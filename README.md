@@ -2,8 +2,7 @@ nano script
 -----------
 
 > minimal script intepreter.
-
-'''typescript
+’‘’typescript
 // how to define a variable
 let a = 1
 let pi: f64 = 3.141592653
@@ -34,5 +33,5 @@ async fn download(url) {
 type Shape {
     area(): f64
 }
+‘’‘
 
-'''
