@@ -1,35 +1,40 @@
 nano script
 -----------
 
-> minimal script intepreter.
+> minimal script interpreter.
 ```typescript
-// how to define a variable
+// define a variable
 let a = 1
 let pi: f64 = 3.141592653
 let str = 'hello world'
 
-// how to define a function
+// define a function
 fn add(a, b) {
     return a + b
 }
 
-// how to define a struct
+// define a object
+let obj = {}
+obj.a = 1
+obj.add = add
+
+// define a struct
 struct Point {
    x: f32
    y: f32
 }
 
-// how to define a anonymous function
+// define a anonymous function
 let swap = { (a, b) in
     a, b = b, a
 }
 
-// how to define a asynchronous function 
+// define a asynchronous function 
 async fn download(url) {
     return await do_download(url)
 }
 
-// how to define a type
+// define a type
 type Shape {
     area(): f64
 }

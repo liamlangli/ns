@@ -1,13 +1,13 @@
 .PHONY: all run clean
 
-CC = gcc
+CC = clang
 
-all: ns.c
+all: nsc.c ns.c ns_tokenize.c
 	mkdir -p out
-	$(CC) -o out/ns $^
+	$(CC) -O0 -o out/nsc $^ -I.
 
 run: all
-	./out/ns
+	./out/nsc test/simple.ns
 
 clean:
 	rm -f out/*
