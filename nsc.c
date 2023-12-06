@@ -1,5 +1,7 @@
 #include "ns.h"
 
+#include <stdlib.h>
+
 void usage() {
   const char *intro =
       "nano script interpreter\n"
@@ -21,13 +23,13 @@ ns_string read_file(ns_string filename) {
   if (length == 0) return (ns_string){.length = 0};
 
   fseek(fd, 0, SEEK_SET);
-  str buffer = (str)malloc(length + 1);
+  void *buffer = (void*)malloc(length + 1);
   if (buffer) {
-    fread(buffer, 1, length, fd);
+    fread((void*)buffer, 1, length, fd);
   }
   fclose(fd);
 
-  return (ns_string){.data = buffer, .length = (i32)length, .null_end = 1};
+  return (ns_string){.data = (str)buffer, .length = (i32)length, .null_end = 1};
 }
 
 void eval(ns_string filename) {

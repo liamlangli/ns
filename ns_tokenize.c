@@ -17,8 +17,7 @@ typedef struct ns_token_t
 } ns_token_t;
 
 ns_value
-scan(ns_context_t* ctx, ns_string content, ns_string filename, int flag)
-{
+scan(ns_context_t* ctx, ns_string content, ns_string filename, int flag) {
   if (content.length == 0)
     return NS_NULL;
 
