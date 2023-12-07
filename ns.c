@@ -22,12 +22,9 @@ ns_context_t *ns_make_context(ns_runtime_t *rt) {
   return ctx;
 }
 
-int ns_is_null(ns_value value) {
-  return NS_VALUE_GET_TAG(value) == NS_TAG_NULL;
-}
+int ns_is_null(ns_value value) { return NS_VALUE_GET_TAG(value) == NS_TAG_NULL; }
 
-ns_value ns_eval(ns_context_t *ctx, ns_string content, ns_string filename,
-int flag) {
+ns_value ns_eval(ns_context_t *ctx, ns_string content, ns_string filename, int flag) {
   if (content.length == 0) return NS_NULL;
 
   int c;

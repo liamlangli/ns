@@ -12,7 +12,7 @@ typedef unsigned char u8;
 typedef char i8;
 typedef float f32;
 typedef double f64;
-typedef const char *str;
+typedef char *str;
 
 #ifdef __cplusplus
 extern "C" {
@@ -59,15 +59,9 @@ typedef struct ns_string {
   int null_end;
 } ns_string;
 
-#define ns_string_str(s)                                                       \
-  ((ns_string){                                                                \
-      .data = s, .length = s ? (unsigned int)strlen(s) : 0, .null_end = 1})
-#define ns_string_STR(s)                                                       \
-  ((ns_string){.data = ("" s ""),                                              \
-               .length = (unsigned int)(sizeof("" s "") - 1),                  \
-               .null_end = 1})
-#define ns_string_range(s, e)                                                  \
-  ((ns_string){.data = (s), length = (unsigned int)((e) - (s))})
+#define ns_string_str(s) ((ns_string){.data = s, .length = s ? (unsigned int)strlen(s) : 0, .null_end = 1})
+#define ns_string_STR(s) ((ns_string){.data = ("" s ""), .length = (unsigned int)(sizeof("" s "") - 1), .null_end = 1})
+#define ns_string_range(s, e) ((ns_string){.data = (s), length = (unsigned int)((e) - (s))})
 
 ns_runtime_t *ns_make_runtime();
 ns_context_t *ns_make_context(ns_runtime_t *rt);
@@ -75,12 +69,11 @@ ns_context_t *ns_make_context(ns_runtime_t *rt);
 #define NS_EVAL_FLAG_GLOBAL (0 << 0)        /* global code */
 #define NS_EVAL_FLAG_VALIDATE_ONLY (0 << 0) /* validate only */
 
-ns_value ns_eval(ns_context_t *ctx, ns_string source, ns_string filename,
-                 int flag);
+ns_value ns_eval(ns_context_t *ctx, ns_string source, ns_string filename, int flag);
 
 #define NS_NULL ((ns_value){.tag = NS_TAG_NULL})
 int ns_is_null(ns_value value);
 
 #ifdef __cplusplus
-} // extern "C"
+}  // extern "C"
 #endif
