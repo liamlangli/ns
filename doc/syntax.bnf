@@ -7,6 +7,18 @@
        | "q" | "r" | "s" | "t" | "u" | "v" | "w"
        | "x" | "y" | "z"
 <digit> ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+<sign> ::= "+" | "-"
+<int_literal> ::= <sign>? <digit>+
+    | <sign>? "0x" <digit>+
+    | <sign>? "0b" <digit>+
+<float_literal> ::= <sign>? <digit>+ "." <digit>+
+    | <sign>? <digit>+ "." <digit>+ "e" <sign>? <digit>+
+    | <sign>? <digit>+ "." <digit>+ "E" <sign>? <digit>+
+    | <sign>? <digit>+ "e" <sign>? <digit>+
+    | <sign>? <digit>+ "E" <sign>? <digit>+
+<string_literal> ::= "\"" <letter>* "\""
+    | "'" <letter>* "'"
+<literal> ::= <int_literal> | <float_literal>
 <identifier_rest> ::= <letter> | <digit> | "_"
 <type_qualifier> ::= "var" | "let"
 <struct_or_type> ::= "struct" | "type"
@@ -23,9 +35,9 @@
 <primary_expression> ::= <identifier>
                        | "(" <expression> ")"
 <logical_or_expression> ::= <logical_and_expression>
-                          | <logical_or_expression> "or" <logical_and_expression>
+                          | <logical_or_expression> "||" <logical_and_expression>
 <logical_and_expression> ::= <inclusive_or_expression>
-                           | <logical_and_expression> "and" <inclusive_or_expression>
+                           | <logical_and_expression> "&&" <inclusive_or_expression>
 <inclusive_or_expression> ::= <exclusive_or_expression>
                             | <inclusive_or_expression> "|" <exclusive_or_expression>
 <exclusive_or_expression> ::= <and_expression>
@@ -81,3 +93,4 @@
 <compound_statement> ::= "{" <statement> "}" <end_of_line>
 <function_definition> ::= <access_specifier>? "fn" <identifier> "(" <parameter_declaration>? ")" <parameter_type_specifier>? <statement>
 <program> ::= <function_definition>*
+    | <statement>*
