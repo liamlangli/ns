@@ -1,0 +1,83 @@
+<letter> ::= "A" | "B" | "C" | "D" | "E" | "F" | "G"
+       | "H" | "I" | "J" | "K" | "L" | "M" | "N"
+       | "O" | "P" | "Q" | "R" | "S" | "T" | "U"
+       | "V" | "W" | "X" | "Y" | "Z" | "a" | "b"
+       | "c" | "d" | "e" | "f" | "g" | "h" | "i"
+       | "j" | "k" | "l" | "m" | "n" | "o" | "p"
+       | "q" | "r" | "s" | "t" | "u" | "v" | "w"
+       | "x" | "y" | "z"
+<digit> ::= "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+<identifier_rest> ::= <letter> | <digit> | "_"
+<type_qualifier> ::= "var" | "let"
+<struct_or_type> ::= "struct" | "type"
+<identifier> ::= <letter> <identifier_rest>*
+<end_of_line> ::= "\n" | "\r\n" | "\r"
+<access_specifier> ::= "pub"
+<struct_or_type_specifier> ::= <struct_or_type> <identifier>
+<type_specifier> ::= "byte" | "i8" | "u8" | "i16" | "u16"
+    | "i32" | "u32" | "i64" | "u64" | "f32" | "f64"
+    | <struct_or_type_specifier>
+<parameter_type_specifier> ::= ":" <type_specifier>
+<parameter_declaration> ::= <identifier> <parameter_type_specifier>?
+
+<primary_expression> ::= <identifier>
+                       | "(" <expression> ")"
+<logical_or_expression> ::= <logical_and_expression>
+                          | <logical_or_expression> "or" <logical_and_expression>
+<logical_and_expression> ::= <inclusive_or_expression>
+                           | <logical_and_expression> "and" <inclusive_or_expression>
+<inclusive_or_expression> ::= <exclusive_or_expression>
+                            | <inclusive_or_expression> "|" <exclusive_or_expression>
+<exclusive_or_expression> ::= <and_expression>
+                            | <exclusive_or_expression> "^" <and_expression>
+<and_expression> ::= <equality_expression>
+                     | <and_expression> "&" <equality_expression>
+<equality_expression> ::= <relational_expression>
+                         | <equality_expression> "==" <relational_expression>
+                         | <equality_expression> "!=" <relational_expression>
+<relational_expression> ::= <shift_expression>
+                           | <relational_expression> "<" <shift_expression>
+                           | <relational_expression> ">" <shift_expression>
+                           | <relational_expression> "<=" <shift_expression>
+                           | <relational_expression> ">=" <shift_expression>
+<shift_expression> ::= <additive_expression>
+                        | <shift_expression> "<<" <additive_expression>
+                        | <shift_expression> ">>" <additive_expression>
+<additive_expression> ::= <multiplicative_expression>
+                        | <additive_expression> "+" <multiplicative_expression>
+                        | <additive_expression> "-" <multiplicative_expression>
+<multiplicative_expression> ::= <cast_expression>
+                              | <multiplicative_expression> "*" <cast_expression>
+                              | <multiplicative_expression> "/" <cast_expression>
+                              | <multiplicative_expression> "%" <cast_expression>
+<cast_expression> ::= <unary_expression>
+                    | "(" <type_specifier> ")" <cast_expression>
+<unary_expression> ::= <postfix_expression>
+                     | <unary_operator> <unary_expression>
+<postfix_expression> ::= <primary_expression>
+                       | <postfix_expression> "[" <expression> "]"
+                       | <postfix_expression> "(" <expression>? ")"
+                       | <postfix_expression> "." <identifier>
+                       | <postfix_expression> "->" <identifier>
+<unary_operator> ::= "&" | "*" | "+" | "-" | "~" | "!"
+<type_name> ::= <identifier>
+              | <type_specifier>
+
+<assignment_operator> ::= "="
+<assignment_expression> ::= <logical_or_expression>
+                          | <primary_expression> <assignment_operator> <assignment_expression>
+<expression> ::= <assignment_expression>
+               | <expression>
+
+<selection_statement> ::= "if" "(" <expression> ")" <statement>
+                        | "if" "(" <expression> ")" <statement> "else" <statement>
+
+<iteration_statement> ::= "while" "(" <expression> ")" <statement>
+                        | "do" <statement> "while" "(" <expression> ")" 
+                        | "for" "(" <expression>? ";" <expression>? ";" <expression>? ")" <statement>
+<statement> ::= <compound_statement>
+    | <selection_statement>
+    | <iteration_statement>
+<compound_statement> ::= "{" <statement> "}" <end_of_line>
+<function_definition> ::= <access_specifier>? "fn" <identifier> "(" <parameter_declaration>? ")" <parameter_type_specifier>? <statement>
+<program> ::= <function_definition>*
