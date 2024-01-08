@@ -13,11 +13,6 @@ fn add(a, b) {
     return a + b
 }
 
-// define a object
-let obj = {}
-obj.a = 1
-obj.add = add
-
 // define a struct
 struct Point {
    x: f32
