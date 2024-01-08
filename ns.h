@@ -1,12 +1,15 @@
 #pragma once
 
-#include "ns_type.h"
 #include <stdio.h>
 #include <string.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#include "ns_tokenize.h"
+#include "ns_ast.h"
+#include "ns_vm.h"
 
 typedef union ns_value_union {
     i32 int32;

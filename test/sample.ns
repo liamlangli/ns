@@ -3,7 +3,7 @@ let pi: f64 = 3.141592653
 let str = 'hello world'
 
 // define a function
-fn add(a, b) {
+fn add(a: f64, b: f64) {
     return a + b
 }
 
@@ -14,12 +14,12 @@ struct Point {
 }
 
 // define a anonymous function
-let swap = { (a, b) in
+let swap = { (a: any, b: any) in
     a, b = b, a
 }
 
 // define a asynchronous function 
-async fn download(url) {
+async fn download(url: str) {
     return await do_download(url)
 }
 
