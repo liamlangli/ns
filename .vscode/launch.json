@@ -7,9 +7,9 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "nsc debug",
-            "program": "${workspaceFolder}/out/nsc test/simple.ns",
-            "args": [],
+            "name": "Launch",
+            "program": "${workspaceFolder}/out/ns",
+            "args": ["test/sample.ns"],
             "cwd": "${workspaceFolder}"
         }
     ]

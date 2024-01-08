@@ -2,12 +2,12 @@
 
 CC = clang
 
-all: nsc.c ns.c ns_tokenize.c
+all: ns.c
 	mkdir -p out
-	$(CC) -O0 -o out/nsc $^ -I.
+	$(CC) -g -O0 -o out/ns $^ -I.
 
 run: all
-	./out/nsc test/simple.ns
+	./out/ns test/sample.ns
 
 clean:
 	rm -f out/*

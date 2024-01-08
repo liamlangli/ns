@@ -1,5 +1,6 @@
-BasedOnStyle: Google
-IndentWidth: 2
-ColumnLimit: 255
-BinPackParameters: false
-AlignConsecutiveAssignments: false
+---
+BreakBeforeBinaryOperators: false
+IndentWidth: 4
+SortIncludes: true
+ColumnLimit: 128
+IndentPPDirectives: BeforeHash
