@@ -9,7 +9,8 @@ all: $(SRCS)
 	$(CC) -g -O0 -o out/ns $^ -Isrc
 
 run: all
-	./out/ns sample/main.ns
+	# ./out/ns sample/main.ns
+	./out/ns sample/token.ns
 
 clean:
 	rm -f out/*

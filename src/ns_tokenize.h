@@ -50,14 +50,21 @@ typedef enum {
     NS_TOKEN_OPEN_BRACKET,
     NS_TOKEN_CLOSE_BRACKET,
     NS_TOKEN_EOF
-} ns_token;
+} NS_TOKEN;
+
+typedef struct ns_str {
+    char *data;
+    int len;
+} ns_str;
+#define ns_str_range(s, n) ((ns_str){(s), (n)})
+#define ns_str_STR(s) ((ns_str){.data = ""})
 
 typedef struct ns_token_t {
-    ns_token type;
-    char val[256];
+    NS_TOKEN type;
+    ns_str val;
 } ns_token_t;
 
-const char *ns_token_to_string(ns_token token);
+const char *ns_token_to_string(NS_TOKEN token);
 
 int ns_tokenize(ns_token_t *token, char *src, int from);
 

@@ -1,7 +1,7 @@
 #include "ns_tokenize.h"
 #include "ns.h"
 
-const char *ns_token_to_string(ns_token type) {
+const char *ns_token_to_string(NS_TOKEN type) {
     switch (type) {
         case NS_TOKEN_INT_LITERIAL:
             return "NS_TOKEN_INT_LITERIAL";
@@ -60,138 +60,104 @@ const char *ns_token_to_string(ns_token type) {
     }
 }
 
-int ns_tokenize(ns_token_t *token, char *src, int from) {
-    int i = from;
-    int to = from + 1;
-    int len;
-    char lead = src[i]; // TODO parse utf8 characters
+int ns_token_float_literal(ns_token_t *t, char *s, int i) {
+    int j = i;
+    while (s[j] >= '0' && s[j] <= '9') {
+        j++;
+    }
+    if (s[j] == '.') {
+        j++;
+        while (s[j] >= '0' && s[j] <= '9') {
+            j++;
+        }
+    }
+    t->type = NS_TOKEN_FLOAT_LITERIAL;
+    int len = j - i;
+    t->val = ns_str_range(s + i, len);
+    return j;
+}
+
+int ns_token_int_literal(ns_token_t *t, char *s, int i) {
+    int j = i;
+    while (s[j] >= '0' && s[j] <= '9') {
+        j++;
+    }
+    t->type = NS_TOKEN_INT_LITERIAL;
+    int len = j - i;
+    t->val = ns_str_range(s + i, len);
+    return j;
+}
+
+int ns_tokenize(ns_token_t *t, char *s, int f) {
+    int i = f;
+    int to = f + 1;
+    int l;
+    char lead = s[i]; // TODO parse utf8 characters
     switch (lead) {
+    case 'a': // as async await
+    {
+        if (s[i + 1] == 's' && s[i + 2] == 'y' && s[i + 3] == 'n' && s[i + 4] == 'c') {
+            t->type = NS_TOKEN_ASYNC;
+            
+            to = i + 5;
+        } else if (s[i + 1] == 'w' && s[i + 2] == 'a' && s[i + 3] == 'i' && s[i + 4] == 't') {
+            t->type = NS_TOKEN_AWAIT;
+            strcpy(t->str, "await");
+            to = i + 5;
+        } else {
+            goto identifer;
+        }
+    } break;
+    } break;
+
     case '0' ... '9': {
-        // parse interger or float
-        int is_float = 0;
-        while (src[i] >= '0' && src[i] <= '9') {
-            i++;
+        i = ns_token_int_literal(t, s, i);
+        if (s[i] == '.') {
+            i = ns_token_float_literal(t, s, i);
         }
-        if (src[i] == '.') {
-            is_float = 1;
-            i++;
-            while (src[i] >= '0' && src[i] <= '9') {
-                i++;
-            }
-        }
-        if (is_float) {
-            token->type = NS_TOKEN_FLOAT_LITERIAL;
-        } else {
-            token->type = NS_TOKEN_INT_LITERIAL;
-        }
-        len = i - from;
-        memcpy(token->val, src + from, len);
-        token->val[len] = '\0';
         to = i;
-    } break;
-    case ':': {
-        token->type = NS_TOKEN_COLON;
-        strcpy(token->val, ":");
-        to = i + 1;
-    } break;
-    case ';': {
-        token->type = NS_TOKEN_SEMICOLON;
-        strcpy(token->val, ";");
-        to = i + 1;
-    } break;
-    case '+':
-    case '-':
-    case '*':
-    case '%': {
-        token->type = NS_TOKEN_OPEATOR;
-        token->val[0] = lead;
-        token->val[1] = '\0';
-        to = i + 1;
-    } break;
-    case '/': {
-        if (src[i + 1] == '/') {
-            while (src[i] != '\n' && src[i] != '\0') {
-                i++;
-            }
-            token->type = NS_TOKEN_SPACE;
-            len = i - from;
-            memcpy(token->val, src + from, len);
-            token->val[len] = '\0';
-            to = i;
-        } else {
-            token->type = NS_TOKEN_OPEATOR;
-            token->val[0] = lead;
-            token->val[1] = '\0';
-            to = i + 1;
-        }
-    } break;
-    case '^':
-    case '&':
-    case '|':
-    case '~':
-    case '!':
-    case '?': {
-        token->type = NS_TOKEN_BITWISE_OPEATOR;
-        token->val[0] = lead;
-        token->val[1] = '\0';
-        to = i + 1;
-    } break;
-    case '<':
-    case '>': {
-        if (src[i + 1] == '=') {
-            token->type = NS_TOKEN_BOOL_OPEATOR;
-            token->val[0] = lead;
-            token->val[1] = '=';
-            token->val[2] = '\0';
-            to = i + 2;
-        } else {
-            token->type = NS_TOKEN_BOOL_OPEATOR;
-            token->val[0] = lead;
-            token->val[1] = '\0';
-            to = i + 1;
-        }
-    } break;
+    } break;    
     case '(': {
         token->type = NS_TOKEN_OPEN_BRACE;
-        strcpy(token->val, "(");
+        strcpy(us_str, "(");
         to = i + 1;
     } break;
     case ')': {
         token->type = NS_TOKEN_CLOSE_BRACE;
-        strcpy(token->val, ")");
+        strcpy(us_str, ")");
         to = i + 1;
     } break;
     case '{': {
         token->type = NS_TOKEN_OPEN_PAREN;
-        strcpy(token->val, "{");
+        strcpy(us_str, "{");
         to = i + 1;
     } break;
     case '}': {
         token->type = NS_TOKEN_CLOSE_PAREN;
-        strcpy(token->val, "}");
+        strcpy(us_str, "}");
         to = i + 1;
     } break;
     case '[': {
         token->type = NS_TOKEN_OPEN_BRACKET;
-        strcpy(token->val, "[");
+        strcpy(us_str, "[");
         to = i + 1;
     } break;
     case ']': {
         token->type = NS_TOKEN_CLOSE_BRACKET;
-        strcpy(token->val, "]");
+        strcpy(us_str, "]");
         to = i + 1;
     } break;
     case '=': {
         if (src[i + 1] == '=') {
             token->type = NS_TOKEN_BOOL_OPEATOR;
-            token->val[0] = '=';
-            token->val[1] = '=';
-            token->val[2] = '\0';
+            us_str[0] = '=';
+            us_str[1] = '=';
+            us_str[2] = '\0';
             to = i + 2;
         } else {
             token->type = NS_TOKEN_ASSIGN;
-            token->val[0] = '=';
-            token->val[1] = '\0';
+            us_str[0] = '=';
+            us_str[1] = '\0';
             to = i + 1;
         }
     } break;
@@ -207,19 +173,19 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
         }
         token->type = NS_TOKEN_STRING_LITERIAL;
         len = i - from;
-        memcpy(token->val, src + from, len + 1);
-        token->val[len + 1] = '\0';
+        memcpy(us_str, src + from, len + 1);
+        us_str[len + 1] = '\0';
         to = i + 1;
     } break;
     // try parse key words
     case 'a': {
         if (src[i + 1] == 's' && src[i + 2] == 'y' && src[i + 3] == 'n' && src[i + 4] == 'c') {
             token->type = NS_TOKEN_ASYNC;
-            strcpy(token->val, "async");
+            strcpy(us_str, "async");
             to = i + 5;
         } else if (src[i + 1] == 'w' && src[i + 2] == 'a' && src[i + 3] == 'i' && src[i + 4] == 't') {
             token->type = NS_TOKEN_AWAIT;
-            strcpy(token->val, "await");
+            strcpy(us_str, "await");
             to = i + 5;
         } else {
             goto identifer;
@@ -228,7 +194,7 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
     case 'c': {
         if (src[i + 1] == 'o' && src[i + 2] == 'n' && src[i + 3] == 's' && src[i + 4] == 't') {
             token->type = NS_TOKEN_CONST;
-            strcpy(token->val, "const");
+            strcpy(us_str, "const");
             to = i + 5;
         } else {
             goto identifer;
@@ -237,15 +203,15 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
     case 'f': {
         if (src[i + 1] == 'n') {
             token->type = NS_TOKEN_FN;
-            strcpy(token->val, "fn");
+            strcpy(us_str, "fn");
             to = i + 2;
         } else if (src[i + 1] == '3' && src[i + 2] == '2') {
             token->type = NS_TOKEN_TYPE;
-            strcpy(token->val, "f32");
+            strcpy(us_str, "f32");
             to = i + 3;
         } else if (src[i + 1] == '6' && src[i + 2] == '4') {
             token->type = NS_TOKEN_TYPE;
-            strcpy(token->val, "f64");
+            strcpy(us_str, "f64");
             to = i + 3;
         } else {
             goto identifer;
@@ -254,15 +220,15 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
     case 'i':
         if (src[i + 1] == 'n') {
             token->type = NS_TOKEN_IN;
-            strcpy(token->val, "in");
+            strcpy(us_str, "in");
             to = i + 2;
         } else if (src[i + 1] == '3' && src[i + 2] == '2') {
             token->type = NS_TOKEN_TYPE;
-            strcpy(token->val, "i32");
+            strcpy(us_str, "i32");
             to = i + 3;
         } else if (src[i + 1] == '6' && src[i + 2] == '4') {
             token->type = NS_TOKEN_TYPE;
-            strcpy(token->val, "i64");
+            strcpy(us_str, "i64");
             to = i + 3;
         } else {
             goto identifer;
@@ -271,7 +237,7 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
     case 'l': {
         if (src[i + 1] == 'e' && src[i + 2] == 't') {
             token->type = NS_TOKEN_LET;
-            strcpy(token->val, "let");
+            strcpy(us_str, "let");
             to = i + 3;
         } else {
             goto identifer;
@@ -280,11 +246,11 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
     case 'u': {
         if (src[i + 1] == '3' && src[i + 2] == '2') {
             token->type = NS_TOKEN_TYPE;
-            strcpy(token->val, "u32");
+            strcpy(us_str, "u32");
             to = i + 3;
         } else if (src[i + 1] == '6' && src[i + 2] == '4') {
             token->type = NS_TOKEN_TYPE;
-            strcpy(token->val, "u64");
+            strcpy(us_str, "u64");
             to = i + 3;
         } else {
             goto identifer;
@@ -293,11 +259,11 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
     case 's':
         if (src[i + 1] == 't' && src[i + 2] == 'r' && src[i + 3] == 'u' && src[i + 4] == 'c' && src[i + 5] == 't') {
             token->type = NS_TOKEN_STRUCT;
-            strcpy(token->val, "struct");
+            strcpy(us_str, "struct");
             to = i + 6;
         } else if (src[i + 1] == 't' && src[i + 2] == 'r') {
             token->type = NS_TOKEN_TYPE;
-            strcpy(token->val, "str");
+            strcpy(us_str, "str");
             to = i + 3;
         } else {
             goto identifer;
@@ -312,13 +278,13 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
             i++;
         }
         len = i - from;
-        memcpy(token->val, src + from, len);
-        token->val[len] = '\0';
+        memcpy(us_str, src + from, len);
+        us_str[len] = '\0';
         to = i;
     } break;
     case '\0': {
         token->type = NS_TOKEN_EOF;
-        token->val[0] = '\0';
+        us_str[0] = '\0';
     } break;
     identifer:
     default: {
@@ -327,8 +293,8 @@ int ns_tokenize(ns_token_t *token, char *src, int from) {
             i++;
         }
         int len = macro_max(i - from, 1);
-        memcpy(token->val, src + from, len);
-        token->val[len] = '\0';
+        memcpy(us_str, src + from, len);
+        us_str[len] = '\0';
         to = from + len;
     } break;
     }
