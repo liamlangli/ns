@@ -1,55 +1,80 @@
 %{
-#include <ns_lexer.tab.h>
+#include "ns_lexer.tab.h"
 %}
 
 %%
 
-'let' { return LET; }
-'const' { return CONST; }
-'fn' { return FN; }
-'struct' { return STRUCT; }
-'async' { return ASYNC; }
-'await' { return AWAIT; }
-'for' { return FOR; }
-'while' { return WHILE; }
-'return' { return RETURN; }
-'break' { return BREAK; }
-'continue' { return CONTINUE; }
-'if' { return IF; }
-'else' { return ELSE; }
+"async" { return ASYNC; }
+"await" { return AWAIT; }
+"as" { return AS; }
+"let" { return LET; }
+"const" { return CONST; }
+"fn" { return FN; }
+"struct" { return STRUCT; }
+"nil" { return NIL; }
+"ref" { return REF; }
 
-'=' { return EQUAL; }
-'+' { return PLUS; }
-'-' { return MINUS; }
-'*' { return TIMES; }
+"for" { return FOR; }
+"do" { return DO; }
+"to" { return TO; }
+"while" { return WHILE; }
+"return" { return RETURN; }
+"break" { return BREAK; }
+"continue" { return CONTINUE; }
+"if" { return IF; }
+"else" { return ELSE; }
 
-'&' { return AND; }
-'|' { return OR; }
-'!' { return NOT; }
-'~' { return BIT_INV; }
-'<<' { return LSHIFT; }
-'>>' { return RSHIFT; }
+"=" { return ASSIGN; }
+"+" { return ADD; }
+"-" { return SUB; }
+"*" { return MUL; }
+"/" { return DIV; }
+"%" { return MOD; }
 
-'+=' { return ADD_ASSIGN; }
-'-=' { return SUB_ASSIGN; }
-'*=' { return MUL_ASSIGN; }
-'/=' { return DIV_ASSIGN; }
-'%=' { return MOD_ASSIGN; }
-'&=' { return AND_ASSIGN; }
-'|=' { return OR_ASSIGN; }
-'^=' { return XOR_ASSIGN; }
-'<<=' { return LSHIFT_ASSIGN; }
-'>>=' { return RSHIFT_ASSIGN; }
+"&" { return AND; }
+"|" { return OR; }
+"!" { return NOT; }
+"~" { return BIT_INV; }
+"<<" { return SHL; }
+">>" { return SHR; }
 
-'==' { return EQ; }
-'!=' { return NEQ; }
-'<' { return LT; }
-'>' { return GT; }
-'<=' { return LEQ; }
-'>=' { return GEQ; }
+"+=" { return ADD_ASSIGN; }
+"-=" { return SUB_ASSIGN; }
+"*=" { return MUL_ASSIGN; }
+"/=" { return DIV_ASSIGN; }
+"%=" { return MOD_ASSIGN; }
+"&=" { return BIT_AND_ASSIGN; }
+"|=" { return BIT_OR_ASSIGN; }
+"^=" { return BIT_XOR_ASSIGN; }
+"<<=" { return BIT_SHL_ASSIGN; }
+">>=" { return BIT_SHR_ASSIGN; }
 
-'&&' { return LOGIC_AND; }
-'||' { return LOGIC_OR; }
+"==" { return EQ; }
+"!=" { return NE; }
+"<" { return LT; }
+">" { return GT; }
+"<=" { return LE; }
+">=" { return GE; }
 
+"&&" { return LOGIC_AND; }
+"||" { return LOGIC_OR; }
+
+"(" { return OPEN_PAREN; }
+")" { return CLOSE_PAREN; }
+"{" { return OPEN_BRACE; }
+"}" { return CLOSE_BRACE; }
+"[" { return OPEN_BRACKET; }
+"]" { return CLOSE_BRACKET; }
+"," { return COMMA; }
+":" { return COLON; }
+"?" { return QUESTION_MARK; }
+"." { return DOT; }
+";" { return EOL; }
+"\n" { return EOL; }
+"\r\n" { return EOL; }
 
 %%
+
+int yywrap() {
+    return 1;
+}

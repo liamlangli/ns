@@ -1,7 +1,7 @@
 %{
 #include <stdio.h>
 #include <stdlib.h>
-void yyerror(char *s);
+void yyerror(const char *s);
 int yylex(void);
 %}
 
@@ -11,40 +11,66 @@ int yylex(void);
     char *str_val;
 }
 
-%token LET CONST FN STRUCT ASYNC AWAIT
-%token IF ELSE WHILE FOR IN RETURN BREAK CONTINUE TRUE FALSE NIL SWITCH CASE DEFAULT
+%token LET "let"
+
+
+%token CONST FN REF STRUCT ASYNC AWAIT AS
+%token IF ELSE DO TO WHILE FOR IN RETURN BREAK CONTINUE TRUE FALSE NIL SWITCH CASE DEFAULT
 %token I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 BOOL BYTE STR
 %token ADD SUB MUL DIV MOD BIT_INV NOT
 %token AND OR XOR SHL SHR
 %token LOGIC_AND LOGIC_OR EQ NE LT GT LE GE
 %token ASSIGN ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN MOD_ASSIGN
 %token BIT_AND_ASSIGN BIT_OR_ASSIGN BIT_XOR_ASSIGN BIT_SHL_ASSIGN BIT_SHR_ASSIGN
-%token <str_val> IDENTIFIER
-%token <str_val> STRING
-%token <int_val> INT
-%token <double_val> DOUBLE
+%token OPEN_PAREN CLOSE_PAREN OPEN_BRACE CLOSE_BRACE OPEN_BRACKET CLOSE_BRACKET
+%token COMMA COLON QUESTION_MARK DOT
+%token EOL
+%token IDENTIFIER INT DOUBLE STRING
 
 %%
 
-program:
-    | statements
+program: statement
     ;
 
-statements: statements statement
-    | statement
+statement: expression_statement 
+    | selection_statement
+    | labeled_statement
+    | iteration_statement
+    | declaration_statement
+    | jump_statement
+    ;
 
-statement: expression
-    | declaration
-    | fn_declaration
-    | lambda_declaration
+labeled_statement: CASE literal COLON statement EOL
+    | DEFAULT COLON statement EOL
+    ;
+
+iteration_statement: WHILE expression OPEN_BRACE statement CLOSE_BRACE  EOL
+    | DO OPEN_BRACE statement CLOSE_BRACE WHILE expression EOL
+    | FOR IDENTIFIER INT TO INT OPEN_BRACE statement CLOSE_BRACE EOL
+    | FOR IDENTIFIER type_declaration IN IDENTIFIER OPEN_BRACE statement CLOSE_BRACE EOL
+    
+selection_statement: IF expression OPEN_BRACE statement CLOSE_BRACE EOL
+    | IF expression OPEN_BRACE statement CLOSE_BRACE ELSE OPEN_BRACE statement CLOSE_BRACE EOL
+    | SWITCH expression OPEN_BRACE statement CLOSE_BRACE
+    ;
+
+expression_statement: EOL
+    | OPEN_BRACE expression CLOSE_BRACE EOL
+    ;
+
+declaration_statement: fn_declaration
     | struct_declaration
-    | if_statement
-    | while_statement
-    | for_statement
-    | switch_statement
-    | return_statement
-    | break_statement
-    | continue_statement
+    | variable_declaration
+    ;
+
+jump_statement: RETURN expression EOL
+    | BREAK EOL
+    | CONTINUE EOL
+    ;
+
+variable_declaration: type_qualifier IDENTIFIER type_declaration
+    | type_qualifier IDENTIFIER type_declaration ASSIGN expression
+    | type_qualifier IDENTIFIER type_declaration ASSIGN lambda_declaration
     ;
 
 type: I8
@@ -64,13 +90,11 @@ type: I8
     ;
 
 type_declaration:
-    | ':' type
+    | COLON type
     ;
 
-declaration: LET IDENTIFIER type_declaration
-    | LET IDENTIFIER type_declaration ASSIGN expression
-    | CONST IDENTIFIER type_declaration
-    | CONST IDENTIFIER type_declaration ASSIGN expression
+type_qualifier: CONST
+    | LET
     ;
 
 assignment_operator: ASSIGN
@@ -86,126 +110,140 @@ assignment_operator: ASSIGN
     | BIT_SHR_ASSIGN
     ;
 
-athmetic_operator: ADD
-    | SUB
+conditional_expression: logical_or_expression
+    | logical_or_expression QUESTION_MARK expression COLON conditional_expression
+    ;
+
+logical_or_expression: logical_and_expression
+    | logical_or_expression LOGIC_OR logical_and_expression
+    ;
+
+logical_and_expression: inclusive_or_expression
+    | logical_and_expression LOGIC_AND inclusive_or_expression
+    ;
+
+inclusive_or_expression: exclusive_or_expression
+    | inclusive_or_expression OR exclusive_or_expression
+    ;
+
+exclusive_or_expression: and_expression
+    | exclusive_or_expression XOR and_expression
+    ;
+
+and_expression: equality_expression
+    | and_expression AND equality_expression
+    ;
+
+equality_expression: relational_expression
+    | equality_expression EQ relational_expression
+    | equality_expression NE relational_expression
+    ;
+
+relational_expression: shift_expression
+    | relational_expression LT shift_expression
+    | relational_expression GT shift_expression
+    | relational_expression LE shift_expression
+    | relational_expression GE shift_expression
+    ;
+
+shift_expression: additive_expression
+    | shift_expression SHL additive_expression
+    | shift_expression SHR additive_expression
+    ;
+
+additive_expression: multiplicative_expression
+    | additive_expression ADD multiplicative_expression
+    | additive_expression SUB multiplicative_expression
+    ;
+
+multiplicative_expression: unary_expression
+    | multiplicative_expression MUL unary_expression
+    | multiplicative_expression DIV unary_expression
+    | multiplicative_expression MOD unary_expression
+    ;
+
+unary_expression: postfix_expression
+    | unary_operator unary_expression
+    | AWAIT unary_expression
+    ;
+
+unary_operator: AND
     | MUL
-    | DIV
-    | MOD
+    | ADD
+    | SUB
+    | BIT_INV
+    | NOT
     ;
 
-bitwise_operator: AND
-    | OR
-    | XOR
-    | SHL
-    | SHR
+postfix_expression: primary_expression
+    | postfix_expression OPEN_PAREN CLOSE_PAREN
+    | postfix_expression OPEN_PAREN assignment_expression CLOSE_PAREN
+    | postfix_expression OPEN_BRACKET expression CLOSE_BRACKET
+    | postfix_expression DOT IDENTIFIER
+    | postfix_expression AS type
     ;
 
-logical_operator: LOGIC_AND
-    | LOGIC_OR
+primary_expression: literal
+    | IDENTIFIER
+    | OPEN_PAREN expression CLOSE_PAREN
     ;
 
-comparison_operator: EQ
-    | NE
-    | LT
-    | GT
-    | LE
-    | GE
-    ;
-
-if_statement: IF '(' expression ')' '{' program '}'
-    | IF '(' expression ')' '{' program '}' ELSE '{' program '}'
-    ;
-
-while_statement: WHILE '(' expression ')' '{' program '}'
-    ;
-
-for_statement: FOR '(' expression ';' expression ';' expression ')' '{' program '}'
-    ;
-
-switch_statement: SWITCH '(' expression ')' '{' cases '}'
-    ;
-
-cases: cases case
-    | case
-    ;
-
-case: CASE expression ':' program
-    | DEFAULT ':' program
-    ;
-
-return_statement: RETURN expression
-    ;
-
-break_statement: BREAK
-    ;
-
-continue_statement:  CONTINUE
-    ;
-
-expression: expression '[' expression ']'
-    | expression '(' ')'
-    | expression '(' expression ')'
-    | expression '?' expression ':' expression
-    | '(' expression ')'
-    | INT
+literal: INT
     | DOUBLE
     | STRING
-    | IDENTIFIER
     | TRUE
     | FALSE
     | NIL
-    | ASYNC expression
-    | AWAIT expression
-    | expression '.' IDENTIFIER
-    | expression '(' arguments ')'
-    | expression '(' parameters ')' '{' program '}'
-    | expression '(' parameters ')' '{' '}'
-    | expression '(' ')' '{' program '}'
-    | expression '(' ')' '{' '}'
-    | NOT expression
-    | BIT_INV expression
-    | expression athmetic_operator expression
-    | expression bitwise_operator expression
-    | expression logical_operator expression
-    | expression comparison_operator expression
-    | expression assignment_operator expression
     ;
 
-arguments: arguments ',' argument
-    | argument
+expression: assignment_expression
+    | expression COMMA assignment_expression
     ;
 
-argument: IDENTIFIER ':' type
-    | expression
+assignment_expression: conditional_expression
+    | unary_expression assignment_operator assignment_expression
     ;
 
-fn_declaration: FN IDENTIFIER '(' parameters ')' type_declaration '{' program '}'
-    | FN IDENTIFIER '(' parameters ')' type_declaration '{' '}'
-    | ASYNC FN IDENTIFIER '(' parameters ')' type_declaration '{' program '}'
-    | ASYNC FN IDENTIFIER '(' parameters ')' type_declaration '{' '}'
+fn_qualifier: 
+    | ASYNC
     ;
 
-lambda_declaration: '{' '(' parameters ')' IN '{' program '}' '}'
-    | '{' '(' parameters ')' ':' type IN '{' program '}' '}'
+fn_declaration: fn_qualifier FN IDENTIFIER OPEN_PAREN parameters CLOSE_PAREN type_declaration OPEN_BRACE statement CLOSE_BRACE EOL
     ;
 
-parameters:
-    | parameters ',' parameter
+lambda_declaration: OPEN_BRACE OPEN_PAREN parameters CLOSE_PAREN type_declaration IN statement CLOSE_BRACE
+    ;
+
+parameters: parameters COMMA parameter
     | parameter
     ;
 
-parameter: IDENTIFIER
-    | IDENTIFIER ':' type
+parameter_qualifier:
+    | REF
     ;
 
-struct_declaration: STRUCT IDENTIFIER '{' '}'
-    | STRUCT IDENTIFIER '{' struct_fields '}'
+parameter:
+    | parameter_qualifier IDENTIFIER type_declaration
     ;
 
-struct_fields: struct_fields struct_field
+struct_declaration: STRUCT IDENTIFIER OPEN_BRACE struct_fields CLOSE_BRACE EOL
+    ;
+
+struct_fields: struct_fields EOL struct_field
     | struct_field
     ;
 
-struct_field: IDENTIFIER ':' type
+struct_field:
+    | IDENTIFIER COLON type
     ;
 %%
+
+void yyerror(const char *s) {
+    fprintf(stderr, "Error: %s\n", s);
+}
+
+int main(void) {
+    printf("Enter expressions:\n");
+    yyparse();
+    return 0;
+}
