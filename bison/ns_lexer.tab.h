@@ -1,14 +1,14 @@
-/* A Bison parser, made by GNU Bison 2.3.  */
+/* A Bison parser, made by GNU Bison 3.7.6.  */
 
-/* Skeleton interface for Bison's Yacc-like parsers in C
+/* Bison interface for Yacc-like parsers in C
 
-   Copyright (C) 1984, 1989, 1990, 2000, 2001, 2002, 2003, 2004, 2005, 2006
-   Free Software Foundation, Inc.
+   Copyright (C) 1984, 1989-1990, 2000-2015, 2018-2021 Free Software Foundation,
+   Inc.
 
-   This program is free software; you can redistribute it and/or modify
+   This program is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
-   the Free Software Foundation; either version 2, or (at your option)
-   any later version.
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
 
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -16,9 +16,7 @@
    GNU General Public License for more details.
 
    You should have received a copy of the GNU General Public License
-   along with this program; if not, write to the Free Software
-   Foundation, Inc., 51 Franklin Street, Fifth Floor,
-   Boston, MA 02110-1301, USA.  */
+   along with this program.  If not, see <https://www.gnu.org/licenses/>.  */
 
 /* As a special exception, you may create a larger work that contains
    part or all of the Bison parser skeleton and distribute that work
@@ -33,200 +31,137 @@
    This special exception was added by the Free Software Foundation in
    version 2.2 of Bison.  */
 
-/* Tokens.  */
+/* DO NOT RELY ON FEATURES THAT ARE NOT DOCUMENTED in the manual,
+   especially those whose name start with YY_ or yy_.  They are
+   private implementation details that can be changed or removed.  */
+
+#ifndef YY_YY_NS_LEXER_TAB_H_INCLUDED
+# define YY_YY_NS_LEXER_TAB_H_INCLUDED
+/* Debug traces.  */
+#ifndef YYDEBUG
+# define YYDEBUG 1
+#endif
+#if YYDEBUG
+extern int yydebug;
+#endif
+
+/* Token kinds.  */
 #ifndef YYTOKENTYPE
 # define YYTOKENTYPE
-   /* Put the tokens into the symbol table, so that GDB and other debuggers
-      know about them.  */
-   enum yytokentype {
-     LET = 258,
-     CONST = 259,
-     FN = 260,
-     REF = 261,
-     STRUCT = 262,
-     ASYNC = 263,
-     AWAIT = 264,
-     AS = 265,
-     IF = 266,
-     ELSE = 267,
-     DO = 268,
-     TO = 269,
-     WHILE = 270,
-     FOR = 271,
-     IN = 272,
-     RETURN = 273,
-     BREAK = 274,
-     CONTINUE = 275,
-     TRUE = 276,
-     FALSE = 277,
-     NIL = 278,
-     SWITCH = 279,
-     CASE = 280,
-     DEFAULT = 281,
-     I8 = 282,
-     I16 = 283,
-     I32 = 284,
-     I64 = 285,
-     U8 = 286,
-     U16 = 287,
-     U32 = 288,
-     U64 = 289,
-     F32 = 290,
-     F64 = 291,
-     BOOL = 292,
-     BYTE = 293,
-     STR = 294,
-     ADD = 295,
-     SUB = 296,
-     MUL = 297,
-     DIV = 298,
-     MOD = 299,
-     BIT_INV = 300,
-     NOT = 301,
-     AND = 302,
-     OR = 303,
-     XOR = 304,
-     SHL = 305,
-     SHR = 306,
-     LOGIC_AND = 307,
-     LOGIC_OR = 308,
-     EQ = 309,
-     NE = 310,
-     LT = 311,
-     GT = 312,
-     LE = 313,
-     GE = 314,
-     ASSIGN = 315,
-     ADD_ASSIGN = 316,
-     SUB_ASSIGN = 317,
-     MUL_ASSIGN = 318,
-     DIV_ASSIGN = 319,
-     MOD_ASSIGN = 320,
-     BIT_AND_ASSIGN = 321,
-     BIT_OR_ASSIGN = 322,
-     BIT_XOR_ASSIGN = 323,
-     BIT_SHL_ASSIGN = 324,
-     BIT_SHR_ASSIGN = 325,
-     OPEN_PAREN = 326,
-     CLOSE_PAREN = 327,
-     OPEN_BRACE = 328,
-     CLOSE_BRACE = 329,
-     OPEN_BRACKET = 330,
-     CLOSE_BRACKET = 331,
-     COMMA = 332,
-     COLON = 333,
-     QUESTION_MARK = 334,
-     DOT = 335,
-     EOL = 336,
-     IDENTIFIER = 337,
-     INT = 338,
-     DOUBLE = 339,
-     STRING = 340
-   };
+  enum yytokentype
+  {
+    YYEMPTY = -2,
+    YYEOF = 0,                     /* "end of file"  */
+    YYerror = 256,                 /* error  */
+    YYUNDEF = 257,                 /* "invalid token"  */
+    LET = 258,                     /* LET  */
+    CONST = 259,                   /* CONST  */
+    FN = 260,                      /* FN  */
+    REF = 261,                     /* REF  */
+    STRUCT = 262,                  /* STRUCT  */
+    ASYNC = 263,                   /* ASYNC  */
+    AWAIT = 264,                   /* AWAIT  */
+    AS = 265,                      /* AS  */
+    IF = 266,                      /* IF  */
+    ELSE = 267,                    /* ELSE  */
+    DO = 268,                      /* DO  */
+    TO = 269,                      /* TO  */
+    WHILE = 270,                   /* WHILE  */
+    FOR = 271,                     /* FOR  */
+    IN = 272,                      /* IN  */
+    RETURN = 273,                  /* RETURN  */
+    BREAK = 274,                   /* BREAK  */
+    CONTINUE = 275,                /* CONTINUE  */
+    TRUE = 276,                    /* TRUE  */
+    FALSE = 277,                   /* FALSE  */
+    NIL = 278,                     /* NIL  */
+    SWITCH = 279,                  /* SWITCH  */
+    CASE = 280,                    /* CASE  */
+    DEFAULT = 281,                 /* DEFAULT  */
+    I8 = 282,                      /* I8  */
+    I16 = 283,                     /* I16  */
+    I32 = 284,                     /* I32  */
+    I64 = 285,                     /* I64  */
+    U8 = 286,                      /* U8  */
+    U16 = 287,                     /* U16  */
+    U32 = 288,                     /* U32  */
+    U64 = 289,                     /* U64  */
+    F32 = 290,                     /* F32  */
+    F64 = 291,                     /* F64  */
+    BOOL = 292,                    /* BOOL  */
+    BYTE = 293,                    /* BYTE  */
+    STR = 294,                     /* STR  */
+    ADD = 295,                     /* ADD  */
+    SUB = 296,                     /* SUB  */
+    MUL = 297,                     /* MUL  */
+    DIV = 298,                     /* DIV  */
+    MOD = 299,                     /* MOD  */
+    BIT_INV = 300,                 /* BIT_INV  */
+    NOT = 301,                     /* NOT  */
+    AND = 302,                     /* AND  */
+    OR = 303,                      /* OR  */
+    XOR = 304,                     /* XOR  */
+    SHL = 305,                     /* SHL  */
+    SHR = 306,                     /* SHR  */
+    LOGIC_AND = 307,               /* LOGIC_AND  */
+    LOGIC_OR = 308,                /* LOGIC_OR  */
+    EQ = 309,                      /* EQ  */
+    NE = 310,                      /* NE  */
+    LT = 311,                      /* LT  */
+    GT = 312,                      /* GT  */
+    LE = 313,                      /* LE  */
+    GE = 314,                      /* GE  */
+    ASSIGN = 315,                  /* ASSIGN  */
+    ADD_ASSIGN = 316,              /* ADD_ASSIGN  */
+    SUB_ASSIGN = 317,              /* SUB_ASSIGN  */
+    MUL_ASSIGN = 318,              /* MUL_ASSIGN  */
+    DIV_ASSIGN = 319,              /* DIV_ASSIGN  */
+    MOD_ASSIGN = 320,              /* MOD_ASSIGN  */
+    BIT_AND_ASSIGN = 321,          /* BIT_AND_ASSIGN  */
+    BIT_OR_ASSIGN = 322,           /* BIT_OR_ASSIGN  */
+    BIT_XOR_ASSIGN = 323,          /* BIT_XOR_ASSIGN  */
+    BIT_SHL_ASSIGN = 324,          /* BIT_SHL_ASSIGN  */
+    BIT_SHR_ASSIGN = 325,          /* BIT_SHR_ASSIGN  */
+    OPEN_PAREN = 326,              /* OPEN_PAREN  */
+    CLOSE_PAREN = 327,             /* CLOSE_PAREN  */
+    OPEN_BRACE = 328,              /* OPEN_BRACE  */
+    CLOSE_BRACE = 329,             /* CLOSE_BRACE  */
+    OPEN_BRACKET = 330,            /* OPEN_BRACKET  */
+    CLOSE_BRACKET = 331,           /* CLOSE_BRACKET  */
+    COMMA = 332,                   /* COMMA  */
+    COLON = 333,                   /* COLON  */
+    QUESTION_MARK = 334,           /* QUESTION_MARK  */
+    DOT = 335,                     /* DOT  */
+    EOL = 336,                     /* EOL  */
+    IDENTIFIER = 337,              /* IDENTIFIER  */
+    INT = 338,                     /* INT  */
+    DOUBLE = 339,                  /* DOUBLE  */
+    STRING = 340                   /* STRING  */
+  };
+  typedef enum yytokentype yytoken_kind_t;
 #endif
-/* Tokens.  */
-#define LET 258
-#define CONST 259
-#define FN 260
-#define REF 261
-#define STRUCT 262
-#define ASYNC 263
-#define AWAIT 264
-#define AS 265
-#define IF 266
-#define ELSE 267
-#define DO 268
-#define TO 269
-#define WHILE 270
-#define FOR 271
-#define IN 272
-#define RETURN 273
-#define BREAK 274
-#define CONTINUE 275
-#define TRUE 276
-#define FALSE 277
-#define NIL 278
-#define SWITCH 279
-#define CASE 280
-#define DEFAULT 281
-#define I8 282
-#define I16 283
-#define I32 284
-#define I64 285
-#define U8 286
-#define U16 287
-#define U32 288
-#define U64 289
-#define F32 290
-#define F64 291
-#define BOOL 292
-#define BYTE 293
-#define STR 294
-#define ADD 295
-#define SUB 296
-#define MUL 297
-#define DIV 298
-#define MOD 299
-#define BIT_INV 300
-#define NOT 301
-#define AND 302
-#define OR 303
-#define XOR 304
-#define SHL 305
-#define SHR 306
-#define LOGIC_AND 307
-#define LOGIC_OR 308
-#define EQ 309
-#define NE 310
-#define LT 311
-#define GT 312
-#define LE 313
-#define GE 314
-#define ASSIGN 315
-#define ADD_ASSIGN 316
-#define SUB_ASSIGN 317
-#define MUL_ASSIGN 318
-#define DIV_ASSIGN 319
-#define MOD_ASSIGN 320
-#define BIT_AND_ASSIGN 321
-#define BIT_OR_ASSIGN 322
-#define BIT_XOR_ASSIGN 323
-#define BIT_SHL_ASSIGN 324
-#define BIT_SHR_ASSIGN 325
-#define OPEN_PAREN 326
-#define CLOSE_PAREN 327
-#define OPEN_BRACE 328
-#define CLOSE_BRACE 329
-#define OPEN_BRACKET 330
-#define CLOSE_BRACKET 331
-#define COMMA 332
-#define COLON 333
-#define QUESTION_MARK 334
-#define DOT 335
-#define EOL 336
-#define IDENTIFIER 337
-#define INT 338
-#define DOUBLE 339
-#define STRING 340
 
-
-
-
+/* Value type.  */
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
-typedef union YYSTYPE
-#line 8 "ns_lexer.y"
+union YYSTYPE
 {
+#line 8 "ns_lexer.y"
+
     int int_val;
     double double_val;
     char *str_val;
-}
-/* Line 1529 of yacc.c.  */
-#line 225 "ns_lexer.tab.h"
-	YYSTYPE;
-# define yystype YYSTYPE /* obsolescent; will be withdrawn */
-# define YYSTYPE_IS_DECLARED 1
+
+#line 155 "ns_lexer.tab.h"
+
+};
+typedef union YYSTYPE YYSTYPE;
 # define YYSTYPE_IS_TRIVIAL 1
+# define YYSTYPE_IS_DECLARED 1
 #endif
+
 
 extern YYSTYPE yylval;
 
+int yyparse (void);
+
+#endif /* !YY_YY_NS_LEXER_TAB_H_INCLUDED  */

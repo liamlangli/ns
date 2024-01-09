@@ -4,4 +4,4 @@ all:
 	clang -o ns_lexer ns_lexer.tab.c lex.yy.c
 
 run: all
-	./ns_lexer < ../test/sample.ns
+	./ns_lexer < ../sample/main.ns
