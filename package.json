@@ -9,6 +9,11 @@
   "categories": [
     "Programming Languages"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:liamlangli/ns.git"
+  },
+  "icon": "icon.png",
   "contributes": {
     "languages": [{
       "id": "ns",

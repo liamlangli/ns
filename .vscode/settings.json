@@ -2,9 +2,5 @@
     "files.associations": {
         "*.h": "c",
         "*.c": "c"
-    },
-    "C_Cpp.default.compilerPath": "/usr/bin/clang",
-    "clang-format.fallbackStyle": "LLVM",
-    "clang-format.language.c.fallbackStyle": "LLVM",
-    "clang-format.language.c.style": "LLVM"
+    }
 }
