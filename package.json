@@ -3,6 +3,7 @@
   "displayName": "nslang",
   "description": "nano script language",
   "version": "0.0.1",
+  "publisher": "liamlangli",
   "engines": {
     "vscode": "^1.85.0"
   },
