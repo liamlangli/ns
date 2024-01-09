@@ -1,0 +1,55 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "nano script",
+	"patterns": [
+		{ "include": "#keywords" },
+		{ "include": "#strings" },
+		{ "include": "#types" },
+		{ "include": "#numbers" },
+		{ "include": "#comments" },
+		{ "include": "#functions" },
+		{ "include": "#variables" },
+		{ "include": "#colon" },
+		{ "include": "#identifiers" }
+	],
+	"repository": {
+		"keywords": {
+			"patterns": [{
+				"name": "keyword.control.ns",
+				"match": "\\b(let|const|struct|fn|type|async|await|in|to|if|while|for|return|switch|case|break|true|false)\\b"
+			}]
+		},
+		"numbers": {
+			"name": "constant.numeric.ns",
+			"match": "\\b(\\d+(\\.\\d+)?)\\b"
+		},
+		"comments": {
+			"name": "comment.line.ns",
+			"begin": "//",
+			"end": "$"
+		},
+		"functions": {
+			"name": "entity.name.function.ns",
+			"match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b\\s*(?=\\()"
+		},
+		"colon":{ "match": ":"},
+		"strings": {
+			"name": "string.quoted.ns",
+			"begin": "[\"'`]",
+			"end": "[\"'`]",
+			"patterns": [
+				{
+					"name": "constant.character.escape.ns",
+					"match": "\\\\."
+				}
+			]
+		}, "types": {
+			"name": "storage.type.ns",
+			"match": "\\b(f32|f64|i8|i16|i32|i64|u8|u16|u32|u64|bool|str|any)\\b"
+		}, "identifiers": {
+			"name": "entity.name.type.ns",
+			"match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\b"
+		}
+	},
+	"scopeName": "source.ns"
+}

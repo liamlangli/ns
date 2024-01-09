@@ -7,7 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Launch",
+            "name": "lexer",
+            "program": "${workspaceFolder}/bison/ns_lexer",
+            "args": [],
+            "cwd": "${workspaceFolder}/bison"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "ns",
             "program": "${workspaceFolder}/out/ns",
             "args": ["test/sample.ns"],
             "cwd": "${workspaceFolder}"

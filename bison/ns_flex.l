@@ -24,6 +24,16 @@
 "if" { return IF; }
 "else" { return ELSE; }
 
+[a-zA-Z_][a-zA-Z0-9_]* { return IDENTIFIER; }
+[0-9]+\.[0-9]+ { return DOUBLE; }
+[0-9]+[e|E][\+|\-]?[0-9]+ { return DOUBLE; }
+[0-9]+ { return INT; }
+0x[0-9A-Fa-f]+ { return INT; }
+0b[01]+ { return INT; }
+\"[^\"]*\" { return STRING; }
+\'[^\']*\' { return STRING; }
+\`[^\`]*\` { return STRING; }
+
 "=" { return ASSIGN; }
 "+" { return ADD; }
 "-" { return SUB; }

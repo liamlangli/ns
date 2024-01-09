@@ -1,0 +1,25 @@
+{
+  "name": "nslang",
+  "displayName": "nslang",
+  "description": "nano script language",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "ns",
+      "aliases": ["nano script", "ns"],
+      "extensions": [".ns"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "ns",
+      "scopeName": "source.ns",
+      "path": "./ns.json"
+    }]
+  }
+}

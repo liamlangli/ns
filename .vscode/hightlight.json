@@ -1,0 +1,17 @@
+{
+    "contributes": {
+      "languages": [
+        {
+          "id": "ns",
+          "extensions": [".ns"]
+        }
+      ],
+      "grammars": [
+        {
+          "language": "ns",
+          "scopeName": "source.ns",
+          "path": "./syntaxes/ns.json"
+        }
+      ]
+    }
+  }

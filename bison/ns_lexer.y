@@ -11,10 +11,7 @@ int yylex(void);
     char *str_val;
 }
 
-%token LET "let"
-
-
-%token CONST FN REF STRUCT ASYNC AWAIT AS
+%token LET CONST FN REF STRUCT ASYNC AWAIT AS
 %token IF ELSE DO TO WHILE FOR IN RETURN BREAK CONTINUE TRUE FALSE NIL SWITCH CASE DEFAULT
 %token I8 I16 I32 I64 U8 U16 U32 U64 F32 F64 BOOL BYTE STR
 %token ADD SUB MUL DIV MOD BIT_INV NOT
@@ -243,6 +240,7 @@ void yyerror(const char *s) {
 }
 
 int main(void) {
+    yydebug = 1;
     printf("Enter expressions:\n");
     yyparse();
     return 0;

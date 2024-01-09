@@ -250,7 +250,7 @@ int yylex(void);
 
 /* Enabling traces.  */
 #ifndef YYDEBUG
-# define YYDEBUG 0
+# define YYDEBUG 1
 #endif
 
 /* Enabling verbose error messages.  */
@@ -632,20 +632,20 @@ static const yytype_int8 yyrhs[] =
 /* YYRLINE[YYN] -- source line where rule number YYN was defined.  */
 static const yytype_uint8 yyrline[] =
 {
-       0,    30,    30,    33,    34,    35,    36,    37,    38,    41,
-      42,    45,    46,    47,    48,    50,    51,    52,    55,    56,
-      59,    60,    61,    64,    65,    66,    69,    70,    71,    74,
-      75,    76,    77,    78,    79,    80,    81,    82,    83,    84,
-      85,    86,    87,    90,    91,    94,    95,    98,    99,   100,
-     101,   102,   103,   104,   105,   106,   107,   108,   111,   112,
-     115,   116,   119,   120,   123,   124,   127,   128,   131,   132,
-     135,   136,   137,   140,   141,   142,   143,   144,   147,   148,
-     149,   152,   153,   154,   157,   158,   159,   160,   163,   164,
-     165,   168,   169,   170,   171,   172,   173,   176,   177,   178,
-     179,   180,   181,   184,   185,   186,   189,   190,   191,   192,
-     193,   194,   197,   198,   201,   202,   205,   206,   209,   212,
-     215,   216,   219,   220,   223,   224,   227,   230,   231,   234,
-     235
+       0,    29,    29,    32,    33,    34,    35,    36,    37,    40,
+      41,    44,    45,    46,    47,    49,    50,    51,    54,    55,
+      58,    59,    60,    63,    64,    65,    68,    69,    70,    73,
+      74,    75,    76,    77,    78,    79,    80,    81,    82,    83,
+      84,    85,    86,    89,    90,    93,    94,    97,    98,    99,
+     100,   101,   102,   103,   104,   105,   106,   107,   110,   111,
+     114,   115,   118,   119,   122,   123,   126,   127,   130,   131,
+     134,   135,   136,   139,   140,   141,   142,   143,   146,   147,
+     148,   151,   152,   153,   156,   157,   158,   159,   162,   163,
+     164,   167,   168,   169,   170,   171,   172,   175,   176,   177,
+     178,   179,   180,   183,   184,   185,   188,   189,   190,   191,
+     192,   193,   196,   197,   200,   201,   204,   205,   208,   211,
+     214,   215,   218,   219,   222,   223,   226,   229,   230,   233,
+     234
 };
 #endif
 
@@ -654,29 +654,28 @@ static const yytype_uint8 yyrline[] =
    First, the terminals, then, starting at YYNTOKENS, nonterminals.  */
 static const char *const yytname[] =
 {
-  "$end", "error", "$undefined", "\"let\"", "CONST", "FN", "REF",
-  "STRUCT", "ASYNC", "AWAIT", "AS", "IF", "ELSE", "DO", "TO", "WHILE",
-  "FOR", "IN", "RETURN", "BREAK", "CONTINUE", "TRUE", "FALSE", "NIL",
-  "SWITCH", "CASE", "DEFAULT", "I8", "I16", "I32", "I64", "U8", "U16",
-  "U32", "U64", "F32", "F64", "BOOL", "BYTE", "STR", "ADD", "SUB", "MUL",
-  "DIV", "MOD", "BIT_INV", "NOT", "AND", "OR", "XOR", "SHL", "SHR",
-  "LOGIC_AND", "LOGIC_OR", "EQ", "NE", "LT", "GT", "LE", "GE", "ASSIGN",
-  "ADD_ASSIGN", "SUB_ASSIGN", "MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN",
-  "BIT_AND_ASSIGN", "BIT_OR_ASSIGN", "BIT_XOR_ASSIGN", "BIT_SHL_ASSIGN",
-  "BIT_SHR_ASSIGN", "OPEN_PAREN", "CLOSE_PAREN", "OPEN_BRACE",
-  "CLOSE_BRACE", "OPEN_BRACKET", "CLOSE_BRACKET", "COMMA", "COLON",
-  "QUESTION_MARK", "DOT", "EOL", "IDENTIFIER", "INT", "DOUBLE", "STRING",
-  "$accept", "program", "statement", "labeled_statement",
-  "iteration_statement", "selection_statement", "expression_statement",
-  "declaration_statement", "jump_statement", "variable_declaration",
-  "type", "type_declaration", "type_qualifier", "assignment_operator",
-  "conditional_expression", "logical_or_expression",
-  "logical_and_expression", "inclusive_or_expression",
-  "exclusive_or_expression", "and_expression", "equality_expression",
-  "relational_expression", "shift_expression", "additive_expression",
-  "multiplicative_expression", "unary_expression", "unary_operator",
-  "postfix_expression", "primary_expression", "literal", "expression",
-  "assignment_expression", "fn_qualifier", "fn_declaration",
+  "$end", "error", "$undefined", "LET", "CONST", "FN", "REF", "STRUCT",
+  "ASYNC", "AWAIT", "AS", "IF", "ELSE", "DO", "TO", "WHILE", "FOR", "IN",
+  "RETURN", "BREAK", "CONTINUE", "TRUE", "FALSE", "NIL", "SWITCH", "CASE",
+  "DEFAULT", "I8", "I16", "I32", "I64", "U8", "U16", "U32", "U64", "F32",
+  "F64", "BOOL", "BYTE", "STR", "ADD", "SUB", "MUL", "DIV", "MOD",
+  "BIT_INV", "NOT", "AND", "OR", "XOR", "SHL", "SHR", "LOGIC_AND",
+  "LOGIC_OR", "EQ", "NE", "LT", "GT", "LE", "GE", "ASSIGN", "ADD_ASSIGN",
+  "SUB_ASSIGN", "MUL_ASSIGN", "DIV_ASSIGN", "MOD_ASSIGN", "BIT_AND_ASSIGN",
+  "BIT_OR_ASSIGN", "BIT_XOR_ASSIGN", "BIT_SHL_ASSIGN", "BIT_SHR_ASSIGN",
+  "OPEN_PAREN", "CLOSE_PAREN", "OPEN_BRACE", "CLOSE_BRACE", "OPEN_BRACKET",
+  "CLOSE_BRACKET", "COMMA", "COLON", "QUESTION_MARK", "DOT", "EOL",
+  "IDENTIFIER", "INT", "DOUBLE", "STRING", "$accept", "program",
+  "statement", "labeled_statement", "iteration_statement",
+  "selection_statement", "expression_statement", "declaration_statement",
+  "jump_statement", "variable_declaration", "type", "type_declaration",
+  "type_qualifier", "assignment_operator", "conditional_expression",
+  "logical_or_expression", "logical_and_expression",
+  "inclusive_or_expression", "exclusive_or_expression", "and_expression",
+  "equality_expression", "relational_expression", "shift_expression",
+  "additive_expression", "multiplicative_expression", "unary_expression",
+  "unary_operator", "postfix_expression", "primary_expression", "literal",
+  "expression", "assignment_expression", "fn_qualifier", "fn_declaration",
   "lambda_declaration", "parameters", "parameter_qualifier", "parameter",
   "struct_declaration", "struct_fields", "struct_field", 0
 };
@@ -1732,7 +1731,7 @@ yyreduce:
     {
       
 /* Line 1267 of yacc.c.  */
-#line 1736 "ns_lexer.tab.c"
+#line 1735 "ns_lexer.tab.c"
       default: break;
     }
   YY_SYMBOL_PRINT ("-> $$ =", yyr1[yyn], &yyval, &yyloc);
@@ -1946,7 +1945,7 @@ yyreturn:
 }
 
 
-#line 237 "ns_lexer.y"
+#line 236 "ns_lexer.y"
 
 
 void yyerror(const char *s) {
@@ -1954,6 +1953,7 @@ void yyerror(const char *s) {
 }
 
 int main(void) {
+    yydebug = 1;
     printf("Enter expressions:\n");
     yyparse();
     return 0;
