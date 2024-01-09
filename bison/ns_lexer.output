@@ -256,9 +256,9 @@ QUESTION_MARK (334) 58
 DOT (335) 100
 EOL (336) 8 9 10 11 12 13 14 15 17 18 22 23 24 117 125 126
 IDENTIFIER (337) 12 13 25 26 27 41 100 103 117 124 125 129
-STRING (338) 107
-INT (339) 12 105
-DOUBLE (340) 106
+INT (338) 12 105
+DOUBLE (339) 106
+STRING (340) 107
 
 
 Nonterminals, with rules where they appear
@@ -432,9 +432,9 @@ state 5
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -479,9 +479,9 @@ state 7
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -527,9 +527,9 @@ state 9
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -581,9 +581,9 @@ state 12
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -612,9 +612,9 @@ state 13
     TRUE    shift, and go to state 32
     FALSE   shift, and go to state 33
     NIL     shift, and go to state 34
-    STRING  shift, and go to state 43
-    INT     shift, and go to state 44
-    DOUBLE  shift, and go to state 45
+    INT     shift, and go to state 43
+    DOUBLE  shift, and go to state 44
+    STRING  shift, and go to state 45
 
     literal  go to state 71
 
@@ -642,9 +642,9 @@ state 15
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -789,9 +789,9 @@ state 31
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     unary_expression    go to state 78
     unary_operator      go to state 58
@@ -879,9 +879,9 @@ state 41
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -912,23 +912,23 @@ state 42
 
 state 43
 
-  107 literal: STRING .
-
-    $default  reduce using rule 107 (literal)
-
-
-state 44
-
   105 literal: INT .
 
     $default  reduce using rule 105 (literal)
 
 
-state 45
+state 44
 
   106 literal: DOUBLE .
 
     $default  reduce using rule 106 (literal)
+
+
+state 45
+
+  107 literal: STRING .
+
+    $default  reduce using rule 107 (literal)
 
 
 state 46
@@ -1094,9 +1094,9 @@ state 58
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     unary_expression    go to state 111
     unary_operator      go to state 58
@@ -1368,9 +1368,9 @@ state 80
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     logical_and_expression     go to state 134
     inclusive_or_expression    go to state 49
@@ -1404,9 +1404,9 @@ state 81
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -1444,9 +1444,9 @@ state 82
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     inclusive_or_expression    go to state 137
     exclusive_or_expression    go to state 50
@@ -1479,9 +1479,9 @@ state 83
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     exclusive_or_expression    go to state 138
     and_expression             go to state 51
@@ -1513,9 +1513,9 @@ state 84
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     and_expression             go to state 139
     equality_expression        go to state 52
@@ -1546,9 +1546,9 @@ state 85
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     equality_expression        go to state 140
     relational_expression      go to state 53
@@ -1578,9 +1578,9 @@ state 86
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     relational_expression      go to state 141
     shift_expression           go to state 54
@@ -1609,9 +1609,9 @@ state 87
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     relational_expression      go to state 142
     shift_expression           go to state 54
@@ -1640,9 +1640,9 @@ state 88
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     shift_expression           go to state 143
     additive_expression        go to state 55
@@ -1670,9 +1670,9 @@ state 89
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     shift_expression           go to state 144
     additive_expression        go to state 55
@@ -1700,9 +1700,9 @@ state 90
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     shift_expression           go to state 145
     additive_expression        go to state 55
@@ -1730,9 +1730,9 @@ state 91
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     shift_expression           go to state 146
     additive_expression        go to state 55
@@ -1760,9 +1760,9 @@ state 92
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     additive_expression        go to state 147
     multiplicative_expression  go to state 56
@@ -1789,9 +1789,9 @@ state 93
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     additive_expression        go to state 148
     multiplicative_expression  go to state 56
@@ -1818,9 +1818,9 @@ state 94
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     multiplicative_expression  go to state 149
     unary_expression           go to state 135
@@ -1846,9 +1846,9 @@ state 95
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     multiplicative_expression  go to state 150
     unary_expression           go to state 135
@@ -1874,9 +1874,9 @@ state 96
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     unary_expression    go to state 151
     unary_operator      go to state 58
@@ -1901,9 +1901,9 @@ state 97
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     unary_expression    go to state 152
     unary_operator      go to state 58
@@ -1928,9 +1928,9 @@ state 98
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     unary_expression    go to state 153
     unary_operator      go to state 58
@@ -2032,9 +2032,9 @@ state 110
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -2102,9 +2102,9 @@ state 113
     OPEN_PAREN   shift, and go to state 41
     CLOSE_PAREN  shift, and go to state 170
     IDENTIFIER   shift, and go to state 42
-    STRING       shift, and go to state 43
-    INT          shift, and go to state 44
-    DOUBLE       shift, and go to state 45
+    INT          shift, and go to state 43
+    DOUBLE       shift, and go to state 44
+    STRING       shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -2141,9 +2141,9 @@ state 114
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -2226,9 +2226,9 @@ state 117
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -2931,9 +2931,9 @@ state 185
     OPEN_PAREN  shift, and go to state 41
     OPEN_BRACE  shift, and go to state 200
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47
@@ -3026,9 +3026,9 @@ state 190
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 210
     logical_or_expression      go to state 47
@@ -3087,9 +3087,9 @@ state 194
     AND         shift, and go to state 40
     OPEN_PAREN  shift, and go to state 41
     IDENTIFIER  shift, and go to state 42
-    STRING      shift, and go to state 43
-    INT         shift, and go to state 44
-    DOUBLE      shift, and go to state 45
+    INT         shift, and go to state 43
+    DOUBLE      shift, and go to state 44
+    STRING      shift, and go to state 45
 
     conditional_expression     go to state 46
     logical_or_expression      go to state 47

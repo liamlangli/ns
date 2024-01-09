@@ -71,6 +71,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#define YYERROR_VERBOSE
+
 void yyerror(const char *s);
 int yylex(void);
 
@@ -97,6 +99,7 @@ int yylex(void);
 #  endif
 # endif
 
+<<<<<<< Updated upstream
 #include "ns_lexer.tab.h"
 /* Symbol kind.  */
 enum yysymbol_kind_t
@@ -234,6 +237,44 @@ typedef enum yysymbol_kind_t yysymbol_kind_t;
 
 
 
+=======
+/* Enabling verbose error messages.  */
+#ifdef YYERROR_VERBOSE
+# undef YYERROR_VERBOSE
+# define YYERROR_VERBOSE 1
+#else
+# define YYERROR_VERBOSE 0
+#endif
+
+/* Enabling the token table.  */
+#ifndef YYTOKEN_TABLE
+# define YYTOKEN_TABLE 0
+#endif
+
+#if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
+typedef union YYSTYPE
+#line 10 "ns_lexer.y"
+{
+    int int_val;
+    double double_val;
+    char *str_val;
+}
+/* Line 193 of yacc.c.  */
+#line 281 "ns_lexer.tab.c"
+	YYSTYPE;
+# define yystype YYSTYPE /* obsolescent; will be withdrawn */
+# define YYSTYPE_IS_DECLARED 1
+# define YYSTYPE_IS_TRIVIAL 1
+#endif
+
+
+
+/* Copy the second part of user declarations.  */
+
+
+/* Line 216 of yacc.c.  */
+#line 294 "ns_lexer.tab.c"
+>>>>>>> Stashed changes
 
 #ifdef short
 # undef short
@@ -617,20 +658,20 @@ static const yytype_int8 yytranslate[] =
   /* YYRLINE[YYN] -- Source line where rule number YYN was defined.  */
 static const yytype_uint8 yyrline[] =
 {
-       0,    29,    29,    32,    33,    34,    35,    36,    37,    40,
-      41,    44,    45,    46,    47,    49,    50,    51,    54,    55,
-      58,    59,    60,    63,    64,    65,    68,    69,    70,    73,
-      74,    75,    76,    77,    78,    79,    80,    81,    82,    83,
-      84,    85,    86,    89,    90,    93,    94,    97,    98,    99,
-     100,   101,   102,   103,   104,   105,   106,   107,   110,   111,
-     114,   115,   118,   119,   122,   123,   126,   127,   130,   131,
-     134,   135,   136,   139,   140,   141,   142,   143,   146,   147,
-     148,   151,   152,   153,   156,   157,   158,   159,   162,   163,
-     164,   167,   168,   169,   170,   171,   172,   175,   176,   177,
-     178,   179,   180,   183,   184,   185,   188,   189,   190,   191,
-     192,   193,   196,   197,   200,   201,   204,   205,   208,   211,
-     214,   215,   218,   219,   222,   223,   226,   229,   230,   233,
-     234
+       0,    31,    31,    34,    35,    36,    37,    38,    39,    42,
+      43,    46,    47,    48,    49,    51,    52,    53,    56,    57,
+      60,    61,    62,    65,    66,    67,    70,    71,    72,    75,
+      76,    77,    78,    79,    80,    81,    82,    83,    84,    85,
+      86,    87,    88,    91,    92,    95,    96,    99,   100,   101,
+     102,   103,   104,   105,   106,   107,   108,   109,   112,   113,
+     116,   117,   120,   121,   124,   125,   128,   129,   132,   133,
+     136,   137,   138,   141,   142,   143,   144,   145,   148,   149,
+     150,   153,   154,   155,   158,   159,   160,   161,   164,   165,
+     166,   169,   170,   171,   172,   173,   174,   177,   178,   179,
+     180,   181,   182,   185,   186,   187,   190,   191,   192,   193,
+     194,   195,   198,   199,   202,   203,   206,   207,   210,   213,
+     216,   217,   220,   221,   224,   225,   228,   231,   232,   235,
+     236
 };
 #endif
 
@@ -1388,9 +1429,15 @@ yyreduce:
   YY_REDUCE_PRINT (yyn);
   switch (yyn)
     {
+<<<<<<< Updated upstream
 
 #line 1393 "ns_lexer.tab.c"
 
+=======
+      
+/* Line 1267 of yacc.c.  */
+#line 1737 "ns_lexer.tab.c"
+>>>>>>> Stashed changes
       default: break;
     }
   /* User semantic actions sometimes alter yychar, and that requires
@@ -1583,7 +1630,7 @@ yyreturn:
   return yyresult;
 }
 
-#line 236 "ns_lexer.y"
+#line 238 "ns_lexer.y"
 
 
 void yyerror(const char *s) {

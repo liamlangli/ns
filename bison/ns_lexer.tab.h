@@ -143,7 +143,12 @@ extern int yydebug;
 
 /* Value type.  */
 #if ! defined YYSTYPE && ! defined YYSTYPE_IS_DECLARED
+<<<<<<< Updated upstream
 union YYSTYPE
+=======
+typedef union YYSTYPE
+#line 10 "ns_lexer.y"
+>>>>>>> Stashed changes
 {
 #line 8 "ns_lexer.y"
 

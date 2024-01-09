@@ -2,12 +2,14 @@
 
 CC = clang
 
-all: ns.c ns_tokenize.c ns_ast.c ns_vm.c
+SRCS = src/ns.c src/ns_tokenize.c src/ns_ast.c src/ns_vm.c
+
+all: $(SRCS)
 	mkdir -p out
 	$(CC) -g -O0 -o out/ns $^ -Isrc
 
 run: all
-	./out/ns test/sample.ns
+	./out/ns sample/main.ns
 
 clean:
 	rm -f out/*

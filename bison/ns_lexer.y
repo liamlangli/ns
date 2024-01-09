@@ -1,6 +1,8 @@
 %{
 #include <stdio.h>
 #include <stdlib.h>
+#define YYERROR_VERBOSE
+
 void yyerror(const char *s);
 int yylex(void);
 %}
