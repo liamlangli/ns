@@ -24,6 +24,7 @@ typedef double f64;
 typedef enum { NS_TYPE_NIL = -1, NS_TYPE_INT, NS_TYPE_FLOAT, NS_TYPE_FUNCTION, NS_TYPE_STRUCT } ns_type;
 
 typedef enum {
+    NS_TOKEN_UNKNOWN = -1,
     NS_TOKEN_AS,
     NS_TOKEN_ASYNC,
     NS_TOKEN_AWAIT,

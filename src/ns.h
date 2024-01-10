@@ -7,6 +7,22 @@
 extern "C" {
 #endif
 
+#ifndef false
+    #define false 0
+#endif
+
+#ifndef true
+    #define true 1
+#endif
+
+#ifndef macro_max
+    #define macro_max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef macro_min
+    #define macro_min(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
 #include "ns_tokenize.h"
 #include "ns_ast.h"
 #include "ns_vm.h"

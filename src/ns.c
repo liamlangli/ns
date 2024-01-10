@@ -1,4 +1,5 @@
 #include "ns.h"
+#include "ns_tokenize.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +29,8 @@ ns_value ns_eval(const char *source) {
         if (token.type == NS_TOKEN_SPACE) {
             continue;
         } else {
-            printf("%s %s\n", ns_token_to_string(token.type), token.val);
+            // printf("%d %s %.*s\n",i, ns_token_to_string(token.type), macro_max(0, token.val.len), token.val.data);
+            token.type = NS_TOKEN_UNKNOWN;
         }
     } while (token.type != NS_TOKEN_EOF && i < len);
     return NS_NIL;

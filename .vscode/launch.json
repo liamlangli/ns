@@ -17,7 +17,7 @@
             "request": "launch",
             "name": "ns",
             "program": "${workspaceFolder}/out/ns",
-            "args": ["test/sample.ns"],
+            "args": ["sample/token.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
