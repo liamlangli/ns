@@ -20,19 +20,19 @@ char *io_read_file(const char *path) {
     return buffer;
 }
 
-ns_value ns_eval(const char *source) {
+ns_value ns_eval(const char *source, const char *filename) {
     int len = strlen(source);
     int i = 0;
-    ns_token_t token = {0};
+    ns_token_t t = {0};
     do {
-        i = ns_tokenize(&token, (char *)source, i);
-        if (token.type == NS_TOKEN_SPACE) {
+        i = ns_tokenize(&t, (char *)source, i);
+        if (t.type == NS_TOKEN_SPACE) {
             continue;
         } else {
-            // printf("%d %s %.*s\n",i, ns_token_to_string(token.type), macro_max(0, token.val.len), token.val.data);
-            token.type = NS_TOKEN_UNKNOWN;
+            printf("[%s, line:%4d, offset:%4d] %20s %.*s\n", filename, t.line, i - t.line_start, ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
+            t.type = NS_TOKEN_UNKNOWN;
         }
-    } while (token.type != NS_TOKEN_EOF && i < len);
+    } while (t.type != NS_TOKEN_EOF && i < len);
     return NS_NIL;
 }
 
@@ -42,12 +42,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const char *source = io_read_file(argv[1]);
+    const char *filename = argv[1];
+    const char *source = io_read_file(filename);
     if (source == NULL) {
         printf("Failed to read file: %s\n", argv[1]);
         return 1;
     }
 
-    ns_value val = ns_eval(source);
+    ns_value val = ns_eval(source, filename);
     return 0;
 }

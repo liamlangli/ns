@@ -2,11 +2,11 @@ nano script
 -----------
 
 > minimal script interpreter.
-```typescript
+```ns
 // define a variable
 let a = 1
 let pi: f64 = 3.141592653
-let str = 'hello world'
+let hello = 'hello world'
 
 // define a function
 fn add(a, b) {

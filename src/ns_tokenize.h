@@ -31,6 +31,7 @@ typedef enum {
     NS_TOKEN_BREAK,
     NS_TOKEN_CONST,
     NS_TOKEN_CONTINUE,
+    NS_TOKEN_COMMENT,
     NS_TOKEN_DEFAULT,
     NS_TOKEN_DO,
     NS_TOKEN_ELSE,
@@ -61,10 +62,12 @@ typedef enum {
     NS_TOKEN_ASSIGN,
     NS_TOKEN_COLON,
     NS_TOKEN_SEMICOLON,
-    NS_TOKEN_OPERATOR,
-    NS_TOKEN_BITWISE_OPERATOR,
 
+    NS_TOKEN_ARITHMETIC_OPERATOR,
+    NS_TOKEN_BITWISE_OPERATOR,
+    NS_TOKEN_ASSIGN_OPERATOR,
     NS_TOKEN_BOOL_OPERATOR,
+
     NS_TOKEN_OPEN_BRACE,
     NS_TOKEN_CLOSE_BRACE,
     NS_TOKEN_OPEN_PAREN,
@@ -84,6 +87,7 @@ typedef struct ns_str {
 typedef struct ns_token_t {
     NS_TOKEN type;
     ns_str val;
+    int line, line_start;
 } ns_token_t;
 
 const char *ns_token_to_string(NS_TOKEN token);

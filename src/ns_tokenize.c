@@ -2,6 +2,8 @@
 #include "ns.h"
 
 #include <assert.h>
+#include <stdio.h>
+#include <string.h>
 
 const char *ns_token_to_string(NS_TOKEN type) {
     switch (type) {
@@ -37,8 +39,10 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_COLON";
     case NS_TOKEN_SEMICOLON:
         return "NS_TOKEN_SEMICOLON";
-    case NS_TOKEN_OPERATOR:
-        return "NS_TOKEN_OPERATOR";
+    case NS_TOKEN_ASSIGN_OPERATOR:
+        return "NS_TOKEN_ASSIGN_OPERATOR";
+    case NS_TOKEN_ARITHMETIC_OPERATOR:
+        return "NS_TOKEN_ARITHMETIC_OPERATOR";
     case NS_TOKEN_BITWISE_OPERATOR:
         return "NS_TOKEN_BITWISE_OPERATOR";
     case NS_TOKEN_BOOL_OPERATOR:
@@ -61,49 +65,6 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "Unknown token";
     }
 }
-
-static ns_token_t ns_token_as = {NS_TOKEN_AS, {"as", 2}};
-static ns_token_t ns_token_async = {NS_TOKEN_ASYNC, {"async", 5}};
-static ns_token_t ns_token_await = {NS_TOKEN_AWAIT, {"await", 5}};
-static ns_token_t ns_token_break = {NS_TOKEN_BREAK, {"break", 5}};
-static ns_token_t ns_token_const = {NS_TOKEN_CONST, {"const", 5}};
-static ns_token_t ns_token_continue = {NS_TOKEN_CONTINUE, {"continue", 8}};
-static ns_token_t ns_token_default = {NS_TOKEN_DEFAULT, {"default", 7}};
-static ns_token_t ns_token_do = {NS_TOKEN_DO, {"do", 2}};
-static ns_token_t ns_token_else = {NS_TOKEN_ELSE, {"else", 4}};
-static ns_token_t ns_token_fn = {NS_TOKEN_FN, {"fn", 2}};
-static ns_token_t ns_token_for = {NS_TOKEN_FOR, {"for", 3}};
-static ns_token_t ns_token_if = {NS_TOKEN_IF, {"if", 2}};
-static ns_token_t ns_token_in = {NS_TOKEN_IN, {"in", 2}};
-static ns_token_t ns_token_i32 = {NS_TOKEN_TYPE, {"i32", 3}};
-static ns_token_t ns_token_i64 = {NS_TOKEN_TYPE, {"i64", 3}};
-static ns_token_t ns_token_i8 = {NS_TOKEN_TYPE, {"i8", 2}};
-static ns_token_t ns_token_i16 = {NS_TOKEN_TYPE, {"i16", 3}};
-static ns_token_t ns_token_f32 = {NS_TOKEN_TYPE, {"f32", 3}};
-static ns_token_t ns_token_f64 = {NS_TOKEN_TYPE, {"f64", 3}};
-static ns_token_t ns_token_let = {NS_TOKEN_LET, {"let", 3}};
-static ns_token_t ns_token_nil = {NS_TOKEN_NIL, {"nil", 3}};
-static ns_token_t ns_token_return = {NS_TOKEN_RETURN, {"return", 6}};
-static ns_token_t ns_token_ref = {NS_TOKEN_REF, {"ref", 3}};
-static ns_token_t ns_token_struct = {NS_TOKEN_STRUCT, {"struct", 6}};
-static ns_token_t ns_token_str = {NS_TOKEN_TYPE, {"str", 3}};
-static ns_token_t ns_token_true = {NS_TOKEN_TRUE, {"true", 4}};
-static ns_token_t ns_token_type = {NS_TOKEN_TYPE, {"type", 4}};
-static ns_token_t ns_token_to = {NS_TOKEN_TO, {"to", 2}};
-static ns_token_t ns_token_u32 = {NS_TOKEN_TYPE, {"u32", 3}};
-static ns_token_t ns_token_u64 = {NS_TOKEN_TYPE, {"u64", 3}};
-static ns_token_t ns_token_u8 = {NS_TOKEN_TYPE, {"u8", 2}};
-static ns_token_t ns_token_u16 = {NS_TOKEN_TYPE, {"u16", 3}};
-static ns_token_t ns_token_while = {NS_TOKEN_WHILE, {"while", 5}};
-static ns_token_t ns_token_open_brace = {NS_TOKEN_OPEN_BRACE, {"{", 1}};
-static ns_token_t ns_token_close_brace = {NS_TOKEN_CLOSE_BRACE, {"}", 1}};
-static ns_token_t ns_token_open_paren = {NS_TOKEN_OPEN_PAREN, {"(", 1}};
-static ns_token_t ns_token_close_paren = {NS_TOKEN_CLOSE_PAREN, {")", 1}};
-static ns_token_t ns_token_open_bracket = {NS_TOKEN_OPEN_BRACKET, {"[", 1}};
-static ns_token_t ns_token_close_bracket = {NS_TOKEN_CLOSE_BRACKET, {"]", 1}};
-static ns_token_t ns_token_eof = {NS_TOKEN_EOF, {"", 0}};
-static ns_token_t ns_token_assign = {NS_TOKEN_ASSIGN, {"=", 1}};
-static ns_token_t ns_token_colon = {NS_TOKEN_COLON, {":", 1}};
 
 int ns_token_float_literal(ns_token_t *t, char *s, int i) {
     int j = i;
@@ -135,14 +96,20 @@ int ns_token_int_literal(ns_token_t *t, char *s, int i) {
 
 // > 0 mean there is a {separator}+
 // = 0 mean there is no {separator}
-int ns_token_separator(char *s, int i) {
+int ns_token_separator(ns_token_t *t, char *s, int i) {
     int c = s[i];
-    int to = i;
-    while (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+    int to = i, eol, sep;
+    do {
+        eol = c == '\n' || strncmp(s + to, "\r\n", 2) == 0;
+        if (eol) {
+            t->line++;
+            t->line_start = to;
+        }
+        sep = c == ' ' || c == '\t' || c == '\v' || c == ';';
         to++;
         c = s[to];
-    }
-    return to - i;
+    } while (eol || sep);
+    return to - i - 1;
 }
 
 int ns_tokenize(ns_token_t *t, char *s, int f) {
@@ -156,27 +123,30 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'a': // as async await
     {
         if (strncmp(s + f, "as", 2) == 0) {
-            sep = ns_token_separator(s, i + 2);
+            sep = ns_token_separator(t, s, i + 2);
             if (sep == 0) {
                 goto identifier;
             }
-            *t = ns_token_as;
+            t->type = NS_TOKEN_AS;
+            t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
         } else if (strncmp(s + f, "async", 5) == 0) {
-            sep = ns_token_separator(s, i + 5);
+            sep = ns_token_separator(t, s, i + 5);
             if (sep == 0) {
                 i += sep;
                 goto identifier;
             }
-            *t = ns_token_async;
+            t->type = NS_TOKEN_ASYNC;
+            t->val = ns_str_range(s + f, 5);
             to = i + 5 + sep;
         } else if (strncmp(s + f, "await", 5) == 0) {
-            sep = ns_token_separator(s, i + 5);
+            sep = ns_token_separator(t, s, i + 5);
             if (sep == 0) {
                 i += sep;
                 goto identifier;
             }
-            *t = ns_token_await;
+            t->type = NS_TOKEN_AWAIT;
+            t->val = ns_str_range(s + f, 5);
             to = i + 5 + sep;
         } else {
             goto identifier;
@@ -185,10 +155,11 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'b': // break
     {
         if (strncmp(s + f, "break", 5) == 0) {
-            sep = ns_token_separator(s, i + 5);
+            sep = ns_token_separator(t, s, i + 5);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_break;
+            t->type = NS_TOKEN_BREAK;
+            t->val = ns_str_range(s + f, 5);
             to = i + 5 + sep;
         } else {
             goto identifier;
@@ -197,32 +168,36 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'c': // const, continue
     {
         if (strncmp(s + f, "const", 5) == 0) {
-            sep = ns_token_separator(s, i + 5);
+            sep = ns_token_separator(t, s, i + 5);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_const;
+            t->type = NS_TOKEN_CONST;
+            t->val = ns_str_range(s + f, 5);
             to = i + 5 + sep;
         } else if (strncmp(s + f, "continue", 8) == 0) {
-            sep = ns_token_separator(s, i + 8);
+            sep = ns_token_separator(t, s, i + 8);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_continue;
+            t->type = NS_TOKEN_CONTINUE;
+            t->val = ns_str_range(s + f, 8);
             to = i + 8 + sep;
         }
     } break;
     case 'd': // default, do
     {
         if (strncmp(s + f, "default", 7) == 0) {
-            sep = ns_token_separator(s, i + 7);
+            sep = ns_token_separator(t, s, i + 7);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_default;
+            t->type = NS_TOKEN_DEFAULT;
+            t->val = ns_str_range(s + f, 7);
             to = i + 7 + sep;
         } else if (strncmp(s + f, "do", 2) == 0) {
-            sep = ns_token_separator(s, i + 2);
+            sep = ns_token_separator(t, s, i + 2);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_do;
+            t->type = NS_TOKEN_DO;
+            t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
         } else {
             goto identifier;
@@ -232,10 +207,11 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'e': // else, enum
     {
         if (strncmp(s + f, "else", 4) == 0) {
-            sep = ns_token_separator(s, i + 4);
+            sep = ns_token_separator(t, s, i + 4);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_else;
+            t->type = NS_TOKEN_ELSE;
+            t->val = ns_str_range(s + f, 4);
             to = i + 4 + sep;
         } else {
             goto identifier;
@@ -245,28 +221,25 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'f': // fn, for, f32, f64
     {
         if (strncmp(s + f, "fn", 2) == 0) {
-            sep = ns_token_separator(s, i + 2);
+            sep = ns_token_separator(t, s, i + 2);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_fn;
+            t->type = NS_TOKEN_FN;
+            t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
         } else if (strncmp(s + f, "for", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
+            sep = ns_token_separator(t, s, i + 3);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_for;
+            t->type = NS_TOKEN_FOR;
+            t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
-        } else if (strncmp(s + f, "f32", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
+        } else if (strncmp(s + f, "f32", 3) == 0 || strncmp(s + f, "f64", 3) == 0) {
+            sep = ns_token_separator(t, s, i + 3);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_f32;
-            to = i + 3 + sep;
-        } else if (strncmp(s + f, "f64", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
-            if (sep == 0)
-                goto identifier;
-            *t = ns_token_f64;
+            t->type = NS_TOKEN_TYPE;
+            t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
             goto identifier;
@@ -276,41 +249,33 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'i': // if, in, i32, i64, i8, i16
     {
         if (strncmp(s + f, "if", 2) == 0) {
-            sep = ns_token_separator(s, i + 2);
+            sep = ns_token_separator(t, s, i + 2);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_if;
+            t->type = NS_TOKEN_IF;
+            t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
         } else if (strncmp(s + f, "in", 2) == 0) {
-            sep = ns_token_separator(s, i + 2);
+            sep = ns_token_separator(t, s, i + 2);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_in;
+            t->type = NS_TOKEN_IN;
+            t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
-        } else if (strncmp(s + f, "i32", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
+        } else if (strncmp(s + f, "i32", 3) == 0 || strncmp(s + f, "i16", 3) == 0 || strncmp(s + f, "i64", 3) == 0) {
+            sep = ns_token_separator(t, s, i + 3);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_i32;
-            to = i + 3 + sep;
-        } else if (strncmp(s + f, "i64", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
-            if (sep == 0)
-                goto identifier;
-            *t = ns_token_i64;
+            t->type = NS_TOKEN_TYPE;
+            t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else if (strncmp(s + f, "i8", 2) == 0) {
-            sep = ns_token_separator(s, i + 2);
+            sep = ns_token_separator(t, s, i + 2);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_i8;
+            t->type = NS_TOKEN_TYPE;
+            t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
-        } else if (strncmp(s + f, "i16", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
-            if (sep == 0)
-                goto identifier;
-            *t = ns_token_i16;
-            to = i + 3 + sep;
         } else {
             goto identifier;
         }
@@ -318,10 +283,11 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
 
     case 'l': {
         if (strncmp(s + f, "let", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
+            sep = ns_token_separator(t, s, i + 3);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_let;
+            t->type = NS_TOKEN_LET;
+            t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
             goto identifier;
@@ -331,10 +297,11 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'n': // nil
     {
         if (strncmp(s + f, "nil", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
+            sep = ns_token_separator(t, s, i + 3);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_nil;
+            t->type = NS_TOKEN_NIL;
+            t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
             goto identifier;
@@ -344,16 +311,18 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'r': // return, ref
     {
         if (strncmp(s + f, "return", 6) == 0) {
-            sep = ns_token_separator(s, i + 6);
+            sep = ns_token_separator(t, s, i + 6);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_return;
+            t->type = NS_TOKEN_RETURN;
+            t->val = ns_str_range(s + f, 6);
             to = i + 6 + sep;
         } else if (strncmp(s + f, "ref", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
+            sep = ns_token_separator(t, s, i + 3);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_ref;
+            t->type = NS_TOKEN_REF;
+            t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
             goto identifier;
@@ -363,16 +332,18 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 's': // struct, str
     {
         if (strncmp(s + f, "struct", 6) == 0) {
-            sep = ns_token_separator(s, i + 6);
+            sep = ns_token_separator(t, s, i + 6);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_struct;
+            t->type = NS_TOKEN_STRUCT;
+            t->val = ns_str_range(s + f, 6);
             to = i + 6 + sep;
         } else if (strncmp(s + f, "str", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
+            sep = ns_token_separator(t, s, i + 3);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_str;
+            t->type = NS_TOKEN_TYPE;
+            t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
             goto identifier;
@@ -382,22 +353,25 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 't': // type true to
     {
         if (strncmp(s + f, "type", 4) == 0) {
-            sep = ns_token_separator(s, i + 4);
+            sep = ns_token_separator(t, s, i + 4);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_type;
+            t->type = NS_TOKEN_TYPE;
+            t->val = ns_str_range(s + f, 4);
             to = i + 4 + sep;
         } else if (strncmp(s + f, "true", 4) == 0) {
-            sep = ns_token_separator(s, i + 4);
+            sep = ns_token_separator(t, s, i + 4);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_true;
+            t->type = NS_TOKEN_TRUE;
+            t->val = ns_str_range(s + f, 4);
             to = i + 4 + sep;
         } else if (strncmp(s + f, "to", 2) == 0) {
-            sep = ns_token_separator(s, i + 2);
+            sep = ns_token_separator(t, s, i + 2);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_to;
+            t->type = NS_TOKEN_TO;
+            t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
         } else {
             goto identifier;
@@ -406,30 +380,20 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
 
     case 'u': // u32, u64, u8, u16
     {
-        if (strncmp(s + f, "u32", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
+        if (strncmp(s + f, "u32", 3) == 0 || strncmp(s + f, "u64", 3) == 0 || strncmp(s + f, "u16", 3) == 0) {
+            sep = ns_token_separator(t, s, i + 3);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_u32;
-            to = i + 3 + sep;
-        } else if (strncmp(s + f, "u64", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
-            if (sep == 0)
-                goto identifier;
-            *t = ns_token_u64;
+            t->type = NS_TOKEN_TYPE;
+            t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else if (strncmp(s + f, "u8", 2) == 0) {
-            sep = ns_token_separator(s, i + 2);
+            sep = ns_token_separator(t, s, i + 2);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_u8;
+            t->type = NS_TOKEN_TYPE;
+            t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
-        } else if (strncmp(s + f, "u16", 3) == 0) {
-            sep = ns_token_separator(s, i + 3);
-            if (sep == 0)
-                goto identifier;
-            *t = ns_token_u16;
-            to = i + 3 + sep;
         } else {
             goto identifier;
         }
@@ -438,37 +402,44 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     case 'w': // while
     {
         if (strncmp(s + f, "while", 5) == 0) {
-            sep = ns_token_separator(s, i + 5);
+            sep = ns_token_separator(t, s, i + 5);
             if (sep == 0)
                 goto identifier;
-            *t = ns_token_while;
+            t->type = NS_TOKEN_WHILE;
+            t->val = ns_str_range(s + f, 5);
             to = i + 5 + sep;
         } else {
             goto identifier;
         }
     } break;
     case '(': {
-        *t = ns_token_open_paren;
+        t->type = NS_TOKEN_OPEN_PAREN;
+        t->val = ns_str_range(s + f, 1);
         to = i + 1;
     } break;
     case ')': {
-        *t = ns_token_close_paren;
+        t->type = NS_TOKEN_CLOSE_PAREN;
+        t->val = ns_str_range(s + f, 1);
         to = i + 1;
     } break;
     case '{': {
-        *t = ns_token_open_brace;
+        t->type = NS_TOKEN_OPEN_BRACE;
+        t->val = ns_str_range(s + f, 1);
         to = i + 1;
     } break;
     case '}': {
-        *t = ns_token_close_brace;
+        t->type = NS_TOKEN_CLOSE_BRACE;
+        t->val = ns_str_range(s + f, 1);
         to = i + 1;
     } break;
     case '[': {
-        *t = ns_token_open_bracket;
+        t->type = NS_TOKEN_OPEN_BRACKET;
+        t->val = ns_str_range(s + f, 1);
         to = i + 1;
     } break;
     case ']': {
-        *t = ns_token_close_bracket;
+        t->type = NS_TOKEN_CLOSE_BRACKET;
+        t->val = ns_str_range(s + f, 1);
         to = i + 1;
     } break;
     case 39: // '
@@ -485,15 +456,105 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
         t->val = ns_str_range(s + f + 1, i - f - 1);
         to = i + 1;
     } break;
+    case '=': {
+        if (s[i + 1] == '=') {
+            t->type = NS_TOKEN_BOOL_OPERATOR;
+            t->val = ns_str_range(s + f, 2);
+            to = i + 2;
+        } else {
+            t->type = NS_TOKEN_ASSIGN;
+            t->val = ns_str_range(s + f, 1);
+            to = i + 1;
+        }
+    } break;
+    case '+': {
+        if (s[i + 1] == '=') {
+            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->val = ns_str_range(s + f, 2);
+            to = i + 2;
+        } else {
+            t->type = NS_TOKEN_ARITHMETIC_OPERATOR;
+            t->val = ns_str_range(s + f, 1);
+            to = i + 1;
+        }
+    } break;
+    case '-': {
+        if (s[i + 1] == '=') {
+            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->val = ns_str_range(s + f, 2);
+            to = i + 2;
+        } else {
+            t->type = NS_TOKEN_ARITHMETIC_OPERATOR;
+            t->val = ns_str_range(s + f, 1);
+            to = i + 1;
+        }
+        break;
+    }
+    case '*': {
+        if (s[i + 1] == '=') {
+            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->val = ns_str_range(s + f, 2);
+            to = i + 2;
+        } else {
+            t->type = NS_TOKEN_ARITHMETIC_OPERATOR;
+            t->val = ns_str_range(s + f, 1);
+            to = i + 1;
+        }
+    } break;
+    case '/': {
+        if (s[i + 1] == '=') {
+            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->val = ns_str_range(s + f, 2);
+            to = i + 2;
+        } else if (s[i + 1] == '/') {
+            while (s[i] != '\n' && strncmp(s + i, "\r\n", 2) != 0) {
+                i++;
+            }
+            t->type = NS_TOKEN_COMMENT;
+            t->val = ns_str_range(s + f, i - f);
+            to = i;
+        } else {
+            t->type = NS_TOKEN_ARITHMETIC_OPERATOR;
+            t->val = ns_str_range(s + f, 1);
+            to = i + 1;
+        }
+    } break;
+    case '%': {
+        if (s[i + 1] == '=') {
+            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->val = ns_str_range(s + f, 2);
+            to = i + 2;
+        } else {
+            t->type = NS_TOKEN_ARITHMETIC_OPERATOR;
+            t->val = ns_str_range(s + f, 1);
+            to = i + 1;
+        }
+    } break;
+    case ' ':
+    case ';':
+    case '\t':
+    case '\n':
+    case '\r':
+    case '\v': {
+        l = i;
+        sep = ns_token_separator(t, s, i);
+        if (sep == 0) {
+            goto identifier;
+        }
+        t->type = NS_TOKEN_SPACE;
+        t->val = ns_str_range(s + l, sep);
+        to = i + sep;
+    } break;
+
     case '\0': {
         t->type = NS_TOKEN_EOF;
     } break;
-identifier:
+    identifier:
     default: {
         i += sep;
-        t->type = NS_TOKEN_IDENTIFIER;
         char lead = s[i];
         if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z'))) {
+            printf("[line:%d, offset:%d] Unexpected character: %c\n", t->line, i - t->line_start, lead);
             assert(false);
         }
         i++;
@@ -502,6 +563,7 @@ identifier:
             i++;
         }
 
+        t->type = NS_TOKEN_IDENTIFIER;
         t->val = ns_str_range(s + f, i - f);
         to = i;
     } break;
