@@ -36,14 +36,44 @@ ns_value ns_eval(const char *source, const char *filename) {
     return NS_NIL;
 }
 
+typedef struct ns_compile_option_t {
+    int tokenize_only;
+    int parse_only;
+    int show_version;
+    int show_help;
+} ns_compile_option_t;
+
+ns_compile_option_t parse_options(int argc, char ** argv) {
+    ns_compile_option_t option = {0};
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--tokenize") == 0) {
+            option.tokenize_only = 1;
+        } else if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--parse") == 0) {
+            option.parse_only = 1;
+        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
+            option.show_version = 1;
+        } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            option.show_help = 1;
+        }
+    }
+    return option;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: ns [file.ns]\n");
+        printf("Usage: [-t] ns [file.ns]\n");
+        printf("  -t --tokenize do tokenize only\n");
+        printf("  -p --parse    do parse only\n");
+        printf("  -v --version  show version\n");
+        printf("  -h --help     show this help\n");
         return 1;
     }
 
-    const char *filename = argv[1];
+    ns_compile_option_t option = parse_options(argc, argv);
+
+    const char *filename = argv[argc - 1];
     const char *source = io_read_file(filename);
+
     if (source == NULL) {
         printf("Failed to read file: %s\n", argv[1]);
         return 1;
