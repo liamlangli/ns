@@ -59,6 +59,8 @@ typedef enum {
     NS_TOKEN_SPACE,
     NS_TOKEN_IDENTIFIER,
 
+    NS_TOKEN_COMMA,
+    NS_TOKEN_DOT,
     NS_TOKEN_ASSIGN,
     NS_TOKEN_COLON,
     NS_TOKEN_SEMICOLON,
@@ -78,7 +80,7 @@ typedef enum {
 } NS_TOKEN;
 
 typedef struct ns_str {
-    char *data;
+    const char *data;
     int len;
 } ns_str;
 #define ns_str_range(s, n) ((ns_str){(s), (n)})
@@ -92,7 +94,7 @@ typedef struct ns_token_t {
 
 const char *ns_token_to_string(NS_TOKEN token);
 
-int ns_tokenize(ns_token_t *token, char *src, int from);
+int ns_tokenize(ns_token_t *token, const char *src, const char* filename, int from);
 
 #ifdef __cplusplus
 }

@@ -25,11 +25,11 @@ ns_value ns_eval(const char *source, const char *filename) {
     int i = 0;
     ns_token_t t = {0};
     do {
-        i = ns_tokenize(&t, (char *)source, i);
+        i = ns_tokenize(&t, source, filename, i);
         if (t.type == NS_TOKEN_SPACE) {
             continue;
         } else {
-            printf("[%s, line:%4d, offset:%4d] %20s %.*s\n", filename, t.line, i - t.line_start, ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
+            printf("[%s, line:%4d, offset:%4d] %-20s %.*s\n", filename, t.line, i - t.line_start, ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
             t.type = NS_TOKEN_UNKNOWN;
         }
     } while (t.type != NS_TOKEN_EOF && i < len);

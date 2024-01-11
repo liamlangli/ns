@@ -66,7 +66,7 @@ const char *ns_token_to_string(NS_TOKEN type) {
     }
 }
 
-int ns_token_float_literal(ns_token_t *t, char *s, int i) {
+int ns_token_float_literal(ns_token_t *t, const char *s, int i) {
     int j = i;
     while (s[j] >= '0' && s[j] <= '9') {
         j++;
@@ -83,7 +83,7 @@ int ns_token_float_literal(ns_token_t *t, char *s, int i) {
     return j;
 }
 
-int ns_token_int_literal(ns_token_t *t, char *s, int i) {
+int ns_token_int_literal(ns_token_t *t, const char *s, int i) {
     int j = i;
     while (s[j] >= '0' && s[j] <= '9') {
         j++;
@@ -96,7 +96,7 @@ int ns_token_int_literal(ns_token_t *t, char *s, int i) {
 
 // > 0 mean there is a {separator}+
 // = 0 mean there is no {separator}
-int ns_token_separator(ns_token_t *t, char *s, int i) {
+int ns_token_separator(ns_token_t *t, const char *s, int i) {
     int c = s[i];
     int to = i, eol, sep;
     do {
@@ -112,13 +112,72 @@ int ns_token_separator(ns_token_t *t, char *s, int i) {
     return to - i - 1;
 }
 
-int ns_tokenize(ns_token_t *t, char *s, int f) {
+int ns_tokenize(ns_token_t *t, const char *s, const char *filename, int f) {
     int i = f;
     int to = f + 1;
     int l, sep;
     char lead = s[i]; // TODO parse utf8 characters
     switch (lead) {
-    case '0' ... '9':
+    case '0' ... '9': {
+        if (s[i + 1] == 'x') {
+            // parse hex literal
+            i += 2;
+            while ((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f')) {
+                i++;
+            }
+            t->type = NS_TOKEN_INT_LITERAL;
+            t->val = ns_str_range(s + f, i - f);
+            to = i;
+        } else if (s[i + 1] == 'b') {
+            // parse binary literal
+            i += 2;
+            while (s[i] == '0' || s[i] == '1') {
+                i++;
+            }
+            t->type = NS_TOKEN_INT_LITERAL;
+            t->val = ns_str_range(s + f, i - f);
+            to = i;
+        } else if (s[i + 1] == 'o') {
+            // parse octal literal
+            i += 2;
+            while (s[i] >= '0' && s[i] <= '7') {
+                i++;
+            }
+            t->type = NS_TOKEN_INT_LITERAL;
+            t->val = ns_str_range(s + f, i - f);
+            to = i;
+        } else if (s[i + 1] == '.') {
+            // parse float literal
+            i = ns_token_float_literal(t, s, i);
+            to = i;
+        } 
+        else {
+            while (s[i] >= '0' && s[i] <= '9') {
+                i++;
+            }
+            if (s[i] == '.') {
+                // parse float literal
+                i = ns_token_float_literal(t, s, f);
+                to = i;
+            } else {
+                t->type = NS_TOKEN_INT_LITERAL;
+                t->val = ns_str_range(s + f, i - f);
+                to = i;
+            }
+        }
+    } break;
+    case '.':
+    {
+        if (s[i + 1] >= '0' && s[i + 1] <= '9') {
+            // parse float literal
+            i = ns_token_float_literal(t, s, i);
+            to = i;
+        } else {
+            t->type = NS_TOKEN_DOT;
+            t->val = ns_str_range(s + f, 1);
+            to = i + 1;
+        }
+    } break;
 
     case 'a': // as async await
     {
@@ -551,10 +610,9 @@ int ns_tokenize(ns_token_t *t, char *s, int f) {
     } break;
     identifier:
     default: {
-        i += sep;
         char lead = s[i];
         if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z'))) {
-            printf("[line:%d, offset:%d] Unexpected character: %c\n", t->line, i - t->line_start, lead);
+            printf("[%s, line:%d, offset:%d] unexpected character: %c\n", filename, t->line, i - t->line_start, lead);
             assert(false);
         }
         i++;
