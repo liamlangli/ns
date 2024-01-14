@@ -226,7 +226,14 @@ int ns_tokenize(ns_token_t *t, const char *s, const char *filename, int f) {
     } break;
     case 'c': // const, continue
     {
-        if (strncmp(s + f, "const", 5) == 0) {
+        if (strncmp(s + f, "case", 4) == 0) {
+            sep = ns_token_separator(t, s, i + 4);
+            if (sep == 0)
+                goto identifier;
+            t->type = NS_TOKEN_CASE;
+            t->val = ns_str_range(s + f, 4);
+            to = i + 4 + sep;
+        } else if (strncmp(s + f, "const", 5) == 0) {
             sep = ns_token_separator(t, s, i + 5);
             if (sep == 0)
                 goto identifier;

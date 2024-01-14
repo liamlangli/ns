@@ -2,17 +2,11 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
-#endif
-
-#ifndef false
-    #define false 0
-#endif
-
-#ifndef true
-    #define true 1
 #endif
 
 #ifndef macro_max
@@ -24,7 +18,7 @@ extern "C" {
 #endif
 
 #include "ns_tokenize.h"
-#include "ns_ast.h"
+#include "ns_parse.h"
 #include "ns_vm.h"
 
 typedef union ns_value_union {
