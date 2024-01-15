@@ -46,7 +46,7 @@ labeled_statement: CASE literal COLON statement EOL
 iteration_statement: WHILE expression OPEN_BRACE statement CLOSE_BRACE  EOL
     | DO OPEN_BRACE statement CLOSE_BRACE WHILE expression EOL
     | FOR IDENTIFIER INT TO INT OPEN_BRACE statement CLOSE_BRACE EOL
-    | FOR IDENTIFIER type_declaration IN IDENTIFIER OPEN_BRACE statement CLOSE_BRACE EOL
+    | FOR IDENTIFIER type_restriction IN IDENTIFIER OPEN_BRACE statement CLOSE_BRACE EOL
     
 selection_statement: IF expression OPEN_BRACE statement CLOSE_BRACE EOL
     | IF expression OPEN_BRACE statement CLOSE_BRACE ELSE OPEN_BRACE statement CLOSE_BRACE EOL
@@ -60,6 +60,7 @@ expression_statement: EOL
 declaration_statement: fn_declaration
     | struct_declaration
     | variable_declaration
+    | type_restriction
     ;
 
 jump_statement: RETURN expression EOL
@@ -67,9 +68,9 @@ jump_statement: RETURN expression EOL
     | CONTINUE EOL
     ;
 
-variable_declaration: type_qualifier IDENTIFIER type_declaration
-    | type_qualifier IDENTIFIER type_declaration ASSIGN expression
-    | type_qualifier IDENTIFIER type_declaration ASSIGN lambda_declaration
+variable_declaration: type_qualifier IDENTIFIER type_restriction
+    | type_qualifier IDENTIFIER type_restriction ASSIGN expression
+    | type_qualifier IDENTIFIER type_restriction ASSIGN lambda_declaration
     ;
 
 type: I8
@@ -88,7 +89,7 @@ type: I8
     | IDENTIFIER
     ;
 
-type_declaration:
+type_restriction:
     | COLON type
     ;
 
@@ -207,10 +208,10 @@ fn_qualifier:
     | ASYNC
     ;
 
-fn_declaration: fn_qualifier FN IDENTIFIER OPEN_PAREN parameters CLOSE_PAREN type_declaration OPEN_BRACE statement CLOSE_BRACE EOL
+fn_declaration: fn_qualifier FN IDENTIFIER OPEN_PAREN parameters CLOSE_PAREN type_restriction OPEN_BRACE statement CLOSE_BRACE EOL
     ;
 
-lambda_declaration: OPEN_BRACE OPEN_PAREN parameters CLOSE_PAREN type_declaration IN statement CLOSE_BRACE
+lambda_declaration: OPEN_BRACE OPEN_PAREN parameters CLOSE_PAREN type_restriction IN statement CLOSE_BRACE
     ;
 
 parameters: parameters COMMA parameter
@@ -222,7 +223,7 @@ parameter_qualifier:
     ;
 
 parameter:
-    | parameter_qualifier IDENTIFIER type_declaration
+    | parameter_qualifier IDENTIFIER type_restriction
     ;
 
 struct_declaration: STRUCT IDENTIFIER OPEN_BRACE struct_fields CLOSE_BRACE EOL
@@ -235,6 +236,10 @@ struct_fields: struct_fields EOL struct_field
 struct_field:
     | IDENTIFIER COLON type
     ;
+
+type_declaration: type IDENTIFIER OPEN_BRACE CLOSE_BRACE
+    ;
+
 %%
 
 void yyerror(const char *s) {
