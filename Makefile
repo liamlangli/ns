@@ -2,7 +2,7 @@
 
 CC = clang
 
-SRCS = src/ns.c src/ns_tokenize.c src/ns_ast.c src/ns_vm.c
+SRCS = src/ns.c src/ns_tokenize.c src/ns_parse.c src/ns_vm.c
 
 all: $(SRCS)
 	mkdir -p out
