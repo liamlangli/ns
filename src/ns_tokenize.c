@@ -1,5 +1,5 @@
 #include "ns_tokenize.h"
-#include "ns.h"
+#include "ns_type.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -411,6 +411,13 @@ int ns_tokenize(ns_token_t *t, const char *s, const char *filename, int f) {
             t->type = NS_TOKEN_TYPE;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
+        } else if (strncmp(s + f, "switch", 6) == 0) {
+            sep = ns_token_separator(t, s, i + 6);
+            if (sep == 0)
+                goto identifier;
+            t->type = NS_TOKEN_SWITCH;
+            t->val = ns_str_range(s + f, 6);
+            to = i + 6 + sep;
         } else {
             goto identifier;
         }
