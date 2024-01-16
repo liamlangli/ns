@@ -16,11 +16,10 @@ typedef union ns_value_union {
     void *ptr;
 } ns_value_union;
 
-#define NS_NIL ((ns_value){.type = -1})
+#define NS_NIL ((ns_value){.u.ptr = NULL})
 
 typedef struct ns_value {
     ns_value_union u;
-    ns_type type;
     char *name;
 } ns_value;
 

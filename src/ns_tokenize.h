@@ -21,7 +21,23 @@ typedef unsigned long u64;
 typedef float f32;
 typedef double f64;
 
-typedef enum { NS_TYPE_NIL = -1, NS_TYPE_INT, NS_TYPE_FLOAT, NS_TYPE_FUNCTION, NS_TYPE_STRUCT } ns_type;
+typedef enum { 
+    NS_TYPE_NIL = -1,
+    NS_TYPE_I8,
+    NS_TYPE_I16,
+    NS_TYPE_I32,
+    NS_TYPE_I64,
+    NS_TYPE_U8,
+    NS_TYPE_U16,
+    NS_TYPE_U32,
+    NS_TYPE_U64,
+    NS_TYPE_F32,
+    NS_TYPE_F64,
+    NS_TYPE_BOOL,
+    NS_TYPE_STRING,
+    NS_TYPE_FUNCTION,
+    NS_TYPE_STRUCT
+} ns_generic_type;
 
 typedef enum {
     NS_TOKEN_UNKNOWN = -1,

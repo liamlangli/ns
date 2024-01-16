@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define STB_DS_IMPLEMENTATION
+#include "stb_ds.h"
+
 char *io_read_file(const char *path) {
     FILE *file = fopen(path, "rb");
     if (!file) {
