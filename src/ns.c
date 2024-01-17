@@ -1,6 +1,9 @@
 #include "ns.h"
+#include "ns_parse.h"
 #include "ns_tokenize.h"
+#include "ns_vm.h"
 
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,22 +24,6 @@ char *io_read_file(const char *path) {
     fclose(file);
     buffer[size] = '\0';
     return buffer;
-}
-
-ns_value ns_eval(const char *source, const char *filename) {
-    int len = strlen(source);
-    int i = 0;
-    ns_token_t t = {0};
-    do {
-        i = ns_tokenize(&t, source, filename, i);
-        if (t.type == NS_TOKEN_SPACE) {
-            continue;
-        } else {
-            printf("[%s, line:%4d, offset:%4d] %-20s %.*s\n", filename, t.line, i - t.line_start, ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
-            t.type = NS_TOKEN_UNKNOWN;
-        }
-    } while (t.type != NS_TOKEN_EOF && i < len);
-    return NS_NIL;
 }
 
 typedef struct ns_compile_option_t {
@@ -62,17 +49,31 @@ ns_compile_option_t parse_options(int argc, char ** argv) {
     return option;
 }
 
+void help() {
+    printf("Usage: ns [option] [file.ns]\n");
+    printf("  -t --tokenize do tokenize only\n");
+    printf("  -p --parse    do parse only\n");
+    printf("  -v --version  show version\n");
+    printf("  -h --help     show this help\n");
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: [-t] ns [file.ns]\n");
-        printf("  -t --tokenize do tokenize only\n");
-        printf("  -p --parse    do parse only\n");
-        printf("  -v --version  show version\n");
-        printf("  -h --help     show this help\n");
-        return 1;
+        help();
+        return 0;
     }
 
     ns_compile_option_t option = parse_options(argc, argv);
+
+    if (option.show_help) {
+        help();
+        return 0;
+    }
+
+    if (option.show_version) {
+        printf("ns %d.%d\n", VERSION_MAJOR, VERSION_MINOR);
+        if (argc == 2) return 0; // only show version
+    }
 
     const char *filename = argv[argc - 1];
     const char *source = io_read_file(filename);
@@ -82,6 +83,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    ns_value val = ns_eval(source, filename);
+    if (option.tokenize_only) {
+        ns_tokenize(source, filename);
+        return 0;
+    } else if (option.parse_only) {
+        ns_parse_context_dump(ns_parse(source, filename));
+    }
+
+    ns_eval(source, filename);
     return 0;
 }

@@ -1,28 +1,14 @@
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "ns_type.h"
 
 #define macro_max(a, b) ((a) > (b) ? (a) : (b))
 #define macro_min(a, b) ((a) < (b) ? (a) : (b))
 #define macro_clamp(x, b, t) (macro_max((b), macro_min((t), (x))))
 
-typedef char i8;
-typedef short i16;
-typedef int i32;
-typedef long i64;
-
-typedef unsigned char u8;
-typedef unsigned short u16;
-typedef unsigned int u32;
-typedef unsigned long u64;
-
-typedef float f32;
-typedef double f64;
-
 typedef enum { 
     NS_TYPE_NIL = -1,
+    NS_TYPE_INFER,
     NS_TYPE_I8,
     NS_TYPE_I16,
     NS_TYPE_I32,
@@ -105,15 +91,9 @@ typedef enum {
     NS_TOKEN_CLOSE_PAREN,
     NS_TOKEN_OPEN_BRACKET,
     NS_TOKEN_CLOSE_BRACKET,
+    NS_TOKEN_EOL,
     NS_TOKEN_EOF
 } NS_TOKEN;
-
-typedef struct ns_str {
-    const char *data;
-    int len;
-} ns_str;
-#define ns_str_range(s, n) ((ns_str){(s), (n)})
-#define ns_str_STR(s) ((ns_str){.data = ""})
 
 typedef struct ns_token_t {
     NS_TOKEN type;
@@ -123,8 +103,5 @@ typedef struct ns_token_t {
 
 const char *ns_token_to_string(NS_TOKEN token);
 
-int ns_tokenize(ns_token_t *token, const char *src, const char* filename, int from);
-
-#ifdef __cplusplus
-}
-#endif
+int ns_next_token(ns_token_t *token, const char *src, const char* filename, int from);
+ns_value ns_tokenize(const char *source, const char *filename);

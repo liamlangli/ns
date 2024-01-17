@@ -1,11 +1,6 @@
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "ns_parse.h"
+#include "ns_type.h"
 
-
-
-#ifdef __cplusplus
-} // extern "C"
-#endif
+ns_value ns_eval(const char* source, const char *filename);
