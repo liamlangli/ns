@@ -1,51 +1,40 @@
 #include "ns_parse.h"
 #include "ns_tokenize.h"
-
-bool ns_parse_define_stmt(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // fn_define
-    if (ns_parse_fn_define(ctx)) {
-        return true;
-    }
-
-    // struct define
-
-    // variable define
-    return false;
-}
+#include <stdbool.h>
 
 bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
-
-    // | continue ;
-    // | break ;
-    // | return {<expression>}? ;
     int state = ns_save_state(ctx);
-    ns_ast_t *node = ns_ast_emplace(ctx, NS_AST_JUMP_STMT);
-    ctx->current = node;
+    ns_ast_t *n = ns_ast_emplace(ctx, NS_AST_JUMP_STMT);
+    ctx->current = n;
 
-    if (ns_token_require(ctx, NS_TOKEN_CONTINUE)) {
-        node->jump_stmt.label = ctx->token;
+    // continue
+    if (ns_token_require(ctx, NS_TOKEN_CONTINUE) && ns_token_require(ctx, NS_TOKEN_EOL)) {
+        n->jump_stmt.label = ctx->token;
         return true;
     }
     ns_restore_state(ctx, state);
 
+    // break
     if (ns_token_require(ctx, NS_TOKEN_BREAK)) {
-        ns_ast_t *node = ns_ast_emplace(ctx, NS_AST_JUMP_STMT);
-        node->jump_stmt.label = ctx->token;
+        ns_ast_t *n = ns_ast_emplace(ctx, NS_AST_JUMP_STMT);
+        n->jump_stmt.label = ctx->token;
         return true;
     }
-
     ns_restore_state(ctx, state);
+
+    // return
     if (ns_token_require(ctx, NS_TOKEN_RETURN)) {
-        ns_ast_t *node = ns_ast_emplace(ctx, NS_AST_JUMP_STMT);
-        node->jump_stmt.label = ctx->token;
-        ns_parse_next_token(ctx);
-        if (ctx->token.type == NS_TOKEN_EOL) {
+        ns_ast_t *n = ns_ast_emplace(ctx, NS_AST_JUMP_STMT);
+        n->jump_stmt.label = ctx->token;
+
+        int end_state = ns_save_state(ctx);
+        if (ns_token_require(ctx, NS_TOKEN_EOL)) {
             return true;
         }
+        ns_restore_state(ctx, end_state);
 
         if (ns_parse_expr(ctx)) {
-            node->jump_stmt.expr = ctx->current;
+            n->jump_stmt.expr = ctx->current;
         }
         return true;
     }
@@ -56,20 +45,84 @@ bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_labeled_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
-    // case constant-expression : statement
-    if (ns_token_require(ctx, NS_TOKEN_CASE)) {
-        
-    }
-    ns_restore_state(ctx, state);
 
-    // default : statement
-    if (ctx->token.type == NS_TOKEN_DEFAULT) {
-        ns_parse_next_token(ctx);
-        if (ctx->token.type == NS_TOKEN_COLON) {
-            ns_parse_next_token(ctx);
-            if (ns_parse_stmt(ctx)) {
+    ns_ast_t *n = ns_ast_emplace(ctx, NS_AST_IF_STMT);
+    // if expression statement [else statement]
+    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_expr(ctx)) {
+        n->if_stmt.condition = ctx->current;
+        if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
+            int else_state = ns_save_state(ctx);
+            if (ns_token_require(ctx, NS_TOKEN_ELSE)) {
+                if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
+                    return true;
+                }
+            }
+            ns_restore_state(ctx, else_state);
+            return true;
+        }
+    }
+
+    ns_restore_state(ctx, state);
+    return false;
+}
+
+bool ns_iteration_stmt(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+
+    // for expression statement
+    if (ns_token_require(ctx, NS_TOKEN_FOR) && ns_parse_generator_expr(ctx)) {
+        ns_ast_t *n = ns_ast_emplace(ctx, NS_AST_ITER_STMT);
+        n->iter_stmt.generator = ctx->current;
+
+        // with body
+        int body_state = ns_save_state(ctx);
+        if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
+            n->iter_stmt.body = ctx->current;
+            return true;
+        }
+        ns_restore_state(ctx, body_state);
+
+        // without body
+        if (ns_token_require(ctx, NS_TOKEN_EOL)) {
+            return true;
+        }
+
+        ns_ast_pop(ctx);
+    }
+
+    // while expression statement
+    if (ns_token_require(ctx, NS_TOKEN_WHILE) && ns_parse_expr(ctx)) {
+        ns_ast_t *n = ns_ast_emplace(ctx, NS_AST_ITER_STMT);
+        n->iter_stmt.condition = ctx->current;
+
+        // with body
+        int body_state = ns_save_state(ctx);
+        if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
+            n->iter_stmt.body = ctx->current;
+            return true;
+        }
+        ns_restore_state(ctx, body_state);
+
+        // without body
+        if (ns_token_require(ctx, NS_TOKEN_EOL)) {
+            return true;
+        }
+
+        ns_ast_pop(ctx);
+    }
+
+    ns_restore_state(ctx, state);
+    return false;
+}
+
+bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
+        while (ns_parse_var_define(ctx) || ns_parse_stmt(ctx)) {
+            if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+                ns_parse_next_token(ctx);
                 return true;
             }
         }
@@ -78,11 +131,22 @@ bool ns_labeled_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
+bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+    if (ns_parse_expr(ctx)) {
+        if (ctx->token.type == NS_TOKEN_EOL) {
+            ns_parse_next_token(ctx);
+            return true;
+        }
+    }
+    ns_restore_state(ctx, state);
+    return false;
+}
+
 bool ns_parse_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
-
     // define statement
-    if (ns_parse_define_stmt(ctx)) {
+    if (ns_parse_compound_stmt(ctx)) {
         return true;
     }
     ns_restore_state(ctx, state);
@@ -93,26 +157,48 @@ bool ns_parse_stmt(ns_parse_context_t *ctx) {
     }
     ns_restore_state(ctx, state);
 
-    // expression statement
-    // if (ns_expr(ctx)) {
-    //     if (ctx->token.type == NS_TOKEN_SEMICOLON) {
-    //         ns_parse_next_token(ctx);
-    //         return true;
-    //     }
-    // }
-
-    // selection statement
-    // ns_restore_state(ctx, state);
-    // if (ns_selection_stmt(ctx)) {
-    //     return true;
-    // }
+    // if statement
+    if (ns_parse_if_stmt(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
 
     // iteration statement
-    // ns_restore_state(ctx, state);
-    // if (ns_iteration_stmt(ctx)) {
+    if (ns_iteration_stmt(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
+
+    // expression statement
+    // if (ns_parse_expr_stmt(ctx)) {
     //     return true;
     // }
+    // ns_restore_state(ctx, state);
 
+    return false;
+}
+
+bool ns_parse_external_define(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+    if (ns_parse_var_define(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
+
+    if (ns_parse_fn_define(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
+
+    if (ns_parse_struct_define(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
+
+    if (ns_parse_type_define(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
 
     return false;
 }

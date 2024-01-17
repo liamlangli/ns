@@ -5,20 +5,28 @@
 typedef enum {
     NS_AST_UNKNOWN = 0,
     NS_AST_PROGRAM,
-    NS_AST_PARAM,
-    NS_AST_FN_DEF,
-    NS_AST_VAR_DEF,
-    NS_AST_VAR_ASSIGN,
-    NS_AST_STRUCT_DEF,
-    NS_AST_BINARY_EXPR,
     NS_AST_LITERAL,
     NS_AST_IDENTIFIER,
+    NS_AST_PARAM,
+
+    NS_AST_FN_DEF,
+    NS_AST_VAR_DEF,
+    NS_AST_STRUCT_DEF,
+    NS_AST_TYPE_DEF,
+
+    NS_AST_VAR_ASSIGN,
+
+    NS_AST_BINARY_EXPR,
     NS_AST_MEMBER_EXPR,
     NS_AST_CALL_EXPR,
+
+    NS_AST_GENERATOR_EXPR,
+
     NS_AST_IF_STMT,
     NS_AST_ITER_STMT,
     NS_AST_RETURN_STMT,
     NS_AST_JUMP_STMT,
+    NS_AST_LABELED_STMT
 } NS_AST_TYPE;
 
 #define MAX_PARAMS 16
@@ -84,6 +92,13 @@ typedef struct ns_ast_call_expr {
     int arg_count;
 } ns_ast_call_expr;
 
+typedef struct ns_ast_generator_expr {
+    ns_ast_t *spawn;
+    ns_token_t label;
+    ns_ast_t *from;
+    ns_ast_t *to;
+} ns_ast_generator_expr;
+
 typedef struct ns_ast_if_stmt {
     ns_ast_t *condition;
     ns_ast_t *body;
@@ -91,9 +106,8 @@ typedef struct ns_ast_if_stmt {
 } ns_ast_if_stmt;
 
 typedef struct ns_ast_iter_stmt {
-    ns_ast_t *init;
     ns_ast_t *condition;
-    ns_ast_t *update;
+    ns_ast_t *generator;
     ns_ast_t *body;
 } ns_ast_iter_stmt;
 
@@ -102,27 +116,37 @@ typedef struct ns_ast_jump_stmt {
     ns_ast_t *expr;
 } ns_ast_jump_stmt;
 
+typedef struct ns_ast_labeled_stmt {
+    ns_token_t label;
+    ns_ast_t *condition;
+    ns_ast_t *stmt;
+} ns_ast_labeled_stmt;
+
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
     union {
         ns_ast_program program;
         ns_ast_param param;
+        ns_ast_literal literal;
+        ns_ast_identifier identifier;
         ns_ast_fn_def fn_def;
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
         ns_ast_binary_expr binary_expr;
-        ns_ast_literal literal;
-        ns_ast_identifier identifier;
+
         ns_ast_call_expr call_expr;
+        ns_ast_generator_expr generator;
+
         ns_ast_if_stmt if_stmt;
         ns_ast_iter_stmt iter_stmt;
         ns_ast_jump_stmt jump_stmt;
+        ns_ast_labeled_stmt label_stmt;
     };
 } ns_ast_t;
 
 typedef struct as_parse_context_t {
     int f, last_f;
-    ns_ast_t *statements;
+    ns_ast_t *sections;
     ns_ast_t *nodes;
     ns_ast_t *current;
     ns_token_t token;
@@ -143,14 +167,17 @@ int ns_save_state(ns_parse_context_t *ctx);
 ns_ast_t *ns_ast_emplace(ns_parse_context_t *ctx, NS_AST_TYPE type);
 void ns_ast_pop(ns_parse_context_t *ctx);
 
-// state func
+// external func
+bool ns_parse_fn_define(ns_parse_context_t *ctx);
+bool ns_parse_var_define(ns_parse_context_t *ctx);
+bool ns_parse_struct_define(ns_parse_context_t *ctx);
+bool ns_parse_type_define(ns_parse_context_t *ctx);
+
+// stmt func
+bool ns_parse_external_define(ns_parse_context_t *ctx);
 bool ns_parse_stmt(ns_parse_context_t *ctx);
-bool ns_parse_selection_stmt(ns_parse_context_t *ctx);
-bool ns_parse_labeled_stmt(ns_parse_context_t *ctx);
-bool ns_parse_define_stmt(ns_parse_context_t *ctx);
-bool ns_parse_iteration_stmt(ns_parse_context_t *ctx);
-bool ns_parse_jump_stmt(ns_parse_context_t *ctx);
 
 // expr func
+bool ns_parse_generator_expr(ns_parse_context_t *ctx);
 bool ns_parse_expr(ns_parse_context_t *ctx);
-bool ns_parse_fn_define(ns_parse_context_t *ctx);
+bool ns_parse_constant_expr(ns_parse_context_t *ctx);

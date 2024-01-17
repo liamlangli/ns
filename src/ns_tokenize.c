@@ -37,8 +37,6 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_ASSIGN";
     case NS_TOKEN_COLON:
         return "NS_TOKEN_COLON";
-    case NS_TOKEN_SEMICOLON:
-        return "NS_TOKEN_SEMICOLON";
     case NS_TOKEN_ASSIGN_OPERATOR:
         return "NS_TOKEN_ASSIGN_OPERATOR";
     case NS_TOKEN_ARITHMETIC_OPERATOR:
@@ -100,12 +98,12 @@ int ns_token_int_literal(ns_token_t *t, const char *s, int i) {
 // = 0 mean there is no {separator}
 int ns_token_separator(ns_token_t *t, const char *s, int i) {
     int c = s[i];
-    int to = i, eol, sep;
+    int to = i, sep;
     do {
         sep = c == ' ' || c == '\t' || c == '\v' || c == ';';
         to++;
         c = s[to];
-    } while (eol || sep);
+    } while (sep);
     return to - i - 1;
 }
 
@@ -227,14 +225,7 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
     } break;
     case 'c': // const, continue
     {
-        if (strncmp(s + f, "case", 4) == 0) {
-            sep = ns_token_separator(t, s, i + 4);
-            if (sep == 0 && ns_identifier_follow(s[i + 4]))
-                goto identifier;
-            t->type = NS_TOKEN_CASE;
-            t->val = ns_str_range(s + f, 4);
-            to = i + 4 + sep;
-        } else if (strncmp(s + f, "const", 5) == 0) {
+        if (strncmp(s + f, "const", 5) == 0) {
             sep = ns_token_separator(t, s, i + 5);
             if (sep == 0 && ns_identifier_follow(s[i + 5]))
                 goto identifier;
@@ -250,16 +241,9 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
             to = i + 8 + sep;
         }
     } break;
-    case 'd': // default, do
+    case 'd': // do
     {
-        if (strncmp(s + f, "default", 7) == 0) {
-            sep = ns_token_separator(t, s, i + 7);
-            if (sep == 0 && ns_identifier_follow(s[i + 7]))
-                goto identifier;
-            t->type = NS_TOKEN_DEFAULT;
-            t->val = ns_str_range(s + f, 7);
-            to = i + 7 + sep;
-        } else if (strncmp(s + f, "do", 2) == 0) {
+        if (strncmp(s + f, "do", 2) == 0) {
             sep = ns_token_separator(t, s, i + 2);
             if (sep == 0 && ns_identifier_follow(s[i + 2]))
                 goto identifier;
@@ -412,13 +396,6 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
             t->type = NS_TOKEN_TYPE;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
-        } else if (strncmp(s + f, "switch", 6) == 0) {
-            sep = ns_token_separator(t, s, i + 6);
-            if (sep == 0 && ns_identifier_follow(s[i + 6]))
-                goto identifier;
-            t->type = NS_TOKEN_SWITCH;
-            t->val = ns_str_range(s + f, 6);
-            to = i + 6 + sep;
         } else {
             goto identifier;
         }
@@ -701,7 +678,6 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
         to = i + 1;
     } break;
     case ' ':
-    case ';':
     case '\t':
     case '\v': {
         l = i;
@@ -713,6 +689,7 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
         t->val = ns_str_range(s + l, sep);
         to = i + sep;
     } break;
+    case ';':
     case '\r':
     case '\n': {
         if (s[i] == '\r' && s[i + 1] == '\n') {
@@ -732,7 +709,7 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
     default: {
         char lead = s[i];
         if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z'))) {
-            printf("[%s, line:%d, offset:%d] unexpected character: %c\n", filename, t->line, i - t->line_start, lead);
+            fprintf(stderr, "[%s, line:%d, offset:%d] unexpected character: %c\n", filename, t->line, i - t->line_start, lead);
             assert(false);
         }
         i++;
