@@ -734,10 +734,12 @@ ns_value ns_tokenize(const char *source, const char *filename) {
         i = ns_next_token(&t, source, filename, i);
         if (t.type == NS_TOKEN_SPACE) {
             continue;
+        } else if (t.type == NS_TOKEN_EOL) {
+            printf("[%s, line:%4d, offset:%4d] %-20s\n", filename, t.line, i - t.line_start, ns_token_to_string(t.type));
         } else {
             printf("[%s, line:%4d, offset:%4d] %-20s %.*s\n", filename, t.line, i - t.line_start, ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
-            t.type = NS_TOKEN_UNKNOWN;
         }
+        t.type = NS_TOKEN_UNKNOWN;
     } while (t.type != NS_TOKEN_EOF && i < len);
     return NS_NIL;
 }

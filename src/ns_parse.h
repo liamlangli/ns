@@ -19,6 +19,7 @@ typedef enum {
     NS_AST_BINARY_EXPR,
     NS_AST_MEMBER_EXPR,
     NS_AST_CALL_EXPR,
+    NS_AST_CAST_EXPR,
 
     NS_AST_GENERATOR_EXPR,
 
@@ -31,13 +32,9 @@ typedef enum {
 
 #define MAX_PARAMS 16
 #define MAX_FIELDS 32
+#define MAX_PARSE_STACK 64
 
 typedef struct ns_ast_t ns_ast_t;
-
-typedef struct ns_ast_program {
-    ns_ast_t *body;
-    int body_len;
-} ns_ast_program;
 
 typedef struct ns_ast_param {
     bool is_ref;
@@ -49,34 +46,39 @@ typedef struct ns_ast_fn_def {
     bool is_async;
     ns_token_t name;
     ns_token_t return_type;
-    ns_ast_t *body;
-    ns_ast_t *params[MAX_PARAMS];
+    int body;
+    int params[MAX_PARAMS];
     int param_count;
 } ns_ast_fn_def;
 
 typedef struct ns_ast_var_def {
-    ns_ast_t *declarations;
+    int declarations;
     ns_token_t name;
     ns_token_t type;
 } ns_ast_var_def;
 
 typedef struct ns_ast_var_assign {
     ns_token_t name;
-    ns_ast_t *property;
+    int property;
     bool computed;
 } ns_ast_var_assign;
 
 typedef struct ns_ast_struct_def {
     ns_token_t name;
-    ns_ast_t *fields[MAX_FIELDS];
+    int fields[MAX_FIELDS];
     int field_count;
 } ns_ast_struct_def;
 
 typedef struct ns_ast_binary_expr {
-    ns_ast_t *left;
-    ns_ast_t *right;
+    int left;
+    int right;
     ns_token_t op;
 } ns_ast_binary_expr;
+
+typedef struct ns_ast_cast_expr {
+    int expr;
+    ns_token_t type;
+} ns_ast_cast_expr;
 
 typedef struct ns_ast_literal {
     ns_token_t token;
@@ -86,55 +88,61 @@ typedef struct ns_ast_identifier {
     ns_token_t token;
 } ns_ast_identifier;
 
+typedef struct ns_ast_member_expr {
+    int left;
+    ns_token_t right;
+} ns_ast_member_expr;
+
 typedef struct ns_ast_call_expr {
-    ns_ast_t *callee;
-    ns_ast_t **args;
+    int callee;
+    int args[MAX_PARAMS];
     int arg_count;
 } ns_ast_call_expr;
 
 typedef struct ns_ast_generator_expr {
-    ns_ast_t *spawn;
+    int spawn;
     ns_token_t label;
-    ns_ast_t *from;
-    ns_ast_t *to;
+    int from;
+    int to;
 } ns_ast_generator_expr;
 
 typedef struct ns_ast_if_stmt {
-    ns_ast_t *condition;
-    ns_ast_t *body;
-    ns_ast_t *else_body;
+    int condition;
+    int body;
+    int else_body;
 } ns_ast_if_stmt;
 
 typedef struct ns_ast_iter_stmt {
-    ns_ast_t *condition;
-    ns_ast_t *generator;
-    ns_ast_t *body;
+    int condition;
+    int generator;
+    int body;
 } ns_ast_iter_stmt;
 
 typedef struct ns_ast_jump_stmt {
     ns_token_t label;
-    ns_ast_t *expr;
+    int expr;
 } ns_ast_jump_stmt;
 
 typedef struct ns_ast_labeled_stmt {
     ns_token_t label;
-    ns_ast_t *condition;
-    ns_ast_t *stmt;
+    int condition;
+    int stmt;
 } ns_ast_labeled_stmt;
 
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
     union {
-        ns_ast_program program;
         ns_ast_param param;
         ns_ast_literal literal;
         ns_ast_identifier identifier;
         ns_ast_fn_def fn_def;
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
-        ns_ast_binary_expr binary_expr;
 
+        ns_ast_binary_expr binary_expr;
         ns_ast_call_expr call_expr;
+        ns_ast_cast_expr type_cast;
+        ns_ast_member_expr member_expr;
         ns_ast_generator_expr generator;
 
         ns_ast_if_stmt if_stmt;
@@ -146,9 +154,14 @@ typedef struct ns_ast_t {
 
 typedef struct as_parse_context_t {
     int f, last_f;
-    ns_ast_t *sections;
+    int* sections;
+    int current;
+
     ns_ast_t *nodes;
-    ns_ast_t *current;
+
+    int stack[MAX_PARSE_STACK];
+    int top;
+
     ns_token_t token;
     const char *source;
     const char *filename;
@@ -164,8 +177,7 @@ bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token);
 // node func
 void ns_restore_state(ns_parse_context_t *ctx, int f);
 int ns_save_state(ns_parse_context_t *ctx);
-ns_ast_t *ns_ast_emplace(ns_parse_context_t *ctx, NS_AST_TYPE type);
-void ns_ast_pop(ns_parse_context_t *ctx);
+int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n);
 
 // external func
 bool ns_parse_fn_define(ns_parse_context_t *ctx);

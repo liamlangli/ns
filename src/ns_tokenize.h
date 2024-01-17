@@ -8,7 +8,7 @@
 
 typedef enum { 
     NS_TYPE_NIL = -1,
-    NS_TYPE_INFER,
+    NS_TYPE_INFER = 0,
     NS_TYPE_I8,
     NS_TYPE_I16,
     NS_TYPE_I32,

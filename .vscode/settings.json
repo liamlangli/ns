@@ -1,6 +1,15 @@
 {
     "files.associations": {
+        "*.tmsl": "hlsl",
+        "*.shader": "hlsl",
+        "*.inc": "cpp",
+        "*.und": "xml",
+        "*.uss": "plaintext",
+        "*.py": "python",
         "*.h": "c",
-        "*.c": "c"
+        "*.c": "c",
+        "__node_handle": "c",
+        "cstdlib": "c",
+        "locale": "c"
     }
 }
