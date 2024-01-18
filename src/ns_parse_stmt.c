@@ -1,6 +1,8 @@
 #include "ns_parse.h"
 #include "ns_tokenize.h"
+
 #include <stdbool.h>
+#include <assert.h>
 
 bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
@@ -30,8 +32,11 @@ bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
         }
         ns_restore_state(ctx, end_state);
 
-        if (ns_parse_expr(ctx)) {
+        if (ns_parse_expr_stack(ctx)) {
             n.jump_stmt.expr = ctx->current;
+        } else {
+            fprintf(stderr, "Expected expression after 'return'\n");
+            assert(false);
         }
         ns_ast_push(ctx, n);
         return true;
@@ -45,7 +50,7 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
     // if expression statement [else statement]
-    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_expr(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_expr_stack(ctx)) {
         ns_ast_t n = {.type = NS_AST_IF_STMT, .if_stmt.condition = ctx->current};
         if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
             int else_state = ns_save_state(ctx);
@@ -94,7 +99,7 @@ bool ns_iteration_stmt(ns_parse_context_t *ctx) {
     ns_restore_state(ctx, state);
 
     // while expression statement
-    if (ns_token_require(ctx, NS_TOKEN_WHILE) && ns_parse_expr(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_WHILE) && ns_parse_expr_stack(ctx)) {
         ns_ast_t n = {.type = NS_AST_ITER_STMT, .iter_stmt.condition = ctx->current};
 
         // with body
@@ -120,9 +125,11 @@ bool ns_iteration_stmt(ns_parse_context_t *ctx) {
 bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
+        ns_token_skip_eol(ctx);
         while (ns_parse_var_define(ctx) || ns_parse_stmt(ctx)) {
+            ns_token_skip_eol(ctx);
+            ns_parse_next_token(ctx);
             if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
-                ns_parse_next_token(ctx);
                 return true;
             }
         }
@@ -133,7 +140,7 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
 
 bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
-    if (ns_parse_expr(ctx)) {
+    if (ns_parse_expr_stack(ctx)) {
         if (ctx->token.type == NS_TOKEN_EOL) {
             ns_parse_next_token(ctx);
             return true;

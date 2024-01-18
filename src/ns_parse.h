@@ -158,7 +158,7 @@ typedef struct as_parse_context_t {
     int stack[MAX_PARSE_STACK];
     int top;
 
-    ns_token_t token;
+    ns_token_t token, last_token;
     const char *source;
     const char *filename;
 } ns_parse_context_t;
@@ -169,6 +169,7 @@ void ns_parse_context_dump(ns_parse_context_t *ctx);
 // token func
 bool ns_parse_next_token(ns_parse_context_t *ctx); // skip space
 bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token);
+void ns_token_skip_eol(ns_parse_context_t *ctx);
 
 // node func
 void ns_restore_state(ns_parse_context_t *ctx, int f);
@@ -184,8 +185,10 @@ bool ns_parse_type_define(ns_parse_context_t *ctx);
 // stmt func
 bool ns_parse_external_define(ns_parse_context_t *ctx);
 bool ns_parse_stmt(ns_parse_context_t *ctx);
+bool ns_parse_compound_stmt(ns_parse_context_t *ctx);
 
 // expr func
 bool ns_parse_generator_expr(ns_parse_context_t *ctx);
 bool ns_parse_expr(ns_parse_context_t *ctx);
+bool ns_parse_expr_stack(ns_parse_context_t *ctx);
 bool ns_parse_constant_expr(ns_parse_context_t *ctx);

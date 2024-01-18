@@ -28,6 +28,7 @@ int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n) {
 bool ns_parse_next_token(ns_parse_context_t *ctx) {
     do {
         ctx->last_f = ctx->f;
+        ctx->last_token = ctx->token;
         ctx->f = ns_next_token(&ctx->token, ctx->source, ctx->filename, ctx->f);
     } while (ctx->token.type == NS_TOKEN_COMMENT || ctx->token.type == NS_TOKEN_SPACE);
     return ctx->token.type != NS_TOKEN_EOF;
@@ -41,6 +42,15 @@ bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token) {
     }
     ns_restore_state(ctx, state);
     return false;
+}
+
+void ns_token_skip_eol(ns_parse_context_t *ctx) {
+    int state;
+    do {
+        state = ns_save_state(ctx);
+        ns_parse_next_token(ctx);
+    } while (ctx->token.type == NS_TOKEN_EOL);
+    ns_restore_state(ctx, state);
 }
 
 bool ns_parse_constant_expr(ns_parse_context_t *ctx) {
@@ -313,7 +323,7 @@ bool ns_conditional_expr(ns_parse_context_t *ctx) {
     if (ns_logic_or_expr(ctx)) {
         if (ctx->token.type == NS_TOKEN_QUESTION_MARK) {
             ns_parse_next_token(ctx);
-            if (ns_parse_expr(ctx)) {
+            if (ns_parse_expr_stack(ctx)) {
                 if (ctx->token.type == NS_TOKEN_COLON) {
                     ns_parse_next_token(ctx);
                     if (ns_conditional_expr(ctx)) {
@@ -388,7 +398,7 @@ bool ns_primary_expr(ns_parse_context_t *ctx) {
     ns_restore_state(ctx, state);
     ns_parse_next_token(ctx);
     if (ctx->token.type == NS_TOKEN_OPEN_PAREN) {
-        if (ns_parse_expr(ctx)) {
+        if (ns_parse_expr_stack(ctx)) {
             ns_parse_next_token(ctx);
             if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
                 return true;
@@ -404,7 +414,7 @@ bool ns_postfix_expr(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     // look ahead for primary expression
     if (ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
-        if (ns_parse_expr(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
+        if (ns_parse_expr_stack(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
             return true;
         }
     }
@@ -419,7 +429,7 @@ bool ns_postfix_expr(ns_parse_context_t *ctx) {
         // identifier [ expression ]
         if (first.type == NS_TOKEN_IDENTIFIER) {
             ns_parse_next_token(ctx);
-            if (ns_parse_expr(ctx)) {
+            if (ns_parse_expr_stack(ctx)) {
                 ns_parse_next_token(ctx);
                 if (ctx->token.type == NS_TOKEN_CLOSE_BRACKET) {
                     return true;
@@ -508,7 +518,7 @@ bool ns_parse_assign_expr(ns_parse_context_t *ctx) {
     if (ns_parse_unary_expr(ctx)) {
         if (ctx->token.type == NS_TOKEN_ASSIGN_OPERATOR) {
             ns_parse_next_token(ctx);
-            if (ns_parse_expr(ctx)) {
+            if (ns_parse_expr_stack(ctx)) {
                 return true;
             }
         }
@@ -527,7 +537,7 @@ bool ns_parse_generator_expr(ns_parse_context_t *ctx) {
         int from_state = ns_save_state(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_IN) {
-            if (ns_parse_expr(ctx)) {
+            if (ns_parse_expr_stack(ctx)) {
                 n.generator.from = ctx->current;
                 ctx->current = ns_ast_push(ctx, n);
                 return true;
@@ -629,22 +639,11 @@ bool ns_parse_fn_define(ns_parse_context_t *ctx) {
         fn.fn_def.return_type = ctx->token;
     }
 
-    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
-        ns_restore_state(ctx, state);
-        return false;
-    }
-
-    if (!ns_parse_stmt(ctx)) {
-        ns_restore_state(ctx, state);
-        return false;
-    }
-    fn.fn_def.body = ctx->current;
-
-    if (ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
-        ns_ast_push(ctx, fn);
+    if (ns_parse_compound_stmt(ctx)) {
+        fn.fn_def.body = ctx->current;
+        ctx->current = ns_ast_push(ctx, fn);
         return true;
     }
-
     ns_restore_state(ctx, state);
     return false;
 }
@@ -699,7 +698,7 @@ bool ns_parse_var_define(ns_parse_context_t *ctx) {
         }
         int assign_state = ns_save_state(ctx);
         if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
-            if (ns_parse_expr(ctx)) {
+            if (ns_parse_expr_stack(ctx)) {
                 return true;
             }
         }
@@ -737,6 +736,9 @@ ns_parse_context_t* ns_parse(const char *source, const char *filename) {
     ctx->last_f = 0;
     ctx->top = -1;
 
+    ctx->nodes = NULL;
+    ctx->sections = NULL;
+
     while (ns_parse_external_define(ctx)) {
         arrpush(ctx->sections, ctx->current);
     }
@@ -768,6 +770,8 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
             return "NS_AST_ITER_STMT";
         case NS_AST_RETURN_STMT:
             return "NS_AST_RETURN_STMT";
+        case NS_AST_JUMP_STMT:
+            return "NS_AST_JUMP_STMT";
         default:
             return "NS_AST_UNKNOWN";
     }
@@ -775,7 +779,7 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
 
 void ns_ast_dump(ns_parse_context_t *ctx, int i) {
     ns_ast_t n = ctx->nodes[i];
-    printf("[type:  %s] ", ns_ast_type_str(n.type));
+    printf("%4d [type:  %s] ", i, ns_ast_type_str(n.type));
     switch (n.type) {
         case NS_AST_FN_DEF:
             ns_str_printf(n.fn_def.name.val);
@@ -802,6 +806,17 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
         case NS_AST_PRIMARY_EXPR:
             ns_str_printf(n.primary_expr.token.val);
             break;
+        case NS_AST_JUMP_STMT:
+            ns_str_printf(n.jump_stmt.label.val);
+            if (n.jump_stmt.expr != -1) {
+                printf(" node[%d]", n.jump_stmt.expr);
+            }
+            break;
+        case NS_AST_BINARY_EXPR:
+            printf("node[%d] ", n.binary_expr.left);
+            ns_str_printf(n.binary_expr.op.val);
+            printf(" node[%d]", n.binary_expr.right);
+            break;
         case NS_AST_PARAM:
             if (n.param.is_ref) {
                 printf("ref ");
@@ -819,7 +834,13 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
 }
 
 void ns_parse_context_dump(ns_parse_context_t *ctx) {
+    printf("AST:\n");
     for (int i = 0; i < arrlen(ctx->nodes); i++) {
         ns_ast_dump(ctx, i);
+    }
+
+    printf("Sections:\n");
+    for (int i = 0; i < arrlen(ctx->sections); i++) {
+        ns_ast_dump(ctx, ctx->sections[i]);
     }
 }
