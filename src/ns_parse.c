@@ -346,7 +346,7 @@ bool ns_identifier(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ctx->token.type == NS_TOKEN_IDENTIFIER) {
-        ns_ast_t n = {.type = NS_AST_IDENTIFIER, .identifier.token = ctx->token};
+        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr.token = ctx->token};
         return true;
     }
     ns_restore_state(ctx, state);
@@ -373,7 +373,7 @@ bool ns_primary_expr(ns_parse_context_t *ctx) {
     }
 
     if (is_literal) {
-        ns_ast_t n = {.type = NS_AST_LITERAL, .literal.token = ctx->token};
+        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr.token = ctx->token};
         ns_ast_push(ctx, n);
         return true;
     }
@@ -735,7 +735,7 @@ ns_parse_context_t* ns_parse(const char *source, const char *filename) {
     ctx->filename = filename;
     ctx->f = 0;
     ctx->last_f = 0;
-    ctx->top = 0;
+    ctx->top = -1;
 
     while (ns_parse_external_define(ctx)) {
         arrpush(ctx->sections, ctx->current);
@@ -758,10 +758,8 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
             return "NS_AST_STRUCT_DEF";
         case NS_AST_BINARY_EXPR:
             return "NS_AST_BINARY_EXPR";
-        case NS_AST_LITERAL:
-            return "NS_AST_LITERAL";
-        case NS_AST_IDENTIFIER:
-            return "NS_AST_IDENTIFIER";
+        case NS_AST_PRIMARY_EXPR:
+            return "NS_AST_PRIMARY_EXPR";
         case NS_AST_CALL_EXPR:
             return "NS_AST_CALL_EXPR";
         case NS_AST_IF_STMT:
@@ -801,8 +799,8 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
                 ns_str_printf(n.fn_def.return_type.val);
             }
             break;
-        case NS_AST_IDENTIFIER:
-            ns_str_printf(n.identifier.token.val);
+        case NS_AST_PRIMARY_EXPR:
+            ns_str_printf(n.primary_expr.token.val);
             break;
         case NS_AST_PARAM:
             if (n.param.is_ref) {

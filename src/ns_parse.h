@@ -5,8 +5,7 @@
 typedef enum {
     NS_AST_UNKNOWN = 0,
     NS_AST_PROGRAM,
-    NS_AST_LITERAL,
-    NS_AST_IDENTIFIER,
+
     NS_AST_PARAM,
 
     NS_AST_FN_DEF,
@@ -16,6 +15,7 @@ typedef enum {
 
     NS_AST_VAR_ASSIGN,
 
+    NS_AST_PRIMARY_EXPR,
     NS_AST_BINARY_EXPR,
     NS_AST_MEMBER_EXPR,
     NS_AST_CALL_EXPR,
@@ -80,13 +80,10 @@ typedef struct ns_ast_cast_expr {
     ns_token_t type;
 } ns_ast_cast_expr;
 
-typedef struct ns_ast_literal {
+typedef struct ns_ast_primary_expr {
     ns_token_t token;
-} ns_ast_literal;
-
-typedef struct ns_ast_identifier {
-    ns_token_t token;
-} ns_ast_identifier;
+    int expr;
+} ns_ast_primary_expr;
 
 typedef struct ns_ast_member_expr {
     int left;
@@ -133,8 +130,6 @@ typedef struct ns_ast_t {
     NS_AST_TYPE type;
     union {
         ns_ast_param param;
-        ns_ast_literal literal;
-        ns_ast_identifier identifier;
         ns_ast_fn_def fn_def;
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
@@ -143,6 +138,7 @@ typedef struct ns_ast_t {
         ns_ast_call_expr call_expr;
         ns_ast_cast_expr type_cast;
         ns_ast_member_expr member_expr;
+        ns_ast_primary_expr primary_expr;
         ns_ast_generator_expr generator;
 
         ns_ast_if_stmt if_stmt;
