@@ -27,6 +27,7 @@ bool ns_token_is_operator(ns_token_t token) {
 bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
     // rewind
     int top = ctx->top;
+    int root = ctx->stack[top];
     while (top > expr_top + 1) {
         int op = ctx->stack[top - 1];
         ns_ast_t *op_n = &ctx->nodes[op];
@@ -34,6 +35,7 @@ bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
         op_n->binary_expr.right = ctx->stack[top];
         ctx->stack[top - 2] = op;
         top -= 2;
+        root = op;
     }
 
     if (top != expr_top + 1) {
@@ -42,6 +44,7 @@ bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
     }
 
     ctx->top = expr_top;
+    ctx->current = root;
     return true;
 }
 
@@ -101,13 +104,11 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
         case NS_TOKEN_OPEN_PAREN: {
             ns_ast_t n = ctx->nodes[ctx->stack[ctx->top]];
             if (n.type == NS_AST_PRIMARY_EXPR) {
-                // parse assign expr
+                // start call expr
                 if (ns_parse_expr_stack(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
                     ns_ast_t expr = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
-
                 } else {
-                    fprintf(stderr, "Expected expression\n");
-                    assert(false);
+                    
                 }
             }
 

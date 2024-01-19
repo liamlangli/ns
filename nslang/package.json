@@ -1,0 +1,54 @@
+{
+  "name": "nslang",
+  "displayName": "nslang",
+  "description": "nano script language",
+  "version": "0.0.1",
+  "publisher": "liamlangli",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:liamlangli/ns.git"
+  },
+  "icon": "icon.png",
+  "contributes": {
+    "languages": [
+      {
+        "id": "ns",
+        "aliases": [
+          "nano script",
+          "ns"
+        ],
+        "extensions": [
+          ".ns"
+        ],
+        "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "ns-markdown-injection"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ns",
+        "scopeName": "source.ns",
+        "path": "./ns.json"
+      },
+      {
+        "language": "ns-markdown-injection",
+        "scopeName": "markdown.ns.codeblock",
+        "path": "./markdown.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.ns": "ns"
+        }
+      }
+    ]
+  }
+}
