@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "stb_ds.h"
+
 typedef char i8;
 typedef short i16;
 typedef int i32;
@@ -32,4 +34,16 @@ typedef struct ns_str {
 } ns_str;
 #define ns_str_range(s, n) ((ns_str){(s), (n)})
 #define ns_str_STR(s) ((ns_str){.data = ""})
+
+#define ns_str_equals_STR(s, S) (strncmp((s).data, (S), (s).len) == 0)
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
+
+int ns_str_to_int(ns_str s);
+f64 ns_str_to_f64(ns_str s);
+
+#define ns_array_push arrpush
+#define ns_array_pop arrpop
+#define ns_array_len arrlen
+
+#define ns_hash_map_get hmgeti
+#define ns_hash_map_set hmput

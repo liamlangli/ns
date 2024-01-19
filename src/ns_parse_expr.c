@@ -12,6 +12,22 @@ int ns_parse_stack_pop(ns_parse_context_t *ctx) {
     return ctx->stack[ctx->top--];
 }
 
+ns_ast_t ns_parse_stack_top(ns_parse_context_t *ctx) {
+    return ctx->nodes[ctx->stack[ctx->top]];
+}
+
+bool ns_parse_stack_top_is_operator(ns_parse_context_t *ctx) {
+    if (ctx->top == -1) return false; // empty stack
+    ns_ast_t n = ns_parse_stack_top(ctx);
+    return n.type == NS_AST_BINARY_EXPR;
+}
+
+bool ns_parse_stack_top_is_operand(ns_parse_context_t *ctx) {
+    if (ctx->top == -1) return false; // empty stack
+    ns_ast_t n = ns_parse_stack_top(ctx);
+    return n.type == NS_AST_PRIMARY_EXPR || n.type == NS_AST_CALL_EXPR || n.type == NS_AST_MEMBER_EXPR || n.type == NS_AST_CAST_EXPR;
+}
+
 bool ns_token_is_operator(ns_token_t token) {
     switch (token.type)
     {
@@ -52,18 +68,6 @@ bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
     return true;
 }
 
-bool ns_parse_stack_top_is_operator(ns_parse_context_t *ctx) {
-    if (ctx->top == -1) return false; // empty stack
-    ns_ast_t n = ctx->nodes[ctx->stack[ctx->top]];
-    return n.type == NS_AST_BINARY_EXPR;
-}
-
-bool ns_parse_stack_top_is_operand(ns_parse_context_t *ctx) {
-    if (ctx->top == -1) return false; // empty stack
-    ns_ast_t n = ctx->nodes[ctx->stack[ctx->top]];
-    return n.type == NS_AST_PRIMARY_EXPR || n.type == NS_AST_CALL_EXPR || n.type == NS_AST_MEMBER_EXPR || n.type == NS_AST_CAST_EXPR;
-}
-
 // stack based expression parser
 bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
     int expr_top = ctx->top;
@@ -73,6 +77,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
         if (!ns_parse_next_token(ctx)) {
             return false;
         }
+
         switch (ctx->token.type)
         {
         case NS_TOKEN_INT_LITERAL:

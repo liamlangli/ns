@@ -52,7 +52,7 @@ typedef struct ns_ast_fn_def {
 } ns_ast_fn_def;
 
 typedef struct ns_ast_var_def {
-    int declarations;
+    int expr;
     ns_token_t name;
     ns_token_t type;
 } ns_ast_var_def;
@@ -188,6 +188,7 @@ bool ns_parse_stmt(ns_parse_context_t *ctx);
 bool ns_parse_compound_stmt(ns_parse_context_t *ctx);
 
 // expr func
+ns_ast_t ns_parse_stack_top(ns_parse_context_t *ctx);
 bool ns_parse_generator_expr(ns_parse_context_t *ctx);
 bool ns_parse_expr_stack(ns_parse_context_t *ctx);
 bool ns_parse_constant_expr(ns_parse_context_t *ctx);

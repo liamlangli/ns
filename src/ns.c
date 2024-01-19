@@ -31,6 +31,7 @@ typedef struct ns_compile_option_t {
     int parse_only;
     int show_version;
     int show_help;
+    int interactive;
 } ns_compile_option_t;
 
 ns_compile_option_t parse_options(int argc, char ** argv) {
@@ -44,6 +45,8 @@ ns_compile_option_t parse_options(int argc, char ** argv) {
             option.show_version = 1;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             option.show_help = 1;
+        } else if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--interactive") == 0) {
+            option.interactive = 1;
         }
     }
     return option;
@@ -86,12 +89,11 @@ int main(int argc, char **argv) {
 
     if (option.tokenize_only) {
         ns_tokenize(source, filename);
-        return 0;
     } else if (option.parse_only) {
         ns_parse_context_dump(ns_parse(source, filename));
+    } else {
+        ns_vm_t *vm = ns_create_vm();
+        ns_eval(vm, source, filename);
     }
-
-    ns_vm_t *vm = ns_create_vm();
-    ns_eval(vm, source, filename);
     return 0;
 }

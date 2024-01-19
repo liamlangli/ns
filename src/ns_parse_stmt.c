@@ -148,8 +148,8 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
 bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     if (ns_parse_expr_stack(ctx)) {
+        ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_EOL) {
-            ns_parse_next_token(ctx);
             return true;
         }
     }
@@ -214,5 +214,9 @@ bool ns_parse_external_define(ns_parse_context_t *ctx) {
     }
     ns_restore_state(ctx, state);
 
+    if (ns_parse_expr_stmt(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
     return false;
 }

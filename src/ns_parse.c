@@ -19,8 +19,8 @@ int ns_save_state(ns_parse_context_t *ctx) {
 }
 
 int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n) {
-    arrpush(ctx->nodes, n);
-    ctx->current = arrlen(ctx->nodes) - 1;
+    ns_array_push(ctx->nodes, n);
+    ctx->current = ns_array_len(ctx->nodes) - 1;
     return ctx->current;
 }
 
@@ -318,6 +318,7 @@ bool ns_parse_var_define(ns_parse_context_t *ctx) {
         int assign_state = ns_save_state(ctx);
         if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
             if (ns_parse_expr_stack(ctx)) {
+                n.var_def.expr = ctx->current;
                 ns_ast_push(ctx, n);
                 return true;
             }
@@ -459,9 +460,20 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
                 printf(":");
                 ns_str_printf(n.var_def.type.val);
             }
-            if (n.var_def.declarations != -1) {
-                printf(" node[%d]", n.var_def.declarations);
+            if (n.var_def.expr != -1) {
+                printf(" node[%d]", n.var_def.expr);
             }
+            break;
+        case NS_AST_CALL_EXPR:
+            printf("node[%d]", n.var_def.expr);
+            printf("(");
+            for (int i = 0; i < n.call_expr.argc; i++) {
+                printf("node[%d]", n.call_expr.args[i]);
+                if (i != n.call_expr.argc - 1) {
+                    printf(", ");
+                }
+            }
+            printf(")");
             break;
         default:
             break;
@@ -472,12 +484,12 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
 void ns_parse_context_dump(ns_parse_context_t *ctx) {
     printf("AST:\n");
 
-    for (int i = 0, l = arrlen(ctx->nodes); i < l; i++) {
+    for (int i = 0, l = ns_array_len(ctx->nodes); i < l; i++) {
         ns_ast_dump(ctx, i);
     }
 
     printf("Sections:\n");
-    for (int i = 0, l = arrlen(ctx->sections); i < l; i++) {
+    for (int i = 0, l = ns_array_len(ctx->sections); i < l; i++) {
         ns_ast_dump(ctx, ctx->sections[i]);
     }
 }
