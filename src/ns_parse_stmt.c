@@ -50,23 +50,30 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
     // if expression statement [else statement]
-    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_expr_stack(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_IF) &&
+        ns_parse_expr_stack(ctx)) {
         ns_ast_t n = {.type = NS_AST_IF_STMT, .if_stmt.condition = ctx->current};
-        if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
-            int else_state = ns_save_state(ctx);
+        if (ns_parse_compound_stmt(ctx)) {
             n.if_stmt.body = ctx->current;
+            ns_ast_push(ctx, n);
 
+            int else_state = ns_save_state(ctx);
             // try parse else statement
             if (ns_token_require(ctx, NS_TOKEN_ELSE)) {
-                if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
+                int recursive_state = ns_save_state(ctx);
+                if (ns_parse_if_stmt(ctx)) {
                     n.if_stmt.else_body = ctx->current;
-                    ns_ast_push(ctx, n);
                     return true;
                 }
-            }
-            ns_restore_state(ctx, else_state);
+                ns_restore_state(ctx, recursive_state);
 
-            ns_ast_push(ctx, n);
+                if (ns_parse_compound_stmt(ctx)) {
+                    n.if_stmt.else_body = ctx->current;
+                }
+                return true;
+            }
+
+            ns_restore_state(ctx, else_state);
             return true;
         }
     }

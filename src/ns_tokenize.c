@@ -15,6 +15,8 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_STRING_LITERAL";
     case NS_TOKEN_CONST:
         return "NS_TOKEN_CONST";
+    case NS_TOKEN_COMMENT:
+        return "NS_TOKEN_COMMENT";
     case NS_TOKEN_LET:
         return "NS_TOKEN_LET";
     case NS_TOKEN_FN:

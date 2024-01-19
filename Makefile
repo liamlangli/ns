@@ -9,10 +9,10 @@ all: $(SRCS)
 	$(CC) -g -O0 -o out/ns $^ -Isrc
 
 token: all
-	./out/ns -t sample/token.ns
+	./out/ns -t sample/fib.ns
 
 parse: all
-	./out/ns -p sample/parse.ns
+	./out/ns -p sample/fib.ns
 
 clean:
 	rm -f out/*

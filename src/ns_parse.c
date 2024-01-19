@@ -7,7 +7,6 @@
 #include "stb_ds.h"
 
 bool ns_parse_unary_expr(ns_parse_context_t *ctx);
-bool ns_parse_assign_expr(ns_parse_context_t *ctx);
 bool ns_parse_type_expr(ns_parse_context_t *ctx);
 
 void ns_restore_state(ns_parse_context_t *ctx, int f) {
@@ -44,12 +43,20 @@ bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token) {
     return false;
 }
 
+bool ns_token_look_ahead(ns_parse_context_t *ctx, NS_TOKEN token) {
+    int state = ns_save_state(ctx);
+    ns_parse_next_token(ctx);
+    bool result = ctx->token.type == token;
+    ns_restore_state(ctx, state);
+    return result;
+}
+
 void ns_token_skip_eol(ns_parse_context_t *ctx) {
     int state;
     do {
         state = ns_save_state(ctx);
         ns_parse_next_token(ctx);
-    } while (ctx->token.type == NS_TOKEN_EOL);
+    } while (ctx->token.type == NS_TOKEN_EOL || ctx->token.type == NS_TOKEN_COMMENT);
     ns_restore_state(ctx, state);
 }
 
@@ -89,267 +96,6 @@ bool ns_parse_type_expr(ns_parse_context_t *ctx) {
 
     ns_restore_state(ctx, state);
     return false;
-}
-
-bool ns_multiplicative_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-
-    if (ns_parse_unary_expr(ctx)) {
-        return true;
-    }
-
-    // multiplicative-expression [*|/|%] unary-expression
-    if (ns_multiplicative_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_MULTIPLICATIVE_OPERATOR) {
-            ns_parse_next_token(ctx);
-            if (ns_parse_unary_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_additive_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // multiplicative-expression
-    if (ns_multiplicative_expr(ctx)) {
-        return true;
-    }
-
-    // additive-expression [+|-] multiplicative-expression
-    ns_restore_state(ctx, state);
-    if (ns_additive_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_ADDITIVE_OPERATOR) {
-            ns_parse_next_token(ctx);
-            if (ns_multiplicative_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_shift_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // additive-expression
-    if (ns_additive_expr(ctx)) {
-        return true;
-    }
-
-    // shift-expression [<<|>>] additive-expression
-    ns_restore_state(ctx, state);
-    if (ns_shift_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_SHIFT_OPERATOR) {
-            ns_parse_next_token(ctx);
-            if (ns_additive_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_relational_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // shift-expression
-    if (ns_shift_expr(ctx)) {
-        return true;
-    }
-
-    // relational-expression [<|>|<=|>=] shift-expression
-    ns_restore_state(ctx, state);
-    if (ns_relational_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_BOOL_OPERATOR) {
-            ns_parse_next_token(ctx);
-            if (ns_shift_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_equality_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // relational-expression
-    if (ns_relational_expr(ctx)) {
-        return true;
-    }
-
-    // equality-expression [==|!=] relational-expression
-    ns_restore_state(ctx, state);
-    if (ns_equality_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_BOOL_OPERATOR) {
-            ns_parse_next_token(ctx);
-            if (ns_relational_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_and_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // equality-expression
-    if (ns_equality_expr(ctx)) {
-        return true;
-    }
-
-    // and-expression & equality-expression
-    ns_restore_state(ctx, state);
-    if (ns_and_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_BITWISE_OPERATOR && ctx->token.val.data[0] == '&') {
-            ns_parse_next_token(ctx);
-            if (ns_equality_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_exclusive_or_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // and-expression
-    if (ns_and_expr(ctx)) {
-        return true;
-    }
-
-    // exclusive-or-expression ^ and-expression
-    ns_restore_state(ctx, state);
-    if (ns_exclusive_or_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_BITWISE_OPERATOR && ctx->token.val.data[0] == '^') {
-            ns_parse_next_token(ctx);
-            if (ns_and_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_inclusive_or_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // exclusive-or-expression
-    if (ns_exclusive_or_expr(ctx)) {
-        return true;
-    }
-
-    // inclusive-or-expression | exclusive-or-expression
-    ns_restore_state(ctx, state);
-    if (ns_inclusive_or_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_BITWISE_OPERATOR && ctx->token.val.data[0] == '|') {
-            ns_parse_next_token(ctx);
-            if (ns_exclusive_or_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_logic_and_expr(ns_parse_context_t *ctx) {
-    // inclusive-or-expression
-    int state = ns_save_state(ctx);
-    if (ns_inclusive_or_expr(ctx)) {
-        return true;
-    }
-
-    // logic-and-expression && inclusive-or-expression
-    ns_restore_state(ctx, state);
-    if (ns_logic_and_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_LOGICAL_OPERATOR && ctx->token.val.data[0] == '&') {
-            ns_parse_next_token(ctx);
-            if (ns_inclusive_or_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_logic_or_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // logic-and-expression
-    if (ns_logic_and_expr(ctx)) {
-        return true;
-    }
-
-    // logic-or-expression || logic-and-expression
-    ns_restore_state(ctx, state);
-    if (ns_logic_or_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_LOGICAL_OPERATOR && ctx->token.val.data[0] == '|') {
-            ns_parse_next_token(ctx);
-            if (ns_logic_and_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_conditional_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-
-    // logical-or-expression
-    if (ns_logic_or_expr(ctx)) {
-        return true;
-    }
-
-    ns_restore_state(ctx, state);
-    // logical-or-expression ? expression : conditional-expression
-    if (ns_logic_or_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_QUESTION_MARK) {
-            ns_parse_next_token(ctx);
-            if (ns_parse_expr_stack(ctx)) {
-                if (ctx->token.type == NS_TOKEN_COLON) {
-                    ns_parse_next_token(ctx);
-                    if (ns_conditional_expr(ctx)) {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_unary_operator(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    ns_parse_next_token(ctx);
-    switch (ctx->token.type) {
-        case NS_TOKEN_ARITHMETIC_OPERATOR:
-        case NS_TOKEN_BITWISE_OPERATOR:
-        case NS_TOKEN_BOOL_OPERATOR:
-            return true;
-        default:
-            ns_restore_state(ctx, state);
-            return false;
-    }
 }
 
 bool ns_identifier(ns_parse_context_t *ctx) {
@@ -410,123 +156,6 @@ bool ns_primary_expr(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_postfix_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    // look ahead for primary expression
-    if (ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
-        if (ns_parse_expr_stack(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
-            return true;
-        }
-    }
-    ns_restore_state(ctx, state);
-
-    ns_parse_next_token(ctx);
-    ns_token_t first = ctx->token;
-    ns_parse_next_token(ctx);
-    ns_token_t second = ctx->token;
-
-    if (second.type == NS_TOKEN_OPEN_BRACKET) {
-        // identifier [ expression ]
-        if (first.type == NS_TOKEN_IDENTIFIER) {
-            ns_parse_next_token(ctx);
-            if (ns_parse_expr_stack(ctx)) {
-                ns_parse_next_token(ctx);
-                if (ctx->token.type == NS_TOKEN_CLOSE_BRACKET) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    if (second.type == NS_TOKEN_OPEN_PAREN) {
-        // identifier ( assign_expression )
-        if (first.type == NS_TOKEN_IDENTIFIER) {
-            ns_parse_next_token(ctx);
-            if (ns_parse_assign_expr(ctx)) {
-                ns_parse_next_token(ctx);
-                if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    if (second.type == NS_TOKEN_DOT) {
-        // identifier . identifier
-        if (first.type == NS_TOKEN_IDENTIFIER) {
-            ns_parse_next_token(ctx);
-            if (ns_identifier(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    if (second.type == NS_TOKEN_AS) {
-        // identifier as type
-        if (first.type == NS_TOKEN_IDENTIFIER) {
-            ns_parse_next_token(ctx);
-            if (ns_parse_type_expr(ctx)) {
-                return true;
-            }
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    if (ns_primary_expr(ctx)) {
-        return true;
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_parse_unary_expr(ns_parse_context_t *ctx) {
-    int state = ns_save_state(ctx);
-    if (ns_postfix_expr(ctx)) {
-        return true;
-    }
-    ns_restore_state(ctx, state);
-
-    // unary-operator unary-expression
-    if (ns_unary_operator(ctx)) {
-        if (ns_parse_unary_expr(ctx)) {
-            return true;
-        }
-    }
-    ns_restore_state(ctx, state);
-
-    // await unary-expression
-    if (ctx->token.type == NS_TOKEN_AWAIT) {
-        ns_parse_next_token(ctx);
-        if (ns_parse_unary_expr(ctx)) {
-            return true;
-        }
-    }
-
-    ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_parse_assign_expr(ns_parse_context_t *ctx) {
-    // conditional-expression
-    int state = ns_save_state(ctx);
-    if (ns_conditional_expr(ctx)) {
-        return true;
-    }
-
-    // unary-expression assignment-operator assignment-expression
-    if (ns_parse_unary_expr(ctx)) {
-        if (ctx->token.type == NS_TOKEN_ASSIGN_OPERATOR) {
-            ns_parse_next_token(ctx);
-            if (ns_parse_expr_stack(ctx)) {
-                return true;
-            }
-        }
-    }
-    ns_restore_state(ctx, state);
-    return false;
-}
-
 bool ns_parse_generator_expr(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
@@ -557,16 +186,6 @@ bool ns_parse_generator_expr(ns_parse_context_t *ctx) {
     }
 
     ns_restore_state(ctx, state);
-    return false;
-}
-
-bool ns_parse_expr(ns_parse_context_t *ctx) {
-    // assignment-expression
-    int state = ns_save_state(ctx);
-    if (ns_parse_assign_expr(ctx)) {
-        return true;
-    }
-
     return false;
 }
 
@@ -739,9 +358,14 @@ ns_parse_context_t* ns_parse(const char *source, const char *filename) {
     ctx->nodes = NULL;
     ctx->sections = NULL;
 
-    while (ns_parse_external_define(ctx)) {
+    ctx->current = -1;
+
+    bool loop = false;
+    do {
+        ns_token_skip_eol(ctx);
+        loop = ns_parse_external_define(ctx);
         arrpush(ctx->sections, ctx->current);
-    }
+    } while (loop);
 
     return ctx;
 }

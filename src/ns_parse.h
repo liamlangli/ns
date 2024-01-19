@@ -93,7 +93,7 @@ typedef struct ns_ast_member_expr {
 typedef struct ns_ast_call_expr {
     int callee;
     int args[MAX_PARAMS];
-    int arg_count;
+    int argc;
 } ns_ast_call_expr;
 
 typedef struct ns_ast_generator_expr {
@@ -189,6 +189,5 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx);
 
 // expr func
 bool ns_parse_generator_expr(ns_parse_context_t *ctx);
-bool ns_parse_expr(ns_parse_context_t *ctx);
 bool ns_parse_expr_stack(ns_parse_context_t *ctx);
 bool ns_parse_constant_expr(ns_parse_context_t *ctx);
