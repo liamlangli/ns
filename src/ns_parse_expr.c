@@ -134,7 +134,6 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                     if (ctx->token.type == NS_TOKEN_COMMA) {
                         continue;
                     } else if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
-                        ns_ast_push(ctx, call);
                         break;
                     } else {
                         fprintf(stderr, "syntax error: expected ',' or ')'\n");

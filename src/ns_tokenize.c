@@ -728,7 +728,7 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
     return to;
 }
 
-ns_value ns_tokenize(const char *source, const char *filename) {
+void ns_tokenize(const char *source, const char *filename) {
     int len = strlen(source);
     int i = 0;
     ns_token_t t = {0};
@@ -743,5 +743,4 @@ ns_value ns_tokenize(const char *source, const char *filename) {
         }
         t.type = NS_TOKEN_UNKNOWN;
     } while (t.type != NS_TOKEN_EOF && i < len);
-    return NS_NIL;
 }

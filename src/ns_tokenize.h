@@ -6,25 +6,6 @@
 #define macro_min(a, b) ((a) < (b) ? (a) : (b))
 #define macro_clamp(x, b, t) (macro_max((b), macro_min((t), (x))))
 
-typedef enum { 
-    NS_TYPE_NIL = -1,
-    NS_TYPE_INFER = 0,
-    NS_TYPE_I8,
-    NS_TYPE_I16,
-    NS_TYPE_I32,
-    NS_TYPE_I64,
-    NS_TYPE_U8,
-    NS_TYPE_U16,
-    NS_TYPE_U32,
-    NS_TYPE_U64,
-    NS_TYPE_F32,
-    NS_TYPE_F64,
-    NS_TYPE_BOOL,
-    NS_TYPE_STRING,
-    NS_TYPE_FUNCTION,
-    NS_TYPE_STRUCT
-} ns_generic_type;
-
 typedef enum {
     NS_TOKEN_UNKNOWN = -1,
     NS_TOKEN_AS,
@@ -100,4 +81,4 @@ typedef struct ns_token_t {
 const char *ns_token_to_string(NS_TOKEN token);
 
 int ns_next_token(ns_token_t *token, const char *src, const char* filename, int from);
-ns_value ns_tokenize(const char *source, const char *filename);
+void ns_tokenize(const char *source, const char *filename);

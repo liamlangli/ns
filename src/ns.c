@@ -51,10 +51,11 @@ ns_compile_option_t parse_options(int argc, char ** argv) {
 
 void help() {
     printf("Usage: ns [option] [file.ns]\n");
-    printf("  -t --tokenize do tokenize only\n");
-    printf("  -p --parse    do parse only\n");
-    printf("  -v --version  show version\n");
-    printf("  -h --help     show this help\n");
+    printf("  -t --tokenize     do tokenize only\n");
+    printf("  -p --parse        do parse only\n");
+    printf("  -v --version      show version\n");
+    printf("  -h --help         show this help\n");
+    printf("  -i --interactive  enter interactive mode\n");
 }
 
 int main(int argc, char **argv) {
@@ -90,6 +91,7 @@ int main(int argc, char **argv) {
         ns_parse_context_dump(ns_parse(source, filename));
     }
 
-    ns_eval(source, filename);
+    ns_vm_t *vm = ns_create_vm();
+    ns_eval(vm, source, filename);
     return 0;
 }

@@ -318,10 +318,12 @@ bool ns_parse_var_define(ns_parse_context_t *ctx) {
         int assign_state = ns_save_state(ctx);
         if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
             if (ns_parse_expr_stack(ctx)) {
+                ns_ast_push(ctx, n);
                 return true;
             }
         }
         ns_restore_state(ctx, assign_state);
+        ns_ast_push(ctx, n);
         return true;
     }
 
@@ -364,7 +366,7 @@ ns_parse_context_t* ns_parse(const char *source, const char *filename) {
     do {
         ns_token_skip_eol(ctx);
         loop = ns_parse_external_define(ctx);
-        arrpush(ctx->sections, ctx->current);
+        if (loop) arrpush(ctx->sections, ctx->current);
     } while (loop);
 
     return ctx;
@@ -451,6 +453,16 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
                 ns_str_printf(n.param.type.val);
             }
             break;
+        case NS_AST_VAR_DEF:
+            ns_str_printf(n.var_def.name.val);
+            if (n.var_def.type.type != NS_TOKEN_UNKNOWN) {
+                printf(":");
+                ns_str_printf(n.var_def.type.val);
+            }
+            if (n.var_def.declarations != -1) {
+                printf(" node[%d]", n.var_def.declarations);
+            }
+            break;
         default:
             break;
     }
@@ -459,12 +471,13 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
 
 void ns_parse_context_dump(ns_parse_context_t *ctx) {
     printf("AST:\n");
-    for (int i = 0; i < arrlen(ctx->nodes); i++) {
+
+    for (int i = 0, l = arrlen(ctx->nodes); i < l; i++) {
         ns_ast_dump(ctx, i);
     }
 
     printf("Sections:\n");
-    for (int i = 0; i < arrlen(ctx->sections); i++) {
+    for (int i = 0, l = arrlen(ctx->sections); i < l; i++) {
         ns_ast_dump(ctx, ctx->sections[i]);
     }
 }
