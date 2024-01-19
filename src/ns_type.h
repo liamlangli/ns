@@ -7,6 +7,11 @@
 
 #include "stb_ds.h"
 
+#define NS_MAX_PARAMS 16
+#define NS_MAX_FIELDS 32
+#define NS_MAX_PARSE_STACK 64
+#define NS_MAX_CALL_STACK 128
+
 typedef char i8;
 typedef short i16;
 typedef int i32;
@@ -45,5 +50,6 @@ f64 ns_str_to_f64(ns_str s);
 #define ns_array_pop arrpop
 #define ns_array_len arrlen
 
-#define ns_hash_map_get hmgeti
+#define ns_hash_map_get(h, k) hmget(h, k)
 #define ns_hash_map_set hmput
+#define ns_hash_map_has(h, k) (hmgeti((h), (k)) != -1)

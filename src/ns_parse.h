@@ -30,10 +30,6 @@ typedef enum {
     NS_AST_LABELED_STMT
 } NS_AST_TYPE;
 
-#define MAX_PARAMS 16
-#define MAX_FIELDS 32
-#define MAX_PARSE_STACK 64
-
 typedef struct ns_ast_t ns_ast_t;
 
 typedef struct ns_ast_param {
@@ -47,7 +43,7 @@ typedef struct ns_ast_fn_def {
     ns_token_t name;
     ns_token_t return_type;
     int body;
-    int params[MAX_PARAMS];
+    int params[NS_MAX_PARAMS];
     int param_count;
 } ns_ast_fn_def;
 
@@ -65,7 +61,7 @@ typedef struct ns_ast_var_assign {
 
 typedef struct ns_ast_struct_def {
     ns_token_t name;
-    int fields[MAX_FIELDS];
+    int fields[NS_MAX_FIELDS];
     int field_count;
 } ns_ast_struct_def;
 
@@ -92,7 +88,7 @@ typedef struct ns_ast_member_expr {
 
 typedef struct ns_ast_call_expr {
     int callee;
-    int args[MAX_PARAMS];
+    int args[NS_MAX_PARAMS];
     int argc;
 } ns_ast_call_expr;
 
@@ -155,7 +151,7 @@ typedef struct as_parse_context_t {
 
     ns_ast_t *nodes;
 
-    int stack[MAX_PARSE_STACK];
+    int stack[NS_MAX_PARSE_STACK];
     int top;
 
     ns_token_t token, last_token;

@@ -41,16 +41,46 @@ typedef struct ns_value {
     ns_value_union u;
 } ns_value;
 
-typedef struct ns_value_pair {
-    ns_str key;
-    int value;
-} ns_value_pair;
+typedef struct ns_value_pair { ns_str key; int value; } ns_value_pair;
+
+typedef struct ns_fn_t {
+    ns_str name;
+    int index;
+    int argc, localc;
+    ns_value_pair *locals;
+    ns_value_pair *args;
+} ns_fn_t;
+
+typedef struct ns_struct_t {
+    ns_str name;
+    int index;
+    int fieldc;
+    ns_value_pair *fields;
+} ns_struct_t;
+
+typedef struct ns_fn_pair { ns_str key; ns_fn_t *value; } ns_fn_pair;
+typedef struct ns_struct_pair { ns_str key; ns_struct_t *value; } ns_struct_pair;
+
+typedef struct ns_call_scope {
+    int fn_index;
+    int argc;
+    ns_value ret;
+    ns_value locals[NS_MAX_PARAMS];
+    ns_value args[NS_MAX_PARAMS];
+} ns_call_scope;
 
 typedef struct ns_vm_t {
     ns_ast_t *ast;
     ns_value *values;
     int stack_depth;
     ns_value_pair *global_values;
+    ns_fn_pair *fns;
+    ns_struct_pair *structs;
+
+    // func call stack
+    ns_call_scope call_stack[NS_MAX_CALL_STACK];
+    int call_stack_top;
+    int argc;
 } ns_vm_t;
 
 ns_value ns_new_i32(ns_vm_t *vm, i32 i);
@@ -58,5 +88,5 @@ ns_value ns_new_f64(ns_vm_t *vm, f64 f);
 ns_value ns_new_bool(ns_vm_t *vm, bool b);
 
 ns_vm_t *ns_create_vm();
-ns_value ns_call(ns_vm_t *vm, ns_value fn, ns_value *args, int argc);
+ns_value ns_eval_expr(ns_vm_t *vm, int expr);
 ns_value ns_eval(ns_vm_t *vm, const char* source, const char *filename);
