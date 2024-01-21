@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-int ns_str_to_int(ns_str s) {
+int ns_str_to_i32(ns_str s) {
     int size = s.len;
     int i = 0;
     int r = 0;

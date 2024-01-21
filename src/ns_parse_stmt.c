@@ -7,8 +7,8 @@
 bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     // continue
+    ns_ast_t n = {.type = NS_AST_JUMP_STMT, .jump_stmt.label = ctx->token, .jump_stmt.expr = -1};
     if (ns_token_require(ctx, NS_TOKEN_CONTINUE) && ns_token_require(ctx, NS_TOKEN_EOL)) {
-        ns_ast_t n = {.type = NS_AST_JUMP_STMT, .jump_stmt.label = ctx->token};
         ns_ast_push(ctx, n);
         return true;
     }
@@ -16,7 +16,6 @@ bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
 
     // break
     if (ns_token_require(ctx, NS_TOKEN_BREAK)) {
-        ns_ast_t n = {.type = NS_AST_JUMP_STMT, .jump_stmt.label = ctx->token};
         ns_ast_push(ctx, n);
         return true;
     }
@@ -24,7 +23,6 @@ bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
 
     // return
     if (ns_token_require(ctx, NS_TOKEN_RETURN)) {
-        ns_ast_t n = {.type = NS_AST_JUMP_STMT, .jump_stmt.label = ctx->token};
         int end_state = ns_save_state(ctx);
         if (ns_token_require(ctx, NS_TOKEN_EOL)) {
             ns_ast_push(ctx, n);
@@ -55,6 +53,7 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
         ns_ast_t n = {.type = NS_AST_IF_STMT, .if_stmt.condition = ctx->current};
         if (ns_parse_compound_stmt(ctx)) {
             n.if_stmt.body = ctx->current;
+            n.if_stmt.else_body = -1;
             ns_ast_push(ctx, n);
 
             int else_state = ns_save_state(ctx);

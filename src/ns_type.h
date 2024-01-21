@@ -44,8 +44,8 @@ typedef struct ns_str {
 #define ns_str_STR(s) ((ns_str){.data = ""})
 
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
-#define ns_str_equals_STR(s, S) (strncmp((s).data, (S), (s).len) == 0)
+#define ns_str_equals_STR(s, S) (strncmp((s).data, (S), strlen(S)) == 0)
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
 
-int ns_str_to_int(ns_str s);
+int ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);

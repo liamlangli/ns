@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <assert.h>
 
+ns_value ns_eval_expr(ns_vm_t *vm, int i);
+
 int ns_add_value(ns_vm_t *vm, ns_value v) {
     v.index = vm->value_count;
     vm->values[vm->value_count++] = v;
@@ -23,7 +25,7 @@ int ns_vm_find_fn(ns_vm_t *vm, ns_str name) {
     return -1;
 }
 
-int ns_vm_find_fn_arg_slot(ns_vm_t *vm, ns_str name) {
+int ns_vm_find_scope_arg_slot(ns_vm_t *vm, ns_str name) {
     ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
     ns_fn_t *fn = &vm->fns[scope->fn_index];
     for (int i = 0; i < fn->arg_count; i++) {
@@ -34,7 +36,7 @@ int ns_vm_find_fn_arg_slot(ns_vm_t *vm, ns_str name) {
     return -1;
 }
 
-int ns_vm_find_fn_local_slot(ns_vm_t *vm, ns_str name) {
+int ns_vm_find_scope_local_slot(ns_vm_t *vm, ns_str name) {
     ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
     ns_fn_t *fn = &vm->fns[scope->fn_index];
     for (int i = 0; i < fn->local_count; i++) {
@@ -54,13 +56,32 @@ int ns_vm_find_global_value_slot(ns_vm_t *vm, ns_str name) {
     return -1;
 }
 
+int ns_vm_find_fn_arg_slot(ns_vm_t *vm, ns_fn_t *fn, ns_str name) {
+    for (int i = 0; i < fn->arg_count; i++) {
+        if (ns_str_equals(fn->arg_names[i], name)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int ns_vm_find_fn_local_slot(ns_vm_t *vm, ns_fn_t *fn, ns_str name) {
+    for (int i = 0; i < fn->local_count; i++) {
+        if (ns_str_equals(fn->local_names[i], name)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
+    if (i == -1) return;
     ns_ast_t n = vm->ast[i];
     switch (n.type)
     {
     case NS_AST_VAR_DEF: {
         ns_str name = n.var_def.name.val;
-        int slot = ns_vm_find_fn_local_slot(vm, name);
+        int slot = ns_vm_find_fn_local_slot(vm, fn, name);
         if (slot != -1) {
             fprintf(stderr, "eval error: duplicate variable %*.s\n", name.len, name.data);
             assert(false);
@@ -82,20 +103,23 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
     case NS_AST_PRIMARY_EXPR:
         if (n.primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
             ns_str name = n.primary_expr.token.val;
-            int slot = ns_vm_find_fn_arg_slot(vm, name);
+            int slot = ns_vm_find_fn_arg_slot(vm, fn, name);
             if (slot != -1) {
                 vm->ast[i].primary_expr.slot = slot + 1;
                 break;
             }
 
-            slot = ns_vm_find_fn_local_slot(vm, name);
+            slot = ns_vm_find_fn_local_slot(vm, fn, name);
             if (slot != -1) {
-                vm->ast[i].primary_expr.slot = -slot;
+                vm->ast[i].primary_expr.slot = -1 -slot;
                 break;
             }
 
-            fprintf(stderr, "eval error: unknown variable %*.s\n", name.len, name.data);
-            assert(false);
+            slot = ns_vm_find_global_value_slot(vm, name);
+            if (slot != -1) {
+                vm->ast[i].primary_expr.slot = 0;
+                break;
+            }
         }
         break;
     case NS_AST_IF_STMT:
@@ -107,6 +131,9 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
         ns_vm_parse_fn_expr(vm, n.iter_stmt.condition, fn);
         ns_vm_parse_fn_expr(vm, n.iter_stmt.generator, fn);
         ns_vm_parse_fn_expr(vm, n.iter_stmt.body, fn);
+        break;
+    case NS_AST_JUMP_STMT:
+        ns_vm_parse_fn_expr(vm, n.jump_stmt.expr, fn);
         break;
     default:
         break;
@@ -129,29 +156,39 @@ void ns_vm_parse_fn(ns_vm_t *vm, ns_ast_t n) {
     ns_vm_parse_fn_expr(vm, n.fn_def.body, fn);
 }
 
-ns_value ns_parse_literal(ns_vm_t *vm, ns_ast_t n) {
+ns_value ns_eval_literal(ns_vm_t *vm, ns_ast_t n) {
     switch (n.primary_expr.token.type)
     {
     case NS_TOKEN_INT_LITERAL:
-        return ns_new_i32(vm, ns_str_to_int(n.primary_expr.token.val));
+        return (ns_value){.type = NS_TYPE_I64, .u.int64 = ns_str_to_i32(n.primary_expr.token.val)};
     case NS_TOKEN_FLOAT_LITERAL:
-        return ns_new_f64(vm, ns_str_to_f64(n.primary_expr.token.val));
+        return (ns_value){.type = NS_TYPE_F64, .u.float64 = ns_str_to_f64(n.primary_expr.token.val)};
     case NS_TOKEN_STRING_LITERAL: break;
         // copy & save string
     case NS_TOKEN_TRUE:
-        return ns_new_bool(vm, true);
+        return NS_TRUE;
     case NS_TOKEN_FALSE:
-        return ns_new_bool(vm, false);
+        return NS_FALSE;
     case NS_TOKEN_NIL:
         return NS_NIL;
     case NS_TOKEN_IDENTIFIER:
-        if (vm->stack_depth > 0) {
+        if (vm->stack_depth > -1) {
             ns_str key = n.primary_expr.token.val;
             ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
             ns_fn_t *fn = &vm->fns[scope->fn_index];
-
-            fprintf(stderr, "eval error: unknown variable %*.s\n", key.len, key.data);
-            assert(false);
+            if (n.primary_expr.slot == 0) {
+                int slot = ns_vm_find_global_value_slot(vm, key);
+                if (slot == -1) {
+                    fprintf(stderr, "eval error: unknown variable %*.s\n", key.len, key.data);
+                    assert(false);
+                } else {
+                    return vm->global_values[slot];
+                }
+            } else if (n.primary_expr.slot > 0) {
+                return scope->args[n.primary_expr.slot - 1];
+            } else {
+                return scope->locals[-n.primary_expr.slot - 1];
+            }
         }
         break;
     default:
@@ -170,7 +207,7 @@ void ns_vm_parse_ast(ns_vm_t *vm, ns_parse_context_t *ctx) {
         switch (n.type)
         {
         case NS_AST_FN_DEF: {
-            ns_fn_t f = {.name = n.fn_def.name.val};
+            ns_fn_t f = {.name = n.fn_def.name.val, .ast_root = n.fn_def.body};
             vm->fns[vm->fn_count++] = f;
         } break;
         case NS_AST_VAR_DEF: {
@@ -261,21 +298,29 @@ bool ns_value_float_type(ns_value v) {
     return v.type == NS_TYPE_F32 || v.type == NS_TYPE_F64;
 }
 
-ns_value ns_call_scoped_fn(ns_vm_t *vm) {
-    ns_call_scope scope = vm->call_stack[vm->call_stack_top];
-    ns_ast_t fn = vm->ast[scope.fn_index];
-    switch (fn.type)
+bool ns_value_conditional_true(ns_value v) {
+    switch (v.type)
     {
-    case NS_AST_FN_DEF: {
-        ns_value v;
-        return v;
-    } break;
+    case NS_TYPE_BOOL:
+        return v.u.boolean;
+    case NS_TYPE_I32:
+    case NS_TYPE_I64:
+    case NS_TYPE_I16:
+    case NS_TYPE_I8:
+    case NS_TYPE_U32:
+    case NS_TYPE_U64:
+    case NS_TYPE_U16:
+    case NS_TYPE_U8:
+        return v.u.int64 != 0;
+    case NS_TYPE_F32:
+    case NS_TYPE_F64:
+        return v.u.float64 != 0;
     default:
-        fprintf(stderr, "eval error: unknown fn type\n");
+        fprintf(stderr, "eval error: unknown value type\n");
         assert(false);
         break;
     }
-    return NS_NIL;
+    return false;
 }
 
 ns_value ns_eval_binary_op(ns_vm_t *vm, ns_value left, ns_value right, int i) {
@@ -341,24 +386,33 @@ ns_value ns_call_fn(ns_vm_t *vm, int i) {
             return ns_call_builtin_fn(vm, name, i);
         } else {
             ns_fn_t *fn = &vm->fns[fn_i];
-            ns_call_scope scope = {0};
+            ns_call_scope scope = {.argc = n.call_expr.arg_count};
             for (int i = 0; i < n.call_expr.arg_count; i++) {
                 scope.args[i] = ns_eval_expr(vm, n.call_expr.args[i]);
             }
             scope.fn_index = fn_i;
             ns_vm_push_call_scope(vm, scope);
-            return ns_call_scoped_fn(vm);
+            ns_value ret = ns_eval_expr(vm, fn->ast_root);
+            vm->call_stack_top--;
+            return ret;
         }
+    }
+    return NS_NIL;
+}
+
+ns_value ns_eval_jump_stmt(ns_vm_t *vm, int i) {
+    ns_ast_t n = vm->ast[i];
+    if (ns_str_equals_STR(n.jump_stmt.label.val, "return")) {
+        ns_value ret = ns_eval_expr(vm, n.jump_stmt.expr);
+        ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
+        scope->ret = ret;
+        return ret;
     }
     return NS_NIL;
 }
 
 ns_value ns_eval_expr(ns_vm_t *vm, int i) {
     ns_ast_t n = vm->ast[i];
-    if (n.type == NS_AST_PRIMARY_EXPR) {
-        return ns_parse_literal(vm, n);
-    }
-
     switch (n.type)
     {
     case NS_AST_BINARY_EXPR: {
@@ -369,16 +423,28 @@ ns_value ns_eval_expr(ns_vm_t *vm, int i) {
     case NS_AST_CALL_EXPR: {
         return ns_call_fn(vm, i);
     }
+    case NS_AST_IF_STMT: {
+        ns_value condition = ns_eval_expr(vm, n.if_stmt.condition);
+        if (ns_value_conditional_true(condition)) {
+            return ns_eval_expr(vm, n.if_stmt.body);
+        } else {
+            if (n.if_stmt.else_body != -1) {
+                return ns_eval_expr(vm, n.if_stmt.else_body);
+            }
+        }
+    } break;
     case NS_AST_CAST_EXPR:
         break;
     case NS_AST_MEMBER_EXPR:
         break;
     case NS_AST_PRIMARY_EXPR:
-        break;
+        return ns_eval_literal(vm, n);
     case NS_AST_GENERATOR_EXPR:
         break;
+    case NS_AST_JUMP_STMT:
+        return ns_eval_jump_stmt(vm, i);
     default:
-        fprintf(stderr, "eval error: unknown ast type\n");
+        fprintf(stderr, "eval error: unknown ast type %s\n", ns_ast_type_str(n.type));
         assert(false);
         break;
     }

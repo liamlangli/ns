@@ -163,6 +163,7 @@ typedef struct as_parse_context_t {
 } ns_parse_context_t;
 
 ns_parse_context_t* ns_parse(const char *source, const char *filename);
+const char * ns_ast_type_str(NS_AST_TYPE type);
 void ns_parse_context_dump(ns_parse_context_t *ctx);
 
 // token func

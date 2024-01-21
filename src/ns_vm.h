@@ -41,10 +41,9 @@ typedef struct ns_value {
     ns_value_union u;
 } ns_value;
 
-typedef struct ns_value_pair { ns_str key; int value; } ns_value_pair;
-
 typedef struct ns_fn_t {
     ns_str name;
+    int ast_root;
     int arg_count, local_count;
     ns_str arg_names[NS_MAX_PARAMS];
     ns_value args[NS_MAX_PARAMS];

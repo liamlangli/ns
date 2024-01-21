@@ -428,6 +428,12 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
                 printf(" -> ");
                 ns_str_printf(n.fn_def.return_type.val);
             }
+
+            if (n.fn_def.body != -1)
+                    printf(" { node[%d] }", n.fn_def.body);
+            else {
+                printf(";");
+            }
             break;
         case NS_AST_PRIMARY_EXPR:
             ns_str_printf(n.primary_expr.token.val);
