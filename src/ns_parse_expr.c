@@ -123,7 +123,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                 // empty call expr
                 ns_ast_t call = {.type = NS_AST_CALL_EXPR, .call_expr = {
                     .callee = ns_parse_stack_pop(ctx),
-                    .argc = 0
+                    .arg_count = 0
                 }};
 
                 int empty_state = ns_save_state(ctx);
@@ -134,7 +134,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
 
                 ns_restore_state(ctx, empty_state);
                 while (ns_parse_expr_stack(ctx)) {
-                    call.call_expr.args[call.call_expr.argc++] = ctx->current;
+                    call.call_expr.args[call.call_expr.arg_count++] = ctx->current;
                     ns_parse_next_token(ctx);
                     if (ctx->token.type == NS_TOKEN_COMMA) {
                         continue;

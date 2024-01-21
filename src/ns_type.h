@@ -5,12 +5,15 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#include "stb_ds.h"
-
 #define NS_MAX_PARAMS 16
 #define NS_MAX_FIELDS 32
 #define NS_MAX_PARSE_STACK 64
 #define NS_MAX_CALL_STACK 128
+#define NS_MAX_SECTION_COUNT 256
+#define NS_MAX_NODE_COUNT 1024
+#define NS_MAX_GLOBAL_VARS 256
+#define NS_MAX_FN_COUNT 128
+#define NS_MAX_VALUE_COUNT 1024
 
 typedef char i8;
 typedef short i16;
@@ -40,16 +43,9 @@ typedef struct ns_str {
 #define ns_str_range(s, n) ((ns_str){(s), (n)})
 #define ns_str_STR(s) ((ns_str){.data = ""})
 
+#define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
 #define ns_str_equals_STR(s, S) (strncmp((s).data, (S), (s).len) == 0)
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
 
 int ns_str_to_int(ns_str s);
 f64 ns_str_to_f64(ns_str s);
-
-#define ns_array_push arrpush
-#define ns_array_pop arrpop
-#define ns_array_length arrlen
-
-#define ns_hash_map_get(h, k) hmget(h, k)
-#define ns_hash_map_set hmput
-#define ns_hash_map_has(h, k) (hmgeti((h), (k)) != -1)

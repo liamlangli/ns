@@ -90,7 +90,7 @@ typedef struct ns_ast_member_expr {
 typedef struct ns_ast_call_expr {
     int callee;
     int args[NS_MAX_PARAMS];
-    int argc;
+    int arg_count;
 } ns_ast_call_expr;
 
 typedef struct ns_ast_generator_expr {
@@ -147,10 +147,12 @@ typedef struct ns_ast_t {
 
 typedef struct as_parse_context_t {
     int f, last_f;
-    int* sections;
+    int sections[NS_MAX_SECTION_COUNT];
+    int section_count;
     int current;
 
-    ns_ast_t *nodes;
+    ns_ast_t nodes[NS_MAX_NODE_COUNT];
+    int node_count;
 
     int stack[NS_MAX_PARSE_STACK];
     int top;

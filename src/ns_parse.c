@@ -4,7 +4,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "stb_ds.h"
 
 bool ns_parse_unary_expr(ns_parse_context_t *ctx);
 bool ns_parse_type_expr(ns_parse_context_t *ctx);
@@ -19,8 +18,8 @@ int ns_save_state(ns_parse_context_t *ctx) {
 }
 
 int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n) {
-    ns_array_push(ctx->nodes, n);
-    ctx->current = ns_array_length(ctx->nodes) - 1;
+    ctx->current = ctx->node_count;
+    ctx->nodes[ctx->node_count++] = n;
     return ctx->current;
 }
 
@@ -358,8 +357,8 @@ ns_parse_context_t* ns_parse(const char *source, const char *filename) {
     ctx->last_f = 0;
     ctx->top = -1;
 
-    ctx->nodes = NULL;
-    ctx->sections = NULL;
+    ctx->node_count = 0;
+    ctx->section_count = 0;
 
     ctx->current = -1;
 
@@ -367,7 +366,7 @@ ns_parse_context_t* ns_parse(const char *source, const char *filename) {
     do {
         ns_token_skip_eol(ctx);
         loop = ns_parse_external_define(ctx);
-        if (loop) arrpush(ctx->sections, ctx->current);
+        if (loop) ctx->sections[ctx->section_count++] = ctx->current;
     } while (loop);
 
     return ctx;
@@ -467,9 +466,9 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
         case NS_AST_CALL_EXPR:
             printf("node[%d]", n.var_def.expr);
             printf("(");
-            for (int i = 0; i < n.call_expr.argc; i++) {
+            for (int i = 0; i < n.call_expr.arg_count; i++) {
                 printf("node[%d]", n.call_expr.args[i]);
-                if (i != n.call_expr.argc - 1) {
+                if (i != n.call_expr.arg_count - 1) {
                     printf(", ");
                 }
             }
@@ -484,12 +483,12 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
 void ns_parse_context_dump(ns_parse_context_t *ctx) {
     printf("AST:\n");
 
-    for (int i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
+    for (int i = 0, l = ctx->node_count; i < l; i++) {
         ns_ast_dump(ctx, i);
     }
 
     printf("Sections:\n");
-    for (int i = 0, l = ns_array_length(ctx->sections); i < l; i++) {
+    for (int i = 0, l = ctx->section_count; i < l; i++) {
         ns_ast_dump(ctx, ctx->sections[i]);
     }
 }

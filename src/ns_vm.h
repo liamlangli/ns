@@ -45,21 +45,19 @@ typedef struct ns_value_pair { ns_str key; int value; } ns_value_pair;
 
 typedef struct ns_fn_t {
     ns_str name;
-    int index;
-    int argc, localc;
-    ns_value_pair *locals;
-    ns_value_pair *args;
+    int arg_count, local_count;
+    ns_str arg_names[NS_MAX_PARAMS];
+    ns_value args[NS_MAX_PARAMS];
+    ns_str local_names[NS_MAX_PARAMS];
+    ns_value locals[NS_MAX_PARAMS];
 } ns_fn_t;
 
 typedef struct ns_struct_t {
     ns_str name;
     int index;
-    int fieldc;
-    ns_value_pair *fields;
+    int field_count;
+    ns_str field_names[NS_MAX_FIELDS];
 } ns_struct_t;
-
-typedef struct ns_fn_pair { ns_str key; ns_fn_t *value; } ns_fn_pair;
-typedef struct ns_struct_pair { ns_str key; ns_struct_t *value; } ns_struct_pair;
 
 typedef struct ns_call_scope {
     int fn_index;
@@ -71,16 +69,21 @@ typedef struct ns_call_scope {
 
 typedef struct ns_vm_t {
     ns_ast_t *ast;
-    ns_value *values;
+    ns_value values[NS_MAX_VALUE_COUNT];
+    int value_count;
+
+    ns_value global_values[NS_MAX_GLOBAL_VARS];
+    ns_str global_names[NS_MAX_GLOBAL_VARS];
+    int global_count;
+
     int stack_depth;
-    ns_value_pair *global_values;
-    ns_fn_pair *fns;
-    ns_struct_pair *structs;
+    ns_fn_t fns[NS_MAX_FN_COUNT];
+    int fn_count;
 
     // func call stack
     ns_call_scope call_stack[NS_MAX_CALL_STACK];
     int call_stack_top;
-    int argc;
+    ns_value ret;
 } ns_vm_t;
 
 ns_value ns_new_i32(ns_vm_t *vm, i32 i);
