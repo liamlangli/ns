@@ -11,6 +11,7 @@
         "__node_handle": "c",
         "cstdlib": "c",
         "locale": "c",
-        "variant": "c"
+        "variant": "c",
+        "typeinfo": "c"
     }
 }

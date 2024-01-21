@@ -48,7 +48,7 @@ f64 ns_str_to_f64(ns_str s);
 
 #define ns_array_push arrpush
 #define ns_array_pop arrpop
-#define ns_array_len arrlen
+#define ns_array_length arrlen
 
 #define ns_hash_map_get(h, k) hmget(h, k)
 #define ns_hash_map_set hmput

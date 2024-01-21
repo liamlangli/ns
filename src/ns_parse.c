@@ -20,7 +20,7 @@ int ns_save_state(ns_parse_context_t *ctx) {
 
 int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n) {
     ns_array_push(ctx->nodes, n);
-    ctx->current = ns_array_len(ctx->nodes) - 1;
+    ctx->current = ns_array_length(ctx->nodes) - 1;
     return ctx->current;
 }
 
@@ -484,12 +484,12 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
 void ns_parse_context_dump(ns_parse_context_t *ctx) {
     printf("AST:\n");
 
-    for (int i = 0, l = ns_array_len(ctx->nodes); i < l; i++) {
+    for (int i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
         ns_ast_dump(ctx, i);
     }
 
     printf("Sections:\n");
-    for (int i = 0, l = ns_array_len(ctx->sections); i < l; i++) {
+    for (int i = 0, l = ns_array_length(ctx->sections); i < l; i++) {
         ns_ast_dump(ctx, ctx->sections[i]);
     }
 }

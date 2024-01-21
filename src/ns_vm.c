@@ -9,6 +9,80 @@
 #include <stdlib.h>
 #include <assert.h>
 
+int ns_add_value(ns_vm_t *vm, ns_value v) {
+    int i = ns_array_length(vm->values);
+    v.index = i;
+    ns_array_push(vm->values, v);
+    return i;
+}
+
+void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
+    ns_ast_t n = vm->ast[i];
+    switch (n.type)
+    {
+    case NS_AST_VAR_DEF: {
+        ns_str name = n.var_def.name.val;
+        ns_hash_map_set(fn->locals, name, -(fn->localc++));
+    } break;
+    case NS_AST_BINARY_EXPR:
+        ns_vm_parse_fn_expr(vm, n.binary_expr.left, fn);
+        ns_vm_parse_fn_expr(vm, n.binary_expr.right, fn);
+        break;
+    case NS_AST_CALL_EXPR:
+        ns_vm_parse_fn_expr(vm, n.call_expr.callee, fn);
+        for (int i = 0; i < n.call_expr.argc; i++) {
+            ns_vm_parse_fn_expr(vm, n.call_expr.args[i], fn);
+        }
+        break;
+    case NS_AST_PRIMARY_EXPR:
+        if (n.primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+            ns_str name = n.primary_expr.token.val;
+            if (ns_hash_map_has(fn->args, name)) {
+                vm->ast[i].primary_expr.slot = ns_hash_map_get(fn->args, name);
+                break;
+            }
+            if (ns_hash_map_has(fn->locals, name)) {
+                vm->ast[i].primary_expr.slot = -ns_hash_map_get(fn->locals, name);
+                break;
+            }
+            if (ns_hash_map_has(vm->global_values, name)) {
+                vm->ast[i].primary_expr.slot = 0;
+                break;
+            }
+            fprintf(stderr, "eval error: unknown variable %*.s\n", name.len, name.data);
+            assert(false);
+        }
+        break;
+    case NS_AST_IF_STMT:
+        ns_vm_parse_fn_expr(vm, n.if_stmt.condition, fn);
+        ns_vm_parse_fn_expr(vm, n.if_stmt.body, fn);
+        ns_vm_parse_fn_expr(vm, n.if_stmt.else_body, fn);
+        break;
+    case NS_AST_ITER_STMT:
+        ns_vm_parse_fn_expr(vm, n.iter_stmt.condition, fn);
+        ns_vm_parse_fn_expr(vm, n.iter_stmt.generator, fn);
+        ns_vm_parse_fn_expr(vm, n.iter_stmt.body, fn);
+        break;
+    default:
+        break;
+    }
+}
+
+ns_fn_t* ns_vm_parse_fn(ns_vm_t *vm, ns_ast_t n) {
+    ns_fn_t *fn = (ns_fn_t *)malloc(sizeof(ns_fn_t));
+    fn->name = n.fn_def.name.val;
+    fn->args = NULL;
+    fn->locals = NULL;
+    for (int i = 0; i < ns_array_length(n.fn_def.params); i++) {
+        ns_str name = vm->ast[n.fn_def.params[i]].param.name.val;
+        ns_hash_map_set(fn->args, name, i);
+    }
+    // TODO collect local variables
+    ns_vm_parse_fn_expr(vm, n.fn_def.body, fn);
+    return fn;
+}
+
+
 ns_value ns_parse_literal(ns_vm_t *vm, ns_ast_t n) {
     switch (n.primary_expr.token.type)
     {
@@ -56,11 +130,42 @@ ns_value ns_parse_literal(ns_vm_t *vm, ns_ast_t n) {
     return NS_NIL;
 }
 
-int ns_add_value(ns_vm_t *vm, ns_value v) {
-    int i = ns_array_len(vm->values);
-    v.index = i;
-    ns_array_push(vm->values, v);
-    return i;
+void ns_vm_parse_ast(ns_vm_t *vm, ns_parse_context_t *ctx) {
+    // stage 1 save global variable & function name in to global context
+    int num_sections = ns_array_length(ctx->sections);
+    for (int i = 0; i < num_sections; ++i) {
+        int s = ctx->sections[i];
+        ns_ast_t n = ctx->nodes[s];
+        switch (n.type)
+        {
+        case NS_AST_FN_DEF: {
+            ns_str key = n.fn_def.name.val;
+            ns_hash_map_set(vm->fns, key, NULL);
+        } break;
+        case NS_AST_VAR_DEF: {
+            ns_str key = n.var_def.name.val;
+            ns_hash_map_set(vm->global_values, key, -1);
+        } break;
+        default:
+            break;
+        }
+    }
+
+    // stage 2 parse function body
+    for (int i = 0; i < num_sections; ++i) {
+        int s = ctx->sections[i];
+        ns_ast_t n = ctx->nodes[s];
+        switch (n.type)
+        {
+        case NS_AST_FN_DEF: {
+            ns_str key = n.fn_def.name.val;
+            ns_fn_t *f = ns_vm_parse_fn(vm, n);
+            ns_hash_map_set(vm->fns, key, f);
+        } break;
+        default:
+            break;
+        }
+    }
 }
 
 ns_value ns_new_bool(ns_vm_t *vm, bool value) {
@@ -154,20 +259,6 @@ ns_value ns_eval_binary_op(ns_vm_t *vm, ns_value left, ns_value right, int i) {
     return NS_NIL;
 }
 
-ns_fn_t* ns_vm_parse_fn(ns_vm_t *vm, ns_ast_t n) {
-    ns_fn_t *fn = (ns_fn_t *)malloc(sizeof(ns_fn_t));
-    fn->name = n.fn_def.name.val;
-    fn->args = NULL;
-    fn->locals = NULL;
-    for (int i = 0; i < ns_array_len(n.fn_def.params); i++) {
-        ns_str name = vm->ast[n.fn_def.params[i]].param.name.val;
-        ns_hash_map_set(fn->args, name, i);
-    }
-
-    // TODO collect local variables
-    return fn;
-}
-
 ns_value ns_call_builtin_fn(ns_vm_t *vm, ns_str name, int i) {
     ns_ast_t n = vm->ast[i];
     if (ns_str_equals_STR(name, "print")) {
@@ -259,10 +350,11 @@ ns_value ns_eval(ns_vm_t *vm, const char* source, const char *filename) {
     }
 
     vm->ast = ctx->nodes;
+    ns_vm_parse_ast(vm, ctx);
 
     ns_value ret = NS_NIL;
     int i = 0;
-    int l = ns_array_len(ctx->sections);
+    int l = ns_array_length(ctx->sections);
 
     // eval global values
     while (i < l) {

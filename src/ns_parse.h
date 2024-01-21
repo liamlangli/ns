@@ -79,6 +79,7 @@ typedef struct ns_ast_cast_expr {
 typedef struct ns_ast_primary_expr {
     ns_token_t token;
     int expr;
+    int slot; // (0) for global, (< 0) for local, (> 0) for param
 } ns_ast_primary_expr;
 
 typedef struct ns_ast_member_expr {
