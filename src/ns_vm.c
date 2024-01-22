@@ -135,6 +135,13 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
     case NS_AST_JUMP_STMT:
         ns_vm_parse_fn_expr(vm, n.jump_stmt.expr, fn);
         break;
+    case NS_AST_COMPOUND_STMT: {
+        ns_ast_compound_sections *sections = &vm->parse_ctx->compound_sections[n.compound_stmt.section];
+        int count = sections->section_count;
+        for (int i = 0; i < count; i++) {
+            ns_vm_parse_fn_expr(vm, sections->sections[i], fn);
+        }
+    } break;
     default:
         break;
     }
@@ -339,8 +346,29 @@ ns_value ns_eval_binary_op(ns_vm_t *vm, ns_value left, ns_value right, int i) {
                 fprintf(stderr, "eval error: unknown value type\n");
                 assert(false);
             }
+        } else {
+            if (ns_value_int_type(left) && ns_value_int_type(right)) {
+                return (ns_value){.type = NS_TYPE_I64, .u.int64 = left.u.int64 - right.u.int64};
+            } else if (ns_value_float_type(left) && ns_value_float_type(right)) {
+                return (ns_value){.type = NS_TYPE_F64, .u.float64 = left.u.float64 - right.u.float64};
+            } else {
+                fprintf(stderr, "eval error: unknown value type\n");
+                assert(false);
+            }
         }
         /* code */
+        break;
+    case NS_TOKEN_EQUALITY_OPERATOR:
+        if (ns_str_equals_STR(n.binary_expr.op.val, "==")) {
+            if (ns_value_int_type(left) && ns_value_int_type(right)) {
+                return left.u.int64 == right.u.int64 ? NS_TRUE : NS_FALSE;
+            } else if (ns_value_float_type(left) && ns_value_float_type(right)) {
+                return left.u.float64 == right.u.float64 ? NS_TRUE : NS_FALSE;
+            } else {
+                fprintf(stderr, "eval error: unknown value type\n");
+                assert(false);
+            }
+        }
         break;
     default:
         fprintf(stderr, "eval error: unknown binary op type\n");
@@ -450,11 +478,12 @@ ns_value ns_eval_expr(ns_vm_t *vm, int i) {
     case NS_AST_ITER_STMT:
         break;
     case NS_AST_COMPOUND_STMT: {
-        int count = n.compound_stmt.end - n.compound_stmt.begin;
+        int count = n.compound_stmt.section;
+        ns_ast_compound_sections *sections = &vm->parse_ctx->compound_sections[n.compound_stmt.section];
         ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
-        for (int i = 0; i < count; i++) {
+        for (int i = 0, l = sections->section_count; i < l; i++) {
             if (scope->returned) break;
-            ns_eval_expr(vm, vm->parse_ctx->compound_nodes[n.compound_stmt.begin + i]);
+            ns_eval_expr(vm, sections->sections[i]);
         }
     } break;
     default:

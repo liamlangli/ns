@@ -126,9 +126,13 @@ typedef struct ns_ast_labeled_stmt {
 } ns_ast_labeled_stmt;
 
 typedef struct ns_ast_compound_stmt {
-    int begin;
-    int end;
+    int section;
 } ns_ast_compound_stmt;
+
+typedef struct ns_ast_compound_sections {
+    int sections[NS_MAX_COMPOUND_SECTION_COUNT];
+    int section_count;
+} ns_ast_compound_sections;
 
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
@@ -165,7 +169,7 @@ typedef struct as_parse_context_t {
     int stack[NS_MAX_PARSE_STACK];
     int top;
 
-    int compound_nodes[NS_MAX_NODE_COUNT];
+    ns_ast_compound_sections compound_sections[NS_MAX_SECTION_COUNT];
     int compound_count;
 
     ns_token_t token, last_token;

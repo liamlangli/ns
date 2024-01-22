@@ -134,13 +134,15 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
         ns_token_skip_eol(ctx);
-        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .compound_stmt.begin = ctx->compound_count };
+        int section = ctx->compound_count;
+        ns_ast_compound_sections *sections = &ctx->compound_sections[ctx->compound_count++];
+        sections->section_count = 0;
+        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .compound_stmt.section = section };
         while (ns_parse_var_define(ctx) || ns_parse_stmt(ctx)) {
-            ctx->compound_nodes[ctx->compound_count++] = ctx->current;
+            sections->sections[sections->section_count++] = ctx->current;
             ns_token_skip_eol(ctx);
             ns_parse_next_token(ctx);
             if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
-                n.compound_stmt.end = ctx->compound_count;
                 ns_ast_push(ctx, n);
                 return true;
             }

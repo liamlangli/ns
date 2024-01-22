@@ -128,7 +128,7 @@ bool ns_primary_expr(ns_parse_context_t *ctx) {
     }
 
     if (is_literal) {
-        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr.token = ctx->token};
+        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = { .token = ctx->token, .slot = -1}};
         ns_ast_push(ctx, n);
         return true;
     }
@@ -485,9 +485,10 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             break;
         case NS_AST_COMPOUND_STMT:
             printf("{ ");
-            int count = n.compound_stmt.end - n.compound_stmt.begin;
+            ns_ast_compound_sections *sections = &ctx->compound_sections[n.compound_stmt.section];
+            int count = sections->section_count;
             for (int i = 0; i < count; i++) {
-                printf("node[%d]", ctx->compound_nodes[n.compound_stmt.begin + i]);
+                printf("node[%d]", sections->sections[i]);
                 if (i != count - 1) {
                     printf(", ");
                 }
