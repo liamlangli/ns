@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ns_tokenize.h"
+#include "ns_type.h"
 
 typedef enum {
     NS_AST_UNKNOWN = 0,
@@ -27,7 +28,8 @@ typedef enum {
     NS_AST_ITER_STMT,
     NS_AST_RETURN_STMT,
     NS_AST_JUMP_STMT,
-    NS_AST_LABELED_STMT
+    NS_AST_LABELED_STMT,
+    NS_AST_COMPOUND_STMT
 } NS_AST_TYPE;
 
 typedef struct ns_ast_t ns_ast_t;
@@ -123,6 +125,11 @@ typedef struct ns_ast_labeled_stmt {
     int stmt;
 } ns_ast_labeled_stmt;
 
+typedef struct ns_ast_compound_stmt {
+    int expr_begin;
+    int expr_end;
+} ns_ast_compound_stmt;
+
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
     union {
@@ -142,6 +149,7 @@ typedef struct ns_ast_t {
         ns_ast_iter_stmt iter_stmt;
         ns_ast_jump_stmt jump_stmt;
         ns_ast_labeled_stmt label_stmt;
+        ns_ast_compound_stmt compound_stmt;
     };
 } ns_ast_t;
 
@@ -156,6 +164,9 @@ typedef struct as_parse_context_t {
 
     int stack[NS_MAX_PARSE_STACK];
     int top;
+
+    int compound_nodes[NS_MAX_NODE_COUNT];
+    int compound_count;
 
     ns_token_t token, last_token;
     const char *source;

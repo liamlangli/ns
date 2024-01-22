@@ -398,6 +398,8 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
             return "NS_AST_RETURN_STMT";
         case NS_AST_JUMP_STMT:
             return "NS_AST_JUMP_STMT";
+        case NS_AST_COMPOUND_STMT:
+            return "NS_AST_COMPOUND_STMT";
         default:
             return "NS_AST_UNKNOWN";
     }
@@ -405,7 +407,7 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
 
 void ns_ast_dump(ns_parse_context_t *ctx, int i) {
     ns_ast_t n = ctx->nodes[i];
-    printf("%4d [type:  %s] ", i, ns_ast_type_str(n.type));
+    printf("%4d [type: %-20s] ", i, ns_ast_type_str(n.type));
     switch (n.type) {
         case NS_AST_FN_DEF:
             ns_str_printf(n.fn_def.name.val);
@@ -437,12 +439,6 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             break;
         case NS_AST_PRIMARY_EXPR:
             ns_str_printf(n.primary_expr.token.val);
-            break;
-        case NS_AST_JUMP_STMT:
-            ns_str_printf(n.jump_stmt.label.val);
-            if (n.jump_stmt.expr != -1) {
-                printf(" node[%d]", n.jump_stmt.expr);
-            }
             break;
         case NS_AST_BINARY_EXPR:
             printf("node[%d] ", n.binary_expr.left);
@@ -479,6 +475,29 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
                 }
             }
             printf(")");
+            break;
+        case NS_AST_JUMP_STMT:
+            ns_str_printf(n.jump_stmt.label.val);
+            if (n.jump_stmt.expr != -1) {
+                printf(" node[%d]", n.jump_stmt.expr);
+            }
+            break;
+        case NS_AST_COMPOUND_STMT:
+            printf("{ ");
+            int count = n.compound_stmt.expr_end - n.compound_stmt.expr_begin;
+            for (int i = 0; i < count; i++) {
+                printf("node[%d]", ctx->compound_nodes[n.compound_stmt.expr_begin + i]);
+                if (i != count - 1) {
+                    printf(", ");
+                }
+            }
+            printf(" }");
+            break;
+        case NS_AST_IF_STMT:
+            printf("if (node[%d]) node[%d]", n.if_stmt.condition, n.if_stmt.body);
+            if (n.if_stmt.else_body != -1) {
+                printf(" else node[%d]", n.if_stmt.else_body);
+            }
             break;
         default:
             break;
