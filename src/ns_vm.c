@@ -269,8 +269,9 @@ int ns_vm_find_global_value(ns_vm_t *vm, ns_str name) {
     return -1;
 }
 
+ns_vm_t _vm = {.call_stack_top = -1};
 ns_vm_t *ns_create_vm() {
-    ns_vm_t *vm = (ns_vm_t *)malloc(sizeof(ns_vm_t));
+    ns_vm_t *vm = &_vm;
     vm->ast = NULL;
     vm->stack_depth = 0;
     vm->global_count = 0;
@@ -281,6 +282,7 @@ ns_vm_t *ns_create_vm() {
 }
 
 bool ns_vm_push_call_scope(ns_vm_t *vm, ns_call_scope scope) {
+    scope.returned = false;
     if (vm->call_stack_top >= NS_MAX_CALL_STACK) {
         fprintf(stderr, "eval error: call stack overflow\n");
         return false;
@@ -392,7 +394,8 @@ ns_value ns_call_fn(ns_vm_t *vm, int i) {
             }
             scope.fn_index = fn_i;
             ns_vm_push_call_scope(vm, scope);
-            ns_value ret = ns_eval_expr(vm, fn->ast_root);
+            ns_eval_expr(vm, fn->ast_root);
+            ns_value ret = vm->call_stack[vm->call_stack_top].ret;
             vm->call_stack_top--;
             return ret;
         }
@@ -405,6 +408,7 @@ ns_value ns_eval_jump_stmt(ns_vm_t *vm, int i) {
     if (ns_str_equals_STR(n.jump_stmt.label.val, "return")) {
         ns_value ret = ns_eval_expr(vm, n.jump_stmt.expr);
         ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
+        scope->returned = true;
         scope->ret = ret;
         return ret;
     }
@@ -443,6 +447,16 @@ ns_value ns_eval_expr(ns_vm_t *vm, int i) {
         break;
     case NS_AST_JUMP_STMT:
         return ns_eval_jump_stmt(vm, i);
+    case NS_AST_ITER_STMT:
+        break;
+    case NS_AST_COMPOUND_STMT: {
+        int count = n.compound_stmt.end - n.compound_stmt.begin;
+        ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
+        for (int i = 0; i < count; i++) {
+            if (scope->returned) break;
+            ns_eval_expr(vm, vm->parse_ctx->compound_nodes[n.compound_stmt.begin + i]);
+        }
+    } break;
     default:
         fprintf(stderr, "eval error: unknown ast type %s\n", ns_ast_type_str(n.type));
         assert(false);
@@ -460,6 +474,7 @@ ns_value ns_eval(ns_vm_t *vm, const char* source, const char *filename) {
     }
 
     vm->ast = ctx->nodes;
+    vm->parse_ctx = ctx;
 
     ns_vm_parse_ast(vm, ctx);
 
@@ -481,14 +496,12 @@ ns_value ns_eval(ns_vm_t *vm, const char* source, const char *filename) {
                 fprintf(stderr, "eval error: unknown variable %*.s\n", key.len, key.data);
                 assert(false);
             } else {
-                slot = vm->global_count++;
                 vm->global_values[slot] = v;
             }
         } break;
-        case NS_AST_CALL_EXPR: {
-            ret = ns_call_fn(vm, i);
-        } break;
-
+        case NS_AST_CALL_EXPR: 
+            ret = ns_call_fn(vm, s);
+            break;
         case NS_AST_FN_DEF:
         case NS_AST_STRUCT_DEF:
         break;

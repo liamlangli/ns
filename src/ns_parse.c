@@ -349,8 +349,9 @@ bool ns_parse_type_define(ns_parse_context_t *ctx) {
     return false;
 }
 
+static ns_parse_context_t _parse_ctx = {0};
 ns_parse_context_t* ns_parse(const char *source, const char *filename) {
-    ns_parse_context_t* ctx = (ns_parse_context_t*)malloc(sizeof(ns_parse_context_t));
+    ns_parse_context_t *ctx = &_parse_ctx;
     ctx->source = source;
     ctx->filename = filename;
     ctx->f = 0;
@@ -484,9 +485,9 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             break;
         case NS_AST_COMPOUND_STMT:
             printf("{ ");
-            int count = n.compound_stmt.expr_end - n.compound_stmt.expr_begin;
+            int count = n.compound_stmt.end - n.compound_stmt.begin;
             for (int i = 0; i < count; i++) {
-                printf("node[%d]", ctx->compound_nodes[n.compound_stmt.expr_begin + i]);
+                printf("node[%d]", ctx->compound_nodes[n.compound_stmt.begin + i]);
                 if (i != count - 1) {
                     printf(", ");
                 }

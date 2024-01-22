@@ -61,12 +61,14 @@ typedef struct ns_struct_t {
 typedef struct ns_call_scope {
     int fn_index;
     int argc;
+    bool returned;
     ns_value ret;
     ns_value locals[NS_MAX_PARAMS];
     ns_value args[NS_MAX_PARAMS];
 } ns_call_scope;
 
 typedef struct ns_vm_t {
+    ns_parse_context_t *parse_ctx;
     ns_ast_t *ast;
     ns_value values[NS_MAX_VALUE_COUNT];
     int value_count;

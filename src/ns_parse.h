@@ -126,8 +126,8 @@ typedef struct ns_ast_labeled_stmt {
 } ns_ast_labeled_stmt;
 
 typedef struct ns_ast_compound_stmt {
-    int expr_begin;
-    int expr_end;
+    int begin;
+    int end;
 } ns_ast_compound_stmt;
 
 typedef struct ns_ast_t {

@@ -54,7 +54,6 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
         if (ns_parse_compound_stmt(ctx)) {
             n.if_stmt.body = ctx->current;
             n.if_stmt.else_body = -1;
-            ns_ast_push(ctx, n);
 
             int else_state = ns_save_state(ctx);
             // try parse else statement
@@ -62,6 +61,7 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
                 int recursive_state = ns_save_state(ctx);
                 if (ns_parse_if_stmt(ctx)) {
                     n.if_stmt.else_body = ctx->current;
+                    ns_ast_push(ctx, n);
                     return true;
                 }
                 ns_restore_state(ctx, recursive_state);
@@ -69,10 +69,12 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
                 if (ns_parse_compound_stmt(ctx)) {
                     n.if_stmt.else_body = ctx->current;
                 }
+                ns_ast_push(ctx, n);
                 return true;
             }
 
             ns_restore_state(ctx, else_state);
+            ns_ast_push(ctx, n);
             return true;
         }
     }
@@ -132,13 +134,13 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
         ns_token_skip_eol(ctx);
-        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .compound_stmt.expr_begin = ctx->compound_count };
+        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .compound_stmt.begin = ctx->compound_count };
         while (ns_parse_var_define(ctx) || ns_parse_stmt(ctx)) {
             ctx->compound_nodes[ctx->compound_count++] = ctx->current;
             ns_token_skip_eol(ctx);
             ns_parse_next_token(ctx);
             if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
-                n.compound_stmt.expr_end = ctx->compound_count;
+                n.compound_stmt.end = ctx->compound_count;
                 ns_ast_push(ctx, n);
                 return true;
             }
