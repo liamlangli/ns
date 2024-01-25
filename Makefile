@@ -9,13 +9,13 @@ all: $(SRCS)
 	$(CC) $(CC_OPT) -o out/ns $^ -Isrc
 
 token: all
-	./out/ns -t sample/fib.ns
+	./out/ns -t sample/rt.ns
 
 parse: all
-	./out/ns -p sample/fib.ns
+	./out/ns -p sample/rt.ns
 
 eval: all
-	./out/ns sample/fib.ns
+	./out/ns sample/rt.ns
 
 clean:
 	rm -rf out/*

@@ -212,6 +212,10 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                 if (ctx->top > expr_top && ns_parse_expr_rewind(ctx, expr_top)) {
                     return true;
                 } else {
+                    if (ctx->top == expr_top) {
+                        ns_ast_push(ctx, (ns_ast_t){.type= NS_AST_COMPOUND_STMT, .compound_stmt = {.section = -1}});
+                        return true; // empty compound stmt
+                    }
                     fprintf(stderr, "syntax error: invalid expression before EOL\n");
                     assert(false);
                 }

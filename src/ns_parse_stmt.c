@@ -83,7 +83,7 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_iteration_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_iteration_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
     // for expression statement
@@ -91,7 +91,7 @@ bool ns_iteration_stmt(ns_parse_context_t *ctx) {
         ns_ast_t n = {.type = NS_AST_ITER_STMT, .iter_stmt.generator = ctx->current};
         // with body
         int body_state = ns_save_state(ctx);
-        if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
+        if (ns_parse_compound_stmt(ctx)) {
             n.iter_stmt.body = ctx->current;
             ns_ast_push(ctx, n);
             return true;
@@ -185,7 +185,7 @@ bool ns_parse_stmt(ns_parse_context_t *ctx) {
     ns_restore_state(ctx, state);
 
     // iteration statement
-    if (ns_iteration_stmt(ctx)) {
+    if (ns_parse_iteration_stmt(ctx)) {
         return true;
     }
     ns_restore_state(ctx, state);

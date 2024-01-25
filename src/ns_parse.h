@@ -96,9 +96,9 @@ typedef struct ns_ast_call_expr {
 } ns_ast_call_expr;
 
 typedef struct ns_ast_generator_expr {
-    int spawn;
     ns_token_t label;
     int from;
+    ns_token_t token;
     int to;
 } ns_ast_generator_expr;
 

@@ -136,6 +136,7 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
         ns_vm_parse_fn_expr(vm, n.jump_stmt.expr, fn);
         break;
     case NS_AST_COMPOUND_STMT: {
+        if (n.compound_stmt.section == -1) break;
         ns_ast_compound_sections *sections = &vm->parse_ctx->compound_sections[n.compound_stmt.section];
         int count = sections->section_count;
         for (int i = 0; i < count; i++) {

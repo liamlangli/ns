@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "ns token",
             "program": "${workspaceFolder}/out/ns",
-            "args": ["-t","sample/fib.ns"],
+            "args": ["-t","sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -17,7 +17,7 @@
             "request": "launch",
             "name": "ns parse",
             "program": "${workspaceFolder}/out/ns",
-            "args": ["-p", "sample/fib.ns"],
+            "args": ["-p", "sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -25,7 +25,7 @@
             "request": "launch",
             "name": "ns eval",
             "program": "${workspaceFolder}/out/ns",
-            "args": ["sample/fib.ns"],
+            "args": ["sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {

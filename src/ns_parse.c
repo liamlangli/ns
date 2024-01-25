@@ -85,11 +85,9 @@ bool ns_parse_type_expr(ns_parse_context_t *ctx) {
     if (ctx->token.type == NS_TOKEN_TYPE) {
         return true;
     }
-    ns_restore_state(ctx, state);
 
     // identifier
     if (ctx->token.type == NS_TOKEN_IDENTIFIER) {
-        ns_parse_next_token(ctx);
         return true;
     }
 
@@ -158,16 +156,21 @@ bool ns_primary_expr(ns_parse_context_t *ctx) {
 bool ns_parse_generator_expr(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
-    if (ns_identifier(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_LET) && ns_identifier(ctx)) {
         ns_ast_t n = {.type = NS_AST_GENERATOR_EXPR, .generator.label = ctx->token};
+        if (!ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
+            ns_restore_state(ctx, state);
+            return false;
+        }
 
         // identifier in b
         int from_state = ns_save_state(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_IN) {
+            n.generator.token = ctx->token;
             if (ns_parse_expr_stack(ctx)) {
                 n.generator.from = ctx->current;
-                ctx->current = ns_ast_push(ctx, n);
+                ns_ast_push(ctx, n);
                 return true;
             }
         }
@@ -176,10 +179,13 @@ bool ns_parse_generator_expr(ns_parse_context_t *ctx) {
         // identifier a to b
         if (ns_primary_expr(ctx)) {
             n.generator.from = ctx->current;
-            if (ns_token_require(ctx, NS_TOKEN_TO) && ns_primary_expr(ctx)) {
-                n.generator.to = ctx->current;
-                ctx->current = ns_ast_push(ctx, n);
-                return true;
+            if (ns_token_require(ctx, NS_TOKEN_TO)) {
+                n.generator.token = ctx->token;
+                if(ns_primary_expr(ctx)) {
+                    n.generator.to = ctx->current;
+                    ns_ast_push(ctx, n);
+                    return true;
+                }
             }
         }
     }
@@ -247,6 +253,7 @@ bool ns_parse_fn_define(ns_parse_context_t *ctx) {
         }
     }
 
+    if (fn.fn_def.param_count == 0) ns_parse_next_token(ctx);
     if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
         ns_restore_state(ctx, state);
         return false;
@@ -286,17 +293,21 @@ bool ns_parse_struct_define(ns_parse_context_t *ctx) {
     }
 
     ns_ast_t n = {.type = NS_AST_STRUCT_DEF, .struct_def = { .name = name, .field_count = 0}};
+    ns_token_skip_eol(ctx);
     while (ns_parameter(ctx)) {
+        ns_token_skip_eol(ctx);
         n.struct_def.fields[n.struct_def.field_count++] = ctx->current;
         ns_parse_next_token(ctx);
-        if (ctx->token.type == NS_TOKEN_COMMA || ctx->token.type == NS_TOKEN_EOL) {
-            return true;
+        if (ctx->token.type == NS_TOKEN_COMMA) {
+            ns_token_skip_eol(ctx);
+            continue;
         } else {
             break;
         }
     }
 
     if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+        ns_ast_push(ctx, n);
         return true;
     }
 
@@ -401,6 +412,8 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
             return "NS_AST_JUMP_STMT";
         case NS_AST_COMPOUND_STMT:
             return "NS_AST_COMPOUND_STMT";
+        case NS_AST_GENERATOR_EXPR:
+            return "NS_AST_GENERATOR_EXPR";
         default:
             return "NS_AST_UNKNOWN";
     }
@@ -485,6 +498,10 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             break;
         case NS_AST_COMPOUND_STMT:
             printf("{ ");
+            if (n.compound_stmt.section == -1) {
+                printf("}");
+                break;
+            }
             ns_ast_compound_sections *sections = &ctx->compound_sections[n.compound_stmt.section];
             int count = sections->section_count;
             for (int i = 0; i < count; i++) {
@@ -501,6 +518,22 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
                 printf(" else node[%d]", n.if_stmt.else_body);
             }
             break;
+        case NS_AST_STRUCT_DEF: {
+            printf("struct ");
+            ns_str_printf(n.struct_def.name.val);
+            printf(" { ");
+            int count = n.struct_def.field_count;
+            for (int i = 0; i < count; ++i) {
+                printf("node[%d]", n.struct_def.fields[i]);
+                if (i != count -1) {
+                    printf(", ");
+                }
+            }
+            printf(" }");
+        } break;
+        case NS_AST_GENERATOR_EXPR: {
+
+        } break;
         default:
             break;
     }
