@@ -1,0 +1,16 @@
+struct float3 {
+    x: f32,
+    y: f32,
+    z: f32
+}
+
+struct ray {
+    origin: float3
+    direction: float3
+}
+
+fn main() {
+
+}
+
+main()
