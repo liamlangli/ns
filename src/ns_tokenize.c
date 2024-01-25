@@ -43,6 +43,8 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_ASSIGN_OPERATOR";
     case NS_TOKEN_ARITHMETIC_OPERATOR:
         return "NS_TOKEN_ARITHMETIC_OPERATOR";
+    case NS_TOKEN_ADDITIVE_OPERATOR:
+        return "NS_TOKEN_ADDITIVE_OPERATOR";
     case NS_TOKEN_BITWISE_OPERATOR:
         return "NS_TOKEN_BITWISE_OPERATOR";
     case NS_TOKEN_BOOL_OPERATOR:
@@ -63,6 +65,14 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_EOL";
     case NS_TOKEN_EOF:
         return "NS_TOKEN_EOF";
+    case NS_TOKEN_RETURN:
+        return "NS_TOKEN_RETURN";
+    case NS_TOKEN_IF:
+        return "NS_TOKEN_IF";
+    case NS_TOKEN_ELSE:
+        return "NS_TOKEN_ELSE";
+    case NS_TOKEN_EQUALITY_OPERATOR:
+        return "NS_TOKEN_EQUALITY_OPERATOR";
     default:
         return "Unknown token";
     }
