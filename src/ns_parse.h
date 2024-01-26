@@ -25,7 +25,8 @@ typedef enum {
     NS_AST_GENERATOR_EXPR,
 
     NS_AST_IF_STMT,
-    NS_AST_ITER_STMT,
+    NS_AST_FOR_STMT,
+    NS_AST_WHILE_STMT,
     NS_AST_RETURN_STMT,
     NS_AST_JUMP_STMT,
     NS_AST_LABELED_STMT,
@@ -108,11 +109,21 @@ typedef struct ns_ast_if_stmt {
     int else_body;
 } ns_ast_if_stmt;
 
-typedef struct ns_ast_iter_stmt {
-    int condition;
+typedef struct ns_ast_for_stmt {
     int generator;
     int body;
-} ns_ast_iter_stmt;
+} ns_ast_for_stmt;
+
+typedef struct ns_ast_while_stmt {
+    int condition;
+    int body;
+} ns_ast_while_stmt;
+
+typedef struct ns_ast_loop_stmt {
+    int condition;
+    int body;
+    bool do_first;
+} ns_ast_loop_stmt;
 
 typedef struct ns_ast_jump_stmt {
     ns_token_t label;
@@ -150,7 +161,8 @@ typedef struct ns_ast_t {
         ns_ast_generator_expr generator;
 
         ns_ast_if_stmt if_stmt;
-        ns_ast_iter_stmt iter_stmt;
+        ns_ast_while_stmt while_stmt;
+        ns_ast_for_stmt for_stmt;
         ns_ast_jump_stmt jump_stmt;
         ns_ast_labeled_stmt label_stmt;
         ns_ast_compound_stmt compound_stmt;

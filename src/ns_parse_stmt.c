@@ -83,47 +83,46 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_iteration_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_for_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
-
-    // for expression statement
     if (ns_token_require(ctx, NS_TOKEN_FOR) && ns_parse_generator_expr(ctx)) {
-        ns_ast_t n = {.type = NS_AST_ITER_STMT, .iter_stmt.generator = ctx->current};
-        // with body
-        int body_state = ns_save_state(ctx);
+        ns_ast_t n = {.type = NS_AST_FOR_STMT, .for_stmt.generator = ctx->current};
         if (ns_parse_compound_stmt(ctx)) {
-            n.iter_stmt.body = ctx->current;
-            ns_ast_push(ctx, n);
-            return true;
-        }
-        ns_restore_state(ctx, body_state);
-
-        // without body
-        if (ns_token_require(ctx, NS_TOKEN_EOL)) {
+            n.for_stmt.body = ctx->current;
             ns_ast_push(ctx, n);
             return true;
         }
     }
     ns_restore_state(ctx, state);
+    return false;
+}
+
+bool ns_parse_while_stmt(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_WHILE) && ns_parse_expr_stack(ctx)) {
+        ns_ast_t n = {.type = NS_AST_WHILE_STMT, .while_stmt.condition = ctx->current};
+        if (ns_parse_compound_stmt(ctx)) {
+            n.while_stmt.body = ctx->current;
+            ns_ast_push(ctx, n);
+            return true;
+        }
+    }
+    ns_restore_state(ctx, state);
+    return false;
+}
+
+bool ns_parse_iteration_stmt(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+
+    // for expression statement
+    if (ns_parse_for_stmt(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
 
     // while expression statement
-    if (ns_token_require(ctx, NS_TOKEN_WHILE) && ns_parse_expr_stack(ctx)) {
-        ns_ast_t n = {.type = NS_AST_ITER_STMT, .iter_stmt.condition = ctx->current};
-
-        // with body
-        int body_state = ns_save_state(ctx);
-        if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE) && ns_parse_stmt(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
-            n.iter_stmt.body = ctx->current;
-            ns_ast_push(ctx, n);
-            return true;
-        }
-        ns_restore_state(ctx, body_state);
-
-        // without body
-        if (ns_token_require(ctx, NS_TOKEN_EOL)) {
-            ns_ast_push(ctx, n);
-            return true;
-        }
+    if (ns_parse_while_stmt(ctx)) {
+        return true;
     }
 
     ns_restore_state(ctx, state);
@@ -133,12 +132,25 @@ bool ns_parse_iteration_stmt(ns_parse_context_t *ctx) {
 bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
+
+        // direct close test
+        int close_state = ns_save_state(ctx);
+        ns_token_skip_eol(ctx);
+        ns_parse_next_token(ctx);
+        if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+            ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .compound_stmt.section = -1 };
+            ns_ast_push(ctx, n);
+            return true;
+        }
+        ns_restore_state(ctx, close_state);
+
         ns_token_skip_eol(ctx);
         int section = ctx->compound_count;
         ns_ast_compound_sections *sections = &ctx->compound_sections[ctx->compound_count++];
         sections->section_count = 0;
         ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .compound_stmt.section = section };
-        while (ns_parse_var_define(ctx) || ns_parse_stmt(ctx)) {
+        while (ns_parse_var_define(ctx) ||
+               ns_parse_stmt(ctx)) {
             sections->sections[sections->section_count++] = ctx->current;
             ns_token_skip_eol(ctx);
             ns_parse_next_token(ctx);

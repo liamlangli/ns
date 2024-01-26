@@ -127,10 +127,13 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
         ns_vm_parse_fn_expr(vm, n.if_stmt.body, fn);
         ns_vm_parse_fn_expr(vm, n.if_stmt.else_body, fn);
         break;
-    case NS_AST_ITER_STMT:
-        ns_vm_parse_fn_expr(vm, n.iter_stmt.condition, fn);
-        ns_vm_parse_fn_expr(vm, n.iter_stmt.generator, fn);
-        ns_vm_parse_fn_expr(vm, n.iter_stmt.body, fn);
+    case NS_AST_FOR_STMT:
+        ns_vm_parse_fn_expr(vm, n.for_stmt.generator, fn);
+        ns_vm_parse_fn_expr(vm, n.for_stmt.body, fn);
+        break;
+    case NS_AST_WHILE_STMT:
+        ns_vm_parse_fn_expr(vm, n.while_stmt.condition, fn);
+        ns_vm_parse_fn_expr(vm, n.while_stmt.body, fn);
         break;
     case NS_AST_JUMP_STMT:
         ns_vm_parse_fn_expr(vm, n.jump_stmt.expr, fn);
@@ -476,7 +479,8 @@ ns_value ns_eval_expr(ns_vm_t *vm, int i) {
         break;
     case NS_AST_JUMP_STMT:
         return ns_eval_jump_stmt(vm, i);
-    case NS_AST_ITER_STMT:
+    case NS_AST_FOR_STMT:
+    case NS_AST_WHILE_STMT:
         break;
     case NS_AST_COMPOUND_STMT: {
         int count = n.compound_stmt.section;

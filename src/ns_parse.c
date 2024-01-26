@@ -404,8 +404,10 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
             return "NS_AST_CALL_EXPR";
         case NS_AST_IF_STMT:
             return "NS_AST_IF_STMT";
-        case NS_AST_ITER_STMT:
-            return "NS_AST_ITER_STMT";
+        case NS_AST_FOR_STMT:
+            return "NS_AST_FOR_STMT";
+        case NS_AST_WHILE_STMT:
+            return "NS_AST_WHILE_STMT";
         case NS_AST_RETURN_STMT:
             return "NS_AST_RETURN_STMT";
         case NS_AST_JUMP_STMT:
@@ -544,8 +546,11 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
                 printf(" to node[%d]", n.generator.to);
             }
         } break;
-        case NS_AST_ITER_STMT: {
-
+        case NS_AST_FOR_STMT: {
+            printf("for node[%d] { node[%d] }", n.for_stmt.generator, n.for_stmt.body);
+        } break;
+        case NS_AST_WHILE_STMT: {
+            printf("while node[%d] { node[%d] }", n.while_stmt.condition, n.while_stmt.body);
         } break;
         default:
             break;
