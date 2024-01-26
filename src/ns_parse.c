@@ -2,6 +2,7 @@
 #include "ns_parse.h"
 #include "ns_tokenize.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -216,6 +217,95 @@ bool ns_parameter(ns_parse_context_t *ctx) {
     return true;
 }
 
+bool ns_parse_ops_overridable(ns_token_t token) {
+    switch (token.type)
+    {
+    case NS_TOKEN_ADDITIVE_OPERATOR:
+    case NS_TOKEN_MULTIPLICATIVE_OPERATOR:
+    case NS_TOKEN_SHIFT_OPERATOR:
+    case NS_TOKEN_RELATIONAL_OPERATOR:
+    case NS_TOKEN_EQUALITY_OPERATOR:
+    case NS_TOKEN_ARITHMETIC_OPERATOR:
+    case NS_TOKEN_BITWISE_OPERATOR:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool ns_parse_ops_fn_define(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+    // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
+
+    bool is_async = false;
+    if (ns_token_require(ctx, NS_TOKEN_ASYNC)) {
+        is_async = true;
+    }
+
+    if (!ns_token_require(ctx, NS_TOKEN_FN)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    if (!ns_token_require(ctx, NS_TOKEN_OPS)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    ns_parse_next_token(ctx);
+    if (!ns_parse_ops_overridable(ctx->token)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+    ns_token_t ops = ctx->token;
+
+    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN) || ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    ns_ast_t fn = {.type = NS_AST_OPS_FN_DEF, .ops_fn_def = { .ops = ops, .is_async = is_async}};
+    // parse parameters
+    ns_token_skip_eol(ctx);
+    if (!ns_parameter(ctx)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+    fn.ops_fn_def.left = ctx->current;
+
+    ns_token_skip_eol(ctx);
+    if (!ns_parameter(ctx)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+    fn.ops_fn_def.right = ctx->current;
+
+    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    // optional
+    if(ns_type_restriction(ctx)) {
+        fn.fn_def.return_type = ctx->token;
+    }
+
+    ns_token_skip_eol(ctx);
+    if (ns_parse_compound_stmt(ctx)) {
+        fn.fn_def.body = ctx->current;
+        ctx->current = ns_ast_push(ctx, fn);
+        return true;
+    }
+
+    ns_restore_state(ctx, state);
+    return false;
+}
+
 bool ns_parse_fn_define(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
@@ -243,8 +333,10 @@ bool ns_parse_fn_define(ns_parse_context_t *ctx) {
 
     ns_ast_t fn = {.type = NS_AST_FN_DEF, .fn_def = { .name = name, .param_count = 0, .is_async = is_async}};
     // parse parameters
+    ns_token_skip_eol(ctx);
     while (ns_parameter(ctx)) {
         fn.fn_def.params[fn.fn_def.param_count++] = ctx->current;
+        ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_COMMA || ctx->token.type == NS_TOKEN_EOL) {
             continue;

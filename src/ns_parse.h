@@ -10,6 +10,7 @@ typedef enum {
     NS_AST_PARAM,
 
     NS_AST_FN_DEF,
+    NS_AST_OPS_FN_DEF,
     NS_AST_VAR_DEF,
     NS_AST_STRUCT_DEF,
     NS_AST_TYPE_DEF,
@@ -49,6 +50,15 @@ typedef struct ns_ast_fn_def {
     int params[NS_MAX_PARAMS];
     int param_count;
 } ns_ast_fn_def;
+
+typedef struct ns_ast_ops_fn_def {
+    bool is_async;
+    ns_token_t ops;
+    ns_token_t return_type;
+    int body;
+    int left;
+    int right;
+} ns_ast_ops_fn_def;
 
 typedef struct ns_ast_var_def {
     int expr;
@@ -150,6 +160,7 @@ typedef struct ns_ast_t {
     union {
         ns_ast_param param;
         ns_ast_fn_def fn_def;
+        ns_ast_ops_fn_def ops_fn_def;
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
 

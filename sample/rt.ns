@@ -1,17 +1,38 @@
-struct float3 {
-    x: f64,
-    y: f64,
-    z: f64
+struct float3 { x: f64, y: f64, z: f64 }
+struct float2 { x: f64, y: f64 }
+struct ray { origin: float3, direction: float3 }
+struct hit { t: f64, p: float3, normal: float3 }
+struct triangle { a: float3, b: float3, c: float3 }
+
+fn ops(+)(lhs: float3, rhs: float3): float3 {
+    return float3 { x: lhs.x + rhs.x, y: lhs.y + rhs.y, z: lhs.z + rhs.z }
 }
 
-struct ray {
-    origin: float3,
-    direction: float3
+fn ops(+)(lhs: float3, rhs: f64): float3 {
+    return float3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs }
 }
+
+fn ops(*)(lhs: float3, rhs: f64): float3 {
+    return float3 { x: lhs.x * rhs, y: lhs.y * rhs, z: lhs.z * rhs }
+}
+
+fn length(this: float3): f64 {
+    return sqrt(this.x * this.x + this.y * this.y + this.z * this.z)
+}
+
+// cornell box
+let triangles = [];
 
 fn main() {
     for let i = 0 to 256 {
         for let j = 0 to 256 {
+            let u = i / 256.0 - 0.5
+            let v = j / 256.0 - 0.5
+
+            let r = ray {
+                origin: float3 { x: 0.0, y: 0.0, z: 0.0 },
+                direction: float3 { x: u, y: v, z: 1.0 }
+            }
 
         }
     }

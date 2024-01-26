@@ -79,6 +79,8 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_FOR";
     case NS_TOKEN_TO:
         return "NS_TOKEN_TO";
+    case NS_TOKEN_OPS:
+        return "NS_TOKEN_OPS";
     default:
         return "Unknown token";
     }
@@ -257,6 +259,8 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
             t->type = NS_TOKEN_CONTINUE;
             t->val = ns_str_range(s + f, 8);
             to = i + 8 + sep;
+        } else {
+            goto identifier;
         }
     } break;
     case 'd': // do
@@ -370,6 +374,20 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
             t->type = NS_TOKEN_NIL;
+            t->val = ns_str_range(s + f, 3);
+            to = i + 3 + sep;
+        } else {
+            goto identifier;
+        }
+    } break;
+
+    case 'o': // ops 
+    {
+        if (strncmp(s + f, "ops", 3) == 0) {
+            sep = ns_token_separator(t, s, i + 3);
+            if (sep == 0 && ns_identifier_follow(s[i + 3]))
+                goto identifier;
+            t->type = NS_TOKEN_OPS;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
