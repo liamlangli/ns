@@ -75,6 +75,10 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_EQUALITY_OPERATOR";
     case NS_TOKEN_COMMA:
         return "NS_TOKEN_COMMA";
+    case NS_TOKEN_FOR:
+        return "NS_TOKEN_FOR";
+    case NS_TOKEN_TO:
+        return "NS_TOKEN_TO";
     default:
         return "Unknown token";
     }

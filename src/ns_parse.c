@@ -421,7 +421,7 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
 
 void ns_ast_dump(ns_parse_context_t *ctx, int i) {
     ns_ast_t n = ctx->nodes[i];
-    printf("%4d [type: %-20s] ", i, ns_ast_type_str(n.type));
+    printf("%4d [type: %-21s] ", i, ns_ast_type_str(n.type));
     switch (n.type) {
         case NS_AST_FN_DEF:
             ns_str_printf(n.fn_def.name.val);
@@ -532,6 +532,19 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             printf(" }");
         } break;
         case NS_AST_GENERATOR_EXPR: {
+            printf("let ");
+            ns_str_printf(n.generator.label.val);
+            printf(" = ");
+            if (n.generator.from != -1) {
+                printf("node[%d]", n.generator.from);
+            } else {
+                ns_str_printf(n.generator.token.val);
+            }
+            if (n.generator.to != -1) {
+                printf(" to node[%d]", n.generator.to);
+            }
+        } break;
+        case NS_AST_ITER_STMT: {
 
         } break;
         default:
