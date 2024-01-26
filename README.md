@@ -24,11 +24,6 @@ struct Point {
    y: f32
 }
 
-// define a anonymous function
-let swap = { (a, b) in
-    a, b = b, a
-}
-
 // define a asynchronous function 
 async fn download(url) {
     return await do_download(url)
