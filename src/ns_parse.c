@@ -264,7 +264,7 @@ bool ns_parse_ops_fn_define(ns_parse_context_t *ctx) {
     }
     ns_token_t ops = ctx->token;
 
-    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN) || ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
+    if (!(ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN) && ns_token_require(ctx, NS_TOKEN_OPEN_PAREN))) {
         ns_restore_state(ctx, state);
         return false;
     }
@@ -277,6 +277,11 @@ bool ns_parse_ops_fn_define(ns_parse_context_t *ctx) {
         return false;
     }
     fn.ops_fn_def.left = ctx->current;
+
+    if (!ns_token_require(ctx, NS_TOKEN_COMMA)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
 
     ns_token_skip_eol(ctx);
     if (!ns_parameter(ctx)) {

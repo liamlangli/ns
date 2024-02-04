@@ -216,6 +216,7 @@ int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n);
 
 // external func
 bool ns_parse_fn_define(ns_parse_context_t *ctx);
+bool ns_parse_ops_fn_define(ns_parse_context_t *ctx);
 bool ns_parse_var_define(ns_parse_context_t *ctx);
 bool ns_parse_struct_define(ns_parse_context_t *ctx);
 bool ns_parse_type_define(ns_parse_context_t *ctx);

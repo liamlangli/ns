@@ -218,7 +218,7 @@ bool ns_parse_external_define(ns_parse_context_t *ctx) {
     }
     ns_restore_state(ctx, state);
 
-    if (ns_parse_fn_define(ctx)) {
+    if (ns_parse_ops_fn_define(ctx) || ns_parse_fn_define(ctx)) {
         return true;
     }
     ns_restore_state(ctx, state);
