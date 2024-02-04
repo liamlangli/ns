@@ -164,6 +164,35 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
+bool ns_parse_designated_value(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+    if (ns_parse_identifier(ctx)) {
+        if (ns_token_require(ctx, NS_TOKEN_COLON)) {
+            if (ns_parse_expr_stack(ctx)) {
+                return true;
+            }
+        }
+    }
+    ns_restore_state(ctx, state);
+    return false;
+}
+
+bool ns_parse_designated_stmt(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+
+    if (!ns_parse_identifier(ctx)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    ns_token_skip_eol(ctx);
+}
+
 bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     if (ns_parse_expr_stack(ctx)) {

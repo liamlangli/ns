@@ -155,6 +155,11 @@ typedef struct ns_ast_compound_sections {
     int section_count;
 } ns_ast_compound_sections;
 
+typedef struct ns_ast_designated_stmt {
+    ns_token_t name;
+    int expr;
+} ns_ast_designated_stmt;
+
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
     union {
@@ -177,6 +182,7 @@ typedef struct ns_ast_t {
         ns_ast_jump_stmt jump_stmt;
         ns_ast_labeled_stmt label_stmt;
         ns_ast_compound_stmt compound_stmt;
+        ns_ast_designated_stmt designated_stmt;
     };
 } ns_ast_t;
 
@@ -213,6 +219,9 @@ void ns_token_skip_eol(ns_parse_context_t *ctx);
 void ns_restore_state(ns_parse_context_t *ctx, int f);
 int ns_save_state(ns_parse_context_t *ctx);
 int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n);
+
+// primary func
+bool ns_parse_identifier(ns_parse_context_t *ctx);
 
 // external func
 bool ns_parse_fn_define(ns_parse_context_t *ctx);
