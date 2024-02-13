@@ -138,20 +138,20 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
-            ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .compound_stmt.section = -1 };
+            ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .next = -1, .compound_stmt.count = -1 };
             ns_ast_push(ctx, n);
             return true;
         }
         ns_restore_state(ctx, close_state);
 
         ns_token_skip_eol(ctx);
-        int section = ctx->compound_count;
-        ns_ast_compound_sections *sections = &ctx->compound_sections[ctx->compound_count++];
-        sections->section_count = 0;
-        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .compound_stmt.section = section };
+        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .next = -1, .compound_stmt.count = 0 };
+        ns_ast_t *t = &n;
         while (ns_parse_var_define(ctx) ||
                ns_parse_stmt(ctx)) {
-            sections->sections[sections->section_count++] = ctx->current;
+            t->next = ctx->current;
+            t = &ctx->nodes[ctx->current];
+            n.compound_stmt.count++;
             ns_token_skip_eol(ctx);
             ns_parse_next_token(ctx);
             if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
@@ -184,13 +184,33 @@ bool ns_parse_designated_stmt(ns_parse_context_t *ctx) {
         ns_restore_state(ctx, state);
         return false;
     }
-
+    ns_ast_t n = {.type = NS_AST_DESIGNATED_STMT, .designated_stmt = { .name = ctx->token } };
     if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET)) {
         ns_restore_state(ctx, state);
         return false;
     }
 
     ns_token_skip_eol(ctx);
+    while(ns_parse_designated_value(ctx)) {
+        ns_token_skip_eol(ctx);
+        int next_state = ns_save_state(ctx);
+        ns_parse_next_token(ctx);
+        if (ctx->token.type == NS_TOKEN_COMMA) {
+            ns_token_skip_eol(ctx);
+            continue;
+        } else {
+            ns_restore_state(ctx, next_state);
+            break;
+        }
+    }
+
+    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+    
+
+    return true;
 }
 
 bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {

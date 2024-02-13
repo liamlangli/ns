@@ -520,7 +520,7 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
 
 void ns_ast_dump(ns_parse_context_t *ctx, int i) {
     ns_ast_t n = ctx->nodes[i];
-    printf("%4d [type: %-21s] ", i, ns_ast_type_str(n.type));
+    printf("%4d [type: %-21s next: %5d] ", i, ns_ast_type_str(n.type), n.next);
     switch (n.type) {
         case NS_AST_FN_DEF:
             ns_str_printf(n.fn_def.name.val);
@@ -596,20 +596,20 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             }
             break;
         case NS_AST_COMPOUND_STMT:
-            printf("{ ");
-            if (n.compound_stmt.section == -1) {
-                printf("}");
-                break;
-            }
-            ns_ast_compound_sections *sections = &ctx->compound_sections[n.compound_stmt.section];
-            int count = sections->section_count;
-            for (int i = 0; i < count; i++) {
-                printf("node[%d]", sections->sections[i]);
-                if (i != count - 1) {
-                    printf(", ");
-                }
-            }
-            printf(" }");
+            // printf("{ ");
+            // if (n.compound_stmt.section == -1) {
+            //     printf("}");
+            //     break;
+            // }
+            // ns_ast_compound_sections *sections = &ctx->compound_sections[n.compound_stmt.section];
+            // int count = sections->section_count;
+            // for (int i = 0; i < count; i++) {
+            //     printf("node[%d]", sections->sections[i]);
+            //     if (i != count - 1) {
+            //         printf(", ");
+            //     }
+            // }
+            // printf(" }");
             break;
         case NS_AST_IF_STMT:
             printf("if (node[%d]) node[%d]", n.if_stmt.condition, n.if_stmt.body);

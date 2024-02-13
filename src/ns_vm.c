@@ -138,14 +138,14 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
     case NS_AST_JUMP_STMT:
         ns_vm_parse_fn_expr(vm, n.jump_stmt.expr, fn);
         break;
-    case NS_AST_COMPOUND_STMT: {
-        if (n.compound_stmt.section == -1) break;
-        ns_ast_compound_sections *sections = &vm->parse_ctx->compound_sections[n.compound_stmt.section];
-        int count = sections->section_count;
-        for (int i = 0; i < count; i++) {
-            ns_vm_parse_fn_expr(vm, sections->sections[i], fn);
-        }
-    } break;
+    // case NS_AST_COMPOUND_STMT: {
+    //     if (n.compound_stmt.section == -1) break;
+    //     ns_ast_compound_sections *sections = &vm->parse_ctx->compound_sections[n.compound_stmt.section];
+    //     int count = sections->section_count;
+    //     for (int i = 0; i < count; i++) {
+    //         ns_vm_parse_fn_expr(vm, sections->sections[i], fn);
+    //     }
+    // } break;
     default:
         break;
     }
@@ -482,15 +482,15 @@ ns_value ns_eval_expr(ns_vm_t *vm, int i) {
     case NS_AST_FOR_STMT:
     case NS_AST_WHILE_STMT:
         break;
-    case NS_AST_COMPOUND_STMT: {
-        int count = n.compound_stmt.section;
-        ns_ast_compound_sections *sections = &vm->parse_ctx->compound_sections[n.compound_stmt.section];
-        ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
-        for (int i = 0, l = sections->section_count; i < l; i++) {
-            if (scope->returned) break;
-            ns_eval_expr(vm, sections->sections[i]);
-        }
-    } break;
+    // case NS_AST_COMPOUND_STMT: {
+    //     int count = n.compound_stmt.section;
+    //     ns_ast_compound_sections *sections = &vm->parse_ctx->compound_sections[n.compound_stmt.section];
+    //     ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
+    //     for (int i = 0, l = sections->section_count; i < l; i++) {
+    //         if (scope->returned) break;
+    //         ns_eval_expr(vm, sections->sections[i]);
+    //     }
+    // } break;
     default:
         fprintf(stderr, "eval error: unknown ast type %s\n", ns_ast_type_str(n.type));
         assert(false);

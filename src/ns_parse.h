@@ -7,12 +7,14 @@ typedef enum {
     NS_AST_UNKNOWN = 0,
     NS_AST_PROGRAM,
 
-    NS_AST_PARAM,
+    NS_AST_LIST,
 
+    NS_AST_PARAM_DEF,
     NS_AST_FN_DEF,
     NS_AST_OPS_FN_DEF,
     NS_AST_VAR_DEF,
     NS_AST_STRUCT_DEF,
+    NS_AST_STRUCT_FIELD_DEF,
     NS_AST_TYPE_DEF,
 
     NS_AST_VAR_ASSIGN,
@@ -22,7 +24,6 @@ typedef enum {
     NS_AST_MEMBER_EXPR,
     NS_AST_CALL_EXPR,
     NS_AST_CAST_EXPR,
-
     NS_AST_GENERATOR_EXPR,
 
     NS_AST_IF_STMT,
@@ -31,7 +32,8 @@ typedef enum {
     NS_AST_RETURN_STMT,
     NS_AST_JUMP_STMT,
     NS_AST_LABELED_STMT,
-    NS_AST_COMPOUND_STMT
+    NS_AST_COMPOUND_STMT,
+    NS_AST_DESIGNATED_STMT
 } NS_AST_TYPE;
 
 typedef struct ns_ast_t ns_ast_t;
@@ -74,8 +76,7 @@ typedef struct ns_ast_var_assign {
 
 typedef struct ns_ast_struct_def {
     ns_token_t name;
-    int fields[NS_MAX_FIELDS];
-    int field_count;
+    int filed_list;
 } ns_ast_struct_def;
 
 typedef struct ns_ast_binary_expr {
@@ -102,8 +103,7 @@ typedef struct ns_ast_member_expr {
 
 typedef struct ns_ast_call_expr {
     int callee;
-    int args[NS_MAX_PARAMS];
-    int arg_count;
+    int body;
 } ns_ast_call_expr;
 
 typedef struct ns_ast_generator_expr {
@@ -147,21 +147,21 @@ typedef struct ns_ast_labeled_stmt {
 } ns_ast_labeled_stmt;
 
 typedef struct ns_ast_compound_stmt {
-    int section;
+    int list;
 } ns_ast_compound_stmt;
-
-typedef struct ns_ast_compound_sections {
-    int sections[NS_MAX_COMPOUND_SECTION_COUNT];
-    int section_count;
-} ns_ast_compound_sections;
 
 typedef struct ns_ast_designated_stmt {
     ns_token_t name;
-    int expr;
+    int list;
 } ns_ast_designated_stmt;
+
+typedef struct ns_ast_node_list {
+    int count;
+} ns_ast_node_list;
 
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
+    int next; // -1 mean null ref
     union {
         ns_ast_param param;
         ns_ast_fn_def fn_def;
@@ -183,6 +183,8 @@ typedef struct ns_ast_t {
         ns_ast_labeled_stmt label_stmt;
         ns_ast_compound_stmt compound_stmt;
         ns_ast_designated_stmt designated_stmt;
+
+        ns_ast_node_list list;
     };
 } ns_ast_t;
 
@@ -197,9 +199,6 @@ typedef struct as_parse_context_t {
 
     int stack[NS_MAX_PARSE_STACK];
     int top;
-
-    ns_ast_compound_sections compound_sections[NS_MAX_SECTION_COUNT];
-    int compound_count;
 
     ns_token_t token, last_token;
     const char *source;

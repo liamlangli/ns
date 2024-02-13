@@ -17,7 +17,7 @@
             "request": "launch",
             "name": "ns parse",
             "program": "${workspaceFolder}/out/ns",
-            "args": ["-p", "sample/rt.ns"],
+            "args": ["-p", "sample/fib.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
