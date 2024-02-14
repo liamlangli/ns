@@ -138,23 +138,25 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
-            ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .next = -1, .compound_stmt.count = -1 };
+            ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .next = -1, .compound_stmt.list = -1 };
             ns_ast_push(ctx, n);
             return true;
         }
         ns_restore_state(ctx, close_state);
 
         ns_token_skip_eol(ctx);
-        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .next = -1, .compound_stmt.count = 0 };
-        ns_ast_t *t = &n;
+        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .next = -1, .compound_stmt.list = -1 };
+        ns_ast_t l = {.type = NS_AST_LIST, .next = -1};
+        ns_ast_t *t = &l;
         while (ns_parse_var_define(ctx) ||
                ns_parse_stmt(ctx)) {
             t->next = ctx->current;
             t = &ctx->nodes[ctx->current];
-            n.compound_stmt.count++;
             ns_token_skip_eol(ctx);
             ns_parse_next_token(ctx);
             if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+                ns_ast_push(ctx, l);
+                n.compound_stmt.list = ctx->current;
                 ns_ast_push(ctx, n);
                 return true;
             }

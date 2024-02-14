@@ -95,10 +95,10 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
         ns_vm_parse_fn_expr(vm, n.binary_expr.right, fn);
         break;
     case NS_AST_CALL_EXPR:
-        ns_vm_parse_fn_expr(vm, n.call_expr.callee, fn);
-        for (int i = 0; i < n.call_expr.arg_count; i++) {
-            ns_vm_parse_fn_expr(vm, n.call_expr.args[i], fn);
-        }
+        // ns_vm_parse_fn_expr(vm, n.call_expr.callee, fn);
+        // for (int i = 0; i < n.call_expr.arg_count; i++) {
+        //     ns_vm_parse_fn_expr(vm, n.call_expr.args[i], fn);
+        // }
         break;
     case NS_AST_PRIMARY_EXPR:
         if (n.primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
@@ -384,30 +384,32 @@ ns_value ns_eval_binary_op(ns_vm_t *vm, ns_value left, ns_value right, int i) {
 ns_value ns_call_builtin_fn(ns_vm_t *vm, ns_str name, int i) {
     ns_ast_t n = vm->ast[i];
     if (ns_str_equals_STR(name, "print")) {
-        for (int i = 0; i < n.call_expr.arg_count; i++) {
-            ns_value v = ns_eval_expr(vm, n.call_expr.args[i]);
-            switch (v.type)
-            {
-            case NS_TYPE_I64:
-                printf("%ld\n", v.u.int64);
-                break;
-            case NS_TYPE_I32:
-                printf("%d\n", (int)v.u.int64);
-                break;
-            case NS_TYPE_F64:
-                printf("%f\n", v.u.float64);
-                break;
-            default:
-                fprintf(stderr, "eval error: unknown value type\n");
-                assert(false);
-                break;
-            }
-        }
-        return NS_NIL;
+        // for (int i = 0; i < n.call_expr.arg_count; i++) {
+        //     ns_value v = ns_eval_expr(vm, n.call_expr.args[i]);
+        //     switch (v.type)
+        //     {
+        //     case NS_TYPE_I64:
+        //         printf("%ld\n", v.u.int64);
+        //         break;
+        //     case NS_TYPE_I32:
+        //         printf("%d\n", (int)v.u.int64);
+        //         break;
+        //     case NS_TYPE_F64:
+        //         printf("%f\n", v.u.float64);
+        //         break;
+        //     default:
+        //         fprintf(stderr, "eval error: unknown value type\n");
+        //         assert(false);
+        //         break;
+        //     }
+        // }
+        // return NS_NIL;
     } else {
         fprintf(stderr, "eval error: unknown builtin function %*.s\n", name.len, name.data);
         assert(false);
     }
+
+    return NS_NIL;
 }
 
 ns_value ns_call_fn(ns_vm_t *vm, int i) {
@@ -419,17 +421,17 @@ ns_value ns_call_fn(ns_vm_t *vm, int i) {
         if (fn_i == -1) {
             return ns_call_builtin_fn(vm, name, i);
         } else {
-            ns_fn_t *fn = &vm->fns[fn_i];
-            ns_call_scope scope = {.argc = n.call_expr.arg_count};
-            for (int i = 0; i < n.call_expr.arg_count; i++) {
-                scope.args[i] = ns_eval_expr(vm, n.call_expr.args[i]);
-            }
-            scope.fn_index = fn_i;
-            ns_vm_push_call_scope(vm, scope);
-            ns_eval_expr(vm, fn->ast_root);
-            ns_value ret = vm->call_stack[vm->call_stack_top].ret;
-            vm->call_stack_top--;
-            return ret;
+            // ns_fn_t *fn = &vm->fns[fn_i];
+            // ns_call_scope scope = {.argc = n.call_expr.arg_count};
+            // for (int i = 0; i < n.call_expr.arg_count; i++) {
+            //     scope.args[i] = ns_eval_expr(vm, n.call_expr.args[i]);
+            // }
+            // scope.fn_index = fn_i;
+            // ns_vm_push_call_scope(vm, scope);
+            // ns_eval_expr(vm, fn->ast_root);
+            // ns_value ret = vm->call_stack[vm->call_stack_top].ret;
+            // vm->call_stack_top--;
+            // return ret;
         }
     }
     return NS_NIL;

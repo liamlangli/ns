@@ -103,7 +103,7 @@ typedef struct ns_ast_member_expr {
 
 typedef struct ns_ast_call_expr {
     int callee;
-    int body;
+    int arg_list;
 } ns_ast_call_expr;
 
 typedef struct ns_ast_generator_expr {

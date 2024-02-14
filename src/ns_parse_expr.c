@@ -121,20 +121,23 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                 }
             } else { // parse call expr
                 // empty call expr
-                ns_ast_t call = {.type = NS_AST_CALL_EXPR, .call_expr = {
-                    .callee = ns_parse_stack_pop(ctx),
-                    .arg_count = 0
-                }};
+                ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = { .callee = ns_parse_stack_pop(ctx), .arg_list = -1 }};
 
                 int empty_state = ns_save_state(ctx);
                 if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
-                    ns_parse_stack_push(ctx, call);
+                    ns_parse_stack_push(ctx, n);
                     break;
                 }
 
+                ns_ast_t l = {.type = NS_AST_LIST, .list = { .count = 0 }};
+                ns_ast_t *t = &l;
+
                 ns_restore_state(ctx, empty_state);
                 while (ns_parse_expr_stack(ctx)) {
-                    call.call_expr.args[call.call_expr.arg_count++] = ctx->current;
+                    t->next = ctx->current;
+                    t = &ctx->nodes[ctx->current];
+                    l.list.count++;
+
                     ns_parse_next_token(ctx);
                     if (ctx->token.type == NS_TOKEN_COMMA) {
                         continue;
@@ -151,7 +154,9 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                     assert(false);
                 }
 
-                ns_parse_stack_push(ctx, call);
+                ns_ast_push(ctx, l);
+                n.call_expr.arg_list = ctx->current;
+                ns_parse_stack_push(ctx, n);
                 break;
             }
 
@@ -213,7 +218,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                     return true;
                 } else {
                     if (ctx->top == expr_top) {
-                        ns_ast_push(ctx, (ns_ast_t){.type= NS_AST_COMPOUND_STMT, .compound_stmt.count = 0 });
+                        ns_ast_push(ctx, (ns_ast_t){ .type= NS_AST_COMPOUND_STMT, .compound_stmt.list = -1 });
                         return true; // empty compound stmt
                     }
                     fprintf(stderr, "syntax error: invalid expression before EOL\n");

@@ -198,7 +198,7 @@ bool ns_parse_generator_expr(ns_parse_context_t *ctx) {
 bool ns_parameter(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
-    ns_ast_t n = {.type = NS_AST_PARAM};
+    ns_ast_t n = { .type = NS_AST_PARAM_DEF };
     if (ns_token_require(ctx, NS_TOKEN_REF)) {
         n.param.is_ref = true;
     }
@@ -389,11 +389,14 @@ bool ns_parse_struct_define(ns_parse_context_t *ctx) {
         return false;
     }
 
-    ns_ast_t n = {.type = NS_AST_STRUCT_DEF, .struct_def = { .name = name, .field_count = 0}};
+    ns_ast_t n = {.type = NS_AST_STRUCT_DEF, .struct_def = { .name = name, .filed_list = -1 }};
+    ns_ast_t l = {.type = NS_AST_LIST, .list = { .count = 0 }};
+    ns_ast_t *t = &l;
     ns_token_skip_eol(ctx);
     while (ns_parameter(ctx)) {
         ns_token_skip_eol(ctx);
-        n.struct_def.fields[n.struct_def.field_count++] = ctx->current;
+        t->next = ctx->current;
+        t = &ctx->nodes[ctx->current];
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_COMMA) {
             ns_token_skip_eol(ctx);
@@ -404,12 +407,13 @@ bool ns_parse_struct_define(ns_parse_context_t *ctx) {
     }
 
     if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+        ns_ast_push(ctx, l);
+        n.struct_def.filed_list = ctx->current;
         ns_ast_push(ctx, n);
         return true;
     }
 
     ns_restore_state(ctx, state);
-    
     return false;
 }
 
@@ -485,8 +489,8 @@ const char * ns_ast_type_str(NS_AST_TYPE type) {
     switch (type) {
         case NS_AST_PROGRAM:
             return "NS_AST_PROGRAM";
-        case NS_AST_PARAM:
-            return "NS_AST_PARAM";
+        case NS_AST_PARAM_DEF:
+            return "NS_AST_PARAM_DEF";
         case NS_AST_FN_DEF:
             return "NS_AST_FN_DEF";
         case NS_AST_VAR_DEF:
@@ -558,7 +562,7 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             ns_str_printf(n.binary_expr.op.val);
             printf(" node[%d]", n.binary_expr.right);
             break;
-        case NS_AST_PARAM:
+        case NS_AST_PARAM_DEF:
             if (n.param.is_ref) {
                 printf("ref ");
             }
@@ -579,15 +583,15 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             }
             break;
         case NS_AST_CALL_EXPR:
-            printf("node[%d]", n.var_def.expr);
-            printf("(");
-            for (int i = 0; i < n.call_expr.arg_count; i++) {
-                printf("node[%d]", n.call_expr.args[i]);
-                if (i != n.call_expr.arg_count - 1) {
-                    printf(", ");
-                }
-            }
-            printf(")");
+            // printf("node[%d]", n.var_def.expr);
+            // printf("(");
+            // for (int i = 0; i < n.call_expr.arg_count; i++) {
+            //     printf("node[%d]", n.call_expr.args[i]);
+            //     if (i != n.call_expr.arg_count - 1) {
+            //         printf(", ");
+            //     }
+            // }
+            // printf(")");
             break;
         case NS_AST_JUMP_STMT:
             ns_str_printf(n.jump_stmt.label.val);
@@ -618,17 +622,17 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             }
             break;
         case NS_AST_STRUCT_DEF: {
-            printf("struct ");
-            ns_str_printf(n.struct_def.name.val);
-            printf(" { ");
-            int count = n.struct_def.field_count;
-            for (int i = 0; i < count; ++i) {
-                printf("node[%d]", n.struct_def.fields[i]);
-                if (i != count -1) {
-                    printf(", ");
-                }
-            }
-            printf(" }");
+            // printf("struct ");
+            // ns_str_printf(n.struct_def.name.val);
+            // printf(" { ");
+            // int count = n.struct_def.field_count;
+            // for (int i = 0; i < count; ++i) {
+            //     printf("node[%d]", n.struct_def.fields[i]);
+            //     if (i != count -1) {
+            //         printf(", ");
+            //     }
+            // }
+            // printf(" }");
         } break;
         case NS_AST_GENERATOR_EXPR: {
             printf("let ");
