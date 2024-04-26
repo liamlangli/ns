@@ -9,7 +9,7 @@
             "request": "launch",
             "name": "ns token",
             "preLaunchTask": "make",
-            "program": "${workspaceFolder}/out/ns",
+            "program": "${workspaceFolder}/bin/ns",
             "args": ["-t","sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
@@ -18,7 +18,7 @@
             "request": "launch",
             "name": "ns parse",
             "preLaunchTask": "make",
-            "program": "${workspaceFolder}/out/ns",
+            "program": "${workspaceFolder}/bin/ns",
             "args": ["-p", "sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
@@ -27,7 +27,7 @@
             "request": "launch",
             "name": "ns eval",
             "preLaunchTask": "make",
-            "program": "${workspaceFolder}/out/ns",
+            "program": "${workspaceFolder}/bin/ns",
             "args": ["sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },

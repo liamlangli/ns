@@ -3,6 +3,17 @@
 
 #include <stdbool.h>
 
+bool ns_parse_import_stmt(ns_parse_context_t *ctx) {
+    int state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_IMPORT) && ns_parse_identifier(ctx)) {
+        ns_ast_t n = {.type = NS_AST_IMPORT_STMT, .import_stmt = ctx->token};
+        ns_ast_push(ctx, n);
+        return true;
+    }
+    ns_restore_state(ctx, state);
+    return false;
+}
+
 bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
     // continue
@@ -229,6 +240,7 @@ bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {
 
 bool ns_parse_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
+
     // define statement
     if (ns_parse_compound_stmt(ctx)) {
         return true;
@@ -264,6 +276,12 @@ bool ns_parse_stmt(ns_parse_context_t *ctx) {
 
 bool ns_parse_external_define(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
+
+    if (ns_parse_import_stmt(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
+
     if (ns_parse_var_define(ctx)) {
         return true;
     }

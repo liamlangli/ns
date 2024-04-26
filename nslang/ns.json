@@ -16,7 +16,7 @@
 		"keywords": {
 			"patterns": [{
 				"name": "keyword.control.ns",
-				"match": "\\b(let|const|struct|fn|type|async|await|in|to|if|while|for|return|else|switch|case|break|true|false)\\b"
+				"match": "\\b(let|const|struct|fn|type|async|await|in|to|if|import|while|for|return|else|switch|case|break|true|false)\\b"
 			}]
 		},
 		"numbers": {

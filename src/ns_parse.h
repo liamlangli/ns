@@ -26,6 +26,7 @@ typedef enum {
     NS_AST_DESIGNATED_EXPR,
 
     NS_AST_IF_STMT,
+    NS_AST_IMPORT_STMT,
     NS_AST_FOR_STMT,
     NS_AST_WHILE_STMT,
     NS_AST_RETURN_STMT,
@@ -112,6 +113,10 @@ typedef struct ns_ast_generator_expr {
     int to;
 } ns_ast_generator_expr;
 
+typedef struct ns_ast_import_stmt {
+    ns_token_t lib;
+} ns_ast_import_stmt;
+
 typedef struct ns_ast_if_stmt {
     int condition;
     int body;
@@ -177,6 +182,7 @@ typedef struct ns_ast_t {
         ns_ast_generator_expr generator;
         ns_ast_designated_expr designated_expr;
 
+        ns_ast_import_stmt import_stmt;
         ns_ast_if_stmt if_stmt;
         ns_ast_while_stmt while_stmt;
         ns_ast_for_stmt for_stmt;

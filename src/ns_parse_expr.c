@@ -132,6 +132,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
         case NS_TOKEN_SHIFT_OPERATOR:
         case NS_TOKEN_RELATIONAL_OPERATOR:
         case NS_TOKEN_EQUALITY_OPERATOR:
+        case NS_TOKEN_BOOL_OPERATOR:
         case NS_TOKEN_LOGICAL_OPERATOR: {
             // try rewind
             if (ns_parse_stack_top_is_operand(ctx)) {

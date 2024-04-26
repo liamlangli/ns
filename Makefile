@@ -2,24 +2,29 @@
 
 CC = clang
 CC_OPT = -g -O0
-SRCS = src/ns.c src/ns_tokenize.c src/ns_parse.c src/ns_parse_stmt.c src/ns_parse_expr.c src/ns_vm.c src/ns_type.c
 
-all: $(SRCS)
-	mkdir -p out
-	$(CC) $(CC_OPT) -o out/ns $^ -Isrc
+NS_SRC = src/ns.c src/ns_type.c
+NS_TOKEN = src/ns_tokenize.c
+NS_PARSE = src/ns_parse.c src/ns_parse_stmt.c src/ns_parse_expr.c src/ns_parse_dump.c
+NS_EVAL = src/ns_vm.c src/ns_type.c
+NS_SRCS = $(NS_SRC) $(NS_TOKEN) $(NS_PARSE) $(NS_EVAL)
+
+all: $(NS_SRCS)
+	mkdir -p bin
+	$(CC) $(CC_OPT) -o bin/ns $^ -Isrc
 
 token: all
-	./out/ns -t sample/rt.ns
+	./bin/ns -t sample/rt.ns
 
 parse: all
-	./out/ns -p sample/rt.ns
+	./bin/ns -p sample/rt.ns
 
 eval: all
-	./out/ns sample/rt.ns
+	./bin/ns sample/rt.ns
 
 clean:
-	rm -rf out/*
+	rm -rf bin/*
 
-install: $(SRCS)
-	$(CC) -O3 -o out/ns $^ -Isrc
-	cp out/ns /usr/local/bin
+install: $(NS_SRCS)
+	$(CC) -O3 -o bin/ns $^ -Isrc
+	cp bin/ns /usr/local/bin

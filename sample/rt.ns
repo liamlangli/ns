@@ -1,34 +1,71 @@
-struct float3 { x: f64, y: f64, z: f64 }
-struct float2 { x: f64, y: f64 }
-struct ray { origin: float3, direction: float3 }
-struct hit { t: f64, p: float3, normal: float3 }
-struct triangle { a: float3, b: float3, c: float3 }
+import std
 
-fn ops(+)(lhs: float3, rhs: float3): float3 {
-    return float3 { x: lhs.x + rhs.x, y: lhs.y + rhs.y, z: lhs.z + rhs.z }
+struct simd3 { x: f64, y: f64, z: f64 }
+struct ray { origin: simd3, direction: simd3 }
+struct hit { t: f64, p: simd3, normal: simd3 }
+struct sphere { center: simd3, radius: f64 }
+
+fn ops(+)(lhs: simd3, rhs: simd3): simd3 {
+    return simd3 { x: lhs.x + rhs.x, y: lhs.y + rhs.y, z: lhs.z + rhs.z }
 }
 
-fn ops(+)(lhs: float3, rhs: f64): float3 {
-    return float3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs }
+fn ops(+)(lhs: simd3, rhs: f64): simd3 {
+    return simd3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs }
 }
 
-fn ops(*)(lhs: float3, rhs: f64): float3 {
-    return float3 { x: lhs.x * rhs, y: lhs.y * rhs, z: lhs.z * rhs }
+fn ops(*)(lhs: simd3, rhs: f64): simd3 {
+    return simd3 { x: lhs.x * rhs, y: lhs.y * rhs, z: lhs.z * rhs }
 }
 
-fn length(this: float3): f64 {
+fn length(this: simd3): f64 {
     return sqrt(this.x * this.x + this.y * this.y + this.z * this.z)
 }
 
+fn dot(lhs: simd3, rhs: simd3): f64 {
+    return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z
+}
+
+fn hit_sphere(r: ray, s: sphere): hit {
+    let oc = r.origin - s.center
+    let a = dot(r.direction, r.direction)
+    let b = 2.0 * dot(oc, r.direction)
+    let c = dot(oc, oc) - s.radius * s.radius
+    let discriminant = b * b - 4.0 * a * c
+
+    if discriminant < 0.0 {
+        return hit { t: -1.0, p: simd3 { x: 0.0, y: 0.0, z: 0.0 }, normal: simd3 { x: 0.0, y: 0.0, z: 0.0 } }
+    }
+
+    let t = (-b - sqrt(discriminant)) / (2.0 * a)
+    let p = r.origin + r.direction * t
+    let normal = (p - s.center) * (1.0 / s.radius)
+
+    return hit { t: t, p: p, normal: normal }
+}
+
 fn main() {
+    let r = ray {
+        origin: simd3 { x: 0.0, y: 0.0, z: 0.0 },
+        direction: simd3 { x: u, y: v, z: 1.0 }
+    }
+
+    let s = sphere {
+        center: simd3 { x: 0.0, y: 0.0, z: 1.0 },
+        radius: 0.5
+    }
+
     for let i = 0 to 256 {
         for let j = 0 to 256 {
             let u = i / 256.0 - 0.5
             let v = j / 256.0 - 0.5
 
-            let r = ray {
-                origin: float3 { x: 0.0, y: 0.0, z: 0.0 },
-                direction: float3 { x: u, y: v, z: 1.0 }
+            r.direction = simd3 { x: u, y: v, z: 1.0 }
+            let h = hit_sphere(r, s)
+            if h.t > 0.0 {
+                let n = h.normal * 0.5 + simd3 { x: 0.5, y: 0.5, z: 0.5 }
+                print(n.x, n.y, n.z)
+            } else {
+                print(0.0, 0.0, 0.0)
             }
 
         }
