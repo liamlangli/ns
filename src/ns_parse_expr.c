@@ -211,6 +211,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
 
         case NS_TOKEN_CLOSE_BRACE:
         case NS_TOKEN_CLOSE_PAREN:
+        case NS_TOKEN_RETURN:
         case NS_TOKEN_LET:
         {
             // push to stack
