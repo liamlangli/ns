@@ -2,7 +2,6 @@
 #include "ns_tokenize.h"
 
 #include <stdbool.h>
-#include <assert.h>
 
 bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
@@ -33,8 +32,7 @@ bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
         if (ns_parse_expr_stack(ctx)) {
             n.jump_stmt.expr = ctx->current;
         } else {
-            fprintf(stderr, "Expected expression after 'return'\n");
-            assert(false);
+            ns_parse_dump_error(ctx, "Expected expression after 'return'");
         }
         ns_ast_push(ctx, n);
         return true;
@@ -182,12 +180,9 @@ bool ns_parse_designated_value(ns_parse_context_t *ctx) {
 bool ns_parse_designated_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
-    if (!ns_parse_identifier(ctx)) {
-        ns_restore_state(ctx, state);
-        return false;
-    }
+    ns_token_skip_eol(ctx);
     ns_ast_t n = {.type = NS_AST_DESIGNATED_STMT, .designated_stmt = { .name = ctx->token } };
-    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET)) {
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
         ns_restore_state(ctx, state);
         return false;
     }
@@ -206,12 +201,12 @@ bool ns_parse_designated_stmt(ns_parse_context_t *ctx) {
         }
     }
 
-    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
+    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
         ns_restore_state(ctx, state);
         return false;
     }
-    
 
+    ns_ast_push(ctx, n);
     return true;
 }
 

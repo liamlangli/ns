@@ -235,6 +235,7 @@ bool ns_parse_type_define(ns_parse_context_t *ctx);
 bool ns_parse_external_define(ns_parse_context_t *ctx);
 bool ns_parse_stmt(ns_parse_context_t *ctx);
 bool ns_parse_compound_stmt(ns_parse_context_t *ctx);
+bool ns_parse_designated_stmt(ns_parse_context_t *ctx);
 
 // expr func
 ns_ast_t ns_parse_stack_top(ns_parse_context_t *ctx);
