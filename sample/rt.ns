@@ -20,9 +20,6 @@ fn length(this: float3): f64 {
     return sqrt(this.x * this.x + this.y * this.y + this.z * this.z)
 }
 
-// cornell box
-let triangles = [];
-
 fn main() {
     for let i = 0 to 256 {
         for let j = 0 to 256 {

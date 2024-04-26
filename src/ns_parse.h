@@ -7,8 +7,6 @@ typedef enum {
     NS_AST_UNKNOWN = 0,
     NS_AST_PROGRAM,
 
-    NS_AST_LIST,
-
     NS_AST_PARAM_DEF,
     NS_AST_FN_DEF,
     NS_AST_OPS_FN_DEF,
@@ -25,6 +23,7 @@ typedef enum {
     NS_AST_CALL_EXPR,
     NS_AST_CAST_EXPR,
     NS_AST_GENERATOR_EXPR,
+    NS_AST_DESIGNATED_EXPR,
 
     NS_AST_IF_STMT,
     NS_AST_FOR_STMT,
@@ -33,7 +32,7 @@ typedef enum {
     NS_AST_JUMP_STMT,
     NS_AST_LABELED_STMT,
     NS_AST_COMPOUND_STMT,
-    NS_AST_DESIGNATED_STMT
+    NS_AST_DESIGNATED_STMT,
 } NS_AST_TYPE;
 
 typedef struct ns_ast_t ns_ast_t;
@@ -76,7 +75,7 @@ typedef struct ns_ast_var_assign {
 
 typedef struct ns_ast_struct_def {
     ns_token_t name;
-    int filed_list;
+    int count;
 } ns_ast_struct_def;
 
 typedef struct ns_ast_binary_expr {
@@ -103,7 +102,7 @@ typedef struct ns_ast_member_expr {
 
 typedef struct ns_ast_call_expr {
     int callee;
-    int arg_list;
+    int arg_count;
 } ns_ast_call_expr;
 
 typedef struct ns_ast_generator_expr {
@@ -147,17 +146,18 @@ typedef struct ns_ast_labeled_stmt {
 } ns_ast_labeled_stmt;
 
 typedef struct ns_ast_compound_stmt {
-    int list;
+    int count;
 } ns_ast_compound_stmt;
 
 typedef struct ns_ast_designated_stmt {
     ns_token_t name;
-    int list;
+    int count;
 } ns_ast_designated_stmt;
 
-typedef struct ns_ast_node_list {
-    int count;
-} ns_ast_node_list;
+typedef struct ns_ast_designated_expr {
+    ns_token_t name;
+    int expr;
+} ns_ast_designated_expr;
 
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
@@ -175,6 +175,7 @@ typedef struct ns_ast_t {
         ns_ast_member_expr member_expr;
         ns_ast_primary_expr primary_expr;
         ns_ast_generator_expr generator;
+        ns_ast_designated_expr designated_expr;
 
         ns_ast_if_stmt if_stmt;
         ns_ast_while_stmt while_stmt;
@@ -183,8 +184,6 @@ typedef struct ns_ast_t {
         ns_ast_labeled_stmt label_stmt;
         ns_ast_compound_stmt compound_stmt;
         ns_ast_designated_stmt designated_stmt;
-
-        ns_ast_node_list list;
     };
 } ns_ast_t;
 

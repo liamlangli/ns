@@ -1,9 +1,14 @@
 #include "ns_parse.h"
 #include "ns_tokenize.h"
 #include "ns_type.h"
+#include <stdbool.h>
+
+void ns_parse_stack_push_index(ns_parse_context_t *ctx, int index) {
+    ctx->stack[++ctx->top] = index;
+}
 
 void ns_parse_stack_push(ns_parse_context_t *ctx, ns_ast_t n) {
-    ctx->stack[++ctx->top] = ns_ast_push(ctx, n);
+    ns_parse_stack_push_index(ctx, ns_ast_push(ctx, n));
 }
 
 int ns_parse_stack_pop(ns_parse_context_t *ctx) {
@@ -65,6 +70,38 @@ bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
     return true;
 }
 
+bool ns_parse_call_expr(ns_parse_context_t *ctx) {
+    ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = { .arg_count = 0 }};
+    if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
+
+        ns_ast_push(ctx, n);
+        return true;
+    }
+
+    ns_ast_t *last = &n;
+    while (ns_parse_expr_stack(ctx)) {
+        last->next = ctx->current;
+        last = &ctx->nodes[ctx->current];
+        n.call_expr.arg_count++;
+
+        ns_parse_next_token(ctx);
+        if (ctx->token.type == NS_TOKEN_COMMA) {
+            continue;
+        } else if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
+            break;
+        } else {
+            ns_parse_dump_error(ctx, "syntax error: expected ',' or ')'");
+        }
+    }
+
+    if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
+        ns_parse_dump_error(ctx, "syntax error: expected ')'");
+    }
+
+    ns_ast_push(ctx, n);
+    return true;
+}
+
 // stack based expression parser
 bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
     int expr_top = ctx->top;
@@ -107,49 +144,21 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
             }
         } break;
         case NS_TOKEN_OPEN_PAREN: {
-            if (ns_parse_stack_top_is_operator(ctx)) { // parse inner expr
-                // start call expr
+            if (ns_parse_stack_top_is_operator(ctx)) {
+                // parse inner expr
                 if (ns_parse_expr_stack(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
                     ns_ast_t expr = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
                 } else {
-                    ns_parse_dump_error(ctx, "syntax error: expected expression after '('");
+                    ns_parse_dump_error(ctx, "syntax error: expected inner expression after '('");
                 }
-            } else { // parse call expr
-                // empty call expr
-                ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = { .callee = ns_parse_stack_pop(ctx), .arg_list = -1 }};
-
-                int empty_state = ns_save_state(ctx);
-                if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
-                    ns_parse_stack_push(ctx, n);
-                    break;
+            } else {
+                int callee = ns_parse_stack_pop(ctx);
+                if (!ns_parse_call_expr(ctx)) {
+                    ns_parse_dump_error(ctx, "syntax error: expected call expression after '('");
                 }
-
-                ns_ast_t l = {.type = NS_AST_LIST, .list = { .count = 0 }};
-                ns_ast_t *t = &l;
-
-                ns_restore_state(ctx, empty_state);
-                while (ns_parse_expr_stack(ctx)) {
-                    t->next = ctx->current;
-                    t = &ctx->nodes[ctx->current];
-                    l.list.count++;
-
-                    ns_parse_next_token(ctx);
-                    if (ctx->token.type == NS_TOKEN_COMMA) {
-                        continue;
-                    } else if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
-                        break;
-                    } else {
-                        ns_parse_dump_error(ctx, "syntax error: expected ',' or ')'");
-                    }
-                }
-
-                if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
-                    ns_parse_dump_error(ctx, "syntax error: expected ')'");
-                }
-
-                ns_ast_push(ctx, l);
-                n.call_expr.arg_list = ctx->current;
-                ns_parse_stack_push(ctx, n);
+                ns_ast_t *call = &ctx->nodes[ctx->current];
+                call->call_expr.callee = callee;
+                ns_parse_stack_push_index(ctx, ctx->current);
                 break;
             }
 
@@ -163,11 +172,11 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
 
             // rewind member access
             ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .member_expr = {
-                .left = ctx->stack[--ctx->top],
+                .left = ns_parse_stack_pop(ctx),
                 .right = ctx->token}
             };
 
-            ctx->stack[ctx->top++] = ns_ast_push(ctx, n);
+            ns_parse_stack_push(ctx, n);
         } break;
 
         case NS_TOKEN_AS: {
@@ -178,24 +187,30 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
 
             // rewind type cast
             ns_ast_t n = {.type = NS_AST_CAST_EXPR, .type_cast = {
-                .expr = ctx->stack[--ctx->top],
+                .expr = ns_parse_stack_pop(ctx),
                 .type = ctx->token}
             };
-            ctx->stack[ctx->top++] = ns_ast_push(ctx, n);
+            ns_parse_stack_push(ctx, n);
         } break;
 
         case NS_TOKEN_OPEN_BRACE: {
             // check if leading token is identifier
             if (ns_parse_stack_top_is_operand(ctx)) {
-                ns_ast_t type = ns_parse_stack_top(ctx);
+                ns_ast_t type = ctx->nodes[ns_parse_stack_pop(ctx)];
                 ns_restore_state(ctx, state); // pop
                 if (!ns_parse_designated_stmt(ctx)) {
                     ns_parse_dump_error(ctx, "syntax error: expected designated stmt");
                 }
+                ns_ast_t* n = &ctx->nodes[ctx->current];
+                n->designated_stmt.name = type.primary_expr.token;
+
+                ns_parse_stack_push_index(ctx, ctx->current);
             }
         } break;
 
+        case NS_TOKEN_CLOSE_BRACE:
         case NS_TOKEN_CLOSE_PAREN:
+        case NS_TOKEN_LET:
         {
             // push to stack
             if (ctx->top > expr_top && ns_parse_expr_rewind(ctx, expr_top)) {
@@ -220,7 +235,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                     return true;
                 } else {
                     if (ctx->top == expr_top) {
-                        ns_ast_push(ctx, (ns_ast_t){ .type= NS_AST_COMPOUND_STMT, .compound_stmt.list = -1 });
+                        ns_ast_push(ctx, (ns_ast_t){ .type= NS_AST_COMPOUND_STMT, .compound_stmt.count = 0 });
                         return true; // empty compound stmt
                     }
                     ns_parse_dump_error(ctx, "syntax error: invalid expression before EOL");
@@ -228,6 +243,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
             }
         } break;
         default:
+            ns_parse_dump_error(ctx, "fatal error: unimplemented token type in expr stack parser.");
             break;
         }
 
