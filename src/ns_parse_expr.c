@@ -59,7 +59,7 @@ bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
     }
 
     if (top != expr_top + 1) {
-        fprintf(stderr, "Rewind failed\n");
+        ns_parse_dump_error(ctx, "Rewind failed.");
         assert(false);
     }
 

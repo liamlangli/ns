@@ -8,6 +8,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "ns token",
+            "preLaunchTask": "make",
             "program": "${workspaceFolder}/out/ns",
             "args": ["-t","sample/rt.ns"],
             "cwd": "${workspaceFolder}"
@@ -16,14 +17,16 @@
             "type": "lldb",
             "request": "launch",
             "name": "ns parse",
+            "preLaunchTask": "make",
             "program": "${workspaceFolder}/out/ns",
-            "args": ["-p", "sample/fib.ns"],
+            "args": ["-p", "sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
             "name": "ns eval",
+            "preLaunchTask": "make",
             "program": "${workspaceFolder}/out/ns",
             "args": ["sample/rt.ns"],
             "cwd": "${workspaceFolder}"

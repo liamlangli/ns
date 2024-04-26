@@ -6,6 +6,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+void ns_parse_dump_error(ns_parse_context_t *ctx, const char *msg) {
+    printf("Error: %s [%s:%d]\n", msg, ctx->filename, ctx->last_token.line);
+    exit(1);
+}
+
 bool ns_parse_unary_expr(ns_parse_context_t *ctx);
 bool ns_parse_type_expr(ns_parse_context_t *ctx);
 
