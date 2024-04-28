@@ -57,8 +57,7 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
     // if expression statement [else statement]
-    if (ns_token_require(ctx, NS_TOKEN_IF) &&
-        ns_parse_expr_stack(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_logical_expr(ctx)) {
         ns_ast_t n = {.type = NS_AST_IF_STMT, .if_stmt.condition = ctx->current};
         if (ns_parse_compound_stmt(ctx)) {
             n.if_stmt.body = ctx->current;
@@ -147,17 +146,16 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
-            ns_ast_t n = {.type = NS_AST_COMPOUND_STMT };
+            ns_ast_t n = {.type = NS_AST_COMPOUND_STMT};
             ns_ast_push(ctx, n);
             return true;
         }
         ns_restore_state(ctx, close_state);
 
         ns_token_skip_eol(ctx);
-        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT };
+        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT};
         ns_ast_t *last = &n;
-        while (ns_parse_var_define(ctx) ||
-               ns_parse_stmt(ctx)) {
+        while (ns_parse_var_define(ctx) || ns_parse_stmt(ctx)) {
             last->next = ctx->current;
             last = &ctx->nodes[ctx->current];
             n.compound_stmt.count++;
@@ -174,7 +172,7 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
 
 bool ns_parse_designated_value(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
-    ns_ast_t n = {.type = NS_AST_DESIGNATED_EXPR, .designated_expr = { .name = ctx->token } };
+    ns_ast_t n = {.type = NS_AST_DESIGNATED_EXPR, .designated_expr = {.name = ctx->token}};
     if (ns_parse_identifier(ctx)) {
         if (ns_token_require(ctx, NS_TOKEN_COLON)) {
             if (ns_parse_expr_stack(ctx)) {
@@ -192,7 +190,7 @@ bool ns_parse_designated_stmt(ns_parse_context_t *ctx) {
     int state = ns_save_state(ctx);
 
     ns_token_skip_eol(ctx);
-    ns_ast_t n = {.type = NS_AST_DESIGNATED_STMT, .designated_stmt = { .name = ctx->token } };
+    ns_ast_t n = {.type = NS_AST_DESIGNATED_STMT, .designated_stmt = {.name = ctx->token}};
     if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
         ns_restore_state(ctx, state);
         return false;
@@ -200,7 +198,7 @@ bool ns_parse_designated_stmt(ns_parse_context_t *ctx) {
 
     ns_ast_t *last = &n;
     ns_token_skip_eol(ctx);
-    while(ns_parse_designated_value(ctx)) {
+    while (ns_parse_designated_value(ctx)) {
         last->next = ctx->current;
         last = &ctx->nodes[ctx->current];
         n.designated_stmt.count++;
@@ -248,7 +246,7 @@ bool ns_parse_stmt(ns_parse_context_t *ctx) {
     ns_restore_state(ctx, state);
 
     // jump statement
-    if(ns_parse_jump_stmt(ctx)) {
+    if (ns_parse_jump_stmt(ctx)) {
         return true;
     }
     ns_restore_state(ctx, state);

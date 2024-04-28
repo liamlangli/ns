@@ -3,6 +3,8 @@
 #include "ns_tokenize.h"
 #include "ns_type.h"
 
+#include <assert.h>
+
 typedef enum {
     NS_AST_UNKNOWN = 0,
     NS_AST_PROGRAM,
@@ -210,7 +212,11 @@ typedef struct as_parse_context_t {
     const char *filename;
 } ns_parse_context_t;
 
-void ns_parse_dump_error(ns_parse_context_t *ctx, const char *msg);
+// void ns_parse_dump_error(ns_parse_context_t *ctx, const char *msg);
+#define ns_parse_dump_error(ctx, msg) \
+    printf("Error: %s at %s:%d\n", msg, ctx->filename, ctx->token.line);\
+    assert(0);
+
 
 ns_parse_context_t* ns_parse(const char *source, const char *filename);
 const char * ns_ast_type_str(NS_AST_TYPE type);
@@ -245,5 +251,6 @@ bool ns_parse_designated_stmt(ns_parse_context_t *ctx);
 // expr func
 ns_ast_t ns_parse_stack_top(ns_parse_context_t *ctx);
 bool ns_parse_generator_expr(ns_parse_context_t *ctx);
+bool ns_parse_logical_expr(ns_parse_context_t *ctx);
 bool ns_parse_expr_stack(ns_parse_context_t *ctx);
 bool ns_parse_constant_expr(ns_parse_context_t *ctx);
