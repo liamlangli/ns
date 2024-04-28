@@ -57,7 +57,7 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
     // if expression statement [else statement]
-    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_logical_expr(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_expr_stack(ctx)) {
         ns_ast_t n = {.type = NS_AST_IF_STMT, .if_stmt.condition = ctx->current};
         if (ns_parse_compound_stmt(ctx)) {
             n.if_stmt.body = ctx->current;

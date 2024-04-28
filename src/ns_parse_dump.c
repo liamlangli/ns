@@ -12,6 +12,14 @@ const char *ns_ast_type_str(NS_AST_TYPE type) {
         return "AST_VAR_DEF";
     case NS_AST_STRUCT_DEF:
         return "AST_STRUCT_DEF";
+    case NS_AST_OPS_FN_DEF:
+        return "AST_OPS_FN_DEF";
+    case NS_AST_TYPE_DEF:
+        return "AST_TYPE_DEF";
+    case NS_AST_STRUCT_FIELD_DEF:
+        return "AST_STRUCT_FIELD_DEF";
+    case NS_AST_EXPR:
+        return "AST_EXPR";
     case NS_AST_BINARY_EXPR:
         return "AST_BINARY_EXPR";
     case NS_AST_PRIMARY_EXPR:
@@ -22,6 +30,8 @@ const char *ns_ast_type_str(NS_AST_TYPE type) {
         return "AST_DESIGNATED_EXPR";
     case NS_AST_MEMBER_EXPR:
         return "AST_MEMBER_EXPR";
+    case NS_AST_GENERATOR_EXPR:
+        return "AST_GENERATOR_EXPR";
     case NS_AST_IF_STMT:
         return "AST_IF_STMT";
     case NS_AST_FOR_STMT:
@@ -34,16 +44,10 @@ const char *ns_ast_type_str(NS_AST_TYPE type) {
         return "AST_JUMP_STMT";
     case NS_AST_COMPOUND_STMT:
         return "AST_COMPOUND_STMT";
-    case NS_AST_GENERATOR_EXPR:
-        return "AST_GENERATOR_EXPR";
-    case NS_AST_STRUCT_FIELD_DEF:
-        return "AST_STRUCT_FIELD_DEF";
     case NS_AST_DESIGNATED_STMT:
         return "AST_DESIGNATED_STMT";
-    case NS_AST_OPS_FN_DEF:
-        return "AST_OPS_FN_DEF";
-    case NS_AST_TYPE_DEF:
-        return "AST_TYPE_DEF";
+    case NS_AST_IMPORT_STMT:
+        return "AST_IMPORT_STMT";
     default:
         return "AST_UNKNOWN";
     }
@@ -144,9 +148,16 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
             printf(" { node[%d] }", n.ops_fn_def.body);
         }
     } break;
-    case NS_AST_PRIMARY_EXPR:
-        ns_str_printf(n.primary_expr.token.val);
+    case NS_AST_EXPR:
+        printf("node[%d]", n.expr.body);
         break;
+    case NS_AST_PRIMARY_EXPR: {
+        if (n.primary_expr.token.type == NS_TOKEN_UNKNOWN) {
+            printf("node[%d]", n.primary_expr.expr);
+        } else {
+            ns_str_printf(n.primary_expr.token.val);
+        }
+    } break;
     case NS_AST_BINARY_EXPR:
         printf("node[%d] ", n.binary_expr.left);
         ns_str_printf(n.binary_expr.op.val);
@@ -237,6 +248,10 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
     } break;
     case NS_AST_WHILE_STMT: {
         printf("while node[%d] { node[%d] }", n.while_stmt.condition, n.while_stmt.body);
+    } break;
+    case NS_AST_IMPORT_STMT: {
+        printf("import ");
+        ns_str_printf(n.import_stmt.lib.val);
     } break;
     default:
         break;

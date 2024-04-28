@@ -241,7 +241,6 @@ typedef struct as_parse_context_t {
     fprintf(stderr, "%s at %s:%d:%d\n", msg, ctx->filename, ctx->token.line, ctx->f - ctx->token.line_start);\
     assert(0);
 
-ns_parse_context_t* ns_parse(const char *source, const char *filename);
 const char * ns_ast_type_str(NS_AST_TYPE type);
 void ns_parse_context_dump(ns_parse_context_t *ctx);
 
@@ -274,6 +273,7 @@ bool ns_parse_designated_stmt(ns_parse_context_t *ctx);
 // expr func
 ns_ast_t ns_parse_stack_top(ns_parse_context_t *ctx);
 bool ns_parse_generator_expr(ns_parse_context_t *ctx);
-bool ns_parse_logical_expr(ns_parse_context_t *ctx);
 bool ns_parse_expr_stack(ns_parse_context_t *ctx);
 bool ns_parse_constant_expr(ns_parse_context_t *ctx);
+
+ns_parse_context_t* ns_parse(const char *source, const char *filename);
