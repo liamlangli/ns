@@ -19,10 +19,13 @@ typedef enum {
 
     NS_AST_VAR_ASSIGN,
 
+    NS_AST_EXPR,
     NS_AST_PRIMARY_EXPR,
     NS_AST_BINARY_EXPR,
     NS_AST_MEMBER_EXPR,
+    NS_AST_UNARY_EXPR,
     NS_AST_CALL_EXPR,
+    NS_AST_INDEX_EXPR,
     NS_AST_CAST_EXPR,
     NS_AST_GENERATOR_EXPR,
     NS_AST_DESIGNATED_EXPR,
@@ -39,6 +42,10 @@ typedef enum {
 } NS_AST_TYPE;
 
 typedef struct ns_ast_t ns_ast_t;
+
+typedef struct ns_parse_state {
+    int f, line;
+} ns_parse_state_t;
 
 typedef struct ns_ast_param {
     bool is_ref;
@@ -98,6 +105,15 @@ typedef struct ns_ast_primary_expr {
     int slot; // (0) for global, (< 0) for local, (> 0) for param
 } ns_ast_primary_expr;
 
+typedef struct ns_ast_unary_expr {
+    ns_token_t op;
+    int expr;
+} ns_ast_unary_expr;
+
+typedef struct ns_ast_expr {
+    int body;
+} ns_ast_expr;
+
 typedef struct ns_ast_member_expr {
     int left;
     ns_token_t right;
@@ -107,6 +123,11 @@ typedef struct ns_ast_call_expr {
     int callee;
     int arg_count;
 } ns_ast_call_expr;
+
+typedef struct ns_ast_index_expr {
+    int table;
+    int expr;
+} ns_ast_index_expr;
 
 typedef struct ns_ast_generator_expr {
     ns_token_t label;
@@ -176,11 +197,14 @@ typedef struct ns_ast_t {
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
 
+        ns_ast_expr expr;
         ns_ast_binary_expr binary_expr;
         ns_ast_call_expr call_expr;
+        ns_ast_index_expr index_expr;
         ns_ast_cast_expr type_cast;
         ns_ast_member_expr member_expr;
         ns_ast_primary_expr primary_expr;
+        ns_ast_unary_expr unary_expr;
         ns_ast_generator_expr generator;
         ns_ast_designated_expr designated_expr;
 
@@ -214,9 +238,8 @@ typedef struct as_parse_context_t {
 
 // void ns_parse_dump_error(ns_parse_context_t *ctx, const char *msg);
 #define ns_parse_dump_error(ctx, msg) \
-    printf("Error: %s at %s:%d\n", msg, ctx->filename, ctx->token.line);\
+    fprintf(stderr, "%s at %s:%d:%d\n", msg, ctx->filename, ctx->token.line, ctx->f - ctx->token.line_start);\
     assert(0);
-
 
 ns_parse_context_t* ns_parse(const char *source, const char *filename);
 const char * ns_ast_type_str(NS_AST_TYPE type);
@@ -228,8 +251,8 @@ bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token);
 void ns_token_skip_eol(ns_parse_context_t *ctx);
 
 // node func
-void ns_restore_state(ns_parse_context_t *ctx, int f);
-int ns_save_state(ns_parse_context_t *ctx);
+void ns_restore_state(ns_parse_context_t *ctx, ns_parse_state_t state);
+ns_parse_state_t ns_save_state(ns_parse_context_t *ctx);
 int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n);
 
 // primary func

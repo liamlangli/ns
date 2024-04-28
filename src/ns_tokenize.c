@@ -83,6 +83,10 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_OPS";
     case NS_TOKEN_IMPORT:
         return "NS_TOKEN_IMPORT";
+    case NS_TOKEN_DOT:
+        return "NS_TOKEN_DOT";
+    case NS_TOKEN_MULTIPLICATIVE_OPERATOR:
+        return "NS_TOKEN_MULTIPLICATIVE_OPERATOR";
     default:
         return "Unknown token";
     }
@@ -625,6 +629,22 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
             t->type = NS_TOKEN_ASSIGN_OPERATOR;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
+        } else if (s[i + 1] >= '0' && s[i + 1] <= '9') {
+            i++;
+            while (s[i] >= '0' && s[i] <= '9') {
+                i++;
+            }
+            if (s[i] == '.') {
+                // parse float literal
+                i = ns_token_float_literal(t, s, f + 1);
+                t->val.data--;
+                t->val.len++;
+                to = i;
+            } else {
+                t->type = NS_TOKEN_INT_LITERAL;
+                t->val = ns_str_range(s + f, i - f);
+                to = i;
+            }
         } else {
             t->type = NS_TOKEN_ADDITIVE_OPERATOR;
             t->val = ns_str_range(s + f, 1);
@@ -782,6 +802,7 @@ void ns_tokenize(const char *source, const char *filename) {
     int len = strlen(source);
     int i = 0;
     ns_token_t t = {0};
+    t.line = 1;
     do {
         i = ns_next_token(&t, source, filename, i);
         if (t.type == NS_TOKEN_SPACE) {

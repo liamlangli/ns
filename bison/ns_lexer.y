@@ -164,12 +164,9 @@ multiplicative_expression: unary_expression
 
 unary_expression: postfix_expression
     | unary_operator unary_expression
-    | AWAIT unary_expression
     ;
 
 unary_operator: AND
-    | MUL
-    | ADD
     | SUB
     | BIT_INV
     | NOT
