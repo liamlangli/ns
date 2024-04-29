@@ -8,7 +8,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "ns token",
-            "preLaunchTask": "make",
+            "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["-t","sample/rt.ns"],
             "cwd": "${workspaceFolder}"
@@ -17,7 +17,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "ns parse",
-            "preLaunchTask": "make",
+            "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["-p", "sample/rt.ns"],
             "cwd": "${workspaceFolder}"
@@ -26,7 +26,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "ns eval",
-            "preLaunchTask": "make",
+            "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["sample/rt.ns"],
             "cwd": "${workspaceFolder}"
@@ -35,9 +35,18 @@
             "type": "lldb",
             "request": "launch",
             "name": "ns repl",
-            "preLaunchTask": "make",
+            "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["-r"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "ns arm",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/ns",
+            "args": ["-arm", "sample/add.ns"],
             "cwd": "${workspaceFolder}"
         },
         {

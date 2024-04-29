@@ -260,13 +260,12 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
 }
 
 void ns_parse_context_dump(ns_parse_context_t *ctx) {
-    printf("AST:\n");
-
+    printf("ast_nodes:\n");
     for (int i = 0, l = ctx->node_count; i < l; i++) {
         ns_ast_dump(ctx, i);
     }
 
-    printf("Sections:\n");
+    printf("sections:\n");
     for (int i = 0, l = ctx->section_count; i < l; i++) {
         ns_ast_dump(ctx, ctx->sections[i]);
     }

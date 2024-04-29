@@ -17,6 +17,7 @@
 - i8
 - if
 - in
+- import
 - let
 - nil
 - ref

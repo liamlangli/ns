@@ -1,6 +1,7 @@
 #include "ns.h"
 #include "ns_parse.h"
 #include "ns_tokenize.h"
+#include "ns_type.h"
 #include "ns_vm.h"
 #include "ns_code_gen.h"
 
@@ -111,15 +112,19 @@ int main(int argc, char **argv) {
     } else if (option.parse_only) {
         ns_parse_context_dump(ns_parse(source, filename));
     } else if (option.code_gen_only) {
+        ns_parse_context_t *ctx = ns_parse(source, filename);
+        if (ctx == NULL) {
+            ns_dump_error(ctx, "parse error: failed to parse source\n")
+        }
         switch (option.arch) {
             case llvm_ir:
-                ns_code_gen_ir(ns_parse(source, filename));
+                ns_code_gen_ir(ctx);
                 break;
             case arm_64:
-                ns_code_gen_arm64(ns_parse(source, filename));
+                ns_code_gen_arm64(ctx);
                 break;
             case x86_64:
-                ns_code_gen_x86_64(ns_parse(source, filename));
+                ns_code_gen_x86_64(ctx);
                 break;
             default:
                 fprintf(stderr, "invalid arch %d\n", option.arch);

@@ -20,11 +20,11 @@ token: all
 parse: all
 	./bin/ns -p sample/rt.ns
 
-gen_ir: all
-	./bin/ns -arm sample/rt.ns
+ir: all
+	./bin/ns -ir sample/add.ns
 
-gen_arm: all
-	./bin/ns -ir sample/rt.ns
+arm: all
+	./bin/ns -arm sample/add.ns
 
 eval: all
 	./bin/ns sample/rt.ns
