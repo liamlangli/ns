@@ -7,7 +7,8 @@ NS_SRC = src/ns.c src/ns_type.c
 NS_TOKEN = src/ns_tokenize.c
 NS_PARSE = src/ns_parse.c src/ns_parse_stmt.c src/ns_parse_expr.c src/ns_parse_dump.c
 NS_EVAL = src/ns_vm.c src/ns_type.c
-NS_SRCS = $(NS_SRC) $(NS_TOKEN) $(NS_PARSE) $(NS_EVAL)
+NS_CODE_GEN = src/ns_gen_ir.c src/ns_gen_arm.c src/ns_gen_x86.c
+NS_SRCS = $(NS_SRC) $(NS_TOKEN) $(NS_PARSE) $(NS_EVAL) $(NS_CODE_GEN)
 
 all: $(NS_SRCS)
 	mkdir -p bin
@@ -19,8 +20,17 @@ token: all
 parse: all
 	./bin/ns -p sample/rt.ns
 
+gen_ir: all
+	./bin/ns -arm sample/rt.ns
+
+gen_arm: all
+	./bin/ns -ir sample/rt.ns
+
 eval: all
 	./bin/ns sample/rt.ns
+
+repl: all
+	./bin/ns -r
 
 clean:
 	rm -rf bin/*

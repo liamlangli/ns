@@ -34,6 +34,15 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "ns repl",
+            "preLaunchTask": "make",
+            "program": "${workspaceFolder}/bin/ns",
+            "args": ["-r"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "bison",
             "program": "${workspaceFolder}/bison/ns_lexer",
             "args": [],

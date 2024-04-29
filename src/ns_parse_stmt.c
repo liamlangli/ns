@@ -43,7 +43,7 @@ bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
         if (ns_parse_expr_stack(ctx)) {
             n.jump_stmt.expr = ctx->current;
         } else {
-            ns_parse_dump_error(ctx, "Expected expression after 'return'");
+            ns_dump_error(ctx, "Expected expression after 'return'");
         }
         ns_ast_push(ctx, n);
         return true;

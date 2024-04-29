@@ -236,11 +236,6 @@ typedef struct as_parse_context_t {
     const char *filename;
 } ns_parse_context_t;
 
-// void ns_parse_dump_error(ns_parse_context_t *ctx, const char *msg);
-#define ns_parse_dump_error(ctx, msg) \
-    fprintf(stderr, "%s at %s:%d:%d\n", msg, ctx->filename, ctx->token.line, ctx->f - ctx->token.line_start);\
-    assert(0);
-
 const char * ns_ast_type_str(NS_AST_TYPE type);
 void ns_parse_context_dump(ns_parse_context_t *ctx);
 

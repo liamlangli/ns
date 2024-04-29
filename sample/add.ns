@@ -1,0 +1,5 @@
+fn add(a: u32, b: u32) {
+    return a + b
+}
+
+print(1, 2)

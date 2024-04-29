@@ -72,7 +72,7 @@ bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
     }
 
     if (top != expr_top + 1) {
-        ns_parse_dump_error(ctx, "Rewind failed.");
+        ns_dump_error(ctx, "Rewind failed.");
     }
 
     ctx->top = expr_top;
@@ -100,12 +100,12 @@ bool ns_parse_call_expr(ns_parse_context_t *ctx) {
         } else if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
             break;
         } else {
-            ns_parse_dump_error(ctx, "syntax error: expected ',' or ')'");
+            ns_dump_error(ctx, "syntax error: expected ',' or ')'");
         }
     }
 
     if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
-        ns_parse_dump_error(ctx, "syntax error: expected ')'");
+        ns_dump_error(ctx, "syntax error: expected ')'");
     }
 
     ns_ast_push(ctx, n);
@@ -136,6 +136,7 @@ bool ns_parse_primary_expr(ns_parse_context_t *ctx) {
         }
     }
 
+    ns_restore_state(ctx, state);
     return false;
 }
 
@@ -171,7 +172,7 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
             } else if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
                 break;
             } else {
-                ns_parse_dump_error(ctx, "syntax error: expected ',' or ')'");
+                ns_dump_error(ctx, "syntax error: expected ',' or ')'");
             }
         }
 
@@ -179,7 +180,7 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
             ns_ast_push(ctx, n);
             return true;
         } else {
-            ns_parse_dump_error(ctx, "syntax error: expected ')'");
+            ns_dump_error(ctx, "syntax error: expected ')'");
         }
     }
 
@@ -191,7 +192,7 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
             ns_ast_push(ctx, n);
             return true;
         } else {
-            ns_parse_dump_error(ctx, "syntax error: expected expression after '['");
+            ns_dump_error(ctx, "syntax error: expected expression after '['");
         }
     }
 
@@ -203,7 +204,7 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
             ns_ast_push(ctx, n);
             return true;
         } else {
-            ns_parse_dump_error(ctx, "syntax error: expected identifier after '.'");
+            ns_dump_error(ctx, "syntax error: expected identifier after '.'");
         }
     }
 
@@ -217,13 +218,12 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
             ns_ast_push(ctx, n);
             return true;
         } else {
-            ns_parse_dump_error(ctx, "syntax error: expected type after 'as'");
+            ns_dump_error(ctx, "syntax error: expected type after 'as'");
         }
     }
 
+    // only primary expr
     ns_restore_state(ctx, state);
-    ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = token}};
-    ns_ast_push(ctx, n);
     return true;
 }
 
@@ -239,7 +239,7 @@ bool ns_parse_unary_expr(ns_parse_context_t *ctx) {
             ns_ast_push(ctx, n);
             return true;
         } else {
-            ns_parse_dump_error(ctx, "syntax error: expected expression after unary operator");
+            ns_dump_error(ctx, "syntax error: expected expression after unary operator");
         }
     }
     
@@ -273,7 +273,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
 
             ns_restore_state(ctx, state);
             if (!ns_parse_postfix_expr(ctx)) {
-                ns_parse_dump_error(ctx, "syntax error: expected postfix expression");
+                ns_dump_error(ctx, "syntax error: expected postfix expression");
             }
             ns_parse_stack_push_index(ctx, ctx->current);
         } break;
@@ -294,7 +294,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                     ns_parse_stack_push_index(ctx, ctx->current);
                     break;
                 } else {
-                    ns_parse_dump_error(ctx, "syntax error: expected unary expression");
+                    ns_dump_error(ctx, "syntax error: expected unary expression");
                 }
             }
 
@@ -303,7 +303,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                 ns_ast_t n = {.type = NS_AST_BINARY_EXPR, .binary_expr = {.op = ctx->token}};
                 ns_parse_stack_push(ctx, n);
             } else {
-                ns_parse_dump_error(ctx, "syntax error: multi operator");
+                ns_dump_error(ctx, "syntax error: multi operator");
             }
         } break;
         case NS_TOKEN_OPEN_PAREN: {
@@ -314,12 +314,12 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                     ns_parse_stack_push(ctx, expr);
                     break;
                 } else {
-                    ns_parse_dump_error(ctx, "syntax error: expected inner expression after '('");
+                    ns_dump_error(ctx, "syntax error: expected inner expression after '('");
                 }
             } else {
                 int callee = ns_parse_stack_pop(ctx);
                 if (!ns_parse_call_expr(ctx)) {
-                    ns_parse_dump_error(ctx, "syntax error: expected call expression after '('");
+                    ns_dump_error(ctx, "syntax error: expected call expression after '('");
                 }
                 ns_ast_t *call = &ctx->nodes[ctx->current];
                 call->call_expr.callee = callee;
@@ -373,11 +373,11 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
                 n.binary_expr.right = ctx->current;
                 ns_parse_stack_push(ctx, n);
             } else {
-                ns_parse_dump_error(ctx, "syntax error: expected expression after assign operator");
+                ns_dump_error(ctx, "syntax error: expected expression after assign operator");
             }
         } break;
         default:
-            ns_parse_dump_error(ctx, "fatal error: unexpected token type in expr stack parser.");
+            ns_dump_error(ctx, "fatal error: unexpected token type in expr stack parser.");
             break;
         }
 
@@ -391,7 +391,7 @@ rewind:
             ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_COMPOUND_STMT, .compound_stmt.count = 0});
             goto success; // empty compound stmt
         }
-        ns_parse_dump_error(ctx, "syntax error: invalid expression before EOL");
+        ns_dump_error(ctx, "syntax error: invalid expression before EOL");
     }
 failed:
     return false;
