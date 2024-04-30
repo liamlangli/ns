@@ -1,6 +1,10 @@
 .PHONY: all run clean
 
-CC = clang
+CC = gcc
+ifeq ($(UNAME_S),Darwin)
+	CC = clang
+endif
+
 CC_OPT = -g -O0
 
 NS_SRC = src/ns.c src/ns_type.c
