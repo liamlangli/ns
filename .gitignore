@@ -1,4 +1,6 @@
 bin
+obj
+bytecode
 .DS_Store
 
 # nslang extension
