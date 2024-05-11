@@ -22,7 +22,7 @@ token: all
 	./bin/ns -t sample/rt.ns
 
 parse: all
-	./bin/ns -p sample/rt.ns
+	./bin/ns -p sample/add.ns
 
 ir: all
 	./bin/ns -ir sample/add.ns

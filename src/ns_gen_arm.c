@@ -2,8 +2,6 @@
 #include "ns_parse.h"
 #include "ns_type.h"
 
-#include <stdlib.h>
-#include <string.h>
 #include <stdio.h>
 
 typedef struct ns_code_gen_ctx_t {
@@ -11,6 +9,48 @@ typedef struct ns_code_gen_ctx_t {
     FILE *fd;
     ns_parse_context_t *ctx;
 } ns_code_gen_ctx_t;
+
+void ns_code_gen_write_type(ns_code_gen_ctx_t *ctx, ns_token_t t) {
+    FILE *fd = ctx->fd;
+
+    bool generic_type = false;
+    if (ns_str_equals_STR(t.val, "i64") ||
+        ns_str_equals_STR(t.val, "i32") ||
+        ns_str_equals_STR(t.val, "i16") ||
+        ns_str_equals_STR(t.val,  "i8") ||
+        ns_str_equals_STR(t.val, "u64") ||
+        ns_str_equals_STR(t.val, "u32") ||
+        ns_str_equals_STR(t.val, "u16") ||
+        ns_str_equals_STR(t.val,  "u8") ||
+        ns_str_equals_STR(t.val, "f64") ||
+        ns_str_equals_STR(t.val, "f32")
+    ) {
+        generic_type = true;
+    }
+
+    if (generic_type) {
+        fprintf(fd, "%s", t.val.data);
+    } else {
+        fprintf(fd, "i64");
+    }
+}
+
+bool ns_code_gen_fn_def(ns_code_gen_ctx_t *ctx, int s) {
+    ns_ast_t n = ctx->ctx->nodes[s];
+
+    FILE *fd = ctx->fd;
+
+    // emit fn header
+    ns_token_t ret = n.fn_def.return_type;
+    fprintf(fd, "define ");
+    ns_code_gen_write_type(ctx, ret);
+    fprintf(fd, " @%.*s(", n.fn_def.name.val.len, n.fn_def.name.val.data);
+
+    i32 param_count = n.fn_def.param_count;
+    // ns_ast_t *p = n.fn_def.params;
+
+    return true;
+}
 
 bool ns_code_gen_arm64(ns_parse_context_t *ctx) {
     ns_str asm_path = ns_str_cstr("bin/asm.s");
@@ -34,6 +74,7 @@ bool ns_code_gen_arm64(ns_parse_context_t *ctx) {
 
         switch (n.type) {
             case NS_AST_FN_DEF:
+                ns_code_gen_fn_def(&code_gen_ctx, s);
                 break;
             default:
                 break;

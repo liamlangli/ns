@@ -55,13 +55,13 @@ ns_compile_option_t parse_options(int argc, char ** argv) {
             option.show_version = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             option.show_help = true;
-        } else if (strcmp(argv[i], "-arm64")) {
+        } else if (strcmp(argv[i], "-arm64") == 0) {
             option.code_gen_only = true;
             option.arch = arm_64;
-        } else if (strcmp(argv[i], "-ir")) {
+        } else if (strcmp(argv[i], "-ir") == 0) {
             option.code_gen_only = true;
             option.arch = llvm_ir;
-        } else if (strcmp(argv[i], "-x86")) {
+        } else if (strcmp(argv[i], "-x86") == 0) {
             option.code_gen_only = true;
             option.arch = x86_64;
         } else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--repl") == 0) {

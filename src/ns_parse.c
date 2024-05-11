@@ -1,11 +1,9 @@
 #include "ns_parse.h"
 #include "ns_tokenize.h"
-#include "ns_type.h"
 
 #include <assert.h>
 #include <stdbool.h>
-#include <stdio.h>
-#include <stdlib.h>
+
 
 bool ns_parse_unary_expr(ns_parse_context_t *ctx);
 bool ns_parse_type_expr(ns_parse_context_t *ctx);

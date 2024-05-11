@@ -43,10 +43,10 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns arm",
+            "name": "ns ir",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-arm", "sample/add.ns"],
+            "args": ["-ir", "sample/add.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
