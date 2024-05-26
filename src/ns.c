@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
     }
 
     if (option.show_version) {
-        printf("ns %d.%d\n", VERSION_MAJOR, VERSION_MINOR);
+        printf("ns %d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
         if (argc == 2) return 0; // only show version
     }
 
