@@ -5,11 +5,9 @@ ifeq ($(UNAME_S),Darwin)
 	CC = clang
 endif
 
-CC_OPT = -g -O0
+CFLAGS = -g -O0
+LDFLAGS =
 
-LLVM_CONFIG = llvm-config
-CFLAGS = `$(LLVM_CONFIG) --cflags`
-LDFLAGS = `$(LLVM_CONFIG) --ldflags --libs --system-libs core native`
 BINDIR = bin
 OBJDIR = $(BINDIR)/obj
 
@@ -40,22 +38,22 @@ $(OBJDIR):
 	mkdir -p $(OBJDIR)/src
 
 token: all
-	./bin/$(TARGET) -t sample/rt.ns
+	$(TARGET) -t sample/rt.ns
 
 parse: all
-	./bin/$(TARGET) -p sample/add.ns
+	$(TARGET) -p sample/add.ns
 
 ir: all
-	./bin/$(TARGET) -ir sample/add.ns
+	$(TARGET) -ir sample/add.ns
 
 arm: all
-	./bin/$(TARGET) -arm sample/add.ns
+	$(TARGET) -arm sample/add.ns
 
 eval: all
-	./bin/$(TARGET) sample/rt.ns
+	$(TARGET) sample/rt.ns
 
 repl: all
-	./bin/$(TARGET) -r
+	$(TARGET) -r
 
 clean:
 	rm -f $(TARGET) $(NS_OBJS)
