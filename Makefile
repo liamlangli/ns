@@ -1,9 +1,6 @@
 .PHONY: all run clean
 
-CC = gcc
-ifeq ($(UNAME_S),Darwin)
-	CC = clang
-endif
+CC = clang
 
 CFLAGS = -g -O0
 LDFLAGS =
