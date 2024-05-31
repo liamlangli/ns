@@ -13,12 +13,17 @@ LDFLAGS = `$(LLVM_CONFIG) --ldflags --libs --system-libs core native`
 BINDIR = bin
 OBJDIR = $(BINDIR)/obj
 
-NS_SRC = src/ns.c src/ns_type.c
-NS_TOKEN = src/ns_tokenize.c
-NS_PARSE = src/ns_parse.c src/ns_parse_stmt.c src/ns_parse_expr.c src/ns_parse_dump.c
-NS_EVAL = src/ns_vm.c src/ns_type.c
-NS_CODE_GEN = src/ns_gen_ir.c src/ns_gen_arm.c src/ns_gen_x86.c
-NS_SRCS = $(NS_SRC) $(NS_TOKEN) $(NS_PARSE) $(NS_EVAL) $(NS_CODE_GEN)
+NS_SRCS = src/ns.c \
+	src/ns_type.c \
+	src/ns_tokenize.c \
+	src/ns_parse.c \
+	src/ns_parse_stmt.c \
+	src/ns_parse_expr.c \
+	src/ns_parse_dump.c \
+	src/ns_vm.c \
+	src/ns_gen_ir.c \
+	src/ns_gen_arm.c \
+	src/ns_gen_x86.c
 NS_OBJS = $(NS_SRCS:%.c=$(OBJDIR)/%.o)
 
 TARGET = $(BINDIR)/ns
@@ -32,7 +37,7 @@ $(OBJDIR)/%.o: %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 $(OBJDIR):
-	mkdir -p $(OBJDIR)
+	mkdir -p $(OBJDIR)/src
 
 token: all
 	./bin/$(TARGET) -t sample/rt.ns
