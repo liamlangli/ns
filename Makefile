@@ -7,38 +7,55 @@ endif
 
 CC_OPT = -g -O0
 
+LLVM_CONFIG = llvm-config
+CFLAGS = `$(LLVM_CONFIG) --cflags`
+LDFLAGS = `$(LLVM_CONFIG) --ldflags --libs --system-libs core native`
+BINDIR = bin
+OBJDIR = $(BINDIR)/obj
+
 NS_SRC = src/ns.c src/ns_type.c
 NS_TOKEN = src/ns_tokenize.c
 NS_PARSE = src/ns_parse.c src/ns_parse_stmt.c src/ns_parse_expr.c src/ns_parse_dump.c
 NS_EVAL = src/ns_vm.c src/ns_type.c
 NS_CODE_GEN = src/ns_gen_ir.c src/ns_gen_arm.c src/ns_gen_x86.c
 NS_SRCS = $(NS_SRC) $(NS_TOKEN) $(NS_PARSE) $(NS_EVAL) $(NS_CODE_GEN)
+NS_OBJS = $(NS_SRCS:%.c=$(OBJDIR)/%.o)
 
-all: $(NS_SRCS)
-	mkdir -p bin
-	$(CC) $(CC_OPT) -o bin/ns $^ -Isrc
+TARGET = $(BINDIR)/ns
+
+all: $(TARGET)
+
+$(TARGET): $(NS_OBJS) | $(BINDIR)
+	$(CC) $(NS_OBJS) -o $(TARGET) $(LDFLAGS)
+
+$(OBJDIR)/%.o: %.c | $(OBJDIR)
+	$(CC) -c $< -o $@ $(CFLAGS)
+
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
 
 token: all
-	./bin/ns -t sample/rt.ns
+	./bin/$(TARGET) -t sample/rt.ns
 
 parse: all
-	./bin/ns -p sample/add.ns
+	./bin/$(TARGET) -p sample/add.ns
 
 ir: all
-	./bin/ns -ir sample/add.ns
+	./bin/$(TARGET) -ir sample/add.ns
 
 arm: all
-	./bin/ns -arm sample/add.ns
+	./bin/$(TARGET) -arm sample/add.ns
 
 eval: all
-	./bin/ns sample/rt.ns
+	./bin/$(TARGET) sample/rt.ns
 
 repl: all
-	./bin/ns -r
+	./bin/$(TARGET) -r
 
 clean:
-	rm -rf bin/*
+	rm -f $(TARGET) $(NS_OBJS)
+	rm -rf $(OBJDIR)
 
 install: $(NS_SRCS)
-	$(CC) -O3 -o bin/ns $^ -Isrc
-	cp bin/ns /usr/local/bin
+	$(CC) -O3 -o bin/$(TARGET) $^ -Isrc
+	cp bin/$(TARGET) /usr/local/bin
