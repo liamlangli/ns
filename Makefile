@@ -2,7 +2,7 @@
 
 CC = clang
 
-CFLAGS = -g -O0
+CFLAGS = -g -O0 -Iinclude
 LDFLAGS =
 
 BINDIR = bin
@@ -57,5 +57,5 @@ clean:
 	rm -rf $(OBJDIR)
 
 install: $(NS_SRCS)
-	$(CC) -O3 -o bin/$(TARGET) $^ -Isrc
+	$(CC) -O3 -o bin/$(TARGET) $^ -Iinclude
 	cp bin/$(TARGET) /usr/local/bin
