@@ -137,10 +137,11 @@ int ns_identifier_follow(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || (c >= '0' && c <= '9');
 }
 
-int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
+int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     int i = f;
     int to = f + 1;
     int l, sep;
+    const char *s = src.data;
     char lead = s[i]; // TODO parse utf8 characters
     switch (lead) {
     case '0' ... '9': {
@@ -781,7 +782,7 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
     default: {
         char lead = s[i];
         if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z'))) {
-            fprintf(stderr, "[%s, line:%d, offset:%d] unexpected character: %c\n", filename, t->line, i - t->line_start, lead);
+            fprintf(stderr, "[%s, line:%d, offset:%d] unexpected character: %c\n", filename.data, t->line, i - t->line_start, lead);
             assert(false);
         }
         i++;
@@ -798,8 +799,8 @@ int ns_next_token(ns_token_t *t, const char *s, const char *filename, int f) {
     return to;
 }
 
-void ns_tokenize(const char *source, const char *filename) {
-    int len = strlen(source);
+void ns_tokenize(ns_str source, ns_str filename) {
+    int len = strlen(source.data);
     int i = 0;
     ns_token_t t = {0};
     t.line = 1;
@@ -808,9 +809,9 @@ void ns_tokenize(const char *source, const char *filename) {
         if (t.type == NS_TOKEN_SPACE) {
             continue;
         } else if (t.type == NS_TOKEN_EOL) {
-            printf("[%s, line:%4d, offset:%4d] %-20s\n", filename, t.line, i - t.line_start, ns_token_to_string(t.type));
+            printf("[%s, line:%4d, offset:%4d] %-20s\n", filename.data, t.line, i - t.line_start, ns_token_to_string(t.type));
         } else {
-            printf("[%s, line:%4d, offset:%4d] %-20s %.*s\n", filename, t.line, i - t.line_start, ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
+            printf("[%s, line:%4d, offset:%4d] %-20s %.*s\n", filename.data, t.line, i - t.line_start, ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
         }
         t.type = NS_TOKEN_UNKNOWN;
     } while (t.type != NS_TOKEN_EOF && i < len);

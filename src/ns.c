@@ -13,10 +13,10 @@
 
 #define STB_DS_IMPLEMENTATION
 
-char *ns_read_file(const char *path) {
-    FILE *file = fopen(path, "rb");
+ns_str ns_read_file(ns_str path) {
+    FILE *file = fopen(path.data, "rb");
     if (!file) {
-        return NULL;
+        return ns_str_null;
     }
     fseek(file, 0, SEEK_END);
     long size = ftell(file);
@@ -25,13 +25,25 @@ char *ns_read_file(const char *path) {
     fread(buffer, 1, size, file);
     fclose(file);
     buffer[size] = '\0';
-    return buffer;
+    ns_str data = ns_str_range(buffer, size);
+    data.dynamic = true;
+    return data;
+}
+
+ns_str ns_str_slice(ns_str s, int start, int end) {
+    char *buffer = (char *)malloc(end - start + 1);
+    memcpy(buffer, s.data + start, end - start);
+    buffer[end - start] = '\0';
+    ns_str data = ns_str_range(buffer, end - start);
+    data.dynamic = true;
+    return data;
 }
 
 typedef enum ns_asm_arch {
-    llvm_ir,
+    llvm_bc,
     arm_64,
-    x86_64
+    x86_64,
+    risc
 } ns_asm_arch;
 
 typedef struct ns_compile_option_t {
@@ -42,6 +54,7 @@ typedef struct ns_compile_option_t {
     bool show_version;
     bool show_help;
     bool repl;
+    ns_str output;
 } ns_compile_option_t;
 
 ns_compile_option_t parse_options(int argc, char ** argv) {
@@ -55,15 +68,21 @@ ns_compile_option_t parse_options(int argc, char ** argv) {
             option.show_version = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             option.show_help = true;
+        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+            option.output = ns_str_cstr(argv[i + 1]);
+            i++;
         } else if (strcmp(argv[i], "-arm64") == 0) {
             option.code_gen_only = true;
             option.arch = arm_64;
-        } else if (strcmp(argv[i], "-ir") == 0) {
+        } else if (strcmp(argv[i], "-bc") == 0) {
             option.code_gen_only = true;
-            option.arch = llvm_ir;
+            option.arch = llvm_bc;
         } else if (strcmp(argv[i], "-x86") == 0) {
             option.code_gen_only = true;
             option.arch = x86_64;
+        } else if (strcmp(argv[i], "-risc") == 0) {
+            option.code_gen_only = true;
+            option.arch = risc;
         } else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--repl") == 0) {
             option.repl = true;
         }
@@ -75,10 +94,11 @@ void help() {
     printf("Usage: ns [option] [file.ns]\n");
     printf("  -t --tokenize     tokenize only\n");
     printf("  -p --parse        parse only\n");
-    printf("  -arm -ir -x86     code gen only (64bit arch only)\n");
+    printf("  -arm -bc -x86     code gen only (64bit arch only)\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
     printf("  -r --repl         read eval print loop mode\n");
+    printf("  -o --output       output file\n");
 }
 
 int main(int argc, char **argv) {
@@ -99,10 +119,10 @@ int main(int argc, char **argv) {
         if (argc == 2) return 0; // only show version
     }
 
-    const char *filename = argv[argc - 1];
-    const char *source = ns_read_file(filename);
+    ns_str filename = ns_str_cstr(argv[argc - 1]);
+    ns_str source = ns_read_file(filename);
 
-    if (source == NULL) {
+    if (source.data == NULL) {
         printf("Failed to read file: %s\n", argv[1]);
         return 1;
     }
@@ -113,12 +133,13 @@ int main(int argc, char **argv) {
         ns_parse_context_dump(ns_parse(source, filename));
     } else if (option.code_gen_only) {
         ns_parse_context_t *ctx = ns_parse(source, filename);
+        ctx->output = option.output;
         if (ctx == NULL) {
             ns_dump_error(ctx, "parse error: failed to parse source\n")
         }
         switch (option.arch) {
-            case llvm_ir:
-                ns_code_gen_ir(ctx);
+            case llvm_bc:
+                ns_code_gen_llvm_bc(ctx);
                 break;
             case arm_64:
                 ns_code_gen_arm64(ctx);

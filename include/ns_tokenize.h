@@ -82,5 +82,5 @@ typedef struct ns_token_t {
 
 const char *ns_token_to_string(NS_TOKEN token);
 
-int ns_next_token(ns_token_t *token, const char *src, const char* filename, int from);
-void ns_tokenize(const char *source, const char *filename);
+int ns_next_token(ns_token_t *token, ns_str src, ns_str filename, int from);
+void ns_tokenize(ns_str source, ns_str filename);

@@ -1,9 +1,15 @@
 #pragma once
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdbool.h>
+
+#ifndef bool
+    #define bool int
+    #define true 1
+    #define false 0
+#endif
 
 #define NS_MAX_PARAMS 16
 #define NS_MAX_FIELDS 32
@@ -40,16 +46,22 @@ typedef double f64;
 typedef struct ns_str {
     const char *data;
     int len;
+    bool dynamic;
 } ns_str;
+
+ns_str ns_str_slice(ns_str s, int start, int end);
+
+#define ns_str_null ((ns_str){0, 0})
 #define ns_str_range(s, n) ((ns_str){(s), (n)})
 #define ns_str_cstr(s) ((ns_str){(s), strlen(s)})
+#define ns_str_free(s) if ((s).dynamic) free((void *)(s).data)
 
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
 #define ns_str_equals_STR(s, S) (strncmp((s).data, (S), strlen(S)) == 0)
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
 
 #define ns_dump_error(ctx, msg) \
-    fprintf(stderr, "%s at %s:%d:%d\n", msg, (ctx)->filename, (ctx)->token.line, (ctx)->f - (ctx)->token.line_start);\
+    fprintf(stderr, "%s at %s:%d:%d\n", msg, (ctx)->filename.data, (ctx)->token.line, (ctx)->f - (ctx)->token.line_start);\
     assert(0);
 
 int ns_str_to_i32(ns_str s);

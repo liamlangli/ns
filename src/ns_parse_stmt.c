@@ -1,8 +1,6 @@
 #include "ns_parse.h"
 #include "ns_tokenize.h"
 
-#include <stdbool.h>
-
 bool ns_parse_import_stmt(ns_parse_context_t *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_IMPORT) && ns_parse_identifier(ctx)) {

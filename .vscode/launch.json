@@ -43,19 +43,11 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns ir",
+            "name": "ns bitcode",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-ir", "sample/add.ns"],
+            "args": ["-o", "bin/add.bc", "-bc", "sample/add.ns"],
             "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "bison",
-            "program": "${workspaceFolder}/bison/ns_lexer",
-            "args": [],
-            "cwd": "${workspaceFolder}/bison"
         }
     ]
 }

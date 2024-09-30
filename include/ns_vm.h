@@ -93,4 +93,4 @@ ns_value ns_new_bool(ns_vm_t *vm, bool b);
 
 ns_vm_t *ns_create_vm();
 ns_value ns_eval_expr(ns_vm_t *vm, int expr);
-ns_value ns_eval(ns_vm_t *vm, const char* source, const char *filename);
+ns_value ns_eval(ns_vm_t *vm, ns_str source, ns_str filename);

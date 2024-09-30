@@ -232,8 +232,9 @@ typedef struct as_parse_context_t {
     int top;
 
     ns_token_t token, last_token;
-    const char *source;
-    const char *filename;
+    ns_str source;
+    ns_str filename;
+    ns_str output;
 } ns_parse_context_t;
 
 const char * ns_ast_type_str(NS_AST_TYPE type);
@@ -271,4 +272,4 @@ bool ns_parse_generator_expr(ns_parse_context_t *ctx);
 bool ns_parse_expr_stack(ns_parse_context_t *ctx);
 bool ns_parse_constant_expr(ns_parse_context_t *ctx);
 
-ns_parse_context_t* ns_parse(const char *source, const char *filename);
+ns_parse_context_t* ns_parse(ns_str source, ns_str filename);

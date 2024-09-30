@@ -2,8 +2,6 @@
 #include "ns_tokenize.h"
 
 #include <assert.h>
-#include <stdbool.h>
-
 
 bool ns_parse_unary_expr(ns_parse_context_t *ctx);
 bool ns_parse_type_expr(ns_parse_context_t *ctx);
@@ -456,7 +454,7 @@ bool ns_parse_type_define(ns_parse_context_t *ctx) {
 }
 
 static ns_parse_context_t _parse_ctx = {0};
-ns_parse_context_t *ns_parse(const char *source, const char *filename) {
+ns_parse_context_t *ns_parse(ns_str source, ns_str filename) {
     ns_parse_context_t *ctx = &_parse_ctx;
     ctx->source = source;
     ctx->filename = filename;

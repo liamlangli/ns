@@ -1,22 +1,24 @@
 .PHONY: all run clean
 
 CC = clang
+LD = clang++
 
-CFLAGS = -g -O0 -Iinclude
-LDFLAGS =
+CFLAGS = -g -O0 -Iinclude `llvm-config --cflags`
+LDFLAGS = `llvm-config --ldflags --libs core executionengine mcjit interpreter analysis native bitwriter --system-libs`
 
 BINDIR = bin
 OBJDIR = $(BINDIR)/obj
 
 NS_SRCS = src/ns.c \
 	src/ns_type.c \
+	src/ns_path.c \
 	src/ns_tokenize.c \
 	src/ns_parse.c \
 	src/ns_parse_stmt.c \
 	src/ns_parse_expr.c \
 	src/ns_parse_dump.c \
 	src/ns_vm.c \
-	src/ns_gen_ir.c \
+	src/ns_gen_llvm_bc.c \
 	src/ns_gen_arm.c \
 	src/ns_gen_x86.c
 NS_OBJS = $(NS_SRCS:%.c=$(OBJDIR)/%.o)
@@ -40,8 +42,9 @@ token: all
 parse: all
 	$(TARGET) -p sample/add.ns
 
-ir: all
-	$(TARGET) -ir sample/add.ns
+bc: all
+	$(TARGET) -o bin/add.bc -bc sample/add.ns
+	llvm-dis bin/add.bc
 
 arm: all
 	$(TARGET) -arm sample/add.ns
