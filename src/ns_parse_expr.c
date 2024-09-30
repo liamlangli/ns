@@ -82,7 +82,6 @@ bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
 bool ns_parse_call_expr(ns_parse_context_t *ctx) {
     ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = {.arg_count = 0}};
     if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
-
         ns_ast_push(ctx, n);
         return true;
     }

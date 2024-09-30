@@ -38,6 +38,18 @@ LLVMTypeRef ns_llvm_type(ns_token_t t) {
     return LLVMVoidType();
 }
 
+LLVMBasicBlockRef ns_llvm_expr(ns_llvm_ctx_t *code_gen_ctx, int s) {
+    ns_parse_context_t *ctx = code_gen_ctx->ctx;
+    ns_ast_t n = ctx->nodes[s];
+    LLVMBuilderRef builder = code_gen_ctx->builder;
+
+    switch (n.type) {
+        // case NS_AST_INT:
+            break;
+    }
+    return NULL;
+}
+
 bool ns_llvm_fn_def(ns_llvm_ctx_t *code_gen_ctx, int s) {
     ns_parse_context_t *ctx = code_gen_ctx->ctx;
     ns_ast_t n = ctx->nodes[s];
@@ -86,6 +98,8 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
         switch (n.type) {
             case NS_AST_FN_DEF:
                 ns_llvm_fn_def(&code_gen_ctx, s);
+                break;
+            case NS_AST_COMPOUND_STMT:
                 break;
             default:
                 break;
