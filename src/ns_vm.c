@@ -501,7 +501,7 @@ ns_value ns_eval_expr(ns_vm_t *vm, int i) {
     return NS_NIL;
 }
 
-ns_value ns_eval(ns_vm_t *vm, const char* source, const char *filename) {
+ns_value ns_eval(ns_vm_t *vm, ns_str source, ns_str filename) {
     ns_parse_context_t *ctx = ns_parse(source, filename);
 
     if (ctx == NULL) {

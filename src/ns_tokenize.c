@@ -33,8 +33,30 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_ASYNC";
     case NS_TOKEN_AWAIT:
         return "NS_TOKEN_AWAIT";
-    case NS_TOKEN_TYPE:
-        return "NS_TOKEN_TYPE";
+    case NS_TOKEN_TYPE_INT8:
+        return "NS_TOKEN_TYPE_INT8";
+    case NS_TOKEN_TYPE_INT16:
+        return "NS_TOKEN_TYPE_INT16";
+    case NS_TOKEN_TYPE_INT32:
+        return "NS_TOKEN_TYPE_INT32";
+    case NS_TOKEN_TYPE_INT64:
+        return "NS_TOKEN_TYPE_INT64";
+    case NS_TOKEN_TYPE_UINT8:
+        return "NS_TOKEN_TYPE_UINT8";
+    case NS_TOKEN_TYPE_UINT16:
+        return "NS_TOKEN_TYPE_UINT16";
+    case NS_TOKEN_TYPE_UINT32:
+        return "NS_TOKEN_TYPE_UINT32";
+    case NS_TOKEN_TYPE_UINT64:
+        return "NS_TOKEN_TYPE_UINT64";
+    case NS_TOKEN_TYPE_FLOAT32:
+        return "NS_TOKEN_TYPE_FLOAT32";
+    case NS_TOKEN_TYPE_FLOAT64:
+        return "NS_TOKEN_TYPE_FLOAT64";
+    case NS_TOKEN_TYPE_BOOL:
+        return "NS_TOKEN_TYPE_BOOL";
+    case NS_TOKEN_TYPE_STR:
+        return "NS_TOKEN_TYPE_STR";
     case NS_TOKEN_ASSIGN:
         return "NS_TOKEN_ASSIGN";
     case NS_TOKEN_COLON:
@@ -246,6 +268,13 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             t->type = NS_TOKEN_BREAK;
             t->val = ns_str_range(s + f, 5);
             to = i + 5 + sep;
+        } else if (strncmp(s + f, "bool", 4) == 0) {
+            sep = ns_token_separator(t, s, i + 4);
+            if (sep == 0 && ns_identifier_follow(s[i + 4]))
+                goto identifier;
+            t->type = NS_TOKEN_TYPE_BOOL;
+            t->val = ns_str_range(s + f, 4);
+            to = i + 4 + sep;
         } else {
             goto identifier;
         }
@@ -318,7 +347,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(t, s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE;
+            t->type = strncmp(s + f, "f32", 3) == 0 ? NS_TOKEN_TYPE_FLOAT32 : NS_TOKEN_TYPE_FLOAT64;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
@@ -346,23 +375,16 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(t, s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE;
+            t->type = strncmp(s + f, "i32", 3) == 0 ? NS_TOKEN_TYPE_INT32 : strncmp(s + f, "i64", 3) == 0 ? NS_TOKEN_TYPE_INT64 : NS_TOKEN_TYPE_INT16;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else if (strncmp(s + f, "i8", 2) == 0) {
             sep = ns_token_separator(t, s, i + 2);
             if (sep == 0 && ns_identifier_follow(s[i + 2]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE;
+            t->type = NS_TOKEN_TYPE_INT8;
             t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
-        } else if (strncmp(s + f, "i16", 3) == 0) {
-            sep = ns_token_separator(t, s, i + 3);
-            if (sep == 0 && ns_identifier_follow(s[i + 3]))
-                goto identifier;
-            t->type = NS_TOKEN_TYPE;
-            t->val = ns_str_range(s + f, 3);
-            to = i + 3 + sep;
         } else if (strncmp(s + f, "import", 6) == 0) {
             sep = ns_token_separator(t, s, i + 6);
             if (sep == 0 && ns_identifier_follow(s[i + 6]))
@@ -450,7 +472,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(t, s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE;
+            t->type = NS_TOKEN_TYPE_STR;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
@@ -464,7 +486,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(t, s, i + 4);
             if (sep == 0 && ns_identifier_follow(s[i + 4]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE;
+            t->type = NS_TOKEN_TYPE_DEF;
             t->val = ns_str_range(s + f, 4);
             to = i + 4 + sep;
         } else if (strncmp(s + f, "true", 4) == 0) {
@@ -492,14 +514,14 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(t, s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE;
+            t->type = strncmp(s + f, "u32", 3) == 0 ? NS_TOKEN_TYPE_UINT32 : strncmp(s + f, "u64", 3) == 0 ? NS_TOKEN_TYPE_UINT64 : NS_TOKEN_TYPE_UINT16;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else if (strncmp(s + f, "u8", 2) == 0) {
             sep = ns_token_separator(t, s, i + 2);
             if (sep == 0 && ns_identifier_follow(s[i + 2]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE;
+            t->type = NS_TOKEN_TYPE_UINT8;
             t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
         } else {

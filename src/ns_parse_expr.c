@@ -212,7 +212,7 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
     ns_token_skip_eol(ctx);
     if (ns_token_require(ctx, NS_TOKEN_AS)) {
         ns_token_skip_eol(ctx);
-        if (ns_token_require(ctx, NS_TOKEN_TYPE)) {
+        if (ns_token_require_type(ctx)) {
             ns_ast_t n = {.type = NS_AST_CAST_EXPR, .type_cast = {.expr = callee, .type = ctx->token}};
             ns_ast_push(ctx, n);
             return true;

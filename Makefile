@@ -37,7 +37,7 @@ $(OBJDIR):
 	mkdir -p $(OBJDIR)/src
 
 token: all
-	$(TARGET) -t sample/rt.ns
+	$(TARGET) -t sample/add.ns
 
 parse: all
 	$(TARGET) -p sample/add.ns

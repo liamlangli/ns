@@ -242,7 +242,9 @@ void ns_parse_context_dump(ns_parse_context_t *ctx);
 
 // token func
 bool ns_parse_next_token(ns_parse_context_t *ctx); // skip space
+bool ns_token_can_be_type(NS_TOKEN t);
 bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token);
+bool ns_token_require_type(ns_parse_context_t *ctx);
 void ns_token_skip_eol(ns_parse_context_t *ctx);
 
 // node func

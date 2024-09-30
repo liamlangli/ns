@@ -40,6 +40,39 @@ bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token) {
     return false;
 }
 
+bool ns_token_can_be_type(NS_TOKEN t) {
+    switch (t)
+    {
+    case NS_TOKEN_TYPE_INT8:
+    case NS_TOKEN_TYPE_INT16:
+    case NS_TOKEN_TYPE_INT32:
+    case NS_TOKEN_TYPE_INT64:
+    case NS_TOKEN_TYPE_UINT8:
+    case NS_TOKEN_TYPE_UINT16:
+    case NS_TOKEN_TYPE_UINT32:
+    case NS_TOKEN_TYPE_UINT64:
+    case NS_TOKEN_TYPE_FLOAT32:
+    case NS_TOKEN_TYPE_FLOAT64:
+    case NS_TOKEN_TYPE_BOOL:
+    case NS_TOKEN_TYPE_STR:
+    case NS_TOKEN_IDENTIFIER:
+        return true;
+    default:
+        break;
+    }
+    return false;
+}
+
+bool ns_token_require_type(ns_parse_context_t *ctx) {
+    ns_parse_state_t state = ns_save_state(ctx);
+    ns_parse_next_token(ctx);
+    if (ns_token_can_be_type(ctx->token.type)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
+    return false;
+}
+
 bool ns_token_look_ahead(ns_parse_context_t *ctx, NS_TOKEN token) {
     ns_parse_state_t state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
@@ -78,7 +111,7 @@ bool ns_parse_type_expr(ns_parse_context_t *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     // type
     ns_parse_next_token(ctx);
-    if (ctx->token.type == NS_TOKEN_TYPE) {
+    if (ns_token_can_be_type(ctx->token.type)) {
         return true;
     }
 

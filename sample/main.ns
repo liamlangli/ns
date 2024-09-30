@@ -1,6 +1,7 @@
 let a = 1
 let pi: f64 = 3.141592653
 let hello = 'hello world'
+let empty = nil
 
 // define a function
 fn add(a: f64, b: f64) {
