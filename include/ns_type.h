@@ -60,9 +60,8 @@ ns_str ns_str_slice(ns_str s, int start, int end);
 #define ns_str_equals_STR(s, S) (strncmp((s).data, (S), strlen(S)) == 0)
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
 
-#define ns_dump_error(ctx, msg) \
-    fprintf(stderr, "%s at %s:%d:%d\n", msg, (ctx)->filename.data, (ctx)->token.line, (ctx)->f - (ctx)->token.line_start);\
-    assert(0);
+#define ns_error(msg) \
+    fprintf(stderr, "%s\n", msg);\
 
 int ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);

@@ -3,10 +3,9 @@
 #include "ns_tokenize.h"
 #include "ns_type.h"
 
-
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
 
 ns_value ns_eval_expr(ns_vm_t *vm, int i);
 
@@ -75,10 +74,10 @@ int ns_vm_find_fn_local_slot(ns_vm_t *vm, ns_fn_t *fn, ns_str name) {
 }
 
 void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
-    if (i == -1) return;
+    if (i == -1)
+        return;
     ns_ast_t n = vm->ast[i];
-    switch (n.type)
-    {
+    switch (n.type) {
     case NS_AST_VAR_DEF: {
         ns_str name = n.var_def.name.val;
         int slot = ns_vm_find_fn_local_slot(vm, fn, name);
@@ -111,7 +110,7 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
 
             slot = ns_vm_find_fn_local_slot(vm, fn, name);
             if (slot != -1) {
-                vm->ast[i].primary_expr.slot = -1 -slot;
+                vm->ast[i].primary_expr.slot = -1 - slot;
                 break;
             }
 
@@ -168,13 +167,13 @@ void ns_vm_parse_fn(ns_vm_t *vm, ns_ast_t n) {
 }
 
 ns_value ns_eval_literal(ns_vm_t *vm, ns_ast_t n) {
-    switch (n.primary_expr.token.type)
-    {
+    switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
         return (ns_value){.type = NS_TYPE_I64, .u.int64 = ns_str_to_i32(n.primary_expr.token.val)};
     case NS_TOKEN_FLOAT_LITERAL:
         return (ns_value){.type = NS_TYPE_F64, .u.float64 = ns_str_to_f64(n.primary_expr.token.val)};
-    case NS_TOKEN_STRING_LITERAL: break;
+    case NS_TOKEN_STRING_LITERAL:
+        break;
         // copy & save string
     case NS_TOKEN_TRUE:
         return NS_TRUE;
@@ -215,8 +214,7 @@ void ns_vm_parse_ast(ns_vm_t *vm, ns_parse_context_t *ctx) {
     for (int i = 0; i < ctx->section_count; ++i) {
         int s = ctx->sections[i];
         ns_ast_t n = ctx->nodes[s];
-        switch (n.type)
-        {
+        switch (n.type) {
         case NS_AST_FN_DEF: {
             ns_fn_t f = {.name = n.fn_def.name.val, .ast_root = n.fn_def.body};
             vm->fns[vm->fn_count++] = f;
@@ -241,8 +239,7 @@ void ns_vm_parse_ast(ns_vm_t *vm, ns_parse_context_t *ctx) {
     for (int i = 0; i < ctx->section_count; ++i) {
         int s = ctx->sections[i];
         ns_ast_t n = ctx->nodes[s];
-        switch (n.type)
-        {
+        switch (n.type) {
         case NS_AST_FN_DEF: {
             ns_str key = n.fn_def.name.val;
             ns_vm_parse_fn(vm, n);
@@ -254,19 +251,19 @@ void ns_vm_parse_ast(ns_vm_t *vm, ns_parse_context_t *ctx) {
 }
 
 ns_value ns_new_bool(ns_vm_t *vm, bool value) {
-    ns_value v = { .type = NS_TYPE_BOOL, .u.boolean = value };
+    ns_value v = {.type = NS_TYPE_BOOL, .u.boolean = value};
     int i = ns_add_value(vm, v);
     return vm->values[i];
 }
 
 ns_value ns_new_i32(ns_vm_t *vm, i32 value) {
-    ns_value v = { .type = NS_TYPE_I64, .u.int64 = value };
+    ns_value v = {.type = NS_TYPE_I64, .u.int64 = value};
     int i = ns_add_value(vm, v);
     return vm->values[i];
 }
 
 ns_value ns_new_f64(ns_vm_t *vm, f64 value) {
-    ns_value v = { .type = NS_TYPE_F64, .u.float64 = value };
+    ns_value v = {.type = NS_TYPE_F64, .u.float64 = value};
     int i = ns_add_value(vm, v);
     return vm->values[i];
 }
@@ -303,17 +300,14 @@ bool ns_vm_push_call_scope(ns_vm_t *vm, ns_call_scope scope) {
 }
 
 bool ns_value_int_type(ns_value v) {
-    return v.type == NS_TYPE_I32 || v.type == NS_TYPE_I64 ||  v.type == NS_TYPE_I16 || v.type == NS_TYPE_I8
-        || v.type == NS_TYPE_U32 || v.type == NS_TYPE_U64 || v.type == NS_TYPE_U16 || v.type == NS_TYPE_U8;
+    return v.type == NS_TYPE_I32 || v.type == NS_TYPE_I64 || v.type == NS_TYPE_I16 || v.type == NS_TYPE_I8 ||
+           v.type == NS_TYPE_U32 || v.type == NS_TYPE_U64 || v.type == NS_TYPE_U16 || v.type == NS_TYPE_U8;
 }
 
-bool ns_value_float_type(ns_value v) {
-    return v.type == NS_TYPE_F32 || v.type == NS_TYPE_F64;
-}
+bool ns_value_float_type(ns_value v) { return v.type == NS_TYPE_F32 || v.type == NS_TYPE_F64; }
 
 bool ns_value_conditional_true(ns_value v) {
-    switch (v.type)
-    {
+    switch (v.type) {
     case NS_TYPE_BOOL:
         return v.u.boolean;
     case NS_TYPE_I32:
@@ -338,8 +332,7 @@ bool ns_value_conditional_true(ns_value v) {
 
 ns_value ns_eval_binary_op(ns_vm_t *vm, ns_value left, ns_value right, int i) {
     ns_ast_t n = vm->ast[i];
-    switch (n.binary_expr.op.type)
-    {
+    switch (n.binary_expr.op.type) {
     case NS_TOKEN_ADDITIVE_OPERATOR:
         if (ns_str_equals_STR(n.binary_expr.op.val, "+")) {
             if (ns_value_int_type(left) && ns_value_int_type(right)) {
@@ -451,8 +444,7 @@ ns_value ns_eval_jump_stmt(ns_vm_t *vm, int i) {
 
 ns_value ns_eval_expr(ns_vm_t *vm, int i) {
     ns_ast_t n = vm->ast[i];
-    switch (n.type)
-    {
+    switch (n.type) {
     case NS_AST_BINARY_EXPR: {
         ns_value left = ns_eval_expr(vm, n.binary_expr.left);
         ns_value right = ns_eval_expr(vm, n.binary_expr.right);
@@ -522,8 +514,7 @@ ns_value ns_eval(ns_vm_t *vm, ns_str source, ns_str filename) {
     while (i < l) {
         int s = ctx->sections[i++];
         ns_ast_t n = ctx->nodes[s];
-        switch (n.type)
-        {
+        switch (n.type) {
         case NS_AST_VAR_DEF: {
             ns_value v = ns_eval_expr(vm, n.var_def.expr);
             ns_str key = n.var_def.name.val;
@@ -535,12 +526,12 @@ ns_value ns_eval(ns_vm_t *vm, ns_str source, ns_str filename) {
                 vm->global_values[slot] = v;
             }
         } break;
-        case NS_AST_CALL_EXPR: 
+        case NS_AST_CALL_EXPR:
             ret = ns_call_fn(vm, s);
             break;
         case NS_AST_FN_DEF:
         case NS_AST_STRUCT_DEF:
-        break;
+            break;
 
         default:
             fprintf(stderr, "eval error: unknown section type\n");

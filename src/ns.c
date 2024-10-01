@@ -1,9 +1,9 @@
 #include "ns.h"
+#include "ns_code_gen.h"
 #include "ns_parse.h"
 #include "ns_tokenize.h"
 #include "ns_type.h"
 #include "ns_vm.h"
-#include "ns_code_gen.h"
 
 #include <assert.h>
 #include <stddef.h>
@@ -39,12 +39,7 @@ ns_str ns_str_slice(ns_str s, int start, int end) {
     return data;
 }
 
-typedef enum ns_asm_arch {
-    llvm_bc,
-    arm_64,
-    x86_64,
-    risc
-} ns_asm_arch;
+typedef enum ns_asm_arch { llvm_bc, arm_64, x86_64, risc } ns_asm_arch;
 
 typedef struct ns_compile_option_t {
     bool tokenize_only;
@@ -57,7 +52,7 @@ typedef struct ns_compile_option_t {
     ns_str output;
 } ns_compile_option_t;
 
-ns_compile_option_t parse_options(int argc, char ** argv) {
+ns_compile_option_t parse_options(int argc, char **argv) {
     ns_compile_option_t option = {0};
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--tokenize") == 0) {
@@ -116,7 +111,8 @@ int main(int argc, char **argv) {
 
     if (option.show_version) {
         printf("ns %d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
-        if (argc == 2) return 0; // only show version
+        if (argc == 2)
+            return 0; // only show version
     }
 
     ns_str filename = ns_str_cstr(argv[argc - 1]);
@@ -135,21 +131,21 @@ int main(int argc, char **argv) {
         ns_parse_context_t *ctx = ns_parse(source, filename);
         ctx->output = option.output;
         if (ctx == NULL) {
-            ns_dump_error(ctx, "parse error: failed to parse source\n")
+            ns_error("parse error: failed to parse source\n")
         }
         switch (option.arch) {
-            case llvm_bc:
-                ns_code_gen_llvm_bc(ctx);
-                break;
-            case arm_64:
-                ns_code_gen_arm64(ctx);
-                break;
-            case x86_64:
-                ns_code_gen_x86_64(ctx);
-                break;
-            default:
-                fprintf(stderr, "invalid arch %d\n", option.arch);
-                exit(1);
+        case llvm_bc:
+            ns_code_gen_llvm_bc(ctx);
+            break;
+        case arm_64:
+            ns_code_gen_arm64(ctx);
+            break;
+        case x86_64:
+            ns_code_gen_x86_64(ctx);
+            break;
+        default:
+            fprintf(stderr, "invalid arch %d\n", option.arch);
+            exit(1);
         }
     } else if (option.repl) {
         ns_vm_t *vm = ns_create_vm();

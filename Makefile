@@ -45,6 +45,8 @@ parse: all
 bc: all
 	$(TARGET) -o bin/add.bc -bc sample/add.ns
 	llvm-dis bin/add.bc
+	llc bin/add.bc -o bin/add.s
+	clang bin/add.s -o bin/add
 
 arm: all
 	$(TARGET) -arm sample/add.ns

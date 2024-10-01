@@ -4,5 +4,5 @@
 
 void ns_repl() {
     ns_parse_context_t ctx = {0};
-    ns_dump_error(&ctx, "REPL is not implemented yet.")
+    ns_error("error: repl is not implemented yet.")
 }

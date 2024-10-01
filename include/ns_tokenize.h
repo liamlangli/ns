@@ -8,7 +8,8 @@
 
 typedef enum {
     NS_TOKEN_UNKNOWN = -1,
-    NS_TOKEN_AS,
+    NS_TOKEN_INVALID = 0,
+    NS_TOKEN_AS = 1,
     NS_TOKEN_ASYNC,
     NS_TOKEN_AWAIT,
     NS_TOKEN_BREAK,

@@ -19,7 +19,7 @@
             "name": "ns parse",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-p", "sample/rt.ns"],
+            "args": ["-p", "sample/add.ns"],
             "cwd": "${workspaceFolder}"
         },
         {

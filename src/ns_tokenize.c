@@ -198,8 +198,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             // parse float literal
             i = ns_token_float_literal(t, s, i);
             to = i;
-        } 
-        else {
+        } else {
             while (s[i] >= '0' && s[i] <= '9') {
                 i++;
             }
@@ -214,8 +213,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             }
         }
     } break;
-    case '.':
-    {
+    case '.': {
         if (s[i + 1] >= '0' && s[i + 1] <= '9') {
             // parse float literal
             i = ns_token_float_literal(t, s, i);
@@ -375,7 +373,9 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(t, s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = strncmp(s + f, "i32", 3) == 0 ? NS_TOKEN_TYPE_INT32 : strncmp(s + f, "i64", 3) == 0 ? NS_TOKEN_TYPE_INT64 : NS_TOKEN_TYPE_INT16;
+            t->type = strncmp(s + f, "i32", 3) == 0   ? NS_TOKEN_TYPE_INT32
+                      : strncmp(s + f, "i64", 3) == 0 ? NS_TOKEN_TYPE_INT64
+                                                      : NS_TOKEN_TYPE_INT16;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else if (strncmp(s + f, "i8", 2) == 0) {
@@ -424,7 +424,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
         }
     } break;
 
-    case 'o': // ops 
+    case 'o': // ops
     {
         if (strncmp(s + f, "ops", 3) == 0) {
             sep = ns_token_separator(t, s, i + 3);
@@ -514,7 +514,9 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(t, s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = strncmp(s + f, "u32", 3) == 0 ? NS_TOKEN_TYPE_UINT32 : strncmp(s + f, "u64", 3) == 0 ? NS_TOKEN_TYPE_UINT64 : NS_TOKEN_TYPE_UINT16;
+            t->type = strncmp(s + f, "u32", 3) == 0   ? NS_TOKEN_TYPE_UINT32
+                      : strncmp(s + f, "u64", 3) == 0 ? NS_TOKEN_TYPE_UINT64
+                                                      : NS_TOKEN_TYPE_UINT16;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else if (strncmp(s + f, "u8", 2) == 0) {
@@ -598,8 +600,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
         }
     } break;
     case '&':
-    case '|':
-    {
+    case '|': {
         if (s[i + 1] == '=') {
             t->type = NS_TOKEN_ASSIGN_OPERATOR;
             t->val = ns_str_range(s + f, 2);
@@ -804,7 +805,8 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     default: {
         char lead = s[i];
         if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z'))) {
-            fprintf(stderr, "[%s, line:%d, offset:%d] unexpected character: %c\n", filename.data, t->line, i - t->line_start, lead);
+            fprintf(stderr, "[%s, line:%d, offset:%d] unexpected character: %c\n", filename.data, t->line, i - t->line_start,
+                    lead);
             assert(false);
         }
         i++;
@@ -833,7 +835,8 @@ void ns_tokenize(ns_str source, ns_str filename) {
         } else if (t.type == NS_TOKEN_EOL) {
             printf("[%s, line:%4d, offset:%4d] %-20s\n", filename.data, t.line, i - t.line_start, ns_token_to_string(t.type));
         } else {
-            printf("[%s, line:%4d, offset:%4d] %-20s %.*s\n", filename.data, t.line, i - t.line_start, ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
+            printf("[%s, line:%4d, offset:%4d] %-20s %.*s\n", filename.data, t.line, i - t.line_start,
+                   ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
         }
         t.type = NS_TOKEN_UNKNOWN;
     } while (t.type != NS_TOKEN_EOF && i < len);

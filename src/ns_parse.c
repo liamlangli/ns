@@ -11,9 +11,7 @@ void ns_restore_state(ns_parse_context_t *ctx, ns_parse_state_t state) {
     ctx->token.line = state.line;
 }
 
-ns_parse_state_t ns_save_state(ns_parse_context_t *ctx) {
-    return (ns_parse_state_t){.f = ctx->f, .line = ctx->token.line};
-}
+ns_parse_state_t ns_save_state(ns_parse_context_t *ctx) { return (ns_parse_state_t){.f = ctx->f, .line = ctx->token.line}; }
 
 int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n) {
     ctx->current = ctx->node_count;
@@ -41,8 +39,7 @@ bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token) {
 }
 
 bool ns_token_can_be_type(NS_TOKEN t) {
-    switch (t)
-    {
+    switch (t) {
     case NS_TOKEN_TYPE_INT8:
     case NS_TOKEN_TYPE_INT16:
     case NS_TOKEN_TYPE_INT32:

@@ -5,6 +5,10 @@
 
 #include <assert.h>
 
+#define ns_parse_error(ctx, msg) \
+    fprintf(stderr, "%s at %s:%d:%d\n", msg, (ctx)->filename.data, (ctx)->token.line, (ctx)->f - (ctx)->token.line_start);\
+    assert(0);
+
 typedef enum {
     NS_AST_UNKNOWN = 0,
     NS_AST_PROGRAM,

@@ -172,7 +172,7 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
         ns_str_printf(n.member_expr.right.val);
     } break;
     case NS_AST_CALL_EXPR:
-        printf("node[%d]", n.var_def.expr);
+        printf("node[%d]", n.call_expr.callee);
         printf("(");
         ns_ast_t *last = &n;
         for (int i = 0; i < n.call_expr.arg_count; i++) {
