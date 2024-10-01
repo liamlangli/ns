@@ -248,7 +248,6 @@ bool ns_parse_unary_expr(ns_parse_context_t *ctx) {
 bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
     int expr_top = ++ctx->top;
     ns_parse_state_t state;
-    ns_ast_t expr = {.type = NS_AST_EXPR, .compound_stmt.count = 0};
     do {
         state = ns_save_state(ctx);
         if (!ns_parse_next_token(ctx)) {
@@ -397,8 +396,6 @@ failed:
     return false;
 
 success:
-    expr.expr.body = ctx->current;
-    ns_ast_push(ctx, expr);
     ctx->top = expr_top - 1;
     return true;
 }
