@@ -249,7 +249,7 @@ bool ns_parse_next_token(ns_parse_context_t *ctx); // skip space
 bool ns_token_can_be_type(NS_TOKEN t);
 bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token);
 bool ns_token_require_type(ns_parse_context_t *ctx);
-void ns_token_skip_eol(ns_parse_context_t *ctx);
+bool ns_token_skip_eol(ns_parse_context_t *ctx);
 
 // node func
 void ns_restore_state(ns_parse_context_t *ctx, ns_parse_state_t state);
@@ -267,7 +267,7 @@ bool ns_parse_struct_define(ns_parse_context_t *ctx);
 bool ns_parse_type_define(ns_parse_context_t *ctx);
 
 // stmt func
-bool ns_parse_external_define(ns_parse_context_t *ctx);
+bool ns_parse_global_define(ns_parse_context_t *ctx);
 bool ns_parse_stmt(ns_parse_context_t *ctx);
 bool ns_parse_compound_stmt(ns_parse_context_t *ctx);
 bool ns_parse_designated_stmt(ns_parse_context_t *ctx);

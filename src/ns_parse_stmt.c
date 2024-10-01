@@ -226,7 +226,7 @@ bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_parse_expr_stack(ctx)) {
         ns_parse_next_token(ctx);
-        if (ctx->token.type == NS_TOKEN_EOL) {
+        if (ctx->token.type == NS_TOKEN_EOL || ctx->token.type == NS_TOKEN_EOF) {
             return true;
         }
     }
@@ -270,7 +270,7 @@ bool ns_parse_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_external_define(ns_parse_context_t *ctx) {
+bool ns_parse_global_define(ns_parse_context_t *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
     if (ns_parse_import_stmt(ctx)) {

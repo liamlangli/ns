@@ -78,7 +78,7 @@ bool ns_token_look_ahead(ns_parse_context_t *ctx, NS_TOKEN token) {
     return result;
 }
 
-void ns_token_skip_eol(ns_parse_context_t *ctx) {
+bool ns_token_skip_eol(ns_parse_context_t *ctx) {
     ns_parse_state_t state;
     do {
         state = ns_save_state(ctx);
@@ -500,8 +500,8 @@ ns_parse_context_t *ns_parse(ns_str source, ns_str filename) {
 
     bool loop = false;
     do {
-        ns_token_skip_eol(ctx);
-        loop = ns_parse_external_define(ctx);
+        if(ns_token_skip_eol(ctx)) break; // EOF
+        loop = ns_parse_global_define(ctx);
         if (loop)
             ctx->sections[ctx->section_count++] = ctx->current;
     } while (loop);

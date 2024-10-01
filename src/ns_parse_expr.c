@@ -252,6 +252,9 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
     do {
         state = ns_save_state(ctx);
         if (!ns_parse_next_token(ctx)) {
+            if (ctx->token.type == NS_TOKEN_EOF) {
+                goto rewind;
+            }
             return false;
         }
 
