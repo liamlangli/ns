@@ -3,53 +3,53 @@
 const char *ns_ast_type_str(NS_AST_TYPE type) {
     switch (type) {
     case NS_AST_PROGRAM:
-        return "AST_PROGRAM";
+        return "NS_AST_PROGRAM";
     case NS_AST_PARAM_DEF:
-        return "AST_PARAM_DEF";
+        return "NS_AST_PARAM_DEF";
     case NS_AST_FN_DEF:
-        return "AST_FN_DEF";
+        return "NS_AST_FN_DEF";
     case NS_AST_VAR_DEF:
-        return "AST_VAR_DEF";
+        return "NS_AST_VAR_DEF";
     case NS_AST_STRUCT_DEF:
-        return "AST_STRUCT_DEF";
+        return "NS_AST_STRUCT_DEF";
     case NS_AST_OPS_FN_DEF:
-        return "AST_OPS_FN_DEF";
+        return "NS_AST_OPS_FN_DEF";
     case NS_AST_TYPE_DEF:
-        return "AST_TYPE_DEF";
+        return "NS_AST_TYPE_DEF";
     case NS_AST_STRUCT_FIELD_DEF:
-        return "AST_STRUCT_FIELD_DEF";
+        return "NS_AST_STRUCT_FIELD_DEF";
     case NS_AST_EXPR:
-        return "AST_EXPR";
+        return "NS_AST_EXPR";
     case NS_AST_BINARY_EXPR:
-        return "AST_BINARY_EXPR";
+        return "NS_AST_BINARY_EXPR";
     case NS_AST_PRIMARY_EXPR:
-        return "AST_PRIMARY_EXPR";
+        return "NS_AST_PRIMARY_EXPR";
     case NS_AST_CALL_EXPR:
-        return "AST_CALL_EXPR";
+        return "NS_AST_CALL_EXPR";
     case NS_AST_DESIGNATED_EXPR:
-        return "AST_DESIGNATED_EXPR";
+        return "NS_AST_DESIGNATED_EXPR";
     case NS_AST_MEMBER_EXPR:
-        return "AST_MEMBER_EXPR";
+        return "NS_AST_MEMBER_EXPR";
     case NS_AST_GENERATOR_EXPR:
-        return "AST_GENERATOR_EXPR";
+        return "NS_AST_GENERATOR_EXPR";
     case NS_AST_IF_STMT:
-        return "AST_IF_STMT";
+        return "NS_AST_IF_STMT";
     case NS_AST_FOR_STMT:
-        return "AST_FOR_STMT";
+        return "NS_AST_FOR_STMT";
     case NS_AST_WHILE_STMT:
-        return "AST_WHILE_STMT";
+        return "NS_AST_WHILE_STMT";
     case NS_AST_RETURN_STMT:
-        return "AST_RETURN_STMT";
+        return "NS_AST_RETURN_STMT";
     case NS_AST_JUMP_STMT:
-        return "AST_JUMP_STMT";
+        return "NS_AST_JUMP_STMT";
     case NS_AST_COMPOUND_STMT:
-        return "AST_COMPOUND_STMT";
+        return "NS_AST_COMPOUND_STMT";
     case NS_AST_DESIGNATED_STMT:
-        return "AST_DESIGNATED_STMT";
+        return "NS_AST_DESIGNATED_STMT";
     case NS_AST_IMPORT_STMT:
-        return "AST_IMPORT_STMT";
+        return "NS_AST_IMPORT_STMT";
     default:
-        return "AST_UNKNOWN";
+        return "NS_AST_UNKNOWN";
     }
 }
 
