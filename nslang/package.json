@@ -1,7 +1,7 @@
 {
   "name": "nslang",
   "displayName": "nslang",
-  "description": "nano script language",
+  "description": "nanoscript language service.",
   "version": "0.0.3",
   "publisher": "liamlangli",
   "engines": {

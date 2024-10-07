@@ -1,4 +1,5 @@
 #include "ns_code_gen.h"
+#include "ns_type.h"
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
@@ -17,11 +18,43 @@
 #define MAX_GLOBAL_COUNT 64
 #define MAX_STACK_DEPTH 16
 
+#define NS_VAR_TMP_0 "__0"
+#define NS_VAR_TMP_1 "__1"
+#define NS_VAR_TMP_2 "__2"
+#define NS_VAR_TMP_3 "__3"
+#define NS_VAR_TMP_4 "__4"
+#define NS_VAR_TMP_5 "__5"
+#define NS_VAR_TMP_6 "__6"
+#define NS_VAR_TMP_7 "__7"
+
 typedef struct ns_llvm_value_record {
-    ns_str name;
     ns_bc_value value;
+    ns_bc_type type;
     int i;
 } ns_llvm_value_record;
+
+typedef struct ns_llvm_fn_record {
+    ns_bc_type type;
+    ns_bc_value fn;
+    int param_count;
+    ns_llvm_value_record params[MAX_PARAM_COUNT];
+} ns_llvm_fn_record;
+
+typedef enum ns_llvm_record_type {
+    NS_LLVM_RECORD_TYPE_INVALID,
+    NS_LLVM_RECORD_TYPE_VALUE,
+    NS_LLVM_RECORD_TYPE_FN,
+} ns_llvm_record_type;
+#define NS_LLVM_RECORD_INVALID ((ns_llvm_record){.type = NS_LLVM_RECORD_TYPE_INVALID})
+
+typedef struct ns_llvm_record {
+    ns_str name;
+    ns_llvm_record_type type;
+    union {
+        ns_llvm_value_record val;
+        ns_llvm_fn_record fn;
+    };
+} ns_llvm_record;
 
 typedef struct ns_llvm_ctx_t {
     ns_str path;
@@ -29,11 +62,11 @@ typedef struct ns_llvm_ctx_t {
     ns_bc_module mod;
     ns_bc_builder builder;
     ns_bc_value fn;
-    ns_llvm_value_record params[MAX_PARAM_COUNT];
+    ns_llvm_record params[MAX_PARAM_COUNT];
     int param_count;
-    ns_llvm_value_record locals[MAX_LOCAL_COUNT];
+    ns_llvm_record locals[MAX_LOCAL_COUNT];
     int local_count;
-    ns_llvm_value_record globals[MAX_GLOBAL_COUNT];
+    ns_llvm_record globals[MAX_GLOBAL_COUNT];
     int global_count;
 } ns_llvm_ctx_t;
 
@@ -52,11 +85,28 @@ const char* ns_llvm_str(ns_str s) {
     return _str_buff;
 }
 
+ns_str ns_tmp_var(ns_llvm_ctx_t *ctx, int i) {
+    switch (i)
+    {
+        case 0: return ns_str_cstr(NS_VAR_TMP_0);
+        case 1: return ns_str_cstr(NS_VAR_TMP_1);
+        case 2: return ns_str_cstr(NS_VAR_TMP_2);
+        case 3: return ns_str_cstr(NS_VAR_TMP_3);
+        case 4: return ns_str_cstr(NS_VAR_TMP_4);
+        case 5: return ns_str_cstr(NS_VAR_TMP_5);
+        case 6: return ns_str_cstr(NS_VAR_TMP_6);
+        case 7: return ns_str_cstr(NS_VAR_TMP_7);
+        default: assert(false);
+    }
+    return ns_str_null;
+}
+
 ns_bc_type ns_llvm_type(ns_token_t t);
 ns_bc_value ns_llvm_find_variable(ns_llvm_ctx_t *code_gen_ctx, ns_str name);
-int ns_llvm_push_param(ns_llvm_ctx_t *code_gen_ctx, ns_str name, int i);
-int ns_llvm_push_local(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_value value);
-int ns_llvm_push_global(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_value value);
+ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *code_gen_ctx, ns_str name);
+int ns_llvm_push_param(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_type type, int i);
+int ns_llvm_push_local(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_type type, ns_bc_value value);
+int ns_llvm_push_global(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_type type, ns_bc_value value);
 
 ns_bc_value ns_llvm_expr(ns_llvm_ctx_t *code_gen_ctx, ns_ast_t n);
 ns_bc_value ns_llvm_fn_def(ns_llvm_ctx_t *code_gen_ctx, ns_ast_t n);
@@ -89,27 +139,30 @@ ns_bc_type ns_llvm_type(ns_token_t t) {
     return LLVMVoidType();
 }
 
-int ns_llvm_push_param(ns_llvm_ctx_t *code_gen_ctx, ns_str name, int i) {
+int ns_llvm_push_param(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_type type, int i) {
     if (code_gen_ctx->param_count >= MAX_PARAM_COUNT) {
         assert(false);
     }
-    code_gen_ctx->params[code_gen_ctx->param_count++] = (ns_llvm_value_record){.name = name, .i = i};
+    ns_llvm_record r = {.name = name, .type = NS_LLVM_RECORD_TYPE_VALUE, .val = {.type = type, .i = i}};
+    code_gen_ctx->params[code_gen_ctx->param_count++] = r;
     return code_gen_ctx->param_count;
 }
 
-int ns_llvm_push_local(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_value value) {
+int ns_llvm_push_local(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_type type, ns_bc_value value) {
     if (code_gen_ctx->local_count >= MAX_LOCAL_COUNT) {
         assert(false);
     }
-    code_gen_ctx->locals[code_gen_ctx->local_count++] = (ns_llvm_value_record){.name = name, .value = value};
+    ns_llvm_record r = {.name = name, .type = NS_LLVM_RECORD_TYPE_VALUE, .val = {.type = type, .value = value}};
+    code_gen_ctx->locals[code_gen_ctx->local_count++] = r;
     return code_gen_ctx->local_count;
 }
 
-int ns_llvm_push_global(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_value value) {
+int ns_llvm_push_global(ns_llvm_ctx_t *code_gen_ctx, ns_str name, ns_bc_type type, ns_bc_value value) {
     if (code_gen_ctx->global_count >= MAX_GLOBAL_COUNT) {
         assert(false);
     }
-    code_gen_ctx->globals[code_gen_ctx->global_count++] = (ns_llvm_value_record){.name = name, .value = value};
+    ns_llvm_record r = {.name = name, .type = NS_LLVM_RECORD_TYPE_VALUE, .val = {.type = type, .value = value}};
+    code_gen_ctx->globals[code_gen_ctx->global_count++] = r;
     return code_gen_ctx->global_count;
 }
 
@@ -121,15 +174,24 @@ ns_bc_value ns_llvm_find_variable(ns_llvm_ctx_t *code_gen_ctx, ns_str name) {
     }
     for (int i = 0; i < code_gen_ctx->local_count; i++) {
         if (ns_str_equals(code_gen_ctx->locals[i].name, name)) {
-            return code_gen_ctx->locals[i].value;
+            return code_gen_ctx->locals[i].val.value;
         }
     }
     for (int i = 0; i < code_gen_ctx->global_count; i++) {
         if (ns_str_equals(code_gen_ctx->globals[i].name, name)) {
-            return code_gen_ctx->globals[i].value;
+            return code_gen_ctx->globals[i].val.value;
         }
     }
     return NULL;
+}
+
+ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *code_gen_ctx, ns_str name) {
+    for (int i = 0; i < code_gen_ctx->global_count; i++) {
+        if (ns_str_equals(code_gen_ctx->globals[i].name, name) && code_gen_ctx->globals[i].type == NS_LLVM_RECORD_TYPE_FN) {
+            return code_gen_ctx->globals[i];
+        }
+    }
+    return NS_LLVM_RECORD_INVALID;
 }
 
 ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *code_gen_ctx, ns_ast_t n) {
@@ -180,7 +242,7 @@ ns_bc_value ns_llvm_fn_def(ns_llvm_ctx_t *code_gen_ctx, ns_ast_t n) {
             // TODO: handle ref type
         }
         param_types[i] = ns_llvm_type(p.param.type);
-        ns_llvm_push_param(code_gen_ctx, p.param.name.val, i);
+        ns_llvm_push_param(code_gen_ctx, p.param.name.val, param_types[i], i);
     }
     ns_bc_type ret_type = ns_llvm_type(n.fn_def.return_type);
     ns_bc_type fn_type = LLVMFunctionType(ret_type, param_types, param_count, 0);
@@ -205,19 +267,20 @@ ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *code_gen_ctx, ns_ast_t n) {
     ns_bc_value left = ns_llvm_expr(code_gen_ctx, ctx->nodes[n.binary_expr.left]);
     ns_bc_value right = ns_llvm_expr(code_gen_ctx, ctx->nodes[n.binary_expr.right]);
     ns_bc_value ret = NULL;
+    int i = code_gen_ctx->local_count++;
     switch (n.binary_expr.op.type) {
     case NS_TOKEN_ADDITIVE_OPERATOR:
         if (ns_str_equals_STR(n.binary_expr.op.val, "+")) {
-            ret = LLVMBuildAdd(builder, left, right, "add");
+            ret = LLVMBuildAdd(builder, left, right, ns_tmp_var(code_gen_ctx, i).data);
         } else if (ns_str_equals_STR(n.binary_expr.op.val, "-")) {
-            ret = LLVMBuildSub(builder, left, right, "sub");
+            ret = LLVMBuildSub(builder, left, right, ns_tmp_var(code_gen_ctx, i).data);
         }
         break;
     case NS_TOKEN_MULTIPLICATIVE_OPERATOR:
         if (ns_str_equals_STR(n.binary_expr.op.val, "*")) {
-            ret = LLVMBuildMul(builder, left, right, "mul");
+            ret = LLVMBuildMul(builder, left, right, ns_tmp_var(code_gen_ctx, i).data);
         } else if (ns_str_equals_STR(n.binary_expr.op.val, "/")) {
-            ret = LLVMBuildSDiv(builder, left, right, "div");
+            ret = LLVMBuildSDiv(builder, left, right, ns_tmp_var(code_gen_ctx, i).data);
         }
         break;
     case NS_TOKEN_ASSIGN_OPERATOR:
@@ -227,6 +290,7 @@ ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *code_gen_ctx, ns_ast_t n) {
         assert(false); // unexpected operator
         break;
     }
+    ns_llvm_push_local(code_gen_ctx, ns_tmp_var(code_gen_ctx, i), LLVMTypeOf(ret), ret);
     return ret;
 }
 
@@ -261,6 +325,22 @@ void ns_llvm_compound_stmt(ns_llvm_ctx_t *code_gen_ctx, ns_ast_t n) {
             break;
         }
     }
+}
+
+static ns_bc_value args[MAX_PARAM_COUNT];
+ns_bc_value ns_llvm_call_expr(ns_llvm_ctx_t *code_gen_ctx, ns_ast_t n) {
+    ns_parse_context_t *ctx = code_gen_ctx->ctx;
+    ns_bc_builder builder = code_gen_ctx->builder;
+
+    ns_bc_value callee = ns_llvm_expr(code_gen_ctx, ctx->nodes[n.call_expr.callee]);
+    ns_ast_t *last = &ctx->nodes[n.call_expr.callee];
+    for (int i = 0; i < n.call_expr.arg_count; i++) {
+        ns_ast_t *arg = &ctx->nodes[last->next];
+        args[i] = ns_llvm_expr(code_gen_ctx, *arg);
+    }
+    ns_llvm_record fn = ns_llvm_find_fn(code_gen_ctx, ctx->nodes[n.call_expr.callee].primary_expr.token.val);
+    ns_bc_value ret = LLVMBuildCall2(builder, callee, fn.type, args, n.call_expr.arg_count, ns_tmp_var(code_gen_ctx, 0).data);
+    return ret;
 }
 
 bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {

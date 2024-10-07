@@ -115,12 +115,12 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
         break;
     case NS_AST_VAR_DEF:
         ns_str_printf(n.var_def.name.val);
-        if (n.var_def.type.type != NS_TOKEN_UNKNOWN) {
+        if (n.var_def.type.type != NS_TOKEN_INVALID) {
             printf(":");
             ns_str_printf(n.var_def.type.val);
         }
         if (n.var_def.expr != -1) {
-            printf(" node[%d]", n.var_def.expr);
+            printf(" = node[%d]", n.var_def.expr);
         }
         break;
     case NS_AST_OPS_FN_DEF: {
