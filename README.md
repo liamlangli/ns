@@ -1,7 +1,13 @@
 nano script language
 --------------------
 
-## syntax preview
+## Design Goal
+- minimal syntax and keywords, easy to learn and use.
+- interpretable and compilable.
+- use explicit type system, not generic type.
+- data oriented programming style.
+
+## Syntax Preview
 [main.ns](sample/main.ns)
 ```ns
 // file end with .ns extension
@@ -72,9 +78,3 @@ async fn download(url: str): Data {
     return await do_download(url)
 }
 ```
-
-## design goal
-- minimal syntax and keywords, easy to learn and use.
-- interpretable and compilable.
-- use explicit type system, not generic type.
-- data oriented programming style.
