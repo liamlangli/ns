@@ -94,7 +94,7 @@ const char* ns_llvm_str(ns_str s);
 ns_str ns_tmp_var_indexed(int i);
 ns_str ns_tmp_var(ns_llvm_ctx_t *ctx);
 ns_bc_type ns_llvm_type(ns_llvm_ctx_t *ctx, ns_token_t t);
-ns_bc_value ns_llvm_find_variable(ns_llvm_ctx_t *llvm_ctx, ns_str name);
+ns_bc_value ns_llvm_find_var(ns_llvm_ctx_t *llvm_ctx, ns_str name);
 ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *llvm_ctx, ns_str name);
 ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx_t *llvm_ctx, ns_str name);
 ns_llvm_value_record ns_llvm_struct_find_member(ns_llvm_record s, ns_str name);
@@ -110,10 +110,8 @@ ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
 // stmt
 int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
 int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
-ns_bc_value ns_llvm_var_assign(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
 ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
 void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
-
 
 // impl
 #define MAX_STR_LENGTH 128
@@ -132,7 +130,7 @@ const char* ns_llvm_str(ns_str s) {
 }
 
 ns_str ns_tmp_var_indexed(int i) {
-        switch (i)
+    switch (i)
     {
         case 0: return ns_str_cstr(NS_VAR_TMP_0);
         case 1: return ns_str_cstr(NS_VAR_TMP_1);
@@ -196,7 +194,7 @@ int ns_llvm_push_global(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r) {
     return i;
 }
 
-ns_bc_value ns_llvm_find_variable(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
+ns_bc_value ns_llvm_find_var(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
     if (llvm_ctx->fn.type != NS_LLVM_RECORD_TYPE_INVALID) {
         ns_llvm_record fn = llvm_ctx->fn;
         for (int i = 0; i < fn.fn.param_count; i++) {
@@ -249,13 +247,12 @@ ns_llvm_value_record ns_llvm_struct_find_member(ns_llvm_record s, ns_str name) {
 ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
-        return LLVMConstInt(LLVMInt64Type(), n.primary_expr.token.val.len, 0);
     case NS_TOKEN_FLT_LITERAL:
         return LLVMConstReal(LLVMDoubleType(), n.primary_expr.token.val.len);
     case NS_TOKEN_STR_LITERAL:
         return LLVMConstString(n.primary_expr.token.val.data, n.primary_expr.token.val.len, 0);
     case NS_TOKEN_IDENTIFIER:
-        return ns_llvm_find_variable(llvm_ctx, n.primary_expr.token.val);
+        return ns_llvm_find_var(llvm_ctx, n.primary_expr.token.val);
     default:
         break;
     }
@@ -305,7 +302,7 @@ int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_bc_type ret_type = ns_llvm_type(llvm_ctx, n.fn_def.return_type);
     ns_bc_type fn_type = LLVMFunctionType(ret_type, param_types, param_count, 0);
     ns_bc_value fn = LLVMAddFunction(llvm_ctx->mod, ns_llvm_str(n.fn_def.name.val), fn_type);
-    r.fn = (ns_llvm_fn_record){.fn = fn, .type = fn_type, .param_count = param_count};
+    r.fn.fn = fn;
     int fn_index = ns_llvm_push_global(llvm_ctx, r);
     llvm_ctx->fn = r;
 
@@ -350,16 +347,16 @@ ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     switch (n.binary_expr.op.type) {
     case NS_TOKEN_ADD_OP:
         if (ns_str_equals_STR(n.binary_expr.op.val, "+")) {
-            ret = LLVMBuildAdd(builder, left, right, NULL);
+            ret = LLVMBuildFAdd(builder, left, right, "");
         } else if (ns_str_equals_STR(n.binary_expr.op.val, "-")) {
-            ret = LLVMBuildSub(builder, left, right, NULL);
+            ret = LLVMBuildFSub(builder, left, right, "");
         }
         break;
     case NS_TOKEN_MUL_OP:
         if (ns_str_equals_STR(n.binary_expr.op.val, "*")) {
-            ret = LLVMBuildMul(builder, left, right, NULL);
+            ret = LLVMBuildFMul(builder, left, right, "");
         } else if (ns_str_equals_STR(n.binary_expr.op.val, "/")) {
-            ret = LLVMBuildSDiv(builder, left, right, NULL);
+            ret = LLVMBuildFDiv(builder, left, right, "");
         }
         break;
     case NS_TOKEN_ASSIGN_OP:
