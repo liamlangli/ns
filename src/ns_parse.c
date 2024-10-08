@@ -88,8 +88,6 @@ bool ns_token_skip_eol(ns_parse_context_t *ctx) {
     return ctx->token.type == NS_TOKEN_EOF;
 }
 
-bool ns_parse_constant_expr(ns_parse_context_t *ctx) { return false; }
-
 bool ns_type_restriction(ns_parse_context_t *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
@@ -465,7 +463,7 @@ bool ns_parse_var_define(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_type_define(ns_parse_context_t *ctx) {
+bool ns_parse_type_define(ns_parse_context_t *_) {
     // int state = ns_save_state(ctx);
 
     // type identifier = type

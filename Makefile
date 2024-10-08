@@ -3,8 +3,19 @@
 CC = clang
 LD = clang++
 
-CFLAGS = -g -O0 -Iinclude `llvm-config --cflags`
-LDFLAGS = `llvm-config --ldflags --libs core executionengine mcjit interpreter analysis native bitwriter --system-libs`
+LLVM_CFLAGS = `llvm-config --cflags`
+LLVM_LDFLAGS = `llvm-config --ldflags --libs core executionengine mcjit interpreter analysis native bitwriter --system-libs`
+
+DEBUG = 1
+
+CFLAGS = -Iinclude
+ifeq ($(DEBUG), 1)
+	CFLAGS += -g -O0 -DDEBUG -Wall -Wextra
+else
+	CFLAGS += -Os
+endif
+
+LDFLAGS = $(LLVM_LDFLAGS)
 
 BINDIR = bin
 OBJDIR = $(BINDIR)/obj
@@ -18,17 +29,22 @@ NS_SRCS = src/ns.c \
 	src/ns_parse_expr.c \
 	src/ns_parse_dump.c \
 	src/ns_vm.c \
-	src/ns_gen_llvm_bc.c \
 	src/ns_gen_arm.c \
 	src/ns_gen_x86.c
 NS_OBJS = $(NS_SRCS:%.c=$(OBJDIR)/%.o)
+
+LLVM_SRC = src/ns_gen_llvm_bc.c
+LLVM_OBJ = $(OBJDIR)/src/ns_gen_llvm_bc.o
 
 TARGET = $(BINDIR)/ns
 
 all: $(TARGET)
 
-$(TARGET): $(NS_OBJS) | $(BINDIR)
-	$(CC) $(NS_OBJS) -o $(TARGET) $(LDFLAGS)
+$(LLVM_OBJ): $(LLVM_SRC) | $(OBJDIR)
+	$(CC) -c $< -o $@ $(CFLAGS) $(LLVM_CFLAGS)
+
+$(TARGET): $(NS_OBJS) $(LLVM_OBJ) | $(BINDIR)
+	$(CC) $(NS_OBJS) $(LLVM_OBJ) $ -o $(TARGET) $(LDFLAGS)
 
 $(OBJDIR)/%.o: %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CFLAGS)

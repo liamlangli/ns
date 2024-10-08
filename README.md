@@ -10,9 +10,10 @@ nano script language
 
 // import a module
 import math
+import std
 
 // define a variable
-let a = 1 // as f64
+let a = 1 // default number type is f64
 let pi: f64 = 3.141592653
 let hello: str = "hello world" // string literal
 
@@ -39,7 +40,7 @@ fn to_str(p: Point): str {
 
 let point_a = Point(0, 0)
 let point_b = Point(1, 1)
-print(a + b) // expect [1, 1]
+print(a + b) // use override add fn, expect result [1, 1]
 
 // define a type
 type Shape {
@@ -55,7 +56,7 @@ struct Circle {
 
 // define area for circle
 fn area(c: Circle): f64 {
-    return math.PI * c.radius * c.radius
+    return pi * c.radius * c.radius
 }
 
 fn calculate_area(s: Shape): f64 {
@@ -66,14 +67,14 @@ let c = Circle(Point(0, 0), 1)
 print(c.area())
 print(calculate_area(c)) // duck type
 
-// define a asynchronous function 
-async fn download(url: str) {
+// define a asynchronous function
+async fn download(url: str): Data {
     return await do_download(url)
 }
 ```
 
 ## design goal
-- supports both compilation and interpretation.
-- supports type but no generic type.
-- data and procedure-oriented.
-- [`TBD`] use fixed size stack rather dynamic heap allocation and release
+- minimal syntax and keywords, easy to learn and use.
+- interpretable and compilable.
+- use explicit type system, not generic type.
+- data oriented programming style.

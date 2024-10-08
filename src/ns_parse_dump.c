@@ -75,7 +75,7 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
         }
         printf(")");
         if (n.fn_def.return_type.type != NS_TOKEN_UNKNOWN) {
-            printf(" -> ");
+            printf(" : ");
             ns_str_printf(n.fn_def.return_type.val);
         }
 
@@ -141,7 +141,7 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
         ns_str_printf(right->param.type.val);
         printf(")");
         if (n.ops_fn_def.return_type.type != NS_TOKEN_UNKNOWN) {
-            printf(" -> ");
+            printf(" : ");
             ns_str_printf(n.ops_fn_def.return_type.val);
         }
         if (n.ops_fn_def.body != -1) {

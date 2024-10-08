@@ -51,9 +51,9 @@ typedef struct ns_str {
 
 ns_str ns_str_slice(ns_str s, int start, int end);
 
-#define ns_str_null ((ns_str){0, 0})
-#define ns_str_range(s, n) ((ns_str){(s), (n)})
-#define ns_str_cstr(s) ((ns_str){(s), strlen(s)})
+#define ns_str_null ((ns_str){0, 0, 0})
+#define ns_str_range(s, n) ((ns_str){(s), (n), 1})
+#define ns_str_cstr(s) ((ns_str){(s), strlen(s), 0})
 #define ns_str_free(s) if ((s).dynamic) free((void *)(s).data)
 
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)

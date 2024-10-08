@@ -146,7 +146,6 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
         return false;
     }
 
-    ns_token_t token = ctx->token;
     int callee = ctx->current;
     ns_parse_state_t state = ns_save_state(ctx);
     // parse postfix '(' [expr]* [,expr]* ')'
@@ -394,8 +393,6 @@ rewind:
         }
         ns_parse_error(ctx, "syntax error: invalid expression before EOL");
     }
-failed:
-    return false;
 
 success:
     ctx->top = expr_top - 1;

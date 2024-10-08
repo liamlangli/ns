@@ -97,7 +97,7 @@ ns_bc_type ns_llvm_type(ns_llvm_ctx_t *ctx, ns_token_t t);
 ns_bc_value ns_llvm_find_variable(ns_llvm_ctx_t *llvm_ctx, ns_str name);
 ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *llvm_ctx, ns_str name);
 ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx_t *llvm_ctx, ns_str name);
-ns_llvm_value_record ns_llvm_struct_find_member(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record s, ns_str name);
+ns_llvm_value_record ns_llvm_struct_find_member(ns_llvm_record s, ns_str name);
 int ns_llvm_push_local(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r);
 int ns_llvm_push_global(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r);
 
@@ -237,7 +237,7 @@ ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
     return NS_LLVM_RECORD_INVALID;
 }
 
-ns_llvm_value_record ns_llvm_struct_find_member(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record s, ns_str name) {
+ns_llvm_value_record ns_llvm_struct_find_member(ns_llvm_record s, ns_str name) {
     for (int i = 0; i < MAX_STRUCT_MEMBER_COUNT; i++) {
         if (ns_str_equals(s.st.members[i].name, name)) {
             return s.st.members[i];
@@ -247,9 +247,6 @@ ns_llvm_value_record ns_llvm_struct_find_member(ns_llvm_ctx_t *llvm_ctx, ns_llvm
 }
 
 ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_parse_context_t *ctx = llvm_ctx->ctx;
-    ns_bc_builder builder = llvm_ctx->builder;
-
     switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
         return LLVMConstInt(LLVMInt64Type(), n.primary_expr.token.val.len, 0);
@@ -267,8 +264,6 @@ ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 
 ns_bc_value ns_llvm_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_parse_context_t *ctx = llvm_ctx->ctx;
-    ns_bc_builder builder = llvm_ctx->builder;
-
     switch (n.type) {
     case NS_AST_EXPR:
         return ns_llvm_expr(llvm_ctx, ctx->nodes[n.expr.body]);
@@ -328,8 +323,6 @@ int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 
 int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_parse_context_t *ctx = llvm_ctx->ctx;
-    ns_bc_builder builder = llvm_ctx->builder;
-
     int member_count = n.struct_def.count;
     ns_ast_t *last = &n;
     ns_str struct_name = n.struct_def.name.val;
@@ -397,7 +390,6 @@ ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 
 void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_parse_context_t *ctx = llvm_ctx->ctx;
-    ns_bc_builder builder = llvm_ctx->builder;
 
     ns_ast_t *last = &n;
     for (int i = 0; i < n.compound_stmt.count; i++) {

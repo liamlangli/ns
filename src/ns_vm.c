@@ -55,7 +55,7 @@ int ns_vm_find_global_value_slot(ns_vm_t *vm, ns_str name) {
     return -1;
 }
 
-int ns_vm_find_fn_arg_slot(ns_vm_t *vm, ns_fn_t *fn, ns_str name) {
+int ns_vm_find_fn_arg_slot(ns_fn_t *fn, ns_str name) {
     for (int i = 0; i < fn->arg_count; i++) {
         if (ns_str_equals(fn->arg_names[i], name)) {
             return i;
@@ -64,7 +64,7 @@ int ns_vm_find_fn_arg_slot(ns_vm_t *vm, ns_fn_t *fn, ns_str name) {
     return -1;
 }
 
-int ns_vm_find_fn_local_slot(ns_vm_t *vm, ns_fn_t *fn, ns_str name) {
+int ns_vm_find_fn_local_slot(ns_fn_t *fn, ns_str name) {
     for (int i = 0; i < fn->local_count; i++) {
         if (ns_str_equals(fn->local_names[i], name)) {
             return i;
@@ -80,7 +80,7 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
     switch (n.type) {
     case NS_AST_VAR_DEF: {
         ns_str name = n.var_def.name.val;
-        int slot = ns_vm_find_fn_local_slot(vm, fn, name);
+        int slot = ns_vm_find_fn_local_slot(fn, name);
         if (slot != -1) {
             fprintf(stderr, "eval error: duplicate variable %*.s\n", name.len, name.data);
             assert(false);
@@ -102,13 +102,13 @@ void ns_vm_parse_fn_expr(ns_vm_t *vm, int i, ns_fn_t *fn) {
     case NS_AST_PRIMARY_EXPR:
         if (n.primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
             ns_str name = n.primary_expr.token.val;
-            int slot = ns_vm_find_fn_arg_slot(vm, fn, name);
+            int slot = ns_vm_find_fn_arg_slot(fn, name);
             if (slot != -1) {
                 vm->ast[i].primary_expr.slot = slot + 1;
                 break;
             }
 
-            slot = ns_vm_find_fn_local_slot(vm, fn, name);
+            slot = ns_vm_find_fn_local_slot(fn, name);
             if (slot != -1) {
                 vm->ast[i].primary_expr.slot = -1 - slot;
                 break;
@@ -185,7 +185,7 @@ ns_value ns_eval_literal(ns_vm_t *vm, ns_ast_t n) {
         if (vm->stack_depth > -1) {
             ns_str key = n.primary_expr.token.val;
             ns_call_scope *scope = &vm->call_stack[vm->call_stack_top];
-            ns_fn_t *fn = &vm->fns[scope->fn_index];
+            // ns_fn_t *fn = &vm->fns[scope->fn_index];
             if (n.primary_expr.slot == 0) {
                 int slot = ns_vm_find_global_value_slot(vm, key);
                 if (slot == -1) {
@@ -241,7 +241,7 @@ void ns_vm_parse_ast(ns_vm_t *vm, ns_parse_context_t *ctx) {
         ns_ast_t n = ctx->nodes[s];
         switch (n.type) {
         case NS_AST_FN_DEF: {
-            ns_str key = n.fn_def.name.val;
+            // ns_str key = n.fn_def.name.val;
             ns_vm_parse_fn(vm, n);
         } break;
         default:
@@ -377,6 +377,7 @@ ns_value ns_eval_binary_op(ns_vm_t *vm, ns_value left, ns_value right, int i) {
 ns_value ns_call_builtin_fn(ns_vm_t *vm, ns_str name, int i) {
     ns_ast_t n = vm->ast[i];
     if (ns_str_equals_STR(name, "print")) {
+        printf("call print with %d args.\n", n.call_expr.arg_count);
         // for (int i = 0; i < n.call_expr.arg_count; i++) {
         //     ns_value v = ns_eval_expr(vm, n.call_expr.args[i]);
         //     switch (v.type)

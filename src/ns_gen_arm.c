@@ -39,9 +39,6 @@ bool ns_code_gen_fn_def(ns_code_gen_ctx_t *ctx, int s) {
     ns_code_gen_write_type(ctx, ret);
     fprintf(fd, " @%.*s(", n.fn_def.name.val.len, n.fn_def.name.val.data);
 
-    i32 param_count = n.fn_def.param_count;
-    // ns_ast_t *p = n.fn_def.params;
-
     return true;
 }
 

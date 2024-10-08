@@ -4,7 +4,7 @@
 bool ns_parse_import_stmt(ns_parse_context_t *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_IMPORT) && ns_parse_identifier(ctx)) {
-        ns_ast_t n = {.type = NS_AST_IMPORT_STMT, .import_stmt = ctx->token};
+        ns_ast_t n = (ns_ast_t){.type = NS_AST_IMPORT_STMT, .import_stmt = { .lib = ctx->token } };
         ns_ast_push(ctx, n);
         return true;
     }
