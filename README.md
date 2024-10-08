@@ -4,23 +4,26 @@ nano script language
 ## syntax preview
 [main.ns](sample/main.ns)
 ```ns
+// file end with .ns extension
+
 // this is a comment
 
-// file end with .ns extension
+// import a module
+import math
 
 // define a variable
 let a = 1 // as f64
 let pi: f64 = 3.141592653
-let hello = "hello world" // string literal
+let hello: str = "hello world" // string literal
 
 // define a function
-fn add(a, b) {
+fn add(a: f64, b: f64): f64 {
     return a + b
 }
 
 // define a struct
 struct Point {
-   x: f32
+   x: f32,
    y: f32
 }
 
@@ -29,7 +32,7 @@ fn ops(+)(lhs: Point, rhs: Point): Point {
     return Point(lhs.x + rhs.x, lhs.y + rhs.y)
 }
 
-// stringfy fn
+// to string fn
 fn to_str(p: Point): str {
     return "[{p.x}, {p.y}]"
 }
@@ -46,13 +49,13 @@ type Shape {
 type number = f64
 
 struct Circle {
-    center: Point
+    center: Point,
     radius: f64
 }
 
 // define area for circle
 fn area(c: Circle): f64 {
-    return math.PI * c.radius * c.radiuse
+    return math.PI * c.radius * c.radius
 }
 
 fn calculate_area(s: Shape): f64 {
