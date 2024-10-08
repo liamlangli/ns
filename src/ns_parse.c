@@ -48,8 +48,8 @@ bool ns_token_can_be_type(NS_TOKEN t) {
     case NS_TOKEN_TYPE_UINT16:
     case NS_TOKEN_TYPE_UINT32:
     case NS_TOKEN_TYPE_UINT64:
-    case NS_TOKEN_TYPE_FLOAT32:
-    case NS_TOKEN_TYPE_FLOAT64:
+    case NS_TOKEN_TYPE_F32:
+    case NS_TOKEN_TYPE_F64:
     case NS_TOKEN_TYPE_BOOL:
     case NS_TOKEN_TYPE_STR:
     case NS_TOKEN_IDENTIFIER:
@@ -140,8 +140,8 @@ bool ns_primary_expr(ns_parse_context_t *ctx) {
     bool is_literal = false;
     switch (ctx->token.type) {
     case NS_TOKEN_INT_LITERAL:
-    case NS_TOKEN_FLOAT_LITERAL:
-    case NS_TOKEN_STRING_LITERAL:
+    case NS_TOKEN_FLT_LITERAL:
+    case NS_TOKEN_STR_LITERAL:
     case NS_TOKEN_TRUE:
     case NS_TOKEN_FALSE:
     case NS_TOKEN_NIL:
@@ -244,13 +244,12 @@ bool ns_parameter(ns_parse_context_t *ctx) {
 
 bool ns_parse_ops_overridable(ns_token_t token) {
     switch (token.type) {
-    case NS_TOKEN_ADDITIVE_OPERATOR:
-    case NS_TOKEN_MULTIPLICATIVE_OPERATOR:
-    case NS_TOKEN_SHIFT_OPERATOR:
-    case NS_TOKEN_RELATIONAL_OPERATOR:
-    case NS_TOKEN_EQUALITY_OPERATOR:
-    case NS_TOKEN_ARITHMETIC_OPERATOR:
-    case NS_TOKEN_BITWISE_OPERATOR:
+    case NS_TOKEN_ADD_OP:
+    case NS_TOKEN_MUL_OP:
+    case NS_TOKEN_SHIFT_OP:
+    case NS_TOKEN_REL_OP:
+    case NS_TOKEN_EQ_OP:
+    case NS_TOKEN_BITWISE_OP:
         return true;
     default:
         return false;

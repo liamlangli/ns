@@ -9,10 +9,10 @@ const char *ns_token_to_string(NS_TOKEN type) {
     switch (type) {
     case NS_TOKEN_INT_LITERAL:
         return "NS_TOKEN_INT_LITERAL";
-    case NS_TOKEN_FLOAT_LITERAL:
-        return "NS_TOKEN_FLOAT_LITERAL";
-    case NS_TOKEN_STRING_LITERAL:
-        return "NS_TOKEN_STRING_LITERAL";
+    case NS_TOKEN_FLT_LITERAL:
+        return "NS_TOKEN_FLT_LITERAL";
+    case NS_TOKEN_STR_LITERAL:
+        return "NS_TOKEN_STR_LITERAL";
     case NS_TOKEN_CONST:
         return "NS_TOKEN_CONST";
     case NS_TOKEN_COMMENT:
@@ -49,10 +49,10 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_TYPE_UINT32";
     case NS_TOKEN_TYPE_UINT64:
         return "NS_TOKEN_TYPE_UINT64";
-    case NS_TOKEN_TYPE_FLOAT32:
-        return "NS_TOKEN_TYPE_FLOAT32";
-    case NS_TOKEN_TYPE_FLOAT64:
-        return "NS_TOKEN_TYPE_FLOAT64";
+    case NS_TOKEN_TYPE_F32:
+        return "NS_TOKEN_TYPE_F32";
+    case NS_TOKEN_TYPE_F64:
+        return "NS_TOKEN_TYPE_F64";
     case NS_TOKEN_TYPE_BOOL:
         return "NS_TOKEN_TYPE_BOOL";
     case NS_TOKEN_TYPE_STR:
@@ -61,16 +61,14 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_ASSIGN";
     case NS_TOKEN_COLON:
         return "NS_TOKEN_COLON";
-    case NS_TOKEN_ASSIGN_OPERATOR:
-        return "NS_TOKEN_ASSIGN_OPERATOR";
-    case NS_TOKEN_ARITHMETIC_OPERATOR:
-        return "NS_TOKEN_ARITHMETIC_OPERATOR";
-    case NS_TOKEN_ADDITIVE_OPERATOR:
-        return "NS_TOKEN_ADDITIVE_OPERATOR";
-    case NS_TOKEN_BITWISE_OPERATOR:
-        return "NS_TOKEN_BITWISE_OPERATOR";
-    case NS_TOKEN_BOOL_OPERATOR:
-        return "NS_TOKEN_BOOL_OPERATOR";
+    case NS_TOKEN_ASSIGN_OP:
+        return "NS_TOKEN_ASSIGN_OP";
+    case NS_TOKEN_ADD_OP:
+        return "NS_TOKEN_ADD_OP";
+    case NS_TOKEN_BITWISE_OP:
+        return "NS_TOKEN_BITWISE_OP";
+    case NS_TOKEN_BOOL_OP:
+        return "NS_TOKEN_BOOL_OP";
     case NS_TOKEN_OPEN_BRACE:
         return "NS_TOKEN_OPEN_BRACE";
     case NS_TOKEN_CLOSE_BRACE:
@@ -93,8 +91,8 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_IF";
     case NS_TOKEN_ELSE:
         return "NS_TOKEN_ELSE";
-    case NS_TOKEN_EQUALITY_OPERATOR:
-        return "NS_TOKEN_EQUALITY_OPERATOR";
+    case NS_TOKEN_EQ_OP:
+        return "NS_TOKEN_EQ_OP";
     case NS_TOKEN_COMMA:
         return "NS_TOKEN_COMMA";
     case NS_TOKEN_FOR:
@@ -107,8 +105,8 @@ const char *ns_token_to_string(NS_TOKEN type) {
         return "NS_TOKEN_IMPORT";
     case NS_TOKEN_DOT:
         return "NS_TOKEN_DOT";
-    case NS_TOKEN_MULTIPLICATIVE_OPERATOR:
-        return "NS_TOKEN_MULTIPLICATIVE_OPERATOR";
+    case NS_TOKEN_MUL_OP:
+        return "NS_TOKEN_MUL_OP";
     default:
         return "Unknown token";
     }
@@ -125,7 +123,7 @@ int ns_token_float_literal(ns_token_t *t, const char *s, int i) {
             j++;
         }
     }
-    t->type = NS_TOKEN_FLOAT_LITERAL;
+    t->type = NS_TOKEN_FLT_LITERAL;
     int len = j - i;
     t->val = ns_str_range(s + i, len);
     return j;
@@ -345,7 +343,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(t, s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = strncmp(s + f, "f32", 3) == 0 ? NS_TOKEN_TYPE_FLOAT32 : NS_TOKEN_TYPE_FLOAT64;
+            t->type = strncmp(s + f, "f32", 3) == 0 ? NS_TOKEN_TYPE_F32 : NS_TOKEN_TYPE_F64;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else {
@@ -584,17 +582,17 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
         while (s[i] != quote && s[i] != '\0') {
             i++;
         }
-        t->type = NS_TOKEN_STRING_LITERAL;
+        t->type = NS_TOKEN_STR_LITERAL;
         t->val = ns_str_range(s + f + 1, i - f - 1);
         to = i + 1;
     } break;
     case '!': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_EQUALITY_OPERATOR;
+            t->type = NS_TOKEN_EQ_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else {
-            t->type = NS_TOKEN_BOOL_OPERATOR;
+            t->type = NS_TOKEN_BOOL_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
@@ -602,33 +600,33 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     case '&':
     case '|': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->type = NS_TOKEN_ASSIGN_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == lead) {
-            t->type = NS_TOKEN_LOGICAL_OPERATOR;
+            t->type = NS_TOKEN_LOGIC_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else {
-            t->type = NS_TOKEN_BITWISE_OPERATOR;
+            t->type = NS_TOKEN_BITWISE_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '^': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->type = NS_TOKEN_ASSIGN_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else {
-            t->type = NS_TOKEN_BITWISE_OPERATOR;
+            t->type = NS_TOKEN_BITWISE_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '=': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_EQUALITY_OPERATOR;
+            t->type = NS_TOKEN_EQ_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else {
@@ -639,18 +637,18 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     } break;
     case '+': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->type = NS_TOKEN_ASSIGN_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else {
-            t->type = NS_TOKEN_ADDITIVE_OPERATOR;
+            t->type = NS_TOKEN_ADD_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '-': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->type = NS_TOKEN_ASSIGN_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] >= '0' && s[i + 1] <= '9') {
@@ -670,7 +668,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
                 to = i;
             }
         } else {
-            t->type = NS_TOKEN_ADDITIVE_OPERATOR;
+            t->type = NS_TOKEN_ADD_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
@@ -678,82 +676,83 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     }
     case '*': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->type = NS_TOKEN_ASSIGN_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else {
-            t->type = NS_TOKEN_MULTIPLICATIVE_OPERATOR;
+            t->type = NS_TOKEN_MUL_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '/': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->type = NS_TOKEN_ASSIGN_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == '/') {
-            while (s[i] != '\n' && strncmp(s + i, "\r\n", 2) != 0) {
+            i += 2;
+            while (s[i] != '\n' && strncmp(s + i, "\r\n", 2) != 0 && i < src.len) {
                 i++;
             }
             t->type = NS_TOKEN_COMMENT;
             t->val = ns_str_range(s + f, i - f);
             to = i;
         } else {
-            t->type = NS_TOKEN_MULTIPLICATIVE_OPERATOR;
+            t->type = NS_TOKEN_MUL_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '%': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_ASSIGN_OPERATOR;
+            t->type = NS_TOKEN_ASSIGN_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else {
-            t->type = NS_TOKEN_MULTIPLICATIVE_OPERATOR;
+            t->type = NS_TOKEN_MUL_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '>': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_BOOL_OPERATOR;
+            t->type = NS_TOKEN_BOOL_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == '>') {
             if (s[i + 2] == '=') {
-                t->type = NS_TOKEN_ASSIGN_OPERATOR;
+                t->type = NS_TOKEN_ASSIGN_OP;
                 t->val = ns_str_range(s + f, 3);
                 to = i + 3;
             } else {
-                t->type = NS_TOKEN_SHIFT_OPERATOR;
+                t->type = NS_TOKEN_SHIFT_OP;
                 t->val = ns_str_range(s + f, 2);
                 to = i + 2;
             }
         } else {
-            t->type = NS_TOKEN_BOOL_OPERATOR;
+            t->type = NS_TOKEN_BOOL_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '<': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_BOOL_OPERATOR;
+            t->type = NS_TOKEN_BOOL_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == '<') {
             if (s[i + 2] == '=') {
-                t->type = NS_TOKEN_ASSIGN_OPERATOR;
+                t->type = NS_TOKEN_ASSIGN_OP;
                 t->val = ns_str_range(s + f, 3);
                 to = i + 3;
             } else {
-                t->type = NS_TOKEN_SHIFT_OPERATOR;
+                t->type = NS_TOKEN_SHIFT_OP;
                 t->val = ns_str_range(s + f, 2);
                 to = i + 2;
             }
         } else {
-            t->type = NS_TOKEN_BOOL_OPERATOR;
+            t->type = NS_TOKEN_BOOL_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
@@ -832,6 +831,8 @@ void ns_tokenize(ns_str source, ns_str filename) {
         i = ns_next_token(&t, source, filename, i);
         if (t.type == NS_TOKEN_SPACE) {
             continue;
+        } else if (t.type == NS_TOKEN_EOF) {
+            break;
         } else if (t.type == NS_TOKEN_EOL) {
             printf("[%s, line:%4d, offset:%4d] %-20s\n", filename.data, t.line, i - t.line_start, ns_token_to_string(t.type));
         } else {
@@ -839,5 +840,5 @@ void ns_tokenize(ns_str source, ns_str filename) {
                    ns_token_to_string(t.type), macro_max(0, t.val.len), t.val.data);
         }
         t.type = NS_TOKEN_UNKNOWN;
-    } while (t.type != NS_TOKEN_EOF && i < len);
+    } while (i < len);
 }

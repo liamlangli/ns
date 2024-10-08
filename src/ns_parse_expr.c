@@ -4,7 +4,9 @@
 
 void ns_parse_stack_push_index(ns_parse_context_t *ctx, int index) { ctx->stack[++ctx->top] = index; }
 
-void ns_parse_stack_push(ns_parse_context_t *ctx, ns_ast_t n) { ns_parse_stack_push_index(ctx, ns_ast_push(ctx, n)); }
+void ns_parse_stack_push(ns_parse_context_t *ctx, ns_ast_t n) {
+    ns_parse_stack_push_index(ctx, ns_ast_push(ctx, n));
+}
 
 int ns_parse_stack_pop(ns_parse_context_t *ctx) { return ctx->stack[ctx->top--]; }
 
@@ -42,13 +44,13 @@ bool ns_parse_stack_top_is_operand(ns_parse_context_t *ctx) {
 
 bool ns_token_is_operator(ns_token_t token) {
     switch (token.type) {
-    case NS_TOKEN_ADDITIVE_OPERATOR:
-    case NS_TOKEN_MULTIPLICATIVE_OPERATOR:
-    case NS_TOKEN_BITWISE_OPERATOR:
-    case NS_TOKEN_SHIFT_OPERATOR:
-    case NS_TOKEN_RELATIONAL_OPERATOR:
-    case NS_TOKEN_EQUALITY_OPERATOR:
-    case NS_TOKEN_LOGICAL_OPERATOR:
+    case NS_TOKEN_ADD_OP:
+    case NS_TOKEN_MUL_OP:
+    case NS_TOKEN_BITWISE_OP:
+    case NS_TOKEN_SHIFT_OP:
+    case NS_TOKEN_REL_OP:
+    case NS_TOKEN_EQ_OP:
+    case NS_TOKEN_LOGIC_OP:
         return true;
     default:
         return false;
@@ -114,8 +116,8 @@ bool ns_parse_primary_expr(ns_parse_context_t *ctx) {
     if (ns_parse_next_token(ctx)) {
         switch (ctx->token.type) {
         case NS_TOKEN_INT_LITERAL:
-        case NS_TOKEN_FLOAT_LITERAL:
-        case NS_TOKEN_STRING_LITERAL: {
+        case NS_TOKEN_FLT_LITERAL:
+        case NS_TOKEN_STR_LITERAL: {
             ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
             ns_ast_push(ctx, n);
             return true;
@@ -227,8 +229,8 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
 bool ns_parse_unary_expr(ns_parse_context_t *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
-    if (ctx->token.type == NS_TOKEN_BIT_INVERT_OPERATOR ||
-        (ctx->token.type == NS_TOKEN_ADDITIVE_OPERATOR && ns_str_equals_STR(ctx->token.val, "-"))) {
+    if (ctx->token.type == NS_TOKEN_BIT_INVERT_OP ||
+        (ctx->token.type == NS_TOKEN_ADD_OP && ns_str_equals_STR(ctx->token.val, "-"))) {
 
         ns_ast_t n = {.type = NS_AST_UNARY_EXPR, .unary_expr = {.op = ctx->token}};
         if (ns_parse_postfix_expr(ctx)) {
@@ -259,8 +261,8 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
 
         switch (ctx->token.type) {
         case NS_TOKEN_INT_LITERAL:
-        case NS_TOKEN_FLOAT_LITERAL:
-        case NS_TOKEN_STRING_LITERAL: {
+        case NS_TOKEN_FLT_LITERAL:
+        case NS_TOKEN_STR_LITERAL: {
             ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
             ns_parse_stack_push(ctx, n);
         } break;
@@ -277,14 +279,14 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
             ns_parse_stack_push_index(ctx, ctx->current);
         } break;
 
-        case NS_TOKEN_ADDITIVE_OPERATOR:
-        case NS_TOKEN_MULTIPLICATIVE_OPERATOR:
-        case NS_TOKEN_BITWISE_OPERATOR:
-        case NS_TOKEN_SHIFT_OPERATOR:
-        case NS_TOKEN_RELATIONAL_OPERATOR:
-        case NS_TOKEN_EQUALITY_OPERATOR:
-        case NS_TOKEN_BOOL_OPERATOR:
-        case NS_TOKEN_LOGICAL_OPERATOR: {
+        case NS_TOKEN_ADD_OP:
+        case NS_TOKEN_MUL_OP:
+        case NS_TOKEN_BITWISE_OP:
+        case NS_TOKEN_SHIFT_OP:
+        case NS_TOKEN_REL_OP:
+        case NS_TOKEN_EQ_OP:
+        case NS_TOKEN_BOOL_OP:
+        case NS_TOKEN_LOGIC_OP: {
 
             // first token is operator
             if (ctx->top == expr_top) {
@@ -364,7 +366,7 @@ bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
         } break;
 
         case NS_TOKEN_ASSIGN:
-        case NS_TOKEN_ASSIGN_OPERATOR: {
+        case NS_TOKEN_ASSIGN_OP: {
             int left = ns_parse_stack_pop(ctx);
             if (ns_parse_expr_stack(ctx)) {
                 ns_ast_t n = {.type = NS_AST_BINARY_EXPR, .binary_expr = {.op = ctx->token}};

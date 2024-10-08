@@ -10,7 +10,7 @@
             "name": "ns token",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-t","sample/rt.ns"],
+            "args": ["-t","sample/add.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -28,7 +28,7 @@
             "name": "ns eval",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["sample/rt.ns"],
+            "args": ["sample/add.ns"],
             "cwd": "${workspaceFolder}"
         },
         {

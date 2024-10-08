@@ -21,8 +21,6 @@ typedef enum {
     NS_AST_STRUCT_FIELD_DEF,
     NS_AST_TYPE_DEF,
 
-    NS_AST_VAR_ASSIGN,
-
     NS_AST_EXPR,
     NS_AST_PRIMARY_EXPR,
     NS_AST_BINARY_EXPR,
@@ -80,12 +78,6 @@ typedef struct ns_ast_var_def {
     ns_token_t name;
     ns_token_t type;
 } ns_ast_var_def;
-
-typedef struct ns_ast_var_assign {
-    ns_token_t name;
-    int property;
-    bool computed;
-} ns_ast_var_assign;
 
 typedef struct ns_ast_struct_def {
     ns_token_t name;

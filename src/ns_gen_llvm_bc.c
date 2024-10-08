@@ -166,9 +166,9 @@ ns_bc_type ns_llvm_type(ns_llvm_ctx_t *ctx, ns_token_t t) {
     case NS_TOKEN_TYPE_INT64:
     case NS_TOKEN_TYPE_UINT64:
         return LLVMInt64Type();
-    case NS_TOKEN_TYPE_FLOAT32:
+    case NS_TOKEN_TYPE_F32:
         return LLVMFloatType();
-    case NS_TOKEN_TYPE_FLOAT64:
+    case NS_TOKEN_TYPE_F64:
         return LLVMDoubleType();
     case NS_TOKEN_IDENTIFIER:
         return ns_llvm_find_struct(ctx, t.val).st.type;
@@ -253,9 +253,9 @@ ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
         return LLVMConstInt(LLVMInt64Type(), n.primary_expr.token.val.len, 0);
-    case NS_TOKEN_FLOAT_LITERAL:
+    case NS_TOKEN_FLT_LITERAL:
         return LLVMConstReal(LLVMDoubleType(), n.primary_expr.token.val.len);
-    case NS_TOKEN_STRING_LITERAL:
+    case NS_TOKEN_STR_LITERAL:
         return LLVMConstString(n.primary_expr.token.val.data, n.primary_expr.token.val.len, 0);
     case NS_TOKEN_IDENTIFIER:
         return ns_llvm_find_variable(llvm_ctx, n.primary_expr.token.val);
@@ -355,21 +355,21 @@ ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_bc_value right = ns_llvm_expr(llvm_ctx, ctx->nodes[n.binary_expr.right]);
     ns_bc_value ret = NULL;
     switch (n.binary_expr.op.type) {
-    case NS_TOKEN_ADDITIVE_OPERATOR:
+    case NS_TOKEN_ADD_OP:
         if (ns_str_equals_STR(n.binary_expr.op.val, "+")) {
             ret = LLVMBuildAdd(builder, left, right, NULL);
         } else if (ns_str_equals_STR(n.binary_expr.op.val, "-")) {
             ret = LLVMBuildSub(builder, left, right, NULL);
         }
         break;
-    case NS_TOKEN_MULTIPLICATIVE_OPERATOR:
+    case NS_TOKEN_MUL_OP:
         if (ns_str_equals_STR(n.binary_expr.op.val, "*")) {
             ret = LLVMBuildMul(builder, left, right, NULL);
         } else if (ns_str_equals_STR(n.binary_expr.op.val, "/")) {
             ret = LLVMBuildSDiv(builder, left, right, NULL);
         }
         break;
-    case NS_TOKEN_ASSIGN_OPERATOR:
+    case NS_TOKEN_ASSIGN_OP:
         ret = LLVMBuildStore(builder, right, left);
         break;
     default:
@@ -462,7 +462,7 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
         case NS_AST_STRUCT_DEF:
             ns_llvm_struct_def(&llvm_ctx, n);
             break;
-        case NS_AST_VAR_ASSIGN: {
+        case NS_AST_VAR_DEF: {
             ns_bc_value val = ns_llvm_primary_expr(&llvm_ctx, n);
             ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_VALUE, .val = {.name = n.primary_expr.token.val, .value = val}};
             ns_llvm_push_global(&llvm_ctx, r);

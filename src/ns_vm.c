@@ -170,9 +170,9 @@ ns_value ns_eval_literal(ns_vm_t *vm, ns_ast_t n) {
     switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
         return (ns_value){.type = NS_TYPE_I64, .u.int64 = ns_str_to_i32(n.primary_expr.token.val)};
-    case NS_TOKEN_FLOAT_LITERAL:
+    case NS_TOKEN_FLT_LITERAL:
         return (ns_value){.type = NS_TYPE_F64, .u.float64 = ns_str_to_f64(n.primary_expr.token.val)};
-    case NS_TOKEN_STRING_LITERAL:
+    case NS_TOKEN_STR_LITERAL:
         break;
         // copy & save string
     case NS_TOKEN_TRUE:
@@ -333,7 +333,7 @@ bool ns_value_conditional_true(ns_value v) {
 ns_value ns_eval_binary_op(ns_vm_t *vm, ns_value left, ns_value right, int i) {
     ns_ast_t n = vm->ast[i];
     switch (n.binary_expr.op.type) {
-    case NS_TOKEN_ADDITIVE_OPERATOR:
+    case NS_TOKEN_ADD_OP:
         if (ns_str_equals_STR(n.binary_expr.op.val, "+")) {
             if (ns_value_int_type(left) && ns_value_int_type(right)) {
                 return (ns_value){.type = NS_TYPE_I64, .u.int64 = left.u.int64 + right.u.int64};
@@ -355,7 +355,7 @@ ns_value ns_eval_binary_op(ns_vm_t *vm, ns_value left, ns_value right, int i) {
         }
         /* code */
         break;
-    case NS_TOKEN_EQUALITY_OPERATOR:
+    case NS_TOKEN_EQ_OP:
         if (ns_str_equals_STR(n.binary_expr.op.val, "==")) {
             if (ns_value_int_type(left) && ns_value_int_type(right)) {
                 return left.u.int64 == right.u.int64 ? NS_TRUE : NS_FALSE;
