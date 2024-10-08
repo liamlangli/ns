@@ -65,3 +65,4 @@ ns_str ns_str_slice(ns_str s, int start, int end);
 
 int ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);
+ns_str ns_str_unescape(ns_str s);

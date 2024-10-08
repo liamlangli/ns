@@ -4,7 +4,7 @@ CC = clang
 LD = clang++
 
 LLVM_CFLAGS = `llvm-config --cflags`
-LLVM_LDFLAGS = `llvm-config --ldflags --libs core executionengine mcjit interpreter analysis native bitwriter --system-libs`
+LLVM_LDFLAGS = `llvm-config --ldflags --libs core --system-libs`
 
 DEBUG = 1
 
@@ -15,7 +15,7 @@ else
 	CFLAGS += -Os
 endif
 
-LDFLAGS = $(LLVM_LDFLAGS)
+LDFLAGS = -lc -lm $(LLVM_LDFLAGS)
 
 BINDIR = bin
 OBJDIR = $(BINDIR)/obj
@@ -63,6 +63,7 @@ bc: all
 	llvm-dis bin/add.bc
 	llc bin/add.bc -o bin/add.s
 	clang bin/add.s -o bin/add
+	bin/add
 
 arm: all
 	$(TARGET) -arm sample/add.ns

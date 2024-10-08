@@ -173,7 +173,7 @@ ns_bc_type ns_llvm_type(ns_llvm_ctx_t *ctx, ns_token_t t) {
     default:
         break;
     }
-    return LLVMVoidType();
+    return NULL;
 }
 
 int ns_llvm_push_local(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r) {
@@ -250,7 +250,7 @@ ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     case NS_TOKEN_FLT_LITERAL:
         return LLVMConstReal(LLVMDoubleType(), n.primary_expr.token.val.len);
     case NS_TOKEN_STR_LITERAL:
-        return LLVMConstString(n.primary_expr.token.val.data, n.primary_expr.token.val.len, 0);
+        return LLVMBuildGlobalStringPtr(llvm_ctx->builder, ns_str_unescape(n.primary_expr.token.val).data, "");
     case NS_TOKEN_IDENTIFIER:
         return ns_llvm_find_var(llvm_ctx, n.primary_expr.token.val);
     default:
@@ -303,6 +303,7 @@ int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_bc_type fn_type = LLVMFunctionType(ret_type, param_types, param_count, 0);
     ns_bc_value fn = LLVMAddFunction(llvm_ctx->mod, ns_llvm_str(n.fn_def.name.val), fn_type);
     r.fn.fn = fn;
+    r.fn.type = fn_type;
     int fn_index = ns_llvm_push_global(llvm_ctx, r);
     llvm_ctx->fn = r;
 
@@ -406,16 +407,36 @@ ns_bc_value ns_llvm_call_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_parse_context_t *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
-    ns_bc_value callee = ns_llvm_expr(llvm_ctx, ctx->nodes[n.call_expr.callee]);
-    ns_ast_t *last = &ctx->nodes[n.call_expr.callee];
+    ns_ast_t *last = &n;
     for (int i = 0; i < n.call_expr.arg_count; i++) {
-        ns_ast_t *arg = &ctx->nodes[last->next];
-        args[i] = ns_llvm_expr(llvm_ctx, *arg);
+        ns_ast_t arg = ctx->nodes[last->next];
+        args[i] = ns_llvm_expr(llvm_ctx, arg);
     }
-    ns_llvm_record fn = ns_llvm_find_fn(llvm_ctx, ctx->nodes[n.call_expr.callee].primary_expr.token.val);
-    ns_str tmp = ns_tmp_var(llvm_ctx);
-    ns_bc_value ret = LLVMBuildCall2(builder, fn.fn.type, callee, args, n.call_expr.arg_count, tmp.data);
+    ns_str fn_name = ctx->nodes[n.call_expr.callee].primary_expr.token.val;
+    ns_llvm_record fn = ns_llvm_find_fn(llvm_ctx, fn_name);
+    if (fn.type == NS_LLVM_RECORD_TYPE_INVALID) {
+        printf("fn [");
+        ns_str_printf(fn_name);
+        printf("] not found.\n");
+        // assert(false);
+        return NULL;
+    }
+
+    ns_bc_value ret = LLVMBuildCall2(builder, fn.fn.type, fn.fn.fn, args, n.call_expr.arg_count, "");
     return ret;
+}
+
+void ns_llvm_std(ns_llvm_ctx_t *llvm_ctx) {
+    ns_bc_module module = llvm_ctx->mod;
+
+    // register printf
+    LLVMTypeRef printf_args[] = { LLVMPointerType(LLVMInt8Type(), 0) }; // char* type
+    LLVMTypeRef printf_type = LLVMFunctionType(LLVMInt32Type(), printf_args, 1, 1); // variadic function
+    LLVMValueRef printf_func = LLVMAddFunction(module, "printf", printf_type);
+    ns_llvm_record printf_record = {.type = NS_LLVM_RECORD_TYPE_FN, .fn = {.name = ns_str_cstr("print"), .param_count = 1}};
+    printf_record.fn.fn = printf_func;
+    printf_record.fn.type = printf_type;
+    ns_llvm_push_global(llvm_ctx, printf_record);
 }
 
 bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
@@ -438,6 +459,8 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
     llvm_ctx.builder = builder;
     llvm_ctx.fn = NS_LLVM_RECORD_INVALID;
 
+    ns_llvm_std(&llvm_ctx);
+
     int i = 0;
     int l = ctx->section_count;
     while (i < l) {
@@ -451,13 +474,8 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
         case NS_AST_STRUCT_DEF:
             ns_llvm_struct_def(&llvm_ctx, n);
             break;
-        case NS_AST_VAR_DEF: {
-            ns_bc_value val = ns_llvm_primary_expr(&llvm_ctx, n);
-            ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_VALUE, .val = {.name = n.primary_expr.token.val, .value = val}};
-            ns_llvm_push_global(&llvm_ctx, r);
-        } break;
         default:
-            llvm_ctx.nodes[llvm_ctx.local_count++] = n;
+            llvm_ctx.nodes[llvm_ctx.node_count++] = n;
             break;
         }
     }
@@ -466,22 +484,30 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
     ns_bc_value main_func = LLVMAddFunction(mod, "main", main_func_type);
     ns_bc_block entry_main = LLVMAppendBasicBlock(main_func, "entry");
     LLVMPositionBuilderAtEnd(builder, entry_main);
-    
+
     // parse deferred nodes as main fn body
-    for (int i = 0; i < llvm_ctx.local_count; i++) {
+    for (int i = 0; i < llvm_ctx.node_count; i++) {
         ns_ast_t n = llvm_ctx.nodes[i];
         switch (n.type) {
-        case NS_AST_EXPR:
-
+        case NS_AST_VAR_DEF: {
+            ns_bc_value ret = ns_llvm_expr(&llvm_ctx, ctx->nodes[n.var_def.expr]);
+            ns_bc_type type = ns_llvm_type(&llvm_ctx, n.var_def.type);
+            if (type == NULL) type = LLVMTypeOf(ret);
+            ns_str name = n.var_def.name.val;
+            ns_bc_value var = LLVMBuildAlloca(builder, type, ns_llvm_str(name));
+            LLVMBuildStore(builder, ret, var);
+            ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_VALUE, .val = {.name = name, .value = var}};
+            ns_llvm_push_global(&llvm_ctx, r);
+        } break;
+        case NS_AST_CALL_EXPR:
+            ns_llvm_call_expr(&llvm_ctx, n);
+            break;
         default:
             break;
         }
     }
 
-    ns_bc_value main_ret_val = LLVMConstInt(LLVMInt32Type(), 0, 0);
-    LLVMBuildRet(builder, main_ret_val);
-
-    LLVMDisposeBuilder(builder);
+    LLVMBuildRet(builder, LLVMConstInt(LLVMInt32Type(), 0, 0));
 
     char *error = NULL;
     LLVMVerifyModule(mod, LLVMAbortProcessAction, &error);
@@ -493,5 +519,7 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
         return false;
     }
 
+    LLVMDisposeBuilder(builder);
+    LLVMDisposeModule(mod);
     return true;
 }
