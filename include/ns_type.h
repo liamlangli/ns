@@ -19,6 +19,18 @@
 #define NS_MAX_NODE 512
 #define NS_MAX_RECORD_COUNT 512
 
+#define ns_error(msg) \
+    fprintf(stderr, "%s\n", msg);\
+
+#ifndef macro_max
+    #define macro_max(a, b) ((a) > (b) ? (a) : (b))
+#endif
+
+#ifndef macro_min
+    #define macro_min(a, b) ((a) < (b) ? (a) : (b))
+#endif
+
+// types
 typedef char i8;
 typedef short i16;
 typedef int i32;
@@ -32,16 +44,9 @@ typedef unsigned long u64;
 typedef float f32;
 typedef double f64;
 
-#ifndef macro_max
-    #define macro_max(a, b) ((a) > (b) ? (a) : (b))
-#endif
-
-#ifndef macro_min
-    #define macro_min(a, b) ((a) < (b) ? (a) : (b))
-#endif
-
+// ns_str
 typedef struct ns_str {
-    const char *data;
+    char *data;
     int len;
     bool dynamic;
 } ns_str;
@@ -57,9 +62,23 @@ ns_str ns_str_slice(ns_str s, int start, int end);
 #define ns_str_equals_STR(s, S) (strncmp((s).data, (S), strlen(S)) == 0)
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
 
-#define ns_error(msg) \
-    fprintf(stderr, "%s\n", msg);\
-
 int ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);
 ns_str ns_str_unescape(ns_str s);
+
+// ns_array
+typedef struct ns_array_header {
+    int len;
+    int cap;
+} ns_array_header;
+
+void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap);
+
+#define ns_array_header(a) ((ns_array_header *)(a) - 1)
+#define ns_array_size(a) ((a) ? (ns_array_header(a))->len : 0)
+#define ns_array_capacity(a) ((a) ? ns_array_header(a)->cap : 0)
+
+#define ns_array_grow(a, n, m) ((a) = _ns_array_grow((a), sizeof(*(a)), (n), (m)))
+#define ns_array_ensure(a, n) ((!(a) || ns_array_header(a)->len + (n) > ns_array_header(a)->cap) ? (ns_array_grow(a, n, 0), 0) : 0)
+
+#define ns_array_push(a, v) (ns_array_ensure(a, 1), (a)[ns_array_header(a)->len++] = (v))

@@ -70,17 +70,13 @@ typedef struct ns_record {
     };
 } ns_record;
 
-typedef union ns_value_union {
-    i64 int64;
-    f64 float64;
-    bool boolean;
-    int ptr;
-} ns_value_union;
-
 typedef struct ns_value {
     NS_VALUE_TYPE type;
     int index;
-    ns_value_union u;
+    union {
+        i64 i;
+        f64 f;
+    };
 } ns_value;
 
 typedef struct ns_fn {
@@ -105,12 +101,11 @@ typedef struct ns_call {
 } ns_call;
 
 typedef struct ns_vm {
-    ns_ast_ctx *ctx;
-    ns_fn_record* fn;
-
+    ns_call *call_stack;
     int record_count;
     ns_record records[NS_MAX_RECORD_COUNT];
 } ns_vm;
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
+ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, int i);
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);

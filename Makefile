@@ -22,6 +22,7 @@ BINDIR = bin
 OBJDIR = $(BINDIR)/obj
 
 NS_SRCS = src/ns.c \
+	src/ns_fmt.c \
 	src/ns_type.c \
 	src/ns_path.c \
 	src/ns_tokenize.c \

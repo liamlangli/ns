@@ -478,52 +478,32 @@
 // }
 
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
-//     ns_ast_ctx *ctx = ns_parse(source, filename);
+    ns_ast_ctx ctx = {0};
 
-//     if (ctx == NULL) {
-//         fprintf(stderr, "eval error: ast parse failed\n");
-//         return NS_NIL;
-//     }
+    if (!ns_parse(&ctx, source, filename)) {
+        ns_error("eval error: ast parse failed.");
+        return NS_NIL;
+    }
 
-//     vm->ast = ctx->nodes;
-//     vm->parse_ctx = ctx;
+    if (!ns_vm_parse(vm, &ctx)) {
+        ns_error("vm error: vm parse failed.\n");
+        return NS_NIL;
+    }
 
-//     ns_vm_parse_ast(vm, ctx);
+    ns_value ret = NS_NIL;
+    for (int i = ctx.section_begin; i < ctx.section_end; ++i) {
+        ns_ast_t n = ctx.nodes[ctx.sections[i++]];
+        switch (n.type) {
+            case NS_AST_CALL_EXPR:
+                // ns_call_fn(vm, i);
+                break;
+            case NS_AST_EXPR:
+                // ns_eval_expr(vm, n.expr.body);
+                break;
+            default:
+                break;
+        }
+    }
 
-//     int i = 0;
-//     int l = ctx->section_count;
-//     ns_value ret = NS_NIL;
-
-//     // eval global values
-//     while (i < l) {
-//         int s = ctx->sections[i++];
-//         ns_ast_t n = ctx->nodes[s];
-//         switch (n.type) {
-//         case NS_AST_VAR_DEF: {
-//             ns_value v = ns_eval_expr(vm, n.var_def.expr);
-//             ns_str key = n.var_def.name.val;
-//             int slot = ns_vm_find_global_value_slot(vm, key);
-//             if (slot == -1) {
-//                 fprintf(stderr, "eval error: unknown variable %*.s\n", key.len, key.data);
-//                 assert(false);
-//             } else {
-//                 vm->global_values[slot] = v;
-//             }
-//         } break;
-//         case NS_AST_CALL_EXPR:
-//             ret = ns_call_fn(vm, s);
-//             break;
-//         case NS_AST_FN_DEF:
-//         case NS_AST_STRUCT_DEF:
-//             break;
-
-//         default:
-//             fprintf(stderr, "eval error: unknown section type\n");
-//             assert(false);
-//             break;
-//         }
-//     }
-
-//     return ret;
-    return NS_NIL;
+    return ret;
 }

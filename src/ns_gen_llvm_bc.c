@@ -504,7 +504,7 @@ bool ns_code_gen_llvm_bc(ns_ast_ctx *ctx) {
 
     // Write out bitcode to file
     if (LLVMWriteBitcodeToFile(mod, output_path.data) != 0) {
-        fprintf(stderr, "error writing bitcode to file, skipping\n");
+        ns_error("code_gen_llvm error: fail writing bitcode to file.");
         return false;
     }
 

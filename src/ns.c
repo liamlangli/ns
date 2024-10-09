@@ -89,11 +89,11 @@ void help() {
     printf("Usage: ns [option] [file.ns]\n");
     printf("  -t --tokenize     tokenize only\n");
     printf("  -p --parse        parse only\n");
-    printf("  -arm -bc -x86     code gen only (64bit arch only)\n");
+    printf("  -arm -bc -x86     code gen only (64bit only)\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
     printf("  -r --repl         read eval print loop mode\n");
-    printf("  -o --output       output file\n");
+    printf("  -o --output       output path\n");
 }
 
 int main(int argc, char **argv) {
@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
     }
 
     if (option.show_version) {
-        printf("ns %d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
+        printf("nano script v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
         if (argc == 2)
             return 0; // only show version
     }
@@ -133,7 +133,7 @@ int main(int argc, char **argv) {
         ns_parse(&ctx, source, filename);
         ctx.output = option.output;
         if (option.output.data == NULL) {
-            fprintf(stderr, "output file is not specified\n");
+            ns_error("output file is not specified.");
             return false;
         }
         switch (option.arch) {

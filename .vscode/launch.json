@@ -16,7 +16,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns parse",
+            "name": "ns ast",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["-p", "sample/add.ns"],
