@@ -1,4 +1,4 @@
-#include "ns_parse.h"
+#include "ns_ast.h"
 
 const char *ns_ast_type_str(NS_AST_TYPE type) {
     switch (type) {
@@ -53,7 +53,7 @@ const char *ns_ast_type_str(NS_AST_TYPE type) {
     }
 }
 
-void ns_ast_dump(ns_parse_context_t *ctx, int i) {
+void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     ns_ast_t n = ctx->nodes[i];
     printf("%4d [type: %-21s next: %5d] ", i, ns_ast_type_str(n.type), n.next);
     switch (n.type) {
@@ -259,14 +259,14 @@ void ns_ast_dump(ns_parse_context_t *ctx, int i) {
     printf("\n");
 }
 
-void ns_parse_context_dump(ns_parse_context_t *ctx) {
+void ns_parse_context_dump(ns_ast_ctx *ctx) {
     printf("ast_nodes:\n");
     for (int i = 0, l = ctx->node_count; i < l; i++) {
         ns_ast_dump(ctx, i);
     }
 
     printf("sections:\n");
-    for (int i = 0, l = ctx->section_count; i < l; i++) {
+    for (int i = ctx->section_begin; i < ctx->section_end; i++) {
         ns_ast_dump(ctx, ctx->sections[i]);
     }
 }

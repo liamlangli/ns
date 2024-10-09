@@ -1,7 +1,7 @@
-#include "ns_parse.h"
+#include "ns_ast.h"
 #include "ns_tokenize.h"
 
-bool ns_parse_import_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_import_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_IMPORT) && ns_parse_identifier(ctx)) {
         ns_ast_t n = (ns_ast_t){.type = NS_AST_IMPORT_STMT, .import_stmt = { .lib = ctx->token } };
@@ -12,7 +12,7 @@ bool ns_parse_import_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_jump_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     // continue
     ns_ast_t n = {.type = NS_AST_JUMP_STMT, .jump_stmt.label = ctx->token, .jump_stmt.expr = -1};
@@ -51,7 +51,7 @@ bool ns_parse_jump_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_if_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
     // if expression statement [else statement]
@@ -89,7 +89,7 @@ bool ns_parse_if_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_for_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_for_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_FOR) && ns_parse_generator_expr(ctx)) {
         ns_ast_t n = {.type = NS_AST_FOR_STMT, .for_stmt.generator = ctx->current};
@@ -103,7 +103,7 @@ bool ns_parse_for_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_while_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_while_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_WHILE) && ns_parse_expr_stack(ctx)) {
         ns_ast_t n = {.type = NS_AST_WHILE_STMT, .while_stmt.condition = ctx->current};
@@ -117,7 +117,7 @@ bool ns_parse_while_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_iteration_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_iteration_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
     // for expression statement
@@ -135,7 +135,7 @@ bool ns_parse_iteration_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_compound_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
 
@@ -168,7 +168,7 @@ bool ns_parse_compound_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_designated_value(ns_parse_context_t *ctx) {
+bool ns_parse_designated_value(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     ns_ast_t n = {.type = NS_AST_DESIGNATED_EXPR, .designated_expr = {.name = ctx->token}};
     if (ns_parse_identifier(ctx)) {
@@ -184,7 +184,7 @@ bool ns_parse_designated_value(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_designated_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_designated_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
     ns_token_skip_eol(ctx);
@@ -222,7 +222,7 @@ bool ns_parse_designated_stmt(ns_parse_context_t *ctx) {
     return true;
 }
 
-bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_expr_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_parse_expr_stack(ctx)) {
         ns_parse_next_token(ctx);
@@ -234,7 +234,7 @@ bool ns_parse_expr_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_stmt(ns_parse_context_t *ctx) {
+bool ns_parse_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
     // define statement
@@ -270,7 +270,7 @@ bool ns_parse_stmt(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_global_define(ns_parse_context_t *ctx) {
+bool ns_parse_global_define(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
     if (ns_parse_import_stmt(ctx)) {

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ns_parse.h"
+#include "ns_ast.h"
 #include "ns_type.h"
 
 typedef enum { 
@@ -21,12 +21,54 @@ typedef enum {
     NS_TYPE_FN,
     NS_TYPE_STRUCT,
     NS_TYPE_ARRAY,
-    NS_TYPE_,
-} NS_VALUE_TYPE ;
+    NS_TYPE_ALIAS,
+} NS_VALUE_TYPE;
 
-#define NS_NIL ((ns_value){.type = NS_TYPE_NIL})
+typedef enum {
+    NS_SCOPE_GLOBAL,
+    NS_SCOPE_LOCAL,
+    NS_SCOPE_PARAM
+} NS_VALUE_SCOPE;
+
+typedef enum {
+    NS_RECORD_INVALID,
+    NS_RECORD_VALUE,
+    NS_RECORD_FN,
+    NS_RECORD_STRUCT,
+} NS_RECORD_TYPE;
+
+#define NS_NIL ((ns_value){.type = NS_TYPE_NIL,})
 #define NS_TRUE ((ns_value){.type = NS_TYPE_BOOL, .u.boolean = true})
 #define NS_FALSE ((ns_value){.type = NS_TYPE_BOOL, .u.boolean = false})
+
+typedef struct ns_value_record {
+    NS_VALUE_TYPE type;
+    NS_VALUE_SCOPE scope;
+} ns_value_record;
+
+typedef struct ns_fn_record {
+    int arg_count, local_count, global_count;
+    ns_value_record args[NS_MAX_PARAMS];
+    ns_value_record locals[NS_MAX_PARAMS];
+    ns_value_record globals[NS_MAX_PARAMS];
+    int body;
+} ns_fn_record;
+
+typedef struct ns_struct_record {
+    int field_count;
+    ns_value_record fields[NS_MAX_FIELDS];
+} ns_struct_record;
+
+typedef struct ns_record {
+    NS_RECORD_TYPE type;
+    ns_str name;
+    int index;
+    union {
+        ns_value_record val;
+        ns_fn_record fn;
+        ns_struct_record st;
+    };
+} ns_record;
 
 typedef union ns_value_union {
     i64 int64;
@@ -41,7 +83,7 @@ typedef struct ns_value {
     ns_value_union u;
 } ns_value;
 
-typedef struct ns_fn_t {
+typedef struct ns_fn {
     ns_str name;
     int ast_root;
     int arg_count, local_count;
@@ -49,48 +91,26 @@ typedef struct ns_fn_t {
     ns_value args[NS_MAX_PARAMS];
     ns_str local_names[NS_MAX_PARAMS];
     ns_value locals[NS_MAX_PARAMS];
-} ns_fn_t;
+} ns_fn;
 
-typedef struct ns_struct_t {
+typedef struct ns_struct {
     ns_str name;
     int index;
     int field_count;
     ns_str field_names[NS_MAX_FIELDS];
-} ns_struct_t;
+} ns_struct;
 
-typedef struct ns_call_scope {
-    int fn_index;
-    int argc;
-    bool returned;
-    ns_value ret;
-    ns_value locals[NS_MAX_PARAMS];
-    ns_value args[NS_MAX_PARAMS];
-} ns_call_scope;
+typedef struct ns_call {
+    ns_fn_record fn;
+} ns_call;
 
-typedef struct ns_vm_t {
-    ns_parse_context_t *parse_ctx;
-    ns_ast_t *ast;
-    ns_value values[NS_MAX_VALUE_COUNT];
-    int value_count;
+typedef struct ns_vm {
+    ns_ast_ctx *ctx;
+    ns_fn_record* fn;
 
-    ns_value global_values[NS_MAX_GLOBAL_VARS];
-    ns_str global_names[NS_MAX_GLOBAL_VARS];
-    int global_count;
+    int record_count;
+    ns_record records[NS_MAX_RECORD_COUNT];
+} ns_vm;
 
-    int stack_depth;
-    ns_fn_t fns[NS_MAX_FN_COUNT];
-    int fn_count;
-
-    // func call stack
-    ns_call_scope call_stack[NS_MAX_CALL_STACK];
-    int call_stack_top;
-    ns_value ret;
-} ns_vm_t;
-
-ns_value ns_new_i32(ns_vm_t *vm, i32 i);
-ns_value ns_new_f64(ns_vm_t *vm, f64 f);
-ns_value ns_new_bool(ns_vm_t *vm, bool b);
-
-ns_vm_t *ns_create_vm();
-ns_value ns_eval_expr(ns_vm_t *vm, int expr);
-ns_value ns_eval(ns_vm_t *vm, ns_str source, ns_str filename);
+bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
+ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);

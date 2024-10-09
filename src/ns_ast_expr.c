@@ -1,30 +1,30 @@
-#include "ns_parse.h"
+#include "ns_ast.h"
 #include "ns_tokenize.h"
 #include "ns_type.h"
 
-void ns_parse_stack_push_index(ns_parse_context_t *ctx, int index) { ctx->stack[++ctx->top] = index; }
+void ns_parse_stack_push_index(ns_ast_ctx *ctx, int index) { ctx->stack[++ctx->top] = index; }
 
-void ns_parse_stack_push(ns_parse_context_t *ctx, ns_ast_t n) {
+void ns_parse_stack_push(ns_ast_ctx *ctx, ns_ast_t n) {
     ns_parse_stack_push_index(ctx, ns_ast_push(ctx, n));
 }
 
-int ns_parse_stack_pop(ns_parse_context_t *ctx) { return ctx->stack[ctx->top--]; }
+int ns_parse_stack_pop(ns_ast_ctx *ctx) { return ctx->stack[ctx->top--]; }
 
-ns_ast_t ns_parse_stack_top(ns_parse_context_t *ctx) { return ctx->nodes[ctx->stack[ctx->top]]; }
+ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx) { return ctx->nodes[ctx->stack[ctx->top]]; }
 
-bool ns_parse_primary_expr(ns_parse_context_t *ctx);
-bool ns_parse_postfix_expr(ns_parse_context_t *ctx);
-bool ns_parse_unary_expr(ns_parse_context_t *ctx);
-bool ns_parse_expr_stack(ns_parse_context_t *ctx);
+bool ns_parse_primary_expr(ns_ast_ctx *ctx);
+bool ns_parse_postfix_expr(ns_ast_ctx *ctx);
+bool ns_parse_unary_expr(ns_ast_ctx *ctx);
+bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 
-bool ns_parse_stack_top_is_operator(ns_parse_context_t *ctx) {
+bool ns_parse_stack_top_is_operator(ns_ast_ctx *ctx) {
     if (ctx->top == -1)
         return false; // empty stack
     ns_ast_t n = ns_parse_stack_top(ctx);
     return n.type == NS_AST_BINARY_EXPR;
 }
 
-bool ns_parse_stack_top_is_operand(ns_parse_context_t *ctx) {
+bool ns_parse_stack_top_is_operand(ns_ast_ctx *ctx) {
     if (ctx->top == -1)
         return false; // empty stack
     ns_ast_t n = ns_parse_stack_top(ctx);
@@ -57,7 +57,7 @@ bool ns_token_is_operator(ns_token_t token) {
     }
 }
 
-bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
+bool ns_parse_expr_rewind(ns_ast_ctx *ctx, int expr_top) {
     // rewind
     int top = ctx->top;
     int root = ctx->stack[top];
@@ -80,7 +80,7 @@ bool ns_parse_expr_rewind(ns_parse_context_t *ctx, int expr_top) {
     return true;
 }
 
-bool ns_parse_call_expr(ns_parse_context_t *ctx) {
+bool ns_parse_call_expr(ns_ast_ctx *ctx) {
     ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = {.arg_count = 0}};
     if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
         ns_ast_push(ctx, n);
@@ -111,7 +111,7 @@ bool ns_parse_call_expr(ns_parse_context_t *ctx) {
     return true;
 }
 
-bool ns_parse_primary_expr(ns_parse_context_t *ctx) {
+bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     if (ns_parse_next_token(ctx)) {
         switch (ctx->token.type) {
@@ -139,7 +139,7 @@ bool ns_parse_primary_expr(ns_parse_context_t *ctx) {
     return false;
 }
 
-bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
+bool ns_parse_postfix_expr(ns_ast_ctx *ctx) {
     ns_parse_state_t primary_state = ns_save_state(ctx);
     if (!ns_parse_primary_expr(ctx)) {
         ns_restore_state(ctx, primary_state);
@@ -225,7 +225,7 @@ bool ns_parse_postfix_expr(ns_parse_context_t *ctx) {
     return true;
 }
 
-bool ns_parse_unary_expr(ns_parse_context_t *ctx) {
+bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ctx->token.type == NS_TOKEN_BIT_INVERT_OP ||
@@ -246,7 +246,7 @@ bool ns_parse_unary_expr(ns_parse_context_t *ctx) {
 }
 
 // stack based expression parser
-bool ns_parse_expr_stack(ns_parse_context_t *ctx) {
+bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
     int expr_top = ++ctx->top;
     ns_parse_state_t state;
     do {

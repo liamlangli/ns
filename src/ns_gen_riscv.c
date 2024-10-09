@@ -44,13 +44,13 @@ enum isa_type {
 // TODO: vector
 // TODO: compressed
 
-bool ns_code_gen_risc(ns_parse_context_t *ctx) {
-    ns_str rv_path = ns_str_cstr("bin/ns_risc");
-    printf("generate risc assemble file: %s\n", rv_path.data);
+bool ns_code_gen_risc(ns_ast_ctx *ctx) {
+    ns_str output_path = ns_str_cstr(ctx->output.data);
+    printf("generate risc object file: %s\n", output_path.data);
 
-    FILE *fd = fopen(rv_path.data, "w");
+    FILE *fd = fopen(output_path.data, "w");
     if (!fd) {
-        fprintf(stderr, "failed to open file %s\n", rv_path.data);
+        fprintf(stderr, "failed to open file %s\n", output_path.data);
         return false;
     }
 

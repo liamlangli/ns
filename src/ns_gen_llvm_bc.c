@@ -1,5 +1,6 @@
 #include "ns_code_gen.h"
 #include "ns_type.h"
+#include "ns_vm.h"
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitWriter.h>
@@ -31,8 +32,9 @@
 
 typedef struct ns_llvm_value_record {
     ns_str name;
-    ns_bc_value value;
-    ns_bc_type type;
+    ns_bc_value ll_value;
+    ns_bc_type ll_type;
+    NS_VALUE_TYPE type;
     int i;
 } ns_llvm_value_record;
 
@@ -58,7 +60,7 @@ typedef enum ns_llvm_record_type {
     NS_LLVM_RECORD_TYPE_STRUCT,
 } ns_llvm_record_type;
 #define NS_LLVM_RECORD_INVALID ((ns_llvm_record){.type = NS_LLVM_RECORD_TYPE_INVALID})
-#define NS_LLVM_VALUE_RECORD_INVALID ((ns_llvm_value_record){.name = ns_str_null, .value = NULL, .type = NULL, .i = -1})
+#define NS_LLVM_VALUE_RECORD_INVALID ((ns_llvm_value_record){.name = ns_str_null, .ll_value = NULL, .ll_type = NULL, .type = NS_TYPE_INFER, .i = -1})
 
 typedef struct ns_llvm_record {
     ns_llvm_record_type type;
@@ -71,7 +73,7 @@ typedef struct ns_llvm_record {
 
 typedef struct ns_llvm_ctx_t {
     ns_str path;
-    ns_parse_context_t *ctx;
+    ns_ast_ctx *ctx;
     ns_bc_module mod;
     ns_bc_builder builder;
     ns_llvm_record fn;
@@ -83,10 +85,6 @@ typedef struct ns_llvm_ctx_t {
     int local_stack[MAX_STACK_DEPTH];
     int global_count;
     ns_llvm_record globals[MAX_GLOBAL_COUNT];
-
-    // defer parsed expr
-    int node_count;
-    ns_ast_t nodes[NS_MAX_NODE_COUNT];
 } ns_llvm_ctx_t;
 
 // util
@@ -206,12 +204,12 @@ ns_bc_value ns_llvm_find_var(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
 
     for (int i = 0; i < llvm_ctx->local_count; i++) {
         if (ns_str_equals(llvm_ctx->locals[i].val.name, name)) {
-            return llvm_ctx->locals[i].val.value;
+            return llvm_ctx->locals[i].val.ll_value;
         }
     }
     for (int i = 0; i < llvm_ctx->global_count; i++) {
         if (ns_str_equals(llvm_ctx->globals[i].val.name, name)) {
-            return llvm_ctx->globals[i].val.value;
+            return llvm_ctx->globals[i].val.ll_value;
         }
     }
     return NULL;
@@ -260,7 +258,7 @@ ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 }
 
 ns_bc_value ns_llvm_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_parse_context_t *ctx = llvm_ctx->ctx;
+    ns_ast_ctx *ctx = llvm_ctx->ctx;
     switch (n.type) {
     case NS_AST_EXPR:
         return ns_llvm_expr(llvm_ctx, ctx->nodes[n.expr.body]);
@@ -277,7 +275,7 @@ ns_bc_value ns_llvm_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 }
 
 int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_parse_context_t *ctx = llvm_ctx->ctx;
+    ns_ast_ctx *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
     // push current local count to stack
@@ -296,7 +294,7 @@ int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
             // TODO: handle ref type
         }
         ns_bc_type type = ns_llvm_type(llvm_ctx, p.param.type);
-        r.fn.params[i] = (ns_llvm_value_record){.name = p.param.name.val, .type = type, .i = i};
+        r.fn.params[i] = (ns_llvm_value_record){.name = p.param.name.val, .ll_type = type, .i = i};
         param_types[i] = type;
     }
     ns_bc_type ret_type = ns_llvm_type(llvm_ctx, n.fn_def.return_type);
@@ -320,7 +318,7 @@ int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 }
 
 int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_parse_context_t *ctx = llvm_ctx->ctx;
+    ns_ast_ctx *ctx = llvm_ctx->ctx;
     int member_count = n.struct_def.count;
     ns_ast_t *last = &n;
     ns_str struct_name = n.struct_def.name.val;
@@ -330,7 +328,7 @@ int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     for (int i = 0; i < member_count; i++) {
         ns_ast_t *member = &ctx->nodes[last->next];
         member_types[i] = ns_llvm_type(llvm_ctx, member->param.type);
-        r.st.members[i] = (ns_llvm_value_record){.name = member->param.name.val, .type = member_types[i], .i = i};
+        r.st.members[i] = (ns_llvm_value_record){.name = member->param.name.val, .ll_type = member_types[i], .i = i};
     }
     ns_bc_type struct_type = LLVMStructCreateNamed(LLVMGetGlobalContext(), ns_llvm_str(struct_name));
     r.st.type = struct_type;
@@ -339,7 +337,7 @@ int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 }
 
 ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_parse_context_t *ctx = llvm_ctx->ctx;
+    ns_ast_ctx *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
     ns_bc_value left = ns_llvm_expr(llvm_ctx, ctx->nodes[n.binary_expr.left]);
@@ -371,7 +369,7 @@ ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 }
 
 ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_parse_context_t *ctx = llvm_ctx->ctx;
+    ns_ast_ctx *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
     ns_token_t t = n.jump_stmt.label;
@@ -387,7 +385,7 @@ ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 }
 
 void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_parse_context_t *ctx = llvm_ctx->ctx;
+    ns_ast_ctx *ctx = llvm_ctx->ctx;
 
     ns_ast_t *last = &n;
     for (int i = 0; i < n.compound_stmt.count; i++) {
@@ -404,7 +402,7 @@ void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 
 static ns_bc_value args[MAX_PARAM_COUNT];
 ns_bc_value ns_llvm_call_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_parse_context_t *ctx = llvm_ctx->ctx;
+    ns_ast_ctx *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
     ns_ast_t *last = &n;
@@ -439,21 +437,15 @@ void ns_llvm_std(ns_llvm_ctx_t *llvm_ctx) {
     ns_llvm_push_global(llvm_ctx, printf_record);
 }
 
-bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
-    ns_str output = ctx->output;
-    if (output.data == NULL) {
-        fprintf(stderr, "output file is not specified\n");
-        return false;
-    }
-
-    ns_str bc_path = ns_str_cstr(output.data);
-    printf("generate llvm bitcode file: %s\n", bc_path.data);
+bool ns_code_gen_llvm_bc(ns_ast_ctx *ctx) {
+    ns_str output_path = ns_str_cstr(ctx->output.data);
+    printf("generate llvm bitcode file: %s\n", output_path.data);
 
     ns_str module_name = ns_path_filename(ctx->filename);
     ns_bc_module mod = LLVMModuleCreateWithName(module_name.data);
     ns_bc_builder builder = LLVMCreateBuilder();
     ns_llvm_ctx_t llvm_ctx = {0};
-    llvm_ctx.path = bc_path;
+    llvm_ctx.path = output_path;
     llvm_ctx.ctx = ctx;
     llvm_ctx.mod = mod;
     llvm_ctx.builder = builder;
@@ -461,11 +453,10 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
 
     ns_llvm_std(&llvm_ctx);
 
-    int i = 0;
-    int l = ctx->section_count;
-    while (i < l) {
-        int s = ctx->sections[i++];
-        ns_ast_t n = ctx->nodes[s];
+    int begin = ctx->section_begin;
+    int end = ctx->section_end;
+    for (int i = begin; i < end; ++i) {
+        ns_ast_t n = ctx->nodes[ctx->sections[i++]];
 
         switch (n.type) {
         case NS_AST_FN_DEF:
@@ -474,9 +465,7 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
         case NS_AST_STRUCT_DEF:
             ns_llvm_struct_def(&llvm_ctx, n);
             break;
-        default:
-            llvm_ctx.nodes[llvm_ctx.node_count++] = n;
-            break;
+        default: break;
         }
     }
 
@@ -486,17 +475,17 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
     LLVMPositionBuilderAtEnd(builder, entry_main);
 
     // parse deferred nodes as main fn body
-    for (int i = 0; i < llvm_ctx.node_count; i++) {
-        ns_ast_t n = llvm_ctx.nodes[i];
+    for (int i = begin; i < end; ++i) {
+        ns_ast_t n = ctx->nodes[ctx->sections[i++]];
         switch (n.type) {
         case NS_AST_VAR_DEF: {
             ns_bc_value ret = ns_llvm_expr(&llvm_ctx, ctx->nodes[n.var_def.expr]);
-            ns_bc_type type = ns_llvm_type(&llvm_ctx, n.var_def.type);
-            if (type == NULL) type = LLVMTypeOf(ret);
+            ns_bc_type ll_type = ns_llvm_type(&llvm_ctx, n.var_def.type);
+            if (ll_type == NULL) ll_type = LLVMTypeOf(ret);
             ns_str name = n.var_def.name.val;
-            ns_bc_value var = LLVMBuildAlloca(builder, type, ns_llvm_str(name));
+            ns_bc_value var = LLVMBuildAlloca(builder, ll_type, ns_llvm_str(name));
             LLVMBuildStore(builder, ret, var);
-            ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_VALUE, .val = {.name = name, .value = var}};
+            ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_VALUE, .val = {.name = name, .ll_value = var, .ll_type = ll_type }};
             ns_llvm_push_global(&llvm_ctx, r);
         } break;
         case NS_AST_CALL_EXPR:
@@ -514,7 +503,7 @@ bool ns_code_gen_llvm_bc(ns_parse_context_t *ctx) {
     LLVMDisposeMessage(error);
 
     // Write out bitcode to file
-    if (LLVMWriteBitcodeToFile(mod, bc_path.data) != 0) {
+    if (LLVMWriteBitcodeToFile(mod, output_path.data) != 0) {
         fprintf(stderr, "error writing bitcode to file, skipping\n");
         return false;
     }

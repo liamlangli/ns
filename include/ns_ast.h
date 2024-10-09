@@ -217,11 +217,11 @@ typedef struct ns_ast_t {
 
 typedef struct as_parse_context_t {
     int f, last_f;
-    int sections[NS_MAX_SECTION_COUNT];
-    int section_count;
+    int sections[NS_MAX_SECTION];
+    int section_begin, section_end;
     int current;
 
-    ns_ast_t nodes[NS_MAX_NODE_COUNT];
+    ns_ast_t nodes[NS_MAX_NODE];
     int node_count;
 
     int stack[NS_MAX_PARSE_STACK];
@@ -231,42 +231,42 @@ typedef struct as_parse_context_t {
     ns_str source;
     ns_str filename;
     ns_str output;
-} ns_parse_context_t;
+} ns_ast_ctx;
 
 const char * ns_ast_type_str(NS_AST_TYPE type);
-void ns_parse_context_dump(ns_parse_context_t *ctx);
+void ns_parse_context_dump(ns_ast_ctx *ctx);
 
 // token func
-bool ns_parse_next_token(ns_parse_context_t *ctx); // skip space
+bool ns_parse_next_token(ns_ast_ctx *ctx); // skip space
 bool ns_token_can_be_type(NS_TOKEN t);
-bool ns_token_require(ns_parse_context_t *ctx, NS_TOKEN token);
-bool ns_token_require_type(ns_parse_context_t *ctx);
-bool ns_token_skip_eol(ns_parse_context_t *ctx);
+bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token);
+bool ns_token_require_type(ns_ast_ctx *ctx);
+bool ns_token_skip_eol(ns_ast_ctx *ctx);
 
 // node func
-void ns_restore_state(ns_parse_context_t *ctx, ns_parse_state_t state);
-ns_parse_state_t ns_save_state(ns_parse_context_t *ctx);
-int ns_ast_push(ns_parse_context_t *ctx, ns_ast_t n);
+void ns_restore_state(ns_ast_ctx *ctx, ns_parse_state_t state);
+ns_parse_state_t ns_save_state(ns_ast_ctx *ctx);
+int ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n);
 
 // primary func
-bool ns_parse_identifier(ns_parse_context_t *ctx);
+bool ns_parse_identifier(ns_ast_ctx *ctx);
 
 // external func
-bool ns_parse_fn_define(ns_parse_context_t *ctx);
-bool ns_parse_ops_fn_define(ns_parse_context_t *ctx);
-bool ns_parse_var_define(ns_parse_context_t *ctx);
-bool ns_parse_struct_define(ns_parse_context_t *ctx);
-bool ns_parse_type_define(ns_parse_context_t *ctx);
+bool ns_parse_fn_define(ns_ast_ctx *ctx);
+bool ns_parse_ops_fn_define(ns_ast_ctx *ctx);
+bool ns_parse_var_define(ns_ast_ctx *ctx);
+bool ns_parse_struct_define(ns_ast_ctx *ctx);
+bool ns_parse_type_define(ns_ast_ctx *ctx);
 
 // stmt func
-bool ns_parse_global_define(ns_parse_context_t *ctx);
-bool ns_parse_stmt(ns_parse_context_t *ctx);
-bool ns_parse_compound_stmt(ns_parse_context_t *ctx);
-bool ns_parse_designated_stmt(ns_parse_context_t *ctx);
+bool ns_parse_global_define(ns_ast_ctx *ctx);
+bool ns_parse_stmt(ns_ast_ctx *ctx);
+bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
+bool ns_parse_designated_stmt(ns_ast_ctx *ctx);
 
 // expr func
-ns_ast_t ns_parse_stack_top(ns_parse_context_t *ctx);
-bool ns_parse_generator_expr(ns_parse_context_t *ctx);
-bool ns_parse_expr_stack(ns_parse_context_t *ctx);
+ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
+bool ns_parse_generator_expr(ns_ast_ctx *ctx);
+bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 
-ns_parse_context_t* ns_parse(ns_str source, ns_str filename);
+bool ns_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);

@@ -25,11 +25,12 @@ NS_SRCS = src/ns.c \
 	src/ns_type.c \
 	src/ns_path.c \
 	src/ns_tokenize.c \
-	src/ns_parse.c \
-	src/ns_parse_stmt.c \
-	src/ns_parse_expr.c \
-	src/ns_parse_dump.c \
-	src/ns_vm.c \
+	src/ns_ast.c \
+	src/ns_ast_stmt.c \
+	src/ns_ast_expr.c \
+	src/ns_ast_dump.c \
+	src/ns_vm_parse.c \
+	src/ns_vm_eval.c \
 	src/ns_gen_arm.c \
 	src/ns_gen_x86.c
 NS_OBJS = $(NS_SRCS:%.c=$(OBJDIR)/%.o)
@@ -56,7 +57,7 @@ $(OBJDIR):
 token: all
 	$(TARGET) -t sample/add.ns
 
-parse: all
+ast: all
 	$(TARGET) -p sample/add.ns
 
 bc: all

@@ -1,6 +1,6 @@
 #include "ns.h"
 #include "ns_code_gen.h"
-#include "ns_parse.h"
+#include "ns_ast.h"
 #include "ns_tokenize.h"
 #include "ns_type.h"
 #include "ns_vm.h"
@@ -123,33 +123,36 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    ns_ast_ctx ctx = {0};
     if (option.tokenize_only) {
         ns_tokenize(source, filename);
     } else if (option.parse_only) {
-        ns_parse_context_dump(ns_parse(source, filename));
+        ns_parse(&ctx, source, filename);
+        ns_parse_context_dump(&ctx);
     } else if (option.code_gen_only) {
-        ns_parse_context_t *ctx = ns_parse(source, filename);
-        ctx->output = option.output;
-        if (ctx == NULL) {
-            ns_error("parse error: failed to parse source\n")
+        ns_parse(&ctx, source, filename);
+        ctx.output = option.output;
+        if (option.output.data == NULL) {
+            fprintf(stderr, "output file is not specified\n");
+            return false;
         }
         switch (option.arch) {
         case llvm_bc:
-            ns_code_gen_llvm_bc(ctx);
+            ns_code_gen_llvm_bc(&ctx);
             break;
         case arm_64:
-            ns_code_gen_arm64(ctx);
+            ns_code_gen_arm64(&ctx);
             break;
         case x86_64:
-            ns_code_gen_x86_64(ctx);
+            ns_code_gen_x86_64(&ctx);
             break;
         default:
             fprintf(stderr, "invalid arch %d\n", option.arch);
             exit(1);
         }
     } else if (option.repl) {
-        ns_vm_t *vm = ns_create_vm();
-        ns_eval(vm, source, filename);
+        ns_vm vm = {0};
+        ns_eval(&vm, source, filename);
     }
     return 0;
 }
