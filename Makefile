@@ -5,6 +5,7 @@ LD = clang++
 
 LLVM_CFLAGS = `llvm-config --cflags`
 LLVM_LDFLAGS = `llvm-config --ldflags --libs core --system-libs`
+LLVM_TRIPLE = `llvm-config --host-target`
 
 DEBUG = 1
 
@@ -61,8 +62,8 @@ parse: all
 bc: all
 	$(TARGET) -o bin/add.bc -bc sample/add.ns
 	llvm-dis bin/add.bc
-	llc bin/add.bc -o bin/add.s
-	clang bin/add.s -o bin/add
+	llc bin/add.bc -filetype=obj -mtriple=$(LLVM_TRIPLE) -relocation-model=pic -o bin/add.o
+	clang bin/add.o -o bin/add
 	bin/add
 
 arm: all
