@@ -14,8 +14,8 @@ void ns_restore_state(ns_ast_ctx *ctx, ns_parse_state_t state) {
 ns_parse_state_t ns_save_state(ns_ast_ctx *ctx) { return (ns_parse_state_t){.f = ctx->f, .line = ctx->token.line}; }
 
 int ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n) {
-    ctx->current = ctx->node_count;
-    ctx->nodes[ctx->node_count++] = n;
+    ctx->current = ns_array_length(ctx->nodes);
+    ns_array_push(ctx->nodes, n);
     return ctx->current;
 }
 
@@ -221,19 +221,19 @@ bool ns_parse_generator_expr(ns_ast_ctx *ctx) {
 bool ns_parameter(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
-    ns_ast_t n = {.type = NS_AST_PARAM_DEF};
+    ns_ast_t n = {.type = NS_AST_ARG_DEF};
     if (ns_token_require(ctx, NS_TOKEN_REF)) {
-        n.param.is_ref = true;
+        n.arg.is_ref = true;
     }
 
     if (!ns_parse_identifier(ctx)) {
         ns_restore_state(ctx, state);
         return false;
     }
-    n.param.name = ctx->token;
+    n.arg.name = ctx->token;
 
     if (ns_type_restriction(ctx)) {
-        n.param.type = ctx->token;
+        n.arg.type = ctx->token;
     }
 
     ctx->current = ns_ast_push(ctx, n);
@@ -357,11 +357,14 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         return false;
     }
 
-    ns_ast_t fn = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .param_count = 0, .is_async = is_async}};
-    // parse parameters
+    ns_ast_t fn = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async}};
+    // parse args
     ns_token_skip_eol(ctx);
+    ns_ast_t *arg = &fn;
     while (ns_parameter(ctx)) {
-        fn.fn_def.params[fn.fn_def.param_count++] = ctx->current;
+        fn.fn_def.arg_count++;
+        arg->next = ctx->current;
+        arg = &ctx->nodes[ctx->current];
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_COMMA || ctx->token.type == NS_TOKEN_EOL) {
@@ -371,7 +374,7 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         }
     }
 
-    if (fn.fn_def.param_count == 0)
+    if (fn.fn_def.arg_count == 0)
         ns_parse_next_token(ctx);
     if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
         ns_restore_state(ctx, state);
@@ -412,12 +415,12 @@ bool ns_parse_struct_define(ns_ast_ctx *ctx) {
     }
 
     ns_ast_t n = {.type = NS_AST_STRUCT_DEF, .struct_def = {.name = name, .count = 0}};
-    ns_ast_t *last = &n;
+    ns_ast_t *field = &n;
     ns_token_skip_eol(ctx);
     while (ns_parameter(ctx)) {
         ns_token_skip_eol(ctx);
-        last->next = ctx->current;
-        last = &ctx->nodes[ctx->current];
+        field->next = ctx->current;
+        field = &ctx->nodes[ctx->current];
         n.struct_def.count++;
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_COMMA) {
@@ -493,8 +496,10 @@ bool ns_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     do {
         if(ns_token_skip_eol(ctx)) break; // EOF
         loop = ns_parse_global_define(ctx);
-        if (loop)
-            ctx->sections[ctx->section_end++] = ctx->current;
+        if (loop) {
+            ns_array_push(ctx->sections, ctx->current);
+            ctx->section_end++;
+        }
     } while (loop);
     return true;
 }

@@ -75,5 +75,4 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
         }
         i++;
     }
-
 }

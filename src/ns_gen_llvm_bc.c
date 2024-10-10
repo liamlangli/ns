@@ -15,12 +15,6 @@
 #define ns_bc_type LLVMTypeRef
 #define ns_bc_value LLVMValueRef
 
-#define MAX_PARAM_COUNT 16
-#define MAX_LOCAL_COUNT 32
-#define MAX_GLOBAL_COUNT 128
-#define MAX_STACK_DEPTH 16
-#define MAX_STRUCT_MEMBER_COUNT 32
-
 #define NS_VAR_TMP_0 "__0"
 #define NS_VAR_TMP_1 "__1"
 #define NS_VAR_TMP_2 "__2"
@@ -42,15 +36,13 @@ typedef struct ns_llvm_fn_record {
     ns_str name;
     ns_bc_type type;
     ns_bc_value fn;
-    int param_count;
-    ns_llvm_value_record params[MAX_PARAM_COUNT];
+    ns_llvm_value_record *args;
 } ns_llvm_fn_record;
 
 typedef struct ns_llvm_struct_record {
     ns_str name;
     ns_bc_type type;
-    int member_count;
-    ns_llvm_value_record members[MAX_STRUCT_MEMBER_COUNT];
+    ns_llvm_value_record *fields;
 } ns_llvm_struct_record;
 
 typedef enum ns_llvm_record_type {
@@ -76,15 +68,13 @@ typedef struct ns_llvm_ctx_t {
     ns_ast_ctx *ctx;
     ns_bc_module mod;
     ns_bc_builder builder;
-    ns_llvm_record fn;
+    ns_llvm_record *fn;
 
     // variables
-    int local_count;
-    ns_llvm_record locals[MAX_LOCAL_COUNT];
+    ns_llvm_record *locals;
+    ns_llvm_record *globals;
     int local_stack_index;
-    int local_stack[MAX_STACK_DEPTH];
-    int global_count;
-    ns_llvm_record globals[MAX_GLOBAL_COUNT];
+    int local_stack[NS_MAX_CALL_STACK];
 } ns_llvm_ctx_t;
 
 // util
@@ -144,7 +134,7 @@ ns_str ns_tmp_var_indexed(int i) {
 }
 
 ns_str ns_tmp_var(ns_llvm_ctx_t *ctx) {
-    int i = ctx->local_count++;
+    int i = ns_array_length(ctx->locals);
     return ns_tmp_var_indexed(i);
 }
 
@@ -175,39 +165,34 @@ ns_bc_type ns_llvm_type(ns_llvm_ctx_t *ctx, ns_token_t t) {
 }
 
 int ns_llvm_push_local(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r) {
-    if (llvm_ctx->local_count >= MAX_LOCAL_COUNT) {
-        assert(false);
-    }
-    int i = llvm_ctx->local_count;
-    llvm_ctx->locals[llvm_ctx->local_count++] = r;
+    int i = ns_array_length(llvm_ctx->locals);
+    ns_array_push(llvm_ctx->locals, r);
     return i;
 }
 
 int ns_llvm_push_global(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r) {
-    if (llvm_ctx->global_count >= MAX_GLOBAL_COUNT) {
-        assert(false);
-    }
-    int i = llvm_ctx->global_count;
-    llvm_ctx->globals[llvm_ctx->global_count++] = r;
+    int i = ns_array_length(llvm_ctx->globals);
+    ns_array_push(llvm_ctx->globals, r);
     return i;
 }
 
 ns_bc_value ns_llvm_find_var(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
-    if (llvm_ctx->fn.type != NS_LLVM_RECORD_TYPE_INVALID) {
-        ns_llvm_record fn = llvm_ctx->fn;
-        for (int i = 0; i < fn.fn.param_count; i++) {
-            if (ns_str_equals(fn.fn.params[i].name, name)) {
-                return LLVMGetParam(fn.fn.fn, i);
+    if (llvm_ctx->fn->type != NS_LLVM_RECORD_TYPE_INVALID) {
+        ns_llvm_record *fn = llvm_ctx->fn;
+        for (int i = 0, l = ns_array_length(fn->fn.args); i < l; i++) {
+            if (ns_str_equals(fn->fn.args[i].name, name)) {
+                return LLVMGetParam(fn->fn.fn, i);
             }
         }
     }
 
-    for (int i = 0; i < llvm_ctx->local_count; i++) {
+    for (int i = 0, l = ns_array_length(llvm_ctx->locals); i < l; i++) {
         if (ns_str_equals(llvm_ctx->locals[i].val.name, name)) {
             return llvm_ctx->locals[i].val.ll_value;
         }
     }
-    for (int i = 0; i < llvm_ctx->global_count; i++) {
+
+    for (int i = 0, l = ns_array_length(llvm_ctx->globals); i < l; i++) {
         if (ns_str_equals(llvm_ctx->globals[i].val.name, name)) {
             return llvm_ctx->globals[i].val.ll_value;
         }
@@ -216,7 +201,7 @@ ns_bc_value ns_llvm_find_var(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
 }
 
 ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
-    for (int i = 0; i < llvm_ctx->global_count; i++) {
+    for (int i = 0, l = ns_array_length(llvm_ctx->globals); i < l; i++) {
         if (ns_str_equals(llvm_ctx->globals[i].fn.name, name) && llvm_ctx->globals[i].type == NS_LLVM_RECORD_TYPE_FN) {
             return llvm_ctx->globals[i];
         }
@@ -225,7 +210,7 @@ ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
 }
 
 ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
-    for (int i = 0; i < llvm_ctx->global_count; i++) {
+    for (int i = 0, l = ns_array_length(llvm_ctx->globals); i < l; i++) {
         if (ns_str_equals(llvm_ctx->globals[i].st.name, name) && llvm_ctx->globals[i].type == NS_LLVM_RECORD_TYPE_STRUCT) {
             return llvm_ctx->globals[i];
         }
@@ -234,9 +219,9 @@ ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
 }
 
 ns_llvm_value_record ns_llvm_struct_find_member(ns_llvm_record s, ns_str name) {
-    for (int i = 0; i < MAX_STRUCT_MEMBER_COUNT; i++) {
-        if (ns_str_equals(s.st.members[i].name, name)) {
-            return s.st.members[i];
+    for (int i = 0, l = ns_array_length(s.st.fields); i < l; i++) {
+        if (ns_str_equals(s.st.fields[i].name, name)) {
+            return s.st.fields[i];
         }
     }
     return NS_LLVM_VALUE_RECORD_INVALID;
@@ -279,60 +264,65 @@ int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_bc_builder builder = llvm_ctx->builder;
 
     // push current local count to stack
-    llvm_ctx->local_stack[llvm_ctx->local_stack_index++] = llvm_ctx->local_count;
+    llvm_ctx->local_stack[llvm_ctx->local_stack_index++] = ns_array_length(llvm_ctx->locals);
     // check stack depth
-    if (llvm_ctx->local_stack_index >= MAX_STACK_DEPTH) {
+    if (llvm_ctx->local_stack_index >= NS_MAX_CALL_STACK) {
         assert(false); // max stack depth reached
     }
 
-    i32 param_count = n.fn_def.param_count;
-    ns_bc_type param_types[MAX_PARAM_COUNT];
-    ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_FN, .fn = {.name = n.fn_def.name.val, .param_count = param_count}};
-    for (int i = 0; i < n.fn_def.param_count; i++) {
-        ns_ast_t p = ctx->nodes[n.fn_def.params[i]];
-        if (p.param.is_ref) {
+    i32 arg_count = n.fn_def.arg_count;
+    ns_bc_type *arg_types = malloc(sizeof(ns_bc_type) * arg_count);
+    ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_FN, .fn = {.name = n.fn_def.name.val}};
+    ns_array_set_length(r.fn.args, arg_count);
+    ns_ast_t *arg = &n;
+    for (int i = 0; i < n.fn_def.arg_count; i++) {
+        arg = &ctx->nodes[arg->next];
+        if (arg->arg.is_ref) {
             // TODO: handle ref type
         }
-        ns_bc_type type = ns_llvm_type(llvm_ctx, p.param.type);
-        r.fn.params[i] = (ns_llvm_value_record){.name = p.param.name.val, .ll_type = type, .i = i};
-        param_types[i] = type;
+        ns_bc_type type = ns_llvm_type(llvm_ctx, arg->arg.type);
+        r.fn.args[i] = (ns_llvm_value_record){.name = arg->arg.name.val, .ll_type = type, .i = i};
+        arg_types[i] = type;
     }
     ns_bc_type ret_type = ns_llvm_type(llvm_ctx, n.fn_def.return_type);
-    ns_bc_type fn_type = LLVMFunctionType(ret_type, param_types, param_count, 0);
+    ns_bc_type fn_type = LLVMFunctionType(ret_type, arg_types, arg_count, 0);
     ns_bc_value fn = LLVMAddFunction(llvm_ctx->mod, ns_llvm_str(n.fn_def.name.val), fn_type);
     r.fn.fn = fn;
     r.fn.type = fn_type;
     int fn_index = ns_llvm_push_global(llvm_ctx, r);
-    llvm_ctx->fn = r;
+    llvm_ctx->fn = &llvm_ctx->globals[fn_index];
 
     // parse function body
     ns_bc_block entry = LLVMAppendBasicBlock(fn, "entry");
     LLVMPositionBuilderAtEnd(builder, entry);
     ns_llvm_compound_stmt(llvm_ctx, ctx->nodes[n.fn_def.body]);
 
-    llvm_ctx->fn = NS_LLVM_RECORD_INVALID;
+    llvm_ctx->fn = NULL;
 
     // pop local count from stack
-    llvm_ctx->local_count = llvm_ctx->local_stack[--llvm_ctx->local_stack_index];
+    int local_count = llvm_ctx->local_stack[--llvm_ctx->local_stack_index];
+    ns_array_set_length(llvm_ctx->locals, local_count);
     return fn_index;
 }
 
 int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_ast_ctx *ctx = llvm_ctx->ctx;
-    int member_count = n.struct_def.count;
-    ns_ast_t *last = &n;
+    int field_count = n.struct_def.count;
+    
     ns_str struct_name = n.struct_def.name.val;
 
-    ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_STRUCT, .st = {.name = struct_name, .member_count = member_count}};
-    ns_bc_type member_types[MAX_STRUCT_MEMBER_COUNT];
-    for (int i = 0; i < member_count; i++) {
-        ns_ast_t *member = &ctx->nodes[last->next];
-        member_types[i] = ns_llvm_type(llvm_ctx, member->param.type);
-        r.st.members[i] = (ns_llvm_value_record){.name = member->param.name.val, .ll_type = member_types[i], .i = i};
+    ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_STRUCT, .st = {.name = struct_name}};
+    ns_array_set_capacity(r.st.fields, field_count);
+    ns_bc_type *field_types = malloc(sizeof(ns_bc_type) * field_count);
+    ns_ast_t *field = &n;
+    for (int i = 0; i < field_count; i++) {
+        field = &ctx->nodes[field->next];
+        field_types[i] = ns_llvm_type(llvm_ctx, field->arg.type);
+        r.st.fields[i] = (ns_llvm_value_record){.name = field->arg.name.val, .ll_type = field_types[i], .i = i};
     }
     ns_bc_type struct_type = LLVMStructCreateNamed(LLVMGetGlobalContext(), ns_llvm_str(struct_name));
     r.st.type = struct_type;
-    LLVMStructSetBody(struct_type, member_types, member_count, 0);
+    LLVMStructSetBody(struct_type, field_types, field_count, 0);
     return ns_llvm_push_global(llvm_ctx, r);
 }
 
@@ -387,9 +377,9 @@ ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
 void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_ast_ctx *ctx = llvm_ctx->ctx;
 
-    ns_ast_t *last = &n;
+    ns_ast_t *stmt = &n;
     for (int i = 0; i < n.compound_stmt.count; i++) {
-        ns_ast_t *stmt = &ctx->nodes[last->next];
+        stmt = &ctx->nodes[stmt->next];
         switch (stmt->type) {
         case NS_AST_JUMP_STMT:
             ns_llvm_jump_stmt(llvm_ctx, *stmt);
@@ -400,15 +390,15 @@ void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     }
 }
 
-static ns_bc_value args[MAX_PARAM_COUNT];
 ns_bc_value ns_llvm_call_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_ast_ctx *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
-    ns_ast_t *last = &n;
+    ns_ast_t *arg = &n;
+    ns_bc_value *args = malloc(n.call_expr.arg_count * sizeof(ns_bc_value));
     for (int i = 0; i < n.call_expr.arg_count; i++) {
-        ns_ast_t arg = ctx->nodes[last->next];
-        args[i] = ns_llvm_expr(llvm_ctx, arg);
+        arg = &ctx->nodes[arg->next];
+        args[i] = ns_llvm_expr(llvm_ctx, *arg);
     }
     ns_str fn_name = ctx->nodes[n.call_expr.callee].primary_expr.token.val;
     ns_llvm_record fn = ns_llvm_find_fn(llvm_ctx, fn_name);
@@ -431,7 +421,7 @@ void ns_llvm_std(ns_llvm_ctx_t *llvm_ctx) {
     LLVMTypeRef printf_args[] = { LLVMPointerType(LLVMInt8Type(), 0) }; // char* type
     LLVMTypeRef printf_type = LLVMFunctionType(LLVMInt32Type(), printf_args, 1, 1); // variadic function
     LLVMValueRef printf_func = LLVMAddFunction(module, "printf", printf_type);
-    ns_llvm_record printf_record = {.type = NS_LLVM_RECORD_TYPE_FN, .fn = {.name = ns_str_cstr("print"), .param_count = 1}};
+    ns_llvm_record printf_record = {.type = NS_LLVM_RECORD_TYPE_FN, .fn = {.name = ns_str_cstr("print"), .args = 0}};
     printf_record.fn.fn = printf_func;
     printf_record.fn.type = printf_type;
     ns_llvm_push_global(llvm_ctx, printf_record);
@@ -449,7 +439,7 @@ bool ns_code_gen_llvm_bc(ns_ast_ctx *ctx) {
     llvm_ctx.ctx = ctx;
     llvm_ctx.mod = mod;
     llvm_ctx.builder = builder;
-    llvm_ctx.fn = NS_LLVM_RECORD_INVALID;
+    llvm_ctx.fn = NULL;
 
     ns_llvm_std(&llvm_ctx);
 

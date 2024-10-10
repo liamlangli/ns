@@ -152,10 +152,9 @@ bool ns_parse_compound_stmt(ns_ast_ctx *ctx) {
 
         ns_token_skip_eol(ctx);
         ns_ast_t n = {.type = NS_AST_COMPOUND_STMT};
-        ns_ast_t *last = &n;
+        ns_ast_t *expr = &n;
         while (ns_parse_var_define(ctx) || ns_parse_stmt(ctx)) {
-            last->next = ctx->current;
-            last = &ctx->nodes[ctx->current];
+            expr = &ctx->nodes[expr->next = ctx->current];
             n.compound_stmt.count++;
             ns_token_skip_eol(ctx);
             if (ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
@@ -184,6 +183,7 @@ bool ns_parse_designated_value(ns_ast_ctx *ctx) {
     return false;
 }
 
+// struct { a: 1, b: 2 }
 bool ns_parse_designated_stmt(ns_ast_ctx *ctx) {
     ns_parse_state_t state = ns_save_state(ctx);
 
@@ -194,11 +194,10 @@ bool ns_parse_designated_stmt(ns_ast_ctx *ctx) {
         return false;
     }
 
-    ns_ast_t *last = &n;
+    ns_ast_t *expr = &n;
     ns_token_skip_eol(ctx);
     while (ns_parse_designated_value(ctx)) {
-        last->next = ctx->current;
-        last = &ctx->nodes[ctx->current];
+        expr = &ctx->nodes[expr->next = ctx->current];
         n.designated_stmt.count++;
 
         ns_token_skip_eol(ctx);

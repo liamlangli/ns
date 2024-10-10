@@ -141,11 +141,11 @@
 //     }
 //     ns_fn *fn = &vm->fns[fn_i];
 
-//     for (int i = 0; i < n.fn_def.param_count; i++) {
+//     for (int i = 0; i < n.fn_def.arg_count; i++) {
 //         fn->arg_names[i] = vm->ast[n.fn_def.params[i]].param.name.val;
 //     }
 
-//     fn->arg_count = n.fn_def.param_count;
+//     fn->arg_count = n.fn_def.arg_count;
 //     ns_vm_parse_fn_expr(vm, n.fn_def.body, fn);
 // }
 
@@ -476,6 +476,10 @@
 //     }
 //     return NS_NIL;
 // }
+
+ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, int i) {
+    return NS_NIL;
+}
 
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     ns_ast_ctx ctx = {0};

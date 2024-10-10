@@ -4,8 +4,8 @@ const char *ns_ast_type_str(NS_AST_TYPE type) {
     switch (type) {
     case NS_AST_PROGRAM:
         return "NS_AST_PROGRAM";
-    case NS_AST_PARAM_DEF:
-        return "NS_AST_PARAM_DEF";
+    case NS_AST_ARG_DEF:
+        return "NS_AST_ARG_DEF";
     case NS_AST_FN_DEF:
         return "NS_AST_FN_DEF";
     case NS_AST_VAR_DEF:
@@ -57,19 +57,20 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     ns_ast_t n = ctx->nodes[i];
     printf("%4d [type: %-21s next: %5d] ", i, ns_ast_type_str(n.type), n.next);
     switch (n.type) {
-    case NS_AST_FN_DEF:
+    case NS_AST_FN_DEF: {
         ns_str_printf(n.fn_def.name.val);
         printf(" (");
-        for (int i = 0; i < n.fn_def.param_count; i++) {
-            ns_ast_t p = ctx->nodes[n.fn_def.params[i]];
-            if (p.param.is_ref) {
+        ns_ast_t *arg = &n;
+        for (int i = 0; i < n.fn_def.arg_count; i++) {
+            arg = &ctx->nodes[arg->next];
+            if (arg->arg.is_ref) {
                 printf("ref ");
             }
 
-            ns_str_printf(p.param.name.val);
+            ns_str_printf(arg->arg.name.val);
             printf(":");
-            ns_str_printf(p.param.type.val);
-            if (i != n.fn_def.param_count - 1) {
+            ns_str_printf(arg->arg.type.val);
+            if (i != n.fn_def.arg_count - 1) {
                 printf(", ");
             }
         }
@@ -84,33 +85,32 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         else {
             printf(";");
         }
-        break;
+    } break;
     case NS_AST_STRUCT_DEF: {
         printf("struct ");
         ns_str_printf(n.struct_def.name.val);
         printf(" { ");
         int count = n.struct_def.count;
-        ns_ast_t *last = &n;
+        ns_ast_t *field = &n;
         for (int i = 0; i < count; i++) {
-            ns_ast_t *field = &ctx->nodes[last->next];
-            ns_str_printf(field->param.name.val);
+            field = &ctx->nodes[field->next];
+            ns_str_printf(field->arg.name.val);
             printf(":");
-            ns_str_printf(field->param.type.val);
+            ns_str_printf(field->arg.type.val);
             if (i != count - 1) {
                 printf(", ");
             }
-            last = field;
         }
         printf(" }");
     } break;
-    case NS_AST_PARAM_DEF:
-        if (n.param.is_ref) {
+    case NS_AST_ARG_DEF:
+        if (n.arg.is_ref) {
             printf("ref ");
         }
-        ns_str_printf(n.param.name.val);
-        if (n.param.type.type != NS_TOKEN_UNKNOWN) {
+        ns_str_printf(n.arg.name.val);
+        if (n.arg.type.type != NS_TOKEN_UNKNOWN) {
             printf(": ");
-            ns_str_printf(n.param.type.val);
+            ns_str_printf(n.arg.type.val);
         }
         break;
     case NS_AST_VAR_DEF:
@@ -131,14 +131,14 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         ns_str_printf(n.ops_fn_def.ops.val);
         printf("(");
         ns_ast_t *left = &ctx->nodes[n.ops_fn_def.left];
-        ns_str_printf(left->param.name.val);
+        ns_str_printf(left->arg.name.val);
         printf(":");
-        ns_str_printf(left->param.type.val);
+        ns_str_printf(left->arg.type.val);
         printf(", ");
         ns_ast_t *right = &ctx->nodes[n.ops_fn_def.right];
-        ns_str_printf(right->param.name.val);
+        ns_str_printf(right->arg.name.val);
         printf(":");
-        ns_str_printf(right->param.type.val);
+        ns_str_printf(right->arg.type.val);
         printf(")");
         if (n.ops_fn_def.return_type.type != NS_TOKEN_UNKNOWN) {
             printf(" : ");
@@ -174,14 +174,13 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     case NS_AST_CALL_EXPR:
         printf("node[%d]", n.call_expr.callee);
         printf("(");
-        ns_ast_t *last = &n;
+        ns_ast_t *arg = &n;
         for (int i = 0; i < n.call_expr.arg_count; i++) {
-            ns_ast_t *arg = &ctx->nodes[last->next];
-            printf("node[%d]", last->next);
+            printf("node[%d]", arg->next);
+            arg = &ctx->nodes[arg->next];
             if (i != n.call_expr.arg_count - 1) {
                 printf(", ");
             }
-            last = arg;
         }
         printf(")");
         break;
@@ -210,14 +209,13 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
             printf("}");
             break;
         }
-        ns_ast_t *last = &n;
+        ns_ast_t *stmt = &n;
         for (int i = 0; i < n.compound_stmt.count; i++) {
-            ns_ast_t *stmt = &ctx->nodes[last->next];
-            printf("node[%d]", last->next);
+            printf("node[%d]", stmt->next);
+            stmt = &ctx->nodes[stmt->next];
             if (i != n.compound_stmt.count - 1) {
                 printf(", ");
             }
-            last = stmt;
         }
         printf(" }");
     } break;
@@ -231,15 +229,14 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         ns_str_printf(n.designated_stmt.name.val);
         printf(" { ");
         int count = n.designated_stmt.count;
-        ns_ast_t *last = &n;
+        ns_ast_t *field = &n;
         for (int i = 0; i < count; i++) {
-            ns_ast_t *field = &ctx->nodes[last->next];
+            field = &ctx->nodes[field->next];
             ns_str_printf(field->designated_expr.name.val);
             printf(": node[%d]", field->designated_expr.expr);
             if (i != count - 1) {
                 printf(", ");
             }
-            last = field;
         }
         printf(" }");
     } break;
@@ -261,7 +258,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
 
 void ns_parse_context_dump(ns_ast_ctx *ctx) {
     printf("ast_nodes:\n");
-    for (int i = 0, l = ctx->node_count; i < l; i++) {
+    for (int i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
         ns_ast_dump(ctx, i);
     }
 

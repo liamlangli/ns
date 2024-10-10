@@ -11,14 +11,6 @@
     #define false 0
 #endif
 
-#define NS_MAX_PARAMS 16
-#define NS_MAX_FIELDS 32
-#define NS_MAX_PARSE_STACK 64
-#define NS_MAX_CALL_STACK 128
-#define NS_MAX_SECTION 256
-#define NS_MAX_NODE 512
-#define NS_MAX_RECORD_COUNT 512
-
 #define ns_error(msg) \
     fprintf(stderr, "%s\n", msg);\
 
@@ -44,6 +36,27 @@ typedef unsigned long u64;
 typedef float f32;
 typedef double f64;
 
+// ns_array
+typedef struct ns_array_header {
+    size_t len;
+    size_t cap;
+} ns_array_header;
+
+void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap);
+
+#define ns_array_header(a) ((ns_array_header *)(a) - 1)
+#define ns_array_length(a) ((a) ? (ns_array_header(a))->len : 0)
+#define ns_array_capacity(a) ((a) ? ns_array_header(a)->cap : 0)
+
+#define ns_array_ensure(a, n) ((!(a) || ns_array_header(a)->len + (n) > ns_array_header(a)->cap) ? (ns_array_grow(a, n, 0), 0) : 0)
+#define ns_array_grow(a, n, m) ((a) = _ns_array_grow((a), sizeof *(a), (n), (m)))
+
+#define ns_array_set_capacity(a, n) (ns_array_grow(a, 0, n))
+#define ns_array_set_length(a, n) (ns_array_ensure(a, (n) - ns_array_length(a)), (a) ? ns_array_header(a)->len = (n) : 0)
+
+#define ns_array_push(a, v) (ns_array_ensure(a, 1), (a)[ns_array_header(a)->len++] = (v))
+#define ns_array_pop(a) ((a)[--ns_array_header(a)->len])
+
 // ns_str
 typedef struct ns_str {
     char *data;
@@ -65,20 +78,3 @@ ns_str ns_str_slice(ns_str s, int start, int end);
 int ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);
 ns_str ns_str_unescape(ns_str s);
-
-// ns_array
-typedef struct ns_array_header {
-    int len;
-    int cap;
-} ns_array_header;
-
-void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap);
-
-#define ns_array_header(a) ((ns_array_header *)(a) - 1)
-#define ns_array_size(a) ((a) ? (ns_array_header(a))->len : 0)
-#define ns_array_capacity(a) ((a) ? ns_array_header(a)->cap : 0)
-
-#define ns_array_grow(a, n, m) ((a) = _ns_array_grow((a), sizeof(*(a)), (n), (m)))
-#define ns_array_ensure(a, n) ((!(a) || ns_array_header(a)->len + (n) > ns_array_header(a)->cap) ? (ns_array_grow(a, n, 0), 0) : 0)
-
-#define ns_array_push(a, v) (ns_array_ensure(a, 1), (a)[ns_array_header(a)->len++] = (v))

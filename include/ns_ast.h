@@ -13,7 +13,7 @@ typedef enum {
     NS_AST_UNKNOWN = 0,
     NS_AST_PROGRAM,
 
-    NS_AST_PARAM_DEF,
+    NS_AST_ARG_DEF,
     NS_AST_FN_DEF,
     NS_AST_OPS_FN_DEF,
     NS_AST_VAR_DEF,
@@ -49,19 +49,18 @@ typedef struct ns_parse_state {
     int f, line;
 } ns_parse_state_t;
 
-typedef struct ns_ast_param {
+typedef struct ns_ast_arg {
     bool is_ref;
     ns_token_t name;
     ns_token_t type;
-} ns_ast_param;
+} ns_ast_arg;
 
 typedef struct ns_ast_fn_def {
     bool is_async;
     ns_token_t name;
     ns_token_t return_type;
     int body;
-    int params[NS_MAX_PARAMS];
-    int param_count;
+    int arg_count;
 } ns_ast_fn_def;
 
 typedef struct ns_ast_ops_fn_def {
@@ -187,7 +186,7 @@ typedef struct ns_ast_t {
     NS_AST_TYPE type;
     int next; // -1 mean null ref
     union {
-        ns_ast_param param;
+        ns_ast_arg arg;
         ns_ast_fn_def fn_def;
         ns_ast_ops_fn_def ops_fn_def;
         ns_ast_var_def var_def;
@@ -215,14 +214,16 @@ typedef struct ns_ast_t {
     };
 } ns_ast_t;
 
+#define NS_MAX_PARSE_STACK 64
+#define NS_MAX_CALL_STACK 64
+
 typedef struct as_parse_context_t {
     int f, last_f;
-    int sections[NS_MAX_SECTION];
+    int *sections;
     int section_begin, section_end;
     int current;
 
-    ns_ast_t nodes[NS_MAX_NODE];
-    int node_count;
+    ns_ast_t *nodes;
 
     int stack[NS_MAX_PARSE_STACK];
     int top;

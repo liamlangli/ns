@@ -112,7 +112,7 @@ const char *ns_token_to_string(NS_TOKEN type) {
     }
 }
 
-int ns_token_float_literal(ns_token_t *t, const char *s, int i) {
+int ns_token_float_literal(ns_token_t *t, char *s, int i) {
     int j = i;
     while (s[j] >= '0' && s[j] <= '9') {
         j++;
@@ -129,7 +129,7 @@ int ns_token_float_literal(ns_token_t *t, const char *s, int i) {
     return j;
 }
 
-int ns_token_int_literal(ns_token_t *t, const char *s, int i) {
+int ns_token_int_literal(ns_token_t *t, char *s, int i) {
     int j = i;
     while (s[j] >= '0' && s[j] <= '9') {
         j++;
@@ -142,7 +142,7 @@ int ns_token_int_literal(ns_token_t *t, const char *s, int i) {
 
 // > 0 mean there is a {separator}+
 // = 0 mean there is no {separator}
-int ns_token_separator(const char *s, int i) {
+int ns_token_separator(char *s, int i) {
     int c = s[i];
     int to = i, sep;
     do {
@@ -161,7 +161,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     int i = f;
     int to = f + 1;
     int l, sep;
-    const char *s = src.data;
+    char *s = src.data;
     char lead = s[i]; // TODO parse utf8 characters
     switch (lead) {
     case '0' ... '9': {

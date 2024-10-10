@@ -9,7 +9,7 @@
 typedef enum {
     NS_TOKEN_UNKNOWN = -1,
     NS_TOKEN_INVALID = 0,
-    NS_TOKEN_AS = 1,
+    NS_TOKEN_AS = 1,        // as: keyword for type casting
     NS_TOKEN_ASYNC,
     NS_TOKEN_AWAIT,
     NS_TOKEN_BREAK,
@@ -32,6 +32,7 @@ typedef enum {
     NS_TOKEN_REF,
     NS_TOKEN_STRUCT,
     NS_TOKEN_TRUE,
+    NS_TOKEN_OPS,           // ops: keyword for operator overloading
 
     NS_TOKEN_TYPE_INT8,
     NS_TOKEN_TYPE_INT16,
@@ -46,7 +47,7 @@ typedef enum {
     NS_TOKEN_TYPE_BOOL,
     NS_TOKEN_TYPE_STR,
 
-    NS_TOKEN_TYPE_DEF,
+    NS_TOKEN_TYPE_DEF,      // type: keyword for type definition
 
     NS_TOKEN_TO,
     NS_TOKEN_WHILE,
@@ -58,33 +59,32 @@ typedef enum {
     NS_TOKEN_SPACE,
     NS_TOKEN_IDENTIFIER,
 
-    NS_TOKEN_COMMA,
-    NS_TOKEN_DOT,
-    NS_TOKEN_ASSIGN,
-    NS_TOKEN_COLON,
-    NS_TOKEN_QUESTION_MARK,
+    NS_TOKEN_COMMA,         // ,
+    NS_TOKEN_DOT,           // .
+    NS_TOKEN_ASSIGN,        // =
+    NS_TOKEN_COLON,         // :
+    NS_TOKEN_QUESTION_MARK, // ?
 
-    NS_TOKEN_LOGIC_OP,
+    NS_TOKEN_LOGIC_OP,      // !, &&, ||
 
-    NS_TOKEN_ADD_OP,
-    NS_TOKEN_MUL_OP,
-    NS_TOKEN_SHIFT_OP,
+    NS_TOKEN_ADD_OP,        // +, -
+    NS_TOKEN_MUL_OP,        // *, /, %
+    NS_TOKEN_SHIFT_OP,      // <<, >>
 
-    NS_TOKEN_REL_OP, // relational
-    NS_TOKEN_EQ_OP,
+    NS_TOKEN_REL_OP,        // >, <, >=, <=
+    NS_TOKEN_EQ_OP,         // ==, !=
 
-    NS_TOKEN_BITWISE_OP,
-    NS_TOKEN_ASSIGN_OP,
-    NS_TOKEN_BOOL_OP,
-    NS_TOKEN_BIT_INVERT_OP,
+    NS_TOKEN_BITWISE_OP,    // &, |, ^
+    NS_TOKEN_ASSIGN_OP,     // +=, -=, *=, /=, %=, &=, |=, ^=
+    NS_TOKEN_BOOL_OP,       // &&, ||
+    NS_TOKEN_BIT_INVERT_OP, // ~
 
-    NS_TOKEN_OPEN_BRACE,
-    NS_TOKEN_CLOSE_BRACE,
-    NS_TOKEN_OPEN_PAREN,
-    NS_TOKEN_OPS, // keyword for operator overloading
-    NS_TOKEN_CLOSE_PAREN,
-    NS_TOKEN_OPEN_BRACKET,
-    NS_TOKEN_CLOSE_BRACKET,
+    NS_TOKEN_OPEN_BRACE,    // {
+    NS_TOKEN_CLOSE_BRACE,   // }
+    NS_TOKEN_OPEN_PAREN,    // (
+    NS_TOKEN_CLOSE_PAREN,   // )
+    NS_TOKEN_OPEN_BRACKET,  // [
+    NS_TOKEN_CLOSE_BRACKET, // ]
     NS_TOKEN_EOL,
     NS_TOKEN_EOF
 } NS_TOKEN;

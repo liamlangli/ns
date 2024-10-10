@@ -41,22 +41,25 @@ typedef enum {
 #define NS_TRUE ((ns_value){.type = NS_TYPE_BOOL, .u.boolean = true})
 #define NS_FALSE ((ns_value){.type = NS_TYPE_BOOL, .u.boolean = false})
 
+typedef struct ns_record ns_record;
+
 typedef struct ns_value_record {
     NS_VALUE_TYPE type;
     NS_VALUE_SCOPE scope;
 } ns_value_record;
 
 typedef struct ns_fn_record {
-    int arg_count, local_count, global_count;
-    ns_value_record args[NS_MAX_PARAMS];
-    ns_value_record locals[NS_MAX_PARAMS];
-    ns_value_record globals[NS_MAX_PARAMS];
+    ns_record *args;
+    ns_record *locals;
+    ns_record *globals;
     int body;
 } ns_fn_record;
 
 typedef struct ns_struct_record {
+    ns_str name;
+    int index;
     int field_count;
-    ns_value_record fields[NS_MAX_FIELDS];
+    ns_record *fields;
 } ns_struct_record;
 
 typedef struct ns_record {
@@ -82,18 +85,12 @@ typedef struct ns_value {
 typedef struct ns_fn {
     ns_str name;
     int ast_root;
-    int arg_count, local_count;
-    ns_str arg_names[NS_MAX_PARAMS];
-    ns_value args[NS_MAX_PARAMS];
-    ns_str local_names[NS_MAX_PARAMS];
-    ns_value locals[NS_MAX_PARAMS];
 } ns_fn;
 
 typedef struct ns_struct {
     ns_str name;
     int index;
-    int field_count;
-    ns_str field_names[NS_MAX_FIELDS];
+    ns_str *field_names;
 } ns_struct;
 
 typedef struct ns_call {
@@ -103,7 +100,7 @@ typedef struct ns_call {
 typedef struct ns_vm {
     ns_call *call_stack;
     int record_count;
-    ns_record records[NS_MAX_RECORD_COUNT];
+    ns_record *records;
 } ns_vm;
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);

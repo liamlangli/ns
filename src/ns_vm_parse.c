@@ -62,11 +62,8 @@ ns_record ns_vm_find_record(ns_vm *vm, ns_str s) {
 }
 
 int ns_vm_push_record(ns_vm *vm, ns_record r) {
-    if (vm->record_count >= NS_MAX_RECORD_COUNT) {
-        assert(false);
-    }
     r.index = vm->record_count;
-    vm->records[vm->record_count++] = r;
+    ns_array_push(vm->records, r);
     return r.index;
 }
 
@@ -74,13 +71,13 @@ int ns_vm_parse_fn_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_record r = (ns_record){ .type = NS_RECORD_FN };
     r.name = n.fn_def.name.val;
     r.fn.body = n.fn_def.body;
-    r.fn.arg_count = n.fn_def.param_count;
-    vm->fn = &r.fn;
-    for (int i = 0; i < n.fn_def.param_count; i++) {
-        ns_ast_t p = ctx->nodes[n.fn_def.params[i]];
+    ns_array_set_capacity(r.fn.args, n.fn_def.arg_count);
+    ns_ast_t *last = &n;
+    for (int i = 0; i < n.fn_def.arg_count; i++) {
+        ns_ast_t *p = &ctx->nodes[last->next];
         ns_record arg = (ns_record){ .type = NS_RECORD_VALUE };
-        arg.name = p.param.name.val;
-        arg.val.type = ns_vm_parse_type(vm, p.param.type);
+        arg.name = p->arg.name.val;
+        arg.val.type = ns_vm_parse_type(vm, p->arg.type);
     }
     return ns_vm_push_record(vm, r);
 }
@@ -93,8 +90,6 @@ int ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 int ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {}
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
-    vm->ctx = ctx;
-
     // parse def
     int begin = ctx->section_begin;
     int end = ctx->section_end;

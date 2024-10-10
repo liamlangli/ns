@@ -3,6 +3,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap) {
+    ns_array_header h = {0};
+    void *b;
+    size_t min_len = ns_array_length(a) + add_count;
+    (void) sizeof(h);
+
+    // compute new capacity
+    if (min_len > min_cap) min_cap = min_len;
+    if (min_cap < ns_array_capacity(a)) return a;
+    if (min_cap < 2 * ns_array_capacity(a)) min_cap = 2 * ns_array_capacity(a);
+    else if (min_cap < 4) min_cap = 4;
+
+    b = realloc((a) ? ns_array_header(a) : 0, elem_size * min_cap + sizeof(ns_array_header));
+    b = (char *)b + sizeof(ns_array_header);
+    if (NULL == a) {
+        ns_array_header(b)->len = 0;
+    }
+    ns_array_header(b)->cap = min_cap;
+    return b;
+}
+
 int ns_str_to_i32(ns_str s) {
     int size = s.len;
     int i = 0;

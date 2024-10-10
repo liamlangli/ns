@@ -87,10 +87,9 @@ bool ns_parse_call_expr(ns_ast_ctx *ctx) {
         return true;
     }
 
-    ns_ast_t *last = &n;
+    ns_ast_t *arg = &n;
     while (ns_parse_expr_stack(ctx)) {
-        last->next = ctx->current;
-        last = &ctx->nodes[ctx->current];
+        arg = &ctx->nodes[arg->next = ctx->current];
         n.call_expr.arg_count++;
 
         ns_parse_next_token(ctx);
@@ -158,10 +157,9 @@ bool ns_parse_postfix_expr(ns_ast_ctx *ctx) {
         }
 
         ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = {.callee = callee, .arg_count = 0}};
-        ns_ast_t *last = &n;
+        ns_ast_t *arg = &n;
         while (ns_parse_expr_stack(ctx)) {
-            last->next = ctx->current;
-            last = &ctx->nodes[ctx->current];
+            arg = &ctx->nodes[arg->next = ctx->current];
             n.call_expr.arg_count++;
 
             ns_parse_next_token(ctx);
