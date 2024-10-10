@@ -6,7 +6,7 @@
 #include <assert.h>
 
 #define ns_parse_error(ctx, msg) \
-    fprintf(stderr, "%s at %s:%d:%d\n", msg, (ctx)->filename.data, (ctx)->token.line, (ctx)->f - (ctx)->token.line_start);\
+    fprintf(stderr, ns_color_red "ast error:" ns_color_none" %s at %s:%d:%d\n", msg, (ctx)->filename.data, (ctx)->token.line, (ctx)->f - (ctx)->token.line_start);\
     assert(0);
 
 typedef enum {
@@ -212,6 +212,7 @@ typedef struct ns_ast_t {
         ns_ast_compound_stmt compound_stmt;
         ns_ast_designated_stmt designated_stmt;
     };
+    ns_value val;
 } ns_ast_t;
 
 #define NS_MAX_PARSE_STACK 64

@@ -46,7 +46,7 @@
             "name": "ns bitcode",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-o", "bin/add.bc", "-bc", "sample/add.ns"],
+            "args": ["-o", "bin/add.bc", "-b", "sample/add.ns"],
             "cwd": "${workspaceFolder}"
         }
     ]

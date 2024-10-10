@@ -1,5 +1,5 @@
 #include "ns.h"
-#include "ns_code_gen.h"
+#include "ns_bitcode.h"
 #include "ns_ast.h"
 #include "ns_tokenize.h"
 #include "ns_type.h"
@@ -66,19 +66,10 @@ ns_compile_option_t parse_options(int argc, char **argv) {
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
-        } else if (strcmp(argv[i], "-arm64") == 0) {
-            option.code_gen_only = true;
-            option.arch = arm_64;
-        } else if (strcmp(argv[i], "-bc") == 0) {
+        } else if (strcmp(argv[i], "-b") == 0 ||strcmp(argv[i], "--bc") == 0) {
             option.code_gen_only = true;
             option.arch = llvm_bc;
-        } else if (strcmp(argv[i], "-x86") == 0) {
-            option.code_gen_only = true;
-            option.arch = x86_64;
-        } else if (strcmp(argv[i], "-risc") == 0) {
-            option.code_gen_only = true;
-            option.arch = risc;
-        } else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--repl") == 0) {
+        }  else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--repl") == 0) {
             option.repl = true;
         }
     }
@@ -86,10 +77,10 @@ ns_compile_option_t parse_options(int argc, char **argv) {
 }
 
 void help() {
-    printf("Usage: ns [option] [file.ns]\n");
+    printf(ns_color_green"Usage:" ns_color_none " ns [option] [file.ns]\n");
     printf("  -t --tokenize     tokenize only\n");
     printf("  -p --parse        parse only\n");
-    printf("  -arm -bc -x86     code gen only (64bit only)\n");
+    printf("  -b --bitcode      generate llvm bitcode\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
     printf("  -r --repl         read eval print loop mode\n");
@@ -140,7 +131,7 @@ int main(int argc, char **argv) {
         }
         switch (option.arch) {
         case llvm_bc:
-            ns_code_gen_llvm_bc(&vm, &ctx);
+            ns_bitcode_gen(&vm, &ctx);
             break;
         case arm_64:
         case x86_64:

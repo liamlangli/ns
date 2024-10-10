@@ -34,24 +34,27 @@ NS_SRCS = src/ns.c \
 	src/ns_vm_eval.c
 NS_OBJS = $(NS_SRCS:%.c=$(OBJDIR)/%.o)
 
-LLVM_SRC = src/ns_gen_llvm_bc.c
-LLVM_OBJ = $(OBJDIR)/src/ns_gen_llvm_bc.o
+BITCODE_SRC = src/ns_bitcode.c
+BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
 
 TARGET = $(BINDIR)/ns
 
 all: $(TARGET)
 
-$(LLVM_OBJ): $(LLVM_SRC) | $(OBJDIR)
+$(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CFLAGS) $(LLVM_CFLAGS)
 
-$(TARGET): $(NS_OBJS) $(LLVM_OBJ) | $(BINDIR)
-	$(CC) $(NS_OBJS) $(LLVM_OBJ) $ -o $(TARGET) $(LDFLAGS)
+$(TARGET): $(NS_OBJS) $(BITCODE_OBJ) | $(BINDIR)
+	$(CC) $(NS_OBJS) $(BITCODE_OBJ) $ -o $(TARGET) $(LDFLAGS)
 
 $(OBJDIR)/%.o: %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)/src
+
+run: all
+	$(TARGET)
 
 token: all
 	$(TARGET) -t sample/add.ns
@@ -60,7 +63,7 @@ ast: all
 	$(TARGET) -p sample/add.ns
 
 bc: all
-	$(TARGET) -o bin/add.bc -bc sample/add.ns
+	$(TARGET) -o bin/add.bc -b sample/add.ns
 	llvm-dis bin/add.bc
 	llc bin/add.bc -filetype=obj -mtriple=$(LLVM_TRIPLE) -relocation-model=pic -o bin/add.o
 	clang bin/add.o -o bin/add
@@ -78,6 +81,9 @@ repl: all
 clean:
 	rm -f $(TARGET) $(NS_OBJS)
 	rm -rf $(OBJDIR)
+
+count:
+	cloc src include sample
 
 install: $(NS_SRCS)
 	$(CC) -O3 -o bin/$(TARGET) $^ -Iinclude
