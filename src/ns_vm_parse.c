@@ -1,12 +1,33 @@
-#include "ns_vm.h"
 #include "ns_ast.h"
 #include "ns_tokenize.h"
 #include "ns_type.h"
+#include "ns_vm.h"
 
-NS_VALUE_TYPE ns_vm_parse_type(ns_vm* vm, ns_token_t t);
+NS_VALUE_TYPE ns_vm_parse_type(ns_vm *vm, ns_token_t t);
 ns_record ns_vm_find_record(ns_vm *vm, ns_str s);
 
-NS_VALUE_TYPE ns_vm_parse_type(ns_vm* vm, ns_token_t t) {
+NS_VALUE_TYPE ns_vm_parse_record_type(ns_vm *vm, ns_str n) {
+    ns_record r = ns_vm_find_record(vm, n);
+    if (r.type == NS_RECORD_INVALID) {
+        fprintf(stderr, "type not found: ");
+        ns_str_printf(n);
+        fprintf(stderr, "\n");
+        assert(false);
+    }
+    switch (r.type) {
+    case NS_RECORD_VALUE:
+        return r.val.type;
+    case NS_RECORD_FN:
+        return NS_TYPE_FN;
+    case NS_RECORD_STRUCT:
+        return NS_TYPE_STRUCT;
+    default:
+        assert(false); // unexpected type
+        break;
+    }
+}
+
+NS_VALUE_TYPE ns_vm_parse_type(ns_vm *vm, ns_token_t t) {
     switch (t.type) {
     case NS_TOKEN_TYPE_INT8:
         return NS_TYPE_I8;
@@ -29,25 +50,7 @@ NS_VALUE_TYPE ns_vm_parse_type(ns_vm* vm, ns_token_t t) {
     case NS_TOKEN_TYPE_F64:
         return NS_TYPE_F64;
     default:
-        ns_record r = ns_vm_find_record(vm, t.val);
-        if (r.type == NS_RECORD_INVALID) {
-            fprintf(stderr, "type not found: ");
-            ns_str_printf(t.val);
-            fprintf(stderr, "\n");
-            assert(false);
-        }
-        switch (r.type)
-        {
-        case NS_RECORD_VALUE:
-            return r.val.type;
-        case NS_RECORD_FN:
-            return NS_TYPE_FN;
-        case NS_RECORD_STRUCT:
-            return NS_TYPE_STRUCT;
-        default:
-            assert(false); // unexpected type
-            break;
-        }
+        return ns_vm_parse_record_type(vm, t.val);
     }
     return NS_TYPE_INFER; // inference specific type later
 }
@@ -68,26 +71,43 @@ int ns_vm_push_record(ns_vm *vm, ns_record r) {
 }
 
 int ns_vm_parse_fn_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    ns_record r = (ns_record){ .type = NS_RECORD_FN };
+    ns_record r = (ns_record){.type = NS_RECORD_FN};
     r.name = n.fn_def.name.val;
     r.fn.body = n.fn_def.body;
-    ns_array_set_capacity(r.fn.args, n.fn_def.arg_count);
-    ns_ast_t *last = &n;
+    ns_array_set_length(r.fn.args, n.fn_def.arg_count);
+    ns_ast_t *arg = &n;
     for (int i = 0; i < n.fn_def.arg_count; i++) {
-        ns_ast_t *p = &ctx->nodes[last->next];
-        ns_record arg = (ns_record){ .type = NS_RECORD_VALUE };
-        arg.name = p->arg.name.val;
-        arg.val.type = ns_vm_parse_type(vm, p->arg.type);
+        arg = &ctx->nodes[arg->next];
+        ns_record arg_record = (ns_record){.type = NS_RECORD_VALUE, .index = i};
+        arg_record.name = arg->arg.name.val;
+        arg_record.val.type = ns_vm_parse_type(vm, arg->arg.type);
+        r.fn.args[i] = arg_record;
     }
     return ns_vm_push_record(vm, r);
 }
 
 int ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    ns_record r = (ns_record){ .type = NS_RECORD_STRUCT };
+    ns_record r = (ns_record){.type = NS_RECORD_STRUCT};
+    r.name = n.struct_def.name.val;
+    ns_array_set_length(r.st.fields, n.struct_def.count);
+    ns_ast_t *field = &n;
+    for (int i = 0; i < n.struct_def.count; i++) {
+        field = &ctx->nodes[field->next];
+        ns_record field_record = (ns_record){.type = NS_RECORD_VALUE, .index = i};
+        field_record.name = field->arg.name.val;
+        field_record.val.type = ns_vm_parse_type(vm, field->arg.type);
+        r.st.fields[i] = field_record;
+    }
+
     return ns_vm_push_record(vm, r);
 }
 
-int ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {}
+int ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_record r = (ns_record){.type = NS_RECORD_VALUE};
+    r.name = n.var_def.name.val;
+    r.val.type = ns_vm_parse_type(vm, n.var_def.type);
+    return ns_vm_push_record(vm, r);
+}
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     // parse def
@@ -106,7 +126,8 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
         case NS_AST_VAR_DEF:
             ns_vm_parse_var_def(vm, ctx, n);
             break;
-        default: break;
+        default:
+            break;
         }
     }
 

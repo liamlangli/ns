@@ -312,7 +312,7 @@ int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_str struct_name = n.struct_def.name.val;
 
     ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_STRUCT, .st = {.name = struct_name}};
-    ns_array_set_capacity(r.st.fields, field_count);
+    ns_array_set_length(r.st.fields, field_count);
     ns_bc_type *field_types = malloc(sizeof(ns_bc_type) * field_count);
     ns_ast_t *field = &n;
     for (int i = 0; i < field_count; i++) {
