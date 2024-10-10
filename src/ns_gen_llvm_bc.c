@@ -427,7 +427,7 @@ void ns_llvm_std(ns_llvm_ctx_t *llvm_ctx) {
     ns_llvm_push_global(llvm_ctx, printf_record);
 }
 
-bool ns_code_gen_llvm_bc(ns_ast_ctx *ctx) {
+bool ns_code_gen_llvm_bc(ns_vm * vm, ns_ast_ctx *ctx) {
     ns_str output_path = ns_str_cstr(ctx->output.data);
     printf("generate llvm bitcode file: %s\n", output_path.data);
 

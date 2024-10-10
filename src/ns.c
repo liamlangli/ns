@@ -124,6 +124,7 @@ int main(int argc, char **argv) {
     }
 
     ns_ast_ctx ctx = {0};
+    ns_vm vm = {0};
     if (option.tokenize_only) {
         ns_tokenize(source, filename);
     } else if (option.parse_only) {
@@ -131,6 +132,7 @@ int main(int argc, char **argv) {
         ns_parse_context_dump(&ctx);
     } else if (option.code_gen_only) {
         ns_parse(&ctx, source, filename);
+        ns_vm_parse(&vm, &ctx);
         ctx.output = option.output;
         if (option.output.data == NULL) {
             ns_error("output file is not specified.");
@@ -138,20 +140,15 @@ int main(int argc, char **argv) {
         }
         switch (option.arch) {
         case llvm_bc:
-            ns_code_gen_llvm_bc(&ctx);
+            ns_code_gen_llvm_bc(&vm, &ctx);
             break;
         case arm_64:
-            ns_code_gen_arm64(&ctx);
-            break;
         case x86_64:
-            ns_code_gen_x86_64(&ctx);
-            break;
         default:
             fprintf(stderr, "invalid arch %d\n", option.arch);
             exit(1);
         }
     } else if (option.repl) {
-        ns_vm vm = {0};
         ns_eval(&vm, source, filename);
     }
     return 0;

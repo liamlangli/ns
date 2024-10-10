@@ -31,9 +31,7 @@ NS_SRCS = src/ns.c \
 	src/ns_ast_expr.c \
 	src/ns_ast_dump.c \
 	src/ns_vm_parse.c \
-	src/ns_vm_eval.c \
-	src/ns_gen_arm.c \
-	src/ns_gen_x86.c
+	src/ns_vm_eval.c
 NS_OBJS = $(NS_SRCS:%.c=$(OBJDIR)/%.o)
 
 LLVM_SRC = src/ns_gen_llvm_bc.c

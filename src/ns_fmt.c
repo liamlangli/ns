@@ -53,7 +53,7 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
     // parse fmt string in the form of "hello {a} {b} {c}" but not "\{a}"
     // replace {a} with value of a
 
-    char *buff = malloc(fmt.len * 2);
+    char *buff = malloc(fmt.len * 4);
     int i = 0;
 
     while (i < fmt.len) {

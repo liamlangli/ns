@@ -46,6 +46,8 @@ typedef struct ns_record ns_record;
 typedef struct ns_value_record {
     NS_VALUE_TYPE type;
     NS_VALUE_SCOPE scope;
+    bool is_const;
+    bool is_ref;
 } ns_value_record;
 
 typedef struct ns_fn_record {
