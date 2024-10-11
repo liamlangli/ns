@@ -16,8 +16,7 @@ ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n) {
     case NS_RECORD_STRUCT:
         return (ns_type){ .type = NS_TYPE_STRUCT, .name = r.name };
     default:
-        fprintf(stderr, ns_color_red "syntax error:" ns_color_none " unknown type %*.s.\n", n.len, n.data);
-        assert(false); // unexpected type
+        ns_error("syntax error", "unknown type %*.s.\n", n.len, n.data);
         break;
     }
 }
@@ -127,8 +126,7 @@ void ns_vm_parse_struct_def_ref(ns_vm *vm) {
             if (!f->val.is_ref) continue;
             ns_record t = ns_vm_find_record(vm, f->val.type.name);
             if (t.type == NS_RECORD_INVALID) {
-                fprintf(stderr, ns_color_red "syntax error:" ns_color_none " unknow ref type %*.s.\n", f->val.type.name.len, f->val.type.name.data);
-                assert(false);
+                ns_error("syntax error", "unknow ref type %*.s.\n", f->val.type.name.len, f->val.type.name.data);
             }
         }
     }

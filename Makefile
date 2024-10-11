@@ -1,17 +1,17 @@
-.PHONY: all run clean
+# OPTIONS
+NS_BITCODE ?= 1
+NS_DEBUG ?= 1
 
+# VARIABLES
 CC = clang
-LD = clang++
 
 LLVM_CFLAGS = `llvm-config --cflags`
 LLVM_LDFLAGS = `llvm-config --ldflags --libs core --system-libs`
 LLVM_TRIPLE = `llvm-config --host-target`
 
-DEBUG = 1
-
 CFLAGS = -Iinclude
-ifeq ($(DEBUG), 1)
-	CFLAGS += -g -O0 -DDEBUG -Wall -Wextra
+ifeq ($(NS_DEBUG), 1)
+	CFLAGS += -g -O0 -DNS_DEBUG -Wall -Wextra
 else
 	CFLAGS += -Os
 endif
@@ -19,10 +19,9 @@ endif
 LDFLAGS = -lc -lm $(LLVM_LDFLAGS)
 
 BINDIR = bin
-OBJDIR = $(BINDIR)/obj
+OBJDIR = $(BINDIR)
 
-NS_SRCS = src/ns.c \
-	src/ns_fmt.c \
+NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
 	src/ns_path.c \
 	src/ns_tokenize.c \
@@ -32,22 +31,34 @@ NS_SRCS = src/ns.c \
 	src/ns_ast_dump.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c
-NS_OBJS = $(NS_SRCS:%.c=$(OBJDIR)/%.o)
+NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(OBJDIR)/%.o)
 
-BITCODE_SRC = src/ns_bitcode.c
-BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
+NS_ENTRY = src/ns.c 
+NS_ENTRY_OBJ = $(OBJDIR)/src/ns.o
+
+ifeq ($(NS_BITCODE), 1)
+	BITCODE_SRC = src/ns_bitcode.c
+	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
+	BITCODE_FLAGS = -DNS_BITCODE
+endif
 
 TARGET = $(BINDIR)/ns
 
 all: $(TARGET)
+	@echo "Building with options:" \
+	"NS_BITCODE=$(NS_BITCODE)" \
+	"NS_DEBUG=$(NS_DEBUG)"
 
 $(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(CFLAGS) $(LLVM_CFLAGS)
+	$(CC) -c $< -o $@ $(CFLAGS) $(LLVM_CFLAGS) $(BITCODE_FLAGS)
 
-$(TARGET): $(NS_OBJS) $(BITCODE_OBJ) | $(BINDIR)
-	$(CC) $(NS_OBJS) $(BITCODE_OBJ) $ -o $(TARGET) $(LDFLAGS)
+$(NS_ENTRY_OBJ): $(NS_ENTRY) | $(OBJDIR)
+	$(CC) -c $< -o $@ $(CFLAGS) $(BITCODE_FLAGS)
 
-$(OBJDIR)/%.o: %.c | $(OBJDIR)
+$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) | $(BINDIR)
+	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $ -o $(TARGET) $(LDFLAGS)
+
+$(NS_LIB_OBJS): $(OBJDIR)/%.o : %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CFLAGS)
 
 $(OBJDIR):
@@ -79,12 +90,10 @@ repl: all
 	$(TARGET) -r
 
 clean:
-	rm -f $(TARGET) $(NS_OBJS)
 	rm -rf $(OBJDIR)
 
 count:
 	cloc src include sample
 
-install: $(NS_SRCS)
-	$(CC) -O3 -o bin/$(TARGET) $^ -Iinclude
+install: $(TARGET)
 	cp bin/$(TARGET) /usr/local/bin

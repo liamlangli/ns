@@ -1,3 +1,5 @@
+#ifdef NS_BITCODE
+
 #include "ns_bitcode.h"
 #include "ns_type.h"
 #include "ns_vm.h"
@@ -159,8 +161,7 @@ ns_bc_type ns_llvm_type(ns_llvm_ctx_t *ctx, ns_token_t t) {
     case NS_TOKEN_IDENTIFIER:
         return ns_llvm_find_struct(ctx, t.val).st.type;
     default:
-        fprintf(stderr, ns_color_red "bitcode:" ns_color_none " unknown type %s\n", ns_llvm_str(t.val));
-        assert(false);
+        ns_error("bitcode error:", "unknown type %s\n", ns_llvm_str(t.val));
         break;
     }
     return NULL;
@@ -218,8 +219,7 @@ ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
         }
     }
 
-    fprintf(stderr, ns_color_red "bitcode error:" ns_color_none " unknown type %s\n", ns_llvm_str(name));
-    assert(false);
+    ns_error("bitcode error", "unknown type %s\n", ns_llvm_str(name));
     return NS_LLVM_RECORD_INVALID;
 }
 
@@ -408,8 +408,7 @@ ns_bc_value ns_llvm_call_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     ns_str fn_name = ctx->nodes[n.call_expr.callee].primary_expr.token.val;
     ns_llvm_record fn = ns_llvm_find_fn(llvm_ctx, fn_name);
     if (fn.type == NS_LLVM_RECORD_TYPE_INVALID) {
-        fprintf(stderr, ns_color_red "bitcode error:" ns_color_none " unknown function %s\n", ns_llvm_str(fn_name));
-        assert(false);
+        ns_error("bitcode error", "unknown function %s\n", ns_llvm_str(fn_name));
     }
 
     ns_bc_value ret = LLVMBuildCall2(builder, fn.fn.type, fn.fn.fn, args, n.call_expr.arg_count, "");
@@ -496,7 +495,7 @@ bool ns_bitcode_gen(ns_vm * vm, ns_ast_ctx *ctx) {
 
     // Write out bitcode to file
     if (LLVMWriteBitcodeToFile(mod, output_path.data) != 0) {
-        ns_error(ns_color_red "bitcode error:" ns_color_none " fail writing bitcode to file.");
+        ns_error("bitcode error", "fail writing bitcode to file.");
         return false;
     }
 
@@ -504,3 +503,5 @@ bool ns_bitcode_gen(ns_vm * vm, ns_ast_ctx *ctx) {
     LLVMDisposeModule(mod);
     return true;
 }
+
+#endif // NS_BITCODE

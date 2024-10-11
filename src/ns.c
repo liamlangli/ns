@@ -77,7 +77,7 @@ ns_compile_option_t parse_options(int argc, char **argv) {
 }
 
 void help() {
-    printf(ns_color_green"Usage:" ns_color_none " ns [option] [file.ns]\n");
+    ns_info("Usage", "ns [option] [file.ns]\n");
     printf("  -t --tokenize     tokenize only\n");
     printf("  -p --parse        parse only\n");
     printf("  -b --bitcode      generate llvm bitcode\n");
@@ -96,21 +96,19 @@ int main(int argc, char **argv) {
     ns_compile_option_t option = parse_options(argc, argv);
 
     if (option.show_help) {
-        help();
-        return 0;
+        help(); return 0;
     }
 
     if (option.show_version) {
-        printf("nano script v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
-        if (argc == 2)
-            return 0; // only show version
+        ns_info("nano script", "v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
+        if (argc == 2) return 0; // only show version
     }
 
     ns_str filename = ns_str_cstr(argv[argc - 1]);
     ns_str source = ns_read_file(filename);
 
     if (source.data == NULL) {
-        printf("Failed to read file: %s\n", argv[1]);
+        ns_exit(1, "ns", "failed to read file: %s\n", argv[1]);
         return 1;
     }
 
@@ -122,11 +120,12 @@ int main(int argc, char **argv) {
         ns_parse(&ctx, source, filename);
         ns_parse_context_dump(&ctx);
     } else if (option.code_gen_only) {
+#ifdef NS_BITCODE
         ns_parse(&ctx, source, filename);
         ns_vm_parse(&vm, &ctx);
         ctx.output = option.output;
         if (option.output.data == NULL) {
-            ns_error("output file is not specified.");
+            ns_warn("ns", "output file is not specified.");
             return false;
         }
         switch (option.arch) {
@@ -136,9 +135,11 @@ int main(int argc, char **argv) {
         case arm_64:
         case x86_64:
         default:
-            fprintf(stderr, "invalid arch %d\n", option.arch);
-            exit(1);
+            ns_exit(1, "ns", "invalid arch %d\n", option.arch);
         }
+#else
+        ns_exit(1, "ns", "bitcode is not enabled\n");
+#endif
     } else if (option.repl) {
         ns_eval(&vm, source, filename);
     }

@@ -4,10 +4,7 @@
 #include "ns_type.h"
 
 #include <assert.h>
-
-#define ns_parse_error(ctx, msg) \
-    fprintf(stderr, ns_color_red "ast error:" ns_color_none" %s at %s:%d:%d\n", msg, (ctx)->filename.data, (ctx)->token.line, (ctx)->f - (ctx)->token.line_start);\
-    assert(0);
+#define ns_parse_error(c, t, m, ...) ns_error(t, m " at %s:%d:%d\n", c->filename.data, c->token.line, c->f - c->token.line_start, ##__VA_ARGS__ );
 
 typedef enum {
     NS_AST_UNKNOWN = 0,

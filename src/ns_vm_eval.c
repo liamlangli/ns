@@ -485,12 +485,12 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     ns_ast_ctx ctx = {0};
 
     if (!ns_parse(&ctx, source, filename)) {
-        ns_error("eval error: ast parse failed.");
+        ns_error("eval error", "ast parse failed.");
         return NS_NIL;
     }
 
     if (!ns_vm_parse(vm, &ctx)) {
-        ns_error("vm error: vm parse failed.\n");
+        ns_error("vm error", "vm parse failed.\n");
         return NS_NIL;
     }
 

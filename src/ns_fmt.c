@@ -53,16 +53,14 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
     // parse fmt string in the form of "hello {a} {b} {c}" but not "\{a}"
     // replace {a} with value of a
 
-    char *buff = malloc(fmt.len * 4);
     int i = 0;
-
     while (i < fmt.len) {
         if (fmt.data[i] == '{' && (i == 0 || (i > 0 && fmt.data[i - 1] != '\\'))) {
             i++;
             int start = i;
             while (i < fmt.len && fmt.data[i] != '}') i++;
             if (i == fmt.len) {
-                ns_error("fmt error: missing '}'.");
+                ns_error("fmt error", "missing '}'.");
                 return ns_str_null;
             }
             ns_ast_ctx ctx = {0};
@@ -71,8 +69,11 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
             expr.data[expr.len] = '\0'; // dynamic string
             int i = ns_parse_expr_stack(&ctx);
             ns_value n = ns_eval_expr(vm, &ctx, i);
-            ns_str value = ns_fmt_value(n);
+            ns_str v = ns_fmt_value(n);
+            ns_info("fmt", "%s\n", v.data);
         }
         i++;
     }
+
+    return ns_str_null;
 }

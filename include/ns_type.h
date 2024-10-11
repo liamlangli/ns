@@ -17,14 +17,14 @@
 #define ns_color_yellow "\x1b[1;33m"
 #define ns_color_none "\x1b[0m"
 
-#define ns_error(msg) \
-    fprintf(stderr, "%s\n", msg);\
+#define ns_error(t, m, ...) fprintf(stderr, ns_color_red "%s: " ns_color_none m, t, ##__VA_ARGS__);assert(false)
+#define ns_exit(c, t, m, ...) fprintf(stderr, ns_color_red "%s: " ns_color_none m, t, ##__VA_ARGS__);exit(c)
+#define ns_warn(t, m, ...) fprintf(stderr, ns_color_yellow "%s: " ns_color_none m, t, ##__VA_ARGS__)
+#define ns_info(t, m, ...) fprintf(stderr, ns_color_green "%s: " ns_color_none m, t, ##__VA_ARGS__)
 
 #define ns_max(a, b) ((a) > (b) ? (a) : (b))
 #define ns_min(a, b) ((a) < (b) ? (a) : (b))
 #define ns_clamp(x, b, t) (ns_max((b), ns_min((t), (x))))
-
-
 
 // ns_type
 typedef char i8;

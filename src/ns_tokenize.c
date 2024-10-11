@@ -804,9 +804,8 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     default: {
         char lead = s[i];
         if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z'))) {
-            fprintf(stderr, "[%s, line:%d, offset:%d] unexpected character: %c\n", filename.data, t->line, i - t->line_start,
+            ns_error("unexpected character", "[%s:%d:%d]%c\n", filename.data, t->line, i - t->line_start,
                     lead);
-            assert(false);
         }
         i++;
 
