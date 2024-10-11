@@ -2,7 +2,7 @@
   "name": "nslang",
   "displayName": "nslang",
   "description": "nanoscript language service.",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "liamlangli",
   "scripts": {
     "pack": "vsce pack"
