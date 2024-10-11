@@ -430,7 +430,7 @@ void ns_llvm_std(ns_llvm_ctx_t *llvm_ctx) {
 
 bool ns_bitcode_gen(ns_vm * vm, ns_ast_ctx *ctx) {
     ns_str output_path = ns_str_cstr(ctx->output.data);
-    printf(ns_color_green "bitcode:" ns_color_none " generate llvm bitcode file: %s\n", output_path.data);
+    ns_info("bitcode", "generate llvm bitcode file %s\n", output_path.data);
 
     ns_str module_name = ns_path_filename(ctx->filename);
     ns_bc_module mod = LLVMModuleCreateWithName(module_name.data);

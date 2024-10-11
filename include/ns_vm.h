@@ -62,6 +62,8 @@ typedef struct ns_call {
 typedef struct ns_vm {
     ns_call *call_stack;
     ns_record *records;
+
+    ns_record *fn;
 } ns_vm;
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);

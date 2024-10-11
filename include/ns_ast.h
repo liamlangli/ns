@@ -232,7 +232,7 @@ typedef struct as_parse_context_t {
     ns_str output;
 } ns_ast_ctx;
 
-const char * ns_ast_type_str(NS_AST_TYPE type);
+ns_str ns_ast_type_to_string(NS_AST_TYPE type);
 void ns_parse_context_dump(ns_ast_ctx *ctx);
 
 // token func
@@ -268,4 +268,4 @@ ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
 bool ns_parse_generator_expr(ns_ast_ctx *ctx);
 bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 
-bool ns_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);
+bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);

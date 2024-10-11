@@ -1,5 +1,5 @@
 # OPTIONS
-NS_BITCODE ?= 1
+NS_BITCODE ?= 0
 NS_DEBUG ?= 1
 
 # VARIABLES
@@ -84,7 +84,7 @@ arm: all
 	$(TARGET) -arm sample/add.ns
 
 eval: all
-	$(TARGET) sample/rt.ns
+	$(TARGET) sample/add.ns
 
 repl: all
 	$(TARGET) -r

@@ -483,16 +483,8 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, int i) {
 
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     ns_ast_ctx ctx = {0};
-
-    if (!ns_parse(&ctx, source, filename)) {
-        ns_error("eval error", "ast parse failed.");
-        return NS_NIL;
-    }
-
-    if (!ns_vm_parse(vm, &ctx)) {
-        ns_error("vm error", "vm parse failed.\n");
-        return NS_NIL;
-    }
+    ns_ast_parse(&ctx, source, filename);
+    ns_vm_parse(vm, &ctx);
 
     ns_value ret = NS_NIL;
     for (int i = ctx.section_begin; i < ctx.section_end; ++i) {

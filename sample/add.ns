@@ -1,7 +1,7 @@
 // define a fn add that takes two f64 and returns their sum
-fn add(a: f64, b: f64): apk {
+fn add(a: f64, b: f64): f64 {
     return a + b
 }
 
-let n = add(1, 2)
+let n: f64 = add(1, 2)
 print("{n}\n")

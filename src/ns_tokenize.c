@@ -5,110 +5,110 @@
 #include <stdio.h>
 #include <string.h>
 
-const char *ns_token_to_string(NS_TOKEN type) {
+ns_str ns_token_type_to_string(NS_TOKEN type) {
     switch (type) {
     case NS_TOKEN_INT_LITERAL:
-        return "NS_TOKEN_INT_LITERAL";
+        return ns_str_cstr("NS_TOKEN_INT_LITERAL");
     case NS_TOKEN_FLT_LITERAL:
-        return "NS_TOKEN_FLT_LITERAL";
+        return ns_str_cstr("NS_TOKEN_FLT_LITERAL");
     case NS_TOKEN_STR_LITERAL:
-        return "NS_TOKEN_STR_LITERAL";
+        return ns_str_cstr("NS_TOKEN_STR_LITERAL");
     case NS_TOKEN_CONST:
-        return "NS_TOKEN_CONST";
+        return ns_str_cstr("NS_TOKEN_CONST");
     case NS_TOKEN_COMMENT:
-        return "NS_TOKEN_COMMENT";
+        return ns_str_cstr("NS_TOKEN_COMMENT");
     case NS_TOKEN_LET:
-        return "NS_TOKEN_LET";
+        return ns_str_cstr("NS_TOKEN_LET");
     case NS_TOKEN_FN:
-        return "NS_TOKEN_FN";
+        return ns_str_cstr("NS_TOKEN_FN");
     case NS_TOKEN_IN:
-        return "NS_TOKEN_IN";
+        return ns_str_cstr("NS_TOKEN_IN");
     case NS_TOKEN_SPACE:
-        return "NS_TOKEN_SPACE";
+        return ns_str_cstr("NS_TOKEN_SPACE");
     case NS_TOKEN_STRUCT:
-        return "NS_TOKEN_STRUCT";
+        return ns_str_cstr("NS_TOKEN_STRUCT");
     case NS_TOKEN_IDENTIFIER:
-        return "NS_TOKEN_IDENTIFIER";
+        return ns_str_cstr("NS_TOKEN_IDENTIFIER");
     case NS_TOKEN_ASYNC:
-        return "NS_TOKEN_ASYNC";
+        return ns_str_cstr("NS_TOKEN_ASYNC");
     case NS_TOKEN_AWAIT:
-        return "NS_TOKEN_AWAIT";
+        return ns_str_cstr("NS_TOKEN_AWAIT");
     case NS_TOKEN_TYPE_INT8:
-        return "NS_TOKEN_TYPE_INT8";
+        return ns_str_cstr("NS_TOKEN_TYPE_INT8");
     case NS_TOKEN_TYPE_INT16:
-        return "NS_TOKEN_TYPE_INT16";
+        return ns_str_cstr("NS_TOKEN_TYPE_INT16");
     case NS_TOKEN_TYPE_INT32:
-        return "NS_TOKEN_TYPE_INT32";
+        return ns_str_cstr("NS_TOKEN_TYPE_INT32");
     case NS_TOKEN_TYPE_INT64:
-        return "NS_TOKEN_TYPE_INT64";
+        return ns_str_cstr("NS_TOKEN_TYPE_INT64");
     case NS_TOKEN_TYPE_UINT8:
-        return "NS_TOKEN_TYPE_UINT8";
+        return ns_str_cstr("NS_TOKEN_TYPE_UINT8");
     case NS_TOKEN_TYPE_UINT16:
-        return "NS_TOKEN_TYPE_UINT16";
+        return ns_str_cstr("NS_TOKEN_TYPE_UINT16");
     case NS_TOKEN_TYPE_UINT32:
-        return "NS_TOKEN_TYPE_UINT32";
+        return ns_str_cstr("NS_TOKEN_TYPE_UINT32");
     case NS_TOKEN_TYPE_UINT64:
-        return "NS_TOKEN_TYPE_UINT64";
+        return ns_str_cstr("NS_TOKEN_TYPE_UINT64");
     case NS_TOKEN_TYPE_F32:
-        return "NS_TOKEN_TYPE_F32";
+        return ns_str_cstr("NS_TOKEN_TYPE_F32");
     case NS_TOKEN_TYPE_F64:
-        return "NS_TOKEN_TYPE_F64";
+        return ns_str_cstr("NS_TOKEN_TYPE_F64");
     case NS_TOKEN_TYPE_BOOL:
-        return "NS_TOKEN_TYPE_BOOL";
+        return ns_str_cstr("NS_TOKEN_TYPE_BOOL");
     case NS_TOKEN_TYPE_STR:
-        return "NS_TOKEN_TYPE_STR";
+        return ns_str_cstr("NS_TOKEN_TYPE_STR");
     case NS_TOKEN_ASSIGN:
-        return "NS_TOKEN_ASSIGN";
+        return ns_str_cstr("NS_TOKEN_ASSIGN");
     case NS_TOKEN_COLON:
-        return "NS_TOKEN_COLON";
+        return ns_str_cstr("NS_TOKEN_COLON");
     case NS_TOKEN_ASSIGN_OP:
-        return "NS_TOKEN_ASSIGN_OP";
+        return ns_str_cstr("NS_TOKEN_ASSIGN_OP");
     case NS_TOKEN_ADD_OP:
-        return "NS_TOKEN_ADD_OP";
+        return ns_str_cstr("NS_TOKEN_ADD_OP");
     case NS_TOKEN_BITWISE_OP:
-        return "NS_TOKEN_BITWISE_OP";
+        return ns_str_cstr("NS_TOKEN_BITWISE_OP");
     case NS_TOKEN_BOOL_OP:
-        return "NS_TOKEN_BOOL_OP";
+        return ns_str_cstr("NS_TOKEN_BOOL_OP");
     case NS_TOKEN_OPEN_BRACE:
-        return "NS_TOKEN_OPEN_BRACE";
+        return ns_str_cstr("NS_TOKEN_OPEN_BRACE");
     case NS_TOKEN_CLOSE_BRACE:
-        return "NS_TOKEN_CLOSE_BRACE";
+        return ns_str_cstr("NS_TOKEN_CLOSE_BRACE");
     case NS_TOKEN_OPEN_PAREN:
-        return "NS_TOKEN_OPEN_PAREN";
+        return ns_str_cstr("NS_TOKEN_OPEN_PAREN");
     case NS_TOKEN_CLOSE_PAREN:
-        return "NS_TOKEN_CLOSE_PAREN";
+        return ns_str_cstr("NS_TOKEN_CLOSE_PAREN");
     case NS_TOKEN_OPEN_BRACKET:
-        return "NS_TOKEN_OPEN_BRACKET";
+        return ns_str_cstr("NS_TOKEN_OPEN_BRACKET");
     case NS_TOKEN_CLOSE_BRACKET:
-        return "NS_TOKEN_CLOSE_BRACKET";
+        return ns_str_cstr("NS_TOKEN_CLOSE_BRACKET");
     case NS_TOKEN_EOL:
-        return "NS_TOKEN_EOL";
+        return ns_str_cstr("NS_TOKEN_EOL");
     case NS_TOKEN_EOF:
-        return "NS_TOKEN_EOF";
+        return ns_str_cstr("NS_TOKEN_EOF");
     case NS_TOKEN_RETURN:
-        return "NS_TOKEN_RETURN";
+        return ns_str_cstr("NS_TOKEN_RETURN");
     case NS_TOKEN_IF:
-        return "NS_TOKEN_IF";
+        return ns_str_cstr("NS_TOKEN_IF");
     case NS_TOKEN_ELSE:
-        return "NS_TOKEN_ELSE";
+        return ns_str_cstr("NS_TOKEN_ELSE");
     case NS_TOKEN_EQ_OP:
-        return "NS_TOKEN_EQ_OP";
+        return ns_str_cstr("NS_TOKEN_EQ_OP");
     case NS_TOKEN_COMMA:
-        return "NS_TOKEN_COMMA";
+        return ns_str_cstr("NS_TOKEN_COMMA");
     case NS_TOKEN_FOR:
-        return "NS_TOKEN_FOR";
+        return ns_str_cstr("NS_TOKEN_FOR");
     case NS_TOKEN_TO:
-        return "NS_TOKEN_TO";
+        return ns_str_cstr("NS_TOKEN_TO");
     case NS_TOKEN_OPS:
-        return "NS_TOKEN_OPS";
+        return ns_str_cstr("NS_TOKEN_OPS");
     case NS_TOKEN_IMPORT:
-        return "NS_TOKEN_IMPORT";
+        return ns_str_cstr("NS_TOKEN_IMPORT");
     case NS_TOKEN_DOT:
-        return "NS_TOKEN_DOT";
+        return ns_str_cstr("NS_TOKEN_DOT");
     case NS_TOKEN_MUL_OP:
-        return "NS_TOKEN_MUL_OP";
+        return ns_str_cstr("NS_TOKEN_MUL_OP");
     default:
-        return "Unknown token";
+        return ns_str_cstr("Unknown token");
     }
 }
 
@@ -822,21 +822,22 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
 }
 
 void ns_tokenize(ns_str source, ns_str filename) {
+    ns_info("ns", "tokenizing %.*s\n", ns_max(0, filename.len), filename.data);
     int len = strlen(source.data);
     int i = 0;
     ns_token_t t = {0};
     t.line = 1;
     do {
         i = ns_next_token(&t, source, filename, i);
+        ns_str type = ns_token_type_to_string(t.type);
         if (t.type == NS_TOKEN_SPACE) {
             continue;
         } else if (t.type == NS_TOKEN_EOF) {
             break;
         } else if (t.type == NS_TOKEN_EOL) {
-            printf("[%s:%d:%-5d] %-20s\n", filename.data, t.line, i - t.line_start, ns_token_to_string(t.type));
+            printf(" [%s:%d:%-4d] %-20.*s\n", filename.data, t.line, i - t.line_start, type.len, type.data);
         } else {
-            printf("[%s:%d:%-5d] %-20s %.*s\n", filename.data, t.line, i - t.line_start,
-                   ns_token_to_string(t.type), ns_max(0, t.val.len), t.val.data);
+            printf(" [%s:%d:%-4d] %-20.*s %.*s\n", filename.data, t.line, i - t.line_start, type.len, type.data, ns_max(0, t.val.len), t.val.data);
         }
         t.type = NS_TOKEN_UNKNOWN;
     } while (i < len);

@@ -484,7 +484,7 @@ bool ns_parse_type_define(ns_ast_ctx *_) {
     return false;
 }
 
-bool ns_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
+bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->source = source;
     ctx->filename = filename;
     ctx->top = -1;
