@@ -1,3 +1,6 @@
+### 0.0.5
+- add readme
+
 ### 0.0.4
 - add icon for nslang
 
