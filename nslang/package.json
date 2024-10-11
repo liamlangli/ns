@@ -11,8 +11,7 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages",
-    "Themes"
+    "Programming Languages"
   ],
   "repository": {
     "type": "git",
@@ -56,13 +55,6 @@
         "embeddedLanguages": {
           "meta.embedded.block.ns": "ns"
         }
-      }
-    ],
-    "iconThemes": [
-      {
-        "id": "nslang",
-        "label": "nslang icons",
-        "path": "./icon.json"
       }
     ]
   }
