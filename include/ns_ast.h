@@ -4,7 +4,7 @@
 #include "ns_type.h"
 
 #include <assert.h>
-#define ns_parse_error(c, t, m, ...) ns_error(t, m " at %s:%d:%d\n", c->filename.data, c->token.line, c->f - c->token.line_start, ##__VA_ARGS__ );
+#define ns_parse_error(c, t, m, ...) ns_error(t, "[%s:%d:%d]: " m "\n", c->filename.data, c->token.line, c->f - c->token.line_start, ##__VA_ARGS__ );
 
 typedef enum {
     NS_AST_UNKNOWN = 0,

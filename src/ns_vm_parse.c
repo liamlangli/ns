@@ -133,6 +133,24 @@ ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n) {
     return ns_type_unknown;
 }
 
+ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_type fn = ns_vm_parse_primary_expr(vm, ctx->nodes[n.call_expr.callee]);
+    if (fn.type!= NS_TYPE_UNKNOWN) {
+        ns_parse_error(ctx, "syntax error", "unknown callee\n");
+    }
+
+    ns_record fn_record = ns_vm_find_record(vm, fn.name);
+    ns_ast_t arg = ctx->nodes[n.call_expr.arg_count];
+    for (int i = 0, l = n.call_expr.arg_count; i < l; ++i) {
+        arg = ctx->nodes[arg.next];
+        ns_type t = ns_vm_parse_expr(vm, ctx, n);
+        if (t.type != fn_record.fn.args[i].val.type.type) {
+            ns_parse_error(ctx, "type error", "call expr type mismatch\n");
+        }
+    }
+    return fn_record.fn.ret;
+}
+
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_type left = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_type right = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
@@ -148,8 +166,12 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_vm_parse_binary_expr(vm, ctx, n);
     case NS_AST_PRIMARY_EXPR:
         return ns_vm_parse_primary_expr(vm, n);
-    default:
-        break;
+    case NS_AST_CALL_EXPR:
+        return ns_vm_parse_call_expr(vm, ctx, n);
+    default: {
+        ns_str type = ns_ast_type_to_string(n.type);
+        ns_warn("vm parse", "unimplemented expr type %.*s\n", type.len, type.data);
+    } break;
     }
     return ns_type_unknown;
 }
@@ -260,5 +282,11 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_vm_parse_fn_def_type(vm, ctx);
     ns_vm_parse_var_def(vm, ctx);
     ns_vm_parse_fn_def_body(vm, ctx);
+    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        ns_ast_t n = ctx->nodes[ctx->sections[i]];
+        if (n.type == NS_AST_FN_DEF || n.type == NS_AST_STRUCT_DEF || n.type == NS_AST_VAR_DEF)
+            continue;
+        ns_vm_parse_expr(vm, ctx, n);
+    }
     return true;
 }
