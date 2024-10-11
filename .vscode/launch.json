@@ -37,7 +37,7 @@
             "name": "ns repl",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-r"],
+            "args": [],
             "cwd": "${workspaceFolder}"
         },
         {

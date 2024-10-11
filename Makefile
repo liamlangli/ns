@@ -1,6 +1,7 @@
 # OPTIONS
 NS_BITCODE ?= 0
 NS_DEBUG ?= 1
+NS_REPL ?= 1
 
 # VARIABLES
 CC = clang
@@ -10,13 +11,24 @@ LLVM_LDFLAGS = `llvm-config --ldflags --libs core --system-libs`
 LLVM_TRIPLE = `llvm-config --host-target`
 
 CFLAGS = -Iinclude
+LDFLAGS = $(LLVM_LDFLAGS)
+
 ifeq ($(NS_DEBUG), 1)
 	CFLAGS += -g -O0 -DNS_DEBUG -Wall -Wextra
 else
 	CFLAGS += -Os
 endif
 
-LDFLAGS = -lc -lm $(LLVM_LDFLAGS)
+ifeq ($(NS_REPL), 1)
+	CFLAGS += -DNS_REPL
+	LDFLAGS += -lreadline
+endif
+
+ifeq ($(NS_BITCODE), 1)
+	BITCODE_SRC = src/ns_bitcode.c
+	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
+	BITCODE_FLAGS = -DNS_BITCODE
+endif
 
 BINDIR = bin
 OBJDIR = $(BINDIR)
@@ -30,17 +42,12 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_expr.c \
 	src/ns_ast_dump.c \
 	src/ns_vm_parse.c \
-	src/ns_vm_eval.c
+	src/ns_vm_eval.c \
+	src/ns_repl.c
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(OBJDIR)/%.o)
 
 NS_ENTRY = src/ns.c 
 NS_ENTRY_OBJ = $(OBJDIR)/src/ns.o
-
-ifeq ($(NS_BITCODE), 1)
-	BITCODE_SRC = src/ns_bitcode.c
-	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
-	BITCODE_FLAGS = -DNS_BITCODE
-endif
 
 TARGET = $(BINDIR)/ns
 
@@ -79,9 +86,6 @@ bc: all
 	llc bin/add.bc -filetype=obj -mtriple=$(LLVM_TRIPLE) -relocation-model=pic -o bin/add.o
 	clang bin/add.o -o bin/add
 	bin/add
-
-arm: all
-	$(TARGET) -arm sample/add.ns
 
 eval: all
 	$(TARGET) sample/add.ns

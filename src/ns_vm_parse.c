@@ -3,14 +3,15 @@
 #include "ns_type.h"
 #include "ns_vm.h"
 
-ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t);
+ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
 ns_record ns_vm_find_record(ns_vm *vm, ns_str s);
 
+ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
-ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n) {
+ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer) {
     ns_record r = ns_vm_find_record(vm, n);
     switch (r.type) {
     case NS_RECORD_VALUE:
@@ -20,12 +21,17 @@ ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n) {
     case NS_RECORD_STRUCT:
         return (ns_type){ .type = NS_TYPE_STRUCT, .name = r.name };
     default:
-        ns_error("syntax error", "unknown type [%.*s]\n", n.len, n.data);
+        if (infer) return ns_type_infer;
+        if (n.len == 0) {
+            ns_error("syntax error", "missing type\n");
+        } else {
+            ns_error("syntax error", "unknown type [%.*s]\n", n.len, n.data);
+        }
         break;
     }
 }
 
-ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t) {
+ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer) {
     switch (t.type) {
     case NS_TOKEN_TYPE_INT8:
         return (ns_type) { .type = NS_TYPE_I8, .name = ns_str_cstr("i8") };
@@ -50,7 +56,7 @@ ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t) {
     default:
         break;
     }
-    return ns_vm_parse_record_type(vm, t.val);
+    return ns_vm_parse_record_type(vm, t.val, infer);
 }
 
 ns_record ns_vm_find_record(ns_vm *vm, ns_str s) {
@@ -84,7 +90,7 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
     for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
         ns_record *fn = &vm->records[i];
         if (fn->type != NS_RECORD_FN) continue;
-        fn->fn.ret = ns_vm_parse_type(vm, ctx->nodes[fn->fn.ast].fn_def.return_type);
+        fn->fn.ret = ns_vm_parse_type(vm, ctx->nodes[fn->fn.ast].fn_def.return_type, false);
         ns_ast_t n = ctx->nodes[fn->fn.ast];
         ns_array_set_length(fn->fn.args, n.fn_def.arg_count);
         ns_ast_t *arg = &n;
@@ -92,18 +98,43 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
             arg = &ctx->nodes[arg->next];
             ns_record arg_record = (ns_record){.type = NS_RECORD_VALUE, .index = i};
             arg_record.name = arg->arg.name.val;
-            arg_record.val.type = ns_vm_parse_type(vm, arg->arg.type);
+            arg_record.val.type = ns_vm_parse_type(vm, arg->arg.type, false);
             fn->fn.args[i] = arg_record;
         }
     }
 }
 
+ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n) {
+    switch (n.primary_expr.token.type) {
+        case NS_TOKEN_INT_LITERAL:
+        case NS_TOKEN_FLT_LITERAL:
+            return (ns_type){.type = NS_TYPE_F64};
+        case NS_TOKEN_STR_LITERAL:
+            return (ns_type){.type = NS_TYPE_STRING};
+        case NS_TOKEN_TRUE:
+        case NS_TOKEN_FALSE:
+            return (ns_type){.type = NS_TYPE_BOOL};
+        case NS_TOKEN_IDENTIFIER:
+            return ns_vm_parse_record_type(vm, n.primary_expr.token.val, true);
+        default:
+            break;
+    }
+    return ns_type_unknown;
+}
+
+ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_type left = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
+    ns_type right = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
+    if (left.type != right.type) {
+        ns_parse_error(ctx, "type error", "binary expr type mismatch\n");
+    }
+    return left;
+}
+
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     switch (n.type) {
-        case NS_AST_BINARY_EXPR:
-            ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
-            ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
-            break;
+        case NS_AST_BINARY_EXPR: return ns_vm_parse_binary_expr(vm, ctx, n);
+        case NS_AST_PRIMARY_EXPR: return ns_vm_parse_primary_expr(vm, n);
         default:
             break;
     }
@@ -112,18 +143,17 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
 void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     switch (n.jump_stmt.label.type) {
-        case NS_TOKEN_RETURN:
+        case NS_TOKEN_RETURN: {
             ns_ast_t expr = ctx->nodes[n.jump_stmt.expr];
             ns_type t = ns_vm_parse_expr(vm, ctx, expr);
-            if (vm->fn->fn.ret.type != NS_TYPE_UNKNOWN) {
-                if (vm->fn->fn.ret.type != t.type) {
-                    ns_parse_error(ctx, "type error", "return type mismatch\n");
-                }
+            if (vm->fn->fn.ret.type != t.type) {
+                ns_parse_error(ctx, "type error", "return type mismatch\n");
             }
-        default:
-            ns_str label = n.jump_stmt.label.val;
-            ns_warn("vm parse", "unknown jump stmt type %.*s\n", label.len, label.data);
-            break;
+        } break;
+        default: {
+            ns_str l = n.jump_stmt.label.val;
+            ns_warn("vm parse", "unknown jump stmt type %.*s\n", l.len, l.data);
+        } break;
     }
 }
 
@@ -135,10 +165,10 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, int i) {
             case NS_AST_JUMP_STMT:
                 ns_vm_parse_jump_stmt(vm, ctx, expr);
                 break;
-            default:
+            default: {
                 ns_str type = ns_ast_type_to_string(expr.type);
                 ns_warn("vm parse", "unimplemented stmt type %.*s*\n", type.len, type.data);
-                break;
+            } break;
         }
     }
 }
@@ -171,7 +201,7 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             f.val.is_const = false;
             f.val.scope = NS_SCOPE_FIELD;
             st.st.fields[i] = f;
-            if (field->arg.is_ref) f.val.type = ns_vm_parse_type(vm, field->arg.type);
+            if (field->arg.is_ref) f.val.type = ns_vm_parse_type(vm, field->arg.type, false);
         }
         ns_vm_push_record(vm, st);
     }
@@ -199,7 +229,7 @@ void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
         if (n.type != NS_AST_VAR_DEF) continue;
         ns_record r = (ns_record){.type = NS_RECORD_VALUE};
         r.name = n.var_def.name.val;
-        r.val.type = ns_vm_parse_type(vm, n.var_def.type);
+        r.val.type = ns_vm_parse_type(vm, n.var_def.type, true);
         ns_vm_push_record(vm, r);
     }
 }

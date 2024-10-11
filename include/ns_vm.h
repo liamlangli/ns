@@ -69,3 +69,7 @@ typedef struct ns_vm {
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
 ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, int i);
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
+
+#ifdef NS_REPL
+void ns_repl(ns_vm* vm);
+#endif

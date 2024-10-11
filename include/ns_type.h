@@ -20,14 +20,16 @@
 
 #ifdef NS_DEBUG
     #define ns_error(t, m, ...)     fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__);assert(false)
-    #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__);exit(c)
     #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_wrn "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
     #define ns_info(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
+    #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__);exit(c)
+    #define ne_exit_safe(t, m, ...) fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__);exit(0)
 #else
     #define ns_error(t, m, ...)     fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__);assert(false)
-    #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__);exit(c)
     #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_wrn "%s: " ns_color_nil m, t, ##__VA_ARGS__)
     #define ns_info(t, m, ...)      fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__)
+    #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__);exit(c)
+    #define ne_exit_safe(t, m, ...) fprintf(stdout, ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__);exit(0)
 #endif // NS_DEBUG
 
 #define ns_max(a, b) ((a) > (b) ? (a) : (b))
@@ -185,6 +187,7 @@ typedef struct ns_token_t {
 typedef enum { 
     NS_TYPE_UNKNOWN = -1,
     NS_TYPE_NIL = 0,
+    NS_TYPE_INFER,
     NS_TYPE_I8,
     NS_TYPE_I16,
     NS_TYPE_I32,
@@ -209,6 +212,7 @@ typedef struct ns_type {
 } ns_type;
 
 #define ns_type_unknown ((ns_type){.type = NS_TYPE_UNKNOWN, .name = ns_str_null})
+#define ns_type_infer ((ns_type){.type = NS_TYPE_INFER, .name = ns_str_null})
 
 typedef enum {
     NS_SCOPE_GLOBAL,

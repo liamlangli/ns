@@ -6,7 +6,7 @@
                 "${workspaceFolder}/include/**",
                 "/opt/homebrew/opt/llvm/include"
             ],
-            "defines": ["NS_BITCODE", "NS_DEBUG"],
+            "defines": ["NS_BITCODE", "NS_DEBUG", "NS_REPL"],
             "macFrameworkPath": [
                 "/Library/Developer/CommandLineTools/SDKs/MacOSX14.sdk/System/Library/Frameworks"
             ],
@@ -21,7 +21,7 @@
                 "${workspaceFolder}/include/**",
                 "/usr/local/opt/llvm/include"
             ],
-            "defines": ["NS_BITCODE", "NS_DEBUG"],
+            "defines": ["NS_BITCODE", "NS_DEBUG", "NS_REPL"],
             "macFrameworkPath": [
                 "/Library/Developer/CommandLineTools/SDKs/MacOSX14.sdk/System/Library/Frameworks"
             ],

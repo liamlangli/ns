@@ -39,22 +39,19 @@ ns_str ns_str_slice(ns_str s, int start, int end) {
     return data;
 }
 
-typedef enum ns_asm_arch { llvm_bc, arm_64, x86_64, risc } ns_asm_arch;
-
 typedef struct ns_compile_option_t {
     bool tokenize_only;
     bool parse_only;
-    bool code_gen_only;
-    ns_asm_arch arch;
+    bool bitcode_only;
     bool show_version;
     bool show_help;
-    bool repl;
     ns_str output;
+    ns_str filename;
 } ns_compile_option_t;
 
 ns_compile_option_t parse_options(int argc, char **argv) {
     ns_compile_option_t option = {0};
-    for (int i = 0; i < argc; i++) {
+    for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--tokenize") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--parse") == 0) {
@@ -67,81 +64,99 @@ ns_compile_option_t parse_options(int argc, char **argv) {
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
         } else if (strcmp(argv[i], "-b") == 0 ||strcmp(argv[i], "--bc") == 0) {
-            option.code_gen_only = true;
-            option.arch = llvm_bc;
-        }  else if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--repl") == 0) {
-            option.repl = true;
+            option.bitcode_only = true;
+        } else {
+            option.filename = ns_str_cstr(argv[i]); // unmatched argument is treated as filename
         }
     }
     return option;
 }
 
-void help() {
+void ns_help() {
     ns_info("Usage", "ns [option] [file.ns]\n");
     printf("  -t --tokenize     tokenize only\n");
     printf("  -p --parse        parse only\n");
     printf("  -b --bitcode      generate llvm bitcode\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
-    printf("  -r --repl         read eval print loop mode\n");
     printf("  -o --output       output path\n");
 }
 
-int main(int argc, char **argv) {
-    if (argc < 2) {
-        help();
-        return 0;
-    }
+void ns_version() {
+    ns_info("nano script", "v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
+}
 
+void ns_exec_tokenize(ns_str filename) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    ns_str source = ns_read_file(filename);
+    ns_tokenize(source, filename);
+}
+
+void ns_exec_ast(ns_str filename) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    ns_ast_ctx ctx = {0};
+    ns_str source = ns_read_file(filename);
+    ns_ast_parse(&ctx, source, filename);
+    ns_parse_context_dump(&ctx);
+}
+
+void ns_exec_bitcode(ns_str filename, ns_str output) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    if (output.len == 0) ns_error("ns", "no output file.\n");
+
+#ifndef NS_BITCODE
+    ns_exit(1, "ns", "bitcode is not enabled\n");
+#else
+    ns_ast_ctx ctx = {0};
+    ns_vm vm = {0};
+    ns_str source = ns_read_file(filename);
+    ns_ast_parse(&ctx, source, filename);
+    ns_vm_parse(&vm, &ctx);
+    ctx.output = output;
+    if (output.data == NULL) {
+        ns_warn("ns", "output file is not specified.");
+        return;
+    }
+    ns_bitcode_gen(&vm, &ctx);
+#endif
+}
+
+void ns_exec_eval(ns_str filename) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    ns_vm vm = {0};
+    ns_str source = ns_read_file(filename);
+    ns_eval(&vm, source, filename);
+}
+
+void ns_exec_repl() {
+    ns_vm vm = {0};
+    ns_repl(&vm);
+}
+
+int main(int argc, char **argv) {
     ns_compile_option_t option = parse_options(argc, argv);
 
     if (option.show_help) {
-        help(); return 0;
+        ns_help(); return 0;
     }
 
     if (option.show_version) {
-        ns_info("nano script", "v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
-        if (argc == 2) return 0; // only show version
+        ns_version(); return 0;
     }
 
-    ns_str filename = ns_str_cstr(argv[argc - 1]);
-    ns_str source = ns_read_file(filename);
-
-    if (source.data == NULL) {
-        ns_exit(1, "ns", "failed to read file: %s\n", argv[1]);
-        return 1;
-    }
-
-    ns_ast_ctx ctx = {0};
-    ns_vm vm = {0};
     if (option.tokenize_only) {
-        ns_tokenize(source, filename);
+        ns_exec_tokenize(option.filename);
     } else if (option.parse_only) {
-        ns_parse(&ctx, source, filename);
-        ns_parse_context_dump(&ctx);
-    } else if (option.code_gen_only) {
-#ifdef NS_BITCODE
-        ns_parse(&ctx, source, filename);
-        ns_vm_parse(&vm, &ctx);
-        ctx.output = option.output;
-        if (option.output.data == NULL) {
-            ns_warn("ns", "output file is not specified.");
-            return false;
+        ns_exec_ast(option.filename);
+    } else if (option.bitcode_only) {
+        ns_exec_bitcode(option.filename, option.output);
+    } else {
+        ns_version();
+        if (option.filename.len == 0) {
+            ns_exec_repl();
+        } else {
+            ns_exec_eval(option.filename);
         }
-        switch (option.arch) {
-        case llvm_bc:
-            ns_bitcode_gen(&vm, &ctx);
-            break;
-        case arm_64:
-        case x86_64:
-        default:
-            ns_exit(1, "ns", "invalid arch %d\n", option.arch);
-        }
-#else
-        ns_exit(1, "ns", "bitcode is not enabled\n");
-#endif
-    } else if (option.repl) {
-        ns_eval(&vm, source, filename);
     }
     return 0;
 }

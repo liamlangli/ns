@@ -1,5 +1,6 @@
-nano script language
---------------------
+Nano Script
+-----------
+> A minimal programming language for data oriented programming.
 
 ## Design Goal
 - minimal syntax and keywords, easy to learn and use.
@@ -10,11 +11,9 @@ nano script language
 ## Syntax Preview
 [main.ns](sample/main.ns)
 ```ns
-// file end with .ns extension
-
 // this is a comment
 
-// import a module
+// import modules
 import math
 import std
 
@@ -78,3 +77,9 @@ async fn download(url: str): Data {
     return await do_download(url)
 }
 ```
+
+## Build Options
+| Option         | Description                  |
+|----------------|------------------------------|
+| `NS_DEBUG`     | Debug mode                   |
+| `NS_BITCODE`   | Generate bitcode file        |
