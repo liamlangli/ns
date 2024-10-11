@@ -1,0 +1,11 @@
+{
+    "iconDefinitions": {
+        "nslang": {
+            "iconPath": "./ns.svg"
+        }
+    },
+    "file": "nslang",
+    "fileExtensions": {
+        "ns": "nslang"
+    }
+}

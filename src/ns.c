@@ -151,8 +151,8 @@ int main(int argc, char **argv) {
     } else if (option.bitcode_only) {
         ns_exec_bitcode(option.filename, option.output);
     } else {
-        ns_version();
         if (option.filename.len == 0) {
+            ns_version();
             ns_exec_repl();
         } else {
             ns_exec_eval(option.filename);

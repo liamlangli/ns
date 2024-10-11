@@ -2,7 +2,7 @@
   "name": "nslang",
   "displayName": "nslang",
   "description": "nanoscript language service.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "liamlangli",
   "scripts": {
     "pack": "vsce pack"
@@ -11,19 +11,24 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Themes"
   ],
   "repository": {
     "type": "git",
     "url": "git@github.com:liamlangli/ns.git"
   },
-  "icon": "icon.png",
+  "icon": "./ns.png",
   "contributes": {
     "languages": [
       {
         "id": "ns",
+        "icon": {
+          "light": "./ns.svg",
+          "dark": "./ns.svg"
+        },
         "aliases": [
-          "nano script",
+          "nanoscript",
           "ns"
         ],
         "extensions": [
@@ -51,6 +56,13 @@
         "embeddedLanguages": {
           "meta.embedded.block.ns": "ns"
         }
+      }
+    ],
+    "iconThemes": [
+      {
+        "id": "nslang",
+        "label": "nslang icons",
+        "path": "./icon.json"
       }
     ]
   }

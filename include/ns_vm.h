@@ -22,8 +22,6 @@ typedef struct ns_value_record {
 typedef struct ns_fn_record {
     ns_type ret;
     ns_record *args;
-    ns_record *locals;
-    ns_record *globals;
     int ast;
 } ns_fn_record;
 

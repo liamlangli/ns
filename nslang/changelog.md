@@ -1,3 +1,6 @@
+### 0.0.4
+- add icon for nslang
+
 ### 0.0.3 
 - add missing keyword `import`
 

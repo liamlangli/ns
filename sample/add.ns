@@ -3,5 +3,5 @@ fn add(a: f64, b: f64): f64 {
     return a + b
 }
 
-let n: f32 = add(1, 2)
+let n = add(1, 2)
 print("{n}\n")

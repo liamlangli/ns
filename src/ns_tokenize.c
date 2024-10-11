@@ -835,9 +835,9 @@ void ns_tokenize(ns_str source, ns_str filename) {
         } else if (t.type == NS_TOKEN_EOF) {
             break;
         } else if (t.type == NS_TOKEN_EOL) {
-            printf(" [%s:%d:%-4d] %-20.*s\n", filename.data, t.line, i - t.line_start, type.len, type.data);
+            printf("[%s:%d:%-4d] %-20.*s\n", filename.data, t.line, i - t.line_start, type.len, type.data);
         } else {
-            printf(" [%s:%d:%-4d] %-20.*s %.*s\n", filename.data, t.line, i - t.line_start, type.len, type.data, ns_max(0, t.val.len), t.val.data);
+            printf("[%s:%d:%-4d] %-20.*s %.*s\n", filename.data, t.line, i - t.line_start, type.len, type.data, ns_max(0, t.val.len), t.val.data);
         }
         t.type = NS_TOKEN_UNKNOWN;
     } while (i < len);
