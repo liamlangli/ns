@@ -1,5 +1,5 @@
 # OPTIONS
-NS_BITCODE ?= 0
+NS_BITCODE ?= 1
 NS_DEBUG ?= 1
 NS_REPL ?= 1
 
@@ -43,6 +43,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_dump.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
+	src/ns_vm_std.c \
 	src/ns_repl.c
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(OBJDIR)/%.o)
 
@@ -54,7 +55,8 @@ TARGET = $(BINDIR)/ns
 all: $(TARGET)
 	@echo "Building with options:" \
 	"NS_BITCODE=$(NS_BITCODE)" \
-	"NS_DEBUG=$(NS_DEBUG)"
+	"NS_DEBUG=$(NS_DEBUG)" \
+	"NS_REPL=$(NS_REPL)"
 
 $(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CFLAGS) $(LLVM_CFLAGS) $(BITCODE_FLAGS)

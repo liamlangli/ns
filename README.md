@@ -79,7 +79,8 @@ async fn download(url: str): Data {
 ```
 
 ## Build Options
-| Option         | Description                  |
-|----------------|------------------------------|
-| `NS_DEBUG`     | Debug mode                   |
-| `NS_BITCODE`   | Generate bitcode file        |
+| Option         | Description                  | Requirements                             |
+|----------------|------------------------------|------------------------------------------|
+| `NS_DEBUG`     | Debug mode                   | none                                     |
+| `NS_BITCODE`   | Enable generate bitcode      | llvm: llvm-config, llc, clang, lld       |
+| `NS_REPL`      | Enable REPL mode             | libreadline-dev                          |

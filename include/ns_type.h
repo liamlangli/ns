@@ -12,6 +12,10 @@
     #define false 0
 #endif
 
+#ifndef nil
+    #define nil NULL
+#endif
+
 #define ns_color_bld "\x1b[1m"
 #define ns_color_err "\x1b[1;31m"
 #define ns_color_log "\x1b[1;32m"
@@ -187,6 +191,7 @@ typedef struct ns_token_t {
 typedef enum { 
     NS_TYPE_UNKNOWN = -1,
     NS_TYPE_NIL = 0,
+    NS_TYPE_EMPTY,
     NS_TYPE_INFER,
     NS_TYPE_I8,
     NS_TYPE_I16,
@@ -213,6 +218,9 @@ typedef struct ns_type {
 
 #define ns_type_unknown ((ns_type){.type = NS_TYPE_UNKNOWN, .name = ns_str_null})
 #define ns_type_infer ((ns_type){.type = NS_TYPE_INFER, .name = ns_str_null})
+#define ns_type_nil ((ns_type){.type = NS_TYPE_NIL, .name = ns_str_cstr("nil")})
+#define ns_type_bool ((ns_type){.type = NS_TYPE_BOOL, .name = ns_str_cstr("bool")})
+#define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
 
 typedef enum {
     NS_SCOPE_GLOBAL,
@@ -222,14 +230,15 @@ typedef enum {
 } NS_VALUE_SCOPE;
 
 typedef struct ns_value {
-    NS_VALUE_TYPE type;
-    int index;
+    ns_type type;
+    int p; // pointer
     union {
         i64 i;
         f64 f;
     };
 } ns_value;
 
-#define NS_NIL ((ns_value){.type = NS_TYPE_NIL,})
-#define NS_TRUE ((ns_value){.type = NS_TYPE_BOOL, .u.boolean = true})
-#define NS_FALSE ((ns_value){.type = NS_TYPE_BOOL, .u.boolean = false})
+#define ns_nil ((ns_value){.type = ns_type_nil, .p = -1, .i = 0})
+#define ns_is_nil(v) ((v).type.type == NS_TYPE_NIL)
+#define ns_true ((ns_value){.type = ns_type_bool, .p = -1, .i = true})
+#define ns_false ((ns_value){.type = ns_type_bool, .p = -1, .i = false})

@@ -209,7 +209,6 @@ typedef struct ns_ast_t {
         ns_ast_compound_stmt compound_stmt;
         ns_ast_designated_stmt designated_stmt;
     };
-    ns_value val;
 } ns_ast_t;
 
 #define NS_MAX_PARSE_STACK 64
@@ -233,7 +232,6 @@ typedef struct as_parse_context_t {
 } ns_ast_ctx;
 
 ns_str ns_ast_type_to_string(NS_AST_TYPE type);
-void ns_parse_context_dump(ns_ast_ctx *ctx);
 
 // token func
 bool ns_parse_next_token(ns_ast_ctx *ctx); // skip space
@@ -269,3 +267,6 @@ bool ns_parse_generator_expr(ns_ast_ctx *ctx);
 bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 
 bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);
+
+// dump func
+void ns_ast_ctx_dump(ns_ast_ctx *ctx);

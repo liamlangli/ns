@@ -13,6 +13,9 @@
 
 #define STB_DS_IMPLEMENTATION
 
+static ns_vm vm = {0};
+static ns_ast_ctx ctx = {0};
+
 ns_str ns_read_file(ns_str path) {
     FILE *file = fopen(path.data, "rb");
     if (!file) {
@@ -94,10 +97,9 @@ void ns_exec_tokenize(ns_str filename) {
 
 void ns_exec_ast(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_ast_ctx ctx = {0};
     ns_str source = ns_read_file(filename);
     ns_ast_parse(&ctx, source, filename);
-    ns_parse_context_dump(&ctx);
+    ns_ast_ctx_dump(&ctx);
 }
 
 void ns_exec_bitcode(ns_str filename, ns_str output) {
@@ -107,8 +109,6 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
 #ifndef NS_BITCODE
     ns_exit(1, "ns", "bitcode is not enabled\n");
 #else
-    ns_ast_ctx ctx = {0};
-    ns_vm vm = {0};
     ns_str source = ns_read_file(filename);
     ns_ast_parse(&ctx, source, filename);
     ns_vm_parse(&vm, &ctx);
@@ -123,13 +123,11 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
 
 void ns_exec_eval(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_vm vm = {0};
     ns_str source = ns_read_file(filename);
     ns_eval(&vm, source, filename);
 }
 
 void ns_exec_repl() {
-    ns_vm vm = {0};
     ns_repl(&vm);
 }
 

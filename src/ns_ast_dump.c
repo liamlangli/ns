@@ -257,7 +257,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     printf("\n");
 }
 
-void ns_parse_context_dump(ns_ast_ctx *ctx) {
+void ns_ast_ctx_dump(ns_ast_ctx *ctx) {
     ns_info("ast", "node count %zu\n", ns_array_length(ctx->nodes));
     for (int i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
         ns_ast_dump(ctx, i);

@@ -4,7 +4,7 @@
 #include <math.h>
 
 ns_str ns_fmt_value(ns_value n) {
-    switch (n.type) {
+    switch (n.type.type) {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
     case NS_TYPE_I32: {
@@ -31,7 +31,7 @@ ns_str ns_fmt_value(ns_value n) {
     }
     case NS_TYPE_F32:
     case NS_TYPE_F64: {
-        char* buff = malloc(n.type == NS_TYPE_F32 ? 12 : 22);
+        char* buff = malloc(n.type.type == NS_TYPE_F32 ? 12 : 22);
         f64 f = fabs(n.f);
         if (f < 1e-3 || f > 1e6) {
             sprintf(buff, "%6.e", n.f);
@@ -68,7 +68,7 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
             // add null terminator
             expr.data[expr.len] = '\0'; // dynamic string
             int i = ns_parse_expr_stack(&ctx);
-            ns_value n = ns_eval_expr(vm, &ctx, i);
+            ns_value n = ns_eval_expr(vm, &ctx, ctx.nodes[i]);
             ns_str v = ns_fmt_value(n);
             ns_info("fmt", "%s\n", v.data);
         }
