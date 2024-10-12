@@ -97,6 +97,12 @@ int ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);
 ns_str ns_str_unescape(ns_str s);
 
+// ns_data
+typedef struct ns_data {
+    void *data;
+    size_t len;
+} ns_data;
+
 // ns_token
 typedef enum {
     NS_TOKEN_UNKNOWN = -1,
@@ -157,7 +163,7 @@ typedef enum {
     NS_TOKEN_COLON,         // :
     NS_TOKEN_QUESTION_MARK, // ?
 
-    NS_TOKEN_LOGIC_OP,      // !, &&, ||
+    NS_TOKEN_LOGIC_OP,      // &&, ||
 
     NS_TOKEN_ADD_OP,        // +, -
     NS_TOKEN_MUL_OP,        // *, /, %
@@ -168,7 +174,7 @@ typedef enum {
 
     NS_TOKEN_BITWISE_OP,    // &, |, ^
     NS_TOKEN_ASSIGN_OP,     // +=, -=, *=, /=, %=, &=, |=, ^=
-    NS_TOKEN_BOOL_OP,       // &&, ||
+    NS_TOKEN_CMP_OP,       // !
     NS_TOKEN_BIT_INVERT_OP, // ~
 
     NS_TOKEN_OPEN_BRACE,    // {
@@ -220,6 +226,9 @@ typedef struct ns_type {
 #define ns_type_infer ((ns_type){.type = NS_TYPE_INFER, .name = ns_str_null})
 #define ns_type_nil ((ns_type){.type = NS_TYPE_NIL, .name = ns_str_cstr("nil")})
 #define ns_type_bool ((ns_type){.type = NS_TYPE_BOOL, .name = ns_str_cstr("bool")})
+#define ns_type_string ((ns_type){.type = NS_TYPE_STRING, .name = ns_str_cstr("str")})
+#define ns_type_f64 ((ns_type){.type = NS_TYPE_F64, .name = ns_str_cstr("f64")})
+#define ns_type_i64 ((ns_type){.type = NS_TYPE_I64, .name = ns_str_cstr("i64")})
 #define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
 
 typedef enum {

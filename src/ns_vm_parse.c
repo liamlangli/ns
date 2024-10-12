@@ -17,6 +17,18 @@ int ns_vm_push_record(ns_vm *vm, ns_record r) {
     return r.index;
 }
 
+int ns_vm_push_string(ns_vm *vm, ns_str s) {
+    int i = ns_array_length(vm->str_list);
+    ns_array_push(vm->str_list, s);
+    return i;
+}
+
+int ns_vm_push_data(ns_vm *vm, ns_data d) {
+    int i = ns_array_length(vm->data_list);
+    ns_array_push(vm->data_list, d);
+    return i;
+}
+
 ns_record* ns_vm_find_record(ns_vm *vm, ns_str s) {
     if (vm->fn) {
         for (int i = 0, l = ns_array_length(vm->fn->fn.args); i < l; ++i) {
@@ -117,6 +129,7 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
 ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n) {
     switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
+        return (ns_type){.type = NS_TYPE_I64};
     case NS_TOKEN_FLT_LITERAL:
         return (ns_type){.type = NS_TYPE_F64};
     case NS_TOKEN_STR_LITERAL:

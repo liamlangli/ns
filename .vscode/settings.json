@@ -6,6 +6,7 @@
         "*.und": "xml",
         "*.uss": "plaintext",
         "*.py": "python",
+        "*.ns": "ns",
         "*.h": "c",
         "*.c": "c",
         "__node_handle": "c",
@@ -39,6 +40,7 @@
         "stack": "c",
         "unordered_map": "c",
         "map": "c",
-        "set": "c"
+        "set": "c",
+        "cmath": "c"
     }
 }

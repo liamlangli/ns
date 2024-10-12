@@ -67,8 +67,8 @@ ns_str ns_token_type_to_string(NS_TOKEN type) {
         return ns_str_cstr("NS_TOKEN_ADD_OP");
     case NS_TOKEN_BITWISE_OP:
         return ns_str_cstr("NS_TOKEN_BITWISE_OP");
-    case NS_TOKEN_BOOL_OP:
-        return ns_str_cstr("NS_TOKEN_BOOL_OP");
+    case NS_TOKEN_CMP_OP:
+        return ns_str_cstr("NS_TOKEN_CMP_OP");
     case NS_TOKEN_OPEN_BRACE:
         return ns_str_cstr("NS_TOKEN_OPEN_BRACE");
     case NS_TOKEN_CLOSE_BRACE:
@@ -592,7 +592,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else {
-            t->type = NS_TOKEN_BOOL_OP;
+            t->type = NS_TOKEN_CMP_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
@@ -600,7 +600,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     case '&':
     case '|': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_ASSIGN_OP;
+            t->type = NS_TOKEN_BITWISE_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == lead) {
@@ -717,7 +717,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     } break;
     case '>': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_BOOL_OP;
+            t->type = NS_TOKEN_CMP_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == '>') {
@@ -731,14 +731,14 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
                 to = i + 2;
             }
         } else {
-            t->type = NS_TOKEN_BOOL_OP;
+            t->type = NS_TOKEN_CMP_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '<': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_BOOL_OP;
+            t->type = NS_TOKEN_CMP_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == '<') {
@@ -752,7 +752,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
                 to = i + 2;
             }
         } else {
-            t->type = NS_TOKEN_BOOL_OP;
+            t->type = NS_TOKEN_CMP_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }

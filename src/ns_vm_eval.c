@@ -1,11 +1,63 @@
 #include "ns_vm.h"
 
+#include <math.h>
+
 ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+
+ns_str ns_ops_name(ns_token_t op) {
+    switch (op.type) {
+    case NS_TOKEN_ADD_OP:
+        if (ns_str_equals_STR(op.val, "+"))
+            return ns_str_cstr("add");
+        else
+            return ns_str_cstr("sub");
+    case NS_TOKEN_MUL_OP:
+        if (ns_str_equals_STR(op.val, "*"))
+            return ns_str_cstr("mul");
+        else if (ns_str_equals_STR(op.val, "/"))
+            return ns_str_cstr("div");
+        else
+            return ns_str_cstr("mod");
+    case NS_TOKEN_LOGIC_OP:
+        if (ns_str_equals_STR(op.val, "&&"))
+            return ns_str_cstr("and");
+        else
+            return ns_str_cstr("or");
+    case NS_TOKEN_SHIFT_OP:
+        if (ns_str_equals_STR(op.val, "<<"))
+            return ns_str_cstr("shl");
+        else
+            return ns_str_cstr("shr");
+    case NS_TOKEN_CMP_OP:
+        if (ns_str_equals_STR(op.val, "=="))
+            return ns_str_cstr("eq");
+        else if (ns_str_equals_STR(op.val, "!="))
+            return ns_str_cstr("ne");
+        else if (ns_str_equals_STR(op.val, "<"))
+            return ns_str_cstr("lt");
+        else if (ns_str_equals_STR(op.val, "<="))
+            return ns_str_cstr("le");
+        else if (ns_str_equals_STR(op.val, ">"))
+            return ns_str_cstr("gt");
+        else if (ns_str_equals_STR(op.val, ">="))
+            return ns_str_cstr("ge");
+    default:
+        ns_error("eval error", "unsupported ops override $.*s\n", op.val.len, op.val.data);
+    }
+}
+
+ns_str ns_ops_override_name(ns_str lhs, ns_str rhs, ns_token_t op) {
+    ns_str op_name = ns_ops_name(op);
+    i8* data = malloc(lhs.len + rhs.len + op_name.len + 3);
+    fprintf(data, "%.*s_%.*s_%.*s", lhs.len, lhs.data, rhs.len, rhs.data, op_name.len, op_name.data);
+    data[lhs.len + rhs.len + op_name.len + 2] = '\0';
+    return (ns_str){.data = data, .len = lhs.len + rhs.len + op_name.len + 2, .dynamic = 1};
+}
 
 bool ns_type_is_number(ns_type t) {
     switch (t.type) {
@@ -68,31 +120,72 @@ ns_value ns_eval_binary_ops_number(ns_value lhs, ns_value rhs, ns_token_t op) {
     switch (op.type) {
     case NS_TOKEN_ADD_OP: {
         if (ns_str_equals_STR(op.val, "+"))
-            return f ? (ns_value){.type = NS_TYPE_F64, .f = lhs.f + rhs.f} : (ns_value){.type = NS_TYPE_I64, .i = lhs.i + rhs.i};
+            return f ? (ns_value){.type = ns_type_f64, .f = lhs.f + rhs.f} : (ns_value){.type = ns_type_i64, .i = lhs.i + rhs.i};
         else 
-            return f ? (ns_value){.type = NS_TYPE_F64, .f = lhs.f - rhs.f} : (ns_value){.type = NS_TYPE_I64, .i = lhs.i - rhs.i};
+            return f ? (ns_value){.type = ns_type_f64, .f = lhs.f - rhs.f} : (ns_value){.type = ns_type_i64, .i = lhs.i - rhs.i};
     } break;
     case NS_TOKEN_MUL_OP: {
         if (ns_str_equals_STR(op.val, "*"))
-            return f ? (ns_value){.type = NS_TYPE_F64, .f = lhs.f * rhs.f} : (ns_value){.type = NS_TYPE_I64, .i = lhs.i * rhs.i};
+            return f ? (ns_value){.type = ns_type_f64, .f = lhs.f * rhs.f} : (ns_value){.type = ns_type_i64, .i = lhs.i * rhs.i};
         else if (ns_str_equals(op.val, ns_str_cstr("/")))
-            return f ? (ns_value){.type = NS_TYPE_F64, .f = lhs.f / rhs.f} : (ns_value){.type = NS_TYPE_I64, .i = lhs.i / rhs.i};
+            return f ? (ns_value){.type = ns_type_f64, .f = lhs.f / rhs.f} : (ns_value){.type = ns_type_i64, .i = lhs.i / rhs.i};
         else
-            return f ? (ns_value){.type = NS_TYPE_F64, .f = fmod(lhs.f, rhs.f)} : (ns_value){.type = NS_TYPE_I64, .i = lhs.i % rhs.i};
+            return f ? (ns_value){.type = ns_type_f64, .f = fmodl(lhs.f, rhs.f)} : (ns_value){.type = ns_type_i64, .i = lhs.i % rhs.i};
     } break;
-    case NS_TOKEN_BOOL_OP: {
+    case NS_TOKEN_LOGIC_OP: {
         if (ns_str_equals_STR(op.val, "&&"))
             return f ? ns_true : (ns_value){.type = ns_type_bool, .i = lhs.i && rhs.i};
         else
         return f ? ns_true : (ns_value){.type = ns_type_bool, .i = lhs.i && rhs.i};
     } break;
+    case NS_TOKEN_SHIFT_OP: {
+        if (ns_str_equals_STR(op.val, "<<"))
+            return (ns_value){.type = ns_type_i64, .i = lhs.i << rhs.i};
+        else
+            return (ns_value){.type = ns_type_i64, .i = lhs.i >> rhs.i};
+    } break;
+    case NS_TOKEN_CMP_OP: {
+        if (ns_str_equals_STR(op.val, "=="))
+            return f ? (ns_value){.type = ns_type_bool, .i = lhs.f == rhs.f} : (ns_value){.type = ns_type_bool, .i = lhs.i == rhs.i};
+        else if (ns_str_equals_STR(op.val, "!="))
+            return f ? (ns_value){.type = ns_type_bool, .i = lhs.f != rhs.f} : (ns_value){.type = ns_type_bool, .i = lhs.i != rhs.i};
+        else if (ns_str_equals_STR(op.val, "<"))
+            return f ? (ns_value){.type = ns_type_bool, .i = lhs.f < rhs.f} : (ns_value){.type = ns_type_bool, .i = lhs.i < rhs.i};
+        else if (ns_str_equals_STR(op.val, "<="))
+            return f ? (ns_value){.type = ns_type_bool, .i = lhs.f <= rhs.f} : (ns_value){.type = ns_type_bool, .i = lhs.i <= rhs.i};
+        else if (ns_str_equals_STR(op.val, ">"))
+            return f ? (ns_value){.type = ns_type_bool, .i = lhs.f > rhs.f} : (ns_value){.type = ns_type_bool, .i = lhs.i > rhs.i};
+        else if (ns_str_equals_STR(op.val, ">="))
+            return f ? (ns_value){.type = ns_type_bool, .i = lhs.f >= rhs.f} : (ns_value){.type = ns_type_bool, .i = lhs.i >= rhs.i};
+    }
     default: ns_error("eval error", "unimplemented binary ops\n");
     }
     return ns_nil;
 }
 
-ns_value ns_eval_binary_ops(ns_vm *vm, ns_value lhs, ns_value rhs, ns_token_t op) {
-    if (ns_type_is_int_number(lhs.type)) {
+ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value lhs, ns_value rhs, ns_token_t op) {
+    ns_str fn_name = ns_ops_override_name(lhs.type.name, rhs.type.name, op);
+    ns_record *fn = ns_vm_find_record(vm, fn_name);
+    if (fn == NULL) {
+        ns_str l = lhs.type.name;
+        ns_str r = rhs.type.name;
+        ns_error("eval error", "override fn not found %.*s %.*s %.*s\n", l.len, l.data, op.val.len, op.val.data, r.len, r.data);
+    }
+
+    ns_call call = (ns_call){.fn = fn, .args = NULL };
+    ns_array_set_length(call.args, 2);
+    call.args[0] = lhs;
+    call.args[1] = rhs;
+
+    ns_array_push(vm->call_stack, call);
+    ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast]);
+    ns_array_pop(vm->call_stack);
+
+    return call.ret;
+}
+
+ns_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value lhs, ns_value rhs, ns_token_t op) {
+    if (ns_type_is_number(lhs.type)) {
         return ns_eval_binary_ops_number(lhs, rhs, op);
     } else {
         switch (lhs.type.type)
@@ -103,6 +196,7 @@ ns_value ns_eval_binary_ops(ns_vm *vm, ns_value lhs, ns_value rhs, ns_token_t op
             return (ns_value){.type = ns_type_bool, .i = lhs.i && rhs.i};
             break;
         default:
+            return ns_eval_call_ops_fn(vm, ctx, lhs, rhs, op);
             break;
         }
         ns_error("eval error", "unimplemented binary ops\n");
@@ -113,7 +207,7 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value left = ns_eval_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_value right = ns_eval_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
     if (left.type.type == right.type.type) {
-        return ns_eval_binary_ops(vm, left, right, n.binary_expr.op); // same type apply binary operator
+        return ns_eval_binary_ops(vm, ctx, left, right, n.binary_expr.op); // same type apply binary operator
     } else {
         // type mismatch, try to cast
         ns_error("eval error", "binary expr type mismatch\n");
@@ -122,7 +216,19 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 }
 
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    switch (n.primary_expr.expr) {
+    case NS_TOKEN_INT_LITERAL:
+        return (ns_value){.type = ns_type_i64, .i = ns_str_to_i32(n.primary_expr.token.val)};
+    case NS_TOKEN_FLT_LITERAL:
+        return (ns_value){.type = ns_type_i64, .i = ns_str_to_f64(n.primary_expr.token.val)};
+    case NS_TOKEN_STR_LITERAL:
+        return (ns_value){.type = ns_type_string, .i = ns_vm_push_string(vm, n.primary_expr.token.val)};
+    case NS_TOKEN_TRUE:
+        return ns_true;
+    case NS_TOKEN_FALSE:
+        return ns_false;
     return ns_nil;
+    }
 }
 
 ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
@@ -135,6 +241,8 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_eval_jump_stmt(vm, ctx, n);
     case NS_AST_BINARY_EXPR:
         return ns_eval_binary_expr(vm, ctx, n);
+    case NS_AST_PRIMARY_EXPR:
+        return ns_eval_primary_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_error("eval error", "unimplemented expr type %.*s\n", type.len, type.data);

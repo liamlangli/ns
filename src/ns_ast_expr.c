@@ -282,7 +282,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
         case NS_TOKEN_SHIFT_OP:
         case NS_TOKEN_REL_OP:
         case NS_TOKEN_EQ_OP:
-        case NS_TOKEN_BOOL_OP:
+        case NS_TOKEN_CMP_OP:
         case NS_TOKEN_LOGIC_OP: {
 
             // first token is operator

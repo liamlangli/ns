@@ -67,6 +67,8 @@ typedef struct ns_vm {
     ns_record *fn;
 
     ns_value *globals;
+    ns_str *str_list;
+    ns_data *data_list;
 } ns_vm;
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
@@ -74,7 +76,9 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // vm record
-int ns_vm_push_record(ns_vm *vm, ns_record record);
+int ns_vm_push_record(ns_vm *vm, ns_record r);
+int ns_vm_push_string(ns_vm *vm, ns_str s);
+int ns_vm_push_data(ns_vm *vm, ns_data d);
 ns_record* ns_vm_find_record(ns_vm *vm, ns_str s);
 
 // vm std

@@ -3,6 +3,25 @@
 #include <stdlib.h>
 #include <string.h>
 
+ns_str ns_type_name(ns_type t) {
+    switch (t.type) {
+    case NS_TYPE_UNKNOWN: return ns_str_null;
+    case NS_TYPE_I8: return ns_str_cstr("i8");
+    case NS_TYPE_I16: return ns_str_cstr("i16");
+    case NS_TYPE_I32: return ns_str_cstr("i32");
+    case NS_TYPE_I64: return ns_str_cstr("i64");
+    case NS_TYPE_U8: return ns_str_cstr("u8");
+    case NS_TYPE_U16: return ns_str_cstr("u16");
+    case NS_TYPE_U32: return ns_str_cstr("u32");
+    case NS_TYPE_U64: return ns_str_cstr("u64");
+    case NS_TYPE_F32: return ns_str_cstr("f32");
+    case NS_TYPE_F64: return ns_str_cstr("f64");
+    case NS_TYPE_BOOL: return ns_str_cstr("bool");
+    case NS_TYPE_STRING: return ns_str_cstr("str");
+    default: return ns_str_null;
+    }
+}
+
 void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap) {
     ns_array_header h = {0};
     void *b;
