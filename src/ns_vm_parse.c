@@ -239,7 +239,9 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
             continue;
         ns_ast_t n = ctx->nodes[fn->fn.ast];
         fn->fn.ast = n.fn_def.body;
-
+        vm->fn = fn;
+        ns_vm_parse_compound_stmt(vm, ctx, n.fn_def.body);
+        vm->fn = NULL;
     }
 }
 

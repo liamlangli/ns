@@ -5,8 +5,8 @@
 ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
-ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 ns_str ns_ops_name(ns_token_t op) {
@@ -47,16 +47,17 @@ ns_str ns_ops_name(ns_token_t op) {
         else if (ns_str_equals_STR(op.val, ">="))
             return ns_str_cstr("ge");
     default:
-        ns_error("eval error", "unsupported ops override $.*s\n", op.val.len, op.val.data);
+        ns_error("eval error", "unsupported ops override %.*s\n", op.val.len, op.val.data);
     }
 }
 
 ns_str ns_ops_override_name(ns_str lhs, ns_str rhs, ns_token_t op) {
     ns_str op_name = ns_ops_name(op);
-    i8* data = malloc(lhs.len + rhs.len + op_name.len + 3);
-    fprintf(data, "%.*s_%.*s_%.*s", lhs.len, lhs.data, rhs.len, rhs.data, op_name.len, op_name.data);
-    data[lhs.len + rhs.len + op_name.len + 2] = '\0';
-    return (ns_str){.data = data, .len = lhs.len + rhs.len + op_name.len + 2, .dynamic = 1};
+    size_t len = lhs.len + rhs.len + op_name.len + 3;
+    i8* data = (i8*)malloc(len);
+    snprintf(data, len, "%.*s_%.*s_%.*s", lhs.len, lhs.data, rhs.len, rhs.data, op_name.len, op_name.data);
+    data[len - 1] = '\0';
+    return (ns_str){.data = data, .len = len - 1, .dynamic = 1};
 }
 
 bool ns_type_is_number(ns_type t) {
@@ -75,6 +76,28 @@ bool ns_type_is_number(ns_type t) {
     default:
         return false;
     }
+}
+
+ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
+    if (ns_array_length(vm->call_stack) > 0) {
+        ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
+        for (int i = 0, l = ns_array_length(call->fn->fn.args); i < l; ++i) {
+            if (ns_str_equals(call->fn->fn.args[i].name, name)) {
+                return call->args[i];
+            }
+        }
+    }
+
+    for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
+        ns_record *r = &vm->records[i];
+        if (ns_str_equals(r->name, name)) {
+            if (r->type == NS_RECORD_VALUE) {
+                return r->val.val;
+            }
+        }
+    }
+
+    return ns_nil;
 }
 
 ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
@@ -215,20 +238,27 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 }
 
-ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    switch (n.primary_expr.expr) {
+ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n) {
+    ns_token_t t = n.primary_expr.token;
+    switch (t.type) {
     case NS_TOKEN_INT_LITERAL:
-        return (ns_value){.type = ns_type_i64, .i = ns_str_to_i32(n.primary_expr.token.val)};
+        return (ns_value){.type = ns_type_i64, .i = ns_str_to_i32(t.val)};
     case NS_TOKEN_FLT_LITERAL:
-        return (ns_value){.type = ns_type_i64, .i = ns_str_to_f64(n.primary_expr.token.val)};
+        return (ns_value){.type = ns_type_i64, .i = ns_str_to_f64(t.val)};
     case NS_TOKEN_STR_LITERAL:
-        return (ns_value){.type = ns_type_string, .i = ns_vm_push_string(vm, n.primary_expr.token.val)};
+        return (ns_value){.type = ns_type_string, .i = ns_vm_push_string(vm, t.val)};
     case NS_TOKEN_TRUE:
         return ns_true;
     case NS_TOKEN_FALSE:
         return ns_false;
-    return ns_nil;
+    case NS_TOKEN_IDENTIFIER:
+        return ns_vm_find_value(vm, t.val);
+    default: {
+        ns_str type = ns_token_type_to_string(t.type);
+        ns_error("eval error", "unimplemented primary expr type %.*s\n", type.len, type.data);
+    } break;
     }
+    return ns_nil;
 }
 
 ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
@@ -242,7 +272,7 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     case NS_AST_BINARY_EXPR:
         return ns_eval_binary_expr(vm, ctx, n);
     case NS_AST_PRIMARY_EXPR:
-        return ns_eval_primary_expr(vm, ctx, n);
+        return ns_eval_primary_expr(vm, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_error("eval error", "unimplemented expr type %.*s\n", type.len, type.data);

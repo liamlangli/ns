@@ -44,6 +44,13 @@ typedef struct ns_record {
     };
 } ns_record;
 
+typedef struct ns_call_record {
+    ns_record *fn;
+    ns_record *args;
+    ns_record *locals;
+    ns_type ret;
+} ns_call_record;
+
 typedef struct ns_fn {
     ns_str name;
     int ast;
@@ -58,14 +65,18 @@ typedef struct ns_struct {
 typedef struct ns_call {
     ns_record *fn;
     ns_value *args;
+    ns_value *locals;
     ns_value ret;
 } ns_call;
 
 typedef struct ns_vm {
-    ns_call *call_stack;
+    // parse state
     ns_record *records;
     ns_record *fn;
+    ns_call_record *call_records;
 
+    // eval state
+    ns_call *call_stack;
     ns_value *globals;
     ns_str *str_list;
     ns_data *data_list;
