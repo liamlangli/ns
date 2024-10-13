@@ -90,7 +90,7 @@ ns_str ns_str_slice(ns_str s, int start, int end);
 #define ns_str_free(s) if ((s).dynamic) free((void *)(s).data)
 
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
-#define ns_str_equals_STR(s, S) (strncmp((s).data, (S), strlen(S)) == 0)
+#define ns_str_equals_STR(s, S) ((!(s).data) ? 0 : (strncmp((s).data, (S), strlen(S)) == 0))
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
 
 int ns_str_to_i32(ns_str s);

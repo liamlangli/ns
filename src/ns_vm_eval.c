@@ -120,9 +120,15 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_value v = ns_eval_expr(vm, ctx, arg);
         call.args[i] = v;
     }
-    ns_array_push(vm->call_stack, call);
-    ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast]);
-    call = ns_array_pop(vm->call_stack);
+
+    if (ns_str_equals_STR(fn->lib, "std")) {
+        // todo call std fn
+        ns_info("eval", "call std fn %.*s\n", fn->name.len, fn->name.data);
+    } else {
+        ns_array_push(vm->call_stack, call);
+        ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast]);
+        call = ns_array_pop(vm->call_stack);
+    }
     return call.ret;
 }
 
