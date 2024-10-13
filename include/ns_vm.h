@@ -7,6 +7,7 @@ typedef enum {
     NS_RECORD_INVALID,
     NS_RECORD_VALUE,
     NS_RECORD_FN,
+    NS_RECORD_FN_CALL,
     NS_RECORD_STRUCT,
 } NS_RECORD_TYPE;
 
@@ -23,8 +24,14 @@ typedef struct ns_value_record {
 typedef struct ns_fn_record {
     ns_type ret;
     ns_record *args;
+    ns_value fn;
     int ast;
 } ns_fn_record;
+
+typedef struct ns_fn_call_record {
+    ns_record *fn;
+    ns_record *locals;
+} ns_fn_call_record;
 
 typedef struct ns_struct_record {
     ns_str name;
@@ -39,17 +46,11 @@ typedef struct ns_record {
     int index;
     union {
         ns_fn_record fn;
+        ns_fn_call_record call;
         ns_value_record val;
         ns_struct_record st;
     };
 } ns_record;
-
-typedef struct ns_call_record {
-    ns_record *fn;
-    ns_record *args;
-    ns_record *locals;
-    ns_type ret;
-} ns_call_record;
 
 typedef struct ns_fn {
     ns_str name;
@@ -72,8 +73,7 @@ typedef struct ns_call {
 typedef struct ns_vm {
     // parse state
     ns_record *records;
-    ns_record *fn;
-    ns_call_record *call_records;
+    ns_record *call_records;
 
     // eval state
     ns_call *call_stack;

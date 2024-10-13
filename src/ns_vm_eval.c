@@ -91,8 +91,12 @@ ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
     for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
         ns_record *r = &vm->records[i];
         if (ns_str_equals(r->name, name)) {
-            if (r->type == NS_RECORD_VALUE) {
-                return r->val.val;
+            switch (r->type)
+            {
+            case NS_RECORD_VALUE: return r->val.val;
+            case NS_RECORD_FN: return r->fn.fn;
+            default:
+                break;
             }
         }
     }
@@ -118,14 +122,22 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
     ns_array_push(vm->call_stack, call);
     ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast]);
-    ns_array_pop(vm->call_stack);
+    call = ns_array_pop(vm->call_stack);
     return call.ret;
 }
 
 ns_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_ast_t expr = ctx->nodes[n.jump_stmt.expr];
-    ns_value v = ns_eval_expr(vm, ctx, expr);
-    return v;
+    ns_value ret = ns_eval_expr(vm, ctx, expr);
+    if (ns_array_length(vm->call_stack) > 0) {
+        ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
+        if (call->fn->fn.ret.type != ret.type.type) {
+            // TODO: try type cast, emit error if failed
+            ns_error("eval error", "return type mismatch\n");
+        }
+        call->ret = ret;
+    }
+    return ret;
 }
 
 ns_value ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
@@ -136,6 +148,7 @@ ns_value ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_error("eval error", "unknown jump stmt type %.*s\n", l.len, l.data);
     } break;
     }
+    return ns_nil;
 }
 
 ns_value ns_eval_binary_ops_number(ns_value lhs, ns_value rhs, ns_token_t op) {
@@ -244,7 +257,7 @@ ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n) {
     case NS_TOKEN_INT_LITERAL:
         return (ns_value){.type = ns_type_i64, .i = ns_str_to_i32(t.val)};
     case NS_TOKEN_FLT_LITERAL:
-        return (ns_value){.type = ns_type_i64, .i = ns_str_to_f64(t.val)};
+        return (ns_value){.type = ns_type_f64, .i = ns_str_to_f64(t.val)};
     case NS_TOKEN_STR_LITERAL:
         return (ns_value){.type = ns_type_string, .i = ns_vm_push_string(vm, t.val)};
     case NS_TOKEN_TRUE:

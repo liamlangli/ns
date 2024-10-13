@@ -30,10 +30,19 @@ int ns_vm_push_data(ns_vm *vm, ns_data d) {
 }
 
 ns_record* ns_vm_find_record(ns_vm *vm, ns_str s) {
-    if (vm->fn) {
-        for (int i = 0, l = ns_array_length(vm->fn->fn.args); i < l; ++i) {
-            if (ns_str_equals(vm->fn->fn.args[i].name, s)) {
-                return &vm->fn->fn.args[i];
+    size_t l = ns_array_length(vm->call_records);
+    if (l > 0) {
+        ns_fn_call_record *call = &vm->call_records[l - 1].call;
+        ns_fn_record *fn = &call->fn->fn;
+        for (int i = 0, l = ns_array_length(fn->args); i < l; ++i) {
+            if (ns_str_equals(fn->args[i].name, s)) {
+                return &fn->args[i];
+            }
+        }
+
+        for (int i = 0, l = ns_array_length(call->locals); i < l; ++i) {
+            if (ns_str_equals(call->locals[i].name, s)) {
+                return &call->locals[i];
             }
         }
     }
@@ -205,7 +214,12 @@ void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     case NS_TOKEN_RETURN: {
         ns_ast_t expr = ctx->nodes[n.jump_stmt.expr];
         ns_type t = ns_vm_parse_expr(vm, ctx, expr);
-        if (vm->fn->fn.ret.type != t.type) {
+        size_t l = ns_array_length(vm->call_records);
+        if (l == 0) {
+            ns_parse_error(ctx, "syntax error", "return stmt not in fn\n");
+        }
+        ns_record *fn = vm->call_records[l - 1].call.fn;
+        if (fn->fn.ret.type != t.type) {
             ns_parse_error(ctx, "type error", "return type mismatch\n");
         }
     } break;
@@ -239,9 +253,13 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
             continue;
         ns_ast_t n = ctx->nodes[fn->fn.ast];
         fn->fn.ast = n.fn_def.body;
-        vm->fn = fn;
+        
+        ns_record call = (ns_record){.type = NS_RECORD_FN_CALL};
+        call.call.fn = fn;
+        ns_array_push(vm->call_records, call);
         ns_vm_parse_compound_stmt(vm, ctx, n.fn_def.body);
-        vm->fn = NULL;
+        ns_array_pop(vm->call_records);
+        fn->fn.fn = (ns_value){.p = i, .type = (ns_type){.type = NS_TYPE_FN, .name = fn->name}};
     }
 }
 
