@@ -105,13 +105,13 @@ ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t);
 ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name);
 
 // expr
-ns_bc_value ns_bc_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ast, ns_ast_t n);
+ns_bc_value ns_bc_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, ns_ast_t n);
 ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, ns_ast_t n);
 ns_bc_value ns_bc_primary_expr(ns_bc_ctx *bc_ctx, ns_ast_t n);
 ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, ns_ast_t n);
 
-ns_bc_value ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, ns_ast_t n);
-void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, ns_ast_t n);
+ns_bc_value ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, ns_ast_t n);
+void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, ns_ast_t n);
 
 // impl
 #define MAX_STR_LENGTH 128
@@ -312,15 +312,14 @@ ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, ns_ast_t n) {
     return ret;
 }
 
-ns_bc_value ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, ns_ast_t n) {
-    ns_ast_ctx *ctx = bc_ctx->ctx;
+ns_bc_value ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_bc_builder builder = bc_ctx->builder;
 
     ns_token_t t = n.jump_stmt.label;
     if (ns_str_equals_STR(t.val, "return")) {
         if (n.jump_stmt.expr != -1) {
-            ns_bc_value expr = ns_bc_expr(bc_ctx, ctx->nodes[n.jump_stmt.expr]);
-            return LLVMBuildRet(builder, expr);
+            ns_bc_value ret = ns_bc_expr(bc_ctx, ctx, ctx->nodes[n.jump_stmt.expr]);
+            // ns_bc_value LLVMBuildRet(builder, ret.val);
         } else {
             return LLVMBuildRetVoid(builder);
         }
@@ -328,9 +327,7 @@ ns_bc_value ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, ns_ast_t n) {
     return NULL;
 }
 
-void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, ns_ast_t n) {
-    ns_ast_ctx *ctx = bc_ctx->ctx;
-
+void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_ast_t *stmt = &n;
     for (int i = 0; i < n.compound_stmt.count; i++) {
         stmt = &ctx->nodes[stmt->next];
