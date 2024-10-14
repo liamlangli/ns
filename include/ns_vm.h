@@ -91,9 +91,11 @@ int ns_vm_push_record(ns_vm *vm, ns_record r);
 int ns_vm_push_string(ns_vm *vm, ns_str s);
 int ns_vm_push_data(ns_vm *vm, ns_data d);
 ns_record* ns_vm_find_record(ns_vm *vm, ns_str s);
+ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 // vm std
 void ns_vm_import_std_records(ns_vm *vm);
+ns_value ns_vm_eval_std(ns_vm *vm);
 
 #ifdef NS_REPL
 void ns_repl(ns_vm* vm);

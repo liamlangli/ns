@@ -22,6 +22,25 @@ ns_str ns_type_name(ns_type t) {
     }
 }
 
+bool ns_type_is_number(ns_type t) {
+    switch (t.type) {
+    case NS_TYPE_I8:
+    case NS_TYPE_I16:
+    case NS_TYPE_I32:
+    case NS_TYPE_I64:
+    case NS_TYPE_U8:
+    case NS_TYPE_U16:
+    case NS_TYPE_U32:
+    case NS_TYPE_U64:
+    case NS_TYPE_F32:
+    case NS_TYPE_F64:
+        return true;
+    default:
+        return false;
+    }
+}
+
+
 void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap) {
     ns_array_header h = {0};
     void *b;
@@ -87,4 +106,12 @@ ns_str ns_str_unescape(ns_str s) {
     data[j] = '\0';
     ns_str ret = {.data = data, .len = j};
     return ret;
+}
+
+i32 ns_str_append_len(ns_str *a, const char *data, int len) {
+    for (int i = 0; i < len; i++) {
+        ns_array_push(a->data, data[i]);
+    }
+    a->len += len;
+    return a->len;
 }

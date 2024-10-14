@@ -84,6 +84,11 @@ typedef struct ns_str {
 
 ns_str ns_str_slice(ns_str s, int start, int end);
 
+i32 ns_str_to_i32(ns_str s);
+f64 ns_str_to_f64(ns_str s);
+ns_str ns_str_unescape(ns_str s);
+i32 ns_str_append_len(ns_str *a, const char *data, int len);
+
 #define ns_str_null ((ns_str){0, 0, 0})
 #define ns_str_range(s, n) ((ns_str){(s), (n), 1})
 #define ns_str_cstr(s) ((ns_str){(s), strlen(s), 0})
@@ -92,10 +97,11 @@ ns_str ns_str_slice(ns_str s, int start, int end);
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
 #define ns_str_equals_STR(s, S) ((!(s).data) ? 0 : (strncmp((s).data, (S), strlen(S)) == 0))
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
+#define ns_str_append(a, b) (ns_str_append_len((a), (b).data, (b).len))
 
-int ns_str_to_i32(ns_str s);
-f64 ns_str_to_f64(ns_str s);
-ns_str ns_str_unescape(ns_str s);
+#define ns_str_true ns_str_cstr("true")
+#define ns_str_false ns_str_cstr("false")
+#define ns_str_nil ns_str_cstr("nil")
 
 // ns_data
 typedef struct ns_data {
@@ -230,6 +236,7 @@ typedef struct ns_type {
 #define ns_type_f64 ((ns_type){.type = NS_TYPE_F64, .name = ns_str_cstr("f64")})
 #define ns_type_i64 ((ns_type){.type = NS_TYPE_I64, .name = ns_str_cstr("i64")})
 #define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
+bool ns_type_is_number(ns_type t);
 
 typedef enum {
     NS_SCOPE_GLOBAL,

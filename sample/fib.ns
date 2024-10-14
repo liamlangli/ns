@@ -1,3 +1,5 @@
+import std
+
 // Fibonacci sequence
 fn fibonacci(n: i32): i32 {
     if n == 0 {
@@ -9,4 +11,4 @@ fn fibonacci(n: i32): i32 {
     }
 }
 let r = fibonacci(10)
-print(r)
+print('{r}')

@@ -18,14 +18,14 @@ bool ns_parse_unary_expr(ns_ast_ctx *ctx);
 bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 
 bool ns_parse_stack_top_is_operator(ns_ast_ctx *ctx) {
-    if (ctx->top == -1)
+    if (ctx->top == 0)
         return false; // empty stack
     ns_ast_t n = ns_parse_stack_top(ctx);
     return n.type == NS_AST_BINARY_EXPR;
 }
 
 bool ns_parse_stack_top_is_operand(ns_ast_ctx *ctx) {
-    if (ctx->top == -1)
+    if (ctx->top == 0)
         return false; // empty stack
     ns_ast_t n = ns_parse_stack_top(ctx);
     switch (n.type) {

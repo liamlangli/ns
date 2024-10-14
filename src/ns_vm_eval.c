@@ -60,24 +60,6 @@ ns_str ns_ops_override_name(ns_str lhs, ns_str rhs, ns_token_t op) {
     return (ns_str){.data = data, .len = len - 1, .dynamic = 1};
 }
 
-bool ns_type_is_number(ns_type t) {
-    switch (t.type) {
-    case NS_TYPE_I8:
-    case NS_TYPE_I16:
-    case NS_TYPE_I32:
-    case NS_TYPE_I64:
-    case NS_TYPE_U8:
-    case NS_TYPE_U16:
-    case NS_TYPE_U32:
-    case NS_TYPE_U64:
-    case NS_TYPE_F32:
-    case NS_TYPE_F64:
-        return true;
-    default:
-        return false;
-    }
-}
-
 ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
     if (ns_array_length(vm->call_stack) > 0) {
         ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
@@ -121,14 +103,13 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         call.args[i] = v;
     }
 
+    ns_array_push(vm->call_stack, call);
     if (ns_str_equals_STR(fn->lib, "std")) {
-        // todo call std fn
-        ns_info("eval", "call std fn %.*s\n", fn->name.len, fn->name.data);
+        ns_vm_eval_std(vm);
     } else {
-        ns_array_push(vm->call_stack, call);
         ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast]);
-        call = ns_array_pop(vm->call_stack);
     }
+    call = ns_array_pop(vm->call_stack);
     return call.ret;
 }
 
@@ -263,9 +244,9 @@ ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n) {
     case NS_TOKEN_INT_LITERAL:
         return (ns_value){.type = ns_type_i64, .i = ns_str_to_i32(t.val)};
     case NS_TOKEN_FLT_LITERAL:
-        return (ns_value){.type = ns_type_f64, .i = ns_str_to_f64(t.val)};
+        return (ns_value){.type = ns_type_f64, .f = ns_str_to_f64(t.val)};
     case NS_TOKEN_STR_LITERAL:
-        return (ns_value){.type = ns_type_string, .i = ns_vm_push_string(vm, t.val)};
+        return (ns_value){.type = ns_type_string, .p = ns_vm_push_string(vm, t.val)};
     case NS_TOKEN_TRUE:
         return ns_true;
     case NS_TOKEN_FALSE:
