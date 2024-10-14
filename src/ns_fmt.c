@@ -114,8 +114,6 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
             ctx.token.line = 1; // start from 1
             ctx.current = -1;
 
-            // add null terminator
-            expr.data[expr.len] = '\0'; // dynamic string
             ns_parse_expr_stack(&ctx);
             ns_value v = ns_eval_expr(vm, &ctx, ctx.nodes[ctx.current]);
             ns_str s = ns_fmt_value(vm, v);

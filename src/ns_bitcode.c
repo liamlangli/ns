@@ -17,15 +17,6 @@
 #define ns_bc_type LLVMTypeRef
 #define ns_bc_value LLVMValueRef
 
-#define NS_VAR_TMP_0 "__0"
-#define NS_VAR_TMP_1 "__1"
-#define NS_VAR_TMP_2 "__2"
-#define NS_VAR_TMP_3 "__3"
-#define NS_VAR_TMP_4 "__4"
-#define NS_VAR_TMP_5 "__5"
-#define NS_VAR_TMP_6 "__6"
-#define NS_VAR_TMP_7 "__7"
-
 typedef struct ns_llvm_value_record {
     ns_str name;
     ns_bc_value ll_value;
@@ -44,8 +35,15 @@ typedef struct ns_llvm_fn_record {
 typedef struct ns_llvm_struct_record {
     ns_str name;
     ns_bc_type type;
+    ns_bc_value st;
     ns_llvm_value_record *fields;
 } ns_llvm_struct_record;
+
+typedef struct ns_llvm_call_record {
+    ns_llvm_record *fn;
+    ns_llvm_record *locals;
+    ns_llvm_record ret;
+} ns_llvm_call_record;
 
 typedef enum ns_llvm_record_type {
     NS_LLVM_RECORD_TYPE_INVALID,
@@ -63,9 +61,9 @@ typedef struct ns_llvm_record {
         ns_llvm_fn_record fn;
         ns_llvm_struct_record st;
     };
-} ns_llvm_record;
+}  ns_llvm_record;
 
-typedef struct ns_llvm_ctx_t {
+typedef struct ns_llvm_ctx {
     ns_str path;
     ns_ast_ctx *ctx;
     ns_bc_module mod;
@@ -77,31 +75,31 @@ typedef struct ns_llvm_ctx_t {
     ns_llvm_record *globals;
     int local_stack_index;
     int local_stack[NS_MAX_CALL_STACK];
-} ns_llvm_ctx_t;
+} ns_llvm_ctx;
 
 // util
 const char* ns_llvm_str(ns_str s);
 ns_str ns_tmp_var_indexed(int i);
-ns_str ns_tmp_var(ns_llvm_ctx_t *ctx);
-ns_bc_type ns_llvm_type(ns_llvm_ctx_t *ctx, ns_token_t t);
-ns_bc_value ns_llvm_find_var(ns_llvm_ctx_t *llvm_ctx, ns_str name);
-ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *llvm_ctx, ns_str name);
-ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx_t *llvm_ctx, ns_str name);
+ns_str ns_tmp_var(ns_llvm_ctx *ctx);
+ns_bc_type ns_llvm_type(ns_llvm_ctx *ctx, ns_type t);
+ns_bc_value ns_llvm_find_var(ns_llvm_ctx *llvm_ctx, ns_str name);
+ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx *llvm_ctx, ns_str name);
+ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx *llvm_ctx, ns_str name);
 ns_llvm_record ns_llvm_struct_find_member(ns_llvm_record s, ns_str name);
-int ns_llvm_push_local(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r);
-int ns_llvm_push_global(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r);
+int ns_llvm_push_local(ns_llvm_ctx *llvm_ctx, ns_llvm_record r);
+int ns_llvm_push_global(ns_llvm_ctx *llvm_ctx, ns_llvm_record r);
 
 // expr
-ns_bc_value ns_llvm_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
-ns_bc_value ns_llvm_call_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
-ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
-ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
+ns_bc_value ns_llvm_expr(ns_llvm_ctx *llvm_ctx, ns_ast_t n);
+ns_bc_value ns_llvm_call_expr(ns_llvm_ctx *llvm_ctx, ns_ast_t n);
+ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx *llvm_ctx, ns_ast_t n);
+ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx *llvm_ctx, ns_ast_t n);
 
 // stmt
-int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
-int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
-ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
-void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n);
+int ns_llvm_fn_def(ns_llvm_ctx *llvm_ctx, ns_ast_t n);
+int ns_llvm_struct_def(ns_llvm_ctx *llvm_ctx, ns_ast_t n);
+ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx *llvm_ctx, ns_ast_t n);
+void ns_llvm_compound_stmt(ns_llvm_ctx *llvm_ctx, ns_ast_t n);
 
 // impl
 #define MAX_STR_LENGTH 128
@@ -119,67 +117,51 @@ const char* ns_llvm_str(ns_str s) {
     return _str_buff;
 }
 
-ns_str ns_tmp_var_indexed(int i) {
-    switch (i)
-    {
-        case 0: return ns_str_cstr(NS_VAR_TMP_0);
-        case 1: return ns_str_cstr(NS_VAR_TMP_1);
-        case 2: return ns_str_cstr(NS_VAR_TMP_2);
-        case 3: return ns_str_cstr(NS_VAR_TMP_3);
-        case 4: return ns_str_cstr(NS_VAR_TMP_4);
-        case 5: return ns_str_cstr(NS_VAR_TMP_5);
-        case 6: return ns_str_cstr(NS_VAR_TMP_6);
-        case 7: return ns_str_cstr(NS_VAR_TMP_7);
-        default: assert(false);
-    }
-    return ns_str_null;
-}
-
-ns_str ns_tmp_var(ns_llvm_ctx_t *ctx) {
+ns_str ns_tmp_var(ns_llvm_ctx *ctx) {
     int i = ns_array_length(ctx->locals);
     return ns_tmp_var_indexed(i);
 }
 
-ns_bc_type ns_llvm_type(ns_llvm_ctx_t *ctx, ns_token_t t) {
+ns_bc_type ns_llvm_type(ns_llvm_ctx *ctx, ns_type t) {
     switch (t.type) {
-    case NS_TOKEN_TYPE_INT8:
-    case NS_TOKEN_TYPE_UINT8:
+    case NS_TYPE_I8:
+    case NS_TYPE_U8:
         return LLVMInt8Type();
-    case NS_TOKEN_TYPE_INT16:
-    case NS_TOKEN_TYPE_UINT16:
+    case NS_TYPE_I16:
+    case NS_TYPE_U16:
         return LLVMInt16Type();
-    case NS_TOKEN_TYPE_INT32:
-    case NS_TOKEN_TYPE_UINT32:
+    case NS_TYPE_I32:
+    case NS_TYPE_U32:
         return LLVMInt32Type();
-    case NS_TOKEN_TYPE_INT64:
-    case NS_TOKEN_TYPE_UINT64:
+    case NS_TYPE_I64:
+    case NS_TYPE_U64:
         return LLVMInt64Type();
-    case NS_TOKEN_TYPE_F32:
+    case NS_TYPE_F32:
         return LLVMFloatType();
-    case NS_TOKEN_TYPE_F64:
+    case NS_TYPE_F64:
         return LLVMDoubleType();
     case NS_TOKEN_IDENTIFIER:
-        return ns_llvm_find_struct(ctx, t.val).st.type;
+        return ns_llvm_find_fn(ctx, t.name).st.type;
     default:
-        ns_error("bitcode error:", "unknown type %s\n", ns_llvm_str(t.val));
+        ns_error("bitcode error:", "unknown type %s\n", ns_llvm_str(t.name));
         break;
     }
     return NULL;
 }
 
-int ns_llvm_push_local(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r) {
+int ns_llvm_push_local(ns_llvm_ctx *llvm_ctx, ns_llvm_record r) {
     int i = ns_array_length(llvm_ctx->locals);
     ns_array_push(llvm_ctx->locals, r);
     return i;
 }
 
-int ns_llvm_push_global(ns_llvm_ctx_t *llvm_ctx, ns_llvm_record r) {
+int ns_llvm_push_global(ns_llvm_ctx *llvm_ctx, ns_llvm_record r) {
     int i = ns_array_length(llvm_ctx->globals);
     ns_array_push(llvm_ctx->globals, r);
     return i;
 }
 
-ns_bc_value ns_llvm_find_var(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
+ns_bc_value ns_llvm_find_var(ns_llvm_ctx *llvm_ctx, ns_str name) {
     if (llvm_ctx->fn->type != NS_LLVM_RECORD_TYPE_INVALID) {
         ns_llvm_record *fn = llvm_ctx->fn;
         for (int i = 0, l = ns_array_length(fn->fn.args); i < l; i++) {
@@ -203,7 +185,7 @@ ns_bc_value ns_llvm_find_var(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
     return NULL;
 }
 
-ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
+ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx *llvm_ctx, ns_str name) {
     for (int i = 0, l = ns_array_length(llvm_ctx->globals); i < l; i++) {
         if (ns_str_equals(llvm_ctx->globals[i].fn.name, name) && llvm_ctx->globals[i].type == NS_LLVM_RECORD_TYPE_FN) {
             return llvm_ctx->globals[i];
@@ -212,7 +194,7 @@ ns_llvm_record ns_llvm_find_fn(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
     return NS_LLVM_RECORD_INVALID;
 }
 
-ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx_t *llvm_ctx, ns_str name) {
+ns_llvm_record ns_llvm_find_struct(ns_llvm_ctx *llvm_ctx, ns_str name) {
     for (int i = 0, l = ns_array_length(llvm_ctx->globals); i < l; i++) {
         if (ns_str_equals(llvm_ctx->globals[i].st.name, name) && llvm_ctx->globals[i].type == NS_LLVM_RECORD_TYPE_STRUCT) {
             return llvm_ctx->globals[i];
@@ -232,7 +214,7 @@ ns_llvm_record ns_llvm_struct_find_member(ns_llvm_record s, ns_str name) {
     return NS_LLVM_RECORD_INVALID;
 }
 
-ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
+ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx *llvm_ctx, ns_ast_t n) {
     switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
     case NS_TOKEN_FLT_LITERAL:
@@ -247,7 +229,7 @@ ns_bc_value ns_llvm_primary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     return NULL;
 }
 
-ns_bc_value ns_llvm_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
+ns_bc_value ns_llvm_expr(ns_llvm_ctx *llvm_ctx, ns_ast_t n) {
     ns_ast_ctx *ctx = llvm_ctx->ctx;
     switch (n.type) {
     case NS_AST_EXPR:
@@ -264,74 +246,57 @@ ns_bc_value ns_llvm_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     return NULL;
 }
 
-int ns_llvm_fn_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_ast_ctx *ctx = llvm_ctx->ctx;
+void ns_bitcode_struct_def(ns_llvm_ctx *llvm_ctx, ns_vm *vm) {
+    ns_bc_module mod = llvm_ctx->mod;
     ns_bc_builder builder = llvm_ctx->builder;
 
-    // push current local count to stack
-    llvm_ctx->local_stack[llvm_ctx->local_stack_index++] = ns_array_length(llvm_ctx->locals);
-    // check stack depth
-    if (llvm_ctx->local_stack_index >= NS_MAX_CALL_STACK) {
-        assert(false); // max stack depth reached
-    }
-
-    i32 arg_count = n.fn_def.arg_count;
-    ns_bc_type *arg_types = malloc(sizeof(ns_bc_type) * arg_count);
-    ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_FN, .fn = {.name = n.fn_def.name.val}};
-    ns_array_set_length(r.fn.args, arg_count);
-    ns_ast_t *arg = &n;
-    for (int i = 0; i < n.fn_def.arg_count; i++) {
-        arg = &ctx->nodes[arg->next];
-        if (arg->arg.is_ref) {
-            // TODO: handle ref type
+    for (int i = 0, l = ns_array_length(vm->records); i < l; i++) {
+        ns_record r = vm->records[i];
+        if (r.type != NS_RECORD_STRUCT) continue;
+        ns_bc_type *fields = NULL;
+        i32 field_count = ns_array_length(r.st.fields);
+        ns_array_set_length(fields, field_count);
+        for (int j = 0; j < field_count; j++) {
+            fields[j] = ns_llvm_type(vm, r.st.fields[j].val.type);
         }
-        ns_bc_type type = ns_llvm_type(llvm_ctx, arg->arg.type);
-        r.fn.args[i] = (ns_llvm_value_record){.name = arg->arg.name.val, .ll_type = type, .i = i};
-        arg_types[i] = type;
+        ns_bc_type struct_type = LLVMStructType(fields, field_count, 0);
+        ns_bc_value st = LLVMAddStruct(mod, ns_llvm_str(r.name), struct_type);
+        ns_llvm_record struct_record = {.type = NS_LLVM_RECORD_TYPE_STRUCT, .st = {.name = r.name}};
+        struct_record.st.type = struct_type;
+        struct_record.st.st = st;
+        ns_llvm_push_global(llvm_ctx, struct_record);
     }
-    ns_bc_type ret_type = ns_llvm_type(llvm_ctx, n.fn_def.return_type);
-    ns_bc_type fn_type = LLVMFunctionType(ret_type, arg_types, arg_count, 0);
-    ns_bc_value fn = LLVMAddFunction(llvm_ctx->mod, ns_llvm_str(n.fn_def.name.val), fn_type);
-    r.fn.fn = fn;
-    r.fn.type = fn_type;
-    int fn_index = ns_llvm_push_global(llvm_ctx, r);
-    llvm_ctx->fn = &llvm_ctx->globals[fn_index];
-
-    // parse function body
-    ns_bc_block entry = LLVMAppendBasicBlock(fn, "entry");
-    LLVMPositionBuilderAtEnd(builder, entry);
-    ns_llvm_compound_stmt(llvm_ctx, ctx->nodes[n.fn_def.body]);
-
-    llvm_ctx->fn = NULL;
-
-    // pop local count from stack
-    int local_count = llvm_ctx->local_stack[--llvm_ctx->local_stack_index];
-    ns_array_set_length(llvm_ctx->locals, local_count);
-    return fn_index;
 }
 
-int ns_llvm_struct_def(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
-    ns_ast_ctx *ctx = llvm_ctx->ctx;
-    int field_count = n.struct_def.count;
-    
-    ns_str struct_name = n.struct_def.name.val;
+void ns_bitcode_fn_def(ns_llvm_ctx *llvm_ctx, ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_bc_module mod = llvm_ctx->mod;
+    ns_bc_builder builder = llvm_ctx->builder;
 
-    ns_llvm_record r = {.type = NS_LLVM_RECORD_TYPE_STRUCT, .st = {.name = struct_name}};
-    ns_array_set_length(r.st.fields, field_count);
-    ns_bc_type *field_types = malloc(sizeof(ns_bc_type) * field_count);
-    ns_ast_t *field = &n;
-    for (int i = 0; i < field_count; i++) {
-        field = &ctx->nodes[field->next];
-        field_types[i] = ns_llvm_type(llvm_ctx, field->arg.type);
-        r.st.fields[i] = (ns_llvm_value_record){.name = field->arg.name.val, .ll_type = field_types[i], .i = i};
+    for (int i = 0, l = ns_array_length(vm->records); i < l; i++) {
+        ns_record r = vm->records[i];
+        if (r.type != NS_RECORD_FN) continue;
+        ns_bc_type *args = NULL;
+        i32 arg_count = ns_array_length(r.fn.args);
+        ns_array_set_length(args, arg_count);
+        for (int j = 0; j < arg_count; j++) {
+            args[j] = ns_llvm_type(vm, r.fn.args[j].val.type);
+        }
+        ns_bc_type ret = ns_llvm_type(vm, r.fn.ret);
+        ns_bc_type fn_type = LLVMFunctionType(ret, args, arg_count, 0);
+        ns_bc_value fn = LLVMAddFunction(mod, ns_llvm_str(r.name), fn_type);
+        ns_llvm_record fn_record = {.type = NS_LLVM_RECORD_TYPE_FN, .fn = {.name = r.name}};
+        fn_record.fn.type = fn_type;
+        fn_record.fn.fn = fn;
+        ns_llvm_push_global(llvm_ctx, fn_record);
+
+        ns_bc_block entry = LLVMAppendBasicBlock(fn, "entry");
+        LLVMPositionBuilderAtEnd(builder, entry);
+        ns_llvm_compound_stmt(llvm_ctx, ctx->nodes[r.fn.ast]);
     }
-    ns_bc_type struct_type = LLVMStructCreateNamed(LLVMGetGlobalContext(), ns_llvm_str(struct_name));
-    r.st.type = struct_type;
-    LLVMStructSetBody(struct_type, field_types, field_count, 0);
-    return ns_llvm_push_global(llvm_ctx, r);
 }
 
-ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
+
+ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx *llvm_ctx, ns_ast_t n) {
     ns_ast_ctx *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
@@ -363,7 +328,7 @@ ns_bc_value ns_llvm_binary_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     return ret;
 }
 
-ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
+ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx *llvm_ctx, ns_ast_t n) {
     ns_ast_ctx *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
@@ -379,7 +344,7 @@ ns_bc_value ns_llvm_jump_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     return NULL;
 }
 
-void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
+void ns_llvm_compound_stmt(ns_llvm_ctx *llvm_ctx, ns_ast_t n) {
     ns_ast_ctx *ctx = llvm_ctx->ctx;
 
     ns_ast_t *stmt = &n;
@@ -395,7 +360,7 @@ void ns_llvm_compound_stmt(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     }
 }
 
-ns_bc_value ns_llvm_call_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
+ns_bc_value ns_llvm_call_expr(ns_llvm_ctx *llvm_ctx, ns_ast_t n) {
     ns_ast_ctx *ctx = llvm_ctx->ctx;
     ns_bc_builder builder = llvm_ctx->builder;
 
@@ -415,7 +380,7 @@ ns_bc_value ns_llvm_call_expr(ns_llvm_ctx_t *llvm_ctx, ns_ast_t n) {
     return ret;
 }
 
-void ns_llvm_std(ns_llvm_ctx_t *llvm_ctx) {
+void ns_llvm_std(ns_llvm_ctx *llvm_ctx) {
     ns_bc_module module = llvm_ctx->mod;
 
     // register printf
@@ -428,14 +393,14 @@ void ns_llvm_std(ns_llvm_ctx_t *llvm_ctx) {
     ns_llvm_push_global(llvm_ctx, printf_record);
 }
 
-bool ns_bitcode_gen(ns_vm * vm, ns_ast_ctx *ctx) {
+bool ns_bitcode_gen(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_str output_path = ns_str_cstr(ctx->output.data);
     ns_info("bitcode", "generate llvm bitcode file %s\n", output_path.data);
 
     ns_str module_name = ns_path_filename(ctx->filename);
     ns_bc_module mod = LLVMModuleCreateWithName(module_name.data);
     ns_bc_builder builder = LLVMCreateBuilder();
-    ns_llvm_ctx_t llvm_ctx = {0};
+    ns_llvm_ctx llvm_ctx = {0};
     llvm_ctx.path = output_path;
     llvm_ctx.ctx = ctx;
     llvm_ctx.mod = mod;
@@ -443,22 +408,8 @@ bool ns_bitcode_gen(ns_vm * vm, ns_ast_ctx *ctx) {
     llvm_ctx.fn = NULL;
 
     ns_llvm_std(&llvm_ctx);
-
-    int begin = ctx->section_begin;
-    int end = ctx->section_end;
-    for (int i = begin; i < end; ++i) {
-        ns_ast_t n = ctx->nodes[ctx->sections[i++]];
-
-        switch (n.type) {
-        case NS_AST_FN_DEF:
-            ns_llvm_fn_def(&llvm_ctx, n);
-            break;
-        case NS_AST_STRUCT_DEF:
-            ns_llvm_struct_def(&llvm_ctx, n);
-            break;
-        default: break;
-        }
-    }
+    ns_bitcode_fn_def(&llvm_ctx, vm, ctx);
+    ns_bitcode_struct_def(&llvm_ctx, vm);
 
     ns_bc_type main_func_type = LLVMFunctionType(LLVMInt32Type(), NULL, 0, 0);
     ns_bc_value main_func = LLVMAddFunction(mod, "main", main_func_type);
@@ -466,7 +417,7 @@ bool ns_bitcode_gen(ns_vm * vm, ns_ast_ctx *ctx) {
     LLVMPositionBuilderAtEnd(builder, entry_main);
 
     // parse deferred nodes as main fn body
-    for (int i = begin; i < end; ++i) {
+    for (int i = ctx->section_begin; i < ctx->section_end; ++i) {
         ns_ast_t n = ctx->nodes[ctx->sections[i++]];
         switch (n.type) {
         case NS_AST_VAR_DEF: {
