@@ -68,8 +68,16 @@ ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
                 return call->args[i];
             }
         }
+
+        for (int i = 0, l = ns_array_length(call->locals); i < l; ++i) {
+            if (ns_str_equals(call->locals[i].name, name)) {
+                return call->locals[i].val.val;
+            }
+        }
     }
 
+    ns_record *r = ns_vm_find_record(vm, name);
+    if (!r) return ns_nil;
     for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
         ns_record *r = &vm->records[i];
         if (ns_str_equals(r->name, name)) {

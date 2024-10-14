@@ -25,7 +25,7 @@ typedef struct ns_fn_record {
     ns_type ret;
     ns_record *args;
     ns_value fn;
-    int ast;
+    i32 ast;
 } ns_fn_record;
 
 typedef struct ns_fn_call_record {
@@ -36,14 +36,14 @@ typedef struct ns_fn_call_record {
 typedef struct ns_struct_record {
     ns_str name;
     ns_record *fields;
-    int ast;
+    i32 ast;
 } ns_struct_record;
 
 typedef struct ns_record {
     NS_RECORD_TYPE type;
     ns_str name;
     ns_str lib;
-    int index;
+    i32 index;
     union {
         ns_fn_record fn;
         ns_fn_call_record call;
@@ -54,19 +54,19 @@ typedef struct ns_record {
 
 typedef struct ns_fn {
     ns_str name;
-    int ast;
+    i32 ast;
 } ns_fn;
 
 typedef struct ns_struct {
     ns_str name;
-    int index;
+    i32 index;
     ns_str *field_names;
 } ns_struct;
 
 typedef struct ns_call {
     ns_record *fn;
+    ns_record *locals;
     ns_value *args;
-    ns_value *locals;
     ns_value ret;
 } ns_call;
 
