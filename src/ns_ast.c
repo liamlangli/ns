@@ -467,7 +467,8 @@ bool ns_parse_var_define(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_type_define(ns_ast_ctx *ctx) {
-    ns_parse_error(ctx, "syntax error", "type define unimplemented\n");
+    ns_parse_state state = ns_save_state(ctx);
+    ns_restore_state(ctx, state);
     return false;
 }
 
