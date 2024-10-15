@@ -466,21 +466,8 @@ bool ns_parse_var_define(ns_ast_ctx *ctx) {
     return false;
 }
 
-bool ns_parse_type_define(ns_ast_ctx *_) {
-    // int state = ns_save_state(ctx);
-
-    // // type identifier = type
-    // if (ns_token_require(ctx, NS_TOKEN_TYPE) && ns_parse_identifier(ctx)) {
-    //     ns_ast_t *n = ns_ast_emplace(ctx, NS_AST_TYPE_DEF);
-    //     n->type_def.name = ctx->token;
-    //     if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
-    //         if (ns_type_expr(ctx)) {
-    //             return true;
-    //         }
-    //     }
-    // }
-
-    // ns_restore_state(ctx, state);
+bool ns_parse_type_define(ns_ast_ctx *ctx) {
+    ns_parse_error(ctx, "syntax error", "type define unimplemented\n");
     return false;
 }
 

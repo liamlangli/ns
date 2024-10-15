@@ -1,20 +1,22 @@
 # OPTIONS
-NS_BITCODE ?= 1
+LLVM_CONFIG := $(shell command -v llvm-config 2>/dev/null)
+ifeq ($(LLVM_CONFIG),)
+	NS_BITCODE ?= 0
+else
+	NS_BITCODE ?= 1
+endif
+
 NS_DEBUG ?= 1
 NS_REPL ?= 1
 
 # VARIABLES
 CC = clang
 
-LLVM_CFLAGS = `llvm-config --cflags`
-LLVM_LDFLAGS = `llvm-config --ldflags --libs core --system-libs`
-LLVM_TRIPLE = `llvm-config --host-target`
-
 CFLAGS = -Iinclude
 LDFLAGS = $(LLVM_LDFLAGS)
 
 ifeq ($(NS_DEBUG), 1)
-	CFLAGS += -g -O0 -DNS_DEBUG -Wall -Wextra
+	CFLAGS += -g -O0 -Wall -Wextra -DNS_DEBUG
 else
 	CFLAGS += -Os
 endif
@@ -28,6 +30,10 @@ ifeq ($(NS_BITCODE), 1)
 	BITCODE_SRC = src/ns_bitcode.c
 	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
 	BITCODE_FLAGS = -DNS_BITCODE
+
+	LLVM_CFLAGS = `llvm-config --cflags`
+	LLVM_LDFLAGS = `llvm-config --ldflags --libs core --system-libs`
+	LLVM_TRIPLE = `llvm-config --host-target`
 endif
 
 BINDIR = bin
