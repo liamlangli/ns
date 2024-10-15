@@ -92,9 +92,6 @@ bc: all
 eval: all
 	$(TARGET) sample/add.ns
 
-repl: all
-	$(TARGET) -r
-
 clean:
 	rm -rf $(OBJDIR)
 
