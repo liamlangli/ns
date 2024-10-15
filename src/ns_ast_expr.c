@@ -111,7 +111,7 @@ bool ns_parse_call_expr(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
-    ns_parse_state_t state = ns_save_state(ctx);
+    ns_parse_state state = ns_save_state(ctx);
     if (ns_parse_next_token(ctx)) {
         switch (ctx->token.type) {
         case NS_TOKEN_INT_LITERAL:
@@ -139,14 +139,14 @@ bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_postfix_expr(ns_ast_ctx *ctx) {
-    ns_parse_state_t primary_state = ns_save_state(ctx);
+    ns_parse_state primary_state = ns_save_state(ctx);
     if (!ns_parse_primary_expr(ctx)) {
         ns_restore_state(ctx, primary_state);
         return false;
     }
 
     int callee = ctx->current;
-    ns_parse_state_t state = ns_save_state(ctx);
+    ns_parse_state state = ns_save_state(ctx);
     // parse postfix '(' [expr]* [,expr]* ')'
     if (ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
         ns_token_skip_eol(ctx);
@@ -224,7 +224,7 @@ bool ns_parse_postfix_expr(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
-    ns_parse_state_t state = ns_save_state(ctx);
+    ns_parse_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ctx->token.type == NS_TOKEN_BIT_INVERT_OP ||
         (ctx->token.type == NS_TOKEN_ADD_OP && ns_str_equals_STR(ctx->token.val, "-"))) {
@@ -246,7 +246,7 @@ bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
 // stack based expression parser
 bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
     int expr_top = ++ctx->top;
-    ns_parse_state_t state;
+    ns_parse_state state;
     do {
         state = ns_save_state(ctx);
         if (!ns_parse_next_token(ctx)) {

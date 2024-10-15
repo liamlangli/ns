@@ -43,7 +43,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns bitcode",
+            "name": "ns bc",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["-o", "bin/add.bc", "-b", "sample/add.ns"],

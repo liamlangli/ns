@@ -44,7 +44,7 @@ typedef struct ns_ast_t ns_ast_t;
 
 typedef struct ns_parse_state {
     int f, line;
-} ns_parse_state_t;
+} ns_parse_state;
 
 typedef struct ns_ast_arg {
     bool is_ref;
@@ -240,8 +240,8 @@ bool ns_token_require_type(ns_ast_ctx *ctx);
 bool ns_token_skip_eol(ns_ast_ctx *ctx);
 
 // node func
-void ns_restore_state(ns_ast_ctx *ctx, ns_parse_state_t state);
-ns_parse_state_t ns_save_state(ns_ast_ctx *ctx);
+void ns_restore_state(ns_ast_ctx *ctx, ns_parse_state state);
+ns_parse_state ns_save_state(ns_ast_ctx *ctx);
 int ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n);
 
 // primary func

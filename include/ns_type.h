@@ -232,7 +232,7 @@ typedef struct ns_type {
 #define ns_type_infer ((ns_type){.type = NS_TYPE_INFER, .i = -1})
 #define ns_type_nil ((ns_type){.type = NS_TYPE_NIL, .i = -1})
 #define ns_type_bool ((ns_type){.type = NS_TYPE_BOOL, .i = -1})
-#define ns_type_string ((ns_type){.type = NS_TYPE_STRING, .i = -1})
+#define ns_type_str ((ns_type){.type = NS_TYPE_STRING, .i = -1})
 
 #define ns_type_i8 ((ns_type){.type = NS_TYPE_I8, .i = -1})
 #define ns_type_i16 ((ns_type){.type = NS_TYPE_I16, .i = -1})
@@ -246,6 +246,8 @@ typedef struct ns_type {
 #define ns_type_f64 ((ns_type){.type = NS_TYPE_F64, .i = -1})
 
 #define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
+#define ns_type_signed(t) ((t).type == NS_TYPE_I8 || (t).type == NS_TYPE_I16 || (t).type == NS_TYPE_I32 || (t).type == NS_TYPE_I64)
+
 bool ns_type_is_number(ns_type t);
 
 typedef enum {
