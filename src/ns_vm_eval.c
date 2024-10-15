@@ -228,7 +228,6 @@ ns_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value lhs, ns_value r
             return (ns_value){.type = ns_type_bool, .i = lhs.i && rhs.i};
             break;
         default:
-            return ns_eval_call_ops_fn(vm, ctx, lhs, rhs, op);
             break;
         }
         ns_error("eval error", "unimplemented binary ops\n");
@@ -241,7 +240,11 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     if (left.type.type == right.type.type) {
         return ns_eval_binary_ops(vm, ctx, left, right, n.binary_expr.op); // same type apply binary operator
     } else {
-        // type mismatch, try to cast
+        // TODO
+        // step 1: if type not the same, try to find override function for binary operator
+        // step 2: if override function not found, try to string cast and apply binary operator
+        // step 3: if string cast not found, upcast number type to f64 and i64 and apply binary operator
+        // step 4: emit error if not override function found
         ns_error("eval error", "binary expr type mismatch\n");
         return ns_nil;
     }

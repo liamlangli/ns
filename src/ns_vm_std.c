@@ -12,7 +12,7 @@ void ns_vm_import_std_records(ns_vm *vm) {
     ns_array_set_length(print->fn.args, 1);
     print->fn.args[0] = (ns_record){.type = NS_RECORD_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_STRING}}};
     print->lib = std;
-    print->fn.fn = (ns_value){.p = print_p, .type = (ns_type){.type = NS_TYPE_FN, .name = print->name}};
+    print->fn.fn = (ns_value){.p = print_p, .type = (ns_type){.type = NS_TYPE_FN, .i = print_p }};
 }
 
 ns_value ns_vm_eval_std(ns_vm *vm) {

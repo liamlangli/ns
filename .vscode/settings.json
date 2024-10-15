@@ -41,6 +41,7 @@
         "unordered_map": "c",
         "map": "c",
         "set": "c",
-        "cmath": "c"
+        "cmath": "c",
+        "ios": "c"
     }
 }

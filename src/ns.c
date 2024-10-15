@@ -117,7 +117,7 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
         ns_warn("ns", "output file is not specified.");
         return;
     }
-    ns_bitcode_gen(&vm, &ctx);
+    ns_bc_gen(&vm, &ctx);
 #endif
 }
 
