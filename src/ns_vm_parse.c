@@ -29,6 +29,31 @@ int ns_vm_push_data(ns_vm *vm, ns_data d) {
     return i;
 }
 
+ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
+    switch (t.type)
+    {
+    case NS_TYPE_I8: return ns_str_cstr("i8");
+    case NS_TYPE_U8: return ns_str_cstr("u8");
+    case NS_TYPE_I16: return ns_str_cstr("i16");
+    case NS_TYPE_U16: return ns_str_cstr("u16");
+    case NS_TYPE_I32: return ns_str_cstr("i32");
+    case NS_TYPE_U32: return ns_str_cstr("u32");
+    case NS_TYPE_I64: return ns_str_cstr("i64");
+    case NS_TYPE_U64: return ns_str_cstr("u64");
+    case NS_TYPE_F32: return ns_str_cstr("f32");
+    case NS_TYPE_F64: return ns_str_cstr("f64");
+    case NS_TYPE_BOOL: return ns_str_cstr("bool");
+    case NS_TYPE_STRING: return ns_str_cstr("str");
+    case NS_TYPE_FN:
+    case NS_TYPE_STRUCT:
+        ns_record *r = &vm->records[t.i];
+        if (!r) ns_error("syntax error", "missing type %d\n", t.i);
+        return r->name;
+    default:
+        break;
+    }
+}
+
 ns_record* ns_vm_find_record(ns_vm *vm, ns_str s) {
     size_t l = ns_array_length(vm->call_records);
     if (l > 0) {
@@ -66,9 +91,9 @@ ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer) {
     case NS_RECORD_VALUE:
         return r->val.type;
     case NS_RECORD_FN:
-        return (ns_type){.type = NS_TYPE_FN, .name = r->name};
+        return (ns_type){.type = NS_TYPE_FN, .i = r->index};
     case NS_RECORD_STRUCT:
-        return (ns_type){.type = NS_TYPE_STRUCT, .name = r->name};
+        return (ns_type){.type = NS_TYPE_STRUCT, .i = r->index};
     default:
         ns_error("syntax error", "unknown type [%.*s]\n", n.len, n.data);
         break;
@@ -77,26 +102,16 @@ ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer) {
 
 ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer) {
     switch (t.type) {
-    case NS_TOKEN_TYPE_INT8:
-        return (ns_type){.type = NS_TYPE_I8, .name = ns_str_cstr("i8")};
-    case NS_TOKEN_TYPE_UINT8:
-        return (ns_type){.type = NS_TYPE_U8, .name = ns_str_cstr("u8")};
-    case NS_TOKEN_TYPE_INT16:
-        return (ns_type){.type = NS_TYPE_I16, .name = ns_str_cstr("i16")};
-    case NS_TOKEN_TYPE_UINT16:
-        return (ns_type){.type = NS_TYPE_U16, .name = ns_str_cstr("u16")};
-    case NS_TOKEN_TYPE_INT32:
-        return (ns_type){.type = NS_TYPE_I32, .name = ns_str_cstr("i32")};
-    case NS_TOKEN_TYPE_UINT32:
-        return (ns_type){.type = NS_TYPE_U32, .name = ns_str_cstr("u32")};
-    case NS_TOKEN_TYPE_INT64:
-        return (ns_type){.type = NS_TYPE_I64, .name = ns_str_cstr("i64")};
-    case NS_TOKEN_TYPE_UINT64:
-        return (ns_type){.type = NS_TYPE_U64, .name = ns_str_cstr("u64")};
-    case NS_TOKEN_TYPE_F32:
-        return (ns_type){.type = NS_TYPE_F32, .name = ns_str_cstr("f32")};
-    case NS_TOKEN_TYPE_F64:
-        return (ns_type){.type = NS_TYPE_F64, .name = ns_str_cstr("f64")};
+    case NS_TOKEN_TYPE_I8: return ns_type_i8;
+    case NS_TOKEN_TYPE_U8: return ns_type_u8;
+    case NS_TOKEN_TYPE_I16: return ns_type_i16;
+    case NS_TOKEN_TYPE_U16: return ns_type_u16;
+    case NS_TOKEN_TYPE_I32: return ns_type_i32;
+    case NS_TOKEN_TYPE_U32: return ns_type_u32;
+    case NS_TOKEN_TYPE_I64: return ns_type_i64;
+    case NS_TOKEN_TYPE_U64: return ns_type_u64;
+    case NS_TOKEN_TYPE_F32: return ns_type_f32;
+    case NS_TOKEN_TYPE_F64: return ns_type_f64;
     default:
         break;
     }
@@ -160,7 +175,7 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_parse_error(ctx, "syntax error", "unknown callee\n");
     }
 
-    ns_record *fn_record = ns_vm_find_record(vm, fn.name);
+    ns_record *fn_record = ns_vm_find_record(vm, ns_vm_get_type_name(vm, fn));
 
     ns_ast_t arg = n;
     for (int i = 0, l = n.call_expr.arg_count; i < l; ++i) {
@@ -259,7 +274,7 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_array_push(vm->call_records, call);
         ns_vm_parse_compound_stmt(vm, ctx, n.fn_def.body);
         ns_array_pop(vm->call_records);
-        fn->fn.fn = (ns_value){.p = i, .type = (ns_type){.type = NS_TYPE_FN, .name = fn->name}};
+        fn->fn.fn = (ns_value){.p = i, .type = (ns_type){.type = NS_TYPE_FN, .i = i}};
     }
 }
 
@@ -297,9 +312,10 @@ void ns_vm_parse_struct_def_ref(ns_vm *vm) {
             ns_record *f = &st->st.fields[j];
             if (!f->val.is_ref)
                 continue;
-            ns_record *t = ns_vm_find_record(vm, f->val.type.name);
+            ns_str n = ns_vm_get_type_name(vm, f->val.type);
+            ns_record *t = ns_vm_find_record(vm, n);
             if (t->type == NS_RECORD_INVALID) {
-                ns_error("syntax error", "unknow ref type %.*s.\n", f->val.type.name.len, f->val.type.name.data);
+                ns_error("syntax error", "unknow ref type %.*s.\n", n.len, n.data);
             }
         }
     }

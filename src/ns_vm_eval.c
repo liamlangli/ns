@@ -195,11 +195,12 @@ ns_value ns_eval_binary_ops_number(ns_value lhs, ns_value rhs, ns_token_t op) {
 }
 
 ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value lhs, ns_value rhs, ns_token_t op) {
-    ns_str fn_name = ns_ops_override_name(lhs.type.name, rhs.type.name, op);
+    ns_str l = ns_vm_get_type_name(vm, lhs.type);
+    ns_str r = ns_vm_get_type_name(vm, rhs.type);
+
+    ns_str fn_name = ns_ops_override_name(l, r, op);
     ns_record *fn = ns_vm_find_record(vm, fn_name);
     if (fn == NULL) {
-        ns_str l = lhs.type.name;
-        ns_str r = rhs.type.name;
         ns_error("eval error", "override fn not found %.*s %.*s %.*s\n", l.len, l.data, op.val.len, op.val.data, r.len, r.data);
     }
 

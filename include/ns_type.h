@@ -138,14 +138,14 @@ typedef enum {
     NS_TOKEN_TRUE,
     NS_TOKEN_OPS,           // ops: keyword for operator overloading
 
-    NS_TOKEN_TYPE_INT8,
-    NS_TOKEN_TYPE_INT16,
-    NS_TOKEN_TYPE_INT32,
-    NS_TOKEN_TYPE_INT64,
-    NS_TOKEN_TYPE_UINT8,
-    NS_TOKEN_TYPE_UINT16,
-    NS_TOKEN_TYPE_UINT32,
-    NS_TOKEN_TYPE_UINT64,
+    NS_TOKEN_TYPE_I8,
+    NS_TOKEN_TYPE_I16,
+    NS_TOKEN_TYPE_I32,
+    NS_TOKEN_TYPE_I64,
+    NS_TOKEN_TYPE_U8,
+    NS_TOKEN_TYPE_U16,
+    NS_TOKEN_TYPE_U32,
+    NS_TOKEN_TYPE_U64,
     NS_TOKEN_TYPE_F32,
     NS_TOKEN_TYPE_F64,
     NS_TOKEN_TYPE_BOOL,
@@ -225,25 +225,25 @@ typedef enum {
 
 typedef struct ns_type {
     NS_VALUE_TYPE type;
-    ns_str name;
+    i32 i; // record ptr
 } ns_type;
 
-#define ns_type_unknown ((ns_type){.type = NS_TYPE_UNKNOWN, .name = ns_str_null})
-#define ns_type_infer ((ns_type){.type = NS_TYPE_INFER, .name = ns_str_null})
-#define ns_type_nil ((ns_type){.type = NS_TYPE_NIL, .name = ns_str_cstr("nil")})
-#define ns_type_bool ((ns_type){.type = NS_TYPE_BOOL, .name = ns_str_cstr("bool")})
-#define ns_type_string ((ns_type){.type = NS_TYPE_STRING, .name = ns_str_cstr("str")})
+#define ns_type_unknown ((ns_type){.type = NS_TYPE_UNKNOWN, .i = -1})
+#define ns_type_infer ((ns_type){.type = NS_TYPE_INFER, .i = -1})
+#define ns_type_nil ((ns_type){.type = NS_TYPE_NIL, .i = -1})
+#define ns_type_bool ((ns_type){.type = NS_TYPE_BOOL, .i = -1})
+#define ns_type_string ((ns_type){.type = NS_TYPE_STRING, .i = -1})
 
-#define ns_type_i8 ((ns_type){.type = NS_TYPE_I8, .name = ns_str_cstr("i8")})
-#define ns_type_i16 ((ns_type){.type = NS_TYPE_I16, .name = ns_str_cstr("i16")})
-#define ns_type_i32 ((ns_type){.type = NS_TYPE_I32, .name = ns_str_cstr("i32")})
-#define ns_type_i64 ((ns_type){.type = NS_TYPE_I64, .name = ns_str_cstr("i64")})
-#define ns_type_u8 ((ns_type){.type = NS_TYPE_U8, .name = ns_str_cstr("u8")})
-#define ns_type_u16 ((ns_type){.type = NS_TYPE_U16, .name = ns_str_cstr("u16")})
-#define ns_type_u32 ((ns_type){.type = NS_TYPE_U32, .name = ns_str_cstr("u32")})
-#define ns_type_u64 ((ns_type){.type = NS_TYPE_U64, .name = ns_str_cstr("u64")})
-#define ns_type_f32 ((ns_type){.type = NS_TYPE_F32, .name = ns_str_cstr("f32")})
-#define ns_type_f64 ((ns_type){.type = NS_TYPE_F64, .name = ns_str_cstr("f64")})
+#define ns_type_i8 ((ns_type){.type = NS_TYPE_I8, .i = -1})
+#define ns_type_i16 ((ns_type){.type = NS_TYPE_I16, .i = -1})
+#define ns_type_i32 ((ns_type){.type = NS_TYPE_I32, .i = -1})
+#define ns_type_i64 ((ns_type){.type = NS_TYPE_I64, .i = -1})
+#define ns_type_u8 ((ns_type){.type = NS_TYPE_U8, .i = -1})
+#define ns_type_u16 ((ns_type){.type = NS_TYPE_U16, .i = -1})
+#define ns_type_u32 ((ns_type){.type = NS_TYPE_U32, .i = -1})
+#define ns_type_u64 ((ns_type){.type = NS_TYPE_U64, .i = -1})
+#define ns_type_f32 ((ns_type){.type = NS_TYPE_F32, .i = -1})
+#define ns_type_f64 ((ns_type){.type = NS_TYPE_F64, .i = -1})
 
 #define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
 bool ns_type_is_number(ns_type t);

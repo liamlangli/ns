@@ -90,6 +90,7 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 int ns_vm_push_record(ns_vm *vm, ns_record r);
 int ns_vm_push_string(ns_vm *vm, ns_str s);
 int ns_vm_push_data(ns_vm *vm, ns_data d);
+ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_record* ns_vm_find_record(ns_vm *vm, ns_str s);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 

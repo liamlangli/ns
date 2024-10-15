@@ -33,22 +33,22 @@ ns_str ns_token_type_to_string(NS_TOKEN type) {
         return ns_str_cstr("NS_TOKEN_ASYNC");
     case NS_TOKEN_AWAIT:
         return ns_str_cstr("NS_TOKEN_AWAIT");
-    case NS_TOKEN_TYPE_INT8:
-        return ns_str_cstr("NS_TOKEN_TYPE_INT8");
-    case NS_TOKEN_TYPE_INT16:
-        return ns_str_cstr("NS_TOKEN_TYPE_INT16");
-    case NS_TOKEN_TYPE_INT32:
-        return ns_str_cstr("NS_TOKEN_TYPE_INT32");
-    case NS_TOKEN_TYPE_INT64:
-        return ns_str_cstr("NS_TOKEN_TYPE_INT64");
-    case NS_TOKEN_TYPE_UINT8:
-        return ns_str_cstr("NS_TOKEN_TYPE_UINT8");
-    case NS_TOKEN_TYPE_UINT16:
-        return ns_str_cstr("NS_TOKEN_TYPE_UINT16");
-    case NS_TOKEN_TYPE_UINT32:
-        return ns_str_cstr("NS_TOKEN_TYPE_UINT32");
-    case NS_TOKEN_TYPE_UINT64:
-        return ns_str_cstr("NS_TOKEN_TYPE_UINT64");
+    case NS_TOKEN_TYPE_I8:
+        return ns_str_cstr("NS_TOKEN_TYPE_I8");
+    case NS_TOKEN_TYPE_I16:
+        return ns_str_cstr("NS_TOKEN_TYPE_I16");
+    case NS_TOKEN_TYPE_I32:
+        return ns_str_cstr("NS_TOKEN_TYPE_I32");
+    case NS_TOKEN_TYPE_I64:
+        return ns_str_cstr("NS_TOKEN_TYPE_I64");
+    case NS_TOKEN_TYPE_U8:
+        return ns_str_cstr("NS_TOKEN_TYPE_U8");
+    case NS_TOKEN_TYPE_U16:
+        return ns_str_cstr("NS_TOKEN_TYPE_U16");
+    case NS_TOKEN_TYPE_U32:
+        return ns_str_cstr("NS_TOKEN_TYPE_U32");
+    case NS_TOKEN_TYPE_U64:
+        return ns_str_cstr("NS_TOKEN_TYPE_U64");
     case NS_TOKEN_TYPE_F32:
         return ns_str_cstr("NS_TOKEN_TYPE_F32");
     case NS_TOKEN_TYPE_F64:
@@ -371,16 +371,16 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = strncmp(s + f, "i32", 3) == 0   ? NS_TOKEN_TYPE_INT32
-                      : strncmp(s + f, "i64", 3) == 0 ? NS_TOKEN_TYPE_INT64
-                                                      : NS_TOKEN_TYPE_INT16;
+            t->type = strncmp(s + f, "i32", 3) == 0   ? NS_TOKEN_TYPE_I32
+                      : strncmp(s + f, "i64", 3) == 0 ? NS_TOKEN_TYPE_I64
+                                                      : NS_TOKEN_TYPE_I16;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else if (strncmp(s + f, "i8", 2) == 0) {
             sep = ns_token_separator(s, i + 2);
             if (sep == 0 && ns_identifier_follow(s[i + 2]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE_INT8;
+            t->type = NS_TOKEN_TYPE_I8;
             t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
         } else if (strncmp(s + f, "import", 6) == 0) {
@@ -512,16 +512,16 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             sep = ns_token_separator(s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3]))
                 goto identifier;
-            t->type = strncmp(s + f, "u32", 3) == 0   ? NS_TOKEN_TYPE_UINT32
-                      : strncmp(s + f, "u64", 3) == 0 ? NS_TOKEN_TYPE_UINT64
-                                                      : NS_TOKEN_TYPE_UINT16;
+            t->type = strncmp(s + f, "u32", 3) == 0   ? NS_TOKEN_TYPE_U32
+                      : strncmp(s + f, "u64", 3) == 0 ? NS_TOKEN_TYPE_U64
+                                                      : NS_TOKEN_TYPE_U16;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
         } else if (strncmp(s + f, "u8", 2) == 0) {
             sep = ns_token_separator(s, i + 2);
             if (sep == 0 && ns_identifier_follow(s[i + 2]))
                 goto identifier;
-            t->type = NS_TOKEN_TYPE_UINT8;
+            t->type = NS_TOKEN_TYPE_U8;
             t->val = ns_str_range(s + f, 2);
             to = i + 2 + sep;
         } else {

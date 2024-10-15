@@ -40,14 +40,14 @@ bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token) {
 
 bool ns_token_can_be_type(NS_TOKEN t) {
     switch (t) {
-    case NS_TOKEN_TYPE_INT8:
-    case NS_TOKEN_TYPE_INT16:
-    case NS_TOKEN_TYPE_INT32:
-    case NS_TOKEN_TYPE_INT64:
-    case NS_TOKEN_TYPE_UINT8:
-    case NS_TOKEN_TYPE_UINT16:
-    case NS_TOKEN_TYPE_UINT32:
-    case NS_TOKEN_TYPE_UINT64:
+    case NS_TOKEN_TYPE_I8:
+    case NS_TOKEN_TYPE_I16:
+    case NS_TOKEN_TYPE_I32:
+    case NS_TOKEN_TYPE_I64:
+    case NS_TOKEN_TYPE_U8:
+    case NS_TOKEN_TYPE_U16:
+    case NS_TOKEN_TYPE_U32:
+    case NS_TOKEN_TYPE_U64:
     case NS_TOKEN_TYPE_F32:
     case NS_TOKEN_TYPE_F64:
     case NS_TOKEN_TYPE_BOOL:
