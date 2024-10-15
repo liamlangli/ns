@@ -220,7 +220,7 @@ ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r,
     return call.ret;
 }
 
-ns_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, ns_token_t op) {
+ns_value ns_eval_binary_ops(ns_value l, ns_value r, ns_token_t op) {
     if (ns_type_is_number(l.type)) {
         return ns_eval_binary_ops_number(l, r, op);
     } else {
@@ -242,7 +242,7 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value left = ns_eval_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_value right = ns_eval_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
     if (left.type.type == right.type.type) {
-        return ns_eval_binary_ops(vm, ctx, left, right, n.binary_expr.op); // same type apply binary operator
+        return ns_eval_binary_ops(left, right, n.binary_expr.op); // same type apply binary operator
     } else {
         // TODO
         // step 1: if type not the same, try to find override function for binary operator

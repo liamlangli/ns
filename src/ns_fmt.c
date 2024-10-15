@@ -88,9 +88,6 @@ ns_str ns_fmt_type_str(ns_type t) {
 }
 
 ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
-    // parse fmt string in the form of "hello {a} {b} {c}" but not "\{a}"
-    // replace {a} with value of a
-
     ns_str ret = {.data = NULL, .len = 0, .dynamic = 1};
     ns_array_set_capacity(ret.data, fmt.len);
 

@@ -45,13 +45,15 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     case NS_TYPE_BOOL: return ns_str_cstr("bool");
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_FN:
-    case NS_TYPE_STRUCT:
+    case NS_TYPE_STRUCT: {
         ns_record *r = &vm->records[t.i];
         if (!r) ns_error("syntax error", "missing type %d\n", t.i);
         return r->name;
+    } break;
     default:
         break;
     }
+    return ns_str_null;
 }
 
 ns_record* ns_vm_find_record(ns_vm *vm, ns_str s) {

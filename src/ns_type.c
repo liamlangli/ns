@@ -104,7 +104,7 @@ ns_str ns_str_unescape(ns_str s) {
         j++;
     }
     data[j] = '\0';
-    ns_str ret = {.data = data, .len = j};
+    ns_str ret = {.data = data, .len = j, .dynamic = 1};
     return ret;
 }
 
