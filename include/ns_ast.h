@@ -265,7 +265,6 @@ ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
 bool ns_parse_generator_expr(ns_ast_ctx *ctx);
 bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 
-void ns_ast_reset(ns_ast_ctx *ctx);
 bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);
 
 // dump func

@@ -21,6 +21,8 @@ void ns_repl(ns_vm* vm) {
     ns_ast_ctx ctx = {0};
     ns_array_set_capacity(ctx.nodes, 4);
 
+    ns_vm_import_std_records(vm);
+
     // read eval print loop
     ns_str filename = ns_str_cstr("<repl>");
     while(1) {

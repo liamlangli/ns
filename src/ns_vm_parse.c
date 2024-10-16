@@ -174,10 +174,13 @@ ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n) {
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_type fn = ns_vm_parse_primary_expr(vm, ctx->nodes[n.call_expr.callee]);
     if (fn.type == NS_TYPE_UNKNOWN) {
-        ns_parse_error(ctx, "syntax error", "unknown callee\n");
+        ns_parse_error(ctx, "syntax error", "unknown callee");
     }
 
     ns_record *fn_record = ns_vm_find_record(vm, ns_vm_get_type_name(vm, fn));
+    if (!fn_record || fn_record->type != NS_RECORD_FN) {
+        ns_parse_error(ctx, "syntax error", "invalid callee");
+    }
 
     ns_ast_t arg = n;
     for (int i = 0, l = n.call_expr.arg_count; i < l; ++i) {
