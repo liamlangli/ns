@@ -11,16 +11,7 @@ NS_DEBUG ?= 1
 # VARIABLES
 CC = clang
 
-NS_LDFLAGS = -lm -lc -lreadline
 
-NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG
-NS_RELEASE_CFLAGS = -Iinclude -Os
-
-ifeq ($(NS_DEBUG), 1)
-	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
-else
-	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
-endif
 
 ifeq ($(NS_BITCODE), 1)
 	LLVM_CFLAGS = `llvm-config --cflags`
@@ -32,6 +23,20 @@ ifeq ($(NS_BITCODE), 1)
 	BITCODE_CFLAGS = -DNS_BITCODE $(LLVM_CFLAGS)
 	BITCODE_LDFLAGS = $(LLVM_LDFLAGS)
 endif
+
+NS_LDFLAGS = -lm -lc -lreadline
+
+NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG
+NS_RELEASE_CFLAGS = -Iinclude -Os
+
+ifeq ($(NS_DEBUG), 1)
+	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
+else
+	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
+endif
+
+NS_DEBUG_TARGET = $(TARGET)_debug_$(LLVM_TRIPLE)
+NS_RELEASE_TARGET = $(TARGET)_release_$(LLVM_TRIPLE)
 
 BINDIR = bin
 OBJDIR = $(BINDIR)
@@ -107,11 +112,13 @@ count:
 pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
 
-debug: clean $(NS_SRCS) | $(OBJDIR)
-	clang -o $(TARGET)_debug $(NS_SRCS) $(NS_DEBUG_CFLAGS) $(NS_LDFLAGS)
+debug: $(NS_SRCS) | $(OBJDIR)
+	clang -o $(NS_DEBUG_TARGET) $(NS_SRCS) $(NS_DEBUG_CFLAGS) $(NS_LDFLAGS)
+	tar -czvf $(NS_DEBUG_TARGET).tar.gz $(NS_DEBUG_TARGET)
 
-release: clean $(NS_SRCS) | $(OBJDIR)
-	clang -o $(TARGET)_release $(NS_SRCS) $(NS_RELEASE_CFLAGS) $(NS_LDFLAGS)
+release: $(NS_SRCS) | $(OBJDIR)
+	clang -o $(NS_RELEASE_TARGET) $(NS_SRCS) $(NS_RELEASE_CFLAGS) $(NS_LDFLAGS)
+	tar -czvf $(NS_RELEASE_TARGET).tar.gz $(NS_RELEASE_TARGET)
 
 install: $(TARGET)
 	cp bin/$(TARGET) /usr/local/bin
