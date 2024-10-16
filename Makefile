@@ -12,7 +12,7 @@ NS_DEBUG ?= 1
 CC = clang
 
 CFLAGS = -Iinclude
-LDFLAGS = $(LLVM_LDFLAGS) -lreadline
+LDFLAGS = -lreadline
 
 ifeq ($(NS_DEBUG), 1)
 	CFLAGS += -g -O0 -Wall -Wextra -DNS_DEBUG
@@ -21,13 +21,14 @@ else
 endif
 
 ifeq ($(NS_BITCODE), 1)
-	BITCODE_SRC = src/ns_bitcode.c
-	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
-	BITCODE_FLAGS = -DNS_BITCODE
-
 	LLVM_CFLAGS = `llvm-config --cflags`
 	LLVM_LDFLAGS = `llvm-config --ldflags --libs core --system-libs`
 	LLVM_TRIPLE = `llvm-config --host-target`
+
+	BITCODE_SRC = src/ns_bitcode.c
+	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
+	BITCODE_CFLAGS = -DNS_BITCODE $(LLVM_CFLAGS)
+	BITCODE_LDFLAGS = $(LLVM_LDFLAGS)
 endif
 
 BINDIR = bin
@@ -52,19 +53,21 @@ NS_ENTRY_OBJ = $(OBJDIR)/src/ns.o
 
 TARGET = $(BINDIR)/ns
 
+NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
+
 all: $(TARGET)
 	@echo "Building with options:" \
 	"NS_BITCODE=$(NS_BITCODE)" \
 	"NS_DEBUG=$(NS_DEBUG)"
 
 $(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(CFLAGS) $(LLVM_CFLAGS) $(BITCODE_FLAGS)
+	$(CC) -c $< -o $@ $(CFLAGS) $(BITCODE_CFLAGS)
 
 $(NS_ENTRY_OBJ): $(NS_ENTRY) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(CFLAGS) $(BITCODE_FLAGS)
+	$(CC) -c $< -o $@ $(CFLAGS) $(BITCODE_CFLAGS)
 
 $(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) | $(BINDIR)
-	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $ -o $(TARGET) $(LDFLAGS)
+	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $ -o $(TARGET) $(LDFLAGS) $(BITCODE_LDFLAGS)
 
 $(NS_LIB_OBJS): $(OBJDIR)/%.o : %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CFLAGS)
@@ -98,9 +101,21 @@ clean:
 count:
 	cloc src include sample
 
+# pack source files
 pack:
-	make clean && make NS_DEBUG=0 -j4
-	tar -czvf ns.tar.gz bin/ns
+	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
+	
+# clang cross compile for windows linux and darwin in both x86 and arm, and link with lld
+NS_CROSS_FLAGS = -Iinclude -Os -lreadline
+cross: $(OBJDIR)
+	clang --target=x86_64-apple-darwin -o $(BINDIR)/ns_darwin_x86_64 $(NS_SRCS) $(NS_CROSS_FLAGS)
+	clang --target=arm64-apple-darwin -o $(BINDIR)/ns_darwin_arm64 $(NS_SRCS) $(NS_CROSS_FLAGS)
+
+	# clang --target=x86_64-pc-windows-gnu -o $(BINDIR)/ns_windows_x86_64.exe $(NS_SRCS) $(NS_CROSS_FLAGS)
+	# clang --target=aarch64-pc-windows-gnu -o $(BINDIR)/ns_windows_arm64.exe $(NS_SRCS) $(NS_CROSS_FLAGS)
+
+	# clang --target=x86_64-linux-gnu -o $(BINDIR)/ns_linux_x86_64 $(NS_SRCS) $(NS_CROSS_FLAGS)
+	# clang --target=aarch64-linux-gnu -o $(BINDIR)/ns_linux_arm64 $(NS_SRCS) $(NS_CROSS_FLAGS)
 
 install: $(TARGET)
 	cp bin/$(TARGET) /usr/local/bin
