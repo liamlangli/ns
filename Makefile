@@ -1,3 +1,10 @@
+# PLATFORNM
+NS_SUFFIX =
+ifeq ($(OS),Windows_NT)
+	NS_WIN32 = 1
+	NS_SUFFIX = .exe
+endif
+
 # OPTIONS
 LLVM_CONFIG := $(shell command -v llvm-config 2>/dev/null)
 ifeq ($(LLVM_CONFIG),)
@@ -11,12 +18,10 @@ NS_DEBUG ?= 1
 # VARIABLES
 CC = clang
 
-
-
 ifeq ($(NS_BITCODE), 1)
-	LLVM_CFLAGS = `llvm-config --cflags`
-	LLVM_LDFLAGS = `llvm-config --ldflags --libs core --system-libs`
-	LLVM_TRIPLE = `llvm-config --host-target`
+	LLVM_CFLAGS = $(shell llvm-config --cflags 2>/dev/null)
+	LLVM_LDFLAGS = $(shell llvm-config --ldflags --libs core --system-libs 2>/dev/null)
+	LLVM_TRIPLE = $(shell llvm-config --host-target 2>/dev/null)
 
 	BITCODE_SRC = src/ns_bitcode.c
 	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
@@ -24,7 +29,7 @@ ifeq ($(NS_BITCODE), 1)
 	BITCODE_LDFLAGS = $(LLVM_LDFLAGS)
 endif
 
-NS_LDFLAGS = -lm -lc -lreadline
+NS_LDFLAGS = -lm -lreadline
 
 NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG
 NS_RELEASE_CFLAGS = -Iinclude -Os
@@ -35,8 +40,8 @@ else
 	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
 endif
 
-NS_DEBUG_TARGET = $(TARGET)_debug_$(LLVM_TRIPLE)
-NS_RELEASE_TARGET = $(TARGET)_release_$(LLVM_TRIPLE)
+NS_DEBUG_TARGET = $(TARGET)_debug_$(LLVM_TRIPLE)$(NS_SUFFIX)
+NS_RELEASE_TARGET = $(TARGET)_release_$(LLVM_TRIPLE)$(NS_SUFFIX)
 
 BINDIR = bin
 OBJDIR = $(BINDIR)
@@ -74,7 +79,7 @@ $(NS_ENTRY_OBJ): $(NS_ENTRY) | $(OBJDIR)
 	$(CC) -c $< -o $@ $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
 $(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) | $(BINDIR)
-	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $ -o $(TARGET) $(NS_LDFLAGS) $(BITCODE_LDFLAGS)
+	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(BITCODE_LDFLAGS)
 
 $(NS_LIB_OBJS): $(OBJDIR)/%.o : %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(NS_CFLAGS)
