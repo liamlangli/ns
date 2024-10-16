@@ -104,18 +104,6 @@ count:
 # pack source files
 pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
-	
-# clang cross compile for windows linux and darwin in both x86 and arm, and link with lld
-NS_CROSS_FLAGS = -Iinclude -Os -lreadline
-cross: $(OBJDIR)
-	clang --target=x86_64-apple-darwin -o $(BINDIR)/ns_darwin_x86_64 $(NS_SRCS) $(NS_CROSS_FLAGS)
-	clang --target=arm64-apple-darwin -o $(BINDIR)/ns_darwin_arm64 $(NS_SRCS) $(NS_CROSS_FLAGS)
-
-	# clang --target=x86_64-pc-windows-gnu -o $(BINDIR)/ns_windows_x86_64.exe $(NS_SRCS) $(NS_CROSS_FLAGS)
-	# clang --target=aarch64-pc-windows-gnu -o $(BINDIR)/ns_windows_arm64.exe $(NS_SRCS) $(NS_CROSS_FLAGS)
-
-	# clang --target=x86_64-linux-gnu -o $(BINDIR)/ns_linux_x86_64 $(NS_SRCS) $(NS_CROSS_FLAGS)
-	# clang --target=aarch64-linux-gnu -o $(BINDIR)/ns_linux_arm64 $(NS_SRCS) $(NS_CROSS_FLAGS)
 
 install: $(TARGET)
 	cp bin/$(TARGET) /usr/local/bin
