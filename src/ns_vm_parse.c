@@ -9,7 +9,9 @@ ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
-ns_type ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_t n);
+
+void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_t n);
+void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, int i);
 
 int ns_vm_push_record(ns_vm *vm, ns_record r) {
     r.index = ns_array_length(vm->records);
@@ -136,7 +138,7 @@ void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
 void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
     for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
         ns_record *fn = &vm->records[i];
-        if (fn->type != NS_RECORD_FN)
+        if (fn->type != NS_RECORD_FN || fn->parsed)
             continue;
         fn->fn.ret = ns_vm_parse_type(vm, ctx->nodes[fn->fn.ast].fn_def.return_type, false);
         ns_ast_t n = ctx->nodes[fn->fn.ast];
@@ -149,6 +151,79 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
             arg_record.val.type = ns_vm_parse_type(vm, arg->arg.type, false);
             fn->fn.args[i] = arg_record;
         }
+    }
+}
+
+void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
+    for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
+        ns_record *fn = &vm->records[i];
+        if (fn->type != NS_RECORD_FN || fn->parsed)
+            continue;
+        ns_ast_t n = ctx->nodes[fn->fn.ast];
+        fn->fn.ast = n.fn_def.body;
+        
+        ns_record call = (ns_record){.type = NS_RECORD_FN_CALL};
+        call.call.fn = fn;
+        ns_array_push(vm->call_records, call);
+        ns_vm_parse_compound_stmt(vm, ctx, n.fn_def.body);
+        ns_array_pop(vm->call_records);
+        fn->fn.fn = (ns_value){.p = i, .type = (ns_type){.type = NS_TYPE_FN, .i = i}};
+        fn->parsed = true;
+    }
+}
+
+void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
+    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        ns_ast_t n = ctx->nodes[ctx->sections[i]];
+        if (n.type != NS_AST_STRUCT_DEF)
+            continue;
+        ns_record st = (ns_record){.type = NS_RECORD_STRUCT, .st = {.ast = i}};
+        st.name = n.struct_def.name.val;
+        ns_array_set_length(st.st.fields, n.struct_def.count);
+        ns_ast_t *field = &n;
+        for (int i = 0; i < n.struct_def.count; i++) {
+            field = &ctx->nodes[field->next];
+            ns_record f = (ns_record){.type = NS_RECORD_VALUE, .index = i, .val = {.type = ns_type_unknown}};
+            f.name = field->arg.name.val;
+            f.val.is_ref = field->arg.is_ref;
+            f.val.is_const = false;
+            f.val.scope = NS_SCOPE_FIELD;
+            st.st.fields[i] = f;
+            if (field->arg.is_ref)
+                f.val.type = ns_vm_parse_type(vm, field->arg.type, false);
+        }
+        ns_vm_push_record(vm, st);
+    }
+}
+
+void ns_vm_parse_struct_def_ref(ns_vm *vm) {
+    for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
+        ns_record *st = &vm->records[i];
+        if (st->type != NS_RECORD_STRUCT || st->parsed)
+            continue;
+        for (int j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
+            ns_record *f = &st->st.fields[j];
+            if (!f->val.is_ref)
+                continue;
+            ns_str n = ns_vm_get_type_name(vm, f->val.type);
+            ns_record *t = ns_vm_find_record(vm, n);
+            if (t->type == NS_RECORD_INVALID) {
+                ns_error("syntax error", "unknow ref type %.*s.\n", n.len, n.data);
+            }
+        }
+        st->parsed = true;
+    }
+}
+
+void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
+    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        ns_ast_t n = ctx->nodes[ctx->sections[i]];
+        if (n.type != NS_AST_VAR_DEF)
+            continue;
+        ns_record r = (ns_record){.type = NS_RECORD_VALUE, .val = { .scope = NS_SCOPE_GLOBAL }, .parsed = true};
+        r.name = n.var_def.name.val;
+        r.val.type = ns_vm_parse_type(vm, n.var_def.type, true);
+        ns_vm_push_record(vm, r);
     }
 }
 
@@ -193,7 +268,7 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     return fn_record->fn.ret;
 }
 
-ns_type ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_t n) {
+void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_t n) {
     ns_str lib = n.import_stmt.lib.val;
     if (ns_str_equals(lib, ns_str_cstr("std"))) {
         ns_vm_import_std_records(vm);
@@ -201,7 +276,6 @@ ns_type ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_t n) {
         // find lib in lib path & then add all symbols to vm
         ns_error("syntax error", "unknown lib %.*s\n", lib.len, lib.data);
     }
-    return ns_type_unknown;
 }
 
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
@@ -266,78 +340,6 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, int i) {
     }
 }
 
-void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
-    for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
-        ns_record *fn = &vm->records[i];
-        if (fn->type != NS_RECORD_FN)
-            continue;
-        ns_ast_t n = ctx->nodes[fn->fn.ast];
-        fn->fn.ast = n.fn_def.body;
-        
-        ns_record call = (ns_record){.type = NS_RECORD_FN_CALL};
-        call.call.fn = fn;
-        ns_array_push(vm->call_records, call);
-        ns_vm_parse_compound_stmt(vm, ctx, n.fn_def.body);
-        ns_array_pop(vm->call_records);
-        fn->fn.fn = (ns_value){.p = i, .type = (ns_type){.type = NS_TYPE_FN, .i = i}};
-    }
-}
-
-void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
-    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
-        ns_ast_t n = ctx->nodes[ctx->sections[i]];
-        if (n.type != NS_AST_STRUCT_DEF)
-            continue;
-        ns_record st = (ns_record){.type = NS_RECORD_STRUCT, .st = {.ast = i}};
-        st.name = n.struct_def.name.val;
-        ns_array_set_length(st.st.fields, n.struct_def.count);
-        ns_ast_t *field = &n;
-        for (int i = 0; i < n.struct_def.count; i++) {
-            field = &ctx->nodes[field->next];
-            ns_record f = (ns_record){.type = NS_RECORD_VALUE, .index = i, .val = {.type = ns_type_unknown}};
-            f.name = field->arg.name.val;
-            f.val.is_ref = field->arg.is_ref;
-            f.val.is_const = false;
-            f.val.scope = NS_SCOPE_FIELD;
-            st.st.fields[i] = f;
-            if (field->arg.is_ref)
-                f.val.type = ns_vm_parse_type(vm, field->arg.type, false);
-        }
-        ns_vm_push_record(vm, st);
-    }
-}
-
-// parse struct def ref field, ref can be struct or fn or generic type
-void ns_vm_parse_struct_def_ref(ns_vm *vm) {
-    for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
-        ns_record *st = &vm->records[i];
-        if (st->type != NS_RECORD_STRUCT)
-            continue;
-        for (int j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
-            ns_record *f = &st->st.fields[j];
-            if (!f->val.is_ref)
-                continue;
-            ns_str n = ns_vm_get_type_name(vm, f->val.type);
-            ns_record *t = ns_vm_find_record(vm, n);
-            if (t->type == NS_RECORD_INVALID) {
-                ns_error("syntax error", "unknow ref type %.*s.\n", n.len, n.data);
-            }
-        }
-    }
-}
-
-void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
-    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
-        ns_ast_t n = ctx->nodes[ctx->sections[i]];
-        if (n.type != NS_AST_VAR_DEF)
-            continue;
-        ns_record r = (ns_record){.type = NS_RECORD_VALUE, .val = { .scope = NS_SCOPE_GLOBAL }};
-        r.name = n.var_def.name.val;
-        r.val.type = ns_vm_parse_type(vm, n.var_def.type, true);
-        ns_vm_push_record(vm, r);
-    }
-}
-
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_vm_parse_fn_def_name(vm, ctx);
 
@@ -365,7 +367,7 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
             break; // already parsed
         default: {
             ns_str type = ns_ast_type_to_string(n.type);
-            ns_warn("vm parse", "unimplemented global ast parse %.*s\n", type.len, type.data);
+            if (vm->mode != NS_VM_MODE_REPL) ns_warn("vm parse", "unimplemented global ast parse %.*s\n", type.len, type.data);
         } break;
         }
     }

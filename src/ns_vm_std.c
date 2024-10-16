@@ -5,7 +5,7 @@ void ns_vm_import_std_records(ns_vm *vm) {
     ns_str std = ns_str_cstr("std");
 
     // print fn
-    int print_p = ns_vm_push_record(vm, (ns_record){.type = NS_RECORD_FN, .fn = {.ast = -1}});
+    int print_p = ns_vm_push_record(vm, (ns_record){.type = NS_RECORD_FN, .fn = {.ast = -1}, .parsed = true});
     ns_record *print = &vm->records[print_p];
     print->name = ns_str_cstr("print");
     print->fn.ret = (ns_type){.type = NS_TYPE_EMPTY };

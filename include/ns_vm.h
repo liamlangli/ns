@@ -11,6 +11,11 @@ typedef enum {
     NS_RECORD_STRUCT,
 } NS_RECORD_TYPE;
 
+typedef enum {
+    NS_VM_MODE_EVAL,
+    NS_VM_MODE_REPL
+} ns_vm_mode;
+
 typedef struct ns_record ns_record;
 
 typedef struct ns_value_record {
@@ -44,6 +49,7 @@ typedef struct ns_record {
     ns_str name;
     ns_str lib;
     i32 index;
+    bool parsed;
     union {
         ns_fn_record fn;
         ns_fn_call_record call;
@@ -80,9 +86,13 @@ typedef struct ns_vm {
     ns_value *globals;
     ns_str *str_list;
     ns_data *data_list;
+
+    ns_vm_mode mode;
 } ns_vm;
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
+ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
+ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
