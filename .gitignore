@@ -1,7 +1,8 @@
 bin
-obj
-bytecode
 .DS_Store
+
+# pack
+*.gz
 
 # nslang extension
 *.vsix

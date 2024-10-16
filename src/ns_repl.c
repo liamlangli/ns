@@ -1,5 +1,3 @@
-#ifdef NS_REPL
-
 #include "ns_ast.h"
 #include "ns_type.h"
 #include "ns_vm.h"
@@ -54,5 +52,3 @@ void ns_repl(ns_vm* vm) {
     }
     ne_exit_safe("ns", "exit repl\n");
 }
-
-#endif // NS_REPL

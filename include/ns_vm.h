@@ -98,6 +98,4 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 void ns_vm_import_std_records(ns_vm *vm);
 ns_value ns_vm_eval_std(ns_vm *vm);
 
-#ifdef NS_REPL
 void ns_repl(ns_vm* vm);
-#endif

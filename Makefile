@@ -7,23 +7,17 @@ else
 endif
 
 NS_DEBUG ?= 1
-NS_REPL ?= 1
 
 # VARIABLES
 CC = clang
 
 CFLAGS = -Iinclude
-LDFLAGS = $(LLVM_LDFLAGS)
+LDFLAGS = $(LLVM_LDFLAGS) -lreadline
 
 ifeq ($(NS_DEBUG), 1)
 	CFLAGS += -g -O0 -Wall -Wextra -DNS_DEBUG
 else
 	CFLAGS += -Os
-endif
-
-ifeq ($(NS_REPL), 1)
-	CFLAGS += -DNS_REPL
-	LDFLAGS += -lreadline
 endif
 
 ifeq ($(NS_BITCODE), 1)
@@ -61,8 +55,7 @@ TARGET = $(BINDIR)/ns
 all: $(TARGET)
 	@echo "Building with options:" \
 	"NS_BITCODE=$(NS_BITCODE)" \
-	"NS_DEBUG=$(NS_DEBUG)" \
-	"NS_REPL=$(NS_REPL)"
+	"NS_DEBUG=$(NS_DEBUG)"
 
 $(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
 	$(CC) -c $< -o $@ $(CFLAGS) $(LLVM_CFLAGS) $(BITCODE_FLAGS)
@@ -101,8 +94,13 @@ eval: all
 clean:
 	rm -rf $(OBJDIR)
 
+# utility
 count:
 	cloc src include sample
+
+pack:
+	make clean && make NS_DEBUG=0 -j4
+	tar -czvf ns.tar.gz bin/ns
 
 install: $(TARGET)
 	cp bin/$(TARGET) /usr/local/bin

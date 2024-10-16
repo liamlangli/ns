@@ -3,10 +3,10 @@ Nano Script
 > A minimal programming language for data oriented programming.
 
 ## Design Goal
-- minimal syntax and keywords, easy to learn and use.
-- interpretable and compilable.
-- use explicit type system, not generic type.
-- data oriented programming style.
+- Minimal syntax and keywords for ease of learning and use.
+- Supports both interpretation and compilation.
+- Utilizes an explicit type system, avoiding generic types.
+- Follows a data-oriented programming approach.
 
 ## Syntax Preview
 ```ns
