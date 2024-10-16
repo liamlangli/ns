@@ -11,13 +11,15 @@ NS_DEBUG ?= 1
 # VARIABLES
 CC = clang
 
-CFLAGS = -Iinclude
-LDFLAGS = -lreadline
+NS_LDFLAGS = -lm -lc -lreadline
+
+NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG
+NS_RELEASE_CFLAGS = -Iinclude -Os
 
 ifeq ($(NS_DEBUG), 1)
-	CFLAGS += -g -O0 -Wall -Wextra -DNS_DEBUG
+	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
 else
-	CFLAGS += -Os
+	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
 endif
 
 ifeq ($(NS_BITCODE), 1)
@@ -61,16 +63,16 @@ all: $(TARGET)
 	"NS_DEBUG=$(NS_DEBUG)"
 
 $(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(CFLAGS) $(BITCODE_CFLAGS)
+	$(CC) -c $< -o $@ $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
 $(NS_ENTRY_OBJ): $(NS_ENTRY) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(CFLAGS) $(BITCODE_CFLAGS)
+	$(CC) -c $< -o $@ $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
 $(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) | $(BINDIR)
-	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $ -o $(TARGET) $(LDFLAGS) $(BITCODE_LDFLAGS)
+	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $ -o $(TARGET) $(NS_LDFLAGS) $(BITCODE_LDFLAGS)
 
 $(NS_LIB_OBJS): $(OBJDIR)/%.o : %.c | $(OBJDIR)
-	$(CC) -c $< -o $@ $(CFLAGS)
+	$(CC) -c $< -o $@ $(NS_CFLAGS)
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)/src
@@ -104,6 +106,12 @@ count:
 # pack source files
 pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
+
+debug: clean $(NS_SRCS) | $(OBJDIR)
+	clang -o $(TARGET)_debug $(NS_SRCS) $(NS_DEBUG_CFLAGS) $(NS_LDFLAGS)
+
+release: clean $(NS_SRCS) | $(OBJDIR)
+	clang -o $(TARGET)_release $(NS_SRCS) $(NS_RELEASE_CFLAGS) $(NS_LDFLAGS)
 
 install: $(TARGET)
 	cp bin/$(TARGET) /usr/local/bin
