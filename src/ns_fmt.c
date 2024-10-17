@@ -54,8 +54,13 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     }
     case NS_TYPE_BOOL:
         return n.i == 0 ? ns_str_false : ns_str_true;
-    case NS_TYPE_STRING:
-        return vm->str_list[n.i];
+    case NS_TYPE_STRING: {
+        ns_str s = vm->str_list[n.i];
+        char* d = malloc(s.len + 1);
+        memcpy(d, s.data, s.len);
+        d[s.len] = '\0';
+        return (ns_str){.data = d, .len = s.len, .dynamic = 1};
+    } break;
     default:
         return ns_str_cstr("nil");
     }
