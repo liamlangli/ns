@@ -57,7 +57,7 @@ ns_compile_option_t parse_options(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--tokenize") == 0) {
             option.tokenize_only = true;
-        } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--a") == 0) {
+        } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
             option.ast_only = true;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             option.show_version = true;
@@ -124,6 +124,7 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
 void ns_exec_eval(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_read_file(filename);
+    if (source.len == 0) ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
     ns_eval(&vm, source, filename);
 }
 

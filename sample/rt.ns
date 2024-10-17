@@ -1,4 +1,5 @@
 import std
+import math
 
 struct simd3 { x: f64, y: f64, z: f64 }
 struct ray { origin: simd3, direction: simd3 }
@@ -73,5 +74,3 @@ fn main() {
         }
     }
 }
-
-main()

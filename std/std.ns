@@ -1,2 +1,5 @@
-import std.to_str
-import std.math
+import c
+
+fn print(str fmt): nil
+fn open(str path, str mode): i32
+fn read(i32 fd): str

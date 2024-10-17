@@ -142,7 +142,7 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_record *fn = &vm->records[i];
         if (fn->type != NS_RECORD_FN || fn->parsed)
             continue;
-        fn->fn.ret = ns_vm_parse_type(vm, ctx->nodes[fn->fn.ast].fn_def.return_type, false);
+        fn->fn.ret = ns_vm_parse_type(vm, ctx->nodes[fn->fn.ast].fn_def.return_type, true);
         ns_ast_t n = ctx->nodes[fn->fn.ast];
         ns_array_set_length(fn->fn.args, n.fn_def.arg_count);
         ns_ast_t *arg = &n;
