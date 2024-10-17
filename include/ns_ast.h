@@ -42,9 +42,9 @@ typedef enum {
 
 typedef struct ns_ast_t ns_ast_t;
 
-typedef struct ns_parse_state {
-    int f, line;
-} ns_parse_state;
+typedef struct ns_ast_state {
+    int f, l, o; // buffer offset, line, line offset
+} ns_ast_state;
 
 typedef struct ns_ast_arg {
     bool is_ref;
@@ -181,6 +181,7 @@ typedef struct ns_ast_designated_expr {
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
     int next; // -1 mean null ref
+    ns_ast_state state;
     union {
         ns_ast_arg arg;
         ns_ast_fn_def fn_def;
@@ -240,8 +241,8 @@ bool ns_token_require_type(ns_ast_ctx *ctx);
 bool ns_token_skip_eol(ns_ast_ctx *ctx);
 
 // node func
-void ns_restore_state(ns_ast_ctx *ctx, ns_parse_state state);
-ns_parse_state ns_save_state(ns_ast_ctx *ctx);
+void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state);
+ns_ast_state ns_save_state(ns_ast_ctx *ctx);
 int ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n);
 
 // primary func
@@ -263,6 +264,7 @@ bool ns_parse_designated_stmt(ns_ast_ctx *ctx);
 // expr func
 ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
 bool ns_parse_generator_expr(ns_ast_ctx *ctx);
+bool ns_parse_type_expr(ns_ast_ctx *ctx);
 bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 
 bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);

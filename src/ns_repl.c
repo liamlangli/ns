@@ -46,7 +46,7 @@ void ns_repl(ns_vm* vm) {
                     ns_value v = ns_eval_primary_expr(vm, n);
                     if (v.type.type != NS_TYPE_NIL) {
                         ns_str s = ns_fmt_value(vm, v);
-                        printf("\b\b\r%*s [" ns_color_log "%s" ns_color_nil "]\n" , line.len + 4, "", s.data);
+                        printf("   [" ns_color_log "%s" ns_color_nil "]\n", s.data);
                         ns_str_free(s);
                     }
                 } break;

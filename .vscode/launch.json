@@ -10,7 +10,7 @@
             "name": "ns token",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-t","sample/add.ns"],
+            "args": ["-t","${file}"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -19,7 +19,7 @@
             "name": "ns ast",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-p", "sample/add.ns"],
+            "args": ["-p", "${file}"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -28,7 +28,7 @@
             "name": "ns eval",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["sample/add.ns"],
+            "args": ["${file}"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -46,7 +46,7 @@
             "name": "ns bc",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-o", "bin/add.bc", "-b", "sample/add.ns"],
+            "args": ["-o", "${file}.bc", "-b", "${file}"],
             "cwd": "${workspaceFolder}"
         }
     ]

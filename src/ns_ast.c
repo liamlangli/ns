@@ -6,12 +6,12 @@
 bool ns_parse_unary_expr(ns_ast_ctx *ctx);
 bool ns_parse_type_expr(ns_ast_ctx *ctx);
 
-void ns_restore_state(ns_ast_ctx *ctx, ns_parse_state state) {
+void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state) {
     ctx->f = state.f;
-    ctx->token.line = state.line;
+    ctx->token.line = state.l;
 }
 
-ns_parse_state ns_save_state(ns_ast_ctx *ctx) { return (ns_parse_state){.f = ctx->f, .line = ctx->token.line}; }
+ns_ast_state ns_save_state(ns_ast_ctx *ctx) { return (ns_ast_state){.f = ctx->f, .l = ctx->token.line, .o = ctx->f - ctx->token.line_start}; }
 
 int ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n) {
     ctx->current = ns_array_length(ctx->nodes);
@@ -29,7 +29,7 @@ bool ns_parse_next_token(ns_ast_ctx *ctx) {
 }
 
 bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ctx->token.type == token) {
         return true;
@@ -61,7 +61,7 @@ bool ns_token_can_be_type(NS_TOKEN t) {
 }
 
 bool ns_token_require_type(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ns_token_can_be_type(ctx->token.type)) {
         return true;
@@ -71,7 +71,7 @@ bool ns_token_require_type(ns_ast_ctx *ctx) {
 }
 
 bool ns_token_look_ahead(ns_ast_ctx *ctx, NS_TOKEN token) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     bool result = ctx->token.type == token;
     ns_restore_state(ctx, state);
@@ -79,7 +79,7 @@ bool ns_token_look_ahead(ns_ast_ctx *ctx, NS_TOKEN token) {
 }
 
 bool ns_token_skip_eol(ns_ast_ctx *ctx) {
-    ns_parse_state state;
+    ns_ast_state state;
     do {
         state = ns_save_state(ctx);
         ns_parse_next_token(ctx);
@@ -89,7 +89,7 @@ bool ns_token_skip_eol(ns_ast_ctx *ctx) {
 }
 
 bool ns_type_restriction(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
 
     // : type
     ns_parse_next_token(ctx);
@@ -104,7 +104,7 @@ bool ns_type_restriction(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_type_expr(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     // type
     ns_parse_next_token(ctx);
     if (ns_token_can_be_type(ctx->token.type)) {
@@ -121,7 +121,7 @@ bool ns_parse_type_expr(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_identifier(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ctx->token.type == NS_TOKEN_IDENTIFIER) {
         return true;
@@ -131,7 +131,7 @@ bool ns_parse_identifier(ns_ast_ctx *ctx) {
 }
 
 bool ns_primary_expr(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
 
     // literal
@@ -178,7 +178,7 @@ bool ns_primary_expr(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_generator_expr(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
 
     if (ns_token_require(ctx, NS_TOKEN_LET) && ns_parse_identifier(ctx)) {
         ns_ast_t n = {.type = NS_AST_GENERATOR_EXPR, .generator.label = ctx->token};
@@ -188,7 +188,7 @@ bool ns_parse_generator_expr(ns_ast_ctx *ctx) {
         }
 
         // identifier in b
-        ns_parse_state from_state = ns_save_state(ctx);
+        ns_ast_state from_state = ns_save_state(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_IN) {
             n.generator.token = ctx->token;
@@ -219,7 +219,7 @@ bool ns_parse_generator_expr(ns_ast_ctx *ctx) {
 }
 
 bool ns_parameter(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
 
     ns_ast_t n = {.type = NS_AST_ARG_DEF};
     if (ns_token_require(ctx, NS_TOKEN_REF)) {
@@ -255,7 +255,7 @@ bool ns_parse_ops_overridable(ns_token_t token) {
 }
 
 bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
 
     bool is_async = false;
@@ -333,7 +333,7 @@ bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_fn_define(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
 
     bool is_async = false;
@@ -396,7 +396,7 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_struct_define(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
 
     if (!ns_token_require(ctx, NS_TOKEN_STRUCT)) {
         ns_restore_state(ctx, state);
@@ -441,7 +441,7 @@ bool ns_parse_struct_define(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_var_define(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
 
     // identifier [type_declare] = expression
     if (ns_token_require(ctx, NS_TOKEN_LET) && ns_parse_identifier(ctx)) {
@@ -449,7 +449,7 @@ bool ns_parse_var_define(ns_ast_ctx *ctx) {
         if (ns_type_restriction(ctx)) {
             n.var_def.type = ctx->token;
         }
-        ns_parse_state assign_state = ns_save_state(ctx);
+        ns_ast_state assign_state = ns_save_state(ctx);
         if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
             if (ns_parse_expr_stack(ctx)) {
                 n.var_def.expr = ctx->current;
@@ -467,7 +467,7 @@ bool ns_parse_var_define(ns_ast_ctx *ctx) {
 }
 
 bool ns_parse_type_define(ns_ast_ctx *ctx) {
-    ns_parse_state state = ns_save_state(ctx);
+    ns_ast_state state = ns_save_state(ctx);
     ns_restore_state(ctx, state);
     return false;
 }

@@ -55,7 +55,7 @@ fn main() {
     }
 
     let fd = open('bin/ns.ppm', 'w')
-    format(fd, `P3\#ns.ppm\n256 256\n255\n`)
+    write(fd, 'P3\#ns.ppm\n256 256\n255\n')
 
     for let i = 0 to 256 {
         for let j = 0 to 256 {
@@ -65,10 +65,10 @@ fn main() {
             r.direction = simd3 { x: u, y: v, z: 1.0 }
             let h = hit_sphere(r, s)
             if h.t > 0.0 {
-                let n = h.normal * 128.0 + 128.0
-                format(fd, `{d} {d} {d}\n`, n.x, n.y, n.z)
+                let n = (h.normal * 128.0 + 128.0) as u8
+                write(fd, `{d} {d} {d}\n`, n.x, n.y, n.z)
             } else {
-                format(fd, `0 0 0\n`)
+                write(fd, `0 0 0\n`)
             }
         }
     }

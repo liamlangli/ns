@@ -44,7 +44,7 @@ ns_str ns_str_slice(ns_str s, int start, int end) {
 
 typedef struct ns_compile_option_t {
     bool tokenize_only;
-    bool parse_only;
+    bool ast_only;
     bool bitcode_only;
     bool show_version;
     bool show_help;
@@ -57,8 +57,8 @@ ns_compile_option_t parse_options(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--tokenize") == 0) {
             option.tokenize_only = true;
-        } else if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--parse") == 0) {
-            option.parse_only = true;
+        } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--a") == 0) {
+            option.ast_only = true;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             option.show_version = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -76,9 +76,9 @@ ns_compile_option_t parse_options(int argc, char **argv) {
 }
 
 void ns_help() {
-    ns_info("Usage", "ns [option] [file.ns]\n");
+    ns_info("usage", "ns [option] [file.ns]\n");
     printf("  -t --tokenize     tokenize only\n");
-    printf("  -p --parse        parse only\n");
+    printf("  -a --ast          parse ast only\n");
     printf("  -b --bitcode      generate llvm bitcode\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
@@ -144,7 +144,7 @@ int main(int argc, char **argv) {
 
     if (option.tokenize_only) {
         ns_exec_tokenize(option.filename);
-    } else if (option.parse_only) {
+    } else if (option.ast_only) {
         ns_exec_ast(option.filename);
     } else if (option.bitcode_only) {
         ns_exec_bitcode(option.filename, option.output);

@@ -126,4 +126,4 @@ release: $(NS_SRCS) | $(OBJDIR)
 	tar -czvf $(NS_RELEASE_TARGET).tar.gz $(NS_RELEASE_TARGET)
 
 install: $(TARGET)
-	cp bin/$(TARGET) /usr/local/bin
+	cp $(TARGET) /usr/local/bin
