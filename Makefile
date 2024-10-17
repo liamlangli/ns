@@ -90,21 +90,12 @@ $(OBJDIR):
 run: all
 	$(TARGET)
 
-token: all
-	$(TARGET) -t sample/add.ns
-
-ast: all
-	$(TARGET) -p sample/add.ns
-
 bc: all
 	$(TARGET) -o bin/add.bc -b sample/add.ns
 	llvm-dis bin/add.bc
 	llc bin/add.bc -filetype=obj -mtriple=$(LLVM_TRIPLE) -relocation-model=pic -o bin/add.o
 	clang bin/add.o -o bin/add
 	bin/add
-
-eval: all
-	$(TARGET) sample/add.ns
 
 clean:
 	rm -rf $(OBJDIR)

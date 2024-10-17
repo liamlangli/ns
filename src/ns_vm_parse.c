@@ -3,6 +3,8 @@
 #include "ns_type.h"
 #include "ns_vm.h"
 
+#define ns_vm_warn(n, t, m, ...) ns_warn("[%s]")
+
 ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer);
 ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
 ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n);
@@ -249,12 +251,12 @@ ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n) {
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_type fn = ns_vm_parse_primary_expr(vm, ctx->nodes[n.call_expr.callee]);
     if (fn.type == NS_TYPE_UNKNOWN) {
-        ns_parse_error(ctx, "syntax error", "unknown callee");
+        ns_ast_error(ctx, "syntax error", "unknown callee");
     }
 
     ns_record *fn_record = ns_vm_find_record(vm, ns_vm_get_type_name(vm, fn));
     if (!fn_record || fn_record->type != NS_RECORD_FN) {
-        ns_parse_error(ctx, "syntax error", "invalid callee");
+        ns_ast_error(ctx, "syntax error", "invalid callee");
     }
 
     ns_ast_t arg = n;
@@ -262,7 +264,7 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         arg = ctx->nodes[arg.next];
         ns_type t = ns_vm_parse_expr(vm, ctx, arg);
         if (t.type != fn_record->fn.args[i].val.type.type) {
-            ns_parse_error(ctx, "type error", "call expr type mismatch\n");
+            ns_ast_error(ctx, "type error", "call expr type mismatch\n");
         }
     }
     return fn_record->fn.ret;
@@ -282,7 +284,7 @@ ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_type left = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_type right = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
     if (left.type != right.type) {
-        ns_parse_error(ctx, "type error", "binary expr type mismatch\n");
+        ns_ast_error(ctx, "type error", "binary expr type mismatch\n");
     }
     return left;
 }
@@ -310,11 +312,11 @@ void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_type t = ns_vm_parse_expr(vm, ctx, expr);
         size_t l = ns_array_length(vm->call_records);
         if (l == 0) {
-            ns_parse_error(ctx, "syntax error", "return stmt not in fn\n");
+            ns_ast_error(ctx, "syntax error", "return stmt not in fn\n");
         }
         ns_record *fn = vm->call_records[l - 1].call.fn;
         if (fn->fn.ret.type != t.type) {
-            ns_parse_error(ctx, "type error", "return type mismatch\n");
+            ns_ast_error(ctx, "type error", "return type mismatch\n");
         }
     } break;
     default: {

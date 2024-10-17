@@ -150,7 +150,7 @@ bool ns_primary_expr(ns_ast_ctx *ctx) {
     }
 
     if (is_literal) {
-        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
+        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}, .state = state };
         ns_ast_push(ctx, n);
         return true;
     }
@@ -158,6 +158,8 @@ bool ns_primary_expr(ns_ast_ctx *ctx) {
     // identifier
     ns_restore_state(ctx, state);
     if (ns_parse_identifier(ctx)) {
+        ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}, .state = state };
+        ns_ast_push(ctx, n);
         return true;
     }
 

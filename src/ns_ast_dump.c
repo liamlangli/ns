@@ -56,9 +56,10 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
 void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     ns_ast_t n = ctx->nodes[i];
     ns_str type = ns_ast_type_to_string(n.type);
-    printf("%4d [type: %-21.*s next: %3d] ", i, type.len, type.data, n.next);
+    printf("%4d [type: %-23.*s next: %4d] ", i, type.len, type.data, n.next);
     switch (n.type) {
     case NS_AST_FN_DEF: {
+        printf(ns_color_log "fn " ns_color_nil);
         ns_str_printf(n.fn_def.name.val);
         printf(" (");
         ns_ast_t *arg = &n;
@@ -69,7 +70,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
             }
 
             ns_str_printf(arg->arg.name.val);
-            printf(":");
+            printf(": ");
             ns_str_printf(arg->arg.type.val);
             if (i != n.fn_def.arg_count - 1) {
                 printf(", ");
@@ -77,7 +78,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         }
         printf(")");
         if (n.fn_def.return_type.type != NS_TOKEN_UNKNOWN) {
-            printf(" : ");
+            printf(": ");
             ns_str_printf(n.fn_def.return_type.val);
         }
 
@@ -87,8 +88,33 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
             printf(";");
         }
     } break;
+    case NS_AST_OPS_FN_DEF: {
+        if (n.ops_fn_def.is_async) {
+            printf("async ");
+        }
+        printf(ns_color_log "fn" ns_color_nil " ops (" ns_color_wrn);
+        ns_str_printf(n.ops_fn_def.ops.val);
+        printf(ns_color_nil ")(");
+        ns_ast_t *left = &ctx->nodes[n.ops_fn_def.left];
+        ns_str_printf(left->arg.name.val);
+        printf(": ");
+        ns_str_printf(left->arg.type.val);
+        printf(", ");
+        ns_ast_t *right = &ctx->nodes[n.ops_fn_def.right];
+        ns_str_printf(right->arg.name.val);
+        printf(": ");
+        ns_str_printf(right->arg.type.val);
+        printf(")");
+        if (n.ops_fn_def.return_type.type != NS_TOKEN_UNKNOWN) {
+            printf(": ");
+            ns_str_printf(n.ops_fn_def.return_type.val);
+        }
+        if (n.ops_fn_def.body != -1) {
+            printf(" { node[%d] }", n.ops_fn_def.body);
+        }
+    } break;
     case NS_AST_STRUCT_DEF: {
-        printf("struct ");
+        printf(ns_color_log "struct " ns_color_nil);
         ns_str_printf(n.struct_def.name.val);
         printf(" { ");
         int count = n.struct_def.count;
@@ -96,7 +122,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         for (int i = 0; i < count; i++) {
             field = &ctx->nodes[field->next];
             ns_str_printf(field->arg.name.val);
-            printf(":");
+            printf(": ");
             ns_str_printf(field->arg.type.val);
             if (i != count - 1) {
                 printf(", ");
@@ -124,31 +150,6 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
             printf(" = node[%d]", n.var_def.expr);
         }
         break;
-    case NS_AST_OPS_FN_DEF: {
-        if (n.ops_fn_def.is_async) {
-            printf("async ");
-        }
-        printf("fn ops ");
-        ns_str_printf(n.ops_fn_def.ops.val);
-        printf("(");
-        ns_ast_t *left = &ctx->nodes[n.ops_fn_def.left];
-        ns_str_printf(left->arg.name.val);
-        printf(":");
-        ns_str_printf(left->arg.type.val);
-        printf(", ");
-        ns_ast_t *right = &ctx->nodes[n.ops_fn_def.right];
-        ns_str_printf(right->arg.name.val);
-        printf(":");
-        ns_str_printf(right->arg.type.val);
-        printf(")");
-        if (n.ops_fn_def.return_type.type != NS_TOKEN_UNKNOWN) {
-            printf(" : ");
-            ns_str_printf(n.ops_fn_def.return_type.val);
-        }
-        if (n.ops_fn_def.body != -1) {
-            printf(" { node[%d] }", n.ops_fn_def.body);
-        }
-    } break;
     case NS_AST_EXPR:
         printf("node[%d]", n.expr.body);
         break;
@@ -242,13 +243,13 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         printf(" }");
     } break;
     case NS_AST_FOR_STMT: {
-        printf("for node[%d] { node[%d] }", n.for_stmt.generator, n.for_stmt.body);
+        printf(ns_color_log "for" ns_color_nil " node[%d] { node[%d] }", n.for_stmt.generator, n.for_stmt.body);
     } break;
     case NS_AST_WHILE_STMT: {
-        printf("while node[%d] { node[%d] }", n.while_stmt.condition, n.while_stmt.body);
+        printf(ns_color_log "while" ns_color_nil " node[%d] { node[%d] }", n.while_stmt.condition, n.while_stmt.body);
     } break;
     case NS_AST_IMPORT_STMT: {
-        printf("import ");
+        printf(ns_color_log "import " ns_color_nil);
         ns_str_printf(n.import_stmt.lib.val);
     } break;
     default:
