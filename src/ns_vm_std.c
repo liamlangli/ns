@@ -1,18 +1,51 @@
 #include "ns_vm.h"
 #include "ns_fmt.h"
 
-void ns_vm_import_std_records(ns_vm *vm) {
+void ns_vm_import_std_symbols(ns_vm *vm) {
     ns_str std = ns_str_cstr("std");
 
-    // print fn
-    int print_p = ns_vm_push_record(vm, (ns_record){.type = NS_RECORD_FN, .fn = {.ast = -1}, .parsed = true});
-    ns_record *print = &vm->records[print_p];
+    // fn print(fmt: str): nil
+    int print_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    ns_symbol *print = &vm->symbols[print_p];
     print->name = ns_str_cstr("print");
     print->fn.ret = (ns_type){.type = NS_TYPE_EMPTY };
     ns_array_set_length(print->fn.args, 1);
-    print->fn.args[0] = (ns_record){.type = NS_RECORD_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_STRING}}};
+    print->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_STRING}}};
     print->lib = std;
     print->fn.fn = (ns_value){.p = print_p, .type = (ns_type){.type = NS_TYPE_FN, .i = print_p }};
+
+    // fn open(path: str, mode: str): i32
+    int open_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    ns_symbol *open = &vm->symbols[open_p];
+    open->name = ns_str_cstr("open");
+    open->fn.ret = (ns_type){.type = NS_TYPE_I32 };
+    ns_array_set_length(open->fn.args, 2);
+    open->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_STRING}}};
+    open->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_STRING}}};
+    open->lib = std;
+    open->fn.fn = (ns_value){.p = open_p, .type = (ns_type){.type = NS_TYPE_FN, .i = open_p }};
+
+    // fn write(fd: i32, data: str): i32
+    int write_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    ns_symbol *write = &vm->symbols[write_p];
+    write->name = ns_str_cstr("write");
+    write->fn.ret = (ns_type){.type = NS_TYPE_I32 };
+    ns_array_set_length(write->fn.args, 2);
+    write->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_I32}}};
+    write->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_STRING}}};
+    write->lib = std;
+    write->fn.fn = (ns_value){.p = write_p, .type = (ns_type){.type = NS_TYPE_FN, .i = write_p }};
+
+    // fn read(fd: i32, size: i32): str
+    int read_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    ns_symbol *read = &vm->symbols[read_p];
+    read->name = ns_str_cstr("read");
+    read->fn.ret = (ns_type){.type = NS_TYPE_STRING };
+    ns_array_set_length(read->fn.args, 2);
+    read->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_I32}}};
+    read->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_I32}}};
+    read->lib = std;
+    read->fn.fn = (ns_value){.p = read_p, .type = (ns_type){.type = NS_TYPE_FN, .i = read_p }};
 }
 
 ns_value ns_vm_eval_std(ns_vm *vm) {

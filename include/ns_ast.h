@@ -211,6 +211,8 @@ typedef struct ns_ast_t {
     };
 } ns_ast_t;
 
+#define ns_ast_nil (ns_ast_t){.type = NS_AST_UNKNOWN, .next = -1}
+
 #define NS_MAX_PARSE_STACK 64
 #define NS_MAX_CALL_STACK 64
 

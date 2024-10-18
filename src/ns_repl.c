@@ -22,7 +22,7 @@ void ns_repl(ns_vm* vm) {
     ns_ast_ctx ctx = {0};
     ns_array_set_capacity(ctx.nodes, 4);
 
-    ns_vm_import_std_records(vm);
+    ns_vm_import_std_symbols(vm);
     vm->mode = NS_VM_MODE_REPL;
 
     // read eval print loop

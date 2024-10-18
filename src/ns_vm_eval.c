@@ -76,15 +76,15 @@ ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
         }
     }
 
-    ns_record *r = ns_vm_find_record(vm, name);
+    ns_symbol *r = ns_vm_find_symbol(vm, name);
     if (!r) return ns_nil;
-    for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
-        ns_record *r = &vm->records[i];
+    for (int i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+        ns_symbol *r = &vm->symbols[i];
         if (ns_str_equals(r->name, name)) {
             switch (r->type)
             {
-            case NS_RECORD_VALUE: return r->val.val;
-            case NS_RECORD_FN: return r->fn.fn;
+            case NS_SYMBOL_VALUE: return r->val.val;
+            case NS_SYMBOL_FN: return r->fn.fn;
             default:
                 break;
             }
@@ -100,7 +100,7 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_error("eval error", "unknown callee\n");
     }
 
-    ns_record *fn = &vm->records[callee.p];
+    ns_symbol *fn = &vm->symbols[callee.p];
     ns_call call = (ns_call){.fn = fn, .args = NULL };
     ns_array_set_length(call.args, ns_array_length(fn->fn.args));
 
@@ -115,7 +115,7 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     if (ns_str_equals_STR(fn->lib, "std")) {
         ns_vm_eval_std(vm);
     } else {
-        ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast]);
+        ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast.fn_def.body]);
     }
     call = ns_array_pop(vm->call_stack);
     return call.ret;
@@ -203,7 +203,7 @@ ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r,
     ns_str r_name = ns_vm_get_type_name(vm, r.type);
 
     ns_str fn_name = ns_ops_override_name(l_name, r_name, op);
-    ns_record *fn = ns_vm_find_record(vm, fn_name);
+    ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
     if (fn == NULL) {
         ns_error("eval error", "override fn not found %.*s %.*s %.*s\n", l_name.len, l_name.data, op.val.len, op.val.data, r_name.len, r_name.data);
     }
@@ -214,7 +214,7 @@ ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r,
     call.args[1] = r;
 
     ns_array_push(vm->call_stack, call);
-    ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast]);
+    ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast.fn_def.body]);
     ns_array_pop(vm->call_stack);
 
     return call.ret;
@@ -319,7 +319,7 @@ ns_value ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 }
 
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    ns_record *val = ns_vm_find_record(vm, n.var_def.name.val);
+    ns_symbol *val = ns_vm_find_symbol(vm, n.var_def.name.val);
     ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
     val->val.val.p = val->index;
     val->val.val = v;
@@ -332,13 +332,13 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     ns_vm_parse(vm, &ctx);
 
     // eval global value
-    for (int i = 0, l = ns_array_length(vm->records); i < l; ++i) {
-        ns_record r = vm->records[i];
-        if (r.type != NS_RECORD_VALUE)
+    for (int i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+        ns_symbol r = vm->symbols[i];
+        if (r.type != NS_SYMBOL_VALUE)
             continue;
         ns_value v = r.val.val;
         if (r.val.is_const) {
-            ns_record *record = &vm->records[i];
+            ns_symbol *record = &vm->symbols[i];
             record->val.val = v;
         }
     }
