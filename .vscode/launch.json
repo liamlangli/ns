@@ -10,7 +10,7 @@
             "name": "ns token",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-t","${file}"],
+            "args": ["--token","${file}"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -19,7 +19,7 @@
             "name": "ns ast",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-p", "${file}"],
+            "args": ["--ast", "${file}"],
             "cwd": "${workspaceFolder}"
         },
         {

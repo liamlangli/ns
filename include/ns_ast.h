@@ -254,7 +254,7 @@ bool ns_parse_identifier(ns_ast_ctx *ctx);
 bool ns_parse_fn_define(ns_ast_ctx *ctx);
 bool ns_parse_ops_fn_define(ns_ast_ctx *ctx);
 bool ns_parse_var_define(ns_ast_ctx *ctx);
-bool ns_parse_struct_define(ns_ast_ctx *ctx);
+bool ns_parse_struct_def(ns_ast_ctx *ctx);
 bool ns_parse_type_define(ns_ast_ctx *ctx);
 
 // stmt func

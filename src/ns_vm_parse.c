@@ -188,8 +188,8 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             f.val.is_const = false;
             f.val.scope = NS_SCOPE_FIELD;
             st.st.fields[i] = f;
-            if (field->arg.is_ref)
-                f.val.type = ns_vm_parse_type(vm, field->arg.type, false);
+            // if (field->arg.is_ref)
+                // f.val.type = ns_vm_parse_type(vm, field->arg.type, false);
         }
         ns_vm_push_symbol(vm, st);
     }

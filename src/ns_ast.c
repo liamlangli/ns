@@ -397,7 +397,7 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
     return false;
 }
 
-bool ns_parse_struct_define(ns_ast_ctx *ctx) {
+bool ns_parse_struct_def(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
 
     if (!ns_token_require(ctx, NS_TOKEN_STRUCT)) {

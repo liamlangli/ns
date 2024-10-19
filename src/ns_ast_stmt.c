@@ -287,7 +287,7 @@ bool ns_parse_global_define(ns_ast_ctx *ctx) {
     }
     ns_restore_state(ctx, state);
 
-    if (ns_parse_struct_define(ctx)) {
+    if (ns_parse_struct_def(ctx)) {
         return true;
     }
     ns_restore_state(ctx, state);
