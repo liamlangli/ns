@@ -1,5 +1,2 @@
-mod c
-
-ref fn print(str fmt): nil
-ref fn open(str path, str mode): i32
-ref fn read(i32 fd): str
+import c
+import m

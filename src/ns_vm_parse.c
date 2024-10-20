@@ -4,7 +4,7 @@
 #include "ns_vm.h"
 
 #define ns_vm_warn(n, t, m, ...) ns_warn("[%s]")
-#define ns_vm_error(f, s, t, m, ...) ns_error(t, "[%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
+#define ns_vm_error(f, s, t, m, ...) ns_error(t, "\n[%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
 
 ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer);
 ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
@@ -13,23 +13,23 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
-void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_t n);
-void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, int i);
+void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
+void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
-int ns_vm_push_symbol(ns_vm *vm, ns_symbol r) {
+i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r) {
     r.index = ns_array_length(vm->symbols);
     ns_array_push(vm->symbols, r);
     return r.index;
 }
 
-int ns_vm_push_string(ns_vm *vm, ns_str s) {
-    int i = ns_array_length(vm->str_list);
+i32 ns_vm_push_string(ns_vm *vm, ns_str s) {
+    i32 i = ns_array_length(vm->str_list);
     ns_array_push(vm->str_list, s);
     return i;
 }
 
-int ns_vm_push_data(ns_vm *vm, ns_data d) {
-    int i = ns_array_length(vm->data_list);
+i32 ns_vm_push_data(ns_vm *vm, ns_data d) {
+    i32 i = ns_array_length(vm->data_list);
     ns_array_push(vm->data_list, d);
     return i;
 }
@@ -66,20 +66,20 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s) {
     if (l > 0) {
         ns_fn_call_record *call = &vm->call_symbols[l - 1].call;
         ns_fn_record *fn = &call->fn->fn;
-        for (int i = 0, l = ns_array_length(fn->args); i < l; ++i) {
+        for (i32 i = 0, l = ns_array_length(fn->args); i < l; ++i) {
             if (ns_str_equals(fn->args[i].name, s)) {
                 return &fn->args[i];
             }
         }
 
-        for (int i = 0, l = ns_array_length(call->locals); i < l; ++i) {
+        for (i32 i = 0, l = ns_array_length(call->locals); i < l; ++i) {
             if (ns_str_equals(call->locals[i].name, s)) {
                 return &call->locals[i];
             }
         }
     }
 
-    for (int i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         if (ns_str_equals(vm->symbols[i].name, s)) {
             return &vm->symbols[i];
         }
@@ -126,8 +126,8 @@ ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer) {
 }
 
 void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
-    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
-        int s = ctx->sections[i];
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        i32 s = ctx->sections[i];
         ns_ast_t n = ctx->nodes[s];
         if (n.type != NS_AST_FN_DEF)
             continue;
@@ -138,7 +138,7 @@ void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
-    for (int i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *fn = &vm->symbols[i];
         if (fn->type != NS_SYMBOL_FN || fn->parsed)
             continue;
@@ -146,7 +146,7 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
         fn->fn.ret = ns_vm_parse_type(vm, n.fn_def.return_type, true);
         ns_array_set_length(fn->fn.args, n.fn_def.arg_count);
         ns_ast_t *arg = &n;
-        for (int i = 0; i < n.fn_def.arg_count; i++) {
+        for (i32 i = 0; i < n.fn_def.arg_count; i++) {
             arg = &ctx->nodes[arg->next];
             ns_symbol arg_record = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = i};
             arg_record.name = arg->arg.name.val;
@@ -157,7 +157,7 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
-    for (int i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *fn = &vm->symbols[i];
         if (fn->type != NS_SYMBOL_FN || fn->parsed)
             continue;
@@ -173,7 +173,7 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
-    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         ns_ast_t n = ctx->nodes[ctx->sections[i]];
         if (n.type != NS_AST_STRUCT_DEF)
             continue;
@@ -181,7 +181,7 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
         st.name = n.struct_def.name.val;
         ns_array_set_length(st.st.fields, n.struct_def.count);
         ns_ast_t *field = &n;
-        for (int i = 0; i < n.struct_def.count; i++) {
+        for (i32 i = 0; i < n.struct_def.count; i++) {
             field = &ctx->nodes[field->next];
             ns_symbol f = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = i, .val = {.type = ns_type_unknown}};
             f.name = field->arg.name.val;
@@ -197,11 +197,11 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 void ns_vm_parse_struct_def_ref(ns_vm *vm) {
-    for (int i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *st = &vm->symbols[i];
         if (st->type != NS_SYMBOL_STRUCT || st->parsed)
             continue;
-        for (int j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
+        for (i32 j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
             ns_symbol *f = &st->st.fields[j];
             if (!f->val.is_ref)
                 continue;
@@ -216,7 +216,7 @@ void ns_vm_parse_struct_def_ref(ns_vm *vm) {
 }
 
 void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
-    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         ns_ast_t n = ctx->nodes[ctx->sections[i]];
         if (n.type != NS_AST_VAR_DEF)
             continue;
@@ -259,7 +259,7 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 
     ns_ast_t arg = n;
-    for (int i = 0, l = n.call_expr.arg_count; i < l; ++i) {
+    for (i32 i = 0, l = n.call_expr.arg_count; i < l; ++i) {
         arg = ctx->nodes[arg.next];
         ns_type t = ns_vm_parse_expr(vm, ctx, arg);
         if (t.type != fn_record->fn.args[i].val.type.type) {
@@ -269,13 +269,18 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     return fn_record->fn.ret;
 }
 
-void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_t n) {
-    ns_str lib = n.import_stmt.lib.val;
-    if (ns_str_equals(lib, ns_str_cstr("std"))) {
-        ns_vm_import_std_symbols(vm);
-    } else {
-        // find lib in lib path & then add all symbols to vm
-        ns_error("syntax error", "unknown lib %.*s\n", lib.len, lib.data);
+void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx) {
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        ns_ast_t n = ctx->nodes[ctx->sections[i]];
+        if (n.type != NS_AST_IMPORT_STMT)
+            continue;
+        ns_str lib = n.import_stmt.lib.val;
+        if (ns_str_equals(lib, ns_str_cstr("std"))) {
+            ns_vm_import_std_symbols(vm);
+        } else {
+            // find lib in lib path & then add all symbols to vm
+            ns_error("syntax error", "unknown lib %.*s\n", lib.len, lib.data);
+        }
     }
 }
 
@@ -298,7 +303,7 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_vm_parse_call_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
-        ns_error("vm parse", "unimplemented expr type %.*s\n", type.len, type.data);
+        ns_vm_error(ctx->filename, n.state, "syntax error", "unimplemented expr type %.*s", type.len, type.data);
     } break;
     }
     return ns_type_unknown;
@@ -325,9 +330,9 @@ void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 }
 
-void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, int i) {
+void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t expr = ctx->nodes[i];
-    for (int i = 0, l = expr.compound_stmt.count; i < l; i++) {
+    for (i32 i = 0, l = expr.compound_stmt.count; i < l; i++) {
         expr = ctx->nodes[expr.next];
         switch (expr.type) {
         case NS_AST_JUMP_STMT:
@@ -342,6 +347,8 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, int i) {
 }
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_vm_parse_import_stmt(vm, ctx);
+
     ns_vm_parse_fn_def_name(vm, ctx);
 
     ns_vm_parse_struct_def(vm, ctx);
@@ -351,15 +358,12 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_vm_parse_var_def(vm, ctx);
     ns_vm_parse_fn_def_body(vm, ctx);
 
-    for (int i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         ns_ast_t n = ctx->nodes[ctx->sections[i]];
         switch (n.type) {
         case NS_AST_EXPR:
         case NS_AST_CALL_EXPR:
             ns_vm_parse_expr(vm, ctx, n);
-            break;
-        case NS_AST_IMPORT_STMT:
-            ns_vm_parse_import_stmt(vm, n);
             break;
         case NS_AST_FN_DEF:
         case NS_AST_OPS_FN_DEF:

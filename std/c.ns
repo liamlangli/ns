@@ -1,0 +1,5 @@
+mod c
+
+ref fn printf(str fmt): nil
+ref fn open(str path, str mode): i32
+ref fn read(i32 fd): str

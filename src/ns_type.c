@@ -40,7 +40,6 @@ bool ns_type_is_number(ns_type t) {
     }
 }
 
-
 void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap) {
     ns_array_header h = {0};
     void *b;

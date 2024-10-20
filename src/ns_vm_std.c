@@ -46,6 +46,15 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     read->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_I32}}};
     read->lib = std;
     read->fn.fn = (ns_value){.p = read_p, .type = (ns_type){.type = NS_TYPE_FN, .i = read_p }};
+
+    int sqrt_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    ns_symbol *sqrt = &vm->symbols[sqrt_p];
+    sqrt->name = ns_str_cstr("sqrt");
+    sqrt->fn.ret = (ns_type){.type = NS_TYPE_F64 };
+    ns_array_set_length(sqrt->fn.args, 1);
+    sqrt->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.type = (ns_type){.type = NS_TYPE_F64}}};
+    sqrt->lib = std;
+    sqrt->fn.fn = (ns_value){.p = sqrt_p, .type = (ns_type){.type = NS_TYPE_FN, .i = sqrt_p }};
 }
 
 ns_value ns_vm_eval_std(ns_vm *vm) {
