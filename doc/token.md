@@ -28,4 +28,4 @@
 - u32
 - u64
 - u8
-- while
+- loop

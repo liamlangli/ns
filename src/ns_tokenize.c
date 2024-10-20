@@ -403,6 +403,13 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
             t->type = NS_TOKEN_LET;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
+        } else if (strncmp(s + f, "loop", 4) == 0) {
+            sep = ns_token_separator(s, i + 4);
+            if (sep == 0 && ns_identifier_follow(s[i + 4]))
+                goto identifier;
+            t->type = NS_TOKEN_LOOP;
+            t->val = ns_str_range(s + f, 4);
+            to = i + 4 + sep;
         } else {
             goto identifier;
         }
@@ -529,19 +536,6 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
         }
     } break;
 
-    case 'w': // while
-    {
-        if (strncmp(s + f, "while", 5) == 0) {
-            sep = ns_token_separator(s, i + 5);
-            if (sep == 0 && ns_identifier_follow(s[i + 6]))
-                goto identifier;
-            t->type = NS_TOKEN_WHILE;
-            t->val = ns_str_range(s + f, 5);
-            to = i + 5 + sep;
-        } else {
-            goto identifier;
-        }
-    } break;
     case '(': {
         t->type = NS_TOKEN_OPEN_PAREN;
         t->val = ns_str_range(s + f, 1);

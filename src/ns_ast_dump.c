@@ -38,8 +38,8 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         return ns_str_cstr("NS_AST_IF_STMT");
     case NS_AST_FOR_STMT:
         return ns_str_cstr("NS_AST_FOR_STMT");
-    case NS_AST_WHILE_STMT:
-        return ns_str_cstr("NS_AST_WHILE_STMT");
+    case NS_AST_LOOP_STMT:
+        return ns_str_cstr("NS_AST_LOOP_STMT");
     case NS_AST_RETURN_STMT:
         return ns_str_cstr("NS_AST_RETURN_STMT");
     case NS_AST_JUMP_STMT:
@@ -258,8 +258,12 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     case NS_AST_FOR_STMT: {
         printf(ns_color_log "for" ns_color_nil " node[%d] { node[%d] }", n.for_stmt.generator, n.for_stmt.body);
     } break;
-    case NS_AST_WHILE_STMT: {
-        printf(ns_color_log "while" ns_color_nil " node[%d] { node[%d] }", n.while_stmt.condition, n.while_stmt.body);
+    case NS_AST_LOOP_STMT: {
+        if (n.loop_stmt.do_first) {
+            printf(ns_color_log "do" ns_color_nil " { node[%d] } loop node[%d]", n.loop_stmt.body, n.loop_stmt.condition);
+        } else {
+            printf(ns_color_log "loop" ns_color_nil " node[%d] { node[%d] }", n.loop_stmt.condition, n.loop_stmt.body);
+        }
     } break;
     case NS_AST_IMPORT_STMT: {
         printf(ns_color_log "import " ns_color_nil);

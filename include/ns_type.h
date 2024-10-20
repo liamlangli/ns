@@ -123,14 +123,15 @@ typedef enum {
     NS_TOKEN_CONTINUE,
     NS_TOKEN_COMMENT,
     NS_TOKEN_DO,
+    NS_TOKEN_LOOP,
     NS_TOKEN_ELSE,
     NS_TOKEN_FALSE,
     NS_TOKEN_FOR,
+    NS_TOKEN_TO,
     NS_TOKEN_IF,
     NS_TOKEN_IMPORT,
     NS_TOKEN_IN,
     NS_TOKEN_LET,
-    NS_TOKEN_LOOP,
     NS_TOKEN_NIL,
     NS_TOKEN_MATCH,
     NS_TOKEN_RETURN,
@@ -153,9 +154,6 @@ typedef enum {
     NS_TOKEN_TYPE_STR,
 
     NS_TOKEN_TYPE_DEF,      // type: keyword for type definition
-
-    NS_TOKEN_TO,
-    NS_TOKEN_WHILE,
 
     NS_TOKEN_INT_LITERAL,
     NS_TOKEN_FLT_LITERAL,

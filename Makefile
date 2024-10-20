@@ -1,3 +1,6 @@
+# FLAGS
+MAKEFLAGS += --no-print-directory -j
+
 # PLATFORNM
 NS_SUFFIX =
 ifeq ($(OS),Windows_NT)

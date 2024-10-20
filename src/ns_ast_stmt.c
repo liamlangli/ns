@@ -103,16 +103,47 @@ bool ns_parse_for_stmt(ns_ast_ctx *ctx) {
     return false;
 }
 
-bool ns_parse_while_stmt(ns_ast_ctx *ctx) {
+// [loop(cond) {}]  [do {body} loop(cond)]
+bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_WHILE) && ns_parse_expr_stack(ctx)) {
-        ns_ast_t n = {.type = NS_AST_WHILE_STMT, .while_stmt.condition = ctx->current};
-        if (ns_parse_compound_stmt(ctx)) {
-            n.while_stmt.body = ctx->current;
+    ns_ast_t n = {.type = NS_AST_LOOP_STMT, .loop_stmt.condition = -1, .loop_stmt.body = -1, .loop_stmt.do_first = false};
+
+    // do first
+    if (ns_token_require(ctx, NS_TOKEN_DO)) {
+        n.loop_stmt.do_first = true;
+    } else {
+        ns_restore_state(ctx, state);
+    }
+
+    if (!n.loop_stmt.do_first && ns_token_require(ctx, NS_TOKEN_LOOP)) {
+        n.loop_stmt.do_first = false;
+        if (!ns_parse_expr_stack(ctx)) {
+            ns_ast_error(ctx, "syntax error", "expected expression after 'loop' statement");
+        }
+    }
+
+    // loop body
+    if (ns_parse_compound_stmt(ctx)) {
+        n.loop_stmt.body = ctx->current;
+        if (n.loop_stmt.do_first) {
+            if (ns_token_require(ctx, NS_TOKEN_LOOP)) {
+                n.loop_stmt.do_first = false;
+                if (ns_parse_expr_stack(ctx)) {
+                    n.loop_stmt.condition = ctx->current;
+                    ns_ast_push(ctx, n);
+                    return true;
+                } else {
+                    ns_ast_error(ctx, "syntax error", "expected expression after 'loop' statement");
+                }
+            } else {
+                ns_ast_error(ctx, "syntax error", "expected 'loop' after 'do' statement");
+            }
+        } else {
             ns_ast_push(ctx, n);
             return true;
         }
     }
+
     ns_restore_state(ctx, state);
     return false;
 }
@@ -126,8 +157,8 @@ bool ns_parse_iteration_stmt(ns_ast_ctx *ctx) {
     }
     ns_restore_state(ctx, state);
 
-    // while expression statement
-    if (ns_parse_while_stmt(ctx)) {
+    // loop expression statement
+    if (ns_parse_loop_stmt(ctx)) {
         return true;
     }
 

@@ -42,7 +42,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.ns",
-					"match": "\\b(async|await|break|case|const|else|false|fn|for|if|import|in|let|mod|ref|return|struct|switch|to|true|type|while)\\b"
+					"match": "\\b(async|await|break|case|const|do|else|false|fn|for|if|import|in|let|loop|mod|ref|return|struct|switch|to|true|type)\\b"
 				}
 			]
 		},

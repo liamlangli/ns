@@ -17,6 +17,7 @@ void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_t n);
 void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r) {
@@ -322,6 +323,8 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_vm_parse_call_expr(vm, ctx, n);
     case NS_AST_MEMBER_EXPR:
         return ns_vm_parse_member_expr(vm, ctx, n);
+    case NS_AST_GENERATOR_EXPR:
+        return ns_type_unknown;
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_vm_error(ctx->filename, n.state, "syntax error", "unimplemented expr type %.*s", type.len, type.data);
@@ -351,6 +354,47 @@ void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 }
 
+void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_ast_t expr = ctx->nodes[n.if_stmt.condition];
+    ns_type t = ns_vm_parse_expr(vm, ctx, expr);
+    if (t.type != NS_TYPE_BOOL) {
+        ns_ast_error(ctx, "type error", "if stmt expr type mismatch\n");
+    }
+
+    ns_vm_parse_compound_stmt(vm, ctx, n.if_stmt.body);
+    if (n.if_stmt.else_body != -1) {
+        ns_vm_parse_compound_stmt(vm, ctx, n.if_stmt.else_body);
+    }
+}
+
+void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    if (n.loop_stmt.do_first) {
+        ns_vm_parse_compound_stmt(vm, ctx, n.loop_stmt.body);
+        ns_ast_t expr = ctx->nodes[n.loop_stmt.condition];
+        ns_type t = ns_vm_parse_expr(vm, ctx, expr);
+        if (t.type != NS_TYPE_BOOL) {
+            ns_ast_error(ctx, "type error", "loop stmt expr type mismatch\n");
+        }
+    } else {
+        ns_ast_t expr = ctx->nodes[n.loop_stmt.condition];
+        ns_type t = ns_vm_parse_expr(vm, ctx, expr);
+        if (t.type != NS_TYPE_BOOL) {
+            ns_ast_error(ctx, "type error", "loop stmt expr type mismatch\n");
+        }
+        ns_vm_parse_compound_stmt(vm, ctx, n.loop_stmt.body);
+    }
+}
+
+void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_ast_t expr = ctx->nodes[n.for_stmt.generator];
+    ns_type t = ns_vm_parse_expr(vm, ctx, expr);
+    if (t.type != NS_TYPE_BOOL) {
+        ns_ast_error(ctx, "type error", "for stmt expr type mismatch\n");
+    }
+
+    ns_vm_parse_compound_stmt(vm, ctx, n.for_stmt.body);
+}
+
 void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_t n) {
     ns_symbol *call = &vm->call_symbols[ns_array_length(vm->call_symbols) - 1];
     ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .scope = NS_SCOPE_LOCAL }, .parsed = true};
@@ -369,6 +413,9 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             break;
         case NS_AST_VAR_DEF:
             ns_vm_parse_local_var_def(vm, expr);
+            break;
+        case NS_AST_IF_STMT:
+            ns_vm_parse_if_stmt(vm, ctx, expr);
             break;
         default: {
             ns_str type = ns_ast_type_to_string(expr.type);

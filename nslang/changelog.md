@@ -1,3 +1,6 @@
+### 0.0.8
+- remove invalid `while` keyword add `loop` and `do`
+
 ### 0.0.7
 - add missing keyword `mod`, `ref`
 - add arrays type
