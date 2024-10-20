@@ -250,7 +250,7 @@ void ns_bc_struct_def(ns_bc_ctx *bc_ctx) {
     for (int i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         ns_symbol r = vm->symbols[i];
         if (r.type != NS_SYMBOL_STRUCT) continue;
-        if (r.index != i) ns_error("bitcode error", "record index not match\n");
+        if (r.index != i) ns_error("bitcode error", "symbol index not match\n");
 
         ns_bc_symbol st_symbol = {.type = NS_BC_STRUCT, .name = r.name};
         ns_bc_type_ref *fields = NULL;
@@ -275,7 +275,7 @@ void ns_bc_fn_def(ns_bc_ctx *bc_ctx) {
     for (int i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         ns_symbol r = vm->symbols[i];
         if (r.type != NS_SYMBOL_FN) continue;
-        if (r.index != i) ns_error("bitcode error", "record index not match\n");
+        if (r.index != i) ns_error("bitcode error", "symbol index not match\n");
         if (r.lib.len > 0) continue;
         i32 arg_count = ns_array_length(r.fn.args);
     
@@ -290,7 +290,7 @@ void ns_bc_fn_def(ns_bc_ctx *bc_ctx) {
             fn_symbol.fn.args[j] = (ns_bc_symbol){.type = NS_BC_VALUE, .name = arg_name, .val = { .type = t, .val = NULL, .p = -1 }};
         }
 
-        // make and save fn record
+        // make and save fn symbol
         ns_bc_type ret = ns_bc_parse_type(bc_ctx, r.fn.ret);
         ns_bc_type_ref fn_type = LLVMFunctionType(ret.type, args, arg_count, 0);
         ns_bc_value_ref fn = LLVMAddFunction(mod, ns_bc_str(r.name), fn_type);

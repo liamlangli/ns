@@ -15,6 +15,9 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_t n);
+void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r) {
     r.index = ns_array_length(vm->symbols);
@@ -64,8 +67,8 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s) {
     size_t l = ns_array_length(vm->call_symbols);
     if (l > 0) {
-        ns_fn_call_record *call = &vm->call_symbols[l - 1].call;
-        ns_fn_record *fn = &call->fn->fn;
+        ns_fn_call_symbol *call = &vm->call_symbols[l - 1].call;
+        ns_fn_symbol *fn = &call->fn->fn;
         for (i32 i = 0, l = ns_array_length(fn->args); i < l; ++i) {
             if (ns_str_equals(fn->args[i].name, s)) {
                 return &fn->args[i];
@@ -183,14 +186,11 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *field = &n;
         for (i32 i = 0; i < n.struct_def.count; i++) {
             field = &ctx->nodes[field->next];
-            ns_symbol f = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = i, .val = {.type = ns_type_unknown}};
+            ns_symbol f = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = i};
             f.name = field->arg.name.val;
-            f.val.is_ref = field->arg.is_ref;
-            f.val.is_const = false;
-            f.val.scope = NS_SCOPE_FIELD;
+            ns_type t = ns_vm_parse_type(vm, field->arg.type, true);
+            f.val = (ns_value_symbol){.type = t, .scope = NS_SCOPE_FIELD, .is_ref = field->arg.is_ref, .is_const = false};
             st.st.fields[i] = f;
-            // if (field->arg.is_ref)
-                // f.val.type = ns_vm_parse_type(vm, field->arg.type, false);
         }
         ns_vm_push_symbol(vm, st);
     }
@@ -263,10 +263,29 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         arg = ctx->nodes[arg.next];
         ns_type t = ns_vm_parse_expr(vm, ctx, arg);
         if (t.type != fn_record->fn.args[i].val.type.type) {
-            ns_ast_error(ctx, "type error", "call expr type mismatch\n");
+            ns_str arg_type = ns_vm_get_type_name(vm, t);
+            ns_str fn_arg_type = ns_vm_get_type_name(vm, fn_record->fn.args[i].val.type);
+            ns_vm_error(ctx->filename, n.state, "type error", "call expr type mismatch fn arg [%.*s], and input arg[%.*s]\n", fn_arg_type.len, fn_arg_type.data, arg_type.len, arg_type.data);
         }
     }
     return fn_record->fn.ret;
+}
+
+ns_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_ast_t left = ctx->nodes[n.member_expr.left];
+    ns_type t = ns_vm_parse_expr(vm, ctx, left);
+    if (t.type != NS_TYPE_STRUCT) {
+        ns_ast_error(ctx, "type error", "member expr type mismatch\n");
+    }
+    ns_str name = n.member_expr.right.val;
+    for (i32 i = 0, l = ns_array_length(vm->symbols[t.i].st.fields); i < l; ++i) {
+        ns_symbol *f = &vm->symbols[t.i].st.fields[i];
+        if (ns_str_equals(f->name, name)) {
+            return f->val.type;
+        }
+    }
+    ns_ast_error(ctx, "syntax error", "unknown member %.*s\n", name.len, name.data);
+    return ns_type_unknown;
 }
 
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -301,6 +320,8 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_vm_parse_primary_expr(vm, n);
     case NS_AST_CALL_EXPR:
         return ns_vm_parse_call_expr(vm, ctx, n);
+    case NS_AST_MEMBER_EXPR:
+        return ns_vm_parse_member_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_vm_error(ctx->filename, n.state, "syntax error", "unimplemented expr type %.*s", type.len, type.data);
@@ -330,6 +351,14 @@ void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 }
 
+void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_t n) {
+    ns_symbol *call = &vm->call_symbols[ns_array_length(vm->call_symbols) - 1];
+    ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .scope = NS_SCOPE_LOCAL }, .parsed = true};
+    r.name = n.var_def.name.val;
+    r.val.type = ns_vm_parse_type(vm, n.var_def.type, true);
+    ns_array_push(call->call.locals, r);
+}
+
 void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t expr = ctx->nodes[i];
     for (i32 i = 0, l = expr.compound_stmt.count; i < l; i++) {
@@ -337,6 +366,9 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         switch (expr.type) {
         case NS_AST_JUMP_STMT:
             ns_vm_parse_jump_stmt(vm, ctx, expr);
+            break;
+        case NS_AST_VAR_DEF:
+            ns_vm_parse_local_var_def(vm, expr);
             break;
         default: {
             ns_str type = ns_ast_type_to_string(expr.type);

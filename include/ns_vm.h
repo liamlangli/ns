@@ -18,31 +18,31 @@ typedef enum {
 
 typedef struct ns_symbol ns_symbol;
 
-typedef struct ns_value_record {
+typedef struct ns_value_symbol {
     ns_type type;
     NS_VALUE_SCOPE scope;
     ns_value val;
     bool is_const;
     bool is_ref;
-} ns_value_record;
+} ns_value_symbol;
 
-typedef struct ns_fn_record {
+typedef struct ns_fn_symbol {
     ns_type ret;
     ns_symbol *args;
     ns_value fn;
     ns_ast_t ast;
-} ns_fn_record;
+} ns_fn_symbol;
 
-typedef struct ns_fn_call_record {
+typedef struct ns_fn_call_symbol {
     ns_symbol *fn;
     ns_symbol *locals;
-} ns_fn_call_record;
+} ns_fn_call_symbol;
 
-typedef struct ns_struct_record {
+typedef struct ns_struct_symbol {
     ns_str name;
     ns_symbol *fields;
     ns_ast_t ast;
-} ns_struct_record;
+} ns_struct_symbol;
 
 typedef struct ns_symbol {
     NS_SYMBOL_TYPE type;
@@ -51,10 +51,10 @@ typedef struct ns_symbol {
     i32 index;
     bool parsed;
     union {
-        ns_fn_record fn;
-        ns_fn_call_record call;
-        ns_value_record val;
-        ns_struct_record st;
+        ns_fn_symbol fn;
+        ns_fn_call_symbol call;
+        ns_value_symbol val;
+        ns_struct_symbol st;
     };
 } ns_symbol;
 

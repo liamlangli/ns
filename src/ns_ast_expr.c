@@ -210,7 +210,7 @@ bool ns_parse_postfix_expr(ns_ast_ctx *ctx) {
     if (ns_token_require(ctx, NS_TOKEN_AS)) {
         ns_token_skip_eol(ctx);
         if (ns_token_require_type(ctx)) {
-            ns_ast_t n = {.type = NS_AST_CAST_EXPR, .type_cast = {.expr = callee, .type = ctx->token}};
+            ns_ast_t n = {.type = NS_AST_CAST_EXPR, .cast_expr = {.expr = callee, .type = ctx->token}};
             ns_ast_push(ctx, n);
             return true;
         } else {
@@ -366,7 +366,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
             if (ns_parse_stack_top_is_operand(ctx)) {
                 int left = ns_parse_stack_pop(ctx);
                 if (ns_parse_type_expr(ctx)) {
-                    ns_ast_t n = {.type = NS_AST_CAST_EXPR, .type_cast = {.expr = left, .type = ctx->token}};
+                    ns_ast_t n = {.type = NS_AST_CAST_EXPR, .cast_expr = {.expr = left, .type = ctx->token}};
                     ns_parse_stack_push(ctx, n);
                     break;
                 }

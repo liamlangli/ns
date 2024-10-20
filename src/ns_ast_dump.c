@@ -22,6 +22,8 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         return ns_str_cstr("NS_AST_EXPR");
     case NS_AST_BINARY_EXPR:
         return ns_str_cstr("NS_AST_BINARY_EXPR");
+    case NS_AST_UNARY_EXPR:
+        return ns_str_cstr("NS_AST_UNARY_EXPR");
     case NS_AST_PRIMARY_EXPR:
         return ns_str_cstr("NS_AST_PRIMARY_EXPR");
     case NS_AST_CALL_EXPR:
@@ -48,7 +50,10 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         return ns_str_cstr("NS_AST_DESIGNATED_STMT");
     case NS_AST_IMPORT_STMT:
         return ns_str_cstr("NS_AST_IMPORT_STMT");
+    case NS_AST_CAST_EXPR:
+        return ns_str_cstr("NS_AST_CAST_EXPR");
     default:
+        ns_error("ast", "unknown type %d\n", type);
         return ns_str_cstr("NS_AST_UNKNOWN");
     }
 }
@@ -153,6 +158,10 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     case NS_AST_EXPR:
         printf("node[%d]", n.expr.body);
         break;
+    case NS_AST_CAST_EXPR:
+        printf("node[%d] as ", n.cast_expr.expr);
+        ns_str_printf(n.cast_expr.type.val);
+        break;
     case NS_AST_PRIMARY_EXPR: {
         if (n.primary_expr.token.type == NS_TOKEN_UNKNOWN) {
             printf("node[%d]", n.primary_expr.expr);
@@ -164,6 +173,10 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         printf("node[%d] ", n.binary_expr.left);
         ns_str_printf(n.binary_expr.op.val);
         printf(" node[%d]", n.binary_expr.right);
+        break;
+    case NS_AST_UNARY_EXPR:
+        ns_str_printf(n.unary_expr.op.val);
+        printf(" node[%d]", n.unary_expr.expr);
         break;
     case NS_AST_DESIGNATED_EXPR: {
         ns_str_printf(n.designated_expr.name.val);

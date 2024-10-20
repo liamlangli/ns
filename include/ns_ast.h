@@ -195,7 +195,7 @@ typedef struct ns_ast_t {
         ns_ast_binary_expr binary_expr;
         ns_ast_call_expr call_expr;
         ns_ast_index_expr index_expr;
-        ns_ast_cast_expr type_cast;
+        ns_ast_cast_expr cast_expr;
         ns_ast_member_expr member_expr;
         ns_ast_primary_expr primary_expr;
         ns_ast_unary_expr unary_expr;
