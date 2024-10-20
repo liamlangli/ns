@@ -53,6 +53,7 @@ typedef struct ns_ast_arg {
 } ns_ast_arg;
 
 typedef struct ns_ast_fn_def {
+    bool is_ref;
     bool is_async;
     ns_token_t name;
     ns_token_t return_type;
@@ -61,6 +62,7 @@ typedef struct ns_ast_fn_def {
 } ns_ast_fn_def;
 
 typedef struct ns_ast_ops_fn_def {
+    bool is_ref;
     bool is_async;
     ns_token_t ops;
     ns_token_t return_type;

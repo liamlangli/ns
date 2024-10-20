@@ -2,10 +2,10 @@
   "name": "nslang",
   "displayName": "nslang",
   "description": "nanoscript language service.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "liamlangli",
   "scripts": {
-    "pack": "vsce pack"
+    "pack": "vsce package"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -17,14 +17,14 @@
     "type": "git",
     "url": "git@github.com:liamlangli/ns.git"
   },
-  "icon": "./ns.png",
+  "icon": "ns.png",
   "contributes": {
     "languages": [
       {
         "id": "ns",
         "icon": {
-          "light": "./ns.svg",
-          "dark": "./ns.svg"
+          "light": "ns.svg",
+          "dark": "ns.svg"
         },
         "aliases": [
           "nanoscript",
