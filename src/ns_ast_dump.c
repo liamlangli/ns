@@ -118,12 +118,12 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         ns_str_printf(n.struct_def.name.val);
         printf(" { ");
         int count = n.struct_def.count;
-        ns_ast_t *field = &n;
+        ns_ast_t field = n;
         for (int i = 0; i < count; i++) {
-            field = &ctx->nodes[field->next];
-            ns_str_printf(field->arg.name.val);
+            field = ctx->nodes[field.next];
+            ns_str_printf(field.arg.name.val);
             printf(": ");
-            ns_str_printf(field->arg.type.val);
+            ns_str_printf(field.arg.type.val);
             if (i != count - 1) {
                 printf(", ");
             }

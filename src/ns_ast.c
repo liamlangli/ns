@@ -359,14 +359,13 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         return false;
     }
 
-    ns_ast_t fn = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async}};
+    ns_ast_t n = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async}};
     // parse args
     ns_token_skip_eol(ctx);
-    ns_ast_t *arg = &fn;
+    i32 next = -1;
     while (ns_parameter(ctx)) {
-        fn.fn_def.arg_count++;
-        arg->next = ctx->current;
-        arg = &ctx->nodes[ctx->current];
+        next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+        n.fn_def.arg_count++;
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_COMMA || ctx->token.type == NS_TOKEN_EOL) {
@@ -376,7 +375,7 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         }
     }
 
-    if (fn.fn_def.arg_count == 0)
+    if (n.fn_def.arg_count == 0)
         ns_parse_next_token(ctx);
     if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
         ns_restore_state(ctx, state);
@@ -385,12 +384,12 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
 
     // optional
     if (ns_type_restriction(ctx)) {
-        fn.fn_def.return_type = ctx->token;
+        n.fn_def.return_type = ctx->token;
     }
 
     if (ns_parse_compound_stmt(ctx)) {
-        fn.fn_def.body = ctx->current;
-        ctx->current = ns_ast_push(ctx, fn);
+        n.fn_def.body = ctx->current;
+        ctx->current = ns_ast_push(ctx, n);
         return true;
     }
     ns_restore_state(ctx, state);
@@ -417,12 +416,12 @@ bool ns_parse_struct_def(ns_ast_ctx *ctx) {
     }
 
     ns_ast_t n = {.type = NS_AST_STRUCT_DEF, .struct_def = {.name = name, .count = 0}};
-    ns_ast_t *field = &n;
+    int next = -1;
     ns_token_skip_eol(ctx);
     while (ns_parameter(ctx)) {
         ns_token_skip_eol(ctx);
-        field->next = ctx->current;
-        field = &ctx->nodes[ctx->current];
+        next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+
         n.struct_def.count++;
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_COMMA) {
