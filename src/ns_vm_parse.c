@@ -4,6 +4,7 @@
 #include "ns_vm.h"
 
 #define ns_vm_warn(n, t, m, ...) ns_warn("[%s]")
+#define ns_vm_error(f, s, t, m, ...) ns_error(t, "[%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
 
 ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer);
 ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
@@ -246,14 +247,15 @@ ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n) {
 }
 
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    ns_type fn = ns_vm_parse_primary_expr(vm, ctx->nodes[n.call_expr.callee]);
+    ns_ast_t callee_n = ctx->nodes[n.call_expr.callee];
+    ns_type fn = ns_vm_parse_primary_expr(vm, callee_n);
     if (fn.type == NS_TYPE_UNKNOWN) {
-        ns_ast_error(ctx, "syntax error", "unknown callee");
+        ns_vm_error(ctx->filename, callee_n.state, "syntax error", "unknown callee");
     }
 
     ns_symbol *fn_record = ns_vm_find_symbol(vm, ns_vm_get_type_name(vm, fn));
     if (!fn_record || fn_record->type != NS_SYMBOL_FN) {
-        ns_ast_error(ctx, "syntax error", "invalid callee");
+        ns_vm_error(ctx->filename, callee_n.state, "syntax error", "invalid callee");
     }
 
     ns_ast_t arg = n;

@@ -1,3 +1,10 @@
+### 0.0.7
+- add missing keyword `mod`, `ref`
+- add arrays type
+
+### 0.0.6
+- optimize icon size
+
 ### 0.0.5
 - add readme
 

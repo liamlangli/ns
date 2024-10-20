@@ -15,6 +15,7 @@ ns_ast_state ns_save_state(ns_ast_ctx *ctx) { return (ns_ast_state){.f = ctx->f,
 
 int ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n) {
     ctx->current = ns_array_length(ctx->nodes);
+    n.state = ns_save_state(ctx);
     ns_array_push(ctx->nodes, n);
     return ctx->current;
 }

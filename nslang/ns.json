@@ -10,6 +10,9 @@
 			"include": "#strings"
 		},
 		{
+			"include": "#arrays"
+		},
+		{
 			"include": "#types"
 		},
 		{
@@ -39,7 +42,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.ns",
-					"match": "\\b(let|const|struct|fn|type|async|await|in|to|if|import|while|for|return|else|switch|case|break|true|false)\\b"
+					"match": "\\b(async|await|break|case|const|else|false|fn|for|if|import|in|let|mod|ref|return|struct|switch|to|true|type|while)\\b"
 				}
 			]
 		},
@@ -72,6 +75,10 @@
 					"match": "\\\\."
 				}
 			]
+		},
+		"arrays": {
+			"name": "storage.type.array.ns",
+			"match": "\\[\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*\\]"
 		},
 		"types": {
 			"name": "storage.type.ns",
