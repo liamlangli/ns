@@ -9,57 +9,6 @@ ns_value ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
-ns_str ns_ops_name(ns_token_t op) {
-    switch (op.type) {
-    case NS_TOKEN_ADD_OP:
-        if (ns_str_equals_STR(op.val, "+"))
-            return ns_str_cstr("add");
-        else
-            return ns_str_cstr("sub");
-    case NS_TOKEN_MUL_OP:
-        if (ns_str_equals_STR(op.val, "*"))
-            return ns_str_cstr("mul");
-        else if (ns_str_equals_STR(op.val, "/"))
-            return ns_str_cstr("div");
-        else
-            return ns_str_cstr("mod");
-    case NS_TOKEN_LOGIC_OP:
-        if (ns_str_equals_STR(op.val, "&&"))
-            return ns_str_cstr("and");
-        else
-            return ns_str_cstr("or");
-    case NS_TOKEN_SHIFT_OP:
-        if (ns_str_equals_STR(op.val, "<<"))
-            return ns_str_cstr("shl");
-        else
-            return ns_str_cstr("shr");
-    case NS_TOKEN_CMP_OP:
-        if (ns_str_equals_STR(op.val, "=="))
-            return ns_str_cstr("eq");
-        else if (ns_str_equals_STR(op.val, "!="))
-            return ns_str_cstr("ne");
-        else if (ns_str_equals_STR(op.val, "<"))
-            return ns_str_cstr("lt");
-        else if (ns_str_equals_STR(op.val, "<="))
-            return ns_str_cstr("le");
-        else if (ns_str_equals_STR(op.val, ">"))
-            return ns_str_cstr("gt");
-        else if (ns_str_equals_STR(op.val, ">="))
-            return ns_str_cstr("ge");
-    default:
-        ns_error("eval error", "unsupported ops override %.*s\n", op.val.len, op.val.data);
-    }
-}
-
-ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
-    ns_str op_name = ns_ops_name(op);
-    size_t len = l.len + r.len + op_name.len + 3;
-    i8* data = (i8*)malloc(len);
-    snprintf(data, len, "%.*s_%.*s_%.*s", l.len, l.data, r.len, r.data, op_name.len, op_name.data);
-    data[len - 1] = '\0';
-    return (ns_str){.data = data, .len = len - 1, .dynamic = 1};
-}
-
 ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
     if (ns_array_length(vm->call_stack) > 0) {
         ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
@@ -201,7 +150,6 @@ ns_value ns_eval_binary_ops_number(ns_value l, ns_value r, ns_token_t op) {
 ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, ns_token_t op) {
     ns_str l_name = ns_vm_get_type_name(vm, l.type);
     ns_str r_name = ns_vm_get_type_name(vm, r.type);
-
     ns_str fn_name = ns_ops_override_name(l_name, r_name, op);
     ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
     if (fn == NULL) {

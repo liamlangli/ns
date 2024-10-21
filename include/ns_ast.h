@@ -17,6 +17,7 @@ typedef enum {
     NS_AST_STRUCT_DEF,
     NS_AST_STRUCT_FIELD_DEF,
     NS_AST_TYPE_DEF,
+    NS_AST_FIELD_DEF,
 
     NS_AST_EXPR,
     NS_AST_PRIMARY_EXPR,
@@ -36,8 +37,7 @@ typedef enum {
     NS_AST_RETURN_STMT,
     NS_AST_JUMP_STMT,
     NS_AST_LABELED_STMT,
-    NS_AST_COMPOUND_STMT,
-    NS_AST_DESIGNATED_STMT,
+    NS_AST_COMPOUND_STMT
 } NS_AST_TYPE;
 
 typedef struct ns_ast_t ns_ast_t;
@@ -165,15 +165,15 @@ typedef struct ns_ast_compound_stmt {
     i32 count;
 } ns_ast_compound_stmt;
 
-typedef struct ns_ast_designated_stmt {
-    ns_token_t name;
-    i32 count;
-} ns_ast_designated_stmt;
-
 typedef struct ns_ast_designated_expr {
     ns_token_t name;
-    i32 expr;
+    i32 count;
 } ns_ast_designated_expr;
+
+typedef struct ns_ast_designated_field {
+    ns_token_t name;
+    i32 expr;
+} ns_ast_designated_field;
 
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
@@ -185,6 +185,7 @@ typedef struct ns_ast_t {
         ns_ast_ops_fn_def ops_fn_def;
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
+        ns_ast_designated_field field_def;
 
         ns_ast_expr expr;
         ns_ast_binary_expr binary_expr;
@@ -204,7 +205,6 @@ typedef struct ns_ast_t {
         ns_ast_jump_stmt jump_stmt;
         ns_ast_labeled_stmt label_stmt;
         ns_ast_compound_stmt compound_stmt;
-        ns_ast_designated_stmt designated_stmt;
     };
 } ns_ast_t;
 
@@ -258,7 +258,7 @@ bool ns_parse_type_define(ns_ast_ctx *ctx);
 bool ns_parse_global_define(ns_ast_ctx *ctx);
 bool ns_parse_stmt(ns_ast_ctx *ctx);
 bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
-bool ns_parse_designated_stmt(ns_ast_ctx *ctx);
+bool ns_parse_designated_expr(ns_ast_ctx *ctx);
 
 // expr func
 ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);

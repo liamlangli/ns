@@ -29,7 +29,9 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     case NS_AST_CALL_EXPR:
         return ns_str_cstr("NS_AST_CALL_EXPR");
     case NS_AST_DESIGNATED_EXPR:
-        return ns_str_cstr("NS_AST_DESIGNATED_EXPR");
+        return ns_str_cstr("NS_AST_DESIG_EXPR");
+    case NS_AST_FIELD_DEF:
+        return ns_str_cstr("NS_AST_FILED_DEF");
     case NS_AST_MEMBER_EXPR:
         return ns_str_cstr("NS_AST_MEMBER_EXPR");
     case NS_AST_GEN_EXPR:
@@ -46,8 +48,6 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         return ns_str_cstr("NS_AST_JUMP_STMT");
     case NS_AST_COMPOUND_STMT:
         return ns_str_cstr("NS_AST_COMPOUND_STMT");
-    case NS_AST_DESIGNATED_STMT:
-        return ns_str_cstr("NS_AST_DESIGNATED_STMT");
     case NS_AST_IMPORT_STMT:
         return ns_str_cstr("NS_AST_IMPORT_STMT");
     case NS_AST_CAST_EXPR:
@@ -61,7 +61,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
 void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     ns_ast_t n = ctx->nodes[i];
     ns_str type = ns_ast_type_to_string(n.type);
-    printf("%4d [type: %-23.*s next: %4d] ", i, type.len, type.data, n.next);
+    printf("%4d [type: %-24.*s next: %4d] ", i, type.len, type.data, n.next);
     switch (n.type) {
     case NS_AST_FN_DEF: {
         printf(ns_color_log "fn " ns_color_nil);
@@ -178,9 +178,9 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         ns_str_printf(n.unary_expr.op.val);
         printf(" node[%d]", n.unary_expr.expr);
         break;
-    case NS_AST_DESIGNATED_EXPR: {
-        ns_str_printf(n.designated_expr.name.val);
-        printf(" = node[%d]", n.designated_expr.expr);
+    case NS_AST_FIELD_DEF: {
+        ns_str_printf(n.field_def.name.val);
+        printf(" = node[%d]", n.field_def.expr);
     } break;
     case NS_AST_MEMBER_EXPR: {
         printf("node[%d].", n.member_expr.left);
@@ -227,15 +227,15 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
             printf(" else node[%d]", n.if_stmt.else_body);
         }
     } break;
-    case NS_AST_DESIGNATED_STMT: {
-        ns_str_printf(n.designated_stmt.name.val);
+    case NS_AST_DESIGNATED_EXPR: {
+        ns_str_printf(n.designated_expr.name.val);
         printf(" { ");
-        int count = n.designated_stmt.count;
+        int count = n.designated_expr.count;
         ns_ast_t *field = &n;
         for (int i = 0; i < count; i++) {
             field = &ctx->nodes[field->next];
-            ns_str_printf(field->designated_expr.name.val);
-            printf(": node[%d]", field->designated_expr.expr);
+            ns_str_printf(field->field_def.name.val);
+            printf(": node[%d]", field->field_def.expr);
             if (i != count - 1) {
                 printf(", ");
             }

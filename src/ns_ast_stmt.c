@@ -198,13 +198,13 @@ bool ns_parse_compound_stmt(ns_ast_ctx *ctx) {
     return false;
 }
 
-bool ns_parse_designated_value(ns_ast_ctx *ctx) {
+bool ns_parse_designated_field(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
-    ns_ast_t n = {.type = NS_AST_DESIGNATED_EXPR, .designated_expr = {.name = ctx->token}};
+    ns_ast_t n = {.type = NS_AST_FIELD_DEF, .field_def = {.name = ctx->token}};
     if (ns_parse_identifier(ctx)) {
         if (ns_token_require(ctx, NS_TOKEN_COLON)) {
             if (ns_parse_expr_stack(ctx)) {
-                n.designated_expr.expr = ctx->current;
+                n.field_def.expr = ctx->current;
                 ns_ast_push(ctx, n);
                 return true;
             }
@@ -215,11 +215,11 @@ bool ns_parse_designated_value(ns_ast_ctx *ctx) {
 }
 
 // struct { a: 1, b: 2 }
-bool ns_parse_designated_stmt(ns_ast_ctx *ctx) {
+bool ns_parse_designated_expr(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
 
     ns_token_skip_eol(ctx);
-    ns_ast_t n = {.type = NS_AST_DESIGNATED_STMT, .designated_stmt = {.name = ctx->token}};
+    ns_ast_t n = {.type = NS_AST_DESIGNATED_EXPR, .designated_expr = {.name = ctx->token}};
     if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
         ns_restore_state(ctx, state);
         return false;
@@ -227,9 +227,9 @@ bool ns_parse_designated_stmt(ns_ast_ctx *ctx) {
 
     i32 next = -1;
     ns_token_skip_eol(ctx);
-    while (ns_parse_designated_value(ctx)) {
+    while (ns_parse_designated_field(ctx)) {
         next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
-        n.designated_stmt.count++;
+        n.designated_expr.count++;
 
         ns_token_skip_eol(ctx);
         ns_ast_state next_state = ns_save_state(ctx);

@@ -84,6 +84,8 @@ typedef struct ns_call {
 typedef struct ns_vm {
     // parse state
     ns_symbol *symbols;
+    int parsed_symbol_count;
+
     ns_symbol *call_symbols;
 
     // eval state
@@ -100,6 +102,10 @@ ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
+
+// ops fn
+ns_str ns_ops_name(ns_token_t op);
+ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 
 // vm record
 int ns_vm_push_symbol(ns_vm *vm, ns_symbol r);
