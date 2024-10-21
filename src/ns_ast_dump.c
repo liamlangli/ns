@@ -242,6 +242,14 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         }
         printf(" }");
     } break;
+    case NS_AST_GEN_EXPR: {
+        ns_str_printf(n.gen_expr.name.val);
+        if (n.gen_expr.range) {
+            printf(" in node[%d] to node[%d]", n.gen_expr.from, n.gen_expr.to);
+        } else {
+            printf(" in node[%d]", n.gen_expr.from);
+        }
+    } break;
     case NS_AST_FOR_STMT: {
         printf(ns_color_log "for " ns_color_nil);
         ns_ast_t gen = ctx->nodes[n.for_stmt.generator];

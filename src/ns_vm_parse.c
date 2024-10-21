@@ -341,8 +341,8 @@ void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx) {
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_type left = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_type right = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
-    if (left.type != right.type) {
-        ns_ast_error(ctx, "type error", "binary expr type mismatch\n");
+    if (left.type != right.type && left.type != NS_TYPE_INFER) {
+        ns_vm_error(ctx->filename, n.state, "type error", "binary expr type mismatch\n");
     }
     return left;
 }

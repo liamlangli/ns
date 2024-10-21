@@ -347,6 +347,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
         case NS_TOKEN_CLOSE_BRACE:
         case NS_TOKEN_CLOSE_PAREN:
         case NS_TOKEN_RETURN:
+        case NS_TOKEN_TO:
         case NS_TOKEN_LET: {
             goto rewind;
         } break;

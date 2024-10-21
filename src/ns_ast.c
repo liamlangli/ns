@@ -184,24 +184,27 @@ bool ns_primary_expr(ns_ast_ctx *ctx) {
 bool ns_parse_gen_expr(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
 
-    if (ns_parse_identifier(ctx)) {
-        ns_ast_t n = {.type = NS_AST_GEN_EXPR, .gen_expr.name = ctx->token};
-        if (!ns_token_require(ctx, NS_TOKEN_IN)) {
-            ns_restore_state(ctx, state);
-            return false;
-        }
+    if (!ns_parse_identifier(ctx)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
 
-        if (ns_parse_expr_stack(ctx)) {
-            n.gen_expr.from = ctx->current;
-            if (ns_token_require(ctx, NS_TOKEN_TO)) {
-                if (ns_parse_expr_stack(ctx)) {
-                    n.gen_expr.to = ctx->current;
-                    n.gen_expr.range = true;
-                }
+    ns_ast_t n = {.type = NS_AST_GEN_EXPR, .gen_expr.name = ctx->token};
+    if (!ns_token_require(ctx, NS_TOKEN_IN)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    if (ns_parse_expr_stack(ctx)) {
+        n.gen_expr.from = ctx->current;
+        if (ns_token_require(ctx, NS_TOKEN_TO)) {
+            if (ns_parse_expr_stack(ctx)) {
+                n.gen_expr.to = ctx->current;
+                n.gen_expr.range = true;
             }
-            ns_ast_push(ctx, n);
-            return true;
         }
+        ns_ast_push(ctx, n);
+        return true;
     }
 
     ns_restore_state(ctx, state);
