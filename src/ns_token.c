@@ -1,4 +1,4 @@
-#include "ns_tokenize.h"
+#include "ns_token.h"
 #include "ns_type.h"
 
 #include <assert.h>
@@ -815,7 +815,7 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
     return to;
 }
 
-void ns_tokenize(ns_str source, ns_str filename) {
+void ns_token(ns_str source, ns_str filename) {
     ns_info("ns", "tokenizing %.*s\n", ns_max(0, filename.len), filename.data);
     int len = strlen(source.data);
     int i = 0;

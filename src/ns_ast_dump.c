@@ -32,8 +32,8 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         return ns_str_cstr("NS_AST_DESIGNATED_EXPR");
     case NS_AST_MEMBER_EXPR:
         return ns_str_cstr("NS_AST_MEMBER_EXPR");
-    case NS_AST_GENERATOR_EXPR:
-        return ns_str_cstr("NS_AST_GENERATOR_EXPR");
+    case NS_AST_GEN_EXPR:
+        return ns_str_cstr("NS_AST_GEN_EXPR");
     case NS_AST_IF_STMT:
         return ns_str_cstr("NS_AST_IF_STMT");
     case NS_AST_FOR_STMT:
@@ -199,19 +199,6 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         }
         printf(")");
         break;
-    case NS_AST_GENERATOR_EXPR: {
-        printf("let ");
-        ns_str_printf(n.generator.label.val);
-        printf(" = ");
-        if (n.generator.from != -1) {
-            printf("node[%d]", n.generator.from);
-        } else {
-            ns_str_printf(n.generator.token.val);
-        }
-        if (n.generator.to != -1) {
-            printf(" to node[%d]", n.generator.to);
-        }
-    } break;
     case NS_AST_JUMP_STMT:
         ns_str_printf(n.jump_stmt.label.val);
         if (n.jump_stmt.expr != -1) {
@@ -256,7 +243,15 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         printf(" }");
     } break;
     case NS_AST_FOR_STMT: {
-        printf(ns_color_log "for" ns_color_nil " node[%d] { node[%d] }", n.for_stmt.generator, n.for_stmt.body);
+        printf(ns_color_log "for " ns_color_nil);
+        ns_ast_t gen = ctx->nodes[n.for_stmt.generator];
+        ns_str_printf(gen.gen_expr.name.val);
+        if (gen.gen_expr.range) {
+            printf(" in node[%d] to node[%d]", gen.gen_expr.from, gen.gen_expr.to);
+        } else {
+            printf(" in node[%d]", gen.gen_expr.from);
+        }
+        printf(" { node[%d] }", n.for_stmt.body);
     } break;
     case NS_AST_LOOP_STMT: {
         if (n.loop_stmt.do_first) {

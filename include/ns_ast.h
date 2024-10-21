@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ns_tokenize.h"
+#include "ns_token.h"
 #include "ns_type.h"
 
 #include <assert.h>
@@ -26,7 +26,7 @@ typedef enum {
     NS_AST_CALL_EXPR,
     NS_AST_INDEX_EXPR,
     NS_AST_CAST_EXPR,
-    NS_AST_GENERATOR_EXPR,
+    NS_AST_GEN_EXPR,
     NS_AST_DESIGNATED_EXPR,
 
     NS_AST_IF_STMT,
@@ -122,12 +122,12 @@ typedef struct ns_ast_index_expr {
     i32 expr;
 } ns_ast_index_expr;
 
-typedef struct ns_ast_generator_expr {
-    ns_token_t label;
+typedef struct ns_ast_gen_expr {
+    ns_token_t name;
     i32 from;
-    ns_token_t token;
     i32 to;
-} ns_ast_generator_expr;
+    bool range;
+} ns_ast_gen_expr;
 
 typedef struct ns_ast_import_stmt {
     ns_token_t lib;
@@ -194,7 +194,7 @@ typedef struct ns_ast_t {
         ns_ast_member_expr member_expr;
         ns_ast_primary_expr primary_expr;
         ns_ast_unary_expr unary_expr;
-        ns_ast_generator_expr generator;
+        ns_ast_gen_expr gen_expr;
         ns_ast_designated_expr designated_expr;
 
         ns_ast_import_stmt import_stmt;
@@ -262,7 +262,7 @@ bool ns_parse_designated_stmt(ns_ast_ctx *ctx);
 
 // expr func
 ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
-bool ns_parse_generator_expr(ns_ast_ctx *ctx);
+bool ns_parse_gen_expr(ns_ast_ctx *ctx);
 bool ns_parse_type_expr(ns_ast_ctx *ctx);
 bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 

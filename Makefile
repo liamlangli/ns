@@ -52,7 +52,7 @@ OBJDIR = $(BINDIR)
 NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
 	src/ns_path.c \
-	src/ns_tokenize.c \
+	src/ns_token.c \
 	src/ns_ast.c \
 	src/ns_ast_stmt.c \
 	src/ns_ast_expr.c \

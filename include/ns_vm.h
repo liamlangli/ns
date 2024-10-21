@@ -11,11 +11,6 @@ typedef enum {
     NS_SYMBOL_STRUCT,
 } NS_SYMBOL_TYPE;
 
-typedef enum {
-    NS_VM_MODE_EVAL,
-    NS_VM_MODE_REPL
-} ns_vm_mode;
-
 typedef struct ns_symbol ns_symbol;
 
 typedef struct ns_value_symbol {
@@ -33,9 +28,19 @@ typedef struct ns_fn_symbol {
     ns_ast_t ast;
 } ns_fn_symbol;
 
+typedef struct ns_scope_symbol {
+    ns_symbol *vars;
+} ns_scope_symbol;
+
+typedef struct ns_array_symbol {
+    ns_type element_type;
+    bool stack;
+} ns_array_symbol;
+
 typedef struct ns_fn_call_symbol {
     ns_symbol *fn;
     ns_symbol *locals;
+    ns_scope_symbol *scopes;
 } ns_fn_call_symbol;
 
 typedef struct ns_struct_symbol {
@@ -87,7 +92,7 @@ typedef struct ns_vm {
     ns_str *str_list;
     ns_data *data_list;
 
-    ns_vm_mode mode;
+    bool repl;
 } ns_vm;
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);

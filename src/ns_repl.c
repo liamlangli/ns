@@ -23,7 +23,7 @@ void ns_repl(ns_vm* vm) {
     ns_array_set_capacity(ctx.nodes, 4);
 
     ns_vm_import_std_symbols(vm);
-    vm->mode = NS_VM_MODE_REPL;
+    vm->repl = true;
 
     // read eval print loop
     ns_str filename = ns_str_cstr("<repl>");

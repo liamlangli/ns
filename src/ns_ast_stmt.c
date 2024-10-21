@@ -1,5 +1,5 @@
 #include "ns_ast.h"
-#include "ns_tokenize.h"
+#include "ns_token.h"
 
 bool ns_parse_import_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
@@ -91,7 +91,7 @@ bool ns_parse_if_stmt(ns_ast_ctx *ctx) {
 
 bool ns_parse_for_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_FOR) && ns_parse_generator_expr(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_FOR) && ns_parse_gen_expr(ctx)) {
         ns_ast_t n = {.type = NS_AST_FOR_STMT, .for_stmt.generator = ctx->current};
         if (ns_parse_compound_stmt(ctx)) {
             n.for_stmt.body = ctx->current;

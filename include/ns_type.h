@@ -224,7 +224,7 @@ typedef enum {
 
 typedef struct ns_type {
     NS_VALUE_TYPE type;
-    i32 i; // record ptr
+    i32 i; // symbol ptr
 } ns_type;
 
 #define ns_type_unknown ((ns_type){.type = NS_TYPE_UNKNOWN, .i = -1})

@@ -1,5 +1,5 @@
 #include "ns_ast.h"
-#include "ns_tokenize.h"
+#include "ns_token.h"
 
 #include <assert.h>
 
@@ -180,40 +180,27 @@ bool ns_primary_expr(ns_ast_ctx *ctx) {
     return false;
 }
 
-bool ns_parse_generator_expr(ns_ast_ctx *ctx) {
+// [a in b] [a in n to m]
+bool ns_parse_gen_expr(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
 
-    if (ns_token_require(ctx, NS_TOKEN_LET) && ns_parse_identifier(ctx)) {
-        ns_ast_t n = {.type = NS_AST_GENERATOR_EXPR, .generator.label = ctx->token};
-        if (!ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
+    if (ns_parse_identifier(ctx)) {
+        ns_ast_t n = {.type = NS_AST_GEN_EXPR, .gen_expr.name = ctx->token};
+        if (!ns_token_require(ctx, NS_TOKEN_IN)) {
             ns_restore_state(ctx, state);
             return false;
         }
 
-        // identifier in b
-        ns_ast_state from_state = ns_save_state(ctx);
-        ns_parse_next_token(ctx);
-        if (ctx->token.type == NS_TOKEN_IN) {
-            n.generator.token = ctx->token;
-            if (ns_parse_expr_stack(ctx)) {
-                n.generator.from = ctx->current;
-                ns_ast_push(ctx, n);
-                return true;
-            }
-        }
-        ns_restore_state(ctx, from_state);
-
-        // identifier a to b
-        if (ns_primary_expr(ctx)) {
-            n.generator.from = ctx->current;
+        if (ns_parse_expr_stack(ctx)) {
+            n.gen_expr.from = ctx->current;
             if (ns_token_require(ctx, NS_TOKEN_TO)) {
-                n.generator.token = ctx->token;
-                if (ns_primary_expr(ctx)) {
-                    n.generator.to = ctx->current;
-                    ns_ast_push(ctx, n);
-                    return true;
+                if (ns_parse_expr_stack(ctx)) {
+                    n.gen_expr.to = ctx->current;
+                    n.gen_expr.range = true;
                 }
             }
+            ns_ast_push(ctx, n);
+            return true;
         }
     }
 

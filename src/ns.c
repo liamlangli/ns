@@ -1,7 +1,7 @@
 #include "ns.h"
 #include "ns_bitcode.h"
 #include "ns_ast.h"
-#include "ns_tokenize.h"
+#include "ns_token.h"
 #include "ns_type.h"
 #include "ns_vm.h"
 
@@ -92,7 +92,7 @@ void ns_version() {
 void ns_exec_tokenize(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_read_file(filename);
-    ns_tokenize(source, filename);
+    ns_token(source, filename);
 }
 
 void ns_exec_ast(ns_str filename) {

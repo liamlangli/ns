@@ -1,5 +1,5 @@
 #include "ns_ast.h"
-#include "ns_tokenize.h"
+#include "ns_token.h"
 #include "ns_type.h"
 
 void ns_parse_stack_push_index(ns_ast_ctx *ctx, int index) { ctx->stack[++ctx->top] = index; }

@@ -1,5 +1,5 @@
 #include "ns_ast.h"
-#include "ns_tokenize.h"
+#include "ns_token.h"
 #include "ns_type.h"
 #include "ns_vm.h"
 
@@ -12,6 +12,7 @@ ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -69,6 +70,15 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s) {
     size_t l = ns_array_length(vm->call_symbols);
     if (l > 0) {
         ns_fn_call_symbol *call = &vm->call_symbols[l - 1].call;
+        if (ns_array_length(call->scopes) > 0) {
+            ns_scope_symbol *scope = &call->scopes[ns_array_length(call->scopes) - 1];
+            for (i32 i = 0, l = ns_array_length(scope->vars); i < l; ++i) {
+                if (ns_str_equals(scope->vars[i].name, s)) {
+                    return &scope->vars[i];
+                }
+            }
+        }
+
         ns_fn_symbol *fn = &call->fn->fn;
         for (i32 i = 0, l = ns_array_length(fn->args); i < l; ++i) {
             if (ns_str_equals(fn->args[i].name, s)) {
@@ -289,6 +299,30 @@ ns_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     return ns_type_unknown;
 }
 
+bool ns_vm_parse_type_generable(ns_type t) {
+    return t.type == NS_TYPE_STRING || t.type == NS_TYPE_ARRAY;
+}
+
+ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    if (n.gen_expr.range) {
+        ns_ast_t from = ctx->nodes[n.gen_expr.from];
+        ns_ast_t to = ctx->nodes[n.gen_expr.to];
+        ns_type from_t = ns_vm_parse_expr(vm, ctx, from);
+        ns_type to_t = ns_vm_parse_expr(vm, ctx, to);
+        if (from_t.type != NS_TYPE_I32 || to_t.type != NS_TYPE_I32) {
+            ns_ast_error(ctx, "type error", "gen expr type mismatch\n");
+        }
+        return ns_type_i32;
+    } else {
+        ns_ast_t from = ctx->nodes[n.gen_expr.from];
+        ns_type from_t = ns_vm_parse_expr(vm, ctx, from);
+        if (!ns_vm_parse_type_generable(from_t)) {
+            ns_ast_error(ctx, "type error", "gen expr type mismatch\n");
+        }
+        return from_t;
+    }
+}
+
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx) {
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         ns_ast_t n = ctx->nodes[ctx->sections[i]];
@@ -323,8 +357,8 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_vm_parse_call_expr(vm, ctx, n);
     case NS_AST_MEMBER_EXPR:
         return ns_vm_parse_member_expr(vm, ctx, n);
-    case NS_AST_GENERATOR_EXPR:
-        return ns_type_unknown;
+    case NS_AST_GEN_EXPR:
+        return ns_vm_parse_gen_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_vm_error(ctx->filename, n.state, "syntax error", "unimplemented expr type %.*s", type.len, type.data);
@@ -387,12 +421,12 @@ void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
 void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_ast_t expr = ctx->nodes[n.for_stmt.generator];
-    ns_type t = ns_vm_parse_expr(vm, ctx, expr);
-    if (t.type != NS_TYPE_BOOL) {
-        ns_ast_error(ctx, "type error", "for stmt expr type mismatch\n");
-    }
-
+    ns_scope_symbol scope = (ns_scope_symbol){.vars = NULL};
+    ns_symbol *call = &vm->call_symbols[ns_array_length(vm->call_symbols) - 1];
+    ns_array_push(call->call.scopes, scope);
+    ns_vm_parse_expr(vm, ctx, expr);
     ns_vm_parse_compound_stmt(vm, ctx, n.for_stmt.body);
+    ns_array_pop(call->call.scopes);
 }
 
 void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_t n) {
@@ -451,7 +485,7 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
             break; // already parsed
         default: {
             ns_str type = ns_ast_type_to_string(n.type);
-            if (vm->mode != NS_VM_MODE_REPL) ns_warn("vm parse", "unimplemented global ast parse %.*s\n", type.len, type.data);
+            if (!vm->repl) ns_warn("vm parse", "unimplemented global ast parse %.*s\n", type.len, type.data);
         } break;
         }
     }
