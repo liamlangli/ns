@@ -338,13 +338,40 @@ void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx) {
     }
 }
 
+ns_type ns_vm_parse_binary_ops_number(ns_ast_ctx *ctx, ns_type t, ns_ast_t n) {
+    switch (n.binary_expr.op.type) {
+    case NS_TOKEN_ADD_OP:
+    case NS_TOKEN_MUL_OP:
+    case NS_TOKEN_SHIFT_OP:
+        return t;
+    case NS_TOKEN_LOGIC_OP:
+    case NS_TOKEN_CMP_OP:
+        return ns_type_bool;
+    default:
+        ns_vm_error(ctx->filename, n.state, "syntax error", "unknown binary ops %.*s\n", n.binary_expr.op.val.len, n.binary_expr.op.val.data);
+        break;
+    }
+    return ns_type_unknown;
+}
+
+ns_type ns_vm_parse_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_type t, ns_ast_t n) {
+    if (ns_type_is_number(t)) {
+        return ns_vm_parse_binary_ops_number(ctx, t, n);
+    } else {
+        (void)sizeof vm; // TODO find 
+        ns_vm_error(ctx->filename, n.state, "syntax error", "unknown binary ops %.*s\n", n.binary_expr.op.val.len, n.binary_expr.op.val.data);
+    }
+    return ns_type_unknown;
+}
+
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_type left = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_type right = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
+    // TODO upgrade type to check
     if (left.type != right.type && left.type != NS_TYPE_INFER) {
         ns_vm_error(ctx->filename, n.state, "type error", "binary expr type mismatch\n");
     }
-    return right;
+    return ns_vm_parse_binary_ops(vm, ctx, left, n);
 }
 
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
