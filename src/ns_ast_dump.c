@@ -1,57 +1,34 @@
 #include "ns_ast.h"
 
+#define NS_STR_CASE(type) case type: return ns_str_cstr(#type);
+
 ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     switch (type) {
-    case NS_AST_PROGRAM:
-        return ns_str_cstr("NS_AST_PROGRAM");
-    case NS_AST_ARG_DEF:
-        return ns_str_cstr("NS_AST_ARG_DEF");
-    case NS_AST_FN_DEF:
-        return ns_str_cstr("NS_AST_FN_DEF");
-    case NS_AST_VAR_DEF:
-        return ns_str_cstr("NS_AST_VAR_DEF");
-    case NS_AST_STRUCT_DEF:
-        return ns_str_cstr("NS_AST_STRUCT_DEF");
-    case NS_AST_OPS_FN_DEF:
-        return ns_str_cstr("NS_AST_OPS_FN_DEF");
-    case NS_AST_TYPE_DEF:
-        return ns_str_cstr("NS_AST_TYPE_DEF");
-    case NS_AST_STRUCT_FIELD_DEF:
-        return ns_str_cstr("NS_AST_STRUCT_FIELD_DEF");
-    case NS_AST_EXPR:
-        return ns_str_cstr("NS_AST_EXPR");
-    case NS_AST_BINARY_EXPR:
-        return ns_str_cstr("NS_AST_BINARY_EXPR");
-    case NS_AST_UNARY_EXPR:
-        return ns_str_cstr("NS_AST_UNARY_EXPR");
-    case NS_AST_PRIMARY_EXPR:
-        return ns_str_cstr("NS_AST_PRIMARY_EXPR");
-    case NS_AST_CALL_EXPR:
-        return ns_str_cstr("NS_AST_CALL_EXPR");
-    case NS_AST_DESIGNATED_EXPR:
-        return ns_str_cstr("NS_AST_DESIG_EXPR");
-    case NS_AST_FIELD_DEF:
-        return ns_str_cstr("NS_AST_FILED_DEF");
-    case NS_AST_MEMBER_EXPR:
-        return ns_str_cstr("NS_AST_MEMBER_EXPR");
-    case NS_AST_GEN_EXPR:
-        return ns_str_cstr("NS_AST_GEN_EXPR");
-    case NS_AST_IF_STMT:
-        return ns_str_cstr("NS_AST_IF_STMT");
-    case NS_AST_FOR_STMT:
-        return ns_str_cstr("NS_AST_FOR_STMT");
-    case NS_AST_LOOP_STMT:
-        return ns_str_cstr("NS_AST_LOOP_STMT");
-    case NS_AST_RETURN_STMT:
-        return ns_str_cstr("NS_AST_RETURN_STMT");
-    case NS_AST_JUMP_STMT:
-        return ns_str_cstr("NS_AST_JUMP_STMT");
-    case NS_AST_COMPOUND_STMT:
-        return ns_str_cstr("NS_AST_COMPOUND_STMT");
-    case NS_AST_IMPORT_STMT:
-        return ns_str_cstr("NS_AST_IMPORT_STMT");
-    case NS_AST_CAST_EXPR:
-        return ns_str_cstr("NS_AST_CAST_EXPR");
+        ns_str_case(NS_AST_PROGRAM)
+        ns_str_case(NS_AST_ARG_DEF)
+        ns_str_case(NS_AST_FN_DEF)
+        ns_str_case(NS_AST_VAR_DEF)
+        ns_str_case(NS_AST_STRUCT_DEF)
+        ns_str_case(NS_AST_OPS_FN_DEF)
+        ns_str_case(NS_AST_TYPE_DEF)
+        ns_str_case(NS_AST_STRUCT_FIELD_DEF)
+        ns_str_case(NS_AST_EXPR)
+        ns_str_case(NS_AST_BINARY_EXPR)
+        ns_str_case(NS_AST_UNARY_EXPR)
+        ns_str_case(NS_AST_PRIMARY_EXPR)
+        ns_str_case(NS_AST_CALL_EXPR)
+        ns_str_case(NS_AST_DESIG_EXPR)
+        ns_str_case(NS_AST_FIELD_DEF)
+        ns_str_case(NS_AST_MEMBER_EXPR)
+        ns_str_case(NS_AST_GEN_EXPR)
+        ns_str_case(NS_AST_IF_STMT)
+        ns_str_case(NS_AST_FOR_STMT)
+        ns_str_case(NS_AST_LOOP_STMT)
+        ns_str_case(NS_AST_RETURN_STMT)
+        ns_str_case(NS_AST_JUMP_STMT)
+        ns_str_case(NS_AST_COMPOUND_STMT)
+        ns_str_case(NS_AST_IMPORT_STMT)
+        ns_str_case(NS_AST_CAST_EXPR)
     default:
         ns_error("ast", "unknown type %d\n", type);
         return ns_str_cstr("NS_AST_UNKNOWN");
@@ -61,7 +38,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
 void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
     ns_ast_t n = ctx->nodes[i];
     ns_str type = ns_ast_type_to_string(n.type);
-    printf("%4d [type: %-24.*s next: %4d] ", i, type.len, type.data, n.next);
+    printf("%4d [type: %-20.*s next: %4d] ", i, type.len, type.data, n.next);
     switch (n.type) {
     case NS_AST_FN_DEF: {
         printf(ns_color_log "fn " ns_color_nil);
@@ -228,7 +205,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
             printf(" " ns_color_log "else" ns_color_nil " [%d]", n.if_stmt.else_body);
         }
     } break;
-    case NS_AST_DESIGNATED_EXPR: {
+    case NS_AST_DESIG_EXPR: {
         ns_str_printf(n.designated_expr.name.val);
         printf(" { ");
         i32 count = n.designated_expr.count;

@@ -631,7 +631,7 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_vm_parse_member_expr(vm, ctx, n);
     case NS_AST_GEN_EXPR:
         return ns_vm_parse_gen_expr(vm, ctx, n);
-    case NS_AST_DESIGNATED_EXPR:
+    case NS_AST_DESIG_EXPR:
         return ns_vm_parse_designated_expr(vm, ctx, n);
     case NS_AST_UNARY_EXPR:
         return ns_vm_parse_unary_expr(vm, ctx, n);
@@ -750,7 +750,7 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         case NS_AST_PRIMARY_EXPR:
         case NS_AST_MEMBER_EXPR:
         case NS_AST_GEN_EXPR:
-        case NS_AST_DESIGNATED_EXPR:
+        case NS_AST_DESIG_EXPR:
         case NS_AST_UNARY_EXPR:
             ns_vm_parse_expr(vm, ctx, expr);
             break;

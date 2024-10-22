@@ -40,6 +40,8 @@
 #define ns_min(a, b) ((a) < (b) ? (a) : (b))
 #define ns_clamp(x, b, t) (ns_max((b), ns_min((t), (x))))
 
+#define ns_str_case(type) case type: return ns_str_cstr(#type);
+
 // ns_type
 typedef char i8;
 typedef short i16;

@@ -7,110 +7,59 @@
 
 ns_str ns_token_type_to_string(NS_TOKEN type) {
     switch (type) {
-    case NS_TOKEN_INT_LITERAL:
-        return ns_str_cstr("NS_TOKEN_INT_LITERAL");
-    case NS_TOKEN_FLT_LITERAL:
-        return ns_str_cstr("NS_TOKEN_FLT_LITERAL");
-    case NS_TOKEN_STR_LITERAL:
-        return ns_str_cstr("NS_TOKEN_STR_LITERAL");
-    case NS_TOKEN_STR_FORMAT:
-        return ns_str_cstr("NS_TOKEN_STR_FORMAT");
-    case NS_TOKEN_CONST:
-        return ns_str_cstr("NS_TOKEN_CONST");
-    case NS_TOKEN_COMMENT:
-        return ns_str_cstr("NS_TOKEN_COMMENT");
-    case NS_TOKEN_LET:
-        return ns_str_cstr("NS_TOKEN_LET");
-    case NS_TOKEN_FN:
-        return ns_str_cstr("NS_TOKEN_FN");
-    case NS_TOKEN_IN:
-        return ns_str_cstr("NS_TOKEN_IN");
-    case NS_TOKEN_SPACE:
-        return ns_str_cstr("NS_TOKEN_SPACE");
-    case NS_TOKEN_STRUCT:
-        return ns_str_cstr("NS_TOKEN_STRUCT");
-    case NS_TOKEN_IDENTIFIER:
-        return ns_str_cstr("NS_TOKEN_IDENTIFIER");
-    case NS_TOKEN_ASYNC:
-        return ns_str_cstr("NS_TOKEN_ASYNC");
-    case NS_TOKEN_AWAIT:
-        return ns_str_cstr("NS_TOKEN_AWAIT");
-    case NS_TOKEN_TYPE_I8:
-        return ns_str_cstr("NS_TOKEN_TYPE_I8");
-    case NS_TOKEN_TYPE_I16:
-        return ns_str_cstr("NS_TOKEN_TYPE_I16");
-    case NS_TOKEN_TYPE_I32:
-        return ns_str_cstr("NS_TOKEN_TYPE_I32");
-    case NS_TOKEN_TYPE_I64:
-        return ns_str_cstr("NS_TOKEN_TYPE_I64");
-    case NS_TOKEN_TYPE_U8:
-        return ns_str_cstr("NS_TOKEN_TYPE_U8");
-    case NS_TOKEN_TYPE_U16:
-        return ns_str_cstr("NS_TOKEN_TYPE_U16");
-    case NS_TOKEN_TYPE_U32:
-        return ns_str_cstr("NS_TOKEN_TYPE_U32");
-    case NS_TOKEN_TYPE_U64:
-        return ns_str_cstr("NS_TOKEN_TYPE_U64");
-    case NS_TOKEN_TYPE_F32:
-        return ns_str_cstr("NS_TOKEN_TYPE_F32");
-    case NS_TOKEN_TYPE_F64:
-        return ns_str_cstr("NS_TOKEN_TYPE_F64");
-    case NS_TOKEN_TYPE_BOOL:
-        return ns_str_cstr("NS_TOKEN_TYPE_BOOL");
-    case NS_TOKEN_TYPE_STR:
-        return ns_str_cstr("NS_TOKEN_TYPE_STR");
-    case NS_TOKEN_ASSIGN:
-        return ns_str_cstr("NS_TOKEN_ASSIGN");
-    case NS_TOKEN_COLON:
-        return ns_str_cstr("NS_TOKEN_COLON");
-    case NS_TOKEN_ASSIGN_OP:
-        return ns_str_cstr("NS_TOKEN_ASSIGN_OP");
-    case NS_TOKEN_ADD_OP:
-        return ns_str_cstr("NS_TOKEN_ADD_OP");
-    case NS_TOKEN_BITWISE_OP:
-        return ns_str_cstr("NS_TOKEN_BITWISE_OP");
-    case NS_TOKEN_CMP_OP:
-        return ns_str_cstr("NS_TOKEN_CMP_OP");
-    case NS_TOKEN_OPEN_BRACE:
-        return ns_str_cstr("NS_TOKEN_OPEN_BRACE");
-    case NS_TOKEN_CLOSE_BRACE:
-        return ns_str_cstr("NS_TOKEN_CLOSE_BRACE");
-    case NS_TOKEN_OPEN_PAREN:
-        return ns_str_cstr("NS_TOKEN_OPEN_PAREN");
-    case NS_TOKEN_CLOSE_PAREN:
-        return ns_str_cstr("NS_TOKEN_CLOSE_PAREN");
-    case NS_TOKEN_OPEN_BRACKET:
-        return ns_str_cstr("NS_TOKEN_OPEN_BRACKET");
-    case NS_TOKEN_CLOSE_BRACKET:
-        return ns_str_cstr("NS_TOKEN_CLOSE_BRACKET");
-    case NS_TOKEN_EOL:
-        return ns_str_cstr("NS_TOKEN_EOL");
-    case NS_TOKEN_EOF:
-        return ns_str_cstr("NS_TOKEN_EOF");
-    case NS_TOKEN_RETURN:
-        return ns_str_cstr("NS_TOKEN_RETURN");
-    case NS_TOKEN_IF:
-        return ns_str_cstr("NS_TOKEN_IF");
-    case NS_TOKEN_ELSE:
-        return ns_str_cstr("NS_TOKEN_ELSE");
-    case NS_TOKEN_EQ_OP:
-        return ns_str_cstr("NS_TOKEN_EQ_OP");
-    case NS_TOKEN_COMMA:
-        return ns_str_cstr("NS_TOKEN_COMMA");
-    case NS_TOKEN_FOR:
-        return ns_str_cstr("NS_TOKEN_FOR");
-    case NS_TOKEN_TO:
-        return ns_str_cstr("NS_TOKEN_TO");
-    case NS_TOKEN_OPS:
-        return ns_str_cstr("NS_TOKEN_OPS");
-    case NS_TOKEN_IMPORT:
-        return ns_str_cstr("NS_TOKEN_IMPORT");
-    case NS_TOKEN_DOT:
-        return ns_str_cstr("NS_TOKEN_DOT");
-    case NS_TOKEN_MUL_OP:
-        return ns_str_cstr("NS_TOKEN_MUL_OP");
+        ns_str_case(NS_TOKEN_INT_LITERAL);
+        ns_str_case(NS_TOKEN_FLT_LITERAL);
+        ns_str_case(NS_TOKEN_STR_LITERAL);
+        ns_str_case(NS_TOKEN_STR_FORMAT);
+        ns_str_case(NS_TOKEN_CONST);
+        ns_str_case(NS_TOKEN_COMMENT);
+        ns_str_case(NS_TOKEN_LET);
+        ns_str_case(NS_TOKEN_FN);
+        ns_str_case(NS_TOKEN_IN);
+        ns_str_case(NS_TOKEN_SPACE);
+        ns_str_case(NS_TOKEN_STRUCT);
+        ns_str_case(NS_TOKEN_IDENTIFIER);
+        ns_str_case(NS_TOKEN_ASYNC);
+        ns_str_case(NS_TOKEN_AWAIT);
+        ns_str_case(NS_TOKEN_TYPE_I8);
+        ns_str_case(NS_TOKEN_TYPE_I16);
+        ns_str_case(NS_TOKEN_TYPE_I32);
+        ns_str_case(NS_TOKEN_TYPE_I64);
+        ns_str_case(NS_TOKEN_TYPE_U8);
+        ns_str_case(NS_TOKEN_TYPE_U16);
+        ns_str_case(NS_TOKEN_TYPE_U32);
+        ns_str_case(NS_TOKEN_TYPE_U64);
+        ns_str_case(NS_TOKEN_TYPE_F32);
+        ns_str_case(NS_TOKEN_TYPE_F64);
+        ns_str_case(NS_TOKEN_TYPE_BOOL);
+        ns_str_case(NS_TOKEN_TYPE_STR);
+        ns_str_case(NS_TOKEN_ASSIGN);
+        ns_str_case(NS_TOKEN_COLON);
+        ns_str_case(NS_TOKEN_ASSIGN_OP);
+        ns_str_case(NS_TOKEN_ADD_OP);
+        ns_str_case(NS_TOKEN_BITWISE_OP);
+        ns_str_case(NS_TOKEN_CMP_OP);
+        ns_str_case(NS_TOKEN_OPEN_BRACE);
+        ns_str_case(NS_TOKEN_CLOSE_BRACE);
+        ns_str_case(NS_TOKEN_OPEN_PAREN);
+        ns_str_case(NS_TOKEN_CLOSE_PAREN);
+        ns_str_case(NS_TOKEN_OPEN_BRACKET);
+        ns_str_case(NS_TOKEN_CLOSE_BRACKET);
+        ns_str_case(NS_TOKEN_EOL);
+        ns_str_case(NS_TOKEN_EOF);
+        ns_str_case(NS_TOKEN_RETURN);
+        ns_str_case(NS_TOKEN_IF);
+        ns_str_case(NS_TOKEN_ELSE);
+        ns_str_case(NS_TOKEN_EQ_OP);
+        ns_str_case(NS_TOKEN_COMMA);
+        ns_str_case(NS_TOKEN_FOR);
+        ns_str_case(NS_TOKEN_TO);
+        ns_str_case(NS_TOKEN_OPS);
+        ns_str_case(NS_TOKEN_IMPORT);
+        ns_str_case(NS_TOKEN_DOT);
+        ns_str_case(NS_TOKEN_MUL_OP);
     default:
-        return ns_str_cstr("Unknown token");
+        ns_error("token", "unknown token %d\n", type);
     }
 }
 
