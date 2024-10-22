@@ -53,10 +53,10 @@ fn main() {
             r.direction = simd3 { x: u, y: v, z: 1.0 }
             let h = hit_sphere(r, s)
             if h.t > 0.0 {
-                let n = (h.normal * 128.0 + 128.0) as u8
-                write(fd, `{d} {d} {d}\n`, n.x, n.y, n.z)
+                let n = h.normal * 128.0 + 128.0
+                write(fd, `{n.x as u8} {n.y as u8} {n.z as u8}\n`)
             } else {
-                write(fd, `0 0 0\n`)
+                write(fd, '0 0 0\n')
             }
         }
     }

@@ -20,8 +20,9 @@ void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx);
 
 ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer);
 ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
-ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n);
+ns_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
@@ -374,14 +375,15 @@ void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
 ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n) {
     switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
-        return (ns_type){.type = NS_TYPE_I32};
+        return ns_type_i32;
     case NS_TOKEN_FLT_LITERAL:
-        return (ns_type){.type = NS_TYPE_F64};
+        return ns_type_f64;
     case NS_TOKEN_STR_LITERAL:
-        return (ns_type){.type = NS_TYPE_STRING};
+    case NS_TOKEN_STR_FORMAT:
+        return ns_type_str;
     case NS_TOKEN_TRUE:
     case NS_TOKEN_FALSE:
-        return (ns_type){.type = NS_TYPE_BOOL};
+        return ns_type_bool;
     case NS_TOKEN_IDENTIFIER:
         return ns_vm_parse_record_type(vm, n.primary_expr.token.val, true);
     default:
@@ -397,7 +399,8 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_vm_error(ctx->filename, callee_n.state, "syntax error", "unknown callee");
     }
 
-    ns_symbol *fn_record = ns_vm_find_symbol(vm, ns_vm_get_type_name(vm, fn));
+    ns_str fn_name = ns_vm_get_type_name(vm, fn);
+    ns_symbol *fn_record = ns_vm_find_symbol(vm, fn_name);
     if (!fn_record || fn_record->type != NS_SYMBOL_FN) {
         ns_vm_error(ctx->filename, callee_n.state, "syntax error", "invalid callee");
     }
@@ -410,7 +413,7 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         if (t.type != fn_record->fn.args[i].val.type.type) {
             ns_str arg_type = ns_vm_get_type_name(vm, t);
             ns_str fn_arg_type = ns_vm_get_type_name(vm, fn_record->fn.args[i].val.type);
-            ns_vm_error(ctx->filename, n.state, "type error", "call expr type mismatch fn arg [%.*s], and input arg[%.*s]\n", fn_arg_type.len, fn_arg_type.data, arg_type.len, arg_type.data);
+            ns_vm_error(ctx->filename, n.state, "type error", "call expr type mismatch fn [%.*s] arg [%.*s], and input arg[%.*s]\n", fn_name.len, fn_name.data, fn_arg_type.len, fn_arg_type.data, arg_type.len, arg_type.data);
         }
     }
     return fn_record->fn.ret;
@@ -504,6 +507,22 @@ ns_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     return ns_type_unknown;
 }
 
+ns_type ns_vm_parse_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_ast_t expr = ctx->nodes[n.cast_expr.expr];
+    ns_type t = ns_vm_parse_expr(vm, ctx, expr);
+    ns_type cast = ns_vm_parse_type(vm, n.cast_expr.type, false);
+    if (t.type == cast.type) {
+        return t;
+    }
+    if (ns_type_is_number(t) && ns_type_is_number(cast)) {
+        return cast;
+    }
+    ns_str t_name = ns_vm_get_type_name(vm, t);
+    ns_str cast_name = ns_vm_get_type_name(vm, cast);
+    ns_vm_error(ctx->filename, n.state, "type error", "cast expr type mismatch [%.*s -> %.*s]\n", t_name.len, t_name.data, cast_name.len, cast_name.data);
+    return ns_type_unknown;
+}
+
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx) {
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         ns_ast_t n = ctx->nodes[ctx->sections[i]];
@@ -556,7 +575,22 @@ ns_type ns_vm_parse_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_type t, ns_ast_t n
     return ns_type_unknown;
 }
 
+ns_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_type l = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
+    ns_type r = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
+    if (l.type != r.type) {
+        ns_str l_name = ns_vm_get_type_name(vm, l);
+        ns_str r_name = ns_vm_get_type_name(vm, r);
+        ns_vm_error(ctx->filename, n.state, "type error", "assign expr type mismatch [%.*s = %.*s]\n", l_name.len, l_name.data, r_name.len, r_name.data);
+    }
+    return l;
+}
+
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    if (n.binary_expr.op.type == NS_TOKEN_ASSIGN_OP || n.binary_expr.op.type == NS_TOKEN_ASSIGN) {
+        return ns_vm_parse_assign_expr(vm, ctx, n);
+    }
+
     ns_type l = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_type r = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
     if (l.type == r.type) {
@@ -601,6 +635,8 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_vm_parse_designated_expr(vm, ctx, n);
     case NS_AST_UNARY_EXPR:
         return ns_vm_parse_unary_expr(vm, ctx, n);
+    case NS_AST_CAST_EXPR:
+        return ns_vm_parse_cast_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_vm_error(ctx->filename, n.state, "syntax error", "unimplemented expr type %.*s", type.len, type.data);
@@ -745,6 +781,7 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
         case NS_AST_CALL_EXPR:
             ns_vm_parse_expr(vm, ctx, n);
             break;
+        case NS_AST_IMPORT_STMT:
         case NS_AST_FN_DEF:
         case NS_AST_OPS_FN_DEF:
         case NS_AST_STRUCT_DEF:

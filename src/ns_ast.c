@@ -138,6 +138,7 @@ bool ns_primary_expr(ns_ast_ctx *ctx) {
     case NS_TOKEN_INT_LITERAL:
     case NS_TOKEN_FLT_LITERAL:
     case NS_TOKEN_STR_LITERAL:
+    case NS_TOKEN_STR_FORMAT:
     case NS_TOKEN_TRUE:
     case NS_TOKEN_FALSE:
     case NS_TOKEN_NIL:

@@ -55,7 +55,7 @@ typedef struct ns_compile_option_t {
 ns_compile_option_t parse_options(i32 argc, i8** argv) {
     ns_compile_option_t option = {0};
     for (i32 i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--tokenize") == 0) {
+        if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--token") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
             option.ast_only = true;
@@ -77,7 +77,7 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
 
 void ns_help() {
     ns_info("usage", "ns [option] [file.ns]\n");
-    printf("  -t --tokenize     tokenize only\n");
+    printf("  -t --token     tokenize only\n");
     printf("  -a --ast          parse ast only\n");
     printf("  -b --bitcode      generate llvm bitcode\n");
     printf("  -v --version      show version\n");

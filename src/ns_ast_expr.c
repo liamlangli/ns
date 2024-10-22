@@ -2,12 +2,12 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
-void ns_parse_stack_push_index(ns_ast_ctx *ctx, i32 index) {
+void ns_parse_stack_push(ns_ast_ctx *ctx, i32 index) {
     ctx->stack[++ctx->top] = index;
 }
 
-void ns_parse_stack_push(ns_ast_ctx *ctx, ns_ast_t n) {
-    ns_parse_stack_push_index(ctx, ns_ast_push(ctx, n));
+void ns_parse_stack_push_ast(ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_parse_stack_push(ctx, ns_ast_push(ctx, n));
 }
 
 i32 ns_parse_stack_pop(ns_ast_ctx *ctx) {
@@ -117,7 +117,8 @@ bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
         switch (ctx->token.type) {
         case NS_TOKEN_INT_LITERAL:
         case NS_TOKEN_FLT_LITERAL:
-        case NS_TOKEN_STR_LITERAL: {
+        case NS_TOKEN_STR_LITERAL:
+        case NS_TOKEN_STR_FORMAT: {
             ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
             ns_ast_push(ctx, n);
             return true;
@@ -236,9 +237,10 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
         switch (ctx->token.type) {
         case NS_TOKEN_INT_LITERAL:
         case NS_TOKEN_FLT_LITERAL:
+        case NS_TOKEN_STR_FORMAT:
         case NS_TOKEN_STR_LITERAL: {
             ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
-            ns_parse_stack_push(ctx, n);
+            ns_parse_stack_push_ast(ctx, n);
         } break;
 
         case NS_TOKEN_IDENTIFIER: {
@@ -250,7 +252,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
             if (!ns_parse_postfix_expr(ctx)) {
                 ns_ast_error(ctx, "syntax error", "expected postfix expression");
             }
-            ns_parse_stack_push_index(ctx, ctx->current);
+            ns_parse_stack_push(ctx, ctx->current);
         } break;
 
         case NS_TOKEN_ADD_OP:
@@ -261,12 +263,11 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
         case NS_TOKEN_EQ_OP:
         case NS_TOKEN_CMP_OP:
         case NS_TOKEN_LOGIC_OP: {
-
             // first token is operator
             if (ctx->top == expr_top) {
                 ns_restore_state(ctx, state);
                 if (ns_parse_unary_expr(ctx)) {
-                    ns_parse_stack_push_index(ctx, ctx->current);
+                    ns_parse_stack_push(ctx, ctx->current);
                     break;
                 } else {
                     ns_ast_error(ctx, "syntax error", "expected unary expression");
@@ -276,7 +277,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
             // try rewind
             if (ns_parse_stack_top_is_operand(ctx)) {
                 ns_ast_t n = {.type = NS_AST_BINARY_EXPR, .binary_expr = {.op = ctx->token}};
-                ns_parse_stack_push(ctx, n);
+                ns_parse_stack_push_ast(ctx, n);
             } else {
                 ns_ast_error(ctx, "syntax error", "multi operator");
             }
@@ -286,7 +287,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
                 // parse inner expr
                 if (ns_parse_expr_stack(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
                     ns_ast_t expr = {.type = NS_AST_EXPR, .expr = {.body = ctx->current}};
-                    ns_parse_stack_push(ctx, expr);
+                    ns_parse_stack_push_ast(ctx, expr);
                     break;
                 } else {
                     ns_ast_error(ctx, "syntax error", "expected inner expression after '('");
@@ -296,7 +297,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
                 if (!ns_parse_call_expr(ctx, callee)) {
                     ns_ast_error(ctx, "syntax error", "expected call expression after '('");
                 }
-                ns_parse_stack_push_index(ctx, ctx->current);
+                ns_parse_stack_push(ctx, ctx->current);
                 break;
             }
 
@@ -309,12 +310,12 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
                 ns_ast_t type = ctx->nodes[last];
                 ns_restore_state(ctx, state);
                 if (!ns_parse_designated_expr(ctx)) {
-                    ns_parse_stack_push_index(ctx, last);
+                    ns_parse_stack_push(ctx, last);
                     goto rewind;
                 }
                 ns_ast_t *n = &ctx->nodes[ctx->current];
                 n->designated_expr.name = type.primary_expr.token;
-                ns_parse_stack_push_index(ctx, ctx->current);
+                ns_parse_stack_push(ctx, ctx->current);
             }
         } break;
 
@@ -342,7 +343,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
                 i32 left = ns_parse_stack_pop(ctx);
                 if (ns_parse_type_expr(ctx)) {
                     ns_ast_t n = {.type = NS_AST_CAST_EXPR, .cast_expr = {.expr = left, .type = ctx->token}};
-                    ns_parse_stack_push(ctx, n);
+                    ns_parse_stack_push_ast(ctx, n);
                     break;
                 }
             }
@@ -351,11 +352,12 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
         case NS_TOKEN_ASSIGN:
         case NS_TOKEN_ASSIGN_OP: {
             i32 left = ns_parse_stack_pop(ctx);
+            ns_token_t t = ctx->token;
             if (ns_parse_expr_stack(ctx)) {
-                ns_ast_t n = {.type = NS_AST_BINARY_EXPR, .binary_expr = {.op = ctx->token}};
+                ns_ast_t n = {.type = NS_AST_BINARY_EXPR, .binary_expr = {.op = t}};
                 n.binary_expr.left = left;
                 n.binary_expr.right = ctx->current;
-                ns_parse_stack_push(ctx, n);
+                ns_parse_stack_push_ast(ctx, n);
             } else {
                 ns_ast_error(ctx, "syntax error", "expected expression after assign operator");
             }

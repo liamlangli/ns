@@ -13,6 +13,8 @@ ns_str ns_token_type_to_string(NS_TOKEN type) {
         return ns_str_cstr("NS_TOKEN_FLT_LITERAL");
     case NS_TOKEN_STR_LITERAL:
         return ns_str_cstr("NS_TOKEN_STR_LITERAL");
+    case NS_TOKEN_STR_FORMAT:
+        return ns_str_cstr("NS_TOKEN_STR_FORMAT");
     case NS_TOKEN_CONST:
         return ns_str_cstr("NS_TOKEN_CONST");
     case NS_TOKEN_COMMENT:
@@ -576,7 +578,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
         while (s[i] != quote && s[i] != '\0') {
             i++;
         }
-        t->type = NS_TOKEN_STR_LITERAL;
+        t->type = lead == 96 ? NS_TOKEN_STR_FORMAT : NS_TOKEN_STR_LITERAL;
         t->val = ns_str_range(s + f + 1, i - f - 1);
         to = i + 1;
     } break;
