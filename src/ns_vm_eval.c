@@ -292,6 +292,16 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
         }
     }
 
+    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
+    if (NULL != main_fn) {
+        ns_call call = (ns_call){.fn = main_fn, .args = NULL };
+        ns_array_set_length(call.args, 0);
+        ns_array_push(vm->call_stack, call);
+        ns_eval_compound_stmt(vm, &ctx, ctx.nodes[main_fn->fn.ast.fn_def.body]);
+        ns_array_pop(vm->call_stack);
+        return ns_nil;
+    }
+
     ns_value ret = ns_nil;
     for (i32 i = ctx.section_begin, l = ctx.section_end; i < l; ++i) {
         ns_ast_t n = ctx.nodes[ctx.sections[i]];
