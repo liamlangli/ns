@@ -5,8 +5,8 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     ns_str std = ns_str_cstr("std");
 
     // fn print(fmt: str): nil
-    int print_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
-    ns_symbol *print = &vm->symbols[print_p];
+    i32 print_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    ns_symbol* print= &vm->symbols[print_p];
     print->name = ns_str_cstr("print");
     print->fn.ret = (ns_type){.type = NS_TYPE_EMPTY };
     ns_array_set_length(print->fn.args, 1);
@@ -15,7 +15,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     print->fn.fn = (ns_value){.p = print_p, .type = (ns_type){.type = NS_TYPE_FN, .i = print_p }};
 
     // fn open(path: str, mode: str): i32
-    int open_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 open_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *open = &vm->symbols[open_p];
     open->name = ns_str_cstr("open");
     open->fn.ret = (ns_type){.type = NS_TYPE_I32 };
@@ -26,7 +26,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     open->fn.fn = (ns_value){.p = open_p, .type = (ns_type){.type = NS_TYPE_FN, .i = open_p }};
 
     // fn write(fd: i32, data: str): i32
-    int write_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 write_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *write = &vm->symbols[write_p];
     write->name = ns_str_cstr("write");
     write->fn.ret = (ns_type){.type = NS_TYPE_I32 };
@@ -37,7 +37,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     write->fn.fn = (ns_value){.p = write_p, .type = (ns_type){.type = NS_TYPE_FN, .i = write_p }};
 
     // fn read(fd: i32, size: i32): str
-    int read_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 read_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *read = &vm->symbols[read_p];
     read->name = ns_str_cstr("read");
     read->fn.ret = (ns_type){.type = NS_TYPE_STRING };
@@ -47,7 +47,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     read->lib = std;
     read->fn.fn = (ns_value){.p = read_p, .type = (ns_type){.type = NS_TYPE_FN, .i = read_p }};
 
-    int sqrt_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 sqrt_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *sqrt = &vm->symbols[sqrt_p];
     sqrt->name = ns_str_cstr("sqrt");
     sqrt->fn.ret = (ns_type){.type = NS_TYPE_F64 };

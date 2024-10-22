@@ -28,6 +28,13 @@ typedef struct ns_fn_symbol {
     ns_ast_t ast;
 } ns_fn_symbol;
 
+typedef struct ns_struct_symbol {
+    ns_type type;
+    ns_str name;
+    ns_symbol *fields;
+    ns_ast_t ast;
+} ns_struct_symbol;
+
 typedef struct ns_scope_symbol {
     ns_symbol *vars;
 } ns_scope_symbol;
@@ -42,12 +49,6 @@ typedef struct ns_fn_call_symbol {
     ns_symbol *locals;
     ns_scope_symbol *scopes;
 } ns_fn_call_symbol;
-
-typedef struct ns_struct_symbol {
-    ns_str name;
-    ns_symbol *fields;
-    ns_ast_t ast;
-} ns_struct_symbol;
 
 typedef struct ns_symbol {
     NS_SYMBOL_TYPE type;

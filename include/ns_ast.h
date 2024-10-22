@@ -232,41 +232,48 @@ typedef struct as_parse_context_t {
 
 ns_str ns_ast_type_to_string(NS_AST_TYPE type);
 
-// token func
+// token fn
 bool ns_parse_next_token(ns_ast_ctx *ctx); // skip space
 bool ns_token_can_be_type(NS_TOKEN t);
 bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token);
 bool ns_token_require_type(ns_ast_ctx *ctx);
 bool ns_token_skip_eol(ns_ast_ctx *ctx);
 
-// node func
+// node fn
 void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state);
 ns_ast_state ns_save_state(ns_ast_ctx *ctx);
 i32 ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n);
 
-// primary func
+// primary fn
 bool ns_parse_identifier(ns_ast_ctx *ctx);
 
-// external func
+// type fn
+bool ns_parse_unary_expr(ns_ast_ctx *ctx);
+bool ns_parse_type_expr(ns_ast_ctx *ctx);
+
+// external fn
 bool ns_parse_fn_define(ns_ast_ctx *ctx);
 bool ns_parse_ops_fn_define(ns_ast_ctx *ctx);
 bool ns_parse_var_define(ns_ast_ctx *ctx);
 bool ns_parse_struct_def(ns_ast_ctx *ctx);
 bool ns_parse_type_define(ns_ast_ctx *ctx);
 
-// stmt func
+// stmt fn
 bool ns_parse_global_define(ns_ast_ctx *ctx);
 bool ns_parse_stmt(ns_ast_ctx *ctx);
 bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
 bool ns_parse_designated_expr(ns_ast_ctx *ctx);
 
-// expr func
+// expr fn
 ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
 bool ns_parse_gen_expr(ns_ast_ctx *ctx);
 bool ns_parse_type_expr(ns_ast_ctx *ctx);
+bool ns_parse_primary_expr(ns_ast_ctx *ctx);
+bool ns_parse_postfix_expr(ns_ast_ctx *ctx);
 bool ns_parse_expr_stack(ns_ast_ctx *ctx);
 
-bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);
-
-// dump func
+// dump fn
 void ns_ast_ctx_dump(ns_ast_ctx *ctx);
+
+// main parse fn
+bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);

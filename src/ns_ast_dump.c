@@ -58,7 +58,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     }
 }
 
-void ns_ast_dump(ns_ast_ctx *ctx, int i) {
+void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
     ns_ast_t n = ctx->nodes[i];
     ns_str type = ns_ast_type_to_string(n.type);
     printf("%4d [type: %-24.*s next: %4d] ", i, type.len, type.data, n.next);
@@ -68,7 +68,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         ns_str_printf(n.fn_def.name.val);
         printf(" (");
         ns_ast_t *arg = &n;
-        for (int i = 0; i < n.fn_def.arg_count; i++) {
+        for (i32 i = 0; i < n.fn_def.arg_count; i++) {
             arg = &ctx->nodes[arg->next];
             if (arg->arg.is_ref) {
                 printf("ref ");
@@ -122,9 +122,9 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         printf(ns_color_log "struct " ns_color_nil);
         ns_str_printf(n.struct_def.name.val);
         printf(" { ");
-        int count = n.struct_def.count;
+        i32 count = n.struct_def.count;
         ns_ast_t field = n;
-        for (int i = 0; i < count; i++) {
+        for (i32 i = 0; i < count; i++) {
             field = ctx->nodes[field.next];
             ns_str_printf(field.arg.name.val);
             printf(": ");
@@ -190,7 +190,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
         printf("node[%d]", n.call_expr.callee);
         printf("(");
         ns_ast_t *arg = &n;
-        for (int i = 0; i < n.call_expr.arg_count; i++) {
+        for (i32 i = 0; i < n.call_expr.arg_count; i++) {
             printf("node[%d]", arg->next);
             arg = &ctx->nodes[arg->next];
             if (i != n.call_expr.arg_count - 1) {
@@ -212,7 +212,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
             break;
         }
         ns_ast_t *stmt = &n;
-        for (int i = 0; i < n.compound_stmt.count; i++) {
+        for (i32 i = 0; i < n.compound_stmt.count; i++) {
             printf("node[%d]", stmt->next);
             stmt = &ctx->nodes[stmt->next];
             if (i != n.compound_stmt.count - 1) {
@@ -230,9 +230,9 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
     case NS_AST_DESIGNATED_EXPR: {
         ns_str_printf(n.designated_expr.name.val);
         printf(" { ");
-        int count = n.designated_expr.count;
+        i32 count = n.designated_expr.count;
         ns_ast_t *field = &n;
-        for (int i = 0; i < count; i++) {
+        for (i32 i = 0; i < count; i++) {
             field = &ctx->nodes[field->next];
             ns_str_printf(field->field_def.name.val);
             printf(": node[%d]", field->field_def.expr);
@@ -280,12 +280,12 @@ void ns_ast_dump(ns_ast_ctx *ctx, int i) {
 
 void ns_ast_ctx_dump(ns_ast_ctx *ctx) {
     ns_info("ast", "node count %zu\n", ns_array_length(ctx->nodes));
-    for (int i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
+    for (i32 i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
         ns_ast_dump(ctx, i);
     }
 
     ns_info("ast", "section count %d\n", ctx->section_end - ctx->section_begin);
-    for (int i = ctx->section_begin; i < ctx->section_end; i++) {
+    for (i32 i = ctx->section_begin; i < ctx->section_end; i++) {
         ns_ast_dump(ctx, ctx->sections[i]);
     }
 }

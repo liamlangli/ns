@@ -12,13 +12,13 @@ ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
     if (ns_array_length(vm->call_stack) > 0) {
         ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
-        for (int i = 0, l = ns_array_length(call->fn->fn.args); i < l; ++i) {
+        for (i32 i = 0, l = ns_array_length(call->fn->fn.args); i < l; ++i) {
             if (ns_str_equals(call->fn->fn.args[i].name, name)) {
                 return call->args[i];
             }
         }
 
-        for (int i = 0, l = ns_array_length(call->locals); i < l; ++i) {
+        for (i32 i = 0, l = ns_array_length(call->locals); i < l; ++i) {
             if (ns_str_equals(call->locals[i].name, name)) {
                 return call->locals[i].val.val;
             }
@@ -27,7 +27,7 @@ ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
 
     ns_symbol *r = ns_vm_find_symbol(vm, name);
     if (!r) return ns_nil;
-    for (int i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *r = &vm->symbols[i];
         if (ns_str_equals(r->name, name)) {
             switch (r->type)
@@ -54,7 +54,7 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_array_set_length(call.args, ns_array_length(fn->fn.args));
 
     ns_ast_t arg = n;
-    for (int i = 0, l = n.call_expr.arg_count; i < l; ++i) {
+    for (i32 i = 0, l = n.call_expr.arg_count; i < l; ++i) {
         arg = ctx->nodes[arg.next];
         ns_value v = ns_eval_expr(vm, ctx, arg);
         call.args[i] = v;
@@ -248,7 +248,7 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
 ns_value ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_ast_t expr = n;
-    for (int i = 0, l = n.compound_stmt.count; i < l; i++) {
+    for (i32 i = 0, l = n.compound_stmt.count; i < l; i++) {
         expr = ctx->nodes[expr.next];
         switch (expr.type) {
         case NS_AST_JUMP_STMT:
@@ -280,7 +280,7 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     ns_vm_parse(vm, &ctx);
 
     // eval global value
-    for (int i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol r = vm->symbols[i];
         if (r.type != NS_SYMBOL_VALUE)
             continue;
@@ -292,7 +292,7 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     }
 
     ns_value ret = ns_nil;
-    for (int i = ctx.section_begin, l = ctx.section_end; i < l; ++i) {
+    for (i32 i = ctx.section_begin, l = ctx.section_end; i < l; ++i) {
         ns_ast_t n = ctx.nodes[ctx.sections[i]];
         switch (n.type) {
         case NS_AST_EXPR:

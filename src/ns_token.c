@@ -112,8 +112,8 @@ ns_str ns_token_type_to_string(NS_TOKEN type) {
     }
 }
 
-int ns_token_float_literal(ns_token_t *t, char *s, int i) {
-    int j = i;
+i32 ns_token_float_literal(ns_token_t *t, char *s, i32 i) {
+    i32 j = i;
     while (s[j] >= '0' && s[j] <= '9') {
         j++;
     }
@@ -124,27 +124,27 @@ int ns_token_float_literal(ns_token_t *t, char *s, int i) {
         }
     }
     t->type = NS_TOKEN_FLT_LITERAL;
-    int len = j - i;
+    i32 len = j - i;
     t->val = ns_str_range(s + i, len);
     return j;
 }
 
-int ns_token_int_literal(ns_token_t *t, char *s, int i) {
-    int j = i;
+i32 ns_token_int_literal(ns_token_t *t, char *s, i32 i) {
+    i32 j = i;
     while (s[j] >= '0' && s[j] <= '9') {
         j++;
     }
     t->type = NS_TOKEN_INT_LITERAL;
-    int len = j - i;
+    i32 len = j - i;
     t->val = ns_str_range(s + i, len);
     return j;
 }
 
 // > 0 mean there is a {separator}+
 // = 0 mean there is no {separator}
-int ns_token_separator(char *s, int i) {
-    int c = s[i];
-    int to = i, sep;
+i32 ns_token_separator(char *s, i32 i) {
+    i32 c = s[i];
+    i32 to = i, sep;
     do {
         sep = c == ' ' || c == '\t' || c == '\v' || c == ';';
         to++;
@@ -153,14 +153,14 @@ int ns_token_separator(char *s, int i) {
     return to - i - 1;
 }
 
-int ns_identifier_follow(char c) {
+i32 ns_identifier_follow(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || (c >= '0' && c <= '9');
 }
 
-int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
-    int i = f;
-    int to = f + 1;
-    int l, sep;
+i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
+    i32 i = f;
+    i32 to = f + 1;
+    i32 l, sep;
     char *s = src.data;
     char lead = s[i]; // TODO parse utf8 characters
     switch (lead) {
@@ -817,8 +817,8 @@ int ns_next_token(ns_token_t *t, ns_str src, ns_str filename, int f) {
 
 void ns_token(ns_str source, ns_str filename) {
     ns_info("ns", "tokenizing %.*s\n", ns_max(0, filename.len), filename.data);
-    int len = strlen(source.data);
-    int i = 0;
+    i32 len = strlen(source.data);
+    i32 i = 0;
     ns_token_t t = {0};
     t.line = 1;
     do {

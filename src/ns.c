@@ -33,7 +33,7 @@ ns_str ns_read_file(ns_str path) {
     return data;
 }
 
-ns_str ns_str_slice(ns_str s, int start, int end) {
+ns_str ns_str_slice(ns_str s, i32 start, i32 end) {
     char *buffer = (char *)malloc(end - start + 1);
     memcpy(buffer, s.data + start, end - start);
     buffer[end - start] = '\0';
@@ -52,9 +52,9 @@ typedef struct ns_compile_option_t {
     ns_str filename;
 } ns_compile_option_t;
 
-ns_compile_option_t parse_options(int argc, char **argv) {
+ns_compile_option_t parse_options(i32 argc, i8** argv) {
     ns_compile_option_t option = {0};
-    for (int i = 1; i < argc; i++) {
+    for (i32 i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--tokenize") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {

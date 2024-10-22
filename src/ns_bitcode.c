@@ -104,17 +104,17 @@ typedef struct ns_bc_ctx {
 const char* ns_bc_str(ns_str s);
 ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t);
 ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name);
-void ns_bc_set_symbol(ns_bc_ctx *bc_ctx, ns_bc_symbol r, int i);
+void ns_bc_set_symbol(ns_bc_ctx *bc_ctx, ns_bc_symbol r, i32 i);
 
 // expr
-ns_bc_value ns_bc_expr(ns_bc_ctx *bc_ctx, int i);
-ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, int i);
-ns_bc_value ns_bc_primary_expr(ns_bc_ctx *bc_ctx, int i);
-ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, int i);
+ns_bc_value ns_bc_expr(ns_bc_ctx *bc_ctx, i32 i);
+ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, i32 i);
+ns_bc_value ns_bc_primary_expr(ns_bc_ctx *bc_ctx, i32 i);
+ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, i32 i);
 ns_bc_value ns_bc_call_std(ns_bc_ctx *bc_ctx);
 
-void ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, int i);
-void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, int i);
+void ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, i32 i);
+void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, i32 i);
 
 
 // impl
@@ -125,7 +125,7 @@ const char* ns_bc_str(ns_str s) {
         assert(false);
     }
     ns_str ret = {.data = _str_buff, .len = 0};
-    for (int i = 0; i < s.len; i++) {
+    for (i32 i = 0; i < s.len; i++) {
         _str_buff[i] = s.data[i];
         ret.len++;
     }
@@ -164,7 +164,7 @@ ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t) {
     return ns_bc_type_nil;
 }
 
-void ns_bc_set_symbol(ns_bc_ctx *bc_ctx, ns_bc_symbol r, int i) {
+void ns_bc_set_symbol(ns_bc_ctx *bc_ctx, ns_bc_symbol r, i32 i) {
     switch (r.type)
     {
     case NS_BC_FN: r.fn.fn.p = i; break;
@@ -179,20 +179,20 @@ ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name) {
     if (ns_array_length(bc_ctx->call_stack) > 0) {
         ns_bc_call *call = &bc_ctx->call_stack[ns_array_length(bc_ctx->call_stack) - 1];
         ns_bc_symbol *fn = call->fn;
-        for (int i = 0, l = ns_array_length(fn->fn.args); i < l; i++) {
+        for (i32 i = 0, l = ns_array_length(fn->fn.args); i < l; i++) {
             if (ns_str_equals(fn->fn.args[i].name, name)) {
                 return call->args[i];
             }
         }
 
-        for (int i = 0, l = ns_array_length(call->locals); i < l; i++) {
+        for (i32 i = 0, l = ns_array_length(call->locals); i < l; i++) {
             if (ns_str_equals(call->locals[i].name, name)) {
                 return call->locals[i].val;
             }
         }
     }
 
-    for (int i = 0, l = ns_array_length(bc_ctx->symbols); i < l; i++) {
+    for (i32 i = 0, l = ns_array_length(bc_ctx->symbols); i < l; i++) {
         if (ns_str_equals(bc_ctx->symbols[i].name, name)) {
             ns_bc_symbol *r = &bc_ctx->symbols[i];
             switch (r->type)
@@ -206,7 +206,7 @@ ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name) {
     return ns_bc_nil;
 }
 
-ns_bc_value ns_bc_primary_expr(ns_bc_ctx *bc_ctx, int i) {
+ns_bc_value ns_bc_primary_expr(ns_bc_ctx *bc_ctx, i32 i) {
     ns_ast_t n = bc_ctx->ctx->nodes[i];
     ns_token_t t = n.primary_expr.token;
     switch (n.primary_expr.token.type) {
@@ -227,7 +227,7 @@ ns_bc_value ns_bc_primary_expr(ns_bc_ctx *bc_ctx, int i) {
     return ns_bc_nil;
 }
 
-ns_bc_value ns_bc_expr(ns_bc_ctx *bc_ctx, int i) {
+ns_bc_value ns_bc_expr(ns_bc_ctx *bc_ctx, i32 i) {
     ns_ast_t n = bc_ctx->ctx->nodes[i];
     switch (n.type) {
     case NS_AST_EXPR:
@@ -247,7 +247,7 @@ ns_bc_value ns_bc_expr(ns_bc_ctx *bc_ctx, int i) {
 void ns_bc_struct_def(ns_bc_ctx *bc_ctx) {
     ns_vm *vm = bc_ctx->vm;
 
-    for (int i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         ns_symbol r = vm->symbols[i];
         if (r.type != NS_SYMBOL_STRUCT) continue;
         if (r.index != i) ns_error("bitcode error", "symbol index not match\n");
@@ -256,7 +256,7 @@ void ns_bc_struct_def(ns_bc_ctx *bc_ctx) {
         ns_bc_type_ref *fields = NULL;
         i32 field_count = ns_array_length(r.st.fields);
         ns_array_set_length(fields, field_count);
-        for (int j = 0; j < field_count; j++) {
+        for (i32 j = 0; j < field_count; j++) {
             ns_bc_type t = ns_bc_parse_type(bc_ctx, r.st.fields[j].val.type);
             fields[j] = t.type;
             st_symbol.st.fields[j].val = (ns_bc_value){.type = t, .val = NULL, .p = j};
@@ -272,7 +272,7 @@ void ns_bc_fn_def(ns_bc_ctx *bc_ctx) {
     ns_bc_builder bdr = bc_ctx->builder;
     ns_vm *vm = bc_ctx->vm;
 
-    for (int i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         ns_symbol r = vm->symbols[i];
         if (r.type != NS_SYMBOL_FN) continue;
         if (r.index != i) ns_error("bitcode error", "symbol index not match\n");
@@ -283,7 +283,7 @@ void ns_bc_fn_def(ns_bc_ctx *bc_ctx) {
         // parse argument types
         ns_bc_type_ref *args = (ns_bc_type_ref *)malloc(sizeof(ns_bc_type_ref) * arg_count);
         ns_array_set_length(fn_symbol.fn.args, arg_count);
-        for (int j = 0; j < arg_count; j++) {
+        for (i32 j = 0; j < arg_count; j++) {
             ns_str arg_name = r.fn.args[j].name;
             ns_bc_type t = ns_bc_parse_type(bc_ctx, r.fn.args[j].val.type);
             args[j] = t.type;
@@ -308,7 +308,7 @@ void ns_bc_fn_def(ns_bc_ctx *bc_ctx) {
         // load argument values
         ns_bc_call call = (ns_bc_call){.fn = &bc_ctx->symbols[r.index], .locals = NULL, .args = NULL, .ret = ns_bc_nil};
         ns_array_set_length(call.args, arg_count);
-        for (int j = 0; j < arg_count; j++) {
+        for (i32 j = 0; j < arg_count; j++) {
             call.args[j] = (ns_bc_value){.p = j, .val = LLVMGetParam(fn, j), .type = fn_symbol.fn.args[j].val.type};
         }
 
@@ -403,7 +403,7 @@ ns_bc_value ns_bc_binary_ops(ns_bc_ctx *bc_ctx, ns_bc_value l, ns_bc_value r, ns
     return ns_bc_nil;
 }
 
-ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, int i) {
+ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, i32 i) {
     ns_ast_t n = bc_ctx->ctx->nodes[i];
     ns_bc_builder bdr = bc_ctx->builder;
     ns_bc_value l = ns_bc_expr(bc_ctx, n.binary_expr.left);
@@ -438,7 +438,7 @@ ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, int i) {
     return ret;
 }
 
-void ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, int i) {
+void ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, i32 i) {
     ns_bc_builder bdr = bc_ctx->builder;
     ns_ast_t n = bc_ctx->ctx->nodes[i];
     ns_token_t t = n.jump_stmt.label;
@@ -452,10 +452,10 @@ void ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, int i) {
     }
 }
 
-void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, int i) {
+void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, i32 i) {
     ns_ast_t n = bc_ctx->ctx->nodes[i];
-    for (int i = 0; i < n.compound_stmt.count; i++) {
-        int n_i = n.next;
+    for (i32 i = 0; i < n.compound_stmt.count; i++) {
+        i32 n_i = n.next;
         n = bc_ctx->ctx->nodes[n_i];
         switch (n.type) {
         case NS_AST_JUMP_STMT:
@@ -467,7 +467,7 @@ void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, int i) {
     }
 }
 
-ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, int i) {
+ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, i32 i) {
     ns_ast_ctx *ctx = bc_ctx->ctx;
     ns_ast_t n = ctx->nodes[i];
     ns_bc_builder bdr = bc_ctx->builder;
@@ -485,7 +485,7 @@ ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, int i) {
     }
 
     ns_ast_t arg = n;
-    for (int i = 0; i < n.call_expr.arg_count; i++) {
+    for (i32 i = 0; i < n.call_expr.arg_count; i++) {
         i32 arg_i = arg.next;
         arg = ctx->nodes[arg_i];
         call.args[i] = ns_bc_expr(bc_ctx, arg_i);
@@ -501,7 +501,7 @@ ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, int i) {
     } else {
         ns_bc_value fn_val = fn_symbol->fn.fn;
         ns_bc_value_ref *args = (ns_bc_value_ref *)malloc(sizeof(ns_bc_value_ref) * n.call_expr.arg_count);
-        for (int i = 0; i < n.call_expr.arg_count; i++) {
+        for (i32 i = 0; i < n.call_expr.arg_count; i++) {
             args[i] = call.args[i].val;
         }
         ret.val = LLVMBuildCall2(bdr, fn_val.type.type, fn_val.val, args, n.call_expr.arg_count, "");
@@ -531,7 +531,7 @@ void ns_bc_std(ns_bc_ctx *bc_ctx) {
     }
 }
 
-ns_bc_value ns_bc_var_def(ns_bc_ctx *bc_ctx, int i) {
+ns_bc_value ns_bc_var_def(ns_bc_ctx *bc_ctx, i32 i) {
     ns_ast_t n = bc_ctx->ctx->nodes[i];
     ns_bc_value val = ns_bc_expr(bc_ctx, n.var_def.expr);
     ns_str name = n.var_def.name.val;
@@ -549,7 +549,7 @@ ns_bc_value ns_bc_call_std_print(ns_bc_ctx *bc_ctx) {
     ns_array_push(args, NULL); // fmt_str placeholder
 
     ns_str fmt = bc_ctx->str_list[call->args[0].p];
-    if (fmt.len == 0) ns_error("bitcode error", "invalid print format\n");
+    if (fmt.len == 0) ns_error("bitcode error", "invalid pri32format\n");
 
     ns_str ptn = {.data = NULL, .len = 0, .dynamic = 1};
     ns_array_set_capacity(ptn.data, fmt.len);
@@ -633,8 +633,8 @@ bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx) {
     LLVMPositionBuilderAtEnd(bc_ctx.builder, entry_main);
 
     // parse deferred nodes as main fn body
-    for (int i = ctx->section_begin; i < ctx->section_end; ++i) {
-        int s = ctx->sections[i];
+    for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
+        i32 s = ctx->sections[i];
         ns_ast_t n = ctx->nodes[s];
         switch (n.type) {
         case NS_AST_VAR_DEF: ns_bc_var_def(&bc_ctx, s); break;
@@ -646,7 +646,7 @@ bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx) {
 
     LLVMBuildRet(bdr, LLVMConstInt(LLVMInt32Type(), 0, 0));
 
-    char *error = NULL;
+    i8* error = NULL;
     LLVMVerifyModule(mod, LLVMAbortProcessAction, &error);
     LLVMDisposeMessage(error);
 

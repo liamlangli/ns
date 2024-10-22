@@ -25,7 +25,7 @@ void ns_repl(ns_vm* vm) {
     ns_vm_import_std_symbols(vm);
     vm->repl = true;
 
-    // read eval print loop
+    // read eval pri32loop
     ns_str filename = ns_str_cstr("<repl>");
     while(1) {
         ns_str line = ns_repl_read_line(ns_color_log "ns" ns_color_nil "> ");
@@ -39,7 +39,7 @@ void ns_repl(ns_vm* vm) {
         ns_ast_parse(&ctx, line, filename);
         ns_vm_parse(vm, &ctx);
 
-        for (int i = ctx.section_begin; i < ctx.section_end; ++i) {
+        for (i32 i = ctx.section_begin; i < ctx.section_end; ++i) {
             ns_ast_t n = ctx.nodes[ctx.sections[i++]];
             switch (n.type) {
                 case NS_AST_PRIMARY_EXPR: {

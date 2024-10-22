@@ -3,9 +3,6 @@
 
 #include <assert.h>
 
-bool ns_parse_unary_expr(ns_ast_ctx *ctx);
-bool ns_parse_type_expr(ns_ast_ctx *ctx);
-
 void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state) {
     ctx->f = state.f;
     ctx->token.line = state.l;
@@ -13,7 +10,7 @@ void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state) {
 
 ns_ast_state ns_save_state(ns_ast_ctx *ctx) { return (ns_ast_state){.f = ctx->f, .l = ctx->token.line, .o = ctx->f - ctx->token.line_start}; }
 
-int ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n) {
+i32 ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n) {
     ctx->current = ns_array_length(ctx->nodes);
     n.state = ns_save_state(ctx);
     ns_array_push(ctx->nodes, n);
@@ -429,7 +426,7 @@ bool ns_parse_struct_def(ns_ast_ctx *ctx) {
     }
 
     ns_ast_t n = {.type = NS_AST_STRUCT_DEF, .struct_def = {.name = name, .count = 0}};
-    int next = -1;
+    i32 next = -1;
     ns_token_skip_eol(ctx);
     while (ns_parameter(ctx)) {
         ns_token_skip_eol(ctx);

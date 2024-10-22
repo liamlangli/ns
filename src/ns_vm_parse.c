@@ -26,6 +26,7 @@ ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_designated_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
@@ -288,7 +289,7 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t n = ctx->nodes[ctx->sections[i]];
         if (n.type != NS_AST_STRUCT_DEF)
             continue;
-        ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = n}};
+        ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = n, .type = (ns_type){.type = NS_TYPE_STRUCT, .i = ns_array_length(vm->symbols)}}};
         st.name = n.struct_def.name.val;
         ns_array_set_length(st.st.fields, n.struct_def.count);
         ns_ast_t *field = &n;
@@ -421,6 +422,49 @@ ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 }
 
 ns_type ns_vm_parse_designated_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_symbol *st = ns_vm_find_symbol(vm, n.designated_expr.name.val);
+    if (!st || st->type != NS_SYMBOL_STRUCT) {
+        ns_vm_error(ctx->filename, n.state, "syntax error", "unknown struct %.*s\n", n.designated_expr.name.val.len, n.designated_expr.name.val.data);
+    }
+
+    ns_ast_t field = n;
+    for (i32 i = 0, l = n.designated_expr.count; i < l; ++i) {
+        field = ctx->nodes[field.next];
+        ns_str name = field.field_def.name.val;
+        for (i32 j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
+            ns_symbol *f = &st->st.fields[j];
+            if (ns_str_equals(f->name, name)) {
+                ns_type t = ns_vm_parse_expr(vm, ctx, ctx->nodes[field.field_def.expr]);
+                if (t.type != f->val.type.type) {
+                    ns_str f_type = ns_vm_get_type_name(vm, f->val.type);
+                    ns_str t_type = ns_vm_get_type_name(vm, t);
+                    ns_vm_error(ctx->filename, field.state, "type error", "designated expr type mismatch %.*s, %.*s\n", f_type.len, f_type.data, t_type.len, t_type.data);
+                }
+                break;
+            }
+        }
+    }
+
+    return st->st.type;
+}
+
+ns_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_ast_t expr = ctx->nodes[n.unary_expr.expr];
+    ns_type t = ns_vm_parse_expr(vm, ctx, expr);
+    switch (n.unary_expr.op.type) {
+    case NS_TOKEN_ADD_OP:
+        if (!ns_type_is_number(t)) {
+            ns_ast_error(ctx, "type error", "unary expr type mismatch\n");
+        }
+        return t;
+    case NS_TOKEN_BIT_INVERT_OP:
+        if (t.type != NS_TYPE_BOOL) {
+            ns_ast_error(ctx, "type error", "unary expr type mismatch\n");
+        }
+        return t;
+    default:
+        ns_vm_error(ctx->filename, n.state, "syntax error", "unknown unary ops %.*s\n", n.unary_expr.op.val.len, n.unary_expr.op.val.data);
+    }
     return ns_type_unknown;
 }
 
@@ -495,6 +539,8 @@ ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     switch (n.type) {
+    case NS_AST_EXPR:
+        return ns_vm_parse_expr(vm, ctx, ctx->nodes[n.expr.body]);
     case NS_AST_BINARY_EXPR:
         return ns_vm_parse_binary_expr(vm, ctx, n);
     case NS_AST_PRIMARY_EXPR:
@@ -507,6 +553,8 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_vm_parse_gen_expr(vm, ctx, n);
     case NS_AST_DESIGNATED_EXPR:
         return ns_vm_parse_designated_expr(vm, ctx, n);
+    case NS_AST_UNARY_EXPR:
+        return ns_vm_parse_unary_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_vm_error(ctx->filename, n.state, "syntax error", "unimplemented expr type %.*s", type.len, type.data);
