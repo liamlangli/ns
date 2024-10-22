@@ -2,18 +2,21 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
-void ns_parse_stack_push_index(ns_ast_ctx *ctx, i32 index) { ctx->stack[++ctx->top] = index; }
+void ns_parse_stack_push_index(ns_ast_ctx *ctx, i32 index) {
+    ctx->stack[++ctx->top] = index;
+}
 
 void ns_parse_stack_push(ns_ast_ctx *ctx, ns_ast_t n) {
     ns_parse_stack_push_index(ctx, ns_ast_push(ctx, n));
 }
 
-i32 ns_parse_stack_pop(ns_ast_ctx *ctx) { return ctx->stack[ctx->top--]; }
+i32 ns_parse_stack_pop(ns_ast_ctx *ctx) {
+    return ctx->stack[ctx->top--];
+}
 
-ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx) { return ctx->nodes[ctx->stack[ctx->top]]; }
-
-bool ns_parse_primary_expr(ns_ast_ctx *ctx);
-bool ns_parse_postfix_expr(ns_ast_ctx *ctx);
+ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx) {
+    return ctx->nodes[ctx->stack[ctx->top]];
+}
 
 bool ns_parse_stack_top_is_operator(ns_ast_ctx *ctx) {
     if (ctx->top == 0)
@@ -78,8 +81,8 @@ bool ns_parse_expr_rewind(ns_ast_ctx *ctx, i32 expr_top) {
     return true;
 }
 
-bool ns_parse_call_expr(ns_ast_ctx *ctx) {
-    ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = {.arg_count = 0}};
+bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
+    ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = { .callee = callee, .arg_count = 0}};
     if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
         ns_ast_push(ctx, n);
         return true;
@@ -87,7 +90,7 @@ bool ns_parse_call_expr(ns_ast_ctx *ctx) {
 
     i32 next = -1;
     while (ns_parse_expr_stack(ctx)) {
-        next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+        next = next == -1 ? n.call_expr.arg = ctx->current : (ctx->nodes[next].next = ctx->current);
         n.call_expr.arg_count++;
 
         ns_parse_next_token(ctx);
@@ -143,38 +146,14 @@ bool ns_parse_postfix_expr(ns_ast_ctx *ctx) {
         return false;
     }
 
+    // parse postfix '(' [expr]* [,expr]* ')'
     i32 callee = ctx->current;
     ns_ast_state state = ns_save_state(ctx);
-    // parse postfix '(' [expr]* [,expr]* ')'
     if (ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
-        ns_token_skip_eol(ctx);
-        if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
-            ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = {.callee = callee, .arg_count = 0}};
-            ns_ast_push(ctx, n);
-            return true;
-        }
-
-        ns_ast_t n = {.type = NS_AST_CALL_EXPR, .call_expr = {.callee = callee, .arg_count = 0}};
-        i32 next = -1;
-        while (ns_parse_expr_stack(ctx)) {
-            next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
-            n.call_expr.arg_count++;
-
-            ns_parse_next_token(ctx);
-            if (ctx->token.type == NS_TOKEN_COMMA) {
-                continue;
-            } else if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
-                break;
-            } else {
-                ns_ast_error(ctx, "syntax error", "expected ',' or ')'");
-            }
-        }
-
-        if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
-            ns_ast_push(ctx, n);
+        if (ns_parse_call_expr(ctx, callee)) {
             return true;
         } else {
-            ns_ast_error(ctx, "syntax error", "expected ')'");
+            ns_ast_error(ctx, "syntax error", "expected call expression after '('");
         }
     }
 
@@ -314,11 +293,9 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
                 }
             } else {
                 i32 callee = ns_parse_stack_pop(ctx);
-                if (!ns_parse_call_expr(ctx)) {
+                if (!ns_parse_call_expr(ctx, callee)) {
                     ns_ast_error(ctx, "syntax error", "expected call expression after '('");
                 }
-                ns_ast_t *call = &ctx->nodes[ctx->current];
-                call->call_expr.callee = callee;
                 ns_parse_stack_push_index(ctx, ctx->current);
                 break;
             }

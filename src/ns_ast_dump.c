@@ -189,10 +189,10 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
     case NS_AST_CALL_EXPR:
         printf("node[%d]", n.call_expr.callee);
         printf("(");
-        ns_ast_t *arg = &n;
+        i32 next = n.call_expr.arg;
         for (i32 i = 0; i < n.call_expr.arg_count; i++) {
-            printf("node[%d]", arg->next);
-            arg = &ctx->nodes[arg->next];
+            printf("node[%d]", next);
+            next = ctx->nodes[next].next;
             if (i != n.call_expr.arg_count - 1) {
                 printf(", ");
             }

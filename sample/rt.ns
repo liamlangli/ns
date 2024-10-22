@@ -34,7 +34,7 @@ fn hit_sphere(r: ray, s: sphere): hit {
 fn main() {
     let r = ray {
         origin: simd3 { x: 0.0, y: 0.0, z: 0.0 },
-        direction: simd3 { x: u, y: v, z: 1.0 }
+        direction: simd3 { x: 0.0, y: 0.0, z: 1.0 }
     }
 
     let s = sphere {

@@ -339,7 +339,7 @@ void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
 ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_t n) {
     switch (n.primary_expr.token.type) {
     case NS_TOKEN_INT_LITERAL:
-        return (ns_type){.type = NS_TYPE_I64};
+        return (ns_type){.type = NS_TYPE_I32};
     case NS_TOKEN_FLT_LITERAL:
         return (ns_type){.type = NS_TYPE_F64};
     case NS_TOKEN_STR_LITERAL:
@@ -367,9 +367,10 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_vm_error(ctx->filename, callee_n.state, "syntax error", "invalid callee");
     }
 
-    ns_ast_t arg = n;
+    i32 next = n.call_expr.arg;
     for (i32 i = 0, l = n.call_expr.arg_count; i < l; ++i) {
-        arg = ctx->nodes[arg.next];
+        ns_ast_t arg = ctx->nodes[next];
+        next = arg.next;
         ns_type t = ns_vm_parse_expr(vm, ctx, arg);
         if (t.type != fn_record->fn.args[i].val.type.type) {
             ns_str arg_type = ns_vm_get_type_name(vm, t);
@@ -408,7 +409,7 @@ ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_type from_t = ns_vm_parse_expr(vm, ctx, from);
         ns_type to_t = ns_vm_parse_expr(vm, ctx, to);
         if (from_t.type != NS_TYPE_I32 || to_t.type != NS_TYPE_I32) {
-            ns_ast_error(ctx, "type error", "gen expr type mismatch\n");
+            ns_ast_error(ctx, "type error", "gen expr type mismatch");
         }
         return ns_type_i32;
     } else {
@@ -656,9 +657,21 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         case NS_AST_IF_STMT:
             ns_vm_parse_if_stmt(vm, ctx, expr);
             break;
+        case NS_AST_FOR_STMT:
+            ns_vm_parse_for_stmt(vm, ctx, expr);
+            break;
+        case NS_AST_CALL_EXPR:
+        case NS_AST_BINARY_EXPR:
+        case NS_AST_PRIMARY_EXPR:
+        case NS_AST_MEMBER_EXPR:
+        case NS_AST_GEN_EXPR:
+        case NS_AST_DESIGNATED_EXPR:
+        case NS_AST_UNARY_EXPR:
+            ns_vm_parse_expr(vm, ctx, expr);
+            break;
         default: {
             ns_str type = ns_ast_type_to_string(expr.type);
-            ns_error("vm parse", "unimplemented stmt type %.*s*\n", type.len, type.data);
+            ns_vm_error(ctx->filename, expr.state, "vm parse", "unimplemented stmt type %.*s*\n", type.len, type.data);
         } break;
         }
     }

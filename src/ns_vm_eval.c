@@ -53,9 +53,10 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_call call = (ns_call){.fn = fn, .args = NULL };
     ns_array_set_length(call.args, ns_array_length(fn->fn.args));
 
-    ns_ast_t arg = n;
+    i32 next = n.call_expr.arg;
     for (i32 i = 0, l = n.call_expr.arg_count; i < l; ++i) {
-        arg = ctx->nodes[arg.next];
+        ns_ast_t arg = ctx->nodes[next];
+        next = arg.next;
         ns_value v = ns_eval_expr(vm, ctx, arg);
         call.args[i] = v;
     }

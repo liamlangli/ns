@@ -4,7 +4,7 @@
 #include "ns_type.h"
 
 #include <assert.h>
-#define ns_ast_error(c, t, m, ...) ns_error(t, "[%s:%d:%d]: " m "\n", c->filename.data, c->token.line, c->f - c->token.line_start, ##__VA_ARGS__ );
+#define ns_ast_error(c, t, m, ...) ns_error(t, "\n[%s:%d:%d]: " m "\n", c->filename.data, c->token.line, c->f - c->token.line_start, ##__VA_ARGS__ );
 
 typedef enum {
     NS_AST_UNKNOWN = 0,
@@ -115,6 +115,7 @@ typedef struct ns_ast_member_expr {
 typedef struct ns_ast_call_expr {
     i32 callee;
     i32 arg_count;
+    i32 arg;
 } ns_ast_call_expr;
 
 typedef struct ns_ast_index_expr {
