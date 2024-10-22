@@ -205,12 +205,12 @@ typedef enum {
     NS_TYPE_EMPTY,
     NS_TYPE_INFER,
     NS_TYPE_I8,
-    NS_TYPE_I16,
-    NS_TYPE_I32,
-    NS_TYPE_I64,
     NS_TYPE_U8,
+    NS_TYPE_I16,
     NS_TYPE_U16,
+    NS_TYPE_I32,
     NS_TYPE_U32,
+    NS_TYPE_I64,
     NS_TYPE_U64,
     NS_TYPE_F32,
     NS_TYPE_F64,
@@ -246,6 +246,7 @@ typedef struct ns_type {
 
 #define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
 #define ns_type_signed(t) ((t).type == NS_TYPE_I8 || (t).type == NS_TYPE_I16 || (t).type == NS_TYPE_I32 || (t).type == NS_TYPE_I64)
+#define ns_type_unsigned(t) ((t).type == NS_TYPE_U8 || (t).type == NS_TYPE_U16 || (t).type == NS_TYPE_U32 || (t).type == NS_TYPE_U64)
 
 bool ns_type_is_number(ns_type t);
 
