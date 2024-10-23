@@ -1,3 +1,6 @@
+### 0.0.9
+- add keyword `kernel` for gpgpu.
+
 ### 0.0.8
 - remove invalid `while` keyword add `loop` and `do`
 

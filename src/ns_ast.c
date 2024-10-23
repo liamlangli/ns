@@ -248,15 +248,9 @@ bool ns_parse_ops_overridable(ns_token_t token) {
 bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
-    bool is_ref = false;
-    if (ns_token_require(ctx, NS_TOKEN_REF)) {
-        is_ref = true;
-    }
 
-    bool is_async = false;
-    if (ns_token_require(ctx, NS_TOKEN_ASYNC)) {
-        is_async = true;
-    }
+    bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
+    bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
 
     if (!ns_token_require(ctx, NS_TOKEN_FN)) {
         ns_restore_state(ctx, state);
@@ -313,7 +307,7 @@ bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
 
     // optional
     if (ns_type_restriction(ctx)) {
-        fn.fn_def.return_type = ctx->token;
+        fn.ops_fn_def.return_type = ctx->token;
     }
 
     // ref type declare, no fn body
@@ -324,7 +318,7 @@ bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
 
     ns_token_skip_eol(ctx);
     if (ns_parse_compound_stmt(ctx)) {
-        fn.fn_def.body = ctx->current;
+        fn.ops_fn_def.body = ctx->current;
         ctx->current = ns_ast_push(ctx, fn);
         return true;
     }
@@ -337,15 +331,9 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
 
-    bool is_ref = false;
-    if (ns_token_require(ctx, NS_TOKEN_REF)) {
-        is_ref = true;
-    }
-
-    bool is_async = false;
-    if (ns_token_require(ctx, NS_TOKEN_ASYNC)) {
-        is_async = true;
-    }
+    bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
+    bool is_kernel = ns_token_require(ctx, NS_TOKEN_KERNEL);
+    bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
 
     if (!ns_token_require(ctx, NS_TOKEN_FN)) {
         ns_restore_state(ctx, state);
@@ -363,7 +351,7 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         return false;
     }
 
-    ns_ast_t n = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async, .is_ref = is_ref}};
+    ns_ast_t n = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async, .is_ref = is_ref, .is_kernel = is_kernel}};
     // parse args
     ns_token_skip_eol(ctx);
     i32 next = -1;

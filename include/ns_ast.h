@@ -55,6 +55,7 @@ typedef struct ns_ast_arg {
 typedef struct ns_ast_fn_def {
     bool is_ref;
     bool is_async;
+    bool is_kernel;
     ns_token_t name;
     ns_token_t return_type;
     i32 body;

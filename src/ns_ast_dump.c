@@ -164,7 +164,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         printf("[%d].", n.member_expr.left);
         ns_str_printf(n.member_expr.right.val);
     } break;
-    case NS_AST_CALL_EXPR:
+    case NS_AST_CALL_EXPR: {
         printf("[%d]", n.call_expr.callee);
         printf("(");
         i32 next = n.call_expr.arg;
@@ -176,7 +176,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
             }
         }
         printf(")");
-        break;
+    } break;
     case NS_AST_JUMP_STMT:
         ns_str_printf(n.jump_stmt.label.val);
         if (n.jump_stmt.expr != -1) {

@@ -155,6 +155,7 @@ typedef enum {
     NS_TOKEN_TYPE_F64,
     NS_TOKEN_TYPE_BOOL,
     NS_TOKEN_TYPE_STR,
+    NS_TOKEN_TYPE_ANY,
 
     NS_TOKEN_TYPE_DEF,      // type: keyword for type definition
 
