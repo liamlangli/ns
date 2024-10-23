@@ -26,7 +26,7 @@ ns_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
-ns_type ns_vm_parse_designated_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
@@ -460,14 +460,14 @@ ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 }
 
-ns_type ns_vm_parse_designated_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    ns_symbol *st = ns_vm_find_symbol(vm, n.designated_expr.name.val);
+ns_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_symbol *st = ns_vm_find_symbol(vm, n.desig_expr.name.val);
     if (!st || st->type != NS_SYMBOL_STRUCT) {
-        ns_vm_error(ctx->filename, n.state, "syntax error", "unknown struct %.*s\n", n.designated_expr.name.val.len, n.designated_expr.name.val.data);
+        ns_vm_error(ctx->filename, n.state, "syntax error", "unknown struct %.*s\n", n.desig_expr.name.val.len, n.desig_expr.name.val.data);
     }
 
     ns_ast_t field = n;
-    for (i32 i = 0, l = n.designated_expr.count; i < l; ++i) {
+    for (i32 i = 0, l = n.desig_expr.count; i < l; ++i) {
         field = ctx->nodes[field.next];
         ns_str name = field.field_def.name.val;
         for (i32 j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
@@ -632,7 +632,7 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     case NS_AST_GEN_EXPR:
         return ns_vm_parse_gen_expr(vm, ctx, n);
     case NS_AST_DESIG_EXPR:
-        return ns_vm_parse_designated_expr(vm, ctx, n);
+        return ns_vm_parse_desig_expr(vm, ctx, n);
     case NS_AST_UNARY_EXPR:
         return ns_vm_parse_unary_expr(vm, ctx, n);
     case NS_AST_CAST_EXPR:

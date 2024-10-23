@@ -166,15 +166,15 @@ typedef struct ns_ast_compound_stmt {
     i32 count;
 } ns_ast_compound_stmt;
 
-typedef struct ns_ast_designated_expr {
+typedef struct ns_ast_desig_expr {
     ns_token_t name;
     i32 count;
-} ns_ast_designated_expr;
+} ns_ast_desig_expr;
 
-typedef struct ns_ast_designated_field {
+typedef struct ns_ast_struct_field {
     ns_token_t name;
     i32 expr;
-} ns_ast_designated_field;
+} ns_ast_struct_field;
 
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
@@ -186,7 +186,7 @@ typedef struct ns_ast_t {
         ns_ast_ops_fn_def ops_fn_def;
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
-        ns_ast_designated_field field_def;
+        ns_ast_struct_field field_def;
 
         ns_ast_expr expr;
         ns_ast_binary_expr binary_expr;
@@ -197,7 +197,7 @@ typedef struct ns_ast_t {
         ns_ast_primary_expr primary_expr;
         ns_ast_unary_expr unary_expr;
         ns_ast_gen_expr gen_expr;
-        ns_ast_designated_expr designated_expr;
+        ns_ast_desig_expr desig_expr;
 
         ns_ast_import_stmt import_stmt;
         ns_ast_if_stmt if_stmt;
@@ -263,7 +263,7 @@ bool ns_parse_type_define(ns_ast_ctx *ctx);
 bool ns_parse_global_define(ns_ast_ctx *ctx);
 bool ns_parse_stmt(ns_ast_ctx *ctx);
 bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
-bool ns_parse_designated_expr(ns_ast_ctx *ctx);
+bool ns_parse_desig_expr(ns_ast_ctx *ctx);
 
 // expr fn
 ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);

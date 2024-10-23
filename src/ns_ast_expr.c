@@ -309,12 +309,12 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
                 i32 last = ns_parse_stack_pop(ctx);
                 ns_ast_t type = ctx->nodes[last];
                 ns_restore_state(ctx, state);
-                if (!ns_parse_designated_expr(ctx)) {
+                if (!ns_parse_desig_expr(ctx)) {
                     ns_parse_stack_push(ctx, last);
                     goto rewind;
                 }
                 ns_ast_t *n = &ctx->nodes[ctx->current];
-                n->designated_expr.name = type.primary_expr.token;
+                n->desig_expr.name = type.primary_expr.token;
                 ns_parse_stack_push(ctx, ctx->current);
             }
         } break;

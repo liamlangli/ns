@@ -346,6 +346,19 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
         }
     } break;
 
+    case 'k': {
+        if (strncmp(s + f, "kernel", 6) == 0) {
+            sep = ns_token_separator(s, i + 6);
+            if (sep == 0 && ns_identifier_follow(s[i + 6]))
+                goto identifier;
+            t->type = NS_TOKEN_KERNEL;
+            t->val = ns_str_range(s + f, 6);
+            to = i + 6 + sep;
+        } else {
+            goto identifier;
+        }
+    } break;
+
     case 'l': {
         if (strncmp(s + f, "let", 3) == 0) {
             sep = ns_token_separator(s, i + 3);

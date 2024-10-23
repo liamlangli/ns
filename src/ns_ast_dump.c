@@ -206,9 +206,9 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         }
     } break;
     case NS_AST_DESIG_EXPR: {
-        ns_str_printf(n.designated_expr.name.val);
+        ns_str_printf(n.desig_expr.name.val);
         printf(" { ");
-        i32 count = n.designated_expr.count;
+        i32 count = n.desig_expr.count;
         ns_ast_t *field = &n;
         for (i32 i = 0; i < count; i++) {
             field = &ctx->nodes[field->next];

@@ -140,6 +140,7 @@ typedef enum {
     NS_TOKEN_REF,
     NS_TOKEN_STRUCT,
     NS_TOKEN_TRUE,
+    NS_TOKEN_KERNEL,
     NS_TOKEN_OPS,           // ops: keyword for operator overloading
 
     NS_TOKEN_TYPE_I8,

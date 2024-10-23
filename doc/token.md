@@ -18,6 +18,7 @@
 - if
 - in
 - import
+- kernel
 - let
 - nil
 - ref

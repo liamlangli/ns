@@ -2,11 +2,13 @@
 
 #include <math.h>
 
+void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+
 ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
-ns_value ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
-ns_value ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
+ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
@@ -85,15 +87,14 @@ ns_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     return ret;
 }
 
-ns_value ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     switch (n.jump_stmt.label.type) {
-    case NS_TOKEN_RETURN: return ns_eval_return_stmt(vm, ctx, n);
+    case NS_TOKEN_RETURN: ns_eval_return_stmt(vm, ctx, n); break;
     default: {
         ns_str l = n.jump_stmt.label.val;
         ns_error("eval error", "unknown jump stmt type %.*s\n", l.len, l.data);
     } break;
     }
-    return ns_nil;
 }
 
 ns_value ns_eval_binary_ops_number(ns_value l, ns_value r, ns_token_t op) {
@@ -232,12 +233,12 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_eval_expr(vm, ctx, ctx->nodes[n.expr.body]);
     case NS_AST_CALL_EXPR:
         return ns_eval_call_expr(vm, ctx, n);
-    case NS_AST_JUMP_STMT:
-        return ns_eval_jump_stmt(vm, ctx, n);
     case NS_AST_BINARY_EXPR:
         return ns_eval_binary_expr(vm, ctx, n);
     case NS_AST_PRIMARY_EXPR:
         return ns_eval_primary_expr(vm, n);
+    case NS_AST_DESIG_EXPR:
+        return ns_eval_desig_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_error("eval error", "unimplemented expr type %.*s\n", type.len, type.data);
@@ -247,7 +248,7 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     return ns_nil;
 }
 
-ns_value ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_ast_t expr = n;
     for (i32 i = 0, l = n.compound_stmt.count; i < l; i++) {
         expr = ctx->nodes[expr.next];
@@ -264,6 +265,26 @@ ns_value ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         } break;
         }
     }
+}
+
+ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    // ns_value val = ns_eval_expr(vm, ctx, ctx->nodes[n.desig_expr.count]);
+    // ns_ast_t expr = n;
+    // for (i32 i = 0, l = n.desig_expr.count; i < l; i++) {
+    //     expr = ctx->nodes[expr.next];
+    //     ns_str name = expr.desig_expr.name.val;
+    //     if (val.type.type == NS_TYPE_STRUCT) {
+    //         ns_struct *st = &vm->structs[val.p];
+    //         for (i32 i = 0, l = ns_array_length(st->field_names); i < l; ++i) {
+    //             if (ns_str_equals(st->field_names[i], name)) {
+    //                 val.p = val.p + i;
+    //                 break;
+    //             }
+    //         }
+    //     } else {
+    //         ns_error("eval error", "unimplemented designated expr\n");
+    //     }
+    // }
     return ns_nil;
 }
 
