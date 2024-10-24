@@ -14,16 +14,17 @@ ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
     if (ns_array_length(vm->call_stack) > 0) {
-        ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
+        ns_call* call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
         for (i32 i = 0, l = ns_array_length(call->fn->fn.args); i < l; ++i) {
             if (ns_str_equals(call->fn->fn.args[i].name, name)) {
                 return call->args[i];
             }
         }
 
-        for (i32 i = 0, l = ns_array_length(call->locals); i < l; ++i) {
-            if (ns_str_equals(call->locals[i].name, name)) {
-                return call->locals[i].val.val;
+        ns_scope* scope = &call->scopes[ns_array_length(call->scopes) - 1];
+        for (i32 i = 0, l = ns_array_length(scope->vars); i < l; ++i) {
+            if (ns_str_equals(scope->vars[i].name, name)) {
+                return scope->vars[i].val.val;
             }
         }
     }
@@ -349,9 +350,10 @@ ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
     ns_scope *scope = &call->scopes[ns_array_length(call->scopes) - 1];
+    if (NULL == scope) ns_vm_error(ctx->filename, n.state, "vm error", "invalid local var def");
     ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
-    
-
+    ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n.var_def.name.val,  .val = {.val = v } };
+    ns_array_push(scope->vars, symbol);
     return v;
 }
 
