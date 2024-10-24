@@ -22,6 +22,8 @@
 #define ns_color_wrn "\x1b[1;33m"
 #define ns_color_nil "\x1b[0m"
 
+#define ns_ptr_size sizeof(void *)
+
 #ifdef NS_DEBUG
     #define ns_error(t, m, ...)     fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), assert(false)
     #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_wrn "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)

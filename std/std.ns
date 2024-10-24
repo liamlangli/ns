@@ -3,5 +3,5 @@ mod std
 import c
 import m
 
-ref fn dispatch(func: function, priority: i32) // dispatch fn to another thread
-ref fn dispatch_kernel(func: function, shape: [i32], args: [any]) // dispatch fn to gpgpu
+ref fn dispatch(f: fn, priority: i32) // dispatch fn to another thread
+ref fn dispatch_kernel(f: fn, shape: [i32], args: [any]) // dispatch fn to gpgpu

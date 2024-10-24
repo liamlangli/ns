@@ -3,6 +3,8 @@
 #include "ns_ast.h"
 #include "ns_type.h"
 
+#define ns_vm_error(f, s, t, m, ...) ns_error(t, "\n[%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
+
 typedef enum {
     NS_SYMBOL_INVALID,
     NS_SYMBOL_VALUE,
@@ -19,6 +21,9 @@ typedef struct ns_value_symbol {
     ns_value val;
     bool is_const;
     bool is_ref;
+
+    // for st field
+    i32 offset, size;
 } ns_value_symbol;
 
 typedef struct ns_fn_symbol {
@@ -33,6 +38,7 @@ typedef struct ns_struct_symbol {
     ns_str name;
     ns_symbol *fields;
     ns_ast_t ast;
+    i32 stride;
 } ns_struct_symbol;
 
 typedef struct ns_scope_symbol {
@@ -109,9 +115,10 @@ ns_str ns_ops_name(ns_token_t op);
 ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 
 // vm record
-int ns_vm_push_symbol(ns_vm *vm, ns_symbol r);
-int ns_vm_push_string(ns_vm *vm, ns_str s);
-int ns_vm_push_data(ns_vm *vm, ns_data d);
+i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r);
+i32 ns_vm_push_string(ns_vm *vm, ns_str s);
+i32 ns_vm_push_data(ns_vm *vm, ns_data d);
+i32 ns_type_size(ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);

@@ -3,9 +3,6 @@
 #include "ns_type.h"
 #include "ns_vm.h"
 
-#define ns_vm_warn(n, t, m, ...) ns_warn("[%s]")
-#define ns_vm_error(f, s, t, m, ...) ns_error(t, "\n[%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
-
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 
 void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx);
@@ -65,6 +62,34 @@ ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
     default: break;
     }
     return ns_type_unknown;
+}
+
+i32 ns_type_size(ns_vm *vm, ns_type t) {
+    switch (t.type)
+    {
+    case NS_TYPE_BOOL:
+    case NS_TYPE_I8:
+    case NS_TYPE_U8: return 1;
+    case NS_TYPE_I16:
+    case NS_TYPE_U16: return 2;
+    case NS_TYPE_I32:
+    case NS_TYPE_U32:
+    case NS_TYPE_F32: return 4;
+    case NS_TYPE_I64:
+    case NS_TYPE_U64:
+    case NS_TYPE_F64: return 8;
+    case NS_TYPE_FN:
+    case NS_TYPE_STRING: return ns_ptr_size;
+    case NS_TYPE_STRUCT: {
+        ns_symbol *s = &vm->symbols[t.i];
+        if (NULL == s) ns_error("eval error", "missing struct %d\n", t.i);
+        return s->st.stride;
+    }
+    default:
+        break;
+    }
+    ns_error("eval error", "unknown type %d\n", t.type);
+    return 0;
 }
 
 i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r) {
@@ -329,6 +354,7 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
         st.name = n.struct_def.name.val;
         ns_array_set_length(st.st.fields, n.struct_def.count);
         ns_ast_t *field = &n;
+        i32 offset = 0;
         for (i32 i = 0; i < n.struct_def.count; i++) {
             field = &ctx->nodes[field->next];
             ns_symbol f = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = i};
@@ -336,7 +362,14 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_type t = ns_vm_parse_type(vm, field->arg.type, true);
             f.val = (ns_value_symbol){.type = t, .scope = NS_SCOPE_FIELD, .is_ref = field->arg.is_ref, .is_const = false};
             st.st.fields[i] = f;
+            i32 size = field->arg.is_ref ? ns_ptr_size : ns_type_size(vm, t);
+            // std layout
+            offset = (offset + size - 1) & ~(size - 1);
+            f.val.offset = offset;
+            f.val.size = size;
+            offset += size;
         }
+        st.st.stride = (offset + 7) & ~7; // 8 bytes align
         ns_vm_push_symbol(vm, st);
     }
 }

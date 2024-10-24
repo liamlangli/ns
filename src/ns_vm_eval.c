@@ -268,8 +268,10 @@ void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 }
 
 ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    // ns_value val = ns_eval_expr(vm, ctx, ctx->nodes[n.desig_expr.count]);
-    // ns_ast_t expr = n;
+    ns_symbol *st = ns_vm_find_symbol(vm, n.desig_expr.name.val);
+    if (NULL == st) ns_vm_error(ctx->filename, n.state, "eval error", "unknown struct %.*s\n", n.desig_expr.name.val.len, n.desig_expr.name.val.data);
+
+    ns_ast_t expr = n;
     // for (i32 i = 0, l = n.desig_expr.count; i < l; i++) {
     //     expr = ctx->nodes[expr.next];
     //     ns_str name = expr.desig_expr.name.val;
