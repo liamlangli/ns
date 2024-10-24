@@ -107,7 +107,7 @@ ns_str ns_str_unescape(ns_str s) {
     return ret;
 }
 
-i32 ns_str_append_len(ns_str *a, const char *data, i32 len) {
+i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len) {
     for (i32 i = 0; i < len; i++) {
         ns_array_push(a->data, data[i]);
     }

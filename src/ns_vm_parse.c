@@ -369,7 +369,7 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             f.val.size = size;
             offset += size;
         }
-        st.st.stride = (offset + 7) & ~7; // 8 bytes align
+        st.st.stride = (offset + 3) & ~3; // 4 bytes align
         ns_vm_push_symbol(vm, st);
     }
 }
@@ -731,8 +731,8 @@ void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 }
 
 void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    ns_scope_symbol scope = (ns_scope_symbol){.vars = NULL};
     ns_symbol *call = &vm->call_symbols[ns_array_length(vm->call_symbols) - 1];
+    ns_scope_symbol scope = (ns_scope_symbol){.vars = NULL};
     ns_ast_t gen = ctx->nodes[n.for_stmt.generator];
     ns_type t = ns_vm_parse_gen_expr(vm, ctx, gen);
     ns_symbol var = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .scope = NS_SCOPE_LOCAL, .type = t }, .parsed = true};

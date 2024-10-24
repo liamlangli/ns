@@ -7,7 +7,7 @@
 
 // ns_def
 #ifndef bool
-    #define bool int
+typedef int bool;
     #define true 1
     #define false 0
 #endif
@@ -82,17 +82,17 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 
 // ns_str
 typedef struct ns_str {
-    char *data;
-    int len;
+    i8 *data;
+    i32 len;
     bool dynamic;
 } ns_str;
 
-ns_str ns_str_slice(ns_str s, int start, int end);
+ns_str ns_str_slice(ns_str s, i32 start, i32 end);
 
 i32 ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);
 ns_str ns_str_unescape(ns_str s);
-i32 ns_str_append_len(ns_str *a, const char *data, int len);
+i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
 
 #define ns_str_null ((ns_str){0, 0, 0})
 #define ns_str_range(s, n) ((ns_str){(s), (n), 1})

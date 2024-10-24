@@ -81,17 +81,22 @@ typedef struct ns_struct {
     ns_str *field_names;
 } ns_struct;
 
+typedef struct ns_scope {
+    ns_symbol *vars;
+    i32 stack_top;
+} ns_scope;
+
 typedef struct ns_call {
     ns_symbol *fn;
-    ns_symbol *locals;
     ns_value *args;
     ns_value ret;
+    ns_scope *scopes;
 } ns_call;
 
 typedef struct ns_vm {
     // parse state
     ns_symbol *symbols;
-    int parsed_symbol_count;
+    i32 parsed_symbol_count;
 
     ns_symbol *call_symbols;
 
@@ -100,7 +105,9 @@ typedef struct ns_vm {
     ns_value *globals;
     ns_str *str_list;
     ns_data *data_list;
+    i8* stack;
 
+    // mode
     bool repl;
 } ns_vm;
 
@@ -118,7 +125,7 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r);
 i32 ns_vm_push_string(ns_vm *vm, ns_str s);
 i32 ns_vm_push_data(ns_vm *vm, ns_data d);
-i32 ns_type_size(ns_type t);
+i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);

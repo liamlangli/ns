@@ -10,6 +10,7 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
     if (ns_array_length(vm->call_stack) > 0) {
@@ -52,8 +53,11 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 
     ns_symbol *fn = &vm->symbols[callee.p];
-    ns_call call = (ns_call){.fn = fn, .args = NULL };
+    ns_call call = (ns_call){.fn = fn, .args = NULL, .scopes = NULL };
     ns_array_set_length(call.args, ns_array_length(fn->fn.args));
+
+    ns_scope scope = (ns_scope){.vars = NULL, .stack_top = ns_array_length(vm->stack)};
+    ns_array_push(call.scopes, scope);
 
     i32 next = n.call_expr.arg;
     for (i32 i = 0, l = n.call_expr.arg_count; i < l; ++i) {
@@ -70,6 +74,7 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast.fn_def.body]);
     }
     call = ns_array_pop(vm->call_stack);
+    ns_array_set_length(vm->stack, scope.stack_top);
     return call.ret;
 }
 
@@ -257,7 +262,7 @@ void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
             ns_eval_jump_stmt(vm, ctx, expr);
             break;
         case NS_AST_VAR_DEF:
-            ns_eval_var_def(vm, ctx, expr);
+            ns_eval_local_var_def(vm, ctx, expr);
             break;
         default: {
             ns_str type = ns_ast_type_to_string(expr.type);
@@ -271,23 +276,66 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_symbol *st = ns_vm_find_symbol(vm, n.desig_expr.name.val);
     if (NULL == st) ns_vm_error(ctx->filename, n.state, "eval error", "unknown struct %.*s\n", n.desig_expr.name.val.len, n.desig_expr.name.val.data);
 
+    i32 offset = ns_array_length(vm->stack);
+    // align in 4 bytes;
+    offset = (offset + 3) & ~3;
+    i32 stride = st->st.stride;
+
+    ns_array_set_length(vm->stack, offset + stride);
+    i8* data = &vm->stack[offset];
+    memset(data, 0, stride);
+
     ns_ast_t expr = n;
-    // for (i32 i = 0, l = n.desig_expr.count; i < l; i++) {
-    //     expr = ctx->nodes[expr.next];
-    //     ns_str name = expr.desig_expr.name.val;
-    //     if (val.type.type == NS_TYPE_STRUCT) {
-    //         ns_struct *st = &vm->structs[val.p];
-    //         for (i32 i = 0, l = ns_array_length(st->field_names); i < l; ++i) {
-    //             if (ns_str_equals(st->field_names[i], name)) {
-    //                 val.p = val.p + i;
-    //                 break;
-    //             }
-    //         }
-    //     } else {
-    //         ns_error("eval error", "unimplemented designated expr\n");
-    //     }
-    // }
-    return ns_nil;
+    for (i32 i = 0, l = n.desig_expr.count; i < l; i++) {
+        expr = ctx->nodes[expr.next];
+        ns_str name = expr.field_def.name.val;
+
+        ns_symbol *field = NULL;
+        for (i32 j = 0, jl = ns_array_length(st->st.fields); j < jl; ++j) {
+            field = &st->st.fields[j];
+            if (ns_str_equals(field->name, name)) {
+                break;
+            }
+        }
+
+        if (field == NULL) {
+            ns_vm_error(ctx->filename, expr.state, "eval error", "unknown field %.*s\n", name.len, name.data);
+        }
+
+        ns_value val = ns_eval_expr(vm, ctx, ctx->nodes[expr.field_def.expr]);
+        if (field->val.type.type != val.type.type) { // type mismatch
+            ns_str f_type = ns_vm_get_type_name(vm, field->val.type);
+            ns_str v_type = ns_vm_get_type_name(vm, val.type);
+            ns_vm_error(ctx->filename, expr.state, "eval error", "field type mismatch [%.*s = %.*s]\n", f_type.len, f_type.data, v_type.len, v_type.data);
+        }
+
+        ns_type t = field->val.type;
+        if (ns_type_is_number(t)) {
+            switch (t.type)
+            {
+            case NS_TYPE_U8: *(u8*)(data + field->val.offset) = val.i; break;
+            case NS_TYPE_U16: *(u16*)(data + field->val.offset) = val.i; break;
+            case NS_TYPE_U32: *(u32*)(data + field->val.offset) = val.i; break;
+            case NS_TYPE_U64: *(u64*)(data + field->val.offset) = val.i; break;
+            case NS_TYPE_I8: *(i8*)(data + field->val.offset) = val.i; break;
+            case NS_TYPE_I16: *(i16*)(data + field->val.offset) = val.i; break;
+            case NS_TYPE_I32: *(i32*)(data + field->val.offset) = val.i; break;
+            case NS_TYPE_I64: *(i64*)(data + field->val.offset) = val.i; break;
+            case NS_TYPE_F32: *(f32*)(data + field->val.offset) = val.f; break;
+            case NS_TYPE_F64: *(f64*)(data + field->val.offset) = val.f; break;
+            default:
+                break;
+            }
+        } else if (t.type == NS_TYPE_STRUCT) {
+            memcpy(data, vm->stack + val.p, stride);
+        } else if (t.type == NS_TYPE_STRING) {
+            ns_error("eval error", "unimplemented string field\n");
+        } else {
+            ns_error("eval error", "unknown field type\n");
+        }
+    }
+
+    return (ns_value){.type = {.type = NS_TYPE_STRUCT, .i = st->index}, .p = offset};
 }
 
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
@@ -295,6 +343,15 @@ ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
     val->val.val.p = val->index;
     val->val.val = v;
+    return v;
+}
+
+ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
+    ns_scope *scope = &call->scopes[ns_array_length(call->scopes) - 1];
+    ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
+    
+
     return v;
 }
 
