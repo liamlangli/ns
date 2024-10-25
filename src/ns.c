@@ -113,7 +113,7 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
     ns_ast_parse(&ctx, source, filename);
     ns_vm_parse(&vm, &ctx);
     ctx.output = output;
-    if (output.data == NULL) {
+    if (output.data == ns_null) {
         ns_warn("ns", "output file is not specified.");
         return;
     }

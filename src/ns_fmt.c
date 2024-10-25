@@ -15,13 +15,13 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
     case NS_TYPE_I32: {
-        i32 s = snprintf(NULL, 0, ns_fmt_pattern_i32, (i32)n.i);
+        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_i32, (i32)n.i);
         char* d = malloc(s + 1);
         snprintf(d, s + 1, ns_fmt_pattern_i32, (i32)n.i);
         return (ns_str){.data=d, .len=s, .dynamic=1};
     }
     case NS_TYPE_I64: {
-        i32 s = snprintf(NULL, 0, ns_fmt_pattern_i64, n.i);
+        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_i64, n.i);
         char* d = malloc(s + 1);
         snprintf(d, s + 1, ns_fmt_pattern_i64, n.i);
         return (ns_str){.data=d, .len=s, .dynamic=1};
@@ -29,25 +29,25 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     case NS_TYPE_U8:
     case NS_TYPE_U16:
     case NS_TYPE_U32: {
-        i32 s = snprintf(NULL, 0, ns_fmt_pattern_u32, (u32)n.i);
+        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_u32, (u32)n.i);
         char* d = malloc(s + 1);
         snprintf(d, s + 1, ns_fmt_pattern_u32, (u32)n.i);
         return (ns_str){.data=d, .len=s, .dynamic=1};
     }
     case NS_TYPE_U64: {
-        i32 s = snprintf(NULL, 0, ns_fmt_pattern_u64, (u64)n.i);
+        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_u64, (u64)n.i);
         char* d = malloc(s + 1);
         snprintf(d, s + 1, ns_fmt_pattern_u64, (u64)n.i);
         return (ns_str){.data=d, .len=s, .dynamic=1};
     }
     case NS_TYPE_F32: {
-        i32 s = snprintf(NULL, 0, ns_fmt_pattern_f32, (f32)n.i);
+        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_f32, (f32)n.i);
         char* d = malloc(s + 1);
         snprintf(d, s + 1, ns_fmt_pattern_f32, (f32)n.i);
         return (ns_str){.data=d, .len=s, .dynamic=1};
     }
     case NS_TYPE_F64: {
-        i32 s = snprintf(NULL, 0, ns_fmt_pattern_f64, n.f);
+        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_f64, n.f);
         char* d = malloc(s + 1);
         snprintf(d, s + 1, ns_fmt_pattern_f64, n.f);
         return (ns_str){.data=d, .len=s, .dynamic=1};
@@ -93,7 +93,7 @@ ns_str ns_fmt_type_str(ns_type t) {
 }
 
 ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
-    ns_str ret = {.data = NULL, .len = 0, .dynamic = 1};
+    ns_str ret = {.data = ns_null, .len = 0, .dynamic = 1};
     ns_array_set_capacity(ret.data, fmt.len);
 
     i32 i = 0;

@@ -54,7 +54,7 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 
     b = realloc((a) ? ns_array_header(a) : 0, elem_size * min_cap + sizeof(ns_array_header));
     b = (char *)b + sizeof(ns_array_header);
-    if (NULL == a) {
+    if (ns_null == a) {
         ns_array_header(b)->len = 0;
     }
     ns_array_header(b)->cap = min_cap;

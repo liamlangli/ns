@@ -82,7 +82,7 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
     case NS_TYPE_STRING: return ns_ptr_size;
     case NS_TYPE_STRUCT: {
         ns_symbol *s = &vm->symbols[t.i];
-        if (NULL == s) ns_error("eval error", "missing struct %d\n", t.i);
+        if (ns_null == s) ns_error("eval error", "missing struct %d\n", t.i);
         return s->st.stride;
     }
     default:
@@ -224,7 +224,7 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s) {
             return &vm->symbols[i];
         }
     }
-    return NULL;
+    return ns_null;
 }
 
 ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer) {
@@ -600,7 +600,7 @@ ns_type ns_vm_parse_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_type t, ns_ast_t n
         return ns_vm_parse_binary_ops_number(ctx, t, n);
     } else {
         ns_type ret = ns_vm_parse_binary_override(vm, t, t, n.binary_expr.op);
-        if (NS_TYPE_UNKNOWN != ret.type) {
+        if (!ns_type_is_unknown(ret)) {
             return ret;
         }
         ns_vm_error(ctx->filename, n.state, "syntax error", "unknown binary ops %.*s\n", n.binary_expr.op.val.len, n.binary_expr.op.val.data);
@@ -632,14 +632,14 @@ ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
     // try to find override fn
     ns_type ret = ns_vm_parse_binary_override(vm, l, r, n.binary_expr.op);
-    if (NS_TYPE_UNKNOWN != ret.type) {
+    if (!ns_type_is_unknown(ret)) {
         return ret;
     }
 
     // try upgrade type
     if (ns_type_is_number(l) && ns_type_is_number(r)) {
         ns_type t = ns_vm_number_type_upgrade(l, r);
-        if (NS_TYPE_UNKNOWN != t.type)
+        if (!ns_type_is_unknown(t))
             return t;
     }
 
@@ -732,7 +732,7 @@ void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
 void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_symbol *call = &vm->call_symbols[ns_array_length(vm->call_symbols) - 1];
-    ns_scope_symbol scope = (ns_scope_symbol){.vars = NULL};
+    ns_scope_symbol scope = (ns_scope_symbol){.vars = ns_null};
     ns_ast_t gen = ctx->nodes[n.for_stmt.generator];
     ns_type t = ns_vm_parse_gen_expr(vm, ctx, gen);
     ns_symbol var = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .scope = NS_SCOPE_LOCAL, .type = t }, .parsed = true};

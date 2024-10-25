@@ -13,7 +13,7 @@ typedef int bool;
 #endif
 
 #ifndef nil
-    #define nil NULL
+    #define nil ns_null
 #endif
 
 #define ns_color_bld "\x1b[1m"
@@ -257,6 +257,7 @@ typedef struct ns_type {
 #define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
 #define ns_type_signed(t) ((t).type == NS_TYPE_I8 || (t).type == NS_TYPE_I16 || (t).type == NS_TYPE_I32 || (t).type == NS_TYPE_I64)
 #define ns_type_unsigned(t) ((t).type == NS_TYPE_U8 || (t).type == NS_TYPE_U16 || (t).type == NS_TYPE_U32 || (t).type == NS_TYPE_U64)
+#define ns_type_is_unknown(t) (NS_TYPE_UNKNOWN == (t).type)
 
 bool ns_type_is_number(ns_type t);
 
@@ -276,6 +277,7 @@ typedef struct ns_value {
     };
 } ns_value;
 
+#define ns_null NULL
 #define ns_nil ((ns_value){.type = ns_type_nil, .p = -1, .i = 0})
 #define ns_is_nil(v) ((v).type.type == NS_TYPE_NIL)
 #define ns_true ((ns_value){.type = ns_type_bool, .p = -1, .i = true})
