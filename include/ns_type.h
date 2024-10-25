@@ -80,6 +80,9 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 #define ns_array_push(a, v) (ns_array_ensure(a, 1), (a)[ns_array_header(a)->len++] = (v))
 #define ns_array_pop(a) ((a)[--ns_array_header(a)->len])
 
+#define ns_array_last(a) (&(a)[ns_array_length(a) - 1])
+#define ns_array_last_safe(a) ((a) ? ns_array_last(a) : 0)
+
 // ns_str
 typedef struct ns_str {
     i8 *data;

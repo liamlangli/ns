@@ -4,6 +4,11 @@
 
 void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+
+void ns_eval_enter_scope(ns_vm *vm, ns_call *call);
+void ns_eval_exit_scope(ns_vm *vm, ns_call *call);
 
 ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
@@ -47,6 +52,16 @@ ns_value ns_vm_find_value(ns_vm *vm, ns_str name) {
     return ns_nil;
 }
 
+void ns_eval_enter_scope(ns_vm *vm, ns_call *call) {
+    ns_scope scope = (ns_scope){.vars = NULL, .stack_top = ns_array_length(vm->stack)};
+    ns_array_push(call->scopes, scope);
+}
+
+void ns_eval_exit_scope(ns_vm *vm, ns_call *call) {
+    ns_scope scope = ns_array_pop(call->scopes);
+    ns_array_set_length(vm->stack, scope.stack_top);
+}
+
 ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value callee = ns_eval_expr(vm, ctx, ctx->nodes[n.call_expr.callee]);
     if (ns_is_nil(callee)) {
@@ -57,9 +72,6 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_call call = (ns_call){.fn = fn, .args = NULL, .scopes = NULL };
     ns_array_set_length(call.args, ns_array_length(fn->fn.args));
 
-    ns_scope scope = (ns_scope){.vars = NULL, .stack_top = ns_array_length(vm->stack)};
-    ns_array_push(call.scopes, scope);
-
     i32 next = n.call_expr.arg;
     for (i32 i = 0, l = n.call_expr.arg_count; i < l; ++i) {
         ns_ast_t arg = ctx->nodes[next];
@@ -68,14 +80,15 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         call.args[i] = v;
     }
 
+    ns_eval_enter_scope(vm, &call);
     ns_array_push(vm->call_stack, call);
     if (ns_str_equals_STR(fn->lib, "std")) {
         ns_vm_eval_std(vm);
     } else {
         ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast.fn_def.body]);
     }
+    ns_eval_exit_scope(vm, &call);
     call = ns_array_pop(vm->call_stack);
-    ns_array_set_length(vm->stack, scope.stack_top);
     return call.ret;
 }
 
@@ -101,6 +114,38 @@ void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_error("eval error", "unknown jump stmt type %.*s\n", l.len, l.data);
     } break;
     }
+}
+
+void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_value b = ns_eval_expr(vm, ctx, ctx->nodes[n.if_stmt.condition]);
+    ns_call *call = ns_array_last(vm->call_stack);
+    ns_ast_t body = ctx->nodes[1 == (b.i & 1) ? n.if_stmt.body : n.if_stmt.else_body];
+    ns_eval_enter_scope(vm, call);
+    ns_eval_compound_stmt(vm, ctx, body);
+    ns_eval_exit_scope(vm, call);
+}
+
+void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_ast_t gen = ctx->nodes[n.for_stmt.generator];
+
+    ns_call *call = ns_array_last(vm->call_stack);
+    ns_eval_enter_scope(vm, call);
+
+    if (gen.gen_expr.range) {
+        ns_value from = ns_eval_expr(vm, ctx, ctx->nodes[gen.gen_expr.from]);
+        ns_value to = ns_eval_expr(vm, ctx, ctx->nodes[gen.gen_expr.to]);
+        ns_str name = gen.gen_expr.name.val;
+        ns_scope *scope = ns_array_last(call->scopes);
+        ns_array_push(scope->vars, ((ns_symbol){.type = NS_SYMBOL_VALUE, .name = name, .val = { .type = ns_type_i32 }, .parsed = true}));
+        for (i32 i = from.i; i < to.i; ++i) {
+            ns_symbol *index = &scope->vars[0];
+            index->val.val.i = i;
+            ns_eval_compound_stmt(vm, ctx, ctx->nodes[n.for_stmt.body]);
+        }
+    } else {
+        // TODO, generator expr from generable subject.
+    }
+    ns_eval_exit_scope(vm, call);
 }
 
 ns_value ns_eval_binary_ops_number(ns_value l, ns_value r, ns_token_t op) {
@@ -165,14 +210,14 @@ ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r,
     }
 
     ns_call call = (ns_call){.fn = fn, .args = NULL };
+    ns_array_push(call.scopes, ((ns_scope){.vars = NULL, .stack_top = ns_array_length(vm->stack)}));
     ns_array_set_length(call.args, 2);
     call.args[0] = l;
     call.args[1] = r;
-
     ns_array_push(vm->call_stack, call);
     ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast.fn_def.body]);
     ns_array_pop(vm->call_stack);
-
+    ns_array_set_length(vm->stack, call.scopes[0].stack_top);
     return call.ret;
 }
 
@@ -205,7 +250,7 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         // step 2: if override function not found, try to string cast and apply binary operator
         // step 3: if string cast not found, upcast number type to f64 and i64 and apply binary operator
         // step 4: emit error if not override function found
-        ns_error("eval error", "binary expr type mismatch\n");
+        ns_vm_error(ctx->filename, n.state, "eval error", "binary expr type mismatch.");
         return ns_nil;
     }
 }
@@ -259,15 +304,20 @@ void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     for (i32 i = 0, l = n.compound_stmt.count; i < l; i++) {
         expr = ctx->nodes[expr.next];
         switch (expr.type) {
-        case NS_AST_JUMP_STMT:
-            ns_eval_jump_stmt(vm, ctx, expr);
-            break;
-        case NS_AST_VAR_DEF:
-            ns_eval_local_var_def(vm, ctx, expr);
-            break;
+        case NS_AST_CALL_EXPR:
+        case NS_AST_BINARY_EXPR:
+        case NS_AST_PRIMARY_EXPR:
+        case NS_AST_MEMBER_EXPR:
+        case NS_AST_GEN_EXPR:
+        case NS_AST_DESIG_EXPR:
+        case NS_AST_UNARY_EXPR: ns_eval_expr(vm, ctx, expr); break;
+        case NS_AST_VAR_DEF: ns_eval_local_var_def(vm, ctx, expr); break;
+        case NS_AST_JUMP_STMT: ns_eval_jump_stmt(vm, ctx, expr); break;
+        case NS_AST_FOR_STMT: ns_eval_for_stmt(vm, ctx, expr); break;
+        case NS_AST_IF_STMT: ns_eval_if_stmt(vm, ctx, expr); break;
         default: {
             ns_str type = ns_ast_type_to_string(expr.type);
-            ns_error("eval error", "unimplemented stmt type %.*s\n", type.len, type.data);
+            ns_vm_error(ctx->filename, n.state, "eval error", "unimplemented stmt type %.*s", type.len, type.data);
         } break;
         }
     }
@@ -376,11 +426,13 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
 
     ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
     if (NULL != main_fn) {
-        ns_call call = (ns_call){.fn = main_fn, .args = NULL };
+        ns_call call = (ns_call){.fn = main_fn, .args = NULL, .scopes = NULL };
+        ns_array_push(call.scopes, ((ns_scope){.vars = NULL, .stack_top = ns_array_length(vm->stack)}));
         ns_array_set_length(call.args, 0);
         ns_array_push(vm->call_stack, call);
         ns_eval_compound_stmt(vm, &ctx, ctx.nodes[main_fn->fn.ast.fn_def.body]);
         ns_array_pop(vm->call_stack);
+        ns_array_set_length(vm->stack, call.scopes[0].stack_top);
         return ns_nil;
     }
 
