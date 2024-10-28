@@ -11,7 +11,7 @@
 #define ns_fmt_pattern_f64 "%.2lf"
 
 ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
-    switch (n.type.type) {
+    switch (n.t.type) {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
     case NS_TYPE_I32: {

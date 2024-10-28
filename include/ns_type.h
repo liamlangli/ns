@@ -262,23 +262,22 @@ typedef struct ns_type {
 bool ns_type_is_number(ns_type t);
 
 typedef enum {
-    NS_SCOPE_GLOBAL,
-    NS_SCOPE_LOCAL,
-    NS_SCOPE_ARG,
-    NS_SCOPE_FIELD
-} NS_VALUE_SCOPE;
+    NS_STORE_CONST,
+    NS_STORE_STACK,
+    NS_STORE_HEAP
+} ns_value_store;
 
 typedef struct ns_value {
-    ns_type type;
-    i32 p; // pointer
+    ns_type t;
     union {
         i64 i;
         f64 f;
     };
+    ns_value_store s;
 } ns_value;
 
 #define ns_null NULL
-#define ns_nil ((ns_value){.type = ns_type_nil, .p = -1, .i = 0})
-#define ns_is_nil(v) ((v).type.type == NS_TYPE_NIL)
-#define ns_true ((ns_value){.type = ns_type_bool, .p = -1, .i = true})
-#define ns_false ((ns_value){.type = ns_type_bool, .p = -1, .i = false})
+#define ns_nil ((ns_value){.t = ns_type_nil, .i = 0, .s = NS_STORE_CONST})
+#define ns_is_nil(v) ((v).t.type == NS_TYPE_NIL)
+#define ns_true ((ns_value){.t = ns_type_bool, .i = true, .s = NS_STORE_CONST})
+#define ns_false ((ns_value){.t = ns_type_bool, .i = false, .s = NS_STORE_CONST})

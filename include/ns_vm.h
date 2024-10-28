@@ -17,11 +17,9 @@ typedef struct ns_symbol ns_symbol;
 
 typedef struct ns_value_symbol {
     ns_type type;
-    NS_VALUE_SCOPE scope;
     ns_value val;
     bool is_const;
     bool is_ref;
-
     // for st field
     i32 offset, size;
 } ns_value_symbol;

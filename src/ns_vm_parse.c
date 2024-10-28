@@ -340,7 +340,7 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_array_push(vm->call_symbols, call);
         ns_vm_parse_compound_stmt(vm, ctx, ctx->nodes[body]);
         ns_array_pop(vm->call_symbols);
-        fn->fn.fn = (ns_value){.p = i, .type = (ns_type){.type = NS_TYPE_FN, .i = i}};
+        fn->fn.fn = (ns_value){.t = (ns_type){.type = NS_TYPE_FN, .i = i}, .s = NS_STORE_STACK};
         fn->parsed = true;
     }
 }
@@ -360,7 +360,7 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_symbol f = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = i};
             f.name = field->arg.name.val;
             ns_type t = ns_vm_parse_type(vm, field->arg.type, true);
-            f.val = (ns_value_symbol){.type = t, .scope = NS_SCOPE_FIELD, .is_ref = field->arg.is_ref, .is_const = false};
+            f.val = (ns_value_symbol){.type = t, .is_ref = field->arg.is_ref, .is_const = false};
             st.st.fields[i] = f;
             i32 size = field->arg.is_ref ? ns_ptr_size : ns_type_size(vm, t);
             // std layout
@@ -398,7 +398,7 @@ void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t n = ctx->nodes[ctx->sections[i]];
         if (n.type != NS_AST_VAR_DEF)
             continue;
-        ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .scope = NS_SCOPE_GLOBAL }, .parsed = true};
+        ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
         r.name = n.var_def.name.val;
         r.val.type = ns_vm_parse_type(vm, n.var_def.type, true);
         ns_vm_push_symbol(vm, r);
@@ -735,7 +735,7 @@ void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_scope_symbol scope = (ns_scope_symbol){.vars = ns_null};
     ns_ast_t gen = ctx->nodes[n.for_stmt.generator];
     ns_type t = ns_vm_parse_gen_expr(vm, ctx, gen);
-    ns_symbol var = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .scope = NS_SCOPE_LOCAL, .type = t }, .parsed = true};
+    ns_symbol var = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .type = t }, .parsed = true};
     var.name = gen.gen_expr.name.val;
     ns_array_push(scope.vars, var);
 
@@ -746,7 +746,7 @@ void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
 void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_symbol *call = &vm->call_symbols[ns_array_length(vm->call_symbols) - 1];
-    ns_symbol s = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .scope = NS_SCOPE_LOCAL }, .parsed = true};
+    ns_symbol s = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
     s.name = n.var_def.name.val;
     ns_type l = ns_vm_parse_type(vm, n.var_def.type, true);
 
