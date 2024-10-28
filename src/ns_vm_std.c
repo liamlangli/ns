@@ -72,10 +72,12 @@ ns_value ns_vm_eval_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
     if (ns_str_equals_STR(call->fn->name, "print")) {
         ns_value arg = call->args[0];
-        ns_str s = ns_fmt_eval(vm, vm->str_list[arg.i]);
+        ns_str s = ns_fmt_eval(vm, vm->str_list[arg.o]);
         ns_str_printf(s);
         ns_str_free(s);
+        return ns_nil;
     }
 
+    ns_error("eval error", "unknown std fn %.*s\n", call->fn->name.len, call->fn->name.data);
     return ns_nil;
 }

@@ -33,25 +33,9 @@ void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
-// f and i, f and u, i and u
-typedef enum {
-    NS_NUMBER_FLT = 1,
-    NS_NUMBER_I = 2,
-    NS_NUMBER_U = 4,
-    NS_NUMBER_FLT_AND_I = 3,
-    NS_NUMBER_FLT_AND_U = 5,
-    NS_NUMBER_I_AND_U = 6,
-} ns_number_type;
-
-ns_number_type ns_mv_number_type(ns_type t) {
-    if (ns_type_is_float(t)) return NS_NUMBER_FLT;
-    if (ns_type_signed(t)) return NS_NUMBER_I;
-    return NS_NUMBER_U;
-}
-
 ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
-    ns_number_type ln = ns_mv_number_type(l);
-    ns_number_type rn = ns_mv_number_type(r);
+    ns_number_type ln = ns_vm_number_type(l);
+    ns_number_type rn = ns_vm_number_type(r);
     if (ln == rn) return (ns_type){.type = ns_max(l.type, r.type), .i = -1};
     switch (ln | rn)
     {
@@ -164,17 +148,17 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     switch (t.type)
     {
-    case NS_TYPE_I8: return ns_str_cstr("i8");
-    case NS_TYPE_U8: return ns_str_cstr("u8");
-    case NS_TYPE_I16: return ns_str_cstr("i16");
-    case NS_TYPE_U16: return ns_str_cstr("u16");
-    case NS_TYPE_I32: return ns_str_cstr("i32");
-    case NS_TYPE_U32: return ns_str_cstr("u32");
-    case NS_TYPE_I64: return ns_str_cstr("i64");
-    case NS_TYPE_U64: return ns_str_cstr("u64");
-    case NS_TYPE_F32: return ns_str_cstr("f32");
-    case NS_TYPE_F64: return ns_str_cstr("f64");
-    case NS_TYPE_BOOL: return ns_str_cstr("bool");
+    case NS_TYPE_I8: return t.is_ref ? ns_str_cstr("ref_i8") : ns_str_cstr("i8");
+    case NS_TYPE_U8: return t.is_ref ? ns_str_cstr("ref_u8") : ns_str_cstr("u8");
+    case NS_TYPE_I16: return t.is_ref ? ns_str_cstr("ref_i16") : ns_str_cstr("i16");
+    case NS_TYPE_U16: return t.is_ref ? ns_str_cstr("ref_u16") : ns_str_cstr("u16");
+    case NS_TYPE_I32: return t.is_ref ? ns_str_cstr("ref_i32") : ns_str_cstr("i32");
+    case NS_TYPE_U32: return t.is_ref ? ns_str_cstr("ref_u32") : ns_str_cstr("u32");
+    case NS_TYPE_I64: return t.is_ref ? ns_str_cstr("ref_i64") : ns_str_cstr("i64");
+    case NS_TYPE_U64: return t.is_ref ? ns_str_cstr("ref_u64") : ns_str_cstr("u64");
+    case NS_TYPE_F32: return t.is_ref ? ns_str_cstr("ref_f32") : ns_str_cstr("f32");
+    case NS_TYPE_F64: return t.is_ref ? ns_str_cstr("ref_f64") : ns_str_cstr("f64");
+    case NS_TYPE_BOOL: return t.is_ref ? ns_str_cstr("ref_bool") : ns_str_cstr("bool");
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_FN:
     case NS_TYPE_STRUCT: {

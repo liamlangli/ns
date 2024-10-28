@@ -119,6 +119,9 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 ns_str ns_ops_name(ns_token_t op);
 ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 
+// number type
+ns_number_type ns_vm_number_type(ns_type t);
+
 // vm record
 i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r);
 i32 ns_vm_push_string(ns_vm *vm, ns_str s);

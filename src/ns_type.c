@@ -40,6 +40,16 @@ bool ns_type_is_number(ns_type t) {
     }
 }
 
+u32 ns_type_encode(NS_VALUE_TYPE t, bool is_ref, bool heap) {
+    return (t & NS_TYPE_MASK) | (is_ref ? NS_REF_MASK : 0) | (heap ? NS_HEAP_MASK : 0);
+}
+
+ns_number_type ns_vm_number_type(ns_type t) {
+    if (ns_type_is_float(t)) return NS_NUMBER_FLT;
+    if (ns_type_signed(t)) return NS_NUMBER_I;
+    return NS_NUMBER_U;
+}
+
 void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap) {
     ns_array_header h = {0};
     void *b;

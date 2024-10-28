@@ -209,8 +209,8 @@ typedef struct ns_token_t {
 
 // ns_value 
 typedef enum { 
-    NS_TYPE_UNKNOWN = -1,
-    NS_TYPE_NIL = 0,
+    NS_TYPE_UNKNOWN = 0,
+    NS_TYPE_NIL,
     NS_TYPE_EMPTY,
     NS_TYPE_INFER,
     NS_TYPE_I8,
@@ -231,28 +231,47 @@ typedef enum {
     NS_TYPE_ALIAS,
 } NS_VALUE_TYPE;
 
+// f and i, f and u, i and u
+typedef enum {
+    NS_NUMBER_FLT = 1,
+    NS_NUMBER_I = 2,
+    NS_NUMBER_U = 4,
+    NS_NUMBER_FLT_AND_I = 3,
+    NS_NUMBER_FLT_AND_U = 5,
+    NS_NUMBER_I_AND_U = 6,
+} ns_number_type;
+
+typedef enum {
+    NS_HEAP_MASK = 1 << 25,
+    NS_REF_MASK = 1 << 24
+} ns_type_mask;
+
+u32 ns_type_encode(NS_VALUE_TYPE t, bool is_ref, bool heap);
+#define ns_type_in_heap(t) ((t & NS_HEAP_MASK) != 0)
+#define ns_type_is_ref(t) ((t & NS_REF_MASK) != 0)
+#define ns_type_id(t) (t & NS_TYPE_MASK)
+
 typedef struct ns_type {
-    NS_VALUE_TYPE type;
-    bool is_ref;
+    u32 type;
     i32 i; // symbol ptr
 } ns_type;
 
-#define ns_type_unknown ((ns_type){.type = NS_TYPE_UNKNOWN, .i = -1, .is_ref = false})
-#define ns_type_infer   ((ns_type){.type = NS_TYPE_INFER,   .i = -1, .is_ref = false})
-#define ns_type_nil     ((ns_type){.type = NS_TYPE_NIL,     .i = -1, .is_ref = false})
-#define ns_type_bool    ((ns_type){.type = NS_TYPE_BOOL,    .i = -1, .is_ref = false})
-#define ns_type_str     ((ns_type){.type = NS_TYPE_STRING,  .i = -1, .is_ref = false})
+#define ns_type_unknown ((ns_type){.type = NS_TYPE_UNKNOWN, .i = -1})
+#define ns_type_infer   ((ns_type){.type = NS_TYPE_INFER,   .i = -1})
+#define ns_type_nil     ((ns_type){.type = NS_TYPE_NIL,     .i = -1})
+#define ns_type_bool    ((ns_type){.type = NS_TYPE_BOOL,    .i = -1})
+#define ns_type_str     ((ns_type){.type = NS_TYPE_STRING,  .i = -1})
 
-#define ns_type_i8  ((ns_type){.type = NS_TYPE_I8,  .i = -1, .is_ref = false})
-#define ns_type_i16 ((ns_type){.type = NS_TYPE_I16, .i = -1, .is_ref = false})
-#define ns_type_i32 ((ns_type){.type = NS_TYPE_I32, .i = -1, .is_ref = false})
-#define ns_type_i64 ((ns_type){.type = NS_TYPE_I64, .i = -1, .is_ref = false})
-#define ns_type_u8  ((ns_type){.type = NS_TYPE_U8,  .i = -1, .is_ref = false})
-#define ns_type_u16 ((ns_type){.type = NS_TYPE_U16, .i = -1, .is_ref = false})
-#define ns_type_u32 ((ns_type){.type = NS_TYPE_U32, .i = -1, .is_ref = false})
-#define ns_type_u64 ((ns_type){.type = NS_TYPE_U64, .i = -1, .is_ref = false})
-#define ns_type_f32 ((ns_type){.type = NS_TYPE_F32, .i = -1, .is_ref = false})
-#define ns_type_f64 ((ns_type){.type = NS_TYPE_F64, .i = -1, .is_ref = false})
+#define ns_type_i8  ((ns_type){.type = NS_TYPE_I8,  .i = -1})
+#define ns_type_i16 ((ns_type){.type = NS_TYPE_I16, .i = -1})
+#define ns_type_i32 ((ns_type){.type = NS_TYPE_I32, .i = -1})
+#define ns_type_i64 ((ns_type){.type = NS_TYPE_I64, .i = -1})
+#define ns_type_u8  ((ns_type){.type = NS_TYPE_U8,  .i = -1})
+#define ns_type_u16 ((ns_type){.type = NS_TYPE_U16, .i = -1})
+#define ns_type_u32 ((ns_type){.type = NS_TYPE_U32, .i = -1})
+#define ns_type_u64 ((ns_type){.type = NS_TYPE_U64, .i = -1})
+#define ns_type_f32 ((ns_type){.type = NS_TYPE_F32, .i = -1})
+#define ns_type_f64 ((ns_type){.type = NS_TYPE_F64, .i = -1})
 
 #define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
 #define ns_type_signed(t) ((t).type == NS_TYPE_I8 || (t).type == NS_TYPE_I16 || (t).type == NS_TYPE_I32 || (t).type == NS_TYPE_I64)
@@ -261,23 +280,11 @@ typedef struct ns_type {
 
 bool ns_type_is_number(ns_type t);
 
-typedef enum {
-    NS_STORE_CONST,
-    NS_STORE_STACK,
-    NS_STORE_HEAP
-} ns_value_store;
-
 typedef struct ns_value {
     ns_type t;
-    union {
-        i64 i;
-        f64 f;
-    };
-    ns_value_store s;
+    u64 o;
 } ns_value;
 
 #define ns_null NULL
-#define ns_nil      ((ns_value){.t = ns_type_nil, .i = 0, .s = NS_STORE_CONST})
-#define ns_is_nil(v) ((v).t.type == NS_TYPE_NIL)
-#define ns_true     ((ns_value){.t = ns_type_bool, .i = true, .s = NS_STORE_CONST})
-#define ns_false    ((ns_value){.t = ns_type_bool, .i = false, .s = NS_STORE_CONST})
+#define ns_nil          ((ns_value){.t = ns_type_nil, .o = 0, .s = NS_STORE_HEAP})
+#define ns_is_nil(v)    ((v).t.type == NS_TYPE_NIL)
