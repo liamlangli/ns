@@ -11,6 +11,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         ns_str_case(NS_AST_STRUCT_DEF)
         ns_str_case(NS_AST_OPS_FN_DEF)
         ns_str_case(NS_AST_TYPE_DEF)
+        ns_str_case(NS_AST_TYPE_LABEL)
         ns_str_case(NS_AST_STRUCT_FIELD_DEF)
         ns_str_case(NS_AST_EXPR)
         ns_str_case(NS_AST_BINARY_EXPR)
@@ -35,34 +36,43 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     }
 }
 
+void ns_ast_dump_type_label(ns_ast_ctx *ctx, i32 i) {
+    if (i == -1) return;
+    printf(": ");
+
+    ns_ast_t *n = &ctx->nodes[i];
+    if (n->type_label.is_ref) {
+        printf("ref ");
+    }
+
+    ns_str_printf(n->type_label.name.val);
+}
+
 void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
     ns_ast_t n = ctx->nodes[i];
     ns_str type = ns_ast_type_to_string(n.type);
     printf("%4d [type: %-20.*s next: %4d] ", i, type.len, type.data, n.next);
     switch (n.type) {
+    case NS_AST_TYPE_LABEL: ns_ast_dump_type_label(ctx, i); break;
     case NS_AST_FN_DEF: {
+        if (n.fn_def.is_ref) printf("ref ");
+        if (n.fn_def.is_async) printf("async ");
+        if (n.fn_def.is_kernel) printf("kernel ");
+
         printf(ns_color_log "fn " ns_color_nil);
         ns_str_printf(n.fn_def.name.val);
         printf(" (");
         ns_ast_t *arg = &n;
         for (i32 i = 0; i < n.fn_def.arg_count; i++) {
             arg = &ctx->nodes[arg->next];
-            if (arg->arg.is_ref) {
-                printf("ref ");
-            }
-
             ns_str_printf(arg->arg.name.val);
-            printf(": ");
-            ns_str_printf(arg->arg.type.val);
+            ns_ast_dump_type_label(ctx, arg->arg.type);
             if (i != n.fn_def.arg_count - 1) {
                 printf(", ");
             }
         }
         printf(")");
-        if (n.fn_def.return_type.type != NS_TOKEN_UNKNOWN) {
-            printf(": ");
-            ns_str_printf(n.fn_def.return_type.val);
-        }
+        ns_ast_dump_type_label(ctx, n.fn_def.ret);
 
         if (n.fn_def.body != -1)
             printf(" { [%d] }", n.fn_def.body);
@@ -71,26 +81,22 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         }
     } break;
     case NS_AST_OPS_FN_DEF: {
-        if (n.ops_fn_def.is_async) {
-            printf("async ");
-        }
+        if (n.fn_def.is_ref) printf("ref ");
+        if (n.fn_def.is_async) printf("async ");
         printf(ns_color_log "fn" ns_color_nil " ops (" ns_color_wrn);
         ns_str_printf(n.ops_fn_def.ops.val);
         printf(ns_color_nil ")(");
         ns_ast_t *left = &ctx->nodes[n.ops_fn_def.left];
         ns_str_printf(left->arg.name.val);
-        printf(": ");
-        ns_str_printf(left->arg.type.val);
+        ns_ast_dump_type_label(ctx, left->arg.type);
         printf(", ");
+
         ns_ast_t *right = &ctx->nodes[n.ops_fn_def.right];
         ns_str_printf(right->arg.name.val);
-        printf(": ");
-        ns_str_printf(right->arg.type.val);
+        ns_ast_dump_type_label(ctx, right->arg.type);
+
         printf(")");
-        if (n.ops_fn_def.return_type.type != NS_TOKEN_UNKNOWN) {
-            printf(": ");
-            ns_str_printf(n.ops_fn_def.return_type.val);
-        }
+        ns_ast_dump_type_label(ctx, n.ops_fn_def.ret);
         if (n.ops_fn_def.body != -1) {
             printf(" { [%d] }", n.ops_fn_def.body);
         }
@@ -104,8 +110,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         for (i32 i = 0; i < count; i++) {
             field = ctx->nodes[field.next];
             ns_str_printf(field.arg.name.val);
-            printf(": ");
-            ns_str_printf(field.arg.type.val);
+            ns_ast_dump_type_label(ctx, field.arg.type);
             if (i != count - 1) {
                 printf(", ");
             }
@@ -113,22 +118,13 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         printf(" }");
     } break;
     case NS_AST_ARG_DEF:
-        if (n.arg.is_ref) {
-            printf("ref ");
-        }
         ns_str_printf(n.arg.name.val);
-        if (n.arg.type.type != NS_TOKEN_UNKNOWN) {
-            printf(": ");
-            ns_str_printf(n.arg.type.val);
-        }
+        ns_ast_dump_type_label(ctx, n.arg.type);
         break;
     case NS_AST_VAR_DEF:
         printf(ns_color_log "let " ns_color_nil);
         ns_str_printf(n.var_def.name.val);
-        if (n.var_def.type.type != NS_TOKEN_INVALID) {
-            printf(":");
-            ns_str_printf(n.var_def.type.val);
-        }
+        ns_ast_dump_type_label(ctx, n.var_def.type);
         if (n.var_def.expr != -1) {
             printf(" = [%d]", n.var_def.expr);
         }

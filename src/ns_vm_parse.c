@@ -287,7 +287,10 @@ void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t l = ctx->nodes[n.ops_fn_def.left];
         ns_ast_t r = ctx->nodes[n.ops_fn_def.right];
 
-        fn.name = ns_ops_override_name(l.arg.type.val, r.arg.type.val, n.ops_fn_def.ops);
+        ns_str l_type = ctx->nodes[l.arg.type].type_label.name.val;
+        ns_str r_type = ctx->nodes[r.arg.type].type_label.name.val;
+
+        fn.name = ns_ops_override_name(l_type, r_type, n.ops_fn_def.ops);
         ns_vm_push_symbol(vm, fn);
     }
 }
@@ -299,28 +302,37 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
             continue;
         ns_ast_t n = fn->fn.ast;
         if (n.type == NS_AST_FN_DEF) {
-            fn->fn.ret = ns_vm_parse_type(vm, n.fn_def.return_type, true);
+            ns_ast_t *ret_type = &ctx->nodes[n.fn_def.ret];
+            fn->fn.ret = ns_vm_parse_type(vm, ret_type->type_label.name, true);
+            fn->fn.ret.is_ref = ret_type->type_label.is_ref;
+
             ns_array_set_length(fn->fn.args, n.fn_def.arg_count);
             ns_ast_t *arg = &n;
             for (i32 i = 0; i < n.fn_def.arg_count; i++) {
                 arg = &ctx->nodes[arg->next];
                 ns_symbol arg_record = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = i};
                 arg_record.name = arg->arg.name.val;
-                arg_record.val.type = ns_vm_parse_type(vm, arg->arg.type, false);
+
+                ns_ast_t *arg_type = &ctx->nodes[arg->arg.type];
+                arg_record.val.type = ns_vm_parse_type(vm, arg_type->type_label.name, false);
+                arg_record.val.type.is_ref = arg_type->type_label.is_ref;
                 fn->fn.args[i] = arg_record;
             }
         } else if (n.type == NS_AST_OPS_FN_DEF) {
             ns_ast_t l = ctx->nodes[n.ops_fn_def.left];
             ns_ast_t r = ctx->nodes[n.ops_fn_def.right];
-            fn->fn.ret = ns_vm_parse_type(vm, l.arg.type, true);
+            fn->fn.ret = ns_vm_parse_type(vm, ctx->nodes[l.arg.type].type_label.name, true);
+            fn->fn.ret.is_ref = ctx->nodes[l.arg.type].type_label.is_ref;
             ns_array_set_length(fn->fn.args, 2);
             ns_symbol l_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = 0};
             l_arg.name = l.arg.name.val;
-            l_arg.val.type = ns_vm_parse_type(vm, l.arg.type, false);
+            l_arg.val.type = ns_vm_parse_type(vm, ctx->nodes[l.arg.type].type_label.name, false);
+            l_arg.val.is_ref = ctx->nodes[l.arg.type].type_label.is_ref;
             fn->fn.args[0] = l_arg;
             ns_symbol r_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = 1};
             r_arg.name = r.arg.name.val;
-            r_arg.val.type = ns_vm_parse_type(vm, r.arg.type, false);
+            r_arg.val.type = ns_vm_parse_type(vm, ctx->nodes[r.arg.type].type_label.name, false);
+            r_arg.val.is_ref = ctx->nodes[r.arg.type].type_label.is_ref;
             fn->fn.args[1] = r_arg;
         } else {
             ns_error("syntax error", "unknown fn def type\n");
@@ -359,10 +371,10 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             field = &ctx->nodes[field->next];
             ns_symbol f = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = i};
             f.name = field->arg.name.val;
-            ns_type t = ns_vm_parse_type(vm, field->arg.type, true);
-            f.val = (ns_value_symbol){.type = t, .is_ref = field->arg.is_ref, .is_const = false};
+            ns_type t = ns_vm_parse_type(vm, ctx->nodes[field->arg.type].type_label.name, true);
+            f.val = (ns_value_symbol){.type = t, .is_ref = ctx->nodes[field->arg.type].type_label.is_ref};
             st.st.fields[i] = f;
-            i32 size = field->arg.is_ref ? ns_ptr_size : ns_type_size(vm, t);
+            i32 size = f.val.is_ref ? ns_ptr_size : ns_type_size(vm, t);
             // std layout
             offset = (offset + size - 1) & ~(size - 1);
             f.val.offset = offset;
@@ -400,7 +412,8 @@ void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
             continue;
         ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
         r.name = n.var_def.name.val;
-        r.val.type = ns_vm_parse_type(vm, n.var_def.type, true);
+        r.val.type = ns_vm_parse_type(vm, ctx->nodes[n.var_def.type].type_label.name, true);
+        r.val.is_ref = ctx->nodes[n.var_def.type].type_label.is_ref;
         ns_vm_push_symbol(vm, r);
     }
 }
@@ -748,7 +761,8 @@ void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_symbol *call = &vm->call_symbols[ns_array_length(vm->call_symbols) - 1];
     ns_symbol s = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
     s.name = n.var_def.name.val;
-    ns_type l = ns_vm_parse_type(vm, n.var_def.type, true);
+    ns_type l = ns_vm_parse_type(vm, ctx->nodes[n.var_def.type].type_label.name, true);
+    l.is_ref = ctx->nodes[n.var_def.type].type_label.is_ref;
 
     if (n.var_def.expr != -1) {
         ns_type t = ns_vm_parse_expr(vm, ctx, ctx->nodes[n.var_def.expr]);

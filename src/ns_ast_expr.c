@@ -341,7 +341,7 @@ bool ns_parse_expr_stack(ns_ast_ctx *ctx) {
         case NS_TOKEN_AS: {
             if (ns_parse_stack_top_is_operand(ctx)) {
                 i32 left = ns_parse_stack_pop(ctx);
-                if (ns_parse_type_expr(ctx)) {
+                if (ns_parse_type_name(ctx)) {
                     ns_ast_t n = {.type = NS_AST_CAST_EXPR, .cast_expr = {.expr = left, .type = ctx->token}};
                     ns_parse_stack_push_ast(ctx, n);
                     break;

@@ -337,7 +337,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     case 't': // type true to
     {
         if (strncmp(s + f, "type", 4) == 0) {
-            ns_range_token(NS_TOKEN_TYPE_DEF, 4)
+            ns_range_token(NS_TOKEN_TYPE, 4)
         } else if (strncmp(s + f, "true", 4) == 0) {
             ns_range_token(NS_TOKEN_TRUE, 4)
         } else if (strncmp(s + f, "to", 2) == 0) {

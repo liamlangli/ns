@@ -10,6 +10,8 @@ typedef enum {
     NS_AST_UNKNOWN = 0,
     NS_AST_PROGRAM,
 
+    NS_AST_TYPE_LABEL,
+
     NS_AST_ARG_DEF,
     NS_AST_FN_DEF,
     NS_AST_OPS_FN_DEF,
@@ -46,10 +48,14 @@ typedef struct ns_ast_state {
     i32 f, l, o; // buffer offset, line, line offset
 } ns_ast_state;
 
-typedef struct ns_ast_arg {
+typedef struct ns_ast_type_label {
     bool is_ref;
     ns_token_t name;
-    ns_token_t type;
+} ns_ast_type_label;
+
+typedef struct ns_ast_arg {
+    ns_token_t name;
+    i32 type;
 } ns_ast_arg;
 
 typedef struct ns_ast_fn_def {
@@ -57,7 +63,7 @@ typedef struct ns_ast_fn_def {
     bool is_async;
     bool is_kernel;
     ns_token_t name;
-    ns_token_t return_type;
+    i32 ret;
     i32 body;
     i32 arg_count;
 } ns_ast_fn_def;
@@ -66,22 +72,27 @@ typedef struct ns_ast_ops_fn_def {
     bool is_ref;
     bool is_async;
     ns_token_t ops;
-    ns_token_t return_type;
+    i32 ret;
     i32 body;
     i32 left;
     i32 right;
 } ns_ast_ops_fn_def;
 
 typedef struct ns_ast_var_def {
-    i32 expr;
     ns_token_t name;
-    ns_token_t type;
+    i32 expr;
+    i32 type;
 } ns_ast_var_def;
 
 typedef struct ns_ast_struct_def {
     ns_token_t name;
     i32 count;
 } ns_ast_struct_def;
+
+typedef struct ns_ast_type_def {
+    ns_token_t name;
+    ns_token_t type;
+} ns_ast_type_def;
 
 typedef struct ns_ast_binary_expr {
     i32 left;
@@ -182,11 +193,14 @@ typedef struct ns_ast_t {
     i32 next; // -1 mean null ref
     ns_ast_state state;
     union {
+        ns_ast_type_label type_label;
+
         ns_ast_arg arg;
         ns_ast_fn_def fn_def;
         ns_ast_ops_fn_def ops_fn_def;
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
+        ns_ast_type_def type_def;
         ns_ast_struct_field field_def;
 
         ns_ast_expr expr;
@@ -251,7 +265,7 @@ bool ns_parse_identifier(ns_ast_ctx *ctx);
 
 // type fn
 bool ns_parse_unary_expr(ns_ast_ctx *ctx);
-bool ns_parse_type_expr(ns_ast_ctx *ctx);
+bool ns_parse_type_name(ns_ast_ctx *ctx);
 
 // external fn
 bool ns_parse_fn_define(ns_ast_ctx *ctx);
@@ -269,7 +283,6 @@ bool ns_parse_desig_expr(ns_ast_ctx *ctx);
 // expr fn
 ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
 bool ns_parse_gen_expr(ns_ast_ctx *ctx);
-bool ns_parse_type_expr(ns_ast_ctx *ctx);
 bool ns_parse_primary_expr(ns_ast_ctx *ctx);
 bool ns_parse_postfix_expr(ns_ast_ctx *ctx);
 bool ns_parse_expr_stack(ns_ast_ctx *ctx);
