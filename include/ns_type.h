@@ -242,14 +242,21 @@ typedef enum {
 } ns_number_type;
 
 typedef enum {
+    NS_TYPE_VALUE_MASK = 0x3f,
+    NS_TYPE_INDEX_MASK = 0xffffff,
     NS_HEAP_MASK = 1 << 25,
     NS_REF_MASK = 1 << 24
 } ns_type_mask;
 
-u32 ns_type_encode(NS_VALUE_TYPE t, bool is_ref, bool heap);
+
+// ns_type memory layout
+// | 1 bit for ref | 1 bit for heap | 24 bits for type index | 6 bits for type enum |
+u32 ns_type_encode(NS_VALUE_TYPE t, i32 i, bool is_ref, bool in_heap);
+
 #define ns_type_in_heap(t) ((t & NS_HEAP_MASK) != 0)
 #define ns_type_is_ref(t) ((t & NS_REF_MASK) != 0)
-#define ns_type_id(t) (t & NS_TYPE_MASK)
+#define ns_type_index(t) ((t & NS_TYPE_MASK) >> 6)
+#define ns_value_type(t) (t & NS_VALUE_MASK)
 
 typedef struct ns_type {
     u32 type;

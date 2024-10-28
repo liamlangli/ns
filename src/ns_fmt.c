@@ -15,7 +15,7 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
     case NS_TYPE_I32: {
-        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_i32, (i32)n.i);
+        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_i32, (i32));
         char* d = malloc(s + 1);
         snprintf(d, s + 1, ns_fmt_pattern_i32, (i32)n.i);
         return (ns_str){.data=d, .len=s, .dynamic=1};

@@ -40,8 +40,12 @@ bool ns_type_is_number(ns_type t) {
     }
 }
 
-u32 ns_type_encode(NS_VALUE_TYPE t, bool is_ref, bool heap) {
-    return (t & NS_TYPE_MASK) | (is_ref ? NS_REF_MASK : 0) | (heap ? NS_HEAP_MASK : 0);
+u32 ns_type_encode(NS_VALUE_TYPE t, i32 i, bool is_ref, bool in_heap) {
+    u32 r = t;
+    r |= (is_ref) ? NS_REF_MASK : 0;
+    r |= (in_heap) ? NS_HEAP_MASK : 0;
+    r |= ((i & 0xffffff) << 6);
+    return r;
 }
 
 ns_number_type ns_vm_number_type(ns_type t) {
