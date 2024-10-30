@@ -211,7 +211,7 @@ typedef struct ns_token_t {
 typedef enum {
     NS_TYPE_UNKNOWN = 0,
     NS_TYPE_NIL,
-    NS_TYPE_EMPTY,
+    NS_TYPE_VOID,
     NS_TYPE_INFER,
     NS_TYPE_I8,
     NS_TYPE_U8,
@@ -276,6 +276,7 @@ ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s);
 
 #define ns_type_unknown NS_TYPE_UNKNOWN
 #define ns_type_infer   NS_TYPE_INFER
+#define ns_type_void    NS_TYPE_VOID
 #define ns_type_nil     NS_TYPE_NIL
 #define ns_type_bool    NS_TYPE_BOOL
 #define ns_type_str     NS_TYPE_STRING
@@ -291,6 +292,9 @@ ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s);
 #define ns_type_f32 NS_TYPE_F32
 #define ns_type_f64 NS_TYPE_F64
 
+#define ns_type_fn     NS_TYPE_FN
+#define ns_type_struct NS_TYPE_STRUCT
+
 #define ns_type_is(t, tt) (tt == ns_type_enum(t))
 #define ns_type_is_float(t) (ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64))
 #define ns_type_signed(t) (ns_type_is(t, NS_TYPE_I8) || ns_type_is(t, NS_TYPE_I16) || ns_type_is(t, NS_TYPE_I32) || ns_type_is(t, NS_TYPE_I64))
@@ -302,6 +306,7 @@ bool ns_type_is_number(u32 t);
 typedef struct ns_value {
     ns_type t;  // type
     union {
+        bool b;
         i8 i8;
         u8 u8;
         i16 i16;
@@ -320,3 +325,5 @@ typedef struct ns_value {
 #define ns_null NULL
 #define ns_nil          ((ns_value){.t = ns_type_nil, .o = 0})
 #define ns_is_nil(v)    ns_type_is(v.t, NS_TYPE_NIL)
+#define ns_true         ((ns_value){.t = ns_type_bool, .b = true})
+#define ns_false        ((ns_value){.t = ns_type_bool, .b = false})
