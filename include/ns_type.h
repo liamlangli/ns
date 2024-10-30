@@ -207,8 +207,8 @@ typedef struct ns_token_t {
     int line, line_start;
 } ns_token_t;
 
-// ns_value 
-typedef enum { 
+// ns_value
+typedef enum {
     NS_TYPE_UNKNOWN = 0,
     NS_TYPE_NIL,
     NS_TYPE_EMPTY,
@@ -229,7 +229,7 @@ typedef enum {
     NS_TYPE_STRUCT,
     NS_TYPE_ARRAY,
     NS_TYPE_ALIAS,
-} NS_VALUE_TYPE;
+} ns_value_type;
 
 // f and i, f and u, i and u
 typedef enum {
@@ -242,56 +242,81 @@ typedef enum {
 } ns_number_type;
 
 typedef enum {
-    NS_TYPE_VALUE_MASK = 0x3f,
-    NS_TYPE_INDEX_MASK = 0xffffff,
-    NS_HEAP_MASK = 1 << 25,
-    NS_REF_MASK = 1 << 24
-} ns_type_mask;
+    NS_TYPE_ENUM_SHIFT = 8,
+    NS_TYPE_REF_SHIFT = 56,
+    NS_TYPE_STORE_SHIFT = 57,
+
+    NS_TYPE_REF_MASK = 1 << NS_TYPE_REF_SHIFT,
+    NS_TYPE_STORE_MASK = 3 << NS_TYPE_STORE_SHIFT,
+    NS_TYPE_INDEX_MASK = 0xffffffffffff << NS_TYPE_ENUM_SHIFT,
+    NS_TYPE_ENUM_MASK = 0xff
+};
+
+typedef enum {
+    NS_STORE_CONST = 0,
+    NS_STORE_STACK = 1 << NS_TYPE_STORE_SHIFT,
+    NS_STORE_HEAP = 2 << NS_TYPE_STORE_SHIFT,
+} ns_store;
+
+#define ns_type_is_ref(t) ((t & NS_TYPE_REF_MASK) != 0)
+#define ns_type_is_const(t) (NS_STORE_CONST == (t & NS_TYPE_STORE_MASK))
+#define ns_type_in_stack(t) (NS_STORE_STACK == (t & NS_TYPE_STORE_MASK))
+#define ns_type_in_heap(t) (NS_STORE_HEAP == (t & NS_TYPE_STORE_MASK))
+#define ns_type_index(t) ((t & NS_TYPE_INDEX_MASK) >> NS_TYPE_ENUM_SHIFT)
+#define ns_type_enum(t) (t & NS_TYPE_ENUM_MASK)
+#define ns_type_set_store(t, s) ((t & (~NS_TYPE_STORE_MASK) | (s & NS_TYPE_STORE_MASK)))
+
+typedef u64 ns_type;
 
 
-// ns_type memory layout
-// | 1 bit for ref | 1 bit for heap | 24 bits for type index | 6 bits for type enum |
-u32 ns_type_encode(NS_VALUE_TYPE t, i32 i, bool is_ref, bool in_heap);
 
-#define ns_type_in_heap(t) ((t & NS_HEAP_MASK) != 0)
-#define ns_type_is_ref(t) ((t & NS_REF_MASK) != 0)
-#define ns_type_index(t) ((t & NS_TYPE_MASK) >> 6)
-#define ns_value_type(t) (t & NS_VALUE_MASK)
+// ns_type(u32) memory layout
+// | 4 bit 0 | 3 bits for ns_store | 1 bit for ref | 48 bits for type index | 8 bits for type enum |
+ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s);
 
-typedef struct ns_type {
-    u32 type;
-    i32 i; // symbol ptr
-} ns_type;
+#define ns_type_unknown NS_TYPE_UNKNOWN
+#define ns_type_infer   NS_TYPE_INFER
+#define ns_type_nil     NS_TYPE_NIL
+#define ns_type_bool    NS_TYPE_BOOL
+#define ns_type_str     NS_TYPE_STRING
 
-#define ns_type_unknown ((ns_type){.type = NS_TYPE_UNKNOWN, .i = -1})
-#define ns_type_infer   ((ns_type){.type = NS_TYPE_INFER,   .i = -1})
-#define ns_type_nil     ((ns_type){.type = NS_TYPE_NIL,     .i = -1})
-#define ns_type_bool    ((ns_type){.type = NS_TYPE_BOOL,    .i = -1})
-#define ns_type_str     ((ns_type){.type = NS_TYPE_STRING,  .i = -1})
+#define ns_type_i8  NS_TYPE_I8
+#define ns_type_i16 NS_TYPE_I16
+#define ns_type_i32 NS_TYPE_I32
+#define ns_type_i64 NS_TYPE_I64
+#define ns_type_u8  NS_TYPE_U8
+#define ns_type_u16 NS_TYPE_U16
+#define ns_type_u32 NS_TYPE_U32
+#define ns_type_u64 NS_TYPE_U64
+#define ns_type_f32 NS_TYPE_F32
+#define ns_type_f64 NS_TYPE_F64
 
-#define ns_type_i8  ((ns_type){.type = NS_TYPE_I8,  .i = -1})
-#define ns_type_i16 ((ns_type){.type = NS_TYPE_I16, .i = -1})
-#define ns_type_i32 ((ns_type){.type = NS_TYPE_I32, .i = -1})
-#define ns_type_i64 ((ns_type){.type = NS_TYPE_I64, .i = -1})
-#define ns_type_u8  ((ns_type){.type = NS_TYPE_U8,  .i = -1})
-#define ns_type_u16 ((ns_type){.type = NS_TYPE_U16, .i = -1})
-#define ns_type_u32 ((ns_type){.type = NS_TYPE_U32, .i = -1})
-#define ns_type_u64 ((ns_type){.type = NS_TYPE_U64, .i = -1})
-#define ns_type_f32 ((ns_type){.type = NS_TYPE_F32, .i = -1})
-#define ns_type_f64 ((ns_type){.type = NS_TYPE_F64, .i = -1})
+#define ns_type_is(t, tt) (tt == ns_type_enum(t))
+#define ns_type_is_float(t) (ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64))
+#define ns_type_signed(t) (ns_type_is(t, NS_TYPE_I8) || ns_type_is(t, NS_TYPE_I16) || ns_type_is(t, NS_TYPE_I32) || ns_type_is(t, NS_TYPE_I64))
+#define ns_type_unsigned(t) (ns_type_is(t, NS_TYPE_U8) || ns_type_is(t, NS_TYPE_U16) || ns_type_is(t, NS_TYPE_U32) || ns_type_is(t, NS_TYPE_U64))
+#define ns_type_is_unknown(t) (ns_type_is(t, NS_TYPE_UNKNOWN))
 
-#define ns_type_is_float(t) ((t).type == NS_TYPE_F32 || (t).type == NS_TYPE_F64)
-#define ns_type_signed(t) ((t).type == NS_TYPE_I8 || (t).type == NS_TYPE_I16 || (t).type == NS_TYPE_I32 || (t).type == NS_TYPE_I64)
-#define ns_type_unsigned(t) ((t).type == NS_TYPE_U8 || (t).type == NS_TYPE_U16 || (t).type == NS_TYPE_U32 || (t).type == NS_TYPE_U64)
-#define ns_type_is_unknown(t) (NS_TYPE_UNKNOWN == (t).type)
-
-bool ns_type_is_number(ns_type t);
+bool ns_type_is_number(u32 t);
 
 typedef struct ns_value {
-    ns_type t;
-    u64 o;
+    ns_type t;  // type
+    union {
+        i8 i8;
+        u8 u8;
+        i16 i16;
+        u16 u16;
+        i32 i32;
+        u32 u32;
+        i64 i64;
+        u64 u64;
+        f32 f32;
+        f64 f64;
+        u64 o;
+    };
+    u64 o;  // memory offset
 } ns_value;
 
 #define ns_null NULL
-#define ns_nil          ((ns_value){.t = ns_type_nil, .o = 0, .s = NS_STORE_HEAP})
-#define ns_is_nil(v)    ((v).t.type == NS_TYPE_NIL)
+#define ns_nil          ((ns_value){.t = ns_type_nil, .o = 0})
+#define ns_is_nil(v)    ns_type_is(v.t, NS_TYPE_NIL)

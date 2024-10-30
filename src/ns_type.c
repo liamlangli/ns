@@ -4,7 +4,7 @@
 #include <string.h>
 
 ns_str ns_type_name(ns_type t) {
-    switch (t.type) {
+    switch (ns_type_enum(t)) {
     case NS_TYPE_UNKNOWN: return ns_str_null;
     case NS_TYPE_I8: return ns_str_cstr("i8");
     case NS_TYPE_I16: return ns_str_cstr("i16");
@@ -22,8 +22,8 @@ ns_str ns_type_name(ns_type t) {
     }
 }
 
-bool ns_type_is_number(ns_type t) {
-    switch (t.type) {
+bool ns_type_is_number(u32 t) {
+    switch (ns_type_enum(t)) {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
     case NS_TYPE_I32:
@@ -40,11 +40,10 @@ bool ns_type_is_number(ns_type t) {
     }
 }
 
-u32 ns_type_encode(NS_VALUE_TYPE t, i32 i, bool is_ref, bool in_heap) {
-    u32 r = t;
-    r |= (is_ref) ? NS_REF_MASK : 0;
-    r |= (in_heap) ? NS_HEAP_MASK : 0;
-    r |= ((i & 0xffffff) << 6);
+ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s) {
+    ns_type r = t;
+    
+
     return r;
 }
 

@@ -38,7 +38,7 @@ ns_value ns_eval_alloc_value(ns_vm *vm, ns_value n, u8 align) {
     i8 *dst = &vm->stack[offset];
     i8 *src = ns_eval_value_ptr(vm, n);
     memcpy(dst, dst, s);
-    return (ns_value){.t = n.t, .o = offset, .s = NS_STORE_STACK};
+    return (ns_value){.t = ns_type_set_store(n.t, NS_STORE_HEAP), .o = offset};
 }
 
 ns_value* ns_eval_find_value(ns_vm *vm, ns_str name) {
@@ -90,7 +90,7 @@ ns_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value l = ns_eval_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_value r = ns_eval_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
 
-    if (l.t.type != r.t.type && l.t.type != NS_TYPE_INFER) {
+    if (l.t != r.t && ns_type_is(l.t, NS_TYPE_INFER)) {
         ns_vm_error(ctx->filename, n.state, "eval error", "invalid assign expr.");
     }
 
@@ -98,13 +98,10 @@ ns_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     i32 s_r = ns_type_size(vm, r.t);
     if (s_l != s_r) ns_vm_error(ctx->filename, n.state, "eval error", "type size mismatched.");
 
-    if (r.t.is_ref) {
+    if (ns_type_is_ref(r.t)) {
         return r;
     } else {
-        i8* l_p = l.s == NS_STORE_HEAP ? &vm->stack[l.i] : (i8*)&l.i;
-        i8* r_p = r.s == NS_STORE_HEAP ? &vm->stack[r.i] : (i8*)&r.i;
-        memcpy(l_p, r_p, s_l);
-        return l;
+
     }
 }
 
@@ -125,6 +122,91 @@ ns_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_valu
     call = ns_array_pop(vm->call_stack);
     return call.ret;
 }
+
+#define ns_eval_number_value(type) type ns_eval_number_##type(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.##type : *(type*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+
+ns_eval_number_value(i8)
+ns_eval_number_value(i16)
+ns_eval_number_value(i32)
+ns_eval_number_value(i64)
+ns_eval_number_value(u8)
+ns_eval_number_value(u16)
+ns_eval_number_value(u32)
+ns_eval_number_value(u64)
+ns_eval_number_value(f32)
+ns_eval_number_value(f64)
+
+#define ns_eval_number_op_case(type, op) case ns_type_##type: ret.##type = ns_eval_number_##type(vm, l) op ns_eval_number_##type(vm, r); break;
+
+#define ns_eval_number_op(fn, op) \
+ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
+    ns_value ret = (ns_value){.t = ns_type_set_store(l.t, NS_STORE_CONST) };\
+    switch (ns_type_enum(l.t)) {                                            \
+        ns_eval_number_op_case(i8, op)                                      \
+        ns_eval_number_op_case(i16, op)                                     \
+        ns_eval_number_op_case(i32, op)                                     \
+        ns_eval_number_op_case(i64, op)                                     \
+        ns_eval_number_op_case(u8, op)                                      \
+        ns_eval_number_op_case(u16, op)                                     \
+        ns_eval_number_op_case(u32, op)                                     \
+        ns_eval_number_op_case(u64, op)                                     \
+        ns_eval_number_op_case(f32, op)                                     \
+        ns_eval_number_op_case(f64, op)                                     \
+        default: break;                                                     \
+    }                                                                       \
+    return ret;                                                             \
+}
+
+#define ns_eval_number_shift_op(fn, op) \
+ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
+    ns_value ret = (ns_value){.t = ns_type_set_store(l.t, NS_STORE_CONST) };\
+    switch (ns_type_enum(l.t)) {                                            \
+        ns_eval_number_op_case(i8, op)                                      \
+        ns_eval_number_op_case(i16, op)                                     \
+        ns_eval_number_op_case(i32, op)                                     \
+        ns_eval_number_op_case(i64, op)                                     \
+        ns_eval_number_op_case(u8, op)                                      \
+        ns_eval_number_op_case(u16, op)                                     \
+        ns_eval_number_op_case(u32, op)                                     \
+        ns_eval_number_op_case(u64, op)                                     \
+        default: break;                                                     \
+    }                                                                       \
+    return ret;                                                             \
+}
+
+ns_eval_number_op(_add, +)
+ns_eval_number_op(_sub, -)
+ns_eval_number_op(_mul, *)
+ns_eval_number_op(_div, /)
+ns_eval_number_op(_and, &&)
+ns_eval_number_op(_or, ||)
+ns_eval_number_op(_eq, ==)
+ns_eval_number_op(_ne, !=)
+ns_eval_number_op(_lt, <)
+ns_eval_number_op(_le, <=)
+ns_eval_number_op(_gt, >)
+ns_eval_number_op(_ge, >=)
+ns_eval_number_shift_op(_shl, <<)
+ns_eval_number_shift_op(_shr, >>)
+
+ns_value ns_eval_number_mod(ns_vm *vm, ns_value l, ns_value r) {
+    ns_value ret = (ns_value){.t = ns_type_set_store(l.t, NS_STORE_CONST)};
+    switch (ns_type_enum(l.t)) {
+        ns_eval_number_op_case(i8, %)
+        ns_eval_number_op_case(i16, %)
+        ns_eval_number_op_case(i32, %)
+        ns_eval_number_op_case(i64, %)
+        ns_eval_number_op_case(u8, %)
+        ns_eval_number_op_case(u16, %)
+        ns_eval_number_op_case(u32, %)
+        ns_eval_number_op_case(u64, %)
+        case ns_type_f32: ret.f32 = fmod(ns_eval_number_f32(vm, l), ns_eval_number_f32(vm, r)); break;
+        case ns_type_f64: ret.f64 = fmod(ns_eval_number_f64(vm, l), ns_eval_number_f64(vm, r)); break;
+        default: break;
+    }
+    return ret;
+}
+
 
 ns_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_value l, ns_value r, ns_token_t op) {
     ns_number_type ln = ns_vm_number_type(l.t);
@@ -148,7 +230,7 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_error("eval error", "unknown callee\n");
     }
 
-    ns_symbol *fn = &vm->symbols[callee.i];
+    ns_symbol *fn = &vm->symbols[ns_type_index(callee.t)];
     ns_call call = (ns_call){.fn = fn, .args = ns_null, .scopes = ns_null };
     ns_array_set_length(call.args, ns_array_length(fn->fn.args));
 
@@ -177,7 +259,7 @@ ns_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value ret = ns_eval_expr(vm, ctx, expr);
     if (ns_array_length(vm->call_stack) > 0) {
         ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
-        if (call->fn->fn.ret.type != ret.t.type) {
+        if (call->fn->fn.ret != ret.t) {
             // TODO: try type cast, emit error if failed
             ns_error("eval error", "return type mismatch\n");
         }
@@ -229,59 +311,45 @@ void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 }
 
 ns_value ns_eval_binary_ops_number(ns_vm *vm, ns_value l, ns_value r, ns_token_t op) {
-    bool f = ns_type_is_float(l.t);
-    ns_value ret = (ns_value){.t = l.t};
-
-    i8* l_p = ns_eval_value_ptr(vm, l);
-    i8* r_p = ns_eval_value_ptr(vm, r);
-    
     switch (op.type) {
-    case NS_TOKEN_ADD_OP: {
-        if (ns_str_equals_STR(op.val, "+")) 
-            if (f) { ret.f = *(f64*)l_p + *(f64*)r_p; } else { ret.i = *(i64*)l_p + *(i64*)r_p; }
-        else 
-            if (f) { ret.f = *(f64*)l_p - *(f64*)r_p; } else { ret.i = *(i64*)l_p - *(i64*)r_p; }
-    } break;
+    case NS_TOKEN_ADD_OP:
+        return ns_str_equals_STR(op.val, "+") ?  ns_eval_binary_add(vm, l, r) : ns_eval_binary_sub(vm, l, r);
     case NS_TOKEN_MUL_OP: {
         if (ns_str_equals_STR(op.val, "*"))
-            if (f) { ret.f = *(f64*)l_p * *(f64*)r_p; } else { ret.i = *(i64*)l_p * *(i64*)r_p; }
-        else if (ns_str_equals(op.val, ns_str_cstr("/")))
-            if (f) { ret.f = *(f64*)l_p / *(f64*)r_p; } else { ret.i = *(i64*)l_p / *(i64*)r_p; }
+            return ns_eval_binary_mul(vm, l, r);
+        else if (ns_str_equals_STR(op.val, "/"))
+            return ns_eval_binary_div(vm, l, r);
         else
-            if (f) { ret.f = fmod(*(f64*)l_p, *(f64*)r_p); } else { ret.i = *(i64*)l_p % *(i64*)r_p; }
+            return ns_eval_number_mod(vm, l, r);
     } break;
     case NS_TOKEN_SHIFT_OP: {
-        if (f) ns_error("eval error", "shift op not support float\n");
+        if (ns_type_is_float(l.t)) ns_error("eval error", "shift op not support float\n");
         if (ns_str_equals_STR(op.val, "<<"))
-            ret.i = *(i64*)l_p << *(i64*)r_p;
+            return ns_eval_binary_shl(vm, l, r);
         else
-            ret.i = *(i64*)l_p >> *(i64*)r_p;
+            return ns_eval_binary_shr(vm, l, r);
     } break;
-    case NS_TOKEN_LOGIC_OP: {
-        if (ns_str_equals_STR(op.val, "&&"))
-            return f ? ns_true : (ns_value){.t = ns_type_bool, .i = *(i64*)l_p && *(i64*)r_p};
-        else
-            return f ? ns_true : (ns_value){.t = ns_type_bool, .i = *(i64*)l_p || *(i64*)r_p};
-    }
+    case NS_TOKEN_LOGIC_OP:
+        return ns_str_equals_STR(op.val, "&&") ? ns_eval_binary_and(vm, l, r) : ns_eval_binary_or(vm, l, r);
     case NS_TOKEN_CMP_OP: {
         if (ns_str_equals_STR(op.val, "=="))
-            return f ? (ns_value){.t = ns_type_bool, .i = *(f64*)l_p == *(f64*)r_p} : (ns_value){.t = ns_type_bool, .i = *(i64*)l_p == *(i64*)r_p};
+            return ns_eval_binary_eq(vm, l, r);
         else if (ns_str_equals_STR(op.val, "!="))
-            return f ? (ns_value){.t = ns_type_bool, .i = *(f64*)l_p != *(f64*)r_p} : (ns_value){.t = ns_type_bool, .i = *(i64*)l_p != *(i64*)r_p};
+            return ns_eval_binary_ne(vm, l, r);
         else if (ns_str_equals_STR(op.val, "<"))
-            return f ? (ns_value){.t = ns_type_bool, .i = *(f64*)l_p < *(f64*)r_p} : (ns_value){.t = ns_type_bool, .i = *(i64*)l_p < *(i64*)r_p};
+            return ns_eval_binary_lt(vm, l, r);
         else if (ns_str_equals_STR(op.val, "<="))
-            return f ? (ns_value){.t = ns_type_bool, .i = *(f64*)l_p <= *(f64*)r_p} : (ns_value){.t = ns_type_bool, .i = *(i64*)l_p <= *(i64*)r_p};
+            return ns_eval_binary_le(vm, l, r);
         else if (ns_str_equals_STR(op.val, ">"))
-            return f ? (ns_value){.t = ns_type_bool, .i = *(f64*)l_p > *(f64*)r_p} : (ns_value){.t = ns_type_bool, .i = *(i64*)l_p > *(i64*)r_p};
+            return ns_eval_binary_gt(vm, l, r);
         else if (ns_str_equals_STR(op.val, ">="))
-            return f ? (ns_value){.t = ns_type_bool, .i = *(f64*)l_p >= *(f64*)r_p} : (ns_value){.t = ns_type_bool, .i = *(i64*)l_p >= *(i64*)r_p};
+            return ns_eval_binary_ge(vm, l, r);
     } break;
         default:
         ns_error("eval error", "unimplemented binary ops\n");
         break;
     }
-    return ret;
+    return ns_nil;
 }
 
 ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, ns_token_t op) {

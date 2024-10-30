@@ -338,7 +338,7 @@ ns_bc_value ns_bc_binary_ops_number(ns_bc_ctx *bc_ctx, ns_bc_value l, ns_bc_valu
             if (f) { ret.val = LLVMBuildFRem(bdr, l.val, r.val, ""); } else { ret.val = s ? LLVMBuildSRem(bdr, l.val, r.val, "") : LLVMBuildURem(bdr, l.val, r.val, ""); }
     } break;
     case NS_TOKEN_SHIFT_OP:
-        if (f) ns_error("bitcode error", "shift operator is not supported for float\n");
+        if (f) ns_error("bitcode error", "shift operator is not supported for float and double.\n");
         if (ns_str_equals_STR(op.val, "<<")) {
             ret.val = LLVMBuildShl(bdr, l.val, r.val, "");
         } else {
