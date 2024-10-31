@@ -36,12 +36,14 @@ void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
     ns_number_type ln = ns_vm_number_type(l);
     ns_number_type rn = ns_vm_number_type(r);
-    if (ln == rn) return (ns_type){.type = ns_max(l.type, r.type), .i = -1};
+    ns_type lt = ns_type_enum(l);
+    ns_type rt = ns_type_enum(r);
+    if (ln == rn) return ns_max(lt, rt);
     switch (ln | rn)
     {
     case NS_NUMBER_FLT_AND_I:
     case NS_NUMBER_FLT_AND_U:
-        if (ns_min(l.type, r.type) >= NS_TYPE_I64) return ns_type_unknown;
+        if (ns_min(lt, rt) >= NS_TYPE_I64) return ns_type_unknown;
         return ns_type_f64;
     default: break;
     }
@@ -49,7 +51,7 @@ ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
 }
 
 i32 ns_type_size(ns_vm *vm, ns_type t) {
-    switch (t.type)
+    switch (ns_type_enum(t))
     {
     case NS_TYPE_BOOL:
     case NS_TYPE_I8:
@@ -65,14 +67,15 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
     case NS_TYPE_FN:
     case NS_TYPE_STRING: return ns_ptr_size;
     case NS_TYPE_STRUCT: {
-        ns_symbol *s = &vm->symbols[t.i];
-        if (ns_null == s) ns_error("eval error", "missing struct %d\n", t.i);
+        u64 ti = ns_type_index(t);
+        ns_symbol *s = &vm->symbols[ti];
+        if (ns_null == s) ns_error("eval error", "missing struct %lu\n", ti);
         return s->st.stride;
     }
     default:
         break;
     }
-    ns_error("eval error", "unknown type %d\n", t.type);
+    ns_error("eval error", "unknown type %d\n", (i32)ns_type_enum(t));
     return 0;
 }
 
@@ -146,24 +149,26 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
 }
 
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
-    switch (t.type)
+    bool is_ref = ns_type_is_ref(t);
+    switch (ns_type_enum(t))
     {
-    case NS_TYPE_I8: return t.is_ref ? ns_str_cstr("ref_i8") : ns_str_cstr("i8");
-    case NS_TYPE_U8: return t.is_ref ? ns_str_cstr("ref_u8") : ns_str_cstr("u8");
-    case NS_TYPE_I16: return t.is_ref ? ns_str_cstr("ref_i16") : ns_str_cstr("i16");
-    case NS_TYPE_U16: return t.is_ref ? ns_str_cstr("ref_u16") : ns_str_cstr("u16");
-    case NS_TYPE_I32: return t.is_ref ? ns_str_cstr("ref_i32") : ns_str_cstr("i32");
-    case NS_TYPE_U32: return t.is_ref ? ns_str_cstr("ref_u32") : ns_str_cstr("u32");
-    case NS_TYPE_I64: return t.is_ref ? ns_str_cstr("ref_i64") : ns_str_cstr("i64");
-    case NS_TYPE_U64: return t.is_ref ? ns_str_cstr("ref_u64") : ns_str_cstr("u64");
-    case NS_TYPE_F32: return t.is_ref ? ns_str_cstr("ref_f32") : ns_str_cstr("f32");
-    case NS_TYPE_F64: return t.is_ref ? ns_str_cstr("ref_f64") : ns_str_cstr("f64");
-    case NS_TYPE_BOOL: return t.is_ref ? ns_str_cstr("ref_bool") : ns_str_cstr("bool");
+    case NS_TYPE_I8: return is_ref ? ns_str_cstr("ref_i8") : ns_str_cstr("i8");
+    case NS_TYPE_U8: return is_ref ? ns_str_cstr("ref_u8") : ns_str_cstr("u8");
+    case NS_TYPE_I16: return is_ref ? ns_str_cstr("ref_i16") : ns_str_cstr("i16");
+    case NS_TYPE_U16: return is_ref ? ns_str_cstr("ref_u16") : ns_str_cstr("u16");
+    case NS_TYPE_I32: return is_ref ? ns_str_cstr("ref_i32") : ns_str_cstr("i32");
+    case NS_TYPE_U32: return is_ref ? ns_str_cstr("ref_u32") : ns_str_cstr("u32");
+    case NS_TYPE_I64: return is_ref ? ns_str_cstr("ref_i64") : ns_str_cstr("i64");
+    case NS_TYPE_U64: return is_ref ? ns_str_cstr("ref_u64") : ns_str_cstr("u64");
+    case NS_TYPE_F32: return is_ref ? ns_str_cstr("ref_f32") : ns_str_cstr("f32");
+    case NS_TYPE_F64: return is_ref ? ns_str_cstr("ref_f64") : ns_str_cstr("f64");
+    case NS_TYPE_BOOL: return is_ref ? ns_str_cstr("ref_bool") : ns_str_cstr("bool");
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_FN:
     case NS_TYPE_STRUCT: {
-        ns_symbol *r = &vm->symbols[t.i];
-        if (!r) ns_error("syntax error", "missing type %d\n", t.i);
+        u64 ti = ns_type_index(t);
+        ns_symbol *r = &vm->symbols[ti];
+        if (!r) ns_error("syntax error", "missing type %lu\n", ti);
         return r->name;
     } break;
     default:
@@ -222,9 +227,9 @@ ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer) {
     case NS_SYMBOL_VALUE:
         return r->val.type;
     case NS_SYMBOL_FN:
-        return (ns_type){.type = NS_TYPE_FN, .i = r->index};
+        return r->fn.fn.t;
     case NS_SYMBOL_STRUCT:
-        return (ns_type){.type = NS_TYPE_STRUCT, .i = r->index};
+        return r->st.type;
     default:
         ns_error("syntax error", "unknown type [%.*s]\n", n.len, n.data);
         break;
@@ -288,7 +293,7 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
         if (n.type == NS_AST_FN_DEF) {
             ns_ast_t *ret_type = &ctx->nodes[n.fn_def.ret];
             fn->fn.ret = ns_vm_parse_type(vm, ret_type->type_label.name, true);
-            fn->fn.ret.is_ref = ret_type->type_label.is_ref;
+            fn->fn.reis_ref = ret_type->type_label.is_ref;
 
             ns_array_set_length(fn->fn.args, n.fn_def.arg_count);
             ns_ast_t *arg = &n;
@@ -306,7 +311,7 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_ast_t l = ctx->nodes[n.ops_fn_def.left];
             ns_ast_t r = ctx->nodes[n.ops_fn_def.right];
             fn->fn.ret = ns_vm_parse_type(vm, ctx->nodes[l.arg.type].type_label.name, true);
-            fn->fn.ret.is_ref = ctx->nodes[l.arg.type].type_label.is_ref;
+            fn->fn.reis_ref = ctx->nodes[l.arg.type].type_label.is_ref;
             ns_array_set_length(fn->fn.args, 2);
             ns_symbol l_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .index = 0};
             l_arg.name = l.arg.name.val;

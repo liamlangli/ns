@@ -2,8 +2,8 @@
 
 #include <math.h>
 
-u64 ns_eval_alloc(ns_vm *vm, i32 stride, u8 align);
-ns_value ns_eval_alloc_value(ns_vm *vm, ns_value n, u8 align);
+u64 ns_eval_alloc(ns_vm *vm, i32 stride);
+ns_value ns_eval_alloc_value(ns_vm *vm, ns_value n);
 
 void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
@@ -25,16 +25,17 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
-u64 ns_eval_alloc(ns_vm *vm, i32 stride, u8 align) {
+u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
     u64 offset = ns_array_length(vm->stack);
+    i32 align = ns_min(ns_align, stride);
     if (align > 0) offset = (offset + (align - 1)) & ~(align - 1);
     ns_array_set_length(vm->stack, offset + stride);
     return offset; // leading 4 bytes for type size
 }
 
-ns_value ns_eval_alloc_value(ns_vm *vm, ns_value n, u8 align) {
+ns_value ns_eval_alloc_value(ns_vm *vm, ns_value n) {
     i32 s = ns_type_size(vm, n.t);
-    i32 offset = ns_eval_alloc(vm, s, align);
+    i32 offset = ns_eval_alloc(vm, s);
     i8 *dst = &vm->stack[offset];
     i8 *src = ns_eval_value_ptr(vm, n);
     memcpy(dst, dst, s);
@@ -507,8 +508,8 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     if (ns_null == st) ns_vm_error(ctx->filename, n.state, "eval error", "unknown struct %.*s\n", n.desig_expr.name.val.len, n.desig_expr.name.val.data);
 
     i32 stride = st->st.stride;
-    i32 offset = ns_eval_alloc(vm, stride, 4);
-    i8* data = &vm->stack[offset];
+    i32 o = ns_eval_alloc(vm, stride);
+    i8* data = &vm->stack[o];
     memset(data, 0, stride);
 
     ns_ast_t expr = n;
@@ -537,41 +538,41 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
         ns_type t = field->val.type;
         if (ns_type_is_number(t)) {
-            switch (t.type)
+            switch (ns_type_enum(t))
             {
-            case NS_TYPE_U8: *(u8*)(data + field->val.offset) = val.i; break;
-            case NS_TYPE_U16: *(u16*)(data + field->val.offset) = val.i; break;
-            case NS_TYPE_U32: *(u32*)(data + field->val.offset) = val.i; break;
-            case NS_TYPE_U64: *(u64*)(data + field->val.offset) = val.i; break;
-            case NS_TYPE_I8: *(i8*)(data + field->val.offset) = val.i; break;
-            case NS_TYPE_I16: *(i16*)(data + field->val.offset) = val.i; break;
-            case NS_TYPE_I32: *(i32*)(data + field->val.offset) = val.i; break;
-            case NS_TYPE_I64: *(i64*)(data + field->val.offset) = val.i; break;
-            case NS_TYPE_F32: *(f32*)(data + field->val.offset) = val.f; break;
-            case NS_TYPE_F64: *(f64*)(data + field->val.offset) = val.f; break;
+            case NS_TYPE_U8: *(u8*)(data + field->val.offset) = ns_eval_number_i8(vm, val); break;
+            case NS_TYPE_I8: *(i8*)(data + field->val.offset) = ns_eval_number_i8(vm, val); break;
+            case NS_TYPE_U16: *(u16*)(data + field->val.offset) = ns_eval_number_u16(vm, val); break;
+            case NS_TYPE_I16: *(i16*)(data + field->val.offset) = ns_eval_number_i16(vm, val); break;
+            case NS_TYPE_U32: *(u32*)(data + field->val.offset) = ns_eval_number_u32(vm, val); break;
+            case NS_TYPE_I32: *(i32*)(data + field->val.offset) = ns_eval_number_i32(vm, val); break;
+            case NS_TYPE_U64: *(u64*)(data + field->val.offset) = ns_eval_number_u64(vm, val); break;
+            case NS_TYPE_I64: *(i64*)(data + field->val.offset) = ns_eval_number_i64(vm, val); break;
+            case NS_TYPE_F32: *(f32*)(data + field->val.offset) = ns_eval_number_f32(vm, val); break;
+            case NS_TYPE_F64: *(f64*)(data + field->val.offset) = ns_eval_number_f64(vm, val); break;
             default:
                 break;
             }
-        } else if (t.type == NS_TYPE_STRUCT) {
-            if (val.s == NS_STORE_STACK) {
-                memcpy(data, vm->stack + val.i, stride);
+        } else if (ns_type_is(t, NS_TYPE_STRUCT)) {
+            if (ns_type_in_stack(t)) {
+                memcpy(data, vm->stack + val.o, stride);
             } else {
-                memcpy(data, (void*)val.i, stride);
+                memcpy(data, (void*)val.o, stride);
             }
-        } else if (t.type == NS_TYPE_STRING) {
+        } else if (ns_type_is(t, NS_TYPE_STRING)) {
             ns_error("eval error", "unimplemented string field\n");
         } else {
             ns_error("eval error", "unknown field type\n");
         }
     }
 
-    return (ns_value){.t = {.type = NS_TYPE_STRUCT, .i = offset}, .s = NS_STORE_STACK};
+    return (ns_value){.t = ns_type_set_store(st->val.type, NS_STORE_STACK), .o = o};
 }
 
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_symbol *val = ns_vm_find_symbol(vm, n.var_def.name.val);
     ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
-    if (v.s == NS_STORE_CONST)
+    if (ns_type_is_const(v.t))
         v = ns_eval_alloc_value(vm, v);
     val->val.val = v;
     return v;
@@ -582,9 +583,9 @@ ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_scope *scope = &call->scopes[ns_array_length(call->scopes) - 1];
     if (ns_null == scope) ns_vm_error(ctx->filename, n.state, "vm error", "invalid local var def");
     ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
-    if (v.t.type == NS_TYPE_NIL) ns_vm_error(ctx->filename, n.state, "eval error", "nil value can't be assigned.");
+    if (ns_type_is(v.t, ns_type_nil)) ns_vm_error(ctx->filename, n.state, "eval error", "nil value can't be assigned.");
     ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n.var_def.name.val };
-    if (v.s == NS_STORE_CONST) v = ns_eval_alloc_value(vm, v);
+    if (ns_type_is_const(v.t)) v = ns_eval_alloc_value(vm, v);
     symbol.val.val = v;
     ns_array_push(scope->vars, symbol);
     return v;

@@ -241,7 +241,7 @@ typedef enum {
     NS_NUMBER_I_AND_U = 6,
 } ns_number_type;
 
-typedef enum {
+enum {
     NS_TYPE_ENUM_SHIFT = 8,
     NS_TYPE_REF_SHIFT = 56,
     NS_TYPE_STORE_SHIFT = 57,
@@ -267,8 +267,6 @@ typedef enum {
 #define ns_type_set_store(t, s) ((t & (~NS_TYPE_STORE_MASK) | (s & NS_TYPE_STORE_MASK)))
 
 typedef u64 ns_type;
-
-
 
 // ns_type(u32) memory layout
 // | 4 bit 0 | 3 bits for ns_store | 1 bit for ref | 48 bits for type index | 8 bits for type enum |
@@ -319,7 +317,6 @@ typedef struct ns_value {
         f64 f64;
         u64 o;
     };
-    u64 o;  // memory offset
 } ns_value;
 
 #define ns_null NULL
@@ -327,3 +324,5 @@ typedef struct ns_value {
 #define ns_is_nil(v)    ns_type_is(v.t, NS_TYPE_NIL)
 #define ns_true         ((ns_value){.t = ns_type_bool, .b = true})
 #define ns_false        ((ns_value){.t = ns_type_bool, .b = false})
+
+#define ns_align 4

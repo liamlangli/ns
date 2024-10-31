@@ -109,11 +109,6 @@ typedef struct ns_vm {
     bool repl;
 } ns_vm;
 
-bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
-ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
-ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
-ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
-ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // ops fn
 ns_str ns_ops_name(ns_token_t op);
@@ -122,7 +117,7 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 // number type
 ns_number_type ns_vm_number_type(ns_type t);
 
-// vm record
+// vm parse stage
 i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r);
 i32 ns_vm_push_string(ns_vm *vm, ns_str s);
 i32 ns_vm_push_data(ns_vm *vm, ns_data d);
@@ -130,6 +125,26 @@ i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
+
+// eval fn
+#define ns_eval_value_def(type) type ns_eval_number_##type(ns_vm *vm, ns_value n);
+ns_eval_value_def(i8)
+ns_eval_value_def(i16)
+ns_eval_value_def(i32)
+ns_eval_value_def(i64)
+ns_eval_value_def(u8)
+ns_eval_value_def(u16)
+ns_eval_value_def(u32)
+ns_eval_value_def(u64)
+ns_eval_value_def(f32)
+ns_eval_value_def(f64)
+ns_eval_value_def(bool)
+
+ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
+ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // vm std
 void ns_vm_import_std_symbols(ns_vm *vm);

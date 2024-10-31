@@ -3,63 +3,37 @@
 #include <string.h>
 #include <math.h>
 
-#define ns_fmt_pattern_i32 "%d"
-#define ns_fmt_pattern_i64 "%ld"
-#define ns_fmt_pattern_u32 "%u"
-#define ns_fmt_pattern_u64 "%lu"
-#define ns_fmt_pattern_f32 "%.2f"
-#define ns_fmt_pattern_f64 "%.2lf"
+#define ns_fmt_print_number(type) \
+{ \
+    type v = ns_eval_number_##type(vm, n); \
+    ns_str pattern = ns_fmt_type_str(ns_type_enum(n.t)); \
+    i32 s = snprintf(ns_null, 0, pattern.data, v); \
+    char* d = malloc(s + 1); \
+    snprintf(d, s + 1, pattern.data, v); \
+    return (ns_str){.data=d, .len=s, .dynamic=1}; \
+}
 
 ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
-    switch (n.t.type) {
-    case NS_TYPE_I8:
-    case NS_TYPE_I16:
-    case NS_TYPE_I32: {
-        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_i32, (i32));
-        char* d = malloc(s + 1);
-        snprintf(d, s + 1, ns_fmt_pattern_i32, (i32)n.i);
-        return (ns_str){.data=d, .len=s, .dynamic=1};
-    }
-    case NS_TYPE_I64: {
-        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_i64, n.i);
-        char* d = malloc(s + 1);
-        snprintf(d, s + 1, ns_fmt_pattern_i64, n.i);
-        return (ns_str){.data=d, .len=s, .dynamic=1};
-    }
-    case NS_TYPE_U8:
-    case NS_TYPE_U16:
-    case NS_TYPE_U32: {
-        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_u32, (u32)n.i);
-        char* d = malloc(s + 1);
-        snprintf(d, s + 1, ns_fmt_pattern_u32, (u32)n.i);
-        return (ns_str){.data=d, .len=s, .dynamic=1};
-    }
-    case NS_TYPE_U64: {
-        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_u64, (u64)n.i);
-        char* d = malloc(s + 1);
-        snprintf(d, s + 1, ns_fmt_pattern_u64, (u64)n.i);
-        return (ns_str){.data=d, .len=s, .dynamic=1};
-    }
-    case NS_TYPE_F32: {
-        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_f32, (f32)n.i);
-        char* d = malloc(s + 1);
-        snprintf(d, s + 1, ns_fmt_pattern_f32, (f32)n.i);
-        return (ns_str){.data=d, .len=s, .dynamic=1};
-    }
-    case NS_TYPE_F64: {
-        i32 s = snprintf(ns_null, 0, ns_fmt_pattern_f64, n.f);
-        char* d = malloc(s + 1);
-        snprintf(d, s + 1, ns_fmt_pattern_f64, n.f);
-        return (ns_str){.data=d, .len=s, .dynamic=1};
-    }
+    switch (ns_type_enum(n.t)) {
+    case NS_TYPE_I8: ns_fmt_print_number(i8)
+    case NS_TYPE_U8: ns_fmt_print_number(u8)
+    case NS_TYPE_I16: ns_fmt_print_number(i16)
+    case NS_TYPE_U16: ns_fmt_print_number(u16)
+    case NS_TYPE_I32: ns_fmt_print_number(i32)
+    case NS_TYPE_U32: ns_fmt_print_number(u32)
+    case NS_TYPE_I64: ns_fmt_print_number(i64)
+    case NS_TYPE_U64: ns_fmt_print_number(u64)
+    case NS_TYPE_F32: ns_fmt_print_number(f32)
+    case NS_TYPE_F64: ns_fmt_print_number(f64)
     case NS_TYPE_BOOL:
-        return n.i == 0 ? ns_str_false : ns_str_true;
+        return ns_eval_number_bool(vm, n) ? ns_str_false : ns_str_true;
     case NS_TYPE_STRING: {
-        ns_str s = vm->str_list[n.i];
-        char* d = malloc(s.len + 1);
-        memcpy(d, s.data, s.len);
-        d[s.len] = '\0';
-        return (ns_str){.data = d, .len = s.len, .dynamic = 1};
+        if (ns_type_is_const(n.t)) {
+            return vm->str_list[n.o];
+        } else {
+            i8* raw = ns_type_in_stack(n.t) ? vm->stack + n.o : (i8*)n.o;
+            return ns_str_range(raw, strlen(raw));
+        }
     } break;
     default:
         return ns_str_cstr("nil");
@@ -67,24 +41,18 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
 }
 
 ns_str ns_fmt_type_str(ns_type t) {
-    switch (t.type)
+    switch (ns_type_enum(t))
     {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
-    case NS_TYPE_I32:
-        return ns_str_cstr("%d");
-    case NS_TYPE_I64:
-        return ns_str_cstr("%ld");
+    case NS_TYPE_I32: return ns_str_cstr("%d");
+    case NS_TYPE_I64: return ns_str_cstr("%ld");
     case NS_TYPE_U8:
     case NS_TYPE_U16:
-    case NS_TYPE_U32:
-        return ns_str_cstr("%u");
-    case NS_TYPE_U64:
-        return ns_str_cstr("%lu");
-    case NS_TYPE_F32:
-        return ns_str_cstr("%.2f");
-    case NS_TYPE_F64:
-        return ns_str_cstr("%.2lf");
+    case NS_TYPE_U32: return ns_str_cstr("%u");
+    case NS_TYPE_U64: return ns_str_cstr("%lu");
+    case NS_TYPE_F32: return ns_str_cstr("%.2f");
+    case NS_TYPE_F64: return ns_str_cstr("%.2lf");
     default:
         ns_error("fmt error", "");
         break;
