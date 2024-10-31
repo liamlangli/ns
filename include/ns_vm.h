@@ -6,23 +6,14 @@
 #define ns_vm_error(f, s, t, m, ...) ns_error(t, "\n[%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
 
 typedef enum {
-    NS_SYMBOL_INVALID,
-    NS_SYMBOL_VALUE,
-    NS_SYMBOL_FN,
-    NS_SYMBOL_FN_CALL,
-    NS_SYMBOL_STRUCT,
-} NS_SYMBOL_TYPE;
+    ns_symbol_invalid,
+    ns_symbol_value,
+    ns_symbol_fn,
+    ns_symbol_fn_call,
+    ns_symbol_struct,
+} ns_symbol_type;
 
 typedef struct ns_symbol ns_symbol;
-
-typedef struct ns_value_symbol {
-    ns_type type;
-    ns_value val;
-    bool is_const;
-    bool is_ref;
-    // for st field
-    i32 offset, size;
-} ns_value_symbol;
 
 typedef struct ns_fn_symbol {
     ns_type ret;
@@ -31,10 +22,16 @@ typedef struct ns_fn_symbol {
     ns_ast_t ast;
 } ns_fn_symbol;
 
-typedef struct ns_struct_symbol {
-    ns_type type;
+typedef struct ns_struct_field {
     ns_str name;
-    ns_symbol *fields;
+    i32 o, s; // offset, size
+    ns_value val;
+} ns_struct_field;
+
+typedef struct ns_struct_symbol {
+    ns_value st;
+    ns_str name;
+    ns_struct_field *fields;
     ns_ast_t ast;
     i32 stride;
 } ns_struct_symbol;
@@ -55,15 +52,14 @@ typedef struct ns_fn_call_symbol {
 } ns_fn_call_symbol;
 
 typedef struct ns_symbol {
-    NS_SYMBOL_TYPE type;
+    ns_symbol_type type;
     ns_str name;
     ns_str lib;
-    i32 index;
     bool parsed;
     union {
+        ns_value val;
         ns_fn_symbol fn;
         ns_fn_call_symbol call;
-        ns_value_symbol val;
         ns_struct_symbol st;
     };
 } ns_symbol;

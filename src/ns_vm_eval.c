@@ -66,8 +66,8 @@ ns_value* ns_eval_find_value(ns_vm *vm, ns_str name) {
         if (ns_str_equals(r->name, name)) {
             switch (r->type)
             {
-            case NS_SYMBOL_VALUE: return &r->val.val;
-            case NS_SYMBOL_FN: return &r->fn.fn;
+            case ns_symbol_value: return &r->val.val;
+            case ns_symbol_fn: return &r->fn.fn;
             default:
                 break;
             }
@@ -320,7 +320,7 @@ void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_value to = ns_eval_expr(vm, ctx, ctx->nodes[gen.gen_expr.to]);
         ns_str name = gen.gen_expr.name.val;
         ns_scope *scope = ns_array_last(call->scopes);
-        ns_array_push(scope->vars, ((ns_symbol){.type = NS_SYMBOL_VALUE, .name = name, .val = { .type = ns_type_i32 }, .parsed = true}));
+        ns_array_push(scope->vars, ((ns_symbol){.type = ns_symbol_value, .name = name, .val = { .type = ns_type_i32 }, .parsed = true}));
         i32 from_i = ns_eval_number_i32(vm, from);
         i32 to_i = ns_eval_number_i32(vm, to);
         for (i32 i = from_i; i < to_i; ++i) {
@@ -584,7 +584,7 @@ ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     if (ns_null == scope) ns_vm_error(ctx->filename, n.state, "vm error", "invalid local var def");
     ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
     if (ns_type_is(v.t, ns_type_nil)) ns_vm_error(ctx->filename, n.state, "eval error", "nil value can't be assigned.");
-    ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n.var_def.name.val };
+    ns_symbol symbol = (ns_symbol){.type = ns_symbol_value, .name = n.var_def.name.val };
     if (ns_type_is_const(v.t)) v = ns_eval_alloc_value(vm, v);
     symbol.val.val = v;
     ns_array_push(scope->vars, symbol);
@@ -599,7 +599,7 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     // eval global value
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol r = vm->symbols[i];
-        if (r.type != NS_SYMBOL_VALUE)
+        if (r.type != ns_symbol_value)
             continue;
         ns_value v = r.val.val;
         if (r.val.is_const) {
