@@ -259,9 +259,9 @@ typedef enum {
 } ns_store;
 
 #define ns_type_is_ref(t) ((t & NS_TYPE_REF_MASK) != 0)
-#define ns_type_is_const(t) (NS_STORE_CONST == (t & NS_TYPE_STORE_MASK))
-#define ns_type_in_stack(t) (NS_STORE_STACK == (t & NS_TYPE_STORE_MASK))
-#define ns_type_in_heap(t) (NS_STORE_HEAP == (t & NS_TYPE_STORE_MASK))
+#define ns_type_is_const(t) ((u64)NS_STORE_CONST == (t & NS_TYPE_STORE_MASK))
+#define ns_type_in_stack(t) ((u64)NS_STORE_STACK == (t & NS_TYPE_STORE_MASK))
+#define ns_type_in_heap(t) ((u64)NS_STORE_HEAP == (t & NS_TYPE_STORE_MASK))
 #define ns_type_index(t) ((t & NS_TYPE_INDEX_MASK) >> NS_TYPE_ENUM_SHIFT)
 #define ns_type_enum(t) (t & NS_TYPE_ENUM_MASK)
 #define ns_type_set_store(t, s) ((t & (~NS_TYPE_STORE_MASK) | (s & NS_TYPE_STORE_MASK)))
@@ -278,6 +278,7 @@ ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s);
 #define ns_type_nil     NS_TYPE_NIL
 #define ns_type_bool    NS_TYPE_BOOL
 #define ns_type_str     NS_TYPE_STRING
+#define ns_type_array   NS_TYPE_ARRAY
 
 #define ns_type_i8  NS_TYPE_I8
 #define ns_type_i16 NS_TYPE_I16

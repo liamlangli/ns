@@ -44,7 +44,7 @@ void ns_repl(ns_vm* vm) {
             switch (n.type) {
                 case NS_AST_PRIMARY_EXPR: {
                     ns_value v = ns_eval_primary_expr(vm, n);
-                    if (v.t.type != NS_TYPE_NIL) {
+                    if (!ns_type_is(v.t, NS_TYPE_NIL)) {
                         ns_str s = ns_fmt_value(vm, v);
                         printf("   [" ns_color_log "%s" ns_color_nil "]\n", s.data);
                         ns_str_free(s);

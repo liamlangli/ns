@@ -42,8 +42,9 @@ bool ns_type_is_number(u32 t) {
 
 ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s) {
     ns_type r = t;
-    
-
+    if (is_ref) r |= NS_TYPE_REF_MASK;
+    r |= ((u64)s << NS_TYPE_STORE_SHIFT);
+    r |= (i << NS_TYPE_ENUM_SHIFT);
     return r;
 }
 
