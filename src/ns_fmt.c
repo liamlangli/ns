@@ -26,7 +26,7 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     case NS_TYPE_F32: ns_fmt_print_number(f32)
     case NS_TYPE_F64: ns_fmt_print_number(f64)
     case NS_TYPE_BOOL:
-        return ns_eval_number_bool(vm, n) ? ns_str_false : ns_str_true;
+        return ns_eval_bool(vm, n) ? ns_str_false : ns_str_true;
     case NS_TYPE_STRING: {
         if (ns_type_is_const(n.t)) {
             return vm->str_list[n.o];

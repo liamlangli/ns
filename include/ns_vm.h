@@ -135,7 +135,7 @@ ns_eval_value_def(u32)
 ns_eval_value_def(u64)
 ns_eval_value_def(f32)
 ns_eval_value_def(f64)
-ns_eval_value_def(bool)
+bool ns_eval_bool(ns_vm *vm, ns_value n);
 
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
