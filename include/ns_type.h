@@ -242,12 +242,12 @@ typedef enum {
 } ns_number_type;
 
 enum {
-    NS_TYPE_ENUM_SHIFT = 8,
-    NS_TYPE_REF_SHIFT = 56,
-    NS_TYPE_STORE_SHIFT = 57,
+    NS_TYPE_ENUM_SHIFT = (u64)8,
+    NS_TYPE_REF_SHIFT = (u64)56,
+    NS_TYPE_STORE_SHIFT = (u64)57,
 
-    NS_TYPE_REF_MASK = 1 << NS_TYPE_REF_SHIFT,
-    NS_TYPE_STORE_MASK = 3 << NS_TYPE_STORE_SHIFT,
+    NS_TYPE_REF_MASK = (u64)1 << NS_TYPE_REF_SHIFT,
+    NS_TYPE_STORE_MASK = (u64)3 << NS_TYPE_STORE_SHIFT,
     NS_TYPE_INDEX_MASK = 0xffffffffffff << NS_TYPE_ENUM_SHIFT,
     NS_TYPE_ENUM_MASK = 0xff
 };
@@ -271,6 +271,7 @@ typedef u64 ns_type;
 // ns_type(u32) memory layout
 // | 4 bit 0 | 3 bits for ns_store | 1 bit for ref | 48 bits for type index | 8 bits for type enum |
 ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s);
+void ns_type_print(ns_type t);
 
 #define ns_type_unknown NS_TYPE_UNKNOWN
 #define ns_type_infer   NS_TYPE_INFER

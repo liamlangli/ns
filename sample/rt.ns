@@ -10,8 +10,14 @@ fn ops(-)(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.x - rhs.x, y: l
 fn ops(+)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs } }
 fn ops(-)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs } }
 fn ops(*)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x * rhs, y: lhs.y * rhs, z: lhs.z * rhs } }
-fn length(this: simd3): f64 { return sqrt(this.x * this.x + this.y * this.y + this.z * this.z) }
-fn dot(lhs: simd3, rhs: simd3): f64 { return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z }
+
+fn length(this: simd3): f64 {
+    return sqrt(this.x * this.x + this.y * this.y + this.z * this.z)
+}
+
+fn dot(lhs: simd3, rhs: simd3): f64 {
+    return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z
+}
 
 fn hit_sphere(r: ray, s: sphere): hit {
     let oc = r.origin - s.center

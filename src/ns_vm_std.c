@@ -15,6 +15,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     print->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_str}};
     print->lib = std;
     print->fn.fn = (ns_value){.t = ns_type_ref_fn(print_p)};
+    ns_type_print(print->fn.fn.t);
 
     // fn open(path: str, mode: str): i32
     i32 open_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
@@ -26,6 +27,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     open->fn.args[1] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_str}};
     open->lib = std;
     open->fn.fn = (ns_value){.t = ns_type_ref_fn(open_p)};
+    ns_type_print(open->fn.fn.t);
 
     // fn write(fd: i32, data: str): i32
     i32 write_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
@@ -37,6 +39,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     write->fn.args[1] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_str}};
     write->lib = std;
     write->fn.fn = (ns_value){.t = ns_type_ref_fn(write_p)};
+    ns_type_print(write->fn.fn.t);
 
     // fn read(fd: i32, size: i32): str
     i32 read_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
@@ -48,6 +51,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     read->fn.args[1] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_i32}};
     read->lib = std;
     read->fn.fn = (ns_value){.t = ns_type_ref_fn(read_p)};
+    ns_type_print(read->fn.fn.t);
 
     // fn close(fd: i32): nil
     i32 close_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
@@ -58,6 +62,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     close->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_i32}};
     close->lib = std;
     close->fn.fn = (ns_value){.t = ns_type_ref_fn(close_p)};
+    ns_type_print(close->fn.fn.t);
 
     // fn sqrt(x: f64): f64
     i32 sqrt_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
@@ -68,6 +73,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     sqrt->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_f64}};
     sqrt->lib = std;
     sqrt->fn.fn = (ns_value){.t = ns_type_ref_fn(sqrt_p)};
+    ns_type_print(sqrt->fn.fn.t);
 }
 
 ns_value ns_vm_eval_std(ns_vm *vm) {

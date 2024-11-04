@@ -18,6 +18,8 @@ ns_str ns_type_name(ns_type t) {
     case NS_TYPE_F64: return ns_str_cstr("f64");
     case NS_TYPE_BOOL: return ns_str_cstr("bool");
     case NS_TYPE_STRING: return ns_str_cstr("str");
+    case NS_TYPE_FN: return ns_str_cstr("fn");
+    case NS_TYPE_STRUCT: return ns_str_cstr("struct");
     default: return ns_str_null;
     }
 }
@@ -46,6 +48,13 @@ ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s) {
     r |= ((u64)s << NS_TYPE_STORE_SHIFT);
     r |= (i << NS_TYPE_ENUM_SHIFT);
     return r;
+}
+void ns_type_print(ns_type t) {
+    const i8* ref = ns_type_is_ref(t) ? "ref" : "";
+    const i8 *store = ns_type_is_const(t) ? "const" : (ns_type_in_stack(t) ? "stack" : "heap");
+    const u64 i = ns_type_index(t);
+    const ns_str type = ns_type_name(t);
+    printf("%-3s %-4s %-3lu %s\n", ref, store, i, type.data);
 }
 
 ns_number_type ns_vm_number_type(ns_type t) {
