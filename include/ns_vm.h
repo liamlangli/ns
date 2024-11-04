@@ -25,7 +25,7 @@ typedef struct ns_fn_symbol {
 typedef struct ns_struct_field {
     ns_str name;
     i32 o, s; // offset, size
-    ns_value val;
+    ns_type t;
 } ns_struct_field;
 
 typedef struct ns_struct_symbol {

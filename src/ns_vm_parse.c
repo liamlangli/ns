@@ -363,7 +363,7 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             i32 size = ns_type_size(vm, t);
             // std layout
             offset = (offset + size - 1) & ~(size - 1);
-            ns_struct_field f = (ns_struct_field){.name = field->arg.name.val, .val = {.t = t}, .o = offset, .s = size};
+            ns_struct_field f = (ns_struct_field){.name = field->arg.name.val, .t = t, .o = offset, .s = size};
             offset += size;
             st.st.fields[i] = f;
         }
@@ -379,9 +379,9 @@ void ns_vm_parse_struct_def_ref(ns_vm *vm) {
             continue;
         for (i32 j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
             ns_struct_field *f = &st->st.fields[j];
-            if (!ns_type_is_ref(f->val.t))
+            if (!ns_type_is_ref(f->t))
                 continue;
-            ns_str n = ns_vm_get_type_name(vm, f->val.t);
+            ns_str n = ns_vm_get_type_name(vm, f->t);
             ns_symbol *t = ns_vm_find_symbol(vm, n);
             if (t->type == ns_symbol_invalid) {
                 ns_error("syntax error", "unknow ref type %.*s.\n", n.len, n.data);
@@ -461,7 +461,7 @@ ns_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     for (i32 i = 0, l = ns_array_length(st->fields); i < l; ++i) {
         ns_struct_field *f = &st->fields[i];
         if (ns_str_equals(f->name, name)) {
-            return f->val.t;
+            return f->t;
         }
     }
     ns_ast_error(ctx, "syntax error", "unknown member %.*s\n", name.len, name.data);
@@ -506,8 +506,8 @@ ns_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
             ns_struct_field *f = &st->st.fields[j];
             if (ns_str_equals(f->name, name)) {
                 ns_type t = ns_vm_parse_expr(vm, ctx, ctx->nodes[field.field_def.expr]);
-                if (t != f->val.t) {
-                    ns_str f_type = ns_vm_get_type_name(vm, f->val.t);
+                if (t != f->t) {
+                    ns_str f_type = ns_vm_get_type_name(vm, f->t);
                     ns_str t_type = ns_vm_get_type_name(vm, t);
                     ns_vm_error(ctx->filename, field.state, "type error", "designated expr type mismatch [%.*s = %.*s]", f_type.len, f_type.data, t_type.len, t_type.data);
                 }

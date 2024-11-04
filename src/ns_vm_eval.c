@@ -23,6 +23,7 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
@@ -475,6 +476,8 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_eval_desig_expr(vm, ctx, n);
     case NS_AST_CAST_EXPR:
         return ns_eval_cast_expr(vm, ctx, n);
+    case NS_AST_MEMBER_EXPR:
+        return ns_eval_member_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_error("eval error", "unimplemented expr type %.*s\n", type.len, type.data);
@@ -535,13 +538,13 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         }
 
         ns_value val = ns_eval_expr(vm, ctx, ctx->nodes[expr.field_def.expr]);
-        if (ns_type_enum(field->val.t) != ns_type_enum(val.t)) { // type mismatch
-            ns_str f_type = ns_vm_get_type_name(vm, field->val.t);
+        if (ns_type_enum(field->t) != ns_type_enum(val.t)) { // type mismatch
+            ns_str f_type = ns_vm_get_type_name(vm, field->t);
             ns_str v_type = ns_vm_get_type_name(vm, val.t);
             ns_vm_error(ctx->filename, expr.state, "eval error", "field type mismatch [%.*s = %.*s]\n", f_type.len, f_type.data, v_type.len, v_type.data);
         }
 
-        ns_type t = field->val.t;
+        ns_type t = field->t;
         if (ns_type_is_number(t)) {
             switch (ns_type_enum(t))
             {
@@ -603,6 +606,29 @@ ns_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     } else {
         ns_vm_error(ctx->filename, n.state, "eval error", "unimplemented cast expr");
     }
+}
+
+ns_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_value st = ns_eval_expr(vm, ctx, ctx->nodes[n.member_expr.left]);
+    ns_str name = n.member_expr.right.val;
+    ns_symbol *st_type = &vm->symbols[ns_type_index(st.t)];
+    if (st_type->type != ns_symbol_struct) {
+        ns_type_print(st.t);
+        ns_vm_error(ctx->filename, n.state, "eval error", "unknown struct %.*s.", st_type->name.len, st_type->name.data);
+    }
+    for (i32 i = 0, l = ns_array_length(st_type->st.fields); i < l; ++i) {
+        ns_struct_field *field = &st_type->st.fields[i];
+        if (ns_str_equals(field->name, name)) {
+            if(ns_type_in_heap(st.t)) {
+                return (ns_value){.t = ns_type_set_store(field->t, NS_STORE_HEAP), .o = st.o + field->o};
+            } else {
+                return (ns_value){.t = ns_type_set_store(field->t, NS_STORE_STACK), .o = st.o + field->o};
+            }
+        }
+    }
+
+    ns_vm_error(ctx->filename, n.state, "eval error", "unknown struct field %.*s.", name.len, name.data);
+    return ns_nil;
 }
 
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
