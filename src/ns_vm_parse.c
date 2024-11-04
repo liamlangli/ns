@@ -87,7 +87,8 @@ i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r) {
 
 i32 ns_vm_push_string(ns_vm *vm, ns_str s) {
     i32 i = ns_array_length(vm->str_list);
-    ns_array_push(vm->str_list, s);
+    ns_str str = ns_str_slice(s, 0, s.len);
+    ns_array_push(vm->str_list, str);
     return i;
 }
 

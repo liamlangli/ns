@@ -53,8 +53,8 @@ fn main() {
 
     for i in 0 to 256 {
         for j in 0 to 256 {
-            let u = i / 256.0 - 0.5
-            let v = j / 256.0 - 0.5
+            let u = i as f64 / 256.0 - 0.5
+            let v = j as f64 / 256.0 - 0.5
 
             r.direction = simd3 { x: u, y: v, z: 1.0 }
             let h = hit_sphere(r, s)

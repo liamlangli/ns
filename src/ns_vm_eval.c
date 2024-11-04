@@ -22,6 +22,8 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
@@ -36,44 +38,50 @@ u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
 ns_value ns_eval_alloc_value(ns_vm *vm, ns_value n) {
     i32 s = ns_type_size(vm, n.t);
     i32 offset = ns_eval_alloc(vm, s);
-    // i8 *dst = &vm->stack[offset];
-    // TODO save 
-    return (ns_value){.t = ns_type_set_store(n.t, NS_STORE_HEAP), .o = offset};
+    ns_value ret = (ns_value){.t = ns_type_set_store(n.t, NS_STORE_STACK)};
+    if (ns_type_is_const(n.t) || ns_type_in_heap(n.t)) {
+        ret.o = n.o;
+    } else {
+        memcpy(&vm->stack[offset], &vm->stack[n.o], s);
+    }
+    return ret;
 }
 
-ns_value* ns_eval_find_value(ns_vm *vm, ns_str name) {
+ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
     if (ns_array_length(vm->call_stack) > 0) {
         ns_call* call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
         for (i32 i = 0, l = ns_array_length(call->fn->fn.args); i < l; ++i) {
             if (ns_str_equals(call->fn->fn.args[i].name, name)) {
-                return &call->args[i];
+                return call->args[i];
             }
         }
 
-        ns_scope* scope = &call->scopes[ns_array_length(call->scopes) - 1];
-        for (i32 i = 0, l = ns_array_length(scope->vars); i < l; ++i) {
-            if (ns_str_equals(scope->vars[i].name, name)) {
-                return &scope->vars[i].val;
+        for (i32 i = 0, l = ns_array_length(call->scopes); i < l; ++i) {
+            ns_scope* scope = &call->scopes[i];
+            for (i32 j = 0, k = ns_array_length(scope->vars); j < k; ++j) {
+                if (ns_str_equals(scope->vars[j].name, name)) {
+                    return scope->vars[j].val;
+                }
             }
         }
     }
 
     ns_symbol *r = ns_vm_find_symbol(vm, name);
-    if (!r) return ns_null;
+    if (!r) return ns_nil;
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *r = &vm->symbols[i];
         if (ns_str_equals(r->name, name)) {
             switch (r->type)
             {
-            case ns_symbol_value: return &r->val;
-            case ns_symbol_fn: return &r->fn.fn;
+            case ns_symbol_value: return r->val;
+            case ns_symbol_fn: return r->fn.fn;
             default:
                 break;
             }
         }
     }
 
-    return ns_null;
+    return ns_nil;
 }
 
 void ns_eval_enter_scope(ns_vm *vm, ns_call *call) {
@@ -444,7 +452,7 @@ ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n) {
     case NS_TOKEN_FALSE:
         return ns_false;
     case NS_TOKEN_IDENTIFIER:
-        return *ns_eval_find_value(vm, t.val);
+        return ns_eval_find_value(vm, t.val);
     default: {
         ns_str type = ns_token_type_to_string(t.type);
         ns_error("eval error", "unimplemented primary expr type %.*s\n", type.len, type.data);
@@ -465,6 +473,8 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         return ns_eval_primary_expr(vm, n);
     case NS_AST_DESIG_EXPR:
         return ns_eval_desig_expr(vm, ctx, n);
+    case NS_AST_CAST_EXPR:
+        return ns_eval_cast_expr(vm, ctx, n);
     default: {
         ns_str type = ns_ast_type_to_string(n.type);
         ns_error("eval error", "unimplemented expr type %.*s\n", type.len, type.data);
@@ -562,6 +572,37 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 
     return (ns_value){.t = ns_type_set_store(st->val.t, NS_STORE_STACK), .o = o};
+}
+
+ns_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
+    ns_type t = ns_vm_parse_type(vm, n.cast_expr.type, false);
+    ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.cast_expr.expr]);
+    if (ns_type_enum(t) == ns_type_enum(v.t)) return v;
+    if (ns_type_is_number(t) && ns_type_is_number(v.t)) {
+        if (ns_type_is_float(t)) {
+            if (ns_type_is_float(v.t)) {
+                if (ns_type_is(t, NS_TYPE_F32)) {
+                    return (ns_value){.t = t, .f32 = (f32)ns_eval_number_f64(vm, v)};
+                } else {
+                    return (ns_value){.t = t, .f64 = ns_eval_number_f64(vm, v)};
+                }
+            } else {
+                if (ns_type_is(t, NS_TYPE_F32)) {
+                    return (ns_value){.t = t, .f32 = (f32)ns_eval_number_i64(vm, v)};
+                } else {
+                    return (ns_value){.t = t, .f64 = (f64)ns_eval_number_i64(vm, v)};
+                }
+            }
+        } else {
+            if (ns_type_is_float(v.t)) {
+                return (ns_value){.t = t, .i64 = (i64)ns_eval_number_f64(vm, v)};
+            } else {
+                return (ns_value){.t = t, .i64 = ns_eval_number_i64(vm, v)};
+            }
+        }
+    } else {
+        ns_vm_error(ctx->filename, n.state, "eval error", "unimplemented cast expr");
+    }
 }
 
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
