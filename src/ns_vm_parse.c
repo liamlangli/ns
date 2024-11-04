@@ -166,7 +166,6 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_FN:
     case NS_TYPE_STRUCT: {
-        ns_type_print(t);
         u64 ti = ns_type_index(t);
         if (ti > ns_array_length(vm->symbols)) {
             ns_error("eval error", "missing type %lu\n", ti);

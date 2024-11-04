@@ -549,7 +549,7 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
                 break;
             }
         } else if (ns_type_is(t, NS_TYPE_STRUCT)) {
-            if (ns_type_in_stack(t)) {
+            if (ns_type_in_heap(t)) {
                 memcpy(data, vm->stack + val.o, stride);
             } else {
                 memcpy(data, (void*)val.o, stride);
