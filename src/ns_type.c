@@ -36,6 +36,7 @@ bool ns_type_is_number(u32 t) {
     case NS_TYPE_U64:
     case NS_TYPE_F32:
     case NS_TYPE_F64:
+    case NS_TYPE_BOOL:
         return true;
     default:
         return false;

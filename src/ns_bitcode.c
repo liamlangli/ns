@@ -524,7 +524,6 @@ ns_bc_value ns_bc_var_def(ns_bc_ctx *bc_ctx, ns_ast_t n) {
     ns_bc_value val = ns_bc_expr(bc_ctx, bc_ctx->ctx->nodes[n.var_def.expr]);
     ns_str name = n.var_def.name.val;
     ns_bc_symbol val_symbol = (ns_bc_symbol){.type = NS_BC_VALUE, .name = name, .val = val};
-    ns_bc_symbol *s = ns_vm_find_symbol(bc_ctx->vm, name);
     ns_bc_set_symbol(bc_ctx, val_symbol, 0);
     return bc_ctx->symbols[0].val;
 }
