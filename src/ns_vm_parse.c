@@ -456,16 +456,23 @@ ns_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     if (!ns_type_is(t, NS_TYPE_STRUCT)) {
         ns_ast_error(ctx, "type error", "member expr type mismatch\n");
     }
-    ns_str name = n.member_expr.right.val;
-    ns_struct_symbol *st = &vm->symbols[ns_type_index(t)].st;
-    for (i32 i = 0, l = ns_array_length(st->fields); i < l; ++i) {
-        ns_struct_field *f = &st->fields[i];
-        if (ns_str_equals(f->name, name)) {
-            return f->t;
+
+    ns_ast_t field = ctx->nodes[n.next];
+    if (field.type == NS_AST_PRIMARY_EXPR) {
+        ns_str name = field.primary_expr.token.val;
+        ns_struct_symbol *st = &vm->symbols[ns_type_index(t)].st;
+        for (i32 i = 0, l = ns_array_length(st->fields); i < l; ++i) {
+            ns_struct_field *f = &st->fields[i];
+            if (ns_str_equals(f->name, name)) {
+                return f->t;
+            }
         }
+        ns_ast_error(ctx, "syntax error", "unknown member %.*s\n", name.len, name.data);
+        return ns_type_unknown;
+    } else {
+        // recursive member expr
+        return ns_vm_parse_expr(vm, ctx, field);
     }
-    ns_ast_error(ctx, "syntax error", "unknown member %.*s\n", name.len, name.data);
-    return ns_type_unknown;
 }
 
 bool ns_vm_parse_type_generable(ns_type t) {

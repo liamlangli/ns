@@ -38,7 +38,7 @@ bool ns_parse_jump_stmt(ns_ast_ctx *ctx) {
         }
         ns_restore_state(ctx, end_state);
 
-        if (ns_parse_expr_stack(ctx)) {
+        if (ns_parse_expr(ctx)) {
             n.jump_stmt.expr = ctx->current;
         } else {
             ns_ast_error(ctx, "syntax error", "expected expression after 'return'");
@@ -55,7 +55,7 @@ bool ns_parse_if_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
 
     // if expression statement [else statement]
-    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_expr_stack(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_IF) && ns_parse_expr(ctx)) {
         ns_ast_t n = {.type = NS_AST_IF_STMT, .if_stmt.condition = ctx->current};
         if (ns_parse_compound_stmt(ctx)) {
             n.if_stmt.body = ctx->current;
@@ -117,7 +117,7 @@ bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
 
     if (!n.loop_stmt.do_first && ns_token_require(ctx, NS_TOKEN_LOOP)) {
         n.loop_stmt.do_first = false;
-        if (!ns_parse_expr_stack(ctx)) {
+        if (!ns_parse_expr(ctx)) {
             ns_ast_error(ctx, "syntax error", "expected expression after 'loop' statement");
         }
     }
@@ -128,7 +128,7 @@ bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
         if (n.loop_stmt.do_first) {
             if (ns_token_require(ctx, NS_TOKEN_LOOP)) {
                 n.loop_stmt.do_first = false;
-                if (ns_parse_expr_stack(ctx)) {
+                if (ns_parse_expr(ctx)) {
                     n.loop_stmt.condition = ctx->current;
                     ns_ast_push(ctx, n);
                     return true;
@@ -203,7 +203,7 @@ bool ns_parse_designated_field(ns_ast_ctx *ctx) {
     ns_ast_t n = {.type = NS_AST_FIELD_DEF, .field_def = {.name = ctx->token}};
     if (ns_parse_identifier(ctx)) {
         if (ns_token_require(ctx, NS_TOKEN_COLON)) {
-            if (ns_parse_expr_stack(ctx)) {
+            if (ns_parse_expr(ctx)) {
                 n.field_def.expr = ctx->current;
                 ns_ast_push(ctx, n);
                 return true;
@@ -254,7 +254,7 @@ bool ns_parse_desig_expr(ns_ast_ctx *ctx) {
 
 bool ns_parse_expr_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
-    if (ns_parse_expr_stack(ctx)) {
+    if (ns_parse_expr(ctx)) {
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_EOL || ctx->token.type == NS_TOKEN_EOF) {
             return true;

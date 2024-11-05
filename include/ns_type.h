@@ -177,7 +177,7 @@ typedef enum {
     NS_TOKEN_COLON,         // :
     NS_TOKEN_QUESTION_MARK, // ?
 
-    NS_TOKEN_CMP_OP,       // !
+    NS_TOKEN_CMP_OP,        // !
     NS_TOKEN_BIT_INVERT_OP, // ~
 
     NS_TOKEN_ADD_OP,        // +, -

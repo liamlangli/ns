@@ -107,7 +107,6 @@ typedef struct ns_ast_cast_expr {
 
 typedef struct ns_ast_primary_expr {
     ns_token_t token;
-    i32 expr;
 } ns_ast_primary_expr;
 
 typedef struct ns_ast_unary_expr {
@@ -121,7 +120,6 @@ typedef struct ns_ast_expr {
 
 typedef struct ns_ast_member_expr {
     i32 left;
-    ns_token_t right;
 } ns_ast_member_expr;
 
 typedef struct ns_ast_call_expr {
@@ -226,8 +224,9 @@ typedef struct ns_ast_t {
 
 #define ns_ast_nil (ns_ast_t){.type = NS_AST_UNKNOWN, .next = -1}
 
-#define NS_MAX_PARSE_STACK 64
-#define NS_MAX_CALL_STACK 64
+typedef struct ns_ast_expr_scope {
+    i32 stack_top, op_top, pre;
+} ns_ast_expr_scope;
 
 typedef struct as_parse_context_t {
     i32 f, last_f;
@@ -237,8 +236,11 @@ typedef struct as_parse_context_t {
 
     ns_ast_t *nodes;
 
-    i32 stack[NS_MAX_PARSE_STACK];
-    i32 top;
+    // stack based expr parsing
+    i32 *stack;
+    i32 *op_stack;
+    i32 *expr_stack;
+    ns_ast_expr_scope *scopes;
 
     ns_token_t token, last_token;
     ns_str source;
@@ -285,7 +287,7 @@ ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
 bool ns_parse_gen_expr(ns_ast_ctx *ctx);
 bool ns_parse_primary_expr(ns_ast_ctx *ctx);
 bool ns_parse_postfix_expr(ns_ast_ctx *ctx);
-bool ns_parse_expr_stack(ns_ast_ctx *ctx);
+bool ns_parse_expr(ns_ast_ctx *ctx);
 
 // dump fn
 void ns_ast_ctx_dump(ns_ast_ctx *ctx);

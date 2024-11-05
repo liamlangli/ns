@@ -176,7 +176,7 @@ bool ns_primary_expr(ns_ast_ctx *ctx) {
     ns_restore_state(ctx, state);
     ns_parse_next_token(ctx);
     if (ctx->token.type == NS_TOKEN_OPEN_PAREN) {
-        if (ns_parse_expr_stack(ctx)) {
+        if (ns_parse_expr(ctx)) {
             ns_parse_next_token(ctx);
             if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
                 return true;
@@ -203,10 +203,10 @@ bool ns_parse_gen_expr(ns_ast_ctx *ctx) {
         return false;
     }
 
-    if (ns_parse_expr_stack(ctx)) {
+    if (ns_parse_expr(ctx)) {
         n.gen_expr.from = ctx->current;
         if (ns_token_require(ctx, NS_TOKEN_TO)) {
-            if (ns_parse_expr_stack(ctx)) {
+            if (ns_parse_expr(ctx)) {
                 n.gen_expr.to = ctx->current;
                 n.gen_expr.range = true;
             }
@@ -467,7 +467,7 @@ bool ns_parse_var_define(ns_ast_ctx *ctx) {
 
         ns_ast_state assign_state = ns_save_state(ctx);
         if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
-            if (ns_parse_expr_stack(ctx)) {
+            if (ns_parse_expr(ctx)) {
                 n.var_def.expr = ctx->current;
                 ns_ast_push(ctx, n);
                 return true;
@@ -509,7 +509,6 @@ bool ns_parse_type_define(ns_ast_ctx *ctx) {
 bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->source = source;
     ctx->filename = filename;
-    ctx->top = -1;
     ctx->token.line = 1; // start from 1
     ctx->current = -1;
     ctx->f = 0;

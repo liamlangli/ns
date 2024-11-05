@@ -557,12 +557,11 @@ ns_bc_value ns_bc_call_std_print(ns_bc_ctx *bc_ctx) {
             ctx.source = expr;
             ctx.filename = ns_str_cstr("fmt");
 
-            ctx.top = -1;
             ctx.token.line = 1; // start from 1
             ctx.current = -1;
             bc_ctx->ctx = &ctx;
 
-            ns_parse_expr_stack(&ctx);
+            ns_parse_expr(&ctx);
             ns_bc_value v = ns_bc_expr(bc_ctx, ctx.nodes[ctx.current]);
             ns_str s = ns_fmt_type_str(v.type.raw);
             ns_str_append(&ptn, s);

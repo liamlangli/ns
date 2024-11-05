@@ -604,7 +604,10 @@ ns_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 
 ns_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value st = ns_eval_expr(vm, ctx, ctx->nodes[n.member_expr.left]);
-    ns_str name = n.member_expr.right.val;
+
+    ns_ast_t field = ctx->nodes[n.next];
+
+    ns_str name = field.primary_expr.token.val;
     ns_symbol *st_type = &vm->symbols[ns_type_index(st.t)];
     if (st_type->type != ns_symbol_struct) {
         ns_type_print(st.t);

@@ -80,11 +80,10 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
             ctx.source = expr;
             ctx.filename = ns_str_cstr("fmt");
 
-            ctx.top = -1;
             ctx.token.line = 1; // start from 1
             ctx.current = -1;
 
-            ns_parse_expr_stack(&ctx);
+            ns_parse_expr(&ctx);
             ns_value v = ns_eval_expr(vm, &ctx, ctx.nodes[ctx.current]);
             ns_str s = ns_fmt_value(vm, v);
             ns_str_append(&ret, s);

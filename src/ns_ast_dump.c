@@ -136,13 +136,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         printf("[%d] as ", n.cast_expr.expr);
         ns_str_printf(n.cast_expr.type.val);
         break;
-    case NS_AST_PRIMARY_EXPR: {
-        if (n.primary_expr.token.type == NS_TOKEN_UNKNOWN) {
-            printf("[%d]", n.primary_expr.expr);
-        } else {
-            ns_str_printf(n.primary_expr.token.val);
-        }
-    } break;
+    case NS_AST_PRIMARY_EXPR: ns_str_printf(n.primary_expr.token.val); break;
     case NS_AST_BINARY_EXPR:
         printf("[%d] ", n.binary_expr.left);
         ns_str_printf(n.binary_expr.op.val);
@@ -157,8 +151,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         printf(" = [%d]", n.field_def.expr);
     } break;
     case NS_AST_MEMBER_EXPR: {
-        printf("[%d].", n.member_expr.left);
-        ns_str_printf(n.member_expr.right.val);
+        printf("[%d].[%d]", n.member_expr.left, n.next);
     } break;
     case NS_AST_CALL_EXPR: {
         printf("[%d]", n.call_expr.callee);
