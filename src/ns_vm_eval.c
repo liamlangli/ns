@@ -221,11 +221,11 @@ ns_eval_number_shift_op(_shr, >>)
 ns_value ns_eval_number_mod(ns_vm *vm, ns_value l, ns_value r) {
     ns_value ret = (ns_value){.t = ns_type_set_store(l.t, NS_STORE_CONST)};
     switch (ns_type_mask(l.t)) {
-        case ns_type_i8: ret.i8 = ns_eval_number_i8(vm, l) % ns_eval_number_i8(vm, r); break;
+        case ns_type_i8:  ret.i8 = ns_eval_number_i8(vm, l) % ns_eval_number_i8(vm, r); break;
         case ns_type_i16: ret.i16 = ns_eval_number_i16(vm, l) % ns_eval_number_i16(vm, r); break;
         case ns_type_i32: ret.i32 = ns_eval_number_i32(vm, l) % ns_eval_number_i32(vm, r); break;
         case ns_type_i64: ret.i64 = ns_eval_number_i64(vm, l) % ns_eval_number_i64(vm, r); break;
-        case ns_type_u8: ret.u8 = ns_eval_number_u8(vm, l) % ns_eval_number_u8(vm, r); break;
+        case ns_type_u8:  ret.u8 = ns_eval_number_u8(vm, l) % ns_eval_number_u8(vm, r); break;
         case ns_type_u16: ret.u16 = ns_eval_number_u16(vm, l) % ns_eval_number_u16(vm, r); break;
         case ns_type_u32: ret.u32 = ns_eval_number_u32(vm, l) % ns_eval_number_u32(vm, r); break;
         case ns_type_u64: ret.u64 = ns_eval_number_u64(vm, l) % ns_eval_number_u64(vm, r); break;
@@ -241,12 +241,8 @@ ns_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_value l, ns_value r, ns_tok
     ns_number_type ln = ns_vm_number_type(l.t);
     ns_number_type rn = ns_vm_number_type(r.t);
     if (((ln & rn) & NS_NUMBER_FLT) == NS_NUMBER_FLT) {
-        l.t = ns_type_f64;
-        r.t = ns_type_f64;
         return ns_eval_binary_ops_number(vm, l, r, op);
     } else if (((ln & rn) & NS_NUMBER_I) == NS_NUMBER_I) {
-        l.t = ns_type_i64;
-        r.t = ns_type_i64;
         return ns_eval_binary_ops_number(vm, l, r, op);
     } else {
         return ns_nil;
@@ -447,9 +443,9 @@ ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n) {
     ns_token_t t = n.primary_expr.token;
     switch (t.type) {
     case NS_TOKEN_INT_LITERAL:
-        return (ns_value){.t = ns_type_i64, .i32 = ns_str_to_i32(t.val)};
+        return (ns_value){.t = ns_type_i32, .i32 = ns_str_to_i32(t.val)};
     case NS_TOKEN_FLT_LITERAL:
-        return (ns_value){.t = ns_type_f64, .f32 = ns_str_to_f64(t.val)};
+        return (ns_value){.t = ns_type_f64, .f64 = ns_str_to_f64(t.val)};
     case NS_TOKEN_STR_LITERAL:
         return (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, t.val)};
     case NS_TOKEN_TRUE:

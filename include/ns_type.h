@@ -177,19 +177,20 @@ typedef enum {
     NS_TOKEN_COLON,         // :
     NS_TOKEN_QUESTION_MARK, // ?
 
-    NS_TOKEN_LOGIC_OP,      // &&, ||
+    NS_TOKEN_CMP_OP,       // !
+    NS_TOKEN_BIT_INVERT_OP, // ~
 
     NS_TOKEN_ADD_OP,        // +, -
-    NS_TOKEN_MUL_OP,        // *, /, %
     NS_TOKEN_SHIFT_OP,      // <<, >>
+    NS_TOKEN_MUL_OP,        // *, /, %
 
     NS_TOKEN_REL_OP,        // >, <, >=, <=
     NS_TOKEN_EQ_OP,         // ==, !=
 
+    NS_TOKEN_LOGIC_OP,      // &&, ||
+
     NS_TOKEN_BITWISE_OP,    // &, |, ^
     NS_TOKEN_ASSIGN_OP,     // +=, -=, *=, /=, %=, &=, |=, ^=
-    NS_TOKEN_CMP_OP,       // !
-    NS_TOKEN_BIT_INVERT_OP, // ~
 
     NS_TOKEN_OPEN_BRACE,    // {
     NS_TOKEN_CLOSE_BRACE,   // }
@@ -247,7 +248,7 @@ enum {
     NS_TYPE_STORE_SHIFT = (u64)8,
 
     NS_TYPE_REF_MASK = (u64)1 << NS_TYPE_REF_SHIFT,
-    NS_TYPE_STORE_MASK = (u64)0xf << NS_TYPE_STORE_SHIFT,
+    NS_TYPE_STORE_MASK = (u64)0xff << NS_TYPE_STORE_SHIFT,
     NS_TYPE_INDEX_MASK = 0xffffffffffff << NS_TYPE_INDEX_SHIFT,
     NS_TYPE_ENUM_MASK = 0x7f,
     NS_TYPE_MASK = 0xff // type enum & ref mask
@@ -309,6 +310,10 @@ bool ns_type_is_number(u32 t);
 typedef struct ns_value {
     ns_type t;  // type
     union {
+        u64 o;
+        f64 f64;
+        u64 u64;
+        i64 i64;
         bool b;
         i8 i8;
         u8 u8;
@@ -316,11 +321,7 @@ typedef struct ns_value {
         u16 u16;
         i32 i32;
         u32 u32;
-        i64 i64;
-        u64 u64;
         f32 f32;
-        f64 f64;
-        u64 o;
     };
 } ns_value;
 

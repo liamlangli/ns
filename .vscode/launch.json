@@ -48,6 +48,15 @@
             "program": "${workspaceFolder}/bin/ns",
             "args": ["-o", "${file}.bc", "-b", "${file}"],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "ns trace",
+            "preLaunchTask": "build",
+            "program": "xctrace",
+            "args": ["record", "--template", "\"Time Profiler\"",  "--output", "bin/ns.trace", "--launch", "--", "bin/ns", "--ast", "sample/rt.ns"],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
