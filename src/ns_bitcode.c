@@ -135,7 +135,7 @@ const char* ns_bc_str(ns_str s) {
 
 
 ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t) {
-    switch (ns_type_enum(t)) {
+    switch (ns_type_mask(t)) {
     case NS_TYPE_I8:
     case NS_TYPE_U8:
         return ns_bc_type_i8;
@@ -383,7 +383,7 @@ ns_bc_value ns_bc_binary_ops(ns_bc_ctx *bc_ctx, ns_bc_value l, ns_bc_value r, ns
     if (ns_type_is_number(l.type.raw)) {
         return ns_bc_binary_ops_number(bc_ctx, l, r, op);
     } else {
-        switch (ns_type_enum(l.type.raw))
+        switch (ns_type_mask(l.type.raw))
         {
         case NS_TYPE_STRING:
             ns_error("bitcode error", "unimplemented string ops\n");
@@ -400,7 +400,7 @@ ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, ns_ast_t n) {
     ns_bc_builder bdr = bc_ctx->builder;
     ns_bc_value l = ns_bc_expr(bc_ctx, bc_ctx->ctx->nodes[n.binary_expr.left]);
     ns_bc_value r = ns_bc_expr(bc_ctx, bc_ctx->ctx->nodes[n.binary_expr.right]);
-    if (ns_type_enum(l.type.raw) == ns_type_enum(r.type.raw)) {
+    if (ns_type_mask(l.type.raw) == ns_type_mask(r.type.raw)) {
         return ns_bc_binary_ops(bc_ctx, l, r, n.binary_expr.op);
     }
 

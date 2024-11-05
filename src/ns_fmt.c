@@ -6,7 +6,7 @@
 #define ns_fmt_print_number(type) \
 { \
     type v = ns_eval_number_##type(vm, n); \
-    ns_str pattern = ns_fmt_type_str(ns_type_enum(n.t)); \
+    ns_str pattern = ns_fmt_type_str(ns_type_mask(n.t)); \
     i32 s = snprintf(ns_null, 0, pattern.data, v); \
     char* d = malloc(s + 1); \
     snprintf(d, s + 1, pattern.data, v); \
@@ -14,7 +14,7 @@
 }
 
 ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
-    switch (ns_type_enum(n.t)) {
+    switch (ns_type_mask(n.t)) {
     case NS_TYPE_I8: ns_fmt_print_number(i8)
     case NS_TYPE_U8: ns_fmt_print_number(u8)
     case NS_TYPE_I16: ns_fmt_print_number(i16)
@@ -41,7 +41,7 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
 }
 
 ns_str ns_fmt_type_str(ns_type t) {
-    switch (ns_type_enum(t))
+    switch (ns_type_mask(t))
     {
     case NS_TYPE_I8:
     case NS_TYPE_I16:

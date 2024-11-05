@@ -242,14 +242,14 @@ typedef enum {
 } ns_number_type;
 
 enum {
-    NS_TYPE_ENUM_SHIFT = (u64)8,
-    NS_TYPE_REF_SHIFT = (u64)60,
-    NS_TYPE_STORE_SHIFT = (u64)56,
+    NS_TYPE_INDEX_SHIFT = (u64)16,
+    NS_TYPE_REF_SHIFT = (u64)7,
+    NS_TYPE_STORE_SHIFT = (u64)8,
 
     NS_TYPE_REF_MASK = (u64)1 << NS_TYPE_REF_SHIFT,
     NS_TYPE_STORE_MASK = (u64)0xf << NS_TYPE_STORE_SHIFT,
-    NS_TYPE_INDEX_MASK = 0xffffffffffff << NS_TYPE_ENUM_SHIFT,
-    NS_TYPE_ENUM_MASK = 0xff
+    NS_TYPE_INDEX_MASK = 0xffffffffffff << NS_TYPE_INDEX_SHIFT,
+    NS_TYPE_MASK = 0xff // type enum & ref mask
 };
 
 typedef enum {
@@ -262,8 +262,8 @@ typedef enum {
 #define ns_type_is_const(t) ((u64)NS_STORE_CONST == (t & NS_TYPE_STORE_MASK))
 #define ns_type_in_stack(t) ((u64)NS_STORE_STACK == (t & NS_TYPE_STORE_MASK))
 #define ns_type_in_heap(t) ((u64)NS_STORE_HEAP == (t & NS_TYPE_STORE_MASK))
-#define ns_type_index(t) ((t & NS_TYPE_INDEX_MASK) >> NS_TYPE_ENUM_SHIFT)
-#define ns_type_enum(t) (t & NS_TYPE_ENUM_MASK)
+#define ns_type_index(t) ((t & NS_TYPE_INDEX_MASK) >> NS_TYPE_INDEX_SHIFT)
+#define ns_type_mask(t) (t & NS_TYPE_MASK)
 #define ns_type_set_store(t, s) ((t & ~NS_TYPE_STORE_MASK) | (s & NS_TYPE_STORE_MASK))
 
 typedef u64 ns_type;
@@ -295,7 +295,7 @@ void ns_type_print(ns_type t);
 #define ns_type_fn     NS_TYPE_FN
 #define ns_type_struct NS_TYPE_STRUCT
 
-#define ns_type_is(t, tt) (tt == ns_type_enum(t))
+#define ns_type_is(t, tt) (tt == ns_type_mask(t))
 #define ns_type_is_float(t) (ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64))
 #define ns_type_signed(t) (ns_type_is(t, NS_TYPE_I8) || ns_type_is(t, NS_TYPE_I16) || ns_type_is(t, NS_TYPE_I32) || ns_type_is(t, NS_TYPE_I64))
 #define ns_type_unsigned(t) (ns_type_is(t, NS_TYPE_U8) || ns_type_is(t, NS_TYPE_U16) || ns_type_is(t, NS_TYPE_U32) || ns_type_is(t, NS_TYPE_U64))

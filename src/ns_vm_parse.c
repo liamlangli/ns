@@ -36,8 +36,8 @@ void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
     ns_number_type ln = ns_vm_number_type(l);
     ns_number_type rn = ns_vm_number_type(r);
-    ns_type lt = ns_type_enum(l);
-    ns_type rt = ns_type_enum(r);
+    ns_type lt = ns_type_mask(l);
+    ns_type rt = ns_type_mask(r);
     if (ln == rn) return ns_max(lt, rt);
     switch (ln | rn)
     {
@@ -51,7 +51,7 @@ ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
 }
 
 i32 ns_type_size(ns_vm *vm, ns_type t) {
-    switch (ns_type_enum(t))
+    switch (ns_type_mask(t))
     {
     case NS_TYPE_BOOL:
     case NS_TYPE_I8:
@@ -75,7 +75,7 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
     default:
         break;
     }
-    ns_error("eval error", "unknown type %d\n", (i32)ns_type_enum(t));
+    ns_error("eval error", "unknown type %d\n", (i32)ns_type_mask(t));
     return 0;
 }
 
@@ -151,7 +151,7 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
 
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     bool is_ref = ns_type_is_ref(t);
-    switch (ns_type_enum(t))
+    switch (ns_type_mask(t))
     {
     case NS_TYPE_I8: return is_ref ? ns_str_cstr("ref_i8") : ns_str_cstr("i8");
     case NS_TYPE_U8: return is_ref ? ns_str_cstr("ref_u8") : ns_str_cstr("u8");
@@ -430,8 +430,7 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         ns_vm_error(ctx->filename, callee_n.state, "syntax error", "unknown callee");
     }
 
-    ns_str fn_name = ns_vm_get_type_name(vm, fn);
-    ns_symbol *fn_record = ns_vm_find_symbol(vm, fn_name);
+    ns_symbol *fn_record = &vm->symbols[ns_type_index(fn)];
     if (!fn_record || fn_record->type != ns_symbol_fn) {
         ns_vm_error(ctx->filename, callee_n.state, "syntax error", "invalid callee");
     }
@@ -444,6 +443,7 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         if (t != fn_record->fn.args[i].val.t) {
             ns_str arg_type = ns_vm_get_type_name(vm, t);
             ns_str fn_arg_type = ns_vm_get_type_name(vm, fn_record->fn.args[i].val.t);
+            ns_str fn_name = fn_record->name;
             ns_vm_error(ctx->filename, n.state, "type error", "call expr type mismatch fn [%.*s] arg [%.*s], and input arg[%.*s]\n", fn_name.len, fn_name.data, fn_arg_type.len, fn_arg_type.data, arg_type.len, arg_type.data);
         }
     }
