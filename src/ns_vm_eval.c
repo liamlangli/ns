@@ -17,6 +17,8 @@ ns_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_valu
 ns_value ns_eval_binary_ops_number(ns_vm *vm, ns_value l, ns_value r, ns_token_t op);
 ns_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_value l, ns_value r, ns_token_t op);
 
+ns_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, ns_ast_t n);
+
 ns_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
@@ -401,18 +403,21 @@ ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r,
     return call.ret;
 }
 
-ns_value ns_eval_binary_ops(ns_vm *vm, ns_value l, ns_value r, ns_token_t op) {
+ns_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, ns_ast_t n) {
     if (ns_type_is_number(l.t)) {
-        return ns_eval_binary_ops_number(vm, l, r, op);
+        return ns_eval_binary_ops_number(vm, l, r, n.binary_expr.op);
     } else {
         switch (ns_type_enum(l.t))
         {
         case NS_TYPE_STRING:
-            ns_error("eval error", "unimplemented string ops\n");
+            ns_vm_error(ctx->filename, n.state, "eval error", "unimplemented string ops.");
         default:
             break;
         }
-        ns_error("eval error", "unimplemented binary ops\n");
+        ns_str l_t = ns_vm_get_type_name(vm, l.t);
+        ns_str r_t = ns_vm_get_type_name(vm, r.t);
+        ns_str op = ns_ops_name(n.binary_expr.op);
+        ns_error("eval error", "unimplemented binary ops %.*s %.*s %.*s\n", l_t.len, l_t.data, op.len, op.data, r_t.len, r_t.data);
     }
 }
 
@@ -424,7 +429,7 @@ ns_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value l = ns_eval_expr(vm, ctx, ctx->nodes[n.binary_expr.left]);
     ns_value r = ns_eval_expr(vm, ctx, ctx->nodes[n.binary_expr.right]);
     if (ns_type_enum(l.t) == ns_type_enum(r.t)) {
-        return ns_eval_binary_ops(vm, l, r, n.binary_expr.op); // same type apply binary operator
+        return ns_eval_binary_ops(vm, ctx, l, r, n); // same type apply binary operator
     }
 
     ns_value ret = ns_eval_binary_override(vm, ctx, l, r, n.binary_expr.op);
@@ -562,10 +567,10 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
                 break;
             }
         } else if (ns_type_is(t, NS_TYPE_STRUCT)) {
-            if (ns_type_in_heap(t)) {
-                memcpy(data, vm->stack + val.o, stride);
-            } else {
+            if (ns_type_in_heap(val.t)) {
                 memcpy(data, (void*)val.o, stride);
+            } else {
+                memcpy(data, vm->stack + val.o, stride);
             }
         } else if (ns_type_is(t, NS_TYPE_STRING)) {
             ns_error("eval error", "unimplemented string field\n");

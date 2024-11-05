@@ -243,19 +243,19 @@ typedef enum {
 
 enum {
     NS_TYPE_ENUM_SHIFT = (u64)8,
-    NS_TYPE_REF_SHIFT = (u64)56,
-    NS_TYPE_STORE_SHIFT = (u64)57,
+    NS_TYPE_REF_SHIFT = (u64)60,
+    NS_TYPE_STORE_SHIFT = (u64)56,
 
     NS_TYPE_REF_MASK = (u64)1 << NS_TYPE_REF_SHIFT,
-    NS_TYPE_STORE_MASK = (u64)3 << NS_TYPE_STORE_SHIFT,
+    NS_TYPE_STORE_MASK = (u64)0xf << NS_TYPE_STORE_SHIFT,
     NS_TYPE_INDEX_MASK = 0xffffffffffff << NS_TYPE_ENUM_SHIFT,
     NS_TYPE_ENUM_MASK = 0xff
 };
 
 typedef enum {
     NS_STORE_CONST = 0,
-    NS_STORE_STACK = 1 << NS_TYPE_STORE_SHIFT,
-    NS_STORE_HEAP = 2 << NS_TYPE_STORE_SHIFT,
+    NS_STORE_STACK = (u64)1 << NS_TYPE_STORE_SHIFT,
+    NS_STORE_HEAP = (u64)2 << NS_TYPE_STORE_SHIFT,
 } ns_store;
 
 #define ns_type_is_ref(t) ((t & NS_TYPE_REF_MASK) != 0)
@@ -264,7 +264,7 @@ typedef enum {
 #define ns_type_in_heap(t) ((u64)NS_STORE_HEAP == (t & NS_TYPE_STORE_MASK))
 #define ns_type_index(t) ((t & NS_TYPE_INDEX_MASK) >> NS_TYPE_ENUM_SHIFT)
 #define ns_type_enum(t) (t & NS_TYPE_ENUM_MASK)
-#define ns_type_set_store(t, s) ((t & (~NS_TYPE_STORE_MASK) | (s & NS_TYPE_STORE_MASK)))
+#define ns_type_set_store(t, s) ((t & ~NS_TYPE_STORE_MASK) | (s & NS_TYPE_STORE_MASK))
 
 typedef u64 ns_type;
 

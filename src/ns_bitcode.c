@@ -254,7 +254,7 @@ void ns_bc_struct_def(ns_bc_ctx *bc_ctx) {
         i32 field_count = ns_array_length(r.st.fields);
         ns_array_set_length(fields, field_count);
         for (i32 j = 0; j < field_count; j++) {
-            ns_bc_type t = ns_bc_parse_type(bc_ctx, r.st.fields[j].val.t);
+            ns_bc_type t = ns_bc_parse_type(bc_ctx, r.st.fields[j].t);
             fields[j] = t.type;
             st_symbol.st.fields[j].val = (ns_bc_value){.type = t, .val = ns_null, .p = j};
         }
