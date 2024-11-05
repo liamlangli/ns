@@ -388,13 +388,13 @@ ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r,
     ns_array_set_length(call.args, 2);
     call.args[0] = l;
     call.args[1] = r;
-    ns_array_push(call.scopes, ((ns_scope){.vars = ns_null, .stack_top = ns_array_length(vm->stack)}));
+    ns_eval_enter_scope(vm, &call);
     ns_array_push(vm->call_stack, call);
     ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast.ops_fn_def.body]);
-    ns_call *_call = ns_array_last(vm->call_stack);
-    ns_array_pop(vm->call_stack);
-    ns_array_set_length(vm->stack, _call->scopes[0].stack_top);
-    return _call->ret;
+    ns_eval_exit_scope(vm, &call);
+    call = ns_array_pop(vm->call_stack);
+    ns_array_set_length(vm->stack, call.scopes[0].stack_top);
+    return call.ret;
 }
 
 ns_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, ns_ast_t n) {
