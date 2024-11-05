@@ -18,12 +18,12 @@ bool ns_parse_stack_push_operator(ns_ast_ctx *ctx, i32 i) {
     if (op_len <= scope->op_top) { // empty
         ns_array_push(ctx->op_stack, i);
     } else {
-        i32 top = ctx->op_stack[op_len - 1];
-        if (n.binary_expr.op.type > ctx->nodes[top].binary_expr.op.type) {
-            ns_array_push(ctx->op_stack, i);
-        } else {
+        i32 top = op_len - 1;
+        while (top >= scope->op_top && n.binary_expr.op.type <= ctx->nodes[ctx->op_stack[top]].binary_expr.op.type) {
             ns_array_push(ctx->stack, ns_array_pop(ctx->op_stack));
+            top--;
         }
+        ns_array_push(ctx->op_stack, i);
     }
     return true;
 }
