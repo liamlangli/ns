@@ -517,6 +517,8 @@ bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ns_array_set_capacity(ctx->op_stack, ns_ast_stack_size);
     ns_array_set_capacity(ctx->expr_stack, ns_ast_stack_size);
 
+    ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_PROGRAM, .next = -1});
+
     ctx->section_begin = ctx->section_end;
     bool loop = false;
     do {

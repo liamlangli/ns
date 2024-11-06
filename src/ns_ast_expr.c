@@ -236,14 +236,16 @@ bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
     // parse postfix '.' identifier
     ns_restore_state(ctx, state);
     if (ns_token_require(ctx, NS_TOKEN_DOT)) {
-        ns_ast_state member_state = ns_save_state(ctx);
         if (ns_token_require(ctx, NS_TOKEN_IDENTIFIER)) {
-            ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .member_expr = {.left = operand}};
-            ns_restore_state(ctx, member_state);
-            if (ns_parse_postfix_expr(ctx, operand)) { // recursive member expr
+            ns_ast_t token = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
+            i32 t = ns_ast_push(ctx, token);
+
+            ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .next = t, .member_expr = {.left = operand}};
+            ns_ast_state member_state = ns_save_state(ctx);
+            if (ns_parse_postfix_expr(ctx, t)) { // recursive member expr
                 n.next = ctx->current;
             } else {
-                n.next = ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}});
+                ns_restore_state(ctx, member_state);
             }
             ns_ast_push(ctx, n);
             return true;

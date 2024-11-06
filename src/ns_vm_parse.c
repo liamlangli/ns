@@ -652,7 +652,7 @@ ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_str l_name = ns_vm_get_type_name(vm, l);
     ns_str r_name = ns_vm_get_type_name(vm, r);
     ns_str op = n.binary_expr.op.val;
-    ns_vm_error(ctx->filename, n.state, "type error", "binary expr type mismatch [%.*s %.*s %.*s]\n", l_name.len, l_name.data, op.len, op.data, r_name.len, r_name.data);
+    ns_vm_error(ctx->filename, n.state, "type error", "binary expr type mismatch [%.*s %.*s %.*s].", l_name.len, l_name.data, op.len, op.data, r_name.len, r_name.data);
     return ns_type_unknown;
 }
 
