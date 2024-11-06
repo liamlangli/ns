@@ -513,7 +513,11 @@ bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->current = -1;
     ctx->f = 0;
 
-    ctx->stack = ctx->op_stack = ctx->expr_stack = NULL;
+    ctx->stack = NULL;
+    ctx->op_stack = NULL;
+    ctx->expr_stack = NULL;
+    ctx->sections = NULL;
+    ctx->nodes = NULL;
 
     ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_PROGRAM, .next = -1});
 

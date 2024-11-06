@@ -303,7 +303,6 @@ bool ns_parse_stmt(ns_ast_ctx *ctx) {
 
 bool ns_parse_global_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
-
     if (ns_parse_import_stmt(ctx)) {
         return true;
     }
@@ -329,9 +328,15 @@ bool ns_parse_global_define(ns_ast_ctx *ctx) {
     }
     ns_restore_state(ctx, state);
 
+    if (ns_parse_stmt(ctx)) {
+        return true;
+    }
+    ns_restore_state(ctx, state);
+
     if (ns_parse_expr_stmt(ctx)) {
         return true;
     }
     ns_restore_state(ctx, state);
+
     return false;
 }

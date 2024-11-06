@@ -4,6 +4,7 @@
 
 ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     switch (type) {
+        ns_str_case(NS_AST_UNKNOWN)
         ns_str_case(NS_AST_PROGRAM)
         ns_str_case(NS_AST_ARG_DEF)
         ns_str_case(NS_AST_FN_DEF)
