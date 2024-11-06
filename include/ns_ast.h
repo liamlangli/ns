@@ -248,8 +248,6 @@ typedef struct as_parse_context_t {
     ns_str output;
 } ns_ast_ctx;
 
-#define ns_ast_stack_size 64
-
 ns_str ns_ast_type_to_string(NS_AST_TYPE type);
 
 // token fn
