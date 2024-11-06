@@ -216,11 +216,11 @@ bool ns_parse_designated_field(ns_ast_ctx *ctx) {
 }
 
 // struct { a: 1, b: 2 }
-bool ns_parse_desig_expr(ns_ast_ctx *ctx) {
+bool ns_parse_desig_expr(ns_ast_ctx *ctx, i32 st) {
     ns_ast_state state = ns_save_state(ctx);
 
     ns_token_skip_eol(ctx);
-    ns_ast_t n = {.type = NS_AST_DESIG_EXPR, .desig_expr = {.name = ctx->token}};
+    ns_ast_t n = {.type = NS_AST_DESIG_EXPR, .desig_expr = {.name = ctx->nodes[st].primary_expr.token}};
     if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
         ns_restore_state(ctx, state);
         return false;

@@ -248,6 +248,8 @@ typedef struct as_parse_context_t {
     ns_str output;
 } ns_ast_ctx;
 
+#define ns_ast_stack_size 64
+
 ns_str ns_ast_type_to_string(NS_AST_TYPE type);
 
 // token fn
@@ -280,10 +282,9 @@ bool ns_parse_type_define(ns_ast_ctx *ctx);
 bool ns_parse_global_define(ns_ast_ctx *ctx);
 bool ns_parse_stmt(ns_ast_ctx *ctx);
 bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
-bool ns_parse_desig_expr(ns_ast_ctx *ctx);
+bool ns_parse_desig_expr(ns_ast_ctx *ctx, i32 st);
 
 // expr fn
-ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
 bool ns_parse_gen_expr(ns_ast_ctx *ctx);
 bool ns_parse_primary_expr(ns_ast_ctx *ctx);
 bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand);

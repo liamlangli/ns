@@ -74,9 +74,14 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
     if (min_len > min_cap) min_cap = min_len;
     if (min_cap < ns_array_capacity(a)) return a;
     if (min_cap < 2 * ns_array_capacity(a)) min_cap = 2 * ns_array_capacity(a);
-    else if (min_cap < 4) min_cap = 4;
+    else if (min_cap < 8) min_cap = 8;
 
-    b = realloc((a) ? ns_array_header(a) : 0, elem_size * min_cap + sizeof(ns_array_header));
+    b = malloc(elem_size * min_cap + sizeof(ns_array_header));
+    if (a) {
+        memcpy(b, ns_array_header(a), elem_size * ns_array_length(a) + sizeof(ns_array_header));
+        free(ns_array_header(a));
+    }
+
     b = (char *)b + sizeof(ns_array_header);
     if (ns_null == a) {
         ns_array_header(b)->len = 0;

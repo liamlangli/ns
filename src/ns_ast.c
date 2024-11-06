@@ -512,6 +512,10 @@ bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->token.line = 1; // start from 1
     ctx->current = -1;
     ctx->f = 0;
+    
+    ns_array_set_capacity(ctx->stack, ns_ast_stack_size);
+    ns_array_set_capacity(ctx->op_stack, ns_ast_stack_size);
+    ns_array_set_capacity(ctx->expr_stack, ns_ast_stack_size);
 
     ctx->section_begin = ctx->section_end;
     bool loop = false;

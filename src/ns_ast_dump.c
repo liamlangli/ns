@@ -198,11 +198,11 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         ns_str_printf(n.desig_expr.name.val);
         printf(" { ");
         i32 count = n.desig_expr.count;
-        ns_ast_t *field = &n;
+        ns_ast_t field = n;
         for (i32 i = 0; i < count; i++) {
-            field = &ctx->nodes[field->next];
-            ns_str_printf(field->field_def.name.val);
-            printf(": [%d]", field->field_def.expr);
+            field = ctx->nodes[field.next];
+            ns_str_printf(field.field_def.name.val);
+            printf(": [%d]", field.field_def.expr);
             if (i != count - 1) {
                 printf(", ");
             }

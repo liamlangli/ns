@@ -217,7 +217,7 @@ bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
 
     // parse postfix { [a: expr]*, [b: expr]* }
     ns_restore_state(ctx, state);
-    if (ns_parse_desig_expr(ctx)) {
+    if (ns_parse_desig_expr(ctx, operand)) {
         return true;
     }
 
