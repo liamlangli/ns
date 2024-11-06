@@ -184,7 +184,8 @@ bool ns_parse_compound_stmt(ns_ast_ctx *ctx) {
         ns_token_skip_eol(ctx);
         ns_ast_t n = {.type = NS_AST_COMPOUND_STMT};
         i32 next = -1;
-        while (ns_parse_var_define(ctx) || ns_parse_stmt(ctx)) {
+        while (ns_parse_var_define(ctx) || 
+            ns_parse_stmt(ctx)) {
             next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
             n.compound_stmt.count++;
             ns_token_skip_eol(ctx);

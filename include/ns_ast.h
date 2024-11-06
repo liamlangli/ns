@@ -286,7 +286,7 @@ bool ns_parse_desig_expr(ns_ast_ctx *ctx);
 ns_ast_t ns_parse_stack_top(ns_ast_ctx *ctx);
 bool ns_parse_gen_expr(ns_ast_ctx *ctx);
 bool ns_parse_primary_expr(ns_ast_ctx *ctx);
-bool ns_parse_postfix_expr(ns_ast_ctx *ctx);
+bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand);
 bool ns_parse_expr(ns_ast_ctx *ctx);
 
 // dump fn

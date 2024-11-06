@@ -523,5 +523,10 @@ bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
             ctx->section_end++;
         }
     } while (loop);
+
+    if (ctx->f < ctx->source.len) {
+        ns_ast_error(ctx, "syntax error", "unexpected parse error");
+        return false;
+    }
     return true;
 }

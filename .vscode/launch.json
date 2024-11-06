@@ -19,7 +19,7 @@
             "name": "ns ast",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["--ast", "sample/expr.ns"],
+            "args": ["--ast", "sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
