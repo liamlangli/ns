@@ -1,1 +1,6 @@
-a.b.c
+fn add() {
+    let a = c()
+    if a.b < 0.0 {
+        return 1.0
+    }
+}
