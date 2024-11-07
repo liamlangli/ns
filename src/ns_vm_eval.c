@@ -532,7 +532,7 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         }
 
         ns_value val = ns_eval_expr(vm, ctx, ctx->nodes[expr.field_def.expr]);
-        if (ns_type_equals(field->t, val.t)) { // type mismatch
+        if (!ns_type_equals(field->t, val.t)) { // type mismatch
             ns_str f_type = ns_vm_get_type_name(vm, field->t);
             ns_str v_type = ns_vm_get_type_name(vm, val.t);
             ns_vm_error(ctx->filename, expr.state, "eval error", "field type mismatch [%.*s = %.*s].", f_type.len, f_type.data, v_type.len, v_type.data);
