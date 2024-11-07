@@ -6,11 +6,11 @@
 #define ns_vm_error(f, s, t, m, ...) ns_error(t, "\n[%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
 
 typedef enum {
-    ns_symbol_invalid,
-    ns_symbol_value,
-    ns_symbol_fn,
-    ns_symbol_fn_call,
-    ns_symbol_struct,
+    NS_SYMBOL_INVALID,
+    NS_SYMBOL_VALUE,
+    NS_SYMBOL_FN,
+    NS_SYMBOL_FN_CALL,
+    NS_SYMBOL_STRUCT,
 } ns_symbol_type;
 
 typedef struct ns_symbol ns_symbol;

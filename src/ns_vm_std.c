@@ -10,65 +10,65 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     ns_str std = ns_str_cstr("std");
 
     // fn print(fmt: str): nil
-    i32 print_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 print_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol* print= &vm->symbols[print_p];
     print->name = ns_str_cstr("print");
     print->fn.ret = ns_type_void;
     ns_array_set_length(print->fn.args, 1);
-    print->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_str}};
+    print->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_str}};
     print->lib = std;
     print->fn.fn = (ns_value){.t = ns_type_ref_fn(print_p)};
 
     // fn open(path: str, mode: str): i32
-    i32 open_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 open_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *open = &vm->symbols[open_p];
     open->name = ns_str_cstr("open");
     open->fn.ret = ns_type_u64;
     ns_array_set_length(open->fn.args, 2);
-    open->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_str}};
-    open->fn.args[1] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_str}};
+    open->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_str}};
+    open->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_str}};
     open->lib = std;
     open->fn.fn = (ns_value){.t = ns_type_ref_fn(open_p)};
 
     // fn write(fd: i32, data: str): i32
-    i32 write_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 write_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *write = &vm->symbols[write_p];
     write->name = ns_str_cstr("write");
     write->fn.ret = ns_type_u64;
     ns_array_set_length(write->fn.args, 2);
-    write->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_u64}};
-    write->fn.args[1] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_str}};
+    write->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_u64}};
+    write->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_str}};
     write->lib = std;
     write->fn.fn = (ns_value){.t = ns_type_ref_fn(write_p)};
 
     // fn read(fd: i32, size: i32): str
-    i32 read_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 read_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *read = &vm->symbols[read_p];
     read->name = ns_str_cstr("read");
     read->fn.ret = ns_type_str;
     ns_array_set_length(read->fn.args, 2);
-    read->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_u64}};
-    read->fn.args[1] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_i32}};
+    read->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_u64}};
+    read->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_i32}};
     read->lib = std;
     read->fn.fn = (ns_value){.t = ns_type_ref_fn(read_p)};
 
     // fn close(fd: i32): nil
-    i32 close_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 close_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *close = &vm->symbols[close_p];
     close->name = ns_str_cstr("close");
     close->fn.ret = ns_type_void;
     ns_array_set_length(close->fn.args, 1);
-    close->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_u64}};
+    close->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_u64}};
     close->lib = std;
     close->fn.fn = (ns_value){.t = ns_type_ref_fn(close_p)};
 
     // fn sqrt(x: f64): f64
-    i32 sqrt_p = ns_vm_push_symbol(vm, (ns_symbol){.type = ns_symbol_fn, .fn = {.ast = ns_ast_nil }, .parsed = true});
+    i32 sqrt_p = ns_vm_push_symbol(vm, (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = ns_ast_nil }, .parsed = true});
     ns_symbol *sqrt = &vm->symbols[sqrt_p];
     sqrt->name = ns_str_cstr("sqrt");
     sqrt->fn.ret = ns_type_f64;
     ns_array_set_length(sqrt->fn.args, 1);
-    sqrt->fn.args[0] = (ns_symbol){.type = ns_symbol_value, .val = {.t = ns_type_f64}};
+    sqrt->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_f64}};
     sqrt->lib = std;
     sqrt->fn.fn = (ns_value){.t = ns_type_ref_fn(sqrt_p)};
 }

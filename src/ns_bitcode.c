@@ -135,7 +135,7 @@ const char* ns_bc_str(ns_str s) {
 
 
 ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t) {
-    switch (ns_type_mask(t)) {
+    switch (t.type) {
     case NS_TYPE_I8:
     case NS_TYPE_U8:
         return ns_bc_type_i8;
@@ -156,7 +156,7 @@ ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t) {
         return ns_bc_type_str;
     case NS_TYPE_FN:
     case NS_TYPE_STRUCT:
-        return bc_ctx->symbols[ns_type_index(t)].fn.ret;
+        return bc_ctx->symbols[t.index].fn.ret;
     default:
         ns_error("bitcode error", "unimplemented type\n");
         break;
@@ -247,7 +247,7 @@ void ns_bc_struct_def(ns_bc_ctx *bc_ctx) {
 
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         ns_symbol r = vm->symbols[i];
-        if (r.type != ns_symbol_struct) continue;
+        if (r.type != NS_SYMBOL_STRUCT) continue;
 
         ns_bc_symbol st_symbol = {.type = NS_BC_STRUCT, .name = r.name};
         ns_bc_type_ref *fields = ns_null;
@@ -271,7 +271,7 @@ void ns_bc_fn_def(ns_bc_ctx *bc_ctx) {
 
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         ns_symbol r = vm->symbols[i];
-        if (r.type != ns_symbol_fn) continue;
+        if (r.type != NS_SYMBOL_FN) continue;
         if (r.lib.len > 0) continue;
         i32 arg_count = ns_array_length(r.fn.args);
     
@@ -383,7 +383,7 @@ ns_bc_value ns_bc_binary_ops(ns_bc_ctx *bc_ctx, ns_bc_value l, ns_bc_value r, ns
     if (ns_type_is_number(l.type.raw)) {
         return ns_bc_binary_ops_number(bc_ctx, l, r, op);
     } else {
-        switch (ns_type_mask(l.type.raw))
+        switch (l.type.raw.type)
         {
         case NS_TYPE_STRING:
             ns_error("bitcode error", "unimplemented string ops\n");
@@ -400,7 +400,7 @@ ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, ns_ast_t n) {
     ns_bc_builder bdr = bc_ctx->builder;
     ns_bc_value l = ns_bc_expr(bc_ctx, bc_ctx->ctx->nodes[n.binary_expr.left]);
     ns_bc_value r = ns_bc_expr(bc_ctx, bc_ctx->ctx->nodes[n.binary_expr.right]);
-    if (ns_type_mask(l.type.raw) == ns_type_mask(r.type.raw)) {
+    if (ns_type_equals(l.type.raw, r.type.raw)) {
         return ns_bc_binary_ops(bc_ctx, l, r, n.binary_expr.op);
     }
 
@@ -478,7 +478,7 @@ ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, ns_ast_t n) {
         ns_ast_t arg = ctx->nodes[next];
         call.args[i] = ns_bc_expr(bc_ctx, arg);
         next = arg.next;
-        if (call.args[i].type.raw != fn_symbol->fn.args[i].val.type.raw) {
+        if (call.args[i].type.type != fn_symbol->fn.args[i].val.type.type) {
             ns_error("bitcode error", "invalid argument type\n");
         }
     }

@@ -4,7 +4,7 @@
 #include <string.h>
 
 ns_str ns_type_name(ns_type t) {
-    switch (ns_type_mask(t)) {
+    switch (t.type) {
     case NS_TYPE_UNKNOWN: return ns_str_null;
     case NS_TYPE_I8: return ns_str_cstr("i8");
     case NS_TYPE_I16: return ns_str_cstr("i16");
@@ -24,8 +24,8 @@ ns_str ns_type_name(ns_type t) {
     }
 }
 
-bool ns_type_is_number(u32 t) {
-    switch (ns_type_mask(t)) {
+bool ns_type_is_number(ns_type t) {
+    switch (t.type) {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
     case NS_TYPE_I32:
@@ -44,18 +44,7 @@ bool ns_type_is_number(u32 t) {
 }
 
 ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s) {
-    ns_type r = t;
-    if (is_ref) r |= NS_TYPE_REF_MASK;
-    r |= ((u64)s << NS_TYPE_STORE_SHIFT);
-    r |= (i << NS_TYPE_INDEX_SHIFT);
-    return r;
-}
-void ns_type_print(ns_type t) {
-    const i8* ref = ns_type_is_ref(t) ? "ref" : "";
-    const i8 *store = ns_type_is_const(t) ? "const" : (ns_type_in_heap(t) ? "heap" : "stack");
-    const u64 i = ns_type_index(t);
-    const ns_str type = ns_type_name(t);
-    printf("[ns_type] %-3s %-4s %-3lu %s\n", ref, store, i, type.data);
+    return (ns_type){.type = t, .index = i, .ref = is_ref, .store = s};
 }
 
 ns_number_type ns_vm_number_type(ns_type t) {

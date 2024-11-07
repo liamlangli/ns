@@ -242,70 +242,60 @@ typedef enum {
     NS_NUMBER_I_AND_U = 6,
 } ns_number_type;
 
-enum {
-    NS_TYPE_INDEX_SHIFT = (u64)16,
-    NS_TYPE_REF_SHIFT = (u64)7,
-    NS_TYPE_STORE_SHIFT = (u64)8,
-
-    NS_TYPE_REF_MASK = (u64)1 << NS_TYPE_REF_SHIFT,
-    NS_TYPE_STORE_MASK = (u64)0xff << NS_TYPE_STORE_SHIFT,
-    NS_TYPE_INDEX_MASK = 0xffffffffffff << NS_TYPE_INDEX_SHIFT,
-    NS_TYPE_ENUM_MASK = 0x7f,
-    NS_TYPE_MASK = 0xff // type enum & ref mask
-};
-
 typedef enum {
-    NS_STORE_CONST = 0,
-    NS_STORE_STACK = (u64)1 << NS_TYPE_STORE_SHIFT,
-    NS_STORE_HEAP = (u64)2 << NS_TYPE_STORE_SHIFT,
+    NS_STORE_CONST = (u8)0,
+    NS_STORE_STACK = (u8)1,
+    NS_STORE_HEAP = (u8)2,
 } ns_store;
 
-#define ns_type_is_ref(t) ((t & NS_TYPE_REF_MASK) != 0)
-#define ns_type_is_const(t) ((u64)NS_STORE_CONST == (t & NS_TYPE_STORE_MASK))
-#define ns_type_in_stack(t) ((u64)NS_STORE_STACK == (t & NS_TYPE_STORE_MASK))
-#define ns_type_in_heap(t) ((u64)NS_STORE_HEAP == (t & NS_TYPE_STORE_MASK))
-#define ns_type_index(t) ((t & NS_TYPE_INDEX_MASK) >> NS_TYPE_INDEX_SHIFT)
-#define ns_type_mask(t) (t & NS_TYPE_MASK)
-#define ns_type_enum(t) (t & NS_TYPE_ENUM_MASK)
-#define ns_type_set_store(t, s) ((t & ~NS_TYPE_STORE_MASK) | (s & NS_TYPE_STORE_MASK))
-#define ns_type_set_enum(t, e) ((t & ~NS_TYPE_ENUM_MASK) | (e & NS_TYPE_ENUM_MASK))
+typedef struct ns_type {
+    u8 ref;
+    u8 store;
+    u16 type;
+    u32 index;
+} ns_type;
 
-typedef u64 ns_type;
+#define ns_type_is_ref(t) (t.ref != (u8)0)
+#define ns_type_is_const(t) (NS_STORE_CONST == t.store)
+#define ns_type_in_stack(t) (NS_STORE_STACK == t.store)
+#define ns_type_in_heap(t) (NS_STORE_HEAP == t.store)
+#define ns_type_index(t) (t.index)
+#define ns_type_set_store(t, s) ((ns_type){.ref = t.ref, .store = s, .type = t.type, .index = t.index})
+#define ns_type_equals(a, b) (a.type == b.type && a.ref == b.ref)
 
-// ns_type(u32) memory layout
-// | 4 bit 0 | 3 bits for ns_store | 1 bit for ref | 48 bits for type index | 8 bits for type enum |
+
+#define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}
+
 ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s);
-void ns_type_print(ns_type t);
 
-#define ns_type_unknown NS_TYPE_UNKNOWN
-#define ns_type_infer   NS_TYPE_INFER
-#define ns_type_void    NS_TYPE_VOID
-#define ns_type_nil     NS_TYPE_NIL
-#define ns_type_bool    NS_TYPE_BOOL
-#define ns_type_str     NS_TYPE_STRING
-#define ns_type_array   NS_TYPE_ARRAY
+#define ns_type_infer   (ns_type){.type = NS_TYPE_INFER}
+#define ns_type_void    (ns_type){.type = NS_TYPE_VOID}
+#define ns_type_nil     (ns_type){.type = NS_TYPE_NIL}
+#define ns_type_bool    (ns_type){.type = NS_TYPE_BOOL}
+#define ns_type_str     (ns_type){.type = NS_TYPE_STRING}
+#define ns_type_array   (ns_type){.type = NS_TYPE_ARRAY}
 
-#define ns_type_i8  NS_TYPE_I8
-#define ns_type_i16 NS_TYPE_I16
-#define ns_type_i32 NS_TYPE_I32
-#define ns_type_i64 NS_TYPE_I64
-#define ns_type_u8  NS_TYPE_U8
-#define ns_type_u16 NS_TYPE_U16
-#define ns_type_u32 NS_TYPE_U32
-#define ns_type_u64 NS_TYPE_U64
-#define ns_type_f32 NS_TYPE_F32
-#define ns_type_f64 NS_TYPE_F64
+#define ns_type_i8  (ns_type){.type = NS_TYPE_I8}
+#define ns_type_i16 (ns_type){.type = NS_TYPE_I16}
+#define ns_type_i32 (ns_type){.type = NS_TYPE_I32}
+#define ns_type_i64 (ns_type){.type = NS_TYPE_I64}
+#define ns_type_u8  (ns_type){.type = NS_TYPE_U8}
+#define ns_type_u16 (ns_type){.type = NS_TYPE_U16}
+#define ns_type_u32 (ns_type){.type = NS_TYPE_U32}
+#define ns_type_u64 (ns_type){.type = NS_TYPE_U64}
+#define ns_type_f32 (ns_type){.type = NS_TYPE_F32}
+#define ns_type_f64 (ns_type){.type = NS_TYPE_F64}
 
 #define ns_type_fn     NS_TYPE_FN
 #define ns_type_struct NS_TYPE_STRUCT
 
-#define ns_type_is(t, tt) (tt == ns_type_enum(t))
+#define ns_type_is(t, tt) (t.type == tt)
 #define ns_type_is_float(t) (ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64))
 #define ns_type_signed(t) (ns_type_is(t, NS_TYPE_I8) || ns_type_is(t, NS_TYPE_I16) || ns_type_is(t, NS_TYPE_I32) || ns_type_is(t, NS_TYPE_I64))
 #define ns_type_unsigned(t) (ns_type_is(t, NS_TYPE_U8) || ns_type_is(t, NS_TYPE_U16) || ns_type_is(t, NS_TYPE_U32) || ns_type_is(t, NS_TYPE_U64))
 #define ns_type_is_unknown(t) (ns_type_is(t, NS_TYPE_UNKNOWN))
 
-bool ns_type_is_number(u32 t);
+bool ns_type_is_number(ns_type t);
 
 typedef struct ns_value {
     ns_type t;  // type
