@@ -39,7 +39,7 @@ u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
 ns_value ns_eval_alloc_value(ns_vm *vm, ns_value n) {
     i32 s = ns_type_size(vm, n.t);
     u64 offset = ns_eval_alloc(vm, s);
-    ns_value ret = (ns_value){.t = ns_type_set_store(n.t, NS_STORE_STACK)};
+    ns_value ret = (ns_value){.t = ns_type_set_store(n.t, NS_STORE_STACK), .o = offset};
     switch (n.t.store)
     {
         case NS_STORE_CONST: {
