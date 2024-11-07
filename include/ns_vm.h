@@ -24,8 +24,8 @@ typedef struct ns_fn_symbol {
 
 typedef struct ns_struct_field {
     ns_str name;
-    i32 o, s; // offset, size
     ns_type t;
+    u64 o, s;
 } ns_struct_field;
 
 typedef struct ns_struct_symbol {
@@ -33,7 +33,7 @@ typedef struct ns_struct_symbol {
     ns_str name;
     ns_struct_field *fields;
     ns_ast_t ast;
-    i32 stride;
+    u64 stride;
 } ns_struct_symbol;
 
 typedef struct ns_scope_symbol {
@@ -84,18 +84,18 @@ typedef struct ns_call {
     ns_symbol *fn;
     ns_value *args;
     ns_value ret;
-    ns_scope *scopes;
+    u32 scope_top;
 } ns_call;
 
 typedef struct ns_vm {
     // parse state
     ns_symbol *symbols;
     i32 parsed_symbol_count;
-
     ns_symbol *call_symbols;
 
     // eval state
     ns_call *call_stack;
+    ns_scope *scope_stack;
     ns_value *globals;
     ns_str *str_list;
     ns_data *data_list;
@@ -117,7 +117,7 @@ ns_number_type ns_vm_number_type(ns_type t);
 i32 ns_vm_push_symbol(ns_vm *vm, ns_symbol r);
 i32 ns_vm_push_string(ns_vm *vm, ns_str s);
 i32 ns_vm_push_data(ns_vm *vm, ns_data d);
-i32 ns_type_size(ns_vm *vm, ns_type t);
+u64 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
@@ -137,6 +137,9 @@ ns_eval_value_def(u64)
 ns_eval_value_def(f32)
 ns_eval_value_def(f64)
 bool ns_eval_bool(ns_vm *vm, ns_value n);
+
+ns_scope *ns_eval_enter_scope(ns_vm *vm);
+ns_scope *ns_eval_exit_scope(ns_vm *vm, ns_call *call);
 
 ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);

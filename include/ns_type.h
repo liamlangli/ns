@@ -58,6 +58,8 @@ typedef unsigned long u64;
 typedef float f32;
 typedef double f64;
 
+u64 ns_align(u64 offset, u64 stride);
+
 // ns_array
 typedef struct ns_array_header {
     size_t len;
@@ -261,8 +263,7 @@ typedef struct ns_type {
 #define ns_type_in_heap(t) (NS_STORE_HEAP == t.store)
 #define ns_type_index(t) (t.index)
 #define ns_type_set_store(t, s) ((ns_type){.ref = t.ref, .store = s, .type = t.type, .index = t.index})
-#define ns_type_equals(a, b) (a.type == b.type)
-
+#define ns_type_equals(a, b) (a.type == b.type && a.index == b.index)
 
 #define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}
 
@@ -320,5 +321,3 @@ typedef struct ns_value {
 #define ns_is_nil(v)    ns_type_is(v.t, NS_TYPE_NIL)
 #define ns_true         ((ns_value){.t = ns_type_bool, .b = true})
 #define ns_false        ((ns_value){.t = ns_type_bool, .b = false})
-
-#define ns_align 4

@@ -1,5 +1,5 @@
 # FLAGS
-MAKEFLAGS += --no-print-directory
+MAKEFLAGS += --no-print-directory -j
 
 # PLATFORNM
 NS_SUFFIX =

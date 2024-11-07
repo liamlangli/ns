@@ -48,7 +48,7 @@ ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
     return ns_type_unknown;
 }
 
-i32 ns_type_size(ns_vm *vm, ns_type t) {
+u64 ns_type_size(ns_vm *vm, ns_type t) {
     switch (t.type)
     {
     case NS_TYPE_BOOL:
@@ -360,12 +360,12 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_type t = ns_vm_parse_type(vm, ctx->nodes[field->arg.type].type_label.name, true);
             i32 size = ns_type_size(vm, t);
             // std layout
-            offset = (offset + size - 1) & ~(size - 1);
+            offset = ns_align(offset, size);
             ns_struct_field f = (ns_struct_field){.name = field->arg.name.val, .t = t, .o = offset, .s = size};
             offset += size;
             st.st.fields[i] = f;
         }
-        st.st.stride = (offset + 3) & ~3; // 4 bytes align
+        st.st.stride = offset; // 4 bytes align
         ns_vm_push_symbol(vm, st);
     }
 }

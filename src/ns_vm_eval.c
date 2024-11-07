@@ -10,9 +10,6 @@ void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
-void ns_eval_enter_scope(ns_vm *vm, ns_call *call);
-void ns_eval_exit_scope(ns_vm *vm, ns_call *call);
-
 ns_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, ns_token_t op);
 ns_value ns_eval_binary_ops_number(ns_vm *vm, ns_value l, ns_value r, ns_token_t op);
 ns_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_value l, ns_value r, ns_token_t op);
@@ -33,7 +30,7 @@ ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 
 u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
     u64 offset = ns_array_length(vm->stack);
-    i32 align = ns_min(ns_align, stride);
+    u64 align = ns_min(sizeof(void*), (u64)stride);
     if (align > 0) offset = (offset + (align - 1)) & ~(align - 1);
     ns_array_set_length(vm->stack, offset + stride);
     return offset; // leading 4 bytes for type size
@@ -41,12 +38,31 @@ u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
 
 ns_value ns_eval_alloc_value(ns_vm *vm, ns_value n) {
     i32 s = ns_type_size(vm, n.t);
-    i32 offset = ns_eval_alloc(vm, s);
+    u64 offset = ns_eval_alloc(vm, s);
     ns_value ret = (ns_value){.t = ns_type_set_store(n.t, NS_STORE_STACK)};
-    if (ns_type_is_const(n.t) || ns_type_in_heap(n.t)) {
-        ret.o = n.o;
-    } else {
-        memcpy(&vm->stack[offset], &vm->stack[n.o], s);
+    switch (n.t.store)
+    {
+        case NS_STORE_CONST: {
+            switch (n.t.type)
+            {
+            case NS_TYPE_I8: *(i8*)&vm->stack[offset] = n.i8; break;
+            case NS_TYPE_I16: *(i16*)&vm->stack[offset] = n.i16; break;
+            case NS_TYPE_I32: *(i32*)&vm->stack[offset] = n.i32; break;
+            case NS_TYPE_I64: *(i64*)&vm->stack[offset] = n.i64; break;
+            case NS_TYPE_U8: *(u8*)&vm->stack[offset] = n.u8; break;
+            case NS_TYPE_U16: *(u16*)&vm->stack[offset] = n.u16; break;
+            case NS_TYPE_U32: *(u32*)&vm->stack[offset] = n.u32; break;
+            case NS_TYPE_U64: *(u64*)&vm->stack[offset] = n.u64; break;
+            case NS_TYPE_F32: *(f32*)&vm->stack[offset] = n.f32; break;
+            case NS_TYPE_F64: *(f64*)&vm->stack[offset] = n.f64; break;
+            case NS_TYPE_BOOL: *(bool*)&vm->stack[offset] = n.b; break;
+            default: break;
+            }
+            
+        } break;
+        case NS_STORE_STACK: memcpy(&vm->stack[offset], &vm->stack[n.o], s); break;
+        case NS_STORE_HEAP: memcpy(&vm->stack[offset], (void*)n.o, s); break;
+    default: ns_error("eval error", "invalid store type.");
     }
     return ret;
 }
@@ -60,8 +76,8 @@ ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
             }
         }
 
-        for (i32 i = 0, l = ns_array_length(call->scopes); i < l; ++i) {
-            ns_scope* scope = &call->scopes[i];
+        for (i32 i = ns_array_length(vm->scope_stack), l = call->scope_top; i >= l; --i) {
+            ns_scope* scope = &vm->scope_stack[i];
             for (i32 j = 0, k = ns_array_length(scope->vars); j < k; ++j) {
                 if (ns_str_equals(scope->vars[j].name, name)) {
                     return scope->vars[j].val;
@@ -88,14 +104,17 @@ ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
     return ns_nil;
 }
 
-void ns_eval_enter_scope(ns_vm *vm, ns_call *call) {
+ns_scope* ns_eval_enter_scope(ns_vm *vm) {
     ns_scope scope = (ns_scope){.vars = ns_null, .stack_top = ns_array_length(vm->stack)};
-    ns_array_push(call->scopes, scope);
+    ns_array_push(vm->scope_stack, scope);
+    return ns_array_last(vm->scope_stack);
 }
 
-void ns_eval_exit_scope(ns_vm *vm, ns_call *call) {
-    ns_scope scope = ns_array_pop(call->scopes);
-    ns_array_set_length(vm->stack, scope.stack_top);
+ns_scope* ns_eval_exit_scope(ns_vm *vm, ns_call *call) {
+    ns_scope *scope = ns_array_last(vm->scope_stack);
+    ns_array_set_length(vm->stack, call->scope_top);
+    ns_array_pop(vm->scope_stack);
+    return scope;
 }
 
 ns_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
@@ -124,11 +143,11 @@ ns_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_valu
     ns_str fn_name = ns_ops_override_name(l_name, r_name, op);
     ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
     if (!fn) ns_nil;
-    ns_call call = (ns_call){.fn = fn, .args = ns_null, .scopes = ns_null};
+    ns_call call = (ns_call){.fn = fn, .args = ns_null, .scope_top = ns_array_length(vm->scope_stack)};
     ns_array_set_length(call.args, 2);
     call.args[0] = l;
     call.args[1] = r;
-    ns_eval_enter_scope(vm, &call);
+    ns_eval_enter_scope(vm);
     ns_array_push(vm->call_stack, call);
     ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast.ops_fn_def.body]);
     ns_eval_exit_scope(vm, &call);
@@ -160,8 +179,8 @@ ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) {\
         case NS_TYPE_U16: ret.u16 = ns_eval_number_u16(vm, l) op ns_eval_number_u16(vm, r); break;\
         case NS_TYPE_U32: ret.u32 = ns_eval_number_u32(vm, l) op ns_eval_number_u32(vm, r); break;\
         case NS_TYPE_U64: ret.u64 = ns_eval_number_u64(vm, l) op ns_eval_number_u64(vm, r); break;\
-        case NS_TYPE_F32: ret.f32 = fmod(ns_eval_number_f32(vm, l), ns_eval_number_f32(vm, r)); break;\
-        case NS_TYPE_F64: ret.f64 = fmod(ns_eval_number_f64(vm, l), ns_eval_number_f64(vm, r)); break;\
+        case NS_TYPE_F32: ret.f32 = ns_eval_number_f32(vm, l) op ns_eval_number_f32(vm, r); break;\
+        case NS_TYPE_F64: ret.f64 = ns_eval_number_f64(vm, l) op ns_eval_number_f64(vm, r); break;\
         default: break;\
     }\
     return ret;\
@@ -190,14 +209,14 @@ ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
 ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
     ns_value ret = (ns_value){.t = ns_type_set_store(l.t, NS_STORE_CONST) };\
     switch (l.t.type) {\
-        case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) % ns_eval_number_i8(vm, r); break;\
-        case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) % ns_eval_number_i16(vm, r); break;\
-        case NS_TYPE_I32: ret.i32 = ns_eval_number_i32(vm, l) % ns_eval_number_i32(vm, r); break;\
-        case NS_TYPE_I64: ret.i64 = ns_eval_number_i64(vm, l) % ns_eval_number_i64(vm, r); break;\
-        case NS_TYPE_U8:  ret.u8 = ns_eval_number_u8(vm, l) % ns_eval_number_u8(vm, r); break;\
-        case NS_TYPE_U16: ret.u16 = ns_eval_number_u16(vm, l) % ns_eval_number_u16(vm, r); break;\
-        case NS_TYPE_U32: ret.u32 = ns_eval_number_u32(vm, l) % ns_eval_number_u32(vm, r); break;\
-        case NS_TYPE_U64: ret.u64 = ns_eval_number_u64(vm, l) % ns_eval_number_u64(vm, r); break;\
+        case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) op ns_eval_number_i8(vm, r); break;\
+        case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) op ns_eval_number_i16(vm, r); break;\
+        case NS_TYPE_I32: ret.i32 = ns_eval_number_i32(vm, l) op ns_eval_number_i32(vm, r); break;\
+        case NS_TYPE_I64: ret.i64 = ns_eval_number_i64(vm, l) op ns_eval_number_i64(vm, r); break;\
+        case NS_TYPE_U8:  ret.u8 = ns_eval_number_u8(vm, l) op ns_eval_number_u8(vm, r); break;\
+        case NS_TYPE_U16: ret.u16 = ns_eval_number_u16(vm, l) op ns_eval_number_u16(vm, r); break;\
+        case NS_TYPE_U32: ret.u32 = ns_eval_number_u32(vm, l) op ns_eval_number_u32(vm, r); break;\
+        case NS_TYPE_U64: ret.u64 = ns_eval_number_u64(vm, l) op ns_eval_number_u64(vm, r); break;\
         default: break;\
     }\
     return ret;\
@@ -256,7 +275,7 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     }
 
     ns_symbol *fn = &vm->symbols[ns_type_index(callee.t)];
-    ns_call call = (ns_call){.fn = fn, .args = ns_null, .scopes = ns_null };
+    ns_call call = (ns_call){.fn = fn, .args = ns_null, .scope_top = ns_array_length(vm->scope_stack)};
     ns_array_set_length(call.args, ns_array_length(fn->fn.args));
 
     i32 next = n.call_expr.arg;
@@ -267,7 +286,7 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         call.args[i] = v;
     }
 
-    ns_eval_enter_scope(vm, &call);
+    ns_eval_enter_scope(vm);
     ns_array_push(vm->call_stack, call);
     if (ns_str_equals_STR(fn->lib, "std")) {
         ns_vm_eval_std(vm);
@@ -307,7 +326,7 @@ void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value b = ns_eval_expr(vm, ctx, ctx->nodes[n.if_stmt.condition]);
     ns_call *call = ns_array_last(vm->call_stack);
     ns_ast_t body = ctx->nodes[ns_eval_bool(vm, b) ? n.if_stmt.body : n.if_stmt.else_body];
-    ns_eval_enter_scope(vm, call);
+    ns_eval_enter_scope(vm);
     ns_eval_compound_stmt(vm, ctx, body);
     ns_eval_exit_scope(vm, call);
 }
@@ -316,13 +335,12 @@ void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_ast_t gen = ctx->nodes[n.for_stmt.generator];
 
     ns_call *call = ns_array_last(vm->call_stack);
-    ns_eval_enter_scope(vm, call);
-
+    ns_eval_enter_scope(vm);
     if (gen.gen_expr.range) {
         ns_value from = ns_eval_expr(vm, ctx, ctx->nodes[gen.gen_expr.from]);
         ns_value to = ns_eval_expr(vm, ctx, ctx->nodes[gen.gen_expr.to]);
         ns_str name = gen.gen_expr.name.val;
-        ns_scope *scope = ns_array_last(call->scopes);
+        ns_scope *scope = ns_array_last(vm->scope_stack);
         ns_array_push(scope->vars, ((ns_symbol){.type = NS_SYMBOL_VALUE, .name = name, .val = { .t = ns_type_i32 }, .parsed = true}));
         i32 from_i = ns_eval_number_i32(vm, from);
         i32 to_i = ns_eval_number_i32(vm, to);
@@ -384,12 +402,12 @@ ns_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r,
     ns_array_set_length(call.args, 2);
     call.args[0] = l;
     call.args[1] = r;
-    ns_eval_enter_scope(vm, &call);
+    ns_eval_enter_scope(vm);
     ns_array_push(vm->call_stack, call);
     ns_eval_compound_stmt(vm, ctx, ctx->nodes[fn->fn.ast.ops_fn_def.body]);
-    ns_eval_exit_scope(vm, &call);
+    ns_scope *scope = ns_eval_exit_scope(vm, &call);
     call = ns_array_pop(vm->call_stack);
-    ns_array_set_length(vm->stack, call.scopes[0].stack_top);
+    ns_array_set_length(vm->stack, scope->stack_top);
     return call.ret;
 }
 
@@ -514,6 +532,8 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     i8* data = &vm->stack[o];
     memset(data, 0, stride);
 
+    u64 offset = o + stride;
+
     ns_ast_t expr = n;
     for (i32 i = 0, l = n.desig_expr.count; i < l; i++) {
         expr = ctx->nodes[expr.next];
@@ -567,6 +587,7 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
         }
     }
 
+    ns_array_set_length(vm->stack, offset);
     return (ns_value){.t = ns_type_set_store(st->val.t, NS_STORE_STACK), .o = o};
 }
 
@@ -605,7 +626,11 @@ ns_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_value st = ns_eval_expr(vm, ctx, ctx->nodes[n.member_expr.left]);
 
     ns_ast_t field = ctx->nodes[n.next];
+    if (field.type == NS_AST_MEMBER_EXPR) {
+        return ns_eval_member_expr(vm, ctx, field);
+    }
 
+    // primary expr
     ns_str name = field.primary_expr.token.val;
     ns_symbol *st_type = &vm->symbols[ns_type_index(st.t)];
     if (st_type->type != NS_SYMBOL_STRUCT) {
@@ -688,21 +713,16 @@ ns_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
     ns_symbol *val = ns_vm_find_symbol(vm, n.var_def.name.val);
     ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
-    if (ns_type_is_const(v.t))
-        v = ns_eval_alloc_value(vm, v);
-    val->val = v;
+    val->val = ns_eval_alloc_value(vm, v);
     return v;
 }
 
 ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n) {
-    ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
-    ns_scope *scope = &call->scopes[ns_array_length(call->scopes) - 1];
-    if (ns_null == scope) ns_vm_error(ctx->filename, n.state, "vm error", "invalid local var def");
+    ns_scope *scope = ns_array_last(vm->scope_stack);
     ns_value v = ns_eval_expr(vm, ctx, ctx->nodes[n.var_def.expr]);
     if (ns_type_is(v.t, NS_TYPE_NIL)) ns_vm_error(ctx->filename, n.state, "eval error", "nil value can't be assigned.");
     ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n.var_def.name.val };
-    if (ns_type_is_const(v.t)) v = ns_eval_alloc_value(vm, v);
-    symbol.val = v;
+    symbol.val = ns_eval_alloc_value(vm, v);
     ns_array_push(scope->vars, symbol);
     return v;
 }
@@ -726,13 +746,14 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
 
     ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
     if (ns_null != main_fn) {
-        ns_call call = (ns_call){.fn = main_fn, .args = ns_null, .scopes = ns_null };
-        ns_array_push(call.scopes, ((ns_scope){.vars = ns_null, .stack_top = ns_array_length(vm->stack)}));
+        ns_call call = (ns_call){.fn = main_fn, .args = ns_null, .scope_top = ns_array_length(vm->scope_stack)};
+        ns_eval_enter_scope(vm);
         ns_array_set_length(call.args, 0);
         ns_array_push(vm->call_stack, call);
         ns_eval_compound_stmt(vm, &ctx, ctx.nodes[main_fn->fn.ast.fn_def.body]);
         ns_array_pop(vm->call_stack);
-        ns_array_set_length(vm->stack, call.scopes[0].stack_top);
+        ns_scope *scope = ns_eval_exit_scope(vm, &call);
+        ns_array_set_length(vm->stack, scope->stack_top);
         return ns_nil;
     }
 

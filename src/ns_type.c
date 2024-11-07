@@ -3,6 +3,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+u64 ns_align(u64 offset, u64 stride) {
+    u64 align = ns_min(sizeof(void *), stride);
+    if (align > 0) offset = (offset + (align - 1)) & ~(align - 1);
+    return offset;
+}
+
 ns_str ns_type_name(ns_type t) {
     switch (t.type) {
     case NS_TYPE_UNKNOWN: return ns_str_null;
