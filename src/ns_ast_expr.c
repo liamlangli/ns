@@ -98,6 +98,11 @@ bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
     }
 
     i32 len = ns_array_length(ctx->stack);
+    if (len == 1) {
+        ctx->current = ns_array_pop(ctx->stack);
+        return true;
+    }
+
     for (i32 i = scope->stack_top; i < len; ++i) {
         i32 o = ctx->stack[i];
         if (ns_parse_is_operand(ctx->nodes[o])) {
@@ -374,6 +379,7 @@ bool ns_parse_expr(ns_ast_ctx *ctx) {
                     ns_parse_stack_push_operand(ctx, ctx->current);
                     break;
                 } else {
+                    ns_parse_stack_push_operand(ctx, operand);
                     goto rewind;
                 }
             }
