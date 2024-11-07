@@ -44,6 +44,7 @@ bool ns_parse_is_operand(ns_ast_t n) {
     case NS_AST_CAST_EXPR:
     case NS_AST_INDEX_EXPR:
     case NS_AST_UNARY_EXPR:
+    case NS_AST_DESIG_EXPR:
     case NS_AST_EXPR:
         return true;
     default:

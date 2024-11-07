@@ -1,6 +1,3 @@
 fn add() {
-    let a = c()
-    if a.b < 0.0 {
-        return 1.0
-    }
+    a.b = simd3{}
 }
