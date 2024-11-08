@@ -82,6 +82,7 @@ typedef struct ns_ast_var_def {
     ns_token_t name;
     i32 expr;
     i32 type;
+    i32 type_size;
 } ns_ast_var_def;
 
 typedef struct ns_ast_struct_def {

@@ -84,7 +84,7 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
             ctx.current = -1;
 
             ns_parse_expr(&ctx);
-            ns_value v = ns_eval_expr(vm, &ctx, ctx.nodes[ctx.current]);
+            ns_value v = ns_eval_expr(vm, &ctx, ctx.current);
             ns_str s = ns_fmt_value(vm, v);
             ns_str_append(&ret, s);
             ns_str_free(s);

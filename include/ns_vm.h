@@ -120,7 +120,6 @@ i32 ns_vm_push_data(ns_vm *vm, ns_data d);
 u64 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
-ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
 ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
 
@@ -141,9 +140,8 @@ bool ns_eval_bool(ns_vm *vm, ns_value n);
 ns_scope *ns_eval_enter_scope(ns_vm *vm);
 ns_scope *ns_eval_exit_scope(ns_vm *vm, ns_call *call);
 
-ns_value ns_eval_primary_expr(ns_vm *vm, ns_ast_t n);
-ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
-ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t n);
+ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // vm std

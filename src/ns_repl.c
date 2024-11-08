@@ -39,28 +39,6 @@ void ns_repl(ns_vm* vm) {
         ns_ast_parse(&ctx, line, filename);
         ns_vm_parse(vm, &ctx);
 
-        for (i32 i = ctx.section_begin; i < ctx.section_end; ++i) {
-            ns_ast_t n = ctx.nodes[ctx.sections[i++]];
-            switch (n.type) {
-                case NS_AST_PRIMARY_EXPR: {
-                    ns_value v = ns_eval_primary_expr(vm, n);
-                    if (!ns_type_is(v.t, NS_TYPE_NIL)) {
-                        ns_str s = ns_fmt_value(vm, v);
-                        printf("   [" ns_color_log "%s" ns_color_nil "]\n", s.data);
-                        ns_str_free(s);
-                    }
-                } break;
-                case NS_AST_VAR_DEF:
-                    ns_eval_var_def(vm, &ctx, n);
-                    break;
-                case NS_AST_CALL_EXPR:
-                case NS_AST_EXPR:
-                    ns_eval_expr(vm, &ctx, n);
-                    break;
-                default:
-                    break;
-            }
-        }
         ns_repl_free_line(line);
     }
     ne_exit_safe("ns", "exit repl\n");
