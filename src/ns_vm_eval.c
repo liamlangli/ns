@@ -3,6 +3,7 @@
 #include <math.h>
 
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
+ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
 void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -35,31 +36,33 @@ u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
     return offset; // leading 4 bytes for type size
 }
 
-void ns_eval_copy(ns_vm *vm, u64 offset, i32 size, ns_value n) {
-    switch (n.t.store)
+ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
+    u64 offset = dst.o;
+    switch (src.t.store)
     {
     case NS_STORE_CONST: {
-        switch (n.t.type)
+        switch (src.t.type)
         {
-        case NS_TYPE_I8: *(i8*)&vm->stack[offset] = n.i8; break;
-        case NS_TYPE_I16: *(i16*)&vm->stack[offset] = n.i16; break;
-        case NS_TYPE_I32: *(i32*)&vm->stack[offset] = n.i32; break;
-        case NS_TYPE_I64: *(i64*)&vm->stack[offset] = n.i64; break;
-        case NS_TYPE_U8: *(u8*)&vm->stack[offset] = n.u8; break;
-        case NS_TYPE_U16: *(u16*)&vm->stack[offset] = n.u16; break;
-        case NS_TYPE_U32: *(u32*)&vm->stack[offset] = n.u32; break;
-        case NS_TYPE_U64: *(u64*)&vm->stack[offset] = n.u64; break;
-        case NS_TYPE_F32: *(f32*)&vm->stack[offset] = n.f32; break;
-        case NS_TYPE_F64: *(f64*)&vm->stack[offset] = n.f64; break;
-        case NS_TYPE_BOOL: *(bool*)&vm->stack[offset] = n.b; break;
+        case NS_TYPE_I8: *(i8*)&vm->stack[offset] = src.i8; break;
+        case NS_TYPE_I16: *(i16*)&vm->stack[offset] = src.i16; break;
+        case NS_TYPE_I32: *(i32*)&vm->stack[offset] = src.i32; break;
+        case NS_TYPE_I64: *(i64*)&vm->stack[offset] = src.i64; break;
+        case NS_TYPE_U8: *(u8*)&vm->stack[offset] = src.u8; break;
+        case NS_TYPE_U16: *(u16*)&vm->stack[offset] = src.u16; break;
+        case NS_TYPE_U32: *(u32*)&vm->stack[offset] = src.u32; break;
+        case NS_TYPE_U64: *(u64*)&vm->stack[offset] = src.u64; break;
+        case NS_TYPE_F32: *(f32*)&vm->stack[offset] = src.f32; break;
+        case NS_TYPE_F64: *(f64*)&vm->stack[offset] = src.f64; break;
+        case NS_TYPE_BOOL: *(bool*)&vm->stack[offset] = src.b; break;
         default: break;
         }
         
     } break;
-    case NS_STORE_STACK: memcpy(&vm->stack[offset], &vm->stack[n.o], size); break;
-    case NS_STORE_HEAP: memcpy(&vm->stack[offset], (void*)n.o, size); break;
+    case NS_STORE_STACK: memcpy(&vm->stack[offset], &vm->stack[src.o], size); break;
+    case NS_STORE_HEAP: memcpy(&vm->stack[offset], (void*)src.o, size); break;
     default: ns_error("eval error", "invalid store type.");
     }
+    return dst;
 }
 
 ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
@@ -727,22 +730,36 @@ ns_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_symbol *val = ns_vm_find_symbol(vm, n->var_def.name.val);
-    u64 offset = ns_eval_alloc(vm, n->var_def.type_size);
+
+    // eval & store value
+    i32 size = n->var_def.type_size;
+    u64 offset = ns_eval_alloc(vm, size);
+    ns_value ret = (ns_value){.o = offset};
     ns_value v = ns_eval_expr(vm, ctx, n->var_def.expr);
-    //TODO: check type match & copy value to stack
-    return v;
+    ret.t = ns_type_set_store(v.t, NS_STORE_STACK);
+    ns_eval_copy(vm, ret, v, size);
+    ns_array_set_length(vm->stack, offset + size);
+
+    val->val = ret;
+    return ret;
 }
 
 ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_scope *scope = ns_array_last(vm->scope_stack);
     ns_ast_t *n = &ctx->nodes[i];
-    u32 offset = ns_eval_alloc(vm, n->var_def.type_size);
-    ns_value v = ns_eval_expr(vm, ctx, n->var_def.expr);
 
-    ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val };
-    //TODO: check type match & copy value to stack
+    // eval & store value
+    i32 size = n->var_def.type_size;
+    u64 offset = ns_eval_alloc(vm, size);
+    ns_value ret = (ns_value){.o = offset};
+    ns_value v = ns_eval_expr(vm, ctx, n->var_def.expr);
+    ret.t = ns_type_set_store(v.t, NS_STORE_STACK);
+    ns_eval_copy(vm, ret, v, size);
+    ns_array_set_length(vm->stack, offset + size);
+
+    ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val, .val = ret, .parsed = true};
     ns_array_push(scope->vars, symbol);
-    return v;
+    return ret;
 }
 
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
