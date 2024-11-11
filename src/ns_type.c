@@ -60,10 +60,8 @@ ns_number_type ns_vm_number_type(ns_type t) {
 }
 
 void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap) {
-    ns_array_header h = {0};
     void *b;
     size_t min_len = ns_array_length(a) + add_count;
-    (void) sizeof(h);
 
     // compute new capacity
     if (min_len > min_cap) min_cap = min_len;
