@@ -59,6 +59,14 @@ ns_number_type ns_vm_number_type(ns_type t) {
     return NS_NUMBER_U;
 }
 
+#ifdef NS_DEBUG
+typedef struct ns_allocator {
+    u64 alloc_op, free_op;
+    u64 alloc, free;
+} ns_allocator;
+static ns_allocator _ns_allocator = {0};
+#endif
+
 void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap) {
     void *b;
     size_t min_len = ns_array_length(a) + add_count;
@@ -70,7 +78,16 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
     else if (min_cap < 8) min_cap = 8;
 
     b = malloc(elem_size * min_cap + sizeof(ns_array_header));
+#ifdef NS_DEBUG
+    _ns_allocator.alloc_op++;
+    _ns_allocator.alloc += elem_size * min_cap + sizeof(ns_array_header);
+#endif
+
     if (a) {
+#ifdef NS_DEBUG
+        _ns_allocator.free_op++;
+        _ns_allocator.free += ns_array_capacity(a) * elem_size + sizeof(ns_array_header);
+#endif
         memcpy(b, ns_array_header(a), elem_size * ns_array_length(a) + sizeof(ns_array_header));
         free(ns_array_header(a));
     }
@@ -81,6 +98,12 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
     }
     ns_array_header(b)->cap = min_cap;
     return b;
+}
+
+void ns_array_status() {
+#ifdef NS_DEBUG
+    ns_info("ns_array", "alloc_op %lu, free_op %lu, alloc %lu, free %lu\n", _ns_allocator.alloc_op, _ns_allocator.free_op, _ns_allocator.alloc, _ns_allocator.free);
+#endif
 }
 
 i32 ns_str_to_i32(ns_str s) {

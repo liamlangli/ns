@@ -85,6 +85,8 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 #define ns_array_last(a) (&(a)[ns_array_length(a) - 1])
 #define ns_array_last_safe(a) ((a) ? ns_array_last(a) : 0)
 
+void ns_array_status();
+
 // ns_str
 typedef struct ns_str {
     i8 *data;

@@ -90,8 +90,9 @@ ns_value ns_vm_eval_std(ns_vm *vm) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         ns_value data = vm->symbol_stack[call->arg_offset + 1].val;
         ns_str s = vm->str_list[data.o];
+        ns_str ss = ns_str_unescape(s);
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
-        i32 len = fwrite(s.data, s.len, 1, f);
+        i32 len = fwrite(ss.data, ss.len, 1, f);
         return call->ret = (ns_value){.t = ns_type_u64, .o = len};
     } else if (ns_str_equals_STR(call->fn->name, "read")) {
         // ns_value fd = call->args[0];

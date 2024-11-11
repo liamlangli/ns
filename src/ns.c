@@ -157,5 +157,7 @@ int main(int argc, char **argv) {
             ns_exec_eval(option.filename);
         }
     }
+
+    ns_array_status();
     return 0;
 }
