@@ -76,19 +76,19 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
 ns_value ns_vm_eval_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
     if (ns_str_equals_STR(call->fn->name, "print")) {
-        ns_value arg = vm->symbols[call->arg_offset].val;
+        ns_value arg = vm->symbol_stack[call->arg_offset].val;
         ns_str s = ns_fmt_eval(vm, vm->str_list[arg.o]);
         ns_str_printf(s);
         ns_str_free(s);
         return call->ret = ns_nil;
     } else if (ns_str_equals_STR(call->fn->name, "open")) {
-        ns_value path = vm->symbols[call->arg_offset].val;
-        ns_value mode = vm->symbols[call->arg_offset + 1].val;
+        ns_value path = vm->symbol_stack[call->arg_offset].val;
+        ns_value mode = vm->symbol_stack[call->arg_offset + 1].val;
         u64 fd = (u64)fopen(vm->str_list[path.o].data, vm->str_list[mode.o].data);
         return call->ret = (ns_value){.t = ns_type_u64, .o = fd};
     } else if (ns_str_equals_STR(call->fn->name, "write")) {
-        ns_value fd = vm->symbols[call->arg_offset].val;
-        ns_value data = vm->symbols[call->arg_offset + 1].val;
+        ns_value fd = vm->symbol_stack[call->arg_offset].val;
+        ns_value data = vm->symbol_stack[call->arg_offset + 1].val;
         ns_str s = vm->str_list[data.o];
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
         i32 len = fwrite(s.data, s.len, 1, f);
@@ -103,11 +103,11 @@ ns_value ns_vm_eval_std(ns_vm *vm) {
         // return (ns_value){.t = ns_type_str, .o = ns_array_push(vm->str_list, s)};
         return ns_nil;
     } else if (ns_str_equals_STR(call->fn->name, "close")) {
-        ns_value fd = vm->symbols[call->arg_offset].val;
+        ns_value fd = vm->symbol_stack[call->arg_offset].val;
         fclose((FILE*)fd.o);
         return call->ret = ns_nil;
     } else if (ns_str_equals_STR(call->fn->name, "sqrt")) {
-        ns_value x = vm->symbols[call->arg_offset].val;
+        ns_value x = vm->symbol_stack[call->arg_offset].val;
         return call->ret = (ns_value){.t = ns_type_f64, .f64 = sqrt(x.f64)};
     }
 
