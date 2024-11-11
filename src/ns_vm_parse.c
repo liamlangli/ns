@@ -839,6 +839,7 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
         case NS_AST_OPS_FN_DEF:
         case NS_AST_STRUCT_DEF:
         case NS_AST_VAR_DEF:
+        case NS_AST_PROGRAM:
             break; // already parsed
         default: {
             ns_str type = ns_ast_type_to_string(n->type);
