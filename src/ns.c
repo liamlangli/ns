@@ -147,6 +147,7 @@ int main(int argc, char **argv) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {
         ns_exec_ast(option.filename);
+        ns_array_status();
     } else if (option.bitcode_only) {
         ns_exec_bitcode(option.filename, option.output);
     } else {
@@ -157,7 +158,5 @@ int main(int argc, char **argv) {
             ns_exec_eval(option.filename);
         }
     }
-
-    ns_array_status();
     return 0;
 }

@@ -11,6 +11,7 @@ typedef enum {
     NS_AST_PROGRAM,
 
     NS_AST_TYPE_LABEL,
+    NS_AST_STR_FMT,
 
     NS_AST_ARG_DEF,
     NS_AST_FN_DEF,
@@ -52,6 +53,10 @@ typedef struct ns_ast_type_label {
     bool is_ref;
     ns_token_t name;
 } ns_ast_type_label;
+
+typedef struct ns_ast_str_fmt {
+    i32 expr_count;
+} ns_ast_str_fmt;
 
 typedef struct ns_ast_arg {
     ns_token_t name;
@@ -193,6 +198,7 @@ typedef struct ns_ast_t {
     ns_ast_state state;
     union {
         ns_ast_type_label type_label;
+        ns_ast_str_fmt str_fmt;
 
         ns_ast_arg arg;
         ns_ast_fn_def fn_def;
