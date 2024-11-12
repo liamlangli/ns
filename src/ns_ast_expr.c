@@ -152,9 +152,48 @@ bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
 }
 
 bool ns_parse_str_format(ns_ast_ctx *ctx) {
-    ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
+    ns_ast_state fmt_state = ns_save_state(ctx);
+
+    ns_str fmt = ctx->token.val;
+    ns_ast_t n = {.type = NS_AST_STR_FMT, .str_fmt = {.expr_count = 0, .fmt = fmt}};
+    ns_ast_state state = (ns_ast_state){.f = ctx->last_f, .l = ctx->token.line, .o = ctx->last_f - ctx->token.line_start};
+
     // parse format string
+    ns_ast_t *expr = &n;
+    i32 i = 0;
+    while (i < fmt.len) {
+        if (fmt.data[i] == '{' && (i == 0 || (i > 0 && fmt.data[i - 1] != '\\'))) {
+            i32 start = ++i;
+            while (i < fmt.len && fmt.data[i] != '}') {
+                i++;
+            }
+
+            if (i == fmt.len) {
+                ns_ast_error(ctx, "syntax error", "missing '}'.");
+                return false;
+            }
+
+            ns_ast_state expr_state = (ns_ast_state){.f = state.f + start + 1, .l = state.l, .o = state.o + start + 1};
+            ns_restore_state(ctx, expr_state);
+            if (ns_parse_expr(ctx)) {
+                n.str_fmt.expr_count++;
+                expr->next = ctx->current;
+                expr = &ctx->nodes[ctx->current];
+            } else {
+                ns_ast_error(ctx, "syntax error", "expected expression.");
+                return false;
+            }
+        } else {
+            i++;
+        }
+    }
+    if (n.str_fmt.expr_count == 0) {
+        n = (ns_ast_t){.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
+        return true;
+    }
+
     ns_ast_push(ctx, n);
+    ns_restore_state(ctx, fmt_state);
     return true;
 }
 
@@ -169,7 +208,9 @@ bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
             ns_ast_push(ctx, n);
             return true;
         } break;
-        case NS_TOKEN_STR_FORMAT: return ns_parse_str_format(ctx);
+        case NS_TOKEN_STR_FORMAT: {
+            return ns_parse_str_format(ctx);
+        } break;
         case NS_TOKEN_IDENTIFIER: {
             ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
             ns_ast_push(ctx, n);
@@ -314,8 +355,12 @@ bool ns_parse_expr(ns_ast_ctx *ctx) {
         case NS_TOKEN_FLT_LITERAL:
         case NS_TOKEN_STR_FORMAT:
         case NS_TOKEN_STR_LITERAL: {
-            ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
-            ns_parse_stack_push_operand(ctx, ns_ast_push(ctx, n));
+            ns_restore_state(ctx, state);
+            if (ns_parse_primary_expr(ctx)) {
+                ns_parse_stack_push_operand(ctx, ctx->current);
+            } else {
+                ns_ast_error(ctx, "syntax error", "expected primary expression");
+            }
         } break;
 
         case NS_TOKEN_ASSIGN:

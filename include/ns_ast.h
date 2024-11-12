@@ -55,6 +55,7 @@ typedef struct ns_ast_type_label {
 } ns_ast_type_label;
 
 typedef struct ns_ast_str_fmt {
+    ns_str fmt;
     i32 expr_count;
 } ns_ast_str_fmt;
 

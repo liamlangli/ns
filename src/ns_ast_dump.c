@@ -138,6 +138,18 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         printf("[%d] as ", n.cast_expr.expr);
         ns_str_printf(n.cast_expr.type.val);
         break;
+    case NS_AST_STR_FMT: {
+        // i32 next = 
+        printf("\"");
+        ns_str_printf(n.str_fmt.fmt);
+        printf("\"");
+        i32 count = n.str_fmt.expr_count;
+        i32 next = n.next;
+        for (i32 a_i = 0; a_i < count; ++a_i) {
+            printf(", [%d]", next);
+            next = ctx->nodes[next].next;
+        }
+    } break;
     case NS_AST_PRIMARY_EXPR: ns_str_printf(n.primary_expr.token.val); break;
     case NS_AST_BINARY_EXPR:
         printf("[%d] ", n.binary_expr.left);
@@ -159,10 +171,10 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         printf("[%d]", n.call_expr.callee);
         printf("(");
         i32 next = n.call_expr.arg;
-        for (i32 i = 0; i < n.call_expr.arg_count; i++) {
+        for (i32 a_i = 0; a_i < n.call_expr.arg_count; a_i++) {
             printf("[%d]", next);
             next = ctx->nodes[next].next;
-            if (i != n.call_expr.arg_count - 1) {
+            if (a_i != n.call_expr.arg_count - 1) {
                 printf(", ");
             }
         }
@@ -181,10 +193,10 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
             break;
         }
         ns_ast_t *stmt = &n;
-        for (i32 i = 0; i < n.compound_stmt.count; i++) {
+        for (i32 s_i = 0; s_i < n.compound_stmt.count; s_i++) {
             printf("[%d]", stmt->next);
             stmt = &ctx->nodes[stmt->next];
-            if (i != n.compound_stmt.count - 1) {
+            if (s_i != n.compound_stmt.count - 1) {
                 printf(", ");
             }
         }
@@ -201,11 +213,11 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         printf(" { ");
         i32 count = n.desig_expr.count;
         ns_ast_t field = n;
-        for (i32 i = 0; i < count; i++) {
+        for (i32 f_i = 0; f_i < count; f_i++) {
             field = ctx->nodes[field.next];
             ns_str_printf(field.field_def.name.val);
             printf(": [%d]", field.field_def.expr);
-            if (i != count - 1) {
+            if (f_i != count - 1) {
                 printf(", ");
             }
         }

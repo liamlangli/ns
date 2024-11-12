@@ -7,6 +7,7 @@
 
 ns_str ns_token_type_to_string(NS_TOKEN type) {
     switch (type) {
+        ns_str_case(NS_TOKEN_AS);
         ns_str_case(NS_TOKEN_INT_LITERAL);
         ns_str_case(NS_TOKEN_FLT_LITERAL);
         ns_str_case(NS_TOKEN_STR_LITERAL);
