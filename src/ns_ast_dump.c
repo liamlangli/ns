@@ -85,7 +85,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
     case NS_AST_OPS_FN_DEF: {
         if (n.fn_def.is_ref) printf("ref ");
         if (n.fn_def.is_async) printf("async ");
-        printf(ns_color_log "fn" ns_color_nil " ops (" ns_color_wrn);
+        printf(ns_color_log "fn" ns_color_nil " ops(" ns_color_wrn);
         ns_str_printf(n.ops_fn_def.ops.val);
         printf(ns_color_nil ")(");
         ns_ast_t *left = &ctx->nodes[n.ops_fn_def.left];
