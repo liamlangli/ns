@@ -71,7 +71,7 @@ TARGET = $(BINDIR)/ns
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 
 all: $(TARGET)
-	@echo "Building with options:" \
+	@echo "building ns with options:" \
 	"NS_BITCODE=$(NS_BITCODE)" \
 	"NS_DEBUG=$(NS_DEBUG)"
 
