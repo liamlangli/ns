@@ -227,6 +227,22 @@ bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
     return false;
 }
 
+bool ns_parse_cast_expr(ns_ast_ctx *ctx, i32 operand) {
+    ns_ast_state state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_AS)) {
+        if (ns_token_require_type(ctx)) {
+            ns_ast_t n = {.type = NS_AST_CAST_EXPR, .cast_expr = {.expr = operand, .type = ctx->token}};
+            ns_ast_push(ctx, n);
+            return true;
+        } else {
+            ns_ast_error(ctx, "syntax error", "expected type after 'as'");
+        }
+    }
+
+    ns_restore_state(ctx, state);
+    return false;
+}
+
 bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
     ns_ast_state primary_state = ns_save_state(ctx);
 
@@ -238,19 +254,6 @@ bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
         operand = ctx->current;
     }
     ns_ast_state state = ns_save_state(ctx);
-
-    // parse postfix 'as' type
-    ns_token_skip_eol(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_AS)) {
-        ns_token_skip_eol(ctx);
-        if (ns_token_require_type(ctx)) {
-            ns_ast_t n = {.type = NS_AST_CAST_EXPR, .cast_expr = {.expr = operand, .type = ctx->token}};
-            ns_ast_push(ctx, n);
-            return true;
-        } else {
-            ns_ast_error(ctx, "syntax error", "expected type after 'as'");
-        }
-    }
 
     // parse postfix '(' [expr]* [,expr]* ')'
     ns_restore_state(ctx, state);
@@ -409,7 +412,19 @@ bool ns_parse_expr(ns_ast_ctx *ctx) {
             }
         } break;
 
-        case NS_TOKEN_AS:
+        case NS_TOKEN_AS: {
+            if (ns_parse_stack_leading_operand(ctx)) {
+                i32 operand = ns_parse_stack_pop(ctx);
+                ns_restore_state(ctx, state);
+                if (ns_parse_cast_expr(ctx, operand)) {
+                    ns_parse_stack_push_operand(ctx, ctx->current);
+                    break;
+                } else {
+                    ns_ast_error(ctx, "syntax error", "expected type after 'as'");
+                }
+            }
+            ns_ast_error(ctx, "syntax error", "expected operand before 'as'");
+        } break;
         case NS_TOKEN_DOT:
         case NS_TOKEN_OPEN_BRACKET:
         case NS_TOKEN_OPEN_BRACE: {
