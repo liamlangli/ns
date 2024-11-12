@@ -18,6 +18,7 @@ void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx);
 ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer);
 ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -401,6 +402,15 @@ void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
     }
 }
 
+ns_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    for (i32 j = 0, l = n->str_fmt.expr_count; j < l; ++j) {
+        ns_ast_t *expr = &ctx->nodes[n->next];
+        ns_vm_parse_expr(vm, ctx, expr->next);
+    }
+    return ns_type_str;
+}
+
 ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->primary_expr.token.type) {
@@ -685,6 +695,8 @@ ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_vm_parse_unary_expr(vm, ctx, i);
     case NS_AST_CAST_EXPR:
         return ns_vm_parse_cast_expr(vm, ctx, i);
+    case NS_AST_STR_FMT:
+        return ns_type_str;
     default: {
         ns_str type = ns_ast_type_to_string(n->type);
         ns_vm_error(ctx->filename, n->state, "syntax error", "unimplemented expr type %.*s", type.len, type.data);
