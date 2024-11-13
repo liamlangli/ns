@@ -56,7 +56,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast.c \
 	src/ns_ast_stmt.c \
 	src/ns_ast_expr.c \
-	src/ns_ast_dump.c \
+	src/ns_ast_print.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
 	src/ns_vm_std.c \

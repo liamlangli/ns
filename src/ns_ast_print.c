@@ -38,7 +38,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     }
 }
 
-void ns_ast_dump_type_label(ns_ast_ctx *ctx, i32 i) {
+void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i) {
     if (i == -1) return;
     printf(": ");
 
@@ -50,12 +50,12 @@ void ns_ast_dump_type_label(ns_ast_ctx *ctx, i32 i) {
     ns_str_printf(n->type_label.name.val);
 }
 
-void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
+void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     ns_ast_t n = ctx->nodes[i];
     ns_str type = ns_ast_type_to_string(n.type);
     printf("%4d [type: %-20.*s next: %4d] ", i, type.len, type.data, n.next);
     switch (n.type) {
-    case NS_AST_TYPE_LABEL: ns_ast_dump_type_label(ctx, i); break;
+    case NS_AST_TYPE_LABEL: ns_ast_print_type_label(ctx, i); break;
     case NS_AST_FN_DEF: {
         if (n.fn_def.is_ref) printf("ref ");
         if (n.fn_def.is_async) printf("async ");
@@ -68,13 +68,13 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         for (i32 i = 0; i < n.fn_def.arg_count; i++) {
             arg = &ctx->nodes[arg->next];
             ns_str_printf(arg->arg.name.val);
-            ns_ast_dump_type_label(ctx, arg->arg.type);
+            ns_ast_print_type_label(ctx, arg->arg.type);
             if (i != n.fn_def.arg_count - 1) {
                 printf(", ");
             }
         }
         printf(")");
-        ns_ast_dump_type_label(ctx, n.fn_def.ret);
+        ns_ast_print_type_label(ctx, n.fn_def.ret);
 
         if (n.fn_def.body != -1)
             printf(" { [%d] }", n.fn_def.body);
@@ -90,15 +90,15 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         printf(ns_color_nil ")(");
         ns_ast_t *left = &ctx->nodes[n.ops_fn_def.left];
         ns_str_printf(left->arg.name.val);
-        ns_ast_dump_type_label(ctx, left->arg.type);
+        ns_ast_print_type_label(ctx, left->arg.type);
         printf(", ");
 
         ns_ast_t *right = &ctx->nodes[n.ops_fn_def.right];
         ns_str_printf(right->arg.name.val);
-        ns_ast_dump_type_label(ctx, right->arg.type);
+        ns_ast_print_type_label(ctx, right->arg.type);
 
         printf(")");
-        ns_ast_dump_type_label(ctx, n.ops_fn_def.ret);
+        ns_ast_print_type_label(ctx, n.ops_fn_def.ret);
         if (n.ops_fn_def.body != -1) {
             printf(" { [%d] }", n.ops_fn_def.body);
         }
@@ -112,7 +112,7 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
         for (i32 i = 0; i < count; i++) {
             field = ctx->nodes[field.next];
             ns_str_printf(field.arg.name.val);
-            ns_ast_dump_type_label(ctx, field.arg.type);
+            ns_ast_print_type_label(ctx, field.arg.type);
             if (i != count - 1) {
                 printf(", ");
             }
@@ -121,12 +121,12 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_AST_ARG_DEF:
         ns_str_printf(n.arg.name.val);
-        ns_ast_dump_type_label(ctx, n.arg.type);
+        ns_ast_print_type_label(ctx, n.arg.type);
         break;
     case NS_AST_VAR_DEF:
         printf(ns_color_log "let " ns_color_nil);
         ns_str_printf(n.var_def.name.val);
-        ns_ast_dump_type_label(ctx, n.var_def.type);
+        ns_ast_print_type_label(ctx, n.var_def.type);
         if (n.var_def.expr != -1) {
             printf(" = [%d]", n.var_def.expr);
         }
@@ -262,11 +262,11 @@ void ns_ast_dump(ns_ast_ctx *ctx, i32 i) {
 void ns_ast_ctx_dump(ns_ast_ctx *ctx) {
     ns_info("ast", "node count %zu\n", ns_array_length(ctx->nodes));
     for (i32 i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
-        ns_ast_dump(ctx, i);
+        ns_ast_print(ctx, i);
     }
 
     ns_info("ast", "section count %d\n", ctx->section_end - ctx->section_begin);
     for (i32 i = ctx->section_begin; i < ctx->section_end; i++) {
-        ns_ast_dump(ctx, ctx->sections[i]);
+        ns_ast_print(ctx, ctx->sections[i]);
     }
 }

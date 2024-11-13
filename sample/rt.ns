@@ -66,4 +66,5 @@ fn main() {
             }
         }
     }
+    print("trace complete\n")
 }

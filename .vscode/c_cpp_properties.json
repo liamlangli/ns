@@ -4,6 +4,7 @@
             "name": "MacARM",
             "includePath": [
                 "${workspaceFolder}/include/**",
+                "${workspaceFolder}/lsp/include/**",
                 "/opt/homebrew/opt/llvm/include"
             ],
             "defines": ["NS_BITCODE", "NS_DEBUG"],
@@ -19,6 +20,7 @@
             "name": "MacX64",
             "includePath": [
                 "${workspaceFolder}/include/**",
+                "${workspaceFolder}/lsp/include/**",
                 "/usr/local/opt/llvm/include"
             ],
             "defines": ["NS_BITCODE", "NS_DEBUG"],

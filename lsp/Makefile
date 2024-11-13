@@ -16,8 +16,8 @@ NS_DEBUG ?= 1
 # VARIABLES
 CC = clang
 
-NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG
-NS_RELEASE_CFLAGS = -Iinclude -Os -I../include
+NS_DEBUG_CFLAGS = -Iinclude -I../include -g -O0 -Wall -Wextra -DNS_DEBUG
+NS_RELEASE_CFLAGS = -Iinclude -I../include -Os
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
@@ -46,6 +46,9 @@ $(NS_LSP_OBJS): $(NS_LSP_SRCS) | $(OBJDIR)
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)/src
+
+run: $(TARGET)
+	$(TARGET)$(NS_SUFFIX)
 
 clean:
 	rm -rf $(OBJDIR)
