@@ -1,0 +1,39 @@
+import simd
+import gpu
+import gui
+
+struct vertex_data {
+    position: float3,
+    normal: float3,
+    uv: float2,
+};
+
+struct fragment_data {
+    position: float4,
+    color: float4,
+};
+
+vertex fn vertex_main(stage_in: vertex_data): fragment_data {
+    let p = stage_in.position;
+    let p_cs = float4{x=p.x, y=p.y, z=p.z, w=1.0};
+    return fragment_data{position: p_cs, color: float4{x=1.0, y=0.0, z=0.0, w=1.0}};
+}
+
+fragment fn fragment_main(stage_in: fragment_data): float4 {
+    return stage_in.color;
+}
+
+fn main() {
+    let window = gui.create_window("Render", 800, 600);
+    let device = gpu.create_device();
+    let pipeline = gpu.create_render_pipeline(vertex_main, fragment_main);
+
+    let vertex_a = vertex_data{position: float3{x=-0.5, y=-0.5, z=0.0}, normal: float3{x=0.0, y=0.0, z=1.0}, uv: float2{x=0.0, y=0.0}};
+    let vertex_b = vertex_data{position: float3{x=0.5, y=-0.5, z=0.0}, normal: float3{x=0.0, y=0.0, z=1.0}, uv: float2{x=1.0, y=0.0}};
+    let vertex_c = vertex_data{position: float3{x=0.0, y=0.5, z=0.0}, normal: float3{x=0.0, y=0.0, z=1.0}, uv: float2{x=0.0, y=1.0}};
+
+    let vertex_buffer = gpu.create_buffer([vertex_data]{vertex_a, vertex_b, vertex_c});
+    let index_buffer = gpu.create_buffer([u32]{0, 1, 2});
+    gpu.draw(pipeline, vertex_buffer, index_buffer);
+    window.run_event_loop();
+}

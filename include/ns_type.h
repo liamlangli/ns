@@ -236,6 +236,16 @@ typedef enum {
     NS_TYPE_ALIAS,
 } ns_value_type;
 
+typedef enum {
+    NS_FN_GENERIC = 0,
+    NS_FN_OPS,
+    NS_FN_ASYNC,
+    NS_FN_KERNEL,
+    NS_FN_VERTEX,
+    NS_FN_FRAGMENT,
+    NS_FN_COMPUTE
+} NS_FN_TYPE;
+
 // f and i, f and u, i and u
 typedef enum {
     NS_NUMBER_FLT = 1,

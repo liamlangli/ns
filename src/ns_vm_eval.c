@@ -54,9 +54,8 @@ ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
         case NS_TYPE_F32: *(f32*)&vm->stack[offset] = src.f32; break;
         case NS_TYPE_F64: *(f64*)&vm->stack[offset] = src.f64; break;
         case NS_TYPE_BOOL: *(bool*)&vm->stack[offset] = src.b; break;
-        default: break;
+        default: ns_error("eval error", "invalid const type.");
         }
-        
     } break;
     case NS_STORE_STACK: memcpy(&vm->stack[offset], &vm->stack[src.o], size); break;
     case NS_STORE_HEAP: memcpy(&vm->stack[offset], (void*)src.o, size); break;
@@ -147,6 +146,11 @@ u64 ns_eval_number_u64(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n
 f32 ns_eval_number_f32(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.f32 : *(f32*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
 f64 ns_eval_number_f64(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.f64 : *(f64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
 bool ns_eval_bool(ns_vm *vm, ns_value n) { return ns_eval_number_i32(vm, n) != 0; }
+ns_str ns_eval_str(ns_vm *vm, ns_value n) {
+    if (ns_type_is_const(n.t)) return vm->str_list[n.o];
+    if (ns_type_in_stack(n.t)) return vm->str_list[*(u64*)&vm->stack[n.o]];
+    return ns_str_null;
+}
 
 #define ns_eval_number_op(fn, op) \
 ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) {\

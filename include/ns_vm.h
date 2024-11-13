@@ -129,6 +129,7 @@ ns_eval_value_def(u64)
 ns_eval_value_def(f32)
 ns_eval_value_def(f64)
 bool ns_eval_bool(ns_vm *vm, ns_value n);
+ns_str ns_eval_str(ns_vm *vm, ns_value n);
 
 ns_scope *ns_enter_scope(ns_vm *vm);
 ns_scope *ns_exit_scope(ns_vm *vm);
