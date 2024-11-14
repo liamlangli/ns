@@ -1,10 +1,6 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
-#include <assert.h>
-#include <stdio.h>
-#include <string.h>
-
 ns_str ns_token_type_to_string(NS_TOKEN type) {
     switch (type) {
         ns_str_case(NS_TOKEN_AS);

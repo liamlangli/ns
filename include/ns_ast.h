@@ -3,7 +3,6 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
-#include <assert.h>
 #define ns_ast_error(c, t, m, ...) ns_error(t, "\n[%s:%d:%d]: " m "\n", c->filename.data, c->token.line, c->f - c->token.line_start, ##__VA_ARGS__ );
 
 typedef enum {

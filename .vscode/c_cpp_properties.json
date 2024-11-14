@@ -7,7 +7,7 @@
                 "${workspaceFolder}/lsp/include/**",
                 "/opt/homebrew/opt/llvm/include"
             ],
-            "defines": ["NS_BITCODE", "NS_DEBUG"],
+            "defines": ["NS_BITCODE", "NS_DEBUG", "NS_WASM"],
             "macFrameworkPath": [
                 "/Library/Developer/CommandLineTools/SDKs/MacOSX14.sdk/System/Library/Frameworks"
             ],

@@ -1,8 +1,5 @@
 #include "ns_type.h"
 
-#include <stdlib.h>
-#include <string.h>
-
 u64 ns_align(u64 offset, u64 stride) {
     u64 align = ns_min(sizeof(void *), stride);
     if (align > 0) offset = (offset + (align - 1)) & ~(align - 1);

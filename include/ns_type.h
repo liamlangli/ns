@@ -1,19 +1,53 @@
 #pragma once
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
+
+#ifndef NS_WASM
+    #include <assert.h>
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <string.h>
+    #include <math.h>
+#else
+    #ifndef NULL
+        #define NULL 0
+    #endif
+    #define assert(x)
+    #define atof(x) 0
+    #define printf(...) 0
+    #define fprintf(...) 0
+    #define snprintf(...) 0
+    #define exit(x) 0
+    #define free(x) 0
+    #define malloc(x) 0
+    #define memset(x, y, z) 0
+    #define memcpy(x, y, z) 0
+    #define strlen(x) 0
+    #define strcmp(x, y) 0
+    #define strncmp(x, y, z) 0
+    #define SEEK_END 0
+    #define SEEK_SET 0
+    #define fopen(x, y) 0
+    #define fclose(x)
+    #define fseek(x, y, z)
+    #define ftell(x) 0
+    #define fread(x, y, z, w) 0
+    #define fwrite(x, y, z, w) 0
+    #define sqrt(x) 0
+    #define fmod(x, y) 0
+
+    typedef unsigned long long size_t;
+    typedef struct FILE FILE;
+#endif
 
 // ns_def
 #ifndef bool
-typedef int bool;
+    typedef int bool;
     #define true 1
     #define false 0
 #endif
 
 #ifndef nil
-    #define nil ns_null
+    #define nil NULL
 #endif
 
 #define ns_color_bld "\x1b[1m"
@@ -24,19 +58,27 @@ typedef int bool;
 
 #define ns_ptr_size sizeof(void *)
 
-#ifdef NS_DEBUG
-    #define ns_error(t, m, ...)     fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), assert(false)
-    #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_wrn "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
-    #define ns_info(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
-    #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(c)
-    #define ne_exit_safe(t, m, ...) fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(0)
+#ifdef NS_WASM
+    #define ns_error(t, m, ...)
+    #define ns_warn(t, m, ...)
+    #define ns_info(t, m, ...)
+    #define ns_exit(c, t, m, ...)
+    #define ne_exit_safe(t, m, ...)
 #else
-    #define ns_error(t, m, ...)     fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), assert(false)
-    #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_wrn "%s: " ns_color_nil m, t, ##__VA_ARGS__)
-    #define ns_info(t, m, ...)      fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__)
-    #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), exit(c)
-    #define ne_exit_safe(t, m, ...) fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__), exit(0)
-#endif // NS_DEBUG
+    #ifdef NS_DEBUG
+        #define ns_error(t, m, ...)     fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), assert(false)
+        #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_wrn "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
+        #define ns_info(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
+        #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(c)
+        #define ne_exit_safe(t, m, ...) fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(0)
+    #else
+        #define ns_error(t, m, ...)     fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), assert(false)
+        #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_wrn "%s: " ns_color_nil m, t, ##__VA_ARGS__)
+        #define ns_info(t, m, ...)      fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__)
+        #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), exit(c)
+        #define ne_exit_safe(t, m, ...) fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__), exit(0)
+    #endif // NS_DEBUG
+#endif // NS_WASM
 
 #define ns_max(a, b) ((a) > (b) ? (a) : (b))
 #define ns_min(a, b) ((a) < (b) ? (a) : (b))

@@ -43,6 +43,11 @@ else
 	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
 endif
 
+ifeq ($(NS_WASM), 1)
+	NS_CFLAGS += --target=wasm32 -DNS_WASM
+	NS_LDFLAGS += -Wl,--export-all -Wl,--no-entry -Wl,--allow-undefined
+endif
+
 NS_DEBUG_TARGET = $(TARGET)_debug_$(LLVM_TRIPLE)$(NS_SUFFIX)
 NS_RELEASE_TARGET = $(TARGET)_release_$(LLVM_TRIPLE)$(NS_SUFFIX)
 
@@ -118,6 +123,20 @@ debug: $(NS_SRCS) | $(OBJDIR)
 release: $(NS_SRCS) | $(OBJDIR)
 	clang -o $(NS_RELEASE_TARGET) $(NS_SRCS) $(NS_RELEASE_CFLAGS) $(NS_LDFLAGS)
 	tar -czvf $(NS_RELEASE_TARGET).tar.gz $(NS_RELEASE_TARGET)
+
+WASM_SRCS = src/ns_fmt.c \
+	src/ns_type.c \
+	src/ns_path.c \
+	src/ns_token.c \
+	src/ns_ast.c \
+	src/ns_ast_stmt.c \
+	src/ns_ast_expr.c \
+	src/ns_ast_print.c \
+	src/ns_vm_parse.c \
+	src/ns_vm_eval.c \
+	src/ns_vm_std.c
+wasm: $(WASM_SRCS) | $(OBJDIR)
+	/opt/homebrew/opt/llvm/bin/clang --target=wasm32 -nostdlib -O3 -o $(BINDIR)/ns.wasm $(WASM_SRCS) $(NS_CFLAGS) $(NS_LDFLAGS) -DNS_WASM -Wl,--export-all -Wl,--no-entry -Wl,--allow-undefined
 
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin

@@ -1,7 +1,5 @@
 #include "ns_vm.h"
 
-#include <math.h>
-
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
 ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 

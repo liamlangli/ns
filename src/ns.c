@@ -5,12 +5,6 @@
 #include "ns_type.h"
 #include "ns_vm.h"
 
-#include <assert.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 #define STB_DS_IMPLEMENTATION
 
 static ns_vm vm = {0};
@@ -128,8 +122,11 @@ void ns_exec_eval(ns_str filename) {
     ns_eval(&vm, source, filename);
 }
 
+
 void ns_exec_repl() {
+#ifndef NS_WASM
     ns_repl(&vm);
+#endif
 }
 
 int main(int argc, char **argv) {

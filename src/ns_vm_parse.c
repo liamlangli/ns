@@ -143,6 +143,7 @@ ns_str ns_ops_name(ns_token_t op) {
     default:
         ns_error("eval error", "unsupported ops override %.*s\n", op.val.len, op.val.data);
     }
+    return ns_str_null;
 }
 
 ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {

@@ -1,8 +1,6 @@
 #include "ns_ast.h"
 #include "ns_token.h"
 
-#include <assert.h>
-
 void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state) {
     ctx->f = state.f;
     ctx->token.line = state.l;

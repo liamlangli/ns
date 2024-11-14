@@ -1,9 +1,6 @@
 #include "ns_vm.h"
 #include "ns_fmt.h"
 
-#include <stdio.h>
-#include <math.h>
-
 #define ns_type_ref_fn(i) ns_type_encode(ns_type_fn, i, 1, NS_STORE_CONST)
 
 void ns_vm_import_std_symbols(ns_vm *vm) {

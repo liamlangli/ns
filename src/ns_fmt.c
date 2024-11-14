@@ -1,8 +1,5 @@
 #include "ns_fmt.h"
 
-#include <string.h>
-#include <math.h>
-
 #define ns_fmt_print_number(_t_) \
 { \
     _t_ v = ns_eval_number_##_t_(vm, n); \
