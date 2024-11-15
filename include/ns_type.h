@@ -257,19 +257,19 @@ typedef enum {
 } ns_number_type;
 
 typedef enum {
-    NS_STORE_CONST = (u8)0,
-    NS_STORE_STACK = (u8)1,
-    NS_STORE_HEAP = (u8)2,
+    NS_STORE_CONST = 0,
+    NS_STORE_STACK = 1,
+    NS_STORE_HEAP = 2,
 } ns_store;
 
 typedef struct ns_type {
-    u8 ref;
-    u8 store;
-    u16 type;
+    bool ref: 1;
+    ns_store store: 7;
+    ns_value_type type: 16;
     u32 index;
 } ns_type;
 
-#define ns_type_is_ref(t) (t.ref != (u8)0)
+#define ns_type_is_ref(t) (t.ref != 0)
 #define ns_type_is_const(t) (NS_STORE_CONST == t.store)
 #define ns_type_in_stack(t) (NS_STORE_STACK == t.store)
 #define ns_type_in_heap(t) (NS_STORE_HEAP == t.store)

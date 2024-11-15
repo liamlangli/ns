@@ -82,14 +82,14 @@ ns_value ns_vm_eval_std(ns_vm *vm) {
         ns_str_free(s);
         return call->ret = ns_nil;
     } else if (ns_str_equals_STR(call->fn->name, "open")) {
-        ns_value path = vm->symbol_stack[call->arg_offset].val;
-        ns_value mode = vm->symbol_stack[call->arg_offset + 1].val;
-        u64 fd = (u64)fopen(vm->str_list[path.o].data, vm->str_list[mode.o].data);
+        ns_str path = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
+        ns_str mode = ns_eval_str(vm, vm->symbol_stack[call->arg_offset + 1].val);
+        u64 fd = (u64)fopen(path.data, mode.data);
         return call->ret = (ns_value){.t = ns_type_u64, .o = fd};
     } else if (ns_str_equals_STR(call->fn->name, "write")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         ns_value data = vm->symbol_stack[call->arg_offset + 1].val;
-        ns_str s = vm->str_list[data.o];
+        ns_str s = ns_eval_str(vm, data);
         ns_str ss = ns_str_unescape(s);
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
         i32 len = fwrite(ss.data, ss.len, 1, f);

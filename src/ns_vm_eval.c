@@ -54,6 +54,7 @@ ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
         case NS_TYPE_F32: *(f32*)&vm->stack[offset] = src.f32; break;
         case NS_TYPE_F64: *(f64*)&vm->stack[offset] = src.f64; break;
         case NS_TYPE_BOOL: *(bool*)&vm->stack[offset] = src.b; break;
+        case NS_TYPE_STRING: *(u64*)&vm->stack[offset] = src.o; break;
         default: ns_error("eval error", "invalid const type.");
         }
     } break;
@@ -149,7 +150,7 @@ bool ns_eval_bool(ns_vm *vm, ns_value n) { return ns_eval_number_i32(vm, n) != 0
 ns_str ns_eval_str(ns_vm *vm, ns_value n) {
     if (ns_type_is_const(n.t)) return vm->str_list[n.o];
     if (ns_type_in_stack(n.t)) return vm->str_list[*(u64*)&vm->stack[n.o]];
-    return ns_str_null;
+    return *(ns_str*)n.o;
 }
 
 #define ns_eval_number_op(fn, op) \
