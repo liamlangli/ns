@@ -32,6 +32,7 @@ typedef enum {
     NS_AST_CAST_EXPR,
     NS_AST_GEN_EXPR,
     NS_AST_DESIG_EXPR,
+    NS_AST_ARRAY_EXPR,
 
     NS_AST_IF_STMT,
     NS_AST_IMPORT_STMT,
@@ -188,6 +189,11 @@ typedef struct ns_ast_desig_expr {
     i32 count;
 } ns_ast_desig_expr;
 
+typedef struct ns_ast_array_expr {
+    i32 type;
+    i32 count; // count expr
+} ns_ast_array_expr;
+
 typedef struct ns_ast_struct_field {
     ns_token_t name;
     i32 expr;
@@ -219,6 +225,7 @@ typedef struct ns_ast_t {
         ns_ast_unary_expr unary_expr;
         ns_ast_gen_expr gen_expr;
         ns_ast_desig_expr desig_expr;
+        ns_ast_array_expr array_expr;
 
         ns_ast_import_stmt import_stmt;
         ns_ast_if_stmt if_stmt;
@@ -283,6 +290,7 @@ bool ns_parse_ops_fn_define(ns_ast_ctx *ctx);
 bool ns_parse_var_define(ns_ast_ctx *ctx);
 bool ns_parse_struct_def(ns_ast_ctx *ctx);
 bool ns_parse_type_define(ns_ast_ctx *ctx);
+bool ns_parse_type_label(ns_ast_ctx *ctx);
 
 // stmt fn
 bool ns_parse_global_define(ns_ast_ctx *ctx);

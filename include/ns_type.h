@@ -60,33 +60,6 @@ typedef double f64;
 
 u64 ns_align(u64 offset, u64 stride);
 
-// ns_array
-typedef struct ns_array_header {
-    size_t len;
-    size_t cap;
-} ns_array_header;
-
-void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap);
-
-#define ns_array_header(a) ((ns_array_header *)(a) - 1)
-#define ns_array_length(a) ((a) ? (ns_array_header(a))->len : 0)
-#define ns_array_capacity(a) ((a) ? ns_array_header(a)->cap : 0)
-#define ns_array_free(a) ((a) ? free(ns_array_header(a)), (a) = 0 : 0)
-
-#define ns_array_grow(a, n, m) ((a) = _ns_array_grow((a), sizeof *(a), (n), (m)))
-#define ns_array_ensure(a, n) ((!(a) || ns_array_header(a)->len + (n) > ns_array_header(a)->cap) ? (ns_array_grow(a, n, 0), 0) : 0)
-
-#define ns_array_set_capacity(a, n) (ns_array_grow(a, 0, n))
-#define ns_array_set_length(a, n) (ns_array_ensure(a, (n) - ns_array_length(a)), (a) ? ns_array_header(a)->len = (n) : 0)
-
-#define ns_array_push(a, v) (ns_array_ensure(a, 1), (a)[ns_array_header(a)->len++] = (v))
-#define ns_array_pop(a) ((a)[--ns_array_header(a)->len])
-
-#define ns_array_last(a) (&(a)[ns_array_length(a) - 1])
-#define ns_array_last_safe(a) ((a) ? ns_array_last(a) : 0)
-
-void ns_array_status();
-
 // ns_str
 typedef struct ns_str {
     i8 *data;
@@ -333,3 +306,31 @@ typedef struct ns_value {
 #define ns_is_nil(v)    ns_type_is(v.t, NS_TYPE_NIL)
 #define ns_true         ((ns_value){.t = ns_type_bool, .b = true})
 #define ns_false        ((ns_value){.t = ns_type_bool, .b = false})
+
+// ns_array
+typedef struct ns_array_header {
+    size_t len;
+    size_t cap;
+    ns_type type;
+} ns_array_header;
+
+void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap);
+
+#define ns_array_header(a) ((ns_array_header *)(a) - 1)
+#define ns_array_length(a) ((a) ? (ns_array_header(a))->len : 0)
+#define ns_array_capacity(a) ((a) ? ns_array_header(a)->cap : 0)
+#define ns_array_free(a) ((a) ? free(ns_array_header(a)), (a) = 0 : 0)
+
+#define ns_array_grow(a, n, m) ((a) = _ns_array_grow((a), sizeof *(a), (n), (m)))
+#define ns_array_ensure(a, n) ((!(a) || ns_array_header(a)->len + (n) > ns_array_header(a)->cap) ? (ns_array_grow(a, n, 0), 0) : 0)
+
+#define ns_array_set_capacity(a, n) (ns_array_grow(a, 0, n))
+#define ns_array_set_length(a, n) (ns_array_ensure(a, (n) - ns_array_length(a)), (a) ? ns_array_header(a)->len = (n) : 0)
+
+#define ns_array_push(a, v) (ns_array_ensure(a, 1), (a)[ns_array_header(a)->len++] = (v))
+#define ns_array_pop(a) ((a)[--ns_array_header(a)->len])
+
+#define ns_array_last(a) (&(a)[ns_array_length(a) - 1])
+#define ns_array_last_safe(a) ((a) ? ns_array_last(a) : 0)
+
+void ns_array_status();

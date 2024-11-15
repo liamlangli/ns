@@ -197,6 +197,45 @@ bool ns_parse_str_format(ns_ast_ctx *ctx) {
     return true;
 }
 
+bool ns_parse_array_expr(ns_ast_ctx *ctx) {
+    // [type](expr)
+    ns_ast_state state = ns_save_state(ctx);
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET)) {
+        ns_restore_state(ctx, state);
+        return false;
+    }
+
+    if (!ns_parse_type_label(ctx)) {
+        ns_ast_error(ctx, "syntax error", "expected type after '['");
+        return false;
+    }
+
+    ns_ast_t n = {.type = NS_AST_ARRAY_EXPR, .array_expr = {.type = ctx->current}};
+    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
+        ns_ast_error(ctx, "syntax error", "expected ']'");
+        return false;
+    }
+
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
+        ns_ast_error(ctx, "syntax error", "expected '('");
+        return false;
+    }
+
+    if (!ns_parse_expr(ctx)) {
+        ns_ast_error(ctx, "syntax error", "expected expression after '('");
+        return false;
+    }
+
+    n.array_expr.count = ctx->current;
+    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
+        ns_ast_error(ctx, "syntax error", "expected ')'");
+        return false;
+    }
+
+    ns_ast_push(ctx, n);
+    return true;
+}
+
 bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     if (ns_parse_next_token(ctx)) {
@@ -236,6 +275,31 @@ bool ns_parse_cast_expr(ns_ast_ctx *ctx, i32 operand) {
             return true;
         } else {
             ns_ast_error(ctx, "syntax error", "expected type after 'as'");
+        }
+    }
+
+    ns_restore_state(ctx, state);
+    return false;
+}
+
+bool ns_parse_member_expr(ns_ast_ctx *ctx, i32 operand) {
+    ns_ast_state state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_DOT)) {
+        if (ns_token_require(ctx, NS_TOKEN_IDENTIFIER)) {
+            ns_ast_t token = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
+            i32 t = ns_ast_push(ctx, token);
+
+            ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .next = t, .member_expr = {.left = operand}};
+            ns_ast_state member_state = ns_save_state(ctx);
+            if (ns_parse_member_expr(ctx, t)) { // recursive member expr
+                n.next = ctx->current;
+            } else {
+                ns_restore_state(ctx, member_state);
+            }
+            ns_ast_push(ctx, n);
+            return true;
+        } else {
+            ns_ast_error(ctx, "syntax error", "expected identifier after '.'");
         }
     }
 
@@ -285,23 +349,8 @@ bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
 
     // parse postfix '.' identifier
     ns_restore_state(ctx, state);
-    if (ns_token_require(ctx, NS_TOKEN_DOT)) {
-        if (ns_token_require(ctx, NS_TOKEN_IDENTIFIER)) {
-            ns_ast_t token = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
-            i32 t = ns_ast_push(ctx, token);
-
-            ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .next = t, .member_expr = {.left = operand}};
-            ns_ast_state member_state = ns_save_state(ctx);
-            if (ns_parse_postfix_expr(ctx, t)) { // recursive member expr
-                n.next = ctx->current;
-            } else {
-                ns_restore_state(ctx, member_state);
-            }
-            ns_ast_push(ctx, n);
-            return true;
-        } else {
-            ns_ast_error(ctx, "syntax error", "expected identifier after '.'");
-        }
+    if (ns_parse_member_expr(ctx, operand)) {
+        return true;
     }
 
     ns_restore_state(ctx, state);
@@ -442,6 +491,17 @@ bool ns_parse_expr(ns_ast_ctx *ctx) {
                 } else {
                     ns_parse_stack_push_operand(ctx, operand);
                     goto rewind;
+                }
+            } else {
+                // parse array define
+                if (ctx->token.type == NS_TOKEN_OPEN_BRACKET) {
+                    ns_restore_state(ctx, state);
+                    if (ns_parse_array_expr(ctx)) {
+                        ns_parse_stack_push_operand(ctx, ctx->current);
+                        break;
+                    } else {
+                        ns_ast_error(ctx, "syntax error", "expected array expression");
+                    }
                 }
             }
         } break;

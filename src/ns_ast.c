@@ -86,25 +86,21 @@ bool ns_token_skip_eol(ns_ast_ctx *ctx) {
     return ctx->token.type == NS_TOKEN_EOF;
 }
 
-//: [ref] type_name
+// [ref] type_name
 bool ns_parse_type_label(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     ns_ast_t n = {.type = NS_AST_TYPE_LABEL};
 
-    ns_parse_next_token(ctx);
-    if (ctx->token.type == NS_TOKEN_COLON) {
-        ns_ast_state ref_state = ns_save_state(ctx);
-        if (ns_token_require(ctx, NS_TOKEN_REF)) {
-            n.type_label.is_ref = true;
-        } else {
-            ns_restore_state(ctx, ref_state);
-        }
+    if (ns_token_require(ctx, NS_TOKEN_REF)) {
+        n.type_label.is_ref = true;
+    } else {
+        ns_restore_state(ctx, state);
+    }
 
-        if (ns_parse_type_name(ctx)) {
-            n.type_label.name = ctx->token;
-            ns_ast_push(ctx, n);
-            return true;
-        }
+    if (ns_parse_type_name(ctx)) {
+        n.type_label.name = ctx->token;
+        ns_ast_push(ctx, n);
+        return true;
     }
 
     ns_restore_state(ctx, state);
@@ -230,15 +226,15 @@ bool ns_parse_arg(ns_ast_ctx *ctx) {
     }
     n.arg.name = ctx->token;
 
-    if (ns_parse_type_label(ctx)) {
+    if (ns_token_require(ctx, NS_TOKEN_COLON) &&
+        ns_parse_type_label(ctx)) {
         n.arg.type = ctx->current;
-    } else {
-        ns_restore_state(ctx, state);
-        return false;
+        ctx->current = ns_ast_push(ctx, n);
+        return true;
     }
 
-    ctx->current = ns_ast_push(ctx, n);
-    return true;
+    ns_restore_state(ctx, state);
+    return false;
 }
 
 bool ns_parse_ops_overridable(ns_token_t token) {
@@ -316,8 +312,12 @@ bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
     }
 
     // optional
-    if (ns_parse_type_label(ctx)) {
+    ns_ast_state type_state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_COLON) &&
+        ns_parse_type_label(ctx)) {
         fn.ops_fn_def.ret = ctx->current;
+    } else {
+        ns_restore_state(ctx, type_state);
     }
 
     // ref type declare, no fn body
@@ -361,13 +361,13 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         return false;
     }
 
-    ns_ast_t n = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async, .is_ref = is_ref, .is_kernel = is_kernel, .ret = -1}};
+    ns_ast_t fn = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async, .is_ref = is_ref, .is_kernel = is_kernel, .ret = -1}};
     // parse args
     ns_token_skip_eol(ctx);
     i32 next = -1;
     while (ns_parse_arg(ctx)) {
-        next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
-        n.fn_def.arg_count++;
+        next = next == -1 ? fn.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+        fn.fn_def.arg_count++;
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_COMMA || ctx->token.type == NS_TOKEN_EOL) {
@@ -377,7 +377,7 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         }
     }
 
-    if (n.fn_def.arg_count == 0)
+    if (fn.fn_def.arg_count == 0)
         ns_parse_next_token(ctx);
 
     if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
@@ -386,19 +386,23 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
     }
 
     // optional
-    if (ns_parse_type_label(ctx)) {
-        n.fn_def.ret = ctx->current;
+    ns_ast_state type_state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_COLON) &&
+        ns_parse_type_label(ctx)) {
+        fn.fn_def.ret = ctx->current;
+    } else {
+        ns_restore_state(ctx, type_state);
     }
 
     // ref type declare, no fn body
     if (is_ref) {
-        ctx->current = ns_ast_push(ctx, n);
+        ctx->current = ns_ast_push(ctx, fn);
         return true;
     }
 
     if (ns_parse_compound_stmt(ctx)) {
-        n.fn_def.body = ctx->current;
-        ctx->current = ns_ast_push(ctx, n);
+        fn.fn_def.body = ctx->current;
+        ctx->current = ns_ast_push(ctx, fn);
         return true;
     }
 
@@ -459,7 +463,8 @@ bool ns_parse_var_define(ns_ast_ctx *ctx) {
         ns_ast_t n = {.type = NS_AST_VAR_DEF, .var_def = {.name = ctx->token, .type = -1, .expr = -1}};
 
         ns_ast_state type_state = ns_save_state(ctx);
-        if (ns_parse_type_label(ctx)) {
+        if (ns_token_require(ctx, NS_TOKEN_COLON) &&
+            ns_parse_type_label(ctx)) {
             n.var_def.type = ctx->current;
         } else {
             ns_restore_state(ctx, type_state);

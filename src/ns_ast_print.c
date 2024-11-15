@@ -20,7 +20,9 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         ns_str_case(NS_AST_UNARY_EXPR)
         ns_str_case(NS_AST_PRIMARY_EXPR)
         ns_str_case(NS_AST_CALL_EXPR)
+        ns_str_case(NS_AST_INDEX_EXPR)
         ns_str_case(NS_AST_DESIG_EXPR)
+        ns_str_case(NS_AST_ARRAY_EXPR)
         ns_str_case(NS_AST_FIELD_DEF)
         ns_str_case(NS_AST_MEMBER_EXPR)
         ns_str_case(NS_AST_GEN_EXPR)
@@ -55,7 +57,10 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     ns_str type = ns_ast_type_to_string(n.type);
     printf("%4d [type: %-20.*s next: %4d] ", i, type.len, type.data, n.next);
     switch (n.type) {
-    case NS_AST_TYPE_LABEL: ns_ast_print_type_label(ctx, i); break;
+    case NS_AST_TYPE_LABEL: {
+        if (n.type_label.is_ref) printf("ref ");
+        ns_str_printf(n.type_label.name.val);
+    } break;
     case NS_AST_FN_DEF: {
         if (n.fn_def.is_ref) printf("ref ");
         if (n.fn_def.is_async) printf("async ");
@@ -208,6 +213,9 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
             printf(" " ns_color_log "else" ns_color_nil " [%d]", n.if_stmt.else_body);
         }
     } break;
+    case NS_AST_INDEX_EXPR: {
+        printf("[%d][%d]", n.index_expr.table, n.index_expr.expr);
+    } break;
     case NS_AST_DESIG_EXPR: {
         ns_str_printf(n.desig_expr.name.val);
         printf(" { ");
@@ -222,6 +230,11 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
             }
         }
         printf(" }");
+    } break;
+    case NS_AST_ARRAY_EXPR: {
+        printf(ns_color_log "[" ns_color_nil);
+        printf("[%d]", n.array_expr.type);
+        printf(ns_color_log "]" ns_color_nil "([%d])", n.array_expr.count);
     } break;
     case NS_AST_GEN_EXPR: {
         ns_str_printf(n.gen_expr.name.val);
@@ -260,7 +273,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
 }
 
 void ns_ast_ctx_dump(ns_ast_ctx *ctx) {
-    ns_info("ast", "node count %zu\n", ns_array_length(ctx->nodes));
+    ns_info("ast", "print ast for [%.*s] node count %zu\n", ctx->filename.len, ctx->filename.data, ns_array_length(ctx->nodes));
     for (i32 i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
         ns_ast_print(ctx, i);
     }

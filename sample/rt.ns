@@ -49,7 +49,7 @@ fn main() {
         radius: 0.5
     }
 
-    let path = "bin/rt.png"
+    let path = 
     let image = Image{data: [u8](256 * 256 * 4), width: 256, height: 256, channels: 4}
     let offset = 0
 
@@ -74,5 +74,7 @@ fn main() {
             image.data[offset + 3] = 255
         }
     }
-    print("trace complete\n")
+    let path = "bin/output.png"
+    print("save image" + path)
+    io_save_image(path, image)
 }
