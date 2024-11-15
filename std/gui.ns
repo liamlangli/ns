@@ -1,0 +1,9 @@
+mod gui
+
+struct Window {
+    title: str,
+    width: i32,
+    height: i32
+}
+
+ref fn gui_create_window(title: str, width: i32, height: i32): Window

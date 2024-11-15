@@ -1,0 +1,11 @@
+mod io
+
+struct Image {
+    width: i32,
+    height: i32,
+    channels: i32,
+    data: [u8]
+}
+
+ref fn io_read_image(path: str): Image
+ref fn io_write_image(path: str, img: Image)
