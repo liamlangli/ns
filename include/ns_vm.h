@@ -9,7 +9,6 @@ typedef enum {
     NS_SYMBOL_INVALID,
     NS_SYMBOL_VALUE,
     NS_SYMBOL_FN,
-    NS_SYMBOL_FN_CALL,
     NS_SYMBOL_STRUCT,
 } ns_symbol_type;
 
@@ -48,7 +47,7 @@ typedef struct ns_array_symbol {
 typedef struct ns_symbol {
     ns_symbol_type type;
     ns_str name;
-    ns_str lib;
+    ns_str mod;
     bool parsed;
     union {
         ns_value val;
@@ -92,6 +91,8 @@ typedef struct ns_vm {
 
     ns_str *str_list;
     ns_data *data_list;
+    ns_str *libs;
+    ns_str lib;
     i8* stack;
 
     // mode
@@ -140,6 +141,9 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // vm std
 void ns_vm_import_std_symbols(ns_vm *vm);
+void ns_vm_import(ns_vm *vm, ns_str lib);
+void ns_vm_symbol_print(ns_vm *vm);
 ns_value ns_vm_eval_std(ns_vm *vm);
 
+// vm repl
 void ns_repl(ns_vm* vm);

@@ -1,3 +1,3 @@
 mod m
 
-ref fn sqrt(f64 x): f64
+ref fn sqrt(x: f64): f64

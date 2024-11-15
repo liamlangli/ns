@@ -8,4 +8,4 @@ struct Image {
 }
 
 ref fn io_load_image(path: str): ref Image
-ref fn io_save_image(path: str, img: ref Image)
+ref fn io_save_image(path: str, img: ref Image): bool

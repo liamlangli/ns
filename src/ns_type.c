@@ -1,8 +1,5 @@
 #include "ns_type.h"
 
-#include <stdlib.h>
-#include <string.h>
-
 u64 ns_align(u64 offset, u64 stride) {
     u64 align = ns_min(sizeof(void *), stride);
     if (align > 0) offset = (offset + (align - 1)) & ~(align - 1);
@@ -158,4 +155,40 @@ i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len) {
     }
     a->len += len;
     return a->len;
+}
+
+ns_str ns_str_slice(ns_str s, i32 start, i32 end) {
+    char *buffer = (char *)malloc(end - start + 1);
+    memcpy(buffer, s.data + start, end - start);
+    buffer[end - start] = '\0';
+    ns_str data = ns_str_range(buffer, end - start);
+    data.dynamic = true;
+    return data;
+}
+
+ns_str ns_str_concat(ns_str a, ns_str b) {
+    char *buffer = (char *)malloc(a.len + b.len + 1);
+    memcpy(buffer, a.data, a.len);
+    memcpy(buffer + a.len, b.data, b.len);
+    buffer[a.len + b.len] = '\0';
+    ns_str data = ns_str_range(buffer, a.len + b.len);
+    data.dynamic = true;
+    return data;
+}
+
+ns_str ns_read_file(ns_str path) {
+    FILE *file = fopen(path.data, "rb");
+    if (!file) {
+        return ns_str_null;
+    }
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    char *buffer = (char *)malloc(size + 1);
+    fread(buffer, 1, size, file);
+    fclose(file);
+    buffer[size] = '\0';
+    ns_str data = ns_str_range(buffer, size);
+    data.dynamic = true;
+    return data;
 }

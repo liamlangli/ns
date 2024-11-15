@@ -1,7 +1,5 @@
 #include "ns_vm.h"
 
-#include <math.h>
-
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
 ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
@@ -274,7 +272,7 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_array_push(vm->call_stack, call);
-    if (ns_str_equals_STR(fn->lib, "std")) {
+    if (ns_str_equals_STR(fn->mod, "std")) {
         ns_vm_eval_std(vm);
     } else {
         ns_eval_compound_stmt(vm, ctx, fn->fn.ast.fn_def.body);
@@ -793,6 +791,7 @@ ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
             ns_eval_var_def(vm, &ctx, s_i);
             break;
         case NS_AST_IMPORT_STMT:
+        case NS_AST_MODULE_STMT:
         case NS_AST_FN_DEF:
         case NS_AST_OPS_FN_DEF:
         case NS_AST_STRUCT_DEF:

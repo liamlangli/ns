@@ -272,7 +272,7 @@ void ns_bc_fn_def(ns_bc_ctx *bc_ctx) {
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         ns_symbol r = vm->symbols[i];
         if (r.type != NS_SYMBOL_FN) continue;
-        if (r.lib.len > 0) continue;
+        if (r.mod.len > 0) continue;
         i32 arg_count = ns_array_length(r.fn.args);
     
         ns_bc_symbol fn_symbol = (ns_bc_symbol){.type = NS_BC_FN, .name = r.name};
@@ -485,7 +485,7 @@ ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, ns_ast_t n) {
 
     ns_array_push(bc_ctx->call_stack, call);
     ns_bc_value ret = (ns_bc_value){.val = ns_null, .type = fn_symbol->fn.ret};
-    if (ns_str_equals_STR(bc_ctx->vm->symbols[fn_symbol->index].lib, "std")) {
+    if (ns_str_equals_STR(bc_ctx->vm->symbols[fn_symbol->index].mod, "std")) {
         ret.val = ns_bc_call_std(bc_ctx).val;
     } else {
         ns_bc_value fn_val = fn_symbol->fn.fn;

@@ -1,10 +1,6 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
-#include <assert.h>
-#include <stdio.h>
-#include <string.h>
-
 ns_str ns_token_type_to_string(NS_TOKEN type) {
     switch (type) {
         ns_str_case(NS_TOKEN_AS);
@@ -15,6 +11,8 @@ ns_str ns_token_type_to_string(NS_TOKEN type) {
         ns_str_case(NS_TOKEN_CONST);
         ns_str_case(NS_TOKEN_COMMENT);
         ns_str_case(NS_TOKEN_LET);
+        ns_str_case(NS_TOKEN_MATCH);
+        ns_str_case(NS_TOKEN_MODULE);
         ns_str_case(NS_TOKEN_FN);
         ns_str_case(NS_TOKEN_IN);
         ns_str_case(NS_TOKEN_SPACE);
@@ -290,6 +288,17 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             ns_range_token(NS_TOKEN_LET, 3)
         } else if (strncmp(s + f, "loop", 4) == 0) {
             ns_range_token(NS_TOKEN_LOOP, 4)
+        } else {
+            goto identifier;
+        }
+    } break;
+
+    case 'm': // match, mod
+    {
+        if (strncmp(s + f, "match", 5) == 0) {
+            ns_range_token(NS_TOKEN_MATCH, 5)
+        } else if (strncmp(s + f, "mod", 3) == 0) {
+            ns_range_token(NS_TOKEN_MODULE, 3)
         } else {
             goto identifier;
         }

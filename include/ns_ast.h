@@ -3,7 +3,6 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
-#include <assert.h>
 #define ns_ast_error(c, t, m, ...) ns_error(t, "\n[%s:%d:%d]: " m "\n", c->filename.data, c->token.line, c->f - c->token.line_start, ##__VA_ARGS__ );
 
 typedef enum {
@@ -36,6 +35,7 @@ typedef enum {
 
     NS_AST_IF_STMT,
     NS_AST_IMPORT_STMT,
+    NS_AST_MODULE_STMT,
     NS_AST_FOR_STMT,
     NS_AST_LOOP_STMT,
     NS_AST_RETURN_STMT,
@@ -53,6 +53,8 @@ typedef struct ns_ast_state {
 typedef struct ns_ast_type_label {
     bool is_ref;
     ns_token_t name;
+    bool is_array;
+    i32 item_type;
 } ns_ast_type_label;
 
 typedef struct ns_ast_str_fmt {
@@ -152,6 +154,10 @@ typedef struct ns_ast_import_stmt {
     ns_token_t lib;
 } ns_ast_import_stmt;
 
+typedef struct ns_ast_module_stmt {
+    ns_token_t name;
+} ns_ast_module_stmt;
+
 typedef struct ns_ast_if_stmt {
     i32 condition;
     i32 body;
@@ -228,6 +234,7 @@ typedef struct ns_ast_t {
         ns_ast_array_expr array_expr;
 
         ns_ast_import_stmt import_stmt;
+        ns_ast_module_stmt module_stmt;
         ns_ast_if_stmt if_stmt;
         ns_ast_loop_stmt loop_stmt;
         ns_ast_for_stmt for_stmt;

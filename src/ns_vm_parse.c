@@ -2,6 +2,7 @@
 #include "ns_token.h"
 #include "ns_type.h"
 #include "ns_vm.h"
+#include "ns_path.h"
 
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 
@@ -243,6 +244,7 @@ ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer) {
     case NS_TOKEN_TYPE_U64: return ns_type_u64;
     case NS_TOKEN_TYPE_F32: return ns_type_f32;
     case NS_TOKEN_TYPE_F64: return ns_type_f64;
+    case NS_TOKEN_TYPE_STR: return ns_type_str;
     default:
         break;
     }
@@ -255,7 +257,7 @@ void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t n = ctx->nodes[s];
         if (n.type != NS_AST_FN_DEF)
             continue;
-        ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n}};
+        ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n}, .mod = vm->lib };
         fn.name = n.fn_def.name.val;
         ns_vm_push_symbol_global(vm, fn);
     }
@@ -267,7 +269,7 @@ void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t n = ctx->nodes[s];
         if (n.type != NS_AST_OPS_FN_DEF)
             continue;
-        ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n}};
+        ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n}, .mod = vm->lib};
         ns_ast_t l = ctx->nodes[n.ops_fn_def.left];
         ns_ast_t r = ctx->nodes[n.ops_fn_def.right];
 
@@ -349,14 +351,13 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
         if (n.type != NS_AST_STRUCT_DEF)
             continue;
         i32 i = ns_array_length(vm->symbols);
-        ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = n, .st.t = ns_type_encode(ns_type_struct, i, 0, 0)}};
+        ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = n, .st.t = ns_type_encode(ns_type_struct, i, 0, 0)}, .mod = vm->lib};
         st.name = n.struct_def.name.val;
         ns_array_set_length(st.st.fields, n.struct_def.count);
         ns_ast_t *field = &n;
         i32 offset = 0;
         for (i32 i = 0; i < n.struct_def.count; i++) {
             field = &ctx->nodes[field->next];
-            // ns_symbol f = (ns_symbol){.type = NS_SYMBOL_VALUE };
             ns_type t = ns_vm_parse_type(vm, ctx->nodes[field->arg.type].type_label.name, true);
             i32 size = ns_type_size(vm, t);
             // std layout
@@ -580,12 +581,7 @@ void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx) {
         if (n.type != NS_AST_IMPORT_STMT)
             continue;
         ns_str lib = n.import_stmt.lib.val;
-        if (ns_str_equals(lib, ns_str_cstr("std"))) {
-            ns_vm_import_std_symbols(vm);
-        } else {
-            // find lib in lib path & then add all symbols to vm
-            ns_error("syntax error", "unknown lib %.*s\n", lib.len, lib.data);
-        }
+        ns_vm_import(vm, lib);
     }
 }
 
@@ -847,6 +843,7 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_vm_parse_expr(vm, ctx, s_i);
             break;
         case NS_AST_IMPORT_STMT:
+        case NS_AST_MODULE_STMT:
         case NS_AST_FN_DEF:
         case NS_AST_OPS_FN_DEF:
         case NS_AST_STRUCT_DEF:
@@ -860,4 +857,27 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
     return true;
+}
+
+bool ns_lib_exists(ns_vm *vm, ns_str lib) {
+    for (i32 i = 0, l = ns_array_length(vm->libs); i < l; i++) {
+        if (ns_str_equals(vm->libs[i], lib)) return true;
+    }
+    return false;
+}
+
+void ns_vm_import(ns_vm *vm, ns_str lib) {
+    if (ns_lib_exists(vm, lib)) return;
+
+    ns_ast_ctx ctx = {0};
+    ns_str path = ns_path_join(ns_str_cstr("lib"), ns_str_concat(lib, ns_str_cstr(".ns")));
+    ns_str source = ns_read_file(path);
+    ns_ast_parse(&ctx, source, path);
+
+    ns_str cur_lib = vm->lib;
+    vm->lib = lib;
+    if (!ns_vm_parse(vm, &ctx)) {
+        ns_error("vm import", "failed to import lib %.*s\n", lib.len, lib.data);
+    }
+    vm->lib = cur_lib;
 }

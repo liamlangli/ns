@@ -1,8 +1,6 @@
 #include "ns_ast.h"
 #include "ns_token.h"
 
-#include <assert.h>
-
 void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state) {
     ctx->f = state.f;
     ctx->token.line = state.l;
@@ -38,6 +36,7 @@ bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token) {
 
 bool ns_token_can_be_type(NS_TOKEN t) {
     switch (t) {
+    case NS_TOKEN_NIL:
     case NS_TOKEN_TYPE_I8:
     case NS_TOKEN_TYPE_I16:
     case NS_TOKEN_TYPE_I32:
@@ -95,6 +94,16 @@ bool ns_parse_type_label(ns_ast_ctx *ctx) {
         n.type_label.is_ref = true;
     } else {
         ns_restore_state(ctx, state);
+    }
+
+    ns_ast_state array_state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET) && ns_parse_type_label(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
+        n.type_label.is_array = true;
+        n.type_label.item_type = ctx->current;
+        ns_ast_push(ctx, n);
+        return true;
+    } else {
+        ns_restore_state(ctx, array_state);
     }
 
     if (ns_parse_type_name(ctx)) {

@@ -1,6 +1,18 @@
 #include "ns_ast.h"
 #include "ns_token.h"
 
+bool ns_parse_module_stmt(ns_ast_ctx *ctx) {
+    ns_ast_state state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_MODULE) &&
+        ns_parse_identifier(ctx)) {
+        ns_ast_t n = (ns_ast_t){.type = NS_AST_MODULE_STMT, .module_stmt = { .name = ctx->token } };
+        ns_ast_push(ctx, n);
+        return true;
+    }
+    ns_restore_state(ctx, state);
+    return false;
+}
+
 bool ns_parse_import_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_IMPORT) && ns_parse_identifier(ctx)) {
@@ -303,39 +315,31 @@ bool ns_parse_stmt(ns_ast_ctx *ctx) {
 
 bool ns_parse_global_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
-    if (ns_parse_import_stmt(ctx)) {
-        return true;
-    }
+    if (ns_parse_import_stmt(ctx)) return true;
     ns_restore_state(ctx, state);
 
-    if (ns_parse_var_define(ctx)) {
-        return true;
-    }
+    if (ns_parse_module_stmt(ctx)) return true;
     ns_restore_state(ctx, state);
 
-    if (ns_parse_ops_fn_define(ctx) || ns_parse_fn_define(ctx)) {
-        return true;
-    }
+    if (ns_parse_var_define(ctx)) return true;
     ns_restore_state(ctx, state);
 
-    if (ns_parse_struct_def(ctx)) {
-        return true;
-    }
+    if (ns_parse_fn_define(ctx)) return true;
     ns_restore_state(ctx, state);
 
-    if (ns_parse_type_define(ctx)) {
-        return true;
-    }
+    if (ns_parse_ops_fn_define(ctx)) return true;
     ns_restore_state(ctx, state);
 
-    if (ns_parse_stmt(ctx)) {
-        return true;
-    }
+    if (ns_parse_struct_def(ctx)) return true;
     ns_restore_state(ctx, state);
 
-    if (ns_parse_expr_stmt(ctx)) {
-        return true;
-    }
+    if (ns_parse_type_define(ctx)) return true;
+    ns_restore_state(ctx, state);
+
+    if (ns_parse_stmt(ctx)) return true;
+    ns_restore_state(ctx, state);
+
+    if (ns_parse_expr_stmt(ctx)) return true;
     ns_restore_state(ctx, state);
 
     return false;

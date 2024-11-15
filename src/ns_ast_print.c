@@ -1,7 +1,5 @@
 #include "ns_ast.h"
 
-#define NS_STR_CASE(type) case type: return ns_str_cstr(#type);
-
 ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     switch (type) {
         ns_str_case(NS_AST_UNKNOWN)
@@ -33,23 +31,30 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         ns_str_case(NS_AST_JUMP_STMT)
         ns_str_case(NS_AST_COMPOUND_STMT)
         ns_str_case(NS_AST_IMPORT_STMT)
+        ns_str_case(NS_AST_MODULE_STMT)
         ns_str_case(NS_AST_CAST_EXPR)
     default:
-        ns_error("ast", "unknown type %d\n", type);
+        ns_error("ast", "unknown ast type %d\n", type);
         return ns_str_cstr("NS_AST_UNKNOWN");
     }
 }
 
-void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i) {
+void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i, bool colon) {
     if (i == -1) return;
-    printf(": ");
+    if (colon) printf(": ");
 
     ns_ast_t *n = &ctx->nodes[i];
     if (n->type_label.is_ref) {
         printf("ref ");
     }
 
-    ns_str_printf(n->type_label.name.val);
+    if (n->type_label.is_array) {
+        printf("[");
+        ns_ast_print_type_label(ctx, n->type_label.item_type, false);
+        printf("]");
+    } else {
+        ns_str_printf(n->type_label.name.val);
+    }
 }
 
 void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
@@ -57,6 +62,14 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     ns_str type = ns_ast_type_to_string(n.type);
     printf("%4d [type: %-20.*s next: %4d] ", i, type.len, type.data, n.next);
     switch (n.type) {
+    case NS_AST_IMPORT_STMT: {
+        printf(ns_color_log "import " ns_color_nil);
+        ns_str_printf(n.import_stmt.lib.val);
+    } break;
+    case NS_AST_MODULE_STMT: {
+        printf(ns_color_log "mod " ns_color_nil);
+        ns_str_printf(n.module_stmt.name.val);
+    } break;
     case NS_AST_TYPE_LABEL: {
         if (n.type_label.is_ref) printf("ref ");
         ns_str_printf(n.type_label.name.val);
@@ -73,18 +86,20 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         for (i32 i = 0; i < n.fn_def.arg_count; i++) {
             arg = &ctx->nodes[arg->next];
             ns_str_printf(arg->arg.name.val);
-            ns_ast_print_type_label(ctx, arg->arg.type);
+            ns_ast_print_type_label(ctx, arg->arg.type, true);
             if (i != n.fn_def.arg_count - 1) {
                 printf(", ");
             }
         }
         printf(")");
-        ns_ast_print_type_label(ctx, n.fn_def.ret);
+        ns_ast_print_type_label(ctx, n.fn_def.ret, true);
 
-        if (n.fn_def.body != -1)
-            printf(" { [%d] }", n.fn_def.body);
-        else {
-            printf(";");
+        if (!n.fn_def.is_ref) {
+            if (n.fn_def.body != -1)
+                printf(" { [%d] }", n.fn_def.body);
+            else {
+                printf(";");
+            }
         }
     } break;
     case NS_AST_OPS_FN_DEF: {
@@ -95,15 +110,15 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf(ns_color_nil ")(");
         ns_ast_t *left = &ctx->nodes[n.ops_fn_def.left];
         ns_str_printf(left->arg.name.val);
-        ns_ast_print_type_label(ctx, left->arg.type);
+        ns_ast_print_type_label(ctx, left->arg.type, true);
         printf(", ");
 
         ns_ast_t *right = &ctx->nodes[n.ops_fn_def.right];
         ns_str_printf(right->arg.name.val);
-        ns_ast_print_type_label(ctx, right->arg.type);
+        ns_ast_print_type_label(ctx, right->arg.type, true);
 
         printf(")");
-        ns_ast_print_type_label(ctx, n.ops_fn_def.ret);
+        ns_ast_print_type_label(ctx, n.ops_fn_def.ret, true);
         if (n.ops_fn_def.body != -1) {
             printf(" { [%d] }", n.ops_fn_def.body);
         }
@@ -117,7 +132,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         for (i32 i = 0; i < count; i++) {
             field = ctx->nodes[field.next];
             ns_str_printf(field.arg.name.val);
-            ns_ast_print_type_label(ctx, field.arg.type);
+            ns_ast_print_type_label(ctx, field.arg.type, true);
             if (i != count - 1) {
                 printf(", ");
             }
@@ -126,12 +141,12 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_AST_ARG_DEF:
         ns_str_printf(n.arg.name.val);
-        ns_ast_print_type_label(ctx, n.arg.type);
+        ns_ast_print_type_label(ctx, n.arg.type, true);
         break;
     case NS_AST_VAR_DEF:
         printf(ns_color_log "let " ns_color_nil);
         ns_str_printf(n.var_def.name.val);
-        ns_ast_print_type_label(ctx, n.var_def.type);
+        ns_ast_print_type_label(ctx, n.var_def.type, true);
         if (n.var_def.expr != -1) {
             printf(" = [%d]", n.var_def.expr);
         }
@@ -261,10 +276,6 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         } else {
             printf(ns_color_log "loop" ns_color_nil " [%d] { [%d] }", n.loop_stmt.condition, n.loop_stmt.body);
         }
-    } break;
-    case NS_AST_IMPORT_STMT: {
-        printf(ns_color_log "import " ns_color_nil);
-        ns_str_printf(n.import_stmt.lib.val);
     } break;
     default:
         break;

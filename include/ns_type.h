@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <assert.h>
+#include <math.h>
 
 // ns_def
 #ifndef bool
@@ -68,9 +70,11 @@ typedef struct ns_str {
 } ns_str;
 
 ns_str ns_str_slice(ns_str s, i32 start, i32 end);
+ns_str ns_str_concat(ns_str a, ns_str b);
 
 i32 ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);
+ns_str ns_read_file(ns_str filename);
 ns_str ns_str_unescape(ns_str s);
 i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
 
@@ -87,6 +91,8 @@ i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
 #define ns_str_true ns_str_cstr("true")
 #define ns_str_false ns_str_cstr("false")
 #define ns_str_nil ns_str_cstr("nil")
+
+#define ns_str_case(type) case type: return ns_str_cstr(#type);
 
 // ns_data
 typedef struct ns_data {
@@ -118,6 +124,7 @@ typedef enum {
     NS_TOKEN_LET,
     NS_TOKEN_NIL,
     NS_TOKEN_MATCH,
+    NS_TOKEN_MODULE,
     NS_TOKEN_RETURN,
     NS_TOKEN_REF,
     NS_TOKEN_STRUCT,

@@ -5,42 +5,10 @@
 #include "ns_type.h"
 #include "ns_vm.h"
 
-#include <assert.h>
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
 #define STB_DS_IMPLEMENTATION
 
 static ns_vm vm = {0};
 static ns_ast_ctx ctx = {0};
-
-ns_str ns_read_file(ns_str path) {
-    FILE *file = fopen(path.data, "rb");
-    if (!file) {
-        return ns_str_null;
-    }
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    char *buffer = (char *)malloc(size + 1);
-    fread(buffer, 1, size, file);
-    fclose(file);
-    buffer[size] = '\0';
-    ns_str data = ns_str_range(buffer, size);
-    data.dynamic = true;
-    return data;
-}
-
-ns_str ns_str_slice(ns_str s, i32 start, i32 end) {
-    char *buffer = (char *)malloc(end - start + 1);
-    memcpy(buffer, s.data + start, end - start);
-    buffer[end - start] = '\0';
-    ns_str data = ns_str_range(buffer, end - start);
-    data.dynamic = true;
-    return data;
-}
 
 typedef struct ns_compile_option_t {
     bool tokenize_only;
@@ -156,6 +124,7 @@ int main(int argc, char **argv) {
             ns_exec_repl();
         } else {
             ns_exec_eval(option.filename);
+            ns_vm_symbol_print(&vm);
         }
     }
     return 0;

@@ -1,9 +1,6 @@
 #include "ns_vm.h"
 #include "ns_fmt.h"
 
-#include <stdio.h>
-#include <math.h>
-
 #define ns_type_ref_fn(i) ns_type_encode(ns_type_fn, i, 1, NS_STORE_CONST)
 
 void ns_vm_import_std_symbols(ns_vm *vm) {
@@ -16,7 +13,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     print->fn.ret = ns_type_void;
     ns_array_set_length(print->fn.args, 1);
     print->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_str}};
-    print->lib = std;
+    print->mod = std;
     print->fn.fn = (ns_value){.t = ns_type_ref_fn(print_p)};
 
     // fn open(path: str, mode: str): i32
@@ -27,7 +24,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     ns_array_set_length(open->fn.args, 2);
     open->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_str}};
     open->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_str}};
-    open->lib = std;
+    open->mod = std;
     open->fn.fn = (ns_value){.t = ns_type_ref_fn(open_p)};
 
     // fn write(fd: i32, data: str): i32
@@ -38,7 +35,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     ns_array_set_length(write->fn.args, 2);
     write->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_u64}};
     write->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_str}};
-    write->lib = std;
+    write->mod = std;
     write->fn.fn = (ns_value){.t = ns_type_ref_fn(write_p)};
 
     // fn read(fd: i32, size: i32): str
@@ -49,7 +46,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     ns_array_set_length(read->fn.args, 2);
     read->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_u64}};
     read->fn.args[1] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_i32}};
-    read->lib = std;
+    read->mod = std;
     read->fn.fn = (ns_value){.t = ns_type_ref_fn(read_p)};
 
     // fn close(fd: i32): nil
@@ -59,7 +56,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     close->fn.ret = ns_type_void;
     ns_array_set_length(close->fn.args, 1);
     close->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_u64}};
-    close->lib = std;
+    close->mod = std;
     close->fn.fn = (ns_value){.t = ns_type_ref_fn(close_p)};
 
     // fn sqrt(x: f64): f64
@@ -69,7 +66,7 @@ void ns_vm_import_std_symbols(ns_vm *vm) {
     sqrt->fn.ret = ns_type_f64;
     ns_array_set_length(sqrt->fn.args, 1);
     sqrt->fn.args[0] = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = {.t = ns_type_f64}};
-    sqrt->lib = std;
+    sqrt->mod = std;
     sqrt->fn.fn = (ns_value){.t = ns_type_ref_fn(sqrt_p)};
 }
 

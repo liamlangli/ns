@@ -1,5 +1,3 @@
-#include <stdio.h>
-
 #include "ns_lsp.h"
 
 bool ns_lsp_serve(u16 port) {
