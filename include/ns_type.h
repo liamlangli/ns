@@ -243,9 +243,10 @@ typedef enum {
 } ns_store;
 
 typedef struct ns_type {
+    ns_value_type type: 8;
+    ns_value_type item_type: 8;
+    ns_store store: 2;
     bool ref: 1;
-    ns_store store: 7;
-    ns_value_type type: 16;
     u32 index;
 } ns_type;
 

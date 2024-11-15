@@ -64,6 +64,7 @@ u64 ns_type_size(ns_vm *vm, ns_type t) {
     case NS_TYPE_I64:
     case NS_TYPE_U64:
     case NS_TYPE_F64: return 8;
+    case NS_TYPE_ARRAY:
     case NS_TYPE_FN:
     case NS_TYPE_STRING: return ns_ptr_size;
     case NS_TYPE_STRUCT: {
@@ -346,6 +347,7 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
+    i32 size;
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         ns_ast_t n = ctx->nodes[ctx->sections[i]];
         if (n.type != NS_AST_STRUCT_DEF)
@@ -358,8 +360,16 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
         i32 offset = 0;
         for (i32 i = 0; i < n.struct_def.count; i++) {
             field = &ctx->nodes[field->next];
-            ns_type t = ns_vm_parse_type(vm, ctx->nodes[field->arg.type].type_label.name, true);
-            i32 size = ns_type_size(vm, t);
+            ns_ast_t *type = &ctx->nodes[field->arg.type];
+            ns_type t;
+            if (type->type_label.is_array) {
+                size = ns_ptr_size;
+                // t = (ns_type){.type = NS_TYPE_ARRAY, .ref};
+            } else {
+                t = ns_vm_parse_type(vm, type->type_label.name, true);
+                i32 size = ns_type_size(vm, t);
+            }
+            
             // std layout
             offset = ns_align(offset, size);
             ns_struct_field f = (ns_struct_field){.name = field->arg.name.val, .t = t, .o = offset, .s = size};
