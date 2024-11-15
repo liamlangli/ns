@@ -1,4 +1,5 @@
 import std
+import io
 
 struct simd3 { x: f64, y: f64, z: f64 }
 struct ray { origin: simd3, direction: simd3 }
@@ -48,9 +49,9 @@ fn main() {
         radius: 0.5
     }
 
-    let path = "bin/ns.ppm"
-    let fd = open(path, 'w')
-    write(fd, 'P3\n#ns.ppm\n256 256\n255\n')
+    let path = "bin/rt.png"
+    let image = Image{data: [u8](256 * 256 * 4), width: 256, height: 256, channels: 4}
+    let offset = 0
 
     for i in 0 to 256 {
         for j in 0 to 256 {
@@ -59,12 +60,18 @@ fn main() {
 
             r.direction = simd3 { x: u, y: v, z: 1.0 }
             let h = hit_sphere(r, s)
+            offset = (i * 256 + j) * 4
             if h.t > 0.0 {
                 let n = h.normal * 128.0 + 128.0
-                write(fd, `{n.x as u8} {n.y as u8} {n.z as u8}\n`)
+                image.data[offset + 0] = n.x as u8
+                image.data[offset + 1] = n.y as u8
+                image.data[offset + 2] = n.z as u8
             } else {
-                write(fd, '0 0 0\n')
+                image.data[offset + 0] = 0
+                image.data[offset + 1] = 0
+                image.data[offset + 2] = 0
             }
+            image.data[offset + 3] = 255
         }
     }
     print("trace complete\n")

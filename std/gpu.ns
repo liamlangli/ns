@@ -1,10 +1,5 @@
 mod gpu
 
-struct GPUDevice {
-    name: str,
-    memory: i32,
-    compute_units: i32,
-    clock_speed: i32
-}
+struct GPUDevice {}
 
-ref fn gpu_create_device(name: str, memory: i32, compute_units: i32, clock_speed: i32): GPUDevice
+ref fn gpu_create_device(): ref GPUDevice
