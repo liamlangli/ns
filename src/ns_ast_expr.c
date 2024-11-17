@@ -59,7 +59,7 @@ bool ns_parse_stack_empty(ns_ast_ctx *ctx) {
 
 bool ns_parse_stack_leading_operand(ns_ast_ctx *ctx) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
-    if (scope->pre == -1) {
+    if (scope->pre == 0) {
         return false;
     }
     return ns_parse_is_operand(ctx->nodes[scope->pre]);
@@ -67,7 +67,7 @@ bool ns_parse_stack_leading_operand(ns_ast_ctx *ctx) {
 
 bool ns_parse_stack_leading_operator(ns_ast_ctx *ctx) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
-    if (scope->pre == -1) {
+    if (scope->pre == 0) {
         return false;
     }
     return !ns_parse_is_operand(ctx->nodes[scope->pre]);
@@ -128,9 +128,9 @@ bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
         return true;
     }
 
-    i32 next = -1;
+    i32 next = 0;
     while (ns_parse_expr(ctx)) {
-        next = next == -1 ? n.call_expr.arg = ctx->current : (ctx->nodes[next].next = ctx->current);
+        next = next == 0 ? n.call_expr.arg = ctx->current : (ctx->nodes[next].next = ctx->current);
         n.call_expr.arg_count++;
 
         ns_parse_next_token(ctx);
@@ -310,7 +310,7 @@ bool ns_parse_member_expr(ns_ast_ctx *ctx, i32 operand) {
 bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
     ns_ast_state primary_state = ns_save_state(ctx);
 
-    if (operand == -1) {
+    if (operand == 0) {
         if (!ns_parse_primary_expr(ctx)) {
             ns_restore_state(ctx, primary_state);
             return false;
@@ -388,7 +388,7 @@ bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
 bool ns_parse_expr(ns_ast_ctx *ctx) {
     i32 stack_top = ns_array_length(ctx->stack);
     i32 op_top = ns_array_length(ctx->op_stack);
-    ns_ast_expr_scope scope = (ns_ast_expr_scope){.stack_top = stack_top, .op_top = op_top, .pre = -1};
+    ns_ast_expr_scope scope = (ns_ast_expr_scope){.stack_top = stack_top, .op_top = op_top, .pre = 0};
     ns_array_push(ctx->scopes, scope);
 
     ns_ast_state state;
@@ -481,7 +481,7 @@ bool ns_parse_expr(ns_ast_ctx *ctx) {
                 i32 operand = ns_parse_stack_pop(ctx);
                 ns_restore_state(ctx, state);
                 ns_token_t t = ctx->token;
-                if (operand == -1) {
+                if (operand == 0) {
                     ns_ast_error(ctx, "syntax error", "expected operand before %.*s", t.val.len, t.val.data);
                     break;
                 }

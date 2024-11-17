@@ -27,7 +27,7 @@ bool ns_parse_import_stmt(ns_ast_ctx *ctx) {
 bool ns_parse_jump_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // continue
-    ns_ast_t n = {.type = NS_AST_JUMP_STMT, .jump_stmt.label = ctx->token, .jump_stmt.expr = -1};
+    ns_ast_t n = {.type = NS_AST_JUMP_STMT, .jump_stmt.label = ctx->token, .jump_stmt.expr = 0};
     if (ns_token_require(ctx, NS_TOKEN_CONTINUE) && ns_token_require(ctx, NS_TOKEN_EOL)) {
         ns_ast_push(ctx, n);
         return true;
@@ -71,7 +71,7 @@ bool ns_parse_if_stmt(ns_ast_ctx *ctx) {
         ns_ast_t n = {.type = NS_AST_IF_STMT, .if_stmt.condition = ctx->current};
         if (ns_parse_compound_stmt(ctx)) {
             n.if_stmt.body = ctx->current;
-            n.if_stmt.else_body = -1;
+            n.if_stmt.else_body = 0;
 
             ns_ast_state else_state = ns_save_state(ctx);
             // try parse else statement
@@ -118,7 +118,7 @@ bool ns_parse_for_stmt(ns_ast_ctx *ctx) {
 // [loop(cond) {}]  [do {body} loop(cond)]
 bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
-    ns_ast_t n = {.type = NS_AST_LOOP_STMT, .loop_stmt.condition = -1, .loop_stmt.body = -1, .loop_stmt.do_first = false};
+    ns_ast_t n = {.type = NS_AST_LOOP_STMT, .loop_stmt.condition = 0, .loop_stmt.body = 0, .loop_stmt.do_first = false};
 
     // do first
     if (ns_token_require(ctx, NS_TOKEN_DO)) {
@@ -195,10 +195,10 @@ bool ns_parse_compound_stmt(ns_ast_ctx *ctx) {
 
         ns_token_skip_eol(ctx);
         ns_ast_t n = {.type = NS_AST_COMPOUND_STMT};
-        i32 next = -1;
+        i32 next = 0;
         while (ns_parse_var_define(ctx) || 
             ns_parse_stmt(ctx)) {
-            next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+            next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
             n.compound_stmt.count++;
             ns_token_skip_eol(ctx);
             if (ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) {
@@ -238,10 +238,10 @@ bool ns_parse_desig_expr(ns_ast_ctx *ctx, i32 st) {
         return false;
     }
 
-    i32 next = -1;
+    i32 next = 0;
     ns_token_skip_eol(ctx);
     while (ns_parse_designated_field(ctx)) {
-        next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+        next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
         n.desig_expr.count++;
 
         ns_token_skip_eol(ctx);

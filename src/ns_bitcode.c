@@ -434,7 +434,7 @@ void ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, ns_ast_t n) {
     ns_bc_builder bdr = bc_ctx->builder;
     ns_token_t t = n.jump_stmt.label;
     if (ns_str_equals_STR(t.val, "return")) {
-        if (n.jump_stmt.expr != -1) {
+        if (n.jump_stmt.expr) {
             ns_bc_value ret = ns_bc_expr(bc_ctx, bc_ctx->ctx->nodes[n.jump_stmt.expr]);
             LLVMBuildRet(bdr, ret.val);
         } else {

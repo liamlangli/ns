@@ -244,13 +244,14 @@ typedef enum {
 
 typedef struct ns_type {
     ns_value_type type: 8;
-    ns_value_type item_type: 8;
-    ns_store store: 2;
-    bool ref: 1;
+    ns_store store: 4;
+    bool ref: 2;
+    bool array: 2;
     u32 index;
 } ns_type;
 
 #define ns_type_is_ref(t) (t.ref != 0)
+#define ns_type_is_array(t) (t.array != 0)
 #define ns_type_is_const(t) (NS_STORE_CONST == t.store)
 #define ns_type_in_stack(t) (NS_STORE_STACK == t.store)
 #define ns_type_in_heap(t) (NS_STORE_HEAP == t.store)

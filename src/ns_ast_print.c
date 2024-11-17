@@ -40,7 +40,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
 }
 
 void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i, bool colon) {
-    if (i == -1) return;
+    if (i == 0) return;
     if (colon) printf(": ");
 
     ns_ast_t *n = &ctx->nodes[i];
@@ -95,7 +95,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         ns_ast_print_type_label(ctx, n.fn_def.ret, true);
 
         if (!n.fn_def.is_ref) {
-            if (n.fn_def.body != -1)
+            if (n.fn_def.body)
                 printf(" { [%d] }", n.fn_def.body);
             else {
                 printf(";");
@@ -119,7 +119,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
 
         printf(")");
         ns_ast_print_type_label(ctx, n.ops_fn_def.ret, true);
-        if (n.ops_fn_def.body != -1) {
+        if (n.ops_fn_def.body) {
             printf(" { [%d] }", n.ops_fn_def.body);
         }
     } break;
@@ -147,7 +147,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf(ns_color_log "let " ns_color_nil);
         ns_str_printf(n.var_def.name.val);
         ns_ast_print_type_label(ctx, n.var_def.type, true);
-        if (n.var_def.expr != -1) {
+        if (n.var_def.expr) {
             printf(" = [%d]", n.var_def.expr);
         }
         break;
@@ -202,7 +202,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_AST_JUMP_STMT:
         ns_str_printf(n.jump_stmt.label.val);
-        if (n.jump_stmt.expr != -1) {
+        if (n.jump_stmt.expr) {
             printf(" [%d]", n.jump_stmt.expr);
         }
         break;
@@ -224,7 +224,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_AST_IF_STMT: {
         printf(ns_color_log "if" ns_color_nil " ([%d]) [%d]", n.if_stmt.condition, n.if_stmt.body);
-        if (n.if_stmt.else_body != -1) {
+        if (n.if_stmt.else_body) {
             printf(" " ns_color_log "else" ns_color_nil " [%d]", n.if_stmt.else_body);
         }
     } break;

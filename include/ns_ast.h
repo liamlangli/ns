@@ -244,7 +244,7 @@ typedef struct ns_ast_t {
     };
 } ns_ast_t;
 
-#define ns_ast_nil (ns_ast_t){.type = NS_AST_UNKNOWN, .next = -1}
+#define ns_ast_nil (ns_ast_t){.type = NS_AST_UNKNOWN}
 
 typedef struct ns_ast_expr_scope {
     i32 stack_top, op_top, pre;

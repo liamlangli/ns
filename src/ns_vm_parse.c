@@ -364,10 +364,12 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_type t;
             if (type->type_label.is_array) {
                 size = ns_ptr_size;
-                // t = (ns_type){.type = NS_TYPE_ARRAY, .ref};
+                ns_ast_t *item_type_n = &ctx->nodes[type->type_label.item_type];
+                ns_type item_type = ns_vm_parse_type(vm, item_type_n->type_label.name, true);
+                t = (ns_type){.type = item_type.type, .ref = true, .array = true, .store = NS_STORE_HEAP};
             } else {
                 t = ns_vm_parse_type(vm, type->type_label.name, true);
-                i32 size = ns_type_size(vm, t);
+                size = ns_type_size(vm, t);
             }
             
             // std layout
@@ -388,7 +390,7 @@ void ns_vm_parse_struct_def_ref(ns_vm *vm) {
             continue;
         for (i32 j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
             ns_struct_field *f = &st->st.fields[j];
-            if (!ns_type_is_ref(f->t))
+            if (!ns_type_is_ref(f->t) || ns_type_is_array(f->t))
                 continue;
             ns_str n = ns_vm_get_type_name(vm, f->t);
             ns_symbol *t = ns_vm_find_symbol(vm, n);
@@ -741,7 +743,7 @@ void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.body);
-    if (n->if_stmt.else_body != -1) {
+    if (n->if_stmt.else_body) {
         ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.else_body);
     }
 }
@@ -785,7 +787,7 @@ void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     s.name = n->var_def.name.val;
     ns_type l = ns_vm_parse_type(vm, ctx->nodes[n->var_def.type].type_label.name, true);
 
-    if (n->var_def.expr != -1) {
+    if (n->var_def.expr != 0) {
         ns_type t = ns_vm_parse_expr(vm, ctx, n->var_def.expr);
         if (!ns_type_is(l, NS_TYPE_INFER) && !ns_type_equals(l, t)) {
             ns_str type = ns_vm_get_type_name(vm, t);

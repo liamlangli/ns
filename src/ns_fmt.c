@@ -78,7 +78,7 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
             ctx.filename = ns_str_cstr("fmt");
 
             ctx.token.line = 1; // start from 1
-            ctx.current = -1;
+            ctx.current = 0;
 
             ns_parse_expr(&ctx);
             ns_value v = ns_eval_expr(vm, &ctx, ctx.current);

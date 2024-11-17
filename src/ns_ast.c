@@ -294,7 +294,7 @@ bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
         return false;
     }
 
-    ns_ast_t fn = {.type = NS_AST_OPS_FN_DEF, .ops_fn_def = {.ops = ops, .is_async = is_async, .is_ref = is_ref, .ret = -1}};
+    ns_ast_t fn = {.type = NS_AST_OPS_FN_DEF, .ops_fn_def = {.ops = ops, .is_async = is_async, .is_ref = is_ref, .ret = 0}};
     // parse parameters
     ns_token_skip_eol(ctx);
     if (!ns_parse_arg(ctx)) {
@@ -370,12 +370,12 @@ bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         return false;
     }
 
-    ns_ast_t fn = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async, .is_ref = is_ref, .is_kernel = is_kernel, .ret = -1}};
+    ns_ast_t fn = {.type = NS_AST_FN_DEF, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async, .is_ref = is_ref, .is_kernel = is_kernel, .ret = 0}};
     // parse args
     ns_token_skip_eol(ctx);
-    i32 next = -1;
+    i32 next = 0;
     while (ns_parse_arg(ctx)) {
-        next = next == -1 ? fn.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+        next = next == 0 ? fn.next = ctx->current : (ctx->nodes[next].next = ctx->current);
         fn.fn_def.arg_count++;
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
@@ -439,11 +439,11 @@ bool ns_parse_struct_def(ns_ast_ctx *ctx) {
     }
 
     ns_ast_t n = {.type = NS_AST_STRUCT_DEF, .struct_def = {.name = name, .count = 0}};
-    i32 next = -1;
+    i32 next = 0;
     ns_token_skip_eol(ctx);
     while (ns_parse_arg(ctx)) {
         ns_token_skip_eol(ctx);
-        next = next == -1 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+        next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
 
         n.struct_def.count++;
         ns_parse_next_token(ctx);
@@ -469,7 +469,7 @@ bool ns_parse_var_define(ns_ast_ctx *ctx) {
 
     // identifier [type_declare] = expression
     if (ns_token_require(ctx, NS_TOKEN_LET) && ns_parse_identifier(ctx)) {
-        ns_ast_t n = {.type = NS_AST_VAR_DEF, .var_def = {.name = ctx->token, .type = -1, .expr = -1}};
+        ns_ast_t n = {.type = NS_AST_VAR_DEF, .var_def = {.name = ctx->token, .type = 0, .expr = 0}};
 
         ns_ast_state type_state = ns_save_state(ctx);
         if (ns_token_require(ctx, NS_TOKEN_COLON) &&
@@ -524,7 +524,7 @@ bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->source = source;
     ctx->filename = filename;
     ctx->token.line = 1; // start from 1
-    ctx->current = -1;
+    ctx->current = 0;
     ctx->f = 0;
 
     ctx->stack = NULL;
@@ -533,7 +533,7 @@ bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->sections = NULL;
     ctx->nodes = NULL;
 
-    ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_PROGRAM, .next = -1});
+    ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_PROGRAM, .next = 0});
 
     ctx->section_begin = ctx->section_end;
     bool loop = false;

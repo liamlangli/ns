@@ -49,7 +49,6 @@ fn main() {
         radius: 0.5
     }
 
-    let path = 
     let image = Image{data: [u8](256 * 256 * 4), width: 256, height: 256, channels: 4}
     let offset = 0
 
