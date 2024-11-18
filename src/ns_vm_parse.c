@@ -330,6 +330,7 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
             continue;
         ns_ast_t n = fn->fn.ast;
         i32 body = n.type == NS_AST_FN_DEF ? n.fn_def.body : n.ops_fn_def.body;
+        bool is_ref = n.type == NS_AST_FN_DEF ? n.fn_def.is_ref : n.ops_fn_def.is_ref;
         ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack)};
 
         ns_array_push(vm->call_stack, call);
@@ -343,7 +344,7 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_vm_parse_compound_stmt(vm, ctx, body);
         ns_exit_scope(vm);
         ns_array_pop(vm->call_stack);
-        fn->fn.fn = (ns_value){.t = ns_type_encode(ns_type_fn, i, 0, 0) };
+        fn->fn.fn = (ns_value){.t = ns_type_encode(ns_type_fn, i, is_ref, 0) };
         fn->parsed = true;
     }
 }

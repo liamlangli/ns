@@ -1,6 +1,0 @@
-mod c
-
-ref fn printf(fmt: str): nil
-ref fn open(path: str, mode: str): u64
-ref fn read(fd: u64): str
-ref fn write(fd: u64, buf: str): u64

@@ -562,7 +562,9 @@ ns_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
 
         ns_type t = field->t;
-        if (ns_type_is_number(t)) {
+        if (ns_type_is_array(t)) {
+            *(u64*)(data + field->o) = val.o;
+        } else if (ns_type_is_number(t)) {
             switch (t.type) {
             case NS_TYPE_U8:   *(u8*)(data + field->o) = ns_eval_number_i8(vm, val); break;
             case NS_TYPE_I8:   *(i8*)(data + field->o) = ns_eval_number_i8(vm, val); break;
@@ -721,14 +723,14 @@ ns_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *t = &ctx->nodes[n->array_expr.type];
-    
+
     ns_type type = ns_vm_parse_type(vm, t->type_label.name, false);
     i32 count = n->array_expr.count;
     i32 size = ns_type_size(vm, type) * count;
     i8* data = NULL;
     ns_array_set_capacity(data, size);
     memset(data, 0, size);
-    return (ns_value){.t = ns_type_set_store(type, NS_STORE_HEAP), .o = (u64)data};
+    return (ns_value){.t = {.type = type.type, .array = true, .ref = type.ref, .index = type.index, .store = NS_STORE_HEAP }, .o = (u64)data};
 }
 
 ns_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -744,11 +746,14 @@ ns_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_type element_type = table.t;
     element_type.array = false;
 
-    if (ns_type_in_heap(table.t)) {
-        return (ns_value){.t = element_type, .o = table.o + ns_type_size(vm, table.t) * ns_eval_number_i32(vm, index)};
+    u64 offset = ns_type_size(vm, table.t) * (u64)ns_eval_number_i32(vm, index);
+    u8* data = NULL;
+    if (ns_type_in_stack(table.t)) {
+        data = (u8*)(*(u64*)(vm->stack + table.o)) + offset;
     } else {
-        return (ns_value){.t = element_type, .o = table.o + ns_type_size(vm, table.t) * ns_eval_number_i32(vm, index)};
+        data = (u8*)table.o + offset;
     }
+    return (ns_value){.t = ns_type_set_store(element_type, NS_STORE_HEAP), .o = (u64)data};
 }
 
 ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -763,7 +768,6 @@ ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ret.t = ns_type_set_store(v.t, NS_STORE_STACK);
     ns_eval_copy(vm, ret, v, size);
     ns_array_set_length(vm->stack, offset + size);
-
     val->val = ret;
     return ret;
 }

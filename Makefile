@@ -42,8 +42,8 @@ endif
 
 NS_LDFLAGS = -lm -lreadline
 
-NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG
-NS_RELEASE_CFLAGS = -Iinclude -Os
+NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG $(NS_PLATFORM_DEF)
+NS_RELEASE_CFLAGS = -Iinclude -Os $(NS_PLATFORM_DEF)
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
@@ -80,7 +80,7 @@ TARGET = $(BINDIR)/ns
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 
 all: $(TARGET)
-	@echo "building ns with options:" \
+	@echo "building ns at "$(OS)" with options:" \
 	"NS_BITCODE=$(NS_BITCODE)" \
 	"NS_DEBUG=$(NS_DEBUG)"
 
@@ -127,6 +127,9 @@ debug: $(NS_SRCS) | $(OBJDIR)
 release: $(NS_SRCS) | $(OBJDIR)
 	clang -o $(NS_RELEASE_TARGET) $(NS_SRCS) $(NS_RELEASE_CFLAGS) $(NS_LDFLAGS)
 	tar -czvf $(NS_RELEASE_TARGET).tar.gz $(NS_RELEASE_TARGET)
+
+trace: $(TARGET)
+	dtrace -n 'profile-997 /execname == "$(TARGET)"/ { @[ustack()] = count(); }' -c $(TARGET) -o bin/ns.stacks
 
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin

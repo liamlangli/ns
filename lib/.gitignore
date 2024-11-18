@@ -1,0 +1,10 @@
+*.dSYM
+*.dylib
+
+*.dll
+*.pdb
+
+*.a
+*.so
+
+*.o
