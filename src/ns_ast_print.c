@@ -50,7 +50,7 @@ void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i, bool colon) {
 
     if (n->type_label.is_array) {
         printf("[");
-        ns_ast_print_type_label(ctx, n->type_label.item_type, false);
+        ns_str_printf(n->type_label.name.val);
         printf("]");
     } else {
         ns_str_printf(n->type_label.name.val);

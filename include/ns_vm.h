@@ -3,7 +3,7 @@
 #include "ns_ast.h"
 #include "ns_type.h"
 
-#define ns_vm_error(f, s, t, m, ...) ns_error(t, "\n[%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
+#define ns_vm_error(f, s, t, m, ...) ns_error(t, "\n  [%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
 
 typedef enum {
     NS_SYMBOL_INVALID,
@@ -140,7 +140,6 @@ ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // vm std
-void ns_vm_import_std_symbols(ns_vm *vm);
 void ns_vm_import(ns_vm *vm, ns_str lib);
 void ns_vm_symbol_print(ns_vm *vm);
 ns_value ns_vm_eval_std(ns_vm *vm);

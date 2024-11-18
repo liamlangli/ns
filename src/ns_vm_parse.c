@@ -27,6 +27,8 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_type ns_vm_parse_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -364,9 +366,8 @@ void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_type t;
             if (type->type_label.is_array) {
                 size = ns_ptr_size;
-                ns_ast_t *item_type_n = &ctx->nodes[type->type_label.item_type];
-                ns_type item_type = ns_vm_parse_type(vm, item_type_n->type_label.name, true);
-                t = (ns_type){.type = item_type.type, .ref = true, .array = true, .store = NS_STORE_HEAP};
+                ns_type item_type = ns_vm_parse_type(vm, type->type_label.name, true);
+                t = (ns_type){.type = item_type.type, .ref = type->type_label.is_ref, .array = true, .store = NS_STORE_HEAP};
             } else {
                 t = ns_vm_parse_type(vm, type->type_label.name, true);
                 size = ns_type_size(vm, t);
@@ -450,12 +451,12 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *callee_n = &ctx->nodes[n->call_expr.callee];
     ns_type fn = ns_vm_parse_primary_expr(vm, ctx, n->call_expr.callee);
     if (ns_type_is(fn, NS_TYPE_UNKNOWN)) {
-        ns_vm_error(ctx->filename, callee_n->state, "syntax error", "unknown callee");
+        ns_vm_error(ctx->filename, callee_n->state, "syntax error", "unknown callee.");
     }
 
     ns_symbol *fn_record = &vm->symbols[ns_type_index(fn)];
     if (!fn_record || fn_record->type != NS_SYMBOL_FN) {
-        ns_vm_error(ctx->filename, callee_n->state, "syntax error", "invalid callee");
+        ns_vm_error(ctx->filename, callee_n->state, "syntax error", "invalid callee.");
     }
 
     i32 next = n->call_expr.arg;
@@ -467,7 +468,7 @@ ns_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             ns_str arg_type = ns_vm_get_type_name(vm, t);
             ns_str fn_arg_type = ns_vm_get_type_name(vm, fn_record->fn.args[a_i].val.t);
             ns_str fn_name = fn_record->name;
-            ns_vm_error(ctx->filename, n->state, "type error", "call expr type mismatch fn [%.*s] arg [%.*s], and input arg[%.*s]\n", fn_name.len, fn_name.data, fn_arg_type.len, fn_arg_type.data, arg_type.len, arg_type.data);
+            ns_vm_error(ctx->filename, n->state, "type error", "call expr type mismatch fn [%.*s] arg [%.*s], and input arg[%.*s].", fn_name.len, fn_name.data, fn_arg_type.len, fn_arg_type.data, arg_type.len, arg_type.data);
         }
     }
     return fn_record->fn.ret;
@@ -525,7 +526,7 @@ ns_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_symbol *st = ns_vm_find_symbol(vm, n->desig_expr.name.val);
     if (!st || st->type != NS_SYMBOL_STRUCT) {
         ns_str name = n->desig_expr.name.val;
-        ns_vm_error(ctx->filename, n->state, "syntax error", "unknown struct %.*s\n", name.len, name.data);
+        ns_vm_error(ctx->filename, n->state, "syntax error", "unknown struct %.*s.", name.len, name.data);
     }
 
     ns_ast_t *field = n;
@@ -540,7 +541,7 @@ ns_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                 if (!ns_type_equals(t, f->t)) {
                     ns_str f_type = ns_vm_get_type_name(vm, f->t);
                     ns_str t_type = ns_vm_get_type_name(vm, t);
-                    ns_vm_error(ctx->filename, field->state, "type error", "designated expr type mismatch [%.*s = %.*s]", f_type.len, f_type.data, t_type.len, t_type.data);
+                    ns_vm_error(ctx->filename, field->state, "type error", "designated expr type mismatch [%.*s = %.*s].", f_type.len, f_type.data, t_type.len, t_type.data);
                 }
                 break;
             }
@@ -566,9 +567,29 @@ ns_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
         return t;
     default:
-        ns_vm_error(ctx->filename, n->state, "syntax error", "unknown unary ops %.*s\n", op.val.len, op.val.data);
+        ns_vm_error(ctx->filename, n->state, "syntax error", "unknown unary ops %.*s.", op.val.len, op.val.data);
     }
     return ns_type_unknown;
+}
+
+ns_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_ast_t *type = &ctx->nodes[n->array_expr.type];
+    ns_type t = ns_vm_parse_type(vm, type->type_label.name, false);
+    return (ns_type){.type = t.type, .ref = t.ref, .array = true, .store = NS_STORE_HEAP};
+}
+
+ns_type ns_vm_parse_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_type l = ns_vm_parse_expr(vm, ctx, n->index_expr.table);
+    ns_type r = ns_vm_parse_expr(vm, ctx, n->index_expr.expr);
+    if (!ns_type_is_array(l)) {
+        ns_vm_error(ctx->filename, n->state, "type error", "index expr type mismatch.");
+    }
+    if (!ns_type_is(r, NS_TYPE_I32)) {
+        ns_vm_error(ctx->filename, n->state, "type error", "index expr type mismatch.");
+    }
+    return (ns_type){.type = l.type, .ref = l.ref, .array = false, .store = l.ref ? NS_STORE_HEAP : NS_STORE_CONST, .index = l.index };
 }
 
 ns_type ns_vm_parse_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -583,7 +604,7 @@ ns_type ns_vm_parse_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
     ns_str t_name = ns_vm_get_type_name(vm, t);
     ns_str cast_name = ns_vm_get_type_name(vm, cast);
-    ns_vm_error(ctx->filename, n->state, "type error", "cast expr type mismatch [%.*s -> %.*s]\n", t_name.len, t_name.data, cast_name.len, cast_name.data);
+    ns_vm_error(ctx->filename, n->state, "type error", "cast expr type mismatch [%.*s -> %.*s].", t_name.len, t_name.data, cast_name.len, cast_name.data);
     return ns_type_unknown;
 }
 
@@ -617,7 +638,7 @@ ns_type ns_vm_parse_binary_ops_number(ns_ast_ctx *ctx, ns_type t, i32 i) {
     case NS_TOKEN_CMP_OP:
         return ns_type_bool;
     default:
-        ns_vm_error(ctx->filename, n->state, "syntax error", "unknown binary ops %.*s\n", op.val.len, op.val.data);
+        ns_vm_error(ctx->filename, n->state, "syntax error", "unknown binary ops %.*s.", op.val.len, op.val.data);
         break;
     }
     return ns_type_unknown;
@@ -633,7 +654,7 @@ ns_type ns_vm_parse_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_type t, i32 i) {
         if (!ns_type_is_unknown(ret)) {
             return ret;
         }
-        ns_vm_error(ctx->filename, n->state, "syntax error", "unknown binary ops %.*s\n", op.val.len, op.val.data);
+        ns_vm_error(ctx->filename, n->state, "syntax error", "unknown binary ops %.*s.", op.val.len, op.val.data);
     }
     return ns_type_unknown;
 }
@@ -645,7 +666,7 @@ ns_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (!ns_type_equals(l, r)) {
         ns_str l_name = ns_vm_get_type_name(vm, l);
         ns_str r_name = ns_vm_get_type_name(vm, r);
-        ns_vm_error(ctx->filename, n->state, "type error", "assign expr type mismatch [%.*s = %.*s]\n", l_name.len, l_name.data, r_name.len, r_name.data);
+        ns_vm_error(ctx->filename, n->state, "type error", "assign expr type mismatch [%.*s = %.*s].", l_name.len, l_name.data, r_name.len, r_name.data);
     }
     return l;
 }
@@ -685,29 +706,21 @@ ns_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->type) {
-    case NS_AST_EXPR:
-        return ns_vm_parse_expr(vm, ctx, n->expr.body);
-    case NS_AST_BINARY_EXPR:
-        return ns_vm_parse_binary_expr(vm, ctx, i);
-    case NS_AST_PRIMARY_EXPR:
-        return ns_vm_parse_primary_expr(vm, ctx, i);
-    case NS_AST_CALL_EXPR:
-        return ns_vm_parse_call_expr(vm, ctx, i);
-    case NS_AST_MEMBER_EXPR:
-        return ns_vm_parse_member_expr(vm, ctx, i);
-    case NS_AST_GEN_EXPR:
-        return ns_vm_parse_gen_expr(vm, ctx, i);
-    case NS_AST_DESIG_EXPR:
-        return ns_vm_parse_desig_expr(vm, ctx, i);
-    case NS_AST_UNARY_EXPR:
-        return ns_vm_parse_unary_expr(vm, ctx, i);
-    case NS_AST_CAST_EXPR:
-        return ns_vm_parse_cast_expr(vm, ctx, i);
-    case NS_AST_STR_FMT:
-        return ns_type_str;
+    case NS_AST_EXPR: return ns_vm_parse_expr(vm, ctx, n->expr.body);
+    case NS_AST_BINARY_EXPR: return ns_vm_parse_binary_expr(vm, ctx, i);
+    case NS_AST_PRIMARY_EXPR: return ns_vm_parse_primary_expr(vm, ctx, i);
+    case NS_AST_CALL_EXPR: return ns_vm_parse_call_expr(vm, ctx, i);
+    case NS_AST_MEMBER_EXPR: return ns_vm_parse_member_expr(vm, ctx, i);
+    case NS_AST_GEN_EXPR: return ns_vm_parse_gen_expr(vm, ctx, i);
+    case NS_AST_DESIG_EXPR: return ns_vm_parse_desig_expr(vm, ctx, i);
+    case NS_AST_UNARY_EXPR: return ns_vm_parse_unary_expr(vm, ctx, i);
+    case NS_AST_CAST_EXPR: return ns_vm_parse_cast_expr(vm, ctx, i);
+    case NS_AST_ARRAY_EXPR: return ns_vm_parse_array_expr(vm, ctx, i);
+    case NS_AST_INDEX_EXPR: return ns_vm_parse_index_expr(vm, ctx, i);
+    case NS_AST_STR_FMT: return ns_type_str;
     default: {
         ns_str type = ns_ast_type_to_string(n->type);
-        ns_vm_error(ctx->filename, n->state, "syntax error", "unimplemented expr type %.*s", type.len, type.data);
+        ns_vm_error(ctx->filename, n->state, "syntax error", "unimplemented expr type %.*s.", type.len, type.data);
     } break;
     }
     return ns_type_unknown;
@@ -739,7 +752,7 @@ void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_type t = ns_vm_parse_expr(vm, ctx, n->if_stmt.condition);
     if (!ns_type_is(t, NS_TYPE_BOOL)) {
         ns_ast_t *cond = &ctx->nodes[n->if_stmt.condition];
-        ns_vm_error(ctx->filename, cond->state, "type error", "if stmt expr type mismatch\n");
+        ns_vm_error(ctx->filename, cond->state, "type error", "if stmt expr type mismatch.");
     }
 
     ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.body);
@@ -791,7 +804,7 @@ void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_type t = ns_vm_parse_expr(vm, ctx, n->var_def.expr);
         if (!ns_type_is(l, NS_TYPE_INFER) && !ns_type_equals(l, t)) {
             ns_str type = ns_vm_get_type_name(vm, t);
-            ns_vm_error(ctx->filename, n->state, "type error", "local var def type mismatch %.*s\n", type.len, type.data);
+            ns_vm_error(ctx->filename, n->state, "type error", "local var def type mismatch %.*s.", type.len, type.data);
         }
         s.val.t = t;
         n->var_def.type_size = ns_type_size(vm, t);
@@ -828,7 +841,7 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             break;
         default: {
             ns_str type = ns_ast_type_to_string(expr->type);
-            ns_vm_error(ctx->filename, expr->state, "vm parse", "unimplemented stmt type %.*s*\n", type.len, type.data);
+            ns_vm_error(ctx->filename, expr->state, "vm parse", "unimplemented stmt type %.*s*.", type.len, type.data);
         } break;
         }
     }

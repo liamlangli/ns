@@ -22,7 +22,6 @@ void ns_repl(ns_vm* vm) {
     ns_ast_ctx ctx = {0};
     ns_array_set_capacity(ctx.nodes, 4);
 
-    ns_vm_import_std_symbols(vm);
     vm->repl = true;
 
     // read eval pri32loop

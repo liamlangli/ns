@@ -97,11 +97,15 @@ bool ns_parse_type_label(ns_ast_ctx *ctx) {
     }
 
     ns_ast_state array_state = ns_save_state(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET) && ns_parse_type_label(ctx) && ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
-        n.type_label.is_array = true;
-        n.type_label.item_type = ctx->current;
-        ns_ast_push(ctx, n);
-        return true;
+    if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET) && ns_parse_type_name(ctx)) {
+        n.type_label.name = ctx->token;
+        if (ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
+            n.type_label.is_array = true;
+            ns_ast_push(ctx, n);
+            return true;
+        } else {
+            ns_ast_error(ctx, "syntax error", "expected ']'");
+        }
     } else {
         ns_restore_state(ctx, array_state);
     }

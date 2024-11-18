@@ -54,7 +54,6 @@ typedef struct ns_ast_type_label {
     bool is_ref;
     ns_token_t name;
     bool is_array;
-    i32 item_type;
 } ns_ast_type_label;
 
 typedef struct ns_ast_str_fmt {
