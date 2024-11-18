@@ -5,6 +5,10 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+ns_export i32 add(i32 a, i32 b) {
+    return a + b;
+}
+
 typedef struct Image {
     i32 width;
     i32 height;

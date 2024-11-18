@@ -18,7 +18,7 @@ void ns_vm_symbol_print(ns_vm *vm) {
         ns_str type = ns_symbol_type_to_string(s->type);
         ns_str name = s->name;
         ns_str lib = s->lib;
-        printf("%4d [type: %-14.*s mod: %5.*s] ", i, type.len, type.data, lib.len, lib.data);
+        printf("%4d [type: %-20.*s mod: %5.*s] ", i, type.len, type.data, lib.len, lib.data);
         printf("%.*s", name.len, name.data);
         switch (s->type)
         {
