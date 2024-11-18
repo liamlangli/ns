@@ -28,7 +28,7 @@ $(LIBS): %$(NS_LIB_SUFFIX): %.o
 	$(CC) -shared $< -o $@ $(LIB_FLAGS)
 
 %.o: %.c
-	$(CC) -fvisibility=hidden -c $< -o $@ $(LIB_FLAGS)
+	$(CC) -fPIC -fvisibility=hidden -c $< -o $@ $(LIB_FLAGS)
 
 clean:
 	rm -f $(LIB_OBJ) $(LIBS)

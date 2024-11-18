@@ -40,10 +40,11 @@ ifeq ($(NS_BITCODE), 1)
 	BITCODE_LDFLAGS = $(LLVM_LDFLAGS)
 endif
 
-NS_LDFLAGS = -lm -lreadline
+NS_LDFLAGS = -lm -lreadline `pkg-config --libs libffi` -ldl -flto
+NS_INC = -Iinclude $(NS_PLATFORM_DEF) `pkg-config --cflags libffi`
 
-NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG $(NS_PLATFORM_DEF)
-NS_RELEASE_CFLAGS = -Iinclude -Os -flto $(NS_PLATFORM_DEF) 
+NS_DEBUG_CFLAGS = $(NS_INC) -g -O0 -Wall -Wextra -DNS_DEBUG
+NS_RELEASE_CFLAGS = $(NS_INC) -Os
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)

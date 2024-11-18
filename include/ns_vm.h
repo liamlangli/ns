@@ -137,6 +137,9 @@ ns_eval_value_def(f32)
 ns_eval_value_def(f64)
 bool ns_eval_bool(ns_vm *vm, ns_value n);
 ns_str ns_eval_str(ns_vm *vm, ns_value n);
+void *ns_eval_array_raw(ns_vm *vm, ns_value n);
+u64 ns_eval_alloc(ns_vm *vm, i32 stride);
+ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
 ns_scope *ns_enter_scope(ns_vm *vm);
 ns_scope *ns_exit_scope(ns_vm *vm);

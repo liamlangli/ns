@@ -5,7 +5,8 @@
             "includePath": [
                 "${workspaceFolder}/include/**",
                 "${workspaceFolder}/lsp/include/**",
-                "/opt/homebrew/opt/llvm/include"
+                "/opt/homebrew/opt/llvm/include",
+                "/opt/homebrew/opt/libffi/include"
             ],
             "defines": ["NS_BITCODE", "NS_DEBUG", "NS_DARWIN"],
             "macFrameworkPath": [
@@ -21,7 +22,8 @@
             "includePath": [
                 "${workspaceFolder}/include/**",
                 "${workspaceFolder}/lsp/include/**",
-                "/usr/local/opt/llvm/include"
+                "/usr/local/opt/llvm/include",
+                "/usr/local/opt/libffi/include"
             ],
             "defines": ["NS_BITCODE", "NS_DEBUG", "NS_DARWIN"],
             "macFrameworkPath": [

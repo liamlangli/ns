@@ -153,6 +153,12 @@ ns_str ns_eval_str(ns_vm *vm, ns_value n) {
     return *(ns_str*)n.o;
 }
 
+void *ns_eval_array_raw(ns_vm *vm, ns_value n) {
+    if (ns_type_is_const(n.t)) return (void*)n.o;
+    if (ns_type_in_stack(n.t)) return (void*)&vm->stack[n.o];
+    return (void*)n.o;
+}
+
 #define ns_eval_number_op(fn, op) \
 ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) {\
     ns_value ret = (ns_value){.t = ns_type_set_store(l.t, NS_STORE_CONST) };\
