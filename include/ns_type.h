@@ -7,6 +7,18 @@
 #include <assert.h>
 #include <math.h>
 
+// ns lib
+#if NS_DARWIN
+    #define ns_lib_ext ns_str_cstr(".dylib")
+    #define ns_export __attribute__((visibility("default")))
+#elif NS_WIN32
+    #define ns_lib_ext ns_str_cstr(".dll")
+    #define ns_export __declspec(dllexport)
+#else
+    #define ns_lib_ext ns_str_cstr(".so")
+    #define ns_export __attribute__((visibility("default")))
+#endif
+
 // ns_def
 #ifndef bool
 typedef int bool;
@@ -346,15 +358,3 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 #define ns_array_last_safe(a) ((a) ? ns_array_last(a) : 0)
 
 void ns_array_status();
-
-// ns lib
-#if NS_DARWIN
-    #define ns_lib_ext ns_str_cstr(".dylib")
-    #define ns_export __attribute__((visibility("default")))
-#elif NS_WIN32
-    #define ns_lib_ext ns_str_cstr(".dll")
-    #define ns_export __declspec(dllexport)
-#else
-    #define ns_lib_ext ns_str_cstr(".so")
-    #define ns_export __attribute__((visibility("default")))
-#endif

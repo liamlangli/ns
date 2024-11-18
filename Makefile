@@ -43,7 +43,7 @@ endif
 NS_LDFLAGS = -lm -lreadline
 
 NS_DEBUG_CFLAGS = -Iinclude -g -O0 -Wall -Wextra -DNS_DEBUG $(NS_PLATFORM_DEF)
-NS_RELEASE_CFLAGS = -Iinclude -Os $(NS_PLATFORM_DEF)
+NS_RELEASE_CFLAGS = -Iinclude -Os -flto $(NS_PLATFORM_DEF) 
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
@@ -127,6 +127,12 @@ debug: $(NS_SRCS) | $(OBJDIR)
 release: $(NS_SRCS) | $(OBJDIR)
 	clang -o $(NS_RELEASE_TARGET) $(NS_SRCS) $(NS_RELEASE_CFLAGS) $(NS_LDFLAGS)
 	tar -czvf $(NS_RELEASE_TARGET).tar.gz $(NS_RELEASE_TARGET)
+
+lib: $(NS_LIB_OBJS) | $(OBJDIR)
+	$(CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/libns.a $(NS_LDFLAGS)
+
+so: $(NS_LIB_OBJS) | $(OBJDIR)
+	$(CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/libns.so $(NS_LDFLAGS)
 
 trace: $(TARGET)
 	dtrace -n 'profile-997 /execname == "$(TARGET)"/ { @[ustack()] = count(); }' -c $(TARGET) -o bin/ns.stacks

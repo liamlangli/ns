@@ -789,7 +789,7 @@ ns_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ret;
 }
 
-ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
+ns_export ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     ns_ast_ctx ctx = {0};
     ns_ast_parse(&ctx, source, filename);
     ns_vm_parse(vm, &ctx);

@@ -594,7 +594,7 @@ ns_bc_value ns_bc_call_std(ns_bc_ctx *bc_ctx) {
     return ns_bc_nil;
 }
 
-bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx) {
+ns_export bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_str output_path = ns_str_cstr(ctx->output.data);
     ns_info("bitcode", "generate llvm bitcode file %s\n", output_path.data);
 
