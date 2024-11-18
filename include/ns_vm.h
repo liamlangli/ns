@@ -19,6 +19,7 @@ typedef struct ns_fn_symbol {
     ns_symbol *args;
     ns_value fn;
     ns_ast_t ast;
+    void *fn_ptr;
 } ns_fn_symbol;
 
 typedef struct ns_struct_field {
@@ -47,7 +48,7 @@ typedef struct ns_array_symbol {
 typedef struct ns_symbol {
     ns_symbol_type type;
     ns_str name;
-    ns_str mod;
+    ns_str lib;
     bool parsed;
     union {
         ns_value val;
@@ -79,6 +80,12 @@ typedef struct ns_call {
     u32 scope_top;
 } ns_call;
 
+typedef struct ns_lib {
+    void *lib;
+    ns_str name;
+    ns_str path;
+} ns_lib;
+
 typedef struct ns_vm {
     // parse state
     ns_symbol *symbols;
@@ -91,14 +98,13 @@ typedef struct ns_vm {
 
     ns_str *str_list;
     ns_data *data_list;
-    ns_str *libs;
+    ns_lib *libs;
     ns_str lib;
     i8* stack;
 
     // mode
     bool repl;
 } ns_vm;
-
 
 // ops fn
 ns_str ns_ops_name(ns_token_t op);
@@ -139,10 +145,13 @@ ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
-// vm std
-void ns_vm_import(ns_vm *vm, ns_str lib);
+// vm eval stage
 void ns_vm_symbol_print(ns_vm *vm);
-ns_value ns_vm_eval_std(ns_vm *vm);
+ns_bool ns_vm_call_ref(ns_vm *vm);
+
+// vm mod
+ns_lib* ns_lib_import(ns_vm *vm, ns_str lib);
+ns_lib* ns_lib_find(ns_vm *vm, ns_str lib);
 
 // vm repl
 void ns_repl(ns_vm* vm);

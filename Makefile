@@ -2,10 +2,18 @@
 MAKEFLAGS += --no-print-directory -j
 
 # PLATFORNM
+OS := $(shell uname -s 2>/dev/null || echo Windows)
+NS_PLATFORM_DEF=
 NS_SUFFIX =
-ifeq ($(OS),Windows_NT)
-	NS_WIN32 = 1
+ifeq ($(OS), Linux)
+	NS_PLATFORM_DEF = -DNS_LINUX
+else ifeq ($(OS), Darwin)
+	NS_PLATFORM_DEF = -DNS_DARWIN
+else ifeq ($(OS), Windows)
 	NS_SUFFIX = .exe
+	NS_PLATFORM_DEF = -DNS_WIN32
+else
+	$(error Unsupported platform: $(OS))
 endif
 
 # OPTIONS
@@ -59,7 +67,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_print.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
-	src/ns_vm_std.c \
+	src/ns_vm_lib.c \
 	src/ns_vm_print.c \
 	src/ns_repl.c
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(OBJDIR)/%.o)

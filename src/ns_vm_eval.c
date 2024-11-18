@@ -274,13 +274,11 @@ ns_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_array_push(vm->call_stack, call);
-
-    if (!fn->fn.ast.fn_def.body) {
-        ns_vm_error(ctx->filename, n->state, "eval error", "fn [%.*s] not implemented.", fn->name.len, fn->name.data);
+    if (fn->fn.fn.t.ref) {
+        ns_vm_call_ref(vm);
+    } else {
+        ns_eval_compound_stmt(vm, ctx, fn->fn.ast.fn_def.body);
     }
-
-    ns_eval_compound_stmt(vm, ctx, fn->fn.ast.fn_def.body);
-
     call = ns_array_pop(vm->call_stack);
     ns_exit_scope(vm);
     return call.ret;
