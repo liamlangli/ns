@@ -82,58 +82,29 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
     }
 }
 
-typedef ffi_type* ffi_types;
-typedef void* ffi_values;
-
-void ns_ffi_map_type(ns_type t, ffi_types *types) {
+ffi_type ns_ffi_map_type(ns_type t) {
     switch (t.type)
     {
-        case NS_TYPE_I8: *types = &ffi_type_sint8;
-        case NS_TYPE_I16: *types = &ffi_type_sint16; break;
-        case NS_TYPE_I32: *types = &ffi_type_sint32; break;
-        case NS_TYPE_I64: *types = &ffi_type_sint64; break;
-        case NS_TYPE_U8: *types = &ffi_type_uint8; break;
-        case NS_TYPE_U16: *types = &ffi_type_uint16; break;
-        case NS_TYPE_U32: *types = &ffi_type_uint32; break;
-        case NS_TYPE_U64: *types = &ffi_type_uint64; break;
-        case NS_TYPE_F32: *types = &ffi_type_float; break;
-        case NS_TYPE_F64: *types = &ffi_type_double; break;
-        case NS_TYPE_STRING: *types = &ffi_type_pointer; break;
-        case NS_TYPE_STRUCT: *types = &ffi_type_pointer; break;
+        case NS_TYPE_I8: return ffi_type_sint8;
+        case NS_TYPE_I16: return ffi_type_sint16; break;
+        case NS_TYPE_I32: return ffi_type_sint32; break;
+        case NS_TYPE_I64: return ffi_type_sint64; break;
+        case NS_TYPE_U8: return ffi_type_uint8; break;
+        case NS_TYPE_U16: return ffi_type_uint16;
+        case NS_TYPE_U32: return ffi_type_uint32;
+        case NS_TYPE_U64: return ffi_type_uint64;
+        case NS_TYPE_F32: return ffi_type_float;
+        case NS_TYPE_F64: return ffi_type_double;
+        case NS_TYPE_STRING: return ffi_type_pointer;
+        case NS_TYPE_STRUCT: return ffi_type_pointer;
         case NS_TYPE_INFER:
-        case NS_TYPE_VOID: *types = &ffi_type_void; break;
+        case NS_TYPE_VOID: return ffi_type_void;
         default:
             ns_error("ffi error", "unknown type %s\n", ns_fmt_type_str(t).data);
         break;
     }
+    return ffi_type_void;
 }
-
-void ns_ffi_set_value(ns_vm* vm, ns_value v, ffi_values *values) {
-    if (ns_type_is_const(v.t)) {
-        i32 size = ns_type_size(vm, v.t);
-        u64 offset = ns_eval_alloc(vm, size);
-        ns_value dst = (ns_value){.t = ns_type_set_store(v.t, NS_STORE_STACK), .o = offset};
-        v = ns_eval_copy(vm, dst, v, size);
-    }
-
-    switch (v.t.type)
-    {
-    case NS_TYPE_STRING: {
-        ns_str s = ns_eval_str(vm, v);
-        *values = s.data;
-    } break;
-    case NS_TYPE_ARRAY: {
-        void *data = ns_eval_array_raw(vm, v);
-        *values = data;
-    } break;
-    default:
-        *values = vm->stack + v.o;
-        break;
-    }
-}
-
-static ffi_types *types = ns_null;
-static ffi_values *values = ns_null;
 
 ns_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
@@ -141,30 +112,51 @@ ns_bool ns_vm_call_ffi(ns_vm *vm) {
 
     ffi_cif cif;
 
-    ns_array_set_length(types, call->arg_count);
-    ns_array_set_length(values, call->arg_count);
+    ffi_type *types[16];
+    void *refs[16];
+    void *values[16];
 
+    // copy args to ffi values
+    ns_enter_scope(vm);
     for (i32 i = 0; i < call->arg_count; i++) {
-        ns_value arg = vm->symbol_stack[call->arg_offset + i].val;
-        ns_ffi_map_type(arg.t, &types[i]);
-    }
+        ns_value v = vm->symbol_stack[call->arg_offset + i].val;
 
-    ffi_type *ret_type_ptr = ns_null;
-    ns_ffi_map_type(fn->fn.ret, &ret_type_ptr);
-    ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, ret_type_ptr, types);
+        if (ns_type_is_const(v.t)) {
+            i32 size = ns_type_size(vm, v.t);
+            u64 offset = ns_eval_alloc(vm, size);
+            ns_value dst = (ns_value){.t = ns_type_set_store(v.t, NS_STORE_STACK), .o = offset};
+            v = ns_eval_copy(vm, dst, v, size);
+        }
+
+        switch (v.t.type)
+        {
+        case NS_TYPE_STRING: {
+            ns_str s = ns_eval_str(vm, v);
+            values[i] = &s.data;
+        } break;
+        case NS_TYPE_ARRAY: {
+            void *data = ns_eval_array_raw(vm, v);
+            values[i] = &data;
+        } break;
+        default:
+            refs[i] = (void*)((i8*)vm->stack + v.o);
+            values[i] = &refs[i];
+            break;
+        }
+        
+        ffi_type t = ns_ffi_map_type(v.t);
+        types[i] = &t;
+    }
+    ns_exit_scope(vm);
+
+    ffi_type ret_type = ns_ffi_map_type(fn->fn.ret);
+    ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, types);
     if (status != FFI_OK) {
         ns_error("ffi call", "failed to prep ffi call: %d\n", status);
     }
 
-    ns_enter_scope(vm);
-    for (i32 i = 0; i < call->arg_count; i++) {
-        ns_value arg = vm->symbol_stack[call->arg_offset + i].val;
-        ns_ffi_set_value(vm, arg, &values[i]);
-    }
-    ns_exit_scope(vm);
-
     ffi_arg ret_ptr;
-    ffi_call(&cif, (void*)fn->fn.fn_ptr, &ret_ptr, values);
+    ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &ret_ptr, values);
 
     if (!ns_type_is(fn->fn.ret, NS_TYPE_VOID)) {
         // u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
