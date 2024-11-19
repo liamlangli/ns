@@ -731,8 +731,10 @@ ns_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *t = &ctx->nodes[n->array_expr.type];
 
     ns_type type = ns_vm_parse_type(vm, t->type_label.name, false);
-    i32 count = n->array_expr.count;
-    i32 size = ns_type_size(vm, type) * count;
+    ns_value count = ns_eval_expr(vm, ctx, n->array_expr.count);
+
+    i32 element_count = ns_eval_number_i32(vm, count);
+    i32 size = ns_type_size(vm, type) * element_count;
     i8* data = NULL;
     ns_array_set_capacity(data, size);
     memset(data, 0, size);

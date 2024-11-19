@@ -124,7 +124,6 @@ int main(int argc, char **argv) {
             ns_exec_repl();
         } else {
             ns_exec_eval(option.filename);
-            ns_vm_symbol_print(&vm);
         }
     }
     return 0;

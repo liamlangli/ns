@@ -75,5 +75,5 @@ fn main() {
     }
     let path = "bin/output.png"
     io_save_image(path, image)
-    print("image saved.")
+    print("image saved.\n")
 }
