@@ -106,15 +106,20 @@ ffi_type ns_ffi_map_type(ns_type t) {
     return ffi_type_void;
 }
 
+#define NS_MAX_FFI_ARGS 16
+
 ns_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_symbol *fn = call->fn;
 
     ffi_cif cif;
 
-    ffi_type *types[16];
-    void *refs[16];
-    void *values[16];
+    ffi_type *types[NS_MAX_FFI_ARGS];
+    void *refs[NS_MAX_FFI_ARGS];
+    void *values[NS_MAX_FFI_ARGS];
+    if (call->arg_count > NS_MAX_FFI_ARGS) {
+        ns_error("ffi call", "too many args %d\n", call->arg_count);
+    }
 
     // copy args to ffi values
     ns_enter_scope(vm);
