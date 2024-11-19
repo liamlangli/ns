@@ -38,29 +38,58 @@ u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
 
 ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
     u64 offset = dst.o;
-    switch (src.t.store)
-    {
-    case NS_STORE_CONST: {
-        switch (src.t.type)
+    if (ns_type_in_stack(dst.t)) {
+        switch (src.t.store)
         {
-        case NS_TYPE_I8: *(i8*)&vm->stack[offset] = src.i8; break;
-        case NS_TYPE_I16: *(i16*)&vm->stack[offset] = src.i16; break;
-        case NS_TYPE_I32: *(i32*)&vm->stack[offset] = src.i32; break;
-        case NS_TYPE_I64: *(i64*)&vm->stack[offset] = src.i64; break;
-        case NS_TYPE_U8: *(u8*)&vm->stack[offset] = src.u8; break;
-        case NS_TYPE_U16: *(u16*)&vm->stack[offset] = src.u16; break;
-        case NS_TYPE_U32: *(u32*)&vm->stack[offset] = src.u32; break;
-        case NS_TYPE_U64: *(u64*)&vm->stack[offset] = src.u64; break;
-        case NS_TYPE_F32: *(f32*)&vm->stack[offset] = src.f32; break;
-        case NS_TYPE_F64: *(f64*)&vm->stack[offset] = src.f64; break;
-        case NS_TYPE_BOOL: *(bool*)&vm->stack[offset] = src.b; break;
-        case NS_TYPE_STRING: *(u64*)&vm->stack[offset] = src.o; break;
-        default: ns_error("eval error", "invalid const type.");
+        case NS_STORE_CONST: {
+            switch (src.t.type)
+            {
+            case NS_TYPE_I8: *(i8*)&vm->stack[offset] = src.i8; break;
+            case NS_TYPE_I16: *(i16*)&vm->stack[offset] = src.i16; break;
+            case NS_TYPE_I32: *(i32*)&vm->stack[offset] = src.i32; break;
+            case NS_TYPE_I64: *(i64*)&vm->stack[offset] = src.i64; break;
+            case NS_TYPE_U8: *(u8*)&vm->stack[offset] = src.u8; break;
+            case NS_TYPE_U16: *(u16*)&vm->stack[offset] = src.u16; break;
+            case NS_TYPE_U32: *(u32*)&vm->stack[offset] = src.u32; break;
+            case NS_TYPE_U64: *(u64*)&vm->stack[offset] = src.u64; break;
+            case NS_TYPE_F32: *(f32*)&vm->stack[offset] = src.f32; break;
+            case NS_TYPE_F64: *(f64*)&vm->stack[offset] = src.f64; break;
+            case NS_TYPE_BOOL: *(bool*)&vm->stack[offset] = src.b; break;
+            case NS_TYPE_STRING: *(u64*)&vm->stack[offset] = src.o; break;
+            default: ns_error("eval error", "invalid const type.");
+            }
+        } break;
+        case NS_STORE_STACK: memcpy(&vm->stack[offset], &vm->stack[src.o], size); break;
+        case NS_STORE_HEAP: memcpy(&vm->stack[offset], (void*)src.o, size); break;
+        default: ns_error("eval error", "invalid store type.");
         }
-    } break;
-    case NS_STORE_STACK: memcpy(&vm->stack[offset], &vm->stack[src.o], size); break;
-    case NS_STORE_HEAP: memcpy(&vm->stack[offset], (void*)src.o, size); break;
-    default: ns_error("eval error", "invalid store type.");
+    } else if (ns_type_in_heap(dst.t)) {
+        switch (src.t.store)
+        {
+        case NS_STORE_CONST: {
+            switch (src.t.type)
+            {
+            case NS_TYPE_I8: *(i8*)dst.o = src.i8; break;
+            case NS_TYPE_I16: *(i16*)dst.o = src.i16; break;
+            case NS_TYPE_I32: *(i32*)dst.o = src.i32; break;
+            case NS_TYPE_I64: *(i64*)dst.o = src.i64; break;
+            case NS_TYPE_U8: *(u8*)dst.o = src.u8; break;
+            case NS_TYPE_U16: *(u16*)dst.o = src.u16; break;
+            case NS_TYPE_U32: *(u32*)dst.o = src.u32; break;
+            case NS_TYPE_U64: *(u64*)dst.o = src.u64; break;
+            case NS_TYPE_F32: *(f32*)dst.o = src.f32; break;
+            case NS_TYPE_F64: *(f64*)dst.o = src.f64; break;
+            case NS_TYPE_BOOL: *(bool*)dst.o = src.b; break;
+            case NS_TYPE_STRING: *(u64*)dst.o = src.o; break;
+            default: ns_error("eval error", "invalid const type.");
+            }
+        } break;
+        case NS_STORE_STACK: memcpy((void*)dst.o, &vm->stack[src.o], size); break;
+        case NS_STORE_HEAP: memcpy((void*)dst.o, (void*)src.o, size); break;
+        default: ns_error("eval error", "invalid store type.");
+        }
+    } else {
+        ns_error("eval error", "cannot copy value to a constant store type.");
     }
     return dst;
 }
@@ -105,11 +134,8 @@ ns_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     i32 s_r = ns_type_size(vm, r.t);
     if (s_l != s_r) ns_vm_error(ctx->filename, n->state, "eval error", "type size mismatched.");
 
-    if (ns_type_is_ref(r.t)) {
-        return r;
-    } else {
-
-    }
+    if (ns_type_is_const(l.t)) ns_vm_error(ctx->filename, n->state, "eval error", "can't assign to const value.");
+    ns_eval_copy(vm, l, r, s_l);
     return r;
 }
 
