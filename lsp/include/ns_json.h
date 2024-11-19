@@ -16,13 +16,22 @@ typedef enum {
 
 typedef struct ns_json {
     struct ns_json *child;
-    i32 type;
+    ns_json_type type;
     ns_str key;
     union {
         ns_str str;
         f64 n;
     };
 } ns_json;
+
+typedef struct ns_json_ctx {
+    ns_json *root;
+    ns_str s;
+    i32 i;
+    i32 *stack;
+} ns_json_ctx;
+
+#define ns_json_null ((ns_json){.type = NS_JSON_NULL})
 
 f64 ns_json_get_number(ns_json *json);
 ns_str ns_json_get_string(ns_json *json);

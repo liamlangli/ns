@@ -3,13 +3,17 @@ MAKEFLAGS += --no-print-directory -j
 
 # PLATFORNM
 OS := $(shell uname -s 2>/dev/null || echo Windows)
-NS_PLATFORM_DEF=
+NS_PLATFORM_DEF =
 NS_SUFFIX =
+NS_LIB_SUFFIX =
 ifeq ($(OS), Linux)
+	NS_LIB_SUFFIX = .so
 	NS_PLATFORM_DEF = -DNS_LINUX
 else ifeq ($(OS), Darwin)
+	NS_LIB_SUFFIX = .dylib
 	NS_PLATFORM_DEF = -DNS_DARWIN
 else ifeq ($(OS), Windows)
+	NS_LIB_SUFFIX = .dll
 	NS_SUFFIX = .exe
 	NS_PLATFORM_DEF = -DNS_WIN32
 else
@@ -140,3 +144,6 @@ trace: $(TARGET)
 
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin
+
+include lsp/Makefile
+include lib/Makefile

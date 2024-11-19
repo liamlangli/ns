@@ -5,6 +5,7 @@
             "includePath": [
                 "${workspaceFolder}/include/**",
                 "${workspaceFolder}/lsp/include/**",
+                "${workspaceFolder}/lib/include/**",
                 "/opt/homebrew/opt/llvm/include",
                 "/opt/homebrew/opt/libffi/include"
             ],
@@ -22,6 +23,7 @@
             "includePath": [
                 "${workspaceFolder}/include/**",
                 "${workspaceFolder}/lsp/include/**",
+                "${workspaceFolder}/lib/include/**",
                 "/usr/local/opt/llvm/include",
                 "/usr/local/opt/libffi/include"
             ],

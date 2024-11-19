@@ -104,6 +104,7 @@ i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
 #define ns_str_true ns_str_cstr("true")
 #define ns_str_false ns_str_cstr("false")
 #define ns_str_nil ns_str_cstr("nil")
+#define ns_str_empty(s) ((s).len == 0)
 
 #define ns_str_case(type) case type: return ns_str_cstr(#type);
 

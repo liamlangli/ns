@@ -1,54 +1,20 @@
-# nslang lsp Makefile
+NS_LSP_LDFLAGS = -L$(BINDIR) -lns
+NS_LSP_TARGET = $(TARGET)_lsp
 
-# FLAGS
-MAKEFLAGS += --no-print-directory -j
+NS_LSP_CFLAGS = $(NS_CFLAGS) -Ilsp/include
 
-# PLATFORNM
-NS_SUFFIX =
-ifeq ($(OS),Windows_NT)
-	NS_WIN32 = 1
-	NS_SUFFIX = .exe
-endif
+NS_LSP_SRCS = lsp/src/ns_lsp.c lsp/src/ns_json.c
+NS_LSP_OBJS = $(NS_LSP_SRCS:lsp/%.c=$(OBJDIR)/%.o)
 
-# OPTIONS
-NS_DEBUG ?= 1
-
-# VARIABLES
-CC = clang
-
-NS_DEBUG_CFLAGS = -Iinclude -I../include -g -O0 -Wall -Wextra -DNS_DEBUG
-NS_RELEASE_CFLAGS = -Iinclude -I../include -Os
-
-ifeq ($(NS_DEBUG), 1)
-	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
-else
-	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
-endif
-
-BINDIR = bin
-OBJDIR = $(BINDIR)
-
-NS_LSP_SRCS = src/ns_lsp.c
-NS_LSP_OBJS = $(NS_LSP_SRCS:%.c=$(OBJDIR)/%.o)
-
-TARGET = $(BINDIR)/ns_lsp
-
-all: $(TARGET)
-	@echo "building ns_lsp with options:" \
-	"NS_BITCODE=$(NS_BITCODE)" \
+lsp: $(NS_LSP_TARGET) lib
+	@echo "building lsp at "$(OS)" with options:" \
 	"NS_DEBUG=$(NS_DEBUG)"
 
-$(TARGET): $(NS_LSP_OBJS) | $(BINDIR)
-	$(CC) $(NS_LSP_OBJS) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
+$(NS_LSP_TARGET): $(NS_LSP_OBJS) | $(BINDIR)
+	$(CC) $(NS_LSP_OBJS) $ -o $(NS_LSP_TARGET)$(NS_SUFFIX) $(NS_LSP_LDFLAGS)
 
-$(NS_LSP_OBJS): $(NS_LSP_SRCS) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(NS_CFLAGS)
+$(NS_LSP_OBJS): $(OBJDIR)/%.o : lsp/%.c | $(OBJDIR)
+	$(CC) -c $< -o $@ $(NS_LSP_CFLAGS)
 
-$(OBJDIR):
-	mkdir -p $(OBJDIR)/src
-
-run: $(TARGET)
-	$(TARGET)$(NS_SUFFIX)
-
-clean:
-	rm -rf $(OBJDIR)
+run_lsp: $(NS_LSP_TARGET)
+	$(NS_LSP_TARGET)$(NS_SUFFIX)

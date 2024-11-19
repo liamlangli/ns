@@ -1,34 +1,13 @@
-CC = clang
+NS_STD_SRCS = lib/src/io.c lib/src/gui.c lib/src/gpu.c
+NS_STD_OBJS = $(NS_STD_SRCS:%.c=%.o)
+NS_STD_LIBS = $(NS_STD_SRCS:%.c=%$(NS_LIB_SUFFIX))
 
-OS := $(shell uname -s 2>/dev/null || echo Windows)
-NS_LIB_SUFFIX =
-NS_PLATFORM_DEF=
-ifeq ($(OS), Linux)
-	NS_LIB_SUFFIX = .so
-	NS_PLATFORM_DEF = -DNS_LINUX
-else ifeq ($(OS), Darwin)
-	NS_LIB_SUFFIX = .dylib
-	NS_PLATFORM_DEF = -DNS_DARWIN
-else ifeq ($(OS), Windows)
-	NS_LIB_SUFFIX = .dll
-	NS_PLATFORM_DEF = -DNS_WIN32
-else
-	$(error Unsupported platform: $(OS))
-endif
+NS_LIB_CFLAGS = $(NS_CFLAGS)
 
-LIB_SRC = io.c gui.c gpu.c
-LIB_OBJ = $(LIB_SRC:%.c=%.o)
-LIBS = $(LIB_SRC:%.c=%$(NS_LIB_SUFFIX))
+$(NS_STD_LIBS): %$(NS_LIB_SUFFIX): %.o
+	$(CC) -shared $< -o $@ $(NS_LIB_CFLAGS)
 
-LIB_FLAGS = -I../include -I. -g -O0 -Wall -Wextra
+$(NS_STD_OBJS): $(OBJDIR)/%.o : std/%.c | $(OBJDIR)
+	$(CC) -c $< -o $@ $(NS_LIB_CFLAGS)
 
-all: $(LIBS)
-
-$(LIBS): %$(NS_LIB_SUFFIX): %.o
-	$(CC) -shared $< -o $@ $(LIB_FLAGS)
-
-%.o: %.c
-	$(CC) -fPIC -fvisibility=hidden -c $< -o $@ $(LIB_FLAGS)
-
-clean:
-	rm -f $(LIB_OBJ) $(LIBS)
+std: $(NS_STD_LIBS)

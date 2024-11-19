@@ -7,7 +7,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns token",
+            "name": "token",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["--token","${file}"],
@@ -16,7 +16,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns ast",
+            "name": "ast",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["--ast", "sample/rt.ns"],
@@ -25,7 +25,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns expr",
+            "name": "expr",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["--eval", "sample/expr.ns"],
@@ -34,7 +34,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns eval",
+            "name": "eval",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["sample/rt.ns"],
@@ -43,7 +43,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns repl",
+            "name": "repl",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": [],
@@ -52,7 +52,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns bc",
+            "name": "lsp",
+            "preLaunchTask": "build lsp",
+            "program": "${workspaceFolder}/bin/ns_lsp",
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "bitcode",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
             "args": ["-o", "${file}.bc", "-b", "${file}"],
@@ -61,7 +70,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns trace",
+            "name": "trace",
             "preLaunchTask": "build",
             "program": "xctrace",
             "args": ["record", "--template", "\"Time Profiler\"",  "--output", "bin/ns.trace", "--launch", "--", "bin/ns", "--ast", "sample/rt.ns"],
