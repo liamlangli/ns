@@ -44,7 +44,7 @@ i32 ns_json_make_string(ns_str s);
 i32 ns_json_make_array();
 i32 ns_json_make_object();
 
-ns_str ns_json_to_string(ns_json *json);
-ns_json *ns_json_parse(ns_str s);
 bool ns_json_print(ns_json *json);
-bool ns_json_print_node(ns_json *json, i32 depth, bool wrap);
+
+ns_json *ns_json_parse(ns_str s);
+ns_str ns_json_to_string(ns_json *json);

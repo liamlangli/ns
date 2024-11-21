@@ -13,6 +13,10 @@ int main() {
 
     i8* json = "{\"name\": \"ns\", \"age\": 18, \"data\": [1, 2, 3], \"info\": {\"email\": \"lilang8936@gmail.com\"}}";
     ns_json *root = ns_json_parse(ns_str_cstr(json));
-    ns_json_print(root);
+    // ns_json_print(root);
+
+    ns_str s = ns_json_to_string(root);
+    ns_str_printf(s);
+
     return 0;
 }
