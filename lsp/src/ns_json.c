@@ -1,62 +1,74 @@
 #include "ns_json.h"
 
 static ns_json *_ns_json_stack = ns_null;
-static ns_json_ctx _ns_json_ctx = {0};
 
-ns_json* ns_json_make() {
-    ns_array_push(_ns_json_stack, (ns_json){.type = NS_JSON_INVALID});
+ns_str ns_json_parse_key(ns_json_ctx *ctx);
+i32 ns_json_skip_whitespace(ns_json_ctx *ctx);
+
+bool ns_json_set(i32 j, ns_str key, i32 c);
+bool ns_json_push(i32 j, i32 c);
+
+i32 ns_json_parse_object(ns_json_ctx *ctx);
+i32 ns_json_parse_array(ns_json_ctx *ctx);
+i32 ns_json_parse_value(ns_json_ctx *ctx);
+i32 ns_json_parse_string(ns_json_ctx *ctx);
+i32 ns_json_parse_true(ns_json_ctx *ctx);
+i32 ns_json_parse_false(ns_json_ctx *ctx);
+i32 ns_json_parse_null(ns_json_ctx *ctx);
+i32 ns_json_parse_number(ns_json_ctx *ctx);
+
+i32 ns_json_make(ns_json_type type) {
+    i32 i = ns_array_length(_ns_json_stack);
+    ns_array_push(_ns_json_stack, (ns_json){.type = type});
     ns_json *json = ns_array_last(_ns_json_stack);
-    json->child = ns_null;
-    return json;
+    json->next_prop = json->next_item = 0;
+    return i;
 }
 
-ns_json* ns_json_make_null() {
-    ns_json *json = ns_json_make();
-    return json;
+ns_json* ns_json_get(i32 i) {
+    return &_ns_json_stack[i];
 }
 
-ns_json* ns_json_make_bool(bool b) {
-    ns_json *json = ns_json_make();
-    json->type = b ? NS_JSON_TRUE : NS_JSON_FALSE;
-    return json;
+i32 ns_json_make_null() {
+    return ns_json_make(NS_JSON_NULL);
 }
 
-ns_json* ns_json_make_number(f64 n) {
-    ns_json *json = ns_json_make();
-    json->type = NS_JSON_NUMBER;
-    json->n = n;
-    return json;
+i32 ns_json_make_bool(bool b) {
+    return ns_json_make(b ? NS_JSON_TRUE : NS_JSON_FALSE);
 }
 
-ns_json* ns_json_make_string(ns_str s) {
-    ns_json *json = ns_json_make();
-    json->type = NS_JSON_STRING;
-    json->str = s;
-    return json;
+i32 ns_json_make_number(f64 n) {
+    i32 i = ns_json_make(NS_JSON_NUMBER);
+    _ns_json_stack[i].n = n;
+    return i;
 }
 
-ns_json* ns_json_make_array() {
-    ns_json *json = ns_json_make();
-    json->type = NS_JSON_ARRAY;
-    return json;
+i32 ns_json_make_string(ns_str s) {
+    i32 i = ns_json_make(NS_JSON_STRING);
+    _ns_json_stack[i].str = s;
+    return i;
 }
 
-ns_json* ns_json_make_object() {
-    ns_json *json = ns_json_make();
-    json->type = NS_JSON_OBJECT;
-    return json;
+i32 ns_json_make_array() {
+    return ns_json_make(NS_JSON_ARRAY);
 }
 
-f64 ns_json_get_number(ns_json *json) {
-    if (json->type == NS_JSON_NUMBER) {
-        return json->n;
+i32 ns_json_make_object() {
+    return ns_json_make(NS_JSON_OBJECT);
+}
+
+f64 ns_json_get_number(i32 i) {
+    ns_json *j = &_ns_json_stack[i];
+    if (j->type == NS_JSON_NUMBER) {
+        return j->n;
     }
     return 0;
 }
 
-ns_str ns_json_get_string(ns_json *json) {
-    if (json->type == NS_JSON_STRING) {
-        return json->str;
+ns_str ns_json_get_string(i32 i) {
+    ns_json *j = &_ns_json_stack[i];
+    if (j->type == NS_JSON_STRING) {
+        return j->str;
     }
     return ns_str_null;
 }
@@ -92,276 +104,275 @@ ns_str ns_json_to_string(ns_json *json) {
 }
 
 ns_json *ns_json_top() {
-    return ns_array_length(_ns_json_ctx.stack) > 0 ? ns_array_last(_ns_json_stack) : ns_null;
+    return ns_array_length(_ns_json_stack) > 0 ? ns_array_last(_ns_json_stack) : ns_null;
 }
 
-bool ns_json_push(ns_json *json, ns_json *child) {
-    if (json->type == NS_JSON_ARRAY) {
-        if (json->child) {
-            ns_json *last = json->child;
-            while (last->child) {
-                last = last->child;
-            }
-            last->child = child;
-        } else {
-            json->child = child;
-        }
-        return true;
+i32 ns_json_skip_whitespace(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    i32 i = ctx->i;
+    while (i < s.len && (s.data[i] == ' ' || s.data[i] == '\t' || s.data[i] == '\n' || s.data[i] == '\r')) {
+        i++;
     }
+    ctx->i = i;
+    return i;
+}
+
+i32 ns_json_skip_whitespace_comma(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    i32 i = ctx->i;
+    while (i < s.len && (s.data[i] == ' ' || s.data[i] == '\t' || s.data[i] == '\n' || s.data[i] == '\r' || s.data[i] == ',')) {
+        i++;
+    }
+    ctx->i = i;
+    return i;
+}
+
+i32 ns_json_parse_string(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    i32 i = ctx->i;
+    if (s.data[i] == '"') {
+        i++;
+        i32 start = i;
+        while (i < s.len) {
+            if (s.data[i] == '"' && s.data[i - 1] != '\\') {
+                break;
+            }
+            i++;
+        }
+        ns_str str = ns_str_range(s.data + start, i - start);
+        i++;
+        ctx->i = i;
+        return ns_json_make_string(str);
+    }
+    return 0;
+}
+
+i32 ns_json_parse_true(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    i32 i = ctx->i;
+    if (strncmp(s.data + i, "true", 4) == 0) {
+        i += 4;
+        ctx->i = i;
+        return ns_json_make_bool(true);
+    }
+    return 0;
+}
+
+i32 ns_json_parse_false(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    i32 i = ctx->i;
+    if (strncmp(s.data + i, "false", 5) == 0) {
+        i += 5;
+        ctx->i = i;
+        return ns_json_make_bool(false);
+    }
+    return 0;
+}
+
+i32 ns_json_parse_null(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    i32 i = ctx->i;
+    if (strncmp(s.data + i, "null", 4) == 0) {
+        i += 4;
+        ctx->i = i;
+        return ns_json_make_null();
+    }
+    return 0;
+}
+
+i32 ns_json_parse_number(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    i32 i = ctx->i;
+    i32 start = i;
+    while (i < s.len && (s.data[i] == '-' || s.data[i] == '.' || (s.data[i] >= '0' && s.data[i] <= '9'))) {
+        i++;
+    }
+    f64 n = ns_str_to_f64(ns_str_range(s.data + start, i - start));
+    ctx->i = i;
+    return ns_json_make_number(n);
+}
+
+bool ns_json_push(i32 j, i32 c) {
+    ns_json *json = &_ns_json_stack[j];
+    while (json->next_item) {
+        json = &_ns_json_stack[json->next_item];
+    }
+    json->next_item = c;
     return false;
 }
 
-bool ns_json_set(ns_json *json, ns_str key, ns_json *child) {
-    child->key = key;
-    if (json->type == NS_JSON_OBJECT) {
-        if (json->child) {
-            ns_json *last = json->child;
-            while (last->child) {
-                last = last->child;
-            }
-            last->child = child;
-        } else {
-            json->child = child;
-        }
-        return true;
+bool ns_json_set(i32 j, ns_str key, i32 c) {
+    ns_json *json = &_ns_json_stack[j];
+    while (json->next_prop) {
+        json = &_ns_json_stack[json->next_prop];
     }
+    ns_json_get(c)->key = key;
+    json->next_prop = c;
     return false;
+}
+
+ns_str ns_json_parse_key(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    i32 i = ctx->i;
+    while (i < s.len && (s.data[i] == ' ' || s.data[i] == '\t' || s.data[i] == '\n' || s.data[i] == '\r')) {
+        i++;
+    }
+    ctx->i = i;
+
+    if (s.data[i] == '"') {
+        i++;
+        i32 start = i;
+        while (i < s.len && s.data[i] != '"') {
+            i++;
+        }
+        ns_str key = ns_str_range(s.data + start, i - start);
+        i++;
+        ctx->i = i;
+        return key;
+    }
+    return ns_str_null;
+}
+
+i32 ns_json_parse_value(ns_json_ctx *ctx) {
+    // skip white space
+    ns_str s = ctx->s;
+    ns_json_skip_whitespace(ctx);
+    i8 c = s.data[ctx->i];
+    switch (c)
+    {
+    case '{':
+        return ns_json_parse_object(ctx);
+    case '[':
+        return ns_json_parse_array(ctx);
+    case '"':
+        return ns_json_parse_string(ctx);
+    case 't':
+        return ns_json_parse_true(ctx);
+    case 'f':
+        return ns_json_parse_false(ctx);
+    case 'n':
+        return ns_json_parse_null(ctx);
+    case '-':
+    case '.':
+    case '0' ... '9':
+        return ns_json_parse_number(ctx);
+    default:
+        ns_error("ns_json", "invalid json value\n");
+        break;
+    }
+}
+
+
+i32 ns_json_parse_object(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    if (s.data[ctx->i] == '{') {
+        ctx->i++;
+        i32 j = ns_json_make_object();
+        i32 count = 0;
+        while (ctx->i < s.len && s.data[ctx->i] != '}') {
+            ns_str key = ns_json_parse_key(ctx);
+            if (key.len == 0) {
+                ns_error("ns_json", "invalid object key\n");
+            }
+            // colon
+            ns_json_skip_whitespace(ctx);
+            if (s.data[ctx->i] != ':') {
+                ns_error("ns_json", "expect colon\n");
+            }
+            ctx->i++;
+            i32 v = ns_json_parse_value(ctx);
+            if (v == 0) {
+                ns_error("ns_json", "invalid object value\n");
+            }
+
+            ns_json_set(j, key, v);
+            count++;
+            ns_json_skip_whitespace_comma(ctx);
+        }
+        ctx->i++;
+        ns_json_get(j)->count = count;
+        return j;
+    }
+    return 0;
+}
+
+i32 ns_json_parse_array(ns_json_ctx *ctx) {
+    ns_str s = ctx->s;
+    if (s.data[ctx->i] == '[') {
+        ctx->i++;
+        i32 j = ns_json_make_array();
+        i32 count = 0;
+        while (ctx->i < s.len && s.data[ctx->i] != ']') {
+            i32 v = ns_json_parse_value(ctx);
+            if (v == 0) {
+                ns_error("ns_json", "invalid array value\n");
+            }
+            ns_json_push(j, v);
+            count++;
+            ns_json_skip_whitespace_comma(ctx);
+        }
+        ctx->i++;
+        ns_json_get(j)->count = count;
+        return j;
+    }
+    return 0;
 }
 
 ns_json *ns_json_parse(ns_str s) {
-    ns_json *json = ns_json_make();
-    _ns_json_ctx.s = s;
-    _ns_json_ctx.i = 0;
-    ns_array_set_length(_ns_json_ctx.stack, 0);
-    _ns_json_ctx.root = ns_null;
-
-    i32 i = 0;
-    while (i < s.len) {
-        i8 c = s.data[i];
-
-        switch (c)
-        {
-        case '{':  {// object 
-            ns_json *obj = ns_json_make_object();
-            ns_json *parent = ns_json_top();
-            if (parent) {
-                if (parent->type == NS_JSON_ARRAY) {
-                    ns_json_push(parent, obj);
-                } else {
-                    if (!ns_str_empty(parent->key)) {
-                        ns_json_set(parent, parent->key, obj);
-                        parent->key = ns_str_null;
-                    } else {
-                        ns_error("ns_json", "json parse error: object key is empty");
-                    }
-                }
-            } else {
-                _ns_json_ctx.root = obj;
-            }
-            ns_array_push(_ns_json_ctx.stack, ns_array_length(_ns_json_stack));
-        } break;
-        case '}': { // object
-            if (ns_array_length(_ns_json_ctx.stack) > 0) {
-                ns_array_pop(_ns_json_ctx.stack);
-            } else {
-                ns_error("ns_json", "json parse error: stack is empty");
-            }
-        } break;
-
-        case '[': { // array
-            ns_json *arr = ns_json_make_array();
-            ns_json *parent = ns_json_top();
-            if (parent) {
-                if (parent->type == NS_JSON_ARRAY) {
-                    ns_json_push(parent, arr);
-                } else {
-                    if (!ns_str_empty(parent->key)) {
-                        ns_json_set(parent, parent->key, arr);
-                        parent->key = ns_str_null;
-                    } else {
-                        ns_error("ns_json", "json parse error: array key is empty");
-                    }
-                }
-            } else {
-                _ns_json_ctx.root = arr;
-            }
-            ns_array_push(_ns_json_ctx.stack, ns_array_length(_ns_json_stack));
-        } break;
-        case ']': { // array
-            if (ns_array_length(_ns_json_ctx.stack) > 0) {
-                ns_array_pop(_ns_json_ctx.stack);
-            } else {
-                ns_error("ns_json", "json parse error: stack is empty");
-            }
-        } break;
-
-        case '"': { // string
-            i32 start = i + 1;
-            i32 end = start;
-            while (end < s.len && s.data[end] != '"') {
-                end++;
-            }
-            ns_str str = ns_str_range(s.data + start, end - start);
-            ns_json *parent = ns_json_top();
-            if (parent) {
-                if (parent->type == NS_JSON_ARRAY) {
-                    ns_json_push(parent, ns_json_make_string(str));
-                } else {
-                    if (ns_str_empty(parent->key)) {
-                        parent->key = str;
-                    } else {
-                        ns_json_set(parent, parent->key, ns_json_make_string(str));
-                        parent->key = ns_str_null;
-                    }
-                }
-            } else {
-                ns_error("ns_json", "json parse error: string is not in object or array.\n");
-            }
-            i = end;
-        } break;
-
-        case 't':  { // true
-            ns_json *parent = ns_json_top();
-            if (parent) {
-                if (parent->type == NS_JSON_ARRAY) {
-                    ns_json_push(parent, ns_json_make_bool(true));
-                } else {
-                    if (ns_str_empty(parent->key)) {
-                        ns_json_set(parent, parent->key, ns_json_make_bool(true));
-                        parent->key = ns_str_null;
-                    } else {
-                        ns_error("ns_json", "json parse error: true key is empty");
-                    }
-                }
-            } else {
-                ns_error("ns_json", "json parse error: true is not in object or array");
-            }
-            i += 3;
-        } break;
-        case 'f': { // false
-            ns_json *parent = ns_json_top();
-            if (parent) {
-                if (parent->type == NS_JSON_ARRAY) {
-                    ns_json_push(parent, ns_json_make_bool(false));
-                } else {
-                    if (ns_str_empty(parent->key)) {
-                        ns_json_set(parent, parent->key, ns_json_make_bool(false));
-                        parent->key = ns_str_null;
-                    } else {
-                        ns_error("ns_json", "json parse error: false key is empty.\n");
-                    }
-                }
-            } else {
-                ns_error("ns_json", "json parse error: false is not in object or array.\n");
-            }
-            i += 4;
-        } break;
-
-        case 'n': { // null
-            ns_json *parent = ns_json_top();
-            if (parent) {
-                if (parent->type == NS_JSON_ARRAY) {
-                    ns_json_push(parent, ns_json_make_null());
-                } else {
-                    if (ns_str_empty(parent->key)) {
-                        ns_json_set(parent, parent->key, ns_json_make_null());
-                        parent->key = ns_str_null;
-                    } else {
-                        ns_error("ns_json", "json parse error: null key is empty");
-                    }
-                }
-            } else {
-                ns_error("ns_json", "json parse error: null is not in object or array");
-            }
-            i += 3;
-        } break;
-
-        case '0' ... '9': { // number
-            i32 start = i;
-            i32 end = start;
-            while (end < s.len && (s.data[end] >= '0' && s.data[end] <= '9')) {
-                end++;
-            }
-            ns_str str = ns_str_slice(s, start, end);
-            f64 n = ns_str_to_f64(str);
-            ns_json *parent = ns_json_top();
-            if (parent) {
-                if (parent->type == NS_JSON_ARRAY) {
-                    ns_json_push(parent, ns_json_make_number(n));
-                } else {
-                    if (ns_str_empty(parent->key)) {
-                        ns_json_set(parent, parent->key, ns_json_make_number(n));
-                        parent->key = ns_str_null;
-                    } else {
-                        ns_error("ns_json", "json parse error: number key is empty.\n");
-                    }
-                }
-            } else {
-                ns_error("ns_json", "json parse error: number is not in object or array.\n");
-            }
-            i = end;
-        } break;
-
-        case ':': {
-            ns_json *parent = ns_json_top();
-            if (parent) {
-                if (parent->type == NS_JSON_OBJECT) {
-                    i++;
-                } else {
-                    ns_error("ns_json", "json parse error: ':' is not in object.\n");
-                }
-            } else {
-                ns_error("ns_json", "json parse error: ':' is not in object.\n");
-            }
-        } break;
-
-        case ',': {
-            i++;
-        } break;
-
-        default:
-            break;
-        }
-        i++;
-        _ns_json_ctx.i = i;
-    }
-    return json;
+    ns_array_set_length(_ns_json_stack, 0);
+    ns_array_push(_ns_json_stack, (ns_json){.type = NS_JSON_INVALID});
+    i32 root = ns_json_parse_value(&(ns_json_ctx){.s = s});
+    return ns_json_get(root);
 }
 
+#define NS_JSON_PAD 4
+
 bool ns_json_print(ns_json *json) {
-    if (json) {
-        switch (json->type)
-        {
-        case NS_JSON_INVALID:
-            ns_info("ns_json", "invalid json\n");
-            break;
-        case NS_JSON_FALSE:
-            ns_info("ns_json", "false\n");
-            break;
-        case NS_JSON_TRUE:
-            ns_info("ns_json", "true\n");
-            break;
-        case NS_JSON_NULL:
-            ns_info("ns_json", "null\n");
-            break;
-        case NS_JSON_NUMBER:
-            ns_info("ns_json", "%f\n", json->n);
-            break;
-        case NS_JSON_STRING:
-            ns_info("ns_json", "%.*s\n", json->str.len, json->str.data);
-            break;
-        case NS_JSON_ARRAY:
-            ns_info("ns_json", "array\n");
-            break;
-        case NS_JSON_OBJECT:
-            ns_info("ns_json", "object\n");
-            break;
-        case NS_JSON_RAW:
-            ns_info("ns_json", "raw\n");
-            break;
-        default:
-            break;
+    return ns_json_print_node(json, 0, false);
+}
+
+#define ns_printf_wrap(fmt, ...) (printf("%*.s"fmt, (wrap ? depth * NS_JSON_PAD : 0), "", ##__VA_ARGS__))
+
+bool ns_json_print_node(ns_json *json, i32 depth, bool wrap) {
+    if (!json) return false;
+    switch (json->type)
+    {
+    case NS_JSON_FALSE: ns_printf_wrap("false"); break;
+    case NS_JSON_TRUE: ns_printf_wrap("true"); break;
+    case NS_JSON_NULL: ns_printf_wrap("null"); break;
+    case NS_JSON_NUMBER: ns_printf_wrap("%.2f", json->n); break;
+    case NS_JSON_STRING: ns_printf_wrap("\"%.*s\"", json->str.len, json->str.data); break;
+    case NS_JSON_ARRAY: {
+        ns_printf_wrap("[");
+        i32 c = json->next_item;
+        i32 count = json->count;
+        while (c) {
+            ns_json *child = ns_json_get(c);
+            ns_json_print_node(child, depth + 1, wrap);
+            c = child->next_item;
+            if (--count == 0) break; else printf(",");
         }
+        ns_printf_wrap("]");
+    } break;
+    case NS_JSON_OBJECT: {
+        ns_printf_wrap("{");
+        i32 count = json->count;
+        i32 c = json->next_prop;
+        while (c) {
+            ns_json *child = ns_json_get(c);
+            ns_printf_wrap("\"%.*s\":", child->key.len, child->key.data);
+            ns_json_print_node(child, depth + 1, false);
+            c = child->next_prop;
+            if (--count == 0) { break;} else { printf(","); } 
+        }
+        ns_printf_wrap("}");
+    } break;
+    case NS_JSON_RAW:
+        ns_info("ns_json", "raw\n");
+        break;
+    default:
+        ns_error("ns_json", "invalid json type\n");
+        break;
     }
     return true;
 }

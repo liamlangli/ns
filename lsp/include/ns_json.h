@@ -15,7 +15,9 @@ typedef enum {
 } ns_json_type;
 
 typedef struct ns_json {
-    struct ns_json *child;
+    i32 next_prop;
+    i32 next_item;
+    i32 count;
     ns_json_type type;
     ns_str key;
     union {
@@ -25,27 +27,24 @@ typedef struct ns_json {
 } ns_json;
 
 typedef struct ns_json_ctx {
-    ns_json *root;
     ns_str s;
     i32 i;
-    i32 *stack;
 } ns_json_ctx;
 
 #define ns_json_null ((ns_json){.type = NS_JSON_NULL})
 
-f64 ns_json_get_number(ns_json *json);
-ns_str ns_json_get_string(ns_json *json);
+f64 ns_json_get_number(i32 i);
+ns_str ns_json_get_string(i32 i);
+ns_json *ns_json_get(i32 i);
 
-ns_json* ns_json_make_null();
-ns_json* ns_json_make_bool(bool b);
-ns_json* ns_json_make_number(f64 n);
-ns_json* ns_json_make_string(ns_str s);
-ns_json* ns_json_make_array();
-ns_json* ns_json_make_object();
-
-bool ns_json_push(ns_json *json, ns_json *child); // for array
-bool ns_json_set(ns_json *json, ns_str key, ns_json *child); // for object
+i32 ns_json_make_null();
+i32 ns_json_make_bool(bool b);
+i32 ns_json_make_number(f64 n);
+i32 ns_json_make_string(ns_str s);
+i32 ns_json_make_array();
+i32 ns_json_make_object();
 
 ns_str ns_json_to_string(ns_json *json);
 ns_json *ns_json_parse(ns_str s);
 bool ns_json_print(ns_json *json);
+bool ns_json_print_node(ns_json *json, i32 depth, bool wrap);

@@ -11,9 +11,8 @@ int main() {
     // todo: parse port from command line
     // ns_lsp_serve(port);
 
-    i8* json = "{\"name\": \"ns\", \"age\": 18}";
+    i8* json = "{\"name\": \"ns\", \"age\": 18, \"data\": [1, 2, 3], \"info\": {\"email\": \"lilang8936@gmail.com\"}}";
     ns_json *root = ns_json_parse(ns_str_cstr(json));
     ns_json_print(root);
-
     return 0;
 }
