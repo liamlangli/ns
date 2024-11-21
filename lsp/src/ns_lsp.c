@@ -1,22 +1,19 @@
 #include "ns_lsp.h"
 #include "ns_json.h"
+#include "ns_net.h"
+
+ns_str ns_lsp_on_data(ns_str data) {
+    ns_info("ns_lsp", "received data: %.*s", data.len, data.data);
+    return data;
+}
 
 bool ns_lsp_serve(u16 port) {
-    ns_info("ns_lsp", "serve lsp on port %d\n", port);
+    ns_udp_serve(port, ns_lsp_on_data);
     return true;
 }
 
 int main() {
-    // u16 port = 9000;
-    // todo: parse port from command line
-    // ns_lsp_serve(port);
-
-    i8* json = "{\"name\": \"ns\", \"age\": 18, \"data\": [1, 2, 3], \"info\": {\"email\": \"lilang8936@gmail.com\"}}";
-    ns_json *root = ns_json_parse(ns_str_cstr(json));
-    // ns_json_print(root);
-
-    ns_str s = ns_json_to_string(root);
-    ns_str_printf(s);
-
+    u16 port = 9000;
+    ns_lsp_serve(port);
     return 0;
 }
