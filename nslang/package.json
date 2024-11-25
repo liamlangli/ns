@@ -5,7 +5,9 @@
   "version": "0.0.9",
   "publisher": "liamlangli",
   "scripts": {
-    "pack": "vsce package"
+    "pack": "vsce package",
+    "compile": "tsc -b",
+    "watch": "tsc -b -w"
   },
   "engines": {
     "vscode": "^1.85.0"
@@ -18,6 +20,7 @@
     "url": "git@github.com:liamlangli/ns.git"
   },
   "icon": "ns.png",
+  "main": "./out/extension",
   "contributes": {
     "languages": [
       {
@@ -39,6 +42,9 @@
         "id": "ns-markdown-injection"
       }
     ],
+    "activationEvents": [
+      "onLanguage:ns"
+    ],
     "grammars": [
       {
         "language": "ns",
@@ -57,5 +63,14 @@
         }
       }
     ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.7.2",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12"
   }
 }
