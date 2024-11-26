@@ -19,11 +19,11 @@ function start_lsp_client(context: vscode.ExtensionContext) {
   const client_options: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "ns" }],
     synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher("**/.clientrc"),
+      fileEvents: vscode.workspace.createFileSystemWatcher("**/*.ns"),
     },
   };
 
-  client = new LanguageClient("ns", "ns", server_options, client_options);
+  client = new LanguageClient("ns_lsp", "ns_lsp", server_options, client_options);
   client.start();
   console.log("ns_lsp client started");
 }
