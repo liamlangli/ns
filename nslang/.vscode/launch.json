@@ -7,7 +7,7 @@
         {
 			"type": "extensionHost",
 			"request": "launch",
-			"name": "nslang lsp client",
+			"name": "nslang extension",
 			"runtimeExecutable": "${execPath}",
 			"args": ["--extensionDevelopmentPath=${workspaceRoot}"],
 			"outFiles": [

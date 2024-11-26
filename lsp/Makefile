@@ -8,11 +8,11 @@ NS_LSP_OBJS = $(NS_LSP_SRCS:lsp/src/%.c=$(OBJDIR)/lsp/%.o)
 
 NS_LSP_BINDIR = $(BINDIR)/lsp
 
-lsp: $(NS_LSP_TARGET) lib
+lsp: $(NS_LSP_TARGET)
 	@echo "building lsp at "$(OS)" with options:" \
 	"NS_DEBUG=$(NS_DEBUG)"
 
-$(NS_LSP_TARGET): $(NS_LSP_OBJS) | $(NS_LSP_BINDIR)
+$(NS_LSP_TARGET): $(NS_LSP_OBJS) | $(NS_LSP_BINDIR) lib
 	$(CC) $(NS_LSP_OBJS) $ -o $(NS_LSP_TARGET)$(NS_SUFFIX) $(NS_LSP_LDFLAGS)
 
 $(NS_LSP_OBJS): $(OBJDIR)/lsp/%.o : lsp/src/%.c | $(OBJDIR)

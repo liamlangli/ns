@@ -13,7 +13,8 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Debuggers"
   ],
   "repository": {
     "type": "git",
@@ -22,6 +23,23 @@
   "icon": "ns.png",
   "main": "./out/extension",
   "contributes": {
+    "debuggers": [
+      {
+        "type": "nsdb",
+        "label": "nsdb",
+        "program": "./out/nsdb.js",
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The program to debug"
+              }
+            }
+          }
+        }
+      }
+    ],
     "languages": [
       {
         "id": "ns",
@@ -65,6 +83,7 @@
     ]
   },
   "dependencies": {
+    "vscode-debugadapter": "^1.51.0",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {

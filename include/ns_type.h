@@ -359,3 +359,32 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 #define ns_array_last_safe(a) ((a) ? ns_array_last(a) : 0)
 
 void ns_array_status();
+
+// ns return
+typedef enum {
+    NS_OK,
+    NS_ERR,
+    NS_ERR_SYNTAX,
+    NS_ERR_TYPE,
+    NS_ERR_RUNTIME,
+    NS_ERR_IMPORT,
+    NS_ERR_FILE,
+    NS_ERR_MEMORY,
+    NS_ERR_INTERNAL,
+    NS_ERR_UNKNOWN,
+} ns_return_state;
+
+typedef struct ns_return {
+    ns_str m;
+} ns_return;
+
+// ns type return
+typedef struct ns_type_return {
+    ns_return_state state;
+    union {
+        ns_return e;
+        ns_value t;
+    };
+} ns_type_return;
+
+#define ns_return_is_ok(r) ((r).state == NS_OK)

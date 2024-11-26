@@ -75,6 +75,12 @@
             "program": "xctrace",
             "args": ["record", "--template", "\"Time Profiler\"",  "--output", "bin/ns.trace", "--launch", "--", "bin/ns", "--ast", "sample/rt.ns"],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "nsdb",
+            "request": "launch",
+            "name": "nsdb",
+            "program": "${file}"
         }
     ]
 }

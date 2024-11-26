@@ -145,5 +145,6 @@ trace: $(TARGET)
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin
 
-include lsp/Makefile
 include lib/Makefile
+include lsp/Makefile
+include dap/Makefile
