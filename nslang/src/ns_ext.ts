@@ -5,12 +5,12 @@ import {
   ServerOptions,
   TransportKind,
 } from "vscode-languageclient/node";
-import { NSDebugger } from "./nsdb";
+import { NSDebugger } from "./ns_db";
 
 let client: LanguageClient;
 
 function start_lsp_client(context: vscode.ExtensionContext) {
-  const server_module = context.asAbsolutePath("out/server.js");
+  const server_module = context.asAbsolutePath("out/ns_lsp.js");
   const server_options: ServerOptions = {
     run: { module: server_module, transport: TransportKind.ipc },
     debug: { module: server_module, transport: TransportKind.ipc },
@@ -25,6 +25,7 @@ function start_lsp_client(context: vscode.ExtensionContext) {
 
   client = new LanguageClient("ns", "ns", server_options, client_options);
   client.start();
+  console.log("ns_lsp client started");
 }
 
 function start_dap_client(context: vscode.ExtensionContext) {

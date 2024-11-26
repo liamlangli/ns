@@ -2,7 +2,7 @@
   "name": "nslang",
   "displayName": "nslang",
   "description": "nanoscript language service.",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "publisher": "liamlangli",
   "scripts": {
     "pack": "vsce package",
@@ -21,23 +21,43 @@
     "url": "git@github.com:liamlangli/ns.git"
   },
   "icon": "ns.png",
-  "main": "./out/extension",
+  "main": "./out/ns_ext",
   "contributes": {
     "debuggers": [
       {
         "type": "nsdb",
         "label": "nsdb",
-        "program": "./out/nsdb.js",
         "configurationAttributes": {
           "launch": {
+            "required": [
+              "program"
+            ],
             "properties": {
               "program": {
                 "type": "string",
-                "description": "The program to debug"
+                "description": "Absolute path to a text file.",
+                "default": "${workspaceFolder}/${command:AskForProgramName}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Automatically stop after launch.",
+                "default": true
               }
             }
           }
-        }
+        },
+        "languages": [
+          "nanoscript"
+        ],
+        "initialConfigurations": [
+          {
+            "name": "Launch",
+            "type": "nsdb",
+            "request": "launch",
+            "program": "${file}",
+            "trace": true
+          }
+        ]
       }
     ],
     "languages": [
@@ -61,7 +81,8 @@
       }
     ],
     "activationEvents": [
-      "onLanguage:ns"
+      "onLanguage:ns",
+      "onDebug:type:nsdb"
     ],
     "grammars": [
       {
@@ -87,6 +108,7 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "@types/vscode": "^1.95.0",
     "typescript": "^5.7.2",
     "vscode-languageserver": "^9.0.1",
