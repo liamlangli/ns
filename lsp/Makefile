@@ -3,7 +3,7 @@ NS_LSP_TARGET = $(TARGET)_lsp
 
 NS_LSP_CFLAGS = $(NS_CFLAGS) -Ilsp/include
 
-NS_LSP_SRCS = lsp/src/ns_lsp.c lsp/src/ns_json.c lsp/src/ns_net.c
+NS_LSP_SRCS = lsp/src/ns_lsp.c lsp/src/ns_net.c
 NS_LSP_OBJS = $(NS_LSP_SRCS:lsp/src/%.c=$(OBJDIR)/lsp/%.o)
 
 NS_LSP_BINDIR = $(BINDIR)/lsp

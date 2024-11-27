@@ -157,6 +157,23 @@ i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len) {
     return a->len;
 }
 
+i32 ns_str_index_of(ns_str s, ns_str sub) {
+    i32 i = 0;
+    i32 j = 0;
+    while (i < s.len) {
+        if (s.data[i] == sub.data[j]) {
+            j++;
+            if (j == sub.len) {
+                return i - j + 1;
+            }
+        } else {
+            j = 0;
+        }
+        i++;
+    }
+    return -1;
+}
+
 ns_str ns_str_slice(ns_str s, i32 start, i32 end) {
     char *buffer = (char *)malloc(end - start + 1);
     memcpy(buffer, s.data + start, end - start);

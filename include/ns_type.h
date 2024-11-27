@@ -90,6 +90,7 @@ f64 ns_str_to_f64(ns_str s);
 ns_str ns_read_file(ns_str filename);
 ns_str ns_str_unescape(ns_str s);
 i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
+i32 ns_str_index_of(ns_str s, ns_str sub);
 
 #define ns_str_null ((ns_str){0, 0, 0})
 #define ns_str_range(s, n) ((ns_str){(s), (n), 1})

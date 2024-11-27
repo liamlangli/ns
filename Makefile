@@ -74,8 +74,12 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_vm_eval.c \
 	src/ns_vm_lib.c \
 	src/ns_vm_print.c \
+	src/ns_json.c \
 	src/ns_repl.c
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(OBJDIR)/%.o)
+
+NS_TEST_SRCS = test/ns_json_test.c
+NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
 NS_ENTRY_OBJ = $(OBJDIR)/src/ns.o
@@ -144,6 +148,12 @@ trace: $(TARGET)
 
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin
+
+$(NS_TEST_TARGETS): $(BINDIR)/%: test/%.c | $(BINDIR) lib
+	$(CC) -o $@ $< $(NS_CFLAGS) $(NS_LDFLAGS) -lns -L$(BINDIR)
+
+test: $(NS_TEST_TARGETS)
+	$(BINDIR)/ns_json_test
 
 include lib/Makefile
 include lsp/Makefile

@@ -76,6 +76,19 @@ ns_str ns_json_get_string(i32 i) {
     return ns_str_null;
 }
 
+i32 ns_json_get_prop(i32 i, ns_str key) {
+    ns_json *j = &_ns_json_stack[i];
+    i32 c = j->next_prop;
+    while (c) {
+        ns_json *child = ns_json_get(c);
+        if (ns_str_equals(child->key, key)) {
+            return c;
+        }
+        c = child->next_prop;
+    }
+    return 0;
+}
+
 bool ns_json_number_is_int(f64 n) {
     return n == (i32)n;
 }
@@ -294,11 +307,11 @@ i32 ns_json_parse_array(ns_json_ctx *ctx) {
     return 0;
 }
 
-ns_json *ns_json_parse(ns_str s) {
+i32 ns_json_parse(ns_str s) {
     ns_array_set_length(_ns_json_stack, 0);
     ns_array_push(_ns_json_stack, (ns_json){.type = NS_JSON_INVALID});
     i32 root = ns_json_parse_value(&(ns_json_ctx){.s = s});
-    return ns_json_get(root);
+    return root;
 }
 
 #define NS_JSON_PAD 4
