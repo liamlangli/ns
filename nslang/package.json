@@ -21,7 +21,7 @@
     "url": "git@github.com:liamlangli/ns.git"
   },
   "icon": "ns.png",
-  "main": "./out/ns_ext",
+  "main": "./dist/ns_ext",
   "contributes": {
     "debuggers": [
       {
@@ -37,26 +37,12 @@
                 "type": "string",
                 "description": "Absolute path to a text file.",
                 "default": "${workspaceFolder}/${command:AskForProgramName}"
-              },
-              "stopOnEntry": {
-                "type": "boolean",
-                "description": "Automatically stop after launch.",
-                "default": true
               }
             }
           }
         },
         "languages": [
           "ns"
-        ],
-        "initialConfigurations": [
-          {
-            "name": "Launch",
-            "type": "nsdb",
-            "request": "launch",
-            "program": "${file}",
-            "trace": true
-          }
         ]
       }
     ],
