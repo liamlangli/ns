@@ -363,7 +363,7 @@ void ns_array_status();
 
 // ns return
 typedef enum {
-    NS_OK,
+    NS_OK = 0,
     NS_ERR,
     NS_ERR_SYNTAX,
     NS_ERR_TYPE,
@@ -375,17 +375,20 @@ typedef enum {
     NS_ERR_UNKNOWN,
 } ns_return_state;
 
+typedef struct ns_code_loc {
+    ns_str f;
+    i32 l, o;
+} ns_code_loc;
+
 typedef struct ns_return {
-    ns_str m;
+    ns_str msg;
+    ns_code_loc loc;
 } ns_return;
 
-// ns type return
-typedef struct ns_type_return {
-    ns_return_state state;
-    union {
-        ns_return e;
-        ns_value t;
-    };
-} ns_type_return;
+typedef struct ns_return_type { ns_return_state s; union { ns_type r; ns_return e; }; } ns_return_type;
+typedef struct ns_return_value { ns_return_state s; union { ns_value r; ns_return e; }; } ns_return_value;
+typedef struct ns_return_bool { ns_return_state s; union { bool r; ns_return e; }; } ns_return_bool;
 
-#define ns_return_is_ok(r) ((r).state == NS_OK)
+#define ns_return_ok(t, v) ((ns_return_##t){.r = v})
+#define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
+#define ns_return_is_error(r) ((r).s != NS_OK)

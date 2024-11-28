@@ -7,9 +7,9 @@ int main() {
     ns_str_printf(r);
     printf("\n");
     if (ns_str_equals(s, r)) {
-        ns_info("ns_json_test", "ns_json_to_string: Passed\n");
+        ns_info("PASS", "ns_json_to_string\n");
     } else {
-        ns_error("ns_json_test", "ns_json_to_string: Failed\n");
+        ns_error("FAILED", "ns_json_to_string\n");
     }
     return 0;
 }

@@ -269,6 +269,9 @@ typedef struct as_parse_context_t {
     ns_str output;
 } ns_ast_ctx;
 
+#define ns_ast_code_loc(ctx) ((ns_code_loc){.f = ctx->filename, .l = ctx->token.line, .o = ctx->f - ctx->token.line_start})
+#define ns_ast_state_loc(ctx, s) ((ns_code_loc){.f = ctx->filename, .l = s.l, .o = s.o})
+
 ns_str ns_ast_type_to_string(NS_AST_TYPE type);
 
 // token fn
@@ -287,31 +290,31 @@ i32 ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n);
 bool ns_parse_identifier(ns_ast_ctx *ctx);
 
 // type fn
-bool ns_parse_unary_expr(ns_ast_ctx *ctx);
+bool ns_parse_type_define(ns_ast_ctx *ctx);
 bool ns_parse_type_name(ns_ast_ctx *ctx);
 
 // external fn
-bool ns_parse_fn_define(ns_ast_ctx *ctx);
-bool ns_parse_ops_fn_define(ns_ast_ctx *ctx);
-bool ns_parse_var_define(ns_ast_ctx *ctx);
-bool ns_parse_struct_def(ns_ast_ctx *ctx);
-bool ns_parse_type_define(ns_ast_ctx *ctx);
-bool ns_parse_type_label(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_struct_def(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_type_label(ns_ast_ctx *ctx);
 
 // stmt fn
-bool ns_parse_global_define(ns_ast_ctx *ctx);
-bool ns_parse_stmt(ns_ast_ctx *ctx);
-bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
-bool ns_parse_desig_expr(ns_ast_ctx *ctx, i32 st);
+ns_return_bool ns_parse_global_define(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_stmt(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
 
 // expr fn
-bool ns_parse_gen_expr(ns_ast_ctx *ctx);
-bool ns_parse_primary_expr(ns_ast_ctx *ctx);
-bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand);
-bool ns_parse_expr(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_desig_expr(ns_ast_ctx *ctx, i32 st);
+ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_gen_expr(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_primary_expr(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand);
+ns_return_bool ns_parse_expr(ns_ast_ctx *ctx);
 
 // dump fn
 void ns_ast_ctx_dump(ns_ast_ctx *ctx);
 
 // main parse fn
-bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);
+ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);
