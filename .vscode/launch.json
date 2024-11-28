@@ -77,10 +77,13 @@
             "cwd": "${workspaceFolder}"
         },
         {
-            "type": "nsdb",
+            "type": "lldb",
             "request": "launch",
-            "name": "nsdb",
-            "program": "${file}"
+            "name": "json test",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/ns_json_test",
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

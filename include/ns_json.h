@@ -15,9 +15,8 @@ typedef enum {
 } ns_json_type;
 
 typedef struct ns_json {
-    i32 next_prop;
-    i32 next_item;
-    i32 count;
+    i32 next;
+    i32 prop; // both array and object
     ns_json_type type;
     ns_str key;
     union {
@@ -41,8 +40,8 @@ ns_str ns_json_get_string(i32 i);
 i32 ns_json_get_prop(i32 i, ns_str key);
 ns_json *ns_json_get(i32 i);
 
-bool ns_json_set(i32 j, ns_str key, i32 c);
-bool ns_json_push(i32 j, i32 c);
+void ns_json_set(i32 j, ns_str key, i32 c);
+void ns_json_push(i32 j, i32 c);
 
 i32 ns_json_make_null();
 i32 ns_json_make_bool(bool b);
