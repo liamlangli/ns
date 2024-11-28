@@ -366,6 +366,7 @@ typedef enum {
     NS_OK = 0,
     NS_ERR,
     NS_ERR_SYNTAX,
+    NS_ERR_EVAL,
     NS_ERR_TYPE,
     NS_ERR_RUNTIME,
     NS_ERR_IMPORT,
@@ -385,10 +386,16 @@ typedef struct ns_return {
     ns_code_loc loc;
 } ns_return;
 
-typedef struct ns_return_type { ns_return_state s; union { ns_type r; ns_return e; }; } ns_return_type;
-typedef struct ns_return_value { ns_return_state s; union { ns_value r; ns_return e; }; } ns_return_value;
-typedef struct ns_return_bool { ns_return_state s; union { bool r; ns_return e; }; } ns_return_bool;
+#define ns_return_define(t, v) typedef struct ns_return_##t { ns_return_state s; union { v r; ns_return e; }; } ns_return_##t
+ns_return_define(type, ns_type);
+ns_return_define(value, ns_value);
+ns_return_define(bool, bool);
+ns_return_define(u64, u64);
+
 
 #define ns_return_ok(t, v) ((ns_return_##t){.r = v})
 #define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
 #define ns_return_is_error(r) ((r).s != NS_OK)
+
+typedef struct ns_return_void { ns_return_state s; ns_return e; } ns_return_void;
+#define ns_return_ok_void ((ns_return_void){.s = NS_OK})
