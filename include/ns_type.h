@@ -380,6 +380,7 @@ typedef struct ns_code_loc {
     ns_str f;
     i32 l, o;
 } ns_code_loc;
+#define ns_code_loc_nil ((ns_code_loc){ns_str_cstr(""), 0, 0})
 
 typedef struct ns_return {
     ns_str msg;
@@ -391,7 +392,6 @@ ns_return_define(type, ns_type);
 ns_return_define(value, ns_value);
 ns_return_define(bool, bool);
 ns_return_define(u64, u64);
-
 
 #define ns_return_ok(t, v) ((ns_return_##t){.r = v})
 #define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
