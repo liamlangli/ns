@@ -117,7 +117,7 @@ ns_number_type ns_vm_number_type(ns_type t);
 i32 ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r);
 i32 ns_vm_push_string(ns_vm *vm, ns_str s);
 i32 ns_vm_push_data(ns_vm *vm, ns_data d);
-u64 ns_type_size(ns_vm *vm, ns_type t);
+i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);

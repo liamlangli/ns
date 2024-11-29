@@ -7,14 +7,14 @@
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 
 ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx);
-ns_return_void ns_vm_parse_struct_def_ref(ns_vm *vm);
+ns_return_void ns_vm_parse_struct_def_ref(ns_vm *vm, ns_ast_ctx *ctx);
 
 void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx);
-ns_return_void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx);
+void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx);
 
-void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx);
+ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx);
 
 ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer);
@@ -282,7 +282,7 @@ void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
     }
 }
 
-void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
+ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
     for (i32 i = vm->symbol_top, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *fn = &vm->symbols[i];
         if (fn->type != NS_SYMBOL_FN || fn->parsed)
@@ -299,7 +299,12 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
                 arg_record.name = arg->arg.name.val;
 
                 ns_ast_t *arg_type = &ctx->nodes[arg->arg.type];
-                arg_record.val.t = ns_vm_parse_type(vm, arg_type->type_label.name, false);
+                ns_type t = ns_vm_parse_type(vm, arg_type->type_label.name, false);
+                if (ns_type_is_unknown(t)) {
+                    return ns_return_error(void, ns_ast_state_loc(ctx, arg->state), NS_ERR_SYNTAX, "unknown type.");
+                }
+
+                arg_record.val.t = t;
                 fn->fn.args[i] = arg_record;
             }
         } else if (n.type == NS_AST_OPS_FN_DEF) {
@@ -309,19 +314,26 @@ void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_array_set_length(fn->fn.args, 2);
             ns_symbol l_arg = (ns_symbol){.type = NS_SYMBOL_VALUE};
             l_arg.name = l.arg.name.val;
-            l_arg.val.t = ns_vm_parse_type(vm, ctx->nodes[l.arg.type].type_label.name, false);
+            ns_type t = ns_vm_parse_type(vm, ctx->nodes[l.arg.type].type_label.name, false);
+            if (ns_type_is_unknown(t)) {
+                return ns_return_error(void, ns_ast_state_loc(ctx, l.state), NS_ERR_SYNTAX, "unknown type.");
+            }
+            l_arg.val.t = t;
             fn->fn.args[0] = l_arg;
+
             ns_symbol r_arg = (ns_symbol){.type = NS_SYMBOL_VALUE};
             r_arg.name = r.arg.name.val;
             r_arg.val.t = ns_vm_parse_type(vm, ctx->nodes[r.arg.type].type_label.name, false);
             fn->fn.args[1] = r_arg;
         } else {
-            ns_error("syntax error", "unknown fn def type\n");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n.state), NS_ERR_SYNTAX, "unknown fn def type");
         }
     }
+    return ns_return_ok_void;
 }
 
-void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
+ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_return_void ret;
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *fn = &vm->symbols[i];
         if (fn->type != NS_SYMBOL_FN || fn->parsed)
@@ -339,12 +351,15 @@ void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_vm_push_symbol_local(vm, *arg);
         }
 
-        ns_vm_parse_compound_stmt(vm, ctx, body);
+        ret = ns_vm_parse_compound_stmt(vm, ctx, body);
+        if (ns_return_is_error(ret)) return ret;
+        
         ns_exit_scope(vm);
         ns_array_pop(vm->call_stack);
         fn->fn.fn = (ns_value){.t = ns_type_encode(ns_type_fn, i, is_ref, 0) };
         fn->parsed = true;
     }
+    return ns_return_ok_void;
 }
 
 ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -366,12 +381,20 @@ ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
             if (type->type_label.is_array) {
                 size = ns_ptr_size;
                 ns_type item_type = ns_vm_parse_type(vm, type->type_label.name, true);
+                if (ns_type_is_unknown(item_type)) {
+                    return ns_return_error(void, ns_ast_state_loc(ctx, type->state), NS_ERR_SYNTAX, "unknown type.");
+                }
+
                 t = (ns_type){.type = item_type.type, .ref = type->type_label.is_ref, .array = true, .store = NS_STORE_HEAP};
             } else {
                 t = ns_vm_parse_type(vm, type->type_label.name, true);
+                if (ns_type_is_unknown(t)) {
+                    return ns_return_error(void, ns_ast_state_loc(ctx, type->state), NS_ERR_SYNTAX, "unknown type.");
+                }
+
                 size = ns_type_size(vm, t);
                 if (size == -1) {
-                    return ns_return_error(void, ns_ast_state_loc(ctx, field->state), NS_ERR_SYNTAX, "unknown type.");
+                    return ns_return_error(void, ns_ast_state_loc(ctx, type->state), NS_ERR_SYNTAX, "unknown type.");
                 }
             }
             
@@ -384,6 +407,7 @@ ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
         st.st.stride = offset; // 4 bytes align
         ns_vm_push_symbol_global(vm, st);
     }
+    return ns_return_ok_void;
 }
 
 ns_return_void ns_vm_parse_struct_def_ref(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -418,7 +442,6 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
         if (n->var_def.expr == -1) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "missing var def expr.");
         }
-
         ns_vm_push_symbol_global(vm, r);
     }
     return ns_return_ok_void;
@@ -707,8 +730,8 @@ ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_type l = ret_l.r;
     ns_type r = ret_r.r;
     if (!ns_type_equals(l, r)) {
-        ns_str l_name = ns_vm_get_type_name(vm, l);
-        ns_str r_name = ns_vm_get_type_name(vm, r);
+        // ns_str l_name = ns_vm_get_type_name(vm, l);
+        // ns_str r_name = ns_vm_get_type_name(vm, r);
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "assign expr type mismatch.");
     }
     return ns_return_ok(type, l);
@@ -745,10 +768,9 @@ ns_return_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_ok(type, t);
     }
 
-    ns_str l_name = ns_vm_get_type_name(vm, l);
-    ns_str r_name = ns_vm_get_type_name(vm, r);
-    ns_str op = n->binary_expr.op.val;
-
+    // ns_str l_name = ns_vm_get_type_name(vm, l);
+    // ns_str r_name = ns_vm_get_type_name(vm, r);
+    // ns_str op = n->binary_expr.op.val;
     return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "binary expr type mismatch.");
 }
 
@@ -764,13 +786,13 @@ ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_AST_DESIG_EXPR: return ns_vm_parse_desig_expr(vm, ctx, i);
     case NS_AST_UNARY_EXPR: return ns_vm_parse_unary_expr(vm, ctx, i);
     case NS_AST_CAST_EXPR: return ns_vm_parse_cast_expr(vm, ctx, i);
-    case NS_AST_ARRAY_EXPR: return ns_vm_parse_array_expr(vm, ctx, i);
+    case NS_AST_ARRAY_EXPR: return ns_return_ok(type, ns_vm_parse_array_expr(vm, ctx, i));
     case NS_AST_INDEX_EXPR: return ns_vm_parse_index_expr(vm, ctx, i);
     case NS_AST_STR_FMT: return ns_return_ok(type, ns_type_str);
     default: {
-        ns_str type = ns_ast_type_to_string(n->type);
-        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unimplemented expr type %.*s.", type.len, type.data);
-        ns_vm_error(ctx->filename, n->state, "syntax error", "unimplemented expr type %.*s.", type.len, type.data);
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unimplemented expr type.");
+        // ns_str type = ns_ast_type_to_string(n->type);
+        // ns_vm_error(ctx->filename, n->state, "syntax error", "unimplemented expr type %.*s.", type.len, type.data);
     } break;
     }
     return ns_return_ok(type, ns_type_unknown);
@@ -796,90 +818,128 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     default:
         return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unknown jump stmt type.");
     }
+    return ns_return_ok_void;
 }
 
-void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
-    ns_type t = ns_vm_parse_expr(vm, ctx, n->if_stmt.condition);
+    ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->if_stmt.condition);
+    if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
+
+    ns_type t = ret_t.r;
     if (!ns_type_is(t, NS_TYPE_BOOL)) {
         ns_ast_t *cond = &ctx->nodes[n->if_stmt.condition];
         ns_vm_error(ctx->filename, cond->state, "type error", "if stmt expr type mismatch.");
     }
 
-    ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.body);
+    ns_return_void ret = ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.body);
+    if (ns_return_is_error(ret)) return ret;
+
     if (n->if_stmt.else_body) {
-        ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.else_body);
+        ret = ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.else_body);
+        if (ns_return_is_error(ret)) return ret;
     }
+
+    return ns_return_ok_void;
 }
 
-void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_return_void ret;
     ns_ast_t *n = &ctx->nodes[i];
     i32 cond = n->loop_stmt.condition;
     i32 body = n->loop_stmt.body;
     if (n->loop_stmt.do_first) {
-        ns_vm_parse_compound_stmt(vm, ctx, body);
-        ns_type t = ns_vm_parse_expr(vm, ctx, cond);
+        ret = ns_vm_parse_compound_stmt(vm, ctx, body);
+        if (ns_return_is_error(ret)) return ret;
+
+        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, cond);
+        if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
+
+        ns_type t = ret_t.r;
         if (!ns_type_is(t, NS_TYPE_BOOL)) {
-            ns_ast_error(ctx, "type error", "loop stmt expr type mismatch\n");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "loop stmt expr type mismatch.");
         }
     } else {
-        ns_type t = ns_vm_parse_expr(vm, ctx, cond);
+        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, cond);
+        if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
+
+        ns_type t = ret_t.r;
         if (!ns_type_is(t, NS_TYPE_BOOL)) {
-            ns_ast_error(ctx, "type error", "loop stmt expr type mismatch\n");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "loop stmt expr type mismatch.");
         }
-        ns_vm_parse_compound_stmt(vm, ctx, body);
+        ret = ns_vm_parse_compound_stmt(vm, ctx, body);
+        if (ns_return_is_error(ret)) return ret;
     }
+
+    return ns_return_ok_void;
 }
 
-void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
 
     ns_ast_t *gen = &ctx->nodes[n->for_stmt.generator];
-    ns_type t = ns_vm_parse_gen_expr(vm, ctx, n->for_stmt.generator);
+    ns_return_type ret_t = ns_vm_parse_gen_expr(vm, ctx, n->for_stmt.generator);
+    if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
+
+    ns_type t = ret_t.r;
     ns_symbol var = (ns_symbol){.type = NS_SYMBOL_VALUE, .val = { .t = t }, .parsed = true};
     var.name = gen->gen_expr.name.val;
     ns_vm_push_symbol_local(vm, var);
 
     ns_enter_scope(vm);
-    ns_vm_parse_compound_stmt(vm, ctx, n->for_stmt.body);
+    ns_return_void ret = ns_vm_parse_compound_stmt(vm, ctx, n->for_stmt.body);
+    if (ns_return_is_error(ret)) return ret;
     ns_exit_scope(vm);
+
+    return ns_return_ok_void;
 }
 
-void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_symbol s = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
     s.name = n->var_def.name.val;
     ns_type l = ns_vm_parse_type(vm, ctx->nodes[n->var_def.type].type_label.name, true);
 
     if (n->var_def.expr != 0) {
-        ns_type t = ns_vm_parse_expr(vm, ctx, n->var_def.expr);
+        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->var_def.expr);
+        if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
+
+        ns_type t = ret_t.r;
         if (!ns_type_is(l, NS_TYPE_INFER) && !ns_type_equals(l, t)) {
-            ns_str type = ns_vm_get_type_name(vm, t);
-            ns_vm_error(ctx->filename, n->state, "type error", "local var def type mismatch %.*s.", type.len, type.data);
+            // ns_str type = ns_vm_get_type_name(vm, t);
+            // ns_vm_error(ctx->filename, n->state, "type error", "local var def type mismatch %.*s.", type.len, type.data);
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "local var def type mismatch.");
         }
         s.val.t = t;
         n->var_def.type_size = ns_type_size(vm, t);
     }
     ns_array_push(vm->symbol_stack, s);
+
+    return ns_return_ok_void;
 }
 
-void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_return_void ret;
     ns_ast_t *expr = &ctx->nodes[i];
     for (i32 e_i = 0, l = expr->compound_stmt.count; e_i < l; e_i++) {
         i32 expr_i = expr->next;
         expr = &ctx->nodes[expr_i];
         switch (expr->type) {
         case NS_AST_JUMP_STMT:
-            ns_vm_parse_jump_stmt(vm, ctx, expr_i);
+            ret = ns_vm_parse_jump_stmt(vm, ctx, expr_i);
+            if (ns_return_is_error(ret)) return ret;
             break;
         case NS_AST_VAR_DEF:
-            ns_vm_parse_local_var_def(vm, ctx, expr_i);
+            ret = ns_vm_parse_local_var_def(vm, ctx, expr_i);
+            if (ns_return_is_error(ret)) return ret;
             break;
         case NS_AST_IF_STMT:
-            ns_vm_parse_if_stmt(vm, ctx, expr_i);
+            ret = ns_vm_parse_if_stmt(vm, ctx, expr_i);
+            if (ns_return_is_error(ret)) return ret;
             break;
         case NS_AST_FOR_STMT:
-            ns_vm_parse_for_stmt(vm, ctx, expr_i);
+            ret = ns_vm_parse_for_stmt(vm, ctx, expr_i);
+            if (ns_return_is_error(ret)) return ret;
             break;
         case NS_AST_CALL_EXPR:
         case NS_AST_BINARY_EXPR:
@@ -887,15 +947,18 @@ void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         case NS_AST_MEMBER_EXPR:
         case NS_AST_GEN_EXPR:
         case NS_AST_DESIG_EXPR:
-        case NS_AST_UNARY_EXPR:
-            ns_vm_parse_expr(vm, ctx, expr_i);
-            break;
+        case NS_AST_UNARY_EXPR: {
+            ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, expr_i);
+            if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
+        } break;
         default: {
-            ns_str type = ns_ast_type_to_string(expr->type);
-            ns_vm_error(ctx->filename, expr->state, "vm parse", "unimplemented stmt type %.*s*.", type.len, type.data);
+            // ns_str type = ns_ast_type_to_string(expr->type);
+            // ns_vm_error(ctx->filename, expr->state, "vm parse", "unimplemented stmt type %.*s*.", type.len, type.data);
+            return ns_return_error(void, ns_ast_state_loc(ctx, expr->state), NS_ERR_SYNTAX, "unimplemented stmt type.");
         } break;
         }
     }
+    return ns_return_ok_void;
 }
 
 bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {

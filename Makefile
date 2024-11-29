@@ -47,7 +47,7 @@ endif
 NS_LDFLAGS = -lm -lreadline `pkg-config --libs libffi` -ldl -flto
 NS_INC = -Iinclude $(NS_PLATFORM_DEF) `pkg-config --cflags libffi`
 
-NS_DEBUG_CFLAGS = $(NS_INC) -g -O0 -Wall -Wextra -DNS_DEBUG
+NS_DEBUG_CFLAGS = $(NS_INC) -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG
 NS_RELEASE_CFLAGS = $(NS_INC) -Os
 
 ifeq ($(NS_DEBUG), 1)
