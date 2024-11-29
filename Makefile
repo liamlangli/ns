@@ -150,7 +150,7 @@ install: $(TARGET)
 	cp $(TARGET) /usr/local/bin
 
 $(NS_TEST_TARGETS): $(BINDIR)/%: test/%.c | $(BINDIR) lib
-	$(CC) -o $@ $< $(NS_CFLAGS) $(NS_LDFLAGS) -lns -L$(BINDIR)
+	$(CC) -o $@ $< $(NS_CFLAGS) $(NS_LDFLAGS) -lns -L$(BINDIR) -Itest
 
 test: $(NS_TEST_TARGETS)
 	$(BINDIR)/ns_json_test

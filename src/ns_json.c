@@ -437,7 +437,7 @@ void ns_str_append_f64(ns_str *s, f64 n, i32 precision) {
     s->len += precision + 1;
 }
 
-ns_str ns_json_to_string(ns_json *json) {
+ns_str ns_json_to_string_append(ns_json *json) {
     switch (json->type)
     {
     case NS_JSON_FALSE: ns_str_append(&_ns_json_str, ns_str_cstr("false")); break;
@@ -460,7 +460,7 @@ ns_str ns_json_to_string(ns_json *json) {
         i32 c = json->prop;
         while (c) {
             ns_json *child = ns_json_get(c);
-            ns_json_to_string(child);
+            ns_json_to_string_append(child);
             c = child->next;
             if (c == 0) break; else ns_str_append_char(_ns_json_str, ',');
         }
@@ -475,7 +475,7 @@ ns_str ns_json_to_string(ns_json *json) {
             ns_str_append(&_ns_json_str, child->key);
             ns_str_append_char(_ns_json_str, '"');
             ns_str_append_char(_ns_json_str, ':');
-            ns_json_to_string(child);
+            ns_json_to_string_append(child);
             c = child->next;
             if (c == 0) break; else ns_str_append_char(_ns_json_str, ',');
         }
@@ -485,4 +485,10 @@ ns_str ns_json_to_string(ns_json *json) {
         break;
     }
     return _ns_json_str;
+}
+
+ns_str ns_json_to_string(ns_json *json) {
+    ns_array_set_length(_ns_json_str.data, 0);
+    _ns_json_str.len = 0;
+    return ns_json_to_string_append(json);
 }

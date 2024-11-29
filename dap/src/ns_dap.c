@@ -6,7 +6,7 @@ static ns_str _out;
 static i8 _chunk[512];
 static i32 _last_seq = 0;
 
-ns_data ns_dap_read_stdin() {
+ns_str ns_dap_read_stdin() {
     i32 size = 0;
     do {
         size = fread(_chunk, 1, sizeof(_chunk), stdin);
@@ -19,17 +19,18 @@ ns_data ns_dap_read_stdin() {
         memcpy(_in.data + len, _chunk, size);
         _in.data[len + size] = '\0';
     } while (size != 0);
+    return _in;
 }
 
 #define NS_DAP_HEADER_SEP "\r\n\r\n"
 #define NS_DAP_CONTENT_LENGTH "Content-Length: "
 
-ns_json ns_dap_parse(ns_str s) {
+i32 ns_dap_parse(ns_str s) {
     i32 i = ns_str_index_of(s, ns_str_cstr("\r\n\r\n"));
     ns_str header = (ns_str){s.data, i, 0};
     i32 l = ns_str_index_of(header, ns_str_cstr("Content-Length: "));
     if (l == -1) {
-        return ns_json_null;
+        return 0;
     }
     i32 len = ns_str_to_i32(ns_str_slice(header, l + 16, header.len));
     ns_str body = (ns_str){s.data + i + 4, len, 0};
@@ -52,12 +53,11 @@ void ns_dap_response_ack(ns_str type, i32 seq, ns_str cmd, bool suc) {
 }
 
 i32 main() {
-    ns_data data;
+    ns_str input;
 
     while(1) {
-        data = ns_dap_read_stdin();
-
-
+        input = ns_dap_read_stdin();
+        
     }
 
     return 0;
