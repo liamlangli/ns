@@ -654,7 +654,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     return to;
 }
 
-ns_export void ns_token(ns_str source, ns_str filename) {
+void ns_token(ns_str source, ns_str filename) {
     ns_info("ns", "tokenizing %.*s\n", ns_max(0, filename.len), filename.data);
     i32 len = strlen(source.data);
     i32 i = 0;

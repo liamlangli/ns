@@ -54,7 +54,7 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
             case NS_TYPE_U64: *(u64*)&vm->stack[offset] = src.u64; break;
             case NS_TYPE_F32: *(f32*)&vm->stack[offset] = src.f32; break;
             case NS_TYPE_F64: *(f64*)&vm->stack[offset] = src.f64; break;
-            case NS_TYPE_BOOL: *(bool*)&vm->stack[offset] = src.b; break;
+            case NS_TYPE_BOOL: *(ns_bool*)&vm->stack[offset] = src.b; break;
             case NS_TYPE_STRING: *(u64*)&vm->stack[offset] = src.o; break;
             default: return ns_return_error(value, ns_code_loc_nil, NS_ERR_EVAL, "invalid const type.");
             }
@@ -79,7 +79,7 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
             case NS_TYPE_U64: *(u64*)dst.o = src.u64; break;
             case NS_TYPE_F32: *(f32*)dst.o = src.f32; break;
             case NS_TYPE_F64: *(f64*)dst.o = src.f64; break;
-            case NS_TYPE_BOOL: *(bool*)dst.o = src.b; break;
+            case NS_TYPE_BOOL: *(ns_bool*)dst.o = src.b; break;
             case NS_TYPE_STRING: *(u64*)dst.o = src.o; break;
             default: return ns_return_error(value, ns_code_loc_nil, NS_ERR_EVAL, "invalid const type.");
             }
@@ -182,7 +182,7 @@ u32 ns_eval_number_u32(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n
 u64 ns_eval_number_u64(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.u64 : *(u64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
 f32 ns_eval_number_f32(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.f32 : *(f32*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
 f64 ns_eval_number_f64(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.f64 : *(f64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-bool ns_eval_bool(ns_vm *vm, ns_value n) { return ns_eval_number_i32(vm, n) != 0; }
+ns_bool ns_eval_bool(ns_vm *vm, ns_value n) { return ns_eval_number_i32(vm, n) != 0; }
 ns_str ns_eval_str(ns_vm *vm, ns_value n) {
     if (ns_type_is_const(n.t)) return vm->str_list[n.o];
     if (ns_type_in_stack(n.t)) return vm->str_list[*(u64*)&vm->stack[n.o]];
@@ -901,7 +901,7 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, ret);
 }
 
-ns_export ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
+ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     ns_ast_ctx ctx = {0};
     ns_ast_parse(&ctx, source, filename);
     ns_vm_parse(vm, &ctx);

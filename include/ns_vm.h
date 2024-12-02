@@ -40,14 +40,14 @@ typedef struct ns_scope_symbol {
 
 typedef struct ns_array_symbol {
     ns_type element_type;
-    bool stack;
+   ns_bool stack;
 } ns_array_symbol;
 
 typedef struct ns_symbol {
     ns_symbol_type type;
     ns_str name;
     ns_str lib;
-    bool parsed;
+   ns_bool parsed;
     union {
         ns_value val;
         ns_fn_symbol fn;
@@ -101,7 +101,7 @@ typedef struct ns_vm {
     i8* stack;
 
     // mode
-    bool repl;
+   ns_bool repl;
 } ns_vm;
 
 // ops fn
@@ -119,7 +119,7 @@ i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
-ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
+ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t,ns_bool infer);
 
 // eval fn
 #define ns_eval_value_def(type) type ns_eval_number_##type(ns_vm *vm, ns_value n);
@@ -133,7 +133,7 @@ ns_eval_value_def(u32)
 ns_eval_value_def(u64)
 ns_eval_value_def(f32)
 ns_eval_value_def(f64)
-bool ns_eval_bool(ns_vm *vm, ns_value n);
+ns_bool ns_eval_bool(ns_vm *vm, ns_value n);
 ns_str ns_eval_str(ns_vm *vm, ns_value n);
 void *ns_eval_array_raw(ns_vm *vm, ns_value n);
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);

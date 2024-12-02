@@ -12,7 +12,7 @@ typedef struct Image {
     u8 *data;
 } Image;
 
-ns_export Image* io_load_image(ns_str path) {
+Image* io_load_image(ns_str path) {
     // Implementation for loading an image from the file at 'path'
     // This is a placeholder implementation
     Image *img = (Image*)malloc(sizeof(Image));
@@ -31,7 +31,7 @@ ns_export Image* io_load_image(ns_str path) {
     return img;
 }
 
-ns_export void io_save_image(const char *path, const Image *img) {
+void io_save_image(const char *path, const Image *img) {
     // Implementation for saving an image to the file at 'path'
     // This is a placeholder implementation
     if (img == NULL) {

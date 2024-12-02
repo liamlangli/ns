@@ -41,7 +41,7 @@ void ns_dap_response(ns_str data) {
     fprintf(stdout, "Content-Length: %d\r\n\r\n%s", data.len, data.data);
 }
 
-void ns_dap_response_ack(ns_str type, i32 seq, ns_str cmd, bool suc) {
+void ns_dap_response_ack(ns_str type, i32 seq, ns_str cmd,ns_bool suc) {
     i32 res = ns_json_make_object();
     ns_json_set(res, ns_str_cstr("type"), ns_json_make_string(type));
     ns_json_set(res, ns_str_cstr("seq"), ns_json_make_number(++_last_seq));

@@ -2,14 +2,14 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
-bool ns_parse_stack_push_operand(ns_ast_ctx *ctx, i32 i) {
+ns_bool ns_parse_stack_push_operand(ns_ast_ctx *ctx, i32 i) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
     scope->pre = i;
     ns_array_push(ctx->stack, i);
     return true;
 }
 
-bool ns_parse_stack_push_operator(ns_ast_ctx *ctx, i32 i) {
+ns_bool ns_parse_stack_push_operator(ns_ast_ctx *ctx, i32 i) {
     ns_ast_t n = ctx->nodes[i];
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
     scope->pre = i;
@@ -36,7 +36,7 @@ i32 ns_parse_stack_pop(ns_ast_ctx *ctx) {
     return ns_array_pop(ctx->stack);
 }
 
-bool ns_parse_is_operand(ns_ast_t n) {
+ns_bool ns_parse_is_operand(ns_ast_t n) {
     switch (n.type) {
     case NS_AST_PRIMARY_EXPR:
     case NS_AST_CALL_EXPR:
@@ -52,12 +52,12 @@ bool ns_parse_is_operand(ns_ast_t n) {
     }
 }
 
-bool ns_parse_stack_empty(ns_ast_ctx *ctx) {
+ns_bool ns_parse_stack_empty(ns_ast_ctx *ctx) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
     return scope->stack_top == (i32)ns_array_length(ctx->stack);
 }
 
-bool ns_parse_stack_leading_operand(ns_ast_ctx *ctx) {
+ns_bool ns_parse_stack_leading_operand(ns_ast_ctx *ctx) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
     if (scope->pre == 0) {
         return false;
@@ -65,7 +65,7 @@ bool ns_parse_stack_leading_operand(ns_ast_ctx *ctx) {
     return ns_parse_is_operand(ctx->nodes[scope->pre]);
 }
 
-bool ns_parse_stack_leading_operator(ns_ast_ctx *ctx) {
+ns_bool ns_parse_stack_leading_operator(ns_ast_ctx *ctx) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
     if (scope->pre == 0) {
         return false;
@@ -73,7 +73,7 @@ bool ns_parse_stack_leading_operator(ns_ast_ctx *ctx) {
     return !ns_parse_is_operand(ctx->nodes[scope->pre]);
 }
 
-bool ns_token_is_operator(ns_token_t token) {
+ns_bool ns_token_is_operator(ns_token_t token) {
     switch (token.type) {
     case NS_TOKEN_ADD_OP:
     case NS_TOKEN_MUL_OP:
@@ -89,7 +89,7 @@ bool ns_token_is_operator(ns_token_t token) {
 }
 
 // Shunting Yard Algorithm
-bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
+ns_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
 
     i32 op_len = ns_array_length(ctx->op_stack);
@@ -274,7 +274,7 @@ ns_return_bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
-bool ns_parse_cast_expr(ns_ast_ctx *ctx, i32 operand) {
+ns_bool ns_parse_cast_expr(ns_ast_ctx *ctx, i32 operand) {
     ns_ast_state state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_AS)) {
         if (ns_token_require_type(ctx)) {

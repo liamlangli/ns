@@ -39,7 +39,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     }
 }
 
-void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i, bool colon) {
+void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i,ns_bool colon) {
     if (i == 0) return;
     if (colon) printf(": ");
 

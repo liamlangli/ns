@@ -6,7 +6,7 @@
 
 #define BUFFER_SIZE 1024
 
-bool ns_udp_serve(u16 port, ns_str (*on_data)(ns_str)) {
+ns_bool ns_udp_serve(u16 port, ns_str (*on_data)(ns_str)) {
     int sockfd;
     char buffer[BUFFER_SIZE];
     struct sockaddr_in server_addr, client_addr;

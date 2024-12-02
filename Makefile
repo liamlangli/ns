@@ -12,12 +12,10 @@ ifeq ($(OS), Linux)
 else ifeq ($(OS), Darwin)
 	NS_LIB_SUFFIX = .dylib
 	NS_PLATFORM_DEF = -DNS_DARWIN
-else ifeq ($(OS), Windows)
+else
 	NS_LIB_SUFFIX = .dll
 	NS_SUFFIX = .exe
 	NS_PLATFORM_DEF = -DNS_WIN32
-else
-	$(error Unsupported platform: $(OS))
 endif
 
 # OPTIONS

@@ -7,7 +7,7 @@ ns_str ns_lsp_on_data(ns_str data) {
     return data;
 }
 
-bool ns_lsp_serve(u16 port) {
+ns_bool ns_lsp_serve(u16 port) {
     ns_udp_serve(port, ns_lsp_on_data);
     return true;
 }

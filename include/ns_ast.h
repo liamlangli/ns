@@ -51,9 +51,9 @@ typedef struct ns_ast_state {
 } ns_ast_state;
 
 typedef struct ns_ast_type_label {
-    bool is_ref;
+    ns_bool is_ref;
     ns_token_t name;
-    bool is_array;
+    ns_bool is_array;
 } ns_ast_type_label;
 
 typedef struct ns_ast_str_fmt {
@@ -67,9 +67,9 @@ typedef struct ns_ast_arg {
 } ns_ast_arg;
 
 typedef struct ns_ast_fn_def {
-    bool is_ref;
-    bool is_async;
-    bool is_kernel;
+    ns_bool is_ref;
+    ns_bool is_async;
+    ns_bool is_kernel;
     ns_token_t name;
     i32 ret;
     i32 body;
@@ -77,8 +77,8 @@ typedef struct ns_ast_fn_def {
 } ns_ast_fn_def;
 
 typedef struct ns_ast_ops_fn_def {
-    bool is_ref;
-    bool is_async;
+    ns_bool is_ref;
+    ns_bool is_async;
     ns_token_t ops;
     i32 ret;
     i32 body;
@@ -146,7 +146,7 @@ typedef struct ns_ast_gen_expr {
     ns_token_t name;
     i32 from;
     i32 to;
-    bool range;
+    ns_bool range;
 } ns_ast_gen_expr;
 
 typedef struct ns_ast_import_stmt {
@@ -171,7 +171,7 @@ typedef struct ns_ast_for_stmt {
 typedef struct ns_ast_loop_stmt {
     i32 condition;
     i32 body;
-    bool do_first;
+    ns_bool do_first;
 } ns_ast_loop_stmt;
 
 typedef struct ns_ast_jump_stmt {
@@ -275,11 +275,11 @@ typedef struct as_parse_context_t {
 ns_str ns_ast_type_to_string(NS_AST_TYPE type);
 
 // token fn
-bool ns_parse_next_token(ns_ast_ctx *ctx); // skip space
-bool ns_token_can_be_type(NS_TOKEN t);
-bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token);
-bool ns_token_require_type(ns_ast_ctx *ctx);
-bool ns_token_skip_eol(ns_ast_ctx *ctx);
+ns_bool ns_parse_next_token(ns_ast_ctx *ctx); // skip space
+ns_bool ns_token_can_be_type(NS_TOKEN t);
+ns_bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token);
+ns_bool ns_token_require_type(ns_ast_ctx *ctx);
+ns_bool ns_token_skip_eol(ns_ast_ctx *ctx);
 
 // node fn
 void ns_restore_state(ns_ast_ctx *ctx, ns_ast_state state);
@@ -287,11 +287,11 @@ ns_ast_state ns_save_state(ns_ast_ctx *ctx);
 i32 ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n);
 
 // primary fn
-bool ns_parse_identifier(ns_ast_ctx *ctx);
+ns_bool ns_parse_identifier(ns_ast_ctx *ctx);
 
 // type fn
-bool ns_parse_type_define(ns_ast_ctx *ctx);
-bool ns_parse_type_name(ns_ast_ctx *ctx);
+ns_bool ns_parse_type_define(ns_ast_ctx *ctx);
+ns_bool ns_parse_type_name(ns_ast_ctx *ctx);
 
 // external fn
 ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx);

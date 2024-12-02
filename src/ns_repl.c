@@ -18,7 +18,7 @@ void ns_repl_free_line(ns_str s) {
     ns_str_free(s);
 }
 
-ns_export void ns_repl(ns_vm* vm) {
+void ns_repl(ns_vm* vm) {
     ns_ast_ctx ctx = {0};
     ns_array_set_capacity(ctx.nodes, 4);
 

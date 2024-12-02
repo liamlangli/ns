@@ -44,13 +44,13 @@ void ns_json_set(i32 j, ns_str key, i32 c);
 void ns_json_push(i32 j, i32 c);
 
 i32 ns_json_make_null();
-i32 ns_json_make_bool(bool b);
+i32 ns_json_make_bool(ns_bool b);
 i32 ns_json_make_number(f64 n);
 i32 ns_json_make_string(ns_str s);
 i32 ns_json_make_array();
 i32 ns_json_make_object();
 
-bool ns_json_print(ns_json *json);
+ns_bool ns_json_print(ns_json *json);
 
 i32 ns_json_parse(ns_str s);
 ns_str ns_json_to_string(ns_json *json);

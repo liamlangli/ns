@@ -27,7 +27,7 @@ ns_str ns_type_name(ns_type t) {
     }
 }
 
-bool ns_type_is_number(ns_type t) {
+ns_bool ns_type_is_number(ns_type t) {
     switch (t.type) {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
@@ -46,7 +46,7 @@ bool ns_type_is_number(ns_type t) {
     }
 }
 
-ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s) {
+ns_type ns_type_encode(ns_value_type t, u64 i,ns_bool is_ref, ns_store s) {
     return (ns_type){.type = t, .index = i, .ref = is_ref, .store = s};
 }
 

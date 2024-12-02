@@ -11,11 +11,11 @@ static ns_vm vm = {0};
 static ns_ast_ctx ctx = {0};
 
 typedef struct ns_compile_option_t {
-    bool tokenize_only;
-    bool ast_only;
-    bool bitcode_only;
-    bool show_version;
-    bool show_help;
+   ns_bool tokenize_only;
+   ns_bool ast_only;
+   ns_bool bitcode_only;
+   ns_bool show_version;
+   ns_bool show_help;
     ns_str output;
     ns_str filename;
 } ns_compile_option_t;

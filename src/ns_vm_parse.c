@@ -17,8 +17,8 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx);
 
 ns_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer);
-ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
+ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n,ns_bool infer);
+ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t,ns_bool infer);
 ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -160,7 +160,7 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
 }
 
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
-    bool is_ref = ns_type_is_ref(t);
+   ns_bool is_ref = ns_type_is_ref(t);
     switch (t.type)
     {
     case NS_TYPE_I8: return is_ref ? ns_str_cstr("ref_i8") : ns_str_cstr("i8");
@@ -216,7 +216,7 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s) {
     return ns_null;
 }
 
-ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer) {
+ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n,ns_bool infer) {
     ns_symbol *r = ns_vm_find_symbol(vm, n);
     if (!r) {
         if (infer) return ns_type_infer;
@@ -235,7 +235,7 @@ ns_type ns_vm_parse_record_type(ns_vm *vm, ns_str n, bool infer) {
     }
 }
 
-ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer) {
+ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t,ns_bool infer) {
     switch (t.type) {
     case NS_TOKEN_TYPE_I8: return ns_type_i8;
     case NS_TOKEN_TYPE_U8: return ns_type_u8;
@@ -348,7 +348,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
             continue;
         ns_ast_t n = fn->fn.ast;
         i32 body = n.type == NS_AST_FN_DEF ? n.fn_def.body : n.ops_fn_def.body;
-        bool is_ref = n.type == NS_AST_FN_DEF ? n.fn_def.is_ref : n.ops_fn_def.is_ref;
+       ns_bool is_ref = n.type == NS_AST_FN_DEF ? n.fn_def.is_ref : n.ops_fn_def.is_ref;
         ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack)};
 
         ns_array_push(vm->call_stack, call);
@@ -543,7 +543,7 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_vm_parse_expr(vm, ctx, n->next);
 }
 
-bool ns_vm_parse_type_generable(ns_type t) {
+ns_bool ns_vm_parse_type_generable(ns_type t) {
     return ns_type_is(t, NS_TYPE_STRING) || ns_type_is(t, NS_TYPE_ARRAY);
 }
 

@@ -316,8 +316,8 @@ void ns_bc_fn_def(ns_bc_ctx *bc_ctx) {
 
 ns_bc_value ns_bc_binary_ops_number(ns_bc_ctx *bc_ctx, ns_bc_value l, ns_bc_value r, ns_token_t op) {
     ns_bc_builder bdr = bc_ctx->builder;
-    bool f = ns_type_is_float(l.type.raw);
-    bool s = ns_type_signed(l.type.raw);
+   ns_bool f = ns_type_is_float(l.type.raw);
+   ns_bool s = ns_type_signed(l.type.raw);
     ns_bc_value ret = (ns_bc_value){.type = l.type};
     switch (op.type)
     {
@@ -594,7 +594,7 @@ ns_bc_value ns_bc_call_std(ns_bc_ctx *bc_ctx) {
     return ns_bc_nil;
 }
 
-ns_export bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx) {
+ns_bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_str output_path = ns_str_cstr(ctx->output.data);
     ns_info("bitcode", "generate llvm bitcode file %s\n", output_path.data);
 

@@ -14,7 +14,7 @@ i32 ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n) {
     return ctx->current;
 }
 
-bool ns_parse_next_token(ns_ast_ctx *ctx) {
+ns_bool ns_parse_next_token(ns_ast_ctx *ctx) {
     do {
         ctx->last_f = ctx->f;
         ctx->last_token = ctx->token;
@@ -23,7 +23,7 @@ bool ns_parse_next_token(ns_ast_ctx *ctx) {
     return ctx->token.type != NS_TOKEN_EOF;
 }
 
-bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token) {
+ns_bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token) {
     ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ctx->token.type == token) {
@@ -33,7 +33,7 @@ bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token) {
     return false;
 }
 
-bool ns_token_can_be_type(NS_TOKEN t) {
+ns_bool ns_token_can_be_type(NS_TOKEN t) {
     switch (t) {
     case NS_TOKEN_NIL:
     case NS_TOKEN_TYPE_I8:
@@ -56,7 +56,7 @@ bool ns_token_can_be_type(NS_TOKEN t) {
     return false;
 }
 
-bool ns_token_require_type(ns_ast_ctx *ctx) {
+ns_bool ns_token_require_type(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ns_token_can_be_type(ctx->token.type)) {
@@ -66,15 +66,15 @@ bool ns_token_require_type(ns_ast_ctx *ctx) {
     return false;
 }
 
-bool ns_token_look_ahead(ns_ast_ctx *ctx, NS_TOKEN token) {
+ns_bool ns_token_look_ahead(ns_ast_ctx *ctx, NS_TOKEN token) {
     ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
-    bool result = ctx->token.type == token;
+   ns_bool result = ctx->token.type == token;
     ns_restore_state(ctx, state);
     return result;
 }
 
-bool ns_token_skip_eol(ns_ast_ctx *ctx) {
+ns_bool ns_token_skip_eol(ns_ast_ctx *ctx) {
     ns_ast_state state;
     do {
         state = ns_save_state(ctx);
@@ -119,7 +119,7 @@ ns_return_bool ns_parse_type_label(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
-bool ns_parse_type_name(ns_ast_ctx *ctx) {
+ns_bool ns_parse_type_name(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // type
     ns_parse_next_token(ctx);
@@ -136,7 +136,7 @@ bool ns_parse_type_name(ns_ast_ctx *ctx) {
     return false;
 }
 
-bool ns_parse_identifier(ns_ast_ctx *ctx) {
+ns_bool ns_parse_identifier(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
     if (ctx->token.type == NS_TOKEN_IDENTIFIER) {
@@ -152,7 +152,7 @@ ns_return_bool ns_primary_expr(ns_ast_ctx *ctx) {
     ns_parse_next_token(ctx);
 
     // literal
-    bool is_literal = false;
+   ns_bool is_literal = false;
     switch (ctx->token.type) {
     case NS_TOKEN_INT_LITERAL:
     case NS_TOKEN_FLT_LITERAL:
@@ -266,7 +266,7 @@ ns_return_bool ns_parse_arg(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
-bool ns_parse_ops_overridable(ns_token_t token) {
+ns_bool ns_parse_ops_overridable(ns_token_t token) {
     switch (token.type) {
     case NS_TOKEN_ADD_OP:
     case NS_TOKEN_MUL_OP:
@@ -285,8 +285,8 @@ ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
 
-    bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
-    bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
+   ns_bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
+   ns_bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
 
     if (!ns_token_require(ctx, NS_TOKEN_FN)) {
         ns_restore_state(ctx, state);
@@ -384,9 +384,9 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
 
-    bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
-    bool is_kernel = ns_token_require(ctx, NS_TOKEN_KERNEL);
-    bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
+   ns_bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
+   ns_bool is_kernel = ns_token_require(ctx, NS_TOKEN_KERNEL);
+   ns_bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
 
     if (!ns_token_require(ctx, NS_TOKEN_FN)) {
         ns_restore_state(ctx, state);
@@ -555,7 +555,7 @@ ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
-bool ns_parse_type_define(ns_ast_ctx *ctx) {
+ns_bool ns_parse_type_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
 
     if (!ns_token_require(ctx, NS_TOKEN_TYPE)) {
@@ -579,7 +579,7 @@ bool ns_parse_type_define(ns_ast_ctx *ctx) {
     return true;
 }
 
-ns_export ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
+ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->source = source;
     ctx->filename = filename;
     ctx->token.line = 1; // start from 1

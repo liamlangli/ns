@@ -18,7 +18,7 @@ i32 ns_json_parse_false(ns_json_ctx *ctx);
 i32 ns_json_parse_null(ns_json_ctx *ctx);
 i32 ns_json_parse_number(ns_json_ctx *ctx);
 
-bool ns_json_print_node(ns_json *json, i32 depth, bool wrap);
+ns_bool ns_json_print_node(ns_json *json, i32 depth,ns_bool wrap);
 
 i32 ns_json_make(ns_json_type type) {
     i32 i = ns_array_length(_ns_json_stack);
@@ -36,7 +36,7 @@ i32 ns_json_make_null() {
     return ns_json_make(NS_JSON_NULL);
 }
 
-i32 ns_json_make_bool(bool b) {
+i32 ns_json_make_bool(ns_bool b) {
     return ns_json_make(b ? NS_JSON_TRUE : NS_JSON_FALSE);
 }
 
@@ -89,7 +89,7 @@ i32 ns_json_get_prop(i32 i, ns_str key) {
     return 0;
 }
 
-bool ns_json_number_is_int(f64 n) {
+ns_bool ns_json_number_is_int(f64 n) {
     return n == (i32)n;
 }
 
@@ -322,14 +322,14 @@ i32 ns_json_parse(ns_str s) {
 #define NS_JSON_PAD 4
 #define NS_JSON_FLT_PRECISION 8
 
-bool ns_json_print(ns_json *json) {
+ns_bool ns_json_print(ns_json *json) {
     return ns_json_print_node(json, 0, false);
 }
 
 #define ns_printf_wrap(fmt, ...) (printf("%*.s"fmt, (wrap ? depth * NS_JSON_PAD : 0), "", ##__VA_ARGS__))
 #define ns_str_append_char(a, c) (ns_array_push((a).data, c), (a).len++)
 
-bool ns_json_print_node(ns_json *json, i32 depth, bool wrap) {
+ns_bool ns_json_print_node(ns_json *json, i32 depth,ns_bool wrap) {
     if (!json) return false;
     switch (json->type)
     {
@@ -379,7 +379,7 @@ bool ns_json_print_node(ns_json *json, i32 depth, bool wrap) {
 
 void ns_str_append_i32(ns_str *s, i32 n) {
     // append i32 to string
-    bool neg = 0;
+   ns_bool neg = 0;
 
     if (n < 0) {
         neg = 1;

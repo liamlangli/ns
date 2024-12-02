@@ -7,7 +7,6 @@
 #include <assert.h>
 #include <math.h>
 
-// ns lib
 #if NS_DARWIN
     #define ns_lib_ext ns_str_cstr(".dylib")
     #define ns_export __attribute__((visibility("default")))
@@ -20,9 +19,8 @@
 #endif
 
 // ns_def
-#ifndef bool
-typedef int bool;
-typedef int ns_bool;
+#ifndef ns_bool
+    typedef int ns_bool;
     #define true 1
     #define false 0
 #endif
@@ -68,7 +66,7 @@ typedef long i64;
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
-typedef unsigned long u64;
+typedef unsigned long long u64;
 
 typedef float f32;
 typedef double f64;
@@ -79,7 +77,7 @@ u64 ns_align(u64 offset, u64 stride);
 typedef struct ns_str {
     i8 *data;
     i32 len;
-    bool dynamic;
+    ns_bool dynamic;
 } ns_str;
 
 ns_str ns_str_slice(ns_str s, i32 start, i32 end);
@@ -260,8 +258,8 @@ typedef enum {
 typedef struct ns_type {
     ns_value_type type: 8;
     ns_store store: 4;
-    bool ref: 2;
-    bool array: 2;
+   ns_bool ref: 2;
+   ns_bool array: 2;
     u32 index;
 } ns_type;
 
@@ -276,7 +274,7 @@ typedef struct ns_type {
 
 #define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}
 
-ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s);
+ns_type ns_type_encode(ns_value_type t, u64 i,ns_bool is_ref, ns_store s);
 
 #define ns_type_infer   (ns_type){.type = NS_TYPE_INFER}
 #define ns_type_void    (ns_type){.type = NS_TYPE_VOID}
@@ -305,7 +303,7 @@ ns_type ns_type_encode(ns_value_type t, u64 i, bool is_ref, ns_store s);
 #define ns_type_unsigned(t) (ns_type_is(t, NS_TYPE_U8) || ns_type_is(t, NS_TYPE_U16) || ns_type_is(t, NS_TYPE_U32) || ns_type_is(t, NS_TYPE_U64))
 #define ns_type_is_unknown(t) (ns_type_is(t, NS_TYPE_UNKNOWN))
 
-bool ns_type_is_number(ns_type t);
+ns_bool ns_type_is_number(ns_type t);
 
 typedef struct ns_value {
     ns_type t;  // type
@@ -314,7 +312,7 @@ typedef struct ns_value {
         f64 f64;
         u64 u64;
         i64 i64;
-        bool b;
+        ns_bool b;
         i8 i8;
         u8 u8;
         i16 i16;
@@ -390,7 +388,7 @@ typedef struct ns_return {
 #define ns_return_define(t, v) typedef struct ns_return_##t { ns_return_state s; union { v r; ns_return e; }; } ns_return_##t
 ns_return_define(type, ns_type);
 ns_return_define(value, ns_value);
-ns_return_define(bool, bool);
+ns_return_define(bool, ns_bool);
 ns_return_define(u64, u64);
 ns_return_define(ptr, void *);
 
