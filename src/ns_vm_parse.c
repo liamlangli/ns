@@ -9,7 +9,7 @@ void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_struct_def_ref(ns_vm *vm, ns_ast_ctx *ctx);
 
-void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx);
+ns_return_void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx);
 void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx);
@@ -144,12 +144,14 @@ ns_str ns_ops_name(ns_token_t op) {
         else if (ns_str_equals_STR(op.val, ">="))
             return ns_str_cstr("ge");
     default:
-        ns_error("eval error", "unsupported ops override %.*s\n", op.val.len, op.val.data);
+        return ns_str_null;
     }
 }
 
 ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
     ns_str op_name = ns_ops_name(op);
+    if (ns_str_empty(op_name)) return ns_str_null;
+
     size_t len = l.len + r.len + op_name.len + 3;
     i8* data = (i8*)malloc(len);
     snprintf(data, len, "%.*s_%.*s_%.*s", l.len, l.data, op_name.len, op_name.data, r.len, r.data);
@@ -177,11 +179,11 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     case NS_TYPE_STRUCT: {
         u64 ti = ns_type_index(t);
         if (ti > ns_array_length(vm->symbols)) {
-            ns_error("eval error", "missing type %lu\n", ti);
+            return ns_str_null;
         }
 
         ns_symbol *r = &vm->symbols[ti];
-        if (!r) ns_error("syntax error", "missing type %lu\n", ti);
+        if (!r) return ns_str_null;
         return r->name;
     } break;
     default:
@@ -264,7 +266,7 @@ void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
     }
 }
 
-void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
+ns_return_void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s = ctx->sections[i];
         ns_ast_t n = ctx->nodes[s];
@@ -278,8 +280,14 @@ void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_str r_type = ctx->nodes[r.arg.type].type_label.name.val;
 
         fn.name = ns_ops_override_name(l_type, r_type, n.ops_fn_def.ops);
+        if (ns_str_empty(fn.name)) {
+            return ns_return_error(void, ns_ast_state_loc(ctx, n.state), NS_ERR_SYNTAX, "unknown ops override.");
+        }
+
         ns_vm_push_symbol_global(vm, fn);
     }
+
+    return ns_return_ok_void;
 }
 
 ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -953,15 +961,26 @@ ns_return_void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok_void;
 }
 
-bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
+ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_vm_parse_import_stmt(vm, ctx);
     ns_vm_parse_fn_def_name(vm, ctx);
-    ns_vm_parse_ops_fn_def_name(vm, ctx);
-    ns_vm_parse_struct_def(vm, ctx);
-    ns_vm_parse_struct_def_ref(vm, ctx);
-    ns_vm_parse_fn_def_type(vm, ctx);
-    ns_vm_parse_var_def(vm, ctx);
-    ns_vm_parse_fn_def_body(vm, ctx);
+    ns_return_void ret = ns_vm_parse_ops_fn_def_name(vm, ctx);
+    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+
+    ret = ns_vm_parse_struct_def(vm, ctx);
+    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+
+    ret = ns_vm_parse_struct_def_ref(vm, ctx);
+    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+
+    ret = ns_vm_parse_fn_def_type(vm, ctx);
+    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+
+    ret = ns_vm_parse_var_def(vm, ctx);
+    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+
+    ret = ns_vm_parse_fn_def_body(vm, ctx);
+    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
 
     vm->symbol_top = ns_array_length(vm->symbols);
 
@@ -970,9 +989,10 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *n = &ctx->nodes[s_i];
         switch (n->type) {
         case NS_AST_EXPR:
-        case NS_AST_CALL_EXPR:
-            ns_vm_parse_expr(vm, ctx, s_i);
-            break;
+        case NS_AST_CALL_EXPR: {
+            ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i);
+            if (ns_return_is_error(ret_t)) return ns_return_change_type(bool, ret_t);
+        } break;
         case NS_AST_IMPORT_STMT:
         case NS_AST_MODULE_STMT:
         case NS_AST_FN_DEF:
@@ -987,5 +1007,5 @@ bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
         } break;
         }
     }
-    return true;
+    return ns_return_ok(bool, true);
 }

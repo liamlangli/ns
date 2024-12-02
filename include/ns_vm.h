@@ -118,7 +118,7 @@ i32 ns_vm_push_data(ns_vm *vm, ns_data d);
 i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
-bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
+ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
 ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t, bool infer);
 
 // eval fn
@@ -148,7 +148,7 @@ ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // vm eval stage
 void ns_vm_symbol_print(ns_vm *vm);
-ns_bool ns_vm_call_ref(ns_vm *vm);
+ns_return_bool ns_vm_call_ref(ns_vm *vm);
 
 // vm mod
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib);

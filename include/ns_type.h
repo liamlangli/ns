@@ -392,6 +392,7 @@ ns_return_define(type, ns_type);
 ns_return_define(value, ns_value);
 ns_return_define(bool, bool);
 ns_return_define(u64, u64);
+ns_return_define(ptr, void *);
 
 #define ns_return_ok(t, v) ((ns_return_##t){.r = (v)})
 #define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})

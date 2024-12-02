@@ -5,7 +5,7 @@
 #include <dlfcn.h>
 #include <ffi.h>
 
-ns_bool ns_vm_call_std(ns_vm *vm) {
+ns_return_bool ns_vm_call_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
     if (ns_str_equals_STR(call->fn->name, "print")) {
         ns_value arg = vm->symbol_stack[call->arg_offset].val;
@@ -44,9 +44,9 @@ ns_bool ns_vm_call_std(ns_vm *vm) {
         ns_value x = vm->symbol_stack[call->arg_offset].val;
         call->ret = (ns_value){.t = ns_type_f64, .f64 = sqrt(x.f64)};
     } else {
-        ns_error("eval error", "unknown std fn %.*s\n", call->fn->name.len, call->fn->name.data);
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "unknown std fn.");
     }
-    return false;
+    return ns_return_ok(bool, true);
 }
 
 ns_lib* ns_lib_find(ns_vm *vm, ns_str lib) {
@@ -64,8 +64,10 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
 
     ns_str cur_lib = vm->lib;
     vm->lib = lib;
-    if (!ns_vm_parse(vm, &ctx)) {
-        ns_error("vm import", "failed to import lib %.*s\n", lib.len, lib.data);
+
+    ns_return_bool ret = ns_vm_parse(vm, &ctx);
+    if (ns_return_is_error(ret)) {
+        ns_error("vm import", "failed to parse lib %.*s\n", lib.len, lib.data);
     }
     vm->lib = cur_lib;
 
@@ -108,7 +110,7 @@ ffi_type ns_ffi_map_type(ns_type t) {
 
 #define NS_MAX_FFI_ARGS 16
 
-ns_bool ns_vm_call_ffi(ns_vm *vm) {
+ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_symbol *fn = call->fn;
 
@@ -118,7 +120,7 @@ ns_bool ns_vm_call_ffi(ns_vm *vm) {
     void *refs[NS_MAX_FFI_ARGS];
     void *values[NS_MAX_FFI_ARGS];
     if (call->arg_count > NS_MAX_FFI_ARGS) {
-        ns_error("ffi call", "too many args %d\n", call->arg_count);
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "too many args.");
     }
 
     // copy args to ffi values
@@ -131,7 +133,7 @@ ns_bool ns_vm_call_ffi(ns_vm *vm) {
             u64 offset = ns_eval_alloc(vm, size);
             ns_value dst = (ns_value){.t = ns_type_set_store(v.t, NS_STORE_STACK), .o = offset};
             ns_return_value ret_v = ns_eval_copy(vm, dst, v, size);
-            if (ns_return_is_error(ret_v)) ns_error("ffi call", "failed to copy arg %d\n", i);
+            if (ns_return_is_error(ret_v)) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to copy arg.");
             v = ret_v.r;
         }
 
@@ -159,7 +161,7 @@ ns_bool ns_vm_call_ffi(ns_vm *vm) {
     ffi_type ret_type = ns_ffi_map_type(fn->fn.ret);
     ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, types);
     if (status != FFI_OK) {
-        ns_error("ffi call", "failed to prep ffi call: %d\n", status);
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to prep ffi call.");
     }
 
     ffi_arg ret_ptr;
@@ -170,10 +172,10 @@ ns_bool ns_vm_call_ffi(ns_vm *vm) {
         ns_value ret = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = (u64)ret_ptr};
         call->ret = ret;
     }
-    return true;
+    return ns_return_ok(bool, true);
 }
 
-ns_bool ns_vm_call_ref(ns_vm *vm) {
+ns_return_bool ns_vm_call_ref(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_symbol *fn = call->fn;
 
@@ -191,13 +193,13 @@ ns_bool ns_vm_call_ref(ns_vm *vm) {
     }
 
     if (!lib) {
-        ns_error("vm call", "failed to find lib %.*s\n", fn->lib.len, fn->lib.data);
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to find lib.\n");
     }
 
     ns_str fn_name = ns_str_slice(fn->name, 0, fn->name.len);
     void *fn_ptr = dlsym(lib->lib, fn_name.data);
     if (!fn_ptr) {
-        ns_error("vm call", "failed to find fn %.*s\n", fn->name.len, fn->name.data);
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to find fn.\n");
     }
 
     fn->fn.fn_ptr = fn_ptr;
