@@ -393,9 +393,10 @@ ns_return_define(value, ns_value);
 ns_return_define(bool, bool);
 ns_return_define(u64, u64);
 
-#define ns_return_ok(t, v) ((ns_return_##t){.r = v})
+#define ns_return_ok(t, v) ((ns_return_##t){.r = (v)})
 #define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
 #define ns_return_is_error(r) ((r).s != NS_OK)
+#define ns_return_change_type(t, err) ((ns_return_##t){.s = err.s, .e = err.e})
 
 typedef struct ns_return_void { ns_return_state s; ns_return e; } ns_return_void;
 #define ns_return_ok_void ((ns_return_void){.s = NS_OK})

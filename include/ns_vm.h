@@ -3,8 +3,6 @@
 #include "ns_ast.h"
 #include "ns_type.h"
 
-#define ns_vm_error(f, s, t, m, ...) ns_error(t, "\n  [%.*s:%d:%d]: " m "\n", f.len, f.data, s.l, s.o, ##__VA_ARGS__)
-
 typedef enum {
     NS_SYMBOL_INVALID,
     NS_SYMBOL_VALUE,
@@ -139,14 +137,14 @@ bool ns_eval_bool(ns_vm *vm, ns_value n);
 ns_str ns_eval_str(ns_vm *vm, ns_value n);
 void *ns_eval_array_raw(ns_vm *vm, ns_value n);
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
-ns_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
+ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
 ns_scope *ns_enter_scope(ns_vm *vm);
 ns_scope *ns_exit_scope(ns_vm *vm);
 
-ns_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
+ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // vm eval stage
 void ns_vm_symbol_print(ns_vm *vm);

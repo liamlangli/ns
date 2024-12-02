@@ -130,7 +130,9 @@ ns_bool ns_vm_call_ffi(ns_vm *vm) {
             i32 size = ns_type_size(vm, v.t);
             u64 offset = ns_eval_alloc(vm, size);
             ns_value dst = (ns_value){.t = ns_type_set_store(v.t, NS_STORE_STACK), .o = offset};
-            v = ns_eval_copy(vm, dst, v, size);
+            ns_return_value ret_v = ns_eval_copy(vm, dst, v, size);
+            if (ns_return_is_error(ret_v)) ns_error("ffi call", "failed to copy arg %d\n", i);
+            v = ret_v.r;
         }
 
         switch (v.t.type)
