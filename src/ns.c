@@ -66,7 +66,8 @@ void ns_exec_tokenize(ns_str filename) {
 void ns_exec_ast(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_read_file(filename);
-    ns_ast_parse(&ctx, source, filename);
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    ns_return_assert(ret);
     ns_ast_ctx_dump(&ctx);
 }
 
@@ -78,8 +79,18 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
     ns_exit(1, "ns", "bitcode is not enabled\n");
 #else
     ns_str source = ns_read_file(filename);
-    ns_ast_parse(&ctx, source, filename);
-    ns_vm_parse(&vm, &ctx);
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    if (ns_return_is_error(ret)) {
+        ns_error("ns", "ast parse error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
+        return;
+    }
+
+    ret = ns_vm_parse(&vm, &ctx);
+    if (ns_return_is_error(ret)) {
+        ns_error("ns", "vm parse error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
+        return;
+    }
+
     ctx.output = output;
     if (output.data == ns_null) {
         ns_warn("ns", "output file is not specified.");

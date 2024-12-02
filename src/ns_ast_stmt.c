@@ -28,7 +28,7 @@ ns_return_bool ns_parse_jump_stmt(ns_ast_ctx *ctx) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
     // continue
-    ns_ast_t n = {.type = NS_AST_JUMP_STMT, .jump_stmt.label = ctx->token, .jump_stmt.expr = 0};
+    ns_ast_t n = {.type = NS_AST_JUMP_STMT, .state = state, .jump_stmt.label = ctx->token, .jump_stmt.expr = 0};
     if (ns_token_require(ctx, NS_TOKEN_CONTINUE) && ns_token_require(ctx, NS_TOKEN_EOL)) {
         ns_ast_push(ctx, n);
         return ns_return_ok(bool, true);

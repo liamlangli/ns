@@ -294,7 +294,7 @@ ns_return_bool ns_parse_designated_field(ns_ast_ctx *ctx) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
     ns_ast_t n = {.type = NS_AST_FIELD_DEF, .state = state, .field_def = {.name = ctx->token}};
-    if (!ns_parse_identifier(ctx)) {
+    if (ns_parse_identifier(ctx)) {
         if (ns_token_require(ctx, NS_TOKEN_COLON)) {
             ret = ns_parse_expr(ctx);
             if (ns_return_is_error(ret)) return ret;

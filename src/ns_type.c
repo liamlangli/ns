@@ -99,7 +99,7 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 
 void ns_array_status() {
 #ifdef NS_DEBUG
-    ns_info("ns_array", "alloc_op %lu, free_op %lu, alloc %lu, free %lu\n", _ns_allocator.alloc_op, _ns_allocator.free_op, _ns_allocator.alloc, _ns_allocator.free);
+    ns_info("ns_array", "alloc_op %llu, free_op %llu, alloc %llu, free %llu\n", _ns_allocator.alloc_op, _ns_allocator.free_op, _ns_allocator.alloc, _ns_allocator.free);
 #endif
 }
 
@@ -208,4 +208,21 @@ ns_str ns_read_file(ns_str path) {
     ns_str data = ns_str_range(buffer, size);
     data.dynamic = true;
     return data;
+}
+
+ns_str ns_return_state_str(ns_return_state s) {
+    switch (s) {
+    case NS_OK: return ns_str_cstr("ok");
+    case NS_ERR: return ns_str_cstr("error");
+    case NS_ERR_SYNTAX: return ns_str_cstr("syntax error");
+    case NS_ERR_EVAL: return ns_str_cstr("eval error");
+    case NS_ERR_TYPE: return ns_str_cstr("type error");
+    case NS_ERR_RUNTIME: return ns_str_cstr("runtime error");
+    case NS_ERR_IMPORT: return ns_str_cstr("import error");
+    case NS_ERR_FILE: return ns_str_cstr("file error");
+    case NS_ERR_MEMORY: return ns_str_cstr("memory error");
+    case NS_ERR_INTERNAL: return ns_str_cstr("internal error");
+    case NS_ERR_UNKNOWN: return ns_str_cstr("unknown error");
+    default: return ns_str_cstr("unknown error");
+    }
 }

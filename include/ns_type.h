@@ -397,5 +397,8 @@ ns_return_define(ptr, void *);
 #define ns_return_is_error(r) ((r).s != NS_OK)
 #define ns_return_change_type(t, err) ((ns_return_##t){.s = err.s, .e = err.e})
 
+ns_str ns_return_state_str(ns_return_state s);
+#define ns_return_assert(r) if (ns_return_is_error(r)) ns_error(ns_return_state_str(r.s).data, "%.*s:%d:%d:\n    %.*s\n", r.e.loc.f.len, r.e.loc.f.data, r.e.loc.l, r.e.loc.o, r.e.msg.len, r.e.msg.data)
+
 typedef struct ns_return_void { ns_return_state s; ns_return e; } ns_return_void;
 #define ns_return_ok_void ((ns_return_void){.s = NS_OK})
