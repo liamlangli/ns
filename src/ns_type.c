@@ -1,30 +1,10 @@
 #include "ns_type.h"
 
+// ns_type
 u64 ns_align(u64 offset, u64 stride) {
     u64 align = ns_min(sizeof(void *), stride);
     if (align > 0) offset = (offset + (align - 1)) & ~(align - 1);
     return offset;
-}
-
-ns_str ns_type_name(ns_type t) {
-    switch (t.type) {
-    case NS_TYPE_UNKNOWN: return ns_str_null;
-    case NS_TYPE_I8: return ns_str_cstr("i8");
-    case NS_TYPE_I16: return ns_str_cstr("i16");
-    case NS_TYPE_I32: return ns_str_cstr("i32");
-    case NS_TYPE_I64: return ns_str_cstr("i64");
-    case NS_TYPE_U8: return ns_str_cstr("u8");
-    case NS_TYPE_U16: return ns_str_cstr("u16");
-    case NS_TYPE_U32: return ns_str_cstr("u32");
-    case NS_TYPE_U64: return ns_str_cstr("u64");
-    case NS_TYPE_F32: return ns_str_cstr("f32");
-    case NS_TYPE_F64: return ns_str_cstr("f64");
-    case NS_TYPE_BOOL: return ns_str_cstr("bool");
-    case NS_TYPE_STRING: return ns_str_cstr("str");
-    case NS_TYPE_FN: return ns_str_cstr("fn");
-    case NS_TYPE_STRUCT: return ns_str_cstr("struct");
-    default: return ns_str_null;
-    }
 }
 
 ns_bool ns_type_is_number(ns_type t) {
@@ -56,6 +36,7 @@ ns_number_type ns_vm_number_type(ns_type t) {
     return NS_NUMBER_U;
 }
 
+// ns_array
 #ifdef NS_DEBUG
 typedef struct ns_allocator {
     u64 alloc_op, free_op;
@@ -101,6 +82,28 @@ void ns_array_status() {
 #ifdef NS_DEBUG
     ns_info("ns_array", "alloc_op %llu, free_op %llu, alloc %llu, free %llu\n", _ns_allocator.alloc_op, _ns_allocator.free_op, _ns_allocator.alloc, _ns_allocator.free);
 #endif
+}
+
+// ns_str
+ns_str ns_type_name(ns_type t) {
+    switch (t.type) {
+    case NS_TYPE_UNKNOWN: return ns_str_null;
+    case NS_TYPE_I8: return ns_str_cstr("i8");
+    case NS_TYPE_I16: return ns_str_cstr("i16");
+    case NS_TYPE_I32: return ns_str_cstr("i32");
+    case NS_TYPE_I64: return ns_str_cstr("i64");
+    case NS_TYPE_U8: return ns_str_cstr("u8");
+    case NS_TYPE_U16: return ns_str_cstr("u16");
+    case NS_TYPE_U32: return ns_str_cstr("u32");
+    case NS_TYPE_U64: return ns_str_cstr("u64");
+    case NS_TYPE_F32: return ns_str_cstr("f32");
+    case NS_TYPE_F64: return ns_str_cstr("f64");
+    case NS_TYPE_BOOL: return ns_str_cstr("bool");
+    case NS_TYPE_STRING: return ns_str_cstr("str");
+    case NS_TYPE_FN: return ns_str_cstr("fn");
+    case NS_TYPE_STRUCT: return ns_str_cstr("struct");
+    default: return ns_str_null;
+    }
 }
 
 i32 ns_str_to_i32(ns_str s) {
@@ -210,6 +213,7 @@ ns_str ns_read_file(ns_str path) {
     return data;
 }
 
+// ns_return
 ns_str ns_return_state_str(ns_return_state s) {
     switch (s) {
     case NS_OK: return ns_str_cstr("ok");
@@ -225,4 +229,9 @@ ns_str ns_return_state_str(ns_return_state s) {
     case NS_ERR_UNKNOWN: return ns_str_cstr("unknown error");
     default: return ns_str_cstr("unknown error");
     }
+}
+
+// ns_chan
+void *ns_chan_make(void *c, size_t elem_size, size_t elem_count) {
+    
 }

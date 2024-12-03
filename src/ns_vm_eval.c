@@ -574,6 +574,7 @@ ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *expr = n;
+    if (vm->step_hook) vm->step_hook(vm, ctx, i);
     for (i32 e_i = 0, l = n->compound_stmt.count; e_i < l; e_i++) {
         i32 next = expr->next;
         expr = &ctx->nodes[expr->next];

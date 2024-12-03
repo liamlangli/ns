@@ -11,11 +11,11 @@ static ns_vm vm = {0};
 static ns_ast_ctx ctx = {0};
 
 typedef struct ns_compile_option_t {
-   ns_bool tokenize_only;
-   ns_bool ast_only;
-   ns_bool bitcode_only;
-   ns_bool show_version;
-   ns_bool show_help;
+    ns_bool tokenize_only: 2;
+    ns_bool ast_only: 2;
+    ns_bool bitcode_only: 2;
+    ns_bool show_version: 2;
+    ns_bool show_help: 2;
     ns_str output;
     ns_str filename;
 } ns_compile_option_t;
@@ -54,7 +54,7 @@ void ns_help() {
 }
 
 void ns_version() {
-    ns_info("nano script", "v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
+    ns_info("nanoscript", "v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
 }
 
 void ns_exec_tokenize(ns_str filename) {

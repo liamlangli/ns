@@ -101,7 +101,10 @@ typedef struct ns_vm {
     i8* stack;
 
     // mode
-   ns_bool repl;
+    ns_bool repl;
+
+    // debug
+    void (*step_hook)(struct ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 } ns_vm;
 
 // ops fn
@@ -155,4 +158,4 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib);
 ns_lib* ns_lib_find(ns_vm *vm, ns_str lib);
 
 // vm repl
-void ns_repl(ns_vm* vm);
+ns_return_void ns_repl(ns_vm* vm);

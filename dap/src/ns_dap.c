@@ -52,6 +52,12 @@ void ns_dap_response_ack(ns_str type, i32 seq, ns_str cmd,ns_bool suc) {
     ns_dap_response(res_str);
 }
 
+void ns_dap_step(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    if (vm->step_hook) {
+        vm->step_hook(vm, ctx, i);
+    }
+}
+
 i32 main() {
     ns_str input;
 
