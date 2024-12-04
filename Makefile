@@ -72,6 +72,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_vm_eval.c \
 	src/ns_vm_lib.c \
 	src/ns_vm_print.c \
+	src/ns_net.c \
 	src/ns_json.c \
 	src/ns_repl.c
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(OBJDIR)/%.o)

@@ -158,4 +158,4 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib);
 ns_lib* ns_lib_find(ns_vm *vm, ns_str lib);
 
 // vm repl
-ns_return_void ns_repl(ns_vm* vm);
+void ns_repl(ns_vm* vm);

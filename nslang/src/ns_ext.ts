@@ -5,15 +5,13 @@ import {
     ServerOptions,
     TransportKind,
 } from "vscode-languageclient/node";
-import path from "path";
 
 let client: LanguageClient;
 
 function start_lsp_client(context: vscode.ExtensionContext) {
-    const server_module = "ns_dap";
     const server_options: ServerOptions = {
-        run: { module: server_module, transport: TransportKind.ipc },
-        debug: { module: server_module, transport: TransportKind.ipc },
+        run: { command: "ns_lsp", transport: { kind: TransportKind.socket, port: 5000 } },
+        debug: { command: "ns_lsp", transport: { kind: TransportKind.socket, port: 5000 } },
     };
 
     const client_options: LanguageClientOptions = {
@@ -23,88 +21,56 @@ function start_lsp_client(context: vscode.ExtensionContext) {
         },
     };
 
-    client = new LanguageClient(
-        "ns_lsp",
-        "ns_lsp",
-        server_options,
-        client_options
-    );
+    client = new LanguageClient("ns_lsp", "ns_lsp", server_options, client_options);
     client.start();
     console.log("ns_lsp client started");
 }
 
-const NSDB_DEBUG_TYPE = "nsdb";
-
 const DEFAULT_CONFIG: vscode.DebugConfiguration = {
-    type: NSDB_DEBUG_TYPE,
+    type: "nsdb",
     request: "launch",
     name: "Debug NS Program",
+    runtimeExecutable: "ns_dap",
     program: "${file}",
 };
 
-class NSDebugConfigurationProvider
-    implements vscode.DebugConfigurationProvider
-{
+class NSDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
     resolveDebugConfiguration(
         folder: vscode.WorkspaceFolder | undefined,
-        config: vscode.DebugConfiguration,
-        token?: vscode.CancellationToken
+        config: vscode.DebugConfiguration
     ): vscode.ProviderResult<vscode.DebugConfiguration> {
-        if (!config.type && !config.request && !config.name) {
-            return DEFAULT_CONFIG;
-        }
-        return config;
+        return !config.type && !config.request && !config.name ? DEFAULT_CONFIG : config;
     }
 
     resolveDebugConfigurationWithSubstitutedVariables(
         folder: vscode.WorkspaceFolder | undefined,
-        debugConfiguration: vscode.DebugConfiguration,
-        token?: vscode.CancellationToken
+        debugConfiguration: vscode.DebugConfiguration
     ): vscode.ProviderResult<vscode.DebugConfiguration> {
-        return Object.assign({}, DEFAULT_CONFIG, debugConfiguration);
+        return { ...DEFAULT_CONFIG, ...debugConfiguration };
     }
 }
 
-class NSDebugAdapterDescriptorFactory
-    implements vscode.DebugAdapterDescriptorFactory
-{
+class NSDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
     createDebugAdapterDescriptor(
         session: vscode.DebugSession,
         executable: vscode.DebugAdapterExecutable | undefined
     ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
-        if (executable == null) {
-            const ns_db = path.resolve(__dirname, "..", "dist", "ns_db.js");
-            executable = new vscode.DebugAdapterExecutable(
-                "node",
-                [ns_db],
-                {}
-            );
-        }
-        return executable;
+        return executable ?? new vscode.DebugAdapterServer(5001);
     }
 }
 
 function start_dap_client(context: vscode.ExtensionContext) {
     context.subscriptions.push(
-        vscode.debug.registerDebugConfigurationProvider(
-            NSDB_DEBUG_TYPE,
-            new NSDebugConfigurationProvider()
-        )
-    );
-
-    context.subscriptions.push(
-        vscode.debug.registerDebugAdapterDescriptorFactory(
-            NSDB_DEBUG_TYPE,
-            new NSDebugAdapterDescriptorFactory()
-        )
+        vscode.debug.registerDebugConfigurationProvider("nsdb", new NSDebugConfigurationProvider()),
+        vscode.debug.registerDebugAdapterDescriptorFactory("nsdb", new NSDebugAdapterDescriptorFactory())
     );
 }
 
 export function activate(context: vscode.ExtensionContext) {
     start_dap_client(context);
-    start_lsp_client(context);
+    // start_lsp_client(context);
 }
 
 export function deactivate(): Thenable<void> | undefined {
-    return client ? client.stop() : undefined;
+    return client?.stop();
 }

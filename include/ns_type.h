@@ -403,26 +403,6 @@ ns_str ns_return_state_str(ns_return_state s);
 typedef struct ns_return_void { ns_return_state s; ns_return e; } ns_return_void;
 #define ns_return_ok_void ((ns_return_void){.s = NS_OK})
 
-// ns_chan
-#include <stdatomic.h>
-typedef struct ns_chan_header {
-    size_t cap;
-    atomic_size_t r;
-    atomic_size_t w;
-} ns_chan_header;
-
-#define ns_chan_header(c) ((ns_chan_header *)(c) - 1)
-#define ns_chan_length(c) ((c) ? (ns_chan_header(c))->len : 0)
-#define ns_chan_capacity(c) ((c) ? ns_chan_header(c)->cap : 0)
-#define ns_chan_free(c) ((c) ? free(ns_chan_header(c)), (c) = 0 : 0)
-
-void *_ns_chan_make(void *c, size_t elem_size, size_t elem_count);
-
-ns_bool _ns_chan_push(void *c, const void *v);
-ns_bool _ns_chan_pop(void *c, void *v);
-
-#define ns_chan_push(c, v) (_ns_chan_push((c), &(v)))
-#define ns_chan_pop(c, v) (_ns_chan_pop((c), &(v)))
-
-// ns_job
-typedef struct ns_job ns_job;
+// ns_loop_io
+ns_str ns_loop_io_read();
+void ns_loop_io_write(ns_str s);

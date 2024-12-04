@@ -1,0 +1,62 @@
+{
+	"folders": [
+		{
+			"name": "ns",
+			"path": "."
+		},
+		{
+			"name": "nslang",
+			"path": "nslang"
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.tmsl": "hlsl",
+			"*.shader": "hlsl",
+			"*.inc": "cpp",
+			"*.und": "xml",
+			"*.uss": "plaintext",
+			"*.py": "python",
+			"*.ns": "ns",
+			"*.h": "c",
+			"*.c": "c",
+			"__node_handle": "c",
+			"cstdlib": "c",
+			"locale": "c",
+			"variant": "c",
+			"typeinfo": "c",
+			"array": "c",
+			"string": "c",
+			"string_view": "c",
+			"vector": "c",
+			"__bit_reference": "c",
+			"bitset": "c",
+			"deque": "c",
+			"limits": "c",
+			"optional": "c",
+			"ratio": "c",
+			"tuple": "c",
+			"__hash_table": "c",
+			"type_traits": "c",
+			"__tree": "c",
+			"complex": "c",
+			"__verbose_abort": "c",
+			"format": "c",
+			"functional": "c",
+			"memory": "c",
+			"mutex": "c",
+			"ostream": "c",
+			"print": "c",
+			"queue": "c",
+			"stack": "c",
+			"unordered_map": "c",
+			"map": "c",
+			"set": "c",
+			"cmath": "c",
+			"ios": "c",
+			"system_error": "c",
+			"__locale": "c",
+			"__config": "c"
+		}
+	}
+}

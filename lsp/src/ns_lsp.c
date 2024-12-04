@@ -7,13 +7,9 @@ ns_str ns_lsp_on_data(ns_str data) {
     return data;
 }
 
-ns_bool ns_lsp_serve(u16 port) {
-    ns_udp_serve(port, ns_lsp_on_data);
-    return true;
-}
-
 int main() {
-    u16 port = 9000;
-    ns_lsp_serve(port);
+    u16 port = 5000;
+    ns_info("ns_dap", "starting lsp server at port %d.\n", port);
+    ns_tcp_serve(port, ns_lsp_on_data);
     return 0;
 }

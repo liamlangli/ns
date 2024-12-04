@@ -6,7 +6,7 @@
   "publisher": "liamlangli",
   "scripts": {
     "pack": "vsce package",
-    "compile": "tsc -b",
+    "build": "tsc -b",
     "watch": "tsc -b -w"
   },
   "engines": {

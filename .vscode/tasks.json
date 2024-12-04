@@ -7,11 +7,6 @@
             "label": "build",
             "type": "shell",
             "command": "make"
-        },
-        {
-            "label": "build lsp",
-            "type": "shell",
-            "command": "make lsp"
         }
     ]
 }

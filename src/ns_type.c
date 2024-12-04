@@ -231,7 +231,25 @@ ns_str ns_return_state_str(ns_return_state s) {
     }
 }
 
-// ns_chan
-void *ns_chan_make(void *c, size_t elem_size, size_t elem_count) {
-    
+// ns_loop_io
+static ns_str _in;
+static i8 _chunk[512];
+ns_str ns_loop_io_read() {
+    i32 size = 0;
+    do {
+        size = fread(_chunk, 1, sizeof(_chunk), stdin);
+        if (size == 0) {
+            break;
+        }
+
+        i32 len = ns_array_length(_in.data);
+        ns_array_set_length(_in.data, size + len + 1);
+        memcpy(_in.data + len, _chunk, size);
+        _in.data[len + size] = '\0';
+    } while (size != 0);
+    return _in;
+}
+
+void ns_loop_io_write(ns_str s) {
+    fwrite(s.data, 1, s.len, stdout);
 }

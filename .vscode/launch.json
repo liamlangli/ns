@@ -79,6 +79,24 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "lsp",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/ns_lsp",
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "dap",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/ns_dap",
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "json test",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns_json_test",

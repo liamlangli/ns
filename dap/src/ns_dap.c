@@ -1,26 +1,8 @@
 #include "ns_dap.h"
 #include "ns_json.h"
+#include "ns_net.h"
 
-static ns_str _in;
-static ns_str _out;
-static i8 _chunk[512];
 static i32 _last_seq = 0;
-
-ns_str ns_dap_read_stdin() {
-    i32 size = 0;
-    do {
-        size = fread(_chunk, 1, sizeof(_chunk), stdin);
-        if (size == 0) {
-            break;
-        }
-
-        i32 len = ns_array_length(_in.data);
-        ns_array_set_length(_in.data, size + len + 1);
-        memcpy(_in.data + len, _chunk, size);
-        _in.data[len + size] = '\0';
-    } while (size != 0);
-    return _in;
-}
 
 #define NS_DAP_HEADER_SEP "\r\n\r\n"
 #define NS_DAP_CONTENT_LENGTH "Content-Length: "
@@ -58,23 +40,14 @@ void ns_dap_step(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 }
 
-void help() {
-    ns_info("usage", "ns_dap /path/to/file.ns\n");
+ns_str ns_dap_on_data(ns_str data) {
+    ns_info("ns_dap", "received data: %.*s", data.len, data.data);
+    return data;
 }
 
-i32 main(int argc, i8 **argv) {
-    ns_str input;
-
-    // get input
-    if (argc < 2) {
-        help();
-        return 1;
-    }
-
-    while(1) {
-        input = ns_dap_read_stdin();
-        
-    }
-
+i32 main() {
+    u16 port = 5001;
+    ns_info("ns_dap", "starting dap server at port %d.\n", port);
+    ns_tcp_serve(port, ns_dap_on_data);
     return 0;
 }
