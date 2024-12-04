@@ -111,7 +111,7 @@ void ns_exec_repl() {
     ns_repl(&vm);
 }
 
-int main(int argc, char **argv) {
+i32 main(i32 argc, i8** argv) {
     ns_compile_option_t option = parse_options(argc, argv);
 
     if (option.show_help) {

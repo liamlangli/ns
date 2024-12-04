@@ -10,7 +10,7 @@ import path from "path";
 let client: LanguageClient;
 
 function start_lsp_client(context: vscode.ExtensionContext) {
-    const server_module = context.asAbsolutePath("dist/ns_lsp.js");
+    const server_module = "ns_dap";
     const server_options: ServerOptions = {
         run: { module: server_module, transport: TransportKind.ipc },
         debug: { module: server_module, transport: TransportKind.ipc },

@@ -58,8 +58,18 @@ void ns_dap_step(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 }
 
-i32 main() {
+void help() {
+    ns_info("usage", "ns_dap /path/to/file.ns\n");
+}
+
+i32 main(int argc, i8 **argv) {
     ns_str input;
+
+    // get input
+    if (argc < 2) {
+        help();
+        return 1;
+    }
 
     while(1) {
         input = ns_dap_read_stdin();
