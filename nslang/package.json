@@ -10,7 +10,7 @@
     "watch": "tsc -b -w"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.95.0"
   },
   "categories": [
     "Programming Languages",
@@ -22,19 +22,6 @@
   },
   "icon": "ns.png",
   "main": "./dist/ns_ext",
-  "files": [
-    "dist/ns_ext.js",
-    "changelog.md",
-    "language-configuration.json",
-    "LICENSE.md",
-    "ns.json",
-    "ns.svg",
-    "ns.png",
-    "markdown.json",
-    "package.json",
-    "README.md",
-    "tsconfig.json"
-  ],
   "contributes": {
     "debuggers": [
       {
