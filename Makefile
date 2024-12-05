@@ -42,7 +42,7 @@ ifeq ($(NS_BITCODE), 1)
 	BITCODE_LDFLAGS = $(LLVM_LDFLAGS)
 endif
 
-NS_LDFLAGS = -lm -lreadline `pkg-config --libs libffi` -ldl -flto
+NS_LDFLAGS = -lm -lreadline `pkg-config --libs libffi` -ldl -flto -L/usr/lib
 NS_INC = -Iinclude $(NS_PLATFORM_DEF) `pkg-config --cflags libffi`
 
 NS_DEBUG_CFLAGS = $(NS_INC) -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG
@@ -137,7 +137,7 @@ release: $(NS_SRCS) | $(OBJDIR)
 	tar -czvf $(NS_RELEASE_TARGET).tar.gz $(NS_RELEASE_TARGET)
 
 lib: $(NS_LIB_OBJS) | $(OBJDIR)
-	$(CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/libns.a $(NS_LDFLAGS)
+	ar rcs $(BINDIR)/libns.a $(NS_LIB_OBJS)
 
 so: $(NS_LIB_OBJS) | $(OBJDIR)
 	$(CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/libns.so $(NS_LDFLAGS)

@@ -1,103 +1,84 @@
 {
-  "name": "nslang",
-  "displayName": "nslang",
-  "description": "nanoscript language service.",
-  "version": "0.0.10",
-  "publisher": "liamlangli",
-  "scripts": {
-    "pack": "vsce package",
-    "build": "tsc -b",
-    "watch": "tsc -b -w"
-  },
-  "engines": {
-    "vscode": "^1.95.0"
-  },
-  "categories": [
-    "Programming Languages",
-    "Debuggers"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git@github.com:liamlangli/ns.git"
-  },
-  "icon": "ns.png",
-  "main": "./dist/ns_ext",
-  "contributes": {
-    "debuggers": [
-      {
-        "type": "nsdb",
-        "label": "nsdb",
-        "configurationAttributes": {
-          "launch": {
-            "required": [
-              "program"
-            ],
-            "properties": {
-              "program": {
-                "type": "string",
-                "description": "Absolute path to a text file.",
-                "default": "${workspaceFolder}/${command:AskForProgramName}"
-              }
+    "name": "nslang",
+    "displayName": "nslang",
+    "description": "nanoscript language service.",
+    "version": "0.0.11",
+    "publisher": "liamlangli",
+    "scripts": {
+        "pack": "vsce package",
+        "build": "tsc -b",
+        "watch": "tsc -b -w"
+    },
+    "engines": {
+        "vscode": "^1.95.0"
+    },
+    "categories": ["Programming Languages", "Debuggers"],
+    "repository": {
+        "type": "git",
+        "url": "git@github.com:liamlangli/ns.git"
+    },
+    "icon": "ns.png",
+    "main": "./dist/ns_ext",
+    "contributes": {
+        "debuggers": [{
+            "type": "nsdb",
+            "label": "Nanoscript Debugger",
+            "program": "${file}",
+            "runtime": "ns_dap",
+            "configurationAttributes": {
+                "launch":{
+                    "required": ["program"],
+                    "properties": {
+                        "program": {
+                            "type": "string",
+                            "description": "path to program to debug",
+                            "default": "${file}"
+                        }
+                    }
+                }
+            },
+            "initialConfigurations": [{
+                "type": "nsdb",
+                "request": "launch",
+                "name": "Launch Program"
+            }]
+        }],
+        "languages": [{
+            "id": "ns",
+            "icon": {
+                "light": "ns.svg",
+                "dark": "ns.svg"
+            },
+            "aliases": ["nanoscript", "ns"],
+            "extensions": [".ns"],
+            "configuration": "./language-configuration.json"
+        }, {
+            "id": "ns-markdown-injection"
+        }],
+        "activationEvents": ["onLanguage:ns", "onDebug:type:nsdb"],
+        "grammars": [{
+            "language": "ns",
+            "scopeName": "source.ns",
+            "path": "./ns.json"
+        }, {
+            "language": "ns-markdown-injection",
+            "scopeName": "markdown.ns.codeblock",
+            "path": "./markdown.json",
+            "injectTo": ["text.html.markdown"],
+            "embeddedLanguages": {
+                "meta.embedded.block.ns": "ns"
             }
-          }
-        },
-        "languages": [
-          "ns"
-        ]
-      }
-    ],
-    "languages": [
-      {
-        "id": "ns",
-        "icon": {
-          "light": "ns.svg",
-          "dark": "ns.svg"
-        },
-        "aliases": [
-          "nanoscript",
-          "ns"
-        ],
-        "extensions": [
-          ".ns"
-        ],
-        "configuration": "./language-configuration.json"
-      },
-      {
-        "id": "ns-markdown-injection"
-      }
-    ],
-    "activationEvents": [
-      "onLanguage:ns",
-      "onDebug:type:nsdb"
-    ],
-    "grammars": [
-      {
-        "language": "ns",
-        "scopeName": "source.ns",
-        "path": "./ns.json"
-      },
-      {
-        "language": "ns-markdown-injection",
-        "scopeName": "markdown.ns.codeblock",
-        "path": "./markdown.json",
-        "injectTo": [
-          "text.html.markdown"
-        ],
-        "embeddedLanguages": {
-          "meta.embedded.block.ns": "ns"
-        }
-      }
-    ]
-  },
-  "dependencies": {
-    "vscode-debugadapter": "^1.51.0",
-    "vscode-languageclient": "^9.0.1"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.0",
-    "@types/vscode": "^1.95.0",
-    "typescript": "^5.7.2",
-    "vscode-languageserver": "^9.0.1",
-    "vscode-languageserver-textdocument": "^1.0.12"
-  }
+        }]
+    },
+    "dependencies": {
+        "vscode-debugadapter": "^1.51.0",
+        "vscode-languageclient": "^9.0.1"
+    },
+    "devDependencies": {
+        "@types/node": "^22.10.0",
+        "@types/vscode": "^1.95.0",
+        "typescript": "^5.7.2",
+        "vscode-languageserver": "^9.0.1",
+        "vscode-languageserver-textdocument": "^1.0.12"
+    }
 }

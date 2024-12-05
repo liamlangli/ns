@@ -102,6 +102,12 @@
             "program": "${workspaceFolder}/bin/ns_json_test",
             "args": [],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "nsdb",
+            "request": "launch",
+            "name": "nsdb",
+            "program": "${file}"
         }
     ]
 }

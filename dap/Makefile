@@ -1,4 +1,4 @@
-NS_DAP_LDFLAGS = -L$(BINDIR) -lns
+NS_DAP_LDFLAGS =
 NS_DAP_TARGET = $(TARGET)_dap
 
 NS_DAP_CFLAGS = $(NS_CFLAGS) -Idap/include
@@ -13,7 +13,7 @@ dap: $(NS_DAP_TARGET)
 	"NS_DEBUG=$(NS_DEBUG)"
 
 $(NS_DAP_TARGET): $(NS_DAP_OBJS) | $(NS_DAP_BINDIR) lib
-	$(CC) $(NS_DAP_OBJS) $ -o $(NS_DAP_TARGET)$(NS_SUFFIX) $(NS_DAP_LDFLAGS)
+	$(CC) $(NS_DAP_OBJS) $(BINDIR)/libns.a $ -o $(NS_DAP_TARGET)$(NS_SUFFIX) $(NS_DAP_LDFLAGS)
 
 $(NS_DAP_OBJS): $(OBJDIR)/dap/%.o : dap/src/%.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(NS_DAP_CFLAGS)

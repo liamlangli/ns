@@ -1,4 +1,4 @@
-NS_LSP_LDFLAGS = -L$(BINDIR) -lns
+NS_LSP_LDFLAGS =
 NS_LSP_TARGET = $(TARGET)_lsp
 
 NS_LSP_CFLAGS = $(NS_CFLAGS) -Ilsp/include
@@ -13,7 +13,7 @@ lsp: $(NS_LSP_TARGET)
 	"NS_DEBUG=$(NS_DEBUG)"
 
 $(NS_LSP_TARGET): $(NS_LSP_OBJS) | $(NS_LSP_BINDIR) lib
-	$(CC) $(NS_LSP_OBJS) $ -o $(NS_LSP_TARGET)$(NS_SUFFIX) $(NS_LSP_LDFLAGS)
+	$(CC) $(NS_LSP_OBJS) $(BINDIR)/libns.a $ -o $(NS_LSP_TARGET)$(NS_SUFFIX) $(NS_LSP_LDFLAGS)
 
 $(NS_LSP_OBJS): $(OBJDIR)/lsp/%.o : lsp/src/%.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(NS_LSP_CFLAGS)
