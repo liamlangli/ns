@@ -77,6 +77,12 @@ async fn download(url: str): Data {
 }
 ```
 
+## LSP Server
+- TCP based LSP server for language server. Host on port 5000.
+
+## DAP Server
+- TCP based DAP server for debugging. Host on port 5001.
+
 ## Build Options
 | Option         | Description                  |
 |----------------|------------------------------|

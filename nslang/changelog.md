@@ -1,3 +1,8 @@
+### 0.0.10
+- add keyword `vertex`, `fragment` for rendering.
+- add tcp based dap client for debugging.
+- add tcp based lsp server for language server.
+
 ### 0.0.9
 - add keyword `kernel` for gpgpu.
 - add missing type keyword `str`.
@@ -18,7 +23,7 @@
 ### 0.0.4
 - add icon for nslang
 
-### 0.0.3 
+### 0.0.3
 - add missing keyword `import`
 
 ### 0.0.2
@@ -26,4 +31,4 @@
 - add missing keyword `else`
 
 ### 0.0.1
-- initialize nslang highlight 
+- initialize nslang highlight

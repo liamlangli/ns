@@ -285,8 +285,8 @@ ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
 
-   ns_bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
-   ns_bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
+    ns_bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
+    ns_bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
 
     if (!ns_token_require(ctx, NS_TOKEN_FN)) {
         ns_restore_state(ctx, state);
@@ -384,9 +384,9 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
 
-   ns_bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
-   ns_bool is_kernel = ns_token_require(ctx, NS_TOKEN_KERNEL);
-   ns_bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
+    ns_bool is_ref = ns_token_require(ctx, NS_TOKEN_REF);
+    ns_bool is_kernel = ns_token_require(ctx, NS_TOKEN_KERNEL);
+    ns_bool is_async = ns_token_require(ctx, NS_TOKEN_ASYNC);
 
     if (!ns_token_require(ctx, NS_TOKEN_FN)) {
         ns_restore_state(ctx, state);

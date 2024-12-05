@@ -68,7 +68,7 @@ function start_dap_client(context: vscode.ExtensionContext) {
 
 export function activate(context: vscode.ExtensionContext) {
     start_dap_client(context);
-    // start_lsp_client(context);
+    start_lsp_client(context);
 }
 
 export function deactivate(): Thenable<void> | undefined {
