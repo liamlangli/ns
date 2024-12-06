@@ -1,14 +1,13 @@
 {
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "commonjs",
+    "target": "ESNext",
+    "module": "NodeNext",
     "lib": [
-      "ES2020",
+      "ESNext",
       "WebWorker",
     ],
-    "outDir": "./dist",
+    "outDir": "./out",
     "rootDir": "./src",
-    "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true

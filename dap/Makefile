@@ -3,12 +3,12 @@ NS_DAP_TARGET = $(TARGET)_dap
 
 NS_DAP_CFLAGS = $(NS_CFLAGS) -Idap/include
 
-NS_DAP_SRCS = dap/src/ns_dap.c
+NS_DAP_SRCS = dap/src/ns_debug.c
 NS_DAP_OBJS = $(NS_DAP_SRCS:dap/src/%.c=$(OBJDIR)/dap/%.o)
 
 NS_DAP_BINDIR = $(BINDIR)/dap
 
-dap: $(NS_DAP_TARGET)
+ns_debug: $(NS_DAP_TARGET)
 	@echo "building dap at "$(OS)" with options:" \
 	"NS_DEBUG=$(NS_DEBUG)"
 

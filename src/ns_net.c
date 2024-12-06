@@ -6,7 +6,14 @@
 
 #define BUFFER_SIZE 1024
 
-ns_bool ns_udp_serve(u16 port, ns_str (*on_data)(ns_str)) {
+typedef struct ns_conn {
+    ns_conn_type type;
+    int sockfd;
+    struct sockaddr_in server_addr, client_addr;
+    socklen_t addr_len;
+} ns_conn;
+
+ns_bool ns_udp_serve(u16 port, ns_on_data on_data) {
     int sockfd;
     char buffer[BUFFER_SIZE];
     struct sockaddr_in server_addr, client_addr;
@@ -39,19 +46,20 @@ ns_bool ns_udp_serve(u16 port, ns_str (*on_data)(ns_str)) {
             continue;
         }
 
-        ns_str res = on_data(ns_str_cstr(buffer));
-        memcpy(buffer, res.data, res.len);
+        ns_conn *conn = (ns_conn *)malloc(sizeof(ns_conn));
+        conn->type = NS_CONN_UDP;
+        conn->sockfd = sockfd;
+        conn->server_addr = server_addr;
+        conn->client_addr = client_addr;
 
-        if (sendto(sockfd, buffer, (u64)res.len, 0, (struct sockaddr *)&client_addr, addr_len) < 0) {
-            ns_warn("ns_net", "send failed");
-        }
+        on_data(conn, ns_str_cstr(buffer));
     }
 
     close(sockfd);
     return true;
 }
 
-ns_bool ns_tcp_serve(u16 port, ns_str (*on_data)(ns_str)) {
+ns_bool ns_tcp_serve(u16 port, ns_on_data on_data) {
     int sockfd, conn_fd;
     char buffer[BUFFER_SIZE];
     struct sockaddr_in server_addr, client_addr;
@@ -88,6 +96,13 @@ ns_bool ns_tcp_serve(u16 port, ns_str (*on_data)(ns_str)) {
             continue;
         }
 
+        ns_conn *conn = (ns_conn *)malloc(sizeof(ns_conn));
+        conn->type = NS_CONN_TCP;
+        conn->sockfd = conn_fd;
+        conn->server_addr = server_addr;
+        conn->client_addr = client_addr;
+        conn->addr_len = addr_len;
+
         memset(buffer, 0, BUFFER_SIZE);
 
         ssize_t n = read(conn_fd, buffer, BUFFER_SIZE);
@@ -96,16 +111,23 @@ ns_bool ns_tcp_serve(u16 port, ns_str (*on_data)(ns_str)) {
             continue;
         }
 
-        ns_str res = on_data(ns_str_cstr(buffer));
-        memcpy(buffer, res.data, res.len);
-
-        if (write(conn_fd, buffer, (u64)res.len) < 0) {
-            ns_warn("ns_net", "write failed");
-        }
-
-        close(conn_fd);
+        on_data(conn, ns_str_cstr(buffer));
     }
 
     close(sockfd);
     return true;
+}
+
+void ns_conn_send(ns_conn *conn, ns_data data) {
+    if (conn->type == NS_CONN_UDP) {
+        sendto(conn->sockfd, data.data, data.len, 0, (const struct sockaddr *)&conn->client_addr, conn->addr_len);
+    } else {
+        write(conn->sockfd, data.data, data.len);
+    }
+}
+
+void ns_conn_close(ns_conn *conn) {
+    if (conn->type == NS_CONN_TCP) {
+        close(conn->sockfd);
+    }
 }

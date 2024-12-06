@@ -18,31 +18,15 @@
         "url": "git@github.com:liamlangli/ns.git"
     },
     "icon": "ns.png",
-    "main": "./dist/ns_ext",
+    "main": "./out/ns_ext",
     "contributes": {
-        "debuggers": [{
-            "type": "nsdb",
-            "label": "Nanoscript Debugger",
-            "program": "${file}",
-            "runtime": "ns_dap",
-            "configurationAttributes": {
-                "launch":{
-                    "required": ["program"],
-                    "properties": {
-                        "program": {
-                            "type": "string",
-                            "description": "path to program to debug",
-                            "default": "${file}"
-                        }
-                    }
-                }
-            },
-            "initialConfigurations": [{
+        "debuggers": [
+            {
                 "type": "nsdb",
-                "request": "launch",
-                "name": "Launch Program"
-            }]
-        }],
+                "label": "Debug with nsdb",
+                "languages": ["ns"]
+            }
+        ],
         "languages": [{
             "id": "ns",
             "icon": {

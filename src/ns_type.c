@@ -117,12 +117,19 @@ i32 ns_str_to_i32(ns_str s) {
     return r;
 }
 
-static i8 _ns_str_buff[256];
+static i8 _ns_str_buff[128];
 f64 ns_str_to_f64(ns_str s) {
     i32 size = s.len;
     memcpy(_ns_str_buff, s.data, size);
     _ns_str_buff[size] = '\0';
     return atof(_ns_str_buff);
+}
+
+ns_str ns_str_from_i32(i32 i) {
+    snprintf(_ns_str_buff, sizeof(_ns_str_buff), "%d", i);
+    i32 len = strlen(_ns_str_buff);
+    _ns_str_buff[len] = '\0';
+    return (ns_str){.data = _ns_str_buff, .len = len, .dynamic = 1};
 }
 
 ns_str ns_str_unescape(ns_str s) {
@@ -229,27 +236,4 @@ ns_str ns_return_state_str(ns_return_state s) {
     case NS_ERR_UNKNOWN: return ns_str_cstr("unknown error");
     default: return ns_str_cstr("unknown error");
     }
-}
-
-// ns_loop_io
-static ns_str _in;
-static i8 _chunk[512];
-ns_str ns_loop_io_read() {
-    i32 size = 0;
-    do {
-        size = fread(_chunk, 1, sizeof(_chunk), stdin);
-        if (size == 0) {
-            break;
-        }
-
-        i32 len = ns_array_length(_in.data);
-        ns_array_set_length(_in.data, size + len + 1);
-        memcpy(_in.data + len, _chunk, size);
-        _in.data[len + size] = '\0';
-    } while (size != 0);
-    return _in;
-}
-
-void ns_loop_io_write(ns_str s) {
-    fwrite(s.data, 1, s.len, stdout);
 }

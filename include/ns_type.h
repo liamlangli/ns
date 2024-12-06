@@ -85,6 +85,7 @@ ns_str ns_str_concat(ns_str a, ns_str b);
 
 i32 ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);
+ns_str ns_str_from_i32(i32 i);
 ns_str ns_read_file(ns_str filename);
 ns_str ns_str_unescape(ns_str s);
 i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
@@ -402,7 +403,3 @@ ns_str ns_return_state_str(ns_return_state s);
 
 typedef struct ns_return_void { ns_return_state s; ns_return e; } ns_return_void;
 #define ns_return_ok_void ((ns_return_void){.s = NS_OK})
-
-// ns_loop_io
-ns_str ns_loop_io_read();
-void ns_loop_io_write(ns_str s);
