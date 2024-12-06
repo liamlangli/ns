@@ -156,4 +156,4 @@ test: $(NS_TEST_TARGETS)
 
 include lib/Makefile
 include lsp/Makefile
-include dap/Makefile
+include debug/Makefile

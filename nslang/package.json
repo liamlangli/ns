@@ -22,8 +22,8 @@
     "contributes": {
         "debuggers": [
             {
-                "type": "nsdb",
-                "label": "Debug with nsdb",
+                "type": "ns_debug",
+                "label": "Debug with ns_debug",
                 "languages": ["ns"]
             }
         ],
@@ -39,7 +39,7 @@
         }, {
             "id": "ns-markdown-injection"
         }],
-        "activationEvents": ["onLanguage:ns", "onDebug:type:nsdb"],
+        "activationEvents": ["onLanguage:ns", "onDebug:type:ns_debug"],
         "grammars": [{
             "language": "ns",
             "scopeName": "source.ns",

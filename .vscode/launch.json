@@ -78,7 +78,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "lsp",
+            "name": "ns_lsp",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns_lsp",
             "args": [],
@@ -87,9 +87,9 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "dap",
+            "name": "ns_debug",
             "program": "${workspaceFolder}/bin/ns_debug",
-            "args": [],
+            "args": ["--socket", "--port", "5001"],
             "cwd": "${workspaceFolder}"
         },
         {

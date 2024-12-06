@@ -77,7 +77,7 @@ ns_str ns_debug_response_ack(ns_str type, i32 seq, ns_str cmd,ns_bool suc) {
     ns_json_set(res, ns_str_cstr("request_seq"), ns_json_make_number(seq));
     ns_json_set(res, ns_str_cstr("command"), ns_json_make_string(cmd));
     ns_json_set(res, ns_str_cstr("success"), ns_json_make_bool(suc));
-    return ns_json_to_string(ns_json_get(res));
+    return ns_json_stringify(ns_json_get(res));
 }
 
 void ns_debug_step(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -88,10 +88,15 @@ void ns_debug_step(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 void ns_debug_on_request(ns_conn *conn, ns_str data) {
     i32 req = ns_debug_parse(data);
-    ns_debug_request_init *init = (ns_debug_request_init *)ns_json_get(req);
+    ns_str cmd = ns_json_to_string(ns_json_get_prop(req, ns_str_cstr("command")));
+    i32 seq = ns_json_to_i32(ns_json_get_prop(req, ns_str_cstr("seq")));
+    
     ns_str res;
-    if (ns_str_equals(init->command, ns_str_cstr("initialize"))) {
-        res = ns_debug_response_ack(ns_str_cstr("response"), init->seq, init->command, 1);
+    if (ns_str_equals(cmd, ns_str_cstr("initialize"))) {
+        res = ns_debug_response_ack(ns_str_cstr("response"), seq, cmd, 1);
+        ns_debug_send_response(conn, res);
+    } else {
+        res = ns_debug_response_ack(ns_str_cstr("response"), seq, cmd, 0);
         ns_debug_send_response(conn, res);
     }
 }

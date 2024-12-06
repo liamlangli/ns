@@ -24,11 +24,10 @@ function start_lsp_client(context: vscode.ExtensionContext) {
 
     client = new LanguageClient("ns_lsp", "ns_lsp", server_options, client_options);
     client.start();
-    console.log("ns_lsp client started");
 }
 
 const DEFAULT_CONFIG: vscode.DebugConfiguration = {
-    type: "nsdb",
+    type: "ns_debug",
     request: "launch",
     name: "Debug NS Program",
     program: "${file}",
@@ -39,7 +38,6 @@ class NSDebugConfigurationProvider implements vscode.DebugConfigurationProvider 
         folder: vscode.WorkspaceFolder | undefined,
         config: vscode.DebugConfiguration
     ): vscode.ProviderResult<vscode.DebugConfiguration> {
-        log?.appendLine("resolveDebugConfiguration");
         return !config.type && !config.request && !config.name ? DEFAULT_CONFIG : config;
     }
 
@@ -47,7 +45,6 @@ class NSDebugConfigurationProvider implements vscode.DebugConfigurationProvider 
         folder: vscode.WorkspaceFolder | undefined,
         debugConfiguration: vscode.DebugConfiguration
     ): vscode.ProviderResult<vscode.DebugConfiguration> {
-        log?.appendLine("resolveDebugConfigurationWithSubstitutedVariables");
         return { ...DEFAULT_CONFIG, ...debugConfiguration };
     }
 }
@@ -57,24 +54,24 @@ class NSDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFa
         session: vscode.DebugSession,
         executable: vscode.DebugAdapterExecutable | undefined
     ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
-        log?.appendLine("createDebugAdapterDescriptor");
+        log?.appendLine("[ns_debug] createDebugAdapterDescriptor");
         return executable ?? new vscode.DebugAdapterServer(5001);
     }
 }
 
 function start_dap_client(context: vscode.ExtensionContext) {
     context.subscriptions.push(
-        vscode.debug.registerDebugConfigurationProvider("nsdb", new NSDebugConfigurationProvider()),
-        vscode.debug.registerDebugAdapterDescriptorFactory("nsdb", new NSDebugAdapterDescriptorFactory())
+        vscode.debug.registerDebugConfigurationProvider("ns_debug", new NSDebugConfigurationProvider()),
+        vscode.debug.registerDebugAdapterDescriptorFactory("ns_debug", new NSDebugAdapterDescriptorFactory())
     );
 }
 
 export function activate(context: vscode.ExtensionContext) {
     log = vscode.window.createOutputChannel("nslang");
     start_dap_client(context);
-    log.appendLine("nslang activated");
+    log.appendLine("[nslang] extension activated");
     start_lsp_client(context);
-    log.appendLine("nslang lsp client started");
+    log.appendLine("[nslang] lsp client started");
 }
 
 export function deactivate(): Thenable<void> | undefined {

@@ -60,7 +60,7 @@ i32 ns_json_make_object() {
     return ns_json_make(NS_JSON_OBJECT);
 }
 
-f64 ns_json_get_number(i32 i) {
+f64 ns_json_to_number(i32 i) {
     ns_json *j = &_ns_json_stack[i];
     if (j->type == NS_JSON_NUMBER) {
         return j->n;
@@ -68,7 +68,11 @@ f64 ns_json_get_number(i32 i) {
     return 0;
 }
 
-ns_str ns_json_get_string(i32 i) {
+i32 ns_json_to_i32(i32 i) {
+    return (i32)ns_json_to_number(i);
+}
+
+ns_str ns_json_to_string(i32 i) {
     ns_json *j = &_ns_json_stack[i];
     if (j->type == NS_JSON_STRING) {
         return j->str;
@@ -437,7 +441,7 @@ void ns_str_append_f64(ns_str *s, f64 n, i32 precision) {
     s->len += precision + 1;
 }
 
-ns_str ns_json_to_string_append(ns_json *json) {
+ns_str ns_json_stringify_append(ns_json *json) {
     switch (json->type)
     {
     case NS_JSON_FALSE: ns_str_append(&_ns_json_str, ns_str_cstr("false")); break;
@@ -460,7 +464,7 @@ ns_str ns_json_to_string_append(ns_json *json) {
         i32 c = json->prop;
         while (c) {
             ns_json *child = ns_json_get(c);
-            ns_json_to_string_append(child);
+            ns_json_stringify_append(child);
             c = child->next;
             if (c == 0) break; else ns_str_append_char(_ns_json_str, ',');
         }
@@ -475,7 +479,7 @@ ns_str ns_json_to_string_append(ns_json *json) {
             ns_str_append(&_ns_json_str, child->key);
             ns_str_append_char(_ns_json_str, '"');
             ns_str_append_char(_ns_json_str, ':');
-            ns_json_to_string_append(child);
+            ns_json_stringify_append(child);
             c = child->next;
             if (c == 0) break; else ns_str_append_char(_ns_json_str, ',');
         }
@@ -487,8 +491,8 @@ ns_str ns_json_to_string_append(ns_json *json) {
     return _ns_json_str;
 }
 
-ns_str ns_json_to_string(ns_json *json) {
+ns_str ns_json_stringify(ns_json *json) {
     ns_array_set_length(_ns_json_str.data, 0);
     _ns_json_str.len = 0;
-    return ns_json_to_string_append(json);
+    return ns_json_stringify_append(json);
 }

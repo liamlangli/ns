@@ -35,8 +35,10 @@ typedef struct ns_json_ctx {
 #define ns_json_true ((ns_json){.type = NS_JSON_TRUE})
 #define ns_json_is_null(j) ((j).type == NS_JSON_NULL)
 
-f64 ns_json_get_number(i32 i);
-ns_str ns_json_get_string(i32 i);
+f64 ns_json_to_number(i32 i);
+ns_str ns_json_to_string(i32 i);
+i32 ns_json_to_i32(i32 i);
+
 i32 ns_json_get_prop(i32 i, ns_str key);
 ns_json *ns_json_get(i32 i);
 
@@ -53,4 +55,4 @@ i32 ns_json_make_object();
 ns_bool ns_json_print(ns_json *json);
 
 i32 ns_json_parse(ns_str s);
-ns_str ns_json_to_string(ns_json *json);
+ns_str ns_json_stringify(ns_json *json);

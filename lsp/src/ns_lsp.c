@@ -23,7 +23,7 @@ ns_str ns_lsp_read() {
 }
 
 void send_response(i32 result) {
-    ns_str str = ns_json_to_string(ns_json_get(result));
+    ns_str str = ns_json_stringify(ns_json_get(result));
     fprintf(stdout, "%zu\n", (size_t)str.len);
     fprintf(stdout, "%.*s\n", str.len, str.data);
 }
