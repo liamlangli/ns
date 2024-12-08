@@ -7,16 +7,7 @@ static ns_str _in;
 static ns_str _out;
 static i8 _chunk[512];
 
-typedef enum ns_debug_mode {
-    NS_DEBUG_STDIO,
-    NS_DEBUG_SOCKET,
-    NS_DEBUG_REPL,
-} ns_debug_mode;
-
-typedef struct ns_debug_options {
-    ns_debug_mode mode;
-    u16 port;
-} ns_debug_options;
+static ns_debug_options _options;
 
 // stdio mode
 i32 ns_debug_stdio(ns_debug_options options);
@@ -63,23 +54,32 @@ ns_json_ref ns_debug_parse(ns_str s) {
     }
     i32 len = ns_str_to_i32(ns_str_slice(header, l + 16, header.len));
     ns_str body = (ns_str){s.data + i + 4, len, 0};
+    ns_info("ns_debug", "request: %.*s\n", body.len, body.data);
     return ns_json_parse(body);
 }
 
 void ns_debug_on_request(ns_conn *conn) {
+    ns_debug_session sess = (ns_debug_session){_options, conn, 0, 0};
     while(1) {
         ns_data data = ns_tcp_read(conn);
         ns_str s = (ns_str){data.data, data.len, 0};
         ns_json_ref req = ns_debug_parse(s);
-        ns_return_json res = ns_debug_handle(req);
-        if (ns_return_is_error(res)) {
-            ns_warn("ns_debug", "error: %.*s\n", res.e.msg.len, res.e.msg.data);
-            break;
-        }
-        ns_debug_send_response(conn, ns_json_stringify(ns_json_get(res.r)));
+        ns_debug_handle(&sess, req);
+        if (sess.terminated) break;
     }
     ns_info("ns_debug", "connection closed\n");
     ns_conn_close(conn);
+}
+
+void ns_debug_session_response(ns_debug_session *session, ns_json_ref res) {
+    ns_str s = ns_json_stringify(ns_json_get(res));
+    if (session->options.mode == NS_DEBUG_STDIO) {
+        ns_debug_write(s);
+    } else if (session->options.mode == NS_DEBUG_SOCKET) {
+        ns_debug_send_response(session->conn, s);
+    } else {
+        ns_error("ns_debug", "invalid mode\n");
+    }
 }
 
 void ns_debug_send_response(ns_conn *conn, ns_str res) {
@@ -132,22 +132,21 @@ ns_debug_options ns_debug_parse_args(i32 argc, i8 **argv) {
         ns_debug_help();
     }
 
-    ns_debug_options options = {0};
     for (i32 i = 1; i < argc; i++) {
         if (ns_str_equals(ns_str_cstr("-h"), ns_str_cstr(argv[i])) || ns_str_equals(ns_str_cstr("--help"), ns_str_cstr(argv[i]))) {
             ns_debug_help();
         } else if (ns_str_equals(ns_str_cstr("--stdio"), ns_str_cstr(argv[i]))) {
-            options.mode = NS_DEBUG_STDIO;
+            _options.mode = NS_DEBUG_STDIO;
         } else if (ns_str_equals(ns_str_cstr("--socket"), ns_str_cstr(argv[i]))) {
-            options.mode = NS_DEBUG_SOCKET;
+            _options.mode = NS_DEBUG_SOCKET;
         } else if (ns_str_equals(ns_str_cstr("--repl"), ns_str_cstr(argv[i]))) {
-            options.mode = NS_DEBUG_REPL;
+            _options.mode = NS_DEBUG_REPL;
         } else if (ns_str_equals(ns_str_cstr("--port"), ns_str_cstr(argv[i]))) {
             i8* arg = argv[++i];
-            options.port = ns_str_to_i32(ns_str_cstr(arg));
+            _options.port = ns_str_to_i32(ns_str_cstr(arg));
         }
     }
-    return options;
+    return _options;
 }
 
 i32 main(i32 argc, i8** argv) {

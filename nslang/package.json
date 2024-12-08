@@ -2,7 +2,7 @@
     "name": "nslang",
     "displayName": "nslang",
     "description": "nanoscript language service.",
-    "version": "0.0.11",
+    "version": "0.0.12",
     "publisher": "liamlangli",
     "scripts": {
         "pack": "vsce package",
@@ -12,7 +12,10 @@
     "engines": {
         "vscode": "^1.95.0"
     },
-    "categories": ["Programming Languages", "Debuggers"],
+    "categories": [
+        "Programming Languages",
+        "Debuggers"
+    ],
     "repository": {
         "type": "git",
         "url": "git@github.com:liamlangli/ns.git"
@@ -24,35 +27,86 @@
             {
                 "type": "ns_debug",
                 "label": "Debug with ns_debug",
-                "languages": ["ns"]
+                "languages": [
+                    "ns"
+                ],
+                "configurationAttributes": {
+                    "launch": {
+                        "required": [
+                            "program"
+                        ],
+                        "properties": {
+                            "program": {
+                                "type": "string",
+                                "description": "Absolute path to the program to debug",
+                                "default": "${file}"
+                            }
+                        }
+                    }
+                }
             }
         ],
-        "languages": [{
-            "id": "ns",
-            "icon": {
-                "light": "ns.svg",
-                "dark": "ns.svg"
-            },
-            "aliases": ["nanoscript", "ns"],
-            "extensions": [".ns"],
-            "configuration": "./language-configuration.json"
-        }, {
-            "id": "ns-markdown-injection"
-        }],
-        "activationEvents": ["onLanguage:ns", "onDebug:type:ns_debug"],
-        "grammars": [{
-            "language": "ns",
-            "scopeName": "source.ns",
-            "path": "./ns.json"
-        }, {
-            "language": "ns-markdown-injection",
-            "scopeName": "markdown.ns.codeblock",
-            "path": "./markdown.json",
-            "injectTo": ["text.html.markdown"],
-            "embeddedLanguages": {
-                "meta.embedded.block.ns": "ns"
+        "configuration": {
+            "title": "Nanoscript LSP Configuration",
+            "properties": {
+                "ns.lsp.mode": {
+                    "type": "string",
+                    "enum": [
+                        "stdio",
+                        "socket"
+                    ],
+                    "default": "stdio",
+                    "description": "The mode of the language server"
+                },
+                "ns.lsp.port": {
+                    "type": "number",
+                    "default": 5000,
+                    "description": "The port of the language server"
+                }
             }
-        }]
+        },
+        "languages": [
+            {
+                "id": "ns",
+                "icon": {
+                    "light": "ns.svg",
+                    "dark": "ns.svg"
+                },
+                "aliases": [
+                    "nanoscript",
+                    "ns"
+                ],
+                "extensions": [
+                    ".ns"
+                ],
+                "configuration": "./language-configuration.json"
+            },
+            {
+                "id": "ns-markdown-injection"
+            }
+        ],
+        "activationEvents": [
+            "onLanguage:ns",
+            "onDebug:type:ns_debug"
+        ],
+        "grammars": [
+            {
+                "language": "ns",
+                "scopeName": "source.ns",
+                "path": "./ns.json"
+            },
+            {
+                "language": "ns-markdown-injection",
+                "scopeName": "markdown.ns.codeblock",
+                "path": "./markdown.json",
+                "injectTo": [
+                    "text.html.markdown"
+                ],
+                "embeddedLanguages": {
+                    "meta.embedded.block.ns": "ns"
+                }
+            }
+        ]
     },
     "dependencies": {
         "vscode-debugadapter": "^1.51.0",

@@ -10,10 +10,23 @@ let client: LanguageClient;
 let log: vscode.OutputChannel;
 
 function start_lsp_client(context: vscode.ExtensionContext) {
-    const server_options: ServerOptions = {
-        run: { command: "ns_lsp", transport: TransportKind.stdio },
-        debug: { command: "ns_lsp", transport: TransportKind.stdio },
-    };
+    // get nanoscript configuration
+    const ns_config = vscode.workspace.getConfiguration("ns");
+    const mode = ns_config.get<"stdio" | "socket">("lsp.mode");
+    const port = ns_config.get<number>("lsp.port");
+
+    let server_options: ServerOptions;
+    if (mode === "socket") {
+        server_options = {
+            run: { command: "ns_lsp", transport: TransportKind.stdio },
+            debug: { command: "ns_lsp", transport: TransportKind.stdio },
+        }
+    } else {
+        server_options = {
+            run: { command: "ns_lsp", transport: { kind: TransportKind.socket, port } },
+            debug: { command: "ns_lsp", transport: { kind: TransportKind.socket, port } }
+        }
+    }
 
     const client_options: LanguageClientOptions = {
         documentSelector: [{ scheme: "file", language: "ns" }],
@@ -29,20 +42,24 @@ function start_lsp_client(context: vscode.ExtensionContext) {
 const DEFAULT_CONFIG: vscode.DebugConfiguration = {
     type: "ns_debug",
     request: "launch",
-    name: "Debug NS Program",
-    program: "${file}",
+    name: "Debug NS Program"
 };
+
+export interface NSDebugConfiguration extends vscode.DebugConfiguration {
+    mode: "stdio" | "socket";
+    port: number;
+}
 
 class NSDebugConfigurationProvider implements vscode.DebugConfigurationProvider {
     resolveDebugConfiguration(
-        folder: vscode.WorkspaceFolder | undefined,
+        _: vscode.WorkspaceFolder | undefined,
         config: vscode.DebugConfiguration
     ): vscode.ProviderResult<vscode.DebugConfiguration> {
         return !config.type && !config.request && !config.name ? DEFAULT_CONFIG : config;
     }
 
     resolveDebugConfigurationWithSubstitutedVariables(
-        folder: vscode.WorkspaceFolder | undefined,
+        _: vscode.WorkspaceFolder | undefined,
         debugConfiguration: vscode.DebugConfiguration
     ): vscode.ProviderResult<vscode.DebugConfiguration> {
         return { ...DEFAULT_CONFIG, ...debugConfiguration };
@@ -51,11 +68,19 @@ class NSDebugConfigurationProvider implements vscode.DebugConfigurationProvider 
 
 class NSDebugAdapterDescriptorFactory implements vscode.DebugAdapterDescriptorFactory {
     createDebugAdapterDescriptor(
-        session: vscode.DebugSession,
+        sess: vscode.DebugSession,
         executable: vscode.DebugAdapterExecutable | undefined
     ): vscode.ProviderResult<vscode.DebugAdapterDescriptor> {
-        log?.appendLine("[ns_debug] createDebugAdapterDescriptor");
-        return executable ?? new vscode.DebugAdapterServer(5001);
+        log?.appendLine("[ns_debug] launching debug adapter");
+        if (executable) return executable;
+        const config = vscode.workspace.getConfiguration("ns");
+        const mode = config.get<"stdio" | "socket">("debugger.mode");
+        const port = config.get<number>("debugger.port");
+        if (mode === "socket") {
+            return new vscode.DebugAdapterServer(port);
+        } else  {
+            return new vscode.DebugAdapterExecutable("ns_debug", ["--stdio"]);
+        }
     }
 }
 

@@ -8,6 +8,7 @@
             "type": "ns_debug",
             "request": "launch",
             "name": "debug ns program",
+            "program": "${file}"
         }
     ]
 }

@@ -59,5 +59,3 @@ ns_bool ns_json_print(ns_json *json);
 
 ns_json_ref ns_json_parse(ns_str s);
 ns_str ns_json_stringify(ns_json *json);
-
-ns_return_define(json, ns_json_ref);
