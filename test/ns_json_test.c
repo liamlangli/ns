@@ -1,7 +1,7 @@
 #include "ns_test.h"
 
 int main() {
-    ns_str s = ns_str_cstr("{\"a\":1,\"b\":2,\"c\":{\"d\":3,\"e\":4},\"f\":[5,6,7],\"g\":\"h\"}");
+    ns_str s = ns_str_cstr("{\"a\":1,\"b\":true,\"c\":{\"d\":null,\"e\":4},\"f\":[5,6,7],\"g\":\"h\"}");
     {
         i32 j = ns_json_parse(s);
         ns_str r = ns_json_stringify(ns_json_get(j));
@@ -11,9 +11,9 @@ int main() {
     {
         i32 o = ns_json_make_object();
         ns_json_set(o, ns_str_cstr("a"), ns_json_make_number(1));
-        ns_json_set(o, ns_str_cstr("b"), ns_json_make_number(2));
+        ns_json_set(o, ns_str_cstr("b"), ns_json_make_bool(true));
         i32 c = ns_json_make_object();
-        ns_json_set(c, ns_str_cstr("d"), ns_json_make_number(3));
+        ns_json_set(c, ns_str_cstr("d"), ns_json_make_null());
         ns_json_set(c, ns_str_cstr("e"), ns_json_make_number(4));
         ns_json_set(o, ns_str_cstr("c"), c);
         i32 a = ns_json_make_array();

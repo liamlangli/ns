@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #define BUFFER_SIZE 1024
+static i8 ns_net_buffer[BUFFER_SIZE];
 
 typedef struct ns_conn {
     ns_conn_type type;
@@ -15,7 +16,6 @@ typedef struct ns_conn {
 
 ns_bool ns_udp_serve(u16 port, ns_on_data on_data) {
     int sockfd;
-    char buffer[BUFFER_SIZE];
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
@@ -38,10 +38,8 @@ ns_bool ns_udp_serve(u16 port, ns_on_data on_data) {
 
     // main loop to receive and respond to messages
     while (1) {
-        memset(buffer, 0, BUFFER_SIZE);
-
-        ssize_t n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_addr, &addr_len);
-        if (n < 0) {
+        ssize_t n = recvfrom(sockfd, ns_net_buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_addr, &addr_len);
+        if (n < 0 || n > BUFFER_SIZE) {
             ns_warn("ns_net", "receive failed");
             continue;
         }
@@ -52,16 +50,15 @@ ns_bool ns_udp_serve(u16 port, ns_on_data on_data) {
         conn->server_addr = server_addr;
         conn->client_addr = client_addr;
 
-        on_data(conn, ns_str_cstr(buffer));
+        on_data(conn, (ns_data){ns_net_buffer, n});
     }
 
     close(sockfd);
     return true;
 }
 
-ns_bool ns_tcp_serve(u16 port, ns_on_data on_data) {
+ns_bool ns_tcp_serve(u16 port, ns_on_connect on_connect) {
     int sockfd, conn_fd;
-    char buffer[BUFFER_SIZE];
     struct sockaddr_in server_addr, client_addr;
     socklen_t addr_len = sizeof(client_addr);
 
@@ -103,19 +100,16 @@ ns_bool ns_tcp_serve(u16 port, ns_on_data on_data) {
         conn->client_addr = client_addr;
         conn->addr_len = addr_len;
 
-        memset(buffer, 0, BUFFER_SIZE);
-
-        ssize_t n = read(conn_fd, buffer, BUFFER_SIZE);
-        if (n < 0) {
-            ns_warn("ns_net", "read failed");
-            continue;
-        }
-
-        on_data(conn, ns_str_cstr(buffer));
+        on_connect(conn);
     }
 
     close(sockfd);
     return true;
+}
+
+ns_data ns_tcp_read(ns_conn *conn) {
+    ssize_t n = read(conn->sockfd, ns_net_buffer, BUFFER_SIZE);
+    return (ns_data){ns_net_buffer, n};
 }
 
 void ns_conn_send(ns_conn *conn, ns_data data) {

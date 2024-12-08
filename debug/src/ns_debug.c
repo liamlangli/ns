@@ -1,8 +1,4 @@
 #include "ns_debug.h"
-#include "ns_json.h"
-#include "ns_net.h"
-
-static i32 _last_seq = 0;
 
 #define ns_debug_HEADER_SEP "\r\n\r\n"
 #define ns_debug_CONTENT_LENGTH "Content-Length: "
@@ -29,7 +25,7 @@ void ns_debug_write(ns_str data);
 
 // socket mode
 i32 ns_debug_socket(ns_debug_options options);
-void ns_debug_on_request(ns_conn *conn, ns_str data);
+void ns_debug_on_request(ns_conn *conn);
 void ns_debug_send_response(ns_conn *conn, ns_str res);
 
 // repl mode
@@ -58,7 +54,7 @@ void ns_debug_write(ns_str data) {
     fprintf(stdout, "Content-Length: %d\r\n\r\n%s", data.len, data.data);
 }
 
-i32 ns_debug_parse(ns_str s) {
+ns_json_ref ns_debug_parse(ns_str s) {
     i32 i = ns_str_index_of(s, ns_str_cstr("\r\n\r\n"));
     ns_str header = (ns_str){s.data, i, 0};
     i32 l = ns_str_index_of(header, ns_str_cstr("Content-Length: "));
@@ -70,35 +66,20 @@ i32 ns_debug_parse(ns_str s) {
     return ns_json_parse(body);
 }
 
-ns_str ns_debug_response_ack(ns_str type, i32 seq, ns_str cmd,ns_bool suc) {
-    i32 res = ns_json_make_object();
-    ns_json_set(res, ns_str_cstr("type"), ns_json_make_string(type));
-    ns_json_set(res, ns_str_cstr("seq"), ns_json_make_number(++_last_seq));
-    ns_json_set(res, ns_str_cstr("request_seq"), ns_json_make_number(seq));
-    ns_json_set(res, ns_str_cstr("command"), ns_json_make_string(cmd));
-    ns_json_set(res, ns_str_cstr("success"), ns_json_make_bool(suc));
-    return ns_json_stringify(ns_json_get(res));
-}
-
-void ns_debug_step(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    if (vm->step_hook) {
-        vm->step_hook(vm, ctx, i);
+void ns_debug_on_request(ns_conn *conn) {
+    while(1) {
+        ns_data data = ns_tcp_read(conn);
+        ns_str s = (ns_str){data.data, data.len, 0};
+        ns_json_ref req = ns_debug_parse(s);
+        ns_return_json res = ns_debug_handle(req);
+        if (ns_return_is_error(res)) {
+            ns_warn("ns_debug", "error: %.*s\n", res.e.msg.len, res.e.msg.data);
+            break;
+        }
+        ns_debug_send_response(conn, ns_json_stringify(ns_json_get(res.r)));
     }
-}
-
-void ns_debug_on_request(ns_conn *conn, ns_str data) {
-    i32 req = ns_debug_parse(data);
-    ns_str cmd = ns_json_to_string(ns_json_get_prop(req, ns_str_cstr("command")));
-    i32 seq = ns_json_to_i32(ns_json_get_prop(req, ns_str_cstr("seq")));
-    
-    ns_str res;
-    if (ns_str_equals(cmd, ns_str_cstr("initialize"))) {
-        res = ns_debug_response_ack(ns_str_cstr("response"), seq, cmd, 1);
-        ns_debug_send_response(conn, res);
-    } else {
-        res = ns_debug_response_ack(ns_str_cstr("response"), seq, cmd, 0);
-        ns_debug_send_response(conn, res);
-    }
+    ns_info("ns_debug", "connection closed\n");
+    ns_conn_close(conn);
 }
 
 void ns_debug_send_response(ns_conn *conn, ns_str res) {
@@ -108,6 +89,7 @@ void ns_debug_send_response(ns_conn *conn, ns_str res) {
     ns_str_append(&_out, ns_str_from_i32(res.len));
     ns_str_append(&_out, ns_str_cstr(ns_debug_HEADER_SEP));
     ns_str_append(&_out, res);
+    ns_info("ns_debug", "response: %.*s\n", res.len, res.data);
     ns_conn_send(conn, (ns_data){_out.data, _out.len});
 }
 

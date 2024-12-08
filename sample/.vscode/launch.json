@@ -7,7 +7,7 @@
         {
             "type": "ns_debug",
             "request": "launch",
-            "name": "Launch Program"
+            "name": "debug ns program",
         }
     ]
 }
