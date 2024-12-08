@@ -35,7 +35,6 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         i32 len = fread(buff, s, 1, f);
         ns_str ret = (ns_str){.data = buff, .len = len};
         call->ret = (ns_value){.t = ns_type_str, .o = (u64)ret.data};
-
     } else if (ns_str_equals_STR(call->fn->name, "close")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         fclose((FILE*)fd.o);

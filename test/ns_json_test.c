@@ -4,7 +4,7 @@ int main() {
     ns_str s = ns_str_cstr("{\"a\":1,\"b\":2,\"c\":{\"d\":3,\"e\":4},\"f\":[5,6,7],\"g\":\"h\"}");
     {
         i32 j = ns_json_parse(s);
-        ns_str r = ns_json_to_string(ns_json_get(j));
+        ns_str r = ns_json_stringify(ns_json_get(j));
         ns_expect(ns_str_equals(s, r), "ns_json_parse & ns_json_to_string.");
     }
 
@@ -22,7 +22,7 @@ int main() {
         ns_json_push(a, ns_json_make_number(7));
         ns_json_set(o, ns_str_cstr("f"), a);
         ns_json_set(o, ns_str_cstr("g"), ns_json_make_string(ns_str_cstr("h")));
-        ns_str r = ns_json_to_string(ns_json_get(o));
+        ns_str r = ns_json_stringify(ns_json_get(o));
         ns_expect(ns_str_equals(s, r), "ns_json_make.");
     }
 

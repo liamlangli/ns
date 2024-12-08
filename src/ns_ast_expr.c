@@ -274,20 +274,20 @@ ns_return_bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
-ns_bool ns_parse_cast_expr(ns_ast_ctx *ctx, i32 operand) {
+ns_return_bool ns_parse_cast_expr(ns_ast_ctx *ctx, i32 operand) {
     ns_ast_state state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_AS)) {
         if (ns_token_require_type(ctx)) {
             ns_ast_t n = {.type = NS_AST_CAST_EXPR, .state = state, .cast_expr = {.expr = operand, .type = ctx->token}};
             ns_ast_push(ctx, n);
-            return true;
+            return ns_return_ok(bool, true);
         } else {
-            ns_ast_error(ctx, "syntax error", "expected type after 'as'");
+            return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected type after 'as'");
         }
     }
 
     ns_restore_state(ctx, state);
-    return false;
+    return ns_return_ok(bool, false);
 }
 
 ns_return_bool ns_parse_designated_field(ns_ast_ctx *ctx) {
@@ -557,7 +557,7 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                     ns_parse_stack_push_operand(ctx, ns_ast_push(ctx, expr));
                     break;
                 } else {
-                    ns_ast_error(ctx, "syntax error", "expected valid expression after '('");
+                    return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected valid expression after '('");
                 }
             } else {
                 i32 callee = ns_parse_stack_pop(ctx);
@@ -576,14 +576,17 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
             if (ns_parse_stack_leading_operand(ctx)) {
                 i32 operand = ns_parse_stack_pop(ctx);
                 ns_restore_state(ctx, state);
-                if (ns_parse_cast_expr(ctx, operand)) {
+                ns_return_bool ret = ns_parse_cast_expr(ctx, operand);
+                if (ns_return_is_error(ret)) return ret;
+
+                if (ret.r) {
                     ns_parse_stack_push_operand(ctx, ctx->current);
                     break;
                 } else {
-                    ns_ast_error(ctx, "syntax error", "expected type after 'as'");
+                    return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected type after 'as'");
                 }
             }
-            ns_ast_error(ctx, "syntax error", "expected operand before 'as'");
+            return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected operand before 'as'");
         } break;
         case NS_TOKEN_DOT:
         case NS_TOKEN_OPEN_BRACKET:
@@ -591,9 +594,8 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
             if (ns_parse_stack_leading_operand(ctx)) {
                 i32 operand = ns_parse_stack_pop(ctx);
                 ns_restore_state(ctx, state);
-                ns_token_t t = ctx->token;
                 if (operand == 0) {
-                    ns_ast_error(ctx, "syntax error", "expected operand before %.*s", t.val.len, t.val.data);
+                    return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected operand before.");
                     break;
                 }
 
@@ -636,7 +638,7 @@ rewind:
         ns_array_set_length(ctx->expr_stack, 0);
         return ns_return_ok(bool, true);
     } else {
-        ns_ast_error(ctx, "syntax error", "invalid expression before EOL");
+        return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "invalid expression before EOL");
     }
     return ns_return_ok(bool, false);
 }
