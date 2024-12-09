@@ -11,6 +11,22 @@ typedef enum ns_debug_request_type {
     NS_DEBUG_DISCONNECT
 } ns_debug_request_type;
 
+typedef enum ns_debug_state {
+    NS_DEBUG_STATE_INIT,
+    NS_DEBUG_STATE_RUNNING,
+    NS_DEBUG_STATE_STOPPED,
+    NS_DEBUG_STATE_TERMINATED
+} ns_debug_state;
+
+void ns_debug_handle_init(ns_debug_session *sess, ns_json_ref json);
+void ns_debug_handle_set_breakpoints(ns_debug_session *sess, ns_json_ref json);
+void ns_debug_handle_set_exception_breakpoints(ns_debug_session *sess, ns_json_ref json);
+void ns_debug_handle_threads(ns_debug_session *sess, ns_json_ref json);
+void ns_debug_handle_launch(ns_debug_session *sess, ns_json_ref json);
+void ns_debug_handle_attach(ns_debug_session *sess, ns_json_ref json);
+void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json);
+void ns_debug_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+
 ns_debug_request_type ns_debug_parse_type(ns_str type) {
     if (ns_str_equals_STR(type, "initialize")) {
         return NS_DEBUG_INIT;
@@ -51,14 +67,6 @@ ns_json_ref ns_debug_send_event(ns_str event, ns_json_ref body) {
     return res;
 }
 
-void ns_debug_handle_init(ns_debug_session *sess, ns_json_ref json);
-void ns_debug_handle_set_breakpoints(ns_debug_session *sess, ns_json_ref json);
-void ns_debug_handle_set_exception_breakpoints(ns_debug_session *sess, ns_json_ref json);
-void ns_debug_handle_threads(ns_debug_session *sess, ns_json_ref json);
-void ns_debug_handle_launch(ns_debug_session *sess, ns_json_ref json);
-void ns_debug_handle_attach(ns_debug_session *sess, ns_json_ref json);
-void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json);
-
 void ns_debug_handle(ns_debug_session *sess, ns_json_ref req) {
     ns_str cmd = ns_json_to_string(ns_json_get_prop(req, ns_str_cstr("command")));
     ns_debug_request_type type = ns_debug_parse_type(cmd);
@@ -80,6 +88,12 @@ void ns_debug_handle(ns_debug_session *sess, ns_json_ref req) {
 void ns_debug_handle_init(ns_debug_session *sess, ns_json_ref json) {
     i32 seq = ns_json_to_i32(ns_json_get_prop(json, ns_str_cstr("seq")));
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("initialize"), true);
+
+    ns_vm *vm = (ns_vm*)malloc(sizeof(ns_vm));
+    sess->vm = vm;
+    vm->debug_session = sess;
+    vm->step_hook = ns_debug_step_hook;
+
     ns_debug_session_response(sess, res);
     ns_debug_session_response(sess, ns_debug_send_event(ns_str_cstr("initialized"), ns_json_make_null()));
 }
@@ -120,6 +134,16 @@ void ns_debug_handle_attach(ns_debug_session *sess, ns_json_ref json) {
 void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json) {
     i32 seq = ns_json_to_i32(ns_json_get_prop(json, ns_str_cstr("seq")));
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("disconnect"), true);
+
+    ns_vm *vm = sess->vm;
+    free(vm);
+
     ns_debug_session_response(sess, res);
     sess->terminated = true;
+}
+
+void ns_debug_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_debug_session *sess = (ns_debug_session*)vm->debug_session;
+
+
 }

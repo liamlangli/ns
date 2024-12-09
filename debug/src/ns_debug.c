@@ -21,9 +21,7 @@ void ns_debug_send_response(ns_conn *conn, ns_str res);
 
 // repl mode
 i32 ns_debug_repl(ns_debug_options options);
-
 i32 ns_debug_parse(ns_str s);
-ns_str ns_debug_response_ack(ns_str type, i32 seq, ns_str cmd, ns_bool suc); 
 
 ns_str ns_debug_read() {
     i32 size = 0;
@@ -59,7 +57,7 @@ ns_json_ref ns_debug_parse(ns_str s) {
 }
 
 void ns_debug_on_request(ns_conn *conn) {
-    ns_debug_session sess = (ns_debug_session){_options, conn, 0, 0};
+    ns_debug_session sess = (ns_debug_session){_options, conn, 0, 0}; // TODO: support multiple sessions
     while(1) {
         ns_data data = ns_tcp_read(conn);
         ns_str s = (ns_str){data.data, data.len, 0};
@@ -155,8 +153,8 @@ i32 main(i32 argc, i8** argv) {
     {
     case NS_DEBUG_STDIO: return ns_debug_stdio(options);
     case NS_DEBUG_SOCKET: return ns_debug_socket(options);
-    case NS_DEBUG_REPL: return ns_debug_repl(options);
     default:
+        ns_debug_repl(options);
         break;
     }
     return 0;
