@@ -122,6 +122,8 @@ void ns_debug_handle_threads(ns_debug_session *sess, ns_json_ref json) {
 void ns_debug_handle_launch(ns_debug_session *sess, ns_json_ref json) {
     i32 seq = ns_json_to_i32(ns_json_get_prop(json, ns_str_cstr("seq")));
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("launch"), true);
+    
+
     ns_debug_session_response(sess, res);
 }
 

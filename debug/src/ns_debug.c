@@ -57,7 +57,7 @@ ns_json_ref ns_debug_parse(ns_str s) {
 }
 
 void ns_debug_on_request(ns_conn *conn) {
-    ns_debug_session sess = (ns_debug_session){_options, conn, 0, 0}; // TODO: support multiple sessions
+    ns_debug_session sess = (ns_debug_session){.options = _options, .conn = conn}; // TODO: support multiple sessions
     while(1) {
         ns_data data = ns_tcp_read(conn);
         ns_str s = (ns_str){data.data, data.len, 0};

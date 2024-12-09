@@ -106,10 +106,10 @@ typedef struct ns_vm {
     // debug
     void (*step_hook)(struct ns_vm *vm, ns_ast_ctx *ctx, i32 i);
     void *debug_session;
-    i8 stack_depth;
+    i32 stack_depth;
 } ns_vm;
 
-#define NS_MAX_STACK_DEPTH 128
+#define NS_MAX_STACK_DEPTH 255
 
 // ops fn
 ns_str ns_ops_name(ns_token_t op);
