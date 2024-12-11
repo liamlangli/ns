@@ -6,14 +6,15 @@
 #include "ns_net.h"
 
 typedef enum ns_debug_mode {
-    NS_DEBUG_STDIO,
-    NS_DEBUG_SOCKET,
     NS_DEBUG_REPL,
+    NS_DEBUG_STDIO,
+    NS_DEBUG_SOCKET
 } ns_debug_mode;
 
 typedef struct ns_debug_options {
     ns_debug_mode mode;
-    u16 port;
+    u16 port; // for socket mode
+    ns_str filename; // for repl mode
 } ns_debug_options;
 
 typedef struct ns_debug_breakpoint {
@@ -31,3 +32,7 @@ typedef struct ns_debug_session {
 
 void ns_debug_handle(ns_debug_session *session, ns_json_ref req);
 void ns_debug_session_response(ns_debug_session *session, ns_json_ref res);
+
+i32 ns_debug_repl(ns_debug_options options);
+i32 ns_debug_stdio(ns_debug_options options);
+i32 ns_debug_socket(ns_debug_options options);

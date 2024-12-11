@@ -104,7 +104,10 @@ void ns_exec_eval(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_read_file(filename);
     if (source.len == 0) ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
-    ns_eval(&vm, source, filename);
+    ns_return_value ret_v = ns_eval(&vm, source, filename);
+    if (ns_return_is_error(ret_v)) {
+        ns_error("ns", "eval error: %.*s\n", ret_v.e.msg.len, ret_v.e.msg.data);
+    }
 }
 
 void ns_exec_repl() {

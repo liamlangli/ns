@@ -20,8 +20,6 @@ void ns_repl_free_line(ns_str s) {
 
 void ns_repl(ns_vm* vm) {
     ns_ast_ctx ctx = {0};
-    ns_array_set_capacity(ctx.nodes, 4);
-
     vm->repl = true;
 
     // read eval pri32loop
@@ -35,8 +33,17 @@ void ns_repl(ns_vm* vm) {
             break;
         }
 
-        ns_ast_parse(&ctx, line, filename);
-        ns_vm_parse(vm, &ctx);
+        ns_return_bool ret_p = ns_ast_parse(&ctx, line, filename);
+        if (ns_return_is_error(ret_p)) {
+            ns_warn("ast", "parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
+        }
+
+        ret_p = ns_vm_parse(vm, &ctx);
+        if (ns_return_is_error(ret_p)) {
+            ns_warn("parse", "vm parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
+        }
+
+        
 
         ns_repl_free_line(line);
     }

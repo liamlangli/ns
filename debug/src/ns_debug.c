@@ -7,20 +7,18 @@ static ns_str _in;
 static ns_str _out;
 static i8 _chunk[512];
 
-static ns_debug_options _options;
+static ns_debug_options _options = {0};
 
 // stdio mode
-i32 ns_debug_stdio(ns_debug_options options);
+
 ns_str ns_debug_read();
 void ns_debug_write(ns_str data);
 
 // socket mode
-i32 ns_debug_socket(ns_debug_options options);
 void ns_debug_on_request(ns_conn *conn);
 void ns_debug_send_response(ns_conn *conn, ns_str res);
 
 // repl mode
-i32 ns_debug_repl(ns_debug_options options);
 i32 ns_debug_parse(ns_str s);
 
 ns_str ns_debug_read() {
@@ -120,16 +118,7 @@ i32 ns_debug_socket(ns_debug_options options) {
     return 0;
 }
 
-i32 ns_debug_repl(ns_debug_options _) {
-    ns_info("ns_debug", "repl mode\n");
-    return 0;
-}
-
 ns_debug_options ns_debug_parse_args(i32 argc, i8 **argv) {
-    if (argc == 1) {
-        ns_debug_help();
-    }
-
     for (i32 i = 1; i < argc; i++) {
         if (ns_str_equals(ns_str_cstr("-h"), ns_str_cstr(argv[i])) || ns_str_equals(ns_str_cstr("--help"), ns_str_cstr(argv[i]))) {
             ns_debug_help();
@@ -142,6 +131,8 @@ ns_debug_options ns_debug_parse_args(i32 argc, i8 **argv) {
         } else if (ns_str_equals(ns_str_cstr("--port"), ns_str_cstr(argv[i]))) {
             i8* arg = argv[++i];
             _options.port = ns_str_to_i32(ns_str_cstr(arg));
+        } else {
+            _options.filename = ns_str_cstr(argv[i]);
         }
     }
     return _options;
@@ -149,13 +140,12 @@ ns_debug_options ns_debug_parse_args(i32 argc, i8 **argv) {
 
 i32 main(i32 argc, i8** argv) {
     ns_debug_options options = ns_debug_parse_args(argc, argv);
+
     switch (options.mode)
     {
     case NS_DEBUG_STDIO: return ns_debug_stdio(options);
     case NS_DEBUG_SOCKET: return ns_debug_socket(options);
-    default:
-        ns_debug_repl(options);
-        break;
+    default: break;
     }
-    return 0;
+    return ns_debug_repl(options);
 }
