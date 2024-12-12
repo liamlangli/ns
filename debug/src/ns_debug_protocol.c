@@ -11,13 +11,6 @@ typedef enum ns_debug_request_type {
     NS_DEBUG_DISCONNECT
 } ns_debug_request_type;
 
-typedef enum ns_debug_state {
-    NS_DEBUG_STATE_INIT,
-    NS_DEBUG_STATE_RUNNING,
-    NS_DEBUG_STATE_STOPPED,
-    NS_DEBUG_STATE_TERMINATED
-} ns_debug_state;
-
 void ns_debug_handle_init(ns_debug_session *sess, ns_json_ref json);
 void ns_debug_handle_set_breakpoints(ns_debug_session *sess, ns_json_ref json);
 void ns_debug_handle_set_exception_breakpoints(ns_debug_session *sess, ns_json_ref json);
@@ -25,7 +18,7 @@ void ns_debug_handle_threads(ns_debug_session *sess, ns_json_ref json);
 void ns_debug_handle_launch(ns_debug_session *sess, ns_json_ref json);
 void ns_debug_handle_attach(ns_debug_session *sess, ns_json_ref json);
 void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json);
-void ns_debug_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_return_void ns_debug_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
 ns_debug_request_type ns_debug_parse_type(ns_str type) {
     if (ns_str_equals_STR(type, "initialize")) {
@@ -141,12 +134,14 @@ void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json) {
     free(vm);
 
     ns_debug_session_response(sess, res);
-    sess->terminated = true;
+    sess->state = NS_DEBUG_STATE_TERMINATED;
 }
 
-void ns_debug_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_void ns_debug_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_debug_session *sess = (ns_debug_session*)vm->debug_session;
     ns_ast_state state = ctx->nodes[i].state;
     ns_str f = ctx->filename;
     ns_info("ns_debug", "step hook at %.*s:%d:%d\n", f.len, f.data, state.l, state.o);
+    sess->state = NS_DEBUG_STATE_PAUSED;
+    return ns_return_ok_void;
 }

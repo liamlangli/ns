@@ -358,6 +358,9 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 #define ns_array_last(a) (&(a)[ns_array_length(a) - 1])
 #define ns_array_last_safe(a) ((a) ? ns_array_last(a) : 0)
 
+#define ns_array_insert(a, i, v) (ns_array_ensure(a, 1), memmove(&(a)[(i) + 1], &(a)[i], (ns_array_length(a) - (i)) * sizeof *(a)), (a)[i] = (v), ns_array_header(a)->len++)
+#define ns_array_splice(a, i) (memmove(&(a)[i], &(a)[(i) + 1], (ns_array_length(a) - (i) - 1) * sizeof *(a)), ns_array_header(a)->len--)
+
 void ns_array_status();
 
 // ns return

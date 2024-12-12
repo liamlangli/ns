@@ -61,7 +61,6 @@ void ns_debug_on_request(ns_conn *conn) {
         ns_str s = (ns_str){data.data, data.len, 0};
         ns_json_ref req = ns_debug_parse(s);
         ns_debug_handle(&sess, req);
-        if (sess.terminated) break;
     }
     ns_info("ns_debug", "connection closed\n");
     ns_conn_close(conn);

@@ -238,14 +238,14 @@ ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx) {
     ns_token_skip_eol(ctx);
     ns_parse_next_token(ctx);
     if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
-        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT};
+        ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .state = state};
         ns_ast_push(ctx, n);
         return ns_return_ok(bool, true);
     }
     ns_restore_state(ctx, close_state);
 
     ns_token_skip_eol(ctx);
-    ns_ast_t n = {.type = NS_AST_COMPOUND_STMT};
+    ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .state = state};
     i32 next = 0;
     do {
         ret = ns_parse_var_define(ctx);

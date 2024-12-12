@@ -87,9 +87,17 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns_debug",
+            "name": "ns_debug[socket]",
             "program": "${workspaceFolder}/bin/ns_debug",
             "args": ["--socket", "--port", "5001"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "ns_debug[repl]",
+            "program": "${workspaceFolder}/bin/ns_debug",
+            "args": ["sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {

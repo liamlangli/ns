@@ -22,12 +22,23 @@ typedef struct ns_debug_breakpoint {
     i32 l;
 } ns_debug_breakpoint;
 
+typedef enum ns_debug_state {
+    NS_DEBUG_STATE_READY,
+    NS_DEBUG_STATE_RUNNING,
+    NS_DEBUG_STATE_PAUSED,
+    NS_DEBUG_STATE_TERMINATED
+} ns_debug_state;
+
 typedef struct ns_debug_session {
+    // common
     ns_debug_options options;
-    ns_conn *conn;
+    ns_str source;
     ns_vm *vm;
-    ns_bool terminated;
+    ns_debug_state state;
     ns_debug_breakpoint *breakpoints;
+
+    // socket mode
+    ns_conn *conn;
 } ns_debug_session;
 
 void ns_debug_handle(ns_debug_session *session, ns_json_ref req);
