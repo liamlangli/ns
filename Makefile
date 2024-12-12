@@ -19,15 +19,16 @@ else
 endif
 
 # OPTIONS
+NS_DEBUG ?= 1
+NS_DEBUG_HOOK ?= 1
+NS_JIT ?= 1
+
 LLVM_CONFIG := $(shell command -v llvm-config 2>/dev/null)
 ifeq ($(LLVM_CONFIG),)
 	NS_BITCODE ?= 0
 else
 	NS_BITCODE ?= 1
 endif
-
-NS_DEBUG ?= 1
-NS_DEBUG_HOOK ?=1
 
 # VARIABLES
 CC = clang
@@ -41,6 +42,11 @@ ifeq ($(NS_BITCODE), 1)
 	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
 	BITCODE_CFLAGS = -DNS_BITCODE $(LLVM_CFLAGS)
 	BITCODE_LDFLAGS = $(LLVM_LDFLAGS)
+
+	JIT_SRC = src/ns_jit.c
+	JIT_OBJ = $(OBJDIR)/src/ns_jit.o
+	JIT_CFLAGS = -DNS_JIT $(LLVM_CFLAGS)
+	JIT_LDFLAGS = $(LLVM_LDFLAGS)
 endif
 
 NS_LDFLAGS = -lm -lreadline `pkg-config --libs libffi` -ldl -flto -L/usr/lib
@@ -96,11 +102,14 @@ all: $(TARGET) std lib
 $(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
 	$(CC) -c $< -o $@ $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
+$(JIT_OBJ): $(JIT_SRC) | $(OBJDIR)
+	$(CC) -c $< -o $@ $(NS_CFLAGS) $(JIT_CFLAGS)
+
 $(NS_ENTRY_OBJ): $(NS_ENTRY) | $(OBJDIR)
 	$(CC) -c $< -o $@ $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
-$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) | $(BINDIR)
-	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(BITCODE_LDFLAGS)
+$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) | $(BINDIR)
+	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(LLVM_LDFLAGS)
 
 $(NS_LIB_OBJS): $(OBJDIR)/%.o : %.c | $(OBJDIR)
 	$(CC) -c $< -o $@ $(NS_CFLAGS)
