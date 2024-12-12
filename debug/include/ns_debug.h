@@ -5,6 +5,7 @@
 #include "ns_json.h"
 #include "ns_net.h"
 #include "ns_os.h"
+#include "ns_fmt.h"
 
 typedef enum ns_debug_mode {
     NS_DEBUG_REPL,

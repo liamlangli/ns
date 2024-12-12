@@ -39,9 +39,11 @@ void ns_debug_repl_list_breakpoints(ns_debug_session *sess);
 void ns_debug_repl_set_breakpoint(ns_debug_session *sess, ns_str f, i32 l);
 void ns_debug_repl_del_breakpoint(ns_debug_session *sess, ns_str f, i32 l);
 ns_bool ns_debug_hit_breakpoint(ns_debug_session *sess, i32 l);
+void ns_debug_repl_print(ns_vm *vm, ns_str expr);
 
 static ns_vm _debug_repl_vm = {0};
 static ns_debug_session _debug_repl_sess = {0};
+static ns_ast_ctx _debug_repl_ctx = {0};
 static ns_str _debug_repl_history;
 
 #define NS_DEBUG_REPL_HISTORY_FILE ".cache/ns/nsdb.history"
@@ -115,9 +117,6 @@ ns_debug_repl_command ns_debug_repl_parse_command(ns_str line) {
         cmd.type = NS_DEBUG_REPL_STEP_OVER;
     } else if (ns_str_starts_with(line, so_cmd) || ns_str_starts_with(line, so_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_STEP_OUT;
-    } else if (ns_str_starts_with(line, b_cmd) || ns_str_starts_with(line, b_short_cmd)) {
-        cmd.type = NS_DEBUG_REPL_BREAK;
-        cmd.line = ns_str_to_i32(ns_str_sub_expr(line));
     } else if (ns_str_starts_with(line, bl_cmd) || ns_str_starts_with(line, bl_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_BREAK_LIST;
     } else if (ns_str_starts_with(line, bd_cmd) || ns_str_starts_with(line, bd_short_cmd)) {
@@ -132,6 +131,11 @@ ns_debug_repl_command ns_debug_repl_parse_command(ns_str line) {
         cmd.expr = ns_str_sub_expr(line);
     } else if (ns_str_starts_with(line, quit_cmd) || ns_str_starts_with(line, q_cmd)) {
         cmd.type = NS_DEBUG_REPL_QUIT;
+    } else if (ns_str_starts_with(line, b_cmd) || ns_str_starts_with(line, b_short_cmd)) {
+        cmd.type = NS_DEBUG_REPL_BREAK;
+        cmd.line = ns_str_to_i32(ns_str_sub_expr(line));
+    } else {
+        cmd.type = NS_DEBUG_REPL_UNKNOWN;
     }
     return cmd;
 }
@@ -142,7 +146,7 @@ ns_return_void ns_debug_repl_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_str f = ctx->filename;
 
-    // if (!ns_debug_hit_breakpoint(sess, n->state.l)) return ns_return_ok_void;
+    if (!ns_debug_hit_breakpoint(sess, n->state.l)) return ns_return_ok_void;
 
     ns_info("ns_debug", "hit breakpoint at %.*s:%d:%d\n", f.len, f.data, n->state.l, n->state.o);
     ns_return_void ret = ns_debug_repl_loop();
@@ -153,8 +157,9 @@ ns_return_void ns_debug_repl_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 void ns_debug_repl_list_breakpoints(ns_debug_session *sess) {
-    ns_info("ns_debug", "breakpoints:\n");
-    for (i32 i = 0, l = ns_array_length(sess->breakpoints); i < l; i++) {
+    i32 len = ns_array_length(sess->breakpoints);
+    ns_info("ns_debug", "breakpoints: %d\n", len);
+    for (i32 i = 0, l = len; i < l; i++) {
         ns_debug_breakpoint bp = sess->breakpoints[i];
         ns_info("ns_debug", "  %.*s:%d\n", bp.f.len, bp.f.data, bp.l);
     }
@@ -170,11 +175,13 @@ void ns_debug_repl_set_breakpoint(ns_debug_session *sess, ns_str f, i32 l) {
     }
     for (i32 i = 0; i < len; i++) {
         ns_debug_breakpoint b = sess->breakpoints[i];
+        if (b.l == l) return;
         if (b.l > l) {
             ns_array_insert(sess->breakpoints, i, bp);
             return;
         }
     }
+    ns_array_push(sess->breakpoints, bp);
 }
 
 void ns_debug_repl_del_breakpoint(ns_debug_session *sess, ns_str f, i32 l) {
@@ -195,6 +202,41 @@ ns_bool ns_debug_hit_breakpoint(ns_debug_session *sess, i32 l) {
     return false;
 }
 
+void ns_debug_repl_print(ns_vm *vm, ns_str expr) {
+    vm->repl = true;
+    ns_ast_ctx *ctx = &_debug_repl_ctx;
+
+    ns_return_bool ret_p = ns_ast_parse(ctx, expr, ns_str_cstr("<repl>"));
+    if (ns_return_is_error(ret_p)) {
+        ns_warn("ast", "parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
+        return;
+    }
+
+    ret_p = ns_vm_parse(vm, &ctx);
+    if (ns_return_is_error(ret_p)) {
+        ns_warn("parse", "vm parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
+    }
+
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        i32 s_i = ctx->sections[i];
+        ns_ast_t *n = &ctx->nodes[s_i];
+        if (n->type >= NS_AST_EXPR && n->type <= NS_AST_ARRAY_EXPR) {
+            ns_return_value ret = ns_eval_expr(vm, ctx, s_i);
+            if (ns_return_is_error(ret)) {
+                ns_warn("eval", "eval error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
+            }
+            ns_str s = ns_fmt_value(vm, ret.r);
+            printf("%.*s\n", s.len, s.data);
+        } else {
+            ns_warn("eval", "invalid expr type: %d\n", n->type);
+        }
+    }
+
+    ns_array_set_length(ctx->sections, 0);
+    ns_array_set_length(ctx->nodes, 0);
+    ctx->section_begin = ctx->section_end = 0;
+}
+
 ns_return_void ns_debug_repl_loop() {
     ns_debug_session *sess = &_debug_repl_sess;
     ns_vm *vm = &_debug_repl_vm;
@@ -211,7 +253,6 @@ ns_return_void ns_debug_repl_loop() {
             break;
         case NS_DEBUG_REPL_LOAD:
             if (sess->state != NS_DEBUG_STATE_INIT) {
-                // ns_error("ns_debug", "invalid state\n");
                 ns_warn("ns_debug", "invalid state\n");
                 break;
             }
@@ -256,12 +297,14 @@ ns_return_void ns_debug_repl_loop() {
             ns_info("ns_debug", "step out\n");
             break;
         case NS_DEBUG_REPL_BREAK:
+            ns_info("ns_debug", "break %d\n", cmd.line);
             ns_debug_repl_set_breakpoint(sess, sess->options.filename, cmd.line);
             break;
         case NS_DEBUG_REPL_BREAK_LIST:
             ns_debug_repl_list_breakpoints(sess);
             break;
         case NS_DEBUG_REPL_BREAK_DELETE:
+            ns_info("ns_debug", "break delete %d\n", cmd.line);
             ns_debug_repl_del_breakpoint(sess, sess->options.filename, cmd.line);
             break;
         case NS_DEBUG_REPL_BREAK_ERROR:
@@ -269,6 +312,9 @@ ns_return_void ns_debug_repl_loop() {
             break;
         case NS_DEBUG_REPL_BREAK_CLEAR:
             ns_array_set_length(sess->breakpoints, 0);
+            break;
+        case NS_DEBUG_REPL_PRINT:
+            ns_debug_repl_print(vm, cmd.expr);
             break;
         case NS_DEBUG_REPL_QUIT:
             ns_info("ns_debug", "quit\n");

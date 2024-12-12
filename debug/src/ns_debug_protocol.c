@@ -1,7 +1,6 @@
 #include "ns_debug.h"
 
 static i32 _last_seq = 0;
-static ns_debug_session _debug_sess = {0};
 
 typedef enum ns_debug_request_type {
     NS_DEBUG_UNKNOWN,
