@@ -141,6 +141,8 @@ ns_debug_repl_command ns_debug_repl_parse_command(ns_str line) {
 }
 
 ns_return_void ns_debug_repl_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_unused(vm);
+
     ns_debug_session *sess = &_debug_repl_sess;
     sess->state = NS_DEBUG_STATE_PAUSED;
     ns_ast_t *n = &ctx->nodes[i];
@@ -212,7 +214,7 @@ void ns_debug_repl_print(ns_vm *vm, ns_str expr) {
         return;
     }
 
-    ret_p = ns_vm_parse(vm, &ctx);
+    ret_p = ns_vm_parse(vm, ctx);
     if (ns_return_is_error(ret_p)) {
         ns_warn("parse", "vm parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
     }

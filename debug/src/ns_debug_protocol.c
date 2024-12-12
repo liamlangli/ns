@@ -136,6 +136,7 @@ void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json) {
 }
 
 ns_return_void ns_debug_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_unused(vm);
     ns_ast_state state = ctx->nodes[i].state;
     ns_str f = ctx->filename;
     ns_info("ns_debug", "step hook at %.*s:%d:%d\n", f.len, f.data, state.l, state.o);
