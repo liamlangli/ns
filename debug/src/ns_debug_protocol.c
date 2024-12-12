@@ -1,5 +1,8 @@
 #include "ns_debug.h"
 
+static i32 _last_seq = 0;
+static ns_debug_session _debug_sess = {0};
+
 typedef enum ns_debug_request_type {
     NS_DEBUG_UNKNOWN,
     NS_DEBUG_INIT,
@@ -38,8 +41,6 @@ ns_debug_request_type ns_debug_parse_type(ns_str type) {
     }
     return NS_DEBUG_UNKNOWN;
 }
-
-static i32 _last_seq = 0;
 
 ns_json_ref ns_debug_response_ack(i32 seq, ns_str cmd, ns_bool suc) {
     ns_json_ref res = ns_json_make_object();
@@ -83,8 +84,6 @@ void ns_debug_handle_init(ns_debug_session *sess, ns_json_ref json) {
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("initialize"), true);
 
     ns_vm *vm = (ns_vm*)malloc(sizeof(ns_vm));
-    sess->vm = vm;
-    vm->debug_session = sess;
     vm->step_hook = ns_debug_step_hook;
 
     ns_debug_session_response(sess, res);
@@ -138,10 +137,8 @@ void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json) {
 }
 
 ns_return_void ns_debug_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_debug_session *sess = (ns_debug_session*)vm->debug_session;
     ns_ast_state state = ctx->nodes[i].state;
     ns_str f = ctx->filename;
     ns_info("ns_debug", "step hook at %.*s:%d:%d\n", f.len, f.data, state.l, state.o);
-    sess->state = NS_DEBUG_STATE_PAUSED;
     return ns_return_ok_void;
 }

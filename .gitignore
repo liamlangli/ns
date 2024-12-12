@@ -6,3 +6,8 @@ bin
 
 # nslang extension
 *.vsix
+
+# history & cache
+*.history 
+.cache
+*.log

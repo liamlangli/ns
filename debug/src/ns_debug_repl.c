@@ -3,24 +3,10 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-/**
- *  nsdb - nanoscript debugger
- * - repl mode commands
- *     - run/r
- *     - step-into/si               : step into
- *     - step-over/so               : step over
- *     - step-out/so                : step out
- *     - break/b [line]             : set breakpoint
- *     - break-list/bl              : list breakpoints
- *     - break-delete/bd [line]     : remove breakpoint
- *     - break-error/be             : set error breakpoint
- *     - break-clear/bc             : clear all breakpoints
- *     - print/p [expr]             : print expression
- *     - quit/q                     : quit
- **/
-
 typedef enum ns_debug_repl_command_type {
     NS_DEBUG_REPL_NONE,
+    NS_DEBUG_REPL_HELP,
+    NS_DEBUG_REPL_LOAD,
     NS_DEBUG_REPL_RUN,
     NS_DEBUG_REPL_STEP_INTO,
     NS_DEBUG_REPL_STEP_OVER,
@@ -43,6 +29,7 @@ typedef struct ns_debug_repl_command {
     };
 } ns_debug_repl_command;
 
+void ns_debug_repl_help();
 ns_str ns_debug_repl_read_line(char *prompt);
 ns_debug_repl_command ns_debug_repl_parse_command(ns_str line);
 ns_return_void ns_debug_repl_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -51,18 +38,47 @@ ns_return_void ns_debug_repl_loop();
 void ns_debug_repl_list_breakpoints(ns_debug_session *sess);
 void ns_debug_repl_set_breakpoint(ns_debug_session *sess, ns_str f, i32 l);
 void ns_debug_repl_del_breakpoint(ns_debug_session *sess, ns_str f, i32 l);
+ns_bool ns_debug_hit_breakpoint(ns_debug_session *sess, i32 l);
 
 static ns_vm _debug_repl_vm = {0};
 static ns_debug_session _debug_repl_sess = {0};
+static ns_str _debug_repl_history;
+
+#define NS_DEBUG_REPL_HISTORY_FILE ".cache/ns/nsdb.history"
+
+void ns_debug_repl_help() {
+    ns_info("ns_debug", "nsdb nanoscript debugger\n");
+    printf("  help/h                     : help\n");
+    printf("  load/l [file]              : load file\n");
+    printf("  run/r                      : run\n");
+    printf("  step-into/si               : step into\n");
+    printf("  step-over/so               : step over\n");
+    printf("  step-out/so                : step out\n");
+    printf("  break/b [line]             : set breakpoint\n");
+    printf("  break-list/bl              : list breakpoints\n");
+    printf("  break-delete/bd [line]     : remove breakpoint\n");
+    printf("  break-error/be             : set error breakpoint\n");
+    printf("  break-clear/bc             : clear all breakpoints\n");
+    printf("  print/p [expr]             : print expression\n");
+    printf("  quit/q                     : quit\n");
+}
 
 ns_str ns_debug_repl_read_line(char *prompt) {
-    char *line = readline(prompt);
-    if (!line) return ns_str_null;
-    add_history(line);
-    ns_str s = ns_str_cstr(line);
+    HIST_ENTRY *h = history_get(history_length);
+    char *l = readline(prompt);
+    if (!l) return ns_str_null;
+    if (!h || strcmp(h->line, l)) {
+        add_history(l);
+        write_history(_debug_repl_history.data);
+    }
+    ns_str s = ns_str_cstr(l);
     return s;
 }
 
+const ns_str help_cmd = ns_str_cstr("help");
+const ns_str h_cmd = ns_str_cstr("h");
+const ns_str load_cmd = ns_str_cstr("load");
+const ns_str l_cmd = ns_str_cstr("l");
 const ns_str run_cmd = ns_str_cstr("run");
 const ns_str r_cmd = ns_str_cstr("r");
 const ns_str si_cmd = ns_str_cstr("step-into");
@@ -86,40 +102,49 @@ const ns_str q_cmd = ns_str_cstr("q");
 
 ns_debug_repl_command ns_debug_repl_parse_command(ns_str line) {
     ns_debug_repl_command cmd = {0};
-    if (ns_str_equals(line, run_cmd) || ns_str_equals(line, r_cmd)) {
+    if (ns_str_starts_with(line, help_cmd) || ns_str_starts_with(line, h_cmd)) {
+        cmd.type = NS_DEBUG_REPL_HELP;
+    } else if (ns_str_starts_with(line, load_cmd) || ns_str_starts_with(line, l_cmd)) {
+        cmd.type = NS_DEBUG_REPL_LOAD;
+        cmd.expr = ns_str_sub_expr(line);
+    } else if (ns_str_starts_with(line, run_cmd) || ns_str_starts_with(line, r_cmd)) {
         cmd.type = NS_DEBUG_REPL_RUN;
-    } else if (ns_str_equals(line, si_cmd) || ns_str_equals(line, si_short_cmd)) {
+    } else if (ns_str_starts_with(line, si_cmd) || ns_str_starts_with(line, si_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_STEP_INTO;
-    } else if (ns_str_equals(line, so_cmd) || ns_str_equals(line, so_short_cmd)) {
+    } else if (ns_str_starts_with(line, so_cmd) || ns_str_starts_with(line, so_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_STEP_OVER;
-    } else if (ns_str_equals(line, so_cmd) || ns_str_equals(line, so_short_cmd)) {
+    } else if (ns_str_starts_with(line, so_cmd) || ns_str_starts_with(line, so_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_STEP_OUT;
-    } else if (ns_str_equals(line, b_cmd) || ns_str_equals(line, b_short_cmd)) {
+    } else if (ns_str_starts_with(line, b_cmd) || ns_str_starts_with(line, b_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_BREAK;
-        cmd.line = atoi(line.data + 6);
-    } else if (ns_str_equals(line, bl_cmd) || ns_str_equals(line, bl_short_cmd)) {
+        cmd.line = ns_str_to_i32(ns_str_sub_expr(line));
+    } else if (ns_str_starts_with(line, bl_cmd) || ns_str_starts_with(line, bl_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_BREAK_LIST;
-    } else if (ns_str_equals(line, bd_cmd) || ns_str_equals(line, bd_short_cmd)) {
+    } else if (ns_str_starts_with(line, bd_cmd) || ns_str_starts_with(line, bd_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_BREAK_DELETE;
-        cmd.line = atoi(line.data + 10);
-    } else if (ns_str_equals(line, be_cmd) || ns_str_equals(line, be_short_cmd)) {
+        cmd.line = ns_str_to_i32(ns_str_sub_expr(line));
+    } else if (ns_str_starts_with(line, be_cmd) || ns_str_starts_with(line, be_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_BREAK_ERROR;
-    } else if (ns_str_equals(line, bc_cmd) || ns_str_equals(line, bc_short_cmd)) {
+    } else if (ns_str_starts_with(line, bc_cmd) || ns_str_starts_with(line, bc_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_BREAK_CLEAR;
-    } else if (ns_str_equals(line, p_cmd) || ns_str_equals(line, p_short_cmd)) {
+    } else if (ns_str_starts_with(line, p_cmd) || ns_str_starts_with(line, p_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_PRINT;
-    } else if (ns_str_equals(line, quit_cmd) || ns_str_equals(line, q_cmd)) {
+        cmd.expr = ns_str_sub_expr(line);
+    } else if (ns_str_starts_with(line, quit_cmd) || ns_str_starts_with(line, q_cmd)) {
         cmd.type = NS_DEBUG_REPL_QUIT;
     }
     return cmd;
 }
 
 ns_return_void ns_debug_repl_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_debug_session *sess = vm->debug_session;
+    ns_debug_session *sess = &_debug_repl_sess;
     sess->state = NS_DEBUG_STATE_PAUSED;
     ns_ast_t *n = &ctx->nodes[i];
     ns_str f = ctx->filename;
-    ns_info("ns_debug", "step hook at %.*s:%d:%d\n", f.len, f.data, n->state.l, n->state.o);
+
+    // if (!ns_debug_hit_breakpoint(sess, n->state.l)) return ns_return_ok_void;
+
+    ns_info("ns_debug", "hit breakpoint at %.*s:%d:%d\n", f.len, f.data, n->state.l, n->state.o);
     ns_return_void ret = ns_debug_repl_loop();
     if (ns_return_is_error(ret)) {
         ns_error("ns_debug", "repl error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
@@ -162,6 +187,14 @@ void ns_debug_repl_del_breakpoint(ns_debug_session *sess, ns_str f, i32 l) {
     }
 }
 
+ns_bool ns_debug_hit_breakpoint(ns_debug_session *sess, i32 l) {
+    for (i32 i = 0, len = ns_array_length(sess->breakpoints); i < len; i++) {
+        ns_debug_breakpoint bp = sess->breakpoints[i];
+        if (bp.l == l) return true;
+    }
+    return false;
+}
+
 ns_return_void ns_debug_repl_loop() {
     ns_debug_session *sess = &_debug_repl_sess;
     ns_vm *vm = &_debug_repl_vm;
@@ -169,9 +202,28 @@ ns_return_void ns_debug_repl_loop() {
     while (1) {
         ns_str line = ns_debug_repl_read_line(ns_color_log "nsdb" ns_color_nil "> ");
         if (line.len == 0) continue;
+
         ns_debug_repl_command cmd = ns_debug_repl_parse_command(line);
         switch (cmd.type)
         {
+        case NS_DEBUG_REPL_HELP:
+            ns_debug_repl_help();
+            break;
+        case NS_DEBUG_REPL_LOAD:
+            if (sess->state != NS_DEBUG_STATE_INIT) {
+                // ns_error("ns_debug", "invalid state\n");
+                ns_warn("ns_debug", "invalid state\n");
+                break;
+            }
+            ns_info("ns_debug", "load %.*s\n", cmd.expr.len, cmd.expr.data);
+            sess->options.filename = cmd.expr;
+            sess->source = ns_fs_read_file(cmd.expr);
+            if (sess->source.len == 0) {
+                ns_error("ns_debug", "file not found: %.*s\n", cmd.expr.len, cmd.expr.data);
+                return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, "file not found");
+            }
+            sess->state = NS_DEBUG_STATE_READY;
+            break;
         case NS_DEBUG_REPL_RUN:
             ns_info("ns_debug", "run\n");
             switch (sess->state)
@@ -185,7 +237,10 @@ ns_return_void ns_debug_repl_loop() {
                 sess->state = NS_DEBUG_STATE_RUNNING;
                 return ns_return_ok_void;
             case NS_DEBUG_STATE_TERMINATED:
+            case NS_DEBUG_STATE_RUNNING:
                 return ns_return_ok_void;
+            case NS_DEBUG_STATE_INIT:
+                return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, "no program loaded");
             default:
                 return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, "invalid state");
                 break;
@@ -233,23 +288,14 @@ i32 ns_debug_repl(ns_debug_options options) {
     ns_info("ns_debug", "repl mode\n");
 
     ns_debug_session *sess = &_debug_repl_sess;
+    sess->options = options;
     ns_vm *vm = &_debug_repl_vm;
-    vm->debug_session = &sess;
     vm->step_hook = ns_debug_repl_step_hook;
 
-    // ns_return_bool ret = ns_ast_parse(options.);
-    if (options.filename.len == 0) {
-        ns_warn("ns_debug", "no input file.\n");
-        return 0;
-    }
+    _debug_repl_history = ns_path_join(ns_path_home(), ns_str_cstr(NS_DEBUG_REPL_HISTORY_FILE));
+    ns_os_mkdir(ns_path_dirname(_debug_repl_history));
+    read_history(_debug_repl_history.data);
 
-    ns_str src = ns_read_file(options.filename);
-    if (src.len == 0) {
-        ns_error("ns_debug", "file not found: %.*s\n", options.filename.len, options.filename.data);
-        return 1;
-    }
-
-    sess->source = src;
     ns_return_void ret = ns_debug_repl_loop();
     if (ns_return_is_error(ret)) {
         ns_error("ns_debug", "repl error: %.*s\n", ret.e.msg.len, ret.e.msg.data);

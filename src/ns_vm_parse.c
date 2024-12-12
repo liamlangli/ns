@@ -2,7 +2,7 @@
 #include "ns_token.h"
 #include "ns_type.h"
 #include "ns_vm.h"
-#include "ns_path.h"
+#include "ns_os.h"
 
 void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 

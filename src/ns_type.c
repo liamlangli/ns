@@ -203,21 +203,15 @@ ns_str ns_str_concat(ns_str a, ns_str b) {
     return data;
 }
 
-ns_str ns_read_file(ns_str path) {
-    FILE *file = fopen(path.data, "rb");
-    if (!file) {
-        return ns_str_null;
+ns_str ns_str_sub_expr(ns_str s) {
+    i32 i = 0;
+    while (i < s.len && s.data[i] != ' ') {
+        i++;
     }
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    char *buffer = (char *)malloc(size + 1);
-    fread(buffer, 1, size, file);
-    fclose(file);
-    buffer[size] = '\0';
-    ns_str data = ns_str_range(buffer, size);
-    data.dynamic = true;
-    return data;
+    while (i < s.len && s.data[i] == ' ') {
+        i++;
+    }
+    return ns_str_range(s.data + i, s.len - i);
 }
 
 // ns_return

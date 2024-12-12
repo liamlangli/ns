@@ -1,5 +1,11 @@
 #include "ns_vm.h"
 
+#ifdef NS_DEBUG_HOOK
+    #define ns_vm_inject_hook(vm, ctx, i) if (vm->step_hook) vm->step_hook(vm, ctx, i)
+#else
+    #define ns_vm_inject_hook(vm, ctx, i)
+#endif
+
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
 ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
@@ -552,6 +558,7 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->type) {
     case NS_AST_EXPR: return ns_eval_expr(vm, ctx, n->expr.body);
@@ -572,11 +579,11 @@ ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
+
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *expr = n;
-    if (vm->step_hook) {
-        vm->step_hook(vm, ctx, i);
-    }
+
     i8 stack_depth = vm->stack_depth;
     if (vm->stack_depth > NS_MAX_STACK_DEPTH) {
         return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "stack overflow.");
@@ -892,6 +899,7 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+    if (vm->step_hook) vm->step_hook(vm, ctx, i);
 
     // eval & store value
     i32 size = n->var_def.type_size;

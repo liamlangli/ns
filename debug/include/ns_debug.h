@@ -4,6 +4,7 @@
 #include "ns_vm.h"
 #include "ns_json.h"
 #include "ns_net.h"
+#include "ns_os.h"
 
 typedef enum ns_debug_mode {
     NS_DEBUG_REPL,
@@ -23,6 +24,7 @@ typedef struct ns_debug_breakpoint {
 } ns_debug_breakpoint;
 
 typedef enum ns_debug_state {
+    NS_DEBUG_STATE_INIT,
     NS_DEBUG_STATE_READY,
     NS_DEBUG_STATE_RUNNING,
     NS_DEBUG_STATE_PAUSED,

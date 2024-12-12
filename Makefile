@@ -27,6 +27,7 @@ else
 endif
 
 NS_DEBUG ?= 1
+NS_DEBUG_HOOK ?=1
 
 # VARIABLES
 CC = clang
@@ -62,7 +63,7 @@ OBJDIR = $(BINDIR)
 
 NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
-	src/ns_path.c \
+	src/ns_os.c \
 	src/ns_token.c \
 	src/ns_ast.c \
 	src/ns_ast_stmt.c \
@@ -87,7 +88,7 @@ TARGET = $(BINDIR)/ns
 
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 
-all: $(TARGET)
+all: $(TARGET) std lib
 	@echo "building ns at "$(OS)" with options:" \
 	"NS_BITCODE=$(NS_BITCODE)" \
 	"NS_DEBUG=$(NS_DEBUG)"

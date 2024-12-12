@@ -105,7 +105,6 @@ typedef struct ns_vm {
 
     // debug
     ns_return_void (*step_hook)(struct ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-    void *debug_session;
     i32 stack_depth;
 } ns_vm;
 

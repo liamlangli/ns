@@ -86,10 +86,10 @@ ns_str ns_str_concat(ns_str a, ns_str b);
 i32 ns_str_to_i32(ns_str s);
 f64 ns_str_to_f64(ns_str s);
 ns_str ns_str_from_i32(i32 i);
-ns_str ns_read_file(ns_str filename);
 ns_str ns_str_unescape(ns_str s);
 i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
 i32 ns_str_index_of(ns_str s, ns_str sub);
+ns_str ns_str_sub_expr(ns_str s); // get inplace sub expr from first space to end of line
 
 #define ns_str_null ((ns_str){0, 0, 0})
 #define ns_str_range(s, n) ((ns_str){(s), (n), 1})
@@ -98,6 +98,7 @@ i32 ns_str_index_of(ns_str s, ns_str sub);
 
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
 #define ns_str_equals_STR(s, S) ((!(s).data) ? 0 : (strncmp((s).data, (S), strlen(S)) == 0))
+#define ns_str_starts_with(a, b) ((a).len >= (b).len && strncmp((a).data, (b).data, (b).len) == 0)
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
 #define ns_str_append(a, b) (ns_str_append_len((a), (b).data, (b).len))
 

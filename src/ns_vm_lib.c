@@ -1,6 +1,6 @@
 #include "ns_vm.h"
 #include "ns_fmt.h"
-#include "ns_path.h"
+#include "ns_os.h"
 
 #include <dlfcn.h>
 #include <ffi.h>
@@ -58,7 +58,7 @@ ns_lib* ns_lib_find(ns_vm *vm, ns_str lib) {
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
     ns_ast_ctx ctx = {0};
     ns_str path = ns_path_join(ns_str_cstr("lib"), ns_str_concat(lib, ns_str_cstr(".ns")));
-    ns_str source = ns_read_file(path);
+    ns_str source = ns_fs_read_file(path);
     ns_ast_parse(&ctx, source, path);
 
     ns_str cur_lib = vm->lib;
