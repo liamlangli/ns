@@ -314,7 +314,7 @@ ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand);
 ns_return_bool ns_parse_expr(ns_ast_ctx *ctx);
 
 // dump fn
-void ns_ast_ctx_dump(ns_ast_ctx *ctx);
+void ns_ast_ctx_print(ns_ast_ctx *ctx);
 
 // main parse fn
 ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);

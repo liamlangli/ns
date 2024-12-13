@@ -196,7 +196,7 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
         }
     }
     if (n.str_fmt.expr_count == 0) {
-        n = (ns_ast_t){.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
+        n = (ns_ast_t){.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
         return ns_return_ok(bool, true);
     }
 
@@ -359,7 +359,7 @@ ns_return_bool ns_parse_member_expr(ns_ast_ctx *ctx, i32 operand) {
     ns_ast_state state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_DOT)) {
         if (ns_token_require(ctx, NS_TOKEN_IDENTIFIER)) {
-            ns_ast_t token = {.type = NS_AST_PRIMARY_EXPR, .primary_expr = {.token = ctx->token}};
+            ns_ast_t token = {.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
             i32 t = ns_ast_push(ctx, token);
             
             ns_ast_state member_state = ns_save_state(ctx);
@@ -542,7 +542,7 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                     return ns_return_error(bool, loc, NS_ERR_SYNTAX, "expected unary expression");
                 }
             } else {
-                ns_parse_stack_push_operator(ctx, ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_BINARY_EXPR, .binary_expr = {.op = ctx->token}}));
+                ns_parse_stack_push_operator(ctx, ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_BINARY_EXPR, .state = state, .binary_expr = {.op = ctx->token}}));
             }
         } break;
         case NS_TOKEN_OPEN_PAREN: {

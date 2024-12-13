@@ -305,6 +305,8 @@ ns_return_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_ast_ctx *ctx, ns_val
 }
 
 ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
+
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_value ret_callee = ns_eval_expr(vm, ctx, n->call_expr.callee);
     if (ns_return_is_error(ret_callee)) return ret_callee;
@@ -969,15 +971,10 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, ret);
 }
 
-ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
-    ns_ast_ctx ctx = {0};
-    ns_return_bool ret_ast = ns_ast_parse(&ctx, source, filename);
-    if (ns_return_is_error(ret_ast)) return ns_return_change_type(value, ret_ast);
-
-    ns_return_bool ret_parse = ns_vm_parse(vm, &ctx);
+ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_return_bool ret_parse = ns_vm_parse(vm, ctx);
     if (ns_return_is_error(ret_parse)) return ns_return_change_type(value, ret_parse);
 
-    // eval global value
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol r = vm->symbols[i];
         if (r.type != NS_SYMBOL_VALUE)
@@ -995,10 +992,10 @@ ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
 
         ns_enter_scope(vm);
         ns_array_push(vm->call_stack, call);
-        ns_return_void ret = ns_eval_compound_stmt(vm, &ctx, main_fn->fn.ast.fn_def.body);
+        ns_return_void ret = ns_eval_compound_stmt(vm, ctx, main_fn->fn.ast.fn_def.body);
         if (ns_return_is_error(ret)) {
-            ns_ast_t *n = &ctx.nodes[main_fn->fn.ast.fn_def.body];
-            ns_code_loc loc = (ns_code_loc){.f = ctx.filename, .l = n->state.l, .o = n->state.o};
+            ns_ast_t *n = &ctx->nodes[main_fn->fn.ast.fn_def.body];
+            ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
             return ns_return_error(value, loc, NS_ERR_EVAL, "main function error.");
         }
 
@@ -1009,17 +1006,17 @@ ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
     }
 
     ns_value ret = ns_nil;
-    for (i32 i = ctx.section_begin, l = ctx.section_end; i < l; ++i) {
-        i32 s_i = ctx.sections[i];
-        ns_ast_t *n = &ctx.nodes[s_i];
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        i32 s_i = ctx->sections[i];
+        ns_ast_t *n = &ctx->nodes[s_i];
         switch (n->type) {
         case NS_AST_EXPR:
         case NS_AST_CALL_EXPR: {
-            ns_return_value ret = ns_eval_expr(vm, &ctx, s_i);
+            ns_return_value ret = ns_eval_expr(vm, ctx, s_i);
             if (ns_return_is_error(ret)) return ret;
         } break;
         case NS_AST_VAR_DEF: {
-            ns_return_value ret = ns_eval_var_def(vm, &ctx, s_i);
+            ns_return_value ret = ns_eval_var_def(vm, ctx, s_i);
             if (ns_return_is_error(ret)) return ret;
         } break;
         case NS_AST_IMPORT_STMT:
@@ -1029,11 +1026,19 @@ ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
         case NS_AST_STRUCT_DEF:
             break; // already parsed
         default: {
-            ns_code_loc loc = (ns_code_loc){.f = ctx.filename, .l = n->state.l, .o = n->state.o};
+            ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
             return ns_return_error(value, loc, NS_ERR_EVAL, "unimplemented global ast.");
         } break;
         }
     }
 
     return ns_return_ok(value, ret);
+}
+
+ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
+    ns_ast_ctx ctx = {0};
+    ns_return_bool ret_ast = ns_ast_parse(&ctx, source, filename);
+    if (ns_return_is_error(ret_ast)) return ns_return_change_type(value, ret_ast);
+
+    return ns_eval_ast(vm, &ctx);
 }

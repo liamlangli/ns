@@ -1,4 +1,5 @@
 #include "ns_debug.h"
+#include "ns_ast.h"
 
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -17,6 +18,7 @@ typedef enum ns_debug_repl_command_type {
     NS_DEBUG_REPL_BREAK_ERROR,
     NS_DEBUG_REPL_BREAK_CLEAR,
     NS_DEBUG_REPL_PRINT,
+    NS_DEBUG_REPL_AST,
     NS_DEBUG_REPL_QUIT,
     NS_DEBUG_REPL_UNKNOWN
 } ns_debug_repl_command_type;
@@ -63,6 +65,7 @@ void ns_debug_repl_help() {
     printf("  break-clear/bc             : clear all breakpoints\n");
     printf("  print/p [expr]             : print expression\n");
     printf("  quit/q                     : quit\n");
+    printf("  ast                        : dump AST\n");
 }
 
 ns_str ns_debug_repl_read_line(char *prompt) {
@@ -101,6 +104,7 @@ const ns_str p_cmd = ns_str_cstr("print");
 const ns_str p_short_cmd = ns_str_cstr("p");
 const ns_str quit_cmd = ns_str_cstr("quit");
 const ns_str q_cmd = ns_str_cstr("q");
+const ns_str ast_cmd = ns_str_cstr("ast");
 
 ns_debug_repl_command ns_debug_repl_parse_command(ns_str line) {
     ns_debug_repl_command cmd = {0};
@@ -131,10 +135,12 @@ ns_debug_repl_command ns_debug_repl_parse_command(ns_str line) {
         cmd.expr = ns_str_sub_expr(line);
     } else if (ns_str_starts_with(line, quit_cmd) || ns_str_starts_with(line, q_cmd)) {
         cmd.type = NS_DEBUG_REPL_QUIT;
+    } else if (ns_str_starts_with(line, ast_cmd)) {
+        cmd.type = NS_DEBUG_REPL_AST;
     } else if (ns_str_starts_with(line, b_cmd) || ns_str_starts_with(line, b_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_BREAK;
         cmd.line = ns_str_to_i32(ns_str_sub_expr(line));
-    } else {
+    } else  {
         cmd.type = NS_DEBUG_REPL_UNKNOWN;
     }
     return cmd;
@@ -265,6 +271,10 @@ ns_return_void ns_debug_repl_loop() {
                 ns_error("ns_debug", "file not found: %.*s\n", cmd.expr.len, cmd.expr.data);
                 return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, "file not found");
             }
+
+            ns_return_bool ret_ast = ns_ast_parse(&_debug_repl_ctx, sess->source, sess->options.filename);
+            if (ns_return_is_error(ret_ast)) return ns_return_change_type(void, ret_ast);
+
             sess->state = NS_DEBUG_STATE_READY;
             break;
         case NS_DEBUG_REPL_RUN:
@@ -273,7 +283,7 @@ ns_return_void ns_debug_repl_loop() {
             {
             case NS_DEBUG_STATE_READY:
                 sess->state = NS_DEBUG_STATE_RUNNING;
-                ns_return_value ret = ns_eval(vm, sess->source, sess->options.filename);
+                ns_return_value ret = ns_eval_ast(vm, &_debug_repl_ctx);
                 if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
                 break;
             case NS_DEBUG_STATE_PAUSED:
@@ -323,6 +333,9 @@ ns_return_void ns_debug_repl_loop() {
             return ns_return_ok_void;
         case NS_DEBUG_REPL_UNKNOWN:
             ns_warn("ns_debug", "unknown command: %.*s\n", line.len, line.data);
+            break;
+        case NS_DEBUG_REPL_AST:
+            ns_ast_ctx_print(&_debug_repl_ctx);
             break;
         default:
             break;

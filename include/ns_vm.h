@@ -47,7 +47,7 @@ typedef struct ns_symbol {
     ns_symbol_type type;
     ns_str name;
     ns_str lib;
-   ns_bool parsed;
+    ns_bool parsed;
     union {
         ns_value val;
         ns_fn_symbol fn;
@@ -150,6 +150,7 @@ ns_scope *ns_exit_scope(ns_vm *vm);
 
 ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
 
 // vm eval stage

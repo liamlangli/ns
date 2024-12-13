@@ -5,7 +5,7 @@ ns_bool ns_parse_module_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_MODULE) &&
         ns_parse_identifier(ctx)) {
-        ns_ast_t n = (ns_ast_t){.type = NS_AST_MODULE_STMT, .module_stmt = { .name = ctx->token } };
+        ns_ast_t n = (ns_ast_t){.type = NS_AST_MODULE_STMT, .state = state, .module_stmt = { .name = ctx->token } };
         ns_ast_push(ctx, n);
         return true;
     }
@@ -16,7 +16,7 @@ ns_bool ns_parse_module_stmt(ns_ast_ctx *ctx) {
 ns_bool ns_parse_import_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_IMPORT) && ns_parse_identifier(ctx)) {
-        ns_ast_t n = (ns_ast_t){.type = NS_AST_IMPORT_STMT, .import_stmt = { .lib = ctx->token } };
+        ns_ast_t n = (ns_ast_t){.type = NS_AST_IMPORT_STMT, .state = state, .import_stmt = { .lib = ctx->token } };
         ns_ast_push(ctx, n);
         return true;
     }

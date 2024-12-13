@@ -60,7 +60,7 @@ void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i,ns_bool colon) {
 void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     ns_ast_t n = ctx->nodes[i];
     ns_str type = ns_ast_type_to_string(n.type);
-    printf("%4d [type: %-20.*s next: %4d] ", i, type.len, type.data, n.next);
+    printf("%4d [type: %-20.*s n:%4d l:%3d] ", i, type.len, type.data, n.next, n.state.l);
     switch (n.type) {
     case NS_AST_IMPORT_STMT: {
         printf(ns_color_log "import " ns_color_nil);
@@ -283,7 +283,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     printf("\n");
 }
 
-void ns_ast_ctx_dump(ns_ast_ctx *ctx) {
+void ns_ast_ctx_print(ns_ast_ctx *ctx) {
     ns_info("ast", "print ast for [%.*s] node count %zu\n", ctx->filename.len, ctx->filename.data, ns_array_length(ctx->nodes));
     for (i32 i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
         ns_ast_print(ctx, i);
