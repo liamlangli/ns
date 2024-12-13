@@ -9,7 +9,7 @@ NS_DAP_OBJS = $(NS_DAP_SRCS:debug/src/%.c=$(OBJDIR)/debug/%.o)
 NS_DAP_BINDIR = $(BINDIR)/debug
 
 ns_debug: $(NS_DAP_TARGET)
-	@echo "building debug at "$(OS)" with options:" \
+	@echo "building ns_debug at "$(OS)" with options:" \
 	"NS_DEBUG=$(NS_DEBUG)"
 
 $(NS_DAP_TARGET): $(NS_DAP_OBJS) | $(NS_DAP_BINDIR) lib

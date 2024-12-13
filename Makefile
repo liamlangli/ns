@@ -94,7 +94,7 @@ TARGET = $(BINDIR)/ns
 
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 
-all: $(TARGET) std lib
+all: $(TARGET) std lib ns_lsp ns_debug
 	@echo "building ns at "$(OS)" with options:" \
 	"NS_BITCODE=$(NS_BITCODE)" \
 	"NS_DEBUG=$(NS_DEBUG)"

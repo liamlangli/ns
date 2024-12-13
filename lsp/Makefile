@@ -9,7 +9,7 @@ NS_LSP_OBJS = $(NS_LSP_SRCS:lsp/src/%.c=$(OBJDIR)/lsp/%.o)
 NS_LSP_BINDIR = $(BINDIR)/lsp
 
 ns_lsp: $(NS_LSP_TARGET)
-	@echo "building lsp at "$(OS)" with options:" \
+	@echo "building ns_lsp at "$(OS)" with options:" \
 	"NS_DEBUG=$(NS_DEBUG)"
 
 $(NS_LSP_TARGET): $(NS_LSP_OBJS) | $(NS_LSP_BINDIR) lib
