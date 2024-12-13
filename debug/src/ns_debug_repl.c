@@ -10,7 +10,7 @@ typedef enum ns_debug_repl_command_type {
     NS_DEBUG_REPL_LOAD,
     NS_DEBUG_REPL_RUN,
     NS_DEBUG_REPL_STEP_INTO,
-    NS_DEBUG_REPL_STEP_OVER,
+    NS_DEBUG_REPL_STEP_NEXT,
     NS_DEBUG_REPL_STEP_OUT,
     NS_DEBUG_REPL_BREAK,
     NS_DEBUG_REPL_BREAK_LIST,
@@ -88,8 +88,10 @@ const ns_str run_cmd = ns_str_cstr("run");
 const ns_str r_cmd = ns_str_cstr("r");
 const ns_str si_cmd = ns_str_cstr("step-into");
 const ns_str si_short_cmd = ns_str_cstr("si");
-const ns_str so_cmd = ns_str_cstr("step-over");
-const ns_str so_short_cmd = ns_str_cstr("so");
+const ns_str sn_cmd = ns_str_cstr("step-over");
+const ns_str sn_short_cmd = ns_str_cstr("sn");
+const ns_str step_out_cmd = ns_str_cstr("step-out");
+const ns_str step_out_short_cmd = ns_str_cstr("so");
 const ns_str b_cmd = ns_str_cstr("break");
 const ns_str b_short_cmd = ns_str_cstr("b");
 const ns_str bl_cmd = ns_str_cstr("break-list");
@@ -117,9 +119,9 @@ ns_debug_repl_command ns_debug_repl_parse_command(ns_str line) {
         cmd.type = NS_DEBUG_REPL_RUN;
     } else if (ns_str_starts_with(line, si_cmd) || ns_str_starts_with(line, si_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_STEP_INTO;
-    } else if (ns_str_starts_with(line, so_cmd) || ns_str_starts_with(line, so_short_cmd)) {
-        cmd.type = NS_DEBUG_REPL_STEP_OVER;
-    } else if (ns_str_starts_with(line, so_cmd) || ns_str_starts_with(line, so_short_cmd)) {
+    } else if (ns_str_starts_with(line, sn_cmd) || ns_str_starts_with(line, sn_short_cmd)) {
+        cmd.type = NS_DEBUG_REPL_STEP_NEXT;
+    } else if (ns_str_starts_with(line, step_out_cmd) || ns_str_starts_with(line, step_out_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_STEP_OUT;
     } else if (ns_str_starts_with(line, bl_cmd) || ns_str_starts_with(line, bl_short_cmd)) {
         cmd.type = NS_DEBUG_REPL_BREAK_LIST;
@@ -150,12 +152,11 @@ ns_return_void ns_debug_repl_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_unused(vm);
 
     ns_debug_session *sess = &_debug_repl_sess;
-    sess->state = NS_DEBUG_STATE_PAUSED;
     ns_ast_t *n = &ctx->nodes[i];
+    if (sess->state != NS_DEBUG_STATE_PAUSED && !ns_debug_hit_breakpoint(sess, n->state.l)) return ns_return_ok_void;
+    sess->state = NS_DEBUG_STATE_PAUSED;
+    
     ns_str f = ctx->filename;
-
-    if (!ns_debug_hit_breakpoint(sess, n->state.l)) return ns_return_ok_void;
-
     ns_info("ns_debug", "hit breakpoint at %.*s:%d:%d\n", f.len, f.data, n->state.l, n->state.o);
     ns_return_void ret = ns_debug_repl_loop();
     if (ns_return_is_error(ret)) {
@@ -264,12 +265,12 @@ ns_return_void ns_debug_repl_loop() {
                 ns_warn("ns_debug", "invalid state\n");
                 break;
             }
-            ns_info("ns_debug", "load %.*s\n", cmd.expr.len, cmd.expr.data);
+
             sess->options.filename = cmd.expr;
             sess->source = ns_fs_read_file(cmd.expr);
             if (sess->source.len == 0) {
-                ns_error("ns_debug", "file not found: %.*s\n", cmd.expr.len, cmd.expr.data);
-                return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, "file not found");
+                ns_warn("ns_debug", "file not found: %.*s\n", cmd.expr.len, cmd.expr.data);
+                break;
             }
 
             ns_return_bool ret_ast = ns_ast_parse(&_debug_repl_ctx, sess->source, sess->options.filename);
@@ -302,8 +303,9 @@ ns_return_void ns_debug_repl_loop() {
         case NS_DEBUG_REPL_STEP_INTO:
             ns_info("ns_debug", "step into\n");
             break;
-        case NS_DEBUG_REPL_STEP_OVER:
-            ns_info("ns_debug", "step over\n");
+        case NS_DEBUG_REPL_STEP_NEXT:
+            ns_info("ns_debug", "step next\n");
+            return ns_return_ok_void;
             break;
         case NS_DEBUG_REPL_STEP_OUT:
             ns_info("ns_debug", "step out\n");
@@ -329,7 +331,8 @@ ns_return_void ns_debug_repl_loop() {
             ns_debug_repl_print(vm, cmd.expr);
             break;
         case NS_DEBUG_REPL_QUIT:
-            ns_exit(0, "ns_debug", "quit\n");
+            ns_info("ns_debug", "quit\n");
+            exit(0);
             return ns_return_ok_void;
         case NS_DEBUG_REPL_UNKNOWN:
             ns_warn("ns_debug", "unknown command: %.*s\n", line.len, line.data);
