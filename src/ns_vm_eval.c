@@ -1,4 +1,5 @@
 #include "ns_vm.h"
+#include "ns_fmt.h"
 
 #ifdef NS_DEBUG_HOOK
     #define ns_vm_inject_hook(vm, ctx, i) if (vm->step_hook) vm->step_hook(vm, ctx, i)
@@ -23,6 +24,7 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
 ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -547,6 +549,7 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_TOKEN_INT_LITERAL: ret = (ns_value){.t = ns_type_i32, .i32 = ns_str_to_i32(t.val)}; break;
     case NS_TOKEN_FLT_LITERAL: ret = (ns_value){.t = ns_type_f64, .f64 = ns_str_to_f64(t.val)}; break;
     case NS_TOKEN_STR_LITERAL: ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, t.val)}; break;
+    case NS_TOKEN_STR_FORMAT: 
     case NS_TOKEN_TRUE: ret = ns_true; break;
     case NS_TOKEN_FALSE: ret = ns_false; break;
     case NS_TOKEN_IDENTIFIER: ret = ns_eval_find_value(vm, t.val); break;
@@ -557,6 +560,53 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, ret);
 }
 
+ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    i32 count = n->str_fmt.expr_count;
+    ns_str fmt = n->str_fmt.fmt;
+
+    ns_str ret = {.data = ns_null, .len = 0, .dynamic = 1};
+    ns_array_set_capacity(ret.data, fmt.len);
+
+    i32 j = 0;
+    ns_ast_t *expr = n;
+    while (j < fmt.len) {
+        if (fmt.data[j] == '{' && (j == 0 || (j > 0 && fmt.data[j - 1] != '\\'))) {
+            ++j;
+            while (j < fmt.len && fmt.data[j] != '}') {
+                j++;
+            }
+            j++;
+
+            if (j == fmt.len) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "missing '}'.");
+            }
+
+            ns_return_value ret_v = ns_eval_expr(vm, ctx, expr->next);
+            expr = &ctx->nodes[expr->next];
+            count--;
+
+            if (count < 0) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unmatched fmt expr.");
+            }
+
+            if (ns_return_is_error(ret_v)) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "failed to eval fmt expr.");
+            }
+            ns_value v = ret_v.r;
+            ns_str s = ns_fmt_value(vm, v);
+            ns_str_append(&ret, s);
+            ns_str_free(s);
+        } else {
+            ns_array_push(ret.data, fmt.data[j++]);
+        }
+    }
+
+    ret.len = ns_array_length(ret.data);
+    ns_value ret_v = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, ns_str_unescape(ret))};
+    return ns_return_ok(value, ret_v);
+}
+
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_vm_inject_hook(vm, ctx, i);
     ns_ast_t *n = &ctx->nodes[i];
@@ -564,6 +614,7 @@ ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_AST_EXPR: return ns_eval_expr(vm, ctx, n->expr.body);
     case NS_AST_CALL_EXPR: return ns_eval_call_expr(vm, ctx, i);
     case NS_AST_BINARY_EXPR: return ns_eval_binary_expr(vm, ctx, i);
+    case NS_AST_STR_FMT_EXPR: return ns_eval_str_fmt_expr(vm, ctx, i);
     case NS_AST_PRIMARY_EXPR: return ns_eval_primary_expr(vm, ctx, i);
     case NS_AST_DESIG_EXPR: return ns_eval_desig_expr(vm, ctx, i);
     case NS_AST_CAST_EXPR: return ns_eval_cast_expr(vm, ctx, i);

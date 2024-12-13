@@ -319,7 +319,7 @@ ns_return_void ns_debug_repl_loop() {
             ns_debug_repl_print(vm, cmd.expr);
             break;
         case NS_DEBUG_REPL_QUIT:
-            ns_info("ns_debug", "quit\n");
+            ns_exit(0, "ns_debug", "quit\n");
             return ns_return_ok_void;
         case NS_DEBUG_REPL_UNKNOWN:
             ns_warn("ns_debug", "unknown command: %.*s\n", line.len, line.data);
@@ -346,7 +346,8 @@ i32 ns_debug_repl(ns_debug_options options) {
 
     ns_return_void ret = ns_debug_repl_loop();
     if (ns_return_is_error(ret)) {
-        ns_error("ns_debug", "repl error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
+        ns_code_loc loc = ret.e.loc;
+        ns_error("ns_debug", "[%.*s:%d:%d] repl error: %.*s\n", loc.f.len, loc.f.data, loc.l, loc.o, ret.e.msg.len, ret.e.msg.data);
         return 1;
     }
 

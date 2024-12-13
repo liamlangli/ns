@@ -43,8 +43,6 @@ void ns_repl(ns_vm* vm) {
             ns_warn("parse", "vm parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
         }
 
-        
-
         ns_repl_free_line(line);
     }
     ne_exit_safe("ns", "exit repl\n");

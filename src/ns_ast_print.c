@@ -5,7 +5,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         ns_str_case(NS_AST_UNKNOWN)
         ns_str_case(NS_AST_PROGRAM)
         ns_str_case(NS_AST_TYPE_LABEL)
-        ns_str_case(NS_AST_STR_FMT)
+        ns_str_case(NS_AST_STR_FMT_EXPR)
         ns_str_case(NS_AST_ARG_DEF)
         ns_str_case(NS_AST_FN_DEF)
         ns_str_case(NS_AST_VAR_DEF)
@@ -158,7 +158,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf("[%d] as ", n.cast_expr.expr);
         ns_str_printf(n.cast_expr.type.val);
         break;
-    case NS_AST_STR_FMT: {
+    case NS_AST_STR_FMT_EXPR: {
         // i32 next = 
         printf("\"");
         ns_str_printf(n.str_fmt.fmt);

@@ -161,7 +161,7 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
     ns_ast_state fmt_state = ns_save_state(ctx);
 
     ns_str fmt = ctx->token.val;
-    ns_ast_t n = {.type = NS_AST_STR_FMT, .state = fmt_state, .str_fmt = {.expr_count = 0, .fmt = fmt}};
+    ns_ast_t n = {.type = NS_AST_STR_FMT_EXPR, .state = fmt_state, .str_fmt = {.expr_count = 0, .fmt = fmt}};
     ns_ast_state state = (ns_ast_state){.f = ctx->last_f, .l = ctx->token.line, .o = ctx->last_f - ctx->token.line_start};
 
     // parse format string

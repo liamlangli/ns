@@ -794,7 +794,7 @@ ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_AST_CAST_EXPR: return ns_vm_parse_cast_expr(vm, ctx, i);
     case NS_AST_ARRAY_EXPR: return ns_return_ok(type, ns_vm_parse_array_expr(vm, ctx, i));
     case NS_AST_INDEX_EXPR: return ns_vm_parse_index_expr(vm, ctx, i);
-    case NS_AST_STR_FMT: return ns_return_ok(type, ns_type_str);
+    case NS_AST_STR_FMT_EXPR: return ns_return_ok(type, ns_type_str);
     default: {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unimplemented expr type.");
     } break;

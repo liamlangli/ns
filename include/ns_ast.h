@@ -10,7 +10,6 @@ typedef enum {
     NS_AST_PROGRAM,
 
     NS_AST_TYPE_LABEL,
-    NS_AST_STR_FMT,
 
     NS_AST_ARG_DEF,
     NS_AST_FN_DEF,
@@ -22,6 +21,7 @@ typedef enum {
     NS_AST_FIELD_DEF,
 
     NS_AST_EXPR,
+    NS_AST_STR_FMT_EXPR,
     NS_AST_PRIMARY_EXPR,
     NS_AST_BINARY_EXPR,
     NS_AST_MEMBER_EXPR,
