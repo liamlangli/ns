@@ -192,13 +192,13 @@ ns_return_bool ns_vm_call_ref(ns_vm *vm) {
     }
 
     if (!lib) {
-        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to find lib.\n");
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref lib not found.\n");
     }
 
     ns_str fn_name = ns_str_slice(fn->name, 0, fn->name.len);
     void *fn_ptr = dlsym(lib->lib, fn_name.data);
     if (!fn_ptr) {
-        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to find fn.\n");
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref fn not found.\n");
     }
 
     fn->fn.fn_ptr = fn_ptr;

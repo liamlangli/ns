@@ -333,7 +333,8 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_array_push(vm->call_stack, call);
     if (fn->fn.fn.t.ref) {
-        ns_vm_call_ref(vm);
+        ns_return_bool ret = ns_vm_call_ref(vm);
+        if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     } else {
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn.ast.fn_def.body);
         if (ns_return_is_error(ret)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "call expr error.");
@@ -642,6 +643,7 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "stack overflow.");
     }
     vm->stack_depth++;
+
     for (i32 e_i = 0, l = n->compound_stmt.count; e_i < l; e_i++) {
         i32 next = expr->next;
         expr = &ctx->nodes[expr->next];
@@ -652,11 +654,26 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         case NS_AST_MEMBER_EXPR:
         case NS_AST_GEN_EXPR:
         case NS_AST_DESIG_EXPR:
-        case NS_AST_UNARY_EXPR: ns_eval_expr(vm, ctx, next); break;
-        case NS_AST_VAR_DEF: ns_eval_local_var_def(vm, ctx, next); break;
-        case NS_AST_JUMP_STMT: ns_eval_jump_stmt(vm, ctx, next); break;
-        case NS_AST_FOR_STMT: ns_eval_for_stmt(vm, ctx, next); break;
-        case NS_AST_IF_STMT: ns_eval_if_stmt(vm, ctx, next); break;
+        case NS_AST_UNARY_EXPR: {
+            ns_return_value ret = ns_eval_expr(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
+        } break;
+        case NS_AST_VAR_DEF: {
+            ns_return_value ret = ns_eval_local_var_def(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
+        } break;
+        case NS_AST_JUMP_STMT: { 
+            ns_return_void ret = ns_eval_jump_stmt(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ret;
+        } break;
+        case NS_AST_FOR_STMT: { 
+            ns_return_void ret = ns_eval_for_stmt(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ret;
+        } break;
+        case NS_AST_IF_STMT: { 
+            ns_return_void ret = ns_eval_if_stmt(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ret;
+        } break;
         default: {
             return ns_return_error(void, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unimplemented stmt type.");
         } break;
@@ -932,6 +949,8 @@ ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
+
     ns_ast_t *n = &ctx->nodes[i];
     ns_symbol *val = ns_vm_find_symbol(vm, n->var_def.name.val);
 
@@ -951,6 +970,8 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
+
     ns_ast_t *n = &ctx->nodes[i];
     if (vm->step_hook) vm->step_hook(vm, ctx, i);
 
@@ -993,11 +1014,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_enter_scope(vm);
         ns_array_push(vm->call_stack, call);
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, main_fn->fn.ast.fn_def.body);
-        if (ns_return_is_error(ret)) {
-            ns_ast_t *n = &ctx->nodes[main_fn->fn.ast.fn_def.body];
-            ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
-            return ns_return_error(value, loc, NS_ERR_EVAL, "main function error.");
-        }
+        if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
 
         ns_array_pop(vm->call_stack);
         ns_exit_scope(vm);

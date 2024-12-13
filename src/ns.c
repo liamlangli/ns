@@ -106,7 +106,7 @@ void ns_exec_eval(ns_str filename) {
     if (source.len == 0) ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
     ns_return_value ret_v = ns_eval(&vm, source, filename);
     if (ns_return_is_error(ret_v)) {
-        ns_error("ns", "eval error: %.*s\n", ret_v.e.msg.len, ret_v.e.msg.data);
+        ns_error("ns", "eval error: %.*s", ret_v.e.msg.len, ret_v.e.msg.data);
     }
 }
 
