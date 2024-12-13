@@ -5,6 +5,8 @@
 #include <dlfcn.h>
 #include <ffi.h>
 
+#define NS_LIB_PATH ".cache/ns/lib/"
+
 ns_return_bool ns_vm_call_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
     if (ns_str_equals_STR(call->fn->name, "print")) {
@@ -57,7 +59,7 @@ ns_lib* ns_lib_find(ns_vm *vm, ns_str lib) {
 
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
     ns_ast_ctx ctx = {0};
-    ns_str path = ns_path_join(ns_str_cstr("lib"), ns_str_concat(lib, ns_str_cstr(".ns")));
+    ns_str path = ns_path_join(ns_str_cstr(NS_LIB_PATH), ns_str_concat(lib, ns_str_cstr(".ns")));
     ns_str source = ns_fs_read_file(path);
     ns_ast_parse(&ctx, source, path);
 
@@ -75,7 +77,8 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
         ns_array_push(vm->libs, _lib);
         return ns_array_last(vm->libs);
     } else {
-        ns_str lib_path = ns_path_join(ns_str_cstr("lib"), ns_str_concat(lib, ns_lib_ext));
+        ns_str home = ns_path_home();
+        ns_str lib_path = ns_path_join(ns_path_join(home, ns_str_cstr(NS_LIB_PATH)), ns_str_concat(lib, ns_lib_ext));
         void* lib_ptr = dlopen(lib_path.data, RTLD_LAZY);
         ns_lib _lib = { .name = lib, .path = lib_path, .lib = lib_ptr };
         ns_array_push(vm->libs, _lib);
@@ -178,28 +181,16 @@ ns_return_bool ns_vm_call_ref(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_symbol *fn = call->fn;
 
-    if (ns_str_equals(fn->lib, ns_str_cstr("std"))) {
-        return ns_vm_call_std(vm);
-    }
-
-    if (fn->fn.fn_ptr) {
-        return ns_vm_call_ffi(vm);
-    }
+    if (ns_str_equals(fn->lib, ns_str_cstr("std"))) return ns_vm_call_std(vm);
+    if (fn->fn.fn_ptr)  return ns_vm_call_ffi(vm);
 
     ns_lib *lib = ns_lib_find(vm, fn->lib);
-    if (!lib) {
-       lib = ns_lib_import(vm, fn->lib);
-    }
-
-    if (!lib) {
-        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref lib not found.\n");
-    }
+    if (!lib) lib = ns_lib_import(vm, fn->lib);
+    if (!lib) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref lib not found.\n");
 
     ns_str fn_name = ns_str_slice(fn->name, 0, fn->name.len);
     void *fn_ptr = dlsym(lib->lib, fn_name.data);
-    if (!fn_ptr) {
-        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref fn not found.\n");
-    }
+    if (!fn_ptr) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref fn not found.\n");
 
     fn->fn.fn_ptr = fn_ptr;
     return ns_vm_call_ffi(vm);

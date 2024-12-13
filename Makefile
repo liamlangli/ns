@@ -155,9 +155,6 @@ so: $(NS_LIB_OBJS) | $(OBJDIR)
 trace: $(TARGET)
 	dtrace -n 'profile-997 /execname == "$(TARGET)"/ { @[ustack()] = count(); }' -c $(TARGET) -o bin/ns.stacks
 
-install: $(TARGET)
-	cp $(TARGET) /usr/local/bin
-
 $(NS_TEST_TARGETS): $(BINDIR)/%: test/%.c | $(BINDIR) lib
 	$(CC) -o $@ $< $(NS_CFLAGS) $(NS_LDFLAGS) -lns -L$(BINDIR) -Itest
 
@@ -167,3 +164,11 @@ test: $(NS_TEST_TARGETS)
 include lib/Makefile
 include lsp/Makefile
 include debug/Makefile
+
+install: all ns_debug ns_lsp
+	mkdir -p ~/.cache/ns/bin
+	cp bin/ns$(NS_SUFFIX) ~/.cache/ns/bin
+	cp bin/ns_debug$(NS_SUFFIX) ~/.cache/ns/bin
+	cp bin/ns_lsp$(NS_SUFFIX) ~/.cache/ns/bin
+	mkdir -p ~/.cache/ns/ref && cp -r lib/*.ns ~/.cache/ns/ref
+	mkdir -p ~/.cache/ns/lib && cp -r bin/*$(NS_LIB_SUFFIX) ~/.cache/ns/lib

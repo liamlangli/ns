@@ -77,14 +77,12 @@ async fn download(url: str): Data {
 }
 ```
 
-## LSP Server
-- TCP based LSP server for language server. Host on port 5000.
-
-## DAP Server
-- TCP based DAP server for debugging. Host on port 5001.
+## Components
+- `ns`: The Nano Script compiler that compiles Nano Script source code into LLVM IR or machine code.
+- `ns_lsp`: A language server for Nano Script providing features like code completion, hover, and diagnostics.
+- `ns_debug`: A debug adapter for Nano Script offering debugging features such as breakpoints, stepping, and variable inspection.
 
 ## Build Options
-| Option         | Description                  |
-|----------------|------------------------------|
-| `NS_DEBUG`     | Debug mode                   |
-| `NS_BITCODE`   | Generate bitcode file        |
+- `NS_DEBUG`: Debug mode.
+- `NS_BITCODE`: Generate bitcode file.
+- `NS_JIT`: Enable Just-In-Time compiler.
