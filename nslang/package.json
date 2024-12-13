@@ -5,7 +5,7 @@
     "version": "0.0.12",
     "publisher": "liamlangli",
     "scripts": {
-        "vsce": "cp ../README.md ./",
+        "vsce": "cp ../README.md ./ && vsce package",
         "build": "tsc -b",
         "watch": "tsc -b -w"
     },

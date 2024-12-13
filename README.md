@@ -78,7 +78,7 @@ async fn download(url: str): Data {
 ```
 
 ## Components
-- `ns`: The Nano Script compiler that compiles Nano Script source code into LLVM IR or machine code.
+- `ns`: The Nano Script compiler and interpreter that can compiles and executes Nano Script source code.
 - `ns_lsp`: A language server for Nano Script providing features like code completion, hover, and diagnostics.
 - `ns_debug`: A debug adapter for Nano Script offering debugging features such as breakpoints, stepping, and variable inspection.
 

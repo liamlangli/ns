@@ -5,7 +5,8 @@
 #include <dlfcn.h>
 #include <ffi.h>
 
-#define NS_LIB_PATH ".cache/ns/lib/"
+#define NS_LIB_PATH ".cache/ns/lib"
+#define NS_REF_PATH ".cache/ns/ref"
 
 ns_return_bool ns_vm_call_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
@@ -59,7 +60,10 @@ ns_lib* ns_lib_find(ns_vm *vm, ns_str lib) {
 
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
     ns_ast_ctx ctx = {0};
-    ns_str path = ns_path_join(ns_str_cstr(NS_LIB_PATH), ns_str_concat(lib, ns_str_cstr(".ns")));
+    ns_str home = ns_path_home();
+    ns_str ref_path = ns_path_join(home, ns_str_cstr(NS_REF_PATH));
+
+    ns_str path = ns_path_join(ref_path, ns_str_concat(lib, ns_str_cstr(".ns")));
     ns_str source = ns_fs_read_file(path);
     ns_ast_parse(&ctx, source, path);
 
@@ -77,10 +81,10 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
         ns_array_push(vm->libs, _lib);
         return ns_array_last(vm->libs);
     } else {
-        ns_str home = ns_path_home();
-        ns_str lib_path = ns_path_join(ns_path_join(home, ns_str_cstr(NS_LIB_PATH)), ns_str_concat(lib, ns_lib_ext));
-        void* lib_ptr = dlopen(lib_path.data, RTLD_LAZY);
-        ns_lib _lib = { .name = lib, .path = lib_path, .lib = lib_ptr };
+        ns_str lib_path = ns_path_join(home, ns_str_cstr(NS_LIB_PATH));
+        ns_str lib_link_path = ns_path_join(lib_path, ns_str_concat(lib, ns_lib_ext));
+        void* lib_ptr = dlopen(lib_link_path.data, RTLD_LAZY);
+        ns_lib _lib = { .name = lib, .path = lib_link_path, .lib = lib_ptr };
         ns_array_push(vm->libs, _lib);
         return ns_array_last(vm->libs);
     }

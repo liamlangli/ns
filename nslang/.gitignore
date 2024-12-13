@@ -130,4 +130,5 @@ dist
 .pnp.*
 
 package-lock.json
-./README.md
+yarn.lock
+README.md
