@@ -68,7 +68,7 @@ fn main() {
             direction = normalize(simd3 { x: u, y: v, z: -1.0 })
             let t = hit_sphere(origin, direction, center, radius)
             p = origin + direction * t
-            n = normalize((p - center) / radius)
+            n = (p - center) / radius
 
             offset = (i * 256 + j) * 4
             if t > 0.0 {
