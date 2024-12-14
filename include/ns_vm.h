@@ -75,6 +75,7 @@ typedef struct ns_call {
     ns_symbol *fn;
     i32 arg_offset, arg_count;
     ns_value ret;
+    ns_bool ret_set;
     u32 scope_top;
 } ns_call;
 

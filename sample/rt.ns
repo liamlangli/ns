@@ -34,8 +34,9 @@ fn hit_sphere(origin: simd3, direction: simd3, center: simd3, radius: f64): f64 
         return -1.0
     }
 
-    let t1 = (-b - sqrt(dt)) / (2.0 * a)
-    let t2 = (-b + sqrt(dt)) / (2.0 * a)
+    let sdt = sqrt(dt)
+    let t1 = (-b - sdt) / (2.0 * a)
+    let t2 = (-b + sdt) / (2.0 * a)
     if t1 >= 0.0 {
         return t1
     }
@@ -51,8 +52,8 @@ fn main() {
     let origin = simd3 { x: 0.0, y: 0.0, z: 0.0 }
     let direction = simd3 { x: 0.0, y: 0.0, z: -1.0 }
 
-    let center = simd3 { x: 0.0, y: 0.0, z: 10.0 }
-    let radius = 0.5
+    let center = simd3 { x: 0.0, y: 0.0, z: -5.0 }
+    let radius = 2.0
 
     let image = Image{data: [u8](256 * 256 * 4), width: 256, height: 256, channels: 4}
     let offset = 0
@@ -61,8 +62,8 @@ fn main() {
 
     for i in 0 to 256 {
         for j in 0 to 256 {
-            let u = i as f64 / 256.0 - 0.5
-            let v = j as f64 / 256.0 - 0.5
+            let u = (i as f64) / 256.0 - 0.5
+            let v = (j as f64) / 256.0 - 0.5
 
             direction = normalize(simd3 { x: u, y: v, z: -1.0 })
             let t = hit_sphere(origin, direction, center, radius)
@@ -70,7 +71,7 @@ fn main() {
             n = normalize((p - center) / radius)
 
             offset = (i * 256 + j) * 4
-            if t < 0.0 {
+            if t > 0.0 {
                 image.data[offset + 0] = (n.x * 128.0 + 128.0) as u8
                 image.data[offset + 1] = (n.y * 128.0 + 128.0) as u8
                 image.data[offset + 2] = (n.z * 128.0 + 128.0) as u8

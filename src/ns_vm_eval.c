@@ -317,7 +317,7 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_symbol *fn = &vm->symbols[ns_type_index(callee.t)];
-    ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->fn.args)};
+    ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->fn.args)};
 
     ns_enter_scope(vm);
     i32 next = n->call_expr.arg;
@@ -357,6 +357,7 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return type mismatch.");
         }
         call->ret = ret;
+        call->ret_set = true;
     }
     return ns_return_ok(value, ret);
 }
@@ -682,6 +683,13 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         default: {
             return ns_return_error(void, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unimplemented stmt type.");
         } break;
+        }
+
+        if (ns_array_length(vm->call_stack) > 0) {
+            ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
+            if (call->ret_set) {
+                return ns_return_ok_void;
+            }
         }
     }
     vm->stack_depth = stack_depth;
@@ -1014,7 +1022,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
 
     ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
     if (ns_null != main_fn) {
-        ns_call call = (ns_call){.fn = main_fn, .scope_top = ns_array_length(vm->scope_stack)};
+        ns_call call = (ns_call){.fn = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
 
         ns_enter_scope(vm);
         ns_array_push(vm->call_stack, call);
