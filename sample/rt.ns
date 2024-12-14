@@ -2,8 +2,6 @@ import std
 import io
 
 struct simd3 { x: f64, y: f64, z: f64 }
-struct ray { origin: simd3, direction: simd3 }
-struct sphere { center: simd3, radius: f64 }
 
 fn ops(+)(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.x + rhs.x, y: lhs.y + rhs.y, z: lhs.z + rhs.z } }
 fn ops(-)(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.x - rhs.x, y: lhs.y - rhs.y, z: lhs.z - rhs.z } }
@@ -25,11 +23,11 @@ fn dot(lhs: simd3, rhs: simd3): f64 {
     return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z
 }
 
-fn hit_sphere(r: ray, s: sphere): f64 {
-    let oc = r.origin - s.center
-    let a = dot(r.direction, r.direction)
-    let b = 2.0 * dot(oc, r.direction)
-    let c = dot(oc, oc) - s.radius * s.radius
+fn hit_sphere(origin: simd3, direction: simd3, center: simd3, radius: f64): f64 {
+    let oc = origin - center
+    let a = dot(direction, direction)
+    let b = 2.0 * dot(oc, direction)
+    let c = dot(oc, oc) - radius * radius
     let dt = b * b - 4.0 * a * c
 
     if dt < 0.0 {
@@ -50,15 +48,11 @@ fn hit_sphere(r: ray, s: sphere): f64 {
 }
 
 fn main() {
-    let r = ray {
-        origin: simd3 { x: 0.0, y: 0.0, z: 0.0 },
-        direction: simd3 { x: 0.0, y: 0.0, z: 1.0 }
-    }
+    let origin = simd3 { x: 0.0, y: 0.0, z: 0.0 }
+    let direction = simd3 { x: 0.0, y: 0.0, z: -1.0 }
 
-    let s = sphere {
-        center: simd3 { x: 0.0, y: 0.0, z: 10.0 },
-        radius: 0.5
-    }
+    let center = simd3 { x: 0.0, y: 0.0, z: 10.0 }
+    let radius = 0.5
 
     let image = Image{data: [u8](256 * 256 * 4), width: 256, height: 256, channels: 4}
     let offset = 0
@@ -70,10 +64,10 @@ fn main() {
             let u = i as f64 / 256.0 - 0.5
             let v = j as f64 / 256.0 - 0.5
 
-            r.direction = simd3 { x: u, y: v, z: -1.0 }
-            let t = hit_sphere(r, s)
-            p = r.origin + r.direction * t
-            n = normalize((p - s.center) / s.radius)
+            direction = normalize(simd3 { x: u, y: v, z: -1.0 })
+            let t = hit_sphere(origin, direction, center, radius)
+            p = origin + direction * t
+            n = normalize((p - center) / radius)
 
             offset = (i * 256 + j) * 4
             if t < 0.0 {

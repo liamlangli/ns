@@ -46,6 +46,7 @@ void ns_debug_repl_print(ns_vm *vm, ns_str expr);
 static ns_vm _debug_repl_vm = {0};
 static ns_debug_session _debug_repl_sess = {0};
 static ns_ast_ctx _debug_repl_ctx = {0};
+static ns_ast_ctx _debug_ast_ctx = {0};
 static ns_str _debug_repl_history;
 
 #define NS_DEBUG_REPL_HISTORY_FILE ".cache/ns/nsdb.history"
@@ -273,7 +274,7 @@ ns_return_void ns_debug_repl_loop() {
                 break;
             }
 
-            ns_return_bool ret_ast = ns_ast_parse(&_debug_repl_ctx, sess->source, sess->options.filename);
+            ns_return_bool ret_ast = ns_ast_parse(&_debug_ast_ctx, sess->source, sess->options.filename);
             if (ns_return_is_error(ret_ast)) return ns_return_change_type(void, ret_ast);
 
             sess->state = NS_DEBUG_STATE_READY;
@@ -284,7 +285,7 @@ ns_return_void ns_debug_repl_loop() {
             {
             case NS_DEBUG_STATE_READY:
                 sess->state = NS_DEBUG_STATE_RUNNING;
-                ns_return_value ret = ns_eval_ast(vm, &_debug_repl_ctx);
+                ns_return_value ret = ns_eval(vm, sess->source, sess->options.filename);
                 if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
                 break;
             case NS_DEBUG_STATE_PAUSED:
@@ -338,7 +339,7 @@ ns_return_void ns_debug_repl_loop() {
             ns_warn("ns_debug", "unknown command: %.*s\n", line.len, line.data);
             break;
         case NS_DEBUG_REPL_AST:
-            ns_ast_ctx_print(&_debug_repl_ctx);
+            ns_ast_ctx_print(&_debug_ast_ctx);
             break;
         default:
             break;

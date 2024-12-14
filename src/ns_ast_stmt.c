@@ -318,5 +318,5 @@ ns_return_bool ns_parse_global_define(ns_ast_ctx *ctx) {
     ns_parse_check_fn(ns_parse_stmt);
     ns_parse_check_fn(ns_parse_expr_stmt);
 
-    return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "invalid global define");
+    return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "invalid syntax.");
 }
