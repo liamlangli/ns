@@ -162,8 +162,10 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_str fn_name = ns_ops_override_name(l_name, r_name, op);
     ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
     if (!fn) ns_nil;
-    ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 2};
 
+    u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
+    ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
+    ns_call call = (ns_call){.fn = fn, .ret = ret_val, .ret_set = false, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 2};
     ns_enter_scope(vm);
 
     ns_symbol l_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->fn.args[0].name, .val = l};
@@ -317,7 +319,9 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_symbol *fn = &vm->symbols[ns_type_index(callee.t)];
-    ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->fn.args)};
+    u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
+    ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
+    ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->fn.args)};
 
     ns_enter_scope(vm);
     i32 next = n->call_expr.arg;
@@ -356,7 +360,7 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             // TODO: try type cast, emit error if failed
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return type mismatch.");
         }
-        call->ret = ret;
+        ns_eval_copy(vm, call->ret, ret, ns_type_size(vm, ret.t));
         call->ret_set = true;
     }
     return ns_return_ok(value, ret);
@@ -473,8 +477,13 @@ ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l
     return ns_return_ok(value, ns_nil);
 }
 
-ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, ns_symbol *fn) {
-    ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), 2 };
+ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value l, ns_value r, ns_symbol *fn) {
+    ns_vm_inject_hook(vm, ctx, i);
+    ns_unused(i);
+
+    u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
+    ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
+    ns_call call = (ns_call){.fn = fn, .ret = ret_val, .ret_set = false, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), 2 };
     ns_enter_scope(vm);
 
     ns_symbol l_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->fn.args[0].name, .val = l, .parsed = true};
@@ -508,7 +517,7 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
         ns_str fn_name = ns_ops_override_name(l_t, r_t, n->ops_fn_def.ops);
         ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
         if (fn) {
-            return ns_eval_call_ops_fn(vm, ctx, l, r, fn);
+            return ns_eval_call_ops_fn(vm, ctx, i, l, r, fn);
         }
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented binary ops.");
     }

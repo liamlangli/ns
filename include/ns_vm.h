@@ -10,6 +10,12 @@ typedef enum {
     NS_SYMBOL_STRUCT,
 } ns_symbol_type;
 
+typedef enum ns_scope_state {
+    NS_SCOPE_LINEAR,
+    NS_SCOPE_CONTINUE,
+    NS_SCOPE_BREAK,
+} ns_scope_state;
+
 typedef struct ns_symbol ns_symbol;
 
 typedef struct ns_fn_symbol {
@@ -69,14 +75,15 @@ typedef struct ns_struct {
 typedef struct ns_scope {
     i32 stack_top;
     i32 symbol_top;
+    ns_scope_state state: 4;
 } ns_scope;
 
 typedef struct ns_call {
     ns_symbol *fn;
     i32 arg_offset, arg_count;
     ns_value ret;
-    ns_bool ret_set;
     u32 scope_top;
+    ns_bool ret_set: 2;
 } ns_call;
 
 typedef struct ns_lib {

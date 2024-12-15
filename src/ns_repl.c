@@ -6,7 +6,6 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-static ns_vm _ns_repl_vm = {0};
 static ns_ast_ctx _ns_repl_ctx = {0};
 
 ns_str ns_repl_read_line(char *prompt) {
