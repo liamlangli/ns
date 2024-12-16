@@ -6,16 +6,20 @@ OS := $(shell uname -s 2>/dev/null || echo Windows)
 NS_PLATFORM_DEF =
 NS_SUFFIX =
 NS_LIB_SUFFIX =
+NS_OS = 
 ifeq ($(OS), Linux)
 	NS_LIB_SUFFIX = .so
 	NS_PLATFORM_DEF = -DNS_LINUX
+	NS_OS =	linux
 else ifeq ($(OS), Darwin)
 	NS_LIB_SUFFIX = .dylib
 	NS_PLATFORM_DEF = -DNS_DARWIN
+	NS_OS = darwin
 else
 	NS_LIB_SUFFIX = .dll
 	NS_SUFFIX = .exe
 	NS_PLATFORM_DEF = -DNS_WIN32
+	NS_OS = windows
 endif
 
 # OPTIONS

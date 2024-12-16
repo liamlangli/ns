@@ -190,11 +190,11 @@ ns_return_bool ns_vm_call_ref(ns_vm *vm) {
 
     ns_lib *lib = ns_lib_find(vm, fn->lib);
     if (!lib) lib = ns_lib_import(vm, fn->lib);
-    if (!lib) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref lib not found.\n");
+    if (!lib) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref lib not found.");
 
     ns_str fn_name = ns_str_slice(fn->name, 0, fn->name.len);
     void *fn_ptr = dlsym(lib->lib, fn_name.data);
-    if (!fn_ptr) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref fn not found.\n");
+    if (!fn_ptr) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref fn not found.");
 
     fn->fn.fn_ptr = fn_ptr;
     return ns_vm_call_ffi(vm);

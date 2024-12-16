@@ -39,7 +39,7 @@ fn ops(+)(lhs: Point, rhs: Point): Point {
 
 // to string fn
 fn to_str(p: Point): str {
-    return "[{p.x}, {p.y}]"
+    return `{p.x}, {p.y}`  // str format
 }
 
 let point_a = Point(0, 0)

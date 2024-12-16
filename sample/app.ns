@@ -1,0 +1,5 @@
+import os
+
+fn main() {
+    let window = os_window_create("ns", 800, 600);
+}
