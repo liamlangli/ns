@@ -6,7 +6,7 @@ struct simd3 { x: f64, y: f64, z: f64 }
 fn ops(+)(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.x + rhs.x, y: lhs.y + rhs.y, z: lhs.z + rhs.z } }
 fn ops(-)(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.x - rhs.x, y: lhs.y - rhs.y, z: lhs.z - rhs.z } }
 fn ops(+)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs } }
-fn ops(-)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs } }
+fn ops(-)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x - rhs, y: lhs.y - rhs, z: lhs.z - rhs } }
 fn ops(*)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x * rhs, y: lhs.y * rhs, z: lhs.z * rhs } }
 fn ops(/)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x / rhs, y: lhs.y / rhs, z: lhs.z / rhs } }
 
@@ -67,7 +67,7 @@ fn main() {
             direction = normalize(simd3 { x: u, y: v, z: -1.0 })
             let t = hit_sphere(origin, direction, center, radius)
             let hit = origin + direction * t
-            n = (hit - center) / radius
+            n = normalize((hit - center) / radius)
 
             offset = (i * 256 + j) * 4
             if t > 0.0 {

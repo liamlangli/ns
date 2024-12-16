@@ -163,7 +163,7 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_str r_name = ns_vm_get_type_name(vm, r.t);
     ns_str fn_name = ns_ops_override_name(l_name, r_name, op);
     ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
-    if (!fn) ns_nil;
+    if (!fn) return ns_return_ok(value, ns_nil);
 
     u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
