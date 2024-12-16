@@ -501,7 +501,7 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
     do {
         state = ns_save_state(ctx);
         if (!ns_parse_next_token(ctx)) {
-            if (ctx->token.type == NS_TOKEN_EOF || ctx->f >= source_len) {
+            if (ctx->token.type == NS_TOKEN_EOF || ctx->f > source_len) {
                 goto rewind;
             }
             return ns_return_ok(bool, false);

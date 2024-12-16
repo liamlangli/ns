@@ -130,6 +130,8 @@ ns_scope* ns_exit_scope(ns_vm *vm) {
 }
 
 ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
+
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_value ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
     if (ns_return_is_error(ret_l)) return ns_return_change_type(value, ret_l);

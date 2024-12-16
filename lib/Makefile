@@ -19,10 +19,10 @@ bin/lib/os.osx.o: lib/src/os.osx.m
 	clang -c $< -o $@ -Ilib/include -Iinclude
 
 bin/lib/os.o: lib/src/os.c
-	$(CC) -c $< -o $@ $(NS_LIB_CFLAGS) -framework Cocoa -framework Metal -framework MetalKit
+	$(CC) -c $< -o $@ $(NS_LIB_CFLAGS)
 
 bin/os.dylib: bin/lib/os.o bin/lib/os.osx.o
-	clang -shared $^ -o $@ $(NS_CFLAGS) -Ilib/include -framework Cocoa -framework Metal -framework MetalKit
+	clang -shared $^ -o $@ -Ilib/include -framework Cocoa -framework Metal -framework MetalKit
 
 std: $(NS_STD_LIBS) bin/os.dylib
 

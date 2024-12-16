@@ -222,11 +222,6 @@ void ns_debug_repl_print(ns_vm *vm, ns_str expr) {
         return;
     }
 
-    ret_p = ns_vm_parse(vm, ctx);
-    if (ns_return_is_error(ret_p)) {
-        ns_warn("parse", "vm parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
-    }
-
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s_i = ctx->sections[i];
         ns_ast_t *n = &ctx->nodes[s_i];

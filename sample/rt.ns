@@ -19,9 +19,8 @@ fn normalize(this: simd3): simd3 {
     return this * inv
 }
 
-fn dot(lhs: simd3, rhs: simd3): f64 {
-    return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z
-}
+fn dot(lhs: simd3, rhs: simd3): f64 { return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z }
+fn cross(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.y * rhs.z - lhs.z * rhs.y, y: lhs.z * rhs.x - lhs.x * rhs.z, z: lhs.x * rhs.y - lhs.y * rhs.x } }
 
 fn hit_sphere(origin: simd3, direction: simd3, center: simd3, radius: f64): f64 {
     let oc = origin - center
@@ -43,39 +42,6 @@ fn hit_sphere(origin: simd3, direction: simd3, center: simd3, radius: f64): f64 
 
     if t2 >= 0.0 {
         return t2
-    }
-
-    return -1.0
-}
-
-fn hit_triangle(origin: simd3, direction: simd3, a: simd3, b: simd3, c: simd3): f64 {
-    let e1 = b - a
-    let e2 = c - a
-    let h = cross(direction, e2)
-    let a = dot(e1, h)
-
-    if a > -0.00001 && a < 0.00001 {
-        return -1.0
-    }
-
-    let f = 1.0 / a
-    let s = origin - a
-    let u = f * dot(s, h)
-
-    if u < 0.0 || u > 1.0 {
-        return -1.0
-    }
-
-    let q = cross(s, e1)
-    let v = f * dot(direction, q)
-
-    if v < 0.0 || u + v > 1.0 {
-        return -1.0
-    }
-
-    let t = f * dot(e2, q)
-    if t > 0.00001 {
-        return t
     }
 
     return -1.0
