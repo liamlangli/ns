@@ -158,11 +158,12 @@ ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
 }
 
 ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
-    ns_ast_state fmt_state = ns_save_state(ctx);
+    ns_ast_state state = (ns_ast_state){.f = ctx->last_f, .l = ctx->token.line, .o = ctx->last_f - ctx->token.line_start};
 
     ns_str fmt = ctx->token.val;
-    ns_ast_t n = {.type = NS_AST_STR_FMT_EXPR, .state = fmt_state, .str_fmt = {.expr_count = 0, .fmt = fmt}};
-    ns_ast_state state = (ns_ast_state){.f = ctx->last_f, .l = ctx->token.line, .o = ctx->last_f - ctx->token.line_start};
+    ns_ast_t n = {.type = NS_AST_STR_FMT_EXPR, .state = state, .str_fmt = {.expr_count = 0, .fmt = fmt}};
+    ns_ast_state end_state = (ns_ast_state){.f = state.f + fmt.len + 2, .l = state.l, .o = state.o + fmt.len + 2};
+    i32 source_len = ctx->source.len;
 
     // parse format string
     ns_ast_t *expr = &n;
@@ -178,14 +179,19 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
                 ns_ast_state expr_state = (ns_ast_state){.f = state.f + start, .l = state.l, .o = state.o + start};
                 return ns_return_error(bool, ns_ast_state_loc(ctx, expr_state), NS_ERR_SYNTAX, "missing '}'.");
             }
-
+            i32 len = i - start;
             ns_ast_state expr_state = (ns_ast_state){.f = state.f + start + 1, .l = state.l, .o = state.o + start + 1};
             ns_restore_state(ctx, expr_state);
 
+            // temporary set end of source to parse expression
+            ctx->source.len = expr_state.f + len;
             ns_return_bool ret = ns_parse_expr(ctx);
+
             if (ns_return_is_error(ret)) return ret;
             if (ret.r) {
                 n.str_fmt.expr_count++;
+                ns_ast_t expr_n = {.type = NS_AST_EXPR, .state = expr_state, .expr = {.body = ctx->current} };
+                ctx->current = ns_ast_push(ctx, expr_n);
                 expr->next = ctx->current;
                 expr = &ctx->nodes[ctx->current];
             } else {
@@ -195,13 +201,15 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
             i++;
         }
     }
+    ctx->source.len = source_len;
+
     if (n.str_fmt.expr_count == 0) {
         n = (ns_ast_t){.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
         return ns_return_ok(bool, true);
     }
 
     ns_ast_push(ctx, n);
-    ns_restore_state(ctx, fmt_state);
+    ns_restore_state(ctx, end_state);
     return ns_return_ok(bool, true);
 }
 
@@ -454,7 +462,7 @@ ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
         ns_ast_t n = {.type = NS_AST_UNARY_EXPR, .state = state, .unary_expr = {.op = ctx->token}};
 
         ns_ast_state operand_state = ns_save_state(ctx);
-        ret = ns_parse_postfix_expr(ctx, -1);
+        ret = ns_parse_postfix_expr(ctx, 0);
         if (ns_return_is_error(ret)) return ret;
 
         if (ret.r) {
@@ -489,10 +497,11 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
 
     ns_return_bool ret;
     ns_ast_state state;
+    i32 source_len = ctx->source.len;
     do {
         state = ns_save_state(ctx);
         if (!ns_parse_next_token(ctx)) {
-            if (ctx->token.type == NS_TOKEN_EOF) {
+            if (ctx->token.type == NS_TOKEN_EOF || ctx->f >= source_len) {
                 goto rewind;
             }
             return ns_return_ok(bool, false);

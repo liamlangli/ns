@@ -20,7 +20,7 @@ ns_bool ns_parse_next_token(ns_ast_ctx *ctx) {
         ctx->last_token = ctx->token;
         ctx->f = ns_next_token(&ctx->token, ctx->source, ctx->filename, ctx->f);
     } while (ctx->token.type == NS_TOKEN_COMMENT || ctx->token.type == NS_TOKEN_SPACE);
-    return ctx->token.type != NS_TOKEN_EOF;
+    return ctx->token.type != NS_TOKEN_EOF && ctx->f < ctx->source.len;
 }
 
 ns_bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token) {

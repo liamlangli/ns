@@ -28,7 +28,7 @@
             "name": "expr",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["--eval", "sample/expr.ns"],
+            "args": ["--ast", "sample/expr.ns"],
             "cwd": "${workspaceFolder}"
         },
         {

@@ -293,7 +293,6 @@ ns_value ns_eval_number_mod(ns_vm *vm, ns_value l, ns_value r) {
     return ret;
 }
 
-
 ns_return_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i) {
     ns_number_type ln = ns_vm_number_type(l.t);
     ns_number_type rn = ns_vm_number_type(r.t);
