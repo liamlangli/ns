@@ -48,6 +48,39 @@ fn hit_sphere(origin: simd3, direction: simd3, center: simd3, radius: f64): f64 
     return -1.0
 }
 
+fn hit_triangle(origin: simd3, direction: simd3, a: simd3, b: simd3, c: simd3): f64 {
+    let e1 = b - a
+    let e2 = c - a
+    let h = cross(direction, e2)
+    let a = dot(e1, h)
+
+    if a > -0.00001 && a < 0.00001 {
+        return -1.0
+    }
+
+    let f = 1.0 / a
+    let s = origin - a
+    let u = f * dot(s, h)
+
+    if u < 0.0 || u > 1.0 {
+        return -1.0
+    }
+
+    let q = cross(s, e1)
+    let v = f * dot(direction, q)
+
+    if v < 0.0 || u + v > 1.0 {
+        return -1.0
+    }
+
+    let t = f * dot(e2, q)
+    if t > 0.00001 {
+        return t
+    }
+
+    return -1.0
+}
+
 fn main() {
     let origin = simd3 { x: 0.0, y: 0.0, z: 0.0 }
     let direction = simd3 { x: 0.0, y: 0.0, z: -1.0 }
