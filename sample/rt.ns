@@ -72,10 +72,9 @@ fn main() {
 
             offset = (i * 256 + j) * 4
             if t > 0.0 {
-                print(`{n.x}, {n.y}, {n.z}\n`)
-                image.data[offset + 0] = (n.x * 255.0) as u8
-                image.data[offset + 1] = (n.y * 255.0) as u8
-                image.data[offset + 2] = (n.z * 255.0) as u8
+                image.data[offset + 0] = (n.x * 127.0 + 127.0) as u8
+                image.data[offset + 1] = (n.y * 127.0 + 127.0) as u8
+                image.data[offset + 2] = (n.z * 127.0 + 127.0) as u8
             } else {
                 image.data[offset + 0] = 0 as u8
                 image.data[offset + 1] = 0 as u8
