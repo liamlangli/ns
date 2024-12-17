@@ -1,4 +1,4 @@
-NS_DAP_LDFLAGS = -lreadline `pkg-config --libs libffi` -ldl -flto -L/usr/lib
+NS_DAP_LDFLAGS = $(NS_LDFLAGS) -lncurses
 NS_DAP_TARGET = $(TARGET)_debug
 
 NS_DAP_CFLAGS = $(NS_CFLAGS) -Idebug/include

@@ -3,7 +3,7 @@
 #include "ns_os.h"
 
 #include <dlfcn.h>
-#include <ffi.h>
+#include <ffi/ffi.h>
 
 #define NS_LIB_PATH ".cache/ns/lib"
 #define NS_REF_PATH ".cache/ns/ref"
