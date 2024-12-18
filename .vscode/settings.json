@@ -9,6 +9,7 @@
         "*.ns": "ns",
         "*.h": "c",
         "*.c": "c",
+        "*.m": "objective-c",
         "__node_handle": "c",
         "cstdlib": "c",
         "locale": "c",

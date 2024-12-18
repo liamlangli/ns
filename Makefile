@@ -53,7 +53,7 @@ ifeq ($(NS_BITCODE), 1)
 	JIT_LDFLAGS = $(LLVM_LDFLAGS)
 endif
 
-NS_LDFLAGS = -lm -lreadline -lffi -ldl -flto -L/usr/lib
+NS_LDFLAGS = -lm -lreadline -lffi -ldl -L/usr/lib
 NS_INC = -Iinclude $(NS_PLATFORM_DEF)
 
 NS_DEBUG_CFLAGS = $(NS_INC) -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG

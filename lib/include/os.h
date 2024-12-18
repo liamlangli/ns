@@ -159,7 +159,7 @@ typedef struct os_window {
     void *on_terminate;
 } os_window;
 
-os_window* os_window_create(ns_str title, i32 width, i32 height);
+os_window* os_window_create(const char *title, i32 width, i32 height);
 
 void os_window_close(os_window *window);
 void os_window_capture_require(os_window *window);

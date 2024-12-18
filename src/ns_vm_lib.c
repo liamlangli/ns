@@ -5,8 +5,19 @@
 #include <dlfcn.h>
 #include <ffi/ffi.h>
 
-#define NS_LIB_PATH ".cache/ns/lib"
-#define NS_REF_PATH ".cache/ns/ref"
+#ifdef NS_DEBUG
+    #define NS_LIB_PATH "bin"
+    #define NS_REF_PATH "lib"
+#else
+    #define NS_LIB_PATH ".cache/ns/lib"
+    #define NS_REF_PATH ".cache/ns/ref"
+#endif // NS_DEBUG
+
+#define NS_MAX_FFI_ARGS 16
+static ffi_type _ffi_type_refs[NS_MAX_FFI_ARGS];
+static ffi_type *_ffi_types[NS_MAX_FFI_ARGS];
+static void *_ffi_refs[NS_MAX_FFI_ARGS];
+static void *_ffi_values[NS_MAX_FFI_ARGS];
 
 ns_return_bool ns_vm_call_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
@@ -60,8 +71,12 @@ ns_lib* ns_lib_find(ns_vm *vm, ns_str lib) {
 
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
     ns_ast_ctx ctx = {0};
+#ifdef NS_DEBUG
+    ns_str ref_path = ns_str_cstr(NS_REF_PATH);
+#else
     ns_str home = ns_path_home();
     ns_str ref_path = ns_path_join(home, ns_str_cstr(NS_REF_PATH));
+#endif
 
     ns_str path = ns_path_join(ref_path, ns_str_concat(lib, ns_str_cstr(".ns")));
     ns_str source = ns_fs_read_file(path);
@@ -81,7 +96,11 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
         ns_array_push(vm->libs, _lib);
         return ns_array_last(vm->libs);
     } else {
+#ifdef NS_DEBUG
+        ns_str lib_path = ns_str_cstr(NS_LIB_PATH);
+#else
         ns_str lib_path = ns_path_join(home, ns_str_cstr(NS_LIB_PATH));
+#endif // NS_DEBUG
         ns_str lib_link_path = ns_path_join(lib_path, ns_str_concat(lib, ns_lib_ext));
         void* lib_ptr = dlopen(lib_link_path.data, RTLD_LAZY);
         ns_lib _lib = { .name = lib, .path = lib_link_path, .lib = lib_ptr };
@@ -114,17 +133,12 @@ ffi_type ns_ffi_map_type(ns_type t) {
     return ffi_type_void;
 }
 
-#define NS_MAX_FFI_ARGS 16
-
 ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_symbol *fn = call->fn;
 
     ffi_cif cif;
 
-    ffi_type *types[NS_MAX_FFI_ARGS];
-    void *refs[NS_MAX_FFI_ARGS];
-    void *values[NS_MAX_FFI_ARGS];
     if (call->arg_count > NS_MAX_FFI_ARGS) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "too many args.");
     }
@@ -147,31 +161,31 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         {
         case NS_TYPE_STRING: {
             ns_str s = ns_eval_str(vm, v);
-            values[i] = &s.data;
+            _ffi_refs[i] = (void*)s.data;
+            _ffi_values[i] = &_ffi_refs[i];
         } break;
         case NS_TYPE_ARRAY: {
             void *data = ns_eval_array_raw(vm, v);
-            values[i] = &data;
+            _ffi_refs[i] = data;
+            _ffi_values[i] = &_ffi_refs[i];
         } break;
         default:
-            refs[i] = (void*)((i8*)vm->stack + v.o);
-            values[i] = &refs[i];
+            _ffi_values[i] = (void*)((i8*)vm->stack + v.o);
             break;
         }
-        
-        ffi_type t = ns_ffi_map_type(v.t);
-        types[i] = &t;
+        _ffi_type_refs[i] = ns_ffi_map_type(v.t);
+        _ffi_types[i] = &_ffi_type_refs[i];
     }
     ns_exit_scope(vm);
 
     ffi_type ret_type = ns_ffi_map_type(fn->fn.ret);
-    ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, types);
+    ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, _ffi_types);
     if (status != FFI_OK) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to prep ffi call.");
     }
 
     ffi_arg ret_ptr;
-    ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &ret_ptr, values);
+    ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &ret_ptr, _ffi_values);
 
     if (!ns_type_is(fn->fn.ret, NS_TYPE_VOID)) {
         // u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));

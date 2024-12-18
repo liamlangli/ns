@@ -31,7 +31,6 @@ typedef void(*os_on_terminate)(os_window*);
 
 static i32 width;
 static i32 height;
-static i32 sample_count;
 static const char* window_title;
 static id window_delegate;
 static id<MTLDevice> mtl_device;
@@ -328,8 +327,8 @@ static os_on_terminate terminate_func = NULL;
 }
 
 - (void)scrollWheel:(NSEvent*)event {
-    double dy = [event scrollingDeltaY];
-    double dx = [event scrollingDeltaX];
+    // double dy = [event scrollingDeltaY];
+    // double dx = [event scrollingDeltaX];
     // os_window_on_scroll(&_window, dx, dy);
 }
 @end
@@ -383,19 +382,23 @@ void metal_capture_end(void) {
     }
 }
 
-ns_export os_window* os_window_create(ns_str title, i32 width, i32 height) {
+os_window* os_window_create(const char *title, i32 width, i32 height) {
     _window.width = width;
     _window.height = height;
     _window.ui_scale = 2.0;
     _window.framebuffer_width = width * _window.ui_scale;
     _window.framebuffer_height = height * _window.ui_scale;
-    _window.title = title;
-    osx_start(width, height, title.data);
+    _window.title = ns_str_cstr((char*)title);
+    osx_start(width, height, title);
     return &_window;
 }
 
 ns_str os_window_get_clipboard(os_window *window) {
+    ns_unused(window);
     return ns_str_null;
 }
 
-void os_window_set_clipboard(os_window *window, ns_str text) {}
+void os_window_set_clipboard(os_window *window, ns_str text) {
+    ns_unused(window);
+    ns_unused(text);
+}
