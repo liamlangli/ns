@@ -1,5 +1,5 @@
 mod gpu
 
-struct GPUDevice {}
+struct gpu_device {}
 
-ref fn gpu_create_device(): ref GPUDevice
+ref fn gpu_create_device(): ref gpu_device
