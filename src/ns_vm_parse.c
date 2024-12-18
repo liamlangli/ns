@@ -509,9 +509,6 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_type t = ret_t.r;
         next = arg.next;
         if (!ns_type_equals(t, fn_record->fn.args[a_i].val.t)) {
-            // ns_str arg_type = ns_vm_get_type_name(vm, t);
-            // ns_str fn_arg_type = ns_vm_get_type_name(vm, fn_record->fn.args[a_i].val.t);
-            // ns_str fn_name = fn_record->name;
             return ns_return_error(type, ns_ast_state_loc(ctx, arg.state), NS_ERR_EVAL, "call expr type mismatch fn.");
         }
     }

@@ -2,6 +2,6 @@ import os
 import gpu
 
 fn main() {
-    let win = os_window_create("ns", 800, 600);
-    let device = gpu_request_device(win);
+    let win = os_window_create("ns", 800, 600)
+    let device = gpu_request_device(win)
 }

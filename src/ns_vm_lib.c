@@ -188,9 +188,19 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &ret_ptr, _ffi_values);
 
     if (!ns_type_is(fn->fn.ret, NS_TYPE_VOID)) {
-        // u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
-        ns_value ret = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = (u64)ret_ptr};
-        call->ret = ret;
+        ns_type ret_type = fn->fn.ret;
+        if (ns_type_is_const(ret_type)) {
+            i32 size = ns_type_size(vm, ret_type);
+            u64 offset = ns_eval_alloc(vm, size);
+            ns_value dst = (ns_value){.t = ns_type_set_store(ret_type, NS_STORE_STACK), .o = offset};
+            ns_return_value ret_v = ns_eval_copy(vm, dst, (ns_value){.t = ret_type, .o = ret_ptr}, size);
+            if (ns_return_is_error(ret_v)) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to copy ret.");
+            call->ret = ret_v.r;
+        } else if (ns_type_is_ref(ret_type)) {
+            call->ret = (ns_value){.t = ret_type, .o = ret_ptr};
+        } else {
+            return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "invalid ret type.");
+        }
     }
     return ns_return_ok(bool, true);
 }

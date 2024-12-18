@@ -1,5 +1,9 @@
 mod gpu
 
-struct gpu_device {}
+import os
 
-ref fn gpu_create_device(): ref gpu_device
+struct gpu_device {
+    handle: u64
+}
+
+ref fn gpu_create_device(win: ref os_window): ref gpu_device
