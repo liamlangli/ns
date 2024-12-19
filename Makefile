@@ -5,7 +5,8 @@ MAKEFLAGS += --no-print-directory -j
 OS := $(shell uname -s 2>/dev/null || echo Windows)
 NS_PLATFORM_DEF =
 NS_SUFFIX =
-NS_LIB_SUFFIX =
+NS_DYLIB_SUFFIX =
+NS_LIB_SUFFIX = 
 NS_OS = 
 
 NS_DARWIN = darwin
@@ -19,16 +20,18 @@ NS_CP = cp -r
 NS_HOME = $(HOME)
 
 ifeq ($(OS), Linux)
-	NS_LIB_SUFFIX = .so
+	NS_DYLIB_SUFFIX = .so
+	NS_LIB_SUFFIX = .a
 	NS_PLATFORM_DEF = -DNS_LINUX
 	NS_OS =	$(NS_LINUX)
-
 else ifeq ($(OS), Darwin)
-	NS_LIB_SUFFIX = .dylib
+	NS_DYLIB_SUFFIX = .dylib
+	NS_LIB_SUFFIX = .a
 	NS_PLATFORM_DEF = -DNS_DARWIN
 	NS_OS = $(NS_DARWIN)
 else
-	NS_LIB_SUFFIX = .dll
+	NS_DYLIB_SUFFIX = .so
+	NS_LIB_SUFFIX = .a
 	NS_SUFFIX = .exe
 	NS_PLATFORM_DEF = -DNS_WIN32
 	NS_OS = $(NS_WIN32)
@@ -163,10 +166,10 @@ pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
 
 lib: $(NS_LIB_OBJS) | $(OBJDIR)
-	ar rcs $(BINDIR)/libns.a $(NS_LIB_OBJS)
+	ar rcs $(BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS)
 
 so: $(NS_LIB_OBJS) | $(OBJDIR)
-	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/libns.so $(NS_LDFLAGS)
+	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
 
 $(NS_TEST_TARGETS): $(BINDIR)/%: test/%.c | $(BINDIR) lib
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) $(NS_LDFLAGS) -lns -L$(BINDIR) -Itest
@@ -184,4 +187,4 @@ install: all ns_debug ns_lsp
 	$(NS_CP) bin/ns_debug$(NS_SUFFIX) ~/.cache/ns/bin
 	$(NS_CP) bin/ns_lsp$(NS_SUFFIX) ~/.cache/ns/bin
 	$(NS_MKDIR) ~/.cache/ns/ref && $(NS_CP) lib/*.ns ~/.cache/ns/ref
-	$(NS_MKDIR) ~/.cache/ns/lib && $(NS_CP) bin/*$(NS_LIB_SUFFIX) ~/.cache/ns/lib
+	$(NS_MKDIR) ~/.cache/ns/lib && $(NS_CP) bin/*$(NS_DYLIB_SUFFIX) ~/.cache/ns/lib
