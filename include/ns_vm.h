@@ -133,7 +133,7 @@ i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
-ns_type ns_vm_parse_type(ns_vm *vm, ns_token_t t,ns_bool infer);
+ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_token_t t, ns_bool infer);
 
 // eval fn
 #define ns_eval_value_def(type) type ns_eval_number_##type(ns_vm *vm, ns_value n);

@@ -785,7 +785,8 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
-    ns_type t = ns_vm_parse_type(vm, n->cast_expr.type, false);
+    ns_type t = ns_vm_parse_type(vm, ctx, i, n->cast_expr.type, false).r;
+
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->cast_expr.expr);
     if (ns_return_is_error(ret_v)) return ret_v;
     ns_value v = ret_v.r;
@@ -927,7 +928,7 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *t = &ctx->nodes[n->array_expr.type];
 
-    ns_type type = ns_vm_parse_type(vm, t->type_label.name, false);
+    ns_type type = ns_vm_parse_type(vm, ctx, i, t->type_label.name, false).r;
     ns_return_value ret_count = ns_eval_expr(vm, ctx, n->array_expr.count);
     if (ns_return_is_error(ret_count)) return ret_count;
 
