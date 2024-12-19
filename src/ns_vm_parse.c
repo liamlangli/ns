@@ -505,7 +505,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_ast_t arg = ctx->nodes[next];
         ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, next);
         if (ns_return_is_error(ret_t)) return ret_t;
-        
+
         ns_type t = ret_t.r;
         next = arg.next;
         if (!ns_type_equals(t, fn_record->fn.args[a_i].val.t)) {

@@ -69,7 +69,7 @@ ns_lib* ns_lib_find(ns_vm *vm, ns_str lib) {
     return ns_null;
 }
 
-ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
+ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     ns_ast_ctx ctx = {0};
 #ifdef NS_DEBUG
     ns_str ref_path = ns_str_cstr(NS_REF_PATH);
@@ -78,21 +78,24 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
     ns_str ref_path = ns_path_join(home, ns_str_cstr(NS_REF_PATH));
 #endif
 
-    ns_str path = ns_path_join(ref_path, ns_str_concat(lib, ns_str_cstr(".ns")));
+    ns_lib *lib = ns_lib_find(vm, lib_name);
+    if (lib) return lib;
+
+    ns_str path = ns_path_join(ref_path, ns_str_concat(lib_name, ns_str_cstr(".ns")));
     ns_str source = ns_fs_read_file(path);
     ns_ast_parse(&ctx, source, path);
 
-    ns_str cur_lib = vm->lib;
-    vm->lib = lib;
+    ns_str prev = vm->lib;
+    vm->lib = lib_name;
 
     ns_return_bool ret = ns_vm_parse(vm, &ctx);
     if (ns_return_is_error(ret)) {
-        ns_error("vm import", "failed to parse lib %.*s\n", lib.len, lib.data);
+        ns_error("vm import", "failed to parse lib %.*s\n", lib_name.len, lib_name.data);
     }
-    vm->lib = cur_lib;
+    vm->lib = prev;
 
-    if (ns_str_equals(lib, ns_str_cstr("std"))) {
-        ns_lib _lib = { .name = lib, .path = ns_str_null, .lib = ns_null };
+    if (ns_str_equals(lib_name, ns_str_cstr("std"))) {
+        ns_lib _lib = { .name = lib_name, .path = ns_str_null, .lib = ns_null };
         ns_array_push(vm->libs, _lib);
         return ns_array_last(vm->libs);
     } else {
@@ -101,9 +104,9 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib) {
 #else
         ns_str lib_path = ns_path_join(home, ns_str_cstr(NS_LIB_PATH));
 #endif // NS_DEBUG
-        ns_str lib_link_path = ns_path_join(lib_path, ns_str_concat(lib, ns_lib_ext));
+        ns_str lib_link_path = ns_path_join(lib_path, ns_str_concat(lib_name, ns_lib_ext));
         void* lib_ptr = dlopen(lib_link_path.data, RTLD_LAZY);
-        ns_lib _lib = { .name = lib, .path = lib_link_path, .lib = lib_ptr };
+        ns_lib _lib = { .name = lib_name, .path = lib_link_path, .lib = lib_ptr };
         ns_array_push(vm->libs, _lib);
         return ns_array_last(vm->libs);
     }

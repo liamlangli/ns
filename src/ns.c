@@ -13,6 +13,7 @@ static ns_ast_ctx ctx = {0};
 typedef struct ns_compile_option_t {
     ns_bool tokenize_only: 2;
     ns_bool ast_only: 2;
+    ns_bool symbol_only: 2;
     ns_bool bitcode_only: 2;
     ns_bool show_version: 2;
     ns_bool show_help: 2;
@@ -27,6 +28,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
             option.ast_only = true;
+        } else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--symbol") == 0) {
+            option.symbol_only = true;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
             option.show_version = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -45,8 +48,9 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
 
 void ns_help() {
     ns_info("usage", "ns [option] [file.ns]\n");
-    printf("  -t --token     tokenize only\n");
+    printf("  -t --token        tokenize only\n");
     printf("  -a --ast          parse ast only\n");
+    printf("  -s --symbol       print symbol table\n");
     printf("  -b --bitcode      generate llvm bitcode\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
@@ -113,6 +117,26 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
 #endif
 }
 
+void ns_exec_symbol(ns_str filename) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    ns_str source = ns_fs_read_file(filename);
+    if (source.len == 0) { 
+        ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
+        return;
+    }
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    if (ns_return_is_error(ret)) {
+        ns_error("ns", "ast parse error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
+        return;
+    }
+    ret = ns_vm_parse(&vm, &ctx);
+    if (ns_return_is_error(ret)) {
+        ns_error("ns", "vm parse error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
+        return;
+    }
+    ns_vm_symbol_print(&vm);
+}
+
 void ns_exec_eval(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_fs_read_file(filename);
@@ -144,6 +168,8 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.ast_only) {
         ns_exec_ast(option.filename);
         ns_array_status();
+    } else if (option.symbol_only) {
+        ns_exec_symbol(option.filename);
     } else if (option.bitcode_only) {
         ns_exec_bitcode(option.filename, option.output);
     } else {
