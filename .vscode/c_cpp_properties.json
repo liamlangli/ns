@@ -43,10 +43,11 @@
                 "${workspaceFolder}/lsp/include/**",
                 "${workspaceFolder}/debug/include/**",
                 "${workspaceFolder}/lib/include/**",
-                "D:/msys64/mingw64/include"
+                "D:/msys64/mingw64/include",
+                "D:/msys64/usr/include"
             ],
             "defines": ["NS_BITCODE", "NS_JIT", "NS_DEBUG", "NS_WIN32"],
-            "compilerPath": "D:/msys64/mingw64/bin/clang.exe",
+            "compilerPath": "D:\\msys64\\ucrt64\\bin\\clang.exe",
             "cStandard": "c11",
             "cppStandard": "c++11",
             "intelliSenseMode": "windows-clang-x64"

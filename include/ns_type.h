@@ -116,6 +116,8 @@ typedef struct ns_data {
     size_t len;
 } ns_data;
 
+#define ns_data_null ((ns_data){.data = NULL, .len = 0})
+
 // ns_token
 typedef enum {
     NS_TOKEN_UNKNOWN = -1,

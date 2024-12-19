@@ -7,19 +7,32 @@ NS_PLATFORM_DEF =
 NS_SUFFIX =
 NS_LIB_SUFFIX =
 NS_OS = 
+
+NS_DARWIN = darwin
+NS_LINUX = linux
+NS_WIN32 = windows
+
+NS_CC = clang
+NS_MKDIR = mkdir -p
+NS_RMDIR = rm -rf
+NS_CP = cp -r
+NS_HOME = $(HOME)
+
 ifeq ($(OS), Linux)
 	NS_LIB_SUFFIX = .so
 	NS_PLATFORM_DEF = -DNS_LINUX
-	NS_OS =	linux
+	NS_OS =	$(NS_LINUX)
+
 else ifeq ($(OS), Darwin)
 	NS_LIB_SUFFIX = .dylib
 	NS_PLATFORM_DEF = -DNS_DARWIN
-	NS_OS = darwin
+	NS_OS = $(NS_DARWIN)
 else
 	NS_LIB_SUFFIX = .dll
 	NS_SUFFIX = .exe
 	NS_PLATFORM_DEF = -DNS_WIN32
-	NS_OS = windows
+	NS_OS = $(NS_WIN32)
+	NS_HOME = $(USERPROFILE)
 endif
 
 # OPTIONS
@@ -34,8 +47,6 @@ else
 	NS_BITCODE ?= 1
 endif
 
-# VARIABLES
-CC = clang
 
 ifeq ($(NS_BITCODE), 1)
 	LLVM_CFLAGS = $(shell llvm-config --cflags 2>/dev/null)
@@ -53,11 +64,16 @@ ifeq ($(NS_BITCODE), 1)
 	JIT_LDFLAGS = $(LLVM_LDFLAGS)
 endif
 
-NS_LDFLAGS = -lm -lreadline -lffi -ldl -L/usr/lib
-NS_INC = -Iinclude $(NS_PLATFORM_DEF)
+ifeq ($(NS_OS), $(NS_WIN32))
+NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
+NS_INC = -I/usr/include -Iinclude $(NS_PLATFORM_DEF)
+else
+NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
+NS_INC = -I/usr/include -Iinclude $(NS_PLATFORM_DEF)
+endif
 
-NS_DEBUG_CFLAGS = $(NS_INC) -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG
-NS_RELEASE_CFLAGS = $(NS_INC) -Os
+NS_DEBUG_CFLAGS = -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG
+NS_RELEASE_CFLAGS = -Os
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
@@ -98,28 +114,32 @@ TARGET = $(BINDIR)/ns
 
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 
-all: $(TARGET) std lib ns_lsp ns_debug
+all: ns_dirs $(TARGET) std lib ns_lsp ns_debug
 	@echo "building ns at "$(OS)" with options:" \
 	"NS_BITCODE=$(NS_BITCODE)" \
 	"NS_DEBUG=$(NS_DEBUG)"
 
+ns_dirs:
+	$(NS_MKDIR) bin
+	$(NS_MKDIR) bin/src bin/lsp bin/debug bin/lib
+
 $(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(NS_CFLAGS) $(BITCODE_CFLAGS)
+	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
 $(JIT_OBJ): $(JIT_SRC) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(NS_CFLAGS) $(JIT_CFLAGS)
+	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(JIT_CFLAGS)
 
 $(NS_ENTRY_OBJ): $(NS_ENTRY) | $(OBJDIR)
-	$(CC) -c $< -o $@ $(NS_CFLAGS) $(BITCODE_CFLAGS)
+	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
 $(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) | $(BINDIR)
-	$(CC) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(LLVM_LDFLAGS)
+	$(NS_CC) -fuse-ld=lld $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(LLVM_LDFLAGS)
 
 $(NS_LIB_OBJS): $(OBJDIR)/%.o : %.c | $(OBJDIR)
-	$(CC) -c $< -o $@ $(NS_CFLAGS)
+	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
 $(OBJDIR):
-	mkdir -p $(OBJDIR)/src
+	$(NS_MKDIR) $(OBJDIR)/src
 
 run: all
 	$(TARGET)
@@ -132,7 +152,7 @@ bc: all
 	bin/add
 
 clean:
-	rm -rf $(OBJDIR)
+	$(NS_RMDIR) $(OBJDIR)
 
 # utility
 count:
@@ -142,25 +162,14 @@ count:
 pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
 
-debug: $(NS_SRCS) | $(OBJDIR)
-	clang -o $(NS_DEBUG_TARGET) $(NS_SRCS) $(NS_DEBUG_CFLAGS) $(NS_LDFLAGS)
-	tar -czvf $(NS_DEBUG_TARGET).tar.gz $(NS_DEBUG_TARGET)
-
-release: $(NS_SRCS) | $(OBJDIR)
-	clang -o $(NS_RELEASE_TARGET) $(NS_SRCS) $(NS_RELEASE_CFLAGS) $(NS_LDFLAGS)
-	tar -czvf $(NS_RELEASE_TARGET).tar.gz $(NS_RELEASE_TARGET)
-
 lib: $(NS_LIB_OBJS) | $(OBJDIR)
 	ar rcs $(BINDIR)/libns.a $(NS_LIB_OBJS)
 
 so: $(NS_LIB_OBJS) | $(OBJDIR)
-	$(CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/libns.so $(NS_LDFLAGS)
-
-trace: $(TARGET)
-	dtrace -n 'profile-997 /execname == "$(TARGET)"/ { @[ustack()] = count(); }' -c $(TARGET) -o bin/ns.stacks
+	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/libns.so $(NS_LDFLAGS)
 
 $(NS_TEST_TARGETS): $(BINDIR)/%: test/%.c | $(BINDIR) lib
-	$(CC) -o $@ $< $(NS_CFLAGS) $(NS_LDFLAGS) -lns -L$(BINDIR) -Itest
+	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) $(NS_LDFLAGS) -lns -L$(BINDIR) -Itest
 
 test: $(NS_TEST_TARGETS)
 	$(BINDIR)/ns_json_test
@@ -170,9 +179,9 @@ include lsp/Makefile
 include debug/Makefile
 
 install: all ns_debug ns_lsp
-	mkdir -p ~/.cache/ns/bin
-	cp bin/ns$(NS_SUFFIX) ~/.cache/ns/bin
-	cp bin/ns_debug$(NS_SUFFIX) ~/.cache/ns/bin
-	cp bin/ns_lsp$(NS_SUFFIX) ~/.cache/ns/bin
-	mkdir -p ~/.cache/ns/ref && cp -r lib/*.ns ~/.cache/ns/ref
-	mkdir -p ~/.cache/ns/lib && cp -r bin/*$(NS_LIB_SUFFIX) ~/.cache/ns/lib
+	$(NS_MKDIR) ~/.cache/ns/bin
+	$(NS_CP) bin/ns$(NS_SUFFIX) ~/.cache/ns/bin
+	$(NS_CP) bin/ns_debug$(NS_SUFFIX) ~/.cache/ns/bin
+	$(NS_CP) bin/ns_lsp$(NS_SUFFIX) ~/.cache/ns/bin
+	$(NS_MKDIR) ~/.cache/ns/ref && $(NS_CP) lib/*.ns ~/.cache/ns/ref
+	$(NS_MKDIR) ~/.cache/ns/lib && $(NS_CP) bin/*$(NS_LIB_SUFFIX) ~/.cache/ns/lib

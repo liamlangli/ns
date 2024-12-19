@@ -3,7 +3,11 @@
 #include "ns_os.h"
 
 #include <dlfcn.h>
-#include <ffi/ffi.h>
+#ifdef NS_WIN32
+    #include <ffi.h>
+#else
+    #include <ffi/ffi.h>
+#endif
 
 #ifdef NS_DEBUG
     #define NS_LIB_PATH "bin"

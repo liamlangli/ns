@@ -11,3 +11,6 @@ bin
 *.history 
 .cache
 *.log
+
+# cmake 
+build

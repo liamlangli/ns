@@ -2,11 +2,44 @@
 #include "ns_json.h"
 #include "ns_net.h"
 
+ssize_t ns_getline(char **lineptr, size_t *n, FILE *stream) {
+    if (*lineptr == NULL || *n == 0) {
+        *n = 128; // Start with an initial buffer size
+        *lineptr = (char *)malloc(*n);
+        if (*lineptr == NULL) {
+            return -1; // Allocation failure
+        }
+    }
+
+    size_t len = 0;
+    while (fgets(*lineptr + len, *n - len, stream)) {
+        len += strlen(*lineptr + len);
+        if ((*lineptr)[len - 1] == '\n') {
+            break;
+        }
+
+        // Resize the buffer if needed
+        if (len + 1 >= *n) {
+            *n *= 2;
+            *lineptr = (char *)realloc(*lineptr, *n);
+            if (*lineptr == NULL) {
+                return -1; // Allocation failure
+            }
+        }
+    }
+
+    if (len == 0) {
+        return -1; // End of input or error
+    }
+
+    return len;
+}
+
 static ns_str _in = (ns_str){0, 0, 1};
 ns_str ns_lsp_read() {
     size_t s;
     i8* b = 0;
-    ssize_t n = getline(&b, &s, stdin);
+    ssize_t n = ns_getline(&b, &s, stdin);
     if (n == -1) {
         return ns_str_null;
     }
