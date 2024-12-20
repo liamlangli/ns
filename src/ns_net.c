@@ -232,8 +232,8 @@ ns_bool ns_tcp_serve(u16 port, ns_on_connect on_connect) {
             continue;
         }
 
-        ns_conn conn = (ns_conn){NS_CONN_TCP, conn_fd, server_add, client_addr, addr_len };
-        on_connect(conn);
+        ns_conn conn = (ns_conn){NS_CONN_TCP, conn_fd, server_addr, client_addr, addr_len };
+        on_connect(&conn);
     }
 
     close(socket_fd);

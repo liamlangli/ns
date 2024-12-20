@@ -13,7 +13,7 @@ ns_lsp: $(NS_LSP_TARGET)
 	"NS_DEBUG=$(NS_DEBUG)"
 
 $(NS_LSP_TARGET): $(NS_LSP_OBJS) | $(NS_LSP_BINDIR) lib
-	$(NS_CC) $(NS_LSP_OBJS)  $ -o $(NS_LSP_TARGET)$(NS_SUFFIX) $(NS_LSP_LDFLAGS)
+	$(NS_LD) $(NS_LSP_OBJS) $ -o $(NS_LSP_TARGET)$(NS_SUFFIX) $(NS_LSP_LDFLAGS)
 
 $(NS_LSP_OBJS): $(OBJDIR)/lsp/%.o : lsp/src/%.c | $(OBJDIR)
 	$(NS_CC) -c $< -o $@ $(NS_LSP_INC) $(NS_CFLAGS)

@@ -14,6 +14,7 @@ NS_LINUX = linux
 NS_WIN32 = windows
 
 NS_CC = clang
+NS_LD = clang -fuse-ld=lld
 NS_MKDIR = mkdir -p
 NS_RMDIR = rm -rf
 NS_CP = cp -r
@@ -49,7 +50,6 @@ ifeq ($(LLVM_CONFIG),)
 else
 	NS_BITCODE ?= 1
 endif
-
 
 ifeq ($(NS_BITCODE), 1)
 	LLVM_CFLAGS = $(shell llvm-config --cflags 2>/dev/null)
@@ -136,7 +136,7 @@ $(NS_ENTRY_OBJ): $(NS_ENTRY) | $(OBJDIR)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
 $(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) | $(BINDIR)
-	$(NS_CC) -fuse-ld=lld $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(LLVM_LDFLAGS)
+	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(LLVM_LDFLAGS)
 
 $(NS_LIB_OBJS): $(OBJDIR)/%.o : %.c | $(OBJDIR)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)

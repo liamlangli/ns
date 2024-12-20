@@ -13,7 +13,7 @@ ns_debug: $(NS_DAP_TARGET)
 	"NS_DEBUG=$(NS_DEBUG)"
 
 $(NS_DAP_TARGET): $(NS_DAP_OBJS) | $(NS_DAP_BINDIR) lib
-	$(NS_CC) -fuse-ld=lld $(NS_DAP_OBJS) $ -o $(NS_DAP_TARGET)$(NS_SUFFIX) $(NS_DAP_LDFLAGS)
+	$(NS_LD) $(NS_DAP_OBJS) $ -o $(NS_DAP_TARGET)$(NS_SUFFIX) $(NS_DAP_LDFLAGS)
 
 $(NS_DAP_OBJS): $(OBJDIR)/debug/%.o : debug/src/%.c | $(OBJDIR)
 	$(NS_CC) -c $< -o $@ $(NS_DAP_INC) $(NS_CFLAGS)
