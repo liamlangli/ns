@@ -85,7 +85,6 @@ void ns_exec_ast(ns_str filename) {
 
 void ns_exec_bitcode(ns_str filename, ns_str output) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    if (output.len == 0) ns_error("ns", "no output file.\n");
 
 #ifndef NS_BITCODE
     ns_exit(1, "ns", "bitcode is not enabled\n");
@@ -108,12 +107,7 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
         return;
     }
 
-    ctx.output = output;
-    if (output.data == ns_null) {
-        ns_warn("ns", "output file is not specified.");
-        return;
-    }
-    ns_bc_gen(&vm, &ctx);
+    ns_bc_gen(&vm, &ctx, output);
 #endif
 }
 

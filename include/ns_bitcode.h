@@ -7,6 +7,6 @@
 #include "ns_ast.h"
 #include "ns_vm.h"
 
-ns_bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx);
+ns_bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx, ns_str output);
 
 #endif // NS_BITCODE

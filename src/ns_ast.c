@@ -589,10 +589,10 @@ ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->stack = NULL;
     ctx->op_stack = NULL;
     ctx->expr_stack = NULL;
-    ctx->sections = NULL;
-    ctx->nodes = NULL;
 
-    ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_PROGRAM, .next = 0});
+    if (ns_array_length(ctx->nodes) == 0) {
+        ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_PROGRAM, .next = 0});
+    }
 
     ctx->section_begin = ctx->section_end;
     ns_return_bool loop;

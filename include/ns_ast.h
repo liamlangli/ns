@@ -266,7 +266,6 @@ typedef struct as_parse_context_t {
     ns_token_t token, last_token;
     ns_str source;
     ns_str filename;
-    ns_str output;
 } ns_ast_ctx;
 
 #define ns_ast_code_loc(ctx) ((ns_code_loc){.f = ctx->filename, .l = ctx->token.line, .o = ctx->f - ctx->token.line_start})

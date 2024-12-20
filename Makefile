@@ -8,6 +8,7 @@ NS_SUFFIX =
 NS_DYLIB_SUFFIX =
 NS_LIB_SUFFIX = 
 NS_OS = 
+NS_LIB = bin/libns.a
 
 NS_DARWIN = darwin
 NS_LINUX = linux
@@ -57,12 +58,12 @@ ifeq ($(NS_BITCODE), 1)
 	LLVM_TRIPLE = $(shell llvm-config --host-target 2>/dev/null)
 
 	BITCODE_SRC = src/ns_bitcode.c
-	BITCODE_OBJ = $(OBJDIR)/src/ns_bitcode.o
+	BITCODE_OBJ = $(NS_BINDIR)/src/ns_bitcode.o
 	BITCODE_CFLAGS = -DNS_BITCODE $(LLVM_CFLAGS)
 	BITCODE_LDFLAGS = $(LLVM_LDFLAGS)
 
 	JIT_SRC = src/ns_jit.c
-	JIT_OBJ = $(OBJDIR)/src/ns_jit.o
+	JIT_OBJ = $(NS_BINDIR)/src/ns_jit.o
 	JIT_CFLAGS = -DNS_JIT $(LLVM_CFLAGS)
 	JIT_LDFLAGS = $(LLVM_LDFLAGS)
 endif
@@ -87,8 +88,7 @@ endif
 NS_DEBUG_TARGET = $(TARGET)_debug_$(LLVM_TRIPLE)$(NS_SUFFIX)
 NS_RELEASE_TARGET = $(TARGET)_release_$(LLVM_TRIPLE)$(NS_SUFFIX)
 
-BINDIR = bin
-OBJDIR = $(BINDIR)
+NS_BINDIR = bin
 
 NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
@@ -105,44 +105,38 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_net.c \
 	src/ns_json.c \
 	src/ns_repl.c
-NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(OBJDIR)/%.o)
+NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
 NS_TEST_SRCS = test/ns_json_test.c
-NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(BINDIR)/%)
+NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
-NS_ENTRY_OBJ = $(OBJDIR)/src/ns.o
+NS_ENTRY_OBJ = $(NS_BINDIR)/src/ns.o
 
-TARGET = $(BINDIR)/ns
+TARGET = $(NS_BINDIR)/ns
 
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
+NS_DIRS = bin/src bin/lsp bin/debug bin/lib
 
-all: ns_dirs $(TARGET) std lib ns_lsp ns_debug
-	@echo "building ns at "$(OS)" with options:" \
-	"NS_BITCODE=$(NS_BITCODE)" \
-	"NS_DEBUG=$(NS_DEBUG)"
+all: $(NS_DIRS) $(TARGET) $(NS_LIB) $(NS_LSP_TARGET) $(NS_DAP_TARGET) std
 
-ns_dirs:
-	$(NS_MKDIR) bin
-	$(NS_MKDIR) bin/src bin/lsp bin/debug bin/lib
+$(NS_DIRS):
+	$(NS_MKDIR) $(NS_DIRS)
 
-$(BITCODE_OBJ): $(BITCODE_SRC) | $(OBJDIR)
+$(BITCODE_OBJ): $(BITCODE_SRC)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
-$(JIT_OBJ): $(JIT_SRC) | $(OBJDIR)
+$(JIT_OBJ): $(JIT_SRC)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(JIT_CFLAGS)
 
-$(NS_ENTRY_OBJ): $(NS_ENTRY) | $(OBJDIR)
+$(NS_ENTRY_OBJ): $(NS_ENTRY)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(BITCODE_CFLAGS)
 
-$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) | $(BINDIR)
+$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) | $(NS_BINDIR)
 	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(LLVM_LDFLAGS)
 
-$(NS_LIB_OBJS): $(OBJDIR)/%.o : %.c | $(OBJDIR)
+$(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
-
-$(OBJDIR):
-	$(NS_MKDIR) $(OBJDIR)/src
 
 run: all
 	$(TARGET)
@@ -165,17 +159,17 @@ count:
 pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
 
-lib: $(NS_LIB_OBJS) | $(OBJDIR)
-	ar rcs $(BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS)
+$(NS_LIB): $(NS_LIB_OBJS)
+	ar rcs $(NS_BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS)
 
-so: $(NS_LIB_OBJS) | $(OBJDIR)
-	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
+so: $(NS_LIB_OBJS)
+	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(NS_BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
 
-$(NS_TEST_TARGETS): $(BINDIR)/%: test/%.c | $(BINDIR) lib
-	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) $(NS_LDFLAGS) -lns -L$(BINDIR) -Itest
+$(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c | $(NS_LIB)
+	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) $(NS_LDFLAGS) -L$(NS_BINDIR) -lns -Itest
 
 test: $(NS_TEST_TARGETS)
-	$(BINDIR)/ns_json_test
+	$(NS_BINDIR)/ns_json_test
 
 include lib/Makefile
 include lsp/Makefile

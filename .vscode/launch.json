@@ -7,28 +7,9 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "token",
+            "name": "ns",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["--token","${file}"],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "ast",
-            "preLaunchTask": "build",
-            "program": "${workspaceFolder}/bin/ns",
-            "args": ["--ast", "sample/rt.ns"],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "expr",
-            "preLaunchTask": "build",
-            "program": "${workspaceFolder}/bin/ns",
-            "args": ["--ast", "sample/expr.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -43,36 +24,10 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "repl",
-            "preLaunchTask": "build",
-            "program": "${workspaceFolder}/bin/ns",
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "lsp",
-            "program": "${workspaceFolder}/bin/ns_lsp",
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
             "name": "bitcode",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-o", "${file}.bc", "-b", "${file}"],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "trace",
-            "preLaunchTask": "build",
-            "program": "xctrace",
-            "args": ["record", "--template", "\"Time Profiler\"",  "--output", "bin/ns.trace", "--launch", "--", "bin/ns", "--ast", "sample/rt.ns"],
+            "args": ["-b", "sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -90,23 +45,6 @@
             "name": "ns_debug[socket]",
             "program": "${workspaceFolder}/bin/ns_debug",
             "args": ["--socket", "--port", "5001"],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "ns_debug[repl]",
-            "program": "${workspaceFolder}/bin/ns_debug",
-            "args": ["sample/rt.ns"],
-            "cwd": "${workspaceFolder}"
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "json test",
-            "preLaunchTask": "build",
-            "program": "${workspaceFolder}/bin/ns_json_test",
-            "args": [],
             "cwd": "${workspaceFolder}"
         }
     ]

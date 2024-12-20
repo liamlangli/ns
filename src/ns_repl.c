@@ -23,6 +23,7 @@ void ns_repl_free_line(ns_str s) {
 void ns_repl(ns_vm* vm) {
     vm->repl = true;
 
+    ns_lib_import(vm, ns_str_cstr("std"));
     // read eval pri32loop
     ns_str filename = ns_str_cstr("<repl>");
     while(1) {
@@ -50,10 +51,16 @@ void ns_repl(ns_vm* vm) {
             ns_return_value ret = ns_return_ok(value, ns_nil);
             if (n->type >= NS_AST_EXPR && n->type <= NS_AST_ARRAY_EXPR) {
                 ret = ns_eval_expr(vm, &_ns_repl_ctx, s_i);
-            } else if (n->type == NS_AST_VAR_DEF) {
-                ret = ns_eval_var_def(vm, &_ns_repl_ctx, s_i);
             } else {
-                ns_warn("eval", "invalid expr type: %d\n", n->type);
+                switch (n->type)
+                {
+                case NS_AST_VAR_DEF: ret = ns_eval_var_def(vm, &_ns_repl_ctx, s_i); break;
+                case NS_AST_IMPORT_STMT: { 
+                    ret = ns_return_ok(value, ns_nil);
+                    ns_lib_import(vm, n->import_stmt.lib.val);
+                } break;
+                default: ns_warn("eval", "invalid expr type: %d\n", n->type); break;
+                }
                 continue;
             }
             if (ns_return_is_error(ret)) {
@@ -63,7 +70,6 @@ void ns_repl(ns_vm* vm) {
             printf("%.*s\n", s.len, s.data);
         }
         ns_repl_free_line(line);
-
         _ns_repl_ctx.section_begin = _ns_repl_ctx.section_end;
     }
     ne_exit_safe("ns", "exit repl\n");

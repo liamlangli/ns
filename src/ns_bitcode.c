@@ -11,6 +11,8 @@
 #include <llvm-c/ExecutionEngine.h>
 #include <llvm-c/Target.h>
 
+#define NS_BC_CACHE ".build/cache"
+
 // types
 #define ns_bc_module LLVMModuleRef
 #define ns_bc_builder LLVMBuilderRef
@@ -594,9 +596,15 @@ ns_bc_value ns_bc_call_std(ns_bc_ctx *bc_ctx) {
     return ns_bc_nil;
 }
 
-ns_bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx) {
-    ns_str output_path = ns_str_cstr(ctx->output.data);
-    ns_info("bitcode", "generate llvm bitcode file %s\n", output_path.data);
+ns_bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx, ns_str output) {
+    if (output.len == 0) {
+        ns_str filename = ns_path_filename(ctx->filename);
+        ns_str bc_file = ns_str_slice(filename, 0, filename.len);
+        ns_str_append(&bc_file, ns_str_cstr(".bc"));
+        output = ns_path_join(ns_str_cstr(NS_BC_CACHE), bc_file);
+    }
+
+    ns_info("bitcode", "generate llvm bitcode file %s\n", output.data);
 
     ns_bc_module mod = LLVMModuleCreateWithName(ctx->filename.data);
     ns_bc_builder bdr = LLVMCreateBuilder();
@@ -637,7 +645,7 @@ ns_bool ns_bc_gen(ns_vm *vm, ns_ast_ctx *ctx) {
     LLVMDisposeMessage(error);
 
     // Write out bitcode to file
-    if (LLVMWriteBitcodeToFile(mod, output_path.data) != 0) {
+    if (LLVMWriteBitcodeToFile(mod, output.data) != 0) {
         ns_error("bitcode error", "fail writing bitcode to file.");
         return false;
     }
