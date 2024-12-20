@@ -586,10 +586,6 @@ ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     ctx->current = 0;
     ctx->f = 0;
 
-    ctx->stack = NULL;
-    ctx->op_stack = NULL;
-    ctx->expr_stack = NULL;
-
     if (ns_array_length(ctx->nodes) == 0) {
         ns_ast_push(ctx, (ns_ast_t){.type = NS_AST_PROGRAM, .next = 0});
     }

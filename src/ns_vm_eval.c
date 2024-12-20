@@ -165,7 +165,10 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
     if (!fn) return ns_return_ok(value, ns_nil);
 
-    u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
+    i32 ret_size = ns_type_size(vm, fn->fn.ret);
+    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
+
+    u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
     ns_call call = (ns_call){.fn = fn, .ret = ret_val, .ret_set = false, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 2};
     ns_enter_scope(vm);
@@ -320,7 +323,10 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_symbol *fn = &vm->symbols[ns_type_index(callee.t)];
-    u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
+    i32 ret_size = ns_type_size(vm, fn->fn.ret);
+    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
+
+    u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
     ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->fn.args)};
 
@@ -482,7 +488,11 @@ ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value 
     ns_vm_inject_hook(vm, ctx, i);
     ns_unused(i);
 
-    u64 ret_offset = ns_eval_alloc(vm, ns_type_size(vm, fn->fn.ret));
+    i32 ret_size = ns_type_size(vm, fn->fn.ret);
+    ns_ast_t *n = &ctx->nodes[i];
+    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
+
+    u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
     ns_call call = (ns_call){.fn = fn, .ret = ret_val, .ret_set = false, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), 2 };
     ns_enter_scope(vm);
@@ -980,6 +990,10 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     // eval & store value
     i32 size = n->var_def.type_size;
+    if (size < 0) {
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown type size.");
+    }
+
     u64 offset = ns_eval_alloc(vm, size);
     ns_value ret = (ns_value){.o = offset};
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->var_def.expr);
@@ -1001,6 +1015,10 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     // eval & store value
     i32 size = n->var_def.type_size;
+    if (size < 0) {
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown type size.");
+    }
+
     u64 offset = ns_eval_alloc(vm, size);
     ns_value ret = (ns_value){.o = offset};
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->var_def.expr);

@@ -80,7 +80,7 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 
 void ns_array_status() {
 #ifdef NS_DEBUG
-    ns_info("ns_array", "alloc_op %llu, free_op %llu, alloc %llu, free %llu\n", _ns_allocator.alloc_op, _ns_allocator.free_op, _ns_allocator.alloc, _ns_allocator.free);
+    ns_info("ns_array", "alloc_op %lu, free_op %lu, alloc %lu, free %lu\n", _ns_allocator.alloc_op, _ns_allocator.free_op, _ns_allocator.alloc, _ns_allocator.free);
 #endif
 }
 

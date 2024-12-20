@@ -149,7 +149,7 @@ bc: all
 	bin/add
 
 clean:
-	$(NS_RMDIR) $(OBJDIR)
+	$(NS_RMDIR) $(NS_BINDIR)
 
 # utility
 count:
