@@ -61,7 +61,6 @@ void ns_repl(ns_vm* vm) {
                 } break;
                 default: ns_warn("eval", "invalid expr type: %d\n", n->type); break;
                 }
-                continue;
             }
             if (ns_return_is_error(ret)) {
                 ns_warn("eval", "eval error: %.*s\n", ret.e.msg.len, ret.e.msg.data);

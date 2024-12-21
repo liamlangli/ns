@@ -990,7 +990,7 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     // eval & store value
     i32 size = n->var_def.type_size;
-    if (size < 0) {
+    if (size < 0 && val->val.t.type != NS_TYPE_INFER) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown type size.");
     }
 
