@@ -3,7 +3,7 @@
 #include "ns_os.h"
 
 #include <dlfcn.h>
-#ifdef NS_WIN32
+#ifndef NS_DARWIN
     #include <ffi.h>
 #else
     #include <ffi/ffi.h>
