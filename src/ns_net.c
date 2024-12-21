@@ -3,7 +3,7 @@
 #define BUFFER_SIZE 1024
 static i8 ns_net_buffer[BUFFER_SIZE];
 
-#ifdef NS_WIN32
+#ifdef NS_WIN
     #include <winsock2.h>
 
 typedef struct ns_conn {

@@ -46,7 +46,7 @@
                 "D:/msys64/mingw64/include",
                 "D:/msys64/usr/include"
             ],
-            "defines": ["NS_BITCODE", "NS_JIT", "NS_DEBUG", "NS_WIN32"],
+            "defines": ["NS_BITCODE", "NS_JIT", "NS_DEBUG", "NS_WIN"],
             "compilerPath": "D:\\msys64\\ucrt64\\bin\\clang.exe",
             "cStandard": "c11",
             "cppStandard": "c++11",

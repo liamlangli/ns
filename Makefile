@@ -12,7 +12,7 @@ NS_LIB = bin/libns.a
 
 NS_DARWIN = darwin
 NS_LINUX = linux
-NS_WIN32 = windows
+NS_WIN = windows
 
 NS_CC = clang
 NS_LD = clang -fuse-ld=lld
@@ -35,8 +35,8 @@ else
 	NS_DYLIB_SUFFIX = .so
 	NS_LIB_SUFFIX = .a
 	NS_SUFFIX = .exe
-	NS_PLATFORM_DEF = -DNS_WIN32
-	NS_OS = $(NS_WIN32)
+	NS_PLATFORM_DEF = -DNS_WIN
+	NS_OS = $(NS_WIN)
 	NS_HOME = $(USERPROFILE)
 endif
 
@@ -68,7 +68,7 @@ ifeq ($(NS_BITCODE), 1)
 	JIT_LDFLAGS = $(LLVM_LDFLAGS)
 endif
 
-ifeq ($(NS_OS), $(NS_WIN32))
+ifeq ($(NS_OS), $(NS_WIN))
 NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
 NS_INC = -I/usr/include -Iinclude $(NS_PLATFORM_DEF)
 else

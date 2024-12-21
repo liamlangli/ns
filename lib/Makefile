@@ -23,6 +23,16 @@ bin/os.dylib: bin/lib/os.o bin/lib/os.osx.o
 std: $(NS_STD_LIBS) bin/os.dylib
 
 else ifeq ($(NS_OS),linux)
+bin/lib/os.o: lib/src/os.linux.c
+	$(NS_CC) -c $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
+
+bin/lib/os.o: lib/src/os.c
+	$(NS_CC) -c $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
+
+bin/os.so: bin/lib/os.o bin/lib/os.linux.o
+	$(NS_CC) -shared -fPIC $^ -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
+
+std: $(NS_STD_LIBS) lib/os.so
 else ifeq ($(NS_OS),windows)
 bin/libos.a: lib/src/os.c lib/src/os.win.c
 	$(NS_CC) -shared -fPIC $^ -o $@ $(NS_LIB_INC) $(NS_CFLAGS)

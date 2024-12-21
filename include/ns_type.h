@@ -10,7 +10,7 @@
 #if NS_DARWIN
     #define ns_lib_ext ns_str_cstr(".dylib")
     #define ns_export __attribute__((visibility("default")))
-#elif NS_WIN32
+#elif NS_WIN
     #define ns_lib_ext ns_str_cstr(".dll")
     #define ns_export __declspec(dllexport)
 #else
