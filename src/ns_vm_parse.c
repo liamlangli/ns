@@ -455,11 +455,25 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_return_type ret = ns_vm_parse_type(vm, ctx, n->var_def.type, ctx->nodes[n->var_def.type].type_label.name, true);
         if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
 
-        r.val.t = ret.r;
-        n->var_def.type_size = ns_type_size(vm, r.val.t);
-        if (n->var_def.expr == -1) {
-            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "missing var def expr.");
+        if (ret.r.type == NS_TYPE_UNKNOWN) return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "var def with unknown type.");
+
+        if (ret.r.type == NS_TYPE_INFER) {
+            if (n->var_def.expr == -1) {
+                return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "implicit var def.");
+            }
+            ns_return_type ret_expr = ns_vm_parse_expr(vm, ctx, n->var_def.expr);
+            if (ns_return_is_error(ret_expr)) return ns_return_change_type(void, ret_expr);
+            r.val.t = ret_expr.r;
+            n->var_def.type_size = ns_type_size(vm, r.val.t);
+        } else {
+            r.val.t = ret.r;
+            n->var_def.type_size = ns_type_size(vm, r.val.t);
         }
+
+        if (n->var_def.type_size == -1) {
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "var def with invalid type.");
+        }
+
         ns_vm_push_symbol_global(vm, r);
     }
     return ns_return_ok_void;
