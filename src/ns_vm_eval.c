@@ -179,7 +179,8 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_array_push(vm->symbol_stack, r_arg);
 
     ns_array_push(vm->call_stack, call);
-    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn.ast.ops_fn_def.body);
+    ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
+    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->ops_fn_def.body);
     if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     call = ns_array_pop(vm->call_stack);
     ns_exit_scope(vm);
@@ -347,7 +348,8 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_return_bool ret = ns_vm_call_ref(vm);
         if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     } else {
-        ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn.ast.fn_def.body);
+        ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
+        ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->fn_def.body);
         if (ns_return_is_error(ret)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "call expr error.");
     }
     call = ns_array_pop(vm->call_stack);
@@ -503,7 +505,8 @@ ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value 
     ns_array_push(vm->symbol_stack, r_arg);
 
     ns_array_push(vm->call_stack, call);
-    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn.ast.ops_fn_def.body);
+    ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
+    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->ops_fn_def.body);
     if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
 
     call = ns_array_pop(vm->call_stack);
@@ -1049,21 +1052,6 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
 
-    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
-    if (ns_null != main_fn) {
-        ns_call call = (ns_call){.fn = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
-
-        ns_enter_scope(vm);
-        ns_array_push(vm->call_stack, call);
-        ns_return_void ret = ns_eval_compound_stmt(vm, ctx, main_fn->fn.ast.fn_def.body);
-        if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
-
-        ns_array_pop(vm->call_stack);
-        ns_exit_scope(vm);
-
-        return ns_return_ok(value, ns_nil);
-    }
-
     ns_value ret = ns_nil;
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s_i = ctx->sections[i];
@@ -1089,6 +1077,22 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
             return ns_return_error(value, loc, NS_ERR_EVAL, "unimplemented global ast.");
         } break;
         }
+    }
+
+    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
+    if (ns_null != main_fn) {
+        ns_call call = (ns_call){.fn = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
+
+        ns_enter_scope(vm);
+        ns_array_push(vm->call_stack, call);
+        ns_ast_t *fn = &ctx->nodes[main_fn->fn.ast];
+        ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn_def.body);
+        if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+
+        ns_array_pop(vm->call_stack);
+        ns_exit_scope(vm);
+
+        return ns_return_ok(value, ns_nil);
     }
 
     return ns_return_ok(value, ret);

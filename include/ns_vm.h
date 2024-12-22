@@ -22,7 +22,7 @@ typedef struct ns_fn_symbol {
     ns_type ret;
     ns_symbol *args;
     ns_value fn;
-    ns_ast_t ast;
+    i32 ast;
     void *fn_ptr;
 } ns_fn_symbol;
 
@@ -36,7 +36,7 @@ typedef struct ns_struct_symbol {
     ns_value st;
     ns_str name;
     ns_struct_field *fields;
-    ns_ast_t ast;
+    i32 ast;
     u64 stride;
 } ns_struct_symbol;
 
@@ -95,7 +95,7 @@ typedef struct ns_lib {
 typedef struct ns_vm {
     // parse state
     ns_symbol *symbols;
-    i32 symbol_top;
+    i32 symbol_top; // parse symbol top
 
     // eval state
     ns_call *call_stack;

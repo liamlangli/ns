@@ -89,25 +89,9 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
 #ifndef NS_BITCODE
     ns_exit(1, "ns", "bitcode is not enabled\n");
 #else
-    ns_str source = ns_fs_read_file(filename);
-    if (source.len == 0) { 
-        ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
-        return;
-    }
 
-    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
-    if (ns_return_is_error(ret)) {
-        ns_error("ns", "ast parse error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
-        return;
-    }
-
-    ret = ns_vm_parse(&vm, &ctx);
-    if (ns_return_is_error(ret)) {
-        ns_error("ns", "vm parse error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
-        return;
-    }
-
-    ns_bc_gen(&vm, &ctx, output);
+    ns_return_bool ret = ns_bc_gen(&vm, filename, output);
+    ns_return_assert(ret);
 #endif
 }
 
@@ -119,15 +103,10 @@ void ns_exec_symbol(ns_str filename) {
         return;
     }
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
-    if (ns_return_is_error(ret)) {
-        ns_error("ns", "ast parse error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
-        return;
-    }
+    if (ns_return_is_error(ret)) ns_return_assert(ret);
+
     ret = ns_vm_parse(&vm, &ctx);
-    if (ns_return_is_error(ret)) {
-        ns_error("ns", "vm parse error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
-        return;
-    }
+    if (ns_return_is_error(ret)) ns_return_assert(ret);
     ns_vm_symbol_print(&vm);
 }
 
@@ -136,10 +115,7 @@ void ns_exec_eval(ns_str filename) {
     ns_str source = ns_fs_read_file(filename);
     if (source.len == 0) ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
     ns_return_value ret_v = ns_eval(&vm, source, filename);
-    if (ns_return_is_error(ret_v)) {
-        ns_code_loc loc = ret_v.e.loc;
-        ns_error("ns", "[%.*s:%d:%d] eval error:\n  %.*s\n", loc.f.len, loc.f.data, loc.l, loc.o, ret_v.e.msg.len, ret_v.e.msg.data);
-    }
+    if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
 }
 
 void ns_exec_repl() {

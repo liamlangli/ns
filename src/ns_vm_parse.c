@@ -263,7 +263,7 @@ void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t n = ctx->nodes[s];
         if (n.type != NS_AST_FN_DEF)
             continue;
-        ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n}, .lib =  vm->lib };
+        ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s}, .lib =  vm->lib };
         fn.name = n.fn_def.name.val;
         ns_vm_push_symbol_global(vm, fn);
     }
@@ -275,7 +275,7 @@ ns_return_void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t n = ctx->nodes[s];
         if (n.type != NS_AST_OPS_FN_DEF)
             continue;
-        ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n}, .lib =  vm->lib};
+        ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s}, .lib =  vm->lib};
         ns_ast_t l = ctx->nodes[n.ops_fn_def.left];
         ns_ast_t r = ctx->nodes[n.ops_fn_def.right];
 
@@ -298,16 +298,16 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_symbol *fn = &vm->symbols[i];
         if (fn->type != NS_SYMBOL_FN || fn->parsed)
             continue;
-        ns_ast_t n = fn->fn.ast;
-        if (n.type == NS_AST_FN_DEF) {
-            ns_ast_t *ret_type = &ctx->nodes[n.fn_def.ret];
-            ns_return_type ret = ns_vm_parse_type(vm, ctx, n.fn_def.ret, ret_type->type_label.name, true);
+        ns_ast_t *n = &ctx->nodes[fn->fn.ast];
+        if (n->type == NS_AST_FN_DEF) {
+            ns_ast_t *ret_type = &ctx->nodes[n->fn_def.ret];
+            ns_return_type ret = ns_vm_parse_type(vm, ctx, n->fn_def.ret, ret_type->type_label.name, true);
             if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
 
             fn->fn.ret = ret.r;
-            ns_array_set_length(fn->fn.args, n.fn_def.arg_count);
-            ns_ast_t *arg = &n;
-            for (i32 i = 0; i < n.fn_def.arg_count; i++) {
+            ns_array_set_length(fn->fn.args, n->fn_def.arg_count);
+            ns_ast_t *arg = n;
+            for (i32 i = 0, l = n->fn_def.arg_count; i < l; i++) {
                 arg = &ctx->nodes[arg->next];
                 ns_symbol arg_record = (ns_symbol){.type = NS_SYMBOL_VALUE};
                 arg_record.name = arg->arg.name.val;
@@ -319,30 +319,30 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
                 arg_record.val.t = ret_t.r;
                 fn->fn.args[i] = arg_record;
             }
-        } else if (n.type == NS_AST_OPS_FN_DEF) {
-            ns_ast_t l = ctx->nodes[n.ops_fn_def.left];
-            ns_ast_t r = ctx->nodes[n.ops_fn_def.right];
-            ns_return_type ret = ns_vm_parse_type(vm, ctx, l.arg.type, ctx->nodes[l.arg.type].type_label.name, true);
+        } else if (n->type == NS_AST_OPS_FN_DEF) {
+            ns_ast_t *l = &ctx->nodes[n->ops_fn_def.left];
+            ns_ast_t *r = &ctx->nodes[n->ops_fn_def.right];
+            ns_return_type ret = ns_vm_parse_type(vm, ctx, l->arg.type, ctx->nodes[l->arg.type].type_label.name, true);
             if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
             fn->fn.ret = ret.r;
 
             ns_array_set_length(fn->fn.args, 2);
             ns_symbol l_arg = (ns_symbol){.type = NS_SYMBOL_VALUE};
-            l_arg.name = l.arg.name.val;
-            ret = ns_vm_parse_type(vm, ctx, l.arg.type, ctx->nodes[l.arg.type].type_label.name, false);
+            l_arg.name = l->arg.name.val;
+            ret = ns_vm_parse_type(vm, ctx, l->arg.type, ctx->nodes[l->arg.type].type_label.name, false);
             if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
             l_arg.val.t = ret.r;
             fn->fn.args[0] = l_arg;
 
             ns_symbol r_arg = (ns_symbol){.type = NS_SYMBOL_VALUE};
-            r_arg.name = r.arg.name.val;
+            r_arg.name = r->arg.name.val;
 
-            ret = ns_vm_parse_type(vm, ctx, r.arg.type, ctx->nodes[r.arg.type].type_label.name, false);
+            ret = ns_vm_parse_type(vm, ctx, r->arg.type, ctx->nodes[r->arg.type].type_label.name, false);
             if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
             r_arg.val.t = ret.r;
             fn->fn.args[1] = r_arg;
         } else {
-            return ns_return_error(void, ns_ast_state_loc(ctx, n.state), NS_ERR_SYNTAX, "unknown fn def type");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unknown fn def type");
         }
     }
     return ns_return_ok_void;
@@ -354,9 +354,9 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_symbol *fn = &vm->symbols[i];
         if (fn->type != NS_SYMBOL_FN || fn->parsed)
             continue;
-        ns_ast_t n = fn->fn.ast;
-        i32 body = n.type == NS_AST_FN_DEF ? n.fn_def.body : n.ops_fn_def.body;
-       ns_bool is_ref = n.type == NS_AST_FN_DEF ? n.fn_def.is_ref : n.ops_fn_def.is_ref;
+        ns_ast_t *n = &ctx->nodes[fn->fn.ast];
+        i32 body = n->type == NS_AST_FN_DEF ? n->fn_def.body : n->ops_fn_def.body;
+        ns_bool is_ref = n->type == NS_AST_FN_DEF ? n->fn_def.is_ref : n->ops_fn_def.is_ref;
         ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack)};
 
         ns_array_push(vm->call_stack, call);
@@ -381,11 +381,12 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
 ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
     i32 size;
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
-        ns_ast_t n = ctx->nodes[ctx->sections[i]];
+        i32 s = ctx->sections[i];
+        ns_ast_t n = ctx->nodes[s];
         if (n.type != NS_AST_STRUCT_DEF)
             continue;
         i32 i = ns_array_length(vm->symbols);
-        ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = n, .st.t = ns_type_encode(ns_type_struct, i, 0, 0)}, .lib =  vm->lib};
+        ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = s, .st.t = ns_type_encode(ns_type_struct, i, 0, 0)}, .lib =  vm->lib};
         st.name = n.struct_def.name.val;
         ns_array_set_length(st.st.fields, n.struct_def.count);
         ns_ast_t *field = &n;
@@ -436,7 +437,8 @@ ns_return_void ns_vm_parse_struct_def_ref(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_str n = ns_vm_get_type_name(vm, f->t);
             ns_symbol *t = ns_vm_find_symbol(vm, n);
             if (t->type == NS_SYMBOL_INVALID) {
-                return ns_return_error(void, ns_ast_state_loc(ctx, st->st.ast.state), NS_ERR_SYNTAX, "unknown ref type");
+                ns_ast_t *field = &ctx->nodes[st->st.ast];
+                return ns_return_error(void, ns_ast_state_loc(ctx, field->state), NS_ERR_SYNTAX, "unknown ref type");
             }
         }
         st->parsed = true;

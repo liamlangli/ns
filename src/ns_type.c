@@ -185,12 +185,10 @@ i32 ns_str_index_of(ns_str s, ns_str sub) {
 }
 
 ns_str ns_str_slice(ns_str s, i32 start, i32 end) {
-    char *buffer = (char *)malloc(end - start + 1);
-    memcpy(buffer, s.data + start, end - start);
-    buffer[end - start] = '\0';
-    ns_str data = ns_str_range(buffer, end - start);
-    data.dynamic = true;
-    return data;
+    i8 *d = (i8 *)malloc(end - start + 1);
+    memcpy(d, s.data + start, end - start);
+    d[end - start] = '\0';
+    return ns_str_range(d, end - start);
 }
 
 ns_str ns_str_concat(ns_str a, ns_str b) {
@@ -221,13 +219,8 @@ ns_str ns_return_state_str(ns_return_state s) {
     case NS_ERR: return ns_str_cstr("error");
     case NS_ERR_SYNTAX: return ns_str_cstr("syntax error");
     case NS_ERR_EVAL: return ns_str_cstr("eval error");
-    case NS_ERR_TYPE: return ns_str_cstr("type error");
     case NS_ERR_RUNTIME: return ns_str_cstr("runtime error");
-    case NS_ERR_IMPORT: return ns_str_cstr("import error");
-    case NS_ERR_FILE: return ns_str_cstr("file error");
-    case NS_ERR_MEMORY: return ns_str_cstr("memory error");
-    case NS_ERR_INTERNAL: return ns_str_cstr("internal error");
-    case NS_ERR_UNKNOWN: return ns_str_cstr("unknown error");
+    case NS_ERR_BITCODE: return ns_str_cstr("bitcode error");
     default: return ns_str_cstr("unknown error");
     }
 }

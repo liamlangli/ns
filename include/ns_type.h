@@ -373,12 +373,8 @@ typedef enum {
     NS_ERR,
     NS_ERR_SYNTAX,
     NS_ERR_EVAL,
-    NS_ERR_TYPE,
     NS_ERR_RUNTIME,
-    NS_ERR_IMPORT,
-    NS_ERR_FILE,
-    NS_ERR_MEMORY,
-    NS_ERR_INTERNAL,
+    NS_ERR_BITCODE,
     NS_ERR_UNKNOWN,
 } ns_return_state;
 
