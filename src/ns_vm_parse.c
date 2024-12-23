@@ -17,7 +17,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx);
 
 ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_record_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_str n, ns_bool infer);
+ns_return_type ns_vm_parse_symbol_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_str n, ns_bool infer);
 ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_token_t t, ns_bool infer);
 ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -219,7 +219,7 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s) {
     return ns_null;
 }
 
-ns_return_type ns_vm_parse_record_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_str n, ns_bool infer) {
+ns_return_type ns_vm_parse_symbol_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_str n, ns_bool infer) {
     ns_symbol *r = ns_vm_find_symbol(vm, n);
     if (!r) {
         if (infer) return ns_return_ok(type, ns_type_infer);
@@ -242,24 +242,30 @@ ns_return_type ns_vm_parse_record_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_str
 }
 
 ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_token_t t, ns_bool infer) {
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_type ret = ns_type_encode(NS_TYPE_UNKNOWN, 0, n->type_label.is_ref, NS_STORE_CONST);
     switch (t.type) {
-    case NS_TOKEN_TYPE_I8: return ns_return_ok(type, ns_type_i8);
-    case NS_TOKEN_TYPE_U8: return ns_return_ok(type, ns_type_u8);
-    case NS_TOKEN_TYPE_I16: return ns_return_ok(type, ns_type_i16);
-    case NS_TOKEN_TYPE_U16: return ns_return_ok(type, ns_type_u16);
-    case NS_TOKEN_TYPE_BOOL: return ns_return_ok(type, ns_type_bool);
-    case NS_TOKEN_TYPE_I32: return ns_return_ok(type, ns_type_i32);
-    case NS_TOKEN_TYPE_U32: return ns_return_ok(type, ns_type_u32);
-    case NS_TOKEN_TYPE_I64: return ns_return_ok(type, ns_type_i64);
-    case NS_TOKEN_TYPE_U64: return ns_return_ok(type, ns_type_u64);
-    case NS_TOKEN_TYPE_F32: return ns_return_ok(type, ns_type_f32);
-    case NS_TOKEN_TYPE_F64: return ns_return_ok(type, ns_type_f64);
-    case NS_TOKEN_TYPE_STR: return ns_return_ok(type, ns_type_str);
-    case NS_TOKEN_NIL: return ns_return_ok(type, ns_type_nil);
+    case NS_TOKEN_TYPE_I8: ret.type = NS_TYPE_I8; break;
+    case NS_TOKEN_TYPE_U8: ret.type = NS_TYPE_U8; break;
+    case NS_TOKEN_TYPE_I16: ret.type = NS_TYPE_I16; break;
+    case NS_TOKEN_TYPE_U16: ret.type = NS_TYPE_U16; break;
+    case NS_TOKEN_TYPE_BOOL: ret.type = NS_TYPE_BOOL; break;
+    case NS_TOKEN_TYPE_I32: ret.type = NS_TYPE_I32; break;
+    case NS_TOKEN_TYPE_U32: ret.type = NS_TYPE_U32; break;
+    case NS_TOKEN_TYPE_I64: ret.type = NS_TYPE_I64; break;
+    case NS_TOKEN_TYPE_U64: ret.type = NS_TYPE_U64; break;
+    case NS_TOKEN_TYPE_F32: ret.type = NS_TYPE_F32; break;
+    case NS_TOKEN_TYPE_F64: ret.type = NS_TYPE_F64; break;
+    case NS_TOKEN_TYPE_STR: ret.type = NS_TYPE_STRING; break;
+    case NS_TOKEN_NIL: ret.type = NS_TYPE_NIL; break;
     default:
         break;
     }
-    return ns_vm_parse_record_type(vm, ctx, i, t.val, infer);
+    if (ret.type != NS_TYPE_UNKNOWN) return ns_return_ok(type, ret);
+
+    ns_return_type ret_t = ns_vm_parse_symbol_type(vm, ctx, i, t.val, infer);
+    if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
+    return ns_return_ok(type, ns_type_set_ref(ret_t.r, ret.ref));
 }
 
 void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -511,7 +517,7 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_TOKEN_FALSE:
         return ns_return_ok(type, ns_type_bool);
     case NS_TOKEN_IDENTIFIER:
-        return ns_vm_parse_record_type(vm, ctx, i, n->primary_expr.token.val, true);
+        return ns_vm_parse_symbol_type(vm, ctx, i, n->primary_expr.token.val, true);
     default:
         break;
     }
@@ -1000,14 +1006,15 @@ ns_return_void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_vm_parse_import_stmt(vm, ctx);
-    ns_vm_parse_fn_def_name(vm, ctx);
-    ns_return_void ret = ns_vm_parse_ops_fn_def_name(vm, ctx);
-    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
 
-    ret = ns_vm_parse_struct_def(vm, ctx);
+    ns_return_void ret = ns_vm_parse_struct_def(vm, ctx);
     if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
 
     ret = ns_vm_parse_struct_def_ref(vm, ctx);
+    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+
+    ns_vm_parse_fn_def_name(vm, ctx);
+    ret = ns_vm_parse_ops_fn_def_name(vm, ctx);
     if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
 
     ret = ns_vm_parse_fn_def_type(vm, ctx);

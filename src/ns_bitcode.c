@@ -113,7 +113,6 @@ ns_bc_value ns_bc_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, i32 i);
 ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, i32 i);
 ns_bc_value ns_bc_primary_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, i32 i);
 ns_bc_value ns_bc_binary_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, i32 i);
-ns_bc_value ns_bc_call_std(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx);
 
 // stmt
 void ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, i32 i);
@@ -145,6 +144,7 @@ ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t) {
     case NS_TYPE_U8: return ns_bc_type_i8;
     case NS_TYPE_I16:
     case NS_TYPE_U16: return ns_bc_type_i16;
+    case NS_TYPE_BOOL:
     case NS_TYPE_I32:
     case NS_TYPE_U32: return ns_bc_type_i32;
     case NS_TYPE_I64:
@@ -152,10 +152,10 @@ ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t) {
     case NS_TYPE_F32: return ns_bc_type_f32;
     case NS_TYPE_F64: return ns_bc_type_f64;
     case NS_TYPE_STRING: return ns_bc_type_str;
+    case NS_TYPE_INFER:
     case NS_TYPE_NIL: return ns_bc_type_nil;
-    case NS_TYPE_FN:
-    case NS_TYPE_STRUCT:
-        return bc_ctx->symbols[t.index].fn.ret;
+    case NS_TYPE_FN: return bc_ctx->symbols[t.index].fn.fn.type;
+    case NS_TYPE_STRUCT: return bc_ctx->symbols[t.index].st.st.type;
     default:
         ns_error("ns_bc", "unimplemented type\n");
         break;
@@ -252,6 +252,7 @@ void ns_bc_struct_def(ns_bc_ctx *bc_ctx, ns_symbol *st, i32 i) {
     for (i32 j = 0, l = field_count; j < l; j++) {
         ns_struct_field *field = &st->st.fields[j];
         ns_bc_type t = ns_bc_parse_type(bc_ctx, field->t);
+        if (field->t.ref) t.type = LLVMPointerType(t.type, 0);
         st_symbol.fields[j] = (ns_bc_symbol){.type = NS_BC_VALUE, .name = field->name, .val = (ns_bc_value){.type = t, .val = ns_null, .p = j}};
         _types[j] = t.type;
     }
@@ -510,6 +511,7 @@ void ns_bc_parse_def(ns_bc_ctx *bc_ctx) {
             ns_bc_struct_def(bc_ctx, s, i);
             break;
         default:
+            ns_error("ns_bc", "unimplemented def\n");
             break;
         }
     }

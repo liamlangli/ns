@@ -45,7 +45,7 @@ void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i,ns_bool colon) {
 
     ns_ast_t *n = &ctx->nodes[i];
     if (n->type_label.is_ref) {
-        printf("ref ");
+        printf(ns_color_log "ref " ns_color_nil);
     }
 
     if (n->type_label.is_array) {
@@ -71,13 +71,13 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         ns_str_printf(n.module_stmt.name.val);
     } break;
     case NS_AST_TYPE_LABEL: {
-        if (n.type_label.is_ref) printf("ref ");
+        if (n.type_label.is_ref) printf(ns_color_log "ref " ns_color_nil);
         ns_str_printf(n.type_label.name.val);
     } break;
     case NS_AST_FN_DEF: {
-        if (n.fn_def.is_ref) printf("ref ");
-        if (n.fn_def.is_async) printf("async ");
-        if (n.fn_def.is_kernel) printf("kernel ");
+        if (n.fn_def.is_ref) printf(ns_color_log "ref ");
+        if (n.fn_def.is_async) printf(ns_color_log "async ");
+        if (n.fn_def.is_kernel) printf(ns_color_log "kernel ");
 
         printf(ns_color_log "fn " ns_color_nil);
         ns_str_printf(n.fn_def.name.val);
