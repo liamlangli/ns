@@ -1,12 +1,12 @@
 mod io
 
-struct Image {
+struct io_image {
     width: i32,
     height: i32,
     channels: i32,
     data: [u8]
 }
 
-ref fn io_load_image(path: str): ref Image
-ref fn io_save_image(path: str, img: ref Image): bool
+ref fn io_load_image(path: str): ref io_image
+ref fn io_save_image(path: str, img: ref io_image): bool
 ref fn add(a: i32, b: i32): i32

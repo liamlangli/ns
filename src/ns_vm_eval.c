@@ -166,7 +166,7 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     if (!fn) return ns_return_ok(value, ns_nil);
 
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
-    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
+    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid  override fn.");
 
     u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
@@ -319,13 +319,13 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_return_is_error(ret_callee)) return ret_callee;
 
     ns_value callee = ret_callee.r;
-    if (ns_is_nil(callee)) {
+    if (ns_is_nil(callee))
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "nil callee.");
-    }
 
     ns_symbol *fn = &vm->symbols[ns_type_index(callee.t)];
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
-    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
+    if (ret_size < 0)
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
 
     u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
@@ -492,7 +492,7 @@ ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value 
 
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
     ns_ast_t *n = &ctx->nodes[i];
-    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
+    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override ops fn.");
 
     u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};

@@ -121,6 +121,7 @@ ffi_type ns_ffi_map_type(ns_type t) {
     {
         case NS_TYPE_I8: return ffi_type_sint8;
         case NS_TYPE_I16: return ffi_type_sint16; break;
+        case NS_TYPE_BOOL:
         case NS_TYPE_I32: return ffi_type_sint32; break;
         case NS_TYPE_I64: return ffi_type_sint64; break;
         case NS_TYPE_U8: return ffi_type_uint8; break;
@@ -177,7 +178,8 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
             _ffi_values[i] = &_ffi_refs[i];
         } break;
         default:
-            _ffi_values[i] = (void*)((i8*)vm->stack + v.o);
+            _ffi_refs[i] = (void*)((i8*)vm->stack + v.o);
+            _ffi_values[i] = &_ffi_refs[i];
             break;
         }
         _ffi_type_refs[i] = ns_ffi_map_type(v.t);

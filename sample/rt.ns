@@ -54,7 +54,7 @@ fn main() {
     let center = simd3 { x: 0.0, y: 0.0, z: -5.0 }
     let radius = 2.0
 
-    let image = Image{data: [u8](256 * 256 * 4), width: 256, height: 256, channels: 4}
+    let image = io_image{data: [u8](256 * 256 * 4), width: 256, height: 256, channels: 4}
     let offset = 0
     let n = simd3 { x: 0.0, y: 0.0, z: 0.0 }
     let p = simd3 { x: 0.0, y: 0.0, z: 0.0 }
@@ -67,7 +67,7 @@ fn main() {
             direction = normalize(simd3 { x: u, y: v, z: -1.0 })
             let t = hit_sphere(origin, direction, center, radius)
             let hit = origin + direction * t
-            n = normalize((hit - center) / radius)
+            n = (hit - center) / radius
 
             offset = (i * 256 + j) * 4
             if t > 0.0 {

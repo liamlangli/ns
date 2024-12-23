@@ -275,6 +275,7 @@ typedef struct ns_type {
 #define ns_type_in_heap(t) (NS_STORE_HEAP == t.store)
 #define ns_type_index(t) (t.index)
 #define ns_type_set_store(t, s) ((ns_type){.ref = t.ref, .store = s, .type = t.type, .array = t.array, .index = t.index})
+#define ns_type_set_ref(t, r) ((ns_type){.ref = r, .store = t.store, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_equals(a, b) (a.type == b.type && a.index == b.index)
 
 #define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}

@@ -5,42 +5,41 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-typedef struct Image {
+typedef struct io_image {
     i32 width;
     i32 height;
     i32 channels;
     u8 *data;
-} Image;
+} io_image;
 
-Image* io_load_image(ns_str path) {
+io_image* io_load_image(ns_str path) {
     // Implementation for loading an image from the file at 'path'
     // This is a placeholder implementation
-    Image *img = (Image*)malloc(sizeof(Image));
+    io_image *img = (io_image*)malloc(sizeof(io_image));
     if (img == NULL) {
-        fprintf(stderr, "Failed to allocate memory for image\n");
+        ns_error("io", "Failed to allocate memory for image\n");
         return NULL;
     }
 
     img->data = stbi_load(path.data, &img->width, &img->height, &img->channels, 0);
     if (img->data == NULL) {
-        fprintf(stderr, "Failed to load image from file: %s\n", path.data);
         free(img);
+        ns_error("io", "Failed to load image from file: %.*s\n", path.len, path.data);
         return NULL;
     }
 
     return img;
 }
 
-void io_save_image(const char *path, const Image *img) {
-    // Implementation for saving an image to the file at 'path'
-    // This is a placeholder implementation
+i32 io_save_image(const char *path, const io_image *img) {
     if (img == NULL) {
-        fprintf(stderr, "Invalid image\n");
-        return;
+        ns_error("io", "Image is NULL\n");
+        return 0;
     }
 
-    int result = stbi_write_png(path, img->width, img->height, img->channels, img->data, img->width * img->channels);
+    i32 result = stbi_write_png(path, img->width, img->height, img->channels, img->data, img->width * img->channels);
     if (result == 0) {
-        fprintf(stderr, "Failed to save image to file: %s\n", path);
+        ns_error("io", "Failed to save image to file: %s\n", path);
     }
+    return 1;
 }

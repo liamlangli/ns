@@ -42,6 +42,7 @@ ns_str ns_fmt_type_str(ns_type t) {
     {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
+    case NS_TYPE_BOOL: return ns_str_cstr("%d");
     case NS_TYPE_I32: return ns_str_cstr("%d");
     case NS_TYPE_I64: return ns_str_cstr("%ld");
     case NS_TYPE_U8:
@@ -51,7 +52,7 @@ ns_str ns_fmt_type_str(ns_type t) {
     case NS_TYPE_F32: return ns_str_cstr("%.2f");
     case NS_TYPE_F64: return ns_str_cstr("%.2lf");
     default:
-        ns_error("fmt error", "");
+        ns_error("fmt error", "unknown type.");
         break;
     }
     return ns_str_null;
