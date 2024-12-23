@@ -1052,6 +1052,9 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
 
+    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
+    ns_bool main_found = ns_null != main_fn;
+
     ns_value ret = ns_nil;
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s_i = ctx->sections[i];
@@ -1059,11 +1062,13 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         switch (n->type) {
         case NS_AST_EXPR:
         case NS_AST_CALL_EXPR: {
+            if (main_found)
+                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "global expr not allowed while main function is defined.");
             ns_return_value ret = ns_eval_expr(vm, ctx, s_i);
             if (ns_return_is_error(ret)) return ret;
         } break;
         case NS_AST_VAR_DEF: {
-            ns_return_value ret = ns_eval_var_def(vm, ctx, s_i);
+            ns_return_value ret = main_found ? ns_eval_var_def(vm, ctx, s_i) : ns_eval_local_var_def(vm, ctx, s_i);
             if (ns_return_is_error(ret)) return ret;
         } break;
         case NS_AST_IMPORT_STMT:
@@ -1079,8 +1084,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
 
-    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
-    if (ns_null != main_fn) {
+    if (main_found) {
         ns_call call = (ns_call){.fn = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
 
         ns_enter_scope(vm);

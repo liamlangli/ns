@@ -310,6 +310,7 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
         if (fn->type != NS_SYMBOL_FN || fn->parsed)
             continue;
         ns_ast_t *n = &ctx->nodes[fn->fn.ast];
+        fn->fn.fn.t = ns_type_encode(NS_TYPE_FN, i, 0, NS_STORE_CONST);
         if (n->type == NS_AST_FN_DEF) {
             ns_ast_t *ret_type = &ctx->nodes[n->fn_def.ret];
             ns_return_type ret = ns_vm_parse_type(vm, ctx, n->fn_def.ret, ret_type->type_label.name, true);
@@ -533,7 +534,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_type fn = ret_callee.r;
     if (ns_type_is(fn, NS_TYPE_UNKNOWN)) {
-        return ns_return_error(type, ns_ast_state_loc(ctx, callee_n->state), NS_ERR_EVAL, "unknown callee.");
+        return ns_return_error(type, ns_ast_state_loc(ctx, callee_n->state), NS_ERR_EVAL, "invalid callee.");
     }
 
     ns_symbol *fn_record = &vm->symbols[ns_type_index(fn)];
@@ -1020,11 +1021,15 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ret = ns_vm_parse_fn_def_type(vm, ctx);
     if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
 
-    ret = ns_vm_parse_var_def(vm, ctx);
-    if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
-
     ret = ns_vm_parse_fn_def_body(vm, ctx);
     if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+
+    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
+
+    if (main_fn) { // main_fn exists, parse top level var def as global var
+        ret = ns_vm_parse_var_def(vm, ctx);
+        if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+    }
 
     vm->symbol_top = ns_array_length(vm->symbols);
 

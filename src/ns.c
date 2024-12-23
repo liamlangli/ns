@@ -90,7 +90,7 @@ void ns_exec_bitcode(ns_str filename, ns_str output) {
     ns_exit(1, "ns", "bitcode is not enabled\n");
 #else
 
-    ns_return_bool ret = ns_bc_gen(&vm, filename, output);
+    ns_return_bool ret = ns_bc_gen(filename, output);
     ns_return_assert(ret);
 #endif
 }
