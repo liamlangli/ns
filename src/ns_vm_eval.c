@@ -166,7 +166,7 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     if (!fn) return ns_return_ok(value, ns_nil);
 
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
-    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid  override fn.");
+    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
 
     u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
@@ -319,13 +319,13 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_return_is_error(ret_callee)) return ret_callee;
 
     ns_value callee = ret_callee.r;
-    if (ns_is_nil(callee))
+    if (ns_is_nil(callee)) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "nil callee.");
+    }
 
     ns_symbol *fn = &vm->symbols[ns_type_index(callee.t)];
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
-    if (ret_size < 0)
-        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
+    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
 
     u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
@@ -492,7 +492,7 @@ ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value 
 
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
     ns_ast_t *n = &ctx->nodes[i];
-    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override ops fn.");
+    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
 
     u64 ret_offset = ns_eval_alloc(vm, ret_size);
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
@@ -1052,9 +1052,6 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
 
-    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
-    ns_bool main_found = ns_null != main_fn;
-
     ns_value ret = ns_nil;
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s_i = ctx->sections[i];
@@ -1062,13 +1059,11 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         switch (n->type) {
         case NS_AST_EXPR:
         case NS_AST_CALL_EXPR: {
-            if (main_found)
-                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "global expr not allowed while main function is defined.");
             ns_return_value ret = ns_eval_expr(vm, ctx, s_i);
             if (ns_return_is_error(ret)) return ret;
         } break;
         case NS_AST_VAR_DEF: {
-            ns_return_value ret = main_found ? ns_eval_var_def(vm, ctx, s_i) : ns_eval_local_var_def(vm, ctx, s_i);
+            ns_return_value ret = ns_eval_var_def(vm, ctx, s_i);
             if (ns_return_is_error(ret)) return ret;
         } break;
         case NS_AST_IMPORT_STMT:
@@ -1084,7 +1079,8 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
 
-    if (main_found) {
+    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
+    if (ns_null != main_fn) {
         ns_call call = (ns_call){.fn = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
 
         ns_enter_scope(vm);
