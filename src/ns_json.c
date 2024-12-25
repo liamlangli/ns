@@ -396,7 +396,7 @@ ns_bool ns_json_print_node(ns_json *json, i32 depth,ns_bool wrap) {
 
 void ns_str_append_i32(ns_str *s, i32 n) {
     // append i32 to string
-   ns_bool neg = 0;
+    ns_bool neg = 0;
 
     if (n < 0) {
         neg = 1;

@@ -59,7 +59,7 @@ ns_str ns_fmt_type_str(ns_type t) {
 }
 
 ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
-    ns_str ret = {.data = ns_null, .len = 0, .dynamic = 1};
+    ns_str ret = (ns_str){.data = ns_null, .len = 0, .dynamic = 1};
     ns_array_set_capacity(ret.data, fmt.len);
 
     i32 i = 0;

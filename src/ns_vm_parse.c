@@ -163,7 +163,7 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
 }
 
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
-   ns_bool is_ref = ns_type_is_ref(t);
+    ns_bool is_ref = ns_type_is_ref(t);
     switch (t.type)
     {
     case NS_TYPE_I8: return is_ref ? ns_str_cstr("ref_i8") : ns_str_cstr("i8");
@@ -496,9 +496,10 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
 ns_return_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_return_type ret;
     ns_ast_t *n = &ctx->nodes[i];
+    i32 next = i;
     for (i32 j = 0, l = n->str_fmt.expr_count; j < l; ++j) {
-        ns_ast_t *expr = &ctx->nodes[n->next];
-        ret = ns_vm_parse_expr(vm, ctx, expr->next);
+        n = &ctx->nodes[next = n->next];
+        ret = ns_vm_parse_expr(vm, ctx, next);
         if (ns_return_is_error(ret)) return ret;
     }
     return ns_return_ok(type, ns_type_str);
@@ -836,7 +837,7 @@ ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_AST_CAST_EXPR: return ns_vm_parse_cast_expr(vm, ctx, i);
     case NS_AST_ARRAY_EXPR: return ns_vm_parse_array_expr(vm, ctx, i);
     case NS_AST_INDEX_EXPR: return ns_vm_parse_index_expr(vm, ctx, i);
-    case NS_AST_STR_FMT_EXPR: return ns_return_ok(type, ns_type_str);
+    case NS_AST_STR_FMT_EXPR: return ns_vm_parse_str_fmt(vm, ctx, i);
     default: {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unimplemented expr type.");
     } break;

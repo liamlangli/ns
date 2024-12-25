@@ -69,7 +69,7 @@ ns_bool ns_token_require_type(ns_ast_ctx *ctx) {
 ns_bool ns_token_look_ahead(ns_ast_ctx *ctx, NS_TOKEN token) {
     ns_ast_state state = ns_save_state(ctx);
     ns_parse_next_token(ctx);
-   ns_bool result = ctx->token.type == token;
+    ns_bool result = ctx->token.type == token;
     ns_restore_state(ctx, state);
     return result;
 }
@@ -152,7 +152,7 @@ ns_return_bool ns_primary_expr(ns_ast_ctx *ctx) {
     ns_parse_next_token(ctx);
 
     // literal
-   ns_bool is_literal = false;
+    ns_bool is_literal = false;
     switch (ctx->token.type) {
     case NS_TOKEN_INT_LITERAL:
     case NS_TOKEN_FLT_LITERAL:
