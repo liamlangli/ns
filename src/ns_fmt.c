@@ -52,7 +52,7 @@ ns_str ns_fmt_type_str(ns_type t) {
     case NS_TYPE_F32: return ns_str_cstr("%.2f");
     case NS_TYPE_F64: return ns_str_cstr("%.2lf");
     default:
-        ns_error("fmt error", "unknown type.");
+        ns_error("fmt error", "unknown type.\n");
         break;
     }
     return ns_str_null;
@@ -70,7 +70,7 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
                 i++;
             }
             if (i == fmt.len) {
-                ns_error("fmt error", "missing '}'.");
+                ns_error("fmt error", "missing '}'.\n");
                 return ns_str_null;
             }
             ns_ast_ctx ctx = {0};

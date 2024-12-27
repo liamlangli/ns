@@ -500,6 +500,7 @@ ns_return_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     for (i32 j = 0, l = n->str_fmt.expr_count; j < l; ++j) {
         n = &ctx->nodes[next = n->next];
         ret = ns_vm_parse_expr(vm, ctx, next);
+        n->expr.type = ret.r;
         if (ns_return_is_error(ret)) return ret;
     }
     return ns_return_ok(type, ns_type_str);
@@ -1006,6 +1007,31 @@ ns_return_void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok_void;
 }
 
+ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        i32 s_i = ctx->sections[i];
+        ns_ast_t *n = &ctx->nodes[s_i];
+        switch (n->type) {
+            case NS_AST_EXPR:
+            case NS_AST_CALL_EXPR: {
+                ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i);
+                if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
+            } break;
+            case NS_AST_IMPORT_STMT:
+            case NS_AST_MODULE_STMT:
+            case NS_AST_FN_DEF:
+            case NS_AST_OPS_FN_DEF:
+            case NS_AST_STRUCT_DEF:
+            case NS_AST_PROGRAM:
+                break; // already parsed
+            default: {
+                ns_str type = ns_ast_type_to_string(n->type);
+                if (!vm->repl) ns_warn("vm parse", "unimplemented global ast parse %.*s\n", type.len, type.data);
+            } break;
+        }
+    }
+}
+
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_vm_parse_import_stmt(vm, ctx);
 
@@ -1027,35 +1053,23 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
 
     ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
 
-    if (main_fn) { // main_fn exists, parse top level var def as global var
+    if (main_fn) {
+        // main_fn exists, parse top level var def as global var
         ret = ns_vm_parse_var_def(vm, ctx);
         if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+
+        ret = ns_vm_parse_global_expr(vm, ctx);
+        if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+    } else {
+        // create main fn
+        ns_symbol main = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ret = ns_type_i32, .args = NULL, .body = 0}, .parsed = true};
+        main.name = ns_str_cstr("main");
+        ns_vm_push_symbol_global(vm, main);
+
+        // parse top level expr as main fn body
+        // parse top level var def as local var def
     }
 
     vm->symbol_top = ns_array_length(vm->symbols);
-
-    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
-        i32 s_i = ctx->sections[i];
-        ns_ast_t *n = &ctx->nodes[s_i];
-        switch (n->type) {
-        case NS_AST_EXPR:
-        case NS_AST_CALL_EXPR: {
-            ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i);
-            if (ns_return_is_error(ret_t)) return ns_return_change_type(bool, ret_t);
-        } break;
-        case NS_AST_IMPORT_STMT:
-        case NS_AST_MODULE_STMT:
-        case NS_AST_FN_DEF:
-        case NS_AST_OPS_FN_DEF:
-        case NS_AST_STRUCT_DEF:
-        case NS_AST_VAR_DEF:
-        case NS_AST_PROGRAM:
-            break; // already parsed
-        default: {
-            ns_str type = ns_ast_type_to_string(n->type);
-            if (!vm->repl) ns_warn("vm parse", "unimplemented global ast parse %.*s\n", type.len, type.data);
-        } break;
-        }
-    }
     return ns_return_ok(bool, true);
 }

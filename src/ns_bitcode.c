@@ -108,6 +108,9 @@ ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t);
 ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name);
 void ns_bc_set_symbol(ns_bc_ctx *bc_ctx, ns_bc_symbol r, i32 i);
 ns_bc_symbol* ns_bc_find_symbol(ns_bc_ctx *bc_ctx, ns_str name);
+ns_bc_value_ref ns_bc_std_malloc(ns_bc_ctx *bc_ctx);
+ns_bc_value_ref ns_bc_std_free(ns_bc_ctx *bc_ctx);
+ns_bc_value_ref ns_bc_std_snprinf(ns_bc_ctx *bc_ctx);
 
 // scope
 ns_scope *ns_bc_enter_scope(ns_bc_ctx *bc_ctx);
@@ -197,6 +200,42 @@ ns_bc_symbol* ns_bc_find_symbol(ns_bc_ctx *bc_ctx, ns_str name) {
         }
     }
     return ns_null;
+}
+
+ns_bc_value_ref ns_bc_std_malloc(ns_bc_ctx *bc_ctx) {
+    static ns_bool _bc_malloc_init = false;
+    static ns_bc_value_ref _bc_malloc;
+    if (_bc_malloc_init) return _bc_malloc;
+
+    ns_bc_type_ref _types[1] = {LLVMInt64Type()};
+    ns_bc_type_ref bc_fn_type = LLVMFunctionType(LLVMPointerType(LLVMInt8Type(), 0), _types, 1, 0);
+    _bc_malloc = LLVMAddFunction(bc_ctx->mod, "malloc", bc_fn_type);
+    _bc_malloc_init = true;
+    return _bc_malloc;
+}
+
+ns_bc_value_ref ns_bc_std_free(ns_bc_ctx *bc_ctx) {
+    static ns_bool _bc_free_init = false;
+    static ns_bc_value_ref _bc_free;
+    if (_bc_free_init) return _bc_free;
+
+    ns_bc_type_ref _types[1] = {LLVMPointerType(LLVMInt8Type(), 0)};
+    ns_bc_type_ref bc_fn_type = LLVMFunctionType(LLVMVoidType(), _types, 1, 0);
+    _bc_free = LLVMAddFunction(bc_ctx->mod, "free", bc_fn_type);
+    _bc_free_init = true;
+    return _bc_free;
+}
+
+ns_bc_value_ref ns_bc_std_snprinf(ns_bc_ctx *bc_ctx) {
+    static ns_bool _bc_snprinf_init = false;
+    static ns_bc_value_ref _bc_snprinf;
+    if (_bc_snprinf_init) return _bc_snprinf;
+
+    ns_bc_type_ref _types[4] = {LLVMPointerType(LLVMInt8Type(), 0), LLVMInt64Type(), LLVMPointerType(LLVMInt8Type(), 0), LLVMInt64Type()};
+    ns_bc_type_ref bc_fn_type = LLVMFunctionType(LLVMInt32Type(), _types, 4, 1);
+    _bc_snprinf = LLVMAddFunction(bc_ctx->mod, "snprintf", bc_fn_type);
+    _bc_snprinf_init = true;
+    return _bc_snprinf;
 }
 
 ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name) {
@@ -528,8 +567,11 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
     ns_str fmt = n->str_fmt.fmt;
     ns_str ret = (ns_str){.data = ns_null, .len = 0, .dynamic = 1};
     ns_array_set_length(ret.data, fmt.len);
+    i32 expr_count = n->str_fmt.expr_count;
+    ns_array_set_length(bc_ctx->symbol_stack, expr_count + 2);
 
     i32 i = 0;
+    i32 expr_i = 0;
     i32 next = n_i;
     while (i < fmt.len) {
         if (fmt.data[i] == '{' && (i == 0 || (i > 0 && fmt.data[i - 1] != '\\'))) {
@@ -541,27 +583,45 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
             }
 
             n = &ctx->nodes[next = n->next];
-            ns_return_type ret_t = ns_vm_parse_expr(bc_ctx->vm, ctx, next);
-            ns_return_assert(ret_t);
-
-            ns_type t = ret_t.r;
+            ns_type t = n->expr.type;
             ns_str p = ns_fmt_type_str(t);
             ns_str_append(&ret, p);
+
+            expr_i++;
+            if (expr_i >= expr_count) {
+                ns_error("fmt error", "too many arguments.");
+            }
+
+            ns_bc_value val = ns_bc_expr(bc_ctx, ctx, next);
+            _args[expr_i + 2] = val.val;
         } else {
             ns_array_push(ret.data, fmt.data[i]);
         }
     }
     ret.len = ns_array_length(ret.data);
 
-    // sprintf get length
-    
-    // malloc string buffer
+    // snprintf get length
+    ns_bc_value_ref bc_snprintf = ns_bc_std_snprinf(bc_ctx);
 
-    // sprintf to buffer
+    _args[0] = ns_bc_nil.val;
+    _args[1] = ns_bc_nil.val;
 
-    // return buffer
+    ns_bc_value_ref fmt_str = LLVMBuildGlobalStringPtr(bc_ctx->bdr, fmt.data, "");
+    _args[2] = fmt_str;
+    ns_bc_value_ref len = LLVMBuildCall2(bc_ctx->bdr, LLVMInt32Type(), bc_snprintf, _args, expr_count, "");
+    ns_bc_value_ref add_one = LLVMBuildAdd(bc_ctx->bdr, len, LLVMConstInt(LLVMInt64Type(), 1, 0), "");
 
-    return ns_bc_nil;
+    _args[0] = len;
+    ns_bc_value_ref buffer = LLVMBuildArrayMalloc(bc_ctx->bdr, LLVMInt8Type(), add_one, ""); 
+
+    _args[0] = buffer;
+    _args[1] = len;
+    LLVMBuildCall2(bc_ctx->bdr, LLVMInt32Type(), bc_snprintf, _args, expr_count, ""); // sprintf to buffer
+
+    // set end of string as '\0'
+    ns_bc_value_ref end = LLVMBuildGEP2(bc_ctx->bdr, LLVMInt8Type(), buffer, &add_one, 1, "");
+    LLVMBuildStore(bc_ctx->bdr, LLVMConstInt(LLVMInt8Type(), 0, 0), end);
+    return (ns_bc_value){.val = buffer, .type = ns_bc_type_str, .p = -1};
 }
 
 ns_bc_value ns_bc_local_var_def(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 i) {
@@ -569,8 +629,8 @@ ns_bc_value ns_bc_local_var_def(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 i) {
     ns_bc_value val = ns_bc_expr(bc_ctx, ctx, n->var_def.expr);
     ns_str name = n->var_def.name.val;
     ns_bc_symbol val_symbol = (ns_bc_symbol){.type = NS_BC_VALUE, .name = name, .val = val};
-    ns_bc_set_symbol(bc_ctx, val_symbol, 0);
-    return bc_ctx->symbols[0].val;
+    ns_array_push(bc_ctx->symbol_stack, val_symbol);
+    return val;
 }
 
 void ns_bc_var_def(ns_bc_ctx *bc_ctx, ns_symbol *s, i32 i) {
