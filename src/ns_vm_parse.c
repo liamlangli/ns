@@ -269,13 +269,15 @@ ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_token_t t,
 }
 
 void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_bool main_mod = vm->lib.len == 0 || ns_str_equals(vm->lib, ns_str_cstr("main"));
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s = ctx->sections[i];
-        ns_ast_t n = ctx->nodes[s];
-        if (n.type != NS_AST_FN_DEF)
-            continue;
+        ns_ast_t *n = &ctx->nodes[s];
+        if (n->type != NS_AST_FN_DEF) continue;
+        if (!main_mod && ns_str_equals_STR(n->fn_def.name.val, "main")) continue; // skip main in lib
+
         ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s}, .lib =  vm->lib };
-        fn.name = n.fn_def.name.val;
+        fn.name = n->fn_def.name.val;
         ns_vm_push_symbol_global(vm, fn);
     }
 }
@@ -283,19 +285,19 @@ void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
 ns_return_void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s = ctx->sections[i];
-        ns_ast_t n = ctx->nodes[s];
-        if (n.type != NS_AST_OPS_FN_DEF)
-            continue;
+        ns_ast_t *n = &ctx->nodes[s];
+        if (n->type != NS_AST_OPS_FN_DEF) continue;
+
         ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s}, .lib =  vm->lib};
-        ns_ast_t l = ctx->nodes[n.ops_fn_def.left];
-        ns_ast_t r = ctx->nodes[n.ops_fn_def.right];
+        ns_ast_t l = ctx->nodes[n->ops_fn_def.left];
+        ns_ast_t r = ctx->nodes[n->ops_fn_def.right];
 
         ns_str l_type = ctx->nodes[l.arg.type].type_label.name.val;
         ns_str r_type = ctx->nodes[r.arg.type].type_label.name.val;
 
-        fn.name = ns_ops_override_name(l_type, r_type, n.ops_fn_def.ops);
+        fn.name = ns_ops_override_name(l_type, r_type, n->ops_fn_def.ops);
         if (ns_str_empty(fn.name)) {
-            return ns_return_error(void, ns_ast_state_loc(ctx, n.state), NS_ERR_SYNTAX, "unknown ops override.");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unknown ops override.");
         }
 
         ns_vm_push_symbol_global(vm, fn);
@@ -305,11 +307,13 @@ ns_return_void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_bool main_mod = vm->lib.len == 0 || ns_str_equals(vm->lib, ns_str_cstr("main"));
     for (i32 i = vm->symbol_top, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *fn = &vm->symbols[i];
-        if (fn->type != NS_SYMBOL_FN || fn->parsed)
-            continue;
+        if (fn->type != NS_SYMBOL_FN || fn->parsed) continue;
         ns_ast_t *n = &ctx->nodes[fn->fn.ast];
+        if (!main_mod && ns_str_equals_STR(n->fn_def.name.val, "main")) continue; // skip main in lib
+
         fn->fn.fn.t = ns_type_encode(NS_TYPE_FN, i, 0, NS_STORE_CONST);
         if (n->type == NS_AST_FN_DEF) {
             ns_ast_t *ret_type = &ctx->nodes[n->fn_def.ret];
@@ -362,11 +366,13 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
 
 ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_return_void ret;
+    ns_bool main_mod = vm->lib.len == 0 || ns_str_equals(vm->lib, ns_str_cstr("main"));
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *fn = &vm->symbols[i];
-        if (fn->type != NS_SYMBOL_FN || fn->parsed)
-            continue;
+        if (fn->type != NS_SYMBOL_FN || fn->parsed) continue;
         ns_ast_t *n = &ctx->nodes[fn->fn.ast];
+        if (!main_mod && ns_str_equals_STR(n->fn_def.name.val, "main")) continue; // skip main in lib
+
         i32 body = n->type == NS_AST_FN_DEF ? n->fn_def.body : n->ops_fn_def.body;
         ns_bool is_ref = n->type == NS_AST_FN_DEF ? n->fn_def.is_ref : n->ops_fn_def.is_ref;
         ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack)};
@@ -1032,6 +1038,39 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
     }
 }
 
+ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_symbol main = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ret = ns_type_i32, .args = NULL}, .parsed = true};
+    main.name = ns_str_cstr("main");
+    ns_vm_push_symbol_global(vm, main);
+
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        i32 s_i = ctx->sections[i];
+        ns_ast_t *n = &ctx->nodes[s_i];
+        switch (n->type) {
+            case NS_AST_EXPR:
+            case NS_AST_CALL_EXPR: {
+                ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i);
+                if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
+            } break;
+            case NS_AST_VAR_DEF:
+                ns_return_void ret = ns_vm_parse_local_var_def(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+                break;
+            case NS_AST_IMPORT_STMT:
+            case NS_AST_MODULE_STMT:
+            case NS_AST_FN_DEF:
+            case NS_AST_OPS_FN_DEF:
+            case NS_AST_STRUCT_DEF:
+            case NS_AST_PROGRAM:
+                break; // already parsed
+            default: {
+                ns_str type = ns_ast_type_to_string(n->type);
+                if (!vm->repl) ns_warn("vm parse", "unimplemented global ast parse %.*s\n", type.len, type.data);
+            } break;
+        }
+    }
+}
+
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_vm_parse_import_stmt(vm, ctx);
 
@@ -1051,23 +1090,26 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ret = ns_vm_parse_fn_def_body(vm, ctx);
     if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
 
-    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
+    ns_bool main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main")) != ns_null;
+    ns_bool main_mod = vm->lib.len == 0 || ns_str_equals(vm->lib, ns_str_cstr("main"));
 
-    if (main_fn) {
-        // main_fn exists, parse top level var def as global var
+    // if is not main module, skip top level expr, parse top level var def as global var def
+    // if is main module and main fn exists, parse top level expr as global expr, top level var def as global var def
+    // if is main module and main fn not exists, create main fn and parse top level expr as main fn body, top level var def as local var def
+    if (!main_mod) {
         ret = ns_vm_parse_var_def(vm, ctx);
         if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
-
-        ret = ns_vm_parse_global_expr(vm, ctx);
-        if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
     } else {
-        // create main fn
-        ns_symbol main = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ret = ns_type_i32, .args = NULL, .body = 0}, .parsed = true};
-        main.name = ns_str_cstr("main");
-        ns_vm_push_symbol_global(vm, main);
+        if (main_fn) {
+            ret = ns_vm_parse_global_expr(vm, ctx);
+            if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
 
-        // parse top level expr as main fn body
-        // parse top level var def as local var def
+            ret = ns_vm_parse_var_def(vm, ctx);
+            if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+        } else {
+            ret = ns_vm_parse_global_as_main(vm, ctx);
+            if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+        }
     }
 
     vm->symbol_top = ns_array_length(vm->symbols);
