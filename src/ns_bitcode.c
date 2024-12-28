@@ -97,8 +97,6 @@ typedef struct ns_bc_ctx {
 
     ns_vm *vm;
     ns_bc_symbol *symbols;
-
-    ns_bc_call call;
     ns_bc_symbol *symbol_stack;
 } ns_bc_ctx;
 
@@ -109,6 +107,7 @@ ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name);
 void ns_bc_set_symbol(ns_bc_ctx *bc_ctx, ns_bc_symbol r, i32 i);
 ns_bc_symbol* ns_bc_find_symbol(ns_bc_ctx *bc_ctx, ns_str name);
 ns_bc_value ns_bc_std_snprinf(ns_bc_ctx *bc_ctx);
+ns_bc_value ns_bc_std_printf(ns_bc_ctx *bc_ctx);
 
 // scope
 ns_scope *ns_bc_enter_scope(ns_bc_ctx *bc_ctx);
@@ -125,6 +124,9 @@ void ns_bc_fn_body(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, ns_symbol *fn, i32 i);
 // stmt
 void ns_bc_jump_stmt(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, i32 i);
 void ns_bc_compound_stmt(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, i32 i);
+
+// std
+ns_bc_value ns_bc_call_std(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, ns_symbol *fn);
 
 // impl
 #define MAX_STR_LENGTH 512
@@ -180,8 +182,10 @@ void ns_bc_set_symbol(ns_bc_ctx *bc_ctx, ns_bc_symbol r, i32 i) {
 }
 
 ns_bc_symbol* ns_bc_find_symbol(ns_bc_ctx *bc_ctx, ns_str name) {
-    if (bc_ctx->call.fn) {
-        i32 scope_top = bc_ctx->call.scope_top;
+    size_t l = ns_array_length(bc_ctx->vm->call_stack);
+    if (l > 0) {
+        ns_call *call = ns_array_last(bc_ctx->vm->call_stack);
+        i32 scope_top = call->scope_top;
         i32 symbol_top = bc_ctx->vm->scope_stack[scope_top].symbol_top;
         i32 symbol_count = ns_array_length(bc_ctx->symbol_stack);
 
@@ -236,28 +240,26 @@ ns_bc_value ns_bc_std_snprinf(ns_bc_ctx *bc_ctx) {
     return _bc_snprinf;
 }
 
+ns_bc_value ns_bc_std_printf(ns_bc_ctx *bc_ctx) {
+    static ns_bool _bc_printf_init = false;
+    static ns_bc_value _bc_printf;
+    if (_bc_printf_init) return _bc_printf;
+
+    ns_bc_type_ref _types[1] = {LLVMPointerType(LLVMInt8Type(), 0)};
+    _bc_printf.type.type = LLVMFunctionType(LLVMInt32Type(), _types, 1, 1);
+    _bc_printf.val = LLVMAddFunction(bc_ctx->mod, "printf", _bc_printf.type.type);
+    _bc_printf_init = true;
+    return _bc_printf;
+}
+
 ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name) {
-    if (bc_ctx->call.fn) {
-        i32 scope_top = bc_ctx->call.scope_top;
-        i32 symbol_top = bc_ctx->vm->scope_stack[scope_top].symbol_top;
-        i32 symbol_count = ns_array_length(bc_ctx->symbol_stack);
-
-        for (i32 j = symbol_count - 1; j >= symbol_top; --j) {
-            if (ns_str_equals(bc_ctx->symbol_stack[j].name, name)) {
-                return bc_ctx->symbol_stack[j].val;
-            }
-        }
-    }
-
-    for (i32 i = 0, l = ns_array_length(bc_ctx->symbols); i < l; i++) {
-        if (ns_str_equals(bc_ctx->symbols[i].name, name)) {
-            ns_bc_symbol *r = &bc_ctx->symbols[i];
-            switch (r->type)
-            {
-            case NS_BC_VALUE: return r->val;
-            case NS_BC_FN: return r->fn.fn;
-            default: break;
-            }
+    ns_bc_symbol *r = ns_bc_find_symbol(bc_ctx, name);
+    if (r) {
+        switch (r->type) {
+        case NS_BC_VALUE: return r->val;
+        case NS_BC_FN: return r->fn.fn;
+        case NS_BC_STRUCT: return r->st.st;
+        default: break;
         }
     }
     return ns_bc_nil;
@@ -363,28 +365,28 @@ ns_return_void ns_bc_fn_def(ns_bc_ctx *bc_ctx, ns_symbol *fn, i32 i) {
 }
 
 void ns_bc_fn_body(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, ns_symbol *fn, i32 i) {
-    if (fn->lib.len != 0) return; // skip lib functions
+    if (fn->lib.len != 0 || fn->fn.fn.t.ref) return; // skip lib functions
 
     ns_bc_symbol *bc_fn = &bc_ctx->symbols[i];
     ns_bc_block entry = LLVMAppendBasicBlock(bc_fn->fn.fn.val, "entry");
     LLVMPositionBuilderAtEnd(bc_ctx->bdr, entry);
 
-    bc_ctx->call.fn = bc_fn;
-    bc_ctx->call.scope_top = ns_array_length(bc_ctx->vm->scope_stack);
-    bc_ctx->call.arg_offset = ns_array_length(bc_ctx->symbol_stack);
-    bc_ctx->call.arg_count = ns_array_length(fn->fn.args);
-
+    ns_vm *vm = bc_ctx->vm;
+    i32 arg_count = ns_array_length(fn->fn.args);
+    ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = arg_count};
     ns_bc_enter_scope(bc_ctx);
-    for (i32 j = 0; j < bc_ctx->call.arg_count; j++) {
+    for (i32 j = 0; j < arg_count; j++) {
         ns_bc_symbol arg = (ns_bc_symbol){.type = NS_BC_VALUE, .name = fn->fn.args[j].name};
         arg.val = (ns_bc_value){.val = LLVMGetParam(bc_fn->fn.fn.val, j), .type = ns_bc_parse_type(bc_ctx, fn->fn.args[j].val.t)};
         ns_array_push(bc_ctx->symbol_stack, arg);
     }
 
+    ns_array_push(vm->call_stack, call);
     ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
     ns_bc_compound_stmt(bc_ctx, ctx, fn_ast->fn_def.body);
+
+    ns_array_pop(vm->call_stack);
     ns_bc_exit_scope(bc_ctx);
-    bc_ctx->call.fn = ns_null;
 }
 
 ns_bc_value ns_bc_binary_ops_number(ns_bc_ctx *bc_ctx, ns_bc_value l, ns_bc_value r, ns_token_t op) {
@@ -542,9 +544,10 @@ ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 i) {
     ns_bc_builder bdr = bc_ctx->bdr;
     ns_ast_t *n = &ctx->nodes[i];
 
-    ns_bc_value fn = ns_bc_expr(bc_ctx, ctx, n->call_expr.callee);
-    ns_bc_symbol *fn_symbol = &bc_ctx->symbols[fn.p];
+    ns_bc_value bc_fn = ns_bc_expr(bc_ctx, ctx, n->call_expr.callee);
+    ns_bc_symbol *fn_symbol = &bc_ctx->symbols[bc_fn.p];
     i32 arg_count = n->call_expr.arg_count;
+    ns_symbol *fn = &bc_ctx->vm->symbols[bc_fn.p];
 
     i32 next = n->call_expr.arg;
     for (i32 i = 0; i < n->call_expr.arg_count; i++) {
@@ -553,9 +556,24 @@ ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 i) {
         next = arg.next;
     }
 
+    if (fn->lib.len != 0 && ns_str_equals_STR(fn->lib, "std")) {
+        return ns_bc_call_std(bc_ctx, ctx, fn);
+    }
+
     ns_bc_value ret = (ns_bc_value){.val = ns_null, .type = fn_symbol->fn.ret};
     ns_bc_value fn_val = fn_symbol->fn.fn;
     ret.val = LLVMBuildCall2(bdr, fn_val.type.type, fn_val.val, _args, arg_count, "");
+    return ret;
+}
+
+ns_bc_value ns_bc_call_std(ns_bc_ctx *bc_ctx, ns_ast_ctx* ctx, ns_symbol *fn) {
+    ns_unused(ctx);
+
+    ns_bc_value ret = ns_bc_nil;
+    if (ns_str_equals_STR(fn->name, "print")) {
+        ns_bc_value bc_printf = ns_bc_std_printf(bc_ctx);
+        LLVMBuildCall2(bc_ctx->bdr, bc_printf.type.type, bc_printf.val, _args, 1, "");
+    }
     return ret;
 }
 
@@ -699,11 +717,9 @@ void ns_bc_parse_ast(ns_bc_ctx* bc_ctx, ns_ast_ctx *ctx) {
         ns_bc_block entry_main = LLVMAppendBasicBlock(main_fn.val, "entry");
         LLVMPositionBuilderAtEnd(bdr, entry_main);
 
-        bc_ctx->call.fn = &bc_ctx->symbols[main_i];
-        bc_ctx->call.scope_top = ns_array_length(bc_ctx->vm->scope_stack);
-        bc_ctx->call.arg_offset = ns_array_length(bc_ctx->symbol_stack);
-        bc_ctx->call.arg_count = 0;
+        ns_call call = (ns_call){.fn = ns_null, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 0};
         ns_bc_enter_scope(bc_ctx);
+        ns_array_push(vm->call_stack, call);
         // parse deferred nodes as main fn body
         for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
             i32 s = ctx->sections[i];
@@ -716,8 +732,8 @@ void ns_bc_parse_ast(ns_bc_ctx* bc_ctx, ns_ast_ctx *ctx) {
             }
         }
         LLVMBuildRet(bdr, LLVMConstInt(LLVMInt32Type(), 0, 0));
+        ns_array_pop(vm->scope_stack);
         ns_bc_exit_scope(bc_ctx);
-        bc_ctx->call.fn = ns_null;
     }
 }
 
