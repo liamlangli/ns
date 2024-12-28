@@ -75,6 +75,7 @@ typedef enum ns_bc_symbol_type {
 typedef struct ns_bc_symbol {
     ns_bc_symbol_type type;
     ns_str name;
+    ns_str lib;
     i32 index;
     union {
         ns_bc_value val;
@@ -341,10 +342,9 @@ void ns_bc_struct_def(ns_bc_ctx *bc_ctx, ns_symbol *st, i32 i) {
 }
 
 ns_return_void ns_bc_fn_def(ns_bc_ctx *bc_ctx, ns_symbol *fn, i32 i) {
-    if (fn->lib.len != 0) return ns_return_ok_void; // skip lib functions
-
+    ns_bc_symbol bc_fn = (ns_bc_symbol){.type = NS_BC_FN, .name = fn->name, .lib = fn->lib};
     i32 arg_count = ns_array_length(fn->fn.args);
-    ns_bc_symbol bc_fn = (ns_bc_symbol){.type = NS_BC_FN, .name = fn->name};
+    
     // parse argument types
     for (i32 j = 0; j < arg_count; j++) {
         ns_bc_type t = ns_bc_parse_type(bc_ctx, fn->fn.args[j].val.t);
@@ -628,7 +628,7 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
     ns_bc_value_ref fmt_str = LLVMBuildGlobalStringPtr(bc_ctx->bdr, ret.data, "");
     _args[2] = fmt_str;
     ns_bc_value_ref len = LLVMBuildCall2(bc_ctx->bdr, bc_snprintf.type.type, bc_snprintf.val, _args, 3 + expr_count, "");
-    ns_bc_value_ref add_one = LLVMBuildAdd(bc_ctx->bdr, len, LLVMConstInt(LLVMInt64Type(), 1, 0), "");
+    ns_bc_value_ref add_one = LLVMBuildAdd(bc_ctx->bdr, len, LLVMConstInt(LLVMInt32Type(), 1, 0), "");
 
     _args[0] = len;
     ns_bc_value_ref buffer = LLVMBuildArrayMalloc(bc_ctx->bdr, LLVMInt8Type(), add_one, ""); 
