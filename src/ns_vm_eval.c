@@ -1118,7 +1118,6 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
 
         ns_array_pop(vm->call_stack);
         ns_exit_scope(vm);
-
         main_ret = call.ret;
     }
 

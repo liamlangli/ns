@@ -563,12 +563,14 @@ ns_bc_value ns_bc_call_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 i) {
 
 ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
     ns_ast_t *n = &ctx->nodes[n_i];
-
+    i32 expr_count = n->str_fmt.expr_count;
     ns_str fmt = n->str_fmt.fmt;
+
+    if (expr_count == 0) return (ns_bc_value){.val = LLVMConstString(fmt.data, fmt.len, 0), .type = ns_bc_type_str, .p = -1};
+    
     ns_str ret = (ns_str){.data = ns_null, .len = 0, .dynamic = 1};
     ns_array_set_length(ret.data, fmt.len);
-    i32 expr_count = n->str_fmt.expr_count;
-    ns_array_set_length(bc_ctx->symbol_stack, expr_count + 2);
+    ns_array_set_length(bc_ctx->symbol_stack, expr_count + 3);
 
     i32 i = 0;
     i32 expr_i = 0;
@@ -588,14 +590,14 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
             ns_str_append(&ret, p);
 
             expr_i++;
-            if (expr_i >= expr_count) {
-                ns_error("fmt error", "too many arguments.");
+            if (expr_i > expr_count) {
+                ns_error("fmt error", "too many arguments.\n");
             }
 
             ns_bc_value val = ns_bc_expr(bc_ctx, ctx, next);
-            _args[expr_i + 2] = val.val;
+            _args[expr_i + 3] = val.val;
         } else {
-            ns_array_push(ret.data, fmt.data[i]);
+            ns_array_push(ret.data, fmt.data[i++]);
         }
     }
     ret.len = ns_array_length(ret.data);
@@ -608,7 +610,7 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
 
     ns_bc_value_ref fmt_str = LLVMBuildGlobalStringPtr(bc_ctx->bdr, fmt.data, "");
     _args[2] = fmt_str;
-    ns_bc_value_ref len = LLVMBuildCall2(bc_ctx->bdr, LLVMInt32Type(), bc_snprintf, _args, expr_count, "");
+    ns_bc_value_ref len = LLVMBuildCall2(bc_ctx->bdr, LLVMInt32Type(), bc_snprintf, _args, 3 + expr_count, "");
     ns_bc_value_ref add_one = LLVMBuildAdd(bc_ctx->bdr, len, LLVMConstInt(LLVMInt64Type(), 1, 0), "");
 
     _args[0] = len;
@@ -616,7 +618,7 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
 
     _args[0] = buffer;
     _args[1] = len;
-    LLVMBuildCall2(bc_ctx->bdr, LLVMInt32Type(), bc_snprintf, _args, expr_count, ""); // sprintf to buffer
+    LLVMBuildCall2(bc_ctx->bdr, LLVMInt32Type(), bc_snprintf, _args, 3 + expr_count, ""); // sprintf to buffer
 
     // set end of string as '\0'
     ns_bc_value_ref end = LLVMBuildGEP2(bc_ctx->bdr, LLVMInt8Type(), buffer, &add_one, 1, "");
@@ -694,6 +696,7 @@ void ns_bc_parse_ast(ns_bc_ctx* bc_ctx, ns_ast_ctx *ctx) {
         ns_bc_block entry_main = LLVMAppendBasicBlock(main_fn.val, "entry");
         LLVMPositionBuilderAtEnd(bdr, entry_main);
 
+        bc_ctx->call.fn = &main_fn;
         // parse deferred nodes as main fn body
         for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
             i32 s = ctx->sections[i];

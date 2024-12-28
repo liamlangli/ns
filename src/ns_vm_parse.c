@@ -1039,6 +1039,9 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_call call = (ns_call){.fn = NULL, .scope_top = ns_array_length(vm->scope_stack), .ret = ns_nil, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 0};
+    ns_enter_scope(vm);
+    ns_array_push(vm->call_stack, call);
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s_i = ctx->sections[i];
         ns_ast_t *n = &ctx->nodes[s_i];
@@ -1065,6 +1068,8 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
             } break;
         }
     }
+    ns_array_pop(vm->call_stack);
+    ns_exit_scope(vm);
     return ns_return_ok_void;
 }
 
