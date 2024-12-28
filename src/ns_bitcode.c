@@ -634,7 +634,7 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
     ns_bc_value_ref buffer = LLVMBuildArrayMalloc(bc_ctx->bdr, LLVMInt8Type(), add_one, ""); 
 
     _args[0] = buffer;
-    _args[1] = len;
+    _args[1] = LLVMBuildSExt(bc_ctx->bdr, len, LLVMInt64Type(), "");
     LLVMBuildCall2(bc_ctx->bdr, bc_snprintf.type.type, bc_snprintf.val, _args, 3 + expr_count, ""); // sprintf to buffer
 
     // set end of string as '\0'
