@@ -1040,11 +1040,15 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_return_bool ret_parse = ns_vm_parse(vm, ctx);
     if (ns_return_is_error(ret_parse)) return ns_return_change_type(value, ret_parse);
+    ns_bool main_mod = vm->lib.len == 0 || ns_str_equals_STR(vm->lib, "main");
+    if (!main_mod) {
+        ns_warn("ns_eval", "try to eval non-main module %.*s.", vm->lib.len, vm->lib.data);
+        return ns_return_ok(value, ns_nil);
+    }
 
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol r = vm->symbols[i];
-        if (r.type != NS_SYMBOL_VALUE)
-            continue;
+        if (r.type != NS_SYMBOL_VALUE) continue;
         ns_value v = r.val;
         if (ns_type_is_const(r.val.t)) {
             ns_symbol *record = &vm->symbols[i];

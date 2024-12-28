@@ -1036,6 +1036,7 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
             } break;
         }
     }
+    return ns_return_ok_void;
 }
 
 ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -1052,10 +1053,10 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
                 ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
             } break;
-            case NS_AST_VAR_DEF:
+            case NS_AST_VAR_DEF: {
                 ns_return_void ret = ns_vm_parse_local_var_def(vm, ctx, s_i);
                 if (ns_return_is_error(ret)) return ret;
-                break;
+            } break;
             case NS_AST_IMPORT_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
@@ -1069,6 +1070,7 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
             } break;
         }
     }
+    return ns_return_ok_void;
 }
 
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
