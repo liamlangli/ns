@@ -108,9 +108,7 @@ ns_bc_type ns_bc_parse_type(ns_bc_ctx *bc_ctx, ns_type t);
 ns_bc_value ns_bc_find_value(ns_bc_ctx *bc_ctx, ns_str name);
 void ns_bc_set_symbol(ns_bc_ctx *bc_ctx, ns_bc_symbol r, i32 i);
 ns_bc_symbol* ns_bc_find_symbol(ns_bc_ctx *bc_ctx, ns_str name);
-ns_bc_value_ref ns_bc_std_malloc(ns_bc_ctx *bc_ctx);
-ns_bc_value_ref ns_bc_std_free(ns_bc_ctx *bc_ctx);
-ns_bc_value_ref ns_bc_std_snprinf(ns_bc_ctx *bc_ctx);
+ns_bc_value ns_bc_std_snprinf(ns_bc_ctx *bc_ctx);
 
 // scope
 ns_scope *ns_bc_enter_scope(ns_bc_ctx *bc_ctx);
@@ -202,38 +200,38 @@ ns_bc_symbol* ns_bc_find_symbol(ns_bc_ctx *bc_ctx, ns_str name) {
     return ns_null;
 }
 
-ns_bc_value_ref ns_bc_std_malloc(ns_bc_ctx *bc_ctx) {
+ns_bc_value ns_bc_std_malloc(ns_bc_ctx *bc_ctx) {
     static ns_bool _bc_malloc_init = false;
-    static ns_bc_value_ref _bc_malloc;
+    static ns_bc_value _bc_malloc;
     if (_bc_malloc_init) return _bc_malloc;
 
     ns_bc_type_ref _types[1] = {LLVMInt64Type()};
-    ns_bc_type_ref bc_fn_type = LLVMFunctionType(LLVMPointerType(LLVMInt8Type(), 0), _types, 1, 0);
-    _bc_malloc = LLVMAddFunction(bc_ctx->mod, "malloc", bc_fn_type);
+    _bc_malloc.type.type = LLVMFunctionType(LLVMPointerType(LLVMInt8Type(), 0), _types, 1, 0);
+    _bc_malloc.val = LLVMAddFunction(bc_ctx->mod, "malloc", _bc_malloc.type.type);
     _bc_malloc_init = true;
     return _bc_malloc;
 }
 
-ns_bc_value_ref ns_bc_std_free(ns_bc_ctx *bc_ctx) {
+ns_bc_value ns_bc_std_free(ns_bc_ctx *bc_ctx) {
     static ns_bool _bc_free_init = false;
-    static ns_bc_value_ref _bc_free;
+    static ns_bc_value _bc_free;
     if (_bc_free_init) return _bc_free;
 
     ns_bc_type_ref _types[1] = {LLVMPointerType(LLVMInt8Type(), 0)};
-    ns_bc_type_ref bc_fn_type = LLVMFunctionType(LLVMVoidType(), _types, 1, 0);
-    _bc_free = LLVMAddFunction(bc_ctx->mod, "free", bc_fn_type);
+    _bc_free.type.type = LLVMFunctionType(LLVMVoidType(), _types, 1, 0);
+    _bc_free.val = LLVMAddFunction(bc_ctx->mod, "free", _bc_free.type.type);
     _bc_free_init = true;
     return _bc_free;
 }
 
-ns_bc_value_ref ns_bc_std_snprinf(ns_bc_ctx *bc_ctx) {
+ns_bc_value ns_bc_std_snprinf(ns_bc_ctx *bc_ctx) {
     static ns_bool _bc_snprinf_init = false;
-    static ns_bc_value_ref _bc_snprinf;
+    static ns_bc_value _bc_snprinf;
     if (_bc_snprinf_init) return _bc_snprinf;
 
-    ns_bc_type_ref _types[4] = {LLVMPointerType(LLVMInt8Type(), 0), LLVMInt64Type(), LLVMPointerType(LLVMInt8Type(), 0), LLVMInt64Type()};
-    ns_bc_type_ref bc_fn_type = LLVMFunctionType(LLVMInt32Type(), _types, 4, 1);
-    _bc_snprinf = LLVMAddFunction(bc_ctx->mod, "snprintf", bc_fn_type);
+    ns_bc_type_ref _types[3] = {LLVMPointerType(LLVMInt8Type(), 0), LLVMInt64Type(), LLVMPointerType(LLVMInt8Type(), 0)};
+    _bc_snprinf.type.type = LLVMFunctionType(LLVMInt32Type(), _types, 3, 1);
+    _bc_snprinf.val = LLVMAddFunction(bc_ctx->mod, "snprintf", _bc_snprinf.type.type);
     _bc_snprinf_init = true;
     return _bc_snprinf;
 }
@@ -569,7 +567,7 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
     if (expr_count == 0) return (ns_bc_value){.val = LLVMConstString(fmt.data, fmt.len, 0), .type = ns_bc_type_str, .p = -1};
     
     ns_str ret = (ns_str){.data = ns_null, .len = 0, .dynamic = 1};
-    ns_array_set_length(ret.data, fmt.len);
+    ns_array_set_capacity(ret.data, fmt.len);
     ns_array_set_length(bc_ctx->symbol_stack, expr_count + 3);
 
     i32 i = 0;
@@ -583,19 +581,20 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
             if (i == fmt.len) {
                 ns_error("fmt error", "missing '}'.");
             }
+            i++;
 
             n = &ctx->nodes[next = n->next];
             ns_type t = n->expr.type;
             ns_str p = ns_fmt_type_str(t);
             ns_str_append(&ret, p);
 
+            ns_bc_value val = ns_bc_expr(bc_ctx, ctx, next);
+            _args[expr_i + 3] = val.val;
+
             expr_i++;
             if (expr_i > expr_count) {
                 ns_error("fmt error", "too many arguments.\n");
             }
-
-            ns_bc_value val = ns_bc_expr(bc_ctx, ctx, next);
-            _args[expr_i + 3] = val.val;
         } else {
             ns_array_push(ret.data, fmt.data[i++]);
         }
@@ -603,14 +602,14 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
     ret.len = ns_array_length(ret.data);
 
     // snprintf get length
-    ns_bc_value_ref bc_snprintf = ns_bc_std_snprinf(bc_ctx);
+    ns_bc_value bc_snprintf = ns_bc_std_snprinf(bc_ctx);
 
-    _args[0] = ns_bc_nil.val;
-    _args[1] = ns_bc_nil.val;
+    _args[0] = LLVMConstNull(LLVMPointerType(LLVMInt8Type(), 0));
+    _args[1] = LLVMConstNull(LLVMInt64Type());
 
-    ns_bc_value_ref fmt_str = LLVMBuildGlobalStringPtr(bc_ctx->bdr, fmt.data, "");
+    ns_bc_value_ref fmt_str = LLVMBuildGlobalStringPtr(bc_ctx->bdr, ret.data, "");
     _args[2] = fmt_str;
-    ns_bc_value_ref len = LLVMBuildCall2(bc_ctx->bdr, LLVMInt32Type(), bc_snprintf, _args, 3 + expr_count, "");
+    ns_bc_value_ref len = LLVMBuildCall2(bc_ctx->bdr, bc_snprintf.type.type, bc_snprintf.val, _args, 3 + expr_count, "");
     ns_bc_value_ref add_one = LLVMBuildAdd(bc_ctx->bdr, len, LLVMConstInt(LLVMInt64Type(), 1, 0), "");
 
     _args[0] = len;
@@ -618,7 +617,7 @@ ns_bc_value ns_bc_str_fmt_expr(ns_bc_ctx *bc_ctx, ns_ast_ctx *ctx, i32 n_i) {
 
     _args[0] = buffer;
     _args[1] = len;
-    LLVMBuildCall2(bc_ctx->bdr, LLVMInt32Type(), bc_snprintf, _args, 3 + expr_count, ""); // sprintf to buffer
+    LLVMBuildCall2(bc_ctx->bdr, bc_snprintf.type.type, bc_snprintf.val, _args, 3 + expr_count, ""); // sprintf to buffer
 
     // set end of string as '\0'
     ns_bc_value_ref end = LLVMBuildGEP2(bc_ctx->bdr, LLVMInt8Type(), buffer, &add_one, 1, "");
@@ -692,11 +691,19 @@ void ns_bc_parse_ast(ns_bc_ctx* bc_ctx, ns_ast_ctx *ctx) {
         ns_bc_type main_fn_type = (ns_bc_type){.type = ns_null, .raw = ns_type_encode(ns_type_fn, 0, true, 0)};
         main_fn_type.type = LLVMFunctionType(LLVMInt32Type(), ns_null, 0, 0);
         ns_bc_value main_fn = (ns_bc_value){.p = -1, .val = ns_null, .type = main_fn_type};
+        main_i = ns_array_length(bc_ctx->symbols);
+        ns_bc_symbol r = (ns_bc_symbol){.type = NS_BC_FN, .name = ns_str_cstr("main"), .fn = (ns_bc_fn_symbol){.fn = main_fn, .ret = ns_bc_type_i32}};
+        ns_bc_set_symbol(bc_ctx, r, main_i);
+
         main_fn.val = LLVMAddFunction(mod, "main", main_fn_type.type);
         ns_bc_block entry_main = LLVMAppendBasicBlock(main_fn.val, "entry");
         LLVMPositionBuilderAtEnd(bdr, entry_main);
 
-        bc_ctx->call.fn = &main_fn;
+        bc_ctx->call.fn = &bc_ctx->symbols[main_i];
+        bc_ctx->call.scope_top = ns_array_length(bc_ctx->vm->scope_stack);
+        bc_ctx->call.arg_offset = ns_array_length(bc_ctx->symbol_stack);
+        bc_ctx->call.arg_count = 0;
+        ns_bc_enter_scope(bc_ctx);
         // parse deferred nodes as main fn body
         for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
             i32 s = ctx->sections[i];
@@ -709,6 +716,8 @@ void ns_bc_parse_ast(ns_bc_ctx* bc_ctx, ns_ast_ctx *ctx) {
             }
         }
         LLVMBuildRet(bdr, LLVMConstInt(LLVMInt32Type(), 0, 0));
+        ns_bc_exit_scope(bc_ctx);
+        bc_ctx->call.fn = ns_null;
     }
 }
 

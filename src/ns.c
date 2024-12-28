@@ -37,7 +37,7 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
-        } else if (strcmp(argv[i], "-b") == 0 ||strcmp(argv[i], "--bc") == 0) {
+        } else if (strcmp(argv[i], "-b") == 0 ||strcmp(argv[i], "--bitcode") == 0) {
             option.bitcode_only = true;
         } else {
             option.filename = ns_str_cstr(argv[i]); // unmatched argument is treated as filename
