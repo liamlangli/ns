@@ -968,7 +968,6 @@ ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         n->var_def.type_size = ns_type_size(vm, t);
     }
     ns_array_push(vm->symbol_stack, s);
-
     return ns_return_ok_void;
 }
 
@@ -1040,10 +1039,6 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
-    ns_symbol main = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ret = ns_type_i32, .args = NULL}, .parsed = true};
-    main.name = ns_str_cstr("main");
-    ns_vm_push_symbol_global(vm, main);
-
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s_i = ctx->sections[i];
         ns_ast_t *n = &ctx->nodes[s_i];

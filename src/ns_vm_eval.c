@@ -1046,45 +1046,68 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         return ns_return_ok(value, ns_nil);
     }
 
-    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
-        ns_symbol r = vm->symbols[i];
-        if (r.type != NS_SYMBOL_VALUE) continue;
-        ns_value v = r.val;
-        if (ns_type_is_const(r.val.t)) {
-            ns_symbol *record = &vm->symbols[i];
-            record->val = v;
-        }
-    }
-
-    ns_value ret = ns_nil;
-    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
-        i32 s_i = ctx->sections[i];
-        ns_ast_t *n = &ctx->nodes[s_i];
-        switch (n->type) {
-        case NS_AST_EXPR:
-        case NS_AST_CALL_EXPR: {
-            ns_return_value ret = ns_eval_expr(vm, ctx, s_i);
-            if (ns_return_is_error(ret)) return ret;
-        } break;
-        case NS_AST_VAR_DEF: {
-            ns_return_value ret = ns_eval_var_def(vm, ctx, s_i);
-            if (ns_return_is_error(ret)) return ret;
-        } break;
-        case NS_AST_IMPORT_STMT:
-        case NS_AST_MODULE_STMT:
-        case NS_AST_FN_DEF:
-        case NS_AST_OPS_FN_DEF:
-        case NS_AST_STRUCT_DEF:
-            break; // already parsed
-        default: {
-            ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
-            return ns_return_error(value, loc, NS_ERR_EVAL, "unimplemented global ast.");
-        } break;
-        }
-    }
-
+    ns_value main_ret = ns_nil;
     ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
-    if (ns_null != main_fn) {
+    if (!main_fn) {
+        ns_call call = (ns_call){.fn = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
+        ns_array_push(vm->call_stack, call);
+
+        ns_enter_scope(vm);
+        for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+            i32 s_i = ctx->sections[i];
+            ns_ast_t *n = &ctx->nodes[s_i];
+            switch (n->type) {
+            case NS_AST_EXPR:
+            case NS_AST_CALL_EXPR: {
+                ns_return_value ret = ns_eval_expr(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_VAR_DEF: {
+                ns_return_value ret = ns_eval_local_var_def(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_IMPORT_STMT:
+            case NS_AST_MODULE_STMT:
+            case NS_AST_FN_DEF:
+            case NS_AST_OPS_FN_DEF:
+            case NS_AST_STRUCT_DEF:
+                break; // already parsed
+            default: {
+                ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
+                return ns_return_error(value, loc, NS_ERR_EVAL, "unimplemented global ast.");
+            } break;
+            }
+        }
+        ns_exit_scope(vm);
+        ns_array_pop(vm->call_stack);
+        main_ret = (ns_value){.t = ns_type_i32, .i32 = 0};
+    } else {
+        for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+            i32 s_i = ctx->sections[i];
+            ns_ast_t *n = &ctx->nodes[s_i];
+            switch (n->type) {
+            case NS_AST_EXPR:
+            case NS_AST_CALL_EXPR: {
+                ns_return_value ret = ns_eval_expr(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_VAR_DEF: {
+                ns_return_value ret = ns_eval_var_def(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_IMPORT_STMT:
+            case NS_AST_MODULE_STMT:
+            case NS_AST_FN_DEF:
+            case NS_AST_OPS_FN_DEF:
+            case NS_AST_STRUCT_DEF:
+                break; // already parsed
+            default: {
+                ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
+                return ns_return_error(value, loc, NS_ERR_EVAL, "unimplemented global ast.");
+            } break;
+            }
+        }
+
         ns_call call = (ns_call){.fn = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
 
         ns_enter_scope(vm);
@@ -1096,10 +1119,10 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_array_pop(vm->call_stack);
         ns_exit_scope(vm);
 
-        return ns_return_ok(value, ns_nil);
+        main_ret = call.ret;
     }
 
-    return ns_return_ok(value, ret);
+    return ns_return_ok(value, main_ret);
 }
 
 ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
