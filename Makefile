@@ -47,19 +47,19 @@ NS_JIT ?= 1
 
 LLVM_CONFIG := $(shell command -v llvm-config 2>/dev/null)
 ifeq ($(LLVM_CONFIG),)
-	NS_BITCODE ?= 0
+	NS_IR ?= 0
 else
-	NS_BITCODE ?= 1
+	NS_IR ?= 1
 endif
 
-ifeq ($(NS_BITCODE), 1)
+ifeq ($(NS_IR), 1)
 	LLVM_CFLAGS = $(shell llvm-config --cflags 2>/dev/null)
 	LLVM_LDFLAGS = $(shell llvm-config --ldflags --libs core --system-libs 2>/dev/null)
 	LLVM_TRIPLE = $(shell llvm-config --host-target 2>/dev/null)
 
-	BITCODE_SRC = src/ns_bitcode.c
-	BITCODE_OBJ = $(NS_BINDIR)/src/ns_bitcode.o
-	BITCODE_CFLAGS = -DNS_BITCODE $(LLVM_CFLAGS)
+	BITCODE_SRC = src/ns_ir.c
+	BITCODE_OBJ = $(NS_BINDIR)/src/ns_ir.o
+	BITCODE_CFLAGS = -DNS_IR $(LLVM_CFLAGS)
 	BITCODE_LDFLAGS = $(LLVM_LDFLAGS)
 
 	JIT_SRC = src/ns_jit.c

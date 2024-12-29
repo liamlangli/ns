@@ -24,16 +24,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "bitcode",
+            "name": "ir",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-b", "sample/add.ns"],
+            "args": ["-ir", "sample/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns_lsp",
+            "name": "lsp",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns_lsp",
             "args": [],
@@ -42,7 +42,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "ns_debug[socket]",
+            "name": "debug[socket]",
             "program": "${workspaceFolder}/bin/ns_debug",
             "args": ["--socket", "--port", "5001"],
             "cwd": "${workspaceFolder}"

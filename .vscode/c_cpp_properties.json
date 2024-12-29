@@ -9,7 +9,7 @@
                 "${workspaceFolder}/lib/include/**",
                 "/opt/homebrew/opt/llvm/include"
             ],
-            "defines": ["NS_BITCODE", "NS_JIT", "NS_DEBUG", "NS_DARWIN"],
+            "defines": ["NS_IR", "NS_JIT", "NS_DEBUG", "NS_DARWIN"],
             "macFrameworkPath": [
                 "/Library/Developer/CommandLineTools/SDKs/MacOSX14.sdk/System/Library/Frameworks"
             ],
@@ -27,7 +27,7 @@
                 "${workspaceFolder}/lib/include/**",
                 "/usr/local/opt/llvm/include"
             ],
-            "defines": ["NS_BITCODE", "NS_JIT", "NS_DEBUG", "NS_DARWIN"],
+            "defines": ["NS_IR", "NS_JIT", "NS_DEBUG", "NS_DARWIN"],
             "macFrameworkPath": [
                 "/Library/Developer/CommandLineTools/SDKs/MacOSX14.sdk/System/Library/Frameworks"
             ],
@@ -46,7 +46,7 @@
                 "D:/msys64/mingw64/include",
                 "D:/msys64/usr/include"
             ],
-            "defines": ["NS_BITCODE", "NS_JIT", "NS_DEBUG", "NS_WIN"],
+            "defines": ["NS_IR", "NS_JIT", "NS_DEBUG", "NS_WIN"],
             "compilerPath": "D:\\msys64\\ucrt64\\bin\\clang.exe",
             "cStandard": "c11",
             "cppStandard": "c++11",

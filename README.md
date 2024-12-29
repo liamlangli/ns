@@ -84,5 +84,5 @@ async fn download(url: str): Data {
 
 ## Build Options
 - `NS_DEBUG`: Debug mode.
-- `NS_BITCODE`: Generate bitcode file.
+- `NS_IR`: Generate llvm ir file.
 - `NS_JIT`: Enable Just-In-Time compiler.
