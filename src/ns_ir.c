@@ -12,7 +12,7 @@
 #include <llvm-c/ExecutionEngine.h>
 #include <llvm-c/Target.h>
 
-#define ns_ir_CACHE ".build/cache"
+#define ns_ir_cache ".build/cache"
 
 // types
 #define ns_ir_module LLVMModuleRef
@@ -115,16 +115,11 @@ ns_scope *ns_ir_enter_scope(ns_ir_ctx *ir_ctx);
 ns_scope *ns_ir_exit_scope(ns_ir_ctx *ir_ctx);
 
 // expr
-ns_ir_value ns_ir_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
-ns_ir_value ns_ir_call_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
-ns_ir_value ns_ir_primary_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
-ns_ir_value ns_ir_binary_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
-ns_ir_value ns_ir_str_fmt_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
-ns_ir_value ns_ir_member_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
+ns_ir_value ns_ir_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i);
+
 void ns_ir_fn_body(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, ns_symbol *fn, i32 i);
 
 // stmt
-void ns_ir_jump_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
 void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
 
 // std
@@ -301,23 +296,6 @@ ns_ir_value ns_ir_primary_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
         return ns_ir_find_value(ir_ctx, n->primary_expr.token.val);
     default:
         break;
-    }
-    return ns_ir_nil;
-}
-
-ns_ir_value ns_ir_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
-    ns_ast_t *n = &ctx->nodes[i];
-    switch (n->type) {
-    case NS_AST_EXPR: return ns_ir_expr(ir_ctx, ctx, n->expr.body);
-    case NS_AST_BINARY_EXPR: return ns_ir_binary_expr(ir_ctx, ctx, i);
-    case NS_AST_PRIMARY_EXPR: return ns_ir_primary_expr(ir_ctx, ctx, i);
-    case NS_AST_CALL_EXPR: return ns_ir_call_expr(ir_ctx, ctx, i);
-    case NS_AST_STR_FMT_EXPR: return ns_ir_str_fmt_expr(ir_ctx, ctx, i);
-    case NS_AST_MEMBER_EXPR: return ns_ir_member_expr(ir_ctx, ctx, i);
-    default: {
-        ns_str type = ns_ast_type_to_string(n->type);
-        ns_error("ns_bc", "unimplemented expr type %.*s\n", type.len, type.data);
-    } break;
     }
     return ns_ir_nil;
 }
@@ -525,22 +503,6 @@ void ns_ir_jump_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     }
 }
 
-void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
-    i32 next;
-    ns_ast_t *n = &ctx->nodes[i];
-    i32 l = n->compound_stmt.count;
-    for (i32 i = 0; i < l; i++) {
-        next = n->next;
-        n = &ctx->nodes[next];
-        switch (n->type) {
-        case NS_AST_JUMP_STMT: ns_ir_jump_stmt(ir_ctx, ctx, next); break;
-        default:
-            ns_error("ns_bc", "unimplemented compound stmt\n");
-        break;
-        }
-    }
-}
-
 #define ns_ir_MAX_ARGS 32
 static ns_ir_value_ref _args[ns_ir_MAX_ARGS];
 ns_ir_value ns_ir_call_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
@@ -681,6 +643,22 @@ ns_ir_value ns_ir_member_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i) {
     }
 }
 
+ns_ir_value ns_ir_designated_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_ir_symbol *st = ns_ir_find_symbol(ir_ctx, n->desig_expr.name.val);
+    if (st == nil) ns_error("ns_bc", "struct %.*s not found.\n", n->desig_expr.name.val.len, n->desig_expr.name.val.data);
+
+    ns_ast_t *field = n;
+    i32 count = n->desig_expr.count;
+    while (count > 0) {
+        field = &ctx->nodes[field->next];
+        // ns_type t = st->st.fields[field->desig_expr.index].t;
+        count--;
+    }
+
+    return ns_ir_nil;
+}
+
 ns_ir_value ns_ir_local_var_def(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ir_value val = ns_ir_expr(ir_ctx, ctx, n->var_def.expr);
@@ -694,6 +672,41 @@ void ns_ir_var_def(ns_ir_ctx *ir_ctx, ns_symbol *s, i32 i) {
     ns_ir_value val = (ns_ir_value){.p = i, .type = ns_ir_parse_type(ir_ctx, s->val.t)};
     ns_ir_symbol r = (ns_ir_symbol){.type = ns_ir_VALUE, .name = s->name, .val = val};
     ns_ir_set_symbol(ir_ctx, r, i);
+}
+
+ns_ir_value ns_ir_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    switch (n->type) {
+    case NS_AST_EXPR: return ns_ir_expr(ir_ctx, ctx, n->expr.body);
+    case NS_AST_BINARY_EXPR: return ns_ir_binary_expr(ir_ctx, ctx, i);
+    case NS_AST_PRIMARY_EXPR: return ns_ir_primary_expr(ir_ctx, ctx, i);
+    case NS_AST_CALL_EXPR: return ns_ir_call_expr(ir_ctx, ctx, i);
+    case NS_AST_STR_FMT_EXPR: return ns_ir_str_fmt_expr(ir_ctx, ctx, i);
+    case NS_AST_MEMBER_EXPR: return ns_ir_member_expr(ir_ctx, ctx, i);
+    case NS_AST_DESIG_EXPR: return ns_ir_designated_expr(ir_ctx, ctx, i);
+    default: {
+        ns_str type = ns_ast_type_to_string(n->type);
+        ns_error("ns_bc", "unimplemented expr type %.*s\n", type.len, type.data);
+    } break;
+    }
+    return ns_ir_nil;
+}
+
+void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
+    i32 next;
+    ns_ast_t *n = &ctx->nodes[i];
+    i32 l = n->compound_stmt.count;
+    for (i32 i = 0; i < l; i++) {
+        next = n->next;
+        n = &ctx->nodes[next];
+        switch (n->type) {
+        case NS_AST_JUMP_STMT: ns_ir_jump_stmt(ir_ctx, ctx, next); break;
+        case NS_AST_VAR_DEF: ns_ir_local_var_def(ir_ctx, ctx, next); break;
+        default:
+            ns_error("ns_bc", "unimplemented compound stmt\n");
+        break;
+        }
+    }
 }
 
 void ns_ir_parse_ast(ns_ir_ctx* ir_ctx, ns_ast_ctx *ctx) {
@@ -786,7 +799,7 @@ ns_return_bool ns_ir_gen(ns_str input, ns_str output) {
     if (output.len == 0) {
         ns_str path = ns_path_filename(input);
         path = ns_str_concat(path, ns_str_cstr(".bc"));
-        output = ns_path_join(ns_str_cstr(ns_ir_CACHE), path);
+        output = ns_path_join(ns_str_cstr(ns_ir_cache), path);
     }
     ctx.source = source;
 

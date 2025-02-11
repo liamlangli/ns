@@ -320,7 +320,7 @@ ns_return_bool ns_parse_designated_field(ns_ast_ctx *ctx) {
 }
 
 // struct { a: 1, b: 2 }
-ns_return_bool ns_parse_desig_expr(ns_ast_ctx *ctx, i32 st) {
+ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
 
@@ -420,7 +420,7 @@ ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
 
     // parse postfix { [a: expr]*, [b: expr]* }
     ns_restore_state(ctx, state);
-    ret = ns_parse_desig_expr(ctx, operand);
+    ret = ns_parse_designated_expr(ctx, operand);
     if (ns_return_is_error(ret)) return ret;
     if (ret.r) {
         return ns_return_ok(bool, true);

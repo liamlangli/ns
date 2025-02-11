@@ -12,7 +12,6 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         ns_str_case(NS_AST_STRUCT_DEF)
         ns_str_case(NS_AST_OPS_FN_DEF)
         ns_str_case(NS_AST_TYPE_DEF)
-        ns_str_case(NS_AST_STRUCT_FIELD_DEF)
         ns_str_case(NS_AST_EXPR)
         ns_str_case(NS_AST_BINARY_EXPR)
         ns_str_case(NS_AST_UNARY_EXPR)

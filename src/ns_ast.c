@@ -514,6 +514,18 @@ ns_return_bool ns_parse_struct_def(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
+i32 ns_ast_struct_field_index(ns_ast_ctx *ctx, i32 st, ns_str name) {
+    ns_ast_t *n = &ctx->nodes[st];
+    i32 count = n->struct_def.count;
+    for (i32 i = 0; i < count; i++) {
+        n = &ctx->nodes[n->next];
+        if (ns_str_equals(n->arg.name.val, name)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);

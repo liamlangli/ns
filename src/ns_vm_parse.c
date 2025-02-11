@@ -631,21 +631,19 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         i32 next = field->next;
         field = &ctx->nodes[next];
         ns_str name = field->field_def.name.val;
-        for (i32 j = 0, l = ns_array_length(st->st.fields); j < l; ++j) {
-            ns_struct_field *f = &st->st.fields[j];
-            if (ns_str_equals(f->name, name)) {
-                ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, field->field_def.expr);
-                if (ns_return_is_error(ret_t)) return ret_t;
-
-                ns_type t = ret_t.r;
-                if (!ns_type_equals(t, f->t)) {
-                    // ns_str f_type = ns_vm_get_type_name(vm, f->t);
-                    // ns_str t_type = ns_vm_get_type_name(vm, t);
-                    return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "designated expr type mismatch.");
-                }
-                break;
-            }
+        i32 field_i = ns_ast_struct_field_index(ctx, st->st.ast, name);
+        if (field_i == -1) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown field.");
         }
+
+        ns_struct_field *f = &st->st.fields[field_i];
+        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, field->field_def.expr);
+        if (ns_return_is_error(ret_t)) return ret_t;
+
+        ns_type t = ret_t.r;
+        if (!ns_type_equals(t, f->t)) return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "designated expr type mismatch.");
+
+        field->field_def.index = field_i;
     }
 
     return ns_return_ok(type, st->st.st.t);

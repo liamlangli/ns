@@ -16,9 +16,8 @@ typedef enum {
     NS_AST_OPS_FN_DEF,
     NS_AST_VAR_DEF,
     NS_AST_STRUCT_DEF,
-    NS_AST_STRUCT_FIELD_DEF,
-    NS_AST_TYPE_DEF,
     NS_AST_FIELD_DEF,
+    NS_AST_TYPE_DEF,
 
     NS_AST_EXPR,
     NS_AST_STR_FMT_EXPR,
@@ -203,6 +202,7 @@ typedef struct ns_ast_array_expr {
 typedef struct ns_ast_struct_field {
     ns_token_t name;
     i32 expr;
+    i32 index;
 } ns_ast_struct_field;
 
 typedef struct ns_ast_t {
@@ -306,7 +306,7 @@ ns_return_bool ns_parse_stmt(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
 
 // expr fn
-ns_return_bool ns_parse_desig_expr(ns_ast_ctx *ctx, i32 st);
+ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st);
 ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_gen_expr(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_primary_expr(ns_ast_ctx *ctx);
@@ -315,6 +315,9 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx);
 
 // dump fn
 void ns_ast_ctx_print(ns_ast_ctx *ctx);
+
+// struct fn
+i32 ns_ast_struct_field_index(ns_ast_ctx *ctx, i32 s_i, ns_str name);
 
 // main parse fn
 ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);
