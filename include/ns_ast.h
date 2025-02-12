@@ -316,8 +316,6 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx);
 // dump fn
 void ns_ast_ctx_print(ns_ast_ctx *ctx);
 
-// struct fn
-i32 ns_ast_struct_field_index(ns_ast_ctx *ctx, i32 s_i, ns_str name);
 
 // main parse fn
 ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);

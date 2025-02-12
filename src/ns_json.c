@@ -3,22 +3,7 @@
 static ns_json *_ns_json_stack = ns_null;
 static ns_str _ns_json_str = ns_str_null;
 
-ns_str ns_json_parse_key(ns_json_ctx *ctx);
-i32 ns_json_skip_whitespace(ns_json_ctx *ctx);
-
-void ns_json_set(ns_json_ref j, ns_str key, ns_json_ref c);
-void ns_json_push(ns_json_ref j, ns_json_ref c);
-
-ns_json_ref ns_json_parse_object(ns_json_ctx *ctx);
-ns_json_ref ns_json_parse_array(ns_json_ctx *ctx);
-ns_json_ref ns_json_parse_value(ns_json_ctx *ctx);
-ns_json_ref ns_json_parse_string(ns_json_ctx *ctx);
-ns_json_ref ns_json_parse_true(ns_json_ctx *ctx);
-ns_json_ref ns_json_parse_false(ns_json_ctx *ctx);
-ns_json_ref ns_json_parse_null(ns_json_ctx *ctx);
-ns_json_ref ns_json_parse_number(ns_json_ctx *ctx);
-
-ns_bool ns_json_print_node(ns_json *json, i32 depth, ns_bool wrap);
+i32 ns_json_parse_value(ns_json_ctx *ctx);
 
 ns_json_ref ns_json_make(ns_json_type type) {
     ns_json_ref i = ns_array_length(_ns_json_stack);
@@ -252,35 +237,6 @@ ns_str ns_json_parse_key(ns_json_ctx *ctx) {
     return ns_str_null;
 }
 
-i32 ns_json_parse_value(ns_json_ctx *ctx) {
-    // skip white space
-    ns_str s = ctx->s;
-    ns_json_skip_whitespace(ctx);
-    i8 c = s.data[ctx->i];
-    switch (c)
-    {
-    case '{':
-        return ns_json_parse_object(ctx);
-    case '[':
-        return ns_json_parse_array(ctx);
-    case '"':
-        return ns_json_parse_string(ctx);
-    case 't':
-        return ns_json_parse_true(ctx);
-    case 'f':
-        return ns_json_parse_false(ctx);
-    case 'n':
-        return ns_json_parse_null(ctx);
-    case '-':
-    case '.':
-    case '0' ... '9':
-        return ns_json_parse_number(ctx);
-    default:
-        ns_error("ns_json", "invalid json value\n");
-        break;
-    }
-}
-
 ns_json_ref ns_json_parse_object(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     if (s.data[ctx->i] == '{') {
@@ -330,6 +286,35 @@ ns_json_ref ns_json_parse_array(ns_json_ctx *ctx) {
     return 0;
 }
 
+i32 ns_json_parse_value(ns_json_ctx *ctx) {
+    // skip white space
+    ns_str s = ctx->s;
+    ns_json_skip_whitespace(ctx);
+    i8 c = s.data[ctx->i];
+    switch (c)
+    {
+    case '{':
+        return ns_json_parse_object(ctx);
+    case '[':
+        return ns_json_parse_array(ctx);
+    case '"':
+        return ns_json_parse_string(ctx);
+    case 't':
+        return ns_json_parse_true(ctx);
+    case 'f':
+        return ns_json_parse_false(ctx);
+    case 'n':
+        return ns_json_parse_null(ctx);
+    case '-':
+    case '.':
+    case '0' ... '9':
+        return ns_json_parse_number(ctx);
+    default:
+        ns_error("ns_json", "invalid json value\n");
+        break;
+    }
+}
+
 ns_json_ref ns_json_parse(ns_str s) {
     ns_array_set_length(_ns_json_stack, 0);
     ns_array_push(_ns_json_stack, (ns_json){.type = NS_JSON_INVALID});
@@ -338,10 +323,6 @@ ns_json_ref ns_json_parse(ns_str s) {
 
 #define NS_JSON_PAD 4
 #define NS_JSON_FLT_PRECISION 8
-
-ns_bool ns_json_print(ns_json *json) {
-    return ns_json_print_node(json, 0, false);
-}
 
 #define ns_printf_wrap(fmt, ...) (printf("%*.s"fmt, (wrap ? depth * NS_JSON_PAD : 0), "", ##__VA_ARGS__))
 #define ns_str_append_char(a, c) (ns_array_push((a).data, c), (a).len++)
@@ -392,6 +373,10 @@ ns_bool ns_json_print_node(ns_json *json, i32 depth,ns_bool wrap) {
         break;
     }
     return true;
+}
+
+ns_bool ns_json_print(ns_json *json) {
+    return ns_json_print_node(json, 0, false);
 }
 
 void ns_str_append_i32(ns_str *s, i32 n) {

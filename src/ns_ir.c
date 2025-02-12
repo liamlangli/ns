@@ -101,29 +101,9 @@ typedef struct ns_ir_ctx {
     ns_ir_symbol *symbol_stack;
 } ns_ir_ctx;
 
-// util
-const char* ns_ir_str(ns_str s);
-ns_ir_type ns_ir_parse_type(ns_ir_ctx *ir_ctx, ns_type t);
-ns_ir_value ns_ir_find_value(ns_ir_ctx *ir_ctx, ns_str name);
-void ns_ir_set_symbol(ns_ir_ctx *ir_ctx, ns_ir_symbol r, i32 i);
-ns_ir_symbol* ns_ir_find_symbol(ns_ir_ctx *ir_ctx, ns_str name);
-ns_ir_value ns_ir_std_snprinf(ns_ir_ctx *ir_ctx);
-ns_ir_value ns_ir_std_printf(ns_ir_ctx *ir_ctx);
-
-// scope
-ns_scope *ns_ir_enter_scope(ns_ir_ctx *ir_ctx);
-ns_scope *ns_ir_exit_scope(ns_ir_ctx *ir_ctx);
-
 // expr
 ns_ir_value ns_ir_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i);
-
-void ns_ir_fn_body(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, ns_symbol *fn, i32 i);
-
-// stmt
 void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i);
-
-// std
-ns_ir_value ns_ir_call_std(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, ns_symbol *fn);
 
 // impl
 #define MAX_STR_LENGTH 512
@@ -140,7 +120,8 @@ const char* ns_ir_str(ns_str s) {
     _str_buff[ret.len] = '\0';
     return _str_buff;
 }
-
+#define ns_ir_MAX_ARGS 32
+static ns_ir_value_ref _args[ns_ir_MAX_ARGS];
 
 ns_ir_type ns_ir_parse_type(ns_ir_ctx *ir_ctx, ns_type t) {
     switch (t.type) {
@@ -201,6 +182,29 @@ ns_ir_symbol* ns_ir_find_symbol(ns_ir_ctx *ir_ctx, ns_str name) {
     return ns_null;
 }
 
+ns_ir_value ns_ir_std_printf(ns_ir_ctx *ir_ctx) {
+    static ns_bool _ir_printf_init = false;
+    static ns_ir_value _ir_printf;
+    if (_ir_printf_init) return _ir_printf;
+
+    ns_ir_type_ref _types[1] = {LLVMPointerType(LLVMInt8Type(), 0)};
+    _ir_printf.type.type = LLVMFunctionType(LLVMInt32Type(), _types, 1, 1);
+    _ir_printf.val = LLVMAddFunction(ir_ctx->mod, "printf", _ir_printf.type.type);
+    _ir_printf_init = true;
+    return _ir_printf;
+}
+
+ns_ir_value ns_ir_call_std(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, ns_symbol *fn) {
+    ns_unused(ctx);
+
+    ns_ir_value ret = ns_ir_nil;
+    if (ns_str_equals_STR(fn->name, "print")) {
+        ns_ir_value ir_printf = ns_ir_std_printf(ir_ctx);
+        LLVMBuildCall2(ir_ctx->bdr, ir_printf.type.type, ir_printf.val, _args, 1, "");
+    }
+    return ret;
+}
+
 ns_ir_value ns_ir_std_malloc(ns_ir_ctx *ir_ctx) {
     static ns_bool _ir_malloc_init = false;
     static ns_ir_value _ir_malloc;
@@ -235,18 +239,6 @@ ns_ir_value ns_ir_std_snprinf(ns_ir_ctx *ir_ctx) {
     _ir_snprinf.val = LLVMAddFunction(ir_ctx->mod, "snprintf", _ir_snprinf.type.type);
     _ir_snprinf_init = true;
     return _ir_snprinf;
-}
-
-ns_ir_value ns_ir_std_printf(ns_ir_ctx *ir_ctx) {
-    static ns_bool _ir_printf_init = false;
-    static ns_ir_value _ir_printf;
-    if (_ir_printf_init) return _ir_printf;
-
-    ns_ir_type_ref _types[1] = {LLVMPointerType(LLVMInt8Type(), 0)};
-    _ir_printf.type.type = LLVMFunctionType(LLVMInt32Type(), _types, 1, 1);
-    _ir_printf.val = LLVMAddFunction(ir_ctx->mod, "printf", _ir_printf.type.type);
-    _ir_printf_init = true;
-    return _ir_printf;
 }
 
 ns_ir_value ns_ir_find_value(ns_ir_ctx *ir_ctx, ns_str name) {
@@ -503,8 +495,6 @@ void ns_ir_jump_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     }
 }
 
-#define ns_ir_MAX_ARGS 32
-static ns_ir_value_ref _args[ns_ir_MAX_ARGS];
 ns_ir_value ns_ir_call_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     ns_ir_builder bdr = ir_ctx->bdr;
     ns_ast_t *n = &ctx->nodes[i];
@@ -528,17 +518,6 @@ ns_ir_value ns_ir_call_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     ns_ir_value ret = (ns_ir_value){.val = ns_null, .type = fn_symbol->fn.ret};
     ns_ir_value fn_val = fn_symbol->fn.fn;
     ret.val = LLVMBuildCall2(bdr, fn_val.type.type, fn_val.val, _args, arg_count, "");
-    return ret;
-}
-
-ns_ir_value ns_ir_call_std(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, ns_symbol *fn) {
-    ns_unused(ctx);
-
-    ns_ir_value ret = ns_ir_nil;
-    if (ns_str_equals_STR(fn->name, "print")) {
-        ns_ir_value ir_printf = ns_ir_std_printf(ir_ctx);
-        LLVMBuildCall2(ir_ctx->bdr, ir_printf.type.type, ir_printf.val, _args, 1, "");
-    }
     return ret;
 }
 

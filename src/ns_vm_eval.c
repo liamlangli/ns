@@ -7,34 +7,8 @@
     #define ns_vm_inject_hook(vm, ctx, i)
 #endif
 
-u64 ns_eval_alloc(ns_vm *vm, i32 stride);
-ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
-
+ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-
-ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i);
-ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i);
-ns_return_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i);
-
-ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i);
-
-ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-
-ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
 u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
     u64 offset = ns_array_length(vm->stack);
@@ -299,6 +273,54 @@ ns_value ns_eval_number_mod(ns_vm *vm, ns_value l, ns_value r) {
     return ret;
 }
 
+ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_token_t op = n->binary_expr.op;
+    switch (op.type) {
+    case NS_TOKEN_ADD_OP: {
+        ns_value n = ns_str_equals_STR(op.val, "+") ? ns_eval_binary_add(vm, l, r) : ns_eval_binary_sub(vm, l, r);
+        return ns_return_ok(value, n);
+    } break;
+    case NS_TOKEN_MUL_OP: {
+        if (ns_str_equals_STR(op.val, "*"))
+            return ns_return_ok(value, ns_eval_binary_mul(vm, l, r));
+        else if (ns_str_equals_STR(op.val, "/"))
+            return ns_return_ok(value, ns_eval_binary_div(vm, l, r));
+        else
+            return ns_return_ok(value, ns_eval_number_mod(vm, l, r));
+    } break;
+    case NS_TOKEN_SHIFT_OP: {
+        if (ns_type_is_float(l.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "shift operator not supported for float type.");
+        if (ns_str_equals_STR(op.val, "<<"))
+            return ns_return_ok(value, ns_eval_binary_shl(vm, l, r));
+        else
+            return ns_return_ok(value, ns_eval_binary_shr(vm, l, r));
+    } break;
+    case NS_TOKEN_LOGIC_OP: {
+        ns_value n = ns_str_equals_STR(op.val, "&&") ? ns_eval_binary_and(vm, l, r) : ns_eval_binary_or(vm, l, r);
+        return ns_return_ok(value, n);
+    } break;
+    case NS_TOKEN_CMP_OP: {
+        if (ns_str_equals_STR(op.val, "=="))
+            return ns_return_ok(value, ns_eval_binary_eq(vm, l, r));
+        else if (ns_str_equals_STR(op.val, "!="))
+            return ns_return_ok(value, ns_eval_binary_ne(vm, l, r));
+        else if (ns_str_equals_STR(op.val, "<"))
+            return ns_return_ok(value, ns_eval_binary_lt(vm, l, r));
+        else if (ns_str_equals_STR(op.val, "<="))
+            return ns_return_ok(value, ns_eval_binary_le(vm, l, r));
+        else if (ns_str_equals_STR(op.val, ">"))
+            return ns_return_ok(value, ns_eval_binary_gt(vm, l, r));
+        else if (ns_str_equals_STR(op.val, ">="))
+            return ns_return_ok(value, ns_eval_binary_ge(vm, l, r));
+    } break;
+        default:
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented binary ops.");
+        break;
+    }
+    return ns_return_ok(value, ns_nil);
+}
+
 ns_return_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i) {
     ns_number_type ln = ns_vm_number_type(l.t);
     ns_number_type rn = ns_vm_number_type(r.t);
@@ -436,54 +458,6 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
     ns_exit_scope(vm);
     return ns_return_ok_void;
-}
-
-ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i) {
-    ns_ast_t *n = &ctx->nodes[i];
-    ns_token_t op = n->binary_expr.op;
-    switch (op.type) {
-    case NS_TOKEN_ADD_OP: {
-        ns_value n = ns_str_equals_STR(op.val, "+") ? ns_eval_binary_add(vm, l, r) : ns_eval_binary_sub(vm, l, r);
-        return ns_return_ok(value, n);
-    } break;
-    case NS_TOKEN_MUL_OP: {
-        if (ns_str_equals_STR(op.val, "*"))
-            return ns_return_ok(value, ns_eval_binary_mul(vm, l, r));
-        else if (ns_str_equals_STR(op.val, "/"))
-            return ns_return_ok(value, ns_eval_binary_div(vm, l, r));
-        else
-            return ns_return_ok(value, ns_eval_number_mod(vm, l, r));
-    } break;
-    case NS_TOKEN_SHIFT_OP: {
-        if (ns_type_is_float(l.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "shift operator not supported for float type.");
-        if (ns_str_equals_STR(op.val, "<<"))
-            return ns_return_ok(value, ns_eval_binary_shl(vm, l, r));
-        else
-            return ns_return_ok(value, ns_eval_binary_shr(vm, l, r));
-    } break;
-    case NS_TOKEN_LOGIC_OP: {
-        ns_value n = ns_str_equals_STR(op.val, "&&") ? ns_eval_binary_and(vm, l, r) : ns_eval_binary_or(vm, l, r);
-        return ns_return_ok(value, n);
-    } break;
-    case NS_TOKEN_CMP_OP: {
-        if (ns_str_equals_STR(op.val, "=="))
-            return ns_return_ok(value, ns_eval_binary_eq(vm, l, r));
-        else if (ns_str_equals_STR(op.val, "!="))
-            return ns_return_ok(value, ns_eval_binary_ne(vm, l, r));
-        else if (ns_str_equals_STR(op.val, "<"))
-            return ns_return_ok(value, ns_eval_binary_lt(vm, l, r));
-        else if (ns_str_equals_STR(op.val, "<="))
-            return ns_return_ok(value, ns_eval_binary_le(vm, l, r));
-        else if (ns_str_equals_STR(op.val, ">"))
-            return ns_return_ok(value, ns_eval_binary_gt(vm, l, r));
-        else if (ns_str_equals_STR(op.val, ">="))
-            return ns_return_ok(value, ns_eval_binary_ge(vm, l, r));
-    } break;
-        default:
-        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented binary ops.");
-        break;
-    }
-    return ns_return_ok(value, ns_nil);
 }
 
 ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value l, ns_value r, ns_symbol *fn) {
@@ -637,86 +611,6 @@ ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ret.len = ns_array_length(ret.data);
     ns_value ret_v = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, ns_str_unescape(ret))};
     return ns_return_ok(value, ret_v);
-}
-
-ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-    ns_ast_t *n = &ctx->nodes[i];
-    switch (n->type) {
-    case NS_AST_EXPR: return ns_eval_expr(vm, ctx, n->expr.body);
-    case NS_AST_CALL_EXPR: return ns_eval_call_expr(vm, ctx, i);
-    case NS_AST_BINARY_EXPR: return ns_eval_binary_expr(vm, ctx, i);
-    case NS_AST_STR_FMT_EXPR: return ns_eval_str_fmt_expr(vm, ctx, i);
-    case NS_AST_PRIMARY_EXPR: return ns_eval_primary_expr(vm, ctx, i);
-    case NS_AST_DESIG_EXPR: return ns_eval_desig_expr(vm, ctx, i);
-    case NS_AST_CAST_EXPR: return ns_eval_cast_expr(vm, ctx, i);
-    case NS_AST_MEMBER_EXPR: return ns_eval_member_expr(vm, ctx, i);
-    case NS_AST_UNARY_EXPR: return ns_eval_unary_expr(vm, ctx, i);
-    case NS_AST_ARRAY_EXPR: return ns_eval_array_expr(vm, ctx, i);
-    case NS_AST_INDEX_EXPR: return ns_eval_index_expr(vm, ctx, i);
-    default:
-        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented expr type.");
-    }
-
-    return ns_return_ok(value, ns_nil);
-}
-
-ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-
-    ns_ast_t *n = &ctx->nodes[i];
-    ns_ast_t *expr = n;
-
-    i8 stack_depth = vm->stack_depth;
-    if (vm->stack_depth > NS_MAX_STACK_DEPTH) {
-        return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "stack overflow.");
-    }
-    vm->stack_depth++;
-
-    for (i32 e_i = 0, l = n->compound_stmt.count; e_i < l; e_i++) {
-        i32 next = expr->next;
-        expr = &ctx->nodes[expr->next];
-        switch (expr->type) {
-        case NS_AST_CALL_EXPR:
-        case NS_AST_BINARY_EXPR:
-        case NS_AST_PRIMARY_EXPR:
-        case NS_AST_MEMBER_EXPR:
-        case NS_AST_GEN_EXPR:
-        case NS_AST_DESIG_EXPR:
-        case NS_AST_UNARY_EXPR: {
-            ns_return_value ret = ns_eval_expr(vm, ctx, next);
-            if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
-        } break;
-        case NS_AST_VAR_DEF: {
-            ns_return_value ret = ns_eval_local_var_def(vm, ctx, next);
-            if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
-        } break;
-        case NS_AST_JUMP_STMT: { 
-            ns_return_void ret = ns_eval_jump_stmt(vm, ctx, next);
-            if (ns_return_is_error(ret)) return ret;
-        } break;
-        case NS_AST_FOR_STMT: { 
-            ns_return_void ret = ns_eval_for_stmt(vm, ctx, next);
-            if (ns_return_is_error(ret)) return ret;
-        } break;
-        case NS_AST_IF_STMT: { 
-            ns_return_void ret = ns_eval_if_stmt(vm, ctx, next);
-            if (ns_return_is_error(ret)) return ret;
-        } break;
-        default: {
-            return ns_return_error(void, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unimplemented stmt type.");
-        } break;
-        }
-
-        if (ns_array_length(vm->call_stack) > 0) {
-            ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
-            if (call->ret_set) {
-                return ns_return_ok_void;
-            }
-        }
-    }
-    vm->stack_depth = stack_depth;
-    return ns_return_ok_void;
 }
 
 ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -1035,6 +929,86 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val, .val = ret, .parsed = true};
     ns_array_push(vm->symbol_stack, symbol);
     return ns_return_ok(value, ret);
+}
+
+ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
+    ns_ast_t *n = &ctx->nodes[i];
+    switch (n->type) {
+    case NS_AST_EXPR: return ns_eval_expr(vm, ctx, n->expr.body);
+    case NS_AST_CALL_EXPR: return ns_eval_call_expr(vm, ctx, i);
+    case NS_AST_BINARY_EXPR: return ns_eval_binary_expr(vm, ctx, i);
+    case NS_AST_STR_FMT_EXPR: return ns_eval_str_fmt_expr(vm, ctx, i);
+    case NS_AST_PRIMARY_EXPR: return ns_eval_primary_expr(vm, ctx, i);
+    case NS_AST_DESIG_EXPR: return ns_eval_desig_expr(vm, ctx, i);
+    case NS_AST_CAST_EXPR: return ns_eval_cast_expr(vm, ctx, i);
+    case NS_AST_MEMBER_EXPR: return ns_eval_member_expr(vm, ctx, i);
+    case NS_AST_UNARY_EXPR: return ns_eval_unary_expr(vm, ctx, i);
+    case NS_AST_ARRAY_EXPR: return ns_eval_array_expr(vm, ctx, i);
+    case NS_AST_INDEX_EXPR: return ns_eval_index_expr(vm, ctx, i);
+    default:
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented expr type.");
+    }
+
+    return ns_return_ok(value, ns_nil);
+}
+
+ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
+
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_ast_t *expr = n;
+
+    i8 stack_depth = vm->stack_depth;
+    if (vm->stack_depth > NS_MAX_STACK_DEPTH) {
+        return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "stack overflow.");
+    }
+    vm->stack_depth++;
+
+    for (i32 e_i = 0, l = n->compound_stmt.count; e_i < l; e_i++) {
+        i32 next = expr->next;
+        expr = &ctx->nodes[expr->next];
+        switch (expr->type) {
+        case NS_AST_CALL_EXPR:
+        case NS_AST_BINARY_EXPR:
+        case NS_AST_PRIMARY_EXPR:
+        case NS_AST_MEMBER_EXPR:
+        case NS_AST_GEN_EXPR:
+        case NS_AST_DESIG_EXPR:
+        case NS_AST_UNARY_EXPR: {
+            ns_return_value ret = ns_eval_expr(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
+        } break;
+        case NS_AST_VAR_DEF: {
+            ns_return_value ret = ns_eval_local_var_def(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
+        } break;
+        case NS_AST_JUMP_STMT: { 
+            ns_return_void ret = ns_eval_jump_stmt(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ret;
+        } break;
+        case NS_AST_FOR_STMT: { 
+            ns_return_void ret = ns_eval_for_stmt(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ret;
+        } break;
+        case NS_AST_IF_STMT: { 
+            ns_return_void ret = ns_eval_if_stmt(vm, ctx, next);
+            if (ns_return_is_error(ret)) return ret;
+        } break;
+        default: {
+            return ns_return_error(void, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unimplemented stmt type.");
+        } break;
+        }
+
+        if (ns_array_length(vm->call_stack) > 0) {
+            ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
+            if (call->ret_set) {
+                return ns_return_ok_void;
+            }
+        }
+    }
+    vm->stack_depth = stack_depth;
+    return ns_return_ok_void;
 }
 
 ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {

@@ -4,38 +4,7 @@
 #include "ns_vm.h"
 #include "ns_os.h"
 
-void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
-
-ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx);
-ns_return_void ns_vm_parse_struct_def_ref(ns_vm *vm, ns_ast_ctx *ctx);
-
-ns_return_void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx);
-void ns_vm_parse_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx);
-ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx);
-ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx);
-
-ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx);
-
-ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_symbol_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_str n, ns_bool infer);
-ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_token_t t, ns_bool infer);
-ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-
-void ns_vm_parse_import_stmt(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
 ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
     ns_number_type ln = ns_vm_number_type(l);
@@ -149,6 +118,15 @@ ns_str ns_ops_name(ns_token_t op) {
     default:
         return ns_str_null;
     }
+}
+
+i32 ns_struct_field_index(ns_struct_symbol *st, ns_str s) {
+    for (i32 i = 0, l = ns_array_length(st->fields); i < l; i++) {
+        if (ns_str_equals(st->fields[i].name, s)) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
@@ -631,7 +609,7 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         i32 next = field->next;
         field = &ctx->nodes[next];
         ns_str name = field->field_def.name.val;
-        i32 field_i = ns_ast_struct_field_index(ctx, st->st.ast, name);
+        i32 field_i = ns_struct_field_index(&st->st, name);
         if (field_i == -1) {
             return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown field.");
         }
