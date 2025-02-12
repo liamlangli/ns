@@ -66,10 +66,10 @@ typedef struct ns_ir_st_symbol {
 } ns_ir_st_symbol;
 
 typedef enum ns_ir_symbol_type {
-    ns_ir_INVALID,
-    ns_ir_VALUE,
-    ns_ir_FN,
-    ns_ir_STRUCT
+    NS_IR_INVALID,
+    NS_IR_VALUE,
+    NS_IR_FN,
+    NS_IR_STRUCT
 } ns_ir_symbol_type;
 
 typedef struct ns_ir_symbol {
@@ -84,7 +84,7 @@ typedef struct ns_ir_symbol {
     };
 }  ns_ir_symbol;
 
-#define ns_ir_nil_symbol ((ns_ir_symbol){.type = ns_ir_INVALID})
+#define ns_ir_nil_symbol ((ns_ir_symbol){.type = NS_IR_INVALID})
 
 typedef struct ns_ir_call {
     ns_ir_symbol *fn;
@@ -97,6 +97,7 @@ typedef struct ns_ir_ctx {
     ns_ir_builder bdr;
 
     ns_vm *vm;
+    i32 fn;
     ns_ir_symbol *symbols;
     ns_ir_symbol *symbol_stack;
 } ns_ir_ctx;
@@ -151,8 +152,8 @@ ns_ir_type ns_ir_parse_type(ns_ir_ctx *ir_ctx, ns_type t) {
 void ns_ir_set_symbol(ns_ir_ctx *ir_ctx, ns_ir_symbol r, i32 i) {
     switch (r.type)
     {
-    case ns_ir_FN: r.fn.fn.p = i; break;
-    case ns_ir_VALUE: r.val.p = i; break;
+    case NS_IR_FN: r.fn.fn.p = i; break;
+    case NS_IR_VALUE: r.val.p = i; break;
     default: break;
     }
     r.index = i;
@@ -160,17 +161,10 @@ void ns_ir_set_symbol(ns_ir_ctx *ir_ctx, ns_ir_symbol r, i32 i) {
 }
 
 ns_ir_symbol* ns_ir_find_symbol(ns_ir_ctx *ir_ctx, ns_str name) {
-    size_t l = ns_array_length(ir_ctx->vm->call_stack);
-    if (l > 0) {
-        ns_call *call = ns_array_last(ir_ctx->vm->call_stack);
-        i32 scope_top = call->scope_top;
-        i32 symbol_top = ir_ctx->vm->scope_stack[scope_top].symbol_top;
-        i32 symbol_count = ns_array_length(ir_ctx->symbol_stack);
-
-        for (i32 j = symbol_count - 1; j >= symbol_top; --j) {
-            if (ns_str_equals(ir_ctx->symbol_stack[j].name, name)) {
-                return &ir_ctx->symbol_stack[j];
-            }
+    i32 symbol_count = ns_array_length(ir_ctx->symbol_stack);
+    for (i32 j = symbol_count - 1; j >= 0; --j) {
+        if (ns_str_equals(ir_ctx->symbol_stack[j].name, name)) {
+            return &ir_ctx->symbol_stack[j];
         }
     }
 
@@ -245,9 +239,9 @@ ns_ir_value ns_ir_find_value(ns_ir_ctx *ir_ctx, ns_str name) {
     ns_ir_symbol *r = ns_ir_find_symbol(ir_ctx, name);
     if (r) {
         switch (r->type) {
-        case ns_ir_VALUE: return r->val;
-        case ns_ir_FN: return r->fn.fn;
-        case ns_ir_STRUCT: return r->st.st;
+        case NS_IR_VALUE: return r->val;
+        case NS_IR_FN: return r->fn.fn;
+        case NS_IR_STRUCT: return r->st.st;
         default: break;
         }
     }
@@ -296,7 +290,7 @@ ns_ir_value ns_ir_primary_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
 static ns_ir_type_ref _types[ns_ir_MAX_FIELD_COUNT];
 
 void ns_ir_struct_def(ns_ir_ctx *ir_ctx, ns_symbol *st, i32 i) {
-    ns_ir_symbol ir_st = (ns_ir_symbol){.type = ns_ir_STRUCT, .name = st->name};
+    ns_ir_symbol ir_st = (ns_ir_symbol){.type = NS_IR_STRUCT, .name = st->name};
     ns_ir_st_symbol st_symbol = {.st = ns_ir_nil, .fields = ns_null};
 
     i32 field_count = ns_array_length(st->st.fields);
@@ -305,7 +299,7 @@ void ns_ir_struct_def(ns_ir_ctx *ir_ctx, ns_symbol *st, i32 i) {
         ns_struct_field *field = &st->st.fields[j];
         ns_ir_type t = ns_ir_parse_type(ir_ctx, field->t);
         if (field->t.ref) t.type = LLVMPointerType(t.type, 0);
-        st_symbol.fields[j] = (ns_ir_symbol){.type = ns_ir_VALUE, .name = field->name, .val = (ns_ir_value){.type = t, .val = ns_null, .p = j}};
+        st_symbol.fields[j] = (ns_ir_symbol){.type = NS_IR_VALUE, .name = field->name, .val = (ns_ir_value){.type = t, .val = ns_null, .p = j}};
         _types[j] = t.type;
     }
     ns_ir_type_ref st_type = LLVMStructType(_types, field_count, 0);
@@ -315,7 +309,7 @@ void ns_ir_struct_def(ns_ir_ctx *ir_ctx, ns_symbol *st, i32 i) {
 }
 
 ns_return_void ns_ir_fn_def(ns_ir_ctx *ir_ctx, ns_symbol *fn, i32 i) {
-    ns_ir_symbol ir_fn = (ns_ir_symbol){.type = ns_ir_FN, .name = fn->name, .lib = fn->lib};
+    ns_ir_symbol ir_fn = (ns_ir_symbol){.type = NS_IR_FN, .name = fn->name, .lib = fn->lib};
     i32 arg_count = ns_array_length(fn->fn.args);
     
     // parse argument types
@@ -344,21 +338,19 @@ void ns_ir_fn_body(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, ns_symbol *fn, i32 i) {
     ns_ir_block entry = LLVMAppendBasicBlock(ir_fn->fn.fn.val, "entry");
     LLVMPositionBuilderAtEnd(ir_ctx->bdr, entry);
 
-    ns_vm *vm = ir_ctx->vm;
     i32 arg_count = ns_array_length(fn->fn.args);
-    ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = arg_count};
     ns_ir_enter_scope(ir_ctx);
     for (i32 j = 0; j < arg_count; j++) {
-        ns_ir_symbol arg = (ns_ir_symbol){.type = ns_ir_VALUE, .name = fn->fn.args[j].name};
+        ns_ir_symbol arg = (ns_ir_symbol){.type = NS_IR_VALUE, .name = fn->fn.args[j].name};
         arg.val = (ns_ir_value){.val = LLVMGetParam(ir_fn->fn.fn.val, j), .type = ns_ir_parse_type(ir_ctx, fn->fn.args[j].val.t)};
         ns_array_push(ir_ctx->symbol_stack, arg);
     }
 
-    ns_array_push(vm->call_stack, call);
+    ir_ctx->fn = fn->fn.fn.t.index;
     ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
     ns_ir_compound_stmt(ir_ctx, ctx, fn_ast->fn_def.body);
+    ir_ctx->fn = -1;
 
-    ns_array_pop(vm->call_stack);
     ns_ir_exit_scope(ir_ctx);
 }
 
@@ -427,10 +419,27 @@ ns_ir_value ns_ir_binary_ops_number(ns_ir_ctx *ir_ctx, ns_ir_value l, ns_ir_valu
     return ret;
 }
 
+ns_ir_value ns_ir_call_ops_fn(ns_ir_ctx *ir_ctx, ns_ir_symbol *fn, ns_ir_value l, ns_ir_value r) {
+    ns_ir_builder bdr = ir_ctx->bdr;
+    ns_ir_value ret = (ns_ir_value){.val = ns_null, .type = fn->fn.ret};
+    ns_ir_value_ref args[2] = {l.val, r.val};
+    ret.val = LLVMBuildCall2(bdr, fn->fn.fn.type.type, fn->fn.fn.val, args, 2, "");
+    return ret;
+}
+
 ns_ir_value ns_ir_binary_ops(ns_ir_ctx *ir_ctx, ns_ir_value l, ns_ir_value r, ns_token_t op) {
     if (ns_type_is_number(l.type.raw)) {
         return ns_ir_binary_ops_number(ir_ctx, l, r, op);
     } else {
+        ns_vm *vm = ir_ctx->vm;
+        ns_str l_t = ns_vm_get_type_name(vm, l.type.raw);
+        ns_str r_t = ns_vm_get_type_name(vm, r.type.raw);
+        ns_str fn_name = ns_ops_override_name(l_t, r_t, op);
+        ns_ir_symbol *fn = ns_ir_find_symbol(ir_ctx, fn_name);
+        if (fn) {
+            return ns_ir_call_ops_fn(ir_ctx, fn, l, r);
+        }
+
         switch (l.type.raw.type)
         {
         case NS_TYPE_STRING:
@@ -598,18 +607,10 @@ ns_ir_value ns_ir_member_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, i32 i) {
     ns_str name = field->primary_expr.token.val;
     ns_symbol *st = &ir_ctx->vm->symbols[ns_type_index(ir_st.type.raw)];
 
-    i32 index = -1;
-    ns_struct_field *st_field = ns_null;
-    for (i32 j = 0, l = ns_array_length(st->st.fields); j < l; j++) {
-        st_field = &st->st.fields[j];
-        if (ns_str_equals(st_field->name, name)) {
-            index = j;
-            break;
-        }
-    }
-
+    i32 index = ns_struct_field_index(st, name);
     if (index == -1) ns_error("ns_bc", "field %.*s not found.\n", name.len, name.data);
 
+    ns_struct_field *st_field = &st->st.fields[index];
     ns_ir_value_ref st_index = LLVMConstInt(LLVMInt32Type(), index, 0);
     if (ns_type_is_ref(ir_st.type.raw)) {
         ns_ir_value_ref member = LLVMBuildGEP2(ir_ctx->bdr, LLVMPointerType(LLVMInt8Type(), 0), ir_st.val, &st_index, 1, "");
@@ -642,14 +643,14 @@ ns_ir_value ns_ir_local_var_def(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ir_value val = ns_ir_expr(ir_ctx, ctx, n->var_def.expr);
     ns_str name = n->var_def.name.val;
-    ns_ir_symbol val_symbol = (ns_ir_symbol){.type = ns_ir_VALUE, .name = name, .val = val};
+    ns_ir_symbol val_symbol = (ns_ir_symbol){.type = NS_IR_VALUE, .name = name, .val = val};
     ns_array_push(ir_ctx->symbol_stack, val_symbol);
     return val;
 }
 
 void ns_ir_var_def(ns_ir_ctx *ir_ctx, ns_symbol *s, i32 i) {
     ns_ir_value val = (ns_ir_value){.p = i, .type = ns_ir_parse_type(ir_ctx, s->val.t)};
-    ns_ir_symbol r = (ns_ir_symbol){.type = ns_ir_VALUE, .name = s->name, .val = val};
+    ns_ir_symbol r = (ns_ir_symbol){.type = NS_IR_VALUE, .name = s->name, .val = val};
     ns_ir_set_symbol(ir_ctx, r, i);
 }
 
@@ -671,6 +672,31 @@ ns_ir_value ns_ir_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     return ns_ir_nil;
 }
 
+void ns_ir_if_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
+    ns_ir_builder bdr = ir_ctx->bdr;
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_ir_value cond = ns_ir_expr(ir_ctx, ctx, n->if_stmt.condition);
+
+    ns_ir_symbol *ir_fn = &ir_ctx->symbols[ir_ctx->fn];
+    assert(ir_fn->type == NS_IR_FN);
+
+    ns_ir_value_ref fn = ir_fn->fn.fn.val;
+    ns_ir_block then = LLVMAppendBasicBlock(fn, "");
+    ns_ir_block els = LLVMAppendBasicBlock(fn, "");
+    ns_ir_block merge = LLVMAppendBasicBlock(fn, "");
+
+    LLVMBuildCondBr(bdr, cond.val, then, els);
+    LLVMPositionBuilderAtEnd(bdr, then);
+    ns_ir_compound_stmt(ir_ctx, ctx, n->if_stmt.body);
+    LLVMBuildBr(bdr, merge);
+
+    LLVMPositionBuilderAtEnd(bdr, els);
+    ns_ir_compound_stmt(ir_ctx, ctx, n->if_stmt.else_body);
+    LLVMBuildBr(bdr, merge);
+
+    LLVMPositionBuilderAtEnd(bdr, merge);
+}
+
 void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     i32 next;
     ns_ast_t *n = &ctx->nodes[i];
@@ -681,6 +707,7 @@ void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
         switch (n->type) {
         case NS_AST_JUMP_STMT: ns_ir_jump_stmt(ir_ctx, ctx, next); break;
         case NS_AST_VAR_DEF: ns_ir_local_var_def(ir_ctx, ctx, next); break;
+        case NS_AST_IF_STMT: ns_ir_if_stmt(ir_ctx, ctx, next); break;
         default:
             ns_error("ns_bc", "unimplemented compound stmt\n");
         break;
@@ -740,16 +767,14 @@ void ns_ir_parse_ast(ns_ir_ctx* ir_ctx, ns_ast_ctx *ctx) {
         main_fn_type.type = LLVMFunctionType(LLVMInt32Type(), ns_null, 0, 0);
         ns_ir_value main_fn = (ns_ir_value){.p = -1, .val = ns_null, .type = main_fn_type};
         main_i = ns_array_length(ir_ctx->symbols);
-        ns_ir_symbol r = (ns_ir_symbol){.type = ns_ir_FN, .name = ns_str_cstr("main"), .fn = (ns_ir_fn_symbol){.fn = main_fn, .ret = ns_ir_type_i32}};
+        ns_ir_symbol r = (ns_ir_symbol){.type = NS_IR_FN, .name = ns_str_cstr("main"), .fn = (ns_ir_fn_symbol){.fn = main_fn, .ret = ns_ir_type_i32}};
         ns_ir_set_symbol(ir_ctx, r, main_i);
 
         main_fn.val = LLVMAddFunction(mod, "main", main_fn_type.type);
         ns_ir_block entry_main = LLVMAppendBasicBlock(main_fn.val, "entry");
         LLVMPositionBuilderAtEnd(bdr, entry_main);
 
-        ns_call call = (ns_call){.fn = ns_null, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 0};
         ns_ir_enter_scope(ir_ctx);
-        ns_array_push(vm->call_stack, call);
         // parse deferred nodes as main fn body
         for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
             i32 s = ctx->sections[i];
@@ -762,7 +787,6 @@ void ns_ir_parse_ast(ns_ir_ctx* ir_ctx, ns_ast_ctx *ctx) {
             }
         }
         LLVMBuildRet(bdr, LLVMConstInt(LLVMInt32Type(), 0, 0));
-        ns_array_pop(vm->scope_stack);
         ns_ir_exit_scope(ir_ctx);
     }
 }

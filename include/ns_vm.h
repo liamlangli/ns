@@ -167,7 +167,7 @@ void ns_vm_symbol_print(ns_vm *vm);
 ns_return_bool ns_vm_call_ref(ns_vm *vm);
 
 // vm struct
-i32 ns_struct_field_index(ns_struct_symbol *st, ns_str s);
+i32 ns_struct_field_index(ns_symbol *st, ns_str s);
 
 // vm mod
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib);

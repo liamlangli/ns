@@ -120,9 +120,11 @@ ns_str ns_ops_name(ns_token_t op) {
     }
 }
 
-i32 ns_struct_field_index(ns_struct_symbol *st, ns_str s) {
-    for (i32 i = 0, l = ns_array_length(st->fields); i < l; i++) {
-        if (ns_str_equals(st->fields[i].name, s)) {
+i32 ns_struct_field_index(ns_symbol *st, ns_str s) {
+    assert(st->type == NS_SYMBOL_STRUCT);
+    ns_struct_field *fields = st->st.fields;
+    for (i32 i = 0, l = ns_array_length(fields); i < l; i++) {
+        if (ns_str_equals(fields[i].name, s)) {
             return i;
         }
     }
@@ -609,7 +611,7 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         i32 next = field->next;
         field = &ctx->nodes[next];
         ns_str name = field->field_def.name.val;
-        i32 field_i = ns_struct_field_index(&st->st, name);
+        i32 field_i = ns_struct_field_index(st, name);
         if (field_i == -1) {
             return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown field.");
         }
