@@ -66,21 +66,21 @@ typedef struct ns_ast_arg {
 } ns_ast_arg;
 
 typedef struct ns_ast_fn_def {
+    i32 ret;
+    i32 body;
     ns_bool is_ref;
     ns_bool is_async;
     ns_bool is_kernel;
     ns_token_t name;
-    i32 ret;
-    i32 body;
     i32 arg_count;
 } ns_ast_fn_def;
 
 typedef struct ns_ast_ops_fn_def {
+    i32 ret;
+    i32 body;
     ns_bool is_ref;
     ns_bool is_async;
     ns_token_t ops;
-    i32 ret;
-    i32 body;
     i32 left;
     i32 right;
 } ns_ast_ops_fn_def;

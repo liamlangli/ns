@@ -188,6 +188,19 @@ ns_ir_value ns_ir_std_printf(ns_ir_ctx *ir_ctx) {
     return _ir_printf;
 }
 
+ns_ir_value ns_ir_std_sqrt(ns_ir_ctx *ir_ctx) {
+    static ns_bool _ir_sqrt_init = false;
+    static ns_ir_value _ir_sqrt;
+    if (_ir_sqrt_init) return _ir_sqrt;
+
+    ns_ir_type_ref sqrtArgs[] = {LLVMDoubleType()};
+    LLVMTypeRef sqrtFuncType = LLVMFunctionType(LLVMDoubleType(), sqrtArgs, 1, 0);
+    LLVMValueRef sqrtFunc = LLVMAddFunction(ir_ctx->mod, "llvm.sqrt.f64", sqrtFuncType);
+    _ir_sqrt = (ns_ir_value){.val = sqrtFunc, .type = (ns_ir_type){.type = sqrtFuncType, .raw = ns_type_f64}};
+    _ir_sqrt_init = true;
+    return _ir_sqrt;
+}
+
 ns_ir_value ns_ir_call_std(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, ns_symbol *fn) {
     ns_unused(ctx);
 
@@ -195,6 +208,12 @@ ns_ir_value ns_ir_call_std(ns_ir_ctx *ir_ctx, ns_ast_ctx* ctx, ns_symbol *fn) {
     if (ns_str_equals_STR(fn->name, "print")) {
         ns_ir_value ir_printf = ns_ir_std_printf(ir_ctx);
         LLVMBuildCall2(ir_ctx->bdr, ir_printf.type.type, ir_printf.val, _args, 1, "");
+    } else if (ns_str_equals_STR(fn->name, "sqrt")) {
+        ns_ir_value ir_sqrt = ns_ir_std_sqrt(ir_ctx);
+        ret.val = LLVMBuildCall2(ir_ctx->bdr, ir_sqrt.type.type, ir_sqrt.val, _args, 1, "");
+        ret.type = ir_sqrt.type;
+    } else {
+        ns_error("ns_bc", "unimplemented std function.\n");
     }
     return ret;
 }
@@ -348,7 +367,7 @@ void ns_ir_fn_body(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, ns_symbol *fn, i32 i) {
 
     ir_ctx->fn = fn->fn.fn.t.index;
     ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
-    ns_ir_compound_stmt(ir_ctx, ctx, fn_ast->fn_def.body);
+    ns_ir_compound_stmt(ir_ctx, ctx, fn_ast->type == NS_AST_FN_DEF ? fn_ast->fn_def.body: fn_ast->ops_fn_def.body);
     ir_ctx->fn = -1;
 
     ns_ir_exit_scope(ir_ctx);
@@ -660,9 +679,10 @@ ns_ir_value ns_ir_unary_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
         ret.val = LLVMBuildNot(ir_ctx->bdr, ret.val, "");
         break;
     default:
+        ns_error("ns_bc", "unimplemented unary ops\n");
         break;
     }
-    return ns_ir_nil;
+    return ret;
 }
 
 ns_ir_value ns_ir_local_var_def(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
@@ -724,6 +744,10 @@ void ns_ir_if_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     LLVMPositionBuilderAtEnd(bdr, merge);
 }
 
+void ns_ir_for_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
+    
+}
+
 void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     i32 next;
     ns_ast_t *n = &ctx->nodes[i];
@@ -735,6 +759,7 @@ void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
         case NS_AST_JUMP_STMT: ns_ir_jump_stmt(ir_ctx, ctx, next); break;
         case NS_AST_VAR_DEF: ns_ir_local_var_def(ir_ctx, ctx, next); break;
         case NS_AST_IF_STMT: ns_ir_if_stmt(ir_ctx, ctx, next); break;
+        case NS_AST_FOR_STMT: ns_ir_for_stmt(ir_ctx, ctx, next); break;
         default:
             ns_error("ns_bc", "unimplemented compound stmt\n");
         break;
