@@ -639,6 +639,32 @@ ns_ir_value ns_ir_designated_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     return ns_ir_nil;
 }
 
+ns_ir_value ns_ir_unary_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_ir_value ret = ns_ir_expr(ir_ctx, ctx, n->unary_expr.expr);
+
+    ns_token_t op = n->unary_expr.op;
+    switch (op.type)
+    {
+    case NS_TOKEN_ADD_OP:
+        if (ns_str_equals_STR(op.val, "+")) return ret;
+        if (ns_str_equals_STR(op.val, "-")) {
+            if (ns_type_is_float(ret.type.raw)) {
+                ret.val = LLVMBuildFNeg(ir_ctx->bdr, ret.val, "");
+            } else {
+                ret.val = LLVMBuildNeg(ir_ctx->bdr, ret.val, "");
+            }
+        }
+        break;
+    case NS_TOKEN_BIT_INVERT_OP:
+        ret.val = LLVMBuildNot(ir_ctx->bdr, ret.val, "");
+        break;
+    default:
+        break;
+    }
+    return ns_ir_nil;
+}
+
 ns_ir_value ns_ir_local_var_def(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ir_value val = ns_ir_expr(ir_ctx, ctx, n->var_def.expr);
@@ -664,6 +690,7 @@ ns_ir_value ns_ir_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     case NS_AST_STR_FMT_EXPR: return ns_ir_str_fmt_expr(ir_ctx, ctx, i);
     case NS_AST_MEMBER_EXPR: return ns_ir_member_expr(ir_ctx, ctx, i);
     case NS_AST_DESIG_EXPR: return ns_ir_designated_expr(ir_ctx, ctx, i);
+    case NS_AST_UNARY_EXPR: return ns_ir_unary_expr(ir_ctx, ctx, i);
     default: {
         ns_str type = ns_ast_type_to_string(n->type);
         ns_error("ns_bc", "unimplemented expr type %.*s\n", type.len, type.data);
