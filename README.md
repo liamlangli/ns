@@ -1,6 +1,6 @@
 Nano Script
 -----------
-> A minimal programming language for data oriented programming.
+> A minimal, data-oriented functional programming language.
 
 ## Design Goal
 - Minimal syntax and keywords for ease of learning and use.
