@@ -623,7 +623,7 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_type t = ret_t.r;
         if (!ns_type_equals(t, f->t)) return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "designated expr type mismatch.");
 
-        field->field_def.index = field_i;
+        field->field_def.rt.index = field_i;
     }
 
     return ns_return_ok(type, st->st.st.t);

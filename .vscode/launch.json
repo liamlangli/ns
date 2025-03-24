@@ -15,6 +15,15 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "ast",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/bin/ns",
+            "args": ["--ast", "sample/rt.ns"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "eval",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",

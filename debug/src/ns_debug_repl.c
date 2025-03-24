@@ -334,7 +334,7 @@ ns_return_void ns_debug_repl_loop() {
             ns_warn("ns_debug", "unknown command: %.*s\n", line.len, line.data);
             break;
         case NS_DEBUG_REPL_AST:
-            ns_ast_ctx_print(&_debug_ast_ctx);
+            ns_ast_ctx_print(&_debug_ast_ctx, false);
             break;
         default:
             break;

@@ -80,7 +80,7 @@ void ns_exec_ast(ns_str filename) {
     }
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
-    ns_ast_ctx_print(&ctx);
+    ns_ast_ctx_print(&ctx, true);
 }
 
 void ns_exec_bitcode(ns_str filename, ns_str output) {

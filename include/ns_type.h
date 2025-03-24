@@ -33,6 +33,7 @@
 #define ns_color_err "\x1b[1;31m"
 #define ns_color_log "\x1b[1;32m"
 #define ns_color_wrn "\x1b[1;33m"
+#define ns_color_cmt "\x1b[1;37m"
 #define ns_color_nil "\x1b[0m"
 
 #define ns_ptr_size sizeof(void *)

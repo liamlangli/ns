@@ -37,7 +37,6 @@ typedef enum {
     NS_AST_MODULE_STMT,
     NS_AST_FOR_STMT,
     NS_AST_LOOP_STMT,
-    NS_AST_RETURN_STMT,
     NS_AST_JUMP_STMT,
     NS_AST_LABELED_STMT,
     NS_AST_COMPOUND_STMT
@@ -202,7 +201,10 @@ typedef struct ns_ast_array_expr {
 typedef struct ns_ast_struct_field {
     ns_token_t name;
     i32 expr;
-    i32 index;
+    struct {
+        i32 index;
+        u64 offset;
+    } rt;
 } ns_ast_struct_field;
 
 typedef struct ns_ast_t {
@@ -314,7 +316,7 @@ ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand);
 ns_return_bool ns_parse_expr(ns_ast_ctx *ctx);
 
 // dump fn
-void ns_ast_ctx_print(ns_ast_ctx *ctx);
+void ns_ast_ctx_print(ns_ast_ctx *ctx, ns_bool verbose);
 
 
 // main parse fn
