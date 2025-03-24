@@ -401,8 +401,9 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             i32 count = n->desig_expr.count;
             ns_ast_t *field = &ctx->nodes[n->next];
             for (i32 f_i = 0; f_i < count; f_i++) {
+                printf(ns_color_ign);
                 ns_str_printf(field->field_def.name.val);
-                printf(": ");
+                printf(": " ns_color_nil);
                 ns_ast_print_node(ctx, field->field_def.expr, depth);
                 if (f_i != count - 1) {
                     printf(", ");
