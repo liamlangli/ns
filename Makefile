@@ -104,7 +104,8 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_vm_print.c \
 	src/ns_net.c \
 	src/ns_json.c \
-	src/ns_repl.c
+	src/ns_repl.c \
+	src/ns_def.c
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
 NS_TEST_SRCS = test/ns_json_test.c
@@ -174,6 +175,7 @@ test: $(NS_TEST_TARGETS)
 include lib/Makefile
 include lsp/Makefile
 include debug/Makefile
+include sample/c/Makefile
 
 install: all ns_debug ns_lsp
 	$(NS_MKDIR) ~/.cache/ns/bin

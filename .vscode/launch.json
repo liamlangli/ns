@@ -55,6 +55,14 @@
             "program": "${workspaceFolder}/bin/ns_debug",
             "args": ["--socket", "--port", "5001"],
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "sample[eval]",
+            "preLaunchTask": "build sample",
+            "program": "${workspaceFolder}/bin/sample/eval",
+            "cwd": "${workspaceFolder}",
         }
     ]
 }

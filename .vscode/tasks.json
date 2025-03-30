@@ -7,6 +7,12 @@
             "label": "build",
             "type": "shell",
             "command": "make"
+        },
+        {
+            "label": "build sample",
+            "type": "shell",
+            "command": "make",
+            "args": ["sample"]
         }
     ]
 }

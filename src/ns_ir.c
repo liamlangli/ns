@@ -745,7 +745,9 @@ void ns_ir_if_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
 }
 
 void ns_ir_for_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
-    
+    ns_unused(ir_ctx);
+    ns_unused(ctx);
+    ns_unused(i);
 }
 
 void ns_ir_compound_stmt(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {

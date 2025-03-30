@@ -4,6 +4,7 @@
 #include "ns_token.h"
 #include "ns_type.h"
 #include "ns_vm.h"
+#include "ns_os.h"
 
 #define STB_DS_IMPLEMENTATION
 

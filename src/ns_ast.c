@@ -612,6 +612,7 @@ ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
             ns_array_push(ctx->sections, ctx->current);
             ctx->section_end++;
         }
+        if (ctx->token.type == NS_TOKEN_EOF) break;
     } while (loop.r);
 
     if (ctx->f < ctx->source.len) {
