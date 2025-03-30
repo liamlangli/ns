@@ -55,20 +55,22 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
     if (min_cap < 2 * ns_array_capacity(a)) min_cap = 2 * ns_array_capacity(a);
     else if (min_cap < 8) min_cap = 8;
 
-    b = malloc(elem_size * min_cap + sizeof(ns_array_header));
-#ifdef NS_DEBUG
-    _ns_allocator.alloc_op++;
-    _ns_allocator.alloc += elem_size * min_cap + sizeof(ns_array_header);
-#endif
-
+    size_t new_size = elem_size * min_cap + sizeof(ns_array_header);
     if (a) {
+        b = realloc(ns_array_header(a), new_size);
 #ifdef NS_DEBUG
-        _ns_allocator.free_op++;
-        _ns_allocator.free += ns_array_capacity(a) * elem_size + sizeof(ns_array_header);
+        _ns_allocator.alloc_op++;
+        _ns_allocator.alloc += new_size - (ns_array_capacity(a) * elem_size + sizeof(ns_array_header));
 #endif
-        memcpy(b, ns_array_header(a), elem_size * ns_array_length(a) + sizeof(ns_array_header));
-        free(ns_array_header(a));
+    } else {
+        b = malloc(new_size);
+#ifdef NS_DEBUG
+        _ns_allocator.alloc_op++;
+        _ns_allocator.alloc += new_size;
+#endif
     }
+
+    if (!b) return NULL; // handle allocation failure
 
     b = (char *)b + sizeof(ns_array_header);
     if (ns_null == a) {

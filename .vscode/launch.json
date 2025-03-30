@@ -18,7 +18,7 @@
             "name": "ast",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["--ast", "sample/rt.ns"],
+            "args": ["--ast", "sample/ns/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -27,7 +27,7 @@
             "name": "eval",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["sample/rt.ns"],
+            "args": ["sample/ns/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -36,7 +36,7 @@
             "name": "ir",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["-ir", "sample/rt.ns"],
+            "args": ["-ir", "sample/ns/rt.ns"],
             "cwd": "${workspaceFolder}"
         },
         {
