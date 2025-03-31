@@ -318,6 +318,5 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx);
 // dump fn
 void ns_ast_ctx_print(ns_ast_ctx *ctx, ns_bool verbose);
 
-
 // main parse fn
 ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename);

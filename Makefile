@@ -154,7 +154,7 @@ clean:
 
 # utility
 count:
-	cloc --force-lang=c=.h src include sample
+	cloc src include sample
 
 # pack source files
 pack:

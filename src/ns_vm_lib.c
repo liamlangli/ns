@@ -17,11 +17,20 @@
     #define NS_REF_PATH ".cache/ns/ref"
 #endif // NS_DEBUG
 
-#define NS_MAX_FFI_ARGS 16
-static ffi_type _ffi_type_refs[NS_MAX_FFI_ARGS];
-static ffi_type *_ffi_types[NS_MAX_FFI_ARGS];
-static void *_ffi_refs[NS_MAX_FFI_ARGS];
-static void *_ffi_values[NS_MAX_FFI_ARGS];
+#define NS_MAX_FFI_ARGS 32
+#define NS_MAX_FFI_STACK 256
+
+typedef struct ffi_ctx {
+    ffi_type type_refs[NS_MAX_FFI_ARGS];
+    ffi_type *types[NS_MAX_FFI_ARGS];
+    void *refs[NS_MAX_FFI_ARGS];
+    void *values[NS_MAX_FFI_ARGS];
+
+    i8 stack[NS_MAX_FFI_STACK];
+    u64 stack_offset;
+} ffi_ctx;
+
+static ffi_ctx _ffi_ctx = {0};
 
 ns_return_bool ns_vm_call_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
@@ -169,32 +178,40 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         {
         case NS_TYPE_STRING: {
             ns_str s = ns_eval_str(vm, v);
-            _ffi_refs[i] = (void*)s.data;
-            _ffi_values[i] = &_ffi_refs[i];
+            _ffi_ctx.refs[i] = (void*)s.data;
+            _ffi_ctx.values[i] = &_ffi_ctx.refs[i];
         } break;
         case NS_TYPE_ARRAY: {
             void *data = ns_eval_array_raw(vm, v);
-            _ffi_refs[i] = data;
-            _ffi_values[i] = &_ffi_refs[i];
+            _ffi_ctx.refs[i] = data;
+            _ffi_ctx.values[i] = &_ffi_ctx.refs[i];
         } break;
-        default:
-            _ffi_refs[i] = (void*)((i8*)vm->stack + v.o);
-            _ffi_values[i] = &_ffi_refs[i];
-            break;
+        default: {
+            u64 offset = (u64)ns_type_size(vm, v.t);
+            u64 start = (_ffi_ctx.stack_offset + 7) & ~7; // Align to 8 bytes
+            u64 end = start + offset; 
+            if (end > NS_MAX_FFI_STACK) {
+                return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ffi stack overflow.");
+            }
+            i8* dst = (i8*)_ffi_ctx.stack + start;
+            memcpy(dst, (i8*)vm->stack + v.o, offset);
+            _ffi_ctx.stack_offset = end;
+            _ffi_ctx.values[i] = dst;
+        }break;
         }
-        _ffi_type_refs[i] = ns_ffi_map_type(v.t);
-        _ffi_types[i] = &_ffi_type_refs[i];
+        _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
+        _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
     }
     ns_exit_scope(vm);
 
     ffi_type ret_type = ns_ffi_map_type(fn->fn.ret);
-    ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, _ffi_types);
+    ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, _ffi_ctx.types);
     if (status != FFI_OK) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to prep ffi call.");
     }
 
     ffi_arg ret_ptr;
-    ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &ret_ptr, _ffi_values);
+    ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &ret_ptr, _ffi_ctx.values);
 
     if (!ns_type_is(fn->fn.ret, NS_TYPE_VOID)) {
         ns_type ret_type = fn->fn.ret;

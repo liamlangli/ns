@@ -19,10 +19,10 @@ typedef enum ns_scope_state {
 typedef struct ns_symbol ns_symbol;
 
 typedef struct ns_fn_symbol {
+    i32 ast;
+    ns_value fn;
     ns_type ret;
     ns_symbol *args;
-    ns_value fn;
-    i32 ast;
     void *fn_ptr;
 } ns_fn_symbol;
 
@@ -33,11 +33,10 @@ typedef struct ns_struct_field {
 } ns_struct_field;
 
 typedef struct ns_struct_symbol {
-    ns_value st;
-    ns_str name;
-    ns_struct_field *fields;
     i32 ast;
+    ns_value st;
     u64 stride;
+    ns_struct_field *fields;
 } ns_struct_symbol;
 
 typedef struct ns_scope_symbol {

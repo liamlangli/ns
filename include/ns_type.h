@@ -96,7 +96,7 @@ ns_str ns_str_sub_expr(ns_str s); // get inplace sub expr from first space to en
 
 #define ns_str_null ((ns_str){0, 0, 0})
 #define ns_str_range(s, n) ((ns_str){(s), (n), 1})
-#define ns_str_cstr(s) ((ns_str){(s), strlen(s), 0})
+#define ns_str_cstr(s) ((ns_str){(i8*)(s), strlen(s), 0})
 #define ns_str_free(s) if ((s).dynamic) free((void *)(s).data)
 
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
@@ -400,7 +400,11 @@ ns_return_define(u64, u64);
 ns_return_define(ptr, void *);
 
 #define ns_return_ok(t, v) ((ns_return_##t){.r = (v)})
-#define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
+#ifdef NS_DEBUG
+    #define ns_return_error(t, l, err, m) assert(false), ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
+#else
+    #define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
+#endif
 #define ns_return_is_error(r) ((r).s != NS_OK)
 #define ns_return_change_type(t, err) ((ns_return_##t){.s = err.s, .e = err.e})
 
