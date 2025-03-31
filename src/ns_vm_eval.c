@@ -123,7 +123,7 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (s_l != s_r)
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "type size mismatched.");
 
-    if (ns_type_is_const(l.t))
+    if (ns_type_is_mut(l.t))
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "can't assign to const value.");
 
     ns_eval_copy(vm, l, r, s_l);
@@ -162,25 +162,25 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     return ns_return_ok(value, call.ret);
 }
 
-i8 ns_eval_number_i8(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.i8 : *(i8*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-i16 ns_eval_number_i16(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.i16 : *(i16*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-i32 ns_eval_number_i32(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.i32 : *(i32*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-i64 ns_eval_number_i64(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.i64 : *(i64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-u8 ns_eval_number_u8(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.u8 : *(u8*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-u16 ns_eval_number_u16(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.u16 : *(u16*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-u32 ns_eval_number_u32(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.u32 : *(u32*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-u64 ns_eval_number_u64(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.u64 : *(u64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-f32 ns_eval_number_f32(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.f32 : *(f32*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
-f64 ns_eval_number_f64(ns_vm *vm, ns_value n) { return ns_type_is_const(n.t) ? n.f64 : *(f64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+i8 ns_eval_number_i8(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.i8 : *(i8*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+i16 ns_eval_number_i16(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.i16 : *(i16*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+i32 ns_eval_number_i32(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.i32 : *(i32*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+i64 ns_eval_number_i64(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.i64 : *(i64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+u8 ns_eval_number_u8(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.u8 : *(u8*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+u16 ns_eval_number_u16(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.u16 : *(u16*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+u32 ns_eval_number_u32(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.u32 : *(u32*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+u64 ns_eval_number_u64(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.u64 : *(u64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+f32 ns_eval_number_f32(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.f32 : *(f32*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
+f64 ns_eval_number_f64(ns_vm *vm, ns_value n) { return ns_type_is_mut(n.t) ? n.f64 : *(f64*)(ns_type_in_stack(n.t) ? &vm->stack[n.o] : (void*)n.o); }
 ns_bool ns_eval_bool(ns_vm *vm, ns_value n) { return ns_eval_number_i32(vm, n) != 0; }
 ns_str ns_eval_str(ns_vm *vm, ns_value n) {
-    if (ns_type_is_const(n.t)) return vm->str_list[n.o];
+    if (ns_type_is_mut(n.t)) return vm->str_list[n.o];
     if (ns_type_in_stack(n.t)) return vm->str_list[*(u64*)&vm->stack[n.o]];
     return *(ns_str*)n.o;
 }
 
 void *ns_eval_array_raw(ns_vm *vm, ns_value n) {
-    if (ns_type_is_const(n.t)) return (void*)n.o;
+    if (ns_type_is_mut(n.t)) return (void*)n.o;
     if (ns_type_in_stack(n.t)) return (void*)&vm->stack[n.o];
     return (void*)n.o;
 }
@@ -354,7 +354,7 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->fn.args)};
 
     ns_enter_scope(vm);
-    i32 next = n->call_expr.arg;
+    i32 next = n->next;
     for (i32 a_i = 0, l = n->call_expr.arg_count; a_i < l; ++a_i) {
         ns_return_value ret_v = ns_eval_expr(vm, ctx, next);
         if (ns_return_is_error(ret_v)) return ret_v;
@@ -836,7 +836,7 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *t = &ctx->nodes[n->array_expr.type];
 
     ns_type type = ns_vm_parse_type(vm, ctx, i, t->type_label.name, false).r;
-    ns_return_value ret_count = ns_eval_expr(vm, ctx, n->array_expr.count);
+    ns_return_value ret_count = ns_eval_expr(vm, ctx, n->array_expr.count_expr);
     if (ns_return_is_error(ret_count)) return ret_count;
 
     ns_value count = ret_count.r;

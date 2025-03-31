@@ -532,7 +532,7 @@ ns_ir_value ns_ir_call_expr(ns_ir_ctx *ir_ctx, ns_ast_ctx *ctx, i32 i) {
     i32 arg_count = n->call_expr.arg_count;
     ns_symbol *fn = &ir_ctx->vm->symbols[ir_fn.p];
 
-    i32 next = n->call_expr.arg;
+    i32 next = n->next;
     for (i32 i = 0; i < n->call_expr.arg_count; i++) {
         ns_ast_t arg = ctx->nodes[next];
         _args[i] = ns_ir_expr(ir_ctx, ctx, next).val;

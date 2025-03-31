@@ -165,7 +165,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     for (i32 i = 0; i < call->arg_count; i++) {
         ns_value v = vm->symbol_stack[call->arg_offset + i].val;
 
-        if (ns_type_is_const(v.t)) {
+        if (ns_type_is_mut(v.t)) {
             i32 size = ns_type_size(vm, v.t);
             u64 offset = ns_eval_alloc(vm, size);
             ns_value dst = (ns_value){.t = ns_type_set_store(v.t, NS_STORE_STACK), .o = offset};
@@ -215,7 +215,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
 
     if (!ns_type_is(fn->fn.ret, NS_TYPE_VOID)) {
         ns_type ret_type = fn->fn.ret;
-        if (ns_type_is_const(ret_type)) {
+        if (ns_type_is_mut(ret_type)) {
             i32 size = ns_type_size(vm, ret_type);
             u64 offset = ns_eval_alloc(vm, size);
             ns_value dst = (ns_value){.t = ns_type_set_store(ret_type, NS_STORE_STACK), .o = offset};

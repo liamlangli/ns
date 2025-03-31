@@ -24,6 +24,42 @@ ns_bool ns_parse_import_stmt(ns_ast_ctx *ctx) {
     return false;
 }
 
+// type name = type_name
+// type name = (args) to type_name
+ns_return_bool ns_parse_typedef_stmt(ns_ast_ctx *ctx) {
+    ns_ast_state state = ns_save_state(ctx);
+
+    if (!ns_token_require(ctx, NS_TOKEN_TYPE)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+    ns_ast_t n = {.type = NS_AST_TYPE_DEF, .state = state, .type_def = {.name = ctx->token}};
+
+    if (!ns_parse_identifier(ctx)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+
+    n.type_def.name = ctx->token;
+    ns_token_skip_eol(ctx);
+
+    if (!ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+
+    ns_return_bool ret = ns_parse_type_label(ctx);
+    if (ns_return_is_error(ret)) return ret;
+    if (ret.r) {
+        n.type_def.type = ctx->current;
+        ns_ast_push(ctx, n);
+        return ns_return_ok(bool, true);
+    }
+
+    ns_restore_state(ctx, state);
+    return ns_return_ok(bool, false);
+}
+
 ns_return_bool ns_parse_jump_stmt(ns_ast_ctx *ctx) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
@@ -314,6 +350,7 @@ ns_return_bool ns_parse_global_define(ns_ast_ctx *ctx) {
     ns_parse_check_fn(ns_parse_var_define);
     ns_parse_check_fn(ns_parse_fn_define);
     ns_parse_check_fn(ns_parse_ops_fn_define);
+    ns_parse_check_fn(ns_parse_typedef_stmt);
     ns_parse_check_fn(ns_parse_struct_def);
     ns_parse_check_fn(ns_parse_stmt);
     ns_parse_check_fn(ns_parse_expr_stmt);

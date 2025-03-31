@@ -530,7 +530,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_error(type, ns_ast_state_loc(ctx, callee_n->state), NS_ERR_EVAL, "unknown callee.");
     }
 
-    i32 next = n->call_expr.arg;
+    i32 next = n->next;
     for (i32 a_i = 0, l = n->call_expr.arg_count; a_i < l; ++a_i) {
         ns_ast_t arg = ctx->nodes[next];
         ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, next);

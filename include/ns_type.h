@@ -272,7 +272,7 @@ typedef struct ns_type {
 
 #define ns_type_is_ref(t) (t.ref != 0)
 #define ns_type_is_array(t) (t.array != 0)
-#define ns_type_is_const(t) (NS_STORE_CONST == t.store)
+#define ns_type_is_mut(t) (NS_STORE_CONST == t.store)
 #define ns_type_in_stack(t) (NS_STORE_STACK == t.store)
 #define ns_type_in_heap(t) (NS_STORE_HEAP == t.store)
 #define ns_type_index(t) (t.index)
@@ -282,7 +282,7 @@ typedef struct ns_type {
 
 #define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}
 
-ns_type ns_type_encode(ns_value_type t, u64 i,ns_bool is_ref, ns_store s);
+ns_type ns_type_encode(ns_value_type t, u64 i, ns_bool is_ref, ns_store s);
 
 #define ns_type_infer   (ns_type){.type = NS_TYPE_INFER}
 #define ns_type_void    (ns_type){.type = NS_TYPE_VOID}

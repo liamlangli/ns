@@ -31,15 +31,20 @@ typedef enum {
     NS_AST_GEN_EXPR,
     NS_AST_DESIG_EXPR,
     NS_AST_ARRAY_EXPR,
+    NS_AST_CLOSURE_EXPR,
 
     NS_AST_IF_STMT,
     NS_AST_IMPORT_STMT,
     NS_AST_MODULE_STMT,
+    NS_AST_TYPE_ALIAS_STMT,
     NS_AST_FOR_STMT,
     NS_AST_LOOP_STMT,
     NS_AST_JUMP_STMT,
     NS_AST_LABELED_STMT,
-    NS_AST_COMPOUND_STMT
+    NS_AST_COMPOUND_STMT,
+    NS_AST_TYPEDEF_STMT,
+
+    NS_AST_COUNT,
 } NS_AST_TYPE;
 
 typedef struct ns_ast_t ns_ast_t;
@@ -49,10 +54,19 @@ typedef struct ns_ast_state {
 } ns_ast_state;
 
 typedef struct ns_ast_type_label {
-    ns_bool is_ref;
     ns_token_t name;
-    ns_bool is_array;
+    i32 arg_count;
+    i32 ret;
+    ns_bool is_array: 2;
+    ns_bool is_ref: 2;
+    ns_bool is_mut: 2;
+    ns_bool is_fn: 2;
 } ns_ast_type_label;
+
+typedef struct ns_ast_typedef_stmt {
+    ns_token_t name;
+    i32 type;
+} ns_ast_typedef_stmt;
 
 typedef struct ns_ast_str_fmt {
     ns_str fmt;
@@ -67,11 +81,11 @@ typedef struct ns_ast_arg {
 typedef struct ns_ast_fn_def {
     i32 ret;
     i32 body;
-    ns_bool is_ref;
-    ns_bool is_async;
-    ns_bool is_kernel;
     ns_token_t name;
     i32 arg_count;
+    ns_bool is_ref : 2;
+    ns_bool is_async : 2;
+    ns_bool is_kernel : 2;
 } ns_ast_fn_def;
 
 typedef struct ns_ast_ops_fn_def {
@@ -96,9 +110,18 @@ typedef struct ns_ast_struct_def {
     i32 count;
 } ns_ast_struct_def;
 
+typedef struct ns_ast_struct_field {
+    ns_token_t name;
+    i32 expr;
+    struct {
+        i32 index;
+        u64 offset;
+    } rt;
+} ns_ast_struct_field;
+
 typedef struct ns_ast_type_def {
     ns_token_t name;
-    ns_token_t type;
+    i32 type;
 } ns_ast_type_def;
 
 typedef struct ns_ast_binary_expr {
@@ -133,7 +156,6 @@ typedef struct ns_ast_member_expr {
 typedef struct ns_ast_call_expr {
     i32 callee;
     i32 arg_count;
-    i32 arg;
 } ns_ast_call_expr;
 
 typedef struct ns_ast_index_expr {
@@ -195,17 +217,14 @@ typedef struct ns_ast_desig_expr {
 
 typedef struct ns_ast_array_expr {
     i32 type;
-    i32 count; // count expr
+    i32 count_expr;
 } ns_ast_array_expr;
 
-typedef struct ns_ast_struct_field {
-    ns_token_t name;
-    i32 expr;
-    struct {
-        i32 index;
-        u64 offset;
-    } rt;
-} ns_ast_struct_field;
+typedef struct ns_ast_closure_expr {
+    i32 ret;
+    i32 body;
+    i32 arg_count;
+} ns_ast_closure_expr;
 
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
@@ -234,6 +253,7 @@ typedef struct ns_ast_t {
         ns_ast_gen_expr gen_expr;
         ns_ast_desig_expr desig_expr;
         ns_ast_array_expr array_expr;
+        ns_ast_closure_expr closure_expr;
 
         ns_ast_import_stmt import_stmt;
         ns_ast_module_stmt module_stmt;
@@ -291,10 +311,6 @@ i32 ns_ast_push(ns_ast_ctx *ctx, ns_ast_t n);
 // primary fn
 ns_bool ns_parse_identifier(ns_ast_ctx *ctx);
 
-// type fn
-ns_bool ns_parse_type_define(ns_ast_ctx *ctx);
-ns_bool ns_parse_type_name(ns_ast_ctx *ctx);
-
 // external fn
 ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx);
@@ -306,6 +322,9 @@ ns_return_bool ns_parse_type_label(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_global_define(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_stmt(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
+
+// arg fn
+ns_return_bool ns_parse_arg(ns_ast_ctx *ctx);
 
 // expr fn
 ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st);

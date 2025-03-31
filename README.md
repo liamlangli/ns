@@ -72,8 +72,10 @@ print(c.area())
 print(calculate_area(c)) // duck type
 
 // define a asynchronous function
-async fn download(url: str): Data {
-    return await do_download(url)
+async fn download(url: str, on_data: (data: Data) to void): Data {
+    let d = await do_download(url)
+    on_data(d)
+    return d
 }
 ```
 

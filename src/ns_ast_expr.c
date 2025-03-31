@@ -131,12 +131,11 @@ ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
     }
 
     i32 next = 0;
-
     do {
         ret = ns_parse_expr(ctx);
         if (ns_return_is_error(ret)) return ret;
 
-        next = next == 0 ? n.call_expr.arg = ctx->current : (ctx->nodes[next].next = ctx->current);
+        next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
         n.call_expr.arg_count++;
 
         ns_parse_next_token(ctx);
@@ -243,7 +242,7 @@ ns_return_bool ns_parse_array_expr(ns_ast_ctx *ctx) {
         return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected expression after '('");
     }
 
-    n.array_expr.count = ctx->current;
+    n.array_expr.count_expr = ctx->current;
     if (!ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
         return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected ')' after expression");
     }
@@ -483,6 +482,70 @@ ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
                 return ns_return_error(bool, loc, NS_ERR_SYNTAX, "expected expression after unary operator");
             }
         }
+    }
+
+    ns_restore_state(ctx, state);
+    return ns_return_ok(bool, false);
+}
+
+// { [(args) [to ret]] in body }
+ns_return_bool ns_parse_closure_expr(ns_ast_ctx *ctx) {
+    ns_return_bool ret;
+    ns_ast_state state = ns_save_state(ctx);
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+
+    ns_ast_t n = {.type = NS_AST_CLOSURE_EXPR, .state = state, .closure_expr = {.arg_count = 0}};
+    if (ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
+        // parse args
+        ns_token_skip_eol(ctx);
+        i32 next = 0;
+        do {
+            ret = ns_parse_arg(ctx);
+            if (ns_return_is_error(ret)) return ret;
+            if (!ret.r) break;
+    
+            next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+            n.closure_expr.arg_count++;
+            ns_token_skip_eol(ctx);
+            ns_parse_next_token(ctx);
+            if (ctx->token.type == NS_TOKEN_COMMA || ctx->token.type == NS_TOKEN_EOL) {
+                continue;
+            } else {
+                break;
+            }
+        } while(1);
+        if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
+            ns_restore_state(ctx, state);
+            return ns_return_ok(bool, false);
+        }
+
+        if (ctx->token.type == NS_TOKEN_TO) {
+            ret = ns_parse_type_label(ctx);
+            if (ns_return_is_error(ret)) return ret;
+            if (ret.r) {
+                n.closure_expr.ret = ctx->current;
+            } else {
+                return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected type after 'to'");
+            }
+        }
+    }
+    ns_token_skip_eol(ctx);
+
+    // require in 
+    if (!ns_token_require(ctx, NS_TOKEN_IN)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+
+    ret = ns_parse_compound_stmt(ctx);
+    if (ns_return_is_error(ret)) return ret;
+    if (ret.r) {
+        n.closure_expr.body = ctx->current;
+        ctx->current = ns_ast_push(ctx, n);
+        return ns_return_ok(bool, true);
     }
 
     ns_restore_state(ctx, state);
