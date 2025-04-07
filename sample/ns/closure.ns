@@ -7,6 +7,10 @@ let gt = { (a: i32, b: i32) to i32 in
     return b - a
 }
 
+let lt = { (a: i32, b: i32) to i32 in
+    return a - b
+}
+
 fn insert_sort(array: [i32], by: (i32, i32) to i32): i32 {
 
 }
