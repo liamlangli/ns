@@ -202,6 +202,9 @@ typedef enum {
     NS_TOKEN_CLOSE_PAREN,   // )
     NS_TOKEN_OPEN_BRACKET,  // [
     NS_TOKEN_CLOSE_BRACKET, // ]
+
+    NS_TOKEN_RETURN_TYPE,   // ->
+
     NS_TOKEN_EOL,
     NS_TOKEN_EOF
 } NS_TOKEN;

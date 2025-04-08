@@ -321,10 +321,10 @@ ns_return_bool ns_parse_type_label(ns_ast_ctx *ctx);
 // stmt fn
 ns_return_bool ns_parse_global_define(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_stmt(ns_ast_ctx *ctx);
-ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx, ns_bool brace_required);
 
 // arg fn
-ns_return_bool ns_parse_arg(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_arg(ns_ast_ctx *ctx, ns_bool type_required);
 
 // expr fn
 ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st);

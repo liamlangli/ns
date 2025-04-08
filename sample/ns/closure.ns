@@ -1,16 +1,21 @@
 import std
 
-// define a closure as a variable
-type comparator = (i32, i32) to i32
+type op_fn = (i32, i32) -> i32
 
-let gt = { (a: i32, b: i32) to i32 in
-    return b - a
+fn do_op(op: op_fn, a: i32, b: i32): i32 {
+    return op(a, b)
 }
 
-let lt = { (a: i32, b: i32) to i32 in
-    return a - b
-}
+fn main() {
+    let add: op_fn = { a, b in
+        return a + b
+    }
 
-fn insert_sort(array: [i32], by: (i32, i32) to i32): i32 {
+    let sub = do_op({ a, b in
+        return a - b
+    }, 5, 3)
 
+    let result = add(5, 3)
+    print(`add result: {result}`)
+    print(`sub result: {sub}`)
 }

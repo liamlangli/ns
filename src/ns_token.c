@@ -57,6 +57,7 @@ ns_str ns_token_type_to_string(NS_TOKEN type) {
         ns_str_case(NS_TOKEN_IMPORT);
         ns_str_case(NS_TOKEN_DOT);
         ns_str_case(NS_TOKEN_MUL_OP);
+        ns_str_case(NS_TOKEN_RETURN_TYPE);
     default:
         ns_error("token", "unknown token %d\n", type);
     }
@@ -482,6 +483,10 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     case '-': {
         if (s[i + 1] == '=') {
             t->type = NS_TOKEN_ASSIGN_OP;
+            t->val = ns_str_range(s + f, 2);
+            to = i + 2;
+        } else if (s[i + 1] == '>') {
+            t->type = NS_TOKEN_RETURN_TYPE;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] >= '0' && s[i + 1] <= '9') {

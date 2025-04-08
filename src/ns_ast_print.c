@@ -142,6 +142,28 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         }
         printf(" }");
     } break;
+    case NS_AST_TYPE_DEF: {
+        printf(ns_color_log "type " ns_color_nil);
+        ns_str_printf(n->type_def.name.val);
+        printf(" = ");
+        ns_ast_print_type_label(ctx, n->type_def.type, false);
+    } break;
+    case NS_AST_CLOSURE_EXPR: {
+        printf("{");
+        ns_ast_t *arg = n;
+        for (i32 a = 0; a < n->closure_expr.arg_count; a++) {
+            arg = &ctx->nodes[arg->next];
+            printf(ns_color_log);
+            ns_str_printf(arg->arg.name.val);
+            ns_ast_print_type_label(ctx, arg->arg.type, true);
+            printf(ns_color_nil);
+            if (a != n->closure_expr.arg_count - 1) {
+                printf(", ");
+            }
+        }
+        ns_ast_print_type_label(ctx, n->closure_expr.ret, true);
+        printf(ns_color_log " in" ns_color_nil " [%d] }", n->closure_expr.body);
+    } break;
     case NS_AST_ARG_DEF:
         ns_str_printf(n->arg.name.val);
         ns_ast_print_type_label(ctx, n->arg.type, true);
@@ -344,6 +366,14 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             }
             break;
 
+        case NS_AST_TYPE_DEF:
+            printf(ns_color_log "type " ns_color_nil);
+            ns_str_printf(n->type_def.name.val);
+            printf(" = ");
+            ns_ast_print_type_label(ctx, n->type_def.type, false);
+            printf("\n");
+            break;
+
         case NS_AST_COMPOUND_STMT: {
             ns_ast_t *stmt = n;
             for (i32 s_i = 0; s_i < n->compound_stmt.count; s_i++) {
@@ -503,6 +533,11 @@ void ns_ast_ctx_print(ns_ast_ctx *ctx, ns_bool verbose) {
             ns_ast_print(ctx, i);
         }
         printf("\n");
+
+        ns_info("ast", "section count %d\n", ctx->section_end - ctx->section_begin);
+        for (i32 i = ctx->section_begin; i < ctx->section_end; i++) {
+            ns_ast_print(ctx, ctx->sections[i]);
+        }
     }
 
     ns_info("ast", "section count %d\n", ctx->section_end - ctx->section_begin);

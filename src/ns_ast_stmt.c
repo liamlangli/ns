@@ -120,7 +120,7 @@ ns_return_bool ns_parse_if_stmt(ns_ast_ctx *ctx) {
     }
 
     ns_ast_t n = {.type = NS_AST_IF_STMT, .state = state, .if_stmt.condition = ctx->current};
-    ret = ns_parse_compound_stmt(ctx);
+    ret = ns_parse_compound_stmt(ctx, true);
     if (ns_return_is_error(ret)) return ret;
     if (!ret.r) {
         ns_restore_state(ctx, state);
@@ -144,7 +144,7 @@ ns_return_bool ns_parse_if_stmt(ns_ast_ctx *ctx) {
         }
         ns_restore_state(ctx, recursive_state);
 
-        ret = ns_parse_compound_stmt(ctx);
+        ret = ns_parse_compound_stmt(ctx, true);
         if (ns_return_is_error(ret)) return ret;
         if (ret.r) {
             n.if_stmt.else_body = ctx->current;
@@ -171,7 +171,7 @@ ns_return_bool ns_parse_for_stmt(ns_ast_ctx *ctx) {
     if (ret.r) {
         ns_ast_t n = {.type = NS_AST_FOR_STMT, .state = state, .for_stmt.generator = ctx->current};
 
-        ret = ns_parse_compound_stmt(ctx);
+        ret = ns_parse_compound_stmt(ctx, true);
         if (ns_return_is_error(ret)) return ret;
         if (ret.r) {
             n.for_stmt.body = ctx->current;
@@ -206,7 +206,7 @@ ns_return_bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
     }
 
     // loop body
-    ret = ns_parse_compound_stmt(ctx);
+    ret = ns_parse_compound_stmt(ctx, true);
     if (ns_return_is_error(ret)) return ret;
     if (!ret.r) {
         ns_restore_state(ctx, state);
@@ -261,12 +261,16 @@ ns_return_bool ns_parse_iteration_stmt(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
-ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx) {
+// { statement* }
+ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx, ns_bool brace_required) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
+
     if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
-        ns_restore_state(ctx, state);
-        return ns_return_ok(bool, false);
+        if (brace_required) {
+            ns_restore_state(ctx, state);
+            return ns_return_ok(bool, false);
+        }
     }
 
     // direct close test
@@ -329,7 +333,7 @@ ns_return_bool ns_parse_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
 
     // compound statement
-    ns_parse_check_fn(ns_parse_compound_stmt);
+    ret = ns_parse_compound_stmt(ctx, true); if (ns_return_is_error(ret)) return ret; if (ret.r) return ns_return_ok(bool, true); ns_restore_state(ctx, state);
     ns_parse_check_fn(ns_parse_jump_stmt);
     ns_parse_check_fn(ns_parse_if_stmt);
     ns_parse_check_fn(ns_parse_iteration_stmt);
