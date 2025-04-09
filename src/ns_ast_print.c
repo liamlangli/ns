@@ -25,7 +25,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         ns_str_case(NS_AST_FIELD_DEF)
         ns_str_case(NS_AST_MEMBER_EXPR)
         ns_str_case(NS_AST_GEN_EXPR)
-        ns_str_case(NS_AST_CLOSURE_EXPR)
+        ns_str_case(NS_AST_BLOCK_EXPR)
         ns_str_case(NS_AST_IF_STMT)
         ns_str_case(NS_AST_FOR_STMT)
         ns_str_case(NS_AST_LOOP_STMT)
@@ -164,21 +164,21 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf(" = ");
         ns_ast_print_type_label(ctx, n->type_def.type, false);
     } break;
-    case NS_AST_CLOSURE_EXPR: {
+    case NS_AST_BLOCK_EXPR: {
         printf("{");
         ns_ast_t *arg = n;
-        for (i32 a = 0; a < n->closure_expr.arg_count; a++) {
+        for (i32 a = 0; a < n->block_expr.arg_count; a++) {
             arg = &ctx->nodes[arg->next];
             printf(ns_color_log);
             ns_str_printf(arg->arg.name.val);
             ns_ast_print_type_label(ctx, arg->arg.type, true);
             printf(ns_color_nil);
-            if (a != n->closure_expr.arg_count - 1) {
+            if (a != n->block_expr.arg_count - 1) {
                 printf(", ");
             }
         }
-        ns_ast_print_type_label(ctx, n->closure_expr.ret, true);
-        printf(ns_color_log " in" ns_color_nil " [%d] }", n->closure_expr.body);
+        ns_ast_print_type_label(ctx, n->block_expr.ret, true);
+        printf(ns_color_log " in" ns_color_nil " [%d] }", n->block_expr.body);
     } break;
     case NS_AST_ARG_DEF:
         ns_str_printf(n->arg.name.val);
@@ -493,22 +493,22 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             printf(")");
             break;
 
-        case NS_AST_CLOSURE_EXPR: {
+        case NS_AST_BLOCK_EXPR: {
             printf("{ ");
             ns_ast_t *arg = n;
-            for (i32 a = 0; a < n->closure_expr.arg_count; a++) {
+            for (i32 a = 0; a < n->block_expr.arg_count; a++) {
                 arg = &ctx->nodes[arg->next];
                 printf(ns_color_log);
                 ns_str_printf(arg->arg.name.val);
                 ns_ast_print_type_label(ctx, arg->arg.type, true);
                 printf(ns_color_nil);
-                if (a != n->closure_expr.arg_count - 1) {
+                if (a != n->block_expr.arg_count - 1) {
                     printf(", ");
                 }
             }
-            ns_ast_print_type_label(ctx, n->closure_expr.ret, true);
+            ns_ast_print_type_label(ctx, n->block_expr.ret, true);
             printf(ns_color_log " in\n" ns_color_nil " ");
-            ns_ast_print_node(ctx, n->closure_expr.body, depth + ns_tab_width);
+            ns_ast_print_node(ctx, n->block_expr.body, depth + ns_tab_width);
             printf("\n%*s}", depth, " ");
         } break;
 

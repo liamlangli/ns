@@ -234,6 +234,7 @@ typedef enum {
     NS_TYPE_BOOL,
     NS_TYPE_STRING,
     NS_TYPE_FN,
+    NS_TYPE_BLOCK,
     NS_TYPE_STRUCT,
     NS_TYPE_ARRAY,
     NS_TYPE_ALIAS,
@@ -304,9 +305,6 @@ ns_type ns_type_encode(ns_value_type t, u64 i, ns_bool is_ref, ns_store s);
 #define ns_type_u64 (ns_type){.type = NS_TYPE_U64}
 #define ns_type_f32 (ns_type){.type = NS_TYPE_F32}
 #define ns_type_f64 (ns_type){.type = NS_TYPE_F64}
-
-#define ns_type_fn     NS_TYPE_FN
-#define ns_type_struct NS_TYPE_STRUCT
 
 #define ns_type_is(t, tt) (t.type == tt)
 #define ns_type_is_float(t) (ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64))

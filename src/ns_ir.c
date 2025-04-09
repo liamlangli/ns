@@ -817,7 +817,7 @@ void ns_ir_parse_ast(ns_ir_ctx* ir_ctx, ns_ast_ctx *ctx) {
         ns_ir_fn_def(ir_ctx, main_fn, main_i);
         ns_ir_fn_body(ir_ctx, ctx, main_fn, main_i);
     } else {
-        ns_ir_type main_fn_type = (ns_ir_type){.type = ns_null, .raw = ns_type_encode(ns_type_fn, 0, true, 0)};
+        ns_ir_type main_fn_type = (ns_ir_type){.type = ns_null, .raw = ns_type_encode(NS_TYPE_FN, 0, true, 0)};
         main_fn_type.type = LLVMFunctionType(LLVMInt32Type(), ns_null, 0, 0);
         ns_ir_value main_fn = (ns_ir_value){.p = -1, .val = ns_null, .type = main_fn_type};
         main_i = ns_array_length(ir_ctx->symbols);

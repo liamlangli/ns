@@ -31,7 +31,7 @@ typedef enum {
     NS_AST_GEN_EXPR,
     NS_AST_DESIG_EXPR,
     NS_AST_ARRAY_EXPR,
-    NS_AST_CLOSURE_EXPR,
+    NS_AST_BLOCK_EXPR,
 
     NS_AST_IF_STMT,
     NS_AST_IMPORT_STMT,
@@ -221,11 +221,11 @@ typedef struct ns_ast_array_expr {
     i32 count_expr;
 } ns_ast_array_expr;
 
-typedef struct ns_ast_closure_expr {
+typedef struct ns_ast_block_expr {
     i32 ret;
     i32 body;
     i32 arg_count;
-} ns_ast_closure_expr;
+} ns_ast_block_expr;
 
 typedef struct ns_ast_t {
     NS_AST_TYPE type;
@@ -254,7 +254,7 @@ typedef struct ns_ast_t {
         ns_ast_gen_expr gen_expr;
         ns_ast_desig_expr desig_expr;
         ns_ast_array_expr array_expr;
-        ns_ast_closure_expr closure_expr;
+        ns_ast_block_expr block_expr;
 
         ns_ast_import_stmt import_stmt;
         ns_ast_module_stmt module_stmt;

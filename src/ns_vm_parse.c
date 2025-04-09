@@ -370,7 +370,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         
         ns_exit_scope(vm);
         ns_array_pop(vm->call_stack);
-        fn->fn.fn = (ns_value){.t = ns_type_encode(ns_type_fn, i, is_ref, 0) };
+        fn->fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, i, is_ref, 0) };
         fn->parsed = true;
     }
     return ns_return_ok_void;
@@ -384,7 +384,7 @@ ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
         if (n.type != NS_AST_STRUCT_DEF)
             continue;
         i32 i = ns_array_length(vm->symbols);
-        ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = s, .st.t = ns_type_encode(ns_type_struct, i, 0, 0)}, .lib =  vm->lib};
+        ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = s, .st.t = ns_type_encode(NS_TYPE_STRUCT, i, 0, 0)}, .lib =  vm->lib};
         st.name = n.struct_def.name.val;
         ns_array_set_length(st.st.fields, n.struct_def.count);
         ns_ast_t *field = &n;
@@ -490,6 +490,12 @@ ns_return_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret)) return ret;
     }
     return ns_return_ok(type, ns_type_str);
+}
+
+ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+
+    return ns_return_ok(type, NS_TYPE_BLOCK);
 }
 
 ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -808,6 +814,7 @@ ns_return_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "binary expr type mismatch.");
 }
 
+#define ns_vm_parse_case_expr(t, fn) case t: return fn(vm, ctx, i);
 ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->type) {
@@ -823,6 +830,7 @@ ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_AST_ARRAY_EXPR: return ns_vm_parse_array_expr(vm, ctx, i);
     case NS_AST_INDEX_EXPR: return ns_vm_parse_index_expr(vm, ctx, i);
     case NS_AST_STR_FMT_EXPR: return ns_vm_parse_str_fmt(vm, ctx, i);
+    case NS_AST_BLOCK_EXPR: return ns_vm_parse_block_expr(vm, ctx, i);
     default: {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unimplemented expr type.");
     } break;
