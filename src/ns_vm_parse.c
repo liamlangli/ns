@@ -498,7 +498,10 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_type t = ns_type_encode(NS_TYPE_BLOCK, ns_array_length(vm->symbols), 0, NS_STORE_CONST);
     ns_block_symbol bc_sym = (ns_block_symbol){.ast = i, .block.t = t};
+    sym.bc = bc_sym;
 
+    ns_vm_parse_compound_stmt(vm, ctx, n->block_expr.body);
+    ns_vm_push_symbol_global(vm, sym);
     return ns_return_ok(type, t);
 }
 

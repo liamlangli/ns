@@ -9,6 +9,7 @@
 typedef void(*ns_repl_cmd_fn)(ns_vm *vm, ns_str arg);
 typedef struct ns_repl_cmd {
     ns_str cmd;
+    ns_str s;
     ns_str desc;
     ns_repl_cmd_fn fn;
 } ns_repl_cmd;
@@ -32,18 +33,13 @@ void ns_repl_free_line(ns_str s) {
     ns_str_free(s);
 }
 
-void ns_repl_print_ast(ns_vm *vm, ns_str arg) {
-    ns_unused(vm); ns_unused(arg);
-    ns_ast_ctx_print(&_ast, false);
-}
-
 void ns_repl_mem(ns_vm *vm, ns_str arg) {
     ns_unused(vm); ns_unused(arg);
     ns_mem_status();
 }
 
-void ns_repl_add_cmd(ns_str cmd, ns_repl_cmd_fn fn) {
-    ns_repl_cmd c = (ns_repl_cmd){.cmd = cmd, .fn = fn};
+void ns_repl_add_cmd(ns_str cmd, ns_str shortcut, ns_repl_cmd_fn fn, ns_str desc) {
+    ns_repl_cmd c = (ns_repl_cmd){.cmd = cmd, .fn = fn, .desc = desc, .s = shortcut};
     ns_array_push(_ctx.cmds, c);
 }
 
@@ -54,11 +50,19 @@ void ns_repl_exit(ns_vm *vm, ns_str arg) {
     ns_exit_safe("ns", "exit repl\n");
 }
 
+void ns_repl_help(ns_vm *vm, ns_str arg) {
+    ns_unused(vm); ns_unused(arg);
+    ns_info("ns_repl", "available commands:\n");
+    for (szt i = 0; i < ns_array_length(_ctx.cmds); ++i) {
+        ns_repl_cmd *c = &_ctx.cmds[i];
+        printf("  [%.*s]%8.*s:"ns_color_cmt" %.*s\n" ns_color_nil, c->s.len, c->s.data, c->cmd.len, c->cmd.data, c->desc.len, c->desc.data);
+    }
+}
+
 void ns_repl_init(void) {
-    ns_repl_add_cmd(ns_str_cstr("ast"), ns_repl_print_ast);
-    ns_repl_add_cmd(ns_str_cstr("mem"), ns_repl_mem);
-    ns_repl_add_cmd(ns_str_cstr("exit"), ns_repl_exit);
-    ns_repl_add_cmd(ns_str_cstr("q"), ns_repl_exit);
+    ns_repl_add_cmd(ns_str_cstr("help"), ns_str_cstr("h"), ns_repl_help, ns_str_cstr("show help"));;
+    ns_repl_add_cmd(ns_str_cstr("mem"), ns_str_cstr("m"), ns_repl_mem, ns_str_cstr("show memory status"));
+    ns_repl_add_cmd(ns_str_cstr("exit"), ns_str_cstr("q"), ns_repl_exit, ns_str_cstr("exit repl"));
 }
 
 ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str cmd) {
@@ -67,7 +71,7 @@ ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str cmd) {
     if (len == 0) return false;
     for (szt i = 0; i < len; ++i) {
         ns_repl_cmd *c = &_ctx.cmds[i];
-        if (ns_str_equals(c->cmd, cmd)) {
+        if (ns_str_equals(c->s, cmd) || ns_str_equals(c->cmd, cmd)) {
             c->fn(vm, cmd);
             return true;
         }
