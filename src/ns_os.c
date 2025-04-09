@@ -6,7 +6,7 @@ ns_str ns_os_exec(ns_str cmd) {
     if (!pipe) {
         return ns_str_null;
     }
-    char buffer[128];
+    i8 buffer[128];
     ns_str data = ns_str_null;
     while (!feof(pipe)) {
         if (fgets(buffer, 128, pipe) != NULL) {
@@ -18,7 +18,7 @@ ns_str ns_os_exec(ns_str cmd) {
 }
 
 ns_str ns_os_mkdir(ns_str path) {
-    char *buffer = (char *)malloc(path.len + 8);
+    i8 *buffer = (i8 *)ns_malloc(path.len + 8);
     memcpy(buffer, "mkdir -p ", 9);
     memcpy(buffer + 9, path.data, path.len);
     buffer[path.len + 9] = '\0';
@@ -65,7 +65,7 @@ ns_str ns_path_dirname(ns_str src) {
 ns_str ns_path_join(ns_str lhs, ns_str rhs) {
     // join two path with path separator
     // create new buffer to save joined path
-    char *buffer = (char *)malloc(lhs.len + rhs.len + 2);
+    char *buffer = (char *)ns_malloc(lhs.len + rhs.len + 2);
     memcpy(buffer, lhs.data, lhs.len);
     buffer[lhs.len] = NS_PATH_SEPARATOR;
     memcpy(buffer + lhs.len + 1, rhs.data, rhs.len);
@@ -93,7 +93,7 @@ ns_str ns_fs_read_file(ns_str path) {
     fseek(file, 0, SEEK_END);
     long size = ftell(file);
     fseek(file, 0, SEEK_SET);
-    char *buffer = (char *)malloc(size + 1);
+    char *buffer = (char *)ns_malloc(size + 1);
     fread(buffer, 1, size, file);
     fclose(file);
     buffer[size] = '\0';

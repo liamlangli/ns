@@ -8,6 +8,7 @@ typedef enum {
     NS_SYMBOL_VALUE,
     NS_SYMBOL_FN,
     NS_SYMBOL_STRUCT,
+    NS_SYMBOL_BLOCK
 } ns_symbol_type;
 
 typedef enum ns_scope_state {
@@ -48,6 +49,13 @@ typedef struct ns_array_symbol {
     ns_bool stack;
 } ns_array_symbol;
 
+#define ns_block_label (ns_str_cstr("__block"))
+
+typedef struct ns_block_symbol {
+    i32 ast;
+    ns_value block;
+} ns_block_symbol;
+
 typedef struct ns_symbol {
     ns_symbol_type type;
     ns_str name;
@@ -57,6 +65,7 @@ typedef struct ns_symbol {
         ns_value val;
         ns_fn_symbol fn;
         ns_struct_symbol st;
+        ns_block_symbol bc;
     };
 } ns_symbol;
 

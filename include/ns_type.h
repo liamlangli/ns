@@ -44,13 +44,13 @@
     #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_wrn "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
     #define ns_info(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
     #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(c)
-    #define ne_exit_safe(t, m, ...) fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(0)
+    #define ns_exit_safe(t, m, ...) fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(0)
 #else
     #define ns_error(t, m, ...)     fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), assert(false)
     #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_wrn "%s: " ns_color_nil m, t, ##__VA_ARGS__)
     #define ns_info(t, m, ...)      fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__)
     #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), exit(c)
-    #define ne_exit_safe(t, m, ...) fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__), exit(0)
+    #define ns_exit_safe(t, m, ...) fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__), exit(0)
 #endif // NS_DEBUG
 
 #define ns_max(a, b) ((a) > (b) ? (a) : (b))
@@ -65,6 +65,7 @@ typedef char i8;
 typedef short i16;
 typedef int i32;
 typedef long i64;
+typedef size_t szt;
 
 typedef unsigned char u8;
 typedef unsigned short u16;
@@ -74,7 +75,26 @@ typedef unsigned long u64;
 typedef float f32;
 typedef double f64;
 
+typedef const char * const_str;
+
 u64 ns_align(u64 offset, u64 stride);
+
+// memory
+#ifdef NS_DEBUG
+    void *_ns_malloc(szt size, const_str file, i32 line);
+    void *_ns_realloc(void *ptr, szt size, const_str file, i32 line);
+    void _ns_free(void *ptr, const_str file, i32 line);
+    void ns_mem_status(void);
+
+    #define ns_malloc(size) _ns_malloc(size, __FILE__, __LINE__)
+    #define ns_realloc(ptr, size) _ns_realloc(ptr, size, __FILE__, __LINE__)
+    #define ns_free(ptr) _ns_free(ptr, __FILE__, __LINE__)    
+#else
+    #define ns_malloc(size) malloc(size)
+    #define ns_realloc(ptr, size) realloc(ptr, size)
+    #define ns_free(ptr) free(ptr)
+    #define ns_mem_status() (void)0
+#endif
 
 // ns_str
 typedef struct ns_str {
@@ -97,7 +117,7 @@ ns_str ns_str_sub_expr(ns_str s); // get inplace sub expr from first space to en
 #define ns_str_null ((ns_str){0, 0, 0})
 #define ns_str_range(s, n) ((ns_str){(s), (n), 1})
 #define ns_str_cstr(s) ((ns_str){(i8*)(s), strlen(s), 0})
-#define ns_str_free(s) if ((s).dynamic) free((void *)(s).data)
+#define ns_str_free(s) if ((s).dynamic) ns_free((void *)(s).data)
 
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
 #define ns_str_equals_STR(s, S) ((!(s).data) ? 0 : (strncmp((s).data, (S), strlen(S)) == 0))
@@ -345,15 +365,19 @@ typedef struct ns_array_header {
     ns_type type;
 } ns_array_header;
 
-void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap);
+#ifdef NS_DEBUG
+void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap, const_str file, i32 line);
+#else
+void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap);
+#endif
 
 #define ns_array_header(a) ((ns_array_header *)(a) - 1)
 #define ns_array_length(a) ((a) ? (ns_array_header(a))->len : 0)
 #define ns_array_capacity(a) ((a) ? ns_array_header(a)->cap : 0)
 #define ns_array_type(a) ((a) ? ns_array_header(a)->type : ns_type_unknown)
-#define ns_array_free(a) ((a) ? free(ns_array_header(a)), (a) = 0 : 0)
+#define ns_array_free(a) ((a) ? ns_free(ns_array_header(a)), (a) = 0 : 0)
 
-#define ns_array_grow(a, n, m) ((a) = _ns_array_grow((a), sizeof *(a), (n), (m)))
+#define ns_array_grow(a, n, m) ((a) = _ns_array_grow((a), sizeof *(a), (n), (m), __FILE__, __LINE__))
 #define ns_array_ensure(a, n) ((!(a) || ns_array_header(a)->len + (n) > ns_array_header(a)->cap) ? (ns_array_grow(a, n, 0), 0) : 0)
 
 #define ns_array_set_capacity(a, n) (ns_array_grow(a, 0, n))
@@ -368,8 +392,6 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
 
 #define ns_array_insert(a, i, v) (ns_array_ensure(a, 1), memmove(&(a)[(i) + 1], &(a)[i], (ns_array_length(a) - (i)) * sizeof *(a)), (a)[i] = (v), ns_array_header(a)->len++)
 #define ns_array_splice(a, i) (memmove(&(a)[i], &(a)[(i) + 1], (ns_array_length(a) - (i) - 1) * sizeof *(a)), ns_array_header(a)->len--)
-
-void ns_array_status();
 
 // ns return
 typedef enum {

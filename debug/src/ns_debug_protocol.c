@@ -82,7 +82,7 @@ void ns_debug_handle_init(ns_debug_session *sess, ns_json_ref json) {
     i32 seq = ns_json_to_i32(ns_json_get_prop(json, ns_str_cstr("seq")));
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("initialize"), true);
 
-    ns_vm *vm = (ns_vm*)malloc(sizeof(ns_vm));
+    ns_vm *vm = (ns_vm*)ns_malloc(sizeof(ns_vm));
     vm->step_hook = ns_debug_step_hook;
 
     ns_debug_session_response(sess, res);
@@ -129,7 +129,7 @@ void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json) {
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("disconnect"), true);
 
     ns_vm *vm = sess->vm;
-    free(vm);
+    ns_free(vm);
 
     ns_debug_session_response(sess, res);
     sess->state = NS_DEBUG_STATE_TERMINATED;

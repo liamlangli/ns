@@ -177,13 +177,13 @@ ns_bool ns_udp_serve(u16 port, ns_on_data on_data) {
 
     // main loop to receive and respond to messages
     while (1) {
-        ssize_t n = recvfrom(socket_fd, ns_net_buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_addr, &addr_len);
+        szt n = recvfrom(socket_fd, ns_net_buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_addr, &addr_len);
         if (n < 0 || n > BUFFER_SIZE) {
             ns_warn("ns_net", "receive failed");
             continue;
         }
 
-        ns_conn *conn = (ns_conn *)malloc(sizeof(ns_conn));
+        ns_conn *conn = (ns_conn *)ns_malloc(sizeof(ns_conn));
         conn->type = NS_CONN_UDP;
         conn->socket_fd = socket_fd;
         conn->server_addr = server_addr;
@@ -241,7 +241,7 @@ ns_bool ns_tcp_serve(u16 port, ns_on_connect on_connect) {
 }
 
 ns_data ns_tcp_read(ns_conn *conn) {
-    ssize_t n = read(conn->socket_fd, ns_net_buffer, BUFFER_SIZE);
+    szt n = read(conn->socket_fd, ns_net_buffer, BUFFER_SIZE);
     return (ns_data){ns_net_buffer, n};
 }
 

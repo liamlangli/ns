@@ -5,7 +5,7 @@
     _t_ v = ns_eval_number_##_t_(vm, n); \
     ns_str pattern = ns_fmt_type_str(n.t); \
     i32 s = snprintf(ns_null, 0, pattern.data, v); \
-    char* d = malloc(s + 1); \
+    char* d = ns_malloc(s + 1); \
     snprintf(d, s + 1, pattern.data, v); \
     return (ns_str){.data=d, .len=s, .dynamic=1}; \
 }

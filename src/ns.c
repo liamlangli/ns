@@ -138,7 +138,7 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {
         ns_exec_ast(option.filename);
-        ns_array_status();
+        ns_mem_status();
     } else if (option.symbol_only) {
         ns_exec_symbol(option.filename);
     } else if (option.bitcode_only) {

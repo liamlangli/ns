@@ -135,8 +135,8 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
     ns_str op_name = ns_ops_name(op);
     if (ns_str_empty(op_name)) return ns_str_null;
 
-    size_t len = l.len + r.len + op_name.len + 3;
-    i8* data = (i8*)malloc(len);
+    szt len = l.len + r.len + op_name.len + 3;
+    i8* data = (i8*)ns_malloc(len);
     snprintf(data, len, "%.*s_%.*s_%.*s", l.len, l.data, op_name.len, op_name.data, r.len, r.data);
     data[len - 1] = '\0';
     return (ns_str){.data = data, .len = len - 1, .dynamic = 1};
@@ -177,7 +177,7 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
 }
 
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s) {
-    size_t l = ns_array_length(vm->call_stack);
+    szt l = ns_array_length(vm->call_stack);
     if (l > 0) {
         ns_call *call = ns_array_last(vm->call_stack);
         i32 scope_top = call->scope_top;
@@ -494,8 +494,12 @@ ns_return_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+    ns_symbol sym = (ns_symbol){.type = NS_SYMBOL_BLOCK, .name = ns_block_label, .parsed = true};
 
-    return ns_return_ok(type, NS_TYPE_BLOCK);
+    ns_type t = ns_type_encode(NS_TYPE_BLOCK, ns_array_length(vm->symbols), 0, NS_STORE_CONST);
+    ns_block_symbol bc_sym = (ns_block_symbol){.ast = i, .block.t = t};
+
+    return ns_return_ok(type, t);
 }
 
 ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -846,7 +850,7 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
         ns_type t = ret_t.r;
 
-        size_t l = ns_array_length(vm->call_stack);
+        szt l = ns_array_length(vm->call_stack);
         if (l == 0) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt not in fn.");
         }

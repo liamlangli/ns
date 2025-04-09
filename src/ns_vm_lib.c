@@ -58,7 +58,7 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         ns_value size = vm->symbol_stack[call->arg_offset + 1].val;
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
         i32 s = ns_eval_number_i32(vm, size);
-        char *buff = malloc(s);
+        char *buff = ns_malloc(s);
         i32 len = fread(buff, s, 1, f);
         ns_str ret = (ns_str){.data = buff, .len = len};
         call->ret = (ns_value){.t = ns_type_str, .o = (u64)ret.data};

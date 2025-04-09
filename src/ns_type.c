@@ -1,5 +1,51 @@
 #include "ns_type.h"
 
+
+#ifdef NS_DEBUG
+typedef struct ns_allocator {
+    u64 alloc_op, free_op, realloc_op;
+    u64 alloc, realloc;
+} ns_allocator;
+static ns_allocator _ns_heap = {0};
+
+// memory
+void *_ns_malloc(szt size, const_str file, i32 line) {
+    ns_unused(file); ns_unused(line);
+    void *ptr = malloc(size);
+    if (ptr) {
+        _ns_heap.alloc_op++;
+        _ns_heap.alloc += size;
+    }
+    return ptr;
+}
+
+void *_ns_realloc(void *ptr, szt size, const_str file, i32 line) {
+    ns_unused(file); ns_unused(line);
+    if (ptr) {
+        _ns_heap.realloc_op++;
+        _ns_heap.realloc += size;
+    }
+    void *new_ptr = realloc(ptr, size);
+    if (new_ptr) {
+        _ns_heap.alloc_op++;
+        _ns_heap.alloc += size;
+    }
+    return new_ptr;
+}
+
+void _ns_free(void *ptr, const_str file, i32 line) {
+    ns_unused(file); ns_unused(line);
+    if (ptr) {
+        _ns_heap.free_op++;
+    }
+    free(ptr);
+}
+
+void ns_mem_status(void) {
+    ns_info("ns_mem_status[op/fp]", "alloc[%lu/%lu], realloc[%lu/%lu], free[%lu]\n", _ns_heap.alloc_op, _ns_heap.alloc, _ns_heap.realloc_op, _ns_heap.realloc, _ns_heap.free_op);
+}
+#endif
+
 // ns_type
 u64 ns_align(u64 offset, u64 stride) {
     u64 align = ns_min(sizeof(void *), stride);
@@ -36,18 +82,13 @@ ns_number_type ns_vm_number_type(ns_type t) {
     return NS_NUMBER_U;
 }
 
-// ns_array
 #ifdef NS_DEBUG
-typedef struct ns_allocator {
-    u64 alloc_op, free_op;
-    u64 alloc, free;
-} ns_allocator;
-static ns_allocator _ns_allocator = {0};
+void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap, const_str file, i32 line) 
+#else
+void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap)
 #endif
-
-void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap) {
-    void *b;
-    size_t min_len = ns_array_length(a) + add_count;
+{   void *b;
+    szt min_len = ns_array_length(a) + add_count;
 
     // compute new capacity
     if (min_len > min_cap) min_cap = min_len;
@@ -55,20 +96,25 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
     if (min_cap < 2 * ns_array_capacity(a)) min_cap = 2 * ns_array_capacity(a);
     else if (min_cap < 8) min_cap = 8;
 
-    size_t new_size = elem_size * min_cap + sizeof(ns_array_header);
+    szt new_size = elem_size * min_cap + sizeof(ns_array_header);
+#ifdef NS_DEBUG
     if (a) {
-        b = realloc(ns_array_header(a), new_size);
-#ifdef NS_DEBUG
-        _ns_allocator.alloc_op++;
-        _ns_allocator.alloc += new_size - (ns_array_capacity(a) * elem_size + sizeof(ns_array_header));
-#endif
+
+        b = _ns_realloc(ns_array_header(a), new_size, file, line);
+        _ns_heap.alloc_op++;
+        _ns_heap.alloc += new_size - (ns_array_capacity(a) * elem_size + sizeof(ns_array_header));
     } else {
-        b = malloc(new_size);
-#ifdef NS_DEBUG
-        _ns_allocator.alloc_op++;
-        _ns_allocator.alloc += new_size;
-#endif
+        b = _ns_malloc(new_size, file, line);
+        _ns_heap.alloc_op++;
+        _ns_heap.alloc += new_size;
     }
+#else
+    if (a) {
+        b = ns_realloc(ns_array_header(a), new_size);
+    else {
+        b = ns_malloc(new_size);
+    }
+#endif
 
     if (!b) return NULL; // handle allocation failure
 
@@ -78,12 +124,6 @@ void *_ns_array_grow(void *a, size_t elem_size, size_t add_count, size_t min_cap
     }
     ns_array_header(b)->cap = min_cap;
     return b;
-}
-
-void ns_array_status() {
-#ifdef NS_DEBUG
-    ns_info("ns_array", "alloc_op %lu, free_op %lu, alloc %lu, free %lu\n", _ns_allocator.alloc_op, _ns_allocator.free_op, _ns_allocator.alloc, _ns_allocator.free);
-#endif
 }
 
 // ns_str
@@ -136,7 +176,7 @@ ns_str ns_str_from_i32(i32 i) {
 
 ns_str ns_str_unescape(ns_str s) {
     i32 size = s.len;
-    i8 *data = (i8 *)malloc(size);
+    i8 *data = (i8 *)ns_malloc(size);
     i32 i = 0;
     i32 j = 0;
     while (i < size) {
@@ -187,14 +227,14 @@ i32 ns_str_index_of(ns_str s, ns_str sub) {
 }
 
 ns_str ns_str_slice(ns_str s, i32 start, i32 end) {
-    i8 *d = (i8 *)malloc(end - start + 1);
+    i8 *d = (i8 *)ns_malloc(end - start + 1);
     memcpy(d, s.data + start, end - start);
     d[end - start] = '\0';
     return ns_str_range(d, end - start);
 }
 
 ns_str ns_str_concat(ns_str a, ns_str b) {
-    char *buffer = (char *)malloc(a.len + b.len + 1);
+    char *buffer = (char *)ns_malloc(a.len + b.len + 1);
     memcpy(buffer, a.data, a.len);
     memcpy(buffer + a.len, b.data, b.len);
     buffer[a.len + b.len] = '\0';

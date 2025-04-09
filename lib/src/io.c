@@ -15,7 +15,7 @@ typedef struct io_image {
 io_image* io_load_image(ns_str path) {
     // Implementation for loading an image from the file at 'path'
     // This is a placeholder implementation
-    io_image *img = (io_image*)malloc(sizeof(io_image));
+    io_image *img = (io_image*)ns_malloc(sizeof(io_image));
     if (img == NULL) {
         ns_error("io", "Failed to allocate memory for image\n");
         return NULL;
