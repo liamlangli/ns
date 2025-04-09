@@ -493,6 +493,25 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             printf(")");
             break;
 
+        case NS_AST_CLOSURE_EXPR: {
+            printf("{ ");
+            ns_ast_t *arg = n;
+            for (i32 a = 0; a < n->closure_expr.arg_count; a++) {
+                arg = &ctx->nodes[arg->next];
+                printf(ns_color_log);
+                ns_str_printf(arg->arg.name.val);
+                ns_ast_print_type_label(ctx, arg->arg.type, true);
+                printf(ns_color_nil);
+                if (a != n->closure_expr.arg_count - 1) {
+                    printf(", ");
+                }
+            }
+            ns_ast_print_type_label(ctx, n->closure_expr.ret, true);
+            printf(ns_color_log " in\n" ns_color_nil " ");
+            ns_ast_print_node(ctx, n->closure_expr.body, depth + ns_tab_width);
+            printf("\n%*s}", depth, " ");
+        } break;
+
         case NS_AST_EXPR:
             if (n->expr.atomic) {
                 ns_ast_print_node(ctx, n->expr.body, depth);
