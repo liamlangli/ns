@@ -147,6 +147,7 @@ typedef struct ns_ast_unary_expr {
 typedef struct ns_ast_expr {
     i32 body;
     ns_type type;
+    ns_bool atomic: 2; // ignore parenthesis
 } ns_ast_expr;
 
 typedef struct ns_ast_member_expr {

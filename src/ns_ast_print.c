@@ -49,14 +49,31 @@ void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i, ns_bool colon) {
     if (n->type_label.is_ref) {
         printf("ref ");
     }
+    printf(ns_color_nil);
 
     if (n->type_label.is_array) {
         printf("[");
         ns_str_printf(n->type_label.name.val);
         printf("]");
+    } else if (n->type_label.is_fn) {
+        printf("(");
+        ns_ast_t *type = n;
+        for (i32 i = 0; i < n->type_label.arg_count; i++) {
+            ns_ast_print_type_label(ctx, type->next, false);
+            if (i != n->type_label.arg_count - 1) {
+                printf(", ");
+            }
+            type = &ctx->nodes[type->next];
+        }
+        printf(")");
+        printf(ns_color_log " -> " ns_color_nil);
+        ns_ast_print_type_label(ctx, n->type_label.ret, false);
     } else {
+        printf(ns_color_log);
         ns_str_printf(n->type_label.name.val);
+        
     }
+
     printf(ns_color_nil);
 }
 
@@ -74,8 +91,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         ns_str_printf(n->module_stmt.name.val);
     } break;
     case NS_AST_TYPE_LABEL: {
-        if (n->type_label.is_ref) printf(ns_color_log "ref " ns_color_nil);
-        ns_str_printf(n->type_label.name.val);
+        ns_ast_print_type_label(ctx, i, false);
     } break;
     case NS_AST_FN_DEF: {
         if (n->fn_def.is_ref) printf(ns_color_log "ref ");
@@ -366,6 +382,25 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             }
             break;
 
+
+        case NS_AST_STRUCT_DEF: {
+            printf(ns_color_log "struct " ns_color_nil);
+            ns_str_printf(n->struct_def.name.val);
+            printf(" {\n");
+            i32 count = n->struct_def.count;
+            ns_ast_t *field = n;
+            for (i32 i = 0; i < count; i++) {
+                printf("%*s", depth + ns_tab_width, "");
+                field = &ctx->nodes[field->next];
+                ns_str_printf(field->arg.name.val);
+                ns_ast_print_type_label(ctx, field->arg.type, true);
+                if (i != count - 1) {
+                    printf(",\n");
+                }
+            }
+            printf("\n%*s}\n", depth, " ");
+        } break;
+
         case NS_AST_TYPE_DEF:
             printf(ns_color_log "type " ns_color_nil);
             ns_str_printf(n->type_def.name.val);
@@ -424,7 +459,7 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             ns_str_printf(n->primary_expr.token.val);
             break;
 
-        case NS_AST_DESIG_EXPR:
+        case NS_AST_DESIG_EXPR: {
             printf(ns_color_cmt);
             ns_str_printf(n->desig_expr.name.val);
             printf(ns_color_nil " { ");
@@ -441,7 +476,7 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
                 field = &ctx->nodes[field->next];
             }
             printf(" }");
-            break;
+        } break;
 
         case NS_AST_CALL_EXPR:
             printf(ns_color_cmt);
@@ -459,9 +494,13 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             break;
 
         case NS_AST_EXPR:
-            printf("(");
-            ns_ast_print_node(ctx, n->expr.body, depth);
-            printf(")");
+            if (n->expr.atomic) {
+                ns_ast_print_node(ctx, n->expr.body, depth);
+            } else {
+                printf("(");
+                ns_ast_print_node(ctx, n->expr.body, depth);
+                printf(")");
+            }
             break;
 
         case NS_AST_UNARY_EXPR:
@@ -520,6 +559,19 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             printf(ns_color_log " as " ns_color_nil);
             ns_str_printf(n->cast_expr.type.val);
             break;
+
+        case NS_AST_STR_FMT_EXPR: {
+            printf("\"");
+            ns_str_printf(n->str_fmt.fmt);
+            printf("\"");
+            i32 count = n->str_fmt.expr_count;
+            i32 next = n->next;
+            for (i32 a_i = 0; a_i < count; ++a_i) {
+                printf(", ");
+                ns_ast_print_node(ctx, next, depth);
+                next = ctx->nodes[next].next;
+            }
+        } break;
 
         default:
             break;

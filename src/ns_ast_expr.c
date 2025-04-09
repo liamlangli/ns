@@ -2,6 +2,11 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
+i32 ns_ast_push_expr(ns_ast_ctx *ctx, ns_ast_state state, i32 i) {
+    ns_ast_t expr = {.type = NS_AST_EXPR, .state = state, .expr = {.body = i, .atomic = 1}};
+    return ns_ast_push(ctx, expr);
+}
+
 ns_bool ns_parse_stack_push_operand(ns_ast_ctx *ctx, i32 i) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
     scope->pre = i;
@@ -135,6 +140,7 @@ ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
     do {
         ret = ns_parse_expr(ctx);
         if (ns_return_is_error(ret)) return ret;
+        if (!ret.r) break;
 
         next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
         n.call_expr.arg_count++;
@@ -190,8 +196,7 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
             if (ns_return_is_error(ret)) return ret;
             if (ret.r) {
                 n.str_fmt.expr_count++;
-                ns_ast_t expr_n = {.type = NS_AST_EXPR, .state = expr_state, .expr = {.body = ctx->current} };
-                ctx->current = ns_ast_push(ctx, expr_n);
+                ns_ast_push_expr(ctx, expr_state, ctx->current);
                 expr->next = ctx->current;
                 expr = &ctx->nodes[ctx->current];
             } else {
@@ -625,8 +630,7 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                 if (ns_return_is_error(ret)) return ret;
                 if (ret.r &&
                     ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
-                    ns_ast_t expr = {.type = NS_AST_EXPR, .state = state, .expr = {.body = ctx->current}};
-                    ns_parse_stack_push_operand(ctx, ns_ast_push(ctx, expr));
+                    ns_parse_stack_push_operand(ctx, ns_ast_push_expr(ctx, state, ctx->current));
                     break;
                 } else {
                     return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected valid expression after '('");
@@ -635,11 +639,10 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                 i32 callee = ns_parse_stack_pop(ctx);
                 ret = ns_parse_call_expr(ctx, callee);
                 if (ns_return_is_error(ret)) return ret;
-
                 if (!ret.r) {
                     return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected call expression after '('");
                 }
-                ns_parse_stack_push_operand(ctx, ctx->current);
+                ns_parse_stack_push_operand(ctx, ns_ast_push_expr(ctx, state, ctx->current));
                 break;
             }
         } break;
@@ -696,8 +699,7 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                     ret = ns_parse_closure_expr(ctx);
                     if (ns_return_is_error(ret)) return ret;
                     if (ret.r) {
-                        ns_ast_t expr = {.type = NS_AST_EXPR, .state = state, .expr = {.body = ctx->current}};
-                        ns_parse_stack_push_operand(ctx, ns_ast_push(ctx, expr));
+                        ns_parse_stack_push_operand(ctx, ns_ast_push_expr(ctx, state, ctx->current));
                         break;
                     } else {
                         return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected closure expression");
