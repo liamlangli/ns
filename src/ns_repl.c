@@ -49,7 +49,7 @@ void ns_repl_add_cmd(ns_str cmd, ns_repl_cmd_fn fn) {
 
 void ns_repl_exit(ns_vm *vm, ns_str arg) {
     ns_unused(vm); ns_unused(arg);
-    ns_free(_ctx.cmds);
+    ns_array_free(_ctx.cmds);
     _ctx.cmds = NULL;
     ns_exit_safe("ns", "exit repl\n");
 }
