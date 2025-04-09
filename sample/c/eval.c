@@ -12,10 +12,7 @@ const i8 *script =
 "let c = add(1, 2)\n"
 "print(`Hello, ns! {c}\n`)\n";
 
-i32 main(i32 argc, i8 *argv[]) {
-    ns_unused(argc);
-    ns_unused(argv);
-
+i32 main() {
     ns_vm vm = {0};
 
     ns_fn_def add_fn = {0};
