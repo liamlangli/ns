@@ -59,7 +59,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "sample[eval]",
+            "name": "sample[c/eval]",
             "preLaunchTask": "build sample",
             "program": "${workspaceFolder}/bin/sample/eval",
             "cwd": "${workspaceFolder}",

@@ -15,6 +15,7 @@ typedef enum ns_scope_state {
     NS_SCOPE_LINEAR,
     NS_SCOPE_CONTINUE,
     NS_SCOPE_BREAK,
+    NS_SCOPE_BLOCK,
 } ns_scope_state;
 
 typedef struct ns_symbol ns_symbol;
@@ -54,6 +55,7 @@ typedef struct ns_array_symbol {
 typedef struct ns_block_symbol {
     i32 ast;
     ns_value block;
+    ns_symbol *refs; // captured variables
 } ns_block_symbol;
 
 typedef struct ns_symbol {

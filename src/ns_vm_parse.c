@@ -777,8 +777,6 @@ ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_type l = ret_l.r;
     ns_type r = ret_r.r;
     if (!ns_type_equals(l, r)) {
-        // ns_str l_name = ns_vm_get_type_name(vm, l);
-        // ns_str r_name = ns_vm_get_type_name(vm, r);
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "assign expr type mismatch.");
     }
     return ns_return_ok(type, l);
@@ -815,9 +813,6 @@ ns_return_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_ok(type, t);
     }
 
-    // ns_str l_name = ns_vm_get_type_name(vm, l);
-    // ns_str r_name = ns_vm_get_type_name(vm, r);
-    // ns_str op = n->binary_expr.op.val;
     return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "binary expr type mismatch.");
 }
 
