@@ -358,7 +358,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack)};
 
         ns_array_push(vm->call_stack, call);
-        ns_enter_scope(vm);
+        ns_scope_enter(vm);
 
         for (i32 j = 0, l = ns_array_length(fn->fn.args); j < l; ++j) {
             ns_symbol *arg = &fn->fn.args[j];
@@ -368,7 +368,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         ret = ns_vm_parse_compound_stmt(vm, ctx, body);
         if (ns_return_is_error(ret)) return ret;
         
-        ns_exit_scope(vm);
+        ns_scope_exit(vm);
         ns_array_pop(vm->call_stack);
         fn->fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, i, is_ref, 0) };
         fn->parsed = true;
@@ -502,6 +502,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_vm_parse_compound_stmt(vm, ctx, n->block_expr.body);
     ns_vm_push_symbol_global(vm, sym);
+
     return ns_return_ok(type, t);
 }
 
@@ -928,10 +929,10 @@ ns_return_void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     var.name = gen->gen_expr.name.val;
     ns_vm_push_symbol_local(vm, var);
 
-    ns_enter_scope(vm);
+    ns_scope_enter(vm);
     ns_return_void ret = ns_vm_parse_compound_stmt(vm, ctx, n->for_stmt.body);
     if (ns_return_is_error(ret)) return ret;
-    ns_exit_scope(vm);
+    ns_scope_exit(vm);
 
     return ns_return_ok_void;
 }
@@ -945,6 +946,10 @@ ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_type l = ret_l.r;
     if (n->var_def.expr != 0) {
+        ns_scope *scope = ns_scope_top(vm);
+        assert(scope);
+        scope->t = ret_l.r;
+
         ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->var_def.expr);
         if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
 
@@ -1028,7 +1033,7 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
 
 ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_call call = (ns_call){.fn = NULL, .scope_top = ns_array_length(vm->scope_stack), .ret = ns_nil, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 0};
-    ns_enter_scope(vm);
+    ns_scope_enter(vm);
     ns_array_push(vm->call_stack, call);
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s_i = ctx->sections[i];
@@ -1057,7 +1062,7 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
     ns_array_pop(vm->call_stack);
-    ns_exit_scope(vm);
+    ns_scope_exit(vm);
     return ns_return_ok_void;
 }
 

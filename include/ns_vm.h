@@ -85,6 +85,7 @@ typedef struct ns_struct {
 typedef struct ns_scope {
     i32 stack_top;
     i32 symbol_top;
+    ns_type t;
     ns_scope_state state: 4;
 } ns_scope;
 
@@ -164,8 +165,9 @@ void *ns_eval_array_raw(ns_vm *vm, ns_value n);
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
 ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
-ns_scope *ns_enter_scope(ns_vm *vm);
-ns_scope *ns_exit_scope(ns_vm *vm);
+ns_scope *ns_scope_top(ns_vm *vm); 
+ns_scope *ns_scope_enter(ns_vm *vm);
+ns_scope *ns_scope_exit(ns_vm *vm);
 
 ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);

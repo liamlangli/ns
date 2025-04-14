@@ -161,7 +161,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     }
 
     // copy args to ffi values
-    ns_enter_scope(vm);
+    ns_scope_enter(vm);
     for (i32 i = 0; i < call->arg_count; i++) {
         ns_value v = vm->symbol_stack[call->arg_offset + i].val;
 
@@ -202,7 +202,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
         _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
     }
-    ns_exit_scope(vm);
+    ns_scope_exit(vm);
 
     ffi_type ret_type = ns_ffi_map_type(fn->fn.ret);
     ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, _ffi_ctx.types);
