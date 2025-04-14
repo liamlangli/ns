@@ -8,7 +8,8 @@ typedef enum {
     NS_SYMBOL_VALUE,
     NS_SYMBOL_FN,
     NS_SYMBOL_STRUCT,
-    NS_SYMBOL_BLOCK
+    NS_SYMBOL_BLOCK,
+    NS_SYMBOL_TYPE
 } ns_symbol_type;
 
 typedef enum ns_scope_state {
@@ -58,6 +59,10 @@ typedef struct ns_block_symbol {
     ns_symbol *refs; // captured variables
 } ns_block_symbol;
 
+typedef struct ns_type_symbol {
+    ns_type t;
+} ns_type_symbol;
+
 typedef struct ns_symbol {
     ns_symbol_type type;
     ns_str name;
@@ -68,6 +73,7 @@ typedef struct ns_symbol {
         ns_fn_symbol fn;
         ns_struct_symbol st;
         ns_block_symbol bc;
+        ns_type t;
     };
 } ns_symbol;
 
@@ -85,7 +91,6 @@ typedef struct ns_struct {
 typedef struct ns_scope {
     i32 stack_top;
     i32 symbol_top;
-    ns_type t;
     ns_scope_state state: 4;
 } ns_scope;
 
@@ -144,8 +149,9 @@ i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
-ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
-ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_token_t t, ns_bool infer);
+ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t);
+ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n);
+ns_return_type ns_vm_parse_type_by_token(ns_vm *vm, ns_token_t t, ns_code_loc loc);
 
 // eval fn
 #define ns_eval_value_def(type) type ns_eval_number_##type(ns_vm *vm, ns_value n);
@@ -165,7 +171,6 @@ void *ns_eval_array_raw(ns_vm *vm, ns_value n);
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
 ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
-ns_scope *ns_scope_top(ns_vm *vm); 
 ns_scope *ns_scope_enter(ns_vm *vm);
 ns_scope *ns_scope_exit(ns_vm *vm);
 

@@ -71,7 +71,6 @@ void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i, ns_bool colon) {
     } else {
         printf(ns_color_log);
         ns_str_printf(n->type_label.name.val);
-        
     }
 
     printf(ns_color_nil);
@@ -161,8 +160,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     case NS_AST_TYPE_DEF: {
         printf(ns_color_log "type " ns_color_nil);
         ns_str_printf(n->type_def.name.val);
-        printf(" = ");
-        ns_ast_print_type_label(ctx, n->type_def.type, false);
+        printf(" = [%d]", n->type_def.type);
     } break;
     case NS_AST_BLOCK_EXPR: {
         printf("{");

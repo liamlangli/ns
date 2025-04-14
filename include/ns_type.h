@@ -184,7 +184,7 @@ typedef enum {
     NS_TOKEN_TYPE_F32,
     NS_TOKEN_TYPE_F64,
     NS_TOKEN_TYPE_BOOL,
-    NS_TOKEN_TYPE_STR,
+    NS_TOKEN_TYPE_STR,     // str: keyword for string
     NS_TOKEN_TYPE_ANY,
 
     NS_TOKEN_INT_LITERAL,
