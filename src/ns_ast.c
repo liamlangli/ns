@@ -303,12 +303,26 @@ ns_return_bool ns_parse_arg(ns_ast_ctx *ctx, ns_bool type_required) {
     ns_ast_state type_state = ns_save_state(ctx);
     ret = ns_parse_type_label(ctx);
     if (ns_return_is_error(ret)) return ret;
-    if (ret.r || !type_required) {
+    if (!ret.r && type_required) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+
+    if (ret.r)
+        n.arg.type = ctx->current;
+    else
+        ns_restore_state(ctx, type_state);
+
+    // parse default value
+    if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
+        ret = ns_parse_expr(ctx);
+        if (ns_return_is_error(ret)) return ret;
         if (ret.r) {
-            n.arg.type = ctx->current;
-        } else {
-            ns_restore_state(ctx, type_state);
+            n.arg.val = ctx->current;
+            ctx->current = ns_ast_push(ctx, n);
+            return ns_return_ok(bool, true);
         }
+    } else {
         ctx->current = ns_ast_push(ctx, n);
         return ns_return_ok(bool, true);
     }
@@ -458,6 +472,7 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
     ns_ast_t fn = {.type = NS_AST_FN_DEF, .state = state, .fn_def = {.name = name, .arg_count = 0, .is_async = is_async, .is_ref = is_ref, .is_kernel = is_kernel, .ret = 0, .body = 0}};
     // parse args
     ns_token_skip_eol(ctx);
+    i32 val_assigned = 0;
     i32 next = 0;
     do {
         ret = ns_parse_arg(ctx, true);
@@ -466,6 +481,12 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
 
         next = next == 0 ? fn.next = ctx->current : (ctx->nodes[next].next = ctx->current);
         fn.fn_def.arg_count++;
+        ns_ast_t *arg = &ctx->nodes[ctx->current];
+        if (val_assigned > 0 && arg->arg.val == 0) {
+            return ns_return_error(bool, ns_ast_state_loc(ctx, arg->state), NS_ERR_SYNTAX, "subscript arg value required.");
+        }
+        if (arg->arg.val != 0) val_assigned++;
+
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_COMMA || ctx->token.type == NS_TOKEN_EOL) {
@@ -474,6 +495,7 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
             break;
         }
     } while(1);
+    if (val_assigned > 0) fn.fn_def.arg_required = fn.fn_def.arg_count - val_assigned;
 
     if (fn.fn_def.arg_count == 0)
         ns_parse_next_token(ctx);

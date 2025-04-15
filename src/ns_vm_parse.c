@@ -202,6 +202,7 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s) {
 ns_type ns_vm_parse_generic_type(ns_token_t t) {
     ns_type ret = ns_type_encode(NS_TYPE_UNKNOWN, 0, 0, NS_STORE_CONST);
     switch (t.type) {
+    case NS_TOKEN_NIL: ret.type = NS_TYPE_NIL; break;
     case NS_TOKEN_TYPE_I8: ret.type = NS_TYPE_I8; break;
     case NS_TOKEN_TYPE_U8: ret.type = NS_TYPE_U8; break;
     case NS_TOKEN_TYPE_I16: ret.type = NS_TYPE_I16; break;
@@ -244,7 +245,9 @@ ns_return_type ns_vm_parse_type_by_token(ns_vm *vm, ns_token_t t, ns_code_loc lo
 
 ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n) {
     ns_token_t t;
-    if (n->type == NS_AST_TYPE_LABEL) {
+    if (n->type == NS_AST_PROGRAM) {
+        return ns_return_ok(type, ns_type_nil);
+    } else if (n->type == NS_AST_TYPE_LABEL) {
         t = n->type_label.name;
     } else if (n->type == NS_AST_CAST_EXPR) {
         t = n->cast_expr.type;
@@ -563,25 +566,77 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
     ns_ast_t *n = &ctx->nodes[i];
     ns_symbol sym = (ns_symbol){.type = NS_SYMBOL_BLOCK, .name = ns_block_label, .parsed = true};
 
-    ns_type type = ns_type_encode(NS_TYPE_BLOCK, ns_array_length(vm->symbols), 0, NS_STORE_CONST);
-    ns_block_symbol bc_sym = (ns_block_symbol){.ast = i, .block.t = t};
-    sym.bc = bc_sym;
+    ns_symbol *fn_t = nil;
+    if (t.type == NS_TYPE_FN) {
+        fn_t = &vm->symbols[ns_type_index(t)];
+        ns_ast_t *fn = &ctx->nodes[fn_t->fn.ast];
+        if (n->block_expr.arg_count < fn->fn_def.arg_required || n->block_expr.arg_count > fn->fn_def.arg_count) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "block expr arg count mismatch.");
+        }
+    }
+
+    ns_scope_enter(vm);
+
+    ns_array_set_length(sym.bc.fn.args, n->block_expr.arg_count);
 
     ns_ast_t *arg = &ctx->nodes[n->next];
     for (i32 i = 0, l = n->block_expr.arg_count; i < l; ++i) {
-        ns_symbol arg_record = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
-        arg_record.name = arg->arg.name.val;
+        ns_symbol arg_sym = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
+        arg_sym.name = arg->arg.name.val;
 
-        ns_ast_t *arg_type = &ctx->nodes[arg->arg.type];
-        ns_return_type ret_t = ns_vm_parse_type(vm, ctx, arg_type);
-        if (ns_return_is_error(ret_t)) return ret_t;
+        if (fn_t == nil) { // if fn_t is nil, it means the block expr must define all types
+            if (arg->arg.type == 0) {
+                return ns_return_error(type, ns_ast_state_loc(ctx, arg->state), NS_ERR_SYNTAX, "block expr arg type mismatch.");
+            } else {
+                ns_ast_t *arg_type = &ctx->nodes[arg->arg.type];
+                ns_return_type ret_t = ns_vm_parse_type(vm, ctx, arg_type);
+                if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
+                arg_sym.val.t = ret_t.r;
+            }
+        } else { // if fn_t is not nil, it means the block expr must use the fn_t type or match the fn_t type
+            ns_type arg_t = fn_t->fn.args[i].val.t;
+            if (arg->arg.type == 0) {
+                ns_ast_t *arg_type = &ctx->nodes[arg->arg.type];
+                ns_return_type ret_t = ns_vm_parse_type(vm, ctx, arg_type);
+                if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
+                if (!ns_type_equals(ret_t.r, arg_t)) {
+                    return ns_return_error(type, ns_ast_state_loc(ctx, arg->state), NS_ERR_SYNTAX, "block expr arg type mismatch.");
+                }
+                arg_sym.val.t = ret_t.r;
+            } else {
+                arg_sym.val.t = arg_t;
+            }
+        }
 
+        sym.bc.fn.args[i] = arg_sym;
+        ns_vm_push_symbol_local(vm, arg_sym);
         arg = &ctx->nodes[arg->next];
     }
 
+    // parse block ret type
+    if (fn_t == nil) {
+        ns_return_type ret_t = ns_vm_parse_type(vm, ctx, &ctx->nodes[n->block_expr.ret]);
+        if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
+        sym.bc.fn.ret = ret_t.r;
+    } else {
+        ns_ast_t *ret_type = &ctx->nodes[n->block_expr.ret];
+        ns_return_type ret_t = ns_vm_parse_type(vm, ctx, ret_type);
+        if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
+        if (!ns_type_equals(ret_t.r, fn_t->fn.ret)) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "block expr ret type mismatch.");
+        }
+        sym.bc.fn.ret = fn_t->fn.ret;
+    }
+
+    // if (sym.bc.st.)
+
     ns_vm_parse_compound_stmt(vm, ctx, n->block_expr.body);
+
+    ns_type block_t = ns_type_encode(NS_TYPE_BLOCK, ns_array_length(vm->symbols), 0, NS_STORE_CONST);
+    sym.bc.block.t = block_t;
     ns_vm_push_symbol_global(vm, sym);
 
+    ns_scope_exit(vm);
     return ns_return_ok(type, t);
 }
 
@@ -1029,7 +1084,7 @@ ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_type l = ret_l.r;
     if (n->var_def.expr != 0) {
-        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->var_def.expr, ns_type_infer);
+        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->var_def.expr, l);
         if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
 
         ns_type t = ret_t.r;

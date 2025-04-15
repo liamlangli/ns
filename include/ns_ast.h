@@ -76,6 +76,7 @@ typedef struct ns_ast_str_fmt {
 typedef struct ns_ast_arg {
     ns_token_t name;
     i32 type;
+    i32 val; // default value expr
 } ns_ast_arg;
 
 typedef struct ns_ast_fn_def {
@@ -83,6 +84,7 @@ typedef struct ns_ast_fn_def {
     i32 body;
     ns_token_t name;
     i32 arg_count;
+    i32 arg_required;
     ns_bool is_ref : 2;
     ns_bool is_async : 2;
     ns_bool is_kernel : 2;

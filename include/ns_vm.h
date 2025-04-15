@@ -56,7 +56,8 @@ typedef struct ns_array_symbol {
 typedef struct ns_block_symbol {
     i32 ast;
     ns_value block;
-    ns_symbol *refs; // captured variables
+    ns_struct_symbol st;
+    ns_fn_symbol fn;
 } ns_block_symbol;
 
 typedef struct ns_type_symbol {

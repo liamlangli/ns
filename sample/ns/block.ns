@@ -6,6 +6,8 @@ fn do_op(op: op_fn, a: i32, b: i32): i32 {
     return op(a, b)
 }
 
+let bias = 1
+
 fn main() {
     let add: op_fn = { a, b in
         return a + b
@@ -16,6 +18,10 @@ fn main() {
     }, 5, 3)
 
     let sum = (1 + 2) * 4 - 5
+
+    let capture = do_op({ a, b in
+        return a + b + sum + bias
+    }, 5, 3)
 
     let result = add(5, 3)
     print(`add result: {result}`)

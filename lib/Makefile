@@ -12,7 +12,7 @@ $(NS_STD_OBJS): $(NS_BINDIR)/lib/%.o : lib/src/%.c
 
 ifeq ($(NS_OS),darwin)
 bin/lib/os.osx.o: lib/src/os.osx.m
-	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_LIB_INC) $(NS_CFLAGS)
+	$(NS_CC) -c $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
 
 bin/lib/os.o: lib/src/os.c
 	$(NS_CC) -c $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
