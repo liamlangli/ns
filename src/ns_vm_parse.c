@@ -374,7 +374,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
 
         i32 body = n->type == NS_AST_FN_DEF ? n->fn_def.body : n->ops_fn_def.body;
         ns_bool is_ref = n->type == NS_AST_FN_DEF ? n->fn_def.is_ref : n->ops_fn_def.is_ref;
-        ns_call call = (ns_call){.fn = fn, .scope_top = ns_array_length(vm->scope_stack)};
+        ns_call call = (ns_call){.callee = fn, .scope_top = ns_array_length(vm->scope_stack)};
 
         ns_array_push(vm->call_stack, call);
         ns_scope_enter(vm);
@@ -989,7 +989,7 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (l == 0) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt not in fn.");
         }
-        ns_symbol *fn = vm->call_stack[l - 1].fn;
+        ns_symbol *fn = vm->call_stack[l - 1].callee;
         if (!ns_type_equals(fn->fn.ret, t)) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt type mismatch.");
         }
@@ -1166,7 +1166,7 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
-    ns_call call = (ns_call){.fn = NULL, .scope_top = ns_array_length(vm->scope_stack), .ret = ns_nil, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 0};
+    ns_call call = (ns_call){.callee = NULL, .scope_top = ns_array_length(vm->scope_stack), .ret = ns_nil, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 0};
     ns_scope_enter(vm);
     ns_array_push(vm->call_stack, call);
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {

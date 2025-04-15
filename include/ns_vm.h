@@ -96,7 +96,7 @@ typedef struct ns_scope {
 } ns_scope;
 
 typedef struct ns_call {
-    ns_symbol *fn;
+    ns_symbol *callee;
     i32 arg_offset, arg_count;
     ns_value ret;
     u32 scope_top;

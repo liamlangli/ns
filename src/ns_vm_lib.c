@@ -34,18 +34,18 @@ static ffi_ctx _ffi_ctx = {0};
 
 ns_return_bool ns_vm_call_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
-    if (ns_str_equals_STR(call->fn->name, "print")) {
+    if (ns_str_equals_STR(call->callee->name, "print")) {
         ns_value arg = vm->symbol_stack[call->arg_offset].val;
         ns_str s = ns_fmt_eval(vm, vm->str_list[arg.o]);
         ns_str_printf(s);
         ns_str_free(s);
         call->ret = ns_nil;
-    } else if (ns_str_equals_STR(call->fn->name, "open")) {
+    } else if (ns_str_equals_STR(call->callee->name, "open")) {
         ns_str path = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
         ns_str mode = ns_eval_str(vm, vm->symbol_stack[call->arg_offset + 1].val);
         u64 fd = (u64)fopen(path.data, mode.data);
         call->ret = (ns_value){.t = ns_type_u64, .o = fd};
-    } else if (ns_str_equals_STR(call->fn->name, "write")) {
+    } else if (ns_str_equals_STR(call->callee->name, "write")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         ns_value data = vm->symbol_stack[call->arg_offset + 1].val;
         ns_str s = ns_eval_str(vm, data);
@@ -53,7 +53,7 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
         i32 len = fwrite(ss.data, ss.len, 1, f);
         call->ret = (ns_value){.t = ns_type_u64, .o = len};
-    } else if (ns_str_equals_STR(call->fn->name, "read")) {
+    } else if (ns_str_equals_STR(call->callee->name, "read")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         ns_value size = vm->symbol_stack[call->arg_offset + 1].val;
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
@@ -62,11 +62,11 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         i32 len = fread(buff, s, 1, f);
         ns_str ret = (ns_str){.data = buff, .len = len};
         call->ret = (ns_value){.t = ns_type_str, .o = (u64)ret.data};
-    } else if (ns_str_equals_STR(call->fn->name, "close")) {
+    } else if (ns_str_equals_STR(call->callee->name, "close")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         fclose((FILE*)fd.o);
         call->ret = ns_nil;
-    } else if (ns_str_equals_STR(call->fn->name, "sqrt")) {
+    } else if (ns_str_equals_STR(call->callee->name, "sqrt")) {
         ns_value x = vm->symbol_stack[call->arg_offset].val;
         call->ret = (ns_value){.t = ns_type_f64, .f64 = sqrt(x.f64)};
     } else {
@@ -152,7 +152,7 @@ ffi_type ns_ffi_map_type(ns_type t) {
 
 ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
-    ns_symbol *fn = call->fn;
+    ns_symbol *fn = call->callee;
 
     ffi_cif cif;
 
@@ -233,7 +233,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
 
 ns_return_bool ns_vm_call_ref(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
-    ns_symbol *fn = call->fn;
+    ns_symbol *fn = call->callee;
 
     if (ns_str_equals(fn->lib, ns_str_cstr("std"))) return ns_vm_call_std(vm);
     if (fn->fn.fn_ptr)  return ns_vm_call_ffi(vm);
