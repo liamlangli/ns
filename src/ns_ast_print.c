@@ -445,6 +445,9 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
                 printf(" = ");
                 ns_ast_print_node(ctx, n->var_def.expr, depth);
             }
+            if (depth == 0) {
+                printf("\n");
+            }
             break;
 
         case NS_AST_MEMBER_EXPR:
@@ -580,6 +583,12 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
         case NS_AST_STR_FMT_EXPR: {
             printf("\"");
             ns_str_printf(n->str_fmt.fmt);
+            for (i32 a_i = 0; a_i < n->str_fmt.expr_count; ++a_i) {
+                printf(" ");
+                ns_ast_print_node(ctx, n->next, depth);
+                n = &ctx->nodes[n->next];
+            }
+
             printf("\"");
             i32 count = n->str_fmt.expr_count;
             i32 next = n->next;
@@ -601,15 +610,13 @@ void ns_ast_ctx_print(ns_ast_ctx *ctx, ns_bool verbose) {
         for (i32 i = 0, l = ns_array_length(ctx->nodes); i < l; i++) {
             ns_ast_print(ctx, i);
         }
-        printf("\n");
 
         ns_info("ast", "section count %d\n", ctx->section_end - ctx->section_begin);
         for (i32 i = ctx->section_begin; i < ctx->section_end; i++) {
             ns_ast_print(ctx, ctx->sections[i]);
         }
     }
-
-    ns_info("ast", "section count %d\n", ctx->section_end - ctx->section_begin);
+    ns_info("ast", "ast code:\n");
     for (i32 i = ctx->section_begin; i < ctx->section_end; i++) {
         ns_ast_print_node(ctx, ctx->sections[i], 0);
     }

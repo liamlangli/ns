@@ -172,6 +172,8 @@ void *ns_eval_array_raw(ns_vm *vm, ns_value n);
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
 ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);
 
+ns_call *ns_call_enter(ns_vm *vm, ns_symbol *callee);
+ns_call *ns_call_exit(ns_vm *vm);
 ns_scope *ns_scope_enter(ns_vm *vm);
 ns_scope *ns_scope_exit(ns_vm *vm);
 

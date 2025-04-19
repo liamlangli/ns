@@ -227,6 +227,9 @@ typedef struct ns_ast_block_expr {
     i32 ret;
     i32 body;
     i32 arg_count;
+    struct {
+        i32 index;
+    } rt;
 } ns_ast_block_expr;
 
 typedef struct ns_ast_t {

@@ -146,13 +146,13 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
     ns_call call = (ns_call){.callee = fn, .ret = ret_val, .ret_set = false, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 2};
     ns_scope_enter(vm);
+    ns_array_push(vm->call_stack, call);
 
     ns_symbol l_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->fn.args[0].name, .val = l};
     ns_array_push(vm->symbol_stack, l_arg);
     ns_symbol r_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->fn.args[1].name, .val = r};
     ns_array_push(vm->symbol_stack, r_arg);
 
-    ns_array_push(vm->call_stack, call);
     ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
     ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->ops_fn_def.body);
     if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
@@ -884,6 +884,14 @@ ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, val);
 }
 
+ns_return_value ns_eval_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_unused(n);
+    ns_unused(vm);
+
+    return ns_return_ok(value, ns_nil);
+}
+
 ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_vm_inject_hook(vm, ctx, i);
 
@@ -951,6 +959,7 @@ ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_AST_UNARY_EXPR: return ns_eval_unary_expr(vm, ctx, i);
     case NS_AST_ARRAY_EXPR: return ns_eval_array_expr(vm, ctx, i);
     case NS_AST_INDEX_EXPR: return ns_eval_index_expr(vm, ctx, i);
+    case NS_AST_BLOCK_EXPR: return ns_eval_block_expr(vm, ctx, i);
     default:
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented expr type.");
     }
@@ -1074,6 +1083,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
                 ns_return_value ret = ns_eval_var_def(vm, ctx, s_i);
                 if (ns_return_is_error(ret)) return ret;
             } break;
+            case NS_AST_TYPE_DEF:
             case NS_AST_IMPORT_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:

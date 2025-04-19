@@ -2,6 +2,7 @@
 #include "ns_type.h"
 #include "ns_vm.h"
 #include "ns_fmt.h"
+#include "ns_os.h"
 
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -38,6 +39,26 @@ void ns_repl_mem(ns_vm *vm, ns_str arg) {
     ns_mem_status();
 }
 
+void ns_repl_load(ns_vm *vm, ns_str arg) {
+    ns_unused(vm); ns_unused(arg);
+    ns_info("ns_repl", "load file: %.*s\n", arg.len, arg.data);
+    ns_str filename = ns_str_slice(arg, 0, arg.len);
+
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    ns_str source = ns_fs_read_file(filename);
+    if (source.len == 0) { 
+        ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
+        return;
+    }
+    ns_ast_parse(&_ast, source, filename);
+    ns_vm_parse(vm, &_ast);
+}
+
+void ns_repl_symbols(ns_vm *vm, ns_str arg) {
+    ns_unused(vm); ns_unused(arg);
+    ns_vm_symbol_print(vm);
+}
+
 void ns_repl_add_cmd(ns_str cmd, ns_str shortcut, ns_repl_cmd_fn fn, ns_str desc) {
     ns_repl_cmd c = (ns_repl_cmd){.cmd = cmd, .fn = fn, .desc = desc, .s = shortcut};
     ns_array_push(_ctx.cmds, c);
@@ -63,16 +84,37 @@ void ns_repl_init(void) {
     ns_repl_add_cmd(ns_str_cstr("help"), ns_str_cstr("h"), ns_repl_help, ns_str_cstr("show help"));;
     ns_repl_add_cmd(ns_str_cstr("mem"), ns_str_cstr("m"), ns_repl_mem, ns_str_cstr("show memory status"));
     ns_repl_add_cmd(ns_str_cstr("exit"), ns_str_cstr("q"), ns_repl_exit, ns_str_cstr("exit repl"));
+    ns_repl_add_cmd(ns_str_cstr("symbols"), ns_str_cstr("s"), ns_repl_symbols, ns_str_cstr("show symbols"));
+    ns_repl_add_cmd(ns_str_cstr("load"), ns_str_cstr("l"), ns_repl_load, ns_str_cstr("load file"));
 }
 
-ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str cmd) {
-    if (ns_str_empty(cmd)) return false;
+ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str line) {
+    if (ns_str_empty(line)) return false;
+
     szt len = ns_array_length(_ctx.cmds);
     if (len == 0) return false;
+
+    // find first space to split cmd
+    i32 space = ns_str_index_of(line, ns_str_cstr(" "));
+
+    ns_str cmd;
+    ns_str arg;
+    if (space == -1) {
+        space = cmd.len;
+        cmd = line;
+        arg = ns_str_nil;
+    } else {
+        cmd = ns_str_range(line.data, space);
+        arg = ns_str_sub_expr(ns_str_range(line.data + space, line.len - space));
+    }
+    if (ns_str_empty(arg)) {
+        arg = ns_str_cstr("");
+    }
+
     for (szt i = 0; i < len; ++i) {
         ns_repl_cmd *c = &_ctx.cmds[i];
         if (ns_str_equals(c->s, cmd) || ns_str_equals(c->cmd, cmd)) {
-            c->fn(vm, cmd);
+            c->fn(vm, arg);
             return true;
         }
     }
