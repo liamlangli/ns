@@ -26,6 +26,7 @@ typedef struct ns_fn_symbol {
     ns_value fn;
     ns_type ret;
     ns_symbol *args;
+    i32 arg_required;
     void *fn_ptr;
 } ns_fn_symbol;
 
@@ -139,7 +140,8 @@ typedef struct ns_vm {
 ns_str ns_ops_name(ns_token_t op);
 ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 
-// number type
+// type
+ns_bool ns_type_match(ns_vm *vm, ns_type require, ns_type provide); // check if provide type can be converted to require type
 ns_number_type ns_vm_number_type(ns_type t);
 
 // vm parse stage

@@ -380,7 +380,7 @@ ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
         return ns_return_ok(bool, false);
     }
 
-    ns_ast_t fn = {.type = NS_AST_OPS_FN_DEF, .state = state, .ops_fn_def = {.ops = ops, .is_async = is_async, .is_ref = is_ref, .ret = 0, .body = 0}};
+    ns_ast_t fn = {.type = NS_AST_OPS_FN_DEF, .state = state, .ops_fn_def = {.ops = ops, .is_async = is_async, .is_ref = is_ref, .ret = 0, .body = 0, .arg_required = 2}};
     // parse parameters
     ns_token_skip_eol(ctx);
     ret = ns_parse_arg(ctx, true);

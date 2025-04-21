@@ -98,6 +98,7 @@ typedef struct ns_ast_ops_fn_def {
     ns_token_t ops;
     i32 left;
     i32 right;
+    i32 arg_required;
 } ns_ast_ops_fn_def;
 
 typedef struct ns_ast_var_def {

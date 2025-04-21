@@ -302,10 +302,9 @@ typedef struct ns_type {
 #define ns_type_index(t) (t.index)
 #define ns_type_set_store(t, s) ((ns_type){.ref = t.ref, .store = s, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_set_ref(t, r) ((ns_type){.ref = r, .store = t.store, .type = t.type, .array = t.array, .index = t.index})
-#define ns_type_equals(a, b) (a.type == b.type && a.index == b.index)
-
 #define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}
 
+#define ns_type_equals(a, b) (a.type == b.type && a.index == b.index)
 ns_type ns_type_encode(ns_value_type t, u64 i, ns_bool is_ref, ns_store s);
 
 #define ns_type_infer   (ns_type){.type = NS_TYPE_INFER}

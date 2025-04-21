@@ -1,6 +1,5 @@
 #include "ns_type.h"
 
-
 #ifdef NS_DEBUG
 typedef struct ns_allocator {
     u64 alloc_op, free_op, realloc_op;
