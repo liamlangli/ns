@@ -23,6 +23,7 @@ typedef struct ns_symbol ns_symbol;
 
 typedef struct ns_fn_symbol {
     i32 ast;
+    i32 body;
     ns_value fn;
     ns_type ret;
     ns_symbol *args;
@@ -52,11 +53,9 @@ typedef struct ns_array_symbol {
     ns_bool stack;
 } ns_array_symbol;
 
-#define ns_block_label (ns_str_cstr("__block"))
-
 typedef struct ns_block_symbol {
     i32 ast;
-    ns_value block;
+    ns_value val;
     ns_struct_symbol st;
     ns_fn_symbol fn;
 } ns_block_symbol;
@@ -150,7 +149,8 @@ i32 ns_vm_push_string(ns_vm *vm, ns_str s);
 i32 ns_vm_push_data(ns_vm *vm, ns_data d);
 i32 ns_type_size(ns_vm *vm, ns_type t);
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t);
-ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s);
+ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture);
+ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s);
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t);
 ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n);

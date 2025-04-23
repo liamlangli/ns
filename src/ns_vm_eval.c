@@ -38,6 +38,10 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
             case NS_TYPE_F64: *(f64*)&vm->stack[offset] = src.f64; break;
             case NS_TYPE_BOOL: *(ns_bool*)&vm->stack[offset] = src.b; break;
             case NS_TYPE_STRING: *(u64*)&vm->stack[offset] = src.o; break;
+            case NS_TYPE_FN: *(u64*)&vm->stack[offset] = src.o; break;
+            case NS_TYPE_BLOCK: {
+
+            } break;
             default: return ns_return_error(value, ns_code_loc_nil, NS_ERR_EVAL, "invalid const type.");
             }
         } break;
@@ -63,6 +67,7 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
             case NS_TYPE_F64: *(f64*)dst.o = src.f64; break;
             case NS_TYPE_BOOL: *(ns_bool*)dst.o = src.b; break;
             case NS_TYPE_STRING: *(u64*)dst.o = src.o; break;
+            case NS_TYPE_FN: *(u64*)dst.o = src.o; break;
             default: return ns_return_error(value, ns_code_loc_nil, NS_ERR_EVAL, "invalid const type.");
             }
         } break;
@@ -77,7 +82,7 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
 }
 
 ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
-    ns_symbol *s = ns_vm_find_symbol(vm, name);
+    ns_symbol *s = ns_vm_find_symbol(vm, name, false);
     if (!s) return ns_nil;
     switch (s->type)
     {
@@ -136,7 +141,7 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_str l_name = ns_vm_get_type_name(vm, l.t);
     ns_str r_name = ns_vm_get_type_name(vm, r.t);
     ns_str fn_name = ns_ops_override_name(l_name, r_name, op);
-    ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
+    ns_symbol *fn = ns_vm_find_symbol(vm, fn_name, false);
     if (!fn) return ns_return_ok(value, ns_nil);
 
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
@@ -345,13 +350,14 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "nil callee.");
     }
 
-    ns_symbol *fn = &vm->symbols[ns_type_index(callee.t)];
-    i32 ret_size = ns_type_size(vm, fn->fn.ret);
+    ns_symbol *sym = &vm->symbols[ns_type_index(callee.t)];
+    ns_fn_symbol *fn = ns_symbol_get_fn(sym);
+    i32 ret_size = ns_type_size(vm, fn->ret);
     if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
 
     u64 ret_offset = ns_eval_alloc(vm, ret_size);
-    ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->fn.ret, NS_STORE_STACK), .o = ret_offset};
-    ns_call call = (ns_call){.callee = fn, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->fn.args)};
+    ns_value ret_val = (ns_value){.t = ns_type_set_store(fn->ret, NS_STORE_STACK), .o = ret_offset};
+    ns_call call = (ns_call){.callee = sym, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->args)};
 
     ns_scope_enter(vm);
     i32 next = n->next;
@@ -361,17 +367,27 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         ns_value v = ret_v.r;
         next = ctx->nodes[next].next;
-        ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->fn.args[a_i].name, .val = v, .parsed = true};
+        ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->args[a_i].name, .val = v, .parsed = true};
         ns_array_push(vm->symbol_stack, arg);
     }
 
     ns_array_push(vm->call_stack, call);
-    if (fn->fn.fn.t.ref) {
+    if (fn->fn.t.ref) {
         ns_return_bool ret = ns_vm_call_ref(vm);
         if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     } else {
-        ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
-        ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->fn_def.body);
+        if (sym->type == NS_SYMBOL_BLOCK) { // push block captured field to stack
+            szt field_count = ns_array_length(sym->bc.st.fields);
+            u64 o = callee.o;
+            for (szt f_i = 0; f_i < field_count; ++f_i) {
+                ns_struct_field *field = &sym->bc.st.fields[f_i];
+                ns_value v = (ns_value){.t = ns_type_set_store(field->t, NS_STORE_STACK), .o = o + field->o};
+                ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = field->name, .val = v, .parsed = true};
+                ns_array_push(vm->symbol_stack, arg);
+            }
+        }
+
+        ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
         if (ns_return_is_error(ret)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "call expr error.");
     }
     call = ns_array_pop(vm->call_stack);
@@ -387,8 +403,8 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_value ret = ret_ret.r;
     if (ns_array_length(vm->call_stack) > 0) {
         ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
-        if (!ns_type_equals(call->callee->fn.ret, ret.t)) {
-            // TODO: try type cast, emit error if failed
+        ns_fn_symbol *fn = ns_symbol_get_fn(call->callee);
+        if (!ns_type_match(vm, fn->ret, ret.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return type mismatch.");
         }
         ns_eval_copy(vm, call->ret, ret, ns_type_size(vm, ret.t));
@@ -503,7 +519,7 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
         ns_str l_t = ns_vm_get_type_name(vm, l.t);
         ns_str r_t = ns_vm_get_type_name(vm, r.t);
         ns_str fn_name = ns_ops_override_name(l_t, r_t, n->ops_fn_def.ops);
-        ns_symbol *fn = ns_vm_find_symbol(vm, fn_name);
+        ns_symbol *fn = ns_vm_find_symbol(vm, fn_name, false);
         if (fn) {
             return ns_eval_call_ops_fn(vm, ctx, i, l, r, fn);
         }
@@ -584,11 +600,13 @@ ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             }
             j++;
 
-            if (j == fmt.len) {
+            if (j > fmt.len) {
                 return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "missing '}'.");
             }
 
             ns_return_value ret_v = ns_eval_expr(vm, ctx, expr->next);
+            if (ns_return_is_error(ret_v)) return ret_v;
+
             expr = &ctx->nodes[expr->next];
             count--;
 
@@ -616,7 +634,7 @@ ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_str st_name = n->desig_expr.name.val;
-    ns_symbol *st = ns_vm_find_symbol(vm, st_name);
+    ns_symbol *st = ns_vm_find_symbol(vm, st_name, false);
     
     if (ns_null == st) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown struct.");
 
@@ -886,17 +904,31 @@ ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_value ns_eval_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
-    ns_unused(n);
-    ns_unused(vm);
+    ns_symbol *sym = &vm->symbols[n->block_expr.rt.index];
+    if (sym->type == NS_SYMBOL_FN) return ns_return_ok(value, sym->fn.fn);
 
-    return ns_return_ok(value, ns_nil);
+    u64 offset = ns_eval_alloc(vm, (i32)(sym->st.stride));
+    ns_value ret = (ns_value){.t = ns_type_set_store(sym->bc.val.t, NS_STORE_STACK), .o = offset};
+
+    i32 field_count = ns_array_length(sym->bc.st.fields);
+    for (i32 f_i = 0; f_i < field_count; ++f_i) {
+        ns_struct_field *field = &sym->bc.st.fields[f_i];
+        ns_value src = ns_eval_find_value(vm, field->name);
+        if (ns_is_nil(src)) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown field.");
+        }
+        ns_value dst = (ns_value){.t = ns_type_set_store(field->t, NS_STORE_STACK), .o = offset + field->o};
+        ns_eval_copy(vm, dst, src, (i32)field->s);
+    }
+
+    return ns_return_ok(value, ret);
 }
 
 ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_vm_inject_hook(vm, ctx, i);
 
     ns_ast_t *n = &ctx->nodes[i];
-    ns_symbol *val = ns_vm_find_symbol(vm, n->var_def.name.val);
+    ns_symbol *val = ns_vm_find_symbol(vm, n->var_def.name.val, false);
 
     // eval & store value
     i32 size = n->var_def.type_size;
@@ -983,6 +1015,7 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         i32 next = expr->next;
         expr = &ctx->nodes[expr->next];
         switch (expr->type) {
+        case NS_AST_EXPR:
         case NS_AST_CALL_EXPR:
         case NS_AST_BINARY_EXPR:
         case NS_AST_PRIMARY_EXPR:
@@ -1035,7 +1068,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
     }
 
     ns_value main_ret = ns_nil;
-    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"));
+    ns_symbol* main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"), false);
     if (!main_fn) {
         ns_call call = (ns_call){.callee = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
         ns_array_push(vm->call_stack, call);
