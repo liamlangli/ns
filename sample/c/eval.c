@@ -26,7 +26,7 @@ i32 main() {
     add_fn.ret = ns_type_i32;
     add_fn.fn = add;
     ns_vm_def_fn(&vm, &add_fn);
-    ns_return_value ret =  ns_eval(&vm, ns_str_cstr(script), ns_str_cstr("<eval>"));
+    ns_return_value ret = ns_eval(&vm, ns_str_cstr(script), ns_str_cstr("<eval>"));
     ns_return_assert(ret);
     return 0;
 }

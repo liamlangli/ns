@@ -358,11 +358,11 @@ typedef struct ns_value {
 #define ns_false        ((ns_value){.t = ns_type_bool, .b = false})
 
 // ns_array
-typedef struct ns_array_header {
+typedef struct ns_array_header_t {
     size_t len;
     size_t cap;
     ns_type type;
-} ns_array_header;
+} ns_array_header_t;
 
 #ifdef NS_DEBUG
 void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap, const_str file, i32 line);
@@ -370,7 +370,7 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap, const_s
 void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap);
 #endif
 
-#define ns_array_header(a) ((ns_array_header *)(a) - 1)
+#define ns_array_header(a) ((ns_array_header_t *)(a) - 1)
 #define ns_array_length(a) ((a) ? (ns_array_header(a))->len : 0)
 #define ns_array_capacity(a) ((a) ? ns_array_header(a)->cap : 0)
 #define ns_array_type(a) ((a) ? ns_array_header(a)->type : ns_type_unknown)

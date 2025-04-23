@@ -95,13 +95,13 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap)
     if (min_cap < 2 * ns_array_capacity(a)) min_cap = 2 * ns_array_capacity(a);
     else if (min_cap < 8) min_cap = 8;
 
-    szt new_size = elem_size * min_cap + sizeof(ns_array_header);
+    szt new_size = elem_size * min_cap + sizeof(ns_array_header_t);
 #ifdef NS_DEBUG
     if (a) {
 
         b = _ns_realloc(ns_array_header(a), new_size, file, line);
         _ns_heap.alloc_op++;
-        _ns_heap.alloc += new_size - (ns_array_capacity(a) * elem_size + sizeof(ns_array_header));
+        _ns_heap.alloc += new_size - (ns_array_capacity(a) * elem_size + sizeof(ns_array_header_t));
     } else {
         b = _ns_malloc(new_size, file, line);
         _ns_heap.alloc_op++;
@@ -117,7 +117,7 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap)
 
     if (!b) return NULL; // handle allocation failure
 
-    b = (char *)b + sizeof(ns_array_header);
+    b = (char *)b + sizeof(ns_array_header_t);
     if (ns_null == a) {
         ns_array_header(b)->len = 0;
     }

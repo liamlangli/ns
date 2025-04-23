@@ -216,9 +216,8 @@ szt ns_vm_get_last_call(ns_vm *vm) {
     if (l > 0) {
         for (szt i = l - 1; i >= 0; --i) {
             ns_call *call = &vm->call_stack[i];
-            if (call->callee->type == NS_SYMBOL_FN) {
-                return i;
-            }
+            ns_symbol *callee = call->callee;
+            if (callee == ns_null || callee->type == NS_SYMBOL_FN) return i;
         }
     }
     return -1;
