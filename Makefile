@@ -26,6 +26,8 @@ ifeq ($(OS), Linux)
 	NS_LIB_SUFFIX = .a
 	NS_PLATFORM_DEF = -DNS_LINUX
 	NS_OS =	$(NS_LINUX)
+	NS_CC = gcc
+	NS_LD = ld
 else ifeq ($(OS), Darwin)
 	NS_DYLIB_SUFFIX = .dylib
 	NS_LIB_SUFFIX = .a
