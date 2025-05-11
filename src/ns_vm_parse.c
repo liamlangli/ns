@@ -211,7 +211,7 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
 }
 
 // reverse search call_stack get last ns_call which callee type is NS_TYPE_FN rather than NS_TYPE_BLOCK
-szt ns_vm_get_last_call(ns_vm *vm) {
+i32 ns_vm_get_last_call(ns_vm *vm) {
     szt l = ns_array_length(vm->call_stack);
     if (l > 0) {
         for (szt i = l - 1; i >= 0; --i) {
@@ -243,7 +243,7 @@ void ns_vm_block_capture_symbol(ns_vm *vm, ns_symbol *bc, ns_symbol *s) {
 }
 
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture) {
-    szt l = ns_vm_get_last_call(vm);
+    i32 l = ns_vm_get_last_call(vm);
     ns_symbol *ret = ns_null;
     if (l >= 0) {
         ns_call *call = &vm->call_stack[l];
