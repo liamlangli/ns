@@ -2,7 +2,7 @@
 #include "ns_json.h"
 #include "ns_net.h"
 
-sszt ns_getline(char **lineptr, szt *n, FILE *stream) {
+szt ns_getline(char **lineptr, szt *n, FILE *stream) {
     if (*lineptr == NULL || *n == 0) {
         *n = 128; // Start with an initial buffer size
         *lineptr = (char *)ns_malloc(*n);
@@ -39,7 +39,7 @@ static ns_str _in = (ns_str){0, 0, 1};
 ns_str ns_lsp_read() {
     szt s;
     i8* b = 0;
-    sszt n = ns_getline(&b, &s, stdin);
+    i32 n = (i32)ns_getline(&b, &s, stdin);
     if (n == -1) {
         return ns_str_null;
     }
@@ -73,9 +73,9 @@ void handle_init(i32 req) {
 }
 
 int main() {
-    while (1)
-    {
+    while (1) {
         ns_str line = ns_lsp_read();
+        if (ns_str_empty(line)) continue;
         i32 r = ns_json_parse(line);
         handle_init(r);
     }

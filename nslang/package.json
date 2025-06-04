@@ -56,12 +56,12 @@
                         "socket"
                     ],
                     "default": "stdio",
-                    "description": "The mode of the language server"
+                    "description": "The mode of the language server."
                 },
                 "ns.lsp.port": {
                     "type": "number",
                     "default": 5000,
-                    "description": "The port of the language server"
+                    "description": "The port of the language server."
                 }
             }
         },
@@ -80,9 +80,6 @@
                     ".ns"
                 ],
                 "configuration": "./language-configuration.json"
-            },
-            {
-                "id": "ns-markdown-injection"
             }
         ],
         "activationEvents": [
@@ -94,17 +91,6 @@
                 "language": "ns",
                 "scopeName": "source.ns",
                 "path": "./ns.json"
-            },
-            {
-                "language": "ns-markdown-injection",
-                "scopeName": "markdown.ns.codeblock",
-                "path": "./markdown.json",
-                "injectTo": [
-                    "text.html.markdown"
-                ],
-                "embeddedLanguages": {
-                    "meta.embedded.block.ns": "ns"
-                }
             }
         ]
     },

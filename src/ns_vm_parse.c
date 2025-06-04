@@ -260,7 +260,7 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture) {
         }
 
         if (capture && ret) {
-            szt t = ns_array_length(vm->call_stack) - 1;
+            i32 t = (i32)ns_array_length(vm->call_stack) - 1;
             ns_call *top_call = &vm->call_stack[t];
             if (t > l && top_call->callee->type == NS_SYMBOL_BLOCK && j < top_call->arg_offset) {
                 ns_vm_block_capture_symbol(vm, top_call->callee, ret);
