@@ -2,6 +2,11 @@
 #include "ns_json.h"
 #include "ns_net.h"
 
+typedef enum {
+    NS_LSP_STDIO,
+    NS_LSP_SOCKET
+} ns_lsp_mode;
+
 szt ns_getline(char **lineptr, szt *n, FILE *stream) {
     if (*lineptr == NULL || *n == 0) {
         *n = 128; // Start with an initial buffer size
@@ -72,13 +77,97 @@ void handle_init(i32 req) {
     send_response(r);
 }
 
-int main() {
-    while (1) {
-        ns_str line = ns_lsp_read();
-        if (ns_str_empty(line)) continue;
-        i32 r = ns_json_parse(line);
-        handle_init(r);
+ns_bool ns_lsp_parse_header(ns_str s, i32 *head_len, i32 *body_len) {
+    i32 i = ns_str_index_of(s, ns_str_cstr("\r\n\r\n"));
+    if (i == -1) {
+        return false;
+    }
+    ns_str header = (ns_str){s.data, i, 0};
+    i32 l = ns_str_index_of(header, ns_str_cstr("Content-Length: "));
+    if (l == -1) {
+        return false;
+    }
+    i32 len = ns_str_to_i32(ns_str_slice(header, l + 16, header.len));
+    if (len < 0) {
+        return false; // Invalid content length
+    }
+    *head_len = i + 4; // Length of header including "\r\n\r\n"
+    *body_len = len;
+    return true;
+}
+
+void ns_lsp_on_connect(ns_conn *conn) {
+    ns_unused(conn);
+    ns_info("lsp", "New connection established.\n");
+    i32 req_len = 0;
+    while(1) {
+        ns_data data = ns_tcp_read(conn);
+        if (data.len == 0) {
+            continue;
+        }
+        i32 rest_len = data.len;
+        while(rest_len > 0) {
+            if (req_len == 0) {
+                i32 head_len = 0, body_len = 0;
+                if (ns_lsp_parse_header(ns_str_range(data.data, rest_len), &head_len, &body_len)) {
+                    req_len = body_len;
+                    rest_len -= head_len;
+                    data.data += head_len;
+                } else {
+                    ns_exit(1, "lsp", "Invalid request header");
+                }
+            }
+            if (req_len > 0 && rest_len >= req_len) {
+                i32 r = ns_json_parse(_in);
+                handle_init(r);
+                _in.len = 0;
+                data.data += req_len;
+                rest_len -= req_len;
+                req_len = 0;
+            } else {
+                ns_str_append(&_in, ns_str_range(data.data, data.len));
+                req_len -= rest_len;
+                break;
+            }
+        }
+    }
+}
+
+i32 main(i32 argc, i8 **argv) {
+    ns_lsp_mode mode = NS_LSP_STDIO;
+    u16 port = 9000; // Default port for socket mode
+    for (i32 i = 1; i < argc; i++) {
+        if (ns_str_equals_STR(ns_str_cstr("--socket"), argv[i])) {
+            mode = NS_LSP_SOCKET;
+        } else if (ns_str_equals_STR(ns_str_cstr("--stdio"), argv[i])) {
+            mode = NS_LSP_STDIO;
+        } else if (ns_str_equals_STR(ns_str_cstr("--port"), argv[i])) {
+            if (i + 1 < argc) {
+                i8 *port_str = argv[i + 1];
+                szt len = strlen(port_str);
+                ns_str port_ns_str = ns_str_range(port_str, len);
+                port = (u16)ns_str_to_i32(port_ns_str);
+                ++i;
+            } else {
+                fprintf(stderr, "Error: --port requires a value\n");
+                return 1;
+            }
+        } else {
+            fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+            return 1;
+        }
     }
 
+    if (mode == NS_LSP_SOCKET) {
+        ns_info("lsp", "Listening on port %d\n", port);
+        ns_tcp_serve(port, ns_lsp_on_connect);
+    } else {
+        while (1) {
+            ns_str line = ns_lsp_read();
+            if (ns_str_empty(line)) continue;
+            i32 r = ns_json_parse(line);
+            handle_init(r);
+        }
+    }
     return 0;
 }

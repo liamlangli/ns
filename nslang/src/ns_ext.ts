@@ -1,8 +1,10 @@
+import * as net from "net";
 import * as vscode from "vscode";
 import {
     LanguageClient,
     LanguageClientOptions,
     ServerOptions,
+    StreamInfo,
     TransportKind,
 } from "vscode-languageclient/node";
 
@@ -12,19 +14,30 @@ let log: vscode.OutputChannel;
 function start_lsp_client(context: vscode.ExtensionContext) {
     // get nanoscript configuration
     const ns_config = vscode.workspace.getConfiguration("ns");
-    const mode = ns_config.get<"stdio" | "socket">("lsp.mode");
-    const port = ns_config.get<number>("lsp.port");
+    const mode = ns_config.get<"stdio" | "socket">("lsp.mode") ?? "socket";
+    const port = ns_config.get<number>("lsp.port") ?? 9000;
 
     let server_options: ServerOptions;
-    if (mode === "socket") {
+    if (mode === "stdio") {
         server_options = {
             run: { command: "ns_lsp", transport: TransportKind.stdio },
             debug: { command: "ns_lsp", transport: TransportKind.stdio },
         }
     } else {
-        server_options = {
-            run: { command: "ns_lsp", transport: { kind: TransportKind.socket, port } },
-            debug: { command: "ns_lsp", transport: { kind: TransportKind.socket, port } }
+        server_options = (): Promise<StreamInfo> => {
+            return new Promise((resolve, reject) => {
+                const socket = net.connect({port}, () => {
+                    log?.appendLine("[ns_lsp] connected to server");
+                    resolve({
+                        reader: socket,
+                        writer: socket,
+                    });
+                });
+                socket.on('error', (err) => {
+                    log?.appendLine(`[ns_lsp] connection error: ${err.message}`);
+                    reject(err)
+                });
+            });
         }
     }
 

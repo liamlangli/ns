@@ -391,6 +391,7 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap);
 
 #define ns_array_insert(a, i, v) (ns_array_ensure(a, 1), memmove(&(a)[(i) + 1], &(a)[i], (ns_array_length(a) - (i)) * sizeof *(a)), (a)[i] = (v), ns_array_header(a)->len++)
 #define ns_array_splice(a, i) (memmove(&(a)[i], &(a)[(i) + 1], (ns_array_length(a) - (i) - 1) * sizeof *(a)), ns_array_header(a)->len--)
+#define ns_array_append(a, b) (ns_array_ensure(a, ns_array_length(b)), memcpy(&(a)[ns_array_length(a)], (b), ns_array_length(b) * sizeof *(b)), ns_array_header(a)->len += ns_array_length(b))
 
 // ns return
 typedef enum {

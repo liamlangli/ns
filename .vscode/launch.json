@@ -45,7 +45,7 @@
             "name": "lsp",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns_lsp",
-            "args": [],
+            "args": ["--socket", "--port", "9000"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -53,7 +53,7 @@
             "request": "launch",
             "name": "debug[socket]",
             "program": "${workspaceFolder}/bin/ns_debug",
-            "args": ["--socket", "--port", "5001"],
+            "args": ["--socket", "--port", "9001"],
             "cwd": "${workspaceFolder}"
         },
         {
