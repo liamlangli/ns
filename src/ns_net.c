@@ -228,7 +228,7 @@ ns_bool ns_tcp_serve(u16 port, ns_on_connect on_connect) {
     while (1) {
         conn_fd = accept(socket_fd, (struct sockaddr *)&client_addr, &addr_len);
         if (conn_fd < 0) {
-            ns_warn("ns_net", "accept failed");
+            ns_warn("ns_net", "accept failed.\n");
             continue;
         }
 

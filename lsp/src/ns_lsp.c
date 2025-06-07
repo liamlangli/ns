@@ -113,8 +113,9 @@ void ns_lsp_on_connect(ns_conn *conn) {
                     req_len = body_len;
                     rest_len -= head_len;
                     data.data += head_len;
+                    data.len = rest_len;
                 } else {
-                    ns_exit(1, "lsp", "Invalid request header");
+                    ns_exit(1, "lsp", "Invalid request header.");
                 }
             }
             if (req_len > 0 && rest_len >= req_len) {
@@ -125,8 +126,10 @@ void ns_lsp_on_connect(ns_conn *conn) {
                 rest_len -= req_len;
                 req_len = 0;
             } else {
-                ns_str_append(&_in, ns_str_range(data.data, data.len));
-                req_len -= rest_len;
+                if (rest_len > 0) {
+                    ns_str_append(&_in, ns_str_range(data.data, data.len));
+                    req_len -= rest_len;
+                }
                 break;
             }
         }
@@ -149,17 +152,17 @@ i32 main(i32 argc, i8 **argv) {
                 port = (u16)ns_str_to_i32(port_ns_str);
                 ++i;
             } else {
-                fprintf(stderr, "Error: --port requires a value\n");
+                fprintf(stderr, "Error: --port requires a value.\n");
                 return 1;
             }
         } else {
-            fprintf(stderr, "Unknown argument: %s\n", argv[i]);
+            fprintf(stderr, "Unknown argument: %s.\n", argv[i]);
             return 1;
         }
     }
 
     if (mode == NS_LSP_SOCKET) {
-        ns_info("lsp", "Listening on port %d\n", port);
+        ns_info("lsp", "Listening on port %d.\n", port);
         ns_tcp_serve(port, ns_lsp_on_connect);
     } else {
         while (1) {
