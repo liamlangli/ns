@@ -16,9 +16,17 @@ typedef struct {
             u16 port;
         } socket; // For socket mode
     };
-    ns_bool connected;
-    i32 process_id;
-    ns_str name;
+
+    struct {
+        ns_bool connected;
+        i32 process_id;
+        ns_str name;
+    } client;
+
+    struct {
+        ns_str root_path;
+        ns_str root_uri;
+    } workspace;
 } ns_lsp_client;
 
 typedef enum {
@@ -169,17 +177,24 @@ void ns_lsp_handle_init(i32 req) {
 
     ns_json_set(r, ns_str_cstr("result"), result);
 
-    _client.process_id = ns_json_to_i32(ns_json_get_prop(params, ns_str_cstr("processId")));
+    _client.client.process_id = ns_json_to_i32(ns_json_get_prop(params, ns_str_cstr("processId")));
     i32 client_info = ns_json_get_prop(params, ns_str_cstr("clientInfo"));
     if (client_info != 0) {
         ns_str name = ns_json_to_string(ns_json_get_prop(client_info, ns_str_cstr("name")));
         if (!ns_str_is_empty(name)) {
-            _client.name = name;
+            _client.client.name = name;
         }
     }
-
+    i32 root_path = ns_json_get_prop(params, ns_str_cstr("rootPath"));
+    if (root_path != 0) {
+        _client.workspace.root_path = ns_json_to_string(root_path);
+    }
+    i32 root_uri = ns_json_get_prop(params, ns_str_cstr("rootUri"));
+    if (root_uri != 0) {
+        _client.workspace.root_uri = ns_json_to_string(root_uri);
+    }
     ns_lsp_response(r);
-    ns_info("lsp", "Initialized LSP server with process ID: %d, client name: %.*s\n", _client.process_id, _client.name.len, _client.name.data);
+    ns_info("lsp", "Initialized LSP server with process ID: %d, client name: %.*s\n", _client.client.process_id, _client.client.name.len, _client.client.name.data);
 }
 
 void ns_lsp_handle_inited(i32 req) {
@@ -201,7 +216,7 @@ void ns_lsp_handle_inited(i32 req) {
 
     ns_json_set(r, ns_str_cstr("result"), result);
 
-    _client.connected = true;
+    _client.client.connected = true;
     ns_lsp_response(r);
 }
 
