@@ -225,6 +225,70 @@ i32 ns_str_index_of(ns_str s, ns_str sub) {
     return -1;
 }
 
+i32 ns_str_append_i32(ns_str *s, i32 n) {
+    // append i32 to string
+    ns_bool neg = 0;
+
+    if (n < 0) {
+        neg = 1;
+        n = -n;
+    }
+
+    i32 size = 0;
+    i32 m = n;
+    while (m) {
+        m /= 10;
+        size++;
+    }
+
+    if (neg) {
+        ns_array_push(s->data, '-');
+    }
+
+    if (n == 0) {
+        ns_array_push(s->data, '0');
+        s->len++;
+    } else {
+        i32 j = size;
+        i32 k = s->len;
+        while (n) {
+            i32 d = n % 10;
+            n /= 10;
+            ns_array_push(s->data, d + '0');
+        }
+
+        i32 l = k + j;
+        while (k < l) {
+            i8 t = s->data[k];
+            s->data[k] = s->data[l - 1];
+            s->data[l - 1] = t;
+            k++;
+            l--;
+        }
+        s->len += size + neg;
+    }
+
+    return s->len;
+}
+
+i32 ns_str_append_f64(ns_str *s, f64 n, i32 precision) {
+    // append f64 to string
+    ns_str_append_i32(s, (i32)n);
+    ns_array_push(s->data, '.');
+
+    f64 f = n - (i32)n;
+    i32 i = 0;
+    while (i < precision) {
+        f *= 10;
+        i32 d = (i32)f;
+        ns_array_push(s->data, d + '0');
+        f -= d;
+        i++;
+    }
+    s->len += precision + 1;
+    return s->len;
+}
+
 ns_str ns_str_slice(ns_str s, i32 start, i32 end) {
     i8 *d = (i8 *)ns_malloc(end - start + 1);
     memcpy(d, s.data + start, end - start);

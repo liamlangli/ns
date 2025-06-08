@@ -2,6 +2,14 @@
 
 #include "ns_type.h"
 
+/**
+ *   DOC: ns json lib.
+ *   for better performance, and minize the memory allocation, ns json use a single static json node
+ * stack and a single static string buffer. every time parse or stringify a json, it will reset the stack and
+ * the string buffer.
+ *   CAUTION: this means you can only parse or stringify one json at a time, and the result will be overwritten.
+ */
+
 typedef enum {
     NS_JSON_INVALID = 0,
     NS_JSON_FALSE,

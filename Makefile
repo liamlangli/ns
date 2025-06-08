@@ -179,7 +179,7 @@ include lsp/Makefile
 include debug/Makefile
 include sample/c/Makefile
 
-install: all ns_debug ns_lsp
+install: all ${NS_DAP_TARGET} ${NS_LSP_TARGET}
 	$(NS_MKDIR) ~/.cache/ns/bin
 	$(NS_CP) bin/ns$(NS_SUFFIX) ~/.cache/ns/bin
 	$(NS_CP) bin/ns_debug$(NS_SUFFIX) ~/.cache/ns/bin

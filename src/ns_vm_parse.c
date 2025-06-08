@@ -167,7 +167,7 @@ i32 ns_struct_field_index(ns_symbol *st, ns_str s) {
 
 ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
     ns_str op_name = ns_ops_name(op);
-    if (ns_str_empty(op_name)) return ns_str_null;
+    if (ns_str_is_empty(op_name)) return ns_str_null;
 
     szt len = l.len + r.len + op_name.len + 3;
     i8* data = (i8*)ns_malloc(len);
@@ -371,7 +371,7 @@ ns_return_void ns_vm_parse_ops_fn_def_name(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_str r_type = ctx->nodes[r.arg.type].type_label.name.val;
 
         fn.name = ns_ops_override_name(l_type, r_type, n->ops_fn_def.ops);
-        if (ns_str_empty(fn.name)) {
+        if (ns_str_is_empty(fn.name)) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unknown ops override.");
         }
 

@@ -89,7 +89,7 @@ void ns_repl_init(void) {
 }
 
 ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str line) {
-    if (ns_str_empty(line)) return false;
+    if (ns_str_is_empty(line)) return false;
 
     szt len = ns_array_length(_ctx.cmds);
     if (len == 0) return false;
@@ -107,7 +107,7 @@ ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str line) {
         cmd = ns_str_range(line.data, space);
         arg = ns_str_sub_expr(ns_str_range(line.data + space, line.len - space));
     }
-    if (ns_str_empty(arg)) {
+    if (ns_str_is_empty(arg)) {
         arg = ns_str_cstr("");
     }
 

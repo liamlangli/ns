@@ -15,6 +15,7 @@ typedef void(*ns_on_data)(ns_conn*, ns_data);
 ns_bool ns_udp_serve(u16 port, ns_on_data on_data);
 ns_bool ns_tcp_serve(u16 port, ns_on_connect on_connect);
 ns_data ns_tcp_read(ns_conn *conn);
+ns_bool ns_tcp_write(ns_conn *conn, ns_data data);
 
 void ns_conn_send(ns_conn *conn, ns_data data);
 void ns_conn_close(ns_conn *conn);

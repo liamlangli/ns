@@ -3,9 +3,46 @@
 #include "ns_net.h"
 
 typedef enum {
+    NS_LSP_INVALID = 0,
     NS_LSP_STDIO,
     NS_LSP_SOCKET
 } ns_lsp_mode;
+
+typedef struct {
+    ns_lsp_mode mode;
+    union {
+        struct {
+            ns_conn *conn;
+            u16 port;
+        } socket; // For socket mode
+    };
+    ns_bool connected;
+    i32 process_id;
+    ns_str name;
+} ns_lsp_client;
+
+typedef enum {
+    NS_LSP_METHOD_UNKNOWN = 0,
+    NS_LSP_METHOD_INITIALIZE,
+    NS_LSP_METHOD_INITIALIZED,
+    NS_LSP_METHOD_SHUTDOWN,
+    NS_LSP_METHOD_EXIT,
+    NS_LSP_METHOD_TEXT_DOCUMENT_DID_OPEN,
+    NS_LSP_METHOD_TEXT_DOCUMENT_DID_CLOSE,
+    NS_LSP_METHOD_TEXT_DOCUMENT_DID_SAVE,
+    NS_LSP_METHOD_TEXT_DOCUMENT_DID_CHANGE,
+    NS_LSP_METHOD_COMPLETION,
+    NS_LSP_METHOD_HOVER,
+    NS_LSP_METHOD_DEFINITION,
+    NS_LSP_METHOD_REFERENCES,
+    NS_LSP_METHOD_DOCUMENT_SYMBOL,
+    NS_LSP_METHOD_WORKSPACE_SYMBOL,
+} ns_lsp_method;
+
+static ns_lsp_client _client = {0};
+static ns_str _in = (ns_str){0, 0, 1};
+static ns_str _out = (ns_str){0, 0, 1};
+
 
 szt ns_getline(char **lineptr, szt *n, FILE *stream) {
     if (*lineptr == NULL || *n == 0) {
@@ -40,7 +77,6 @@ szt ns_getline(char **lineptr, szt *n, FILE *stream) {
     return len;
 }
 
-static ns_str _in = (ns_str){0, 0, 1};
 ns_str ns_lsp_read() {
     szt s;
     i8* b = 0;
@@ -60,21 +96,146 @@ ns_str ns_lsp_read() {
     return _in;
 }
 
-void send_response(i32 result) {
-    ns_str str = ns_json_stringify(ns_json_get(result));
-    fprintf(stdout, "%zu\n", (szt)str.len);
-    fprintf(stdout, "%.*s\n", str.len, str.data);
+void ns_lsp_response(i32 r) {
+    ns_str str = ns_json_stringify(ns_json_get(r));
+
+    ns_str_append(&_out, ns_str_cstr("Content-Length: "));
+    ns_str_append_i32(&_out, (i32)str.len);
+    ns_str_append(&_out, ns_str_cstr("\r\n\r\n"));
+    ns_str_append(&_out, str);
+
+    if (_client.mode == NS_LSP_STDIO) {
+        fprintf(stdout, "%.*s", _out.len, _out.data);
+        fflush(stdout);
+    } else if (_client.mode == NS_LSP_SOCKET) {
+        ns_tcp_write(_client.socket.conn, (ns_data){_out.data, _out.len});
+    } else {
+        ns_warn("lsp", "Invalid LSP mode.\n");
+        return;
+    }
+    ns_str_clear(&_out);
 }
 
-void handle_init(i32 req) {
-    i32 r = ns_json_make_object();
+ns_lsp_method ns_lsp_parse_method(ns_str str) {
+    if (ns_str_equals_STR(str, "initialized")) {
+        return NS_LSP_METHOD_INITIALIZED;
+    } else if (ns_str_equals_STR(str, "initialize")) {
+        return NS_LSP_METHOD_INITIALIZE;
+    } else if (ns_str_equals_STR(str, "shutdown")) {
+        return NS_LSP_METHOD_SHUTDOWN;
+    } else if (ns_str_equals_STR(str, "exit")) {
+        return NS_LSP_METHOD_EXIT;
+    } else if (ns_str_equals_STR(str, "textDocument/didOpen")) {
+        return NS_LSP_METHOD_TEXT_DOCUMENT_DID_OPEN;
+    } else if (ns_str_equals_STR(str, "textDocument/didClose")) {
+        return NS_LSP_METHOD_TEXT_DOCUMENT_DID_CLOSE;
+    } else if (ns_str_equals_STR(str, "textDocument/didSave")) {
+        return NS_LSP_METHOD_TEXT_DOCUMENT_DID_SAVE;
+    } else if (ns_str_equals_STR(str, "textDocument/didChange")) {
+        return NS_LSP_METHOD_TEXT_DOCUMENT_DID_CHANGE;
+    } else if (ns_str_equals_STR(str, "textDocument/completion")) {
+        return NS_LSP_METHOD_COMPLETION;
+    } else if (ns_str_equals_STR(str, "textDocument/hover")) {
+        return NS_LSP_METHOD_HOVER;
+    } else if (ns_str_equals_STR(str, "textDocument/definition")) {
+        return NS_LSP_METHOD_DEFINITION;
+    } else if (ns_str_equals_STR(str, "textDocument/references")) {
+        return NS_LSP_METHOD_REFERENCES;
+    } else if (ns_str_equals_STR(str, "textDocument/documentSymbol")) {
+        return NS_LSP_METHOD_DOCUMENT_SYMBOL;
+    } else if (ns_str_equals_STR(str, "workspace/symbol")) {
+        return NS_LSP_METHOD_WORKSPACE_SYMBOL;
+    } else {
+        return NS_LSP_METHOD_UNKNOWN;
+    }
+}
 
+void ns_lsp_handle_init(i32 req) {
+    i32 params = ns_json_get_prop(req, ns_str_cstr("params"));
+    if (params == 0) {
+        ns_warn("lsp", "No params in request.\n");
+    }
+
+    i32 r = ns_json_make_object();
     ns_json_set(r, ns_str_cstr("jsonrpc"), ns_json_make_string(ns_str_cstr("2.0")));
-    ns_json_set(r, ns_str_cstr("id"), ns_json_get_prop(req, ns_str_cstr("id")));
+
+    // set id
+    i32 id = ns_json_to_i32(ns_json_get_prop(req, ns_str_cstr("id")));
+    ns_json_set(r, ns_str_cstr("id"), ns_json_make_number(id));
+
+    // set result
     i32 result = ns_json_make_object();
     ns_json_set(result, ns_str_cstr("capabilities"), ns_json_make_object());
+
     ns_json_set(r, ns_str_cstr("result"), result);
-    send_response(r);
+
+    _client.process_id = ns_json_to_i32(ns_json_get_prop(params, ns_str_cstr("processId")));
+    i32 client_info = ns_json_get_prop(params, ns_str_cstr("clientInfo"));
+    if (client_info != 0) {
+        ns_str name = ns_json_to_string(ns_json_get_prop(client_info, ns_str_cstr("name")));
+        if (!ns_str_is_empty(name)) {
+            _client.name = name;
+        }
+    }
+
+    ns_lsp_response(r);
+    ns_info("lsp", "Initialized LSP server with process ID: %d, client name: %.*s\n", _client.process_id, _client.name.len, _client.name.data);
+}
+
+void ns_lsp_handle_inited(i32 req) {
+    i32 params = ns_json_get_prop(req, ns_str_cstr("params"));
+    if (params == 0) {
+        ns_warn("lsp", "No params in initialized request.\n");
+    }
+
+    i32 r = ns_json_make_object();
+    ns_json_set(r, ns_str_cstr("jsonrpc"), ns_json_make_string(ns_str_cstr("2.0")));
+
+    // set id
+    i32 id = ns_json_to_i32(ns_json_get_prop(req, ns_str_cstr("id")));
+    ns_json_set(r, ns_str_cstr("id"), ns_json_make_number(id));
+
+    // set result
+    i32 result = ns_json_make_object();
+    ns_json_set(result, ns_str_cstr("capabilities"), ns_json_make_object());
+
+    ns_json_set(r, ns_str_cstr("result"), result);
+
+    _client.connected = true;
+    ns_lsp_response(r);
+}
+
+void ns_lsp_handle_request(i32 req) {
+    i32 method = ns_json_get_prop(req, ns_str_cstr("method"));
+    if (method == 0) {
+        // dump input json
+        ns_str input_json = ns_json_stringify(ns_json_get(req));
+        ns_exit(1, "lsp", "Received request without method: %.*s\n", input_json.len, input_json.data);
+    }
+    ns_str method_str = ns_json_to_string(method);
+    ns_lsp_method lsp_method = ns_lsp_parse_method(method_str);
+    switch (lsp_method) {
+        case NS_LSP_METHOD_INITIALIZE:
+            ns_lsp_handle_init(req);
+            break;
+        case NS_LSP_METHOD_INITIALIZED:
+            ns_lsp_handle_inited(req);
+            ns_info("lsp", "Initialized method called.\n");
+            break;
+        case NS_LSP_METHOD_SHUTDOWN:
+            // Handle shutdown method
+            ns_info("lsp", "Shutdown method called.\n");
+            break;
+        case NS_LSP_METHOD_EXIT:
+            // Handle exit method
+            ns_info("lsp", "Exit method called.\n");
+            exit(0);
+            break;
+        default:
+            ns_exit(1, "lsp", "Unknown method: %.*s\n", method_str.len, method_str.data);
+            // You can handle other methods here as needed
+            break;
+    }
 }
 
 ns_bool ns_lsp_parse_header(ns_str s, i32 *head_len, i32 *body_len) {
@@ -97,80 +258,79 @@ ns_bool ns_lsp_parse_header(ns_str s, i32 *head_len, i32 *body_len) {
 }
 
 void ns_lsp_on_connect(ns_conn *conn) {
-    ns_unused(conn);
     ns_info("lsp", "New connection established.\n");
-    i32 req_len = 0;
+    _client.socket.conn = conn;
+
+    i32 head, body, recv;
     while(1) {
         ns_data data = ns_tcp_read(conn);
         if (data.len == 0) {
             continue;
         }
-        i32 rest_len = data.len;
-        while(rest_len > 0) {
-            if (req_len == 0) {
-                i32 head_len = 0, body_len = 0;
-                if (ns_lsp_parse_header(ns_str_range(data.data, rest_len), &head_len, &body_len)) {
-                    req_len = body_len;
-                    rest_len -= head_len;
-                    data.data += head_len;
-                    data.len = rest_len;
-                } else {
-                    ns_exit(1, "lsp", "Invalid request header.");
-                }
-            }
-            if (req_len > 0 && rest_len >= req_len) {
-                i32 r = ns_json_parse(_in);
-                handle_init(r);
-                _in.len = 0;
-                data.data += req_len;
-                rest_len -= req_len;
-                req_len = 0;
+
+        if (ns_lsp_parse_header(ns_str_range(data.data, data.len), &head, &body)) {
+            if ((i32)data.len == head + body) {
+                ns_str_append(&_in, ns_str_range(data.data + head, body));
             } else {
-                if (rest_len > 0) {
-                    ns_str_append(&_in, ns_str_range(data.data, data.len));
-                    req_len -= rest_len;
+                recv = data.len - head;
+                while (recv < body) {
+                    ns_data more_data = ns_tcp_read(conn);
+                    if (more_data.len == 0) continue;
+                    ns_str_append(&_in, ns_str_range(more_data.data, more_data.len));
+                    recv += more_data.len;
                 }
-                break;
             }
+        } else {
+            ns_exit(1, "lsp", "Invalid request header.");
         }
+
+        ns_lsp_handle_request(ns_json_parse(_in));
+        ns_str_clear(&_in);
     }
 }
 
-i32 main(i32 argc, i8 **argv) {
-    ns_lsp_mode mode = NS_LSP_STDIO;
-    u16 port = 9000; // Default port for socket mode
+void ns_lsp_parse_arg(i32 argc, i8 **argv) {
+    _client.mode = NS_LSP_INVALID;
     for (i32 i = 1; i < argc; i++) {
         if (ns_str_equals_STR(ns_str_cstr("--socket"), argv[i])) {
-            mode = NS_LSP_SOCKET;
+            _client.mode = NS_LSP_SOCKET;
         } else if (ns_str_equals_STR(ns_str_cstr("--stdio"), argv[i])) {
-            mode = NS_LSP_STDIO;
+            _client.mode = NS_LSP_STDIO;
         } else if (ns_str_equals_STR(ns_str_cstr("--port"), argv[i])) {
             if (i + 1 < argc) {
                 i8 *port_str = argv[i + 1];
                 szt len = strlen(port_str);
                 ns_str port_ns_str = ns_str_range(port_str, len);
-                port = (u16)ns_str_to_i32(port_ns_str);
+                _client.socket.port = (u16)ns_str_to_i32(port_ns_str);
                 ++i;
             } else {
-                fprintf(stderr, "Error: --port requires a value.\n");
-                return 1;
+                ns_exit(1, "lsp", "Error: --port requires a value.");
             }
         } else {
-            fprintf(stderr, "Unknown argument: %s.\n", argv[i]);
-            return 1;
+            ns_exit(1, "lsp", "Unknown argument: %s.", argv[i]);
         }
     }
+}
 
-    if (mode == NS_LSP_SOCKET) {
+i32 main(i32 argc, i8 **argv) {
+    if (argc < 2) {
+        ns_exit(1, "lsp", "Usage: lsp --socket|--stdio [--port <port>]");
+    } else {
+        ns_lsp_parse_arg(argc, argv);
+    }
+
+    if (_client.mode == NS_LSP_SOCKET) {
+        u16 port = _client.socket.port;
         ns_info("lsp", "Listening on port %d.\n", port);
         ns_tcp_serve(port, ns_lsp_on_connect);
-    } else {
+    } else if (_client.mode == NS_LSP_STDIO) {
         while (1) {
             ns_str line = ns_lsp_read();
-            if (ns_str_empty(line)) continue;
-            i32 r = ns_json_parse(line);
-            handle_init(r);
+            if (ns_str_is_empty(line)) continue;
+            ns_lsp_handle_request(ns_json_parse(line));
         }
+    } else {
+        ns_exit(1, "lsp", "Error: No valid mode specified. Use --socket or --stdio.");
     }
     return 0;
 }

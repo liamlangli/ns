@@ -103,17 +103,6 @@ typedef struct ns_str {
     ns_bool dynamic;
 } ns_str;
 
-ns_str ns_str_slice(ns_str s, i32 start, i32 end);
-ns_str ns_str_concat(ns_str a, ns_str b);
-
-i32 ns_str_to_i32(ns_str s);
-f64 ns_str_to_f64(ns_str s);
-ns_str ns_str_from_i32(i32 i);
-ns_str ns_str_unescape(ns_str s);
-i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
-i32 ns_str_index_of(ns_str s, ns_str sub);
-ns_str ns_str_sub_expr(ns_str s); // get inplace sub expr from first space to end of line
-
 #define ns_str_null ((ns_str){0, 0, 0})
 #define ns_str_range(s, n) ((ns_str){(s), (n), 1})
 #define ns_str_cstr(s) ((ns_str){(i8*)(s), strlen(s), 0})
@@ -128,7 +117,21 @@ ns_str ns_str_sub_expr(ns_str s); // get inplace sub expr from first space to en
 #define ns_str_true ns_str_cstr("true")
 #define ns_str_false ns_str_cstr("false")
 #define ns_str_nil ns_str_cstr("nil")
-#define ns_str_empty(s) ((s).len == 0)
+#define ns_str_is_empty(s) ((s).len == 0)
+#define ns_str_clear(s) ((s) ? ((s)->len = 0, ns_array_set_length((s)->data, 0)) : (void)0)
+
+ns_str ns_str_slice(ns_str s, i32 start, i32 end);
+ns_str ns_str_concat(ns_str a, ns_str b);
+
+i32 ns_str_to_i32(ns_str s);
+f64 ns_str_to_f64(ns_str s);
+ns_str ns_str_from_i32(i32 i);
+ns_str ns_str_unescape(ns_str s);
+i32 ns_str_append_len(ns_str *a, const i8 *data, i32 len);
+i32 ns_str_append_i32(ns_str *a, i32 i);
+i32 ns_str_append_f64(ns_str *s, f64 n, i32 precision);
+i32 ns_str_index_of(ns_str s, ns_str sub);
+ns_str ns_str_sub_expr(ns_str s); // get inplace sub expr from first space to end of line
 
 #define ns_str_case(type) case type: return ns_str_cstr(#type);
 

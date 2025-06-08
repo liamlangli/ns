@@ -160,7 +160,7 @@ ns_bool ns_udp_serve(u16 port, ns_on_data on_data) {
 
     // create a UDP socket
     if ((socket_fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-        ns_exit(EXIT_FAILURE, "ns_net", "socket creation failed");
+        ns_exit(EXIT_FAILURE, "ns_net", "socket creation failed.\n");
     }
 
     // set server address
@@ -172,14 +172,14 @@ ns_bool ns_udp_serve(u16 port, ns_on_data on_data) {
     // bind the socket to the address
     if (bind(socket_fd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         close(socket_fd);
-        ns_exit(EXIT_FAILURE, "ns_net", "bind failed");
+        ns_exit(EXIT_FAILURE, "ns_net", "bind failed.\n");
     }
 
     // main loop to receive and respond to messages
     while (1) {
         szt n = recvfrom(socket_fd, ns_net_buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_addr, &addr_len);
         if (n < 0 || n > BUFFER_SIZE) {
-            ns_warn("ns_net", "receive failed");
+            ns_warn("ns_net", "receive failed.\n");
             continue;
         }
 
@@ -203,7 +203,7 @@ ns_bool ns_tcp_serve(u16 port, ns_on_connect on_connect) {
 
     // create a TCP socket
     if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        ns_exit(EXIT_FAILURE, "ns_net", "socket creation failed");
+        ns_exit(EXIT_FAILURE, "ns_net", "socket creation failed.\n");
     }
 
     // set server address
@@ -215,13 +215,13 @@ ns_bool ns_tcp_serve(u16 port, ns_on_connect on_connect) {
     // bind the socket to the address
     if (bind(socket_fd, (const struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         close(socket_fd);
-        ns_exit(EXIT_FAILURE, "ns_net", "bind failed");
+        ns_exit(EXIT_FAILURE, "ns_net", "bind failed.\n");
     }
 
     // listen for incoming connections
     if (listen(socket_fd, 5) < 0) {
         close(socket_fd);
-        ns_exit(EXIT_FAILURE, "ns_net", "listen failed");
+        ns_exit(EXIT_FAILURE, "ns_net", "listen failed.\n");
     }
 
     // main loop to accept and respond to connections
@@ -243,6 +243,13 @@ ns_bool ns_tcp_serve(u16 port, ns_on_connect on_connect) {
 ns_data ns_tcp_read(ns_conn *conn) {
     szt n = read(conn->socket_fd, ns_net_buffer, BUFFER_SIZE);
     return (ns_data){ns_net_buffer, n};
+}
+
+ns_bool ns_tcp_write(ns_conn *conn, ns_data data) {
+    if (conn->type == NS_CONN_TCP) {
+        return (szt)write(conn->socket_fd, data.data, data.len) == data.len;
+    }
+    return false; // Not a TCP connection
 }
 
 void ns_conn_send(ns_conn *conn, ns_data data) {

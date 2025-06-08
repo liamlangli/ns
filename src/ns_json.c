@@ -316,7 +316,7 @@ i32 ns_json_parse_value(ns_json_ctx *ctx) {
 }
 
 ns_json_ref ns_json_parse(ns_str s) {
-    ns_array_set_length(_ns_json_stack, 0);
+    ns_array_set_length(_ns_json_stack, 1); // 0 is reserved for invalid
     ns_array_push(_ns_json_stack, (ns_json){.type = NS_JSON_INVALID});
     return ns_json_parse_value(&(ns_json_ctx){.s = s});
 }
@@ -377,67 +377,6 @@ ns_bool ns_json_print_node(ns_json *json, i32 depth,ns_bool wrap) {
 
 ns_bool ns_json_print(ns_json *json) {
     return ns_json_print_node(json, 0, false);
-}
-
-void ns_str_append_i32(ns_str *s, i32 n) {
-    // append i32 to string
-    ns_bool neg = 0;
-
-    if (n < 0) {
-        neg = 1;
-        n = -n;
-    }
-
-    i32 size = 0;
-    i32 m = n;
-    while (m) {
-        m /= 10;
-        size++;
-    }
-
-    if (neg) {
-        ns_array_push(s->data, '-');
-    }
-
-    if (n == 0) {
-        ns_array_push(s->data, '0');
-        s->len++;
-    } else {
-        i32 j = size;
-        i32 k = s->len;
-        while (n) {
-            i32 d = n % 10;
-            n /= 10;
-            ns_array_push(s->data, d + '0');
-        }
-
-        i32 l = k + j;
-        while (k < l) {
-            i8 t = s->data[k];
-            s->data[k] = s->data[l - 1];
-            s->data[l - 1] = t;
-            k++;
-            l--;
-        }
-        s->len += size + neg;
-    }
-}
-
-void ns_str_append_f64(ns_str *s, f64 n, i32 precision) {
-    // append f64 to string
-    ns_str_append_i32(s, (i32)n);
-    ns_array_push(s->data, '.');
-
-    f64 f = n - (i32)n;
-    i32 i = 0;
-    while (i < precision) {
-        f *= 10;
-        i32 d = (i32)f;
-        ns_array_push(s->data, d + '0');
-        f -= d;
-        i++;
-    }
-    s->len += precision + 1;
 }
 
 ns_str ns_json_stringify_append(ns_json *json) {
