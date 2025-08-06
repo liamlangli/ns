@@ -40,6 +40,19 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
     }
 }
 
+ns_str ns_ast_fn_type_to_string(ns_fn_type type) {
+    switch (type) {
+        case NS_FN_GENERIC: return ns_str_cstr("generic");
+        case NS_FN_ASYNC: return ns_str_cstr("async");
+        case NS_FN_KERNEL: return ns_str_cstr("kernel");
+        case NS_FN_VERTEX: return ns_str_cstr("vertex");
+        case NS_FN_FRAGMENT: return ns_str_cstr("fragment");
+        case NS_FN_COMPUTE: return ns_str_cstr("compute");
+    }
+    ns_error("ast", "unknown function type %d\n", type);
+    return ns_str_cstr("NS_FN_UNKNOWN");
+}
+
 void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i, ns_bool colon) {
     if (i == 0) return;
     if (colon) printf(": ");
@@ -94,8 +107,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_AST_FN_DEF: {
         if (n->fn_def.is_ref) printf(ns_color_log "ref ");
-        if (n->fn_def.is_async) printf(ns_color_log "async ");
-        if (n->fn_def.is_kernel) printf(ns_color_log "kernel ");
+        ns_str_printf(ns_ast_fn_type_to_string(n->fn_def.type));
 
         printf(ns_color_log "fn " ns_color_nil);
         ns_str_printf(n->fn_def.name.val);
@@ -122,7 +134,8 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_AST_OPS_FN_DEF: {
         if (n->fn_def.is_ref) printf("ref ");
-        if (n->fn_def.is_async) printf("async ");
+        ns_str_printf(ns_ast_fn_type_to_string(n->ops_fn_def.type));
+
         printf(ns_color_log "fn" ns_color_nil " ops(" ns_color_wrn);
         ns_str_printf(n->ops_fn_def.ops.val);
         printf(ns_color_nil ")(");

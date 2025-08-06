@@ -4,6 +4,8 @@
 ns_str ns_token_type_to_string(NS_TOKEN type) {
     switch (type) {
         ns_str_case(NS_TOKEN_AS);
+        ns_str_case(NS_TOKEN_ASYNC);
+        ns_str_case(NS_TOKEN_AWAIT);
         ns_str_case(NS_TOKEN_INT_LITERAL);
         ns_str_case(NS_TOKEN_FLT_LITERAL);
         ns_str_case(NS_TOKEN_STR_LITERAL);
@@ -13,13 +15,15 @@ ns_str ns_token_type_to_string(NS_TOKEN type) {
         ns_str_case(NS_TOKEN_LET);
         ns_str_case(NS_TOKEN_MATCH);
         ns_str_case(NS_TOKEN_MODULE);
+        ns_str_case(NS_TOKEN_VERTEX);
+        ns_str_case(NS_TOKEN_FRAGMENT);
+        ns_str_case(NS_TOKEN_COMPUTE);
+        ns_str_case(NS_TOKEN_KERNEL);
         ns_str_case(NS_TOKEN_FN);
         ns_str_case(NS_TOKEN_IN);
         ns_str_case(NS_TOKEN_SPACE);
         ns_str_case(NS_TOKEN_STRUCT);
         ns_str_case(NS_TOKEN_IDENTIFIER);
-        ns_str_case(NS_TOKEN_ASYNC);
-        ns_str_case(NS_TOKEN_AWAIT);
         ns_str_case(NS_TOKEN_TYPE_I8);
         ns_str_case(NS_TOKEN_TYPE_I16);
         ns_str_case(NS_TOKEN_TYPE_I32);
@@ -123,6 +127,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     char *s = src.data;
     char lead = s[i]; // TODO parse utf8 characters
     switch (lead) {
+
     case '0' ... '9': {
         if (s[i + 1] == 'x') {
             // parse hex literal
@@ -170,6 +175,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             }
         }
     } break;
+
     case '.': {
         if (s[i + 1] >= '0' && s[i + 1] <= '9') {
             // parse float literal
@@ -196,6 +202,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             goto identifier;
         }
     } break;
+
     case 'b': // break
     {
         if (strncmp(s + f, "break", 5) == 0) {
@@ -206,16 +213,20 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             goto identifier;
         }
     } break;
+
     case 'c': // const, continue
     {
         if (strncmp(s + f, "const", 5) == 0) {
             ns_range_token(NS_TOKEN_CONST, 5)
+        } else if (strncmp(s + f, "compute", 7) == 0) {
+            ns_range_token(NS_TOKEN_COMPUTE, 7)
         } else if (strncmp(s + f, "continue", 8) == 0) {
             ns_range_token(NS_TOKEN_CONTINUE, 8)
         } else {
             goto identifier;
         }
     } break;
+
     case 'd': // do
     {
         if (strncmp(s + f, "do", 2) == 0) {
@@ -234,7 +245,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
         }
     } break;
 
-    case 'f': // fn, for, f32, f64
+    case 'f': // fn, for, f32, f64, false
     {
         if (strncmp(s + f, "fn", 2) == 0) {
             ns_range_token(NS_TOKEN_FN, 2)
@@ -247,6 +258,10 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             t->type = strncmp(s + f, "f32", 3) == 0 ? NS_TOKEN_TYPE_F32 : NS_TOKEN_TYPE_F64;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
+        } else if (strncmp(s + f, "false", 5) == 0) {
+            ns_range_token(NS_TOKEN_FALSE, 5)
+        } else if (strncmp(s + f, "fragment", 8) == 0) {
+            ns_range_token(NS_TOKEN_FRAGMENT, 8)
         } else {
             goto identifier;
         }
@@ -371,6 +386,15 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             to = i + 3 + sep;
         } else if (strncmp(s + f, "u8", 2) == 0) {
             ns_range_token(NS_TOKEN_TYPE_U8, 2)
+        } else {
+            goto identifier;
+        }
+    } break;
+
+    case 'v': // vertex
+    {
+        if (strncmp(s + f, "vertex", 6) == 0) {
+            ns_range_token(NS_TOKEN_VERTEX, 6)
         } else {
             goto identifier;
         }

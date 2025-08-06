@@ -83,19 +83,18 @@ typedef struct ns_ast_fn_def {
     i32 ret;
     i32 body;
     ns_token_t name;
+    ns_bool is_ref;
+    ns_fn_type type;
     i32 arg_count;
     i32 arg_required;
-    ns_bool is_ref : 2;
-    ns_bool is_async : 2;
-    ns_bool is_kernel : 2;
 } ns_ast_fn_def;
 
 typedef struct ns_ast_ops_fn_def {
     i32 ret;
     i32 body;
-    ns_bool is_ref;
-    ns_bool is_async;
     ns_token_t ops;
+    ns_bool is_ref;
+    ns_fn_type type;
     i32 left;
     i32 right;
     i32 arg_required;
