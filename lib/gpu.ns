@@ -1,9 +1,9 @@
 mod gpu
 
-import os
+import view
 
 struct gpu_device {
     handle: u64
 }
 
-ref fn gpu_request_device(win: ref os_window): ref gpu_device
+ref fn gpu_request_device(v: ref view): ref gpu_device

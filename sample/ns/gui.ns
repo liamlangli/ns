@@ -1,4 +1,4 @@
-import os
+import view
 import gpu
 
 vertex fn vs_main() {}
@@ -8,8 +8,8 @@ fragment fn fs_main() {}
 kernel fn cs_main() {}
 
 fn main() {
-    let win = os_window_create("ns", 800, 600)
-    let gpu = gpu_request_device(win)
+    let v = view_create("ns", 800, 600)
+    let gpu = gpu_request_device(v)
 
     let program = gpu.create_render_program(vertex_shader, fragment_shader)
     let pip = gpu.create_pipeline(program)
@@ -17,12 +17,12 @@ fn main() {
 
     let cs_program = gpu.create_compute_program(compute_shader)
 
-    win.on_update({ in 
+    v.on_update({ in 
         gpu.begin_frame()
         gpu.set_clear_color(0.0, 0.0, 0.0, 1.0)
 
         // draw mesh
-        gpu.set_viewport(0, 0, win.width, win.height)
+        gpu.set_viewport(0, 0, v.width, v.height)
         gpu.set_pipeline(program)
         gpu.set_mesh(mesh)
         gpu.draw_instanced(TRIANGLES, 0, 3, 1)
@@ -33,11 +33,11 @@ fn main() {
         gpu.end_frame()
     })
 
-    win.on_close({ in
+    v.on_close({ in
         gpu.release()
     })
 
-    win.on_resize({ in
-        gpu.resize(win.width, win.height)
+    v.on_resize({ in
+        gpu.resize(v.width, v.height)
     })
 }

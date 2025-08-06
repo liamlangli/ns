@@ -4,7 +4,9 @@
 #include "os.h"
 #include "ns_type.h"
 
-typedef enum gpu_backend {
+#include "view.h"
+
+typedef enum gpu_resource_type {
     none,
     webgl,
     webgpu,
@@ -270,7 +272,7 @@ typedef struct gpu_pipeline_reflection {
     gpu_index_type index_type;
 } gpu_pipeline_reflection;
 
-ns_bool gpu_request_device(os_window *window);
+ns_bool gpu_request_device(view *v);
 void gpu_destroy_device(void);
 
 gpu_texture gpu_create_texture(gpu_texture_desc *desc);

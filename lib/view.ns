@@ -1,0 +1,37 @@
+import std
+
+type view_on_launch = (ref view) -> void
+type view_on_frame = (ref view) -> void
+
+struct view {
+    title: str
+    width: i32
+    height: i32
+    framebuffer_width: i32
+    framebuffer_height: i32
+    mouse_x: f64
+    mouse_y: f64
+    display_ratio: f64
+    ui_scale: f64
+    native_window: ptr
+    gpu_device: ptr
+    capture_required: bool
+    capture_started: bool
+    on_launch: ptr
+    on_frame: ptr
+    on_terminate: ptr
+}
+
+ref fn view_create(title: str, width: i32, height: i32): ref view
+ref fn view_close(v: ref view)
+ref fn view_capture_require(v: ref view)
+
+ref fn view_on_scroll(v: ref view, x: f64, y: f64)
+ref fn view_on_resize(v: ref view, width: i32, height: i32)
+ref fn view_on_mouse_move(v: ref view, x: f64, y: f64)
+ref fn view_on_mouse_btn(v: ref view, button: i32, action: i32)
+ref fn view_on_key_action(v: ref view, key: i32, action: i32)
+ref fn view_is_key_pressed(v: ref view, key: i32): bool
+
+ref fn view_get_clipboard(v: ref view): str
+ref fn view_set_clipboard(v: ref view, text: str)

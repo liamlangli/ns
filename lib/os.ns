@@ -1,10 +1,4 @@
 mod os
 
-struct os_window {
-    title: str,
-    width: i32,
-    height: i32,
-    handle: u64
-}
-
-ref fn os_window_create(title: str, width: i32, height: i32): ref os_window
+// OS-specific functionality
+// File system operations, process management, etc.

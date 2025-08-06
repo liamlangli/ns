@@ -143,7 +143,7 @@ typedef struct gpu_state_mtl {
 
 static gpu_state_mtl _state = {0};
 
-bool gpu_request_device(os_window* window) {
+bool gpu_request_device(view* v) {
     _state.semaphore = dispatch_semaphore_create(1);
     _state.device.device = MTLCreateSystemDefaultDevice();
 
