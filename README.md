@@ -9,7 +9,7 @@ Nano Script
 - Follows a data-oriented programming approach.
 
 ## Syntax Preview
-```ns
+```swift
 // this is a comment
 
 // import modules
