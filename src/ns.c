@@ -15,7 +15,6 @@ typedef struct ns_compile_option_t {
     ns_bool tokenize_only: 2;
     ns_bool ast_only: 2;
     ns_bool symbol_only: 2;
-    ns_bool bitcode_only: 2;
     ns_bool show_version: 2;
     ns_bool show_help: 2;
     ns_str output;
@@ -38,8 +37,6 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
-        } else if (strcmp(argv[i], "-ir") == 0 ||strcmp(argv[i], "--ir") == 0) {
-            option.bitcode_only = true;
         } else {
             option.filename = ns_str_cstr(argv[i]); // unmatched argument is treated as filename
         }
@@ -82,18 +79,6 @@ void ns_exec_ast(ns_str filename) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
     ns_ast_ctx_print(&ctx, true);
-}
-
-void ns_exec_bitcode(ns_str filename, ns_str output) {
-    if (filename.len == 0) ns_error("ns", "no input file.\n");
-
-#ifndef NS_IR
-    ns_exit(1, "ns", "bitcode is not enabled\n");
-#else
-
-    ns_return_bool ret = ns_ir_gen(filename, output);
-    ns_return_assert(ret);
-#endif
 }
 
 void ns_exec_symbol(ns_str filename) {
@@ -141,8 +126,6 @@ i32 main(i32 argc, i8** argv) {
         ns_mem_status();
     } else if (option.symbol_only) {
         ns_exec_symbol(option.filename);
-    } else if (option.bitcode_only) {
-        ns_exec_bitcode(option.filename, option.output);
     } else {
         if (option.filename.len == 0) {
             ns_version();
