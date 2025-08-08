@@ -83,7 +83,8 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_net.c \
 	src/ns_json.c \
 	src/ns_repl.c \
-	src/ns_def.c
+	src/ns_def.c \
+	src/ns_asm.c
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
 NS_TEST_SRCS = test/ns_json_test.c
