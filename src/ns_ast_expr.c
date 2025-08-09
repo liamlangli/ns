@@ -530,8 +530,8 @@ ns_return_bool ns_parse_block_expr(ns_ast_ctx *ctx) {
             n.block_expr.ret = ctx->current;
         }
         ns_token_skip_eol(ctx);
-        ns_parse_next_token(ctx);
     }
+    ns_parse_next_token(ctx);
 
     // require in
     if (ctx->token.type != NS_TOKEN_IN) {

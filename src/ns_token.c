@@ -25,6 +25,8 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_SPACE);
         ns_str_case(NS_TOKEN_STRUCT);
         ns_str_case(NS_TOKEN_IDENTIFIER);
+        ns_str_case(NS_TOKEN_TYPE_ANY);
+        ns_str_case(NS_TOKEN_TYPE_VOID);
         ns_str_case(NS_TOKEN_TYPE_I8);
         ns_str_case(NS_TOKEN_TYPE_I16);
         ns_str_case(NS_TOKEN_TYPE_I32);
@@ -62,6 +64,9 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_IMPORT);
         ns_str_case(NS_TOKEN_DOT);
         ns_str_case(NS_TOKEN_MUL_OP);
+        ns_str_case(NS_TOKEN_REL_OP);
+        ns_str_case(NS_TOKEN_SHIFT_OP);
+        ns_str_case(NS_TOKEN_LOGIC_OP);
         ns_str_case(NS_TOKEN_RETURN_TYPE);
     default:
         ns_error("token", "unknown token %d\n", t);
@@ -396,8 +401,10 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
 
     case 'v': // vertex
     {
-        if (strncmp(s + f, "vertex", 6) == 0) {
-            ns_range_token(NS_TOKEN_VERTEX, 6)
+        if (strncmp(s + f, "void", 4) == 0) {
+            ns_range_token(NS_TOKEN_TYPE_VOID, 4);
+        } else if (strncmp(s + f, "vertex", 6) == 0) {
+            ns_range_token(NS_TOKEN_VERTEX, 6);
         } else {
             goto identifier;
         }
@@ -449,9 +456,15 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     } break;
     case '!': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_EQ_OP;
-            t->val = ns_str_range(s + f, 2);
-            to = i + 2;
+            if (s[i + 2] == '=') {
+                t->type = NS_TOKEN_EQ_OP;
+                t->val = ns_str_range(s + f, 3);
+                to = i + 3;
+            } else {
+                t->type = NS_TOKEN_EQ_OP;
+                t->val = ns_str_range(s + f, 2);
+                to = i + 2;
+            }
         } else {
             t->type = NS_TOKEN_CMP_OP;
             t->val = ns_str_range(s + f, 1);
@@ -487,9 +500,15 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     } break;
     case '=': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_EQ_OP;
-            t->val = ns_str_range(s + f, 2);
-            to = i + 2;
+            if (s[i + 2] == '=') {
+                t->type = NS_TOKEN_EQ_OP;
+                t->val = ns_str_range(s + f, 3);
+                to = i + 3;
+            } else {
+                t->type = NS_TOKEN_EQ_OP;
+                t->val = ns_str_range(s + f, 2);
+                to = i + 2;
+            }
         } else {
             t->type = NS_TOKEN_ASSIGN;
             t->val = ns_str_range(s + f, 1);

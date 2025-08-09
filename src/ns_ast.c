@@ -35,7 +35,8 @@ ns_bool ns_token_require(ns_ast_ctx *ctx, ns_token_type t) {
 
 ns_bool ns_token_can_be_type(ns_token_type t) {
     switch (t) {
-    case NS_TOKEN_NIL:
+    case NS_TOKEN_TYPE_ANY:
+    case NS_TOKEN_TYPE_VOID:
     case NS_TOKEN_TYPE_I8:
     case NS_TOKEN_TYPE_I16:
     case NS_TOKEN_TYPE_I32:
@@ -576,7 +577,7 @@ ns_return_bool ns_parse_struct_def(ns_ast_ctx *ctx) {
     do {
         ret = ns_parse_arg(ctx, true);
         if (ns_return_is_error(ret)) return ret;
-        if (!ret.r) break;
+        if (!ret.r) return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "struct field definition expected.");
 
         ns_token_skip_eol(ctx);
         next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);

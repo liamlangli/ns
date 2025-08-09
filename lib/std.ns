@@ -1,7 +1,7 @@
 mod std
 
 // libc
-ref fn print(fmt: str): nil
+ref fn print(fmt: str): void
 ref fn open(path: str, mode: str): u64
 ref fn read(fd: u64): str
 ref fn write(fd: u64, buf: str): u64

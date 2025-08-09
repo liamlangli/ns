@@ -326,6 +326,7 @@ ns_str ns_return_state_str(ns_return_state s) {
     case NS_ERR_EVAL: return ns_str_cstr("eval error");
     case NS_ERR_RUNTIME: return ns_str_cstr("runtime error");
     case NS_ERR_BITCODE: return ns_str_cstr("bitcode error");
+    case NS_ERR_ASSERTION: return ns_str_cstr("assertion error");
     default: return ns_str_cstr("unknown error");
     }
 }

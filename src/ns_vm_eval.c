@@ -7,6 +7,12 @@
     #define ns_vm_inject_hook(vm, ctx, i)
 #endif
 
+#define ns_eval_stmt_case(fn) \
+    { \
+        ns_return_void ret = fn(vm, ctx, next); \
+        if (ns_return_is_error(ret)) return ret; \
+    } break
+
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
@@ -306,9 +312,7 @@ ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l
         return ns_return_ok(value, n);
     } break;
     case NS_TOKEN_CMP_OP: {
-        if (ns_str_equals_STR(op.val, "=="))
-            return ns_return_ok(value, ns_eval_binary_eq(vm, l, r));
-        else if (ns_str_equals_STR(op.val, "!="))
+        if (ns_str_equals_STR(op.val, "!="))
             return ns_return_ok(value, ns_eval_binary_ne(vm, l, r));
         else if (ns_str_equals_STR(op.val, "<"))
             return ns_return_ok(value, ns_eval_binary_lt(vm, l, r));
@@ -319,7 +323,17 @@ ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l
         else if (ns_str_equals_STR(op.val, ">="))
             return ns_return_ok(value, ns_eval_binary_ge(vm, l, r));
     } break;
-        default:
+    case NS_TOKEN_EQ_OP: {
+        if (ns_str_equals_STR(op.val, "=="))
+            return ns_return_ok(value, ns_eval_binary_eq(vm, l, r));
+        else if (ns_str_equals_STR(op.val, "!="))
+            return ns_return_ok(value, ns_eval_binary_ne(vm, l, r));
+        else if (ns_str_equals_STR(op.val, "==="))
+            return ns_return_ok(value, ns_eval_binary_eq(vm, l, r));
+        else if (ns_str_equals_STR(op.val, "!=="))
+            return ns_return_ok(value, ns_eval_binary_ne(vm, l, r));
+    } break;
+    default:
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented binary ops.");
         break;
     }
@@ -393,6 +407,19 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     call = ns_array_pop(vm->call_stack);
     ns_scope_exit(vm);
     return ns_return_ok(value, call.ret);
+}
+
+ns_return_void ns_eval_assert_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_return_value ret_cond = ns_eval_expr(vm, ctx, n->assert_stmt.expr);
+    if (ns_return_is_error(ret_cond)) return ns_return_change_type(void, ret_cond);
+
+    ns_value cond = ret_cond.r;
+    if (!ns_eval_bool(vm, cond)) {
+        ns_return_void ret = ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_ASSERTION, "assertion failed.");
+        ns_return_assert(ret);
+    }
+    return ns_return_ok_void;
 }
 
 ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -1030,18 +1057,10 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             ns_return_value ret = ns_eval_local_var_def(vm, ctx, next);
             if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
         } break;
-        case NS_AST_JUMP_STMT: { 
-            ns_return_void ret = ns_eval_jump_stmt(vm, ctx, next);
-            if (ns_return_is_error(ret)) return ret;
-        } break;
-        case NS_AST_FOR_STMT: { 
-            ns_return_void ret = ns_eval_for_stmt(vm, ctx, next);
-            if (ns_return_is_error(ret)) return ret;
-        } break;
-        case NS_AST_IF_STMT: { 
-            ns_return_void ret = ns_eval_if_stmt(vm, ctx, next);
-            if (ns_return_is_error(ret)) return ret;
-        } break;
+        case NS_AST_JUMP_STMT: ns_eval_stmt_case(ns_eval_jump_stmt);
+        case NS_AST_FOR_STMT: ns_eval_stmt_case(ns_eval_for_stmt);
+        case NS_AST_IF_STMT: ns_eval_stmt_case(ns_eval_if_stmt);
+        case NS_AST_ASSERT_STMT: ns_eval_stmt_case(ns_eval_assert_stmt);
         default: {
             return ns_return_error(void, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unimplemented stmt type.");
         } break;
@@ -1087,12 +1106,16 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
                 ns_return_value ret = ns_eval_local_var_def(vm, ctx, s_i);
                 if (ns_return_is_error(ret)) return ret;
             } break;
+            case NS_AST_ASSERT_STMT: {
+                ns_return_void ret = ns_eval_assert_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
             case NS_AST_IMPORT_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
             case NS_AST_OPS_FN_DEF:
             case NS_AST_STRUCT_DEF:
-                break; // already parsed
+                break; // already parsed, no need to re-evaluate
             default: {
                 ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
                 return ns_return_error(value, loc, NS_ERR_EVAL, "unimplemented global ast.");

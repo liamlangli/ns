@@ -102,9 +102,7 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     vm->lib = lib_name;
 
     ns_return_bool ret = ns_vm_parse(vm, &ctx);
-    if (ns_return_is_error(ret)) {
-        ns_error("vm import", "failed to parse lib %.*s\n", lib_name.len, lib_name.data);
-    }
+    ns_return_assert(ret);
     vm->lib = prev;
 
     if (ns_str_equals(lib_name, ns_str_cstr("std"))) {

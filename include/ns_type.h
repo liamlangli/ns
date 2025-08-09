@@ -148,6 +148,7 @@ typedef enum {
     NS_TOKEN_UNKNOWN = -1,
     NS_TOKEN_INVALID = 0,
     NS_TOKEN_AS = 1,        // as: keyword for type casting
+    NS_TOKEN_ANY,
     NS_TOKEN_ASYNC,
     NS_TOKEN_ASSERT,
     NS_TOKEN_AWAIT,
@@ -193,6 +194,7 @@ typedef enum {
     NS_TOKEN_TYPE_BOOL,
     NS_TOKEN_TYPE_STR,     // str: keyword for string
     NS_TOKEN_TYPE_ANY,
+    NS_TOKEN_TYPE_VOID,
 
     NS_TOKEN_INT_LITERAL,
     NS_TOKEN_FLT_LITERAL,
@@ -208,17 +210,16 @@ typedef enum {
     NS_TOKEN_COLON,         // :
     NS_TOKEN_QUESTION_MARK, // ?
 
-    NS_TOKEN_CMP_OP,        // !
-    NS_TOKEN_BIT_INVERT_OP, // ~
+    NS_TOKEN_LOGIC_OP,      // &&, ||
+    NS_TOKEN_EQ_OP,         // ==, !=, ===, !==
+    NS_TOKEN_REL_OP,        // >, <, >=, <=
 
-    NS_TOKEN_ADD_OP,        // +, -
     NS_TOKEN_SHIFT_OP,      // <<, >>
+    NS_TOKEN_ADD_OP,        // +, -
     NS_TOKEN_MUL_OP,        // *, /, %
 
-    NS_TOKEN_REL_OP,        // >, <, >=, <=
-    NS_TOKEN_EQ_OP,         // ==, !=
-
-    NS_TOKEN_LOGIC_OP,      // &&, ||
+    NS_TOKEN_CMP_OP,        // !
+    NS_TOKEN_BIT_INVERT_OP, // ~
 
     NS_TOKEN_BITWISE_OP,    // &, |, ^
     NS_TOKEN_ASSIGN_OP,     // +=, -=, *=, /=, %=, &=, |=, ^=
@@ -246,6 +247,7 @@ typedef struct ns_token_t {
 typedef enum {
     NS_TYPE_UNKNOWN = 0,
     NS_TYPE_NIL,
+    NS_TYPE_ANY,
     NS_TYPE_VOID,
     NS_TYPE_INFER,
     NS_TYPE_I8,
@@ -407,6 +409,7 @@ typedef enum {
     NS_ERR_EVAL,
     NS_ERR_RUNTIME,
     NS_ERR_BITCODE,
+    NS_ERR_ASSERTION,
     NS_ERR_UNKNOWN,
 } ns_return_state;
 
@@ -430,7 +433,7 @@ ns_return_define(ptr, void *);
 
 #define ns_return_ok(t, v) ((ns_return_##t){.r = (v)})
 #ifdef NS_DEBUG
-    #define ns_return_error(t, l, err, m) assert(false), ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
+    #define ns_return_error(t, l, err, m) (assert(false), (ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
 #else
     #define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
 #endif

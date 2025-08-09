@@ -11,11 +11,11 @@ fn main() {
     let v = view_create("ns", 800, 600)
     let gpu = gpu_request_device(v)
 
-    let program = gpu.create_render_program(vertex_shader, fragment_shader)
+    let program = gpu.create_render_program(vs_main, fs_main)
     let pip = gpu.create_pipeline(program)
     let mesh = gpu.create_mesh()
 
-    let cs_program = gpu.create_compute_program(compute_shader)
+    let cs_program = gpu.create_compute_program(cs_main)
 
     v.on_update({ in 
         gpu.begin_frame()
