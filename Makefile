@@ -9,6 +9,7 @@ NS_DYLIB_SUFFIX =
 NS_LIB_SUFFIX = 
 NS_OS = 
 NS_LIB = bin/libns.a
+NS_INC = -I/usr/include -Iinclude -Iinclude/asm -Iinclude/os
 
 NS_DARWIN = darwin
 NS_LINUX = linux
@@ -41,6 +42,7 @@ else
 	NS_OS = $(NS_WIN)
 	NS_HOME = $(USERPROFILE)
 endif
+NS_INC += $(NS_PLATFORM_DEF)
 
 # OPTIONS
 NS_DEBUG ?= 1
@@ -48,10 +50,8 @@ NS_DEBUG_HOOK ?= 1
 
 ifeq ($(NS_OS), $(NS_WIN))
 NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
-NS_INC = -I/usr/include -Iinclude $(NS_PLATFORM_DEF)
 else
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
-NS_INC = -I/usr/include -Iinclude $(NS_PLATFORM_DEF)
 endif
 
 NS_DEBUG_CFLAGS = -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG

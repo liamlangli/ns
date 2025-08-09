@@ -89,6 +89,39 @@ typedef struct  {
     ns_str *fns;
 } ns_asm_lib;
 
+typedef enum {
+    NS_ARCH_UNKNOWN = 0,
+    NS_ARCH_X64,
+    NS_ARCH_X86,
+    NS_ARCH_ARM,
+    NS_ARCH_AARCH64
+} ns_arch;
+
+typedef enum {
+    NS_OS_UNKNOWN = 0,
+    NS_OS_LINUX,
+    NS_OS_DARWIN,
+    NS_OS_WINDOWS
+} ns_os;
+
 typedef struct {
+    ns_arch arch;
+    ns_os os;
+} ns_asm_target;
+
+typedef enum {
+    NS_EXE_FMT_UNKNOWN = 0,
+    NS_EXE_FMT_PE,
+    NS_EXE_FMT_ELF,
+    NS_EXE_FMT_MACHO
+} ns_exe_fmt;
+
+typedef struct {
+    ns_asm_target target;
+    ns_str *files;
     ns_inst *insts;
 } ns_assembler;
+
+void ns_asm_get_current_target(ns_asm_target *target);
+ns_str ns_os_str(ns_os os);
+ns_str ns_arch_str(ns_arch arch);

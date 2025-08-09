@@ -41,7 +41,7 @@ void _ns_free(void *ptr, const_str file, i32 line) {
 }
 
 void ns_mem_status(void) {
-    ns_info("ns_mem_status[op/fp]", "alloc[%lu/%lu], realloc[%lu/%lu], free[%lu]\n", _ns_heap.alloc_op, _ns_heap.alloc, _ns_heap.realloc_op, _ns_heap.realloc, _ns_heap.free_op);
+    ns_info("ns_mem_status[op|sz]", "alloc[%lu|%lu], realloc[%lu|%lu], free[%lu]\n", _ns_heap.alloc_op, _ns_heap.alloc, _ns_heap.realloc_op, _ns_heap.realloc, _ns_heap.free_op);
 }
 #endif
 

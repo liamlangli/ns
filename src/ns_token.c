@@ -1,10 +1,11 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
-ns_str ns_token_type_to_string(NS_TOKEN type) {
-    switch (type) {
+ns_str ns_token_type_to_string(ns_token_type t) {
+    switch (t) {
         ns_str_case(NS_TOKEN_AS);
         ns_str_case(NS_TOKEN_ASYNC);
+        ns_str_case(NS_TOKEN_ASSERT);
         ns_str_case(NS_TOKEN_AWAIT);
         ns_str_case(NS_TOKEN_INT_LITERAL);
         ns_str_case(NS_TOKEN_FLT_LITERAL);
@@ -63,7 +64,7 @@ ns_str ns_token_type_to_string(NS_TOKEN type) {
         ns_str_case(NS_TOKEN_MUL_OP);
         ns_str_case(NS_TOKEN_RETURN_TYPE);
     default:
-        ns_error("token", "unknown token %d\n", type);
+        ns_error("token", "unknown token %d\n", t);
     }
 }
 
@@ -198,6 +199,8 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             ns_range_token(NS_TOKEN_ASYNC, 5)
         } else if (strncmp(s + f, "await", 5) == 0) {
             ns_range_token(NS_TOKEN_AWAIT, 5)
+        } else if (strncmp(s + f, "assert", 6) == 0) {
+            ns_range_token(NS_TOKEN_ASSERT, 6)
         } else {
             goto identifier;
         }

@@ -5,6 +5,7 @@
 #include "ns_type.h"
 #include "ns_vm.h"
 #include "ns_os.h"
+#include "ns_asm.h"
 
 #define STB_DS_IMPLEMENTATION
 
@@ -45,7 +46,13 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
 }
 
 void ns_help() {
+    ns_asm_target target;
+    ns_asm_get_current_target(&target);
+    ns_str arch = ns_arch_str(target.arch);
+    ns_str os = ns_os_str(target.os);
+
     ns_info("usage", "ns [option] [file.ns]\n");
+    printf("target: %.*s-%.*s\n", arch.len, arch.data, os.len, os.data);
     printf("  -t --token        tokenize only\n");
     printf("  -a --ast          parse ast only\n");
     printf("  -s --symbol       print symbol table\n");
@@ -53,6 +60,7 @@ void ns_help() {
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
     printf("  -o --output       output path\n");
+
 }
 
 void ns_version() {

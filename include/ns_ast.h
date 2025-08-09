@@ -304,8 +304,8 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type);
 
 // token fn
 ns_bool ns_parse_next_token(ns_ast_ctx *ctx); // skip space
-ns_bool ns_token_can_be_type(NS_TOKEN t);
-ns_bool ns_token_require(ns_ast_ctx *ctx, NS_TOKEN token);
+ns_bool ns_token_can_be_type(ns_token_type t);
+ns_bool ns_token_require(ns_ast_ctx *ctx, ns_token_type t);
 ns_bool ns_token_require_type(ns_ast_ctx *ctx);
 ns_bool ns_token_skip_eol(ns_ast_ctx *ctx);
 

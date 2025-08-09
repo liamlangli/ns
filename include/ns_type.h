@@ -149,6 +149,7 @@ typedef enum {
     NS_TOKEN_INVALID = 0,
     NS_TOKEN_AS = 1,        // as: keyword for type casting
     NS_TOKEN_ASYNC,
+    NS_TOKEN_ASSERT,
     NS_TOKEN_AWAIT,
     NS_TOKEN_BREAK,
 
@@ -233,10 +234,10 @@ typedef enum {
 
     NS_TOKEN_EOL,
     NS_TOKEN_EOF
-} NS_TOKEN;
+} ns_token_type;
 
 typedef struct ns_token_t {
-    NS_TOKEN type;
+    ns_token_type type;
     ns_str val;
     int line, line_start;
 } ns_token_t;
