@@ -1,0 +1,5 @@
+import std
+
+assert 1 == 0
+assert 1 + 2 == 3
+assert 2 * 3 == 6

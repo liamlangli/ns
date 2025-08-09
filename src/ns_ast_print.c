@@ -2,7 +2,7 @@
 
 #define ns_tab_width 4
 
-ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
+ns_str ns_ast_type_to_string(ns_ast_type type) {
     switch (type) {
         ns_str_case(NS_AST_UNKNOWN)
         ns_str_case(NS_AST_PROGRAM)
@@ -34,6 +34,7 @@ ns_str ns_ast_type_to_string(NS_AST_TYPE type) {
         ns_str_case(NS_AST_IMPORT_STMT)
         ns_str_case(NS_AST_MODULE_STMT)
         ns_str_case(NS_AST_CAST_EXPR)
+        ns_str_case(NS_AST_ASSERT_STMT)
     default:
         ns_error("ast", "unknown ast type %d\n", type);
         return ns_str_cstr("NS_AST_UNKNOWN");
@@ -94,6 +95,10 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
     ns_str type = ns_ast_type_to_string(n->type);
     printf("%4d [type: %-20.*s n:%4d l:%3d] ", i, type.len, type.data, n->next, n->state.l);
     switch (n->type) {
+    case NS_AST_ASSERT_STMT: {
+        printf(ns_color_log "assert " ns_color_nil);
+        printf("[%d]", n->assert_stmt.expr);
+    } break;
     case NS_AST_IMPORT_STMT: {
         printf(ns_color_log "import " ns_color_nil);
         ns_str_printf(n->import_stmt.lib.val);

@@ -60,6 +60,26 @@ ns_return_bool ns_parse_typedef_stmt(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
+// assert expr
+ns_return_bool ns_parse_assert_stmt(ns_ast_ctx *ctx) {
+    ns_ast_state state = ns_save_state(ctx);
+    if (!ns_token_require(ctx, NS_TOKEN_ASSERT)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+
+    ns_ast_t n = {.type = NS_AST_ASSERT_STMT, .state = state};
+    ns_return_bool ret = ns_parse_expr(ctx);
+    if (ns_return_is_error(ret)) return ret;
+    if (ret.r) {
+        n.assert_stmt.expr = ctx->current;
+        ns_ast_push(ctx, n);
+        return ns_return_ok(bool, true);
+    }
+    ns_restore_state(ctx, state);
+    return ns_return_ok(bool, false);
+}
+
 ns_return_bool ns_parse_jump_stmt(ns_ast_ctx *ctx) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
@@ -288,14 +308,9 @@ ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx, ns_bool brace_required) {
     ns_ast_t n = {.type = NS_AST_COMPOUND_STMT, .state = state};
     i32 next = 0;
     do {
-        ret = ns_parse_var_define(ctx);
+        ret = ns_parse_stmt(ctx);
         if (ns_return_is_error(ret)) return ret;
-
-        if (!ret.r) {
-            ret = ns_parse_stmt(ctx);
-            if (ns_return_is_error(ret)) return ret;
-            if (!ret.r) break;
-        }
+        if (!ret.r) break;
 
         next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
         n.compound_stmt.count++;
@@ -334,6 +349,8 @@ ns_return_bool ns_parse_stmt(ns_ast_ctx *ctx) {
 
     // compound statement
     ret = ns_parse_compound_stmt(ctx, true); if (ns_return_is_error(ret)) return ret; if (ret.r) return ns_return_ok(bool, true); ns_restore_state(ctx, state);
+    ns_parse_check_fn(ns_parse_var_define);
+    ns_parse_check_fn(ns_parse_assert_stmt);
     ns_parse_check_fn(ns_parse_jump_stmt);
     ns_parse_check_fn(ns_parse_if_stmt);
     ns_parse_check_fn(ns_parse_iteration_stmt);

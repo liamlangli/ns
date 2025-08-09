@@ -1328,13 +1328,13 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_vm_parse_import_stmt(vm, ctx);
     
     ns_return_void ret;
+    ns_vm_parse_global(ns_vm_parse_fn_def_name);
+    ns_vm_parse_global(ns_vm_parse_fn_def_type);
     ns_vm_parse_global(ns_vm_parse_type_def);
     ns_vm_parse_global(ns_vm_parse_var_def);
     ns_vm_parse_global(ns_vm_parse_struct_def);
     ns_vm_parse_global(ns_vm_parse_struct_def_ref);
     ns_vm_parse_global(ns_vm_parse_ops_fn_def_name);
-    ns_vm_parse_global(ns_vm_parse_fn_def_name);
-    ns_vm_parse_global(ns_vm_parse_fn_def_type);
     ns_vm_parse_global(ns_vm_parse_fn_def_body);
 
     ns_bool main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"), false) != ns_null;

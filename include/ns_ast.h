@@ -33,6 +33,7 @@ typedef enum {
     NS_AST_ARRAY_EXPR,
     NS_AST_BLOCK_EXPR,
 
+    NS_AST_ASSERT_STMT,
     NS_AST_IF_STMT,
     NS_AST_IMPORT_STMT,
     NS_AST_MODULE_STMT,
@@ -45,7 +46,7 @@ typedef enum {
     NS_AST_TYPEDEF_STMT,
 
     NS_AST_COUNT,
-} NS_AST_TYPE;
+} ns_ast_type;
 
 typedef struct ns_ast_t ns_ast_t;
 
@@ -232,8 +233,12 @@ typedef struct ns_ast_block_expr {
     } rt;
 } ns_ast_block_expr;
 
+typedef struct {
+    i32 expr;
+} ns_ast_assert_stmt;
+
 typedef struct ns_ast_t {
-    NS_AST_TYPE type;
+    ns_ast_type type;
     i32 next; // -1 mean null ref
     ns_ast_state state;
     union {
@@ -261,6 +266,7 @@ typedef struct ns_ast_t {
         ns_ast_array_expr array_expr;
         ns_ast_block_expr block_expr;
 
+        ns_ast_assert_stmt assert_stmt;
         ns_ast_import_stmt import_stmt;
         ns_ast_module_stmt module_stmt;
         ns_ast_if_stmt if_stmt;
@@ -300,7 +306,7 @@ typedef struct as_parse_context_t {
 #define ns_ast_code_loc(ctx) ((ns_code_loc){.f = ctx->filename, .l = ctx->token.line, .o = ctx->f - ctx->token.line_start})
 #define ns_ast_state_loc(ctx, s) ((ns_code_loc){.f = ctx->filename, .l = s.l, .o = s.o})
 
-ns_str ns_ast_type_to_string(NS_AST_TYPE type);
+ns_str ns_ast_type_to_string(ns_ast_type type);
 
 // token fn
 ns_bool ns_parse_next_token(ns_ast_ctx *ctx); // skip space

@@ -191,16 +191,16 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
 
     case 'a': // as async await
     {
-        if (strncmp(s + f, "as", 2) == 0) {
-            ns_range_token(NS_TOKEN_AS, 2)
-        } else if (strncmp(s + f, "any", 3) == 0) {
-            ns_range_token(NS_TOKEN_TYPE_ANY, 3)
+        if (strncmp(s + f, "assert", 6) == 0) {
+            ns_range_token(NS_TOKEN_ASSERT, 6)
         } else if (strncmp(s + f, "async", 5) == 0) {
             ns_range_token(NS_TOKEN_ASYNC, 5)
         } else if (strncmp(s + f, "await", 5) == 0) {
             ns_range_token(NS_TOKEN_AWAIT, 5)
-        } else if (strncmp(s + f, "assert", 6) == 0) {
-            ns_range_token(NS_TOKEN_ASSERT, 6)
+        } else if (strncmp(s + f, "any", 3) == 0) {
+            ns_range_token(NS_TOKEN_TYPE_ANY, 3)
+        } else if (strncmp(s + f, "as", 2) == 0) {
+            ns_range_token(NS_TOKEN_AS, 2)
         } else {
             goto identifier;
         }
