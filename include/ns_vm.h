@@ -144,7 +144,7 @@ ns_bool ns_type_match(ns_vm *vm, ns_type require, ns_type provide); // check if 
 ns_number_type ns_vm_number_type(ns_type t);
 
 // vm parse stage
-i32 ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r);
+void ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r);
 i32 ns_vm_push_string(ns_vm *vm, ns_str s);
 i32 ns_vm_push_data(ns_vm *vm, ns_data d);
 i32 ns_type_size(ns_vm *vm, ns_type t);

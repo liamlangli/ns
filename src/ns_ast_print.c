@@ -526,7 +526,7 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
                 }
             }
             ns_ast_print_type_label(ctx, n->block_expr.ret, true);
-            printf(ns_color_log " in\n" ns_color_nil " ");
+            printf(ns_color_log " in\n" ns_color_nil);
             ns_ast_print_node(ctx, n->block_expr.body, depth + ns_tab_width);
             printf("\n%*s}", depth, " ");
         } break;

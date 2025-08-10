@@ -3,7 +3,7 @@ mod gpu
 import view
 
 struct gpu_device {
-    handle: u64
+    handle: any
 }
 
 ref fn gpu_request_device(v: ref view): ref gpu_device

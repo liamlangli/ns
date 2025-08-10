@@ -1,8 +1,6 @@
-import std
+mod view
 
-type view_on_launch = (ref view) -> void
-type view_on_frame = (ref view) -> void
-type view_on_terminate = (ref view) -> void
+import std
 
 struct view {
     title: str,
@@ -22,6 +20,10 @@ struct view {
     on_frame: view_on_frame,
     on_terminate: view_on_terminate
 }
+
+type view_on_launch = (ref view) -> void
+type view_on_frame = (ref view) -> void
+type view_on_terminate = (ref view) -> void
 
 ref fn view_create(title: str, width: i32, height: i32): ref view
 ref fn view_close(v: ref view)

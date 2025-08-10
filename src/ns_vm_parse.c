@@ -88,10 +88,8 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
     return -1;
 }
 
-i32 ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r) {
-    i32 i = ns_array_length(vm->symbols);
+void ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r) {
     ns_array_push(vm->symbols, r);
-    return i;
 }
 
 i32 ns_vm_push_symbol_local(ns_vm *vm, ns_symbol r) {
@@ -350,17 +348,20 @@ ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         i32 s = ctx->sections[i];
         ns_ast_t *n = &ctx->nodes[s];
+        i32 symbol_index = ns_array_length(vm->symbols);
         switch (n->type)
         {
         case NS_AST_FN_DEF: {
             if (!main_mod && ns_str_equals_STR(n->fn_def.name.val, "main")) continue; // skip main in lib
             ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->fn_def.body}, .lib =  vm->lib };
+            fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->fn_def.is_ref, NS_STORE_CONST);
             fn.name = n->fn_def.name.val;
             ns_vm_push_symbol_global(vm, fn);
         } break;
 
         case NS_AST_OPS_FN_DEF: {
             ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->ops_fn_def.body}, .lib =  vm->lib};
+            fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->ops_fn_def.is_ref, NS_STORE_CONST);
             ns_ast_t l = ctx->nodes[n->ops_fn_def.left];
             ns_ast_t r = ctx->nodes[n->ops_fn_def.right];
 
@@ -377,6 +378,7 @@ ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
 
         case NS_AST_STRUCT_DEF: {
             ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = s }, .lib = vm->lib};
+            st.st.st.t = ns_type_encode(NS_TYPE_STRUCT, symbol_index, 0, NS_STORE_CONST);
             st.name = n->struct_def.name.val;
             ns_vm_push_symbol_global(vm, st);
         } break;
@@ -780,7 +782,7 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *callee_n = &ctx->nodes[n->call_expr.callee];
-    ns_return_type ret_callee = ns_vm_parse_primary_expr(vm, ctx, n->call_expr.callee);
+    ns_return_type ret_callee = ns_vm_parse_expr(vm, ctx, n->call_expr.callee, ns_type_nil);
     if (ns_return_is_error(ret_callee)) return ret_callee;
 
     ns_type fn = ret_callee.r;
