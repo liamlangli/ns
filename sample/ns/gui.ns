@@ -1,43 +1,36 @@
-import view
+import simd
 import gpu
+import view
 
-vertex fn vs_main() {}
+struct VertexData {
+    position: Float3,
+    uv: Float2
+}
 
-fragment fn fs_main() {}
+struct FragmentInput {
+    position: Float4,
+    uv: Float2,
+    color: Float4
+}
 
-kernel fn cs_main() {}
+vertex fn vs_main(data: VertexData): FragmentInput {
+    let pos = data.position
+    return FragmentInput {
+        position: Float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
+        uv: data.uv,
+        color: Float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },
+    };
+}
+
+fragment fn fs_main(data: FragmentInput): Float4 {
+    return data.color;
+}
 
 fn main() {
-    let v = view_create("ns", 800, 600)
-    let gpu = gpu_request_device(v)
+    let view = view_create("ns", 800, 600)
+    let gpu = gpu_request_device()
+    let pipeline = gpu_create_pipeline(gpu, vs_main, fs_main)
 
-    let program = gpu.create_render_program(vs_main, fs_main)
-    let pip = gpu.create_pipeline(program)
-    let mesh = gpu.create_mesh()
-
-    let cs_program = gpu.create_compute_program(cs_main)
-
-    v.on_update({ in 
-        gpu.begin_frame()
-        gpu.set_clear_color(0.0, 0.0, 0.0, 1.0)
-
-        // draw mesh
-        gpu.set_viewport(0, 0, v.width, v.height)
-        gpu.set_pipeline(program)
-        gpu.set_mesh(mesh)
-        gpu.draw_instanced(TRIANGLES, 0, 3, 1)
-
-        gpu.dispatch_compute(cs_main, 1, 1, 1)
-
-        gpu.clear()
-        gpu.end_frame()
-    })
-
-    v.on_close({ in
-        gpu.release()
-    })
-
-    v.on_resize({ in
-        gpu.resize(v.width, v.height)
+    view.on_launch({ view in
     })
 }

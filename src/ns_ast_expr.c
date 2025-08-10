@@ -530,8 +530,8 @@ ns_return_bool ns_parse_block_expr(ns_ast_ctx *ctx) {
             n.block_expr.ret = ctx->current;
         }
         ns_token_skip_eol(ctx);
+        ns_parse_next_token(ctx);
     }
-    ns_parse_next_token(ctx);
 
     // require in
     if (ctx->token.type != NS_TOKEN_IN) {
@@ -697,13 +697,12 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                 } else if (ctx->token.type == NS_TOKEN_OPEN_BRACE) { // parse block define: { [(args)] [-> ret] in body }
                     ns_restore_state(ctx, state);
                     ret = ns_parse_block_expr(ctx);
-                    if (ns_return_is_error(ret)) return ret;
-                    if (ret.r) {
-                        ns_parse_stack_push_operand(ctx, ns_ast_push_expr(ctx, state, ctx->current));
-                        break;
-                    } else {
+                    if (ns_return_is_error(ret))
+                        return ret;
+                    if (!ret.r)
                         return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected block expression");
-                    }
+                    ns_parse_stack_push_operand(ctx, ns_ast_push_expr(ctx, state, ctx->current));
+                    break;    
                 }
             }
         } break;

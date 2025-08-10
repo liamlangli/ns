@@ -418,7 +418,7 @@ typedef struct ns_code_loc {
     i32 l, o;
 } ns_code_loc;
 #define ns_code_loc_nil ((ns_code_loc){ns_str_cstr(""), 0, 0})
-#define ns_code_loc_print(loc) ns_error("error", "%.*s:%d:%d\n", (loc).f.len, (loc).f.data, (loc).l, (loc).o)
+#define ns_code_loc_print(loc, msg) ns_error("error", "%.*s:%d:%d\n    %s\n", (loc).f.len, (loc).f.data, (loc).l, (loc).o, msg)
 
 typedef struct ns_return {
     ns_str msg;
@@ -433,10 +433,9 @@ ns_return_define(u64, u64);
 ns_return_define(ptr, void *);
 
 #define ns_return_ok(t, v) ((ns_return_##t){.r = (v)})
-#define ns_return_print_state(s) ns_print("return state: %d\n", s)
 
 #ifdef NS_DEBUG
-    #define ns_return_error(t, l, err, m) (ns_code_loc_print(l), assert(false), (ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
+    #define ns_return_error(t, l, err, m) (ns_code_loc_print(l, m), assert(false), (ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
 #else
     #define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
 #endif

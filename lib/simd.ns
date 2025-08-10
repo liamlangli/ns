@@ -1,0 +1,30 @@
+mod simd
+
+struct Float2 {
+    x: f32,
+    y: f32
+}
+
+struct Float3 {
+    x: f32,
+    y: f32,
+    z: f32
+}
+
+struct Float4 {
+    x: f32,
+    y: f32,
+    z: f32,
+    w: f32
+}
+
+type Quaternion = Float4
+
+struct Float4x4 {
+    col0: Float4,
+    col1: Float4,
+    col2: Float4,
+    col3: Float4
+}
+
+
