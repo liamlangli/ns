@@ -53,20 +53,21 @@ static ns_str _debug_repl_history;
 
 void ns_debug_repl_help() {
     ns_info("ns_debug", "nsdb nanoscript debugger\n");
-    printf("  help/h                     : help\n");
-    printf("  load/l [file]              : load file\n");
-    printf("  run/r                      : run\n");
-    printf("  step-into/si               : step into\n");
-    printf("  step-over/so               : step over\n");
-    printf("  step-out/so                : step out\n");
-    printf("  break/b [line]             : set breakpoint\n");
-    printf("  break-list/bl              : list breakpoints\n");
-    printf("  break-delete/bd [line]     : remove breakpoint\n");
-    printf("  break-error/be             : set error breakpoint\n");
-    printf("  break-clear/bc             : clear all breakpoints\n");
-    printf("  print/p [expr]             : print expression\n");
-    printf("  quit/q                     : quit\n");
-    printf("  ast                        : dump AST\n");
+    printf(" |name            |short                 |description\n");
+    printf("  help             h                     : help\n");
+    printf("  load             l [file]              : load file\n");
+    printf("  run              r                     : run\n");
+    printf("  step-into        si                    : step into\n");
+    printf("  step-over        so                    : step over\n");
+    printf("  step-out         so                    : step out\n");
+    printf("  break            b [line]              : set breakpoint\n");
+    printf("  break-list       bl                    : list breakpoints\n");
+    printf("  break-delete     bd [line]             : remove breakpoint\n");
+    printf("  break-error      be                    : set error breakpoint\n");
+    printf("  break-clear      bc                    : clear all breakpoints\n");
+    printf("  print            p [expr]              : print expression\n");
+    printf("  quit             q                     : quit\n");
+    printf("  ast              ast                   : dump AST\n");
 }
 
 ns_str ns_debug_repl_read_line(char *prompt) {
