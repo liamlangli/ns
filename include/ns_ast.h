@@ -13,7 +13,7 @@ typedef enum {
 
     NS_AST_ARG_DEF,
     NS_AST_FN_DEF,
-    NS_AST_OPS_FN_DEF,
+    NS_AST_OP_FN_DEF,
     NS_AST_VAR_DEF,
     NS_AST_STRUCT_DEF,
     NS_AST_FIELD_DEF,
@@ -325,7 +325,7 @@ ns_bool ns_parse_identifier(ns_ast_ctx *ctx);
 
 // external fn
 ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx);
-ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_op_fn_define(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_struct_def(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_type_label(ns_ast_ctx *ctx);

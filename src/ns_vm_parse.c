@@ -359,7 +359,7 @@ ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_vm_push_symbol_global(vm, fn);
         } break;
 
-        case NS_AST_OPS_FN_DEF: {
+        case NS_AST_OP_FN_DEF: {
             ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->ops_fn_def.body}, .lib =  vm->lib};
             fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->ops_fn_def.is_ref, NS_STORE_CONST);
             ns_ast_t l = ctx->nodes[n->ops_fn_def.left];
@@ -420,7 +420,7 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
                 arg_record.val.t = ret_t.r;
                 fn->fn.args[i] = arg_record;
             }
-        } else if (n->type == NS_AST_OPS_FN_DEF) {
+        } else if (n->type == NS_AST_OP_FN_DEF) {
             ns_ast_t *l = &ctx->nodes[n->ops_fn_def.left];
             ns_ast_t *r = &ctx->nodes[n->ops_fn_def.right];
             ns_ast_t *ret_type = &ctx->nodes[n->ops_fn_def.ret];
@@ -1291,7 +1291,7 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_IMPORT_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
-            case NS_AST_OPS_FN_DEF:
+            case NS_AST_OP_FN_DEF:
             case NS_AST_STRUCT_DEF:
             case NS_AST_PROGRAM:
                 break; // already parsed
@@ -1329,7 +1329,7 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_IMPORT_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
-            case NS_AST_OPS_FN_DEF:
+            case NS_AST_OP_FN_DEF:
             case NS_AST_STRUCT_DEF:
             case NS_AST_PROGRAM:
                 break; // already parsed

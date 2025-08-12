@@ -3,26 +3,26 @@ import io
 
 struct simd3 { x: f64, y: f64, z: f64 }
 
-fn ops(+)(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.x + rhs.x, y: lhs.y + rhs.y, z: lhs.z + rhs.z } }
-fn ops(-)(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.x - rhs.x, y: lhs.y - rhs.y, z: lhs.z - rhs.z } }
-fn ops(+)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs } }
-fn ops(-)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x - rhs, y: lhs.y - rhs, z: lhs.z - rhs } }
-fn ops(*)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x * rhs, y: lhs.y * rhs, z: lhs.z * rhs } }
-fn ops(/)(lhs: simd3, rhs: f64): simd3 { return simd3 { x: lhs.x / rhs, y: lhs.y / rhs, z: lhs.z / rhs } }
+fn ops(+)(lhs: simd3, rhs: simd3) simd3 { return simd3 { x: lhs.x + rhs.x, y: lhs.y + rhs.y, z: lhs.z + rhs.z } }
+fn ops(-)(lhs: simd3, rhs: simd3) simd3 { return simd3 { x: lhs.x - rhs.x, y: lhs.y - rhs.y, z: lhs.z - rhs.z } }
+fn ops(+)(lhs: simd3, rhs: f64) simd3 { return simd3 { x: lhs.x + rhs, y: lhs.y + rhs, z: lhs.z + rhs } }
+fn ops(-)(lhs: simd3, rhs: f64) simd3 { return simd3 { x: lhs.x - rhs, y: lhs.y - rhs, z: lhs.z - rhs } }
+fn ops(*)(lhs: simd3, rhs: f64) simd3 { return simd3 { x: lhs.x * rhs, y: lhs.y * rhs, z: lhs.z * rhs } }
+fn ops(/)(lhs: simd3, rhs: f64) simd3 { return simd3 { x: lhs.x / rhs, y: lhs.y / rhs, z: lhs.z / rhs } }
 
-fn length(this: simd3): f64 {
+fn length(this: simd3) f64 {
     return sqrt(this.x * this.x + this.y * this.y + this.z * this.z)
 }
 
-fn normalize(this: simd3): simd3 {
+fn normalize(this: simd3) simd3 {
     let inv = 1.0 / length(this)
     return this * inv
 }
 
-fn dot(lhs: simd3, rhs: simd3): f64 { return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z }
-fn cross(lhs: simd3, rhs: simd3): simd3 { return simd3 { x: lhs.y * rhs.z - lhs.z * rhs.y, y: lhs.z * rhs.x - lhs.x * rhs.z, z: lhs.x * rhs.y - lhs.y * rhs.x } }
+fn dot(lhs: simd3, rhs: simd3) f64 { return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z }
+fn cross(lhs: simd3, rhs: simd3) simd3 { return simd3 { x: lhs.y * rhs.z - lhs.z * rhs.y, y: lhs.z * rhs.x - lhs.x * rhs.z, z: lhs.x * rhs.y - lhs.y * rhs.x } }
 
-fn hit_sphere(origin: simd3, direction: simd3, center: simd3, radius: f64): f64 {
+fn hit_sphere(origin: simd3, direction: simd3, center: simd3, radius: f64) f64 {
     let oc = origin - center
     let a = dot(direction, direction)
     let b = 2.0 * dot(oc, direction)

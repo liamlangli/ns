@@ -361,7 +361,7 @@ ns_fn_type ns_parse_fn_type(ns_ast_ctx *ctx) {
     }
 }   
 
-ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
+ns_return_bool ns_parse_op_fn_define(ns_ast_ctx *ctx) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
     // [async] fn identifier ( [type_declare identifier] ) [type_declare] { stmt }
@@ -395,7 +395,7 @@ ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
         return ns_return_ok(bool, false);
     }
 
-    ns_ast_t fn = {.type = NS_AST_OPS_FN_DEF, .state = state, .ops_fn_def = {.ops = ops, .type = fn_type, .is_ref = is_ref, .ret = 0, .body = 0, .arg_required = 2}};
+    ns_ast_t fn = {.type = NS_AST_OP_FN_DEF, .state = state, .ops_fn_def = {.ops = ops, .type = fn_type, .is_ref = is_ref, .ret = 0, .body = 0, .arg_required = 2}};
     // parse parameters
     ns_token_skip_eol(ctx);
     ret = ns_parse_arg(ctx, true);
@@ -428,14 +428,10 @@ ns_return_bool ns_parse_ops_fn_define(ns_ast_ctx *ctx) {
 
     // optional
     ns_ast_state type_state = ns_save_state(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_COLON)) {
-        ret = ns_parse_type_label(ctx);
-        if (ns_return_is_error(ret)) return ret;
-        if (ret.r) {
-            fn.ops_fn_def.ret = ctx->current;
-        } else {
-            ns_restore_state(ctx, type_state);
-        }
+    ret = ns_parse_type_label(ctx);
+    if (ns_return_is_error(ret)) return ret;
+    if (ret.r) {
+        fn.ops_fn_def.ret = ctx->current;
     } else {
         ns_restore_state(ctx, type_state);
     }
@@ -521,14 +517,10 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
 
     // optional
     ns_ast_state type_state = ns_save_state(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_COLON)) {
-        ret = ns_parse_type_label(ctx);
-        if (ns_return_is_error(ret)) return ret;
-        if (ret.r) {
-            fn.fn_def.ret = ctx->current;
-        } else {
-            ns_restore_state(ctx, type_state);
-        }
+    ret = ns_parse_type_label(ctx);
+    if (ns_return_is_error(ret)) return ret;
+    if (ret.r) {
+        fn.fn_def.ret = ctx->current;
     } else {
         ns_restore_state(ctx, type_state);
     }

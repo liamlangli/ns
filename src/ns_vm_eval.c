@@ -1113,7 +1113,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_IMPORT_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
-            case NS_AST_OPS_FN_DEF:
+            case NS_AST_OP_FN_DEF:
             case NS_AST_STRUCT_DEF:
                 break; // already parsed, no need to re-evaluate
             default: {
@@ -1143,7 +1143,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_IMPORT_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
-            case NS_AST_OPS_FN_DEF:
+            case NS_AST_OP_FN_DEF:
             case NS_AST_STRUCT_DEF:
                 break; // already parsed
             default: {

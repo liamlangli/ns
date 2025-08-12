@@ -370,7 +370,7 @@ ns_return_bool ns_parse_global_define(ns_ast_ctx *ctx) {
 
     ns_parse_check_fn(ns_parse_var_define);
     ns_parse_check_fn(ns_parse_fn_define);
-    ns_parse_check_fn(ns_parse_ops_fn_define);
+    ns_parse_check_fn(ns_parse_op_fn_define);
     ns_parse_check_fn(ns_parse_typedef_stmt);
     ns_parse_check_fn(ns_parse_struct_def);
     ns_parse_check_fn(ns_parse_stmt);

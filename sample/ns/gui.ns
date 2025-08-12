@@ -13,7 +13,7 @@ struct FragmentInput {
     color: Float4
 }
 
-vertex fn vs_main(data: VertexData): FragmentInput {
+vertex fn vs_main(data: VertexData) FragmentInput {
     let pos = data.position
     return FragmentInput {
         position: Float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
@@ -22,7 +22,7 @@ vertex fn vs_main(data: VertexData): FragmentInput {
     };
 }
 
-fragment fn fs_main(data: FragmentInput): Float4 {
+fragment fn fs_main(data: FragmentInput) Float4 {
     return data.color;
 }
 

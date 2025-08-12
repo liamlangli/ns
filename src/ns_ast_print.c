@@ -12,7 +12,7 @@ ns_str ns_ast_type_to_string(ns_ast_type type) {
         ns_str_case(NS_AST_FN_DEF)
         ns_str_case(NS_AST_VAR_DEF)
         ns_str_case(NS_AST_STRUCT_DEF)
-        ns_str_case(NS_AST_OPS_FN_DEF)
+        ns_str_case(NS_AST_OP_FN_DEF)
         ns_str_case(NS_AST_TYPE_DEF)
         ns_str_case(NS_AST_EXPR)
         ns_str_case(NS_AST_BINARY_EXPR)
@@ -43,7 +43,7 @@ ns_str ns_ast_type_to_string(ns_ast_type type) {
 
 ns_str ns_ast_fn_type_to_string(ns_fn_type type) {
     switch (type) {
-        case NS_FN_GENERIC: return ns_str_cstr("generic");
+        case NS_FN_GENERIC: return ns_str_cstr("");
         case NS_FN_ASYNC: return ns_str_cstr("async");
         case NS_FN_KERNEL: return ns_str_cstr("kernel");
         case NS_FN_VERTEX: return ns_str_cstr("vertex");
@@ -126,8 +126,8 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
                 printf(", ");
             }
         }
-        printf(")");
-        ns_ast_print_type_label(ctx, n->fn_def.ret, true);
+        printf(") ");
+        ns_ast_print_type_label(ctx, n->fn_def.ret, false);
 
         if (!n->fn_def.is_ref) {
             if (n->fn_def.body)
@@ -137,7 +137,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
             }
         }
     } break;
-    case NS_AST_OPS_FN_DEF: {
+    case NS_AST_OP_FN_DEF: {
         if (n->fn_def.is_ref) printf("ref ");
         ns_str_printf(ns_ast_fn_type_to_string(n->ops_fn_def.type));
 
@@ -153,8 +153,8 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         ns_str_printf(right->arg.name.val);
         ns_ast_print_type_label(ctx, right->arg.type, true);
 
-        printf(")");
-        ns_ast_print_type_label(ctx, n->ops_fn_def.ret, true);
+        printf(") ");
+        ns_ast_print_type_label(ctx, n->ops_fn_def.ret, false);
         if (n->ops_fn_def.body) {
             printf(" { [%d] }", n->ops_fn_def.body);
         }
@@ -349,7 +349,7 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             printf("\n");
             break;
 
-        case NS_AST_OPS_FN_DEF:
+        case NS_AST_OP_FN_DEF:
             printf(ns_color_log "fn" ns_color_cmt " ops" ns_color_nil "(" ns_color_wrn);
             ns_str_printf(n->ops_fn_def.ops.val);
             printf(ns_color_nil ")(");
@@ -360,8 +360,8 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             ns_ast_t *right = &ctx->nodes[n->ops_fn_def.right];
             ns_str_printf(right->arg.name.val);
             ns_ast_print_type_label(ctx, right->arg.type, true);
-            printf(")");
-            ns_ast_print_type_label(ctx, n->ops_fn_def.ret, true);
+            printf(") ");
+            ns_ast_print_type_label(ctx, n->ops_fn_def.ret, false);
 
             if (n->ops_fn_def.body) {
                 printf(" {\n");
@@ -387,8 +387,8 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
                 }
                 arg = &ctx->nodes[arg->next];
             }
-            printf(")");
-            ns_ast_print_type_label(ctx, n->fn_def.ret, true);
+            printf(") ");
+            ns_ast_print_type_label(ctx, n->fn_def.ret, false);
             printf(" {\n");
             if (n->fn_def.body) {
                 ns_ast_print_node(ctx, n->fn_def.body, depth + ns_tab_width);
