@@ -512,7 +512,7 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
 
     if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
         ns_restore_state(ctx, state);
-        return ns_return_ok(bool, false);
+        return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected ')'");
     }
 
     // optional
@@ -522,7 +522,7 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
     if (ret.r) {
         fn.fn_def.ret = ctx->current;
     } else {
-        ns_restore_state(ctx, type_state);
+        ns_restore_state(ctx, type_state); //
     }
 
     // ref type declare, no fn body
@@ -539,8 +539,7 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         return ns_return_ok(bool, true);
     }
 
-    ns_restore_state(ctx, state);
-    return ns_return_ok(bool, false);
+    return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected function body");
 }
 
 ns_return_bool ns_parse_struct_def(ns_ast_ctx *ctx) {

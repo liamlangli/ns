@@ -7,6 +7,6 @@ struct io_image {
     data: [u8]
 }
 
-ref fn io_load_image(path: str): ref io_image
-ref fn io_save_image(path: str, img: ref io_image): bool
-ref fn add(a: i32, b: i32): i32
+ref fn io_load_image(path: str) ref io_image
+ref fn io_save_image(path: str, img: ref io_image) bool
+ref fn add(a: i32, b: i32) i32

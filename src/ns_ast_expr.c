@@ -95,9 +95,9 @@ ns_bool ns_token_is_operator(ns_token_t token) {
 }
 
 // Shunting Yard Algorithm
-ns_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
+ns_return_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
-
+    
     i32 op_len = ns_array_length(ctx->op_stack);
     for (i32 i = scope->op_top; i < op_len; ++i) {
         i32 op = ns_array_pop(ctx->op_stack);
@@ -107,7 +107,7 @@ ns_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
     i32 len = ns_array_length(ctx->stack);
     if (len == 1) {
         ctx->current = ns_array_pop(ctx->stack);
-        return true;
+        return ns_return_ok(bool, true);
     }
 
     for (i32 i = scope->stack_top; i < len; ++i) {
@@ -123,8 +123,14 @@ ns_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
             ns_array_push(ctx->expr_stack, o);
         }
     }
+
+    if (ctx->expr_stack == NULL || ns_array_length(ctx->expr_stack) == 0) {
+        ns_ast_state state = ns_save_state(ctx);
+        return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "unexpected expr.");
+    }
+
     ctx->current = ns_array_pop(ctx->expr_stack);
-    return true;
+    return ns_return_ok(bool, true);
 }
 
 ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
@@ -714,7 +720,9 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
 
 rewind:
     ns_restore_state(ctx, state);
-    if (ns_parse_expr_rewind(ctx)) {
+    ns_return_bool rewind_ret = ns_parse_expr_rewind(ctx);
+    if (ns_return_is_error(rewind_ret)) return rewind_ret;
+    if (rewind_ret.r) {
         scope = ns_array_pop(ctx->scopes);
         ns_array_set_length(ctx->stack, scope.stack_top);
         ns_array_set_length(ctx->op_stack, scope.op_top);
