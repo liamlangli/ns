@@ -731,7 +731,7 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_array_set_length(vm->stack, offset);
-    ns_value ret = (ns_value){.t = ns_type_set_store(st->val.t, NS_STORE_STACK), .o = o};
+    ns_value ret = (ns_value){.t = ns_type_set_store(st->st.st.t, NS_STORE_STACK), .o = o};
     return ns_return_ok(value, ret);
 }
 
