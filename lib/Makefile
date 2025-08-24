@@ -5,10 +5,10 @@ NS_STD_OBJS = $(NS_STD_SRCS:lib/src/%.c=$(NS_BINDIR)/lib/%.o)
 NS_STD_LIBS = $(NS_STD_SRCS:lib/src/%.c=$(NS_BINDIR)/%$(NS_DYLIB_SUFFIX))
 
 $(NS_STD_LIBS): $(NS_BINDIR)/%$(NS_DYLIB_SUFFIX) : $(NS_BINDIR)/lib/%.o
-	$(NS_CC) -shared -fPIC $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS) $(NS_LIB_LDFLAGS)
+	$(NS_CC) -shared -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS) $(NS_LIB_LDFLAGS)
 
 $(NS_STD_OBJS): $(NS_BINDIR)/lib/%.o : lib/src/%.c
-	$(NS_CC) -c $< -o $@ $(NS_LIB_INC)
+	$(NS_CC) -c -g $< -o $@ $(NS_LIB_INC)
 
 ifeq ($(NS_OS),darwin)
 bin/lib/view.osx.o: lib/src/view.osx.m
