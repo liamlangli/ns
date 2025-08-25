@@ -1,7 +1,7 @@
 #include "ns_def.h"
 
 void ns_vm_def_fn(ns_vm *vm, ns_fn_def *fn) {
-    ns_value fn_val = {.t = ns_type_encode(NS_TYPE_FN, (u32)ns_array_length(vm->symbols), true, 0)};
+    ns_value fn_val = {.t = ns_type_encode(NS_TYPE_FN, (u32)ns_array_length(vm->symbols), true, false, true)};
     ns_fn_symbol fn_sym = {.fn_ptr = fn->fn, .args = nil, .ret = fn->ret, .ast = 0, .fn = fn_val};
     ns_array_set_length(fn_sym.args, fn->arg_count);
     for (i32 i = 0; i < fn->arg_count; ++i) {
@@ -13,7 +13,7 @@ void ns_vm_def_fn(ns_vm *vm, ns_fn_def *fn) {
 }
 
 void ns_vm_def_struct(ns_vm *vm, ns_struct_def *st) {
-    ns_value st_val = {.t = ns_type_encode(NS_TYPE_STRUCT, (u32)ns_array_length(vm->symbols), true, 0)};
+    ns_value st_val = {.t = ns_type_encode(NS_TYPE_STRUCT, (u32)ns_array_length(vm->symbols), false, true, true)};
     ns_struct_symbol st_sym = {.st = st_val, .fields = nil, .stride = 0, .ast = 0};
     u64 stride = 0;
     ns_array_set_length(st_sym.fields, st->field_count);

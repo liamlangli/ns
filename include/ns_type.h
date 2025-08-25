@@ -288,15 +288,10 @@ typedef enum {
     NS_NUMBER_I_AND_U = 6,
 } ns_number_type;
 
-typedef enum {
-    NS_STORE_CONST = 0,
-    NS_STORE_STACK = 1,
-    NS_STORE_HEAP = 2,
-} ns_store;
-
 typedef struct ns_type {
     ns_value_type type: 8;
-    ns_store store: 4;
+    ns_bool mut: 2; // is mut is 0, it is const or immediate
+    ns_bool stack: 2;
     ns_bool ref: 2;
     ns_bool array: 2;
     u32 index;
@@ -304,16 +299,16 @@ typedef struct ns_type {
 
 #define ns_type_is_ref(t) (t.ref != 0)
 #define ns_type_is_array(t) (t.array != 0)
-#define ns_type_is_mut(t) (NS_STORE_CONST == t.store)
-#define ns_type_in_stack(t) (NS_STORE_STACK == t.store)
-#define ns_type_in_heap(t) (NS_STORE_HEAP == t.store)
+#define ns_type_is_const(t) (t.mut == 0)
+#define ns_type_in_stack(t) (t.stack != 0)
+#define ns_type_in_heap(t) (t.heap != 0)
 #define ns_type_index(t) (t.index)
-#define ns_type_set_store(t, s) ((ns_type){.ref = t.ref, .store = s, .type = t.type, .array = t.array, .index = t.index})
-#define ns_type_set_ref(t, r) ((ns_type){.ref = r, .store = t.store, .type = t.type, .array = t.array, .index = t.index})
+#define ns_type_set_stack(t, s) ((ns_type){.ref = t.ref, .stack = s, .mut = t.mut, .type = t.type, .array = t.array, .index = t.index})
+#define ns_type_set_ref(t, r) ((ns_type){.ref = r, .stack = t.stack, .mut = t.mut, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}
 
 #define ns_type_equals(a, b) (a.type == b.type && a.index == b.index)
-ns_type ns_type_encode(ns_value_type t, u64 i, ns_bool is_ref, ns_store s);
+#define ns_type_encode(t, i, r, m, s) ((ns_type){.type = t, .index = i, .ref = r, .mut = m, .stack = s})
 
 #define ns_type_infer   (ns_type){.type = NS_TYPE_INFER}
 #define ns_type_void    (ns_type){.type = NS_TYPE_VOID}

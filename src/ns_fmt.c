@@ -25,7 +25,7 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     case NS_TYPE_BOOL:
         return ns_eval_bool(vm, n) ? ns_str_false : ns_str_true;
     case NS_TYPE_STRING: {
-        if (ns_type_is_mut(n.t)) {
+        if (ns_type_is_const(n.t)) {
             return vm->str_list[n.o];
         } else {
             i8* raw = ns_type_in_stack(n.t) ? vm->stack + n.o : (i8*)n.o;

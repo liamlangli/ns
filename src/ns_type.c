@@ -71,10 +71,6 @@ ns_bool ns_type_is_number(ns_type t) {
     }
 }
 
-ns_type ns_type_encode(ns_value_type t, u64 i,ns_bool is_ref, ns_store s) {
-    return (ns_type){.type = t, .index = i, .ref = is_ref, .store = s};
-}
-
 ns_number_type ns_vm_number_type(ns_type t) {
     if (ns_type_is_float(t)) return NS_NUMBER_FLT;
     if (ns_type_signed(t)) return NS_NUMBER_I;

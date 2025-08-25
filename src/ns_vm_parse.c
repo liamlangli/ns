@@ -278,7 +278,7 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture) {
 }
 
 ns_type ns_vm_parse_generic_type(ns_token_t t) {
-    ns_type ret = ns_type_encode(NS_TYPE_UNKNOWN, 0, 0, NS_STORE_CONST);
+    ns_type ret = ns_type_encode(NS_TYPE_UNKNOWN, 0, false, false, true);
     switch (t.type) {
     case NS_TOKEN_NIL: ret.type = NS_TYPE_NIL; break;
     case NS_TOKEN_TYPE_ANY: ret.type = NS_TYPE_ANY; break;
@@ -325,10 +325,12 @@ ns_return_type ns_vm_parse_type_by_token(ns_vm *vm, ns_token_t t, ns_code_loc lo
 
 ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n) {
     ns_token_t t;
+    ns_bool is_ref = false;
     if (n->type == NS_AST_PROGRAM) {
         return ns_return_ok(type, ns_type_infer);
     } else if (n->type == NS_AST_TYPE_LABEL) {
         t = n->type_label.name;
+        is_ref = n->type_label.is_ref;
     } else if (n->type == NS_AST_CAST_EXPR) {
         t = n->cast_expr.type;
     } else {
@@ -340,7 +342,7 @@ ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n) {
 
     ns_return_type ret_t = ns_vm_parse_type_by_token(vm, t, ns_ast_state_loc(ctx, n->state));
     if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
-    return ns_return_ok(type, ns_type_set_ref(ret_t.r, ret.ref));
+    return ns_return_ok(type, ns_type_set_ref(ret_t.r, is_ref));
 }
 
 ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -354,14 +356,14 @@ ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
         case NS_AST_FN_DEF: {
             if (!main_mod && ns_str_equals_STR(n->fn_def.name.val, "main")) continue; // skip main in lib
             ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->fn_def.body}, .lib =  vm->lib };
-            fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->fn_def.is_ref, NS_STORE_CONST);
+            fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->fn_def.is_ref, false, true);
             fn.name = n->fn_def.name.val;
             ns_vm_push_symbol_global(vm, fn);
         } break;
 
         case NS_AST_OP_FN_DEF: {
             ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->ops_fn_def.body}, .lib =  vm->lib};
-            fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->ops_fn_def.is_ref, NS_STORE_CONST);
+            fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->ops_fn_def.is_ref, false, true);
             ns_ast_t l = ctx->nodes[n->ops_fn_def.left];
             ns_ast_t r = ctx->nodes[n->ops_fn_def.right];
 
@@ -378,7 +380,7 @@ ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
 
         case NS_AST_STRUCT_DEF: {
             ns_symbol st = (ns_symbol){.type = NS_SYMBOL_STRUCT, .st = {.ast = s }, .lib = vm->lib};
-            st.st.st.t = ns_type_encode(NS_TYPE_STRUCT, symbol_index, 0, NS_STORE_CONST);
+            st.st.st.t = ns_type_encode(NS_TYPE_STRUCT, symbol_index, 0, false, true);
             st.name = n->struct_def.name.val;
             ns_vm_push_symbol_global(vm, st);
         } break;
@@ -398,7 +400,7 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *n = &ctx->nodes[fn->fn.ast];
         if (!main_mod && ns_str_equals_STR(n->fn_def.name.val, "main")) continue; // skip main in lib
 
-        fn->fn.fn.t = ns_type_encode(NS_TYPE_FN, i, 0, NS_STORE_CONST);
+        fn->fn.fn.t = ns_type_encode(NS_TYPE_FN, i, 0, false, true);
         if (n->type == NS_AST_FN_DEF) {
             ns_ast_t *ret_type = &ctx->nodes[n->fn_def.ret];
             ns_return_type ret = ns_vm_parse_type(vm, ctx, ret_type);
@@ -479,7 +481,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         
         ns_scope_exit(vm);
         ns_array_pop(vm->call_stack);
-        fn->fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, i, is_ref, 0) };
+        fn->fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, i, is_ref, false, true) };
         fn->parsed = true;
     }
     return ns_return_ok_void;
@@ -516,7 +518,7 @@ ns_return_void ns_vm_parse_type_def(ns_vm *vm, ns_ast_ctx *ctx) {
             }
             fn.fn.ret = ret_t.r;
             i32 index = ns_array_length(vm->symbols);
-            fn.fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, index, 0, NS_STORE_CONST)};
+            fn.fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, index, 0, false, true)};
 
             ns_vm_push_symbol_global(vm, fn);
         } else {
@@ -555,7 +557,7 @@ ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
                 if (ns_return_is_error(ret_item_type)) return ns_return_change_type(void, ret_item_type);
 
                 ns_type item_type = ret_item_type.r;
-                t = (ns_type){.type = item_type.type, .ref = type->type_label.is_ref, .array = true, .store = NS_STORE_HEAP};
+                t = (ns_type){.type = item_type.type, .ref = type->type_label.is_ref, .array = true, .mut = item_type.mut, .stack = true};
             } else {
                 ns_return_type ret_t = ns_vm_parse_type(vm, ctx, type);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
@@ -734,7 +736,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
 
     // if no arg captured by block, set the block type to fn type
     if (field_count == 0) {
-        ns_type fn_t = ns_type_encode(NS_TYPE_FN, index, 0, NS_STORE_CONST);
+        ns_type fn_t = ns_type_encode(NS_TYPE_FN, index, 0, true, true);
         sym.bc.fn.fn = (ns_value){.t = fn_t};
         ns_symbol bc_fn = (ns_symbol){.name = sym.name, .type = NS_SYMBOL_FN, .fn = sym.bc.fn, .lib = vm->lib, .parsed = true};
         ns_vm_push_symbol_global(vm, bc_fn);
@@ -750,7 +752,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
             offset += f->s;
         }
         sym.bc.st.stride = offset;
-        ns_type block_t = ns_type_encode(NS_TYPE_BLOCK, index, 0, NS_STORE_CONST);
+        ns_type block_t = ns_type_encode(NS_TYPE_BLOCK, index, 0, true, true);
         sym.bc.val.t = block_t;
         ns_vm_push_symbol_global(vm, sym);
         return ns_return_ok(type, block_t);
@@ -914,6 +916,8 @@ ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
         }
         return ns_return_ok(type, t);
+    case NS_TOKEN_REF:
+        return ns_return_ok(type, ns_type_set_ref(t, true));
     default:
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown unary ops.");
     }
@@ -926,7 +930,7 @@ ns_return_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_return_type ret_t = ns_vm_parse_type(vm, ctx, type);
     if (ns_return_is_error(ret_t)) return ret_t;
     ns_type t = ret_t.r;
-    ns_type arr_t = (ns_type){.type = t.type, .ref = t.ref, .array = true, .store = NS_STORE_HEAP};
+    ns_type arr_t = (ns_type){.type = t.type, .ref = t.ref, .array = true, .mut = t.mut, .stack = true};
     return ns_return_ok(type, arr_t);
 }
 
@@ -945,7 +949,7 @@ ns_return_type ns_vm_parse_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (!ns_type_is(r, NS_TYPE_I32)) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
     }
-    ns_type t = (ns_type){.type = l.type, .ref = l.ref, .array = false, .store = l.ref ? NS_STORE_HEAP : NS_STORE_CONST, .index = l.index };
+    ns_type t = (ns_type){.type = l.type, .ref = l.ref, .array = false, .mut = l.mut, .stack = true, .index = l.index };
     return ns_return_ok(type, t);
 }
 

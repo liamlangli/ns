@@ -124,6 +124,7 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
 }
 
 ffi_type ns_ffi_map_type(ns_type t) {
+    if (t.ref) return ffi_type_pointer;
     switch (t.type)
     {
         case NS_TYPE_I8: return ffi_type_sint8;
@@ -163,10 +164,10 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     for (i32 i = 0; i < call->arg_count; i++) {
         ns_value v = vm->symbol_stack[call->arg_offset + i].val;
 
-        if (ns_type_is_mut(v.t)) {
+        if (ns_type_is_const(v.t)) {
             i32 size = ns_type_size(vm, v.t);
             u64 offset = ns_eval_alloc(vm, size);
-            ns_value dst = (ns_value){.t = ns_type_set_store(v.t, NS_STORE_STACK), .o = offset};
+            ns_value dst = (ns_value){.t = ns_type_set_stack(v.t, true), .o = offset};
             ns_return_value ret_v = ns_eval_copy(vm, dst, v, size);
             if (ns_return_is_error(ret_v)) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to copy arg.");
             v = ret_v.r;
@@ -213,10 +214,10 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
 
     if (!ns_type_is(fn->fn.ret, NS_TYPE_VOID)) {
         ns_type ret_type = fn->fn.ret;
-        if (ns_type_is_mut(ret_type)) {
+        if (ns_type_is_const(ret_type)) {
             i32 size = ns_type_size(vm, ret_type);
             u64 offset = ns_eval_alloc(vm, size);
-            ns_value dst = (ns_value){.t = ns_type_set_store(ret_type, NS_STORE_STACK), .o = offset};
+            ns_value dst = (ns_value){.t = ns_type_set_stack(ret_type, true), .o = offset};
             ns_return_value ret_v = ns_eval_copy(vm, dst, (ns_value){.t = ret_type, .o = ret_ptr}, size);
             if (ns_return_is_error(ret_v)) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to copy ret.");
             call->ret = ret_v.r;

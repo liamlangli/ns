@@ -88,6 +88,7 @@ ns_bool ns_token_is_operator(ns_token_t token) {
     case NS_TOKEN_REL_OP:
     case NS_TOKEN_EQ_OP:
     case NS_TOKEN_LOGIC_OP:
+    case NS_TOKEN_REF:
         return true;
     default:
         return false;
@@ -494,6 +495,31 @@ ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
                 return ns_return_error(bool, loc, NS_ERR_SYNTAX, "expected expression after unary operator");
             }
         }
+    } else if (ctx->token.type == NS_TOKEN_REF) {
+        ns_ast_t n = {.type = NS_AST_UNARY_EXPR, .state = state, .unary_expr = {.op = ctx->token}};
+
+        ns_ast_state operand_state = ns_save_state(ctx);
+        ret = ns_parse_postfix_expr(ctx, 0);
+        if (ns_return_is_error(ret)) return ret;
+
+        if (ret.r) {
+            n.unary_expr.expr = ctx->current;
+            ns_ast_push(ctx, n);
+            return ns_return_ok(bool, true);
+        } else {
+            ns_restore_state(ctx, operand_state);
+            ret = ns_parse_primary_expr(ctx);
+            if (ns_return_is_error(ret)) return ret;
+
+            if (ret.r) {
+                n.unary_expr.expr = ctx->current;
+                ns_ast_push(ctx, n);
+                return ns_return_ok(bool, true);
+            } else {
+                ns_code_loc loc = ns_ast_state_loc(ctx, state);
+                return ns_return_error(bool, loc, NS_ERR_SYNTAX, "expected expression after 'ref'");
+            }
+        }
     }
 
     ns_restore_state(ctx, state);
@@ -601,6 +627,7 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
         } break;
 
         case NS_TOKEN_ASSIGN:
+        case NS_TOKEN_REF:
         case NS_TOKEN_ASSIGN_OP:
         case NS_TOKEN_ADD_OP:
         case NS_TOKEN_MUL_OP:
