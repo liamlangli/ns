@@ -233,7 +233,11 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf(" [%d]", n->binary_expr.right);
         break;
     case NS_AST_UNARY_EXPR:
-        ns_str_printf(n->unary_expr.op.val);
+        if (n->unary_expr.op.type == NS_TOKEN_REF)
+            printf(ns_color_log "%.*s" ns_color_nil, n->unary_expr.op.val.len, n->unary_expr.op.val.data);
+        else
+            ns_str_printf(n->unary_expr.op.val);
+            
         printf(" [%d]", n->unary_expr.expr);
         break;
     case NS_AST_FIELD_DEF: {

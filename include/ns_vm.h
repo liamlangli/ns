@@ -128,6 +128,9 @@ typedef struct ns_vm {
     // mode
     ns_bool repl;
 
+    // code
+    ns_code_loc loc;
+
     // debug
     ns_return_void (*step_hook)(struct ns_vm *vm, ns_ast_ctx *ctx, i32 i);
     i32 stack_depth;

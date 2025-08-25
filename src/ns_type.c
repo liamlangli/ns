@@ -40,8 +40,29 @@ void _ns_free(void *ptr, const_str file, i32 line) {
     free(ptr);
 }
 
+ns_str ns_mem_str(u64 i) {
+    if (i < 1024) {
+        ns_str s = ns_str_from_i32((i32)i);
+        ns_str_append(&s, ns_str_cstr(ns_color_ign "B" ns_color_nil));
+        return s;
+    } else if (i < 1024 * 1024) {
+        ns_str s = ns_str_from_i32((i32)i >> 10);
+        ns_str_append(&s, ns_str_cstr(ns_color_ign "KB" ns_color_nil));
+        return s;
+    } else if (i < 1024 * 1024 * 1024) {
+        ns_str s = ns_str_from_i32((i32)i >> 20);
+        ns_str_append(&s, ns_str_cstr(ns_color_ign "MB" ns_color_nil));
+        return s;
+    }
+    ns_str s = ns_str_from_i32((i32)i >> 30);
+    ns_str_append(&s, ns_str_cstr(ns_color_ign "GB" ns_color_nil));
+    return s;
+}
+
 void ns_mem_status(void) {
-    ns_info("ns_mem_status[op|sz]", "alloc[%lu|%lu], realloc[%lu|%lu], free[%lu]\n", _ns_heap.alloc_op, _ns_heap.alloc, _ns_heap.realloc_op, _ns_heap.realloc, _ns_heap.free_op);
+    ns_str alloc = ns_mem_str(_ns_heap.alloc);
+    ns_str realloc = ns_mem_str(_ns_heap.realloc);
+    ns_info("ns_mem_status", "alloc[%lu|%.*s], realloc[%lu|%.*s], free[%lu]\n", _ns_heap.alloc_op, alloc.len, alloc.data, _ns_heap.realloc_op, realloc.len, realloc.data, _ns_heap.free_op);
 }
 #endif
 
@@ -94,7 +115,6 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap)
     szt new_size = elem_size * min_cap + sizeof(ns_array_header_t);
 #ifdef NS_DEBUG
     if (a) {
-
         b = _ns_realloc(ns_array_header(a), new_size, file, line);
         _ns_heap.alloc_op++;
         _ns_heap.alloc += new_size - (ns_array_capacity(a) * elem_size + sizeof(ns_array_header_t));
@@ -163,10 +183,12 @@ f64 ns_str_to_f64(ns_str s) {
 }
 
 ns_str ns_str_from_i32(i32 i) {
-    snprintf(_ns_str_buff, sizeof(_ns_str_buff), "%d", i);
-    i32 len = strlen(_ns_str_buff);
-    _ns_str_buff[len] = '\0';
-    return (ns_str){.data = _ns_str_buff, .len = len, .dynamic = 1};
+    ns_str s = {.dynamic = 1};
+    szt len = snprintf(_ns_str_buff, sizeof(_ns_str_buff), "%d", i);
+    ns_array_set_length(s.data, len);
+    strcpy(s.data, _ns_str_buff);
+    s.len = len;
+    return s;
 }
 
 ns_str ns_str_unescape(ns_str s) {

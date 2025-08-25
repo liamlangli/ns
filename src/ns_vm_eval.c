@@ -33,7 +33,7 @@ u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
 
 ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
     if (ns_type_is_const(dst.t)) {
-        return ns_return_error(value, ns_code_loc_nil, NS_ERR_EVAL, "cannot assign to const.");
+        return ns_return_error(value, vm->loc, NS_ERR_EVAL, "cannot assign to const.");
     }
 
     if (ns_type_is_ref(dst.t)) return ns_return_ok(value, src); // ref semantics, return src
@@ -968,8 +968,8 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_vm_inject_hook(vm, ctx, i);
-
     ns_ast_t *n = &ctx->nodes[i];
+    vm->loc = ns_ast_state_loc(ctx, n->state);
     if (vm->step_hook) vm->step_hook(vm, ctx, i);
 
     // eval & store value
@@ -977,14 +977,14 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (size < 0) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown type size.");
     }
-
+    
     u64 offset = ns_eval_alloc(vm, size);
     ns_value ret = (ns_value){.o = offset};
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->var_def.expr);
     if (ns_return_is_error(ret_v)) return ret_v;
 
     ns_value v = ret_v.r;
-    ret.t = ns_type_set_stack(v.t, true);
+    ret.t = ns_type_encode(v.t.type, v.t.index, n->type_label.is_ref, true, true);
     ns_eval_copy(vm, ret, v, size);
     ns_array_set_length(vm->stack, offset + size);
 
