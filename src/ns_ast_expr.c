@@ -403,6 +403,10 @@ ns_return_bool ns_parse_member_expr(ns_ast_ctx *ctx, i32 operand) {
     return ns_return_ok(bool, false);
 }
 
+/*
+ * parse postfix expression
+ * operand: 
+ */
 ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
     ns_return_bool ret;
     ns_ast_state primary_state = ns_save_state(ctx);

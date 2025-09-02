@@ -55,6 +55,7 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
         case NS_TYPE_BOOL: *(ns_bool*)&vm->stack[offset] = src.b; break;
         case NS_TYPE_STRING: *(u64*)&vm->stack[offset] = src.o; break;
         case NS_TYPE_FN: *(u64*)&vm->stack[offset] = src.o; break;
+        case NS_TYPE_STRUCT: memcpy(&vm->stack[offset], &vm->stack[src.o], size); break;
         case NS_TYPE_BLOCK: {
             ns_error("eval error", "can't copy block type.");
         } break;
@@ -860,8 +861,11 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_TOKEN_REF:
         if (ns_type_is_ref(v.t)) return ns_return_ok(value, v);
         if (ns_type_is_const(v.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "cannot take reference of const value.");
-        // ns_value ret = (ns_value){.t = ns_type_set_store(v.t, NS_STORE_CONST)};
-        // u64 offset = ns_eval_alloc(vm, ns_type_size(vm, v.t) + sizeof(u64));
+        u64 offset = ns_eval_alloc(vm, sizeof(u64));
+        ns_value dst = {.o = offset};
+        dst.t = ns_type_encode(v.t.type, v.t.index, true, true, true);
+        ns_eval_copy(vm, dst, v, ns_type_size(vm, v.t));
+        return ns_return_ok(value, dst);
     default:
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown unary ops.");
     }
@@ -953,8 +957,8 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown type size.");
     }
 
-    u64 offset = ns_eval_alloc(vm, size);
-    ns_value ret = (ns_value){.o = offset};
+    u32 offset = ns_array_length(vm->stack);
+    ns_value ret = (ns_value){.o = ns_eval_alloc(vm, size)};
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->var_def.expr);
     if (ns_return_is_error(ret_v)) return ret_v;
 
@@ -977,17 +981,15 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (size < 0) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown type size.");
     }
-    
-    u64 offset = ns_eval_alloc(vm, size);
-    ns_value ret = (ns_value){.o = offset};
+
+    ns_value ret = (ns_value){.o = ns_eval_alloc(vm, size)};
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->var_def.expr);
     if (ns_return_is_error(ret_v)) return ret_v;
-
-    ns_value v = ret_v.r;
-    ret.t = ns_type_encode(v.t.type, v.t.index, n->type_label.is_ref, true, true);
-    ns_eval_copy(vm, ret, v, size);
-    ns_array_set_length(vm->stack, offset + size);
-
+    if (n->var_def.is_ref && ns_type_is_ref(ret_v.r.t)) {
+        return ns_return_ok(value, ret_v.r);
+    }
+    ret.t = ns_type_set_stack(ret_v.r.t, true);
+    ns_array_set_length(vm->stack, ret.o + size);
     ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val, .val = ret, .parsed = true};
     ns_array_push(vm->symbol_stack, symbol);
     return ns_return_ok(value, ret);

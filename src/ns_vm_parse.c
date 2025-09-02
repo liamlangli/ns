@@ -405,7 +405,7 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_ast_t *ret_type = &ctx->nodes[n->fn_def.ret];
             ns_return_type ret = ns_vm_parse_type(vm, ctx, ret_type);
             if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
-            fn->fn.ret = ret.r;
+            fn->fn.ret = ns_type_set_mut(ret.r, true);
 
             fn->fn.arg_required = n->fn_def.arg_required;
             ns_array_set_length(fn->fn.args, n->fn_def.arg_count);
@@ -428,7 +428,7 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_ast_t *ret_type = &ctx->nodes[n->ops_fn_def.ret];
             ns_return_type ret = ns_vm_parse_type(vm, ctx, ret_type);
             if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
-            fn->fn.ret = ret.r;
+            fn->fn.ret = ns_type_set_mut(ret.r, true);
             fn->fn.arg_required = n->ops_fn_def.arg_required; // TODO, for single arg ops fn, ast arg_required as 1
 
             ns_array_set_length(fn->fn.args, 2);
@@ -609,11 +609,13 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
         r.name = n->var_def.name.val;
 
+        ns_bool type_required = n->var_def.type != 0;
         ns_ast_t *type = &ctx->nodes[n->var_def.type];
         ns_return_type ret = ns_vm_parse_type(vm, ctx, type);
         if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
-
-        if (ret.r.type == NS_TYPE_UNKNOWN) return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "var def with unknown type.");
+        if (type_required && ret.r.type == NS_TYPE_UNKNOWN) {
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "var def with unknown type.");
+        }
 
         if (ret.r.type == NS_TYPE_INFER) {
             if (n->var_def.expr == -1) {

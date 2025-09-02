@@ -604,43 +604,62 @@ i32 ns_ast_struct_field_index(ns_ast_ctx *ctx, i32 st, ns_str name) {
     return -1;
 }
 
+/**
+ * let name = expr
+ * ref name = expr
+ */
 ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
 
     // identifier [type_declare] = expression
-    if (ns_token_require(ctx, NS_TOKEN_LET) && ns_parse_identifier(ctx)) {
-        ns_ast_t n = {.type = NS_AST_VAR_DEF, .state = state, .var_def = {.name = ctx->token, .type = 0, .expr = 0}};
+    ns_parse_next_token(ctx);
+    if (!(ctx->token.type == NS_TOKEN_REF || ctx->token.type == NS_TOKEN_LET)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
 
-        ns_ast_state type_state = ns_save_state(ctx);
-        if (ns_token_require(ctx, NS_TOKEN_COLON)) {
-            ret = ns_parse_type_label(ctx);
-            if (ns_return_is_error(ret)) return ret;
-            if (ret.r) {
-                n.var_def.type = ctx->current;
-            } else {
-                ns_restore_state(ctx, type_state);
-            }
+    ns_bool is_ref = ctx->token.type == NS_TOKEN_REF;
+    if (!ns_parse_identifier(ctx)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+
+    ns_ast_t n = {.type = NS_AST_VAR_DEF, .state = state, .var_def = {.name = ctx->token, .expr = 0, .is_ref = is_ref, .type = 0}};
+
+    ns_ast_state type_state = ns_save_state(ctx);
+    ns_bool has_type = true;
+    if (ns_token_require(ctx, NS_TOKEN_COLON)) {
+        ret = ns_parse_type_label(ctx);
+        if (ns_return_is_error(ret)) return ret;
+        if (ret.r) {
+            n.var_def.type = ctx->current;
         } else {
             ns_restore_state(ctx, type_state);
         }
+    } else {
+        ns_restore_state(ctx, type_state);
+        has_type = false;
+    }
 
-        ns_ast_state assign_state = ns_save_state(ctx);
-        if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
-            ret = ns_parse_expr(ctx);
-            if (ns_return_is_error(ret)) return ret;
+    ns_ast_state assign_state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
+        ret = ns_parse_expr(ctx);
+        if (ns_return_is_error(ret)) return ret;
 
-            if (ret.r) {
-                n.var_def.expr = ctx->current;
-                ns_ast_push(ctx, n);
-                return ns_return_ok(bool, true);
-            }
+        if (ret.r) {
+            n.var_def.expr = ctx->current;
+            ns_ast_push(ctx, n);
+            return ns_return_ok(bool, true);
         }
-        ns_restore_state(ctx, assign_state);
+    } else {
+        if (!has_type) {
+            ns_restore_state(ctx, assign_state);
+            return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "variable type must be specified");
+        }
         ns_ast_push(ctx, n);
         return ns_return_ok(bool, true);
     }
-
     ns_restore_state(ctx, state);
     return ns_return_ok(bool, false);
 }

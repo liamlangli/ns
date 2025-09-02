@@ -106,6 +106,7 @@ typedef struct ns_ast_var_def {
     i32 expr;
     i32 type;
     i32 type_size;
+    ns_bool is_ref;
 } ns_ast_var_def;
 
 typedef struct ns_ast_struct_def {

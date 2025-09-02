@@ -303,7 +303,8 @@ typedef struct ns_type {
 #define ns_type_in_stack(t) (t.stack != 0)
 #define ns_type_in_heap(t) (t.heap != 0)
 #define ns_type_index(t) (t.index)
-#define ns_type_set_stack(t, s) ((ns_type){.ref = t.ref, .stack = s, .mut = t.mut, .type = t.type, .array = t.array, .index = t.index})
+#define ns_type_set_mut(t, c) ((ns_type){.ref = t.ref, .stack = t.stack, .mut = c, .type = t.type, .array = t.array, .index = t.index})
+#define ns_type_set_stack(t, s) ((ns_type){.ref = t.ref, .stack = s, .mut = s || t.mut, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_set_ref(t, r) ((ns_type){.ref = r, .stack = t.stack, .mut = t.mut, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}
 
