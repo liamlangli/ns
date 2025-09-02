@@ -303,7 +303,7 @@ typedef struct ns_type {
 #define ns_type_in_stack(t) (t.stack != 0)
 #define ns_type_in_heap(t) (t.heap != 0)
 #define ns_type_index(t) (t.index)
-#define ns_type_set_mut(t, c) ((ns_type){.ref = t.ref, .stack = t.stack, .mut = c, .type = t.type, .array = t.array, .index = t.index})
+#define ns_type_set_mut(t, c) ((ns_type){.ref = t.ref, .stack = c && t.stack, .mut = c, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_set_stack(t, s) ((ns_type){.ref = t.ref, .stack = s, .mut = s || t.mut, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_set_ref(t, r) ((ns_type){.ref = r, .stack = t.stack, .mut = t.mut, .type = t.type, .array = t.array, .index = t.index})
 #define ns_type_unknown (ns_type){.type = NS_TYPE_UNKNOWN}
@@ -312,22 +312,22 @@ typedef struct ns_type {
 #define ns_type_encode(t, i, r, m, s) ((ns_type){.type = t, .index = i, .ref = r, .mut = m, .stack = s})
 
 #define ns_type_infer   (ns_type){.type = NS_TYPE_INFER}
-#define ns_type_void    (ns_type){.type = NS_TYPE_VOID}
-#define ns_type_nil     (ns_type){.type = NS_TYPE_NIL}
-#define ns_type_bool    (ns_type){.type = NS_TYPE_BOOL}
-#define ns_type_str     (ns_type){.type = NS_TYPE_STRING}
-#define ns_type_array   (ns_type){.type = NS_TYPE_ARRAY}
+#define ns_type_void    (ns_type){.type = NS_TYPE_VOID, .mut = 0}
+#define ns_type_nil     (ns_type){.type = NS_TYPE_NIL, .mut = 0}
+#define ns_type_bool    (ns_type){.type = NS_TYPE_BOOL, .mut = 0}
+#define ns_type_str     (ns_type){.type = NS_TYPE_STRING, .mut = 1}
+#define ns_type_array   (ns_type){.type = NS_TYPE_ARRAY, .mut = 1}
 
-#define ns_type_i8  (ns_type){.type = NS_TYPE_I8}
-#define ns_type_i16 (ns_type){.type = NS_TYPE_I16}
-#define ns_type_i32 (ns_type){.type = NS_TYPE_I32}
-#define ns_type_i64 (ns_type){.type = NS_TYPE_I64}
-#define ns_type_u8  (ns_type){.type = NS_TYPE_U8}
-#define ns_type_u16 (ns_type){.type = NS_TYPE_U16}
-#define ns_type_u32 (ns_type){.type = NS_TYPE_U32}
-#define ns_type_u64 (ns_type){.type = NS_TYPE_U64}
-#define ns_type_f32 (ns_type){.type = NS_TYPE_F32}
-#define ns_type_f64 (ns_type){.type = NS_TYPE_F64}
+#define ns_type_i8  (ns_type){.type = NS_TYPE_I8, .mut = 0}
+#define ns_type_i16 (ns_type){.type = NS_TYPE_I16, .mut = 0}
+#define ns_type_i32 (ns_type){.type = NS_TYPE_I32, .mut = 0}
+#define ns_type_i64 (ns_type){.type = NS_TYPE_I64, .mut = 0}
+#define ns_type_u8  (ns_type){.type = NS_TYPE_U8, .mut = 0}
+#define ns_type_u16 (ns_type){.type = NS_TYPE_U16, .mut = 0}
+#define ns_type_u32 (ns_type){.type = NS_TYPE_U32, .mut = 0}
+#define ns_type_u64 (ns_type){.type = NS_TYPE_U64, .mut = 0}
+#define ns_type_f32 (ns_type){.type = NS_TYPE_F32, .mut = 0}
+#define ns_type_f64 (ns_type){.type = NS_TYPE_F64, .mut = 0}
 
 #define ns_type_is(t, tt) (t.type == tt)
 #define ns_type_is_float(t) (ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64))

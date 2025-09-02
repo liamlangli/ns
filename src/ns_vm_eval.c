@@ -184,7 +184,7 @@ void *ns_eval_array_raw(ns_vm *vm, ns_value n) {
 
 #define ns_eval_number_op(fn, op) \
 ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) {\
-    ns_value ret = (ns_value){.t = l.t };\
+    ns_value ret = (ns_value){.t = ns_type_set_mut(l.t, false) };\
     switch (l.t.type) {\
         case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) op ns_eval_number_i8(vm, r); break;\
         case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) op ns_eval_number_i16(vm, r); break;\
@@ -352,11 +352,12 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_symbol *sym = &vm->symbols[ns_type_index(callee.t)];
     ns_fn_symbol *fn = ns_symbol_get_fn(sym);
-    i32 ret_size = ns_type_size(vm, fn->ret);
-    if (ret_size < 0) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid override fn.");
 
-    u64 ret_offset = ns_eval_alloc(vm, ret_size);
-    ns_value ret_val = (ns_value){.t = ns_type_set_stack(fn->ret, true), .o = ret_offset};
+    ns_value ret_val = (ns_value){.t = ns_type_set_stack(fn->ret, true), .o = 0};
+    i32 ret_size = ns_type_size(vm, fn->ret);
+    if (ret_size > 0) {
+        ret_val.o = ns_eval_alloc(vm, ret_size);
+    }
     ns_call call = (ns_call){.callee = sym, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->args)};
 
     ns_scope_enter(vm);
@@ -919,7 +920,7 @@ ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     } else {
         data = (u8*)table.o + offset;
     }
-    ns_value val = (ns_value){.t = ns_type_set_stack(element_type, false), .o = (u64)data};
+    ns_value val = (ns_value){.t = ns_type_set_stack(element_type, true), .o = (u64)data};
     return ns_return_ok(value, val);
 }
 
@@ -989,6 +990,7 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_ok(value, ret_v.r);
     }
     ret.t = ns_type_set_stack(ret_v.r.t, true);
+    ns_eval_copy(vm, ret, ret_v.r, size);
     ns_array_set_length(vm->stack, ret.o + size);
     ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val, .val = ret, .parsed = true};
     ns_array_push(vm->symbol_stack, symbol);

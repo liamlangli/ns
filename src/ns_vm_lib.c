@@ -23,7 +23,7 @@
 typedef struct ffi_ctx {
     ffi_type type_refs[NS_MAX_FFI_ARGS];
     ffi_type *types[NS_MAX_FFI_ARGS];
-    void *refs[NS_MAX_FFI_ARGS];
+    void *value_refs[NS_MAX_FFI_ARGS];
     void *values[NS_MAX_FFI_ARGS];
 
     i8 stack[NS_MAX_FFI_STACK];
@@ -173,30 +173,40 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
             v = ret_v.r;
         }
 
+        if (ns_type_is_ref(v.t)) {
+            if (ns_type_in_stack(v.t)) {
+                _ffi_ctx.value_refs[i] = (i8*)vm->stack + v.o;
+                _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
+            } else {
+                _ffi_ctx.values[i] = (void*)v.o;
+            }
+            _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
+            _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
+            continue;
+        }
+
         switch (v.t.type)
         {
-        case NS_TYPE_STRING: {
-            ns_str s = ns_eval_str(vm, v);
-            _ffi_ctx.refs[i] = (void*)s.data;
-            _ffi_ctx.values[i] = &_ffi_ctx.refs[i];
-        } break;
-        case NS_TYPE_ARRAY: {
-            void *data = ns_eval_array_raw(vm, v);
-            _ffi_ctx.refs[i] = data;
-            _ffi_ctx.values[i] = &_ffi_ctx.refs[i];
-        } break;
-        default: {
-            u64 offset = (u64)ns_type_size(vm, v.t);
-            u64 start = (_ffi_ctx.stack_offset + 7) & ~7; // Align to 8 bytes
-            u64 end = start + offset; 
-            if (end > NS_MAX_FFI_STACK) {
-                return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ffi stack overflow.");
-            }
-            i8* dst = (i8*)_ffi_ctx.stack + start;
-            memcpy(dst, (i8*)vm->stack + v.o, offset);
-            _ffi_ctx.stack_offset = end;
-            _ffi_ctx.values[i] = dst;
-        }break;
+            case NS_TYPE_STRING: {
+                ns_str s = ns_eval_str(vm, v);
+                _ffi_ctx.values[i] = (void*)&s.data;
+            } break;
+            case NS_TYPE_ARRAY: {
+                void *data = ns_eval_array_raw(vm, v);
+                _ffi_ctx.values[i] = data;
+            } break;
+            default: {
+                u64 offset = (u64)ns_type_size(vm, v.t);
+                u64 start = (_ffi_ctx.stack_offset + 7) & ~7; // Align to 8 bytes
+                u64 end = start + offset; 
+                if (end > NS_MAX_FFI_STACK) {
+                    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ffi stack overflow.");
+                }
+                i8* dst = (i8*)_ffi_ctx.stack + start;
+                memcpy(dst, (i8*)vm->stack + v.o, offset);
+                _ffi_ctx.stack_offset = end;
+                _ffi_ctx.values[i] = dst;
+            }break;
         }
         _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
         _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
@@ -209,23 +219,14 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to prep ffi call.");
     }
 
-    ffi_arg ret_ptr;
-    ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &ret_ptr, _ffi_ctx.values);
-
-    if (!ns_type_is(fn->fn.ret, NS_TYPE_VOID)) {
-        ns_type ret_type = fn->fn.ret;
-        if (ns_type_is_const(ret_type)) {
-            i32 size = ns_type_size(vm, ret_type);
-            u64 offset = ns_eval_alloc(vm, size);
-            ns_value dst = (ns_value){.t = ns_type_set_stack(ret_type, true), .o = offset};
-            ns_return_value ret_v = ns_eval_copy(vm, dst, (ns_value){.t = ret_type, .o = ret_ptr}, size);
-            if (ns_return_is_error(ret_v)) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to copy ret.");
-            call->ret = ret_v.r;
-        } else if (ns_type_is_ref(ret_type)) {
-            call->ret = (ns_value){.t = ret_type, .o = ret_ptr};
-        } else {
-            return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "invalid ret type.");
-        }
+    ns_type t = fn->fn.ret;
+    i32 size = ns_type_size(vm, t);
+    ns_value v = {.t = ns_type_set_stack(fn->fn.ret, true), .o = ns_eval_alloc(vm, size)};
+    ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &vm->stack[v.o], _ffi_ctx.values);
+    if (ns_type_is_ref(t)) {
+        call->ret.o = v.o;
+    } else {
+        if (size > 0) ns_eval_copy(vm, call->ret, v, size);
     }
     return ns_return_ok(bool, true);
 }
