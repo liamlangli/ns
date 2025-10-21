@@ -2,6 +2,8 @@
 #include "ns_token.h"
 #include "ns_type.h"
 
+static ns_return_bool ns_parse_trailing_block_arg(ns_ast_ctx *ctx, i32 call_index);
+
 i32 ns_ast_push_expr(ns_ast_ctx *ctx, ns_ast_state state, i32 i) {
     ns_ast_t expr = {.type = NS_AST_EXPR, .state = state, .expr = {.body = i, .atomic = 1}};
     return ns_ast_push(ctx, expr);
@@ -428,6 +430,8 @@ ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
         ret = ns_parse_call_expr(ctx, operand);
         if (ns_return_is_error(ret)) return ret;
         if (ret.r) {
+            ns_return_bool trailing = ns_parse_trailing_block_arg(ctx, ctx->current);
+            if (ns_return_is_error(trailing)) return trailing;
             return ns_return_ok(bool, true);
         } else {
             return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected call expression after '('");
@@ -591,6 +595,63 @@ ns_return_bool ns_parse_block_expr(ns_ast_ctx *ctx) {
 
     ns_restore_state(ctx, state);
     return ns_return_ok(bool, false);
+}
+
+static ns_return_bool ns_parse_trailing_block_arg(ns_ast_ctx *ctx, i32 call_index) {
+    ns_ast_t *call = &ctx->nodes[call_index];
+    if (call->type != NS_AST_CALL_EXPR) {
+        return ns_return_ok(bool, false);
+    }
+
+    ctx->current = call_index;
+
+    ns_ast_state start_state = ns_save_state(ctx);
+    ns_ast_state token_state = start_state;
+
+    while (1) {
+        ns_restore_state(ctx, token_state);
+        if (!ns_parse_next_token(ctx)) {
+            ns_restore_state(ctx, start_state);
+            return ns_return_ok(bool, false);
+        }
+        if (ctx->token.type == NS_TOKEN_EOL) {
+            token_state = ns_save_state(ctx);
+            continue;
+        }
+        break;
+    }
+
+    if (ctx->token.type != NS_TOKEN_OPEN_BRACE) {
+        ns_restore_state(ctx, start_state);
+        return ns_return_ok(bool, false);
+    }
+
+    ns_restore_state(ctx, token_state);
+    ns_return_bool block_ret = ns_parse_block_expr(ctx);
+    if (ns_return_is_error(block_ret)) return block_ret;
+    if (!block_ret.r) {
+        ns_restore_state(ctx, start_state);
+        ctx->current = call_index;
+        return ns_return_ok(bool, false);
+    }
+
+    i32 block_node = ctx->current;
+    i32 block_expr = ns_ast_push_expr(ctx, start_state, block_node);
+    call = &ctx->nodes[call_index];
+
+    if (call->next == 0) {
+        call->next = block_expr;
+    } else {
+        i32 arg = call->next;
+        while (ctx->nodes[arg].next != 0) {
+            arg = ctx->nodes[arg].next;
+        }
+        ctx->nodes[arg].next = block_expr;
+    }
+    call->call_expr.arg_count++;
+    ctx->current = call_index;
+
+    return ns_return_ok(bool, true);
 }
 
 ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
