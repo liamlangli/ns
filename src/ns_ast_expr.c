@@ -128,6 +128,9 @@ ns_return_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
     }
 
     if (ctx->expr_stack == NULL || ns_array_length(ctx->expr_stack) == 0) {
+        fprintf(stderr, "DEBUG ns_parse_expr_rewind: stack_len=%zu expr_stack_len=%zu scope_top=%d op_top=%d\n",
+                ns_array_length(ctx->stack), ctx->expr_stack ? ns_array_length(ctx->expr_stack) : 0,
+                scope->stack_top, scope->op_top);
         ns_ast_state state = ns_save_state(ctx);
         return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "unexpected expr.");
     }
@@ -574,7 +577,7 @@ ns_return_bool ns_parse_block_expr(ns_ast_ctx *ctx) {
     }
 
     // require in
-    if (ctx->token.type != NS_TOKEN_IN) {
+    if (!ns_token_require(ctx, NS_TOKEN_IN)) {
         ns_restore_state(ctx, state);
         return ns_return_ok(bool, false);
     }
@@ -795,15 +798,17 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                 } else if (ctx->token.type == NS_TOKEN_OPEN_BRACE) { // parse block define: { [(args)] [-> ret] in body }
                     ns_restore_state(ctx, state);
                     ret = ns_parse_block_expr(ctx);
-                    if (ns_return_is_error(ret))
-                        return ret;
-                    if (!ret.r)
-                        return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected block expression");
-                    ns_parse_stack_push_operand(ctx, ns_ast_push_expr(ctx, state, ctx->current));
-                    break;    
-                }
+                if (ns_return_is_error(ret))
+                    return ret;
+                if (!ret.r)
+                    return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected block expression");
+                i32 expr_index = ns_ast_push_expr(ctx, state, ctx->current);
+                ns_parse_stack_push_operand(ctx, expr_index);
+                fprintf(stderr, "DEBUG push block expr idx=%d stack_len=%zu\n", expr_index, ns_array_length(ctx->stack));
+                break;    
             }
-        } break;
+        }
+    } break;
 
         default:
             goto rewind;
@@ -812,6 +817,8 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
 
 rewind:
     ns_restore_state(ctx, state);
+    fprintf(stderr, "DEBUG before rewind stack_len=%zu scope_top=%d\n",
+            ns_array_length(ctx->stack), ns_array_last(ctx->scopes)->stack_top);
     ns_return_bool rewind_ret = ns_parse_expr_rewind(ctx);
     if (ns_return_is_error(rewind_ret)) return rewind_ret;
     if (rewind_ret.r) {

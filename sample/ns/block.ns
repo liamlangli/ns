@@ -1,9 +1,14 @@
 use std
 
 type op_fn = (i32, i32) -> i32
+type unary_op = (i32) -> i32
 
 fn do_op(op: op_fn, a: i32, b: i32) i32 {
     return op(a, b)
+}
+
+fn apply_twice(value: i32, op: unary_op) i32 {
+    return op(value)
 }
 
 let bias = 1
@@ -27,4 +32,10 @@ fn main() {
     print(`add result: {result}\n`)      // should be 5 + 3 = 8
     print(`sub result: {sub}\n`)         // should be 5 - 3 = 2
     print(`capture result: {capture}\n`) // should be 5 + 3 + (7) + 1 = 16
+
+    // trailing block argument call
+    let doubled = apply_twice(21) { value in
+        return value * 2
+    }
+    print(`doubled result: {doubled}\n`) // should be 21 * 2 = 42
 }
