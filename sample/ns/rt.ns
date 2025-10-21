@@ -1,5 +1,5 @@
-import std
-import io
+use std
+use io
 
 struct simd3 { x: f64, y: f64, z: f64 }
 

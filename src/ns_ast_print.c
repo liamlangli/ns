@@ -31,7 +31,7 @@ ns_str ns_ast_type_to_string(ns_ast_type type) {
         ns_str_case(NS_AST_LOOP_STMT)
         ns_str_case(NS_AST_JUMP_STMT)
         ns_str_case(NS_AST_COMPOUND_STMT)
-        ns_str_case(NS_AST_IMPORT_STMT)
+        ns_str_case(NS_AST_USE_STMT)
         ns_str_case(NS_AST_MODULE_STMT)
         ns_str_case(NS_AST_CAST_EXPR)
         ns_str_case(NS_AST_ASSERT_STMT)
@@ -99,9 +99,9 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf(ns_color_log "assert " ns_color_nil);
         printf("[%d]", n->assert_stmt.expr);
     } break;
-    case NS_AST_IMPORT_STMT: {
-        printf(ns_color_log "import " ns_color_nil);
-        ns_str_printf(n->import_stmt.lib.val);
+    case NS_AST_USE_STMT: {
+        printf(ns_color_log "use " ns_color_nil);
+        ns_str_printf(n->use_stmt.lib.val);
     } break;
     case NS_AST_MODULE_STMT: {
         printf(ns_color_log "mod " ns_color_nil);
@@ -347,9 +347,9 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->type)
     {
-        case NS_AST_IMPORT_STMT:
-            printf(ns_color_log "import " ns_color_nil);
-            ns_str_printf(n->import_stmt.lib.val);
+        case NS_AST_USE_STMT:
+            printf(ns_color_log "use " ns_color_nil);
+            ns_str_printf(n->use_stmt.lib.val);
             printf("\n");
             break;
 

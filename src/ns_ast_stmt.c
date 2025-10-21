@@ -13,10 +13,10 @@ ns_bool ns_parse_module_stmt(ns_ast_ctx *ctx) {
     return false;
 }
 
-ns_bool ns_parse_import_stmt(ns_ast_ctx *ctx) {
+ns_bool ns_parse_use_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_IMPORT) && ns_parse_identifier(ctx)) {
-        ns_ast_t n = (ns_ast_t){.type = NS_AST_IMPORT_STMT, .state = state, .import_stmt = { .lib = ctx->token } };
+    if (ns_token_require(ctx, NS_TOKEN_USE) && ns_parse_identifier(ctx)) {
+        ns_ast_t n = (ns_ast_t){.type = NS_AST_USE_STMT, .state = state, .use_stmt = { .lib = ctx->token } };
         ns_ast_push(ctx, n);
         return true;
     }
@@ -362,7 +362,7 @@ ns_return_bool ns_parse_stmt(ns_ast_ctx *ctx) {
 ns_return_bool ns_parse_global_define(ns_ast_ctx *ctx) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
-    if (ns_parse_import_stmt(ctx)) return ns_return_ok(bool, true);
+    if (ns_parse_use_stmt(ctx)) return ns_return_ok(bool, true);
     ns_restore_state(ctx, state);
 
     if (ns_parse_module_stmt(ctx)) return ns_return_ok(bool, true);

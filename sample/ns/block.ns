@@ -1,4 +1,4 @@
-import std
+use std
 
 type op_fn = (i32, i32) -> i32
 

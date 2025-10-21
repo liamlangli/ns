@@ -61,7 +61,7 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_FOR);
         ns_str_case(NS_TOKEN_TO);
         ns_str_case(NS_TOKEN_OPS);
-        ns_str_case(NS_TOKEN_IMPORT);
+        ns_str_case(NS_TOKEN_USE);
         ns_str_case(NS_TOKEN_DOT);
         ns_str_case(NS_TOKEN_MUL_OP);
         ns_str_case(NS_TOKEN_REL_OP);
@@ -292,8 +292,6 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             to = i + 3 + sep;
         } else if (strncmp(s + f, "i8", 2) == 0) {
             ns_range_token(NS_TOKEN_TYPE_I8, 2)
-        } else if (strncmp(s + f, "import", 6) == 0) {
-            ns_range_token(NS_TOKEN_IMPORT, 6)
         } else {
             goto identifier;
         }
@@ -392,6 +390,8 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
                                                       : NS_TOKEN_TYPE_U16;
             t->val = ns_str_range(s + f, 3);
             to = i + 3 + sep;
+        } else if (strncmp(s + f, "use", 3) == 0) {
+            ns_range_token(NS_TOKEN_USE, 3)
         } else if (strncmp(s + f, "u8", 2) == 0) {
             ns_range_token(NS_TOKEN_TYPE_U8, 2)
         } else {

@@ -3,7 +3,7 @@ nanoscript module manager
 
 > `nsm.ns` - nanoscript module manager config file
 ```nanoscript
-import nsm
+use nsm
 
 let module = NSModule{
     name: "example",

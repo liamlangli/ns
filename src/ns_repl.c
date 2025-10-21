@@ -157,9 +157,9 @@ void ns_repl(ns_vm* vm) {
                 switch (n->type)
                 {
                 case NS_AST_VAR_DEF: ret = ns_eval_var_def(vm, &_ast, s_i); break;
-                case NS_AST_IMPORT_STMT: { 
+                case NS_AST_USE_STMT: { 
                     ret = ns_return_ok(value, ns_nil);
-                    ns_lib_import(vm, n->import_stmt.lib.val);
+                    ns_lib_import(vm, n->use_stmt.lib.val);
                 } break;
                 default: ns_warn("eval", "invalid expr type: %d\n", n->type); break;
                 }

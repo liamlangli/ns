@@ -12,9 +12,9 @@ Nano Script
 ```swift
 // this is a comment
 
-// import modules
-import math
-import std
+// use modules
+use math
+use std
 
 // define a variable
 let a = 1 // default number int type is i32, for float number is f64

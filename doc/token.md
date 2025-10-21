@@ -17,7 +17,7 @@
 - i8
 - if
 - in
-- import
+- use
 - kernel
 - let
 - nil

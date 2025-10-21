@@ -8,7 +8,7 @@ i32 add(i32 a, i32 b) {
 }
 
 const i8 *script = 
-"import std\n"
+"use std\n"
 "let c = add(1, 2)\n"
 "print(`Hello, ns! {c}\n`)\n";
 

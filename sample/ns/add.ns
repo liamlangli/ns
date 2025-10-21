@@ -1,4 +1,4 @@
-import std
+use std
 
 // define a fn add that takes two f64 and returns their sum
 fn add(a: f64, b: f64) f64 {

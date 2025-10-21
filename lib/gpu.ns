@@ -1,6 +1,6 @@
 mod gpu
 
-import view
+use view
 
 struct gpu_device {
     handle: any

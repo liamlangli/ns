@@ -1104,7 +1104,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
                 ns_return_void ret = ns_eval_assert_stmt(vm, ctx, s_i);
                 if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
             } break;
-            case NS_AST_IMPORT_STMT:
+            case NS_AST_USE_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
             case NS_AST_OP_FN_DEF:
@@ -1134,7 +1134,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
                 if (ns_return_is_error(ret)) return ret;
             } break;
             case NS_AST_TYPE_DEF:
-            case NS_AST_IMPORT_STMT:
+            case NS_AST_USE_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
             case NS_AST_OP_FN_DEF:

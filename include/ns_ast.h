@@ -35,7 +35,7 @@ typedef enum {
 
     NS_AST_ASSERT_STMT,
     NS_AST_IF_STMT,
-    NS_AST_IMPORT_STMT,
+    NS_AST_USE_STMT,
     NS_AST_MODULE_STMT,
     NS_AST_TYPE_ALIAS_STMT,
     NS_AST_FOR_STMT,
@@ -175,9 +175,9 @@ typedef struct ns_ast_gen_expr {
     ns_bool range;
 } ns_ast_gen_expr;
 
-typedef struct ns_ast_import_stmt {
+typedef struct ns_ast_use_stmt {
     ns_token_t lib;
-} ns_ast_import_stmt;
+} ns_ast_use_stmt;
 
 typedef struct ns_ast_module_stmt {
     ns_token_t name;
@@ -268,7 +268,7 @@ typedef struct ns_ast_t {
         ns_ast_block_expr block_expr;
 
         ns_ast_assert_stmt assert_stmt;
-        ns_ast_import_stmt import_stmt;
+        ns_ast_use_stmt use_stmt;
         ns_ast_module_stmt module_stmt;
         ns_ast_if_stmt if_stmt;
         ns_ast_loop_stmt loop_stmt;

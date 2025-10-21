@@ -164,7 +164,7 @@ typedef enum {
     NS_TOKEN_FOR,
     NS_TOKEN_TO,
     NS_TOKEN_IF,
-    NS_TOKEN_IMPORT,
+    NS_TOKEN_USE,
     NS_TOKEN_IN,
     NS_TOKEN_LET,
     NS_TOKEN_NIL,

@@ -1,6 +1,6 @@
-import simd
-import gpu
-import view
+use simd
+use gpu
+use view
 
 struct VertexData {
     position: Float3,

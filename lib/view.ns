@@ -1,6 +1,6 @@
 mod view
 
-import std
+use std
 
 struct view {
     title: str,
