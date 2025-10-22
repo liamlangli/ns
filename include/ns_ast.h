@@ -345,6 +345,7 @@ ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_gen_expr(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_primary_expr(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand);
+ns_return_bool ns_parse_block_expr(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_expr(ns_ast_ctx *ctx);
 
 // dump fn
