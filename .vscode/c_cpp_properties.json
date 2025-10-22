@@ -11,7 +11,7 @@
             ],
             "defines": ["NS_IR", "NS_JIT", "NS_DEBUG", "NS_DARWIN"],
             "macFrameworkPath": [
-                "/Library/Developer/CommandLineTools/SDKs/MacOSX14.sdk/System/Library/Frameworks"
+                "/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk/System/Library/Frameworks"
             ],
             "compilerPath": "/opt/homebrew/opt/llvm/bin/clang",
             "cStandard": "c11",
