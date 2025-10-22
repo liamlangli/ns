@@ -347,6 +347,7 @@ ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st) {
         ns_restore_state(ctx, state);
         return ns_return_ok(bool, false);
     }
+    
 
     i32 next = 0;
     ns_token_skip_eol(ctx);
@@ -565,6 +566,8 @@ ns_return_bool ns_parse_block_expr(ns_ast_ctx *ctx) {
         }
     } while(1);
 
+    
+
     // [-> ret_type]
     if (ctx->token.type == NS_TOKEN_RETURN_TYPE) {
         ns_return_bool ret = ns_parse_type_label(ctx);
@@ -575,12 +578,15 @@ ns_return_bool ns_parse_block_expr(ns_ast_ctx *ctx) {
         ns_token_skip_eol(ctx);
         ns_parse_next_token(ctx);
     }
-
     // require in
-    if (!ns_token_require(ctx, NS_TOKEN_IN)) {
+    if (ctx->token.type != NS_TOKEN_IN) {
         ns_restore_state(ctx, state);
         return ns_return_ok(bool, false);
     }
+
+    /* consume 'in' */
+    ns_parse_next_token(ctx);
+    ns_token_skip_eol(ctx);
     ns_token_skip_eol(ctx);
 
     ret = ns_parse_compound_stmt(ctx, false);
@@ -590,14 +596,9 @@ ns_return_bool ns_parse_block_expr(ns_ast_ctx *ctx) {
         return ns_return_ok(bool, false);
     }
 
-    if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
-        n.block_expr.body = ctx->current;
-        ctx->current = ns_ast_push(ctx, n);
-        return ns_return_ok(bool, true);
-    }
-
-    ns_restore_state(ctx, state);
-    return ns_return_ok(bool, false);
+    n.block_expr.body = ctx->current;
+    ctx->current = ns_ast_push(ctx, n);
+    return ns_return_ok(bool, true);
 }
 
 static ns_return_bool ns_parse_trailing_block_arg(ns_ast_ctx *ctx, i32 call_index) {
@@ -804,7 +805,7 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                     return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected block expression");
                 i32 expr_index = ns_ast_push_expr(ctx, state, ctx->current);
                 ns_parse_stack_push_operand(ctx, expr_index);
-                fprintf(stderr, "DEBUG push block expr idx=%d stack_len=%zu\n", expr_index, ns_array_length(ctx->stack));
+                
                 break;    
             }
         }
