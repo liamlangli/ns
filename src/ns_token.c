@@ -71,6 +71,7 @@ ns_str ns_token_type_to_string(ns_token_type t) {
     default:
         ns_error("token", "unknown token %d\n", t);
     }
+    return ns_str_nil;
 }
 
 i32 ns_token_float_literal(ns_token_t *t, char *s, i32 i) {

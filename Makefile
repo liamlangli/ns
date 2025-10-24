@@ -213,8 +213,7 @@ IOS_OBJS   := $(NS_IOS_LIB_SRCS:%.c=$(IOS_OBJDIR)/%.o)
 .PHONY: ns_xcframework ns_apple_dirs ns_apple_clean macos_arm64 ios_arm64 xcframework apple-xcframework
 
 # Public entrypoint
-xcframework: ns_xcframework
-apple-xcframework: ns_xcframework
+xc: ns_xcframework
 
 ns_xcframework: macos_arm64 ios_arm64
 	rm -rf $(NS_XCFRAMEWORK)
@@ -222,7 +221,9 @@ ns_xcframework: macos_arm64 ios_arm64
 		-library $(MACOS_LIB) -headers $(NS_HEADERS_DIR) \
 		-library $(IOS_LIB) -headers $(NS_HEADERS_DIR) \
 		-output $(NS_XCFRAMEWORK)
-	@echo "✅ Built $(NS_XCFRAMEWORK)"
+	@echo "📦 Signing xcframework..."
+	codesign --force --sign - --timestamp=none $(NS_XCFRAMEWORK)
+	@echo "✅ Built and signed $(NS_XCFRAMEWORK)"
 
 ns_apple_dirs:
 	mkdir -p $(MACOS_OBJDIR)
@@ -235,6 +236,7 @@ macos_arm64: $(MACOS_LIB)
 
 $(MACOS_LIB): ns_apple_dirs $(MACOS_OBJS)
 	$(APPLE_LIBTOOL) -static -o $@ $(MACOS_OBJS)
+	codesign --force --sign - --timestamp=none $@
 	@echo "📦 macOS arm64 static lib -> $@"
 
 $(MACOS_OBJDIR)/%.o: %.c | ns_apple_dirs
@@ -246,6 +248,7 @@ ios_arm64: $(IOS_LIB)
 
 $(IOS_LIB): ns_apple_dirs $(IOS_OBJS)
 	$(APPLE_LIBTOOL) -static -o $@ $(IOS_OBJS)
+	codesign --force --sign - --timestamp=none $@
 	@echo "📦 iOS arm64 static lib -> $@"
 
 $(IOS_OBJDIR)/%.o: %.c | ns_apple_dirs

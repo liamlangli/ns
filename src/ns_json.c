@@ -313,6 +313,7 @@ i32 ns_json_parse_value(ns_json_ctx *ctx) {
         ns_error("ns_json", "invalid json value\n");
         break;
     }
+    return 0;
 }
 
 ns_json_ref ns_json_parse(ns_str s) {
