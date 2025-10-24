@@ -126,7 +126,7 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap)
 #else
     if (a) {
         b = ns_realloc(ns_array_header(a), new_size);
-    else {
+    } else {
         b = ns_malloc(new_size);
     }
 #endif

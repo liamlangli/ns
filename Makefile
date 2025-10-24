@@ -85,6 +85,24 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_repl.c \
 	src/ns_def.c \
 	src/ns_asm.c
+
+# iOS subset: exclude repl and vm_lib (depend on readline/libffi not available on iOS)
+NS_IOS_LIB_SRCS = src/ns_fmt.c \
+	src/ns_type.c \
+	src/ns_os.c \
+	src/ns_token.c \
+	src/ns_ast.c \
+	src/ns_ast_stmt.c \
+	src/ns_ast_expr.c \
+	src/ns_ast_print.c \
+	src/ns_vm_parse.c \
+	src/ns_vm_eval.c \
+	src/ns_vm_print.c \
+	src/ns_net.c \
+	src/ns_json.c \
+	src/ns_def.c \
+	src/ns_asm.c
+
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
 NS_TEST_SRCS = test/ns_json_test.c
@@ -163,3 +181,80 @@ install: all ${NS_DAP_TARGET} ${NS_LSP_TARGET}
 	$(NS_CP) bin/ns_lsp$(NS_SUFFIX) ~/.cache/ns/bin
 	$(NS_MKDIR) ~/.cache/ns/ref && $(NS_CP) lib/*.ns ~/.cache/ns/ref
 	$(NS_MKDIR) ~/.cache/ns/lib && $(NS_CP) bin/*$(NS_DYLIB_SUFFIX) ~/.cache/ns/lib
+
+# ===== Apple (Darwin) XCFramework packing (macOS arm64 + iOS arm64) =====
+# Unique target names to avoid clashes with other included makefiles.
+
+ifeq ($(NS_OS), $(NS_DARWIN))
+
+APPLE_CC        := $(shell xcrun -find clang)
+APPLE_LIBTOOL   := $(shell xcrun -find libtool)
+MACOS_SDK       := $(shell xcrun --sdk macosx --show-sdk-path)
+IOS_SDK         := $(shell xcrun --sdk iphoneos --show-sdk-path)
+
+MACOS_MIN_VER   ?= 12.0
+IOS_MIN_VER     ?= 13.0
+
+APPLE_OUTDIR    := $(NS_BINDIR)/apple
+MACOS_OBJDIR    := $(APPLE_OUTDIR)/macos-arm64/obj
+IOS_OBJDIR      := $(APPLE_OUTDIR)/ios-arm64/obj
+MACOS_LIB       := $(APPLE_OUTDIR)/macos-arm64/libns.a
+IOS_LIB         := $(APPLE_OUTDIR)/ios-arm64/libns.a
+
+NS_XCFRAMEWORK  := $(NS_BINDIR)/ns.xcframework
+NS_HEADERS_DIR  := include
+
+MACOS_CFLAGS := -target arm64-apple-macos$(MACOS_MIN_VER) -isysroot $(MACOS_SDK) -fPIC -DNDEBUG
+IOS_CFLAGS   := -target arm64-apple-ios$(IOS_MIN_VER)   -isysroot $(IOS_SDK)   -fembed-bitcode -fPIC -DNDEBUG
+
+MACOS_OBJS := $(NS_LIB_SRCS:%.c=$(MACOS_OBJDIR)/%.o)
+IOS_OBJS   := $(NS_IOS_LIB_SRCS:%.c=$(IOS_OBJDIR)/%.o)
+
+.PHONY: ns_xcframework ns_apple_dirs ns_apple_clean macos_arm64 ios_arm64 xcframework apple-xcframework
+
+# Public entrypoint
+xcframework: ns_xcframework
+apple-xcframework: ns_xcframework
+
+ns_xcframework: macos_arm64 ios_arm64
+	rm -rf $(NS_XCFRAMEWORK)
+	xcodebuild -create-xcframework \
+		-library $(MACOS_LIB) -headers $(NS_HEADERS_DIR) \
+		-library $(IOS_LIB) -headers $(NS_HEADERS_DIR) \
+		-output $(NS_XCFRAMEWORK)
+	@echo "✅ Built $(NS_XCFRAMEWORK)"
+
+ns_apple_dirs:
+	mkdir -p $(MACOS_OBJDIR)
+	mkdir -p $(IOS_OBJDIR)
+	mkdir -p $(APPLE_OUTDIR)/macos-arm64
+	mkdir -p $(APPLE_OUTDIR)/ios-arm64
+
+# macOS arm64 static lib
+macos_arm64: $(MACOS_LIB)
+
+$(MACOS_LIB): ns_apple_dirs $(MACOS_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $(MACOS_OBJS)
+	@echo "📦 macOS arm64 static lib -> $@"
+
+$(MACOS_OBJDIR)/%.o: %.c | ns_apple_dirs
+	mkdir -p $(dir $@)
+	$(APPLE_CC) -c $< -o $@ $(NS_INC) $(MACOS_CFLAGS)
+
+# iOS arm64 static lib
+ios_arm64: $(IOS_LIB)
+
+$(IOS_LIB): ns_apple_dirs $(IOS_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $(IOS_OBJS)
+	@echo "📦 iOS arm64 static lib -> $@"
+
+$(IOS_OBJDIR)/%.o: %.c | ns_apple_dirs
+	mkdir -p $(dir $@)
+	$(APPLE_CC) -c $< -o $@ $(NS_INC) $(IOS_CFLAGS)
+
+# Clean only Apple artifacts
+ns_apple_clean:
+	rm -rf $(APPLE_OUTDIR) $(NS_XCFRAMEWORK)
+
+endif
+# ===== end Apple (Darwin) XCFramework block =====
