@@ -286,6 +286,7 @@ ns_return_bool ns_parse_compound_stmt(ns_ast_ctx *ctx, ns_bool brace_required) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
 
+    ns_token_skip_eol(ctx);
     if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
         if (brace_required) {
             ns_restore_state(ctx, state);

@@ -1164,6 +1164,11 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
 }
 
 ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
+    // Check for empty input
+    if (source.data == ns_null || source.len == 0) {
+        return ns_return_error(value, ns_code_loc_nil, NS_ERR_SYNTAX, "empty source input");
+    }
+
     ns_ast_ctx ctx = {0};
     ns_return_bool ret_ast = ns_ast_parse(&ctx, source, filename);
     if (ns_return_is_error(ret_ast)) return ns_return_change_type(value, ret_ast);

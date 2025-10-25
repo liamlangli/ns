@@ -29,6 +29,16 @@
     #define nil ns_null
 #endif
 
+#ifdef NS_XCLIB
+// XCFramework build: no terminal colors
+#define ns_color_bld ""
+#define ns_color_err ""
+#define ns_color_log ""
+#define ns_color_wrn ""
+#define ns_color_cmt ""
+#define ns_color_ign ""
+#define ns_color_nil ""
+#else
 #define ns_color_bld "\x1b[1m"
 #define ns_color_err "\x1b[1;31m"
 #define ns_color_log "\x1b[1;32m"
@@ -36,6 +46,7 @@
 #define ns_color_cmt "\x1b[1;37m"
 #define ns_color_ign "\x1b[0;90m"
 #define ns_color_nil "\x1b[0m"
+#endif // NS_XCLIB
 
 #define ns_ptr_size sizeof(void *)
 

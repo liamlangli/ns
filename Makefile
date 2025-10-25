@@ -204,8 +204,8 @@ IOS_LIB         := $(APPLE_OUTDIR)/ios-arm64/libns.a
 NS_XCFRAMEWORK  := $(NS_BINDIR)/ns.xcframework
 NS_HEADERS_DIR  := include
 
-MACOS_CFLAGS := -target arm64-apple-macos$(MACOS_MIN_VER) -isysroot $(MACOS_SDK) -fPIC -DNDEBUG -DNS_XCLIB
-IOS_CFLAGS   := -target arm64-apple-ios$(IOS_MIN_VER)   -isysroot $(IOS_SDK)   -fembed-bitcode -fPIC -DNDEBUG -DNS_XCLIB
+MACOS_CFLAGS := -target arm64-apple-macos$(MACOS_MIN_VER) -isysroot $(MACOS_SDK) -fPIC -g -O0 -DNS_DEBUG -DNS_XCLIB
+IOS_CFLAGS   := -target arm64-apple-ios$(IOS_MIN_VER)   -isysroot $(IOS_SDK)   -fembed-bitcode -fPIC -g -O0 -DNS_DEBUG -DNS_XCLIB
 
 MACOS_OBJS := $(NS_LIB_SRCS:%.c=$(MACOS_OBJDIR)/%.o)
 IOS_OBJS   := $(NS_IOS_LIB_SRCS:%.c=$(IOS_OBJDIR)/%.o)

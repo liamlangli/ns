@@ -665,6 +665,11 @@ ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx) {
 }
 
 ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
+    // Check for empty input
+    if (source.data == ns_null || source.len == 0) {
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_SYNTAX, "empty source input");
+    }
+
     ctx->source = source;
     ctx->filename = filename;
     ctx->token.line = 1; // start from 1
