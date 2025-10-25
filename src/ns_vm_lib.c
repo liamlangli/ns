@@ -2,12 +2,14 @@
 #include "ns_fmt.h"
 #include "ns_os.h"
 
+#ifndef NS_XCLIB
 #include <dlfcn.h>
 #ifndef NS_DARWIN
     #include <ffi.h>
 #else
     #include <ffi/ffi.h>
 #endif
+#endif // NS_XCLIB
 
 #ifdef NS_DEBUG
     #define NS_LIB_PATH "bin"
@@ -17,6 +19,7 @@
     #define NS_REF_PATH ".cache/ns/ref"
 #endif // NS_DEBUG
 
+#ifndef NS_XCLIB
 #define NS_MAX_FFI_ARGS 32
 #define NS_MAX_FFI_STACK 256
 
@@ -31,6 +34,7 @@ typedef struct ffi_ctx {
 } ffi_ctx;
 
 static ffi_ctx _ffi_ctx = {0};
+#endif // NS_XCLIB
 
 ns_return_bool ns_vm_call_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
@@ -110,6 +114,7 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
         ns_array_push(vm->libs, _lib);
         return ns_array_last(vm->libs);
     } else {
+#ifndef NS_XCLIB
 #ifdef NS_DEBUG
         ns_str lib_path = ns_str_cstr(NS_LIB_PATH);
 #else
@@ -120,9 +125,16 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
         ns_lib _lib = { .name = lib_name, .path = lib_link_path, .lib = lib_ptr };
         ns_array_push(vm->libs, _lib);
         return ns_array_last(vm->libs);
+#else
+        // XCFramework build: no dynamic library loading
+        ns_lib _lib = { .name = lib_name, .path = ns_str_null, .lib = ns_null };
+        ns_array_push(vm->libs, _lib);
+        return ns_array_last(vm->libs);
+#endif // NS_XCLIB
     }
 }
 
+#ifndef NS_XCLIB
 ffi_type ns_ffi_map_type(ns_type t) {
     if (t.ref) return ffi_type_pointer;
     switch (t.type)
@@ -230,12 +242,20 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     }
     return ns_return_ok(bool, true);
 }
+#else
+// XCFramework build: FFI not supported
+ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
+    (void)vm;
+    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "FFI calls not supported in XCFramework build.");
+}
+#endif // NS_XCLIB
 
 ns_return_bool ns_vm_call_ref(ns_vm *vm) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_symbol *fn = call->callee;
 
     if (ns_str_equals(fn->lib, ns_str_cstr("std"))) return ns_vm_call_std(vm);
+#ifndef NS_XCLIB
     if (fn->fn.fn_ptr)  return ns_vm_call_ffi(vm);
 
     ns_lib *lib = ns_lib_find(vm, fn->lib);
@@ -248,4 +268,10 @@ ns_return_bool ns_vm_call_ref(ns_vm *vm) {
 
     fn->fn.fn_ptr = fn_ptr;
     return ns_vm_call_ffi(vm);
+#else
+    // XCFramework build: no FFI or dynamic library support
+    (void)call;
+    (void)fn;
+    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "External library calls not supported in XCFramework build.");
+#endif // NS_XCLIB
 }
