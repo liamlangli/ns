@@ -27,7 +27,7 @@
             "name": "eval",
             "preLaunchTask": "build",
             "program": "${workspaceFolder}/bin/ns",
-            "args": ["sample/ns/rt.ns"],
+            "args": ["sample/ns/add.ns"],
             "cwd": "${workspaceFolder}"
         },
         {

@@ -1147,7 +1147,11 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
             }
         }
 
-        ns_call call = (ns_call){.callee = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret_set = false };
+        ns_type ret_type = main_fn->fn.ret;
+        i32 ret_size = ns_type_size(vm, ret_type);
+        u64 ret_offset = ns_eval_alloc(vm, ret_size);
+        ns_value ret_val = (ns_value){.t = ns_type_set_stack(ret_type, true), .o = ret_offset};
+        ns_call call = (ns_call){.callee = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false };
 
         ns_scope_enter(vm);
         ns_array_push(vm->call_stack, call);
@@ -1155,7 +1159,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn_def.body);
         if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
 
-        ns_array_pop(vm->call_stack);
+        call = ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);
         main_ret = call.ret;
     }

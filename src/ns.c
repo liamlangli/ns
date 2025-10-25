@@ -110,6 +110,9 @@ void ns_exec_eval(ns_str filename) {
     if (source.len == 0) ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
     ns_return_value ret_v = ns_eval(&vm, source, filename);
     if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
+    ns_str ret = ns_fmt_value(&vm, ret_v.r);
+    printf("%.*s\n", ret.len, ret.data);
+    ns_str_free(ret);
 }
 
 void ns_exec_repl() {
