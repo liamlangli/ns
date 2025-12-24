@@ -70,7 +70,9 @@ ns_json_ref ns_json_get_prop(ns_json_ref i, ns_str key) {
     ns_json_ref c = j->prop;
     while (c) {
         ns_json *child = ns_json_get(c);
-        if (ns_str_equals(child->key, key)) {
+        ns_str child_key = child->key;
+        // Quick length check before expensive string comparison
+        if (child_key.len == key.len && strncmp(child_key.data, key.data, key.len) == 0) {
             return c;
         }
         c = child->next;

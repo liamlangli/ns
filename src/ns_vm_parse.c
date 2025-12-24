@@ -157,7 +157,9 @@ i32 ns_struct_field_index(ns_symbol *st, ns_str s) {
     assert(st->type == NS_SYMBOL_STRUCT);
     ns_struct_field *fields = st->st.fields;
     for (i32 i = 0, l = ns_array_length(fields); i < l; i++) {
-        if (ns_str_equals(fields[i].name, s)) {
+        ns_str field_name = fields[i].name;
+        // Quick length check before expensive string comparison
+        if (field_name.len == s.len && strncmp(field_name.data, s.data, s.len) == 0) {
             return i;
         }
     }
@@ -250,9 +252,12 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture) {
         i32 symbol_top = vm->scope_stack[scope_top].symbol_top;
         i32 symbol_count = ns_array_length(vm->symbol_stack);
 
+        // Search local symbols in reverse order (most recent first)
         i32 j = symbol_count - 1;
         for (; j >= symbol_top; --j) {
-            if (ns_str_equals(vm->symbol_stack[j].name, s)) {
+            ns_str sym_name = vm->symbol_stack[j].name;
+            // Quick length check before expensive string comparison
+            if (sym_name.len == s.len && strncmp(sym_name.data, s.data, s.len) == 0) {
                 ret = &vm->symbol_stack[j];
                 break;
             }
@@ -269,8 +274,11 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture) {
         if (ret) return ret;
     }
 
+    // Search global symbols
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
-        if (ns_str_equals(vm->symbols[i].name, s)) {
+        ns_str sym_name = vm->symbols[i].name;
+        // Quick length check before expensive string comparison
+        if (sym_name.len == s.len && strncmp(sym_name.data, s.data, s.len) == 0) {
             return &vm->symbols[i];
         }
     }
