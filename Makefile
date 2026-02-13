@@ -76,6 +76,8 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_stmt.c \
 	src/ns_ast_expr.c \
 	src/ns_ast_print.c \
+	src/ns_ssa.c \
+	src/ns_aarch.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
 	src/ns_vm_lib.c \
@@ -95,6 +97,8 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_stmt.c \
 	src/ns_ast_expr.c \
 	src/ns_ast_print.c \
+	src/ns_ssa.c \
+	src/ns_aarch.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
 	src/ns_vm_print.c \

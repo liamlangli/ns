@@ -8,3 +8,5 @@
 #include "ns_type.h"
 #include "ns_token.h"
 #include "ns_vm.h"
+#include "ns_ssa.h"
+#include "ns_aarch.h"
