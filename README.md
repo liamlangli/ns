@@ -88,5 +88,4 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
 
 ## Build Options
 - `NS_DEBUG`: Debug mode.
-- `NS_IR`: Generate llvm ir file.
 - `NS_JIT`: Enable Just-In-Time compiler.

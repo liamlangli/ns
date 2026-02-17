@@ -688,9 +688,11 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     identifier:
     default: {
         char lead = s[i];
-        if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z'))) {
-            ns_error("unexpected character", "[%s:%d:%d]%c\n", filename.data, t->line, i - t->line_start,
-                    lead);
+        if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z') || lead == '_')) {
+            t->type = NS_TOKEN_INVALID;
+            t->val = ns_str_range(s + i, 1);
+            to = i + 1;
+            break;
         }
         i++;
 

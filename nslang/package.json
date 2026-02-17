@@ -5,9 +5,7 @@
     "version": "0.0.12",
     "publisher": "liamlangli",
     "scripts": {
-        "vsce": "cp ../README.md ./ && vsce package",
-        "build": "tsc -b",
-        "watch": "tsc -b -w"
+        "vsce": "cp ../README.md ./ && vsce package"
     },
     "engines": {
         "vscode": "^1.95.0"
@@ -21,7 +19,7 @@
         "url": "git@github.com:liamlangli/ns.git"
     },
     "icon": "ns.png",
-    "main": "./out/ns_ext",
+    "main": "./src/ns_ext.js",
     "contributes": {
         "debuggers": [
             {
@@ -49,19 +47,34 @@
         "configuration": {
             "title": "Nanoscript LSP Configuration",
             "properties": {
-                "ns.lsp.mode": {
+                "ns.lsp.workspaceMode": {
                     "type": "string",
                     "enum": [
+                        "perWorkspace",
+                        "single"
+                    ],
+                    "default": "perWorkspace",
+                    "description": "Run one LSP client per workspace folder or a single shared client."
+                },
+                "ns.lsp.transport": {
+                    "type": "string",
+                    "enum": [
+                        "auto",
                         "stdio",
                         "socket"
                     ],
-                    "default": "stdio",
-                    "description": "The mode of the language server."
+                    "default": "auto",
+                    "description": "LSP transport: auto uses stdio locally and socket in remote sessions."
                 },
                 "ns.lsp.port": {
                     "type": "number",
                     "default": 5000,
                     "description": "The port of the language server."
+                },
+                "ns.lsp.serverPath": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Absolute path to ns_lsp binary. Leave empty for auto-discovery."
                 }
             }
         },
@@ -95,14 +108,7 @@
         ]
     },
     "dependencies": {
-        "vscode-debugadapter": "^1.51.0",
         "vscode-languageclient": "^9.0.1"
     },
-    "devDependencies": {
-        "@types/node": "^22.10.0",
-        "@types/vscode": "^1.95.0",
-        "typescript": "^5.7.2",
-        "vscode-languageserver": "^9.0.1",
-        "vscode-languageserver-textdocument": "^1.0.12"
-    }
+    "devDependencies": {}
 }

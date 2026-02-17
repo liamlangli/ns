@@ -5,6 +5,15 @@ static ns_str _ns_json_str = ns_str_null;
 
 i32 ns_json_parse_value(ns_json_ctx *ctx);
 
+static ns_bool ns_json_is_space(i8 c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+static ns_bool ns_json_has_prefix(ns_str s, i32 i, const i8 *lit, i32 n) {
+    if (i < 0 || i + n > s.len) return false;
+    return strncmp(s.data + i, lit, n) == 0;
+}
+
 ns_json_ref ns_json_make(ns_json_type type) {
     ns_json_ref i = ns_array_length(_ns_json_stack);
     ns_array_push(_ns_json_stack, (ns_json){.type = type});
@@ -103,7 +112,7 @@ ns_json *ns_json_top() {
 i32 ns_json_skip_whitespace(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
-    while (i < s.len && (s.data[i] == ' ' || s.data[i] == '\t' || s.data[i] == '\n' || s.data[i] == '\r')) {
+    while (i < s.len && ns_json_is_space(s.data[i])) {
         i++;
     }
     ctx->i = i;
@@ -113,7 +122,7 @@ i32 ns_json_skip_whitespace(ns_json_ctx *ctx) {
 i32 ns_json_skip_whitespace_comma(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
-    while (i < s.len && (s.data[i] == ' ' || s.data[i] == '\t' || s.data[i] == '\n' || s.data[i] == '\r' || s.data[i] == ',')) {
+    while (i < s.len && (ns_json_is_space(s.data[i]) || s.data[i] == ',')) {
         i++;
     }
     ctx->i = i;
@@ -123,14 +132,30 @@ i32 ns_json_skip_whitespace_comma(ns_json_ctx *ctx) {
 i32 ns_json_parse_string(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
-    if (s.data[i] == '"') {
+    if (i < s.len && s.data[i] == '"') {
         i++;
         i32 start = i;
         while (i < s.len) {
-            if (s.data[i] == '"' && s.data[i - 1] != '\\') {
+            if (s.data[i] == '"') {
+                i32 bs = 0;
+                i32 j = i - 1;
+                while (j >= start && s.data[j] == '\\') {
+                    bs++;
+                    j--;
+                }
+                if ((bs & 1) == 0) {
+                    break;
+                }
+            }
+            if (s.data[i] == '\n' || s.data[i] == '\r') {
+                ns_error("ns_json", "invalid string value\n");
                 break;
             }
             i++;
+        }
+        if (i >= s.len || s.data[i] != '"') {
+            ns_error("ns_json", "unterminated string value\n");
+            return 0;
         }
         ns_str str = ns_str_range(s.data + start, i - start);
         i++;
@@ -143,7 +168,7 @@ i32 ns_json_parse_string(ns_json_ctx *ctx) {
 i32 ns_json_parse_true(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
-    if (strncmp(s.data + i, "true", 4) == 0) {
+    if (ns_json_has_prefix(s, i, "true", 4)) {
         i += 4;
         ctx->i = i;
         return ns_json_make_bool(true);
@@ -154,7 +179,7 @@ i32 ns_json_parse_true(ns_json_ctx *ctx) {
 i32 ns_json_parse_false(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
-    if (strncmp(s.data + i, "false", 5) == 0) {
+    if (ns_json_has_prefix(s, i, "false", 5)) {
         i += 5;
         ctx->i = i;
         return ns_json_make_bool(false);
@@ -165,7 +190,7 @@ i32 ns_json_parse_false(ns_json_ctx *ctx) {
 i32 ns_json_parse_null(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
-    if (strncmp(s.data + i, "null", 4) == 0) {
+    if (ns_json_has_prefix(s, i, "null", 4)) {
         i += 4;
         ctx->i = i;
         return ns_json_make_null();
@@ -177,8 +202,20 @@ i32 ns_json_parse_number(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
     i32 start = i;
-    while (i < s.len && (s.data[i] == '-' || s.data[i] == '.' || (s.data[i] >= '0' && s.data[i] <= '9'))) {
+    if (i < s.len && s.data[i] == '-') i++;
+    while (i < s.len && (s.data[i] >= '0' && s.data[i] <= '9')) i++;
+    if (i < s.len && s.data[i] == '.') {
         i++;
+        while (i < s.len && (s.data[i] >= '0' && s.data[i] <= '9')) i++;
+    }
+    if (i < s.len && (s.data[i] == 'e' || s.data[i] == 'E')) {
+        i++;
+        if (i < s.len && (s.data[i] == '+' || s.data[i] == '-')) i++;
+        while (i < s.len && (s.data[i] >= '0' && s.data[i] <= '9')) i++;
+    }
+    if (i == start || (i == start + 1 && s.data[start] == '-')) {
+        ns_error("ns_json", "invalid number value\n");
+        return 0;
     }
     f64 n = ns_str_to_f64(ns_str_range(s.data + start, i - start));
     ctx->i = i;
@@ -218,16 +255,30 @@ void ns_json_set(ns_json_ref j, ns_str key, ns_json_ref c) {
 ns_str ns_json_parse_key(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
     i32 i = ctx->i;
-    while (i < s.len && (s.data[i] == ' ' || s.data[i] == '\t' || s.data[i] == '\n' || s.data[i] == '\r')) {
+    while (i < s.len && ns_json_is_space(s.data[i])) {
         i++;
     }
     ctx->i = i;
 
-    if (s.data[i] == '"') {
+    if (i < s.len && s.data[i] == '"') {
         i++;
         i32 start = i;
-        while (i < s.len && s.data[i] != '"') {
+        while (i < s.len) {
+            if (s.data[i] == '"') {
+                i32 bs = 0;
+                i32 j = i - 1;
+                while (j >= start && s.data[j] == '\\') {
+                    bs++;
+                    j--;
+                }
+                if ((bs & 1) == 0) {
+                    break;
+                }
+            }
             i++;
+        }
+        if (i >= s.len || s.data[i] != '"') {
+            return ns_str_null;
         }
         ns_str key = ns_str_range(s.data + start, i - start);
         i++;
@@ -239,7 +290,7 @@ ns_str ns_json_parse_key(ns_json_ctx *ctx) {
 
 ns_json_ref ns_json_parse_object(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
-    if (s.data[ctx->i] == '{') {
+    if (ctx->i < s.len && s.data[ctx->i] == '{') {
         ctx->i++;
         ns_json_ref j = ns_json_make_object();
         while (ctx->i < s.len && s.data[ctx->i] != '}') {
@@ -249,6 +300,9 @@ ns_json_ref ns_json_parse_object(ns_json_ctx *ctx) {
             }
             // colon
             ns_json_skip_whitespace(ctx);
+            if (ctx->i >= s.len) {
+                ns_error("ns_json", "invalid object value\n");
+            }
             if (s.data[ctx->i] != ':') {
                 ns_error("ns_json", "expect colon\n");
             }
@@ -269,7 +323,7 @@ ns_json_ref ns_json_parse_object(ns_json_ctx *ctx) {
 
 ns_json_ref ns_json_parse_array(ns_json_ctx *ctx) {
     ns_str s = ctx->s;
-    if (s.data[ctx->i] == '[') {
+    if (ctx->i < s.len && s.data[ctx->i] == '[') {
         ctx->i++;
         i32 j = ns_json_make_array();
         while (ctx->i < s.len && s.data[ctx->i] != ']') {
@@ -290,6 +344,10 @@ i32 ns_json_parse_value(ns_json_ctx *ctx) {
     // skip white space
     ns_str s = ctx->s;
     ns_json_skip_whitespace(ctx);
+    if (ctx->i >= s.len) {
+        ns_error("ns_json", "unexpected end of json value\n");
+        return 0;
+    }
     i8 c = s.data[ctx->i];
     switch (c)
     {

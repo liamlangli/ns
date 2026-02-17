@@ -63,8 +63,8 @@ else
 	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
 endif
 
-NS_DEBUG_TARGET = $(TARGET)_debug_$(LLVM_TRIPLE)$(NS_SUFFIX)
-NS_RELEASE_TARGET = $(TARGET)_release_$(LLVM_TRIPLE)$(NS_SUFFIX)
+NS_DEBUG_TARGET = $(TARGET)_debug$(NS_SUFFIX)
+NS_RELEASE_TARGET = $(TARGET)_release$(NS_SUFFIX)
 
 NS_BINDIR = bin
 
@@ -78,6 +78,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_print.c \
 	src/ns_ssa.c \
 	src/ns_aarch.c \
+	src/ns_macho.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
 	src/ns_vm_lib.c \
@@ -99,6 +100,7 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_print.c \
 	src/ns_ssa.c \
 	src/ns_aarch.c \
+	src/ns_macho.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
 	src/ns_vm_print.c \
@@ -125,30 +127,17 @@ all: $(NS_DIRS) $(TARGET) $(NS_LIB) $(NS_LSP_TARGET) $(NS_DAP_TARGET) std
 $(NS_DIRS):
 	$(NS_MKDIR) $(NS_DIRS)
 
-$(BITCODE_OBJ): $(BITCODE_SRC)
-	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(BITCODE_CFLAGS)
-
-$(JIT_OBJ): $(JIT_SRC)
-	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(JIT_CFLAGS)
-
 $(NS_ENTRY_OBJ): $(NS_ENTRY)
-	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS) $(BITCODE_CFLAGS)
+	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
-$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) | $(NS_BINDIR)
-	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(BITCODE_OBJ) $(JIT_OBJ) $ -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS) $(LLVM_LDFLAGS)
+$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) | $(NS_BINDIR)
+	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
 
 $(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
 run: all
 	$(TARGET)
-
-bc: all
-	$(TARGET) -o bin/add.bc -b sample/add.ns
-	llvm-dis bin/add.bc
-	llc bin/add.bc -filetype=obj -mtriple=$(LLVM_TRIPLE) -relocation-model=pic -o bin/add.o
-	clang bin/add.o -o bin/add
-	bin/add
 
 clean:
 	$(NS_RMDIR) $(NS_BINDIR)

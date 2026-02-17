@@ -10,3 +10,4 @@
 #include "ns_vm.h"
 #include "ns_ssa.h"
 #include "ns_aarch.h"
+#include "ns_macho.h"

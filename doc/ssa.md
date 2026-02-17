@@ -22,6 +22,15 @@ Defined in:
 - CLI:
   - `ns --aarch <file.ns>`
 
+## Mach-O Emitter
+- New module:
+  - `/Users/lang/os/ns/include/ns_macho.h`
+  - `/Users/lang/os/ns/src/ns_macho.c`
+- Pipeline:
+  - `AST -> SSA -> AArch64 bytes -> Mach-O`
+- CLI:
+  - `ns --macho <file.ns> -o <output>`
+
 ## IR Shape
 - `ns_ssa_module`: list of functions.
 - `ns_ssa_fn`: SSA function with:
