@@ -5,6 +5,18 @@
 #include <stdarg.h>
 #include <time.h>
 
+// In stdio mode, stdout is reserved for LSP frames only.
+// Route diagnostic/info logging to stderr to avoid corrupting protocol output.
+#undef ns_warn
+#undef ns_info
+#ifdef NS_DEBUG
+#define ns_warn(t, m, ...) fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_wrn "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
+#define ns_info(t, m, ...) fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
+#else
+#define ns_warn(t, m, ...) fprintf(stderr, ns_color_wrn "%s: " ns_color_nil m, t, ##__VA_ARGS__)
+#define ns_info(t, m, ...) fprintf(stderr, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__)
+#endif
+
 #if NS_DARWIN
 #include <mach-o/dyld.h>
 #elif NS_LINUX

@@ -382,9 +382,34 @@ ns_json_ref ns_json_parse(ns_str s) {
 
 #define NS_JSON_PAD 4
 #define NS_JSON_FLT_PRECISION 8
+static const i8 *_ns_json_hex = "0123456789abcdef";
 
 #define ns_printf_wrap(fmt, ...) (printf("%*.s"fmt, (wrap ? depth * NS_JSON_PAD : 0), "", ##__VA_ARGS__))
 #define ns_str_append_char(a, c) (ns_array_push((a).data, c), (a).len++)
+
+static void ns_json_append_escaped(ns_str s) {
+    for (i32 i = 0; i < s.len; i++) {
+        u8 c = (u8)s.data[i];
+        switch (c) {
+            case '\"': ns_str_append(&_ns_json_str, ns_str_cstr("\\\"")); break;
+            case '\\': ns_str_append(&_ns_json_str, ns_str_cstr("\\\\")); break;
+            case '\b': ns_str_append(&_ns_json_str, ns_str_cstr("\\b")); break;
+            case '\f': ns_str_append(&_ns_json_str, ns_str_cstr("\\f")); break;
+            case '\n': ns_str_append(&_ns_json_str, ns_str_cstr("\\n")); break;
+            case '\r': ns_str_append(&_ns_json_str, ns_str_cstr("\\r")); break;
+            case '\t': ns_str_append(&_ns_json_str, ns_str_cstr("\\t")); break;
+            default:
+                if (c < 0x20) {
+                    ns_str_append(&_ns_json_str, ns_str_cstr("\\u00"));
+                    ns_str_append_char(_ns_json_str, _ns_json_hex[(c >> 4) & 0x0f]);
+                    ns_str_append_char(_ns_json_str, _ns_json_hex[c & 0x0f]);
+                } else {
+                    ns_str_append_char(_ns_json_str, (i8)c);
+                }
+                break;
+        }
+    }
+}
 
 ns_bool ns_json_print_node(ns_json *json, i32 depth,ns_bool wrap) {
     if (!json) return false;
@@ -453,7 +478,7 @@ ns_str ns_json_stringify_append(ns_json *json) {
     } break;
     case NS_JSON_STRING: {
         ns_str_append_char(_ns_json_str, '"');
-        ns_str_append(&_ns_json_str, json->str);
+        ns_json_append_escaped(json->str);
         ns_str_append_char(_ns_json_str, '"');
     } break;
     case NS_JSON_ARRAY: {
@@ -473,7 +498,7 @@ ns_str ns_json_stringify_append(ns_json *json) {
         while (c) {
             ns_json *child = ns_json_get(c);
             ns_str_append_char(_ns_json_str, '"');
-            ns_str_append(&_ns_json_str, child->key);
+            ns_json_append_escaped(child->key);
             ns_str_append_char(_ns_json_str, '"');
             ns_str_append_char(_ns_json_str, ':');
             ns_json_stringify_append(child);
