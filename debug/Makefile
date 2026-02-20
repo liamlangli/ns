@@ -9,7 +9,7 @@ NS_DAP_OBJS = $(NS_DAP_SRCS:debug/src/%.c=$(NS_BINDIR)/debug/%.o)
 debug: $(NS_DAP_TARGET)
 
 $(NS_DAP_TARGET): $(NS_DAP_OBJS) | $(NS_LIB)
-	$(NS_LD) $(NS_DAP_OBJS) $ -o $(NS_DAP_TARGET)$(NS_SUFFIX) $(NS_DAP_LDFLAGS)
+	$(NS_LD) $(NS_DAP_OBJS) -o $(NS_DAP_TARGET)$(NS_SUFFIX) $(NS_DAP_LDFLAGS)
 
 $(NS_DAP_OBJS): $(NS_BINDIR)/debug/%.o : debug/src/%.c
 	$(NS_CC) -c $< -o $@ $(NS_DAP_INC) $(NS_CFLAGS)

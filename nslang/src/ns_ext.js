@@ -1,3 +1,17 @@
+const _emit_warning = process.emitWarning.bind(process);
+process.emitWarning = function patched_emit_warning(warning, ...args) {
+    const text = typeof warning === "string" ? warning : warning?.message || "";
+    const code = typeof warning === "object" ? warning?.code : (args[1] || "");
+    const type = typeof warning === "object" ? warning?.name : (args[0] || "");
+
+    const is_punycode_dep = code === "DEP0040" || text.includes("`punycode` module is deprecated");
+    const is_sqlite_experimental = type === "ExperimentalWarning" && text.includes("SQLite is an experimental feature");
+    if (is_punycode_dep || is_sqlite_experimental) {
+        return;
+    }
+    return _emit_warning(warning, ...args);
+};
+
 const net = require("net");
 const vscode = require("vscode");
 const fs = require("fs");
@@ -14,6 +28,7 @@ const workspace_ports = new Map();
 let next_port_offset = 0;
 let log;
 let lsp_command;
+let dap_command;
 let lsp_transport = "socket";
 const SERVER_READY_TIMEOUT_MS = 8000;
 const SERVER_START_MAX_ATTEMPTS = 20;
@@ -153,6 +168,34 @@ function resolve_lsp_command(context) {
     }
 
     const in_path = command_in_path("ns_lsp");
+    return in_path || exe_name;
+}
+
+function resolve_debugger_command(context) {
+    const exe_name = is_windows() ? "ns_debug.exe" : "ns_debug";
+    const candidates = [];
+
+    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        for (const f of vscode.workspace.workspaceFolders) {
+            candidates.push(path.join(f.uri.fsPath, "bin", exe_name));
+        }
+    }
+
+    if (context && context.extensionPath) {
+        candidates.push(path.join(context.extensionPath, "..", "bin", exe_name));
+        candidates.push(path.join(context.extensionPath, "bin", exe_name));
+    }
+
+    const home = process.env.HOME || process.env.USERPROFILE;
+    if (home) {
+        candidates.push(path.join(home, ".cache", "ns", "bin", exe_name));
+    }
+
+    for (const c of candidates) {
+        if (executable_exists(c)) return c;
+    }
+
+    const in_path = command_in_path("ns_debug");
     return in_path || exe_name;
 }
 
@@ -489,21 +532,36 @@ const DEFAULT_CONFIG = {
     type: "ns_debug",
     request: "launch",
     name: "Debug NS Program",
+    stopOnEntry: true,
 };
 
 class NSDebugConfigurationProvider {
     resolveDebugConfiguration(_, config) {
-        return !config.type && !config.request && !config.name ? DEFAULT_CONFIG : config;
+        const out = !config.type && !config.request && !config.name ? { ...DEFAULT_CONFIG } : { ...config };
+        if (!out.program || typeof out.program !== "string" || out.program.trim().length === 0) {
+            const active = vscode.window.activeTextEditor?.document;
+            if (active && active.uri?.scheme === "file" && active.languageId === "ns") {
+                out.program = active.uri.fsPath;
+            }
+        }
+        return out;
     }
 
     resolveDebugConfigurationWithSubstitutedVariables(_, debugConfiguration) {
-        return { ...DEFAULT_CONFIG, ...debugConfiguration };
+        const out = { ...DEFAULT_CONFIG, ...debugConfiguration };
+        if (!out.program || typeof out.program !== "string" || out.program.trim().length === 0) {
+            const active = vscode.window.activeTextEditor?.document;
+            if (active && active.uri?.scheme === "file" && active.languageId === "ns") {
+                out.program = active.uri.fsPath;
+            }
+        }
+        return out;
     }
 }
 
 class NSDebugAdapterDescriptorFactory {
     createDebugAdapterDescriptor(_sess, executable) {
-        if (log) log.appendLine("[ns_debug] launching debug adapter");
+        if (log) log.appendLine(`[ns_debug] launching debug adapter cmd=${dap_command || "ns_debug"}`);
         if (executable) return executable;
         const config = vscode.workspace.getConfiguration("ns");
         const mode = config.get("debugger.mode");
@@ -511,7 +569,7 @@ class NSDebugAdapterDescriptorFactory {
         if (mode === "socket") {
             return new vscode.DebugAdapterServer(port);
         }
-        return new vscode.DebugAdapterExecutable("ns_debug", ["--stdio"]);
+        return new vscode.DebugAdapterExecutable(dap_command || "ns_debug", ["--stdio"]);
     }
 }
 
@@ -525,7 +583,9 @@ function start_dap_client(context) {
 function activate(context) {
     log = vscode.window.createOutputChannel("nslang");
     lsp_command = resolve_lsp_command(context);
+    dap_command = resolve_debugger_command(context);
     if (log) log.appendLine(`[ns_lsp] server command: ${lsp_command}`);
+    if (log) log.appendLine(`[ns_debug] adapter command: ${dap_command}`);
     start_dap_client(context);
     log.appendLine("[nslang] extension activated");
     context.subscriptions.push({

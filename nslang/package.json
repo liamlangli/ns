@@ -38,6 +38,11 @@
                                 "type": "string",
                                 "description": "Absolute path to the program to debug",
                                 "default": "${file}"
+                            },
+                            "stopOnEntry": {
+                                "type": "boolean",
+                                "description": "Automatically pause on first executable statement.",
+                                "default": true
                             }
                         }
                     }

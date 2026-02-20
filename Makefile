@@ -48,14 +48,19 @@ NS_INC += $(NS_PLATFORM_DEF)
 NS_DEBUG ?= 1
 NS_DEBUG_HOOK ?= 1
 
+NS_HOOK_CFLAGS =
+ifeq ($(NS_DEBUG_HOOK), 1)
+	NS_HOOK_CFLAGS += -DNS_DEBUG_HOOK
+endif
+
 ifeq ($(NS_OS), $(NS_WIN))
 NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
 else
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
 endif
 
-NS_DEBUG_CFLAGS = -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG
-NS_RELEASE_CFLAGS = -Os
+NS_DEBUG_CFLAGS = -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG $(NS_HOOK_CFLAGS)
+NS_RELEASE_CFLAGS = -Os $(NS_HOOK_CFLAGS)
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)

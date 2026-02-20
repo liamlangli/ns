@@ -46,6 +46,8 @@ typedef struct ns_debug_session {
     ns_vm *vm;
     ns_debug_state state;
     ns_debug_step_mode step_mode;
+    ns_bool stop_on_entry;
+    ns_bool entry_pending;
     i32 step_depth;
     i32 pause_line;
     ns_str pause_file;

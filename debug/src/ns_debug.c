@@ -1,4 +1,5 @@
 #include "ns_debug.h"
+#include <unistd.h>
 
 #define ns_debug_HEADER_SEP "\r\n\r\n"
 #define ns_debug_CONTENT_LENGTH "Content-Length: "
@@ -8,11 +9,13 @@ static ns_str _out;
 static i8 _chunk[512];
 
 static ns_debug_options _options = {0};
+static i32 _dap_out_fd = -1;
 
 // stdio mode
 
 ns_str ns_debug_read();
 void ns_debug_write(ns_str data);
+ns_bool ns_debug_read_frame(ns_str *body);
 
 // socket mode
 void ns_debug_on_request(ns_conn *conn);
@@ -20,6 +23,45 @@ void ns_debug_send_response(ns_conn *conn, ns_str res);
 
 // repl mode
 i32 ns_debug_parse(ns_str s);
+
+static i32 ns_debug_readline_stdin(i8 *buf, i32 cap) {
+    if (cap <= 1) return 0;
+    i32 i = 0;
+    i32 c = 0;
+    while ((c = fgetc(stdin)) != EOF) {
+        if (c == '\r') continue;
+        if (c == '\n') break;
+        if (i < cap - 1) buf[i++] = (i8)c;
+    }
+    if (c == EOF && i == 0) return -1;
+    buf[i] = '\0';
+    return i;
+}
+
+ns_bool ns_debug_read_frame(ns_str *body) {
+    i8 line[256] = {0};
+    i32 content_length = -1;
+
+    while (1) {
+        i32 n = ns_debug_readline_stdin(line, (i32)sizeof(line));
+        if (n < 0) return false;
+        if (n == 0 || line[0] == '\0') break;
+
+        if (strncmp((char*)line, ns_debug_CONTENT_LENGTH, strlen(ns_debug_CONTENT_LENGTH)) == 0) {
+            content_length = atoi((char*)line + strlen(ns_debug_CONTENT_LENGTH));
+        }
+    }
+
+    if (content_length <= 0) return false;
+
+    ns_array_set_length(body->data, content_length + 1);
+    i32 read_n = (i32)fread(body->data, 1, content_length, stdin);
+    if (read_n != content_length) return false;
+    body->data[content_length] = '\0';
+    body->len = content_length;
+    body->dynamic = 1;
+    return true;
+}
 
 ns_str ns_debug_read() {
     i32 size = 0;
@@ -38,7 +80,25 @@ ns_str ns_debug_read() {
 }
 
 void ns_debug_write(ns_str data) {
-    fprintf(stdout, "Content-Length: %d\r\n\r\n%s", data.len, data.data);
+    if (_dap_out_fd < 0) return;
+
+    i8 header[64] = {0};
+    i32 hlen = snprintf((char *)header, sizeof(header), "Content-Length: %d\r\n\r\n", data.len);
+    if (hlen <= 0) return;
+
+    i32 off = 0;
+    while (off < hlen) {
+        i32 n = (i32)write(_dap_out_fd, header + off, hlen - off);
+        if (n <= 0) return;
+        off += n;
+    }
+
+    off = 0;
+    while (off < data.len) {
+        i32 n = (i32)write(_dap_out_fd, data.data + off, data.len - off);
+        if (n <= 0) return;
+        off += n;
+    }
 }
 
 ns_json_ref ns_debug_parse(ns_str s) {
@@ -100,14 +160,24 @@ void ns_debug_help() {
 }
 
 i32 ns_debug_stdio(ns_debug_options _) {
-    ns_info("ns_debug", "stdio mode\n");
+    ns_debug_session sess = (ns_debug_session){.options = _options, .state = NS_DEBUG_STATE_INIT};
+    _dap_out_fd = dup(STDOUT_FILENO);
+    if (_dap_out_fd < 0) return 1;
+    fflush(stdout);
+    dup2(STDERR_FILENO, STDOUT_FILENO);
+
+    ns_str body = ns_str_null;
     while (1)
     {
-        ns_str line = ns_debug_read();
-        if (line.len == 0) {
+        if (!ns_debug_read_frame(&body)) {
             break;
         }
+        ns_json_ref req = ns_json_parse(body);
+        ns_debug_handle(&sess, req);
     }
+    ns_str_free(body);
+    close(_dap_out_fd);
+    _dap_out_fd = -1;
     return 0;
 }
 
