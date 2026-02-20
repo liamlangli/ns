@@ -126,9 +126,6 @@ ns_return_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
     }
 
     if (ctx->expr_stack == NULL || ns_array_length(ctx->expr_stack) == 0) {
-        fprintf(stderr, "DEBUG ns_parse_expr_rewind: stack_len=%zu expr_stack_len=%zu scope_top=%d op_top=%d\n",
-                ns_array_length(ctx->stack), ctx->expr_stack ? ns_array_length(ctx->expr_stack) : 0,
-                scope->stack_top, scope->op_top);
         ns_ast_state state = ns_save_state(ctx);
         return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "unexpected expr.");
     }

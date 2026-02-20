@@ -995,6 +995,16 @@ ns_type ns_vm_parse_binary_override(ns_vm *vm, ns_type l, ns_type r, ns_token_t 
     return fn ? fn->fn.ret : ns_type_unknown;
 }
 
+ns_bool ns_vm_assign_number_compatible(ns_vm *vm, ns_type dst, ns_type src) {
+    if (!ns_type_is_number(dst) || !ns_type_is_number(src)) return false;
+    if (ns_type_is_float(src) && !ns_type_is_float(dst)) return false;
+
+    i32 dst_size = ns_type_size(vm, dst);
+    i32 src_size = ns_type_size(vm, src);
+    if (dst_size < src_size) return false;
+    return true;
+}
+
 ns_return_type ns_vm_parse_binary_ops_number(ns_ast_ctx *ctx, ns_type t, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_token_t op = n->binary_expr.op;
@@ -1038,6 +1048,9 @@ ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_type l = ret_l.r;
     ns_type r = ret_r.r;
     if (!ns_type_equals(l, r)) {
+        if (ns_vm_assign_number_compatible(vm, l, r)) {
+            return ns_return_ok(type, l);
+        }
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "assign expr type mismatch.");
     }
     return ns_return_ok(type, l);
@@ -1227,11 +1240,11 @@ ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
 
         ns_type t = ret_t.r;
-        if (!ns_type_is(l, NS_TYPE_INFER) && !ns_type_is(t, NS_TYPE_FN) && !ns_type_equals(l, t)) {
+        if (!ns_type_is(l, NS_TYPE_INFER) && !ns_type_is(t, NS_TYPE_FN) && !ns_type_equals(l, t) && !ns_vm_assign_number_compatible(vm, l, t)) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "local var def type mismatch.");
         }
-        s.val.t = t;
-        n->var_def.type_size = ns_type_size(vm, t);
+        s.val.t = ns_type_is(l, NS_TYPE_INFER) ? t : l;
+        n->var_def.type_size = ns_type_size(vm, s.val.t);
     }
     ns_array_push(vm->symbol_stack, s);
     return ns_return_ok_void;

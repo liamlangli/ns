@@ -83,7 +83,11 @@ void ns_debug_handle_init(ns_debug_session *sess, ns_json_ref json) {
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("initialize"), true);
 
     ns_vm *vm = (ns_vm*)ns_malloc(sizeof(ns_vm));
+    memset(vm, 0, sizeof(ns_vm));
     vm->step_hook = ns_debug_step_hook;
+    sess->vm = vm;
+    sess->state = NS_DEBUG_STATE_INIT;
+    sess->step_mode = NS_DEBUG_STEP_NONE;
 
     ns_debug_session_response(sess, res);
     ns_debug_session_response(sess, ns_debug_send_event(ns_str_cstr("initialized"), ns_json_make_null()));
@@ -129,7 +133,10 @@ void ns_debug_handle_disconnect(ns_debug_session *sess, ns_json_ref json) {
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("disconnect"), true);
 
     ns_vm *vm = sess->vm;
-    ns_free(vm);
+    if (vm) {
+        ns_free(vm);
+        sess->vm = ns_null;
+    }
 
     ns_debug_session_response(sess, res);
     sess->state = NS_DEBUG_STATE_TERMINATED;

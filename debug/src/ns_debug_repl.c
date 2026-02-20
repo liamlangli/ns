@@ -40,8 +40,9 @@ ns_return_void ns_debug_repl_loop();
 void ns_debug_repl_list_breakpoints(ns_debug_session *sess);
 void ns_debug_repl_set_breakpoint(ns_debug_session *sess, ns_str f, i32 l);
 void ns_debug_repl_del_breakpoint(ns_debug_session *sess, ns_str f, i32 l);
-ns_bool ns_debug_hit_breakpoint(ns_debug_session *sess, i32 l);
+ns_bool ns_debug_hit_breakpoint(ns_debug_session *sess, ns_str f, i32 l);
 void ns_debug_repl_print(ns_vm *vm, ns_str expr);
+ns_bool ns_debug_should_pause(ns_debug_session *sess, ns_vm *vm, ns_ast_t *n, ns_str f);
 
 static ns_vm _debug_repl_vm = {0};
 static ns_debug_session _debug_repl_sess = {0};
@@ -58,7 +59,7 @@ void ns_debug_repl_help() {
     printf("  load             l [file]              : load file\n");
     printf("  run              r                     : run\n");
     printf("  step-into        si                    : step into\n");
-    printf("  step-over        so                    : step over\n");
+    printf("  step-over        sn                    : step over\n");
     printf("  step-out         so                    : step out\n");
     printf("  break            b [line]              : set breakpoint\n");
     printf("  break-list       bl                    : list breakpoints\n");
@@ -151,20 +152,39 @@ ns_debug_repl_command ns_debug_repl_parse_command(ns_str line) {
 }
 
 ns_return_void ns_debug_repl_step_hook(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_unused(vm);
-
     ns_debug_session *sess = &_debug_repl_sess;
     ns_ast_t *n = &ctx->nodes[i];
-    if (sess->state != NS_DEBUG_STATE_PAUSED && !ns_debug_hit_breakpoint(sess, n->state.l)) return ns_return_ok_void;
-    sess->state = NS_DEBUG_STATE_PAUSED;
-    
     ns_str f = ctx->filename;
+    if (!ns_debug_should_pause(sess, vm, n, f)) return ns_return_ok_void;
+    sess->state = NS_DEBUG_STATE_PAUSED;
+    sess->step_mode = NS_DEBUG_STEP_NONE;
+    sess->pause_line = n->state.l;
+    sess->pause_file = f;
+    
     ns_info("ns_debug", "hit breakpoint at %.*s:%d:%d\n", f.len, f.data, n->state.l, n->state.o);
     ns_return_void ret = ns_debug_repl_loop();
     if (ns_return_is_error(ret)) {
         ns_error("ns_debug", "repl error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
     }
     return ret;
+}
+
+ns_bool ns_debug_should_pause(ns_debug_session *sess, ns_vm *vm, ns_ast_t *n, ns_str f) {
+    i32 depth = ns_array_length(vm->call_stack);
+    switch (sess->step_mode) {
+    case NS_DEBUG_STEP_INTO:
+        return true;
+    case NS_DEBUG_STEP_OVER:
+        if (depth < sess->step_depth) return true;
+        if (depth == sess->step_depth && n->state.l != sess->pause_line) return true;
+        return false;
+    case NS_DEBUG_STEP_OUT:
+        if (depth < sess->step_depth) return true;
+        return false;
+    case NS_DEBUG_STEP_NONE:
+    default:
+        return ns_debug_hit_breakpoint(sess, f, n->state.l);
+    }
 }
 
 void ns_debug_repl_list_breakpoints(ns_debug_session *sess) {
@@ -205,10 +225,10 @@ void ns_debug_repl_del_breakpoint(ns_debug_session *sess, ns_str f, i32 l) {
     }
 }
 
-ns_bool ns_debug_hit_breakpoint(ns_debug_session *sess, i32 l) {
+ns_bool ns_debug_hit_breakpoint(ns_debug_session *sess, ns_str f, i32 l) {
     for (i32 i = 0, len = ns_array_length(sess->breakpoints); i < len; i++) {
         ns_debug_breakpoint bp = sess->breakpoints[i];
-        if (bp.l == l) return true;
+        if (bp.l == l && ns_str_equals(bp.f, f)) return true;
     }
     return false;
 }
@@ -299,13 +319,43 @@ ns_return_void ns_debug_repl_loop() {
             break;
         case NS_DEBUG_REPL_STEP_INTO:
             ns_info("ns_debug", "step into\n");
+            if (sess->state == NS_DEBUG_STATE_PAUSED) {
+                sess->step_mode = NS_DEBUG_STEP_INTO;
+                sess->step_depth = ns_array_length(vm->call_stack);
+                sess->state = NS_DEBUG_STATE_RUNNING;
+                return ns_return_ok_void;
+            } else if (sess->state == NS_DEBUG_STATE_READY) {
+                sess->step_mode = NS_DEBUG_STEP_INTO;
+                sess->step_depth = 0;
+                sess->pause_line = -1;
+                sess->state = NS_DEBUG_STATE_RUNNING;
+                ns_return_value ret = ns_eval(vm, sess->source, sess->options.filename);
+                if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
+            } else {
+                ns_warn("ns_debug", "step into requires paused or ready state\n");
+            }
             break;
         case NS_DEBUG_REPL_STEP_NEXT:
             ns_info("ns_debug", "step next\n");
+            if (sess->state != NS_DEBUG_STATE_PAUSED) {
+                ns_warn("ns_debug", "step over requires paused state\n");
+                break;
+            }
+            sess->step_mode = NS_DEBUG_STEP_OVER;
+            sess->step_depth = ns_array_length(vm->call_stack);
+            sess->state = NS_DEBUG_STATE_RUNNING;
             return ns_return_ok_void;
             break;
         case NS_DEBUG_REPL_STEP_OUT:
             ns_info("ns_debug", "step out\n");
+            if (sess->state != NS_DEBUG_STATE_PAUSED) {
+                ns_warn("ns_debug", "step out requires paused state\n");
+                break;
+            }
+            sess->step_mode = NS_DEBUG_STEP_OUT;
+            sess->step_depth = ns_array_length(vm->call_stack);
+            sess->state = NS_DEBUG_STATE_RUNNING;
+            return ns_return_ok_void;
             break;
         case NS_DEBUG_REPL_BREAK:
             ns_info("ns_debug", "break %d\n", cmd.line);
@@ -351,6 +401,10 @@ i32 ns_debug_repl(ns_debug_options options) {
     ns_debug_session *sess = &_debug_repl_sess;
     sess->options = options;
     ns_vm *vm = &_debug_repl_vm;
+    sess->vm = vm;
+    sess->state = NS_DEBUG_STATE_INIT;
+    sess->step_mode = NS_DEBUG_STEP_NONE;
+    sess->pause_line = -1;
     vm->step_hook = ns_debug_repl_step_hook;
 
     _debug_repl_history = ns_path_join(ns_path_home(), ns_str_cstr(NS_DEBUG_REPL_HISTORY_FILE));

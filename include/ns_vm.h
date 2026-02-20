@@ -145,6 +145,7 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 // type
 ns_bool ns_type_match(ns_vm *vm, ns_type require, ns_type provide); // check if provide type can be converted to require type
 ns_number_type ns_vm_number_type(ns_type t);
+ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r);
 
 // vm parse stage
 void ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r);

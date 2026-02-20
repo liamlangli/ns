@@ -50,14 +50,16 @@
 
 #define ns_ptr_size sizeof(void *)
 
+#define ns_assert_or_recover() ((void)((getenv("NS_REPL_RECOVER") == NULL) ? (assert(false), 0) : 0))
+
 #ifdef NS_DEBUG
-    #define ns_error(t, m, ...)     fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), assert(false)
+    #define ns_error(t, m, ...)     (fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), ns_assert_or_recover())
     #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_wrn "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
     #define ns_info(t, m, ...)      fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__)
     #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_bld "[%s:%d] " ns_color_err "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(c)
     #define ns_exit_safe(t, m, ...) fprintf(stdout, ns_color_bld "[%s:%d] " ns_color_log "%s: " ns_color_nil m, __FILE__, __LINE__, t, ##__VA_ARGS__), exit(0)
 #else
-    #define ns_error(t, m, ...)     fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), assert(false)
+    #define ns_error(t, m, ...)     (fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), ns_assert_or_recover())
     #define ns_warn(t, m, ...)      fprintf(stdout, ns_color_wrn "%s: " ns_color_nil m, t, ##__VA_ARGS__)
     #define ns_info(t, m, ...)      fprintf(stdout, ns_color_log "%s: " ns_color_nil m, t, ##__VA_ARGS__)
     #define ns_exit(c, t, m, ...)   fprintf(stderr, ns_color_err "%s: " ns_color_nil m, t, ##__VA_ARGS__), exit(c)
@@ -442,7 +444,7 @@ ns_return_define(ptr, void *);
 #define ns_return_ok(t, v) ((ns_return_##t){.r = (v)})
 
 #ifdef NS_DEBUG
-    #define ns_return_error(t, l, err, m) (ns_code_loc_print(l, m), assert(false), (ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
+    #define ns_return_error(t, l, err, m) (ns_code_loc_print(l, m), ns_assert_or_recover(), (ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
 #else
     #define ns_return_error(t, l, err, m) ((ns_return_##t){.s = err, .e = {.msg = ns_str_cstr(m), .loc = l}})
 #endif

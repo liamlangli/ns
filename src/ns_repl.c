@@ -123,6 +123,7 @@ ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str line) {
 
 void ns_repl(ns_vm* vm) {
     vm->repl = true;
+    setenv("NS_REPL_RECOVER", "1", 1);
     ns_repl_init();
 
     ns_lib_import(vm, ns_str_cstr("std"));
@@ -130,7 +131,14 @@ void ns_repl(ns_vm* vm) {
     ns_str filename = ns_str_cstr("<repl>");
     while(1) {
         ns_str line = ns_repl_read_line(ns_color_log "ns" ns_color_nil "> ");
-        if (line.len == 0) continue;
+        if (!line.data) {
+            printf("\n");
+            break;
+        }
+        if (line.len == 0) {
+            ns_repl_free_line(line);
+            continue;
+        }
 
         if (ns_repl_invoke_cmd(vm, line)) {
             ns_repl_free_line(line);
@@ -140,11 +148,17 @@ void ns_repl(ns_vm* vm) {
         ns_return_bool ret_p = ns_ast_parse(&_ast, line, filename);
         if (ns_return_is_error(ret_p)) {
             ns_warn("ast", "parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
+            ns_repl_free_line(line);
+            _ast.section_begin = _ast.section_end;
+            continue;
         }
 
         ret_p = ns_vm_parse(vm, &_ast);
         if (ns_return_is_error(ret_p)) {
             ns_warn("parse", "vm parse error: %.*s\n", ret_p.e.msg.len, ret_p.e.msg.data);
+            ns_repl_free_line(line);
+            _ast.section_begin = _ast.section_end;
+            continue;
         }
 
         for (i32 i = _ast.section_begin, l = _ast.section_end; i < l; ++i) {
@@ -166,6 +180,7 @@ void ns_repl(ns_vm* vm) {
             }
             if (ns_return_is_error(ret)) {
                 ns_warn("eval", "eval error: %.*s\n", ret.e.msg.len, ret.e.msg.data);
+                continue;
             }
             ns_str s = ns_fmt_value(vm, ret.r);
             printf("%.*s\n", s.len, s.data);
@@ -173,4 +188,5 @@ void ns_repl(ns_vm* vm) {
         ns_repl_free_line(line);
         _ast.section_begin = _ast.section_end;
     }
+    unsetenv("NS_REPL_RECOVER");
 }

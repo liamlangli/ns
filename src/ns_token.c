@@ -128,6 +128,7 @@ i32 ns_identifier_follow(char c) {
     to = i + length + sep;
 
 i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
+    ns_unused(filename);
     i32 i = f;
     i32 to = f + 1;
     i32 l, sep;

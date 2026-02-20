@@ -32,12 +32,23 @@ typedef enum ns_debug_state {
     NS_DEBUG_STATE_TERMINATED
 } ns_debug_state;
 
+typedef enum ns_debug_step_mode {
+    NS_DEBUG_STEP_NONE,
+    NS_DEBUG_STEP_INTO,
+    NS_DEBUG_STEP_OVER,
+    NS_DEBUG_STEP_OUT
+} ns_debug_step_mode;
+
 typedef struct ns_debug_session {
     // common
     ns_debug_options options;
     ns_str source;
     ns_vm *vm;
     ns_debug_state state;
+    ns_debug_step_mode step_mode;
+    i32 step_depth;
+    i32 pause_line;
+    ns_str pause_file;
     ns_debug_breakpoint *breakpoints;
 
     // socket mode
