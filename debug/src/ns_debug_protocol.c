@@ -220,6 +220,7 @@ void ns_debug_handle_init(ns_debug_session *sess, ns_json_ref json) {
 
     ns_debug_session_response(sess, res);
     ns_debug_session_response(sess, ns_debug_send_event(ns_str_cstr("initialized"), ns_json_make_null()));
+    ns_debug_send_output(sess, ns_str_cstr("[ns_debug] initialize ok\n"), ns_str_cstr("console"));
 }
 
 void ns_debug_handle_set_breakpoints(ns_debug_session *sess, ns_json_ref json) {
@@ -536,6 +537,7 @@ void ns_debug_handle_launch(ns_debug_session *sess, ns_json_ref json) {
         ns_json_set(res, ns_str_cstr("success"), ns_json_make_bool(false));
         ns_json_set(res, ns_str_cstr("message"), ns_json_make_string(ns_str_cstr("missing launch.arguments.program")));
         ns_debug_session_response(sess, res);
+        ns_debug_send_output(sess, ns_str_cstr("[ns_debug] launch failed: missing program\n"), ns_str_cstr("stderr"));
         return;
     }
 
@@ -545,6 +547,7 @@ void ns_debug_handle_launch(ns_debug_session *sess, ns_json_ref json) {
         ns_json_set(res, ns_str_cstr("success"), ns_json_make_bool(false));
         ns_json_set(res, ns_str_cstr("message"), ns_json_make_string(ns_str_cstr("failed to read program source")));
         ns_debug_session_response(sess, res);
+        ns_debug_send_output(sess, ns_str_cstr("[ns_debug] launch failed: cannot read program source\n"), ns_str_cstr("stderr"));
         ns_str_free(program_own);
         return;
     }
@@ -562,17 +565,23 @@ void ns_debug_handle_launch(ns_debug_session *sess, ns_json_ref json) {
     sess->pause_file = ns_debug_str_copy(program_own);
 
     ns_debug_session_response(sess, res);
+    ns_str msg = ns_str_concat(ns_str_cstr("[ns_debug] launch ready: "), program_own);
+    ns_str_append(&msg, ns_str_cstr("\n"));
+    ns_debug_send_output(sess, msg, ns_str_cstr("console"));
+    ns_str_free(msg);
 }
 
 void ns_debug_handle_configuration_done(ns_debug_session *sess, ns_json_ref json) {
     i32 seq = ns_json_to_i32(ns_json_get_prop(json, ns_str_cstr("seq")));
     ns_json_ref res = ns_debug_response_ack(seq, ns_str_cstr("configurationDone"), true);
     ns_debug_session_response(sess, res);
+    ns_debug_send_output(sess, ns_str_cstr("[ns_debug] configurationDone\n"), ns_str_cstr("console"));
 
     if (sess->state == NS_DEBUG_STATE_READY && !_dap_eval_running && sess->source.len > 0 && sess->source.data) {
         _dap_eval_running = true;
         sess->state = NS_DEBUG_STATE_RUNNING;
         sess->step_mode = sess->stop_on_entry ? NS_DEBUG_STEP_INTO : NS_DEBUG_STEP_NONE;
+        ns_debug_send_output(sess, ns_str_cstr("[ns_debug] starting program\n"), ns_str_cstr("console"));
         pthread_create(&_dap_eval_thread, ns_null, ns_debug_eval_main, sess);
     }
 }
@@ -593,6 +602,7 @@ void ns_debug_handle_continue(ns_debug_session *sess, ns_json_ref json) {
     ns_json_set(body, ns_str_cstr("allThreadsContinued"), ns_json_make_bool(true));
     ns_json_set(res, ns_str_cstr("body"), body);
     ns_debug_session_response(sess, res);
+    ns_debug_send_output(sess, ns_str_cstr("[ns_debug] continue\n"), ns_str_cstr("console"));
 
     if (sess->state == NS_DEBUG_STATE_READY && !_dap_eval_running) {
         _dap_eval_running = true;
