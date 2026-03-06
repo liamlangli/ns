@@ -11,3 +11,4 @@
 #include "ns_ssa.h"
 #include "ns_aarch.h"
 #include "ns_macho.h"
+#include "ns_wasm.h"

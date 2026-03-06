@@ -28,7 +28,7 @@ ifeq ($(OS), Linux)
 	NS_PLATFORM_DEF = -DNS_LINUX
 	NS_OS =	$(NS_LINUX)
 	NS_CC = gcc
-	NS_LD = ld
+	NS_LD = gcc
 else ifeq ($(OS), Darwin)
 	NS_DYLIB_SUFFIX = .dylib
 	NS_LIB_SUFFIX = .a
@@ -84,6 +84,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ssa.c \
 	src/ns_aarch.c \
 	src/ns_macho.c \
+	src/ns_wasm.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
 	src/ns_vm_lib.c \
