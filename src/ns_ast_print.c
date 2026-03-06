@@ -45,9 +45,6 @@ ns_str ns_ast_fn_type_to_string(ns_fn_type type) {
     switch (type) {
         case NS_FN_GENERIC: return ns_str_cstr("");
         case NS_FN_ASYNC: return ns_str_cstr("async");
-        case NS_FN_KERNEL: return ns_str_cstr("kernel");
-        case NS_FN_VERTEX: return ns_str_cstr("vertex");
-        case NS_FN_FRAGMENT: return ns_str_cstr("fragment");
         case NS_FN_COMPUTE: return ns_str_cstr("compute");
     }
     ns_error("ast", "unknown function type %d\n", type);

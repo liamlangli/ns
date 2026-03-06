@@ -188,10 +188,7 @@ typedef enum {
     NS_TOKEN_STRUCT,
     NS_TOKEN_TRUE,
     NS_TOKEN_TYPE,
-    NS_TOKEN_VERTEX,
-    NS_TOKEN_FRAGMENT,
     NS_TOKEN_COMPUTE,
-    NS_TOKEN_KERNEL,
     NS_TOKEN_OPS,           // ops: keyword for operator overloading
 
     NS_TOKEN_TYPE_I8,
@@ -285,10 +282,7 @@ typedef enum {
 typedef enum {
     NS_FN_GENERIC = 0,
     NS_FN_ASYNC,
-    NS_FN_KERNEL,
-    NS_FN_VERTEX,
-    NS_FN_FRAGMENT,
-    NS_FN_COMPUTE
+    NS_FN_COMPUTE,
 } ns_fn_type;
 
 // f and i, f and u, i and u
