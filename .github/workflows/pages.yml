@@ -2,7 +2,7 @@ name: Deploy NSCode to GitHub Pages
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, 'claude/**']
   workflow_dispatch:
 
 permissions:
