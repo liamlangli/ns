@@ -1,9 +1,20 @@
 import { TextBuffer } from './editor.js';
 import { Renderer }   from './renderer.js';
+import { NSInterpreter } from './interpreter.js';
 
-const SAMPLE_CODE = `// NanoScript fibonacci example
-use std
+// ── Examples ──────────────────────────────────────────────────────────────────
 
+const EXAMPLES = {
+  hello: `// Hello World in NanoScript
+fn main() {
+    println("Hello, World!")
+    println("Welcome to NSCode!")
+}
+
+main()
+`,
+
+  fib: `// Fibonacci — recursive
 fn fib(n: i32) i32 {
     if n == 0 {
         return 0
@@ -14,108 +25,307 @@ fn fib(n: i32) i32 {
     }
 }
 
+for i in 0 to 10 {
+    println(fib(i))
+}
+`,
+
+  factorial: `// Factorial — recursive
+fn factorial(n: i32) i32 {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+for i in 0 to 13 {
+    println(factorial(i))
+}
+`,
+
+  loop: `// Loop and accumulate
 fn sum(n: i32) i32 {
     let total: i32 = 0
-    for i in 0 to n {
+    for i in 1 to n + 1 {
         total = total + i
     }
     return total
 }
 
-type Point = { x: f64, y: f64 }
+println(sum(10))
+println(sum(100))
+`,
 
-fn distance(a: Point, b: Point) f64 {
-    let dx = a.x - b.x
-    let dy = a.y - b.y
-    return dx * dx + dy * dy
+  fizzbuzz: `// FizzBuzz 1..30
+for i in 1 to 31 {
+    if i % 15 == 0 {
+        println("FizzBuzz")
+    } else if i % 3 == 0 {
+        println("Fizz")
+    } else if i % 5 == 0 {
+        println("Buzz")
+    } else {
+        println(i)
+    }
 }
-`;
+`,
+
+  primes: `// Sieve-like prime check
+fn is_prime(n: i32) i32 {
+    if n < 2 { return 0 }
+    if n == 2 { return 1 }
+    if n % 2 == 0 { return 0 }
+    let i: i32 = 3
+    for i in 3 to n {
+        if i * i > n { return 1 }
+        if n % i == 0 { return 0 }
+    }
+    return 1
+}
+
+let count: i32 = 0
+for n in 2 to 50 {
+    if is_prime(n) == 1 {
+        println(n)
+        count = count + 1
+    }
+}
+println("Total primes < 50:")
+println(count)
+`,
+
+  closure: `// Functions as values
+fn make_adder(x: i32) {
+    return fn(y: i32) {
+        return x + y
+    }
+}
+
+let add5 = make_adder(5)
+let add10 = make_adder(10)
+
+println(add5(3))
+println(add10(3))
+println(add5(add10(2)))
+`,
+};
+
+const DEFAULT_CODE = EXAMPLES.fib;
+
+// ── Output panel ──────────────────────────────────────────────────────────────
+
+class OutputPanel {
+    constructor(scrollEl, dotEl, statusEl) {
+        this._el  = scrollEl;
+        this._dot = dotEl;
+        this._st  = statusEl;
+    }
+
+    _append(text, cls) {
+        const p = document.createElement('p');
+        p.className = `out-line ${cls}`;
+        p.textContent = text;
+        this._el.appendChild(p);
+        this._el.scrollTop = this._el.scrollHeight;
+    }
+
+    print(text)  { this._append(String(text), 'print'); }
+    error(text)  { this._append(String(text), 'error'); }
+    info(text)   { this._append(String(text), 'info'); }
+    sep()        { this._append('─'.repeat(40), 'sep'); }
+    time(ms)     { this._append(`Finished in ${ms.toFixed(1)} ms`, 'time'); }
+
+    clear() {
+        this._el.innerHTML = '';
+    }
+
+    setStatus(state, text) {
+        // state: 'idle' | 'run' | 'ok' | 'err'
+        this._dot.className = '';
+        if (state === 'run') this._dot.classList.add('run');
+        else if (state === 'ok') this._dot.classList.add('ok');
+        else if (state === 'err') this._dot.classList.add('err');
+        this._st.textContent = text;
+    }
+}
+
+// ── Divider drag ──────────────────────────────────────────────────────────────
+
+function initDivider(dividerEl, outputPane) {
+    let dragging = false;
+    let startX = 0, startW = 0;
+
+    dividerEl.addEventListener('mousedown', (e) => {
+        dragging = true;
+        startX = e.clientX;
+        startW = outputPane.getBoundingClientRect().width;
+        dividerEl.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!dragging) return;
+        const totalW = document.getElementById('main').getBoundingClientRect().width;
+        const delta = startX - e.clientX;
+        const newW = Math.max(180, Math.min(totalW * 0.65, startW + delta));
+        outputPane.style.width = `${newW}px`;
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (!dragging) return;
+        dragging = false;
+        dividerEl.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+    });
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-    const canvas = document.getElementById('editor-canvas');
-    const statusEl = document.getElementById('status');
+    const canvas      = document.getElementById('editor-canvas');
+    const statusEl    = document.getElementById('editor-status');
+    const wgpuBadge   = document.getElementById('wgpu-badge');
+    const runBtn      = document.getElementById('run-btn');
+    const clearBtn    = document.getElementById('clear-btn');
+    const exampleSel  = document.getElementById('example-select');
+    const outputPanel = new OutputPanel(
+        document.getElementById('output-scroll'),
+        document.getElementById('status-dot'),
+        document.getElementById('run-status'),
+    );
 
-    const buf = new TextBuffer(SAMPLE_CODE);
+    initDivider(
+        document.getElementById('divider'),
+        document.getElementById('output-pane'),
+    );
+
+    const buf      = new TextBuffer(DEFAULT_CODE);
     const renderer = new Renderer(canvas);
 
-    // Resize canvas to window
+    // ── Canvas sizing ──
+    const editorPane = document.getElementById('editor-pane');
     function resizeCanvas() {
-        renderer.resize(window.innerWidth, window.innerHeight);
+        const r = editorPane.getBoundingClientRect();
+        renderer.resize(r.width, r.height);
+        scheduleRender();
     }
     resizeCanvas();
-    window.addEventListener('resize', () => { resizeCanvas(); scheduleRender(); });
 
-    // Try to init WebGPU
+    const ro = new ResizeObserver(() => resizeCanvas());
+    ro.observe(editorPane);
+
+    // ── WebGPU init ──
+    let webgpuOk = false;
     try {
         await renderer.init();
-        statusEl.textContent = `WebGPU ready  •  ${renderer.glyphW}×${renderer.glyphH}px glyphs`;
+        webgpuOk = true;
+        wgpuBadge.textContent = 'WebGPU ✓';
+        wgpuBadge.className = 'ok';
+        statusEl.textContent = `Ln 1, Col 1  •  ${buf.lineCount()} lines`;
     } catch (e) {
+        wgpuBadge.textContent = 'WebGPU ✗';
+        wgpuBadge.className = 'err';
         statusEl.textContent = `WebGPU error: ${e.message}`;
-        console.error(e);
-        return;
+        document.getElementById('no-webgpu').style.display = 'flex';
+        console.error('WebGPU init failed:', e);
     }
 
-    // Cursor blink
+    // ── Cursor blink ──
     let cursorVisible = true;
-    let blinkTimer = setInterval(() => {
-        cursorVisible = !cursorVisible;
-        scheduleRender();
-    }, 530);
+    let blinkTimer = setInterval(() => { cursorVisible = !cursorVisible; scheduleRender(); }, 530);
 
     function resetBlink() {
         cursorVisible = true;
         clearInterval(blinkTimer);
-        blinkTimer = setInterval(() => {
-            cursorVisible = !cursorVisible;
-            scheduleRender();
-        }, 530);
+        blinkTimer = setInterval(() => { cursorVisible = !cursorVisible; scheduleRender(); }, 530);
     }
 
-    // Render loop
+    // ── Render loop ──
     let rafPending = false;
     function scheduleRender() {
-        if (!rafPending) {
+        if (!rafPending && webgpuOk) {
             rafPending = true;
             requestAnimationFrame(() => {
                 rafPending = false;
                 renderer.render(buf, cursorVisible);
-                updateStatus();
+                const { line, col } = buf.cursor;
+                statusEl.textContent = `Ln ${line + 1}, Col ${col + 1}  •  ${buf.lineCount()} lines`;
             });
         }
     }
-
     buf.onChange(() => scheduleRender());
 
-    // Status bar
-    function updateStatus() {
-        const { line, col } = buf.cursor;
-        statusEl.textContent =
-            `Ln ${line + 1}, Col ${col + 1}  •  ${buf.lineCount()} lines  •  WebGPU`;
+    // ── Run NS code ──
+    async function runCode() {
+        const src = buf.getText();
+        outputPanel.clear();
+        outputPanel.setStatus('run', 'Running…');
+        runBtn.disabled = true;
+
+        await new Promise(r => setTimeout(r, 0)); // let UI update
+
+        const lines = [];
+        const interp = new NSInterpreter({
+            print: (v) => {
+                const s = String(v);
+                lines.push(s);
+                outputPanel.print(s);
+            },
+            error: (v) => {
+                outputPanel.error(String(v));
+            },
+        });
+
+        const t0 = performance.now();
+        let ok = true;
+        try {
+            interp.run(src);
+        } catch (e) {
+            ok = false;
+            outputPanel.error(e.message ?? String(e));
+        }
+        const elapsed = performance.now() - t0;
+
+        outputPanel.sep();
+        outputPanel.time(elapsed);
+        outputPanel.setStatus(ok ? 'ok' : 'err', ok ? 'Success' : 'Error');
+        runBtn.disabled = false;
     }
 
-    // Scroll to keep cursor visible
-    function ensureCursorVisible() {
-        const { line, col } = buf.cursor;
-        const visLines = Math.floor(window.innerHeight / renderer.glyphH) - 2;
+    runBtn.addEventListener('click', runCode);
+    clearBtn.addEventListener('click', () => {
+        outputPanel.clear();
+        outputPanel.setStatus('idle', 'Ready');
+    });
 
-        // Vertical
-        if (line < buf.scrollTop) buf.scrollTop = line;
-        if (line >= buf.scrollTop + visLines) buf.scrollTop = line - visLines + 1;
+    exampleSel.addEventListener('change', () => {
+        const key = exampleSel.value;
+        if (key && EXAMPLES[key]) {
+            buf.setText(EXAMPLES[key]);
+            scheduleRender();
+        }
+        exampleSel.value = '';
+    });
 
-        // Horizontal (very simple)
-        const codeX = col * renderer.glyphW;
-        const codeAreaW = window.innerWidth - renderer.lineNumWidth - renderer.paddingLeft * 2;
-        if (codeX < buf.scrollLeft) buf.scrollLeft = Math.max(0, codeX - 40);
-        if (codeX + renderer.glyphW > buf.scrollLeft + codeAreaW)
-            buf.scrollLeft = codeX + renderer.glyphW - codeAreaW + 40;
-    }
+    // ── Keyboard ──
+    const hiddenInput = document.getElementById('hidden-input');
+    hiddenInput.focus();
 
-    // Keyboard input
     window.addEventListener('keydown', (e) => {
         const ctrl  = e.ctrlKey || e.metaKey;
         const shift = e.shiftKey;
-        let handled = true;
 
+        // Ctrl+Enter → run
+        if (ctrl && e.key === 'Enter') {
+            e.preventDefault();
+            runCode();
+            return;
+        }
+
+        let handled = true;
         switch (e.key) {
         case 'ArrowLeft':  buf.moveLeft(shift);      break;
         case 'ArrowRight': buf.moveRight(shift);     break;
@@ -130,28 +340,25 @@ async function main() {
             break;
         case 'Enter': {
             const indent = buf.autoIndent();
-            // Add extra indent after '{'
             const curLine = buf.lineAt(buf.cursor.line);
             const before  = curLine.slice(0, buf.cursor.col).trimEnd();
             const extra   = before.endsWith('{') ? '    ' : '';
             buf.insertText('\n' + indent + extra);
             break;
         }
-        case 'a':
-            if (ctrl) { buf.selectAll(); break; }
-            handled = false; break;
+        case 'a': if (ctrl) { buf.selectAll(); break; } handled = false; break;
         case 'c':
             if (ctrl) {
                 const sel = buf.getSelectionRange();
                 if (sel) {
-                    const lines = [];
+                    const parts = [];
                     for (let l = sel.start.line; l <= sel.end.line; l++) {
-                        const line = buf.lineAt(l);
-                        const s = l === sel.start.line ? sel.start.col : 0;
-                        const e2 = l === sel.end.line   ? sel.end.col   : line.length;
-                        lines.push(line.slice(s, e2));
+                        const ln = buf.lineAt(l);
+                        const s  = l === sel.start.line ? sel.start.col : 0;
+                        const en = l === sel.end.line   ? sel.end.col   : ln.length;
+                        parts.push(ln.slice(s, en));
                     }
-                    navigator.clipboard?.writeText(lines.join('\n'));
+                    navigator.clipboard?.writeText(parts.join('\n'));
                 }
                 break;
             }
@@ -159,7 +366,7 @@ async function main() {
         case 'v':
             if (ctrl) {
                 navigator.clipboard?.readText().then(text => {
-                    if (text) { buf.insertText(text); ensureCursorVisible(); }
+                    if (text) { buf.insertText(text); ensureCursorVisible(); scheduleRender(); }
                 });
                 break;
             }
@@ -168,25 +375,20 @@ async function main() {
             if (ctrl) {
                 const sel2 = buf.getSelectionRange();
                 if (sel2) {
-                    const lines2 = [];
+                    const parts2 = [];
                     for (let l = sel2.start.line; l <= sel2.end.line; l++) {
-                        const line = buf.lineAt(l);
-                        const s = l === sel2.start.line ? sel2.start.col : 0;
-                        const e2 = l === sel2.end.line   ? sel2.end.col   : line.length;
-                        lines2.push(line.slice(s, e2));
+                        const ln = buf.lineAt(l);
+                        const s  = l === sel2.start.line ? sel2.start.col : 0;
+                        const en = l === sel2.end.line   ? sel2.end.col   : ln.length;
+                        parts2.push(ln.slice(s, en));
                     }
-                    navigator.clipboard?.writeText(lines2.join('\n'));
+                    navigator.clipboard?.writeText(parts2.join('\n'));
                     buf.deleteSelection();
-                    buf._dirty();
                 }
                 break;
             }
             handled = false; break;
-        case 'z':
-            if (ctrl) break; // TODO: undo
-            handled = false; break;
-        default:
-            handled = false;
+        default: handled = false;
         }
 
         if (handled) {
@@ -195,10 +397,6 @@ async function main() {
             ensureCursorVisible();
         }
     });
-
-    // Printable character input via 'keypress' / 'input' on hidden textarea
-    const hiddenInput = document.getElementById('hidden-input');
-    hiddenInput.focus();
 
     hiddenInput.addEventListener('input', (e) => {
         const text = e.data ?? '';
@@ -210,17 +408,17 @@ async function main() {
         hiddenInput.value = '';
     });
 
-    // Keep hidden input focused when canvas is clicked
+    // ── Mouse ──
     canvas.addEventListener('mousedown', (e) => {
         hiddenInput.focus();
         const { line, col } = renderer.hitTest(buf, e.clientX, e.clientY);
         buf.moveCursor(line, col, e.shiftKey);
         resetBlink();
 
-        // Drag selection
         const onMove = (me) => {
             const pos = renderer.hitTest(buf, me.clientX, me.clientY);
             buf.moveCursor(pos.line, pos.col, true);
+            scheduleRender();
         };
         const onUp = () => {
             window.removeEventListener('mousemove', onMove);
@@ -231,17 +429,28 @@ async function main() {
         e.preventDefault();
     });
 
-    // Scroll with mouse wheel
     canvas.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const linesDelta = e.deltaY / renderer.glyphH;
-        buf.scrollTop = Math.max(0,
-            Math.min(buf.scrollTop + linesDelta, buf.lineCount() - 1));
+        buf.scrollTop  = Math.max(0, Math.min(buf.scrollTop  + e.deltaY / renderer.glyphH, buf.lineCount() - 1));
         buf.scrollLeft = Math.max(0, buf.scrollLeft + e.deltaX);
         scheduleRender();
     }, { passive: false });
 
-    // Initial render
+    // ── Helpers ──
+    function ensureCursorVisible() {
+        const { line, col } = buf.cursor;
+        const paneH    = editorPane.getBoundingClientRect().height;
+        const visLines = Math.floor(paneH / renderer.glyphH) - 2;
+        if (line < buf.scrollTop) buf.scrollTop = line;
+        if (line >= buf.scrollTop + visLines) buf.scrollTop = line - visLines + 1;
+
+        const codeX     = col * renderer.glyphW;
+        const codeAreaW = editorPane.getBoundingClientRect().width - renderer.lineNumWidth - renderer.paddingLeft * 2;
+        if (codeX < buf.scrollLeft) buf.scrollLeft = Math.max(0, codeX - 40);
+        if (codeX + renderer.glyphW > buf.scrollLeft + codeAreaW)
+            buf.scrollLeft = codeX + renderer.glyphW - codeAreaW + 40;
+    }
+
     scheduleRender();
 }
 
