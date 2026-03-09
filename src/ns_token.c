@@ -16,10 +16,7 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_LET);
         ns_str_case(NS_TOKEN_MATCH);
         ns_str_case(NS_TOKEN_MODULE);
-        ns_str_case(NS_TOKEN_VERTEX);
-        ns_str_case(NS_TOKEN_FRAGMENT);
         ns_str_case(NS_TOKEN_COMPUTE);
-        ns_str_case(NS_TOKEN_KERNEL);
         ns_str_case(NS_TOKEN_FN);
         ns_str_case(NS_TOKEN_IN);
         ns_str_case(NS_TOKEN_SPACE);
@@ -270,8 +267,6 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             to = i + 3 + sep;
         } else if (strncmp(s + f, "false", 5) == 0) {
             ns_range_token(NS_TOKEN_FALSE, 5)
-        } else if (strncmp(s + f, "fragment", 8) == 0) {
-            ns_range_token(NS_TOKEN_FRAGMENT, 8)
         } else {
             goto identifier;
         }
@@ -299,15 +294,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
         }
     } break;
 
-    case 'k': {
-        if (strncmp(s + f, "kernel", 6) == 0) {
-            ns_range_token(NS_TOKEN_KERNEL, 6)
-        } else {
-            goto identifier;
-        }
-    } break;
-
-    case 'l': {
+case 'l': {
         if (strncmp(s + f, "let", 3) == 0) {
             ns_range_token(NS_TOKEN_LET, 3)
         } else if (strncmp(s + f, "loop", 4) == 0) {
@@ -401,12 +388,10 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
         }
     } break;
 
-    case 'v': // vertex
+    case 'v':
     {
         if (strncmp(s + f, "void", 4) == 0) {
             ns_range_token(NS_TOKEN_TYPE_VOID, 4);
-        } else if (strncmp(s + f, "vertex", 6) == 0) {
-            ns_range_token(NS_TOKEN_VERTEX, 6);
         } else {
             goto identifier;
         }
