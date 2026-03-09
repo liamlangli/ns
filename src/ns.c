@@ -18,6 +18,7 @@ typedef struct ns_compile_option_t {
     ns_bool aarch_only: 2;
     ns_bool macho_only: 2;
     ns_bool macho_obj_only: 2;
+    ns_bool wasm_only: 2;
     ns_bool symbol_only: 2;
     ns_bool show_version: 2;
     ns_bool show_help: 2;
@@ -40,6 +41,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.macho_only = true;
         } else if (strcmp(argv[i], "--macho-o") == 0 || strcmp(argv[i], "--macho-obj") == 0) {
             option.macho_obj_only = true;
+        } else if (strcmp(argv[i], "--wasm") == 0) {
+            option.wasm_only = true;
         } else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--symbol") == 0) {
             option.symbol_only = true;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -70,6 +73,7 @@ void ns_help() {
     printf("  --aarch           lower ssa to aarch64 machine words\n");
     printf("  --macho           emit mach-o executable (arm64)\n");
     printf("  --macho-o         emit mach-o object file (.o, arm64)\n");
+    printf("  --wasm            emit webassembly module (.wasm)\n");
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
@@ -215,6 +219,32 @@ void ns_exec_macho_object(ns_str filename, ns_str output) {
     ns_info("macho", "object %.*s\n", output.len, output.data);
 }
 
+void ns_exec_wasm(ns_str filename, ns_str output) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    ns_str source = ns_fs_read_file(filename);
+    if (source.len == 0) {
+        ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
+        return;
+    }
+
+    if (output.len == 0) {
+        output = ns_str_cstr("bin/a.wasm");
+    }
+
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    ns_return_assert(ret);
+
+    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
+    ns_ssa_module *ssa = ssa_ret.r;
+
+    ns_return_bool emit_ret = ns_wasm_emit(ssa, output);
+    ns_ssa_module_free(ssa);
+    if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+
+    ns_info("wasm", "output %.*s\n", output.len, output.data);
+}
+
 void ns_exec_eval(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_fs_read_file(filename);
@@ -254,6 +284,8 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_macho(option.filename, option.output);
     } else if (option.macho_obj_only) {
         ns_exec_macho_object(option.filename, option.output);
+    } else if (option.wasm_only) {
+        ns_exec_wasm(option.filename, option.output);
     } else if (option.symbol_only) {
         ns_exec_symbol(option.filename);
     } else {
