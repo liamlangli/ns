@@ -4,7 +4,10 @@
     "dev": "node serve-https.js"
   },
   "devDependencies": {
-    "@unionengine/font": "^0.0.3"
+    "@unionengine/font": "^0.0.3",
+    "@webgpu/types": "^0.1.69",
+    "esbuild": "^0.27.3",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.2.8"
