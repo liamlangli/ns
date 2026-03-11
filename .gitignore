@@ -18,3 +18,7 @@ build
 
 # Claude Code session data
 .claude/
+
+# local HTTPS dev certs
+nscode/dev-key.pem
+nscode/dev-cert.pem
