@@ -37,19 +37,19 @@ export const C = {
 import { DrawList } from './draw.js';
 import { tokenize_line } from './syntax.js';
 
-// Map token type → color tuple
-const TOK_COLOR = {
-    KEYWORD:     C.SYN_KW,
-    TYPE:        C.SYN_TYPE,
-    NUMBER:      C.SYN_NUM,
-    STRING:      C.SYN_STR,
-    COMMENT:     C.SYN_CMT,
-    OPERATOR:    C.SYN_OP,
-    PUNCTUATION: C.SYN_PUNCT,
-    IDENTIFIER:  C.SYN_ID,
-    WHITESPACE:  C.SYN_ID,
-    UNKNOWN:     C.SYN_ID,
-};
+// Map token type (numeric) → color tuple. Order matches TT enum: 0..9
+const TOK_COLOR = [
+    C.SYN_KW,    // 0 KEYWORD
+    C.SYN_TYPE,  // 1 TYPE
+    C.SYN_NUM,   // 2 NUMBER
+    C.SYN_STR,   // 3 STRING
+    C.SYN_CMT,   // 4 COMMENT
+    C.SYN_OP,    // 5 OPERATOR
+    C.SYN_ID,    // 6 IDENTIFIER
+    C.SYN_PUNCT, // 7 PUNCTUATION
+    C.SYN_ID,    // 8 WHITESPACE
+    C.SYN_ID,    // 9 UNKNOWN
+];
 
 export class UI {
     constructor() {
@@ -190,7 +190,7 @@ export class UI {
      * @param {number} y, h  extents
      * @returns {number}  new x position (caller must clamp + store)
      */
-    divider(id, x, y, h, drag_ref) {
+    divider(id, x, y, h, drag_ref, reverse = false) {
         const hw  = 4;
         const hot = this._hit(x - hw, y, hw * 2, h);
 
@@ -201,7 +201,10 @@ export class UI {
             drag_ref.start_val   = drag_ref.value;
         }
         if (this._active_id === id) {
-            drag_ref.value = drag_ref.start_val + (drag_ref.start_x - this._mx);
+            const delta = reverse
+                ? (this._mx - drag_ref.start_x)
+                : (drag_ref.start_x - this._mx);
+            drag_ref.value = drag_ref.start_val + delta;
             if (this._just_up) this._active_id = '';
         }
 
