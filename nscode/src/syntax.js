@@ -43,7 +43,7 @@ export const TOKEN_COLOR = [
  * Tokenize a single line of NS code.
  * Returns array of {type, text} tokens.
  */
-export function tokenizeLine(line) {
+export function tokenize_line(line) {
     const tokens = [];
     let i = 0;
     const n = line.length;
