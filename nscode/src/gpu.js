@@ -59,17 +59,18 @@ export class GPU {
         this.ctx    = null;
         this.fmt    = null;
 
-        this._rectPipeline = null;
-        this._textPipeline = null;
-        this._uniformBuf   = null;
-        this._uniformBG    = null;
-        this._textBG       = null;
+        this._rect_pipeline = null;
+        this._text_pipeline = null;
+        this._uniform_buf   = null;
+        this._uniform_bg    = null;
+        this._text_bg       = null;
+        this._rect_bg       = null;
 
-        this._vpW = 0;
-        this._vpH = 0;
+        this._vp_w = 0;
+        this._vp_h = 0;
     }
 
-    /** @param {GPUDevice} device  @param {object} font  atlas from buildFontAtlas */
+    /** @param {GPUDevice} device  @param {object} font  atlas from load_msdf_font */
     async init(device, font) {
         this.device = device;
         const dev   = this.device;
@@ -79,23 +80,23 @@ export class GPU {
         this.ctx.configure({ device: dev, format: this.fmt, alphaMode: 'opaque' });
 
         // ── Uniform buffer (viewport vec2f, padded to 16 bytes) ─────────────
-        this._uniformBuf = dev.createBuffer({
+        this._uniform_buf = dev.createBuffer({
             label: 'uniform',
             size:  16,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
         // ── Rect pipeline ────────────────────────────────────────────────────
-        const rectMod = dev.createShaderModule({ label: 'rect', code: RECT_SHADER });
-        const rectBGL = dev.createBindGroupLayout({
+        const rect_mod = dev.createShaderModule({ label: 'rect', code: RECT_SHADER });
+        const rect_bgl = dev.createBindGroupLayout({
             label:   'rect-bgl',
             entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX, buffer: {} }],
         });
-        this._rectPipeline = dev.createRenderPipeline({
+        this._rect_pipeline = dev.createRenderPipeline({
             label:  'rect',
-            layout: dev.createPipelineLayout({ bindGroupLayouts: [rectBGL] }),
+            layout: dev.createPipelineLayout({ bindGroupLayouts: [rect_bgl] }),
             vertex: {
-                module:     rectMod,
+                module:     rect_mod,
                 entryPoint: 'vs',
                 buffers: [{
                     arrayStride: 24,   // 6 floats × 4 bytes
@@ -106,7 +107,7 @@ export class GPU {
                 }],
             },
             fragment: {
-                module:     rectMod,
+                module:     rect_mod,
                 entryPoint: 'fs',
                 targets: [{
                     format: this.fmt,
@@ -118,14 +119,14 @@ export class GPU {
             },
             primitive: { topology: 'triangle-list' },
         });
-        this._rectBG = dev.createBindGroup({
-            layout:  rectBGL,
-            entries: [{ binding: 0, resource: { buffer: this._uniformBuf } }],
+        this._rect_bg = dev.createBindGroup({
+            layout:  rect_bgl,
+            entries: [{ binding: 0, resource: { buffer: this._uniform_buf } }],
         });
 
         // ── Text pipeline ────────────────────────────────────────────────────
-        const textMod = dev.createShaderModule({ label: 'text', code: TEXT_SHADER });
-        const textBGL = dev.createBindGroupLayout({
+        const text_mod = dev.createShaderModule({ label: 'text', code: TEXT_SHADER });
+        const text_bgl = dev.createBindGroupLayout({
             label:   'text-bgl',
             entries: [
                 { binding: 0, visibility: GPUShaderStage.VERTEX,   buffer: {} },
@@ -133,11 +134,11 @@ export class GPU {
                 { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
             ],
         });
-        this._textPipeline = dev.createRenderPipeline({
+        this._text_pipeline = dev.createRenderPipeline({
             label:  'text',
-            layout: dev.createPipelineLayout({ bindGroupLayouts: [textBGL] }),
+            layout: dev.createPipelineLayout({ bindGroupLayouts: [text_bgl] }),
             vertex: {
-                module:     textMod,
+                module:     text_mod,
                 entryPoint: 'vs',
                 buffers: [{
                     arrayStride: 32,   // 8 floats × 4 bytes
@@ -149,7 +150,7 @@ export class GPU {
                 }],
             },
             fragment: {
-                module:     textMod,
+                module:     text_mod,
                 entryPoint: 'fs',
                 targets: [{
                     format: this.fmt,
@@ -161,10 +162,10 @@ export class GPU {
             },
             primitive: { topology: 'triangle-list' },
         });
-        this._textBG = dev.createBindGroup({
-            layout:  textBGL,
+        this._text_bg = dev.createBindGroup({
+            layout:  text_bgl,
             entries: [
-                { binding: 0, resource: { buffer: this._uniformBuf } },
+                { binding: 0, resource: { buffer: this._uniform_buf } },
                 { binding: 1, resource: font.texture.createView() },
                 { binding: 2, resource: font.sampler },
             ],
@@ -172,7 +173,7 @@ export class GPU {
     }
 
     resize(w, h) {
-        this._vpW = w; this._vpH = h;
+        this._vp_w = w; this._vp_h = h;
         this.canvas.width  = Math.max(1, Math.round(w * (window.devicePixelRatio ?? 1)));
         this.canvas.height = Math.max(1, Math.round(h * (window.devicePixelRatio ?? 1)));
         this.canvas.style.width  = w + 'px';
@@ -184,14 +185,14 @@ export class GPU {
         dl.finalize();
 
         // Update uniform (canvas size in CSS pixels so UI coords match)
-        dev.queue.writeBuffer(this._uniformBuf, 0,
-            new Float32Array([this._vpW, this._vpH, 0, 0]));
+        dev.queue.writeBuffer(this._uniform_buf, 0,
+            new Float32Array([this._vp_w, this._vp_h, 0, 0]));
 
-        const rData = dl.rectData;
-        const tData = dl.textData;
+        const r_data = dl.rect_data;
+        const t_data = dl.text_data;
 
-        const rBuf = rData.length > 0 ? _upload(dev, rData) : null;
-        const tBuf = tData.length > 0 ? _upload(dev, tData) : null;
+        const r_buf = r_data.length > 0 ? _upload(dev, r_data) : null;
+        const t_buf = t_data.length > 0 ? _upload(dev, t_data) : null;
 
         const enc  = dev.createCommandEncoder();
         const pass = enc.beginRenderPass({
@@ -204,34 +205,34 @@ export class GPU {
         });
 
         // Emit commands
-        let curScissor = null;
+        let cur_scissor = null;
         const dpr = window.devicePixelRatio ?? 1;
-        const phW = Math.round(this._vpW * dpr);
-        const phH = Math.round(this._vpH * dpr);
-        pass.setScissorRect(0, 0, phW, phH);
+        const ph_w = Math.round(this._vp_w * dpr);
+        const ph_h = Math.round(this._vp_h * dpr);
+        pass.setScissorRect(0, 0, ph_w, ph_h);
 
         for (const cmd of dl.commands) {
             if (cmd.type === 'scissor') {
                 // Convert CSS-pixel scissor to physical pixels
                 const sx = Math.max(0, Math.round(cmd.x * dpr));
                 const sy = Math.max(0, Math.round(cmd.y * dpr));
-                const sw = Math.max(1, Math.min(Math.round(cmd.w * dpr), phW - sx));
-                const sh = Math.max(1, Math.min(Math.round(cmd.h * dpr), phH - sy));
+                const sw = Math.max(1, Math.min(Math.round(cmd.w * dpr), ph_w - sx));
+                const sh = Math.max(1, Math.min(Math.round(cmd.h * dpr), ph_h - sy));
                 pass.setScissorRect(sx, sy, sw, sh);
-                curScissor = { sx, sy, sw, sh };
+                cur_scissor = { sx, sy, sw, sh };
                 continue;
             }
             // cmd.type === 'draw'
-            if (cmd.rcnt > 0 && rBuf) {
-                pass.setPipeline(this._rectPipeline);
-                pass.setBindGroup(0, this._rectBG);
-                pass.setVertexBuffer(0, rBuf, cmd.rbase * 24, cmd.rcnt * 24);
+            if (cmd.rcnt > 0 && r_buf) {
+                pass.setPipeline(this._rect_pipeline);
+                pass.setBindGroup(0, this._rect_bg);
+                pass.setVertexBuffer(0, r_buf, cmd.rbase * 24, cmd.rcnt * 24);
                 pass.draw(cmd.rcnt);
             }
-            if (cmd.tcnt > 0 && tBuf) {
-                pass.setPipeline(this._textPipeline);
-                pass.setBindGroup(0, this._textBG);
-                pass.setVertexBuffer(0, tBuf, cmd.tbase * 32, cmd.tcnt * 32);
+            if (cmd.tcnt > 0 && t_buf) {
+                pass.setPipeline(this._text_pipeline);
+                pass.setBindGroup(0, this._text_bg);
+                pass.setVertexBuffer(0, t_buf, cmd.tbase * 32, cmd.tcnt * 32);
                 pass.draw(cmd.tcnt);
             }
         }
@@ -239,8 +240,8 @@ export class GPU {
         pass.end();
         dev.queue.submit([enc.finish()]);
 
-        if (rBuf) rBuf.destroy();
-        if (tBuf) tBuf.destroy();
+        if (r_buf) r_buf.destroy();
+        if (t_buf) t_buf.destroy();
     }
 }
 

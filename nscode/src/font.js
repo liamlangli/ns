@@ -10,35 +10,35 @@
  *
  * @param {GPUDevice} device
  * @param {object}    opts
- * @param {string}    opts.jsonUrl      URL to the BMFont JSON
- * @param {string}    opts.pngUrl       URL to the atlas PNG
- * @param {number}    [opts.displaySize=20]  Desired font cap-height in CSS px
+ * @param {string}    opts.json_url      URL to the BMFont JSON
+ * @param {string}    opts.png_url       URL to the atlas PNG
+ * @param {number}    [opts.display_size=20]  Desired font cap-height in CSS px
  * @returns {Promise<FontAtlas>}
  */
-export async function loadMsdfFont(device, { jsonUrl, pngUrl, displaySize = 20 }) {
+export async function load_msdf_font(device, { json_url, png_url, display_size = 20 }) {
     // ── 1. Fetch JSON metrics and PNG bitmap in parallel ─────────────────────
     const [metrics, bitmap] = await Promise.all([
-        fetch(jsonUrl).then(r => { if (!r.ok) throw new Error(`Font JSON load failed: ${r.status}`); return r.json(); }),
-        fetch(pngUrl).then(r => { if (!r.ok) throw new Error(`Font PNG load failed: ${r.status}`); return r.blob(); })
+        fetch(json_url).then(r => { if (!r.ok) throw new Error(`Font JSON load failed: ${r.status}`); return r.json(); }),
+        fetch(png_url).then(r => { if (!r.ok) throw new Error(`Font PNG load failed: ${r.status}`); return r.blob(); })
               .then(b => createImageBitmap(b)),
     ]);
 
-    const atlasSize  = metrics.size;          // render px used by ufont (e.g. 48)
-    const lineHeight = metrics.line_height;   // px in atlas space (e.g. 63)
-    const scale      = displaySize / atlasSize;
+    const atlas_size  = metrics.size;          // render px used by ufont (e.g. 48)
+    const line_height = metrics.line_height;   // px in atlas space (e.g. 63)
+    const scale       = display_size / atlas_size;
 
     // Monospace advance (from space or first char with xadvance)
-    const spaceMeta = metrics.chars.find(c => c[0] === 32);
-    const xadvance  = spaceMeta ? spaceMeta[5] : metrics.chars[0][5];
-    const glyphW    = xadvance  * scale;
-    const glyphH    = lineHeight * scale;
+    const space_meta = metrics.chars.find(c => c[0] === 32);
+    const xadvance   = space_meta ? space_meta[5] : metrics.chars[0][5];
+    const glyph_w    = xadvance  * scale;
+    const glyph_h    = line_height * scale;
 
     // ── 2. Build glyph map  ───────────────────────────────────────────────────
     // Each entry: { u0,v0,u1,v1, xoff,yoff, w,h } – all in screen-space px
-    const glyphMap = new Map();
+    const glyph_map = new Map();
     for (const ch of metrics.chars) {
         const [id, cw, ch2, xoff, yoff, , x, y] = ch;
-        glyphMap.set(id, {
+        glyph_map.set(id, {
             u0:   x / bitmap.width,
             v0:   y / bitmap.height,
             u1:   (x + cw)  / bitmap.width,
@@ -50,7 +50,7 @@ export async function loadMsdfFont(device, { jsonUrl, pngUrl, displaySize = 20 }
         });
     }
 
-    const FALLBACK = glyphMap.get(63) ?? glyphMap.values().next().value; // '?'
+    const FALLBACK = glyph_map.get(63) ?? glyph_map.values().next().value; // '?'
 
     // ── 3. Upload atlas PNG as rgba8unorm GPU texture ─────────────────────────
     const texture = device.createTexture({
@@ -74,20 +74,20 @@ export async function loadMsdfFont(device, { jsonUrl, pngUrl, displaySize = 20 }
     // ── 4. Return atlas interface ─────────────────────────────────────────────
     return {
         texture, sampler,
-        glyphW, glyphH,
-        atlasW: bitmap.width,
-        atlasH: bitmap.height,
-        atlasSize, scale,
-        isMsdf: true,
+        glyph_w, glyph_h,
+        atlas_w: bitmap.width,
+        atlas_h: bitmap.height,
+        atlas_size, scale,
+        is_msdf: true,
 
         /**
          * Returns glyph draw info for a character.
          * @param {string} ch
          * @returns {{ u0,v0,u1,v1, xoff,yoff, w,h }}
          */
-        getGlyph(ch) {
+        get_glyph(ch) {
             const cp = ch.codePointAt(0) ?? 63;
-            return glyphMap.get(cp) ?? FALLBACK;
+            return glyph_map.get(cp) ?? FALLBACK;
         },
     };
 }

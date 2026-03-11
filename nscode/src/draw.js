@@ -24,19 +24,19 @@ export class DrawList {
     // Set GPU scissor rect (pixels, top-left origin).
     // Call before drawing clipped content; pass null to reset.
     scissor(x, y, w, h) {
-        this._flushCmd();
+        this._flush_cmd();
         this._cmds.push({ type: 'scissor', x: x|0, y: y|0, w: Math.max(1, w|0), h: Math.max(1, h|0) });
         this._rbase = this._rcnt;
         this._tbase = this._tcnt;
     }
 
-    resetScissor(vpW, vpH) {
-        this.scissor(0, 0, vpW, vpH);
+    reset_scissor(vp_w, vp_h) {
+        this.scissor(0, 0, vp_w, vp_h);
     }
 
     // Filled axis-aligned rect. Color components 0..1.
     rect(x, y, w, h, r, g, b, a = 1) {
-        this._growRects(6);
+        this._grow_rects(6);
         const x1 = x + w, y1 = y + h;
         const base = this._rcnt * RECT_FLOATS;
         const d = this._rects;
@@ -52,7 +52,7 @@ export class DrawList {
 
     // Draw a single glyph quad. uv = [u0,v0,u1,v1]
     glyph(x, y, w, h, uv, r, g, b, a = 1) {
-        this._growTexts(6);
+        this._grow_texts(6);
         const x1 = x + w, y1 = y + h;
         const u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
         const base = this._tcnt * TEXT_FLOATS;
@@ -67,51 +67,51 @@ export class DrawList {
     }
 
     // Draw a string at pixel (x, y) — top-left of glyph cell.
-    // Font must expose getGlyph(ch) → {u0,v0,u1,v1,xoff,yoff,w,h} and glyphW.
+    // Font must expose get_glyph(ch) → {u0,v0,u1,v1,xoff,yoff,w,h} and glyph_w.
     // Returns x position after the last glyph.
     text(str, x, y, font, r, g, b, a = 1) {
         let cx = x;
         for (let i = 0; i < str.length; i++) {
-            const gi = font.getGlyph(str[i]);
+            const gi = font.get_glyph(str[i]);
             if (gi && gi.w > 0 && gi.h > 0) {
                 this.glyph(cx + gi.xoff, y + gi.yoff, gi.w, gi.h,
                     [gi.u0, gi.v0, gi.u1, gi.v1], r, g, b, a);
             }
-            cx += font.glyphW;
+            cx += font.glyph_w;
         }
         return cx;
     }
 
-    // Draw string clipped to maxW pixels (measured in glyphW cells). Returns end x.
-    textClipped(str, x, y, maxW, font, r, g, b, a = 1) {
+    // Draw string clipped to max_w pixels (measured in glyph_w cells). Returns end x.
+    text_clipped(str, x, y, max_w, font, r, g, b, a = 1) {
         let cx = x;
-        const xmax = x + maxW;
+        const xmax = x + max_w;
         for (let i = 0; i < str.length; i++) {
-            if (cx + font.glyphW > xmax) break;
-            const gi = font.getGlyph(str[i]);
+            if (cx + font.glyph_w > xmax) break;
+            const gi = font.get_glyph(str[i]);
             if (gi && gi.w > 0 && gi.h > 0) {
                 this.glyph(cx + gi.xoff, y + gi.yoff, gi.w, gi.h,
                     [gi.u0, gi.v0, gi.u1, gi.v1], r, g, b, a);
             }
-            cx += font.glyphW;
+            cx += font.glyph_w;
         }
         return cx;
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
-    _flushCmd() {
-        const rDelta = this._rcnt - this._rbase;
-        const tDelta = this._tcnt - this._tbase;
-        if (rDelta > 0 || tDelta > 0) {
-            this._cmds.push({ type: 'draw', rbase: this._rbase, rcnt: rDelta, tbase: this._tbase, tcnt: tDelta });
+    _flush_cmd() {
+        const r_delta = this._rcnt - this._rbase;
+        const t_delta = this._tcnt - this._tbase;
+        if (r_delta > 0 || t_delta > 0) {
+            this._cmds.push({ type: 'draw', rbase: this._rbase, rcnt: r_delta, tbase: this._tbase, tcnt: t_delta });
         }
     }
 
     finalize() {
-        this._flushCmd();
+        this._flush_cmd();
     }
 
-    _growRects(need) {
+    _grow_rects(need) {
         while ((this._rcnt + need) * RECT_FLOATS > this._rects.length) {
             const n = new Float32Array(this._rects.length * 2);
             n.set(this._rects);
@@ -119,7 +119,7 @@ export class DrawList {
         }
     }
 
-    _growTexts(need) {
+    _grow_texts(need) {
         while ((this._tcnt + need) * TEXT_FLOATS > this._texts.length) {
             const n = new Float32Array(this._texts.length * 2);
             n.set(this._texts);
@@ -127,7 +127,7 @@ export class DrawList {
         }
     }
 
-    get rectData() { return this._rects.subarray(0, this._rcnt * RECT_FLOATS); }
-    get textData() { return this._texts.subarray(0, this._tcnt * TEXT_FLOATS); }
+    get rect_data() { return this._rects.subarray(0, this._rcnt * RECT_FLOATS); }
+    get text_data() { return this._texts.subarray(0, this._tcnt * TEXT_FLOATS); }
     get commands() { return this._cmds; }
 }

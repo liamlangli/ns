@@ -1,71 +1,71 @@
 // Text buffer and editor state management
 
 export class TextBuffer {
-    constructor(initialText = '') {
-        this.lines = initialText ? initialText.split('\n') : [''];
+    constructor(initial_text = '') {
+        this.lines = initial_text ? initial_text.split('\n') : [''];
         this.cursor = { line: 0, col: 0 };
         this.selection = null; // { anchor, focus } each {line, col}
-        this.scrollTop = 0;   // in lines
-        this.scrollLeft = 0;  // in pixels
-        this._onChange = null;
+        this.scroll_top = 0;   // in lines
+        this.scroll_left = 0;  // in pixels
+        this._on_change = null;
         this._version = 0;
     }
 
     get version() { return this._version; }
 
-    onChange(fn) { this._onChange = fn; }
+    on_change(fn) { this._on_change = fn; }
 
     _dirty() {
         this._version++;
-        if (this._onChange) this._onChange();
+        if (this._on_change) this._on_change();
     }
 
-    getText() { return this.lines.join('\n'); }
+    get_text() { return this.lines.join('\n'); }
 
-    setText(text) {
+    set_text(text) {
         this.lines = text.split('\n');
         this.cursor = { line: 0, col: 0 };
         this.selection = null;
         this._dirty();
     }
 
-    lineCount() { return this.lines.length; }
+    line_count() { return this.lines.length; }
 
-    lineAt(i) { return i >= 0 && i < this.lines.length ? this.lines[i] : ''; }
+    line_at(i) { return i >= 0 && i < this.lines.length ? this.lines[i] : ''; }
 
     // Clamp cursor to valid position
-    clampCursor(c) {
+    clamp_cursor(c) {
         let line = Math.max(0, Math.min(c.line, this.lines.length - 1));
         let col  = Math.max(0, Math.min(c.col, this.lines[line].length));
         return { line, col };
     }
 
-    moveCursor(line, col, select = false) {
-        const newCursor = this.clampCursor({ line, col });
+    move_cursor(line, col, select = false) {
+        const new_cursor = this.clamp_cursor({ line, col });
         if (select) {
             if (!this.selection) {
-                this.selection = { anchor: { ...this.cursor }, focus: newCursor };
+                this.selection = { anchor: { ...this.cursor }, focus: new_cursor };
             } else {
-                this.selection.focus = newCursor;
+                this.selection.focus = new_cursor;
             }
         } else {
             this.selection = null;
         }
-        this.cursor = newCursor;
+        this.cursor = new_cursor;
         this._dirty();
     }
 
     // Returns selection in normalized (start <= end) form
-    getSelectionRange() {
+    get_selection_range() {
         if (!this.selection) return null;
         const a = this.selection.anchor;
         const b = this.selection.focus;
-        const aLess = a.line < b.line || (a.line === b.line && a.col <= b.col);
-        return aLess ? { start: a, end: b } : { start: b, end: a };
+        const a_less = a.line < b.line || (a.line === b.line && a.col <= b.col);
+        return a_less ? { start: a, end: b } : { start: b, end: a };
     }
 
-    deleteSelection() {
-        const sel = this.getSelectionRange();
+    delete_selection() {
+        const sel = this.get_selection_range();
         if (!sel) return;
         const { start, end } = sel;
         const before = this.lines[start.line].slice(0, start.col);
@@ -76,23 +76,23 @@ export class TextBuffer {
     }
 
     // Insert text at cursor (handles newlines)
-    insertText(text) {
-        if (this.selection) this.deleteSelection();
+    insert_text(text) {
+        if (this.selection) this.delete_selection();
         const parts = text.split('\n');
         const { line, col } = this.cursor;
-        const lineText = this.lines[line] ?? '';
-        const before = lineText.slice(0, col);
-        const after  = lineText.slice(col);
+        const line_text = this.lines[line] ?? '';
+        const before = line_text.slice(0, col);
+        const after  = line_text.slice(col);
 
         if (parts.length === 1) {
             this.lines[line] = before + parts[0] + after;
             this.cursor = { line, col: col + parts[0].length };
         } else {
-            const newLines = [];
-            newLines.push(before + parts[0]);
-            for (let i = 1; i < parts.length - 1; i++) newLines.push(parts[i]);
-            newLines.push(parts[parts.length - 1] + after);
-            this.lines.splice(line, 1, ...newLines);
+            const new_lines = [];
+            new_lines.push(before + parts[0]);
+            for (let i = 1; i < parts.length - 1; i++) new_lines.push(parts[i]);
+            new_lines.push(parts[parts.length - 1] + after);
+            this.lines.splice(line, 1, ...new_lines);
             this.cursor = {
                 line: line + parts.length - 1,
                 col: parts[parts.length - 1].length
@@ -102,7 +102,7 @@ export class TextBuffer {
     }
 
     backspace() {
-        if (this.selection) { this.deleteSelection(); this._dirty(); return; }
+        if (this.selection) { this.delete_selection(); this._dirty(); return; }
         const { line, col } = this.cursor;
         if (col > 0) {
             this.lines[line] = this.lines[line].slice(0, col - 1) + this.lines[line].slice(col);
@@ -115,76 +115,76 @@ export class TextBuffer {
         this._dirty();
     }
 
-    deleteForward() {
-        if (this.selection) { this.deleteSelection(); this._dirty(); return; }
+    delete_forward() {
+        if (this.selection) { this.delete_selection(); this._dirty(); return; }
         const { line, col } = this.cursor;
-        const lineText = this.lines[line];
-        if (col < lineText.length) {
-            this.lines[line] = lineText.slice(0, col) + lineText.slice(col + 1);
+        const line_text = this.lines[line];
+        if (col < line_text.length) {
+            this.lines[line] = line_text.slice(0, col) + line_text.slice(col + 1);
         } else if (line < this.lines.length - 1) {
-            this.lines.splice(line, 2, lineText + this.lines[line + 1]);
+            this.lines.splice(line, 2, line_text + this.lines[line + 1]);
         }
         this._dirty();
     }
 
-    moveLeft(select = false) {
+    move_left(select = false) {
         let { line, col } = this.cursor;
         if (!select && this.selection) {
-            const sel = this.getSelectionRange();
-            this.moveCursor(sel.start.line, sel.start.col, false);
+            const sel = this.get_selection_range();
+            this.move_cursor(sel.start.line, sel.start.col, false);
             return;
         }
         if (col > 0) col--;
         else if (line > 0) { line--; col = this.lines[line].length; }
-        this.moveCursor(line, col, select);
+        this.move_cursor(line, col, select);
     }
 
-    moveRight(select = false) {
+    move_right(select = false) {
         let { line, col } = this.cursor;
         if (!select && this.selection) {
-            const sel = this.getSelectionRange();
-            this.moveCursor(sel.end.line, sel.end.col, false);
+            const sel = this.get_selection_range();
+            this.move_cursor(sel.end.line, sel.end.col, false);
             return;
         }
-        const lineText = this.lines[line];
-        if (col < lineText.length) col++;
+        const line_text = this.lines[line];
+        if (col < line_text.length) col++;
         else if (line < this.lines.length - 1) { line++; col = 0; }
-        this.moveCursor(line, col, select);
+        this.move_cursor(line, col, select);
     }
 
-    moveUp(select = false) {
+    move_up(select = false) {
         const { line, col } = this.cursor;
-        if (line > 0) this.moveCursor(line - 1, col, select);
-        else this.moveCursor(0, 0, select);
+        if (line > 0) this.move_cursor(line - 1, col, select);
+        else this.move_cursor(0, 0, select);
     }
 
-    moveDown(select = false) {
+    move_down(select = false) {
         const { line, col } = this.cursor;
-        if (line < this.lines.length - 1) this.moveCursor(line + 1, col, select);
-        else this.moveCursor(line, this.lines[line].length, select);
+        if (line < this.lines.length - 1) this.move_cursor(line + 1, col, select);
+        else this.move_cursor(line, this.lines[line].length, select);
     }
 
-    moveLineStart(select = false) {
-        this.moveCursor(this.cursor.line, 0, select);
+    move_line_start(select = false) {
+        this.move_cursor(this.cursor.line, 0, select);
     }
 
-    moveLineEnd(select = false) {
+    move_line_end(select = false) {
         const { line } = this.cursor;
-        this.moveCursor(line, this.lines[line].length, select);
+        this.move_cursor(line, this.lines[line].length, select);
     }
 
-    selectAll() {
-        const lastLine = this.lines.length - 1;
+    select_all() {
+        const last_line = this.lines.length - 1;
         this.selection = {
             anchor: { line: 0, col: 0 },
-            focus:  { line: lastLine, col: this.lines[lastLine].length }
+            focus:  { line: last_line, col: this.lines[last_line].length }
         };
         this.cursor = this.selection.focus;
         this._dirty();
     }
 
     // Auto-indent: return indent of previous line
-    autoIndent() {
+    auto_indent() {
         const { line } = this.cursor;
         if (line === 0) return '';
         const prev = this.lines[line - 1];

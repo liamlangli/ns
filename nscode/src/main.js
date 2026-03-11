@@ -3,7 +3,7 @@
 
 import { TextBuffer }    from './editor.js';
 import { NSInterpreter } from './interpreter.js';
-import { loadMsdfFont }  from './font.js';
+import { load_msdf_font } from './font.js';
 import { GPU }           from './gpu.js';
 import { UI, C }         from './ui.js';
 
@@ -104,115 +104,115 @@ async function main() {
         return;
     }
 
-    const canvas  = document.getElementById('c');
-    const hiddenInput = document.getElementById('hi');
-    hiddenInput.focus();
+    const canvas       = document.getElementById('c');
+    const hidden_input = document.getElementById('hi');
+    hidden_input.focus();
 
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('No WebGPU adapter');
     const device  = await adapter.requestDevice();
-    const atlas   = await loadMsdfFont(device, {
-        jsonUrl:     './public/fonts/jetbrains-mono-latin-400-normal.json',
-        pngUrl:      './public/fonts/jetbrains-mono.png',
-        displaySize: 20,   // scale the 48px atlas to ~20px cap-height
+    const atlas   = await load_msdf_font(device, {
+        json_url:     './public/fonts/jetbrains-mono-latin-400-normal.json',
+        png_url:      './public/fonts/jetbrains-mono.png',
+        display_size: 20,   // scale the 48px atlas to ~20px cap-height
     });
 
     const gpu = new GPU(canvas);
     await gpu.init(device, atlas);
 
     const ui  = new UI();
-    ui.setFont(atlas);
+    ui.set_font(atlas);
 
     const buf = new TextBuffer(EXAMPLES.fib);
 
     // Output state
-    let outLines     = [];  // [{text, cls}]
-    let outScroll    = 0;
-    let runStatus    = 'idle';  // 'idle'|'run'|'ok'|'err'
-    let runStatusMsg = 'Ready';
+    let out_lines      = [];  // [{text, cls}]
+    let out_scroll     = 0;
+    let run_status     = 'idle';  // 'idle'|'run'|'ok'|'err'
+    let run_status_msg = 'Ready';
 
-    // Divider (outputPane width = divRef.value, starts at 40% of window)
-    const divRef = { value: 0, startX: 0, startVal: 0 };
+    // Divider (output pane width = div_ref.value, starts at 40% of window)
+    const div_ref = { value: 0, start_x: 0, start_val: 0 };
 
     // Cursor blink
-    let cursorVisible = true;
-    let blinkT = 0;
+    let cursor_visible = true;
+    let blink_t = 0;
 
     // Mouse state
-    let mx = 0, my = 0, mouseDown = false, justDown = false, justUp = false;
-    let vpW = 0, vpH = 0;
+    let mx = 0, my = 0, mouse_down = false, just_down = false, just_up = false;
+    let vp_w = 0, vp_h = 0;
 
     // Viewport sizing
     function resize() {
-        vpW = window.innerWidth;
-        vpH = window.innerHeight;
-        gpu.resize(vpW, vpH);
-        if (divRef.value === 0) divRef.value = Math.round(vpW * 0.4);
+        vp_w = window.innerWidth;
+        vp_h = window.innerHeight;
+        gpu.resize(vp_w, vp_h);
+        if (div_ref.value === 0) div_ref.value = Math.round(vp_w * 0.4);
     }
     resize();
     window.addEventListener('resize', resize);
 
     // ── Run NS code ──────────────────────────────────────────────────────────
-    async function runCode() {
-        outLines = [];
-        outScroll = 0;
-        runStatus = 'run';
-        runStatusMsg = 'Running…';
+    async function run_code() {
+        out_lines = [];
+        out_scroll = 0;
+        run_status = 'run';
+        run_status_msg = 'Running…';
 
         await new Promise(r => setTimeout(r, 0));
         const interp = new NSInterpreter({
-            print: v => outLines.push({ text: String(v), cls: 'print' }),
-            error: v => outLines.push({ text: String(v), cls: 'error' }),
+            print: v => out_lines.push({ text: String(v), cls: 'print' }),
+            error: v => out_lines.push({ text: String(v), cls: 'error' }),
         });
         const t0 = performance.now();
         let ok = true;
-        try { interp.run(buf.getText()); }
-        catch (e) { ok = false; outLines.push({ text: e.message ?? String(e), cls: 'error' }); }
+        try { interp.run(buf.get_text()); }
+        catch (e) { ok = false; out_lines.push({ text: e.message ?? String(e), cls: 'error' }); }
         const ms = performance.now() - t0;
-        outLines.push({ text: '─'.repeat(36), cls: 'sep' });
-        outLines.push({ text: `Finished in ${ms.toFixed(1)} ms`, cls: 'time' });
-        runStatus    = ok ? 'ok' : 'err';
-        runStatusMsg = ok ? 'Success' : 'Error';
-        outScroll    = Math.max(0, outLines.length - 10);
+        out_lines.push({ text: '─'.repeat(36), cls: 'sep' });
+        out_lines.push({ text: `Finished in ${ms.toFixed(1)} ms`, cls: 'time' });
+        run_status     = ok ? 'ok' : 'err';
+        run_status_msg = ok ? 'Success' : 'Error';
+        out_scroll     = Math.max(0, out_lines.length - 10);
     }
 
     // ── Keyboard ─────────────────────────────────────────────────────────────
     window.addEventListener('keydown', e => {
-        const ctrl = e.ctrlKey || e.metaKey;
+        const ctrl  = e.ctrlKey || e.metaKey;
         const shift = e.shiftKey;
-        if (ctrl && e.key === 'Enter') { e.preventDefault(); runCode(); return; }
+        if (ctrl && e.key === 'Enter') { e.preventDefault(); run_code(); return; }
         let handled = true;
         switch (e.key) {
-        case 'ArrowLeft':  buf.moveLeft(shift);      break;
-        case 'ArrowRight': buf.moveRight(shift);     break;
-        case 'ArrowUp':    buf.moveUp(shift);        break;
-        case 'ArrowDown':  buf.moveDown(shift);      break;
-        case 'Home':       buf.moveLineStart(shift); break;
-        case 'End':        buf.moveLineEnd(shift);   break;
-        case 'Backspace':  buf.backspace();          break;
-        case 'Delete':     buf.deleteForward();      break;
-        case 'Tab':        buf.insertText('    ');   break;
+        case 'ArrowLeft':  buf.move_left(shift);       break;
+        case 'ArrowRight': buf.move_right(shift);      break;
+        case 'ArrowUp':    buf.move_up(shift);         break;
+        case 'ArrowDown':  buf.move_down(shift);       break;
+        case 'Home':       buf.move_line_start(shift); break;
+        case 'End':        buf.move_line_end(shift);   break;
+        case 'Backspace':  buf.backspace();             break;
+        case 'Delete':     buf.delete_forward();       break;
+        case 'Tab':        buf.insert_text('    ');    break;
         case 'Enter': {
-            const indent = buf.autoIndent();
-            const before = buf.lineAt(buf.cursor.line).slice(0, buf.cursor.col).trimEnd();
-            buf.insertText('\n' + indent + (before.endsWith('{') ? '    ' : ''));
+            const indent = buf.auto_indent();
+            const before = buf.line_at(buf.cursor.line).slice(0, buf.cursor.col).trimEnd();
+            buf.insert_text('\n' + indent + (before.endsWith('{') ? '    ' : ''));
             break;
         }
-        case 'a': if (ctrl) buf.selectAll(); else handled = false; break;
-        case 'c': if (ctrl) { copySelection(); } else handled = false; break;
-        case 'v': if (ctrl) { navigator.clipboard?.readText().then(t => { if (t) buf.insertText(t); }); } else handled = false; break;
-        case 'x': if (ctrl) { copySelection(); buf.deleteSelection(); } else handled = false; break;
+        case 'a': if (ctrl) buf.select_all(); else handled = false; break;
+        case 'c': if (ctrl) { copy_selection(); } else handled = false; break;
+        case 'v': if (ctrl) { navigator.clipboard?.readText().then(t => { if (t) buf.insert_text(t); }); } else handled = false; break;
+        case 'x': if (ctrl) { copy_selection(); buf.delete_selection(); } else handled = false; break;
         default:  handled = false;
         }
-        if (handled) { e.preventDefault(); blinkT = 0; cursorVisible = true; }
+        if (handled) { e.preventDefault(); blink_t = 0; cursor_visible = true; }
     });
 
-    function copySelection() {
-        const sel = buf.getSelectionRange();
+    function copy_selection() {
+        const sel = buf.get_selection_range();
         if (!sel) return;
         const parts = [];
         for (let l = sel.start.line; l <= sel.end.line; l++) {
-            const ln = buf.lineAt(l);
+            const ln = buf.line_at(l);
             const s  = l === sel.start.line ? sel.start.col : 0;
             const en = l === sel.end.line   ? sel.end.col   : ln.length;
             parts.push(ln.slice(s, en));
@@ -220,37 +220,37 @@ async function main() {
         navigator.clipboard?.writeText(parts.join('\n'));
     }
 
-    hiddenInput.addEventListener('input', e => {
+    hidden_input.addEventListener('input', e => {
         const t = e.data ?? '';
-        if (t) { buf.insertText(t); blinkT = 0; cursorVisible = true; }
-        hiddenInput.value = '';
+        if (t) { buf.insert_text(t); blink_t = 0; cursor_visible = true; }
+        hidden_input.value = '';
     });
 
     // ── Mouse ────────────────────────────────────────────────────────────────
     canvas.addEventListener('mousedown', e => {
-        hiddenInput.focus();
+        hidden_input.focus();
         mx = e.clientX; my = e.clientY;
-        mouseDown = true; justDown = true;
+        mouse_down = true; just_down = true;
         e.preventDefault();
     });
     window.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
     window.addEventListener('mouseup',   e => {
         mx = e.clientX; my = e.clientY;
-        mouseDown = false; justUp = true;
+        mouse_down = false; just_up = true;
     });
 
     canvas.addEventListener('wheel', e => {
         e.preventDefault();
-        const mainH    = vpH - TOOLBAR_H - STATUS_H;
-        const outW     = Math.max(200, Math.min(vpW * 0.65, divRef.value));
-        const editorW  = vpW - outW - DIVIDER_W;
+        const main_h   = vp_h - TOOLBAR_H - STATUS_H;
+        const out_w    = Math.max(200, Math.min(vp_w * 0.65, div_ref.value));
+        const editor_w = vp_w - out_w - DIVIDER_W;
 
         // Determine which pane the wheel is over
-        if (e.clientX < editorW) {
-            buf.scrollTop = Math.max(0, Math.min((buf.scrollTop ?? 0) + e.deltaY / atlas.glyphH, buf.lineCount() - 1));
-            buf.scrollLeft = Math.max(0, (buf.scrollLeft ?? 0) + e.deltaX);
+        if (e.clientX < editor_w) {
+            buf.scroll_top  = Math.max(0, Math.min((buf.scroll_top ?? 0) + e.deltaY / atlas.glyph_h, buf.line_count() - 1));
+            buf.scroll_left = Math.max(0, (buf.scroll_left ?? 0) + e.deltaX);
         } else {
-            outScroll = Math.max(0, Math.min(outScroll + e.deltaY / atlas.glyphH, Math.max(0, outLines.length - 1)));
+            out_scroll = Math.max(0, Math.min(out_scroll + e.deltaY / atlas.glyph_h, Math.max(0, out_lines.length - 1)));
         }
     }, { passive: false });
 
@@ -262,25 +262,25 @@ async function main() {
         const dt = ts - last; last = ts;
 
         // Cursor blink
-        blinkT += dt;
-        if (blinkT > 530) { blinkT = 0; cursorVisible = !cursorVisible; }
+        blink_t += dt;
+        if (blink_t > 530) { blink_t = 0; cursor_visible = !cursor_visible; }
 
         // Layout
-        const mainH   = vpH - TOOLBAR_H - STATUS_H;
-        const outW    = Math.max(200, Math.min(Math.round(vpW * 0.65), divRef.value));
-        const editorW = vpW - outW - DIVIDER_W;
+        const main_h   = vp_h - TOOLBAR_H - STATUS_H;
+        const out_w    = Math.max(200, Math.min(Math.round(vp_w * 0.65), div_ref.value));
+        const editor_w = vp_w - out_w - DIVIDER_W;
 
         // Begin ImGui frame
-        ui.beginFrame(mx, my, mouseDown, justDown, justUp, vpW, vpH);
+        ui.begin_frame(mx, my, mouse_down, just_down, just_up, vp_w, vp_h);
 
         // ── Toolbar ───────────────────────────────────────────────────────────
-        ui.panel(0, 0, vpW, TOOLBAR_H, C.SURFACE);
-        ui.separator(0, TOOLBAR_H - 1, vpW, C.BORDER);
+        ui.panel(0, 0, vp_w, TOOLBAR_H, C.SURFACE);
+        ui.separator(0, TOOLBAR_H - 1, vp_w, C.BORDER);
 
         let tbx = 12;
         // Brand
-        ui.drawText('NSCode', tbx, (TOOLBAR_H - atlas.glyphH) / 2, C.ACCENT);
-        tbx += 7 * atlas.glyphW + 8;
+        ui.draw_text('NSCode', tbx, (TOOLBAR_H - atlas.glyph_h) / 2, C.ACCENT);
+        tbx += 7 * atlas.glyph_w + 8;
 
         // Separator
         ui._dl.rect(tbx, BTN_PAD, 1, BTN_H, C.BORDER[0], C.BORDER[1], C.BORDER[2], 1);
@@ -288,13 +288,13 @@ async function main() {
 
         // Run button
         if (ui.button('run', '\u25b6 Run', tbx, BTN_PAD, BTN_W, BTN_H, true)) {
-            runCode();
+            run_code();
         }
         tbx += BTN_W + 6;
 
         // Clear button
         if (ui.button('clear', 'Clear', tbx, BTN_PAD, BTN_W, BTN_H)) {
-            outLines = []; outScroll = 0; runStatus = 'idle'; runStatusMsg = 'Ready';
+            out_lines = []; out_scroll = 0; run_status = 'idle'; run_status_msg = 'Ready';
         }
         tbx += BTN_W + 8;
 
@@ -303,67 +303,67 @@ async function main() {
         tbx += 9;
 
         // Example dropdown
-        const exampleW = 16 * atlas.glyphW;
-        const chosen = ui.select('examples', EXAMPLE_LIST, '— Examples —', tbx, BTN_PAD, exampleW, BTN_H);
-        if (chosen) { buf.setText(EXAMPLES[chosen]); blinkT = 0; cursorVisible = true; }
-        tbx += exampleW + 16;
+        const example_w = 16 * atlas.glyph_w;
+        const chosen = ui.select('examples', EXAMPLE_LIST, '— Examples —', tbx, BTN_PAD, example_w, BTN_H);
+        if (chosen) { buf.set_text(EXAMPLES[chosen]); blink_t = 0; cursor_visible = true; }
+        tbx += example_w + 16;
 
         // Hint (right-aligned)
-        const hint = 'Ctrl+Enter to run';
-        const hintX = vpW - hint.length * atlas.glyphW - 12;
-        ui.drawText(hint, hintX, (TOOLBAR_H - atlas.glyphH) / 2, C.TEXT_DIM);
+        const hint  = 'Ctrl+Enter to run';
+        const hint_x = vp_w - hint.length * atlas.glyph_w - 12;
+        ui.draw_text(hint, hint_x, (TOOLBAR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
 
         // ── Editor pane ───────────────────────────────────────────────────────
-        const hit = ui.codeEditor(buf, 0, TOOLBAR_H, editorW, mainH, cursorVisible, atlas);
+        const hit = ui.code_editor(buf, 0, TOOLBAR_H, editor_w, main_h, cursor_visible, atlas);
         if (hit) {
-            buf.moveCursor(hit.line, hit.col, false);
-            blinkT = 0; cursorVisible = true;
+            buf.move_cursor(hit.line, hit.col, false);
+            blink_t = 0; cursor_visible = true;
         }
 
         // ── Divider ───────────────────────────────────────────────────────────
-        const divX = editorW;
-        ui.divider('div', divX, TOOLBAR_H, mainH, divRef);
+        const div_x = editor_w;
+        ui.divider('div', div_x, TOOLBAR_H, main_h, div_ref);
 
         // ── Output header ─────────────────────────────────────────────────────
-        const outX    = divX + DIVIDER_W;
-        const HDR_H   = 34;
-        ui.panel(outX, TOOLBAR_H, outW, HDR_H, C.SURFACE);
-        ui.separator(outX, TOOLBAR_H + HDR_H - 1, outW, C.BORDER);
-        const dotY = TOOLBAR_H + (HDR_H - 8) / 2;
-        ui.statusDot(outX + 10, dotY, 4, runStatus);
-        ui.drawText('Output', outX + 26, TOOLBAR_H + (HDR_H - atlas.glyphH) / 2, C.TEXT);
-        const msgX = outX + 26 + 8 * atlas.glyphW;
-        ui.drawText(runStatusMsg, msgX, TOOLBAR_H + (HDR_H - atlas.glyphH) / 2, C.TEXT_DIM);
+        const out_x    = div_x + DIVIDER_W;
+        const HDR_H    = 34;
+        ui.panel(out_x, TOOLBAR_H, out_w, HDR_H, C.SURFACE);
+        ui.separator(out_x, TOOLBAR_H + HDR_H - 1, out_w, C.BORDER);
+        const dot_y = TOOLBAR_H + (HDR_H - 8) / 2;
+        ui.status_dot(out_x + 10, dot_y, 4, run_status);
+        ui.draw_text('Output', out_x + 26, TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.TEXT);
+        const msg_x = out_x + 26 + 8 * atlas.glyph_w;
+        ui.draw_text(run_status_msg, msg_x, TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
 
         // ── Output body ───────────────────────────────────────────────────────
-        const outBodyY = TOOLBAR_H + HDR_H;
-        const outBodyH = mainH - HDR_H;
-        outScroll = ui.outputPanel(outLines, outX, outBodyY, outW, outBodyH, outScroll);
+        const out_body_y = TOOLBAR_H + HDR_H;
+        const out_body_h = main_h - HDR_H;
+        out_scroll = ui.output_panel(out_lines, out_x, out_body_y, out_w, out_body_h, out_scroll);
 
         // ── Status bar ────────────────────────────────────────────────────────
-        const sbY = vpH - STATUS_H;
-        ui.panel(0, sbY, vpW, STATUS_H, C.SURFACE);
-        ui.separator(0, sbY, vpW, C.BORDER);
+        const sb_y = vp_h - STATUS_H;
+        ui.panel(0, sb_y, vp_w, STATUS_H, C.SURFACE);
+        ui.separator(0, sb_y, vp_w, C.BORDER);
 
         let sbx = 12;
-        ui.drawText('NSCode', sbx, sbY + (STATUS_H - atlas.glyphH) / 2, C.ACCENT);
-        sbx += 8 * atlas.glyphW;
+        ui.draw_text('NSCode', sbx, sb_y + (STATUS_H - atlas.glyph_h) / 2, C.ACCENT);
+        sbx += 8 * atlas.glyph_w;
 
         const { line, col } = buf.cursor;
-        const edStatus = `Ln ${line+1}, Col ${col+1}  \u2022  ${buf.lineCount()} lines`;
-        ui.drawText(edStatus, sbx, sbY + (STATUS_H - atlas.glyphH) / 2, C.TEXT_DIM);
+        const ed_status = `Ln ${line+1}, Col ${col+1}  \u2022  ${buf.line_count()} lines`;
+        ui.draw_text(ed_status, sbx, sb_y + (STATUS_H - atlas.glyph_h) / 2, C.TEXT_DIM);
 
         // WebGPU badge (right side)
-        const badge = 'WebGPU \u2713';
-        const badgeX = vpW - badge.length * atlas.glyphW - 12;
-        ui.drawText(badge, badgeX, sbY + (STATUS_H - atlas.glyphH) / 2, C.GREEN);
+        const badge   = 'WebGPU \u2713';
+        const badge_x = vp_w - badge.length * atlas.glyph_w - 12;
+        ui.draw_text(badge, badge_x, sb_y + (STATUS_H - atlas.glyph_h) / 2, C.GREEN);
 
         // ── Render ────────────────────────────────────────────────────────────
-        gpu.render(ui.endFrame());
+        gpu.render(ui.end_frame());
 
         // Reset per-frame input flags
-        justDown = false;
-        justUp   = false;
+        just_down = false;
+        just_up   = false;
     }
 
     requestAnimationFrame(frame);

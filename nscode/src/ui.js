@@ -1,9 +1,9 @@
 // Immediate-mode UI system (ImGui-style).
 //
 // Each frame:
-//   ui.beginFrame(mouseX, mouseY, mouseDown, vpW, vpH)
+//   ui.begin_frame(mouse_x, mouse_y, mouse_down, vp_w, vp_h)
 //   ... build UI with widget calls ...
-//   ui.endFrame()  → returns DrawList
+//   ui.end_frame()  → returns DrawList
 //
 // Widgets return true when activated (button clicked, etc.)
 //
@@ -35,7 +35,7 @@ export const C = {
 };
 
 import { DrawList } from './draw.js';
-import { tokenizeLine } from './syntax.js';
+import { tokenize_line } from './syntax.js';
 
 // Map token type → color tuple
 const TOK_COLOR = {
@@ -53,34 +53,34 @@ const TOK_COLOR = {
 
 export class UI {
     constructor() {
-        this._dl     = new DrawList();
-        this._font   = null;
-        this._vpW    = 0;
-        this._vpH    = 0;
+        this._dl       = new DrawList();
+        this._font     = null;
+        this._vp_w     = 0;
+        this._vp_h     = 0;
 
         // Mouse state
-        this._mx     = 0;
-        this._my     = 0;
-        this._down   = false;
-        this._justDown  = false;   // pressed this frame
-        this._justUp    = false;   // released this frame
+        this._mx       = 0;
+        this._my       = 0;
+        this._down     = false;
+        this._just_down = false;   // pressed this frame
+        this._just_up   = false;   // released this frame
 
-        // Scroll tracking for the output pane (managed externally via scrollRef)
-        this._hotId  = '';
-        this._activeId = '';
+        // Scroll tracking for the output pane (managed externally via scroll_ref)
+        this._hot_id   = '';
+        this._active_id = '';
     }
 
-    setFont(font) { this._font = font; }
+    set_font(font) { this._font = font; }
 
-    beginFrame(mx, my, down, justDown, justUp, vpW, vpH) {
+    begin_frame(mx, my, down, just_down, just_up, vp_w, vp_h) {
         this._mx = mx; this._my = my;
-        this._down = down; this._justDown = justDown; this._justUp = justUp;
-        this._vpW = vpW; this._vpH = vpH;
+        this._down = down; this._just_down = just_down; this._just_up = just_up;
+        this._vp_w = vp_w; this._vp_h = vp_h;
         this._dl.clear();
-        this._hotId = '';
+        this._hot_id = '';
     }
 
-    endFrame() {
+    end_frame() {
         this._dl.finalize();
         return this._dl;
     }
@@ -89,20 +89,20 @@ export class UI {
     get dl()   { return this._dl; }
 
     // ── Primitives ────────────────────────────────────────────────────────────
-    drawRect(x, y, w, h, c) {
+    draw_rect(x, y, w, h, c) {
         this._dl.rect(x, y, w, h, c[0], c[1], c[2], c[3] ?? 1);
     }
-    drawBorder(x, y, w, h, c, t = 1) {
+    draw_border(x, y, w, h, c, t = 1) {
         this._dl.rect(x,     y,     w, t, c[0], c[1], c[2], c[3] ?? 1);
         this._dl.rect(x,     y+h-t, w, t, c[0], c[1], c[2], c[3] ?? 1);
         this._dl.rect(x,     y,     t, h, c[0], c[1], c[2], c[3] ?? 1);
         this._dl.rect(x+w-t, y,     t, h, c[0], c[1], c[2], c[3] ?? 1);
     }
-    drawText(str, x, y, c) {
+    draw_text(str, x, y, c) {
         this._dl.text(str, x, y, this._font, c[0], c[1], c[2], c[3] ?? 1);
     }
-    drawTextClipped(str, x, y, maxW, c) {
-        this._dl.textClipped(str, x, y, maxW, this._font, c[0], c[1], c[2], c[3] ?? 1);
+    draw_text_clipped(str, x, y, max_w, c) {
+        this._dl.text_clipped(str, x, y, max_w, this._font, c[0], c[1], c[2], c[3] ?? 1);
     }
 
     // ── Hit test ──────────────────────────────────────────────────────────────
@@ -116,7 +116,7 @@ export class UI {
      * Filled panel background.
      */
     panel(x, y, w, h, c = C.SURFACE) {
-        this.drawRect(x, y, w, h, c);
+        this.draw_rect(x, y, w, h, c);
     }
 
     /**
@@ -130,7 +130,7 @@ export class UI {
      * Label (non-interactive text).
      */
     label(text, x, y, c = C.TEXT) {
-        this.drawText(text, x, y, c);
+        this.draw_text(text, x, y, c);
     }
 
     /**
@@ -139,9 +139,9 @@ export class UI {
      */
     button(id, label, x, y, w, h, primary = false) {
         const hot     = this._hit(x, y, w, h);
-        const pressed = this._activeId === id;
-        if (hot) this._hotId = id;
-        if (hot && this._justDown) this._activeId = id;
+        const pressed = this._active_id === id;
+        if (hot) this._hot_id = id;
+        if (hot && this._just_down) this._active_id = id;
 
         let bg, fg;
         if (primary) {
@@ -152,18 +152,18 @@ export class UI {
             fg = hot ? C.ACCENT : C.TEXT;
         }
 
-        this.drawRect(x, y, w, h, bg);
-        this.drawBorder(x, y, w, h, C.BORDER);
+        this.draw_rect(x, y, w, h, bg);
+        this.draw_border(x, y, w, h, C.BORDER);
 
         // Center label
         const f    = this._font;
-        const tw   = label.length * f.glyphW;
+        const tw   = label.length * f.glyph_w;
         const tx   = x + (w - tw) / 2;
-        const ty   = y + (h - f.glyphH) / 2;
-        this.drawText(label, tx, ty, fg);
+        const ty   = y + (h - f.glyph_h) / 2;
+        this.draw_text(label, tx, ty, fg);
 
-        const clicked = hot && this._justUp && this._activeId === id;
-        if (this._justUp && this._activeId === id) this._activeId = '';
+        const clicked = hot && this._just_up && this._active_id === id;
+        if (this._just_up && this._active_id === id) this._active_id = '';
         return clicked;
     }
 
@@ -174,22 +174,22 @@ export class UI {
      * @param {number} y, h  extents
      * @returns {number}  new x position (caller must clamp + store)
      */
-    divider(id, x, y, h, dragRef) {
+    divider(id, x, y, h, drag_ref) {
         const hw  = 4;
         const hot = this._hit(x - hw, y, hw * 2, h);
 
-        if (hot) this._hotId = id;
-        if (hot && this._justDown) {
-            this._activeId  = id;
-            dragRef.startX  = this._mx;
-            dragRef.startVal = dragRef.value;
+        if (hot) this._hot_id = id;
+        if (hot && this._just_down) {
+            this._active_id      = id;
+            drag_ref.start_x     = this._mx;
+            drag_ref.start_val   = drag_ref.value;
         }
-        if (this._activeId === id) {
-            dragRef.value = dragRef.startVal + (dragRef.startX - this._mx);
-            if (this._justUp) this._activeId = '';
+        if (this._active_id === id) {
+            drag_ref.value = drag_ref.start_val + (drag_ref.start_x - this._mx);
+            if (this._just_up) this._active_id = '';
         }
 
-        const c = (this._activeId === id || hot) ? C.ACCENT : C.BORDER;
+        const c = (this._active_id === id || hot) ? C.ACCENT : C.BORDER;
         this._dl.rect(x - 2, y, 4, h, c[0], c[1], c[2], 1);
     }
 
@@ -198,39 +198,39 @@ export class UI {
      * options: [{label, value}]
      * Returns the selected value, or null if unchanged.
      */
-    select(id, options, selectedLabel, x, y, w, h) {
+    select(id, options, selected_label, x, y, w, h) {
         const hot = this._hit(x, y, w, h);
-        if (hot) this._hotId = id;
+        if (hot) this._hot_id = id;
 
-        const active = this._activeId === id;
+        const active = this._active_id === id;
         const bg  = hot ? C.SURFACE2 : C.SURFACE;
-        this.drawRect(x, y, w, h, bg);
-        this.drawBorder(x, y, w, h, C.BORDER);
+        this.draw_rect(x, y, w, h, bg);
+        this.draw_border(x, y, w, h, C.BORDER);
         const f   = this._font;
-        const ty  = y + (h - f.glyphH) / 2;
-        this.drawTextClipped(selectedLabel, x + 6, ty, w - 12, C.TEXT_DIM);
+        const ty  = y + (h - f.glyph_h) / 2;
+        this.draw_text_clipped(selected_label, x + 6, ty, w - 12, C.TEXT_DIM);
         // Chevron ▾
-        this.drawText('v', x + w - f.glyphW - 4, ty, C.TEXT_DIM);
+        this.draw_text('v', x + w - f.glyph_w - 4, ty, C.TEXT_DIM);
 
-        if (hot && this._justDown) {
-            this._activeId = active ? '' : id;
+        if (hot && this._just_down) {
+            this._active_id = active ? '' : id;
         }
 
         let chosen = null;
-        if (this._activeId === id) {
+        if (this._active_id === id) {
             // Popup
-            const popH  = options.length * h;
-            const popY  = y + h;
-            this.drawRect(x, popY, w, popH, C.SURFACE2);
-            this.drawBorder(x, popY, w, popH, C.BORDER);
+            const pop_h  = options.length * h;
+            const pop_y  = y + h;
+            this.draw_rect(x, pop_y, w, pop_h, C.SURFACE2);
+            this.draw_border(x, pop_y, w, pop_h, C.BORDER);
             for (let i = 0; i < options.length; i++) {
-                const iy  = popY + i * h;
-                const iHot = this._hit(x, iy, w, h);
-                if (iHot) this.drawRect(x, iy, w, h, C.ACCENT_DIM);
-                this.drawTextClipped(options[i].label, x + 6, iy + (h - f.glyphH) / 2, w - 12, iHot ? C.TEXT : C.TEXT_DIM);
-                if (iHot && this._justDown) {
+                const iy   = pop_y + i * h;
+                const i_hot = this._hit(x, iy, w, h);
+                if (i_hot) this.draw_rect(x, iy, w, h, C.ACCENT_DIM);
+                this.draw_text_clipped(options[i].label, x + 6, iy + (h - f.glyph_h) / 2, w - 12, i_hot ? C.TEXT : C.TEXT_DIM);
+                if (i_hot && this._just_down) {
                     chosen = options[i].value;
-                    this._activeId = '';
+                    this._active_id = '';
                 }
             }
         }
@@ -238,41 +238,41 @@ export class UI {
     }
 
     /**
-     * Scrollbar. Returns delta scrollTop if dragged.
-     * @param {number} scrollTop    current scroll offset in items
-     * @param {number} totalItems
-     * @param {number} visibleItems
+     * Scrollbar. Returns updated scroll_top if dragged.
+     * @param {number} scroll_top    current scroll offset in items
+     * @param {number} total_items
+     * @param {number} visible_items
      */
-    vScrollbar(id, x, y, w, h, scrollTop, totalItems, visibleItems) {
-        if (totalItems <= visibleItems) return scrollTop;
-        this.drawRect(x, y, w, h, C.SURFACE);
+    v_scrollbar(id, x, y, w, h, scroll_top, total_items, visible_items) {
+        if (total_items <= visible_items) return scroll_top;
+        this.draw_rect(x, y, w, h, C.SURFACE);
 
-        const thumbRatio = Math.min(1, visibleItems / totalItems);
-        const thumbH     = Math.max(20, h * thumbRatio);
-        const trackH     = h - thumbH;
-        const thumbY     = y + trackH * (scrollTop / (totalItems - visibleItems));
+        const thumb_ratio = Math.min(1, visible_items / total_items);
+        const thumb_h     = Math.max(20, h * thumb_ratio);
+        const track_h     = h - thumb_h;
+        const thumb_y     = y + track_h * (scroll_top / (total_items - visible_items));
 
-        const hot = this._hit(x, thumbY, w, thumbH);
-        if (hot) this._hotId = id;
+        const hot = this._hit(x, thumb_y, w, thumb_h);
+        if (hot) this._hot_id = id;
 
-        const dragging = this._activeId === id;
-        if (hot && this._justDown) {
-            this._activeId     = id;
-            this._scrollDragY  = this._my - thumbY;
-            this._scrollOrig   = scrollTop;
+        const dragging = this._active_id === id;
+        if (hot && this._just_down) {
+            this._active_id      = id;
+            this._scroll_drag_y  = this._my - thumb_y;
+            this._scroll_orig    = scroll_top;
         }
 
-        let newScroll = scrollTop;
+        let new_scroll = scroll_top;
         if (dragging) {
-            const newThumbY = this._my - this._scrollDragY;
-            const t = Math.max(0, Math.min(1, (newThumbY - y) / trackH));
-            newScroll = t * (totalItems - visibleItems);
-            if (this._justUp) this._activeId = '';
+            const new_thumb_y = this._my - this._scroll_drag_y;
+            const t = Math.max(0, Math.min(1, (new_thumb_y - y) / track_h));
+            new_scroll = t * (total_items - visible_items);
+            if (this._just_up) this._active_id = '';
         }
 
-        const thumbC = (dragging || hot) ? C.ACCENT : C.BORDER;
-        this.drawRect(x + 1, thumbY, w - 2, thumbH, thumbC);
-        return newScroll;
+        const thumb_c = (dragging || hot) ? C.ACCENT : C.BORDER;
+        this.draw_rect(x + 1, thumb_y, w - 2, thumb_h, thumb_c);
+        return new_scroll;
     }
 
     /**
@@ -281,137 +281,137 @@ export class UI {
      *  - background, line number gutter
      *  - selection highlight
      *  - syntax-highlighted text lines
-     *  - cursor (blink controlled by caller via cursorVisible)
+     *  - cursor (blink controlled by caller via cursor_visible)
      *  - mouse click → cursor position
      *  - does NOT handle keyboard; caller does that via TextBuffer directly
      *
-     * Returns { clickedLine, clickedCol } if user clicked (or null).
+     * Returns { line, col } if user clicked (or null).
      */
-    codeEditor(buf, x, y, w, h, cursorVisible, font) {
+    code_editor(buf, x, y, w, h, cursor_visible, font) {
         const f    = font ?? this._font;
-        const gW   = f.glyphW;
-        const gH   = f.glyphH;
+        const g_w  = f.glyph_w;
+        const g_h  = f.glyph_h;
 
         const GUTTER_PAD  = 6;
-        const lineCount   = buf.lineCount();
-        const gutterCols  = String(lineCount).length;
-        const gutterW     = gutterCols * gW + GUTTER_PAD * 2;
+        const line_count  = buf.line_count();
+        const gutter_cols = String(line_count).length;
+        const gutter_w    = gutter_cols * g_w + GUTTER_PAD * 2;
 
         // Background
-        this.drawRect(x, y, w, h, C.BG);
-        this.drawRect(x, y, gutterW, h, C.SURFACE);
+        this.draw_rect(x, y, w, h, C.BG);
+        this.draw_rect(x, y, gutter_w, h, C.SURFACE);
 
-        const visLines = Math.floor(h / gH);
-        const scrollT  = Math.floor(buf.scrollTop ?? 0);
-        const scrollL  = buf.scrollLeft ?? 0;
-        const codeX    = x + gutterW;
-        const codeW    = w - gutterW;
+        const vis_lines = Math.floor(h / g_h);
+        const scroll_t  = Math.floor(buf.scroll_top ?? 0);
+        const scroll_l  = buf.scroll_left ?? 0;
+        const code_x    = x + gutter_w;
+        const code_w    = w - gutter_w;
 
         // ── Scissor the code area ─────────────────────────────────────────────
         this._dl.scissor(x, y, w, h);
 
         // ── Selection ─────────────────────────────────────────────────────────
-        const sel = buf.getSelectionRange?.();
+        const sel = buf.get_selection_range?.();
         if (sel) {
             for (let l = sel.start.line; l <= sel.end.line; l++) {
-                const vy = l - scrollT;
-                if (vy < 0 || vy >= visLines) continue;
-                const lineLen = buf.lineAt(l).length;
+                const vy = l - scroll_t;
+                if (vy < 0 || vy >= vis_lines) continue;
+                const line_len = buf.line_at(l).length;
                 const sc = l === sel.start.line ? sel.start.col : 0;
-                const ec = l === sel.end.line   ? sel.end.col   : lineLen;
-                const sx = codeX + sc * gW - scrollL;
-                const sw = (ec - sc) * gW;
+                const ec = l === sel.end.line   ? sel.end.col   : line_len;
+                const sx = code_x + sc * g_w - scroll_l;
+                const sw = (ec - sc) * g_w;
                 if (sw > 0) {
-                    this._dl.rect(sx, y + vy * gH, sw, gH, C.SEL[0], C.SEL[1], C.SEL[2], C.SEL[3]);
+                    this._dl.rect(sx, y + vy * g_h, sw, g_h, C.SEL[0], C.SEL[1], C.SEL[2], C.SEL[3]);
                 }
             }
         }
 
         // ── Text lines ────────────────────────────────────────────────────────
-        for (let vi = 0; vi < visLines + 1; vi++) {
-            const li = scrollT + vi;
-            if (li >= lineCount) break;
-            const ty2 = y + vi * gH;
-            const lineStr = buf.lineAt(li);
+        for (let vi = 0; vi < vis_lines + 1; vi++) {
+            const li = scroll_t + vi;
+            if (li >= line_count) break;
+            const ty2     = y + vi * g_h;
+            const line_str = buf.line_at(li);
 
             // Line number
-            const numStr = String(li + 1).padStart(gutterCols, ' ');
-            this._dl.text(numStr, x + GUTTER_PAD, ty2, f, C.LINE_NUM[0], C.LINE_NUM[1], C.LINE_NUM[2], 1);
+            const num_str = String(li + 1).padStart(gutter_cols, ' ');
+            this._dl.text(num_str, x + GUTTER_PAD, ty2, f, C.LINE_NUM[0], C.LINE_NUM[1], C.LINE_NUM[2], 1);
 
             // Syntax-highlighted code
-            let cx = codeX - scrollL;
-            const tokens = tokenizeLine(lineStr);
+            let cx = code_x - scroll_l;
+            const tokens = tokenize_line(line_str);
             for (const tok of tokens) {
                 const c = TOK_COLOR[tok.type] ?? C.TEXT;
                 for (let ci = 0; ci < tok.text.length; ci++) {
-                    const gcx = cx + ci * gW;
-                    if (gcx + gW < codeX || gcx > codeX + codeW) continue; // horizontal clip
-                    const gi = f.getGlyph(tok.text[ci]);
+                    const gcx = cx + ci * g_w;
+                    if (gcx + g_w < code_x || gcx > code_x + code_w) continue; // horizontal clip
+                    const gi = f.get_glyph(tok.text[ci]);
                     if (gi && gi.w > 0 && gi.h > 0) {
                         this._dl.glyph(gcx + gi.xoff, ty2 + gi.yoff, gi.w, gi.h,
                             [gi.u0, gi.v0, gi.u1, gi.v1], c[0], c[1], c[2], 1);
                     }
                 }
-                cx += tok.text.length * gW;
+                cx += tok.text.length * g_w;
             }
         }
 
         // ── Cursor ────────────────────────────────────────────────────────────
-        if (cursorVisible) {
+        if (cursor_visible) {
             const { line, col } = buf.cursor;
-            const vy = line - scrollT;
-            if (vy >= 0 && vy < visLines) {
-                const cx2 = codeX + col * gW - scrollL;
-                this._dl.rect(cx2, y + vy * gH, 2, gH, C.TEXT[0], C.TEXT[1], C.TEXT[2], 0.9);
+            const vy = line - scroll_t;
+            if (vy >= 0 && vy < vis_lines) {
+                const cx2 = code_x + col * g_w - scroll_l;
+                this._dl.rect(cx2, y + vy * g_h, 2, g_h, C.TEXT[0], C.TEXT[1], C.TEXT[2], 0.9);
             }
         }
 
         // ── Reset scissor ────────────────────────────────────────────────────
-        this._dl.scissor(0, 0, this._vpW, this._vpH);
+        this._dl.scissor(0, 0, this._vp_w, this._vp_h);
 
         // ── Scrollbar ────────────────────────────────────────────────────────
         const SBW = 8;
-        const newScroll = this.vScrollbar(
+        const new_scroll = this.v_scrollbar(
             'editor-sb', x + w - SBW, y, SBW, h,
-            scrollT, lineCount, visLines
+            scroll_t, line_count, vis_lines
         );
-        buf.scrollTop = newScroll;
+        buf.scroll_top = new_scroll;
 
         // ── Hit test → cursor placement ───────────────────────────────────────
-        let clickResult = null;
-        if (this._justDown && this._hit(codeX, y, codeW, h)) {
-            const clickedLine = Math.min(lineCount - 1,
-                Math.max(0, Math.floor((this._my - y) / gH) + scrollT));
-            const clickedCol  = Math.min(buf.lineAt(clickedLine).length,
-                Math.max(0, Math.round((this._mx - codeX + scrollL) / gW)));
-            clickResult = { line: clickedLine, col: clickedCol };
+        let click_result = null;
+        if (this._just_down && this._hit(code_x, y, code_w, h)) {
+            const clicked_line = Math.min(line_count - 1,
+                Math.max(0, Math.floor((this._my - y) / g_h) + scroll_t));
+            const clicked_col  = Math.min(buf.line_at(clicked_line).length,
+                Math.max(0, Math.round((this._mx - code_x + scroll_l) / g_w)));
+            click_result = { line: clicked_line, col: clicked_col };
         }
         // Also handle click-drag selection (update focus on mouse move while down)
-        if (this._down && !this._justDown && this._hit(codeX, y, codeW, h)) {
-            const dragLine = Math.min(lineCount - 1,
-                Math.max(0, Math.floor((this._my - y) / gH) + scrollT));
-            const dragCol  = Math.min(buf.lineAt(dragLine).length,
-                Math.max(0, Math.round((this._mx - codeX + scrollL) / gW)));
-            buf.moveCursor(dragLine, dragCol, true);
+        if (this._down && !this._just_down && this._hit(code_x, y, code_w, h)) {
+            const drag_line = Math.min(line_count - 1,
+                Math.max(0, Math.floor((this._my - y) / g_h) + scroll_t));
+            const drag_col  = Math.min(buf.line_at(drag_line).length,
+                Math.max(0, Math.round((this._mx - code_x + scroll_l) / g_w)));
+            buf.move_cursor(drag_line, drag_col, true);
         }
 
-        return clickResult;
+        return click_result;
     }
 
     /**
      * Output text panel. Renders an array of {text, cls} lines.
-     * Returns updated scrollTop.
+     * Returns updated scroll_top.
      */
-    outputPanel(lines, x, y, w, h, scrollTop) {
+    output_panel(lines, x, y, w, h, scroll_top) {
         const f    = this._font;
-        const gH   = f.glyphH;
-        const vis  = Math.floor(h / gH);
+        const g_h  = f.glyph_h;
+        const vis  = Math.floor(h / g_h);
         const total = lines.length;
 
-        this.drawRect(x, y, w, h, C.BG);
+        this.draw_rect(x, y, w, h, C.BG);
         this._dl.scissor(x, y, w, h);
 
-        const clsColor = {
+        const cls_color = {
             print: C.TEXT,
             error: C.RED,
             info:  C.TEXT_DIM,
@@ -419,25 +419,25 @@ export class UI {
             time:  C.YELLOW,
         };
 
-        const st = Math.floor(scrollTop);
+        const st = Math.floor(scroll_top);
         for (let vi = 0; vi < vis + 1; vi++) {
             const li = st + vi;
             if (li >= total) break;
-            const c = clsColor[lines[li].cls] ?? C.TEXT;
-            const ty = y + vi * gH;
-            this._dl.textClipped(lines[li].text, x + 8, ty, w - 16, f, c[0], c[1], c[2], 1);
+            const c = cls_color[lines[li].cls] ?? C.TEXT;
+            const ty = y + vi * g_h;
+            this._dl.text_clipped(lines[li].text, x + 8, ty, w - 16, f, c[0], c[1], c[2], 1);
         }
 
-        this._dl.scissor(0, 0, this._vpW, this._vpH);
+        this._dl.scissor(0, 0, this._vp_w, this._vp_h);
 
         const SBW = 8;
-        return this.vScrollbar('out-sb', x + w - SBW, y, SBW, h, st, total, vis);
+        return this.v_scrollbar('out-sb', x + w - SBW, y, SBW, h, st, total, vis);
     }
 
     /**
      * Status dot indicator. cls: 'idle'|'run'|'ok'|'err'
      */
-    statusDot(x, y, r, cls) {
+    status_dot(x, y, r, cls) {
         const c = cls === 'ok'  ? C.GREEN
                 : cls === 'err' ? C.RED
                 : cls === 'run' ? C.YELLOW
