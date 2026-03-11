@@ -15,3 +15,6 @@ bin
 # cmake
 build
 .build
+
+# Claude Code session data
+.claude/
