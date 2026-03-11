@@ -1,4 +1,4 @@
-// WebGPU backend: two pipelines (rect + SDF text), uploads draw list each frame.
+// WebGPU backend: two pipelines (rect + MSDF text), uploads draw list each frame.
 
 const RECT_SHADER = /* wgsl */`
 struct Uni { viewport: vec2f }
@@ -22,9 +22,9 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) col: vec4f }
 
 const TEXT_SHADER = /* wgsl */`
 struct Uni { viewport: vec2f }
-@group(0) @binding(0) var<uniform> uni        : Uni;
-@group(0) @binding(1) var          sdf_tex    : texture_2d<f32>;
-@group(0) @binding(2) var          sdf_smp    : sampler;
+@group(0) @binding(0) var<uniform> uni      : Uni;
+@group(0) @binding(1) var          msdf_tex : texture_2d<f32>;
+@group(0) @binding(2) var          msdf_smp : sampler;
 
 struct VIn  { @location(0) pos: vec2f, @location(1) uv: vec2f, @location(2) col: vec4f }
 struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1) col: vec4f }
@@ -37,10 +37,17 @@ struct VOut { @builtin(position) pos: vec4f, @location(0) uv: vec2f, @location(1
     return VOut(vec4f(ndc, 0.0, 1.0), v.uv, v.col);
 }
 
+// MSDF: take median of R,G,B channels, then anti-alias via screen-space derivatives.
+fn median(r: f32, g: f32, b: f32) -> f32 {
+    return max(min(r, g), min(max(r, g), b));
+}
+
 @fragment fn fs(v: VOut) -> @location(0) vec4f {
-    let d     = textureSample(sdf_tex, sdf_smp, v.uv).r;
-    // width controls AA sharpness — thinner at 0.5±0.04 = very crisp
-    let alpha = smoothstep(0.46, 0.54, d);
+    let s   = textureSample(msdf_tex, msdf_smp, v.uv);
+    let sd  = median(s.r, s.g, s.b);
+    // Use screen-space derivative for pixel-perfect AA at any scale
+    let w   = fwidth(sd);
+    let alpha = clamp((sd - 0.5) / max(w, 0.0001) + 0.5, 0.0, 1.0);
     return vec4f(v.col.rgb, v.col.a * alpha);
 }
 `;

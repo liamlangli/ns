@@ -66,26 +66,33 @@ export class DrawList {
         this._tcnt += 6;
     }
 
-    // Draw a string at pixel (x, y) — top-left of cell.
+    // Draw a string at pixel (x, y) — top-left of glyph cell.
+    // Font must expose getGlyph(ch) → {u0,v0,u1,v1,xoff,yoff,w,h} and glyphW.
     // Returns x position after the last glyph.
     text(str, x, y, font, r, g, b, a = 1) {
         let cx = x;
         for (let i = 0; i < str.length; i++) {
-            const uv = font.getUV(str[i]);
-            this.glyph(cx, y, font.glyphW, font.glyphH, uv, r, g, b, a);
+            const gi = font.getGlyph(str[i]);
+            if (gi && gi.w > 0 && gi.h > 0) {
+                this.glyph(cx + gi.xoff, y + gi.yoff, gi.w, gi.h,
+                    [gi.u0, gi.v0, gi.u1, gi.v1], r, g, b, a);
+            }
             cx += font.glyphW;
         }
         return cx;
     }
 
-    // Draw string clipped to maxW pixels. Returns end x.
+    // Draw string clipped to maxW pixels (measured in glyphW cells). Returns end x.
     textClipped(str, x, y, maxW, font, r, g, b, a = 1) {
         let cx = x;
         const xmax = x + maxW;
         for (let i = 0; i < str.length; i++) {
             if (cx + font.glyphW > xmax) break;
-            const uv = font.getUV(str[i]);
-            this.glyph(cx, y, font.glyphW, font.glyphH, uv, r, g, b, a);
+            const gi = font.getGlyph(str[i]);
+            if (gi && gi.w > 0 && gi.h > 0) {
+                this.glyph(cx + gi.xoff, y + gi.yoff, gi.w, gi.h,
+                    [gi.u0, gi.v0, gi.u1, gi.v1], r, g, b, a);
+            }
             cx += font.glyphW;
         }
         return cx;

@@ -346,8 +346,11 @@ export class UI {
                 for (let ci = 0; ci < tok.text.length; ci++) {
                     const gcx = cx + ci * gW;
                     if (gcx + gW < codeX || gcx > codeX + codeW) continue; // horizontal clip
-                    const uv = f.getUV(tok.text[ci]);
-                    this._dl.glyph(gcx, ty2, gW, gH, uv, c[0], c[1], c[2], 1);
+                    const gi = f.getGlyph(tok.text[ci]);
+                    if (gi && gi.w > 0 && gi.h > 0) {
+                        this._dl.glyph(gcx + gi.xoff, ty2 + gi.yoff, gi.w, gi.h,
+                            [gi.u0, gi.v0, gi.u1, gi.v1], c[0], c[1], c[2], 1);
+                    }
                 }
                 cx += tok.text.length * gW;
             }

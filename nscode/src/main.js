@@ -1,11 +1,11 @@
 // NSCode — GPU-rendered code playground (no HTML/CSS UI elements)
-// All UI rendered via SDF text + rect pipelines on a single WebGPU canvas.
+// All UI rendered via MSDF text + rect pipelines on a single WebGPU canvas.
 
 import { TextBuffer }    from './editor.js';
 import { NSInterpreter } from './interpreter.js';
-import { buildFontAtlas } from './font.js';
-import { GPU }            from './gpu.js';
-import { UI, C }          from './ui.js';
+import { loadMsdfFont }  from './font.js';
+import { GPU }           from './gpu.js';
+import { UI, C }         from './ui.js';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const TOOLBAR_H = 44;
@@ -111,7 +111,11 @@ async function main() {
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('No WebGPU adapter');
     const device  = await adapter.requestDevice();
-    const atlas   = await buildFontAtlas(device, { renderSize: 16, sdfSpread: 6 });
+    const atlas   = await loadMsdfFont(device, {
+        jsonUrl:     './public/fonts/jetbrains-mono-latin-400-normal.json',
+        pngUrl:      './public/fonts/jetbrains-mono.png',
+        displaySize: 20,   // scale the 48px atlas to ~20px cap-height
+    });
 
     const gpu = new GPU(canvas);
     await gpu.init(device, atlas);
