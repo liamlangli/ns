@@ -8,12 +8,12 @@ import { GPU }           from './gpu.js';
 import { UI, C }         from './ui.js';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-const TOOLBAR_H = 44;
-const STATUS_H  = 26;
+const TOOLBAR_H = 32;
+const STATUS_H  = 20;
 const DIVIDER_W = 4;
-const BTN_W     = 80;
-const BTN_H     = 30;
-const BTN_PAD   = 7;   // top padding inside toolbar
+const BTN_W     = 72;
+const BTN_H     = 22;
+const BTN_PAD   = 5;   // top padding inside toolbar
 
 // ── Example programs ──────────────────────────────────────────────────────────
 const EXAMPLES = {
@@ -114,7 +114,7 @@ async function main() {
     const atlas   = await load_msdf_font(device, {
         json_url:     './public/fonts/jetbrains-mono-latin-400-normal.json',
         png_url:      './public/fonts/jetbrains-mono.png',
-        display_size: 20,   // scale the 48px atlas to ~20px cap-height
+        display_size: 14,   // scale the 48px atlas to ~14px cap-height
     });
 
     const gpu = new GPU(canvas);
