@@ -4,43 +4,65 @@
 const RECT_FLOATS = 6;   // x,y, r,g,b,a  per vertex × 6 verts/rect
 const TEXT_FLOATS = 8;   // x,y, u,v, r,g,b,a  per vertex × 6 verts/glyph
 
+export type Rgba = readonly [number, number, number, number];
+export type Point2 = readonly [number, number];
+
+export interface GlyphInfo {
+    u0: number; v0: number; u1: number; v1: number;
+    xoff: number; yoff: number;
+    w: number; h: number;
+}
+
+export interface FontAtlas {
+    glyph_w:  number;
+    glyph_h:  number;
+    atlasW:   number;
+    atlasH:   number;
+    texture:  GPUTexture;
+    sampler:  GPUSampler;
+    get_glyph(ch: string): GlyphInfo | undefined;
+}
+
+export type DrawCmd =
+    | { type: 'scissor'; x: number; y: number; w: number; h: number }
+    | { type: 'draw';    rbase: number; rcnt: number; tbase: number; tcnt: number };
+
 export class DrawList {
+    private _rects: Float32Array;
+    private _texts: Float32Array;
+    private _rcnt  = 0;
+    private _tcnt  = 0;
+    private _cmds:  DrawCmd[] = [];
+    private _rbase = 0;
+    private _tbase = 0;
+
     constructor() {
         this._rects = new Float32Array(1024 * RECT_FLOATS * 6);
         this._texts = new Float32Array(1024 * TEXT_FLOATS * 6);
-        this._rcnt  = 0;  // rect vertex count
-        this._tcnt  = 0;  // text vertex count
-        this._cmds  = []; // [{type:'scissor',x,y,w,h}|{type:'flush',rcnt,tcnt}]
-        this._rbase = 0;
-        this._tbase = 0;
     }
 
-    clear() {
+    clear(): void {
         this._rcnt = 0; this._tcnt = 0;
         this._cmds.length = 0;
         this._rbase = 0; this._tbase = 0;
     }
 
-    // Set GPU scissor rect (pixels, top-left origin).
-    // Call before drawing clipped content; pass null to reset.
-    scissor(x, y, w, h) {
+    scissor(x: number, y: number, w: number, h: number): void {
         this._flush_cmd();
-        this._cmds.push({ type: 'scissor', x: x|0, y: y|0, w: Math.max(1, w|0), h: Math.max(1, h|0) });
+        this._cmds.push({ type: 'scissor', x: x | 0, y: y | 0, w: Math.max(1, w | 0), h: Math.max(1, h | 0) });
         this._rbase = this._rcnt;
         this._tbase = this._tcnt;
     }
 
-    reset_scissor(vp_w, vp_h) {
+    reset_scissor(vp_w: number, vp_h: number): void {
         this.scissor(0, 0, vp_w, vp_h);
     }
 
-    // Filled axis-aligned rect. Color components 0..1.
-    rect(x, y, w, h, r, g, b, a = 1) {
+    rect(x: number, y: number, w: number, h: number, r: number, g: number, b: number, a = 1): void {
         this._grow_rects(6);
         const x1 = x + w, y1 = y + h;
         const base = this._rcnt * RECT_FLOATS;
         const d = this._rects;
-        // 2 triangles, CCW
         d[base +  0]=x;  d[base +  1]=y;  d[base +  2]=r; d[base +  3]=g; d[base +  4]=b; d[base +  5]=a;
         d[base +  6]=x1; d[base +  7]=y;  d[base +  8]=r; d[base +  9]=g; d[base + 10]=b; d[base + 11]=a;
         d[base + 12]=x;  d[base + 13]=y1; d[base + 14]=r; d[base + 15]=g; d[base + 16]=b; d[base + 17]=a;
@@ -50,11 +72,11 @@ export class DrawList {
         this._rcnt += 6;
     }
 
-    // Draw a single glyph quad. uv = [u0,v0,u1,v1]
-    glyph(x, y, w, h, uv, r, g, b, a = 1) {
+    glyph(x: number, y: number, w: number, h: number, uv: readonly [number,number,number,number],
+          r: number, g: number, b: number, a = 1): void {
         this._grow_texts(6);
         const x1 = x + w, y1 = y + h;
-        const u0 = uv[0], v0 = uv[1], u1 = uv[2], v1 = uv[3];
+        const [u0, v0, u1, v1] = uv;
         const base = this._tcnt * TEXT_FLOATS;
         const d = this._texts;
         d[base +  0]=x;  d[base +  1]=y;  d[base +  2]=u0; d[base +  3]=v0; d[base +  4]=r; d[base +  5]=g; d[base +  6]=b; d[base +  7]=a;
@@ -66,13 +88,10 @@ export class DrawList {
         this._tcnt += 6;
     }
 
-    // Draw a string at pixel (x, y) — top-left of glyph cell.
-    // Font must expose get_glyph(ch) → {u0,v0,u1,v1,xoff,yoff,w,h} and glyph_w.
-    // Returns x position after the last glyph.
-    text(str, x, y, font, r, g, b, a = 1) {
+    text(str: string, x: number, y: number, font: FontAtlas, r: number, g: number, b: number, a = 1): number {
         let cx = x;
         for (let i = 0; i < str.length; i++) {
-            const gi = font.get_glyph(str[i]);
+            const gi = font.get_glyph(str[i]!);
             if (gi && gi.w > 0 && gi.h > 0) {
                 this.glyph(cx + gi.xoff, y + gi.yoff, gi.w, gi.h,
                     [gi.u0, gi.v0, gi.u1, gi.v1], r, g, b, a);
@@ -82,13 +101,13 @@ export class DrawList {
         return cx;
     }
 
-    // Draw string clipped to max_w pixels (measured in glyph_w cells). Returns end x.
-    text_clipped(str, x, y, max_w, font, r, g, b, a = 1) {
+    text_clipped(str: string, x: number, y: number, max_w: number, font: FontAtlas,
+                 r: number, g: number, b: number, a = 1): number {
         let cx = x;
         const xmax = x + max_w;
         for (let i = 0; i < str.length; i++) {
             if (cx + font.glyph_w > xmax) break;
-            const gi = font.get_glyph(str[i]);
+            const gi = font.get_glyph(str[i]!);
             if (gi && gi.w > 0 && gi.h > 0) {
                 this.glyph(cx + gi.xoff, y + gi.yoff, gi.w, gi.h,
                     [gi.u0, gi.v0, gi.u1, gi.v1], r, g, b, a);
@@ -98,18 +117,17 @@ export class DrawList {
         return cx;
     }
 
-    // Draw a filled convex polygon. pts = [[x,y], ...]  (≥ 3 points).
-    // Fan-triangulated from pts[0]. Uses the rect (colored-vertex) pipeline.
-    fill_convex_poly(pts, r, g, b, a = 1) {
+    /** Fill a convex polygon. pts = [[x,y], …] (≥ 3 points). Fan-triangulated from pts[0]. */
+    fill_convex_poly(pts: readonly Point2[], r: number, g: number, b: number, a = 1): void {
         const n = pts.length;
         if (n < 3) return;
         const tris = n - 2;
         this._grow_rects(tris * 3);
         const d  = this._rects;
-        const x0 = pts[0][0], y0 = pts[0][1];
+        const [x0, y0] = pts[0]!;
         for (let i = 0; i < tris; i++) {
-            const x1 = pts[i + 1][0], y1 = pts[i + 1][1];
-            const x2 = pts[i + 2][0], y2 = pts[i + 2][1];
+            const [x1, y1] = pts[i + 1]!;
+            const [x2, y2] = pts[i + 2]!;
             const base = this._rcnt * RECT_FLOATS;
             d[base+ 0]=x0; d[base+ 1]=y0; d[base+ 2]=r; d[base+ 3]=g; d[base+ 4]=b; d[base+ 5]=a;
             d[base+ 6]=x1; d[base+ 7]=y1; d[base+ 8]=r; d[base+ 9]=g; d[base+10]=b; d[base+11]=a;
@@ -118,8 +136,8 @@ export class DrawList {
         }
     }
 
-    // ── Internal ──────────────────────────────────────────────────────────────
-    _flush_cmd() {
+    // ── Internal ────────────────────────────────────────────────────────────────
+    private _flush_cmd(): void {
         const r_delta = this._rcnt - this._rbase;
         const t_delta = this._tcnt - this._tbase;
         if (r_delta > 0 || t_delta > 0) {
@@ -127,11 +145,9 @@ export class DrawList {
         }
     }
 
-    finalize() {
-        this._flush_cmd();
-    }
+    finalize(): void { this._flush_cmd(); }
 
-    _grow_rects(need) {
+    private _grow_rects(need: number): void {
         while ((this._rcnt + need) * RECT_FLOATS > this._rects.length) {
             const n = new Float32Array(this._rects.length * 2);
             n.set(this._rects);
@@ -139,7 +155,7 @@ export class DrawList {
         }
     }
 
-    _grow_texts(need) {
+    private _grow_texts(need: number): void {
         while ((this._tcnt + need) * TEXT_FLOATS > this._texts.length) {
             const n = new Float32Array(this._texts.length * 2);
             n.set(this._texts);
@@ -147,7 +163,7 @@ export class DrawList {
         }
     }
 
-    get rect_data() { return this._rects.subarray(0, this._rcnt * RECT_FLOATS); }
-    get text_data() { return this._texts.subarray(0, this._tcnt * TEXT_FLOATS); }
-    get commands() { return this._cmds; }
+    get rect_data(): Float32Array { return this._rects.subarray(0, this._rcnt * RECT_FLOATS); }
+    get text_data(): Float32Array { return this._texts.subarray(0, this._tcnt * TEXT_FLOATS); }
+    get commands(): readonly DrawCmd[] { return this._cmds; }
 }
