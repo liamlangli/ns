@@ -92,6 +92,22 @@ export class UI {
     draw_rect(x, y, w, h, c) {
         this._dl.rect(x, y, w, h, c[0], c[1], c[2], c[3] ?? 1);
     }
+
+    /**
+     * Filled triangle. dir: 'right' (▶) or 'down' (▾).
+     * cx/cy = centre, size = half-extent in pixels.
+     */
+    draw_triangle(cx, cy, size, dir, c) {
+        const [r, g, b, a] = [c[0], c[1], c[2], c[3] ?? 1];
+        const pts = dir === 'down'
+            ? [ [cx - size, cy - size * 0.55],
+                [cx + size, cy - size * 0.55],
+                [cx,        cy + size * 0.55] ]
+            : [ [cx - size * 0.55, cy - size],
+                [cx + size * 0.55, cy        ],
+                [cx - size * 0.55, cy + size ] ];
+        this._dl.fill_convex_poly(pts, r, g, b, a);
+    }
     draw_border(x, y, w, h, c, t = 1) {
         this._dl.rect(x,     y,     w, t, c[0], c[1], c[2], c[3] ?? 1);
         this._dl.rect(x,     y+h-t, w, t, c[0], c[1], c[2], c[3] ?? 1);
@@ -432,6 +448,100 @@ export class UI {
 
         const SBW = 8;
         return this.v_scrollbar('out-sb', x + w - SBW, y, SBW, h, st, total, vis);
+    }
+
+    /**
+     * Run button with a drawn play-triangle icon (no unicode glyph needed).
+     * Returns true on click.
+     */
+    run_button(id, x, y, w, h) {
+        const hot     = this._hit(x, y, w, h);
+        const pressed = this._active_id === id;
+        if (hot) this._hot_id = id;
+        if (hot && this._just_down) this._active_id = id;
+
+        const bg = pressed ? C.ACCENT_DIM : (hot ? C.ACCENT_DIM : C.ACCENT);
+        this.draw_rect(x, y, w, h, bg);
+        this.draw_border(x, y, w, h, C.BORDER);
+
+        const f      = this._font;
+        const label  = 'Run';
+        const icon_w = 9;
+        const gap    = 5;
+        const total  = icon_w + gap + label.length * f.glyph_w;
+        const sx     = x + (w - total) / 2;
+        const mid_y  = y + h / 2;
+
+        this.draw_triangle(sx + icon_w * 0.5, mid_y, 4, 'right', C.TEXT);
+        this.draw_text(label, sx + icon_w + gap, y + (h - f.glyph_h) / 2, C.TEXT);
+
+        const clicked = hot && this._just_up && this._active_id === id;
+        if (this._just_up && this._active_id === id) this._active_id = '';
+        return clicked;
+    }
+
+    /**
+     * Foldable file-tree panel.
+     * groups: Array<{ label: string, open: bool, items: [{label, value}] }>
+     * active_key: currently loaded item value.
+     * Returns clicked item value, or null.
+     */
+    file_tree(groups, active_key, x, y, w, h) {
+        const f     = this._font;
+        const row_h = Math.round(f.glyph_h + 8);
+        const PAD   = 8;
+        const IND   = 14;   // item indent under group header
+
+        this.draw_rect(x, y, w, h, C.SURFACE);
+        this._dl.scissor(x, y, w, h);
+
+        let cy     = y + 4;
+        let chosen = null;
+
+        for (const group of groups) {
+            if (cy + row_h > y + h) break;
+
+            const hot = this._hit(x, cy, w, row_h);
+            if (hot) this._hot_id = 'ftg_' + group.label;
+            if (hot) this.draw_rect(x, cy, w, row_h, C.SURFACE2);
+            if (hot && this._just_down) group.open = !group.open;
+
+            // Fold arrow
+            this.draw_triangle(x + PAD + 4, cy + row_h / 2, 3.5,
+                group.open ? 'down' : 'right', C.TEXT_DIM);
+            this.draw_text_clipped(group.label, x + PAD + 14, cy + (row_h - f.glyph_h) / 2,
+                w - PAD - 14 - 4, C.TEXT);
+            cy += row_h;
+
+            if (group.open) {
+                for (const item of group.items) {
+                    if (cy + row_h > y + h) break;
+                    const active = item.value === active_key;
+                    const i_hot  = this._hit(x, cy, w, row_h);
+                    if (i_hot) this._hot_id = 'fti_' + item.value;
+
+                    if (active) {
+                        this.draw_rect(x, cy, w, row_h, C.SEL);
+                        // Accent left bar
+                        this._dl.rect(x, cy, 2, row_h,
+                            C.ACCENT[0], C.ACCENT[1], C.ACCENT[2], 1);
+                    } else if (i_hot) {
+                        this.draw_rect(x, cy, w, row_h, C.SURFACE2);
+                    }
+
+                    this.draw_text_clipped(item.label,
+                        x + PAD + IND, cy + (row_h - f.glyph_h) / 2,
+                        w - PAD - IND - 4,
+                        active ? C.ACCENT : C.TEXT);
+
+                    if (i_hot && this._just_up) chosen = item.value;
+                    cy += row_h;
+                }
+            }
+        }
+
+        this._dl.scissor(0, 0, this._vp_w, this._vp_h);
+        return chosen;
     }
 
     /**

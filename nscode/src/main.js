@@ -10,6 +10,7 @@ import { UI, C }         from './ui.js';
 // ── Layout constants ──────────────────────────────────────────────────────────
 const TOOLBAR_H = 32;
 const STATUS_H  = 20;
+const TREE_W    = 160;
 const DIVIDER_W = 4;
 const BTN_W     = 72;
 const BTN_H     = 22;
@@ -97,6 +98,23 @@ const EXAMPLE_LIST = [
 ];
 
 // ── App state ─────────────────────────────────────────────────────────────────
+// File-tree structure (mutable: group.open can toggle)
+const FILE_TREE = [
+    {
+        label: 'Examples',
+        open:  true,
+        items: [
+            { label: 'Hello World', value: 'hello'     },
+            { label: 'Fibonacci',   value: 'fib'       },
+            { label: 'Factorial',   value: 'factorial' },
+            { label: 'Loop & Sum',  value: 'loop'      },
+            { label: 'FizzBuzz',    value: 'fizzbuzz'  },
+            { label: 'Primes',      value: 'primes'    },
+            { label: 'Closures',    value: 'closure'   },
+        ],
+    },
+];
+
 async function main() {
     if (!navigator.gpu) {
         document.body.style.cssText = 'margin:0;background:#1e1e24;color:#e05c5c;display:flex;align-items:center;justify-content:center;height:100vh;font:16px monospace;text-align:center';
@@ -124,6 +142,7 @@ async function main() {
     ui.set_font(atlas);
 
     const buf = new TextBuffer(EXAMPLES.fib);
+    let active_example = 'fib';
 
     // Output state
     let out_lines      = [];  // [{text, cls}]
@@ -147,7 +166,7 @@ async function main() {
         vp_w = window.innerWidth;
         vp_h = window.innerHeight;
         gpu.resize(vp_w, vp_h);
-        if (div_ref.value === 0) div_ref.value = Math.round(vp_w * 0.4);
+        if (div_ref.value === 0) div_ref.value = Math.round((vp_w - TREE_W) * 0.4);
     }
     resize();
     window.addEventListener('resize', resize);
@@ -241,12 +260,13 @@ async function main() {
 
     canvas.addEventListener('wheel', e => {
         e.preventDefault();
-        const main_h   = vp_h - TOOLBAR_H - STATUS_H;
-        const out_w    = Math.max(200, Math.min(vp_w * 0.65, div_ref.value));
-        const editor_w = vp_w - out_w - DIVIDER_W;
+        const avail_w  = vp_w - TREE_W;
+        const out_w    = Math.max(200, Math.min(avail_w * 0.65, div_ref.value));
+        const editor_w = avail_w - out_w - DIVIDER_W;
 
-        // Determine which pane the wheel is over
-        if (e.clientX < editor_w) {
+        if (e.clientX < TREE_W) {
+            // tree panel — no scroll needed
+        } else if (e.clientX < TREE_W + editor_w) {
             buf.scroll_top  = Math.max(0, Math.min((buf.scroll_top ?? 0) + e.deltaY / atlas.glyph_h, buf.line_count() - 1));
             buf.scroll_left = Math.max(0, (buf.scroll_left ?? 0) + e.deltaX);
         } else {
@@ -267,8 +287,9 @@ async function main() {
 
         // Layout
         const main_h   = vp_h - TOOLBAR_H - STATUS_H;
-        const out_w    = Math.max(200, Math.min(Math.round(vp_w * 0.65), div_ref.value));
-        const editor_w = vp_w - out_w - DIVIDER_W;
+        const avail_w  = vp_w - TREE_W;
+        const out_w    = Math.max(200, Math.min(Math.round(avail_w * 0.65), div_ref.value));
+        const editor_w = avail_w - out_w - DIVIDER_W;
 
         // Begin ImGui frame
         ui.begin_frame(mx, my, mouse_down, just_down, just_up, vp_w, vp_h);
@@ -286,10 +307,8 @@ async function main() {
         ui._dl.rect(tbx, BTN_PAD, 1, BTN_H, C.BORDER[0], C.BORDER[1], C.BORDER[2], 1);
         tbx += 9;
 
-        // Run button
-        if (ui.button('run', '\u25b6 Run', tbx, BTN_PAD, BTN_W, BTN_H, true)) {
-            run_code();
-        }
+        // Run button (drawn play icon, no unicode glyph)
+        if (ui.run_button('run', tbx, BTN_PAD, BTN_W, BTN_H)) run_code();
         tbx += BTN_W + 6;
 
         // Clear button
@@ -298,30 +317,31 @@ async function main() {
         }
         tbx += BTN_W + 8;
 
-        // Separator
-        ui._dl.rect(tbx, BTN_PAD, 1, BTN_H, C.BORDER[0], C.BORDER[1], C.BORDER[2], 1);
-        tbx += 9;
-
-        // Example dropdown
-        const example_w = 16 * atlas.glyph_w;
-        const chosen = ui.select('examples', EXAMPLE_LIST, '— Examples —', tbx, BTN_PAD, example_w, BTN_H);
-        if (chosen) { buf.set_text(EXAMPLES[chosen]); blink_t = 0; cursor_visible = true; }
-        tbx += example_w + 16;
-
         // Hint (right-aligned)
-        const hint  = 'Ctrl+Enter to run';
+        const hint   = 'Ctrl+Enter to run';
         const hint_x = vp_w - hint.length * atlas.glyph_w - 12;
         ui.draw_text(hint, hint_x, (TOOLBAR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
 
+        // ── File tree ─────────────────────────────────────────────────────────
+        const tree_chosen = ui.file_tree(FILE_TREE, active_example, 0, TOOLBAR_H, TREE_W, main_h);
+        if (tree_chosen) {
+            active_example = tree_chosen;
+            buf.set_text(EXAMPLES[tree_chosen]);
+            blink_t = 0; cursor_visible = true;
+        }
+        // Right border of tree panel
+        ui._dl.rect(TREE_W - 1, TOOLBAR_H, 1, main_h,
+            C.BORDER[0], C.BORDER[1], C.BORDER[2], 1);
+
         // ── Editor pane ───────────────────────────────────────────────────────
-        const hit = ui.code_editor(buf, 0, TOOLBAR_H, editor_w, main_h, cursor_visible, atlas);
+        const hit = ui.code_editor(buf, TREE_W, TOOLBAR_H, editor_w, main_h, cursor_visible, atlas);
         if (hit) {
             buf.move_cursor(hit.line, hit.col, false);
             blink_t = 0; cursor_visible = true;
         }
 
         // ── Divider ───────────────────────────────────────────────────────────
-        const div_x = editor_w;
+        const div_x = TREE_W + editor_w;
         ui.divider('div', div_x, TOOLBAR_H, main_h, div_ref);
 
         // ── Output header ─────────────────────────────────────────────────────

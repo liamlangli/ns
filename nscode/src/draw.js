@@ -98,6 +98,26 @@ export class DrawList {
         return cx;
     }
 
+    // Draw a filled convex polygon. pts = [[x,y], ...]  (≥ 3 points).
+    // Fan-triangulated from pts[0]. Uses the rect (colored-vertex) pipeline.
+    fill_convex_poly(pts, r, g, b, a = 1) {
+        const n = pts.length;
+        if (n < 3) return;
+        const tris = n - 2;
+        this._grow_rects(tris * 3);
+        const d  = this._rects;
+        const x0 = pts[0][0], y0 = pts[0][1];
+        for (let i = 0; i < tris; i++) {
+            const x1 = pts[i + 1][0], y1 = pts[i + 1][1];
+            const x2 = pts[i + 2][0], y2 = pts[i + 2][1];
+            const base = this._rcnt * RECT_FLOATS;
+            d[base+ 0]=x0; d[base+ 1]=y0; d[base+ 2]=r; d[base+ 3]=g; d[base+ 4]=b; d[base+ 5]=a;
+            d[base+ 6]=x1; d[base+ 7]=y1; d[base+ 8]=r; d[base+ 9]=g; d[base+10]=b; d[base+11]=a;
+            d[base+12]=x2; d[base+13]=y2; d[base+14]=r; d[base+15]=g; d[base+16]=b; d[base+17]=a;
+            this._rcnt += 3;
+        }
+    }
+
     // ── Internal ──────────────────────────────────────────────────────────────
     _flush_cmd() {
         const r_delta = this._rcnt - this._rbase;
