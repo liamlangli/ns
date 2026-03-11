@@ -58,21 +58,21 @@ function lex(src) {
         // Numbers
         if (src[i] >= '0' && src[i] <= '9') {
             let j = i;
-            let isFloat = false;
+            let is_float = false;
             while (j < n && (src[j] >= '0' && src[j] <= '9' || src[j] === '_')) j++;
             if (j < n && src[j] === '.' && src[j+1] >= '0' && src[j+1] <= '9') {
-                isFloat = true;
+                is_float = true;
                 j++;
                 while (j < n && (src[j] >= '0' && src[j] <= '9')) j++;
             }
             if (j < n && (src[j] === 'e' || src[j] === 'E')) {
-                isFloat = true; j++;
+                is_float = true; j++;
                 if (j < n && (src[j] === '+' || src[j] === '-')) j++;
                 while (j < n && src[j] >= '0' && src[j] <= '9') j++;
             }
             const raw = src.slice(i, j).replace(/_/g,'');
-            tokens.push(new Token(isFloat ? TK.FLOAT : TK.INT,
-                isFloat ? parseFloat(raw) : parseInt(raw, 10), line));
+            tokens.push(new Token(is_float ? TK.FLOAT : TK.INT,
+                is_float ? parseFloat(raw) : parseInt(raw, 10), line));
             i = j; continue;
         }
 
@@ -80,7 +80,7 @@ function lex(src) {
         if (src[i] === '"') {
             let j = i + 1, s = '';
             while (j < n && src[j] !== '"') {
-                if (src[j] === '\\') { j++; s += escapeChar(src[j]); }
+                if (src[j] === '\\') { j++; s += escape_char(src[j]); }
                 else s += src[j];
                 j++;
             }
@@ -124,7 +124,7 @@ function lex(src) {
         if (src[i] === "'") {
             let j = i + 1, s = '';
             while (j < n && src[j] !== "'") {
-                if (src[j] === '\\') { j++; s += escapeChar(src[j]); }
+                if (src[j] === '\\') { j++; s += escape_char(src[j]); }
                 else s += src[j];
                 j++;
             }
@@ -134,9 +134,9 @@ function lex(src) {
         }
 
         // Identifiers / keywords
-        if (isAlpha(src[i])) {
+        if (is_alpha(src[i])) {
             let j = i;
-            while (j < n && isAlphaNum(src[j])) j++;
+            while (j < n && is_alpha_num(src[j])) j++;
             const word = src.slice(i, j);
             if (word === 'true' || word === 'false')
                 tokens.push(new Token(TK.BOOL, word === 'true', line));
@@ -149,16 +149,16 @@ function lex(src) {
 
         // Two-char operators
         const two = src.slice(i, i+2);
-        const twoMap = {
+        const two_map = {
             '==': TK.EQ, '!=': TK.NEQ, '<=': TK.LE, '>=': TK.GE,
             '&&': TK.AND, '||': TK.OR, '->': TK.ARROW,
             '+=': TK.PLUS_ASSIGN, '-=': TK.MINUS_ASSIGN,
             '*=': TK.STAR_ASSIGN, '/=': TK.SLASH_ASSIGN,
         };
-        if (twoMap[two]) { tokens.push(new Token(twoMap[two], two, line)); i += 2; continue; }
+        if (two_map[two]) { tokens.push(new Token(two_map[two], two, line)); i += 2; continue; }
 
         // Single-char operators
-        const oneMap = {
+        const one_map = {
             '(': TK.LPAREN, ')': TK.RPAREN, '{': TK.LBRACE, '}': TK.RBRACE,
             '[': TK.LBRACKET, ']': TK.RBRACKET,
             ',': TK.COMMA, ':': TK.COLON, ';': TK.SEMI, '.': TK.DOT,
@@ -167,7 +167,7 @@ function lex(src) {
             '<': TK.LT, '>': TK.GT, '=': TK.ASSIGN,
             '!': TK.BANG, '&': TK.AMPERSAND, '|': TK.PIPE,
         };
-        if (oneMap[src[i]]) { tokens.push(new Token(oneMap[src[i]], src[i], line)); i++; continue; }
+        if (one_map[src[i]]) { tokens.push(new Token(one_map[src[i]], src[i], line)); i++; continue; }
 
         i++; // skip unknown
     }
@@ -176,9 +176,9 @@ function lex(src) {
     return tokens;
 }
 
-function isAlpha(c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_'; }
-function isAlphaNum(c) { return isAlpha(c) || (c >= '0' && c <= '9'); }
-function escapeChar(c) {
+function is_alpha(c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_'; }
+function is_alpha_num(c) { return is_alpha(c) || (c >= '0' && c <= '9'); }
+function escape_char(c) {
     return { n: '\n', t: '\t', r: '\r', '\\': '\\', '"': '"', "'": "'" }[c] ?? c;
 }
 
@@ -206,266 +206,266 @@ class Parser {
     }
     eat(type) { if (this.at(type)) { this.advance(); return true; } return false; }
 
-    parseProgram() {
+    parse_program() {
         const stmts = [];
         while (!this.at(TK.EOF)) {
-            stmts.push(this.parseTopLevel());
+            stmts.push(this.parse_top_level());
         }
         return { kind: 'Program', stmts };
     }
 
-    parseTopLevel() {
+    parse_top_level() {
         const t = this.peek();
-        if (t.type === TK.FN)     return this.parseFn();
-        if (t.type === TK.LET)    return this.parseLet();
-        if (t.type === TK.USE)    return this.parseUse();
-        if (t.type === TK.TYPE)   return this.parseTypeAlias();
-        if (t.type === TK.STRUCT) return this.parseStruct();
-        return this.parseExprStmt();
+        if (t.type === TK.FN)     return this.parse_fn();
+        if (t.type === TK.LET)    return this.parse_let();
+        if (t.type === TK.USE)    return this.parse_use();
+        if (t.type === TK.TYPE)   return this.parse_type_alias();
+        if (t.type === TK.STRUCT) return this.parse_struct();
+        return this.parse_expr_stmt();
     }
 
-    parseFn() {
+    parse_fn() {
         const line = this.peek().line;
         this.expect(TK.FN);
         const name = this.expect(TK.IDENT).value;
         this.expect(TK.LPAREN);
         const params = [];
         while (!this.at(TK.RPAREN) && !this.at(TK.EOF)) {
-            const pname = this.expect(TK.IDENT).value;
-            let ptype = 'i32';
-            if (this.eat(TK.COLON)) ptype = this.parseType();
-            params.push({ name: pname, type: ptype });
+            const p_name = this.expect(TK.IDENT).value;
+            let p_type = 'i32';
+            if (this.eat(TK.COLON)) p_type = this.parse_type();
+            params.push({ name: p_name, type: p_type });
             this.eat(TK.COMMA);
         }
         this.expect(TK.RPAREN);
-        let retType = 'void';
-        if (!this.at(TK.LBRACE)) retType = this.parseType();
-        const body = this.parseBlock();
-        return { kind: 'FnDef', name, params, retType, body, line };
+        let ret_type = 'void';
+        if (!this.at(TK.LBRACE)) ret_type = this.parse_type();
+        const body = this.parse_block();
+        return { kind: 'FnDef', name, params, ret_type, body, line };
     }
 
-    parseType() {
+    parse_type() {
         // Skip type annotation (we don't enforce types in the interpreter)
         let t = this.advance().value;
         // handle pointer / generic suffixes
         while (this.at(TK.LT) || this.at(TK.LBRACKET)) {
-            if (this.at(TK.LT)) { this.advance(); this.parseType(); this.expect(TK.GT); }
+            if (this.at(TK.LT)) { this.advance(); this.parse_type(); this.expect(TK.GT); }
             if (this.at(TK.LBRACKET)) { this.advance(); this.expect(TK.RBRACKET); }
         }
         // function type  (a, b) -> c
-        if (this.at(TK.ARROW)) { this.advance(); this.parseType(); }
+        if (this.at(TK.ARROW)) { this.advance(); this.parse_type(); }
         return t;
     }
 
-    parseLet() {
+    parse_let() {
         const line = this.peek().line;
         this.expect(TK.LET);
         const name = this.expect(TK.IDENT).value;
-        if (this.eat(TK.COLON)) this.parseType(); // skip type annotation
+        if (this.eat(TK.COLON)) this.parse_type(); // skip type annotation
         let init = null;
-        if (this.eat(TK.ASSIGN)) init = this.parseExpr();
+        if (this.eat(TK.ASSIGN)) init = this.parse_expr();
         this.eat(TK.SEMI);
         return { kind: 'LetStmt', name, init, line };
     }
 
-    parseUse() {
+    parse_use() {
         this.expect(TK.USE);
         const mod = this.expect(TK.IDENT).value;
         this.eat(TK.SEMI);
         return { kind: 'UseStmt', mod };
     }
 
-    parseTypeAlias() {
+    parse_type_alias() {
         this.expect(TK.TYPE);
         this.expect(TK.IDENT);
         this.expect(TK.ASSIGN);
         // consume until end of line / next fn or let
         while (!this.at(TK.EOF) && !this.at(TK.FN) && !this.at(TK.LET) &&
                !this.at(TK.TYPE) && !this.at(TK.USE)) {
-            if (this.at(TK.LBRACE)) { this.parseBlock(); break; }
+            if (this.at(TK.LBRACE)) { this.parse_block(); break; }
             this.advance();
         }
         return { kind: 'TypeAlias' };
     }
 
-    parseStruct() {
+    parse_struct() {
         this.expect(TK.STRUCT);
         this.expect(TK.IDENT);
-        this.parseBlock();
+        this.parse_block();
         return { kind: 'StructDef' };
     }
 
-    parseBlock() {
+    parse_block() {
         this.expect(TK.LBRACE);
         const stmts = [];
         while (!this.at(TK.RBRACE) && !this.at(TK.EOF)) {
-            stmts.push(this.parseStmt());
+            stmts.push(this.parse_stmt());
         }
         this.expect(TK.RBRACE);
         return { kind: 'Block', stmts };
     }
 
-    parseStmt() {
+    parse_stmt() {
         const t = this.peek();
-        if (t.type === TK.LET)      return this.parseLet();
-        if (t.type === TK.RETURN)   return this.parseReturn();
-        if (t.type === TK.IF)       return this.parseIf();
-        if (t.type === TK.FOR)      return this.parseFor();
+        if (t.type === TK.LET)      return this.parse_let();
+        if (t.type === TK.RETURN)   return this.parse_return();
+        if (t.type === TK.IF)       return this.parse_if();
+        if (t.type === TK.FOR)      return this.parse_for();
         if (t.type === TK.BREAK)    { this.advance(); this.eat(TK.SEMI); return { kind: 'Break' }; }
         if (t.type === TK.CONTINUE) { this.advance(); this.eat(TK.SEMI); return { kind: 'Continue' }; }
-        if (t.type === TK.LBRACE)   return this.parseBlock();
-        return this.parseExprStmt();
+        if (t.type === TK.LBRACE)   return this.parse_block();
+        return this.parse_expr_stmt();
     }
 
-    parseReturn() {
+    parse_return() {
         const line = this.peek().line;
         this.expect(TK.RETURN);
         let value = null;
         if (!this.at(TK.RBRACE) && !this.at(TK.EOF) && !this.at(TK.SEMI)) {
-            value = this.parseExpr();
+            value = this.parse_expr();
         }
         this.eat(TK.SEMI);
         return { kind: 'ReturnStmt', value, line };
     }
 
-    parseIf() {
+    parse_if() {
         const line = this.peek().line;
         this.expect(TK.IF);
-        const cond = this.parseExpr();
-        const then = this.parseBlock();
+        const cond = this.parse_expr();
+        const then = this.parse_block();
         let alt = null;
         if (this.eat(TK.ELSE)) {
-            alt = this.at(TK.IF) ? this.parseIf() : this.parseBlock();
+            alt = this.at(TK.IF) ? this.parse_if() : this.parse_block();
         }
         return { kind: 'IfStmt', cond, then, alt, line };
     }
 
-    parseFor() {
+    parse_for() {
         const line = this.peek().line;
         this.expect(TK.FOR);
-        const varName = this.expect(TK.IDENT).value;
+        const var_name = this.expect(TK.IDENT).value;
         this.expect(TK.IN);
-        const from = this.parseExpr();
+        const from = this.parse_expr();
         this.expect(TK.TO);
-        const to = this.parseExpr();
-        const body = this.parseBlock();
-        return { kind: 'ForStmt', var: varName, from, to, body, line };
+        const to = this.parse_expr();
+        const body = this.parse_block();
+        return { kind: 'ForStmt', var: var_name, from, to, body, line };
     }
 
-    parseExprStmt() {
-        const expr = this.parseExpr();
+    parse_expr_stmt() {
+        const expr = this.parse_expr();
         this.eat(TK.SEMI);
         return { kind: 'ExprStmt', expr };
     }
 
-    parseExpr() { return this.parseAssign(); }
+    parse_expr() { return this.parse_assign(); }
 
-    parseAssign() {
-        const left = this.parseOr();
-        const assignOps = {
+    parse_assign() {
+        const left = this.parse_or();
+        const assign_ops = {
             [TK.ASSIGN]: '=', [TK.PLUS_ASSIGN]: '+=',
             [TK.MINUS_ASSIGN]: '-=', [TK.STAR_ASSIGN]: '*=',
             [TK.SLASH_ASSIGN]: '/=',
         };
-        const op = assignOps[this.peek().type];
+        const op = assign_ops[this.peek().type];
         if (op) {
             const line = this.peek().line;
             this.advance();
-            const right = this.parseExpr();
+            const right = this.parse_expr();
             return { kind: 'Assign', op, target: left, value: right, line };
         }
         return left;
     }
 
-    parseOr() {
-        let left = this.parseAnd();
+    parse_or() {
+        let left = this.parse_and();
         while (this.at(TK.OR)) {
             const line = this.peek().line;
             this.advance();
-            left = { kind: 'Binary', op: '||', left, right: this.parseAnd(), line };
+            left = { kind: 'Binary', op: '||', left, right: this.parse_and(), line };
         }
         return left;
     }
 
-    parseAnd() {
-        let left = this.parseCmp();
+    parse_and() {
+        let left = this.parse_cmp();
         while (this.at(TK.AND)) {
             const line = this.peek().line;
             this.advance();
-            left = { kind: 'Binary', op: '&&', left, right: this.parseCmp(), line };
+            left = { kind: 'Binary', op: '&&', left, right: this.parse_cmp(), line };
         }
         return left;
     }
 
-    parseCmp() {
-        let left = this.parseAdd();
-        const cmpOps = {
+    parse_cmp() {
+        let left = this.parse_add();
+        const cmp_ops = {
             [TK.EQ]:'==', [TK.NEQ]:'!=', [TK.LT]:'<',
             [TK.LE]:'<=', [TK.GT]:'>', [TK.GE]:'>=',
         };
-        const op = cmpOps[this.peek().type];
+        const op = cmp_ops[this.peek().type];
         if (op) {
             const line = this.peek().line;
             this.advance();
-            left = { kind: 'Binary', op, left, right: this.parseAdd(), line };
+            left = { kind: 'Binary', op, left, right: this.parse_add(), line };
         }
         return left;
     }
 
-    parseAdd() {
-        let left = this.parseMul();
+    parse_add() {
+        let left = this.parse_mul();
         while (this.at(TK.PLUS) || this.at(TK.MINUS)) {
             const op = this.peek().type; const line = this.peek().line;
             this.advance();
-            left = { kind: 'Binary', op, left, right: this.parseMul(), line };
+            left = { kind: 'Binary', op, left, right: this.parse_mul(), line };
         }
         return left;
     }
 
-    parseMul() {
-        let left = this.parseUnary();
+    parse_mul() {
+        let left = this.parse_unary();
         while (this.at(TK.STAR) || this.at(TK.SLASH) || this.at(TK.PERCENT)) {
             const op = this.peek().type; const line = this.peek().line;
             this.advance();
-            left = { kind: 'Binary', op, left, right: this.parseUnary(), line };
+            left = { kind: 'Binary', op, left, right: this.parse_unary(), line };
         }
         return left;
     }
 
-    parseUnary() {
+    parse_unary() {
         if (this.at(TK.MINUS)) {
             const line = this.peek().line; this.advance();
-            return { kind: 'Unary', op: '-', expr: this.parseUnary(), line };
+            return { kind: 'Unary', op: '-', expr: this.parse_unary(), line };
         }
         if (this.at(TK.BANG)) {
             const line = this.peek().line; this.advance();
-            return { kind: 'Unary', op: '!', expr: this.parseUnary(), line };
+            return { kind: 'Unary', op: '!', expr: this.parse_unary(), line };
         }
-        return this.parsePostfix();
+        return this.parse_postfix();
     }
 
-    parsePostfix() {
-        let base = this.parsePrimary();
+    parse_postfix() {
+        let base = this.parse_primary();
         for (;;) {
             if (this.at(TK.LPAREN)) {
                 const line = this.peek().line;
                 this.advance();
                 const args = [];
                 while (!this.at(TK.RPAREN) && !this.at(TK.EOF)) {
-                    args.push(this.parseExpr());
+                    args.push(this.parse_expr());
                     this.eat(TK.COMMA);
                 }
                 this.expect(TK.RPAREN);
                 // Optional trailing block: fn(args) { ... }
-                let trailingBlock = null;
-                if (this.at(TK.LBRACE)) trailingBlock = this.parseBlock();
-                base = { kind: 'Call', callee: base, args, trailingBlock, line };
+                let trailing_block = null;
+                if (this.at(TK.LBRACE)) trailing_block = this.parse_block();
+                base = { kind: 'Call', callee: base, args, trailing_block, line };
             } else if (this.at(TK.DOT)) {
                 const line = this.peek().line; this.advance();
                 const field = this.expect(TK.IDENT).value;
                 base = { kind: 'Field', obj: base, field, line };
             } else if (this.at(TK.AS)) {
-                this.advance(); this.parseType(); // skip cast type
+                this.advance(); this.parse_type(); // skip cast type
             } else {
                 break;
             }
@@ -473,7 +473,7 @@ class Parser {
         return base;
     }
 
-    parsePrimary() {
+    parse_primary() {
         const t = this.peek();
 
         if (t.type === TK.INT)   { this.advance(); return { kind: 'Lit', value: t.value }; }
@@ -488,30 +488,30 @@ class Parser {
 
         if (t.type === TK.LPAREN) {
             this.advance();
-            const e = this.parseExpr();
+            const e = this.parse_expr();
             this.expect(TK.RPAREN);
             return e;
         }
 
         // Template string
         if (t.type === TK.BACKTICK) {
-            return this.parseTemplateLit();
+            return this.parse_template_lit();
         }
 
         // Block lambda: { a, b in ... } or { ... }
         if (t.type === TK.LBRACE) {
-            return this.parseLambda();
+            return this.parse_lambda();
         }
 
         // simd3 / struct literals — just skip for now
         if (t.type === TK.FN) {
-            return this.parseFnExpr();
+            return this.parse_fn_expr();
         }
 
         throw new ParseError(`unexpected token '${t.type}' ('${t.value}')`, t.line);
     }
 
-    parseTemplateLit() {
+    parse_template_lit() {
         const line = this.peek().line;
         this.expect(TK.BACKTICK);
         const parts = [];
@@ -520,7 +520,7 @@ class Parser {
                 parts.push({ kind: 'Lit', value: this.advance().value });
             } else if (this.at(TK.LBRACE)) {
                 this.advance();
-                parts.push(this.parseExpr());
+                parts.push(this.parse_expr());
                 this.expect(TK.RBRACE);
             } else break;
         }
@@ -528,7 +528,7 @@ class Parser {
         return { kind: 'Template', parts, line };
     }
 
-    parseLambda() {
+    parse_lambda() {
         // Peek ahead: is this { name, name in ... } or { name in ... } ?
         const saved = this.pos;
         try {
@@ -541,7 +541,7 @@ class Parser {
             if (this.at(TK.IN) && params.length > 0) {
                 this.advance(); // consume 'in'
                 const body = [];
-                while (!this.at(TK.RBRACE) && !this.at(TK.EOF)) body.push(this.parseStmt());
+                while (!this.at(TK.RBRACE) && !this.at(TK.EOF)) body.push(this.parse_stmt());
                 this.expect(TK.RBRACE);
                 return { kind: 'Lambda', params, body };
             }
@@ -549,11 +549,11 @@ class Parser {
             this.pos = saved;
         } catch (_) { this.pos = saved; }
         // Plain block used as expression (not common, but handle)
-        const block = this.parseBlock();
+        const block = this.parse_block();
         return { kind: 'BlockExpr', block };
     }
 
-    parseFnExpr() {
+    parse_fn_expr() {
         // anonymous fn expression
         this.expect(TK.FN);
         this.expect(TK.LPAREN);
@@ -561,15 +561,15 @@ class Parser {
         while (!this.at(TK.RPAREN) && !this.at(TK.EOF)) {
             const n = this.expect(TK.IDENT).value;
             let type = 'i32';
-            if (this.eat(TK.COLON)) type = this.parseType();
+            if (this.eat(TK.COLON)) type = this.parse_type();
             params.push({ name: n, type });
             this.eat(TK.COMMA);
         }
         this.expect(TK.RPAREN);
-        let retType = 'void';
-        if (!this.at(TK.LBRACE)) retType = this.parseType();
-        const body = this.parseBlock();
-        return { kind: 'FnExpr', params, retType, body };
+        let ret_type = 'void';
+        if (!this.at(TK.LBRACE)) ret_type = this.parse_type();
+        const body = this.parse_block();
+        return { kind: 'FnExpr', params, ret_type, body };
     }
 }
 
@@ -617,21 +617,21 @@ const MAX_ITERS  = 1000000;
 
 export class NSInterpreter {
     constructor({ print = console.log, error = console.error } = {}) {
-        this.print = print;
-        this.error = error;
-        this.callDepth = 0;
-        this.iterCount = 0;
-        this.globals = new Env();
-        this._seedGlobals();
+        this.print      = print;
+        this.error      = error;
+        this.call_depth = 0;
+        this.iter_count = 0;
+        this.globals    = new Env();
+        this._seed_globals();
     }
 
-    _seedGlobals() {
-        const g = this.globals;
+    _seed_globals() {
+        const g    = this.globals;
         const self = this;
 
         // std library
-        g.def('print',   { __fn: true, call: (args) => { self.print(args.map(nsStr).join('')); return null; } });
-        g.def('println', { __fn: true, call: (args) => { self.print(args.map(nsStr).join('') + '\n'); return null; } });
+        g.def('print',   { __fn: true, call: (args) => { self.print(args.map(ns_str).join('')); return null; } });
+        g.def('println', { __fn: true, call: (args) => { self.print(args.map(ns_str).join('') + '\n'); return null; } });
         g.def('assert',  { __fn: true, call: ([cond, msg]) => {
             if (!cond) throw new NSError(`assertion failed${msg ? ': ' + msg : ''}`);
             return null;
@@ -652,26 +652,26 @@ export class NSInterpreter {
     }
 
     run(source) {
-        this.callDepth = 0;
-        this.iterCount = 0;
+        this.call_depth = 0;
+        this.iter_count = 0;
         let tokens, ast;
         try { tokens = lex(source); }
         catch (e) { this.error('Lex error: ' + e.message); return; }
 
         try {
             const parser = new Parser(tokens);
-            ast = parser.parseProgram();
+            ast = parser.parse_program();
         } catch (e) { this.error('Parse error: ' + e.message); return; }
 
         try {
-            this.evalProgram(ast, this.globals);
+            this.eval_program(ast, this.globals);
         } catch (e) {
             if (e instanceof ReturnSignal) return; // top-level return
             this.error('Runtime error: ' + e.message);
         }
     }
 
-    evalProgram(ast, env) {
+    eval_program(ast, env) {
         // First pass: register all fn definitions
         for (const stmt of ast.stmts) {
             if (stmt.kind === 'FnDef') {
@@ -680,38 +680,38 @@ export class NSInterpreter {
         }
         // Second pass: execute non-fn statements
         for (const stmt of ast.stmts) {
-            if (stmt.kind !== 'FnDef') this.evalStmt(stmt, env);
+            if (stmt.kind !== 'FnDef') this.eval_stmt(stmt, env);
         }
     }
 
-    evalBlock(block, env) {
+    eval_block(block, env) {
         const local = new Env(env);
         for (const stmt of block.stmts) {
-            const sig = this.evalStmt(stmt, local);
+            const sig = this.eval_stmt(stmt, local);
             if (sig instanceof ReturnSignal || sig instanceof BreakSignal || sig instanceof ContinueSignal)
                 return sig;
         }
         return null;
     }
 
-    evalStmt(stmt, env) {
+    eval_stmt(stmt, env) {
         switch (stmt.kind) {
         case 'FnDef':
             env.def(stmt.name, { __fn: true, def: stmt, closure: env });
             break;
         case 'LetStmt': {
-            const val = stmt.init ? this.evalExpr(stmt.init, env) : null;
+            const val = stmt.init ? this.eval_expr(stmt.init, env) : null;
             env.def(stmt.name, val);
             break;
         }
         case 'ReturnStmt':
-            return new ReturnSignal(stmt.value ? this.evalExpr(stmt.value, env) : null);
+            return new ReturnSignal(stmt.value ? this.eval_expr(stmt.value, env) : null);
         case 'Break':    return new BreakSignal();
         case 'Continue': return new ContinueSignal();
-        case 'IfStmt':   return this.evalIf(stmt, env);
-        case 'ForStmt':  return this.evalFor(stmt, env);
-        case 'ExprStmt': this.evalExpr(stmt.expr, env); break;
-        case 'Block':    return this.evalBlock(stmt, env);
+        case 'IfStmt':   return this.eval_if(stmt, env);
+        case 'ForStmt':  return this.eval_for(stmt, env);
+        case 'ExprStmt': this.eval_expr(stmt.expr, env); break;
+        case 'Block':    return this.eval_block(stmt, env);
         case 'UseStmt':  break; // handled by globals
         case 'TypeAlias': case 'StructDef': break;
         default:
@@ -720,26 +720,26 @@ export class NSInterpreter {
         return null;
     }
 
-    evalIf(stmt, env) {
-        const cond = this.evalExpr(stmt.cond, env);
-        if (cond) return this.evalBlock(stmt.then, env);
+    eval_if(stmt, env) {
+        const cond = this.eval_expr(stmt.cond, env);
+        if (cond) return this.eval_block(stmt.then, env);
         if (stmt.alt) {
-            if (stmt.alt.kind === 'IfStmt') return this.evalIf(stmt.alt, env);
-            return this.evalBlock(stmt.alt, env);
+            if (stmt.alt.kind === 'IfStmt') return this.eval_if(stmt.alt, env);
+            return this.eval_block(stmt.alt, env);
         }
         return null;
     }
 
-    evalFor(stmt, env) {
-        const from = this.evalExpr(stmt.from, env);
-        const to   = this.evalExpr(stmt.to,   env);
+    eval_for(stmt, env) {
+        const from  = this.eval_expr(stmt.from, env);
+        const to    = this.eval_expr(stmt.to,   env);
         const local = new Env(env);
         local.def(stmt.var, from);
         for (let i = from; i < to; i++) {
-            if (++this.iterCount > MAX_ITERS)
+            if (++this.iter_count > MAX_ITERS)
                 throw new NSError('iteration limit exceeded (infinite loop?)');
             local.set(stmt.var, i);
-            const sig = this.evalBlock(stmt.body, local);
+            const sig = this.eval_block(stmt.body, local);
             if (sig instanceof ReturnSignal) return sig;
             if (sig instanceof BreakSignal)  break;
             // ContinueSignal: just continue
@@ -747,19 +747,19 @@ export class NSInterpreter {
         return null;
     }
 
-    evalExpr(node, env) {
+    eval_expr(node, env) {
         switch (node.kind) {
         case 'Lit':    return node.value;
         case 'Ident':  return env.get(node.name);
 
         case 'Assign': {
-            let val = this.evalExpr(node.value, env);
+            let val = this.eval_expr(node.value, env);
             if (node.op === '+=') val = env.get(node.target.name) + val;
             if (node.op === '-=') val = env.get(node.target.name) - val;
             if (node.op === '*=') val = env.get(node.target.name) * val;
             if (node.op === '/=') val = env.get(node.target.name) / val;
             if (node.target.kind === 'Field') {
-                const obj = this.evalExpr(node.target.obj, env);
+                const obj = this.eval_expr(node.target.obj, env);
                 if (obj && typeof obj === 'object') obj[node.target.field] = val;
             } else if (node.target.kind === 'Ident') {
                 env.set(node.target.name, val);
@@ -769,10 +769,10 @@ export class NSInterpreter {
 
         case 'Binary': {
             // Short-circuit logical ops
-            if (node.op === '&&') return this.evalExpr(node.left, env) && this.evalExpr(node.right, env);
-            if (node.op === '||') return this.evalExpr(node.left, env) || this.evalExpr(node.right, env);
-            const l = this.evalExpr(node.left, env);
-            const r = this.evalExpr(node.right, env);
+            if (node.op === '&&') return this.eval_expr(node.left, env) && this.eval_expr(node.right, env);
+            if (node.op === '||') return this.eval_expr(node.left, env) || this.eval_expr(node.right, env);
+            const l = this.eval_expr(node.left, env);
+            const r = this.eval_expr(node.right, env);
             switch (node.op) {
             case '+':  return typeof l === 'string' || typeof r === 'string' ? String(l) + String(r) : l + r;
             case '-':  return l - r;
@@ -790,23 +790,23 @@ export class NSInterpreter {
         }
 
         case 'Unary': {
-            const v = this.evalExpr(node.expr, env);
+            const v = this.eval_expr(node.expr, env);
             if (node.op === '-') return -v;
             if (node.op === '!') return !v;
             break;
         }
 
-        case 'Call': return this.evalCall(node, env);
+        case 'Call': return this.eval_call(node, env);
 
         case 'Field': {
-            const obj = this.evalExpr(node.obj, env);
+            const obj = this.eval_expr(node.obj, env);
             if (obj == null) throw new NSError(`null field access '.${node.field}'`, node.line);
             return obj[node.field] ?? null;
         }
 
         case 'Template': {
             let s = '';
-            for (const p of node.parts) s += nsStr(this.evalExpr(p, env));
+            for (const p of node.parts) s += ns_str(this.eval_expr(p, env));
             return s;
         }
 
@@ -817,7 +817,7 @@ export class NSInterpreter {
             return { __fn: true, def: node, closure: env };
 
         case 'BlockExpr':
-            return this.evalBlock(node.block, env);
+            return this.eval_block(node.block, env);
 
         default:
             return null;
@@ -825,8 +825,8 @@ export class NSInterpreter {
         return null;
     }
 
-    evalCall(node, env) {
-        if (++this.callDepth > MAX_CALLS)
+    eval_call(node, env) {
+        if (++this.call_depth > MAX_CALLS)
             throw new NSError('call stack overflow (infinite recursion?)');
 
         try {
@@ -837,9 +837,9 @@ export class NSInterpreter {
                 catch (_) { throw new NSError(`undefined function '${node.callee.name}'`, node.line); }
             } else if (node.callee.kind === 'Field') {
                 // method call: obj.method(args) — find method in builtins
-                const obj = this.evalExpr(node.callee.obj, env);
+                const obj    = this.eval_expr(node.callee.obj, env);
                 const method = node.callee.field;
-                const args   = node.args.map(a => this.evalExpr(a, env));
+                const args   = node.args.map(a => this.eval_expr(a, env));
                 // Array / string methods
                 if (Array.isArray(obj)) {
                     if (method === 'push')  { obj.push(...args); return null; }
@@ -851,7 +851,7 @@ export class NSInterpreter {
                 }
                 return null;
             } else {
-                fn = this.evalExpr(node.callee, env);
+                fn = this.eval_expr(node.callee, env);
             }
 
             if (!fn || !fn.__fn)
@@ -859,41 +859,41 @@ export class NSInterpreter {
 
             // Native JS function
             if (fn.call) {
-                const args = node.args.map(a => this.evalExpr(a, env));
+                const args = node.args.map(a => this.eval_expr(a, env));
                 return fn.call(args) ?? null;
             }
 
             // NS-defined function or lambda
-            const def = fn.def ?? fn.lambda;
+            const def    = fn.def ?? fn.lambda;
             const params = def.params ?? def.params ?? [];
-            const args   = node.args.map(a => this.evalExpr(a, env));
+            const args   = node.args.map(a => this.eval_expr(a, env));
 
             // Add trailing block as last param (if any)
-            if (node.trailingBlock) {
+            if (node.trailing_block) {
                 // synthesise a lambda
                 args.push({ __fn: true,
                     lambda: { kind: 'Lambda', params: params.length > args.length ?
                         [params[params.length-1].name ?? 'value'] : [],
-                        body: node.trailingBlock.stmts },
+                        body: node.trailing_block.stmts },
                     closure: env });
             }
 
             const local = new Env(fn.closure ?? this.globals);
             (params).forEach((p, i) => {
-                const pname = typeof p === 'string' ? p : p.name;
-                local.def(pname, args[i] ?? null);
+                const p_name = typeof p === 'string' ? p : p.name;
+                local.def(p_name, args[i] ?? null);
             });
 
-            const sig = this.evalBlock(def.body, local);
+            const sig = this.eval_block(def.body, local);
             if (sig instanceof ReturnSignal) return sig.value ?? null;
             return null;
         } finally {
-            this.callDepth--;
+            this.call_depth--;
         }
     }
 }
 
-function nsStr(v) {
+function ns_str(v) {
     if (v === null || v === undefined) return 'null';
     if (typeof v === 'boolean') return v ? 'true' : 'false';
     if (typeof v === 'number') {
