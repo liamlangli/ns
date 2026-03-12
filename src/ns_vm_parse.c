@@ -1269,12 +1269,20 @@ ns_return_void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             ret = ns_vm_parse_local_var_def(vm, ctx, expr_i);
             if (ns_return_is_error(ret)) return ret;
             break;
+        case NS_AST_ASSERT_STMT:
+            ret = ns_vm_parse_assert_stmt(vm, ctx, expr_i);
+            if (ns_return_is_error(ret)) return ret;
+            break;
         case NS_AST_IF_STMT:
             ret = ns_vm_parse_if_stmt(vm, ctx, expr_i);
             if (ns_return_is_error(ret)) return ret;
             break;
         case NS_AST_FOR_STMT:
             ret = ns_vm_parse_for_stmt(vm, ctx, expr_i);
+            if (ns_return_is_error(ret)) return ret;
+            break;
+        case NS_AST_LOOP_STMT:
+            ret = ns_vm_parse_loop_stmt(vm, ctx, expr_i);
             if (ns_return_is_error(ret)) return ret;
             break;
         case NS_AST_CALL_EXPR:
@@ -1304,6 +1312,26 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_CALL_EXPR: {
                 ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i, ns_type_infer);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
+            } break;
+            case NS_AST_ASSERT_STMT: {
+                ns_return_void ret = ns_vm_parse_assert_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_IF_STMT: {
+                ns_return_void ret = ns_vm_parse_if_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_FOR_STMT: {
+                ns_return_void ret = ns_vm_parse_for_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_LOOP_STMT: {
+                ns_return_void ret = ns_vm_parse_loop_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_JUMP_STMT: {
+                ns_return_void ret = ns_vm_parse_jump_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
             } break;
             case NS_AST_TYPE_DEF:
             case NS_AST_VAR_DEF:
@@ -1343,6 +1371,22 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
             } break;
             case NS_AST_ASSERT_STMT: {
                 ns_return_void ret = ns_vm_parse_assert_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_IF_STMT: {
+                ns_return_void ret = ns_vm_parse_if_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_FOR_STMT: {
+                ns_return_void ret = ns_vm_parse_for_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_LOOP_STMT: {
+                ns_return_void ret = ns_vm_parse_loop_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_JUMP_STMT: {
+                ns_return_void ret = ns_vm_parse_jump_stmt(vm, ctx, s_i);
                 if (ns_return_is_error(ret)) return ret;
             } break;
             case NS_AST_USE_STMT:

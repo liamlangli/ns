@@ -595,6 +595,34 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok_void;
 }
 
+ns_return_void ns_eval_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    ns_vm_inject_hook(vm, ctx, i);
+
+    ns_ast_t *n = &ctx->nodes[i];
+    ns_scope_enter(vm);
+    if (n->loop_stmt.do_first) {
+        do {
+            ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->loop_stmt.body);
+            if (ns_return_is_error(ret)) return ret;
+
+            ns_return_value ret_cond = ns_eval_expr(vm, ctx, n->loop_stmt.condition);
+            if (ns_return_is_error(ret_cond)) return ns_return_change_type(void, ret_cond);
+            if (!ns_eval_bool(vm, ret_cond.r)) break;
+        } while (1);
+    } else {
+        while (1) {
+            ns_return_value ret_cond = ns_eval_expr(vm, ctx, n->loop_stmt.condition);
+            if (ns_return_is_error(ret_cond)) return ns_return_change_type(void, ret_cond);
+            if (!ns_eval_bool(vm, ret_cond.r)) break;
+
+            ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->loop_stmt.body);
+            if (ns_return_is_error(ret)) return ret;
+        }
+    }
+    ns_scope_exit(vm);
+    return ns_return_ok_void;
+}
+
 ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value l, ns_value r, ns_symbol *fn) {
     ns_vm_inject_hook(vm, ctx, i);
     ns_unused(i);
@@ -1188,6 +1216,7 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         case NS_AST_JUMP_STMT: ns_eval_stmt_case(ns_eval_jump_stmt);
         case NS_AST_FOR_STMT: ns_eval_stmt_case(ns_eval_for_stmt);
         case NS_AST_IF_STMT: ns_eval_stmt_case(ns_eval_if_stmt);
+        case NS_AST_LOOP_STMT: ns_eval_stmt_case(ns_eval_loop_stmt);
         case NS_AST_ASSERT_STMT: ns_eval_stmt_case(ns_eval_assert_stmt);
         default: {
             return ns_return_error(void, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unimplemented stmt type.");
@@ -1238,6 +1267,22 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
                 ns_return_void ret = ns_eval_assert_stmt(vm, ctx, s_i);
                 if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
             } break;
+            case NS_AST_IF_STMT: {
+                ns_return_void ret = ns_eval_if_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
+            case NS_AST_FOR_STMT: {
+                ns_return_void ret = ns_eval_for_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
+            case NS_AST_LOOP_STMT: {
+                ns_return_void ret = ns_eval_loop_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
+            case NS_AST_JUMP_STMT: {
+                ns_return_void ret = ns_eval_jump_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
             case NS_AST_USE_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:
@@ -1266,6 +1311,26 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_VAR_DEF: {
                 ns_return_value ret = ns_eval_var_def(vm, ctx, s_i);
                 if (ns_return_is_error(ret)) return ret;
+            } break;
+            case NS_AST_ASSERT_STMT: {
+                ns_return_void ret = ns_eval_assert_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
+            case NS_AST_IF_STMT: {
+                ns_return_void ret = ns_eval_if_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
+            case NS_AST_FOR_STMT: {
+                ns_return_void ret = ns_eval_for_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
+            case NS_AST_LOOP_STMT: {
+                ns_return_void ret = ns_eval_loop_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+            } break;
+            case NS_AST_JUMP_STMT: {
+                ns_return_void ret = ns_eval_jump_stmt(vm, ctx, s_i);
+                if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
             } break;
             case NS_AST_TYPE_DEF:
             case NS_AST_USE_STMT:

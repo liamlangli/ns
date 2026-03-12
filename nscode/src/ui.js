@@ -468,35 +468,11 @@ export class UI {
      * Returns updated scroll_top.
      */
     output_panel(lines, x, y, w, h, scroll_top) {
-        const f    = this._font;
-        const g_h  = f.glyph_h;
-        const vis  = Math.floor(h / g_h);
-        const total = lines.length;
+        void lines;
+        void scroll_top;
 
         this.draw_rect(x, y, w, h, C.BG);
-        this._dl.scissor(x, y, w, h);
-
-        const cls_color = {
-            print: C.TEXT,
-            error: C.RED,
-            info:  C.TEXT_DIM,
-            sep:   C.BORDER,
-            time:  C.YELLOW,
-        };
-
-        const st = Math.floor(scroll_top);
-        for (let vi = 0; vi < vis + 1; vi++) {
-            const li = st + vi;
-            if (li >= total) break;
-            const c = cls_color[lines[li].cls] ?? C.TEXT;
-            const ty = y + vi * g_h;
-            this._dl.text_clipped(lines[li].text, x + 8, ty, w - 16, f, c[0], c[1], c[2], 1);
-        }
-
-        this._dl.scissor(0, 0, this._vp_w, this._vp_h);
-
-        const SBW = 8;
-        return this.v_scrollbar('out-sb', x + w - SBW, y, SBW, h, st, total, vis);
+        return 0;
     }
 
     /**

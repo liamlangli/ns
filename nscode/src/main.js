@@ -156,7 +156,26 @@ async function main() {
 
     const canvas       = document.getElementById('c');
     const hidden_input = document.getElementById('hi');
+    const output_view  = document.createElement('div');
     hidden_input.focus();
+
+    output_view.id = 'output-view';
+    output_view.tabIndex = 0;
+    output_view.style.position = 'fixed';
+    output_view.style.margin = '0';
+    output_view.style.padding = '8px';
+    output_view.style.boxSizing = 'border-box';
+    output_view.style.overflow = 'auto';
+    output_view.style.whiteSpace = 'pre-wrap';
+    output_view.style.wordBreak = 'break-word';
+    output_view.style.userSelect = 'text';
+    output_view.style.webkitUserSelect = 'text';
+    output_view.style.outline = 'none';
+    output_view.style.border = 'none';
+    output_view.style.background = '#1e1e24';
+    output_view.style.color = '#e0e0ec';
+    output_view.style.zIndex = '2';
+    document.body.appendChild(output_view);
 
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('No WebGPU adapter');
@@ -181,6 +200,7 @@ async function main() {
     let out_scroll     = 0;
     let run_status     = 'idle';
     let run_status_msg = 'Ready';
+    let output_html    = '';
 
     // ── Layout state ──────────────────────────────────────────────────────────
     const tree_ref = { value: 160, start_x: 0, start_val: 0 };
@@ -227,10 +247,46 @@ async function main() {
     resize();
     window.addEventListener('resize', resize);
 
+    function escape_html(text) {
+        return text
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;');
+    }
+
+    function render_output_view() {
+        const cls_style = {
+            print: 'color:#e0e0ec;',
+            error: 'color:#e05c5c;',
+            info: 'color:#888;',
+            sep: 'color:#3a3a48;',
+            time: 'color:#d4a44c;',
+        };
+        output_html = out_lines.map(line => {
+            const cls = line.cls ? ` out-${line.cls}` : '';
+            const style = cls_style[line.cls] ?? 'color:#e0e0ec;';
+            return `<div class="out-line${cls}" style="${style}">${escape_html(String(line.text)) || '&nbsp;'}</div>`;
+        }).join('');
+        output_view.innerHTML = output_html;
+        output_view.scrollTop = out_scroll * atlas.glyph_h;
+    }
+
+    function has_output_selection() {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed) return false;
+        return output_view.contains(sel.anchorNode) || output_view.contains(sel.focusNode);
+    }
+
+    output_view.addEventListener('scroll', () => {
+        out_scroll = output_view.scrollTop / atlas.glyph_h;
+    });
+    render_output_view();
+
     // ── Run NS code ───────────────────────────────────────────────────────────
     async function run_code() {
         out_lines = [];
         out_scroll = 0;
+        render_output_view();
         run_status = 'run';
         run_status_msg = 'Running\u2026';
         await new Promise(r => setTimeout(r, 0));
@@ -248,6 +304,7 @@ async function main() {
         run_status     = ok ? 'ok' : 'err';
         run_status_msg = ok ? 'Success' : 'Error';
         out_scroll     = Math.max(0, out_lines.length - 10);
+        render_output_view();
     }
 
     // ── Editor operations ─────────────────────────────────────────────────────
@@ -381,7 +438,7 @@ async function main() {
         blink_t = 0; cursor_visible = true;
         switch (id) {
         case 'run':          run_code(); break;
-        case 'clear':        out_lines = []; out_scroll = 0; run_status = 'idle'; run_status_msg = 'Ready'; break;
+        case 'clear':        out_lines = []; out_scroll = 0; run_status = 'idle'; run_status_msg = 'Ready'; render_output_view(); break;
         case 'palette':      palette.open = true; palette.query = ''; palette.sel = 0;
                              find_state.open = false; goto_state.open = false; kb_state.open = false; break;
         case 'find':         open_overlay('find'); break;
@@ -390,9 +447,15 @@ async function main() {
         case 'keybindings':  open_overlay('keybindings'); break;
         case 'toggle_tree':  tree_collapsed = !tree_collapsed; break;
         case 'select_all':   buf.select_all(); break;
-        case 'copy':         copy_selection(); break;
+        case 'copy':
+            if (has_output_selection()) navigator.clipboard?.writeText(window.getSelection()?.toString() ?? '');
+            else copy_selection();
+            break;
         case 'paste':        navigator.clipboard?.readText().then(t => { if (t) buf.insert_text(t); }); break;
-        case 'cut':          copy_selection(); buf.delete_selection(); buf.mark_dirty(); break;
+        case 'cut':
+            if (has_output_selection()) navigator.clipboard?.writeText(window.getSelection()?.toString() ?? '');
+            else { copy_selection(); buf.delete_selection(); buf.mark_dirty(); }
+            break;
         case 'comment':      toggle_comment(); break;
         case 'move_up':      move_line(-1); break;
         case 'move_down':    move_line(1); break;
@@ -487,6 +550,10 @@ async function main() {
                 keymap.override(kb_state.edit_id, [event_key_id(e)]);
                 kb_state.edit_id = null; return;
             }
+            return;
+        }
+
+        if (document.activeElement === output_view && !e.metaKey && !e.ctrlKey && !e.altKey) {
             return;
         }
 
@@ -677,6 +744,12 @@ async function main() {
         // ── Output body ───────────────────────────────────────────────────────
         out_scroll = ui.output_panel(out_lines, out_x,
             TOOLBAR_H + HDR_H, out_w, main_h - HDR_H, out_scroll);
+        output_view.style.left = `${out_x}px`;
+        output_view.style.top = `${TOOLBAR_H + HDR_H}px`;
+        output_view.style.width = `${out_w}px`;
+        output_view.style.height = `${main_h - HDR_H}px`;
+        output_view.style.font = `${atlas.glyph_h - 4}px monospace`;
+        output_view.style.lineHeight = `${atlas.glyph_h}px`;
 
         // ── Status bar ────────────────────────────────────────────────────────
         const sb_y = vp_h - STATUS_H;

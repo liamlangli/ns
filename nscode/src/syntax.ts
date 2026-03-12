@@ -140,13 +140,21 @@ function _wasm_tokenize_line(line: string): Token[] {
     const tok_ptr = w.get_tok_buf();
     const toks    = new Int32Array(w.memory.buffer, tok_ptr, count * 3);
     const result: Token[] = [];
+    let cursor = 0;
     for (let i = 0; i < count; i++) {
         const c_type = toks[i * 3]!;
         const offset = toks[i * 3 + 1]!;
         const len    = toks[i * 3 + 2]!;
+        if (offset > cursor) {
+            result.push({ type: TT.WHITESPACE, text: line.slice(cursor, offset) });
+        }
         const tt     = (c_type >= 0 && c_type < _tt_map.length)
             ? (_tt_map[c_type]! as TokenType) : TT.UNKNOWN;
         result.push({ type: tt, text: line.slice(offset, offset + len) });
+        cursor = offset + len;
+    }
+    if (cursor < line.length) {
+        result.push({ type: TT.WHITESPACE, text: line.slice(cursor) });
     }
     return result;
 }

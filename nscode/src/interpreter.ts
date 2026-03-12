@@ -201,6 +201,9 @@ class Parser {
         if (t.type === TK.USE)    return this.parse_use();
         if (t.type === TK.TYPE)   return this.parse_type_alias();
         if (t.type === TK.STRUCT) return this.parse_struct();
+        if (t.type === TK.IF)     return this.parse_if();
+        if (t.type === TK.FOR)    return this.parse_for();
+        if (t.type === TK.LBRACE) return this.parse_block();
         return this.parse_expr_stmt();
     }
     parse_fn(): AstNode {

@@ -558,7 +558,7 @@ i32 get_tok_buf(void) { return (i32)(i8 *)tok_mem; }
 /**
  * Tokenize src_len bytes from src_mem.
  * Writes token triples [type, byte_offset, byte_length] into tok_mem.
- * Returns token count. Skips SPACE and EOL tokens.
+ * Returns token count. Skips EOL tokens.
  */
 __attribute__((export_name("tokenize")))
 i32 tokenize(i32 src_len) {
@@ -573,7 +573,7 @@ i32 tokenize(i32 src_len) {
     while (i < src_len && count < TOK_MAX) {
         i32 next = ns_next_token(&tok, src, i);
         if (tok.type == NS_TOKEN_EOF) break;
-        if (tok.type != NS_TOKEN_SPACE && tok.type != NS_TOKEN_EOL) {
+        if (tok.type != NS_TOKEN_EOL) {
             i32 offset = (i32)(tok.val.data - src_mem);
             i32 len    = tok.val.len;
             /* clamp to avoid out-of-range data */
