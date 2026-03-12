@@ -37,19 +37,19 @@ export const C = {
 import { DrawList } from './draw.js';
 import { tokenize_line } from './syntax.js';
 
-// Map token type → color tuple
-const TOK_COLOR = {
-    KEYWORD:     C.SYN_KW,
-    TYPE:        C.SYN_TYPE,
-    NUMBER:      C.SYN_NUM,
-    STRING:      C.SYN_STR,
-    COMMENT:     C.SYN_CMT,
-    OPERATOR:    C.SYN_OP,
-    PUNCTUATION: C.SYN_PUNCT,
-    IDENTIFIER:  C.SYN_ID,
-    WHITESPACE:  C.SYN_ID,
-    UNKNOWN:     C.SYN_ID,
-};
+// Map token type (numeric) → color tuple. Order matches TT enum: 0..9
+const TOK_COLOR = [
+    C.SYN_KW,    // 0 KEYWORD
+    C.SYN_TYPE,  // 1 TYPE
+    C.SYN_NUM,   // 2 NUMBER
+    C.SYN_STR,   // 3 STRING
+    C.SYN_CMT,   // 4 COMMENT
+    C.SYN_OP,    // 5 OPERATOR
+    C.SYN_ID,    // 6 IDENTIFIER
+    C.SYN_PUNCT, // 7 PUNCTUATION
+    C.SYN_ID,    // 8 WHITESPACE
+    C.SYN_ID,    // 9 UNKNOWN
+];
 
 export class UI {
     constructor() {
@@ -83,6 +83,17 @@ export class UI {
     end_frame() {
         this._dl.finalize();
         return this._dl;
+    }
+
+    /**
+     * Start an overlay pass. Like begin_frame but does NOT clear the draw list,
+     * so overlays are composited on top of what was already drawn.
+     * Call this after the main begin_frame / widget pass, before drawing overlays.
+     */
+    begin_overlay(mx, my, down, just_down, just_up) {
+        this._mx = mx; this._my = my;
+        this._down = down; this._just_down = just_down; this._just_up = just_up;
+        this._hot_id = '';
     }
 
     get font() { return this._font; }
@@ -127,6 +138,29 @@ export class UI {
     }
 
     // ── Widgets ───────────────────────────────────────────────────────────────
+
+    /**
+     * Draw a styled text field box (no keyboard logic — caller owns the string).
+     * focused: true draws accent border + blinking cursor at end of value.
+     */
+    _draw_text_field(x, y, w, h, value, focused, placeholder = '') {
+        const f = this._font, gw = f.glyph_w, gh = f.glyph_h;
+        this.draw_rect(x, y, w, h, focused ? C.BG : C.SURFACE);
+        this.draw_border(x, y, w, h, focused ? C.ACCENT : C.BORDER);
+        const pad = 6, ty = y + (h - gh) / 2;
+        if (value.length === 0 && placeholder) {
+            this.draw_text_clipped(placeholder, x + pad, ty, w - pad * 2, C.TEXT_DIM);
+        } else {
+            const max_ch = Math.floor((w - pad * 2) / gw);
+            const vis    = value.length > max_ch ? value.slice(-max_ch) : value;
+            this.draw_text_clipped(vis, x + pad, ty, w - pad * 2, C.TEXT);
+        }
+        if (focused) {
+            const max_ch = Math.floor((w - 12) / gw);
+            const cx = x + 6 + Math.min(value.length, max_ch) * gw;
+            this._dl.rect(cx, ty, 2, gh, C.ACCENT[0], C.ACCENT[1], C.ACCENT[2], 0.9);
+        }
+    }
 
     /**
      * Filled panel background.
@@ -190,7 +224,7 @@ export class UI {
      * @param {number} y, h  extents
      * @returns {number}  new x position (caller must clamp + store)
      */
-    divider(id, x, y, h, drag_ref) {
+    divider(id, x, y, h, drag_ref, reverse = false) {
         const hw  = 4;
         const hot = this._hit(x - hw, y, hw * 2, h);
 
@@ -201,7 +235,10 @@ export class UI {
             drag_ref.start_val   = drag_ref.value;
         }
         if (this._active_id === id) {
-            drag_ref.value = drag_ref.start_val + (drag_ref.start_x - this._mx);
+            const delta = reverse
+                ? (this._mx - drag_ref.start_x)
+                : (drag_ref.start_x - this._mx);
+            drag_ref.value = drag_ref.start_val + delta;
             if (this._just_up) this._active_id = '';
         }
 
@@ -303,7 +340,7 @@ export class UI {
      *
      * Returns { line, col } if user clicked (or null).
      */
-    code_editor(buf, x, y, w, h, cursor_visible, font) {
+    code_editor(buf, x, y, w, h, cursor_visible, font, find_matches = null) {
         const f    = font ?? this._font;
         const g_w  = f.glyph_w;
         const g_h  = f.glyph_h;
@@ -340,6 +377,18 @@ export class UI {
                 if (sw > 0) {
                     this._dl.rect(sx, y + vy * g_h, sw, g_h, C.SEL[0], C.SEL[1], C.SEL[2], C.SEL[3]);
                 }
+            }
+        }
+
+        // ── Find match highlights ─────────────────────────────────────────────
+        if (find_matches && find_matches.length) {
+            for (const m of find_matches) {
+                const vy = m.line - scroll_t;
+                if (vy < 0 || vy >= vis_lines) continue;
+                const mx2 = code_x + m.col * g_w - scroll_l;
+                const mw  = m.len * g_w;
+                this._dl.rect(mx2, y + vy * g_h, mw, g_h,
+                    C.YELLOW[0], C.YELLOW[1], C.YELLOW[2], 0.28);
             }
         }
 
@@ -553,5 +602,207 @@ export class UI {
                 : cls === 'run' ? C.YELLOW
                 :                 C.TEXT_DIM;
         this._dl.rect(x, y, r*2, r*2, c[0], c[1], c[2], 1);
+    }
+
+    /**
+     * Command palette overlay (rendered last, covers everything with dimmed backdrop).
+     * cmds:  [{id, label, category, hint}] — already fuzzy-filtered and sorted.
+     * query: current search string.
+     * sel:   highlighted row index.
+     * Returns the id of the clicked/activated command, or null.
+     */
+    command_palette(query, cmds, sel) {
+        const f   = this._font, gw = f.glyph_w, gh = f.glyph_h;
+        const PAL_W     = Math.min(560, this._vp_w - 80);
+        const px        = Math.round((this._vp_w - PAL_W) / 2);
+        const py        = 68;
+        const ROW_H     = gh + 14;
+        const INPUT_H   = 40;
+        const MAX_VIS   = Math.min(cmds.length, 9);
+        const PAL_H     = INPUT_H + MAX_VIS * ROW_H + 8;
+
+        // Dimmed backdrop — click outside palette to close
+        this._dl.rect(0, 0, this._vp_w, this._vp_h, 0, 0, 0, 0.5);
+        if (this._just_down && !this._hit(px, py, PAL_W, PAL_H)) return '__close__';
+        // Drop shadow
+        this._dl.rect(px + 4, py + 4, PAL_W, PAL_H, 0, 0, 0, 0.4);
+        // Panel
+        this.draw_rect(px, py, PAL_W, PAL_H, C.SURFACE2);
+        this.draw_border(px, py, PAL_W, PAL_H, C.ACCENT);
+
+        // Input row
+        const IPAD = 8;
+        this._draw_text_field(px + IPAD, py + IPAD, PAL_W - IPAD * 2, INPUT_H - IPAD * 2,
+            query, true, 'Type a command or example…');
+
+        this.separator(px, py + INPUT_H - 1, PAL_W, C.BORDER);
+
+        let chosen = null;
+        for (let i = 0; i < MAX_VIS; i++) {
+            const cmd = cmds[i];
+            const ry  = py + INPUT_H + i * ROW_H;
+            const hot = this._hit(px, ry, PAL_W, ROW_H);
+            const active = i === sel;
+
+            if (active) {
+                this.draw_rect(px, ry, PAL_W, ROW_H, [C.ACCENT[0], C.ACCENT[1], C.ACCENT[2], 0.15]);
+                this._dl.rect(px, ry, 2, ROW_H, C.ACCENT[0], C.ACCENT[1], C.ACCENT[2], 1);
+            } else if (hot) {
+                this.draw_rect(px, ry, PAL_W, ROW_H, C.SURFACE);
+            }
+
+            // Category chip
+            const cat = cmd.category ? '[' + cmd.category + '] ' : '';
+            this.draw_text(cat, px + 14, ry + (ROW_H - gh) / 2, C.TEXT_DIM);
+            // Label
+            this.draw_text_clipped(cmd.label,
+                px + 14 + cat.length * gw, ry + (ROW_H - gh) / 2,
+                PAL_W - 100 - cat.length * gw,
+                active ? C.ACCENT : C.TEXT);
+            // Key hint
+            if (cmd.hint) {
+                const hw = cmd.hint.length * gw;
+                this.draw_text(cmd.hint, px + PAL_W - hw - 14, ry + (ROW_H - gh) / 2, C.TEXT_DIM);
+            }
+
+            if (hot && this._just_up) chosen = cmd.id;
+        }
+        return chosen;
+    }
+
+    /**
+     * Find / Replace bar floating at top-right of the editor pane.
+     * state: { query, replace, replace_mode, focus:'q'|'r' }
+     * match_count: number of current matches (shown as badge).
+     * Returns: 'next'|'prev'|'replace'|'replace_all'|'close' or null.
+     */
+    find_bar(state, ex, ey, ew, match_count) {
+        const f = this._font, gw = f.glyph_w, gh = f.glyph_h;
+        const BTN   = 24;
+        const GAP   = 4;
+        const ROWS  = state.replace_mode ? 2 : 1;
+        const FH    = 24;   // field height
+        const W     = Math.min(380, ew - 16);
+        const H     = 10 + ROWS * (FH + GAP) - GAP + 10;
+        const x     = ex + ew - W - 6;
+        const y     = ey + 6;
+
+        // Shadow + panel
+        this._dl.rect(x + 3, y + 3, W, H, 0, 0, 0, 0.35);
+        this.draw_rect(x, y, W, H, C.SURFACE2);
+        this.draw_border(x, y, W, H, C.BORDER);
+
+        let action = null;
+        const FIELD_W = W - BTN * 2 - GAP * 3 - 16;
+
+        // ── Find row ────────────────────────────────────────────────────────
+        const fy = y + 8;
+        const focused_q = state.focus === 'q';
+        this._draw_text_field(x + 8, fy, FIELD_W, FH, state.query, focused_q, 'Find…');
+        if (this._just_down && this._hit(x + 8, fy, FIELD_W, FH)) state.focus = 'q';
+
+        // Match badge inside field
+        const badge   = match_count > 0 ? String(match_count) : (state.query ? '✕' : '');
+        const badge_c = match_count > 0 ? C.GREEN : C.TEXT_DIM;
+        if (badge) this.draw_text(badge, x + 8 + FIELD_W - badge.length * gw - 4, fy + (FH - gh) / 2, badge_c);
+
+        // ↑ ↓ buttons
+        const b1x = x + 8 + FIELD_W + GAP;
+        if (this.button('fb-prev', '\u2191', b1x,           fy, BTN, FH)) action = 'prev';
+        if (this.button('fb-next', '\u2193', b1x + BTN + GAP, fy, BTN, FH)) action = 'next';
+
+        // × close
+        if (this.button('fb-cls', '\u00d7', x + W - 18, y + 2, 16, 16)) action = 'close';
+
+        // ── Replace row ─────────────────────────────────────────────────────
+        if (state.replace_mode) {
+            const ry = fy + FH + GAP;
+            const focused_r = state.focus === 'r';
+            this._draw_text_field(x + 8, ry, FIELD_W, FH, state.replace, focused_r, 'Replace…');
+            if (this._just_down && this._hit(x + 8, ry, FIELD_W, FH)) state.focus = 'r';
+            if (this.button('fb-rep',  '1\u00d7', b1x,           ry, BTN, FH)) action = 'replace';
+            if (this.button('fb-repa', 'All',     b1x + BTN + GAP, ry, BTN, FH)) action = 'replace_all';
+        }
+
+        return action;
+    }
+
+    /**
+     * Minimal go-to-line overlay centred at the top of the editor pane.
+     * query: digit string. line_count: total lines (shown as hint).
+     * Caller handles Enter (navigate) and Escape (close).
+     */
+    goto_overlay(query, ex, ey, ew, line_count) {
+        const f  = this._font, gw = f.glyph_w, gh = f.glyph_h;
+        const W  = 240, H = 40;
+        const x  = ex + Math.round((ew - W) / 2);
+        const y  = ey + 6;
+        this._dl.rect(x + 3, y + 3, W, H, 0, 0, 0, 0.35);
+        this.draw_rect(x, y, W, H, C.SURFACE2);
+        this.draw_border(x, y, W, H, C.BORDER);
+        const label = 'Go to line:';
+        const lw = label.length * gw;
+        this.draw_text(label, x + 8, y + (H - gh) / 2, C.TEXT_DIM);
+        const fw = W - lw - 24;
+        this._draw_text_field(x + 8 + lw + 4, y + 8, fw, H - 16, query, true, '1');
+        const hint = '/ ' + line_count;
+        this.draw_text(hint, x + 8 + lw + 4 + (query.length + 1) * gw + 4,
+            y + (H - gh) / 2, C.TEXT_DIM);
+    }
+
+    /**
+     * Keybinding settings overlay. Shows all commands with their effective bindings.
+     * bindings: [{ id, label, category, keys: string[] }]
+     * edit_state: { id: string|null }  — which command is being re-bound.
+     * Returns: { close: bool }
+     */
+    keybindings_overlay(bindings, edit_state) {
+        const f = this._font, gw = f.glyph_w, gh = f.glyph_h;
+        const W = Math.min(520, this._vp_w - 60);
+        const H = Math.min(this._vp_h - 80, bindings.length * (gh + 10) + 60);
+        const x = Math.round((this._vp_w - W) / 2);
+        const y = Math.round((this._vp_h - H) / 2);
+        const ROW_H = gh + 10;
+
+        this._dl.rect(0, 0, this._vp_w, this._vp_h, 0, 0, 0, 0.5);
+        if (this._just_down && !this._hit(x, y, W, H)) return true; // close
+        this._dl.rect(x + 4, y + 4, W, H, 0, 0, 0, 0.4);
+        this.draw_rect(x, y, W, H, C.SURFACE2);
+        this.draw_border(x, y, W, H, C.BORDER);
+
+        // Header
+        const HDR = 36;
+        this.draw_rect(x, y, W, HDR, C.SURFACE);
+        this.draw_text('Keyboard Shortcuts', x + 12, y + (HDR - gh) / 2, C.TEXT);
+        let closed = false;
+        if (this.button('kb-close', '\u00d7', x + W - 28, y + 6, 22, 22)) closed = true;
+        this.separator(x, y + HDR - 1, W, C.BORDER);
+
+        this._dl.scissor(x, y + HDR, W, H - HDR);
+        const vis_rows = Math.floor((H - HDR) / ROW_H);
+        const max_show = Math.min(bindings.length, vis_rows);
+        for (let i = 0; i < max_show; i++) {
+            const b  = bindings[i];
+            const ry = y + HDR + i * ROW_H;
+            if (i % 2 === 0) this.draw_rect(x, ry, W, ROW_H, C.SURFACE);
+            // Category
+            this.draw_text('[' + b.category + ']', x + 10, ry + (ROW_H - gh) / 2, C.TEXT_DIM);
+            // Label
+            this.draw_text_clipped(b.label, x + 90, ry + (ROW_H - gh) / 2, W - 200, C.TEXT);
+            // Key
+            const key_str = b.keys.length ? b.keys[0] : '—';
+            const editing  = edit_state.id === b.id;
+            const kw = key_str.length * gw + 12;
+            this.draw_rect(x + W - kw - 8, ry + 2, kw, ROW_H - 4,
+                editing ? C.ACCENT_DIM : C.SURFACE);
+            this.draw_text(key_str, x + W - kw - 2, ry + (ROW_H - gh) / 2,
+                editing ? C.TEXT : C.TEXT_DIM);
+            if (this._just_down && this._hit(x + W - kw - 8, ry + 2, kw, ROW_H - 4)) {
+                edit_state.id = editing ? null : b.id;
+            }
+        }
+        this._dl.scissor(0, 0, this._vp_w, this._vp_h);
+
+        return closed;
     }
 }

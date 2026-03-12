@@ -198,4 +198,6 @@ export class TextBuffer {
         const match = prev.match(/^(\s*)/);
         return match ? match[1]! : '';
     }
+
+    mark_dirty(): void { this._dirty(); }
 }

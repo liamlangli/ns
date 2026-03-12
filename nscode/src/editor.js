@@ -191,4 +191,8 @@ export class TextBuffer {
         const match = prev.match(/^(\s*)/);
         return match ? match[1] : '';
     }
+
+    // Expose dirty marking so callers that mutate buf.lines directly can trigger
+    // re-tokenization and version bumping without going through insert_text.
+    mark_dirty() { this._dirty(); }
 }
