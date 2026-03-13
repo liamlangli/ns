@@ -2,7 +2,7 @@
 // All UI rendered via MSDF text + rect pipelines on a single WebGPU canvas.
 
 import { text_buffer }           from './editor.js';
-import { ns_interpreter }        from './interpreter.js';
+import { ns_interpreter, parse_to_ast } from './interpreter.js';
 import { load_msdf_font }       from './font.js';
 import { GPU }                  from './gpu.js';
 import { gpu_parser }            from './gpu_parser.js';
@@ -352,8 +352,42 @@ async function main() {
             error: v => out_lines.push({ text: String(v), cls: 'error' }),
         });
         const source = buf.get_text();
+        const spans = extract_function_spans(source);
+
+        let cpu_parse_ms = 0;
+        let gpu_parse_ms = null;
+        let execute_ms   = null;
+        let cpu_ast      = null;
+        let parse_ok     = true;
+        let ok = true;
+
+        const cpu_parse_t0 = performance.now();
+        try {
+            cpu_ast = parse_to_ast(source);
+        } catch (e) {
+            parse_ok = false;
+            ok = false;
+            out_lines.push({ text: `Parse error: ${e.message ?? String(e)}`, cls: 'error' });
+        }
+        cpu_parse_ms = performance.now() - cpu_parse_t0;
+
+        if (compile_gpu && gpu_parser_ready) {
+            const gpu_parse_t0 = performance.now();
+            try {
+                const gpu_result = await compile_gpu.run(source, spans);
+                gpu_parse_ms = performance.now() - gpu_parse_t0;
+                if (gpu_result.counters.tokenOverflow || gpu_result.counters.astOverflow) {
+                    out_lines.push({ text: '[GPU parser] overflow flag raised (results clamped).', cls: 'error' });
+                }
+            } catch (e) {
+                gpu_parse_ms = performance.now() - gpu_parse_t0;
+                out_lines.push({ text: `[GPU parser] parse failed: ${e.message ?? String(e)}`, cls: 'error' });
+            }
+        } else {
+            out_lines.push({ text: '[GPU parser] unavailable; CPU parser in use.', cls: 'info' });
+        }
+
         if (DEBUG_GPU_PARSE_VALIDATION) {
-            const spans = extract_function_spans(source);
             try {
                 const cpu_normalized = normalize_cpu_ast_by_function(source, spans);
                 if (!compile_gpu || !gpu_parser_ready) {
@@ -377,13 +411,23 @@ async function main() {
                 out_lines.push({ text: `[parser Validation] ERROR: ${e.message ?? String(e)} (CPU fallback in effect)`, cls: 'error' });
             }
         }
-        const t0 = performance.now();
-        let ok = true;
-        try { interp.run(source); }
-        catch (e) { ok = false; out_lines.push({ text: e.message ?? String(e), cls: 'error' }); }
-        const ms = performance.now() - t0;
+
+        if (parse_ok && cpu_ast) {
+            const exec_t0 = performance.now();
+            try {
+                interp.eval_program(cpu_ast, interp.globals);
+            } catch (e) {
+                ok = false;
+                out_lines.push({ text: `Runtime error: ${e.message ?? String(e)}`, cls: 'error' });
+            }
+            execute_ms = performance.now() - exec_t0;
+        }
+
         out_lines.push({ text: '\u2500'.repeat(36), cls: 'sep' });
-        out_lines.push({ text: `Finished in ${ms.toFixed(1)} ms`, cls: 'time' });
+        out_lines.push({ text: `CPU parse: ${cpu_parse_ms.toFixed(2)} ms`, cls: 'time' });
+        out_lines.push({ text: `GPU parse: ${gpu_parse_ms === null ? 'N/A' : `${gpu_parse_ms.toFixed(2)} ms`}`, cls: 'time' });
+        out_lines.push({ text: `Execute: ${execute_ms === null ? 'N/A' : `${execute_ms.toFixed(2)} ms`}`, cls: 'time' });
+        out_lines.push({ text: `Total: ${(cpu_parse_ms + (execute_ms ?? 0)).toFixed(2)} ms`, cls: 'time' });
         run_status     = ok ? 'ok' : 'err';
         run_status_msg = ok ? 'Success' : 'Error';
         out_scroll     = Math.max(0, out_lines.length - 10);
