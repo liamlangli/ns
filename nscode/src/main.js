@@ -5,6 +5,7 @@ import { TextBuffer }           from './editor.js';
 import { NSInterpreter }        from './interpreter.js';
 import { load_msdf_font }       from './font.js';
 import { GPU }                  from './gpu.js';
+import { GPUParser }            from './gpu_parser.js';
 import { UI, C }                from './ui.js';
 import { fuzzy_filter, Keymap, event_key_id } from './commands.js';
 
@@ -127,6 +128,32 @@ const DEFAULT_BINDINGS = [
 
 const keymap = new Keymap(DEFAULT_BINDINGS);
 
+function extract_function_spans(source) {
+    const spans = [];
+    const fn_re = /\bfn\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)\s*(?:[A-Za-z0-9_<>\[\]]+\s*)?\{/g;
+    for (const match of source.matchAll(fn_re)) {
+        const start = match.index ?? 0;
+        let brace_i = source.indexOf('{', start);
+        if (brace_i < 0) continue;
+        let depth = 0;
+        let end = source.length;
+        for (let i = brace_i; i < source.length; i++) {
+            const ch = source[i];
+            if (ch === '{') depth++;
+            else if (ch === '}') {
+                depth--;
+                if (depth === 0) {
+                    end = i + 1;
+                    break;
+                }
+            }
+        }
+        spans.push({ start, end });
+    }
+    if (spans.length === 0) spans.push({ start: 0, end: source.length });
+    return spans;
+}
+
 // ── Build command palette entries ─────────────────────────────────────────────
 function build_commands() {
     const base = DEFAULT_BINDINGS.map(b => ({
@@ -188,6 +215,21 @@ async function main() {
 
     const gpu = new GPU(canvas);
     await gpu.init(device, atlas);
+
+    // Compute-only parser pipeline is initialized separately from rendering.
+    const compile_gpu = new GPUParser(device);
+    const boot_source = EXAMPLES.fib;
+    const boot_spans = extract_function_spans(boot_source);
+    compile_gpu.run(boot_source, boot_spans)
+        .then((result) => {
+            console.debug('[GPU parser] startup parse', {
+                functions: result.functionSpans.length,
+                tokens: result.counters.tokenCount,
+                ast: result.counters.astCount,
+                overflows: [result.counters.tokenOverflow, result.counters.astOverflow],
+            });
+        })
+        .catch((err) => console.warn('[GPU parser] startup parse failed', err));
 
     const ui = new UI();
     ui.set_font(atlas);
