@@ -15,10 +15,10 @@ export const TT = {
     FUNC_CALL:   11,
 } as const;
 
-export type TokenType = typeof TT[keyof typeof TT];
+export type token_type = typeof TT[keyof typeof TT];
 
-export interface Token {
-    type: TokenType;
+export interface token {
+    type: token_type;
     text: string;
 }
 
@@ -107,14 +107,14 @@ _tt_map[C_TOKEN.SPACE]        = TT.WHITESPACE;
 
 // ---------- WASM loader -----------------------------------------------------
 
-interface WasmExports {
+interface wasm_exports {
     memory:      WebAssembly.Memory;
     get_src_buf: () => number;
     get_tok_buf: () => number;
     tokenize:    (src_len: number) => number;
 }
 
-let _wasm: WasmExports | null = null;
+let _wasm: wasm_exports | null = null;
 
 async function _load_wasm(): Promise<void> {
     try {
@@ -123,7 +123,7 @@ async function _load_wasm(): Promise<void> {
         const buf  = await resp.arrayBuffer();
         const mod  = await WebAssembly.compile(buf);
         const inst = await WebAssembly.instantiate(mod, {});
-        const ex   = inst.exports as unknown as WasmExports;
+        const ex   = inst.exports as unknown as wasm_exports;
         _wasm = { memory: ex.memory, get_src_buf: ex.get_src_buf, get_tok_buf: ex.get_tok_buf, tokenize: ex.tokenize };
     } catch (e) {
         console.warn('ns_token.wasm unavailable, using JS fallback:', e);
@@ -133,7 +133,7 @@ _load_wasm();
 
 const _enc = new TextEncoder();
 
-function _wasm_tokenize_line(line: string): Token[] {
+function _wasm_tokenize_line(line: string): token[] {
     const w       = _wasm!;
     const src_ptr = w.get_src_buf();
     const bytes   = _enc.encode(line);
@@ -143,7 +143,7 @@ function _wasm_tokenize_line(line: string): Token[] {
     const count   = w.tokenize(src_len);
     const tok_ptr = w.get_tok_buf();
     const toks    = new Int32Array(w.memory.buffer, tok_ptr, count * 3);
-    const result: Token[] = [];
+    const result: token[] = [];
     let cursor = 0;
     for (let i = 0; i < count; i++) {
         const c_type = toks[i * 3]!;
@@ -153,7 +153,7 @@ function _wasm_tokenize_line(line: string): Token[] {
             result.push({ type: TT.WHITESPACE, text: line.slice(cursor, offset) });
         }
         const tt     = (c_type >= 0 && c_type < _tt_map.length)
-            ? (_tt_map[c_type]! as TokenType) : TT.UNKNOWN;
+            ? (_tt_map[c_type]! as token_type) : TT.UNKNOWN;
         result.push({ type: tt, text: line.slice(offset, offset + len) });
         cursor = offset + len;
     }
@@ -174,8 +174,8 @@ const NS_TYPES = new Set([
     'i8','u8','i16','u16','i32','u32','i64','u64','f32','f64','bool','str','void','any',
 ]);
 
-function _js_tokenize_line(line: string): Token[] {
-    const tokens: Token[] = [];
+function _js_tokenize_line(line: string): token[] {
+    const tokens: token[] = [];
     let i = 0;
     const n = line.length;
     while (i < n) {
@@ -206,7 +206,7 @@ function _js_tokenize_line(line: string): Token[] {
             let j = i + 1;
             while (j < n && /[\w]/.test(line[j]!)) j++;
             const word = line.slice(i, j);
-            const type: TokenType = NS_KEYWORDS.has(word) ? TT.KEYWORD
+            const type: token_type = NS_KEYWORDS.has(word) ? TT.KEYWORD
                         : NS_TYPES.has(word)    ? TT.TYPE : TT.IDENTIFIER;
             tokens.push({ type, text: word });
             i = j; continue;
@@ -234,7 +234,7 @@ function _js_tokenize_line(line: string): Token[] {
  * - FUNC_DEF: identifier immediately after the `fn` keyword
  * - FUNC_CALL: identifier followed by `(`
  */
-function _classify_functions(tokens: Token[]): Token[] {
+function _classify_functions(tokens: token[]): token[] {
     const result = tokens.slice();
     const n = result.length;
 
@@ -277,7 +277,7 @@ function _classify_functions(tokens: Token[]): Token[] {
 // ---------- public API -------------------------------------------------------
 
 /** Tokenize one line of NS source. Uses WASM when loaded, JS fallback otherwise. */
-export function tokenize_line(line: string): Token[] {
+export function tokenize_line(line: string): token[] {
     const raw = _wasm ? _wasm_tokenize_line(line) : _js_tokenize_line(line);
     return _classify_functions(raw);
 }

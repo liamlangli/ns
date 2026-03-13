@@ -1,14 +1,14 @@
 // NSCode — GPU-rendered code playground (no HTML/CSS UI elements)
 // All UI rendered via MSDF text + rect pipelines on a single WebGPU canvas.
 
-import { TextBuffer }           from './editor.js';
-import { NSInterpreter }        from './interpreter.js';
+import { text_buffer }           from './editor.js';
+import { ns_interpreter }        from './interpreter.js';
 import { load_msdf_font }       from './font.js';
 import { GPU }                  from './gpu.js';
-import { GPUParser }            from './gpu_parser.js';
+import { gpu_parser }            from './gpu_parser.js';
 import { compare_normalized_asts, normalize_cpu_ast_by_function } from './parser_validation.js';
 import { UI, C }                from './ui.js';
-import { fuzzy_filter, Keymap, event_key_id } from './commands.js';
+import { fuzzy_filter, key_map, event_key_id } from './commands.js';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const DEBUG_GPU_PARSE_VALIDATION = globalThis.localStorage?.getItem('ns.debugGpuParseValidation') === '1';
@@ -128,7 +128,7 @@ const DEFAULT_BINDINGS = [
     { id: 'keybindings',  label: 'Keyboard Shortcuts', category: 'UI',    keys: ['ctrl+k'] },
 ];
 
-const keymap = new Keymap(DEFAULT_BINDINGS);
+const key_map_instance = new key_map(DEFAULT_BINDINGS);
 
 function extract_function_spans(source) {
     const spans = [];
@@ -162,7 +162,7 @@ function build_commands() {
         id:       b.id,
         label:    b.label,
         category: b.category,
-        hint:     keymap.display(b.id),
+        hint:     key_map_instance.display(b.id),
     }));
     const file_cmds = FILE_TREE.flatMap(group =>
         group.items.map(item => ({
@@ -222,16 +222,16 @@ async function main() {
     let compile_gpu = null;
     let gpu_parser_ready = false;
     try {
-        compile_gpu = new GPUParser(device);
+        compile_gpu = new gpu_parser(device);
         const boot_source = EXAMPLES.fib;
         const boot_spans = extract_function_spans(boot_source);
         compile_gpu.run(boot_source, boot_spans)
             .then((result) => {
                 gpu_parser_ready = true;
                 console.debug('[GPU parser] startup parse', {
-                    functions: result.functionSpans.length,
-                    tokens: result.counters.tokenCount,
-                    ast: result.counters.astCount,
+                    functions: result.function_spans.length,
+                    tokens: result.counters.token_count,
+                    ast: result.counters.ast_count,
                     overflows: [result.counters.tokenOverflow, result.counters.astOverflow],
                 });
             })
@@ -249,7 +249,7 @@ async function main() {
     const ui = new UI();
     ui.set_font(atlas);
 
-    const buf = new TextBuffer(EXAMPLES.fib);
+    const buf = new text_buffer(EXAMPLES.fib);
     let active_example = 'fib';
 
     // ── Output state ──────────────────────────────────────────────────────────
@@ -347,7 +347,7 @@ async function main() {
         run_status = 'run';
         run_status_msg = 'Running\u2026';
         await new Promise(r => setTimeout(r, 0));
-        const interp = new NSInterpreter({
+        const interp = new ns_interpreter({
             print: v => out_lines.push({ text: String(v), cls: 'print' }),
             error: v => out_lines.push({ text: String(v), cls: 'error' }),
         });
@@ -355,26 +355,26 @@ async function main() {
         if (DEBUG_GPU_PARSE_VALIDATION) {
             const spans = extract_function_spans(source);
             try {
-                const cpuNormalized = normalize_cpu_ast_by_function(source, spans);
+                const cpu_normalized = normalize_cpu_ast_by_function(source, spans);
                 if (!compile_gpu || !gpu_parser_ready) {
-                    out_lines.push({ text: '[Parser Validation] GPU unavailable; using CPU parser fallback.', cls: 'info' });
+                    out_lines.push({ text: '[parser Validation] GPU unavailable; using CPU parser fallback.', cls: 'info' });
                 } else {
-                    const gpuNormalizedResult = await compile_gpu.parse_normalized_ast(source, spans);
-                    if (gpuNormalizedResult.run.counters.tokenOverflow || gpuNormalizedResult.run.counters.astOverflow) {
-                        out_lines.push({ text: '[Parser Validation] GPU overflow flag raised; using CPU parser fallback.', cls: 'error' });
+                    const gpu_normalized_result = await compile_gpu.parse_normalized_ast(source, spans);
+                    if (gpu_normalized_result.run.counters.tokenOverflow || gpu_normalized_result.run.counters.astOverflow) {
+                        out_lines.push({ text: '[parser Validation] GPU overflow flag raised; using CPU parser fallback.', cls: 'error' });
                     } else {
-                        const cmp = compare_normalized_asts(cpuNormalized, gpuNormalizedResult.astByFunction.map((nodes, functionIndex) => ({ functionIndex, nodes })));
+                        const cmp = compare_normalized_asts(cpu_normalized, gpu_normalized_result.ast_by_function.map((nodes, functionIndex) => ({ functionIndex, nodes })));
                         if (cmp.ok) {
-                            out_lines.push({ text: `[Parser Validation] PASS (${spans.length} functions)`, cls: 'info' });
+                            out_lines.push({ text: `[parser Validation] PASS (${spans.length} functions)`, cls: 'info' });
                         } else if (cmp.mismatch) {
                             const m = cmp.mismatch;
-                            out_lines.push({ text: `[Parser Validation] FAIL at function=${m.functionIndex} path=${m.path}: ${m.reason}`, cls: 'error' });
-                            out_lines.push({ text: `[Parser Validation] expected=${JSON.stringify(m.expected)} actual=${JSON.stringify(m.actual)}`, cls: 'error' });
+                            out_lines.push({ text: `[parser Validation] FAIL at function=${m.functionIndex} path=${m.path}: ${m.reason}`, cls: 'error' });
+                            out_lines.push({ text: `[parser Validation] expected=${JSON.stringify(m.expected)} actual=${JSON.stringify(m.actual)}`, cls: 'error' });
                         }
                     }
                 }
             } catch (e) {
-                out_lines.push({ text: `[Parser Validation] ERROR: ${e.message ?? String(e)} (CPU fallback in effect)`, cls: 'error' });
+                out_lines.push({ text: `[parser Validation] ERROR: ${e.message ?? String(e)} (CPU fallback in effect)`, cls: 'error' });
             }
         }
         const t0 = performance.now();
@@ -628,9 +628,9 @@ async function main() {
             // If editing a binding, capture the key combo
             if (kb_state.edit_id) {
                 e.preventDefault();
-                if (e.key === 'Backspace') { keymap.reset(kb_state.edit_id); kb_state.edit_id = null; return; }
+                if (e.key === 'Backspace') { key_map_instance.reset(kb_state.edit_id); kb_state.edit_id = null; return; }
                 if (['Shift','Control','Alt','Meta'].includes(e.key)) return; // modifier-only, ignore
-                keymap.override(kb_state.edit_id, [event_key_id(e)]);
+                key_map_instance.override(kb_state.edit_id, [event_key_id(e)]);
                 kb_state.edit_id = null; return;
             }
             return;
@@ -641,7 +641,7 @@ async function main() {
         }
 
         // ── Command dispatch via keymap ────────────────────────────────────────
-        const cmd_id = keymap.match(e);
+        const cmd_id = key_map_instance.match(e);
         if (cmd_id) {
             e.preventDefault();
             execute_command(cmd_id);
@@ -872,7 +872,7 @@ async function main() {
             }
 
             if (kb_state.open) {
-                const bindings      = keymap.get_all();
+                const bindings      = key_map_instance.get_all();
                 const edit_state_ref = { id: kb_state.edit_id };
                 const closed = ui.keybindings_overlay(bindings, edit_state_ref);
                 kb_state.edit_id = edit_state_ref.id;

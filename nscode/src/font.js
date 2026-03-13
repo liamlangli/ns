@@ -13,7 +13,7 @@
  * @param {string}    opts.json_url      URL to the BMFont JSON
  * @param {string}    opts.png_url       URL to the atlas PNG
  * @param {number}    [opts.display_size=20]  Desired font cap-height in CSS px
- * @returns {Promise<FontAtlas>}
+ * @returns {Promise<font_atlas>}
  */
 export async function load_msdf_font(device, { json_url, png_url, display_size = 20 }) {
     // ── 1. Fetch JSON metrics and PNG bitmap in parallel ─────────────────────

@@ -1,7 +1,7 @@
 const BYTES_PER_U32 = 4;
 const TOKEN_RECORD_U32 = 6; // functionId, start, end, kind, valueLo, valueHi
-const AST_RECORD_U32 = 6;   // functionId, tokenStart, tokenCount, nodeKind, payload0, payload1
-const COUNTER_U32 = 4;      // tokenCount, astCount, tokenOverflow, astOverflow
+const AST_RECORD_U32 = 6;   // functionId, tokenStart, token_count, nodeKind, payload0, payload1
+const COUNTER_U32 = 4;      // token_count, ast_count, tokenOverflow, astOverflow
 
 const INGEST_SHADER = /* wgsl */`
 struct Limits {
@@ -34,12 +34,12 @@ struct Limits {
     maxAstPerFunction: u32,
 }
 
-struct FunctionSpan {
+struct function_span {
     start: u32,
     end: u32,
 }
 
-struct TokenRecord {
+struct token_record {
     functionId: u32,
     start: u32,
     end: u32,
@@ -49,15 +49,15 @@ struct TokenRecord {
 }
 
 struct Counters {
-    tokenCount: atomic<u32>,
-    astCount: atomic<u32>,
+    token_count: atomic<u32>,
+    ast_count: atomic<u32>,
     tokenOverflow: atomic<u32>,
     astOverflow: atomic<u32>,
 }
 
-@group(0) @binding(0) var<storage, read> spans: array<FunctionSpan>;
+@group(0) @binding(0) var<storage, read> spans: array<function_span>;
 @group(0) @binding(1) var<storage, read> source_words: array<u32>;
-@group(0) @binding(2) var<storage, read_write> tokens: array<TokenRecord>;
+@group(0) @binding(2) var<storage, read_write> tokens: array<token_record>;
 @group(0) @binding(3) var<storage, read_write> counters: Counters;
 @group(0) @binding(4) var<uniform> limits: Limits;
 
@@ -125,7 +125,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             cursor = cursor + 1u;
         }
 
-        let token_idx = atomicAdd(&counters.tokenCount, 1u);
+        let token_idx = atomicAdd(&counters.token_count, 1u);
         let max_tokens = limits.functionCount * limits.maxTokensPerFunction;
         if (token_idx >= max_tokens) {
             atomicStore(&counters.tokenOverflow, 1u);
@@ -152,7 +152,7 @@ struct Limits {
     maxAstPerFunction: u32,
 }
 
-struct TokenRecord {
+struct token_record {
     functionId: u32,
     start: u32,
     end: u32,
@@ -161,24 +161,24 @@ struct TokenRecord {
     value1: u32,
 }
 
-struct AstNode {
+struct ast_node {
     functionId: u32,
     tokenStart: u32,
-    tokenCount: u32,
+    token_count: u32,
     kind: u32,
     payload0: u32,
     payload1: u32,
 }
 
 struct Counters {
-    tokenCount: atomic<u32>,
-    astCount: atomic<u32>,
+    token_count: atomic<u32>,
+    ast_count: atomic<u32>,
     tokenOverflow: atomic<u32>,
     astOverflow: atomic<u32>,
 }
 
-@group(0) @binding(0) var<storage, read> tokens: array<TokenRecord>;
-@group(0) @binding(1) var<storage, read_write> ast_nodes: array<AstNode>;
+@group(0) @binding(0) var<storage, read> tokens: array<token_record>;
+@group(0) @binding(1) var<storage, read_write> ast_nodes: array<ast_node>;
 @group(0) @binding(2) var<storage, read_write> counters: Counters;
 @group(0) @binding(3) var<uniform> limits: Limits;
 
@@ -189,7 +189,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let token_count = atomicLoad(&counters.tokenCount);
+    let token_count = atomicLoad(&counters.token_count);
     var emitted = 0u;
     for (var i = 0u; i < token_count; i = i + 1u) {
         let tok = tokens[i];
@@ -197,7 +197,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             continue;
         }
 
-        let node_idx = atomicAdd(&counters.astCount, 1u);
+        let node_idx = atomicAdd(&counters.ast_count, 1u);
         let max_nodes = limits.functionCount * limits.maxAstPerFunction;
         if (node_idx >= max_nodes) {
             atomicStore(&counters.astOverflow, 1u);
@@ -206,7 +206,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         ast_nodes[node_idx].functionId = fn_id;
         ast_nodes[node_idx].tokenStart = tok.start;
-        ast_nodes[node_idx].tokenCount = tok.end - tok.start;
+        ast_nodes[node_idx].token_count = tok.end - tok.start;
         ast_nodes[node_idx].kind = tok.kind;
         ast_nodes[node_idx].payload0 = i;
         ast_nodes[node_idx].payload1 = 0u;
@@ -215,8 +215,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 `;
 
-export type FunctionSpanInput = { start: number; end: number };
-export type TokenRecord = {
+export type function_span_input = { start: number; end: number };
+export type token_record = {
     functionId: number;
     start: number;
     end: number;
@@ -224,40 +224,40 @@ export type TokenRecord = {
     value0: number;
     value1: number;
 };
-export type AstNodeRecord = {
+export type ast_node_record = {
     functionId: number;
     tokenStart: number;
-    tokenCount: number;
+    token_count: number;
     kind: number;
     payload0: number;
     payload1: number;
 };
 
 
-export type NormalizedGpuNode = {
+export type normalized_gpu_node = {
     kind: string;
     payload: Record<string, unknown>;
 };
 
-export type NormalizedGpuAstResult = {
-    run: ParserRunResult;
-    astByFunction: NormalizedGpuNode[][];
+export type normalized_gpu_ast_result = {
+    run: parser_run_result;
+    ast_by_function: normalized_gpu_node[][];
 };
 
-export type ParserRunResult = {
+export type parser_run_result = {
     sourceLength: number;
-    functionSpans: FunctionSpanInput[];
-    counters: { tokenCount: number; astCount: number; tokenOverflow: boolean; astOverflow: boolean };
-    tokens: TokenRecord[];
-    astNodes: AstNodeRecord[];
-    astByFunction: AstNodeRecord[][];
+    function_spans: function_span_input[];
+    counters: { token_count: number; ast_count: number; tokenOverflow: boolean; astOverflow: boolean };
+    tokens: token_record[];
+    ast_nodes: ast_node_record[];
+    ast_by_function: ast_node_record[][];
 };
 
-function divUp(a: number, b: number): number {
+function div_up(a: number, b: number): number {
     return Math.ceil(a / b);
 }
 
-function toU32Words(bytes: Uint8Array): Uint32Array {
+function to_u32_words(bytes: Uint8Array): Uint32Array {
     const words = new Uint32Array(Math.ceil(bytes.length / BYTES_PER_U32));
     for (let i = 0; i < bytes.length; i++) {
         const prev = words[i >>> 2] ?? 0;
@@ -267,7 +267,7 @@ function toU32Words(bytes: Uint8Array): Uint32Array {
     return words;
 }
 
-export class GPUParser {
+export class gpu_parser {
     private readonly device: GPUDevice;
     private readonly maxSourceBytes: number;
     private readonly maxFunctions: number;
@@ -301,20 +301,20 @@ export class GPUParser {
         this.maxTokensPerFunction = opts?.maxTokensPerFunction ?? 1024;
         this.maxAstPerFunction = opts?.maxAstPerFunction ?? 1024;
 
-        const sourceWords = Math.ceil(this.maxSourceBytes / BYTES_PER_U32);
-        const tokenCap = this.maxFunctions * this.maxTokensPerFunction;
-        const astCap = this.maxFunctions * this.maxAstPerFunction;
+        const source_words = Math.ceil(this.maxSourceBytes / BYTES_PER_U32);
+        const token_cap = this.maxFunctions * this.maxTokensPerFunction;
+        const ast_cap = this.maxFunctions * this.maxAstPerFunction;
 
         this.limitsBuffer = device.createBuffer({ size: 5 * 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        this.ingestUploadBuffer = device.createBuffer({ size: sourceWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-        this.sourceBuffer = device.createBuffer({ size: sourceWords * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        this.ingestUploadBuffer = device.createBuffer({ size: source_words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        this.sourceBuffer = device.createBuffer({ size: source_words * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.functionSpanBuffer = device.createBuffer({ size: this.maxFunctions * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-        this.tokenBuffer = device.createBuffer({ size: tokenCap * TOKEN_RECORD_U32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-        this.astBuffer = device.createBuffer({ size: astCap * AST_RECORD_U32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+        this.tokenBuffer = device.createBuffer({ size: token_cap * TOKEN_RECORD_U32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+        this.astBuffer = device.createBuffer({ size: ast_cap * AST_RECORD_U32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
         this.counterBuffer = device.createBuffer({ size: COUNTER_U32 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
 
-        this.tokenReadback = device.createBuffer({ size: tokenCap * TOKEN_RECORD_U32 * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-        this.astReadback = device.createBuffer({ size: astCap * AST_RECORD_U32 * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        this.tokenReadback = device.createBuffer({ size: token_cap * TOKEN_RECORD_U32 * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        this.astReadback = device.createBuffer({ size: ast_cap * AST_RECORD_U32 * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
         this.counterReadback = device.createBuffer({ size: COUNTER_U32 * 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
 
         this.ingestPipeline = device.createComputePipeline({
@@ -361,29 +361,29 @@ export class GPUParser {
         });
     }
 
-    async run(source: string, functionSpans: FunctionSpanInput[]): Promise<ParserRunResult> {
-        const encoderUtf8 = new TextEncoder();
-        const sourceBytes = encoderUtf8.encode(source);
-        const clampedSource = sourceBytes.subarray(0, this.maxSourceBytes);
-        const spans = functionSpans.slice(0, this.maxFunctions).map((span) => ({
-            start: Math.min(span.start, clampedSource.length),
-            end: Math.min(Math.max(span.end, span.start), clampedSource.length),
+    async run(source: string, function_spans: function_span_input[]): Promise<parser_run_result> {
+        const encoder_utf8 = new TextEncoder();
+        const source_bytes = encoder_utf8.encode(source);
+        const clamped_source = source_bytes.subarray(0, this.maxSourceBytes);
+        const spans = function_spans.slice(0, this.maxFunctions).map((span) => ({
+            start: Math.min(span.start, clamped_source.length),
+            end: Math.min(Math.max(span.end, span.start), clamped_source.length),
         }));
 
-        const sourceWords = toU32Words(clampedSource);
-        const spanArray = new Uint32Array(this.maxFunctions * 2);
+        const source_words = to_u32_words(clamped_source);
+        const span_array = new Uint32Array(this.maxFunctions * 2);
         for (let i = 0; i < spans.length; i++) {
             const span = spans[i]!;
-            spanArray[i * 2 + 0] = span.start;
-            spanArray[i * 2 + 1] = span.end;
+            span_array[i * 2 + 0] = span.start;
+            span_array[i * 2 + 1] = span.end;
         }
 
-        this.device.queue.writeBuffer(this.ingestUploadBuffer, 0, sourceWords.buffer.slice(sourceWords.byteOffset, sourceWords.byteOffset + sourceWords.byteLength));
-        this.device.queue.writeBuffer(this.functionSpanBuffer, 0, spanArray);
+        this.device.queue.writeBuffer(this.ingestUploadBuffer, 0, source_words.buffer.slice(source_words.byteOffset, source_words.byteOffset + source_words.byteLength));
+        this.device.queue.writeBuffer(this.functionSpanBuffer, 0, span_array);
         this.device.queue.writeBuffer(this.counterBuffer, 0, new Uint32Array(COUNTER_U32));
         this.device.queue.writeBuffer(this.limitsBuffer, 0, new Uint32Array([
-            sourceWords.length,
-            clampedSource.length,
+            source_words.length,
+            clamped_source.length,
             spans.length,
             this.maxTokensPerFunction,
             this.maxAstPerFunction,
@@ -394,21 +394,21 @@ export class GPUParser {
             const pass = encoder.beginComputePass({ label: 'source-ingestion' });
             pass.setPipeline(this.ingestPipeline);
             pass.setBindGroup(0, this.ingestBG);
-            pass.dispatchWorkgroups(Math.max(1, divUp(sourceWords.length, 64)));
+            pass.dispatchWorkgroups(Math.max(1, div_up(source_words.length, 64)));
             pass.end();
         }
         {
             const pass = encoder.beginComputePass({ label: 'tokenization' });
             pass.setPipeline(this.tokenizePipeline);
             pass.setBindGroup(0, this.tokenizeBG);
-            pass.dispatchWorkgroups(Math.max(1, divUp(spans.length, 64)));
+            pass.dispatchWorkgroups(Math.max(1, div_up(spans.length, 64)));
             pass.end();
         }
         {
             const pass = encoder.beginComputePass({ label: 'parse-ast' });
             pass.setPipeline(this.parsePipeline);
             pass.setBindGroup(0, this.parseBG);
-            pass.dispatchWorkgroups(Math.max(1, divUp(spans.length, 64)));
+            pass.dispatchWorkgroups(Math.max(1, div_up(spans.length, 64)));
             pass.end();
         }
 
@@ -424,11 +424,11 @@ export class GPUParser {
             this.readMappedU32(this.astReadback),
         ]);
 
-        const tokenCount = Math.min(counterData[0] ?? 0, this.maxFunctions * this.maxTokensPerFunction);
-        const astCount = Math.min(counterData[1] ?? 0, this.maxFunctions * this.maxAstPerFunction);
+        const token_count = Math.min(counterData[0] ?? 0, this.maxFunctions * this.maxTokensPerFunction);
+        const ast_count = Math.min(counterData[1] ?? 0, this.maxFunctions * this.maxAstPerFunction);
 
-        const tokens: TokenRecord[] = [];
-        for (let i = 0; i < tokenCount; i++) {
+        const tokens: token_record[] = [];
+        for (let i = 0; i < token_count; i++) {
             const base = i * TOKEN_RECORD_U32;
             tokens.push({
                 functionId: tokenData[base + 0] ?? 0,
@@ -440,58 +440,58 @@ export class GPUParser {
             });
         }
 
-        const astNodes: AstNodeRecord[] = [];
-        for (let i = 0; i < astCount; i++) {
+        const ast_nodes: ast_node_record[] = [];
+        for (let i = 0; i < ast_count; i++) {
             const base = i * AST_RECORD_U32;
-            astNodes.push({
+            ast_nodes.push({
                 functionId: astData[base + 0] ?? 0,
                 tokenStart: astData[base + 1] ?? 0,
-                tokenCount: astData[base + 2] ?? 0,
+                token_count: astData[base + 2] ?? 0,
                 kind: astData[base + 3] ?? 0,
                 payload0: astData[base + 4] ?? 0,
                 payload1: astData[base + 5] ?? 0,
             });
         }
 
-        const astByFunction = Array.from({ length: spans.length }, () => [] as AstNodeRecord[]);
-        for (const node of astNodes) {
-            if (node.functionId >= astByFunction.length) continue;
-            const bucket = astByFunction[node.functionId];
+        const ast_by_function = Array.from({ length: spans.length }, () => [] as ast_node_record[]);
+        for (const node of ast_nodes) {
+            if (node.functionId >= ast_by_function.length) continue;
+            const bucket = ast_by_function[node.functionId];
             if (bucket) bucket.push(node);
         }
 
         return {
-            sourceLength: clampedSource.length,
-            functionSpans: spans,
+            sourceLength: clamped_source.length,
+            function_spans: spans,
             counters: {
-                tokenCount,
-                astCount,
+                token_count,
+                ast_count,
                 tokenOverflow: (counterData[2] ?? 0) !== 0,
                 astOverflow: (counterData[3] ?? 0) !== 0,
             },
             tokens,
-            astNodes,
-            astByFunction,
+            ast_nodes,
+            ast_by_function,
         };
     }
 
 
-    async parse_normalized_ast(source: string, functionSpans: FunctionSpanInput[]): Promise<NormalizedGpuAstResult> {
-        const run = await this.run(source, functionSpans);
+    async parse_normalized_ast(source: string, function_spans: function_span_input[]): Promise<normalized_gpu_ast_result> {
+        const run = await this.run(source, function_spans);
         return {
             run,
-            astByFunction: this.normalize_ast_by_function(source, run.astByFunction),
+            ast_by_function: this.normalize_ast_by_function(source, run.ast_by_function),
         };
     }
 
-    private normalize_ast_by_function(source: string, astByFunction: AstNodeRecord[][]): NormalizedGpuNode[][] {
-        return astByFunction.map((nodes) => {
-            const sorted = [...nodes].sort((a, b) => a.tokenStart - b.tokenStart || a.kind - b.kind || a.tokenCount - b.tokenCount);
+    private normalize_ast_by_function(source: string, ast_by_function: ast_node_record[][]): normalized_gpu_node[][] {
+        return ast_by_function.map((nodes) => {
+            const sorted = [...nodes].sort((a, b) => a.tokenStart - b.tokenStart || a.kind - b.kind || a.token_count - b.token_count);
             return sorted.map((node) => {
-                const tokenText = source.slice(node.tokenStart, node.tokenStart + node.tokenCount);
-                if (node.kind === 1) return { kind: 'Identifier', payload: { name: tokenText } };
-                if (node.kind === 2) return { kind: 'Literal', payload: { literalType: 'int', value: tokenText } };
-                return { kind: 'Symbol', payload: { token: tokenText } };
+                const token_text = source.slice(node.tokenStart, node.tokenStart + node.token_count);
+                if (node.kind === 1) return { kind: 'Identifier', payload: { name: token_text } };
+                if (node.kind === 2) return { kind: 'Literal', payload: { literalType: 'int', value: token_text } };
+                return { kind: 'Symbol', payload: { token: token_text } };
             });
         });
     }

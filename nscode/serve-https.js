@@ -25,10 +25,10 @@ const server = https.createServer({
   key:  fs.readFileSync(path.join(__dirname, 'dev-key.pem')),
   cert: fs.readFileSync(path.join(__dirname, 'dev-cert.pem')),
 }, (req, res) => {
-  let urlPath = req.url.split('?')[0];
-  if (urlPath === '/') urlPath = '/index.html';
+  let url_path = req.url.split('?')[0];
+  if (url_path === '/') url_path = '/index.html';
 
-  const file = path.join(__dirname, urlPath);
+  const file = path.join(__dirname, url_path);
 
   // Prevent path traversal
   if (!file.startsWith(__dirname)) {

@@ -4,35 +4,35 @@
 const RECT_FLOATS = 6;   // x,y, r,g,b,a  per vertex × 6 verts/rect
 const TEXT_FLOATS = 8;   // x,y, u,v, r,g,b,a  per vertex × 6 verts/glyph
 
-export type Rgba = readonly [number, number, number, number];
-export type Point2 = readonly [number, number];
+export type rgba = readonly [number, number, number, number];
+export type point2 = readonly [number, number];
 
-export interface GlyphInfo {
+export interface glyph_info {
     u0: number; v0: number; u1: number; v1: number;
     xoff: number; yoff: number;
     w: number; h: number;
 }
 
-export interface FontAtlas {
+export interface font_atlas {
     glyph_w:  number;
     glyph_h:  number;
     atlasW:   number;
     atlasH:   number;
     texture:  GPUTexture;
     sampler:  GPUSampler;
-    get_glyph(ch: string): GlyphInfo | undefined;
+    get_glyph(ch: string): glyph_info | undefined;
 }
 
-export type DrawCmd =
+export type draw_cmd =
     | { type: 'scissor'; x: number; y: number; w: number; h: number }
     | { type: 'draw';    rbase: number; rcnt: number; tbase: number; tcnt: number };
 
-export class DrawList {
+export class draw_list {
     private _rects: Float32Array;
     private _texts: Float32Array;
     private _rcnt  = 0;
     private _tcnt  = 0;
-    private _cmds:  DrawCmd[] = [];
+    private _cmds:  draw_cmd[] = [];
     private _rbase = 0;
     private _tbase = 0;
 
@@ -88,7 +88,7 @@ export class DrawList {
         this._tcnt += 6;
     }
 
-    text(str: string, x: number, y: number, font: FontAtlas, r: number, g: number, b: number, a = 1): number {
+    text(str: string, x: number, y: number, font: font_atlas, r: number, g: number, b: number, a = 1): number {
         let cx = x;
         for (let i = 0; i < str.length; i++) {
             const gi = font.get_glyph(str[i]!);
@@ -101,7 +101,7 @@ export class DrawList {
         return cx;
     }
 
-    text_clipped(str: string, x: number, y: number, max_w: number, font: FontAtlas,
+    text_clipped(str: string, x: number, y: number, max_w: number, font: font_atlas,
                  r: number, g: number, b: number, a = 1): number {
         let cx = x;
         const xmax = x + max_w;
@@ -118,7 +118,7 @@ export class DrawList {
     }
 
     /** Fill a convex polygon. pts = [[x,y], …] (≥ 3 points). Fan-triangulated from pts[0]. */
-    fill_convex_poly(pts: readonly Point2[], r: number, g: number, b: number, a = 1): void {
+    fill_convex_poly(pts: readonly point2[], r: number, g: number, b: number, a = 1): void {
         const n = pts.length;
         if (n < 3) return;
         const tris = n - 2;
@@ -165,5 +165,5 @@ export class DrawList {
 
     get rect_data(): Float32Array { return this._rects.subarray(0, this._rcnt * RECT_FLOATS); }
     get text_data(): Float32Array { return this._texts.subarray(0, this._tcnt * TEXT_FLOATS); }
-    get commands(): readonly DrawCmd[] { return this._cmds; }
+    get commands(): readonly draw_cmd[] { return this._cmds; }
 }
