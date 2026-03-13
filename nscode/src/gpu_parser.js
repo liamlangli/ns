@@ -337,6 +337,26 @@ export class GPUParser {
         };
     }
 
+    async parse_normalized_ast(source, functionSpans) {
+        const run = await this.run(source, functionSpans);
+        return {
+            run,
+            astByFunction: this.normalize_ast_by_function(source, run.astByFunction),
+        };
+    }
+
+    normalize_ast_by_function(source, astByFunction) {
+        return astByFunction.map((nodes) => {
+            const sorted = [...nodes].sort((a, b) => a.tokenStart - b.tokenStart || a.kind - b.kind || a.tokenCount - b.tokenCount);
+            return sorted.map((node) => {
+                const tokenText = source.slice(node.tokenStart, node.tokenStart + node.tokenCount);
+                if (node.kind === 1) return { kind: 'Identifier', payload: { name: tokenText } };
+                if (node.kind === 2) return { kind: 'Literal', payload: { literalType: 'int', value: tokenText } };
+                return { kind: 'Symbol', payload: { token: tokenText } };
+            });
+        });
+    }
+
     async readMappedU32(buffer) {
         await buffer.mapAsync(GPUMapMode.READ);
         const copy = new Uint32Array(buffer.getMappedRange().slice(0));

@@ -6,10 +6,12 @@ import { NSInterpreter }        from './interpreter.js';
 import { load_msdf_font }       from './font.js';
 import { GPU }                  from './gpu.js';
 import { GPUParser }            from './gpu_parser.js';
+import { compare_normalized_asts, normalize_cpu_ast_by_function } from './parser_validation.js';
 import { UI, C }                from './ui.js';
 import { fuzzy_filter, Keymap, event_key_id } from './commands.js';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
+const DEBUG_GPU_PARSE_VALIDATION = globalThis.localStorage?.getItem('ns.debugGpuParseValidation') === '1';
 const TOOLBAR_H        = 32;
 const STATUS_H         = 20;
 const TREE_HEADER_H    = 28;
@@ -217,19 +219,32 @@ async function main() {
     await gpu.init(device, atlas);
 
     // Compute-only parser pipeline is initialized separately from rendering.
-    const compile_gpu = new GPUParser(device);
-    const boot_source = EXAMPLES.fib;
-    const boot_spans = extract_function_spans(boot_source);
-    compile_gpu.run(boot_source, boot_spans)
-        .then((result) => {
-            console.debug('[GPU parser] startup parse', {
-                functions: result.functionSpans.length,
-                tokens: result.counters.tokenCount,
-                ast: result.counters.astCount,
-                overflows: [result.counters.tokenOverflow, result.counters.astOverflow],
+    let compile_gpu = null;
+    let gpu_parser_ready = false;
+    try {
+        compile_gpu = new GPUParser(device);
+        const boot_source = EXAMPLES.fib;
+        const boot_spans = extract_function_spans(boot_source);
+        compile_gpu.run(boot_source, boot_spans)
+            .then((result) => {
+                gpu_parser_ready = true;
+                console.debug('[GPU parser] startup parse', {
+                    functions: result.functionSpans.length,
+                    tokens: result.counters.tokenCount,
+                    ast: result.counters.astCount,
+                    overflows: [result.counters.tokenOverflow, result.counters.astOverflow],
+                });
+            })
+            .catch((err) => {
+                gpu_parser_ready = false;
+                compile_gpu = null;
+                console.warn('[GPU parser] startup parse failed', err);
             });
-        })
-        .catch((err) => console.warn('[GPU parser] startup parse failed', err));
+    } catch (err) {
+        compile_gpu = null;
+        gpu_parser_ready = false;
+        console.warn('[GPU parser] init failed, CPU parser fallback remains active', err);
+    }
 
     const ui = new UI();
     ui.set_font(atlas);
@@ -336,9 +351,35 @@ async function main() {
             print: v => out_lines.push({ text: String(v), cls: 'print' }),
             error: v => out_lines.push({ text: String(v), cls: 'error' }),
         });
+        const source = buf.get_text();
+        if (DEBUG_GPU_PARSE_VALIDATION) {
+            const spans = extract_function_spans(source);
+            try {
+                const cpuNormalized = normalize_cpu_ast_by_function(source, spans);
+                if (!compile_gpu || !gpu_parser_ready) {
+                    out_lines.push({ text: '[Parser Validation] GPU unavailable; using CPU parser fallback.', cls: 'info' });
+                } else {
+                    const gpuNormalizedResult = await compile_gpu.parse_normalized_ast(source, spans);
+                    if (gpuNormalizedResult.run.counters.tokenOverflow || gpuNormalizedResult.run.counters.astOverflow) {
+                        out_lines.push({ text: '[Parser Validation] GPU overflow flag raised; using CPU parser fallback.', cls: 'error' });
+                    } else {
+                        const cmp = compare_normalized_asts(cpuNormalized, gpuNormalizedResult.astByFunction.map((nodes, functionIndex) => ({ functionIndex, nodes })));
+                        if (cmp.ok) {
+                            out_lines.push({ text: `[Parser Validation] PASS (${spans.length} functions)`, cls: 'info' });
+                        } else if (cmp.mismatch) {
+                            const m = cmp.mismatch;
+                            out_lines.push({ text: `[Parser Validation] FAIL at function=${m.functionIndex} path=${m.path}: ${m.reason}`, cls: 'error' });
+                            out_lines.push({ text: `[Parser Validation] expected=${JSON.stringify(m.expected)} actual=${JSON.stringify(m.actual)}`, cls: 'error' });
+                        }
+                    }
+                }
+            } catch (e) {
+                out_lines.push({ text: `[Parser Validation] ERROR: ${e.message ?? String(e)} (CPU fallback in effect)`, cls: 'error' });
+            }
+        }
         const t0 = performance.now();
         let ok = true;
-        try { interp.run(buf.get_text()); }
+        try { interp.run(source); }
         catch (e) { ok = false; out_lines.push({ text: e.message ?? String(e), cls: 'error' }); }
         const ms = performance.now() - t0;
         out_lines.push({ text: '\u2500'.repeat(36), cls: 'sep' });

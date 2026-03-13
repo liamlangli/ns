@@ -233,6 +233,17 @@ export type AstNodeRecord = {
     payload1: number;
 };
 
+
+export type NormalizedGpuNode = {
+    kind: string;
+    payload: Record<string, unknown>;
+};
+
+export type NormalizedGpuAstResult = {
+    run: ParserRunResult;
+    astByFunction: NormalizedGpuNode[][];
+};
+
 export type ParserRunResult = {
     sourceLength: number;
     functionSpans: FunctionSpanInput[];
@@ -462,6 +473,27 @@ export class GPUParser {
             astNodes,
             astByFunction,
         };
+    }
+
+
+    async parse_normalized_ast(source: string, functionSpans: FunctionSpanInput[]): Promise<NormalizedGpuAstResult> {
+        const run = await this.run(source, functionSpans);
+        return {
+            run,
+            astByFunction: this.normalize_ast_by_function(source, run.astByFunction),
+        };
+    }
+
+    private normalize_ast_by_function(source: string, astByFunction: AstNodeRecord[][]): NormalizedGpuNode[][] {
+        return astByFunction.map((nodes) => {
+            const sorted = [...nodes].sort((a, b) => a.tokenStart - b.tokenStart || a.kind - b.kind || a.tokenCount - b.tokenCount);
+            return sorted.map((node) => {
+                const tokenText = source.slice(node.tokenStart, node.tokenStart + node.tokenCount);
+                if (node.kind === 1) return { kind: 'Identifier', payload: { name: tokenText } };
+                if (node.kind === 2) return { kind: 'Literal', payload: { literalType: 'int', value: tokenText } };
+                return { kind: 'Symbol', payload: { token: tokenText } };
+            });
+        });
     }
 
     private async readMappedU32(buffer: GPUBuffer): Promise<Uint32Array> {

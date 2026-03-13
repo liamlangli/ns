@@ -618,6 +618,12 @@ class Env {
 const MAX_CALLS  = 100000;
 const MAX_ITERS  = 1000000;
 
+export function parse_to_ast(source) {
+    const tokens = lex(source);
+    const parser = new Parser(tokens);
+    return parser.parse_program();
+}
+
 export class NSInterpreter {
     constructor({ print = console.log, error = console.error } = {}) {
         this.print      = print;
