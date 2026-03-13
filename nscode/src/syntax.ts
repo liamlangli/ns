@@ -11,6 +11,8 @@ export const TT = {
     PUNCTUATION: 7,
     WHITESPACE:  8,
     UNKNOWN:     9,
+    FUNC_DEF:    10,
+    FUNC_CALL:   11,
 } as const;
 
 export type TokenType = typeof TT[keyof typeof TT];
@@ -32,6 +34,8 @@ export const TOKEN_COLOR: readonly [number, number, number, number][] = [
     [0.70, 0.70, 0.70, 1.0],  // PUNCTUATION— light gray
     [0.00, 0.00, 0.00, 0.0],  // WHITESPACE — transparent
     [0.92, 0.92, 0.92, 1.0],  // UNKNOWN    — white
+    [0.86, 0.86, 0.67, 1.0],  // FUNC_DEF   — golden yellow
+    [0.67, 0.86, 0.86, 1.0],  // FUNC_CALL  — light cyan
 ];
 
 // ---------- WASM token-type → JS TT mapping ---------------------------------
@@ -223,10 +227,57 @@ function _js_tokenize_line(line: string): Token[] {
     return tokens;
 }
 
+// ---------- function-name classifier ----------------------------------------
+
+/**
+ * Post-processing pass: reclassifies IDENTIFIER tokens as FUNC_DEF or FUNC_CALL.
+ * - FUNC_DEF: identifier immediately after the `fn` keyword
+ * - FUNC_CALL: identifier followed by `(`
+ */
+function _classify_functions(tokens: Token[]): Token[] {
+    const result = tokens.slice();
+    const n = result.length;
+
+    const prev_real = (i: number): number => {
+        for (let j = i - 1; j >= 0; j--) {
+            if (result[j]!.type !== TT.WHITESPACE) return j;
+        }
+        return -1;
+    };
+
+    const next_real = (i: number): number => {
+        for (let j = i + 1; j < n; j++) {
+            if (result[j]!.type !== TT.WHITESPACE) return j;
+        }
+        return -1;
+    };
+
+    for (let i = 0; i < n; i++) {
+        const tok = result[i]!;
+        if (tok.type !== TT.IDENTIFIER) continue;
+
+        const pi = prev_real(i);
+        const ni = next_real(i);
+        const prev_tok = pi >= 0 ? result[pi] : null;
+        const next_tok = ni >= 0 ? result[ni] : null;
+
+        const after_fn     = prev_tok?.type === TT.KEYWORD && prev_tok.text === 'fn';
+        const before_paren = next_tok?.type === TT.PUNCTUATION && next_tok.text === '(';
+
+        if (after_fn) {
+            result[i] = { type: TT.FUNC_DEF, text: tok.text };
+        } else if (before_paren) {
+            result[i] = { type: TT.FUNC_CALL, text: tok.text };
+        }
+    }
+
+    return result;
+}
+
 // ---------- public API -------------------------------------------------------
 
 /** Tokenize one line of NS source. Uses WASM when loaded, JS fallback otherwise. */
 export function tokenize_line(line: string): Token[] {
-    if (_wasm) return _wasm_tokenize_line(line);
-    return _js_tokenize_line(line);
+    const raw = _wasm ? _wasm_tokenize_line(line) : _js_tokenize_line(line);
+    return _classify_functions(raw);
 }

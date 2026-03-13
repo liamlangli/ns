@@ -28,28 +28,32 @@ export const C: Record<string, Rgba> = {
     SEL:        [0.361, 0.561, 0.937, 0.25], // selection highlight
     LINE_NUM:   [0.400, 0.400, 0.450, 1.0],
     // syntax token colours
-    SYN_KW:     [0.482, 0.671, 0.996, 1.0],  // blue  #7ab4ff
-    SYN_TYPE:   [0.529, 0.882, 0.702, 1.0],  // teal  #87e1b3
-    SYN_NUM:    [0.722, 0.886, 0.573, 1.0],  // lime  #b8e292
-    SYN_STR:    [0.914, 0.737, 0.518, 1.0],  // orange #e9bc84
-    SYN_CMT:    [0.420, 0.490, 0.420, 1.0],  // grey-green
-    SYN_PUNCT:  [0.800, 0.800, 0.850, 1.0],
-    SYN_OP:     [0.937, 0.600, 0.600, 1.0],  // pinkish
-    SYN_ID:     [0.878, 0.878, 0.925, 1.0],  // same as TEXT
+    SYN_KW:       [0.482, 0.671, 0.996, 1.0],  // blue  #7ab4ff
+    SYN_TYPE:     [0.529, 0.882, 0.702, 1.0],  // teal  #87e1b3
+    SYN_NUM:      [0.722, 0.886, 0.573, 1.0],  // lime  #b8e292
+    SYN_STR:      [0.914, 0.737, 0.518, 1.0],  // orange #e9bc84
+    SYN_CMT:      [0.420, 0.490, 0.420, 1.0],  // grey-green
+    SYN_PUNCT:    [0.800, 0.800, 0.850, 1.0],
+    SYN_OP:       [0.937, 0.600, 0.600, 1.0],  // pinkish
+    SYN_ID:       [0.878, 0.878, 0.925, 1.0],  // same as TEXT
+    SYN_FUNC_DEF: [0.863, 0.863, 0.667, 1.0],  // golden yellow — function definition name
+    SYN_FUNC_CALL:[0.667, 0.863, 0.863, 1.0],  // light cyan    — function call name
 };
 
-// Map token type (numeric) → color tuple. Order matches TT enum: 0..9
+// Map token type (numeric) → color tuple. Order matches TT enum: 0..11
 const TOK_COLOR: Rgba[] = [
-    C.SYN_KW!,    // 0 KEYWORD
-    C.SYN_TYPE!,  // 1 TYPE
-    C.SYN_NUM!,   // 2 NUMBER
-    C.SYN_STR!,   // 3 STRING
-    C.SYN_CMT!,   // 4 COMMENT
-    C.SYN_OP!,    // 5 OPERATOR
-    C.SYN_ID!,    // 6 IDENTIFIER
-    C.SYN_PUNCT!, // 7 PUNCTUATION
-    C.SYN_ID!,    // 8 WHITESPACE
-    C.SYN_ID!,    // 9 UNKNOWN
+    C.SYN_KW!,        // 0  KEYWORD
+    C.SYN_TYPE!,      // 1  TYPE
+    C.SYN_NUM!,       // 2  NUMBER
+    C.SYN_STR!,       // 3  STRING
+    C.SYN_CMT!,       // 4  COMMENT
+    C.SYN_OP!,        // 5  OPERATOR
+    C.SYN_ID!,        // 6  IDENTIFIER
+    C.SYN_PUNCT!,     // 7  PUNCTUATION
+    C.SYN_ID!,        // 8  WHITESPACE
+    C.SYN_ID!,        // 9  UNKNOWN
+    C.SYN_FUNC_DEF!,  // 10 FUNC_DEF
+    C.SYN_FUNC_CALL!, // 11 FUNC_CALL
 ];
 
 export interface TreeItem  { label: string; value: string; }
