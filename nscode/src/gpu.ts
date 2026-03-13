@@ -1,6 +1,6 @@
 // WebGPU backend: two pipelines (rect + MSDF text), uploads draw list each frame.
 
-import type { DrawList, FontAtlas } from './draw.ts';
+import type { draw_list, font_atlas } from './draw.ts';
 
 const RECT_SHADER = /* wgsl */`
 struct Uni { viewport: vec2f }
@@ -82,7 +82,7 @@ export class GPU {
         this.canvas = canvas;
     }
 
-    async init(device: GPUDevice, font: FontAtlas): Promise<void> {
+    async init(device: GPUDevice, font: font_atlas): Promise<void> {
         this.device = device;
         const dev   = device;
 
@@ -186,7 +186,7 @@ export class GPU {
         this.canvas.style.height = `${h}px`;
     }
 
-    render(dl: DrawList): void {
+    render(dl: draw_list): void {
         const dev = this.device!;
         dl.finalize();
 

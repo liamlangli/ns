@@ -47,15 +47,15 @@ function fmt_key(k) {
         .join('');
 }
 
-// ── Keymap ────────────────────────────────────────────────────────────────────
+// ── keymap ────────────────────────────────────────────────────────────────────
 
 /**
- * Keymap: maps keyboard events to command ids.
+ * keymap: maps keyboard events to command ids.
  * Supports localStorage overrides for customization.
  *
  * defaults: [{ id, label, category, keys: string[] }]
  */
-export class Keymap {
+export class key_map {
     constructor(defaults) {
         this._defaults = defaults;
         this._ov = (() => {

@@ -4,7 +4,7 @@
 const RECT_FLOATS = 6;   // x,y, r,g,b,a  per vertex × 6 verts/rect
 const TEXT_FLOATS = 8;   // x,y, u,v, r,g,b,a  per vertex × 6 verts/glyph
 
-export class DrawList {
+export class draw_list {
     constructor() {
         this._rects = new Float32Array(1024 * RECT_FLOATS * 6);
         this._texts = new Float32Array(1024 * TEXT_FLOATS * 6);

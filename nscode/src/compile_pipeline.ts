@@ -1,16 +1,16 @@
-export interface FunctionSpan {
+export interface function_span {
     byteOffset: number;
-    byteLength: number;
+    byte_length: number;
 }
 
-export interface PreprocessLimits {
+export interface preprocess_limits {
     maxSourceBytes: number;
     maxFunctionBytes: number;
     maxTokensPerFunction: number;
     maxAstNodes: number;
 }
 
-export const DEFAULT_PREPROCESS_LIMITS: PreprocessLimits = {
+export const DEFAULT_PREPROCESS_LIMITS: preprocess_limits = {
     maxSourceBytes: 8 * 1024 * 1024,
     maxFunctionBytes: 512 * 1024,
     maxTokensPerFunction: 16_384,
@@ -24,19 +24,19 @@ export const TOKEN_RECORD_BYTES = TOKEN_RECORD_WORDS * 4;
 export const AST_NODE_RECORD_WORDS = 6;
 export const AST_NODE_RECORD_BYTES = AST_NODE_RECORD_WORDS * 4;
 
-export interface TokenRecord {
+export interface token_record {
     kind: number;
     flags: number;
     byteOffset: number;
-    byteLength: number;
+    byte_length: number;
     nodeIndex: number;
 }
 
-export interface AstNodeRecord {
+export interface ast_node_record {
     kind: number;
     flags: number;
     tokenStart: number;
-    tokenCount: number;
+    token_count: number;
     firstChild: number;
     childCount: number;
 }
@@ -52,7 +52,7 @@ struct FunctionSpanRecord {
     token_count: u32,
 };
 
-struct TokenRecord {
+struct token_record {
     kind: u32,
     flags: u32,
     byte_offset: u32,
@@ -60,7 +60,7 @@ struct TokenRecord {
     node_index: u32,
 };
 
-struct AstNodeRecord {
+struct ast_node_record {
     kind: u32,
     flags: u32,
     token_start: u32,
@@ -94,37 +94,37 @@ const CH = {
     n: 110,
 } as const;
 
-function isIdentStart(ch: number): boolean {
+function is_ident_start(ch: number): boolean {
     return ch === CH.UNDERSCORE ||
         (ch >= CH.A && ch <= CH.Z) ||
         (ch >= CH.a && ch <= CH.z);
 }
 
-function isIdentContinue(ch: number): boolean {
-    return isIdentStart(ch) || (ch >= CH.D0 && ch <= CH.D9);
+function is_ident_continue(ch: number): boolean {
+    return is_ident_start(ch) || (ch >= CH.D0 && ch <= CH.D9);
 }
 
-function assertU32(value: number, field: string): void {
+function assert_u32(value: number, field: string): void {
     if (!Number.isInteger(value) || value < 0 || value > 0xffff_ffff) {
         throw new Error(`${field} must be an unsigned 32-bit integer, got ${value}`);
     }
 }
 
-function matchFnKeyword(bytes: Uint8Array, i: number): boolean {
+function match_fn_keyword(bytes: Uint8Array, i: number): boolean {
     if (i + 1 >= bytes.length) return false;
     if (bytes[i] !== CH.f || bytes[i + 1] !== CH.n) return false;
 
     const prev = i > 0 ? bytes[i - 1]! : 0;
     const next = i + 2 < bytes.length ? bytes[i + 2]! : 0;
-    const prevOk = i === 0 || !isIdentContinue(prev);
-    const nextOk = i + 2 >= bytes.length || !isIdentContinue(next);
-    return prevOk && nextOk;
+    const prev_ok = i === 0 || !is_ident_continue(prev);
+    const next_ok = i + 2 >= bytes.length || !is_ident_continue(next);
+    return prev_ok && next_ok;
 }
 
-function findFunctionEnd(bytes: Uint8Array, fnOffset: number): number {
+function find_function_end(bytes: Uint8Array, fnOffset: number): number {
     let i = fnOffset + 2;
-    let braceDepth = 0;
-    let seenBodyBrace = false;
+    let brace_depth = 0;
+    let seen_body_brace = false;
 
     while (i < bytes.length) {
         const ch = bytes[i]!;
@@ -160,14 +160,14 @@ function findFunctionEnd(bytes: Uint8Array, fnOffset: number): number {
         }
 
         if (ch === CH.LBRACE) {
-            seenBodyBrace = true;
-            braceDepth++;
+            seen_body_brace = true;
+            brace_depth++;
         } else if (ch === CH.RBRACE) {
-            if (!seenBodyBrace) {
+            if (!seen_body_brace) {
                 throw new Error(`Invalid function starting at byte ${fnOffset}: unmatched '}' before body.`);
             }
-            braceDepth--;
-            if (braceDepth === 0) {
+            brace_depth--;
+            if (brace_depth === 0) {
                 return i + 1;
             }
         }
@@ -178,10 +178,10 @@ function findFunctionEnd(bytes: Uint8Array, fnOffset: number): number {
     throw new Error(`Unterminated function starting at byte ${fnOffset}.`);
 }
 
-function scanTopLevelFunctions(bytes: Uint8Array, limits: PreprocessLimits): FunctionSpan[] {
-    const spans: FunctionSpan[] = [];
+function scan_top_level_functions(bytes: Uint8Array, limits: preprocess_limits): function_span[] {
+    const spans: function_span[] = [];
     let i = 0;
-    let topLevelBraceDepth = 0;
+    let top_level_brace_depth = 0;
 
     while (i < bytes.length) {
         const ch = bytes[i]!;
@@ -217,23 +217,23 @@ function scanTopLevelFunctions(bytes: Uint8Array, limits: PreprocessLimits): Fun
         }
 
         if (ch === CH.LBRACE) {
-            topLevelBraceDepth++;
+            top_level_brace_depth++;
             i++;
             continue;
         }
         if (ch === CH.RBRACE) {
-            topLevelBraceDepth = Math.max(0, topLevelBraceDepth - 1);
+            top_level_brace_depth = Math.max(0, top_level_brace_depth - 1);
             i++;
             continue;
         }
 
-        if (topLevelBraceDepth === 0 && matchFnKeyword(bytes, i)) {
-            const end = findFunctionEnd(bytes, i);
-            const byteLength = end - i;
-            if (byteLength > limits.maxFunctionBytes) {
-                throw new Error(`Function at byte ${i} exceeds maxFunctionBytes (${byteLength} > ${limits.maxFunctionBytes}).`);
+        if (top_level_brace_depth === 0 && match_fn_keyword(bytes, i)) {
+            const end = find_function_end(bytes, i);
+            const byte_length = end - i;
+            if (byte_length > limits.maxFunctionBytes) {
+                throw new Error(`Function at byte ${i} exceeds maxFunctionBytes (${byte_length} > ${limits.maxFunctionBytes}).`);
             }
-            spans.push({ byteOffset: i, byteLength });
+            spans.push({ byteOffset: i, byte_length });
             i = end;
             continue;
         }
@@ -244,89 +244,89 @@ function scanTopLevelFunctions(bytes: Uint8Array, limits: PreprocessLimits): Fun
     return spans;
 }
 
-export interface PreprocessResult {
-    sourceBytes: Uint8Array;
-    functionSpans: FunctionSpan[];
-    functionSpanTable: Uint32Array;
-    limits: PreprocessLimits;
+export interface preprocess_result {
+    source_bytes: Uint8Array;
+    function_spans: function_span[];
+    function_span_table: Uint32Array;
+    limits: preprocess_limits;
 }
 
-export function preprocessSourceForGpu(source: string, customLimits: Partial<PreprocessLimits> = {}): PreprocessResult {
+export function preprocess_source_for_gpu(source: string, customLimits: Partial<preprocess_limits> = {}): preprocess_result {
     const limits = { ...DEFAULT_PREPROCESS_LIMITS, ...customLimits };
-    const sourceBytes = UTF8.encode(source);
+    const source_bytes = UTF8.encode(source);
 
-    if (sourceBytes.length > limits.maxSourceBytes) {
-        throw new Error(`Source exceeds maxSourceBytes (${sourceBytes.length} > ${limits.maxSourceBytes}).`);
+    if (source_bytes.length > limits.maxSourceBytes) {
+        throw new Error(`Source exceeds maxSourceBytes (${source_bytes.length} > ${limits.maxSourceBytes}).`);
     }
 
-    const functionSpans = scanTopLevelFunctions(sourceBytes, limits);
-    const functionSpanTable = new Uint32Array(functionSpans.length * FUNCTION_SPAN_RECORD_WORDS);
+    const function_spans = scan_top_level_functions(source_bytes, limits);
+    const function_span_table = new Uint32Array(function_spans.length * FUNCTION_SPAN_RECORD_WORDS);
 
-    for (let i = 0; i < functionSpans.length; i++) {
-        const span = functionSpans[i]!;
+    for (let i = 0; i < function_spans.length; i++) {
+        const span = function_spans[i]!;
         const base = i * FUNCTION_SPAN_RECORD_WORDS;
-        assertU32(span.byteOffset, 'function span byteOffset');
-        assertU32(span.byteLength, 'function span byteLength');
-        functionSpanTable[base] = span.byteOffset;
-        functionSpanTable[base + 1] = span.byteLength;
-        functionSpanTable[base + 2] = 0;
-        functionSpanTable[base + 3] = 0;
+        assert_u32(span.byteOffset, 'function span byteOffset');
+        assert_u32(span.byte_length, 'function span byte_length');
+        function_span_table[base] = span.byteOffset;
+        function_span_table[base + 1] = span.byte_length;
+        function_span_table[base + 2] = 0;
+        function_span_table[base + 3] = 0;
     }
 
     return {
-        sourceBytes,
-        functionSpans,
-        functionSpanTable,
+        source_bytes,
+        function_spans,
+        function_span_table,
         limits,
     };
 }
 
-export function ensureTokenCountWithinLimit(tokenCount: number, limits: PreprocessLimits = DEFAULT_PREPROCESS_LIMITS): void {
-    if (tokenCount > limits.maxTokensPerFunction) {
-        throw new Error(`Function token count exceeds maxTokensPerFunction (${tokenCount} > ${limits.maxTokensPerFunction}).`);
+export function ensure_token_count_within_limit(token_count: number, limits: preprocess_limits = DEFAULT_PREPROCESS_LIMITS): void {
+    if (token_count > limits.maxTokensPerFunction) {
+        throw new Error(`Function token count exceeds maxTokensPerFunction (${token_count} > ${limits.maxTokensPerFunction}).`);
     }
 }
 
-export function ensureAstNodeCountWithinLimit(nodeCount: number, limits: PreprocessLimits = DEFAULT_PREPROCESS_LIMITS): void {
-    if (nodeCount > limits.maxAstNodes) {
-        throw new Error(`AST node count exceeds maxAstNodes (${nodeCount} > ${limits.maxAstNodes}).`);
+export function ensure_ast_node_count_within_limit(node_count: number, limits: preprocess_limits = DEFAULT_PREPROCESS_LIMITS): void {
+    if (node_count > limits.maxAstNodes) {
+        throw new Error(`AST node count exceeds maxAstNodes (${node_count} > ${limits.maxAstNodes}).`);
     }
 }
 
-export function packTokenRecords(records: readonly TokenRecord[]): Uint32Array {
+export function pack_token_records(records: readonly token_record[]): Uint32Array {
     const out = new Uint32Array(records.length * TOKEN_RECORD_WORDS);
     for (let i = 0; i < records.length; i++) {
         const r = records[i]!;
         const base = i * TOKEN_RECORD_WORDS;
-        assertU32(r.kind, 'token.kind');
-        assertU32(r.flags, 'token.flags');
-        assertU32(r.byteOffset, 'token.byteOffset');
-        assertU32(r.byteLength, 'token.byteLength');
-        assertU32(r.nodeIndex, 'token.nodeIndex');
+        assert_u32(r.kind, 'token.kind');
+        assert_u32(r.flags, 'token.flags');
+        assert_u32(r.byteOffset, 'token.byteOffset');
+        assert_u32(r.byte_length, 'token.byte_length');
+        assert_u32(r.nodeIndex, 'token.nodeIndex');
         out[base] = r.kind;
         out[base + 1] = r.flags;
         out[base + 2] = r.byteOffset;
-        out[base + 3] = r.byteLength;
+        out[base + 3] = r.byte_length;
         out[base + 4] = r.nodeIndex;
     }
     return out;
 }
 
-export function packAstNodeRecords(records: readonly AstNodeRecord[]): Uint32Array {
+export function pack_ast_node_records(records: readonly ast_node_record[]): Uint32Array {
     const out = new Uint32Array(records.length * AST_NODE_RECORD_WORDS);
     for (let i = 0; i < records.length; i++) {
         const r = records[i]!;
         const base = i * AST_NODE_RECORD_WORDS;
-        assertU32(r.kind, 'node.kind');
-        assertU32(r.flags, 'node.flags');
-        assertU32(r.tokenStart, 'node.tokenStart');
-        assertU32(r.tokenCount, 'node.tokenCount');
-        assertU32(r.firstChild, 'node.firstChild');
-        assertU32(r.childCount, 'node.childCount');
+        assert_u32(r.kind, 'node.kind');
+        assert_u32(r.flags, 'node.flags');
+        assert_u32(r.tokenStart, 'node.tokenStart');
+        assert_u32(r.token_count, 'node.token_count');
+        assert_u32(r.firstChild, 'node.firstChild');
+        assert_u32(r.childCount, 'node.childCount');
         out[base] = r.kind;
         out[base + 1] = r.flags;
         out[base + 2] = r.tokenStart;
-        out[base + 3] = r.tokenCount;
+        out[base + 3] = r.token_count;
         out[base + 4] = r.firstChild;
         out[base + 5] = r.childCount;
     }

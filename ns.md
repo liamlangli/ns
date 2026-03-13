@@ -223,3 +223,14 @@ cd nscode && npm install && npm run dev
 ## 12) One-paragraph summary
 
 This repo is a full Nano Script toolchain: a C-based language core (lexer/parser/type/VM), SSA-based lowering pipeline with multiple emitters (AArch64/Mach-O/PE/WASM), developer tooling (LSP + debug adapter + VS Code extension), runtime/std modules, and a WebGPU browser playground. For most engineering tasks, start at `src/ns.c` + `Makefile`, then jump to front-end (`ns_token`/`ns_ast*`) and execution (`ns_vm_*`) or backend (`ns_ssa` + emitter files) depending on whether the task is language semantics or code generation.
+---
+
+## 12) Naming convention baseline
+
+For the `nscode/` codebase, use **snake_case** consistently for:
+- filenames,
+- variable names, and
+- function names.
+
+When refactoring or adding new code in `nscode/`, prefer snake_case names and avoid introducing new camelCase/PascalCase identifiers unless required by external APIs.
+

@@ -1,6 +1,6 @@
 // NS language tokenizer — backed by ns_token.wasm (falls back to JS if unavailable)
 
-// Token types (JS-side enum)
+// token types (JS-side enum)
 export const TT = {
     KEYWORD:     0,
     TYPE:        1,

@@ -3,17 +3,17 @@
 // Each frame:
 //   ui.begin_frame(mouse_x, mouse_y, mouse_down, vp_w, vp_h)
 //   ... build UI with widget calls ...
-//   ui.end_frame()  → returns DrawList
+//   ui.end_frame()  → returns draw_list
 //
 // Widgets return true when activated (button clicked, etc.)
 //
 // Color palette (all values 0..1):
 
-import { DrawList, type Rgba, type FontAtlas } from './draw.ts';
+import { draw_list, type rgba, type font_atlas } from './draw.ts';
 import { tokenize_line } from './syntax.ts';
-import type { TextBuffer } from './editor.ts';
+import type { text_buffer } from './editor.ts';
 
-export const C: Record<string, Rgba> = {
+export const C: Record<string, rgba> = {
     BG:         [0.118, 0.118, 0.141, 1.0],  // #1e1e24
     SURFACE:    [0.165, 0.165, 0.208, 1.0],  // #2a2a35
     SURFACE2:   [0.200, 0.200, 0.247, 1.0],  // slightly lighter
@@ -41,7 +41,7 @@ export const C: Record<string, Rgba> = {
 };
 
 // Map token type (numeric) → color tuple. Order matches TT enum: 0..11
-const TOK_COLOR: Rgba[] = [
+const TOK_COLOR: rgba[] = [
     C.SYN_KW!,        // 0  KEYWORD
     C.SYN_TYPE!,      // 1  TYPE
     C.SYN_NUM!,       // 2  NUMBER
@@ -56,24 +56,24 @@ const TOK_COLOR: Rgba[] = [
     C.SYN_FUNC_CALL!, // 11 FUNC_CALL
 ];
 
-export interface TreeItem  { label: string; value: string; }
-export interface TreeGroup { label: string; open: boolean; items: TreeItem[]; }
-export interface ClickResult { line: number; col: number; }
+export interface tree_item  { label: string; value: string; }
+export interface tree_group { label: string; open: boolean; items: tree_item[]; }
+export interface click_result { line: number; col: number; }
 
-export interface DragRef {
+export interface drag_ref {
     value:     number;
     start_x:   number;
     start_val: number;
 }
 
-export interface OutputLine {
+export interface output_line {
     text: string;
     cls:  string;
 }
 
 export class UI {
-    private _dl:        DrawList;
-    private _font:      FontAtlas | null;
+    private _dl:        draw_list;
+    private _font:      font_atlas | null;
     private _vp_w:      number;
     private _vp_h:      number;
 
@@ -93,7 +93,7 @@ export class UI {
     private _scroll_orig:   number;
 
     constructor() {
-        this._dl        = new DrawList();
+        this._dl        = new draw_list();
         this._font      = null;
         this._vp_w      = 0;
         this._vp_h      = 0;
@@ -111,7 +111,7 @@ export class UI {
         this._scroll_orig   = 0;
     }
 
-    set_font(font: FontAtlas): void { this._font = font; }
+    set_font(font: font_atlas): void { this._font = font; }
 
     begin_frame(mx: number, my: number, down: boolean, just_down: boolean, just_up: boolean, vp_w: number, vp_h: number): void {
         this._mx = mx; this._my = my;
@@ -121,16 +121,16 @@ export class UI {
         this._hot_id = '';
     }
 
-    end_frame(): DrawList {
+    end_frame(): draw_list {
         this._dl.finalize();
         return this._dl;
     }
 
-    get font(): FontAtlas | null { return this._font; }
-    get dl(): DrawList   { return this._dl; }
+    get font(): font_atlas | null { return this._font; }
+    get dl(): draw_list   { return this._dl; }
 
     // ── Primitives ────────────────────────────────────────────────────────────
-    draw_rect(x: number, y: number, w: number, h: number, c: Rgba): void {
+    draw_rect(x: number, y: number, w: number, h: number, c: rgba): void {
         this._dl.rect(x, y, w, h, c[0], c[1], c[2], c[3] ?? 1);
     }
 
@@ -138,7 +138,7 @@ export class UI {
      * Filled triangle. dir: 'right' (▶) or 'down' (▾).
      * cx/cy = centre, size = half-extent in pixels.
      */
-    draw_triangle(cx: number, cy: number, size: number, dir: string, c: Rgba): void {
+    draw_triangle(cx: number, cy: number, size: number, dir: string, c: rgba): void {
         const [r, g, b, a] = [c[0], c[1], c[2], c[3] ?? 1];
         const pts: readonly [number, number][] = dir === 'down'
             ? [ [cx - size, cy - size * 0.55],
@@ -150,18 +150,18 @@ export class UI {
         this._dl.fill_convex_poly(pts, r, g, b, a);
     }
 
-    draw_border(x: number, y: number, w: number, h: number, c: Rgba, t = 1): void {
+    draw_border(x: number, y: number, w: number, h: number, c: rgba, t = 1): void {
         this._dl.rect(x,     y,     w, t, c[0], c[1], c[2], c[3] ?? 1);
         this._dl.rect(x,     y+h-t, w, t, c[0], c[1], c[2], c[3] ?? 1);
         this._dl.rect(x,     y,     t, h, c[0], c[1], c[2], c[3] ?? 1);
         this._dl.rect(x+w-t, y,     t, h, c[0], c[1], c[2], c[3] ?? 1);
     }
 
-    draw_text(str: string, x: number, y: number, c: Rgba): void {
+    draw_text(str: string, x: number, y: number, c: rgba): void {
         this._dl.text(str, x, y, this._font!, c[0], c[1], c[2], c[3] ?? 1);
     }
 
-    draw_text_clipped(str: string, x: number, y: number, max_w: number, c: Rgba): void {
+    draw_text_clipped(str: string, x: number, y: number, max_w: number, c: rgba): void {
         this._dl.text_clipped(str, x, y, max_w, this._font!, c[0], c[1], c[2], c[3] ?? 1);
     }
 
@@ -175,21 +175,21 @@ export class UI {
     /**
      * Filled panel background.
      */
-    panel(x: number, y: number, w: number, h: number, c: Rgba = C.SURFACE!): void {
+    panel(x: number, y: number, w: number, h: number, c: rgba = C.SURFACE!): void {
         this.draw_rect(x, y, w, h, c);
     }
 
     /**
      * Horizontal separator line.
      */
-    separator(x: number, y: number, w: number, c: Rgba = C.BORDER!): void {
+    separator(x: number, y: number, w: number, c: rgba = C.BORDER!): void {
         this._dl.rect(x, y, w, 1, c[0], c[1], c[2], c[3] ?? 1);
     }
 
     /**
      * Label (non-interactive text).
      */
-    label(text: string, x: number, y: number, c: Rgba = C.TEXT!): void {
+    label(text: string, x: number, y: number, c: rgba = C.TEXT!): void {
         this.draw_text(text, x, y, c);
     }
 
@@ -203,7 +203,7 @@ export class UI {
         if (hot) this._hot_id = id;
         if (hot && this._just_down) this._active_id = id;
 
-        let bg: Rgba, fg: Rgba;
+        let bg: rgba, fg: rgba;
         if (primary) {
             bg = pressed ? C.ACCENT_DIM! : (hot ? C.ACCENT_DIM! : C.ACCENT!);
             fg = C.TEXT!;
@@ -234,7 +234,7 @@ export class UI {
      * @param y, h  extents
      * @returns  new x position (caller must clamp + store)
      */
-    divider(id: string, x: number, y: number, h: number, drag_ref: DragRef, reverse = false): void {
+    divider(id: string, x: number, y: number, h: number, drag_ref: drag_ref, reverse = false): void {
         const hw  = 4;
         const hot = this._hit(x - hw, y, hw * 2, h);
 
@@ -261,7 +261,7 @@ export class UI {
      * options: [{label, value}]
      * Returns the selected value, or null if unchanged.
      */
-    select(id: string, options: TreeItem[], selected_label: string, x: number, y: number, w: number, h: number): string | null {
+    select(id: string, options: tree_item[], selected_label: string, x: number, y: number, w: number, h: number): string | null {
         const hot = this._hit(x, y, w, h);
         if (hot) this._hot_id = id;
 
@@ -346,11 +346,11 @@ export class UI {
      *  - syntax-highlighted text lines
      *  - cursor (blink controlled by caller via cursor_visible)
      *  - mouse click → cursor position
-     *  - does NOT handle keyboard; caller does that via TextBuffer directly
+     *  - does NOT handle keyboard; caller does that via text_buffer directly
      *
      * Returns { line, col } if user clicked (or null).
      */
-    code_editor(buf: TextBuffer, x: number, y: number, w: number, h: number, cursor_visible: boolean, font?: FontAtlas): ClickResult | null {
+    code_editor(buf: text_buffer, x: number, y: number, w: number, h: number, cursor_visible: boolean, font?: font_atlas): click_result | null {
         const f    = font ?? this._font!;
         const g_w  = f.glyph_w;
         const g_h  = f.glyph_h;
@@ -373,7 +373,7 @@ export class UI {
         // ── Scissor the code area ─────────────────────────────────────────────
         this._dl.scissor(x, y, w, h);
 
-        // ── Selection ─────────────────────────────────────────────────────────
+        // ── selection ─────────────────────────────────────────────────────────
         const sel = buf.get_selection_range?.();
         if (sel) {
             for (let l = sel.start.line; l <= sel.end.line; l++) {
@@ -441,7 +441,7 @@ export class UI {
         buf.scroll_top = new_scroll;
 
         // ── Hit test → cursor placement ───────────────────────────────────────
-        let click_result: ClickResult | null = null;
+        let click_result: click_result | null = null;
         if (this._just_down && this._hit(code_x, y, code_w, h)) {
             const clicked_line = Math.min(line_count - 1,
                 Math.max(0, Math.floor((this._my - y) / g_h) + scroll_t));
@@ -465,7 +465,7 @@ export class UI {
      * Output text panel. Renders an array of {text, cls} lines.
      * Returns updated scroll_top.
      */
-    output_panel(lines: OutputLine[], x: number, y: number, w: number, h: number, scroll_top: number): number {
+    output_panel(lines: output_line[], x: number, y: number, w: number, h: number, scroll_top: number): number {
         void lines;
         void scroll_top;
 
@@ -509,7 +509,7 @@ export class UI {
      * active_key: currently loaded item value.
      * Returns clicked item value, or null.
      */
-    file_tree(groups: TreeGroup[], active_key: string, x: number, y: number, w: number, h: number): string | null {
+    file_tree(groups: tree_group[], active_key: string, x: number, y: number, w: number, h: number): string | null {
         const f     = this._font!;
         const row_h = Math.round(f.glyph_h + 8);
         const PAD   = 8;

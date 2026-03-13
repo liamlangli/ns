@@ -1,24 +1,24 @@
 // Text buffer and cursor/selection state management.
 
-export interface CursorPos {
+export interface cursor_pos {
     line: number;
     col:  number;
 }
 
-export interface Selection {
-    anchor: CursorPos;
-    focus:  CursorPos;
+export interface selection {
+    anchor: cursor_pos;
+    focus:  cursor_pos;
 }
 
-export interface SelectionRange {
-    start: CursorPos;
-    end:   CursorPos;
+export interface selection_range {
+    start: cursor_pos;
+    end:   cursor_pos;
 }
 
-export class TextBuffer {
+export class text_buffer {
     lines:       string[];
-    cursor:      CursorPos;
-    selection:   Selection | null;
+    cursor:      cursor_pos;
+    selection:   selection | null;
     scroll_top:  number;
     scroll_left: number;
 
@@ -55,7 +55,7 @@ export class TextBuffer {
 
     line_at(i: number): string { return (i >= 0 && i < this.lines.length) ? this.lines[i]! : ''; }
 
-    clamp_cursor(c: CursorPos): CursorPos {
+    clamp_cursor(c: cursor_pos): cursor_pos {
         const line = Math.max(0, Math.min(c.line, this.lines.length - 1));
         const col  = Math.max(0, Math.min(c.col, this.lines[line]!.length));
         return { line, col };
@@ -76,7 +76,7 @@ export class TextBuffer {
         this._dirty();
     }
 
-    get_selection_range(): SelectionRange | null {
+    get_selection_range(): selection_range | null {
         if (!this.selection) return null;
         const a = this.selection.anchor, b = this.selection.focus;
         const a_less = a.line < b.line || (a.line === b.line && a.col <= b.col);

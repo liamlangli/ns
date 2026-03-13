@@ -3,7 +3,7 @@
 // Each frame:
 //   ui.begin_frame(mouse_x, mouse_y, mouse_down, vp_w, vp_h)
 //   ... build UI with widget calls ...
-//   ui.end_frame()  → returns DrawList
+//   ui.end_frame()  → returns draw_list
 //
 // Widgets return true when activated (button clicked, etc.)
 //
@@ -34,7 +34,7 @@ export const C = {
     SYN_ID:     [0.878, 0.878, 0.925, 1.0],  // same as TEXT
 };
 
-import { DrawList } from './draw.js';
+import { draw_list } from './draw.js';
 import { tokenize_line } from './syntax.js';
 
 // Map token type (numeric) → color tuple. Order matches TT enum: 0..9
@@ -53,7 +53,7 @@ const TOK_COLOR = [
 
 export class UI {
     constructor() {
-        this._dl       = new DrawList();
+        this._dl       = new draw_list();
         this._font     = null;
         this._vp_w     = 0;
         this._vp_h     = 0;
@@ -336,7 +336,7 @@ export class UI {
      *  - syntax-highlighted text lines
      *  - cursor (blink controlled by caller via cursor_visible)
      *  - mouse click → cursor position
-     *  - does NOT handle keyboard; caller does that via TextBuffer directly
+     *  - does NOT handle keyboard; caller does that via text_buffer directly
      *
      * Returns { line, col } if user clicked (or null).
      */
@@ -363,7 +363,7 @@ export class UI {
         // ── Scissor the code area ─────────────────────────────────────────────
         this._dl.scissor(x, y, w, h);
 
-        // ── Selection ─────────────────────────────────────────────────────────
+        // ── selection ─────────────────────────────────────────────────────────
         const sel = buf.get_selection_range?.();
         if (sel) {
             for (let l = sel.start.line; l <= sel.end.line; l++) {

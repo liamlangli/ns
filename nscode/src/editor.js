@@ -1,6 +1,6 @@
 // Text buffer and editor state management
 
-export class TextBuffer {
+export class text_buffer {
     constructor(initial_text = '') {
         this.lines = initial_text ? initial_text.split('\n') : [''];
         this.cursor = { line: 0, col: 0 };

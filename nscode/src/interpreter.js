@@ -35,7 +35,7 @@ const KEYWORDS = new Set([
     'break','continue','as','type','struct','true','false',
 ]);
 
-class Token {
+class token {
     constructor(type, value, line) { this.type = type; this.value = value; this.line = line; }
 }
 
@@ -71,7 +71,7 @@ function lex(src) {
                 while (j < n && src[j] >= '0' && src[j] <= '9') j++;
             }
             const raw = src.slice(i, j).replace(/_/g,'');
-            tokens.push(new Token(is_float ? TK.FLOAT : TK.INT,
+            tokens.push(new token(is_float ? TK.FLOAT : TK.INT,
                 is_float ? parseFloat(raw) : parseInt(raw, 10), line));
             i = j; continue;
         }
@@ -85,20 +85,20 @@ function lex(src) {
                 j++;
             }
             j++; // closing "
-            tokens.push(new Token(TK.STRING, s, line));
+            tokens.push(new token(TK.STRING, s, line));
             i = j; continue;
         }
 
         // Template string backtick `…{expr}…`
         if (src[i] === '`') {
-            tokens.push(new Token(TK.BACKTICK, '`', line));
+            tokens.push(new token(TK.BACKTICK, '`', line));
             i++;
             let s = '';
             while (i < n && src[i] !== '`') {
                 if (src[i] === '{') {
-                    if (s) tokens.push(new Token(TK.STRING, s, line));
+                    if (s) tokens.push(new token(TK.STRING, s, line));
                     s = '';
-                    tokens.push(new Token(TK.LBRACE, '{', line));
+                    tokens.push(new token(TK.LBRACE, '{', line));
                     i++;
                     let depth = 1;
                     let inner = '';
@@ -108,14 +108,14 @@ function lex(src) {
                         inner += src[i++];
                     }
                     tokens.push(...lex(inner));
-                    tokens.push(new Token(TK.RBRACE, '}', line));
+                    tokens.push(new token(TK.RBRACE, '}', line));
                 } else {
                     if (src[i] === '\n') line++;
                     s += src[i++];
                 }
             }
-            if (s) tokens.push(new Token(TK.STRING, s, line));
-            tokens.push(new Token(TK.BACKTICK, '`', line));
+            if (s) tokens.push(new token(TK.STRING, s, line));
+            tokens.push(new token(TK.BACKTICK, '`', line));
             if (i < n) i++; // closing `
             continue;
         }
@@ -129,7 +129,7 @@ function lex(src) {
                 j++;
             }
             j++;
-            tokens.push(new Token(TK.STRING, s, line));
+            tokens.push(new token(TK.STRING, s, line));
             i = j; continue;
         }
 
@@ -139,11 +139,11 @@ function lex(src) {
             while (j < n && is_alpha_num(src[j])) j++;
             const word = src.slice(i, j);
             if (word === 'true' || word === 'false')
-                tokens.push(new Token(TK.BOOL, word === 'true', line));
+                tokens.push(new token(TK.BOOL, word === 'true', line));
             else if (KEYWORDS.has(word))
-                tokens.push(new Token(word, word, line));
+                tokens.push(new token(word, word, line));
             else
-                tokens.push(new Token(TK.IDENT, word, line));
+                tokens.push(new token(TK.IDENT, word, line));
             i = j; continue;
         }
 
@@ -155,7 +155,7 @@ function lex(src) {
             '+=': TK.PLUS_ASSIGN, '-=': TK.MINUS_ASSIGN,
             '*=': TK.STAR_ASSIGN, '/=': TK.SLASH_ASSIGN,
         };
-        if (two_map[two]) { tokens.push(new Token(two_map[two], two, line)); i += 2; continue; }
+        if (two_map[two]) { tokens.push(new token(two_map[two], two, line)); i += 2; continue; }
 
         // Single-char operators
         const one_map = {
@@ -167,12 +167,12 @@ function lex(src) {
             '<': TK.LT, '>': TK.GT, '=': TK.ASSIGN,
             '!': TK.BANG, '&': TK.AMPERSAND, '|': TK.PIPE,
         };
-        if (one_map[src[i]]) { tokens.push(new Token(one_map[src[i]], src[i], line)); i++; continue; }
+        if (one_map[src[i]]) { tokens.push(new token(one_map[src[i]], src[i], line)); i++; continue; }
 
         i++; // skip unknown
     }
 
-    tokens.push(new Token(TK.EOF, null, line));
+    tokens.push(new token(TK.EOF, null, line));
     return tokens;
 }
 
@@ -183,14 +183,14 @@ function escape_char(c) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Parser → AST
+// parser → AST
 // ─────────────────────────────────────────────────────────────────────────────
 
-class ParseError extends Error {
+class parse_error extends Error {
     constructor(msg, line) { super(`Line ${line}: ${msg}`); this.line = line; }
 }
 
-class Parser {
+class ns_parser {
     constructor(tokens) {
         this.tokens = tokens;
         this.pos = 0;
@@ -201,7 +201,7 @@ class Parser {
     advance() { return this.tokens[this.pos++]; }
     expect(type) {
         const t = this.peek();
-        if (t.type !== type) throw new ParseError(`expected '${type}', got '${t.type}' ('${t.value}')`, t.line);
+        if (t.type !== type) throw new parse_error(`expected '${type}', got '${t.type}' ('${t.value}')`, t.line);
         return this.advance();
     }
     eat(type) { if (this.at(type)) { this.advance(); return true; } return false; }
@@ -511,7 +511,7 @@ class Parser {
             return this.parse_fn_expr();
         }
 
-        throw new ParseError(`unexpected token '${t.type}' ('${t.value}')`, t.line);
+        throw new parse_error(`unexpected token '${t.type}' ('${t.value}')`, t.line);
     }
 
     parse_template_lit() {
@@ -580,10 +580,10 @@ class Parser {
 // Runtime signals
 // ─────────────────────────────────────────────────────────────────────────────
 
-class ReturnSignal { constructor(value) { this.value = value; } }
-class BreakSignal  {}
-class ContinueSignal {}
-class NSError extends Error {
+class return_signal { constructor(value) { this.value = value; } }
+class break_signal  {}
+class continue_signal {}
+class ns_error extends Error {
     constructor(msg, line) { super(line ? `Line ${line}: ${msg}` : msg); }
 }
 
@@ -591,13 +591,13 @@ class NSError extends Error {
 // Environment (lexical scope)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class Env {
+class env_scope {
     constructor(parent = null) { this.vars = new Map(); this.parent = parent; }
 
     get(name) {
         if (this.vars.has(name)) return this.vars.get(name);
         if (this.parent) return this.parent.get(name);
-        throw new NSError(`undefined variable '${name}'`);
+        throw new ns_error(`undefined variable '${name}'`);
     }
 
     set(name, value) {
@@ -620,17 +620,17 @@ const MAX_ITERS  = 1000000;
 
 export function parse_to_ast(source) {
     const tokens = lex(source);
-    const parser = new Parser(tokens);
-    return parser.parse_program();
+    const parser_instance = new ns_parser(tokens);
+    return parser_instance.parse_program();
 }
 
-export class NSInterpreter {
+export class ns_interpreter {
     constructor({ print = console.log, error = console.error } = {}) {
         this.print      = print;
         this.error      = error;
         this.call_depth = 0;
         this.iter_count = 0;
-        this.globals    = new Env();
+        this.globals    = new env_scope();
         this._seed_globals();
     }
 
@@ -642,7 +642,7 @@ export class NSInterpreter {
         g.def('print',   { __fn: true, call: (args) => { self.print(args.map(ns_str).join('')); return null; } });
         g.def('println', { __fn: true, call: (args) => { self.print(args.map(ns_str).join('') + '\n'); return null; } });
         g.def('assert',  { __fn: true, call: ([cond, msg]) => {
-            if (!cond) throw new NSError(`assertion failed${msg ? ': ' + msg : ''}`);
+            if (!cond) throw new ns_error(`assertion failed${msg ? ': ' + msg : ''}`);
             return null;
         }});
 
@@ -668,14 +668,14 @@ export class NSInterpreter {
         catch (e) { this.error('Lex error: ' + e.message); return; }
 
         try {
-            const parser = new Parser(tokens);
-            ast = parser.parse_program();
+            const parser_instance = new ns_parser(tokens);
+            ast = parser_instance.parse_program();
         } catch (e) { this.error('Parse error: ' + e.message); return; }
 
         try {
             this.eval_program(ast, this.globals);
         } catch (e) {
-            if (e instanceof ReturnSignal) return; // top-level return
+            if (e instanceof return_signal) return; // top-level return
             this.error('Runtime error: ' + e.message);
         }
     }
@@ -684,7 +684,7 @@ export class NSInterpreter {
         // First pass: register all fn definitions
         for (const stmt of ast.stmts) {
             if (stmt.kind === 'FnDef') {
-                env.def(stmt.name, { __fn: true, def: stmt, closure: env });
+                env.def(stmt.name, { __fn: true, def: stmt, closure : env });
             }
         }
         // Second pass: execute non-fn statements
@@ -694,10 +694,10 @@ export class NSInterpreter {
     }
 
     eval_block(block, env) {
-        const local = new Env(env);
+        const local = new env_scope(env);
         for (const stmt of block.stmts) {
             const sig = this.eval_stmt(stmt, local);
-            if (sig instanceof ReturnSignal || sig instanceof BreakSignal || sig instanceof ContinueSignal)
+            if (sig instanceof return_signal || sig instanceof break_signal || sig instanceof continue_signal)
                 return sig;
         }
         return null;
@@ -706,7 +706,7 @@ export class NSInterpreter {
     eval_stmt(stmt, env) {
         switch (stmt.kind) {
         case 'FnDef':
-            env.def(stmt.name, { __fn: true, def: stmt, closure: env });
+            env.def(stmt.name, { __fn: true, def: stmt, closure : env });
             break;
         case 'LetStmt': {
             const val = stmt.init ? this.eval_expr(stmt.init, env) : null;
@@ -714,9 +714,9 @@ export class NSInterpreter {
             break;
         }
         case 'ReturnStmt':
-            return new ReturnSignal(stmt.value ? this.eval_expr(stmt.value, env) : null);
-        case 'Break':    return new BreakSignal();
-        case 'Continue': return new ContinueSignal();
+            return new return_signal(stmt.value ? this.eval_expr(stmt.value, env) : null);
+        case 'Break':    return new break_signal();
+        case 'Continue': return new continue_signal();
         case 'IfStmt':   return this.eval_if(stmt, env);
         case 'ForStmt':  return this.eval_for(stmt, env);
         case 'ExprStmt': this.eval_expr(stmt.expr, env); break;
@@ -742,16 +742,16 @@ export class NSInterpreter {
     eval_for(stmt, env) {
         const from  = this.eval_expr(stmt.from, env);
         const to    = this.eval_expr(stmt.to,   env);
-        const local = new Env(env);
+        const local = new env_scope(env);
         local.def(stmt.var, from);
         for (let i = from; i < to; i++) {
             if (++this.iter_count > MAX_ITERS)
-                throw new NSError('iteration limit exceeded (infinite loop?)');
+                throw new ns_error('iteration limit exceeded (infinite loop?)');
             local.set(stmt.var, i);
             const sig = this.eval_block(stmt.body, local);
-            if (sig instanceof ReturnSignal) return sig;
-            if (sig instanceof BreakSignal)  break;
-            // ContinueSignal: just continue
+            if (sig instanceof return_signal) return sig;
+            if (sig instanceof break_signal)  break;
+            // continue_signal: just continue
         }
         return null;
     }
@@ -786,7 +786,7 @@ export class NSInterpreter {
             case '+':  return typeof l === 'string' || typeof r === 'string' ? String(l) + String(r) : l + r;
             case '-':  return l - r;
             case '*':  return l * r;
-            case '/':  if (r === 0) throw new NSError('division by zero', node.line); return l / r;
+            case '/':  if (r === 0) throw new ns_error('division by zero', node.line); return l / r;
             case '%':  return l % r;
             case '==': return l === r;
             case '!=': return l !== r;
@@ -809,7 +809,7 @@ export class NSInterpreter {
 
         case 'Field': {
             const obj = this.eval_expr(node.obj, env);
-            if (obj == null) throw new NSError(`null field access '.${node.field}'`, node.line);
+            if (obj == null) throw new ns_error(`null field access '.${node.field}'`, node.line);
             return obj[node.field] ?? null;
         }
 
@@ -820,10 +820,10 @@ export class NSInterpreter {
         }
 
         case 'Lambda':
-            return { __fn: true, lambda: node, closure: env };
+            return { __fn: true, lambda: node, closure : env };
 
         case 'FnExpr':
-            return { __fn: true, def: node, closure: env };
+            return { __fn: true, def: node, closure : env };
 
         case 'BlockExpr':
             return this.eval_block(node.block, env);
@@ -836,14 +836,14 @@ export class NSInterpreter {
 
     eval_call(node, env) {
         if (++this.call_depth > MAX_CALLS)
-            throw new NSError('call stack overflow (infinite recursion?)');
+            throw new ns_error('call stack overflow (infinite recursion?)');
 
         try {
             // Resolve callee
             let fn;
             if (node.callee.kind === 'Ident') {
                 try { fn = env.get(node.callee.name); }
-                catch (_) { throw new NSError(`undefined function '${node.callee.name}'`, node.line); }
+                catch (_) { throw new ns_error(`undefined function '${node.callee.name}'`, node.line); }
             } else if (node.callee.kind === 'Field') {
                 // method call: obj.method(args) — find method in builtins
                 const obj    = this.eval_expr(node.callee.obj, env);
@@ -864,7 +864,7 @@ export class NSInterpreter {
             }
 
             if (!fn || !fn.__fn)
-                throw new NSError(`'${node.callee.name ?? '?'}' is not a function`, node.line);
+                throw new ns_error(`'${node.callee.name ?? '?'}' is not a function`, node.line);
 
             // Native JS function
             if (fn.call) {
@@ -884,17 +884,17 @@ export class NSInterpreter {
                     lambda: { kind: 'Lambda', params: params.length > args.length ?
                         [params[params.length-1].name ?? 'value'] : [],
                         body: node.trailing_block.stmts },
-                    closure: env });
+                    closure : env });
             }
 
-            const local = new Env(fn.closure ?? this.globals);
+            const local = new env_scope(fn.closure ?? this.globals);
             (params).forEach((p, i) => {
                 const p_name = typeof p === 'string' ? p : p.name;
                 local.def(p_name, args[i] ?? null);
             });
 
             const sig = this.eval_block(def.body, local);
-            if (sig instanceof ReturnSignal) return sig.value ?? null;
+            if (sig instanceof return_signal) return sig.value ?? null;
             return null;
         } finally {
             this.call_depth--;

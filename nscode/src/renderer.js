@@ -69,14 +69,14 @@ struct RectVOut {
 }
 `;
 
-export class Renderer {
+export class renderer {
     constructor(canvas) {
         this.canvas  = canvas;
         this.device  = null;
         this.context = null;
 
         // Font metrics (filled after atlas build)
-        this.glyphW  = 0;
+        this.glyph_w  = 0;
         this.glyphH  = 0;
         this.atlasW  = 0;
         this.atlasH  = 0;
@@ -126,10 +126,10 @@ export class Renderer {
         const mctx = measure.getContext('2d');
         mctx.font = font;
         const met = mctx.measureText('W');
-        this.glyphW = Math.ceil(met.width) + 2;
+        this.glyph_w = Math.ceil(met.width) + 2;
         this.glyphH = Math.ceil(this.fontSize * 1.5) + 2;
 
-        this.atlasW = this.glyphW * ATLAS_COLS;
+        this.atlasW = this.glyph_w * ATLAS_COLS;
         this.atlasH = this.glyphH * ATLAS_ROWS;
 
         const ac = document.createElement('canvas');
@@ -144,16 +144,16 @@ export class Renderer {
 
         for (let i = 0; i < GLYPH_COUNT; i++) {
             const ch = String.fromCharCode(GLYPH_START + i);
-            const gx = (i % ATLAS_COLS) * this.glyphW + 1;
+            const gx = (i % ATLAS_COLS) * this.glyph_w + 1;
             const gy = Math.floor(i / ATLAS_COLS) * this.glyphH + 1;
             actx.fillText(ch, gx, gy);
         }
 
         // Upload to WebGPU texture
-        const imageData = actx.getImageData(0, 0, this.atlasW, this.atlasH);
+        const image_data = actx.getImageData(0, 0, this.atlasW, this.atlasH);
         // Extract red channel as atlas
         const pixels = new Uint8Array(this.atlasW * this.atlasH);
-        for (let i = 0; i < pixels.length; i++) pixels[i] = imageData.data[i * 4];
+        for (let i = 0; i < pixels.length; i++) pixels[i] = image_data.data[i * 4];
 
         this.fontTex = this.device.createTexture({
             size: [this.atlasW, this.atlasH],
@@ -172,7 +172,7 @@ export class Renderer {
             minFilter: 'linear',
         });
 
-        this.lineNumWidth = this.glyphW * 4 + this.paddingLeft * 2;
+        this.lineNumWidth = this.glyph_w * 4 + this.paddingLeft * 2;
     }
 
     _buildPipelines(format) {
@@ -202,7 +202,7 @@ export class Renderer {
             ],
         });
 
-        const blendAlpha = {
+        const blend_alpha = {
             color: {
                 srcFactor: 'src-alpha',
                 dstFactor: 'one-minus-src-alpha',
@@ -212,7 +212,7 @@ export class Renderer {
         };
 
         // Text pipeline (pos:2f, uv:2f, color:4f = 32 bytes/vertex)
-        const textVBL = [{
+        const text_vbl = [{
             arrayStride: 32,
             attributes: [
                 { shaderLocation: 0, offset:  0, format: 'float32x2' }, // pos
@@ -222,13 +222,13 @@ export class Renderer {
         }];
         this.textPipeline = d.createRenderPipeline({
             layout: d.createPipelineLayout({ bindGroupLayouts: [bgl] }),
-            vertex:   { module, entryPoint: 'vs',      buffers: textVBL },
-            fragment: { module, entryPoint: 'fs',      targets: [{ format, blend: blendAlpha }] },
+            vertex:   { module, entryPoint: 'vs',      buffers: text_vbl },
+            fragment: { module, entryPoint: 'fs',      targets: [{ format, blend: blend_alpha }] },
             primitive: { topology: 'triangle-list' },
         });
 
         // Rect pipeline (pos:2f, color:4f = 24 bytes/vertex)
-        const rectVBL = [{
+        const rect_vbl = [{
             arrayStride: 24,
             attributes: [
                 { shaderLocation: 0, offset:  0, format: 'float32x2' }, // pos
@@ -237,8 +237,8 @@ export class Renderer {
         }];
         this.rectPipeline = d.createRenderPipeline({
             layout: d.createPipelineLayout({ bindGroupLayouts: [bgl] }),
-            vertex:   { module, entryPoint: 'rect_vs', buffers: rectVBL },
-            fragment: { module, entryPoint: 'rect_fs', targets: [{ format, blend: blendAlpha }] },
+            vertex:   { module, entryPoint: 'rect_vs', buffers: rect_vbl },
+            fragment: { module, entryPoint: 'rect_fs', targets: [{ format, blend: blend_alpha }] },
             primitive: { topology: 'triangle-list' },
         });
     }
@@ -249,9 +249,9 @@ export class Renderer {
         if (idx < 0 || idx >= GLYPH_COUNT) return this._glyphUV(63); // '?'
         const col = idx % ATLAS_COLS;
         const row = Math.floor(idx / ATLAS_COLS);
-        const u0 = col * this.glyphW / this.atlasW;
+        const u0 = col * this.glyph_w / this.atlasW;
         const v0 = row * this.glyphH / this.atlasH;
-        const u1 = u0 + (this.glyphW - 1) / this.atlasW;
+        const u1 = u0 + (this.glyph_w - 1) / this.atlasW;
         const v1 = v0 + (this.glyphH - 1) / this.atlasH;
         return { u0, v0, u1, v1 };
     }
@@ -286,26 +286,26 @@ export class Renderer {
         const H = this.canvas.height;
 
         // Update uniforms
-        const scrollX = buf.scrollLeft;
-        const scrollY = buf.scrollTop * this.glyphH;
+        const scroll_x = buf.scrollLeft;
+        const scroll_y = buf.scrollTop * this.glyphH;
         d.queue.writeBuffer(this.uniformBuf, 0,
-            new Float32Array([W, H, scrollX, scrollY]));
+            new Float32Array([W, H, scroll_x, scroll_y]));
 
-        const lineH  = this.glyphH;
-        const glyphW = this.glyphW;
-        const lnW    = this.lineNumWidth;
-        const pLeft  = this.paddingLeft;
-        const pTop   = this.paddingTop;
+        const line_h  = this.glyphH;
+        const glyph_w = this.glyph_w;
+        const ln_w    = this.lineNumWidth;
+        const p_left  = this.paddingLeft;
+        const p_top   = this.paddingTop;
 
         // Visible line range
-        const firstLine = Math.floor(buf.scrollTop);
-        const lastLine  = Math.min(
+        const first_line = Math.floor(buf.scrollTop);
+        const last_line  = Math.min(
             buf.lineCount() - 1,
-            firstLine + Math.ceil(H / lineH) + 1
+            first_line + Math.ceil(H / line_h) + 1
         );
 
-        const textVerts = [];
-        const rectVerts = [];
+        const text_verts = [];
+        const rect_verts = [];
 
         const GRAY_DIM   = [0.25, 0.25, 0.25, 1.0];
         const SEL_COLOR  = [0.27, 0.41, 0.62, 0.6];
@@ -313,63 +313,63 @@ export class Renderer {
 
         const sel = buf.getSelectionRange();
 
-        for (let li = firstLine; li <= lastLine; li++) {
-            const lineText = buf.lineAt(li);
-            const baseY = pTop + li * lineH;
+        for (let li = first_line; li <= last_line; li++) {
+            const line_text = buf.lineAt(li);
+            const base_y = p_top + li * line_h;
 
-            // Selection background
+            // selection background
             if (sel) {
-                let selStart = -1, selEnd = -1;
+                let sel_start = -1, selEnd = -1;
                 if (li > sel.start.line && li < sel.end.line) {
-                    selStart = 0; selEnd = lineText.length;
+                    sel_start = 0; selEnd = line_text.length;
                 } else if (li === sel.start.line && li === sel.end.line) {
-                    selStart = sel.start.col; selEnd = sel.end.col;
+                    sel_start = sel.start.col; selEnd = sel.end.col;
                 } else if (li === sel.start.line) {
-                    selStart = sel.start.col; selEnd = lineText.length;
+                    sel_start = sel.start.col; selEnd = line_text.length;
                 } else if (li === sel.end.line) {
-                    selStart = 0; selEnd = sel.end.col;
+                    sel_start = 0; selEnd = sel.end.col;
                 }
-                if (selStart >= 0 && selEnd > selStart) {
-                    const sx = pLeft + lnW + selStart * glyphW;
-                    const sw = (selEnd - selStart) * glyphW;
-                    this._pushRectQuad(rectVerts, sx, baseY, sw, lineH, SEL_COLOR);
+                if (sel_start >= 0 && selEnd > sel_start) {
+                    const sx = p_left + ln_w + sel_start * glyph_w;
+                    const sw = (selEnd - sel_start) * glyph_w;
+                    this._pushRectQuad(rect_verts, sx, base_y, sw, line_h, SEL_COLOR);
                 }
             }
 
             // Line number
-            const lineNumStr = String(li + 1).padStart(3, ' ');
-            for (let ci = 0; ci < lineNumStr.length; ci++) {
-                const cp = lineNumStr.charCodeAt(ci);
+            const line_num_str = String(li + 1).padStart(3, ' ');
+            for (let ci = 0; ci < line_num_str.length; ci++) {
+                const cp = line_num_str.charCodeAt(ci);
                 if (cp < 32 || cp >= 32 + GLYPH_COUNT) continue;
-                const x = pLeft + ci * glyphW;
-                this._pushTextQuad(textVerts, x, baseY, glyphW, lineH,
+                const x = p_left + ci * glyph_w;
+                this._pushTextQuad(text_verts, x, base_y, glyph_w, line_h,
                     this._glyphUV(cp), GRAY_DIM);
             }
 
             // Code text with syntax highlighting
-            const tokens = tokenizeLine(lineText);
-            let colOffset = 0;
+            const tokens = tokenizeLine(line_text);
+            let col_offset = 0;
             for (const tok of tokens) {
                 const color = TOKEN_COLOR[tok.type];
                 for (let ci = 0; ci < tok.text.length; ci++) {
                     const cp = tok.text.charCodeAt(ci);
                     if (cp >= 32 && cp < 32 + GLYPH_COUNT) {
-                        const x = pLeft + lnW + (colOffset + ci) * glyphW;
-                        this._pushTextQuad(textVerts, x, baseY, glyphW, lineH,
+                        const x = p_left + ln_w + (col_offset + ci) * glyph_w;
+                        this._pushTextQuad(text_verts, x, base_y, glyph_w, line_h,
                             this._glyphUV(cp), color);
                     }
                 }
-                colOffset += tok.text.length;
+                col_offset += tok.text.length;
             }
         }
 
         // Cursor
         if (cursorBlink) {
             const { line, col } = buf.cursor;
-            if (line >= firstLine && line <= lastLine) {
-                const cx = pLeft + lnW + col * glyphW;
-                const cy = pTop  + line * lineH;
-                this._pushRectQuad(rectVerts, cx, cy, 2, lineH, CURSOR_COL);
+            if (line >= first_line && line <= last_line) {
+                const cx = p_left + ln_w + col * glyph_w;
+                const cy = p_top  + line * line_h;
+                this._pushRectQuad(rect_verts, cx, cy, 2, line_h, CURSOR_COL);
             }
         }
 
@@ -386,33 +386,33 @@ export class Renderer {
         });
 
         // Draw selection / cursor rects
-        if (rectVerts.length > 0) {
+        if (rect_verts.length > 0) {
             const rb = d.createBuffer({
-                size: rectVerts.length * 4,
+                size: rect_verts.length * 4,
                 usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 mappedAtCreation: true,
             });
-            new Float32Array(rb.getMappedRange()).set(rectVerts);
+            new Float32Array(rb.getMappedRange()).set(rect_verts);
             rb.unmap();
             pass.setPipeline(this.rectPipeline);
             pass.setBindGroup(0, this.bindGroup);
             pass.setVertexBuffer(0, rb);
-            pass.draw(rectVerts.length / 6); // 6 floats per vertex
+            pass.draw(rect_verts.length / 6); // 6 floats per vertex
         }
 
         // Draw text
-        if (textVerts.length > 0) {
+        if (text_verts.length > 0) {
             const tb = d.createBuffer({
-                size: textVerts.length * 4,
+                size: text_verts.length * 4,
                 usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
                 mappedAtCreation: true,
             });
-            new Float32Array(tb.getMappedRange()).set(textVerts);
+            new Float32Array(tb.getMappedRange()).set(text_verts);
             tb.unmap();
             pass.setPipeline(this.textPipeline);
             pass.setBindGroup(0, this.bindGroup);
             pass.setVertexBuffer(0, tb);
-            pass.draw(textVerts.length / 8); // 8 floats per vertex
+            pass.draw(text_verts.length / 8); // 8 floats per vertex
         }
 
         pass.end();
@@ -426,13 +426,13 @@ export class Renderer {
 
     // Convert pixel coords to (line, col)
     hitTest(buf, px, py) {
-        const lnW = this.lineNumWidth;
-        const pLeft = this.paddingLeft;
-        const pTop  = this.paddingTop;
-        const scrollX = buf.scrollLeft;
-        const scrollY = buf.scrollTop * this.glyphH;
-        const line = Math.floor((py + scrollY - pTop) / this.glyphH);
-        const col  = Math.floor((px + scrollX - pLeft - lnW) / this.glyphW);
+        const ln_w = this.lineNumWidth;
+        const p_left = this.paddingLeft;
+        const p_top  = this.paddingTop;
+        const scroll_x = buf.scrollLeft;
+        const scroll_y = buf.scrollTop * this.glyphH;
+        const line = Math.floor((py + scroll_y - p_top) / this.glyphH);
+        const col  = Math.floor((px + scroll_x - p_left - ln_w) / this.glyph_w);
         return {
             line: Math.max(0, Math.min(line, buf.lineCount() - 1)),
             col:  Math.max(0, col),
