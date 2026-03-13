@@ -234,3 +234,17 @@ For the `nscode/` codebase, use **snake_case** consistently for:
 
 When refactoring or adding new code in `nscode/`, prefer snake_case names and avoid introducing new camelCase/PascalCase identifiers unless required by external APIs.
 
+## 13) NSCode memory note: runtime timing telemetry
+
+When working in `nscode/src/main.js`, preserve the output-panel timing contract added for script runs:
+
+- Every run should print timing rows for:
+  - `CPU parse: ... ms`
+  - `GPU parse: ... ms` (or `N/A` if GPU parser is unavailable)
+  - `Execute: ... ms` (or `N/A` on parse failure)
+  - `Total: ... ms`
+- GPU parser status should be visible to users (unavailable / parse failure / overflow warning).
+- This timing output applies to example scripts loaded from the file tree as well as arbitrary edited code, because all are executed through the same `run_code()` path.
+
+If future refactors touch interpreter or parser integration, keep these output lines and semantics stable unless explicitly requested otherwise.
+
