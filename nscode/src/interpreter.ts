@@ -164,7 +164,7 @@ class ParseError extends Error {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AstNode = Record<string, any>;
+export type AstNode = Record<string, any>;
 
 export interface NSFn {
     __fn: true;
@@ -471,6 +471,12 @@ class Parser {
     }
 }
 
+export function parse_to_ast(source: string): AstNode {
+    const tokens = lex(source);
+    const parser = new Parser(tokens);
+    return parser.parse_program();
+}
+
 class ReturnSignal { value: NSValue; constructor(value: NSValue) { this.value = value; } }
 class BreakSignal  {}
 class ContinueSignal {}
@@ -544,9 +550,8 @@ export class NSInterpreter {
     }
     run(source: string): void {
         this.call_depth = 0; this.iter_count = 0;
-        let tokens: Token[], ast: AstNode;
-        try { tokens = lex(source); } catch (e) { this.error('Lex error: ' + (e as Error).message); return; }
-        try { const parser = new Parser(tokens); ast = parser.parse_program(); }
+        let ast: AstNode;
+        try { ast = parse_to_ast(source); }
         catch (e) { this.error('Parse error: ' + (e as Error).message); return; }
         try { this.eval_program(ast, this.globals); }
         catch (e) { if (e instanceof ReturnSignal) return; this.error('Runtime error: ' + (e as Error).message); }
