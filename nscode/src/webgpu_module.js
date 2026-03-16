@@ -88,34 +88,55 @@ export class WebGPUModule {
     }
 
     /**
-     * Execute user-supplied WebGPU JavaScript.
-     * The code runs with these injected globals:
-     *   device   – GPUDevice (shared with the main renderer)
-     *   canvas   – the preview HTMLCanvasElement
-     *   context  – GPUCanvasContext for the preview canvas
-     *   format   – preferred canvas texture format string
-     *   print    – function(value) to emit a line in the Output panel
+     * Returns an object of NS built-in function definitions to be injected
+     * into the NS interpreter's global scope for WebGPU examples.
      *
-     * Returns { ok: boolean, error?: string }
+     * Available in NanoScript as:
+     *   gpu_shader(wgsl)          – compile a WGSL shader, return opaque handle
+     *   gpu_pipeline(shader)      – build a triangle-list render pipeline (vs/fs)
+     *   gpu_render(pipeline, n)   – clear, draw n vertices, submit
      */
-    async run(code, print_fn) {
-        if (!this._ready) return { ok: false, error: 'WebGPU module not ready' };
-        this.clear();
-        try {
-            const fn = new AsyncFn(
-                'device', 'canvas', 'context', 'format', 'print',
-                code
-            );
-            await fn(
-                this.device,
-                this.canvas,
-                this.context,
-                this.format,
-                print_fn
-            );
-            return { ok: true };
-        } catch (e) {
-            return { ok: false, error: e.message ?? String(e) };
-        }
+    make_ns_globals() {
+        if (!this._ready) return {};
+        const device  = this.device;
+        const context = this.context;
+        const format  = this.format;
+
+        return {
+            gpu_shader: {
+                __fn: true,
+                call: ([wgsl]) => device.createShaderModule({ code: wgsl }),
+            },
+            gpu_pipeline: {
+                __fn: true,
+                call: ([shader]) => device.createRenderPipeline({
+                    layout:    'auto',
+                    vertex:    { module: shader, entryPoint: 'vs' },
+                    fragment:  { module: shader, entryPoint: 'fs', targets: [{ format }] },
+                    primitive: { topology: 'triangle-list' },
+                }),
+            },
+            gpu_render: {
+                __fn: true,
+                call: ([pipeline, count]) => {
+                    const n   = (typeof count === 'number' && count > 0) ? count : 3;
+                    const enc = device.createCommandEncoder();
+                    const view = context.getCurrentTexture().createView();
+                    const pass = enc.beginRenderPass({
+                        colorAttachments: [{
+                            view,
+                            clearValue: { r: 0.118, g: 0.118, b: 0.141, a: 1 },
+                            loadOp:  'clear',
+                            storeOp: 'store',
+                        }],
+                    });
+                    pass.setPipeline(pipeline);
+                    pass.draw(n);
+                    pass.end();
+                    device.queue.submit([enc.finish()]);
+                    return null;
+                },
+            },
+        };
     }
 }

@@ -91,58 +91,40 @@ println(add10(3))
 println(add5(add10(2)))
 `,
 
-    // ── WebGPU examples (JavaScript, not NanoScript) ────────────────────────
+    // ── WebGPU examples (NanoScript with gpu_* built-in functions) ──────────
     webgpu_triangle: `// WebGPU Triangle
-// Renders a rainbow triangle using WebGPU.
-// Globals: device, canvas, context, format, print
+// Built-in gpu_* functions connect NanoScript to the WebGPU preview canvas.
+//   gpu_shader(wgsl)       — compile WGSL source, return shader handle
+//   gpu_pipeline(shader)   — build a triangle-list pipeline (vs + fs entry pts)
+//   gpu_render(pipeline, n) — clear, draw n vertices, submit
 
-const shader = device.createShaderModule({
-    code: \`
-        struct VSOut {
-            @builtin(position) pos : vec4f,
-            @location(0)       col : vec3f,
-        }
-        @vertex fn vs(@builtin(vertex_index) i: u32) -> VSOut {
-            var p = array<vec2f, 3>(
-                vec2f( 0.0,  0.6),
-                vec2f(-0.6, -0.6),
-                vec2f( 0.6, -0.6),
-            );
-            var c = array<vec3f, 3>(
-                vec3f(1.0, 0.4, 0.4),
-                vec3f(0.4, 1.0, 0.4),
-                vec3f(0.4, 0.4, 1.0),
-            );
-            return VSOut(vec4f(p[i], 0.0, 1.0), c[i]);
-        }
-        @fragment fn fs(v: VSOut) -> @location(0) vec4f {
-            return vec4f(v.col, 1.0);
-        }
-    \`,
-});
+let wgsl = \`
+    struct VSOut {
+        @builtin(position) pos : vec4f,
+        @location(0)       col : vec3f,
+    }
+    @vertex fn vs(@builtin(vertex_index) i: u32) -> VSOut {
+        var p = array<vec2f, 3>(
+            vec2f( 0.0,  0.6),
+            vec2f(-0.6, -0.6),
+            vec2f( 0.6, -0.6),
+        );
+        var c = array<vec3f, 3>(
+            vec3f(1.0, 0.4, 0.4),
+            vec3f(0.4, 1.0, 0.4),
+            vec3f(0.4, 0.4, 1.0),
+        );
+        return VSOut(vec4f(p[i], 0.0, 1.0), c[i]);
+    }
+    @fragment fn fs(v: VSOut) -> @location(0) vec4f {
+        return vec4f(v.col, 1.0);
+    }
+\`
 
-const pipeline = device.createRenderPipeline({
-    layout:    'auto',
-    vertex:    { module: shader, entryPoint: 'vs' },
-    fragment:  { module: shader, entryPoint: 'fs', targets: [{ format }] },
-    primitive: { topology: 'triangle-list' },
-});
-
-const enc  = device.createCommandEncoder();
-const view = context.getCurrentTexture().createView();
-const pass = enc.beginRenderPass({
-    colorAttachments: [{
-        view,
-        clearValue: { r: 0.118, g: 0.118, b: 0.141, a: 1 },
-        loadOp:  'clear',
-        storeOp: 'store',
-    }],
-});
-pass.setPipeline(pipeline);
-pass.draw(3);
-pass.end();
-device.queue.submit([enc.finish()]);
-print('Triangle rendered!');
+let shader   = gpu_shader(wgsl)
+let pipeline = gpu_pipeline(shader)
+gpu_render(pipeline, 3)
+println("Triangle rendered!")
 `,
 };
 
@@ -416,20 +398,33 @@ async function main() {
         run_status_msg = 'Running\u2026';
         await new Promise(r => setTimeout(r, 0));
 
-        // ── WebGPU execution path ──────────────────────────────────────────
+        // ── WebGPU execution path (NanoScript + injected gpu_* built-ins) ───
         if (WEBGPU_EXAMPLES.has(active_example)) {
-            const print_fn = v => out_lines.push({ text: String(v), cls: 'print' });
-            const t0 = performance.now();
-            const result = await wgpu_module.run(buf.get_text(), print_fn);
-            const elapsed = (performance.now() - t0).toFixed(2);
-            if (result.ok) {
-                out_lines.push({ text: '\u2500'.repeat(36), cls: 'sep' });
-                out_lines.push({ text: `Done in ${elapsed} ms`, cls: 'time' });
-                run_status = 'ok'; run_status_msg = 'Success';
-            } else {
-                out_lines.push({ text: `Error: ${result.error}`, cls: 'error' });
-                run_status = 'err'; run_status_msg = 'Error';
+            wgpu_module.clear();
+            const interp = new ns_interpreter({
+                print: v => out_lines.push({ text: String(v), cls: 'print' }),
+                error: v => out_lines.push({ text: String(v), cls: 'error' }),
+            });
+            // Inject gpu_* built-ins into the global scope
+            const gpu_globals = wgpu_module.make_ns_globals();
+            for (const [name, fn_def] of Object.entries(gpu_globals)) {
+                interp.globals.def(name, fn_def);
             }
+            const source = buf.get_text();
+            let ok = true;
+            const t0 = performance.now();
+            try {
+                const ast = parse_to_ast(source);
+                interp.eval_program(ast, interp.globals);
+            } catch (e) {
+                ok = false;
+                out_lines.push({ text: `Error: ${e.message ?? String(e)}`, cls: 'error' });
+            }
+            const elapsed = (performance.now() - t0).toFixed(2);
+            out_lines.push({ text: '\u2500'.repeat(36), cls: 'sep' });
+            out_lines.push({ text: `Execute: ${elapsed} ms`, cls: 'time' });
+            run_status = ok ? 'ok' : 'err';
+            run_status_msg = ok ? 'Success' : 'Error';
             out_scroll = Math.max(0, out_lines.length - 10);
             render_output_view();
             return;
