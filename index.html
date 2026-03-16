@@ -2,17 +2,667 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="refresh" content="0; url=nscode/" />
-<title>NSCode — NanoScript</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nano Script — A Minimal, Data-Oriented Language</title>
 <link rel="icon" type="image/png" href="nslang/ns.png" />
 <style>
-  body { background: #13131a; color: #e0e0ec; font-family: system-ui, sans-serif;
-         display: flex; align-items: center; justify-content: center; height: 100vh; }
-  a { color: #5c8fef; text-decoration: none; font-size: 18px; }
-  a:hover { text-decoration: underline; }
+  :root {
+    --bg: #0f0f16;
+    --bg2: #161622;
+    --bg3: #1e1e2e;
+    --border: #2a2a3e;
+    --text: #cdd6f4;
+    --text-dim: #6c7086;
+    --accent: #89b4fa;
+    --accent2: #cba6f7;
+    --accent3: #94e2d5;
+    --accent4: #a6e3a1;
+    --accent5: #f9e2af;
+    --red: #f38ba8;
+    --orange: #fab387;
+    --green: #a6e3a1;
+    --yellow: #f9e2af;
+    --teal: #94e2d5;
+    --blue: #89b4fa;
+    --purple: #cba6f7;
+    --pink: #f5c2e7;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    line-height: 1.6;
+    font-size: 16px;
+  }
+
+  /* ── Layout ────────────────────────────────────────────── */
+  .container { max-width: 860px; margin: 0 auto; padding: 0 24px; }
+
+  /* ── Nav ───────────────────────────────────────────────── */
+  nav {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(15,15,22,0.88);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 0;
+  }
+  nav .inner {
+    max-width: 860px; margin: 0 auto; padding: 0 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; font-size: 18px; color: var(--text);
+    text-decoration: none;
+  }
+  .logo img { width: 28px; height: 28px; }
+  .logo span { color: var(--accent); }
+  nav .links { display: flex; gap: 24px; }
+  nav .links a {
+    color: var(--text-dim); text-decoration: none; font-size: 14px;
+    transition: color .15s;
+  }
+  nav .links a:hover { color: var(--text); }
+  .btn {
+    display: inline-block;
+    padding: 8px 20px;
+    border-radius: 8px;
+    font-size: 14px; font-weight: 600;
+    text-decoration: none;
+    transition: opacity .15s, transform .1s;
+  }
+  .btn:hover { opacity: .85; transform: translateY(-1px); }
+  .btn-primary { background: var(--accent); color: #0f0f16; }
+  .btn-ghost {
+    border: 1px solid var(--border); color: var(--text);
+    background: transparent;
+  }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Hero ──────────────────────────────────────────────── */
+  .hero {
+    padding: 96px 0 80px;
+    text-align: center;
+  }
+  .hero-badge {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    color: var(--accent);
+    font-size: 12px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase;
+    margin-bottom: 24px;
+  }
+  .hero h1 {
+    font-size: clamp(38px, 7vw, 64px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+    margin-bottom: 20px;
+  }
+  .hero h1 span { color: var(--accent); }
+  .hero p {
+    font-size: 18px; color: var(--text-dim);
+    max-width: 520px; margin: 0 auto 36px;
+  }
+  .hero-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+  /* ── Pills / feature grid ─────────────────────────────── */
+  .pills {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    justify-content: center;
+    margin-top: 56px;
+  }
+  .pill {
+    padding: 6px 14px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    font-size: 13px; color: var(--text-dim);
+    background: var(--bg2);
+  }
+
+  /* ── Section ───────────────────────────────────────────── */
+  section { padding: 72px 0; border-top: 1px solid var(--border); }
+  .section-label {
+    font-size: 12px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 12px;
+  }
+  h2 {
+    font-size: clamp(24px, 4vw, 36px);
+    font-weight: 700; letter-spacing: -0.02em;
+    margin-bottom: 16px;
+  }
+  .lead {
+    color: var(--text-dim); font-size: 17px;
+    max-width: 600px; margin-bottom: 48px;
+  }
+
+  /* ── Cards ─────────────────────────────────────────────── */
+  .cards { display: grid; gap: 16px; }
+  .cards-2 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .cards-3 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .card-icon {
+    font-size: 22px; margin-bottom: 12px;
+  }
+  .card h3 { font-size: 16px; margin-bottom: 6px; }
+  .card p { font-size: 14px; color: var(--text-dim); }
+
+  /* ── Code block ────────────────────────────────────────── */
+  .code-wrap {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 32px;
+  }
+  .code-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg3);
+  }
+  .code-bar .dots { display: flex; gap: 6px; }
+  .code-bar .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+  }
+  .code-bar .dot:nth-child(1) { background: #ff5f57; }
+  .code-bar .dot:nth-child(2) { background: #febc2e; }
+  .code-bar .dot:nth-child(3) { background: #28c840; }
+  .code-bar .filename { font-size: 12px; color: var(--text-dim); font-family: monospace; }
+  pre {
+    padding: 24px;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+    font-size: 13.5px;
+    line-height: 1.7;
+  }
+  /* Syntax highlighting via spans */
+  .kw  { color: var(--purple); font-weight: 600; }
+  .fn  { color: var(--blue); }
+  .ty  { color: var(--teal); }
+  .st  { color: var(--green); }
+  .cm  { color: var(--text-dim); font-style: italic; }
+  .num { color: var(--orange); }
+  .op  { color: var(--red); }
+  .tpl { color: var(--yellow); }
+
+  /* ── Two-col layout ────────────────────────────────────── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  @media (max-width: 640px) {
+    .two-col { grid-template-columns: 1fr; }
+  }
+
+  /* ── Module table ──────────────────────────────────────── */
+  .module-grid { display: grid; gap: 12px; }
+  .module-row {
+    display: flex; gap: 16px; align-items: start;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+  }
+  .module-name {
+    font-family: monospace;
+    font-size: 14px; font-weight: 700;
+    color: var(--accent);
+    min-width: 72px;
+    padding-top: 2px;
+  }
+  .module-desc { font-size: 14px; color: var(--text-dim); }
+  .module-desc strong { color: var(--text); display: block; margin-bottom: 3px; }
+
+  /* ── Toolchain ─────────────────────────────────────────── */
+  .pipeline {
+    display: flex; flex-wrap: wrap; gap: 0;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 32px;
+  }
+  .pipe-step {
+    flex: 1; min-width: 100px;
+    padding: 20px 16px; text-align: center;
+    position: relative;
+  }
+  .pipe-step:not(:last-child)::after {
+    content: '→';
+    position: absolute; right: -8px; top: 50%; transform: translateY(-50%);
+    color: var(--text-dim); font-size: 16px; z-index: 1;
+  }
+  .pipe-step .ps-icon { font-size: 20px; margin-bottom: 6px; }
+  .pipe-step .ps-label { font-size: 12px; font-weight: 600; color: var(--accent); }
+  .pipe-step .ps-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  @media (max-width: 500px) {
+    .pipe-step:not(:last-child)::after { display: none; }
+  }
+
+  /* ── Footer ────────────────────────────────────────────── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 40px 0;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
-  <p>Redirecting to <a href="nscode/">NSCode Playground</a>…</p>
+
+<!-- ── Nav ─────────────────────────────────────────────────── -->
+<nav>
+  <div class="inner">
+    <a class="logo" href="#">
+      <img src="nslang/ns.png" alt="ns" />
+      <span>Nano</span>Script
+    </a>
+    <div class="links">
+      <a href="#syntax">Syntax</a>
+      <a href="#modules">Modules</a>
+      <a href="#toolchain">Toolchain</a>
+      <a href="nscode/" class="btn btn-primary">Playground →</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Hero ────────────────────────────────────────────────── -->
+<div class="hero">
+  <div class="container">
+    <div class="hero-badge">minimal · data-oriented · functional</div>
+    <h1>The <span>Nano Script</span><br/>Programming Language</h1>
+    <p>A compact, explicitly-typed language built for clarity. Write expressive code with minimal syntax and zero ambiguity.</p>
+    <div class="hero-btns">
+      <a href="nscode/" class="btn btn-primary">Open Playground</a>
+      <a href="https://github.com/liamlangli/ns" class="btn btn-ghost">View on GitHub</a>
+    </div>
+    <div class="pills">
+      <span class="pill">Minimal keywords</span>
+      <span class="pill">Explicit type system</span>
+      <span class="pill">No generics</span>
+      <span class="pill">First-class functions</span>
+      <span class="pill">Closures &amp; blocks</span>
+      <span class="pill">Async / await</span>
+      <span class="pill">Operator overloading</span>
+      <span class="pill">WebAssembly target</span>
+      <span class="pill">Runs in the browser</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── Design Principles ────────────────────────────────────── -->
+<section id="design">
+  <div class="container">
+    <div class="section-label">Design Principles</div>
+    <h2>Designed to stay simple</h2>
+    <p class="lead">Every feature in Nano Script earns its place. The language is optimized for legibility and predictability — not cleverness.</p>
+    <div class="cards cards-2">
+      <div class="card">
+        <div class="card-icon">✦</div>
+        <h3>Minimal syntax</h3>
+        <p>A small set of keywords and constructs means less to memorize and less to misread. The entire token vocabulary fits on a single page.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">⬡</div>
+        <h3>Explicit type system</h3>
+        <p>Types are always visible. No hidden coercions, no implicit generics. What you write is what the compiler sees.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">⇄</div>
+        <h3>Interpretation &amp; compilation</h3>
+        <p>Run scripts instantly with the interpreter, or compile to native AArch64, x86-64, PE, Mach-O, or WebAssembly binaries.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">◈</div>
+        <h3>Data-oriented</h3>
+        <p>Structs are plain data. Functions operate on data. There is no inheritance hierarchy to untangle — just shapes and transforms.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Syntax ───────────────────────────────────────────────── -->
+<section id="syntax">
+  <div class="container">
+    <div class="section-label">Syntax</div>
+    <h2>Clean &amp; readable by default</h2>
+    <p class="lead">Nano Script syntax draws from Swift and Go — familiar, yet stripped to the essentials.</p>
+
+    <!-- Variables & types -->
+    <div class="code-wrap">
+      <div class="code-bar">
+        <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+        <span class="filename">variables.ns</span>
+        <span></span>
+      </div>
+      <pre><span class="cm">// Variables — type annotation is optional (inferred from value)</span>
+<span class="kw">let</span> a = <span class="num">1</span>               <span class="cm">// i32 by default</span>
+<span class="kw">let</span> pi: <span class="ty">f64</span> = <span class="num">3.141592653</span>
+<span class="kw">let</span> hello: <span class="ty">str</span> = <span class="st">"hello world"</span>
+<span class="kw">let</span> empty = <span class="kw">nil</span>
+
+<span class="cm">// Primitive types: i8  i16  i32  i64  u8  u16  u32  u64  f32  f64  str</span></pre>
+    </div>
+
+    <!-- Functions -->
+    <div class="code-wrap">
+      <div class="code-bar">
+        <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+        <span class="filename">functions.ns</span>
+        <span></span>
+      </div>
+      <pre><span class="cm">// Functions</span>
+<span class="kw">fn</span> <span class="fn">add</span>(a: <span class="ty">f64</span>, b: <span class="ty">f64</span>): <span class="ty">f64</span> {
+    <span class="kw">return</span> a + b
+}
+
+<span class="cm">// Recursive functions</span>
+<span class="kw">fn</span> <span class="fn">fibonacci</span>(n: <span class="ty">i32</span>): <span class="ty">i32</span> {
+    <span class="kw">if</span> n == <span class="num">0</span> { <span class="kw">return</span> <span class="num">0</span> }
+    <span class="kw">else if</span> n == <span class="num">1</span> { <span class="kw">return</span> <span class="num">1</span> }
+    <span class="kw">else</span> { <span class="kw">return</span> <span class="fn">fibonacci</span>(n - <span class="num">1</span>) + <span class="fn">fibonacci</span>(n - <span class="num">2</span>) }
+}
+
+<span class="cm">// Async functions — stackful coroutines on the same thread</span>
+<span class="kw">async fn</span> <span class="fn">download</span>(url: <span class="ty">str</span>): <span class="ty">str</span> {
+    <span class="kw">let</span> response = <span class="kw">await</span> <span class="fn">fetch</span>(url)
+    <span class="kw">return</span> <span class="kw">await</span> response.<span class="fn">text</span>()
+}</pre>
+    </div>
+
+    <!-- Structs & operator overloading -->
+    <div class="code-wrap">
+      <div class="code-bar">
+        <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+        <span class="filename">structs.ns</span>
+        <span></span>
+      </div>
+      <pre><span class="cm">// Structs are plain data — no methods, no inheritance</span>
+<span class="kw">struct</span> <span class="ty">Point</span> {
+    x: <span class="ty">f32</span>,
+    y: <span class="ty">f32</span>
+}
+
+<span class="cm">// Operator overloading via ops() convention</span>
+<span class="kw">fn</span> <span class="fn">ops</span>(+)(lhs: <span class="ty">Point</span>, rhs: <span class="ty">Point</span>): <span class="ty">Point</span> {
+    <span class="kw">return</span> <span class="ty">Point</span>(lhs.x + rhs.x, lhs.y + rhs.y)
+}
+
+<span class="cm">// String formatting via to_str()</span>
+<span class="kw">fn</span> <span class="fn">to_str</span>(p: <span class="ty">Point</span>): <span class="ty">str</span> {
+    <span class="kw">return</span> <span class="tpl">`{p.x}, {p.y}`</span>   <span class="cm">// template string interpolation</span>
+}
+
+<span class="kw">let</span> a = <span class="ty">Point</span>(<span class="num">0</span>, <span class="num">0</span>)
+<span class="kw">let</span> b = <span class="ty">Point</span>(<span class="num">1</span>, <span class="num">1</span>)
+<span class="fn">print</span>(a + b)   <span class="cm">// → 1, 1</span></pre>
+    </div>
+
+    <!-- Blocks / closures -->
+    <div class="code-wrap">
+      <div class="code-bar">
+        <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+        <span class="filename">blocks.ns</span>
+        <span></span>
+      </div>
+      <pre><span class="cm">// Type aliases and function types</span>
+<span class="kw">type</span> <span class="ty">op_fn</span> = (<span class="ty">i32</span>, <span class="ty">i32</span>) -> <span class="ty">i32</span>
+
+<span class="cm">// Block (closure) syntax — capture outer scope implicitly</span>
+<span class="kw">let</span> add_op: <span class="ty">op_fn</span> = { a, b <span class="kw">in</span>
+    <span class="kw">return</span> a + b
+}
+
+<span class="cm">// Higher-order functions</span>
+<span class="kw">fn</span> <span class="fn">do_op</span>(a: <span class="ty">i32</span>, b: <span class="ty">i32</span>, op: <span class="ty">op_fn</span>): <span class="ty">i32</span> {
+    <span class="kw">return</span> <span class="fn">op</span>(a, b)
+}
+
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> r = <span class="fn">do_op</span>(<span class="num">1</span>, <span class="num">2</span>, add_op)
+    <span class="fn">print</span>(<span class="tpl">`1 + 2 = {r}`</span>)   <span class="cm">// → 1 + 2 = 3</span>
+}</pre>
+    </div>
+
+    <!-- Ref -->
+    <div class="code-wrap">
+      <div class="code-bar">
+        <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+        <span class="filename">references.ns</span>
+        <span></span>
+      </div>
+      <pre><span class="cm">// ref — explicit reference semantics, no hidden aliasing</span>
+<span class="kw">let</span> a = <span class="num">1.0</span>
+<span class="kw">let</span> b = <span class="kw">ref</span> a      <span class="cm">// b is a reference to a</span>
+<span class="kw">let</span> c = a           <span class="cm">// c is a copy of a's value</span>
+
+b = <span class="num">2.0</span>
+<span class="fn">print</span>(<span class="tpl">`{a} {b} {c}`</span>) <span class="cm">// → 2.0 2.0 1.0</span>
+
+<span class="cm">// ref in function signatures — mutate caller data</span>
+<span class="kw">fn</span> <span class="fn">upper</span>(s: <span class="kw">ref</span> <span class="ty">str</span>): <span class="kw">ref</span> <span class="ty">str</span> {
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="num">0</span> <span class="kw">to</span> s.<span class="fn">len</span>() {
+        s[i] = s[i].<span class="fn">to_upper</span>()
+    }
+    <span class="kw">return</span> s
+}
+
+<span class="cm">// External function declarations (FFI)</span>
+<span class="kw">ref fn</span> <span class="fn">add</span>(a: <span class="ty">i32</span>, b: <span class="ty">i32</span>): <span class="ty">i32</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ── Modules ──────────────────────────────────────────────── -->
+<section id="modules">
+  <div class="container">
+    <div class="section-label">Modules</div>
+    <h2>Built-in standard modules</h2>
+    <p class="lead">Nano Script ships with a focused set of modules. Import them with <code style="color:var(--accent);background:var(--bg3);padding:1px 6px;border-radius:4px;">use &lt;module&gt;</code> at the top of any file.</p>
+
+    <div class="module-grid" style="margin-bottom:40px;">
+      <div class="module-row">
+        <span class="module-name">std</span>
+        <div class="module-desc">
+          <strong>Standard library</strong>
+          Core I/O and math bindings: <code>print</code>, <code>open</code>, <code>read</code>, <code>write</code>, <code>sqrt</code>, and other libc/libm essentials.
+        </div>
+      </div>
+      <div class="module-row">
+        <span class="module-name">io</span>
+        <div class="module-desc">
+          <strong>Image I/O</strong>
+          Load and save raster images. Provides <code>io_image</code> struct (width, height, channels, pixel data) and <code>io_load_image</code> / <code>io_save_image</code>.
+        </div>
+      </div>
+      <div class="module-row">
+        <span class="module-name">os</span>
+        <div class="module-desc">
+          <strong>Operating system</strong>
+          File system operations, process management, and other platform-specific functionality.
+        </div>
+      </div>
+      <div class="module-row">
+        <span class="module-name">gpu</span>
+        <div class="module-desc">
+          <strong>GPU / compute</strong>
+          WebGPU-backed compute kernels. Write <code>kernel fn</code> functions and dispatch them on the GPU — used in the browser playground.
+        </div>
+      </div>
+      <div class="module-row">
+        <span class="module-name">view</span>
+        <div class="module-desc">
+          <strong>UI / windowing</strong>
+          Cross-platform view and windowing primitives for building graphical applications.
+        </div>
+      </div>
+      <div class="module-row">
+        <span class="module-name">simd</span>
+        <div class="module-desc">
+          <strong>SIMD intrinsics</strong>
+          Vectorized arithmetic operations backed by CPU SIMD instructions for performance-critical code.
+        </div>
+      </div>
+      <div class="module-row">
+        <span class="module-name">nsm</span>
+        <div class="module-desc">
+          <strong>Module manager</strong>
+          Declare project metadata and dependencies in <code>nsm.ns</code>. Use the <code>nsm</code> CLI to create, build, run, and manage packages.
+        </div>
+      </div>
+    </div>
+
+    <!-- Module usage example -->
+    <div class="code-wrap">
+      <div class="code-bar">
+        <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+        <span class="filename">example.ns</span>
+        <span></span>
+      </div>
+      <pre><span class="kw">use</span> std
+<span class="kw">use</span> io
+
+<span class="cm">// Load an image and print its dimensions</span>
+<span class="kw">fn</span> <span class="fn">main</span>() {
+    <span class="kw">let</span> img = <span class="fn">io_load_image</span>(<span class="st">"photo.png"</span>)
+    <span class="fn">print</span>(<span class="tpl">`width={img.width} height={img.height} ch={img.channels}`</span>)
+}</pre>
+    </div>
+
+    <!-- nsm project file -->
+    <div class="code-wrap">
+      <div class="code-bar">
+        <div class="dots"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+        <span class="filename">nsm.ns — project manifest</span>
+        <span></span>
+      </div>
+      <pre><span class="kw">use</span> nsm
+
+<span class="kw">let</span> module = <span class="ty">NSModule</span>{
+    name:         <span class="st">"my_app"</span>,
+    version:      <span class="st">"0.1.0"</span>,
+    description:  <span class="st">"my first Nano Script app"</span>,
+    type:         <span class="st">"app"</span>,    <span class="cm">// or "lib"</span>
+    source:       <span class="st">"src"</span>,
+    dependencies: [
+        {name: <span class="st">"ref_lib"</span>, version: <span class="st">"0.1.0"</span>}
+    ]
+}</pre>
+    </div>
+
+    <div class="cards cards-3" style="margin-top:8px;">
+      <div class="card">
+        <div class="card-icon" style="font-family:monospace;font-size:13px;color:var(--accent);">nsm create</div>
+        <h3>Create a project</h3>
+        <p><code>nsm create my_app</code> — scaffold an app. Add <code>--lib</code> for a library.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="font-family:monospace;font-size:13px;color:var(--accent);">nsm build</div>
+        <h3>Build &amp; run</h3>
+        <p><code>nsm build</code> compiles. <code>nsm run</code> builds and executes in one step.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon" style="font-family:monospace;font-size:13px;color:var(--accent);">nsm add</div>
+        <h3>Manage deps</h3>
+        <p><code>nsm add &lt;name&gt;</code> to add a dependency, <code>nsm remove</code> to remove one.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Toolchain ────────────────────────────────────────────── -->
+<section id="toolchain">
+  <div class="container">
+    <div class="section-label">Toolchain</div>
+    <h2>From source to binary</h2>
+    <p class="lead">The Nano Script toolchain is a single, self-contained C project — no runtime dependencies, multiple output targets.</p>
+
+    <div class="pipeline">
+      <div class="pipe-step">
+        <div class="ps-icon">📄</div>
+        <div class="ps-label">Source</div>
+        <div class="ps-sub">.ns files</div>
+      </div>
+      <div class="pipe-step">
+        <div class="ps-icon">🔤</div>
+        <div class="ps-label">Tokenize</div>
+        <div class="ps-sub">ns_token</div>
+      </div>
+      <div class="pipe-step">
+        <div class="ps-icon">🌳</div>
+        <div class="ps-label">Parse AST</div>
+        <div class="ps-sub">ns_ast</div>
+      </div>
+      <div class="pipe-step">
+        <div class="ps-icon">⚙️</div>
+        <div class="ps-label">VM / SSA</div>
+        <div class="ps-sub">ns_vm · ns_ssa</div>
+      </div>
+      <div class="pipe-step">
+        <div class="ps-icon">🎯</div>
+        <div class="ps-label">Emit</div>
+        <div class="ps-sub">native · wasm</div>
+      </div>
+    </div>
+
+    <div class="cards cards-2">
+      <div class="card">
+        <div class="card-icon">⚡</div>
+        <h3>ns — compiler &amp; interpreter</h3>
+        <p>Evaluate scripts directly, print the AST or SSA IR, or emit Mach-O, PE, AArch64, or WebAssembly output. Includes a REPL.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔍</div>
+        <h3>ns_lsp — language server</h3>
+        <p>LSP-compliant server providing code completion, hover information, and diagnostics for any LSP-compatible editor.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🐛</div>
+        <h3>ns_debug — debug adapter</h3>
+        <p>DAP-compatible debug adapter with breakpoints, step-through execution, and variable inspection.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🖊️</div>
+        <h3>nslang — VS Code extension</h3>
+        <p>Syntax highlighting, LSP integration, and debugger support for <code>.ns</code> files inside Visual Studio Code.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ──────────────────────────────────────────────────── -->
+<section style="text-align:center; border-top:1px solid var(--border); padding:80px 0;">
+  <div class="container">
+    <div class="section-label">Try it now</div>
+    <h2>Write your first Nano Script</h2>
+    <p class="lead" style="margin:0 auto 32px;">No install needed. The browser playground runs the full interpreter via WebAssembly.</p>
+    <a href="nscode/" class="btn btn-primary" style="font-size:16px; padding:12px 32px;">Open Playground →</a>
+  </div>
+</section>
+
+<!-- ── Footer ───────────────────────────────────────────────── -->
+<footer>
+  <div class="container">
+    <p>Nano Script is open-source. <a href="https://github.com/liamlangli/ns">View the source on GitHub</a>.</p>
+  </div>
+</footer>
+
 </body>
 </html>
