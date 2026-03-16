@@ -98,7 +98,7 @@ println(add5(add10(2)))
 //   gpu_pipeline(shader)   — build a triangle-list pipeline (vs + fs entry pts)
 //   gpu_render(pipeline, n) — clear, draw n vertices, submit
 
-let wgsl = \`
+let wgsl = "
     struct VSOut {
         @builtin(position) pos : vec4f,
         @location(0)       col : vec3f,
@@ -119,7 +119,7 @@ let wgsl = \`
     @fragment fn fs(v: VSOut) -> @location(0) vec4f {
         return vec4f(v.col, 1.0);
     }
-\`
+"
 
 let shader   = gpu_shader(wgsl)
 let pipeline = gpu_pipeline(shader)

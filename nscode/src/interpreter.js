@@ -76,12 +76,12 @@ function lex(src) {
             i = j; continue;
         }
 
-        // String double-quote
+        // String double-quote — raw, multi-line, no interpolation
         if (src[i] === '"') {
             let j = i + 1, s = '';
             while (j < n && src[j] !== '"') {
                 if (src[j] === '\\') { j++; s += escape_char(src[j]); }
-                else s += src[j];
+                else { if (src[j] === '\n') line++; s += src[j]; }
                 j++;
             }
             j++; // closing "
@@ -89,17 +89,17 @@ function lex(src) {
             i = j; continue;
         }
 
-        // Template string backtick `…${expr}…`
+        // Template string backtick `…{expr}…`
         if (src[i] === '`') {
             tokens.push(new token(TK.BACKTICK, '`', line));
             i++;
             let s = '';
             while (i < n && src[i] !== '`') {
-                if (src[i] === '$' && src[i + 1] === '{') {
+                if (src[i] === '{') {
                     if (s) tokens.push(new token(TK.STRING, s, line));
                     s = '';
-                    i += 2; // skip '${'
                     tokens.push(new token(TK.LBRACE, '{', line));
+                    i++;
                     let depth = 1;
                     let inner = '';
                     while (i < n && depth > 0) {
