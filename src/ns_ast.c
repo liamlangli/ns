@@ -351,7 +351,6 @@ ns_fn_type ns_parse_fn_type(ns_ast_ctx *ctx) {
     ns_parse_next_token(ctx);
     switch (ctx->token.type) {
     case NS_TOKEN_ASYNC: return NS_FN_ASYNC;
-    case NS_TOKEN_COMPUTE: return NS_FN_COMPUTE;
     default:
         ns_restore_state(ctx, state);
         return NS_FN_GENERIC;

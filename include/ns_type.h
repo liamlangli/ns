@@ -167,7 +167,6 @@ typedef enum {
     NS_TOKEN_AWAIT,
     NS_TOKEN_BREAK,
 
-    NS_TOKEN_CONST,
     NS_TOKEN_CONTINUE,
     NS_TOKEN_COMMENT,
     NS_TOKEN_DO,
@@ -188,7 +187,6 @@ typedef enum {
     NS_TOKEN_STRUCT,
     NS_TOKEN_TRUE,
     NS_TOKEN_TYPE,
-    NS_TOKEN_COMPUTE,
     NS_TOKEN_OPS,           // ops: keyword for operator overloading
 
     NS_TOKEN_TYPE_I8,
@@ -282,7 +280,6 @@ typedef enum {
 typedef enum {
     NS_FN_GENERIC = 0,
     NS_FN_ASYNC,
-    NS_FN_COMPUTE,
 } ns_fn_type;
 
 // f and i, f and u, i and u

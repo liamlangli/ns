@@ -9,6 +9,7 @@ import { gpu_parser }            from './gpu_parser.js';
 import { compare_normalized_asts, normalize_cpu_ast_by_function } from './parser_validation.js';
 import { UI, C }                from './ui.js';
 import { fuzzy_filter, key_map, event_key_id } from './commands.js';
+import { WebGPUModule }         from './webgpu_module.js';
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const DEBUG_GPU_PARSE_VALIDATION = globalThis.localStorage?.getItem('ns.debugGpuParseValidation') === '1';
@@ -89,6 +90,42 @@ println(add5(3))
 println(add10(3))
 println(add5(add10(2)))
 `,
+
+    // ── WebGPU examples (NanoScript with gpu_* built-in functions) ──────────
+    webgpu_triangle: `// WebGPU Triangle
+// Built-in gpu_* functions connect NanoScript to the WebGPU preview canvas.
+//   gpu_shader(wgsl)       — compile WGSL source, return shader handle
+//   gpu_pipeline(shader)   — build a triangle-list pipeline (vs + fs entry pts)
+//   gpu_render(pipeline, n) — clear, draw n vertices, submit
+
+let wgsl = \`
+    struct VSOut {
+        @builtin(position) pos : vec4f,
+        @location(0)       col : vec3f,
+    }
+    @vertex fn vs(@builtin(vertex_index) i: u32) -> VSOut {
+        var p = array<vec2f, 3>(
+            vec2f( 0.0,  0.6),
+            vec2f(-0.6, -0.6),
+            vec2f( 0.6, -0.6),
+        );
+        var c = array<vec3f, 3>(
+            vec3f(1.0, 0.4, 0.4),
+            vec3f(0.4, 1.0, 0.4),
+            vec3f(0.4, 0.4, 1.0),
+        );
+        return VSOut(vec4f(p[i], 0.0, 1.0), c[i]);
+    }
+    @fragment fn fs(v: VSOut) -> @location(0) vec4f {
+        return vec4f(v.col, 1.0);
+    }
+\`
+
+let shader   = gpu_shader(wgsl)
+let pipeline = gpu_pipeline(shader)
+gpu_render(pipeline, 3)
+println("Triangle rendered!")
+`,
 };
 
 // File-tree structure (mutable: group.open can toggle)
@@ -106,7 +143,17 @@ const FILE_TREE = [
             { label: 'Closures',    value: 'closure'   },
         ],
     },
+    {
+        label: 'WebGPU',
+        open:  true,
+        items: [
+            { label: 'Triangle', value: 'webgpu_triangle' },
+        ],
+    },
 ];
+
+// WebGPU examples execute as JavaScript, not NanoScript
+const WEBGPU_EXAMPLES = new Set(['webgpu_triangle']);
 
 // ── Default keybindings ───────────────────────────────────────────────────────
 const DEFAULT_BINDINGS = [
@@ -217,6 +264,9 @@ async function main() {
 
     const gpu = new GPU(canvas);
     await gpu.init(device, atlas);
+
+    const wgpu_module = new WebGPUModule();
+    await wgpu_module.init(device);
 
     // Compute-only parser pipeline is initialized separately from rendering.
     let compile_gpu = null;
@@ -339,7 +389,7 @@ async function main() {
     });
     render_output_view();
 
-    // ── Run NS code ───────────────────────────────────────────────────────────
+    // ── Run code ──────────────────────────────────────────────────────────────
     async function run_code() {
         out_lines = [];
         out_scroll = 0;
@@ -347,6 +397,40 @@ async function main() {
         run_status = 'run';
         run_status_msg = 'Running\u2026';
         await new Promise(r => setTimeout(r, 0));
+
+        // ── WebGPU execution path (NanoScript + injected gpu_* built-ins) ───
+        if (WEBGPU_EXAMPLES.has(active_example)) {
+            wgpu_module.clear();
+            const interp = new ns_interpreter({
+                print: v => out_lines.push({ text: String(v), cls: 'print' }),
+                error: v => out_lines.push({ text: String(v), cls: 'error' }),
+            });
+            // Inject gpu_* built-ins into the global scope
+            const gpu_globals = wgpu_module.make_ns_globals();
+            for (const [name, fn_def] of Object.entries(gpu_globals)) {
+                interp.globals.def(name, fn_def);
+            }
+            const source = buf.get_text();
+            let ok = true;
+            const t0 = performance.now();
+            try {
+                const ast = parse_to_ast(source);
+                interp.eval_program(ast, interp.globals);
+            } catch (e) {
+                ok = false;
+                out_lines.push({ text: `Error: ${e.message ?? String(e)}`, cls: 'error' });
+            }
+            const elapsed = (performance.now() - t0).toFixed(2);
+            out_lines.push({ text: '\u2500'.repeat(36), cls: 'sep' });
+            out_lines.push({ text: `Execute: ${elapsed} ms`, cls: 'time' });
+            run_status = ok ? 'ok' : 'err';
+            run_status_msg = ok ? 'Success' : 'Error';
+            out_scroll = Math.max(0, out_lines.length - 10);
+            render_output_view();
+            return;
+        }
+
+        // ── NanoScript execution path ──────────────────────────────────────
         const interp = new ns_interpreter({
             print: v => out_lines.push({ text: String(v), cls: 'print' }),
             error: v => out_lines.push({ text: String(v), cls: 'error' }),
@@ -857,26 +941,76 @@ async function main() {
         const div_x = editor_x + editor_w;
         ui.divider('div', div_x, TOOLBAR_H, main_h, div_ref);
 
-        // ── Output header ─────────────────────────────────────────────────────
-        const out_x = div_x + DIVIDER_W;
-        const HDR_H = 34;
-        ui.panel(out_x, TOOLBAR_H, out_w, HDR_H, C.SURFACE);
-        ui.separator(out_x, TOOLBAR_H + HDR_H - 1, out_w, C.BORDER);
-        ui.status_dot(out_x + 10, TOOLBAR_H + (HDR_H - 8) / 2, 4, run_status);
-        ui.draw_text('Output', out_x + 26, TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.TEXT);
-        ui.draw_text(run_status_msg,
-            out_x + 26 + 8 * atlas.glyph_w,
-            TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
+        const out_x      = div_x + DIVIDER_W;
+        const HDR_H      = 34;
+        const webgpu_mode = WEBGPU_EXAMPLES.has(active_example);
 
-        // ── Output body ───────────────────────────────────────────────────────
-        out_scroll = ui.output_panel(out_lines, out_x,
-            TOOLBAR_H + HDR_H, out_w, main_h - HDR_H, out_scroll);
-        output_view.style.left = `${out_x}px`;
-        output_view.style.top = `${TOOLBAR_H + HDR_H}px`;
-        output_view.style.width = `${out_w}px`;
-        output_view.style.height = `${main_h - HDR_H}px`;
-        output_view.style.font = `${atlas.glyph_h - 4}px monospace`;
-        output_view.style.lineHeight = `${atlas.glyph_h}px`;
+        if (webgpu_mode) {
+            // ── WebGPU mode: preview top-right, output bottom-right ───────────
+            const prev_h         = Math.floor(main_h * 0.6);  // preview panel (incl. header)
+            const prev_content_h = prev_h - HDR_H;
+            const sep_y          = TOOLBAR_H + prev_h;
+            const out_panel_y    = sep_y + DIVIDER_W;
+            const out_content_h  = main_h - prev_h - DIVIDER_W - HDR_H;
+
+            // Preview header
+            ui.panel(out_x, TOOLBAR_H, out_w, HDR_H, C.SURFACE);
+            ui.separator(out_x, TOOLBAR_H + HDR_H - 1, out_w, C.BORDER);
+            ui.draw_text('WebGPU Preview',
+                out_x + 10, TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.ACCENT);
+
+            // Thin separator strip between preview and output
+            ui._dl.rect(out_x, sep_y, out_w, DIVIDER_W,
+                C.SURFACE[0], C.SURFACE[1], C.SURFACE[2], 1);
+            ui.separator(out_x, sep_y, out_w, C.BORDER);
+            ui.separator(out_x, out_panel_y, out_w, C.BORDER);
+
+            // Output header
+            ui.panel(out_x, out_panel_y, out_w, HDR_H, C.SURFACE);
+            ui.separator(out_x, out_panel_y + HDR_H - 1, out_w, C.BORDER);
+            ui.status_dot(out_x + 10, out_panel_y + (HDR_H - 8) / 2, 4, run_status);
+            ui.draw_text('Output', out_x + 26, out_panel_y + (HDR_H - atlas.glyph_h) / 2, C.TEXT);
+            ui.draw_text(run_status_msg,
+                out_x + 26 + 8 * atlas.glyph_w,
+                out_panel_y + (HDR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
+
+            // Position WebGPU canvas overlay
+            wgpu_module.resize(out_x, TOOLBAR_H + HDR_H, out_w, prev_content_h);
+            wgpu_module.show();
+
+            // Position output HTML overlay
+            out_scroll = ui.output_panel(out_lines, out_x,
+                out_panel_y + HDR_H, out_w, out_content_h, out_scroll);
+            output_view.style.left       = `${out_x}px`;
+            output_view.style.top        = `${out_panel_y + HDR_H}px`;
+            output_view.style.width      = `${out_w}px`;
+            output_view.style.height     = `${out_content_h}px`;
+            output_view.style.font       = `${atlas.glyph_h - 4}px monospace`;
+            output_view.style.lineHeight = `${atlas.glyph_h}px`;
+
+        } else {
+            // ── Normal mode: full right panel = output ────────────────────────
+            wgpu_module.hide();
+
+            // Output header
+            ui.panel(out_x, TOOLBAR_H, out_w, HDR_H, C.SURFACE);
+            ui.separator(out_x, TOOLBAR_H + HDR_H - 1, out_w, C.BORDER);
+            ui.status_dot(out_x + 10, TOOLBAR_H + (HDR_H - 8) / 2, 4, run_status);
+            ui.draw_text('Output', out_x + 26, TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.TEXT);
+            ui.draw_text(run_status_msg,
+                out_x + 26 + 8 * atlas.glyph_w,
+                TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
+
+            // Output body
+            out_scroll = ui.output_panel(out_lines, out_x,
+                TOOLBAR_H + HDR_H, out_w, main_h - HDR_H, out_scroll);
+            output_view.style.left       = `${out_x}px`;
+            output_view.style.top        = `${TOOLBAR_H + HDR_H}px`;
+            output_view.style.width      = `${out_w}px`;
+            output_view.style.height     = `${main_h - HDR_H}px`;
+            output_view.style.font       = `${atlas.glyph_h - 4}px monospace`;
+            output_view.style.lineHeight = `${atlas.glyph_h}px`;
+        }
 
         // ── Status bar ────────────────────────────────────────────────────────
         const sb_y = vp_h - STATUS_H;
