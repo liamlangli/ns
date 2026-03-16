@@ -76,12 +76,12 @@ function lex(src) {
             i = j; continue;
         }
 
-        // String double-quote
+        // String double-quote — raw, multi-line, no interpolation
         if (src[i] === '"') {
             let j = i + 1, s = '';
             while (j < n && src[j] !== '"') {
                 if (src[j] === '\\') { j++; s += escape_char(src[j]); }
-                else s += src[j];
+                else { if (src[j] === '\n') line++; s += src[j]; }
                 j++;
             }
             j++; // closing "
