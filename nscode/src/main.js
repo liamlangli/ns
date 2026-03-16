@@ -319,6 +319,9 @@ async function main() {
     let cursor_visible = true;
     let blink_t = 0;
 
+    // ── Dirty flag — render only when something actually changed ──────────────
+    let dirty = true;   // true on first frame to draw initial UI
+
     // ── Mouse state ───────────────────────────────────────────────────────────
     let mx = 0, my = 0, mouse_down = false, just_down = false, just_up = false;
     let vp_w = 0, vp_h = 0;
@@ -350,6 +353,7 @@ async function main() {
         vp_h = window.innerHeight;
         gpu.resize(vp_w, vp_h);
         if (div_ref.value === 0) div_ref.value = Math.round((vp_w - tree_ref.value) * 0.4);
+        dirty = true;
     }
     resize();
     window.addEventListener('resize', resize);
@@ -396,6 +400,7 @@ async function main() {
         render_output_view();
         run_status = 'run';
         run_status_msg = 'Running\u2026';
+        dirty = true;
         await new Promise(r => setTimeout(r, 0));
 
         // ── WebGPU execution path (NanoScript + injected gpu_* built-ins) ───
@@ -427,6 +432,7 @@ async function main() {
             run_status_msg = ok ? 'Success' : 'Error';
             out_scroll = Math.max(0, out_lines.length - 10);
             render_output_view();
+            dirty = true;
             return;
         }
 
@@ -516,6 +522,7 @@ async function main() {
         run_status_msg = ok ? 'Success' : 'Error';
         out_scroll     = Math.max(0, out_lines.length - 10);
         render_output_view();
+        dirty = true;
     }
 
     // ── Editor operations ─────────────────────────────────────────────────────
@@ -687,6 +694,7 @@ async function main() {
     const any_overlay = () => palette.open || find_state.open || goto_state.open || kb_state.open;
 
     window.addEventListener('keydown', e => {
+        dirty = true;
         const shift = e.shiftKey;
 
         // ── Palette overlay ────────────────────────────────────────────────────
@@ -799,7 +807,7 @@ async function main() {
         }
         default: handled = false;
         }
-        if (handled) { e.preventDefault(); blink_t = 0; cursor_visible = true; }
+        if (handled) { e.preventDefault(); blink_t = 0; cursor_visible = true; dirty = true; }
     });
 
     // ── Text input routing ─────────────────────────────────────────────────────
@@ -807,6 +815,7 @@ async function main() {
         const t = e.data ?? '';
         hidden_input.value = '';
         if (!t) return;
+        dirty = true;
         if (palette.open) {
             palette.query += t; palette.sel = 0; return;
         }
@@ -827,12 +836,14 @@ async function main() {
         hidden_input.focus();
         mx = e.clientX; my = e.clientY;
         mouse_down = true; just_down = true;
+        dirty = true;
         e.preventDefault();
     });
-    window.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+    window.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; dirty = true; });
     window.addEventListener('mouseup',   e => {
         mx = e.clientX; my = e.clientY;
         mouse_down = false; just_up = true;
+        dirty = true;
     });
 
     canvas.addEventListener('wheel', e => {
@@ -846,6 +857,7 @@ async function main() {
         } else {
             out_scroll = Math.max(0, Math.min(out_scroll + e.deltaY / atlas.glyph_h, Math.max(0, out_lines.length - 1)));
         }
+        dirty = true;
     }, { passive: false });
 
     // ── Frame loop ────────────────────────────────────────────────────────────
@@ -854,9 +866,12 @@ async function main() {
         requestAnimationFrame(frame);
         const dt = ts - last; last = ts;
 
-        // Cursor blink (suppress blinking when overlay is open for cleanliness)
+        // Cursor blink — only marks dirty when visible state actually toggles
         blink_t += dt;
-        if (blink_t > 530) { blink_t = 0; cursor_visible = !cursor_visible; }
+        if (blink_t > 530) { blink_t = 0; cursor_visible = !cursor_visible; dirty = true; }
+
+        if (!dirty) { just_down = false; just_up = false; return; }
+        dirty = false;
 
         // Layout
         const main_h  = vp_h - TOOLBAR_H - STATUS_H;
