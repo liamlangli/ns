@@ -11,7 +11,6 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_FLT_LITERAL);
         ns_str_case(NS_TOKEN_STR_LITERAL);
         ns_str_case(NS_TOKEN_STR_FORMAT);
-        ns_str_case(NS_TOKEN_CONST);
         ns_str_case(NS_TOKEN_COMMENT);
         ns_str_case(NS_TOKEN_LET);
         ns_str_case(NS_TOKEN_MATCH);
@@ -221,11 +220,9 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
         }
     } break;
 
-    case 'c': // const, continue
+    case 'c': // compute, continue
     {
-        if (strncmp(s + f, "const", 5) == 0) {
-            ns_range_token(NS_TOKEN_CONST, 5)
-        } else if (strncmp(s + f, "compute", 7) == 0) {
+        if (strncmp(s + f, "compute", 7) == 0) {
             ns_range_token(NS_TOKEN_COMPUTE, 7)
         } else if (strncmp(s + f, "continue", 8) == 0) {
             ns_range_token(NS_TOKEN_CONTINUE, 8)

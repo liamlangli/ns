@@ -63,7 +63,7 @@ const C = {
 const _tt_map = new Int8Array(128).fill(TT.UNKNOWN);
 const _kw = [
     C.AS, C.ANY, C.ASYNC, C.ASSERT, C.AWAIT, C.BREAK,
-    C.CONST, C.CONTINUE, C.DO, C.LOOP, C.ELSE, C.FALSE,
+    C.CONTINUE, C.DO, C.LOOP, C.ELSE, C.FALSE,
     C.FOR, C.TO, C.IF, C.USE, C.IN, C.LET, C.NIL, C.MATCH,
     C.MODULE, C.RETURN, C.REF, C.STRUCT, C.TRUE, C.TYPE,
     C.VERTEX, C.FRAGMENT, C.COMPUTE, C.KERNEL, C.OPS, C.FN,
@@ -167,7 +167,7 @@ const NS_KEYWORDS = new Set([
     'type', 'use', 'break', 'continue', 'as', 'true', 'false',
     'struct', 'enum', 'import', 'pub', 'nil', 'loop', 'do',
     'match', 'mod', 'async', 'await', 'assert', 'ref', 'ops',
-    'const', 'vertex', 'fragment', 'compute', 'kernel',
+    'vertex', 'fragment', 'compute', 'kernel',
 ]);
 
 const NS_TYPES = new Set([

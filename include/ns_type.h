@@ -167,7 +167,6 @@ typedef enum {
     NS_TOKEN_AWAIT,
     NS_TOKEN_BREAK,
 
-    NS_TOKEN_CONST,
     NS_TOKEN_CONTINUE,
     NS_TOKEN_COMMENT,
     NS_TOKEN_DO,
