@@ -89,17 +89,17 @@ function lex(src) {
             i = j; continue;
         }
 
-        // Template string backtick `…{expr}…`
+        // Template string backtick `…${expr}…`
         if (src[i] === '`') {
             tokens.push(new token(TK.BACKTICK, '`', line));
             i++;
             let s = '';
             while (i < n && src[i] !== '`') {
-                if (src[i] === '{') {
+                if (src[i] === '$' && src[i + 1] === '{') {
                     if (s) tokens.push(new token(TK.STRING, s, line));
                     s = '';
+                    i += 2; // skip '${'
                     tokens.push(new token(TK.LBRACE, '{', line));
-                    i++;
                     let depth = 1;
                     let inner = '';
                     while (i < n && depth > 0) {
