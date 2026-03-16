@@ -71,7 +71,6 @@ typedef enum {
     NS_TOKEN_TYPE,
     NS_TOKEN_VERTEX,
     NS_TOKEN_FRAGMENT,
-    NS_TOKEN_COMPUTE,
     NS_TOKEN_KERNEL,
     NS_TOKEN_OPS,
 
@@ -252,8 +251,7 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
     } break;
 
     case 'c': {
-        if      (strncmp(s + f, "compute",  7) == 0){ ns_range_token(NS_TOKEN_COMPUTE,  7) }
-        else if (strncmp(s + f, "continue", 8) == 0){ ns_range_token(NS_TOKEN_CONTINUE, 8) }
+        if (strncmp(s + f, "continue", 8) == 0){ ns_range_token(NS_TOKEN_CONTINUE, 8) }
         else goto identifier;
     } break;
 

@@ -168,7 +168,7 @@ function _wasm_tokenize_line(line: string): token[] {
 const NS_KEYWORDS = new Set([
     'fn','let','return','if','else','for','in','to','type','use','break',
     'continue','as','true','false','struct','nil','loop','do','match','mod',
-    'async','await','assert','ref','ops','vertex','fragment','compute','kernel',
+    'async','await','assert','ref','ops','vertex','fragment','kernel',
 ]);
 const NS_TYPES = new Set([
     'i8','u8','i16','u16','i32','u32','i64','u64','f32','f64','bool','str','void','any',

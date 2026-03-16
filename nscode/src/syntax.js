@@ -66,7 +66,7 @@ const _kw = [
     C.CONTINUE, C.DO, C.LOOP, C.ELSE, C.FALSE,
     C.FOR, C.TO, C.IF, C.USE, C.IN, C.LET, C.NIL, C.MATCH,
     C.MODULE, C.RETURN, C.REF, C.STRUCT, C.TRUE, C.TYPE,
-    C.VERTEX, C.FRAGMENT, C.COMPUTE, C.KERNEL, C.OPS, C.FN,
+    C.VERTEX, C.FRAGMENT, C.KERNEL, C.OPS, C.FN,
 ];
 const _ty = [
     C.TYPE_I8, C.TYPE_I16, C.TYPE_I32, C.TYPE_I64,
@@ -167,7 +167,7 @@ const NS_KEYWORDS = new Set([
     'type', 'use', 'break', 'continue', 'as', 'true', 'false',
     'struct', 'enum', 'import', 'pub', 'nil', 'loop', 'do',
     'match', 'mod', 'async', 'await', 'assert', 'ref', 'ops',
-    'vertex', 'fragment', 'compute', 'kernel',
+    'vertex', 'fragment', 'kernel',
 ]);
 
 const NS_TYPES = new Set([
