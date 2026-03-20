@@ -253,6 +253,17 @@ async function main() {
     output_view.style.zIndex = '2';
     document.body.appendChild(output_view);
 
+    // ── Parse texture overlay canvas ─────────────────────────────────────────
+    const parse_tex_canvas = document.createElement('canvas');
+    parse_tex_canvas.id = 'parse-texture-view';
+    parse_tex_canvas.style.position = 'fixed';
+    parse_tex_canvas.style.display = 'none';
+    parse_tex_canvas.style.zIndex = '2';
+    parse_tex_canvas.style.imageRendering = 'pixelated';
+    parse_tex_canvas.style.pointerEvents = 'none';
+    parse_tex_canvas.style.border = 'none';
+    document.body.appendChild(parse_tex_canvas);
+
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('No WebGPU adapter');
     const device  = await adapter.requestDevice();
@@ -308,6 +319,63 @@ async function main() {
     let run_status     = 'idle';
     let run_status_msg = 'Ready';
     let output_html    = '';
+
+    // ── Parse texture state ───────────────────────────────────────────────────
+    let parse_tex_fn_count = 0; // 0 = no texture to show
+
+    /**
+     * Build and draw a per-function parse texture onto parse_tex_canvas.
+     * Each row = one function, each pixel column = one token.
+     * Pixel color encodes token kind (RGBA u8).
+     */
+    function build_parse_texture(gpu_result) {
+        const fn_count = gpu_result.function_spans.length;
+        if (fn_count === 0) { parse_tex_fn_count = 0; return; }
+
+        // Group tokens by function and sort by source position
+        const fn_tokens = Array.from({ length: fn_count }, () => []);
+        for (const tok of gpu_result.tokens) {
+            if (tok.functionId < fn_count) fn_tokens[tok.functionId].push(tok);
+        }
+        for (const arr of fn_tokens) arr.sort((a, b) => a.start - b.start);
+
+        let max_tok = 0;
+        for (const arr of fn_tokens) max_tok = Math.max(max_tok, arr.length);
+        if (max_tok === 0) { parse_tex_fn_count = 0; return; }
+
+        // Token kind → RGBA u8 color
+        // kind 0/unknown: dark bg | kind 1: identifier (blue) | kind 2: literal (green) | kind 3: symbol (orange)
+        const KIND_COLORS = [
+            [30,  30,  40,  255],   // 0: empty / unknown
+            [80,  160, 255, 255],   // 1: identifier  — blue
+            [80,  255, 140, 255],   // 2: literal      — green
+            [255, 160,  60, 255],   // 3: symbol       — orange
+        ];
+        const BG = KIND_COLORS[0];
+
+        const pixels = new Uint8ClampedArray(max_tok * fn_count * 4);
+        // Fill background
+        for (let i = 0; i < pixels.length; i += 4) {
+            pixels[i]   = BG[0]; pixels[i+1] = BG[1];
+            pixels[i+2] = BG[2]; pixels[i+3] = BG[3];
+        }
+        // Fill token pixels
+        for (let fi = 0; fi < fn_count; fi++) {
+            const toks = fn_tokens[fi];
+            for (let ti = 0; ti < toks.length && ti < max_tok; ti++) {
+                const col = KIND_COLORS[toks[ti].kind] ?? KIND_COLORS[0];
+                const base = (fi * max_tok + ti) * 4;
+                pixels[base]   = col[0]; pixels[base+1] = col[1];
+                pixels[base+2] = col[2]; pixels[base+3] = col[3];
+            }
+        }
+
+        parse_tex_canvas.width  = max_tok;
+        parse_tex_canvas.height = fn_count;
+        const ctx2d = parse_tex_canvas.getContext('2d');
+        ctx2d.putImageData(new ImageData(pixels, max_tok, fn_count), 0, 0);
+        parse_tex_fn_count = fn_count;
+    }
 
     // ── Layout state ──────────────────────────────────────────────────────────
     const tree_ref = { value: 160, start_x: 0, start_val: 0 };
@@ -469,12 +537,15 @@ async function main() {
                 if (gpu_result.counters.tokenOverflow || gpu_result.counters.astOverflow) {
                     out_lines.push({ text: '[GPU parser] overflow flag raised (results clamped).', cls: 'error' });
                 }
+                build_parse_texture(gpu_result);
             } catch (e) {
                 gpu_parse_ms = performance.now() - gpu_parse_t0;
                 out_lines.push({ text: `[GPU parser] parse failed: ${e.message ?? String(e)}`, cls: 'error' });
+                parse_tex_fn_count = 0;
             }
         } else {
             out_lines.push({ text: '[GPU parser] unavailable; CPU parser in use.', cls: 'info' });
+            parse_tex_fn_count = 0;
         }
 
         if (DEBUG_GPU_PARSE_VALIDATION) {
@@ -656,7 +727,7 @@ async function main() {
         blink_t = 0; cursor_visible = true;
         switch (id) {
         case 'run':          run_code(); break;
-        case 'clear':        out_lines = []; out_scroll = 0; run_status = 'idle'; run_status_msg = 'Ready'; render_output_view(); break;
+        case 'clear':        out_lines = []; out_scroll = 0; run_status = 'idle'; run_status_msg = 'Ready'; parse_tex_fn_count = 0; render_output_view(); break;
         case 'palette':      palette.open = true; palette.query = ''; palette.sel = 0;
                              find_state.open = false; goto_state.open = false; kb_state.open = false; break;
         case 'find':         open_overlay('find'); break;
@@ -989,6 +1060,9 @@ async function main() {
                 out_x + 26 + 8 * atlas.glyph_w,
                 out_panel_y + (HDR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
 
+            // Hide parse texture in WebGPU mode
+            parse_tex_canvas.style.display = 'none';
+
             // Position WebGPU canvas overlay
             wgpu_module.resize(out_x, TOOLBAR_H + HDR_H, out_w, prev_content_h);
             wgpu_module.show();
@@ -1007,22 +1081,60 @@ async function main() {
             // ── Normal mode: full right panel = output ────────────────────────
             wgpu_module.hide();
 
-            // Output header
-            ui.panel(out_x, TOOLBAR_H, out_w, HDR_H, C.SURFACE);
-            ui.separator(out_x, TOOLBAR_H + HDR_H - 1, out_w, C.BORDER);
-            ui.status_dot(out_x + 10, TOOLBAR_H + (HDR_H - 8) / 2, 4, run_status);
-            ui.draw_text('Output', out_x + 26, TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.TEXT);
+            // ── Parse texture display (shown when GPU parse data is available) ─
+            // Each function is a pixel row; each token is a pixel column.
+            // Nearest-neighbour scaling via CSS image-rendering:pixelated.
+            // If the natural height is too small, scale rows up so the texture
+            // is at least MIN_TEX_DISPLAY_H pixels tall for readability.
+            const MIN_TEX_DISPLAY_H = 64;
+            const TEX_LABEL_H = HDR_H; // header row for the texture panel
+            let tex_display_h = 0;
+
+            if (parse_tex_fn_count > 0) {
+                const row_scale = Math.max(1, Math.ceil(MIN_TEX_DISPLAY_H / parse_tex_fn_count));
+                tex_display_h = TEX_LABEL_H + parse_tex_fn_count * row_scale;
+
+                // Texture panel header
+                ui.panel(out_x, TOOLBAR_H, out_w, TEX_LABEL_H, C.SURFACE);
+                ui.separator(out_x, TOOLBAR_H + TEX_LABEL_H - 1, out_w, C.BORDER);
+                ui.draw_text('Parse Texture',
+                    out_x + 10, TOOLBAR_H + (TEX_LABEL_H - atlas.glyph_h) / 2, C.ACCENT);
+                const fn_label = `${parse_tex_fn_count} fn`;
+                ui.draw_text(fn_label,
+                    out_x + out_w - fn_label.length * atlas.glyph_w - 10,
+                    TOOLBAR_H + (TEX_LABEL_H - atlas.glyph_h) / 2, C.TEXT_DIM);
+
+                // Position and show the texture canvas overlay
+                const tex_y = TOOLBAR_H + TEX_LABEL_H;
+                const tex_h = tex_display_h - TEX_LABEL_H;
+                parse_tex_canvas.style.display = 'block';
+                parse_tex_canvas.style.left    = `${out_x}px`;
+                parse_tex_canvas.style.top     = `${tex_y}px`;
+                parse_tex_canvas.style.width   = `${out_w}px`;
+                parse_tex_canvas.style.height  = `${tex_h}px`;
+            } else {
+                parse_tex_canvas.style.display = 'none';
+            }
+
+            // Output header (shifted down by texture block)
+            const out_body_top = TOOLBAR_H + tex_display_h;
+            ui.panel(out_x, out_body_top, out_w, HDR_H, C.SURFACE);
+            ui.separator(out_x, out_body_top + HDR_H - 1, out_w, C.BORDER);
+            ui.status_dot(out_x + 10, out_body_top + (HDR_H - 8) / 2, 4, run_status);
+            ui.draw_text('Output', out_x + 26, out_body_top + (HDR_H - atlas.glyph_h) / 2, C.TEXT);
             ui.draw_text(run_status_msg,
                 out_x + 26 + 8 * atlas.glyph_w,
-                TOOLBAR_H + (HDR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
+                out_body_top + (HDR_H - atlas.glyph_h) / 2, C.TEXT_DIM);
 
             // Output body
+            const out_content_y = out_body_top + HDR_H;
+            const out_content_h = main_h - tex_display_h - HDR_H;
             out_scroll = ui.output_panel(out_lines, out_x,
-                TOOLBAR_H + HDR_H, out_w, main_h - HDR_H, out_scroll);
+                out_content_y, out_w, out_content_h, out_scroll);
             output_view.style.left       = `${out_x}px`;
-            output_view.style.top        = `${TOOLBAR_H + HDR_H}px`;
+            output_view.style.top        = `${out_content_y}px`;
             output_view.style.width      = `${out_w}px`;
-            output_view.style.height     = `${main_h - HDR_H}px`;
+            output_view.style.height     = `${Math.max(0, out_content_h)}px`;
             output_view.style.font       = `${atlas.glyph_h - 4}px monospace`;
             output_view.style.lineHeight = `${atlas.glyph_h}px`;
         }
