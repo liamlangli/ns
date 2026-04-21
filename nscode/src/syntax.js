@@ -102,7 +102,7 @@ let _wasm = null; // { memory, get_src_buf, get_tok_buf, tokenize }
 
 async function _load_wasm() {
     try {
-        const resp = await fetch('/public/ns_token.wasm');
+        const resp = await fetch(new URL('../public/ns_token.wasm', import.meta.url));
         if (!resp.ok) return;
         const buf   = await resp.arrayBuffer();
         const mod   = await WebAssembly.compile(buf);

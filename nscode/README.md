@@ -46,6 +46,20 @@ Navigate to `https://localhost:8443`. On first visit, accept the self-signed cer
 
 After accepting once, the warning won't appear again for this cert.
 
+## Deploy
+
+Deploy the static app to `/var/www/ns`:
+
+```sh
+npm run ci
+```
+
+Deploy to a different directory:
+
+```sh
+npm run ci -- /tmp/ns-deploy
+```
+
 ## Project Structure
 
 ```

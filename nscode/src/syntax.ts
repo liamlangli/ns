@@ -118,7 +118,7 @@ let _wasm: wasm_exports | null = null;
 
 async function _load_wasm(): Promise<void> {
     try {
-        const resp = await fetch('/public/ns_token.wasm');
+        const resp = await fetch(new URL('../public/ns_token.wasm', import.meta.url));
         if (!resp.ok) return;
         const buf  = await resp.arrayBuffer();
         const mod  = await WebAssembly.compile(buf);

@@ -1,7 +1,8 @@
 {
   "type": "module",
   "scripts": {
-    "dev": "node serve-https.js"
+    "dev": "node serve-https.js",
+    "ci": "node scripts/ci.mjs"
   },
   "devDependencies": {
     "@unionengine/font": "^0.0.3",
