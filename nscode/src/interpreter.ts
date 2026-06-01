@@ -1,3 +1,4 @@
+// @ts-nocheck
 // NanoScript tree-walk interpreter
 // Supports: fn, let, if/else, for-in-to, return, arithmetic, comparisons,
 // logical ops, function calls, recursion, use std (print/println)

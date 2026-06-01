@@ -1,5 +1,5 @@
-import { ast_node, parse_to_ast } from './interpreter.js';
-import { ast_node_record, parser_run_result } from './gpu_parser.js';
+import { ast_node, parse_to_ast } from './interpreter.ts';
+import { ast_node_record, parser_run_result } from './gpu_parser.ts';
 
 export type normalized_node = {
     kind: string;

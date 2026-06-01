@@ -9,7 +9,7 @@ A WebGPU-based code editor and interpreter for NanoScript, running entirely in t
 
 ## Local Development (HTTPS)
 
-WebGPU requires a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) (`https://` or `localhost`). The included dev server handles this with a self-signed certificate.
+WebGPU requires a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) (`https://` or `localhost`). Vite serves the app over HTTPS with the local self-signed certificate.
 
 ### 1. Generate a local certificate (one-time)
 
@@ -27,13 +27,13 @@ The cert files are gitignored and only needed locally.
 
 ```sh
 npm run dev
-# → HTTPS dev server → https://localhost:8443
+# → https://localhost:8443
 ```
 
 Or specify a custom port:
 
 ```sh
-node serve-https.js 9000
+npm run dev -- --port 9000
 # → https://localhost:9000
 ```
 
@@ -65,16 +65,14 @@ npm run ci -- /tmp/ns-deploy
 ```
 nscode/
 ├── index.html          # Entry point
-├── serve-https.js      # HTTPS dev server
+├── vite.config.js      # HTTPS Vite dev server config
 ├── src/
-│   ├── main.js         # App entry, event loop
-│   ├── editor.js       # Text editor buffer
-│   ├── interpreter.js  # NanoScript interpreter
-│   ├── ui.js           # UI layout and widgets
-│   ├── draw.js         # Draw list (rects + text)
-│   ├── gpu.js          # WebGPU rendering backend
-│   ├── font.js         # MSDF font atlas
-│   ├── syntax.js       # Syntax highlighting
-│   └── fonts/          # Font assets
+│   ├── main.ts         # App entry, event loop
+│   ├── editor.ts       # Text editor buffer
+│   ├── interpreter.ts  # NanoScript interpreter
+│   ├── ui.ts           # UI adapter backed by @liamlangli/ui
+│   ├── draw.ts         # Draw list types and helpers
+│   ├── gpu.ts          # Legacy WebGPU backend
+│   └── syntax.ts       # Syntax highlighting
 └── public/             # Static assets
 ```
