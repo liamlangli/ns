@@ -170,7 +170,11 @@ export class UI {
 
     async init() {
         if (!this._renderer) throw new Error('UI requires a canvas');
-        await this._renderer.init();
+        // The Chinese (PingFang SC) atlas is several MB. Let the renderer fetch
+        // it asynchronously so it never blocks startup — CJK glyphs fall back to
+        // a 1x1 transparent texture until the atlas finishes loading in the
+        // background.
+        await this._renderer.init({ chinese_font: true });
         const { device } = this._renderer.gpu();
         if (!device) throw new Error('UI renderer did not initialize a GPUDevice');
         return device;
