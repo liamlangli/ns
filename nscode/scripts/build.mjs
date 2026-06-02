@@ -19,6 +19,33 @@ const script_dir = path.dirname(fileURLToPath(import.meta.url));
 const root_dir   = path.resolve(script_dir, '..');
 const out_dir    = path.resolve(process.argv[2] ?? path.join(root_dir, 'dist'));
 
+// @liamlangli/ui imports its assets with Vite's `?url` query suffix
+// (e.g. `import url from './ui.wgsl?url'`), expecting the import to resolve to
+// the asset's URL string. esbuild doesn't recognize that convention: it leaves
+// the suffix on the path and emits a literal `import '...?url'` into the
+// bundle, which the browser then tries to load as an ES module — failing strict
+// MIME-type checks (text/wgsl, image/png, image/webp).
+//
+// The `file` loader is what turns such an import into a URL string (it emits
+// the asset and substitutes the import with the emitted path). The `copy`
+// loader, by contrast, preserves the `import` statement, so it can't be used
+// for these default imports. Route every `?url` import through the `file`
+// loader here; the extension-keyed `copy` loaders below still serve the
+// `new URL('...', import.meta.url)` assets the app loads directly.
+const url_suffix_plugin = {
+    name: 'url-asset',
+    setup(build) {
+        build.onResolve({ filter: /\?url$/ }, (args) => ({
+            path:      path.resolve(args.resolveDir, args.path.replace(/\?url$/, '')),
+            namespace: 'url-asset',
+        }));
+        build.onLoad({ filter: /.*/, namespace: 'url-asset' }, async (args) => ({
+            contents: await readFile(args.path),
+            loader:   'file',
+        }));
+    },
+};
+
 async function main() {
     // Clean output directory.
     await rm(out_dir, { recursive: true, force: true });
@@ -36,6 +63,7 @@ async function main() {
         minify:      true,
         sourcemap:   true,
         legalComments: 'none',
+        plugins: [url_suffix_plugin],
         loader: {
             '.wasm':  'copy',
             '.png':   'copy',
