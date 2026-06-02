@@ -35,8 +35,90 @@ export const C = {
     SYN_ID:     [0.878, 0.878, 0.925, 1.0],  // same as TEXT
 };
 
-import { FONT_MAIN, FONT_MONO, ui_renderer } from '@liamlangli/ui';
+import {
+    FONT_MAIN,
+    FONT_MONO,
+    ui_renderer,
+    ui_widgets,
+    create_text_view_state,
+    create_empty_ui_input,
+    create_default_dock_layout,
+    compute_dock_frame,
+    restore_dock_layout,
+    serialize_dock_layout,
+    activate_dock_tab,
+    set_dock_split_ratio,
+    move_dock_tab,
+    split_dock_tab,
+    close_dock_tab,
+    resolve_dock_drop,
+    find_leaf_by_id,
+    visit_dock_leaves,
+    tab_width as dock_tab_width,
+    dock_tab_h,
+    dock_splitter_w,
+} from '@liamlangli/ui';
 import { tokenize_line } from './syntax.ts';
+
+// Re-export text-view + dock helpers so main.ts can own persistent UI state.
+export {
+    create_text_view_state,
+    create_empty_ui_input,
+    create_default_dock_layout,
+    compute_dock_frame,
+    restore_dock_layout,
+    serialize_dock_layout,
+    activate_dock_tab,
+    set_dock_split_ratio,
+    move_dock_tab,
+    split_dock_tab,
+    close_dock_tab,
+    resolve_dock_drop,
+    find_leaf_by_id,
+    visit_dock_leaves,
+    dock_tab_width,
+    dock_tab_h,
+    dock_splitter_w,
+};
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+// @liamlangli/ui widgets (text_view, list, dropdown, …) are theme-driven: they
+// read named slots from a `theme_definition`. Build one from the `C` palette so
+// the shared widgets match NSCode's look.
+function hex3(c) {
+    const h = n => Math.round(Math.max(0, Math.min(1, n)) * 255).toString(16).padStart(2, '0');
+    return `#${h(c[0])}${h(c[1])}${h(c[2])}`;
+}
+function hex4(c) {
+    const h = n => Math.round(Math.max(0, Math.min(1, n)) * 255).toString(16).padStart(2, '0');
+    return `#${h(c[0])}${h(c[1])}${h(c[2])}${h(c[3] ?? 1)}`;
+}
+
+export const NS_THEME = {
+    css: {},
+    palette: {
+        bg:            hex3(C.BG),
+        panel:         hex3(C.SURFACE),
+        panel_alt:     hex3(C.SURFACE2),
+        border:        hex3(C.BORDER),
+        border_strong: hex3(C.BORDER),
+        text:          hex3(C.TEXT),
+        text_dim:      hex3(C.TEXT_DIM),
+        hover:         hex3(C.SURFACE2),
+        active:        hex3(C.ACCENT_DIM),
+        selected:      hex4(C.SEL),      // translucent selection highlight
+        accent:        hex3(C.ACCENT),
+        accent_dim:    hex3(C.ACCENT_DIM),
+        scene_outline: hex3(C.BORDER),
+        gizmo_axis_x:  hex3(C.RED),
+        gizmo_axis_y:  hex3(C.GREEN),
+        gizmo_axis_z:  hex3(C.ACCENT),
+        gizmo_center:  hex3(C.YELLOW),
+        track:         hex3(C.SURFACE),
+        overlay:       '#00000080',
+        ghost:         hex3(C.SURFACE2),
+    },
+};
 
 function pack_rgba(r, g, b, a = 1) {
     const rr = Math.max(0, Math.min(255, Math.round(r * 255)));
@@ -153,6 +235,10 @@ export class UI {
         this._dl       = this._renderer
             ? new webgpu_draw_adapter(this._renderer, () => ({ w: this._vp_w, h: this._vp_h }))
             : null;
+        // Shared @liamlangli/ui widget set (theme-driven). Drives the output
+        // console text_view and any future docked panels.
+        this._widgets  = this._renderer ? new ui_widgets(this._renderer) : null;
+        this._out_state = create_text_view_state();
         this._vp_w     = 0;
         this._vp_h     = 0;
 
@@ -196,6 +282,118 @@ export class UI {
     render() {
         if (this._dl) this._dl.finalize();
         this._renderer.flush({ r: C.BG[0], g: C.BG[1], b: C.BG[2], a: 1 });
+    }
+
+    get out_state() { return this._out_state; }
+    get scale() { return window.devicePixelRatio || 1; }
+
+    // ── @liamlangli/ui widget pass ────────────────────────────────────────────
+    // Widget coords are physical pixels; build the input snapshot in physical
+    // pixels too (mouse * dpr). Call after begin_frame, before render().
+    widgets_begin(input) {
+        if (this._widgets) this._widgets.begin_frame(NS_THEME, input);
+    }
+    widgets_end() {
+        if (this._widgets) this._widgets.end_frame();
+    }
+
+    /**
+     * Selectable / copyable / scrollable output console, drawn entirely through
+     * the @liamlangli/ui renderer (replaces the old DOM <div> overlay).
+     * `lines` is `[{ text, color? }]`; coords are logical px.
+     */
+    output_text_view(id, lines, x, y, w, h, opts = {}) {
+        if (!this._widgets) return;
+        const s = this.scale;
+        this._widgets.text_view(
+            id, x * s, y * s, w * s, h * s, lines, this._out_state,
+            { font_px: 13, wrap: false, background: true, ...opts },
+        );
+    }
+
+    // ── GPU textures (replaces the 2D <canvas> parse-texture overlay) ──────────
+    create_texture(w, h, opts) { return this._renderer ? this._renderer.create_texture(w, h, opts) : -1; }
+    update_texture(id, data, opts) { if (this._renderer) this._renderer.update_texture(id, data, opts); }
+    destroy_texture(id) { if (this._renderer) this._renderer.destroy_texture(id); }
+    /** Draw a texture; coords are logical px. */
+    draw_texture(id, x, y, w, h, opts) {
+        if (!this._renderer) return;
+        const s = this.scale;
+        this._renderer.draw_texture(id, x * s, y * s, w * s, h * s, opts);
+    }
+
+    // ── Rounded primitives (logical px) ───────────────────────────────────────
+    draw_round_rect(x, y, w, h, c, radius = 6) {
+        if (!this._renderer) return;
+        const s = this.scale;
+        this._renderer.fill_round_rect(x * s, y * s, w * s, h * s, radius * s,
+            pack_rgba(c[0], c[1], c[2], c[3] ?? 1));
+    }
+    draw_round_border(x, y, w, h, c, radius = 6, t = 1) {
+        if (!this._renderer) return;
+        const s = this.scale;
+        this._renderer.stroke_round_rect(x * s, y * s, w * s, h * s, radius * s, t * s,
+            pack_rgba(c[0], c[1], c[2], c[3] ?? 1));
+    }
+
+    // ── Dock chrome ───────────────────────────────────────────────────────────
+    /** Width of a dock tab (logical px), consistent with resolve_dock_drop. */
+    tab_width(title) {
+        return dock_tab_width(title, 1, title.length * this._font.glyph_w);
+    }
+
+    /**
+     * Draw a leaf's tab bar (rounded tabs) and hit-test it.
+     * Returns { activate, drag_tab } — `activate` = clicked tab id,
+     * `drag_tab` = tab id under a press (for drag-to-move).
+     */
+    dock_tabbar(leaf) {
+        const f = this._font;
+        const TAB_H = leaf.tab_bar_h;
+        // Bar background + bottom border.
+        this.draw_rect(leaf.x, leaf.y, leaf.w, TAB_H, C.SURFACE);
+        this.draw_rect(leaf.x, leaf.y + TAB_H - 1, leaf.w, 1, C.BORDER);
+
+        let result = { activate: null, drag_tab: null };
+        let tx = leaf.x + 4;
+        for (const tab of leaf.tabs) {
+            const tw     = this.tab_width(tab.title);
+            const active = tab.id === leaf.active_tab_id;
+            const hot    = this._hit(tx, leaf.y + 3, tw, TAB_H - 3);
+            if (active)      this.draw_round_rect(tx, leaf.y + 4, tw, TAB_H - 4, C.BG, 5);
+            else if (hot)    this.draw_round_rect(tx, leaf.y + 4, tw, TAB_H - 4, C.SURFACE2, 5);
+            if (active)      this.draw_rect(tx + 6, leaf.y + 3, tw - 12, 2, C.ACCENT);
+            this.draw_text_clipped(tab.title, tx + 10, leaf.y + (TAB_H - f.glyph_h) / 2, tw - 16,
+                active ? C.TEXT : C.TEXT_DIM);
+            if (hot && this._just_down) { result.activate = tab.id; result.drag_tab = tab.id; }
+            tx += tw + 4;
+        }
+        return result;
+    }
+
+    /**
+     * Draw + hit-test a dock splitter. `drag_ref` persists drag state
+     * ({ active, start, start_ratio }). Returns the new ratio while dragging,
+     * else null. Coords are logical px (from compute_dock_frame at scale 1).
+     */
+    dock_splitter(split, drag_ref) {
+        const horiz = split.axis === 'horizontal';
+        const hot = this._hit(split.x, split.y, split.w, split.h);
+        const col = (hot || drag_ref.active) ? C.ACCENT_DIM : C.BORDER;
+        // Thin centred grip line.
+        if (horiz) this.draw_rect(split.x + split.w / 2 - 0.5, split.y + 4, 1, split.h - 8, col);
+        else       this.draw_rect(split.x + 4, split.y + split.h / 2 - 0.5, split.w - 8, 1, col);
+
+        if (hot && this._just_down) {
+            drag_ref.active = true;
+            drag_ref.id = split.split_id;
+        }
+        if (drag_ref.active && drag_ref.id === split.split_id && this._down) {
+            const avail = horiz ? (split.parent_w - split.w) : (split.parent_h - split.h);
+            const rel   = horiz ? (this._mx - split.parent_x) : (this._my - split.parent_y);
+            return avail > 0 ? Math.max(0.05, Math.min(0.95, rel / avail)) : null;
+        }
+        return null;
     }
 
     set_font(font) { this._font = font ?? this._font; }
@@ -586,18 +784,6 @@ export class UI {
         }
 
         return click_result;
-    }
-
-    /**
-     * Output text panel. Renders an array of {text, cls} lines.
-     * Returns updated scroll_top.
-     */
-    output_panel(lines, x, y, w, h, scroll_top) {
-        void lines;
-        void scroll_top;
-
-        this.draw_rect(x, y, w, h, C.BG);
-        return 0;
     }
 
     /**

@@ -25,23 +25,35 @@ the offscreen hidden `<input>` used purely to capture IME/keyboard text (it is
 never visible). A bare pre-init fallback message (e.g. "WebGPU not available")
 is acceptable *only* because the renderer cannot run yet.
 
-### Known violations to migrate
+### Migration status
 
-These currently bypass the renderer and must be reimplemented in
-`@liamlangli/ui`:
+Done — both former DOM fallbacks now render through `@liamlangli/ui`:
 
-- `src/main.ts` — `output_view` (`<div>` + `innerHTML`): the output/console
-  panel. Render text lines, scrolling, and selection through `ui_renderer`.
-- `src/main.ts` — `parse_tex_canvas` (2D `<canvas>` + `putImageData`): the
-  token/parse texture overlay. Draw it as a GPU texture/rects via the renderer.
+- ✅ output/console panel → `ui_widgets.text_view` (`UI.output_text_view`),
+  with selection, scroll, and Ctrl/Cmd+C copy handled by the widget.
+- ✅ parse/token texture → GPU texture via `ui_renderer.create_texture` /
+  `update_texture` / `draw_texture` (`UI.create_texture` … `draw_texture`),
+  nearest-neighbour sampled.
+
+Remaining non-renderer surfaces are limited to the pre-init "WebGPU not
+available" fallback and the WebGPU preview canvas (`webgpu_module.ts`, itself a
+GPU surface). Keep new UI on the renderer path; do not reintroduce DOM widgets.
 
 ## Use `ui_dock` for an editor-like layout
 
-Compose the window from `@liamlangli/ui`'s `ui_dock` (docking) primitives rather
-than hand-rolled `*_ref` split offsets. The result should read like a real IDE:
-dockable, resizable regions for the file tree, editor, output/console, and the
-parse visualiser, with draggable splitters and persistable layout. New panels
-should be added as docked regions, not as ad-hoc absolutely-positioned rects.
+The window layout is driven by `@liamlangli/ui`'s dock module (`compute_dock_frame`
++ the `dock_*` state helpers), not hand-rolled split offsets. Panels live in a
+dock tree — **Files | Editor | Output**, with contextual **Preview** (WebGPU
+examples) and **Parse** (GPU parse data) tabs — with:
+
+- rounded tabs (click to activate, drag to move/split across leaves),
+- draggable splitters (`set_dock_split_ratio`),
+- layout persisted to `localStorage` (`ns.dockLayout`).
+
+Chrome is rendered via `UI.dock_tabbar` / `UI.dock_splitter`; geometry comes from
+`compute_dock_frame(root, x, y, w, h, 1)` in **logical px** (the renderer adapter
+applies dpr). Add new panels as dock tabs/leaves — never as ad-hoc
+absolutely-positioned rects. The default tree lives in `main.ts:make_ns_layout`.
 
 ## Prefer rounded rectangles
 
