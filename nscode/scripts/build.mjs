@@ -51,9 +51,11 @@ async function main() {
     await rm(out_dir, { recursive: true, force: true });
     await mkdir(out_dir, { recursive: true });
 
-    // Bundle the app. `new URL('../public/*.wasm', import.meta.url)` references
-    // in the source are emitted next to the bundle via the copy loader so the
-    // runtime fetch resolves relative to main.js.
+    // Bundle the app. esbuild does NOT rewrite `new URL('...', import.meta.url)`
+    // asset references — it leaves the specifier literal — so runtime assets like
+    // ns_token.wasm are supplied by the `cp public → dist/public` step below
+    // rather than emitted by a loader. The literal path is corrected for the
+    // bundle's location after the build (see the `../public/` rewrite).
     await build({
         entryPoints: [path.join(root_dir, 'src', 'main.ts')],
         outfile:     path.join(out_dir, 'main.js'),
@@ -76,6 +78,16 @@ async function main() {
         assetNames: '[name]',
         logLevel:   'info',
     });
+
+    // The source resolves the WASM via `new URL('../public/ns_token.wasm',
+    // import.meta.url)`, which is correct under Vite dev (src/main.ts sits a
+    // level above public/). In the static build the bundle lives at the output
+    // root with public/ as a *child* directory, so the `../` would overshoot to
+    // the parent of the deploy dir (e.g. /nscode/main.js → /public/...). Rewrite
+    // it to `./public/` so the fetch resolves to dist/public/ns_token.wasm.
+    const main_path = path.join(out_dir, 'main.js');
+    const main_js   = await readFile(main_path, 'utf8');
+    await writeFile(main_path, main_js.replaceAll('../public/', './public/'));
 
     // Emit a production index.html that loads the compiled bundle and resolves
     // the favicon relative to the page (project-page friendly, no leading /).
