@@ -39,9 +39,11 @@ async function main() {
         loader: {
             '.wasm':  'copy',
             '.png':   'copy',
+            '.webp':  'copy',
             '.ttf':   'copy',
             '.woff':  'copy',
             '.woff2': 'copy',
+            '.wgsl':  'copy',
         },
         assetNames: '[name]',
         logLevel:   'info',
