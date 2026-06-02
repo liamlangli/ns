@@ -15,22 +15,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Build on every triggered branch so the bundle is validated in CI. Only the
+  # deploy job is gated to the default branch (the github-pages environment
+  # rejects deployments from other branches).
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Build NSCode app
+        working-directory: nscode
+        run: |
+          # The lockfile pins @liamlangli/ui over git+ssh; the runner has no SSH
+          # key, so fetch the public dependency over HTTPS instead.
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          npm ci
+          npm run build   # compiles src/main.ts → dist/main.js (+ assets)
+
+      - name: Assemble site
+        run: |
+          rm -rf _site
+          mkdir -p _site/nscode
+          # Landing page + its assets (favicon/logo) served from the root.
+          cp index.html _site/index.html
+          cp -r nslang _site/nslang
+          # Bypass Jekyll so files like ns_token.wasm are served verbatim.
+          touch _site/.nojekyll
+          # Compiled NSCode playground served under /nscode/.
+          cp -r nscode/dist/. _site/nscode/
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_site'
+
   deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: '.'   # serve from repo root (index.html redirects to nscode/)
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
