@@ -7,7 +7,13 @@ import { text_buffer }           from './editor.ts';
 import { ns_interpreter, parse_to_ast } from './interpreter.ts';
 import { gpu_parser }            from './gpu_parser.ts';
 import { compare_normalized_asts, normalize_cpu_ast_by_function } from './parser_validation.ts';
-import { UI, C, create_empty_ui_input } from './ui.ts';
+import {
+    UI, C, create_empty_ui_input,
+    create_default_dock_layout, compute_dock_frame, restore_dock_layout,
+    serialize_dock_layout, activate_dock_tab, set_dock_split_ratio,
+    move_dock_tab, split_dock_tab, close_dock_tab, resolve_dock_drop,
+    find_leaf_by_id, visit_dock_leaves,
+} from './ui.ts';
 import { fuzzy_filter, key_map, event_key_id } from './commands.ts';
 import { WebGPUModule }         from './webgpu_module.ts';
 
@@ -350,11 +356,100 @@ async function main() {
         parse_tex_fn_count = fn_count;
     }
 
-    // ── Layout state ──────────────────────────────────────────────────────────
-    const tree_ref = { value: 160, start_x: 0, start_val: 0 };
-    let   tree_collapsed = false;
-    const div_ref  = { value: 0,   start_x: 0, start_val: 0 };
-    let   computed_tree_w = 160, computed_editor_w = 0;
+    // ── Dock layout state ──────────────────────────────────────────────────────
+    // Panels live in a @liamlangli/ui dock tree: Files | Editor | Output, with
+    // contextual Preview / Parse tabs. Persisted to localStorage.
+    const DOCK_LS_KEY = 'ns.dockLayout';
+
+    function make_ns_layout() {
+        const leaf = (id, tabs, active) => ({ kind: 'leaf', id, tabs, active_tab_id: active, ox: 0, oy: 0, ow: 1, oh: 1 });
+        return {
+            root: {
+                kind: 'split', id: 'split-root', axis: 'horizontal', ratio: 0.18,
+                left:  leaf('leaf-tree', [{ id: 'files', title: 'Files' }], 'files'),
+                right: {
+                    kind: 'split', id: 'split-main', axis: 'horizontal', ratio: 0.58,
+                    left:  leaf('leaf-editor', [{ id: 'editor', title: 'Editor' }], 'editor'),
+                    right: leaf('leaf-panel', [{ id: 'console', title: 'Output' }], 'console'),
+                },
+            },
+            next_id: 20,
+            last_active_leaf_id: 'leaf-editor',
+        };
+    }
+
+    function layout_has_essentials(l) {
+        if (!l || !l.root) return false;
+        let editor = false, console_ = false;
+        visit_dock_leaves(l.root, leaf => {
+            for (const t of leaf.tabs) {
+                if (t.id === 'editor')  editor  = true;
+                if (t.id === 'console') console_ = true;
+            }
+        });
+        return editor && console_;
+    }
+
+    let dock_layout = make_ns_layout();
+    try {
+        const raw = globalThis.localStorage?.getItem(DOCK_LS_KEY);
+        if (raw) {
+            const restored = restore_dock_layout(JSON.parse(raw));
+            if (restored && layout_has_essentials(restored)) dock_layout = restored;
+        }
+    } catch { /* ignore malformed saved layout */ }
+
+    function save_dock_layout() {
+        try { globalThis.localStorage?.setItem(DOCK_LS_KEY, serialize_dock_layout(dock_layout)); }
+        catch { /* storage unavailable */ }
+    }
+
+    const split_drag = { active: false, id: null };
+    const tab_drag   = { active: false, armed: false, leaf: null, tab: null, sx: 0, sy: 0 };
+    let   last_dock_frame = { leaves: [], splits: [] };  // for wheel routing
+    let   prev_webgpu_mode = false;
+
+    function find_leaf_with_tab(tid) {
+        let r = null;
+        visit_dock_leaves(dock_layout.root, leaf => { if (leaf.tabs.some(t => t.id === tid)) r = leaf; });
+        return r;
+    }
+    function host_panel_leaf() {
+        return find_leaf_with_tab('console')
+            ?? find_leaf_by_id(dock_layout, 'leaf-panel')
+            ?? (() => { let f = null; visit_dock_leaves(dock_layout.root, l => { if (!f) f = l; }); return f; })();
+    }
+    /** Toggle the Files sidebar: collapse to its sibling, or re-add it on the left. */
+    function toggle_files_panel() {
+        const leaf = find_leaf_with_tab('files');
+        if (leaf) {
+            close_dock_tab(dock_layout, leaf.id, 'files');
+        } else {
+            dock_layout = {
+                root: {
+                    kind: 'split', id: `split-${dock_layout.next_id++}`, axis: 'horizontal', ratio: 0.18,
+                    left:  { kind: 'leaf', id: `leaf-${dock_layout.next_id++}`, tabs: [{ id: 'files', title: 'Files' }], active_tab_id: 'files', ox: 0, oy: 0, ow: 1, oh: 1 },
+                    right: dock_layout.root,
+                },
+                next_id: dock_layout.next_id,
+                last_active_leaf_id: dock_layout.last_active_leaf_id,
+            };
+        }
+        save_dock_layout();
+        dirty = true;
+    }
+
+    /** Add or remove a contextual tab (preview / parse) without pruning leaves. */
+    function ensure_tab(tid, title, present) {
+        const leaf = find_leaf_with_tab(tid);
+        if (present && !leaf) {
+            host_panel_leaf()?.tabs.push({ id: tid, title });
+        } else if (!present && leaf) {
+            const i = leaf.tabs.findIndex(t => t.id === tid);
+            if (i >= 0) leaf.tabs.splice(i, 1);
+            if (leaf.active_tab_id === tid) leaf.active_tab_id = leaf.tabs[0]?.id ?? '';
+        }
+    }
 
     // ── Cursor blink ──────────────────────────────────────────────────────────
     let cursor_visible = true;
@@ -399,7 +494,6 @@ async function main() {
         vp_w = window.innerWidth;
         vp_h = window.innerHeight;
         ui.resize(vp_w, vp_h);
-        if (div_ref.value === 0) div_ref.value = Math.round((vp_w - tree_ref.value) * 0.4);
         dirty = true;
     }
     resize();
@@ -699,7 +793,7 @@ async function main() {
         case 'find_replace': open_overlay('replace'); break;
         case 'goto_line':    open_overlay('goto'); break;
         case 'keybindings':  open_overlay('keybindings'); break;
-        case 'toggle_tree':  tree_collapsed = !tree_collapsed; break;
+        case 'toggle_tree':  toggle_files_panel(); break;
         case 'select_all':   buf.select_all(); break;
         case 'copy':
             // Output-console copy is handled by the text_view itself (Ctrl/Cmd+C
@@ -902,13 +996,15 @@ async function main() {
 
     canvas.addEventListener('wheel', e => {
         e.preventDefault();
-        const tw = computed_tree_w;
-        if (e.clientX < tw) {
-            // tree — no scroll
-        } else if (e.clientX < tw + DIVIDER_W + computed_editor_w) {
+        // Route the wheel to the panel under the cursor, using the dock frame.
+        const leaf = last_dock_frame.leaves.find(l =>
+            e.clientX >= l.x && e.clientX < l.x + l.w &&
+            e.clientY >= l.y && e.clientY < l.y + l.h);
+        const tab = leaf?.active_tab_id;
+        if (tab === 'editor') {
             buf.scroll_top  = Math.max(0, Math.min((buf.scroll_top ?? 0) + e.deltaY / font.glyph_h, buf.line_count() - 1));
             buf.scroll_left = Math.max(0, (buf.scroll_left ?? 0) + e.deltaX);
-        } else {
+        } else if (tab === 'console') {
             // Output console — feed the wheel delta to the text_view widget,
             // which owns its own scroll state and clamps internally.
             out_wheel_y += -e.deltaY / 20;
@@ -931,13 +1027,6 @@ async function main() {
 
         // Layout
         const main_h  = vp_h - TOOLBAR_H - STATUS_H;
-        const tree_w  = tree_collapsed
-            ? TREE_COLLAPSED_W
-            : Math.max(100, Math.min(400, tree_ref.value));
-        const avail_w  = vp_w - tree_w - DIVIDER_W;
-        const out_w    = Math.max(200, Math.min(Math.round(avail_w * 0.65), div_ref.value));
-        const editor_w = Math.max(100, avail_w - out_w - DIVIDER_W);
-        computed_tree_w = tree_w; computed_editor_w = editor_w;
 
         // Begin frame — mouse clicks inside overlays are processed by the overlay widgets;
         // suppress canvas clicks from reaching editor when any overlay is open.
@@ -999,135 +1088,142 @@ async function main() {
         const hint_x = vp_w - hint.length * font.glyph_w - 12;
         ui.draw_text(hint, hint_x, (TOOLBAR_H - font.glyph_h) / 2, C.TEXT_DIM);
 
-        // ── File tree panel ───────────────────────────────────────────────────
-        ui.panel(0, TOOLBAR_H, tree_w, main_h, C.SURFACE);
-        ui.panel(0, TOOLBAR_H, tree_w, TREE_HEADER_H, C.SURFACE);
-        ui.separator(0, TOOLBAR_H + TREE_HEADER_H - 1, tree_w, C.BORDER);
-
-        const tog_x = 4, tog_y = TOOLBAR_H + (TREE_HEADER_H - 18) / 2;
-        if (ui.button('tree-toggle', tree_collapsed ? '>' : '<', tog_x, tog_y, 18, 18)) {
-            tree_collapsed = !tree_collapsed;
-            if (!tree_collapsed && tree_ref.value < 100) tree_ref.value = 160;
-        }
-
-        if (!tree_collapsed) {
-            ui.draw_text('FILES', tog_x + 22, TOOLBAR_H + (TREE_HEADER_H - font.glyph_h) / 2, C.TEXT_DIM);
-            const tree_chosen = ui.file_tree(FILE_TREE, active_example,
-                0, TOOLBAR_H + TREE_HEADER_H, tree_w, main_h - TREE_HEADER_H);
-            if (tree_chosen) {
-                active_example = tree_chosen;
-                buf.set_text(EXAMPLES[tree_chosen]);
-                blink_t = 0; cursor_visible = true;
-            }
-            ui.divider('tree-div', tree_w, TOOLBAR_H, main_h, tree_ref, true);
-        }
-
-        // ── Editor pane ───────────────────────────────────────────────────────
-        const editor_x = tree_w + DIVIDER_W;
-        const hit = ui.code_editor(buf, editor_x, TOOLBAR_H, editor_w, main_h,
-            cursor_visible && !ov_open, ui.mono_font,
-            find_state.open ? find_state.matches : null);
-        if (hit) {
-            buf.move_cursor(hit.line, hit.col, false);
-            blink_t = 0; cursor_visible = true;
-        }
-
-        // ── Output / editor divider ───────────────────────────────────────────
-        const div_x = editor_x + editor_w;
-        ui.divider('div', div_x, TOOLBAR_H, main_h, div_ref);
-
-        const out_x      = div_x + DIVIDER_W;
-        const HDR_H      = 34;
+        // ── Dock panels (Files | Editor | Output, + contextual Preview/Parse) ──
         const webgpu_mode = WEBGPU_EXAMPLES.has(active_example);
 
-        if (webgpu_mode) {
-            // ── WebGPU mode: preview top-right, output bottom-right ───────────
-            const prev_h         = Math.floor(main_h * 0.6);  // preview panel (incl. header)
-            const prev_content_h = prev_h - HDR_H;
-            const sep_y          = TOOLBAR_H + prev_h;
-            const out_panel_y    = sep_y + DIVIDER_W;
-            const out_content_h  = main_h - prev_h - DIVIDER_W - HDR_H;
+        // Contextual tabs follow the active example / parse data.
+        ensure_tab('preview', 'Preview', webgpu_mode);
+        ensure_tab('parse',   'Parse',   !webgpu_mode && parse_tex_fn_count > 0);
+        if (webgpu_mode && !prev_webgpu_mode) {
+            const l = find_leaf_with_tab('preview');
+            if (l) activate_dock_tab(dock_layout, l.id, 'preview');
+        }
+        prev_webgpu_mode = webgpu_mode;
 
-            // Preview header
-            ui.panel(out_x, TOOLBAR_H, out_w, HDR_H, C.SURFACE);
-            ui.separator(out_x, TOOLBAR_H + HDR_H - 1, out_w, C.BORDER);
-            ui.draw_text('WebGPU Preview',
-                out_x + 10, TOOLBAR_H + (HDR_H - font.glyph_h) / 2, C.ACCENT);
+        const dframe = compute_dock_frame(dock_layout.root, 0, TOOLBAR_H, vp_w, main_h, 1);
+        last_dock_frame = dframe;
 
-            // Thin separator strip between preview and output
-            ui.dl.rect(out_x, sep_y, out_w, DIVIDER_W,
-                C.SURFACE[0], C.SURFACE[1], C.SURFACE[2], 1);
-            ui.separator(out_x, sep_y, out_w, C.BORDER);
-            ui.separator(out_x, out_panel_y, out_w, C.BORDER);
+        // Splitters — draw + drag to resize.
+        if (!mouse_down) split_drag.active = false;
+        for (const sp of dframe.splits) {
+            const ratio = ui.dock_splitter(sp, split_drag);
+            if (ratio != null) { set_dock_split_ratio(dock_layout, sp.split_id, ratio); dirty = true; }
+        }
+        if (just_up && split_drag.id) { save_dock_layout(); split_drag.id = null; }
 
-            // Output header
-            ui.panel(out_x, out_panel_y, out_w, HDR_H, C.SURFACE);
-            ui.separator(out_x, out_panel_y + HDR_H - 1, out_w, C.BORDER);
-            ui.status_dot(out_x + 10, out_panel_y + (HDR_H - 8) / 2, 4, run_status);
-            ui.draw_text('Output', out_x + 26, out_panel_y + (HDR_H - font.glyph_h) / 2, C.TEXT);
-            ui.draw_text(run_status_msg,
-                out_x + 26 + 8 * font.glyph_w,
-                out_panel_y + (HDR_H - font.glyph_h) / 2, C.TEXT_DIM);
+        // Editor leaf rect feeds the find / goto overlays.
+        let editor_x = 0, editor_y = TOOLBAR_H, editor_w = 0;
+        let preview_visible = false;
 
-            // Position WebGPU canvas overlay
-            wgpu_module.resize(out_x, TOOLBAR_H + HDR_H, out_w, prev_content_h);
-            wgpu_module.show();
-
-            // Output console — selectable / scrollable text_view (GPU-rendered)
-            ui.output_text_view('output', out_view_lines(), out_x,
-                out_panel_y + HDR_H, out_w, out_content_h);
-
-        } else {
-            // ── Normal mode: full right panel = output ────────────────────────
-            wgpu_module.hide();
-
-            // ── Parse texture display (shown when GPU parse data is available) ─
-            // Each function is a pixel row; each token is a pixel column.
-            // Nearest-neighbour scaling via CSS image-rendering:pixelated.
-            // If the natural height is too small, scale rows up so the texture
-            // is at least MIN_TEX_DISPLAY_H pixels tall for readability.
-            const MIN_TEX_DISPLAY_H = 64;
-            const TEX_LABEL_H = HDR_H; // header row for the texture panel
-            let tex_display_h = 0;
-
-            if (parse_tex_fn_count > 0) {
-                const row_scale = Math.max(1, Math.ceil(MIN_TEX_DISPLAY_H / parse_tex_fn_count));
-                tex_display_h = TEX_LABEL_H + parse_tex_fn_count * row_scale;
-
-                // Texture panel header
-                ui.panel(out_x, TOOLBAR_H, out_w, TEX_LABEL_H, C.SURFACE);
-                ui.separator(out_x, TOOLBAR_H + TEX_LABEL_H - 1, out_w, C.BORDER);
-                ui.draw_text('Parse Texture',
-                    out_x + 10, TOOLBAR_H + (TEX_LABEL_H - font.glyph_h) / 2, C.ACCENT);
-                const fn_label = `${parse_tex_fn_count} fn`;
-                ui.draw_text(fn_label,
-                    out_x + out_w - fn_label.length * font.glyph_w - 10,
-                    TOOLBAR_H + (TEX_LABEL_H - font.glyph_h) / 2, C.TEXT_DIM);
-
-                // Draw the parse texture (GPU), nearest-neighbour scaled.
-                const tex_y = TOOLBAR_H + TEX_LABEL_H;
-                const tex_h = tex_display_h - TEX_LABEL_H;
-                if (parse_tex_id >= 0) {
-                    ui.draw_texture(parse_tex_id, out_x, tex_y, out_w, tex_h, { filter: 'nearest' });
-                }
+        for (const leaf of dframe.leaves) {
+            const bar = ui.dock_tabbar(leaf);
+            if (bar.activate) {
+                activate_dock_tab(dock_layout, leaf.leaf_id, bar.activate);
+                save_dock_layout();
+                dirty = true;
+            }
+            if (bar.drag_tab) {
+                const t = leaf.tabs.find(tt => tt.id === bar.drag_tab);
+                tab_drag.armed = true; tab_drag.active = false;
+                tab_drag.leaf = leaf.leaf_id; tab_drag.tab = bar.drag_tab;
+                tab_drag.title = t?.title ?? '';
+                tab_drag.sx = mx; tab_drag.sy = my;
             }
 
-            // Output header (shifted down by texture block)
-            const out_body_top = TOOLBAR_H + tex_display_h;
-            ui.panel(out_x, out_body_top, out_w, HDR_H, C.SURFACE);
-            ui.separator(out_x, out_body_top + HDR_H - 1, out_w, C.BORDER);
-            ui.status_dot(out_x + 10, out_body_top + (HDR_H - 8) / 2, 4, run_status);
-            ui.draw_text('Output', out_x + 26, out_body_top + (HDR_H - font.glyph_h) / 2, C.TEXT);
-            ui.draw_text(run_status_msg,
-                out_x + 26 + 8 * font.glyph_w,
-                out_body_top + (HDR_H - font.glyph_h) / 2, C.TEXT_DIM);
+            const bx = leaf.x, by = leaf.y + leaf.tab_bar_h;
+            const bw = leaf.w, bh = leaf.h - leaf.tab_bar_h;
+            const busy = tab_drag.active;  // suppress content interaction while dragging a tab
 
-            // Output body — selectable / scrollable text_view (GPU-rendered)
-            const out_content_y = out_body_top + HDR_H;
-            const out_content_h = main_h - tex_display_h - HDR_H;
-            ui.output_text_view('output', out_view_lines(), out_x,
-                out_content_y, out_w, Math.max(0, out_content_h));
+            switch (leaf.active_tab_id) {
+                case 'files': {
+                    ui.draw_round_rect(bx + 4, by, bw - 8, bh - 4, C.SURFACE, 6);
+                    const chosen = ui.file_tree(FILE_TREE, active_example, bx, by, bw, bh);
+                    if (chosen && !busy) {
+                        active_example = chosen;
+                        buf.set_text(EXAMPLES[chosen]);
+                        blink_t = 0; cursor_visible = true;
+                        dirty = true;
+                    }
+                    break;
+                }
+                case 'editor': {
+                    editor_x = bx; editor_y = by; editor_w = bw;
+                    const hit = ui.code_editor(buf, bx, by, bw, bh,
+                        cursor_visible && !ov_open, ui.mono_font,
+                        find_state.open ? find_state.matches : null);
+                    if (hit && !busy) { buf.move_cursor(hit.line, hit.col, false); blink_t = 0; cursor_visible = true; }
+                    break;
+                }
+                case 'console': {
+                    // Run-status dot + message, right-aligned in the tab bar.
+                    ui.status_dot(leaf.x + leaf.w - 86, leaf.y + (leaf.tab_bar_h - 8) / 2, 4, run_status);
+                    ui.draw_text_clipped(run_status_msg,
+                        leaf.x + leaf.w - 74, leaf.y + (leaf.tab_bar_h - font.glyph_h) / 2, 70, C.TEXT_DIM);
+                    ui.output_text_view('output', out_view_lines(), bx, by, bw, Math.max(0, bh));
+                    break;
+                }
+                case 'preview': {
+                    preview_visible = true;
+                    wgpu_module.resize(bx, by, bw, Math.max(0, bh));
+                    wgpu_module.show();
+                    break;
+                }
+                case 'parse': {
+                    ui.draw_round_rect(bx + 4, by, bw - 8, bh - 4, C.BG, 6);
+                    if (parse_tex_id >= 0 && parse_tex_fn_count > 0) {
+                        const row_scale = Math.max(1, Math.ceil(64 / parse_tex_fn_count));
+                        const tex_h = Math.min(Math.max(0, bh - 8), parse_tex_fn_count * row_scale);
+                        ui.draw_texture(parse_tex_id, bx + 4, by + 4, bw - 8, tex_h, { filter: 'nearest' });
+                        ui.draw_text(`${parse_tex_fn_count} fn`,
+                            bx + bw - `${parse_tex_fn_count} fn`.length * font.glyph_w - 10,
+                            by + bh - font.glyph_h - 6, C.TEXT_DIM);
+                    }
+                    break;
+                }
+            }
         }
+
+        if (!preview_visible) wgpu_module.hide();
+
+        // ── Tab drag: move / split across leaves ───────────────────────────────
+        if (tab_drag.armed && mouse_down && !tab_drag.active &&
+            Math.abs(mx - tab_drag.sx) + Math.abs(my - tab_drag.sy) > 6) {
+            tab_drag.active = true;
+        }
+        if (tab_drag.active && mouse_down) {
+            const drop = resolve_dock_drop(dframe, mx, my, 1, t => t.length * font.glyph_w);
+            const tl = drop.target_leaf_id ? dframe.leaves.find(l => l.leaf_id === drop.target_leaf_id) : null;
+            if (tl) {
+                let hx = tl.x, hy = tl.y, hw = tl.w, hh = tl.h;
+                const tby = tl.y + tl.tab_bar_h, tbh = tl.h - tl.tab_bar_h;
+                if      (drop.drop_kind === 'split-left')   { hw = tl.w * 0.5; }
+                else if (drop.drop_kind === 'split-right')  { hx = tl.x + tl.w * 0.5; hw = tl.w * 0.5; }
+                else if (drop.drop_kind === 'split-top')    { hy = tby; hh = tbh * 0.5; }
+                else if (drop.drop_kind === 'split-bottom') { hy = tby + tbh * 0.5; hh = tbh * 0.5; }
+                else                                        { hh = tl.tab_bar_h; }
+                ui.draw_round_rect(hx, hy, hw, hh, [C.ACCENT[0], C.ACCENT[1], C.ACCENT[2], 0.18], 6);
+                ui.draw_round_border(hx, hy, hw, hh, C.ACCENT, 6, 2);
+            }
+            // Floating tab label following the cursor.
+            const lw = ui.tab_width(tab_drag.title);
+            ui.draw_round_rect(mx + 10, my + 8, lw, 22, C.SURFACE2, 5);
+            ui.draw_text_clipped(tab_drag.title, mx + 18, my + 8 + (22 - font.glyph_h) / 2, lw - 14, C.TEXT);
+            dirty = true;
+        }
+        if (tab_drag.active && just_up) {
+            const drop = resolve_dock_drop(dframe, mx, my, 1, t => t.length * font.glyph_w);
+            if (drop.target_leaf_id) {
+                if (drop.drop_kind === 'tabbar') {
+                    move_dock_tab(dock_layout, tab_drag.leaf, tab_drag.tab, drop.target_leaf_id, drop.target_tab_index);
+                } else {
+                    split_dock_tab(dock_layout, tab_drag.leaf, tab_drag.tab, drop.target_leaf_id, drop.drop_kind);
+                }
+                save_dock_layout();
+            }
+            tab_drag.active = false; tab_drag.armed = false;
+            dirty = true;
+        }
+        if (!mouse_down) { tab_drag.armed = false; tab_drag.active = false; }
 
         // ── Status bar ────────────────────────────────────────────────────────
         const sb_y = vp_h - STATUS_H;
@@ -1153,7 +1249,7 @@ async function main() {
             ui.begin_overlay(mx, my, mouse_down, just_down, just_up);
 
             if (find_state.open) {
-                const fa = ui.find_bar(find_state, editor_x, TOOLBAR_H, editor_w,
+                const fa = ui.find_bar(find_state, editor_x, editor_y, editor_w,
                     find_state.matches.length);
                 if (fa === 'close')       find_state.open = false;
                 else if (fa === 'next')   find_next();
@@ -1163,7 +1259,7 @@ async function main() {
             }
 
             if (goto_state.open) {
-                ui.goto_overlay(goto_state.query, editor_x, TOOLBAR_H, editor_w, buf.line_count());
+                ui.goto_overlay(goto_state.query, editor_x, editor_y, editor_w, buf.line_count());
             }
 
             if (kb_state.open) {
