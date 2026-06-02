@@ -3,6 +3,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "typecheck": "tsc --noEmit",
+    "build": "node scripts/build.mjs",
     "ci": "node scripts/ci.mjs"
   },
   "devDependencies": {
