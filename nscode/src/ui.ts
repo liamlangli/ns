@@ -35,8 +35,58 @@ export const C = {
     SYN_ID:     [0.878, 0.878, 0.925, 1.0],  // same as TEXT
 };
 
-import { FONT_MAIN, FONT_MONO, ui_renderer } from '@liamlangli/ui';
+import {
+    FONT_MAIN,
+    FONT_MONO,
+    ui_renderer,
+    ui_widgets,
+    create_text_view_state,
+    create_empty_ui_input,
+} from '@liamlangli/ui';
 import { tokenize_line } from './syntax.ts';
+
+// Re-export the text-view state factory so main.ts can own the persistent
+// selection/scroll state for the output console.
+export { create_text_view_state, create_empty_ui_input };
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+// @liamlangli/ui widgets (text_view, list, dropdown, …) are theme-driven: they
+// read named slots from a `theme_definition`. Build one from the `C` palette so
+// the shared widgets match NSCode's look.
+function hex3(c) {
+    const h = n => Math.round(Math.max(0, Math.min(1, n)) * 255).toString(16).padStart(2, '0');
+    return `#${h(c[0])}${h(c[1])}${h(c[2])}`;
+}
+function hex4(c) {
+    const h = n => Math.round(Math.max(0, Math.min(1, n)) * 255).toString(16).padStart(2, '0');
+    return `#${h(c[0])}${h(c[1])}${h(c[2])}${h(c[3] ?? 1)}`;
+}
+
+export const NS_THEME = {
+    css: {},
+    palette: {
+        bg:            hex3(C.BG),
+        panel:         hex3(C.SURFACE),
+        panel_alt:     hex3(C.SURFACE2),
+        border:        hex3(C.BORDER),
+        border_strong: hex3(C.BORDER),
+        text:          hex3(C.TEXT),
+        text_dim:      hex3(C.TEXT_DIM),
+        hover:         hex3(C.SURFACE2),
+        active:        hex3(C.ACCENT_DIM),
+        selected:      hex4(C.SEL),      // translucent selection highlight
+        accent:        hex3(C.ACCENT),
+        accent_dim:    hex3(C.ACCENT_DIM),
+        scene_outline: hex3(C.BORDER),
+        gizmo_axis_x:  hex3(C.RED),
+        gizmo_axis_y:  hex3(C.GREEN),
+        gizmo_axis_z:  hex3(C.ACCENT),
+        gizmo_center:  hex3(C.YELLOW),
+        track:         hex3(C.SURFACE),
+        overlay:       '#00000080',
+        ghost:         hex3(C.SURFACE2),
+    },
+};
 
 function pack_rgba(r, g, b, a = 1) {
     const rr = Math.max(0, Math.min(255, Math.round(r * 255)));
@@ -153,6 +203,10 @@ export class UI {
         this._dl       = this._renderer
             ? new webgpu_draw_adapter(this._renderer, () => ({ w: this._vp_w, h: this._vp_h }))
             : null;
+        // Shared @liamlangli/ui widget set (theme-driven). Drives the output
+        // console text_view and any future docked panels.
+        this._widgets  = this._renderer ? new ui_widgets(this._renderer) : null;
+        this._out_state = create_text_view_state();
         this._vp_w     = 0;
         this._vp_h     = 0;
 
@@ -196,6 +250,44 @@ export class UI {
     render() {
         if (this._dl) this._dl.finalize();
         this._renderer.flush({ r: C.BG[0], g: C.BG[1], b: C.BG[2], a: 1 });
+    }
+
+    get out_state() { return this._out_state; }
+    get scale() { return window.devicePixelRatio || 1; }
+
+    // ── @liamlangli/ui widget pass ────────────────────────────────────────────
+    // Widget coords are physical pixels; build the input snapshot in physical
+    // pixels too (mouse * dpr). Call after begin_frame, before render().
+    widgets_begin(input) {
+        if (this._widgets) this._widgets.begin_frame(NS_THEME, input);
+    }
+    widgets_end() {
+        if (this._widgets) this._widgets.end_frame();
+    }
+
+    /**
+     * Selectable / copyable / scrollable output console, drawn entirely through
+     * the @liamlangli/ui renderer (replaces the old DOM <div> overlay).
+     * `lines` is `[{ text, color? }]`; coords are logical px.
+     */
+    output_text_view(id, lines, x, y, w, h, opts = {}) {
+        if (!this._widgets) return;
+        const s = this.scale;
+        this._widgets.text_view(
+            id, x * s, y * s, w * s, h * s, lines, this._out_state,
+            { font_px: 13, wrap: false, background: true, ...opts },
+        );
+    }
+
+    // ── GPU textures (replaces the 2D <canvas> parse-texture overlay) ──────────
+    create_texture(w, h, opts) { return this._renderer ? this._renderer.create_texture(w, h, opts) : -1; }
+    update_texture(id, data, opts) { if (this._renderer) this._renderer.update_texture(id, data, opts); }
+    destroy_texture(id) { if (this._renderer) this._renderer.destroy_texture(id); }
+    /** Draw a texture; coords are logical px. */
+    draw_texture(id, x, y, w, h, opts) {
+        if (!this._renderer) return;
+        const s = this.scale;
+        this._renderer.draw_texture(id, x * s, y * s, w * s, h * s, opts);
     }
 
     set_font(font) { this._font = font ?? this._font; }
@@ -586,18 +678,6 @@ export class UI {
         }
 
         return click_result;
-    }
-
-    /**
-     * Output text panel. Renders an array of {text, cls} lines.
-     * Returns updated scroll_top.
-     */
-    output_panel(lines, x, y, w, h, scroll_top) {
-        void lines;
-        void scroll_top;
-
-        this.draw_rect(x, y, w, h, C.BG);
-        return 0;
     }
 
     /**

@@ -25,15 +25,19 @@ the offscreen hidden `<input>` used purely to capture IME/keyboard text (it is
 never visible). A bare pre-init fallback message (e.g. "WebGPU not available")
 is acceptable *only* because the renderer cannot run yet.
 
-### Known violations to migrate
+### Migration status
 
-These currently bypass the renderer and must be reimplemented in
-`@liamlangli/ui`:
+Done — both former DOM fallbacks now render through `@liamlangli/ui`:
 
-- `src/main.ts` — `output_view` (`<div>` + `innerHTML`): the output/console
-  panel. Render text lines, scrolling, and selection through `ui_renderer`.
-- `src/main.ts` — `parse_tex_canvas` (2D `<canvas>` + `putImageData`): the
-  token/parse texture overlay. Draw it as a GPU texture/rects via the renderer.
+- ✅ output/console panel → `ui_widgets.text_view` (`UI.output_text_view`),
+  with selection, scroll, and Ctrl/Cmd+C copy handled by the widget.
+- ✅ parse/token texture → GPU texture via `ui_renderer.create_texture` /
+  `update_texture` / `draw_texture` (`UI.create_texture` … `draw_texture`),
+  nearest-neighbour sampled.
+
+Remaining non-renderer surfaces are limited to the pre-init "WebGPU not
+available" fallback and the WebGPU preview canvas (`webgpu_module.ts`, itself a
+GPU surface). Keep new UI on the renderer path; do not reintroduce DOM widgets.
 
 ## Use `ui_dock` for an editor-like layout
 

@@ -7,7 +7,7 @@ import { text_buffer }           from './editor.ts';
 import { ns_interpreter, parse_to_ast } from './interpreter.ts';
 import { gpu_parser }            from './gpu_parser.ts';
 import { compare_normalized_asts, normalize_cpu_ast_by_function } from './parser_validation.ts';
-import { UI, C }                from './ui.ts';
+import { UI, C, create_empty_ui_input } from './ui.ts';
 import { fuzzy_filter, key_map, event_key_id } from './commands.ts';
 import { WebGPUModule }         from './webgpu_module.ts';
 
@@ -232,37 +232,11 @@ async function main() {
 
     const canvas       = document.getElementById('c');
     const hidden_input = document.getElementById('hi');
-    const output_view  = document.createElement('div');
     hidden_input.focus();
 
-    output_view.id = 'output-view';
-    output_view.tabIndex = 0;
-    output_view.style.position = 'fixed';
-    output_view.style.margin = '0';
-    output_view.style.padding = '8px';
-    output_view.style.boxSizing = 'border-box';
-    output_view.style.overflow = 'auto';
-    output_view.style.whiteSpace = 'pre-wrap';
-    output_view.style.wordBreak = 'break-word';
-    output_view.style.userSelect = 'text';
-    output_view.style.webkitUserSelect = 'text';
-    output_view.style.outline = 'none';
-    output_view.style.border = 'none';
-    output_view.style.background = '#1e1e24';
-    output_view.style.color = '#e0e0ec';
-    output_view.style.zIndex = '2';
-    document.body.appendChild(output_view);
-
-    // ── Parse texture overlay canvas ─────────────────────────────────────────
-    const parse_tex_canvas = document.createElement('canvas');
-    parse_tex_canvas.id = 'parse-texture-view';
-    parse_tex_canvas.style.position = 'fixed';
-    parse_tex_canvas.style.display = 'none';
-    parse_tex_canvas.style.zIndex = '2';
-    parse_tex_canvas.style.imageRendering = 'pixelated';
-    parse_tex_canvas.style.pointerEvents = 'none';
-    parse_tex_canvas.style.border = 'none';
-    document.body.appendChild(parse_tex_canvas);
+    // The output console and parse-texture view are now rendered entirely
+    // through the @liamlangli/ui WebGPU renderer (no DOM overlays). See the
+    // output text_view + GPU parse texture below.
 
     // ── Renderer / device bootstrap ──────────────────────────────────────────
     // The UI owns the @liamlangli/ui WebGPU renderer; ui.init() creates the
@@ -306,19 +280,22 @@ async function main() {
     let active_example = 'fib';
 
     // ── Output state ──────────────────────────────────────────────────────────
+    // Scroll + selection state lives in `ui.out_state` (the text_view widget).
     let out_lines      = [];
-    let out_scroll     = 0;
     let run_status     = 'idle';
     let run_status_msg = 'Ready';
-    let output_html    = '';
 
     // ── Parse texture state ───────────────────────────────────────────────────
-    let parse_tex_fn_count = 0; // 0 = no texture to show
+    let parse_tex_fn_count = 0;   // 0 = no texture to show
+    let parse_tex_id       = -1;  // GPU texture handle (@liamlangli/ui renderer)
+    let parse_tex_w        = 0;
+    let parse_tex_h        = 0;
 
     /**
-     * Build and draw a per-function parse texture onto parse_tex_canvas.
+     * Build a per-function parse texture as a GPU texture (no DOM canvas).
      * Each row = one function, each pixel column = one token.
-     * Pixel color encodes token kind (RGBA u8).
+     * Pixel color encodes token kind (RGBA u8). Uploaded via the renderer and
+     * drawn each frame with nearest-neighbour sampling.
      */
     function build_parse_texture(gpu_result) {
         const fn_count = gpu_result.function_spans.length;
@@ -362,10 +339,14 @@ async function main() {
             }
         }
 
-        parse_tex_canvas.width  = max_tok;
-        parse_tex_canvas.height = fn_count;
-        const ctx2d = parse_tex_canvas.getContext('2d');
-        ctx2d.putImageData(new ImageData(pixels, max_tok, fn_count), 0, 0);
+        // Upload to a GPU texture (recreate only when dimensions change).
+        if (parse_tex_id < 0 || parse_tex_w !== max_tok || parse_tex_h !== fn_count) {
+            if (parse_tex_id >= 0) ui.destroy_texture(parse_tex_id);
+            parse_tex_id = ui.create_texture(max_tok, fn_count, { filter: 'nearest' });
+            parse_tex_w  = max_tok;
+            parse_tex_h  = fn_count;
+        }
+        ui.update_texture(parse_tex_id, pixels, { width: max_tok, height: fn_count });
         parse_tex_fn_count = fn_count;
     }
 
@@ -385,6 +366,12 @@ async function main() {
     // ── Mouse state ───────────────────────────────────────────────────────────
     let mx = 0, my = 0, mouse_down = false, just_down = false, just_up = false;
     let vp_w = 0, vp_h = 0;
+
+    // ── @liamlangli/ui input accumulators (for the output text_view) ──────────
+    // Edge-triggered keys + wheel delta, consumed once per frame then reset.
+    let out_wheel_y = 0;
+    let mod_shift = false, mod_ctrl = false, mod_meta = false;
+    const out_keys = { up: 0, down: 0, pgup: 0, pgdn: 0, home: 0, end: 0, a: 0, c: 0 };
 
     // ── Overlay state ─────────────────────────────────────────────────────────
     // Command palette
@@ -418,46 +405,34 @@ async function main() {
     resize();
     window.addEventListener('resize', resize);
 
-    function escape_html(text) {
-        return text
-            .replaceAll('&', '&amp;')
-            .replaceAll('<', '&lt;')
-            .replaceAll('>', '&gt;');
+    // Output console colours per line class (consumed by the text_view widget).
+    const OUT_CLS_COLOR = {
+        print: '#e0e0ec',
+        error: '#e05c5c',
+        info:  '#888888',
+        sep:   '#3a3a48',
+        time:  '#d4a44c',
+    };
+
+    /** Map `out_lines` ({text, cls}) → text_view lines ({text, color}). */
+    function out_view_lines() {
+        return out_lines.map(l => ({
+            text:  String(l.text),
+            color: OUT_CLS_COLOR[l.cls] ?? OUT_CLS_COLOR.print,
+        }));
     }
 
-    function render_output_view() {
-        const cls_style = {
-            print: 'color:#e0e0ec;',
-            error: 'color:#e05c5c;',
-            info: 'color:#888;',
-            sep: 'color:#3a3a48;',
-            time: 'color:#d4a44c;',
-        };
-        output_html = out_lines.map(line => {
-            const cls = line.cls ? ` out-${line.cls}` : '';
-            const style = cls_style[line.cls] ?? 'color:#e0e0ec;';
-            return `<div class="out-line${cls}" style="${style}">${escape_html(String(line.text)) || '&nbsp;'}</div>`;
-        }).join('');
-        output_view.innerHTML = output_html;
-        output_view.scrollTop = out_scroll * font.glyph_h;
+    /** Request the output console to scroll to its last line on the next frame. */
+    function scroll_output_to_bottom() {
+        ui.out_state.scroll_to_line = Math.max(0, out_lines.length - 1);
+        dirty = true;
     }
-
-    function has_output_selection() {
-        const sel = window.getSelection();
-        if (!sel || sel.isCollapsed) return false;
-        return output_view.contains(sel.anchorNode) || output_view.contains(sel.focusNode);
-    }
-
-    output_view.addEventListener('scroll', () => {
-        out_scroll = output_view.scrollTop / font.glyph_h;
-    });
-    render_output_view();
 
     // ── Run code ──────────────────────────────────────────────────────────────
     async function run_code() {
         out_lines = [];
-        out_scroll = 0;
-        render_output_view();
+        ui.out_state.scroll_top = 0;
+        dirty = true;
         run_status = 'run';
         run_status_msg = 'Running…';
         dirty = true;
@@ -490,8 +465,7 @@ async function main() {
             out_lines.push({ text: `Execute: ${elapsed} ms`, cls: 'time' });
             run_status = ok ? 'ok' : 'err';
             run_status_msg = ok ? 'Success' : 'Error';
-            out_scroll = Math.max(0, out_lines.length - 10);
-            render_output_view();
+            scroll_output_to_bottom();
             dirty = true;
             return;
         }
@@ -583,8 +557,7 @@ async function main() {
         out_lines.push({ text: `Total: ${(cpu_parse_ms + (execute_ms ?? 0)).toFixed(2)} ms`, cls: 'time' });
         run_status     = ok ? 'ok' : 'err';
         run_status_msg = ok ? 'Success' : 'Error';
-        out_scroll     = Math.max(0, out_lines.length - 10);
-        render_output_view();
+        scroll_output_to_bottom();
         dirty = true;
     }
 
@@ -719,7 +692,7 @@ async function main() {
         blink_t = 0; cursor_visible = true;
         switch (id) {
         case 'run':          run_code(); break;
-        case 'clear':        out_lines = []; out_scroll = 0; run_status = 'idle'; run_status_msg = 'Ready'; parse_tex_fn_count = 0; render_output_view(); break;
+        case 'clear':        out_lines = []; ui.out_state.scroll_top = 0; run_status = 'idle'; run_status_msg = 'Ready'; parse_tex_fn_count = 0; dirty = true; break;
         case 'palette':      palette.open = true; palette.query = ''; palette.sel = 0;
                              find_state.open = false; goto_state.open = false; kb_state.open = false; break;
         case 'find':         open_overlay('find'); break;
@@ -729,13 +702,13 @@ async function main() {
         case 'toggle_tree':  tree_collapsed = !tree_collapsed; break;
         case 'select_all':   buf.select_all(); break;
         case 'copy':
-            if (has_output_selection()) navigator.clipboard?.writeText(window.getSelection()?.toString() ?? '');
-            else copy_selection();
+            // Output-console copy is handled by the text_view itself (Ctrl/Cmd+C
+            // while it holds focus); this path is the editor selection.
+            copy_selection();
             break;
         case 'paste':        navigator.clipboard?.readText().then(t => { if (t) buf.insert_text(t); }); break;
         case 'cut':
-            if (has_output_selection()) navigator.clipboard?.writeText(window.getSelection()?.toString() ?? '');
-            else { copy_selection(); buf.delete_selection(); buf.mark_dirty(); }
+            copy_selection(); buf.delete_selection(); buf.mark_dirty();
             break;
         case 'comment':      toggle_comment(); break;
         case 'move_up':      move_line(-1); break;
@@ -758,6 +731,28 @@ async function main() {
 
     window.addEventListener('keydown', e => {
         dirty = true;
+
+        // ── Output console focus ───────────────────────────────────────────────
+        // While the output text_view holds focus, it owns the keyboard for
+        // scrolling, select-all and copy. Capture only the keys it consumes.
+        if (ui.out_state.focused && !any_overlay()) {
+            mod_shift = e.shiftKey; mod_ctrl = e.ctrlKey; mod_meta = e.metaKey;
+            let consumed = true;
+            switch (e.key) {
+                case 'ArrowUp':   out_keys.up   = 1; break;
+                case 'ArrowDown': out_keys.down = 1; break;
+                case 'PageUp':    out_keys.pgup = 1; break;
+                case 'PageDown':  out_keys.pgdn = 1; break;
+                case 'Home':      out_keys.home = 1; break;
+                case 'End':       out_keys.end  = 1; break;
+                case 'a': case 'A': if (e.ctrlKey || e.metaKey) out_keys.a = 1; else consumed = false; break;
+                case 'c': case 'C': if (e.ctrlKey || e.metaKey) out_keys.c = 1; else consumed = false; break;
+                case 'Escape':    ui.out_state.focused = false; break;
+                default:          consumed = false;
+            }
+            if (consumed) { e.preventDefault(); return; }
+        }
+
         const shift = e.shiftKey;
 
         // ── Palette overlay ────────────────────────────────────────────────────
@@ -832,10 +827,6 @@ async function main() {
                 key_map_instance.override(kb_state.edit_id, [event_key_id(e)]);
                 kb_state.edit_id = null; return;
             }
-            return;
-        }
-
-        if (document.activeElement === output_view && !e.metaKey && !e.ctrlKey && !e.altKey) {
             return;
         }
 
@@ -918,7 +909,9 @@ async function main() {
             buf.scroll_top  = Math.max(0, Math.min((buf.scroll_top ?? 0) + e.deltaY / font.glyph_h, buf.line_count() - 1));
             buf.scroll_left = Math.max(0, (buf.scroll_left ?? 0) + e.deltaX);
         } else {
-            out_scroll = Math.max(0, Math.min(out_scroll + e.deltaY / font.glyph_h, Math.max(0, out_lines.length - 1)));
+            // Output console — feed the wheel delta to the text_view widget,
+            // which owns its own scroll state and clamps internally.
+            out_wheel_y += -e.deltaY / 20;
         }
         dirty = true;
     }, { passive: false });
@@ -953,6 +946,30 @@ async function main() {
             just_down && !ov_open,
             just_up   && !ov_open,
             vp_w, vp_h);
+
+        // @liamlangli/ui widget pass: build a physical-pixel input snapshot for
+        // the output text_view (selection / scroll / copy). Suppressed while an
+        // overlay is open so clicks don't fall through to the console.
+        const s = ui.scale;
+        const wi = create_empty_ui_input();
+        wi.mouse_x        = mx * s;
+        wi.mouse_y        = my * s;
+        wi.mouse_down     = mouse_down && !ov_open;
+        wi.mouse_pressed  = just_down && !ov_open;
+        wi.mouse_released = just_up   && !ov_open;
+        wi.wheel_y        = out_wheel_y;
+        wi.shift          = mod_shift;
+        wi.ctrl           = mod_ctrl;
+        wi.meta           = mod_meta;
+        wi.key_up         = !!out_keys.up;
+        wi.key_down       = !!out_keys.down;
+        wi.key_page_up    = !!out_keys.pgup;
+        wi.key_page_down  = !!out_keys.pgdn;
+        wi.key_home       = !!out_keys.home;
+        wi.key_end        = !!out_keys.end;
+        wi.key_a          = !!out_keys.a;
+        wi.key_c          = !!out_keys.c;
+        ui.widgets_begin(wi);
 
         // ── Background ────────────────────────────────────────────────────────
         ui.draw_rect(0, 0, vp_w, vp_h, C.BG);
@@ -1052,22 +1069,13 @@ async function main() {
                 out_x + 26 + 8 * font.glyph_w,
                 out_panel_y + (HDR_H - font.glyph_h) / 2, C.TEXT_DIM);
 
-            // Hide parse texture in WebGPU mode
-            parse_tex_canvas.style.display = 'none';
-
             // Position WebGPU canvas overlay
             wgpu_module.resize(out_x, TOOLBAR_H + HDR_H, out_w, prev_content_h);
             wgpu_module.show();
 
-            // Position output HTML overlay
-            ui.output_panel(out_lines, out_x,
-                out_panel_y + HDR_H, out_w, out_content_h, out_scroll);
-            output_view.style.left       = `${out_x}px`;
-            output_view.style.top        = `${out_panel_y + HDR_H}px`;
-            output_view.style.width      = `${out_w}px`;
-            output_view.style.height     = `${out_content_h}px`;
-            output_view.style.font       = `${font.glyph_h - 4}px monospace`;
-            output_view.style.lineHeight = `${font.glyph_h}px`;
+            // Output console — selectable / scrollable text_view (GPU-rendered)
+            ui.output_text_view('output', out_view_lines(), out_x,
+                out_panel_y + HDR_H, out_w, out_content_h);
 
         } else {
             // ── Normal mode: full right panel = output ────────────────────────
@@ -1096,16 +1104,12 @@ async function main() {
                     out_x + out_w - fn_label.length * font.glyph_w - 10,
                     TOOLBAR_H + (TEX_LABEL_H - font.glyph_h) / 2, C.TEXT_DIM);
 
-                // Position and show the texture canvas overlay
+                // Draw the parse texture (GPU), nearest-neighbour scaled.
                 const tex_y = TOOLBAR_H + TEX_LABEL_H;
                 const tex_h = tex_display_h - TEX_LABEL_H;
-                parse_tex_canvas.style.display = 'block';
-                parse_tex_canvas.style.left    = `${out_x}px`;
-                parse_tex_canvas.style.top     = `${tex_y}px`;
-                parse_tex_canvas.style.width   = `${out_w}px`;
-                parse_tex_canvas.style.height  = `${tex_h}px`;
-            } else {
-                parse_tex_canvas.style.display = 'none';
+                if (parse_tex_id >= 0) {
+                    ui.draw_texture(parse_tex_id, out_x, tex_y, out_w, tex_h, { filter: 'nearest' });
+                }
             }
 
             // Output header (shifted down by texture block)
@@ -1118,17 +1122,11 @@ async function main() {
                 out_x + 26 + 8 * font.glyph_w,
                 out_body_top + (HDR_H - font.glyph_h) / 2, C.TEXT_DIM);
 
-            // Output body
+            // Output body — selectable / scrollable text_view (GPU-rendered)
             const out_content_y = out_body_top + HDR_H;
             const out_content_h = main_h - tex_display_h - HDR_H;
-            ui.output_panel(out_lines, out_x,
-                out_content_y, out_w, out_content_h, out_scroll);
-            output_view.style.left       = `${out_x}px`;
-            output_view.style.top        = `${out_content_y}px`;
-            output_view.style.width      = `${out_w}px`;
-            output_view.style.height     = `${Math.max(0, out_content_h)}px`;
-            output_view.style.font       = `${font.glyph_h - 4}px monospace`;
-            output_view.style.lineHeight = `${font.glyph_h}px`;
+            ui.output_text_view('output', out_view_lines(), out_x,
+                out_content_y, out_w, Math.max(0, out_content_h));
         }
 
         // ── Status bar ────────────────────────────────────────────────────────
@@ -1187,10 +1185,16 @@ async function main() {
         }
 
         // ── Render ────────────────────────────────────────────────────────────
+        ui.widgets_end();
         ui.render();
 
         just_down = false;
         just_up   = false;
+
+        // Reset per-frame input edges consumed by the widget pass.
+        out_wheel_y = 0;
+        out_keys.up = out_keys.down = out_keys.pgup = out_keys.pgdn =
+            out_keys.home = out_keys.end = out_keys.a = out_keys.c = 0;
     }
 
     requestAnimationFrame(frame);
