@@ -59,6 +59,10 @@ import {
     dock_splitter_w,
     default_themes,
     lerp_theme,
+    pack_rgba_floats,
+    code_editor as code_editor_plugin,
+    create_code_editor_state,
+    text_buffer,
 } from '@liamlangli/ui';
 import { tokenize_line } from './syntax.ts';
 
@@ -83,6 +87,8 @@ export {
     dock_splitter_w,
     default_themes,
     lerp_theme,
+    create_code_editor_state,
+    text_buffer,
 };
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -280,19 +286,42 @@ class webgpu_draw_adapter {
     }
 }
 
-// Map token type (numeric) → color tuple. Order matches TT enum: 0..9
-const TOK_COLOR = [
-    C.SYN_KW,    // 0 KEYWORD
-    C.SYN_TYPE,  // 1 TYPE
-    C.SYN_NUM,   // 2 NUMBER
-    C.SYN_STR,   // 3 STRING
-    C.SYN_CMT,   // 4 COMMENT
-    C.SYN_OP,    // 5 OPERATOR
-    C.SYN_ID,    // 6 IDENTIFIER
-    C.SYN_PUNCT, // 7 PUNCTUATION
-    C.SYN_ID,    // 8 WHITESPACE
-    C.SYN_ID,    // 9 UNKNOWN
+// Adapt NSCode's NS tokenizer (TT enum) to the @liamlangli/ui code_editor
+// plugin's token model. TT order: 0..11 (see syntax.ts).
+const TT_KIND = [
+    'keyword',     // 0  KEYWORD
+    'type',        // 1  TYPE
+    'number',      // 2  NUMBER
+    'string',      // 3  STRING
+    'comment',     // 4  COMMENT
+    'operator',    // 5  OPERATOR
+    'identifier',  // 6  IDENTIFIER
+    'punctuation', // 7  PUNCTUATION
+    'whitespace',  // 8  WHITESPACE
+    'plain',       // 9  UNKNOWN
+    'function',    // 10 FUNC_DEF
+    'function',    // 11 FUNC_CALL
 ];
+
+function ns_editor_tokenize(line) {
+    return tokenize_line(line).map(t => ({ kind: TT_KIND[t.type] ?? 'plain', text: t.text }));
+}
+
+// Per-kind colours mirror NSCode's `C.SYN_*` palette (which apply_theme leaves
+// untouched, so capturing them once is fine). Functions keep the identifier
+// colour to match the previous editor exactly.
+const NS_TOKEN_COLORS = {
+    keyword:     hex3(C.SYN_KW),
+    type:        hex3(C.SYN_TYPE),
+    number:      hex3(C.SYN_NUM),
+    string:      hex3(C.SYN_STR),
+    comment:     hex3(C.SYN_CMT),
+    operator:    hex3(C.SYN_OP),
+    identifier:  hex3(C.SYN_ID),
+    punctuation: hex3(C.SYN_PUNCT),
+    function:    hex3(C.SYN_ID),
+    plain:       hex3(C.SYN_ID),
+};
 
 export class UI {
     constructor(canvas) {
@@ -307,6 +336,8 @@ export class UI {
         // console text_view and any future docked panels.
         this._widgets  = this._renderer ? new ui_widgets(this._renderer) : null;
         this._out_state = create_text_view_state();
+        // Persistent view state for the code_editor plugin (scroll / focus / selection clicks).
+        this._editor_state = create_code_editor_state();
         this._vp_w     = 0;
         this._vp_h     = 0;
 
@@ -381,6 +412,7 @@ export class UI {
     request_cursor(cursor) { this._want_cursor = cursor ?? null; }
 
     get out_state() { return this._out_state; }
+    get editor_state() { return this._editor_state; }
     get scale() { return window.devicePixelRatio || 1; }
 
     // ── @liamlangli/ui widget pass ────────────────────────────────────────────
@@ -769,125 +801,36 @@ export class UI {
      *
      * Returns { line, col } if user clicked (or null).
      */
-    code_editor(buf, x, y, w, h, cursor_visible, font, find_matches = null) {
-        const f    = font ?? this._code_font;
-        const g_w  = f.glyph_w;
-        const g_h  = f.glyph_h;
+    code_editor(buf, state, input, x, y, w, h, opts = {}) {
+        // Thin bridge to @liamlangli/ui's `code_editor` plugin. Coords are logical
+        // px (× scale → physical for the renderer). NSCode keeps ownership of the
+        // keyboard (see main.ts), so the plugin runs render + mouse only.
+        if (!this._renderer) return { changed: false };
+        const s = this.scale;
 
-        const GUTTER_PAD  = 6;
-        const line_count  = buf.line_count();
-        const gutter_cols = String(line_count).length;
-        const gutter_w    = gutter_cols * g_w + GUTTER_PAD * 2;
+        // Show a text I-beam while hovering the editable code area (the plugin
+        // also requests it, but NSCode's render() reapplies _want_cursor last).
+        if (this._hit(x, y, w, h)) this._want_cursor = 'text';
 
-        // Background
-        this.draw_rect(x, y, w, h, C.BG);
-        this.draw_rect(x, y, gutter_w, h, C.SURFACE);
+        const highlights = opts.highlights?.map(m => ({
+            ...m,
+            color: m.color ?? pack_rgba_floats(C.YELLOW[0], C.YELLOW[1], C.YELLOW[2], 0.28),
+        }));
 
-        const vis_lines = Math.floor(h / g_h);
-        const scroll_t  = Math.floor(buf.scroll_top ?? 0);
-        const scroll_l  = buf.scroll_left ?? 0;
-        const code_x    = x + gutter_w;
-        const code_w    = w - gutter_w;
-
-        // ── Scissor the code area ─────────────────────────────────────────────
-        this._dl.scissor(x, y, w, h);
-
-        // ── selection ─────────────────────────────────────────────────────────
-        const sel = buf.get_selection_range?.();
-        if (sel) {
-            for (let l = sel.start.line; l <= sel.end.line; l++) {
-                const vy = l - scroll_t;
-                if (vy < 0 || vy >= vis_lines) continue;
-                const line_len = buf.line_at(l).length;
-                const sc = l === sel.start.line ? sel.start.col : 0;
-                const ec = l === sel.end.line   ? sel.end.col   : line_len;
-                const sx = code_x + sc * g_w - scroll_l;
-                const sw = (ec - sc) * g_w;
-                if (sw > 0) {
-                    this._dl.rect(sx, y + vy * g_h, sw, g_h, C.SEL[0], C.SEL[1], C.SEL[2], C.SEL[3]);
-                }
-            }
-        }
-
-        // ── Find match highlights ─────────────────────────────────────────────
-        if (find_matches && find_matches.length) {
-            for (const m of find_matches) {
-                const vy = m.line - scroll_t;
-                if (vy < 0 || vy >= vis_lines) continue;
-                const mx2 = code_x + m.col * g_w - scroll_l;
-                const mw  = m.len * g_w;
-                this._dl.rect(mx2, y + vy * g_h, mw, g_h,
-                    C.YELLOW[0], C.YELLOW[1], C.YELLOW[2], 0.28);
-            }
-        }
-
-        // ── Text lines ────────────────────────────────────────────────────────
-        for (let vi = 0; vi < vis_lines + 1; vi++) {
-            const li = scroll_t + vi;
-            if (li >= line_count) break;
-            const ty2     = y + vi * g_h;
-            const line_str = buf.line_at(li);
-
-            // Line number
-            const num_str = String(li + 1).padStart(gutter_cols, ' ');
-            this._dl.text(num_str, x + GUTTER_PAD, ty2, f, C.LINE_NUM[0], C.LINE_NUM[1], C.LINE_NUM[2], 1);
-
-            // Syntax-highlighted code
-            let cx = code_x - scroll_l;
-            const tokens = tokenize_line(line_str);
-            for (const tok of tokens) {
-                const c = TOK_COLOR[tok.type] ?? C.TEXT;
-                for (let ci = 0; ci < tok.text.length; ci++) {
-                    const gcx = cx + ci * g_w;
-                    if (gcx + g_w < code_x || gcx > code_x + code_w) continue; // horizontal clip
-                    this._dl.text(tok.text[ci], gcx, ty2, f, c[0], c[1], c[2], 1);
-                }
-                cx += tok.text.length * g_w;
-            }
-        }
-
-        // ── Cursor ────────────────────────────────────────────────────────────
-        if (cursor_visible) {
-            const { line, col } = buf.cursor;
-            const vy = line - scroll_t;
-            if (vy >= 0 && vy < vis_lines) {
-                const cx2 = code_x + col * g_w - scroll_l;
-                this._dl.rect(cx2, y + vy * g_h, 2, g_h, C.TEXT[0], C.TEXT[1], C.TEXT[2], 0.9);
-            }
-        }
-
-        // ── Reset scissor ────────────────────────────────────────────────────
-        this._dl.scissor(0, 0, this._vp_w, this._vp_h);
-
-        // ── Scrollbar ────────────────────────────────────────────────────────
-        const SBW = 8;
-        const new_scroll = this.v_scrollbar(
-            'editor-sb', x + w - SBW, y, SBW, h,
-            scroll_t, line_count, vis_lines
+        return code_editor_plugin(
+            this._renderer, NS_THEME, input,
+            x * s, y * s, w * s, h * s,
+            buf, state,
+            {
+                font_px: 13,
+                line_pad: 2,
+                handle_keyboard: false,
+                tokenize: ns_editor_tokenize,
+                token_colors: NS_TOKEN_COLORS,
+                ...opts,
+                highlights,
+            },
         );
-        buf.scroll_top = new_scroll;
-
-        // ── Hit test → cursor placement ───────────────────────────────────────
-        // Show a text I-beam while hovering the editable code area.
-        if (this._hit(code_x, y, code_w, h)) this._want_cursor = 'text';
-        let click_result = null;
-        if (this._just_down && this._hit(code_x, y, code_w, h)) {
-            const clicked_line = Math.min(line_count - 1,
-                Math.max(0, Math.floor((this._my - y) / g_h) + scroll_t));
-            const clicked_col  = Math.min(buf.line_at(clicked_line).length,
-                Math.max(0, Math.round((this._mx - code_x + scroll_l) / g_w)));
-            click_result = { line: clicked_line, col: clicked_col };
-        }
-        // Also handle click-drag selection (update focus on mouse move while down)
-        if (this._down && !this._just_down && this._hit(code_x, y, code_w, h)) {
-            const drag_line = Math.min(line_count - 1,
-                Math.max(0, Math.floor((this._my - y) / g_h) + scroll_t));
-            const drag_col  = Math.min(buf.line_at(drag_line).length,
-                Math.max(0, Math.round((this._mx - code_x + scroll_l) / g_w)));
-            buf.move_cursor(drag_line, drag_col, true);
-        }
-
-        return click_result;
     }
 
     /**

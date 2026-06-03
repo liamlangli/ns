@@ -14,6 +14,7 @@ import {
     move_dock_tab, split_dock_tab, close_dock_tab, resolve_dock_drop,
     find_leaf_by_id, visit_dock_leaves,
     default_themes, lerp_theme, NS_DEFAULT_THEME, apply_theme,
+    create_code_editor_state,
 } from './ui.ts';
 import { fuzzy_filter, key_map, event_key_id } from './commands.ts';
 import { WebGPUModule }         from './webgpu_module.ts';
@@ -284,6 +285,7 @@ async function main() {
     }
 
     const buf = new text_buffer(EXAMPLES.fib);
+    const editor_state = create_code_editor_state();
     let active_example = 'fib';
 
     // ── Output state ──────────────────────────────────────────────────────────
@@ -466,6 +468,7 @@ async function main() {
     // ── @liamlangli/ui input accumulators (for the output text_view) ──────────
     // Edge-triggered keys + wheel delta, consumed once per frame then reset.
     let out_wheel_y = 0;
+    let editor_wheel_y = 0;   // wheel delta routed to the code_editor plugin
     let mod_shift = false, mod_ctrl = false, mod_meta = false;
     const out_keys = { up: 0, down: 0, pgup: 0, pgdn: 0, home: 0, end: 0, a: 0, c: 0 };
 
@@ -778,7 +781,7 @@ async function main() {
 
     function scroll_to_match(m) {
         if (!m) return;
-        buf.scroll_top = Math.max(0, m.line - 3);
+        editor_state.scroll_to_line = Math.max(0, m.line - 3);
         buf.move_cursor(m.line, m.col, false);
         buf.move_cursor(m.line, m.col + m.len, true);
     }
@@ -949,7 +952,7 @@ async function main() {
                 if (!isNaN(n)) {
                     const l = Math.max(0, Math.min(n - 1, buf.line_count() - 1));
                     buf.move_cursor(l, 0, false);
-                    buf.scroll_top = Math.max(0, l - 5);
+                    editor_state.scroll_to_line = Math.max(0, l - 5);
                 }
                 goto_state.open = false; return;
             }
@@ -1050,8 +1053,8 @@ async function main() {
             e.clientY >= l.y && e.clientY < l.y + l.h);
         const tab = leaf?.active_tab_id;
         if (tab === 'editor') {
-            buf.scroll_top  = Math.max(0, Math.min((buf.scroll_top ?? 0) + e.deltaY / font.glyph_h, buf.line_count() - 1));
-            buf.scroll_left = Math.max(0, (buf.scroll_left ?? 0) + e.deltaX);
+            // The code_editor plugin owns its own scroll state; feed it the delta.
+            editor_wheel_y += -e.deltaY / 20;
         } else if (tab === 'console') {
             // Output console — feed the wheel delta to the text_view widget,
             // which owns its own scroll state and clamps internally.
@@ -1211,10 +1214,23 @@ async function main() {
                 }
                 case 'editor': {
                     editor_x = bx; editor_y = by; editor_w = bw;
-                    const hit = ui.code_editor(buf, bx, by, bw, bh,
-                        cursor_visible && !ov_open, ui.mono_font,
-                        find_state.open ? find_state.matches : null);
-                    if (hit && !busy) { buf.move_cursor(hit.line, hit.col, false); blink_t = 0; cursor_visible = true; }
+                    // Build a physical-px input snapshot for the plugin's mouse +
+                    // wheel handling. Keyboard stays with main.ts (handle_keyboard
+                    // is off), so no key flags are forwarded here. Mouse is
+                    // suppressed while an overlay is open or a tab is being dragged.
+                    const active = !busy && !ov_open;
+                    const ei = create_empty_ui_input();
+                    ei.mouse_x        = mx * s;
+                    ei.mouse_y        = my * s;
+                    ei.mouse_down     = mouse_down && active;
+                    ei.mouse_pressed  = just_down   && active;
+                    ei.mouse_released = just_up     && active;
+                    ei.wheel_y        = editor_wheel_y;
+                    ei.shift          = mod_shift;
+                    ui.code_editor(buf, editor_state, ei, bx, by, bw, bh, {
+                        caret_visible: cursor_visible && !ov_open,
+                        highlights: find_state.open ? find_state.matches : undefined,
+                    });
                     break;
                 }
                 case 'console': {
@@ -1359,6 +1375,7 @@ async function main() {
 
         // Reset per-frame input edges consumed by the widget pass.
         out_wheel_y = 0;
+        editor_wheel_y = 0;
         out_keys.up = out_keys.down = out_keys.pgup = out_keys.pgdn =
             out_keys.home = out_keys.end = out_keys.a = out_keys.c = 0;
     }
