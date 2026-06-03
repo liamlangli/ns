@@ -9,10 +9,9 @@ import { gpu_parser }            from './gpu_parser.ts';
 import { compare_normalized_asts, normalize_cpu_ast_by_function } from './parser_validation.ts';
 import {
     UI, C, create_empty_ui_input,
-    create_default_dock_layout, compute_dock_frame, restore_dock_layout,
-    serialize_dock_layout, activate_dock_tab, set_dock_split_ratio,
-    move_dock_tab, split_dock_tab, close_dock_tab, resolve_dock_drop,
-    find_leaf_by_id, visit_dock_leaves,
+    compute_dock_frame, restore_dock_layout, serialize_dock_layout,
+    activate_dock_tab, close_dock_tab,
+    find_leaf_by_id, visit_dock_leaves, dock_system,
     default_themes, lerp_theme, NS_DEFAULT_THEME, apply_theme,
     create_code_editor_state,
 } from './ui.ts';
@@ -393,49 +392,59 @@ async function main() {
         return editor && console_;
     }
 
-    let dock_layout = make_ns_layout();
+    let initial_layout = make_ns_layout();
     try {
         const raw = globalThis.localStorage?.getItem(DOCK_LS_KEY);
         if (raw) {
             const restored = restore_dock_layout(JSON.parse(raw));
-            if (restored && layout_has_essentials(restored)) dock_layout = restored;
+            if (restored && layout_has_essentials(restored)) initial_layout = restored;
         }
     } catch { /* ignore malformed saved layout */ }
 
-    function save_dock_layout() {
-        try { globalThis.localStorage?.setItem(DOCK_LS_KEY, serialize_dock_layout(dock_layout)); }
-        catch { /* storage unavailable */ }
-    }
+    // The shared @liamlangli/ui dock_system owns the layout tree plus all
+    // transient drag/resize state, and renders the entire dock chrome itself —
+    // NSCode just hands it a per-panel body renderer (see the frame loop).
+    const dock = new dock_system(initial_layout);
 
-    const split_drag = { active: false, id: null };
-    const tab_drag   = { active: false, armed: false, leaf: null, tab: null, sx: 0, sy: 0 };
-    let   last_dock_frame = { leaves: [], splits: [] };  // for wheel routing
-    let   prev_webgpu_mode = false;
+    // Persist only when dock_system actually mutated the layout (tab activate /
+    // move / split / close / splitter resize), detected by serialization diff.
+    let last_dock_snap = serialize_dock_layout(dock.layout);
+    function persist_dock(force) {
+        const snap = serialize_dock_layout(dock.layout);
+        if (!force && snap === last_dock_snap) return;
+        try { globalThis.localStorage?.setItem(DOCK_LS_KEY, snap); }
+        catch { /* storage unavailable */ }
+        last_dock_snap = snap;
+    }
+    function save_dock_layout() { persist_dock(true); }
+
+    let last_dock_frame = { leaves: [], splits: [] };  // for wheel routing
+    let prev_webgpu_mode = false;
 
     function find_leaf_with_tab(tid) {
         let r = null;
-        visit_dock_leaves(dock_layout.root, leaf => { if (leaf.tabs.some(t => t.id === tid)) r = leaf; });
+        visit_dock_leaves(dock.layout.root, leaf => { if (leaf.tabs.some(t => t.id === tid)) r = leaf; });
         return r;
     }
     function host_panel_leaf() {
         return find_leaf_with_tab('console')
-            ?? find_leaf_by_id(dock_layout, 'leaf-panel')
-            ?? (() => { let f = null; visit_dock_leaves(dock_layout.root, l => { if (!f) f = l; }); return f; })();
+            ?? find_leaf_by_id(dock.layout, 'leaf-panel')
+            ?? (() => { let f = null; visit_dock_leaves(dock.layout.root, l => { if (!f) f = l; }); return f; })();
     }
     /** Toggle the Files sidebar: collapse to its sibling, or re-add it on the left. */
     function toggle_files_panel() {
         const leaf = find_leaf_with_tab('files');
         if (leaf) {
-            close_dock_tab(dock_layout, leaf.id, 'files');
+            close_dock_tab(dock.layout, leaf.id, 'files');
         } else {
-            dock_layout = {
+            dock.layout = {
                 root: {
-                    kind: 'split', id: `split-${dock_layout.next_id++}`, axis: 'horizontal', ratio: 0.18,
-                    left:  { kind: 'leaf', id: `leaf-${dock_layout.next_id++}`, tabs: [{ id: 'files', title: 'Files' }], active_tab_id: 'files', ox: 0, oy: 0, ow: 1, oh: 1 },
-                    right: dock_layout.root,
+                    kind: 'split', id: `split-${dock.layout.next_id++}`, axis: 'horizontal', ratio: 0.18,
+                    left:  { kind: 'leaf', id: `leaf-${dock.layout.next_id++}`, tabs: [{ id: 'files', title: 'Files' }], active_tab_id: 'files', ox: 0, oy: 0, ow: 1, oh: 1 },
+                    right: dock.layout.root,
                 },
-                next_id: dock_layout.next_id,
-                last_active_leaf_id: dock_layout.last_active_leaf_id,
+                next_id: dock.layout.next_id,
+                last_active_leaf_id: dock.layout.last_active_leaf_id,
             };
         }
         save_dock_layout();
@@ -1162,45 +1171,29 @@ async function main() {
         ensure_tab('parse',   'Parse',   !webgpu_mode && parse_tex_fn_count > 0);
         if (webgpu_mode && !prev_webgpu_mode) {
             const l = find_leaf_with_tab('preview');
-            if (l) activate_dock_tab(dock_layout, l.id, 'preview');
+            if (l) activate_dock_tab(dock.layout, l.id, 'preview');
         }
         prev_webgpu_mode = webgpu_mode;
 
-        const dframe = compute_dock_frame(dock_layout.root, 0, TOOLBAR_H, vp_w, main_h, 1);
+        // A logical-px frame snapshot, kept for wheel routing (event handler)
+        // and the status-dot overlay below. dock_system computes its own
+        // physical-px layout from the same tree, so the two stay in sync.
+        const dframe = compute_dock_frame(dock.layout.root, 0, TOOLBAR_H, vp_w, main_h, 1);
         last_dock_frame = dframe;
 
-        // Splitters — draw + drag to resize.
-        if (!mouse_down) split_drag.active = false;
-        for (const sp of dframe.splits) {
-            const ratio = ui.dock_splitter(sp, split_drag);
-            if (ratio != null) { set_dock_split_ratio(dock_layout, sp.split_id, ratio); dirty = true; }
-        }
-        if (just_up && split_drag.id) { save_dock_layout(); split_drag.id = null; }
-
-        // Editor leaf rect feeds the find / goto overlays.
+        // Editor leaf rect feeds the find / goto overlays; preview drives the
+        // WebGPU surface. Both are captured as their panels are rendered.
         let editor_x = 0, editor_y = TOOLBAR_H, editor_w = 0;
         let preview_visible = false;
 
-        for (const leaf of dframe.leaves) {
-            const bar = ui.dock_tabbar(leaf);
-            if (bar.activate) {
-                activate_dock_tab(dock_layout, leaf.leaf_id, bar.activate);
-                save_dock_layout();
-                dirty = true;
-            }
-            if (bar.drag_tab) {
-                const t = leaf.tabs.find(tt => tt.id === bar.drag_tab);
-                tab_drag.armed = true; tab_drag.active = false;
-                tab_drag.leaf = leaf.leaf_id; tab_drag.tab = bar.drag_tab;
-                tab_drag.title = t?.title ?? '';
-                tab_drag.sx = mx; tab_drag.sy = my;
-            }
-
-            const bx = leaf.x, by = leaf.y + leaf.tab_bar_h;
-            const bw = leaf.w, bh = leaf.h - leaf.tab_bar_h;
-            const busy = tab_drag.active;  // suppress content interaction while dragging a tab
-
-            switch (leaf.active_tab_id) {
+        // Per-panel body renderer handed to dock_system. The dock owns all chrome
+        // (tab bars, splitters, drag ghost, drop overlay); we only fill bodies.
+        // `panel.{x,y,w,h}` arrive in physical px — divide by scale for NSCode's
+        // logical-px draw helpers.
+        const render_body = (panel) => {
+            const bx = panel.x / s, by = panel.y / s, bw = panel.w / s, bh = panel.h / s;
+            const busy = dock.drag.active;  // suppress content interaction while dragging a tab
+            switch (panel.tab.id) {
                 case 'files': {
                     ui.draw_round_rect(bx + 4, by, bw - 8, bh - 4, C.SURFACE, 6);
                     const chosen = ui.file_tree(FILE_TREE, active_example, bx, by, bw, bh);
@@ -1214,10 +1207,10 @@ async function main() {
                 }
                 case 'editor': {
                     editor_x = bx; editor_y = by; editor_w = bw;
-                    // Build a physical-px input snapshot for the plugin's mouse +
-                    // wheel handling. Keyboard stays with main.ts (handle_keyboard
-                    // is off), so no key flags are forwarded here. Mouse is
-                    // suppressed while an overlay is open or a tab is being dragged.
+                    // Physical-px input snapshot for the plugin's mouse + wheel
+                    // handling. Keyboard stays with main.ts (handle_keyboard is
+                    // off). Mouse is suppressed while an overlay is open or a tab
+                    // is being dragged.
                     const active = !busy && !ov_open;
                     const ei = create_empty_ui_input();
                     ei.mouse_x        = mx * s;
@@ -1234,10 +1227,6 @@ async function main() {
                     break;
                 }
                 case 'console': {
-                    // Run-status dot + message, right-aligned in the tab bar.
-                    ui.status_dot(leaf.x + leaf.w - 86, leaf.y + (leaf.tab_bar_h - 8) / 2, 4, run_status);
-                    ui.draw_text_clipped(run_status_msg,
-                        leaf.x + leaf.w - 74, leaf.y + (leaf.tab_bar_h - font.glyph_h) / 2, 70, C.TEXT_DIM);
                     ui.output_text_view('output', out_view_lines(), bx, by, bw, Math.max(0, bh));
                     break;
                 }
@@ -1260,50 +1249,33 @@ async function main() {
                     break;
                 }
             }
-        }
+        };
+
+        // Physical-px input for the dock chrome (tab activate, drag-to-move /
+        // split, splitter resize). Suppressed while an overlay is open so its
+        // clicks don't fall through. dock_system mutates dock.layout in place.
+        const di = create_empty_ui_input();
+        di.mouse_x        = mx * s;
+        di.mouse_y        = my * s;
+        di.mouse_down     = mouse_down && !ov_open;
+        di.mouse_pressed  = just_down  && !ov_open;
+        di.mouse_released = just_up     && !ov_open;
+        ui.dock_frame(dock, di, 0, TOOLBAR_H, vp_w, main_h, render_body);
 
         if (!preview_visible) wgpu_module.hide();
+        if (dock.drag.active) { ui.request_cursor('grabbing'); dirty = true; }
 
-        // ── Tab drag: move / split across leaves ───────────────────────────────
-        if (tab_drag.armed && mouse_down && !tab_drag.active &&
-            Math.abs(mx - tab_drag.sx) + Math.abs(my - tab_drag.sy) > 6) {
-            tab_drag.active = true;
+        // Run-status dot + message, overlaid on the console leaf's tab bar
+        // (dock_system draws the bar itself, so these are painted on top).
+        const cleaf = dframe.leaves.find(l => l.active_tab_id === 'console');
+        if (cleaf) {
+            ui.status_dot(cleaf.x + cleaf.w - 86, cleaf.y + (cleaf.tab_bar_h - 8) / 2, 4, run_status);
+            ui.draw_text_clipped(run_status_msg,
+                cleaf.x + cleaf.w - 74, cleaf.y + (cleaf.tab_bar_h - font.glyph_h) / 2, 70, C.TEXT_DIM);
         }
-        if (tab_drag.active && mouse_down) {
-            const drop = resolve_dock_drop(dframe, mx, my, 1, t => t.length * font.glyph_w);
-            const tl = drop.target_leaf_id ? dframe.leaves.find(l => l.leaf_id === drop.target_leaf_id) : null;
-            if (tl) {
-                let hx = tl.x, hy = tl.y, hw = tl.w, hh = tl.h;
-                const tby = tl.y + tl.tab_bar_h, tbh = tl.h - tl.tab_bar_h;
-                if      (drop.drop_kind === 'split-left')   { hw = tl.w * 0.5; }
-                else if (drop.drop_kind === 'split-right')  { hx = tl.x + tl.w * 0.5; hw = tl.w * 0.5; }
-                else if (drop.drop_kind === 'split-top')    { hy = tby; hh = tbh * 0.5; }
-                else if (drop.drop_kind === 'split-bottom') { hy = tby + tbh * 0.5; hh = tbh * 0.5; }
-                else                                        { hh = tl.tab_bar_h; }
-                ui.draw_round_rect(hx, hy, hw, hh, [C.ACCENT[0], C.ACCENT[1], C.ACCENT[2], 0.18], 6);
-                ui.draw_round_border(hx, hy, hw, hh, C.ACCENT, 6, 2);
-            }
-            // Floating tab label following the cursor.
-            const lw = ui.tab_width(tab_drag.title);
-            ui.draw_round_rect(mx + 10, my + 8, lw, 22, C.SURFACE2, 5);
-            ui.draw_text_clipped(tab_drag.title, mx + 18, my + 8 + (22 - font.glyph_h) / 2, lw - 14, C.TEXT);
-            ui.request_cursor('grabbing');
-            dirty = true;
-        }
-        if (tab_drag.active && just_up) {
-            const drop = resolve_dock_drop(dframe, mx, my, 1, t => t.length * font.glyph_w);
-            if (drop.target_leaf_id) {
-                if (drop.drop_kind === 'tabbar') {
-                    move_dock_tab(dock_layout, tab_drag.leaf, tab_drag.tab, drop.target_leaf_id, drop.target_tab_index);
-                } else {
-                    split_dock_tab(dock_layout, tab_drag.leaf, tab_drag.tab, drop.target_leaf_id, drop.drop_kind);
-                }
-                save_dock_layout();
-            }
-            tab_drag.active = false; tab_drag.armed = false;
-            dirty = true;
-        }
-        if (!mouse_down) { tab_drag.armed = false; tab_drag.active = false; }
+
+        // Persist if dock_system mutated the layout this frame.
+        persist_dock(false);
 
         // ── Status bar ────────────────────────────────────────────────────────
         const sb_y = vp_h - STATUS_H;

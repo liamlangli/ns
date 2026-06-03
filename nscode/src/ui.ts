@@ -54,9 +54,9 @@ import {
     resolve_dock_drop,
     find_leaf_by_id,
     visit_dock_leaves,
-    tab_width as dock_tab_width,
     dock_tab_h,
     dock_splitter_w,
+    dock_system,
     default_themes,
     lerp_theme,
     pack_rgba_floats,
@@ -82,9 +82,9 @@ export {
     resolve_dock_drop,
     find_leaf_by_id,
     visit_dock_leaves,
-    dock_tab_width,
     dock_tab_h,
     dock_splitter_w,
+    dock_system,
     default_themes,
     lerp_theme,
     create_code_editor_state,
@@ -467,66 +467,35 @@ export class UI {
     }
 
     // ── Dock chrome ───────────────────────────────────────────────────────────
-    /** Width of a dock tab (logical px), consistent with resolve_dock_drop. */
-    tab_width(title) {
-        return dock_tab_width(title, 1, title.length * this._font.glyph_w);
-    }
-
     /**
-     * Draw a leaf's tab bar (rounded tabs) and hit-test it.
-     * Returns { activate, drag_tab } — `activate` = clicked tab id,
-     * `drag_tab` = tab id under a press (for drag-to-move).
+     * Drive @liamlangli/ui's `dock_system` for one frame — this is the *whole*
+     * dock chrome (rounded panels, per-corner tabs, accent indicator, close
+     * affordance, dirty dots, splitters, drag ghost, drop overlay), shared with
+     * the upstream `ui` preview so NSCode's dock looks identical.
+     *
+     * `dock` is a `dock_system` instance (owns the layout + drag/resize state).
+     * `x,y,w,h` are logical px (scaled here); `input.mouse_*` must already be in
+     * physical px (mx * scale). `render_body(panel)` fills each visible panel —
+     * `panel.{x,y,w,h}` come back in physical px.
+     *
+     * `dock_system` requests resize cursors via `renderer.set_cursor`, but
+     * NSCode's `render()` applies the accumulated `_want_cursor` last (so the
+     * last writer wins across passes). Capture what the dock asks for and fold
+     * it into `_want_cursor` so the col-/row-resize feedback survives.
      */
-    dock_tabbar(leaf) {
-        const f = this._font;
-        const TAB_H = leaf.tab_bar_h;
-        // Bar background + bottom border.
-        this.draw_rect(leaf.x, leaf.y, leaf.w, TAB_H, C.SURFACE);
-        this.draw_rect(leaf.x, leaf.y + TAB_H - 1, leaf.w, 1, C.BORDER);
-
-        let result = { activate: null, drag_tab: null };
-        let tx = leaf.x + 4;
-        for (const tab of leaf.tabs) {
-            const tw     = this.tab_width(tab.title);
-            const active = tab.id === leaf.active_tab_id;
-            const hot    = this._hit(tx, leaf.y + 3, tw, TAB_H - 3);
-            if (active)      this.draw_round_rect(tx, leaf.y + 4, tw, TAB_H - 4, C.BG, 5);
-            else if (hot)    this.draw_round_rect(tx, leaf.y + 4, tw, TAB_H - 4, C.SURFACE2, 5);
-            if (active)      this.draw_rect(tx + 6, leaf.y + 3, tw - 12, 2, C.ACCENT);
-            this.draw_text_clipped(tab.title, tx + 10, leaf.y + (TAB_H - f.glyph_h) / 2, tw - 16,
-                active ? C.TEXT : C.TEXT_DIM);
-            if (hot) this._want_cursor = 'pointer';
-            if (hot && this._just_down) { result.activate = tab.id; result.drag_tab = tab.id; }
-            tx += tw + 4;
+    dock_frame(dock, input, x, y, w, h, render_body, opts) {
+        if (!this._renderer) return;
+        const s = this.scale;
+        const r = this._renderer;
+        const real_set_cursor = r.set_cursor.bind(r);
+        let captured;
+        r.set_cursor = (c) => { captured = c; };
+        try {
+            dock.frame(r, NS_THEME, input, x * s, y * s, w * s, h * s, render_body, opts);
+        } finally {
+            r.set_cursor = real_set_cursor;
         }
-        return result;
-    }
-
-    /**
-     * Draw + hit-test a dock splitter. `drag_ref` persists drag state
-     * ({ active, start, start_ratio }). Returns the new ratio while dragging,
-     * else null. Coords are logical px (from compute_dock_frame at scale 1).
-     */
-    dock_splitter(split, drag_ref) {
-        const horiz = split.axis === 'horizontal';
-        const hot = this._hit(split.x, split.y, split.w, split.h);
-        const dragging = drag_ref.active && drag_ref.id === split.split_id;
-        if (hot || dragging) this._want_cursor = horiz ? 'col-resize' : 'row-resize';
-        const col = (hot || drag_ref.active) ? C.ACCENT_DIM : C.BORDER;
-        // Thin centred grip line.
-        if (horiz) this.draw_rect(split.x + split.w / 2 - 0.5, split.y + 4, 1, split.h - 8, col);
-        else       this.draw_rect(split.x + 4, split.y + split.h / 2 - 0.5, split.w - 8, 1, col);
-
-        if (hot && this._just_down) {
-            drag_ref.active = true;
-            drag_ref.id = split.split_id;
-        }
-        if (drag_ref.active && drag_ref.id === split.split_id && this._down) {
-            const avail = horiz ? (split.parent_w - split.w) : (split.parent_h - split.h);
-            const rel   = horiz ? (this._mx - split.parent_x) : (this._my - split.parent_y);
-            return avail > 0 ? Math.max(0.05, Math.min(0.95, rel / avail)) : null;
-        }
-        return null;
+        if (captured != null) this._want_cursor = captured;
     }
 
     set_font(font) { this._font = font ?? this._font; }
