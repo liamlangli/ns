@@ -13,6 +13,7 @@ import {
     serialize_dock_layout, activate_dock_tab, set_dock_split_ratio,
     move_dock_tab, split_dock_tab, close_dock_tab, resolve_dock_drop,
     find_leaf_by_id, visit_dock_leaves,
+    default_themes, lerp_theme, NS_DEFAULT_THEME, apply_theme,
 } from './ui.ts';
 import { fuzzy_filter, key_map, event_key_id } from './commands.ts';
 import { WebGPUModule }         from './webgpu_module.ts';
@@ -489,6 +490,53 @@ async function main() {
     // Keybindings editor
     const kb_state = { open: false, edit_id: null };
 
+    // ── Theme picker (built-in presets + linear cross-fade) ────────────────────
+    // NSCode's own look leads the list; the @liamlangli/ui built-ins follow.
+    const theme_presets = [
+        NS_DEFAULT_THEME,
+        ...default_themes.filter(p => p.name !== NS_DEFAULT_THEME.name),
+    ];
+    const theme_ctrl = {
+        open:        false,                 // dropdown visible?
+        index:       0,                     // active preset
+        from:        NS_DEFAULT_THEME.theme,
+        to:          NS_DEFAULT_THEME.theme,
+        start:       0,
+        duration_ms: 360,
+        current:     NS_DEFAULT_THEME.theme,
+        applied:     null,
+    };
+    // Restore the saved theme (applied instantly, no cross-fade on load).
+    {
+        const saved = globalThis.localStorage?.getItem('ns.theme');
+        const i = saved ? theme_presets.findIndex(p => p.name === saved) : 0;
+        if (i > 0) {
+            theme_ctrl.index = i;
+            theme_ctrl.from = theme_ctrl.to = theme_ctrl.current = theme_presets[i].theme;
+        }
+        apply_theme(theme_ctrl.current);
+        theme_ctrl.applied = theme_ctrl.current;
+    }
+    /** Kick off a cross-fade to preset `i` from whatever is on screen now. */
+    function select_theme(i, now) {
+        if (i < 0 || i >= theme_presets.length || i === theme_ctrl.index) return;
+        theme_ctrl.from  = theme_ctrl.current;
+        theme_ctrl.to    = theme_presets[i].theme;
+        theme_ctrl.start = now;
+        theme_ctrl.index = i;
+        try { globalThis.localStorage?.setItem('ns.theme', theme_presets[i].name); } catch {}
+    }
+    /** Advance the cross-fade; keeps the frame dirty until it settles. */
+    function tick_theme(now) {
+        const t = theme_ctrl.duration_ms <= 0 ? 1
+            : Math.min(1, (now - theme_ctrl.start) / theme_ctrl.duration_ms);
+        const cur = lerp_theme(theme_ctrl.from, theme_ctrl.to, t);
+        theme_ctrl.current = cur;
+        if (cur !== theme_ctrl.applied) { apply_theme(cur); theme_ctrl.applied = cur; }
+        // lerp_theme returns the `to` reference by identity once settled.
+        if (cur !== theme_ctrl.to) dirty = true;
+    }
+
     // ── Viewport sizing ───────────────────────────────────────────────────────
     function resize() {
         vp_w = window.innerWidth;
@@ -821,7 +869,7 @@ async function main() {
     }
 
     // ── Keyboard handler ──────────────────────────────────────────────────────
-    const any_overlay = () => palette.open || find_state.open || goto_state.open || kb_state.open;
+    const any_overlay = () => palette.open || find_state.open || goto_state.open || kb_state.open || theme_ctrl.open;
 
     window.addEventListener('keydown', e => {
         dirty = true;
@@ -1025,6 +1073,10 @@ async function main() {
         if (!dirty) { just_down = false; just_up = false; return; }
         dirty = false;
 
+        // Advance any in-flight theme cross-fade before drawing this frame
+        // (re-marks dirty while still animating).
+        tick_theme(ts);
+
         // Layout
         const main_h  = vp_h - TOOLBAR_H - STATUS_H;
 
@@ -1083,9 +1135,20 @@ async function main() {
         if (ui.button('palette-btn', 'Cmd+P', tbx, BTN_PAD, BTN_W, BTN_H)) execute_command('palette');
         tbx += BTN_W + 8;
 
-        // Hint (right-aligned)
+        // Theme picker (right-aligned). Click toggles the preset dropdown,
+        // which is drawn in the overlay pass and anchored to this button.
+        const theme_label = 'Theme: ' + theme_presets[theme_ctrl.index].name;
+        const theme_btn_w = theme_label.length * font.glyph_w + 20;
+        const theme_btn_x = vp_w - theme_btn_w - 12;
+        if (ui.button('theme-btn', theme_label, theme_btn_x, BTN_PAD, theme_btn_w, BTN_H)) {
+            theme_ctrl.open = !theme_ctrl.open;
+        }
+        const theme_menu_x = theme_btn_x;
+        const theme_menu_y = BTN_PAD + BTN_H + 4;
+
+        // Hint (right-aligned, left of the theme button)
         const hint   = 'Ctrl+Enter to run';
-        const hint_x = vp_w - hint.length * font.glyph_w - 12;
+        const hint_x = theme_btn_x - hint.length * font.glyph_w - 16;
         ui.draw_text(hint, hint_x, (TOOLBAR_H - font.glyph_h) / 2, C.TEXT_DIM);
 
         // ── Dock panels (Files | Editor | Output, + contextual Preview/Parse) ──
@@ -1208,6 +1271,7 @@ async function main() {
             const lw = ui.tab_width(tab_drag.title);
             ui.draw_round_rect(mx + 10, my + 8, lw, 22, C.SURFACE2, 5);
             ui.draw_text_clipped(tab_drag.title, mx + 18, my + 8 + (22 - font.glyph_h) / 2, lw - 14, C.TEXT);
+            ui.request_cursor('grabbing');
             dirty = true;
         }
         if (tab_drag.active && just_up) {
@@ -1277,6 +1341,12 @@ async function main() {
                 const picked   = ui.command_palette(palette.query, filtered, palette.sel);
                 if (picked === '__close__') { palette.open = false; }
                 else if (picked) { execute_command(picked); palette.open = false; }
+            }
+
+            if (theme_ctrl.open) {
+                const picked = ui.theme_menu(theme_presets, theme_ctrl.index, theme_menu_x, theme_menu_y);
+                if (picked === '__close__') { theme_ctrl.open = false; }
+                else if (picked != null) { select_theme(picked, ts); theme_ctrl.open = false; dirty = true; }
             }
         }
 

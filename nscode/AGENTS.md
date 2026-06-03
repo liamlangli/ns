@@ -70,9 +70,34 @@ Use the renderer's rounded-rect fill (e.g. a `fill_round_rect`-style call from
 `webgpu_draw_adapter.rect`. Keep the radius defined once in the shared palette
 (`src/ui.ts`, alongside `C`) so it stays consistent across the app.
 
+## Theming is live — drive everything from the `C` palette
+
+The app ships a **theme picker** (toolbar, top-right) backed by `@liamlangli/ui`'s
+built-in `default_themes` and `lerp_theme` linear cross-fade. The active theme is
+applied through `apply_theme()` in `src/ui.ts`, which mutates the shared `C`
+palette **in place** and swaps `NS_THEME.palette`. Because `C` slots are arrays
+read at draw time, any UI that reads its colours from `C` (and any widget themed
+through `NS_THEME`) re-themes automatically, including a smooth cross-fade.
+
+So: never hard-code colours at a call site. Always read from `C` (or a
+`NS_THEME` slot for `@liamlangli/ui` widgets) so theme switching reaches your UI.
+Syntax-token colours (`SYN_*`) are intentionally left out of the preset mapping —
+highlighting stays consistent across themes. New chrome colours that should
+follow the theme must be added to the `apply_theme` slot mapping. The selected
+preset persists to `localStorage` (`ns.theme`).
+
+The renderer runs in `mode: 'realtime'` (set in `UI.init`) because nscode owns
+its own redraw gating via the `dirty` flag in `main.ts`; don't switch it to the
+renderer's `adaptive` default unless you also call `request_render()` on changes.
+
+Interactive helpers report a CSS cursor via `this._want_cursor` (applied with the
+renderer's `set_cursor` in `UI.render`): set it when you add new hit-tested UI so
+hover/resize/text feedback stays consistent.
+
 ## Checklist before adding/changing UI
 
 1. Is it drawn purely via `@liamlangli/ui` (`ui_renderer`)? No new DOM/2D-canvas.
 2. Does it live inside a `ui_dock` region (if it's a panel)?
 3. Are its backgrounds/highlights/overlays rounded rects with the shared radius?
-4. Do colours come from the `C` palette in `src/ui.ts`?
+4. Do colours come from the `C` palette in `src/ui.ts` (so theming reaches it)?
+5. Does any new hit-tested control set `this._want_cursor` for cursor feedback?
