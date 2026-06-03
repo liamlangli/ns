@@ -57,6 +57,8 @@ import {
     tab_width as dock_tab_width,
     dock_tab_h,
     dock_splitter_w,
+    default_themes,
+    lerp_theme,
 } from '@liamlangli/ui';
 import { tokenize_line } from './syntax.ts';
 
@@ -79,6 +81,8 @@ export {
     dock_tab_width,
     dock_tab_h,
     dock_splitter_w,
+    default_themes,
+    lerp_theme,
 };
 
 // ── Theme ─────────────────────────────────────────────────────────────────────
@@ -119,6 +123,70 @@ export const NS_THEME = {
         ghost:         hex3(C.SURFACE2),
     },
 };
+
+// ── Theme presets + live cross-fade ───────────────────────────────────────────
+// The new @liamlangli/ui ships built-in `default_themes` plus `lerp_theme` for a
+// linear cross-fade. We expose those through a small controller: the active
+// theme drives both NS_THEME.palette (consumed by @liamlangli/ui widgets) and
+// the `C` palette (read each frame by every nscode draw call). Because `C`'s
+// slots are arrays read at draw time, mutating their contents in place re-themes
+// the whole app live — no need to thread a theme object through every call site.
+
+/** Parse `#rgb` / `#rrggbb` / `#rrggbbaa` → [r, g, b, a] in 0..1. */
+function parse_hex(hex) {
+    let s = String(hex).trim().replace('#', '');
+    if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+    const n = (i) => parseInt(s.slice(i, i + 2), 16) / 255;
+    if (s.length === 6) return [n(0), n(2), n(4), 1];
+    if (s.length === 8) return [n(0), n(2), n(4), n(6)];
+    return [1, 1, 1, 1];
+}
+
+/** Overwrite a `C` colour array in place (so live references re-theme). */
+function set_color(arr, hex, alpha) {
+    const [r, g, b, a] = parse_hex(hex);
+    arr[0] = r; arr[1] = g; arr[2] = b; arr[3] = alpha != null ? alpha : a;
+}
+
+// NSCode's own look, captured as the first preset so users can always return to
+// it (mirrors how the upstream preview leads its list with the loaded theme).
+export const NS_DEFAULT_THEME = {
+    name: 'NSCode',
+    theme: { css: {}, palette: { ...NS_THEME.palette } },
+};
+
+/**
+ * Apply a `theme_definition` to the live palettes. Mutates `C`'s UI-chrome slots
+ * and swaps NS_THEME.palette. Syntax-token colours (SYN_*) are intentionally
+ * left untouched — the presets only define generic UI slots, so highlighting
+ * stays consistent across themes.
+ */
+export function apply_theme(theme) {
+    const p = theme?.palette;
+    if (!p) return;
+    set_color(C.BG,        p.bg);
+    set_color(C.SURFACE,   p.panel);
+    set_color(C.SURFACE2,  p.panel_alt);
+    set_color(C.BORDER,    p.border);
+    set_color(C.TEXT,      p.text);
+    set_color(C.TEXT_DIM,  p.text_dim);
+    set_color(C.LINE_NUM,  p.text_dim);
+    set_color(C.ACCENT,    p.accent);
+    set_color(C.ACCENT_DIM, p.accent_dim);
+    set_color(C.GREEN,     p.gizmo_axis_y);
+    set_color(C.RED,       p.gizmo_axis_x);
+    set_color(C.YELLOW,    p.gizmo_center);
+    // Keep the selection highlight a translucent accent regardless of theme.
+    set_color(C.SEL,       p.accent, 0.25);
+
+    // Re-theme the @liamlangli/ui widgets. Override `selected` so the output
+    // text_view keeps a translucent accent selection like the editor.
+    NS_THEME.palette = {
+        ...p,
+        border_strong: p.border_strong ?? p.border,
+        selected: hex4([...parse_hex(p.accent).slice(0, 3), 0.25]),
+    };
+}
 
 function pack_rgba(r, g, b, a = 1) {
     const rr = Math.max(0, Math.min(255, Math.round(r * 255)));
@@ -252,6 +320,12 @@ export class UI {
         // Scroll tracking for the output pane (managed externally via scroll_ref)
         this._hot_id   = '';
         this._active_id = '';
+
+        // Cursor feedback — interactive helpers (buttons, splitters, tab bars,
+        // the editor, …) request a CSS cursor as they hit-test; the last writer
+        // each frame wins (matches draw/z order) and render() pushes it to the
+        // renderer via set_cursor. Reset to null (default arrow) every frame.
+        this._want_cursor = null;
     }
 
     async init() {
@@ -260,7 +334,14 @@ export class UI {
         // it asynchronously so it never blocks startup — CJK glyphs fall back to
         // a 1x1 transparent texture until the atlas finishes loading in the
         // background.
-        await this._renderer.init({ chinese_font: true });
+        //
+        // `mode: 'realtime'` because nscode already owns its own redraw gating
+        // via the `dirty` flag in main.ts (it skips begin_frame/flush entirely
+        // when nothing changed). The renderer's newer default 'adaptive' mode
+        // only submits GPU work for a few frames after each `request_render()`,
+        // which would leave our canvas blank once that burst lapses — so we keep
+        // flush() unconditional and let the frame loop decide when to draw.
+        await this._renderer.init({ chinese_font: true, mode: 'realtime' });
         const { device } = this._renderer.gpu();
         if (!device) throw new Error('UI renderer did not initialize a GPUDevice');
         return device;
@@ -269,6 +350,13 @@ export class UI {
     get device() {
         return this._renderer?.gpu().device ?? null;
     }
+
+    /**
+     * Set the canvas CSS cursor (e.g. 'text', 'pointer', 'col-resize').
+     * Pass null to fall back to the default arrow. Backed by the renderer's
+     * `set_cursor` so cursor feedback stays a single source of truth.
+     */
+    set_cursor(cursor) { if (this._renderer) this._renderer.set_cursor(cursor ?? null); }
 
     resize(w, h) {
         if (!this._renderer) return;
@@ -281,8 +369,16 @@ export class UI {
 
     render() {
         if (this._dl) this._dl.finalize();
+        // Apply the cursor accumulated over the main + overlay passes.
+        this.set_cursor(this._want_cursor);
         this._renderer.flush({ r: C.BG[0], g: C.BG[1], b: C.BG[2], a: 1 });
     }
+
+    /**
+     * Request a CSS cursor for this frame (e.g. from main.ts while dragging a
+     * tab). Last writer wins; cleared each begin_frame.
+     */
+    request_cursor(cursor) { this._want_cursor = cursor ?? null; }
 
     get out_state() { return this._out_state; }
     get scale() { return window.devicePixelRatio || 1; }
@@ -304,6 +400,8 @@ export class UI {
      */
     output_text_view(id, lines, x, y, w, h, opts = {}) {
         if (!this._widgets) return;
+        // The text_view is selectable/copyable — show an I-beam over it.
+        if (this._hit(x, y, w, h)) this._want_cursor = 'text';
         const s = this.scale;
         this._widgets.text_view(
             id, x * s, y * s, w * s, h * s, lines, this._out_state,
@@ -365,6 +463,7 @@ export class UI {
             if (active)      this.draw_rect(tx + 6, leaf.y + 3, tw - 12, 2, C.ACCENT);
             this.draw_text_clipped(tab.title, tx + 10, leaf.y + (TAB_H - f.glyph_h) / 2, tw - 16,
                 active ? C.TEXT : C.TEXT_DIM);
+            if (hot) this._want_cursor = 'pointer';
             if (hot && this._just_down) { result.activate = tab.id; result.drag_tab = tab.id; }
             tx += tw + 4;
         }
@@ -379,6 +478,8 @@ export class UI {
     dock_splitter(split, drag_ref) {
         const horiz = split.axis === 'horizontal';
         const hot = this._hit(split.x, split.y, split.w, split.h);
+        const dragging = drag_ref.active && drag_ref.id === split.split_id;
+        if (hot || dragging) this._want_cursor = horiz ? 'col-resize' : 'row-resize';
         const col = (hot || drag_ref.active) ? C.ACCENT_DIM : C.BORDER;
         // Thin centred grip line.
         if (horiz) this.draw_rect(split.x + split.w / 2 - 0.5, split.y + 4, 1, split.h - 8, col);
@@ -404,6 +505,7 @@ export class UI {
         this._vp_w = vp_w; this._vp_h = vp_h;
         this._dl.clear();
         this._hot_id = '';
+        this._want_cursor = null;
     }
 
     end_frame() {
@@ -517,7 +619,7 @@ export class UI {
     button(id, label, x, y, w, h, primary = false) {
         const hot     = this._hit(x, y, w, h);
         const pressed = this._active_id === id;
-        if (hot) this._hot_id = id;
+        if (hot) { this._hot_id = id; this._want_cursor = 'pointer'; }
         if (hot && this._just_down) this._active_id = id;
 
         let bg, fg;
@@ -766,6 +868,8 @@ export class UI {
         buf.scroll_top = new_scroll;
 
         // ── Hit test → cursor placement ───────────────────────────────────────
+        // Show a text I-beam while hovering the editable code area.
+        if (this._hit(code_x, y, code_w, h)) this._want_cursor = 'text';
         let click_result = null;
         if (this._just_down && this._hit(code_x, y, code_w, h)) {
             const clicked_line = Math.min(line_count - 1,
@@ -793,7 +897,7 @@ export class UI {
     run_button(id, x, y, w, h) {
         const hot     = this._hit(x, y, w, h);
         const pressed = this._active_id === id;
-        if (hot) this._hot_id = id;
+        if (hot) { this._hot_id = id; this._want_cursor = 'pointer'; }
         if (hot && this._just_down) this._active_id = id;
 
         const bg = pressed ? C.ACCENT_DIM : (hot ? C.ACCENT_DIM : C.ACCENT);
@@ -838,7 +942,7 @@ export class UI {
             if (cy + row_h > y + h) break;
 
             const hot = this._hit(x, cy, w, row_h);
-            if (hot) this._hot_id = 'ftg_' + group.label;
+            if (hot) { this._hot_id = 'ftg_' + group.label; this._want_cursor = 'pointer'; }
             if (hot) this.draw_rect(x, cy, w, row_h, C.SURFACE2);
             if (hot && this._just_down) group.open = !group.open;
 
@@ -854,7 +958,7 @@ export class UI {
                     if (cy + row_h > y + h) break;
                     const active = item.value === active_key;
                     const i_hot  = this._hit(x, cy, w, row_h);
-                    if (i_hot) this._hot_id = 'fti_' + item.value;
+                    if (i_hot) { this._hot_id = 'fti_' + item.value; this._want_cursor = 'pointer'; }
 
                     if (active) {
                         this.draw_rect(x, cy, w, row_h, C.SEL);
@@ -937,6 +1041,7 @@ export class UI {
             } else if (hot) {
                 this.draw_rect(px, ry, PAL_W, ROW_H, C.SURFACE);
             }
+            if (hot) this._want_cursor = 'pointer';
 
             // Category chip
             const cat = cmd.category ? '[' + cmd.category + '] ' : '';
@@ -953,6 +1058,41 @@ export class UI {
             }
 
             if (hot && this._just_up) chosen = cmd.id;
+        }
+        return chosen;
+    }
+
+    /**
+     * Theme picker dropdown, anchored at (x, y) just below its toolbar button.
+     * `presets` is `[{ name, theme }]`, `current` the active index. Returns the
+     * clicked preset index, '__close__' on an outside click, or null.
+     */
+    theme_menu(presets, current, x, y) {
+        const f = this._font, gh = f.glyph_h;
+        const ROW_H = gh + 12;
+        let max_len = 4;
+        for (const p of presets) max_len = Math.max(max_len, p.name.length);
+        const W = Math.max(150, max_len * f.glyph_w + 40);
+        const H = presets.length * ROW_H + 8;
+
+        // Outside click closes the menu.
+        if (this._just_down && !this._hit(x, y, W, H)) return '__close__';
+
+        // Drop shadow + rounded panel.
+        this._dl.rect(x + 3, y + 4, W, H, 0, 0, 0, 0.35);
+        this.draw_round_rect(x, y, W, H, C.SURFACE2, 8);
+        this.draw_round_border(x, y, W, H, C.BORDER, 8, 1);
+
+        let chosen = null;
+        for (let i = 0; i < presets.length; i++) {
+            const ry     = y + 4 + i * ROW_H;
+            const hot    = this._hit(x + 4, ry, W - 8, ROW_H);
+            const active = i === current;
+            if (hot) { this.draw_round_rect(x + 4, ry, W - 8, ROW_H, C.SURFACE, 6); this._want_cursor = 'pointer'; }
+            if (active) this._dl.rect(x + 4, ry + 3, 2, ROW_H - 6, C.ACCENT[0], C.ACCENT[1], C.ACCENT[2], 1);
+            this.draw_text_clipped(presets[i].name, x + 16, ry + (ROW_H - gh) / 2, W - 24,
+                active ? C.ACCENT : C.TEXT);
+            if (hot && this._just_up) chosen = i;
         }
         return chosen;
     }
