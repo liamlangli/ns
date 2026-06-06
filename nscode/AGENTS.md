@@ -101,3 +101,9 @@ hover/resize/text feedback stays consistent.
 3. Are its backgrounds/highlights/overlays rounded rects with the shared radius?
 4. Do colours come from the `C` palette in `src/ui.ts` (so theming reaches it)?
 5. Does any new hit-tested control set `this._want_cursor` for cursor feedback?
+
+## Verification scope
+
+Agents should run compile/build/type checks only. Leave runtime interaction and
+visual appearance checks to the user unless the user explicitly asks the agent
+to perform them.

@@ -9,7 +9,7 @@ const targetDir = path.resolve(process.argv[2] ?? process.env.NSCODE_DEPLOY_DIR 
 
 const copyEntries = ['index.html', 'src', 'public'];
 const faviconSource = path.resolve(rootDir, '../nslang/ns.png');
-const faviconTarget = path.join(targetDir, 'public', 'ns.png');
+const faviconTarget = path.join(targetDir, 'ns.png');
 
 async function ensureCleanDir(dir) {
     await mkdir(dir, { recursive: true });

@@ -14,5 +14,10 @@
   },
   "dependencies": {
     "@liamlangli/ui": "github:liamlangli/ui#main"
+  },
+  "allowScripts": {
+    "esbuild@0.27.7": true,
+    "esbuild@0.25.12": true,
+    "fsevents@2.3.3": true
   }
 }

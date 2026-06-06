@@ -22,12 +22,7 @@ import { WebGPUModule }         from './webgpu_module.ts';
 const DEBUG_GPU_PARSE_VALIDATION = globalThis.localStorage?.getItem('ns.debugGpuParseValidation') === '1';
 const TOOLBAR_H        = 32;
 const STATUS_H         = 20;
-const TREE_HEADER_H    = 28;
-const TREE_COLLAPSED_W = 24;
-const DIVIDER_W        = 4;
-const BTN_W            = 72;
-const BTN_H            = 22;
-const BTN_PAD          = 5;
+const AUTO_COMPILE_DEBOUNCE_MS = 550;
 
 // ── Example programs ──────────────────────────────────────────────────────────
 const EXAMPLES = {
@@ -538,6 +533,50 @@ async function main() {
         theme_ctrl.index = i;
         try { globalThis.localStorage?.setItem('ns.theme', theme_presets[i].name); } catch {}
     }
+
+    function build_main_menu() {
+        return [
+            {
+                label: 'Code',
+                children: [
+                    { id: 'run', label: 'Run Code' },
+                    { id: 'clear', label: 'Clear Output' },
+                    { separator: true, label: '' },
+                    { id: 'palette', label: 'Command Palette' },
+                    { id: 'keybindings', label: 'Keyboard Shortcuts' },
+                ],
+            },
+            {
+                label: 'View',
+                children: [
+                    { id: 'toggle_tree', label: 'Toggle Sidebar' },
+                    { id: 'find', label: 'Find' },
+                    { id: 'find_replace', label: 'Find & Replace' },
+                    { id: 'goto_line', label: 'Go to Line' },
+                ],
+            },
+            {
+                label: 'Examples',
+                children: FILE_TREE.map(group => ({
+                    label: group.label,
+                    children: group.items.map(item => ({
+                        id: 'load:' + item.value,
+                        label: item.label,
+                        checked: item.value === active_example,
+                    })),
+                })),
+            },
+            {
+                label: 'Theme',
+                children: theme_presets.map((preset, i) => ({
+                    id: 'theme:' + i,
+                    label: preset.name,
+                    checked: i === theme_ctrl.index,
+                })),
+            },
+        ];
+    }
+
     /** Advance the cross-fade; keeps the frame dirty until it settles. */
     function tick_theme(now) {
         const t = theme_ctrl.duration_ms <= 0 ? 1
@@ -583,13 +622,39 @@ async function main() {
     }
 
     // ── Run code ──────────────────────────────────────────────────────────────
+    let compile_timer = 0;
+    let compile_running = false;
+    let compile_queued = false;
+
+    function schedule_compile(delay = AUTO_COMPILE_DEBOUNCE_MS) {
+        if (compile_timer) clearTimeout(compile_timer);
+        compile_timer = setTimeout(() => {
+            compile_timer = 0;
+            run_code();
+        }, delay);
+    }
+
+    function mark_source_changed() {
+        blink_t = 0;
+        cursor_visible = true;
+        dirty = true;
+        schedule_compile();
+    }
+
     async function run_code() {
+        if (compile_running) {
+            compile_queued = true;
+            return;
+        }
+        compile_running = true;
+        compile_queued = false;
         out_lines = [];
         ui.out_state.scroll_top = 0;
         dirty = true;
         run_status = 'run';
         run_status_msg = 'Running…';
         dirty = true;
+        try {
         await new Promise(r => setTimeout(r, 0));
 
         // ── WebGPU execution path (NanoScript + injected gpu_* built-ins) ───
@@ -713,6 +778,13 @@ async function main() {
         run_status_msg = ok ? 'Success' : 'Error';
         scroll_output_to_bottom();
         dirty = true;
+        } finally {
+            compile_running = false;
+            if (compile_queued) {
+                compile_queued = false;
+                schedule_compile(0);
+            }
+        }
     }
 
     // ── Editor operations ─────────────────────────────────────────────────────
@@ -743,6 +815,7 @@ async function main() {
                 : '//' + buf.lines[l];
         }
         buf.mark_dirty();
+        mark_source_changed();
     }
 
     function move_line(dir) {
@@ -752,6 +825,7 @@ async function main() {
         [buf.lines[l], buf.lines[swap]] = [buf.lines[swap], buf.lines[l]];
         buf.cursor.line = swap;
         buf.mark_dirty();
+        mark_source_changed();
     }
 
     function duplicate_line() {
@@ -759,6 +833,7 @@ async function main() {
         buf.lines.splice(l + 1, 0, buf.lines[l]);
         buf.cursor.line = l + 1;
         buf.mark_dirty();
+        mark_source_changed();
     }
 
     function outdent_selection() {
@@ -770,6 +845,7 @@ async function main() {
             else if (buf.lines[l].startsWith('\t'))   buf.lines[l] = buf.lines[l].slice(1);
         }
         buf.mark_dirty();
+        mark_source_changed();
     }
 
     // ── Find ──────────────────────────────────────────────────────────────────
@@ -815,6 +891,7 @@ async function main() {
         buf.move_cursor(m.line, m.col, false);
         buf.move_cursor(m.line, m.col + m.len, true);
         buf.insert_text(find_state.replace);
+        mark_source_changed();
         update_find_matches();
         find_next();
     }
@@ -828,6 +905,7 @@ async function main() {
             buf.move_cursor(m.line, m.col + m.len, true);
             buf.insert_text(find_state.replace);
         }
+        mark_source_changed();
         update_find_matches();
     }
 
@@ -845,7 +923,10 @@ async function main() {
     function execute_command(id) {
         blink_t = 0; cursor_visible = true;
         switch (id) {
-        case 'run':          run_code(); break;
+        case 'run':
+            if (compile_timer) { clearTimeout(compile_timer); compile_timer = 0; }
+            run_code();
+            break;
         case 'clear':        out_lines = []; ui.out_state.scroll_top = 0; run_status = 'idle'; run_status_msg = 'Ready'; parse_tex_fn_count = 0; dirty = true; break;
         case 'palette':      palette.open = true; palette.query = ''; palette.sel = 0;
                              find_state.open = false; goto_state.open = false; kb_state.open = false; break;
@@ -860,28 +941,35 @@ async function main() {
             // while it holds focus); this path is the editor selection.
             copy_selection();
             break;
-        case 'paste':        navigator.clipboard?.readText().then(t => { if (t) buf.insert_text(t); }); break;
+        case 'paste':        navigator.clipboard?.readText().then(t => { if (t) { buf.insert_text(t); mark_source_changed(); } }); break;
         case 'cut':
-            copy_selection(); buf.delete_selection(); buf.mark_dirty();
+            copy_selection(); buf.delete_selection(); buf.mark_dirty(); mark_source_changed();
             break;
         case 'comment':      toggle_comment(); break;
         case 'move_up':      move_line(-1); break;
         case 'move_down':    move_line(1); break;
         case 'duplicate':    duplicate_line(); break;
         default:
+            if (id.startsWith('theme:')) {
+                const i = parseInt(id.slice(6), 10);
+                select_theme(i, performance.now());
+                dirty = true;
+                break;
+            }
             if (id.startsWith('load:')) {
                 const key = id.slice(5);
                 if (EXAMPLES[key]) {
                     active_example = key;
                     buf.set_text(EXAMPLES[key]);
                     find_state.open = false; palette.open = false;
+                    mark_source_changed();
                 }
             }
         }
     }
 
     // ── Keyboard handler ──────────────────────────────────────────────────────
-    const any_overlay = () => palette.open || find_state.open || goto_state.open || kb_state.open || theme_ctrl.open;
+    const any_overlay = () => palette.open || find_state.open || goto_state.open || kb_state.open || ui.main_menu_open;
 
     window.addEventListener('keydown', e => {
         dirty = true;
@@ -994,6 +1082,7 @@ async function main() {
 
         // ── Editor keys ────────────────────────────────────────────────────────
         let handled = true;
+        let source_changed = false;
         switch (e.key) {
         case 'ArrowLeft':  buf.move_left(shift);       break;
         case 'ArrowRight': buf.move_right(shift);      break;
@@ -1001,21 +1090,26 @@ async function main() {
         case 'ArrowDown':  buf.move_down(shift);       break;
         case 'Home':       buf.move_line_start(shift); break;
         case 'End':        buf.move_line_end(shift);   break;
-        case 'Backspace':  buf.backspace();             break;
-        case 'Delete':     buf.delete_forward();        break;
+        case 'Backspace':  buf.backspace();             source_changed = true; break;
+        case 'Delete':     buf.delete_forward();        source_changed = true; break;
         case 'Tab':
             if (shift) outdent_selection();
-            else buf.insert_text('    ');
+            else { buf.insert_text('    '); source_changed = true; }
             break;
         case 'Enter': {
             const indent = buf.auto_indent();
             const before = buf.line_at(buf.cursor.line).slice(0, buf.cursor.col).trimEnd();
             buf.insert_text('\n' + indent + (before.endsWith('{') ? '    ' : ''));
+            source_changed = true;
             break;
         }
         default: handled = false;
         }
-        if (handled) { e.preventDefault(); blink_t = 0; cursor_visible = true; dirty = true; }
+        if (handled) {
+            e.preventDefault();
+            blink_t = 0; cursor_visible = true; dirty = true;
+            if (source_changed) mark_source_changed();
+        }
     });
 
     // ── Text input routing ─────────────────────────────────────────────────────
@@ -1036,7 +1130,7 @@ async function main() {
             return;
         }
         if (goto_state.open || kb_state.open) return;
-        buf.insert_text(t); blink_t = 0; cursor_visible = true;
+        buf.insert_text(t); mark_source_changed();
     });
 
     // ── Mouse ─────────────────────────────────────────────────────────────────
@@ -1131,36 +1225,9 @@ async function main() {
         ui.panel(0, 0, vp_w, TOOLBAR_H, C.SURFACE);
         ui.separator(0, TOOLBAR_H - 1, vp_w, C.BORDER);
 
-        let tbx = 12;
-        ui.draw_text('NSCode', tbx, (TOOLBAR_H - font.glyph_h) / 2, C.ACCENT);
-        tbx += 7 * font.glyph_w + 8;
-
-        ui.dl.rect(tbx, BTN_PAD, 1, BTN_H, C.BORDER[0], C.BORDER[1], C.BORDER[2], 1);
-        tbx += 9;
-
-        if (ui.run_button('run', tbx, BTN_PAD, BTN_W, BTN_H)) run_code();
-        tbx += BTN_W + 6;
-
-        if (ui.button('clear', 'Clear', tbx, BTN_PAD, BTN_W, BTN_H)) execute_command('clear');
-        tbx += BTN_W + 6;
-
-        if (ui.button('palette-btn', 'Cmd+P', tbx, BTN_PAD, BTN_W, BTN_H)) execute_command('palette');
-        tbx += BTN_W + 8;
-
-        // Theme picker (right-aligned). Click toggles the preset dropdown,
-        // which is drawn in the overlay pass and anchored to this button.
-        const theme_label = 'Theme: ' + theme_presets[theme_ctrl.index].name;
-        const theme_btn_w = theme_label.length * font.glyph_w + 20;
-        const theme_btn_x = vp_w - theme_btn_w - 12;
-        if (ui.button('theme-btn', theme_label, theme_btn_x, BTN_PAD, theme_btn_w, BTN_H)) {
-            theme_ctrl.open = !theme_ctrl.open;
-        }
-        const theme_menu_x = theme_btn_x;
-        const theme_menu_y = BTN_PAD + BTN_H + 4;
-
         // Hint (right-aligned, left of the theme button)
         const hint   = 'Ctrl+Enter to run';
-        const hint_x = theme_btn_x - hint.length * font.glyph_w - 16;
+        const hint_x = vp_w - hint.length * font.glyph_w - 12;
         ui.draw_text(hint, hint_x, (TOOLBAR_H - font.glyph_h) / 2, C.TEXT_DIM);
 
         // ── Dock panels (Files | Editor | Output, + contextual Preview/Parse) ──
@@ -1294,6 +1361,23 @@ async function main() {
         const badge_x = vp_w - badge.length * font.glyph_w - 12;
         ui.draw_text(badge, badge_x, sb_y + (STATUS_H - font.glyph_h) / 2, C.GREEN);
 
+        const mi = create_empty_ui_input();
+        mi.mouse_x        = mx * s;
+        mi.mouse_y        = my * s;
+        mi.mouse_down     = mouse_down;
+        mi.mouse_pressed  = just_down;
+        mi.mouse_released = just_up;
+        mi.key_escape     = false;
+        const menu_ev = ui.main_menu_frame(build_main_menu(), mi, 6, 4, Math.max(160, vp_w - 12), TOOLBAR_H - 8, {
+            font_px: 13,
+            item_h: 24,
+            min_menu_w: 178,
+        });
+        if (menu_ev.activated?.id) {
+            execute_command(menu_ev.activated.id);
+            dirty = true;
+        }
+
         // ── Overlays (rendered on top of everything) ───────────────────────────
         // Switch to overlay pass: updates mouse state without clearing the draw list,
         // so overlays are drawn on top of the main frame content.
@@ -1331,11 +1415,6 @@ async function main() {
                 else if (picked) { execute_command(picked); palette.open = false; }
             }
 
-            if (theme_ctrl.open) {
-                const picked = ui.theme_menu(theme_presets, theme_ctrl.index, theme_menu_x, theme_menu_y);
-                if (picked === '__close__') { theme_ctrl.open = false; }
-                else if (picked != null) { select_theme(picked, ts); theme_ctrl.open = false; dirty = true; }
-            }
         }
 
         // ── Render ────────────────────────────────────────────────────────────

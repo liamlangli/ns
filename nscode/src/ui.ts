@@ -64,6 +64,7 @@ import {
     create_code_editor_state,
     text_buffer,
 } from '@liamlangli/ui';
+import { ui_main_menu } from '@liamlangli/ui/plugins';
 import { tokenize_line } from './syntax.ts';
 
 // Re-export text-view + dock helpers so main.ts can own persistent UI state.
@@ -335,6 +336,7 @@ export class UI {
         // Shared @liamlangli/ui widget set (theme-driven). Drives the output
         // console text_view and any future docked panels.
         this._widgets  = this._renderer ? new ui_widgets(this._renderer) : null;
+        this._main_menu = this._renderer ? new ui_main_menu() : null;
         this._out_state = create_text_view_state();
         // Persistent view state for the code_editor plugin (scroll / focus / selection clicks).
         this._editor_state = create_code_editor_state();
@@ -424,6 +426,14 @@ export class UI {
     widgets_end() {
         if (this._widgets) this._widgets.end_frame();
     }
+
+    main_menu_frame(menus, input, x, y, w, h, opts) {
+        if (!this._renderer || !this._main_menu) return {};
+        this._main_menu.menus = menus;
+        return this._main_menu.frame(this._renderer, NS_THEME, input, x * this.scale, y * this.scale, w * this.scale, h * this.scale, opts);
+    }
+
+    get main_menu_open() { return !!this._main_menu?.is_open; }
 
     /**
      * Selectable / copyable / scrollable output console, drawn entirely through
@@ -803,36 +813,6 @@ export class UI {
     }
 
     /**
-     * Run button with a drawn play-triangle icon (no unicode glyph needed).
-     * Returns true on click.
-     */
-    run_button(id, x, y, w, h) {
-        const hot     = this._hit(x, y, w, h);
-        const pressed = this._active_id === id;
-        if (hot) { this._hot_id = id; this._want_cursor = 'pointer'; }
-        if (hot && this._just_down) this._active_id = id;
-
-        const bg = pressed ? C.ACCENT_DIM : (hot ? C.ACCENT_DIM : C.ACCENT);
-        this.draw_rect(x, y, w, h, bg);
-        this.draw_border(x, y, w, h, C.BORDER);
-
-        const f      = this._font;
-        const label  = 'Run';
-        const icon_w = 9;
-        const gap    = 5;
-        const total  = icon_w + gap + label.length * f.glyph_w;
-        const sx     = x + (w - total) / 2;
-        const mid_y  = y + h / 2;
-
-        this.draw_triangle(sx + icon_w * 0.5, mid_y, 4, 'right', C.TEXT);
-        this.draw_text(label, sx + icon_w + gap, y + (h - f.glyph_h) / 2, C.TEXT);
-
-        const clicked = hot && this._just_up && this._active_id === id;
-        if (this._just_up && this._active_id === id) this._active_id = '';
-        return clicked;
-    }
-
-    /**
      * Foldable file-tree panel.
      * groups: Array<{ label: string, open: bool, items: [{label, value}] }>
      * active_key: currently loaded item value.
@@ -970,41 +950,6 @@ export class UI {
             }
 
             if (hot && this._just_up) chosen = cmd.id;
-        }
-        return chosen;
-    }
-
-    /**
-     * Theme picker dropdown, anchored at (x, y) just below its toolbar button.
-     * `presets` is `[{ name, theme }]`, `current` the active index. Returns the
-     * clicked preset index, '__close__' on an outside click, or null.
-     */
-    theme_menu(presets, current, x, y) {
-        const f = this._font, gh = f.glyph_h;
-        const ROW_H = gh + 12;
-        let max_len = 4;
-        for (const p of presets) max_len = Math.max(max_len, p.name.length);
-        const W = Math.max(150, max_len * f.glyph_w + 40);
-        const H = presets.length * ROW_H + 8;
-
-        // Outside click closes the menu.
-        if (this._just_down && !this._hit(x, y, W, H)) return '__close__';
-
-        // Drop shadow + rounded panel.
-        this._dl.rect(x + 3, y + 4, W, H, 0, 0, 0, 0.35);
-        this.draw_round_rect(x, y, W, H, C.SURFACE2, 8);
-        this.draw_round_border(x, y, W, H, C.BORDER, 8, 1);
-
-        let chosen = null;
-        for (let i = 0; i < presets.length; i++) {
-            const ry     = y + 4 + i * ROW_H;
-            const hot    = this._hit(x + 4, ry, W - 8, ROW_H);
-            const active = i === current;
-            if (hot) { this.draw_round_rect(x + 4, ry, W - 8, ROW_H, C.SURFACE, 6); this._want_cursor = 'pointer'; }
-            if (active) this._dl.rect(x + 4, ry + 3, 2, ROW_H - 6, C.ACCENT[0], C.ACCENT[1], C.ACCENT[2], 1);
-            this.draw_text_clipped(presets[i].name, x + 16, ry + (ROW_H - gh) / 2, W - 24,
-                active ? C.ACCENT : C.TEXT);
-            if (hot && this._just_up) chosen = i;
         }
         return chosen;
     }
