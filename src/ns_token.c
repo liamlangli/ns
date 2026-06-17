@@ -100,14 +100,12 @@ i32 ns_token_int_literal(ns_token_t *t, char *s, i32 i) {
 // > 0 mean there is a {separator}+
 // = 0 mean there is no {separator}
 i32 ns_token_separator(char *s, i32 i) {
-    i32 c = s[i];
-    i32 to = i, sep;
-    do {
-        sep = c == ' ' || c == '\t' || c == '\v' || c == ';';
-        to++;
-        c = s[to];
-    } while (sep);
-    return to - i - 1;
+    // Count consecutive separators starting at i. Stops at the first
+    // non-separator (the null terminator qualifies), so it never reads past
+    // the end of the (null-terminated) source buffer.
+    i32 to = i;
+    while (s[to] == ' ' || s[to] == '\t' || s[to] == '\v' || s[to] == ';') to++;
+    return to - i;
 }
 
 i32 ns_identifier_follow(char c) {

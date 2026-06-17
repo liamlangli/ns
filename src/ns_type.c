@@ -115,9 +115,12 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap)
     szt new_size = elem_size * min_cap + sizeof(ns_array_header_t);
 #ifdef NS_DEBUG
     if (a) {
+        // Capture the old size before realloc frees the old buffer; reading the
+        // header through `a` afterwards would be a use-after-free.
+        szt old_size = ns_array_capacity(a) * elem_size + sizeof(ns_array_header_t);
         b = _ns_realloc(ns_array_header(a), new_size, file, line);
         _ns_heap.alloc_op++;
-        _ns_heap.alloc += new_size - (ns_array_capacity(a) * elem_size + sizeof(ns_array_header_t));
+        _ns_heap.alloc += new_size - old_size;
     } else {
         b = _ns_malloc(new_size, file, line);
         _ns_heap.alloc_op++;
@@ -193,7 +196,7 @@ ns_str ns_str_from_i32(i32 i) {
 
 ns_str ns_str_unescape(ns_str s) {
     i32 size = s.len;
-    i8 *data = (i8 *)ns_malloc(size);
+    i8 *data = (i8 *)ns_malloc(size + 1); // +1 for the trailing '\0'
     i32 i = 0;
     i32 j = 0;
     while (i < size) {

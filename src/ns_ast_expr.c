@@ -208,8 +208,9 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
     ns_ast_state end_state = (ns_ast_state){.f = state.f + fmt.len + 2, .l = state.l, .o = state.o + fmt.len + 2};
     i32 source_len = ctx->source.len;
 
-    // parse format string
-    ns_ast_t *expr = &n;
+    // parse format string. Track the previous embedded-expr node by index, not
+    // pointer: pushing nodes can realloc ctx->nodes and invalidate pointers.
+    i32 prev = -1; // -1 links into the (local) str_fmt node n
     i32 i = 0;
     while (i < fmt.len) {
         if (fmt.data[i] == '{' && (i == 0 || (i > 0 && fmt.data[i - 1] != '\\'))) {
@@ -234,8 +235,10 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
             if (ret.r) {
                 n.str_fmt.expr_count++;
                 ns_ast_push_expr(ctx, expr_state, ctx->current);
-                expr->next = ctx->current;
-                expr = &ctx->nodes[ctx->current];
+                i32 cur = ctx->current;
+                if (prev < 0) n.next = cur;
+                else ctx->nodes[prev].next = cur;
+                prev = cur;
             } else {
                 return ns_return_error(bool, ns_ast_state_loc(ctx, expr_state), NS_ERR_SYNTAX, "expected expression.");
             }
@@ -300,7 +303,10 @@ ns_return_bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
         switch (ctx->token.type) {
         case NS_TOKEN_INT_LITERAL:
         case NS_TOKEN_FLT_LITERAL:
-        case NS_TOKEN_STR_LITERAL: {
+        case NS_TOKEN_STR_LITERAL:
+        case NS_TOKEN_TRUE:
+        case NS_TOKEN_FALSE:
+        case NS_TOKEN_NIL: {
             ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
             ns_ast_push(ctx, n);
             return ns_return_ok(bool, true);
@@ -647,7 +653,10 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
         case NS_TOKEN_INT_LITERAL:
         case NS_TOKEN_FLT_LITERAL:
         case NS_TOKEN_STR_FORMAT:
-        case NS_TOKEN_STR_LITERAL: {
+        case NS_TOKEN_STR_LITERAL:
+        case NS_TOKEN_TRUE:
+        case NS_TOKEN_FALSE:
+        case NS_TOKEN_NIL: {
             ns_restore_state(ctx, state);
 
             ret = ns_parse_primary_expr(ctx);

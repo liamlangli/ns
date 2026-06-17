@@ -774,6 +774,8 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_TOKEN_TRUE:
     case NS_TOKEN_FALSE:
         return ns_return_ok(type, ns_type_bool);
+    case NS_TOKEN_NIL:
+        return ns_return_ok(type, ns_type_nil);
     case NS_TOKEN_IDENTIFIER:
         return ns_vm_parse_type_by_token(vm, n->primary_expr.token, ns_ast_state_loc(ctx, n->state));
     default:
@@ -822,6 +824,16 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_return_is_error(ret_t)) return ret_t;
 
     ns_type t = ret_t.r;
+
+    // string .len yields an i32 length.
+    if (ns_type_is(t, NS_TYPE_STRING)) {
+        ns_ast_t lf = ctx->nodes[n->next];
+        if (lf.type == NS_AST_PRIMARY_EXPR && ns_str_equals_STR(lf.primary_expr.token.val, "len")) {
+            return ns_return_ok(type, ns_type_i32);
+        }
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown string member.");
+    }
+
     if (!ns_type_is(t, NS_TYPE_STRUCT)) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "member expr type mismatch.");
     }
@@ -945,10 +957,14 @@ ns_return_type ns_vm_parse_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_type l = ret_l.r;
     ns_type r = ret_r.r;
-    if (!ns_type_is_array(l)) {
+    if (!ns_type_is(r, NS_TYPE_I32)) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
     }
-    if (!ns_type_is(r, NS_TYPE_I32)) {
+    // string indexing yields an i32 char code.
+    if (ns_type_is(l, NS_TYPE_STRING) && !ns_type_is_array(l)) {
+        return ns_return_ok(type, ns_type_i32);
+    }
+    if (!ns_type_is_array(l)) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
     }
     ns_type t = (ns_type){.type = l.type, .ref = l.ref, .array = false, .mut = l.mut, .stack = true, .index = l.index };
@@ -1167,7 +1183,13 @@ ns_return_void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_return_is_error(ret)) return ret;
 
     if (n->if_stmt.else_body) {
-        ret = ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.else_body);
+        // `else if` chains store a nested if-stmt as the else body rather than a
+        // compound block; dispatch on the actual node type.
+        ns_ast_t *e = &ctx->nodes[n->if_stmt.else_body];
+        if (e->type == NS_AST_IF_STMT)
+            ret = ns_vm_parse_if_stmt(vm, ctx, n->if_stmt.else_body);
+        else
+            ret = ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.else_body);
         if (ns_return_is_error(ret)) return ret;
     }
 

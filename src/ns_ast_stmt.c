@@ -223,6 +223,7 @@ ns_return_bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
         if (!ret.r) {
             return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected expression after 'loop' statement");
         }
+        n.loop_stmt.condition = ctx->current;
     }
 
     // loop body

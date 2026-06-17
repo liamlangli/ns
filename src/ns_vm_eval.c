@@ -125,9 +125,10 @@ ns_return_value ns_eval_cast_number(ns_vm *vm, ns_value v, ns_type dst, ns_code_
 
 u64 ns_eval_alloc(ns_vm *vm, i32 stride) {
     u64 offset = ns_array_length(vm->stack);
+    if (stride <= 0) return offset; // nothing to reserve (e.g. void/unknown type)
     u64 align = ns_min(sizeof(void*), (u64)stride);
     if (align > 0) offset = (offset + (align - 1)) & ~(align - 1);
-    ns_array_set_length(vm->stack, offset + stride);
+    ns_array_set_length(vm->stack, offset + (u64)stride);
     return offset; // leading 4 bytes for type size
 }
 
@@ -138,33 +139,46 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
 
     if (ns_type_is_ref(dst.t)) return ns_return_ok(value, src); // ref semantics, return src
 
-    u64 offset = dst.o;
+    // A value's .o is interpreted relative to vm->stack when its `stack` flag is
+    // set, and as an absolute address otherwise. Honor that flag for the
+    // destination so heap-backed locations (e.g. array elements) work too.
+    i8 *dptr = ns_type_in_stack(dst.t) ? &vm->stack[dst.o] : (i8 *)dst.o;
+
+    // Arrays, strings and fns are reference values stored as a single u64 handle
+    // (a heap pointer or str_list index). Their value type carries mut=1, so they
+    // never reach the const switch below; handle them uniformly here.
+    if (ns_type_is_array(src.t) || ns_type_is(src.t, NS_TYPE_STRING) || ns_type_is(src.t, NS_TYPE_FN)) {
+        u64 handle = ns_type_in_stack(src.t) ? *(u64 *)&vm->stack[src.o] : src.o;
+        *(u64 *)dptr = handle;
+        return ns_return_ok(value, dst);
+    }
+
     if (ns_type_is_const(src.t)) {
         switch (src.t.type)
         {
-        case NS_TYPE_I8: *(i8*)&vm->stack[offset] = src.i8; break;
-        case NS_TYPE_I16: *(i16*)&vm->stack[offset] = src.i16; break;
-        case NS_TYPE_I32: *(i32*)&vm->stack[offset] = src.i32; break;
-        case NS_TYPE_I64: *(i64*)&vm->stack[offset] = src.i64; break;
-        case NS_TYPE_U8: *(u8*)&vm->stack[offset] = src.u8; break;
-        case NS_TYPE_U16: *(u16*)&vm->stack[offset] = src.u16; break;
-        case NS_TYPE_U32: *(u32*)&vm->stack[offset] = src.u32; break;
-        case NS_TYPE_U64: *(u64*)&vm->stack[offset] = src.u64; break;
-        case NS_TYPE_F32: *(f32*)&vm->stack[offset] = src.f32; break;
-        case NS_TYPE_F64: *(f64*)&vm->stack[offset] = src.f64; break;
-        case NS_TYPE_BOOL: *(ns_bool*)&vm->stack[offset] = src.b; break;
-        case NS_TYPE_STRING: *(u64*)&vm->stack[offset] = src.o; break;
-        case NS_TYPE_FN: *(u64*)&vm->stack[offset] = src.o; break;
-        case NS_TYPE_STRUCT: memcpy(&vm->stack[offset], &vm->stack[src.o], size); break;
+        case NS_TYPE_I8: *(i8*)dptr = src.i8; break;
+        case NS_TYPE_I16: *(i16*)dptr = src.i16; break;
+        case NS_TYPE_I32: *(i32*)dptr = src.i32; break;
+        case NS_TYPE_I64: *(i64*)dptr = src.i64; break;
+        case NS_TYPE_U8: *(u8*)dptr = src.u8; break;
+        case NS_TYPE_U16: *(u16*)dptr = src.u16; break;
+        case NS_TYPE_U32: *(u32*)dptr = src.u32; break;
+        case NS_TYPE_U64: *(u64*)dptr = src.u64; break;
+        case NS_TYPE_F32: *(f32*)dptr = src.f32; break;
+        case NS_TYPE_F64: *(f64*)dptr = src.f64; break;
+        case NS_TYPE_BOOL: *(ns_bool*)dptr = src.b; break;
+        case NS_TYPE_STRING: *(u64*)dptr = src.o; break;
+        case NS_TYPE_FN: *(u64*)dptr = src.o; break;
+        case NS_TYPE_STRUCT: memcpy(dptr, &vm->stack[src.o], size); break;
         case NS_TYPE_BLOCK: {
             ns_error("eval error", "can't copy block type.");
         } break;
         default: return ns_return_error(value, ns_code_loc_nil, NS_ERR_EVAL, "invalid const type.");
         }
     } else if (ns_type_in_stack(src.t)) {
-        memcpy(&vm->stack[offset], &vm->stack[src.o], size);
+        memcpy(dptr, &vm->stack[src.o], size);
     } else {
-        memcpy(&vm->stack[offset], (void*)src.o, size);
+        memcpy(dptr, (void*)src.o, size);
     }
     return ns_return_ok(value, dst);
 }
@@ -301,6 +315,7 @@ ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) {\
         case NS_TYPE_U64: ret.u64 = ns_eval_number_u64(vm, l) op ns_eval_number_u64(vm, r); break;\
         case NS_TYPE_F32: ret.f32 = ns_eval_number_f32(vm, l) op ns_eval_number_f32(vm, r); break;\
         case NS_TYPE_F64: ret.f64 = ns_eval_number_f64(vm, l) op ns_eval_number_f64(vm, r); break;\
+        case NS_TYPE_BOOL: ret.b = ns_eval_number_i32(vm, l) op ns_eval_number_i32(vm, r); break;\
         default: break;\
     }\
     return ret;\
@@ -403,16 +418,17 @@ ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l
         return ns_return_ok(value, n);
     } break;
     case NS_TOKEN_CMP_OP: {
-        if (ns_str_equals_STR(op.val, "!="))
+        // Use exact matching: prefix matching would let "<=" be caught by "<".
+        if (ns_str_equals(op.val, ns_str_cstr("!=")))
             return ns_return_ok(value, ns_eval_binary_ne(vm, l, r));
-        else if (ns_str_equals_STR(op.val, "<"))
-            return ns_return_ok(value, ns_eval_binary_lt(vm, l, r));
-        else if (ns_str_equals_STR(op.val, "<="))
+        else if (ns_str_equals(op.val, ns_str_cstr("<=")))
             return ns_return_ok(value, ns_eval_binary_le(vm, l, r));
-        else if (ns_str_equals_STR(op.val, ">"))
-            return ns_return_ok(value, ns_eval_binary_gt(vm, l, r));
-        else if (ns_str_equals_STR(op.val, ">="))
+        else if (ns_str_equals(op.val, ns_str_cstr("<")))
+            return ns_return_ok(value, ns_eval_binary_lt(vm, l, r));
+        else if (ns_str_equals(op.val, ns_str_cstr(">=")))
             return ns_return_ok(value, ns_eval_binary_ge(vm, l, r));
+        else if (ns_str_equals(op.val, ns_str_cstr(">")))
+            return ns_return_ok(value, ns_eval_binary_gt(vm, l, r));
     } break;
     case NS_TOKEN_EQ_OP: {
         if (ns_str_equals_STR(op.val, "=="))
@@ -552,6 +568,14 @@ ns_return_void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_value b = ret_b.r;
     i32 body = ns_eval_bool(vm, b) ? n->if_stmt.body : n->if_stmt.else_body;
+    if (!body) return ns_return_ok_void; // empty else
+
+    // `else if`: the else body may itself be an if-stmt rather than a block.
+    ns_ast_t *body_n = &ctx->nodes[body];
+    if (body_n->type == NS_AST_IF_STMT) {
+        return ns_eval_if_stmt(vm, ctx, body);
+    }
+
     ns_scope_enter(vm);
     ns_return_void ret = ns_eval_compound_stmt(vm, ctx, body);
     if (ns_return_is_error(ret)) return ret;
@@ -914,6 +938,14 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     // primary expr
     ns_str name = field->primary_expr.token.val;
+
+    // string .len yields the byte length as an i32.
+    if (ns_type_is(st.t, NS_TYPE_STRING) && ns_str_equals_STR(name, "len")) {
+        ns_str s = ns_eval_str(vm, st);
+        ns_value lv = {.t = ns_type_i32, .i32 = s.len};
+        return ns_return_ok(value, lv);
+    }
+
     ns_symbol *st_type = &vm->symbols[ns_type_index(st.t)];
     if (st_type->type != NS_SYMBOL_STRUCT) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown struct.");
@@ -1040,20 +1072,34 @@ ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (!ns_type_is_number(index.t)) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
     }
+
+    // string indexing: s[i] yields the byte at position i as an i32 char code.
+    if (ns_type_is(table.t, NS_TYPE_STRING) && !ns_type_is_array(table.t)) {
+        ns_str s = ns_eval_str(vm, table);
+        i32 idx = ns_eval_number_i32(vm, index);
+        i32 c = (idx >= 0 && idx < s.len) ? (i32)(u8)s.data[idx] : 0;
+        ns_value cv = {.t = ns_type_i32, .i32 = c};
+        return ns_return_ok(value, cv);
+    }
+
     if (!ns_type_is_array(table.t)) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
     }
     ns_type element_type = table.t;
     element_type.array = false;
 
-    u64 offset = ns_type_size(vm, table.t) * (u64)ns_eval_number_i32(vm, index);
+    u64 offset = (u64)ns_type_size(vm, element_type) * (u64)ns_eval_number_i32(vm, index);
     u8* data = NULL;
     if (ns_type_in_stack(table.t)) {
         data = (u8*)(*(u64*)(vm->stack + table.o)) + offset;
     } else {
         data = (u8*)table.o + offset;
     }
-    ns_value val = (ns_value){.t = ns_type_set_stack(element_type, true), .o = (u64)data};
+    // The element lives in the array's heap storage: address it absolutely
+    // (stack=false) and keep it mutable so it can be assigned to.
+    element_type.stack = false;
+    element_type.mut = true;
+    ns_value val = (ns_value){.t = element_type, .o = (u64)data};
     return ns_return_ok(value, val);
 }
 
@@ -1226,6 +1272,7 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_array_length(vm->call_stack) > 0) {
             ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
             if (call->ret_set) {
+                vm->stack_depth = stack_depth; // restore on early return, else depth leaks
                 return ns_return_ok_void;
             }
         }

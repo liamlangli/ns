@@ -23,15 +23,13 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     case NS_TYPE_F32: ns_fmt_print_number(f32)
     case NS_TYPE_F64: ns_fmt_print_number(f64)
     case NS_TYPE_BOOL:
-        return ns_eval_bool(vm, n) ? ns_str_false : ns_str_true;
+        return ns_eval_bool(vm, n) ? ns_str_true : ns_str_false;
     case NS_TYPE_STRING: {
-        if (ns_type_is_const(n.t)) {
-            return vm->str_list[n.o];
-        } else {
-            i8* raw = ns_type_in_stack(n.t) ? vm->stack + n.o : (i8*)n.o;
-            return ns_str_range(raw, strlen(raw));
-        }
-    } break;
+        // Return a non-owning view: callers may ns_str_free the result, and the
+        // underlying storage lives in vm->str_list and must not be released here.
+        ns_str s = ns_eval_str(vm, n);
+        return ns_str_range(s.data, s.len);
+    }
     default:
         return ns_str_cstr("nil");
     }
