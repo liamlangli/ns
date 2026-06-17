@@ -944,7 +944,9 @@ ns_return_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_return_type ret_t = ns_vm_parse_type(vm, ctx, type);
     if (ns_return_is_error(ret_t)) return ret_t;
     ns_type t = ret_t.r;
-    ns_type arr_t = (ns_type){.type = t.type, .ref = t.ref, .array = true, .mut = t.mut, .stack = true};
+    // Preserve the element type's index (e.g. the struct symbol) so that
+    // element access like arr[i].field can resolve the element's type.
+    ns_type arr_t = (ns_type){.type = t.type, .ref = t.ref, .array = true, .mut = t.mut, .stack = true, .index = t.index};
     return ns_return_ok(type, arr_t);
 }
 

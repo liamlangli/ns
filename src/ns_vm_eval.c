@@ -954,13 +954,14 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     for (i32 f_i = 0, l = ns_array_length(st_type->st.fields); f_i < l; ++f_i) {
         ns_struct_field *field = &st_type->st.fields[f_i];
         if (ns_str_equals(field->name, name)) {
-            if(ns_type_in_stack(st.t)) {
-                ns_value val = (ns_value){.t = ns_type_set_stack(field->t, true), .o = st.o + field->o};
-                return ns_return_ok(value, val);
-            } else {
-                ns_value val = (ns_value){.t = ns_type_set_stack(field->t, false), .o = st.o + field->o};
-                return ns_return_ok(value, val);
-            }
+            // The field inherits the struct's addressing (stack vs absolute)
+            // and mutability, so fields of a mutable struct - including
+            // heap-backed array elements - are themselves assignable.
+            ns_type ft = field->t;
+            ft.stack = ns_type_in_stack(st.t);
+            ft.mut = st.t.mut;
+            ns_value val = (ns_value){.t = ft, .o = st.o + field->o};
+            return ns_return_ok(value, val);
         }
     }
 
@@ -1137,8 +1138,8 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown type size.");
     }
 
-    u32 offset = ns_array_length(vm->stack);
-    ns_value ret = (ns_value){.o = ns_eval_alloc(vm, size)};
+    // Evaluate the initializer first so an inferred type (and thus its size)
+    // is known before we reserve the global's stack slot.
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->var_def.expr);
     if (ns_return_is_error(ret_v)) return ret_v;
 
@@ -1155,9 +1156,15 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         v = cast_ret.r;
     }
 
-    ret.t = ns_type_set_stack(dst_t, true);
+    // Reference values (arrays, strings, fns) are stored as an 8-byte handle;
+    // ns_type_size would otherwise report the element/underlying size.
+    if (ns_type_is_array(dst_t) || ns_type_is(dst_t, NS_TYPE_STRING) || ns_type_is(dst_t, NS_TYPE_FN))
+        size = (i32)sizeof(void *);
+    else if (size <= 0)
+        size = ns_type_size(vm, dst_t);
+    ns_value ret = (ns_value){.o = ns_eval_alloc(vm, size), .t = ns_type_set_stack(dst_t, true)};
     ns_eval_copy(vm, ret, v, size);
-    ns_array_set_length(vm->stack, offset + size);
+    ns_array_set_length(vm->stack, ret.o + size);
     val->val = ret;
     return ns_return_ok(value, ret);
 }
