@@ -290,9 +290,11 @@ ns_eval_number_fn(f64)
 
 ns_bool ns_eval_bool(ns_vm *vm, ns_value n) { return ns_eval_number_i32(vm, n) != 0; }
 ns_str ns_eval_str(ns_vm *vm, ns_value n) {
-    if (ns_type_is_const(n.t)) return vm->str_list[n.o];
+    // String values always carry a str_list index in `.o` (string literals are
+    // mut=1 but still index-based), or, when held in a stack slot, the slot
+    // stores that index. There is no raw ns_str* representation.
     if (ns_type_in_stack(n.t)) return vm->str_list[*(u64*)&vm->stack[n.o]];
-    return *(ns_str*)n.o;
+    return vm->str_list[n.o];
 }
 
 void *ns_eval_array_raw(ns_vm *vm, ns_value n) {
