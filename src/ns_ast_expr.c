@@ -420,12 +420,15 @@ ns_return_bool ns_parse_member_expr(ns_ast_ctx *ctx, i32 operand) {
             i32 t = ns_ast_push(ctx, token);
             
             ns_ast_state member_state = ns_save_state(ctx);
-            ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .state = member_state, .next = t, .member_expr = {.left = operand}};
+            // Store the field node in member_expr.right (not .next): .next is
+            // reused by argument-list/sibling linking and would otherwise be
+            // overwritten, detaching the field.
+            ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .state = member_state, .member_expr = {.left = operand, .right = t}};
 
             ret = ns_parse_member_expr(ctx, t);
             if (ns_return_is_error(ret)) return ret;
             if (ret.r) { // recursive member expr
-                n.next = ctx->current;
+                n.member_expr.right = ctx->current;
             } else {
                 ns_restore_state(ctx, member_state);
             }

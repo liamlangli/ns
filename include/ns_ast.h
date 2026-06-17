@@ -156,6 +156,8 @@ typedef struct ns_ast_expr {
 
 typedef struct ns_ast_member_expr {
     i32 left;
+    i32 right; // field/primary node (or chained member). Kept separate from
+               // ns_ast_t.next so argument-list linking cannot clobber it.
 } ns_ast_member_expr;
 
 typedef struct ns_ast_call_expr {

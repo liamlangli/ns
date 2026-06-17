@@ -101,6 +101,8 @@ typedef struct ns_call {
     ns_value ret;
     u32 scope_top;
     ns_bool ret_set: 2;
+    ns_bool brk_set: 2; // `break` requested; cleared by the enclosing loop
+    ns_bool cnt_set: 2; // `continue` requested; cleared by the enclosing loop
 } ns_call;
 
 typedef struct ns_lib {

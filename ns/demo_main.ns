@@ -1,0 +1,25 @@
+// ns/demo_main.ns - demo driver for the self-hosted tokenizer.
+// Linked (by concatenation) after lexer.ns; see ns/Makefile.
+fn dump(src: str) void {
+    let toks = [Tok](src.len + 4)
+    let n = tokenize(src, toks, src.len + 4)
+    print(`tokens: {n}\n`)
+    let i = 0
+    loop i < n {
+        let t = toks[i]
+        let text = substr(src, t.start, t.len)
+        if t.kind == TK_EOL() {
+            print(`  [{i}] line {t.line} {kind_name(t.kind)}\n`)
+        } else {
+            print(`  [{i}] line {t.line} {kind_name(t.kind)} '{text}'\n`)
+        }
+        i = i + 1
+    }
+}
+
+fn main() {
+    // unescape() turns the literal "\n" spellings into real newline bytes so
+    // the tokenizer sees line breaks and emits EOL tokens.
+    let src = unescape("fn add(a: i32, b: i32) i32 {\n    return a + b\n}\n")
+    dump(src)
+}

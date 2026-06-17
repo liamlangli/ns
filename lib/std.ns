@@ -8,3 +8,7 @@ ref fn write(fd: u64, buf: str) u64
 
 // libm
 ref fn sqrt(x: f64) f64
+
+// string
+ref fn substr(s: str, start: i32, len: i32) str
+ref fn unescape(s: str) str

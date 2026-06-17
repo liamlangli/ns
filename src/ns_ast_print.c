@@ -241,7 +241,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf(" = [%d]", n->field_def.expr);
     } break;
     case NS_AST_MEMBER_EXPR: {
-        printf("[%d].[%d]", n->member_expr.left, n->next);
+        printf("[%d].[%d]", n->member_expr.left, n->member_expr.right);
     } break;
     case NS_AST_CALL_EXPR: {
         printf("[%d]", n->call_expr.callee);
@@ -475,7 +475,7 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
         case NS_AST_MEMBER_EXPR:
             ns_ast_print_node(ctx, n->member_expr.left, depth);
             printf(".");
-            ns_ast_print_node(ctx, n->next, depth);
+            ns_ast_print_node(ctx, n->member_expr.right, depth);
             break;
 
         case NS_AST_PRIMARY_EXPR:

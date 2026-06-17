@@ -1,0 +1,183 @@
+// ns/test/test_lexer.ns
+// Unit tests for the self-hosted tokenizer (ns/lexer.ns).
+//
+// Linked by concatenation as:  std + lexer.ns + harness.ns + this file.
+// Run with `make test` in the ns/ directory.
+//
+// Assertions are numeric (token kind/start/len/line) and textual (via substr),
+// which the host runs deterministically. `main()` is auto-invoked by the
+// runtime, so there is no explicit call.
+
+// Tokenize `src` into a fresh array and return the count via the harness while
+// leaving the tokens in the caller-provided array.
+fn lex_into(src: str, toks: [Tok]) i32 {
+    return tokenize(src, toks, src.len + 4)
+}
+
+fn test_keywords() void {
+    print("test_keywords\n")
+    let src = "let fn struct return if else for in to loop"
+    let toks = [Tok](src.len + 4)
+    let n = lex_into(src, toks)
+    expect_eq(n, 10, "keyword token count")
+    expect_eq(toks[0].kind, TK_LET(), "let")
+    expect_eq(toks[1].kind, TK_FN(), "fn")
+    expect_eq(toks[2].kind, TK_STRUCT(), "struct")
+    expect_eq(toks[3].kind, TK_RETURN(), "return")
+    expect_eq(toks[4].kind, TK_IF(), "if")
+    expect_eq(toks[5].kind, TK_ELSE(), "else")
+    expect_eq(toks[6].kind, TK_FOR(), "for")
+    expect_eq(toks[7].kind, TK_IN(), "in")
+    expect_eq(toks[8].kind, TK_TO(), "to")
+    expect_eq(toks[9].kind, TK_LOOP(), "loop")
+}
+
+fn test_ident_not_keyword() void {
+    print("test_ident_not_keyword\n")
+    // identifiers that merely contain keywords stay identifiers
+    let src = "let1 fn2 atofnawaitasync i9"
+    let toks = [Tok](src.len + 4)
+    let n = lex_into(src, toks)
+    expect_eq(n, 4, "ident count")
+    expect_eq(toks[0].kind, TK_IDENT(), "let1 is ident")
+    expect_str(substr(src, toks[0].start, toks[0].len), "let1", "let1 text")
+    expect_eq(toks[1].kind, TK_IDENT(), "fn2 is ident")
+    expect_eq(toks[2].kind, TK_IDENT(), "atofnawaitasync is ident")
+    expect_eq(toks[3].kind, TK_IDENT(), "i9 is ident")
+}
+
+fn test_numbers() void {
+    print("test_numbers\n")
+    let src = "0 123 0xff 3.14 2.0 1e3"
+    let toks = [Tok](src.len + 4)
+    let n = lex_into(src, toks)
+    expect_eq(n, 6, "number count")
+    expect_eq(toks[0].kind, TK_INT(), "0 int")
+    expect_eq(toks[1].kind, TK_INT(), "123 int")
+    expect_str(substr(src, toks[1].start, toks[1].len), "123", "123 text")
+    expect_eq(toks[2].kind, TK_INT(), "0xff hex int")
+    expect_str(substr(src, toks[2].start, toks[2].len), "0xff", "0xff text")
+    expect_eq(toks[3].kind, TK_FLOAT(), "3.14 float")
+    expect_eq(toks[4].kind, TK_FLOAT(), "2.0 float")
+    expect_eq(toks[5].kind, TK_FLOAT(), "1e3 float")
+}
+
+fn test_strings() void {
+    print("test_strings\n")
+    // each quote style is checked from its own source so the host's lexer does
+    // not have to parse all three quote characters inside one literal.
+    let s1 = "'hi there'"
+    let t1 = [Tok](s1.len + 4)
+    let n1 = lex_into(s1, t1)
+    expect_eq(n1, 1, "single quote count")
+    expect_eq(t1[0].kind, TK_STR(), "single quote str")
+    expect_eq(t1[0].len, 10, "single quote span")
+
+    let s2 = '"double"'
+    let t2 = [Tok](s2.len + 4)
+    let n2 = lex_into(s2, t2)
+    expect_eq(n2, 1, "double quote count")
+    expect_eq(t2[0].kind, TK_STR(), "double quote str")
+
+    let s3 = "`fmt {x}`"
+    let t3 = [Tok](s3.len + 4)
+    let n3 = lex_into(s3, t3)
+    expect_eq(n3, 1, "backtick count")
+    expect_eq(t3[0].kind, TK_STR_FMT(), "backtick str_fmt")
+}
+
+fn test_operators() void {
+    print("test_operators\n")
+    let src = "+ * << <= == != && | ! ~ = += ->"
+    let toks = [Tok](src.len + 4)
+    let n = lex_into(src, toks)
+    expect_eq(toks[0].kind, TK_ADD(), "+")
+    expect_eq(toks[1].kind, TK_MUL(), "*")
+    expect_eq(toks[2].kind, TK_SHIFT(), "<<")
+    expect_eq(toks[3].kind, TK_REL(), "<=")
+    expect_eq(toks[4].kind, TK_EQ(), "==")
+    expect_eq(toks[5].kind, TK_EQ(), "!=")
+    expect_eq(toks[6].kind, TK_LOGIC(), "&&")
+    expect_eq(toks[7].kind, TK_BITWISE(), "|")
+    expect_eq(toks[8].kind, TK_NOT(), "!")
+    expect_eq(toks[9].kind, TK_BIT_NOT(), "~")
+    expect_eq(toks[10].kind, TK_ASSIGN(), "=")
+    expect_eq(toks[11].kind, TK_ASSIGN_OP(), "+=")
+    expect_eq(toks[12].kind, TK_ARROW(), "->")
+}
+
+fn test_punctuation() void {
+    print("test_punctuation\n")
+    let src = ", . : ( ) { } [ ]"
+    let toks = [Tok](src.len + 4)
+    let n = lex_into(src, toks)
+    expect_eq(toks[0].kind, TK_COMMA(), ",")
+    expect_eq(toks[1].kind, TK_DOT(), ".")
+    expect_eq(toks[2].kind, TK_COLON(), ":")
+    expect_eq(toks[3].kind, TK_LPAREN(), "(")
+    expect_eq(toks[4].kind, TK_RPAREN(), ")")
+    expect_eq(toks[5].kind, TK_LBRACE(), "{")
+    expect_eq(toks[6].kind, TK_RBRACE(), "}")
+    expect_eq(toks[7].kind, TK_LBRACKET(), "[")
+    expect_eq(toks[8].kind, TK_RBRACKET(), "]")
+}
+
+fn test_spans() void {
+    print("test_spans\n")
+    let src = "fn add(x: i32)"
+    let toks = [Tok](src.len + 4)
+    let n = lex_into(src, toks)
+    expect_eq(toks[0].start, 0, "fn start")
+    expect_eq(toks[0].len, 2, "fn len")
+    expect_str(substr(src, toks[0].start, toks[0].len), "fn", "fn text")
+    expect_eq(toks[1].start, 3, "add start")
+    expect_str(substr(src, toks[1].start, toks[1].len), "add", "add text")
+    expect_eq(toks[5].kind, TK_TYPE(), "i32 type kw")
+    expect_str(substr(src, toks[5].start, toks[5].len), "i32", "i32 text")
+}
+
+fn test_lines_and_comments() void {
+    print("test_lines_and_comments\n")
+    // real newlines via unescape; // and /* */ comments are skipped
+    let src = unescape("a // c1\nb /* blk */ c\n")
+    let toks = [Tok](src.len + 4)
+    let n = lex_into(src, toks)
+    // expected: a EOL b c EOL  -> 5 tokens
+    expect_eq(n, 5, "comment/eol token count")
+    expect_eq(toks[0].kind, TK_IDENT(), "a ident")
+    expect_eq(toks[0].line, 1, "a on line 1")
+    expect_eq(toks[1].kind, TK_EOL(), "first EOL")
+    expect_eq(toks[2].kind, TK_IDENT(), "b ident")
+    expect_eq(toks[2].line, 2, "b on line 2")
+    expect_eq(toks[3].kind, TK_IDENT(), "c ident")
+    expect_str(substr(src, toks[3].start, toks[3].len), "c", "c text")
+    expect_eq(toks[4].kind, TK_EOL(), "trailing EOL")
+}
+
+fn test_full_function() void {
+    print("test_full_function\n")
+    let src = unescape("fn add(a: i32, b: i32) i32 {\n    return a + b\n}\n")
+    let toks = [Tok](src.len + 4)
+    let n = lex_into(src, toks)
+    expect_eq(toks[0].kind, TK_FN(), "fn")
+    expect_eq(toks[1].kind, TK_IDENT(), "add")
+    expect_eq(toks[2].kind, TK_LPAREN(), "(")
+    expect_eq(toks[14].kind, TK_RETURN(), "return")
+    expect_eq(toks[16].kind, TK_ADD(), "+ op")
+    expect_eq(toks[3].line, 1, "param line 1")
+    expect_eq(toks[14].line, 2, "return line 2")
+}
+
+fn main() {
+    print("== self-hosted lexer tests ==\n")
+    test_keywords()
+    test_ident_not_keyword()
+    test_numbers()
+    test_strings()
+    test_operators()
+    test_punctuation()
+    test_spans()
+    test_lines_and_comments()
+    test_full_function()
+    test_summary()
+}

@@ -40,7 +40,10 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
     ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
     if (ns_str_equals_STR(call->callee->name, "print")) {
         ns_value arg = vm->symbol_stack[call->arg_offset].val;
-        ns_str s = ns_fmt_eval(vm, vm->str_list[arg.o]);
+        // Resolve through ns_eval_str so both immediate (str_list index in .o)
+        // and stack-resident strings (index stored in a stack slot, e.g. the
+        // result of string concatenation) are handled correctly.
+        ns_str s = ns_fmt_eval(vm, ns_eval_str(vm, arg));
         ns_str_printf(s);
         ns_str_free(s);
         call->ret = ns_nil;
@@ -73,6 +76,26 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
     } else if (ns_str_equals_STR(call->callee->name, "sqrt")) {
         ns_value x = vm->symbol_stack[call->arg_offset].val;
         call->ret = (ns_value){.t = ns_type_f64, .f64 = sqrt(x.f64)};
+    } else if (ns_str_equals_STR(call->callee->name, "substr")) {
+        // substr(s, start, len) -> str : a copy of the [start, start+len) slice,
+        // clamped to the bounds of s. Lets ns code turn a source span into text.
+        ns_str s = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
+        i32 start = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
+        i32 len = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 2].val);
+        if (start < 0) start = 0;
+        if (start > s.len) start = s.len;
+        if (len < 0) len = 0;
+        if (start + len > s.len) len = s.len - start;
+        ns_str sub = ns_str_range(s.data + start, len);
+        call->ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, sub)};
+    } else if (ns_str_equals_STR(call->callee->name, "unescape")) {
+        // unescape(s) -> str : resolve backslash escapes (\n, \t, ...) into the
+        // bytes they denote. String literals keep their raw spelling until this
+        // is applied, so this lets ns code build strings with real control chars.
+        ns_str s = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
+        ns_str u = ns_str_unescape(s);
+        call->ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, u)};
+        ns_str_free(u);
     } else {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "unknown std fn.");
     }

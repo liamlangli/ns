@@ -337,12 +337,23 @@ ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unknown ast type.");
     }
 
+    // Array-ness of a type label (e.g. `[i32]`, `[Tok]`) must be carried onto
+    // the resolved type. Both the generic (primitive) and by-token (named)
+    // paths below honor it; without this, array parameters lose their array
+    // flag and indexing them fails to type-check.
+    ns_bool is_array = (n->type == NS_AST_TYPE_LABEL) ? n->type_label.is_array : false;
+
     ns_type ret = ns_vm_parse_generic_type(t);
-    if (ret.type != NS_TYPE_UNKNOWN) return ns_return_ok(type, ret);
+    if (ret.type != NS_TYPE_UNKNOWN) {
+        if (is_array) { ret.array = true; ret.stack = true; }
+        return ns_return_ok(type, ret);
+    }
 
     ns_return_type ret_t = ns_vm_parse_type_by_token(vm, t, ns_ast_state_loc(ctx, n->state));
     if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
-    return ns_return_ok(type, ns_type_set_ref(ret_t.r, is_ref));
+    ns_type rt = ns_type_set_ref(ret_t.r, is_ref);
+    if (is_array) { rt.array = true; rt.stack = true; }
+    return ns_return_ok(type, rt);
 }
 
 ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -827,7 +838,7 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     // string .len yields an i32 length.
     if (ns_type_is(t, NS_TYPE_STRING)) {
-        ns_ast_t lf = ctx->nodes[n->next];
+        ns_ast_t lf = ctx->nodes[n->member_expr.right];
         if (lf.type == NS_AST_PRIMARY_EXPR && ns_str_equals_STR(lf.primary_expr.token.val, "len")) {
             return ns_return_ok(type, ns_type_i32);
         }
@@ -838,7 +849,7 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "member expr type mismatch.");
     }
 
-    ns_ast_t field = ctx->nodes[n->next];
+    ns_ast_t field = ctx->nodes[n->member_expr.right];
     if (field.type == NS_AST_PRIMARY_EXPR) {
         ns_str name = field.primary_expr.token.val;
         ns_struct_symbol *st = &vm->symbols[ns_type_index(t)].st;
@@ -850,7 +861,7 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
         return ns_return_error(type, ns_ast_state_loc(ctx, field.state), NS_ERR_EVAL, "unknown member.");
     }
-    return ns_vm_parse_expr(vm, ctx, n->next, ns_type_infer);
+    return ns_vm_parse_expr(vm, ctx, n->member_expr.right, ns_type_infer);
 }
 
 ns_bool ns_vm_parse_type_generable(ns_type t) {
@@ -1030,6 +1041,7 @@ ns_return_type ns_vm_parse_binary_ops_number(ns_ast_ctx *ctx, ns_type t, i32 i) 
     case NS_TOKEN_ADD_OP:
     case NS_TOKEN_MUL_OP:
     case NS_TOKEN_SHIFT_OP:
+    case NS_TOKEN_BITWISE_OP:
         return ns_return_ok(type, t);
     case NS_TOKEN_LOGIC_OP:
     case NS_TOKEN_CMP_OP:
@@ -1046,6 +1058,15 @@ ns_return_type ns_vm_parse_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_type t, i32
     ns_ast_t *n = &ctx->nodes[i];
     if (ns_type_is_number(t)) {
         return ns_vm_parse_binary_ops_number(ctx, t, i);
+    } else if (ns_type_is(t, NS_TYPE_STRING)) {
+        ns_token_t op = n->binary_expr.op;
+        if (op.type == NS_TOKEN_ADD_OP && ns_str_equals(op.val, ns_str_cstr("+")))
+            return ns_return_ok(type, ns_type_str);
+        if (op.type == NS_TOKEN_EQ_OP || op.type == NS_TOKEN_CMP_OP)
+            return ns_return_ok(type, ns_type_bool);
+        ns_type ret = ns_vm_parse_binary_override(vm, t, t, op);
+        if (!ns_type_is_unknown(ret)) return ns_return_ok(type, ret);
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown string binary ops");
     } else {
         ns_token_t op = n->binary_expr.op;
         ns_type ret = ns_vm_parse_binary_override(vm, t, t, op);
@@ -1151,6 +1172,9 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt type mismatch.");
         }
     } break;
+    case NS_TOKEN_BREAK:
+    case NS_TOKEN_CONTINUE:
+        break; // loop control: no type checking required
     default:
         return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unknown jump stmt type.");
     }

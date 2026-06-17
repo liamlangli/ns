@@ -1,0 +1,467 @@
+// ns/lexer.ns
+// ---------------------------------------------------------------------------
+// A self-hosted tokenizer for Nano Script, written in Nano Script itself.
+//
+// This is the first stage of the clean-room "ns in ns" reimplementation of the
+// language front-end. It scans a source string into a flat array of tokens,
+// each recorded as a (kind, start, len, line) span into the source. Storing
+// spans (rather than copied text) mirrors the C implementation and keeps the
+// tokenizer free of string allocation.
+//
+// This file defines only functions/structs (no `main`), so it can be linked
+// (by concatenation - see ns/Makefile) with either a demo driver or the unit
+// test harness.
+//
+// Notes on the language as currently implemented:
+//   * `&&` / `||` are NOT short-circuit, so every source read goes through
+//     `lx_at`, which returns 0 (a safe EOF sentinel) past the end of input.
+//   * characters are read as their numeric byte value; ASCII code constants
+//     are spelled out via the `c_*` helpers for readability.
+
+// ---- token kinds ----------------------------------------------------------
+// ns has no enums; token kinds are small integer constants exposed as fns.
+fn TK_EOF() i32 { return 0 }
+fn TK_ERROR() i32 { return 1 }
+fn TK_INT() i32 { return 2 }
+fn TK_FLOAT() i32 { return 3 }
+fn TK_STR() i32 { return 4 }
+fn TK_STR_FMT() i32 { return 5 }
+fn TK_IDENT() i32 { return 6 }
+fn TK_TYPE() i32 { return 7 }   // primitive type keyword (i8..f64, bool, str, ...)
+
+fn TK_USE() i32 { return 10 }
+fn TK_LET() i32 { return 11 }
+fn TK_FN() i32 { return 12 }
+fn TK_STRUCT() i32 { return 13 }
+fn TK_TYPE_KW() i32 { return 14 }
+fn TK_RETURN() i32 { return 15 }
+fn TK_IF() i32 { return 16 }
+fn TK_ELSE() i32 { return 17 }
+fn TK_FOR() i32 { return 18 }
+fn TK_IN() i32 { return 19 }
+fn TK_TO() i32 { return 20 }
+fn TK_LOOP() i32 { return 21 }
+fn TK_DO() i32 { return 22 }
+fn TK_BREAK() i32 { return 23 }
+fn TK_CONTINUE() i32 { return 24 }
+fn TK_ASSERT() i32 { return 25 }
+fn TK_AS() i32 { return 26 }
+fn TK_OPS() i32 { return 27 }
+fn TK_ASYNC() i32 { return 28 }
+fn TK_AWAIT() i32 { return 29 }
+fn TK_TRUE() i32 { return 30 }
+fn TK_FALSE() i32 { return 31 }
+fn TK_NIL() i32 { return 32 }
+
+fn TK_COMMA() i32 { return 50 }
+fn TK_DOT() i32 { return 51 }
+fn TK_COLON() i32 { return 52 }
+fn TK_ASSIGN() i32 { return 53 }
+fn TK_ARROW() i32 { return 54 }
+fn TK_LPAREN() i32 { return 55 }
+fn TK_RPAREN() i32 { return 56 }
+fn TK_LBRACE() i32 { return 57 }
+fn TK_RBRACE() i32 { return 58 }
+fn TK_LBRACKET() i32 { return 59 }
+fn TK_RBRACKET() i32 { return 60 }
+
+fn TK_ADD() i32 { return 70 }
+fn TK_MUL() i32 { return 71 }
+fn TK_SHIFT() i32 { return 72 }
+fn TK_REL() i32 { return 73 }
+fn TK_EQ() i32 { return 74 }
+fn TK_LOGIC() i32 { return 75 }
+fn TK_BITWISE() i32 { return 76 }
+fn TK_NOT() i32 { return 77 }
+fn TK_BIT_NOT() i32 { return 78 }
+fn TK_ASSIGN_OP() i32 { return 79 }
+fn TK_EOL() i32 { return 80 }
+
+// ---- ASCII code helpers ---------------------------------------------------
+fn c_tab() i32 { return 9 }
+fn c_nl() i32 { return 10 }
+fn c_cr() i32 { return 13 }
+fn c_space() i32 { return 32 }
+fn c_bang() i32 { return 33 }
+fn c_dquote() i32 { return 34 }
+fn c_squote() i32 { return 39 }
+fn c_percent() i32 { return 37 }
+fn c_amp() i32 { return 38 }
+fn c_lparen() i32 { return 40 }
+fn c_rparen() i32 { return 41 }
+fn c_star() i32 { return 42 }
+fn c_plus() i32 { return 43 }
+fn c_comma() i32 { return 44 }
+fn c_minus() i32 { return 45 }
+fn c_dot() i32 { return 46 }
+fn c_slash() i32 { return 47 }
+fn c_0() i32 { return 48 }
+fn c_9() i32 { return 57 }
+fn c_colon() i32 { return 58 }
+fn c_lt() i32 { return 60 }
+fn c_eq() i32 { return 61 }
+fn c_gt() i32 { return 62 }
+fn c_A() i32 { return 65 }
+fn c_Z() i32 { return 90 }
+fn c_lbracket() i32 { return 91 }
+fn c_backslash() i32 { return 92 }
+fn c_rbracket() i32 { return 93 }
+fn c_caret() i32 { return 94 }
+fn c_underscore() i32 { return 95 }
+fn c_backtick() i32 { return 96 }
+fn c_a() i32 { return 97 }
+fn c_z() i32 { return 122 }
+fn c_lbrace() i32 { return 123 }
+fn c_pipe() i32 { return 124 }
+fn c_rbrace() i32 { return 125 }
+fn c_tilde() i32 { return 126 }
+
+// ---- token record ---------------------------------------------------------
+struct Tok {
+    kind: i32,
+    start: i32,
+    len: i32,
+    line: i32
+}
+
+// ---- safe source access ---------------------------------------------------
+// Returns the byte at index i, or 0 if i is out of range. Used everywhere so
+// the (non-short-circuiting) loop conditions never read past the buffer.
+fn lx_at(s: str, i: i32) i32 {
+    if i < s.len {
+        return s[i] as i32
+    }
+    return 0
+}
+
+fn is_digit(c: i32) bool {
+    return c >= c_0() && c <= c_9()
+}
+
+fn is_alpha(c: i32) bool {
+    return (c >= c_a() && c <= c_z()) || (c >= c_A() && c <= c_Z()) || c == c_underscore()
+}
+
+fn is_alnum(c: i32) bool {
+    return is_alpha(c) || is_digit(c)
+}
+
+fn is_space(c: i32) bool {
+    return c == c_space() || c == c_tab() || c == c_cr()
+}
+
+// ---- keyword classification ----------------------------------------------
+// Resolve an identifier span to its keyword/type kind, or TK_IDENT otherwise.
+fn keyword_kind(src: str, start: i32, len: i32) i32 {
+    let w = substr(src, start, len)
+    if w == "use" { return TK_USE() }
+    if w == "let" { return TK_LET() }
+    if w == "fn" { return TK_FN() }
+    if w == "struct" { return TK_STRUCT() }
+    if w == "type" { return TK_TYPE_KW() }
+    if w == "return" { return TK_RETURN() }
+    if w == "if" { return TK_IF() }
+    if w == "else" { return TK_ELSE() }
+    if w == "for" { return TK_FOR() }
+    if w == "in" { return TK_IN() }
+    if w == "to" { return TK_TO() }
+    if w == "loop" { return TK_LOOP() }
+    if w == "do" { return TK_DO() }
+    if w == "break" { return TK_BREAK() }
+    if w == "continue" { return TK_CONTINUE() }
+    if w == "assert" { return TK_ASSERT() }
+    if w == "as" { return TK_AS() }
+    if w == "ops" { return TK_OPS() }
+    if w == "async" { return TK_ASYNC() }
+    if w == "await" { return TK_AWAIT() }
+    if w == "true" { return TK_TRUE() }
+    if w == "false" { return TK_FALSE() }
+    if w == "nil" { return TK_NIL() }
+    if w == "i8" { return TK_TYPE() }
+    if w == "i16" { return TK_TYPE() }
+    if w == "i32" { return TK_TYPE() }
+    if w == "i64" { return TK_TYPE() }
+    if w == "u8" { return TK_TYPE() }
+    if w == "u16" { return TK_TYPE() }
+    if w == "u32" { return TK_TYPE() }
+    if w == "u64" { return TK_TYPE() }
+    if w == "f32" { return TK_TYPE() }
+    if w == "f64" { return TK_TYPE() }
+    if w == "bool" { return TK_TYPE() }
+    if w == "str" { return TK_TYPE() }
+    if w == "void" { return TK_TYPE() }
+    if w == "any" { return TK_TYPE() }
+    return TK_IDENT()
+}
+
+// ---- human readable kind names (for the demo driver) ----------------------
+fn kind_name(k: i32) str {
+    if k == TK_EOF() { return "EOF" }
+    if k == TK_ERROR() { return "ERROR" }
+    if k == TK_INT() { return "INT" }
+    if k == TK_FLOAT() { return "FLOAT" }
+    if k == TK_STR() { return "STR" }
+    if k == TK_STR_FMT() { return "STR_FMT" }
+    if k == TK_IDENT() { return "IDENT" }
+    if k == TK_TYPE() { return "TYPE" }
+    if k == TK_USE() { return "use" }
+    if k == TK_LET() { return "let" }
+    if k == TK_FN() { return "fn" }
+    if k == TK_STRUCT() { return "struct" }
+    if k == TK_TYPE_KW() { return "type" }
+    if k == TK_RETURN() { return "return" }
+    if k == TK_IF() { return "if" }
+    if k == TK_ELSE() { return "else" }
+    if k == TK_FOR() { return "for" }
+    if k == TK_IN() { return "in" }
+    if k == TK_TO() { return "to" }
+    if k == TK_LOOP() { return "loop" }
+    if k == TK_DO() { return "do" }
+    if k == TK_BREAK() { return "break" }
+    if k == TK_CONTINUE() { return "continue" }
+    if k == TK_ASSERT() { return "assert" }
+    if k == TK_AS() { return "as" }
+    if k == TK_OPS() { return "ops" }
+    if k == TK_ASYNC() { return "async" }
+    if k == TK_AWAIT() { return "await" }
+    if k == TK_TRUE() { return "true" }
+    if k == TK_FALSE() { return "false" }
+    if k == TK_NIL() { return "nil" }
+    if k == TK_COMMA() { return "," }
+    if k == TK_DOT() { return "." }
+    if k == TK_COLON() { return ":" }
+    if k == TK_ASSIGN() { return "=" }
+    if k == TK_ARROW() { return "->" }
+    if k == TK_LPAREN() { return "(" }
+    if k == TK_RPAREN() { return ")" }
+    if k == TK_LBRACE() { return "{" }
+    if k == TK_RBRACE() { return "}" }
+    if k == TK_LBRACKET() { return "[" }
+    if k == TK_RBRACKET() { return "]" }
+    if k == TK_ADD() { return "add_op" }
+    if k == TK_MUL() { return "mul_op" }
+    if k == TK_SHIFT() { return "shift_op" }
+    if k == TK_REL() { return "rel_op" }
+    if k == TK_EQ() { return "eq_op" }
+    if k == TK_LOGIC() { return "logic_op" }
+    if k == TK_BITWISE() { return "bitwise_op" }
+    if k == TK_NOT() { return "not_op" }
+    if k == TK_BIT_NOT() { return "bit_not_op" }
+    if k == TK_ASSIGN_OP() { return "assign_op" }
+    if k == TK_EOL() { return "EOL" }
+    return "?"
+}
+
+// ---- the tokenizer --------------------------------------------------------
+// Build a token at (kind, start, len, line).
+fn mk_tok(kind: i32, start: i32, len: i32, line: i32) Tok {
+    return Tok { kind: kind, start: start, len: len, line: line }
+}
+
+// Scan `src` into `toks` (capacity `cap`); returns the number of tokens.
+// Newlines are emitted as EOL tokens; spaces/tabs and // ... and /* ... */
+// comments are skipped.
+fn tokenize(src: str, toks: [Tok], cap: i32) i32 {
+    let n = 0
+    let i = 0
+    let line = 1
+    let len = src.len
+
+    loop i < len {
+        let c = lx_at(src, i)
+
+        // whitespace (not newline)
+        if is_space(c) {
+            i = i + 1
+            continue
+        }
+
+        // newline -> EOL
+        if c == c_nl() {
+            toks[n] = mk_tok(TK_EOL(), i, 1, line)
+            n = n + 1
+            line = line + 1
+            i = i + 1
+            continue
+        }
+
+        // line comment: // .... (skip to end of line)
+        if c == c_slash() && lx_at(src, i + 1) == c_slash() {
+            loop i < len && lx_at(src, i) != c_nl() {
+                i = i + 1
+            }
+            continue
+        }
+
+        // block comment: /* .... */
+        if c == c_slash() && lx_at(src, i + 1) == c_star() {
+            i = i + 2
+            loop i < len && (lx_at(src, i) != c_star() || lx_at(src, i + 1) != c_slash()) {
+                if lx_at(src, i) == c_nl() {
+                    line = line + 1
+                }
+                i = i + 1
+            }
+            i = i + 2
+            continue
+        }
+
+        // identifier / keyword
+        if is_alpha(c) {
+            let start = i
+            loop i < len && is_alnum(lx_at(src, i)) {
+                i = i + 1
+            }
+            let k = keyword_kind(src, start, i - start)
+            toks[n] = mk_tok(k, start, i - start, line)
+            n = n + 1
+            continue
+        }
+
+        // number (int / hex / float)
+        if is_digit(c) {
+            let start = i
+            let is_float = false
+            if c == c_0() && (lx_at(src, i + 1) == 120 || lx_at(src, i + 1) == 88) {
+                // hex literal 0x...
+                i = i + 2
+                loop i < len && is_hex(lx_at(src, i)) {
+                    i = i + 1
+                }
+            } else {
+                loop i < len && is_digit(lx_at(src, i)) {
+                    i = i + 1
+                }
+                if lx_at(src, i) == c_dot() && is_digit(lx_at(src, i + 1)) {
+                    is_float = true
+                    i = i + 1
+                    loop i < len && is_digit(lx_at(src, i)) {
+                        i = i + 1
+                    }
+                }
+                if lx_at(src, i) == 101 || lx_at(src, i) == 69 {
+                    // exponent e/E
+                    is_float = true
+                    i = i + 1
+                    if lx_at(src, i) == c_plus() || lx_at(src, i) == c_minus() {
+                        i = i + 1
+                    }
+                    loop i < len && is_digit(lx_at(src, i)) {
+                        i = i + 1
+                    }
+                }
+            }
+            let nk = TK_INT()
+            if is_float {
+                nk = TK_FLOAT()
+            }
+            toks[n] = mk_tok(nk, start, i - start, line)
+            n = n + 1
+            continue
+        }
+
+        // string: ' " or ` (format)
+        if c == c_squote() || c == c_dquote() || c == c_backtick() {
+            let q = c
+            let start = i
+            i = i + 1
+            loop i < len && lx_at(src, i) != q {
+                if lx_at(src, i) == c_backslash() {
+                    i = i + 1
+                }
+                i = i + 1
+            }
+            i = i + 1
+            let sk = TK_STR()
+            if q == c_backtick() {
+                sk = TK_STR_FMT()
+            }
+            toks[n] = mk_tok(sk, start, i - start, line)
+            n = n + 1
+            continue
+        }
+
+        // operators / punctuation
+        let k2 = scan_punct(src, i, len)
+        let plen = punct_len(src, i, len)
+        toks[n] = mk_tok(k2, i, plen, line)
+        n = n + 1
+        i = i + plen
+    }
+
+    toks[n] = mk_tok(TK_EOF(), i, 0, line)
+    return n
+}
+
+fn is_hex(c: i32) bool {
+    return is_digit(c) || (c >= c_a() && c <= 102) || (c >= c_A() && c <= 70)
+}
+
+// Length in bytes of the punctuation/operator token starting at i.
+fn punct_len(src: str, i: i32, len: i32) i32 {
+    let c = lx_at(src, i)
+    let d = lx_at(src, i + 1)
+    let e = lx_at(src, i + 2)
+    // three char: === !==
+    if (c == c_eq() && d == c_eq() && e == c_eq()) || (c == c_bang() && d == c_eq() && e == c_eq()) {
+        return 3
+    }
+    // two char ops
+    if c == c_minus() && d == c_gt() { return 2 }      // ->
+    if (c == c_plus() || c == c_minus()) && d == c_eq() { return 2 }
+    if (c == c_star() || c == c_slash() || c == c_percent()) && d == c_eq() { return 2 }
+    if c == c_lt() && d == c_lt() { return 2 }          // <<
+    if c == c_gt() && d == c_gt() { return 2 }          // >>
+    if c == c_lt() && d == c_eq() { return 2 }          // <=
+    if c == c_gt() && d == c_eq() { return 2 }          // >=
+    if c == c_eq() && d == c_eq() { return 2 }          // ==
+    if c == c_bang() && d == c_eq() { return 2 }        // !=
+    if c == c_amp() && d == c_amp() { return 2 }        // &&
+    if c == c_pipe() && d == c_pipe() { return 2 }      // ||
+    if c == c_amp() && d == c_eq() { return 2 }         // &=
+    if c == c_pipe() && d == c_eq() { return 2 }        // |=
+    if c == c_caret() && d == c_eq() { return 2 }       // ^=
+    return 1
+}
+
+// Classify the punctuation/operator token starting at i.
+fn scan_punct(src: str, i: i32, len: i32) i32 {
+    let c = lx_at(src, i)
+    let d = lx_at(src, i + 1)
+    let e = lx_at(src, i + 2)
+
+    if c == c_comma() { return TK_COMMA() }
+    if c == c_dot() { return TK_DOT() }
+    if c == c_colon() { return TK_COLON() }
+    if c == c_lparen() { return TK_LPAREN() }
+    if c == c_rparen() { return TK_RPAREN() }
+    if c == c_lbrace() { return TK_LBRACE() }
+    if c == c_rbrace() { return TK_RBRACE() }
+    if c == c_lbracket() { return TK_LBRACKET() }
+    if c == c_rbracket() { return TK_RBRACKET() }
+    if c == c_tilde() { return TK_BIT_NOT() }
+
+    if c == c_minus() && d == c_gt() { return TK_ARROW() }
+    if (c == c_plus() || c == c_minus()) && d == c_eq() { return TK_ASSIGN_OP() }
+    if (c == c_star() || c == c_slash() || c == c_percent()) && d == c_eq() { return TK_ASSIGN_OP() }
+    if c == c_amp() && d == c_eq() { return TK_ASSIGN_OP() }
+    if c == c_pipe() && d == c_eq() { return TK_ASSIGN_OP() }
+    if c == c_caret() && d == c_eq() { return TK_ASSIGN_OP() }
+
+    if c == c_plus() || c == c_minus() { return TK_ADD() }
+    if c == c_star() || c == c_slash() || c == c_percent() { return TK_MUL() }
+    if c == c_lt() && d == c_lt() { return TK_SHIFT() }
+    if c == c_gt() && d == c_gt() { return TK_SHIFT() }
+    if c == c_lt() || c == c_gt() { return TK_REL() }
+
+    if c == c_eq() && d == c_eq() { return TK_EQ() }
+    if c == c_bang() && d == c_eq() { return TK_EQ() }
+    if c == c_eq() { return TK_ASSIGN() }
+    if c == c_bang() { return TK_NOT() }
+
+    if c == c_amp() && d == c_amp() { return TK_LOGIC() }
+    if c == c_pipe() && d == c_pipe() { return TK_LOGIC() }
+    if c == c_amp() || c == c_pipe() || c == c_caret() { return TK_BITWISE() }
+
+    return TK_ERROR()
+}

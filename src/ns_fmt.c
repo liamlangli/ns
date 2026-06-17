@@ -63,14 +63,20 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
     i32 i = 0;
     while (i < fmt.len) {
         if (fmt.data[i] == '{' && (i == 0 || (i > 0 && fmt.data[i - 1] != '\\'))) {
+            // Scan for the matching '}'. If there is none, the '{' is not an
+            // interpolation - emit it literally. This keeps print() tolerant of
+            // already-formatted text that legitimately contains brace characters
+            // (e.g. the source text of a `{` token).
+            i32 scan = i + 1;
+            while (scan < fmt.len && fmt.data[scan] != '}') {
+                scan++;
+            }
+            if (scan == fmt.len) {
+                ns_array_push(ret.data, fmt.data[i++]);
+                continue;
+            }
             i32 start = ++i;
-            while (i < fmt.len && fmt.data[i] != '}') {
-                i++;
-            }
-            if (i == fmt.len) {
-                ns_error("fmt error", "missing '}'.\n");
-                return ns_str_null;
-            }
+            i = scan;
             ns_ast_ctx ctx = {0};
             ns_str expr = ns_str_slice(fmt, start, i++);
             ctx.source = expr;

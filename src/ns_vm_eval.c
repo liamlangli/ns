@@ -344,7 +344,7 @@ ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
 
 #define ns_eval_number_shift_op(fn, op) \
 ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
-    ns_value ret = (ns_value){.t = ns_type_set_stack(l.t, true) };\
+    ns_value ret = (ns_value){.t = ns_type_set_mut(l.t, false) };\
     switch (l.t.type) {\
         case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) op ns_eval_number_i8(vm, r); break;\
         case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) op ns_eval_number_i16(vm, r); break;\
@@ -374,8 +374,30 @@ ns_eval_number_cmp_op(_ge, >=)
 ns_eval_number_shift_op(_shl, <<)
 ns_eval_number_shift_op(_shr, >>)
 
+// Integer-only bitwise ops. Result is an immediate constant (mut=false), the
+// same representation arithmetic ops use, so it reads back correctly.
+#define ns_eval_number_bit_op(fn, op) \
+ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
+    ns_value ret = (ns_value){.t = ns_type_set_mut(l.t, false) };\
+    switch (l.t.type) {\
+        case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) op ns_eval_number_i8(vm, r); break;\
+        case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) op ns_eval_number_i16(vm, r); break;\
+        case NS_TYPE_I32: ret.i32 = ns_eval_number_i32(vm, l) op ns_eval_number_i32(vm, r); break;\
+        case NS_TYPE_I64: ret.i64 = ns_eval_number_i64(vm, l) op ns_eval_number_i64(vm, r); break;\
+        case NS_TYPE_U8:  ret.u8 = ns_eval_number_u8(vm, l) op ns_eval_number_u8(vm, r); break;\
+        case NS_TYPE_U16: ret.u16 = ns_eval_number_u16(vm, l) op ns_eval_number_u16(vm, r); break;\
+        case NS_TYPE_U32: ret.u32 = ns_eval_number_u32(vm, l) op ns_eval_number_u32(vm, r); break;\
+        case NS_TYPE_U64: ret.u64 = ns_eval_number_u64(vm, l) op ns_eval_number_u64(vm, r); break;\
+        default: break;\
+    }\
+    return ret;\
+}
+ns_eval_number_bit_op(_band, &)
+ns_eval_number_bit_op(_bor, |)
+ns_eval_number_bit_op(_bxor, ^)
+
 ns_value ns_eval_number_mod(ns_vm *vm, ns_value l, ns_value r) {
-    ns_value ret = (ns_value){.t = ns_type_set_stack(l.t, true)};
+    ns_value ret = (ns_value){.t = ns_type_set_mut(l.t, false)};
     switch (l.t.type) {
         case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) % ns_eval_number_i8(vm, r); break;
         case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) % ns_eval_number_i16(vm, r); break;
@@ -418,6 +440,15 @@ ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l
     case NS_TOKEN_LOGIC_OP: {
         ns_value n = ns_str_equals_STR(op.val, "&&") ? ns_eval_binary_and(vm, l, r) : ns_eval_binary_or(vm, l, r);
         return ns_return_ok(value, n);
+    } break;
+    case NS_TOKEN_BITWISE_OP: {
+        if (ns_type_is_float(l.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "bitwise operator not supported for float type.");
+        if (ns_str_equals(op.val, ns_str_cstr("&")))
+            return ns_return_ok(value, ns_eval_binary_band(vm, l, r));
+        else if (ns_str_equals(op.val, ns_str_cstr("|")))
+            return ns_return_ok(value, ns_eval_binary_bor(vm, l, r));
+        else if (ns_str_equals(op.val, ns_str_cstr("^")))
+            return ns_return_ok(value, ns_eval_binary_bxor(vm, l, r));
     } break;
     case NS_TOKEN_CMP_OP: {
         // Use exact matching: prefix matching would let "<=" be caught by "<".
@@ -555,6 +586,14 @@ ns_return_void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->jump_stmt.label.type) {
     case NS_TOKEN_RETURN: ns_eval_return_stmt(vm, ctx, i); break;
+    case NS_TOKEN_BREAK:
+    case NS_TOKEN_CONTINUE: {
+        i32 cl = ns_array_length(vm->call_stack);
+        if (cl == 0) return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "break/continue not in loop.");
+        ns_call *call = &vm->call_stack[cl - 1];
+        if (n->jump_stmt.label.type == NS_TOKEN_BREAK) call->brk_set = true;
+        else call->cnt_set = true;
+    } break;
     default:
         return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown jump stmt type.");
     }
@@ -586,6 +625,26 @@ ns_return_void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok_void;
 }
 
+// True when the innermost active call has executed a `return`, so enclosing
+// loops must stop iterating instead of running further bodies.
+static ns_bool ns_call_returned(ns_vm *vm) {
+    i32 n = ns_array_length(vm->call_stack);
+    return n > 0 && vm->call_stack[n - 1].ret_set;
+}
+
+// Called by loops after each body iteration. Consumes a pending `continue` so
+// the loop proceeds, and reports whether the loop must stop due to a pending
+// `break` or `return`. `break` is consumed here; `return` is left set so it
+// keeps propagating up to the enclosing function call frame.
+static ns_bool ns_loop_should_stop(ns_vm *vm) {
+    i32 n = ns_array_length(vm->call_stack);
+    if (n == 0) return false;
+    ns_call *call = &vm->call_stack[n - 1];
+    if (call->cnt_set) call->cnt_set = false;
+    if (call->brk_set) { call->brk_set = false; return true; }
+    return call->ret_set;
+}
+
 ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_vm_inject_hook(vm, ctx, i);
 
@@ -613,6 +672,7 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             index->val.i32 = g_i;
             ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->for_stmt.body);
             if (ns_return_is_error(ret)) return ret;
+            if (ns_loop_should_stop(vm)) break; // break or return
         }
     } else {
         // TODO, generator expr from generable subject.
@@ -630,6 +690,7 @@ ns_return_void ns_eval_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         do {
             ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->loop_stmt.body);
             if (ns_return_is_error(ret)) return ret;
+            if (ns_loop_should_stop(vm)) break; // break or return
 
             ns_return_value ret_cond = ns_eval_expr(vm, ctx, n->loop_stmt.condition);
             if (ns_return_is_error(ret_cond)) return ns_return_change_type(void, ret_cond);
@@ -643,6 +704,7 @@ ns_return_void ns_eval_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
             ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->loop_stmt.body);
             if (ns_return_is_error(ret)) return ret;
+            if (ns_loop_should_stop(vm)) break; // break or return
         }
     }
     ns_scope_exit(vm);
@@ -684,8 +746,23 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
     } else {
         switch (l.t.type)
         {
-        case NS_TYPE_STRING:
+        case NS_TYPE_STRING: {
+            ns_token_t op = n->binary_expr.op;
+            ns_str ls = ns_eval_str(vm, l);
+            ns_str rs = ns_eval_str(vm, r);
+            if (op.type == NS_TOKEN_ADD_OP && ns_str_equals(op.val, ns_str_cstr("+"))) {
+                ns_str cat = ns_str_concat(ls, rs);
+                ns_value v = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, cat)};
+                ns_str_free(cat);
+                return ns_return_ok(value, v);
+            } else if (op.type == NS_TOKEN_EQ_OP || op.type == NS_TOKEN_CMP_OP) {
+                ns_bool eq = ns_str_equals(ls, rs);
+                ns_bool ne = ns_str_equals(op.val, ns_str_cstr("!=")) || ns_str_equals(op.val, ns_str_cstr("!=="));
+                ns_value v = (ns_value){.t = ns_type_bool, .b = ne ? !eq : eq};
+                return ns_return_ok(value, v);
+            }
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented string ops.");
+        }
         default:
             break;
         }
@@ -933,9 +1010,9 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_return_is_error(ret_st)) return ret_st;
     ns_value st = ret_st.r;
 
-    ns_ast_t *field = &ctx->nodes[n->next];
+    ns_ast_t *field = &ctx->nodes[n->member_expr.right];
     if (field->type == NS_AST_MEMBER_EXPR) {
-        return ns_eval_member_expr(vm, ctx, n->next);
+        return ns_eval_member_expr(vm, ctx, n->member_expr.right);
     }
 
     // primary expr
@@ -1280,8 +1357,10 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         if (ns_array_length(vm->call_stack) > 0) {
             ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
-            if (call->ret_set) {
-                vm->stack_depth = stack_depth; // restore on early return, else depth leaks
+            // return, break and continue all abort the rest of this block. The
+            // enclosing loop clears brk/cnt; ret propagates to the call.
+            if (call->ret_set || call->brk_set || call->cnt_set) {
+                vm->stack_depth = stack_depth; // restore on early exit, else depth leaks
                 return ns_return_ok_void;
             }
         }
