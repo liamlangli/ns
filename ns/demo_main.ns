@@ -1,5 +1,9 @@
 // ns/demo_main.ns - demo driver for the self-hosted tokenizer.
-// Linked (by concatenation) after lexer.ns; see ns/Makefile.
+// Run with `ns run ns/demo_main.ns`: the project compiler inlines the local
+// `lexer` module (and keeps `use std` as an external import).
+use std
+use lexer
+
 fn dump(src: str) void {
     let toks = [Tok](src.len + 4)
     let n = tokenize(src, toks, src.len + 4)

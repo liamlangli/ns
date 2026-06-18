@@ -58,6 +58,13 @@ ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
 i32 ns_type_size(ns_vm *vm, ns_type t) {
     if (ns_type_is_ref(t)) return ns_ptr_size;
 
+    // An array-typed value is a single handle (heap pointer), regardless of its
+    // element type. Without this, `[i32]` (element type NS_TYPE_I32 + array flag)
+    // would size to 4 bytes and a stored 8-byte handle would be truncated by the
+    // next stack allocation. Element sizing always clears the array flag first,
+    // so this does not affect index/stride computations.
+    if (ns_type_is_array(t)) return ns_ptr_size;
+
     switch (t.type)
     {
     case NS_TYPE_NIL: return 0;

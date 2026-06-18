@@ -1,15 +1,17 @@
-// ns/test/test_lexer.ns
+// ns/lexer_test.ns
 // Unit tests for the self-hosted tokenizer (ns/lexer.ns).
 //
-// Linked by concatenation as:  std + lexer.ns + harness.ns + this file.
-// Run with `make test` in the ns/ directory.
-//
-// Assertions are numeric (token kind/start/len/line) and textual (via substr),
-// which the host runs deterministically. `main()` is auto-invoked by the
-// runtime, so there is no explicit call.
+// This is a self-contained test entry: it imports the standard library, the
+// lexer module under test, and the test harness. `ns test ns/` (or
+// `ns test ns/lexer_test.ns`) compiles the project scope - inlining the local
+// `lexer` and `harness` modules - and runs `main`, whose return value is the
+// process exit status.
+use std
+use lexer
+use harness
 
-// Tokenize `src` into a fresh array and return the count via the harness while
-// leaving the tokens in the caller-provided array.
+// Tokenize `src` into a fresh array and return the count, leaving the tokens in
+// the caller-provided array.
 fn lex_into(src: str, toks: [Tok]) i32 {
     return tokenize(src, toks, src.len + 4)
 }
@@ -168,7 +170,7 @@ fn test_full_function() void {
     expect_eq(toks[14].line, 2, "return line 2")
 }
 
-fn main() {
+fn main() i32 {
     print("== self-hosted lexer tests ==\n")
     test_keywords()
     test_ident_not_keyword()
@@ -179,5 +181,5 @@ fn main() {
     test_spans()
     test_lines_and_comments()
     test_full_function()
-    test_summary()
+    return test_summary()
 }

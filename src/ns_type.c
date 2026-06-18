@@ -169,12 +169,37 @@ ns_str ns_type_name(ns_type t) {
 i32 ns_str_to_i32(ns_str s) {
     i32 size = s.len;
     i32 i = 0;
+    i32 sign = 1;
     i32 r = 0;
-    while (i < size) {
-        r = r * 10 + (s.data[i] - '0');
+
+    if (i < size && (s.data[i] == '-' || s.data[i] == '+')) {
+        if (s.data[i] == '-') sign = -1;
         i++;
     }
-    return r;
+
+    // hex literal: 0x.. / 0X..
+    if (i + 1 < size && s.data[i] == '0' && (s.data[i + 1] == 'x' || s.data[i + 1] == 'X')) {
+        i += 2;
+        while (i < size) {
+            i8 c = s.data[i];
+            i32 d;
+            if (c >= '0' && c <= '9') d = c - '0';
+            else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+            else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+            else break;
+            r = r * 16 + d;
+            i++;
+        }
+    } else {
+        while (i < size) {
+            i8 c = s.data[i];
+            if (c < '0' || c > '9') break;
+            r = r * 10 + (c - '0');
+            i++;
+        }
+    }
+
+    return sign * r;
 }
 
 static i8 _ns_str_buff[128];

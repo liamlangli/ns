@@ -1,0 +1,331 @@
+// ns/parser.ns
+// ---------------------------------------------------------------------------
+// Stage 2 of the self-hosted "ns in ns" front-end: a recursive-descent parser
+// that turns the token stream produced by lexer.ns into an abstract syntax
+// tree. Like the lexer, it is written in Nano Script and runs on the C `ns`
+// interpreter; it depends on the lexer module for the `Tok` record, the token
+// kind constants (`TK_*`) and the ASCII helpers (`c_*`).
+//
+// The AST is stored, like the token list, as a flat array of fixed-shape
+// records (`struct Node`). A node refers to its children by their index in that
+// array, which keeps the tree allocation-free and easy to walk:
+//
+//   * literals / identifiers     -> tok  = the source token index
+//   * binary  (a OP b)           -> a=left node, b=right node, tok=op token
+//   * unary   (OP a)             -> a=operand node, tok=op token
+//   * call    (callee(args...))  -> a=callee node, b=first arg node, c=arg count
+//                                   arguments are chained via each node's `next`
+//   * let  (let name = value)    -> a=name token, b=value node
+//   * return (return value)      -> a=value node
+//   * expr-statement             -> a=expr node
+//
+// Operator precedence (low -> high) mirrors the C front-end:
+//   ||/&&  <  ==/!=/===  <  </>/<=/>=  <  &/|/^  <  <</>>  <  +/-  <  */ /%
+//   < unary  < call  < primary
+//
+// The parser keeps its cursor (`p_pos`, the current token index) and node
+// allocator (`p_nc`, the next free node slot) in module globals, reset by
+// `parse_reset()` at the start of every `parse_program`.
+
+use lexer
+
+// ---- node kinds -----------------------------------------------------------
+fn NK_NONE() i32 { return 0 }
+fn NK_INT() i32 { return 1 }
+fn NK_FLOAT() i32 { return 2 }
+fn NK_IDENT() i32 { return 3 }
+fn NK_STR() i32 { return 4 }
+fn NK_BOOL() i32 { return 5 }
+fn NK_NIL() i32 { return 6 }
+fn NK_BINARY() i32 { return 10 }
+fn NK_UNARY() i32 { return 11 }
+fn NK_CALL() i32 { return 12 }
+fn NK_LET() i32 { return 20 }
+fn NK_RETURN() i32 { return 21 }
+fn NK_EXPR() i32 { return 22 }
+
+// ---- AST node record ------------------------------------------------------
+// `next` links sibling call arguments (-1 = none).
+struct Node {
+    kind: i32,
+    a: i32,
+    b: i32,
+    c: i32,
+    tok: i32,
+    next: i32
+}
+
+// ---- parser state (module globals) ----------------------------------------
+let p_pos = 0   // index of the current token
+let p_nc = 0    // next free node slot / total node count
+
+fn parse_reset() void {
+    p_pos = 0
+    p_nc = 0
+}
+
+// Number of nodes allocated by the last parse.
+fn node_count() i32 {
+    return p_nc
+}
+
+fn mk_node(kind: i32, a: i32, b: i32, c: i32, tok: i32, next: i32) Node {
+    return Node { kind: kind, a: a, b: b, c: c, tok: tok, next: next }
+}
+
+// Allocate a node, returning its index.
+fn nd(nodes: [Node], kind: i32, a: i32, b: i32, c: i32, tok: i32) i32 {
+    let idx = p_nc
+    nodes[idx] = mk_node(kind, a, b, c, tok, -1)
+    p_nc = p_nc + 1
+    return idx
+}
+
+// ---- token cursor helpers -------------------------------------------------
+// Kind of the current token, or TK_EOF past the end.
+fn p_kind(toks: [Tok], n: i32) i32 {
+    if p_pos < n {
+        return toks[p_pos].kind
+    }
+    return TK_EOF()
+}
+
+fn p_advance() void {
+    p_pos = p_pos + 1
+}
+
+// Skip end-of-line tokens (they separate statements, never appear mid-expr).
+fn p_skip_eol(toks: [Tok], n: i32) void {
+    loop p_pos < n && toks[p_pos].kind == TK_EOL() {
+        p_pos = p_pos + 1
+    }
+}
+
+// ---- expression grammar ---------------------------------------------------
+// Parenthesised argument list for a call whose callee node is already parsed.
+fn p_call(src: str, toks: [Tok], n: i32, nodes: [Node], callee: i32) i32 {
+    p_advance() // consume '('
+    let first = -1
+    let prev = -1
+    let count = 0
+    p_skip_eol(toks, n)
+    loop p_kind(toks, n) != TK_RPAREN() && p_kind(toks, n) != TK_EOF() {
+        let arg = p_expr(src, toks, n, nodes)
+        if first < 0 {
+            first = arg
+        } else {
+            nodes[prev].next = arg
+        }
+        prev = arg
+        count = count + 1
+        p_skip_eol(toks, n)
+        if p_kind(toks, n) == TK_COMMA() {
+            p_advance()
+            p_skip_eol(toks, n)
+        }
+    }
+    if p_kind(toks, n) == TK_RPAREN() {
+        p_advance()
+    }
+    return nd(nodes, NK_CALL(), callee, first, count, 0)
+}
+
+fn p_primary(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    p_skip_eol(toks, n)
+    let k = p_kind(toks, n)
+    let pos = p_pos
+
+    if k == TK_INT() { p_advance(); return nd(nodes, NK_INT(), 0, 0, 0, pos) }
+    if k == TK_FLOAT() { p_advance(); return nd(nodes, NK_FLOAT(), 0, 0, 0, pos) }
+    if k == TK_STR() { p_advance(); return nd(nodes, NK_STR(), 0, 0, 0, pos) }
+    if k == TK_STR_FMT() { p_advance(); return nd(nodes, NK_STR(), 0, 0, 0, pos) }
+    if k == TK_TRUE() { p_advance(); return nd(nodes, NK_BOOL(), 1, 0, 0, pos) }
+    if k == TK_FALSE() { p_advance(); return nd(nodes, NK_BOOL(), 0, 0, 0, pos) }
+    if k == TK_NIL() { p_advance(); return nd(nodes, NK_NIL(), 0, 0, 0, pos) }
+
+    if k == TK_LPAREN() {
+        p_advance()
+        let inner = p_expr(src, toks, n, nodes)
+        if p_kind(toks, n) == TK_RPAREN() {
+            p_advance()
+        }
+        return inner
+    }
+
+    if k == TK_IDENT() {
+        p_advance()
+        let id = nd(nodes, NK_IDENT(), 0, 0, 0, pos)
+        if p_kind(toks, n) == TK_LPAREN() {
+            return p_call(src, toks, n, nodes, id)
+        }
+        return id
+    }
+
+    // unrecognised token -> error placeholder (kept so callers stay in sync)
+    p_advance()
+    return nd(nodes, NK_NONE(), 0, 0, 0, pos)
+}
+
+fn p_unary(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    p_skip_eol(toks, n)
+    let k = p_kind(toks, n)
+    let pos = p_pos
+
+    if k == TK_NOT() || k == TK_BIT_NOT() {
+        p_advance()
+        let operand = p_unary(src, toks, n, nodes)
+        return nd(nodes, NK_UNARY(), operand, 0, 0, pos)
+    }
+
+    // unary minus: an additive-op token whose text is '-'
+    if k == TK_ADD() {
+        let t = toks[p_pos]
+        if (src[t.start] as i32) == c_minus() {
+            p_advance()
+            let operand = p_unary(src, toks, n, nodes)
+            return nd(nodes, NK_UNARY(), operand, 0, 0, pos)
+        }
+    }
+
+    return p_primary(src, toks, n, nodes)
+}
+
+fn p_mul(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    let left = p_unary(src, toks, n, nodes)
+    loop p_kind(toks, n) == TK_MUL() {
+        let op = p_pos
+        p_advance()
+        let right = p_unary(src, toks, n, nodes)
+        left = nd(nodes, NK_BINARY(), left, right, 0, op)
+    }
+    return left
+}
+
+fn p_add(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    let left = p_mul(src, toks, n, nodes)
+    loop p_kind(toks, n) == TK_ADD() {
+        let op = p_pos
+        p_advance()
+        let right = p_mul(src, toks, n, nodes)
+        left = nd(nodes, NK_BINARY(), left, right, 0, op)
+    }
+    return left
+}
+
+fn p_shift(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    let left = p_add(src, toks, n, nodes)
+    loop p_kind(toks, n) == TK_SHIFT() {
+        let op = p_pos
+        p_advance()
+        let right = p_add(src, toks, n, nodes)
+        left = nd(nodes, NK_BINARY(), left, right, 0, op)
+    }
+    return left
+}
+
+fn p_bitwise(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    let left = p_shift(src, toks, n, nodes)
+    loop p_kind(toks, n) == TK_BITWISE() {
+        let op = p_pos
+        p_advance()
+        let right = p_shift(src, toks, n, nodes)
+        left = nd(nodes, NK_BINARY(), left, right, 0, op)
+    }
+    return left
+}
+
+fn p_rel(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    let left = p_bitwise(src, toks, n, nodes)
+    loop p_kind(toks, n) == TK_REL() {
+        let op = p_pos
+        p_advance()
+        let right = p_bitwise(src, toks, n, nodes)
+        left = nd(nodes, NK_BINARY(), left, right, 0, op)
+    }
+    return left
+}
+
+fn p_eq(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    let left = p_rel(src, toks, n, nodes)
+    loop p_kind(toks, n) == TK_EQ() {
+        let op = p_pos
+        p_advance()
+        let right = p_rel(src, toks, n, nodes)
+        left = nd(nodes, NK_BINARY(), left, right, 0, op)
+    }
+    return left
+}
+
+fn p_logic(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    let left = p_eq(src, toks, n, nodes)
+    loop p_kind(toks, n) == TK_LOGIC() {
+        let op = p_pos
+        p_advance()
+        let right = p_eq(src, toks, n, nodes)
+        left = nd(nodes, NK_BINARY(), left, right, 0, op)
+    }
+    return left
+}
+
+// Parse a full expression (lowest precedence entry point).
+fn p_expr(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    return p_logic(src, toks, n, nodes)
+}
+
+// ---- statement grammar ----------------------------------------------------
+fn p_stmt(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
+    p_skip_eol(toks, n)
+    let k = p_kind(toks, n)
+
+    if k == TK_LET() {
+        p_advance()
+        let name = p_pos   // identifier token index
+        p_advance()
+        // skip an optional `: type` annotation up to the '='
+        loop p_kind(toks, n) != TK_ASSIGN() && p_kind(toks, n) != TK_EOL() && p_kind(toks, n) != TK_EOF() {
+            p_advance()
+        }
+        if p_kind(toks, n) == TK_ASSIGN() {
+            p_advance()
+        }
+        let val = p_expr(src, toks, n, nodes)
+        return nd(nodes, NK_LET(), name, val, 0, name)
+    }
+
+    if k == TK_RETURN() {
+        p_advance()
+        let val = p_expr(src, toks, n, nodes)
+        return nd(nodes, NK_RETURN(), val, 0, 0, 0)
+    }
+
+    let e = p_expr(src, toks, n, nodes)
+    return nd(nodes, NK_EXPR(), e, 0, 0, 0)
+}
+
+// Parse a whole token stream into a sequence of top-level statements. The node
+// index of each statement is written to `roots`; the count is returned.
+fn parse_program(src: str, toks: [Tok], n: i32, nodes: [Node], roots: [i32]) i32 {
+    parse_reset()
+    let rc = 0
+    p_skip_eol(toks, n)
+    loop p_kind(toks, n) != TK_EOF() {
+        let s = p_stmt(src, toks, n, nodes)
+        roots[rc] = s
+        rc = rc + 1
+        p_skip_eol(toks, n)
+    }
+    return rc
+}
+
+// Convenience: tokenize `src`, then parse, filling `toks`/`nodes`/`roots` (all
+// caller-allocated with capacity >= src.len + 4). Returns the statement count.
+fn parse_source(src: str, toks: [Tok], nodes: [Node], roots: [i32]) i32 {
+    let n = tokenize(src, toks, src.len + 4)
+    return parse_program(src, toks, n, nodes, roots)
+}
+
+// The source text of a node's principal token (operator, identifier, literal).
+fn node_token_text(src: str, toks: [Tok], nodes: [Node], i: i32) str {
+    let t = toks[nodes[i].tok]
+    return substr(src, t.start, t.len)
+}

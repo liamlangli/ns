@@ -2,105 +2,107 @@
 
 This directory contains a **clean-room reimplementation of the Nano Script
 front-end, written in Nano Script itself** (self-hosting), plus a unit-test
-harness — also written in Nano Script — that exercises it on the existing `ns`
+harness — also written in Nano Script — that exercises it on the `ns`
 interpreter built from the repository root.
 
-It is developed in stages. **Stage 1 — the tokenizer/lexer — is complete and
-fully tested (78 assertions passing).** Later stages (parser → type checker →
-tree-walking interpreter) build on the same approach.
+It is developed in stages:
 
-## Why a runtime had to be extended first
+- [x] **Stage 1 — Lexer** (`lexer.ns`): complete, **78 assertions passing**.
+- [x] **Stage 2 — Parser** (`parser.ns`): recursive-descent expression/statement
+      parser producing a flat AST, **57 assertions passing**.
+- [ ] Stage 3 — Type checker in ns.
+- [ ] Stage 4 — Tree-walking interpreter in ns.
 
-Self-hosting means the reimplementation must *run* on the current `ns`
-interpreter. A tokenizer is almost entirely string scanning and looping, and
-the interpreter was missing or mis-implementing several primitives needed for
-that. So the first task was to make the C interpreter capable of hosting its
-own front-end. The following changes were made in the repo's `src/` (all
-verified, with no regressions to the existing JSON tests or samples):
+## Scope-based project compilation (no Makefile)
 
-| Area | Change |
-|------|--------|
-| `src/ns_vm_eval.c`, `src/ns_vm_parse.c` | **Bitwise operators** `&` `\|` `^` added for integers (were unimplemented). |
-| `src/ns_vm_eval.c` | **Shift** `<<` `>>` and **modulo** `%` fixed — they produced garbage because results were flagged stack-resident instead of immediate. |
-| `src/ns_vm_eval.c`, `src/ns_vm_parse.c` | **String concatenation** `+` and **string equality** `==` / `!=`. |
-| `src/ns_vm_lib.c` | `print()` now resolves stack-resident strings (e.g. concatenation results) correctly. |
-| `src/ns_vm_lib.c`, `lib/std.ns` | New builtins **`substr(s, start, len)`** and **`unescape(s)`**. |
-| `src/ns_vm_eval.c`, `src/ns_vm_parse.c`, `include/ns_vm.h` | **`break` / `continue`** statements implemented for `loop` and `for`. |
-| `src/ns_vm_parse.c` | **Array-typed parameters** (`a: [i32]`) keep their array flag, so they can be indexed. |
-| `src/ns_fmt.c` | `print` tolerates literal `{`/`}` in already-formatted text instead of aborting. |
-| AST (`include/ns_ast.h`, `ns_ast_expr.c`, `ns_vm_parse.c`, `ns_vm_eval.c`, `ns_ast_print.c`) | **Member-access fix**: a field was stored in `ns_ast_t.next`, which argument-list linking clobbered, so `f(p.a, p.b)` aliased both args to `p.b`. The field now lives in a dedicated `member_expr.right`. |
+Earlier the modules here had to be "linked" by **concatenating** sources in a
+Makefile, because Nano Script's `use` only imported modules from the
+interpreter's ref path — there was no local module import. That is no longer
+needed: `ns` now **compiles a project by scope**.
 
-These are genuine, general correctness fixes — they benefit any Nano Script
-program, not just this project.
+When you `ns run` or `ns test` a file, the interpreter resolves every
+`use <name>` against the **directory of that entry file** first. If
+`<dir>/<name>.ns` exists it is compiled in as a local module; otherwise the
+`use` is treated as an external library import (e.g. `use std`). So the modules
+in this directory simply `use` one another, and `ns` links them itself.
 
-## Language notes / design decisions
+```sh
+# from the repository root, after `make` has produced bin/ns:
 
-The reimplementation is a **clean redesign** that preserves Nano Script
-semantics while working within what the interpreter currently supports:
+bin/ns run  ns/demo_main.ns     # tokenize a sample and print the token stream
+bin/ns test ns/lexer_test.ns    # run one test entry  (exit code = failures)
+bin/ns test ns/parser_test.ns   # run the parser test entry
+bin/ns test ns/                 # discover & run every *_test.ns in the dir
+```
 
-- **Tokens are spans, not copied text.** Each token is a `(kind, start, len,
-  line)` record into the source string (`struct Tok`), mirroring the C
-  tokenizer and avoiding string allocation. `substr` materializes text only
-  when needed.
-- **`&&` / `||` are not short-circuit** in the host, so every source read goes
-  through `lx_at`, which returns `0` past end-of-input. This makes all loop
-  conditions safe regardless of evaluation order.
-- **Token kinds are integer constants exposed as `fn`s** (e.g. `TK_LET()`),
-  since the language has no enums.
-- **Characters are byte values.** ASCII codes are named via `c_*` helpers for
-  readability (`c_nl()` = 10, etc.).
-- **No local module imports.** The interpreter's `use` only loads modules from
-  its lib path, so multi-file programs are "linked" by **concatenation** (see
-  the Makefile): `use std` + `lexer.ns` + driver/tests. This is the one
-  structural concession to the host; it keeps the lexer source DRY (shared by
-  both the demo and the tests).
-- **`main()` is auto-invoked** by the runtime, so drivers define `main` and do
-  not call it.
+`ns test <file>` runs a test entry and uses the i32 returned by its `main`
+(the harness's failure count) as the process exit status. `ns test <dir>`
+discovers every `*_test.ns` file, runs each in a fresh VM, prints a per-suite
+PASS/FAIL line, and exits non-zero if any suite failed. `ns run` compiles the
+project scope and executes `main`.
 
 ## Layout
 
 ```
 ns/
-  lexer.ns            the tokenizer (functions + Tok struct; no main)
-  demo_main.ns        a demo driver: tokenize a sample and print the tokens
-  test/
-    harness.ns        soft-assert unit-test harness (expect / expect_eq / ...)
-    test_lexer.ns     the lexer test suite (main + summary)
-  Makefile            concatenates sources and runs them on ../bin/ns
-  bin/                generated, concatenated programs (gitignored)
+  lexer.ns          the tokenizer        (struct Tok, TK_*/c_* consts; no main)
+  parser.ns         the parser           (struct Node, NK_* consts; uses lexer)
+  harness.ns        soft-assert unit-test harness (expect / expect_eq / ...)
+  demo_main.ns      run entry: tokenize a sample and dump the tokens
+  lexer_test.ns     test entry for the lexer  (use std/lexer/harness)
+  parser_test.ns    test entry for the parser (use std/lexer/parser/harness)
 ```
 
-## Building and running
+Every entry file declares its own imports (`use std`, `use lexer`, …); there
+are no generated/concatenated artifacts and no Makefile.
 
-First build the interpreter from the repository root:
+## Runtime fixes that made self-hosting possible
 
-```sh
-make          # produces bin/ns (the io.so std lib may fail to build; unrelated)
-```
+Self-hosting means the reimplementation must *run* on the current `ns`
+interpreter, which surfaced genuine, general correctness bugs in the C core.
+All of the following are fixed in the repo's `src/` (verified, no regressions
+to the JSON test or the `add`/`fib` samples):
 
-Then, from this directory:
+| Area | Change |
+|------|--------|
+| `src/ns_vm_eval.c`, `src/ns_vm_parse.c` | **Bitwise operators** `&` `\|` `^` for integers (were unimplemented). |
+| `src/ns_vm_eval.c` | **Shift** `<<` `>>` and **modulo** `%` fixed (had been flagged stack-resident instead of immediate). |
+| `src/ns_vm_eval.c`, `src/ns_vm_parse.c` | **String concatenation** `+` and **string equality** `==` / `!=`. |
+| `src/ns_vm_lib.c`, `lib/std.ns` | New builtins **`substr(s, start, len)`** and **`unescape(s)`**. |
+| `src/ns_vm_eval.c`, `src/ns_vm_parse.c`, `include/ns_vm.h` | **`break` / `continue`** for `loop` and `for`. |
+| `src/ns_vm_parse.c` | **Array-typed parameters** keep their array flag so they can be indexed. |
+| AST files | **Member-access fix**: a field lived in `ns_ast_t.next`, clobbered by arg linking; now `member_expr.right`. |
+| `src/ns_type.c` | **`ns_str_to_i32`** now handles a leading sign (`-1`/`+1`) and `0x` hex; before, `"-1"` evaluated to `-29`. |
+| `src/ns_vm_parse.c` | **`ns_type_size`** returns pointer size for *any* array value. A scalar array like `[i32]` was sized to its element (4 bytes), so an 8-byte array handle was truncated and clobbered by the next allocation — corrupting arrays written in a callee and read back in the caller. Struct arrays only worked by luck (stride ≥ 8). |
+| `src/ns.c` | **`run` / `test` subcommands** and the **scope-based project linker** described above. |
 
-```sh
-make test     # run the self-hosted lexer unit tests
-make demo     # tokenize a sample function and print the token stream
-```
+## Language notes / design decisions
 
-`make test` prints one line per assertion and a final summary; it exits after
-`ALL TESTS PASSED` / `SOME TESTS FAILED`.
+The reimplementation preserves Nano Script semantics while working within what
+the interpreter currently supports:
 
-## What the lexer supports
+- **Tokens and AST nodes are flat records.** A token is a `(kind, start, len,
+  line)` span into the source (`struct Tok`); an AST node is a
+  `(kind, a, b, c, tok, next)` record (`struct Node`) that refers to its
+  children by their index in a flat node array. Both avoid string/heap churn.
+- **`&&` / `||` are not short-circuit** in the host, so every source read goes
+  through `lx_at` / `p_kind`, which return safe sentinels past end-of-input.
+- **Token and node kinds are integer constants exposed as `fn`s** (`TK_LET()`,
+  `NK_BINARY()`), since the language has no enums.
+- **Characters are byte values**, named via `c_*` helpers (`c_nl()` = 10, …).
+- **`main()` is auto-invoked** by the runtime; test entries `return
+  test_summary()` so the failure count becomes the exit status.
 
-Keywords (`use let fn struct type return if else for in to loop do break
-continue assert as ops async await true false nil`), primitive type keywords
-(`i8`..`f64`, `bool`, `str`, `void`, `any`), identifiers, integer/hex/float
-literals, `'...'` / `"..."` strings and `` `...` `` format strings, line (`//`)
-and block (`/* */`) comments, newlines as `EOL` tokens with line tracking, and
-the full operator/punctuation set (`+ - * / % << >> < > <= >= == != === && ||
-& | ^ ! ~ = += -> , . : ( ) { } [ ]`).
+## What the front-end supports
 
-## Status / next stages
+**Lexer** — keywords (`use let fn struct type return if else for in to loop do
+break continue assert as ops async await true false nil`), primitive type
+keywords, identifiers, integer/hex/float literals, `'…'` / `"…"` strings and
+`` `…` `` format strings, line (`//`) and block (`/* */`) comments, newlines as
+`EOL` tokens with line tracking, and the full operator/punctuation set.
 
-- [x] **Stage 1 — Lexer**: complete, 78 assertions passing.
-- [ ] Stage 2 — Parser (AST) in ns.
-- [ ] Stage 3 — Type checker in ns.
-- [ ] Stage 4 — Tree-walking interpreter in ns.
+**Parser** — expressions with C-matching precedence (`||/&&` < `==/!=/===` <
+`</>/<=/>=` < `&/|/^` < `<</>>` < `+/-` < `*//%` < unary < call < primary),
+parenthesised grouping, unary `!` `~` `-`, function calls with argument lists,
+and the `let` / `return` / expression statements, parsed into the flat `Node`
+AST.

@@ -1,11 +1,12 @@
-// ns/test/harness.ns
+// ns/harness.ns
 // A minimal self-contained unit-test harness written in Nano Script.
 //
 // The host interpreter's built-in `assert` aborts the whole program on the
 // first failure, which is no good for a test runner. Instead this harness uses
 // soft checks that record pass/fail counts and keep going, then prints a
-// summary. It is linked (by concatenation, see ns/Makefile) ahead of the test
-// body, which must finish by calling `test_summary()`.
+// summary. Test entries `use harness` and finish their `main` by returning
+// `test_summary()`, whose i32 result is the process exit status that
+// `ns test` reports (0 == every assertion passed).
 
 let g_pass = 0
 let g_fail = 0
@@ -43,11 +44,14 @@ fn expect_str(got: str, want: str, name: str) void {
     }
 }
 
-fn test_summary() void {
+// Print the summary and return the failure count so the entry `main` can hand
+// it back to `ns test` as the exit status.
+fn test_summary() i32 {
     print(`\n{g_pass} passed, {g_fail} failed\n`)
     if g_fail == 0 {
         print("ALL TESTS PASSED\n")
     } else {
         print("SOME TESTS FAILED\n")
     }
+    return g_fail
 }

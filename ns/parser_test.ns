@@ -1,0 +1,254 @@
+// ns/parser_test.ns
+// Unit tests for the self-hosted parser (ns/parser.ns).
+//
+// A self-contained test entry: `ns test ns/` (or `ns test ns/parser_test.ns`)
+// compiles the project scope - inlining the local `lexer`, `parser` and
+// `harness` modules - and runs `main`, whose return value is the exit status.
+//
+// Each test parses a small source string and asserts on the shape of the
+// resulting AST (node kinds, operator text, child links).
+use std
+use lexer
+use parser
+use harness
+
+// Parse `src`, leaving tokens/nodes/roots in caller arrays; return stmt count.
+fn parse1(src: str, toks: [Tok], nodes: [Node], roots: [i32]) i32 {
+    return parse_source(src, toks, nodes, roots)
+}
+
+fn test_primary() void {
+    print("test_primary\n")
+    let src = "42"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    expect_eq(rc, 1, "one statement")
+    let stmt = roots[0]
+    expect_eq(nodes[stmt].kind, NK_EXPR(), "expr statement")
+    let e = nodes[stmt].a
+    expect_eq(nodes[e].kind, NK_INT(), "int literal")
+    expect_str(node_token_text(src, toks, nodes, e), "42", "int text")
+}
+
+fn test_identifier() void {
+    print("test_identifier\n")
+    let src = "foo"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let e = nodes[roots[0]].a
+    expect_eq(nodes[e].kind, NK_IDENT(), "ident node")
+    expect_str(node_token_text(src, toks, nodes, e), "foo", "ident text")
+}
+
+fn test_precedence() void {
+    print("test_precedence\n")
+    // 1 + 2 * 3  parses as  1 + (2 * 3)
+    let src = "1 + 2 * 3"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let e = nodes[roots[0]].a
+    expect_eq(nodes[e].kind, NK_BINARY(), "root is binary")
+    expect_str(node_token_text(src, toks, nodes, e), "+", "root op +")
+    let l = nodes[e].a
+    let r = nodes[e].b
+    expect_eq(nodes[l].kind, NK_INT(), "left is int 1")
+    expect_str(node_token_text(src, toks, nodes, l), "1", "left text 1")
+    expect_eq(nodes[r].kind, NK_BINARY(), "right is binary")
+    expect_str(node_token_text(src, toks, nodes, r), "*", "right op *")
+}
+
+fn test_left_assoc() void {
+    print("test_left_assoc\n")
+    // 1 - 2 - 3  parses as  (1 - 2) - 3
+    let src = "1 - 2 - 3"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let e = nodes[roots[0]].a
+    expect_eq(nodes[e].kind, NK_BINARY(), "root binary")
+    expect_str(node_token_text(src, toks, nodes, e), "-", "root op -")
+    let l = nodes[e].a
+    let r = nodes[e].b
+    expect_eq(nodes[l].kind, NK_BINARY(), "left is binary (1 - 2)")
+    expect_eq(nodes[r].kind, NK_INT(), "right is int 3")
+    expect_str(node_token_text(src, toks, nodes, r), "3", "right text 3")
+}
+
+fn test_parentheses() void {
+    print("test_parentheses\n")
+    // (1 + 2) * 3  parses as  (1 + 2) * 3
+    let src = "(1 + 2) * 3"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let e = nodes[roots[0]].a
+    expect_eq(nodes[e].kind, NK_BINARY(), "root binary")
+    expect_str(node_token_text(src, toks, nodes, e), "*", "root op *")
+    let l = nodes[e].a
+    expect_eq(nodes[l].kind, NK_BINARY(), "left is grouped +")
+    expect_str(node_token_text(src, toks, nodes, l), "+", "left op +")
+}
+
+fn test_unary() void {
+    print("test_unary\n")
+    let s1 = "-5"
+    let t1 = [Tok](s1.len + 4)
+    let d1 = [Node](s1.len + 4)
+    let r1 = [i32](s1.len + 4)
+    let rc1 = parse1(s1, t1, d1, r1)
+    let e1 = d1[r1[0]].a
+    expect_eq(d1[e1].kind, NK_UNARY(), "unary minus")
+    expect_str(node_token_text(s1, t1, d1, e1), "-", "unary op -")
+    let op1 = d1[e1].a
+    expect_eq(d1[op1].kind, NK_INT(), "operand int 5")
+
+    let s2 = "!x"
+    let t2 = [Tok](s2.len + 4)
+    let d2 = [Node](s2.len + 4)
+    let r2 = [i32](s2.len + 4)
+    let rc2 = parse1(s2, t2, d2, r2)
+    let e2 = d2[r2[0]].a
+    expect_eq(d2[e2].kind, NK_UNARY(), "logical not")
+    expect_str(node_token_text(s2, t2, d2, e2), "!", "unary op !")
+    let op2 = d2[e2].a
+    expect_eq(d2[op2].kind, NK_IDENT(), "operand ident x")
+}
+
+fn test_let_stmt() void {
+    print("test_let_stmt\n")
+    let src = "let x = 1 + 2"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let stmt = roots[0]
+    expect_eq(nodes[stmt].kind, NK_LET(), "let statement")
+    expect_str(node_token_text(src, toks, nodes, stmt), "x", "let name x")
+    let val = nodes[stmt].b
+    expect_eq(nodes[val].kind, NK_BINARY(), "value is binary")
+    expect_str(node_token_text(src, toks, nodes, val), "+", "value op +")
+}
+
+fn test_let_typed() void {
+    print("test_let_typed\n")
+    // the optional `: type` annotation is skipped up to '='
+    let src = "let n: i32 = 7"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let stmt = roots[0]
+    expect_eq(nodes[stmt].kind, NK_LET(), "typed let statement")
+    expect_str(node_token_text(src, toks, nodes, stmt), "n", "let name n")
+    let val = nodes[stmt].b
+    expect_eq(nodes[val].kind, NK_INT(), "value int 7")
+    expect_str(node_token_text(src, toks, nodes, val), "7", "value text 7")
+}
+
+fn test_return_stmt() void {
+    print("test_return_stmt\n")
+    let src = "return a + b"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let stmt = roots[0]
+    expect_eq(nodes[stmt].kind, NK_RETURN(), "return statement")
+    let val = nodes[stmt].a
+    expect_eq(nodes[val].kind, NK_BINARY(), "return value binary")
+    let l = nodes[val].a
+    let r = nodes[val].b
+    expect_str(node_token_text(src, toks, nodes, l), "a", "left ident a")
+    expect_str(node_token_text(src, toks, nodes, r), "b", "right ident b")
+}
+
+fn test_call() void {
+    print("test_call\n")
+    let src = "f(1, 2)"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let call = nodes[roots[0]].a
+    expect_eq(nodes[call].kind, NK_CALL(), "call node")
+    expect_eq(nodes[call].c, 2, "arg count 2")
+    let callee = nodes[call].a
+    expect_str(node_token_text(src, toks, nodes, callee), "f", "callee f")
+    let a0 = nodes[call].b
+    expect_str(node_token_text(src, toks, nodes, a0), "1", "arg0 = 1")
+    let a1 = nodes[a0].next
+    expect_str(node_token_text(src, toks, nodes, a1), "2", "arg1 = 2")
+}
+
+fn test_call_nested_args() void {
+    print("test_call_nested_args\n")
+    // arguments are full expressions: g(1 + 2, x)
+    let src = "g(1 + 2, x)"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let call = nodes[roots[0]].a
+    expect_eq(nodes[call].kind, NK_CALL(), "nested-arg call")
+    expect_eq(nodes[call].c, 2, "two args")
+    let a0 = nodes[call].b
+    expect_eq(nodes[a0].kind, NK_BINARY(), "arg0 is binary")
+    expect_str(node_token_text(src, toks, nodes, a0), "+", "arg0 op +")
+    let a1 = nodes[a0].next
+    expect_eq(nodes[a1].kind, NK_IDENT(), "arg1 ident")
+    expect_str(node_token_text(src, toks, nodes, a1), "x", "arg1 = x")
+}
+
+fn test_multi_statements() void {
+    print("test_multi_statements\n")
+    let src = unescape("let x = 1\nreturn x\n")
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    expect_eq(rc, 2, "two statements")
+    expect_eq(nodes[roots[0]].kind, NK_LET(), "first is let")
+    expect_eq(nodes[roots[1]].kind, NK_RETURN(), "second is return")
+}
+
+fn test_comparison_precedence() void {
+    print("test_comparison_precedence\n")
+    // a + b == c  parses as  (a + b) == c
+    let src = "a + b == c"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let e = nodes[roots[0]].a
+    expect_eq(nodes[e].kind, NK_BINARY(), "root binary")
+    expect_str(node_token_text(src, toks, nodes, e), "==", "root op ==")
+    let l = nodes[e].a
+    expect_eq(nodes[l].kind, NK_BINARY(), "left is +")
+    expect_str(node_token_text(src, toks, nodes, l), "+", "left op +")
+}
+
+fn main() i32 {
+    print("== self-hosted parser tests ==\n")
+    test_primary()
+    test_identifier()
+    test_precedence()
+    test_left_assoc()
+    test_parentheses()
+    test_unary()
+    test_let_stmt()
+    test_let_typed()
+    test_return_stmt()
+    test_call()
+    test_call_nested_args()
+    test_multi_statements()
+    test_comparison_precedence()
+    return test_summary()
+}
