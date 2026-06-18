@@ -93,6 +93,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_vm_print.c \
 	src/ns_net.c \
 	src/ns_json.c \
+	src/ns_toml.c \
 	src/ns_repl.c \
 	src/ns_def.c \
 	src/ns_asm.c
@@ -114,6 +115,7 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_vm_print.c \
 	src/ns_net.c \
 	src/ns_json.c \
+	src/ns_toml.c \
 	src/ns_def.c \
 	src/ns_asm.c
 

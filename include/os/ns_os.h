@@ -22,3 +22,11 @@ ns_str ns_path_home();
 
 // fs
 ns_str ns_fs_read_file(ns_str path);
+ns_bool ns_fs_exists(ns_str path);
+ns_bool ns_fs_is_dir(ns_str path);
+
+// recursively collect every file under `dir` whose name ends with `ext`
+// (e.g. ".ns"). returns a dynamic ns_array of NUL-terminated ns_str paths,
+// sorted lexicographically for deterministic builds. free with ns_fs_list_free.
+ns_str *ns_fs_list_ext(ns_str dir, ns_str ext);
+void ns_fs_list_free(ns_str *list);

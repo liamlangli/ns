@@ -171,9 +171,14 @@ static ns_return_bool ns_macho_write_file(ns_str path, u8 *buf) {
 }
 
 static ns_str ns_macho_symbol_name(ns_str fn_name) {
-    ns_str s = ns_str_null;
-    ns_str_append_len(&s, "_", 1);
-    ns_str_append_len(&s, fn_name.data, fn_name.len);
+    // build a plain heap string ("_" + fn_name) so callers can release it with
+    // ns_str_free; an ns_array-backed buffer would put the real allocation
+    // before .data and make that free a bad-free.
+    i8 *buf = (i8 *)ns_malloc(fn_name.len + 2);
+    buf[0] = '_';
+    memcpy(buf + 1, fn_name.data, fn_name.len);
+    buf[fn_name.len + 1] = '\0';
+    ns_str s = ns_str_range(buf, fn_name.len + 1);
     s.dynamic = true;
     return s;
 }

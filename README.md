@@ -93,6 +93,42 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
 - `ns_lsp`: A language server for Nano Script providing features like code completion, hover, and diagnostics.
 - `ns_debug`: A debug adapter for Nano Script offering debugging features such as breakpoints, stepping, and variable inspection.
 
+## Project Compile
+Compile a whole folder instead of a single file. From inside a project
+directory (or by passing a path) run:
+
+```sh
+ns compile            # compile every .ns file under the current folder
+ns compile path/to/project
+```
+
+`ns compile` recursively locates every `.ns` file under the folder, parses them
+into one linked unit (so a function defined in one file is visible to the
+others), lowers to SSA and emits a single binary or library. Files under a
+`bin/` directory are ignored so generated artifacts are never re-compiled. The
+output defaults to `<dir>/bin/<name>` with an extension chosen for the target.
+
+### `ns.toml`
+If the folder contains an `ns.toml`, it configures the target specification:
+
+```toml
+[project]
+name = "myapp"      # output base name (default: "app")
+type = "binary"     # "binary" (default) or "lib"
+
+[target]
+os = "darwin"       # darwin | windows | linux  (selects a default format)
+format = "macho"    # macho | pe | wasm         (overrides os)
+
+[build]
+output = "bin/myapp"  # explicit output path (overrides the derived one)
+```
+
+Resolution order for the output format is: CLI flag (`--macho`, `--macho-o`,
+`--pe`, `--wasm`) > `[target] format` > `[target] os` > the host platform.
+`type = "lib"` emits a Mach-O object (`.o`) for the macho target. `-o` overrides
+`[build] output`.
+
 ## Build Options
 - `NS_DEBUG`: Debug mode.
 - `NS_JIT`: Enable Just-In-Time compiler.
