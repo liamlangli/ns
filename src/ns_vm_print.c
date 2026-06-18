@@ -8,6 +8,7 @@ ns_str ns_symbol_type_to_string(ns_symbol_type type) {
         ns_str_case(NS_SYMBOL_STRUCT)
         ns_str_case(NS_SYMBOL_BLOCK)
         ns_str_case(NS_SYMBOL_TYPE)
+        ns_str_case(NS_SYMBOL_UNION)
     default:
         ns_error("ast", "unknown symbol type %d\n", type);
         return ns_str_cstr("NS_SYMBOL_INVALID");

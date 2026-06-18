@@ -1,0 +1,41 @@
+// Union types: a named type that admits a value of any of its member types.
+//
+//   type Name = A | B | C
+//
+// A union-typed variable can be assigned any member value. Because Nano Script
+// is explicitly typed, reading a union back as a concrete type uses the `as`
+// cast to narrow it to one of its members.
+
+// A union of two numeric members.
+type num = i32 | f64
+
+let a: num = 7      // holds an i32
+let b: num = 3.5    // holds an f64
+
+assert (a as i32) == 7
+assert (b as f64) == 3.5
+
+// Unions work as function parameter and return types.
+fn identity(x: num) num {
+    return x
+}
+
+let r: num = identity(42)
+let s: num = identity(1.25)
+assert (r as i32) == 42
+assert (s as f64) == 1.25
+
+// A union may mix struct and primitive members.
+struct vec2 { x: f64, y: f64 }
+type shape = i32 | vec2
+
+let id: shape = 5
+let pt: shape = vec2 { x: 1.0, y: 2.0 }
+assert (id as i32) == 5
+assert (pt as vec2).x == 1.0
+assert (pt as vec2).y == 2.0
+
+// A union may also be the type of a struct field.
+struct box { v: num }
+let bx: box = box { v: 9 }
+assert (bx.v as i32) == 9

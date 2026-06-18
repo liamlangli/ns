@@ -175,6 +175,13 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf(ns_color_log "type " ns_color_nil);
         ns_str_printf(n->type_def.name.val);
         printf(" = [%d]", n->type_def.type);
+        if (n->type_def.count > 1) {
+            i32 m = ctx->nodes[n->type_def.type].next;
+            for (i32 k = 1; k < n->type_def.count; k++) {
+                printf(" | [%d]", m);
+                m = ctx->nodes[m].next;
+            }
+        }
     } break;
     case NS_AST_BLOCK_EXPR: {
         printf("{");
@@ -422,6 +429,14 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             ns_str_printf(n->type_def.name.val);
             printf(" = ");
             ns_ast_print_type_label(ctx, n->type_def.type, false);
+            if (n->type_def.count > 1) {
+                i32 m = ctx->nodes[n->type_def.type].next;
+                for (i32 k = 1; k < n->type_def.count; k++) {
+                    printf(" | ");
+                    ns_ast_print_type_label(ctx, m, false);
+                    m = ctx->nodes[m].next;
+                }
+            }
             printf("\n");
             break;
 

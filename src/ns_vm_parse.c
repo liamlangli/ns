@@ -15,6 +15,15 @@ ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s) {
 
 ns_bool ns_type_match(ns_vm *vm, ns_type r, ns_type p) {
     if (ns_type_equals(r, p)) return true;
+    else if (ns_type_is(r, NS_TYPE_UNION)) {
+        // A value is assignable to a union when its concrete type matches the
+        // union itself or any of the union's member types.
+        ns_symbol *u = &vm->symbols[ns_type_index(r)];
+        for (szt i = 0, l = ns_array_length(u->un.members); i < l; ++i) {
+            if (ns_type_match(vm, u->un.members[i], p)) return true;
+        }
+        return false;
+    }
     else if (ns_type_is(r, NS_TYPE_FN) && (ns_type_is(p, NS_TYPE_FN) || ns_type_is(p, NS_TYPE_BLOCK))) {
         ns_fn_symbol *fn_r = ns_symbol_get_fn(&vm->symbols[ns_type_index(r)]);
         ns_fn_symbol *fn_p = ns_symbol_get_fn(&vm->symbols[ns_type_index(p)]);
@@ -88,6 +97,17 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
         ns_symbol *s = &vm->symbols[ti];
         if (ns_null == s) return -1;
         return s->st.stride;
+    }
+    case NS_TYPE_UNION: {
+        // A union slot must fit its largest member.
+        ns_symbol *s = &vm->symbols[ns_type_index(t)];
+        i32 max = 0;
+        for (szt i = 0, l = ns_array_length(s->un.members); i < l; ++i) {
+            i32 ms = ns_type_size(vm, s->un.members[i]);
+            if (ms < 0) return -1;
+            if (ms > max) max = ms;
+        }
+        return max;
     }
     default:
         break;
@@ -199,7 +219,8 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     case NS_TYPE_BOOL: return is_ref ? ns_str_cstr("ref_bool") : ns_str_cstr("bool");
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_FN:
-    case NS_TYPE_STRUCT: {
+    case NS_TYPE_STRUCT:
+    case NS_TYPE_UNION: {
         u64 ti = ns_type_index(t);
         if (ti > ns_array_length(vm->symbols)) {
             return ns_str_null;
@@ -324,6 +345,10 @@ ns_return_type ns_vm_parse_type_by_token(ns_vm *vm, ns_token_t t, ns_code_loc lo
         return ns_return_ok(type, r->fn.fn.t);
     case NS_SYMBOL_STRUCT:
         return ns_return_ok(type, r->st.st.t);
+    case NS_SYMBOL_TYPE: // type alias resolves to its underlying type
+        return ns_return_ok(type, r->val.t);
+    case NS_SYMBOL_UNION:
+        return ns_return_ok(type, r->un.t);
     default: {
         return ns_return_error(type, loc, NS_ERR_SYNTAX, "unknown symbol.");
     } break;
@@ -511,7 +536,26 @@ ns_return_void ns_vm_parse_type_def(ns_vm *vm, ns_ast_ctx *ctx) {
         if (n->type != NS_AST_TYPE_DEF)
             continue;
         ns_ast_t *t = &ctx->nodes[n->type_def.type];
-        if (t->type_label.is_fn) { // if t is fn, create a new fn type
+        if (n->type_def.count > 1) { // union type: `type T = A | B | C`
+            ns_symbol u = (ns_symbol){.type = NS_SYMBOL_UNION, .lib = vm->lib, .parsed = true};
+            u.name = n->type_def.name.val;
+            i32 index = ns_array_length(vm->symbols);
+            u.un.t = ns_type_encode(NS_TYPE_UNION, index, 0, false, true);
+
+            i32 member = n->type_def.type;
+            for (i32 m = 0; m < n->type_def.count; ++m) {
+                ns_ast_t *member_node = &ctx->nodes[member];
+                ns_return_type ret = ns_vm_parse_type(vm, ctx, member_node);
+                if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
+                if (ret.r.type == NS_TYPE_UNKNOWN) {
+                    return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "union type with unknown member type.");
+                }
+                ns_array_push(u.un.members, ret.r);
+                member = member_node->next;
+            }
+
+            ns_vm_push_symbol_global(vm, u);
+        } else if (t->type_label.is_fn) { // if t is fn, create a new fn type
             ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n->type_def.type, .body = 0}, .lib = vm->lib, .parsed = true};
             fn.name = n->type_def.name.val;
 
@@ -922,7 +966,7 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_t)) return ret_t;
 
         ns_type t = ret_t.r;
-        if (!ns_type_equals(t, f->t)) return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "designated expr type mismatch.");
+        if (!ns_type_equals(t, f->t) && !ns_type_match(vm, f->t, t)) return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "designated expr type mismatch.");
 
         field->field_def.rt.index = field_i;
     }
@@ -1006,6 +1050,15 @@ ns_return_type ns_vm_parse_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     if (ns_type_is_number(t) && ns_type_is_number(cast)) {
+        return ns_return_ok(type, cast);
+    }
+    // Narrow a union to one of its member types (`u as T`). The interpreter
+    // tracks the concrete member tag at runtime, so the value round-trips.
+    if (ns_type_is(t, NS_TYPE_UNION) && ns_type_match(vm, t, cast)) {
+        return ns_return_ok(type, cast);
+    }
+    // Widen a member value into a union it belongs to (`v as U`).
+    if (ns_type_is(cast, NS_TYPE_UNION) && ns_type_match(vm, cast, t)) {
         return ns_return_ok(type, cast);
     }
     // ns_str t_name = ns_vm_get_type_name(vm, t);
@@ -1174,8 +1227,8 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
         ns_symbol *callee = vm->call_stack[l - 1].callee;
         ns_fn_symbol *fn = ns_symbol_get_fn(callee);
-        
-        if (!ns_type_equals(fn->ret, t)) {
+
+        if (!ns_type_equals(fn->ret, t) && !ns_type_match(vm, fn->ret, t)) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt type mismatch.");
         }
     } break;
@@ -1295,7 +1348,7 @@ ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
 
         ns_type t = ret_t.r;
-        if (!ns_type_is(l, NS_TYPE_INFER) && !ns_type_is(t, NS_TYPE_FN) && !ns_type_equals(l, t) && !ns_vm_assign_number_compatible(vm, l, t)) {
+        if (!ns_type_is(l, NS_TYPE_INFER) && !ns_type_is(t, NS_TYPE_FN) && !ns_type_equals(l, t) && !ns_vm_assign_number_compatible(vm, l, t) && !ns_type_match(vm, l, t)) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "local var def type mismatch.");
         }
         s.val.t = ns_type_is(l, NS_TYPE_INFER) ? t : l;
@@ -1449,6 +1502,7 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_FN_DEF:
             case NS_AST_OP_FN_DEF:
             case NS_AST_STRUCT_DEF:
+            case NS_AST_TYPE_DEF:
             case NS_AST_PROGRAM:
                 break; // already parsed
             default: {
@@ -1471,8 +1525,11 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     
     ns_return_void ret;
     ns_vm_parse_global(ns_vm_parse_name);
-    ns_vm_parse_global(ns_vm_parse_fn_def_type);
+    // Resolve type aliases/unions before fn signatures so they can be used as
+    // parameter and return types. Member/struct names are already registered by
+    // ns_vm_parse_name, so only their type encoding (not layout) is needed here.
     ns_vm_parse_global(ns_vm_parse_type_def);
+    ns_vm_parse_global(ns_vm_parse_fn_def_type);
     ns_vm_parse_global(ns_vm_parse_var_def);
     ns_vm_parse_global(ns_vm_parse_struct_def);
     ns_vm_parse_global(ns_vm_parse_struct_def_ref);

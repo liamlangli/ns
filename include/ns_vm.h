@@ -9,7 +9,8 @@ typedef enum {
     NS_SYMBOL_FN,
     NS_SYMBOL_STRUCT,
     NS_SYMBOL_BLOCK,
-    NS_SYMBOL_TYPE
+    NS_SYMBOL_TYPE,
+    NS_SYMBOL_UNION
 } ns_symbol_type;
 
 typedef enum ns_scope_state {
@@ -64,6 +65,14 @@ typedef struct ns_type_symbol {
     ns_type t;
 } ns_type_symbol;
 
+// A union type (`type T = A | B | C`) carries its own union type tag plus the
+// list of member types it admits. A value is assignable to the union when its
+// concrete type matches any member.
+typedef struct ns_union_symbol {
+    ns_type t;
+    ns_type *members;
+} ns_union_symbol;
+
 typedef struct ns_symbol {
     ns_symbol_type type;
     ns_str name;
@@ -74,6 +83,7 @@ typedef struct ns_symbol {
         ns_fn_symbol fn;
         ns_struct_symbol st;
         ns_block_symbol bc;
+        ns_union_symbol un;
         ns_type t;
     };
 } ns_symbol;

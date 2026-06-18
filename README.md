@@ -56,6 +56,12 @@ print(a + b) // use override add fn, expect result [1, 1]
 // typealias
 type number = f64
 
+// union type: a value may be any one of the member types
+type num = i32 | f64
+let some_num: num = 1       // holds an i32
+let other_num: num = 3.14   // holds an f64
+let n = some_num as i32     // narrow to a member with `as`
+
 // block[closure]
 // define a block or fn type
 type op_fn = (i32, i32) -> i32

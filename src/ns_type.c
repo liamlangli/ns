@@ -162,6 +162,7 @@ ns_str ns_type_name(ns_type t) {
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_FN: return ns_str_cstr("fn");
     case NS_TYPE_STRUCT: return ns_str_cstr("struct");
+    case NS_TYPE_UNION: return ns_str_cstr("union");
     default: return ns_str_null;
     }
 }

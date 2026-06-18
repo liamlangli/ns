@@ -125,7 +125,8 @@ typedef struct ns_ast_struct_field {
 
 typedef struct ns_ast_type_def {
     ns_token_t name;
-    i32 type;
+    i32 type;       // first type label node
+    i32 count;      // number of type labels; >1 means a union type (A | B | ...)
 } ns_ast_type_def;
 
 typedef struct ns_ast_binary_expr {

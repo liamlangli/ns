@@ -52,6 +52,32 @@ ns_return_bool ns_parse_typedef_stmt(ns_ast_ctx *ctx) {
     if (ns_return_is_error(ret)) return ret;
     if (ret.r) {
         n.type_def.type = ctx->current;
+        n.type_def.count = 1;
+
+        // union type: `type T = A | B | C`. Additional members are parsed as
+        // type labels separated by `|` and chained through the type label's
+        // `next` pointer (plain/array/named labels do not otherwise use it).
+        i32 prev = n.type_def.type;
+        do {
+            ns_ast_state pipe_state = ns_save_state(ctx);
+            ns_parse_next_token(ctx);
+            ns_bool is_pipe = ctx->token.type == NS_TOKEN_BITWISE_OP &&
+                              ctx->token.val.len == 1 && ctx->token.val.data[0] == '|';
+            if (!is_pipe) {
+                ns_restore_state(ctx, pipe_state);
+                break;
+            }
+
+            ns_return_bool m = ns_parse_type_label(ctx);
+            if (ns_return_is_error(m)) return m;
+            if (!m.r) {
+                return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "expected type after '|' in union type.");
+            }
+            ctx->nodes[prev].next = ctx->current;
+            prev = ctx->current;
+            n.type_def.count++;
+        } while (1);
+
         ns_ast_push(ctx, n);
         return ns_return_ok(bool, true);
     }

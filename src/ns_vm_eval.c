@@ -576,6 +576,11 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return type mismatch.");
         }
         ns_eval_copy(vm, call->ret, ret, ns_type_size(vm, ret.t));
+        // For a union return type, keep the concrete member's tag on the return
+        // slot so the caller's value round-trips (the slot itself is large enough).
+        if (ns_type_is(fn->ret, NS_TYPE_UNION)) {
+            call->ret.t = ns_type_set_stack(ret.t, true);
+        }
         call->ret_set = true;
     }
     return ns_return_ok(value, ret);
@@ -916,13 +921,14 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_val)) return ret_val;
         ns_value val = ret_val.r;
 
-        if (!ns_type_equals(field->t, val.t)) { // type mismatch
+        if (!ns_type_equals(field->t, val.t) && !ns_type_match(vm, field->t, val.t)) { // type mismatch
             // ns_str f_type = ns_vm_get_type_name(vm, field->t);
             // ns_str v_type = ns_vm_get_type_name(vm, val.t);
             return ns_return_error(value, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "field type mismatch");
         }
 
-        ns_type t = field->t;
+        // For a union field, store the concrete member that was actually provided.
+        ns_type t = ns_type_is(field->t, NS_TYPE_UNION) ? val.t : field->t;
         if (ns_type_is_array(t)) {
             *(u64*)(data + field->o) = val.o;
         } else if (ns_type_is_number(t)) {
@@ -968,7 +974,18 @@ ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_return_is_error(ret_v)) return ret_v;
     ns_value v = ret_v.r;
 
+    // Narrow a value that carries a union tag (e.g. read from a union-typed
+    // struct field) to a member type by reinterpreting its stored bytes.
+    if (ns_type_is(v.t, NS_TYPE_UNION) && !ns_type_is(t, NS_TYPE_UNION)) {
+        ns_value out = v;
+        out.t = ns_type_set_stack(t, ns_type_in_stack(v.t));
+        return ns_return_ok(value, out);
+    }
+
     if (ns_type_equals(t, v.t)) return ns_return_ok(value, v);
+    // Union widening: the value already carries its concrete member tag, so
+    // casting it to the union type is an identity at runtime.
+    if (ns_type_is(t, NS_TYPE_UNION)) return ns_return_ok(value, v);
     if (ns_type_is_number(t) && ns_type_is_number(v.t)) {
         if (ns_type_is_float(t)) {
             if (ns_type_is_float(v.t)) {
@@ -1224,8 +1241,17 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_value v = ret_v.r;
     ns_type dst_t = val->val.t;
+    // A union-typed slot keeps the concrete member's type tag at runtime so the
+    // stored value round-trips (values are self-describing in the interpreter).
+    ns_type store_t = dst_t;
     if (ns_type_is(dst_t, NS_TYPE_INFER)) {
         dst_t = v.t;
+        store_t = v.t;
+    } else if (ns_type_is(dst_t, NS_TYPE_UNION)) {
+        if (!ns_type_match(vm, dst_t, v.t)) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "var def type mismatch.");
+        }
+        store_t = v.t;
     } else if (!ns_type_equals(dst_t, v.t)) {
         if (!ns_eval_number_assign_compatible(vm, dst_t, v.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "var def type mismatch.");
@@ -1233,6 +1259,7 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_return_value cast_ret = ns_eval_cast_number(vm, v, dst_t, ns_ast_state_loc(ctx, n->state));
         if (ns_return_is_error(cast_ret)) return cast_ret;
         v = cast_ret.r;
+        store_t = dst_t;
     }
 
     // Reference values (arrays, strings, fns) are stored as an 8-byte handle;
@@ -1241,8 +1268,10 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         size = (i32)sizeof(void *);
     else if (size <= 0)
         size = ns_type_size(vm, dst_t);
-    ns_value ret = (ns_value){.o = ns_eval_alloc(vm, size), .t = ns_type_set_stack(dst_t, true)};
-    ns_eval_copy(vm, ret, v, size);
+    // Copy only the concrete member's bytes; the union slot may be larger.
+    i32 copy_size = ns_type_is(dst_t, NS_TYPE_UNION) ? ns_type_size(vm, v.t) : size;
+    ns_value ret = (ns_value){.o = ns_eval_alloc(vm, size), .t = ns_type_set_stack(store_t, true)};
+    ns_eval_copy(vm, ret, v, copy_size);
     ns_array_set_length(vm->stack, ret.o + size);
     val->val = ret;
     return ns_return_ok(value, ret);
@@ -1272,8 +1301,17 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_type dst_t = ret_type.r;
     ns_value src = ret_v.r;
 
+    // A union-typed slot keeps the concrete member's type tag at runtime so the
+    // stored value round-trips (values are self-describing in the interpreter).
+    ns_type store_t = dst_t;
     if (ns_type_is(dst_t, NS_TYPE_INFER)) {
         dst_t = src.t;
+        store_t = src.t;
+    } else if (ns_type_is(dst_t, NS_TYPE_UNION)) {
+        if (!ns_type_match(vm, dst_t, src.t)) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "local var def type mismatch.");
+        }
+        store_t = src.t;
     } else if (!ns_type_equals(dst_t, src.t)) {
         if (!ns_eval_number_assign_compatible(vm, dst_t, src.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "local var def type mismatch.");
@@ -1281,10 +1319,13 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_return_value cast_ret = ns_eval_cast_number(vm, src, dst_t, ns_ast_state_loc(ctx, n->state));
         if (ns_return_is_error(cast_ret)) return cast_ret;
         src = cast_ret.r;
+        store_t = dst_t;
     }
 
-    ret.t = ns_type_set_stack(dst_t, true);
-    ns_eval_copy(vm, ret, src, size);
+    // Copy only the concrete member's bytes; the union slot may be larger.
+    i32 copy_size = ns_type_is(dst_t, NS_TYPE_UNION) ? ns_type_size(vm, src.t) : size;
+    ret.t = ns_type_set_stack(store_t, true);
+    ns_eval_copy(vm, ret, src, copy_size);
     ns_array_set_length(vm->stack, ret.o + size);
     ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val, .val = ret, .parsed = true};
     ns_array_push(vm->symbol_stack, symbol);
@@ -1423,6 +1464,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_FN_DEF:
             case NS_AST_OP_FN_DEF:
             case NS_AST_STRUCT_DEF:
+            case NS_AST_TYPE_DEF:
                 break; // already parsed, no need to re-evaluate
             default: {
                 ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
