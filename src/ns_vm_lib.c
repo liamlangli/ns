@@ -65,6 +65,23 @@ extern void view_set_clipboard(void *v, ns_str text);
 
 extern ns_bool gpu_request_device(void *v);
 
+extern i32 term_enable_raw(void);
+extern i32 term_disable_raw(void);
+extern i32 term_read_key(void);
+extern i32 term_width(void);
+extern i32 term_height(void);
+extern i32 term_putc(i32 c);
+extern i32 term_flush(void);
+extern i32 term_path_reset(void);
+extern i32 term_path_push(i32 c);
+extern i32 term_open_read(void);
+extern i32 term_getc(void);
+extern i32 term_close_read(void);
+extern i32 term_open_write(void);
+extern i32 term_putc_file(i32 c);
+extern i32 term_close_write(void);
+extern i32 term_env_byte(i32 idx);
+
 typedef struct ns_static_sym {
     const char *name;
     void *fn;
@@ -87,13 +104,38 @@ static const ns_static_sym ns_static_syms[] = {
     {"view_set_clipboard", (void*)view_set_clipboard},
 
     {"gpu_request_device", (void*)gpu_request_device},
+
+    {"term_enable_raw", (void*)term_enable_raw},
+    {"term_disable_raw", (void*)term_disable_raw},
+    {"term_read_key", (void*)term_read_key},
+    {"term_width", (void*)term_width},
+    {"term_height", (void*)term_height},
+    {"term_putc", (void*)term_putc},
+    {"term_flush", (void*)term_flush},
+    {"term_path_reset", (void*)term_path_reset},
+    {"term_path_push", (void*)term_path_push},
+    {"term_open_read", (void*)term_open_read},
+    {"term_getc", (void*)term_getc},
+    {"term_close_read", (void*)term_close_read},
+    {"term_open_write", (void*)term_open_write},
+    {"term_putc_file", (void*)term_putc_file},
+    {"term_close_write", (void*)term_close_write},
+    {"term_env_byte", (void*)term_env_byte},
 };
 
 // Resolve a `ref fn` to a statically linked symbol, or NULL when the name is
 // not part of the built-in standard library (callers then fall back to dlsym).
 void *ns_lib_static_sym(ns_str name) {
     for (u32 i = 0; i < sizeof(ns_static_syms) / sizeof(ns_static_syms[0]); i++) {
-        if (ns_str_equals_STR(name, ns_static_syms[i].name)) return ns_static_syms[i].fn;
+        // Exact match required: ns_str_equals_STR() compares only strlen(entry)
+        // bytes, so a table name that is a prefix of the queried name (e.g.
+        // "term_putc" vs "term_putc_file") would mis-resolve to the shorter
+        // symbol. Anchor on the full queried length to forbid that.
+        const char *sym = ns_static_syms[i].name;
+        if (name.data && name.len == (i32)strlen(sym) &&
+            strncmp(name.data, sym, (size_t)name.len) == 0) {
+            return ns_static_syms[i].fn;
+        }
     }
     return ns_null;
 }
@@ -257,6 +299,12 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "too many args.");
     }
 
+    // Reset the scratch stack used to stage by-value scalar args. It is a
+    // persistent static, so without this every call would leak its arg bytes and
+    // eventually trip the "ffi stack overflow" guard below (fatal once a program
+    // makes enough native calls, e.g. an interactive loop).
+    _ffi_ctx.stack_offset = 0;
+
     // copy args to ffi values
     ns_scope_enter(vm);
     for (i32 i = 0; i < call->arg_count; i++) {
@@ -325,7 +373,14 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
 
     ns_type t = fn->fn.ret;
     i32 size = ns_type_size(vm, t);
-    ns_value v = {.t = ns_type_set_stack(fn->fn.ret, true), .o = ns_eval_alloc(vm, size)};
+    // libffi widens any integer return to at least sizeof(ffi_arg) and writes
+    // that many bytes through the result pointer, so the destination slot must be
+    // >= sizeof(ffi_arg) even for a narrower type (e.g. i32). Reserving only
+    // ns_type_size() would let the call scribble past the slot and corrupt the
+    // vm stack's heap block -- fatal after a few native calls. Over-reserve here;
+    // only `size` bytes are read back below.
+    i32 alloc_size = size < (i32)sizeof(ffi_arg) ? (i32)sizeof(ffi_arg) : size;
+    ns_value v = {.t = ns_type_set_stack(fn->fn.ret, true), .o = ns_eval_alloc(vm, alloc_size)};
     ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &vm->stack[v.o], _ffi_ctx.values);
     if (ns_type_is_ref(t)) {
         // Native code returns an absolute pointer to the result. Represent it as

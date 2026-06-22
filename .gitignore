@@ -17,5 +17,5 @@ build
 .claude/
 
 # local HTTPS dev certs
-nscode/dev-key.pem
-nscode/dev-cert.pem
+nscode/web/dev-key.pem
+nscode/web/dev-cert.pem

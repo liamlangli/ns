@@ -1,0 +1,47 @@
+mod term
+
+// Native terminal primitives for terminal applications (e.g. the nscode/cli
+// editor). Implemented in lib/src/term.posix.c (Linux + macOS) and
+// lib/src/term.win.c (Windows), resolved through the static symbol table in
+// src/ns_vm_lib.c.
+//
+// Every function is SCALAR (i32 in / i32 out). Only scalar FFI marshals
+// reliably from inside an ns function body, so bytes are moved one at a time:
+// output via term_putc/term_flush, files via term_getc/term_putc_file over a
+// path built with term_path_push, and the startup filename via term_env_byte
+// (the NSCODE_FILE environment variable).
+
+// Raw mode on/off (idempotent); both return 0.
+ref fn term_enable_raw() i32
+ref fn term_disable_raw() i32
+
+// Block for one key: a byte (0..255) or a KEY_* code (see nscode/cli/keys.ns);
+// -1 on end-of-input.
+ref fn term_read_key() i32
+
+// Terminal size, with fallbacks (80x24) when it cannot be queried.
+ref fn term_width() i32
+ref fn term_height() i32
+
+// Buffered screen output: term_putc appends one byte; term_flush writes the
+// buffer to stdout in a single frame.
+ref fn term_putc(c: i32) i32
+ref fn term_flush() i32
+
+// Assemble the path for the next open, one byte at a time.
+ref fn term_path_reset() i32
+ref fn term_path_push(c: i32) i32
+
+// File reading over the assembled path: term_open_read returns 0/-1, term_getc
+// returns the next byte or -1 at EOF.
+ref fn term_open_read() i32
+ref fn term_getc() i32
+ref fn term_close_read() i32
+
+// File writing over the assembled path: term_open_write returns 0/-1.
+ref fn term_open_write() i32
+ref fn term_putc_file(c: i32) i32
+ref fn term_close_write() i32
+
+// Byte `idx` of the NSCODE_FILE environment variable, or -1 past its end.
+ref fn term_env_byte(idx: i32) i32

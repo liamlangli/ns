@@ -1,0 +1,26 @@
+// nscode/cli/keys.ns
+// ---------------------------------------------------------------------------
+// Key codes returned by term_read_key() (lib/term.ns). Printable and control
+// bytes come back as their raw value (0..255); the editor's navigation keys are
+// escape-decoded by the native layer into the >= 1000 codes below. These MUST
+// match the NS_KEY_* constants in lib/include/term.h.
+//
+// ns has no enums; integer constants are exposed as zero-argument fns, the same
+// convention used by the self-hosted lexer (ns/lexer.ns).
+
+fn KEY_ARROW_LEFT() i32 { return 1000 }
+fn KEY_ARROW_RIGHT() i32 { return 1001 }
+fn KEY_ARROW_UP() i32 { return 1002 }
+fn KEY_ARROW_DOWN() i32 { return 1003 }
+fn KEY_DEL() i32 { return 1004 }
+fn KEY_HOME() i32 { return 1005 }
+fn KEY_END() i32 { return 1006 }
+fn KEY_PAGE_UP() i32 { return 1007 }
+fn KEY_PAGE_DOWN() i32 { return 1008 }
+
+// Control keys (raw byte values).
+fn KEY_CTRL_Q() i32 { return 17 }
+fn KEY_CTRL_S() i32 { return 19 }
+fn KEY_ENTER() i32 { return 13 }
+fn KEY_BACKSPACE() i32 { return 127 }
+fn KEY_BACKSPACE_ALT() i32 { return 8 }

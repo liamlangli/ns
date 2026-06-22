@@ -43,7 +43,8 @@ Entrypoint and CLI routing are in `src/ns.c`.
 - `lib/` — Standard/runtime dynamic libraries and Nano Script standard modules (`*.ns`) plus OS/GPU/view C implementations.
 - `lsp/` — Nano Script language server (`ns_lsp`).
 - `debug/` — Nano Script debug adapter (`ns_debug`) and protocol/repl bridge.
-- `nscode/` — Browser playground/editor using WebGPU, including tokenizer WASM asset.
+- `nscode/` — NSCode editors. `nscode/web/` is the WebGPU browser playground;
+  `nscode/cli/` is the terminal editor written in ns (uses the `term` module).
 - `sample/ns/` — Language feature examples (expressions, parse, fib, GUI, etc.).
 - `sample/c/` — C embedding sample.
 - `test/` — C tests (currently JSON-focused test target in root Makefile).
@@ -132,10 +133,14 @@ With filename and no analysis/emit flag, it evaluates and prints result.
   - `debug/src/ns_debug_protocol.c`
   - `debug/src/ns_debug_repl.c`
 
-### Browser playground (`nscode/`)
+### Browser playground (`nscode/web/`)
 - WebGPU-based in-browser Nano Script playground/editor.
 - Uses HTTPS dev server (`serve-https.js`) because WebGPU secure context requirement.
-- Includes interpreter/editor/rendering modules in `nscode/src/`.
+- Includes interpreter/editor/rendering modules in `nscode/web/src/`.
+
+### Terminal editor (`nscode/cli/`)
+- A "kilo"-style text editor written in ns, run with `bin/ns run nscode/cli/main.ns`.
+- Uses the native `term` module (`lib/term.ns`) for raw mode, key input and I/O.
 
 ---
 
@@ -149,7 +154,7 @@ For fast onboarding, recommended order:
 4. `doc/ssa.md` — SSA & backend design intent
 5. `doc/block.md`, `doc/ref.md`, `doc/token.md` — language semantics cheatsheets
 6. `sample/ns/*.ns` — practical examples to test parsing/execution and language features
-7. `nscode/README.md` — browser playground setup
+7. `nscode/web/README.md` — browser playground setup
 
 ---
 
@@ -176,7 +181,7 @@ Touch likely areas in this order:
 - Debugger behavior: `debug/src/*`
 
 ### D) “Work on web playground UX/rendering”
-- `nscode/src/editor.ts`, `ui.ts`, `renderer.js`, `gpu.ts`, `syntax.ts`
+- `nscode/web/src/editor.ts`, `ui.ts`, `renderer.js`, `gpu.ts`, `syntax.ts`
 - local run via HTTPS (`npm run dev`)
 
 ---
@@ -209,7 +214,7 @@ make
 make test
 
 # Build browser playground (in nscode)
-cd nscode && npm install && npm run dev
+cd nscode/web && npm install && npm run dev
 ```
 
 ---
@@ -221,16 +226,16 @@ This repo is a full Nano Script toolchain: a C-based language core (lexer/parser
 
 ## 12) Naming convention baseline
 
-For the `nscode/` codebase, use **snake_case** consistently for:
+For the `nscode/web/` codebase, use **snake_case** consistently for:
 - filenames,
 - variable names, and
 - function names.
 
-When refactoring or adding new code in `nscode/`, prefer snake_case names and avoid introducing new camelCase/PascalCase identifiers unless required by external APIs.
+When refactoring or adding new code in `nscode/web/`, prefer snake_case names and avoid introducing new camelCase/PascalCase identifiers unless required by external APIs.
 
 ## 13) NSCode memory note: runtime timing telemetry
 
-When working in `nscode/src/main.js`, preserve the output-panel timing contract added for script runs:
+When working in `nscode/web/src/main.js`, preserve the output-panel timing contract added for script runs:
 
 - Every run should print timing rows for:
   - `CPU parse: ... ms`

@@ -1,0 +1,18 @@
+// nscode/cli/main.ns
+// ---------------------------------------------------------------------------
+// Entry point for nscode -- the terminal text editor. Run it with:
+//
+//   NSCODE_FILE=path/to/file  bin/ns run nscode/cli/main.ns
+//
+// The filename is passed via the NSCODE_FILE environment variable because the
+// ns CLI does not forward extra command-line arguments to the program. If the
+// variable is unset the editor opens an empty, unnamed buffer.
+use std
+use term
+use keys
+use editor
+
+fn main() {
+    editor_init()
+    editor_run()
+}

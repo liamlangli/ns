@@ -29,7 +29,7 @@ jobs:
           node-version: 20
 
       - name: Build NSCode app
-        working-directory: nscode
+        working-directory: nscode/web
         run: |
           # The lockfile pins @liamlangli/ui over git+ssh; the runner has no SSH
           # key, so fetch the public dependency over HTTPS instead.
@@ -48,7 +48,7 @@ jobs:
           # Bypass Jekyll so files like ns_token.wasm are served verbatim.
           touch _site/.nojekyll
           # Compiled NSCode playground served under /nscode/.
-          cp -r nscode/dist/. _site/nscode/
+          cp -r nscode/web/dist/. _site/nscode/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

@@ -1,78 +1,20 @@
-# NSCode — NanoScript Playground
+# NSCode
 
-A WebGPU-based code editor and interpreter for NanoScript, running entirely in the browser.
+Editors for Nano Script. This directory groups the different NSCode front-ends:
 
-## Requirements
+- **`web/`** — the WebGPU browser playground/editor (TypeScript + Vite). This is
+  what is deployed to GitHub Pages under `/nscode/`. See `web/README.md`.
+- **`cli/`** — a terminal text editor written **in ns itself** (a "kilo"-style
+  editor). See `cli/README.md`.
+- **`app/`** — *(planned)* a native GUI editor.
 
-- A browser with WebGPU support (Chrome 113+, Edge 113+)
-- Node.js 18+
+## Terminal editor quick start
 
-## Local Development (HTTPS)
-
-WebGPU requires a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) (`https://` or `localhost`). Vite serves the app over HTTPS with the local self-signed certificate.
-
-### 1. Generate a local certificate (one-time)
-
-```sh
-openssl req -x509 -newkey rsa:2048 \
-  -keyout dev-key.pem -out dev-cert.pem \
-  -days 3650 -nodes \
-  -subj "/CN=localhost" \
-  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+```bash
+make                                            # build bin/ns (includes the term module)
+NSCODE_FILE=notes.txt bin/ns run nscode/cli/main.ns
 ```
 
-The cert files are gitignored and only needed locally.
-
-### 2. Start the dev server
-
-```sh
-npm run dev
-# → https://localhost:8443
-```
-
-Or specify a custom port:
-
-```sh
-npm run dev -- --port 9000
-# → https://localhost:9000
-```
-
-### 3. Open in browser
-
-Navigate to `https://localhost:8443`. On first visit, accept the self-signed certificate warning:
-
-- **Chrome/Edge**: click _Advanced_ → _Proceed to localhost_
-- **Firefox**: click _Advanced_ → _Accept the Risk and Continue_
-
-After accepting once, the warning won't appear again for this cert.
-
-## Deploy
-
-Deploy the static app to `/var/www/ns`:
-
-```sh
-npm run ci
-```
-
-Deploy to a different directory:
-
-```sh
-npm run ci -- /tmp/ns-deploy
-```
-
-## Project Structure
-
-```
-nscode/
-├── index.html          # Entry point
-├── vite.config.js      # HTTPS Vite dev server config
-├── src/
-│   ├── main.ts         # App entry, event loop
-│   ├── editor.ts       # Text editor buffer
-│   ├── interpreter.ts  # NanoScript interpreter
-│   ├── ui.ts           # UI adapter backed by @liamlangli/ui
-│   ├── draw.ts         # Draw list types and helpers
-│   ├── gpu.ts          # Legacy WebGPU backend
-│   └── syntax.ts       # Syntax highlighting
-└── public/             # Static assets
-```
+The terminal editor relies on the native `term` module (`lib/term.ns`,
+`lib/src/term.posix.c`, `lib/src/term.win.c`) for raw-mode terminal control,
+which is compiled into `bin/ns` and works on Linux, macOS and Windows.

@@ -1,0 +1,137 @@
+// nscode/cli/buffer_test.ns
+// ---------------------------------------------------------------------------
+// Tests for the editor's pure buffer logic -- editing, line geometry, cursor
+// movement and a file save/open round-trip. None of this needs a TTY or raw
+// mode, so it runs headless:
+//
+//   bin/ns test nscode/cli/buffer_test.ns      (exit code = failure count)
+//
+// Self-contained (no external harness) so it has no dependency outside lib.
+use std
+use term
+use editor
+
+let t_pass = 0
+let t_fail = 0
+
+fn check(got: i32, want: i32, name: str) {
+    if got == want {
+        t_pass = t_pass + 1
+    } else {
+        t_fail = t_fail + 1
+        print(`FAIL {name}: got {got} want {want}\n`)
+    }
+}
+
+// Reset editor state between cases.
+fn reset() {
+    g_len = 0
+    g_cur = 0
+    g_rowoff = 0
+    g_coloff = 0
+    g_dirty = 0
+}
+
+// Type a str literal's bytes through insert_byte (newline as byte 10).
+fn type_str(s: str) {
+    for i in 0 to s.len {
+        insert_byte(s[i] as i32)
+    }
+}
+
+fn test_insert() {
+    reset()
+    type_str("abc")
+    check(g_len, 3, "insert len")
+    check(gb(0), 97, "insert a")
+    check(gb(2), 99, "insert c")
+    check(g_dirty, 1, "insert dirty")
+    // insert in the middle
+    g_cur = 1
+    insert_byte(90)
+    check(g_len, 4, "mid len")
+    check(gb(1), 90, "mid value")
+    check(gb(2), 98, "mid shift")
+}
+
+fn test_delete() {
+    reset()
+    type_str("abcd")
+    g_cur = 4
+    delete_back()
+    check(g_len, 3, "del_back len")
+    check(gb(2), 99, "del_back last")
+    g_cur = 0
+    delete_forward()
+    check(g_len, 2, "del_fwd len")
+    check(gb(0), 98, "del_fwd first")
+}
+
+fn test_lines() {
+    reset()
+    type_str("ab")
+    insert_byte(10)
+    type_str("cde")
+    insert_byte(10)
+    type_str("f")
+    check(line_count(), 3, "line_count")
+    check(line_start(0), 0, "start0")
+    check(line_start(1), 3, "start1")
+    check(line_start(2), 7, "start2")
+    check(line_len(line_start(1)), 3, "len1")
+    check(line_len(line_start(2)), 1, "len2")
+}
+
+fn test_cursor() {
+    reset()
+    type_str("ab")
+    insert_byte(10)
+    type_str("cdef")
+    // cursor at end of line 1 (col 4)
+    move_up()
+    check(cur_line(), 0, "up line")
+    // column clamps to shorter line length (2)
+    check(cur_col(), 2, "up col clamp")
+    move_down()
+    check(cur_line(), 1, "down line")
+    do_home()
+    check(cur_col(), 0, "home col")
+    do_end()
+    check(cur_col(), 4, "end col")
+}
+
+fn test_roundtrip() {
+    reset()
+    // set filename to /tmp/nscode_bt.txt
+    let path = "/tmp/nscode_bt.txt"
+    g_fnlen = 0
+    for i in 0 to path.len {
+        g_fname[g_fnlen] = path[i] as u8
+        g_fnlen = g_fnlen + 1
+    }
+    type_str("hello")
+    insert_byte(10)
+    type_str("world")
+    let saved = g_len
+    editor_save()
+    check(g_dirty, 0, "save clears dirty")
+    // wipe and reload
+    g_len = 0
+    g_cur = 99
+    editor_open()
+    check(g_len, saved, "reload len")
+    check(gb(0), 104, "reload h")
+    check(gb(5), 10, "reload nl")
+    check(gb(6), 119, "reload w")
+    check(g_cur, 0, "reload cursor reset")
+}
+
+fn main() i32 {
+    test_insert()
+    test_delete()
+    test_lines()
+    test_cursor()
+    test_roundtrip()
+    print(`buffer_test: {t_pass} passed, {t_fail} failed\n`)
+    return t_fail
+}

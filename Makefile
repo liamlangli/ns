@@ -146,14 +146,14 @@ NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 # ns_vm_lib.c instead of dlopen()/dlsym(), so it loads and runs faster.
 NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c
 ifeq ($(NS_OS), $(NS_LINUX))
-	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c
+	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
-	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m
+	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/term.posix.c
 	ifeq ($(NS_ENABLE_METAL), 1)
 		NS_LIBFN_SRCS += lib/src/gpu.metal.m
 	endif
 else ifeq ($(NS_OS), $(NS_WIN))
-	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c
+	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c
 endif
 NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)

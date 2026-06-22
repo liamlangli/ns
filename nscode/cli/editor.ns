@@ -1,0 +1,477 @@
+// nscode/cli/editor.ns
+// ---------------------------------------------------------------------------
+// A small "kilo"-style terminal text editor, written entirely in ns. All OS
+// interaction goes through the scalar native primitives in lib/term.ns
+// (term_read_key, term_putc/flush, term file I/O, term_env_byte).
+//
+// The document is held in one flat byte buffer (g_buf, g_len). Lines are not
+// stored explicitly -- they are derived by scanning for '\n' (byte 10). The
+// cursor is a single byte offset (g_cur) into that buffer; screen row/column
+// are computed from it on demand.
+//
+// Notes on ns quirks honoured throughout this file:
+//   * Reading a [u8] element over-reads 4 bytes, so every read goes through
+//     gb()/fnb() which mask with 255; buffers are over-allocated to keep that
+//     read in bounds.
+//   * String literals are NOT escape-processed, so control bytes (ESC=27,
+//     '\n'=10, '\r'=13) are written as numbers.
+//   * There is no bare `return;` -- void helpers guard their bodies with `if`.
+//   * `<` binds tighter than `-`, so mixed comparisons are parenthesised,
+//     e.g. `a < (b - 1)`.
+
+use std
+use term
+use keys
+
+// Capacity must stay in sync with the guard in insert_byte(); g_buf is padded
+// past g_cap so the 4-byte over-read on the last element stays in bounds.
+fn g_cap() i32 { return 262144 }
+
+let g_buf = [u8](262208)
+let g_len = 0
+let g_cur = 0          // cursor as a byte offset into g_buf
+
+let g_rowoff = 0       // first document line shown
+let g_coloff = 0       // first column shown
+let g_rows = 24        // terminal height (text rows + 1 status row)
+let g_cols = 80        // terminal width
+
+let g_dirty = 0
+let g_quit = 0
+
+let g_fname = [u8](640)
+let g_fnlen = 0
+
+// ---- low level byte access ------------------------------------------------
+
+fn gb(i: i32) i32 {
+    return (g_buf[i] as i32) & 255
+}
+
+fn sb(i: i32, v: i32) {
+    g_buf[i] = v as u8
+}
+
+fn fnb(i: i32) i32 {
+    return (g_fname[i] as i32) & 255
+}
+
+// ---- buffered terminal output --------------------------------------------
+
+fn e_putc(c: i32) {
+    let r = term_putc(c)
+}
+
+fn e_puts(s: str) {
+    for i in 0 to s.len {
+        e_putc(s[i] as i32)
+    }
+}
+
+// Emit a non-negative integer as decimal digits (used for cursor positioning).
+fn e_num(n: i32) {
+    if n >= 10 {
+        e_num(n / 10)
+    }
+    e_putc(48 + n % 10)
+}
+
+fn e_flush() {
+    let r = term_flush()
+}
+
+// ---- line geometry over the flat buffer -----------------------------------
+
+fn line_count() i32 {
+    let c = 1
+    for i in 0 to g_len {
+        if gb(i) == 10 {
+            c = c + 1
+        }
+    }
+    return c
+}
+
+// Byte offset where document line `target` begins.
+fn line_start(target: i32) i32 {
+    if target <= 0 {
+        return 0
+    }
+    let l = 0
+    for i in 0 to g_len {
+        if gb(i) == 10 {
+            l = l + 1
+            if l == target {
+                return i + 1
+            }
+        }
+    }
+    return g_len
+}
+
+// Length (excluding the newline) of the line beginning at byte offset `off`.
+fn line_len(off: i32) i32 {
+    let n = 0
+    for i in off to g_len {
+        if gb(i) == 10 {
+            return n
+        }
+        n = n + 1
+    }
+    return n
+}
+
+fn cur_line() i32 {
+    let l = 0
+    for i in 0 to g_cur {
+        if gb(i) == 10 {
+            l = l + 1
+        }
+    }
+    return l
+}
+
+fn cur_col() i32 {
+    let c = 0
+    for i in 0 to g_cur {
+        if gb(i) == 10 {
+            c = 0
+        } else {
+            c = c + 1
+        }
+    }
+    return c
+}
+
+// ---- editing --------------------------------------------------------------
+
+fn insert_byte(b: i32) {
+    if g_len < g_cap() {
+        let i = g_len
+        loop i > g_cur {
+            sb(i, gb(i - 1))
+            i = i - 1
+        }
+        sb(g_cur, b)
+        g_len = g_len + 1
+        g_cur = g_cur + 1
+        g_dirty = 1
+    }
+}
+
+fn delete_back() {
+    if g_cur > 0 {
+        let i = g_cur - 1
+        loop i < (g_len - 1) {
+            sb(i, gb(i + 1))
+            i = i + 1
+        }
+        g_len = g_len - 1
+        g_cur = g_cur - 1
+        g_dirty = 1
+    }
+}
+
+fn delete_forward() {
+    if g_cur < g_len {
+        let i = g_cur
+        loop i < (g_len - 1) {
+            sb(i, gb(i + 1))
+            i = i + 1
+        }
+        g_len = g_len - 1
+        g_dirty = 1
+    }
+}
+
+// ---- cursor movement ------------------------------------------------------
+
+fn move_left() {
+    if g_cur > 0 {
+        g_cur = g_cur - 1
+    }
+}
+
+fn move_right() {
+    if g_cur < g_len {
+        g_cur = g_cur + 1
+    }
+}
+
+fn move_up() {
+    let cl = cur_line()
+    if cl > 0 {
+        let cc = cur_col()
+        let ps = line_start(cl - 1)
+        let pl = line_len(ps)
+        let col = cc
+        if col > pl {
+            col = pl
+        }
+        g_cur = ps + col
+    }
+}
+
+fn move_down() {
+    let cl = cur_line()
+    let total = line_count()
+    if cl < (total - 1) {
+        let cc = cur_col()
+        let ns = line_start(cl + 1)
+        let nl = line_len(ns)
+        let col = cc
+        if col > nl {
+            col = nl
+        }
+        g_cur = ns + col
+    }
+}
+
+fn do_home() {
+    g_cur = line_start(cur_line())
+}
+
+fn do_end() {
+    let s = line_start(cur_line())
+    g_cur = s + line_len(s)
+}
+
+fn page_up() {
+    let n = g_rows - 1
+    for i in 0 to n {
+        move_up()
+    }
+}
+
+fn page_down() {
+    let n = g_rows - 1
+    for i in 0 to n {
+        move_down()
+    }
+}
+
+// ---- rendering ------------------------------------------------------------
+
+fn editor_scroll() {
+    let cl = cur_line()
+    let cc = cur_col()
+    let textrows = g_rows - 1
+    if cl < g_rowoff {
+        g_rowoff = cl
+    }
+    if cl >= (g_rowoff + textrows) {
+        g_rowoff = (cl - textrows) + 1
+    }
+    if cc < g_coloff {
+        g_coloff = cc
+    }
+    if cc >= (g_coloff + g_cols) {
+        g_coloff = (cc - g_cols) + 1
+    }
+}
+
+fn draw_rows() {
+    let textrows = g_rows - 1
+    let total = line_count()
+    for r in 0 to textrows {
+        let fileline = g_rowoff + r
+        if fileline < total {
+            let off = line_start(fileline)
+            let llen = line_len(off)
+            let start = off + g_coloff
+            let vis = llen - g_coloff
+            if vis < 0 {
+                vis = 0
+            }
+            if vis > g_cols {
+                vis = g_cols
+            }
+            for k in 0 to vis {
+                e_putc(gb(start + k))
+            }
+        } else {
+            e_putc(126)
+        }
+        // ESC [ K : clear to end of line, then CR LF.
+        e_putc(27)
+        e_puts("[K")
+        e_putc(13)
+        e_putc(10)
+    }
+}
+
+fn draw_status() {
+    // ESC [ 7 m : reverse video.
+    e_putc(27)
+    e_puts("[7m")
+    let col = 0
+    if g_fnlen > 0 {
+        for i in 0 to g_fnlen {
+            e_putc(fnb(i))
+            col = col + 1
+        }
+    } else {
+        e_puts("[No Name]")
+        col = col + 9
+    }
+    if g_dirty > 0 {
+        e_puts(" *")
+        col = col + 2
+    }
+    e_puts("  (Ctrl-S save  Ctrl-Q quit)")
+    col = col + 28
+    loop col < g_cols {
+        e_putc(32)
+        col = col + 1
+    }
+    // ESC [ m : reset attributes.
+    e_putc(27)
+    e_puts("[m")
+}
+
+fn editor_refresh() {
+    editor_scroll()
+    // Hide cursor, move to home.
+    e_putc(27)
+    e_puts("[?25l")
+    e_putc(27)
+    e_puts("[H")
+
+    draw_rows()
+    draw_status()
+
+    // Position the cursor: ESC [ row ; col H (1-based).
+    let sr = (cur_line() - g_rowoff) + 1
+    let sc = (cur_col() - g_coloff) + 1
+    e_putc(27)
+    e_puts("[")
+    e_num(sr)
+    e_putc(59)
+    e_num(sc)
+    e_putc(72)
+    // Show cursor.
+    e_putc(27)
+    e_puts("[?25h")
+    e_flush()
+}
+
+// ---- file I/O over the assembled native path ------------------------------
+
+fn push_path() {
+    let r = term_path_reset()
+    for i in 0 to g_fnlen {
+        let r2 = term_path_push(fnb(i))
+    }
+}
+
+fn editor_open() {
+    push_path()
+    let rc = term_open_read()
+    if rc == 0 {
+        g_len = 0
+        let ch = term_getc()
+        loop ch >= 0 {
+            if g_len < g_cap() {
+                sb(g_len, ch)
+                g_len = g_len + 1
+            }
+            ch = term_getc()
+        }
+        let rc2 = term_close_read()
+    }
+    g_cur = 0
+}
+
+fn editor_save() {
+    if g_fnlen > 0 {
+        push_path()
+        let rc = term_open_write()
+        if rc == 0 {
+            for i in 0 to g_len {
+                let r = term_putc_file(gb(i))
+            }
+            let rc2 = term_close_write()
+            g_dirty = 0
+        }
+    }
+}
+
+// ---- input dispatch -------------------------------------------------------
+
+fn process_key(k: i32) {
+    if k == KEY_CTRL_Q() {
+        g_quit = 1
+    } else if k == KEY_CTRL_S() {
+        editor_save()
+    } else if k == KEY_ARROW_LEFT() {
+        move_left()
+    } else if k == KEY_ARROW_RIGHT() {
+        move_right()
+    } else if k == KEY_ARROW_UP() {
+        move_up()
+    } else if k == KEY_ARROW_DOWN() {
+        move_down()
+    } else if k == KEY_HOME() {
+        do_home()
+    } else if k == KEY_END() {
+        do_end()
+    } else if k == KEY_PAGE_UP() {
+        page_up()
+    } else if k == KEY_PAGE_DOWN() {
+        page_down()
+    } else if k == KEY_DEL() {
+        delete_forward()
+    } else if k == KEY_BACKSPACE() {
+        delete_back()
+    } else if k == KEY_BACKSPACE_ALT() {
+        delete_back()
+    } else if k == KEY_ENTER() {
+        insert_byte(10)
+    } else if k >= 32 && k < 127 {
+        insert_byte(k)
+    }
+}
+
+// ---- startup + main loop --------------------------------------------------
+
+fn editor_init() {
+    g_rows = term_height()
+    g_cols = term_width()
+
+    // Read the target filename from the NSCODE_FILE environment variable.
+    g_fnlen = 0
+    let idx = 0
+    let b = term_env_byte(0)
+    loop b >= 0 {
+        if g_fnlen < 639 {
+            g_fname[g_fnlen] = b as u8
+            g_fnlen = g_fnlen + 1
+        }
+        idx = idx + 1
+        b = term_env_byte(idx)
+    }
+
+    if g_fnlen > 0 {
+        editor_open()
+    }
+}
+
+fn editor_run() {
+    let r = term_enable_raw()
+    loop g_quit == 0 {
+        editor_refresh()
+        let k = term_read_key()
+        if k < 0 {
+            g_quit = 1
+        } else {
+            process_key(k)
+        }
+    }
+    let r2 = term_disable_raw()
+    // Clear the screen on exit.
+    e_putc(27)
+    e_puts("[2J")
+    e_putc(27)
+    e_puts("[H")
+    e_flush()
+}
