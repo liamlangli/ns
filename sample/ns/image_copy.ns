@@ -1,0 +1,15 @@
+// A tiny desktop-style tool built on the statically linked standard library.
+// The io module (image load/save) is compiled position-independent directly
+// into the ns binary, so this runs with no shared objects to load.
+//
+//   ns sample/ns/image_copy.ns <input.png> <output.png>
+//
+// Loads an image, reports its dimensions, and writes a PNG copy.
+use std
+use io
+
+let src = io_load_image("bin/input.png")
+print(`loaded {src.width}x{src.height}, {src.channels} channels\n`)
+
+let ok = io_save_image("bin/output.png", src)
+print(`saved copy: {ok}\n`)

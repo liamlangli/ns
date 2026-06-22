@@ -12,19 +12,20 @@ typedef struct io_image {
     u8 *data;
 } io_image;
 
-io_image* io_load_image(ns_str path) {
-    // Implementation for loading an image from the file at 'path'
-    // This is a placeholder implementation
+// `path` arrives as a C string: the ns runtime passes `str` arguments to ref
+// functions as a char* (see the FFI string marshalling in ns_vm_lib.c), not as
+// an ns_str struct by value.
+io_image* io_load_image(const char *path) {
     io_image *img = (io_image*)ns_malloc(sizeof(io_image));
     if (img == NULL) {
         ns_error("io", "Failed to allocate memory for image\n");
         return NULL;
     }
 
-    img->data = stbi_load(path.data, &img->width, &img->height, &img->channels, 0);
+    img->data = stbi_load(path, &img->width, &img->height, &img->channels, 0);
     if (img->data == NULL) {
         free(img);
-        ns_error("io", "Failed to load image from file: %.*s\n", path.len, path.data);
+        ns_error("io", "Failed to load image from file: %s\n", path);
         return NULL;
     }
 

@@ -55,6 +55,9 @@ endif
 
 ifeq ($(NS_OS), $(NS_WIN))
 NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
+else ifeq ($(NS_OS), $(NS_DARWIN))
+# Frameworks required by the statically linked Cocoa/Metal standard library.
+NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -framework Cocoa -framework Metal -framework MetalKit
 else
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
 endif
@@ -119,6 +122,21 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
+# Standard library (lib/*) compiled position-independent and statically linked
+# into the ns binary. Resolved at runtime via the compiled-in symbol table in
+# ns_vm_lib.c instead of dlopen()/dlsym(), so it loads and runs faster.
+NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c
+ifeq ($(NS_OS), $(NS_LINUX))
+	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c
+else ifeq ($(NS_OS), $(NS_DARWIN))
+	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/gpu.metal.m
+else ifeq ($(NS_OS), $(NS_WIN))
+	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c
+endif
+NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
+NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
+NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
+
 NS_TEST_SRCS = test/ns_json_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
@@ -138,8 +156,8 @@ $(NS_DIRS):
 $(NS_ENTRY_OBJ): $(NS_ENTRY)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
-$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) | $(NS_BINDIR)
-	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
+$(TARGET): $(NS_LIB_OBJS) $(NS_LIBFN_OBJS) $(NS_ENTRY_OBJ) | $(NS_BINDIR)
+	$(NS_LD) $(NS_LIB_OBJS) $(NS_LIBFN_OBJS) $(NS_ENTRY_OBJ) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
 
 $(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
@@ -158,8 +176,8 @@ count:
 pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
 
-$(NS_LIB): $(NS_LIB_OBJS)
-	ar rcs $(NS_BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS)
+$(NS_LIB): $(NS_LIB_OBJS) $(NS_LIBFN_OBJS)
+	ar rcs $(NS_BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS) $(NS_LIBFN_OBJS)
 
 so: $(NS_LIB_OBJS)
 	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(NS_BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
@@ -181,7 +199,10 @@ install: all ${NS_DAP_TARGET} ${NS_LSP_TARGET}
 	$(NS_CP) bin/ns_debug$(NS_SUFFIX) ~/.cache/ns/bin
 	$(NS_CP) bin/ns_lsp$(NS_SUFFIX) ~/.cache/ns/bin
 	$(NS_MKDIR) ~/.cache/ns/ref && $(NS_CP) lib/*.ns ~/.cache/ns/ref
-	$(NS_MKDIR) ~/.cache/ns/lib && $(NS_CP) bin/*$(NS_DYLIB_SUFFIX) ~/.cache/ns/lib
+	# The standard library is statically linked into the ns binary, so there are
+	# normally no shared objects to install; copy any that exist (e.g. from
+	# `make shared`) without failing when there are none.
+	$(NS_MKDIR) ~/.cache/ns/lib && -$(NS_CP) bin/*$(NS_DYLIB_SUFFIX) ~/.cache/ns/lib 2>/dev/null || true
 
 # ===== Apple (Darwin) XCFramework packing (macOS arm64 + iOS arm64) =====
 # Unique target names to avoid clashes with other included makefiles.

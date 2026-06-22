@@ -34,6 +34,69 @@ typedef struct ffi_ctx {
 } ffi_ctx;
 
 static ffi_ctx _ffi_ctx = {0};
+
+// ---------------------------------------------------------------------------
+// Static (position-independent) standard library symbol table.
+//
+// The lib/* C functions are compiled with -fPIC directly into the ns binary,
+// so a `ref fn` can be resolved by a compiled-in lookup instead of a runtime
+// dlopen()/dlsym() against a shared object. This removes per-process load cost
+// (no shared object mapping, relocation or symbol binding at first call) and
+// makes the standard library available even when no .so/.dylib is shipped.
+//
+// Prototypes are intentionally opaque (void*) — only the function address is
+// needed here; the real signatures live in lib/include and are honoured by the
+// ffi call that follows. Declaring opaque pointers keeps this table free of the
+// lib/* headers (and their platform GUI types) while still linking the symbol.
+extern void *io_load_image(const char *path);
+extern i32 io_save_image(const char *path, const void *img);
+
+extern void *view_create(const char *title, i32 width, i32 height);
+extern void view_close(void *v);
+extern void view_capture_require(void *v);
+extern void view_on_scroll(void *v, f64 x, f64 y);
+extern void view_on_resize(void *v, i32 width, i32 height);
+extern void view_on_mouse_move(void *v, f64 x, f64 y);
+extern void view_on_mouse_btn(void *v, i32 button, i32 action);
+extern void view_on_key_action(void *v, i32 key, i32 action);
+extern ns_bool view_is_key_pressed(void *v, i32 key);
+extern ns_str view_get_clipboard(void *v);
+extern void view_set_clipboard(void *v, ns_str text);
+
+extern ns_bool gpu_request_device(void *v);
+
+typedef struct ns_static_sym {
+    const char *name;
+    void *fn;
+} ns_static_sym;
+
+static const ns_static_sym ns_static_syms[] = {
+    {"io_load_image", (void*)io_load_image},
+    {"io_save_image", (void*)io_save_image},
+
+    {"view_create", (void*)view_create},
+    {"view_close", (void*)view_close},
+    {"view_capture_require", (void*)view_capture_require},
+    {"view_on_scroll", (void*)view_on_scroll},
+    {"view_on_resize", (void*)view_on_resize},
+    {"view_on_mouse_move", (void*)view_on_mouse_move},
+    {"view_on_mouse_btn", (void*)view_on_mouse_btn},
+    {"view_on_key_action", (void*)view_on_key_action},
+    {"view_is_key_pressed", (void*)view_is_key_pressed},
+    {"view_get_clipboard", (void*)view_get_clipboard},
+    {"view_set_clipboard", (void*)view_set_clipboard},
+
+    {"gpu_request_device", (void*)gpu_request_device},
+};
+
+// Resolve a `ref fn` to a statically linked symbol, or NULL when the name is
+// not part of the built-in standard library (callers then fall back to dlsym).
+void *ns_lib_static_sym(ns_str name) {
+    for (u32 i = 0; i < sizeof(ns_static_syms) / sizeof(ns_static_syms[0]); i++) {
+        if (ns_str_equals_STR(name, ns_static_syms[i].name)) return ns_static_syms[i].fn;
+    }
+    return ns_null;
+}
 #endif // NS_XCLIB
 
 ns_return_bool ns_vm_call_std(ns_vm *vm) {
@@ -209,12 +272,12 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         }
 
         if (ns_type_is_ref(v.t)) {
-            if (ns_type_in_stack(v.t)) {
-                _ffi_ctx.value_refs[i] = (i8*)vm->stack + v.o;
-                _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
-            } else {
-                _ffi_ctx.values[i] = (void*)v.o;
-            }
+            // ffi expects values[i] to point at the pointer being passed. The
+            // referent address is either stack-relative (vm->stack + offset) or
+            // an absolute address (e.g. a heap pointer returned by a previous
+            // native call); stash it so values[i] points at a live pointer.
+            _ffi_ctx.value_refs[i] = ns_type_in_stack(v.t) ? (void*)((i8*)vm->stack + v.o) : (void*)v.o;
+            _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
             _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
             _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
             continue;
@@ -223,12 +286,18 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         switch (v.t.type)
         {
             case NS_TYPE_STRING: {
+                // A `str` argument is passed to native code as a char*. ffi needs
+                // values[i] to point at the pointer value, so the char* must live
+                // until ffi_call. Stash it in the static ffi context rather than a
+                // loop-local (whose address would dangle by call time).
                 ns_str s = ns_eval_str(vm, v);
-                _ffi_ctx.values[i] = (void*)&s.data;
+                _ffi_ctx.value_refs[i] = (void*)s.data;
+                _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
             } break;
             case NS_TYPE_ARRAY: {
                 void *data = ns_eval_array_raw(vm, v);
-                _ffi_ctx.values[i] = data;
+                _ffi_ctx.value_refs[i] = data;
+                _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
             } break;
             default: {
                 u64 offset = (u64)ns_type_size(vm, v.t);
@@ -259,7 +328,11 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_value v = {.t = ns_type_set_stack(fn->fn.ret, true), .o = ns_eval_alloc(vm, size)};
     ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &vm->stack[v.o], _ffi_ctx.values);
     if (ns_type_is_ref(t)) {
-        call->ret.o = v.o;
+        // Native code returns an absolute pointer to the result. Represent it as
+        // an absolute-address ref value (stack=false, .o = the pointer) so that
+        // member access dereferences the heap struct directly.
+        call->ret.t = ns_type_set_stack(t, false);
+        call->ret.o = *(u64*)&vm->stack[v.o];
     } else {
         if (size > 0) ns_eval_copy(vm, call->ret, v, size);
     }
@@ -280,6 +353,14 @@ ns_return_bool ns_vm_call_ref(ns_vm *vm) {
     if (ns_str_equals(fn->lib, ns_str_cstr("std"))) return ns_vm_call_std(vm);
 #ifndef NS_XCLIB
     if (fn->fn.fn_ptr)  return ns_vm_call_ffi(vm);
+
+    // Prefer the statically linked symbol: no dlopen/dlsym round-trip and it
+    // works without any shipped shared object. Cache the resolved pointer.
+    void *static_ptr = ns_lib_static_sym(fn->name);
+    if (static_ptr) {
+        fn->fn.fn_ptr = static_ptr;
+        return ns_vm_call_ffi(vm);
+    }
 
     ns_lib *lib = ns_lib_find(vm, fn->lib);
     if (!lib) lib = ns_lib_import(vm, fn->lib);

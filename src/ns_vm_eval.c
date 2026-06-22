@@ -1322,6 +1322,16 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         store_t = dst_t;
     }
 
+    // A ref-typed binding aliases its referent: keep the ref value itself (an
+    // absolute heap pointer from a native call, or a stack-relative reference)
+    // rather than copying struct bytes into a fresh slot - ns_eval_copy is a
+    // no-op for refs, so copying here would silently drop the pointer.
+    if (ns_type_is_ref(store_t)) {
+        ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val, .val = src, .parsed = true};
+        ns_array_push(vm->symbol_stack, symbol);
+        return ns_return_ok(value, src);
+    }
+
     // Copy only the concrete member's bytes; the union slot may be larger.
     i32 copy_size = ns_type_is(dst_t, NS_TYPE_UNION) ? ns_type_size(vm, src.t) : size;
     ret.t = ns_type_set_stack(store_t, true);

@@ -34,7 +34,7 @@ ref fn view_on_resize(v: ref view, width: i32, height: i32)
 ref fn view_on_mouse_move(v: ref view, x: f64, y: f64)
 ref fn view_on_mouse_btn(v: ref view, button: i32, action: i32)
 ref fn view_on_key_action(v: ref view, key: i32, action: i32)
-ref fn view_is_key_pressed(v: ref view, key: i32): bool
+ref fn view_is_key_pressed(v: ref view, key: i32) bool
 
-ref fn view_get_clipboard(v: ref view): str
+ref fn view_get_clipboard(v: ref view) str
 ref fn view_set_clipboard(v: ref view, text: str)
