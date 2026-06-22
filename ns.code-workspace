@@ -3,10 +3,6 @@
 		{
 			"name": "ns",
 			"path": "."
-		},
-		{
-			"name": "nslang",
-			"path": "nslang"
 		}
 	],
 	"settings": {

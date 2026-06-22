@@ -43,7 +43,7 @@ jobs:
           mkdir -p _site/nscode
           # Landing page + its assets (favicon/logo) served from the root.
           cp index.html _site/index.html
-          cp -r nslang _site/nslang
+          cp -r assets _site/assets
           # Bypass Jekyll so files like ns_token.wasm are served verbatim.
           touch _site/.nojekyll
           # Compiled NSCode playground served under /nscode/.

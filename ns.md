@@ -43,7 +43,6 @@ Entrypoint and CLI routing are in `src/ns.c`.
 - `lib/` — Standard/runtime dynamic libraries and Nano Script standard modules (`*.ns`) plus OS/GPU/view C implementations.
 - `lsp/` — Nano Script language server (`ns_lsp`).
 - `debug/` — Nano Script debug adapter (`ns_debug`) and protocol/repl bridge.
-- `nslang/` — VS Code extension package metadata + grammar/config for `.ns` files.
 - `nscode/` — Browser playground/editor using WebGPU, including tokenizer WASM asset.
 - `sample/ns/` — Language feature examples (expressions, parse, fib, GUI, etc.).
 - `sample/c/` — C embedding sample.
@@ -133,10 +132,6 @@ With filename and no analysis/emit flag, it evaluates and prints result.
   - `debug/src/ns_debug_protocol.c`
   - `debug/src/ns_debug_repl.c`
 
-### VS Code extension (`nslang/`)
-- Declares language id `ns`, grammar, and debug type `ns_debug`.
-- Exposes LSP configuration (transport, port, server path, workspace mode).
-
 ### Browser playground (`nscode/`)
 - WebGPU-based in-browser Nano Script playground/editor.
 - Uses HTTPS dev server (`serve-https.js`) because WebGPU secure context requirement.
@@ -178,7 +173,6 @@ Touch likely areas in this order:
 
 ### C) “Improve editor / IDE support”
 - LSP behavior: `lsp/src/ns_lsp.c`
-- VS Code package/activation/config: `nslang/package.json`, `nslang/src/ns_ext.js`, grammar files
 - Debugger behavior: `debug/src/*`
 
 ### D) “Work on web playground UX/rendering”
@@ -222,7 +216,7 @@ cd nscode && npm install && npm run dev
 
 ## 12) One-paragraph summary
 
-This repo is a full Nano Script toolchain: a C-based language core (lexer/parser/type/VM), SSA-based lowering pipeline with multiple emitters (AArch64/Mach-O/PE/WASM), developer tooling (LSP + debug adapter + VS Code extension), runtime/std modules, and a WebGPU browser playground. For most engineering tasks, start at `src/ns.c` + `Makefile`, then jump to front-end (`ns_token`/`ns_ast*`) and execution (`ns_vm_*`) or backend (`ns_ssa` + emitter files) depending on whether the task is language semantics or code generation.
+This repo is a full Nano Script toolchain: a C-based language core (lexer/parser/type/VM), SSA-based lowering pipeline with multiple emitters (AArch64/Mach-O/PE/WASM), developer tooling (LSP + debug adapter), runtime/std modules, and a WebGPU browser playground. For most engineering tasks, start at `src/ns.c` + `Makefile`, then jump to front-end (`ns_token`/`ns_ast*`) and execution (`ns_vm_*`) or backend (`ns_ssa` + emitter files) depending on whether the task is language semantics or code generation.
 ---
 
 ## 12) Naming convention baseline

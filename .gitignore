@@ -4,9 +4,6 @@ bin
 # pack
 *.gz
 
-# nslang extension
-*.vsix
-
 # history & cache
 *.history
 .cache
