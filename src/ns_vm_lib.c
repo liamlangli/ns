@@ -15,8 +15,8 @@
     #define NS_LIB_PATH "bin"
     #define NS_REF_PATH "lib"
 #else
-    #define NS_LIB_PATH ".cache/ns/lib"
-    #define NS_REF_PATH ".cache/ns/ref"
+    #define NS_LIB_PATH "ns/lib"
+    #define NS_REF_PATH "ns/ref"
 #endif // NS_DEBUG
 
 #ifndef NS_XCLIB

@@ -21,6 +21,8 @@ NS_MKDIR = mkdir -p
 NS_RMDIR = rm -rf
 NS_CP = cp -r
 NS_HOME = $(HOME)
+NS_INSTALL_ROOT = $(NS_HOME)/ns
+NS_INSTALL_DISPLAY = ~/ns
 
 ifeq ($(OS), Linux)
 	NS_DYLIB_SUFFIX = .so
@@ -216,15 +218,18 @@ include sample/c/Makefile
 all: $(NS_LSP_TARGET) $(NS_DAP_TARGET)
 
 install: all ${NS_DAP_TARGET} ${NS_LSP_TARGET}
-	$(NS_MKDIR) ~/.cache/ns/bin
-	$(NS_CP) bin/ns$(NS_SUFFIX) ~/.cache/ns/bin
-	$(NS_CP) bin/ns_debug$(NS_SUFFIX) ~/.cache/ns/bin
-	$(NS_CP) bin/ns_lsp$(NS_SUFFIX) ~/.cache/ns/bin
-	$(NS_MKDIR) ~/.cache/ns/ref && $(NS_CP) lib/*.ns ~/.cache/ns/ref
-	# The standard library is statically linked into the ns binary, so there are
-	# normally no shared objects to install; copy any that exist (e.g. from
-	# `make shared`) without failing when there are none.
-	$(NS_MKDIR) ~/.cache/ns/lib && -$(NS_CP) bin/*$(NS_DYLIB_SUFFIX) ~/.cache/ns/lib 2>/dev/null || true
+	$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref
+	$(NS_CP) $(TARGET)$(NS_SUFFIX) $(NS_DAP_TARGET)$(NS_SUFFIX) $(NS_LSP_TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin
+	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
+	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec cp {} $(NS_INSTALL_ROOT)/lib \;
+	@echo "Installed ns to $(NS_INSTALL_DISPLAY)"
+	@echo "Please add $(NS_INSTALL_DISPLAY)/bin to your system PATH."
+	@case "$${SHELL##*/}" in \
+		zsh) ns_shell_rc="~/.zshrc" ;; \
+		bash) ns_shell_rc="~/.bashrc" ;; \
+		*) ns_shell_rc="~/.profile" ;; \
+	esac; \
+	printf 'Run this to append it: `echo '\''export PATH="$$HOME/ns/bin:$$PATH"'\'' >> %s`\n' "$$ns_shell_rc"
 
 # ===== Apple (Darwin) XCFramework packing (macOS arm64 + iOS arm64) =====
 # Unique target names to avoid clashes with other included makefiles.

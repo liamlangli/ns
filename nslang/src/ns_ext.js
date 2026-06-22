@@ -160,6 +160,7 @@ function resolve_lsp_command(context) {
 
     const home = process.env.HOME || process.env.USERPROFILE;
     if (home) {
+        candidates.push(path.join(home, "ns", "bin", exe_name));
         candidates.push(path.join(home, ".cache", "ns", "bin", exe_name));
     }
 
@@ -188,6 +189,7 @@ function resolve_debugger_command(context) {
 
     const home = process.env.HOME || process.env.USERPROFILE;
     if (home) {
+        candidates.push(path.join(home, "ns", "bin", exe_name));
         candidates.push(path.join(home, ".cache", "ns", "bin", exe_name));
     }
 
