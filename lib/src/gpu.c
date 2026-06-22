@@ -1,10 +1,9 @@
 // GPU device management.
 //
-// macOS uses the Metal backend implemented in gpu.metal.m. Other platforms
-// (Linux/Windows) will use a Vulkan backend; until that lands this provides a
-// linkable stub so the statically linked standard library always resolves
-// gpu_request_device.
-#ifndef NS_DARWIN
+// The Metal backend is opt-in on macOS while it still depends on external
+// mapper headers. Other platforms will use a Vulkan backend later; until then
+// this keeps the statically linked standard library resolving gpu_request_device.
+#if !defined(NS_DARWIN) || !NS_ENABLE_METAL
 
 #include "view.h"
 
@@ -14,4 +13,4 @@ ns_bool gpu_request_device(view *v) {
     return false;
 }
 
-#endif // NS_DARWIN
+#endif

@@ -391,7 +391,13 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap);
 #define ns_array_set_capacity(a, n) (ns_array_grow(a, 0, n))
 // Only ensure capacity when growing. When shrinking, `(n) - ns_array_length(a)`
 // would underflow (szt is unsigned) and request a bogus huge allocation.
-#define ns_array_set_length(a, n) (((n) > ns_array_length(a) ? (ns_array_ensure(a, (n) - ns_array_length(a)), 0) : 0), (a) ? ns_array_header(a)->len = (n) : 0)
+#define ns_array_set_length(a, n) __extension__ ({ \
+    size_t _ns_array_new_len = (size_t)(n); \
+    size_t _ns_array_old_len = ns_array_length(a); \
+    if (_ns_array_new_len > _ns_array_old_len) ns_array_ensure(a, _ns_array_new_len - _ns_array_old_len); \
+    if (a) ns_array_header(a)->len = _ns_array_new_len; \
+    0; \
+})
 #define ns_array_set_type(a, t) ((a) ? ns_array_header(a)->type = (t) : 0)
 
 #define ns_array_push(a, v) (ns_array_ensure(a, 1), (a)[ns_array_header(a)->len++] = (v))

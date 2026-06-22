@@ -34,6 +34,7 @@ else ifeq ($(OS), Darwin)
 	NS_LIB_SUFFIX = .a
 	NS_PLATFORM_DEF = -DNS_DARWIN
 	NS_OS = $(NS_DARWIN)
+	NS_LD = clang
 else
 	NS_DYLIB_SUFFIX = .so
 	NS_LIB_SUFFIX = .a
@@ -47,11 +48,20 @@ NS_INC += $(NS_PLATFORM_DEF)
 # OPTIONS
 NS_DEBUG ?= 1
 NS_DEBUG_HOOK ?= 1
+NS_WERROR ?= 1
+NS_ENABLE_METAL ?= 0
 
 NS_HOOK_CFLAGS =
 ifeq ($(NS_DEBUG_HOOK), 1)
 	NS_HOOK_CFLAGS += -DNS_DEBUG_HOOK
 endif
+
+NS_WERROR_CFLAGS =
+ifeq ($(NS_WERROR), 1)
+	NS_WERROR_CFLAGS += -Werror
+endif
+
+NS_WARN_CFLAGS = -Wall -Wextra -Wunused-result $(NS_WERROR_CFLAGS)
 
 ifeq ($(NS_OS), $(NS_WIN))
 NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
@@ -62,14 +72,21 @@ else
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
 endif
 
-NS_DEBUG_CFLAGS = -g -O0 -Wall -Wunused-result -Wextra -DNS_DEBUG $(NS_HOOK_CFLAGS)
-NS_RELEASE_CFLAGS = -Os $(NS_HOOK_CFLAGS)
+NS_DEBUG_CFLAGS = -g -O0 $(NS_WARN_CFLAGS) -DNS_DEBUG $(NS_HOOK_CFLAGS)
+NS_RELEASE_CFLAGS = -Os $(NS_WARN_CFLAGS) $(NS_HOOK_CFLAGS)
+NS_METAL_CFLAGS =
+ifeq ($(NS_ENABLE_METAL), 1)
+	NS_METAL_CFLAGS += -DNS_ENABLE_METAL=1
+else
+	NS_METAL_CFLAGS += -DNS_ENABLE_METAL=0
+endif
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
 else
 	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
 endif
+NS_CFLAGS += $(NS_METAL_CFLAGS)
 
 NS_DEBUG_TARGET = $(TARGET)_debug$(NS_SUFFIX)
 NS_RELEASE_TARGET = $(TARGET)_release$(NS_SUFFIX)
@@ -129,7 +146,10 @@ NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
-	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/gpu.metal.m
+	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m
+	ifeq ($(NS_ENABLE_METAL), 1)
+		NS_LIBFN_SRCS += lib/src/gpu.metal.m
+	endif
 else ifeq ($(NS_OS), $(NS_WIN))
 	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c
 endif
@@ -193,6 +213,8 @@ include lsp/Makefile
 include debug/Makefile
 include sample/c/Makefile
 
+all: $(NS_LSP_TARGET) $(NS_DAP_TARGET)
+
 install: all ${NS_DAP_TARGET} ${NS_LSP_TARGET}
 	$(NS_MKDIR) ~/.cache/ns/bin
 	$(NS_CP) bin/ns$(NS_SUFFIX) ~/.cache/ns/bin
@@ -209,10 +231,10 @@ install: all ${NS_DAP_TARGET} ${NS_LSP_TARGET}
 
 ifeq ($(NS_OS), $(NS_DARWIN))
 
-APPLE_CC        := $(shell xcrun -find clang)
-APPLE_LIBTOOL   := $(shell xcrun -find libtool)
-MACOS_SDK       := $(shell xcrun --sdk macosx --show-sdk-path)
-IOS_SDK         := $(shell xcrun --sdk iphoneos --show-sdk-path)
+APPLE_CC        = $(shell xcrun -find clang)
+APPLE_LIBTOOL   = $(shell xcrun -find libtool)
+MACOS_SDK       = $(shell xcrun --sdk macosx --show-sdk-path)
+IOS_SDK         = $(shell xcrun --sdk iphoneos --show-sdk-path)
 
 MACOS_MIN_VER   ?= 12.0
 IOS_MIN_VER     ?= 13.0
@@ -226,8 +248,8 @@ IOS_LIB         := $(APPLE_OUTDIR)/ios-arm64/libns.a
 NS_XCFRAMEWORK  := $(NS_BINDIR)/ns.xcframework
 NS_HEADERS_DIR  := include
 
-MACOS_CFLAGS := -target arm64-apple-macos$(MACOS_MIN_VER) -isysroot $(MACOS_SDK) -fPIC -g -O0 -DNS_DEBUG -DNS_XCLIB
-IOS_CFLAGS   := -target arm64-apple-ios$(IOS_MIN_VER)   -isysroot $(IOS_SDK)   -fembed-bitcode -fPIC -g -O0 -DNS_DEBUG -DNS_XCLIB
+MACOS_CFLAGS = -target arm64-apple-macos$(MACOS_MIN_VER) -isysroot $(MACOS_SDK) -fPIC -g -O0 -DNS_DEBUG -DNS_XCLIB
+IOS_CFLAGS   = -target arm64-apple-ios$(IOS_MIN_VER)   -isysroot $(IOS_SDK)   -fembed-bitcode -fPIC -g -O0 -DNS_DEBUG -DNS_XCLIB
 
 MACOS_OBJS := $(NS_LIB_SRCS:%.c=$(MACOS_OBJDIR)/%.o)
 IOS_OBJS   := $(NS_IOS_LIB_SRCS:%.c=$(IOS_OBJDIR)/%.o)

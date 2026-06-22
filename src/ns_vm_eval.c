@@ -630,13 +630,6 @@ ns_return_void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok_void;
 }
 
-// True when the innermost active call has executed a `return`, so enclosing
-// loops must stop iterating instead of running further bodies.
-static ns_bool ns_call_returned(ns_vm *vm) {
-    i32 n = ns_array_length(vm->call_stack);
-    return n > 0 && vm->call_stack[n - 1].ret_set;
-}
-
 // Called by loops after each body iteration. Consumes a pending `continue` so
 // the loop proceeds, and reports whether the loop must stop due to a pending
 // `break` or `return`. `break` is consumed here; `return` is left set so it
