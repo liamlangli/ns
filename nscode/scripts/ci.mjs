@@ -8,7 +8,7 @@ const rootDir = path.resolve(scriptDir, '..');
 const targetDir = path.resolve(process.argv[2] ?? process.env.NSCODE_DEPLOY_DIR ?? '/var/www/ns');
 
 const copyEntries = ['index.html', 'src', 'public'];
-const faviconSource = path.resolve(rootDir, '../assets/ns.png');
+const faviconSource = path.resolve(rootDir, '../sample/ns.png');
 const faviconTarget = path.join(targetDir, 'ns.png');
 
 async function ensureCleanDir(dir) {

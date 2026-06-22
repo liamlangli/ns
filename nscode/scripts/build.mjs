@@ -102,8 +102,8 @@ async function main() {
         await cp(path.join(root_dir, 'public'), path.join(out_dir, 'public'), { recursive: true });
     }
 
-    // Favicon lives in the repo-root assets directory.
-    const favicon = path.resolve(root_dir, '..', 'assets', 'ns.png');
+    // Favicon lives in the repo-root sample directory.
+    const favicon = path.resolve(root_dir, '..', 'sample', 'ns.png');
     if (existsSync(favicon)) {
         await cp(favicon, path.join(out_dir, 'ns.png'));
     }
