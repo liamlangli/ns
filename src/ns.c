@@ -485,12 +485,9 @@ static ns_str ns_manifest_value(ns_str src, const char *key) {
     return ns_str_null;
 }
 
-// Resolve the entry source file `ns run` should execute when no file is given:
-// walk up from the current directory to the nearest `ns.mod` and read its
-// declared `entry` (or first of `entries`), relative to its `source` dir.
-static ns_str ns_manifest_entry_file(void) {
-    ns_str cwd = ns_getcwd();
-    ns_str root = ns_project_root(cwd);
+// Resolve the entry source file declared by `root/ns.mod`, relative to its
+// `source` dir. Supports both `entry = "..."` and `entries = ["...", ...]`.
+static ns_str ns_manifest_entry_file_for_root(ns_str root) {
     ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
     ns_str mod = ns_fs_read_file(manifest);
     if (mod.data == ns_null)
@@ -508,9 +505,18 @@ static ns_str ns_manifest_entry_file(void) {
     return ns_path_join(base, entry);
 }
 
+// Resolve the entry source file `ns run` should execute when no file is given:
+// walk up from the current directory to the nearest `ns.mod`.
+static ns_str ns_manifest_entry_file(void) {
+    ns_str cwd = ns_getcwd();
+    ns_str root = ns_project_root(cwd);
+    return ns_manifest_entry_file_for_root(root);
+}
+
 void ns_exec_run(ns_str filename) {
     // No file argument: run the project's declared entry from its ns.mod.
     if (filename.len == 0) filename = ns_manifest_entry_file();
+    if (ns_is_dir(filename)) filename = ns_manifest_entry_file_for_root(ns_project_root(filename));
 
     ns_str source = ns_fs_read_file(filename);
     if (source.data == ns_null || source.len == 0)
