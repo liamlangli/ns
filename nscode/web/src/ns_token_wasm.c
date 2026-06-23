@@ -69,9 +69,6 @@ typedef enum {
     NS_TOKEN_STRUCT,
     NS_TOKEN_TRUE,
     NS_TOKEN_TYPE,
-    NS_TOKEN_VERTEX,
-    NS_TOKEN_FRAGMENT,
-    NS_TOKEN_KERNEL,
     NS_TOKEN_OPS,
 
     NS_TOKEN_TYPE_I8,
@@ -128,6 +125,9 @@ typedef enum {
 
     NS_TOKEN_EOL,
     NS_TOKEN_EOF,
+
+    /* Web tokenizer extension; the C frontend does not currently expose this. */
+    NS_TOKEN_KERNEL,
 } ns_token_type;
 
 typedef struct {
@@ -269,7 +269,6 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
         if (strncmp(s + f, "fn", 2) == 0)          { ns_range_token(NS_TOKEN_FN,  2) }
         else if (strncmp(s + f, "for", 3) == 0)    { ns_range_token(NS_TOKEN_FOR, 3) }
         else if (strncmp(s + f, "false", 5) == 0)  { ns_range_token(NS_TOKEN_FALSE, 5) }
-        else if (strncmp(s + f, "fragment", 8) == 0){ ns_range_token(NS_TOKEN_FRAGMENT, 8) }
         else if (strncmp(s + f, "f32", 3) == 0 || strncmp(s + f, "f64", 3) == 0) {
             sep = ns_token_separator(s, i + 3);
             if (sep == 0 && ns_identifier_follow(s[i + 3])) goto identifier;
@@ -356,7 +355,6 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
 
     case 'v': {
         if (strncmp(s + f, "void",   4) == 0)      { ns_range_token(NS_TOKEN_TYPE_VOID, 4) }
-        else if (strncmp(s + f, "vertex", 6) == 0) { ns_range_token(NS_TOKEN_VERTEX,    6) }
         else goto identifier;
     } break;
 

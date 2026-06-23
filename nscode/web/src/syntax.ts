@@ -44,37 +44,38 @@ export const TOKEN_COLOR: readonly [number, number, number, number][] = [
 const C_TOKEN = {
     UNKNOWN: -1, INVALID: 0,
     AS: 1, ANY: 2, ASYNC: 3, ASSERT: 4, AWAIT: 5, BREAK: 6,
-    CONST: 7, CONTINUE: 8, COMMENT: 9, DO: 10, LOOP: 11,
-    ELSE: 12, FALSE: 13, FOR: 14, TO: 15, IF: 16, USE: 17,
-    IN: 18, LET: 19, NIL: 20, MATCH: 21, MODULE: 22,
-    RETURN: 23, REF: 24, STRUCT: 25, TRUE: 26, TYPE: 27,
-    VERTEX: 28, FRAGMENT: 29, COMPUTE: 30, KERNEL: 31, OPS: 32,
-    TYPE_I8: 33, TYPE_I16: 34, TYPE_I32: 35, TYPE_I64: 36,
-    TYPE_U8: 37, TYPE_U16: 38, TYPE_U32: 39, TYPE_U64: 40,
-    TYPE_F32: 41, TYPE_F64: 42, TYPE_BOOL: 43, TYPE_STR: 44,
-    TYPE_ANY: 45, TYPE_VOID: 46,
-    INT_LITERAL: 47, FLT_LITERAL: 48,
-    STR_LITERAL: 49, STR_FORMAT: 50,
-    FN: 51, SPACE: 52, IDENTIFIER: 53,
-    COMMA: 54, DOT: 55, ASSIGN: 56, COLON: 57, QUESTION_MARK: 58,
-    LOGIC_OP: 59, EQ_OP: 60, REL_OP: 61,
-    SHIFT_OP: 62, ADD_OP: 63, MUL_OP: 64,
-    CMP_OP: 65, BIT_INVERT_OP: 66,
-    BITWISE_OP: 67, ASSIGN_OP: 68,
-    OPEN_BRACE: 69, CLOSE_BRACE: 70,
-    OPEN_PAREN: 71, CLOSE_PAREN: 72,
-    OPEN_BRACKET: 73, CLOSE_BRACKET: 74,
-    RETURN_TYPE: 75,
-    EOL: 76, EOF: 77,
+    CONTINUE: 7, COMMENT: 8, DO: 9, LOOP: 10,
+    ELSE: 11, FALSE: 12, FOR: 13, TO: 14, IF: 15, USE: 16,
+    IN: 17, LET: 18, NIL: 19, MATCH: 20, MODULE: 21,
+    RETURN: 22, REF: 23, STRUCT: 24, TRUE: 25, TYPE: 26,
+    OPS: 27,
+    TYPE_I8: 28, TYPE_I16: 29, TYPE_I32: 30, TYPE_I64: 31,
+    TYPE_U8: 32, TYPE_U16: 33, TYPE_U32: 34, TYPE_U64: 35,
+    TYPE_F32: 36, TYPE_F64: 37, TYPE_BOOL: 38, TYPE_STR: 39,
+    TYPE_ANY: 40, TYPE_VOID: 41,
+    INT_LITERAL: 42, FLT_LITERAL: 43,
+    STR_LITERAL: 44, STR_FORMAT: 45,
+    FN: 46, SPACE: 47, IDENTIFIER: 48,
+    COMMA: 49, DOT: 50, ASSIGN: 51, COLON: 52, QUESTION_MARK: 53,
+    LOGIC_OP: 54, EQ_OP: 55, REL_OP: 56,
+    SHIFT_OP: 57, ADD_OP: 58, MUL_OP: 59,
+    CMP_OP: 60, BIT_INVERT_OP: 61,
+    BITWISE_OP: 62, ASSIGN_OP: 63,
+    OPEN_BRACE: 64, CLOSE_BRACE: 65,
+    OPEN_PAREN: 66, CLOSE_PAREN: 67,
+    OPEN_BRACKET: 68, CLOSE_BRACKET: 69,
+    RETURN_TYPE: 70,
+    EOL: 71, EOF: 72,
+    KERNEL: 73,
 } as const;
 
 const _tt_map = new Int8Array(128).fill(TT.UNKNOWN);
 const _kw: number[] = [
     C_TOKEN.AS, C_TOKEN.ANY, C_TOKEN.ASYNC, C_TOKEN.ASSERT, C_TOKEN.AWAIT, C_TOKEN.BREAK,
-    C_TOKEN.CONST, C_TOKEN.CONTINUE, C_TOKEN.DO, C_TOKEN.LOOP, C_TOKEN.ELSE, C_TOKEN.FALSE,
+    C_TOKEN.CONTINUE, C_TOKEN.DO, C_TOKEN.LOOP, C_TOKEN.ELSE, C_TOKEN.FALSE,
     C_TOKEN.FOR, C_TOKEN.TO, C_TOKEN.IF, C_TOKEN.USE, C_TOKEN.IN, C_TOKEN.LET, C_TOKEN.NIL,
     C_TOKEN.MATCH, C_TOKEN.MODULE, C_TOKEN.RETURN, C_TOKEN.REF, C_TOKEN.STRUCT, C_TOKEN.TRUE,
-    C_TOKEN.TYPE, C_TOKEN.VERTEX, C_TOKEN.FRAGMENT, C_TOKEN.COMPUTE, C_TOKEN.KERNEL, C_TOKEN.OPS,
+    C_TOKEN.TYPE, C_TOKEN.KERNEL, C_TOKEN.OPS,
     C_TOKEN.FN,
 ];
 const _ty: number[] = [
@@ -116,6 +117,28 @@ interface wasm_exports {
 
 let _wasm: wasm_exports | null = null;
 
+function _wasm_contract_ok(w: wasm_exports): boolean {
+    const probe = 'vertex fragment fn';
+    const bytes = new TextEncoder().encode(probe);
+    const src_ptr = w.get_src_buf();
+    new Uint8Array(w.memory.buffer, src_ptr, bytes.length).set(bytes);
+    const count = w.tokenize(bytes.length);
+    const tok_ptr = w.get_tok_buf();
+    const toks = new Int32Array(w.memory.buffer, tok_ptr, count * 3);
+    const words: { type: number; text: string }[] = [];
+    for (let i = 0; i < count; i++) {
+        const type = toks[i * 3]!;
+        const offset = toks[i * 3 + 1]!;
+        const len = toks[i * 3 + 2]!;
+        const text = probe.slice(offset, offset + len);
+        if (text.trim().length > 0) words.push({ type, text });
+    }
+    return words.length >= 3
+        && words[0]!.text === 'vertex' && words[0]!.type === C_TOKEN.IDENTIFIER
+        && words[1]!.text === 'fragment' && words[1]!.type === C_TOKEN.IDENTIFIER
+        && words[2]!.text === 'fn' && words[2]!.type === C_TOKEN.FN;
+}
+
 async function _load_wasm(): Promise<void> {
     try {
         const resp = await fetch(new URL('../public/ns_token.wasm', import.meta.url));
@@ -124,6 +147,9 @@ async function _load_wasm(): Promise<void> {
         const mod  = await WebAssembly.compile(buf);
         const inst = await WebAssembly.instantiate(mod, {});
         const ex   = inst.exports as unknown as wasm_exports;
+        if (!_wasm_contract_ok(ex)) {
+            throw new Error('ns_token.wasm token ids are stale');
+        }
         _wasm = { memory: ex.memory, get_src_buf: ex.get_src_buf, get_tok_buf: ex.get_tok_buf, tokenize: ex.tokenize };
     } catch (e) {
         console.warn('ns_token.wasm unavailable, using JS fallback:', e);
@@ -168,7 +194,7 @@ function _wasm_tokenize_line(line: string): token[] {
 const NS_KEYWORDS = new Set([
     'fn','let','return','if','else','for','in','to','type','use','break',
     'continue','as','true','false','struct','nil','loop','do','match','mod',
-    'async','await','assert','ref','ops','vertex','fragment','kernel',
+    'async','await','assert','ref','ops','kernel',
 ]);
 const NS_TYPES = new Set([
     'i8','u8','i16','u16','i32','u32','i64','u64','f32','f64','bool','str','void','any',

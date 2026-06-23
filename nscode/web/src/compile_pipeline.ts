@@ -178,10 +178,9 @@ function find_function_end(bytes: Uint8Array, fnOffset: number): number {
     throw new Error(`Unterminated function starting at byte ${fnOffset}.`);
 }
 
-function scan_top_level_functions(bytes: Uint8Array, limits: preprocess_limits): function_span[] {
+function scan_functions(bytes: Uint8Array, limits: preprocess_limits): function_span[] {
     const spans: function_span[] = [];
     let i = 0;
-    let top_level_brace_depth = 0;
 
     while (i < bytes.length) {
         const ch = bytes[i]!;
@@ -216,25 +215,14 @@ function scan_top_level_functions(bytes: Uint8Array, limits: preprocess_limits):
             continue;
         }
 
-        if (ch === CH.LBRACE) {
-            top_level_brace_depth++;
-            i++;
-            continue;
-        }
-        if (ch === CH.RBRACE) {
-            top_level_brace_depth = Math.max(0, top_level_brace_depth - 1);
-            i++;
-            continue;
-        }
-
-        if (top_level_brace_depth === 0 && match_fn_keyword(bytes, i)) {
+        if (match_fn_keyword(bytes, i)) {
             const end = find_function_end(bytes, i);
             const byte_length = end - i;
             if (byte_length > limits.maxFunctionBytes) {
                 throw new Error(`Function at byte ${i} exceeds maxFunctionBytes (${byte_length} > ${limits.maxFunctionBytes}).`);
             }
             spans.push({ byteOffset: i, byte_length });
-            i = end;
+            i += 2;
             continue;
         }
 
@@ -259,7 +247,7 @@ export function preprocess_source_for_gpu(source: string, customLimits: Partial<
         throw new Error(`Source exceeds maxSourceBytes (${source_bytes.length} > ${limits.maxSourceBytes}).`);
     }
 
-    const function_spans = scan_top_level_functions(source_bytes, limits);
+    const function_spans = scan_functions(source_bytes, limits);
     const function_span_table = new Uint32Array(function_spans.length * FUNCTION_SPAN_RECORD_WORDS);
 
     for (let i = 0; i < function_spans.length; i++) {

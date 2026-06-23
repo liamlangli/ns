@@ -212,25 +212,87 @@ const key_map_instance = new key_map(DEFAULT_BINDINGS);
 
 function extract_function_spans(source) {
     const spans = [];
-    const fn_re = /\bfn\s+[A-Za-z_][A-Za-z0-9_]*\s*\([^)]*\)\s*(?:[A-Za-z0-9_<>\[\]]+\s*)?\{/g;
-    for (const match of source.matchAll(fn_re)) {
-        const start = match.index ?? 0;
-        let brace_i = source.indexOf('{', start);
-        if (brace_i < 0) continue;
-        let depth = 0;
-        let end = source.length;
-        for (let i = brace_i; i < source.length; i++) {
+    const is_ident = (ch) => /[A-Za-z0-9_$]/.test(ch ?? '');
+    const skip_string = (i) => {
+        const quote = source[i];
+        i++;
+        while (i < source.length) {
+            if (source[i] === '\\') {
+                i += 2;
+                continue;
+            }
+            if (source[i] === quote) return i + 1;
+            i++;
+        }
+        return i;
+    };
+    const skip_comment = (i) => {
+        if (source[i + 1] === '/') {
+            i += 2;
+            while (i < source.length && source[i] !== '\n') i++;
+            return i;
+        }
+        if (source[i + 1] === '*') {
+            i += 2;
+            while (i + 1 < source.length && !(source[i] === '*' && source[i + 1] === '/')) i++;
+            return Math.min(source.length, i + 2);
+        }
+        return i;
+    };
+    const find_body_start = (i) => {
+        while (i < source.length) {
             const ch = source[i];
+            if (ch === '"' || ch === "'" || ch === '`') {
+                i = skip_string(i);
+                continue;
+            }
+            if (ch === '/' && (source[i + 1] === '/' || source[i + 1] === '*')) {
+                i = skip_comment(i);
+                continue;
+            }
+            if (ch === '{') return i;
+            i++;
+        }
+        return -1;
+    };
+    const find_body_end = (i) => {
+        let depth = 0;
+        while (i < source.length) {
+            const ch = source[i];
+            if (ch === '"' || ch === "'" || ch === '`') {
+                i = skip_string(i);
+                continue;
+            }
+            if (ch === '/' && (source[i + 1] === '/' || source[i + 1] === '*')) {
+                i = skip_comment(i);
+                continue;
+            }
             if (ch === '{') depth++;
             else if (ch === '}') {
                 depth--;
-                if (depth === 0) {
-                    end = i + 1;
-                    break;
-                }
+                if (depth === 0) return i + 1;
             }
+            i++;
         }
-        spans.push({ start, end });
+        return source.length;
+    };
+
+    for (let i = 0; i < source.length; i++) {
+        const ch = source[i];
+        if (ch === '"' || ch === "'" || ch === '`') {
+            i = skip_string(i) - 1;
+            continue;
+        }
+        if (ch === '/' && (source[i + 1] === '/' || source[i + 1] === '*')) {
+            i = skip_comment(i) - 1;
+            continue;
+        }
+        if (source.startsWith('fn', i) && !is_ident(source[i - 1]) && !is_ident(source[i + 2])) {
+            const brace_i = find_body_start(i + 2);
+            if (brace_i < 0) continue;
+            spans.push({ start: i, end: find_body_end(brace_i) });
+            i += 1;
+        }
     }
     if (spans.length === 0) spans.push({ start: 0, end: source.length });
     return spans;
