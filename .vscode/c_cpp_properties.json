@@ -17,40 +17,6 @@
             "cStandard": "c11",
             "cppStandard": "c++11",
             "intelliSenseMode": "macos-clang-arm64"
-        },
-        {
-            "name": "MacX64",
-            "includePath": [
-                "${workspaceFolder}/include/**",
-                "${workspaceFolder}/lsp/include/**",
-                "${workspaceFolder}/debug/include/**",
-                "${workspaceFolder}/lib/include/**",
-                "/usr/local/opt/llvm/include"
-            ],
-            "defines": ["NS_IR", "NS_JIT", "NS_DEBUG", "NS_DARWIN"],
-            "macFrameworkPath": [
-                "/Library/Developer/CommandLineTools/SDKs/MacOSX14.sdk/System/Library/Frameworks"
-            ],
-            "compilerPath": "/usr/local/opt/llvm/bin/clang",
-            "cStandard": "c11",
-            "cppStandard": "c++11",
-            "intelliSenseMode": "macos-clang-arm64"
-        },
-        {
-            "name": "Win32",
-            "includePath": [
-                "${workspaceFolder}/include/**",
-                "${workspaceFolder}/lsp/include/**",
-                "${workspaceFolder}/debug/include/**",
-                "${workspaceFolder}/lib/include/**",
-                "D:/msys64/mingw64/include",
-                "D:/msys64/usr/include"
-            ],
-            "defines": ["NS_IR", "NS_JIT", "NS_DEBUG", "NS_WIN"],
-            "compilerPath": "D:\\msys64\\ucrt64\\bin\\clang.exe",
-            "cStandard": "c11",
-            "cppStandard": "c++11",
-            "intelliSenseMode": "windows-clang-x64"
         }
     ],
     "version": 4
