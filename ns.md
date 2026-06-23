@@ -117,7 +117,7 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 
 ### Browser playground (`nscode/web/`)
 - WebGPU-based in-browser Nano Script playground/editor.
-- Uses HTTPS dev server (`serve-https.js`) because WebGPU secure context requirement.
+- Uses the Vite dev server on `localhost`, which satisfies WebGPU's secure context requirement without a local certificate.
 - Includes interpreter/editor/rendering modules in `nscode/web/src/`.
 
 ### Terminal editor (`nscode/cli/`)
@@ -170,7 +170,7 @@ Touch likely areas in this order:
 
 ### C) “Work on web playground UX/rendering”
 - `nscode/web/src/editor.ts`, `ui.ts`, `renderer.js`, `gpu.ts`, `syntax.ts`
-- local run via HTTPS (`npm run dev`)
+- local run via `npm run dev`
 
 ---
 

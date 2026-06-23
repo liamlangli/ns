@@ -1,7 +1,7 @@
 {
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "vite --host localhost",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
     "ci": "node scripts/ci.mjs"

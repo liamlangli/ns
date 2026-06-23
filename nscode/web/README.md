@@ -7,44 +7,23 @@ A WebGPU-based code editor and interpreter for NanoScript, running entirely in t
 - A browser with WebGPU support (Chrome 113+, Edge 113+)
 - Node.js 18+
 
-## Local Development (HTTPS)
+## Local Development
 
-WebGPU requires a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) (`https://` or `localhost`). Vite serves the app over HTTPS with the local self-signed certificate.
-
-### 1. Generate a local certificate (one-time)
-
-```sh
-openssl req -x509 -newkey rsa:2048 \
-  -keyout dev-key.pem -out dev-cert.pem \
-  -days 3650 -nodes \
-  -subj "/CN=localhost" \
-  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-```
-
-The cert files are gitignored and only needed locally.
-
-### 2. Start the dev server
+WebGPU requires a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts). `localhost` is treated as a secure context, so the Vite dev server can run over plain HTTP without a local certificate.
 
 ```sh
 npm run dev
-# → https://localhost:8443
+# → http://localhost:8443
 ```
 
 Or specify a custom port:
 
 ```sh
 npm run dev -- --port 9000
-# → https://localhost:9000
+# → http://localhost:9000
 ```
 
-### 3. Open in browser
-
-Navigate to `https://localhost:8443`. On first visit, accept the self-signed certificate warning:
-
-- **Chrome/Edge**: click _Advanced_ → _Proceed to localhost_
-- **Firefox**: click _Advanced_ → _Accept the Risk and Continue_
-
-After accepting once, the warning won't appear again for this cert.
+Open `http://localhost:8443` in a browser with WebGPU support.
 
 ## Deploy
 
@@ -65,7 +44,7 @@ npm run ci -- /tmp/ns-deploy
 ```
 nscode/
 ├── index.html          # Entry point
-├── vite.config.js      # HTTPS Vite dev server config
+├── vite.config.ts      # Vite dev server config
 ├── src/
 │   ├── main.ts         # App entry, event loop
 │   ├── editor.ts       # Text editor buffer
