@@ -53,6 +53,8 @@ void gpu_draw(int base, int count, int instance_count) { ns_unused(base); ns_unu
 void gpu_end_pass(void) {}
 void gpu_commit(void) {}
 
+#endif
+
 // Pixel-format math is backend agnostic; provide a minimal RGBA8 fallback so the
 // helpers return sane values when no backend is present.
 int gpu_pixel_format_size(gpu_pixel_format format) {
@@ -77,5 +79,3 @@ int gpu_pixel_format_surface_pitch(gpu_pixel_format format, int width, int heigh
     int row_pitch = gpu_pixel_format_row_pitch(format, width, row_alignment);
     return row_pitch * gpu_pixel_format_row_count(format, height);
 }
-
-#endif

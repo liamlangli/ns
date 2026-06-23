@@ -17,10 +17,11 @@
 // Lifecycle note: view_create() opens the window WITHOUT entering the loop so
 // callbacks (on_frame / on_launch / on_terminate) can be attached before
 // view_run() drives frames. Attaching those callbacks from ns currently depends
-// on closure support in the interpreter, which has a pre-existing bug (e.g.
-// sample/ns/block.ns also fails to parse today). Until that is fixed, this entry
-// draws a single frame up front and then runs the loop; per-frame ns callbacks
-// and live key input (which also needs an on_key hook on `view`) are follow-ups.
+// on closure/function assignment support in the interpreter, which has a
+// pre-existing bug (e.g. sample/ns/block.ns also fails to parse today). Until
+// that is fixed, this entry draws a single frame up front and then runs the
+// loop; per-frame ns callbacks and live key input (which also needs an on_key
+// hook on `view`) are follow-ups.
 
 use std
 use view

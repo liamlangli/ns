@@ -7,6 +7,8 @@
 
 #include "view.h"
 
+void gpu_mtl_begin_frame(MTKView *view);
+
 @interface ViewApp : NSApplication
 @end
 
@@ -117,9 +119,9 @@ i32 view_osx_key_map(i32 k) {
 }
 
 - (void)drawInMTKView:(nonnull MTKView*)view {
-    (void)view;
     view_on_frame frame = (view_on_frame)_view.on_frame;
     if (frame) {
+        gpu_mtl_begin_frame(view);
         frame(&_view);
     }
 }
