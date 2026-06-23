@@ -1,0 +1,294 @@
+// nscode/native/editor.ns
+// ---------------------------------------------------------------------------
+// Document model for the native, view-based code editor. This is the same flat
+// byte-buffer model proven in nscode/cli/editor.ns, lifted out of the terminal:
+// there are no term_* calls here. The document is one flat byte buffer
+// (g_buf, g_len). Lines are derived by scanning for '\n' (byte 10). The cursor
+// is a single byte offset (g_cur); screen row/column are computed on demand.
+//
+// Rendering (nscode/native/render.ns) and the window/GPU lifecycle
+// (nscode/native/main.ns) live in sibling modules. Input is dispatched here via
+// process_view_key(), keyed by the VIEW_KEY_* codes from lib/include/view.h.
+//
+// ns quirks honoured (see nscode/cli/editor.ns for the full list):
+//   * [u8] element reads over-read 4 bytes, so reads go through gb() which masks
+//     with 255 and g_buf is over-allocated past g_cap().
+//   * String literals are not escape-processed; control bytes are written as
+//     numbers (newline = 10).
+//   * No bare `return;` in void helpers.
+//   * `<` binds tighter than `-`, so mixed comparisons are parenthesised.
+
+use std
+
+// Capacity must stay in sync with the guard in insert_byte(); g_buf is padded
+// past g_cap so the 4-byte over-read on the last element stays in bounds.
+fn g_cap() i32 { return 262144 }
+
+let g_buf = [u8](262208)
+let g_len = 0
+let g_cur = 0          // cursor as a byte offset into g_buf
+
+let g_rowoff = 0       // first document line shown
+let g_coloff = 0       // first column shown
+let g_rows = 40        // visible text rows (set from the framebuffer in main)
+let g_cols = 120       // visible columns
+
+// VIEW_KEY_* codes (lib/include/view.h). ns has no enums; constants are
+// zero-argument fns, matching the convention in nscode/cli/keys.ns.
+fn VK_ENTER() i32 { return 257 }
+fn VK_BACKSPACE() i32 { return 259 }
+fn VK_DELETE() i32 { return 261 }
+fn VK_RIGHT() i32 { return 262 }
+fn VK_LEFT() i32 { return 263 }
+fn VK_DOWN() i32 { return 264 }
+fn VK_UP() i32 { return 265 }
+fn VK_PAGE_UP() i32 { return 266 }
+fn VK_PAGE_DOWN() i32 { return 267 }
+fn VK_HOME() i32 { return 268 }
+fn VK_END() i32 { return 269 }
+
+// ---- low level byte access ------------------------------------------------
+
+fn gb(i: i32) i32 {
+    return (g_buf[i] as i32) & 255
+}
+
+fn sb(i: i32, v: i32) {
+    g_buf[i] = v as u8
+}
+
+// Append one byte at the end of the document (used to seed initial content).
+fn append_byte(b: i32) {
+    if g_len < g_cap() {
+        sb(g_len, b)
+        g_len = g_len + 1
+    }
+}
+
+// Seed the buffer with the bytes of `s` (resets the document first).
+fn load_str(s: str) {
+    g_len = 0
+    g_cur = 0
+    for i in 0 to s.len {
+        append_byte(s[i] as i32)
+    }
+    g_cur = 0
+}
+
+// ---- line geometry over the flat buffer -----------------------------------
+
+fn line_count() i32 {
+    let c = 1
+    for i in 0 to g_len {
+        if gb(i) == 10 {
+            c = c + 1
+        }
+    }
+    return c
+}
+
+// Byte offset where document line `target` begins.
+fn line_start(target: i32) i32 {
+    if target <= 0 {
+        return 0
+    }
+    let l = 0
+    for i in 0 to g_len {
+        if gb(i) == 10 {
+            l = l + 1
+            if l == target {
+                return i + 1
+            }
+        }
+    }
+    return g_len
+}
+
+// Length (excluding the newline) of the line beginning at byte offset `off`.
+fn line_len(off: i32) i32 {
+    let n = 0
+    for i in off to g_len {
+        if gb(i) == 10 {
+            return n
+        }
+        n = n + 1
+    }
+    return n
+}
+
+fn cur_line() i32 {
+    let l = 0
+    for i in 0 to g_cur {
+        if gb(i) == 10 {
+            l = l + 1
+        }
+    }
+    return l
+}
+
+fn cur_col() i32 {
+    let c = 0
+    for i in 0 to g_cur {
+        if gb(i) == 10 {
+            c = 0
+        } else {
+            c = c + 1
+        }
+    }
+    return c
+}
+
+// ---- editing --------------------------------------------------------------
+
+fn insert_byte(b: i32) {
+    if g_len < g_cap() {
+        let i = g_len
+        loop i > g_cur {
+            sb(i, gb(i - 1))
+            i = i - 1
+        }
+        sb(g_cur, b)
+        g_len = g_len + 1
+        g_cur = g_cur + 1
+    }
+}
+
+fn delete_back() {
+    if g_cur > 0 {
+        let i = g_cur - 1
+        loop i < (g_len - 1) {
+            sb(i, gb(i + 1))
+            i = i + 1
+        }
+        g_len = g_len - 1
+        g_cur = g_cur - 1
+    }
+}
+
+fn delete_forward() {
+    if g_cur < g_len {
+        let i = g_cur
+        loop i < (g_len - 1) {
+            sb(i, gb(i + 1))
+            i = i + 1
+        }
+        g_len = g_len - 1
+    }
+}
+
+// ---- cursor movement ------------------------------------------------------
+
+fn move_left() {
+    if g_cur > 0 {
+        g_cur = g_cur - 1
+    }
+}
+
+fn move_right() {
+    if g_cur < g_len {
+        g_cur = g_cur + 1
+    }
+}
+
+fn move_up() {
+    let cl = cur_line()
+    if cl > 0 {
+        let cc = cur_col()
+        let ps = line_start(cl - 1)
+        let pl = line_len(ps)
+        let col = cc
+        if col > pl {
+            col = pl
+        }
+        g_cur = ps + col
+    }
+}
+
+fn move_down() {
+    let cl = cur_line()
+    let total = line_count()
+    if cl < (total - 1) {
+        let cc = cur_col()
+        let ns = line_start(cl + 1)
+        let nl = line_len(ns)
+        let col = cc
+        if col > nl {
+            col = nl
+        }
+        g_cur = ns + col
+    }
+}
+
+fn do_home() {
+    g_cur = line_start(cur_line())
+}
+
+fn do_end() {
+    let s = line_start(cur_line())
+    g_cur = s + line_len(s)
+}
+
+fn page_up() {
+    let n = g_rows - 1
+    for i in 0 to n {
+        move_up()
+    }
+}
+
+fn page_down() {
+    let n = g_rows - 1
+    for i in 0 to n {
+        move_down()
+    }
+}
+
+// ---- scrolling ------------------------------------------------------------
+
+fn editor_scroll() {
+    let cl = cur_line()
+    let cc = cur_col()
+    if cl < g_rowoff {
+        g_rowoff = cl
+    }
+    if cl >= (g_rowoff + g_rows) {
+        g_rowoff = (cl - g_rows) + 1
+    }
+    if cc < g_coloff {
+        g_coloff = cc
+    }
+    if cc >= (g_coloff + g_cols) {
+        g_coloff = (cc - g_cols) + 1
+    }
+}
+
+// ---- input dispatch -------------------------------------------------------
+// Navigation and structural edits are keyed by VIEW_KEY_* codes delivered by
+// the native window layer. Printable-character insertion needs translated
+// character events (with modifier/shift state), which the current view struct
+// does not yet surface to ns -- see the note in main.ns.
+
+fn process_view_key(k: i32) {
+    if k == VK_LEFT() {
+        move_left()
+    } else if k == VK_RIGHT() {
+        move_right()
+    } else if k == VK_UP() {
+        move_up()
+    } else if k == VK_DOWN() {
+        move_down()
+    } else if k == VK_HOME() {
+        do_home()
+    } else if k == VK_END() {
+        do_end()
+    } else if k == VK_PAGE_UP() {
+        page_up()
+    } else if k == VK_PAGE_DOWN() {
+        page_down()
+    } else if k == VK_DELETE() {
+        delete_forward()
+    } else if k == VK_BACKSPACE() {
+        delete_back()
+    } else if k == VK_ENTER() {
+        insert_byte(10)
+    }
+}

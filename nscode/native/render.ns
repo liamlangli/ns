@@ -1,0 +1,40 @@
+// nscode/native/render.ns
+// ---------------------------------------------------------------------------
+// GPU render layer for the native editor. Each frame it opens the screen render
+// pass, sets the viewport, and (TODO) submits one textured quad per visible
+// glyph sampled from a monospace font atlas. The backend behind these calls is
+// Metal on Apple, DirectX 12 on Windows, and a no-op on Linux (lib/src/gpu.c),
+// so this module is safe to call on every platform -- it simply draws nothing
+// where there is no backend.
+//
+// Scaffolding status: the per-frame pass scaffolding below is real. Building the
+// glyph mesh requires the descriptor-driven creation calls (gpu_create_shader /
+// gpu_create_pipeline / gpu_create_mesh) whose nested descriptors do not yet
+// marshal through the interpreter FFI (see lib/gpu.ns). Those are wired through
+// a future scalar helper layer; until then the glyph submission is a TODO.
+
+use gpu
+use editor
+
+// The default screen pass (handle id 0). On real backends a configured pass is
+// created once at launch; here the zero handle selects the swapchain target.
+fn screen_pass() gpu_render_pass {
+    return gpu_render_pass { id: 0 }
+}
+
+// Render one frame of the document at framebuffer size (fb_w x fb_h).
+fn render_frame(fb_w: i32, fb_h: i32) {
+    editor_scroll()
+
+    gpu_begin_render_pass(screen_pass())
+    gpu_set_viewport(0, 0, fb_w, fb_h)
+
+    // TODO: for each visible document line (g_rowoff .. g_rowoff + g_rows) and
+    // column, append a textured quad (position + atlas uv) to a vertex buffer,
+    // then gpu_set_pipeline / gpu_set_mesh / gpu_draw to blit the glyphs. Also
+    // draw the cursor as a thin quad at (cur_col-g_coloff, cur_line-g_rowoff).
+    // Requires the glyph-atlas + pipeline created at launch.
+
+    gpu_end_pass()
+    gpu_commit()
+}

@@ -51,7 +51,10 @@ NS_INC += $(NS_PLATFORM_DEF)
 NS_DEBUG ?= 1
 NS_DEBUG_HOOK ?= 1
 NS_WERROR ?= 1
-NS_ENABLE_METAL ?= 0
+
+# Extra include path for the Metal backend's external mapper headers
+# (foundation/*, gpu/*, metal.h). Override on Apple if they live elsewhere.
+NS_GPU_INC ?=
 
 NS_HOOK_CFLAGS =
 ifeq ($(NS_DEBUG_HOOK), 1)
@@ -66,7 +69,8 @@ endif
 NS_WARN_CFLAGS = -Wall -Wextra -Wunused-result $(NS_WERROR_CFLAGS)
 
 ifeq ($(NS_OS), $(NS_WIN))
-NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
+# DirectX 12 backend (gpu.dx12.c) links against the D3D12/DXGI runtime libraries.
+NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32 -ld3d12 -ldxgi -ldxguid -ld3dcompiler
 else ifeq ($(NS_OS), $(NS_DARWIN))
 # Frameworks required by the statically linked Cocoa/Metal standard library.
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -framework Cocoa -framework Metal -framework MetalKit
@@ -76,19 +80,16 @@ endif
 
 NS_DEBUG_CFLAGS = -g -O0 $(NS_WARN_CFLAGS) -DNS_DEBUG $(NS_HOOK_CFLAGS)
 NS_RELEASE_CFLAGS = -Os $(NS_WARN_CFLAGS) $(NS_HOOK_CFLAGS)
-NS_METAL_CFLAGS =
-ifeq ($(NS_ENABLE_METAL), 1)
-	NS_METAL_CFLAGS += -DNS_ENABLE_METAL=1
-else
-	NS_METAL_CFLAGS += -DNS_ENABLE_METAL=0
-endif
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
 else
 	NS_CFLAGS = $(NS_RELEASE_CFLAGS)
 endif
-NS_CFLAGS += $(NS_METAL_CFLAGS)
+# The GPU backend is forced per platform in lib/include/gpu.h (Metal on Apple,
+# DX12 on Windows); the Metal source needs its external mapper headers on the
+# include path.
+NS_CFLAGS += $(NS_GPU_INC)
 
 NS_DEBUG_TARGET = $(TARGET)_debug$(NS_SUFFIX)
 NS_RELEASE_TARGET = $(TARGET)_release$(NS_SUFFIX)
@@ -148,12 +149,11 @@ NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/n
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
-	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/term.posix.c
-	ifeq ($(NS_ENABLE_METAL), 1)
-		NS_LIBFN_SRCS += lib/src/gpu.metal.m
-	endif
+	# Apple: force the Metal backend.
+	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/term.posix.c lib/src/gpu.metal.m
 else ifeq ($(NS_OS), $(NS_WIN))
-	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c
+	# Windows: force the DirectX 12 backend.
+	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c lib/src/gpu.dx12.c
 endif
 NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)

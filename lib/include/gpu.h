@@ -6,6 +6,18 @@
 
 #include "view.h"
 
+// Platform-forced GPU backend selection.
+//
+// The backend is chosen at compile time from the platform define rather than an
+// opt-in flag: Metal on Apple, DirectX 12 on Windows. Other platforms (Linux)
+// fall back to the no-op stub in gpu.c until a Vulkan backend is wired up.
+// Only amd64 and aarch64 targets are supported.
+#if defined(NS_DARWIN)
+#  define NS_GPU_METAL 1
+#elif defined(NS_WIN)
+#  define NS_GPU_DX12 1
+#endif
+
 typedef enum gpu_resource_type {
     none,
     webgl,
