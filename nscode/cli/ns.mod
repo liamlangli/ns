@@ -16,5 +16,3 @@ version = ">=0.1.0"
 [[dependencies.runtime]]
 name = "term"
 version = ">=0.1.0"
-
-dependencies.local = ["editor", "keys"]

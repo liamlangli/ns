@@ -19,5 +19,3 @@ version = ">=0.1.0"
 [[dependencies.runtime]]
 name = "gpu"
 version = ">=0.1.0"
-
-dependencies.local = ["editor", "render"]

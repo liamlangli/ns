@@ -12,5 +12,3 @@ exclude = ["README.md", ".gitignore"]
 [[dependencies.runtime]]
 name = "std"
 version = ">=0.1.0"
-
-dependencies.local = ["lexer", "parser", "harness"]
