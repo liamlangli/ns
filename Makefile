@@ -208,6 +208,7 @@ install: all
 	$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref
 	$(NS_CP) $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin
 	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
+	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec cp {} $(NS_INSTALL_ROOT)/lib \;
 	@echo "Installed ns to $(NS_INSTALL_DISPLAY)"
 	@echo "Please add $(NS_INSTALL_DISPLAY)/bin to your system PATH."
