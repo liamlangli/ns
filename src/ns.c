@@ -9,9 +9,11 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <direct.h>
 #else
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 #define STB_DS_IMPLEMENTATION
@@ -97,7 +99,7 @@ void ns_help() {
     printf("  -h --help         show this help\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
-    printf("  run  <file.ns>    compile the project scope and run it\n");
+    printf("  run  [file.ns]    compile the project scope and run it (entry from ns.mod if omitted)\n");
     printf("  test <path>       run a test entry, or every *_test.ns under a dir\n");
 
 }
@@ -440,8 +442,76 @@ static ns_str ns_project_link(ns_str scope, ns_str entry_src) {
     return out;
 }
 
+// Absolute current working directory (heap-owned), or "." if it can't be read.
+static ns_str ns_getcwd(void) {
+    char buf[4096];
+#if defined(_WIN32)
+    if (_getcwd(buf, sizeof(buf)) == ns_null) return ns_str_cstr(".");
+#else
+    if (getcwd(buf, sizeof(buf)) == ns_null) return ns_str_cstr(".");
+#endif
+    return ns_str_concat(ns_str_cstr(buf), ns_str_cstr(""));
+}
+
+// Extract the first quoted string that follows `key =` in a TOML manifest.
+// Handles both `key = "value"` and `key = ["value", ...]`; the key must be the
+// first token on its line so `entry` never matches `entries`. Returns a
+// heap-owned ns_str, or ns_str_null when the key is absent.
+static ns_str ns_manifest_value(ns_str src, const char *key) {
+    i32 klen = (i32)strlen(key);
+    i32 i = 0;
+    while (i < src.len) {
+        i32 ls = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        i32 le = i;
+        if (i < src.len) i++;
+
+        i32 t = ls;
+        while (t < le && (src.data[t] == ' ' || src.data[t] == '\t' || src.data[t] == '\r')) t++;
+        if (le - t < klen || strncmp(src.data + t, key, klen) != 0) continue;
+
+        i32 p = t + klen;
+        while (p < le && (src.data[p] == ' ' || src.data[p] == '\t')) p++;
+        if (p >= le || src.data[p] != '=') continue; // not `key = ...`
+        p++;
+
+        while (p < le && src.data[p] != '"') p++; // first quote on the line
+        if (p >= le) continue;
+        i32 vs = ++p;
+        while (p < le && src.data[p] != '"') p++;
+        if (p >= le) continue;
+        return ns_str_concat(ns_str_slice(src, vs, p), ns_str_cstr(""));
+    }
+    return ns_str_null;
+}
+
+// Resolve the entry source file `ns run` should execute when no file is given:
+// walk up from the current directory to the nearest `ns.mod` and read its
+// declared `entry` (or first of `entries`), relative to its `source` dir.
+static ns_str ns_manifest_entry_file(void) {
+    ns_str cwd = ns_getcwd();
+    ns_str root = ns_project_root(cwd);
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str mod = ns_fs_read_file(manifest);
+    if (mod.data == ns_null)
+        ns_exit(1, "ns", "cannot read manifest %.*s.\n", manifest.len, manifest.data);
+
+    ns_str entry = ns_manifest_value(mod, "entry");
+    if (entry.data == ns_null) entry = ns_manifest_value(mod, "entries");
+    if (entry.data == ns_null)
+        ns_exit(1, "ns", "ns.mod at %.*s declares no `entry` to run.\n", root.len, root.data);
+
+    ns_str src_dir = ns_manifest_value(mod, "source");
+    ns_str base = (src_dir.data != ns_null && !ns_str_equals(src_dir, ns_str_cstr(".")))
+                      ? ns_path_join(root, src_dir)
+                      : root;
+    return ns_path_join(base, entry);
+}
+
 void ns_exec_run(ns_str filename) {
-    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    // No file argument: run the project's declared entry from its ns.mod.
+    if (filename.len == 0) filename = ns_manifest_entry_file();
+
     ns_str source = ns_fs_read_file(filename);
     if (source.data == ns_null || source.len == 0)
         ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);

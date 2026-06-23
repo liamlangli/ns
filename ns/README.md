@@ -33,6 +33,10 @@ bin/ns run  ns/demo_main.ns     # tokenize a sample and print the token stream
 bin/ns test ns/lexer_test.ns    # run one test entry  (exit code = failures)
 bin/ns test ns/parser_test.ns   # run the parser test entry
 bin/ns test ns/                 # discover & run every *_test.ns in the dir
+
+# from inside the project directory, `ns run` needs no file argument: it
+# finds the nearest ns.mod and runs the entry the manifest declares.
+cd ns && ../bin/ns run          # runs the manifest's entry (demo_main.ns)
 ```
 
 `ns test <file>` runs a test entry and uses the i32 returned by its `main`

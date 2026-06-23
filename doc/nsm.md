@@ -26,6 +26,10 @@ Local modules need not be declared: every `use <name>` is resolved against the
 project's own source first, so any sibling `<name>.ns` is included in the build
 automatically. Only external `dependencies.runtime` need listing.
 
+Running `ns run` with no file argument compiles and runs the whole project: it
+walks up from the current directory to the nearest `ns.mod` and executes the
+`entry` (or first of `entries`) it declares, resolved against the `source` dir.
+
 The `nsm` module is a module manager for nanoscript. It allows you to create, install, and manage modules for your nanoscript projects. The `nsm` module is a core module and is included with the nanoscript runtime.
 
 ### Usage
