@@ -7,9 +7,6 @@ This file is an onboarding map for the whole repository. It is meant to help an 
 **Nano Script** is a minimal, data-oriented functional programming language with:
 - an interpreter/runtime,
 - a compiler pipeline with multiple backend emitters,
-- a language server,
-- a debug adapter,
-- editor/tooling integrations,
 - and a browser playground.
 
 At repo level, the project is polyglot but mostly **C** for core tooling and **TypeScript/JavaScript** for web/editor integrations.
@@ -41,8 +38,6 @@ Entrypoint and CLI routing are in `src/ns.c`.
 - `src/` — Core compiler/interpreter/runtime implementation in C.
 - `include/` — Public headers for lexer/parser/VM/SSA/backends/platform utils.
 - `lib/` — Standard/runtime dynamic libraries and Nano Script standard modules (`*.ns`) plus OS/GPU/view C implementations.
-- `lsp/` — Nano Script language server (`ns_lsp`).
-- `debug/` — Nano Script debug adapter (`ns_debug`) and protocol/repl bridge.
 - `nscode/` — NSCode editors. `nscode/web/` is the WebGPU browser playground;
   `nscode/cli/` is the terminal editor written in ns (uses the `term` module).
 - `sample/ns/` — Language feature examples (expressions, parse, fib, GUI, etc.).
@@ -56,16 +51,15 @@ Entrypoint and CLI routing are in `src/ns.c`.
 
 The root `Makefile` is the orchestrator:
 
-- Builds `bin/ns` (main CLI), `bin/libns.a`, `bin/ns_lsp`, `bin/ns_debug`, and std dynamic libs via included makefiles.
+- Builds `bin/ns` (main CLI), `bin/libns.a`, and std dynamic libs via included makefiles.
 - Supports platform-specific flags and outputs for Linux/macOS/Windows.
 - Includes optional Apple XCFramework packaging flow (`make xc`) for macOS+iOS arm64 static libs.
 - Main knobs:
   - `NS_DEBUG=1|0`
-  - `NS_DEBUG_HOOK=1|0`
 
 Common commands:
 
-- `make` — build everything (core + libs + lsp + debug + std libs)
+- `make` — build everything (core + libs + std libs)
 - `make test` — build and run tests (currently `bin/ns_json_test`)
 - `make run` — run `ns`
 - `make clean`
@@ -121,18 +115,6 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 
 ## 7) Language/tooling ecosystem in this repo
 
-### Language Server (`lsp/`)
-- Built as `ns_lsp`.
-- Source concentrated in `lsp/src/ns_lsp.c`.
-- Build config in `lsp/Makefile` links against `libns`.
-
-### Debug Adapter (`debug/`)
-- Built as `ns_debug`.
-- Main files:
-  - `debug/src/ns_debug.c`
-  - `debug/src/ns_debug_protocol.c`
-  - `debug/src/ns_debug_repl.c`
-
 ### Browser playground (`nscode/web/`)
 - WebGPU-based in-browser Nano Script playground/editor.
 - Uses HTTPS dev server (`serve-https.js`) because WebGPU secure context requirement.
@@ -186,11 +168,7 @@ Touch likely areas in this order:
 4. headers in `include/`
 5. tests/samples for emitted artifact flow
 
-### C) “Improve editor / IDE support”
-- LSP behavior: `lsp/src/ns_lsp.c`
-- Debugger behavior: `debug/src/*`
-
-### D) “Work on web playground UX/rendering”
+### C) “Work on web playground UX/rendering”
 - `nscode/web/src/editor.ts`, `ui.ts`, `renderer.js`, `gpu.ts`, `syntax.ts`
 - local run via HTTPS (`npm run dev`)
 
@@ -231,7 +209,7 @@ cd nscode/web && npm install && npm run dev
 
 ## 12) One-paragraph summary
 
-This repo is a full Nano Script toolchain: a C-based language core (lexer/parser/type/VM), SSA-based lowering pipeline with multiple emitters (AArch64/Mach-O/PE/WASM), developer tooling (LSP + debug adapter), runtime/std modules, and a WebGPU browser playground. For most engineering tasks, start at `src/ns.c` + `Makefile`, then jump to front-end (`ns_token`/`ns_ast*`) and execution (`ns_vm_*`) or backend (`ns_ssa` + emitter files) depending on whether the task is language semantics or code generation.
+This repo is a full Nano Script toolchain: a C-based language core (lexer/parser/type/VM), SSA-based lowering pipeline with multiple emitters (AArch64/Mach-O/PE/WASM), runtime/std modules, and a WebGPU browser playground. For most engineering tasks, start at `src/ns.c` + `Makefile`, then jump to front-end (`ns_token`/`ns_ast*`) and execution (`ns_vm_*`) or backend (`ns_ssa` + emitter files) depending on whether the task is language semantics or code generation.
 ---
 
 ## 12) Naming convention baseline
@@ -256,4 +234,3 @@ When working in `nscode/web/src/main.js`, preserve the output-panel timing contr
 - This timing output applies to example scripts loaded from the file tree as well as arbitrary edited code, because all are executed through the same `run_code()` path.
 
 If future refactors touch interpreter or parser integration, keep these output lines and semantics stable unless explicitly requested otherwise.
-

@@ -96,8 +96,6 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
 
 ## Components
 - `ns`: The Nano Script compiler and interpreter that can compiles and executes Nano Script source code.
-- `ns_lsp`: A language server for Nano Script providing features like code completion, hover, and diagnostics.
-- `ns_debug`: A debug adapter for Nano Script offering debugging features such as breakpoints, stepping, and variable inspection.
 
 ## Build Options
 - `NS_DEBUG`: Debug mode.

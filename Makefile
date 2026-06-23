@@ -49,17 +49,11 @@ NS_INC += $(NS_PLATFORM_DEF)
 
 # OPTIONS
 NS_DEBUG ?= 1
-NS_DEBUG_HOOK ?= 1
 NS_WERROR ?= 1
 
 # Extra include path for the Metal backend's external mapper headers
 # (foundation/*, gpu/*, metal.h). Override on Apple if they live elsewhere.
 NS_GPU_INC ?=
-
-NS_HOOK_CFLAGS =
-ifeq ($(NS_DEBUG_HOOK), 1)
-	NS_HOOK_CFLAGS += -DNS_DEBUG_HOOK
-endif
 
 NS_WERROR_CFLAGS =
 ifeq ($(NS_WERROR), 1)
@@ -78,8 +72,8 @@ else
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
 endif
 
-NS_DEBUG_CFLAGS = -g -O0 $(NS_WARN_CFLAGS) -DNS_DEBUG $(NS_HOOK_CFLAGS)
-NS_RELEASE_CFLAGS = -Os $(NS_WARN_CFLAGS) $(NS_HOOK_CFLAGS)
+NS_DEBUG_CFLAGS = -g -O0 $(NS_WARN_CFLAGS) -DNS_DEBUG
+NS_RELEASE_CFLAGS = -Os $(NS_WARN_CFLAGS)
 
 ifeq ($(NS_DEBUG), 1)
 	NS_CFLAGS = $(NS_DEBUG_CFLAGS)
@@ -90,9 +84,6 @@ endif
 # DX12 on Windows); the Metal source needs its external mapper headers on the
 # include path.
 NS_CFLAGS += $(NS_GPU_INC)
-
-NS_DEBUG_TARGET = $(TARGET)_debug$(NS_SUFFIX)
-NS_RELEASE_TARGET = $(TARGET)_release$(NS_SUFFIX)
 
 NS_BINDIR = bin
 
@@ -168,9 +159,9 @@ NS_ENTRY_OBJ = $(NS_BINDIR)/src/ns.o
 TARGET = $(NS_BINDIR)/ns
 
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
-NS_DIRS = bin/src bin/lsp bin/debug bin/lib
+NS_DIRS = bin/src bin/lib
 
-all: $(NS_DIRS) $(TARGET) $(NS_LIB) $(NS_LSP_TARGET) $(NS_DAP_TARGET) std
+all: $(NS_DIRS) $(TARGET) $(NS_LIB) std
 
 $(NS_DIRS):
 	$(NS_MKDIR) $(NS_DIRS)
@@ -211,15 +202,11 @@ test: $(NS_TEST_TARGETS)
 	$(NS_BINDIR)/ns_json_test
 
 include lib/Makefile
-include lsp/Makefile
-include debug/Makefile
 include sample/c/Makefile
 
-all: $(NS_LSP_TARGET) $(NS_DAP_TARGET)
-
-install: all ${NS_DAP_TARGET} ${NS_LSP_TARGET}
+install: all
 	$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref
-	$(NS_CP) $(TARGET)$(NS_SUFFIX) $(NS_DAP_TARGET)$(NS_SUFFIX) $(NS_LSP_TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin
+	$(NS_CP) $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin
 	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
 	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec cp {} $(NS_INSTALL_ROOT)/lib \;
 	@echo "Installed ns to $(NS_INSTALL_DISPLAY)"

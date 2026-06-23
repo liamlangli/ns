@@ -8,12 +8,6 @@
  * if dst is reference semantics, return src
  */
 
-#ifdef NS_DEBUG_HOOK
-    #define ns_vm_inject_hook(vm, ctx, i) if (vm->step_hook) vm->step_hook(vm, ctx, i)
-#else
-    #define ns_vm_inject_hook(vm, ctx, i)
-#endif
-
 #define ns_eval_stmt_case(fn) \
     { \
         ns_return_void ret = fn(vm, ctx, next); \
@@ -211,8 +205,6 @@ ns_scope* ns_scope_exit(ns_vm *vm) {
 }
 
 ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_value ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
     if (ns_return_is_error(ret_l)) return ns_return_change_type(value, ret_l);
@@ -493,8 +485,6 @@ ns_return_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_ast_ctx *ctx, ns_val
 }
 
 ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_value ret_callee = ns_eval_expr(vm, ctx, n->call_expr.callee);
     if (ns_return_is_error(ret_callee)) return ret_callee;
@@ -587,7 +577,6 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->jump_stmt.label.type) {
     case NS_TOKEN_RETURN: ns_eval_return_stmt(vm, ctx, i); break;
@@ -606,8 +595,6 @@ ns_return_void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_void ns_eval_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_value ret_b = ns_eval_expr(vm, ctx, n->if_stmt.condition);
     if (ns_return_is_error(ret_b)) return ns_return_change_type(void, ret_b);
@@ -644,8 +631,6 @@ static ns_bool ns_loop_should_stop(ns_vm *vm) {
 }
 
 ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *gen = &ctx->nodes[n->for_stmt.generator];
 
@@ -680,8 +665,6 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_void ns_eval_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-
     ns_ast_t *n = &ctx->nodes[i];
     ns_scope_enter(vm);
     if (n->loop_stmt.do_first) {
@@ -710,7 +693,6 @@ ns_return_void ns_eval_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value l, ns_value r, ns_symbol *fn) {
-    ns_vm_inject_hook(vm, ctx, i);
     ns_unused(i);
 
     i32 ret_size = ns_type_size(vm, fn->fn.ret);
@@ -1216,8 +1198,6 @@ ns_return_value ns_eval_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-
     ns_ast_t *n = &ctx->nodes[i];
     ns_symbol *val = ns_vm_find_symbol(vm, n->var_def.name.val, false);
 
@@ -1271,10 +1251,8 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
     ns_ast_t *n = &ctx->nodes[i];
     vm->loc = ns_ast_state_loc(ctx, n->state);
-    if (vm->step_hook) vm->step_hook(vm, ctx, i);
 
     // eval & store value
     i32 size = n->var_def.type_size;
@@ -1336,7 +1314,6 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->type) {
     case NS_AST_EXPR: return ns_eval_expr(vm, ctx, n->expr.body);
@@ -1359,8 +1336,6 @@ ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
-    ns_vm_inject_hook(vm, ctx, i);
-
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *expr = n;
 
