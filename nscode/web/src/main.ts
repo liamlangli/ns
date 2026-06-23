@@ -26,71 +26,105 @@ const AUTO_COMPILE_DEBOUNCE_MS = 550;
 
 // ── Example programs ──────────────────────────────────────────────────────────
 const EXAMPLES = {
-    hello: `// Hello World
-fn main() {
-    println("Hello, World!")
-    println("Welcome to NSCode!")
-}
-main()
-`,
-    fib: `// Fibonacci
-fn fib(n: i32) i32 {
-    if n == 0 { return 0 }
-    else if n == 1 { return 1 }
-    else { return fib(n - 1) + fib(n - 2) }
-}
-for i in 0 to 10 {
-    println(fib(i))
-}
-`,
-    factorial: `// Factorial
-fn factorial(n: i32) i32 {
-    if n <= 1 { return 1 }
-    return n * factorial(n - 1)
-}
-for i in 0 to 13 { println(factorial(i)) }
-`,
-    loop: `// Loop & Sum
-fn sum(n: i32) i32 {
-    let total: i32 = 0
-    for i in 1 to n + 1 { total = total + i }
+    language_tour: `// Nano Script language tour
+// Run this first: it introduces declarations, explicit types, functions,
+// loops, conditionals, and template strings in one small program.
+
+fn score(name: str, base: i32, bonus: i32) i32 {
+    let total: i32 = base + bonus
+    if total >= 90 {
+        println(\`{name}: excellent ({total})\`)
+    } else if total >= 70 {
+        println(\`{name}: ready ({total})\`)
+    } else {
+        println(\`{name}: keep iterating ({total})\`)
+    }
     return total
 }
-println(sum(10))
-println(sum(100))
-`,
-    fizzbuzz: `// FizzBuzz
-for i in 1 to 31 {
-    if i % 15 == 0 { println("FizzBuzz") }
-    else if i % 3 == 0 { println("Fizz") }
-    else if i % 5 == 0 { println("Buzz") }
-    else { println(i) }
+
+let alice = score("alice", 72, 21)
+let bob   = score("bob", 61, 14)
+
+for round in 1 to 4 {
+    println(\`review round {round}: delta = {alice - bob}\`)
 }
 `,
-    primes: `// Primes < 50
-fn is_prime(n: i32) i32 {
-    if n < 2 { return 0 }
-    if n == 2 { return 1 }
-    if n % 2 == 0 { return 0 }
-    for i in 3 to n {
-        if i * i > n { return 1 }
-        if n % i == 0 { return 0 }
+    data_model: `// Data model: structs, value copies, refs, and operator hooks
+// Structs are plain data. Pass by value when you want a copy; use ref when a
+// function should mutate caller-owned storage.
+
+struct Point {
+    x: f32,
+    y: f32,
+}
+
+fn ops(+)(lhs: Point, rhs: Point) Point {
+    return Point(lhs.x + rhs.x, lhs.y + rhs.y)
+}
+
+fn translate(p: ref Point, dx: f32, dy: f32) {
+    p.x = p.x + dx
+    p.y = p.y + dy
+}
+
+let origin = Point(0.0, 0.0)
+let step   = Point(2.0, 3.5)
+let cursor = origin + step
+translate(ref cursor, 1.0, -0.5)
+println(\`cursor = {cursor.x}, {cursor.y}\`)
+`,
+    functions_blocks: `// Function types and blocks
+// Blocks are closures: they capture values from outer scope and can be passed
+// anywhere a matching function type is expected.
+
+type reducer = (i32, i32) -> i32
+
+fn fold_until(limit: i32, seed: i32, op: reducer) i32 {
+    let acc: i32 = seed
+    for n in 1 to limit + 1 {
+        acc = op(acc, n)
     }
-    return 1
+    return acc
 }
-for n in 2 to 50 {
-    if is_prime(n) == 1 { println(n) }
+
+let scale = 2
+let scaled_sum: reducer = { acc, n in
+    return acc + n * scale
+}
+
+println(fold_until(5, 0, scaled_sum))
+`,
+    control_flow: `// Control flow and recursion
+// if / else branches are explicit, for ranges are half-open, and recursion is
+// ordinary function dispatch.
+
+fn fib(n: i32) i32 {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+for n in 0 to 10 {
+    let value = fib(n)
+    if value % 2 == 0 {
+        println(\`fib({n}) = {value} even\`)
+    } else {
+        println(\`fib({n}) = {value} odd\`)
+    }
 }
 `,
-    closure: `// Closures
-fn make_adder(x: i32) {
-    return fn(y: i32) { return x + y }
+    modules_ffi: `// Modules and external functions
+// Native builds can import focused standard modules and declare referenced C
+// symbols. Browser examples use the embedded interpreter plus WebGPU helpers.
+
+use std
+use os
+
+ref fn puts(message: str): i32
+
+fn main() {
+    println("standard output through std")
+    puts("external puts through ref fn")
 }
-let add5  = make_adder(5)
-let add10 = make_adder(10)
-println(add5(3))
-println(add10(3))
-println(add5(add10(2)))
 `,
 
     // ── WebGPU examples (NanoScript with gpu_* built-in functions) ──────────
@@ -129,20 +163,17 @@ gpu_render(pipeline, 3)
 println("Triangle rendered!")
 `,
 };
-
 // File-tree structure (mutable: group.open can toggle)
 const FILE_TREE = [
     {
-        label: 'Examples',
+        label: 'Language Spec',
         open:  true,
         items: [
-            { label: 'Hello World', value: 'hello'     },
-            { label: 'Fibonacci',   value: 'fib'       },
-            { label: 'Factorial',   value: 'factorial' },
-            { label: 'Loop & Sum',  value: 'loop'      },
-            { label: 'FizzBuzz',    value: 'fizzbuzz'  },
-            { label: 'Primes',      value: 'primes'    },
-            { label: 'Closures',    value: 'closure'   },
+            { label: 'Language Tour',      value: 'language_tour'     },
+            { label: 'Data Model',         value: 'data_model'        },
+            { label: 'Functions & Blocks', value: 'functions_blocks'  },
+            { label: 'Control Flow',       value: 'control_flow'      },
+            { label: 'Modules & FFI',      value: 'modules_ffi'       },
         ],
     },
     {
@@ -278,9 +309,9 @@ async function main() {
         console.warn('[GPU parser] init failed, CPU parser fallback remains active', err);
     }
 
-    const buf = new text_buffer(EXAMPLES.fib);
+    const buf = new text_buffer(EXAMPLES.language_tour);
     const editor_state = create_code_editor_state();
-    let active_example = 'fib';
+    let active_example = 'language_tour';
 
     // ── Output state ──────────────────────────────────────────────────────────
     // Scroll + selection state lives in `ui.out_state` (the text_view widget).
