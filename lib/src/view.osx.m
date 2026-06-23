@@ -36,9 +36,6 @@ static id view_mtk_view_delegate;
 static MTKView* view_mtk_view;
 
 static view _view;
-static view_on_launch launch_func = NULL;
-static view_on_frame frame_func = NULL;
-static view_on_terminate terminate_func = NULL;
 
 // Key mapping function
 i32 view_osx_key_map(i32 k) {
@@ -78,46 +75,19 @@ i32 view_osx_key_map(i32 k) {
 @implementation ViewAppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification {
     (void)aNotification;
-
-    view_window_delegate = [[ViewWindowDelegate alloc] init];
-    const NSUInteger style =
-        NSWindowStyleMaskTitled |
-        NSWindowStyleMaskClosable |
-        NSWindowStyleMaskMiniaturizable |
-        NSWindowStyleMaskResizable;
-    view_window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, view_width, view_height)
-        styleMask: style
-        backing: NSBackingStoreBuffered
-        defer: NO];
-    [view_window setTitle:[NSString stringWithUTF8String: view_title]];
-    [view_window setAcceptsMouseMovedEvents: YES];
-    [view_window center];
-    [view_window setRestorable: YES];
-    [view_window setDelegate: view_window_delegate];
-
-    view_mtl_device = MTLCreateSystemDefaultDevice();
-    view_mtk_view = [[ViewMTKView alloc] init];
-    [view_mtk_view setDevice: view_mtl_device];
-    [view_mtk_view setColorPixelFormat: MTLPixelFormatBGRA8Unorm];
-    [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatDepth32Float];
-    view_mtk_view_delegate = [[ViewDelegate alloc] init];
-    [view_mtk_view setDelegate: view_mtk_view_delegate];
-    [view_window setContentView: view_mtk_view];
-    [view_window makeKeyAndOrderFront: nil];
-
-    _view.native_window = (__bridge void*)view_window;
-    _view.gpu_device = (__bridge void*)view_mtl_device;
-
-    if (launch_func) {
-        launch_func(&_view);
+    // The window is created in view_create(); the run loop only needs to fire
+    // the ns on_launch callback (set between view_create and view_run).
+    view_on_launch launch = (view_on_launch)_view.on_launch;
+    if (launch) {
+        launch(&_view);
     }
 }
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
     (void)sender;
-    if (terminate_func) {
-        terminate_func(&_view);
+    view_on_terminate terminate = (view_on_terminate)_view.on_terminate;
+    if (terminate) {
+        terminate(&_view);
     }
     return NSTerminateNow;
 }
@@ -148,8 +118,9 @@ i32 view_osx_key_map(i32 k) {
 
 - (void)drawInMTKView:(nonnull MTKView*)view {
     (void)view;
-    if (frame_func) {
-        frame_func(&_view);
+    view_on_frame frame = (view_on_frame)_view.on_frame;
+    if (frame) {
+        frame(&_view);
     }
 }
 @end
@@ -248,15 +219,47 @@ i32 view_osx_key_map(i32 k) {
 @end
 
 //------------------------------------------------------------------------------
-void view_osx_start(i32 w, i32 h, const char* title) {
+// Create the application, window and Metal view. Does NOT enter the run loop so
+// the caller can attach callbacks first; view_run() then drives frames.
+void view_osx_create(i32 w, i32 h, const char* title) {
     view_width = w;
     view_height = h;
     view_title = title;
+
     [ViewApp sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     id delegate = [[ViewAppDelegate alloc] init];
     [NSApp setDelegate:delegate];
-    [NSApp run];
+
+    view_window_delegate = [[ViewWindowDelegate alloc] init];
+    const NSUInteger style =
+        NSWindowStyleMaskTitled |
+        NSWindowStyleMaskClosable |
+        NSWindowStyleMaskMiniaturizable |
+        NSWindowStyleMaskResizable;
+    view_window = [[NSWindow alloc]
+        initWithContentRect:NSMakeRect(0, 0, view_width, view_height)
+        styleMask: style
+        backing: NSBackingStoreBuffered
+        defer: NO];
+    [view_window setTitle:[NSString stringWithUTF8String: view_title]];
+    [view_window setAcceptsMouseMovedEvents: YES];
+    [view_window center];
+    [view_window setRestorable: YES];
+    [view_window setDelegate: view_window_delegate];
+
+    view_mtl_device = MTLCreateSystemDefaultDevice();
+    view_mtk_view = [[ViewMTKView alloc] init];
+    [view_mtk_view setDevice: view_mtl_device];
+    [view_mtk_view setColorPixelFormat: MTLPixelFormatBGRA8Unorm];
+    [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatDepth32Float];
+    view_mtk_view_delegate = [[ViewDelegate alloc] init];
+    [view_mtk_view setDelegate: view_mtk_view_delegate];
+    [view_window setContentView: view_mtk_view];
+    [view_window makeKeyAndOrderFront: nil];
+
+    _view.native_window = (__bridge void*)view_window;
+    _view.gpu_device = (__bridge void*)view_mtl_device;
 }
 
 /* return current MTKView drawable width */
@@ -282,8 +285,13 @@ view* view_create(const char *title, i32 width, i32 height) {
     _view.framebuffer_width = width * _view.ui_scale;
     _view.framebuffer_height = height * _view.ui_scale;
     _view.title = ns_str_cstr((char*)title);
-    view_osx_start(width, height, title);
+    view_osx_create(width, height, title);
     return &_view;
+}
+
+void view_run(view *v) {
+    (void)v;
+    [NSApp run];
 }
 
 ns_str view_get_clipboard(view *v) {

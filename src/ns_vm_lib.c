@@ -52,6 +52,7 @@ extern void *io_load_image(const char *path);
 extern i32 io_save_image(const char *path, const void *img);
 
 extern void *view_create(const char *title, i32 width, i32 height);
+extern void view_run(void *v);
 extern void view_close(void *v);
 extern void view_capture_require(void *v);
 extern void view_on_scroll(void *v, f64 x, f64 y);
@@ -63,7 +64,21 @@ extern ns_bool view_is_key_pressed(void *v, i32 key);
 extern ns_str view_get_clipboard(void *v);
 extern void view_set_clipboard(void *v, ns_str text);
 
+// GPU resource handles are single-u32 structs in lib/include/gpu.h; mirror that
+// here so the symbol table can reference the per-frame submission API without
+// pulling in the full GPU headers (see note above).
+typedef struct { u32 id; } ns_gpu_handle;
 extern ns_bool gpu_request_device(void *v);
+extern void gpu_destroy_device(void);
+extern void gpu_begin_render_pass(ns_gpu_handle pass);
+extern void gpu_set_viewport(int x, int y, int width, int height);
+extern void gpu_set_scissor(int x, int y, int width, int height);
+extern void gpu_set_pipeline(ns_gpu_handle pipeline);
+extern void gpu_set_binding(ns_gpu_handle binding);
+extern void gpu_set_mesh(ns_gpu_handle mesh);
+extern void gpu_draw(int base, int count, int instance_count);
+extern void gpu_end_pass(void);
+extern void gpu_commit(void);
 
 extern i32 term_enable_raw(void);
 extern i32 term_disable_raw(void);
@@ -120,6 +135,7 @@ static const ns_static_sym ns_static_syms[] = {
     {"io_save_image", (void*)io_save_image},
 
     {"view_create", (void*)view_create},
+    {"view_run", (void*)view_run},
     {"view_close", (void*)view_close},
     {"view_capture_require", (void*)view_capture_require},
     {"view_on_scroll", (void*)view_on_scroll},
@@ -132,6 +148,16 @@ static const ns_static_sym ns_static_syms[] = {
     {"view_set_clipboard", (void*)view_set_clipboard},
 
     {"gpu_request_device", (void*)gpu_request_device},
+    {"gpu_destroy_device", (void*)gpu_destroy_device},
+    {"gpu_begin_render_pass", (void*)gpu_begin_render_pass},
+    {"gpu_set_viewport", (void*)gpu_set_viewport},
+    {"gpu_set_scissor", (void*)gpu_set_scissor},
+    {"gpu_set_pipeline", (void*)gpu_set_pipeline},
+    {"gpu_set_binding", (void*)gpu_set_binding},
+    {"gpu_set_mesh", (void*)gpu_set_mesh},
+    {"gpu_draw", (void*)gpu_draw},
+    {"gpu_end_pass", (void*)gpu_end_pass},
+    {"gpu_commit", (void*)gpu_commit},
 
     {"term_enable_raw", (void*)term_enable_raw},
     {"term_disable_raw", (void*)term_disable_raw},

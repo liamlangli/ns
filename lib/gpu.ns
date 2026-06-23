@@ -2,8 +2,44 @@ mod gpu
 
 use view
 
-struct gpu_device {
-    handle: any
-}
+// Native GPU primitives, implemented per platform (Metal on Apple, DirectX 12 on
+// Windows; a no-op fallback on Linux) and resolved through the static symbol
+// table in src/ns_vm_lib.c.
+//
+// As with the other native modules, the interface exposed to ns is the FFI-safe
+// subset: scalars, `str`, `ref` pointers, and the small single-field GPU handle
+// structs below (which mirror `struct { u32 id; }` in lib/include/gpu.h). The
+// descriptor-driven creation calls (gpu_create_pipeline, gpu_create_mesh, ...)
+// take deeply nested structs that do not marshal reliably through the
+// interpreter and are intended to be driven from a future scalar helper layer;
+// they are intentionally not bound here yet.
 
-ref fn gpu_request_device(v: ref view) ref gpu_device
+struct gpu_device { handle: any }
+
+// Opaque GPU resource handles. `id` is a slot index into the backend pools; 0 is
+// the invalid handle.
+struct gpu_texture { id: i32 }
+struct gpu_sampler { id: i32 }
+struct gpu_buffer { id: i32 }
+struct gpu_shader { id: i32 }
+struct gpu_pipeline { id: i32 }
+struct gpu_binding { id: i32 }
+struct gpu_mesh { id: i32 }
+struct gpu_render_pass { id: i32 }
+
+// Acquire the platform GPU device for `v`. Returns true on success. On platforms
+// without a backend this returns false.
+ref fn gpu_request_device(v: ref view) bool
+ref fn gpu_destroy_device()
+
+// ---- per-frame submission (FFI-safe: handles + scalars) -------------------
+
+ref fn gpu_begin_render_pass(pass: gpu_render_pass)
+ref fn gpu_set_viewport(x: i32, y: i32, width: i32, height: i32)
+ref fn gpu_set_scissor(x: i32, y: i32, width: i32, height: i32)
+ref fn gpu_set_pipeline(pipeline: gpu_pipeline)
+ref fn gpu_set_binding(binding: gpu_binding)
+ref fn gpu_set_mesh(mesh: gpu_mesh)
+ref fn gpu_draw(base: i32, count: i32, instance_count: i32)
+ref fn gpu_end_pass()
+ref fn gpu_commit()

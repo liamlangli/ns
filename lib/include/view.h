@@ -159,8 +159,15 @@ typedef struct view {
     void *on_terminate;
 } view;
 
-// View management functions
+// View management functions.
+//
+// view_create() opens the window and returns the view WITHOUT entering the event
+// loop, so callers can attach on_launch / on_frame / on_terminate callbacks
+// before driving frames with view_run(). view_run() blocks until the window
+// closes. On platforms without a native backend (Linux) view_create() returns a
+// no-op view and view_run() returns immediately.
 view* view_create(const char *title, i32 width, i32 height);
+void view_run(view *v);
 void view_close(view *v);
 void view_capture_require(view *v);
 

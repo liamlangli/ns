@@ -1,0 +1,60 @@
+// nscode/native/main.ns
+// ---------------------------------------------------------------------------
+// Entry point for the native, view-based code editor. Run it with:
+//
+//   bin/ns run nscode/native/main.ns
+//
+// It opens a native window (Cocoa on Apple, Win32 on Windows), acquires the
+// platform GPU device (Metal on Apple, DirectX 12 on Windows), draws the
+// document through nscode/native/render.ns, and enters the event loop. On Linux
+// there is no native backend yet, so view_create returns a no-op view, the GPU
+// request returns false, render is a no-op, and view_run returns immediately --
+// the program exits cleanly.
+//
+// The document model lives in nscode/native/editor.ns and shares its design,
+// unchanged, with the terminal editor (nscode/cli/editor.ns).
+//
+// Lifecycle note: view_create() opens the window WITHOUT entering the loop so
+// callbacks (on_frame / on_launch / on_terminate) can be attached before
+// view_run() drives frames. Attaching those callbacks from ns currently depends
+// on closure support in the interpreter, which has a pre-existing bug (e.g.
+// sample/ns/block.ns also fails to parse today). Until that is fixed, this entry
+// draws a single frame up front and then runs the loop; per-frame ns callbacks
+// and live key input (which also needs an on_key hook on `view`) are follow-ups.
+
+use std
+use view
+use gpu
+use editor
+use render
+
+fn seed_document() {
+    // Double-quoted string literals are not escape-processed, so run the text
+    // through std.unescape to turn "\n" into real newline bytes.
+    load_str(unescape("// ns native editor\n// view + gpu scaffold\n\nfn main() {\n    print(42)\n}\n"))
+}
+
+fn main() {
+    seed_document()
+
+    let v = view_create("ns editor", 1024, 768)
+
+    let ok = gpu_request_device(v)
+    if ok {
+        print("gpu device acquired\n")
+    } else {
+        print("no GPU backend on this platform; rendering is a no-op\n")
+    }
+
+    // Framebuffer dims via locals: passing a struct-field expression straight
+    // into a call mis-evaluates in the current interpreter, so read them first.
+    let fb_w = v.framebuffer_width
+    let fb_h = v.framebuffer_height
+
+    // Draw one frame of the document. Once interpreter closure support lands,
+    // this call moves into an on_frame callback attached before view_run.
+    render_frame(fb_w, fb_h)
+
+    // Enter the event loop (returns immediately where there is no backend).
+    view_run(v)
+}
