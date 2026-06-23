@@ -1,20 +1,27 @@
 nanoscript module manager
 -------------------------
 
-> `nsm.ns` - nanoscript module manager config file
-```nanoscript
-use nsm
+> `ns.mod` - nanoscript module manager config file
 
-let module = NSModule{
-    name: "example",
-    version: "0.1.0",
-    description: "example module",
-    type: "app", // or "lib"
-    source: "src", 
-    dependencies: [
-        {name: "ref_lib", version: "0.1.0"}
-    ]
-}
+Scope-based projects require an `ns.mod` file at the project root. The file is
+TOML so tools can read project metadata before compiling any Nano Script source.
+
+```toml
+schema = "ns.mod/v1"
+name = "example"
+version = "0.1.0"
+author = "Example Author <author@example.com>"
+type = "app"
+description = "Example module."
+source = "src"
+entry = "main.ns"
+exclude = ["README.md", "build/"]
+
+[[dependencies.runtime]]
+name = "std"
+version = ">=0.1.0"
+
+dependencies.local = ["helper"]
 ```
 
 The `nsm` module is a module manager for nanoscript. It allows you to create, install, and manage modules for your nanoscript projects. The `nsm` module is a core module and is included with the nanoscript runtime.

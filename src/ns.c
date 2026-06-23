@@ -298,12 +298,13 @@ void ns_exec_pe(ns_str filename, ns_str output) {
 // Nano Script's `use` only imports modules from the interpreter's ref path,
 // so a multi-file program in a working directory ("project scope") cannot
 // import its own local modules. The linker below resolves `use <name>` against
-// the entry file's directory first: when `<scope>/<name>.ns` exists it is
+// the nearest manifest root first: when `<root>/<name>.ns` exists it is
 // inlined (its body merged into a single translation unit, after stripping its
 // own `mod`/local-`use` lines), otherwise the `use` is kept as an external
 // library import (e.g. `use std`). This lets the self-hosted `ns-in-ns` project
 // be compiled, run and tested directly by `ns`, without a Makefile to
-// concatenate sources by hand.
+// concatenate sources by hand. Scope projects must have an `ns.mod` TOML
+// manifest at their root; for now the runtime only requires its presence.
 
 typedef struct ns_linker {
     ns_str scope;       // directory used to resolve local modules
@@ -323,6 +324,48 @@ static ns_bool ns_name_in(ns_str *names, ns_str name) {
 static ns_bool ns_is_ident_char(i8 c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
            (c >= '0' && c <= '9') || c == '_';
+}
+
+static ns_bool ns_is_dir(ns_str path);
+
+static ns_str ns_path_dirname_safe(ns_str path) {
+    for (i32 i = path.len - 1; i >= 0; i--) {
+        if (path.data[i] == NS_PATH_SEPARATOR) {
+            if (i == 0) return ns_str_cstr("/");
+            return ns_str_slice(path, 0, i);
+        }
+    }
+    return ns_str_cstr(".");
+}
+
+static ns_str ns_path_parent(ns_str dir) {
+    if (dir.len == 0 || ns_str_equals(dir, ns_str_cstr(".")) || ns_str_equals(dir, ns_str_cstr("/"))) {
+        return dir;
+    }
+    return ns_path_dirname_safe(dir);
+}
+
+static ns_bool ns_file_exists(ns_str path) {
+    ns_str data = ns_fs_read_file(path);
+    if (data.data == ns_null) return false;
+    ns_str_free(data);
+    return true;
+}
+
+static ns_str ns_project_root(ns_str path) {
+    ns_str dir = ns_is_dir(path) ? path : ns_path_dirname_safe(path);
+    while (true) {
+        ns_str manifest = ns_path_join(dir, ns_str_cstr("ns.mod"));
+        ns_bool found = ns_file_exists(manifest);
+        ns_str_free(manifest);
+        if (found) return dir;
+
+        ns_str parent = ns_path_parent(dir);
+        if (ns_str_equals(parent, dir)) break;
+        dir = parent;
+    }
+    ns_exit(1, "ns", "scope project requires ns.mod at project root for %.*s.\n", path.len, path.data);
+    return ns_str_null;
 }
 
 static void ns_link_source(ns_linker *lk, ns_str src);
@@ -403,7 +446,7 @@ void ns_exec_run(ns_str filename) {
     if (source.data == ns_null || source.len == 0)
         ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
 
-    ns_str scope = ns_path_dirname(filename);
+    ns_str scope = ns_project_root(filename);
     ns_str merged = ns_project_link(scope, source);
 
     ns_return_value ret_v = ns_eval(&vm, merged, filename);
@@ -420,7 +463,7 @@ static i32 ns_run_test_file(ns_str filename) {
         return 1;
     }
 
-    ns_str scope = ns_path_dirname(filename);
+    ns_str scope = ns_project_root(filename);
     ns_str merged = ns_project_link(scope, source);
 
     ns_return_value ret_v = ns_eval(&tvm, merged, filename);
