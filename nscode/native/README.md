@@ -1,14 +1,17 @@
-# nscode/native — native, view-based code editor (in ns)
+# nscode/native — native code editor (in ns)
 
-A native code editor written in Nano Script that renders through the `view`
-(native window) and `gpu` modules of the standard library, rather than the
-terminal. It shares its document model design with the terminal editor in
-`nscode/cli`.
+A native code editor written in Nano Script that renders through the new `ui`
+module of the standard library (`lib/ui.ns` — the Nano Script surface of the
+[`@liamlangli/ui`](https://github.com/liamlangli/ui) WebGPU toolkit), rather
+than the terminal. The on-screen editor is a native port of that toolkit's
+`code_editor` plugin: a line-number gutter, selection highlight, document text
+and caret, all drawn through the batched `ui_renderer`.
 
-The GPU backend is selected automatically per platform (see
-`lib/include/gpu.h`): **Metal on Apple, DirectX 12 on Windows**. Linux has no
-native backend yet, so the window/GPU calls are no-ops there. Only amd64 and
-aarch64 are supported.
+The `ui` renderer is bound to the view's GPU device, whose backend is selected
+automatically per platform (see `lib/include/gpu.h`): **Metal on Apple, DirectX
+12 on Windows**. Linux has no native backend yet, so the window/GPU calls are
+no-ops there and the `ui` renderer is never created. Only amd64 and aarch64 are
+supported.
 
 ## Build & run
 
@@ -17,40 +20,48 @@ make                       # builds bin/ns with the view + gpu modules
 bin/ns run nscode/native/main.ns
 ```
 
-On macOS/Windows this opens a window and acquires the GPU device. On Linux
-`view_create` returns a no-op view and the program prints that no GPU backend is
-available, then exits.
+On macOS/Windows this opens a window, acquires the GPU device, creates the `ui`
+renderer and draws one frame of the code editor. On Linux `view_create` returns
+a no-op view, `gpu_request_device` returns false, the renderer is skipped, and
+the program prints that no GPU backend is available, then exits.
 
 ## Files
 
 - `main.ns` — entry point: seed a document, create the window, request the GPU
-  device, draw a frame, and run the event loop (`view_create` → configure →
-  `view_run`).
-- `editor.ns` — the document model: a flat byte buffer (`g_buf`/`g_len`), the
-  cursor as a byte offset (`g_cur`), line geometry derived by scanning for
-  `\n`, editing (`insert_byte`/`delete_back`/`delete_forward`), cursor movement,
+  device, create the `ui` renderer on it (`ui_renderer_create` → `ui_resize`),
+  draw one frame (`ui_begin_frame` → `render_frame` → `ui_flush`), and run the
+  event loop.
+- `editor.ns` — the document model: the text as one `str` (`g_doc`), the caret
+  as a byte offset (`g_cur`) and an optional selection anchor (`g_anchor`), line
+  geometry derived by scanning for `\n`, editing (`insert_str` / `delete_back` /
+  `delete_forward` / `delete_selection`), cursor movement with shift-selection,
   scrolling, and `process_view_key()` keyed by the `VIEW_KEY_*` codes from
-  `lib/include/view.h`.
-- `render.ns` — the per-frame GPU render layer: opens the screen render pass and
-  sets the viewport. Submitting one textured quad per glyph from a font atlas is
-  scaffolded with TODOs (it needs the descriptor-driven `gpu_create_*` calls,
-  which require a scalar helper layer over the GPU API — see `lib/gpu.ns`).
+  `lib/include/view.h`. It mirrors the `text_buffer` model of the `ui` toolkit's
+  `code_editor` plugin and does no rendering.
+- `render.ns` — the per-frame render layer, a native port of the toolkit's
+  `code_editor` plugin built on `ui_renderer`. Each frame it paints the
+  background, the line-number gutter, the selection highlight, the visible
+  document lines (`ui_draw_text` in the FONT_MONO atlas) and the caret, and
+  overlays a vertical scrollbar — all batched into one GPU submission on flush.
 
 ## Status / known limitations
 
-This is a working scaffold. The C-side infrastructure (per-platform GPU backend
-selection, the DirectX 12 backend skeleton, the Win32 window, and the
-`view_create`/`view_run` split) is in place, and the ns document model is fully
-functional. The remaining pieces are follow-ups, blocked on interpreter gaps:
+The ns side is complete: the document model is fully functional and the renderer
+draws the whole editor through the `ui` module's builder API. The remaining
+pieces are follow-ups:
 
+- **`ui` native backend.** `lib/ui.ns` currently declares the toolkit's builder
+  API as `ref fn`s; the C implementation that bridges them onto the GPU backends
+  is a separate follow-up. Until it lands the `ui_*` calls resolve as references
+  but have no native symbol, so a frame is only actually drawn once that backend
+  is wired up (on Linux the renderer is skipped entirely, so the program runs
+  and exits cleanly).
 - **Per-frame & input callbacks.** `view` exposes `on_launch`/`on_frame`/
   `on_terminate` hooks, but attaching them from ns needs closure support, which
   currently has a pre-existing bug (`sample/ns/block.ns` also fails to parse).
   Until that lands, `main.ns` draws a single frame before `view_run` instead of
-  rendering from an `on_frame` callback. Live key input additionally needs an
-  `on_key` hook on the `view` struct plus native-layer plumbing.
-- **Glyph rendering.** Requires the descriptor-based GPU creation calls to be
-  reachable from ns (a scalar helper layer over `gpu_create_shader` /
-  `gpu_create_pipeline` / `gpu_create_mesh`).
+  rendering from an `on_frame` callback. Live editing additionally needs an
+  `on_key` hook on the `view` struct plus character/shift plumbing into
+  `editor.ns` (`process_view_key` / `set_shift` / `insert_str` are ready for it).
 - **Linux backend.** No native window/GPU backend yet (a Vulkan + X11/Wayland
   backend is future work).

@@ -1,37 +1,41 @@
 // nscode/native/editor.ns
 // ---------------------------------------------------------------------------
-// Document model for the native, view-based code editor. This is the same flat
-// byte-buffer model proven in nscode/cli/editor.ns, lifted out of the terminal:
-// there are no term_* calls here. The document is one flat byte buffer
-// (g_buf, g_len). Lines are derived by scanning for '\n' (byte 10). The cursor
-// is a single byte offset (g_cur); screen row/column are computed on demand.
+// Document model for the native code editor. The view is rendered through the
+// `ui` module (lib/ui.ns) by nscode/native/render.ns; this file owns only the
+// text model and is rendering-agnostic.
 //
-// Rendering (nscode/native/render.ns) and the window/GPU lifecycle
-// (nscode/native/main.ns) live in sibling modules. Input is dispatched here via
-// process_view_key(), keyed by the VIEW_KEY_* codes from lib/include/view.h.
+// The document is held as a single `str` (g_doc). Lines are derived by scanning
+// for '\n' (byte 10); the caret is a byte offset (g_cur) and an optional
+// selection anchor offset (g_anchor, -1 when there is no selection). Screen
+// row/column are computed on demand. This mirrors the line/cursor/selection
+// model of the @liamlangli/ui `code_editor` plugin (text_buffer) so the native
+// renderer can draw the gutter, selection highlight and caret the same way.
 //
 // ns quirks honoured (see nscode/cli/editor.ns for the full list):
-//   * [u8] element reads over-read 4 bytes, so reads go through gb() which masks
-//     with 255 and g_buf is over-allocated past g_cap().
-//   * String literals are not escape-processed; control bytes are written as
-//     numbers (newline = 10).
-//   * No bare `return;` in void helpers.
-//   * `<` binds tighter than `-`, so mixed comparisons are parenthesised.
+//   * String indexing reads can over-read, so byte reads go through dc() which
+//     masks with 255.
+//   * String literals are not escape-processed; the newline byte is produced by
+//     unescape() in nl().
+//   * No bare `return;` in void helpers; if/loop/for bodies are always written
+//     as multi-line blocks (a single-line `if cond { stmt }` mis-parses as a
+//     trailing statement), and a condition never starts with '(' (the parser
+//     treats `if (` ambiguously) -- value-producing helpers wrap such reads.
+//   * `<` binds tighter than `-`, so mixed comparisons are parenthesised, but
+//     the parenthesis is never the first token of the condition.
 
 use std
 
-// Capacity must stay in sync with the guard in insert_byte(); g_buf is padded
-// past g_cap so the 4-byte over-read on the last element stays in bounds.
-fn g_cap() i32 { return 262144 }
+// ---- document state -------------------------------------------------------
 
-let g_buf = [u8](262208)
-let g_len = 0
-let g_cur = 0          // cursor as a byte offset into g_buf
+let g_doc = ""         // whole document as one string
+let g_cur = 0          // caret as a byte offset into g_doc
+let g_anchor = -1      // selection anchor offset, or -1 for no selection
+let g_shift = false    // host-set: extend selection on the next navigation key
 
 let g_rowoff = 0       // first document line shown
 let g_coloff = 0       // first column shown
-let g_rows = 40        // visible text rows (set from the framebuffer in main)
-let g_cols = 120       // visible columns
+let g_rows = 40        // visible text rows (set from the framebuffer in render)
+let g_cols = 120       // visible columns (set from the framebuffer in render)
 
 // VIEW_KEY_* codes (lib/include/view.h). ns has no enums; constants are
 // zero-argument fns, matching the convention in nscode/cli/keys.ns.
@@ -47,40 +51,56 @@ fn VK_PAGE_DOWN() i32 { return 267 }
 fn VK_HOME() i32 { return 268 }
 fn VK_END() i32 { return 269 }
 
-// ---- low level byte access ------------------------------------------------
+// ---- small helpers --------------------------------------------------------
 
-fn gb(i: i32) i32 {
-    return (g_buf[i] as i32) & 255
+// A one-byte string holding the newline byte (10). Double-quoted literals are
+// not escape-processed, so the real newline is produced through std.unescape.
+fn nl() str {
+    return unescape("\n")
 }
 
-fn sb(i: i32, v: i32) {
-    g_buf[i] = v as u8
+fn doc_len() i32 {
+    return g_doc.len
 }
 
-// Append one byte at the end of the document (used to seed initial content).
-fn append_byte(b: i32) {
-    if g_len < g_cap() {
-        sb(g_len, b)
-        g_len = g_len + 1
+// Byte value at offset i. The mask keeps any over-read in range.
+fn dc(i: i32) i32 {
+    return (g_doc[i] as i32) & 255
+}
+
+// Non-negative integer to decimal string (used for line numbers). Template
+// strings mis-parse in the current interpreter, so this is done by hand.
+fn itos(n: i32) str {
+    if n == 0 {
+        return "0"
     }
+    let digits = "0123456789"
+    let out = ""
+    let v = n
+    loop v > 0 {
+        let d = v % 10
+        out = substr(digits, d, 1) + out
+        v = v / 10
+    }
+    return out
 }
 
 // Seed the buffer with the bytes of `s` (resets the document first).
 fn load_str(s: str) {
-    g_len = 0
+    g_doc = s
     g_cur = 0
-    for i in 0 to s.len {
-        append_byte(s[i] as i32)
-    }
-    g_cur = 0
+    g_anchor = -1
+    g_rowoff = 0
+    g_coloff = 0
 }
 
-// ---- line geometry over the flat buffer -----------------------------------
+// ---- line geometry over the flat string -----------------------------------
 
 fn line_count() i32 {
     let c = 1
-    for i in 0 to g_len {
-        if gb(i) == 10 {
+    let n = doc_len()
+    for i in 0 to n {
+        if dc(i) == 10 {
             c = c + 1
         }
     }
@@ -93,43 +113,47 @@ fn line_start(target: i32) i32 {
         return 0
     }
     let l = 0
-    for i in 0 to g_len {
-        if gb(i) == 10 {
+    let n = doc_len()
+    for i in 0 to n {
+        if dc(i) == 10 {
             l = l + 1
             if l == target {
                 return i + 1
             }
         }
     }
-    return g_len
+    return n
 }
 
 // Length (excluding the newline) of the line beginning at byte offset `off`.
 fn line_len(off: i32) i32 {
-    let n = 0
-    for i in off to g_len {
-        if gb(i) == 10 {
-            return n
+    let m = 0
+    let n = doc_len()
+    for i in off to n {
+        if dc(i) == 10 {
+            return m
         }
-        n = n + 1
+        m = m + 1
     }
-    return n
+    return m
 }
 
-fn cur_line() i32 {
+// Document line containing byte offset `off`.
+fn line_of(off: i32) i32 {
     let l = 0
-    for i in 0 to g_cur {
-        if gb(i) == 10 {
+    for i in 0 to off {
+        if dc(i) == 10 {
             l = l + 1
         }
     }
     return l
 }
 
-fn cur_col() i32 {
+// Column of byte offset `off` within its line.
+fn col_of(off: i32) i32 {
     let c = 0
-    for i in 0 to g_cur {
-        if gb(i) == 10 {
+    for i in 0 to off {
+        if dc(i) == 10 {
             c = 0
         } else {
             c = c + 1
@@ -138,59 +162,141 @@ fn cur_col() i32 {
     return c
 }
 
-// ---- editing --------------------------------------------------------------
+fn cur_line() i32 {
+    return line_of(g_cur)
+}
 
-fn insert_byte(b: i32) {
-    if g_len < g_cap() {
-        let i = g_len
-        loop i > g_cur {
-            sb(i, gb(i - 1))
-            i = i - 1
+fn cur_col() i32 {
+    return col_of(g_cur)
+}
+
+// The text of visible line `li`, without its trailing newline.
+fn line_text(li: i32) str {
+    // The start/length must be passed to substr inline: binding them to local
+    // `let`s before the call mis-evaluates in the current interpreter (an
+    // immediate-valued local read as a substr index returns an empty slice).
+    return substr(g_doc, line_start(li), line_len(line_start(li)))
+}
+
+// ---- selection ------------------------------------------------------------
+
+fn has_selection() bool {
+    if g_anchor < 0 {
+        return false
+    }
+    if g_anchor == g_cur {
+        return false
+    }
+    return true
+}
+
+fn sel_min() i32 {
+    if g_anchor < g_cur {
+        return g_anchor
+    }
+    return g_cur
+}
+
+fn sel_max() i32 {
+    if g_anchor < g_cur {
+        return g_cur
+    }
+    return g_anchor
+}
+
+// Start (or clear) a selection ahead of a navigation move. With `sel` true the
+// anchor is pinned to the pre-move caret on the first shifted key.
+fn begin_sel(sel: bool) {
+    if sel {
+        if g_anchor < 0 {
+            g_anchor = g_cur
         }
-        sb(g_cur, b)
-        g_len = g_len + 1
-        g_cur = g_cur + 1
+    } else {
+        g_anchor = -1
     }
 }
 
+fn select_all() {
+    g_anchor = 0
+    g_cur = doc_len()
+}
+
+// The currently selected text (empty when there is no selection).
+fn selected_text() str {
+    if has_selection() {
+        let a = sel_min()
+        let b = sel_max()
+        return substr(g_doc, a, b - a)
+    }
+    return ""
+}
+
+fn delete_selection() {
+    let a = sel_min()
+    let b = sel_max()
+    let rest = doc_len() - b
+    g_doc = substr(g_doc, 0, a) + substr(g_doc, b, rest)
+    g_cur = a
+    g_anchor = -1
+}
+
+// ---- editing --------------------------------------------------------------
+
+fn insert_str(s: str) {
+    if has_selection() {
+        delete_selection()
+    }
+    let rest = doc_len() - g_cur
+    g_doc = substr(g_doc, 0, g_cur) + s + substr(g_doc, g_cur, rest)
+    g_cur = g_cur + s.len
+    g_anchor = -1
+}
+
+fn insert_newline() {
+    insert_str(nl())
+}
+
 fn delete_back() {
-    if g_cur > 0 {
-        let i = g_cur - 1
-        loop i < (g_len - 1) {
-            sb(i, gb(i + 1))
-            i = i + 1
+    if has_selection() {
+        delete_selection()
+    } else {
+        if g_cur > 0 {
+            let rest = doc_len() - g_cur
+            g_doc = substr(g_doc, 0, g_cur - 1) + substr(g_doc, g_cur, rest)
+            g_cur = g_cur - 1
         }
-        g_len = g_len - 1
-        g_cur = g_cur - 1
     }
 }
 
 fn delete_forward() {
-    if g_cur < g_len {
-        let i = g_cur
-        loop i < (g_len - 1) {
-            sb(i, gb(i + 1))
-            i = i + 1
+    if has_selection() {
+        delete_selection()
+    } else {
+        if g_cur < doc_len() {
+            let rest = (doc_len() - g_cur) - 1
+            g_doc = substr(g_doc, 0, g_cur) + substr(g_doc, g_cur + 1, rest)
         }
-        g_len = g_len - 1
     }
 }
 
 // ---- cursor movement ------------------------------------------------------
 
-fn move_left() {
+fn move_left(sel: bool) {
+    begin_sel(sel)
     if g_cur > 0 {
         g_cur = g_cur - 1
     }
 }
 
-fn move_right() {
-    if g_cur < g_len {
+fn move_right(sel: bool) {
+    begin_sel(sel)
+    if g_cur < doc_len() {
         g_cur = g_cur + 1
     }
 }
 
-fn move_up() {
+fn move_up(sel: bool) {
+    begin_sel(sel)
     let cl = cur_line()
     if cl > 0 {
         let cc = cur_col()
@@ -204,7 +310,8 @@ fn move_up() {
     }
 }
 
-fn move_down() {
+fn move_down(sel: bool) {
+    begin_sel(sel)
     let cl = cur_line()
     let total = line_count()
     if cl < (total - 1) {
@@ -219,26 +326,28 @@ fn move_down() {
     }
 }
 
-fn do_home() {
+fn do_home(sel: bool) {
+    begin_sel(sel)
     g_cur = line_start(cur_line())
 }
 
-fn do_end() {
+fn do_end(sel: bool) {
+    begin_sel(sel)
     let s = line_start(cur_line())
     g_cur = s + line_len(s)
 }
 
-fn page_up() {
+fn page_up(sel: bool) {
     let n = g_rows - 1
     for i in 0 to n {
-        move_up()
+        move_up(sel)
     }
 }
 
-fn page_down() {
+fn page_down(sel: bool) {
     let n = g_rows - 1
     for i in 0 to n {
-        move_down()
+        move_down(sel)
     }
 }
 
@@ -263,32 +372,38 @@ fn editor_scroll() {
 
 // ---- input dispatch -------------------------------------------------------
 // Navigation and structural edits are keyed by VIEW_KEY_* codes delivered by
-// the native window layer. Printable-character insertion needs translated
-// character events (with modifier/shift state), which the current view struct
-// does not yet surface to ns -- see the note in main.ns.
+// the native window layer. Set g_shift before dispatch to extend the selection.
+// Printable-character insertion uses insert_str() with translated character
+// events (with modifier/shift state), which the current view struct does not
+// yet surface to ns -- see the note in main.ns.
+
+fn set_shift(b: bool) {
+    g_shift = b
+}
 
 fn process_view_key(k: i32) {
+    let sel = g_shift
     if k == VK_LEFT() {
-        move_left()
+        move_left(sel)
     } else if k == VK_RIGHT() {
-        move_right()
+        move_right(sel)
     } else if k == VK_UP() {
-        move_up()
+        move_up(sel)
     } else if k == VK_DOWN() {
-        move_down()
+        move_down(sel)
     } else if k == VK_HOME() {
-        do_home()
+        do_home(sel)
     } else if k == VK_END() {
-        do_end()
+        do_end(sel)
     } else if k == VK_PAGE_UP() {
-        page_up()
+        page_up(sel)
     } else if k == VK_PAGE_DOWN() {
-        page_down()
+        page_down(sel)
     } else if k == VK_DELETE() {
         delete_forward()
     } else if k == VK_BACKSPACE() {
         delete_back()
     } else if k == VK_ENTER() {
-        insert_byte(10)
+        insert_newline()
     }
 }

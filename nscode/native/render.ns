@@ -1,40 +1,196 @@
 // nscode/native/render.ns
 // ---------------------------------------------------------------------------
-// GPU render layer for the native editor. Each frame it opens the screen render
-// pass, sets the viewport, and (TODO) submits one textured quad per visible
-// glyph sampled from a monospace font atlas. The backend behind these calls is
-// Metal on Apple, DirectX 12 on Windows, and a no-op on Linux (lib/src/gpu.c),
-// so this module is safe to call on every platform -- it simply draws nothing
-// where there is no backend.
+// Render layer for the native code editor, drawn through the `ui` module
+// (lib/ui.ns) -- the Nano Script surface of the @liamlangli/ui WebGPU toolkit.
+// This is the native port of that toolkit's `code_editor` plugin: each frame it
+// paints the editor background, a line-number gutter, the selection highlight,
+// the visible document lines and a caret, all through `ui_renderer` draw calls
+// (ui_fill_rect / ui_draw_text / ui_push_clip) instead of hand-rolled GPU
+// passes. The renderer batches these into one GPU submission on flush.
 //
-// Scaffolding status: the per-frame pass scaffolding below is real. Building the
-// glyph mesh requires the descriptor-driven creation calls (gpu_create_shader /
-// gpu_create_pipeline / gpu_create_mesh) whose nested descriptors do not yet
-// marshal through the interpreter FFI (see lib/gpu.ns). Those are wired through
-// a future scalar helper layer; until then the glyph submission is a TODO.
+// Geometry is in physical pixels (f64). Colours are packed 0xAABBGGRR values
+// built from hex with ui_pack_color; on a themed host these would instead come
+// from ui_theme_rgba, but a self-contained palette keeps the scaffold free of
+// an external theme document.
 
-use gpu
+use ui
 use editor
 
-// The default screen pass (handle id 0). On real backends a configured pass is
-// created once at launch; here the zero handle selects the swapchain target.
-fn screen_pass() gpu_render_pass {
-    return gpu_render_pass { id: 0 }
+// Font-face selector: UI_FONT_MONO in lib/ui.ns. Re-exposed as a helper so a
+// condition/argument never has to reach across modules for the constant.
+fn FONT_MONO() i32 { return 1 }
+
+// Logical font size and per-line padding, in physical pixels.
+fn font_px() f64 { return 16.0 }
+fn line_pad() f64 { return 4.0 }
+fn gutter_pad() f64 { return 8.0 }
+
+// ---- palette (packed 0xAABBGGRR) ------------------------------------------
+
+fn col_bg() u32 { return ui_pack_color("#1e1e2e") }
+fn col_gutter() u32 { return ui_pack_color("#181825") }
+fn col_text() u32 { return ui_pack_color("#cdd6f4") }
+fn col_dim() u32 { return ui_pack_color("#6c7086") }
+fn col_sel() u32 { return ui_pack_color("#414b6b") }
+fn col_caret() u32 { return ui_pack_color("#f5e0dc") }
+fn col_track() u32 { return ui_pack_color("#11111b") }
+fn col_thumb() u32 { return ui_pack_color("#45475a") }
+
+// The clear colour passed to ui_flush, matching col_bg above.
+fn clear_color() ui_color_rgba {
+    return ui_color_rgba { r: 0.118, g: 0.118, b: 0.180, a: 1.0 }
 }
 
-// Render one frame of the document at framebuffer size (fb_w x fb_h).
-fn render_frame(fb_w: i32, fb_h: i32) {
+// Digit count of a positive line count, with a two-digit minimum gutter.
+fn gutter_digits(total: i32) i32 {
+    let d = itos(total).len
+    if d < 2 {
+        return 2
+    }
+    return d
+}
+
+// ---- selection highlight --------------------------------------------------
+// One filled rect per selected line, clipped to the code column. Drawn before
+// the glyphs so the text sits on top.
+
+fn draw_selection(r: ref ui_renderer, code_x: f64, y: f64, char_w: f64, line_h: f64, scroll_t: f64, scroll_l: f64) {
+    let a = sel_min()
+    let b = sel_max()
+    let sline = line_of(a)
+    let scol = col_of(a)
+    let eline = line_of(b)
+    let ecol = col_of(b)
+    let li = sline
+    loop li <= eline {
+        let sc = 0
+        if li == sline {
+            sc = scol
+        }
+        let ec = line_len(line_start(li))
+        if li == eline {
+            ec = ecol
+        }
+        let ry = y + (li as f64) * line_h - scroll_t
+        let rx = code_x + (sc as f64) * char_w - scroll_l
+        let rw = ((ec - sc) as f64) * char_w
+        if rw > 0.0 {
+            ui_fill_rect(r, rx, ry, rw, line_h, col_sel(), 0.0)
+        }
+        li = li + 1
+    }
+}
+
+// ---- vertical scrollbar ---------------------------------------------------
+
+fn draw_scrollbar(r: ref ui_renderer, x: f64, y: f64, h: f64, content_h: f64) {
+    if content_h > h {
+        let bar_w = 8.0
+        let track_x = x - bar_w
+        ui_fill_rect(r, track_x, y, bar_w, h, col_track(), 0.0)
+        let thumb_h = h * h / content_h
+        if thumb_h < 20.0 {
+            thumb_h = 20.0
+        }
+        let max_scroll = content_h - h
+        let scroll_t = (g_rowoff as f64) * (content_h / (line_count() as f64))
+        let thumb_y = y
+        if max_scroll > 0.0 {
+            thumb_y = y + scroll_t / max_scroll * (h - thumb_h)
+        }
+        ui_fill_round_rect(r, track_x + 1.0, thumb_y, bar_w - 2.0, thumb_h, 3.0, col_thumb(), 0.0)
+    }
+}
+
+// ---- frame ----------------------------------------------------------------
+// Render one frame of the document at framebuffer size (fb_w x fb_h). Call it
+// between ui_begin_frame and ui_flush.
+
+fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
+    let fpx = font_px()
+    let char_w = ui_mono_char_width(r, fpx, FONT_MONO())
+    if char_w < 1.0 {
+        char_w = 1.0
+    }
+    let line_h = ui_text_line_height(r, fpx, FONT_MONO()) + line_pad()
+
+    let x = 0.0
+    let y = 0.0
+    let w = fb_w as f64
+    let h = fb_h as f64
+
+    let total = line_count()
+    let digits = gutter_digits(total)
+    let gutter_w = (digits as f64) * char_w + gutter_pad() * 2.0
+    let code_x = x + gutter_w
+    let code_w = w - gutter_w
+
+    // Visible row/column counts feed the document model's scroll clamp.
+    let vrows = (h / line_h) as i32
+    if vrows < 1 {
+        vrows = 1
+    }
+    g_rows = vrows
+    let vcols = (code_w / char_w) as i32
+    if vcols < 1 {
+        vcols = 1
+    }
+    g_cols = vcols
     editor_scroll()
 
-    gpu_begin_render_pass(screen_pass())
-    gpu_set_viewport(0, 0, fb_w, fb_h)
+    let scroll_t = (g_rowoff as f64) * line_h
+    let scroll_l = (g_coloff as f64) * char_w
 
-    // TODO: for each visible document line (g_rowoff .. g_rowoff + g_rows) and
-    // column, append a textured quad (position + atlas uv) to a vertex buffer,
-    // then gpu_set_pipeline / gpu_set_mesh / gpu_draw to blit the glyphs. Also
-    // draw the cursor as a thin quad at (cur_col-g_coloff, cur_line-g_rowoff).
-    // Requires the glyph-atlas + pipeline created at launch.
+    // Background + gutter strip.
+    ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
+    ui_fill_rect(r, x, y, gutter_w, h, col_gutter(), 0.0)
 
-    gpu_end_pass()
-    gpu_commit()
+    // Line numbers in the gutter (unclipped; the gutter is its own column).
+    let first = g_rowoff
+    let gi = 0
+    loop gi <= vrows {
+        let li = first + gi
+        if li < total {
+            let row_y = y + (li as f64) * line_h - scroll_t
+            let text_y = ui_text_v_center_y(r, row_y, line_h, fpx, FONT_MONO())
+            let num = itos(li + 1)
+            let nx = code_x - gutter_pad() - (num.len as f64) * char_w
+            ui_draw_text(r, nx, text_y, num, fpx, col_dim(), FONT_MONO())
+        }
+        gi = gi + 1
+    }
+
+    // Code column: selection, glyphs and caret, clipped to the text area.
+    ui_push_clip(r, code_x, y, code_w, h)
+
+    if has_selection() {
+        draw_selection(r, code_x, y, char_w, line_h, scroll_t, scroll_l)
+    }
+
+    let vi = 0
+    loop vi <= vrows {
+        let li = first + vi
+        if li < total {
+            let row_y = y + (li as f64) * line_h - scroll_t
+            let text_y = ui_text_v_center_y(r, row_y, line_h, fpx, FONT_MONO())
+            let lt = line_text(li)
+            if lt.len > 0 {
+                ui_draw_text(r, code_x - scroll_l, text_y, lt, fpx, col_text(), FONT_MONO())
+            }
+        }
+        vi = vi + 1
+    }
+
+    // Caret: a thin filled bar at the current line/column.
+    let cl = cur_line()
+    let cc = cur_col()
+    let cy = y + (cl as f64) * line_h - scroll_t
+    let cx = code_x + (cc as f64) * char_w - scroll_l
+    ui_fill_rect(r, cx, cy, 2.0, line_h, col_caret(), 0.0)
+
+    ui_pop_clip(r)
+
+    // Vertical scrollbar overlay (drawn when the document overflows).
+    let content_h = (total as f64) * line_h
+    draw_scrollbar(r, w, y, h, content_h)
 }
