@@ -1,0 +1,25 @@
+// A static file server built on the standard library `http` module. The whole
+// server is one call: http_serve_static binds the port, accepts connections,
+// maps each request path to a file under the given root (rejecting "../"
+// traversal), serves it with a Content-Type inferred from the extension, and
+// answers 404 for anything missing.
+//
+//   bin/ns run sample/ns/http_server.ns
+//   curl http://127.0.0.1:8080/          # serves <root>/index.html
+//
+// The `net` and `http` modules are compiled position-independent directly into
+// the ns binary, so this runs with no shared objects to load.
+use std
+use http
+
+fn main() {
+    let port = 8080
+    let root = "."
+    print(`serving "{root}" on http://127.0.0.1:{port}/\n`)
+
+    // Blocks forever; returns -1 only if the port could not be bound.
+    let r = http_serve_static(port, root)
+    if r < 0 {
+        print(`failed to bind port {port}\n`)
+    }
+}

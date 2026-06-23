@@ -1,0 +1,63 @@
+mod http
+
+// Minimal HTTP/1.1 helpers built on the net module, implemented in
+// lib/src/http.c and resolved through the static symbol table in
+// src/ns_vm_lib.c.
+//
+// Like net, the interface is SCALAR plus `str` arguments. Parsed request data
+// is staged in shared statics and read back with http_method()/http_path_byte;
+// responses are written straight to a socket fd.
+//
+// The headline feature is http_serve_static(port, root): a complete, blocking
+// static file server. For custom servers, use net.net_tcp_listen/accept to run
+// the loop yourself, http_recv_request() to parse each request, and the
+// http_send_* helpers to reply.
+
+// Method codes returned by http_recv_request() / http_method().
+let HTTP_GET = 0
+let HTTP_HEAD = 1
+let HTTP_POST = 2
+let HTTP_PUT = 3
+let HTTP_DELETE = 4
+let HTTP_OTHER = 5
+
+// ---- request parsing ------------------------------------------------------
+
+// Read and parse one request from `fd`. Returns an HTTP_* method code, or -1
+// when the connection closed or the request was malformed.
+ref fn http_recv_request(fd: i32) i32
+
+// Method code of the most recently parsed request.
+ref fn http_method() i32
+
+// Length of the parsed request path (percent-decoded, query string stripped).
+ref fn http_path_len() i32
+
+// Byte `i` of the parsed request path (0..255), or -1 when out of range.
+ref fn http_path_byte(i: i32) i32
+
+// ---- response building ----------------------------------------------------
+
+// Send a complete response: status line, optional Content-Type (skipped when
+// `content_type` is empty), Content-Length, blank line, then `body_len` bytes
+// of `body`. Pass `body.len` as `body_len`. Returns 0 on success, -1 on error.
+ref fn http_send_response(fd: i32, status: i32, content_type: str, body: str, body_len: i32) i32
+
+// Send `path` as a 200 response with Content-Type inferred from its extension.
+// Returns body bytes sent, or -1 when the file cannot be opened.
+ref fn http_send_file(fd: i32, path: str) i32
+
+// Send a status-only response (e.g. 404, 500) with a small HTML body.
+ref fn http_send_status(fd: i32, status: i32) i32
+
+// ---- complete static file server ------------------------------------------
+
+// Serve files under `root` over HTTP on `port`, forever. Blocks; returns -1
+// only on fatal setup failure (e.g. the port could not be bound).
+ref fn http_serve_static(port: i32, root: str) i32
+
+// ---- minimal client ------------------------------------------------------
+
+// Connect to `host`:`port` and send "GET `path`". Returns a connected fd whose
+// response can be read with net.net_recv(), or -1.
+ref fn http_get(host: str, port: i32, path: str) i32

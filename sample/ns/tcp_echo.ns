@@ -1,0 +1,34 @@
+// A TCP echo server written entirely in ns on top of the standard library
+// `net` module. It listens on a port, then loops accepting one client at a
+// time, reading a chunk and writing it straight back.
+//
+//   bin/ns run sample/ns/tcp_echo.ns
+//   printf 'hello\n' | nc 127.0.0.1 7000
+//
+// Bytes received by net_recv are staged in a shared buffer; net_send_buf
+// forwards them back without copying them out through the FFI, so the payload
+// echoes verbatim (binary included).
+use std
+use net
+
+fn main() {
+    let port = 7000
+    let server = net_tcp_listen(port)
+    if server < 0 {
+        print(`failed to bind port {port}\n`)
+    }
+    if server >= 0 {
+        print(`tcp echo server on 127.0.0.1:{port}\n`)
+        for i in 0 to 16 {
+            let client = net_tcp_accept(server)
+            if client >= 0 {
+                let n = net_recv(client)
+                if n > 0 {
+                    let w = net_send_buf(client, n)
+                }
+                let d = net_close(client)
+            }
+        }
+        let d = net_close(server)
+    }
+}

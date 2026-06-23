@@ -27,8 +27,11 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     case NS_TYPE_STRING: {
         // Return a non-owning view: callers may ns_str_free the result, and the
         // underlying storage lives in vm->str_list and must not be released here.
+        // dynamic MUST be 0 -- ns_str_range() would set it to 1, which makes the
+        // caller's ns_str_free() release vm->str_list storage and corrupt the
+        // interpolated string variable on its next use.
         ns_str s = ns_eval_str(vm, n);
-        return ns_str_range(s.data, s.len);
+        return (ns_str){.data = s.data, .len = s.len, .dynamic = 0};
     }
     default:
         return ns_str_cstr("nil");

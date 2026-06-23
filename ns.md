@@ -142,6 +142,16 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 - A "kilo"-style text editor written in ns, run with `bin/ns run nscode/cli/main.ns`.
 - Uses the native `term` module (`lib/term.ns`) for raw mode, key input and I/O.
 
+### Standard library modules (`lib/`)
+- `*.ns` modules declare `ref fn` bindings to C implementations in `lib/src/`,
+  compiled position-independent into the binary and resolved through the static
+  symbol table in `src/ns_vm_lib.c`.
+- `std`, `io`, `view`, `gpu`, `term`, and the networking pair `net` / `http`.
+- `net` (`lib/net.ns`, `lib/src/net.c`) provides TCP/UDP socket primitives;
+  `http` (`lib/http.ns`, `lib/src/http.c`) adds HTTP/1.1 helpers and a complete
+  static file server (`http_serve_static`). See `doc/net.md` and the
+  `sample/ns/http_server.ns` / `sample/ns/tcp_echo.ns` examples.
+
 ---
 
 ## 8) Docs and samples worth reading first

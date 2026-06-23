@@ -82,6 +82,34 @@ extern i32 term_putc_file(i32 c);
 extern i32 term_close_write(void);
 extern i32 term_env_byte(i32 idx);
 
+extern i32 net_tcp_listen(i32 port);
+extern i32 net_tcp_accept(i32 server_fd);
+extern i32 net_tcp_connect(const char *host, i32 port);
+extern i32 net_udp_bind(i32 port);
+extern i32 net_udp_socket(void);
+extern i32 net_recv(i32 fd);
+extern i32 net_udp_recv(i32 fd);
+extern i32 net_buf_len(void);
+extern i32 net_buf_byte(i32 i);
+extern i32 net_send(i32 fd, const char *data, i32 len);
+extern i32 net_send_str(i32 fd, const char *s);
+extern i32 net_send_buf(i32 fd, i32 len);
+extern i32 net_udp_reply(i32 fd, const char *data, i32 len);
+extern i32 net_udp_send(i32 fd, const char *host, i32 port, const char *data, i32 len);
+extern i32 net_file_size(const char *path);
+extern i32 net_send_file(i32 fd, const char *path);
+extern i32 net_close(i32 fd);
+
+extern i32 http_recv_request(i32 fd);
+extern i32 http_method(void);
+extern i32 http_path_len(void);
+extern i32 http_path_byte(i32 i);
+extern i32 http_send_response(i32 fd, i32 status, const char *content_type, const char *body, i32 body_len);
+extern i32 http_send_file(i32 fd, const char *path);
+extern i32 http_send_status(i32 fd, i32 status);
+extern i32 http_serve_static(i32 port, const char *root);
+extern i32 http_get(const char *host, i32 port, const char *path);
+
 typedef struct ns_static_sym {
     const char *name;
     void *fn;
@@ -121,6 +149,34 @@ static const ns_static_sym ns_static_syms[] = {
     {"term_putc_file", (void*)term_putc_file},
     {"term_close_write", (void*)term_close_write},
     {"term_env_byte", (void*)term_env_byte},
+
+    {"net_tcp_listen", (void*)net_tcp_listen},
+    {"net_tcp_accept", (void*)net_tcp_accept},
+    {"net_tcp_connect", (void*)net_tcp_connect},
+    {"net_udp_bind", (void*)net_udp_bind},
+    {"net_udp_socket", (void*)net_udp_socket},
+    {"net_recv", (void*)net_recv},
+    {"net_udp_recv", (void*)net_udp_recv},
+    {"net_buf_len", (void*)net_buf_len},
+    {"net_buf_byte", (void*)net_buf_byte},
+    {"net_send", (void*)net_send},
+    {"net_send_str", (void*)net_send_str},
+    {"net_send_buf", (void*)net_send_buf},
+    {"net_udp_reply", (void*)net_udp_reply},
+    {"net_udp_send", (void*)net_udp_send},
+    {"net_file_size", (void*)net_file_size},
+    {"net_send_file", (void*)net_send_file},
+    {"net_close", (void*)net_close},
+
+    {"http_recv_request", (void*)http_recv_request},
+    {"http_method", (void*)http_method},
+    {"http_path_len", (void*)http_path_len},
+    {"http_path_byte", (void*)http_path_byte},
+    {"http_send_response", (void*)http_send_response},
+    {"http_send_file", (void*)http_send_file},
+    {"http_send_status", (void*)http_send_status},
+    {"http_serve_static", (void*)http_serve_static},
+    {"http_get", (void*)http_get},
 };
 
 // Resolve a `ref fn` to a statically linked symbol, or NULL when the name is

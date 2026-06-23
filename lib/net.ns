@@ -1,0 +1,81 @@
+mod net
+
+// Native TCP / UDP socket primitives, implemented in lib/src/net.c and resolved
+// through the static symbol table in src/ns_vm_lib.c.
+//
+// The interface is SCALAR (i32 in / i32 out) plus `str` arguments, the subset
+// that marshals reliably through the interpreter's FFI. Sockets are identified
+// by their integer file descriptor. Received bytes are staged in a shared
+// buffer and read back one at a time with net_buf_byte(); payloads are sent
+// with an explicit length so binary data is handled correctly.
+//
+// The model is blocking and single-threaded: a server calls net_tcp_listen()
+// once and then loops over net_tcp_accept().
+
+// ---- TCP ------------------------------------------------------------------
+
+// Bind to `port` on all interfaces and listen. Returns the listening fd, or -1.
+ref fn net_tcp_listen(port: i32) i32
+
+// Block until a client connects to `server_fd`. Returns the client fd, or -1.
+ref fn net_tcp_accept(server_fd: i32) i32
+
+// Connect to `host`:`port` (host may be a name or dotted-quad). Returns fd/-1.
+ref fn net_tcp_connect(host: str, port: i32) i32
+
+// ---- UDP ------------------------------------------------------------------
+
+// Bind a UDP socket to `port` for receiving. Returns fd, or -1.
+ref fn net_udp_bind(port: i32) i32
+
+// Create an unbound UDP socket for sending. Returns fd, or -1.
+ref fn net_udp_socket() i32
+
+// ---- receive (into the shared buffer) -------------------------------------
+
+// Receive from TCP `fd` into the shared buffer. Returns byte count (0 = peer
+// closed), or -1.
+ref fn net_recv(fd: i32) i32
+
+// Receive one UDP datagram on `fd`, remembering the sender for net_udp_reply.
+// Returns byte count, or -1.
+ref fn net_udp_recv(fd: i32) i32
+
+// Bytes currently in the shared receive buffer.
+ref fn net_buf_len() i32
+
+// Byte `i` of the shared receive buffer (0..255), or -1 when out of range.
+ref fn net_buf_byte(i: i32) i32
+
+// ---- send -----------------------------------------------------------------
+
+// Send `len` bytes of `data` over `fd`. Pass `s.len` as the length. Returns the
+// number of bytes sent, or -1.
+ref fn net_send(fd: i32, data: str, len: i32) i32
+
+// Send NUL-terminated text `s` over `fd`. Returns bytes sent, or -1.
+ref fn net_send_str(fd: i32, s: str) i32
+
+// Send the first `len` bytes of the shared receive buffer over `fd`, forwarding
+// exactly what net_recv() read (e.g. for an echo server). Returns bytes sent,
+// or -1.
+ref fn net_send_buf(fd: i32, len: i32) i32
+
+// Reply to the sender of the most recent net_udp_recv() on `fd`. Returns -1/n.
+ref fn net_udp_reply(fd: i32, data: str, len: i32) i32
+
+// Send a UDP datagram from `fd` to `host`:`port`. Returns bytes sent, or -1.
+ref fn net_udp_send(fd: i32, host: str, port: i32, data: str, len: i32) i32
+
+// ---- file helpers ---------------------------------------------------------
+
+// Size of the file at `path`, or -1 when missing / not a regular file.
+ref fn net_file_size(path: str) i32
+
+// Stream the file at `path` over `fd`. Returns body bytes sent, or -1.
+ref fn net_send_file(fd: i32, path: str) i32
+
+// ---- lifecycle ------------------------------------------------------------
+
+// Close the socket `fd`. Returns 0 on success, -1 on error.
+ref fn net_close(fd: i32) i32
