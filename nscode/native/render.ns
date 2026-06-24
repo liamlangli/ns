@@ -35,6 +35,19 @@ fn col_sel() u32 { return ui_pack_color("#414b6b") }
 fn col_caret() u32 { return ui_pack_color("#f5e0dc") }
 fn col_track() u32 { return ui_pack_color("#11111b") }
 fn col_thumb() u32 { return ui_pack_color("#45475a") }
+fn col_panel() u32 { return ui_pack_color("#303446") }
+fn col_panel_hi() u32 { return ui_pack_color("#414559") }
+fn col_accent() u32 { return ui_pack_color("#8bd5ca") }
+fn col_gold() u32 { return ui_pack_color("#eed49f") }
+fn col_red() u32 { return ui_pack_color("#ed8796") }
+fn col_sidebar() u32 { return ui_pack_color("#181926") }
+fn col_sidebar_alt() u32 { return ui_pack_color("#1e2030") }
+fn col_tab() u32 { return ui_pack_color("#24273a") }
+fn col_line_hot() u32 { return ui_pack_color("#292c3c") }
+fn col_border() u32 { return ui_pack_color("#494d64") }
+fn col_keyword() u32 { return ui_pack_color("#8aadf4") }
+fn col_string() u32 { return ui_pack_color("#f0c6a6") }
+fn col_comment() u32 { return ui_pack_color("#6e738d") }
 
 // The clear colour passed to ui_flush, matching col_bg above.
 fn clear_color() ui_color_rgba {
@@ -102,11 +115,93 @@ fn draw_scrollbar(r: ref ui_renderer, x: f64, y: f64, h: f64, content_h: f64) {
     }
 }
 
+fn draw_file_row(r: ref ui_renderer, x: f64, y: f64, w: f64, text: str, depth: i32, selected: bool, folder: bool) {
+    let row_h = 24.0
+    if selected {
+        ui_fill_round_rect(r, x + 8.0, y + 2.0, w - 16.0, row_h - 4.0, 5.0, col_sel(), 0.0)
+    }
+
+    let tx = x + 14.0 + (depth as f64) * 16.0
+    if folder {
+        ui_draw_text(r, tx, y + 6.0, "v", 13.0, col_dim(), FONT_MONO())
+        ui_draw_text(r, tx + 17.0, y + 6.0, text, 13.0, col_text(), FONT_MONO())
+    } else {
+        ui_draw_text(r, tx, y + 6.0, "-", 13.0, col_accent(), FONT_MONO())
+        ui_draw_text(r, tx + 17.0, y + 6.0, text, 13.0, col_dim(), FONT_MONO())
+    }
+}
+
+fn draw_file_tree(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_sidebar(), 0.0)
+    ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_border(), 0.0)
+
+    ui_draw_text(r, x + 14.0, y + 16.0, "EXPLORER", 12.0, col_dim(), FONT_MONO())
+    ui_fill_rect(r, x + 12.0, y + 42.0, w - 24.0, 1.0, col_border(), 0.0)
+
+    draw_file_row(r, x, y + 56.0, w, "nscode", 0, false, true)
+    draw_file_row(r, x, y + 84.0, w, "native", 1, true, true)
+    draw_file_row(r, x, y + 112.0, w, "main.ns", 2, false, false)
+    draw_file_row(r, x, y + 140.0, w, "render.ns", 2, true, false)
+    draw_file_row(r, x, y + 168.0, w, "editor.ns", 2, false, false)
+    draw_file_row(r, x, y + 196.0, w, "README.md", 2, false, false)
+
+    let info_y = y + h - 92.0
+    let info_min_y = y + 230.0
+    if info_y > info_min_y {
+        ui_fill_round_rect(r, x + 12.0, info_y, w - 24.0, 66.0, 8.0, col_sidebar_alt(), 0.0)
+        ui_draw_text(r, x + 24.0, info_y + 14.0, "renderer", 12.0, col_dim(), FONT_MONO())
+        ui_draw_text(r, x + 24.0, info_y + 36.0, "Metal / MSDF", 13.0, col_accent(), FONT_MONO())
+    }
+}
+
+fn draw_tab_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    let tab_h = 38.0
+    ui_fill_rect(r, x, y, w, tab_h, col_tab(), 0.0)
+    ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_border(), 0.0)
+    ui_fill_round_rect(r, x + 10.0, y + 7.0, 116.0, 24.0, 5.0, col_panel(), 0.0)
+    ui_fill_rect(r, x + 10.0, y + 30.0, 116.0, 2.0, col_accent(), 0.0)
+    ui_draw_text(r, x + 24.0, y + 13.0, "render.ns", 13.0, col_text(), FONT_MONO())
+    ui_draw_text(r, x + 146.0, y + 13.0, "main.ns", 13.0, col_dim(), FONT_MONO())
+    ui_draw_text(r, x + w - 186.0, y + 13.0, "Nano Script Native", 13.0, col_dim(), FONT_MONO())
+}
+
+fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, row: i32, col: i32) {
+    ui_fill_rect(r, x, y, w, 28.0, col_accent(), 0.0)
+    ui_draw_text(r, x + 12.0, y + 8.0, "nscode/native", 12.0, col_sidebar(), FONT_MONO())
+    ui_draw_text(r, x + w - 236.0, y + 8.0, "UTF-8   LF   Nano Script", 12.0, col_sidebar(), FONT_MONO())
+
+    let rx = x + w - 360.0
+    let status_min_x = x + 200.0
+    if rx > status_min_x {
+        ui_draw_text(r, rx, y + 8.0, "Ln", 12.0, col_sidebar(), FONT_MONO())
+        ui_draw_text(r, rx + 22.0, y + 8.0, itos(row + 1), 12.0, col_sidebar(), FONT_MONO())
+        ui_draw_text(r, rx + 62.0, y + 8.0, "Col", 12.0, col_sidebar(), FONT_MONO())
+        ui_draw_text(r, rx + 98.0, y + 8.0, itos(col + 1), 12.0, col_sidebar(), FONT_MONO())
+    }
+}
+
 // ---- frame ----------------------------------------------------------------
 // Render one frame of the document at framebuffer size (fb_w x fb_h). Call it
 // between ui_begin_frame and ui_flush.
 
 fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
+    let w = fb_w as f64
+    let h = fb_h as f64
+
+    let tree_w = 220.0
+    if w < 760.0 {
+        tree_w = 164.0
+    }
+    let top_h = 38.0
+    let status_h = 28.0
+    let editor_x = tree_w
+    let editor_y = top_h
+    let editor_w = w - tree_w
+    let editor_h = h - top_h - status_h
+
+    draw_file_tree(r, 0.0, 0.0, tree_w, h - status_h)
+    draw_tab_bar(r, editor_x, 0.0, editor_w)
+
     let fpx = font_px()
     let char_w = ui_mono_char_width(r, fpx, FONT_MONO())
     if char_w < 1.0 {
@@ -114,19 +209,19 @@ fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
     }
     let line_h = ui_text_line_height(r, fpx, FONT_MONO()) + line_pad()
 
-    let x = 0.0
-    let y = 0.0
-    let w = fb_w as f64
-    let h = fb_h as f64
+    let x = editor_x
+    let y = editor_y
+    let code_surface_w = editor_w
+    let code_surface_h = editor_h
 
     let total = line_count()
     let digits = gutter_digits(total)
     let gutter_w = (digits as f64) * char_w + gutter_pad() * 2.0
     let code_x = x + gutter_w
-    let code_w = w - gutter_w
+    let code_w = code_surface_w - gutter_w
 
     // Visible row/column counts feed the document model's scroll clamp.
-    let vrows = (h / line_h) as i32
+    let vrows = (code_surface_h / line_h) as i32
     if vrows < 1 {
         vrows = 1
     }
@@ -141,9 +236,18 @@ fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
     let scroll_t = (g_rowoff as f64) * line_h
     let scroll_l = (g_coloff as f64) * char_w
 
-    // Background + gutter strip.
-    ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
-    ui_fill_rect(r, x, y, gutter_w, h, col_gutter(), 0.0)
+    // Editor surface + gutter strip.
+    ui_fill_rect(r, x, y, code_surface_w, code_surface_h, col_bg(), 0.0)
+    ui_fill_rect(r, x, y, gutter_w, code_surface_h, col_gutter(), 0.0)
+    ui_fill_rect(r, x, y, code_surface_w, 1.0, col_border(), 0.0)
+
+    let hot_row_y = y + (cur_line() as f64) * line_h - scroll_t
+    let editor_bottom = y + code_surface_h
+    if hot_row_y >= y {
+        if hot_row_y < editor_bottom {
+            ui_fill_rect(r, x, hot_row_y, code_surface_w, line_h, col_line_hot(), 0.0)
+        }
+    }
 
     // Line numbers in the gutter (unclipped; the gutter is its own column).
     let first = g_rowoff
@@ -161,7 +265,7 @@ fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
     }
 
     // Code column: selection, glyphs and caret, clipped to the text area.
-    ui_push_clip(r, code_x, y, code_w, h)
+    ui_push_clip(r, code_x, y, code_w, code_surface_h)
 
     if has_selection() {
         draw_selection(r, code_x, y, char_w, line_h, scroll_t, scroll_l)
@@ -192,5 +296,7 @@ fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
 
     // Vertical scrollbar overlay (drawn when the document overflows).
     let content_h = (total as f64) * line_h
-    draw_scrollbar(r, w, y, h, content_h)
+    draw_scrollbar(r, x + code_surface_w, y, code_surface_h, content_h)
+
+    draw_status_bar(r, 0.0, h - status_h, w, cur_line(), cur_col())
 }

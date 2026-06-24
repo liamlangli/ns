@@ -110,6 +110,14 @@ i32 view_osx_key_map(i32 k) {
 }
 @end
 
+static void view_osx_update_mouse(NSEvent *event) {
+    const NSPoint p = [event locationInWindow];
+    const NSRect content_rect = [[event window] contentRectForFrameRect:[[event window] frame]];
+    const f64 x = p.x;
+    const f64 y = content_rect.size.height - p.y;
+    view_on_mouse_move(&_view, x, y);
+}
+
 //------------------------------------------------------------------------------
 @implementation ViewDelegate
 - (void)mtkView:(nonnull MTKView*)view drawableSizeWillChange:(CGSize)size {
@@ -130,31 +138,35 @@ i32 view_osx_key_map(i32 k) {
 //------------------------------------------------------------------------------
 @implementation ViewMTKView
 - (void)mouseDown:(NSEvent*)event {
-    (void)event;
+    view_osx_update_mouse(event);
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
 }
 
 - (void)mouseUp:(NSEvent*)event {
-    (void)event;
+    view_osx_update_mouse(event);
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
 }
 
 - (void)mouseMoved:(NSEvent*)event {
-    const NSPoint p = [event locationInWindow];
-    const NSRect content_rect = [[event window] contentRectForFrameRect:[[event window] frame]];
-    const f64 x = p.x;
-    const f64 y = content_rect.size.height - p.y;
-    view_on_mouse_move(&_view, x, y);
+    view_osx_update_mouse(event);
+}
+
+- (void)mouseDragged:(NSEvent*)event {
+    view_osx_update_mouse(event);
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
-    (void)event;
+    view_osx_update_mouse(event);
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_RIGHT, VIEW_BUTTON_ACTION_PRESS);
 }
 
 - (void)rightMouseUp:(NSEvent*)event {
-    (void)event;
+    view_osx_update_mouse(event);
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_RIGHT, VIEW_BUTTON_ACTION_RELEASE);
+}
+
+- (void)rightMouseDragged:(NSEvent*)event {
+    view_osx_update_mouse(event);
 }
 
 - (void)keyDown:(NSEvent*)event {
@@ -210,9 +222,8 @@ i32 view_osx_key_map(i32 k) {
 - (void)scrollWheel:(NSEvent*)event {
     const f64 dx = [event scrollingDeltaX];
     const f64 dy = [event scrollingDeltaY];
-    ns_unused(dx);
-    ns_unused(dy);
-    // view_on_scroll(&_view, dx, dy);
+    view_osx_update_mouse(event);
+    view_on_scroll(&_view, dx, dy);
 }
 
 - (BOOL)acceptsFirstResponder {

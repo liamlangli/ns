@@ -18,13 +18,11 @@
 // native port of the toolkit's `code_editor` plugin built on `ui_renderer`.
 //
 // Lifecycle note: view_create() opens the window WITHOUT entering the loop so
-// callbacks (on_frame / on_launch / on_terminate) can be attached before
-// view_run() drives frames. Attaching those callbacks from ns currently depends
-// on closure/function assignment support in the interpreter, which has a
-// pre-existing bug (e.g. sample/ns/block.ns also fails to parse today). Until
-// that is fixed, this entry draws a single frame up front and then runs the
-// loop; per-frame ns callbacks and live key input (which also needs an on_key
-// hook on `view` plus shift/character plumbing into editor.ns) are follow-ups.
+// callbacks can be attached before view_run() drives frames. Closure/function
+// assignment from Nano Script into view.on_frame still has VM gaps, so this
+// entry uses ui_code_editor_attach as a temporary native bridge. Live key input
+// still needs an on_key hook on `view` plus shift/character plumbing into
+// editor.ns.
 
 use std
 use view
@@ -47,23 +45,7 @@ fn main() {
     let ok = gpu_request_device(v)
     if ok {
         print("gpu device acquired\n")
-
-        // Bind a ui renderer to the view's GPU device. It loads the Latin glyph
-        // atlas (FONT_MAIN + FONT_MONO) from lib/assets during init.
-        let r = ui_renderer_create(v)
-        ui_resize(r)
-
-        let fb_w = ui_canvas_width(r)
-        let fb_h = ui_canvas_height(r)
-
-        // Draw one frame of the document through the ui renderer. Once
-        // interpreter closure support lands, this moves into an on_frame
-        // callback attached before view_run.
-        ui_begin_frame(r)
-        render_frame(r, fb_w, fb_h)
-        ui_flush(r, clear_color())
-
-        ui_renderer_destroy(r)
+        ui_code_editor_attach(v)
     } else {
         print("no GPU backend on this platform; rendering is a no-op\n")
     }

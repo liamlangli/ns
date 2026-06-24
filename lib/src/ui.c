@@ -708,3 +708,270 @@ f64 ui_mono_char_width(ui_renderer *r, f64 font_px, i32 font_type) {
     ns_unused(font_type);
     return ui_text_width(r, "0", font_px, UI_FONT_MONO);
 }
+
+// ---- native code-editor bridge -------------------------------------------
+// Nano Script cannot yet assign function values into view.on_frame reliably, so
+// the native demo installs a small C frame callback and keeps the renderer alive
+// for the lifetime of the app loop. The draw commands mirror nscode/native's
+// script renderer and the ~/os/ui code_editor plugin layout: file tree, tabs,
+// gutter, code surface, caret, scrollbar, and status bar.
+
+typedef void(*ui_view_callback)(view*);
+
+static ui_renderer *ui_code_editor_renderer;
+static view *ui_code_editor_view;
+static f64 ui_code_scroll_y;
+static i32 ui_code_caret_line;
+static i32 ui_code_hover_line = -1;
+
+static f64 ui_code_scale(void) {
+    return (ui_code_editor_view && ui_code_editor_view->ui_scale > 0.0) ? ui_code_editor_view->ui_scale : 1.0;
+}
+
+static f64 ui_native_font_px(void) { return 18.0 * ui_code_scale(); }
+static f64 ui_native_line_pad(void) { return 5.0 * ui_code_scale(); }
+static f64 ui_native_gutter_pad(void) { return 10.0 * ui_code_scale(); }
+
+static u32 ui_col_bg(void) { return ui_pack_color("#1e1e2e"); }
+static u32 ui_col_gutter(void) { return ui_pack_color("#181825"); }
+static u32 ui_col_text(void) { return ui_pack_color("#cdd6f4"); }
+static u32 ui_col_dim(void) { return ui_pack_color("#6c7086"); }
+static u32 ui_col_sel(void) { return ui_pack_color("#414b6b"); }
+static u32 ui_col_caret(void) { return ui_pack_color("#f5e0dc"); }
+static u32 ui_col_track(void) { return ui_pack_color("#11111b"); }
+static u32 ui_col_thumb(void) { return ui_pack_color("#45475a"); }
+static u32 ui_col_panel(void) { return ui_pack_color("#303446"); }
+static u32 ui_col_accent(void) { return ui_pack_color("#8bd5ca"); }
+static u32 ui_col_sidebar(void) { return ui_pack_color("#181926"); }
+static u32 ui_col_sidebar_alt(void) { return ui_pack_color("#1e2030"); }
+static u32 ui_col_tab(void) { return ui_pack_color("#24273a"); }
+static u32 ui_col_line_hot(void) { return ui_pack_color("#292c3c"); }
+static u32 ui_col_border(void) { return ui_pack_color("#494d64"); }
+static u32 ui_col_keyword(void) { return ui_pack_color("#8aadf4"); }
+static u32 ui_col_string(void) { return ui_pack_color("#f0c6a6"); }
+static u32 ui_col_comment(void) { return ui_pack_color("#6e738d"); }
+static u32 ui_col_number(void) { return ui_pack_color("#a6da95"); }
+
+static ui_color_rgba ui_native_clear(void) {
+    return (ui_color_rgba){0.118, 0.118, 0.180, 1.0};
+}
+
+static void ui_code_file_row(ui_renderer *r, f64 x, f64 y, f64 w, const char *text, i32 depth, ns_bool selected, ns_bool folder) {
+    const f64 s = ui_code_scale();
+    const f64 row_h = 24.0 * s;
+    if (selected) {
+        ui_fill_round_rect(r, x + 8.0 * s, y + 2.0 * s, w - 16.0 * s, row_h - 4.0 * s, 5.0 * s, ui_col_sel(), 0.0);
+    }
+
+    const f64 tx = x + 14.0 * s + (f64)depth * 16.0 * s;
+    if (folder) {
+        ui_draw_text(r, tx, y + 6.0 * s, "v", 13.0 * s, ui_col_dim(), UI_FONT_MONO);
+        ui_draw_text(r, tx + 17.0 * s, y + 6.0 * s, text, 13.0 * s, ui_col_text(), UI_FONT_MONO);
+    } else {
+        ui_draw_text(r, tx, y + 6.0 * s, "-", 13.0 * s, ui_col_accent(), UI_FONT_MONO);
+        ui_draw_text(r, tx + 17.0 * s, y + 6.0 * s, text, 13.0 * s, ui_col_dim(), UI_FONT_MONO);
+    }
+}
+
+static void ui_code_file_tree(ui_renderer *r, f64 x, f64 y, f64 w, f64 h) {
+    const f64 s = ui_code_scale();
+    ui_fill_rect(r, x, y, w, h, ui_col_sidebar(), 0.0);
+    ui_fill_rect(r, x + w - 1.0 * s, y, 1.0 * s, h, ui_col_border(), 0.0);
+    ui_draw_text(r, x + 14.0 * s, y + 16.0 * s, "EXPLORER", 12.0 * s, ui_col_dim(), UI_FONT_MONO);
+    ui_fill_rect(r, x + 12.0 * s, y + 42.0 * s, w - 24.0 * s, 1.0 * s, ui_col_border(), 0.0);
+
+    ui_code_file_row(r, x, y + 56.0 * s, w, "nscode", 0, false, true);
+    ui_code_file_row(r, x, y + 84.0 * s, w, "native", 1, true, true);
+    ui_code_file_row(r, x, y + 112.0 * s, w, "main.ns", 2, false, false);
+    ui_code_file_row(r, x, y + 140.0 * s, w, "render.ns", 2, true, false);
+    ui_code_file_row(r, x, y + 168.0 * s, w, "editor.ns", 2, false, false);
+    ui_code_file_row(r, x, y + 196.0 * s, w, "README.md", 2, false, false);
+
+    const f64 info_y = y + h - 92.0 * s;
+    if (info_y > y + 230.0 * s) {
+        ui_fill_round_rect(r, x + 12.0 * s, info_y, w - 24.0 * s, 66.0 * s, 8.0 * s, ui_col_sidebar_alt(), 0.0);
+        ui_draw_text(r, x + 24.0 * s, info_y + 14.0 * s, "renderer", 12.0 * s, ui_col_dim(), UI_FONT_MONO);
+        ui_draw_text(r, x + 24.0 * s, info_y + 36.0 * s, "Metal / MSDF", 13.0 * s, ui_col_accent(), UI_FONT_MONO);
+    }
+}
+
+static void ui_code_tab_bar(ui_renderer *r, f64 x, f64 y, f64 w) {
+    const f64 s = ui_code_scale();
+    const f64 tab_h = 38.0 * s;
+    ui_fill_rect(r, x, y, w, tab_h, ui_col_tab(), 0.0);
+    ui_fill_rect(r, x, y + tab_h - 1.0 * s, w, 1.0 * s, ui_col_border(), 0.0);
+    ui_fill_round_rect(r, x + 10.0 * s, y + 7.0 * s, 116.0 * s, 24.0 * s, 5.0 * s, ui_col_panel(), 0.0);
+    ui_fill_rect(r, x + 10.0 * s, y + 30.0 * s, 116.0 * s, 2.0 * s, ui_col_accent(), 0.0);
+    ui_draw_text(r, x + 24.0 * s, y + 13.0 * s, "render.ns", 13.0 * s, ui_col_text(), UI_FONT_MONO);
+    ui_draw_text(r, x + 146.0 * s, y + 13.0 * s, "main.ns", 13.0 * s, ui_col_dim(), UI_FONT_MONO);
+    if (w > 420.0 * s) {
+        ui_draw_text(r, x + w - 186.0 * s, y + 13.0 * s, "Nano Script Native", 13.0 * s, ui_col_dim(), UI_FONT_MONO);
+    }
+}
+
+static void ui_code_status_bar(ui_renderer *r, view *v, f64 x, f64 y, f64 w) {
+    const f64 s = ui_code_scale();
+    const char *mouse_label = (v && v->mouse_down) ? "Mouse down" : "Mouse ready";
+    ui_fill_rect(r, x, y, w, 28.0 * s, ui_col_accent(), 0.0);
+    ui_draw_text(r, x + 12.0 * s, y + 8.0 * s, "nscode/native", 12.0 * s, ui_col_sidebar(), UI_FONT_MONO);
+    if (w > 640.0 * s) {
+        char pos[64];
+        snprintf(pos, sizeof(pos), "Ln %d   %s", ui_code_caret_line + 1, mouse_label);
+        ui_draw_text(r, x + w - 400.0 * s, y + 8.0 * s, pos, 12.0 * s, ui_col_sidebar(), UI_FONT_MONO);
+        ui_draw_text(r, x + w - 236.0 * s, y + 8.0 * s, "UTF-8   LF   Nano Script", 12.0 * s, ui_col_sidebar(), UI_FONT_MONO);
+    }
+}
+
+static f64 ui_code_text_segment(ui_renderer *r, f64 x, f64 y, const char *text, u32 color) {
+    ui_draw_text(r, x, y, text, ui_native_font_px(), color, UI_FONT_MONO);
+    return x + ui_text_width(r, text, ui_native_font_px(), UI_FONT_MONO);
+}
+
+static void ui_code_line(ui_renderer *r, f64 x, f64 y, i32 line_no, const char *number, const char **parts, const u32 *colors, i32 part_count, f64 gutter_w, f64 char_w) {
+    const f64 line_h = ui_text_line_height(r, ui_native_font_px(), UI_FONT_MONO) + ui_native_line_pad();
+    const f64 text_y = ui_text_v_center_y(r, y, line_h, ui_native_font_px(), UI_FONT_MONO);
+    const f64 num_x = x + gutter_w - ui_native_gutter_pad() - (f64)strlen(number) * char_w;
+    ui_draw_text(r, num_x, text_y, number, ui_native_font_px(), ui_col_dim(), UI_FONT_MONO);
+
+    f64 tx = x + gutter_w;
+    for (i32 i = 0; i < part_count; i++) {
+        tx = ui_code_text_segment(r, tx, text_y, parts[i], colors[i]);
+    }
+    ns_unused(line_no);
+}
+
+static void ui_code_editor_draw(ui_renderer *r, view *v) {
+    ui_resize(r);
+    const f64 s = ui_code_scale();
+    const f64 w = (f64)ui_canvas_width(r);
+    const f64 h = (f64)ui_canvas_height(r);
+    const f64 tree_w = w < 760.0 * s ? 164.0 * s : 220.0 * s;
+    const f64 top_h = 38.0 * s;
+    const f64 status_h = 28.0 * s;
+    const f64 editor_x = tree_w;
+    const f64 editor_y = top_h;
+    const f64 editor_w = fmax(1.0, w - tree_w);
+    const f64 editor_h = fmax(1.0, h - top_h - status_h);
+
+    ui_code_file_tree(r, 0.0, 0.0, tree_w, h - status_h);
+    ui_code_tab_bar(r, editor_x, 0.0, editor_w);
+
+    const f64 char_w = fmax(1.0, ui_mono_char_width(r, ui_native_font_px(), UI_FONT_MONO));
+    const f64 line_h = ui_text_line_height(r, ui_native_font_px(), UI_FONT_MONO) + ui_native_line_pad();
+    const f64 gutter_w = 2.0 * char_w + ui_native_gutter_pad() * 2.0;
+    const f64 code_x = editor_x + gutter_w;
+    const f64 code_w = fmax(1.0, editor_w - gutter_w);
+    const i32 total_lines = 36;
+    const f64 content_h = (f64)total_lines * line_h;
+    const f64 max_scroll_y = fmax(0.0, content_h - editor_h);
+
+    if (v) {
+        ui_code_scroll_y = ui_clamp_f64(ui_code_scroll_y - v->scroll_y, 0.0, max_scroll_y);
+        ui_code_hover_line = -1;
+        if (v->mouse_x >= code_x && v->mouse_x < code_x + code_w && v->mouse_y >= editor_y && v->mouse_y < editor_y + editor_h) {
+            ui_code_hover_line = (i32)floor((v->mouse_y - editor_y + ui_code_scroll_y) / line_h);
+            if (ui_code_hover_line >= total_lines) ui_code_hover_line = -1;
+            if (v->mouse_pressed && ui_code_hover_line >= 0) {
+                ui_code_caret_line = ui_code_hover_line;
+            }
+        }
+    }
+    ui_code_caret_line = (i32)ui_clamp_f64((f64)ui_code_caret_line, 0.0, (f64)total_lines - 1.0);
+
+    ui_fill_rect(r, editor_x, editor_y, editor_w, editor_h, ui_col_bg(), 0.0);
+    ui_fill_rect(r, editor_x, editor_y, gutter_w, editor_h, ui_col_gutter(), 0.0);
+    ui_fill_rect(r, editor_x, editor_y, editor_w, 1.0, ui_col_border(), 0.0);
+    if (ui_code_hover_line >= 0) {
+        const f64 hover_y = editor_y + (f64)ui_code_hover_line * line_h - ui_code_scroll_y;
+        ui_fill_rect(r, editor_x, hover_y, editor_w, line_h, ui_col_panel(), 0.0);
+    }
+    const f64 caret_y = editor_y + (f64)ui_code_caret_line * line_h - ui_code_scroll_y;
+    if (caret_y + line_h >= editor_y && caret_y <= editor_y + editor_h) {
+        ui_fill_rect(r, editor_x, caret_y, editor_w, line_h, ui_col_line_hot(), 0.0);
+    }
+
+    ui_push_clip(r, code_x, editor_y, code_w, editor_h);
+
+    const char *l1[] = {"// native code editor bridge"};
+    const u32 c1[] = {ui_col_comment()};
+    const char *l2[] = {"use ", "ui"};
+    const u32 c2[] = {ui_col_keyword(), ui_col_text()};
+    const char *l3[] = {"use ", "editor"};
+    const u32 c3[] = {ui_col_keyword(), ui_col_text()};
+    const char *l4[] = {""};
+    const u32 c4[] = {ui_col_text()};
+    const char *l5[] = {"fn ", "render_frame", "(r: ref ui_renderer) {"};
+    const u32 c5[] = {ui_col_keyword(), ui_col_accent(), ui_col_text()};
+    const char *l6[] = {"    ", "ui_fill_round_rect", "(r, x, y, w, h, ", "8.0", ", panel, ", "0.0", ")"};
+    const u32 c6[] = {ui_col_text(), ui_col_accent(), ui_col_text(), ui_col_number(), ui_col_text(), ui_col_number(), ui_col_text()};
+    const char *l7[] = {"    ", "ui_draw_text", "(r, code_x, text_y, line, ", "16.0", ", text)"};
+    const u32 c7[] = {ui_col_text(), ui_col_accent(), ui_col_text(), ui_col_number(), ui_col_text()};
+    const char *l8[] = {"    let title = ", "\"render.ns\""};
+    const u32 c8[] = {ui_col_keyword(), ui_col_string()};
+    const char *l9[] = {"}"};
+    const u32 c9[] = {ui_col_text()};
+
+    const char **lines[] = {l1, l2, l3, l4, l5, l6, l7, l8, l9};
+    const u32 *cols[] = {c1, c2, c3, c4, c5, c6, c7, c8, c9};
+    const i32 counts[] = {1, 2, 2, 1, 3, 7, 5, 2, 1};
+    const i32 first_line = (i32)floor(ui_code_scroll_y / line_h);
+    const i32 visible_lines = (i32)ceil(editor_h / line_h) + 2;
+    for (i32 i = 0; i < visible_lines; i++) {
+        const i32 line = first_line + i;
+        if (line >= total_lines) break;
+        const i32 sample = line % 9;
+        char num[16];
+        snprintf(num, sizeof(num), "%d", line + 1);
+        ui_code_line(r, editor_x, editor_y + (f64)line * line_h - ui_code_scroll_y, line + 1, num, lines[sample], cols[sample], counts[sample], gutter_w, char_w);
+    }
+
+    ui_fill_rect(r, code_x, caret_y + 2.0 * s, 2.0 * s, line_h - 4.0 * s, ui_col_caret(), 0.0);
+    ui_pop_clip(r);
+
+    const f64 track_w = 8.0 * s;
+    const f64 track_x = editor_x + editor_w - track_w;
+    ui_fill_rect(r, track_x, editor_y, track_w, editor_h, ui_col_track(), 0.0);
+    const f64 thumb_h = fmax(28.0 * s, editor_h * editor_h / content_h);
+    const f64 thumb_y = editor_y + (max_scroll_y > 0.0 ? ui_code_scroll_y / max_scroll_y * (editor_h - thumb_h) : 0.0);
+    ui_fill_round_rect(r, track_x + 1.0 * s, thumb_y, track_w - 2.0 * s, thumb_h, 3.0 * s, ui_col_thumb(), 0.0);
+    ui_code_status_bar(r, v, 0.0, h - status_h, w);
+}
+
+static void ui_code_editor_frame(view *v) {
+    ns_unused(v);
+    if (!ui_code_editor_renderer) return;
+    ui_begin_frame(ui_code_editor_renderer);
+    ui_code_editor_draw(ui_code_editor_renderer, v ? v : ui_code_editor_view);
+    ui_color_rgba clear = ui_native_clear();
+    ui_flush(ui_code_editor_renderer, &clear);
+    if (v) {
+        v->mouse_pressed = false;
+        v->mouse_released = false;
+        v->mouse_right_pressed = false;
+        v->mouse_right_released = false;
+        v->mouse_middle_pressed = false;
+        v->mouse_middle_released = false;
+        v->scroll_x = 0.0;
+        v->scroll_y = 0.0;
+    }
+}
+
+static void ui_code_editor_terminate(view *v) {
+    ns_unused(v);
+    if (ui_code_editor_renderer) {
+        ui_renderer_destroy(ui_code_editor_renderer);
+        ui_code_editor_renderer = NULL;
+    }
+    ui_code_editor_view = NULL;
+}
+
+void ui_code_editor_attach(view *v) {
+    if (!v) return;
+    ui_code_editor_terminate(v);
+    ui_code_editor_view = v;
+    ui_code_editor_renderer = ui_renderer_create(v);
+    if (!ui_code_editor_renderer) return;
+    ui_resize(ui_code_editor_renderer);
+    v->on_frame = (void*)(ui_view_callback)ui_code_editor_frame;
+    v->on_terminate = (void*)(ui_view_callback)ui_code_editor_terminate;
+}

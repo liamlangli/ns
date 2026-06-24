@@ -146,6 +146,10 @@ typedef struct view {
     i32 framebuffer_height;
 
     f64 mouse_x, mouse_y;
+    f64 scroll_x, scroll_y;
+    ns_bool mouse_down, mouse_pressed, mouse_released;
+    ns_bool mouse_right_down, mouse_right_pressed, mouse_right_released;
+    ns_bool mouse_middle_down, mouse_middle_pressed, mouse_middle_released;
 
     f64 display_ratio;
     f64 ui_scale;
