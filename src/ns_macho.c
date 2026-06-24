@@ -171,11 +171,7 @@ static ns_return_bool ns_macho_write_file(ns_str path, u8 *buf) {
 }
 
 static ns_str ns_macho_symbol_name(ns_str fn_name) {
-    ns_str s = ns_str_null;
-    ns_str_append_len(&s, "_", 1);
-    ns_str_append_len(&s, fn_name.data, fn_name.len);
-    s.dynamic = true;
-    return s;
+    return ns_str_concat(ns_str_cstr("_"), fn_name);
 }
 
 ns_return_bool ns_macho_emit(ns_ssa_module *ssa, ns_str output_path) {

@@ -30,6 +30,12 @@ Running `ns run` with no file argument compiles and runs the whole project: it
 walks up from the current directory to the nearest `ns.mod` and executes the
 `entry` (or first of `entries`) it declares, resolved against the `source` dir.
 
+Running `ns build` with no file argument compiles the current module into an
+artifact under `<module>/bin`: `type = "app"` produces an executable, while
+`type = "library"` produces a static library. `ns build <file.ns>` builds a
+single script and links any local sibling modules it imports. Use `-o <path>` to
+set the output path, or `--exe` / `--lib` to force the artifact kind.
+
 The `nsm` module is a module manager for nanoscript. It allows you to create, install, and manage modules for your nanoscript projects. The `nsm` module is a core module and is included with the nanoscript runtime.
 
 ### Usage

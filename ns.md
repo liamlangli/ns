@@ -82,6 +82,9 @@ Common commands:
 - `-s|--symbol` print symbol table
 - `-v|--version`, `-h|--help`
 - `-o|--output` output path for emitters
+- `build [path]` compile and link a script/module to an executable or static
+  library; infers module artifact type from `ns.mod` and accepts `--exe` /
+  `--lib`
 
 No filename defaults to version + REPL.
 With filename and no analysis/emit flag, it evaluates and prints result.

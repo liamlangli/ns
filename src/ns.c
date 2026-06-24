@@ -35,6 +35,8 @@ typedef struct ns_compile_option_t {
     ns_bool show_help: 2;
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
+    ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
+    u8 build_kind;      // 0 auto, 1 executable, 2 library
     ns_str output;
     ns_str filename;
 } ns_compile_option_t;
@@ -46,6 +48,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.run = true;
         } else if (i == 1 && strcmp(argv[i], "test") == 0) {
             option.test = true;
+        } else if (i == 1 && strcmp(argv[i], "build") == 0) {
+            option.build = true;
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--token") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
@@ -68,6 +72,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.show_version = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             option.show_help = true;
+        } else if (strcmp(argv[i], "--exe") == 0 || strcmp(argv[i], "--app") == 0) {
+            option.build_kind = 1;
+        } else if (strcmp(argv[i], "--lib") == 0 || strcmp(argv[i], "--library") == 0) {
+            option.build_kind = 2;
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
@@ -101,6 +109,9 @@ void ns_help() {
     printf("\ncommands:\n");
     printf("  run  [file.ns]    compile the project scope and run it (entry from ns.mod if omitted)\n");
     printf("  test <path>       run a test entry, or every *_test.ns under a dir\n");
+    printf("  build [path]      compile and link a script/module to an executable or static lib\n");
+    printf("                    uses ns.mod type when path is omitted or a module dir\n");
+    printf("                    --exe/--app or --lib/--library can force artifact type\n");
 
 }
 
@@ -513,6 +524,233 @@ static ns_str ns_manifest_entry_file(void) {
     return ns_manifest_entry_file_for_root(root);
 }
 
+typedef enum {
+    NS_BUILD_AUTO = 0,
+    NS_BUILD_EXE = 1,
+    NS_BUILD_LIB = 2,
+} ns_build_kind;
+
+typedef struct ns_build_input {
+    ns_str filename;
+    ns_str source;
+    ns_str scope;
+    ns_str name;
+    ns_str module_type;
+    ns_bool has_manifest;
+} ns_build_input;
+
+static ns_bool ns_find_project_root(ns_str path, ns_str *out) {
+    ns_str dir = ns_is_dir(path) ? path : ns_path_dirname_safe(path);
+    while (true) {
+        ns_str manifest = ns_path_join(dir, ns_str_cstr("ns.mod"));
+        ns_bool found = ns_file_exists(manifest);
+        ns_str_free(manifest);
+        if (found) {
+            if (out) *out = dir;
+            return true;
+        }
+
+        ns_str parent = ns_path_parent(dir);
+        if (ns_str_equals(parent, dir)) break;
+        dir = parent;
+    }
+    return false;
+}
+
+static ns_str ns_build_manifest_value(ns_str root, const char *key) {
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str mod = ns_fs_read_file(manifest);
+    if (mod.data == ns_null) return ns_str_null;
+    return ns_manifest_value(mod, key);
+}
+
+static ns_str ns_build_default_name(ns_build_input *in) {
+    if (in->has_manifest) {
+        ns_str name = ns_build_manifest_value(in->scope, "name");
+        if (name.data != ns_null) return name;
+    }
+    return ns_path_filename(in->filename);
+}
+
+static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
+    ns_str name = in->name.data != ns_null ? in->name : ns_build_default_name(in);
+    ns_str artifact;
+    if (kind == NS_BUILD_LIB) {
+        artifact = ns_str_concat(ns_str_cstr("lib"), name);
+        artifact = ns_str_concat(artifact, ns_str_cstr(".a"));
+    } else {
+        artifact = ns_str_concat(name, ns_str_cstr(""));
+#if defined(_WIN32)
+        artifact = ns_str_concat(artifact, ns_str_cstr(".exe"));
+#endif
+    }
+
+    ns_str bin = ns_path_join(in->scope, ns_str_cstr("bin"));
+    return ns_path_join(bin, artifact);
+}
+
+static void ns_mkdir_one(ns_str dir) {
+    if (dir.len == 0) return;
+#if defined(_WIN32)
+    CreateDirectoryA(dir.data, NULL);
+#else
+    mkdir(dir.data, 0755);
+#endif
+}
+
+static void ns_mkdir_p(ns_str dir) {
+    if (dir.len == 0 || ns_str_equals(dir, ns_str_cstr("."))) return;
+    ns_str tmp = ns_str_concat(dir, ns_str_cstr(""));
+    for (i32 i = 1; i < tmp.len; i++) {
+        if (tmp.data[i] == NS_PATH_SEPARATOR) {
+            tmp.data[i] = '\0';
+            ns_mkdir_one(ns_str_cstr(tmp.data));
+            tmp.data[i] = NS_PATH_SEPARATOR;
+        }
+    }
+    ns_mkdir_one(tmp);
+    ns_str_free(tmp);
+}
+
+static void ns_build_ensure_output_dir(ns_str output) {
+    ns_str dir = ns_path_dirname_safe(output);
+    ns_mkdir_p(dir);
+    ns_str_free(dir);
+}
+
+static ns_str ns_shell_quote(ns_str s) {
+    ns_str q = ns_str_null;
+    ns_str_append_len(&q, "'", 1);
+    for (i32 i = 0; i < s.len; i++) {
+        if (s.data[i] == '\'') {
+            ns_str_append_len(&q, "'\\''", 4);
+        } else {
+            ns_str_append_len(&q, s.data + i, 1);
+        }
+    }
+    ns_str_append_len(&q, "'", 1);
+    ns_array_push(q.data, '\0');
+    return q;
+}
+
+static void ns_archive_object(ns_str output, ns_str object) {
+    ns_str q_output = ns_shell_quote(output);
+    ns_str q_object = ns_shell_quote(object);
+    ns_str cmd = ns_str_null;
+    ns_str_append_len(&cmd, "ar rcs ", 7);
+    ns_str_append_len(&cmd, q_output.data, q_output.len);
+    ns_str_append_len(&cmd, " ", 1);
+    ns_str_append_len(&cmd, q_object.data, q_object.len);
+    ns_array_push(cmd.data, '\0');
+
+    i32 ret = system(cmd.data);
+    if (ret != 0) {
+        ns_exit(1, "build", "failed to archive %.*s.\n", output.len, output.data);
+    }
+
+    remove(object.data);
+}
+
+static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename) {
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    ns_return_assert(ret);
+
+    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
+    return ssa_ret.r;
+}
+
+static ns_ssa_module *ns_compile_build_input(ns_build_input *in) {
+    ns_str merged = ns_project_link(in->scope, in->source);
+    return ns_compile_source_to_ssa(merged, in->filename);
+}
+
+static ns_build_input ns_build_input_resolve(ns_str path) {
+    ns_build_input in = {0};
+
+    if (path.len == 0) {
+        ns_str cwd = ns_getcwd();
+        in.scope = ns_project_root(cwd);
+        in.filename = ns_manifest_entry_file_for_root(in.scope);
+        in.has_manifest = true;
+    } else if (ns_is_dir(path)) {
+        in.scope = ns_project_root(path);
+        in.filename = ns_manifest_entry_file_for_root(in.scope);
+        in.has_manifest = true;
+    } else {
+        in.filename = path;
+        if (!ns_find_project_root(path, &in.scope)) in.scope = ns_path_dirname_safe(path);
+        in.has_manifest = ns_file_exists(ns_path_join(in.scope, ns_str_cstr("ns.mod")));
+    }
+
+    in.source = ns_fs_read_file(in.filename);
+    if (in.source.data == ns_null || in.source.len == 0) {
+        ns_exit(1, "build", "invalid input file %.*s.\n", in.filename.len, in.filename.data);
+    }
+
+    if (in.has_manifest) {
+        in.name = ns_build_manifest_value(in.scope, "name");
+        in.module_type = ns_build_manifest_value(in.scope, "type");
+    }
+    if (in.name.data == ns_null) in.name = ns_path_filename(in.filename);
+    return in;
+}
+
+static ns_bool ns_build_type_is_library(ns_str t) {
+    return ns_str_equals(t, ns_str_cstr("library")) || ns_str_equals(t, ns_str_cstr("lib"));
+}
+
+static ns_build_kind ns_build_resolve_kind(ns_build_input *in, u8 requested) {
+    if (requested == NS_BUILD_EXE) return NS_BUILD_EXE;
+    if (requested == NS_BUILD_LIB) return NS_BUILD_LIB;
+    if (ns_build_type_is_library(in->module_type)) return NS_BUILD_LIB;
+    return NS_BUILD_EXE;
+}
+
+void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
+    ns_build_input in = ns_build_input_resolve(path);
+    ns_build_kind kind = ns_build_resolve_kind(&in, requested_kind);
+    if (output.len == 0) output = ns_build_default_output(&in, kind);
+    ns_build_ensure_output_dir(output);
+
+    ns_ssa_module *ssa = ns_compile_build_input(&in);
+
+    if (kind == NS_BUILD_LIB) {
+        ns_asm_target target;
+        ns_asm_get_current_target(&target);
+        if (target.os != NS_OS_DARWIN) {
+            ns_ssa_module_free(ssa);
+            ns_exit(1, "build", "static library output is currently supported for mach-o targets only.\n");
+        }
+
+        ns_str object = ns_str_concat(output, ns_str_cstr(".o"));
+        ns_return_bool emit_ret = ns_macho_emit_object(ssa, object);
+        ns_ssa_module_free(ssa);
+        if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+
+        ns_archive_object(output, object);
+        ns_info("build", "library %.*s\n", output.len, output.data);
+        return;
+    }
+
+    ns_asm_target target;
+    ns_asm_get_current_target(&target);
+    ns_return_bool emit_ret;
+    if (target.os == NS_OS_DARWIN) {
+        emit_ret = ns_macho_emit(ssa, output);
+    } else if (target.os == NS_OS_WINDOWS) {
+        emit_ret = ns_pe_emit(ssa, output);
+    } else {
+        ns_ssa_module_free(ssa);
+        ns_exit(1, "build", "executable output is not yet supported for this target OS.\n");
+        return;
+    }
+
+    ns_ssa_module_free(ssa);
+    if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+    ns_info("build", "executable %.*s\n", output.len, output.data);
+}
+
 void ns_exec_run(ns_str filename) {
     // No file argument: run the project's declared entry from its ns.mod.
     if (filename.len == 0) filename = ns_manifest_entry_file();
@@ -659,6 +897,8 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_run(option.filename);
     } else if (option.test) {
         ns_exec_test(option.filename);
+    } else if (option.build) {
+        ns_exec_build(option.filename, option.output, option.build_kind);
     } else if (option.tokenize_only) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {
