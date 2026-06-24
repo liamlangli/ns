@@ -1,13 +1,21 @@
 // nscode/native/render.ns
 // ---------------------------------------------------------------------------
-// Nano Script mirror of the native agentic coding shell. The running app still
-// uses the C bridge in lib/src/ui.c because assigning view.on_frame callbacks
-// from Nano Script is not reliable yet, but this file keeps the intended layout
-// visible from the NS side: chat history, agent dialog, and Git diff review.
+// Active Nano Script renderer for the native NSCode shell. C owns only the
+// low-level immediate-mode UI kernel; app/editor state and drawing live here.
 
+use view
 use ui
+use editor
 
 fn FONT_MONO() i32 { return 1 }
+fn MODE_CODE() i32 { return 0 }
+fn MODE_AGENT() i32 { return 1 }
+
+let g_mode = 1
+let g_selected_chat = 0
+let g_dialog_scroll = 0.0
+let g_diff_scroll = 0.0
+let g_code_scroll = 0.0
 
 fn font_px() f64 { return 14.0 }
 fn small_px() f64 { return 12.0 }
@@ -31,9 +39,51 @@ fn col_titlebar() u32 { return ui_pack_color("#101317") }
 fn col_close() u32 { return ui_pack_color("#ff5f57") }
 fn col_min() u32 { return ui_pack_color("#ffbd2e") }
 fn col_zoom() u32 { return ui_pack_color("#28c840") }
+fn col_editor_bg() u32 { return ui_pack_color("#0f1117") }
+fn col_editor_panel() u32 { return ui_pack_color("#171a22") }
+fn col_editor_panel_hi() u32 { return ui_pack_color("#202633") }
+fn col_editor_gutter() u32 { return ui_pack_color("#222733") }
+fn col_editor_cursor() u32 { return ui_pack_color("#f4d35e") }
 
 fn clear_color() ui_color_rgba {
     return ui_color_rgba { r: 0.071, g: 0.078, b: 0.090, a: 1.0 }
+}
+
+fn clamp(v: f64, lo: f64, hi: f64) f64 {
+    if v < lo {
+        return lo
+    }
+    if v > hi {
+        return hi
+    }
+    return v
+}
+
+fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
+    if v.mouse_x < x {
+        return false
+    }
+    if v.mouse_x >= (x + w) {
+        return false
+    }
+    if v.mouse_y < y {
+        return false
+    }
+    if v.mouse_y >= (y + h) {
+        return false
+    }
+    return true
+}
+
+fn reset_view_input(v: ref view) {
+    v.mouse_pressed = false
+    v.mouse_released = false
+    v.mouse_right_pressed = false
+    v.mouse_right_released = false
+    v.mouse_middle_pressed = false
+    v.mouse_middle_released = false
+    v.scroll_x = 0.0
+    v.scroll_y = 0.0
 }
 
 fn draw_rule(r: ref ui_renderer, x: f64, y: f64, w: f64) {
@@ -42,12 +92,6 @@ fn draw_rule(r: ref ui_renderer, x: f64, y: f64, w: f64) {
 
 fn draw_label(r: ref ui_renderer, x: f64, y: f64, text: str) {
     ui_draw_text(r, x, y, text, small_px(), col_muted(), FONT_MONO())
-}
-
-fn draw_pill(r: ref ui_renderer, x: f64, y: f64, text: str, bg: u32, fg: u32) {
-    let tw = ui_text_width(r, text, small_px(), FONT_MONO())
-    ui_fill_round_rect(r, x, y, tw + 16.0, 22.0, 6.0, bg, 0.0)
-    ui_draw_text(r, x + 8.0, y + 6.0, text, small_px(), fg, FONT_MONO())
 }
 
 fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, px: f64, color: u32) {
@@ -60,7 +104,97 @@ fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: s
     }
 }
 
-fn draw_title_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+fn draw_pill(r: ref ui_renderer, x: f64, y: f64, text: str, bg: u32, fg: u32) {
+    let tw = ui_text_width(r, text, small_px(), FONT_MONO())
+    ui_fill_round_rect(r, x, y, tw + 16.0, 22.0, 6.0, bg, 0.0)
+    ui_draw_text(r, x + 8.0, y + 6.0, text, small_px(), fg, FONT_MONO())
+}
+
+fn chat_title(i: i32) str {
+    if i == 0 {
+        return "Agentic native shell"
+    }
+    if i == 1 {
+        return "Parser diagnostics"
+    }
+    if i == 2 {
+        return "GPU text pass"
+    }
+    return "Diff review"
+}
+
+fn chat_subtitle(i: i32) str {
+    if i == 0 {
+        return "Design and wire the NSCode layout"
+    }
+    if i == 1 {
+        return "Review AST checks for editor modules"
+    }
+    if i == 2 {
+        return "Tighten clipping and glyph metrics"
+    }
+    return "Inspect local changes before commit"
+}
+
+fn chat_meta(i: i32) str {
+    if i == 0 {
+        return "now"
+    }
+    if i == 1 {
+        return "14m"
+    }
+    if i == 2 {
+        return "1h"
+    }
+    return "2h"
+}
+
+fn chat_badge(i: i32) str {
+    if i == 0 {
+        return "active"
+    }
+    if i == 1 {
+        return "done"
+    }
+    if i == 2 {
+        return "notes"
+    }
+    return "git"
+}
+
+fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    let pad = 3.0
+    let half_w = (w - pad * 2.0) * 0.5
+    let code_x = x + pad
+    let agent_x = x + pad + half_w
+    let code_hot = hit(v, code_x, y + pad, half_w, h - pad * 2.0)
+    let agent_hot = hit(v, agent_x, y + pad, half_w, h - pad * 2.0)
+    if v.mouse_pressed {
+        if code_hot {
+            g_mode = MODE_CODE()
+        } else if agent_hot {
+            g_mode = MODE_AGENT()
+        }
+    }
+
+    ui_fill_round_rect(r, x, y, w, h, 8.0, col_surface(), 0.0)
+    let active_x = agent_x
+    if g_mode == MODE_CODE() {
+        active_x = code_x
+    }
+    ui_fill_round_rect(r, active_x, y + pad, half_w, h - pad * 2.0, 6.0, col_accent(), 0.0)
+
+    let code_color = col_muted()
+    let agent_color = col_bg()
+    if g_mode == MODE_CODE() {
+        code_color = col_bg()
+        agent_color = col_muted()
+    }
+    draw_text_clipped(r, code_x + 15.0, y + 8.0, half_w - 24.0, 14.0, "Code", small_px(), code_color)
+    draw_text_clipped(r, agent_x + 10.0, y + 8.0, half_w - 18.0, 14.0, "Agent", small_px(), agent_color)
+}
+
+fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_titlebar(), 0.0)
     ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
     let radius = 6.0
@@ -68,40 +202,48 @@ fn draw_title_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_round_rect(r, x + 18.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_close(), 0.0)
     ui_fill_round_rect(r, x + 40.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_min(), 0.0)
     ui_fill_round_rect(r, x + 62.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_zoom(), 0.0)
-    draw_text_clipped(r, x + 86.0, y + 12.0, w - 172.0, 16.0, "NSCode Native", small_px(), col_muted())
+    draw_text_clipped(r, x + 86.0, y + 12.0, w - 260.0, 16.0, "NSCode Native", small_px(), col_muted())
+    draw_mode_switch(r, v, x + w - 166.0, y + 5.0, 150.0, 28.0)
 }
 
-fn draw_chat_row(r: ref ui_renderer, x: f64, y: f64, w: f64, title: str, subtitle: str, meta: str, badge: str, selected: bool) {
+fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i32) {
+    if v.mouse_pressed {
+        if hit(v, x, y, w, 74.0) {
+            g_selected_chat = idx
+        }
+    }
+    let selected = false
+    if idx == g_selected_chat {
+        selected = true
+    }
     if selected {
         ui_fill_round_rect(r, x + 10.0, y, w - 20.0, 70.0, 7.0, col_surface_hi(), 0.0)
         ui_fill_rect(r, x + 10.0, y + 12.0, 3.0, 46.0, col_accent(), 0.0)
     }
-    draw_text_clipped(r, x + 24.0, y + 12.0, w - 84.0, 20.0, title, font_px(), col_text())
-    draw_text_clipped(r, x + 24.0, y + 34.0, w - 48.0, 16.0, subtitle, small_px(), col_muted())
-    draw_text_clipped(r, x + w - 44.0, y + 12.0, 34.0, 16.0, meta, small_px(), col_muted())
+    draw_text_clipped(r, x + 24.0, y + 12.0, w - 84.0, 20.0, chat_title(idx), font_px(), col_text())
+    draw_text_clipped(r, x + 24.0, y + 34.0, w - 48.0, 16.0, chat_subtitle(idx), small_px(), col_muted())
+    draw_text_clipped(r, x + w - 44.0, y + 12.0, 34.0, 16.0, chat_meta(idx), small_px(), col_muted())
     let pill_bg = col_surface()
     let pill_fg = col_muted()
     if selected {
         pill_bg = col_bg()
         pill_fg = col_accent()
     }
-    draw_pill(r, x + 24.0, y + 48.0, badge, pill_bg, pill_fg)
+    draw_pill(r, x + 24.0, y + 48.0, chat_badge(idx), pill_bg, pill_fg)
 }
 
-fn draw_history(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_rail(), 0.0)
     ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_line(), 0.0)
     ui_push_clip(r, x, y, w, h)
     draw_text_clipped(r, x + 18.0, y + 18.0, w - 36.0, 24.0, "NSCode Agent", title_px(), col_text())
     draw_label(r, x + 18.0, y + 48.0, "CHAT HISTORY")
     draw_rule(r, x + 18.0, y + 72.0, w - 36.0)
-    draw_chat_row(r, x, y + 90.0, w, "Agentic native shell", "Design and wire the NSCode layout", "now", "active", true)
-    draw_chat_row(r, x, y + 172.0, w, "Parser diagnostics", "Review AST checks for editor modules", "14m", "done", false)
-    draw_chat_row(r, x, y + 254.0, w, "GPU text pass", "Tighten clipping and glyph metrics", "1h", "notes", false)
-    draw_chat_row(r, x, y + 336.0, w, "Diff review", "Inspect local changes before commit", "2h", "git", false)
+    for i in 0 to 4 {
+        draw_chat_row(r, v, x, y + 90.0 + (i as f64) * 82.0, w, i)
+    }
     let foot_y = y + h - 86.0
-    let foot_min_y = y + 440.0
-    if foot_y > foot_min_y {
+    if foot_y > (y + 440.0) {
         ui_fill_round_rect(r, x + 14.0, foot_y, w - 28.0, 62.0, 7.0, col_surface(), 0.0)
         draw_label(r, x + 28.0, foot_y + 13.0, "WORKSPACE")
         draw_text_clipped(r, x + 28.0, foot_y + 34.0, w - 56.0, 16.0, "/Users/demi/os/ns", small_px(), col_accent())
@@ -121,62 +263,182 @@ fn draw_step(r: ref ui_renderer, x: f64, y: f64, kind: str, title: str, detail: 
     ui_fill_rect(r, x + 12.0, y + 28.0, 1.0, 33.0, col_line(), 0.0)
 }
 
-fn draw_dialog(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+fn draw_dialog(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let header_h = 58.0
+    let body_y = y + header_h
+    let body_h = h - header_h
+    let content_h = 500.0
+    let max_scroll = content_h - body_h
+    if hit(v, x, body_y, w, body_h) {
+        g_dialog_scroll = clamp(g_dialog_scroll - v.scroll_y, 0.0, max_scroll)
+    }
+
     ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
     draw_text_clipped(r, x + 24.0, y + 17.0, w - 190.0, 24.0, "Agent Dialog", title_px(), col_text())
     draw_pill(r, x + w - 152.0, y + 17.0, "planning", col_surface(), col_accent())
     draw_rule(r, x, y + header_h, w)
 
-    let body_y = y + header_h + 22.0
-    ui_fill_round_rect(r, x + 24.0, body_y, w - 48.0, 92.0, 8.0, col_surface(), 0.0)
-    draw_label(r, x + 42.0, body_y + 16.0, "USER")
-    draw_text_clipped(r, x + 42.0, body_y + 40.0, w - 84.0, 20.0, "Make nscode/native feel like an agentic coding app.", font_px(), col_text())
-    draw_text_clipped(r, x + 42.0, body_y + 64.0, w - 84.0, 20.0, "Add chat history, agent timeline, and local Git diff review.", font_px(), col_text())
+    ui_push_clip(r, x, body_y, w, body_h)
+    let yy = body_y + 22.0 - g_dialog_scroll
+    ui_fill_round_rect(r, x + 24.0, yy, w - 48.0, 92.0, 8.0, col_surface(), 0.0)
+    draw_label(r, x + 42.0, yy + 16.0, "USER")
+    draw_text_clipped(r, x + 42.0, yy + 40.0, w - 84.0, 20.0, "Keep low-level UI in C.", font_px(), col_text())
+    draw_text_clipped(r, x + 42.0, yy + 64.0, w - 84.0, 20.0, "Move editor and app behavior into nscode/native.", font_px(), col_text())
 
-    let agent_y = body_y + 124.0
+    let agent_y = yy + 124.0
     ui_fill_round_rect(r, x + 24.0, agent_y, w - 48.0, 312.0, 8.0, col_surface(), 0.0)
     draw_label(r, x + 42.0, agent_y + 16.0, "AGENT")
     draw_text_clipped(r, x + 42.0, agent_y + 40.0, w - 84.0, 20.0, "Working plan", font_px(), col_text())
-    draw_text_clipped(r, x + 42.0, agent_y + 64.0, w - 84.0, 16.0, "Runtime bridge owns the app shell until NS callbacks can drive frames.", small_px(), col_muted())
-    draw_step(r, x + 42.0, agent_y + 98.0, "scan", "Read current native bridge", "Mapped the C callback path that owns runtime rendering.", true)
-    draw_step(r, x + 42.0, agent_y + 152.0, "plan", "Choose shell shape", "Three panes: conversations, agent dialog, and Git diff.", true)
-    draw_step(r, x + 42.0, agent_y + 206.0, "edit", "Patch renderer", "Add seeded agent activity and live diff loading.", true)
-    draw_step(r, x + 42.0, agent_y + 260.0, "check", "Verify native surface", "Build, AST checks, then visual review in the running app.", false)
+    draw_text_clipped(r, x + 42.0, agent_y + 64.0, w - 84.0, 16.0, "Nano Script owns frame callbacks, layout, and editor state.", small_px(), col_muted())
+    draw_step(r, x + 42.0, agent_y + 98.0, "scan", "Separate kernel and app", "ui.c now contains renderer primitives only.", true)
+    draw_step(r, x + 42.0, agent_y + 152.0, "edit", "Install NS callbacks", "main.ns creates the renderer and calls render_frame.", true)
+    draw_step(r, x + 42.0, agent_y + 206.0, "port", "Move shell rendering", "render.ns owns chat, code view, mode switch, and scroll state.", true)
+    draw_step(r, x + 42.0, agent_y + 260.0, "check", "Build and visually review", "Runtime appearance should be checked in the running app.", false)
+    ui_pop_clip(r)
 }
 
 fn draw_diff_line(r: ref ui_renderer, x: f64, y: f64, w: f64, no: str, text: str, bg: u32, fg: u32, paint_bg: bool) {
     if paint_bg {
         ui_fill_rect(r, x, y, w, 22.0, bg, 0.0)
     }
-    ui_draw_text(r, x + 12.0, y + 5.0, no, small_px(), col_muted(), FONT_MONO())
-    ui_draw_text(r, x + 58.0, y + 5.0, text, small_px(), fg, FONT_MONO())
+    draw_text_clipped(r, x + 12.0, y + 5.0, 38.0, 16.0, no, small_px(), col_muted())
+    draw_text_clipped(r, x + 58.0, y + 5.0, w - 68.0, 16.0, text, small_px(), fg)
 }
 
-fn draw_diff(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+fn draw_diff(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let header_h = 58.0
+    let body_y = y + header_h
+    let body_h = h - header_h
+    let content_h = 220.0
+    let max_scroll = content_h - body_h
+    if hit(v, x, body_y, w, body_h) {
+        g_diff_scroll = clamp(g_diff_scroll - v.scroll_y, 0.0, max_scroll)
+    }
+
     ui_fill_rect(r, x, y, w, h, col_surface(), 0.0)
     ui_fill_rect(r, x, y, 1.0, h, col_line(), 0.0)
-    draw_text_clipped(r, x + 18.0, y + 17.0, w - 178.0, 24.0, "Local Diff", title_px(), col_text())
-    draw_pill(r, x + w - 148.0, y + 17.0, "git diff", col_bg(), col_accent())
+    draw_text_clipped(r, x + 18.0, y + 17.0, w - 178.0, 24.0, "Review Preview", title_px(), col_text())
+    draw_pill(r, x + w - 148.0, y + 17.0, "ns render", col_bg(), col_accent())
     draw_rule(r, x, y + header_h, w)
-    let dy = y + header_h + 18.0
+
+    ui_push_clip(r, x, body_y, w, body_h)
+    let dy = body_y + 18.0 - g_diff_scroll
     draw_diff_line(r, x, dy, w, "1", "diff --git a/nscode/native/main.ns b/nscode/native/main.ns", col_bg(), col_blue(), false)
-    draw_diff_line(r, x, dy + 22.0, w, "2", "@@ -42,7 +42,7 @@", col_hunk_bg(), col_blue(), true)
-    draw_diff_line(r, x, dy + 44.0, w, "3", "-        ui_code_editor_attach(v)", col_red_bg(), col_red(), true)
-    draw_diff_line(r, x, dy + 66.0, w, "4", "+        ui_agentic_coding_attach(v)", col_green_bg(), col_accent(), true)
-    draw_diff_line(r, x, dy + 88.0, w, "5", "diff output is loaded live by the C bridge at runtime.", col_bg(), col_muted(), false)
+    draw_diff_line(r, x, dy + 22.0, w, "2", "@@ -44,7 +44,13 @@", col_hunk_bg(), col_blue(), true)
+    draw_diff_line(r, x, dy + 44.0, w, "3", "-        start_native_bridge(v)", col_red_bg(), col_red(), true)
+    draw_diff_line(r, x, dy + 66.0, w, "4", "+        let r = ui_renderer_create(v)", col_green_bg(), col_accent(), true)
+    draw_diff_line(r, x, dy + 88.0, w, "5", "+        v.on_frame({ frame_view in", col_green_bg(), col_accent(), true)
+    draw_diff_line(r, x, dy + 110.0, w, "6", "+            render_frame(r, frame_view)", col_green_bg(), col_accent(), true)
+    draw_diff_line(r, x, dy + 132.0, w, "7", "App behavior is Nano Script-owned under nscode/native.", col_bg(), col_muted(), false)
+    ui_pop_clip(r)
 }
 
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     ui_fill_rect(r, x, y, w, 28.0, col_accent(), 0.0)
-    ui_draw_text(r, x + 14.0, y + 8.0, "nscode/native agent", small_px(), col_bg(), FONT_MONO())
-    ui_draw_text(r, x + w - 250.0, y + 8.0, "Local Git diff", small_px(), col_bg(), FONT_MONO())
+    ui_draw_text(r, x + 14.0, y + 8.0, "nscode/native", small_px(), col_bg(), FONT_MONO())
+    if w > 620.0 {
+        ui_draw_text(r, x + w - 250.0, y + 8.0, "UI kernel in C, editor in NS", small_px(), col_bg(), FONT_MONO())
+    }
 }
 
-fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
-    let w = fb_w as f64
-    let h = fb_h as f64
+fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    let tab_h = 42.0
+    let line_h = 24.0
+    let body_y = y + tab_h
+    let body_h = h - tab_h
+    let gutter_w = 72.0
+    let max_scroll = 14.0 * line_h - body_h
+    if hit(v, x, body_y, w, body_h) {
+        g_code_scroll = clamp(g_code_scroll - v.scroll_y, 0.0, max_scroll)
+    }
+
+    ui_fill_rect(r, x, y, w, h, col_editor_bg(), 0.0)
+    ui_fill_rect(r, x, y, w, tab_h, col_editor_panel(), 0.0)
+    ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_line(), 0.0)
+    ui_fill_round_rect(r, x + 14.0, y + 9.0, 156.0, 32.0, 6.0, col_editor_panel_hi(), 0.0)
+    draw_text_clipped(r, x + 30.0, y + 18.0, 130.0, 16.0, "main.ns", small_px(), col_text())
+
+    ui_fill_rect(r, x, body_y, gutter_w, body_h, col_editor_gutter(), 0.0)
+    ui_fill_rect(r, x + gutter_w - 1.0, body_y, 1.0, body_h, col_line(), 0.0)
+    ui_push_clip(r, x, body_y, w, body_h)
+    let total = line_count()
+    for i in 0 to total {
+        let row_y = body_y + 22.0 + (i as f64) * line_h - g_code_scroll
+        if row_y + line_h >= body_y {
+            if row_y <= body_y + body_h {
+                if i == cur_line() {
+                    ui_fill_rect(r, x + gutter_w, row_y - 4.0, w - gutter_w, line_h, col_editor_panel(), 0.0)
+                }
+                draw_text_clipped(r, x + 20.0, row_y, 34.0, 18.0, itos(i + 1), small_px(), col_muted())
+                draw_text_clipped(r, x + gutter_w + 16.0, row_y, w - gutter_w - 24.0, 18.0, line_text(i), font_px(), col_text())
+            }
+        }
+    }
+    let cursor_x = x + gutter_w + 16.0 + (cur_col() as f64) * ui_mono_char_width(r, font_px(), FONT_MONO())
+    let cursor_y = body_y + 22.0 + (cur_line() as f64) * line_h - g_code_scroll
+    ui_fill_rect(r, cursor_x, cursor_y - 2.0, 2.0, 20.0, col_editor_cursor(), 0.0)
+    ui_pop_clip(r)
+}
+
+fn draw_texture_panel(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_editor_panel(), 0.0)
+    ui_fill_rect(r, x, y, 1.0, h, col_line(), 0.0)
+    draw_text_clipped(r, x + 18.0, y + 18.0, w - 36.0, 20.0, "Parse Texture", title_px(), col_text())
+    draw_text_clipped(r, x + 18.0, y + 48.0, w - 36.0, 16.0, "tokens x functions", small_px(), col_muted())
+    draw_rule(r, x, y + 76.0, w)
+    let grid_x = x + 18.0
+    let grid_y = y + 102.0
+    let cell = 10.0
+    let cols = 22
+    let rows = 30
+    ui_push_clip(r, grid_x, grid_y, w - 36.0, h - 150.0)
+    for row in 0 to rows {
+        for col in 0 to cols {
+            let c = col_blue()
+            let idx = (row + col) % 5
+            if idx == 1 {
+                c = col_accent()
+            }
+            if idx == 2 {
+                c = col_yellow()
+            }
+            if idx == 3 {
+                c = col_red()
+            }
+            if idx == 4 {
+                c = col_surface_hi()
+            }
+            ui_fill_rect(r, grid_x + (col as f64) * cell, grid_y + (row as f64) * cell, cell - 1.0, cell - 1.0, c, 0.0)
+        }
+    }
+    ui_pop_clip(r)
+    draw_pill(r, x + 18.0, y + h - 46.0, "classic", col_bg(), col_accent())
+}
+
+fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    let title_h = 38.0
+    let status_h = 28.0
+    let app_y = title_h
+    let app_h = h - title_h - status_h
+    let texture_w = 288.0
+    if w < 820.0 {
+        texture_w = 220.0
+    }
+    if w < 620.0 {
+        texture_w = 0.0
+    }
+    let editor_w = w - texture_w
+
+    ui_fill_rect(r, 0.0, 0.0, w, h, col_editor_bg(), 0.0)
+    draw_title_bar(r, v, 0.0, 0.0, w, title_h)
+    draw_code_editor(r, v, 0.0, app_y, editor_w, app_h)
+    if texture_w > 0.0 {
+        draw_texture_panel(r, editor_w, app_y, texture_w, app_h)
+    }
+    draw_status_bar(r, 0.0, h - status_h, w)
+}
+
+fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let title_h = 38.0
     let status_h = 28.0
     let app_y = title_h
@@ -199,11 +461,22 @@ fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
     let diff_x = history_w + dialog_w
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
-    draw_title_bar(r, 0.0, 0.0, w, title_h)
-    draw_history(r, 0.0, app_y, history_w, app_h)
-    draw_dialog(r, dialog_x, app_y, dialog_w, app_h)
+    draw_title_bar(r, v, 0.0, 0.0, w, title_h)
+    draw_history(r, v, 0.0, app_y, history_w, app_h)
+    draw_dialog(r, v, dialog_x, app_y, dialog_w, app_h)
     if diff_w > 0.0 {
-        draw_diff(r, diff_x, app_y, diff_w, app_h)
+        draw_diff(r, v, diff_x, app_y, diff_w, app_h)
     }
     draw_status_bar(r, 0.0, h - status_h, w)
+}
+
+fn render_frame(r: ref ui_renderer, v: ref view) {
+    ui_resize(r)
+    let w = ui_canvas_width(r) as f64
+    let h = ui_canvas_height(r) as f64
+    if g_mode == MODE_CODE() {
+        render_code(r, v, w, h)
+    } else {
+        render_agent(r, v, w, h)
+    }
 }

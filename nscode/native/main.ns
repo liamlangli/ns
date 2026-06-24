@@ -7,18 +7,16 @@
 // It opens a native window (Cocoa on Apple, Win32 on Windows), acquires the
 // platform GPU device (Metal on Apple, DirectX 12 on Windows), creates a `ui`
 // renderer (lib/ui.ns -- the Nano Script surface of the @liamlangli/ui WebGPU
-// toolkit) on that device, draws an agentic coding shell, and enters the event
-// loop. On Linux there is no native backend yet, so view_create returns a no-op
-// view, gpu_request_device returns false, the ui renderer is never created, and
-// view_run returns immediately -- the program exits cleanly.
+// toolkit), then installs Nano Script frame callbacks that render the editor
+// shell from render.ns. On Linux there is no native backend yet, so view_create
+// returns a no-op view, gpu_request_device returns false, the ui renderer is
+// never created, and view_run returns immediately -- the program exits cleanly.
 //
 // The document model lives in nscode/native/editor.ns; render.ns mirrors the
-// app shell in Nano Script for future callback work.
+// app shell in Nano Script.
 //
 // Lifecycle note: view_create() opens the window WITHOUT entering the loop so
-// callbacks can be attached before view_run() drives frames. Closure/function
-// assignment from Nano Script into view.on_frame still has VM gaps, so this
-// entry uses ui_agentic_coding_attach as a temporary native bridge.
+// callbacks can be attached before view_run() drives frames.
 
 use std
 use view
@@ -41,7 +39,16 @@ fn main() {
     let ok = gpu_request_device(v)
     if ok {
         print("gpu device acquired\n")
-        ui_agentic_coding_attach(v)
+        let r = ui_renderer_create(v)
+        v.on_frame({ frame_view in
+            ui_begin_frame(r)
+            render_frame(r, frame_view)
+            ui_flush(r, clear_color())
+            reset_view_input(frame_view)
+        })
+        v.on_terminate({ dead_view in
+            ui_renderer_destroy(r)
+        })
     } else {
         print("no GPU backend on this platform; rendering is a no-op\n")
     }

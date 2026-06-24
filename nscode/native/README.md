@@ -19,44 +19,31 @@ bin/ns run nscode/native/main.ns
 ```
 
 On macOS/Windows this opens a window, acquires the GPU device, installs the
-temporary native bridge with `ui_agentic_coding_attach`, and renders the
-agentic coding shell each frame. On Linux `view_create` returns a no-op view,
-`gpu_request_device` returns false, the renderer is skipped, and the program
-prints that no GPU backend is available.
+Nano Script frame callback, and renders the agentic coding shell each frame.
+On Linux `view_create` returns a no-op view, `gpu_request_device` returns
+false, the renderer is skipped, and the program prints that no GPU backend is
+available.
 
 ## Files
 
 - `main.ns` - entry point: seeds the editor model, creates the window, requests
-  the GPU device, and attaches the native agentic renderer bridge.
-- `render.ns` - Nano Script mirror of the intended agentic layout. It is kept
-  aligned with the C bridge so future `view.on_frame` callback support has a
-  ready NS-side render path.
-- `editor.ns` - the existing text document model. It remains available for
-  future live editing work, but the first agentic shell pass uses seeded chat
-  and agent activity rather than a real chat backend.
-- `lib/src/ui.c` - the active runtime renderer while NS callback assignment is
-  incomplete. It owns the frame callback, seeded chat/activity UI, mouse
-  selection for the chat list, scrolling for the dialog and diff panes, and the
-  local Git diff loader.
+  the GPU device, creates the UI renderer, and installs Nano Script callbacks.
+- `render.ns` - active app renderer. It owns the agent shell, code view, mode
+  switch, mouse selection, and pane scroll state.
+- `editor.ns` - text document model used by the code view.
+- `lib/src/ui.c` - low-level UI kernel only: renderer lifecycle, clipping,
+  shapes, text measurement, and text drawing primitives.
 
 ## Git diff pane
 
-The right pane runs a narrow internal command:
-
-```bash
-git diff --no-ext-diff --
-```
-
-Output is capped at 256 KB. Empty output shows a "No local changes" state;
-Git errors or non-repository directories show an error state instead of
-crashing. This does not expose a general shell/process API to Nano Script.
+The right pane is currently a Nano Script-rendered review preview. There is no
+general shell/process API exposed to Nano Script yet, so it does not run
+`git diff` directly.
 
 ## Status / known limitations
 
 - The agent conversation and timeline are seeded/static. There is no real LLM
   chat backend or prompt entry yet.
-- The Git diff is live runtime data from the current working directory and is
-  refreshed periodically by the native bridge.
-- `view.on_frame` callbacks from Nano Script are still unreliable, so
-  `ui_agentic_coding_attach` remains the active bridge.
+- The review preview is static until Nano Script gets a narrow process or Git
+  API.
 - Runtime appearance changes should be checked visually in the running app.
