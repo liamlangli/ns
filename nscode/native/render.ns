@@ -122,12 +122,15 @@ fn draw_file_row(r: ref ui_renderer, x: f64, y: f64, w: f64, text: str, depth: i
     }
 
     let tx = x + 14.0 + (depth as f64) * 16.0
+    // Vertically centre the icon + label within the row instead of a fixed
+    // top offset so glyphs of any font size sit on the row's mid-line.
+    let text_y = ui_text_v_center_y(r, y, row_h, 13.0, FONT_MONO())
     if folder {
-        ui_draw_text(r, tx, y + 6.0, "v", 13.0, col_dim(), FONT_MONO())
-        ui_draw_text(r, tx + 17.0, y + 6.0, text, 13.0, col_text(), FONT_MONO())
+        ui_draw_text(r, tx, text_y, "v", 13.0, col_dim(), FONT_MONO())
+        ui_draw_text(r, tx + 17.0, text_y, text, 13.0, col_text(), FONT_MONO())
     } else {
-        ui_draw_text(r, tx, y + 6.0, "-", 13.0, col_accent(), FONT_MONO())
-        ui_draw_text(r, tx + 17.0, y + 6.0, text, 13.0, col_dim(), FONT_MONO())
+        ui_draw_text(r, tx, text_y, "-", 13.0, col_accent(), FONT_MONO())
+        ui_draw_text(r, tx + 17.0, text_y, text, 13.0, col_dim(), FONT_MONO())
     }
 }
 
@@ -135,8 +138,14 @@ fn draw_file_tree(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_sidebar(), 0.0)
     ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_border(), 0.0)
 
-    ui_draw_text(r, x + 14.0, y + 16.0, "EXPLORER", 12.0, col_dim(), FONT_MONO())
-    ui_fill_rect(r, x + 12.0, y + 42.0, w - 24.0, 1.0, col_border(), 0.0)
+    // Clip every label and selection highlight to the sidebar column so long
+    // file names and row backgrounds never bleed into the editor surface.
+    ui_push_clip(r, x, y, w, h)
+
+    let head_h = 42.0
+    let head_y = ui_text_v_center_y(r, y, head_h, 12.0, FONT_MONO())
+    ui_draw_text(r, x + 14.0, head_y, "EXPLORER", 12.0, col_dim(), FONT_MONO())
+    ui_fill_rect(r, x + 12.0, y + head_h, w - 24.0, 1.0, col_border(), 0.0)
 
     draw_file_row(r, x, y + 56.0, w, "nscode", 0, false, true)
     draw_file_row(r, x, y + 84.0, w, "native", 1, true, true)
@@ -149,35 +158,56 @@ fn draw_file_tree(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
     let info_min_y = y + 230.0
     if info_y > info_min_y {
         ui_fill_round_rect(r, x + 12.0, info_y, w - 24.0, 66.0, 8.0, col_sidebar_alt(), 0.0)
-        ui_draw_text(r, x + 24.0, info_y + 14.0, "renderer", 12.0, col_dim(), FONT_MONO())
-        ui_draw_text(r, x + 24.0, info_y + 36.0, "Metal / MSDF", 13.0, col_accent(), FONT_MONO())
+        // Two stacked labels, each centred within its half of the panel.
+        let row_h = 33.0
+        let l1_y = ui_text_v_center_y(r, info_y, row_h, 12.0, FONT_MONO())
+        let l2_y = ui_text_v_center_y(r, info_y + row_h, row_h, 13.0, FONT_MONO())
+        ui_draw_text(r, x + 24.0, l1_y, "renderer", 12.0, col_dim(), FONT_MONO())
+        ui_draw_text(r, x + 24.0, l2_y, "Metal / MSDF", 13.0, col_accent(), FONT_MONO())
     }
+
+    ui_pop_clip(r)
 }
 
 fn draw_tab_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     let tab_h = 38.0
     ui_fill_rect(r, x, y, w, tab_h, col_tab(), 0.0)
     ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_border(), 0.0)
+
+    // Clip tab pills and labels to the bar so nothing spills onto the editor.
+    ui_push_clip(r, x, y, w, tab_h)
+
     ui_fill_round_rect(r, x + 10.0, y + 7.0, 116.0, 24.0, 5.0, col_panel(), 0.0)
     ui_fill_rect(r, x + 10.0, y + 30.0, 116.0, 2.0, col_accent(), 0.0)
-    ui_draw_text(r, x + 24.0, y + 13.0, "render.ns", 13.0, col_text(), FONT_MONO())
-    ui_draw_text(r, x + 146.0, y + 13.0, "main.ns", 13.0, col_dim(), FONT_MONO())
-    ui_draw_text(r, x + w - 186.0, y + 13.0, "Nano Script Native", 13.0, col_dim(), FONT_MONO())
+    // Centre tab labels within the bar height instead of a fixed top offset.
+    let text_y = ui_text_v_center_y(r, y, tab_h, 13.0, FONT_MONO())
+    ui_draw_text(r, x + 24.0, text_y, "render.ns", 13.0, col_text(), FONT_MONO())
+    ui_draw_text(r, x + 146.0, text_y, "main.ns", 13.0, col_dim(), FONT_MONO())
+    ui_draw_text(r, x + w - 186.0, text_y, "Nano Script Native", 13.0, col_dim(), FONT_MONO())
+
+    ui_pop_clip(r)
 }
 
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, row: i32, col: i32) {
-    ui_fill_rect(r, x, y, w, 28.0, col_accent(), 0.0)
-    ui_draw_text(r, x + 12.0, y + 8.0, "nscode/native", 12.0, col_sidebar(), FONT_MONO())
-    ui_draw_text(r, x + w - 236.0, y + 8.0, "UTF-8   LF   Nano Script", 12.0, col_sidebar(), FONT_MONO())
+    let bar_h = 28.0
+    ui_fill_rect(r, x, y, w, bar_h, col_accent(), 0.0)
+
+    // Clip and vertically centre the status labels within the bar.
+    ui_push_clip(r, x, y, w, bar_h)
+    let text_y = ui_text_v_center_y(r, y, bar_h, 12.0, FONT_MONO())
+    ui_draw_text(r, x + 12.0, text_y, "nscode/native", 12.0, col_sidebar(), FONT_MONO())
+    ui_draw_text(r, x + w - 236.0, text_y, "UTF-8   LF   Nano Script", 12.0, col_sidebar(), FONT_MONO())
 
     let rx = x + w - 360.0
     let status_min_x = x + 200.0
     if rx > status_min_x {
-        ui_draw_text(r, rx, y + 8.0, "Ln", 12.0, col_sidebar(), FONT_MONO())
-        ui_draw_text(r, rx + 22.0, y + 8.0, itos(row + 1), 12.0, col_sidebar(), FONT_MONO())
-        ui_draw_text(r, rx + 62.0, y + 8.0, "Col", 12.0, col_sidebar(), FONT_MONO())
-        ui_draw_text(r, rx + 98.0, y + 8.0, itos(col + 1), 12.0, col_sidebar(), FONT_MONO())
+        ui_draw_text(r, rx, text_y, "Ln", 12.0, col_sidebar(), FONT_MONO())
+        ui_draw_text(r, rx + 22.0, text_y, itos(row + 1), 12.0, col_sidebar(), FONT_MONO())
+        ui_draw_text(r, rx + 62.0, text_y, "Col", 12.0, col_sidebar(), FONT_MONO())
+        ui_draw_text(r, rx + 98.0, text_y, itos(col + 1), 12.0, col_sidebar(), FONT_MONO())
     }
+
+    ui_pop_clip(r)
 }
 
 // ---- frame ----------------------------------------------------------------
