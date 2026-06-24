@@ -125,6 +125,29 @@ extern i32 http_send_status(i32 fd, i32 status);
 extern i32 http_serve_static(i32 port, const char *root);
 extern i32 http_get(const char *host, i32 port, const char *path);
 
+extern void *ui_renderer_create(void *v);
+extern void ui_renderer_destroy(void *r);
+extern void ui_resize(void *r);
+extern void ui_resize_to(void *r, i32 width, i32 height);
+extern void ui_request_render(void *r, i32 frames);
+extern void ui_begin_frame(void *r);
+extern void ui_flush(void *r, void *clear);
+extern i32 ui_canvas_width(void *r);
+extern i32 ui_canvas_height(void *r);
+extern void ui_fill_rect(void *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);
+extern void ui_fill_round_rect(void *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather);
+extern void ui_fill_round_rect_per_corner(void *r, f64 x, f64 y, f64 w, f64 h, f64 rtl, f64 rtr, f64 rbl, f64 rbr, u32 rgba, f64 feather);
+extern void ui_push_clip(void *r, f64 x, f64 y, f64 w, f64 h);
+extern void ui_push_clip_round(void *r, f64 x, f64 y, f64 w, f64 h, f64 radius);
+extern void ui_pop_clip(void *r);
+extern ns_bool ui_rect_clipped(void *r, f64 x, f64 y, f64 w, f64 h);
+extern void ui_draw_text(void *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type);
+extern f64 ui_text_line_height(void *r, f64 font_px, i32 font_type);
+extern f64 ui_text_v_center_y(void *r, f64 y, f64 h, f64 font_px, i32 font_type);
+extern f64 ui_text_width(void *r, const char *text, f64 font_px, i32 font_type);
+extern f64 ui_mono_char_width(void *r, f64 font_px, i32 font_type);
+extern u32 ui_pack_color(const char *hex);
+
 typedef struct ns_static_sym {
     const char *name;
     void *fn;
@@ -203,6 +226,29 @@ static const ns_static_sym ns_static_syms[] = {
     {"http_send_status", (void*)http_send_status},
     {"http_serve_static", (void*)http_serve_static},
     {"http_get", (void*)http_get},
+
+    {"ui_renderer_create", (void*)ui_renderer_create},
+    {"ui_renderer_destroy", (void*)ui_renderer_destroy},
+    {"ui_resize", (void*)ui_resize},
+    {"ui_resize_to", (void*)ui_resize_to},
+    {"ui_request_render", (void*)ui_request_render},
+    {"ui_begin_frame", (void*)ui_begin_frame},
+    {"ui_flush", (void*)ui_flush},
+    {"ui_canvas_width", (void*)ui_canvas_width},
+    {"ui_canvas_height", (void*)ui_canvas_height},
+    {"ui_fill_rect", (void*)ui_fill_rect},
+    {"ui_fill_round_rect", (void*)ui_fill_round_rect},
+    {"ui_fill_round_rect_per_corner", (void*)ui_fill_round_rect_per_corner},
+    {"ui_push_clip", (void*)ui_push_clip},
+    {"ui_push_clip_round", (void*)ui_push_clip_round},
+    {"ui_pop_clip", (void*)ui_pop_clip},
+    {"ui_rect_clipped", (void*)ui_rect_clipped},
+    {"ui_draw_text", (void*)ui_draw_text},
+    {"ui_text_line_height", (void*)ui_text_line_height},
+    {"ui_text_v_center_y", (void*)ui_text_v_center_y},
+    {"ui_text_width", (void*)ui_text_width},
+    {"ui_mono_char_width", (void*)ui_mono_char_width},
+    {"ui_pack_color", (void*)ui_pack_color},
 };
 
 // Resolve a `ref fn` to a statically linked symbol, or NULL when the name is
@@ -501,11 +547,35 @@ ns_return_bool ns_vm_call_ref(ns_vm *vm) {
 
     ns_lib *lib = ns_lib_find(vm, fn->lib);
     if (!lib) lib = ns_lib_import(vm, fn->lib);
-    if (!lib) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref lib not found.");
+    if (!lib) {
+        static char msg[512];
+        snprintf(msg, sizeof(msg), "ref lib not found: %.*s", fn->lib.len, fn->lib.data);
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, msg);
+    }
 
     ns_str fn_name = ns_str_slice(fn->name, 0, fn->name.len);
+    const char *load_err = lib->lib ? ns_null : dlerror();
+    dlerror();
     void *fn_ptr = dlsym(lib->lib, fn_name.data);
-    if (!fn_ptr) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ref fn not found.");
+    if (!fn_ptr) {
+        static char msg[1024];
+        const char *err = dlerror();
+        if (lib->lib) {
+            snprintf(msg, sizeof(msg), "ref fn not found: %.*s.%.*s%s%s",
+                     fn->lib.len, fn->lib.data,
+                     fn_name.len, fn_name.data,
+                     err ? ": " : "", err ? err : "");
+        } else {
+            snprintf(msg, sizeof(msg), "ref lib not loaded: %.*s (%.*s)%s%s; ref fn not found: %.*s.%.*s%s%s",
+                     fn->lib.len, fn->lib.data,
+                     lib->path.len, lib->path.data,
+                     load_err ? ": " : "", load_err ? load_err : "",
+                     fn->lib.len, fn->lib.data,
+                     fn_name.len, fn_name.data,
+                     err ? ": " : "", err ? err : "");
+        }
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, msg);
+    }
 
     fn->fn.fn_ptr = fn_ptr;
     return ns_vm_call_ffi(vm);

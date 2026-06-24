@@ -50,12 +50,12 @@ The ns side is complete: the document model is fully functional and the renderer
 draws the whole editor through the `ui` module's builder API. The remaining
 pieces are follow-ups:
 
-- **`ui` native backend.** `lib/ui.ns` currently declares the toolkit's builder
-  API as `ref fn`s; the C implementation that bridges them onto the GPU backends
-  is a separate follow-up. Until it lands the `ui_*` calls resolve as references
-  but have no native symbol, so a frame is only actually drawn once that backend
-  is wired up (on Linux the renderer is skipped entirely, so the program runs
-  and exits cleanly).
+- **`ui` native backend.** The core renderer path used by this sample is now
+  linked natively: rectangles, rounded rectangles, clipping, packed colours and
+  MSDF text are batched and submitted through the platform GPU backend using the
+  bundled Latin/mono font atlas. The broader `lib/ui.ns` widget/theme surface is
+  still a follow-up. On Linux the renderer is skipped entirely, so the program
+  runs and exits cleanly.
 - **Per-frame & input callbacks.** `view` exposes `on_launch`/`on_frame`/
   `on_terminate` hooks, but attaching them from ns needs closure support, which
   currently has a pre-existing bug (`sample/ns/block.ns` also fails to parse).
