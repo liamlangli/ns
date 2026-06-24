@@ -506,9 +506,11 @@ static ns_str ns_path_resolve(ns_str root, ns_str path) {
     return ns_path_join(root, path);
 }
 
+#if defined(NS_DARWIN)
 static ns_bool ns_str_ends_with(ns_str s, ns_str suffix) {
     return s.len >= suffix.len && strncmp(s.data + s.len - suffix.len, suffix.data, suffix.len) == 0;
 }
+#endif
 
 // Extract the first quoted string that follows `key =` in a TOML manifest.
 // Handles both `key = "value"` and `key = ["value", ...]`; the key must be the
@@ -646,10 +648,12 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
     return ns_path_join(bin, artifact);
 }
 
+#if defined(NS_DARWIN)
 static ns_str ns_build_app_output(ns_str output) {
     if (ns_str_ends_with(output, ns_str_cstr(".app"))) return output;
     return ns_str_concat(output, ns_str_cstr(".app"));
 }
+#endif
 
 static void ns_mkdir_one(ns_str dir) {
     if (dir.len == 0) return;
@@ -680,6 +684,7 @@ static void ns_build_ensure_output_dir(ns_str output) {
     ns_str_free(dir);
 }
 
+#if defined(NS_DARWIN)
 static void ns_write_text_file(ns_str path, ns_str text) {
     FILE *file = fopen(path.data, "wb");
     if (!file) ns_exit(1, "build", "failed to write %.*s.\n", path.len, path.data);
@@ -722,6 +727,7 @@ static ns_str ns_xml_escape(ns_str s) {
     ns_array_push(out.data, '\0');
     return out;
 }
+#endif
 
 static ns_str ns_shell_quote(ns_str s) {
     ns_str q = ns_str_null;

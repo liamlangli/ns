@@ -329,7 +329,7 @@ ns_scope* ns_scope_exit(ns_vm *vm) {
     ns_scope *scope = ns_array_last(vm->scope_stack);
     ns_array_set_length(vm->stack, scope->stack_top);
     ns_array_set_length(vm->symbol_stack, scope->symbol_top);
-    ns_array_pop(vm->scope_stack);
+    ns_array_pop_discard(vm->scope_stack);
     return scope;
 }
 
@@ -745,7 +745,7 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
 
     ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
     if (ns_return_is_error(ret)) {
-        ns_array_pop(vm->call_stack);
+        ns_array_pop_discard(vm->call_stack);
         ns_scope_exit(vm);
         return ns_return_change_type(value, ret);
     }
@@ -1696,7 +1696,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
             }
         }
         ns_scope_exit(vm);
-        ns_array_pop(vm->call_stack);
+        ns_array_pop_discard(vm->call_stack);
         main_ret = (ns_value){.t = ns_type_i32, .i32 = 0};
     } else {
         for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {

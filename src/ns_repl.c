@@ -100,7 +100,6 @@ ns_bool ns_repl_invoke_cmd(ns_vm *vm, ns_str line) {
     ns_str cmd;
     ns_str arg;
     if (space == -1) {
-        space = cmd.len;
         cmd = line;
         arg = ns_str_nil;
     } else {

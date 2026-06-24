@@ -448,7 +448,7 @@ static void ns_ssa_lower_loop(ns_ssa_builder *b, i32 i) {
         ns_ssa_emit_jump(b, cond_block, i);
     }
 
-    ns_array_pop(b->loops);
+    ns_array_pop_discard(b->loops);
     b->block = exit_block;
     b->fn->blocks[b->block].terminated = false;
 }
@@ -495,7 +495,7 @@ static void ns_ssa_lower_for(ns_ssa_builder *b, i32 i) {
     ns_ssa_env_bind(b, g->gen_expr.name.val, next, ns_type_i32);
     ns_ssa_emit_jump(b, cond_block, i);
 
-    ns_array_pop(b->loops);
+    ns_array_pop_discard(b->loops);
     b->block = exit_block;
     b->fn->blocks[b->block].terminated = false;
 }

@@ -404,6 +404,8 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap);
 
 #define ns_array_push(a, v) (ns_array_ensure(a, 1), (a)[ns_array_header(a)->len++] = (v))
 #define ns_array_pop(a) ((a)[--ns_array_header(a)->len])
+// Pop without yielding the removed element; use when the value is discarded.
+#define ns_array_pop_discard(a) (--ns_array_header(a)->len)
 
 #define ns_array_last(a) (&(a)[ns_array_length(a) - 1])
 #define ns_array_last_safe(a) ((a) ? ns_array_last(a) : 0)

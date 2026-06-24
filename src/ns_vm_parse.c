@@ -219,7 +219,7 @@ ns_str ns_ops_name(ns_token_t op) {
             return ns_str_cstr("le");
         else if (ns_str_equals_STR(op.val, ">"))
             return ns_str_cstr("gt");
-        else if (ns_str_equals_STR(op.val, ">="))
+        else
             return ns_str_cstr("ge");
     default:
         return ns_str_null;
@@ -288,12 +288,10 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
 // reverse search call_stack get last ns_call which callee type is NS_TYPE_FN rather than NS_TYPE_BLOCK
 i32 ns_vm_get_last_call(ns_vm *vm) {
     szt l = ns_array_length(vm->call_stack);
-    if (l > 0) {
-        for (szt i = l - 1; i >= 0; --i) {
-            ns_call *call = &vm->call_stack[i];
-            ns_symbol *callee = call->callee;
-            if (callee == ns_null || callee->type == NS_SYMBOL_FN) return i;
-        }
+    for (szt i = l; i-- > 0;) {
+        ns_call *call = &vm->call_stack[i];
+        ns_symbol *callee = call->callee;
+        if (callee == ns_null || callee->type == NS_SYMBOL_FN) return (i32)i;
     }
     return -1;
 }
@@ -598,7 +596,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         if (ns_return_is_error(ret)) return ret;
         
         ns_scope_exit(vm);
-        ns_array_pop(vm->call_stack);
+        ns_array_pop_discard(vm->call_stack);
         fn->fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, i, is_ref, false, true) };
         fn->parsed = true;
     }
@@ -872,7 +870,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
     ns_return_void stmt_ret = ns_vm_parse_compound_stmt(vm, ctx, n->block_expr.body);
     if (ns_return_is_error(stmt_ret)) return ns_return_change_type(type, stmt_ret);
     ns_scope_exit(vm);
-    ns_array_pop(vm->call_stack);
+    ns_array_pop_discard(vm->call_stack);
 
     i32 index = ns_array_length(vm->symbols);
     n->block_expr.rt.index = index;
@@ -1623,7 +1621,7 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
     ns_scope_exit(vm);
-    ns_array_pop(vm->call_stack);
+    ns_array_pop_discard(vm->call_stack);
     return ns_return_ok_void;
 }
 
