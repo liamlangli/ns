@@ -523,11 +523,73 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     }
     return ns_return_ok(bool, true);
 }
+
+// ---------------------------------------------------------------------------
+// Closure -> C function-pointer bridge.
+//
+// Native APIs (e.g. view.on_frame) store a `void(*)(view*)` and invoke it from
+// their event loop. ns closures are interpreted, so we hand the native side a
+// libffi closure: a real, callable address whose invocation re-enters the
+// interpreter to evaluate the ns closure body. The bridge is allocated for the
+// process lifetime (callbacks may fire for as long as the window is open).
+typedef struct ns_callback_bridge {
+    ns_vm *vm;
+    ns_ast_ctx *ctx;
+    ns_value closure;
+    void *cap_base; // heap snapshot of captured fields (ns_null if non-capturing)
+    ffi_cif cif;
+    ffi_type *arg_types[1];
+    ffi_closure *closure_obj;
+} ns_callback_bridge;
+
+static void ns_callback_bridge_handler(ffi_cif *cif, void *ret, void **args, void *user) {
+    (void)cif;
+    (void)ret;
+    ns_callback_bridge *b = (ns_callback_bridge *)user;
+    void *arg_ptr = *(void **)args[0];
+    ns_eval_invoke_callback(b->vm, b->ctx, b->closure, b->cap_base, arg_ptr);
+}
+
+void *ns_callback_bridge_create(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure) {
+    ns_callback_bridge *b = (ns_callback_bridge *)ns_malloc(sizeof(ns_callback_bridge));
+    b->vm = vm;
+    b->ctx = ctx;
+    b->closure = closure;
+    b->cap_base = ns_null;
+
+    // A capturing closure (NS_TYPE_BLOCK) holds its captures on the eval stack,
+    // which is reclaimed when the defining scope exits. The callback may fire
+    // much later, so snapshot the capture struct onto the heap for its lifetime.
+    ns_symbol *sym = &vm->symbols[ns_type_index(closure.t)];
+    if (sym->type == NS_SYMBOL_BLOCK) {
+        u64 stride = sym->bc.st.stride;
+        if (stride > 0) {
+            b->cap_base = ns_malloc(stride);
+            memcpy(b->cap_base, &vm->stack[closure.o], stride);
+        }
+    }
+
+    void *code = ns_null;
+    b->closure_obj = ffi_closure_alloc(sizeof(ffi_closure), &code);
+    if (!b->closure_obj) return ns_null;
+
+    b->arg_types[0] = &ffi_type_pointer;
+    if (ffi_prep_cif(&b->cif, FFI_DEFAULT_ABI, 1, &ffi_type_void, b->arg_types) != FFI_OK) return ns_null;
+    if (ffi_prep_closure_loc(b->closure_obj, &b->cif, ns_callback_bridge_handler, b, code) != FFI_OK) return ns_null;
+    return code;
+}
 #else
 // XCFramework build: FFI not supported
 ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     (void)vm;
     return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "FFI calls not supported in XCFramework build.");
+}
+
+void *ns_callback_bridge_create(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure) {
+    (void)vm;
+    (void)ctx;
+    (void)closure;
+    return ns_null;
 }
 #endif // NS_XCLIB
 

@@ -583,11 +583,9 @@ ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l
         else if (ns_str_equals(op.val, ns_str_cstr("^")))
             return ns_return_ok(value, ns_eval_binary_bxor(vm, l, r));
     } break;
-    case NS_TOKEN_CMP_OP: {
+    case NS_TOKEN_REL_OP: {
         // Use exact matching: prefix matching would let "<=" be caught by "<".
-        if (ns_str_equals(op.val, ns_str_cstr("!=")))
-            return ns_return_ok(value, ns_eval_binary_ne(vm, l, r));
-        else if (ns_str_equals(op.val, ns_str_cstr("<=")))
+        if (ns_str_equals(op.val, ns_str_cstr("<=")))
             return ns_return_ok(value, ns_eval_binary_le(vm, l, r));
         else if (ns_str_equals(op.val, ns_str_cstr("<")))
             return ns_return_ok(value, ns_eval_binary_lt(vm, l, r));
@@ -627,6 +625,33 @@ ns_return_value ns_eval_binary_number_upgrade(ns_vm *vm, ns_ast_ctx *ctx, ns_val
 
 ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+
+    // Closure registration into a fn-typed struct field: `v.on_frame({ ... })`.
+    // Mirrors the type-check branch in ns_vm_parse_call_expr: evaluate the callee
+    // member as an lvalue (the field slot), evaluate the closure, and store it
+    // into the field rather than invoking the field's function.
+    ns_ast_t *callee_n = &ctx->nodes[n->call_expr.callee];
+    ns_ast_t *eval_arg0 = &ctx->nodes[n->next];
+    i32 eval_arg0_body = eval_arg0->type == NS_AST_EXPR ? eval_arg0->expr.body : n->next;
+    if (callee_n->type == NS_AST_MEMBER_EXPR && n->call_expr.arg_count == 1 &&
+        ctx->nodes[eval_arg0_body].type == NS_AST_BLOCK_EXPR) {
+        ns_return_value ret_field = ns_eval_expr(vm, ctx, n->call_expr.callee);
+        if (ns_return_is_error(ret_field)) return ret_field;
+        ns_return_value ret_cb = ns_eval_expr(vm, ctx, n->next);
+        if (ns_return_is_error(ret_cb)) return ret_cb;
+        // The field is a C function-pointer slot read by native code, so store a
+        // trampoline that re-enters the interpreter rather than the raw closure
+        // value (which would be invoked as a bogus address).
+        void *trampoline = ns_callback_bridge_create(vm, ctx, ret_cb.r);
+        if (!trampoline) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "failed to create callback bridge.");
+        }
+        ns_value dst = ret_field.r;
+        i8 *dptr = ns_type_in_stack(dst.t) ? &vm->stack[dst.o] : (i8 *)dst.o;
+        *(void **)dptr = trampoline;
+        return ns_return_ok(value, ns_nil);
+    }
+
     ns_return_value ret_callee = ns_eval_expr(vm, ctx, n->call_expr.callee);
     if (ns_return_is_error(ret_callee)) return ret_callee;
 
@@ -675,6 +700,54 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
         if (ns_return_is_error(ret)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "call expr error.");
+    }
+    call = ns_array_pop(vm->call_stack);
+    ns_scope_exit(vm);
+    return ns_return_ok(value, call.ret);
+}
+
+ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure, void *cap_base, void *arg_ptr) {
+    ns_symbol *sym = &vm->symbols[ns_type_index(closure.t)];
+    ns_fn_symbol *fn = ns_symbol_get_fn(sym);
+
+    ns_value ret_val = (ns_value){.t = ns_type_set_stack(fn->ret, true), .o = 0};
+    i32 ret_size = ns_type_size(vm, fn->ret);
+    if (ret_size > 0) ret_val.o = ns_eval_alloc(vm, ret_size);
+
+    ns_call call = (ns_call){.callee = sym, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = ns_array_length(fn->args)};
+    ns_scope_enter(vm);
+
+    // The single closure parameter receives the native pointer as an absolute
+    // (non-stack) ref value, the same representation native ref returns use.
+    if (ns_array_length(fn->args) > 0) {
+        ns_type at = fn->args[0].val.t;
+        ns_value av = (ns_value){.t = ns_type_set_stack(at, false), .o = (u64)arg_ptr};
+        ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->args[0].name, .val = av, .parsed = true};
+        ns_array_push(vm->symbol_stack, arg);
+    }
+
+    ns_array_push(vm->call_stack, call);
+    if (sym->type == NS_SYMBOL_BLOCK && cap_base) { // push captured fields from the heap snapshot
+        szt field_count = ns_array_length(sym->bc.st.fields);
+        for (szt f_i = 0; f_i < field_count; ++f_i) {
+            ns_struct_field *field = &sym->bc.st.fields[f_i];
+            i8 *slot = (i8 *)cap_base + field->o;
+            // The snapshot is heap memory, so address fields absolutely. A ref
+            // field stores the captured pointer in its slot; dereference it so
+            // the value carries the pointer (matching native ref representation).
+            ns_value v = ns_type_is_ref(field->t)
+                ? (ns_value){.t = ns_type_set_stack(field->t, false), .o = *(u64 *)slot}
+                : (ns_value){.t = ns_type_set_stack(field->t, false), .o = (u64)slot};
+            ns_symbol cap = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = field->name, .val = v, .parsed = true};
+            ns_array_push(vm->symbol_stack, cap);
+        }
+    }
+
+    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
+    if (ns_return_is_error(ret)) {
+        ns_array_pop(vm->call_stack);
+        ns_scope_exit(vm);
+        return ns_return_change_type(value, ret);
     }
     call = ns_array_pop(vm->call_stack);
     ns_scope_exit(vm);
@@ -876,7 +949,7 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
                 ns_value v = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, cat)};
                 ns_str_free(cat);
                 return ns_return_ok(value, v);
-            } else if (op.type == NS_TOKEN_EQ_OP || op.type == NS_TOKEN_CMP_OP) {
+            } else if (op.type == NS_TOKEN_EQ_OP || op.type == NS_TOKEN_REL_OP) {
                 ns_bool eq = ns_str_equals(ls, rs);
                 ns_bool ne = ns_str_equals(op.val, ns_str_cstr("!=")) || ns_str_equals(op.val, ns_str_cstr("!=="));
                 ns_value v = (ns_value){.t = ns_type_bool, .b = ne ? !eq : eq};
@@ -1171,7 +1244,9 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             // heap-backed array elements - are themselves assignable.
             ns_type ft = field->t;
             ft.stack = ns_type_in_stack(st.t);
-            ft.mut = st.t.mut;
+            // A field reached through a ref is mutable: a ref is a mutable
+            // pointer to its target, so `v.field = x` is allowed for `v: ref T`.
+            ft.mut = st.t.mut || ns_type_is_ref(st.t);
             ns_value val = (ns_value){.t = ft, .o = st.o + field->o};
             return ns_return_ok(value, val);
         }
@@ -1351,7 +1426,16 @@ ns_return_value ns_eval_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown field.");
         }
         ns_value dst = (ns_value){.t = ns_type_set_stack(field->t, true), .o = offset + field->o};
-        ns_eval_copy(vm, dst, src, (i32)field->s);
+        if (ns_type_is_ref(field->t)) {
+            // ns_eval_copy treats a ref destination as pass-by-reference and
+            // skips the write, which would leave the captured slot uninitialized.
+            // A captured ref must snapshot the pointer itself so the closure can
+            // dereference it later (e.g. after the defining scope exits).
+            u64 ptr = ns_type_in_stack(src.t) ? *(u64 *)&vm->stack[src.o] : src.o;
+            *(u64 *)&vm->stack[dst.o] = ptr;
+        } else {
+            ns_eval_copy(vm, dst, src, (i32)field->s);
+        }
     }
 
     return ns_return_ok(value, ret);
@@ -1682,14 +1766,19 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
     return ns_return_ok(value, main_ret);
 }
 
-ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
+ns_return_value ns_eval_with_map(ns_vm *vm, ns_str source, ns_str filename, ns_line_loc *line_map) {
     // Check for empty input
     if (source.data == ns_null || source.len == 0) {
         return ns_return_error(value, ns_code_loc_nil, NS_ERR_SYNTAX, "empty source input");
     }
 
     ns_ast_ctx ctx = {0};
+    ctx.line_map = line_map;
     ns_return_bool ret_ast = ns_ast_parse(&ctx, source, filename);
     if (ns_return_is_error(ret_ast)) return ns_return_change_type(value, ret_ast);
     return ns_eval_ast(vm, &ctx);
+}
+
+ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename) {
+    return ns_eval_with_map(vm, source, filename, ns_null);
 }

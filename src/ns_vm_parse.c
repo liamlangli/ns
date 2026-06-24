@@ -136,8 +136,12 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
     case NS_TYPE_ARRAY:
     case NS_TYPE_DICT:
     case NS_TYPE_SET:
-    case NS_TYPE_FN:
-    case NS_TYPE_STRING: return ns_ptr_size;
+    case NS_TYPE_FN: return ns_ptr_size;
+    // A str field is laid out as the C `ns_str` struct (data ptr + len + flag),
+    // so its slot must match that ABI size for struct field offsets to line up
+    // with native code. The ns value model only uses the low 8 bytes (a str_list
+    // index), but the slot still reserves the full struct width.
+    case NS_TYPE_STRING: return (i32)sizeof(ns_str);
     case NS_TYPE_STRUCT: {
         u64 ti = ns_type_index(t);
         ns_symbol *s = &vm->symbols[ti];
@@ -208,12 +212,8 @@ ns_str ns_ops_name(ns_token_t op) {
             return ns_str_cstr("shl");
         else
             return ns_str_cstr("shr");
-    case NS_TOKEN_CMP_OP:
-        if (ns_str_equals_STR(op.val, "=="))
-            return ns_str_cstr("eq");
-        else if (ns_str_equals_STR(op.val, "!="))
-            return ns_str_cstr("ne");
-        else if (ns_str_equals_STR(op.val, "<"))
+    case NS_TOKEN_REL_OP:
+        if (ns_str_equals_STR(op.val, "<"))
             return ns_str_cstr("lt");
         else if (ns_str_equals_STR(op.val, "<="))
             return ns_str_cstr("le");
@@ -635,6 +635,7 @@ ns_return_void ns_vm_parse_type_def(ns_vm *vm, ns_ast_ctx *ctx) {
             fn.name = n->type_def.name.val;
 
             ns_ast_t *arg = &ctx->nodes[n->type_def.type];
+            fn.fn.arg_required = t->type_label.arg_count;
             ns_array_set_length(fn.fn.args, t->type_label.arg_count);
             for (i32 a = 0, an = t->type_label.arg_count; a < an; ++a) {
                 // type def ignore arg name
@@ -803,9 +804,13 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
 
     ns_symbol *fn_t = nil;
     if (t.type == NS_TYPE_FN) {
+        // The expected type is a fn type whose symbol carries the resolved arg
+        // list and required count. Read those from the symbol rather than the
+        // backing AST node: for a `type X = (...) -> ...` alias the node is a
+        // type_label, not a fn_def, so fn_def.arg_count would alias garbage.
         fn_t = &vm->symbols[ns_type_index(t)];
-        ns_ast_t *fn = &ctx->nodes[fn_t->fn.ast];
-        if (n->block_expr.arg_count < fn->fn_def.arg_required || n->block_expr.arg_count > fn->fn_def.arg_count) {
+        i32 fn_arg_count = (i32)ns_array_length(fn_t->fn.args);
+        if (n->block_expr.arg_count < fn_t->fn.arg_required || n->block_expr.arg_count > fn_arg_count) {
             return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "block expr arg count mismatch.");
         }
     }
@@ -936,6 +941,24 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_symbol *fn_record = &vm->symbols[ns_type_index(fn)];
     if (!fn_record || fn_record->type != NS_SYMBOL_FN) {
         return ns_return_error(type, ns_ast_state_loc(ctx, callee_n->state), NS_ERR_EVAL, "unknown callee.");
+    }
+
+    // Registering a closure into a fn-typed struct field, e.g. `v.on_frame({ ... })`.
+    // The callee is a member access whose field type is itself a function type and
+    // the sole argument is a closure. The closure must match the field's fn type,
+    // so check it against `fn` directly rather than against the field-fn's first
+    // parameter; the call evaluates to void (it stores the callback, not invokes it).
+    if (callee_n->type == NS_AST_MEMBER_EXPR && n->call_expr.arg_count == 1) {
+        ns_ast_t *arg0 = &ctx->nodes[n->next];
+        i32 arg0_body = arg0->type == NS_AST_EXPR ? arg0->expr.body : n->next;
+        if (ctx->nodes[arg0_body].type == NS_AST_BLOCK_EXPR) {
+            ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->next, fn);
+            if (ns_return_is_error(ret_t)) return ret_t;
+            if (!ns_type_match(vm, fn, ret_t.r)) {
+                return ns_return_error(type, ns_ast_state_loc(ctx, arg0->state), NS_ERR_EVAL, "callback type mismatch.");
+            }
+            return ns_return_ok(type, ns_type_void);
+        }
     }
 
     i32 next = n->next;
@@ -1192,7 +1215,7 @@ ns_return_type ns_vm_parse_binary_ops_number(ns_ast_ctx *ctx, ns_type t, i32 i) 
     case NS_TOKEN_BITWISE_OP:
         return ns_return_ok(type, t);
     case NS_TOKEN_LOGIC_OP:
-    case NS_TOKEN_CMP_OP:
+    case NS_TOKEN_REL_OP:
     case NS_TOKEN_EQ_OP:
         return ns_return_ok(type, ns_type_bool);
     default:
@@ -1210,7 +1233,7 @@ ns_return_type ns_vm_parse_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_type t, i32
         ns_token_t op = n->binary_expr.op;
         if (op.type == NS_TOKEN_ADD_OP && ns_str_equals(op.val, ns_str_cstr("+")))
             return ns_return_ok(type, ns_type_str);
-        if (op.type == NS_TOKEN_EQ_OP || op.type == NS_TOKEN_CMP_OP)
+        if (op.type == NS_TOKEN_EQ_OP || op.type == NS_TOKEN_REL_OP)
             return ns_return_ok(type, ns_type_bool);
         ns_type ret = ns_vm_parse_binary_override(vm, t, t, op);
         if (!ns_type_is_unknown(ret)) return ns_return_ok(type, ret);

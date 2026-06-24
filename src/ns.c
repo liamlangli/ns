@@ -323,11 +323,13 @@ void ns_exec_pe(ns_str filename, ns_str output) {
 // manifest at their root; for now the runtime only requires its presence.
 
 typedef struct ns_linker {
-    ns_str scope;       // directory used to resolve local modules
-    ns_str *seen;       // module names already inlined (dedup)
-    ns_str *ext_seen;   // external lib names already emitted (dedup)
-    ns_str body;        // accumulated module + entry bodies
-    ns_str ext;         // accumulated external `use` lines
+    ns_str scope;          // directory used to resolve local modules
+    ns_str *seen;          // module names already inlined (dedup)
+    ns_str *ext_seen;      // external lib names already emitted (dedup)
+    ns_str body;           // accumulated module + entry bodies
+    ns_str ext;            // accumulated external `use` lines
+    ns_line_loc *body_map; // origin (file, line) for each emitted body line
+    ns_line_loc *ext_map;  // origin (file, line) for each emitted external line
 } ns_linker;
 
 static ns_bool ns_name_in(ns_str *names, ns_str name) {
@@ -384,22 +386,29 @@ static ns_str ns_project_root(ns_str path) {
     return ns_str_null;
 }
 
-static void ns_link_source(ns_linker *lk, ns_str src);
+static void ns_link_source(ns_linker *lk, ns_str src, ns_str file);
 
 // Inline the local module `name` (resolved as `<scope>/<name>.ns`) once.
-static void ns_link_module(ns_linker *lk, ns_str name, ns_str src) {
+static void ns_link_module(ns_linker *lk, ns_str name, ns_str src, ns_str file) {
     if (ns_name_in(lk->seen, name)) return;
     ns_array_push(lk->seen, name);
-    ns_link_source(lk, src);
+    ns_link_source(lk, src, file);
 }
 
-static void ns_link_source(ns_linker *lk, ns_str src) {
+// Append `src` to the merged body, recording each emitted line's origin
+// (`file` + its 1-based line in that file) into the linker's source map so the
+// merged translation unit can be mapped back for diagnostics. `line` counts
+// every physical line in `src`, including the `use`/`mod` lines that are
+// stripped, so it always matches the source file's real line numbers.
+static void ns_link_source(ns_linker *lk, ns_str src, ns_str file) {
     i32 i = 0;
+    i32 line = 0;
     while (i < src.len) {
         i32 ls = i;
         while (i < src.len && src.data[i] != '\n') i++;
         i32 le = i;            // line end (exclusive of '\n')
         if (i < src.len) i++;  // consume newline
+        line++;                // 1-based physical line in `file`
 
         // first non-blank column of the line
         i32 t = ls;
@@ -418,12 +427,13 @@ static void ns_link_source(ns_linker *lk, ns_str src) {
             ns_str path = ns_path_join(lk->scope, ns_str_concat(name, ns_str_cstr(".ns")));
             ns_str mod_src = ns_fs_read_file(path);
             if (mod_src.data != ns_null) {
-                ns_link_module(lk, name, mod_src);   // local module -> inline
+                ns_link_module(lk, name, mod_src, path);   // local module -> inline
             } else if (!ns_name_in(lk->ext_seen, name)) {
                 ns_array_push(lk->ext_seen, name);   // external lib -> keep `use`
                 ns_str_append_len(&lk->ext, "use ", 4);
                 ns_str_append_len(&lk->ext, name.data, name.len);
                 ns_str_append_len(&lk->ext, "\n", 1);
+                ns_array_push(lk->ext_map, ((ns_line_loc){.f = file, .l = line}));
             }
             continue; // the `use` line itself never reaches the merged body
         }
@@ -432,16 +442,19 @@ static void ns_link_source(ns_linker *lk, ns_str src) {
 
         ns_str_append_len(&lk->body, src.data + ls, le - ls);
         ns_str_append_len(&lk->body, "\n", 1);
+        ns_array_push(lk->body_map, ((ns_line_loc){.f = file, .l = line}));
     }
 }
 
 // Merge the entry source plus every local module it transitively `use`s into a
 // single source string (external `use`s hoisted to the top). The result is
-// null-terminated and owns its buffer.
-static ns_str ns_project_link(ns_str scope, ns_str entry_src) {
+// null-terminated and owns its buffer. When `out_map` is non-NULL it receives a
+// source map (one entry per line of the merged output, in output order) so
+// diagnostics can be mapped back to their original file and line.
+static ns_str ns_project_link(ns_str scope, ns_str entry_src, ns_str entry_file, ns_line_loc **out_map) {
     ns_linker lk = {0};
     lk.scope = scope.len > 0 ? scope : ns_str_cstr(".");
-    ns_link_source(&lk, entry_src);
+    ns_link_source(&lk, entry_src, entry_file);
 
     ns_str out = ns_str_null;
     if (lk.ext.len > 0) ns_str_append_len(&out, lk.ext.data, lk.ext.len);
@@ -449,10 +462,20 @@ static ns_str ns_project_link(ns_str scope, ns_str entry_src) {
     ns_array_push(out.data, '\0');
     out.dynamic = false; // backed by ns_array, freed at process exit
 
+    // The map mirrors `out`: external `use` lines first, then the body lines.
+    if (out_map != ns_null) {
+        ns_line_loc *map = ns_null;
+        for (i32 i = 0, l = ns_array_length(lk.ext_map); i < l; i++) ns_array_push(map, lk.ext_map[i]);
+        for (i32 i = 0, l = ns_array_length(lk.body_map); i < l; i++) ns_array_push(map, lk.body_map[i]);
+        *out_map = map;
+    }
+
     ns_str_free(lk.ext);
     ns_str_free(lk.body);
     ns_array_free(lk.seen);
     ns_array_free(lk.ext_seen);
+    ns_array_free(lk.ext_map);
+    ns_array_free(lk.body_map);
     return out;
 }
 
@@ -733,7 +756,8 @@ static void ns_archive_object(ns_str output, ns_str object) {
     remove(object.data);
 }
 
-static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename) {
+static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, ns_line_loc *line_map) {
+    ctx.line_map = line_map;
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
@@ -743,8 +767,9 @@ static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename) {
 }
 
 static ns_ssa_module *ns_compile_build_input(ns_build_input *in) {
-    ns_str merged = ns_project_link(in->scope, in->source);
-    return ns_compile_source_to_ssa(merged, in->filename);
+    ns_line_loc *map = ns_null;
+    ns_str merged = ns_project_link(in->scope, in->source, in->filename, &map);
+    return ns_compile_source_to_ssa(merged, in->filename, map);
 }
 
 static ns_build_input ns_build_input_resolve(ns_str path) {
@@ -1026,9 +1051,10 @@ void ns_exec_run(ns_str filename) {
         setenv("NS_APP_ICON", icon.data, 1);
 #endif
     }
-    ns_str merged = ns_project_link(scope, source);
+    ns_line_loc *map = ns_null;
+    ns_str merged = ns_project_link(scope, source, filename, &map);
 
-    ns_return_value ret_v = ns_eval(&vm, merged, filename);
+    ns_return_value ret_v = ns_eval_with_map(&vm, merged, filename, map);
     if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
 }
 
@@ -1043,9 +1069,10 @@ static i32 ns_run_test_file(ns_str filename) {
     }
 
     ns_str scope = ns_project_root(filename);
-    ns_str merged = ns_project_link(scope, source);
+    ns_line_loc *map = ns_null;
+    ns_str merged = ns_project_link(scope, source, filename, &map);
 
-    ns_return_value ret_v = ns_eval(&tvm, merged, filename);
+    ns_return_value ret_v = ns_eval_with_map(&tvm, merged, filename, map);
     if (ns_return_is_error(ret_v)) {
         ns_warn("test", "%.*s errored.\n", filename.len, filename.data);
         return 1;

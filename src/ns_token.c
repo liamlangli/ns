@@ -580,7 +580,7 @@ case 'l': {
     } break;
     case '>': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_CMP_OP;
+            t->type = NS_TOKEN_REL_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == '>') {
@@ -594,14 +594,14 @@ case 'l': {
                 to = i + 2;
             }
         } else {
-            t->type = NS_TOKEN_CMP_OP;
+            t->type = NS_TOKEN_REL_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }
     } break;
     case '<': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_CMP_OP;
+            t->type = NS_TOKEN_REL_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == '<') {
@@ -615,7 +615,7 @@ case 'l': {
                 to = i + 2;
             }
         } else {
-            t->type = NS_TOKEN_CMP_OP;
+            t->type = NS_TOKEN_REL_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;
         }

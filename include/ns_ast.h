@@ -54,6 +54,12 @@ typedef struct ns_ast_state {
     i32 f, l, o; // buffer offset, line, line offset
 } ns_ast_state;
 
+// Maps one line of a merged translation unit back to its source file + line.
+typedef struct ns_line_loc {
+    ns_str f;
+    i32 l;
+} ns_line_loc;
+
 typedef struct ns_ast_type_label {
     ns_token_t name;
     i32 arg_count;
@@ -310,10 +316,28 @@ typedef struct as_parse_context_t {
     ns_token_t token, last_token;
     ns_str source;
     ns_str filename;
+
+    // Optional source map for linked/merged translation units (see
+    // ns_project_link). When set, it maps each 1-based line of `source` back to
+    // its originating file and line so diagnostics point at the real location
+    // instead of the merged entry file. NULL for single-file parses.
+    ns_line_loc *line_map;
 } ns_ast_ctx;
 
-#define ns_ast_code_loc(ctx) ((ns_code_loc){.f = ctx->filename, .l = ctx->token.line, .o = ctx->f - ctx->token.line_start})
-#define ns_ast_state_loc(ctx, s) ((ns_code_loc){.f = ctx->filename, .l = s.l, .o = s.o})
+// Resolve a merged-source (line, offset) back to its real file location via the
+// context's line map. The column offset is preserved verbatim because the
+// linker copies source lines unchanged. Falls back to the context filename and
+// raw line when there is no map (single-file parse) or the line is out of range.
+static inline ns_code_loc ns_ctx_loc(ns_ast_ctx *ctx, i32 line, i32 off) {
+    if (ctx->line_map != ns_null && line >= 1 && line <= (i32)ns_array_length(ctx->line_map)) {
+        ns_line_loc e = ctx->line_map[line - 1];
+        return (ns_code_loc){.f = e.f, .l = e.l, .o = off};
+    }
+    return (ns_code_loc){.f = ctx->filename, .l = line, .o = off};
+}
+
+#define ns_ast_code_loc(ctx) ns_ctx_loc((ctx), (ctx)->token.line, (ctx)->f - (ctx)->token.line_start)
+#define ns_ast_state_loc(ctx, s) ns_ctx_loc((ctx), (s).l, (s).o)
 
 ns_str ns_ast_type_to_string(ns_ast_type type);
 

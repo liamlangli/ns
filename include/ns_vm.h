@@ -205,10 +205,25 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);
+// Like ns_eval, but attaches a source map so diagnostics in a merged/linked
+// translation unit report their original file and line (see ns_project_link).
+ns_return_value ns_eval_with_map(ns_vm *vm, ns_str source, ns_str filename, ns_line_loc *line_map);
 
 // vm eval stage
 void ns_vm_symbol_print(ns_vm *vm);
 ns_return_bool ns_vm_call_ref(ns_vm *vm);
+
+// Invoke a closure (block or fn value) registered as a native callback, passing
+// a single absolute pointer argument (e.g. the C `view*`) as the closure's
+// `ref` parameter. `cap_base` is a heap snapshot of the closure's captured
+// fields (or ns_null for a non-capturing closure). Re-enters the interpreter
+// from a C trampoline.
+ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure, void *cap_base, void *arg_ptr);
+// Build a C-callable `void(*)(void*)` trampoline that invokes `closure` via
+// ns_eval_invoke_callback. Used to store an ns closure into a fn-pointer struct
+// field consumed by native code. Returns the executable pointer (lives for the
+// process lifetime), or ns_null if FFI is unavailable.
+void *ns_callback_bridge_create(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure);
 
 // vm struct
 i32 ns_struct_field_index(ns_symbol *st, ns_str s);
