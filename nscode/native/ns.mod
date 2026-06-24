@@ -6,7 +6,7 @@ type = "app"
 description = "Native code editor for Nano Script, rendered through the ui module."
 source = "."
 entry = "main.ns"
-icon = "../../sample/ns.png"
+icon = "icon.png"
 exclude = ["README.md"]
 
 [[dependencies.runtime]]
