@@ -49,6 +49,50 @@ ns_bool ns_type_match(ns_vm *vm, ns_type r, ns_type p) {
     }
 }
 
+ns_bool ns_vm_container_type_matches(ns_container_symbol *ct, ns_value_type kind, ns_type key, ns_type val) {
+    if (!ns_type_is(ct->t, kind)) return false;
+    if (!ns_type_equals(ct->key, key)) return false;
+    if (kind == NS_TYPE_SET) return true;
+    return ns_type_equals(ct->val, val);
+}
+
+ns_str ns_vm_container_type_name(ns_vm *vm, ns_value_type kind, ns_type key, ns_type val) {
+    ns_str key_name = ns_vm_get_type_name(vm, key);
+    ns_str val_name = ns_vm_get_type_name(vm, val);
+    ns_str name = {.dynamic = true};
+    if (kind == NS_TYPE_SET) {
+        ns_str_append(&name, ns_str_cstr("set["));
+        ns_str_append(&name, key_name);
+        ns_str_append(&name, ns_str_cstr("]"));
+    } else {
+        ns_str_append(&name, ns_str_cstr("["));
+        ns_str_append(&name, key_name);
+        ns_str_append(&name, ns_str_cstr(": "));
+        ns_str_append(&name, val_name);
+        ns_str_append(&name, ns_str_cstr("]"));
+    }
+    ns_array_push(name.data, '\0');
+    return name;
+}
+
+ns_type ns_vm_intern_container_type(ns_vm *vm, ns_value_type kind, ns_type key, ns_type val) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+        ns_symbol *s = &vm->symbols[i];
+        if (s->type == NS_SYMBOL_CONTAINER && ns_vm_container_type_matches(&s->ct, kind, key, val)) {
+            return s->ct.t;
+        }
+    }
+
+    i32 index = ns_array_length(vm->symbols);
+    ns_symbol ct = (ns_symbol){.type = NS_SYMBOL_CONTAINER, .parsed = true, .lib = vm->lib};
+    ct.ct.t = ns_type_encode(kind, index, 0, true, true);
+    ct.ct.key = key;
+    ct.ct.val = val;
+    ct.name = ns_vm_container_type_name(vm, kind, key, val);
+    ns_vm_push_symbol_global(vm, ct);
+    return ct.ct.t;
+}
+
 ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r) {
     ns_number_type ln = ns_vm_number_type(l);
     ns_number_type rn = ns_vm_number_type(r);
@@ -90,6 +134,8 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
     case NS_TYPE_F64: return 8;
     case NS_TYPE_ANY:
     case NS_TYPE_ARRAY:
+    case NS_TYPE_DICT:
+    case NS_TYPE_SET:
     case NS_TYPE_FN:
     case NS_TYPE_STRING: return ns_ptr_size;
     case NS_TYPE_STRUCT: {
@@ -220,7 +266,9 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_FN:
     case NS_TYPE_STRUCT:
-    case NS_TYPE_UNION: {
+    case NS_TYPE_UNION:
+    case NS_TYPE_DICT:
+    case NS_TYPE_SET: {
         u64 ti = ns_type_index(t);
         if (ti > ns_array_length(vm->symbols)) {
             return ns_str_null;
@@ -374,6 +422,33 @@ ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n) {
     // paths below honor it; without this, array parameters lose their array
     // flag and indexing them fails to type-check.
     ns_bool is_array = (n->type == NS_AST_TYPE_LABEL) ? n->type_label.is_array : false;
+    ns_bool is_dict = (n->type == NS_AST_TYPE_LABEL) ? n->type_label.is_dict : false;
+    ns_bool is_set = (n->type == NS_AST_TYPE_LABEL) ? n->type_label.is_set : false;
+
+    if (is_dict) {
+        ns_return_type key_ret = ns_vm_parse_type(vm, ctx, &ctx->nodes[n->type_label.key]);
+        if (ns_return_is_error(key_ret)) return key_ret;
+        ns_return_type val_ret = ns_vm_parse_type(vm, ctx, &ctx->nodes[n->type_label.val]);
+        if (ns_return_is_error(val_ret)) return val_ret;
+        ns_type dict_t = ns_vm_intern_container_type(vm, NS_TYPE_DICT, key_ret.r, val_ret.r);
+        return ns_return_ok(type, ns_type_set_ref(dict_t, is_ref));
+    }
+
+    if (is_set) {
+        ns_return_type elem_ret = ns_vm_parse_type(vm, ctx, &ctx->nodes[n->type_label.elem]);
+        if (ns_return_is_error(elem_ret)) return elem_ret;
+        ns_type set_t = ns_vm_intern_container_type(vm, NS_TYPE_SET, elem_ret.r, ns_type_void);
+        return ns_return_ok(type, ns_type_set_ref(set_t, is_ref));
+    }
+
+    if (is_array && n->type_label.elem != 0) {
+        ns_return_type elem_ret = ns_vm_parse_type(vm, ctx, &ctx->nodes[n->type_label.elem]);
+        if (ns_return_is_error(elem_ret)) return elem_ret;
+        ns_type rt = ns_type_set_ref(elem_ret.r, is_ref);
+        rt.array = true;
+        rt.stack = true;
+        return ns_return_ok(type, rt);
+    }
 
     ns_type ret = ns_vm_parse_generic_type(t);
     if (ret.type != NS_TYPE_UNKNOWN) {
@@ -1006,6 +1081,9 @@ ns_return_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_return_type ret_t = ns_vm_parse_type(vm, ctx, type);
     if (ns_return_is_error(ret_t)) return ret_t;
     ns_type t = ret_t.r;
+    if (type->type_label.is_dict || type->type_label.is_set) {
+        return ns_return_ok(type, t);
+    }
     // Preserve the element type's index (e.g. the struct symbol) so that
     // element access like arr[i].field can resolve the element's type.
     ns_type arr_t = (ns_type){.type = t.type, .ref = t.ref, .array = true, .mut = t.mut, .stack = true, .index = t.index};
@@ -1021,14 +1099,24 @@ ns_return_type ns_vm_parse_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_type l = ret_l.r;
     ns_type r = ret_r.r;
-    if (!ns_type_is(r, NS_TYPE_I32)) {
-        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
-    }
     // string indexing yields an i32 char code.
     if (ns_type_is(l, NS_TYPE_STRING) && !ns_type_is_array(l)) {
+        if (!ns_type_is(r, NS_TYPE_I32)) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
+        }
         return ns_return_ok(type, ns_type_i32);
     }
+    if (ns_type_is(l, NS_TYPE_DICT)) {
+        ns_symbol *dict = &vm->symbols[ns_type_index(l)];
+        if (!ns_type_match(vm, dict->ct.key, r)) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "dict key type mismatch.");
+        }
+        return ns_return_ok(type, dict->ct.val);
+    }
     if (!ns_type_is_array(l)) {
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
+    }
+    if (!ns_type_is(r, NS_TYPE_I32)) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
     }
     ns_type t = (ns_type){.type = l.type, .ref = l.ref, .array = false, .mut = l.mut, .stack = true, .index = l.index };

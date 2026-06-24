@@ -1,0 +1,15 @@
+type AgeMap = [str: i32]
+type NameSet = set[str]
+
+fn main() i32 {
+    let ages: AgeMap = [str: i32](8)
+    ages["amy"] = 32
+    assert ages["amy"] == 32
+
+    let labels = [i32: str](8)
+    labels[7] = "seven"
+    assert labels[7] == "seven"
+
+    let seen: NameSet = set[str](8)
+    return 0
+}

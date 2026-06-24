@@ -104,6 +104,8 @@ ns_bool ns_parse_type_name(ns_ast_ctx *ctx) {
 
 // [ref] type_name
 // [ref] [type_name]
+// [ref] [key_type: value_type]
+// [ref] set[type_name]
 // (args_type) to type_name
 ns_return_bool ns_parse_type_label(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
@@ -115,12 +117,65 @@ ns_return_bool ns_parse_type_label(ns_ast_ctx *ctx) {
         ns_restore_state(ctx, state);
     }
 
-    // array type
+    // set type
+    ns_ast_state set_state = ns_save_state(ctx);
+    if (ns_parse_identifier(ctx) && ns_str_equals_STR(ctx->token.val, "set")) {
+        if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET)) {
+            ns_restore_state(ctx, set_state);
+        } else {
+            ns_return_bool ret = ns_parse_type_label(ctx);
+            if (ns_return_is_error(ret)) return ret;
+            if (!ret.r) {
+                return ns_return_error(bool, ns_ast_state_loc(ctx, set_state), NS_ERR_SYNTAX, "expected type after 'set['");
+            }
+            n.type_label.elem = ctx->current;
+            if (!ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
+                return ns_return_error(bool, ns_ast_state_loc(ctx, set_state), NS_ERR_SYNTAX, "expected ']'");
+            }
+            n.type_label.is_set = true;
+            ns_ast_push(ctx, n);
+            return ns_return_ok(bool, true);
+        }
+    } else {
+        ns_restore_state(ctx, set_state);
+    }
+
+    // array or dict type
     ns_ast_state array_state = ns_save_state(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET) && ns_parse_type_name(ctx)) {
-        n.type_label.name = ctx->token;
+    if (ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET)) {
+        ns_return_bool key_ret = ns_parse_type_label(ctx);
+        if (ns_return_is_error(key_ret)) return key_ret;
+        if (!key_ret.r) {
+            ns_restore_state(ctx, array_state);
+            return ns_return_ok(bool, false);
+        }
+        n.type_label.elem = ctx->current;
+        n.type_label.key = ctx->current;
+
+        ns_ast_state after_key = ns_save_state(ctx);
+        if (ns_token_require(ctx, NS_TOKEN_COLON)) {
+            ns_return_bool val_ret = ns_parse_type_label(ctx);
+            if (ns_return_is_error(val_ret)) return val_ret;
+            if (!val_ret.r) {
+                return ns_return_error(bool, ns_ast_state_loc(ctx, after_key), NS_ERR_SYNTAX, "expected value type after ':'");
+            }
+            n.type_label.val = ctx->current;
+            if (ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
+                n.type_label.is_dict = true;
+                ns_ast_push(ctx, n);
+                return ns_return_ok(bool, true);
+            } else {
+                return ns_return_error(bool, ns_ast_state_loc(ctx, array_state), NS_ERR_SYNTAX, "expected ']'");
+            }
+        } else {
+            ns_restore_state(ctx, after_key);
+        }
+
         if (ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
             n.type_label.is_array = true;
+            if (ctx->nodes[n.type_label.elem].type == NS_AST_TYPE_LABEL) {
+                n.type_label.name = ctx->nodes[n.type_label.elem].type_label.name;
+            }
             ns_ast_push(ctx, n);
             return ns_return_ok(bool, true);
         } else {

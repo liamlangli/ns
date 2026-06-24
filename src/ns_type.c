@@ -163,6 +163,8 @@ ns_str ns_type_name(ns_type t) {
     case NS_TYPE_FN: return ns_str_cstr("fn");
     case NS_TYPE_STRUCT: return ns_str_cstr("struct");
     case NS_TYPE_UNION: return ns_str_cstr("union");
+    case NS_TYPE_DICT: return ns_str_cstr("dict");
+    case NS_TYPE_SET: return ns_str_cstr("set");
     default: return ns_str_null;
     }
 }

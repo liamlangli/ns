@@ -15,7 +15,21 @@
     } break
 
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+
+typedef struct ns_dict_table {
+    i32 cap;
+    i32 len;
+    i32 key_size;
+    i32 val_size;
+    i32 key_off;
+    i32 val_off;
+    i32 stride;
+    ns_type key_type;
+    ns_type val_type;
+    u8 data[];
+} ns_dict_table;
 
 ns_bool ns_eval_number_assign_compatible(ns_vm *vm, ns_type dst, ns_type src) {
     if (!ns_type_is_number(dst) || !ns_type_is_number(src)) return false;
@@ -78,6 +92,120 @@ static f64 ns_eval_to_f64(ns_vm *vm, ns_value v) {
     }
 }
 
+static u64 ns_hash_bytes(const u8 *data, i32 len) {
+    u64 h = 1469598103934665603ULL;
+    for (i32 i = 0; i < len; ++i) {
+        h ^= data[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static u64 ns_eval_hash_value(ns_vm *vm, ns_value v) {
+    if (ns_type_is(v.t, NS_TYPE_STRING)) {
+        ns_str s = ns_eval_str(vm, v);
+        return ns_hash_bytes((u8 *)s.data, s.len);
+    }
+    if (ns_type_is_number(v.t)) {
+        u64 n = ns_eval_to_u64(vm, v);
+        n ^= n >> 33;
+        n *= 0xff51afd7ed558ccdULL;
+        n ^= n >> 33;
+        n *= 0xc4ceb9fe1a85ec53ULL;
+        n ^= n >> 33;
+        return n;
+    }
+    return 0;
+}
+
+static ns_bool ns_eval_value_equals(ns_vm *vm, ns_value a, ns_value b) {
+    if (ns_type_is(a.t, NS_TYPE_STRING) && ns_type_is(b.t, NS_TYPE_STRING)) {
+        return ns_str_equals(ns_eval_str(vm, a), ns_eval_str(vm, b));
+    }
+    if (ns_type_is_number(a.t) && ns_type_is_number(b.t)) {
+        if (ns_type_is_float(a.t) || ns_type_is_float(b.t)) return ns_eval_to_f64(vm, a) == ns_eval_to_f64(vm, b);
+        return ns_eval_to_u64(vm, a) == ns_eval_to_u64(vm, b);
+    }
+    return false;
+}
+
+static ns_dict_table *ns_eval_dict_alloc(ns_vm *vm, ns_type t, i32 cap) {
+    ns_symbol *ct = &vm->symbols[ns_type_index(t)];
+    ns_type key_type = ct->ct.key;
+    ns_type val_type = ct->ct.val;
+    i32 key_size = ns_type_size(vm, key_type);
+    i32 val_size = ns_type_is(t, NS_TYPE_SET) ? 0 : ns_type_size(vm, val_type);
+    if (ns_type_is(key_type, NS_TYPE_STRING)) key_size = (i32)sizeof(u64);
+    if (ns_type_is(val_type, NS_TYPE_STRING) && !ns_type_is(t, NS_TYPE_SET)) val_size = (i32)sizeof(u64);
+
+    i32 key_off = (i32)ns_align(1, key_size);
+    i32 val_off = ns_type_is(t, NS_TYPE_SET) ? 0 : (i32)ns_align(key_off + key_size, val_size);
+    i32 stride = ns_type_is(t, NS_TYPE_SET) ? key_off + key_size : val_off + val_size;
+    cap = ns_max(1, cap);
+    ns_dict_table *table = ns_malloc(sizeof(ns_dict_table) + (szt)cap * (szt)stride);
+    memset(table, 0, sizeof(ns_dict_table) + (szt)cap * (szt)stride);
+    table->cap = cap;
+    table->key_size = key_size;
+    table->val_size = val_size;
+    table->key_off = key_off;
+    table->val_off = val_off;
+    table->stride = stride;
+    table->key_type = key_type;
+    table->val_type = val_type;
+    return table;
+}
+
+static u8 *ns_eval_dict_slot(ns_dict_table *table, i32 index) {
+    return table->data + (szt)index * (szt)table->stride;
+}
+
+static ns_value ns_eval_slot_value(ns_dict_table *table, u8 *ptr, ns_type t) {
+    ns_unused(table);
+    ns_value v = {.t = ns_type_set_stack(ns_type_set_mut(t, true), false), .o = (u64)ptr};
+    if (ns_type_is(t, NS_TYPE_STRING)) v.o = *(u64 *)ptr;
+    return v;
+}
+
+static ns_value ns_eval_dict_value(ns_dict_table *table, u8 *ptr, ns_bool write_target) {
+    ns_value v = {.t = ns_type_set_stack(ns_type_set_mut(table->val_type, true), false), .o = (u64)ptr};
+    if (!write_target && ns_type_is(table->val_type, NS_TYPE_STRING)) {
+        v.t = ns_type_set_stack(table->val_type, false);
+        v.o = *(u64 *)ptr;
+    }
+    return v;
+}
+
+static ns_return_value ns_eval_dict_find(ns_vm *vm, ns_value table_v, ns_value key, ns_bool create, ns_code_loc loc) {
+    if (!ns_type_is_number(key.t) && !ns_type_is(key.t, NS_TYPE_STRING)) {
+        return ns_return_error(value, loc, NS_ERR_EVAL, "dict key type not hashable.");
+    }
+
+    ns_dict_table *table = ns_type_in_stack(table_v.t) ? *(ns_dict_table **)&vm->stack[table_v.o] : (ns_dict_table *)table_v.o;
+    u64 h = ns_eval_hash_value(vm, key);
+    i32 start = (i32)(h % (u64)table->cap);
+    for (i32 step = 0; step < table->cap; ++step) {
+        i32 index = (start + step) % table->cap;
+        u8 *slot = ns_eval_dict_slot(table, index);
+        if (slot[0] == 0) {
+            if (!create) break;
+            if (table->len >= table->cap) {
+                return ns_return_error(value, loc, NS_ERR_EVAL, "dict capacity exceeded.");
+            }
+            slot[0] = 1;
+            table->len++;
+            ns_value dst_key = {.t = ns_type_set_stack(ns_type_set_mut(table->key_type, true), false), .o = (u64)(slot + table->key_off)};
+            ns_eval_copy(vm, dst_key, key, table->key_size);
+            return ns_return_ok(value, ns_eval_dict_value(table, slot + table->val_off, create));
+        }
+
+        ns_value slot_key = ns_eval_slot_value(table, slot + table->key_off, table->key_type);
+        if (ns_eval_value_equals(vm, slot_key, key)) {
+            return ns_return_ok(value, ns_eval_dict_value(table, slot + table->val_off, create));
+        }
+    }
+    return ns_return_error(value, loc, NS_ERR_EVAL, "dict key not found.");
+}
+
 ns_return_value ns_eval_cast_number(ns_vm *vm, ns_value v, ns_type dst, ns_code_loc loc) {
     if (ns_type_equals(v.t, dst)) return ns_return_ok(value, v);
     if (!ns_type_is_number(v.t) || !ns_type_is_number(dst)) {
@@ -138,10 +266,11 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
     // destination so heap-backed locations (e.g. array elements) work too.
     i8 *dptr = ns_type_in_stack(dst.t) ? &vm->stack[dst.o] : (i8 *)dst.o;
 
-    // Arrays, strings and fns are reference values stored as a single u64 handle
+    // Arrays, dicts, sets, strings and fns are reference values stored as a single u64 handle
     // (a heap pointer or str_list index). Their value type carries mut=1, so they
     // never reach the const switch below; handle them uniformly here.
-    if (ns_type_is_array(src.t) || ns_type_is(src.t, NS_TYPE_STRING) || ns_type_is(src.t, NS_TYPE_FN)) {
+    if (ns_type_is_array(src.t) || ns_type_is(src.t, NS_TYPE_STRING) || ns_type_is(src.t, NS_TYPE_FN) ||
+        ns_type_is(src.t, NS_TYPE_DICT) || ns_type_is(src.t, NS_TYPE_SET)) {
         u64 handle = ns_type_in_stack(src.t) ? *(u64 *)&vm->stack[src.o] : src.o;
         *(u64 *)dptr = handle;
         return ns_return_ok(value, dst);
@@ -206,7 +335,19 @@ ns_scope* ns_scope_exit(ns_vm *vm) {
 
 ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
-    ns_return_value ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
+    ns_return_value ret_l;
+    if (ctx->nodes[n->binary_expr.left].type == NS_AST_INDEX_EXPR) {
+        ns_ast_t *idx = &ctx->nodes[n->binary_expr.left];
+        ns_return_value ret_table = ns_eval_expr(vm, ctx, idx->index_expr.table);
+        if (ns_return_is_error(ret_table)) return ns_return_change_type(value, ret_table);
+        if (ns_type_is(ret_table.r.t, NS_TYPE_DICT)) {
+            ret_l = ns_eval_index_expr_with_create(vm, ctx, n->binary_expr.left, true);
+        } else {
+            ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
+        }
+    } else {
+        ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
+    }
     if (ns_return_is_error(ret_l)) return ns_return_change_type(value, ret_l);
     ns_value l = ret_l.r;
 
@@ -1114,7 +1255,7 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *t = &ctx->nodes[n->array_expr.type];
 
-    ns_return_type ret_t = ns_vm_parse_type_by_token(vm, t->type_label.name, ns_ast_state_loc(ctx, t->state));
+    ns_return_type ret_t = ns_vm_parse_type(vm, ctx, t);
     if (ns_return_is_error(ret_t)) return ns_return_change_type(value, ret_t);
     ns_type type = ret_t.r;
 
@@ -1123,6 +1264,13 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_value count = ret_count.r;
     i32 element_count = ns_eval_number_i32(vm, count);
+    if (ns_type_is(type, NS_TYPE_DICT) || ns_type_is(type, NS_TYPE_SET)) {
+        ns_dict_table *table = ns_eval_dict_alloc(vm, type, element_count);
+        ns_value v = (ns_value){.t = ns_type_set_stack(type, false), .o = (u64)table};
+        return ns_return_ok(value, v);
+    }
+
+    type.array = false;
     i32 size = ns_type_size(vm, type) * element_count;
     i8* data = NULL;
     ns_array_set_capacity(data, size);
@@ -1131,7 +1279,7 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, v);
 }
 
-ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_value ret_table = ns_eval_expr(vm, ctx, n->index_expr.table);
     if (ns_return_is_error(ret_table)) return ret_table;
@@ -1140,6 +1288,14 @@ ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_return_value ret_index = ns_eval_expr(vm, ctx, n->index_expr.expr);
     if (ns_return_is_error(ret_index)) return ret_index;
     ns_value index = ret_index.r;
+
+    if (ns_type_is(table.t, NS_TYPE_DICT)) {
+        ns_symbol *dict = &vm->symbols[ns_type_index(table.t)];
+        if (!ns_type_match(vm, dict->ct.key, index.t)) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "dict key type mismatch.");
+        }
+        return ns_eval_dict_find(vm, table, index, create, ns_ast_state_loc(ctx, n->state));
+    }
 
     if (!ns_type_is_number(index.t)) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
@@ -1173,6 +1329,10 @@ ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     element_type.mut = true;
     ns_value val = (ns_value){.t = element_type, .o = (u64)data};
     return ns_return_ok(value, val);
+}
+
+ns_return_value ns_eval_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    return ns_eval_index_expr_with_create(vm, ctx, i, false);
 }
 
 ns_return_value ns_eval_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -1235,9 +1395,10 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         store_t = dst_t;
     }
 
-    // Reference values (arrays, strings, fns) are stored as an 8-byte handle;
+    // Reference values (arrays, dicts, sets, strings, fns) are stored as an 8-byte handle;
     // ns_type_size would otherwise report the element/underlying size.
-    if (ns_type_is_array(dst_t) || ns_type_is(dst_t, NS_TYPE_STRING) || ns_type_is(dst_t, NS_TYPE_FN))
+    if (ns_type_is_array(dst_t) || ns_type_is(dst_t, NS_TYPE_STRING) || ns_type_is(dst_t, NS_TYPE_FN) ||
+        ns_type_is(dst_t, NS_TYPE_DICT) || ns_type_is(dst_t, NS_TYPE_SET))
         size = (i32)sizeof(void *);
     else if (size <= 0)
         size = ns_type_size(vm, dst_t);

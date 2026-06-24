@@ -276,6 +276,8 @@ typedef enum {
     NS_TYPE_ARRAY,
     NS_TYPE_ALIAS,
     NS_TYPE_UNION,
+    NS_TYPE_DICT,
+    NS_TYPE_SET,
 } ns_value_type;
 
 typedef enum {

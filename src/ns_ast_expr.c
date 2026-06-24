@@ -258,28 +258,25 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, true);
 }
 
+ns_bool ns_ast_type_label_is_container(ns_ast_t *n) {
+    return n->type == NS_AST_TYPE_LABEL &&
+           (n->type_label.is_array || n->type_label.is_dict || n->type_label.is_set);
+}
+
 ns_return_bool ns_parse_array_expr(ns_ast_ctx *ctx) {
     ns_return_bool ret;
-    // [type](expr)
+    // [type](expr), [key: value](expr), set[type](expr)
     ns_ast_state state = ns_save_state(ctx);
-    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACKET)) {
+    ret = ns_parse_type_label(ctx);
+    if (ns_return_is_error(ret)) return ret;
+    if (!ret.r || !ns_ast_type_label_is_container(&ctx->nodes[ctx->current])) {
         ns_restore_state(ctx, state);
         return ns_return_ok(bool, false);
     }
 
-    ret = ns_parse_type_label(ctx);
-    if (ns_return_is_error(ret)) return ret;
-    if (!ret.r) {
-        return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected type after '['");
-    }
-
     ns_ast_t n = {.type = NS_AST_ARRAY_EXPR, .state = state, .array_expr = {.type = ctx->current}};
-    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_BRACKET)) {
-        return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected ']' after type");
-    }
-
     if (!ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
-        return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected '(' after ']'");
+        return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected '(' after container type");
     }
 
     ret = ns_parse_expr(ctx);
@@ -652,7 +649,34 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
         }
 
         switch (ctx->token.type) {
-        case NS_TOKEN_IDENTIFIER:
+        case NS_TOKEN_IDENTIFIER: {
+            if (ns_str_equals_STR(ctx->token.val, "set")) {
+                ns_ast_state next_state = ns_save_state(ctx);
+                ns_parse_next_token(ctx);
+                if (ctx->token.type == NS_TOKEN_OPEN_BRACKET) {
+                    ns_restore_state(ctx, state);
+                    ret = ns_parse_array_expr(ctx);
+                    if (ns_return_is_error(ret)) return ret;
+                    if (ret.r) {
+                        ns_parse_stack_push_operand(ctx, ctx->current);
+                        break;
+                    }
+                    return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected set expression");
+                }
+                ns_restore_state(ctx, next_state);
+            }
+            ns_restore_state(ctx, state);
+
+            ret = ns_parse_primary_expr(ctx);
+            if (ns_return_is_error(ret)) return ret;
+
+            if (ret.r) {
+                ns_parse_stack_push_operand(ctx, ctx->current);
+            } else {
+                ns_code_loc loc = ns_ast_code_loc(ctx);
+                return ns_return_error(bool, loc, NS_ERR_SYNTAX, "expected primary expression");
+            }
+        } break;
         case NS_TOKEN_INT_LITERAL:
         case NS_TOKEN_FLT_LITERAL:
         case NS_TOKEN_STR_FORMAT:

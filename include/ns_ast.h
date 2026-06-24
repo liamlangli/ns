@@ -58,7 +58,12 @@ typedef struct ns_ast_type_label {
     ns_token_t name;
     i32 arg_count;
     i32 ret;
+    i32 elem;
+    i32 key;
+    i32 val;
     ns_bool is_array: 2;
+    ns_bool is_dict: 2;
+    ns_bool is_set: 2;
     ns_bool is_ref: 2;
     ns_bool is_mut: 2;
     ns_bool is_fn: 2;

@@ -10,7 +10,8 @@ typedef enum {
     NS_SYMBOL_STRUCT,
     NS_SYMBOL_BLOCK,
     NS_SYMBOL_TYPE,
-    NS_SYMBOL_UNION
+    NS_SYMBOL_UNION,
+    NS_SYMBOL_CONTAINER
 } ns_symbol_type;
 
 typedef enum ns_scope_state {
@@ -73,6 +74,12 @@ typedef struct ns_union_symbol {
     ns_type *members;
 } ns_union_symbol;
 
+typedef struct ns_container_symbol {
+    ns_type t;
+    ns_type key;
+    ns_type val;
+} ns_container_symbol;
+
 typedef struct ns_symbol {
     ns_symbol_type type;
     ns_str name;
@@ -84,6 +91,7 @@ typedef struct ns_symbol {
         ns_struct_symbol st;
         ns_block_symbol bc;
         ns_union_symbol un;
+        ns_container_symbol ct;
         ns_type t;
     };
 } ns_symbol;

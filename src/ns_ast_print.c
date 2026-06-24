@@ -61,9 +61,23 @@ void ns_ast_print_type_label(ns_ast_ctx *ctx, i32 i, ns_bool colon) {
     }
     printf(ns_color_nil);
 
-    if (n->type_label.is_array) {
+    if (n->type_label.is_dict) {
         printf("[");
-        ns_str_printf(n->type_label.name.val);
+        ns_ast_print_type_label(ctx, n->type_label.key, false);
+        printf(ns_color_log ": " ns_color_nil);
+        ns_ast_print_type_label(ctx, n->type_label.val, false);
+        printf("]");
+    } else if (n->type_label.is_set) {
+        printf(ns_color_log "set" ns_color_nil "[");
+        ns_ast_print_type_label(ctx, n->type_label.elem, false);
+        printf("]");
+    } else if (n->type_label.is_array) {
+        printf("[");
+        if (n->type_label.elem != 0) {
+            ns_ast_print_type_label(ctx, n->type_label.elem, false);
+        } else {
+            ns_str_printf(n->type_label.name.val);
+        }
         printf("]");
     } else if (n->type_label.is_fn) {
         printf("(");
@@ -579,9 +593,8 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             break;
 
         case NS_AST_ARRAY_EXPR:
-            printf(ns_color_log "[");
             ns_ast_print_type_label(ctx, n->array_expr.type, false);
-            printf(ns_color_log "]" ns_color_nil "(");
+            printf(ns_color_nil "(");
             ns_ast_print_node(ctx, n->array_expr.count_expr, depth);
             printf(")");
             break;
