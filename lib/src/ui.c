@@ -754,6 +754,10 @@ static u32 ui_col_keyword(void) { return ui_pack_color("#8aadf4"); }
 static u32 ui_col_string(void) { return ui_pack_color("#f0c6a6"); }
 static u32 ui_col_comment(void) { return ui_pack_color("#6e738d"); }
 static u32 ui_col_number(void) { return ui_pack_color("#a6da95"); }
+static u32 ui_col_titlebar(void) { return ui_pack_color("#161821"); }
+static u32 ui_col_green(void) { return ui_pack_color("#a6da95"); }
+static u32 ui_col_gold(void) { return ui_pack_color("#eed49f"); }
+static u32 ui_col_red(void) { return ui_pack_color("#ed8796"); }
 
 static ui_color_rgba ui_native_clear(void) {
     return (ui_color_rgba){0.118, 0.118, 0.180, 1.0};
@@ -812,6 +816,25 @@ static void ui_code_tab_bar(ui_renderer *r, f64 x, f64 y, f64 w) {
     }
 }
 
+static void ui_code_title_bar(ui_renderer *r, f64 x, f64 y, f64 w) {
+    const f64 s = ui_code_scale();
+    const f64 title_h = 38.0 * s;
+    ui_fill_rect(r, x, y, w, title_h, ui_col_titlebar(), 0.0);
+    ui_fill_rect(r, x, y + title_h - 1.0 * s, w, 1.0 * s, ui_col_border(), 0.0);
+
+    const f64 cy = y + title_h * 0.5;
+    const f64 radius = 6.0 * s;
+    ui_fill_round_rect(r, x + 12.0 * s, cy - radius, 12.0 * s, 12.0 * s, radius, ui_col_red(), 0.0);
+    ui_fill_round_rect(r, x + 34.0 * s, cy - radius, 12.0 * s, 12.0 * s, radius, ui_col_gold(), 0.0);
+    ui_fill_round_rect(r, x + 56.0 * s, cy - radius, 12.0 * s, 12.0 * s, radius, ui_col_green(), 0.0);
+
+    const char *title = "NSCode Native";
+    const f64 font_px = 13.0 * s;
+    const f64 title_w = ui_text_width(r, title, font_px, UI_FONT_MONO);
+    const f64 text_y = ui_text_v_center_y(r, y, title_h, font_px, UI_FONT_MONO);
+    ui_draw_text(r, fmax(84.0 * s, x + (w - title_w) * 0.5), text_y, title, font_px, ui_col_dim(), UI_FONT_MONO);
+}
+
 static void ui_code_status_bar(ui_renderer *r, view *v, f64 x, f64 y, f64 w) {
     const f64 s = ui_code_scale();
     const char *mouse_label = (v && v->mouse_down) ? "Mouse down" : "Mouse ready";
@@ -848,16 +871,19 @@ static void ui_code_editor_draw(ui_renderer *r, view *v) {
     const f64 s = ui_code_scale();
     const f64 w = (f64)ui_canvas_width(r);
     const f64 h = (f64)ui_canvas_height(r);
+    const f64 title_h = 38.0 * s;
     const f64 tree_w = w < 760.0 * s ? 164.0 * s : 220.0 * s;
     const f64 top_h = 38.0 * s;
     const f64 status_h = 28.0 * s;
     const f64 editor_x = tree_w;
-    const f64 editor_y = top_h;
+    const f64 content_y = title_h;
+    const f64 editor_y = content_y + top_h;
     const f64 editor_w = fmax(1.0, w - tree_w);
-    const f64 editor_h = fmax(1.0, h - top_h - status_h);
+    const f64 editor_h = fmax(1.0, h - title_h - top_h - status_h);
 
-    ui_code_file_tree(r, 0.0, 0.0, tree_w, h - status_h);
-    ui_code_tab_bar(r, editor_x, 0.0, editor_w);
+    ui_code_title_bar(r, 0.0, 0.0, w);
+    ui_code_file_tree(r, 0.0, content_y, tree_w, h - title_h - status_h);
+    ui_code_tab_bar(r, editor_x, content_y, editor_w);
 
     const f64 char_w = fmax(1.0, ui_mono_char_width(r, ui_native_font_px(), UI_FONT_MONO));
     const f64 line_h = ui_text_line_height(r, ui_native_font_px(), UI_FONT_MONO) + ui_native_line_pad();

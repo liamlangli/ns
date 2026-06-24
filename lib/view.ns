@@ -37,6 +37,7 @@ type view_on_frame = (ref view) -> void
 type view_on_terminate = (ref view) -> void
 
 ref fn view_create(title: str, width: i32, height: i32) ref view
+ref fn view_create_no_title(title: str, width: i32, height: i32) ref view
 ref fn view_run(v: ref view)
 ref fn view_close(v: ref view)
 ref fn view_capture_require(v: ref view)

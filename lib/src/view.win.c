@@ -19,6 +19,7 @@ static view _view;
 static HWND _hwnd;
 static HINSTANCE _hinstance;
 static ns_bool _quit;
+static ns_bool _no_title;
 
 // Win32 virtual-key -> VIEW_KEY_* mapping (parallels view_osx_key_map).
 static i32 view_win_key_map(i32 vk) {
@@ -48,12 +49,56 @@ static i32 view_win_key_map(i32 vk) {
     }
 }
 
+static ns_bool view_win_no_title_button(i32 x, i32 y, i32 *button) {
+    if (!_no_title || y < 0 || y > 38) return false;
+
+    const i32 centers[] = {18, 40, 62};
+    for (i32 i = 0; i < 3; i++) {
+        const i32 dx = x - centers[i];
+        const i32 dy = y - 19;
+        if (dx * dx + dy * dy <= 100) {
+            *button = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static ns_bool view_win_handle_no_title_mouse_down(HWND hwnd, LPARAM lparam) {
+    if (!_no_title) return false;
+
+    const i32 x = (i32)GET_X_LPARAM(lparam);
+    const i32 y = (i32)GET_Y_LPARAM(lparam);
+    if (y < 0 || y > 38) return false;
+
+    i32 button = -1;
+    if (view_win_no_title_button(x, y, &button)) {
+        if (button == 0) {
+            PostMessage(hwnd, WM_CLOSE, 0, 0);
+        } else if (button == 1) {
+            ShowWindow(hwnd, SW_MINIMIZE);
+        } else {
+            WINDOWPLACEMENT placement = {0};
+            placement.length = sizeof(placement);
+            GetWindowPlacement(hwnd, &placement);
+            ShowWindow(hwnd, placement.showCmd == SW_SHOWMAXIMIZED ? SW_RESTORE : SW_MAXIMIZE);
+        }
+        return true;
+    }
+
+    ReleaseCapture();
+    SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+    return true;
+}
+
 static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
         case WM_MOUSEMOVE:
             view_on_mouse_move(&_view, (f64)GET_X_LPARAM(lparam), (f64)GET_Y_LPARAM(lparam));
             return 0;
         case WM_LBUTTONDOWN:
+            view_on_mouse_move(&_view, (f64)GET_X_LPARAM(lparam), (f64)GET_Y_LPARAM(lparam));
+            if (view_win_handle_no_title_mouse_down(hwnd, lparam)) return 0;
             view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
             return 0;
         case WM_LBUTTONUP:
@@ -102,7 +147,8 @@ static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
     }
 }
 
-view *view_create(const char *title, i32 width, i32 height) {
+static view *view_win_create(const char *title, i32 width, i32 height, ns_bool no_title) {
+    _no_title = no_title;
     _hinstance = GetModuleHandle(NULL);
 
     WNDCLASSEX wc = {0};
@@ -115,8 +161,11 @@ view *view_create(const char *title, i32 width, i32 height) {
     RegisterClassEx(&wc);
 
     RECT rect = {0, 0, width, height};
-    AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, FALSE);
-    _hwnd = CreateWindowEx(0, wc.lpszClassName, title, WS_OVERLAPPEDWINDOW,
+    const DWORD style = no_title
+        ? (WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+        : WS_OVERLAPPEDWINDOW;
+    AdjustWindowRect(&rect, style, FALSE);
+    _hwnd = CreateWindowEx(0, wc.lpszClassName, title, style,
                            CW_USEDEFAULT, CW_USEDEFAULT,
                            rect.right - rect.left, rect.bottom - rect.top,
                            NULL, NULL, _hinstance, NULL);
@@ -137,6 +186,14 @@ view *view_create(const char *title, i32 width, i32 height) {
     // Note: the event loop runs in view_run(), so the caller can attach
     // on_launch / on_frame / on_terminate callbacks first.
     return &_view;
+}
+
+view *view_create(const char *title, i32 width, i32 height) {
+    return view_win_create(title, width, height, false);
+}
+
+view *view_create_no_title(const char *title, i32 width, i32 height) {
+    return view_win_create(title, width, height, true);
 }
 
 void view_run(view *v) {

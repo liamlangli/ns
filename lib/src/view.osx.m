@@ -36,6 +36,7 @@ static id view_window_delegate;
 static id<MTLDevice> view_mtl_device;
 static id view_mtk_view_delegate;
 static MTKView* view_mtk_view;
+static ns_bool view_no_title;
 
 static view _view;
 
@@ -61,6 +62,60 @@ static void view_osx_sync_metrics(f64 width, f64 height) {
     _view.height = (i32)height;
     _view.framebuffer_width = (i32)(width * ratio + 0.5);
     _view.framebuffer_height = (i32)(height * ratio + 0.5);
+}
+
+static void view_osx_apply_manifest_icon(void) {
+    const char *icon_path = getenv("NS_APP_ICON");
+    if (!icon_path || icon_path[0] == '\0') return;
+
+    NSString *path = [NSString stringWithUTF8String:icon_path];
+    NSImage *image = [[NSImage alloc] initWithContentsOfFile:path];
+    if (image) {
+        [NSApp setApplicationIconImage:image];
+    }
+}
+
+static ns_bool view_osx_no_title_button(NSPoint p, f64 content_height, i32 *button) {
+    if (!view_no_title) return false;
+
+    const f64 y = content_height - p.y;
+    if (y < 0.0 || y > 38.0) return false;
+
+    const f64 centers[] = {18.0, 40.0, 62.0};
+    const f64 cy = 19.0;
+    for (i32 i = 0; i < 3; i++) {
+        const f64 dx = p.x - centers[i];
+        const f64 dy = y - cy;
+        if (dx * dx + dy * dy <= 100.0) {
+            *button = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+static ns_bool view_osx_handle_no_title_mouse_down(NSEvent *event) {
+    if (!view_no_title) return false;
+
+    const NSPoint p = [event locationInWindow];
+    const NSRect content_rect = [[event window] contentRectForFrameRect:[[event window] frame]];
+    const f64 y = content_rect.size.height - p.y;
+    if (y < 0.0 || y > 38.0) return false;
+
+    i32 button = -1;
+    if (view_osx_no_title_button(p, content_rect.size.height, &button)) {
+        if (button == 0) {
+            [[event window] performClose:nil];
+        } else if (button == 1) {
+            [[event window] miniaturize:nil];
+        } else {
+            [[event window] toggleFullScreen:nil];
+        }
+        return true;
+    }
+
+    [[event window] performWindowDragWithEvent:event];
+    return true;
 }
 
 // Key mapping function
@@ -187,6 +242,7 @@ static void view_osx_update_mouse(NSEvent *event) {
 @implementation ViewMTKView
 - (void)mouseDown:(NSEvent*)event {
     view_osx_update_mouse(event);
+    if (view_osx_handle_no_title_mouse_down(event)) return;
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
 }
 
@@ -286,13 +342,15 @@ static void view_osx_update_mouse(NSEvent *event) {
 //------------------------------------------------------------------------------
 // Create the application, window and Metal view. Does NOT enter the run loop so
 // the caller can attach callbacks first; view_run() then drives frames.
-void view_osx_create(i32 w, i32 h, const char* title) {
+void view_osx_create(i32 w, i32 h, const char* title, ns_bool no_title) {
     view_width = w;
     view_height = h;
     view_title = title;
+    view_no_title = no_title;
 
     [ViewApp sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    view_osx_apply_manifest_icon();
     id delegate = [[ViewAppDelegate alloc] init];
     [NSApp setDelegate:delegate];
 
@@ -301,13 +359,22 @@ void view_osx_create(i32 w, i32 h, const char* title) {
         NSWindowStyleMaskTitled |
         NSWindowStyleMaskClosable |
         NSWindowStyleMaskMiniaturizable |
-        NSWindowStyleMaskResizable;
+        NSWindowStyleMaskResizable |
+        (no_title ? NSWindowStyleMaskFullSizeContentView : 0);
     view_window = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, view_width, view_height)
         styleMask: style
         backing: NSBackingStoreBuffered
         defer: NO];
     [view_window setTitle:[NSString stringWithUTF8String: view_title]];
+    if (no_title) {
+        [view_window setTitleVisibility:NSWindowTitleHidden];
+        [view_window setTitlebarAppearsTransparent:YES];
+        [view_window setMovableByWindowBackground:NO];
+        [[view_window standardWindowButton:NSWindowCloseButton] setHidden:YES];
+        [[view_window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
+        [[view_window standardWindowButton:NSWindowZoomButton] setHidden:YES];
+    }
     [view_window setAcceptsMouseMovedEvents: YES];
     [view_window center];
     [view_window setRestorable: YES];
@@ -353,7 +420,19 @@ view* view_create(const char *title, i32 width, i32 height) {
     _view.framebuffer_width = width;
     _view.framebuffer_height = height;
     _view.title = ns_str_cstr((char*)title);
-    view_osx_create(width, height, title);
+    view_osx_create(width, height, title, false);
+    return &_view;
+}
+
+view* view_create_no_title(const char *title, i32 width, i32 height) {
+    _view.width = width;
+    _view.height = height;
+    _view.display_ratio = 1.0;
+    _view.ui_scale = 1.0;
+    _view.framebuffer_width = width;
+    _view.framebuffer_height = height;
+    _view.title = ns_str_cstr((char*)title);
+    view_osx_create(width, height, title, true);
     return &_view;
 }
 

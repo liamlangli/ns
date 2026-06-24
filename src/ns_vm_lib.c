@@ -52,6 +52,7 @@ extern void *io_load_image(const char *path);
 extern i32 io_save_image(const char *path, const void *img);
 
 extern void *view_create(const char *title, i32 width, i32 height);
+extern void *view_create_no_title(const char *title, i32 width, i32 height);
 extern void view_run(void *v);
 extern void view_close(void *v);
 extern void view_capture_require(void *v);
@@ -159,6 +160,7 @@ static const ns_static_sym ns_static_syms[] = {
     {"io_save_image", (void*)io_save_image},
 
     {"view_create", (void*)view_create},
+    {"view_create_no_title", (void*)view_create_no_title},
     {"view_run", (void*)view_run},
     {"view_close", (void*)view_close},
     {"view_capture_require", (void*)view_capture_require},

@@ -1,11 +1,12 @@
 schema = "ns.mod/v1"
 name = "nscode-native"
 version = "0.1.0"
-author = "lang <lilang8936@gmail.com>"
+author = "liamlangli <lilang8936@gmail.com>"
 type = "app"
 description = "Native code editor for Nano Script, rendered through the ui module."
 source = "."
 entry = "main.ns"
+icon = "../../sample/ns.png"
 exclude = ["README.md"]
 
 [[dependencies.runtime]]

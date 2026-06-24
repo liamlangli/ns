@@ -84,7 +84,10 @@ Common commands:
 - `-o|--output` output path for emitters
 - `build [path]` compile and link a script/module to an executable or static
   library; infers module artifact type from `ns.mod` and accepts `--exe` /
-  `--lib`
+  `--app` / `--lib`
+- `ns.mod` app manifests may set `icon = "path/to/image.png"`; the path is
+  relative to the manifest root. `ns run` passes it to the native view runtime,
+  and Darwin app builds package it as the bundle icon.
 
 No filename defaults to version + REPL.
 With filename and no analysis/emit flag, it evaluates and prints result.

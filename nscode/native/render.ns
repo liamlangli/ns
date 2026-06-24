@@ -48,6 +48,8 @@ fn col_border() u32 { return ui_pack_color("#494d64") }
 fn col_keyword() u32 { return ui_pack_color("#8aadf4") }
 fn col_string() u32 { return ui_pack_color("#f0c6a6") }
 fn col_comment() u32 { return ui_pack_color("#6e738d") }
+fn col_titlebar() u32 { return ui_pack_color("#161821") }
+fn col_green() u32 { return ui_pack_color("#a6da95") }
 
 // The clear colour passed to ui_flush, matching col_bg above.
 fn clear_color() ui_color_rgba {
@@ -188,6 +190,20 @@ fn draw_tab_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     ui_pop_clip(r)
 }
 
+fn draw_title_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    let title_h = 38.0
+    ui_fill_rect(r, x, y, w, title_h, col_titlebar(), 0.0)
+    ui_fill_rect(r, x, y + title_h - 1.0, w, 1.0, col_border(), 0.0)
+
+    let cy = y + title_h * 0.5
+    ui_fill_round_rect(r, x + 12.0, cy - 6.0, 12.0, 12.0, 6.0, col_red(), 0.0)
+    ui_fill_round_rect(r, x + 34.0, cy - 6.0, 12.0, 12.0, 6.0, col_gold(), 0.0)
+    ui_fill_round_rect(r, x + 56.0, cy - 6.0, 12.0, 12.0, 6.0, col_green(), 0.0)
+
+    let text_y = ui_text_v_center_y(r, y, title_h, 13.0, FONT_MONO())
+    ui_draw_text(r, x + 84.0, text_y, "NSCode Native", 13.0, col_dim(), FONT_MONO())
+}
+
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, row: i32, col: i32) {
     let bar_h = 28.0
     ui_fill_rect(r, x, y, w, bar_h, col_accent(), 0.0)
@@ -222,15 +238,18 @@ fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
     if w < 760.0 {
         tree_w = 164.0
     }
+    let title_h = 38.0
     let top_h = 38.0
     let status_h = 28.0
     let editor_x = tree_w
-    let editor_y = top_h
+    let content_y = title_h
+    let editor_y = content_y + top_h
     let editor_w = w - tree_w
-    let editor_h = h - top_h - status_h
+    let editor_h = h - title_h - top_h - status_h
 
-    draw_file_tree(r, 0.0, 0.0, tree_w, h - status_h)
-    draw_tab_bar(r, editor_x, 0.0, editor_w)
+    draw_title_bar(r, 0.0, 0.0, w)
+    draw_file_tree(r, 0.0, content_y, tree_w, h - title_h - status_h)
+    draw_tab_bar(r, editor_x, content_y, editor_w)
 
     let fpx = font_px()
     let char_w = ui_mono_char_width(r, fpx, FONT_MONO())

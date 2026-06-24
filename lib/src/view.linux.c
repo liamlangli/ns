@@ -20,6 +20,10 @@ view* view_create(const char *title, i32 width, i32 height) {
     return &_view;
 }
 
+view* view_create_no_title(const char *title, i32 width, i32 height) {
+    return view_create(title, width, height);
+}
+
 void view_run(view *v) {
     ns_unused(v);
     // No event loop without a native backend.

@@ -171,6 +171,7 @@ typedef struct view {
 // closes. On platforms without a native backend (Linux) view_create() returns a
 // no-op view and view_run() returns immediately.
 view* view_create(const char *title, i32 width, i32 height);
+view* view_create_no_title(const char *title, i32 width, i32 height);
 void view_run(view *v);
 void view_close(view *v);
 void view_capture_require(view *v);

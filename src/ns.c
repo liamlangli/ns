@@ -72,8 +72,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.show_version = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             option.show_help = true;
-        } else if (strcmp(argv[i], "--exe") == 0 || strcmp(argv[i], "--app") == 0) {
+        } else if (strcmp(argv[i], "--exe") == 0) {
             option.build_kind = 1;
+        } else if (strcmp(argv[i], "--app") == 0) {
+            option.build_kind = 3;
         } else if (strcmp(argv[i], "--lib") == 0 || strcmp(argv[i], "--library") == 0) {
             option.build_kind = 2;
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
@@ -112,6 +114,7 @@ void ns_help() {
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
+    printf("                    app manifests may set icon = \"path/to/image.png\"\n");
 
 }
 
@@ -464,6 +467,26 @@ static ns_str ns_getcwd(void) {
     return ns_str_concat(ns_str_cstr(buf), ns_str_cstr(""));
 }
 
+static ns_bool ns_path_is_absolute(ns_str path) {
+    if (path.len == 0) return false;
+#if defined(_WIN32)
+    return path.data[0] == '\\' || path.data[0] == '/' ||
+           (path.len >= 3 && path.data[1] == ':' && (path.data[2] == '\\' || path.data[2] == '/'));
+#else
+    return path.data[0] == '/';
+#endif
+}
+
+static ns_str ns_path_resolve(ns_str root, ns_str path) {
+    if (path.data == ns_null || path.len == 0) return ns_str_null;
+    if (ns_path_is_absolute(path)) return ns_str_concat(path, ns_str_cstr(""));
+    return ns_path_join(root, path);
+}
+
+static ns_bool ns_str_ends_with(ns_str s, ns_str suffix) {
+    return s.len >= suffix.len && strncmp(s.data + s.len - suffix.len, suffix.data, suffix.len) == 0;
+}
+
 // Extract the first quoted string that follows `key =` in a TOML manifest.
 // Handles both `key = "value"` and `key = ["value", ...]`; the key must be the
 // first token on its line so `entry` never matches `entries`. Returns a
@@ -528,6 +551,7 @@ typedef enum {
     NS_BUILD_AUTO = 0,
     NS_BUILD_EXE = 1,
     NS_BUILD_LIB = 2,
+    NS_BUILD_APP = 3,
 } ns_build_kind;
 
 typedef struct ns_build_input {
@@ -536,6 +560,7 @@ typedef struct ns_build_input {
     ns_str scope;
     ns_str name;
     ns_str module_type;
+    ns_str icon;
     ns_bool has_manifest;
 } ns_build_input;
 
@@ -578,6 +603,15 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
     if (kind == NS_BUILD_LIB) {
         artifact = ns_str_concat(ns_str_cstr("lib"), name);
         artifact = ns_str_concat(artifact, ns_str_cstr(".a"));
+    } else if (kind == NS_BUILD_APP) {
+#if defined(NS_DARWIN)
+        artifact = ns_str_concat(name, ns_str_cstr(".app"));
+#else
+        artifact = ns_str_concat(name, ns_str_cstr(""));
+#if defined(_WIN32)
+        artifact = ns_str_concat(artifact, ns_str_cstr(".exe"));
+#endif
+#endif
     } else {
         artifact = ns_str_concat(name, ns_str_cstr(""));
 #if defined(_WIN32)
@@ -587,6 +621,11 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
 
     ns_str bin = ns_path_join(in->scope, ns_str_cstr("bin"));
     return ns_path_join(bin, artifact);
+}
+
+static ns_str ns_build_app_output(ns_str output) {
+    if (ns_str_ends_with(output, ns_str_cstr(".app"))) return output;
+    return ns_str_concat(output, ns_str_cstr(".app"));
 }
 
 static void ns_mkdir_one(ns_str dir) {
@@ -616,6 +655,49 @@ static void ns_build_ensure_output_dir(ns_str output) {
     ns_str dir = ns_path_dirname_safe(output);
     ns_mkdir_p(dir);
     ns_str_free(dir);
+}
+
+static void ns_write_text_file(ns_str path, ns_str text) {
+    FILE *file = fopen(path.data, "wb");
+    if (!file) ns_exit(1, "build", "failed to write %.*s.\n", path.len, path.data);
+    if (text.len > 0 && fwrite(text.data, 1, text.len, file) != (size_t)text.len) {
+        fclose(file);
+        ns_exit(1, "build", "failed to write %.*s.\n", path.len, path.data);
+    }
+    fclose(file);
+}
+
+static void ns_copy_file_or_exit(ns_str src, ns_str dst) {
+    ns_str data = ns_fs_read_file(src);
+    if (data.data == ns_null) ns_exit(1, "build", "failed to read icon %.*s.\n", src.len, src.data);
+
+    FILE *file = fopen(dst.data, "wb");
+    if (!file) ns_exit(1, "build", "failed to copy icon to %.*s.\n", dst.len, dst.data);
+    if (data.len > 0 && fwrite(data.data, 1, data.len, file) != (size_t)data.len) {
+        fclose(file);
+        ns_exit(1, "build", "failed to copy icon to %.*s.\n", dst.len, dst.data);
+    }
+    fclose(file);
+    ns_str_free(data);
+}
+
+static void ns_str_append_cstr(ns_str *s, const char *cstr) {
+    ns_str_append_len(s, cstr, (i32)strlen(cstr));
+}
+
+static ns_str ns_xml_escape(ns_str s) {
+    ns_str out = ns_str_null;
+    for (i32 i = 0; i < s.len; i++) {
+        switch (s.data[i]) {
+            case '&': ns_str_append_len(&out, "&amp;", 5); break;
+            case '<': ns_str_append_len(&out, "&lt;", 4); break;
+            case '>': ns_str_append_len(&out, "&gt;", 4); break;
+            case '"': ns_str_append_len(&out, "&quot;", 6); break;
+            default: ns_str_append_len(&out, s.data + i, 1); break;
+        }
+    }
+    ns_array_push(out.data, '\0');
+    return out;
 }
 
 static ns_str ns_shell_quote(ns_str s) {
@@ -691,6 +773,7 @@ static ns_build_input ns_build_input_resolve(ns_str path) {
     if (in.has_manifest) {
         in.name = ns_build_manifest_value(in.scope, "name");
         in.module_type = ns_build_manifest_value(in.scope, "type");
+        in.icon = ns_path_resolve(in.scope, ns_build_manifest_value(in.scope, "icon"));
     }
     if (in.name.data == ns_null) in.name = ns_path_filename(in.filename);
     return in;
@@ -700,12 +783,167 @@ static ns_bool ns_build_type_is_library(ns_str t) {
     return ns_str_equals(t, ns_str_cstr("library")) || ns_str_equals(t, ns_str_cstr("lib"));
 }
 
+static ns_bool ns_build_type_is_app(ns_str t) {
+    return ns_str_equals(t, ns_str_cstr("app")) || ns_str_equals(t, ns_str_cstr("application"));
+}
+
 static ns_build_kind ns_build_resolve_kind(ns_build_input *in, u8 requested) {
     if (requested == NS_BUILD_EXE) return NS_BUILD_EXE;
     if (requested == NS_BUILD_LIB) return NS_BUILD_LIB;
+    if (requested == NS_BUILD_APP) return NS_BUILD_APP;
     if (ns_build_type_is_library(in->module_type)) return NS_BUILD_LIB;
+    if (ns_build_type_is_app(in->module_type)) return NS_BUILD_APP;
     return NS_BUILD_EXE;
 }
+
+#if defined(NS_DARWIN)
+static ns_bool ns_build_darwin_make_icns(ns_str icon, ns_str resources_dir, ns_str *out_icon_file) {
+    if (icon.data == ns_null) return false;
+    if (!ns_file_exists(icon)) ns_exit(1, "build", "icon file not found: %.*s.\n", icon.len, icon.data);
+
+    ns_str icon_file = ns_str_cstr("AppIcon.icns");
+    ns_str icns_path = ns_path_join(resources_dir, icon_file);
+    if (ns_str_ends_with(icon, ns_str_cstr(".icns"))) {
+        ns_copy_file_or_exit(icon, icns_path);
+        *out_icon_file = icon_file;
+        return true;
+    }
+
+    ns_str iconset_dir = ns_path_join(resources_dir, ns_str_cstr("AppIcon.iconset"));
+    ns_mkdir_p(iconset_dir);
+
+    const char *names[] = {
+        "icon_16x16.png", "icon_16x16@2x.png",
+        "icon_32x32.png", "icon_32x32@2x.png",
+        "icon_128x128.png", "icon_128x128@2x.png",
+        "icon_256x256.png", "icon_256x256@2x.png",
+        "icon_512x512.png", "icon_512x512@2x.png",
+    };
+    const i32 pixels[] = {16, 32, 32, 64, 128, 256, 256, 512, 512, 1024};
+
+    ns_str q_icon = ns_shell_quote(icon);
+    for (i32 i = 0; i < 10; i++) {
+        ns_str out = ns_path_join(iconset_dir, ns_str_cstr((char*)names[i]));
+        ns_str q_out = ns_shell_quote(out);
+        ns_str px = ns_str_from_i32(pixels[i]);
+        ns_str cmd = ns_str_null;
+        ns_str_append_cstr(&cmd, "/usr/bin/sips -z ");
+        ns_str_append(&cmd, px);
+        ns_str_append_len(&cmd, " ", 1);
+        ns_str_append(&cmd, px);
+        ns_str_append_len(&cmd, " ", 1);
+        ns_str_append(&cmd, q_icon);
+        ns_str_append_len(&cmd, " --out ", 7);
+        ns_str_append(&cmd, q_out);
+        ns_str_append_cstr(&cmd, " >/dev/null");
+        ns_array_push(cmd.data, '\0');
+        i32 ret = system(cmd.data);
+        if (ret != 0) ns_exit(1, "build", "failed to resize icon %.*s.\n", icon.len, icon.data);
+        ns_str_free(out);
+        ns_str_free(q_out);
+        ns_str_free(cmd);
+    }
+    ns_str_free(q_icon);
+
+    ns_str q_iconset = ns_shell_quote(iconset_dir);
+    ns_str q_icns = ns_shell_quote(icns_path);
+    ns_str iconutil = ns_str_null;
+    ns_str_append_cstr(&iconutil, "/usr/bin/iconutil -c icns ");
+    ns_str_append(&iconutil, q_iconset);
+    ns_str_append_len(&iconutil, " -o ", 4);
+    ns_str_append(&iconutil, q_icns);
+    ns_array_push(iconutil.data, '\0');
+    i32 iconutil_ret = system(iconutil.data);
+    if (iconutil_ret != 0) ns_exit(1, "build", "failed to create icon %.*s.\n", icns_path.len, icns_path.data);
+
+    ns_str rm = ns_str_null;
+    ns_str_append_len(&rm, "rm -rf ", 7);
+    ns_str_append(&rm, q_iconset);
+    ns_array_push(rm.data, '\0');
+    system(rm.data);
+
+    ns_str_free(iconset_dir);
+    ns_str_free(q_iconset);
+    ns_str_free(q_icns);
+    ns_str_free(iconutil);
+    ns_str_free(rm);
+    *out_icon_file = icon_file;
+    return true;
+}
+
+static void ns_build_darwin_write_plist(ns_build_input *in, ns_str app_dir, ns_str executable_name, ns_str icon_file) {
+    ns_str contents_dir = ns_path_join(app_dir, ns_str_cstr("Contents"));
+    ns_str plist_path = ns_path_join(contents_dir, ns_str_cstr("Info.plist"));
+    ns_str name = ns_xml_escape(in->name);
+    ns_str executable = ns_xml_escape(executable_name);
+    ns_str identifier_src = ns_str_concat(ns_str_cstr("ns."), in->name);
+    ns_str identifier = ns_xml_escape(identifier_src);
+    ns_str icon = icon_file.data != ns_null ? ns_xml_escape(icon_file) : ns_str_null;
+
+    ns_str plist = ns_str_null;
+    ns_str_append_cstr(&plist, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    ns_str_append_cstr(&plist, "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n");
+    ns_str_append_cstr(&plist, "<plist version=\"1.0\">\n<dict>\n");
+    ns_str_append_cstr(&plist, "  <key>CFBundleName</key>\n  <string>");
+    ns_str_append(&plist, name);
+    ns_str_append_cstr(&plist, "</string>\n");
+    ns_str_append_cstr(&plist, "  <key>CFBundleDisplayName</key>\n  <string>");
+    ns_str_append(&plist, name);
+    ns_str_append_cstr(&plist, "</string>\n");
+    ns_str_append_cstr(&plist, "  <key>CFBundleExecutable</key>\n  <string>");
+    ns_str_append(&plist, executable);
+    ns_str_append_cstr(&plist, "</string>\n");
+    ns_str_append_cstr(&plist, "  <key>CFBundleIdentifier</key>\n  <string>");
+    ns_str_append(&plist, identifier);
+    ns_str_append_cstr(&plist, "</string>\n");
+    ns_str_append_cstr(&plist, "  <key>CFBundlePackageType</key>\n  <string>APPL</string>\n");
+    ns_str_append_cstr(&plist, "  <key>CFBundleVersion</key>\n  <string>1</string>\n");
+    ns_str_append_cstr(&plist, "  <key>CFBundleShortVersionString</key>\n  <string>1.0</string>\n");
+    if (icon_file.data != ns_null) {
+        ns_str_append_cstr(&plist, "  <key>CFBundleIconFile</key>\n  <string>");
+        ns_str_append(&plist, icon);
+        ns_str_append_cstr(&plist, "</string>\n");
+    }
+    ns_str_append_cstr(&plist, "</dict>\n</plist>\n");
+    ns_array_push(plist.data, '\0');
+    ns_write_text_file(plist_path, plist);
+
+    ns_str_free(contents_dir);
+    ns_str_free(plist_path);
+    ns_str_free(name);
+    ns_str_free(executable);
+    ns_str_free(identifier_src);
+    ns_str_free(identifier);
+    ns_str_free(icon);
+    ns_str_free(plist);
+}
+
+static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
+    ns_str app_dir = ns_build_app_output(output);
+    ns_str contents_dir = ns_path_join(app_dir, ns_str_cstr("Contents"));
+    ns_str macos_dir = ns_path_join(contents_dir, ns_str_cstr("MacOS"));
+    ns_str resources_dir = ns_path_join(contents_dir, ns_str_cstr("Resources"));
+    ns_mkdir_p(macos_dir);
+    ns_mkdir_p(resources_dir);
+
+    ns_str executable_name = ns_str_concat(in->name, ns_str_cstr(""));
+    ns_str executable_path = ns_path_join(macos_dir, executable_name);
+    ns_return_bool emit_ret = ns_macho_emit(ssa, executable_path);
+    if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+
+    ns_str icon_file = ns_str_null;
+    ns_build_darwin_make_icns(in->icon, resources_dir, &icon_file);
+    ns_build_darwin_write_plist(in, app_dir, executable_name, icon_file);
+
+    ns_info("build", "app %.*s\n", app_dir.len, app_dir.data);
+    ns_str_free(app_dir);
+    ns_str_free(contents_dir);
+    ns_str_free(macos_dir);
+    ns_str_free(resources_dir);
+    ns_str_free(executable_name);
+    ns_str_free(executable_path);
+}
+#endif
 
 void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_build_input in = ns_build_input_resolve(path);
@@ -731,6 +969,25 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
         ns_archive_object(output, object);
         ns_info("build", "library %.*s\n", output.len, output.data);
         return;
+    }
+
+    if (kind == NS_BUILD_APP) {
+        ns_asm_target target;
+        ns_asm_get_current_target(&target);
+        if (target.os != NS_OS_DARWIN) {
+            ns_warn("build", "app bundle icon packaging is currently supported for mach-o targets only; emitting executable.\n");
+            kind = NS_BUILD_EXE;
+        } else {
+#if defined(NS_DARWIN)
+            ns_str app_output = ns_build_app_output(output);
+            ns_build_darwin_app(&in, app_output, ssa);
+            ns_ssa_module_free(ssa);
+            return;
+#else
+            ns_ssa_module_free(ssa);
+            ns_exit(1, "build", "app bundle output is only available on Darwin builds.\n");
+#endif
+        }
     }
 
     ns_asm_target target;
@@ -761,6 +1018,14 @@ void ns_exec_run(ns_str filename) {
         ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
 
     ns_str scope = ns_project_root(filename);
+    ns_str icon = ns_path_resolve(scope, ns_build_manifest_value(scope, "icon"));
+    if (icon.data != ns_null) {
+#if defined(_WIN32)
+        _putenv_s("NS_APP_ICON", icon.data);
+#else
+        setenv("NS_APP_ICON", icon.data, 1);
+#endif
+    }
     ns_str merged = ns_project_link(scope, source);
 
     ns_return_value ret_v = ns_eval(&vm, merged, filename);
