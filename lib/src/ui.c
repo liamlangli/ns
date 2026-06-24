@@ -725,6 +725,9 @@ static i32 ui_code_caret_line;
 static i32 ui_code_hover_line = -1;
 
 static f64 ui_code_scale(void) {
+    if (ui_code_editor_view && ui_code_editor_view->display_ratio > 0.0) {
+        return ui_code_editor_view->display_ratio;
+    }
     return (ui_code_editor_view && ui_code_editor_view->ui_scale > 0.0) ? ui_code_editor_view->ui_scale : 1.0;
 }
 

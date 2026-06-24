@@ -39,6 +39,30 @@ static MTKView* view_mtk_view;
 
 static view _view;
 
+static f64 view_osx_current_display_ratio(void) {
+    CGFloat ratio = 0.0;
+    if (view_window) {
+        ratio = [view_window backingScaleFactor];
+        if (ratio <= 0.0 && [view_window screen]) {
+            ratio = [[view_window screen] backingScaleFactor];
+        }
+    }
+    if (ratio <= 0.0 && [NSScreen mainScreen]) {
+        ratio = [[NSScreen mainScreen] backingScaleFactor];
+    }
+    return ratio > 0.0 ? (f64)ratio : 1.0;
+}
+
+static void view_osx_sync_metrics(f64 width, f64 height) {
+    const f64 ratio = view_osx_current_display_ratio();
+    _view.display_ratio = ratio;
+    _view.ui_scale = ratio;
+    _view.width = (i32)width;
+    _view.height = (i32)height;
+    _view.framebuffer_width = (i32)(width * ratio + 0.5);
+    _view.framebuffer_height = (i32)(height * ratio + 0.5);
+}
+
 // Key mapping function
 i32 view_osx_key_map(i32 k) {
     switch (k) {
@@ -118,7 +142,19 @@ i32 view_osx_key_map(i32 k) {
 - (void)windowDidResize:(NSNotification*)notification {
     (void)notification;
     const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
-    view_on_resize(&_view, content_rect.size.width, content_rect.size.height);
+    view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
+}
+
+- (void)windowDidChangeScreen:(NSNotification*)notification {
+    (void)notification;
+    const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
+    view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
+}
+
+- (void)windowDidChangeBackingProperties:(NSNotification*)notification {
+    (void)notification;
+    const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
+    view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
 }
 @end
 
@@ -286,6 +322,8 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     [view_mtk_view setDelegate: view_mtk_view_delegate];
     [view_window setContentView: view_mtk_view];
     [view_window makeKeyAndOrderFront: nil];
+    const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
+    view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
 
     _view.native_window = (__bridge void*)view_window;
     _view.gpu_device = (__bridge void*)view_mtl_device;
@@ -310,9 +348,10 @@ id<MTLDevice> view_osx_mtl_device() {
 view* view_create(const char *title, i32 width, i32 height) {
     _view.width = width;
     _view.height = height;
-    _view.ui_scale = 2.0;
-    _view.framebuffer_width = width * _view.ui_scale;
-    _view.framebuffer_height = height * _view.ui_scale;
+    _view.display_ratio = 1.0;
+    _view.ui_scale = 1.0;
+    _view.framebuffer_width = width;
+    _view.framebuffer_height = height;
     _view.title = ns_str_cstr((char*)title);
     view_osx_create(width, height, title);
     return &_view;
