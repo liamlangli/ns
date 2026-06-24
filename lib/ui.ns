@@ -193,10 +193,11 @@ struct ui_layer {
 ref fn ui_renderer_create(v: ref view) ref ui_renderer
 ref fn ui_renderer_destroy(r: ref ui_renderer)
 
-// Temporary native bridge for nscode/native while view.on_frame assignment from
-// Nano Script is still incomplete. It owns a renderer and installs a C frame
-// callback that draws the code editor shell each MTKView frame.
+// Temporary native bridges for nscode/native while view.on_frame assignment
+// from Nano Script is still incomplete. They own a renderer and install a C
+// frame callback for the app shell.
 ref fn ui_code_editor_attach(v: ref view)
+ref fn ui_agentic_coding_attach(v: ref view)
 
 // Load the optional Chinese (FONT_ZH) atlas at runtime. Returns true on success.
 ref fn ui_load_chinese_font(r: ref ui_renderer, json_path: str, image_path: str) bool

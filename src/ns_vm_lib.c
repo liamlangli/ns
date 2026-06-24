@@ -129,6 +129,7 @@ extern i32 http_get(const char *host, i32 port, const char *path);
 extern void *ui_renderer_create(void *v);
 extern void ui_renderer_destroy(void *r);
 extern void ui_code_editor_attach(void *v);
+extern void ui_agentic_coding_attach(void *v);
 extern void ui_resize(void *r);
 extern void ui_resize_to(void *r, i32 width, i32 height);
 extern void ui_request_render(void *r, i32 frames);
@@ -233,6 +234,7 @@ static const ns_static_sym ns_static_syms[] = {
     {"ui_renderer_create", (void*)ui_renderer_create},
     {"ui_renderer_destroy", (void*)ui_renderer_destroy},
     {"ui_code_editor_attach", (void*)ui_code_editor_attach},
+    {"ui_agentic_coding_attach", (void*)ui_agentic_coding_attach},
     {"ui_resize", (void*)ui_resize},
     {"ui_resize_to", (void*)ui_resize_to},
     {"ui_request_render", (void*)ui_request_render},

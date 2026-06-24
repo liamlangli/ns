@@ -1,351 +1,209 @@
 // nscode/native/render.ns
 // ---------------------------------------------------------------------------
-// Render layer for the native code editor, drawn through the `ui` module
-// (lib/ui.ns) -- the Nano Script surface of the @liamlangli/ui WebGPU toolkit.
-// This is the native port of that toolkit's `code_editor` plugin: each frame it
-// paints the editor background, a line-number gutter, the selection highlight,
-// the visible document lines and a caret, all through `ui_renderer` draw calls
-// (ui_fill_rect / ui_draw_text / ui_push_clip) instead of hand-rolled GPU
-// passes. The renderer batches these into one GPU submission on flush.
-//
-// Geometry is in physical pixels (f64). Colours are packed 0xAABBGGRR values
-// built from hex with ui_pack_color; on a themed host these would instead come
-// from ui_theme_rgba, but a self-contained palette keeps the scaffold free of
-// an external theme document.
+// Nano Script mirror of the native agentic coding shell. The running app still
+// uses the C bridge in lib/src/ui.c because assigning view.on_frame callbacks
+// from Nano Script is not reliable yet, but this file keeps the intended layout
+// visible from the NS side: chat history, agent dialog, and Git diff review.
 
 use ui
-use editor
 
-// Font-face selector: UI_FONT_MONO in lib/ui.ns. Re-exposed as a helper so a
-// condition/argument never has to reach across modules for the constant.
 fn FONT_MONO() i32 { return 1 }
 
-// Logical font size and per-line padding, in physical pixels.
-fn font_px() f64 { return 16.0 }
-fn line_pad() f64 { return 4.0 }
-fn gutter_pad() f64 { return 8.0 }
+fn font_px() f64 { return 14.0 }
+fn small_px() f64 { return 12.0 }
+fn title_px() f64 { return 18.0 }
 
-// ---- palette (packed 0xAABBGGRR) ------------------------------------------
+fn col_bg() u32 { return ui_pack_color("#121417") }
+fn col_rail() u32 { return ui_pack_color("#171b20") }
+fn col_surface() u32 { return ui_pack_color("#1e242b") }
+fn col_surface_hi() u32 { return ui_pack_color("#27313a") }
+fn col_line() u32 { return ui_pack_color("#34404a") }
+fn col_text() u32 { return ui_pack_color("#d7dde5") }
+fn col_muted() u32 { return ui_pack_color("#83909e") }
+fn col_accent() u32 { return ui_pack_color("#61d394") }
+fn col_blue() u32 { return ui_pack_color("#7aa8ff") }
+fn col_yellow() u32 { return ui_pack_color("#f2c86b") }
+fn col_red() u32 { return ui_pack_color("#ff7b86") }
+fn col_green_bg() u32 { return ui_pack_color("#173726") }
+fn col_red_bg() u32 { return ui_pack_color("#3a2025") }
+fn col_hunk_bg() u32 { return ui_pack_color("#23304a") }
+fn col_titlebar() u32 { return ui_pack_color("#101317") }
+fn col_close() u32 { return ui_pack_color("#ff5f57") }
+fn col_min() u32 { return ui_pack_color("#ffbd2e") }
+fn col_zoom() u32 { return ui_pack_color("#28c840") }
 
-fn col_bg() u32 { return ui_pack_color("#1e1e2e") }
-fn col_gutter() u32 { return ui_pack_color("#181825") }
-fn col_text() u32 { return ui_pack_color("#cdd6f4") }
-fn col_dim() u32 { return ui_pack_color("#6c7086") }
-fn col_sel() u32 { return ui_pack_color("#414b6b") }
-fn col_caret() u32 { return ui_pack_color("#f5e0dc") }
-fn col_track() u32 { return ui_pack_color("#11111b") }
-fn col_thumb() u32 { return ui_pack_color("#45475a") }
-fn col_panel() u32 { return ui_pack_color("#303446") }
-fn col_panel_hi() u32 { return ui_pack_color("#414559") }
-fn col_accent() u32 { return ui_pack_color("#8bd5ca") }
-fn col_gold() u32 { return ui_pack_color("#eed49f") }
-fn col_red() u32 { return ui_pack_color("#ed8796") }
-fn col_sidebar() u32 { return ui_pack_color("#181926") }
-fn col_sidebar_alt() u32 { return ui_pack_color("#1e2030") }
-fn col_tab() u32 { return ui_pack_color("#24273a") }
-fn col_line_hot() u32 { return ui_pack_color("#292c3c") }
-fn col_border() u32 { return ui_pack_color("#494d64") }
-fn col_keyword() u32 { return ui_pack_color("#8aadf4") }
-fn col_string() u32 { return ui_pack_color("#f0c6a6") }
-fn col_comment() u32 { return ui_pack_color("#6e738d") }
-fn col_titlebar() u32 { return ui_pack_color("#161821") }
-fn col_green() u32 { return ui_pack_color("#a6da95") }
-
-// The clear colour passed to ui_flush, matching col_bg above.
 fn clear_color() ui_color_rgba {
-    return ui_color_rgba { r: 0.118, g: 0.118, b: 0.180, a: 1.0 }
+    return ui_color_rgba { r: 0.071, g: 0.078, b: 0.090, a: 1.0 }
 }
 
-// Digit count of a positive line count, with a two-digit minimum gutter.
-fn gutter_digits(total: i32) i32 {
-    let d = itos(total).len
-    if d < 2 {
-        return 2
-    }
-    return d
+fn draw_rule(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    ui_fill_rect(r, x, y, w, 1.0, col_line(), 0.0)
 }
 
-// ---- selection highlight --------------------------------------------------
-// One filled rect per selected line, clipped to the code column. Drawn before
-// the glyphs so the text sits on top.
+fn draw_label(r: ref ui_renderer, x: f64, y: f64, text: str) {
+    ui_draw_text(r, x, y, text, small_px(), col_muted(), FONT_MONO())
+}
 
-fn draw_selection(r: ref ui_renderer, code_x: f64, y: f64, char_w: f64, line_h: f64, scroll_t: f64, scroll_l: f64) {
-    let a = sel_min()
-    let b = sel_max()
-    let sline = line_of(a)
-    let scol = col_of(a)
-    let eline = line_of(b)
-    let ecol = col_of(b)
-    let li = sline
-    loop li <= eline {
-        let sc = 0
-        if li == sline {
-            sc = scol
+fn draw_pill(r: ref ui_renderer, x: f64, y: f64, text: str, bg: u32, fg: u32) {
+    let tw = ui_text_width(r, text, small_px(), FONT_MONO())
+    ui_fill_round_rect(r, x, y, tw + 16.0, 22.0, 6.0, bg, 0.0)
+    ui_draw_text(r, x + 8.0, y + 6.0, text, small_px(), fg, FONT_MONO())
+}
+
+fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, px: f64, color: u32) {
+    if w > 0.0 {
+        if h > 0.0 {
+            ui_push_clip(r, x, y, w, h)
+            ui_draw_text(r, x, y, text, px, color, FONT_MONO())
+            ui_pop_clip(r)
         }
-        let ec = line_len(line_start(li))
-        if li == eline {
-            ec = ecol
-        }
-        let ry = y + (li as f64) * line_h - scroll_t
-        let rx = code_x + (sc as f64) * char_w - scroll_l
-        let rw = ((ec - sc) as f64) * char_w
-        if rw > 0.0 {
-            ui_fill_rect(r, rx, ry, rw, line_h, col_sel(), 0.0)
-        }
-        li = li + 1
     }
 }
 
-// ---- vertical scrollbar ---------------------------------------------------
-
-fn draw_scrollbar(r: ref ui_renderer, x: f64, y: f64, h: f64, content_h: f64) {
-    if content_h > h {
-        let bar_w = 8.0
-        let track_x = x - bar_w
-        ui_fill_rect(r, track_x, y, bar_w, h, col_track(), 0.0)
-        let thumb_h = h * h / content_h
-        if thumb_h < 20.0 {
-            thumb_h = 20.0
-        }
-        let max_scroll = content_h - h
-        let scroll_t = (g_rowoff as f64) * (content_h / (line_count() as f64))
-        let thumb_y = y
-        if max_scroll > 0.0 {
-            thumb_y = y + scroll_t / max_scroll * (h - thumb_h)
-        }
-        ui_fill_round_rect(r, track_x + 1.0, thumb_y, bar_w - 2.0, thumb_h, 3.0, col_thumb(), 0.0)
-    }
+fn draw_title_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_titlebar(), 0.0)
+    ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
+    let radius = 6.0
+    let cy = y + h * 0.5
+    ui_fill_round_rect(r, x + 18.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_close(), 0.0)
+    ui_fill_round_rect(r, x + 40.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_min(), 0.0)
+    ui_fill_round_rect(r, x + 62.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_zoom(), 0.0)
+    draw_text_clipped(r, x + 86.0, y + 12.0, w - 172.0, 16.0, "NSCode Native", small_px(), col_muted())
 }
 
-fn draw_file_row(r: ref ui_renderer, x: f64, y: f64, w: f64, text: str, depth: i32, selected: bool, folder: bool) {
-    let row_h = 24.0
+fn draw_chat_row(r: ref ui_renderer, x: f64, y: f64, w: f64, title: str, subtitle: str, meta: str, badge: str, selected: bool) {
     if selected {
-        ui_fill_round_rect(r, x + 8.0, y + 2.0, w - 16.0, row_h - 4.0, 5.0, col_sel(), 0.0)
+        ui_fill_round_rect(r, x + 10.0, y, w - 20.0, 70.0, 7.0, col_surface_hi(), 0.0)
+        ui_fill_rect(r, x + 10.0, y + 12.0, 3.0, 46.0, col_accent(), 0.0)
     }
-
-    let tx = x + 14.0 + (depth as f64) * 16.0
-    // Vertically centre the icon + label within the row instead of a fixed
-    // top offset so glyphs of any font size sit on the row's mid-line.
-    let text_y = ui_text_v_center_y(r, y, row_h, 13.0, FONT_MONO())
-    if folder {
-        ui_draw_text(r, tx, text_y, "v", 13.0, col_dim(), FONT_MONO())
-        ui_draw_text(r, tx + 17.0, text_y, text, 13.0, col_text(), FONT_MONO())
-    } else {
-        ui_draw_text(r, tx, text_y, "-", 13.0, col_accent(), FONT_MONO())
-        ui_draw_text(r, tx + 17.0, text_y, text, 13.0, col_dim(), FONT_MONO())
+    draw_text_clipped(r, x + 24.0, y + 12.0, w - 84.0, 20.0, title, font_px(), col_text())
+    draw_text_clipped(r, x + 24.0, y + 34.0, w - 48.0, 16.0, subtitle, small_px(), col_muted())
+    draw_text_clipped(r, x + w - 44.0, y + 12.0, 34.0, 16.0, meta, small_px(), col_muted())
+    let pill_bg = col_surface()
+    let pill_fg = col_muted()
+    if selected {
+        pill_bg = col_bg()
+        pill_fg = col_accent()
     }
+    draw_pill(r, x + 24.0, y + 48.0, badge, pill_bg, pill_fg)
 }
 
-fn draw_file_tree(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_sidebar(), 0.0)
-    ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_border(), 0.0)
-
-    // Clip every label and selection highlight to the sidebar column so long
-    // file names and row backgrounds never bleed into the editor surface.
+fn draw_history(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_rail(), 0.0)
+    ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_line(), 0.0)
     ui_push_clip(r, x, y, w, h)
-
-    let head_h = 42.0
-    let head_y = ui_text_v_center_y(r, y, head_h, 12.0, FONT_MONO())
-    ui_draw_text(r, x + 14.0, head_y, "EXPLORER", 12.0, col_dim(), FONT_MONO())
-    ui_fill_rect(r, x + 12.0, y + head_h, w - 24.0, 1.0, col_border(), 0.0)
-
-    draw_file_row(r, x, y + 56.0, w, "nscode", 0, false, true)
-    draw_file_row(r, x, y + 84.0, w, "native", 1, true, true)
-    draw_file_row(r, x, y + 112.0, w, "main.ns", 2, false, false)
-    draw_file_row(r, x, y + 140.0, w, "render.ns", 2, true, false)
-    draw_file_row(r, x, y + 168.0, w, "editor.ns", 2, false, false)
-    draw_file_row(r, x, y + 196.0, w, "README.md", 2, false, false)
-
-    let info_y = y + h - 92.0
-    let info_min_y = y + 230.0
-    if info_y > info_min_y {
-        ui_fill_round_rect(r, x + 12.0, info_y, w - 24.0, 66.0, 8.0, col_sidebar_alt(), 0.0)
-        // Two stacked labels, each centred within its half of the panel.
-        let row_h = 33.0
-        let l1_y = ui_text_v_center_y(r, info_y, row_h, 12.0, FONT_MONO())
-        let l2_y = ui_text_v_center_y(r, info_y + row_h, row_h, 13.0, FONT_MONO())
-        ui_draw_text(r, x + 24.0, l1_y, "renderer", 12.0, col_dim(), FONT_MONO())
-        ui_draw_text(r, x + 24.0, l2_y, "Metal / MSDF", 13.0, col_accent(), FONT_MONO())
+    draw_text_clipped(r, x + 18.0, y + 18.0, w - 36.0, 24.0, "NSCode Agent", title_px(), col_text())
+    draw_label(r, x + 18.0, y + 48.0, "CHAT HISTORY")
+    draw_rule(r, x + 18.0, y + 72.0, w - 36.0)
+    draw_chat_row(r, x, y + 90.0, w, "Agentic native shell", "Design and wire the NSCode layout", "now", "active", true)
+    draw_chat_row(r, x, y + 172.0, w, "Parser diagnostics", "Review AST checks for editor modules", "14m", "done", false)
+    draw_chat_row(r, x, y + 254.0, w, "GPU text pass", "Tighten clipping and glyph metrics", "1h", "notes", false)
+    draw_chat_row(r, x, y + 336.0, w, "Diff review", "Inspect local changes before commit", "2h", "git", false)
+    let foot_y = y + h - 86.0
+    let foot_min_y = y + 440.0
+    if foot_y > foot_min_y {
+        ui_fill_round_rect(r, x + 14.0, foot_y, w - 28.0, 62.0, 7.0, col_surface(), 0.0)
+        draw_label(r, x + 28.0, foot_y + 13.0, "WORKSPACE")
+        draw_text_clipped(r, x + 28.0, foot_y + 34.0, w - 56.0, 16.0, "/Users/demi/os/ns", small_px(), col_accent())
     }
-
     ui_pop_clip(r)
 }
 
-fn draw_tab_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
-    let tab_h = 38.0
-    ui_fill_rect(r, x, y, w, tab_h, col_tab(), 0.0)
-    ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_border(), 0.0)
-
-    // Clip tab pills and labels to the bar so nothing spills onto the editor.
-    ui_push_clip(r, x, y, w, tab_h)
-
-    ui_fill_round_rect(r, x + 10.0, y + 7.0, 116.0, 24.0, 5.0, col_panel(), 0.0)
-    ui_fill_rect(r, x + 10.0, y + 30.0, 116.0, 2.0, col_accent(), 0.0)
-    // Centre tab labels within the bar height instead of a fixed top offset.
-    let text_y = ui_text_v_center_y(r, y, tab_h, 13.0, FONT_MONO())
-    ui_draw_text(r, x + 24.0, text_y, "render.ns", 13.0, col_text(), FONT_MONO())
-    ui_draw_text(r, x + 146.0, text_y, "main.ns", 13.0, col_dim(), FONT_MONO())
-    ui_draw_text(r, x + w - 186.0, text_y, "Nano Script Native", 13.0, col_dim(), FONT_MONO())
-
-    ui_pop_clip(r)
-}
-
-fn draw_title_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
-    let title_h = 38.0
-    ui_fill_rect(r, x, y, w, title_h, col_titlebar(), 0.0)
-    ui_fill_rect(r, x, y + title_h - 1.0, w, 1.0, col_border(), 0.0)
-
-    let cy = y + title_h * 0.5
-    ui_fill_round_rect(r, x + 12.0, cy - 6.0, 12.0, 12.0, 6.0, col_red(), 0.0)
-    ui_fill_round_rect(r, x + 34.0, cy - 6.0, 12.0, 12.0, 6.0, col_gold(), 0.0)
-    ui_fill_round_rect(r, x + 56.0, cy - 6.0, 12.0, 12.0, 6.0, col_green(), 0.0)
-
-    let text_y = ui_text_v_center_y(r, y, title_h, 13.0, FONT_MONO())
-    ui_draw_text(r, x + 84.0, text_y, "NSCode Native", 13.0, col_dim(), FONT_MONO())
-}
-
-fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, row: i32, col: i32) {
-    let bar_h = 28.0
-    ui_fill_rect(r, x, y, w, bar_h, col_accent(), 0.0)
-
-    // Clip and vertically centre the status labels within the bar.
-    ui_push_clip(r, x, y, w, bar_h)
-    let text_y = ui_text_v_center_y(r, y, bar_h, 12.0, FONT_MONO())
-    ui_draw_text(r, x + 12.0, text_y, "nscode/native", 12.0, col_sidebar(), FONT_MONO())
-    ui_draw_text(r, x + w - 236.0, text_y, "UTF-8   LF   Nano Script", 12.0, col_sidebar(), FONT_MONO())
-
-    let rx = x + w - 360.0
-    let status_min_x = x + 200.0
-    if rx > status_min_x {
-        ui_draw_text(r, rx, text_y, "Ln", 12.0, col_sidebar(), FONT_MONO())
-        ui_draw_text(r, rx + 22.0, text_y, itos(row + 1), 12.0, col_sidebar(), FONT_MONO())
-        ui_draw_text(r, rx + 62.0, text_y, "Col", 12.0, col_sidebar(), FONT_MONO())
-        ui_draw_text(r, rx + 98.0, text_y, itos(col + 1), 12.0, col_sidebar(), FONT_MONO())
+fn draw_step(r: ref ui_renderer, x: f64, y: f64, kind: str, title: str, detail: str, done: bool) {
+    let dot = col_yellow()
+    if done {
+        dot = col_accent()
     }
-
-    ui_pop_clip(r)
+    ui_fill_round_rect(r, x + 7.0, y + 12.0, 10.0, 10.0, 5.0, dot, 0.0)
+    draw_text_clipped(r, x + 32.0, y + 5.0, 52.0, 16.0, kind, small_px(), col_blue())
+    draw_text_clipped(r, x + 92.0, y + 5.0, 320.0, 20.0, title, font_px(), col_text())
+    draw_text_clipped(r, x + 32.0, y + 29.0, 420.0, 16.0, detail, small_px(), col_muted())
+    ui_fill_rect(r, x + 12.0, y + 28.0, 1.0, 33.0, col_line(), 0.0)
 }
 
-// ---- frame ----------------------------------------------------------------
-// Render one frame of the document at framebuffer size (fb_w x fb_h). Call it
-// between ui_begin_frame and ui_flush.
+fn draw_dialog(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    let header_h = 58.0
+    ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
+    draw_text_clipped(r, x + 24.0, y + 17.0, w - 190.0, 24.0, "Agent Dialog", title_px(), col_text())
+    draw_pill(r, x + w - 152.0, y + 17.0, "planning", col_surface(), col_accent())
+    draw_rule(r, x, y + header_h, w)
+
+    let body_y = y + header_h + 22.0
+    ui_fill_round_rect(r, x + 24.0, body_y, w - 48.0, 92.0, 8.0, col_surface(), 0.0)
+    draw_label(r, x + 42.0, body_y + 16.0, "USER")
+    draw_text_clipped(r, x + 42.0, body_y + 40.0, w - 84.0, 20.0, "Make nscode/native feel like an agentic coding app.", font_px(), col_text())
+    draw_text_clipped(r, x + 42.0, body_y + 64.0, w - 84.0, 20.0, "Add chat history, agent timeline, and local Git diff review.", font_px(), col_text())
+
+    let agent_y = body_y + 124.0
+    ui_fill_round_rect(r, x + 24.0, agent_y, w - 48.0, 312.0, 8.0, col_surface(), 0.0)
+    draw_label(r, x + 42.0, agent_y + 16.0, "AGENT")
+    draw_text_clipped(r, x + 42.0, agent_y + 40.0, w - 84.0, 20.0, "Working plan", font_px(), col_text())
+    draw_text_clipped(r, x + 42.0, agent_y + 64.0, w - 84.0, 16.0, "Runtime bridge owns the app shell until NS callbacks can drive frames.", small_px(), col_muted())
+    draw_step(r, x + 42.0, agent_y + 98.0, "scan", "Read current native bridge", "Mapped the C callback path that owns runtime rendering.", true)
+    draw_step(r, x + 42.0, agent_y + 152.0, "plan", "Choose shell shape", "Three panes: conversations, agent dialog, and Git diff.", true)
+    draw_step(r, x + 42.0, agent_y + 206.0, "edit", "Patch renderer", "Add seeded agent activity and live diff loading.", true)
+    draw_step(r, x + 42.0, agent_y + 260.0, "check", "Verify native surface", "Build, AST checks, then visual review in the running app.", false)
+}
+
+fn draw_diff_line(r: ref ui_renderer, x: f64, y: f64, w: f64, no: str, text: str, bg: u32, fg: u32, paint_bg: bool) {
+    if paint_bg {
+        ui_fill_rect(r, x, y, w, 22.0, bg, 0.0)
+    }
+    ui_draw_text(r, x + 12.0, y + 5.0, no, small_px(), col_muted(), FONT_MONO())
+    ui_draw_text(r, x + 58.0, y + 5.0, text, small_px(), fg, FONT_MONO())
+}
+
+fn draw_diff(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    let header_h = 58.0
+    ui_fill_rect(r, x, y, w, h, col_surface(), 0.0)
+    ui_fill_rect(r, x, y, 1.0, h, col_line(), 0.0)
+    draw_text_clipped(r, x + 18.0, y + 17.0, w - 178.0, 24.0, "Local Diff", title_px(), col_text())
+    draw_pill(r, x + w - 148.0, y + 17.0, "git diff", col_bg(), col_accent())
+    draw_rule(r, x, y + header_h, w)
+    let dy = y + header_h + 18.0
+    draw_diff_line(r, x, dy, w, "1", "diff --git a/nscode/native/main.ns b/nscode/native/main.ns", col_bg(), col_blue(), false)
+    draw_diff_line(r, x, dy + 22.0, w, "2", "@@ -42,7 +42,7 @@", col_hunk_bg(), col_blue(), true)
+    draw_diff_line(r, x, dy + 44.0, w, "3", "-        ui_code_editor_attach(v)", col_red_bg(), col_red(), true)
+    draw_diff_line(r, x, dy + 66.0, w, "4", "+        ui_agentic_coding_attach(v)", col_green_bg(), col_accent(), true)
+    draw_diff_line(r, x, dy + 88.0, w, "5", "diff output is loaded live by the C bridge at runtime.", col_bg(), col_muted(), false)
+}
+
+fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    ui_fill_rect(r, x, y, w, 28.0, col_accent(), 0.0)
+    ui_draw_text(r, x + 14.0, y + 8.0, "nscode/native agent", small_px(), col_bg(), FONT_MONO())
+    ui_draw_text(r, x + w - 250.0, y + 8.0, "Local Git diff", small_px(), col_bg(), FONT_MONO())
+}
 
 fn render_frame(r: ref ui_renderer, fb_w: i32, fb_h: i32) {
     let w = fb_w as f64
     let h = fb_h as f64
-
-    let tree_w = 220.0
-    if w < 760.0 {
-        tree_w = 164.0
-    }
     let title_h = 38.0
-    let top_h = 38.0
     let status_h = 28.0
-    let editor_x = tree_w
-    let content_y = title_h
-    let editor_y = content_y + top_h
-    let editor_w = w - tree_w
-    let editor_h = h - title_h - top_h - status_h
-
-    draw_title_bar(r, 0.0, 0.0, w)
-    draw_file_tree(r, 0.0, content_y, tree_w, h - title_h - status_h)
-    draw_tab_bar(r, editor_x, content_y, editor_w)
-
-    let fpx = font_px()
-    let char_w = ui_mono_char_width(r, fpx, FONT_MONO())
-    if char_w < 1.0 {
-        char_w = 1.0
+    let app_y = title_h
+    let app_h = h - title_h - status_h
+    let history_w = 276.0
+    let diff_w = 430.0
+    if w < 980.0 {
+        history_w = 214.0
+        diff_w = 330.0
     }
-    let line_h = ui_text_line_height(r, fpx, FONT_MONO()) + line_pad()
-
-    let x = editor_x
-    let y = editor_y
-    let code_surface_w = editor_w
-    let code_surface_h = editor_h
-
-    let total = line_count()
-    let digits = gutter_digits(total)
-    let gutter_w = (digits as f64) * char_w + gutter_pad() * 2.0
-    let code_x = x + gutter_w
-    let code_w = code_surface_w - gutter_w
-
-    // Visible row/column counts feed the document model's scroll clamp.
-    let vrows = (code_surface_h / line_h) as i32
-    if vrows < 1 {
-        vrows = 1
+    if w < 740.0 {
+        history_w = 180.0
+        diff_w = 0.0
     }
-    g_rows = vrows
-    let vcols = (code_w / char_w) as i32
-    if vcols < 1 {
-        vcols = 1
+    let dialog_x = history_w
+    let dialog_w = w - history_w - diff_w
+    if dialog_w < 1.0 {
+        dialog_w = 1.0
     }
-    g_cols = vcols
-    editor_scroll()
+    let diff_x = history_w + dialog_w
 
-    let scroll_t = (g_rowoff as f64) * line_h
-    let scroll_l = (g_coloff as f64) * char_w
-
-    // Editor surface + gutter strip.
-    ui_fill_rect(r, x, y, code_surface_w, code_surface_h, col_bg(), 0.0)
-    ui_fill_rect(r, x, y, gutter_w, code_surface_h, col_gutter(), 0.0)
-    ui_fill_rect(r, x, y, code_surface_w, 1.0, col_border(), 0.0)
-
-    let hot_row_y = y + (cur_line() as f64) * line_h - scroll_t
-    let editor_bottom = y + code_surface_h
-    if hot_row_y >= y {
-        if hot_row_y < editor_bottom {
-            ui_fill_rect(r, x, hot_row_y, code_surface_w, line_h, col_line_hot(), 0.0)
-        }
+    ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
+    draw_title_bar(r, 0.0, 0.0, w, title_h)
+    draw_history(r, 0.0, app_y, history_w, app_h)
+    draw_dialog(r, dialog_x, app_y, dialog_w, app_h)
+    if diff_w > 0.0 {
+        draw_diff(r, diff_x, app_y, diff_w, app_h)
     }
-
-    // Line numbers in the gutter (unclipped; the gutter is its own column).
-    let first = g_rowoff
-    let gi = 0
-    loop gi <= vrows {
-        let li = first + gi
-        if li < total {
-            let row_y = y + (li as f64) * line_h - scroll_t
-            let text_y = ui_text_v_center_y(r, row_y, line_h, fpx, FONT_MONO())
-            let num = itos(li + 1)
-            let nx = code_x - gutter_pad() - (num.len as f64) * char_w
-            ui_draw_text(r, nx, text_y, num, fpx, col_dim(), FONT_MONO())
-        }
-        gi = gi + 1
-    }
-
-    // Code column: selection, glyphs and caret, clipped to the text area.
-    ui_push_clip(r, code_x, y, code_w, code_surface_h)
-
-    if has_selection() {
-        draw_selection(r, code_x, y, char_w, line_h, scroll_t, scroll_l)
-    }
-
-    let vi = 0
-    loop vi <= vrows {
-        let li = first + vi
-        if li < total {
-            let row_y = y + (li as f64) * line_h - scroll_t
-            let text_y = ui_text_v_center_y(r, row_y, line_h, fpx, FONT_MONO())
-            let lt = line_text(li)
-            if lt.len > 0 {
-                ui_draw_text(r, code_x - scroll_l, text_y, lt, fpx, col_text(), FONT_MONO())
-            }
-        }
-        vi = vi + 1
-    }
-
-    // Caret: a thin filled bar at the current line/column.
-    let cl = cur_line()
-    let cc = cur_col()
-    let cy = y + (cl as f64) * line_h - scroll_t
-    let cx = code_x + (cc as f64) * char_w - scroll_l
-    ui_fill_rect(r, cx, cy, 2.0, line_h, col_caret(), 0.0)
-
-    ui_pop_clip(r)
-
-    // Vertical scrollbar overlay (drawn when the document overflows).
-    let content_h = (total as f64) * line_h
-    draw_scrollbar(r, x + code_surface_w, y, code_surface_h, content_h)
-
-    draw_status_bar(r, 0.0, h - status_h, w, cur_line(), cur_col())
+    draw_status_bar(r, 0.0, h - status_h, w)
 }
