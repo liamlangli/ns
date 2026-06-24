@@ -84,6 +84,7 @@ typedef struct ui_renderer {
     view *v;
     i32 width;
     i32 height;
+    f64 content_scale;
 
     ui_vertex *vertices;
     i32 vertex_count;
@@ -522,17 +523,36 @@ static void ui_create_gpu_resources(ui_renderer *r) {
                    r->binding_white_image.id && r->binding_font_msdf.id && r->mesh.id;
 }
 
+static f64 ui_view_content_scale(view *v) {
+    if (!v) return 1.0;
+    if (v->display_ratio > 0.0) return v->display_ratio;
+    if (v->ui_scale > 0.0) return v->ui_scale;
+    return 1.0;
+}
+
+// The renderer works in logical points; the display scale converts to physical
+// framebuffer pixels only at the GPU viewport/scissor (see ui_flush).
+static void ui_sync_view_metrics(ui_renderer *r) {
+    if (!r) return;
+    view *v = r->v;
+    r->content_scale = ui_view_content_scale(v);
+    i32 lw = 0, lh = 0;
+    if (v) {
+        lw = v->width;
+        lh = v->height;
+        if (lw <= 0 && v->framebuffer_width > 0) lw = (i32)(v->framebuffer_width / r->content_scale + 0.5);
+        if (lh <= 0 && v->framebuffer_height > 0) lh = (i32)(v->framebuffer_height / r->content_scale + 0.5);
+    }
+    r->width = lw > 0 ? lw : 1;
+    r->height = lh > 0 ? lh : 1;
+}
+
 ui_renderer *ui_renderer_create(view *v) {
     ui_renderer *r = (ui_renderer*)calloc(1, sizeof(ui_renderer));
     if (!r) return NULL;
     r->handle = r;
     r->v = v;
-    r->width = v ? v->framebuffer_width : 1;
-    r->height = v ? v->framebuffer_height : 1;
-    if (r->width <= 0 && v) r->width = v->width;
-    if (r->height <= 0 && v) r->height = v->height;
-    if (r->width <= 0) r->width = 1;
-    if (r->height <= 0) r->height = 1;
+    ui_sync_view_metrics(r);
     r->vertex_capacity = UI_INITIAL_VERTEX_CAP;
     r->vertices = (ui_vertex*)calloc((size_t)r->vertex_capacity, sizeof(ui_vertex));
     r->current_texture_id = UI_WHITE_TEXTURE;
@@ -553,10 +573,7 @@ void ui_renderer_destroy(ui_renderer *r) {
 
 void ui_resize(ui_renderer *r) {
     if (!r) return;
-    if (r->v) {
-        r->width = r->v->framebuffer_width > 0 ? r->v->framebuffer_width : r->v->width;
-        r->height = r->v->framebuffer_height > 0 ? r->v->framebuffer_height : r->v->height;
-    }
+    ui_sync_view_metrics(r);
     f32 screen[2] = {(f32)r->width, (f32)r->height};
     if (r->screen_buffer.id) gpu_update_buffer(r->screen_buffer, (ns_data){screen, sizeof(screen)});
 }
@@ -593,13 +610,15 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         const size_t clip_len = r->gpu_clip_count > 0 ? (size_t)r->gpu_clip_count * sizeof(ui_gpu_clip) : sizeof(empty_clip);
         gpu_update_buffer(r->clip_buffer, (ns_data){(void*)clip_data, clip_len});
     }
+    const f64 s = r->content_scale > 0.0 ? r->content_scale : 1.0;
     gpu_begin_render_pass(r->screen_pass);
-    gpu_set_viewport(0, 0, r->width, r->height);
+    gpu_set_viewport(0, 0, (i32)(r->width * s + 0.5), (i32)(r->height * s + 0.5));
     ns_unused(clear);
     for (i32 i = 0; i < r->command_count; i++) {
         ui_command *cmd = &r->commands[i];
         if (cmd->clip_w <= 0 || cmd->clip_h <= 0) continue;
-        gpu_set_scissor(cmd->clip_x, cmd->clip_y, cmd->clip_w, cmd->clip_h);
+        gpu_set_scissor((i32)floor(cmd->clip_x * s), (i32)floor(cmd->clip_y * s),
+                        (i32)ceil(cmd->clip_w * s), (i32)ceil(cmd->clip_h * s));
         if (cmd->kind == UI_KIND_MSDF) {
             gpu_set_pipeline(r->pipeline_msdf);
             gpu_set_binding(r->binding_font_msdf);
