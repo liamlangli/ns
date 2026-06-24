@@ -388,6 +388,7 @@ typedef struct gpu_state_mtl {
     bool valid;
     int frame_index;
     gpu_device_mtl device;
+    view *owner_view;
     MTKView *view;
     dispatch_semaphore_t semaphore;
 
@@ -401,6 +402,7 @@ typedef struct gpu_state_mtl {
     id<MTLCommandBuffer> cmd_buffer;
     id<MTLRenderCommandEncoder> cmd_encoder;
     id<CAMetalDrawable> cur_drawable;
+    id<MTLCaptureScope> capture_scope;
     
     gpu_shader_mtl shaders[GPU_RESOURCE_POOL_SIZE];
     gpu_texture_mtl textures[GPU_RESOURCE_POOL_SIZE];
@@ -424,8 +426,106 @@ typedef struct gpu_state_mtl {
 
 static gpu_state_mtl _state = {0};
 
+static NSURL *gpu_mtl_capture_output_url(void) {
+    NSString *cwd = [[NSFileManager defaultManager] currentDirectoryPath];
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    [formatter setDateFormat: @"yyyyMMdd-HHmmss"];
+    NSString *stamp = [formatter stringFromDate: [NSDate date]];
+    NSString *name = [NSString stringWithFormat: @"metal-frame-%@-%04d.gputrace", stamp, _state.frame_index];
+    NSString *path = [cwd stringByAppendingPathComponent: name];
+#ifndef ENABLE_ARC
+    [formatter release];
+#endif
+    return [NSURL fileURLWithPath: path];
+}
+
+static BOOL gpu_mtl_capture_start(MTLCaptureDestination destination, NSURL *output_url, NSError **error) {
+    MTLCaptureManager *mgr = [MTLCaptureManager sharedCaptureManager];
+    MTLCaptureDescriptor *desc = [MTLCaptureDescriptor new];
+    desc.captureObject = _state.capture_scope != nil ? (id)_state.capture_scope : (id)_state.cmd_queue;
+    desc.destination = destination;
+    if (destination == MTLCaptureDestinationGPUTraceDocument) {
+        desc.outputURL = output_url;
+    }
+
+    BOOL ok = [mgr startCaptureWithDescriptor: desc error: error];
+#ifndef ENABLE_ARC
+    [desc release];
+#endif
+    return ok;
+}
+
+static void gpu_mtl_capture_begin_if_requested(void) {
+    view *owner = _state.owner_view;
+    if (!owner || !owner->capture_required || owner->capture_started) {
+        return;
+    }
+
+    owner->capture_required = false;
+
+    MTLCaptureManager *mgr = [MTLCaptureManager sharedCaptureManager];
+    if ([mgr isCapturing]) {
+        NSLog(@"Metal GPU capture skipped: another capture is already running");
+        return;
+    }
+
+    if (_state.capture_scope == nil && _state.cmd_queue != nil) {
+        _state.capture_scope = [mgr newCaptureScopeWithCommandQueue: _state.cmd_queue];
+        [_state.capture_scope setLabel: @"ns frame"];
+    }
+
+    NSURL *output_url = gpu_mtl_capture_output_url();
+    BOOL file_supported = [mgr supportsDestination: MTLCaptureDestinationGPUTraceDocument];
+    if (!file_supported) {
+        NSLog(@"Metal GPU capture file destination reports unsupported; trying anyway: %@", [output_url path]);
+    }
+
+    NSError *error = nil;
+    BOOL ok = gpu_mtl_capture_start(MTLCaptureDestinationGPUTraceDocument, output_url, &error);
+    if (ok && !error) {
+        if (_state.capture_scope != nil) [_state.capture_scope beginScope];
+        owner->capture_started = true;
+        NSLog(@"Metal GPU capture started: %@", [output_url path]);
+        return;
+    }
+
+    NSLog(@"Metal GPU trace document capture failed: %@", error);
+    if (![mgr supportsDestination: MTLCaptureDestinationDeveloperTools]) {
+        NSLog(@"Metal GPU capture failed: no supported fallback destination");
+        return;
+    }
+
+    error = nil;
+    ok = gpu_mtl_capture_start(MTLCaptureDestinationDeveloperTools, nil, &error);
+    if (!ok || error) {
+        NSLog(@"Metal GPU Developer Tools capture failed: %@", error);
+        return;
+    }
+
+    if (_state.capture_scope != nil) [_state.capture_scope beginScope];
+    owner->capture_started = true;
+    NSLog(@"Metal GPU capture started in Developer Tools; this runtime cannot save a .gputrace file directly");
+}
+
+static void gpu_mtl_capture_end_if_started(void) {
+    view *owner = _state.owner_view;
+    if (!owner || !owner->capture_started) {
+        return;
+    }
+
+    MTLCaptureManager *mgr = [MTLCaptureManager sharedCaptureManager];
+    if (_state.capture_scope != nil) {
+        [_state.capture_scope endScope];
+    }
+    if ([mgr isCapturing]) {
+        [mgr stopCapture];
+    }
+    owner->capture_started = false;
+    NSLog(@"Metal GPU capture saved");
+}
+
 ns_bool gpu_request_device(view* v) {
-    ns_unused(v);
+    _state.owner_view = v;
     _state.semaphore = dispatch_semaphore_create(1);
     if (v != NULL && v->gpu_device != NULL) {
         _state.device.device = (__bridge id<MTLDevice>)v->gpu_device;
@@ -452,6 +552,7 @@ ns_bool gpu_request_device(view* v) {
     _state.cmd_buffer = nil;
     _state.cmd_encoder = nil;
     _state.cur_drawable = nil;
+    _state.capture_scope = nil;
     _state.frame_index = 0;
     
     _state.shader_count = 1;
@@ -474,6 +575,7 @@ void gpu_destroy_device() {
 #ifndef ENABLE_ARC
     [_state.cmd_encoder release];
     [_state.cmd_buffer release];
+    [_state.capture_scope release];
     [_state.cmd_queue release];
     [_state.device.device release];
     dispatch_release(_state.semaphore);
@@ -743,6 +845,7 @@ void gpu_mtl_begin_frame(MTKView *view) {
     };
     
     dispatch_semaphore_wait(_state.semaphore, DISPATCH_TIME_FOREVER);
+    gpu_mtl_capture_begin_if_requested();
     _state.cmd_buffer = [_state.cmd_queue commandBuffer];
     [_state.cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> _) { dispatch_semaphore_signal(_state.semaphore); }];
     _state.cur_drawable = [view currentDrawable];
@@ -789,7 +892,9 @@ void gpu_commit() {
     }
 
     [_state.cmd_buffer commit];
+    gpu_mtl_capture_end_if_started();
     _state.cmd_buffer = nil;
+    _state.frame_index += 1;
 }
 
 id<MTLLibrary> _mtl_library_from_bytecode(ns_data src) {

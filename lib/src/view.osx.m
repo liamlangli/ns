@@ -56,6 +56,18 @@ i32 view_osx_key_map(i32 k) {
         case 119: return VIEW_KEY_END;
         case 116: return VIEW_KEY_PAGE_UP;
         case 121: return VIEW_KEY_PAGE_DOWN;
+        case 122: return VIEW_KEY_F1;
+        case 120: return VIEW_KEY_F2;
+        case 99: return VIEW_KEY_F3;
+        case 118: return VIEW_KEY_F4;
+        case 96: return VIEW_KEY_F5;
+        case 97: return VIEW_KEY_F6;
+        case 98: return VIEW_KEY_F7;
+        case 100: return VIEW_KEY_F8;
+        case 101: return VIEW_KEY_F9;
+        case 109: return VIEW_KEY_F10;
+        case 103: return VIEW_KEY_F11;
+        case 111: return VIEW_KEY_F12;
         default:
             return -1;
     }
@@ -170,8 +182,10 @@ static void view_osx_update_mouse(NSEvent *event) {
 }
 
 - (void)keyDown:(NSEvent*)event {
-    (void)event;
-    // Key down handling - currently commented out to match original
+    const i32 key = view_osx_key_map((i32)[event keyCode]);
+    if (key >= 0 && ![event isARepeat]) {
+        view_on_key_action(&_view, key, VIEW_BUTTON_ACTION_PRESS);
+    }
 }
 
 - (void)flagsChanged:(NSEvent*)event {
@@ -215,8 +229,10 @@ static void view_osx_update_mouse(NSEvent *event) {
 }
 
 - (void)keyUp:(NSEvent*)event {
-    (void)event;
-    // Key up handling - currently commented out to match original
+    const i32 key = view_osx_key_map((i32)[event keyCode]);
+    if (key >= 0) {
+        view_on_key_action(&_view, key, VIEW_BUTTON_ACTION_RELEASE);
+    }
 }
 
 - (void)scrollWheel:(NSEvent*)event {

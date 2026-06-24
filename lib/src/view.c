@@ -1,5 +1,7 @@
 #include "view.h"
 
+static ns_bool view_keys[VIEW_KEY_MENU + 1];
+
 void view_on_mouse_move(view* v, f64 x, f64 y) {
     if (!v) return;
     v->mouse_x = x * v->ui_scale;
@@ -31,17 +33,16 @@ void view_on_mouse_btn(view* v, view_mouse_button button, view_button_action act
 }
 
 void view_on_key_action(view* v, view_keycode key, view_button_action action) {
-    ns_unused(v);
-    ns_unused(key);
-    ns_unused(action);
-    // Key action handling implementation
+    if (!v || key < 0 || key > VIEW_KEY_MENU) return;
+    view_keys[key] = action == VIEW_BUTTON_ACTION_PRESS;
+    if (key == VIEW_KEY_F12 && action == VIEW_BUTTON_ACTION_PRESS) {
+        view_capture_require(v);
+    }
 }
 
 ns_bool view_is_key_pressed(view* v, view_keycode key) {
-    ns_unused(v);
-    ns_unused(key);
-    // Key state checking implementation
-    return false;
+    if (!v || key < 0 || key > VIEW_KEY_MENU) return false;
+    return view_keys[key];
 }
 
 void view_on_resize(view *v, i32 width, i32 height) {
@@ -58,6 +59,6 @@ void view_close(view *v) {
 }
 
 void view_capture_require(view *v) {
-    ns_unused(v);
-    // Capture requirement implementation
+    if (!v) return;
+    v->capture_required = true;
 }
