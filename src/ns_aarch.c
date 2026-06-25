@@ -164,7 +164,6 @@ static void ns_aarch_emit_const_u64(ns_aarch_ctx *c, i32 rd, u64 val) {
 /* ── register allocation ──────────────────────────────────────────────────── */
 static i32 ns_aarch_alloc_reg(ns_aarch_ctx *c) {
     if (c->next_gpr > 27) {
-        ns_warn("aarch", "register pressure too high in function %.*s, reusing x27\n", c->fn->name.len, c->fn->name.data);
         return 27;
     }
     return c->next_gpr++;
@@ -188,25 +187,65 @@ static i32 ns_aarch_reg_for_value(ns_aarch_ctx *c, i32 v) {
 /* ── parse constant string ────────────────────────────────────────────────── */
 static ns_bool ns_aarch_parse_u64(ns_str s, u64 *out) {
     if (s.len <= 0 || !s.data) return false;
+    if (ns_str_equals(s, ns_str_cstr("true"))) {
+        *out = 1;
+        return true;
+    }
+    if (ns_str_equals(s, ns_str_cstr("false"))) {
+        *out = 0;
+        return true;
+    }
+
+    i32 start = 0;
+    ns_bool neg = false;
+    if (s.data[0] == '-' || s.data[0] == '+') {
+        neg = s.data[0] == '-';
+        start = 1;
+        if (start >= s.len) return false;
+    }
+
+    if (start + 1 < s.len && s.data[start] == '0' && (s.data[start + 1] == 'x' || s.data[start + 1] == 'X')) {
+        u64 v = 0;
+        for (i32 i = start + 2; i < s.len; ++i) {
+            i8 ch = s.data[i];
+            u64 d;
+            if (ch >= '0' && ch <= '9') d = (u64)(ch - '0');
+            else if (ch >= 'a' && ch <= 'f') d = (u64)(ch - 'a' + 10);
+            else if (ch >= 'A' && ch <= 'F') d = (u64)(ch - 'A' + 10);
+            else return false;
+            u64 next = (v << 4) | d;
+            if (next < v) return false;
+            v = next;
+        }
+        *out = neg ? (u64)(-(i64)v) : v;
+        return true;
+    }
+
     ns_bool has_dot = false;
-    for (i32 i = 0; i < s.len; ++i) {
+    for (i32 i = start; i < s.len; ++i) {
         if (s.data[i] == '.') { has_dot = true; break; }
         if (s.data[i] < '0' || s.data[i] > '9') return false;
     }
     if (!has_dot) {
         u64 v = 0;
-        for (i32 i = 0; i < s.len; ++i) {
+        for (i32 i = start; i < s.len; ++i) {
             if (s.data[i] < '0' || s.data[i] > '9') return false;
             u64 d = v * 10u + (u64)(s.data[i] - '0');
             if (d < v) return false; /* overflow */
             v = d;
         }
-        *out = v;
+        *out = neg ? (u64)(-(i64)v) : v;
         return true;
     }
-    /* Float: only accept exact non-negative integers */
+    /* Float: only accept exact integers */
     f64 fv = ns_str_to_f64(s);
-    if (fv < 0.0) return false;
+    if (fv < 0.0) {
+        f64 pos = -fv;
+        u64 iv = (u64)pos;
+        if ((f64)iv != pos) return false;
+        *out = (u64)(-(i64)iv);
+        return true;
+    }
     u64 iv = (u64)fv;
     if ((f64)iv != fv) return false;
     *out = iv;
@@ -238,8 +277,6 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         if (ns_aarch_parse_u64(inst->name, &val)) {
             ns_aarch_emit_const_u64(c, rd, val);
         } else {
-            ns_warn("aarch", "unsupported const literal '%.*s' in fn %.*s, using 0\n",
-                inst->name.len, inst->name.data, c->fn->name.len, c->fn->name.data);
             ns_aarch_emit_u32(c, ns_aarch_movz(rd, 0, 0));
         }
     } break;
@@ -258,6 +295,13 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_CAST: {
         /* treat as identity copy for now */
+        if (inst->dst < 0 || inst->a < 0) break;
+        i32 rd = ns_aarch_reg_for_value(c, inst->dst);
+        i32 rm = ns_aarch_reg_for_value(c, inst->a);
+        if (rd != rm) ns_aarch_emit_u32(c, ns_aarch_mov_rr(rd, rm));
+    } break;
+    case NS_SSA_OP_MEMBER:
+    case NS_SSA_OP_INDEX: {
         if (inst->dst < 0 || inst->a < 0) break;
         i32 rd = ns_aarch_reg_for_value(c, inst->dst);
         i32 rm = ns_aarch_reg_for_value(c, inst->a);
