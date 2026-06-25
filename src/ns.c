@@ -943,6 +943,48 @@ static void ns_build_darwin_write_plist(ns_build_input *in, ns_str app_dir, ns_s
     ns_str_free(plist);
 }
 
+static void ns_build_darwin_codesign_app(ns_str app_dir) {
+    ns_str q_app_dir = ns_shell_quote(app_dir);
+    ns_str cmd = ns_str_null;
+    ns_str_append_cstr(&cmd, "/usr/bin/codesign --force --sign - --timestamp=none ");
+    ns_str_append(&cmd, q_app_dir);
+    ns_array_push(cmd.data, '\0');
+
+    i32 ret = system(cmd.data);
+    if (ret != 0) {
+        ns_exit(1, "build", "failed to codesign app %.*s.\n", app_dir.len, app_dir.data);
+    }
+
+    ns_str_free(q_app_dir);
+    ns_str_free(cmd);
+}
+
+static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executable_path) {
+    ns_str object_path = ns_str_concat(executable_path, ns_str_cstr(".o"));
+    ns_return_bool emit_ret = ns_macho_emit_object(ssa, object_path);
+    if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+
+    ns_str q_object = ns_shell_quote(object_path);
+    ns_str q_executable = ns_shell_quote(executable_path);
+    ns_str cmd = ns_str_null;
+    ns_str_append_cstr(&cmd, "/usr/bin/clang ");
+    ns_str_append(&cmd, q_object);
+    ns_str_append_cstr(&cmd, " -o ");
+    ns_str_append(&cmd, q_executable);
+    ns_array_push(cmd.data, '\0');
+
+    i32 ret = system(cmd.data);
+    if (ret != 0) {
+        ns_exit(1, "build", "failed to link executable %.*s.\n", executable_path.len, executable_path.data);
+    }
+
+    remove(object_path.data);
+    ns_str_free(object_path);
+    ns_str_free(q_object);
+    ns_str_free(q_executable);
+    ns_str_free(cmd);
+}
+
 static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
     ns_str app_dir = ns_build_app_output(output);
     ns_str contents_dir = ns_path_join(app_dir, ns_str_cstr("Contents"));
@@ -953,12 +995,12 @@ static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module
 
     ns_str executable_name = ns_str_concat(in->name, ns_str_cstr(""));
     ns_str executable_path = ns_path_join(macos_dir, executable_name);
-    ns_return_bool emit_ret = ns_macho_emit(ssa, executable_path);
-    if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+    ns_build_darwin_link_executable(ssa, executable_path);
 
     ns_str icon_file = ns_str_null;
     ns_build_darwin_make_icns(in->icon, resources_dir, &icon_file);
     ns_build_darwin_write_plist(in, app_dir, executable_name, icon_file);
+    ns_build_darwin_codesign_app(app_dir);
 
     ns_info("build", "app %.*s\n", app_dir.len, app_dir.data);
     ns_str_free(app_dir);
@@ -967,6 +1009,7 @@ static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module
     ns_str_free(resources_dir);
     ns_str_free(executable_name);
     ns_str_free(executable_path);
+    ns_str_free(icon_file);
 }
 #endif
 
@@ -1019,7 +1062,14 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_asm_get_current_target(&target);
     ns_return_bool emit_ret;
     if (target.os == NS_OS_DARWIN) {
+#if defined(NS_DARWIN)
+        ns_build_darwin_link_executable(ssa, output);
+        ns_ssa_module_free(ssa);
+        ns_info("build", "executable %.*s\n", output.len, output.data);
+        return;
+#else
         emit_ret = ns_macho_emit(ssa, output);
+#endif
     } else if (target.os == NS_OS_WINDOWS) {
         emit_ret = ns_pe_emit(ssa, output);
     } else {
