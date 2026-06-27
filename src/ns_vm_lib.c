@@ -51,6 +51,16 @@ static ffi_ctx _ffi_ctx = {0};
 extern void *io_load_image(const char *path);
 extern i32 io_save_image(const char *path, const void *img);
 
+extern f64 os_time(void);
+extern u64 os_time_ms(void);
+extern u64 os_time_us(void);
+extern u64 os_time_ns(void);
+extern void *os_date_now(void);
+extern const char *os_time_string(void);
+extern const char *os_date_string(void);
+extern const char *os_locale_date_string(void);
+extern const char *os_locale_date_time_string(void);
+
 extern void *view_create(const char *title, i32 width, i32 height);
 extern void *view_create_no_title(const char *title, i32 width, i32 height);
 extern void view_run(void *v);
@@ -135,9 +145,12 @@ extern void ui_begin_frame(void *r);
 extern void ui_flush(void *r, void *clear);
 extern i32 ui_canvas_width(void *r);
 extern i32 ui_canvas_height(void *r);
+extern void *ui_layout(f64 x, f64 y, f64 w, f64 h, f64 child_w, f64 child_h, i32 align);
 extern void ui_fill_rect(void *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);
 extern void ui_fill_round_rect(void *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather);
 extern void ui_fill_round_rect_per_corner(void *r, f64 x, f64 y, f64 w, f64 h, f64 rtl, f64 rtr, f64 rbl, f64 rbr, u32 rgba, f64 feather);
+extern void ui_fill_circle(void *r, f64 cx, f64 cy, f64 radius, u32 rgba, f64 feather);
+extern void ui_stroke_circle(void *r, f64 cx, f64 cy, f64 radius, f64 thickness, u32 rgba, f64 feather);
 extern void ui_push_clip(void *r, f64 x, f64 y, f64 w, f64 h);
 extern void ui_push_clip_round(void *r, f64 x, f64 y, f64 w, f64 h, f64 radius);
 extern void ui_pop_clip(void *r);
@@ -157,6 +170,16 @@ typedef struct ns_static_sym {
 static const ns_static_sym ns_static_syms[] = {
     {"io_load_image", (void*)io_load_image},
     {"io_save_image", (void*)io_save_image},
+
+    {"os_time", (void*)os_time},
+    {"os_time_ms", (void*)os_time_ms},
+    {"os_time_us", (void*)os_time_us},
+    {"os_time_ns", (void*)os_time_ns},
+    {"os_date_now", (void*)os_date_now},
+    {"os_time_string", (void*)os_time_string},
+    {"os_date_string", (void*)os_date_string},
+    {"os_locale_date_string", (void*)os_locale_date_string},
+    {"os_locale_date_time_string", (void*)os_locale_date_time_string},
 
     {"view_create", (void*)view_create},
     {"view_create_no_title", (void*)view_create_no_title},
@@ -238,9 +261,12 @@ static const ns_static_sym ns_static_syms[] = {
     {"ui_flush", (void*)ui_flush},
     {"ui_canvas_width", (void*)ui_canvas_width},
     {"ui_canvas_height", (void*)ui_canvas_height},
+    {"ui_layout", (void*)ui_layout},
     {"ui_fill_rect", (void*)ui_fill_rect},
     {"ui_fill_round_rect", (void*)ui_fill_round_rect},
     {"ui_fill_round_rect_per_corner", (void*)ui_fill_round_rect_per_corner},
+    {"ui_fill_circle", (void*)ui_fill_circle},
+    {"ui_stroke_circle", (void*)ui_stroke_circle},
     {"ui_push_clip", (void*)ui_push_clip},
     {"ui_push_clip_round", (void*)ui_push_clip_round},
     {"ui_pop_clip", (void*)ui_pop_clip},
@@ -518,6 +544,12 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
         // member access dereferences the heap struct directly.
         call->ret.t = ns_type_set_stack(t, false);
         call->ret.o = *(u64*)&vm->stack[v.o];
+    } else if (ns_type_is(t, NS_TYPE_STRING)) {
+        // Native `str` returns use a C string pointer. Copy it into the VM's
+        // string table so ns code receives the usual str_list-backed handle.
+        const char *s = *(const char **)&vm->stack[v.o];
+        call->ret.t = ns_type_str;
+        call->ret.o = ns_vm_push_string(vm, s ? ns_str_cstr((char *)s) : ns_str_null);
     } else {
         if (size > 0) ns_eval_copy(vm, call->ret, v, size);
     }

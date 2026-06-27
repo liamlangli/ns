@@ -24,3 +24,7 @@ version = ">=0.1.0"
 [[dependencies.runtime]]
 name = "ui"
 version = ">=0.1.0"
+
+[[dependencies.runtime]]
+name = "os"
+version = ">=0.1.0"

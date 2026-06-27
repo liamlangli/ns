@@ -117,7 +117,10 @@ static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
             view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_MIDDLE, VIEW_BUTTON_ACTION_RELEASE);
             return 0;
         case WM_MOUSEWHEEL:
-            view_on_scroll(&_view, 0.0, (f64)GET_WHEEL_DELTA_WPARAM(wparam) / (f64)WHEEL_DELTA);
+            view_on_scroll(&_view, 0.0, (f64)(i32)(i16)HIWORD(wparam) / (f64)WHEEL_DELTA);
+            return 0;
+        case WM_MOUSEHWHEEL:
+            view_on_scroll(&_view, (f64)(i32)(i16)HIWORD(wparam) / (f64)WHEEL_DELTA, 0.0);
             return 0;
         case WM_KEYDOWN: {
             i32 key = view_win_key_map((i32)wparam);

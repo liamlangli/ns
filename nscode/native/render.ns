@@ -6,6 +6,8 @@
 use view
 use ui
 use editor
+use os
+use std
 
 fn FONT_MONO() i32 { return 1 }
 fn MODE_CODE() i32 { return 0 }
@@ -16,6 +18,9 @@ let g_selected_chat = 0
 let g_dialog_scroll = 0.0
 let g_diff_scroll = 0.0
 let g_code_scroll = 0.0
+let g_last_frame_time = 0.0
+let g_fps = 0.0
+let g_fps_i = 0
 
 fn font_px() f64 { return 14.0 }
 fn small_px() f64 { return 12.0 }
@@ -57,6 +62,13 @@ fn clamp(v: f64, lo: f64, hi: f64) f64 {
         return hi
     }
     return v
+}
+
+fn scroll_max(content_h: f64, body_h: f64) f64 {
+    if content_h > body_h {
+        return content_h - body_h
+    }
+    return 0.0
 }
 
 fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
@@ -106,8 +118,34 @@ fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: s
 
 fn draw_pill(r: ref ui_renderer, x: f64, y: f64, text: str, bg: u32, fg: u32) {
     let tw = ui_text_width(r, text, small_px(), FONT_MONO())
-    ui_fill_round_rect(r, x, y, tw + 16.0, 22.0, 6.0, bg, 0.0)
+    ui_fill_round_rect(r, x, y, tw + 16.0, 22.0, 4.0, bg, 0.0)
     ui_draw_text(r, x + 8.0, y + 6.0, text, small_px(), fg, FONT_MONO())
+}
+
+fn layout_center_v(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64) ref ui_rect {
+    return ui_layout(x, y, w, h, child_w, child_h, UI_ALIGN_LEFT + UI_ALIGN_CENTER_VERTICAL)
+}
+
+fn text_box_h() f64 { return 16.0 }
+
+fn text_box_y(rect: ref ui_rect) f64 {
+    return rect.y - 1.0
+}
+
+fn update_fps() {
+    let now = os_time()
+    if g_last_frame_time > 0.0 {
+        let dt = now - g_last_frame_time
+        if dt > 0.0 {
+            g_fps = 1.0 / dt
+            g_fps_i = g_fps as i32
+        }
+    }
+    g_last_frame_time = now
+}
+
+fn fps_text() str {
+    return "FPS " + itos(g_fps_i)
 }
 
 fn chat_title(i: i32) str {
@@ -149,19 +187,6 @@ fn chat_meta(i: i32) str {
     return "2h"
 }
 
-fn chat_badge(i: i32) str {
-    if i == 0 {
-        return "active"
-    }
-    if i == 1 {
-        return "done"
-    }
-    if i == 2 {
-        return "notes"
-    }
-    return "git"
-}
-
 fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let pad = 3.0
     let half_w = (w - pad * 2.0) * 0.5
@@ -177,12 +202,12 @@ fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
         }
     }
 
-    ui_fill_round_rect(r, x, y, w, h, 8.0, col_surface(), 0.0)
+    ui_fill_round_rect(r, x, y, w, h, 5.0, col_surface(), 0.0)
     let active_x = agent_x
     if g_mode == MODE_CODE() {
         active_x = code_x
     }
-    ui_fill_round_rect(r, active_x, y + pad, half_w, h - pad * 2.0, 6.0, col_accent(), 0.0)
+    ui_fill_round_rect(r, active_x, y + pad, half_w, h - pad * 2.0, 4.0, col_accent(), 0.0)
 
     let code_color = col_muted()
     let agent_color = col_bg()
@@ -190,8 +215,23 @@ fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
         code_color = col_bg()
         agent_color = col_muted()
     }
-    draw_text_clipped(r, code_x + 15.0, y + 8.0, half_w - 24.0, 14.0, "Code", small_px(), code_color)
-    draw_text_clipped(r, agent_x + 10.0, y + 8.0, half_w - 18.0, 14.0, "Agent", small_px(), agent_color)
+    let label_y = y + (h - text_box_h()) * 0.5 - 1.0
+    ui_draw_text(r, code_x + 12.0, label_y, "Code Editor", small_px(), code_color, FONT_MONO())
+    ui_draw_text(r, agent_x + 24.0, label_y, "Agentic", small_px(), agent_color, FONT_MONO())
+}
+
+fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    let badge_w = 132.0
+    let badge_h = 28.0
+    let badge_x = x + w - badge_w - 10.0
+    let badge_y = y + 5.0
+    let text = fps_text()
+    if badge_x > x {
+        ui_fill_rect(r, badge_x, badge_y, badge_w, badge_h, col_accent(), 0.0)
+        ui_fill_rect(r, badge_x + 2.0, badge_y + 2.0, badge_w - 4.0, badge_h - 4.0, col_bg(), 0.0)
+        let label = layout_center_v(badge_x + 10.0, badge_y, badge_w - 20.0, badge_h, badge_w - 20.0, text_box_h())
+        draw_text_clipped(r, label.x, text_box_y(label), label.w, label.h, text, small_px(), col_accent())
+    }
 }
 
 fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
@@ -199,16 +239,29 @@ fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
     let radius = 6.0
     let cy = y + h * 0.5
-    ui_fill_round_rect(r, x + 18.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_close(), 0.0)
-    ui_fill_round_rect(r, x + 40.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_min(), 0.0)
-    ui_fill_round_rect(r, x + 62.0 - radius, cy - radius, radius * 2.0, radius * 2.0, radius, col_zoom(), 0.0)
-    draw_text_clipped(r, x + 86.0, y + 12.0, w - 260.0, 16.0, "NSCode Native", small_px(), col_muted())
-    draw_mode_switch(r, v, x + w - 166.0, y + 5.0, 150.0, 28.0)
+    ui_fill_circle(r, x + 18.0, cy, radius, col_close(), 0.5)
+    ui_fill_circle(r, x + 40.0, cy, radius, col_min(), 0.5)
+    ui_fill_circle(r, x + 62.0, cy, radius, col_zoom(), 0.5)
+    let title_label = layout_center_v(x + 86.0, y, 130.0, h, 130.0, text_box_h())
+    let fps_label = layout_center_v(x + 226.0, y, 90.0, h, 90.0, text_box_h())
+    let fps_value = layout_center_v(x + 258.0, y, 70.0, h, 70.0, text_box_h())
+    draw_text_clipped(r, title_label.x, text_box_y(title_label), title_label.w, title_label.h, "NSCode Native", small_px(), col_muted())
+    draw_text_clipped(r, fps_label.x, text_box_y(fps_label), fps_label.w, fps_label.h, "FPS", small_px(), col_accent())
+    draw_text_clipped(r, fps_value.x, text_box_y(fps_value), fps_value.w, fps_value.h, itos(g_fps_i), small_px(), col_accent())
+    draw_fps(r, x, y, w)
+}
+
+fn draw_top_controls(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
+    ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
+    let switch_rect = ui_layout(x, y, w, h, 236.0, 28.0, UI_ALIGN_CENTER_HORIZONTAL + UI_ALIGN_CENTER_VERTICAL)
+    draw_mode_switch(r, v, switch_rect.x, switch_rect.y, switch_rect.w, switch_rect.h)
 }
 
 fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i32) {
+    let hot = hit(v, x, y, w, 74.0)
     if v.mouse_pressed {
-        if hit(v, x, y, w, 74.0) {
+        if hot {
             g_selected_chat = idx
         }
     }
@@ -217,19 +270,13 @@ fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i
         selected = true
     }
     if selected {
-        ui_fill_round_rect(r, x + 10.0, y, w - 20.0, 70.0, 7.0, col_surface_hi(), 0.0)
-        ui_fill_rect(r, x + 10.0, y + 12.0, 3.0, 46.0, col_accent(), 0.0)
+        ui_fill_round_rect(r, x + 10.0, y, w - 20.0, 70.0, 4.0, col_surface_hi(), 0.0)
+    } else if hot {
+        ui_fill_round_rect(r, x + 10.0, y, w - 20.0, 70.0, 4.0, col_surface(), 0.0)
     }
     draw_text_clipped(r, x + 24.0, y + 12.0, w - 84.0, 20.0, chat_title(idx), font_px(), col_text())
     draw_text_clipped(r, x + 24.0, y + 34.0, w - 48.0, 16.0, chat_subtitle(idx), small_px(), col_muted())
     draw_text_clipped(r, x + w - 44.0, y + 12.0, 34.0, 16.0, chat_meta(idx), small_px(), col_muted())
-    let pill_bg = col_surface()
-    let pill_fg = col_muted()
-    if selected {
-        pill_bg = col_bg()
-        pill_fg = col_accent()
-    }
-    draw_pill(r, x + 24.0, y + 48.0, chat_badge(idx), pill_bg, pill_fg)
 }
 
 fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
@@ -244,7 +291,7 @@ fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     }
     let foot_y = y + h - 86.0
     if foot_y > (y + 440.0) {
-        ui_fill_round_rect(r, x + 14.0, foot_y, w - 28.0, 62.0, 7.0, col_surface(), 0.0)
+        ui_fill_round_rect(r, x + 14.0, foot_y, w - 28.0, 62.0, 4.0, col_surface(), 0.0)
         draw_label(r, x + 28.0, foot_y + 13.0, "WORKSPACE")
         draw_text_clipped(r, x + 28.0, foot_y + 34.0, w - 56.0, 16.0, "/Users/demi/os/ns", small_px(), col_accent())
     }
@@ -256,7 +303,7 @@ fn draw_step(r: ref ui_renderer, x: f64, y: f64, kind: str, title: str, detail: 
     if done {
         dot = col_accent()
     }
-    ui_fill_round_rect(r, x + 7.0, y + 12.0, 10.0, 10.0, 5.0, dot, 0.0)
+    ui_fill_circle(r, x + 12.0, y + 17.0, 5.0, dot, 0.5)
     draw_text_clipped(r, x + 32.0, y + 5.0, 52.0, 16.0, kind, small_px(), col_blue())
     draw_text_clipped(r, x + 92.0, y + 5.0, 320.0, 20.0, title, font_px(), col_text())
     draw_text_clipped(r, x + 32.0, y + 29.0, 420.0, 16.0, detail, small_px(), col_muted())
@@ -268,7 +315,7 @@ fn draw_dialog(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) 
     let body_y = y + header_h
     let body_h = h - header_h
     let content_h = 500.0
-    let max_scroll = content_h - body_h
+    let max_scroll = scroll_max(content_h, body_h)
     if hit(v, x, body_y, w, body_h) {
         g_dialog_scroll = clamp(g_dialog_scroll - v.scroll_y, 0.0, max_scroll)
     }
@@ -280,13 +327,13 @@ fn draw_dialog(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) 
 
     ui_push_clip(r, x, body_y, w, body_h)
     let yy = body_y + 22.0 - g_dialog_scroll
-    ui_fill_round_rect(r, x + 24.0, yy, w - 48.0, 92.0, 8.0, col_surface(), 0.0)
+    ui_fill_round_rect(r, x + 24.0, yy, w - 48.0, 92.0, 4.0, col_surface(), 0.0)
     draw_label(r, x + 42.0, yy + 16.0, "USER")
     draw_text_clipped(r, x + 42.0, yy + 40.0, w - 84.0, 20.0, "Keep low-level UI in C.", font_px(), col_text())
     draw_text_clipped(r, x + 42.0, yy + 64.0, w - 84.0, 20.0, "Move editor and app behavior into nscode/native.", font_px(), col_text())
 
     let agent_y = yy + 124.0
-    ui_fill_round_rect(r, x + 24.0, agent_y, w - 48.0, 312.0, 8.0, col_surface(), 0.0)
+    ui_fill_round_rect(r, x + 24.0, agent_y, w - 48.0, 312.0, 4.0, col_surface(), 0.0)
     draw_label(r, x + 42.0, agent_y + 16.0, "AGENT")
     draw_text_clipped(r, x + 42.0, agent_y + 40.0, w - 84.0, 20.0, "Working plan", font_px(), col_text())
     draw_text_clipped(r, x + 42.0, agent_y + 64.0, w - 84.0, 16.0, "Nano Script owns frame callbacks, layout, and editor state.", small_px(), col_muted())
@@ -310,7 +357,7 @@ fn draw_diff(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let body_y = y + header_h
     let body_h = h - header_h
     let content_h = 220.0
-    let max_scroll = content_h - body_h
+    let max_scroll = scroll_max(content_h, body_h)
     if hit(v, x, body_y, w, body_h) {
         g_diff_scroll = clamp(g_diff_scroll - v.scroll_y, 0.0, max_scroll)
     }
@@ -337,7 +384,8 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     ui_fill_rect(r, x, y, w, 28.0, col_accent(), 0.0)
     ui_draw_text(r, x + 14.0, y + 8.0, "nscode/native", small_px(), col_bg(), FONT_MONO())
     if w > 620.0 {
-        ui_draw_text(r, x + w - 250.0, y + 8.0, "UI kernel in C, editor in NS", small_px(), col_bg(), FONT_MONO())
+        ui_draw_text(r, x + w - 390.0, y + 8.0, "UI kernel in C, editor in NS", small_px(), col_bg(), FONT_MONO())
+        ui_draw_text(r, x + w - 120.0, y + 8.0, fps_text(), small_px(), col_bg(), FONT_MONO())
     }
 }
 
@@ -347,7 +395,7 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     let body_y = y + tab_h
     let body_h = h - tab_h
     let gutter_w = 72.0
-    let max_scroll = 14.0 * line_h - body_h
+    let max_scroll = scroll_max(14.0 * line_h, body_h)
     if hit(v, x, body_y, w, body_h) {
         g_code_scroll = clamp(g_code_scroll - v.scroll_y, 0.0, max_scroll)
     }
@@ -355,7 +403,7 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     ui_fill_rect(r, x, y, w, h, col_editor_bg(), 0.0)
     ui_fill_rect(r, x, y, w, tab_h, col_editor_panel(), 0.0)
     ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_line(), 0.0)
-    ui_fill_round_rect(r, x + 14.0, y + 9.0, 156.0, 32.0, 6.0, col_editor_panel_hi(), 0.0)
+    ui_fill_round_rect(r, x + 14.0, y + 9.0, 156.0, 32.0, 4.0, col_editor_panel_hi(), 0.0)
     draw_text_clipped(r, x + 30.0, y + 18.0, 130.0, 16.0, "main.ns", small_px(), col_text())
 
     ui_fill_rect(r, x, body_y, gutter_w, body_h, col_editor_gutter(), 0.0)
@@ -417,9 +465,10 @@ fn draw_texture_panel(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
 
 fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let title_h = 38.0
+    let controls_h = 38.0
     let status_h = 28.0
-    let app_y = title_h
-    let app_h = h - title_h - status_h
+    let app_y = title_h + controls_h
+    let app_h = h - title_h - controls_h - status_h
     let texture_w = 288.0
     if w < 820.0 {
         texture_w = 220.0
@@ -431,6 +480,7 @@ fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_editor_bg(), 0.0)
     draw_title_bar(r, v, 0.0, 0.0, w, title_h)
+    draw_top_controls(r, v, 0.0, title_h, w, controls_h)
     draw_code_editor(r, v, 0.0, app_y, editor_w, app_h)
     if texture_w > 0.0 {
         draw_texture_panel(r, editor_w, app_y, texture_w, app_h)
@@ -440,9 +490,10 @@ fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 
 fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let title_h = 38.0
+    let controls_h = 38.0
     let status_h = 28.0
-    let app_y = title_h
-    let app_h = h - title_h - status_h
+    let app_y = title_h + controls_h
+    let app_h = h - title_h - controls_h - status_h
     let history_w = 276.0
     let diff_w = 430.0
     if w < 980.0 {
@@ -462,6 +513,7 @@ fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
     draw_title_bar(r, v, 0.0, 0.0, w, title_h)
+    draw_top_controls(r, v, 0.0, title_h, w, controls_h)
     draw_history(r, v, 0.0, app_y, history_w, app_h)
     draw_dialog(r, v, dialog_x, app_y, dialog_w, app_h)
     if diff_w > 0.0 {
@@ -471,6 +523,7 @@ fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 }
 
 fn render_frame(r: ref ui_renderer, v: ref view) {
+    update_fps()
     ui_resize(r)
     let w = ui_canvas_width(r) as f64
     let h = ui_canvas_height(r) as f64

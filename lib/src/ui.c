@@ -18,6 +18,7 @@
 #define UI_FONT_TEXTURE 2
 #define UI_KIND_IMAGE 0
 #define UI_KIND_MSDF 1
+#define UI_DEFAULT_FEATHER 0.5
 
 typedef struct io_image {
     i32 width;
@@ -34,6 +35,22 @@ typedef struct ui_color_rgba {
     f64 b;
     f64 a;
 } ui_color_rgba;
+
+typedef struct ui_rect {
+    f64 x;
+    f64 y;
+    f64 w;
+    f64 h;
+} ui_rect;
+
+enum {
+    UI_ALIGN_LEFT = 1,
+    UI_ALIGN_RIGHT = 2,
+    UI_ALIGN_TOP = 4,
+    UI_ALIGN_BOTTOM = 8,
+    UI_ALIGN_CENTER_HORIZONTAL = 16,
+    UI_ALIGN_CENTER_VERTICAL = 32,
+};
 
 typedef struct ui_vertex {
     f32 x, y;
@@ -150,6 +167,10 @@ static const char *ui_shader_src =
 
 static f64 ui_clamp_f64(f64 v, f64 lo, f64 hi) {
     return v < lo ? lo : (v > hi ? hi : v);
+}
+
+static f64 ui_resolve_feather(f64 feather) {
+    return feather > 0.0 ? feather : UI_DEFAULT_FEATHER;
 }
 
 static i32 ui_hex_digit(char c) {
@@ -419,6 +440,112 @@ static void ui_push_tri(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 x2, 
     ui_emit_command(r, base, 3, UI_KIND_IMAGE);
 }
 
+static u32 ui_color_alpha_mul(u32 color, f64 alpha) {
+    u32 a = (color >> 24) & 0xffu;
+    a = (u32)ui_clamp_f64((f64)a * alpha, 0.0, 255.0);
+    return (color & 0x00ffffffu) | (a << 24);
+}
+
+static void ui_push_tri_colors(ui_renderer *r, f64 x0, f64 y0, u32 c0, f64 x1, f64 y1, u32 c1, f64 x2, f64 y2, u32 c2) {
+    ui_clip clip = ui_current_clip(r);
+    f64 min_x = fmin(x0, fmin(x1, x2));
+    f64 min_y = fmin(y0, fmin(y1, y2));
+    f64 max_x = fmax(x0, fmax(x1, x2));
+    f64 max_y = fmax(y0, fmax(y1, y2));
+    if (max_x <= clip.x || max_y <= clip.y || min_x >= clip.x + clip.w || min_y >= clip.y + clip.h) return;
+    const f64 clip_param = ui_clip_param(r, clip);
+    i32 base = r->vertex_count;
+    if (!ui_push_vertex(r, x0, y0, 0, 0, c0, 0, 0, 0, clip_param) ||
+        !ui_push_vertex(r, x1, y1, 0, 0, c1, 0, 0, 0, clip_param) ||
+        !ui_push_vertex(r, x2, y2, 0, 0, c2, 0, 0, 0, clip_param)) {
+        r->vertex_count = base;
+        return;
+    }
+    ui_emit_command(r, base, 3, UI_KIND_IMAGE);
+}
+
+void ui_fill_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, u32 rgba, f64 feather) {
+    if (!r || radius <= 0.0) return;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+
+    const i32 seg = 40;
+    f64 f = ui_clamp_f64(ui_resolve_feather(feather), 0.0, radius);
+    f64 inner = radius - f;
+    u32 transparent = ui_color_alpha_mul(rgba, 0.0);
+
+    if (inner <= 0.0) {
+        for (i32 i = 0; i < seg; i++) {
+            f64 a0 = (f64)i / (f64)seg * M_PI * 2.0;
+            f64 a1 = (f64)(i + 1) / (f64)seg * M_PI * 2.0;
+            ui_push_tri_colors(r, cx, cy, rgba,
+                               cx + cos(a0) * radius, cy + sin(a0) * radius, transparent,
+                               cx + cos(a1) * radius, cy + sin(a1) * radius, transparent);
+        }
+        return;
+    }
+
+    for (i32 i = 0; i < seg; i++) {
+        f64 a0 = (f64)i / (f64)seg * M_PI * 2.0;
+        f64 a1 = (f64)(i + 1) / (f64)seg * M_PI * 2.0;
+        f64 ix0 = cx + cos(a0) * inner;
+        f64 iy0 = cy + sin(a0) * inner;
+        f64 ix1 = cx + cos(a1) * inner;
+        f64 iy1 = cy + sin(a1) * inner;
+        f64 ox0 = cx + cos(a0) * radius;
+        f64 oy0 = cy + sin(a0) * radius;
+        f64 ox1 = cx + cos(a1) * radius;
+        f64 oy1 = cy + sin(a1) * radius;
+
+        ui_push_tri_colors(r, cx, cy, rgba, ix0, iy0, rgba, ix1, iy1, rgba);
+        if (f > 0.0) {
+            ui_push_tri_colors(r, ix0, iy0, rgba, ox0, oy0, transparent, ox1, oy1, transparent);
+            ui_push_tri_colors(r, ix0, iy0, rgba, ox1, oy1, transparent, ix1, iy1, rgba);
+        }
+    }
+}
+
+void ui_stroke_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness, u32 rgba, f64 feather) {
+    if (!r || radius <= 0.0 || thickness <= 0.0) return;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+
+    const i32 seg = 48;
+    f64 half = thickness * 0.5;
+    f64 f = ui_clamp_f64(ui_resolve_feather(feather), 0.0, radius);
+    f64 outer = radius + half;
+    f64 outer_solid = fmax(radius, outer - f);
+    f64 inner = fmax(0.0, radius - half);
+    f64 inner_solid = fmin(radius, inner + f);
+    u32 transparent = ui_color_alpha_mul(rgba, 0.0);
+
+    for (i32 i = 0; i < seg; i++) {
+        f64 a0 = (f64)i / (f64)seg * M_PI * 2.0;
+        f64 a1 = (f64)(i + 1) / (f64)seg * M_PI * 2.0;
+        f64 c0 = cos(a0), s0 = sin(a0);
+        f64 c1 = cos(a1), s1 = sin(a1);
+
+        f64 os0x = cx + c0 * outer_solid, os0y = cy + s0 * outer_solid;
+        f64 os1x = cx + c1 * outer_solid, os1y = cy + s1 * outer_solid;
+        f64 is0x = cx + c0 * inner_solid, is0y = cy + s0 * inner_solid;
+        f64 is1x = cx + c1 * inner_solid, is1y = cy + s1 * inner_solid;
+        ui_push_tri_colors(r, is0x, is0y, rgba, os0x, os0y, rgba, os1x, os1y, rgba);
+        ui_push_tri_colors(r, is0x, is0y, rgba, os1x, os1y, rgba, is1x, is1y, rgba);
+
+        if (f > 0.0) {
+            f64 o0x = cx + c0 * outer, o0y = cy + s0 * outer;
+            f64 o1x = cx + c1 * outer, o1y = cy + s1 * outer;
+            ui_push_tri_colors(r, os0x, os0y, rgba, o0x, o0y, transparent, o1x, o1y, transparent);
+            ui_push_tri_colors(r, os0x, os0y, rgba, o1x, o1y, transparent, os1x, os1y, rgba);
+
+            if (inner > 0.0) {
+                f64 i0x = cx + c0 * inner, i0y = cy + s0 * inner;
+                f64 i1x = cx + c1 * inner, i1y = cy + s1 * inner;
+                ui_push_tri_colors(r, i0x, i0y, transparent, is0x, is0y, rgba, is1x, is1y, rgba);
+                ui_push_tri_colors(r, i0x, i0y, transparent, is1x, is1y, rgba, i1x, i1y, transparent);
+            }
+        }
+    }
+}
+
 static void ui_create_gpu_resources(ui_renderer *r) {
     f32 screen[2] = {(f32)r->width, (f32)r->height};
     r->screen_buffer = gpu_create_buffer(&(gpu_buffer_desc){
@@ -643,6 +770,29 @@ i32 ui_canvas_height(ui_renderer *r) {
     return r ? r->height : 0;
 }
 
+ui_rect *ui_layout(f64 x, f64 y, f64 w, f64 h, f64 child_w, f64 child_h, i32 align) {
+    ui_rect *rect = (ui_rect *)ns_malloc(sizeof(ui_rect));
+    if (!rect) return NULL;
+    rect->x = x;
+    rect->y = y;
+    rect->w = child_w;
+    rect->h = child_h;
+
+    if (align & UI_ALIGN_CENTER_HORIZONTAL) {
+        rect->x = x + (w - child_w) * 0.5;
+    } else if (align & UI_ALIGN_RIGHT) {
+        rect->x = x + w - child_w;
+    }
+
+    if (align & UI_ALIGN_CENTER_VERTICAL) {
+        rect->y = y + (h - child_h) * 0.5;
+    } else if (align & UI_ALIGN_BOTTOM) {
+        rect->y = y + h - child_h;
+    }
+
+    return rect;
+}
+
 void ui_push_clip(ui_renderer *r, f64 x, f64 y, f64 w, f64 h) {
     if (!r || r->clip_count >= UI_MAX_CLIPS) return;
     ui_clip a = ui_current_clip(r);
@@ -669,6 +819,7 @@ ns_bool ui_rect_clipped(ui_renderer *r, f64 x, f64 y, f64 w, f64 h) {
 }
 
 void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather) {
+    feather = ui_resolve_feather(feather);
     ns_unused(feather);
     if (!r || w <= 0 || h <= 0) return;
     r->current_texture_id = UI_WHITE_TEXTURE;
@@ -705,6 +856,7 @@ static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 
 }
 
 void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather) {
+    feather = ui_resolve_feather(feather);
     ns_unused(feather);
     if (!r || w <= 0 || h <= 0) return;
     f64 pts[4 * 9 * 2];

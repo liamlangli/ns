@@ -40,6 +40,8 @@ static ns_bool view_no_title;
 
 static view _view;
 
+static void view_osx_update_mouse(NSEvent *event);
+
 static f64 view_osx_current_display_ratio(void) {
     CGFloat ratio = 0.0;
     if (view_window) {
@@ -94,6 +96,28 @@ static ns_bool view_osx_no_title_button(NSPoint p, f64 content_height, i32 *butt
     return false;
 }
 
+static void view_osx_drag_no_title_window(NSEvent *event) {
+    NSWindow *window = [event window];
+    NSPoint start_mouse = [NSEvent mouseLocation];
+    NSRect start_frame = [window frame];
+
+    for (;;) {
+        NSEvent *drag_event = [NSApp nextEventMatchingMask:(NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp)
+                                                untilDate:[NSDate distantFuture]
+                                                   inMode:NSEventTrackingRunLoopMode
+                                                  dequeue:YES];
+        if (!drag_event) return;
+        if ([drag_event type] == NSEventTypeLeftMouseUp) return;
+        if ([drag_event type] != NSEventTypeLeftMouseDragged) continue;
+
+        NSPoint mouse = [NSEvent mouseLocation];
+        NSPoint origin = NSMakePoint(start_frame.origin.x + mouse.x - start_mouse.x,
+                                     start_frame.origin.y + mouse.y - start_mouse.y);
+        [window setFrameOrigin:origin];
+        view_osx_update_mouse(drag_event);
+    }
+}
+
 static ns_bool view_osx_handle_no_title_mouse_down(NSEvent *event) {
     if (!view_no_title) return false;
 
@@ -114,7 +138,7 @@ static ns_bool view_osx_handle_no_title_mouse_down(NSEvent *event) {
         return true;
     }
 
-    [[event window] performWindowDragWithEvent:event];
+    view_osx_drag_no_title_window(event);
     return true;
 }
 

@@ -1,4 +1,31 @@
 mod os
 
-// OS-specific functionality
-// File system operations, process management, etc.
+struct os_date {
+    year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    millisecond: i32,
+    microsecond: i32,
+    nanosecond: i32,
+    utc_offset_minutes: i32
+}
+
+// Current Unix time in seconds with sub-second precision.
+ref fn os_time() f64
+
+// Current Unix time since 1970-01-01T00:00:00Z.
+ref fn os_time_ms() u64
+ref fn os_time_us() u64
+ref fn os_time_ns() u64
+
+// Current local date/time, including sub-second fields and UTC offset.
+ref fn os_date_now() ref os_date
+
+// Local formatted strings.
+ref fn os_time_string() str
+ref fn os_date_string() str
+ref fn os_locale_date_string() str
+ref fn os_locale_date_time_string() str

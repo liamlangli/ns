@@ -4,14 +4,14 @@ static ns_bool view_keys[VIEW_KEY_MENU + 1];
 
 void view_on_mouse_move(view* v, f64 x, f64 y) {
     if (!v) return;
-    v->mouse_x = x * v->ui_scale;
-    v->mouse_y = y * v->ui_scale;
+    v->mouse_x = x;
+    v->mouse_y = y;
 }
 
 void view_on_scroll(view* v, f64 x, f64 y) {
     if (!v) return;
-    v->scroll_x += x * v->ui_scale;
-    v->scroll_y += y * v->ui_scale;
+    v->scroll_x += x;
+    v->scroll_y += y;
 }
 
 void view_on_mouse_btn(view* v, view_mouse_button button, view_button_action action) {

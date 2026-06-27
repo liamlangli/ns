@@ -32,7 +32,23 @@ let UI_FONT_MAIN = 0
 let UI_FONT_MONO = 1
 let UI_FONT_ZH = 2
 
+// Alignment flags for ui_layout().
+let UI_ALIGN_LEFT = 1
+let UI_ALIGN_RIGHT = 2
+let UI_ALIGN_TOP = 4
+let UI_ALIGN_BOTTOM = 8
+let UI_ALIGN_CENTER_HORIZONTAL = 16
+let UI_ALIGN_CENTER_VERTICAL = 32
+
 // ---- shared value types ---------------------------------------------------
+
+// Rectangle returned by layout helpers.
+struct ui_rect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64
+}
 
 // A colour expressed as four 0..1 float channels (used by the colour picker
 // and as the renderer clear colour).
@@ -212,6 +228,9 @@ ref fn ui_flush(r: ref ui_renderer, clear: ui_color_rgba)
 // Logical drawable size in physical pixels.
 ref fn ui_canvas_width(r: ref ui_renderer) i32
 ref fn ui_canvas_height(r: ref ui_renderer) i32
+
+// Place a child of child_w/child_h inside a container rect using UI_ALIGN_* flags.
+ref fn ui_layout(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64, align: i32) ref ui_rect
 
 // ===========================================================================
 // Renderer: shapes
