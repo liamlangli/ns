@@ -511,7 +511,8 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
                     return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "ffi stack overflow.");
                 }
                 i8* dst = (i8*)_ffi_ctx.stack + start;
-                memcpy(dst, (i8*)vm->stack + v.o, offset);
+                const void *src = ns_type_in_stack(v.t) ? (const void*)((i8*)vm->stack + v.o) : (const void*)v.o;
+                memcpy(dst, src, offset);
                 _ffi_ctx.stack_offset = end;
                 _ffi_ctx.values[i] = dst;
             }break;
