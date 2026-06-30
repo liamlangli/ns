@@ -21,6 +21,7 @@ let g_code_scroll = 0.0
 let g_last_frame_time = 0.0
 let g_fps = 0.0
 let g_fps_i = 0
+let g_logged_metrics = false
 
 fn font_px() f64 { return 14.0 }
 fn small_px() f64 { return 12.0 }
@@ -123,7 +124,7 @@ fn draw_pill(r: ref ui_renderer, x: f64, y: f64, text: str, bg: u32, fg: u32) {
 }
 
 fn layout_center_v(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64) ref ui_rect {
-    return ui_layout(x, y, w, h, child_w, child_h, UI_ALIGN_LEFT + UI_ALIGN_CENTER_VERTICAL)
+    return ui_rect { x: x, y: y + (h - child_h) * 0.5, w: child_w, h: child_h }
 }
 
 fn text_box_h() f64 { return 16.0 }
@@ -242,20 +243,27 @@ fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     ui_fill_circle(r, x + 18.0, cy, radius, col_close(), 0.5)
     ui_fill_circle(r, x + 40.0, cy, radius, col_min(), 0.5)
     ui_fill_circle(r, x + 62.0, cy, radius, col_zoom(), 0.5)
-    let title_label = layout_center_v(x + 86.0, y, 130.0, h, 130.0, text_box_h())
-    let fps_label = layout_center_v(x + 226.0, y, 90.0, h, 90.0, text_box_h())
-    let fps_value = layout_center_v(x + 258.0, y, 70.0, h, 70.0, text_box_h())
-    draw_text_clipped(r, title_label.x, text_box_y(title_label), title_label.w, title_label.h, "NSCode Native", small_px(), col_muted())
-    draw_text_clipped(r, fps_label.x, text_box_y(fps_label), fps_label.w, fps_label.h, "FPS", small_px(), col_accent())
-    draw_text_clipped(r, fps_value.x, text_box_y(fps_value), fps_value.w, fps_value.h, itos(g_fps_i), small_px(), col_accent())
     draw_fps(r, x, y, w)
+    let title_text = "NSCode Native"
+    let title_w = ui_text_width(r, title_text, small_px(), FONT_MONO())
+    if title_w <= 0.0 {
+        title_w = 104.0
+    }
+    let title_x = x + (w - title_w) * 0.5
+    let title_y = y + (h - text_box_h()) * 0.5 - 1.0
+    ui_fill_rect(r, title_x, y + 8.0, title_w, 18.0, col_yellow(), 0.0)
+    draw_text_clipped(r, title_x, title_y, title_w, text_box_h(), title_text, small_px(), col_text())
 }
 
 fn draw_top_controls(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
     ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
-    let switch_rect = ui_layout(x, y, w, h, 236.0, 28.0, UI_ALIGN_CENTER_HORIZONTAL + UI_ALIGN_CENTER_VERTICAL)
-    draw_mode_switch(r, v, switch_rect.x, switch_rect.y, switch_rect.w, switch_rect.h)
+    let switch_w = 236.0
+    let switch_h = 28.0
+    let switch_x = x + (w - switch_w) * 0.5
+    let switch_y = y + (h - switch_h) * 0.5
+    ui_fill_rect(r, switch_x, switch_y, switch_w, switch_h, col_blue(), 0.0)
+    draw_mode_switch(r, v, switch_x, switch_y, switch_w, switch_h)
 }
 
 fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i32) {
@@ -527,6 +535,13 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     ui_resize(r)
     let w = ui_canvas_width(r) as f64
     let h = ui_canvas_height(r) as f64
+    if g_logged_metrics == false {
+        let title_x = ((w - 104.0) * 0.5) as i32
+        let switch_x = ((w - 236.0) * 0.5) as i32
+        print("nscode frame metrics w=" + itos(w as i32) + " h=" + itos(h as i32) + " title_x=" + itos(title_x) + " switch_x=" + itos(switch_x) + "\n")
+        g_logged_metrics = true
+        view_close(v)
+    }
     if g_mode == MODE_CODE() {
         render_code(r, v, w, h)
     } else {

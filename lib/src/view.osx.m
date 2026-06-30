@@ -66,6 +66,20 @@ static void view_osx_sync_metrics(f64 width, f64 height) {
     _view.framebuffer_height = (i32)(height * ratio + 0.5);
 }
 
+static void view_osx_sync_mtk_view_metrics(MTKView *mtk_view) {
+    if (!mtk_view) return;
+    NSRect bounds = [mtk_view bounds];
+    f64 width = bounds.size.width;
+    f64 height = bounds.size.height;
+    CGSize drawable = [mtk_view drawableSize];
+    if (width <= 0.0 || height <= 0.0) {
+        const f64 ratio = view_osx_current_display_ratio();
+        width = ratio > 0.0 ? drawable.width / ratio : drawable.width;
+        height = ratio > 0.0 ? drawable.height / ratio : drawable.height;
+    }
+    view_osx_sync_metrics(width, height);
+}
+
 static void view_osx_apply_manifest_icon(void) {
     const char *icon_path = getenv("NS_APP_ICON");
     if (!icon_path || icon_path[0] == '\0') return;
@@ -248,12 +262,12 @@ static void view_osx_update_mouse(NSEvent *event) {
 //------------------------------------------------------------------------------
 @implementation ViewDelegate
 - (void)mtkView:(nonnull MTKView*)view drawableSizeWillChange:(CGSize)size {
-    (void)view;
     (void)size;
-    // Handle drawable size change
+    view_osx_sync_mtk_view_metrics(view);
 }
 
 - (void)drawInMTKView:(nonnull MTKView*)view {
+    view_osx_sync_mtk_view_metrics(view);
     view_on_frame frame = (view_on_frame)_view.on_frame;
     if (frame) {
         gpu_mtl_begin_frame(view);
