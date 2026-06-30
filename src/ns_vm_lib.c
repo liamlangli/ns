@@ -382,6 +382,10 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     ns_lib *lib = ns_lib_find(vm, lib_name);
     if (lib) return lib;
 
+    ns_lib pending = { .name = lib_name, .path = ns_str_null, .lib = ns_null };
+    ns_array_push(vm->libs, pending);
+    i32 lib_index = (i32)ns_array_length(vm->libs) - 1;
+
     ns_str path = ns_path_join(ref_path, ns_str_concat(lib_name, ns_str_cstr(".ns")));
     ns_str source = ns_fs_read_file(path);
     ns_ast_parse(&ctx, source, path);
@@ -391,12 +395,14 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
 
     ns_return_bool ret = ns_vm_parse(vm, &ctx);
     ns_return_assert(ret);
+    ns_return_value init_ret = ns_eval_module_globals(vm, &ctx);
+    ns_return_assert(init_ret);
     vm->lib = prev;
 
     if (ns_str_equals(lib_name, ns_str_cstr("std"))) {
-        ns_lib _lib = { .name = lib_name, .path = ns_str_null, .lib = ns_null };
-        ns_array_push(vm->libs, _lib);
-        return ns_array_last(vm->libs);
+        vm->libs[lib_index].path = ns_str_null;
+        vm->libs[lib_index].lib = ns_null;
+        return &vm->libs[lib_index];
     } else {
 #ifndef NS_XCLIB
 #ifdef NS_DEBUG
@@ -406,14 +412,14 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
 #endif // NS_DEBUG
         ns_str lib_link_path = ns_path_join(lib_path, ns_str_concat(lib_name, ns_lib_ext));
         void* lib_ptr = dlopen(lib_link_path.data, RTLD_LAZY);
-        ns_lib _lib = { .name = lib_name, .path = lib_link_path, .lib = lib_ptr };
-        ns_array_push(vm->libs, _lib);
-        return ns_array_last(vm->libs);
+        vm->libs[lib_index].path = lib_link_path;
+        vm->libs[lib_index].lib = lib_ptr;
+        return &vm->libs[lib_index];
 #else
         // XCFramework build: no dynamic library loading
-        ns_lib _lib = { .name = lib_name, .path = ns_str_null, .lib = ns_null };
-        ns_array_push(vm->libs, _lib);
-        return ns_array_last(vm->libs);
+        vm->libs[lib_index].path = ns_str_null;
+        vm->libs[lib_index].lib = ns_null;
+        return &vm->libs[lib_index];
 #endif // NS_XCLIB
     }
 }

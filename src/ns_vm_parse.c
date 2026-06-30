@@ -346,6 +346,12 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture) {
     }
 
     for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
+        if (ns_str_equals(vm->symbols[i].name, s) && ns_str_equals(vm->symbols[i].lib, vm->lib)) {
+            return &vm->symbols[i];
+        }
+    }
+
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; i++) {
         if (ns_str_equals(vm->symbols[i].name, s)) {
             return &vm->symbols[i];
         }
@@ -744,7 +750,7 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *n = &ctx->nodes[ctx->sections[i]];
         if (n->type != NS_AST_VAR_DEF)
             continue;
-        ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
+        ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true, .lib = vm->lib};
         r.name = n->var_def.name.val;
 
         ns_bool type_required = n->var_def.type != 0;
@@ -1653,8 +1659,8 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     // if is main module and main fn exists, parse top level expr as global expr, top level var def as global var def
     // if is main module and main fn not exists, create main fn and parse top level expr as main fn body, top level var def as local var def
     if (!main_mod || vm->repl) {
-        ret = ns_vm_parse_var_def(vm, ctx);
-        if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
+        // Module globals were registered by the common parse pass above; non-main
+        // modules intentionally skip executable top-level expressions here.
     } else {
         if (main_fn) {
             ret = ns_vm_parse_global_expr(vm, ctx);

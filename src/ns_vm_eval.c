@@ -1495,6 +1495,23 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, ret);
 }
 
+ns_return_value ns_eval_module_globals(ns_vm *vm, ns_ast_ctx *ctx) {
+    for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
+        i32 s_i = ctx->sections[i];
+        ns_ast_t *n = &ctx->nodes[s_i];
+        if (n->type != NS_AST_VAR_DEF) continue;
+
+        ns_symbol *val = ns_vm_find_symbol(vm, n->var_def.name.val, false);
+        if (val && val->type == NS_SYMBOL_VALUE && ns_type_in_stack(val->val.t)) {
+            continue;
+        }
+
+        ns_return_value ret = ns_eval_var_def(vm, ctx, s_i);
+        if (ns_return_is_error(ret)) return ret;
+    }
+    return ns_return_ok(value, ns_nil);
+}
+
 ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     vm->loc = ns_ast_state_loc(ctx, n->state);

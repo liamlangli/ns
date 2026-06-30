@@ -202,6 +202,7 @@ ns_scope *ns_scope_enter(ns_vm *vm);
 ns_scope *ns_scope_exit(ns_vm *vm);
 
 ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_return_value ns_eval_module_globals(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_value ns_eval(ns_vm *vm, ns_str source, ns_str filename);

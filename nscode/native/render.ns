@@ -21,7 +21,6 @@ let g_code_scroll = 0.0
 let g_last_frame_time = 0.0
 let g_fps = 0.0
 let g_fps_i = 0
-let g_logged_metrics = false
 
 fn font_px() f64 { return 14.0 }
 fn small_px() f64 { return 12.0 }
@@ -251,7 +250,6 @@ fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     }
     let title_x = x + (w - title_w) * 0.5
     let title_y = y + (h - text_box_h()) * 0.5 - 1.0
-    ui_fill_rect(r, title_x, y + 8.0, title_w, 18.0, col_yellow(), 0.0)
     draw_text_clipped(r, title_x, title_y, title_w, text_box_h(), title_text, small_px(), col_text())
 }
 
@@ -262,7 +260,6 @@ fn draw_top_controls(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
     let switch_h = 28.0
     let switch_x = x + (w - switch_w) * 0.5
     let switch_y = y + (h - switch_h) * 0.5
-    ui_fill_rect(r, switch_x, switch_y, switch_w, switch_h, col_blue(), 0.0)
     draw_mode_switch(r, v, switch_x, switch_y, switch_w, switch_h)
 }
 
@@ -535,13 +532,6 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     ui_resize(r)
     let w = ui_canvas_width(r) as f64
     let h = ui_canvas_height(r) as f64
-    if g_logged_metrics == false {
-        let title_x = ((w - 104.0) * 0.5) as i32
-        let switch_x = ((w - 236.0) * 0.5) as i32
-        print("nscode frame metrics w=" + itos(w as i32) + " h=" + itos(h as i32) + " title_x=" + itos(title_x) + " switch_x=" + itos(switch_x) + "\n")
-        g_logged_metrics = true
-        view_close(v)
-    }
     if g_mode == MODE_CODE() {
         render_code(r, v, w, h)
     } else {

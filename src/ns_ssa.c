@@ -1,10 +1,23 @@
 #include "ns_ssa.h"
+#include "ns_os.h"
+
+#ifdef NS_DEBUG
+    #define NS_SSA_REF_PATH "lib"
+#else
+    #define NS_SSA_REF_PATH "ns/ref"
+#endif
 
 typedef struct ns_ssa_binding {
     ns_str name;
     i32 value;
     ns_type type;
 } ns_ssa_binding;
+
+typedef struct ns_ssa_global_const {
+    ns_str name;
+    ns_token_t token;
+    ns_type type;
+} ns_ssa_global_const;
 
 typedef struct ns_ssa_loop_ctx {
     i32 break_block;
@@ -18,6 +31,8 @@ typedef struct ns_ssa_builder {
     i32 block;
     i32 next_value;
     ns_ssa_binding *env;
+    ns_ssa_global_const *globals;
+    ns_str *import_seen;
     ns_ssa_loop_ctx *loops;
 } ns_ssa_builder;
 
@@ -207,6 +222,96 @@ static void ns_ssa_env_bind(ns_ssa_builder *b, ns_str name, i32 value, ns_type t
         b->env[idx] = binding;
     } else {
         ns_array_push(b->env, binding);
+    }
+}
+
+static ns_bool ns_ssa_str_seen(ns_str *items, ns_str name) {
+    for (i32 i = 0, l = (i32)ns_array_length(items); i < l; ++i) {
+        if (ns_str_equals(items[i], name)) return true;
+    }
+    return false;
+}
+
+static ns_bool ns_ssa_global_const_seen(ns_ssa_builder *b, ns_str name) {
+    for (i32 i = 0, l = (i32)ns_array_length(b->globals); i < l; ++i) {
+        if (ns_str_equals(b->globals[i].name, name)) return true;
+    }
+    return false;
+}
+
+static ns_bool ns_ssa_const_from_expr(ns_ast_ctx *ctx, i32 expr, ns_token_t *token, ns_type *type) {
+    if (expr <= 0) return false;
+    ns_ast_t *n = &ctx->nodes[expr];
+    if (n->type == NS_AST_EXPR) return ns_ssa_const_from_expr(ctx, n->expr.body, token, type);
+    if (n->type != NS_AST_PRIMARY_EXPR) return false;
+
+    ns_token_t t = n->primary_expr.token;
+    switch (t.type) {
+    case NS_TOKEN_INT_LITERAL:
+        *token = t;
+        *type = ns_type_i32;
+        return true;
+    case NS_TOKEN_TRUE:
+        *token = (ns_token_t){.type = NS_TOKEN_INT_LITERAL, .val = ns_str_cstr("1")};
+        *type = ns_type_bool;
+        return true;
+    case NS_TOKEN_FALSE:
+        *token = (ns_token_t){.type = NS_TOKEN_INT_LITERAL, .val = ns_str_cstr("0")};
+        *type = ns_type_bool;
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void ns_ssa_seed_global_consts(ns_ssa_builder *b) {
+    for (i32 i = 0, l = (i32)ns_array_length(b->globals); i < l; ++i) {
+        ns_ssa_global_const *g = &b->globals[i];
+        i32 value = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, g->type, g->token.val, g->token, -1);
+        ns_ssa_env_bind(b, g->name, value, g->type);
+    }
+}
+
+static void ns_ssa_collect_module_consts(ns_ssa_builder *b, ns_ast_ctx *ctx);
+
+static void ns_ssa_import_module_consts(ns_ssa_builder *b, ns_str lib_name) {
+    if (ns_ssa_str_seen(b->import_seen, lib_name)) return;
+    ns_array_push(b->import_seen, lib_name);
+
+#ifdef NS_DEBUG
+    ns_str ref_path = ns_str_cstr(NS_SSA_REF_PATH);
+#else
+    ns_str home = ns_path_home();
+    ns_str ref_path = ns_path_join(home, ns_str_cstr(NS_SSA_REF_PATH));
+#endif
+
+    ns_str path = ns_path_join(ref_path, ns_str_concat(lib_name, ns_str_cstr(".ns")));
+    ns_str source = ns_fs_read_file(path);
+    if (source.data == ns_null || source.len == 0) return;
+
+    ns_ast_ctx lib_ctx = {0};
+    ns_return_bool parsed = ns_ast_parse(&lib_ctx, source, path);
+    if (ns_return_is_error(parsed)) return;
+    ns_ssa_collect_module_consts(b, &lib_ctx);
+}
+
+static void ns_ssa_collect_module_consts(ns_ssa_builder *b, ns_ast_ctx *ctx) {
+    for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
+        ns_ast_t *n = &ctx->nodes[ctx->sections[i]];
+        if (n->type == NS_AST_USE_STMT) ns_ssa_import_module_consts(b, n->use_stmt.lib.val);
+    }
+
+    for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
+        ns_ast_t *n = &ctx->nodes[ctx->sections[i]];
+        if (n->type != NS_AST_VAR_DEF) continue;
+        if (ns_ssa_global_const_seen(b, n->var_def.name.val)) continue;
+
+        ns_token_t token = {0};
+        ns_type type = ns_type_unknown;
+        if (!ns_ssa_const_from_expr(ctx, n->var_def.expr, &token, &type)) continue;
+
+        ns_ssa_global_const global = {.name = n->var_def.name.val, .token = token, .type = type};
+        ns_array_push(b->globals, global);
     }
 }
 
@@ -601,6 +706,7 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     ns_array_free(b->env);
     b->env = NULL;
     b->loops = NULL;
+    ns_ssa_seed_global_consts(b);
 
     i32 arg = arg_head;
     for (i32 ai = 0; ai < arg_count && arg > 0; ++ai) {
@@ -634,6 +740,8 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
     b.ctx = ctx;
     b.m = m;
 
+    ns_ssa_collect_module_consts(&b, ctx);
+
     ns_bool has_init = false;
     i32 init_ast = 0;
     for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
@@ -666,6 +774,7 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
         b.next_value = 0;
         b.env = NULL;
         b.loops = NULL;
+        ns_ssa_seed_global_consts(&b);
 
         for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
             i32 s = ctx->sections[i];
@@ -681,6 +790,9 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
         ns_array_free(b.env);
         ns_array_free(b.loops);
     }
+
+    ns_array_free(b.globals);
+    ns_array_free(b.import_seen);
 
     return ns_return_ok(ptr, m);
 }
