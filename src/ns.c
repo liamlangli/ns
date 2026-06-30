@@ -16,6 +16,10 @@
 #include <unistd.h>
 #endif
 
+#if defined(NS_DARWIN)
+#include <mach-o/dyld.h>
+#endif
+
 #define STB_DS_IMPLEMENTATION
 
 static ns_vm vm = {0};
@@ -738,6 +742,22 @@ static ns_str ns_shell_quote(ns_str s) {
     return q;
 }
 
+static ns_str ns_c_string_escape(ns_str s) {
+    ns_str out = ns_str_null;
+    for (i32 i = 0; i < s.len; i++) {
+        switch (s.data[i]) {
+            case '\\': ns_str_append_len(&out, "\\\\", 2); break;
+            case '"': ns_str_append_len(&out, "\\\"", 2); break;
+            case '\n': ns_str_append_len(&out, "\\n", 2); break;
+            case '\r': ns_str_append_len(&out, "\\r", 2); break;
+            case '\t': ns_str_append_len(&out, "\\t", 2); break;
+            default: ns_str_append_len(&out, s.data + i, 1); break;
+        }
+    }
+    ns_array_push(out.data, '\0');
+    return out;
+}
+
 static void ns_archive_object(ns_str output, ns_str object) {
     ns_str q_output = ns_shell_quote(output);
     ns_str q_object = ns_shell_quote(object);
@@ -985,6 +1005,112 @@ static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executabl
     ns_str_free(cmd);
 }
 
+static ns_str ns_build_darwin_current_executable(void) {
+    u32 size = 0;
+    _NSGetExecutablePath(ns_null, &size);
+    if (size == 0) return ns_str_null;
+
+    char *buf = (char*)ns_malloc(size + 1);
+    if (_NSGetExecutablePath(buf, &size) != 0) {
+        ns_free(buf);
+        return ns_str_null;
+    }
+    buf[size] = '\0';
+
+    char resolved[4096];
+    if (realpath(buf, resolved)) {
+        ns_free(buf);
+        return ns_str_concat(ns_str_cstr(resolved), ns_str_cstr(""));
+    }
+
+    ns_str path = ns_str_concat(ns_str_cstr(buf), ns_str_cstr(""));
+    ns_free(buf);
+    if (ns_path_is_absolute(path)) return path;
+
+    ns_str cwd = ns_getcwd();
+    ns_str absolute = ns_path_join(cwd, path);
+    ns_str_free(cwd);
+    ns_str_free(path);
+    return absolute;
+}
+
+static void ns_build_darwin_launcher_executable(ns_build_input *in, ns_str executable_path) {
+    ns_str ns_path = ns_build_darwin_current_executable();
+    if (ns_path.data == ns_null) ns_exit(1, "build", "failed to locate ns executable for app launcher.\n");
+
+    ns_str cwd = ns_getcwd();
+    ns_str root_path = ns_str_concat(cwd, ns_str_cstr(""));
+    ns_str entry_path = ns_path_resolve(cwd, in->filename);
+    ns_str source_path = ns_str_concat(executable_path, ns_str_cstr(".launcher.c"));
+    ns_str q_source = ns_shell_quote(source_path);
+    ns_str q_executable = ns_shell_quote(executable_path);
+    ns_str c_ns_path = ns_c_string_escape(ns_path);
+    ns_str c_root_path = ns_c_string_escape(root_path);
+    ns_str c_entry_path = ns_c_string_escape(entry_path);
+
+    ns_str source = ns_str_null;
+    ns_str_append_cstr(&source, "#include <errno.h>\n");
+    ns_str_append_cstr(&source, "#include <stdio.h>\n");
+    ns_str_append_cstr(&source, "#include <sys/wait.h>\n");
+    ns_str_append_cstr(&source, "#include <unistd.h>\n\n");
+    ns_str_append_cstr(&source, "int main(void) {\n");
+    ns_str_append_cstr(&source, "    const char *ns = \"");
+    ns_str_append(&source, c_ns_path);
+    ns_str_append_cstr(&source, "\";\n");
+    ns_str_append_cstr(&source, "    const char *root = \"");
+    ns_str_append(&source, c_root_path);
+    ns_str_append_cstr(&source, "\";\n");
+    ns_str_append_cstr(&source, "    const char *entry = \"");
+    ns_str_append(&source, c_entry_path);
+    ns_str_append_cstr(&source, "\";\n");
+    ns_str_append_cstr(&source, "    if (chdir(root) != 0) {\n");
+    ns_str_append_cstr(&source, "        perror(\"nscode-native launcher failed to enter project root\");\n");
+    ns_str_append_cstr(&source, "        return errno ? errno : 127;\n");
+    ns_str_append_cstr(&source, "    }\n");
+    ns_str_append_cstr(&source, "    pid_t pid = fork();\n");
+    ns_str_append_cstr(&source, "    if (pid == 0) {\n");
+    ns_str_append_cstr(&source, "        execl(ns, ns, \"run\", entry, (char*)0);\n");
+    ns_str_append_cstr(&source, "        perror(\"nscode-native launcher failed\");\n");
+    ns_str_append_cstr(&source, "        _exit(errno ? errno : 127);\n");
+    ns_str_append_cstr(&source, "    }\n");
+    ns_str_append_cstr(&source, "    if (pid < 0) {\n");
+    ns_str_append_cstr(&source, "        perror(\"nscode-native launcher failed to fork\");\n");
+    ns_str_append_cstr(&source, "        return errno ? errno : 127;\n");
+    ns_str_append_cstr(&source, "    }\n");
+    ns_str_append_cstr(&source, "    int status = 0;\n");
+    ns_str_append_cstr(&source, "    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}\n");
+    ns_str_append_cstr(&source, "    if (WIFEXITED(status)) return WEXITSTATUS(status);\n");
+    ns_str_append_cstr(&source, "    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);\n");
+    ns_str_append_cstr(&source, "    return status;\n");
+    ns_str_append_cstr(&source, "}\n");
+    ns_array_push(source.data, '\0');
+    ns_write_text_file(source_path, source);
+
+    ns_str cmd = ns_str_null;
+    ns_str_append_cstr(&cmd, "/usr/bin/clang ");
+    ns_str_append(&cmd, q_source);
+    ns_str_append_cstr(&cmd, " -o ");
+    ns_str_append(&cmd, q_executable);
+    ns_array_push(cmd.data, '\0');
+
+    i32 ret = system(cmd.data);
+    if (ret != 0) ns_exit(1, "build", "failed to build app launcher %.*s.\n", executable_path.len, executable_path.data);
+
+    remove(source_path.data);
+    ns_str_free(ns_path);
+    ns_str_free(cwd);
+    ns_str_free(root_path);
+    ns_str_free(entry_path);
+    ns_str_free(source_path);
+    ns_str_free(q_source);
+    ns_str_free(q_executable);
+    ns_str_free(c_ns_path);
+    ns_str_free(c_root_path);
+    ns_str_free(c_entry_path);
+    ns_str_free(source);
+    ns_str_free(cmd);
+}
+
 static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
     ns_str app_dir = ns_build_app_output(output);
     ns_str contents_dir = ns_path_join(app_dir, ns_str_cstr("Contents"));
@@ -995,7 +1121,8 @@ static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module
 
     ns_str executable_name = ns_str_concat(in->name, ns_str_cstr(""));
     ns_str executable_path = ns_path_join(macos_dir, executable_name);
-    ns_build_darwin_link_executable(ssa, executable_path);
+    (void)ssa;
+    ns_build_darwin_launcher_executable(in, executable_path);
 
     ns_str icon_file = ns_str_null;
     ns_build_darwin_make_icns(in->icon, resources_dir, &icon_file);
