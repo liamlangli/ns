@@ -1,8 +1,7 @@
 mod http
 
 // Minimal HTTP/1.1 helpers built on the net module, implemented in
-// lib/src/http.c and resolved through the static symbol table in
-// src/ns_vm_lib.c.
+// lib/src/http.c, compiled to http.dylib/http.so, and resolved through FFI.
 //
 // Like net, the interface is SCALAR plus `str` arguments. Parsed request data
 // is staged in shared statics and read back with http_method()/http_path_byte;

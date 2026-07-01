@@ -2,8 +2,8 @@ mod term
 
 // Native terminal primitives for terminal applications (e.g. the nscode/cli
 // editor). Implemented in lib/src/term.posix.c (Linux + macOS) and
-// lib/src/term.win.c (Windows), resolved through the static symbol table in
-// src/ns_vm_lib.c.
+// lib/src/term.win.c (Windows), compiled to term.dylib/term.so and resolved
+// through FFI.
 //
 // Every function is SCALAR (i32 in / i32 out). Only scalar FFI marshals
 // reliably from inside an ns function body, so bytes are moved one at a time:

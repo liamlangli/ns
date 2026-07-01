@@ -1,0 +1,14 @@
+// nscode/cli/term_ffi_test.ns
+// ---------------------------------------------------------------------------
+// Smoke test that the terminal native module is loaded through FFI.
+use term
+
+fn main() i32 {
+    if term_width() <= 0 {
+        return 1
+    }
+    if term_height() <= 0 {
+        return 1
+    }
+    return 0
+}

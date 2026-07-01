@@ -6,7 +6,7 @@ type = "app"
 description = "Terminal text editor for Nano Script."
 source = "."
 entry = "main.ns"
-tests = ["buffer_test.ns"]
+tests = ["buffer_test.ns", "term_ffi_test.ns"]
 exclude = ["README.md"]
 
 [[dependencies.runtime]]

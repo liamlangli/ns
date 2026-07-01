@@ -66,7 +66,7 @@ ifeq ($(NS_OS), $(NS_WIN))
 # DirectX 12 backend (gpu.dx12.c) links against the D3D12/DXGI runtime libraries.
 NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32 -ld3d12 -ldxgi -ldxguid -ld3dcompiler
 else ifeq ($(NS_OS), $(NS_DARWIN))
-# Frameworks required by the statically linked Cocoa/Metal standard library.
+# Frameworks required by language runtime callbacks and native dylib modules.
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -framework Cocoa -framework Metal -framework MetalKit
 else
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
@@ -133,9 +133,9 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
-# Standard library (lib/*) compiled position-independent and statically linked
-# into the ns binary. Resolved at runtime via the compiled-in symbol table in
-# ns_vm_lib.c instead of dlopen()/dlsym(), so it loads and runs faster.
+# Native feature modules (lib/*) are compiled position-independent and built as
+# dylibs/so files. Keep them out of bin/ns so the interpreter remains
+# language-only; ref fn calls resolve them through dlopen()/dlsym().
 NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/ui.c
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c
@@ -169,8 +169,8 @@ $(NS_DIRS):
 $(NS_ENTRY_OBJ): $(NS_ENTRY)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
-$(TARGET): $(NS_LIB_OBJS) $(NS_LIBFN_OBJS) $(NS_ENTRY_OBJ) | $(NS_BINDIR)
-	$(NS_LD) $(NS_LIB_OBJS) $(NS_LIBFN_OBJS) $(NS_ENTRY_OBJ) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
+$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) | $(NS_BINDIR)
+	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
 
 $(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
@@ -189,8 +189,8 @@ count:
 pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
 
-$(NS_LIB): $(NS_LIB_OBJS) $(NS_LIBFN_OBJS)
-	ar rcs $(NS_BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS) $(NS_LIBFN_OBJS)
+$(NS_LIB): $(NS_LIB_OBJS)
+	ar rcs $(NS_BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS)
 
 so: $(NS_LIB_OBJS)
 	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(NS_BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)

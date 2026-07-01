@@ -41,6 +41,7 @@ fn col_green_bg() u32 { return ui_pack_color("#173726") }
 fn col_red_bg() u32 { return ui_pack_color("#3a2025") }
 fn col_hunk_bg() u32 { return ui_pack_color("#23304a") }
 fn col_titlebar() u32 { return ui_pack_color("#101317") }
+fn col_title_text() u32 { return ui_pack_color("#f3f7fb") }
 fn col_close() u32 { return ui_pack_color("#ff5f57") }
 fn col_min() u32 { return ui_pack_color("#ffbd2e") }
 fn col_zoom() u32 { return ui_pack_color("#28c840") }
@@ -132,6 +133,22 @@ fn text_box_y(rect: ref ui_rect) f64 {
     return rect.y - 1.0
 }
 
+fn draw_centered_text(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, px: f64, color: u32) {
+    if w > 0.0 {
+        if h > 0.0 {
+            let tw = ui_text_width(r, text, px, FONT_MONO())
+            if tw <= 0.0 {
+                tw = text.len as f64 * px * 0.6
+            }
+            let tx = x + (w - tw) * 0.5
+            let ty = ui_text_v_center_y(r, y, h, px, FONT_MONO())
+            ui_push_clip(r, x, y, w, h)
+            ui_draw_text(r, tx, ty, text, px, color, FONT_MONO())
+            ui_pop_clip(r)
+        }
+    }
+}
+
 fn update_fps() {
     let now = os_time()
     if g_last_frame_time > 0.0 {
@@ -202,22 +219,25 @@ fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
         }
     }
 
-    ui_fill_round_rect(r, x, y, w, h, 5.0, col_surface(), 0.0)
+    ui_fill_round_rect(r, x, y, w, h, 5.0, col_surface_hi(), 0.0)
+    ui_fill_rect(r, x, y, w, 1.0, col_line(), 0.0)
+    ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
+    ui_fill_rect(r, x, y, 1.0, h, col_line(), 0.0)
+    ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_line(), 0.0)
     let active_x = agent_x
     if g_mode == MODE_CODE() {
         active_x = code_x
     }
     ui_fill_round_rect(r, active_x, y + pad, half_w, h - pad * 2.0, 4.0, col_accent(), 0.0)
 
-    let code_color = col_muted()
+    let code_color = col_title_text()
     let agent_color = col_bg()
     if g_mode == MODE_CODE() {
         code_color = col_bg()
-        agent_color = col_muted()
+        agent_color = col_title_text()
     }
-    let label_y = y + (h - text_box_h()) * 0.5 - 1.0
-    ui_draw_text(r, code_x + 12.0, label_y, "Code Editor", small_px(), code_color, FONT_MONO())
-    ui_draw_text(r, agent_x + 24.0, label_y, "Agentic", small_px(), agent_color, FONT_MONO())
+    draw_centered_text(r, code_x, y + pad, half_w, h - pad * 2.0, "Code Editor", small_px(), code_color)
+    draw_centered_text(r, agent_x, y + pad, half_w, h - pad * 2.0, "Agentic", small_px(), agent_color)
 }
 
 fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
@@ -249,8 +269,9 @@ fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
         title_w = 104.0
     }
     let title_x = x + (w - title_w) * 0.5
-    let title_y = y + (h - text_box_h()) * 0.5 - 1.0
-    draw_text_clipped(r, title_x, title_y, title_w, text_box_h(), title_text, small_px(), col_text())
+    let title_y = ui_text_v_center_y(r, y, h, small_px(), FONT_MONO())
+    ui_draw_text(r, title_x + 1.0, title_y + 1.0, title_text, small_px(), col_bg(), FONT_MONO())
+    ui_draw_text(r, title_x, title_y, title_text, small_px(), col_title_text(), FONT_MONO())
 }
 
 fn draw_top_controls(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {

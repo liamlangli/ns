@@ -1,7 +1,7 @@
 mod net
 
-// Native TCP / UDP socket primitives, implemented in lib/src/net.c and resolved
-// through the static symbol table in src/ns_vm_lib.c.
+// Native TCP / UDP socket primitives, implemented in lib/src/net.c, compiled
+// to net.dylib/net.so, and resolved through FFI.
 //
 // The interface is SCALAR (i32 in / i32 out) plus `str` arguments, the subset
 // that marshals reliably through the interpreter's FFI. Sockets are identified

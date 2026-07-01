@@ -3,8 +3,8 @@ mod gpu
 use view
 
 // Native GPU primitives, implemented per platform (Metal on Apple, DirectX 12 on
-// Windows; a no-op fallback on Linux) and resolved through the static symbol
-// table in src/ns_vm_lib.c.
+// Windows; a no-op fallback on Linux), compiled to gpu.dylib/gpu.so and
+// resolved through FFI.
 //
 // As with the other native modules, the interface exposed to ns is the FFI-safe
 // subset: scalars, `str`, `ref` pointers, and the small single-field GPU handle

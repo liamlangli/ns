@@ -43,6 +43,11 @@ typedef struct ui_rect {
     f64 h;
 } ui_rect;
 
+typedef struct ui_text_size {
+    f64 w;
+    f64 h;
+} ui_text_size;
+
 enum {
     UI_ALIGN_LEFT = 1,
     UI_ALIGN_RIGHT = 2,
@@ -132,6 +137,7 @@ typedef struct ui_renderer {
 } ui_renderer;
 
 void ui_renderer_destroy(ui_renderer *r);
+void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);
 
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
@@ -504,6 +510,34 @@ void ui_fill_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, u32 rgba, f64 fe
     }
 }
 
+void ui_fill_triangle(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 x2, f64 y2, u32 rgba, f64 feather) {
+    ns_unused(feather);
+    if (!r) return;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    ui_push_tri(r, x0, y0, x1, y1, x2, y2, 0, 0, rgba);
+}
+
+void ui_stroke_line(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 thickness, u32 rgba, f64 feather) {
+    ns_unused(feather);
+    if (!r || thickness <= 0.0) return;
+    f64 dx = x1 - x0;
+    f64 dy = y1 - y0;
+    f64 len = sqrt(dx * dx + dy * dy);
+    if (len <= 0.000001) return;
+    f64 nx = -dy / len * thickness * 0.5;
+    f64 ny = dx / len * thickness * 0.5;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    ui_push_tri(r, x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, 0, 0, rgba);
+    ui_push_tri(r, x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny, 0, 0, rgba);
+}
+
+void ui_stroke_polyline(ui_renderer *r, f64 *points, i32 point_count, f64 thickness, u32 rgba, f64 feather) {
+    if (!r || !points || point_count < 2) return;
+    for (i32 i = 0; i < point_count - 1; i++) {
+        ui_stroke_line(r, points[i * 2], points[i * 2 + 1], points[(i + 1) * 2], points[(i + 1) * 2 + 1], thickness, rgba, feather);
+    }
+}
+
 void ui_stroke_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness, u32 rgba, f64 feather) {
     if (!r || radius <= 0.0 || thickness <= 0.0) return;
     r->current_texture_id = UI_WHITE_TEXTURE;
@@ -544,6 +578,27 @@ void ui_stroke_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness,
             }
         }
     }
+}
+
+void ui_stroke_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 thickness, u32 rgba, f64 feather) {
+    ns_unused(feather);
+    if (!r || w <= 0.0 || h <= 0.0 || thickness <= 0.0) return;
+    ui_fill_rect(r, x, y, w, thickness, rgba, 0.0);
+    ui_fill_rect(r, x, y + h - thickness, w, thickness, rgba, 0.0);
+    ui_fill_rect(r, x, y, thickness, h, rgba, 0.0);
+    ui_fill_rect(r, x + w - thickness, y, thickness, h, rgba, 0.0);
+}
+
+void ui_stroke_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, f64 thickness, u32 rgba, f64 feather) {
+    ns_unused(radius);
+    ui_stroke_rect(r, x, y, w, h, thickness, rgba, feather);
+}
+
+void ui_stroke_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 rtl, f64 rtr, f64 rbl, f64 rbr, f64 thickness, u32 rgba, f64 feather) {
+    ns_unused(rtl);
+    ns_unused(rtr);
+    ns_unused(rbl);
+    ui_stroke_round_rect(r, x, y, w, h, rbr, thickness, rgba, feather);
 }
 
 static void ui_create_gpu_resources(ui_renderer *r) {
@@ -936,7 +991,23 @@ f64 ui_text_width(ui_renderer *r, const char *text, f64 font_px, i32 font_type) 
     return width;
 }
 
+ui_text_size *ui_measure_text(ui_renderer *r, const char *text, f64 font_px, i32 font_type) {
+    ui_text_size *size = (ui_text_size*)malloc(sizeof(ui_text_size));
+    if (!size) return NULL;
+    size->w = ui_text_width(r, text, font_px, font_type);
+    size->h = ui_text_line_height(r, font_px, font_type);
+    return size;
+}
+
 f64 ui_mono_char_width(ui_renderer *r, f64 font_px, i32 font_type) {
     ns_unused(font_type);
     return ui_text_width(r, "0", font_px, UI_FONT_MONO);
+}
+
+u32 ui_pack_rgba_floats(f64 r, f64 g, f64 b, f64 a) {
+    u32 rr = (u32)ui_clamp_f64(r * 255.0, 0.0, 255.0);
+    u32 gg = (u32)ui_clamp_f64(g * 255.0, 0.0, 255.0);
+    u32 bb = (u32)ui_clamp_f64(b * 255.0, 0.0, 255.0);
+    u32 aa = (u32)ui_clamp_f64(a * 255.0, 0.0, 255.0);
+    return (aa << 24) | (bb << 16) | (gg << 8) | rr;
 }
