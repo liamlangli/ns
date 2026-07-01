@@ -151,7 +151,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_buffer_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -201,7 +201,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) | $(NS_LIB)
 
 test: $(NS_TEST_TARGETS)
 	$(NS_BINDIR)/ns_json_test
-	$(NS_BINDIR)/ns_buffer_test
+	$(NS_BINDIR)/ns_expr_test
 
 include lib/Makefile
 include sample/c/Makefile

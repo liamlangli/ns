@@ -620,6 +620,11 @@ case 'l': {
             to = i + 1;
         }
     } break;
+    case '~': {
+        t->type = NS_TOKEN_BIT_INVERT_OP;
+        t->val = ns_str_range(s + f, 1);
+        to = i + 1;
+    } break;
     case '?': {
         t->type = NS_TOKEN_QUESTION_MARK;
         t->val = ns_str_range(s + f, 1);

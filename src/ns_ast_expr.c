@@ -506,65 +506,64 @@ ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
     return ns_return_ok(bool, false);
 }
 
-ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
-    ns_return_bool ret;
-    ns_ast_state state = ns_save_state(ctx);
-    ns_parse_next_token(ctx);
-    if (ctx->token.type == NS_TOKEN_BIT_INVERT_OP ||
-        (ctx->token.type == NS_TOKEN_ADD_OP && ns_str_equals_STR(ctx->token.val, "-"))) {
-        ns_ast_t n = {.type = NS_AST_UNARY_EXPR, .state = state, .unary_expr = {.op = ctx->token}};
+// Parse the operand of a prefix unary operator. Besides a postfix/primary
+// operand, a parenthesized sub-expression `(expr)` is accepted so negating a
+// compound expression - `!(a == b)`, `-(x + y)`, `ref (v)` - parses correctly.
+// On success ctx->current holds the operand node.
+ns_return_bool ns_parse_unary_operand(ns_ast_ctx *ctx) {
+    ns_ast_state operand_state = ns_save_state(ctx);
 
-        ns_ast_state operand_state = ns_save_state(ctx);
-        ret = ns_parse_postfix_expr(ctx, 0);
+    // nested unary operand: `!!a`, `- -a`, `~~a`. ns_parse_unary_expr restores
+    // and reports false when the next token is not a unary operator, so this is
+    // safe to try first; each recursion consumes one operator token.
+    ns_return_bool nested = ns_parse_unary_expr(ctx);
+    if (ns_return_is_error(nested)) return nested;
+    if (nested.r) return ns_return_ok(bool, true);
+    ns_restore_state(ctx, operand_state);
+
+    // parenthesized operand: '(' expr ')'
+    if (ns_token_require(ctx, NS_TOKEN_OPEN_PAREN)) {
+        ns_return_bool ret = ns_parse_expr(ctx);
         if (ns_return_is_error(ret)) return ret;
-
-        if (ret.r) {
-            n.unary_expr.expr = ctx->current;
-            ns_ast_push(ctx, n);
+        if (ret.r && ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
+            ns_ast_push_expr(ctx, operand_state, ctx->current);
             return ns_return_ok(bool, true);
-        } else {
-            ns_restore_state(ctx, operand_state);
-            ret = ns_parse_primary_expr(ctx);
-            if (ns_return_is_error(ret)) return ret;
-
-            if (ret.r) {
-                n.unary_expr.expr = ctx->current;
-                ns_ast_push(ctx, n);
-                return ns_return_ok(bool, true);
-            } else {
-                ns_code_loc loc = ns_ast_state_loc(ctx, state);
-                return ns_return_error(bool, loc, NS_ERR_SYNTAX, "expected expression after unary operator");
-            }
         }
-    } else if (ctx->token.type == NS_TOKEN_REF) {
-        ns_ast_t n = {.type = NS_AST_UNARY_EXPR, .state = state, .unary_expr = {.op = ctx->token}};
-
-        ns_ast_state operand_state = ns_save_state(ctx);
-        ret = ns_parse_postfix_expr(ctx, 0);
-        if (ns_return_is_error(ret)) return ret;
-
-        if (ret.r) {
-            n.unary_expr.expr = ctx->current;
-            ns_ast_push(ctx, n);
-            return ns_return_ok(bool, true);
-        } else {
-            ns_restore_state(ctx, operand_state);
-            ret = ns_parse_primary_expr(ctx);
-            if (ns_return_is_error(ret)) return ret;
-
-            if (ret.r) {
-                n.unary_expr.expr = ctx->current;
-                ns_ast_push(ctx, n);
-                return ns_return_ok(bool, true);
-            } else {
-                ns_code_loc loc = ns_ast_state_loc(ctx, state);
-                return ns_return_error(bool, loc, NS_ERR_SYNTAX, "expected expression after 'ref'");
-            }
-        }
+        ns_restore_state(ctx, operand_state);
     }
 
-    ns_restore_state(ctx, state);
-    return ns_return_ok(bool, false);
+    // postfix operand (call/index/member chains on a primary)
+    ns_return_bool ret = ns_parse_postfix_expr(ctx, 0);
+    if (ns_return_is_error(ret)) return ret;
+    if (ret.r) return ns_return_ok(bool, true);
+
+    // bare primary operand
+    ns_restore_state(ctx, operand_state);
+    return ns_parse_primary_expr(ctx);
+}
+
+ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
+    ns_ast_state state = ns_save_state(ctx);
+    ns_parse_next_token(ctx);
+    ns_bool is_unary = ctx->token.type == NS_TOKEN_BIT_INVERT_OP ||
+                       ctx->token.type == NS_TOKEN_CMP_OP ||
+                       ctx->token.type == NS_TOKEN_REF ||
+                       (ctx->token.type == NS_TOKEN_ADD_OP && ns_str_equals_STR(ctx->token.val, "-"));
+    if (!is_unary) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+
+    ns_ast_t n = {.type = NS_AST_UNARY_EXPR, .state = state, .unary_expr = {.op = ctx->token}};
+    ns_return_bool ret = ns_parse_unary_operand(ctx);
+    if (ns_return_is_error(ret)) return ret;
+    if (!ret.r) {
+        ns_code_loc loc = ns_ast_state_loc(ctx, state);
+        return ns_return_error(bool, loc, NS_ERR_SYNTAX, "expected expression after unary operator");
+    }
+    n.unary_expr.expr = ctx->current;
+    ns_ast_push(ctx, n);
+    return ns_return_ok(bool, true);
 }
 
 // { [(args) [-> ret]] in body }
@@ -707,6 +706,7 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
         case NS_TOKEN_REL_OP:
         case NS_TOKEN_EQ_OP:
         case NS_TOKEN_CMP_OP:
+        case NS_TOKEN_BIT_INVERT_OP:
         case NS_TOKEN_LOGIC_OP: {
             // first token is operator
             if (ns_parse_stack_leading_operator(ctx) ||

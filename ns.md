@@ -150,7 +150,7 @@ For fast onboarding, recommended order:
 2. `src/ns.c` — authoritative CLI flow / execution modes
 3. `Makefile` (+ included makefiles) — build outputs and platform branching
 4. `doc/ssa.md` — SSA & backend design intent
-5. `doc/block.md`, `doc/ref.md`, `doc/token.md` — language semantics cheatsheets
+5. `doc/block.md`, `doc/ref.md`, `doc/operators.md`, `doc/token.md` — language semantics cheatsheets
 6. `sample/ns/*.ns` — practical examples to test parsing/execution and language features
 7. `nscode/web/README.md` — browser playground setup
 

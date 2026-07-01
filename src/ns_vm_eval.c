@@ -480,6 +480,7 @@ ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
         case NS_TYPE_U64: ret.b = ns_eval_number_u64(vm, l) op ns_eval_number_u64(vm, r); break;\
         case NS_TYPE_F32: ret.b = ns_eval_number_f32(vm, l) op ns_eval_number_f32(vm, r); break;\
         case NS_TYPE_F64: ret.b = ns_eval_number_f64(vm, l) op ns_eval_number_f64(vm, r); break;\
+        case NS_TYPE_BOOL: ret.b = ns_eval_number_i32(vm, l) op ns_eval_number_i32(vm, r); break;\
         default: break;\
     }\
     return ret;\
@@ -682,14 +683,23 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_scope_enter(vm);
     i32 next = n->next;
-    for (i32 a_i = 0, l = n->call_expr.arg_count; a_i < l; ++a_i) {
+    i32 arg_base = ns_array_length(vm->symbol_stack);
+    i32 arg_count = n->call_expr.arg_count;
+    // Evaluate every argument before activating any parameter name. Arguments
+    // are pushed under a blank name so a later bare-identifier argument that
+    // matches a parameter name still resolves to the caller's binding rather
+    // than a not-yet-active parameter of this call (e.g. `f(a + 1.0, a)`).
+    for (i32 a_i = 0; a_i < arg_count; ++a_i) {
         ns_return_value ret_v = ns_eval_expr(vm, ctx, next);
         if (ns_return_is_error(ret_v)) return ret_v;
 
         ns_value v = ret_v.r;
         next = ctx->nodes[next].next;
-        ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->args[a_i].name, .val = v, .parsed = true};
+        ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = ns_str_null, .val = v, .parsed = true};
         ns_array_push(vm->symbol_stack, arg);
+    }
+    for (i32 a_i = 0; a_i < arg_count; ++a_i) {
+        vm->symbol_stack[arg_base + a_i].name = fn->args[a_i].name;
     }
 
     ns_array_push(vm->call_stack, call);
@@ -959,10 +969,23 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
                 ns_value v = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, cat)};
                 ns_str_free(cat);
                 return ns_return_ok(value, v);
-            } else if (op.type == NS_TOKEN_EQ_OP || op.type == NS_TOKEN_REL_OP) {
+            } else if (op.type == NS_TOKEN_EQ_OP) {
                 ns_bool eq = ns_str_equals(ls, rs);
                 ns_bool ne = ns_str_equals(op.val, ns_str_cstr("!=")) || ns_str_equals(op.val, ns_str_cstr("!=="));
                 ns_value v = (ns_value){.t = ns_type_bool, .b = ne ? !eq : eq};
+                return ns_return_ok(value, v);
+            } else if (op.type == NS_TOKEN_REL_OP) {
+                // Lexicographic ordering: compare the shared prefix, then break
+                // ties on length (so "ab" < "abc").
+                i32 min_len = ls.len < rs.len ? ls.len : rs.len;
+                i32 cmp = min_len > 0 ? memcmp(ls.data, rs.data, (szt)min_len) : 0;
+                if (cmp == 0) cmp = (ls.len > rs.len) - (ls.len < rs.len);
+                ns_bool result;
+                if (ns_str_equals(op.val, ns_str_cstr("<"))) result = cmp < 0;
+                else if (ns_str_equals(op.val, ns_str_cstr("<="))) result = cmp <= 0;
+                else if (ns_str_equals(op.val, ns_str_cstr(">"))) result = cmp > 0;
+                else result = cmp >= 0; // ">="
+                ns_value v = (ns_value){.t = ns_type_bool, .b = result};
                 return ns_return_ok(value, v);
             }
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented string ops.");
@@ -1326,30 +1349,34 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
         }
         return ns_return_ok(value, v);
-    case NS_TOKEN_BIT_INVERT_OP:
+    case NS_TOKEN_CMP_OP: {      // logical not: !bool -> bool
         if (!ns_type_is(v.t, NS_TYPE_BOOL)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "logical not requires a bool operand.");
         }
-        if (ns_str_equals_STR(op.val, "!")) {
-            ns_value ret = (ns_value){.t = ns_type_encode(NS_TYPE_BOOL, 0, false, false, true)};
-            switch (v.t.type) {
-            case NS_TYPE_I8: ret.b = 0 != ns_eval_number_i8(vm, v); break;
-            case NS_TYPE_U8: ret.b = 0 != ns_eval_number_u8(vm, v); break;
-            case NS_TYPE_I16: ret.b = 0 != ns_eval_number_i16(vm, v); break;
-            case NS_TYPE_U16: ret.b = 0 != ns_eval_number_u16(vm, v); break;
-            case NS_TYPE_I32: ret.b = 0 != ns_eval_number_i32(vm, v); break;
-            case NS_TYPE_U32: ret.b = 0 != ns_eval_number_u32(vm, v); break;
-            case NS_TYPE_I64: ret.b = 0 != ns_eval_number_i64(vm, v); break;
-            case NS_TYPE_U64: ret.b = 0 != ns_eval_number_u64(vm, v); break;
-            case NS_TYPE_F32: ret.b = 0 != ns_eval_number_f32(vm, v); break;
-            case NS_TYPE_F64: ret.b = 0 != ns_eval_number_f64(vm, v); break;
-            case NS_TYPE_BOOL: ret.b = !v.b; break;
-            default: break;
-            }
-            return ns_return_ok(value, ret);
-        } else {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
+        // Read through the stack: a bool variable's value lives in the stack
+        // slot, not the immediate `v.b` union field.
+        ns_value ret = (ns_value){.t = ns_type_encode(NS_TYPE_BOOL, 0, false, false, true)};
+        ret.b = !ns_eval_bool(vm, v);
+        return ns_return_ok(value, ret);
+    }
+    case NS_TOKEN_BIT_INVERT_OP: { // bitwise not: ~int -> int (same type)
+        if (!ns_type_is_number(v.t) || ns_type_is_float(v.t) || ns_type_is(v.t, NS_TYPE_BOOL)) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "bitwise not requires an integer operand.");
         }
+        ns_value ret = (ns_value){.t = ns_type_set_mut(v.t, false)};
+        switch (v.t.type) {
+        case NS_TYPE_I8:  ret.i8  = ~ns_eval_number_i8(vm, v); break;
+        case NS_TYPE_U8:  ret.u8  = ~ns_eval_number_u8(vm, v); break;
+        case NS_TYPE_I16: ret.i16 = ~ns_eval_number_i16(vm, v); break;
+        case NS_TYPE_U16: ret.u16 = ~ns_eval_number_u16(vm, v); break;
+        case NS_TYPE_I32: ret.i32 = ~ns_eval_number_i32(vm, v); break;
+        case NS_TYPE_U32: ret.u32 = ~ns_eval_number_u32(vm, v); break;
+        case NS_TYPE_I64: ret.i64 = ~ns_eval_number_i64(vm, v); break;
+        case NS_TYPE_U64: ret.u64 = ~ns_eval_number_u64(vm, v); break;
+        default: break;
+        }
+        return ns_return_ok(value, ret);
+    }
     case NS_TOKEN_REF:
         if (ns_type_is_ref(v.t)) return ns_return_ok(value, v);
         if (ns_type_is_const(v.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "cannot take reference of const value.");
@@ -1461,7 +1488,7 @@ ns_return_value ns_eval_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_symbol *sym = &vm->symbols[n->block_expr.rt.index];
     if (sym->type == NS_SYMBOL_FN) return ns_return_ok(value, sym->fn.fn);
 
-    u64 offset = ns_eval_alloc(vm, (i32)(sym->st.stride));
+    u64 offset = ns_eval_alloc(vm, (i32)(sym->bc.st.stride));
     ns_value ret = (ns_value){.t = ns_type_set_stack(sym->bc.val.t, true), .o = offset};
 
     i32 field_count = ns_array_length(sym->bc.st.fields);
@@ -1504,13 +1531,15 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_value v = ret_v.r;
     ns_type dst_t = val->val.t;
-    // A union-typed slot keeps the concrete member's type tag at runtime so the
-    // stored value round-trips (values are self-describing in the interpreter).
+    // A union- or fn-typed slot keeps the concrete assigned type tag at runtime
+    // so the stored value round-trips (values are self-describing in the
+    // interpreter). See the matching comment in ns_eval_local_var_def for why
+    // fn destinations need ns_type_match rather than exact type equality.
     ns_type store_t = dst_t;
     if (ns_type_is(dst_t, NS_TYPE_INFER)) {
         dst_t = v.t;
         store_t = v.t;
-    } else if (ns_type_is(dst_t, NS_TYPE_UNION)) {
+    } else if (ns_type_is(dst_t, NS_TYPE_UNION) || ns_type_is(dst_t, NS_TYPE_FN)) {
         if (!ns_type_match(vm, dst_t, v.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "var def type mismatch.");
         }
@@ -1580,13 +1609,18 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_type dst_t = ret_type.r;
     ns_value src = ret_v.r;
 
-    // A union-typed slot keeps the concrete member's type tag at runtime so the
-    // stored value round-trips (values are self-describing in the interpreter).
+    // A union- or fn-typed slot keeps the concrete assigned type tag at runtime
+    // so the stored value round-trips (values are self-describing in the
+    // interpreter). A no-capture closure's own NS_TYPE_FN symbol index never
+    // equals a declared `type X = (...) -> ...` alias's index even when the
+    // signatures match structurally, so fn destinations need ns_type_match
+    // (the same structural check ns_vm_parse_local_var_def already applies)
+    // rather than exact type equality.
     ns_type store_t = dst_t;
     if (ns_type_is(dst_t, NS_TYPE_INFER)) {
         dst_t = src.t;
         store_t = src.t;
-    } else if (ns_type_is(dst_t, NS_TYPE_UNION)) {
+    } else if (ns_type_is(dst_t, NS_TYPE_UNION) || ns_type_is(dst_t, NS_TYPE_FN)) {
         if (!ns_type_match(vm, dst_t, src.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "local var def type mismatch.");
         }

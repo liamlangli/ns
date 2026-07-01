@@ -1115,9 +1115,14 @@ ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
         }
         return ns_return_ok(type, t);
-    case NS_TOKEN_BIT_INVERT_OP:
+    case NS_TOKEN_CMP_OP:       // logical not: !bool -> bool
         if (!ns_type_is(t, NS_TYPE_BOOL)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "logical not requires a bool operand.");
+        }
+        return ns_return_ok(type, ns_type_bool);
+    case NS_TOKEN_BIT_INVERT_OP: // bitwise not: ~int -> int (same type)
+        if (!ns_type_is_number(t) || ns_type_is_float(t) || ns_type_is(t, NS_TYPE_BOOL)) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "bitwise not requires an integer operand.");
         }
         return ns_return_ok(type, t);
     case NS_TOKEN_REF:

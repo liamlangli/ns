@@ -28,6 +28,13 @@ let a = 1 // default number int type is i32, for float number is f64
 let pi: f64 = 3.141592653
 let hello: str = "hello world" // string literal
 
+// operators (see doc/operators.md for the full set)
+let ready = true
+let blocked = !ready              // unary logical not
+let go = ready && !(a == 0)       // negate a compound expression
+let delta = -(a + 1)              // arithmetic negation of a group
+let low = a & ~1                  // bitwise not: clear the low bit
+
 // define a function
 fn add(a: f64, b: f64): f64 {
     return a + b
