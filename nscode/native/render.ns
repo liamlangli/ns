@@ -209,15 +209,6 @@ fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     let half_w = (w - pad * 2.0) * 0.5
     let code_x = x + pad
     let agent_x = x + pad + half_w
-    let code_hot = hit(v, code_x, y + pad, half_w, h - pad * 2.0)
-    let agent_hot = hit(v, agent_x, y + pad, half_w, h - pad * 2.0)
-    if v.mouse_pressed {
-        if code_hot {
-            g_mode = MODE_CODE()
-        } else if agent_hot {
-            g_mode = MODE_AGENT()
-        }
-    }
 
     ui_fill_round_rect(r, x, y, w, h, 5.0, col_surface_hi(), 0.0)
     ui_fill_rect(r, x, y, w, 1.0, col_line(), 0.0)
@@ -236,8 +227,16 @@ fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
         code_color = col_bg()
         agent_color = col_title_text()
     }
-    draw_centered_text(r, code_x, y + pad, half_w, h - pad * 2.0, "Code Editor", small_px(), code_color)
-    draw_centered_text(r, agent_x, y + pad, half_w, h - pad * 2.0, "Agentic", small_px(), agent_color)
+    draw_centered_text(r, code_x, y + pad, half_w, h - pad * 2.0, "Code", small_px(), code_color)
+    draw_centered_text(r, agent_x, y + pad, half_w, h - pad * 2.0, "Agent", small_px(), agent_color)
+
+    if v.mouse_pressed {
+        if hit(v, code_x, y + pad, half_w, h - pad * 2.0) {
+            g_mode = MODE_CODE()
+        } else if hit(v, agent_x, y + pad, half_w, h - pad * 2.0) {
+            g_mode = MODE_AGENT()
+        }
+    }
 }
 
 fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
@@ -262,26 +261,40 @@ fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     ui_fill_circle(r, x + 18.0, cy, radius, col_close(), 0.5)
     ui_fill_circle(r, x + 40.0, cy, radius, col_min(), 0.5)
     ui_fill_circle(r, x + 62.0, cy, radius, col_zoom(), 0.5)
-    draw_fps(r, x, y, w)
-    let title_text = "NSCode Native"
-    let title_w = ui_text_width(r, title_text, small_px(), FONT_MONO())
-    if title_w <= 0.0 {
-        title_w = 104.0
-    }
-    let title_x = x + (w - title_w) * 0.5
-    let title_y = ui_text_v_center_y(r, y, h, small_px(), FONT_MONO())
-    ui_draw_text(r, title_x + 1.0, title_y + 1.0, title_text, small_px(), col_bg(), FONT_MONO())
-    ui_draw_text(r, title_x, title_y, title_text, small_px(), col_title_text(), FONT_MONO())
-}
-
-fn draw_top_controls(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
-    ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
-    let switch_w = 236.0
+    let switch_w = 150.0
     let switch_h = 28.0
-    let switch_x = x + (w - switch_w) * 0.5
-    let switch_y = y + (h - switch_h) * 0.5
-    draw_mode_switch(r, v, switch_x, switch_y, switch_w, switch_h)
+    let switch_x = x + 858.0
+    let switch_y = y + 5.0
+    let title_rect = layout_center_v(x + 86.0, y, switch_x - x - 98.0, h, switch_x - x - 98.0, text_box_h())
+    draw_text_clipped(r, title_rect.x, text_box_y(title_rect), title_rect.w, title_rect.h, "NSCode Native", small_px(), col_title_text())
+    let gap = 4.0
+    let button_w = (switch_w - gap) * 0.5
+    let code_x = switch_x
+    let agent_x = switch_x + button_w + gap
+    let code_bg = col_surface_hi()
+    let code_fg = col_title_text()
+    let agent_bg = col_surface_hi()
+    let agent_fg = col_title_text()
+    if g_mode == MODE_CODE() {
+        code_bg = col_accent()
+        code_fg = col_bg()
+    } else {
+        agent_bg = col_accent()
+        agent_fg = col_bg()
+    }
+    ui_fill_round_rect(r, code_x, switch_y, button_w, switch_h, 5.0, code_bg, 0.0)
+    ui_fill_round_rect(r, agent_x, switch_y, button_w, switch_h, 5.0, agent_bg, 0.0)
+    ui_stroke_round_rect(r, code_x, switch_y, button_w, switch_h, 5.0, 1.0, col_line(), 0.0)
+    ui_stroke_round_rect(r, agent_x, switch_y, button_w, switch_h, 5.0, 1.0, col_line(), 0.0)
+    draw_centered_text(r, code_x, switch_y, button_w, switch_h, "Code", small_px(), code_fg)
+    draw_centered_text(r, agent_x, switch_y, button_w, switch_h, "Agent", small_px(), agent_fg)
+    if v.mouse_pressed {
+        if hit(v, code_x, switch_y, button_w, switch_h) {
+            g_mode = MODE_CODE()
+        } else if hit(v, agent_x, switch_y, button_w, switch_h) {
+            g_mode = MODE_AGENT()
+        }
+    }
 }
 
 fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i32) {
@@ -491,10 +504,9 @@ fn draw_texture_panel(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
 
 fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let title_h = 38.0
-    let controls_h = 38.0
     let status_h = 28.0
-    let app_y = title_h + controls_h
-    let app_h = h - title_h - controls_h - status_h
+    let app_y = title_h
+    let app_h = h - title_h - status_h
     let texture_w = 288.0
     if w < 820.0 {
         texture_w = 220.0
@@ -506,7 +518,6 @@ fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_editor_bg(), 0.0)
     draw_title_bar(r, v, 0.0, 0.0, w, title_h)
-    draw_top_controls(r, v, 0.0, title_h, w, controls_h)
     draw_code_editor(r, v, 0.0, app_y, editor_w, app_h)
     if texture_w > 0.0 {
         draw_texture_panel(r, editor_w, app_y, texture_w, app_h)
@@ -516,10 +527,9 @@ fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 
 fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let title_h = 38.0
-    let controls_h = 38.0
     let status_h = 28.0
-    let app_y = title_h + controls_h
-    let app_h = h - title_h - controls_h - status_h
+    let app_y = title_h
+    let app_h = h - title_h - status_h
     let history_w = 276.0
     let diff_w = 430.0
     if w < 980.0 {
@@ -539,7 +549,6 @@ fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
     draw_title_bar(r, v, 0.0, 0.0, w, title_h)
-    draw_top_controls(r, v, 0.0, title_h, w, controls_h)
     draw_history(r, v, 0.0, app_y, history_w, app_h)
     draw_dialog(r, v, dialog_x, app_y, dialog_w, app_h)
     if diff_w > 0.0 {
