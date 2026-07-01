@@ -177,7 +177,13 @@ i32 ns_vm_push_symbol_local(ns_vm *vm, ns_symbol r) {
 
 i32 ns_vm_push_string(ns_vm *vm, ns_str s) {
     i32 i = ns_array_length(vm->str_list);
-    ns_str str = ns_str_slice(s, 0, s.len);
+    i8 *data = (i8 *)ns_buffer_alloc(sizeof(i8), (szt)s.len + 1, ns_type_i8);
+    if (data) {
+        if (s.len > 0) memcpy(data, s.data, (szt)s.len);
+        data[s.len] = '\0';
+        ns_buffer_header(data)->len = (szt)s.len;
+    }
+    ns_str str = (ns_str){.data = data, .len = s.len, .dynamic = false};
     ns_array_push(vm->str_list, str);
     return i;
 }
@@ -991,13 +997,31 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_type t = ret_t.r;
 
-    // string .len yields an i32 length.
-    if (ns_type_is(t, NS_TYPE_STRING)) {
+    ns_ast_t lf = ctx->nodes[n->member_expr.right];
+    if (lf.type == NS_AST_PRIMARY_EXPR &&
+        (ns_str_equals_STR(lf.primary_expr.token.val, "len") ||
+         ns_str_equals_STR(lf.primary_expr.token.val, "size") ||
+         ns_str_equals_STR(lf.primary_expr.token.val, "cap"))) {
+        if (ns_type_is_array(t) || (ns_type_is(t, NS_TYPE_STRING) && !ns_type_is_array(t)) ||
+            ns_type_is(t, NS_TYPE_DICT) || ns_type_is(t, NS_TYPE_SET)) {
+            return ns_return_ok(type, ns_type_i32);
+        }
+    }
+
+    // string .len/.size/.cap yield i32 metadata.
+    if (ns_type_is(t, NS_TYPE_STRING) && !ns_type_is_array(t)) {
         ns_ast_t lf = ctx->nodes[n->member_expr.right];
-        if (lf.type == NS_AST_PRIMARY_EXPR && ns_str_equals_STR(lf.primary_expr.token.val, "len")) {
+        if (lf.type == NS_AST_PRIMARY_EXPR &&
+            (ns_str_equals_STR(lf.primary_expr.token.val, "len") ||
+             ns_str_equals_STR(lf.primary_expr.token.val, "size") ||
+             ns_str_equals_STR(lf.primary_expr.token.val, "cap"))) {
             return ns_return_ok(type, ns_type_i32);
         }
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown string member.");
+    }
+
+    if (ns_type_is_array(t) || ns_type_is(t, NS_TYPE_DICT) || ns_type_is(t, NS_TYPE_SET)) {
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown container member.");
     }
 
     if (!ns_type_is(t, NS_TYPE_STRUCT)) {

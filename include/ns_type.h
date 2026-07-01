@@ -372,6 +372,7 @@ typedef struct ns_value {
 typedef struct ns_array_header_t {
     size_t len;
     size_t cap;
+    size_t elem_size;
     ns_type type;
 } ns_array_header_t;
 
@@ -383,12 +384,22 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap);
 #define ns_array_grow(a, n, m) ((a) = _ns_array_grow((a), sizeof *(a), (n), (m)))
 #endif
 
+void *ns_buffer_alloc(szt elem_size, szt len, ns_type elem_type);
+
 #define ns_array_header(a) ((ns_array_header_t *)(a) - 1)
 #define ns_array_length(a) ((a) ? (ns_array_header(a))->len : 0)
 #define ns_array_capacity(a) ((a) ? ns_array_header(a)->cap : 0)
+#define ns_array_elem_size(a) ((a) ? ns_array_header(a)->elem_size : 0)
 #define ns_array_type(a) ((a) ? ns_array_header(a)->type : ns_type_unknown)
 #define ns_array_free(a) ((a) ? ns_free(ns_array_header(a)), (a) = 0 : 0)
 #define ns_array_ensure(a, n) ((!(a) || ns_array_header(a)->len + (n) > ns_array_header(a)->cap) ? (ns_array_grow(a, n, 0), 0) : 0)
+
+#define ns_buffer_header(a) ns_array_header(a)
+#define ns_buffer_len(a) ns_array_length(a)
+#define ns_buffer_size(a) ns_array_length(a)
+#define ns_buffer_cap(a) ns_array_capacity(a)
+#define ns_buffer_elem_size(a) ns_array_elem_size(a)
+#define ns_buffer_type(a) ns_array_type(a)
 
 #define ns_array_set_capacity(a, n) (ns_array_grow(a, 0, n))
 // Only ensure capacity when growing. When shrinking, `(n) - ns_array_length(a)`

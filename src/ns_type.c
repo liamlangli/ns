@@ -141,7 +141,22 @@ void *_ns_array_grow(void *a, szt elem_size, szt add_count, szt min_cap)
         ns_array_header(b)->len = 0;
     }
     ns_array_header(b)->cap = min_cap;
+    ns_array_header(b)->elem_size = elem_size;
     return b;
+}
+
+void *ns_buffer_alloc(szt elem_size, szt len, ns_type elem_type) {
+    if (elem_size == 0) elem_size = 1;
+    szt payload_size = elem_size * len;
+    ns_array_header_t *h = (ns_array_header_t *)ns_malloc(sizeof(ns_array_header_t) + payload_size);
+    if (!h) return ns_null;
+    h->len = len;
+    h->cap = len;
+    h->elem_size = elem_size;
+    h->type = elem_type;
+    void *data = (void *)(h + 1);
+    if (payload_size > 0) memset(data, 0, payload_size);
+    return data;
 }
 
 // ns_str

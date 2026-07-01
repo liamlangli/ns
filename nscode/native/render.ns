@@ -123,13 +123,13 @@ fn draw_pill(r: ref ui_renderer, x: f64, y: f64, text: str, bg: u32, fg: u32) {
     ui_draw_text(r, x + 8.0, y + 6.0, text, small_px(), fg, FONT_MONO())
 }
 
-fn layout_center_v(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64) ref ui_rect {
+fn layout_center_v(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64) ui_rect {
     return ui_rect { x: x, y: y + (h - child_h) * 0.5, w: child_w, h: child_h }
 }
 
 fn text_box_h() f64 { return 16.0 }
 
-fn text_box_y(rect: ref ui_rect) f64 {
+fn text_box_y(rect: ui_rect) f64 {
     return rect.y - 1.0
 }
 

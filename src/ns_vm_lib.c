@@ -62,13 +62,34 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         call->ret = (ns_value){.t = ns_type_u64, .o = len};
     } else if (ns_str_equals_STR(call->callee->name, "read")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
-        ns_value size = vm->symbol_stack[call->arg_offset + 1].val;
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
-        i32 s = ns_eval_number_i32(vm, size);
-        char *buff = ns_malloc(s);
-        i32 len = fread(buff, s, 1, f);
-        ns_str ret = (ns_str){.data = buff, .len = len};
-        call->ret = (ns_value){.t = ns_type_str, .o = (u64)ret.data};
+        ns_str ret = {.data = ns_null, .len = 0, .dynamic = true};
+        i32 requested = -1;
+        if (call->arg_count > 1) requested = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
+        if (requested < 0 && f) {
+            long pos = ftell(f);
+            if (pos >= 0 && fseek(f, 0, SEEK_END) == 0) {
+                long end = ftell(f);
+                if (end >= pos && fseek(f, pos, SEEK_SET) == 0) requested = (i32)(end - pos);
+            } else if (pos >= 0) {
+                fseek(f, pos, SEEK_SET);
+            }
+        }
+        if (requested >= 0) {
+            ns_array_set_length(ret.data, requested);
+            szt n = f && requested > 0 ? fread(ret.data, 1, (szt)requested, f) : 0;
+            ns_array_set_length(ret.data, n);
+        } else {
+            char chunk[4096];
+            while (f) {
+                szt n = fread(chunk, 1, sizeof(chunk), f);
+                if (n == 0) break;
+                for (szt j = 0; j < n; ++j) ns_array_push(ret.data, chunk[j]);
+            }
+        }
+        ret.len = (i32)ns_array_length(ret.data);
+        call->ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, ret)};
+        ns_array_free(ret.data);
     } else if (ns_str_equals_STR(call->callee->name, "close")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         fclose((FILE*)fd.o);
@@ -166,6 +187,7 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
 
 #ifndef NS_XCLIB
 ffi_type ns_ffi_map_type(ns_type t) {
+    if (ns_type_is_array(t)) return ffi_type_pointer;
     if (t.ref) return ffi_type_pointer;
     switch (t.type)
     {
@@ -227,6 +249,15 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
             // an absolute address (e.g. a heap pointer returned by a previous
             // native call); stash it so values[i] points at a live pointer.
             _ffi_ctx.value_refs[i] = ns_type_in_stack(v.t) ? (void*)((i8*)vm->stack + v.o) : (void*)v.o;
+            _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
+            _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
+            _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
+            continue;
+        }
+
+        if (ns_type_is_array(v.t)) {
+            void *data = ns_eval_array_raw(vm, v);
+            _ffi_ctx.value_refs[i] = data;
             _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
             _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
             _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];

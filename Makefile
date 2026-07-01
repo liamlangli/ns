@@ -46,6 +46,7 @@ else
 	NS_HOME = $(USERPROFILE)
 endif
 NS_INC += $(NS_PLATFORM_DEF)
+NS_HEADERS = $(wildcard include/*.h include/asm/*.h include/os/*.h)
 
 # OPTIONS
 NS_DEBUG ?= 1
@@ -150,7 +151,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_buffer_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -166,13 +167,13 @@ all: $(NS_DIRS) $(TARGET) $(NS_LIB) std
 $(NS_DIRS):
 	$(NS_MKDIR) $(NS_DIRS)
 
-$(NS_ENTRY_OBJ): $(NS_ENTRY)
+$(NS_ENTRY_OBJ): $(NS_ENTRY) $(NS_HEADERS) | $(NS_DIRS)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
 $(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) | $(NS_BINDIR)
 	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
 
-$(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c
+$(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c $(NS_HEADERS) | $(NS_DIRS)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
 run: all
@@ -195,11 +196,12 @@ $(NS_LIB): $(NS_LIB_OBJS)
 so: $(NS_LIB_OBJS)
 	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(NS_BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
 
-$(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c | $(NS_LIB)
+$(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) | $(NS_LIB)
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) $(NS_LDFLAGS) -L$(NS_BINDIR) -lns -Itest
 
 test: $(NS_TEST_TARGETS)
 	$(NS_BINDIR)/ns_json_test
+	$(NS_BINDIR)/ns_buffer_test
 
 include lib/Makefile
 include sample/c/Makefile

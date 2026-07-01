@@ -31,6 +31,18 @@ typedef struct ns_dict_table {
     u8 data[];
 } ns_dict_table;
 
+static void *ns_eval_handle_ptr(ns_vm *vm, ns_value v) {
+    return ns_type_in_stack(v.t) ? (void *)(*(u64 *)&vm->stack[v.o]) : (void *)v.o;
+}
+
+static ns_dict_table *ns_eval_dict_table(ns_vm *vm, ns_value v) {
+    return (ns_dict_table *)ns_eval_handle_ptr(vm, v);
+}
+
+static void *ns_eval_array_data(ns_vm *vm, ns_value v) {
+    return ns_eval_handle_ptr(vm, v);
+}
+
 ns_bool ns_eval_number_assign_compatible(ns_vm *vm, ns_type dst, ns_type src) {
     if (!ns_type_is_number(dst) || !ns_type_is_number(src)) return false;
     if (ns_type_is_float(src) && !ns_type_is_float(dst)) return false;
@@ -180,7 +192,7 @@ static ns_return_value ns_eval_dict_find(ns_vm *vm, ns_value table_v, ns_value k
         return ns_return_error(value, loc, NS_ERR_EVAL, "dict key type not hashable.");
     }
 
-    ns_dict_table *table = ns_type_in_stack(table_v.t) ? *(ns_dict_table **)&vm->stack[table_v.o] : (ns_dict_table *)table_v.o;
+    ns_dict_table *table = ns_eval_dict_table(vm, table_v);
     u64 h = ns_eval_hash_value(vm, key);
     i32 start = (i32)(h % (u64)table->cap);
     for (i32 step = 0; step < table->cap; ++step) {
@@ -431,9 +443,7 @@ ns_str ns_eval_str(ns_vm *vm, ns_value n) {
 }
 
 void *ns_eval_array_raw(ns_vm *vm, ns_value n) {
-    if (ns_type_is_const(n.t)) return (void*)n.o;
-    if (ns_type_in_stack(n.t)) return (void*)&vm->stack[n.o];
-    return (void*)n.o;
+    return ns_eval_array_data(vm, n);
 }
 
 #define ns_eval_number_op(fn, op) \
@@ -1119,7 +1129,7 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         // For a union field, store the concrete member that was actually provided.
         ns_type t = ns_type_is(field->t, NS_TYPE_UNION) ? val.t : field->t;
         if (ns_type_is_array(t)) {
-            *(u64*)(data + field->o) = val.o;
+            *(u64*)(data + field->o) = (u64)ns_eval_array_raw(vm, val);
         } else if (ns_type_is_number(t)) {
             switch (t.type) {
             case NS_TYPE_U8:   *(u8*)(data + field->o) = ns_eval_number_i8(vm, val); break;
@@ -1224,10 +1234,38 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     // primary expr
     ns_str name = field->primary_expr.token.val;
 
-    // string .len yields the byte length as an i32.
-    if (ns_type_is(st.t, NS_TYPE_STRING) && ns_str_equals_STR(name, "len")) {
+    if (ns_type_is_array(st.t)) {
+        void *data = ns_eval_array_data(vm, st);
+        i32 n = 0;
+        if (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size")) {
+            n = (i32)ns_buffer_len(data);
+        } else if (ns_str_equals_STR(name, "cap")) {
+            n = (i32)ns_buffer_cap(data);
+        } else {
+            return ns_return_error(value, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown array member.");
+        }
+        return ns_return_ok(value, ((ns_value){.t = ns_type_i32, .i32 = n}));
+    }
+
+    if (ns_type_is(st.t, NS_TYPE_DICT) || ns_type_is(st.t, NS_TYPE_SET)) {
+        ns_dict_table *table = ns_eval_dict_table(vm, st);
+        i32 n = 0;
+        if (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size")) {
+            n = table ? table->len : 0;
+        } else if (ns_str_equals_STR(name, "cap")) {
+            n = table ? table->cap : 0;
+        } else {
+            return ns_return_error(value, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown container member.");
+        }
+        return ns_return_ok(value, ((ns_value){.t = ns_type_i32, .i32 = n}));
+    }
+
+    // string .len/.size/.cap yield byte-count metadata.
+    if (ns_type_is(st.t, NS_TYPE_STRING) && !ns_type_is_array(st.t) &&
+        (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size") || ns_str_equals_STR(name, "cap"))) {
         ns_str s = ns_eval_str(vm, st);
-        ns_value lv = {.t = ns_type_i32, .i32 = s.len};
+        i32 n = ns_str_equals_STR(name, "cap") && s.data ? (i32)ns_buffer_cap(s.data) : s.len;
+        ns_value lv = {.t = ns_type_i32, .i32 = n};
         return ns_return_ok(value, lv);
     }
 
@@ -1346,10 +1384,17 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     type.array = false;
-    i32 size = ns_type_size(vm, type) * element_count;
-    i8* data = NULL;
-    ns_array_set_capacity(data, size);
-    memset(data, 0, size);
+    if (element_count < 0) {
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "array size must be non-negative.");
+    }
+    i32 element_size = ns_type_size(vm, type);
+    if (element_size <= 0) {
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid array element type.");
+    }
+    i8* data = (i8 *)ns_buffer_alloc((szt)element_size, (szt)element_count, type);
+    if (!data) {
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "array allocation failed.");
+    }
     ns_value v = (ns_value){.t = {.type = type.type, .array = true, .mut = true, .ref = type.ref, .index = type.index, .stack = false }, .o = (u64)data};
     return ns_return_ok(value, v);
 }
@@ -1391,13 +1436,14 @@ ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i
     ns_type element_type = table.t;
     element_type.array = false;
 
-    u64 offset = (u64)ns_type_size(vm, element_type) * (u64)ns_eval_number_i32(vm, index);
-    u8* data = NULL;
-    if (ns_type_in_stack(table.t)) {
-        data = (u8*)(*(u64*)(vm->stack + table.o)) + offset;
-    } else {
-        data = (u8*)table.o + offset;
+    i32 idx = ns_eval_number_i32(vm, index);
+    void *base = ns_eval_array_data(vm, table);
+    i32 len = (i32)ns_buffer_len(base);
+    if (idx < 0 || idx >= len) {
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "array index out of bounds.");
     }
+    u64 offset = (u64)ns_type_size(vm, element_type) * (u64)idx;
+    u8* data = (u8*)base + offset;
     // The element lives in the array's heap storage: address it absolutely
     // (stack=false) and keep it mutable so it can be assigned to.
     element_type.stack = false;
