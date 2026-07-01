@@ -360,8 +360,17 @@ ns_return_bool ns_parse_expr_stmt(ns_ast_ctx *ctx) {
     ret = ns_parse_expr(ctx);
     if (ns_return_is_error(ret)) return ret;
     if (ret.r) {
+        // An expression statement is terminated by a newline, end of file, or the
+        // closing brace of a single-line compound body ({ stmt }). Peek the next
+        // token: for '}' leave it in place so the enclosing compound statement can
+        // match it, matching how var/return statements defer the terminator.
+        ns_ast_state end_state = ns_save_state(ctx);
         ns_parse_next_token(ctx);
         if (ctx->token.type == NS_TOKEN_EOL || ctx->token.type == NS_TOKEN_EOF) {
+            return ns_return_ok(bool, true);
+        }
+        if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+            ns_restore_state(ctx, end_state);
             return ns_return_ok(bool, true);
         }
     }

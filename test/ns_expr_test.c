@@ -327,5 +327,23 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "string relational ordering (regression: always equality).");
     }
 
+    // --- single-line function body containing an assignment statement
+    // (regression): a body written on one line with the open brace on the same
+    // line ({ v.x = 1.0 }) used to fail to parse with "expected function body",
+    // because the expression-statement parser required a newline/EOF terminator
+    // and rejected the closing brace. It must now parse, compile and run like its
+    // multiline equivalent. ---
+    {
+        const char *src =
+            "struct point { x: f64, y: f64 }\n"
+            "fn set_x(v: ref point) void { v.x = 1.0 }\n"
+            "fn main() bool {\n"
+            "    let p = point { x: 0.0, y: 0.0 }\n"
+            "    set_x(ref p)\n"
+            "    return true\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "single-line function body with an assignment statement.");
+    }
+
     return 0;
 }
