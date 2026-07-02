@@ -1,5 +1,7 @@
 Nano Script
 -----------
+[![Build and Test](https://github.com/liamlangli/ns/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/liamlangli/ns/actions/workflows/build.yml)
+
 > A minimal, data-oriented functional programming language.
 
 ## Play Nano Script in your browser

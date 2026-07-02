@@ -1,0 +1,31 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [main, master, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreadline-dev libffi-dev
+
+      # GCC 13 on ubuntu-latest raises warnings (implicit-fallthrough,
+      # type-limits, unused-function, maybe-uninitialized) that the default
+      # -Werror promotes to errors; build without -Werror until the sources
+      # are warning-clean under GCC.
+      - name: Build
+        run: make NS_WERROR=0
+
+      - name: Test
+        run: make test NS_WERROR=0

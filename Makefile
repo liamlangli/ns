@@ -197,7 +197,10 @@ so: $(NS_LIB_OBJS)
 	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(NS_BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
 
 $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) | $(NS_LIB)
-	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) $(NS_LDFLAGS) -L$(NS_BINDIR) -lns -Itest
+# libns.a must precede $(NS_LDFLAGS): with ld's default --as-needed, shared
+# libs listed before the archive that references them (ffi, readline) are
+# dropped and the link fails with undefined references.
+	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 test: $(NS_TEST_TARGETS)
 	$(NS_BINDIR)/ns_json_test
