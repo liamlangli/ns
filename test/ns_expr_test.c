@@ -86,6 +86,81 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "float add div mod operators (mod via fmod).");
     }
 
+    // --- multiplicative binds tighter than additive, parens override ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    return 2 + 3 * 4 == 14 && 20 - 6 / 2 == 17 && (2 + 3) * 4 == 20 && 2 * (3 + 4) == 14\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "multiplicative over additive precedence, parens override.");
+    }
+
+    // --- left associativity of - / % chains ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    return 10 - 3 - 2 == 5 && 100 / 5 / 2 == 10 && 7 / 2 * 2 == 6 && 2 - 3 + 4 == 3 && 20 % 7 % 4 == 2\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "left-associative subtraction, division and modulo chains.");
+    }
+
+    // --- integer division truncates toward zero; remainder keeps the dividend's
+    // sign, so (a / b) * b + a % b == a holds for negative operands too. ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    return -7 / 2 == -3 && 7 / -2 == -3 && -7 % 2 == -1 && -7 / 2 * 2 + -7 % 2 == -7\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "negative integer division truncates toward zero.");
+    }
+
+    // --- unary minus as the right operand of a binary operator ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    return 2 * -3 == -6 && 5 - -2 == 7 && -2 - -3 == 1 && -(2 * 3) == -6\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "unary minus as a right operand and on a product.");
+    }
+
+    // --- float precedence, negative factors, fmod sign follows the dividend ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    return 1.0 / 4.0 + 0.25 == 0.5 && -1.5 * -2.0 == 3.0 && 2.0 * 3.0 + 1.5 == 7.5 && -7.5 % 2.0 == -1.5\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "float precedence, negative factors and fmod sign.");
+    }
+
+    // --- arithmetic over variables: (a + b) * (a - b) == a*a - b*b ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let a = 6\n"
+            "    let b = 4\n"
+            "    return (a + b) * (a - b) == a * a - b * b\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "difference-of-squares identity over variables.");
+    }
+
+    // --- parenthesized shifts composed with arithmetic ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    return (1 << 4) - 1 == 15 && (255 >> 4) + 1 == 16\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "parenthesized shifts composed with arithmetic.");
+    }
+
+    // --- cast results as arithmetic operands ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    return (7 as f64) / 2.0 == 3.5 && (7.9 as i32) * 2 == 14\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "cast results as arithmetic operands.");
+    }
+
     // --- bitwise and shift operators ---
     {
         const char *src =
