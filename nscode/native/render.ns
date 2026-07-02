@@ -16,7 +16,6 @@ fn MODE_AGENT() i32 { return 1 }
 let g_mode = 1
 let g_selected_chat = 0
 let g_dialog_scroll = 0.0
-let g_diff_scroll = 0.0
 let g_code_scroll = 0.0
 let g_last_frame_time = 0.0
 let g_fps = 0.0
@@ -30,6 +29,51 @@ let g_last_click_line = -1
 let g_click_streak = 0
 let g_key_prev = [u8](512)
 let g_caret_follow = false
+
+// Agent view state: the conversation transcript (role + text per message), the
+// codex-style composer (multi-line input, attachments, permission level and
+// module selectors) and the simulated session lifecycle. String arrays are not
+// supported by the runtime yet, so message/attachment text lives in i32-keyed
+// dictionaries addressed by the parallel counters.
+let g_msg_text = [i32: str](64)
+let g_msg_role = [i32](64)
+let g_msg_count = 0
+let g_convo_seeded = false
+
+let g_input_text = ""
+let g_input_focus = true
+let g_perm = 1
+let g_module = 0
+let g_attach_name = [i32: str](8)
+let g_attach_count = 0
+let g_attach_seq = 0
+let g_running = false
+let g_run_started = 0.0
+let g_reply_delay = 2.4
+let g_dialog_follow = false
+let g_dialog_content_h = 0.0
+
+// Composer/popup hit rects, written while drawing so click handling and the
+// headless frame tests can address the controls without mirroring layout math.
+let g_click_used = false
+let g_pop_kind = 0
+let g_cmp_x = 0.0
+let g_cmp_y = 0.0
+let g_cmp_w = 0.0
+let g_cmp_h = 0.0
+let g_attach_btn_x = 0.0
+let g_attach_btn_y = 0.0
+let g_perm_btn_x = 0.0
+let g_perm_btn_y = 0.0
+let g_perm_btn_w = 0.0
+let g_module_btn_x = 0.0
+let g_module_btn_y = 0.0
+let g_module_btn_w = 0.0
+let g_send_btn_x = 0.0
+let g_send_btn_y = 0.0
+let g_pop_x = 0.0
+let g_pop_y = 0.0
+let g_pop_w = 0.0
 
 fn font_px() f64 { return 14.0 }
 fn small_px() f64 { return 12.0 }
@@ -46,9 +90,6 @@ fn col_accent() u32 { return ui_pack_color("#61d394") }
 fn col_blue() u32 { return ui_pack_color("#7aa8ff") }
 fn col_yellow() u32 { return ui_pack_color("#f2c86b") }
 fn col_red() u32 { return ui_pack_color("#ff7b86") }
-fn col_green_bg() u32 { return ui_pack_color("#173726") }
-fn col_red_bg() u32 { return ui_pack_color("#3a2025") }
-fn col_hunk_bg() u32 { return ui_pack_color("#23304a") }
 fn col_titlebar() u32 { return ui_pack_color("#101317") }
 fn col_title_text() u32 { return ui_pack_color("#f3f7fb") }
 fn col_close() u32 { return ui_pack_color("#ff5f57") }
@@ -381,86 +422,642 @@ fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     ui_pop_clip(r)
 }
 
-fn draw_step(r: ref ui_renderer, x: f64, y: f64, kind: str, title: str, detail: str, done: bool) {
-    let dot = col_yellow()
-    if done {
-        dot = col_accent()
+// ---- agent session model ----------------------------------------------------
+
+fn ROLE_USER() i32 { return 0 }
+fn ROLE_AGENT() i32 { return 1 }
+fn ROLE_EVENT() i32 { return 2 }
+
+fn msg_cap() i32 { return 64 }
+fn attach_cap() i32 { return 4 }
+fn input_line_h() f64 { return 20.0 }
+fn ctl_h() f64 { return 26.0 }
+fn send_d() f64 { return 30.0 }
+fn pop_item_h() f64 { return 26.0 }
+
+fn perm_count() i32 { return 3 }
+
+fn perm_label(i: i32) str {
+    if i == 0 {
+        return "Read Only"
     }
-    ui_fill_circle(r, x + 12.0, y + 17.0, 5.0, dot, 0.5)
-    draw_text_clipped(r, x + 32.0, y + 5.0, 52.0, 16.0, kind, small_px(), col_blue())
-    draw_text_clipped(r, x + 92.0, y + 5.0, 320.0, 20.0, title, font_px(), col_text())
-    draw_text_clipped(r, x + 32.0, y + 29.0, 420.0, 16.0, detail, small_px(), col_muted())
-    ui_fill_rect(r, x + 12.0, y + 28.0, 1.0, 33.0, col_line(), 0.0)
+    if i == 2 {
+        return "Full Access"
+    }
+    return "Auto"
 }
 
-fn draw_dialog(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let header_h = 58.0
-    let body_y = y + header_h
-    let body_h = h - header_h
-    let content_h = 500.0
-    let max_scroll = scroll_max(content_h, body_h)
-    if hit(v, x, body_y, w, body_h) {
-        g_dialog_scroll = clamp(g_dialog_scroll - v.scroll_y, 0.0, max_scroll)
+fn module_count() i32 { return 4 }
+
+fn module_label(i: i32) str {
+    if i == 1 {
+        return "nscode/cli"
     }
+    if i == 2 {
+        return "nscode/web"
+    }
+    if i == 3 {
+        return "lib/ui"
+    }
+    return "nscode/native"
+}
+
+fn attach_pool(i: i32) str {
+    if i == 1 {
+        return "render.ns"
+    }
+    if i == 2 {
+        return "editor.ns"
+    }
+    if i == 3 {
+        return "icon.png"
+    }
+    return "main.ns"
+}
+
+fn push_msg(role: i32, text: str) {
+    if g_msg_count < msg_cap() {
+        g_msg_text[g_msg_count] = text
+        g_msg_role[g_msg_count] = role
+        g_msg_count = g_msg_count + 1
+        g_dialog_follow = true
+    }
+}
+
+fn seed_conversation() {
+    if g_convo_seeded == false {
+        g_convo_seeded = true
+        push_msg(ROLE_USER(), "Keep low-level UI in C." + nl() + "Move editor and app behavior into nscode/native.")
+        push_msg(ROLE_AGENT(), "Working plan:" + nl() + "1. Separate kernel and app -- ui.c keeps renderer primitives only." + nl() + "2. Install NS callbacks -- main.ns creates the renderer and calls render_frame." + nl() + "3. Move shell rendering -- render.ns owns chat, code view and scroll state." + nl() + "4. Build and visually review the running app.")
+        g_dialog_follow = false
+    }
+}
+
+fn add_attachment() {
+    if g_attach_count < attach_cap() {
+        g_attach_name[g_attach_count] = attach_pool(g_attach_seq % 4)
+        g_attach_count = g_attach_count + 1
+        g_attach_seq = g_attach_seq + 1
+    }
+}
+
+fn remove_attachment(idx: i32) {
+    for j in idx to g_attach_count - 1 {
+        g_attach_name[j] = g_attach_name[j + 1]
+    }
+    if g_attach_count > 0 {
+        g_attach_count = g_attach_count - 1
+    }
+}
+
+// Post the composer content as a user message and start a (simulated) session.
+fn composer_send() {
+    let has_content = false
+    if g_input_text != "" {
+        has_content = true
+    }
+    if g_attach_count > 0 {
+        has_content = true
+    }
+    if has_content {
+        let text = g_input_text
+        if g_attach_count > 0 {
+            let names = ""
+            for i in 0 to g_attach_count {
+                if i > 0 {
+                    names = names + ", "
+                }
+                names = names + g_attach_name[i]
+            }
+            if text != "" {
+                text = text + nl()
+            }
+            text = text + "[attachments: " + names + "]"
+        }
+        push_msg(ROLE_USER(), text)
+        g_input_text = ""
+        g_attach_count = 0
+        g_running = true
+        g_run_started = os_time()
+    }
+}
+
+fn session_terminate() {
+    if g_running {
+        g_running = false
+        push_msg(ROLE_EVENT(), "session terminated by user")
+    }
+}
+
+// The conversation backend is still simulated: a running session posts an
+// agent reply after a short delay (g_reply_delay; the frame tests retune it).
+fn update_session() {
+    if g_running {
+        let dt = os_time() - g_run_started
+        if dt > g_reply_delay {
+            g_running = false
+            push_msg(ROLE_AGENT(), "Done. Worked in " + module_label(g_module) + " with " + perm_label(g_perm) + " permissions. Switch to Code mode to review the result.")
+        }
+    }
+}
+
+// ---- composer input ----------------------------------------------------------
+
+// Polled keyboard input for the composer: printable keys append, backspace
+// deletes, enter sends (shift+enter inserts a newline), cmd/ctrl+V pastes and
+// escape interrupts the running session.
+fn process_composer_keys(v: ref view) {
+    let shift = shift_down(v)
+    let cmd = cmd_down(v)
+    if key_edge(v, 256) {
+        session_terminate()
+    }
+    if g_input_focus {
+        if key_edge(v, 257) {
+            if shift {
+                g_input_text = g_input_text + nl()
+            } else if cmd == false {
+                composer_send()
+            }
+        }
+        if key_edge(v, 259) {
+            let n = g_input_text.len
+            if n > 0 {
+                g_input_text = substr(g_input_text, 0, n - 1)
+            }
+        }
+        if cmd {
+            if key_edge(v, 86) {
+                let clip = view_get_clipboard(v)
+                if clip != "" {
+                    g_input_text = g_input_text + clip
+                }
+            }
+        } else {
+            // Printable keys: space, punctuation, digits and letters (32..96).
+            for k in 32 to 97 {
+                if key_edge(v, k) {
+                    let c = key_char(k, shift)
+                    if c != "" {
+                        g_input_text = g_input_text + c
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---- mono text wrapping -------------------------------------------------------
+
+fn byte_at(s: str, i: i32) i32 {
+    return (s[i] as i32) & 255
+}
+
+// Number of visual lines `text` occupies when wrapped at `cols` characters.
+// Measurement helpers accumulate and return f64: casting a computed i32 to
+// f64 mis-evaluates in the current interpreter (garbage upper bits), while
+// f64 function returns are reliable.
+fn wrap_lines_f(text: str, cols: i32) f64 {
+    let lines = 1.0
+    let run = 0
+    let n = text.len
+    for i in 0 to n {
+        if byte_at(text, i) == 10 {
+            lines = lines + 1.0
+            run = 0
+        } else {
+            run = run + 1
+            if run > cols {
+                lines = lines + 1.0
+                run = 1
+            }
+        }
+    }
+    return lines
+}
+
+// Character count of the final visual line (caret column for the composer).
+fn wrap_caret_f(text: str, cols: i32) f64 {
+    let run = 0
+    let run_f = 0.0
+    let n = text.len
+    for i in 0 to n {
+        if byte_at(text, i) == 10 {
+            run = 0
+            run_f = 0.0
+        } else {
+            run = run + 1
+            run_f = run_f + 1.0
+            if run > cols {
+                run = 1
+                run_f = 1.0
+            }
+        }
+    }
+    return run_f
+}
+
+// Popup row count for float layout math, same f64-return rule as above.
+fn pop_count_f() f64 {
+    if g_pop_kind == 1 {
+        return 3.0
+    }
+    return 4.0
+}
+
+// Draw `text` wrapped at `cols` characters; returns the consumed height.
+fn draw_wrapped(r: ref ui_renderer, x: f64, y: f64, text: str, cols: i32, px: f64, color: u32, line_h: f64) f64 {
+    let start = 0
+    let run = 0
+    let yy = y
+    let n = text.len
+    for i in 0 to n {
+        if byte_at(text, i) == 10 {
+            ui_draw_text(r, x, yy, substr(text, start, i - start), px, color, FONT_MONO())
+            yy = yy + line_h
+            start = i + 1
+            run = 0
+        } else {
+            run = run + 1
+            if run > cols {
+                ui_draw_text(r, x, yy, substr(text, start, i - start), px, color, FONT_MONO())
+                yy = yy + line_h
+                start = i
+                run = 1
+            }
+        }
+    }
+    ui_draw_text(r, x, yy, substr(text, start, n - start), px, color, FONT_MONO())
+    return yy + line_h - y
+}
+
+// ---- selector popup ------------------------------------------------------------
+
+fn pop_count() i32 {
+    if g_pop_kind == 1 {
+        return perm_count()
+    }
+    return module_count()
+}
+
+fn pop_label(i: i32) str {
+    if g_pop_kind == 1 {
+        return perm_label(i)
+    }
+    return module_label(i)
+}
+
+// Resolve last frame's popup against this frame's click before anything else
+// draws: a click on an item selects it, any other click closes the popup, and
+// clicks on the selector buttons are consumed so they toggle instead of reopen.
+fn handle_popup_input(v: ref view) {
+    g_click_used = false
+    if g_pop_kind != 0 {
+        if v.mouse_pressed {
+            let count = pop_count() & 15
+            let ph = pop_count_f() * pop_item_h()
+            if hit(v, g_pop_x, g_pop_y, g_pop_w, ph) {
+                let idx = ((v.mouse_y - g_pop_y) / pop_item_h()) as i32
+                idx = clamp_i(idx, 0, count - 1)
+                if g_pop_kind == 1 {
+                    g_perm = idx
+                } else {
+                    g_module = idx
+                }
+                g_click_used = true
+            } else if hit(v, g_perm_btn_x, g_perm_btn_y, g_perm_btn_w, ctl_h()) {
+                g_click_used = true
+            } else if hit(v, g_module_btn_x, g_module_btn_y, g_module_btn_w, ctl_h()) {
+                g_click_used = true
+            }
+            g_pop_kind = 0
+        }
+    }
+}
+
+fn draw_popup(r: ref ui_renderer, v: ref view) {
+    let count = pop_count() & 15
+    let count_f = pop_count_f()
+    let wmax = 0.0
+    for i in 0 to count {
+        let tw = ui_text_width(r, pop_label(i), small_px(), FONT_MONO())
+        if tw > wmax {
+            wmax = tw
+        }
+    }
+    let pw = wmax + 44.0
+    let ph = count_f * pop_item_h() + 12.0
+    let px = g_perm_btn_x
+    if g_pop_kind == 2 {
+        px = g_module_btn_x
+    }
+    let py = g_perm_btn_y - ph - 8.0
+    g_pop_x = px
+    g_pop_y = py + 6.0
+    g_pop_w = pw
+    ui_fill_round_rect(r, px, py, pw, ph, 8.0, col_rail(), 0.0)
+    ui_stroke_round_rect(r, px, py, pw, ph, 8.0, 1.0, col_line(), 0.0)
+    for i in 0 to count {
+        let iy = py + 6.0 + (i as f64) * pop_item_h()
+        let selected = false
+        if g_pop_kind == 1 {
+            if i == g_perm {
+                selected = true
+            }
+        } else {
+            if i == g_module {
+                selected = true
+            }
+        }
+        if hit(v, px, iy, pw, pop_item_h()) {
+            ui_fill_rect(r, px + 4.0, iy, pw - 8.0, pop_item_h(), col_surface_hi(), 0.0)
+        }
+        let fg = col_text()
+        if selected {
+            fg = col_accent()
+            ui_fill_circle(r, px + 12.0, iy + pop_item_h() * 0.5, 3.0, col_accent(), 0.5)
+        }
+        ui_draw_text(r, px + 24.0, iy + 6.0, pop_label(i), small_px(), fg, FONT_MONO())
+    }
+}
+
+// ---- composer -------------------------------------------------------------------
+
+// One selector pill (label + down triangle). Stores its rect for hit tests and
+// the popup anchor, opens the popup on click, returns the next control x.
+fn draw_selector(r: ref ui_renderer, v: ref view, x: f64, y: f64, text: str, kind: i32) f64 {
+    let tw = ui_text_width(r, text, small_px(), FONT_MONO())
+    if tw <= 0.0 {
+        tw = (text.len as f64) * small_px() * 0.6
+    }
+    let bw = tw + 34.0
+    ui_fill_round_rect(r, x, y, bw, ctl_h(), 13.0, col_surface_hi(), 0.0)
+    ui_draw_text(r, x + 12.0, y + 6.0, text, small_px(), col_text(), FONT_MONO())
+    let t_x = x + bw - 16.0
+    let t_y = y + 11.0
+    ui_fill_triangle(r, t_x, t_y, t_x + 8.0, t_y, t_x + 4.0, t_y + 5.0, col_muted(), 0.0)
+    if kind == 1 {
+        g_perm_btn_x = x
+        g_perm_btn_y = y
+        g_perm_btn_w = bw
+    } else {
+        g_module_btn_x = x
+        g_module_btn_y = y
+        g_module_btn_w = bw
+    }
+    if v.mouse_pressed {
+        if g_click_used == false {
+            if hit(v, x, y, bw, ctl_h()) {
+                g_pop_kind = kind
+                g_click_used = true
+            }
+        }
+    }
+    return x + bw + 10.0
+}
+
+// The codex-style composer: rounded container with attachment chips, the
+// wrapped multi-line input (grows up to 6 lines), and a control row with the
+// attach button, permission/module selectors and the send/stop button.
+fn draw_composer(r: ref ui_renderer, v: ref view, char_w: f64, cols: i32, shown_f: f64, total_f: f64, chips_h: f64) {
+    let x = g_cmp_x
+    let y = g_cmp_y
+    let w = g_cmp_w
+    let h = g_cmp_h
+    let pad = 14.0
+
+    if v.mouse_pressed {
+        if g_click_used == false {
+            if hit(v, x, y, w, h) {
+                g_input_focus = true
+            }
+        }
+    }
+
+    ui_fill_round_rect(r, x, y, w, h, 10.0, col_surface(), 0.0)
+    let border = col_line()
+    if g_input_focus {
+        border = col_muted()
+    }
+    ui_stroke_round_rect(r, x, y, w, h, 10.0, 1.0, border, 0.0)
+
+    // attachment chips
+    if g_attach_count > 0 {
+        let cy = y + 10.0
+        let cx = x + pad
+        for i in 0 to g_attach_count {
+            let name = g_attach_name[i]
+            let tw = ui_text_width(r, name, small_px(), FONT_MONO())
+            if tw <= 0.0 {
+                tw = (name.len as f64) * small_px() * 0.6
+            }
+            let chip_w = tw + 34.0
+            ui_fill_round_rect(r, cx, cy, chip_w, 24.0, 12.0, col_surface_hi(), 0.0)
+            ui_draw_text(r, cx + 10.0, cy + 5.0, name, small_px(), col_text(), FONT_MONO())
+            let rx = cx + chip_w - 18.0
+            ui_stroke_line(r, rx, cy + 8.0, rx + 8.0, cy + 16.0, 1.0, col_muted(), 0.0)
+            ui_stroke_line(r, rx, cy + 16.0, rx + 8.0, cy + 8.0, 1.0, col_muted(), 0.0)
+            if v.mouse_pressed {
+                if g_click_used == false {
+                    if hit(v, rx - 4.0, cy + 4.0, 16.0, 16.0) {
+                        remove_attachment(i)
+                        g_click_used = true
+                    }
+                }
+            }
+            cx = cx + chip_w + 8.0
+        }
+    }
+
+    // multi-line input (the last `shown_f` visual lines stay visible)
+    let input_x = x + pad
+    let input_y = y + 10.0 + chips_h
+    let input_h = shown_f * input_line_h()
+    ui_push_clip(r, input_x, input_y, w - pad * 2.0, input_h)
+    if g_input_text == "" {
+        ui_draw_text(r, input_x, input_y + 2.0, "Describe a task for the agent", font_px(), col_muted(), FONT_MONO())
+    } else {
+        let skip_h = (total_f - shown_f) * input_line_h()
+        draw_wrapped(r, input_x, input_y + 2.0 - skip_h, g_input_text, cols, font_px(), col_text(), input_line_h())
+    }
+    if g_input_focus {
+        let blink = ((os_time() * 2.0) as i32) % 2
+        if blink == 0 {
+            let caret_x = input_x + wrap_caret_f(g_input_text, cols) * char_w
+            let caret_y = input_y + (shown_f - 1.0) * input_line_h()
+            ui_fill_rect(r, caret_x + 1.0, caret_y, 2.0, input_line_h() - 2.0, col_editor_cursor(), 0.0)
+        }
+    }
+    ui_pop_clip(r)
+
+    // control row: attach, permission level, module, send/stop
+    let ctl_y = y + h - 33.0
+    let bx = x + pad - 2.0
+    g_attach_btn_x = bx
+    g_attach_btn_y = ctl_y
+    ui_fill_round_rect(r, bx, ctl_y, ctl_h(), ctl_h(), 13.0, col_surface_hi(), 0.0)
+    let pcx = bx + ctl_h() * 0.5
+    let pcy = ctl_y + ctl_h() * 0.5
+    ui_fill_rect(r, pcx - 5.0, pcy - 1.0, 10.0, 2.0, col_text(), 0.0)
+    ui_fill_rect(r, pcx - 1.0, pcy - 5.0, 2.0, 10.0, col_text(), 0.0)
+    if v.mouse_pressed {
+        if g_click_used == false {
+            if hit(v, bx, ctl_y, ctl_h(), ctl_h()) {
+                add_attachment()
+                g_click_used = true
+            }
+        }
+    }
+    bx = bx + ctl_h() + 10.0
+    bx = draw_selector(r, v, bx, ctl_y, perm_label(g_perm), 1)
+    bx = draw_selector(r, v, bx, ctl_y, module_label(g_module), 2)
+
+    let sx = x + w - pad - send_d() + 2.0
+    let sy = ctl_y - 2.0
+    g_send_btn_x = sx
+    g_send_btn_y = sy
+    if g_running {
+        ui_fill_round_rect(r, sx, sy, send_d(), send_d(), send_d() * 0.5, col_red(), 0.0)
+        ui_fill_rect(r, sx + 10.0, sy + 10.0, 10.0, 10.0, col_bg(), 0.0)
+    } else {
+        let can_send = false
+        if g_input_text != "" {
+            can_send = true
+        }
+        if g_attach_count > 0 {
+            can_send = true
+        }
+        let sbg = col_surface_hi()
+        let sfg = col_muted()
+        if can_send {
+            sbg = col_accent()
+            sfg = col_bg()
+        }
+        ui_fill_round_rect(r, sx, sy, send_d(), send_d(), send_d() * 0.5, sbg, 0.0)
+        ui_fill_triangle(r, sx + 15.0, sy + 8.0, sx + 8.0, sy + 19.0, sx + 22.0, sy + 19.0, sfg, 0.0)
+    }
+    if v.mouse_pressed {
+        if g_click_used == false {
+            if hit(v, sx, sy, send_d(), send_d()) {
+                g_click_used = true
+                if g_running {
+                    session_terminate()
+                } else {
+                    composer_send()
+                }
+            }
+        }
+    }
+}
+
+// ---- conversation pane ------------------------------------------------------------
+
+// Codex-style agent view: the transcript flows down a centered column and the
+// composer stays pinned at the bottom center of the pane.
+fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    let header_h = 52.0
+    let col_w = w - 48.0
+    if col_w > 760.0 {
+        col_w = 760.0
+    }
+    if col_w < 120.0 {
+        col_w = w - 16.0
+    }
+    let col_x = x + (w - col_w) * 0.5
+
+    let char_w = ui_mono_char_width(r, font_px(), FONT_MONO())
+    if char_w <= 0.0 {
+        char_w = font_px() * 0.6
+    }
+
+    // composer geometry first: the input grows with its wrapped line count
+    let pad = 14.0
+    let cols = ((col_w - pad * 2.0) / char_w) as i32
+    if cols < 8 {
+        cols = 8
+    }
+    let total_f = wrap_lines_f(g_input_text, cols)
+    let shown_f = total_f
+    if shown_f > 6.0 {
+        shown_f = 6.0
+    }
+    let chips_h = 0.0
+    if g_attach_count > 0 {
+        chips_h = 32.0
+    }
+    let hint_h = 24.0
+    let cmp_h = 12.0 + chips_h + shown_f * input_line_h() + 6.0 + 40.0
+    g_cmp_x = col_x
+    g_cmp_y = y + h - hint_h - cmp_h
+    g_cmp_w = col_w
+    g_cmp_h = cmp_h
 
     ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
-    draw_text_clipped(r, x + 24.0, y + 17.0, w - 190.0, 24.0, "Agent Dialog", title_px(), col_text())
-    draw_pill(r, x + w - 152.0, y + 17.0, "planning", col_surface(), col_accent())
+    draw_text_clipped(r, x + 24.0, y + 15.0, w - 190.0, 24.0, "Agent Session", title_px(), col_text())
+    if g_running {
+        draw_pill(r, x + w - 118.0, y + 14.0, "running", col_surface(), col_yellow())
+    } else {
+        draw_pill(r, x + w - 118.0, y + 14.0, "ready", col_surface(), col_accent())
+    }
     draw_rule(r, x, y + header_h, w)
 
-    ui_push_clip(r, x, body_y, w, body_h)
-    let yy = body_y + 22.0 - g_dialog_scroll
-    ui_fill_round_rect(r, x + 24.0, yy, w - 48.0, 92.0, 4.0, col_surface(), 0.0)
-    draw_label(r, x + 42.0, yy + 16.0, "USER")
-    draw_text_clipped(r, x + 42.0, yy + 40.0, w - 84.0, 20.0, "Keep low-level UI in C.", font_px(), col_text())
-    draw_text_clipped(r, x + 42.0, yy + 64.0, w - 84.0, 20.0, "Move editor and app behavior into nscode/native.", font_px(), col_text())
-
-    let agent_y = yy + 124.0
-    ui_fill_round_rect(r, x + 24.0, agent_y, w - 48.0, 312.0, 4.0, col_surface(), 0.0)
-    draw_label(r, x + 42.0, agent_y + 16.0, "AGENT")
-    draw_text_clipped(r, x + 42.0, agent_y + 40.0, w - 84.0, 20.0, "Working plan", font_px(), col_text())
-    draw_text_clipped(r, x + 42.0, agent_y + 64.0, w - 84.0, 16.0, "Nano Script owns frame callbacks, layout, and editor state.", small_px(), col_muted())
-    draw_step(r, x + 42.0, agent_y + 98.0, "scan", "Separate kernel and app", "ui.c now contains renderer primitives only.", true)
-    draw_step(r, x + 42.0, agent_y + 152.0, "edit", "Install NS callbacks", "main.ns creates the renderer and calls render_frame.", true)
-    draw_step(r, x + 42.0, agent_y + 206.0, "port", "Move shell rendering", "render.ns owns chat, code view, mode switch, and scroll state.", true)
-    draw_step(r, x + 42.0, agent_y + 260.0, "check", "Build and visually review", "Runtime appearance should be checked in the running app.", false)
-    ui_pop_clip(r)
-}
-
-fn draw_diff_line(r: ref ui_renderer, x: f64, y: f64, w: f64, no: str, text: str, bg: u32, fg: u32, paint_bg: bool) {
-    if paint_bg {
-        ui_fill_rect(r, x, y, w, 22.0, bg, 0.0)
-    }
-    draw_text_clipped(r, x + 12.0, y + 5.0, 38.0, 16.0, no, small_px(), col_muted())
-    draw_text_clipped(r, x + 58.0, y + 5.0, w - 68.0, 16.0, text, small_px(), fg)
-}
-
-fn draw_diff(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let header_h = 58.0
+    // transcript
     let body_y = y + header_h
-    let body_h = h - header_h
-    let content_h = 220.0
-    let max_scroll = scroll_max(content_h, body_h)
+    let body_h = g_cmp_y - body_y - 10.0
+    let max_scroll = scroll_max(g_dialog_content_h, body_h)
     if hit(v, x, body_y, w, body_h) {
-        g_diff_scroll = clamp(g_diff_scroll - v.scroll_y, 0.0, max_scroll)
+        g_dialog_scroll = clamp(g_dialog_scroll - v.scroll_y, 0.0, max_scroll)
+        if v.mouse_pressed {
+            if g_click_used == false {
+                g_input_focus = false
+            }
+        }
     }
 
-    ui_fill_rect(r, x, y, w, h, col_surface(), 0.0)
-    ui_fill_rect(r, x, y, 1.0, h, col_line(), 0.0)
-    draw_text_clipped(r, x + 18.0, y + 17.0, w - 178.0, 24.0, "Review Preview", title_px(), col_text())
-    draw_pill(r, x + w - 148.0, y + 17.0, "ns render", col_bg(), col_accent())
-    draw_rule(r, x, y + header_h, w)
-
+    let msg_cols = cols
     ui_push_clip(r, x, body_y, w, body_h)
-    let dy = body_y + 18.0 - g_diff_scroll
-    draw_diff_line(r, x, dy, w, "1", "diff --git a/nscode/native/main.ns b/nscode/native/main.ns", col_bg(), col_blue(), false)
-    draw_diff_line(r, x, dy + 22.0, w, "2", "@@ -44,7 +44,13 @@", col_hunk_bg(), col_blue(), true)
-    draw_diff_line(r, x, dy + 44.0, w, "3", "-        start_native_bridge(v)", col_red_bg(), col_red(), true)
-    draw_diff_line(r, x, dy + 66.0, w, "4", "+        let r = ui_renderer_create(v)", col_green_bg(), col_accent(), true)
-    draw_diff_line(r, x, dy + 88.0, w, "5", "+        v.on_frame({ frame_view in", col_green_bg(), col_accent(), true)
-    draw_diff_line(r, x, dy + 110.0, w, "6", "+            render_frame(r, frame_view)", col_green_bg(), col_accent(), true)
-    draw_diff_line(r, x, dy + 132.0, w, "7", "App behavior is Nano Script-owned under nscode/native.", col_bg(), col_muted(), false)
+    let yy = body_y + 16.0 - g_dialog_scroll
+    for i in 0 to g_msg_count {
+        let role = g_msg_role[i] as i32
+        let text = g_msg_text[i]
+        if role == ROLE_USER() {
+            let bh = wrap_lines_f(text, msg_cols) * input_line_h() + 40.0
+            ui_fill_round_rect(r, col_x, yy, col_w, bh, 8.0, col_surface(), 0.0)
+            draw_label(r, col_x + pad, yy + 12.0, "YOU")
+            draw_wrapped(r, col_x + pad, yy + 32.0, text, msg_cols, font_px(), col_text(), input_line_h())
+            yy = yy + bh + 14.0
+        } else if role == ROLE_AGENT() {
+            ui_fill_circle(r, col_x + 5.0, yy + 11.0, 4.0, col_accent(), 0.5)
+            draw_label(r, col_x + 18.0, yy + 4.0, "NSCODE")
+            let th = draw_wrapped(r, col_x + 18.0, yy + 26.0, text, msg_cols, font_px(), col_text(), input_line_h())
+            yy = yy + th + 40.0
+        } else {
+            draw_centered_text(r, col_x, yy, col_w, 18.0, text, small_px(), col_muted())
+            yy = yy + 30.0
+        }
+    }
+    if g_running {
+        ui_fill_circle(r, col_x + 5.0, yy + 11.0, 4.0, col_yellow(), 0.5)
+        let dots = (((os_time() * 3.0) as i32) % 3) + 1
+        let label = "working"
+        for d in 0 to dots {
+            label = label + "."
+        }
+        draw_text_clipped(r, col_x + 18.0, yy + 4.0, 200.0, 16.0, label, small_px(), col_yellow())
+        yy = yy + 30.0
+    }
     ui_pop_clip(r)
+    g_dialog_content_h = yy + g_dialog_scroll - body_y + 12.0
+    if g_dialog_follow {
+        g_dialog_follow = false
+        g_dialog_scroll = scroll_max(g_dialog_content_h, body_h)
+    }
+
+    draw_composer(r, v, char_w, cols, shown_f, total_f, chips_h)
+    draw_centered_text(r, col_x, g_cmp_y + cmp_h + 2.0, col_w, hint_h - 4.0, "enter to send / shift+enter for newline / esc to stop", small_px(), col_muted())
+    if g_pop_kind != 0 {
+        draw_popup(r, v)
+    }
 }
 
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
@@ -786,43 +1383,43 @@ fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     draw_status_bar(r, 0.0, h - status_h, w)
 }
 
+fn history_width(w: f64) f64 {
+    if w < 740.0 {
+        return 180.0
+    }
+    if w < 980.0 {
+        return 214.0
+    }
+    return 276.0
+}
+
 fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let title_h = 38.0
     let status_h = 28.0
     let app_y = title_h
     let app_h = h - title_h - status_h
-    let history_w = 276.0
-    let diff_w = 430.0
-    if w < 980.0 {
-        history_w = 214.0
-        diff_w = 330.0
-    }
-    if w < 740.0 {
-        history_w = 180.0
-        diff_w = 0.0
-    }
-    let dialog_x = history_w
-    let dialog_w = w - history_w - diff_w
-    if dialog_w < 1.0 {
-        dialog_w = 1.0
-    }
-    let diff_x = history_w + dialog_w
+    let history_w = history_width(w)
+
+    seed_conversation()
+    update_session()
+    handle_popup_input(v)
+    process_composer_keys(v)
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
     draw_title_bar(r, v, 0.0, 0.0, w, title_h)
     draw_history(r, v, 0.0, app_y, history_w, app_h)
-    draw_dialog(r, v, dialog_x, app_y, dialog_w, app_h)
-    if diff_w > 0.0 {
-        draw_diff(r, v, diff_x, app_y, diff_w, app_h)
-    }
+    draw_conversation(r, v, history_w, app_y, w - history_w, app_h)
     draw_status_bar(r, 0.0, h - status_h, w)
 }
 
 fn render_frame(r: ref ui_renderer, v: ref view) {
     update_fps()
     ui_resize(r)
-    let w = ui_canvas_width(r) as f64
-    let h = ui_canvas_height(r) as f64
+    // ref-fn i32 returns can carry garbage upper bits (same class of quirk as
+    // the masked byte reads in editor.ns), which poisons f64 arithmetic on the
+    // cast value; mask to a sane canvas range first.
+    let w = (ui_canvas_width(r) & 1048575) as f64
+    let h = (ui_canvas_height(r) & 1048575) as f64
     if g_mode == MODE_CODE() {
         render_code(r, v, w, h)
     } else {

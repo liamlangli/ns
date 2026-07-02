@@ -173,6 +173,90 @@ fn main() {
     view_on_key_action(v, 341, 1)
     check("ctrl+a selects all", selected_text() == g_doc)
 
+    // ---- agent mode: codex-style composer ----------------------------------
+    // Sessions would otherwise auto-complete after g_reply_delay seconds; park
+    // the delay far away so the send/terminate checks are deterministic.
+    g_reply_delay = 3600.0
+    reset_clicks()
+    click(r, v, 960.0, 20.0)
+    check("agent button returns to agent mode", g_mode == 1)
+    frame(r, v)
+    check("conversation is seeded", g_msg_count == 2)
+    check("composer rect is measured", g_cmp_w > 0.0)
+
+    // Clicking the transcript blurs the input, clicking the composer focuses.
+    reset_clicks()
+    click(r, v, g_cmp_x + 20.0, 200.0)
+    check("transcript click blurs input", g_input_focus == false)
+    click(r, v, g_cmp_x + g_cmp_w * 0.5, g_cmp_y + 14.0)
+    check("composer click focuses input", g_input_focus == true)
+
+    // Typing goes to the composer; shift+enter wraps instead of sending.
+    tap(r, v, 72)
+    tap(r, v, 73)
+    check_s("typing fills composer", g_input_text, "hi")
+    view_on_key_action(v, 340, 0)
+    tap(r, v, 257)
+    view_on_key_action(v, 340, 1)
+    check("shift+enter does not send", g_msg_count == 2)
+    tap(r, v, 79)
+    tap(r, v, 75)
+    check_s("shift+enter makes multiline input", g_input_text, unescape("hi\nok"))
+
+    // Enter sends: user message appended, input cleared, session running.
+    tap(r, v, 257)
+    check("enter sends the message", g_msg_count == 3)
+    check_s("send clears the input", g_input_text, "")
+    check("send starts the session", g_running == true)
+    check_s("user message is stored", g_msg_text[2], unescape("hi\nok"))
+
+    // Escape terminates the running session and posts an event line.
+    tap(r, v, 256)
+    check("esc terminates the session", g_running == false)
+    check("terminate posts an event", g_msg_count == 4)
+
+    // The attach button adds a chip; the chip close cross removes it.
+    reset_clicks()
+    click(r, v, g_attach_btn_x + 13.0, g_attach_btn_y + 13.0)
+    check("attach button adds a chip", g_attach_count == 1)
+    check_s("attachment takes the pool name", g_attach_name[0], "main.ns")
+    let chip_w = ui_text_width(r, "main.ns", 12.0, 1) + 34.0
+    click(r, v, g_cmp_x + 14.0 + chip_w - 14.0, g_cmp_y + 22.0)
+    check("chip cross removes the attachment", g_attach_count == 0)
+
+    // Permission selector: click opens the popup, item click selects.
+    reset_clicks()
+    click(r, v, g_perm_btn_x + 10.0, g_perm_btn_y + 10.0)
+    check("perm button opens popup", g_pop_kind == 1)
+    click(r, v, g_pop_x + 20.0, g_pop_y + pop_item_h() * 2.0 + 13.0)
+    check("popup selects full access", g_perm == 2)
+    check("popup closes after selecting", g_pop_kind == 0)
+
+    // Module selector works the same way.
+    click(r, v, g_module_btn_x + 10.0, g_module_btn_y + 10.0)
+    check("module button opens popup", g_pop_kind == 2)
+    click(r, v, g_pop_x + 20.0, g_pop_y + pop_item_h() + 13.0)
+    check("popup selects module", g_module == 1)
+
+    // Send button posts attachments alone; while running it becomes stop.
+    click(r, v, g_attach_btn_x + 13.0, g_attach_btn_y + 13.0)
+    check("second attachment lands", g_attach_count == 1)
+    click(r, v, g_send_btn_x + 15.0, g_send_btn_y + 15.0)
+    check("send button posts the message", g_msg_count == 5)
+    check("send button starts the session", g_running == true)
+    check("send clears attachments", g_attach_count == 0)
+    click(r, v, g_send_btn_x + 15.0, g_send_btn_y + 15.0)
+    check("stop button terminates the session", g_running == false)
+    check("stop posts an event", g_msg_count == 6)
+
+    // With no delay the simulated agent reply lands on the next frame.
+    g_reply_delay = 0.0
+    tap(r, v, 88)
+    tap(r, v, 257)
+    frame(r, v)
+    check("agent reply lands", g_msg_count == 8)
+    check("session returns to ready", g_running == false)
+
     if g_fail == 0 {
         print("frame_test: all passed" + unescape("\n"))
     } else {

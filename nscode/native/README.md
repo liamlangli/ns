@@ -2,8 +2,9 @@
 
 A native NSCode shell written in Nano Script and rendered through the `ui`
 module of the standard library (`lib/ui.ns`). The current runtime view is an
-agentic coding app layout: chat history on the left, an agent dialog/timeline in
-the center, and a local Git diff review pane on the right.
+agentic coding app layout in the codex style: chat history on the left and a
+centered conversation column with a composer pinned at the bottom center of
+the screen.
 
 The `ui` renderer is bound to the view's GPU device, whose backend is selected
 automatically per platform (see `lib/include/gpu.h`): **Metal on Apple, DirectX
@@ -62,18 +63,38 @@ drags the window instead, and the traffic-light buttons keep their meaning.
 - `lib/src/ui.c` - low-level UI kernel only: renderer lifecycle, clipping,
   shapes, text measurement, and text drawing primitives.
 
-## Git diff pane
+## Agent view (Agent mode)
 
-The right pane is currently a Nano Script-rendered review preview. There is no
-general shell/process API exposed to Nano Script yet, so it does not run
-`git diff` directly.
+The agent view mirrors the codex UI: the transcript flows down a centered
+column (user messages in bubbles, agent replies as plain rows, session events
+as centered lines) and a multi-line composer stays pinned at the bottom center
+of the pane:
+
+- **Multi-line input** - printable keys append, Backspace deletes,
+  Cmd/Ctrl+V pastes, Shift+Enter inserts a newline and the box grows up to six
+  wrapped lines; Enter (or the round send button) posts the message.
+- **Attachments** - the `+` button adds a file chip above the input (sampled
+  from the workspace until a file picker API exists); each chip carries a
+  close cross to remove it.
+- **Permission level** - a selector pill (Read Only / Auto / Full Access)
+  that opens an upward popup menu.
+- **Module** - a second selector pill choosing the workspace module the
+  session targets (nscode/native, nscode/cli, nscode/web, lib/ui).
+- **Send / terminate** - the round accent button sends; while a session is
+  running it turns into a red stop button, and Escape also interrupts. The
+  transcript shows an animated `working...` row while the session runs.
+
+Clicking the composer focuses it (typing goes to the input); clicking the
+transcript blurs it. The transcript auto-scrolls to follow new messages and
+the wheel scrolls the history.
 
 ## Status / known limitations
 
-- The agent conversation and timeline are seeded/static. There is no real LLM
-  chat backend or prompt entry yet.
-- The review preview is static until Nano Script gets a narrow process or Git
-  API.
+- The conversation backend is simulated: a running session posts a canned
+  agent reply after a short delay (`g_reply_delay`). There is no real LLM
+  chat backend yet.
+- Attachments name workspace files; there is no OS file picker API surfaced
+  to Nano Script yet.
 - Typing assumes a US keyboard layout (keys are polled as VIEW_KEY_* codes;
   there is no OS text-input/IME event surfaced to ns yet), and key repeat is
   not synthesized while a key is held.
