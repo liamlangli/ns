@@ -70,7 +70,10 @@ else ifeq ($(NS_OS), $(NS_DARWIN))
 # Frameworks required by language runtime callbacks and native dylib modules.
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -framework Cocoa -framework Metal -framework MetalKit
 else
-NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
+# -rdynamic exports bin/ns symbols to FFI-loaded modules (bin/*.so reference
+# runtime helpers like _ns_malloc; macOS resolves these against the host
+# executable automatically, Linux only with an exported dynamic symbol table).
+NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -rdynamic
 endif
 
 NS_DEBUG_CFLAGS = -g -O0 $(NS_WARN_CFLAGS) -DNS_DEBUG

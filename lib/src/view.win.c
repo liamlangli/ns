@@ -21,6 +21,13 @@ static HINSTANCE _hinstance;
 static ns_bool _quit;
 static ns_bool _no_title;
 
+// Pending title-strip press: a clean click (no movement) is forwarded to the
+// app so widgets drawn in the title strip stay clickable; movement past a
+// small threshold hands the gesture to the system window drag instead.
+static ns_bool _title_click_pending;
+static i32 _title_click_x;
+static i32 _title_click_y;
+
 // Win32 virtual-key -> VIEW_KEY_* mapping (parallels view_osx_key_map).
 static i32 view_win_key_map(i32 vk) {
     if (vk >= 'A' && vk <= 'Z') return VIEW_KEY_A + (vk - 'A');
@@ -45,6 +52,17 @@ static i32 view_win_key_map(i32 vk) {
         case VK_LCONTROL: case VK_CONTROL: return VIEW_KEY_LEFT_CONTROL;
         case VK_LMENU: case VK_MENU: return VIEW_KEY_LEFT_ALT;
         case VK_LWIN: return VIEW_KEY_LEFT_SUPER;
+        case VK_OEM_1: return VIEW_KEY_SEMICOLON;
+        case VK_OEM_PLUS: return VIEW_KEY_EQUAL;
+        case VK_OEM_COMMA: return VIEW_KEY_COMMA;
+        case VK_OEM_MINUS: return VIEW_KEY_MINUS;
+        case VK_OEM_PERIOD: return VIEW_KEY_PERIOD;
+        case VK_OEM_2: return VIEW_KEY_SLASH;
+        case VK_OEM_3: return VIEW_KEY_GRAVE_ACCENT;
+        case VK_OEM_4: return VIEW_KEY_LEFT_BRACKET;
+        case VK_OEM_5: return VIEW_KEY_BACKSLASH;
+        case VK_OEM_6: return VIEW_KEY_RIGHT_BRACKET;
+        case VK_OEM_7: return VIEW_KEY_APOSTROPHE;
         default: return -1;
     }
 }
@@ -86,22 +104,43 @@ static ns_bool view_win_handle_no_title_mouse_down(HWND hwnd, LPARAM lparam) {
         return true;
     }
 
-    ReleaseCapture();
-    SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+    _title_click_pending = true;
+    _title_click_x = x;
+    _title_click_y = y;
+    SetCapture(hwnd);
     return true;
 }
 
 static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
-        case WM_MOUSEMOVE:
-            view_on_mouse_move(&_view, (f64)GET_X_LPARAM(lparam), (f64)GET_Y_LPARAM(lparam));
+        case WM_MOUSEMOVE: {
+            const i32 x = (i32)GET_X_LPARAM(lparam);
+            const i32 y = (i32)GET_Y_LPARAM(lparam);
+            view_on_mouse_move(&_view, (f64)x, (f64)y);
+            if (_title_click_pending) {
+                const i32 dx = x - _title_click_x;
+                const i32 dy = y - _title_click_y;
+                if (dx * dx + dy * dy > 9) {
+                    _title_click_pending = false;
+                    ReleaseCapture();
+                    SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                }
+            }
             return 0;
+        }
         case WM_LBUTTONDOWN:
             view_on_mouse_move(&_view, (f64)GET_X_LPARAM(lparam), (f64)GET_Y_LPARAM(lparam));
             if (view_win_handle_no_title_mouse_down(hwnd, lparam)) return 0;
             view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
             return 0;
         case WM_LBUTTONUP:
+            if (_title_click_pending) {
+                // The press never crossed the drag threshold: deliver it to the
+                // app as a click on the title strip.
+                _title_click_pending = false;
+                ReleaseCapture();
+                view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
+            }
             view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
             return 0;
         case WM_RBUTTONDOWN:

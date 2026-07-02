@@ -22,6 +22,15 @@ let g_last_frame_time = 0.0
 let g_fps = 0.0
 let g_fps_i = 0
 
+// Code view input state: mouse drag selection, click streak (double/triple
+// click) and the previous frame's key levels for edge detection.
+let g_code_drag = false
+let g_last_click_time = 0.0
+let g_last_click_line = -1
+let g_click_streak = 0
+let g_key_prev = [u8](512)
+let g_caret_follow = false
+
 fn font_px() f64 { return 14.0 }
 fn small_px() f64 { return 12.0 }
 fn title_px() f64 { return 18.0 }
@@ -50,6 +59,41 @@ fn col_editor_panel() u32 { return ui_pack_color("#171a22") }
 fn col_editor_panel_hi() u32 { return ui_pack_color("#202633") }
 fn col_editor_gutter() u32 { return ui_pack_color("#222733") }
 fn col_editor_cursor() u32 { return ui_pack_color("#f4d35e") }
+fn col_editor_sel() u32 { return ui_pack_color("#2b4a6f") }
+
+// Syntax palette for the code view, keyed by the editor token kinds.
+fn col_syn_keyword() u32 { return ui_pack_color("#c678dd") }
+fn col_syn_type() u32 { return ui_pack_color("#56b6c2") }
+fn col_syn_number() u32 { return ui_pack_color("#d19a66") }
+fn col_syn_string() u32 { return ui_pack_color("#98c379") }
+fn col_syn_comment() u32 { return ui_pack_color("#5f6b7a") }
+fn col_syn_punct() u32 { return ui_pack_color("#9aa5b1") }
+fn col_syn_call() u32 { return ui_pack_color("#7aa8ff") }
+
+fn token_color(kind: i32) u32 {
+    if kind == TK_KEYWORD() {
+        return col_syn_keyword()
+    }
+    if kind == TK_TYPE() {
+        return col_syn_type()
+    }
+    if kind == TK_NUMBER() {
+        return col_syn_number()
+    }
+    if kind == TK_STRING() {
+        return col_syn_string()
+    }
+    if kind == TK_COMMENT() {
+        return col_syn_comment()
+    }
+    if kind == TK_PUNCT() {
+        return col_syn_punct()
+    }
+    if kind == TK_CALL() {
+        return col_syn_call()
+    }
+    return col_text()
+}
 
 fn clear_color() ui_color_rgba {
     return ui_color_rgba { r: 0.071, g: 0.078, b: 0.090, a: 1.0 }
@@ -428,16 +472,221 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     }
 }
 
+// ---- code view input -------------------------------------------------------
+
+fn shift_down(v: ref view) bool {
+    if view_is_key_pressed(v, 340) {
+        return true
+    }
+    if view_is_key_pressed(v, 344) {
+        return true
+    }
+    return false
+}
+
+// Control or Command (super), so shortcuts work on both Windows and macOS.
+fn cmd_down(v: ref view) bool {
+    if view_is_key_pressed(v, 341) {
+        return true
+    }
+    if view_is_key_pressed(v, 345) {
+        return true
+    }
+    if view_is_key_pressed(v, 343) {
+        return true
+    }
+    if view_is_key_pressed(v, 347) {
+        return true
+    }
+    return false
+}
+
+// True only on the frame key `k` transitions to pressed.
+fn key_edge(v: ref view, k: i32) bool {
+    let was = (g_key_prev[k] as i32) & 255
+    if view_is_key_pressed(v, k) {
+        g_key_prev[k] = 1 as u8
+        if was == 0 {
+            return true
+        }
+        return false
+    }
+    g_key_prev[k] = 0 as u8
+    return false
+}
+
+// Poll keyboard state and apply edits/navigation to the document. Marks the
+// caret to be scrolled into view when anything happened.
+fn process_code_keys(v: ref view) {
+    set_shift(shift_down(v))
+    let cmd = cmd_down(v)
+
+    // Structural and navigation keys: enter(257), backspace(259), delete(261),
+    // arrows/home/end/page (262..269). Tab(258) and insert(260) are skipped.
+    for k in 257 to 270 {
+        if k != 258 {
+            if k != 260 {
+                if key_edge(v, k) {
+                    if cmd == false {
+                        process_view_key(k)
+                        g_caret_follow = true
+                    }
+                }
+            }
+        }
+    }
+
+    if key_edge(v, 258) {
+        if cmd == false {
+            insert_str("    ")
+            g_caret_follow = true
+        }
+    }
+
+    if cmd {
+        if key_edge(v, 65) {
+            select_all()
+        }
+        if key_edge(v, 67) {
+            if has_selection() {
+                view_set_clipboard(v, selected_text())
+            }
+        }
+        if key_edge(v, 88) {
+            if has_selection() {
+                view_set_clipboard(v, selected_text())
+                delete_selection()
+                g_caret_follow = true
+            }
+        }
+        if key_edge(v, 86) {
+            let clip = view_get_clipboard(v)
+            if clip != "" {
+                insert_str(clip)
+                g_caret_follow = true
+            }
+        }
+    } else {
+        // Printable keys: space, punctuation, digits and letters (32..96).
+        let shifted = g_shift
+        for k in 32 to 97 {
+            if key_edge(v, k) {
+                let c = key_char(k, shifted)
+                if c != "" {
+                    insert_str(c)
+                    g_caret_follow = true
+                }
+            }
+        }
+    }
+}
+
+fn mouse_line(v: ref view, body_y: f64, line_h: f64) i32 {
+    let fy = (v.mouse_y - body_y - 18.0 + g_code_scroll) / line_h
+    if fy < 0.0 {
+        return 0
+    }
+    return fy as i32
+}
+
+fn mouse_col(v: ref view, text_x: f64, char_w: f64) i32 {
+    let fx = (v.mouse_x - text_x) / char_w + 0.5
+    if fx < 0.0 {
+        return 0
+    }
+    return fx as i32
+}
+
+// Click places the caret, drag extends the selection, double click selects the
+// word and triple click the whole line.
+fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, text_x: f64, line_h: f64, char_w: f64) {
+    if v.mouse_pressed {
+        if hit(v, x, body_y, w, body_h) {
+            let li = mouse_line(v, body_y, line_h)
+            let col = mouse_col(v, text_x, char_w)
+            let now = os_time()
+            let streak = 1
+            if (now - g_last_click_time) < 0.45 {
+                if li == g_last_click_line {
+                    streak = g_click_streak + 1
+                }
+            }
+            g_click_streak = streak
+            g_last_click_time = now
+            g_last_click_line = li
+            if streak >= 3 {
+                select_line(li)
+                g_code_drag = false
+            } else if streak == 2 {
+                select_word_at(li, col)
+                g_code_drag = false
+            } else {
+                place_cursor(li, col, shift_down(v))
+                g_code_drag = true
+            }
+        }
+    }
+    if g_code_drag {
+        if v.mouse_down {
+            place_cursor(mouse_line(v, body_y, line_h), mouse_col(v, text_x, char_w), true)
+        }
+    }
+    if v.mouse_released {
+        g_code_drag = false
+    }
+}
+
+// Adjust g_code_scroll so the caret line is visible inside the body.
+fn follow_caret(body_h: f64, line_h: f64, max_scroll: f64) {
+    let top = (cur_line() as f64) * line_h
+    let bot = top + line_h + 26.0
+    if top < g_code_scroll {
+        g_code_scroll = top
+    }
+    if bot > (g_code_scroll + body_h) {
+        g_code_scroll = bot - body_h
+    }
+    g_code_scroll = clamp(g_code_scroll, 0.0, max_scroll)
+}
+
+// One syntax-highlighted document line at the mono grid position (text_x, row_y).
+fn draw_code_line(r: ref ui_renderer, li: i32, text_x: f64, row_y: f64, char_w: f64) {
+    let n = tokenize_line(li)
+    for t in 0 to n {
+        let tx = text_x + (token_start(t) as f64) * char_w
+        ui_draw_text(r, tx, row_y, token_text(t), font_px(), token_color(token_kind(t)), FONT_MONO())
+    }
+}
+
 fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let tab_h = 42.0
     let line_h = 24.0
     let body_y = y + tab_h
     let body_h = h - tab_h
     let gutter_w = 72.0
-    let max_scroll = scroll_max(14.0 * line_h, body_h)
+    let total = line_count()
+    let content_h = (total as f64) * line_h + 40.0
+    let max_scroll = scroll_max(content_h, body_h)
     if hit(v, x, body_y, w, body_h) {
         g_code_scroll = clamp(g_code_scroll - v.scroll_y, 0.0, max_scroll)
     }
+
+    let char_w = ui_mono_char_width(r, font_px(), FONT_MONO())
+    if char_w <= 0.0 {
+        char_w = font_px() * 0.6
+    }
+    let text_x = x + gutter_w + 16.0
+
+    process_code_mouse(v, x, body_y, w, body_h, text_x, line_h, char_w)
+    process_code_keys(v)
+    total = line_count()
+    content_h = (total as f64) * line_h + 40.0
+    max_scroll = scroll_max(content_h, body_h)
+    if g_caret_follow {
+        g_caret_follow = false
+        follow_caret(body_h, line_h, max_scroll)
+    }
+    g_code_scroll = clamp(g_code_scroll, 0.0, max_scroll)
 
     ui_fill_rect(r, x, y, w, h, col_editor_bg(), 0.0)
     ui_fill_rect(r, x, y, w, tab_h, col_editor_panel(), 0.0)
@@ -448,7 +697,6 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     ui_fill_rect(r, x, body_y, gutter_w, body_h, col_editor_gutter(), 0.0)
     ui_fill_rect(r, x + gutter_w - 1.0, body_y, 1.0, body_h, col_line(), 0.0)
     ui_push_clip(r, x, body_y, w, body_h)
-    let total = line_count()
     for i in 0 to total {
         let row_y = body_y + 22.0 + (i as f64) * line_h - g_code_scroll
         if row_y + line_h >= body_y {
@@ -456,12 +704,25 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
                 if i == cur_line() {
                     ui_fill_rect(r, x + gutter_w, row_y - 4.0, w - gutter_w, line_h, col_editor_panel(), 0.0)
                 }
-                draw_text_clipped(r, x + 20.0, row_y, 34.0, 18.0, itos(i + 1), small_px(), col_muted())
-                draw_text_clipped(r, x + gutter_w + 16.0, row_y, w - gutter_w - 24.0, 18.0, line_text(i), font_px(), col_text())
+                let sb = line_sel_begin(i)
+                if sb >= 0 {
+                    let se = line_sel_end(i)
+                    let sel_x = text_x + (sb as f64) * char_w
+                    let sel_w = ((se - sb) as f64) * char_w
+                    ui_fill_rect(r, sel_x, row_y - 4.0, sel_w, line_h, col_editor_sel(), 0.0)
+                }
+                let num_color = col_muted()
+                if i == cur_line() {
+                    num_color = col_text()
+                }
+                draw_text_clipped(r, x + 20.0, row_y, 34.0, 18.0, itos(i + 1), small_px(), num_color)
+                ui_push_clip(r, text_x, body_y, w - gutter_w - 24.0, body_h)
+                draw_code_line(r, i, text_x, row_y, char_w)
+                ui_pop_clip(r)
             }
         }
     }
-    let cursor_x = x + gutter_w + 16.0 + (cur_col() as f64) * ui_mono_char_width(r, font_px(), FONT_MONO())
+    let cursor_x = text_x + (cur_col() as f64) * char_w
     let cursor_y = body_y + 22.0 + (cur_line() as f64) * line_h - g_code_scroll
     ui_fill_rect(r, cursor_x, cursor_y - 2.0, 2.0, 20.0, col_editor_cursor(), 0.0)
     ui_pop_clip(r)

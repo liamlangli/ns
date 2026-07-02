@@ -114,21 +114,40 @@ static void view_osx_drag_no_title_window(NSEvent *event) {
     NSWindow *window = [event window];
     NSPoint start_mouse = [NSEvent mouseLocation];
     NSRect start_frame = [window frame];
+    ns_bool dragging = false;
 
     for (;;) {
         NSEvent *drag_event = [NSApp nextEventMatchingMask:(NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp)
                                                 untilDate:[NSDate distantFuture]
                                                    inMode:NSEventTrackingRunLoopMode
                                                   dequeue:YES];
-        if (!drag_event) return;
-        if ([drag_event type] == NSEventTypeLeftMouseUp) return;
+        if (!drag_event) break;
+        if ([drag_event type] == NSEventTypeLeftMouseUp) {
+            view_osx_update_mouse(drag_event);
+            break;
+        }
         if ([drag_event type] != NSEventTypeLeftMouseDragged) continue;
 
         NSPoint mouse = [NSEvent mouseLocation];
-        NSPoint origin = NSMakePoint(start_frame.origin.x + mouse.x - start_mouse.x,
-                                     start_frame.origin.y + mouse.y - start_mouse.y);
-        [window setFrameOrigin:origin];
+        const f64 dx = mouse.x - start_mouse.x;
+        const f64 dy = mouse.y - start_mouse.y;
+        // Only start moving the window once the pointer travels past a small
+        // threshold, so app widgets drawn in the title strip still get clicks.
+        if (!dragging && (dx * dx + dy * dy) > 9.0) {
+            dragging = true;
+        }
+        if (dragging) {
+            NSPoint origin = NSMakePoint(start_frame.origin.x + dx, start_frame.origin.y + dy);
+            [window setFrameOrigin:origin];
+        }
         view_osx_update_mouse(drag_event);
+    }
+
+    // A press that never crossed the drag threshold is a click meant for the
+    // app UI (e.g. the Code/Agent switch rendered in the title strip).
+    if (!dragging) {
+        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
+        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
     }
 }
 
@@ -156,9 +175,56 @@ static ns_bool view_osx_handle_no_title_mouse_down(NSEvent *event) {
     return true;
 }
 
-// Key mapping function
+// Key mapping function (ANSI layout keycodes -> VIEW_KEY_*)
 i32 view_osx_key_map(i32 k) {
     switch (k) {
+        case 0: return VIEW_KEY_A;
+        case 1: return VIEW_KEY_S;
+        case 2: return VIEW_KEY_D;
+        case 3: return VIEW_KEY_F;
+        case 4: return VIEW_KEY_H;
+        case 5: return VIEW_KEY_G;
+        case 6: return VIEW_KEY_Z;
+        case 7: return VIEW_KEY_X;
+        case 8: return VIEW_KEY_C;
+        case 9: return VIEW_KEY_V;
+        case 11: return VIEW_KEY_B;
+        case 12: return VIEW_KEY_Q;
+        case 13: return VIEW_KEY_W;
+        case 14: return VIEW_KEY_E;
+        case 15: return VIEW_KEY_R;
+        case 16: return VIEW_KEY_Y;
+        case 17: return VIEW_KEY_T;
+        case 18: return VIEW_KEY_1;
+        case 19: return VIEW_KEY_2;
+        case 20: return VIEW_KEY_3;
+        case 21: return VIEW_KEY_4;
+        case 22: return VIEW_KEY_6;
+        case 23: return VIEW_KEY_5;
+        case 24: return VIEW_KEY_EQUAL;
+        case 25: return VIEW_KEY_9;
+        case 26: return VIEW_KEY_7;
+        case 27: return VIEW_KEY_MINUS;
+        case 28: return VIEW_KEY_8;
+        case 29: return VIEW_KEY_0;
+        case 30: return VIEW_KEY_RIGHT_BRACKET;
+        case 31: return VIEW_KEY_O;
+        case 32: return VIEW_KEY_U;
+        case 33: return VIEW_KEY_LEFT_BRACKET;
+        case 34: return VIEW_KEY_I;
+        case 35: return VIEW_KEY_P;
+        case 37: return VIEW_KEY_L;
+        case 38: return VIEW_KEY_J;
+        case 39: return VIEW_KEY_APOSTROPHE;
+        case 40: return VIEW_KEY_K;
+        case 41: return VIEW_KEY_SEMICOLON;
+        case 42: return VIEW_KEY_BACKSLASH;
+        case 43: return VIEW_KEY_COMMA;
+        case 44: return VIEW_KEY_SLASH;
+        case 45: return VIEW_KEY_N;
+        case 46: return VIEW_KEY_M;
+        case 47: return VIEW_KEY_PERIOD;
+        case 50: return VIEW_KEY_GRAVE_ACCENT;
         case 51: return VIEW_KEY_BACKSPACE;
         case 53: return VIEW_KEY_ESCAPE;
         case 123: return VIEW_KEY_LEFT;

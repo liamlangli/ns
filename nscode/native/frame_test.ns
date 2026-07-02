@@ -1,0 +1,182 @@
+// nscode/native/frame_test.ns
+// ---------------------------------------------------------------------------
+// Headless interaction test for the native code editor. On Linux view_create
+// returns a real (no-op) view struct and the gpu calls are safe stubs, so the
+// whole render/input path in render.ns can be driven frame by frame without a
+// window: clicks are injected by writing the view's mouse fields and keys by
+// calling view_on_key_action. Run from the repo root (the ui renderer loads
+// lib/assets/latin_mono.* relative to the cwd):
+//
+//   bin/ns run nscode/native/frame_test.ns
+
+use std
+use view
+use gpu
+use ui
+use editor
+use render
+
+let g_fail = 0
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        g_fail = g_fail + 1
+        print("FAIL " + name + unescape("\n"))
+    }
+}
+
+fn check_s(name: str, got: str, want: str) {
+    if got == want {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        g_fail = g_fail + 1
+        print("FAIL " + name + " got [" + got + "] want [" + want + "]" + unescape("\n"))
+    }
+}
+
+fn frame(r: ref ui_renderer, v: ref view) {
+    ui_begin_frame(r)
+    render_frame(r, v)
+    ui_flush(r, clear_color())
+    reset_view_input(v)
+}
+
+// One full click (press frame + release frame) at window position (x, y).
+fn click(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
+    v.mouse_x = x
+    v.mouse_y = y
+    v.mouse_down = true
+    v.mouse_pressed = true
+    frame(r, v)
+    v.mouse_down = false
+    v.mouse_released = true
+    frame(r, v)
+}
+
+// Tap key `k` (VIEW_KEY_* code): press for one frame, then release.
+fn tap(r: ref ui_renderer, v: ref view, k: i32) {
+    view_on_key_action(v, k, 0)
+    frame(r, v)
+    view_on_key_action(v, k, 1)
+    frame(r, v)
+}
+
+// Geometry mirrored from render.ns: title bar 38px, tab strip 42px, gutter
+// 72px + 16px text inset, 24px line height, first row baseline offset 22px.
+fn body_y() f64 { return 80.0 }
+fn text_x() f64 { return 88.0 }
+fn line_h() f64 { return 24.0 }
+
+fn row_mid_y(li: i32) f64 {
+    return body_y() + 18.0 + (li as f64) * line_h() + 11.0
+}
+
+fn col_x(char_w: f64, col: i32) f64 {
+    return text_x() + (col as f64) * char_w + 1.0
+}
+
+// Frames run far faster than the 0.45s multi-click window, so successive test
+// gestures would otherwise chain into double/triple clicks. Reset the streak
+// state in render.ns between independent gestures.
+fn reset_clicks() {
+    g_last_click_time = -10.0
+    g_last_click_line = -1
+    g_click_streak = 0
+}
+
+fn main() {
+    load_str(unescape("fn main() {\n    let count = 42\n    print(count)\n}\n"))
+
+    let v = view_create_no_title("frame test", 1024, 768)
+    let r = ui_renderer_create(v)
+    let char_w = ui_mono_char_width(r, 14.0, 1)
+    check("renderer created", char_w > 0.0)
+
+    // The app boots in agent mode; a settle frame, then click the "Code" half
+    // of the title-bar mode switch (x 858..931, y 5..33).
+    frame(r, v)
+    check("boots in agent mode", g_mode == 1)
+    click(r, v, 880.0, 20.0)
+    check("code button switches mode", g_mode == 0)
+    click(r, v, 960.0, 20.0)
+    check("agent button switches back", g_mode == 1)
+    click(r, v, 880.0, 20.0)
+    check("mode switch is repeatable", g_mode == 0)
+
+    // Click on line 1 ("    let count = 42") column 8: caret relocates there.
+    click(r, v, col_x(char_w, 8), row_mid_y(1))
+    check("click moves caret line", cur_line() == 1)
+    check("click moves caret col", cur_col() == 8)
+    check("plain click leaves no selection", has_selection() == false)
+
+    // Drag from line 1 col 8 to line 2 col 4: a multiline selection.
+    reset_clicks()
+    v.mouse_x = col_x(char_w, 8)
+    v.mouse_y = row_mid_y(1)
+    v.mouse_down = true
+    v.mouse_pressed = true
+    frame(r, v)
+    v.mouse_x = col_x(char_w, 4)
+    v.mouse_y = row_mid_y(2)
+    v.mouse_down = true
+    frame(r, v)
+    v.mouse_down = false
+    v.mouse_released = true
+    frame(r, v)
+    check_s("drag selects across lines", selected_text(), unescape("count = 42\n    "))
+
+    // Double click on "count" in line 1 selects the word.
+    reset_clicks()
+    click(r, v, col_x(char_w, 9), row_mid_y(1))
+    click(r, v, col_x(char_w, 9), row_mid_y(1))
+    check_s("double click selects word", selected_text(), "count")
+
+    // Third quick click on the same line selects the whole line.
+    click(r, v, col_x(char_w, 9), row_mid_y(1))
+    check_s("triple click selects line", selected_text(), unescape("    let count = 42\n"))
+
+    // Keyboard: caret at line 2 col 4, shift+right twice extends selection.
+    reset_clicks()
+    click(r, v, col_x(char_w, 4), row_mid_y(2))
+    view_on_key_action(v, 340, 0)
+    tap(r, v, 262)
+    tap(r, v, 262)
+    view_on_key_action(v, 340, 1)
+    check_s("shift+right extends selection", selected_text(), "pr")
+
+    // Typing replaces the selection: "pr" -> "PR" (shift held for letters).
+    view_on_key_action(v, 340, 0)
+    tap(r, v, 80)
+    tap(r, v, 82)
+    view_on_key_action(v, 340, 1)
+    check_s("typing replaces selection", line_text(2), "    PRint(count)")
+
+    // Plain letters, backspace and enter.
+    tap(r, v, 259)
+    tap(r, v, 259)
+    check_s("backspace deletes", line_text(2), "    int(count)")
+    tap(r, v, 80)
+    tap(r, v, 82)
+    check_s("typing inserts lowercase", line_text(2), "    print(count)")
+
+    // Enter at end of line 2 adds a line (5 lines including the trailing
+    // empty one, 6 after the split).
+    tap(r, v, 269)
+    tap(r, v, 257)
+    check("enter splits line", line_count() == 6)
+
+    // Ctrl+A selects the whole document.
+    view_on_key_action(v, 341, 0)
+    tap(r, v, 65)
+    view_on_key_action(v, 341, 1)
+    check("ctrl+a selects all", selected_text() == g_doc)
+
+    if g_fail == 0 {
+        print("frame_test: all passed" + unescape("\n"))
+    } else {
+        print("frame_test: " + itos(g_fail) + " FAILED" + unescape("\n"))
+    }
+    assert g_fail == 0
+}

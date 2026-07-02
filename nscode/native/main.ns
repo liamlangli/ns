@@ -27,8 +27,11 @@ use render
 
 fn seed_document() {
     // Double-quoted string literals are not escape-processed, so run the text
-    // through std.unescape to turn "\n" into real newline bytes.
-    load_str(unescape("// ns native editor\n// rendered through the ui module\n\nfn main() {\n    print(42)\n}\n"))
+    // through std.unescape to turn "\n" into real newline bytes. The snippet
+    // exercises the code view: keywords, types, numbers, strings, comments,
+    // calls -- click to place the caret, drag to select, and type to edit.
+    let src = "// ns native editor\n// rendered through the ui module\n\nuse std\n\nstruct point {\n    x: f64,\n    y: f64\n}\n\nfn dist(a: point, b: point) f64 {\n    let dx = a.x - b.x\n    let dy = a.y - b.y\n    return sqrt(dx * dx + dy * dy)\n}\n\nfn main() {\n    let origin = point { x: 0.0, y: 0.0 }\n    let unit = point { x: 3.0, y: 4.0 }\n    print(" + '"dist "' + " + itos(dist(origin, unit) as i32))\n    if true {\n        print(" + '"editable"' + ")\n    }\n}\n"
+    load_str(unescape(src))
 }
 
 fn main() {
