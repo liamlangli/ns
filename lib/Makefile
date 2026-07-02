@@ -4,6 +4,8 @@ ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_DYLIB_CREATE = -dynamiclib
 	NS_DYLIB_COMMON = -fPIC -g -Wl,-install_name,@rpath/$(@F) -Wl,-rpath,@loader_path -undefined dynamic_lookup
 	NS_DYLIB_DEPS = $(NS_LDFLAGS)
+	NS_VIEW_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_COCOA_LDFLAGS) $(NS_METAL_LDFLAGS)
+	NS_GPU_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_METAL_LDFLAGS)
 else ifeq ($(NS_OS), $(NS_LINUX))
 	NS_DYLIB_CREATE = -shared
 	NS_DYLIB_COMMON = -fPIC -g -Wl,-soname,$(@F) -Wl,-rpath,'$$ORIGIN'
@@ -12,7 +14,12 @@ else
 	NS_DYLIB_CREATE = -shared
 	NS_DYLIB_COMMON = -fPIC -g
 	NS_DYLIB_DEPS = $(NS_LDFLAGS)
+	NS_GPU_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_GPU_LDFLAGS)
 endif
+
+NS_VIEW_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
+NS_GPU_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
+NS_UI_DYLIB_DEPS ?= $(NS_GPU_DYLIB_DEPS)
 
 # Position-independent compile rules for the C and Objective-C feature sources.
 $(NS_BINDIR)/lib/%.o: lib/src/%.c
@@ -84,10 +91,10 @@ $(NS_TERM_DYLIB): $(NS_TERM_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
 
 $(NS_GPU_DYLIB): $(NS_GPU_OBJS) $(if $(filter $(NS_WIN),$(NS_OS)),$(NS_VIEW_DYLIB),) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_GPU_OBJS) $(if $(filter $(NS_WIN),$(NS_OS)),$(NS_VIEW_DYLIB),) -o $@ $(NS_DYLIB_DEPS)
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_GPU_OBJS) $(if $(filter $(NS_WIN),$(NS_OS)),$(NS_VIEW_DYLIB),) -o $@ $(NS_GPU_DYLIB_DEPS)
 
 $(NS_VIEW_DYLIB): $(NS_VIEW_OBJS) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB),) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_VIEW_OBJS) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB),) -o $@ $(NS_DYLIB_DEPS)
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_VIEW_OBJS) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB),) -o $@ $(NS_VIEW_DYLIB_DEPS)
 
 $(NS_UI_DYLIB): $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) -o $@ $(NS_DYLIB_DEPS)
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) -o $@ $(NS_UI_DYLIB_DEPS)

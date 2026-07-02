@@ -64,11 +64,12 @@ endif
 NS_WARN_CFLAGS = -Wall -Wextra -Wunused-result $(NS_WERROR_CFLAGS)
 
 ifeq ($(NS_OS), $(NS_WIN))
-# DirectX 12 backend (gpu.dx12.c) links against the D3D12/DXGI runtime libraries.
-NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32 -ld3d12 -ldxgi -ldxguid -ld3dcompiler
+NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
+NS_GPU_LDFLAGS = -ld3d12 -ldxgi -ldxguid -ld3dcompiler
 else ifeq ($(NS_OS), $(NS_DARWIN))
-# Frameworks required by language runtime callbacks and native dylib modules.
-NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -framework Cocoa -framework Metal -framework MetalKit
+NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
+NS_COCOA_LDFLAGS = -framework Cocoa
+NS_METAL_LDFLAGS = -framework Metal -framework MetalKit -framework QuartzCore
 else
 # -rdynamic exports bin/ns symbols to FFI-loaded modules (bin/*.so reference
 # runtime helpers like _ns_malloc; macOS resolves these against the host
