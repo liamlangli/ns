@@ -69,6 +69,25 @@ ns_str ns_token_type_to_string(ns_token_type t) {
     return ns_str_nil;
 }
 
+i32 ns_identifier_follow(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || (c >= '0' && c <= '9');
+}
+
+// scan an optional numeric literal tail after the digits: 'f' turns the
+// literal into a f32, 'i'/'u'/'b' pick i32/u32/byte (u8). No tail keeps the
+// 64-bit default. The tail is only a suffix when it doesn't start an
+// identifier (so `32b` is a byte but `32bit` stays int 32 + ident `bit`).
+i32 ns_token_number_suffix(ns_token_t *t, char *s, i32 i) {
+    char c = s[i];
+    if ((c == 'f' || c == 'i' || c == 'u' || c == 'b') && !ns_identifier_follow(s[i + 1])) {
+        t->suffix = c;
+        t->type = c == 'f' ? NS_TOKEN_FLT_LITERAL : NS_TOKEN_INT_LITERAL;
+        return i + 1;
+    }
+    t->type = NS_TOKEN_INT_LITERAL;
+    return i;
+}
+
 i32 ns_token_float_literal(ns_token_t *t, char *s, i32 i) {
     i32 j = i;
     while (s[j] >= '0' && s[j] <= '9') {
@@ -79,6 +98,10 @@ i32 ns_token_float_literal(ns_token_t *t, char *s, i32 i) {
         while (s[j] >= '0' && s[j] <= '9') {
             j++;
         }
+    }
+    if (s[j] == 'f' && !ns_identifier_follow(s[j + 1])) {
+        t->suffix = 'f';
+        j++;
     }
     t->type = NS_TOKEN_FLT_LITERAL;
     i32 len = j - i;
@@ -91,7 +114,7 @@ i32 ns_token_int_literal(ns_token_t *t, char *s, i32 i) {
     while (s[j] >= '0' && s[j] <= '9') {
         j++;
     }
-    t->type = NS_TOKEN_INT_LITERAL;
+    j = ns_token_number_suffix(t, s, j);
     i32 len = j - i;
     t->val = ns_str_range(s + i, len);
     return j;
@@ -106,10 +129,6 @@ i32 ns_token_separator(char *s, i32 i) {
     i32 to = i;
     while (s[to] == ' ' || s[to] == '\t' || s[to] == '\v' || s[to] == ';') to++;
     return to - i;
-}
-
-i32 ns_identifier_follow(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || (c >= '0' && c <= '9');
 }
 
 #define ns_range_token(token, length) \
@@ -127,6 +146,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     i32 l, sep;
     char *s = src.data;
     char lead = s[i]; // TODO parse utf8 characters
+    t->suffix = 0;
     switch (lead) {
 
     case '0' ... '9': {
@@ -139,8 +159,9 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             t->type = NS_TOKEN_INT_LITERAL;
             t->val = ns_str_range(s + f, i - f);
             to = i;
-        } else if (s[i + 1] == 'b') {
-            // parse binary literal
+        } else if (s[i + 1] == 'b' && (s[i + 2] == '0' || s[i + 2] == '1')) {
+            // parse binary literal (a bare `0b` falls through to the decimal
+            // path below, where the 'b' tail makes it a byte literal)
             i += 2;
             while (s[i] == '0' || s[i] == '1') {
                 i++;
@@ -170,7 +191,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
                 i = ns_token_float_literal(t, s, f);
                 to = i;
             } else {
-                t->type = NS_TOKEN_INT_LITERAL;
+                i = ns_token_number_suffix(t, s, i);
                 t->val = ns_str_range(s + f, i - f);
                 to = i;
             }
@@ -526,7 +547,7 @@ case 'l': {
                 t->val.len++;
                 to = i;
             } else {
-                t->type = NS_TOKEN_INT_LITERAL;
+                i = ns_token_number_suffix(t, s, i);
                 t->val = ns_str_range(s + f, i - f);
                 to = i;
             }

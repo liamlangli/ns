@@ -294,13 +294,11 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
 
 // reverse search call_stack get last ns_call which callee type is NS_TYPE_FN rather than NS_TYPE_BLOCK
 i32 ns_vm_get_last_call(ns_vm *vm) {
-    szt l = ns_array_length(vm->call_stack);
-    if (l > 0) {
-        for (szt i = l - 1; i >= 0; --i) {
-            ns_call *call = &vm->call_stack[i];
-            ns_symbol *callee = call->callee;
-            if (callee == ns_null || callee->type == NS_SYMBOL_FN) return i;
-        }
+    i32 l = ns_array_length(vm->call_stack);
+    for (i32 i = l - 1; i >= 0; --i) {
+        ns_call *call = &vm->call_stack[i];
+        ns_symbol *callee = call->callee;
+        if (callee == ns_null || callee->type == NS_SYMBOL_FN) return i;
     }
     return -1;
 }
@@ -597,13 +595,18 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
 
         i32 body = n->type == NS_AST_FN_DEF ? n->fn_def.body : n->ops_fn_def.body;
         ns_bool is_ref = n->type == NS_AST_FN_DEF ? n->fn_def.is_ref : n->ops_fn_def.is_ref;
-        ns_call call = (ns_call){.callee = fn, .scope_top = ns_array_length(vm->scope_stack)};
+        // Parsing the body can push new global symbols (each block/closure
+        // registers one), reallocating vm->symbols. Keep the call frame's
+        // callee on a stable stack copy and re-fetch the symbol afterwards so
+        // neither dangles across that growth.
+        ns_symbol fn_sym = *fn;
+        ns_call call = (ns_call){.callee = &fn_sym, .scope_top = ns_array_length(vm->scope_stack)};
 
         ns_array_push(vm->call_stack, call);
         ns_scope_enter(vm);
 
-        for (i32 j = 0, l = ns_array_length(fn->fn.args); j < l; ++j) {
-            ns_symbol *arg = &fn->fn.args[j];
+        for (i32 j = 0, l = ns_array_length(fn_sym.fn.args); j < l; ++j) {
+            ns_symbol *arg = &fn_sym.fn.args[j];
             ns_vm_push_symbol_local(vm, *arg);
         }
 
@@ -612,6 +615,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         
         ns_scope_exit(vm);
         ns_array_pop(vm->call_stack);
+        fn = &vm->symbols[i];
         fn->fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, i, is_ref, false, true) };
         fn->parsed = true;
     }
@@ -916,13 +920,51 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
     }
 }
 
-ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+// resolve the number type an unsuffixed literal adopts from the expected type
+// `t`: a number type is adopted as-is (bool is number-like for casts but never
+// a literal type), a union adopts its first member the literal class fits.
+static ns_type ns_vm_literal_expect(ns_vm *vm, ns_type t, ns_bool flt) {
+    if (ns_type_is(t, NS_TYPE_UNION)) {
+        ns_symbol *u = &vm->symbols[ns_type_index(t)];
+        ns_type fallback = ns_type_unknown;
+        for (szt i = 0, l = ns_array_length(u->un.members); i < l; ++i) {
+            ns_type m = u->un.members[i];
+            if (!ns_type_is_number(m) || ns_type_is(m, NS_TYPE_BOOL)) continue;
+            if (ns_type_is_float(m) == flt) return (ns_type){.type = m.type};
+            // an int literal can widen into a float member if no int member exists
+            if (!flt && ns_type_is_float(m) && ns_type_is_unknown(fallback)) fallback = (ns_type){.type = m.type};
+        }
+        return fallback;
+    }
+    if (!ns_type_is_number(t) || ns_type_is(t, NS_TYPE_BOOL)) return ns_type_unknown;
+    if (flt && !ns_type_is_float(t)) return ns_type_unknown;
+    return (ns_type){.type = t.type};
+}
+
+ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->primary_expr.token.type) {
-    case NS_TOKEN_INT_LITERAL:
-        return ns_return_ok(type, ns_type_i32);
-    case NS_TOKEN_FLT_LITERAL:
-        return ns_return_ok(type, ns_type_f64);
+    case NS_TOKEN_INT_LITERAL: {
+        ns_type lt;
+        switch (n->primary_expr.token.suffix) {
+        case 'i': lt = ns_type_i32; break;
+        case 'u': lt = ns_type_u32; break;
+        case 'b': lt = ns_type_u8; break;
+        default: { // unsuffixed: adopt the expected number type, i64 otherwise
+            lt = ns_vm_literal_expect(vm, t, false);
+            if (ns_type_is_unknown(lt)) lt = ns_type_i64;
+        } break;
+        }
+        n->primary_expr.t = lt;
+        return ns_return_ok(type, lt);
+    }
+    case NS_TOKEN_FLT_LITERAL: {
+        // unsuffixed: adopt the expected float type, f64 otherwise
+        ns_type lt = n->primary_expr.token.suffix == 'f' ? ns_type_f32 : ns_vm_literal_expect(vm, t, true);
+        if (ns_type_is_unknown(lt)) lt = ns_type_f64;
+        n->primary_expr.t = lt;
+        return ns_return_ok(type, lt);
+    }
     case NS_TOKEN_STR_LITERAL:
     case NS_TOKEN_STR_FORMAT:
         return ns_return_ok(type, ns_type_str);
@@ -977,6 +1019,9 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     i32 next = n->next;
     for (i32 a_i = 0, l = n->call_expr.arg_count; a_i < l; ++a_i) {
         ns_ast_t arg = ctx->nodes[next];
+        // re-fetch each iteration: parsing a block arg pushes a global symbol,
+        // which may realloc vm->symbols and move the fn record
+        fn_record = &vm->symbols[ns_type_index(fn)];
         ns_type arg_t = fn_record->fn.args[a_i].val.t;
 
         ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, next, arg_t);
@@ -984,10 +1029,14 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         ns_type t = ret_t.r;
         next = arg.next;
-        if (!ns_type_match(vm, arg_t, t)) {
+        // a numeric param accepts any numeric arg (converted when the call
+        // pushes args in ns_eval_call_expr), matching designated-expr fields
+        ns_bool number_ok = !ns_type_is_ref(arg_t) && ns_type_is_number(arg_t) && ns_type_is_number(t);
+        if (!number_ok && !ns_type_match(vm, arg_t, t)) {
             return ns_return_error(type, ns_ast_state_loc(ctx, arg.state), NS_ERR_EVAL, "call expr type mismatch fn.");
         }
     }
+    fn_record = &vm->symbols[ns_type_index(fn)];
     return ns_return_ok(type, fn_record->fn.ret);
 }
 
@@ -1051,9 +1100,10 @@ ns_bool ns_vm_parse_type_generable(ns_type t) {
 ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     if (n->gen_expr.range) {
-        ns_return_type from_ret = ns_vm_parse_expr(vm, ctx, n->gen_expr.from, ns_type_infer);
+        // range bounds are i32; unsuffixed literals adopt it
+        ns_return_type from_ret = ns_vm_parse_expr(vm, ctx, n->gen_expr.from, ns_type_i32);
         if (ns_return_is_error(from_ret)) return from_ret;
-        ns_return_type to_ret = ns_vm_parse_expr(vm, ctx, n->gen_expr.to, ns_type_infer);
+        ns_return_type to_ret = ns_vm_parse_expr(vm, ctx, n->gen_expr.to, ns_type_i32);
         if (ns_return_is_error(to_ret)) return to_ret;
 
         ns_type from_t = from_ret.r;
@@ -1091,7 +1141,8 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
 
         ns_struct_field *f = &st->st.fields[field_i];
-        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, field->field_def.expr, ns_type_infer);
+        // the field expr adopts the field type so number literals unify
+        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, field->field_def.expr, f->t);
         if (ns_return_is_error(ret_t)) return ret_t;
 
         ns_type t = ret_t.r;
@@ -1156,7 +1207,10 @@ ns_return_type ns_vm_parse_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_type ret_l = ns_vm_parse_expr(vm, ctx, n->index_expr.table, ns_type_infer);
     if (ns_return_is_error(ret_l)) return ret_l;
-    ns_return_type ret_r = ns_vm_parse_expr(vm, ctx, n->index_expr.expr, ns_type_infer);
+    // array/string indexes are i32 and dict keys use the dict key type, so
+    // unsuffixed number literals adopt the right width
+    ns_type idx_t = ns_type_is(ret_l.r, NS_TYPE_DICT) ? vm->symbols[ns_type_index(ret_l.r)].ct.key : ns_type_i32;
+    ns_return_type ret_r = ns_vm_parse_expr(vm, ctx, n->index_expr.expr, idx_t);
     if (ns_return_is_error(ret_r)) return ret_r;
 
     ns_type l = ret_l.r;
@@ -1292,7 +1346,8 @@ ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_type ret_l = ns_vm_parse_expr(vm, ctx, n->binary_expr.left, ns_type_infer);
     if (ns_return_is_error(ret_l)) return ret_l;
-    ns_return_type ret_r = ns_vm_parse_expr(vm, ctx, n->binary_expr.right, ns_type_infer);
+    // the right side adopts the assign target type so number literals unify
+    ns_return_type ret_r = ns_vm_parse_expr(vm, ctx, n->binary_expr.right, ret_l.r);
     if (ns_return_is_error(ret_r)) return ret_r;
     ns_type l = ret_l.r;
     ns_type r = ret_r.r;
@@ -1305,18 +1360,19 @@ ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(type, l);
 }
 
-ns_return_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t) {
     ns_ast_t *n = &ctx->nodes[i];
     if (n->binary_expr.op.type == NS_TOKEN_ASSIGN_OP || n->binary_expr.op.type == NS_TOKEN_ASSIGN) {
         return ns_vm_parse_assign_expr(vm, ctx, i);
     }
 
-    ns_return_type ret_l = ns_vm_parse_expr(vm, ctx, n->binary_expr.left, ns_type_infer);
+    ns_return_type ret_l = ns_vm_parse_expr(vm, ctx, n->binary_expr.left, t);
     if (ns_return_is_error(ret_l)) return ret_l;
-    ns_return_type ret_r = ns_vm_parse_expr(vm, ctx, n->binary_expr.right, ns_type_infer);
+    ns_type l = ret_l.r;
+    // the right side adopts the left number type so unsuffixed literals unify
+    ns_return_type ret_r = ns_vm_parse_expr(vm, ctx, n->binary_expr.right, ns_type_is_number(l) ? l : t);
     if (ns_return_is_error(ret_r)) return ret_r;
 
-    ns_type l = ret_l.r;
     ns_type r = ret_r.r;
 
     if (ns_type_equals(l, r)) {
@@ -1344,8 +1400,8 @@ ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->type) {
     case NS_AST_EXPR: return ns_vm_parse_expr(vm, ctx, n->expr.body, t);
-    case NS_AST_BINARY_EXPR: return ns_vm_parse_binary_expr(vm, ctx, i);
-    case NS_AST_PRIMARY_EXPR: return ns_vm_parse_primary_expr(vm, ctx, i);
+    case NS_AST_BINARY_EXPR: return ns_vm_parse_binary_expr(vm, ctx, i, t);
+    case NS_AST_PRIMARY_EXPR: return ns_vm_parse_primary_expr(vm, ctx, i, t);
     case NS_AST_CALL_EXPR: return ns_vm_parse_call_expr(vm, ctx, i);
     case NS_AST_MEMBER_EXPR: return ns_vm_parse_member_expr(vm, ctx, i);
     case NS_AST_GEN_EXPR: return ns_vm_parse_gen_expr(vm, ctx, i);
@@ -1367,10 +1423,6 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->jump_stmt.label.type) {
     case NS_TOKEN_RETURN: {
-        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->jump_stmt.expr, ns_type_infer);
-        if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
-        ns_type t = ret_t.r;
-
         szt l = ns_array_length(vm->call_stack);
         if (l == 0) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt not in fn.");
@@ -1378,7 +1430,15 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_symbol *callee = vm->call_stack[l - 1].callee;
         ns_fn_symbol *fn = ns_symbol_get_fn(callee);
 
-        if (!ns_type_equals(fn->ret, t) && !ns_type_match(vm, fn->ret, t)) {
+        // the return expr adopts the fn return type so number literals unify
+        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->jump_stmt.expr, fn->ret);
+        if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
+        ns_type t = ret_t.r;
+
+        // a numeric return slot accepts any numeric expr (converted in
+        // ns_eval_return_stmt), matching call args and designated-expr fields
+        ns_bool number_ok = !ns_type_is_ref(fn->ret) && ns_type_is_number(fn->ret) && ns_type_is_number(t);
+        if (!number_ok && !ns_type_equals(fn->ret, t) && !ns_type_match(vm, fn->ret, t)) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt type mismatch.");
         }
     } break;

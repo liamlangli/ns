@@ -54,10 +54,10 @@ fn main() {
     let center = simd3 { x: 0.0, y: 0.0, z: -5.0 }
     let radius = 2.0
 
-    let size = 128
+    let size = 128i // 'i' tail keeps the loop/index math i32
 
     let img = io_image{data: [u8](size * size * 4), width: size, height: size, channels: 4}
-    let offset = 0
+    let offset = 0i
     let n = simd3 { x: 0.0, y: 0.0, z: 0.0 }
     let p = simd3 { x: 0.0, y: 0.0, z: 0.0 }
 
@@ -77,11 +77,11 @@ fn main() {
                 img.data[offset + 1] = (n.y * 127.0 + 127.0) as u8
                 img.data[offset + 2] = (n.z * 127.0 + 127.0) as u8
             } else {
-                img.data[offset + 0] = 0 as u8
-                img.data[offset + 1] = 0 as u8
-                img.data[offset + 2] = 0 as u8
+                img.data[offset + 0] = 0b // 'b' tail makes a byte (u8) literal
+                img.data[offset + 1] = 0b
+                img.data[offset + 2] = 0b
             }
-            img.data[offset + 3] = 255 as u8
+            img.data[offset + 3] = 255b
         }
     }
     let path = "bin/output.png"

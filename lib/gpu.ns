@@ -24,10 +24,10 @@ struct gpu_binding { id: i32 }
 struct gpu_mesh { id: i32 }
 struct gpu_render_pass { id: i32 }
 
-let GPU_USAGE_DEFAULT = 0
-let GPU_ATTRIBUTE_FORMAT_FLOAT = 1
-let GPU_PIXELFORMAT_BGRA8 = 28
-let GPU_PRIMITIVE_TRIANGLES = 4
+let GPU_USAGE_DEFAULT = 0i
+let GPU_ATTRIBUTE_FORMAT_FLOAT = 1i
+let GPU_PIXELFORMAT_BGRA8 = 28i
+let GPU_PRIMITIVE_TRIANGLES = 4i
 
 // Acquire the platform GPU device for `v`. Returns true on success. On platforms
 // without a backend this returns false.

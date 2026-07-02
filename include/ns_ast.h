@@ -153,6 +153,7 @@ typedef struct ns_ast_cast_expr {
 
 typedef struct ns_ast_primary_expr {
     ns_token_t token;
+    ns_type t; // literal type resolved at vm-parse (suffix or expected-type adoption)
 } ns_ast_primary_expr;
 
 typedef struct ns_ast_unary_expr {

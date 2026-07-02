@@ -137,6 +137,7 @@ ns_str ns_str_slice(ns_str s, i32 start, i32 end);
 ns_str ns_str_concat(ns_str a, ns_str b);
 
 i32 ns_str_to_i32(ns_str s);
+i64 ns_str_to_i64(ns_str s);
 f64 ns_str_to_f64(ns_str s);
 ns_str ns_str_from_i32(i32 i);
 ns_str ns_str_unescape(ns_str s);
@@ -249,6 +250,7 @@ typedef struct ns_token_t {
     ns_token_type type;
     ns_str val;
     int line, line_start;
+    i8 suffix; // numeric literal tail: 'f' f32, 'i' i32, 'u' u32, 'b' byte (u8); 0 = 64-bit default
 } ns_token_t;
 
 // ns_value

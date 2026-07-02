@@ -184,11 +184,11 @@ ns_str ns_type_name(ns_type t) {
     }
 }
 
-i32 ns_str_to_i32(ns_str s) {
+i64 ns_str_to_i64(ns_str s) {
     i32 size = s.len;
     i32 i = 0;
-    i32 sign = 1;
-    i32 r = 0;
+    i64 sign = 1;
+    i64 r = 0;
 
     if (i < size && (s.data[i] == '-' || s.data[i] == '+')) {
         if (s.data[i] == '-') sign = -1;
@@ -200,7 +200,7 @@ i32 ns_str_to_i32(ns_str s) {
         i += 2;
         while (i < size) {
             i8 c = s.data[i];
-            i32 d;
+            i64 d;
             if (c >= '0' && c <= '9') d = c - '0';
             else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
             else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
@@ -218,6 +218,10 @@ i32 ns_str_to_i32(ns_str s) {
     }
 
     return sign * r;
+}
+
+i32 ns_str_to_i32(ns_str s) {
+    return (i32)ns_str_to_i64(s);
 }
 
 static i8 _ns_str_buff[128];

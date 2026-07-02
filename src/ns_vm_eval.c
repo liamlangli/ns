@@ -695,6 +695,16 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_v)) return ret_v;
 
         ns_value v = ret_v.r;
+        // a numeric arg converts to the numeric param type (the parse pass
+        // already accepted the pair in ns_vm_parse_call_expr)
+        if (a_i < (i32)ns_array_length(fn->args)) {
+            ns_type pt = fn->args[a_i].val.t;
+            if (!ns_type_is_ref(pt) && ns_type_is_number(pt) && ns_type_is_number(v.t) && !ns_type_equals(pt, v.t)) {
+                ns_return_value cast_ret = ns_eval_cast_number(vm, v, pt, ns_ast_state_loc(ctx, n->state));
+                if (ns_return_is_error(cast_ret)) return cast_ret;
+                v = cast_ret.r;
+            }
+        }
         next = ctx->nodes[next].next;
         ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = ns_str_null, .val = v, .parsed = true};
         ns_array_push(vm->symbol_stack, arg);
@@ -799,6 +809,13 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_array_length(vm->call_stack) > 0) {
         ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
         ns_fn_symbol *fn = ns_symbol_get_fn(call->callee);
+        // a numeric return converts to the fn's numeric return type (the parse
+        // pass already accepted the pair in ns_vm_parse_jump_stmt)
+        if (!ns_type_is_ref(fn->ret) && ns_type_is_number(fn->ret) && ns_type_is_number(ret.t) && !ns_type_equals(fn->ret, ret.t)) {
+            ns_return_value cast_ret = ns_eval_cast_number(vm, ret, fn->ret, ns_ast_state_loc(ctx, n->state));
+            if (ns_return_is_error(cast_ret)) return cast_ret;
+            ret = cast_ret.r;
+        }
         if (!ns_type_match(vm, fn->ret, ret.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return type mismatch.");
         }
@@ -1048,8 +1065,31 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_token_t t = n->primary_expr.token;
     ns_value ret;
     switch (t.type) {
-    case NS_TOKEN_INT_LITERAL: ret = (ns_value){.t = ns_type_i32, .i32 = ns_str_to_i32(t.val)}; break;
-    case NS_TOKEN_FLT_LITERAL: ret = (ns_value){.t = ns_type_f64, .f64 = ns_str_to_f64(t.val)}; break;
+    case NS_TOKEN_INT_LITERAL: {
+        // use the type resolved at vm-parse; fall back to the suffix default
+        // for exprs evaluated without a parse pass
+        ns_type lt = n->primary_expr.t;
+        if (!ns_type_is_number(lt)) {
+            switch (t.suffix) {
+            case 'i': lt = ns_type_i32; break;
+            case 'u': lt = ns_type_u32; break;
+            case 'b': lt = ns_type_u8; break;
+            default: lt = ns_type_i64; break;
+            }
+        }
+        ns_value iv = (ns_value){.t = ns_type_i64, .i64 = ns_str_to_i64(t.val)};
+        if (ns_type_is(lt, NS_TYPE_I64)) { ret = iv; break; }
+        ns_return_value cast_ret = ns_eval_cast_number(vm, iv, lt, ns_ast_state_loc(ctx, n->state));
+        if (ns_return_is_error(cast_ret)) return cast_ret;
+        ret = cast_ret.r;
+    } break;
+    case NS_TOKEN_FLT_LITERAL: {
+        ns_type lt = n->primary_expr.t;
+        if (!ns_type_is_float(lt)) lt = t.suffix == 'f' ? ns_type_f32 : ns_type_f64;
+        f64 fv = ns_str_to_f64(t.val);
+        ret = ns_type_is(lt, NS_TYPE_F32) ? (ns_value){.t = ns_type_f32, .f32 = (f32)fv}
+                                          : (ns_value){.t = ns_type_f64, .f64 = fv};
+    } break;
     case NS_TOKEN_STR_LITERAL: ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, t.val)}; break;
     case NS_TOKEN_STR_FORMAT: 
     case NS_TOKEN_TRUE: ret = ns_true; break;
@@ -1638,6 +1678,16 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(cast_ret)) return cast_ret;
         src = cast_ret.r;
         store_t = dst_t;
+    }
+
+    // A capturing block value points at its capture struct on the stack; bind
+    // it directly (as a call-arg closure would be). Copying `size` bytes here
+    // would truncate the captures to the declared fn type's 8-byte handle and
+    // the trailing stack shrink below would free the struct.
+    if (ns_type_is(store_t, NS_TYPE_BLOCK)) {
+        ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val, .val = src, .parsed = true};
+        ns_array_push(vm->symbol_stack, symbol);
+        return ns_return_ok(value, src);
     }
 
     // A ref-typed binding aliases its referent: keep the ref value itself (an
