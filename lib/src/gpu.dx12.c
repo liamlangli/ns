@@ -233,7 +233,7 @@ void gpu_destroy_device(void) {
 
 // ---- resources -------------------------------------------------------------
 
-gpu_buffer gpu_create_buffer(gpu_buffer_desc *desc) {
+gpu_buffer gpu_create_buffer_desc(gpu_buffer_desc *desc) {
     u32 slot = GPU_DX12_ALLOC(buffers);
     if (slot == 0) return (gpu_buffer){0};
     gpu_buffer_dx12 *b = &_state.buffers[slot];
@@ -378,7 +378,7 @@ void gpu_update_texture(gpu_texture texture, ns_data data) {
     // TODO: upload `data` into the texture resource via a staging buffer.
 }
 
-void gpu_update_buffer(gpu_buffer buffer, ns_data data) {
+void gpu_update_buffer_desc(gpu_buffer buffer, ns_data data) {
     ns_unused(buffer);
     ns_unused(data);
     // TODO: map the buffer resource and memcpy `data`.

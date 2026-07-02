@@ -1,0 +1,139 @@
+// Render a triangle with shaders written in ns.
+//
+// Run from the repo root after building the std dylibs:
+//
+//   make std
+//   bin/ns sample/ns/shader_triangle.ns
+//
+// `use shader` transpiles vs_main/fs_main to the active native GPU target. The
+// triangle vertices, pipeline setup, and per-frame draw sequence are ordinary ns
+// code that calls the generic gpu module primitives.
+
+use std
+use simd
+use shader
+use view
+use gpu
+
+struct VertexData {
+    position: Float3,
+    color: Float4
+}
+
+struct FragmentInput {
+    position: Float4,
+    color: Float4
+}
+
+let g_resources = [u32](4)
+
+fn vs_main(data: VertexData) FragmentInput {
+    let pos = data.position
+    return FragmentInput {
+        position: Float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
+        color: data.color,
+    }
+}
+
+fn fs_main(data: FragmentInput) Float4 {
+    return data.color
+}
+
+fn fill_vertices(vertices: [f32]) {
+    vertices[0] = 0.00 as f32
+    vertices[1] = 0.62 as f32
+    vertices[2] = 0.0 as f32
+    vertices[3] = 1.00 as f32
+    vertices[4] = 0.25 as f32
+    vertices[5] = 0.22 as f32
+    vertices[6] = 1.0 as f32
+
+    vertices[7] = -0.72 as f32
+    vertices[8] = -0.58 as f32
+    vertices[9] = 0.0 as f32
+    vertices[10] = 0.20 as f32
+    vertices[11] = 0.78 as f32
+    vertices[12] = 0.42 as f32
+    vertices[13] = 1.0 as f32
+
+    vertices[14] = 0.72 as f32
+    vertices[15] = -0.58 as f32
+    vertices[16] = 0.0 as f32
+    vertices[17] = 0.18 as f32
+    vertices[18] = 0.48 as f32
+    vertices[19] = 1.00 as f32
+    vertices[20] = 1.0 as f32
+}
+
+fn create_pipeline(target: str) {
+    let vertices = [f32](21)
+    fill_vertices(vertices)
+
+    let attr_offsets = [i32](2)
+    attr_offsets[0] = 0
+    attr_offsets[1] = 12
+
+    let attr_sizes = [i32](2)
+    attr_sizes[0] = 3
+    attr_sizes[1] = 4
+
+    let attr_formats = [i32](2)
+    attr_formats[0] = GPU_ATTRIBUTE_FORMAT_FLOAT
+    attr_formats[1] = GPU_ATTRIBUTE_FORMAT_FLOAT
+
+    let vertex_bytes = vertices.len * 4
+    g_resources[0] = gpu_create_buffer(vertex_bytes, GPU_USAGE_DEFAULT)
+    gpu_update_buffer(g_resources[0], vertices, vertex_bytes)
+    let vs_src = shader_transpile_stage(vs_main, target, "vertex")
+    let fs_src = shader_transpile_stage(fs_main, target, "fragment")
+    let vs_entry = shader_entry(vs_main, target)
+    let fs_entry = shader_entry(fs_main, target)
+    g_resources[1] = gpu_create_shader_source(vs_src, fs_src, vs_entry, fs_entry)
+    g_resources[2] = gpu_create_pipeline_layout(g_resources[1], 28, attr_offsets, attr_sizes, attr_formats, 2, GPU_PIXELFORMAT_BGRA8, GPU_PRIMITIVE_TRIANGLES)
+    g_resources[3] = gpu_create_mesh_1(g_resources[2], g_resources[0])
+}
+
+fn draw_triangle(v: ref view) {
+    gpu_begin_render_pass_id(0 as u32)
+    gpu_set_viewport(0, 0, v.framebuffer_width, v.framebuffer_height)
+    gpu_set_scissor(0, 0, v.framebuffer_width, v.framebuffer_height)
+    gpu_set_pipeline_id(g_resources[2])
+    gpu_set_mesh_id(g_resources[3])
+    gpu_draw(0, 3, 1)
+    gpu_end_pass()
+    gpu_commit()
+}
+
+fn destroy_pipeline() {
+    gpu_destroy_mesh_id(g_resources[3])
+    gpu_destroy_pipeline_id(g_resources[2])
+    gpu_destroy_shader_id(g_resources[1])
+    gpu_destroy_buffer_id(g_resources[0])
+}
+
+fn main() {
+    let v = view_create("ns shader triangle", 800, 600)
+
+    if gpu_request_device(v) {
+        let target = gpu_shader_target()
+        create_pipeline(target)
+
+        if g_resources[0] != 0 as u32 && g_resources[1] != 0 as u32 && g_resources[2] != 0 as u32 && g_resources[3] != 0 as u32 {
+            print(`rendering triangle with {target} shaders\n`)
+        } else {
+            print("triangle shader pipeline was not created\n")
+        }
+
+        v.on_frame({ frame_view in
+            draw_triangle(frame_view)
+        })
+
+        v.on_terminate({ dead_view in
+            destroy_pipeline()
+        })
+    } else {
+        print("no GPU backend on this platform; rendering is a no-op\n")
+    }
+
+    view_run(v)
+}

@@ -603,18 +603,18 @@ void ui_stroke_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
 
 static void ui_create_gpu_resources(ui_renderer *r) {
     f32 screen[2] = {(f32)r->width, (f32)r->height};
-    r->screen_buffer = gpu_create_buffer(&(gpu_buffer_desc){
+    r->screen_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
         .size = sizeof(screen),
         .data = (ns_data){screen, sizeof(screen)},
         .type = BUFFER_UNIFORM,
         .usage = USAGE_DEFAULT,
     });
-    r->clip_buffer = gpu_create_buffer(&(gpu_buffer_desc){
+    r->clip_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
         .size = (int)sizeof(r->gpu_clips),
         .type = BUFFER_UNIFORM,
         .usage = USAGE_DEFAULT,
     });
-    r->vertex_buffer = gpu_create_buffer(&(gpu_buffer_desc){
+    r->vertex_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
         .size = r->vertex_capacity * UI_VERTEX_STRIDE,
         .type = BUFFER_VERTEX,
         .usage = USAGE_DEFAULT,
@@ -757,7 +757,7 @@ void ui_resize(ui_renderer *r) {
     if (!r) return;
     ui_sync_view_metrics(r);
     f32 screen[2] = {(f32)r->width, (f32)r->height};
-    if (r->screen_buffer.id) gpu_update_buffer(r->screen_buffer, (ns_data){screen, sizeof(screen)});
+    if (r->screen_buffer.id) gpu_update_buffer_desc(r->screen_buffer, (ns_data){screen, sizeof(screen)});
 }
 
 void ui_resize_to(ui_renderer *r, i32 width, i32 height) {
@@ -765,7 +765,7 @@ void ui_resize_to(ui_renderer *r, i32 width, i32 height) {
     r->width = width > 0 ? width : 1;
     r->height = height > 0 ? height : 1;
     f32 screen[2] = {(f32)r->width, (f32)r->height};
-    if (r->screen_buffer.id) gpu_update_buffer(r->screen_buffer, (ns_data){screen, sizeof(screen)});
+    if (r->screen_buffer.id) gpu_update_buffer_desc(r->screen_buffer, (ns_data){screen, sizeof(screen)});
 }
 
 void ui_request_render(ui_renderer *r, i32 frames) {
@@ -785,12 +785,12 @@ void ui_begin_frame(ui_renderer *r) {
 
 void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     if (!r || !r->gpu_ready) return;
-    gpu_update_buffer(r->vertex_buffer, (ns_data){r->vertices, (size_t)r->vertex_count * UI_VERTEX_STRIDE});
+    gpu_update_buffer_desc(r->vertex_buffer, (ns_data){r->vertices, (size_t)r->vertex_count * UI_VERTEX_STRIDE});
     if (r->clip_buffer.id) {
         ui_gpu_clip empty_clip = {0};
         const void *clip_data = r->gpu_clip_count > 0 ? (const void*)r->gpu_clips : (const void*)&empty_clip;
         const size_t clip_len = r->gpu_clip_count > 0 ? (size_t)r->gpu_clip_count * sizeof(ui_gpu_clip) : sizeof(empty_clip);
-        gpu_update_buffer(r->clip_buffer, (ns_data){(void*)clip_data, clip_len});
+        gpu_update_buffer_desc(r->clip_buffer, (ns_data){(void*)clip_data, clip_len});
     }
     const f64 s = r->content_scale > 0.0 ? r->content_scale : 1.0;
     gpu_begin_render_pass(r->screen_pass);

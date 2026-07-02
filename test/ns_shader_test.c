@@ -1,6 +1,22 @@
 #include "ns_test.h"
 #include "ns_shader.h"
 
+#if NS_WIN
+    #include <io.h>
+    #define ns_shader_test_dup _dup
+    #define ns_shader_test_dup2 _dup2
+    #define ns_shader_test_close _close
+    #define ns_shader_test_fileno _fileno
+    #define ns_shader_test_null "NUL"
+#else
+    #include <unistd.h>
+    #define ns_shader_test_dup dup
+    #define ns_shader_test_dup2 dup2
+    #define ns_shader_test_close close
+    #define ns_shader_test_fileno fileno
+    #define ns_shader_test_null "/dev/null"
+#endif
+
 // Transpiles the gui.ns-style vertex/fragment pair (over `use simd` structs) to
 // every target and checks the stage-specific markers, then drives the runtime
 // `use shader` intrinsics end to end. Run from the repo root so the debug
@@ -41,6 +57,31 @@ static const char *ns_shader_test_src =
     "}\n";
 
 static ns_bool ns_shader_test_has(ns_str hay, const char *needle) { return ns_str_index_of(hay, ns_str_cstr(needle)) != -1; }
+
+static i32 ns_shader_test_silence_stderr(void) {
+    fflush(stderr);
+    i32 saved = ns_shader_test_dup(ns_shader_test_fileno(stderr));
+    FILE *null = fopen(ns_shader_test_null, "w");
+    if (saved >= 0 && null) ns_shader_test_dup2(ns_shader_test_fileno(null), ns_shader_test_fileno(stderr));
+    if (null) fclose(null);
+    return saved;
+}
+
+static void ns_shader_test_restore_stderr(i32 saved) {
+    fflush(stderr);
+    if (saved >= 0) {
+        ns_shader_test_dup2(saved, ns_shader_test_fileno(stderr));
+        ns_shader_test_close(saved);
+    }
+}
+
+#define ns_shader_expect_transpile_error(call, msg)                                                                                                 \
+    do {                                                                                                                                             \
+        i32 stderr_saved = ns_shader_test_silence_stderr();                                                                                          \
+        ns_return_str ret = (call);                                                                                                                  \
+        ns_shader_test_restore_stderr(stderr_saved);                                                                                                 \
+        ns_expect(ns_return_is_error(ret), msg);                                                                                                     \
+    } while (0)
 
 static i32 ns_shader_test_fn(ns_vm *vm, const char *name) {
     for (i32 i = 0, l = (i32)ns_array_length(vm->symbols); i < l; ++i) {
@@ -142,22 +183,22 @@ int main() {
         }
 
         ns_shader_entry_desc entries[2] = {{.fn_index = vs, .stage = NS_SHADER_STAGE_AUTO}, {.fn_index = fs, .stage = NS_SHADER_STAGE_AUTO}};
-        ns_return_str multi = ns_shader_transpile_program(&vm, &ctx, entries, 2, NS_SHADER_GLSL_VULKAN);
-        ns_expect(ns_return_is_error(multi), "glsl rejects multi-entry programs.");
+        ns_shader_expect_transpile_error(ns_shader_transpile_program(&vm, &ctx, entries, 2, NS_SHADER_GLSL_VULKAN),
+                                         "glsl rejects multi-entry programs.");
     }
 
     // --- error paths ---
     {
         i32 bad = ns_shader_test_fn(&vm, "bad_print");
-        ns_return_str r = ns_shader_transpile(&vm, &ctx, bad, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);
-        ns_expect(ns_return_is_error(r), "fn calling print fails to transpile.");
+        ns_shader_expect_transpile_error(ns_shader_transpile(&vm, &ctx, bad, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT),
+                                         "fn calling print fails to transpile.");
 
         i32 plain = ns_shader_test_fn(&vm, "plain");
-        r = ns_shader_transpile(&vm, &ctx, plain, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
-        ns_expect(ns_return_is_error(r), "uninferable stage fails.");
+        ns_shader_expect_transpile_error(ns_shader_transpile(&vm, &ctx, plain, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO),
+                                         "uninferable stage fails.");
 
-        r = ns_shader_transpile(&vm, &ctx, vs, NS_SHADER_TARGET_UNKNOWN, NS_SHADER_STAGE_AUTO);
-        ns_expect(ns_return_is_error(r), "unknown target fails.");
+        ns_shader_expect_transpile_error(ns_shader_transpile(&vm, &ctx, vs, NS_SHADER_TARGET_UNKNOWN, NS_SHADER_STAGE_AUTO),
+                                         "unknown target fails.");
     }
 
     // --- runtime dispatch through `use shader` ---

@@ -667,7 +667,7 @@ void gpu_update_texture(gpu_texture texture, ns_data data) {
     }
 }
 
-gpu_buffer gpu_create_buffer(gpu_buffer_desc *desc) {
+gpu_buffer gpu_create_buffer_desc(gpu_buffer_desc *desc) {
     assert(desc->size > 0);
 
     MTLResourceOptions options = _mtl_resource_options(desc->usage);
@@ -682,7 +682,7 @@ gpu_buffer gpu_create_buffer(gpu_buffer_desc *desc) {
     return (gpu_buffer){ .id = _state.buffer_count++ };
 }
 
-void gpu_update_buffer(gpu_buffer buffer, ns_data data) {
+void gpu_update_buffer_desc(gpu_buffer buffer, ns_data data) {
     gpu_buffer_mtl _buffer = _state.buffers[buffer.id];
     void *contents = [_buffer.buffer contents];
     if (contents != NULL) {
@@ -771,6 +771,75 @@ gpu_mesh gpu_create_mesh(gpu_mesh_desc *desc) {
     
     _state.meshes[_state.mesh_count] = _mesh;
     return (gpu_mesh){ .id = _state.mesh_count++ };
+}
+
+void gpu_destroy_texture(gpu_texture texture) {
+    if (texture.id == 0 || texture.id >= GPU_RESOURCE_POOL_SIZE) return;
+    gpu_texture_mtl *t = &_state.textures[texture.id];
+#ifndef ENABLE_ARC
+    if (t->texture) [t->texture release];
+#endif
+    memset(t, 0, sizeof(*t));
+}
+
+void gpu_destroy_sampler(gpu_sampler sampler) {
+    if (sampler.id == 0 || sampler.id >= GPU_RESOURCE_POOL_SIZE) return;
+    gpu_sampler_mtl *s = &_state.samplers[sampler.id];
+#ifndef ENABLE_ARC
+    if (s->sampler) [s->sampler release];
+#endif
+    memset(s, 0, sizeof(*s));
+}
+
+void gpu_destroy_buffer(gpu_buffer buffer) {
+    if (buffer.id == 0 || buffer.id >= GPU_RESOURCE_POOL_SIZE) return;
+    gpu_buffer_mtl *b = &_state.buffers[buffer.id];
+#ifndef ENABLE_ARC
+    if (b->buffer) [b->buffer release];
+#endif
+    memset(b, 0, sizeof(*b));
+}
+
+void gpu_destroy_shader(gpu_shader shader) {
+    if (shader.id == 0 || shader.id >= GPU_RESOURCE_POOL_SIZE) return;
+    gpu_shader_mtl *s = &_state.shaders[shader.id];
+#ifndef ENABLE_ARC
+    if (s->vertex_func) [s->vertex_func release];
+    if (s->fragment_func) [s->fragment_func release];
+    if (s->vertex_lib) [s->vertex_lib release];
+    if (s->fragment_lib) [s->fragment_lib release];
+#endif
+    memset(s, 0, sizeof(*s));
+}
+
+void gpu_destroy_pipeline(gpu_pipeline pipeline) {
+    if (pipeline.id == 0 || pipeline.id >= GPU_RESOURCE_POOL_SIZE) return;
+    gpu_pipeline_mtl *p = &_state.pipelines[pipeline.id];
+#ifndef ENABLE_ARC
+    if (p->pso) [p->pso release];
+    if (p->dso) [p->dso release];
+    if (p->reflection) [p->reflection release];
+#endif
+    memset(p, 0, sizeof(*p));
+}
+
+void gpu_destroy_binding(gpu_binding binding) {
+    if (binding.id == 0 || binding.id >= GPU_RESOURCE_POOL_SIZE) return;
+    memset(&_state.bindings[binding.id], 0, sizeof(gpu_binding_mtl));
+}
+
+void gpu_destroy_mesh(gpu_mesh mesh) {
+    if (mesh.id == 0 || mesh.id >= GPU_RESOURCE_POOL_SIZE) return;
+    memset(&_state.meshes[mesh.id], 0, sizeof(gpu_mesh_mtl));
+}
+
+void gpu_destroy_render_pass(gpu_render_pass pass) {
+    if (pass.id == 0 || pass.id >= GPU_RESOURCE_POOL_SIZE) return;
+    gpu_render_pass_mtl *p = &_state.render_passes[pass.id];
+#ifndef ENABLE_ARC
+    if (p->desc) [p->desc release];
+#endif
+    memset(p, 0, sizeof(*p));
 }
 
 gpu_render_pass gpu_create_render_pass(gpu_render_pass_desc *desc) {

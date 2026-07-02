@@ -129,7 +129,7 @@ void ns_help() {
     printf("  -h --help         show this help\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
-    printf("  run  [file.ns]    compile the project scope and run it (entry from ns.mod if omitted)\n");
+    printf("  run  [file.ns]    run a project entry, or run a standalone file when no ns.mod is found\n");
     printf("  test <path>       run a test entry, or every *_test.ns under a dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
@@ -1235,7 +1235,13 @@ void ns_exec_run(ns_str filename) {
     if (source.data == ns_null || source.len == 0)
         ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
 
-    ns_str scope = ns_project_root(filename);
+    ns_str scope = ns_str_null;
+    if (!ns_find_project_root(filename, &scope)) {
+        ns_return_value ret_v = ns_eval(&vm, source, filename);
+        if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
+        return;
+    }
+
     ns_str icon = ns_path_resolve(scope, ns_build_manifest_value(scope, "icon"));
     if (icon.data != ns_null) {
 #if defined(_WIN32)

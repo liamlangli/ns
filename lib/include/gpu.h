@@ -289,7 +289,7 @@ void gpu_destroy_device(void);
 
 gpu_texture gpu_create_texture(gpu_texture_desc *desc);
 gpu_sampler gpu_create_sampler(gpu_sampler_desc *desc);
-gpu_buffer gpu_create_buffer(gpu_buffer_desc *desc);
+gpu_buffer gpu_create_buffer_desc(gpu_buffer_desc *desc);
 gpu_shader gpu_create_shader(gpu_shader_desc *desc);
 gpu_pipeline gpu_create_pipeline(gpu_pipeline_desc *desc);
 gpu_binding gpu_create_binding(gpu_binding_desc *desc);
@@ -307,7 +307,7 @@ void gpu_destroy_render_pass(gpu_render_pass pass);
 
 gpu_pipeline_reflection gpu_pipeline_get_reflection(gpu_pipeline pipeline);
 void gpu_update_texture(gpu_texture texture, ns_data data);
-void gpu_update_buffer(gpu_buffer buffer, ns_data data);
+void gpu_update_buffer_desc(gpu_buffer buffer, ns_data data);
 
 void gpu_begin_render_pass(gpu_render_pass pass);
 void gpu_set_viewport(int x, int y, int width, int height);
@@ -318,6 +318,21 @@ void gpu_set_mesh(gpu_mesh mesh);
 void gpu_draw(int base, int count, int instance_count);
 void gpu_end_pass(void);
 void gpu_commit(void);
+
+const char *gpu_shader_target(void);
+u32 gpu_create_buffer(i32 byte_len, i32 usage);
+void gpu_update_buffer(u32 buffer_id, void *data, i32 byte_len);
+u32 gpu_create_shader_source(const char *vertex_source, const char *fragment_source, const char *vertex_entry, const char *fragment_entry);
+u32 gpu_create_pipeline_layout(u32 shader_id, i32 vertex_stride, i32 *attr_offsets, i32 *attr_sizes, i32 *attr_formats, i32 attr_count,
+                               i32 color_format, i32 primitive_type);
+u32 gpu_create_mesh_1(u32 pipeline_id, u32 vertex_buffer_id);
+void gpu_destroy_buffer_id(u32 buffer_id);
+void gpu_destroy_shader_id(u32 shader_id);
+void gpu_destroy_pipeline_id(u32 pipeline_id);
+void gpu_destroy_mesh_id(u32 mesh_id);
+void gpu_begin_render_pass_id(u32 pass_id);
+void gpu_set_pipeline_id(u32 pipeline_id);
+void gpu_set_mesh_id(u32 mesh_id);
 
 int gpu_pixel_format_row_count(gpu_pixel_format format, int height);
 int gpu_pixel_format_size(gpu_pixel_format format);

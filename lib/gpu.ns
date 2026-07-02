@@ -7,12 +7,9 @@ use view
 // resolved through FFI.
 //
 // As with the other native modules, the interface exposed to ns is the FFI-safe
-// subset: scalars, `str`, `ref` pointers, and the small single-field GPU handle
-// structs below (which mirror `struct { u32 id; }` in lib/include/gpu.h). The
-// descriptor-driven creation calls (gpu_create_pipeline, gpu_create_mesh, ...)
-// take deeply nested structs that do not marshal reliably through the
-// interpreter and are intended to be driven from a future scalar helper layer;
-// they are intentionally not bound here yet.
+// subset: scalars, `str`, `ref` pointers, arrays, and small resource IDs. The C
+// backend still owns the full descriptor structs; ns drives them through the
+// scalar ID helpers below.
 
 struct gpu_device { handle: any }
 
@@ -27,10 +24,31 @@ struct gpu_binding { id: i32 }
 struct gpu_mesh { id: i32 }
 struct gpu_render_pass { id: i32 }
 
+let GPU_USAGE_DEFAULT = 0
+let GPU_ATTRIBUTE_FORMAT_FLOAT = 1
+let GPU_PIXELFORMAT_BGRA8 = 28
+let GPU_PRIMITIVE_TRIANGLES = 4
+
 // Acquire the platform GPU device for `v`. Returns true on success. On platforms
 // without a backend this returns false.
 ref fn gpu_request_device(v: ref view) bool
 ref fn gpu_destroy_device()
+
+// ---- scalar resource creation for ns FFI ----------------------------------
+
+ref fn gpu_shader_target() str
+ref fn gpu_create_buffer(byte_len: i32, usage: i32) u32
+ref fn gpu_update_buffer(buffer_id: u32, data: [any], byte_len: i32)
+ref fn gpu_create_shader_source(vertex_source: str, fragment_source: str, vertex_entry: str, fragment_entry: str) u32
+ref fn gpu_create_pipeline_layout(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32) u32
+ref fn gpu_create_mesh_1(pipeline_id: u32, vertex_buffer_id: u32) u32
+ref fn gpu_destroy_buffer_id(buffer_id: u32)
+ref fn gpu_destroy_shader_id(shader_id: u32)
+ref fn gpu_destroy_pipeline_id(pipeline_id: u32)
+ref fn gpu_destroy_mesh_id(mesh_id: u32)
+ref fn gpu_begin_render_pass_id(pass_id: u32)
+ref fn gpu_set_pipeline_id(pipeline_id: u32)
+ref fn gpu_set_mesh_id(mesh_id: u32)
 
 // ---- per-frame submission (FFI-safe: handles + scalars) -------------------
 
