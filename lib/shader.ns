@@ -1,0 +1,27 @@
+mod shader
+
+// Transcode ns fns to shader source text at runtime. These fns are VM-internal
+// intrinsics (like std): the transpiler walks the fn-body ast inside the
+// interpreter, so there is no shader dylib.
+//
+// Targets: "msl" (Metal), "glsl" (Vulkan GLSL 450, one source per stage),
+// "hlsl" (DirectX 12).
+//
+// A shader entry is an ordinary ns fn over simd/user structs:
+//   - vertex:   fn vs_main(in: VertexData) FragmentInput  (return struct needs
+//                a `position: Float4` field)
+//   - fragment: fn fs_main(in: FragmentInput) Float4
+// Numbers are emitted as 32-bit floats (f64 literals are demoted). str,
+// containers, closures, ref types and native fns are rejected with a
+// source-located error.
+
+// Transpile fn `f` for `target`; the stage is inferred from the fn name
+// (vs_* / fs_* / ps_*) or its signature.
+ref fn shader_transpile(f: any, target: str) str
+
+// Transpile with an explicit stage: "vertex" | "fragment".
+ref fn shader_transpile_stage(f: any, target: str, stage: str) str
+
+// Entry-point name for gpu_shader_stage_desc.entry: the fn name for msl/hlsl,
+// "main" for glsl (the generated wrapper).
+ref fn shader_entry(f: any, target: str) str

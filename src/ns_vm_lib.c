@@ -159,7 +159,8 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     ns_return_assert(init_ret);
     vm->lib = prev;
 
-    if (ns_str_equals(lib_name, ns_str_cstr("std"))) {
+    // std and shader are VM-internal (dispatched in the interpreter, no dylib)
+    if (ns_str_equals(lib_name, ns_str_cstr("std")) || ns_str_equals(lib_name, ns_str_cstr("shader"))) {
         vm->libs[lib_index].path = ns_str_null;
         vm->libs[lib_index].lib = ns_null;
         return &vm->libs[lib_index];

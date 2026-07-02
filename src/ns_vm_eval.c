@@ -1,5 +1,6 @@
 #include "ns_vm.h"
 #include "ns_fmt.h"
+#include "ns_shader.h"
 
 /**
  * value transfer semantics
@@ -704,7 +705,9 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_array_push(vm->call_stack, call);
     if (fn->fn.t.ref) {
-        ns_return_bool ret = ns_vm_call_ref(vm);
+        // `mod shader` fns are VM-internal intrinsics (like std) but need the ast
+        // ctx to walk fn bodies, so they dispatch here where ctx is in scope.
+        ns_return_bool ret = ns_str_equals(sym->lib, ns_str_cstr("shader")) ? ns_shader_vm_call(vm, ctx) : ns_vm_call_ref(vm);
         if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     } else {
         if (sym->type == NS_SYMBOL_BLOCK) { // push block captured field to stack
@@ -1143,7 +1146,9 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_val)) return ret_val;
         ns_value val = ret_val.r;
 
-        if (!ns_type_equals(field->t, val.t) && !ns_type_match(vm, field->t, val.t)) { // type mismatch
+        // numeric fields accept any numeric value; the switch below converts it
+        ns_bool number_ok = ns_type_is_number(field->t) && ns_type_is_number(val.t);
+        if (!number_ok && !ns_type_equals(field->t, val.t) && !ns_type_match(vm, field->t, val.t)) { // type mismatch
             // ns_str f_type = ns_vm_get_type_name(vm, field->t);
             // ns_str v_type = ns_vm_get_type_name(vm, val.t);
             return ns_return_error(value, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "field type mismatch");
