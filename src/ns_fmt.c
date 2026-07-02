@@ -66,15 +66,18 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
     i32 i = 0;
     while (i < fmt.len) {
         if (fmt.data[i] == '{' && (i == 0 || (i > 0 && fmt.data[i - 1] != '\\'))) {
-            // Scan for the matching '}'. If there is none, the '{' is not an
-            // interpolation - emit it literally. This keeps print() tolerant of
-            // already-formatted text that legitimately contains brace characters
-            // (e.g. the source text of a `{` token).
+            // Scan for the matching '}'. If there is none, or the braces span
+            // multiple lines, the '{' is not an interpolation - emit it
+            // literally. This keeps print() tolerant of already-formatted text
+            // that legitimately contains brace characters (e.g. printed source
+            // code such as ns_shader output, where `{` opens a code block).
             i32 scan = i + 1;
+            ns_bool multiline = false;
             while (scan < fmt.len && fmt.data[scan] != '}') {
+                if (fmt.data[scan] == '\n') multiline = true;
                 scan++;
             }
-            if (scan == fmt.len) {
+            if (scan == fmt.len || multiline) {
                 ns_array_push(ret.data, fmt.data[i++]);
                 continue;
             }

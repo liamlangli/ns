@@ -6,6 +6,7 @@
 #include "ns_os.h"
 #include "ns_asm.h"
 #include "ns_pe.h"
+#include "ns_shader.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -40,7 +41,11 @@ typedef struct ns_compile_option_t {
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
+    ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
+    ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
+    ns_str shader_target;
+    ns_str entry;
     ns_str output;
     ns_str filename;
 } ns_compile_option_t;
@@ -82,6 +87,13 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.build_kind = 3;
         } else if (strcmp(argv[i], "--lib") == 0 || strcmp(argv[i], "--library") == 0) {
             option.build_kind = 2;
+        } else if (strcmp(argv[i], "--shader") == 0) {
+            option.shader_only = true;
+            if (i + 1 < argc) { i++; option.shader_target = ns_str_cstr(argv[i]); } // ns_str_cstr is a macro: no argv[++i]
+        } else if (strcmp(argv[i], "--entry") == 0) {
+            if (i + 1 < argc) { i++; option.entry = ns_str_cstr(argv[i]); }
+        } else if (strcmp(argv[i], "--shader-bin") == 0) {
+            option.shader_bin = true;
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
@@ -108,6 +120,10 @@ void ns_help() {
     printf("  --macho-o         emit mach-o object file (.o, arm64)\n");
     printf("  --wasm            emit webassembly module (.wasm)\n");
     printf("  --pe              emit windows pe executable (.exe, amd64)\n");
+    printf("  --shader <target> transpile shader fns to msl | glsl | hlsl source\n");
+    printf("  --entry <name>    shader entry fn (default: every vs_*/fs_*/ps_* fn)\n");
+    printf("  --shader-bin      also compile the shader source when the platform\n");
+    printf("                    toolchain is installed (xcrun metal / glslc / dxc)\n");
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
@@ -1347,6 +1363,150 @@ void ns_exec_eval(ns_str filename) {
     ns_str_free(ret);
 }
 
+// ---------------------------------------------------------------------------
+// `ns --shader <target> file.ns [-o out] [--entry name] [--shader-bin]`
+// ---------------------------------------------------------------------------
+
+static ns_bool ns_shader_tool_exists(const char *tool) {
+    char probe[256];
+#if defined(NS_WIN)
+    snprintf(probe, sizeof(probe), "where %s >NUL 2>&1", tool);
+#else
+    snprintf(probe, sizeof(probe), "command -v %s >/dev/null 2>&1", tool);
+#endif
+    return system(probe) == 0;
+}
+
+// Best-effort shader binary compilation via the platform toolchain. Never turns
+// a successful source emission into a failure: a missing tool only warns.
+static void ns_shader_compile_binary(ns_shader_target target, ns_str src_path, ns_str entry_name, ns_shader_stage stage) {
+    char cmd[2048];
+    ns_str q = ns_shell_quote(src_path);
+    switch (target) {
+    case NS_SHADER_MSL: {
+#if defined(NS_DARWIN)
+        if (!ns_shader_tool_exists("xcrun")) {
+            ns_warn("shader", "xcrun not found; wrote source only.\n");
+            break;
+        }
+        snprintf(cmd, sizeof(cmd), "xcrun -sdk macosx metal -c %s -o %s.air && xcrun -sdk macosx metallib %s.air -o %s.metallib", q.data, q.data, q.data,
+                 q.data);
+        if (system(cmd) != 0) ns_warn("shader", "metal compile failed for %.*s.\n", src_path.len, src_path.data);
+        else ns_info("shader", "binary %.*s.metallib\n", src_path.len, src_path.data);
+#else
+        ns_warn("shader", "metallib compilation needs the Apple toolchain; wrote source only.\n");
+#endif
+    } break;
+    case NS_SHADER_GLSL_VULKAN: {
+        const char *stage_name = stage == NS_SHADER_STAGE_VERTEX ? "vertex" : "fragment";
+        if (ns_shader_tool_exists("glslc")) {
+            snprintf(cmd, sizeof(cmd), "glslc -fshader-stage=%s %s -o %s.spv", stage_name, q.data, q.data);
+        } else if (ns_shader_tool_exists("glslangValidator")) {
+            snprintf(cmd, sizeof(cmd), "glslangValidator -V %s -o %s.spv", q.data, q.data);
+        } else {
+            ns_warn("shader", "glslc / glslangValidator not found; wrote source only.\n");
+            break;
+        }
+        if (system(cmd) != 0) ns_warn("shader", "spir-v compile failed for %.*s.\n", src_path.len, src_path.data);
+        else ns_info("shader", "binary %.*s.spv\n", src_path.len, src_path.data);
+    } break;
+    case NS_SHADER_HLSL: {
+        if (!ns_shader_tool_exists("dxc")) {
+            ns_warn("shader", "dxc not found; wrote source only.\n");
+            break;
+        }
+        const char *profile = stage == NS_SHADER_STAGE_VERTEX ? "vs_6_0" : "ps_6_0";
+        snprintf(cmd, sizeof(cmd), "dxc -T %s -E %.*s %s -Fo %s.%.*s.dxil", profile, entry_name.len, entry_name.data, q.data, q.data, entry_name.len,
+                 entry_name.data);
+        if (system(cmd) != 0) ns_warn("shader", "dxil compile failed for %.*s.\n", src_path.len, src_path.data);
+        else ns_info("shader", "binary %.*s.%.*s.dxil\n", src_path.len, src_path.data, entry_name.len, entry_name.data);
+    } break;
+    default: break;
+    }
+    ns_str_free(q);
+}
+
+static void ns_shader_emit_output(ns_str output, ns_str suffix, ns_str src, ns_bool bin, ns_shader_target target, ns_str entry_name, ns_shader_stage stage) {
+    if (output.len == 0) {
+        printf("%.*s", src.len, src.data);
+        if (bin) ns_warn("shader", "--shader-bin needs -o <path>; printed source only.\n");
+        return;
+    }
+    ns_str path = suffix.len > 0 ? ns_str_concat(output, suffix) : output;
+    ns_build_ensure_output_dir(path);
+    ns_write_text_file(path, src);
+    ns_info("shader", "wrote %.*s\n", path.len, path.data);
+    if (bin) ns_shader_compile_binary(target, path, entry_name, stage);
+}
+
+void ns_exec_shader(ns_str filename, ns_str target_s, ns_str entry, ns_str output, ns_bool bin) {
+    if (filename.len == 0) ns_exit(1, "shader", "no input file.\n");
+    ns_shader_target target = ns_shader_target_from_str(target_s);
+    if (target == NS_SHADER_TARGET_UNKNOWN) {
+        ns_exit(1, "shader", "unknown target %.*s (expected msl | glsl | hlsl).\n", target_s.len, target_s.data);
+    }
+
+    ns_str source = ns_fs_read_file(filename);
+    if (source.len == 0) ns_exit(1, "shader", "invalid input file %.*s.\n", filename.len, filename.data);
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    if (ns_return_is_error(ret)) ns_return_assert(ret);
+    ret = ns_vm_parse(&vm, &ctx); // runs `use` imports so simd structs resolve
+    if (ns_return_is_error(ret)) ns_return_assert(ret);
+
+    // entries: --entry name, otherwise every main-TU vs_*/fs_*/ps_* fn
+    ns_shader_entry_desc *entries = ns_null;
+    for (i32 i = 0, l = (i32)ns_array_length(vm.symbols); i < l; ++i) {
+        ns_symbol *s = &vm.symbols[i];
+        if (s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || s->fn.body == 0) continue;
+        if (!(s->lib.len == 0 || ns_str_equals(s->lib, ns_str_cstr("main")))) continue;
+        if (entry.len > 0) {
+            if (!ns_str_equals(s->name, entry)) continue;
+        } else if (!(ns_str_starts_with(s->name, ns_str_cstr("vs_")) || ns_str_starts_with(s->name, ns_str_cstr("fs_")) ||
+                     ns_str_starts_with(s->name, ns_str_cstr("ps_")))) {
+            continue;
+        }
+        ns_shader_stage stage = ns_shader_stage_infer(&vm, &ctx, i);
+        if (stage == NS_SHADER_STAGE_AUTO) {
+            ns_exit(1, "shader", "cannot infer the stage of %.*s; name it vs_*/fs_* or adjust its signature.\n", s->name.len, s->name.data);
+        }
+        ns_array_push(entries, ((ns_shader_entry_desc){.fn_index = i, .stage = stage}));
+    }
+    if (ns_array_length(entries) == 0) {
+        if (entry.len > 0) ns_exit(1, "shader", "entry fn %.*s not found.\n", entry.len, entry.data);
+        ns_exit(1, "shader", "no shader entry fns found (name them vs_*/fs_*/ps_* or pass --entry).\n");
+    }
+
+    if (target == NS_SHADER_GLSL_VULKAN) {
+        // Vulkan GLSL is one source per stage
+        for (i32 i = 0, l = (i32)ns_array_length(entries); i < l; ++i) {
+            ns_symbol *s = &vm.symbols[entries[i].fn_index];
+            ns_return_str src = ns_shader_transpile_program(&vm, &ctx, &entries[i], 1, target);
+            if (ns_return_is_error(src)) ns_return_assert(src);
+            ns_str suffix = entries[i].stage == NS_SHADER_STAGE_VERTEX ? ns_str_cstr(".vert") : ns_str_cstr(".frag");
+            if (output.len == 0 && l > 1) printf("// ---- %.*s ----\n", s->name.len, s->name.data);
+            ns_shader_emit_output(output, suffix, src.r, bin, target, ns_shader_entry_name(target, s->name), entries[i].stage);
+            ns_array_free(src.r.data);
+        }
+    } else {
+        ns_return_str src = ns_shader_transpile_program(&vm, &ctx, entries, (i32)ns_array_length(entries), target);
+        if (ns_return_is_error(src)) ns_return_assert(src);
+        ns_shader_emit_output(output, ns_str_null, src.r, bin && target == NS_SHADER_MSL, target, ns_str_null, NS_SHADER_STAGE_AUTO);
+        if (bin && target == NS_SHADER_HLSL) {
+            if (output.len == 0) {
+                ns_warn("shader", "--shader-bin needs -o <path>; printed source only.\n");
+            } else {
+                // dxc compiles per entry point
+                for (i32 i = 0, l = (i32)ns_array_length(entries); i < l; ++i) {
+                    ns_symbol *s = &vm.symbols[entries[i].fn_index];
+                    ns_shader_compile_binary(target, output, ns_shader_entry_name(target, s->name), entries[i].stage);
+                }
+            }
+        }
+        ns_array_free(src.r.data);
+    }
+    ns_array_free(entries);
+}
+
 void ns_exec_repl() {
     ns_repl(&vm);
 }
@@ -1373,6 +1533,8 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.ast_only) {
         ns_exec_ast(option.filename);
         ns_mem_status();
+    } else if (option.shader_only) {
+        ns_exec_shader(option.filename, option.shader_target, option.entry, option.output, option.shader_bin);
     } else if (option.ssa_only) {
         ns_exec_ssa(option.filename);
     } else if (option.aarch_only) {

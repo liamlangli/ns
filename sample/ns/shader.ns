@@ -1,0 +1,50 @@
+// Write both logic and shaders in ns: ordinary fns over simd structs are
+// transcoded to platform shader source at runtime with `use shader`
+// (or ahead of time with `ns --shader <msl|glsl|hlsl> sample/ns/shader.ns`).
+use std
+use simd
+use shader
+
+struct VertexData {
+    position: Float3,
+    uv: Float2
+}
+
+struct FragmentInput {
+    position: Float4,
+    uv: Float2,
+    color: Float4
+}
+
+fn vs_main(data: VertexData) FragmentInput {
+    let pos = data.position
+    return FragmentInput {
+        position: Float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
+        uv: data.uv,
+        color: Float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },
+    }
+}
+
+fn fs_main(data: FragmentInput) Float4 {
+    return data.color
+}
+
+fn main() {
+    print("// ---- msl ----\n")
+    print(shader_transpile(vs_main, "msl"))
+    print(shader_transpile(fs_main, "msl"))
+
+    print("// ---- glsl (vulkan) ----\n")
+    print(shader_transpile(vs_main, "glsl"))
+    print(shader_transpile(fs_main, "glsl"))
+
+    print("// ---- hlsl (dx12) ----\n")
+    print(shader_transpile(vs_main, "hlsl"))
+    print(shader_transpile(fs_main, "hlsl"))
+
+    // entry name to hand to gpu_shader_stage_desc.entry
+    let glsl_entry = shader_entry(vs_main, "glsl")
+    let msl_entry = shader_entry(vs_main, "msl")
+    print(`glsl entry: {glsl_entry}\n`)
+    print(`msl entry: {msl_entry}\n`)
+}

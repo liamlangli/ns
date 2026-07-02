@@ -79,6 +79,12 @@ Common commands:
 - `--macho-o` emit Mach-O object
 - `--wasm` emit WebAssembly
 - `--pe` emit PE executable
+- `--shader <msl|glsl|hlsl>` transpile shader fns (see `src/ns_shader.c`) to
+  target shader source; `--entry <name>` picks one entry (default: every
+  `vs_*`/`fs_*`/`ps_*` fn), GLSL emits one file per stage (`<out>.vert` /
+  `<out>.frag`); `--shader-bin` additionally compiles the source when the
+  platform toolchain is installed (`xcrun metal` → metallib, `glslc` /
+  `glslangValidator` → SPIR-V, `dxc` → DXIL) and only warns when it is not
 - `-s|--symbol` print symbol table
 - `-v|--version`, `-h|--help`
 - `-o|--output` output path for emitters
@@ -113,6 +119,10 @@ With filename and no analysis/emit flag, it evaluates and prints result.
   - `ns_aarch.c`, `ns_amd64.c` — architecture-related lowering/assembly helpers
   - `ns_macho.c`, `ns_pe.c`, `ns_wasm.c` — file format emitters
   - `ns_asm.c` — asm target abstraction/helpers
+  - `ns_shader.c` — transpiles ns fns to shader source (MSL / Vulkan GLSL /
+    HLSL); powers both the `--shader` CLI mode and the runtime `use shader`
+    module (`shader_transpile(fn, target)`), so logic and shaders can both be
+    written in ns (see `sample/ns/shader.ns` and `lib/shader.ns`)
 
 - **Runtime/platform utilities**
   - `ns_os.c`, `ns_net.c`, `ns_json.c`, `ns_fmt.c`, `ns_def.c`, `ns_jit.c`

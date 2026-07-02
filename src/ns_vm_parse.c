@@ -14,6 +14,7 @@ ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s) {
 }
 
 ns_bool ns_type_match(ns_vm *vm, ns_type r, ns_type p) {
+    if (ns_type_is(r, NS_TYPE_ANY)) return true; // an `any` slot accepts every provided type
     if (ns_type_equals(r, p)) return true;
     else if (ns_type_is(r, NS_TYPE_UNION)) {
         // A value is assignable to a union when its concrete type matches the
@@ -1094,7 +1095,10 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_t)) return ret_t;
 
         ns_type t = ret_t.r;
-        if (!ns_type_equals(t, f->t) && !ns_type_match(vm, f->t, t)) return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "designated expr type mismatch.");
+        // A numeric field accepts any numeric expr (converted at store time by
+        // ns_eval_desig_expr), so float literals (f64) initialize f32 fields.
+        ns_bool number_ok = ns_type_is_number(f->t) && ns_type_is_number(t);
+        if (!number_ok && !ns_type_equals(t, f->t) && !ns_type_match(vm, f->t, t)) return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "designated expr type mismatch.");
 
         field->field_def.rt.index = field_i;
     }
