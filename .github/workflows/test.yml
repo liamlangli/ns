@@ -1,4 +1,4 @@
-name: Build
+name: Test
 
 on:
   push:
@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,9 +20,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libreadline-dev libffi-dev
 
-      # GCC 13 on ubuntu-latest raises warnings (implicit-fallthrough,
-      # type-limits, unused-function, maybe-uninitialized) that the default
-      # -Werror promotes to errors; build without -Werror until the sources
-      # are warning-clean under GCC.
-      - name: Build
-        run: make NS_WERROR=0
+      # `make test` builds libns.a and the C test binaries, then runs them.
+      # -Werror is disabled for the same GCC 13 warnings noted in build.yml.
+      - name: Test
+        run: make test NS_WERROR=0
