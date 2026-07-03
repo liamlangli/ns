@@ -14,6 +14,34 @@ static ns_bool ns_expr_eval_bool(const char *src) {
 }
 
 int main() {
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let arr = [1, 2, 3]\n"
+            "    return arr.len == 3 && arr[0] == 1 && arr[1] == 2 && arr[2] == 3\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "array literal infers element type and supports indexing.");
+    }
+
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let arr: [f32] = [0, 1, 2]\n"
+            "    return arr.len == 3 && arr[0] == 0.f && arr[1] == 1.f && arr[2] == 2.f\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "array literal adopts declared array element type.");
+    }
+
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let arr = [f32](3)\n"
+            "    arr = [0.f, 1.f, 2.f]\n"
+            "    return arr.len == 3 && arr[0] == 0.f && arr[1] == 1.f && arr[2] == 2.f\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "array literal works as an assignment right-hand side.");
+    }
+
     // Regression: a call argument that is a bare identifier must resolve to the
     // caller's binding, not to a parameter of the same name that an earlier
     // argument of the same call already bound. Before the fix, `pick(a + 100, a)`

@@ -324,9 +324,20 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         printf(" }");
     } break;
     case NS_AST_ARRAY_EXPR: {
-        printf(ns_color_log "[" ns_color_nil);
-        printf("[%d]", n->array_expr.type);
-        printf(ns_color_log "]" ns_color_nil "([%d])", n->array_expr.count_expr);
+        if (n->array_expr.literal) {
+            printf(ns_color_log "[" ns_color_nil);
+            i32 next = n->next;
+            for (i32 e_i = 0; e_i < n->array_expr.elem_count; ++e_i) {
+                printf("[%d]", next);
+                next = ctx->nodes[next].next;
+                if (e_i != n->array_expr.elem_count - 1) printf(", ");
+            }
+            printf(ns_color_log "]" ns_color_nil);
+        } else {
+            printf(ns_color_log "[" ns_color_nil);
+            printf("[%d]", n->array_expr.type);
+            printf(ns_color_log "]" ns_color_nil "([%d])", n->array_expr.count_expr);
+        }
     } break;
     case NS_AST_GEN_EXPR: {
         ns_str_printf(n->gen_expr.name.val);
@@ -593,10 +604,21 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             break;
 
         case NS_AST_ARRAY_EXPR:
-            ns_ast_print_type_label(ctx, n->array_expr.type, false);
-            printf(ns_color_nil "(");
-            ns_ast_print_node(ctx, n->array_expr.count_expr, depth);
-            printf(")");
+            if (n->array_expr.literal) {
+                printf(ns_color_log "[" ns_color_nil);
+                i32 next = n->next;
+                for (i32 e_i = 0; e_i < n->array_expr.elem_count; ++e_i) {
+                    ns_ast_print_node(ctx, next, depth);
+                    next = ctx->nodes[next].next;
+                    if (e_i != n->array_expr.elem_count - 1) printf(", ");
+                }
+                printf(ns_color_log "]" ns_color_nil);
+            } else {
+                ns_ast_print_type_label(ctx, n->array_expr.type, false);
+                printf(ns_color_nil "(");
+                ns_ast_print_node(ctx, n->array_expr.count_expr, depth);
+                printf(")");
+            }
             break;
 
         case NS_AST_FOR_STMT:

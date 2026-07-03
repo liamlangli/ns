@@ -5,6 +5,7 @@
 #include "ns_os.h"
 
 ns_return_void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+ns_bool ns_vm_assign_number_compatible(ns_vm *vm, ns_type dst, ns_type src);
 
 ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s) {
     assert(s->type == NS_SYMBOL_FN || s->type == NS_SYMBOL_BLOCK);
@@ -1188,18 +1189,55 @@ ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(type, ns_type_unknown);
 }
 
-ns_return_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t) {
     ns_ast_t *n = &ctx->nodes[i];
+    if (n->array_expr.literal) {
+        ns_type elem_t = ns_type_unknown;
+        if (ns_type_is_array(t)) {
+            elem_t = t;
+            elem_t.array = false;
+        }
+
+        if (n->array_expr.elem_count == 0) {
+            if (ns_type_is_unknown(elem_t)) {
+                return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "empty array literal needs an array target type.");
+            }
+            n->array_expr.rt = (ns_type){.type = elem_t.type, .ref = elem_t.ref, .array = true, .mut = true, .stack = true, .index = elem_t.index};
+            return ns_return_ok(type, n->array_expr.rt);
+        }
+
+        i32 next = n->next;
+        for (i32 e_i = 0; e_i < n->array_expr.elem_count; ++e_i) {
+            ns_ast_t elem = ctx->nodes[next];
+            ns_return_type ret_e = ns_vm_parse_expr(vm, ctx, next, ns_type_is_unknown(elem_t) ? ns_type_infer : elem_t);
+            if (ns_return_is_error(ret_e)) return ret_e;
+            ns_type et = ret_e.r;
+            if (ns_type_is_unknown(elem_t)) {
+                elem_t = et;
+            } else if (!ns_type_equals(elem_t, et)) {
+                if (!ns_vm_assign_number_compatible(vm, elem_t, et) && !ns_type_match(vm, elem_t, et)) {
+                    return ns_return_error(type, ns_ast_state_loc(ctx, elem.state), NS_ERR_EVAL, "array literal element type mismatch.");
+                }
+            }
+            next = elem.next;
+        }
+
+        n->array_expr.rt = (ns_type){.type = elem_t.type, .ref = elem_t.ref, .array = true, .mut = true, .stack = true, .index = elem_t.index};
+        return ns_return_ok(type, n->array_expr.rt);
+    }
+
     ns_ast_t *type = &ctx->nodes[n->array_expr.type];
     ns_return_type ret_t = ns_vm_parse_type(vm, ctx, type);
     if (ns_return_is_error(ret_t)) return ret_t;
-    ns_type t = ret_t.r;
+    ns_type ctor_t = ret_t.r;
     if (type->type_label.is_dict || type->type_label.is_set) {
-        return ns_return_ok(type, t);
+        n->array_expr.rt = ctor_t;
+        return ns_return_ok(type, ctor_t);
     }
     // Preserve the element type's index (e.g. the struct symbol) so that
     // element access like arr[i].field can resolve the element's type.
-    ns_type arr_t = (ns_type){.type = t.type, .ref = t.ref, .array = true, .mut = t.mut, .stack = true, .index = t.index};
+    ns_type arr_t = (ns_type){.type = ctor_t.type, .ref = ctor_t.ref, .array = true, .mut = ctor_t.mut, .stack = true, .index = ctor_t.index};
+    n->array_expr.rt = arr_t;
     return ns_return_ok(type, arr_t);
 }
 
@@ -1408,7 +1446,7 @@ ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t) {
     case NS_AST_DESIG_EXPR: return ns_vm_parse_desig_expr(vm, ctx, i);
     case NS_AST_UNARY_EXPR: return ns_vm_parse_unary_expr(vm, ctx, i);
     case NS_AST_CAST_EXPR: return ns_vm_parse_cast_expr(vm, ctx, i);
-    case NS_AST_ARRAY_EXPR: return ns_vm_parse_array_expr(vm, ctx, i);
+    case NS_AST_ARRAY_EXPR: return ns_vm_parse_array_expr(vm, ctx, i, t);
     case NS_AST_INDEX_EXPR: return ns_vm_parse_index_expr(vm, ctx, i);
     case NS_AST_STR_FMT_EXPR: return ns_vm_parse_str_fmt(vm, ctx, i);
     case NS_AST_BLOCK_EXPR: return ns_vm_parse_block_expr(vm, ctx, i, t);

@@ -238,6 +238,9 @@ typedef struct ns_ast_desig_expr {
 typedef struct ns_ast_array_expr {
     i32 type;
     i32 count_expr;
+    i32 elem_count;
+    ns_bool literal;
+    ns_type rt;
 } ns_ast_array_expr;
 
 typedef struct ns_ast_block_expr {

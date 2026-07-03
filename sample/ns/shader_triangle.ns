@@ -25,7 +25,7 @@ struct FragmentInput {
     color: Float4
 }
 
-let g_resources = [u32](4)
+let g_resources = [0u, 0u, 0u, 0u]
 
 fn vs_main(data: VertexData) FragmentInput {
     let pos = data.position
@@ -39,47 +39,16 @@ fn fs_main(data: FragmentInput) Float4 {
     return data.color
 }
 
-fn fill_vertices(vertices: [f32]) {
-    vertices[0] = 0.00f // 'f' tail makes a f32 literal, no `as f32` cast needed
-    vertices[1] = 0.62f
-    vertices[2] = 0.0f
-    vertices[3] = 1.00f
-    vertices[4] = 0.25f
-    vertices[5] = 0.22f
-    vertices[6] = 1.0f
-
-    vertices[7] = -0.72f
-    vertices[8] = -0.58f
-    vertices[9] = 0.0f
-    vertices[10] = 0.20f
-    vertices[11] = 0.78f
-    vertices[12] = 0.42f
-    vertices[13] = 1.0f
-
-    vertices[14] = 0.72f
-    vertices[15] = -0.58f
-    vertices[16] = 0.0f
-    vertices[17] = 0.18f
-    vertices[18] = 0.48f
-    vertices[19] = 1.00f
-    vertices[20] = 1.0f
-}
-
 fn create_pipeline(target: str) {
-    let vertices = [f32](21)
-    fill_vertices(vertices)
+    let vertices = [
+        0.00f, 0.62f, 0.0f, 1.00f, 0.25f, 0.22f, 1.0f,
+        -0.72f, -0.58f, 0.0f, 0.20f, 0.78f, 0.42f, 1.0f,
+        0.72f, -0.58f, 0.0f, 0.18f, 0.48f, 1.00f, 1.0f,
+    ]
 
-    let attr_offsets = [i32](2)
-    attr_offsets[0] = 0
-    attr_offsets[1] = 12
-
-    let attr_sizes = [i32](2)
-    attr_sizes[0] = 3
-    attr_sizes[1] = 4
-
-    let attr_formats = [i32](2)
-    attr_formats[0] = GPU_ATTRIBUTE_FORMAT_FLOAT
-    attr_formats[1] = GPU_ATTRIBUTE_FORMAT_FLOAT
+    let attr_offsets = [0, 12]
+    let attr_sizes = [3, 4]
+    let attr_formats = [GPU_ATTRIBUTE_FORMAT_FLOAT, GPU_ATTRIBUTE_FORMAT_FLOAT]
 
     let vertex_bytes = vertices.len * 4
     g_resources[0] = gpu_create_buffer(vertex_bytes, GPU_USAGE_DEFAULT)

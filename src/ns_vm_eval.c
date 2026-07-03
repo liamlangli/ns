@@ -1438,6 +1438,55 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+    if (n->array_expr.literal) {
+        ns_type arr_type = n->array_expr.rt;
+        if (!ns_type_is_array(arr_type)) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "array literal type was not resolved.");
+        }
+
+        ns_type element_type = arr_type;
+        element_type.array = false;
+        i32 element_count = n->array_expr.elem_count;
+        i32 element_size = ns_type_size(vm, element_type);
+        if (element_size <= 0) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "invalid array element type.");
+        }
+
+        i8 *data = (i8 *)ns_buffer_alloc((szt)element_size, (szt)element_count, element_type);
+        if (!data) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "array allocation failed.");
+        }
+
+        i32 next = n->next;
+        for (i32 e_i = 0; e_i < element_count; ++e_i) {
+            ns_ast_t elem = ctx->nodes[next];
+            ns_return_value ret_elem = ns_eval_expr(vm, ctx, next);
+            if (ns_return_is_error(ret_elem)) return ret_elem;
+            ns_value elem_v = ret_elem.r;
+
+            if (!ns_type_equals(element_type, elem_v.t)) {
+                if (!ns_eval_number_assign_compatible(vm, element_type, elem_v.t) && !ns_type_match(vm, element_type, elem_v.t)) {
+                    return ns_return_error(value, ns_ast_state_loc(ctx, elem.state), NS_ERR_EVAL, "array literal element type mismatch.");
+                }
+                if (ns_type_is_number(element_type) && ns_type_is_number(elem_v.t)) {
+                    ns_return_value cast_ret = ns_eval_cast_number(vm, elem_v, element_type, ns_ast_state_loc(ctx, elem.state));
+                    if (ns_return_is_error(cast_ret)) return cast_ret;
+                    elem_v = cast_ret.r;
+                }
+            }
+
+            ns_value dst = {.t = element_type, .o = (u64)(data + (szt)e_i * (szt)element_size)};
+            dst.t.stack = false;
+            dst.t.mut = true;
+            ns_return_value copy_ret = ns_eval_copy(vm, dst, elem_v, element_size);
+            if (ns_return_is_error(copy_ret)) return copy_ret;
+            next = elem.next;
+        }
+
+        ns_value v = (ns_value){.t = {.type = arr_type.type, .array = true, .mut = true, .ref = arr_type.ref, .index = arr_type.index, .stack = false}, .o = (u64)data};
+        return ns_return_ok(value, v);
+    }
+
     ns_ast_t *t = &ctx->nodes[n->array_expr.type];
 
     ns_return_type ret_t = ns_vm_parse_type(vm, ctx, t);
