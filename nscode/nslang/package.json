@@ -3,9 +3,12 @@
     "displayName": "Nano Script",
     "description": "Syntax highlighting for the Nano Script (ns) language.",
     "version": "0.1.0",
-    "publisher": "nslang",
+    "publisher": "liamlangli",
     "license": "MIT",
     "icon": "icons/ns.png",
+    "scripts": {
+        "pack": "cp ../../README.md README.md && cp ../../LICENSE LICENSE && vsce package"
+    },
     "repository": {
         "type": "git",
         "url": "https://github.com/liamlangli/ns"
