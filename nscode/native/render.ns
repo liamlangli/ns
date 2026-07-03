@@ -13,20 +13,20 @@ fn FONT_MONO() i32 { return 1 }
 fn MODE_CODE() i32 { return 0 }
 fn MODE_AGENT() i32 { return 1 }
 
-let g_mode = 1
-let g_selected_chat = 0
+let g_mode: i32 = 1i
+let g_selected_chat: i32 = 0i
 let g_dialog_scroll = 0.0
 let g_code_scroll = 0.0
 let g_last_frame_time = 0.0
 let g_fps = 0.0
-let g_fps_i = 0
+let g_fps_i: i32 = 0i
 
 // Code view input state: mouse drag selection, click streak (double/triple
 // click) and the previous frame's key levels for edge detection.
 let g_code_drag = false
 let g_last_click_time = 0.0
-let g_last_click_line = -1
-let g_click_streak = 0
+let g_last_click_line: i32 = -1i
+let g_click_streak: i32 = 0i
 let g_key_prev = [u8](512)
 let g_caret_follow = false
 
@@ -37,16 +37,16 @@ let g_caret_follow = false
 // dictionaries addressed by the parallel counters.
 let g_msg_text = [i32: str](64)
 let g_msg_role = [i32](64)
-let g_msg_count = 0
+let g_msg_count: i32 = 0i
 let g_convo_seeded = false
 
 let g_input_text = ""
 let g_input_focus = true
-let g_perm = 1
-let g_module = 0
+let g_perm: i32 = 1i
+let g_module: i32 = 0i
 let g_attach_name = [i32: str](8)
-let g_attach_count = 0
-let g_attach_seq = 0
+let g_attach_count: i32 = 0i
+let g_attach_seq: i32 = 0i
 let g_running = false
 let g_run_started = 0.0
 let g_reply_delay = 2.4
@@ -56,7 +56,7 @@ let g_dialog_content_h = 0.0
 // Composer/popup hit rects, written while drawing so click handling and the
 // headless frame tests can address the controls without mirroring layout math.
 let g_click_used = false
-let g_pop_kind = 0
+let g_pop_kind: i32 = 0i
 let g_cmp_x = 0.0
 let g_cmp_y = 0.0
 let g_cmp_w = 0.0
@@ -1202,7 +1202,7 @@ fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, tex
             let li = mouse_line(v, body_y, line_h)
             let col = mouse_col(v, text_x, char_w)
             let now = os_time()
-            let streak = 1
+            let streak: i32 = 1i
             if (now - g_last_click_time) < 0.45 {
                 if li == g_last_click_line {
                     streak = g_click_streak + 1
@@ -1334,8 +1334,8 @@ fn draw_texture_panel(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
     let grid_x = x + 18.0
     let grid_y = y + 102.0
     let cell = 10.0
-    let cols = 22
-    let rows = 30
+    let cols: i32 = 22i
+    let rows: i32 = 30i
     ui_push_clip(r, grid_x, grid_y, w - 36.0, h - 150.0)
     for row in 0 to rows {
         for col in 0 to cols {
