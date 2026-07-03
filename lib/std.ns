@@ -9,6 +9,7 @@ ref fn write(fd: u64, buf: str) u64
 // libm
 ref fn sqrt(x: f64) f64
 
-// string
+// string (str is utf8-encoded; substr indexes bytes, utf8_len counts codepoints)
 ref fn substr(s: str, start: i32, len: i32) str
 ref fn unescape(s: str) str
+ref fn utf8_len(s: str) i32

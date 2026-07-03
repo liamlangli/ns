@@ -70,7 +70,9 @@ ns_str ns_token_type_to_string(ns_token_type t) {
 }
 
 i32 ns_identifier_follow(char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || (c >= '0' && c <= '9');
+    // source text is utf8 by default: any non-ascii byte belongs to a
+    // multibyte codepoint, which identifiers may contain
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || (c >= '0' && c <= '9') || (u8)c >= 0x80;
 }
 
 // scan an optional numeric literal tail after the digits: 'f' turns the
@@ -145,7 +147,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     i32 to = f + 1;
     i32 l, sep;
     char *s = src.data;
-    char lead = s[i]; // TODO parse utf8 characters
+    char lead = s[i]; // non-ascii utf8 lead bytes fall through to the identifier path
     t->suffix = 0;
     switch (lead) {
 
@@ -444,15 +446,19 @@ case 'l': {
     case 34: // "
     case 96: // `
     {
-        // parse string LITERAL
+        // parse string LITERAL: utf8 payload passes through byte-wise (no
+        // byte of a multibyte sequence can collide with an ascii quote), and
+        // a backslash escapes the next byte so \" \' \` and \\ stay inside
+        // the literal (they are resolved later by ns_str_unescape)
         char quote = lead;
         i++;
         while (s[i] != quote && s[i] != '\0') {
+            if (s[i] == '\\' && s[i + 1] != '\0') i++;
             i++;
         }
         t->type = lead == 96 ? NS_TOKEN_STR_FORMAT : NS_TOKEN_STR_LITERAL;
         t->val = ns_str_range(s + f + 1, i - f - 1);
-        to = i + 1;
+        to = s[i] == quote ? i + 1 : i;
     } break;
     case '!': {
         if (s[i + 1] == '=') {
@@ -691,17 +697,49 @@ case 'l': {
     } break;
     identifier:
     default: {
-        char lead = s[i];
-        if (!((lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z') || lead == '_')) {
+        // identifiers are utf8 by default: an ascii letter/underscore or any
+        // valid non-ascii codepoint starts one, and both may follow. Invalid
+        // utf8 (bad lead, truncated or malformed sequence) yields a one-byte
+        // NS_TOKEN_INVALID instead of being silently absorbed.
+        u8 c = (u8)s[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_') {
+            i++;
+        } else if (c >= 0x80) {
+            u32 cp = 0;
+            i32 n = ns_utf8_decode(src, i, &cp);
+            if (n == 0) {
+                t->type = NS_TOKEN_INVALID;
+                t->val = ns_str_range(s + i, 1);
+                to = i + 1;
+                break;
+            }
+            if (cp == 0xfeff) { // utf8 BOM: treat as whitespace
+                t->type = NS_TOKEN_SPACE;
+                t->val = ns_str_range(s + i, n);
+                to = i + n;
+                break;
+            }
+            i += n;
+        } else {
             t->type = NS_TOKEN_INVALID;
             t->val = ns_str_range(s + i, 1);
             to = i + 1;
             break;
         }
-        i++;
 
-        while ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9') || s[i] == '_') {
-            i++;
+        for (;;) {
+            c = (u8)s[i];
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+                i++;
+                continue;
+            }
+            if (c >= 0x80) {
+                i32 n = ns_utf8_decode(src, i, ns_null);
+                if (n == 0) break; // stop before invalid utf8, next call reports it
+                i += n;
+                continue;
+            }
+            break;
         }
 
         t->type = NS_TOKEN_IDENTIFIER;

@@ -241,6 +241,85 @@ ns_str ns_str_from_i32(i32 i) {
     return s;
 }
 
+i32 ns_utf8_seq_len(i8 lead) {
+    u8 c = (u8)lead;
+    if (c < 0x80) return 1;
+    if ((c & 0xe0) == 0xc0) return 2;
+    if ((c & 0xf0) == 0xe0) return 3;
+    if ((c & 0xf8) == 0xf0) return 4;
+    return 0;
+}
+
+i32 ns_utf8_decode(ns_str s, i32 i, u32 *cp) {
+    // low bits kept from the lead byte, and the smallest codepoint each
+    // sequence length is allowed to encode (rejects overlong forms)
+    static const u8 lead_mask[5] = {0, 0x7f, 0x1f, 0x0f, 0x07};
+    static const u32 min_cp[5] = {0, 0, 0x80, 0x800, 0x10000};
+    if (i < 0 || i >= s.len) return 0;
+    i32 n = ns_utf8_seq_len(s.data[i]);
+    if (n == 0 || i + n > s.len) return 0;
+    u32 c = (u8)s.data[i] & lead_mask[n];
+    for (i32 k = 1; k < n; k++) {
+        u8 b = (u8)s.data[i + k];
+        if ((b & 0xc0) != 0x80) return 0;
+        c = (c << 6) | (b & 0x3f);
+    }
+    if (c < min_cp[n] || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff)) return 0;
+    if (cp) *cp = c;
+    return n;
+}
+
+i32 ns_utf8_encode(u32 cp, i8 *buf) {
+    if (cp < 0x80) {
+        buf[0] = (i8)cp;
+        return 1;
+    } else if (cp < 0x800) {
+        buf[0] = (i8)(0xc0 | (cp >> 6));
+        buf[1] = (i8)(0x80 | (cp & 0x3f));
+        return 2;
+    } else if (cp < 0x10000) {
+        if (cp >= 0xd800 && cp <= 0xdfff) return 0; // surrogates never appear in utf8
+        buf[0] = (i8)(0xe0 | (cp >> 12));
+        buf[1] = (i8)(0x80 | ((cp >> 6) & 0x3f));
+        buf[2] = (i8)(0x80 | (cp & 0x3f));
+        return 3;
+    } else if (cp <= 0x10ffff) {
+        buf[0] = (i8)(0xf0 | (cp >> 18));
+        buf[1] = (i8)(0x80 | ((cp >> 12) & 0x3f));
+        buf[2] = (i8)(0x80 | ((cp >> 6) & 0x3f));
+        buf[3] = (i8)(0x80 | (cp & 0x3f));
+        return 4;
+    }
+    return 0;
+}
+
+i32 ns_str_utf8_len(ns_str s) {
+    i32 i = 0, n = 0;
+    while (i < s.len) {
+        i32 l = ns_utf8_decode(s, i, ns_null);
+        i += l ? l : 1;
+        n++;
+    }
+    return n;
+}
+
+ns_bool ns_str_utf8_valid(ns_str s) {
+    i32 i = 0;
+    while (i < s.len) {
+        i32 l = ns_utf8_decode(s, i, ns_null);
+        if (l == 0) return false;
+        i += l;
+    }
+    return true;
+}
+
+static i32 ns_hex_digit(i8 c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 ns_str ns_str_unescape(ns_str s) {
     i32 size = s.len;
     i8 *data = (i8 *)ns_malloc(size + 1); // +1 for the trailing '\0'
@@ -255,6 +334,35 @@ ns_str ns_str_unescape(ns_str s) {
             case 'r': data[j] = '\r'; break;
             case '0': data[j] = '\0'; break;
             case '\\': data[j] = '\\'; break;
+            case 'u': {
+                // \u{XXXX}: hex codepoint written out as utf8 bytes. The
+                // spelling is always at least as long as the encoded bytes,
+                // so the size+1 output buffer still fits. A malformed escape
+                // falls through and keeps the 'u' verbatim like any other
+                // unknown escape.
+                i32 k = i + 1;
+                u32 cp = 0;
+                ns_bool ok = k < size && s.data[k] == '{';
+                if (ok) {
+                    k++;
+                    i32 digits = 0;
+                    while (k < size && s.data[k] != '}') {
+                        i32 d = ns_hex_digit(s.data[k]);
+                        if (d < 0 || cp > 0x10ffff) { ok = false; break; }
+                        cp = cp * 16 + d;
+                        digits++;
+                        k++;
+                    }
+                    ok = ok && digits > 0 && k < size && s.data[k] == '}';
+                }
+                i32 n = ok ? ns_utf8_encode(cp, data + j) : 0;
+                if (n > 0) {
+                    j += n - 1; // the loop tail adds the final +1
+                    i = k;      // consume through the closing '}'
+                } else {
+                    data[j] = s.data[i];
+                }
+            } break;
             default: data[j] = s.data[i]; break;
             }
         } else {

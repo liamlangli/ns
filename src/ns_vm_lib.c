@@ -117,6 +117,12 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         ns_str u = ns_str_unescape(s);
         call->ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, u)};
         ns_str_free(u);
+    } else if (ns_str_equals_STR(call->callee->name, "utf8_len")) {
+        // utf8_len(s) -> i32 : number of utf8 codepoints in s. str data is
+        // utf8-encoded by default, so this is the user-visible character
+        // count, while the byte count stays the storage-level length.
+        ns_str s = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
+        call->ret = (ns_value){.t = ns_type_i32, .i32 = ns_str_utf8_len(s)};
     } else {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "unknown std fn.");
     }

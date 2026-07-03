@@ -136,6 +136,14 @@ typedef struct ns_str {
 ns_str ns_str_slice(ns_str s, i32 start, i32 end);
 ns_str ns_str_concat(ns_str a, ns_str b);
 
+// utf8: ns_str is a byte string whose default and global text encoding is
+// utf8. data/len always count bytes; these helpers work in codepoints.
+i32 ns_utf8_seq_len(i8 lead);                 // bytes announced by a lead byte (1..4), 0 for a continuation/invalid lead
+i32 ns_utf8_decode(ns_str s, i32 i, u32 *cp); // decode the codepoint at byte i, return bytes consumed, 0 on invalid utf8
+i32 ns_utf8_encode(u32 cp, i8 *buf);          // encode cp into buf (>= 4 bytes), return bytes written, 0 on invalid cp
+i32 ns_str_utf8_len(ns_str s);                // codepoint count (each invalid byte counts as one)
+ns_bool ns_str_utf8_valid(ns_str s);          // true when every byte belongs to a well-formed utf8 sequence
+
 i32 ns_str_to_i32(ns_str s);
 i64 ns_str_to_i64(ns_str s);
 f64 ns_str_to_f64(ns_str s);

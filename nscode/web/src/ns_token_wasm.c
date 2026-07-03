@@ -168,10 +168,33 @@ static i32 ns_token_separator(char *s, i32 i) {
 }
 
 static i32 ns_identifier_follow(char c) {
+    /* source is utf8 by default: non-ascii bytes belong to multibyte
+     * codepoints, which identifiers may contain */
     return (c >= 'a' && c <= 'z') ||
            (c >= 'A' && c <= 'Z') ||
            c == '_' || c == '$'   ||
-           (c >= '0' && c <= '9');
+           (c >= '0' && c <= '9') ||
+           (unsigned char)c >= 0x80;
+}
+
+/* Byte length of the valid utf8 sequence starting at s.data[i], 0 when the
+ * bytes there are not well-formed utf8 (mirrors ns_utf8_decode in ns_type.c). */
+static i32 ns_utf8_next(ns_str s, i32 i, unsigned int *cp_out) {
+    static const unsigned char lead_mask[5] = {0, 0x7f, 0x1f, 0x0f, 0x07};
+    static const unsigned int  min_cp[5]    = {0, 0, 0x80, 0x800, 0x10000};
+    if (i < 0 || i >= s.len) return 0;
+    unsigned char c = (unsigned char)s.data[i];
+    i32 n = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 0;
+    if (n == 0 || i + n > s.len) return 0;
+    unsigned int cp = c & lead_mask[n];
+    for (i32 k = 1; k < n; k++) {
+        unsigned char b = (unsigned char)s.data[i + k];
+        if ((b & 0xc0) != 0x80) return 0;
+        cp = (cp << 6) | (b & 0x3f);
+    }
+    if (cp < min_cp[n] || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return 0;
+    if (cp_out) *cp_out = cp;
+    return n;
 }
 
 #define ns_range_token(token, length)                                   \
@@ -370,7 +393,12 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
     case 96:  /* ` */ {
         char quote = lead;
         i++;
-        while (s[i] != quote && s[i] != '\0' && i < src.len) i++;
+        /* utf8 payload passes through byte-wise; a backslash escapes the
+         * next byte so \" \' \` and \\ stay inside the literal */
+        while (s[i] != quote && s[i] != '\0' && i < src.len) {
+            if (s[i] == '\\' && i + 1 < src.len && s[i + 1] != '\0') i++;
+            i++;
+        }
         t->type = (lead == 96) ? NS_TOKEN_STR_FORMAT : NS_TOKEN_STR_LITERAL;
         /* include the quotes in the token span */
         t->val  = ns_str_range(s + f, i - f + (s[i] == quote ? 1 : 0));
@@ -523,16 +551,46 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
 
     identifier:
     default: {
-        char lc = s[i];
-        if (!((lc >= 'a' && lc <= 'z') || (lc >= 'A' && lc <= 'Z') || lc == '_')) {
+        /* utf8 identifiers by default: ascii letter/underscore or any valid
+         * non-ascii codepoint starts one; invalid utf8 is a one-byte
+         * NS_TOKEN_INVALID and a utf8 BOM counts as whitespace */
+        unsigned char lc = (unsigned char)s[i];
+        if ((lc >= 'a' && lc <= 'z') || (lc >= 'A' && lc <= 'Z') || lc == '_') {
+            i++;
+        } else if (lc >= 0x80) {
+            unsigned int cp = 0;
+            i32 n = ns_utf8_next(src, i, &cp);
+            if (n == 0) {
+                t->type = NS_TOKEN_INVALID;
+                t->val  = ns_str_range(s + i, 1);
+                to = i + 1;
+                break;
+            }
+            if (cp == 0xfeff) {
+                t->type = NS_TOKEN_SPACE;
+                t->val  = ns_str_range(s + i, n);
+                to = i + n;
+                break;
+            }
+            i += n;
+        } else {
             t->type = NS_TOKEN_INVALID;
             t->val  = ns_str_range(s + i, 1);
             to = i + 1;
             break;
         }
-        i++;
-        while ((s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') ||
-               (s[i] >= '0' && s[i] <= '9') || s[i] == '_') i++;
+        for (;;) {
+            unsigned char c = (unsigned char)s[i];
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                (c >= '0' && c <= '9') || c == '_') { i++; continue; }
+            if (c >= 0x80) {
+                i32 n = ns_utf8_next(src, i, 0);
+                if (n == 0) break;
+                i += n;
+                continue;
+            }
+            break;
+        }
         t->type = NS_TOKEN_IDENTIFIER;
         t->val  = ns_str_range(s + f, i - f);
         to = i;

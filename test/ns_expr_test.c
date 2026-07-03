@@ -420,5 +420,42 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "single-line function body with an assignment statement.");
     }
 
+    // --- utf8 source text: str is utf8-encoded by default, so multibyte
+    // identifiers and string literals flow through tokenize/parse/eval
+    // unchanged, including as format-string interpolation inputs. ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let 答案 = 40\n"
+            "    let 名字 = \"世界\"\n"
+            "    let s = `你好 {名字} {答案 + 2}`\n"
+            "    return 答案 + 2 == 42 && s == \"你好 世界 42\"\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "utf8 identifiers and string literals through parse and eval.");
+    }
+
+    // --- escaped quotes inside string literals (tokenizer regression: the
+    // literal used to end at the first quote even when escaped, which made
+    // everything after `say \` tokenize as code and fail to parse). ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let s = \"say \\\"hi\\\"\"\n"
+            "    let t = \"ok\"\n"
+            "    return t == \"ok\"\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "escaped quote stays inside a string literal.");
+    }
+
+    // --- std.utf8_len counts codepoints while byte indexing stays byte-based ---
+    {
+        const char *src =
+            "use std\n"
+            "fn main() bool {\n"
+            "    return utf8_len(\"你好ns\") == 4 && utf8_len(\"ns\") == 2\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "std.utf8_len counts utf8 codepoints.");
+    }
+
     return 0;
 }
