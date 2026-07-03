@@ -1,0 +1,46 @@
+{
+    "name": "nslang",
+    "displayName": "Nano Script",
+    "description": "Syntax highlighting for the Nano Script (ns) language.",
+    "version": "0.1.0",
+    "publisher": "nslang",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/liamlangli/ns"
+    },
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "ns",
+                "aliases": [
+                    "Nano Script",
+                    "ns",
+                    "nslang"
+                ],
+                "extensions": [
+                    ".ns"
+                ],
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "ns",
+                "scopeName": "source.ns",
+                "path": "./syntaxes/ns.tmLanguage.json"
+            }
+        ],
+        "configurationDefaults": {
+            "files.associations": {
+                "ns.mod": "toml"
+            }
+        }
+    }
+}
