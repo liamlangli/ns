@@ -225,7 +225,7 @@ ns_return_value ns_eval_cast_number(ns_vm *vm, ns_value v, ns_type dst, ns_code_
         return ns_return_error(value, loc, NS_ERR_EVAL, "numeric cast type mismatch.");
     }
 
-    ns_value out = {.t = dst};
+    ns_value out = {.t = ns_type_set_mut(dst, false)};
     if (ns_type_is_float(dst)) {
         if (ns_type_is(dst, NS_TYPE_F32)) {
             out.f32 = (f32)ns_eval_to_f64(vm, v);

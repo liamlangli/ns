@@ -1427,7 +1427,7 @@ ns_return_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_typ
     if (ns_type_is_number(l) && ns_type_is_number(r)) {
         ns_type t = ns_vm_number_type_upgrade(l, r);
         if (!ns_type_is_unknown(t))
-            return ns_return_ok(type, t);
+            return ns_vm_parse_binary_ops(vm, ctx, t, i);
     }
 
     return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "binary expr type mismatch.");

@@ -28,14 +28,14 @@ use std
 // ---- document state -------------------------------------------------------
 
 let g_doc = ""         // whole document as one string
-let g_cur = 0          // caret as a byte offset into g_doc
-let g_anchor = -1      // selection anchor offset, or -1 for no selection
+let g_cur: i32 = 0i     // caret as a byte offset into g_doc
+let g_anchor: i32 = -1i // selection anchor offset, or -1 for no selection
 let g_shift = false    // host-set: extend selection on the next navigation key
 
-let g_rowoff = 0       // first document line shown
-let g_coloff = 0       // first column shown
-let g_rows = 40        // visible text rows (set from the framebuffer in render)
-let g_cols = 120       // visible columns (set from the framebuffer in render)
+let g_rowoff: i32 = 0i  // first document line shown
+let g_coloff: i32 = 0i  // first column shown
+let g_rows: i32 = 40i   // visible text rows (set from the framebuffer in render)
+let g_cols: i32 = 120i  // visible columns (set from the framebuffer in render)
 
 // VIEW_KEY_* codes (lib/include/view.h). ns has no enums; constants are
 // zero-argument fns, matching the convention in nscode/cli/keys.ns.
@@ -650,7 +650,7 @@ fn key_char(k: i32, shift: bool) str {
         return "["
     }
     if k == 92 {
-        return "\"
+        return "\\"
     }
     if k == 93 {
         return "]"
@@ -680,8 +680,8 @@ fn tok_cap() i32 { return 192 }
 let g_tok_start = [i32](192)
 let g_tok_len = [i32](192)
 let g_tok_kind = [i32](192)
-let g_tok_count = 0
-let g_tok_line_off = 0 // byte offset of the line last passed to tokenize_line
+let g_tok_count: i32 = 0i
+let g_tok_line_off: i32 = 0i // byte offset of the line last passed to tokenize_line
 
 fn token_count() i32 {
     return g_tok_count

@@ -189,6 +189,26 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "cast results as arithmetic operands.");
     }
 
+    // Regression: casting a stack-backed inferred i64 local to an i32 return
+    // type must produce an immediate i32 value, not an immediate value still
+    // tagged as stack-backed.
+    {
+        const char *src =
+            "fn one() i32 {\n"
+            "    let x = 1\n"
+            "    return x\n"
+            "}\n"
+            "fn inc() i32 {\n"
+            "    let x = 1\n"
+            "    x = x + 1\n"
+            "    return x\n"
+            "}\n"
+            "fn main() bool {\n"
+            "    return one() == 1 && inc() == 2\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "numeric return cast from inferred local.");
+    }
+
     // --- bitwise and shift operators ---
     {
         const char *src =

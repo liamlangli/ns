@@ -526,10 +526,6 @@ static ns_str ns_path_resolve(ns_str root, ns_str path) {
     return ns_path_join(root, path);
 }
 
-static ns_bool ns_str_ends_with(ns_str s, ns_str suffix) {
-    return s.len >= suffix.len && strncmp(s.data + s.len - suffix.len, suffix.data, suffix.len) == 0;
-}
-
 // Extract the first quoted string that follows `key =` in a TOML manifest.
 // Handles both `key = "value"` and `key = ["value", ...]`; the key must be the
 // first token on its line so `entry` never matches `entries`. Returns a
@@ -666,11 +662,6 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
     return ns_path_join(bin, artifact);
 }
 
-static ns_str ns_build_app_output(ns_str output) {
-    if (ns_str_ends_with(output, ns_str_cstr(".app"))) return output;
-    return ns_str_concat(output, ns_str_cstr(".app"));
-}
-
 static void ns_mkdir_one(ns_str dir) {
     if (dir.len == 0) return;
 #if defined(_WIN32)
@@ -710,6 +701,16 @@ static void ns_write_text_file(ns_str path, ns_str text) {
     fclose(file);
 }
 
+#if defined(NS_DARWIN)
+static ns_bool ns_str_ends_with(ns_str s, ns_str suffix) {
+    return s.len >= suffix.len && strncmp(s.data + s.len - suffix.len, suffix.data, suffix.len) == 0;
+}
+
+static ns_str ns_build_app_output(ns_str output) {
+    if (ns_str_ends_with(output, ns_str_cstr(".app"))) return output;
+    return ns_str_concat(output, ns_str_cstr(".app"));
+}
+
 static void ns_copy_file_or_exit(ns_str src, ns_str dst) {
     ns_str data = ns_fs_read_file(src);
     if (data.data == ns_null) ns_exit(1, "build", "failed to read icon %.*s.\n", src.len, src.data);
@@ -742,6 +743,7 @@ static ns_str ns_xml_escape(ns_str s) {
     ns_array_push(out.data, '\0');
     return out;
 }
+#endif
 
 static ns_str ns_shell_quote(ns_str s) {
     ns_str q = ns_str_null;
@@ -758,6 +760,7 @@ static ns_str ns_shell_quote(ns_str s) {
     return q;
 }
 
+#if defined(NS_DARWIN)
 static ns_str ns_c_string_escape(ns_str s) {
     ns_str out = ns_str_null;
     for (i32 i = 0; i < s.len; i++) {
@@ -773,6 +776,7 @@ static ns_str ns_c_string_escape(ns_str s) {
     ns_array_push(out.data, '\0');
     return out;
 }
+#endif
 
 static void ns_archive_object(ns_str output, ns_str object) {
     ns_str q_output = ns_shell_quote(output);
