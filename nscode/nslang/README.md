@@ -16,6 +16,9 @@ TextMate grammar that mirrors the reference lexer (`src/ns_token.c`).
 - `//` line comments, bracket matching, auto-closing pairs, and indentation
   rules via the language configuration.
 - Associates `ns.mod` module manifests with TOML highlighting.
+- Ships the ns logo (`icons/ns.png` / `icons/ns.svg`, copied from
+  `sample/ns.svg` and `sample/ns.png`) as the extension icon and the `.ns`
+  file icon shown in editor tabs.
 
 ## Install
 

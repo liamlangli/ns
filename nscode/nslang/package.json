@@ -5,6 +5,7 @@
     "version": "0.1.0",
     "publisher": "nslang",
     "license": "MIT",
+    "icon": "icons/ns.png",
     "repository": {
         "type": "git",
         "url": "https://github.com/liamlangli/ns"
@@ -27,6 +28,10 @@
                 "extensions": [
                     ".ns"
                 ],
+                "icon": {
+                    "light": "./icons/ns.svg",
+                    "dark": "./icons/ns.svg"
+                },
                 "configuration": "./language-configuration.json"
             }
         ],
