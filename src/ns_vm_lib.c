@@ -91,8 +91,10 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         call->ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, ret)};
         ns_array_free(ret.data);
     } else if (ns_str_equals_STR(call->callee->name, "close")) {
-        ns_value fd = vm->symbol_stack[call->arg_offset].val;
-        fclose((FILE*)fd.o);
+        // Resolve through ns_eval_number_u64 so stack-resident fds (locals)
+        // yield the FILE* value rather than their stack offset.
+        FILE *f = (FILE*)ns_eval_number_u64(vm, vm->symbol_stack[call->arg_offset].val);
+        if (f) fclose(f);
         call->ret = ns_nil;
     } else if (ns_str_equals_STR(call->callee->name, "sqrt")) {
         ns_value x = vm->symbol_stack[call->arg_offset].val;

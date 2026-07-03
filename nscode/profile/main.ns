@@ -1,0 +1,65 @@
+// nscode/profile/main.ns
+// ---------------------------------------------------------------------------
+// Entry point for the trace viewer. Run it with:
+//
+//   bin/ns run --profile your_script.ns     # writes ns.trace
+//   bin/ns run nscode/profile ns.trace      # view it
+//
+// Everything after the run target on the ns command line is passed straight
+// through to `fn main(args: [str])`, so args[0] is the trace path (defaults
+// to ns.trace in the current directory).
+//
+// It opens a native window (Cocoa on Apple, Win32 on Windows), acquires the
+// platform GPU device, creates a `ui` renderer and renders the flame chart
+// from render.ns. On Linux there is no native backend yet, so view_create
+// returns a no-op view, gpu_request_device returns false, and view_run
+// returns immediately -- the parse summary printed below is still useful.
+
+use std
+use view
+use gpu
+use ui
+use trace
+use render
+
+fn main(args: [str]) i32 {
+    let path = "ns.trace"
+    if args.len > 0 {
+        path = args[0]
+    }
+
+    let fd = open(path, "rb")
+    if fd == 0 {
+        print("profile: cannot open " + path + unescape("\n"))
+        return 1
+    }
+    let text = read(fd)
+    close(fd)
+
+    let n = trace_load(text)
+    print("profile: " + itos(n) + " events from " + path + ", total " + fmt_us(trace_end()) + unescape("\n"))
+    if trace_truncated() {
+        print("profile: truncated at " + itos(trace_cap()) + " events" + unescape("\n"))
+    }
+
+    let v = view_create_no_title("ns profile - " + path, 1280, 720)
+    let ok = gpu_request_device(v)
+    if ok {
+        let r = ui_renderer_create(v)
+        v.on_frame({ frame_view in
+            ui_begin_frame(r)
+            render_frame(r, frame_view)
+            ui_flush(r, bg_color())
+            reset_input(frame_view)
+        })
+        v.on_terminate({ dead_view in
+            ui_renderer_destroy(r)
+        })
+    } else {
+        print("no GPU backend on this platform; nothing to render" + unescape("\n"))
+    }
+
+    // Enter the event loop (returns immediately where there is no backend).
+    view_run(v)
+    return 0
+}

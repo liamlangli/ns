@@ -145,6 +145,9 @@ typedef struct ns_vm {
     ns_str lib;
     i8* stack;
 
+    // CLI positionals after the script path, bound to `fn main(args: [str])`
+    ns_str *args;
+
     // mode
     ns_bool repl;
 

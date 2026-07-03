@@ -6,6 +6,7 @@
 #include "ns_os.h"
 #include "ns_asm.h"
 #include "ns_pe.h"
+#include "ns_profile.h"
 #include "ns_shader.h"
 
 #if defined(_WIN32)
@@ -43,16 +44,25 @@ typedef struct ns_compile_option_t {
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
+    ns_bool profile: 2; // `ns run --profile <file>` - write a chrome trace file (ns.trace)
     u8 build_kind;      // 0 auto, 1 executable, 2 library
     ns_str shader_target;
     ns_str entry;
     ns_str output;
     ns_str filename;
+    ns_str *args;       // run mode: positionals after the script, passed through to it
 } ns_compile_option_t;
 
 ns_compile_option_t parse_options(i32 argc, i8** argv) {
     ns_compile_option_t option = {0};
     for (i32 i = 1; i < argc; i++) {
+        // In run mode everything after the script path is passed through to
+        // the script verbatim (bound to `fn main(args: [str])`), so ns flags
+        // must precede the script path.
+        if (option.run && option.filename.len > 0) {
+            ns_array_push(option.args, ns_str_cstr(argv[i]));
+            continue;
+        }
         if (i == 1 && strcmp(argv[i], "run") == 0) {
             option.run = true;
         } else if (i == 1 && strcmp(argv[i], "test") == 0) {
@@ -94,6 +104,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             if (i + 1 < argc) { i++; option.entry = ns_str_cstr(argv[i]); }
         } else if (strcmp(argv[i], "--shader-bin") == 0) {
             option.shader_bin = true;
+        } else if (strcmp(argv[i], "--profile") == 0) {
+            option.profile = true;
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
@@ -124,12 +136,16 @@ void ns_help() {
     printf("  --entry <name>    shader entry fn (default: every vs_*/fs_*/ps_* fn)\n");
     printf("  --shader-bin      also compile the shader source when the platform\n");
     printf("                    toolchain is installed (xcrun metal / glslc / dxc)\n");
+    printf("  --profile         run mode: write a chrome trace file (ns.trace) with one\n");
+    printf("                    event per function call; view it in nscode/profile\n");
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
-    printf("  run  [file.ns]    run a project entry, or run a standalone file when no ns.mod is found\n");
+    printf("  run  [file.ns] [args...]\n");
+    printf("                    run a project entry, or run a standalone file when no ns.mod is found\n");
+    printf("                    everything after the script path is passed to fn main(args: [str])\n");
     printf("  test <path>       run a test entry, or every *_test.ns under a dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
@@ -1230,7 +1246,20 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_info("build", "executable %.*s\n", output.len, output.data);
 }
 
-void ns_exec_run(ns_str filename) {
+// When main declares an i32 return, its value becomes the process exit code
+// (matching the test runner's use of main's return as a status).
+static i32 ns_run_exit_code(ns_return_value ret_v) {
+    if (ns_return_is_error(ret_v)) {
+        // Debug builds abort in ns_return_assert, skipping atexit; flush the
+        // profile first so an erroring run still leaves a usable trace.
+        ns_profile_save();
+        ns_return_assert(ret_v);
+        return 1;
+    }
+    return ns_type_is(ret_v.r.t, NS_TYPE_I32) ? ns_eval_number_i32(&vm, ret_v.r) : 0;
+}
+
+i32 ns_exec_run(ns_str filename) {
     // No file argument: run the project's declared entry from its ns.mod.
     if (filename.len == 0) filename = ns_manifest_entry_file();
     if (ns_is_dir(filename)) filename = ns_manifest_entry_file_for_root(ns_project_root(filename));
@@ -1241,9 +1270,7 @@ void ns_exec_run(ns_str filename) {
 
     ns_str scope = ns_str_null;
     if (!ns_find_project_root(filename, &scope)) {
-        ns_return_value ret_v = ns_eval(&vm, source, filename);
-        if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
-        return;
+        return ns_run_exit_code(ns_eval(&vm, source, filename));
     }
 
     ns_str icon = ns_path_resolve(scope, ns_build_manifest_value(scope, "icon"));
@@ -1257,8 +1284,7 @@ void ns_exec_run(ns_str filename) {
     ns_line_loc *map = ns_null;
     ns_str merged = ns_project_link(scope, source, filename, &map);
 
-    ns_return_value ret_v = ns_eval_with_map(&vm, merged, filename, map);
-    if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
+    return ns_run_exit_code(ns_eval_with_map(&vm, merged, filename, map));
 }
 
 // Run a single test entry in a fresh VM; returns the entry's i32 exit status
@@ -1533,7 +1559,9 @@ i32 main(i32 argc, i8** argv) {
     }
 
     if (option.run) {
-        ns_exec_run(option.filename);
+        vm.args = option.args;
+        if (option.profile) ns_profile_begin(ns_str_cstr("ns.trace"));
+        return ns_exec_run(option.filename);
     } else if (option.test) {
         ns_exec_test(option.filename);
     } else if (option.build) {

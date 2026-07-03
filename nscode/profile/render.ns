@@ -1,0 +1,252 @@
+// nscode/profile/render.ns
+// ---------------------------------------------------------------------------
+// Flame-chart rendering + input for the trace viewer. One row per call
+// depth, x mapped from event time. Drag pans, scroll wheel zooms about the
+// cursor, hovering a span shows a tooltip with its name/category/duration.
+//
+// Computed i32 -> f64 casts can carry garbage upper bits in the current
+// interpreter (see nscode/native/render.ns), so integer values are masked
+// before converting into geometry math.
+
+mod render
+
+use std
+use view
+use ui
+use trace
+
+fn FONT_MONO() i32 { return 1 }
+
+fn header_h() f64 { return 30.0 }
+fn axis_h() f64 { return 22.0 }
+fn row_h() f64 { return 20.0 }
+
+fn bg_color() ui_color_rgba {
+    return ui_color_rgba { r: 0.071, g: 0.078, b: 0.090, a: 1.0 }
+}
+
+fn col_header() u32 { return ui_pack_color("#161A20") }
+fn col_line() u32 { return ui_pack_color("#262B33") }
+fn col_text() u32 { return ui_pack_color("#D7DBE0") }
+fn col_muted() u32 { return ui_pack_color("#8A919C") }
+fn col_span_text() u32 { return ui_pack_color("#10141A") }
+fn col_tip_bg() u32 { return ui_pack_color("#0E1116") }
+
+fn span_color(idx: i32) u32 {
+    if idx == 0 { return ui_pack_color("#4E79A7") }
+    if idx == 1 { return ui_pack_color("#F28E2B") }
+    if idx == 2 { return ui_pack_color("#59A14F") }
+    if idx == 3 { return ui_pack_color("#E15759") }
+    if idx == 4 { return ui_pack_color("#76B7B2") }
+    if idx == 5 { return ui_pack_color("#EDC948") }
+    if idx == 6 { return ui_pack_color("#B07AA1") }
+    return ui_pack_color("#9C755F")
+}
+
+fn name_hash(s: str) i32 {
+    let h: i32 = 0i
+    let n = s.len
+    for i in 0 to n {
+        h = (h * 31 + s[i]) & 1048575
+    }
+    return h % 8
+}
+
+fn clamp(v: f64, lo: f64, hi: f64) f64 {
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+
+fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
+    if v.mouse_x < x { return false }
+    if v.mouse_x >= (x + w) { return false }
+    if v.mouse_y < y { return false }
+    if v.mouse_y >= (y + h) { return false }
+    return true
+}
+
+fn reset_input(v: ref view) {
+    v.mouse_pressed = false
+    v.mouse_released = false
+    v.mouse_right_pressed = false
+    v.mouse_right_released = false
+    v.mouse_middle_pressed = false
+    v.mouse_middle_released = false
+    v.scroll_x = 0.0
+    v.scroll_y = 0.0
+}
+
+// Truncate a non-negative f64 (masked against the cast quirk).
+fn floor_pos(x: f64) f64 {
+    let k = (x as i32) & 1048575
+    let f = k as f64
+    return f
+}
+
+// ---- view state -------------------------------------------------------------
+
+let g_t0 = 0.0      // time at the left edge (us)
+let g_upp = 1.0     // microseconds per pixel
+let g_scroll = 0.0  // vertical scroll of the span rows (px)
+let g_fitted = false
+let g_drag = false
+let g_drag_x = 0.0
+let g_drag_y = 0.0
+let g_drag_t0 = 0.0
+let g_drag_scroll = 0.0
+
+// Fit the whole trace into the canvas width.
+fn fit_view(w: f64) {
+    g_t0 = 0.0
+    g_scroll = 0.0
+    if trace_end() > 0.0 && w > 40.0 {
+        g_upp = trace_end() / (w - 24.0)
+    } else {
+        g_upp = 1.0
+    }
+}
+
+// Smallest 1/2/5 * 10^k step that is >= target.
+fn nice_step(target: f64) f64 {
+    let s = 1.0
+    loop s < target { s = s * 10.0 }
+    loop s / 10.0 >= target { s = s / 10.0 }
+    if s / 5.0 >= target {
+        s = s / 5.0
+    } else if s / 2.0 >= target {
+        s = s / 2.0
+    }
+    return s
+}
+
+fn handle_input(v: ref view, w: f64, h: f64) {
+    // Wheel zoom about the cursor: keep the time under the mouse fixed.
+    if v.scroll_y != 0.0 {
+        let factor = clamp(1.0 + v.scroll_y * 0.12, 0.5, 2.0)
+        let t_at = g_t0 + v.mouse_x * g_upp
+        g_upp = clamp(g_upp / factor, 0.0001, 1000000.0)
+        g_t0 = t_at - v.mouse_x * g_upp
+    }
+    if v.scroll_x != 0.0 {
+        g_t0 = g_t0 + v.scroll_x * g_upp * 24.0
+    }
+
+    // Drag pans both axes.
+    if v.mouse_pressed && v.mouse_y > header_h() {
+        g_drag = true
+        g_drag_x = v.mouse_x
+        g_drag_y = v.mouse_y
+        g_drag_t0 = g_t0
+        g_drag_scroll = g_scroll
+    }
+    if !v.mouse_down {
+        g_drag = false
+    }
+    if g_drag {
+        g_t0 = g_drag_t0 - (v.mouse_x - g_drag_x) * g_upp
+        g_scroll = g_drag_scroll - (v.mouse_y - g_drag_y)
+    }
+
+    // Clamp to the trace extents.
+    let max_t0 = trace_end() - w * g_upp
+    if max_t0 < 0.0 { max_t0 = 0.0 }
+    g_t0 = clamp(g_t0, 0.0, max_t0)
+
+    let depth_rows = ((trace_max_depth() & 1023) as f64) + 1.0
+    let max_scroll = depth_rows * row_h() - (h - header_h() - axis_h())
+    if max_scroll < 0.0 { max_scroll = 0.0 }
+    g_scroll = clamp(g_scroll, 0.0, max_scroll)
+}
+
+fn draw_header(r: ref ui_renderer, w: f64) {
+    ui_fill_rect(r, 0.0, 0.0, w, header_h(), col_header(), 0.0)
+    let title = itos(trace_count()) + " events   total " + fmt_us(trace_end())
+    if trace_truncated() {
+        title = title + "   (truncated at " + itos(trace_cap()) + ")"
+    }
+    ui_draw_text(r, 12.0, 8.0, title, 13.0, col_text(), FONT_MONO())
+    let help = "drag: pan   wheel: zoom"
+    let hw = ui_text_width(r, help, 12.0, FONT_MONO())
+    if w > hw + 260.0 {
+        ui_draw_text(r, w - hw - 12.0, 8.0, help, 12.0, col_muted(), FONT_MONO())
+    }
+    ui_fill_rect(r, 0.0, header_h() - 1.0, w, 1.0, col_line(), 0.0)
+}
+
+fn draw_axis(r: ref ui_renderer, w: f64, h: f64) {
+    let step = nice_step(g_upp * 90.0)
+    let t = floor_pos(g_t0 / step) * step
+    let limit = g_t0 + w * g_upp
+    loop t < limit {
+        let x = (t - g_t0) / g_upp
+        if x >= 0.0 && x < w {
+            ui_fill_rect(r, x, header_h(), 1.0, h - header_h(), col_line(), 0.0)
+            ui_draw_text(r, x + 4.0, header_h() + 4.0, fmt_us(t), 11.0, col_muted(), FONT_MONO())
+        }
+        t = t + step
+    }
+}
+
+fn draw_tooltip(r: ref ui_renderer, v: ref view, i: i32, w: f64, h: f64) {
+    let text = ev_name(i) + "  " + fmt_us(ev_dur(i)) + "  [" + ev_cat(i) + "]"
+    let tw = ui_text_width(r, text, 12.0, FONT_MONO()) + 16.0
+    let th = 24.0
+    let tx = v.mouse_x + 14.0
+    if tx + tw > w { tx = w - tw }
+    if tx < 0.0 { tx = 0.0 }
+    let ty = v.mouse_y + 18.0
+    if ty + th > h { ty = v.mouse_y - th - 6.0 }
+    ui_fill_round_rect(r, tx, ty, tw, th, 4.0, col_tip_bg(), 0.0)
+    ui_stroke_round_rect(r, tx, ty, tw, th, 4.0, 1.0, col_line(), 0.0)
+    ui_draw_text(r, tx + 8.0, ty + 5.0, text, 12.0, col_text(), FONT_MONO())
+}
+
+fn draw_spans(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    let top = header_h() + axis_h()
+    ui_push_clip(r, 0.0, top, w, h - top)
+    let n = trace_count()
+    let hover: i32 = -1i
+    for i in 0 to n {
+        let x = (ev_ts(i) - g_t0) / g_upp
+        let sw = ev_dur(i) / g_upp
+        let y = top + ((ev_depth(i) & 1023) as f64) * row_h() - g_scroll
+        if x < w && x + sw > 0.0 && sw >= 0.3 && y + row_h() > top && y < h {
+            if sw < 1.0 { sw = 1.0 }
+            ui_fill_rect(r, x, y, sw - 0.5, row_h() - 2.0, span_color(name_hash(ev_name(i))), 0.0)
+            if sw > 40.0 {
+                ui_push_clip(r, x + 2.0, y, sw - 6.0, row_h() - 2.0)
+                ui_draw_text(r, x + 4.0, y + 3.0, ev_name(i), 12.0, col_span_text(), FONT_MONO())
+                ui_pop_clip(r)
+            }
+            if hit(v, x, y, sw, row_h() - 2.0) {
+                hover = i
+            }
+        }
+    }
+    ui_pop_clip(r)
+    if hover >= 0 {
+        draw_tooltip(r, v, hover, w, h)
+    }
+    if n == 0 {
+        ui_draw_text(r, 12.0, top + 8.0, "no events in trace", 13.0, col_muted(), FONT_MONO())
+    }
+}
+
+// Returns whether anything was drawn (a bare return does not parse yet).
+fn render_frame(r: ref ui_renderer, v: ref view) bool {
+    let w = (ui_canvas_width(r) & 1048575) as f64
+    let h = (ui_canvas_height(r) & 1048575) as f64
+    if w < 1.0 || h < 1.0 {
+        return false
+    }
+    if !g_fitted {
+        fit_view(w)
+        g_fitted = true
+    }
+    handle_input(v, w, h)
+    draw_axis(r, w, h)
+    draw_spans(r, v, w, h)
+    draw_header(r, w)
+    return true
+}

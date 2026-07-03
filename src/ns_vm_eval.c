@@ -1,5 +1,6 @@
 #include "ns_vm.h"
 #include "ns_fmt.h"
+#include "ns_profile.h"
 #include "ns_shader.h"
 
 /**
@@ -353,7 +354,9 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_ast_t *idx = &ctx->nodes[n->binary_expr.left];
         ns_return_value ret_table = ns_eval_expr(vm, ctx, idx->index_expr.table);
         if (ns_return_is_error(ret_table)) return ns_return_change_type(value, ret_table);
-        if (ns_type_is(ret_table.r.t, NS_TYPE_DICT)) {
+        // Dicts create missing slots; arrays use create=true so a str element
+        // write gets the slot pointer rather than the read-side handle value.
+        if (ns_type_is(ret_table.r.t, NS_TYPE_DICT) || ns_type_is_array(ret_table.r.t)) {
             ret_l = ns_eval_index_expr_with_create(vm, ctx, n->binary_expr.left, true);
         } else {
             ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
@@ -404,6 +407,7 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_value ret_val = (ns_value){.t = ns_type_set_stack(fn->fn.ret, true), .o = ret_offset};
     ns_call call = (ns_call){.callee = fn, .ret = ret_val, .ret_set = false, .scope_top = ns_array_length(vm->scope_stack), .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 2};
     ns_scope_enter(vm);
+    if (ns_profile_on) ns_profile_enter(fn->name, fn->lib);
     ns_array_push(vm->call_stack, call);
 
     ns_symbol l_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->fn.args[0].name, .val = l};
@@ -416,6 +420,7 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     call = ns_array_pop(vm->call_stack);
     ns_scope_exit(vm);
+    if (ns_profile_on) ns_profile_exit();
 
     return ns_return_ok(value, call.ret);
 }
@@ -713,6 +718,7 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         vm->symbol_stack[arg_base + a_i].name = fn->args[a_i].name;
     }
 
+    if (ns_profile_on) ns_profile_enter(sym->name, sym->lib);
     ns_array_push(vm->call_stack, call);
     if (fn->fn.t.ref) {
         // `mod shader` fns are VM-internal intrinsics (like std) but need the ast
@@ -736,6 +742,7 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
     call = ns_array_pop(vm->call_stack);
     ns_scope_exit(vm);
+    if (ns_profile_on) ns_profile_exit();
     return ns_return_ok(value, call.ret);
 }
 
@@ -759,6 +766,7 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
         ns_array_push(vm->symbol_stack, arg);
     }
 
+    if (ns_profile_on) ns_profile_enter(sym->name.len > 0 ? sym->name : ns_str_cstr("closure"), sym->lib);
     ns_array_push(vm->call_stack, call);
     if (sym->type == NS_SYMBOL_BLOCK && cap_base) { // push captured fields from the heap snapshot
         szt field_count = ns_array_length(sym->bc.st.fields);
@@ -780,10 +788,12 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
     if (ns_return_is_error(ret)) {
         ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);
+        if (ns_profile_on) ns_profile_exit();
         return ns_return_change_type(value, ret);
     }
     call = ns_array_pop(vm->call_stack);
     ns_scope_exit(vm);
+    if (ns_profile_on) ns_profile_exit();
     return ns_return_ok(value, call.ret);
 }
 
@@ -963,6 +973,7 @@ ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value 
     ns_symbol r_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->fn.args[1].name, .val = r, .parsed = true};
     ns_array_push(vm->symbol_stack, r_arg);
 
+    if (ns_profile_on) ns_profile_enter(fn->name, fn->lib);
     ns_array_push(vm->call_stack, call);
     ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
     ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->ops_fn_def.body);
@@ -970,6 +981,7 @@ ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value 
 
     call = ns_array_pop(vm->call_stack);
     ns_scope_exit(vm);
+    if (ns_profile_on) ns_profile_exit();
     return ns_return_ok(value, call.ret);
 }
 
@@ -1565,6 +1577,13 @@ ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i
     }
     u64 offset = (u64)ns_type_size(vm, element_type) * (u64)idx;
     u8* data = (u8*)base + offset;
+    // A str element slot stores the str_list handle. On reads surface the
+    // handle itself (mirroring ns_eval_dict_value) so ns_eval_str resolves
+    // it; write targets keep the slot pointer as the lvalue.
+    if (ns_type_is(element_type, NS_TYPE_STRING) && !create) {
+        ns_value sval = (ns_value){.t = ns_type_set_stack(element_type, false), .o = *(u64 *)data};
+        return ns_return_ok(value, sval);
+    }
     // The element lives in the array's heap storage: address it absolutely
     // (stack=false) and keep it mutable so it can be assigned to.
     element_type.stack = false;
@@ -1954,6 +1973,22 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_call call = (ns_call){.callee = main_fn, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false };
 
         ns_scope_enter(vm);
+        // Bind the CLI pass-through args when the entry declares
+        // `fn main(args: [str])`; a no-param main keeps the plain path.
+        if (ns_array_length(main_fn->fn.args) == 1 && ns_type_is_array(main_fn->fn.args[0].val.t) && ns_type_is(main_fn->fn.args[0].val.t, NS_TYPE_STRING)) {
+            i32 argc = (i32)ns_array_length(vm->args);
+            i32 stride = ns_type_size(vm, ns_type_str);
+            i8 *data = (i8 *)ns_buffer_alloc((szt)stride, (szt)argc, ns_type_str);
+            for (i32 a_i = 0; a_i < argc; ++a_i) {
+                *(u64 *)(data + (szt)a_i * (szt)stride) = (u64)ns_vm_push_string(vm, vm->args[a_i]);
+            }
+            ns_value args_v = (ns_value){.t = {.type = NS_TYPE_STRING, .array = true, .mut = true, .stack = false}, .o = (u64)data};
+            call.arg_offset = ns_array_length(vm->symbol_stack);
+            call.arg_count = 1;
+            ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = main_fn->fn.args[0].name, .val = args_v, .parsed = true};
+            ns_array_push(vm->symbol_stack, arg);
+        }
+        if (ns_profile_on) ns_profile_enter(main_fn->name, main_fn->lib);
         ns_array_push(vm->call_stack, call);
         ns_ast_t *fn = &ctx->nodes[main_fn->fn.ast];
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn_def.body);
@@ -1961,6 +1996,7 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
 
         call = ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);
+        if (ns_profile_on) ns_profile_exit();
         main_ret = call.ret;
     }
 
