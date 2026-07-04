@@ -704,6 +704,10 @@ fn token_text(i: i32) str {
     return substr(g_doc, g_tok_line_off + token_start(i), token_len(i))
 }
 
+fn token_text_part(i: i32, start_delta: i32, len: i32) str {
+    return substr(g_doc, g_tok_line_off + token_start(i) + start_delta, len)
+}
+
 fn add_token(start: i32, len: i32, kind: i32) {
     if g_tok_count < tok_cap() {
         g_tok_start[g_tok_count] = start

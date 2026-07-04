@@ -95,14 +95,15 @@ fn main() {
     check("renderer created", char_w > 0.0)
 
     // The app boots in agent mode; a settle frame, then click the "Code" half
-    // of the title-bar mode switch (x 858..931, y 5..33).
+    // of the content mode switch. The switch intentionally sits below the
+    // custom title strip so the no-title window drag handler does not delay it.
     frame(r, v)
     check("boots in agent mode", g_mode == 1)
-    click(r, v, 880.0, 20.0)
+    click(r, v, 600.0, 58.0)
     check("code button switches mode", g_mode == 0)
-    click(r, v, 960.0, 20.0)
+    click(r, v, 690.0, 58.0)
     check("agent button switches back", g_mode == 1)
-    click(r, v, 880.0, 20.0)
+    click(r, v, 600.0, 58.0)
     check("mode switch is repeatable", g_mode == 0)
 
     // Click on line 1 ("    let count = 42") column 8: caret relocates there.
@@ -178,7 +179,7 @@ fn main() {
     // the delay far away so the send/terminate checks are deterministic.
     g_reply_delay = 3600.0
     reset_clicks()
-    click(r, v, 960.0, 20.0)
+    click(r, v, 690.0, 58.0)
     check("agent button returns to agent mode", g_mode == 1)
     frame(r, v)
     check("conversation is seeded", g_msg_count == 2)
