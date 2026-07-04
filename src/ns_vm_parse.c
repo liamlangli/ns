@@ -948,21 +948,36 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_ty
     case NS_TOKEN_INT_LITERAL: {
         ns_type lt;
         switch (n->primary_expr.token.suffix) {
-        case 'i': lt = ns_type_i32; break;
-        case 'u': lt = ns_type_u32; break;
-        case 'b': lt = ns_type_u8; break;
-        default: { // unsuffixed: adopt the expected number type, i64 otherwise
+        case NS_NUM_SUFFIX_I8: lt = ns_type_i8; break;
+        case NS_NUM_SUFFIX_U8: lt = ns_type_u8; break;
+        case NS_NUM_SUFFIX_I16: lt = ns_type_i16; break;
+        case NS_NUM_SUFFIX_U16: lt = ns_type_u16; break;
+        case NS_NUM_SUFFIX_U32: lt = ns_type_u32; break;
+        case NS_NUM_SUFFIX_I64: lt = ns_type_i64; break;
+        case NS_NUM_SUFFIX_U64: lt = ns_type_u64; break;
+        default: { // unsuffixed: adopt the expected number type, i32 otherwise
             lt = ns_vm_literal_expect(vm, t, false);
-            if (ns_type_is_unknown(lt)) lt = ns_type_i64;
+            if (ns_type_is_unknown(lt)) lt = ns_type_i32;
         } break;
         }
         n->primary_expr.t = lt;
         return ns_return_ok(type, lt);
     }
     case NS_TOKEN_FLT_LITERAL: {
-        // unsuffixed: adopt the expected float type, f64 otherwise
-        ns_type lt = n->primary_expr.token.suffix == 'f' ? ns_type_f32 : ns_vm_literal_expect(vm, t, true);
-        if (ns_type_is_unknown(lt)) lt = ns_type_f64;
+        // unsuffixed: adopt the expected float type, f32 otherwise
+        ns_type lt;
+        if (n->primary_expr.token.suffix == NS_NUM_SUFFIX_F16) {
+            ns_warn("numeric", "half-float literal fallback to f32 on CPU.\n");
+            lt = ns_type_f32;
+        } else if (n->primary_expr.token.suffix == NS_NUM_SUFFIX_BF16) {
+            ns_warn("numeric", "brain-float literal fallback to f32 on CPU.\n");
+            lt = ns_type_f32;
+        } else if (n->primary_expr.token.suffix == NS_NUM_SUFFIX_F64) {
+            lt = ns_type_f64;
+        } else {
+            lt = ns_vm_literal_expect(vm, t, true);
+        }
+        if (ns_type_is_unknown(lt)) lt = ns_type_f32;
         n->primary_expr.t = lt;
         return ns_return_ok(type, lt);
     }

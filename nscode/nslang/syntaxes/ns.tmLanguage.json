@@ -135,23 +135,23 @@
             "patterns": [
                 {
                     "name": "constant.numeric.hex.ns",
-                    "match": "\\b0x[0-9a-fA-F]+\\b"
+                    "match": "\\b0x[0-9a-fA-F]+(?:us|ub|ul|[sblu])?\\b"
                 },
                 {
                     "name": "constant.numeric.binary.ns",
-                    "match": "\\b0b[01]+\\b"
+                    "match": "\\b0b[01]+(?:us|ub|ul|[sblu])?\\b"
                 },
                 {
                     "name": "constant.numeric.octal.ns",
-                    "match": "\\b0o[0-7]+\\b"
+                    "match": "\\b0o[0-7]+(?:us|ub|ul|[sblu])?\\b"
                 },
                 {
                     "name": "constant.numeric.float.ns",
-                    "match": "\\b\\d+\\.\\d+f?\\b|(?<=[^\\w.]|^)\\.\\d+f?\\b|\\b\\d+f\\b"
+                    "match": "\\b\\d+\\.\\d+(?:hb|[dh])?\\b|(?<=[^\\w.]|^)\\.\\d+(?:hb|[dh])?\\b|\\b\\d+(?:hb|[dh])\\b"
                 },
                 {
                     "name": "constant.numeric.integer.ns",
-                    "match": "\\b\\d+[iub]?\\b"
+                    "match": "\\b\\d+(?:us|ub|ul|[sblu])?\\b"
                 }
             ]
         },

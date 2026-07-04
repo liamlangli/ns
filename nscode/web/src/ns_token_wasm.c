@@ -145,6 +145,76 @@ static i32  tok_mem[TOK_MAX * 3]; /* [type, offset, length] per token */
 
 /* ---------- ns_next_token (adapted from ns_token.c) -------------- */
 
+static i32 ns_identifier_follow(char c);
+
+static i32 ns_token_number_suffix(ns_token_t *t, char *s, i32 i) {
+    switch (s[i]) {
+    case 's':
+    case 'b':
+    case 'l':
+        if (!ns_identifier_follow(s[i + 1])) {
+            t->type = NS_TOKEN_INT_LITERAL;
+            return i + 1;
+        }
+        break;
+    case 'h':
+        if (s[i + 1] == 'b' && !ns_identifier_follow(s[i + 2])) {
+            t->type = NS_TOKEN_FLT_LITERAL;
+            return i + 2;
+        }
+        if (!ns_identifier_follow(s[i + 1])) {
+            t->type = NS_TOKEN_FLT_LITERAL;
+            return i + 1;
+        }
+        break;
+    case 'd':
+        if (!ns_identifier_follow(s[i + 1])) {
+            t->type = NS_TOKEN_FLT_LITERAL;
+            return i + 1;
+        }
+        break;
+    case 'u':
+        switch (s[i + 1]) {
+        case 's':
+        case 'b':
+        case 'l':
+            if (!ns_identifier_follow(s[i + 2])) {
+                t->type = NS_TOKEN_INT_LITERAL;
+                return i + 2;
+            }
+            break;
+        default:
+            if (!ns_identifier_follow(s[i + 1])) {
+                t->type = NS_TOKEN_INT_LITERAL;
+                return i + 1;
+            }
+            break;
+        }
+        break;
+    default:
+        break;
+    }
+    t->type = NS_TOKEN_INT_LITERAL;
+    return i;
+}
+
+static i32 ns_token_float_suffix(ns_token_t *t, char *s, i32 i) {
+    if (s[i] == 'h' && s[i + 1] == 'b' && !ns_identifier_follow(s[i + 2])) {
+        t->type = NS_TOKEN_FLT_LITERAL;
+        return i + 2;
+    }
+    if (s[i] == 'h' && !ns_identifier_follow(s[i + 1])) {
+        t->type = NS_TOKEN_FLT_LITERAL;
+        return i + 1;
+    }
+    if (s[i] == 'd' && !ns_identifier_follow(s[i + 1])) {
+        t->type = NS_TOKEN_FLT_LITERAL;
+        return i + 1;
+    }
+    t->type = NS_TOKEN_FLT_LITERAL;
+    return i;
+}
+
 static i32 ns_token_float_literal(ns_token_t *t, char *s, i32 i) {
     i32 j = i;
     while (s[j] >= '0' && s[j] <= '9') j++;
@@ -152,7 +222,7 @@ static i32 ns_token_float_literal(ns_token_t *t, char *s, i32 i) {
         j++;
         while (s[j] >= '0' && s[j] <= '9') j++;
     }
-    t->type = NS_TOKEN_FLT_LITERAL;
+    j = ns_token_float_suffix(t, s, j);
     t->val  = ns_str_range(s + i, j - i);
     return j;
 }
@@ -216,19 +286,19 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
         if (s[i + 1] == 'x') {
             i += 2;
             while ((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f')) i++;
-            t->type = NS_TOKEN_INT_LITERAL;
+            i = ns_token_number_suffix(t, s, i);
             t->val  = ns_str_range(s + f, i - f);
             to = i;
-        } else if (s[i + 1] == 'b') {
+        } else if (s[i + 1] == 'b' && (s[i + 2] == '0' || s[i + 2] == '1')) {
             i += 2;
             while (s[i] == '0' || s[i] == '1') i++;
-            t->type = NS_TOKEN_INT_LITERAL;
+            i = ns_token_number_suffix(t, s, i);
             t->val  = ns_str_range(s + f, i - f);
             to = i;
         } else if (s[i + 1] == 'o') {
             i += 2;
             while (s[i] >= '0' && s[i] <= '7') i++;
-            t->type = NS_TOKEN_INT_LITERAL;
+            i = ns_token_number_suffix(t, s, i);
             t->val  = ns_str_range(s + f, i - f);
             to = i;
         } else if (s[i + 1] == '.') {
@@ -240,7 +310,7 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
                 i = ns_token_float_literal(t, s, f);
                 to = i;
             } else {
-                t->type = NS_TOKEN_INT_LITERAL;
+                i = ns_token_number_suffix(t, s, i);
                 t->val  = ns_str_range(s + f, i - f);
                 to = i;
             }
@@ -462,7 +532,7 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
                 t->val.len++;
                 to = i;
             } else {
-                t->type = NS_TOKEN_INT_LITERAL;
+                i = ns_token_number_suffix(t, s, i);
                 t->val  = ns_str_range(s + f, i - f);
                 to = i;
             }

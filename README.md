@@ -27,7 +27,7 @@ use math
 use std
 
 // define a variable
-let a = 1 // default number int type is i32, for float number is f64
+let a = 1 // default int literal type is i32; default float literal type is f32
 let pi: f64 = 3.141592653
 let hello: str = "hello world" // string literal
 
@@ -64,7 +64,7 @@ let point_b = Point(1, 1)
 print(a + b) // use override add fn, expect result [1, 1]
 
 // typealias
-type number = f64
+type number = f32
 
 // union type: a value may be any one of the member types
 type num = i32 | f64

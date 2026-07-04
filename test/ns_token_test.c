@@ -22,6 +22,10 @@ static ns_bool ns_token_is(ns_token_t t, ns_token_type type, const char *val) {
     return t.type == type && t.val.len == (i32)strlen(val) && strncmp((char *)t.val.data, val, t.val.len) == 0;
 }
 
+static ns_bool ns_token_num_is(ns_token_t t, ns_token_type type, const char *val, ns_num_suffix suffix) {
+    return ns_token_is(t, type, val) && t.suffix == suffix;
+}
+
 int main() {
     ns_token_t ts[16];
 
@@ -109,6 +113,40 @@ int main() {
         ns_str m = ns_str_unescape(ns_str_cstr("\\u{}\\uZZ"));
         ns_expect(ns_str_equals(m, ns_str_cstr("u{}uZZ")), "malformed \\u escapes keep their spelling.");
         ns_str_free(m);
+    }
+
+    // numeric literal suffixes select explicit widths; old i/f suffixes are
+    // no longer part of the language.
+    {
+        i32 n = ns_token_lex("1s 1us 1b 1ub 1l 1ul 1u 1d 1.0d 1h 1.0h 1hb 1.0hb", ts, 16);
+        ns_expect(n == 13 &&
+                      ns_token_num_is(ts[0], NS_TOKEN_INT_LITERAL, "1s", NS_NUM_SUFFIX_I16) &&
+                      ns_token_num_is(ts[1], NS_TOKEN_INT_LITERAL, "1us", NS_NUM_SUFFIX_U16) &&
+                      ns_token_num_is(ts[2], NS_TOKEN_INT_LITERAL, "1b", NS_NUM_SUFFIX_I8) &&
+                      ns_token_num_is(ts[3], NS_TOKEN_INT_LITERAL, "1ub", NS_NUM_SUFFIX_U8) &&
+                      ns_token_num_is(ts[4], NS_TOKEN_INT_LITERAL, "1l", NS_NUM_SUFFIX_I64) &&
+                      ns_token_num_is(ts[5], NS_TOKEN_INT_LITERAL, "1ul", NS_NUM_SUFFIX_U64) &&
+                      ns_token_num_is(ts[6], NS_TOKEN_INT_LITERAL, "1u", NS_NUM_SUFFIX_U32) &&
+                      ns_token_num_is(ts[7], NS_TOKEN_FLT_LITERAL, "1d", NS_NUM_SUFFIX_F64) &&
+                      ns_token_num_is(ts[8], NS_TOKEN_FLT_LITERAL, "1.0d", NS_NUM_SUFFIX_F64) &&
+                      ns_token_num_is(ts[9], NS_TOKEN_FLT_LITERAL, "1h", NS_NUM_SUFFIX_F16) &&
+                      ns_token_num_is(ts[10], NS_TOKEN_FLT_LITERAL, "1.0h", NS_NUM_SUFFIX_F16) &&
+                      ns_token_num_is(ts[11], NS_TOKEN_FLT_LITERAL, "1hb", NS_NUM_SUFFIX_BF16) &&
+                      ns_token_num_is(ts[12], NS_TOKEN_FLT_LITERAL, "1.0hb", NS_NUM_SUFFIX_BF16),
+                  "numeric literal suffix grammar.");
+    }
+    {
+        i32 n = ns_token_lex("32bit 1i 1f 1bh", ts, 16);
+        ns_expect(n == 8 &&
+                      ns_token_num_is(ts[0], NS_TOKEN_INT_LITERAL, "32", NS_NUM_SUFFIX_NONE) &&
+                      ns_token_is(ts[1], NS_TOKEN_IDENTIFIER, "bit") &&
+                      ns_token_num_is(ts[2], NS_TOKEN_INT_LITERAL, "1", NS_NUM_SUFFIX_NONE) &&
+                      ns_token_is(ts[3], NS_TOKEN_IDENTIFIER, "i") &&
+                      ns_token_num_is(ts[4], NS_TOKEN_INT_LITERAL, "1", NS_NUM_SUFFIX_NONE) &&
+                      ns_token_is(ts[5], NS_TOKEN_IDENTIFIER, "f") &&
+                      ns_token_num_is(ts[6], NS_TOKEN_INT_LITERAL, "1", NS_NUM_SUFFIX_NONE) &&
+                      ns_token_is(ts[7], NS_TOKEN_IDENTIFIER, "bh"),
+                  "old numeric suffixes are identifiers and suffixes do not split identifiers.");
     }
 
     return 0;

@@ -60,6 +60,29 @@ static void ns_shader_pad(ns_str *dst, i32 indent) {
     for (i32 i = 0; i < indent; ++i) ns_shader_cstr(dst, "    ");
 }
 
+static ns_str ns_shader_literal_body(ns_token_t t) {
+    i32 suffix_len = 0;
+    switch (t.suffix) {
+    case NS_NUM_SUFFIX_U8:
+    case NS_NUM_SUFFIX_U16:
+    case NS_NUM_SUFFIX_U64:
+    case NS_NUM_SUFFIX_BF16: suffix_len = 2; break;
+    case NS_NUM_SUFFIX_I8:
+    case NS_NUM_SUFFIX_I16:
+    case NS_NUM_SUFFIX_U32:
+    case NS_NUM_SUFFIX_I64:
+    case NS_NUM_SUFFIX_F64:
+    case NS_NUM_SUFFIX_F16: suffix_len = 1; break;
+    default: break;
+    }
+    if (suffix_len <= 0 || t.val.len < suffix_len) return t.val;
+    return ns_str_range(t.val.data, t.val.len - suffix_len);
+}
+
+static const char *ns_shader_half_type(ns_shader_target target) {
+    return target == NS_SHADER_GLSL_VULKAN ? "float16_t" : "half";
+}
+
 static ns_bool ns_shader_index_in(i32 *arr, i32 v) {
     for (i32 i = 0, l = (i32)ns_array_length(arr); i < l; ++i) {
         if (arr[i] == v) return true;
@@ -583,10 +606,26 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
     case NS_AST_PRIMARY_EXPR: {
         switch (n->primary_expr.token.type) {
         case NS_TOKEN_INT_LITERAL:
-        case NS_TOKEN_FLT_LITERAL:
+            ns_shader_str(dst, ns_shader_literal_body(n->primary_expr.token));
+            return ns_return_ok_void;
+        case NS_TOKEN_FLT_LITERAL: {
+            ns_token_t tok = n->primary_expr.token;
+            if (tok.suffix == NS_NUM_SUFFIX_F16 || tok.suffix == NS_NUM_SUFFIX_BF16) {
+                if (tok.suffix == NS_NUM_SUFFIX_BF16) ns_warn("shader", "brain-float literal fallback to half.\n");
+                ns_shader_cstr(dst, ns_shader_half_type(e->target));
+                ns_shader_cstr(dst, "(");
+                ns_shader_str(dst, ns_shader_literal_body(tok));
+                ns_shader_cstr(dst, ")");
+            } else {
+                ns_shader_str(dst, ns_shader_literal_body(tok));
+            }
+            return ns_return_ok_void;
+        }
         case NS_TOKEN_IDENTIFIER:
         case NS_TOKEN_TRUE:
-        case NS_TOKEN_FALSE: ns_shader_str(dst, n->primary_expr.token.val); return ns_return_ok_void;
+        case NS_TOKEN_FALSE:
+            ns_shader_str(dst, n->primary_expr.token.val);
+            return ns_return_ok_void;
         default: return ns_return_error(void, loc, NS_ERR_EVAL, "shader: string and nil literals are not supported in shader fns.");
         }
     }

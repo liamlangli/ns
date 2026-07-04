@@ -27,7 +27,7 @@ int main() {
         const char *src =
             "fn main() bool {\n"
             "    let arr: [f32] = [0, 1, 2]\n"
-            "    return arr.len == 3 && arr[0] == 0.f && arr[1] == 1.f && arr[2] == 2.f\n"
+            "    return arr.len == 3 && arr[0] == 0.0 && arr[1] == 1.0 && arr[2] == 2.0\n"
             "}\n";
         ns_expect(ns_expr_eval_bool(src), "array literal adopts declared array element type.");
     }
@@ -36,8 +36,8 @@ int main() {
         const char *src =
             "fn main() bool {\n"
             "    let arr = [f32](3)\n"
-            "    arr = [0.f, 1.f, 2.f]\n"
-            "    return arr.len == 3 && arr[0] == 0.f && arr[1] == 1.f && arr[2] == 2.f\n"
+            "    arr = [0.0, 1.0, 2.0]\n"
+            "    return arr.len == 3 && arr[0] == 0.0 && arr[1] == 1.0 && arr[2] == 2.0\n"
             "}\n";
         ns_expect(ns_expr_eval_bool(src), "array literal works as an assignment right-hand side.");
     }
@@ -105,6 +105,50 @@ int main() {
             "    return 2 + 3 == 5 && 2 - 3 == -1 && 2 * 3 == 6 && 7 / 2 == 3 && 7 % 2 == 1\n"
             "}\n";
         ns_expect(ns_expr_eval_bool(src), "integer add sub mul div mod operators.");
+    }
+    {
+        const char *src =
+            "fn takes_i32(x: i32) bool { return x == 1 }\n"
+            "fn takes_f32(x: f32) bool { return x == 1.5 }\n"
+            "fn main() bool {\n"
+            "    let i = 1\n"
+            "    let f = 1.5\n"
+            "    return takes_i32(i) && takes_f32(f)\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "unsuffixed literals infer to i32 and f32 by default.");
+    }
+    {
+        const char *src =
+            "fn takes_i8(x: i8) bool { return x == 1b }\n"
+            "fn takes_u8(x: u8) bool { return x == 255ub }\n"
+            "fn takes_i16(x: i16) bool { return x == 123s }\n"
+            "fn takes_u16(x: u16) bool { return x == 456us }\n"
+            "fn takes_u32(x: u32) bool { return x == 789u }\n"
+            "fn takes_i64(x: i64) bool { return x == 100000l }\n"
+            "fn takes_u64(x: u64) bool { return x == 100000ul }\n"
+            "fn takes_f64(x: f64) bool { return x == 1.25d }\n"
+            "fn main() bool {\n"
+            "    let a = 1b\n"
+            "    let b = 255ub\n"
+            "    let c = 123s\n"
+            "    let d = 456us\n"
+            "    let e = 789u\n"
+            "    let f = 100000l\n"
+            "    let g = 100000ul\n"
+            "    let h = 1.25d\n"
+            "    return takes_i8(a) && takes_u8(b) && takes_i16(c) && takes_u16(d) && takes_u32(e) && takes_i64(f) && takes_u64(g) && takes_f64(h)\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "numeric literal suffixes infer explicit widths.");
+    }
+    {
+        const char *src =
+            "fn takes_f32(x: f32) bool { return x == 1.5 }\n"
+            "fn main() bool {\n"
+            "    let h = 1.5h\n"
+            "    let hb = 1.5hb\n"
+            "    return takes_f32(h) && takes_f32(hb)\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "half and brain-float literals fall back to f32 on CPU.");
     }
     {
         const char *src =

@@ -254,11 +254,25 @@ typedef enum {
     NS_TOKEN_EOF
 } ns_token_type;
 
+typedef enum {
+    NS_NUM_SUFFIX_NONE = 0,
+    NS_NUM_SUFFIX_I8,
+    NS_NUM_SUFFIX_U8,
+    NS_NUM_SUFFIX_I16,
+    NS_NUM_SUFFIX_U16,
+    NS_NUM_SUFFIX_U32,
+    NS_NUM_SUFFIX_I64,
+    NS_NUM_SUFFIX_U64,
+    NS_NUM_SUFFIX_F64,
+    NS_NUM_SUFFIX_F16,
+    NS_NUM_SUFFIX_BF16,
+} ns_num_suffix;
+
 typedef struct ns_token_t {
     ns_token_type type;
     ns_str val;
     int line, line_start;
-    i8 suffix; // numeric literal tail: 'f' f32, 'i' i32, 'u' u32, 'b' byte (u8); 0 = 64-bit default
+    ns_num_suffix suffix;
 } ns_token_t;
 
 // ns_value

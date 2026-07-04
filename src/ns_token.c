@@ -75,18 +75,106 @@ i32 ns_identifier_follow(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '$' || (c >= '0' && c <= '9') || (u8)c >= 0x80;
 }
 
-// scan an optional numeric literal tail after the digits: 'f' turns the
-// literal into a f32, 'i'/'u'/'b' pick i32/u32/byte (u8). No tail keeps the
-// 64-bit default. The tail is only a suffix when it doesn't start an
-// identifier (so `32b` is a byte but `32bit` stays int 32 + ident `bit`).
+// Scan an optional numeric literal suffix. Unsuffixed int/float literals
+// default to i32/f32; suffixes select the non-default widths.
 i32 ns_token_number_suffix(ns_token_t *t, char *s, i32 i) {
-    char c = s[i];
-    if ((c == 'f' || c == 'i' || c == 'u' || c == 'b') && !ns_identifier_follow(s[i + 1])) {
-        t->suffix = c;
-        t->type = c == 'f' ? NS_TOKEN_FLT_LITERAL : NS_TOKEN_INT_LITERAL;
-        return i + 1;
+    switch (s[i]) {
+    case 's':
+        if (!ns_identifier_follow(s[i + 1])) {
+            t->suffix = NS_NUM_SUFFIX_I16;
+            t->type = NS_TOKEN_INT_LITERAL;
+            return i + 1;
+        }
+        break;
+    case 'b':
+        if (!ns_identifier_follow(s[i + 1])) {
+            t->suffix = NS_NUM_SUFFIX_I8;
+            t->type = NS_TOKEN_INT_LITERAL;
+            return i + 1;
+        }
+        break;
+    case 'h':
+        if (s[i + 1] == 'b' && !ns_identifier_follow(s[i + 2])) {
+            t->suffix = NS_NUM_SUFFIX_BF16;
+            t->type = NS_TOKEN_FLT_LITERAL;
+            return i + 2;
+        }
+        if (!ns_identifier_follow(s[i + 1])) {
+            t->suffix = NS_NUM_SUFFIX_F16;
+            t->type = NS_TOKEN_FLT_LITERAL;
+            return i + 1;
+        }
+        break;
+    case 'l':
+        if (!ns_identifier_follow(s[i + 1])) {
+            t->suffix = NS_NUM_SUFFIX_I64;
+            t->type = NS_TOKEN_INT_LITERAL;
+            return i + 1;
+        }
+        break;
+    case 'd':
+        if (!ns_identifier_follow(s[i + 1])) {
+            t->suffix = NS_NUM_SUFFIX_F64;
+            t->type = NS_TOKEN_FLT_LITERAL;
+            return i + 1;
+        }
+        break;
+    case 'u':
+        switch (s[i + 1]) {
+        case 's':
+            if (!ns_identifier_follow(s[i + 2])) {
+                t->suffix = NS_NUM_SUFFIX_U16;
+                t->type = NS_TOKEN_INT_LITERAL;
+                return i + 2;
+            }
+            break;
+        case 'b':
+            if (!ns_identifier_follow(s[i + 2])) {
+                t->suffix = NS_NUM_SUFFIX_U8;
+                t->type = NS_TOKEN_INT_LITERAL;
+                return i + 2;
+            }
+            break;
+        case 'l':
+            if (!ns_identifier_follow(s[i + 2])) {
+                t->suffix = NS_NUM_SUFFIX_U64;
+                t->type = NS_TOKEN_INT_LITERAL;
+                return i + 2;
+            }
+            break;
+        default:
+            if (!ns_identifier_follow(s[i + 1])) {
+                t->suffix = NS_NUM_SUFFIX_U32;
+                t->type = NS_TOKEN_INT_LITERAL;
+                return i + 1;
+            }
+            break;
+        }
+        break;
+    default:
+        break;
     }
     t->type = NS_TOKEN_INT_LITERAL;
+    return i;
+}
+
+i32 ns_token_float_suffix(ns_token_t *t, char *s, i32 i) {
+    if (s[i] == 'h' && s[i + 1] == 'b' && !ns_identifier_follow(s[i + 2])) {
+        t->suffix = NS_NUM_SUFFIX_BF16;
+        t->type = NS_TOKEN_FLT_LITERAL;
+        return i + 2;
+    }
+    if (s[i] == 'h' && !ns_identifier_follow(s[i + 1])) {
+        t->suffix = NS_NUM_SUFFIX_F16;
+        t->type = NS_TOKEN_FLT_LITERAL;
+        return i + 1;
+    }
+    if (s[i] == 'd' && !ns_identifier_follow(s[i + 1])) {
+        t->suffix = NS_NUM_SUFFIX_F64;
+        t->type = NS_TOKEN_FLT_LITERAL;
+        return i + 1;
+    }
+    t->type = NS_TOKEN_FLT_LITERAL;
     return i;
 }
 
@@ -101,11 +189,7 @@ i32 ns_token_float_literal(ns_token_t *t, char *s, i32 i) {
             j++;
         }
     }
-    if (s[j] == 'f' && !ns_identifier_follow(s[j + 1])) {
-        t->suffix = 'f';
-        j++;
-    }
-    t->type = NS_TOKEN_FLT_LITERAL;
+    j = ns_token_float_suffix(t, s, j);
     i32 len = j - i;
     t->val = ns_str_range(s + i, len);
     return j;
@@ -148,7 +232,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     i32 l, sep;
     char *s = src.data;
     char lead = s[i]; // non-ascii utf8 lead bytes fall through to the identifier path
-    t->suffix = 0;
+    t->suffix = NS_NUM_SUFFIX_NONE;
     switch (lead) {
 
     case '0' ... '9': {
@@ -158,17 +242,17 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             while ((s[i] >= '0' && s[i] <= '9') || (s[i] >= 'a' && s[i] <= 'f')) {
                 i++;
             }
-            t->type = NS_TOKEN_INT_LITERAL;
+            i = ns_token_number_suffix(t, s, i);
             t->val = ns_str_range(s + f, i - f);
             to = i;
         } else if (s[i + 1] == 'b' && (s[i + 2] == '0' || s[i + 2] == '1')) {
             // parse binary literal (a bare `0b` falls through to the decimal
-            // path below, where the 'b' tail makes it a byte literal)
+            // path below, where the 'b' tail makes it an i8 literal)
             i += 2;
             while (s[i] == '0' || s[i] == '1') {
                 i++;
             }
-            t->type = NS_TOKEN_INT_LITERAL;
+            i = ns_token_number_suffix(t, s, i);
             t->val = ns_str_range(s + f, i - f);
             to = i;
         } else if (s[i + 1] == 'o') {
@@ -177,7 +261,7 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
             while (s[i] >= '0' && s[i] <= '7') {
                 i++;
             }
-            t->type = NS_TOKEN_INT_LITERAL;
+            i = ns_token_number_suffix(t, s, i);
             t->val = ns_str_range(s + f, i - f);
             to = i;
         } else if (s[i + 1] == '.') {

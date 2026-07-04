@@ -50,10 +50,10 @@ fn test_ident_not_keyword() void {
 
 fn test_numbers() void {
     print("test_numbers\n")
-    let src = "0 123 0xff 3.14 2.0 1e3"
+    let src = "0 123 0xff 3.14 2.0 1e3 1s 1us 1b 1ub 1l 1ul 1u 1d 1.0d 1h 1.0h 1hb 1.0hb 32bit"
     let toks = [Tok](src.len + 4)
     let n = lex_into(src, toks)
-    expect_eq(n, 6, "number count")
+    expect_eq(n, 21, "number count")
     expect_eq(toks[0].kind, TK_INT(), "0 int")
     expect_eq(toks[1].kind, TK_INT(), "123 int")
     expect_str(substr(src, toks[1].start, toks[1].len), "123", "123 text")
@@ -62,6 +62,21 @@ fn test_numbers() void {
     expect_eq(toks[3].kind, TK_FLOAT(), "3.14 float")
     expect_eq(toks[4].kind, TK_FLOAT(), "2.0 float")
     expect_eq(toks[5].kind, TK_FLOAT(), "1e3 float")
+    expect_str(substr(src, toks[6].start, toks[6].len), "1s", "i16 suffix text")
+    expect_str(substr(src, toks[7].start, toks[7].len), "1us", "u16 suffix text")
+    expect_str(substr(src, toks[8].start, toks[8].len), "1b", "i8 suffix text")
+    expect_str(substr(src, toks[9].start, toks[9].len), "1ub", "u8 suffix text")
+    expect_str(substr(src, toks[10].start, toks[10].len), "1l", "i64 suffix text")
+    expect_str(substr(src, toks[11].start, toks[11].len), "1ul", "u64 suffix text")
+    expect_str(substr(src, toks[12].start, toks[12].len), "1u", "u32 suffix text")
+    expect_eq(toks[13].kind, TK_FLOAT(), "1d float")
+    expect_eq(toks[14].kind, TK_FLOAT(), "1.0d float")
+    expect_str(substr(src, toks[15].start, toks[15].len), "1h", "half suffix text")
+    expect_str(substr(src, toks[16].start, toks[16].len), "1.0h", "half float suffix text")
+    expect_str(substr(src, toks[17].start, toks[17].len), "1hb", "brain float suffix text")
+    expect_str(substr(src, toks[18].start, toks[18].len), "1.0hb", "brain float literal suffix text")
+    expect_str(substr(src, toks[19].start, toks[19].len), "32", "suffix stops before identifier")
+    expect_str(substr(src, toks[20].start, toks[20].len), "bit", "identifier after number")
 }
 
 fn test_strings() void {

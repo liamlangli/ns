@@ -1060,6 +1060,38 @@ ns_return_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "binary expr type mismatch.");
 }
 
+static u64 ns_eval_literal_u64(ns_str s) {
+    i32 i = 0;
+    ns_bool neg = false;
+    if (i < s.len && (s.data[i] == '-' || s.data[i] == '+')) {
+        neg = s.data[i] == '-';
+        i++;
+    }
+
+    u64 r = 0;
+    if (i + 1 < s.len && s.data[i] == '0' && (s.data[i + 1] == 'x' || s.data[i + 1] == 'X')) {
+        i += 2;
+        while (i < s.len) {
+            i8 c = s.data[i];
+            u64 d;
+            if (c >= '0' && c <= '9') d = (u64)(c - '0');
+            else if (c >= 'a' && c <= 'f') d = (u64)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') d = (u64)(c - 'A' + 10);
+            else break;
+            r = r * 16u + d;
+            i++;
+        }
+    } else {
+        while (i < s.len) {
+            i8 c = s.data[i];
+            if (c < '0' || c > '9') break;
+            r = r * 10u + (u64)(c - '0');
+            i++;
+        }
+    }
+    return neg ? (u64)(-(i64)r) : r;
+}
+
 ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_token_t t = n->primary_expr.token;
@@ -1071,11 +1103,23 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_type lt = n->primary_expr.t;
         if (!ns_type_is_number(lt)) {
             switch (t.suffix) {
-            case 'i': lt = ns_type_i32; break;
-            case 'u': lt = ns_type_u32; break;
-            case 'b': lt = ns_type_u8; break;
-            default: lt = ns_type_i64; break;
+            case NS_NUM_SUFFIX_I8: lt = ns_type_i8; break;
+            case NS_NUM_SUFFIX_U8: lt = ns_type_u8; break;
+            case NS_NUM_SUFFIX_I16: lt = ns_type_i16; break;
+            case NS_NUM_SUFFIX_U16: lt = ns_type_u16; break;
+            case NS_NUM_SUFFIX_U32: lt = ns_type_u32; break;
+            case NS_NUM_SUFFIX_I64: lt = ns_type_i64; break;
+            case NS_NUM_SUFFIX_U64: lt = ns_type_u64; break;
+            default: lt = ns_type_i32; break;
             }
+        }
+        if (ns_type_unsigned(lt)) {
+            ns_value uv = (ns_value){.t = ns_type_u64, .u64 = ns_eval_literal_u64(t.val)};
+            if (ns_type_is(lt, NS_TYPE_U64)) { ret = uv; break; }
+            ns_return_value cast_ret = ns_eval_cast_number(vm, uv, lt, ns_ast_state_loc(ctx, n->state));
+            if (ns_return_is_error(cast_ret)) return cast_ret;
+            ret = cast_ret.r;
+            break;
         }
         ns_value iv = (ns_value){.t = ns_type_i64, .i64 = ns_str_to_i64(t.val)};
         if (ns_type_is(lt, NS_TYPE_I64)) { ret = iv; break; }
@@ -1085,7 +1129,14 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_TOKEN_FLT_LITERAL: {
         ns_type lt = n->primary_expr.t;
-        if (!ns_type_is_float(lt)) lt = t.suffix == 'f' ? ns_type_f32 : ns_type_f64;
+        if (!ns_type_is_float(lt)) {
+            if (t.suffix == NS_NUM_SUFFIX_F16) {
+                ns_warn("numeric", "half-float literal fallback to f32 on CPU.\n");
+            } else if (t.suffix == NS_NUM_SUFFIX_BF16) {
+                ns_warn("numeric", "brain-float literal fallback to f32 on CPU.\n");
+            }
+            lt = t.suffix == NS_NUM_SUFFIX_F64 ? ns_type_f64 : ns_type_f32;
+        }
         f64 fv = ns_str_to_f64(t.val);
         ret = ns_type_is(lt, NS_TYPE_F32) ? (ns_value){.t = ns_type_f32, .f32 = (f32)fv}
                                           : (ns_value){.t = ns_type_f64, .f64 = fv};
@@ -1254,33 +1305,7 @@ ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     // casting it to the union type is an identity at runtime.
     if (ns_type_is(t, NS_TYPE_UNION)) return ns_return_ok(value, v);
     if (ns_type_is_number(t) && ns_type_is_number(v.t)) {
-        if (ns_type_is_float(t)) {
-            if (ns_type_is_float(v.t)) {
-                if (ns_type_is(t, NS_TYPE_F32)) {
-                    ns_value val = (ns_value){.t = t, .f32 = (f32)ns_eval_number_f64(vm, v)};
-                    return ns_return_ok(value, val);
-                } else {
-                    ns_value val = (ns_value){.t = t, .f64 = ns_eval_number_f64(vm, v)};
-                    return ns_return_ok(value, val);
-                }
-            } else {
-                if (ns_type_is(t, NS_TYPE_F32)) {
-                    ns_value val = (ns_value){.t = t, .f32 = (f32)ns_eval_number_i64(vm, v)};
-                    return ns_return_ok(value, val);
-                } else {
-                    ns_value val = (ns_value){.t = t, .f64 = (f64)ns_eval_number_i64(vm, v)};
-                    return ns_return_ok(value, val);
-                }
-            }
-        } else {
-            if (ns_type_is_float(v.t)) {
-                ns_value val = (ns_value){.t = t, .i64 = (i64)ns_eval_number_f64(vm, v)};
-                return ns_return_ok(value, val);
-            } else {
-                ns_value val = (ns_value){.t = t, .i64 = ns_eval_number_i64(vm, v)};
-                return ns_return_ok(value, val);
-            }
-        }
+        return ns_eval_cast_number(vm, v, t, ns_ast_state_loc(ctx, n->state));
     } else {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented cast expr.");
     }

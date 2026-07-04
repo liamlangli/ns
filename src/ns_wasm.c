@@ -292,9 +292,13 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
             case NS_SSA_OP_CONST:
                 if (inst->type.type != NS_TYPE_UNKNOWN) {
                     vt[inst->dst] = ns_wasm_valtype(inst->type.type);
+                } else if (inst->token.type == NS_TOKEN_FLT_LITERAL) {
+                    vt[inst->dst] = inst->token.suffix == NS_NUM_SUFFIX_F64 ? NS_WASM_F64 : NS_WASM_F32;
+                } else if (inst->token.type == NS_TOKEN_INT_LITERAL &&
+                           (inst->token.suffix == NS_NUM_SUFFIX_I64 || inst->token.suffix == NS_NUM_SUFFIX_U64)) {
+                    vt[inst->dst] = NS_WASM_I64;
                 } else if (ns_wasm_is_float_lit(inst->name)) {
-                    // Default float literals to f64
-                    vt[inst->dst] = NS_WASM_F64;
+                    vt[inst->dst] = NS_WASM_F32;
                 }
                 // else keep i32
                 break;
@@ -524,7 +528,7 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         switch (vt) {
         case NS_WASM_I64:
             ns_wasm_u8(&ctx->code, NS_WASM_I64_CONST);
-            ns_wasm_i64leb(&ctx->code, (i64)ns_str_to_i32(inst->name));
+            ns_wasm_i64leb(&ctx->code, ns_str_to_i64(inst->name));
             break;
         case NS_WASM_F32: {
             f32 fv = (f32)ns_str_to_f64(inst->name);

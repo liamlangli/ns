@@ -13,20 +13,20 @@ fn FONT_MONO() i32 { return 1 }
 fn MODE_CODE() i32 { return 0 }
 fn MODE_AGENT() i32 { return 1 }
 
-let g_mode: i32 = 1i
-let g_selected_chat: i32 = 0i
+let g_mode: i32 = 1
+let g_selected_chat: i32 = 0
 let g_dialog_scroll = 0.0
 let g_code_scroll = 0.0
 let g_last_frame_time = 0.0
 let g_fps = 0.0
-let g_fps_i: i32 = 0i
+let g_fps_i: i32 = 0
 
 // Code view input state: mouse drag selection, click streak (double/triple
 // click) and the previous frame's key levels for edge detection.
 let g_code_drag = false
 let g_last_click_time = 0.0
-let g_last_click_line: i32 = -1i
-let g_click_streak: i32 = 0i
+let g_last_click_line: i32 = -1
+let g_click_streak: i32 = 0
 let g_key_prev = [u8](512)
 let g_caret_follow = false
 
@@ -37,16 +37,16 @@ let g_caret_follow = false
 // dictionaries addressed by the parallel counters.
 let g_msg_text = [i32: str](64)
 let g_msg_role = [i32](64)
-let g_msg_count: i32 = 0i
+let g_msg_count: i32 = 0
 let g_convo_seeded = false
 
 let g_input_text = ""
 let g_input_focus = true
-let g_perm: i32 = 1i
-let g_module: i32 = 0i
+let g_perm: i32 = 1
+let g_module: i32 = 0
 let g_attach_name = [i32: str](8)
-let g_attach_count: i32 = 0i
-let g_attach_seq: i32 = 0i
+let g_attach_count: i32 = 0
+let g_attach_seq: i32 = 0
 let g_running = false
 let g_run_started = 0.0
 let g_reply_delay = 2.4
@@ -56,7 +56,7 @@ let g_dialog_content_h = 0.0
 // Composer/popup hit rects, written while drawing so click handling and the
 // headless frame tests can address the controls without mirroring layout math.
 let g_click_used = false
-let g_pop_kind: i32 = 0i
+let g_pop_kind: i32 = 0
 let g_cmp_x = 0.0
 let g_cmp_y = 0.0
 let g_cmp_w = 0.0
@@ -100,7 +100,7 @@ fn col_editor_panel() u32 { return ui_pack_color("#171a22") }
 fn col_editor_panel_hi() u32 { return ui_pack_color("#202633") }
 fn col_editor_gutter() u32 { return ui_pack_color("#222733") }
 fn col_editor_cursor() u32 { return ui_pack_color("#f4d35e") }
-fn col_editor_sel() u32 { return ui_pack_color("#2b4a6f") }
+fn col_editor_sel() u32 { return ui_pack_color("#2b4a6") }
 
 // Syntax palette for the code view, keyed by the editor token kinds.
 fn col_syn_keyword() u32 { return ui_pack_color("#c678dd") }
@@ -1199,7 +1199,7 @@ fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, tex
             let li = mouse_line(v, body_y, line_h)
             let col = mouse_col(v, text_x, char_w)
             let now = os_time()
-            let streak: i32 = 1i
+            let streak: i32 = 1
             if (now - g_last_click_time) < 0.45 {
                 if li == g_last_click_line {
                     streak = g_click_streak + 1

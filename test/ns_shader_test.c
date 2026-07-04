@@ -37,6 +37,9 @@ static const char *ns_shader_test_src =
     "fn brighten(c: Float4, gain: f32) Float4 {\n"
     "    return Float4 { x: c.x * gain, y: c.y * gain, z: c.z * gain, w: c.w }\n"
     "}\n"
+    "fn half_gain(a: f32) f32 {\n"
+    "    return a + 0.25h + 0.25hb\n"
+    "}\n"
     "fn vs_main(data: VertexData) FragmentInput {\n"
     "    let pos = data.position\n"
     "    return FragmentInput {\n"
@@ -46,7 +49,7 @@ static const char *ns_shader_test_src =
     "    }\n"
     "}\n"
     "fn fs_main(data: FragmentInput) Float4 {\n"
-    "    return brighten(data.color, 0.5 as f32)\n"
+    "    return brighten(data.color, half_gain(0.5 as f32))\n"
     "}\n"
     "fn bad_print(data: FragmentInput) Float4 {\n"
     "    print(\"no\")\n"
@@ -141,6 +144,7 @@ int main() {
             ns_expect(ns_shader_test_has(r.r, "float4 position [[position]]"), "msl stage-io position attribute.");
             ns_expect(ns_shader_test_has(r.r, "float4(pos.x, pos.y, pos.z, 1.0)"), "msl Float4 literal becomes a constructor.");
             ns_expect(ns_shader_test_has(r.r, "float4 brighten(float4 c, float gain)"), "msl helper fn emitted.");
+            ns_expect(ns_shader_test_has(r.r, "half(0.25)"), "msl half and brain-float suffixes lower to half.");
             ns_expect(ns_shader_test_has(r.r, "float3 pos = data.position"), "msl let binding types are inferred.");
             ns_array_free(r.r.data);
         }
@@ -156,6 +160,7 @@ int main() {
             ns_expect(ns_shader_test_has(r.r, "float2 uv : TEXCOORD0"), "hlsl texcoord semantics.");
             ns_expect(ns_shader_test_has(r.r, "float4 position : SV_Position"), "hlsl stage-io position semantic.");
             ns_expect(ns_shader_test_has(r.r, "float4 fs_main(FragmentInput data) : SV_Target"), "hlsl fragment entry signature.");
+            ns_expect(ns_shader_test_has(r.r, "half(0.25)"), "hlsl half and brain-float suffixes lower to half.");
             ns_array_free(r.r.data);
         }
     }

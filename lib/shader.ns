@@ -11,7 +11,7 @@ mod shader
 //   - vertex:   fn vs_main(in: VertexData) FragmentInput  (return struct needs
 //                a `position: Float4` field)
 //   - fragment: fn fs_main(in: FragmentInput) Float4
-// Numbers are emitted as 32-bit floats (f64 literals are demoted). str,
+// Numbers are emitted as 32-bit floats (f64 `d` literals are demoted). str,
 // containers, closures, ref types and native fns are rejected with a
 // source-located error.
 

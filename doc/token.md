@@ -55,17 +55,26 @@ on top of that.
 
 ## number literal suffix
 
-A decimal number literal defaults to a 64-bit type: int literals are `i64`,
-float literals are `f64`. A one-letter tail picks a 32-bit (or byte) type
-instead:
+A decimal number literal defaults to GPU-friendly 32-bit types: int literals
+are `i32`, float literals are `f32`. A suffix picks another width:
 
-- `1.5f`, `3f` -> `f32`
-- `42i` -> `i32`
-- `7u` -> `u32`
-- `200b` -> byte (`u8`)
+- `12b` -> `i8`
+- `12ub` -> `u8`
+- `12s` -> `i16`
+- `12us` -> `u16`
+- `12u` -> `u32`
+- `12l` -> `i64`
+- `12ul` -> `u64`
+- `1d`, `1.0d` -> `f64`
+- `1h`, `1.0h` -> half float intent; CPU currently falls back to `f32`
+- `1hb`, `1.0hb` -> brain float intent; CPU currently falls back to `f32`
 
-The tail only counts when it ends the number (`32b` is a byte, `32bit` is the
+The suffix only counts when it ends the number (`32b` is an `i8`, `32bit` is the
 int `32` followed by the identifier `bit`). An unsuffixed literal also adopts
 the number type expected by its context (a typed `let`, fn arg, struct field,
 return slot, or the other side of a binary expr), so `let x: f32 = 1.5` needs
 no suffix or cast.
+
+When shader source is emitted, `h` literals are emitted as half literals/casts.
+`hb` literals fall back to half when bfloat16 is not available in the shader
+target and emit a warning.
