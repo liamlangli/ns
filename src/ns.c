@@ -46,6 +46,7 @@ typedef struct ns_compile_option_t {
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
+    i32 positional_count;
     ns_str shader_target;
     ns_str entry;
     ns_str output;
@@ -102,7 +103,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
         } else {
-            option.filename = ns_str_cstr(argv[i]); // unmatched argument is treated as filename
+            if (option.filename.len == 0) {
+                option.filename = ns_str_cstr(argv[i]); // unmatched argument is treated as filename
+            }
+            option.positional_count++;
         }
     }
     return option;
@@ -1567,6 +1571,10 @@ i32 main(i32 argc, i8** argv) {
 
     if (option.show_version) {
         ns_version(); return 0;
+    }
+
+    if (option.positional_count > 1) {
+        ns_exit(1, "usage", "too many input paths; expected at most one. See `ns --help`.\n");
     }
 
     f64 profile_start_ms = option.profile ? ns_profile_now_ms() : 0.0;

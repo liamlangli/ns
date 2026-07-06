@@ -1492,7 +1492,9 @@ ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t) {
     case NS_AST_STR_FMT_EXPR: return ns_vm_parse_str_fmt(vm, ctx, i);
     case NS_AST_BLOCK_EXPR: return ns_vm_parse_block_expr(vm, ctx, i, t);
     default: {
-        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unimplemented expr type.");
+        static char msg[96];
+        snprintf(msg, sizeof(msg), "unimplemented expr type: %d.", n->type);
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, msg);
     } break;
     }
     return ns_return_ok(type, ns_type_unknown);

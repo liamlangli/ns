@@ -118,6 +118,12 @@ static void ns_return_print_source_context(ns_code_loc loc) {
     fclose(file);
 }
 
+static void ns_return_exit_or_recover(void) {
+    if (getenv("NS_REPL_RECOVER") == NULL) {
+        exit(1);
+    }
+}
+
 void ns_return_print_error(ns_return_state s, ns_return e) {
     ns_str state = ns_return_state_str(s);
     fprintf(stderr, ns_color_err "%.*s: " ns_color_nil "%.*s\n", state.len, state.data, e.msg.len, e.msg.data);
@@ -125,7 +131,7 @@ void ns_return_print_error(ns_return_state s, ns_return e) {
         fprintf(stderr, "  --> %.*s:%d:%d\n", e.loc.f.len, e.loc.f.data, e.loc.l, e.loc.o);
         ns_return_print_source_context(e.loc);
     }
-    ns_assert_or_recover();
+    ns_return_exit_or_recover();
 }
 
 ns_bool ns_type_is_number(ns_type t) {

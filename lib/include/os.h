@@ -24,3 +24,4 @@ const char *os_time_string(void);
 const char *os_date_string(void);
 const char *os_locale_date_string(void);
 const char *os_locale_date_time_string(void);
+const char *os_open_file_dialog(const char *title);

@@ -29,3 +29,7 @@ ref fn os_time_string() str
 ref fn os_date_string() str
 ref fn os_locale_date_string() str
 ref fn os_locale_date_time_string() str
+
+// Show a native open-file dialog when the platform backend supports one.
+// Returns an empty string when the dialog is cancelled or unavailable.
+ref fn os_open_file_dialog(title: str) str
