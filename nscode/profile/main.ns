@@ -1,0 +1,328 @@
+// nscode/profile/main.ns
+// Native viewer for ns.profile files.
+
+use std
+use view
+use gpu
+use ui
+use os
+
+fn FONT_MONO() i32 { return 1 }
+
+let g_path = ""
+let g_raw = ""
+let g_format = ""
+let g_elapsed = ""
+let g_argv = ""
+let g_status = "No profile loaded."
+let g_scroll: f64 = 0.0
+let g_frame_count: i32 = 0
+
+fn col_bg() u32 { return ui_pack_color("#101418") }
+fn col_panel() u32 { return ui_pack_color("#182026") }
+fn col_panel_hi() u32 { return ui_pack_color("#22303a") }
+fn col_line() u32 { return ui_pack_color("#34424d") }
+fn col_text() u32 { return ui_pack_color("#d8e0e7") }
+fn col_muted() u32 { return ui_pack_color("#8b98a5") }
+fn col_accent() u32 { return ui_pack_color("#66d39a") }
+fn col_warn() u32 { return ui_pack_color("#f0bd5f") }
+
+fn clear_color() ui_color_rgba {
+    return ui_color_rgba { r: 0.063, g: 0.078, b: 0.094, a: 1.0 }
+}
+
+fn min_f(a: f64, b: f64) f64 {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn max_f(a: f64, b: f64) f64 {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
+    if v.mouse_x < x {
+        return false
+    }
+    if v.mouse_x >= (x + w) {
+        return false
+    }
+    if v.mouse_y < y {
+        return false
+    }
+    if v.mouse_y >= (y + h) {
+        return false
+    }
+    return true
+}
+
+fn reset_view_input(v: ref view) {
+    v.mouse_pressed = false
+    v.mouse_released = false
+    v.mouse_right_pressed = false
+    v.mouse_right_released = false
+    v.mouse_middle_pressed = false
+    v.mouse_middle_released = false
+    v.scroll_x = 0.0
+    v.scroll_y = 0.0
+}
+
+fn starts_with(s: str, prefix: str) bool {
+    if s.len < prefix.len {
+        return false
+    }
+    return substr(s, 0, prefix.len) == prefix
+}
+
+fn trim_left(s: str) str {
+    let i = 0
+    loop i < s.len {
+        let c = (s[i] as i32) & 255
+        if c != 32 {
+            if c != 9 {
+                return substr(s, i, s.len - i)
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn profile_line(src: str, key: str) str {
+    let i = 0
+    loop i < src.len {
+        let start = i
+        loop i < src.len {
+            if ((src[i] as i32) & 255) != 10 {
+                i = i + 1
+            } else {
+                let line = substr(src, start, i - start)
+                let prefix = key + ":"
+                if starts_with(line, prefix) {
+                    return trim_left(substr(line, prefix.len, line.len - prefix.len))
+                }
+                i = i + 1
+                start = i
+            }
+        }
+        let line = substr(src, start, i - start)
+        let prefix = key + ":"
+        if starts_with(line, prefix) {
+            return trim_left(substr(line, prefix.len, line.len - prefix.len))
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn read_file(path: str) str {
+    let fd = open(path, "rb")
+    if fd == 0 {
+        return ""
+    }
+    let data = read(fd)
+    close(fd)
+    return data
+}
+
+fn clear_profile() {
+    g_raw = ""
+    g_format = ""
+    g_elapsed = ""
+    g_argv = ""
+}
+
+fn load_profile(path: str) {
+    let data = read_file(path)
+    if data.len == 0 {
+        clear_profile()
+        g_path = path
+        g_status = "Failed to read profile."
+    } else {
+        g_path = path
+        g_raw = data
+        g_format = profile_line(data, "format")
+        g_elapsed = profile_line(data, "elapsed_ms")
+        g_argv = profile_line(data, "argv")
+
+        if g_format != "ns-profile-v1" {
+            g_status = "Loaded file is not ns-profile-v1."
+        } else {
+            g_status = "Profile loaded."
+        }
+        g_scroll = 0.0
+    }
+}
+
+fn open_profile() {
+    let path = os_open_file_dialog("Open ns.profile")
+    if path.len == 0 {
+        g_status = "No profile selected."
+    } else {
+        load_profile(path)
+    }
+}
+
+fn draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, label: str, accent: bool) bool {
+    let bg = col_panel_hi()
+    let fg = col_text()
+    if accent {
+        bg = col_accent()
+        fg = col_bg()
+    }
+    if hit(v, x, y, w, h) {
+        if accent == false {
+            bg = ui_pack_color("#2b3c48")
+        }
+    }
+    ui_fill_round_rect(r, x, y, w, h, 6.0, bg, 0.0)
+    let tw = ui_text_width(r, label, 14.0, FONT_MONO())
+    let tx = x + (w - tw) * 0.5
+    let ty = ui_text_v_center_y(r, y, h, 14.0, FONT_MONO())
+    ui_draw_text(r, tx, ty, label, 14.0, fg, FONT_MONO())
+    if g_frame_count > 2 {
+        if v.mouse_pressed {
+            if hit(v, x, y, w, h) {
+                return true
+            }
+        }
+    }
+    return false
+}
+
+fn draw_metric(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str, color: u32) {
+    ui_fill_round_rect(r, x, y, w, 70.0, 6.0, col_panel(), 0.0)
+    ui_draw_text(r, x + 14.0, y + 13.0, label, 12.0, col_muted(), FONT_MONO())
+    ui_push_clip(r, x + 14.0, y + 34.0, w - 28.0, 24.0)
+    ui_draw_text(r, x + 14.0, y + 34.0, value, 18.0, color, FONT_MONO())
+    ui_pop_clip(r)
+}
+
+fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    let metric_w = (w - 24.0) / 3.0
+    let format_text = g_format
+    if format_text == "" {
+        format_text = "-"
+    }
+    let elapsed_text = g_elapsed
+    if elapsed_text == "" {
+        elapsed_text = "-"
+    } else {
+        elapsed_text = elapsed_text + " ms"
+    }
+    let path_text = g_path
+    if path_text == "" {
+        path_text = "-"
+    }
+
+    draw_metric(r, x, y, metric_w, "FORMAT", format_text, col_text())
+    draw_metric(r, x + metric_w + 12.0, y, metric_w, "ELAPSED", elapsed_text, col_accent())
+    draw_metric(r, x + (metric_w + 12.0) * 2.0, y, metric_w, "FILE", path_text, col_text())
+
+    let argv_y = y + 94.0
+    ui_draw_text(r, x, argv_y, "argv", 13.0, col_muted(), FONT_MONO())
+    ui_fill_round_rect(r, x, argv_y + 22.0, w, 74.0, 6.0, col_panel(), 0.0)
+    ui_push_clip(r, x + 14.0, argv_y + 34.0, w - 28.0, 46.0)
+    let argv_text = g_argv
+    if argv_text == "" {
+        argv_text = "-"
+    }
+    ui_draw_text_wrapped(r, x + 14.0, argv_y + 34.0, w - 28.0, argv_text, 13.0, col_text(), FONT_MONO())
+    ui_pop_clip(r)
+
+    let raw_y = argv_y + 122.0
+    let raw_h = h - 216.0
+    if raw_h > 80.0 {
+        ui_draw_text(r, x, raw_y, "raw profile", 13.0, col_muted(), FONT_MONO())
+        ui_fill_round_rect(r, x, raw_y + 22.0, w, raw_h, 6.0, col_panel(), 0.0)
+        if hit(v, x, raw_y + 22.0, w, raw_h) {
+            g_scroll = g_scroll - v.scroll_y * 18.0
+            let max_scroll = max_f(0.0, g_raw.len as f64 * 0.45 - raw_h)
+            if g_scroll < 0.0 {
+                g_scroll = 0.0
+            }
+            if g_scroll > max_scroll {
+                g_scroll = max_scroll
+            }
+        }
+        ui_push_clip(r, x + 14.0, raw_y + 34.0, w - 28.0, raw_h - 24.0)
+        ui_draw_text_wrapped(r, x + 14.0, raw_y + 34.0 - g_scroll, w - 28.0, g_raw, 13.0, col_text(), FONT_MONO())
+        ui_pop_clip(r)
+    }
+}
+
+fn render_frame(r: ref ui_renderer, v: ref view) {
+    ui_resize(r)
+
+    let w = v.width as f64
+    let h = v.height as f64
+
+    ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
+
+    let pad = 24.0
+    let header_h = 70.0
+    ui_fill_rect(r, 0.0, 0.0, w, header_h, col_panel(), 0.0)
+    ui_draw_text(r, pad, 20.0, "NS Profile", 22.0, col_text(), FONT_MONO())
+    ui_draw_text(r, pad + 160.0, 26.0, g_status, 13.0, col_muted(), FONT_MONO())
+
+    let open_w = 132.0
+    let load_w = 132.0
+    let by = 18.0
+    let open_x = w - pad - open_w
+    let load_x = open_x - load_w - 10.0
+    if draw_button(r, v, load_x, by, load_w, 34.0, "Load ns.profile", false) {
+        load_profile("ns.profile")
+    }
+    if draw_button(r, v, open_x, by, open_w, 34.0, "Open Profile", true) {
+        open_profile()
+    }
+
+    ui_fill_rect(r, 0.0, header_h, w, 1.0, col_line(), 0.0)
+
+    let body_x = pad
+    let body_y = header_h + 24.0
+    let body_w = w - pad * 2.0
+    let body_h = h - body_y - pad
+
+    if body_w > 100.0 {
+        if body_h > 100.0 {
+            if g_raw.len == 0 {
+                let cy = body_y + min_f(90.0, body_h * 0.3)
+                ui_draw_text(r, body_x, cy, "No profile loaded", 18.0, col_text(), FONT_MONO())
+                ui_draw_text(r, body_x, cy + 30.0, "Open a saved ns.profile or load ./ns.profile.", 13.0, col_muted(), FONT_MONO())
+                if g_status == "Loaded file is not ns-profile-v1." {
+                    ui_draw_text(r, body_x, cy + 56.0, g_status, 13.0, col_warn(), FONT_MONO())
+                }
+            } else {
+                draw_profile(r, v, body_x, body_y, body_w, body_h)
+            }
+        }
+    }
+    g_frame_count = g_frame_count + 1
+}
+
+fn main() {
+    let v = view_create("NS Profile", 900, 640)
+    reset_view_input(v)
+    let ok = gpu_request_device(v)
+    if ok {
+        let r = ui_renderer_create(v)
+        v.on_frame({ frame_view in
+            ui_begin_frame(r)
+            render_frame(r, frame_view)
+            ui_flush(r, clear_color())
+            reset_view_input(frame_view)
+        })
+        v.on_terminate({ dead_view in
+            ui_renderer_destroy(r)
+        })
+    } else {
+        print("no GPU backend on this platform; profile viewer is unavailable\n")
+    }
+    view_run(v)
+}
