@@ -19,6 +19,32 @@ ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
+static const_str ns_eval_type_mismatch_msg(ns_vm *vm, const_str msg, ns_type expected, ns_type got) {
+    ns_str e = ns_vm_get_type_name(vm, expected);
+    ns_str g = ns_vm_get_type_name(vm, got);
+    szt len = snprintf(ns_null, 0, "%s expected %.*s, got %.*s.", msg, e.len, e.data, g.len, g.data);
+    i8 *data = ns_malloc(len + 1);
+    snprintf(data, len + 1, "%s expected %.*s, got %.*s.", msg, e.len, e.data, g.len, g.data);
+    return data;
+}
+
+static const_str ns_eval_type_mismatch_label_msg(ns_vm *vm, const_str msg, const_str expected, ns_type got) {
+    ns_str g = ns_vm_get_type_name(vm, got);
+    szt len = snprintf(ns_null, 0, "%s expected %s, got %.*s.", msg, expected, g.len, g.data);
+    i8 *data = ns_malloc(len + 1);
+    snprintf(data, len + 1, "%s expected %s, got %.*s.", msg, expected, g.len, g.data);
+    return data;
+}
+
+static const_str ns_eval_type_pair_mismatch_msg(ns_vm *vm, const_str msg, const_str left_label, ns_type left, const_str right_label, ns_type right) {
+    ns_str l = ns_vm_get_type_name(vm, left);
+    ns_str r = ns_vm_get_type_name(vm, right);
+    szt len = snprintf(ns_null, 0, "%s %s %.*s, %s %.*s.", msg, left_label, l.len, l.data, right_label, r.len, r.data);
+    i8 *data = ns_malloc(len + 1);
+    snprintf(data, len + 1, "%s %s %.*s, %s %.*s.", msg, left_label, l.len, l.data, right_label, r.len, r.data);
+    return data;
+}
+
 typedef struct ns_dict_table {
     i32 cap;
     i32 len;
@@ -222,7 +248,7 @@ static ns_return_value ns_eval_dict_find(ns_vm *vm, ns_value table_v, ns_value k
 ns_return_value ns_eval_cast_number(ns_vm *vm, ns_value v, ns_type dst, ns_code_loc loc) {
     if (ns_type_equals(v.t, dst)) return ns_return_ok(value, v);
     if (!ns_type_is_number(v.t) || !ns_type_is_number(dst)) {
-        return ns_return_error(value, loc, NS_ERR_EVAL, "numeric cast type mismatch.");
+        return ns_return_error(value, loc, NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "numeric cast type mismatch.", dst, v.t));
     }
 
     ns_value out = {.t = ns_type_set_mut(dst, false)};
@@ -376,7 +402,7 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     if (!ns_type_equals(l.t, r.t)) {
         if (!ns_eval_number_assign_compatible(vm, l.t, r.t)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "assign expr type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "assign expr type mismatch.", l.t, r.t));
         }
         ns_return_value cast_ret = ns_eval_cast_number(vm, r, l.t, ns_ast_state_loc(ctx, n->state));
         if (ns_return_is_error(cast_ret)) return cast_ret;
@@ -817,7 +843,7 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             ret = cast_ret.r;
         }
         if (!ns_type_match(vm, fn->ret, ret.t)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "return type mismatch.", fn->ret, ret.t));
         }
         ns_eval_copy(vm, call->ret, ret, ns_type_size(vm, ret.t));
         // For a union return type, keep the concrete member's tag on the return
@@ -1057,7 +1083,7 @@ ns_return_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (!ns_type_is_unknown(ret.t)) return ns_return_ok(value, ret);
     }
 
-    return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "binary expr type mismatch.");
+    return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_pair_mismatch_msg(vm, "binary expr type mismatch.", "left", l.t, "right", r.t));
 }
 
 static u64 ns_eval_literal_u64(ns_str s) {
@@ -1242,7 +1268,7 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (!number_ok && !ns_type_equals(field->t, val.t) && !ns_type_match(vm, field->t, val.t)) { // type mismatch
             // ns_str f_type = ns_vm_get_type_name(vm, field->t);
             // ns_str v_type = ns_vm_get_type_name(vm, val.t);
-            return ns_return_error(value, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "field type mismatch");
+            return ns_return_error(value, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "field type mismatch.", field->t, val.t));
         }
 
         // For a union field, store the concrete member that was actually provided.
@@ -1396,7 +1422,7 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     switch (op.type) {
     case NS_TOKEN_ADD_OP:
         if (!ns_type_is_number(v.t)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_label_msg(vm, "unary expr type mismatch.", "number", v.t));
         }
         if (ns_str_equals_STR(op.val, "-")) {
             switch (v.t.type) {
@@ -1416,7 +1442,7 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             v.t.mut = false;
             return ns_return_ok(value, v);
         } else {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_label_msg(vm, "unary expr type mismatch.", "'-'", v.t));
         }
         return ns_return_ok(value, v);
     case NS_TOKEN_CMP_OP: {      // logical not: !bool -> bool
@@ -1491,7 +1517,7 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
             if (!ns_type_equals(element_type, elem_v.t)) {
                 if (!ns_eval_number_assign_compatible(vm, element_type, elem_v.t) && !ns_type_match(vm, element_type, elem_v.t)) {
-                    return ns_return_error(value, ns_ast_state_loc(ctx, elem.state), NS_ERR_EVAL, "array literal element type mismatch.");
+                    return ns_return_error(value, ns_ast_state_loc(ctx, elem.state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "array literal element type mismatch.", element_type, elem_v.t));
                 }
                 if (ns_type_is_number(element_type) && ns_type_is_number(elem_v.t)) {
                     ns_return_value cast_ret = ns_eval_cast_number(vm, elem_v, element_type, ns_ast_state_loc(ctx, elem.state));
@@ -1558,13 +1584,13 @@ ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i
     if (ns_type_is(table.t, NS_TYPE_DICT)) {
         ns_symbol *dict = &vm->symbols[ns_type_index(table.t)];
         if (!ns_type_match(vm, dict->ct.key, index.t)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "dict key type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "dict key type mismatch.", dict->ct.key, index.t));
         }
         return ns_eval_dict_find(vm, table, index, create, ns_ast_state_loc(ctx, n->state));
     }
 
     if (!ns_type_is_number(index.t)) {
-        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_label_msg(vm, "index expr type mismatch.", "number", index.t));
     }
 
     // string indexing: s[i] yields the byte at position i as an i32 char code.
@@ -1577,7 +1603,7 @@ ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i
     }
 
     if (!ns_type_is_array(table.t)) {
-        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_label_msg(vm, "index expr type mismatch.", "array, dict, or string", table.t));
     }
     ns_type element_type = table.t;
     element_type.array = false;
@@ -1660,12 +1686,12 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         store_t = v.t;
     } else if (ns_type_is(dst_t, NS_TYPE_UNION) || ns_type_is(dst_t, NS_TYPE_FN)) {
         if (!ns_type_match(vm, dst_t, v.t)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "var def type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "var def type mismatch.", dst_t, v.t));
         }
         store_t = v.t;
     } else if (!ns_type_equals(dst_t, v.t)) {
         if (!ns_eval_number_assign_compatible(vm, dst_t, v.t)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "var def type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "var def type mismatch.", dst_t, v.t));
         }
         ns_return_value cast_ret = ns_eval_cast_number(vm, v, dst_t, ns_ast_state_loc(ctx, n->state));
         if (ns_return_is_error(cast_ret)) return cast_ret;
@@ -1741,12 +1767,12 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         store_t = src.t;
     } else if (ns_type_is(dst_t, NS_TYPE_UNION) || ns_type_is(dst_t, NS_TYPE_FN)) {
         if (!ns_type_match(vm, dst_t, src.t)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "local var def type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "local var def type mismatch.", dst_t, src.t));
         }
         store_t = src.t;
     } else if (!ns_type_equals(dst_t, src.t)) {
         if (!ns_eval_number_assign_compatible(vm, dst_t, src.t)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "local var def type mismatch.");
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "local var def type mismatch.", dst_t, src.t));
         }
         ns_return_value cast_ret = ns_eval_cast_number(vm, src, dst_t, ns_ast_state_loc(ctx, n->state));
         if (ns_return_is_error(cast_ret)) return cast_ret;

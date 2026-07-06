@@ -7,6 +7,32 @@
 ns_return_void ns_vm_parse_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_bool ns_vm_assign_number_compatible(ns_vm *vm, ns_type dst, ns_type src);
 
+static const_str ns_vm_type_mismatch_msg(ns_vm *vm, const_str msg, ns_type expected, ns_type got) {
+    ns_str e = ns_vm_get_type_name(vm, expected);
+    ns_str g = ns_vm_get_type_name(vm, got);
+    szt len = snprintf(ns_null, 0, "%s expected %.*s, got %.*s.", msg, e.len, e.data, g.len, g.data);
+    i8 *data = ns_malloc(len + 1);
+    snprintf(data, len + 1, "%s expected %.*s, got %.*s.", msg, e.len, e.data, g.len, g.data);
+    return data;
+}
+
+static const_str ns_vm_type_mismatch_label_msg(ns_vm *vm, const_str msg, const_str expected, ns_type got) {
+    ns_str g = ns_vm_get_type_name(vm, got);
+    szt len = snprintf(ns_null, 0, "%s expected %s, got %.*s.", msg, expected, g.len, g.data);
+    i8 *data = ns_malloc(len + 1);
+    snprintf(data, len + 1, "%s expected %s, got %.*s.", msg, expected, g.len, g.data);
+    return data;
+}
+
+static const_str ns_vm_type_pair_mismatch_msg(ns_vm *vm, const_str msg, const_str left_label, ns_type left, const_str right_label, ns_type right) {
+    ns_str l = ns_vm_get_type_name(vm, left);
+    ns_str r = ns_vm_get_type_name(vm, right);
+    szt len = snprintf(ns_null, 0, "%s %s %.*s, %s %.*s.", msg, left_label, l.len, l.data, right_label, r.len, r.data);
+    i8 *data = ns_malloc(len + 1);
+    snprintf(data, len + 1, "%s %s %.*s, %s %.*s.", msg, left_label, l.len, l.data, right_label, r.len, r.data);
+    return data;
+}
+
 ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s) {
     assert(s->type == NS_SYMBOL_FN || s->type == NS_SYMBOL_BLOCK);
     if (s->type == NS_SYMBOL_FN) return &s->fn;
@@ -859,7 +885,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
                 ns_return_type ret_t = ns_vm_parse_type(vm, ctx, arg_type);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
                 if (!ns_type_is(ret_t.r, NS_TYPE_INFER) && !ns_type_equals(ret_t.r, arg_t)) {
-                    return ns_return_error(type, ns_ast_state_loc(ctx, arg->state), NS_ERR_SYNTAX, "block expr arg type mismatch.");
+                    return ns_return_error(type, ns_ast_state_loc(ctx, arg->state), NS_ERR_SYNTAX, ns_vm_type_mismatch_msg(vm, "block expr arg type mismatch.", arg_t, ret_t.r));
                 }
                 arg_sym.val.t = arg_t;
             } else {
@@ -882,7 +908,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
         ns_return_type ret_t = ns_vm_parse_type(vm, ctx, ret_type);
         if (ns_return_is_error(ret_t)) return ns_return_change_type(type, ret_t);
         if (!ns_type_is(ret_t.r, NS_TYPE_INFER) && !ns_type_equals(ret_t.r, fn_t->fn.ret)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "block expr ret type mismatch.");
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, ns_vm_type_mismatch_msg(vm, "block expr ret type mismatch.", fn_t->fn.ret, ret_t.r));
         }
         sym.bc.fn.ret = fn_t->fn.ret;
     }
@@ -1026,7 +1052,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->next, fn);
             if (ns_return_is_error(ret_t)) return ret_t;
             if (!ns_type_match(vm, fn, ret_t.r)) {
-                return ns_return_error(type, ns_ast_state_loc(ctx, arg0->state), NS_ERR_EVAL, "callback type mismatch.");
+                return ns_return_error(type, ns_ast_state_loc(ctx, arg0->state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "callback type mismatch.", fn, ret_t.r));
             }
             return ns_return_ok(type, ns_type_void);
         }
@@ -1049,7 +1075,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         // pushes args in ns_eval_call_expr), matching designated-expr fields
         ns_bool number_ok = !ns_type_is_ref(arg_t) && ns_type_is_number(arg_t) && ns_type_is_number(t);
         if (!number_ok && !ns_type_match(vm, arg_t, t)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, arg.state), NS_ERR_EVAL, "call expr type mismatch fn.");
+            return ns_return_error(type, ns_ast_state_loc(ctx, arg.state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "call expr type mismatch.", arg_t, t));
         }
     }
     fn_record = &vm->symbols[ns_type_index(fn)];
@@ -1091,7 +1117,7 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     if (!ns_type_is(t, NS_TYPE_STRUCT)) {
-        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "member expr type mismatch.");
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "member expr type mismatch.", "struct", t));
     }
 
     ns_ast_t field = ctx->nodes[n->member_expr.right];
@@ -1125,7 +1151,7 @@ ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_type from_t = from_ret.r;
         ns_type to_t = to_ret.r;
         if (!ns_type_is(from_t, NS_TYPE_I32) || !ns_type_is(to_t, NS_TYPE_I32)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "gen expr type mismatch.");
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_pair_mismatch_msg(vm, "gen expr type mismatch.", "from", from_t, "to", to_t));
         }
         return ns_return_ok(type, ns_type_i32);
     } else {
@@ -1133,7 +1159,7 @@ ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(from_ret)) return from_ret;
         ns_type from_t = from_ret.r;
         if (!ns_vm_parse_type_generable(from_t)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "gen expr type mismatch.");
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "gen expr type mismatch.", "string or array", from_t));
         }
         return ns_return_ok(type, from_t);
     }
@@ -1165,7 +1191,7 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         // A numeric field accepts any numeric expr (converted at store time by
         // ns_eval_desig_expr), so float literals (f64) initialize f32 fields.
         ns_bool number_ok = ns_type_is_number(f->t) && ns_type_is_number(t);
-        if (!number_ok && !ns_type_equals(t, f->t) && !ns_type_match(vm, f->t, t)) return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "designated expr type mismatch.");
+        if (!number_ok && !ns_type_equals(t, f->t) && !ns_type_match(vm, f->t, t)) return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "designated expr type mismatch.", f->t, t));
 
         field->field_def.rt.index = field_i;
     }
@@ -1183,7 +1209,7 @@ ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     switch (op.type) {
     case NS_TOKEN_ADD_OP:
         if (!ns_type_is_number(t)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unary expr type mismatch.");
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "unary expr type mismatch.", "number", t));
         }
         return ns_return_ok(type, t);
     case NS_TOKEN_CMP_OP:       // logical not: !bool -> bool
@@ -1231,7 +1257,7 @@ ns_return_type ns_vm_parse_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
                 elem_t = et;
             } else if (!ns_type_equals(elem_t, et)) {
                 if (!ns_vm_assign_number_compatible(vm, elem_t, et) && !ns_type_match(vm, elem_t, et)) {
-                    return ns_return_error(type, ns_ast_state_loc(ctx, elem.state), NS_ERR_EVAL, "array literal element type mismatch.");
+                    return ns_return_error(type, ns_ast_state_loc(ctx, elem.state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "array literal element type mismatch.", elem_t, et));
                 }
             }
             next = elem.next;
@@ -1271,22 +1297,22 @@ ns_return_type ns_vm_parse_index_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     // string indexing yields an i32 char code.
     if (ns_type_is(l, NS_TYPE_STRING) && !ns_type_is_array(l)) {
         if (!ns_type_is(r, NS_TYPE_I32)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "index expr type mismatch.", ns_type_i32, r));
         }
         return ns_return_ok(type, ns_type_i32);
     }
     if (ns_type_is(l, NS_TYPE_DICT)) {
         ns_symbol *dict = &vm->symbols[ns_type_index(l)];
         if (!ns_type_match(vm, dict->ct.key, r)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "dict key type mismatch.");
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "dict key type mismatch.", dict->ct.key, r));
         }
         return ns_return_ok(type, dict->ct.val);
     }
     if (!ns_type_is_array(l)) {
-        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "index expr type mismatch.", "array, dict, or string", l));
     }
     if (!ns_type_is(r, NS_TYPE_I32)) {
-        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "index expr type mismatch.");
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "index expr type mismatch.", ns_type_i32, r));
     }
     ns_type t = (ns_type){.type = l.type, .ref = l.ref, .array = false, .mut = l.mut, .stack = true, .index = l.index };
     return ns_return_ok(type, t);
@@ -1320,7 +1346,7 @@ ns_return_type ns_vm_parse_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
     // ns_str t_name = ns_vm_get_type_name(vm, t);
     // ns_str cast_name = ns_vm_get_type_name(vm, cast);
-    return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "cast expr type mismatch.");
+    return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "cast expr type mismatch.", cast, t));
 }
 
 void ns_vm_parse_use_stmt(ns_vm *vm, ns_ast_ctx *ctx) {
@@ -1408,7 +1434,7 @@ ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_vm_assign_number_compatible(vm, l, r)) {
             return ns_return_ok(type, l);
         }
-        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "assign expr type mismatch.");
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "assign expr type mismatch.", l, r));
     }
     return ns_return_ok(type, l);
 }
@@ -1445,7 +1471,7 @@ ns_return_type ns_vm_parse_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_typ
             return ns_vm_parse_binary_ops(vm, ctx, t, i);
     }
 
-    return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "binary expr type mismatch.");
+    return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, ns_vm_type_pair_mismatch_msg(vm, "binary expr type mismatch.", "left", l, "right", r));
 }
 
 #define ns_vm_parse_case_expr(t, fn) case t: return fn(vm, ctx, i);
@@ -1492,7 +1518,7 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         // ns_eval_return_stmt), matching call args and designated-expr fields
         ns_bool number_ok = !ns_type_is_ref(fn->ret) && ns_type_is_number(fn->ret) && ns_type_is_number(t);
         if (!number_ok && !ns_type_equals(fn->ret, t) && !ns_type_match(vm, fn->ret, t)) {
-            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt type mismatch.");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, ns_vm_type_mismatch_msg(vm, "return stmt type mismatch.", fn->ret, t));
         }
     } break;
     case NS_TOKEN_BREAK:
@@ -1511,7 +1537,7 @@ ns_return_void ns_vm_parse_assert_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_type t = ret_t.r;
     if (!ns_type_is(t, NS_TYPE_BOOL)) {
-        return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "assert stmt expr type mismatch.");
+        return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, ns_vm_type_mismatch_msg(vm, "assert stmt expr type mismatch.", ns_type_bool, t));
     }
 
     return ns_return_ok_void;
@@ -1525,7 +1551,7 @@ ns_return_void ns_vm_parse_if_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_type t = ret_t.r;
     if (!ns_type_is(t, NS_TYPE_BOOL)) {
         ns_ast_t *cond = &ctx->nodes[n->if_stmt.condition];
-        return ns_return_error(void, ns_ast_state_loc(ctx, cond->state), NS_ERR_SYNTAX, "if stmt expr type mismatch.");
+        return ns_return_error(void, ns_ast_state_loc(ctx, cond->state), NS_ERR_SYNTAX, ns_vm_type_mismatch_msg(vm, "if stmt expr type mismatch.", ns_type_bool, t));
     }
 
     ns_return_void ret = ns_vm_parse_compound_stmt(vm, ctx, n->if_stmt.body);
@@ -1559,7 +1585,7 @@ ns_return_void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         ns_type t = ret_t.r;
         if (!ns_type_is(t, NS_TYPE_BOOL)) {
-            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "loop stmt expr type mismatch.");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, ns_vm_type_mismatch_msg(vm, "loop stmt expr type mismatch.", ns_type_bool, t));
         }
     } else {
         ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, cond, ns_type_infer);
@@ -1567,7 +1593,7 @@ ns_return_void ns_vm_parse_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         ns_type t = ret_t.r;
         if (!ns_type_is(t, NS_TYPE_BOOL)) {
-            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "loop stmt expr type mismatch.");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, ns_vm_type_mismatch_msg(vm, "loop stmt expr type mismatch.", ns_type_bool, t));
         }
         ret = ns_vm_parse_compound_stmt(vm, ctx, body);
         if (ns_return_is_error(ret)) return ret;
@@ -1612,7 +1638,7 @@ ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         ns_type t = ret_t.r;
         if (!ns_type_is(l, NS_TYPE_INFER) && !ns_type_is(t, NS_TYPE_FN) && !ns_type_equals(l, t) && !ns_vm_assign_number_compatible(vm, l, t) && !ns_type_match(vm, l, t)) {
-            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "local var def type mismatch.");
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, ns_vm_type_mismatch_msg(vm, "local var def type mismatch.", l, t));
         }
         s.val.t = ns_type_is(l, NS_TYPE_INFER) ? t : l;
         n->var_def.type_size = ns_type_size(vm, s.val.t);

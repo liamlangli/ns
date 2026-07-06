@@ -73,6 +73,61 @@ u64 ns_align(u64 offset, u64 stride) {
     return offset;
 }
 
+static void ns_return_print_source_line(FILE *file, i32 line, i32 target, i32 col) {
+    ns_bool selected = line == target - 1 || line == target || line == target + 1;
+
+    if (selected) fprintf(stderr, "  %5d | ", line);
+    for (;;) {
+        int ch = fgetc(file);
+        if (ch == EOF || ch == '\n') {
+            if (selected) {
+                fprintf(stderr, "\n");
+                if (line == target && col >= 0) {
+                    fprintf(stderr, "        | ");
+                    for (i32 i = 0; i < col; ++i) fputc(' ', stderr);
+                    fprintf(stderr, "^\n");
+                }
+            }
+            return;
+        }
+
+        if (selected) {
+            fputc(ch, stderr);
+        }
+    }
+}
+
+static void ns_return_print_source_context(ns_code_loc loc) {
+    if (loc.f.len == 0 || loc.f.data == ns_null || loc.l <= 0) return;
+
+    char *path = (char *)ns_malloc((szt)loc.f.len + 1);
+    if (!path) return;
+    memcpy(path, loc.f.data, (szt)loc.f.len);
+    path[loc.f.len] = '\0';
+
+    FILE *file = fopen(path, "r");
+    ns_free(path);
+    if (!file) return;
+
+    i32 end = loc.l + 1;
+    for (i32 line = 1; line <= end; ++line) {
+        if (feof(file)) break;
+        ns_return_print_source_line(file, line, loc.l, loc.o);
+    }
+
+    fclose(file);
+}
+
+void ns_return_print_error(ns_return_state s, ns_return e) {
+    ns_str state = ns_return_state_str(s);
+    fprintf(stderr, ns_color_err "%.*s: " ns_color_nil "%.*s\n", state.len, state.data, e.msg.len, e.msg.data);
+    if (e.loc.f.len > 0 && e.loc.f.data != ns_null) {
+        fprintf(stderr, "  --> %.*s:%d:%d\n", e.loc.f.len, e.loc.f.data, e.loc.l, e.loc.o);
+        ns_return_print_source_context(e.loc);
+    }
+    ns_assert_or_recover();
+}
+
 ns_bool ns_type_is_number(ns_type t) {
     switch (t.type) {
     case NS_TYPE_I8:

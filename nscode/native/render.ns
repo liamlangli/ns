@@ -15,16 +15,16 @@ fn MODE_AGENT() i32 { return 1 }
 
 let g_mode: i32 = 1
 let g_selected_chat: i32 = 0
-let g_dialog_scroll = 0.0
-let g_code_scroll = 0.0
-let g_last_frame_time = 0.0
-let g_fps = 0.0
+let g_dialog_scroll: f64 = 0.0
+let g_code_scroll: f64 = 0.0
+let g_last_frame_time: f64 = 0.0
+let g_fps: f64 = 0.0
 let g_fps_i: i32 = 0
 
 // Code view input state: mouse drag selection, click streak (double/triple
 // click) and the previous frame's key levels for edge detection.
 let g_code_drag = false
-let g_last_click_time = 0.0
+let g_last_click_time: f64 = 0.0
 let g_last_click_line: i32 = -1
 let g_click_streak: i32 = 0
 let g_key_prev = [u8](512)
@@ -48,32 +48,32 @@ let g_attach_name = [i32: str](8)
 let g_attach_count: i32 = 0
 let g_attach_seq: i32 = 0
 let g_running = false
-let g_run_started = 0.0
-let g_reply_delay = 2.4
+let g_run_started: f64 = 0.0
+let g_reply_delay: f64 = 2.4
 let g_dialog_follow = false
-let g_dialog_content_h = 0.0
+let g_dialog_content_h: f64 = 0.0
 
 // Composer/popup hit rects, written while drawing so click handling and the
 // headless frame tests can address the controls without mirroring layout math.
 let g_click_used = false
 let g_pop_kind: i32 = 0
-let g_cmp_x = 0.0
-let g_cmp_y = 0.0
-let g_cmp_w = 0.0
-let g_cmp_h = 0.0
-let g_attach_btn_x = 0.0
-let g_attach_btn_y = 0.0
-let g_perm_btn_x = 0.0
-let g_perm_btn_y = 0.0
-let g_perm_btn_w = 0.0
-let g_module_btn_x = 0.0
-let g_module_btn_y = 0.0
-let g_module_btn_w = 0.0
-let g_send_btn_x = 0.0
-let g_send_btn_y = 0.0
-let g_pop_x = 0.0
-let g_pop_y = 0.0
-let g_pop_w = 0.0
+let g_cmp_x: f64 = 0.0
+let g_cmp_y: f64 = 0.0
+let g_cmp_w: f64 = 0.0
+let g_cmp_h: f64 = 0.0
+let g_attach_btn_x: f64 = 0.0
+let g_attach_btn_y: f64 = 0.0
+let g_perm_btn_x: f64 = 0.0
+let g_perm_btn_y: f64 = 0.0
+let g_perm_btn_w: f64 = 0.0
+let g_module_btn_x: f64 = 0.0
+let g_module_btn_y: f64 = 0.0
+let g_module_btn_w: f64 = 0.0
+let g_send_btn_x: f64 = 0.0
+let g_send_btn_y: f64 = 0.0
+let g_pop_x: f64 = 0.0
+let g_pop_y: f64 = 0.0
+let g_pop_w: f64 = 0.0
 
 fn font_px() f64 { return 14.0 }
 fn small_px() f64 { return 12.0 }
@@ -615,7 +615,7 @@ fn byte_at(s: str, i: i32) i32 {
 // f64 mis-evaluates in the current interpreter (garbage upper bits), while
 // f64 function returns are reliable.
 fn wrap_lines_f(text: str, cols: i32) f64 {
-    let lines = 1.0
+    let lines: f64 = 1.0
     let run = 0
     let n = text.len
     for i in 0 to n {
@@ -636,7 +636,7 @@ fn wrap_lines_f(text: str, cols: i32) f64 {
 // Character count of the final visual line (caret column for the composer).
 fn wrap_caret_f(text: str, cols: i32) f64 {
     let run = 0
-    let run_f = 0.0
+    let run_f: f64 = 0.0
     let n = text.len
     for i in 0 to n {
         if byte_at(text, i) == 10 {
@@ -735,7 +735,7 @@ fn handle_popup_input(v: ref view) {
 fn draw_popup(r: ref ui_renderer, v: ref view) {
     let count = pop_count() & 15
     let count_f = pop_count_f()
-    let wmax = 0.0
+    let wmax: f64 = 0.0
     for i in 0 to count {
         let tw = ui_text_width(r, pop_label(i), small_px(), FONT_MONO())
         if tw > wmax {
@@ -978,7 +978,7 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
     if shown_f > 6.0 {
         shown_f = 6.0
     }
-    let chips_h = 0.0
+    let chips_h: f64 = 0.0
     if g_attach_count > 0 {
         chips_h = 32.0
     }
