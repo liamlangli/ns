@@ -37,7 +37,7 @@ fn seed_document() {
 fn main() {
     seed_document()
 
-    let v = view_create_no_title("NSCode Native", 1024, 768)
+    let v = view_create("NSCode Native", 1024, 768)
 
     let ok = gpu_request_device(v)
     if ok {

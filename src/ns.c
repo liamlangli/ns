@@ -14,6 +14,7 @@
 #else
 #include <dirent.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #endif
 
@@ -38,6 +39,7 @@ typedef struct ns_compile_option_t {
     ns_bool symbol_only: 2;
     ns_bool show_version: 2;
     ns_bool show_help: 2;
+    ns_bool profile: 2; // write ns.profile with elapsed wall-clock time
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
@@ -81,6 +83,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.show_version = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             option.show_help = true;
+        } else if (strcmp(argv[i], "--profile") == 0) {
+            option.profile = true;
         } else if (strcmp(argv[i], "--exe") == 0) {
             option.build_kind = 1;
         } else if (strcmp(argv[i], "--app") == 0) {
@@ -127,6 +131,7 @@ void ns_help() {
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
+    printf("  --profile         write elapsed wall-clock time to ns.profile\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  run  [file.ns]    run a project entry, or run a standalone file when no ns.mod is found\n");
@@ -140,6 +145,38 @@ void ns_help() {
 
 void ns_version() {
     ns_info("nanoscript", "v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
+}
+
+static f64 ns_profile_now_ms(void) {
+#if defined(_WIN32)
+    LARGE_INTEGER freq;
+    LARGE_INTEGER counter;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&counter);
+    return ((f64)counter.QuadPart * 1000.0) / (f64)freq.QuadPart;
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ((f64)ts.tv_sec * 1000.0) + ((f64)ts.tv_nsec / 1000000.0);
+#endif
+}
+
+static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
+    f64 elapsed_ms = ns_profile_now_ms() - start_ms;
+    FILE *f = fopen("ns.profile", "w");
+    if (!f) {
+        ns_warn("profile", "failed to write ns.profile.\n");
+        return;
+    }
+
+    fprintf(f, "format: ns-profile-v1\n");
+    fprintf(f, "elapsed_ms: %.3f\n", elapsed_ms);
+    fprintf(f, "argv:");
+    for (i32 i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
+    fprintf(f, "\n");
+    fclose(f);
+
+    ns_info("profile", "wrote ns.profile (%.3f ms)\n", elapsed_ms);
 }
 
 void ns_exec_tokenize(ns_str filename) {
@@ -1532,6 +1569,8 @@ i32 main(i32 argc, i8** argv) {
         ns_version(); return 0;
     }
 
+    f64 profile_start_ms = option.profile ? ns_profile_now_ms() : 0.0;
+
     if (option.run) {
         ns_exec_run(option.filename);
     } else if (option.test) {
@@ -1567,5 +1606,6 @@ i32 main(i32 argc, i8** argv) {
             ns_exec_eval(option.filename);
         }
     }
+    if (option.profile) ns_profile_emit(profile_start_ms, argc, argv);
     return 0;
 }

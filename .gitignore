@@ -8,6 +8,7 @@ bin
 *.history
 .cache
 *.log
+ns.profile
 
 # cmake
 build

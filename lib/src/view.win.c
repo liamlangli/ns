@@ -19,14 +19,6 @@ static view _view;
 static HWND _hwnd;
 static HINSTANCE _hinstance;
 static ns_bool _quit;
-static ns_bool _no_title;
-
-// Pending title-strip press: a clean click (no movement) is forwarded to the
-// app so widgets drawn in the title strip stay clickable; movement past a
-// small threshold hands the gesture to the system window drag instead.
-static ns_bool _title_click_pending;
-static i32 _title_click_x;
-static i32 _title_click_y;
 
 // Win32 virtual-key -> VIEW_KEY_* mapping (parallels view_osx_key_map).
 static i32 view_win_key_map(i32 vk) {
@@ -67,80 +59,19 @@ static i32 view_win_key_map(i32 vk) {
     }
 }
 
-static ns_bool view_win_no_title_button(i32 x, i32 y, i32 *button) {
-    if (!_no_title || y < 0 || y > 38) return false;
-
-    const i32 centers[] = {18, 40, 62};
-    for (i32 i = 0; i < 3; i++) {
-        const i32 dx = x - centers[i];
-        const i32 dy = y - 19;
-        if (dx * dx + dy * dy <= 100) {
-            *button = i;
-            return true;
-        }
-    }
-    return false;
-}
-
-static ns_bool view_win_handle_no_title_mouse_down(HWND hwnd, LPARAM lparam) {
-    if (!_no_title) return false;
-
-    const i32 x = (i32)GET_X_LPARAM(lparam);
-    const i32 y = (i32)GET_Y_LPARAM(lparam);
-    if (y < 0 || y > 38) return false;
-
-    i32 button = -1;
-    if (view_win_no_title_button(x, y, &button)) {
-        if (button == 0) {
-            PostMessage(hwnd, WM_CLOSE, 0, 0);
-        } else if (button == 1) {
-            ShowWindow(hwnd, SW_MINIMIZE);
-        } else {
-            WINDOWPLACEMENT placement = {0};
-            placement.length = sizeof(placement);
-            GetWindowPlacement(hwnd, &placement);
-            ShowWindow(hwnd, placement.showCmd == SW_SHOWMAXIMIZED ? SW_RESTORE : SW_MAXIMIZE);
-        }
-        return true;
-    }
-
-    _title_click_pending = true;
-    _title_click_x = x;
-    _title_click_y = y;
-    SetCapture(hwnd);
-    return true;
-}
-
 static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
         case WM_MOUSEMOVE: {
             const i32 x = (i32)GET_X_LPARAM(lparam);
             const i32 y = (i32)GET_Y_LPARAM(lparam);
             view_on_mouse_move(&_view, (f64)x, (f64)y);
-            if (_title_click_pending) {
-                const i32 dx = x - _title_click_x;
-                const i32 dy = y - _title_click_y;
-                if (dx * dx + dy * dy > 9) {
-                    _title_click_pending = false;
-                    ReleaseCapture();
-                    SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-                }
-            }
             return 0;
         }
         case WM_LBUTTONDOWN:
             view_on_mouse_move(&_view, (f64)GET_X_LPARAM(lparam), (f64)GET_Y_LPARAM(lparam));
-            if (view_win_handle_no_title_mouse_down(hwnd, lparam)) return 0;
             view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
             return 0;
         case WM_LBUTTONUP:
-            if (_title_click_pending) {
-                // The press never crossed the drag threshold: deliver it to the
-                // app as a click on the title strip.
-                _title_click_pending = false;
-                ReleaseCapture();
-                view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
-            }
             view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
             return 0;
         case WM_RBUTTONDOWN:
@@ -189,8 +120,7 @@ static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
     }
 }
 
-static view *view_win_create(const char *title, i32 width, i32 height, ns_bool no_title) {
-    _no_title = no_title;
+static view *view_win_create(const char *title, i32 width, i32 height) {
     _hinstance = GetModuleHandle(NULL);
 
     WNDCLASSEX wc = {0};
@@ -203,9 +133,7 @@ static view *view_win_create(const char *title, i32 width, i32 height, ns_bool n
     RegisterClassEx(&wc);
 
     RECT rect = {0, 0, width, height};
-    const DWORD style = no_title
-        ? (WS_POPUP | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
-        : WS_OVERLAPPEDWINDOW;
+    const DWORD style = WS_OVERLAPPEDWINDOW;
     AdjustWindowRect(&rect, style, FALSE);
     _hwnd = CreateWindowEx(0, wc.lpszClassName, title, style,
                            CW_USEDEFAULT, CW_USEDEFAULT,
@@ -231,11 +159,11 @@ static view *view_win_create(const char *title, i32 width, i32 height, ns_bool n
 }
 
 view *view_create(const char *title, i32 width, i32 height) {
-    return view_win_create(title, width, height, false);
+    return view_win_create(title, width, height);
 }
 
 view *view_create_no_title(const char *title, i32 width, i32 height) {
-    return view_win_create(title, width, height, true);
+    return view_create(title, width, height);
 }
 
 void view_run(view *v) {

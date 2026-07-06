@@ -43,9 +43,9 @@ The code pane is an editable, syntax-highlighted view of the document model in
 - The view auto-scrolls to keep the caret visible after keyboard edits, and
   the wheel scrolls the full document height.
 
-Clicks in the custom title strip are delivered to the app (the Code/Agent
-switch is clickable); moving the mouse past a small threshold while pressed
-drags the window instead, and the traffic-light buttons keep their meaning.
+The window titlebar, platform window controls, and drag behavior are native.
+The Code/Agent switch is rendered inside the app content below that native
+chrome.
 
 ## Files
 

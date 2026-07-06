@@ -90,18 +90,6 @@ fn col_accent() u32 { return ui_pack_color("#61d394") }
 fn col_blue() u32 { return ui_pack_color("#7aa8ff") }
 fn col_yellow() u32 { return ui_pack_color("#f2c86b") }
 fn col_red() u32 { return ui_pack_color("#ff7b86") }
-fn col_titlebar() u32 { return ui_pack_color("#101317") }
-fn col_title_text() u32 { return ui_pack_color("#f3f7fb") }
-fn col_close() u32 { return ui_pack_color("#ff5f57") }
-fn col_min() u32 { return ui_pack_color("#ffbd2e") }
-fn col_zoom() u32 { return ui_pack_color("#28c840") }
-fn col_close_hover() u32 { return ui_pack_color("#ff746d") }
-fn col_min_hover() u32 { return ui_pack_color("#ffca52") }
-fn col_zoom_hover() u32 { return ui_pack_color("#45d85a") }
-fn col_close_down() u32 { return ui_pack_color("#d94b44") }
-fn col_min_down() u32 { return ui_pack_color("#d99b22") }
-fn col_zoom_down() u32 { return ui_pack_color("#21a934") }
-fn col_traffic_icon() u32 { return ui_pack_color("#3c2222") }
 fn col_editor_bg() u32 { return ui_pack_color("#0f1117") }
 fn col_editor_panel() u32 { return ui_pack_color("#171a22") }
 fn col_editor_panel_hi() u32 { return ui_pack_color("#202633") }
@@ -256,7 +244,7 @@ fn mode_switch_x(w: f64) f64 {
 }
 
 fn mode_switch_y() f64 {
-    return 45.0
+    return 7.0
 }
 
 fn handle_mode_switch_input(v: ref view, w: f64) {
@@ -349,11 +337,11 @@ fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     }
     ui_fill_round_rect(r, active_x, y + pad, half_w, h - pad * 2.0, 4.0, col_accent(), 0.0)
 
-    let code_color = col_title_text()
+    let code_color = col_text()
     let agent_color = col_bg()
     if g_mode == MODE_CODE() {
         code_color = col_bg()
-        agent_color = col_title_text()
+        agent_color = col_text()
     }
     draw_centered_text(r, code_x, y + pad, half_w, h - pad * 2.0, "Code", small_px(), code_color)
     draw_centered_text(r, agent_x, y + pad, half_w, h - pad * 2.0, "Agent", small_px(), agent_color)
@@ -372,59 +360,6 @@ fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
         let label = layout_center_v(badge_x + 10.0, badge_y, badge_w - 20.0, badge_h, badge_w - 20.0, text_box_h())
         draw_text_clipped(r, label.x, text_box_y(label), label.w, label.h, text, small_px(), col_accent())
     }
-}
-
-fn traffic_light_hit(v: ref view, cx: f64, cy: f64) bool {
-    let dx = v.mouse_x - cx
-    let dy = v.mouse_y - cy
-    return (dx * dx + dy * dy) <= 100.0
-}
-
-fn draw_traffic_light(r: ref ui_renderer, v: ref view, cx: f64, cy: f64, base: u32, hover: u32, down: u32, kind: i32) {
-    let hot = traffic_light_hit(v, cx, cy)
-    let pressed = false
-    if hot {
-        if v.mouse_down {
-            pressed = true
-        }
-    }
-
-    let radius = 6.0
-    let fill = base
-    if hot {
-        ui_fill_circle(r, cx, cy, 10.0, col_surface_hi(), 0.0)
-        fill = hover
-    }
-    if pressed {
-        fill = down
-        radius = 5.2
-    }
-    ui_fill_circle(r, cx, cy, radius, fill, 0.5)
-
-    if hot {
-        let icon = col_traffic_icon()
-        if kind == 0 {
-            ui_stroke_line(r, cx - 3.0, cy - 3.0, cx + 3.0, cy + 3.0, 1.2, icon, 0.0)
-            ui_stroke_line(r, cx - 3.0, cy + 3.0, cx + 3.0, cy - 3.0, 1.2, icon, 0.0)
-        } else if kind == 1 {
-            ui_stroke_line(r, cx - 3.5, cy, cx + 3.5, cy, 1.4, icon, 0.0)
-        } else {
-            ui_stroke_line(r, cx - 3.0, cy + 3.0, cx + 3.0, cy - 3.0, 1.2, icon, 0.0)
-            ui_stroke_line(r, cx + 0.5, cy - 3.0, cx + 3.0, cy - 3.0, 1.2, icon, 0.0)
-            ui_stroke_line(r, cx + 3.0, cy - 0.5, cx + 3.0, cy - 3.0, 1.2, icon, 0.0)
-        }
-    }
-}
-
-fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_titlebar(), 0.0)
-    ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
-    let cy = y + h * 0.5
-    draw_traffic_light(r, v, x + 18.0, cy, col_close(), col_close_hover(), col_close_down(), 0)
-    draw_traffic_light(r, v, x + 40.0, cy, col_min(), col_min_hover(), col_min_down(), 1)
-    draw_traffic_light(r, v, x + 62.0, cy, col_zoom(), col_zoom_hover(), col_zoom_down(), 2)
-    let title_rect = layout_center_v(x + 86.0, y, w - 172.0, h, w - 172.0, text_box_h())
-    draw_text_clipped(r, title_rect.x, text_box_y(title_rect), title_rect.w, title_rect.h, "NSCode Native", small_px(), col_title_text())
 }
 
 fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i32) {
@@ -1407,13 +1342,11 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
 }
 
 fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
-    let title_h = 38.0
     let status_h = 28.0
-    let app_y = title_h
-    let app_h = h - title_h - status_h
+    let app_y = 0.0
+    let app_h = h - status_h
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_editor_bg(), 0.0)
-    draw_title_bar(r, v, 0.0, 0.0, w, title_h)
     draw_code_editor(r, v, 0.0, app_y, w, app_h)
     draw_mode_switch(r, v, mode_switch_x(w), mode_switch_y(), 150.0, 28.0)
     draw_status_bar(r, 0.0, h - status_h, w)
@@ -1430,10 +1363,9 @@ fn history_width(w: f64) f64 {
 }
 
 fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
-    let title_h = 38.0
     let status_h = 28.0
-    let app_y = title_h
-    let app_h = h - title_h - status_h
+    let app_y = 0.0
+    let app_h = h - status_h
     let history_w = history_width(w)
 
     seed_conversation()
@@ -1442,7 +1374,6 @@ fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     process_composer_keys(v)
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
-    draw_title_bar(r, v, 0.0, 0.0, w, title_h)
     draw_history(r, v, 0.0, app_y, history_w, app_h)
     draw_conversation(r, v, history_w, app_y, w - history_w, app_h)
     draw_mode_switch(r, v, mode_switch_x(w), mode_switch_y(), 150.0, 28.0)

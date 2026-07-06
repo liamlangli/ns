@@ -36,13 +36,6 @@ static id view_window_delegate;
 static id<MTLDevice> view_mtl_device;
 static id view_mtk_view_delegate;
 static MTKView* view_mtk_view;
-static ns_bool view_no_title;
-static ns_bool view_title_click_pending;
-static ns_bool view_title_dragging;
-static NSPoint view_title_start_mouse;
-static NSRect view_title_start_frame;
-static ns_bool view_traffic_button_pending;
-static i32 view_traffic_button;
 
 static view _view;
 
@@ -99,113 +92,7 @@ static void view_osx_apply_manifest_icon(void) {
 }
 
 static void view_osx_request_terminate(void) {
-    view_title_click_pending = false;
-    view_title_dragging = false;
-    view_traffic_button_pending = false;
-    view_traffic_button = -1;
     [NSApp terminate:nil];
-}
-
-static NSPoint view_osx_event_content_point(NSEvent *event) {
-    const NSPoint p = [event locationInWindow];
-    const NSRect content_rect = [[event window] contentRectForFrameRect:[[event window] frame]];
-    return NSMakePoint(p.x, content_rect.size.height - p.y);
-}
-
-static ns_bool view_osx_no_title_button(NSPoint p, i32 *button) {
-    if (!view_no_title || p.y < 0.0 || p.y > 38.0) return false;
-
-    const f64 centers[] = {18.0, 40.0, 62.0};
-    const f64 cy = 19.0;
-    for (i32 i = 0; i < 3; i++) {
-        const f64 dx = p.x - centers[i];
-        const f64 dy = p.y - cy;
-        if (dx * dx + dy * dy <= 100.0) {
-            *button = i;
-            return true;
-        }
-    }
-    return false;
-}
-
-static ns_bool view_osx_handle_no_title_mouse_down(NSEvent *event) {
-    if (!view_no_title) return false;
-
-    const NSPoint p = view_osx_event_content_point(event);
-    if (p.y < 0.0 || p.y > 38.0) return false;
-
-    i32 button = -1;
-    if (view_osx_no_title_button(p, &button)) {
-        view_title_click_pending = false;
-        view_title_dragging = false;
-        view_traffic_button_pending = true;
-        view_traffic_button = button;
-        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
-        return true;
-    }
-
-    if ([event clickCount] == 2) {
-        view_title_click_pending = false;
-        view_title_dragging = false;
-        view_traffic_button_pending = false;
-        view_traffic_button = -1;
-        [[event window] zoom:nil];
-        return true;
-    }
-
-    view_title_click_pending = true;
-    view_title_dragging = false;
-    view_title_start_mouse = [NSEvent mouseLocation];
-    view_title_start_frame = [[event window] frame];
-    return true;
-}
-
-static ns_bool view_osx_handle_no_title_mouse_dragged(NSEvent *event) {
-    if (view_traffic_button_pending) return true;
-    if (!view_title_click_pending) return false;
-
-    NSPoint mouse = [NSEvent mouseLocation];
-    const f64 dx = mouse.x - view_title_start_mouse.x;
-    const f64 dy = mouse.y - view_title_start_mouse.y;
-    if (!view_title_dragging && (dx * dx + dy * dy) > 9.0) {
-        view_title_dragging = true;
-    }
-    if (view_title_dragging) {
-        NSPoint origin = NSMakePoint(view_title_start_frame.origin.x + dx, view_title_start_frame.origin.y + dy);
-        [[event window] setFrameOrigin:origin];
-    }
-    return true;
-}
-
-static ns_bool view_osx_handle_no_title_mouse_up(NSEvent *event) {
-    if (view_traffic_button_pending) {
-        i32 button = -1;
-        const ns_bool activate = view_osx_no_title_button(view_osx_event_content_point(event), &button) && button == view_traffic_button;
-        view_traffic_button_pending = false;
-        view_traffic_button = -1;
-        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
-        if (activate) {
-            if (button == 0) {
-                view_osx_request_terminate();
-            } else if (button == 1) {
-                [[event window] miniaturize:nil];
-            } else {
-                [[event window] toggleFullScreen:nil];
-            }
-        }
-        return true;
-    }
-
-    if (!view_title_click_pending) return false;
-
-    const ns_bool clicked = !view_title_dragging;
-    view_title_click_pending = false;
-    view_title_dragging = false;
-    if (clicked) {
-        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
-        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
-    }
-    return true;
 }
 
 // Key mapping function (ANSI layout keycodes -> VIEW_KEY_*)
@@ -385,13 +272,11 @@ static void view_osx_update_mouse(NSEvent *event) {
 @implementation ViewMTKView
 - (void)mouseDown:(NSEvent*)event {
     view_osx_update_mouse(event);
-    if (view_osx_handle_no_title_mouse_down(event)) return;
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
 }
 
 - (void)mouseUp:(NSEvent*)event {
     view_osx_update_mouse(event);
-    if (view_osx_handle_no_title_mouse_up(event)) return;
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
 }
 
@@ -401,7 +286,6 @@ static void view_osx_update_mouse(NSEvent *event) {
 
 - (void)mouseDragged:(NSEvent*)event {
     view_osx_update_mouse(event);
-    if (view_osx_handle_no_title_mouse_dragged(event)) return;
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
@@ -487,11 +371,10 @@ static void view_osx_update_mouse(NSEvent *event) {
 //------------------------------------------------------------------------------
 // Create the application, window and Metal view. Does NOT enter the run loop so
 // the caller can attach callbacks first; view_run() then drives frames.
-void view_osx_create(i32 w, i32 h, const char* title, ns_bool no_title) {
+void view_osx_create(i32 w, i32 h, const char* title) {
     view_width = w;
     view_height = h;
     view_title = title;
-    view_no_title = no_title;
 
     [ViewApp sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -504,22 +387,13 @@ void view_osx_create(i32 w, i32 h, const char* title, ns_bool no_title) {
         NSWindowStyleMaskTitled |
         NSWindowStyleMaskClosable |
         NSWindowStyleMaskMiniaturizable |
-        NSWindowStyleMaskResizable |
-        (no_title ? NSWindowStyleMaskFullSizeContentView : 0);
+        NSWindowStyleMaskResizable;
     view_window = [[NSWindow alloc]
         initWithContentRect:NSMakeRect(0, 0, view_width, view_height)
         styleMask: style
         backing: NSBackingStoreBuffered
         defer: NO];
     [view_window setTitle:[NSString stringWithUTF8String: view_title]];
-    if (no_title) {
-        [view_window setTitleVisibility:NSWindowTitleHidden];
-        [view_window setTitlebarAppearsTransparent:YES];
-        [view_window setMovableByWindowBackground:NO];
-        [[view_window standardWindowButton:NSWindowCloseButton] setHidden:YES];
-        [[view_window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
-        [[view_window standardWindowButton:NSWindowZoomButton] setHidden:YES];
-    }
     [view_window setAcceptsMouseMovedEvents: YES];
     [view_window center];
     [view_window setRestorable: YES];
@@ -565,20 +439,12 @@ view* view_create(const char *title, i32 width, i32 height) {
     _view.framebuffer_width = width;
     _view.framebuffer_height = height;
     _view.title = ns_str_cstr((char*)title);
-    view_osx_create(width, height, title, false);
+    view_osx_create(width, height, title);
     return &_view;
 }
 
 view* view_create_no_title(const char *title, i32 width, i32 height) {
-    _view.width = width;
-    _view.height = height;
-    _view.display_ratio = 1.0;
-    _view.ui_scale = 1.0;
-    _view.framebuffer_width = width;
-    _view.framebuffer_height = height;
-    _view.title = ns_str_cstr((char*)title);
-    view_osx_create(width, height, title, true);
-    return &_view;
+    return view_create(title, width, height);
 }
 
 void view_run(view *v) {
