@@ -95,6 +95,13 @@ fn col_title_text() u32 { return ui_pack_color("#f3f7fb") }
 fn col_close() u32 { return ui_pack_color("#ff5f57") }
 fn col_min() u32 { return ui_pack_color("#ffbd2e") }
 fn col_zoom() u32 { return ui_pack_color("#28c840") }
+fn col_close_hover() u32 { return ui_pack_color("#ff746d") }
+fn col_min_hover() u32 { return ui_pack_color("#ffca52") }
+fn col_zoom_hover() u32 { return ui_pack_color("#45d85a") }
+fn col_close_down() u32 { return ui_pack_color("#d94b44") }
+fn col_min_down() u32 { return ui_pack_color("#d99b22") }
+fn col_zoom_down() u32 { return ui_pack_color("#21a934") }
+fn col_traffic_icon() u32 { return ui_pack_color("#3c2222") }
 fn col_editor_bg() u32 { return ui_pack_color("#0f1117") }
 fn col_editor_panel() u32 { return ui_pack_color("#171a22") }
 fn col_editor_panel_hi() u32 { return ui_pack_color("#202633") }
@@ -367,14 +374,55 @@ fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     }
 }
 
+fn traffic_light_hit(v: ref view, cx: f64, cy: f64) bool {
+    let dx = v.mouse_x - cx
+    let dy = v.mouse_y - cy
+    return (dx * dx + dy * dy) <= 100.0
+}
+
+fn draw_traffic_light(r: ref ui_renderer, v: ref view, cx: f64, cy: f64, base: u32, hover: u32, down: u32, kind: i32) {
+    let hot = traffic_light_hit(v, cx, cy)
+    let pressed = false
+    if hot {
+        if v.mouse_down {
+            pressed = true
+        }
+    }
+
+    let radius = 6.0
+    let fill = base
+    if hot {
+        ui_fill_circle(r, cx, cy, 10.0, col_surface_hi(), 0.0)
+        fill = hover
+    }
+    if pressed {
+        fill = down
+        radius = 5.2
+    }
+    ui_fill_circle(r, cx, cy, radius, fill, 0.5)
+
+    if hot {
+        let icon = col_traffic_icon()
+        if kind == 0 {
+            ui_stroke_line(r, cx - 3.0, cy - 3.0, cx + 3.0, cy + 3.0, 1.2, icon, 0.0)
+            ui_stroke_line(r, cx - 3.0, cy + 3.0, cx + 3.0, cy - 3.0, 1.2, icon, 0.0)
+        } else if kind == 1 {
+            ui_stroke_line(r, cx - 3.5, cy, cx + 3.5, cy, 1.4, icon, 0.0)
+        } else {
+            ui_stroke_line(r, cx - 3.0, cy + 3.0, cx + 3.0, cy - 3.0, 1.2, icon, 0.0)
+            ui_stroke_line(r, cx + 0.5, cy - 3.0, cx + 3.0, cy - 3.0, 1.2, icon, 0.0)
+            ui_stroke_line(r, cx + 3.0, cy - 0.5, cx + 3.0, cy - 3.0, 1.2, icon, 0.0)
+        }
+    }
+}
+
 fn draw_title_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_titlebar(), 0.0)
     ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
-    let radius = 6.0
     let cy = y + h * 0.5
-    ui_fill_circle(r, x + 18.0, cy, radius, col_close(), 0.5)
-    ui_fill_circle(r, x + 40.0, cy, radius, col_min(), 0.5)
-    ui_fill_circle(r, x + 62.0, cy, radius, col_zoom(), 0.5)
+    draw_traffic_light(r, v, x + 18.0, cy, col_close(), col_close_hover(), col_close_down(), 0)
+    draw_traffic_light(r, v, x + 40.0, cy, col_min(), col_min_hover(), col_min_down(), 1)
+    draw_traffic_light(r, v, x + 62.0, cy, col_zoom(), col_zoom_hover(), col_zoom_down(), 2)
     let title_rect = layout_center_v(x + 86.0, y, w - 172.0, h, w - 172.0, text_box_h())
     draw_text_clipped(r, title_rect.x, text_box_y(title_rect), title_rect.w, title_rect.h, "NSCode Native", small_px(), col_title_text())
 }

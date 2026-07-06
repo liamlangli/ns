@@ -37,10 +37,17 @@ static id<MTLDevice> view_mtl_device;
 static id view_mtk_view_delegate;
 static MTKView* view_mtk_view;
 static ns_bool view_no_title;
+static ns_bool view_title_click_pending;
+static ns_bool view_title_dragging;
+static NSPoint view_title_start_mouse;
+static NSRect view_title_start_frame;
+static ns_bool view_traffic_button_pending;
+static i32 view_traffic_button;
 
 static view _view;
 
 static void view_osx_update_mouse(NSEvent *event);
+static void view_osx_request_terminate(void);
 
 static f64 view_osx_current_display_ratio(void) {
     CGFloat ratio = 0.0;
@@ -91,17 +98,28 @@ static void view_osx_apply_manifest_icon(void) {
     }
 }
 
-static ns_bool view_osx_no_title_button(NSPoint p, f64 content_height, i32 *button) {
-    if (!view_no_title) return false;
+static void view_osx_request_terminate(void) {
+    view_title_click_pending = false;
+    view_title_dragging = false;
+    view_traffic_button_pending = false;
+    view_traffic_button = -1;
+    [NSApp terminate:nil];
+}
 
-    const f64 y = content_height - p.y;
-    if (y < 0.0 || y > 38.0) return false;
+static NSPoint view_osx_event_content_point(NSEvent *event) {
+    const NSPoint p = [event locationInWindow];
+    const NSRect content_rect = [[event window] contentRectForFrameRect:[[event window] frame]];
+    return NSMakePoint(p.x, content_rect.size.height - p.y);
+}
+
+static ns_bool view_osx_no_title_button(NSPoint p, i32 *button) {
+    if (!view_no_title || p.y < 0.0 || p.y > 38.0) return false;
 
     const f64 centers[] = {18.0, 40.0, 62.0};
     const f64 cy = 19.0;
     for (i32 i = 0; i < 3; i++) {
         const f64 dx = p.x - centers[i];
-        const f64 dy = y - cy;
+        const f64 dy = p.y - cy;
         if (dx * dx + dy * dy <= 100.0) {
             *button = i;
             return true;
@@ -110,68 +128,83 @@ static ns_bool view_osx_no_title_button(NSPoint p, f64 content_height, i32 *butt
     return false;
 }
 
-static void view_osx_drag_no_title_window(NSEvent *event) {
-    NSWindow *window = [event window];
-    NSPoint start_mouse = [NSEvent mouseLocation];
-    NSRect start_frame = [window frame];
-    ns_bool dragging = false;
-
-    for (;;) {
-        NSEvent *drag_event = [NSApp nextEventMatchingMask:(NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp)
-                                                untilDate:[NSDate distantFuture]
-                                                   inMode:NSEventTrackingRunLoopMode
-                                                  dequeue:YES];
-        if (!drag_event) break;
-        if ([drag_event type] == NSEventTypeLeftMouseUp) {
-            view_osx_update_mouse(drag_event);
-            break;
-        }
-        if ([drag_event type] != NSEventTypeLeftMouseDragged) continue;
-
-        NSPoint mouse = [NSEvent mouseLocation];
-        const f64 dx = mouse.x - start_mouse.x;
-        const f64 dy = mouse.y - start_mouse.y;
-        // Only start moving the window once the pointer travels past a small
-        // threshold, so app widgets drawn in the title strip still get clicks.
-        if (!dragging && (dx * dx + dy * dy) > 9.0) {
-            dragging = true;
-        }
-        if (dragging) {
-            NSPoint origin = NSMakePoint(start_frame.origin.x + dx, start_frame.origin.y + dy);
-            [window setFrameOrigin:origin];
-        }
-        view_osx_update_mouse(drag_event);
-    }
-
-    // A press that never crossed the drag threshold is a click meant for the
-    // app UI (e.g. the Code/Agent switch rendered in the title strip).
-    if (!dragging) {
-        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
-        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
-    }
-}
-
 static ns_bool view_osx_handle_no_title_mouse_down(NSEvent *event) {
     if (!view_no_title) return false;
 
-    const NSPoint p = [event locationInWindow];
-    const NSRect content_rect = [[event window] contentRectForFrameRect:[[event window] frame]];
-    const f64 y = content_rect.size.height - p.y;
-    if (y < 0.0 || y > 38.0) return false;
+    const NSPoint p = view_osx_event_content_point(event);
+    if (p.y < 0.0 || p.y > 38.0) return false;
 
     i32 button = -1;
-    if (view_osx_no_title_button(p, content_rect.size.height, &button)) {
-        if (button == 0) {
-            [[event window] performClose:nil];
-        } else if (button == 1) {
-            [[event window] miniaturize:nil];
-        } else {
-            [[event window] toggleFullScreen:nil];
+    if (view_osx_no_title_button(p, &button)) {
+        view_title_click_pending = false;
+        view_title_dragging = false;
+        view_traffic_button_pending = true;
+        view_traffic_button = button;
+        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
+        return true;
+    }
+
+    if ([event clickCount] == 2) {
+        view_title_click_pending = false;
+        view_title_dragging = false;
+        view_traffic_button_pending = false;
+        view_traffic_button = -1;
+        [[event window] zoom:nil];
+        return true;
+    }
+
+    view_title_click_pending = true;
+    view_title_dragging = false;
+    view_title_start_mouse = [NSEvent mouseLocation];
+    view_title_start_frame = [[event window] frame];
+    return true;
+}
+
+static ns_bool view_osx_handle_no_title_mouse_dragged(NSEvent *event) {
+    if (view_traffic_button_pending) return true;
+    if (!view_title_click_pending) return false;
+
+    NSPoint mouse = [NSEvent mouseLocation];
+    const f64 dx = mouse.x - view_title_start_mouse.x;
+    const f64 dy = mouse.y - view_title_start_mouse.y;
+    if (!view_title_dragging && (dx * dx + dy * dy) > 9.0) {
+        view_title_dragging = true;
+    }
+    if (view_title_dragging) {
+        NSPoint origin = NSMakePoint(view_title_start_frame.origin.x + dx, view_title_start_frame.origin.y + dy);
+        [[event window] setFrameOrigin:origin];
+    }
+    return true;
+}
+
+static ns_bool view_osx_handle_no_title_mouse_up(NSEvent *event) {
+    if (view_traffic_button_pending) {
+        i32 button = -1;
+        const ns_bool activate = view_osx_no_title_button(view_osx_event_content_point(event), &button) && button == view_traffic_button;
+        view_traffic_button_pending = false;
+        view_traffic_button = -1;
+        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
+        if (activate) {
+            if (button == 0) {
+                view_osx_request_terminate();
+            } else if (button == 1) {
+                [[event window] miniaturize:nil];
+            } else {
+                [[event window] toggleFullScreen:nil];
+            }
         }
         return true;
     }
 
-    view_osx_drag_no_title_window(event);
+    if (!view_title_click_pending) return false;
+
+    const ns_bool clicked = !view_title_dragging;
+    view_title_click_pending = false;
+    view_title_dragging = false;
+    if (clicked) {
+        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);
+        view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
+    }
     return true;
 }
 
@@ -259,7 +292,13 @@ i32 view_osx_key_map(i32 k) {
 //------------------------------------------------------------------------------
 @implementation ViewApp
 - (void)sendEvent:(NSEvent*) event {
-    if ([event type] == NSEventTypeKeyUp && ([event modifierFlags] & NSEventModifierFlagCommand)) {
+    if ([event type] == NSEventTypeKeyDown &&
+        ([event modifierFlags] & NSEventModifierFlagCommand) &&
+        [event keyCode] == 12 &&
+        ![event isARepeat]) {
+        view_osx_request_terminate();
+    }
+    else if ([event type] == NSEventTypeKeyUp && ([event modifierFlags] & NSEventModifierFlagCommand)) {
         [[self keyWindow] sendEvent:event];
     }
     else {
@@ -294,7 +333,7 @@ i32 view_osx_key_map(i32 k) {
 @implementation ViewWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow*)sender {
     (void)sender;
-    [NSApp terminate:nil];
+    view_osx_request_terminate();
     return YES;
 }
 
@@ -352,6 +391,7 @@ static void view_osx_update_mouse(NSEvent *event) {
 
 - (void)mouseUp:(NSEvent*)event {
     view_osx_update_mouse(event);
+    if (view_osx_handle_no_title_mouse_up(event)) return;
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_RELEASE);
 }
 
@@ -361,6 +401,7 @@ static void view_osx_update_mouse(NSEvent *event) {
 
 - (void)mouseDragged:(NSEvent*)event {
     view_osx_update_mouse(event);
+    if (view_osx_handle_no_title_mouse_dragged(event)) return;
 }
 
 - (void)rightMouseDown:(NSEvent*)event {
