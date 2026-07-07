@@ -7,6 +7,7 @@
 #include "ns_asm.h"
 #include "ns_pe.h"
 #include "ns_shader.h"
+#include "ns_profile.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -135,7 +136,7 @@ void ns_help() {
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
-    printf("  --profile         write elapsed wall-clock time to ns.profile\n");
+    printf("  --profile         write ns.profile: elapsed time plus a per-symbol ffi breakdown\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  run  [file.ns]    run a project entry, or run a standalone file when no ns.mod is found\n");
@@ -151,18 +152,16 @@ void ns_version() {
     ns_info("nanoscript", "v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
 }
 
-static f64 ns_profile_now_ms(void) {
-#if defined(_WIN32)
-    LARGE_INTEGER freq;
-    LARGE_INTEGER counter;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&counter);
-    return ((f64)counter.QuadPart * 1000.0) / (f64)freq.QuadPart;
-#else
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ((f64)ts.tv_sec * 1000.0) + ((f64)ts.tv_nsec / 1000000.0);
-#endif
+// Order the per-symbol FFI table by descending time so the hottest native
+// calls sort to the top of the emitted profile.
+static int ns_profile_fn_cmp(const void *a, const void *b) {
+    const ns_profile_fn_stat *x = a;
+    const ns_profile_fn_stat *y = b;
+    if (x->total_ms < y->total_ms) return 1;
+    if (x->total_ms > y->total_ms) return -1;
+    if (x->calls < y->calls) return 1;
+    if (x->calls > y->calls) return -1;
+    return 0;
 }
 
 static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
@@ -173,14 +172,37 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
         return;
     }
 
-    fprintf(f, "format: ns-profile-v1\n");
+    f64 ffi_ms = ns_profile.ffi_total_ms;
+    f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
+
+    fprintf(f, "format: ns-profile-v2\n");
     fprintf(f, "elapsed_ms: %.3f\n", elapsed_ms);
+    fprintf(f, "ffi_calls: %llu\n", (unsigned long long)ns_profile.ffi_calls);
+    fprintf(f, "ffi_ms: %.3f\n", ffi_ms);
+    fprintf(f, "ffi_pct: %.1f\n", ffi_pct);
+    fprintf(f, "ffi_symbols: %d\n", ns_profile.fn_count);
     fprintf(f, "argv:");
     for (i32 i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
     fprintf(f, "\n");
+
+    // Per-symbol breakdown, hottest first. Columns:
+    //   calls  total_ms  avg_ms  min_ms  max_ms  lib::name
+    qsort(ns_profile.fns, ns_profile.fn_count, sizeof(ns_profile_fn_stat), ns_profile_fn_cmp);
+    fprintf(f, "ffi_table: calls total_ms avg_ms min_ms max_ms symbol\n");
+    for (i32 i = 0; i < ns_profile.fn_count; i++) {
+        ns_profile_fn_stat *s = &ns_profile.fns[i];
+        f64 avg_ms = s->calls ? s->total_ms / (f64)s->calls : 0.0;
+        fprintf(f, "ffi: %llu %.3f %.4f %.4f %.4f ", (unsigned long long)s->calls, s->total_ms, avg_ms, s->min_ms, s->max_ms);
+        if (s->lib.len > 0) fprintf(f, "%.*s::", s->lib.len, s->lib.data);
+        fprintf(f, "%.*s\n", s->name.len, s->name.data);
+    }
+    if (ns_profile.fns_dropped > 0) {
+        fprintf(f, "ffi_dropped: %llu\n", (unsigned long long)ns_profile.fns_dropped);
+    }
     fclose(f);
 
-    ns_info("profile", "wrote ns.profile (%.3f ms)\n", elapsed_ms);
+    ns_info("profile", "wrote ns.profile (%.3f ms total, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
+            elapsed_ms, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
 }
 
 void ns_exec_tokenize(ns_str filename) {
@@ -1577,6 +1599,7 @@ i32 main(i32 argc, i8** argv) {
         ns_exit(1, "usage", "too many input paths; expected at most one. See `ns --help`.\n");
     }
 
+    if (option.profile) ns_profile_enable();
     f64 profile_start_ms = option.profile ? ns_profile_now_ms() : 0.0;
 
     if (option.run) {

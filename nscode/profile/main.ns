@@ -14,6 +14,9 @@ let g_raw = ""
 let g_format = ""
 let g_elapsed = ""
 let g_argv = ""
+let g_ffi_calls = ""
+let g_ffi_ms = ""
+let g_ffi_pct = ""
 let g_status = "No profile loaded."
 let g_scroll: f64 = 0.0
 let g_frame_count: i32 = 0
@@ -135,6 +138,9 @@ fn clear_profile() {
     g_format = ""
     g_elapsed = ""
     g_argv = ""
+    g_ffi_calls = ""
+    g_ffi_ms = ""
+    g_ffi_pct = ""
 }
 
 fn load_profile(path: str) {
@@ -149,11 +155,18 @@ fn load_profile(path: str) {
         g_format = profile_line(data, "format")
         g_elapsed = profile_line(data, "elapsed_ms")
         g_argv = profile_line(data, "argv")
+        g_ffi_calls = profile_line(data, "ffi_calls")
+        g_ffi_ms = profile_line(data, "ffi_ms")
+        g_ffi_pct = profile_line(data, "ffi_pct")
 
-        if g_format != "ns-profile-v1" {
-            g_status = "Loaded file is not ns-profile-v1."
-        } else {
+        if g_format == "ns-profile-v1" {
             g_status = "Profile loaded."
+        } else {
+            if g_format == "ns-profile-v2" {
+                g_status = "Profile loaded."
+            } else {
+                g_status = "Loaded file is not an ns-profile."
+            }
         }
         g_scroll = 0.0
     }
@@ -224,7 +237,29 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     draw_metric(r, x + metric_w + 12.0, y, metric_w, "ELAPSED", elapsed_text, col_accent())
     draw_metric(r, x + (metric_w + 12.0) * 2.0, y, metric_w, "FILE", path_text, col_text())
 
-    let argv_y = y + 94.0
+    let ffi_calls_text = g_ffi_calls
+    if ffi_calls_text == "" {
+        ffi_calls_text = "-"
+    }
+    let ffi_ms_text = g_ffi_ms
+    if ffi_ms_text == "" {
+        ffi_ms_text = "-"
+    } else {
+        ffi_ms_text = ffi_ms_text + " ms"
+    }
+    let ffi_pct_text = g_ffi_pct
+    if ffi_pct_text == "" {
+        ffi_pct_text = "-"
+    } else {
+        ffi_pct_text = ffi_pct_text + " %"
+    }
+
+    let row2_y = y + 82.0
+    draw_metric(r, x, row2_y, metric_w, "FFI CALLS", ffi_calls_text, col_text())
+    draw_metric(r, x + metric_w + 12.0, row2_y, metric_w, "FFI TIME", ffi_ms_text, col_accent())
+    draw_metric(r, x + (metric_w + 12.0) * 2.0, row2_y, metric_w, "FFI SHARE", ffi_pct_text, col_warn())
+
+    let argv_y = y + 176.0
     ui_draw_text(r, x, argv_y, "argv", 13.0, col_muted(), FONT_MONO())
     ui_fill_round_rect(r, x, argv_y + 22.0, w, 74.0, 6.0, col_panel(), 0.0)
     ui_push_clip(r, x + 14.0, argv_y + 34.0, w - 28.0, 46.0)
@@ -236,7 +271,7 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     ui_pop_clip(r)
 
     let raw_y = argv_y + 122.0
-    let raw_h = h - 216.0
+    let raw_h = h - 298.0
     if raw_h > 80.0 {
         ui_draw_text(r, x, raw_y, "raw profile", 13.0, col_muted(), FONT_MONO())
         ui_fill_round_rect(r, x, raw_y + 22.0, w, raw_h, 6.0, col_panel(), 0.0)
@@ -295,7 +330,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
                 let cy = body_y + min_f(90.0, body_h * 0.3)
                 ui_draw_text(r, body_x, cy, "No profile loaded", 18.0, col_text(), FONT_MONO())
                 ui_draw_text(r, body_x, cy + 30.0, "Open a saved ns.profile or load ./ns.profile.", 13.0, col_muted(), FONT_MONO())
-                if g_status == "Loaded file is not ns-profile-v1." {
+                if g_status == "Loaded file is not an ns-profile." {
                     ui_draw_text(r, body_x, cy + 56.0, g_status, 13.0, col_warn(), FONT_MONO())
                 }
             } else {

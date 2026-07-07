@@ -1,6 +1,7 @@
 #include "ns_vm.h"
 #include "ns_fmt.h"
 #include "ns_os.h"
+#include "ns_profile.h"
 
 #ifndef NS_XCLIB
 #include <dlfcn.h>
@@ -322,7 +323,11 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     // only `size` bytes are read back below.
     i32 alloc_size = size < (i32)sizeof(ffi_arg) ? (i32)sizeof(ffi_arg) : size;
     ns_value v = {.t = ns_type_set_stack(fn->fn.ret, true), .o = ns_eval_alloc(vm, alloc_size)};
+    // Time the native call so `--profile` can attribute wall-clock cost per
+    // foreign symbol. The clock read is skipped entirely when profiling is off.
+    f64 ffi_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
     ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &vm->stack[v.o], _ffi_ctx.values);
+    if (ns_profile.enabled) ns_profile_record_ffi(fn->name, fn->lib, ns_profile_now_ms() - ffi_start_ms);
     if (ns_type_is_ref(t)) {
         // Native code returns an absolute pointer to the result. Represent it as
         // an absolute-address ref value (stack=false, .o = the pointer) so that

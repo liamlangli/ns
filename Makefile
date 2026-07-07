@@ -94,6 +94,7 @@ NS_BINDIR = bin
 
 NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
+	src/ns_profile.c \
 	src/ns_os.c \
 	src/ns_token.c \
 	src/ns_ast.c \
