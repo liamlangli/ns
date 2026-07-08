@@ -7,7 +7,7 @@ description = "Native code editor for Nano Script, rendered through the ui modul
 source = "."
 entry = "main.ns"
 icon = "icon.png"
-tests = ["editor_test.ns", "frame_test.ns"]
+tests = ["editor_test.ns", "frame_test.ns", "ui_layout_test.ns"]
 exclude = ["README.md"]
 
 [[dependencies.runtime]]

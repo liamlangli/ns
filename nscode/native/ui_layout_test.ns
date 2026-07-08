@@ -1,0 +1,53 @@
+// nscode/native/ui_layout_test.ns
+// ---------------------------------------------------------------------------
+// Regression tests for ui_layout alignment flags as seen through `use ui`.
+//
+// Run with:
+//
+//   bin/ns test nscode/native/ui_layout_test.ns
+//
+// The literal-flag case isolates ui_layout/bitwise handling. The imported
+// constant case catches regressions where external module `let` constants
+// resolve to 0 in NS code.
+use std
+use ui
+
+let t_pass = 0
+let t_fail = 0
+
+fn check(got: i32, want: i32, name: str) {
+    if got == want {
+        t_pass = t_pass + 1
+    } else {
+        t_fail = t_fail + 1
+        print(`FAIL {name}: got {got} want {want}\n`)
+    }
+}
+
+fn test_literal_center_flags() {
+    let flags = 16 + 32
+    let r = ui_layout(10.0, 20.0, 100.0, 50.0, 20.0, 10.0, flags)
+    check(r.x as i32, 50, "literal flags center x")
+    check(r.y as i32, 40, "literal flags center y")
+}
+
+fn test_imported_alignment_constants() {
+    check(UI_ALIGN_CENTER_HORIZONTAL, 16, "imported horizontal center flag")
+    check(UI_ALIGN_CENTER_VERTICAL, 32, "imported vertical center flag")
+    check(UI_ALIGN_CENTER_HORIZONTAL + UI_ALIGN_CENTER_VERTICAL, 48, "imported combined center flags")
+}
+
+fn test_imported_center_flags() {
+    let flags = UI_ALIGN_CENTER_HORIZONTAL + UI_ALIGN_CENTER_VERTICAL
+    let r = ui_layout(10.0, 20.0, 100.0, 50.0, 20.0, 10.0, flags)
+    check(r.x as i32, 50, "imported flags center x")
+    check(r.y as i32, 40, "imported flags center y")
+}
+
+fn main() i32 {
+    test_literal_center_flags()
+    test_imported_alignment_constants()
+    test_imported_center_flags()
+    print(`ui_layout_test: {t_pass} passed, {t_fail} failed\n`)
+    return t_fail
+}

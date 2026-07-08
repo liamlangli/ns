@@ -27,8 +27,8 @@ jobs:
 
       # The NSCode editor tests are written in ns itself: editor_test.ns is a
       # pure document-model test, frame_test.ns drives the render/input path
-      # headlessly through the no-op Linux view backend. Both `assert` a zero
-      # failure count, so a red run fails the job.
+      # headlessly through the no-op Linux view backend, and ui_layout_test.ns
+      # covers imported UI alignment constants.
       - name: Build interpreter and native modules
         run: make NS_WERROR=0
 
@@ -36,3 +36,4 @@ jobs:
         run: |
           bin/ns run nscode/native/editor_test.ns
           bin/ns run nscode/native/frame_test.ns
+          bin/ns run nscode/native/ui_layout_test.ns
