@@ -968,6 +968,73 @@ void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u
     }
 }
 
+static f64 ui_text_char_advance(ui_font *font, unsigned char c, f64 font_px) {
+    if (!font || font->font_size <= 0.0) return font_px * 0.55;
+    ui_glyph *g = ui_font_glyph(font, c);
+    if (!g) g = ui_font_glyph(font, 32);
+    return g ? g->x_advance * (font_px / font->font_size) : font_px * 0.55;
+}
+
+static void ui_draw_text_range(ui_renderer *r, f64 x, f64 y, const char *text, i32 len, f64 font_px, u32 rgba, i32 font_type) {
+    if (!r || !text || len <= 0) return;
+    char *line = (char*)malloc((size_t)len + 1);
+    if (!line) return;
+    memcpy(line, text, (size_t)len);
+    line[len] = '\0';
+    ui_draw_text(r, x, y, line, font_px, rgba, font_type);
+    free(line);
+}
+
+f64 ui_draw_text_wrapped(ui_renderer *r, f64 x, f64 y, f64 w, const char *text, f64 font_px, u32 rgba, i32 font_type) {
+    if (!r || !text || font_px <= 0.0) return 0.0;
+    if (w <= 0.0) return 0.0;
+
+    ui_font *font = &r->fonts[(font_type == UI_FONT_MONO) ? UI_FONT_MONO : UI_FONT_MAIN];
+    const f64 line_h = font->font_size > 0.0 ? font->line_height * (font_px / font->font_size) : font_px;
+    const char *line_start = text;
+    const char *p = text;
+    const char *last_space = ns_null;
+    f64 line_w = 0.0;
+    f64 cy = y;
+
+    while (*p) {
+        if (*p == '\n') {
+            ui_draw_text_range(r, x, cy, line_start, (i32)(p - line_start), font_px, rgba, font_type);
+            cy += line_h;
+            p++;
+            line_start = p;
+            last_space = ns_null;
+            line_w = 0.0;
+            continue;
+        }
+
+        if (*p == ' ' || *p == '\t') last_space = p;
+        line_w += ui_text_char_advance(font, (unsigned char)*p, font_px);
+
+        if (line_w > w && p > line_start) {
+            const char *break_at = last_space && last_space >= line_start ? last_space : p;
+            ui_draw_text_range(r, x, cy, line_start, (i32)(break_at - line_start), font_px, rgba, font_type);
+            cy += line_h;
+
+            p = break_at;
+            while (*p == ' ' || *p == '\t') p++;
+            line_start = p;
+            last_space = ns_null;
+            line_w = 0.0;
+            continue;
+        }
+
+        p++;
+    }
+
+    if (p > line_start) {
+        ui_draw_text_range(r, x, cy, line_start, (i32)(p - line_start), font_px, rgba, font_type);
+        cy += line_h;
+    }
+
+    return cy - y;
+}
+
 f64 ui_text_line_height(ui_renderer *r, f64 font_px, i32 font_type) {
     if (!r) return font_px;
     ui_font *font = &r->fonts[(font_type == UI_FONT_MONO) ? UI_FONT_MONO : UI_FONT_MAIN];

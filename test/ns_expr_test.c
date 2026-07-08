@@ -549,5 +549,29 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "std.utf8_len counts utf8 codepoints.");
     }
 
+    // --- std file handles survive storage in locals. close(fd) must read the
+    // u64 handle value, not the stack slot offset of the local variable. ---
+    {
+        FILE *f = fopen("bin/ns_std_file_test.txt", "wb");
+        ns_expect(f != NULL, "test fixture file opens for writing.");
+        if (f) {
+            fwrite("hello profile", 1, 13, f);
+            fclose(f);
+        }
+
+        const char *src =
+            "use std\n"
+            "fn main() bool {\n"
+            "    let fd = open(\"bin/ns_std_file_test.txt\", \"rb\")\n"
+            "    if fd == 0 {\n"
+            "        return false\n"
+            "    }\n"
+            "    let data = read(fd)\n"
+            "    close(fd)\n"
+            "    return data == \"hello profile\"\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "std open/read/close handles stored in locals.");
+    }
+
     return 0;
 }

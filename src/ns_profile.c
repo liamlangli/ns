@@ -22,7 +22,8 @@ f64 ns_profile_now_ms(void) {
 #endif
 }
 
-void ns_profile_enable(void) {
+void ns_profile_enable(f64 start_ms) {
+    ns_profile.start_ms = start_ms;
     ns_profile.enabled = true;
 }
 
@@ -34,11 +35,28 @@ static ns_bool ns_str_eq(ns_str a, ns_str b) {
     return true;
 }
 
-void ns_profile_record_ffi(ns_str name, ns_str lib, f64 elapsed_ms) {
+static void ns_profile_record_event(u8 kind, ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms) {
+    if (ns_profile.event_count < NS_PROFILE_MAX_EVENTS) {
+        ns_profile.events[ns_profile.event_count++] = (ns_profile_event){
+            .kind = kind,
+            .depth = depth,
+            .start_ms = start_ms - ns_profile.start_ms,
+            .elapsed_ms = elapsed_ms,
+            .name = name,
+            .lib = lib,
+        };
+    } else {
+        ns_profile.events_dropped++;
+    }
+}
+
+void ns_profile_record_ffi(ns_str name, ns_str lib, f64 start_ms, f64 elapsed_ms) {
     if (!ns_profile.enabled) return;
 
     ns_profile.ffi_calls++;
     ns_profile.ffi_total_ms += elapsed_ms;
+
+    ns_profile_record_event(NS_PROFILE_EVENT_FFI, name, lib, -1, start_ms, elapsed_ms);
 
     ns_profile_fn_stat *slot = ns_null;
     for (i32 i = 0; i < ns_profile.fn_count; i++) {
@@ -67,4 +85,11 @@ void ns_profile_record_ffi(ns_str name, ns_str lib, f64 elapsed_ms) {
     slot->total_ms += elapsed_ms;
     if (elapsed_ms < slot->min_ms) slot->min_ms = elapsed_ms;
     if (elapsed_ms > slot->max_ms) slot->max_ms = elapsed_ms;
+}
+
+void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms) {
+    if (!ns_profile.enabled) return;
+
+    ns_profile.scope_calls++;
+    ns_profile_record_event(NS_PROFILE_EVENT_SCOPE, name, lib, depth, start_ms, elapsed_ms);
 }

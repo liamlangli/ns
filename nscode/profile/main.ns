@@ -17,9 +17,27 @@ let g_argv = ""
 let g_ffi_calls = ""
 let g_ffi_ms = ""
 let g_ffi_pct = ""
+let g_ffi_events = ""
+let g_scope_calls = ""
+let g_scope_events = ""
+let g_timeline_events = ""
 let g_status = "No profile loaded."
 let g_scroll: f64 = 0.0
 let g_frame_count: i32 = 0
+let g_load_profile_pending = false
+let g_open_profile_pending = false
+let g_event_start = [f64](8192)
+let g_event_duration = [f64](8192)
+let g_event_lane = [i32](8192)
+let g_event_name = [i32: str](8192)
+let g_event_start_text = [i32: str](8192)
+let g_event_duration_text = [i32: str](8192)
+let g_event_count = 0
+let g_lane_name = [i32: str](256)
+let g_lane_total = [f64](256)
+let g_lane_calls = [i32](256)
+let g_lane_count = 0
+let g_time_end: f64 = 0.0
 
 fn col_bg() u32 { return ui_pack_color("#101418") }
 fn col_panel() u32 { return ui_pack_color("#182026") }
@@ -29,6 +47,11 @@ fn col_text() u32 { return ui_pack_color("#d8e0e7") }
 fn col_muted() u32 { return ui_pack_color("#8b98a5") }
 fn col_accent() u32 { return ui_pack_color("#66d39a") }
 fn col_warn() u32 { return ui_pack_color("#f0bd5f") }
+fn col_bar_a() u32 { return ui_pack_color("#5fb3f0") }
+fn col_bar_b() u32 { return ui_pack_color("#66d39a") }
+fn col_bar_c() u32 { return ui_pack_color("#d7a8ff") }
+fn col_bar_d() u32 { return ui_pack_color("#f08a7a") }
+fn col_bar_e() u32 { return ui_pack_color("#f0bd5f") }
 
 fn clear_color() ui_color_rgba {
     return ui_color_rgba { r: 0.063, g: 0.078, b: 0.094, a: 1.0 }
@@ -96,6 +119,206 @@ fn trim_left(s: str) str {
     return ""
 }
 
+fn is_space_code(c: i32) bool {
+    if c == 32 {
+        return true
+    }
+    return c == 9
+}
+
+fn skip_spaces(s: str, i: i32) i32 {
+    let p = i
+    loop p < s.len {
+        let c = (s[p] as i32) & 255
+        if is_space_code(c) == false {
+            return p
+        }
+        p = p + 1
+    }
+    return p
+}
+
+fn word_at(s: str, i: i32) str {
+    let start = skip_spaces(s, i)
+    let p = start
+    loop p < s.len {
+        let c = (s[p] as i32) & 255
+        if is_space_code(c) {
+            return substr(s, start, p - start)
+        }
+        p = p + 1
+    }
+    return substr(s, start, p - start)
+}
+
+fn parse_f64(s: str) f64 {
+    let i = skip_spaces(s, 0)
+    let sign = 1.0
+    if i < s.len {
+        if ((s[i] as i32) & 255) == 45 {
+            sign = -1.0
+            i = i + 1
+        }
+    }
+
+    let value = 0.0
+    loop i < s.len {
+        let c = (s[i] as i32) & 255
+        if c < 48 {
+            break
+        }
+        if c > 57 {
+            break
+        }
+        value = value * 10.0 + ((c - 48) as f64)
+        i = i + 1
+    }
+
+    if i < s.len {
+        if ((s[i] as i32) & 255) == 46 {
+            i = i + 1
+            let scale = 0.1
+            loop i < s.len {
+                let c = (s[i] as i32) & 255
+                if c < 48 {
+                    break
+                }
+                if c > 57 {
+                    break
+                }
+                value = value + ((c - 48) as f64) * scale
+                scale = scale * 0.1
+                i = i + 1
+            }
+        }
+    }
+
+    return value * sign
+}
+
+fn event_color(i: i32) u32 {
+    let m = i % 5
+    if m == 0 {
+        return col_bar_a()
+    }
+    if m == 1 {
+        return col_bar_b()
+    }
+    if m == 2 {
+        return col_bar_c()
+    }
+    if m == 3 {
+        return col_bar_d()
+    }
+    return col_bar_e()
+}
+
+fn find_lane(name: str) i32 {
+    let i = 0
+    loop i < g_lane_count {
+        if g_lane_name[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    if g_lane_count >= g_lane_total.len {
+        return g_lane_total.len - 1
+    }
+    let lane = g_lane_count
+    g_lane_name[lane] = name
+    g_lane_total[lane] = 0.0
+    g_lane_calls[lane] = 0
+    g_lane_count = g_lane_count + 1
+    return lane
+}
+
+fn record_event_in_lane(start: f64, duration: f64, name: str, start_text: str, duration_text: str, lane_name: str) {
+    if g_event_count < g_event_start.len {
+        let lane = find_lane(lane_name)
+        g_event_start[g_event_count] = start
+        g_event_duration[g_event_count] = duration
+        g_event_lane[g_event_count] = lane
+        g_event_name[g_event_count] = name
+        g_event_start_text[g_event_count] = start_text
+        g_event_duration_text[g_event_count] = duration_text
+        g_event_count = g_event_count + 1
+        g_lane_total[lane] = g_lane_total[lane] + duration
+        g_lane_calls[lane] = g_lane_calls[lane] + 1
+        let end = start + duration
+        if end > g_time_end {
+            g_time_end = end
+        }
+    }
+}
+
+fn record_event(start: f64, duration: f64, name: str, start_text: str, duration_text: str) {
+    record_event_in_lane(start, duration, name, start_text, duration_text, name)
+}
+
+fn parse_event_line(line: str) {
+    let p = skip_spaces(line, 10)
+    let start_s = word_at(line, p)
+    p = skip_spaces(line, p + start_s.len)
+    let dur_s = word_at(line, p)
+    p = skip_spaces(line, p + dur_s.len)
+    let name = trim_left(substr(line, p, line.len - p))
+    if name.len > 0 {
+        let start_ms = parse_f64(start_s)
+        let duration_ms = parse_f64(dur_s)
+        record_event(start_ms, duration_ms, name, start_s, dur_s)
+    }
+}
+
+fn parse_scope_event_line(line: str) {
+    let p = skip_spaces(line, 12)
+    let depth_s = word_at(line, p)
+    p = skip_spaces(line, p + depth_s.len)
+    let start_s = word_at(line, p)
+    p = skip_spaces(line, p + start_s.len)
+    let dur_s = word_at(line, p)
+    p = skip_spaces(line, p + dur_s.len)
+    let name = trim_left(substr(line, p, line.len - p))
+    if name.len > 0 {
+        let start_ms = parse_f64(start_s)
+        let duration_ms = parse_f64(dur_s)
+        record_event_in_lane(start_ms, duration_ms, name, start_s, dur_s, "scope " + depth_s)
+    }
+}
+
+fn parse_profile_events(src: str) {
+    g_event_count = 0
+    g_lane_count = 0
+    g_time_end = 0.0
+
+    let i = 0
+    loop i < src.len {
+        let start = i
+        loop i < src.len {
+            if ((src[i] as i32) & 255) != 10 {
+                i = i + 1
+            } else {
+                let line = substr(src, start, i - start)
+                if starts_with(line, "ffi_event:") {
+                    parse_event_line(line)
+                }
+                if starts_with(line, "scope_event:") {
+                    parse_scope_event_line(line)
+                }
+                i = i + 1
+                start = i
+            }
+        }
+        let line = substr(src, start, i - start)
+        if starts_with(line, "ffi_event:") {
+            parse_event_line(line)
+        }
+        if starts_with(line, "scope_event:") {
+            parse_scope_event_line(line)
+        }
+        i = i + 1
+    }
+}
+
 fn profile_line(src: str, key: str) str {
     let i = 0
     loop i < src.len {
@@ -141,6 +364,13 @@ fn clear_profile() {
     g_ffi_calls = ""
     g_ffi_ms = ""
     g_ffi_pct = ""
+    g_ffi_events = ""
+    g_scope_calls = ""
+    g_scope_events = ""
+    g_timeline_events = ""
+    g_event_count = 0
+    g_lane_count = 0
+    g_time_end = 0.0
 }
 
 fn load_profile(path: str) {
@@ -158,6 +388,11 @@ fn load_profile(path: str) {
         g_ffi_calls = profile_line(data, "ffi_calls")
         g_ffi_ms = profile_line(data, "ffi_ms")
         g_ffi_pct = profile_line(data, "ffi_pct")
+        g_ffi_events = profile_line(data, "ffi_events")
+        g_scope_calls = profile_line(data, "scope_calls")
+        g_scope_events = profile_line(data, "scope_events")
+        g_timeline_events = profile_line(data, "timeline_events")
+        parse_profile_events(data)
 
         if g_format == "ns-profile-v1" {
             g_status = "Profile loaded."
@@ -165,7 +400,11 @@ fn load_profile(path: str) {
             if g_format == "ns-profile-v2" {
                 g_status = "Profile loaded."
             } else {
-                g_status = "Loaded file is not an ns-profile."
+                if g_format == "ns-profile-v3" {
+                    g_status = "Profile loaded."
+                } else {
+                    g_status = "Loaded file is not an ns-profile."
+                }
             }
         }
         g_scroll = 0.0
@@ -216,78 +455,152 @@ fn draw_metric(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: st
     ui_pop_clip(r)
 }
 
-fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let metric_w = (w - 24.0) / 3.0
-    let format_text = g_format
-    if format_text == "" {
-        format_text = "-"
+fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_round_rect(r, x, y, w, h, 6.0, col_panel(), 0.0)
+    if g_event_count == 0 {
+        ui_draw_text(r, x + 16.0, y + 18.0, "No timeline events in this profile.", 14.0, col_muted(), FONT_MONO())
+        ui_draw_text(r, x + 16.0, y + 44.0, "Run with a fresh --profile build to generate ns-profile-v3.", 13.0, col_muted(), FONT_MONO())
+    } else {
+        let label_w = min_f(230.0, max_f(140.0, w * 0.28))
+        let axis_h = 34.0
+        let row_h = 26.0
+        let plot_x = x + label_w
+        let plot_w = w - label_w - 12.0
+        let plot_y = y + axis_h
+        let plot_h = h - axis_h - 42.0
+        if plot_w > 20.0 {
+            if plot_h > 40.0 {
+                let end_ms = g_time_end
+                if end_ms <= 0.0 {
+                    end_ms = parse_f64(g_elapsed)
+                }
+                if end_ms <= 0.0 {
+                    end_ms = 1.0
+                }
+                let scale = plot_w / end_ms
+
+                if hit(v, x, plot_y, w, plot_h) {
+                    g_scroll = g_scroll - v.scroll_y * 24.0
+                    let max_scroll = max_f(0.0, g_lane_count as f64 * row_h - plot_h)
+                    if g_scroll < 0.0 {
+                        g_scroll = 0.0
+                    }
+                    if g_scroll > max_scroll {
+                        g_scroll = max_scroll
+                    }
+                }
+
+                ui_draw_text(r, x + 12.0, y + 10.0, "scope / symbol", 12.0, col_muted(), FONT_MONO())
+                ui_draw_text(r, plot_x, y + 10.0, "0 ms", 12.0, col_muted(), FONT_MONO())
+                ui_draw_text(r, plot_x + plot_w - 72.0, y + 10.0, g_elapsed + " ms", 12.0, col_muted(), FONT_MONO())
+                ui_fill_rect(r, plot_x, y + axis_h - 1.0, plot_w, 1.0, col_line(), 0.0)
+
+                let tick = 1
+                loop tick < 5 {
+                    let tx = plot_x + plot_w * (tick as f64 / 5.0)
+                    ui_fill_rect(r, tx, plot_y, 1.0, plot_h, ui_pack_color("#25313a"), 0.0)
+                    tick = tick + 1
+                }
+
+                ui_push_clip(r, x, plot_y, w, plot_h)
+                let lane = 0
+                loop lane < g_lane_count {
+                    let lane_y = plot_y + lane as f64 * row_h - g_scroll
+                    if lane_y + row_h >= plot_y {
+                        if lane_y <= plot_y + plot_h {
+                            if lane % 2 == 0 {
+                                ui_fill_rect(r, x, lane_y, w, row_h, ui_pack_color("#151d22"), 0.0)
+                            }
+                            ui_push_clip(r, x + 10.0, lane_y + 4.0, label_w - 18.0, row_h - 6.0)
+                            ui_draw_text(r, x + 10.0, lane_y + 6.0, g_lane_name[lane], 12.0, col_text(), FONT_MONO())
+                            ui_pop_clip(r)
+                            ui_fill_rect(r, plot_x - 8.0, lane_y, 1.0, row_h, col_line(), 0.0)
+                        }
+                    }
+                    lane = lane + 1
+                }
+
+                let hovered = -1
+                let i = 0
+                loop i < g_event_count {
+                    let ev_lane = g_event_lane[i]
+                    let ev_start = g_event_start[i]
+                    let ev_duration = g_event_duration[i]
+                    let ev_name = g_event_name[i]
+                    let lane_y = plot_y + ev_lane as f64 * row_h - g_scroll
+                    if lane_y + row_h >= plot_y {
+                        if lane_y <= plot_y + plot_h {
+                            let bx = plot_x + ev_start * scale
+                            let bw = max_f(1.0, ev_duration * scale)
+                            let by = lane_y + 5.0
+                            let bh = row_h - 10.0
+                            let color = event_color(ev_lane)
+                            if hit(v, bx, by, bw, bh) {
+                                hovered = i
+                                ui_fill_round_rect(r, bx, by - 1.0, bw, bh + 2.0, 3.0, col_warn(), 0.0)
+                            } else {
+                                ui_fill_round_rect(r, bx, by, bw, bh, 3.0, color, 0.0)
+                            }
+                            if bw > 70.0 {
+                                ui_push_clip(r, bx + 4.0, by + 1.0, bw - 8.0, bh - 2.0)
+                                ui_draw_text(r, bx + 4.0, by + 2.0, ev_name, 10.0, col_bg(), FONT_MONO())
+                                ui_pop_clip(r)
+                            }
+                        }
+                    }
+                    i = i + 1
+                }
+                ui_pop_clip(r)
+
+                ui_fill_rect(r, x, y + h - 36.0, w, 1.0, col_line(), 0.0)
+                if hovered >= 0 {
+                    let detail = g_event_name[hovered] + "  start " + g_event_start_text[hovered] + " ms  duration " + g_event_duration_text[hovered] + " ms"
+                    ui_draw_text(r, x + 12.0, y + h - 25.0, detail, 12.0, col_text(), FONT_MONO())
+                } else {
+                    let event_count_text = g_timeline_events
+                    if event_count_text == "" {
+                        event_count_text = g_ffi_events
+                    }
+                    ui_draw_text(r, x + 12.0, y + h - 25.0, event_count_text + " timeline events", 12.0, col_muted(), FONT_MONO())
+                }
+            }
+        }
     }
+}
+
+fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let elapsed_text = g_elapsed
     if elapsed_text == "" {
         elapsed_text = "-"
     } else {
         elapsed_text = elapsed_text + " ms"
     }
-    let path_text = g_path
-    if path_text == "" {
-        path_text = "-"
-    }
-
-    draw_metric(r, x, y, metric_w, "FORMAT", format_text, col_text())
-    draw_metric(r, x + metric_w + 12.0, y, metric_w, "ELAPSED", elapsed_text, col_accent())
-    draw_metric(r, x + (metric_w + 12.0) * 2.0, y, metric_w, "FILE", path_text, col_text())
-
     let ffi_calls_text = g_ffi_calls
     if ffi_calls_text == "" {
         ffi_calls_text = "-"
     }
-    let ffi_ms_text = g_ffi_ms
-    if ffi_ms_text == "" {
-        ffi_ms_text = "-"
-    } else {
-        ffi_ms_text = ffi_ms_text + " ms"
+    let event_text = g_ffi_events
+    if g_timeline_events != "" {
+        event_text = g_timeline_events
     }
-    let ffi_pct_text = g_ffi_pct
-    if ffi_pct_text == "" {
-        ffi_pct_text = "-"
-    } else {
-        ffi_pct_text = ffi_pct_text + " %"
+    if event_text == "" {
+        event_text = "-"
+    }
+    let scope_calls_text = g_scope_calls
+    if scope_calls_text == "" {
+        scope_calls_text = "-"
     }
 
-    let row2_y = y + 82.0
-    draw_metric(r, x, row2_y, metric_w, "FFI CALLS", ffi_calls_text, col_text())
-    draw_metric(r, x + metric_w + 12.0, row2_y, metric_w, "FFI TIME", ffi_ms_text, col_accent())
-    draw_metric(r, x + (metric_w + 12.0) * 2.0, row2_y, metric_w, "FFI SHARE", ffi_pct_text, col_warn())
+    let metric_w = (w - 36.0) / 4.0
+    draw_metric(r, x, y, metric_w, "ELAPSED", elapsed_text, col_accent())
+    draw_metric(r, x + metric_w + 12.0, y, metric_w, "VM SCOPES", scope_calls_text, col_text())
+    draw_metric(r, x + (metric_w + 12.0) * 2.0, y, metric_w, "EVENTS", event_text, col_warn())
+    draw_metric(r, x + (metric_w + 12.0) * 3.0, y, metric_w, "FFI CALLS", ffi_calls_text, col_text())
 
-    let argv_y = y + 176.0
-    ui_draw_text(r, x, argv_y, "argv", 13.0, col_muted(), FONT_MONO())
-    ui_fill_round_rect(r, x, argv_y + 22.0, w, 74.0, 6.0, col_panel(), 0.0)
-    ui_push_clip(r, x + 14.0, argv_y + 34.0, w - 28.0, 46.0)
-    let argv_text = g_argv
-    if argv_text == "" {
-        argv_text = "-"
-    }
-    ui_draw_text_wrapped(r, x + 14.0, argv_y + 34.0, w - 28.0, argv_text, 13.0, col_text(), FONT_MONO())
-    ui_pop_clip(r)
-
-    let raw_y = argv_y + 122.0
-    let raw_h = h - 298.0
-    if raw_h > 80.0 {
-        ui_draw_text(r, x, raw_y, "raw profile", 13.0, col_muted(), FONT_MONO())
-        ui_fill_round_rect(r, x, raw_y + 22.0, w, raw_h, 6.0, col_panel(), 0.0)
-        if hit(v, x, raw_y + 22.0, w, raw_h) {
-            g_scroll = g_scroll - v.scroll_y * 18.0
-            let max_scroll = max_f(0.0, g_raw.len as f64 * 0.45 - raw_h)
-            if g_scroll < 0.0 {
-                g_scroll = 0.0
-            }
-            if g_scroll > max_scroll {
-                g_scroll = max_scroll
-            }
-        }
-        ui_push_clip(r, x + 14.0, raw_y + 34.0, w - 28.0, raw_h - 24.0)
-        ui_draw_text_wrapped(r, x + 14.0, raw_y + 34.0 - g_scroll, w - 28.0, g_raw, 13.0, col_text(), FONT_MONO())
-        ui_pop_clip(r)
+    let chart_y = y + 92.0
+    let chart_h = h - 92.0
+    if chart_h > 100.0 {
+        draw_timeline(r, v, x, chart_y, w, chart_h)
     }
 }
 
@@ -311,10 +624,10 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     let open_x = w - pad - open_w
     let load_x = open_x - load_w - 10.0
     if draw_button(r, v, load_x, by, load_w, 34.0, "Load ns.profile", false) {
-        load_profile("ns.profile")
+        g_load_profile_pending = true
     }
     if draw_button(r, v, open_x, by, open_w, 34.0, "Open Profile", true) {
-        open_profile()
+        g_open_profile_pending = true
     }
 
     ui_fill_rect(r, 0.0, header_h, w, 1.0, col_line(), 0.0)
@@ -352,6 +665,14 @@ fn main() {
             render_frame(r, frame_view)
             ui_flush(r, clear_color())
             reset_view_input(frame_view)
+            if g_load_profile_pending {
+                g_load_profile_pending = false
+                load_profile("ns.profile")
+            }
+            if g_open_profile_pending {
+                g_open_profile_pending = false
+                open_profile()
+            }
         })
         v.on_terminate({ dead_view in
             ui_renderer_destroy(r)

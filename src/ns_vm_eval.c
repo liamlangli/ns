@@ -1,6 +1,7 @@
 #include "ns_vm.h"
 #include "ns_fmt.h"
 #include "ns_shader.h"
+#include "ns_profile.h"
 
 /**
  * value transfer semantics
@@ -18,6 +19,11 @@
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
+
+static void ns_eval_profile_scope_end(ns_symbol *sym, i32 depth, f64 start_ms) {
+    if (!ns_profile.enabled) return;
+    ns_profile_record_scope(sym->name, sym->lib, depth, start_ms, ns_profile_now_ms() - start_ms);
+}
 
 static const_str ns_eval_type_mismatch_msg(ns_vm *vm, const_str msg, ns_type expected, ns_type got) {
     ns_str e = ns_vm_get_type_name(vm, expected);
@@ -438,7 +444,10 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_array_push(vm->symbol_stack, r_arg);
 
     ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
+    f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
+    i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
     ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->ops_fn_def.body);
+    ns_eval_profile_scope_end(fn, profile_depth, profile_start_ms);
     if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     call = ns_array_pop(vm->call_stack);
     ns_scope_exit(vm);
@@ -757,7 +766,10 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             }
         }
 
+        f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
+        i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
+        ns_eval_profile_scope_end(sym, profile_depth, profile_start_ms);
         if (ns_return_is_error(ret)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "call expr error.");
     }
     call = ns_array_pop(vm->call_stack);
@@ -802,7 +814,10 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
         }
     }
 
+    f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
+    i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
     ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
+    ns_eval_profile_scope_end(sym, profile_depth, profile_start_ms);
     if (ns_return_is_error(ret)) {
         ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);
@@ -2007,7 +2022,10 @@ ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_scope_enter(vm);
         ns_array_push(vm->call_stack, call);
         ns_ast_t *fn = &ctx->nodes[main_fn->fn.ast];
+        f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
+        i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn_def.body);
+        ns_eval_profile_scope_end(main_fn, profile_depth, profile_start_ms);
         if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
 
         call = ns_array_pop(vm->call_stack);

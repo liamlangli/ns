@@ -52,7 +52,7 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         ns_str path = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
         ns_str mode = ns_eval_str(vm, vm->symbol_stack[call->arg_offset + 1].val);
         u64 fd = (u64)fopen(path.data, mode.data);
-        call->ret = (ns_value){.t = ns_type_u64, .o = fd};
+        call->ret = (ns_value){.t = ns_type_u64, .u64 = fd};
     } else if (ns_str_equals_STR(call->callee->name, "write")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         ns_value data = vm->symbol_stack[call->arg_offset + 1].val;
@@ -60,7 +60,7 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         ns_str ss = ns_str_unescape(s);
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
         i32 len = fwrite(ss.data, ss.len, 1, f);
-        call->ret = (ns_value){.t = ns_type_u64, .o = len};
+        call->ret = (ns_value){.t = ns_type_u64, .u64 = (u64)len};
     } else if (ns_str_equals_STR(call->callee->name, "read")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
@@ -93,7 +93,8 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         ns_array_free(ret.data);
     } else if (ns_str_equals_STR(call->callee->name, "close")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
-        fclose((FILE*)fd.o);
+        FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
+        if (f) fclose(f);
         call->ret = ns_nil;
     } else if (ns_str_equals_STR(call->callee->name, "sqrt")) {
         ns_value x = vm->symbol_stack[call->arg_offset].val;
@@ -327,7 +328,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     // foreign symbol. The clock read is skipped entirely when profiling is off.
     f64 ffi_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
     ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &vm->stack[v.o], _ffi_ctx.values);
-    if (ns_profile.enabled) ns_profile_record_ffi(fn->name, fn->lib, ns_profile_now_ms() - ffi_start_ms);
+    if (ns_profile.enabled) ns_profile_record_ffi(fn->name, fn->lib, ffi_start_ms, ns_profile_now_ms() - ffi_start_ms);
     if (ns_type_is_ref(t)) {
         // Native code returns an absolute pointer to the result. Represent it as
         // an absolute-address ref value (stack=false, .o = the pointer) so that

@@ -164,7 +164,28 @@ static int ns_profile_fn_cmp(const void *a, const void *b) {
     return 0;
 }
 
+static int ns_profile_event_cmp(const void *a, const void *b) {
+    const ns_profile_event *x = a;
+    const ns_profile_event *y = b;
+    if (x->start_ms < y->start_ms) return -1;
+    if (x->start_ms > y->start_ms) return 1;
+    if (x->kind == NS_PROFILE_EVENT_SCOPE && y->kind != NS_PROFILE_EVENT_SCOPE) return -1;
+    if (x->kind != NS_PROFILE_EVENT_SCOPE && y->kind == NS_PROFILE_EVENT_SCOPE) return 1;
+    if (x->depth < y->depth) return -1;
+    if (x->depth > y->depth) return 1;
+    return 0;
+}
+
+static f64 ns_profile_start_ms = 0.0;
+static i32 ns_profile_argc = 0;
+static i8 **ns_profile_argv = ns_null;
+static ns_bool ns_profile_registered = false;
+static ns_bool ns_profile_written = false;
+
 static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
+    if (ns_profile_written) return;
+    ns_profile_written = true;
+
     f64 elapsed_ms = ns_profile_now_ms() - start_ms;
     FILE *f = fopen("ns.profile", "w");
     if (!f) {
@@ -174,16 +195,47 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
 
     f64 ffi_ms = ns_profile.ffi_total_ms;
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
+    i32 ffi_event_count = 0;
+    i32 scope_event_count = 0;
+    for (i32 i = 0; i < ns_profile.event_count; i++) {
+        ns_profile_event *e = &ns_profile.events[i];
+        if (e->kind == NS_PROFILE_EVENT_SCOPE) {
+            scope_event_count++;
+        } else {
+            ffi_event_count++;
+        }
+    }
 
-    fprintf(f, "format: ns-profile-v2\n");
+    fprintf(f, "format: ns-profile-v3\n");
     fprintf(f, "elapsed_ms: %.3f\n", elapsed_ms);
     fprintf(f, "ffi_calls: %llu\n", (unsigned long long)ns_profile.ffi_calls);
     fprintf(f, "ffi_ms: %.3f\n", ffi_ms);
     fprintf(f, "ffi_pct: %.1f\n", ffi_pct);
     fprintf(f, "ffi_symbols: %d\n", ns_profile.fn_count);
+    fprintf(f, "ffi_events: %d\n", ffi_event_count);
+    fprintf(f, "scope_calls: %llu\n", (unsigned long long)ns_profile.scope_calls);
+    fprintf(f, "scope_events: %d\n", scope_event_count);
+    fprintf(f, "timeline_events: %d\n", ns_profile.event_count);
     fprintf(f, "argv:");
     for (i32 i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
     fprintf(f, "\n");
+
+    qsort(ns_profile.events, ns_profile.event_count, sizeof(ns_profile_event), ns_profile_event_cmp);
+
+    fprintf(f, "timeline: kind depth start_ms duration_ms symbol\n");
+    for (i32 i = 0; i < ns_profile.event_count; i++) {
+        ns_profile_event *e = &ns_profile.events[i];
+        if (e->kind == NS_PROFILE_EVENT_SCOPE) {
+            fprintf(f, "scope_event: %d %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms);
+        } else {
+            fprintf(f, "ffi_event: %.3f %.3f ", e->start_ms, e->elapsed_ms);
+        }
+        if (e->lib.len > 0) fprintf(f, "%.*s::", e->lib.len, e->lib.data);
+        fprintf(f, "%.*s\n", e->name.len, e->name.data);
+    }
+    if (ns_profile.events_dropped > 0) {
+        fprintf(f, "timeline_events_dropped: %llu\n", (unsigned long long)ns_profile.events_dropped);
+    }
 
     // Per-symbol breakdown, hottest first. Columns:
     //   calls  total_ms  avg_ms  min_ms  max_ms  lib::name
@@ -201,8 +253,28 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
     }
     fclose(f);
 
-    ns_info("profile", "wrote ns.profile (%.3f ms total, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
-            elapsed_ms, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
+    ns_info("profile", "wrote ns.profile (%.3f ms total, %llu vm scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
+            elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
+}
+
+static void ns_profile_emit_at_exit(void) {
+    if (!ns_profile.enabled) return;
+    ns_profile_emit(ns_profile_start_ms, ns_profile_argc, ns_profile_argv);
+}
+
+static void ns_profile_begin(i32 argc, i8 **argv) {
+    ns_profile_start_ms = ns_profile_now_ms();
+    ns_profile_enable(ns_profile_start_ms);
+    ns_profile_argc = argc;
+    ns_profile_argv = argv;
+
+    if (!ns_profile_registered) {
+        if (atexit(ns_profile_emit_at_exit) != 0) {
+            ns_warn("profile", "failed to register exit hook; profile only writes on normal return.\n");
+        } else {
+            ns_profile_registered = true;
+        }
+    }
 }
 
 void ns_exec_tokenize(ns_str filename) {
@@ -1599,8 +1671,7 @@ i32 main(i32 argc, i8** argv) {
         ns_exit(1, "usage", "too many input paths; expected at most one. See `ns --help`.\n");
     }
 
-    if (option.profile) ns_profile_enable();
-    f64 profile_start_ms = option.profile ? ns_profile_now_ms() : 0.0;
+    if (option.profile) ns_profile_begin(argc, argv);
 
     if (option.run) {
         ns_exec_run(option.filename);
@@ -1637,6 +1708,6 @@ i32 main(i32 argc, i8** argv) {
             ns_exec_eval(option.filename);
         }
     }
-    if (option.profile) ns_profile_emit(profile_start_ms, argc, argv);
+    if (option.profile) ns_profile_emit(ns_profile_start_ms, argc, argv);
     return 0;
 }
