@@ -195,6 +195,7 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
 
 void ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r) {
     ns_array_push(vm->symbols, r);
+    vm->symbol_gen++;
 }
 
 i32 ns_vm_push_symbol_local(ns_vm *vm, ns_symbol r) {

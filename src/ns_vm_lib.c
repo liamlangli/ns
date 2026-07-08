@@ -160,12 +160,14 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
 
     ns_str prev = vm->lib;
     vm->lib = lib_name;
+    vm->symbol_gen++; // lib-preferred lookup order changed; drop cached resolutions
 
     ns_return_bool ret = ns_vm_parse(vm, &ctx);
     ns_return_assert(ret);
     ns_return_value init_ret = ns_eval_module_globals(vm, &ctx);
     ns_return_assert(init_ret);
     vm->lib = prev;
+    vm->symbol_gen++;
 
     // std and shader are VM-internal (dispatched in the interpreter, no dylib)
     if (ns_str_equals(lib_name, ns_str_cstr("std")) || ns_str_equals(lib_name, ns_str_cstr("shader"))) {

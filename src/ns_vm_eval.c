@@ -351,8 +351,62 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
     return ns_return_ok(value, dst);
 }
 
-ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
-    ns_symbol *s = ns_vm_find_symbol(vm, name, false);
+// eval-only ns_vm_find_symbol(vm, s, false) with a per-AST-node inline cache.
+// LOCAL entries hold a frame-relative symbol_stack offset and are only trusted
+// (and filled) when the innermost fn frame is the top call frame, so closure
+// block frames with per-site layouts never alias a same-named outer local.
+// GLOBAL entries hold a vm->symbols index, invalidated by vm->symbol_gen.
+// Every hit is verified by one name compare; any mismatch falls back to the
+// full scan and refills, so semantics (shadowing, lib preference) are unchanged.
+ns_symbol* ns_vm_find_symbol_cached(ns_vm *vm, ns_str s, ns_sym_cache *c) {
+    i32 l = ns_vm_get_last_call(vm);
+    if (l >= 0) {
+        ns_call *call = &vm->call_stack[l];
+        i32 symbol_top = vm->scope_stack[call->scope_top].symbol_top;
+        i32 symbol_count = ns_array_length(vm->symbol_stack);
+        ns_bool frame_stable = c && l == (i32)ns_array_length(vm->call_stack) - 1;
+
+        if (frame_stable && c->kind == NS_SYM_CACHE_LOCAL) {
+            i32 j = symbol_top + c->index;
+            if (j < symbol_count && ns_str_equals(vm->symbol_stack[j].name, s)) {
+                return &vm->symbol_stack[j];
+            }
+        }
+
+        for (i32 j = symbol_count - 1; j >= symbol_top; --j) {
+            if (ns_str_equals(vm->symbol_stack[j].name, s)) {
+                if (c) {
+                    if (frame_stable) *c = (ns_sym_cache){.kind = NS_SYM_CACHE_LOCAL, .index = j - symbol_top};
+                    else c->kind = NS_SYM_CACHE_NONE;
+                }
+                return &vm->symbol_stack[j];
+            }
+        }
+    }
+
+    if (c && c->kind == NS_SYM_CACHE_GLOBAL && c->gen == vm->symbol_gen &&
+        c->index < (i32)ns_array_length(vm->symbols) && ns_str_equals(vm->symbols[c->index].name, s)) {
+        return &vm->symbols[c->index];
+    }
+
+    for (i32 i = 0, n = ns_array_length(vm->symbols); i < n; i++) {
+        if (ns_str_equals(vm->symbols[i].name, s) && ns_str_equals(vm->symbols[i].lib, vm->lib)) {
+            if (c) *c = (ns_sym_cache){.kind = NS_SYM_CACHE_GLOBAL, .index = i, .gen = vm->symbol_gen};
+            return &vm->symbols[i];
+        }
+    }
+
+    for (i32 i = 0, n = ns_array_length(vm->symbols); i < n; i++) {
+        if (ns_str_equals(vm->symbols[i].name, s)) {
+            if (c) *c = (ns_sym_cache){.kind = NS_SYM_CACHE_GLOBAL, .index = i, .gen = vm->symbol_gen};
+            return &vm->symbols[i];
+        }
+    }
+    return ns_null;
+}
+
+ns_value ns_eval_find_value_cached(ns_vm *vm, ns_str name, ns_sym_cache *c) {
+    ns_symbol *s = ns_vm_find_symbol_cached(vm, name, c);
     if (!s) return ns_nil;
     switch (s->type)
     {
@@ -362,6 +416,10 @@ ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
     default: break;
     }
     return ns_nil;
+}
+
+ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
+    return ns_eval_find_value_cached(vm, name, ns_null);
 }
 
 ns_scope* ns_scope_enter(ns_vm *vm) {
@@ -1186,7 +1244,7 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_TOKEN_STR_FORMAT: 
     case NS_TOKEN_TRUE: ret = ns_true; break;
     case NS_TOKEN_FALSE: ret = ns_false; break;
-    case NS_TOKEN_IDENTIFIER: ret = ns_eval_find_value(vm, t.val); break;
+    case NS_TOKEN_IDENTIFIER: ret = ns_eval_find_value_cached(vm, t.val, &n->primary_expr.rt.cache); break;
     default: {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented primary expr type.");
     } break;
@@ -1246,7 +1304,7 @@ ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_str st_name = n->desig_expr.name.val;
-    ns_symbol *st = ns_vm_find_symbol(vm, st_name, false);
+    ns_symbol *st = ns_vm_find_symbol_cached(vm, st_name, &n->desig_expr.rt.cache);
     
     if (ns_null == st) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown struct.");
 

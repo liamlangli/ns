@@ -54,6 +54,18 @@ typedef struct ns_ast_state {
     i32 f, l, o; // buffer offset, line, line offset
 } ns_ast_state;
 
+typedef enum {
+    NS_SYM_CACHE_NONE = 0,
+    NS_SYM_CACHE_LOCAL,  // index is a frame-relative symbol_stack offset
+    NS_SYM_CACHE_GLOBAL, // index is a vm->symbols index, valid while gen matches
+} ns_sym_cache_kind;
+
+typedef struct ns_sym_cache {
+    i32 kind;  // ns_sym_cache_kind
+    i32 index;
+    u32 gen;   // vm->symbol_gen at fill time (GLOBAL only)
+} ns_sym_cache;
+
 // Maps one line of a merged translation unit back to its source file + line.
 typedef struct ns_line_loc {
     ns_str f;
@@ -154,6 +166,9 @@ typedef struct ns_ast_cast_expr {
 typedef struct ns_ast_primary_expr {
     ns_token_t token;
     ns_type t; // literal type resolved at vm-parse (suffix or expected-type adoption)
+    struct {
+        ns_sym_cache cache; // identifier lookup cache, filled at eval
+    } rt;
 } ns_ast_primary_expr;
 
 typedef struct ns_ast_unary_expr {
@@ -233,6 +248,9 @@ typedef struct ns_ast_compound_stmt {
 typedef struct ns_ast_desig_expr {
     ns_token_t name;
     i32 count;
+    struct {
+        ns_sym_cache cache; // struct symbol lookup cache, filled at eval
+    } rt;
 } ns_ast_desig_expr;
 
 typedef struct ns_ast_array_expr {
