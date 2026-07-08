@@ -175,6 +175,23 @@ int main() {
             "}\n";
         ns_expect(ns_expr_eval_bool(src), "left-associative subtraction, division and modulo chains.");
     }
+    {
+        const char *src =
+            "fn rev_digits(n: i32) i32 {\n"
+            "    let out = 0\n"
+            "    let v = n\n"
+            "    loop v > 0 {\n"
+            "        let d = v % 10\n"
+            "        out = out * 10 + d\n"
+            "        v = v / 10\n"
+            "    }\n"
+            "    return out\n"
+            "}\n"
+            "fn main() bool {\n"
+            "    return rev_digits(102) == 201\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "loop body locals are scoped per iteration.");
+    }
 
     // --- integer division truncates toward zero; remainder keeps the dividend's
     // sign, so (a / b) * b + a % b == a holds for negative operands too. ---

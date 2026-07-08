@@ -990,11 +990,17 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_scope_enter(vm);
     if (gen->gen_expr.range) {
         ns_return_value ret_from = ns_eval_expr(vm, ctx, gen->gen_expr.from);
-        if (ns_return_is_error(ret_from)) return ns_return_change_type(void, ret_from);
+        if (ns_return_is_error(ret_from)) {
+            ns_scope_exit(vm);
+            return ns_return_change_type(void, ret_from);
+        }
         ns_value from = ret_from.r;
 
         ns_return_value ret_to = ns_eval_expr(vm, ctx, gen->gen_expr.to);
-        if (ns_return_is_error(ret_to)) return ns_return_change_type(void, ret_to);
+        if (ns_return_is_error(ret_to)) {
+            ns_scope_exit(vm);
+            return ns_return_change_type(void, ret_to);
+        }
         ns_value to = ret_to.r;
 
         ns_str name = gen->gen_expr.name.val;
@@ -1006,8 +1012,13 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         for (i32 g_i = from_i; g_i < to_i; ++g_i) {
             ns_symbol *index = &vm->symbol_stack[ii];
             index->val.i32 = g_i;
+            ns_scope_enter(vm);
             ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->for_stmt.body);
-            if (ns_return_is_error(ret)) return ret;
+            ns_scope_exit(vm);
+            if (ns_return_is_error(ret)) {
+                ns_scope_exit(vm);
+                return ret;
+            }
             if (ns_loop_should_stop(vm)) break; // break or return
         }
     } else {
@@ -1019,10 +1030,11 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_void ns_eval_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
-    ns_scope_enter(vm);
     if (n->loop_stmt.do_first) {
         do {
+            ns_scope_enter(vm);
             ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->loop_stmt.body);
+            ns_scope_exit(vm);
             if (ns_return_is_error(ret)) return ret;
             if (ns_loop_should_stop(vm)) break; // break or return
 
@@ -1036,12 +1048,13 @@ ns_return_void ns_eval_loop_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             if (ns_return_is_error(ret_cond)) return ns_return_change_type(void, ret_cond);
             if (!ns_eval_bool(vm, ret_cond.r)) break;
 
+            ns_scope_enter(vm);
             ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->loop_stmt.body);
+            ns_scope_exit(vm);
             if (ns_return_is_error(ret)) return ret;
             if (ns_loop_should_stop(vm)) break; // break or return
         }
     }
-    ns_scope_exit(vm);
     return ns_return_ok_void;
 }
 
