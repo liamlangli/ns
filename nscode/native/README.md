@@ -88,6 +88,19 @@ Clicking the composer focuses it (typing goes to the input); clicking the
 transcript blurs it. The transcript auto-scrolls to follow new messages and
 the wheel scrolls the history.
 
+### Chat history rail
+
+Each history entry is a single-line row. Titles that exceed the row width are
+cut at the container edge and the last few glyphs fade to transparent instead
+of ending in a hard clip. Hovering a row reveals a `...` menu button at its
+end which opens a per-chat menu:
+
+- **Pin / Unpin** - pins the chat to the top of the list (pinned rows carry a
+  small accent dot; unpinning drops the row below the remaining pinned block).
+- **Archive** - removes the row and counts it under an `ARCHIVED n` label
+  (there is no persistent archive store yet).
+- **Delete** - removes the conversation from the list.
+
 ## Status / known limitations
 
 - The conversation backend is simulated: a running session posts a canned

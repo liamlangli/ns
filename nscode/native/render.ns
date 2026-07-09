@@ -75,6 +75,24 @@ let g_pop_x: f64 = 0.0
 let g_pop_y: f64 = 0.0
 let g_pop_w: f64 = 0.0
 
+// Chat history model: titles and pinned flags live in i32-keyed stores (same
+// string-array workaround as the transcript). Pinned chats stay at the top of
+// the list; archive/delete remove the row (archived rows only keep a counter
+// until a real store exists). The row menu (pin/archive/delete) follows the
+// selector-popup pattern: rects are written while drawing and last frame's
+// menu is resolved against this frame's click.
+let g_chat_title = [i32: str](16)
+let g_chat_pinned = [i32](16)
+let g_chat_count: i32 = 0
+let g_chats_seeded = false
+let g_chat_archived: i32 = 0
+let g_chat_menu_chat: i32 = -1
+let g_chat_menu_x: f64 = 0.0
+let g_chat_menu_y: f64 = 0.0
+let g_chat_menu_w: f64 = 0.0
+let g_chat_menu_btn_x: f64 = 0.0
+let g_chat_menu_btn_y: f64 = 0.0
+
 fn font_px() f64 { return 14.0 }
 fn small_px() f64 { return 12.0 }
 fn title_px() f64 { return 18.0 }
@@ -281,43 +299,111 @@ fn fps_text() str {
     return "FPS " + itos(g_fps_i)
 }
 
+fn chat_cap() i32 { return 16 }
+
 fn chat_title(i: i32) str {
-    if i == 0 {
-        return "Agentic native shell"
-    }
-    if i == 1 {
-        return "Parser diagnostics"
-    }
-    if i == 2 {
-        return "GPU text pass"
-    }
-    return "Diff review"
+    return g_chat_title[i]
 }
 
-fn chat_subtitle(i: i32) str {
-    if i == 0 {
-        return "Design and wire the NSCode layout"
+fn chat_is_pinned(i: i32) bool {
+    if (g_chat_pinned[i] as i32) == 1 {
+        return true
     }
-    if i == 1 {
-        return "Review AST checks for editor modules"
-    }
-    if i == 2 {
-        return "Tighten clipping and glyph metrics"
-    }
-    return "Inspect local changes before commit"
+    return false
 }
 
-fn chat_meta(i: i32) str {
-    if i == 0 {
-        return "now"
+fn chat_add(title: str) {
+    if g_chat_count < chat_cap() {
+        g_chat_title[g_chat_count] = title
+        g_chat_pinned[g_chat_count] = 0
+        g_chat_count = g_chat_count + 1
     }
-    if i == 1 {
-        return "14m"
+}
+
+fn seed_chats() {
+    if g_chats_seeded == false {
+        g_chats_seeded = true
+        chat_add("Agentic native shell layout and wiring")
+        chat_add("Parser diagnostics for editor modules")
+        chat_add("GPU text pass")
+        chat_add("Diff review before commit")
     }
-    if i == 2 {
-        return "1h"
+}
+
+// Move the chat at `from` to `to`, shifting the rows in between; the selection
+// follows the chat it was on.
+fn chat_move(src: i32, dst: i32) {
+    if src != dst {
+        let title = g_chat_title[src]
+        let pinned = g_chat_pinned[src] as i32
+        if src < dst {
+            for i in src to dst {
+                g_chat_title[i] = g_chat_title[i + 1]
+                g_chat_pinned[i] = g_chat_pinned[i + 1]
+            }
+            if g_selected_chat == src {
+                g_selected_chat = dst
+            } else if g_selected_chat > src {
+                if g_selected_chat <= dst {
+                    g_selected_chat = g_selected_chat - 1
+                }
+            }
+        } else {
+            for k in dst to src {
+                let i = src - 1 - (k - dst)
+                g_chat_title[i + 1] = g_chat_title[i]
+                g_chat_pinned[i + 1] = g_chat_pinned[i]
+            }
+            if g_selected_chat == src {
+                g_selected_chat = dst
+            } else if g_selected_chat >= dst {
+                if g_selected_chat < src {
+                    g_selected_chat = g_selected_chat + 1
+                }
+            }
+        }
+        g_chat_title[dst] = title
+        g_chat_pinned[dst] = pinned
     }
-    return "2h"
+}
+
+fn chat_pinned_count() i32 {
+    let n = 0
+    for i in 0 to g_chat_count {
+        if chat_is_pinned(i) {
+            n = n + 1
+        }
+    }
+    return n
+}
+
+// Pin moves the chat to the top of the list; unpin drops it to the first
+// slot below the remaining pinned block.
+fn chat_toggle_pin(idx: i32) {
+    if chat_is_pinned(idx) {
+        g_chat_pinned[idx] = 0
+        chat_move(idx, chat_pinned_count())
+    } else {
+        g_chat_pinned[idx] = 1
+        chat_move(idx, 0)
+    }
+}
+
+fn chat_remove(idx: i32) {
+    for i in idx to g_chat_count - 1 {
+        g_chat_title[i] = g_chat_title[i + 1]
+        g_chat_pinned[i] = g_chat_pinned[i + 1]
+    }
+    g_chat_count = g_chat_count - 1
+    if g_selected_chat > idx {
+        g_selected_chat = g_selected_chat - 1
+    }
+    if g_selected_chat >= g_chat_count {
+        g_selected_chat = g_chat_count - 1
+    }
+    if g_selected_chat < 0 {
+        g_selected_chat = 0
+    }
 }
 
 fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
@@ -362,25 +448,195 @@ fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     }
 }
 
-fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i32) {
-    let hot = hit(v, x, y, w, 74.0)
-    if v.mouse_pressed {
-        if hot {
-            g_selected_chat = idx
+fn chat_row_h() f64 { return 30.0 }
+fn chat_row_stride() f64 { return 36.0 }
+fn chat_rows_top() f64 { return 84.0 }
+fn chat_btn_d() f64 { return 22.0 }
+fn chat_menu_items() i32 { return 3 }
+
+// Text colour with an explicit alpha (col_text is #d7dde5).
+fn col_text_fade(a: f64) u32 {
+    return ui_pack_rgba_floats(0.843, 0.867, 0.898, a)
+}
+
+// Alpha ramp for the trailing glyphs of a truncated row title.
+fn fade_alpha(i: i32) f64 {
+    if i == 0 {
+        return 0.72
+    }
+    if i == 1 {
+        return 0.52
+    }
+    if i == 2 {
+        return 0.32
+    }
+    return 0.14
+}
+
+// One line of mono text that never leaves [x, x+w]: text that fits is drawn
+// as-is, longer text is cut at the container edge and its last glyphs fade
+// out to transparent instead of ending in a hard clip.
+fn draw_faded_text(r: ref ui_renderer, x: f64, y: f64, w: f64, text: str, px: f64) {
+    let char_w = ui_mono_char_width(r, px, FONT_MONO())
+    if char_w <= 0.0 {
+        char_w = px * 0.6
+    }
+    let fit = (w / char_w) as i32
+    if fit > 0 {
+        let n = text.len
+        if n <= fit {
+            ui_draw_text(r, x, y, text, px, col_text(), FONT_MONO())
+        } else {
+            let fade = 4
+            if fade > fit {
+                fade = fit
+            }
+            let solid = fit - fade
+            let head = substr(text, 0, solid)
+            ui_draw_text(r, x, y, head, px, col_text(), FONT_MONO())
+            let gx = x + ui_text_width(r, head, px, FONT_MONO())
+            for i in 0 to fade {
+                ui_draw_text(r, gx, y, substr(text, solid + i, 1), px, col_text_fade(fade_alpha(i)), FONT_MONO())
+                gx = gx + char_w
+            }
         }
     }
-    let selected = false
+}
+
+// One single-line history row: the title truncates with a glyph fade at the
+// container edge, and hovering the row reveals a "..." menu button at its end
+// (pin / archive / delete). Pinned rows carry a small accent dot.
+fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i32) {
+    let rx = x + 10.0
+    let rw = w - 20.0
+    let hot = hit(v, rx, y, rw, chat_row_h())
+    let show_btn = hot
+    if g_chat_menu_chat == idx {
+        show_btn = true
+    }
+
+    let bx = rx + rw - chat_btn_d() - 4.0
+    let by = y + (chat_row_h() - chat_btn_d()) * 0.5
+
+    if v.mouse_pressed {
+        if g_click_used == false {
+            if show_btn {
+                if hit(v, bx, by, chat_btn_d(), chat_btn_d()) {
+                    g_chat_menu_chat = idx
+                    g_chat_menu_btn_x = bx
+                    g_chat_menu_btn_y = by
+                    g_click_used = true
+                }
+            }
+            if g_click_used == false {
+                if hot {
+                    g_selected_chat = idx
+                }
+            }
+        }
+    }
+
     if idx == g_selected_chat {
-        selected = true
-    }
-    if selected {
-        ui_fill_round_rect(r, x + 10.0, y, w - 20.0, 70.0, 4.0, col_surface_hi(), 0.0)
+        ui_fill_round_rect(r, rx, y, rw, chat_row_h(), 4.0, col_surface_hi(), 0.0)
     } else if hot {
-        ui_fill_round_rect(r, x + 10.0, y, w - 20.0, 70.0, 4.0, col_surface(), 0.0)
+        ui_fill_round_rect(r, rx, y, rw, chat_row_h(), 4.0, col_surface(), 0.0)
     }
-    draw_text_clipped(r, x + 24.0, y + 12.0, w - 84.0, 20.0, chat_title(idx), font_px(), col_text())
-    draw_text_clipped(r, x + 24.0, y + 34.0, w - 48.0, 16.0, chat_subtitle(idx), small_px(), col_muted())
-    draw_text_clipped(r, x + w - 44.0, y + 12.0, 34.0, 16.0, chat_meta(idx), small_px(), col_muted())
+
+    let tx = x + 24.0
+    let text_end = rx + rw - 10.0
+    if show_btn {
+        text_end = bx - 6.0
+    }
+    draw_faded_text(r, tx, y + 7.0, text_end - tx, chat_title(idx), font_px())
+    if chat_is_pinned(idx) {
+        ui_fill_circle(r, rx + 6.0, y + chat_row_h() * 0.5, 2.5, col_accent(), 0.5)
+    }
+
+    if show_btn {
+        let bbg = col_surface_hi()
+        if hit(v, bx, by, chat_btn_d(), chat_btn_d()) {
+            bbg = col_line()
+        }
+        ui_fill_round_rect(r, bx, by, chat_btn_d(), chat_btn_d(), 4.0, bbg, 0.0)
+        let dcy = by + chat_btn_d() * 0.5
+        ui_fill_circle(r, bx + 6.0, dcy, 1.5, col_text(), 0.5)
+        ui_fill_circle(r, bx + 11.0, dcy, 1.5, col_text(), 0.5)
+        ui_fill_circle(r, bx + 16.0, dcy, 1.5, col_text(), 0.5)
+    }
+}
+
+fn chat_menu_label(i: i32) str {
+    if i == 0 {
+        if g_chat_menu_chat >= 0 {
+            if chat_is_pinned(g_chat_menu_chat) {
+                return "Unpin"
+            }
+        }
+        return "Pin"
+    }
+    if i == 1 {
+        return "Archive"
+    }
+    return "Delete"
+}
+
+fn chat_menu_action(chat: i32, item: i32) {
+    if item == 0 {
+        chat_toggle_pin(chat)
+    } else if item == 1 {
+        g_chat_archived = g_chat_archived + 1
+        chat_remove(chat)
+    } else {
+        chat_remove(chat)
+    }
+}
+
+// Resolve last frame's chat row menu against this frame's click: an item click
+// runs the action, a click on the anchor button just closes the menu, and any
+// other click dismisses it (without eating the click).
+fn handle_chat_menu_input(v: ref view) {
+    if g_chat_menu_chat >= 0 {
+        if v.mouse_pressed {
+            let mh = 3.0 * pop_item_h()
+            if hit(v, g_chat_menu_x, g_chat_menu_y, g_chat_menu_w, mh) {
+                let idx = ((v.mouse_y - g_chat_menu_y) / pop_item_h()) as i32
+                idx = clamp_i(idx, 0, chat_menu_items() - 1)
+                chat_menu_action(g_chat_menu_chat, idx)
+                g_click_used = true
+            } else if hit(v, g_chat_menu_btn_x, g_chat_menu_btn_y, chat_btn_d(), chat_btn_d()) {
+                g_click_used = true
+            }
+            g_chat_menu_chat = -1
+        }
+    }
+}
+
+// The pin/archive/delete menu anchored to a row's "..." button, right-aligned
+// inside the history rail. Drawn after the rows so it floats above them.
+fn draw_chat_menu(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    let mw = 112.0
+    let mh = 3.0 * pop_item_h() + 12.0
+    let px = x + w - mw - 12.0
+    let py = g_chat_menu_btn_y + chat_btn_d() + 4.0
+    if (py + mh) > (y + h - 8.0) {
+        py = g_chat_menu_btn_y - mh - 4.0
+    }
+    g_chat_menu_x = px
+    g_chat_menu_y = py + 6.0
+    g_chat_menu_w = mw
+    ui_fill_round_rect(r, px, py, mw, mh, 8.0, col_surface(), 0.0)
+    ui_stroke_round_rect(r, px, py, mw, mh, 8.0, 1.0, col_line(), 0.0)
+    for i in 0 to chat_menu_items() {
+        let iy = py + 6.0 + (i as f64) * pop_item_h()
+        if hit(v, px, iy, mw, pop_item_h()) {
+            ui_fill_rect(r, px + 4.0, iy, mw - 8.0, pop_item_h(), col_surface_hi(), 0.0)
+        }
+        let fg = col_text()
+        if i == 2 {
+            fg = col_red()
+        }
+        ui_draw_text(r, px + 14.0, iy + 6.0, chat_menu_label(i), small_px(), fg, FONT_MONO())
+    }
 }
 
 fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
@@ -390,16 +646,24 @@ fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     draw_text_clipped(r, x + 18.0, y + 18.0, w - 36.0, 24.0, "NSCode Agent", title_px(), col_text())
     draw_label(r, x + 18.0, y + 48.0, "CHAT HISTORY")
     draw_rule(r, x + 18.0, y + 72.0, w - 36.0)
-    for i in 0 to 4 {
-        draw_chat_row(r, v, x, y + 90.0 + (i as f64) * 82.0, w, i)
+    let row_y = y + chat_rows_top()
+    for i in 0 to g_chat_count {
+        draw_chat_row(r, v, x, row_y, w, i)
+        row_y = row_y + chat_row_stride()
+    }
+    if g_chat_archived > 0 {
+        draw_label(r, x + 18.0, row_y + 8.0, "ARCHIVED " + itos(g_chat_archived))
     }
     let foot_y = y + h - 86.0
-    if foot_y > (y + 440.0) {
+    if foot_y > (row_y + 60.0) {
         ui_fill_round_rect(r, x + 14.0, foot_y, w - 28.0, 62.0, 4.0, col_surface(), 0.0)
         draw_label(r, x + 28.0, foot_y + 13.0, "WORKSPACE")
         draw_text_clipped(r, x + 28.0, foot_y + 34.0, w - 56.0, 16.0, "/Users/demi/os/ns", small_px(), col_accent())
     }
     ui_pop_clip(r)
+    if g_chat_menu_chat >= 0 {
+        draw_chat_menu(r, v, x, y, w, h)
+    }
 }
 
 // ---- agent session model ----------------------------------------------------
@@ -1368,9 +1632,11 @@ fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let app_h = h - status_h
     let history_w = history_width(w)
 
+    seed_chats()
     seed_conversation()
     update_session()
     handle_popup_input(v)
+    handle_chat_menu_input(v)
     process_composer_keys(v)
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)

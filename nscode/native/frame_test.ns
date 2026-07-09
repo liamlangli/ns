@@ -257,6 +257,59 @@ fn main() {
     check("agent reply lands", g_msg_count == 8)
     check("session returns to ready", g_running == false)
 
+    // ---- chat history: single-line rows with a hover row menu --------------
+    // Geometry mirrored from render.ns at w=1024 (history rail 276 wide): rows
+    // start at y=84 with a 36px stride and 30px height; the "..." button sits
+    // at x 240..262 in the row, the menu items at g_chat_menu_x/y after open.
+    reset_clicks()
+    check("history is seeded", g_chat_count == 4)
+    check("first chat starts selected", g_selected_chat == 0)
+
+    // Clicking a row body selects it.
+    click(r, v, 100.0, 171.0)
+    check("row click selects chat", g_selected_chat == 2)
+
+    // Clicking the row-end menu button opens the row menu instead of selecting.
+    click(r, v, 251.0, 171.0)
+    check("row menu button opens menu", g_chat_menu_chat == 2)
+    check("menu rect is measured", g_chat_menu_w > 0.0)
+
+    // Pin moves the chat to the top and the selection follows it.
+    click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + 13.0)
+    check("pin closes the menu", g_chat_menu_chat == -1)
+    check_s("pin moves chat to top", chat_title(0), "GPU text pass")
+    check("pinned flag is set", chat_is_pinned(0))
+    check("selection follows the pinned chat", g_selected_chat == 0)
+
+    // Unpin clears the flag; with no other pinned chats the row stays first.
+    click(r, v, 251.0, 99.0)
+    check("menu opens on the pinned row", g_chat_menu_chat == 0)
+    click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + 13.0)
+    check("unpin clears the flag", chat_is_pinned(0) == false)
+    check_s("unpinned chat keeps its slot", chat_title(0), "GPU text pass")
+
+    // Archive removes the row and bumps the archived counter.
+    click(r, v, 251.0, 135.0)
+    check("menu opens on second row", g_chat_menu_chat == 1)
+    click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + pop_item_h() + 13.0)
+    check("archive removes the row", g_chat_count == 3)
+    check("archive bumps the counter", g_chat_archived == 1)
+    check_s("later rows shift up on archive", chat_title(1), "Parser diagnostics for editor modules")
+
+    // Delete removes the row without touching the archive counter.
+    click(r, v, 251.0, 135.0)
+    click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + pop_item_h() * 2.0 + 13.0)
+    check("delete removes the row", g_chat_count == 2)
+    check("delete leaves the archive counter", g_chat_archived == 1)
+    check_s("last chat survives", chat_title(1), "Diff review before commit")
+
+    // A click outside the open menu dismisses it without acting.
+    click(r, v, 251.0, 99.0)
+    check("menu reopens on first row", g_chat_menu_chat == 0)
+    click(r, v, 600.0, 300.0)
+    check("outside click closes the menu", g_chat_menu_chat == -1)
+    check("outside click removes nothing", g_chat_count == 2)
+
     if g_fail == 0 {
         print("frame_test: all passed" + unescape("\n"))
     } else {
