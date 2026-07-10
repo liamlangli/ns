@@ -47,16 +47,31 @@ The window titlebar, platform window controls, and drag behavior are native.
 The Code/Agent switch is rendered inside the app content below that native
 chrome.
 
+### File explorer (Code mode)
+
+Code mode includes a left-hand TreeView backed by a live scan of
+`nscode/native`. The workspace root and nested folders can be expanded or
+collapsed, rows highlight on hover, and the active file is marked with an
+accent edge. Clicking a text file opens it in the editor; binary assets remain
+visible but muted. Each opened file keeps its own in-memory text buffer,
+selection, cursor, horizontal offset, and vertical scroll position, so unsaved
+edits survive file switches. Dirty files show a yellow dot in the tree and an
+asterisk on the editor tab.
+
 ## Files
 
 - `main.ns` - entry point: seeds the editor model, creates the window, requests
   the GPU device, creates the UI renderer, and installs Nano Script callbacks.
 - `render.ns` - active app renderer. It owns the agent shell, code view, mode
-  switch, mouse/keyboard editor input, and pane scroll state.
+  switch, TreeView, mouse/keyboard editor input, and pane scroll state.
+- `workspace.ns` - filesystem snapshot and multi-file buffer state used by the
+  Code view.
 - `editor.ns` - text document model used by the code view: text buffer, caret,
   selection, syntax tokenizer, and typed-key character mapping.
 - `editor_test.ns` - headless tests for the document model (runs anywhere:
   `bin/ns run nscode/native/editor_test.ns`).
+- `workspace_test.ns` - headless tests for directory discovery, file switching,
+  and preservation of unsaved buffers.
 - `frame_test.ns` - headless interaction tests that drive render.ns frame by
   frame through the no-op Linux view backend
   (`bin/ns run nscode/native/frame_test.ns`).

@@ -155,7 +155,7 @@ fn test_key_char() {
     check_s("non printable", key_char(262, false), "")
 }
 
-fn main() {
+fn main() i32 {
     test_place_cursor()
     test_click_selection()
     test_word_line_selection()
@@ -168,4 +168,5 @@ fn main() {
         print("editor_test: " + itos(g_fail) + " FAILED" + unescape("\n"))
     }
     assert g_fail == 0
+    return g_fail
 }

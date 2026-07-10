@@ -144,7 +144,7 @@ NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 # Native feature modules (lib/*) are compiled position-independent and built as
 # dylibs/so files. Keep them out of bin/ns so the interpreter remains
 # language-only; ref fn calls resolve them through dlopen()/dlsym().
-NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/ui.c
+NS_LIBFN_SRCS = lib/src/io.c lib/src/fs.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/ui.c
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c
 else ifeq ($(NS_OS), $(NS_DARWIN))

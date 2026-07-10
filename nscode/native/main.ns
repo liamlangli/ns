@@ -23,6 +23,7 @@ use view
 use gpu
 use ui
 use editor
+use workspace
 use render
 
 fn seed_document() {
@@ -36,6 +37,7 @@ fn seed_document() {
 
 fn main() {
     seed_document()
+    workspace_init()
 
     let v = view_create("NSCode Native", 1024, 768)
 

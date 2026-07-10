@@ -14,6 +14,8 @@ use view
 use gpu
 use ui
 use editor
+use workspace
+use fs
 use render
 
 let g_fail = 0
@@ -63,10 +65,10 @@ fn tap(r: ref ui_renderer, v: ref view, k: i32) {
     frame(r, v)
 }
 
-// Geometry mirrored from render.ns: native titlebar, tab strip 42px, gutter
-// 72px + 16px text inset, 24px line height, first row baseline offset 22px.
+// Geometry mirrored from render.ns: file tree, tab strip 42px, gutter 72px +
+// 16px text inset, 24px line height, first row top 18px below the tab strip.
 fn body_y() f64 { return 42.0 }
-fn text_x() f64 { return 88.0 }
+fn text_x() f64 { return file_tree_width(1024.0) + 88.0 }
 fn line_h() f64 { return 24.0 }
 
 fn row_mid_y(li: i32) f64 {
@@ -75,6 +77,19 @@ fn row_mid_y(li: i32) f64 {
 
 fn col_x(char_w: f64, col: i32) f64 {
     return text_x() + (col as f64) * char_w + 1.0
+}
+
+fn tree_entry_mid_y(index: i32) f64 {
+    let yy: f64 = 72.0 + tree_row_h() * 0.5
+    for i in 0 to g_workspace_count {
+        if workspace_entry_visible(i) {
+            if i == index {
+                return yy
+            }
+            yy = yy + tree_row_h()
+        }
+    }
+    return -1.0
 }
 
 // Frames run far faster than the 0.45s multi-click window, so successive test
@@ -86,7 +101,8 @@ fn reset_clicks() {
     g_click_streak = 0
 }
 
-fn main() {
+fn main() i32 {
+    workspace_init()
     load_str(unescape("fn main() {\n    let count = 42\n    print(count)\n}\n"))
 
     let v = view_create("frame test", 1024, 768)
@@ -172,6 +188,21 @@ fn main() {
     tap(r, v, 65)
     view_on_key_action(v, 341, 1)
     check("ctrl+a selects all", selected_text() == g_doc)
+
+    // ---- workspace tree: collapse and buffered file switching -------------
+    let editor_index = workspace_find("editor.ns")
+    check("tree discovers editor.ns", editor_index >= 0)
+    click(r, v, 100.0, 57.0)
+    check("root row collapses the tree", g_workspace_root_expanded == false)
+    click(r, v, 100.0, 57.0)
+    check("root row expands the tree", g_workspace_root_expanded)
+    click(r, v, 100.0, tree_entry_mid_y(editor_index))
+    check("file row switches active buffer", g_workspace_active == editor_index)
+    check("switched file has source", g_doc.len > 0)
+    let main_index = workspace_find("main.ns")
+    click(r, v, 100.0, tree_entry_mid_y(main_index))
+    check("tree switches back to main", g_workspace_active == main_index)
+    check("main's edited buffer survives", line_count() == 6)
 
     // ---- agent mode: codex-style composer ----------------------------------
     // Sessions would otherwise auto-complete after g_reply_delay seconds; park
@@ -316,4 +347,5 @@ fn main() {
         print("frame_test: " + itos(g_fail) + " FAILED" + unescape("\n"))
     }
     assert g_fail == 0
+    return g_fail
 }

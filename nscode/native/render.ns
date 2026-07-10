@@ -6,6 +6,8 @@
 use view
 use ui
 use editor
+use workspace
+use fs
 use os
 use std
 
@@ -17,6 +19,8 @@ let g_mode: i32 = 1
 let g_selected_chat: i32 = 0
 let g_dialog_scroll: f64 = 0.0
 let g_code_scroll: f64 = 0.0
+let g_tree_scroll: f64 = 0.0
+let g_file_scroll = [f64](2048)
 let g_last_frame_time: f64 = 0.0
 let g_fps: f64 = 0.0
 let g_fps_i: i32 = 0
@@ -215,20 +219,15 @@ fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: s
     }
 }
 
+// Text y that centers the visible glyphs of one `px` line in the (y, h) band.
+fn text_center_y(r: ref ui_renderer, y: f64, h: f64, px: f64) f64 {
+    return ui_text_v_center_y(r, y, h, px, FONT_MONO())
+}
+
 fn draw_pill(r: ref ui_renderer, x: f64, y: f64, text: str, bg: u32, fg: u32) {
     let tw = ui_text_width(r, text, small_px(), FONT_MONO())
     ui_fill_round_rect(r, x, y, tw + 16.0, 22.0, 4.0, bg, 0.0)
-    ui_draw_text(r, x + 8.0, y + 6.0, text, small_px(), fg, FONT_MONO())
-}
-
-fn layout_center_v(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64) ui_rect {
-    return ui_rect { x: x, y: y + (h - child_h) * 0.5, w: child_w, h: child_h }
-}
-
-fn text_box_h() f64 { return 16.0 }
-
-fn text_box_y(rect: ui_rect) f64 {
-    return rect.y - 1.0
+    ui_draw_text(r, x + 8.0, text_center_y(r, y, 22.0, small_px()), text, small_px(), fg, FONT_MONO())
 }
 
 fn draw_centered_text(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, px: f64, color: u32) {
@@ -443,8 +442,8 @@ fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     if badge_x > x {
         ui_fill_rect(r, badge_x, badge_y, badge_w, badge_h, col_accent(), 0.0)
         ui_fill_rect(r, badge_x + 2.0, badge_y + 2.0, badge_w - 4.0, badge_h - 4.0, col_bg(), 0.0)
-        let label = layout_center_v(badge_x + 10.0, badge_y, badge_w - 20.0, badge_h, badge_w - 20.0, text_box_h())
-        draw_text_clipped(r, label.x, text_box_y(label), label.w, label.h, text, small_px(), col_accent())
+        let ty = text_center_y(r, badge_y, badge_h, small_px())
+        draw_text_clipped(r, badge_x + 10.0, ty, badge_w - 20.0, 16.0, text, small_px(), col_accent())
     }
 }
 
@@ -547,7 +546,7 @@ fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i
     if show_btn {
         text_end = bx - 6.0
     }
-    draw_faded_text(r, tx, y + 7.0, text_end - tx, chat_title(idx), font_px())
+    draw_faded_text(r, tx, text_center_y(r, y, chat_row_h(), font_px()), text_end - tx, chat_title(idx), font_px())
     if chat_is_pinned(idx) {
         ui_fill_circle(r, rx + 6.0, y + chat_row_h() * 0.5, 2.5, col_accent(), 0.5)
     }
@@ -635,7 +634,7 @@ fn draw_chat_menu(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
         if i == 2 {
             fg = col_red()
         }
-        ui_draw_text(r, px + 14.0, iy + 6.0, chat_menu_label(i), small_px(), fg, FONT_MONO())
+        ui_draw_text(r, px + 14.0, text_center_y(r, iy, pop_item_h(), small_px()), chat_menu_label(i), small_px(), fg, FONT_MONO())
     }
 }
 
@@ -1021,7 +1020,7 @@ fn draw_popup(r: ref ui_renderer, v: ref view) {
             fg = col_accent()
             ui_fill_circle(r, px + 12.0, iy + pop_item_h() * 0.5, 3.0, col_accent(), 0.5)
         }
-        ui_draw_text(r, px + 24.0, iy + 6.0, pop_label(i), small_px(), fg, FONT_MONO())
+        ui_draw_text(r, px + 24.0, text_center_y(r, iy, pop_item_h(), small_px()), pop_label(i), small_px(), fg, FONT_MONO())
     }
 }
 
@@ -1036,7 +1035,7 @@ fn draw_selector(r: ref ui_renderer, v: ref view, x: f64, y: f64, text: str, kin
     }
     let bw = tw + 34.0
     ui_fill_round_rect(r, x, y, bw, ctl_h(), 13.0, col_surface_hi(), 0.0)
-    ui_draw_text(r, x + 12.0, y + 6.0, text, small_px(), col_text(), FONT_MONO())
+    ui_draw_text(r, x + 12.0, text_center_y(r, y, ctl_h(), small_px()), text, small_px(), col_text(), FONT_MONO())
     let t_x = x + bw - 16.0
     let t_y = y + 11.0
     ui_fill_triangle(r, t_x, t_y, t_x + 8.0, t_y, t_x + 4.0, t_y + 5.0, col_muted(), 0.0)
@@ -1097,7 +1096,7 @@ fn draw_composer(r: ref ui_renderer, v: ref view, char_w: f64, cols: i32, shown_
             }
             let chip_w = tw + 34.0
             ui_fill_round_rect(r, cx, cy, chip_w, 24.0, 12.0, col_surface_hi(), 0.0)
-            ui_draw_text(r, cx + 10.0, cy + 5.0, name, small_px(), col_text(), FONT_MONO())
+            ui_draw_text(r, cx + 10.0, text_center_y(r, cy, 24.0, small_px()), name, small_px(), col_text(), FONT_MONO())
             let rx = cx + chip_w - 18.0
             ui_stroke_line(r, rx, cy + 8.0, rx + 8.0, cy + 16.0, 1.0, col_muted(), 0.0)
             ui_stroke_line(r, rx, cy + 16.0, rx + 8.0, cy + 8.0, 1.0, col_muted(), 0.0)
@@ -1118,11 +1117,12 @@ fn draw_composer(r: ref ui_renderer, v: ref view, char_w: f64, cols: i32, shown_
     let input_y = y + 10.0 + chips_h
     let input_h = shown_f * input_line_h()
     ui_push_clip(r, input_x, input_y, w - pad * 2.0, input_h)
+    let input_ty = text_center_y(r, input_y, input_line_h(), font_px())
     if g_input_text == "" {
-        ui_draw_text(r, input_x, input_y + 2.0, "Describe a task for the agent", font_px(), col_muted(), FONT_MONO())
+        ui_draw_text(r, input_x, input_ty, "Describe a task for the agent", font_px(), col_muted(), FONT_MONO())
     } else {
         let skip_h = (total_f - shown_f) * input_line_h()
-        draw_wrapped(r, input_x, input_y + 2.0 - skip_h, g_input_text, cols, font_px(), col_text(), input_line_h())
+        draw_wrapped(r, input_x, input_ty - skip_h, g_input_text, cols, font_px(), col_text(), input_line_h())
     }
     if g_input_focus {
         let blink = ((os_time() * 2.0) as i32) % 2
@@ -1237,11 +1237,12 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
     g_cmp_h = cmp_h
 
     ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
-    draw_text_clipped(r, x + 24.0, y + 15.0, w - 190.0, 24.0, "Agent Session", title_px(), col_text())
+    draw_text_clipped(r, x + 24.0, text_center_y(r, y, header_h, title_px()), w - 190.0, 24.0, "Agent Session", title_px(), col_text())
+    let pill_y = y + (header_h - 22.0) * 0.5
     if g_running {
-        draw_pill(r, x + w - 118.0, y + 14.0, "running", col_surface(), col_yellow())
+        draw_pill(r, x + w - 118.0, pill_y, "running", col_surface(), col_yellow())
     } else {
-        draw_pill(r, x + w - 118.0, y + 14.0, "ready", col_surface(), col_accent())
+        draw_pill(r, x + w - 118.0, pill_y, "ready", col_surface(), col_accent())
     }
     draw_rule(r, x, y + header_h, w)
 
@@ -1272,7 +1273,7 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
             yy = yy + bh + 14.0
         } else if role == ROLE_AGENT() {
             ui_fill_circle(r, col_x + 5.0, yy + 11.0, 4.0, col_accent(), 0.5)
-            draw_label(r, col_x + 18.0, yy + 4.0, "NSCODE")
+            draw_label(r, col_x + 18.0, text_center_y(r, yy, 22.0, small_px()), "NSCODE")
             let th = draw_wrapped(r, col_x + 18.0, yy + 26.0, text, msg_cols, font_px(), col_text(), input_line_h())
             yy = yy + th + 40.0
         } else {
@@ -1287,7 +1288,7 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
         for d in 0 to dots {
             label = label + "."
         }
-        draw_text_clipped(r, col_x + 18.0, yy + 4.0, 200.0, 16.0, label, small_px(), col_yellow())
+        draw_text_clipped(r, col_x + 18.0, text_center_y(r, yy, 22.0, small_px()), 200.0, 16.0, label, small_px(), col_yellow())
         yy = yy + 30.0
     }
     ui_pop_clip(r)
@@ -1306,10 +1307,11 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
 
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     ui_fill_rect(r, x, y, w, 28.0, col_accent(), 0.0)
-    ui_draw_text(r, x + 14.0, y + 8.0, "nscode/native", small_px(), col_bg(), FONT_MONO())
+    let ty = text_center_y(r, y, 28.0, small_px())
+    ui_draw_text(r, x + 14.0, ty, "nscode/native", small_px(), col_bg(), FONT_MONO())
     if w > 620.0 {
-        ui_draw_text(r, x + w - 390.0, y + 8.0, "UI kernel in C, editor in NS", small_px(), col_bg(), FONT_MONO())
-        ui_draw_text(r, x + w - 120.0, y + 8.0, fps_text(), small_px(), col_bg(), FONT_MONO())
+        ui_draw_text(r, x + w - 390.0, ty, "UI kernel in C, editor in NS", small_px(), col_bg(), FONT_MONO())
+        ui_draw_text(r, x + w - 120.0, ty, fps_text(), small_px(), col_bg(), FONT_MONO())
     }
 }
 
@@ -1514,6 +1516,146 @@ fn draw_code_line(r: ref ui_renderer, li: i32, text_x: f64, row_y: f64, char_w: 
     }
 }
 
+fn file_tree_width(w: f64) f64 {
+    if w < 700.0 {
+        return 176.0
+    }
+    if w < 900.0 {
+        return 208.0
+    }
+    return 244.0
+}
+
+fn tree_row_h() f64 { return 26.0 }
+
+fn workspace_visible_height() f64 {
+    let height: f64 = 0.0
+    if g_workspace_root_expanded {
+        for i in 0 to g_workspace_count {
+            if workspace_entry_visible(i) {
+                height = height + tree_row_h()
+            }
+        }
+    }
+    return height
+}
+
+fn activate_workspace_file(index: i32) {
+    let previous = g_workspace_active
+    if previous >= 0 {
+        g_file_scroll[previous] = g_code_scroll
+    }
+    if workspace_open(index) {
+        g_code_scroll = g_file_scroll[index]
+        g_caret_follow = true
+        g_code_drag = false
+        g_last_click_line = -1
+        g_click_streak = 0
+    }
+}
+
+fn draw_tree_arrow(r: ref ui_renderer, x: f64, y: f64, expanded: bool, color: u32) {
+    if expanded {
+        ui_fill_triangle(r, x, y + 3.0, x + 8.0, y + 3.0, x + 4.0, y + 8.0, color, 0.0)
+    } else {
+        ui_fill_triangle(r, x + 2.0, y + 1.0, x + 2.0, y + 9.0, x + 7.0, y + 5.0, color, 0.0)
+    }
+}
+
+fn draw_tree_folder_icon(r: ref ui_renderer, x: f64, y: f64, color: u32) {
+    ui_fill_rect(r, x + 1.0, y + 2.0, 6.0, 3.0, color, 0.0)
+    ui_stroke_rect(r, x, y + 4.0, 14.0, 10.0, 1.0, color, 0.0)
+}
+
+fn draw_tree_file_icon(r: ref ui_renderer, x: f64, y: f64, color: u32) {
+    ui_stroke_rect(r, x + 2.0, y + 1.0, 10.0, 14.0, 1.0, color, 0.0)
+    ui_stroke_line(r, x + 5.0, y + 6.0, x + 10.0, y + 6.0, 1.0, color, 0.0)
+    ui_stroke_line(r, x + 5.0, y + 9.0, x + 10.0, y + 9.0, 1.0, color, 0.0)
+}
+
+fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    let header_h = 42.0
+    let root_h = 30.0
+    let list_y = y + header_h + root_h
+    let list_h = h - header_h - root_h
+
+    ui_fill_rect(r, x, y, w, h, col_editor_panel(), 0.0)
+    ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_line(), 0.0)
+    draw_text_clipped(r, x + 14.0, text_center_y(r, y, header_h, small_px()), w - 28.0, 16.0, "EXPLORER", small_px(), col_muted())
+    ui_fill_rect(r, x, y + header_h - 1.0, w, 1.0, col_line(), 0.0)
+
+    let root_hover = hit(v, x, y + header_h, w, root_h)
+    if root_hover {
+        ui_fill_rect(r, x, y + header_h, w - 1.0, root_h, col_editor_panel_hi(), 0.0)
+    }
+    draw_tree_arrow(r, x + 12.0, y + header_h + 10.0, g_workspace_root_expanded, col_text())
+    draw_tree_folder_icon(r, x + 28.0, y + header_h + 7.0, col_accent())
+    draw_text_clipped(r, x + 50.0, text_center_y(r, y + header_h, root_h, small_px()), w - 60.0, 16.0, "nscode/native", small_px(), col_text())
+    if v.mouse_pressed {
+        if root_hover {
+            g_workspace_root_expanded = g_workspace_root_expanded == false
+        }
+    }
+
+    let content_h = workspace_visible_height()
+    let max_scroll = scroll_max(content_h, list_h)
+    if hit(v, x, list_y, w, list_h) {
+        g_tree_scroll = clamp(g_tree_scroll - v.scroll_y, 0.0, max_scroll)
+    }
+    g_tree_scroll = clamp(g_tree_scroll, 0.0, max_scroll)
+
+    ui_push_clip(r, x, list_y, w - 1.0, list_h)
+    let row_y = list_y - g_tree_scroll
+    for i in 0 to g_workspace_count {
+        if workspace_entry_visible(i) {
+            if row_y + tree_row_h() >= list_y {
+                if row_y <= list_y + list_h {
+                    let hovered = hit(v, x, row_y, w - 1.0, tree_row_h())
+                    if i == g_workspace_active {
+                        ui_fill_rect(r, x, row_y, w - 1.0, tree_row_h(), col_editor_panel_hi(), 0.0)
+                        ui_fill_rect(r, x, row_y, 2.0, tree_row_h(), col_accent(), 0.0)
+                    } else if hovered {
+                        ui_fill_rect(r, x, row_y, w - 1.0, tree_row_h(), col_surface_hi(), 0.0)
+                    }
+
+                    let depth = fs_entry_depth(i) & 255
+                    let depth_f: f64 = 0.0
+                    loop depth > 0 {
+                        depth_f = depth_f + 1.0
+                        depth = depth - 1
+                    }
+                    let indent = x + 14.0 + depth_f * 16.0
+                    let icon_color = col_blue()
+                    if workspace_entry_editable(i) == false {
+                        icon_color = col_muted()
+                    }
+                    if fs_entry_is_dir(i) != 0 {
+                        draw_tree_arrow(r, indent, row_y + 8.0, workspace_entry_expanded(i), col_muted())
+                        draw_tree_folder_icon(r, indent + 15.0, row_y + 6.0, col_blue())
+                    } else {
+                        draw_tree_file_icon(r, indent + 15.0, row_y + 5.0, icon_color)
+                    }
+                    draw_text_clipped(r, indent + 38.0, text_center_y(r, row_y, tree_row_h(), small_px()), w - (indent - x) - 54.0, 16.0, fs_entry_name(i), small_px(), icon_color)
+                    if workspace_entry_dirty(i) {
+                        ui_fill_circle(r, x + w - 12.0, row_y + tree_row_h() * 0.5, 3.0, col_yellow(), 0.0)
+                    }
+                    if v.mouse_pressed {
+                        if hovered {
+                            if fs_entry_is_dir(i) != 0 {
+                                workspace_toggle_entry(i)
+                            } else {
+                                activate_workspace_file(i)
+                            }
+                        }
+                    }
+                }
+            }
+            row_y = row_y + tree_row_h()
+        }
+    }
+    ui_pop_clip(r)
+}
+
 fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let tab_h = 42.0
     let line_h = 24.0
@@ -1545,16 +1687,31 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     ui_fill_rect(r, x, y, w, h, col_editor_bg(), 0.0)
     ui_fill_rect(r, x, y, w, tab_h, col_editor_panel(), 0.0)
     ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_line(), 0.0)
-    ui_fill_round_rect(r, x + 14.0, y + 9.0, 156.0, 32.0, 4.0, col_editor_panel_hi(), 0.0)
-    draw_text_clipped(r, x + 30.0, y + 18.0, 130.0, 16.0, "main.ns", small_px(), col_text())
+    let tab_name = "untitled"
+    if g_workspace_active >= 0 {
+        tab_name = fs_entry_name(g_workspace_active)
+    }
+    if workspace_entry_dirty(g_workspace_active) {
+        tab_name = tab_name + " *"
+    }
+    let tab_w = ui_text_width(r, tab_name, small_px(), FONT_MONO()) + 48.0
+    if tab_w < 132.0 {
+        tab_w = 132.0
+    }
+    if tab_w > 240.0 {
+        tab_w = 240.0
+    }
+    ui_fill_round_rect(r, x + 14.0, y + 9.0, tab_w, 32.0, 4.0, col_editor_panel_hi(), 0.0)
+    draw_tree_file_icon(r, x + 26.0, y + 16.0, col_blue())
+    draw_text_clipped(r, x + 48.0, text_center_y(r, y + 9.0, 32.0, small_px()), tab_w - 42.0, 16.0, tab_name, small_px(), col_text())
 
     ui_fill_rect(r, x, body_y, gutter_w, body_h, col_editor_gutter(), 0.0)
     ui_fill_rect(r, x + gutter_w - 1.0, body_y, 1.0, body_h, col_line(), 0.0)
-    let first = ((g_code_scroll - 22.0 - line_h) / line_h) as i32
+    let first = ((g_code_scroll - 18.0 - line_h) / line_h) as i32
     if first < 0 {
         first = 0
     }
-    let last = ((g_code_scroll + body_h - 22.0) / line_h) as i32 + 2
+    let last = ((g_code_scroll + body_h - 18.0) / line_h) as i32 + 2
     if last > total {
         last = total
     }
@@ -1564,11 +1721,13 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     let selected = has_selection()
     ui_push_clip(r, x, body_y, w, body_h)
     for i in first to last {
-        let row_y = body_y + 22.0 + (i as f64) * line_h - g_code_scroll
-        if row_y + line_h >= body_y {
-            if row_y <= body_y + body_h {
+        // Row rect (row_top, line_h) matches the mouse_line hit mapping; the
+        // text y inside it comes from text_center_y so the glyphs sit mid-row.
+        let row_top = body_y + 18.0 + (i as f64) * line_h - g_code_scroll
+        if row_top + line_h >= body_y {
+            if row_top <= body_y + body_h {
                 if i == cursor_line {
-                    ui_fill_rect(r, x + gutter_w, row_y - 4.0, w - gutter_w, line_h, col_editor_panel(), 0.0)
+                    ui_fill_rect(r, x + gutter_w, row_top, w - gutter_w, line_h, col_editor_panel(), 0.0)
                 }
                 if selected {
                     let sb = line_sel_begin(i)
@@ -1586,7 +1745,7 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
                         if ee > ss {
                             let sel_x = text_x + ((ss - g_coloff) as f64) * char_w
                             let sel_w = ((ee - ss) as f64) * char_w
-                            ui_fill_rect(r, sel_x, row_y - 4.0, sel_w, line_h, col_editor_sel(), 0.0)
+                            ui_fill_rect(r, sel_x, row_top, sel_w, line_h, col_editor_sel(), 0.0)
                         }
                     }
                 }
@@ -1594,14 +1753,14 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
                 if i == cursor_line {
                     num_color = col_text()
                 }
-                draw_text_clipped(r, x + 20.0, row_y, 34.0, 18.0, itos(i + 1), small_px(), num_color)
-                draw_code_line(r, i, text_x, row_y, char_w, g_coloff, visible_cols)
+                draw_text_clipped(r, x + 20.0, text_center_y(r, row_top, line_h, small_px()), 34.0, 18.0, itos(i + 1), small_px(), num_color)
+                draw_code_line(r, i, text_x, text_center_y(r, row_top, line_h, font_px()), char_w, g_coloff, visible_cols)
             }
         }
     }
     let cursor_x = text_x + ((cursor_col - g_coloff) as f64) * char_w
-    let cursor_y = body_y + 22.0 + (cursor_line as f64) * line_h - g_code_scroll
-    ui_fill_rect(r, cursor_x, cursor_y - 2.0, 2.0, 20.0, col_editor_cursor(), 0.0)
+    let cursor_top = body_y + 18.0 + (cursor_line as f64) * line_h - g_code_scroll
+    ui_fill_rect(r, cursor_x, cursor_top + 2.0, 2.0, line_h - 4.0, col_editor_cursor(), 0.0)
     ui_pop_clip(r)
 }
 
@@ -1609,9 +1768,11 @@ fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let status_h = 28.0
     let app_y = 0.0
     let app_h = h - status_h
+    let tree_w = file_tree_width(w)
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_editor_bg(), 0.0)
-    draw_code_editor(r, v, 0.0, app_y, w, app_h)
+    draw_file_tree(r, v, 0.0, app_y, tree_w, app_h)
+    draw_code_editor(r, v, tree_w, app_y, w - tree_w, app_h)
     draw_mode_switch(r, v, mode_switch_x(w), mode_switch_y(), 150.0, 28.0)
     draw_status_bar(r, 0.0, h - status_h, w)
 }

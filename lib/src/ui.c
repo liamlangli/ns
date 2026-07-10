@@ -99,6 +99,7 @@ typedef struct ui_font {
     f64 font_size;
     f64 line_height;
     f64 baseline;
+    f64 cap_top;
 } ui_font;
 
 typedef struct ui_renderer {
@@ -263,13 +264,18 @@ static ui_glyph *ui_font_glyph(ui_font *font, i32 code) {
     return NULL;
 }
 
-static f64 ui_detect_baseline(ui_font *font) {
+static void ui_detect_cap_metrics(ui_font *font) {
     static const i32 refs[] = {72, 77, 78, 73, 76, 69, 88, 84};
     for (u32 i = 0; i < sizeof(refs) / sizeof(refs[0]); i++) {
         ui_glyph *g = ui_font_glyph(font, refs[i]);
-        if (g && g->height > 0) return g->y_offset + g->height;
+        if (g && g->height > 0) {
+            font->cap_top = g->y_offset;
+            font->baseline = g->y_offset + g->height;
+            return;
+        }
     }
-    return round(font->font_size * 0.8);
+    font->cap_top = round(font->font_size * 0.1);
+    font->baseline = round(font->font_size * 0.8);
 }
 
 static ns_bool ui_load_font_face(char *json, const char *face_name, i32 tex_w, i32 tex_h, ui_font *font) {
@@ -315,7 +321,7 @@ static ns_bool ui_load_font_face(char *json, const char *face_name, i32 tex_w, i
     }
 
     qsort(font->glyphs, (size_t)font->glyph_count, sizeof(ui_glyph), ui_glyph_cmp);
-    font->baseline = ui_detect_baseline(font);
+    ui_detect_cap_metrics(font);
     return true;
 }
 
@@ -1042,8 +1048,14 @@ f64 ui_text_line_height(ui_renderer *r, f64 font_px, i32 font_type) {
 }
 
 f64 ui_text_v_center_y(ui_renderer *r, f64 y, f64 h, f64 font_px, i32 font_type) {
-    f64 line_h = ui_text_line_height(r, font_px, font_type);
-    return y + (h - line_h) * 0.5 - font_px * 0.03;
+    if (!r) return y + (h - font_px) * 0.5;
+    ui_font *font = &r->fonts[(font_type == UI_FONT_MONO) ? UI_FONT_MONO : UI_FONT_MAIN];
+    if (font->font_size <= 0.0) return y + (h - font_px) * 0.5;
+    // ui_draw_text takes the top of the line box, whose glyphs sit below
+    // center (the box reserves room for descenders and line gap). Return the
+    // top that centers the cap band (cap top .. baseline) in the rect instead,
+    // so the visible ink is what ends up in the middle.
+    return y + h * 0.5 - (font->cap_top + font->baseline) * 0.5 * (font_px / font->font_size);
 }
 
 f64 ui_text_width(ui_renderer *r, const char *text, f64 font_px, i32 font_type) {
