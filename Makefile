@@ -114,9 +114,32 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_net.c \
 	src/ns_json.c \
 	src/ns_shader.c \
+	src/ns_project.c \
+	src/ns_project_xcode.c \
+	src/ns_project_vs.c \
 	src/ns_repl.c \
 	src/ns_def.c \
 	src/ns_asm.c
+
+# Language-only runtime copied into generated Apple IDE projects. Keep native
+# UI, terminal, view, GPU, network/HTTP modules, the REPL, and object emitters
+# out of this list.
+NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
+	src/ns_type.c \
+	src/ns_profile.c \
+	src/ns_os.c \
+	src/ns_token.c \
+	src/ns_ast.c \
+	src/ns_ast_stmt.c \
+	src/ns_ast_expr.c \
+	src/ns_ast_print.c \
+	src/ns_vm_parse.c \
+	src/ns_vm_eval.c \
+	src/ns_vm_lib.c \
+	src/ns_vm_print.c \
+	src/ns_json.c \
+	src/ns_shader.c \
+	src/ns_def.c
 
 # iOS subset: exclude repl and vm_lib (depend on readline/libffi not available on iOS)
 NS_IOS_LIB_SRCS = src/ns_fmt.c \
@@ -158,7 +181,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_shader_test.c test/ns_token_test.c test/ns_buffer_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_shader_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_project_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -215,15 +238,21 @@ test: $(NS_TEST_TARGETS)
 	$(NS_BINDIR)/ns_shader_test
 	$(NS_BINDIR)/ns_token_test
 	$(NS_BINDIR)/ns_buffer_test
+	$(NS_BINDIR)/ns_project_test
 
 include lib/Makefile
 include sample/c/Makefile
 
 install: all
-	$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref
+	$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref \
+		$(NS_INSTALL_ROOT)/share/ns-runtime/src $(NS_INSTALL_ROOT)/share/ns-runtime/include \
+		$(NS_INSTALL_ROOT)/share/ns-runtime/ref
 	$(NS_CP) $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin
 	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
 	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
+	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
+	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
+	cp lib/std.ns lib/shader.ns lib/simd.ns $(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec cp {} $(NS_INSTALL_ROOT)/lib \;
 	@echo "Installed ns to $(NS_INSTALL_DISPLAY)"
 	@echo "Please add $(NS_INSTALL_DISPLAY)/bin to your system PATH."

@@ -36,6 +36,52 @@ artifact under `<module>/bin`: `type = "app"` produces an executable, while
 single script and links any local sibling modules it imports. Use `-o <path>` to
 set the output path, or `--exe` / `--lib` to force the artifact kind.
 
+### IDE projects
+
+`ns project [path]` finds the nearest `ns.mod`, starting at `path` or the current
+directory, validates it, and generates host-native IDE files under the module's
+`bin` directory. Names that are not valid IDE identifiers are normalized to a
+safe name. Generation requires schema `ns.mod/v1`, a nonempty name, a recognized
+app/application or lib/library type, and a valid entry for an app.
+
+On Darwin, it creates `bin/<safe-name>.xcodeproj`. An app manifest gets SwiftUI
+application targets named `<safe-name> macOS`, `<safe-name> iOS`, and
+`<safe-name> visionOS`, with automatic signing and the default bundle identifier
+`ns.<safe-name>`; no development team is preset. The embedded interpreter runs
+the linked entry on a background task; status appears in the app, while `print`
+output and diagnostics appear in the Xcode console. The app bundles `std.ns`,
+`shader.ns`, and the pure-language `simd.ns`; it otherwise supports only the
+language runtime and pure-language modules. Native UI, view, GPU, terminal,
+network/HTTP, and external or dynamically loaded FFI modules are not available;
+generation reports unsupported dependencies instead of silently producing a
+broken app.
+
+On Windows, it creates `bin/<safe-name>.sln` and
+`bin/<safe-name>.vcxproj` for Visual Studio 2022. App projects are x64 NMake
+projects in Debug and Release configurations: Build invokes
+`ns build <module> --exe -o <output>`, Clean removes that executable, and
+debugging launches it. Nano Script source files are visible in Solution Explorer,
+excluding `bin`. Library manifests produce browsing/utility projects; their
+Build and Rebuild actions run `ns test` rather than claiming a native Windows
+library artifact.
+
+Library manifests similarly produce `NS Build` and `NS Test` utility targets on
+Darwin. They do not create iOS or visionOS library artifacts; portable native
+library output remains dependent on a stable NS ABI and the required object and
+archive backends.
+
+Generated IDE skeletons remain editable. The Xcode `project.pbxproj`, Visual
+Studio solution, and project files are created only when absent and are not
+rewritten by later `ns project` runs. Generated support files are refreshed in
+the clearly marked `bin/<safe-name>.nsproject` directory. Files named
+`Config/NS.Generated.xcconfig` or `Config/NS.Generated.props` are managed and
+refreshed; the matching `NS.Local.xcconfig` or `NS.Local.props` overrides are
+created once and preserved. Xcode builds rerun `ns project` to refresh the fixed
+`LinkedProject.ns` resource and other managed inputs without replacing the IDE
+project.
+
+Other host operating systems report that IDE project generation is unsupported.
+
 The `nsm` module is a module manager for nanoscript. It allows you to create, install, and manage modules for your nanoscript projects. The `nsm` module is a core module and is included with the nanoscript runtime.
 
 ### Usage

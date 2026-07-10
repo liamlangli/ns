@@ -107,6 +107,21 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
 ## Components
 - `ns`: The Nano Script compiler and interpreter that can compiles and executes Nano Script source code.
 
+## Generate an IDE project
+
+Run `ns project [path]` in or below a directory containing `ns.mod`. On Darwin,
+it creates `bin/<safe-name>.xcodeproj` with macOS, iOS, and visionOS app targets.
+On Windows, it creates a Visual Studio 2022 x64 NMake solution at
+`bin/<safe-name>.sln`. App projects embed the language-only runtime plus `std`
+and shader support, with pure-language modules such as `simd`; native UI, GPU,
+terminal, network/HTTP, and external FFI modules are not included. Library
+manifests generate build/test utility projects, and other hosts report that
+project generation is unsupported.
+
+Generated support files are refreshed on later runs, but IDE project files and
+local configuration overrides are preserved. See [the module guide](doc/nsm.md)
+for output paths, target behavior, and limitations.
+
 ## Build Options
 - `NS_DEBUG`: Debug mode.
 - `NS_JIT`: Enable Just-In-Time compiler.

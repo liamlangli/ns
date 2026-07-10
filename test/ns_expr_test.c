@@ -15,6 +15,17 @@ static ns_bool ns_expr_eval_bool(const char *src) {
 
 int main() {
     {
+        ns_vm vm = {0};
+        ns_vm_set_ref_path(&vm, ns_str_cstr("test/ref"));
+        const char *src =
+            "use std\n"
+            "fn main() bool { return sqrt(9.0d) == 3.0d }\n";
+        ns_return_value r = ns_eval(&vm, ns_str_cstr((i8 *)src), ns_str_cstr("<ref-path-test>"));
+        ns_expect(!ns_return_is_error(r) && ns_eval_bool(&vm, r.r),
+                  "VM resolves modules from a configured reference path.");
+    }
+
+    {
         const char *src =
             "fn main() bool {\n"
             "    let arr = [1, 2, 3]\n"

@@ -138,13 +138,19 @@ ns_lib* ns_lib_find(ns_vm *vm, ns_str lib) {
     return ns_null;
 }
 
+void ns_vm_set_ref_path(ns_vm *vm, ns_str ref_path) {
+    vm->ref_path = ref_path;
+}
+
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     ns_ast_ctx ctx = {0};
 #ifdef NS_DEBUG
-    ns_str ref_path = ns_str_cstr(NS_REF_PATH);
+    ns_str ref_path = vm->ref_path.data ? vm->ref_path : ns_str_cstr(NS_REF_PATH);
 #else
     ns_str home = ns_path_home();
-    ns_str ref_path = ns_path_join(home, ns_str_cstr(NS_REF_PATH));
+    ns_str ref_path = vm->ref_path.data
+        ? vm->ref_path
+        : ns_path_join(home, ns_str_cstr(NS_REF_PATH));
 #endif
 
     ns_lib *lib = ns_lib_find(vm, lib_name);

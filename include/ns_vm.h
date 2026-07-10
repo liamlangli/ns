@@ -144,6 +144,7 @@ typedef struct ns_vm {
     ns_data *data_list;
     ns_lib *libs;
     ns_str lib;
+    ns_str ref_path;
     i8* stack;
 
     // mode
@@ -233,6 +234,10 @@ void *ns_callback_bridge_create(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure);
 i32 ns_struct_field_index(ns_symbol *st, ns_str s);
 
 // vm mod
+// Set the directory used to resolve reference modules such as std.ns and
+// shader.ns. The VM borrows ref_path; its storage must remain valid while an
+// evaluation can import modules. Pass ns_str_null to restore the default path.
+void ns_vm_set_ref_path(ns_vm *vm, ns_str ref_path);
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib);
 ns_lib* ns_lib_find(ns_vm *vm, ns_str lib);
 

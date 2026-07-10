@@ -2,6 +2,13 @@
 
 // os
 ns_str ns_os_exec(ns_str cmd) {
+#ifdef NS_XCLIB
+    // Embedded Apple runtimes are language-only and cannot spawn host
+    // processes. Keep path/file helpers available without importing popen,
+    // which is unavailable on iOS and visionOS.
+    (void)cmd;
+    return ns_str_null;
+#else
     FILE *pipe = popen(cmd.data, "r");
     if (!pipe) {
         return ns_str_null;
@@ -15,9 +22,14 @@ ns_str ns_os_exec(ns_str cmd) {
     }
     pclose(pipe);
     return data;
+#endif
 }
 
 ns_str ns_os_mkdir(ns_str path) {
+#ifdef NS_XCLIB
+    (void)path;
+    return ns_str_null;
+#else
     i8 *buffer = (i8 *)ns_malloc(path.len + 8);
     memcpy(buffer, "mkdir -p ", 9);
     memcpy(buffer + 9, path.data, path.len);
@@ -26,6 +38,7 @@ ns_str ns_os_mkdir(ns_str path) {
     ns_str data = ns_os_exec(cmd);
     free(buffer);
     return data;
+#endif
 }
 
 // path

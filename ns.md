@@ -91,6 +91,14 @@ Common commands:
 - `build [path]` compile and link a script/module to an executable or static
   library; infers module artifact type from `ns.mod` and accepts `--exe` /
   `--app` / `--lib`
+- `project [path]` find the nearest `ns.mod` and generate host-native IDE files
+  under `<module>/bin`: an Xcode project with macOS, iOS, and visionOS app
+  targets on Darwin, or a Visual Studio 2022 x64 NMake solution on Windows.
+  Library manifests generate host build/test utility projects rather than
+  unsupported mobile or Windows native libraries. Existing IDE skeletons and
+  local configuration overrides are preserved while managed support files are
+  refreshed. Other hosts report an unsupported-platform error. See
+  `doc/nsm.md` for generated paths and runtime limitations.
 - `ns.mod` app manifests may set `icon = "path/to/image.png"`; the path is
   relative to the manifest root. `ns run` passes it to the native view runtime,
   and Darwin app builds package it as the bundle icon.

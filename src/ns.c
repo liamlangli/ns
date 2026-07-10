@@ -8,6 +8,7 @@
 #include "ns_pe.h"
 #include "ns_shader.h"
 #include "ns_profile.h"
+#include "ns_project.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -44,6 +45,7 @@ typedef struct ns_compile_option_t {
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
+    ns_bool project: 2; // `ns project <path>` - generate a host IDE project
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
@@ -63,6 +65,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.test = true;
         } else if (i == 1 && strcmp(argv[i], "build") == 0) {
             option.build = true;
+        } else if (i == 1 && strcmp(argv[i], "project") == 0) {
+            option.project = true;
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--token") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
@@ -145,6 +149,8 @@ void ns_help() {
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
+    printf("  project [path]    generate an editable IDE project from the nearest ns.mod\n");
+    printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
 
 }
 
@@ -606,7 +612,8 @@ static void ns_link_source(ns_linker *lk, ns_str src, ns_str file) {
 // null-terminated and owns its buffer. When `out_map` is non-NULL it receives a
 // source map (one entry per line of the merged output, in output order) so
 // diagnostics can be mapped back to their original file and line.
-static ns_str ns_project_link(ns_str scope, ns_str entry_src, ns_str entry_file, ns_line_loc **out_map) {
+static ns_str ns_project_link(ns_str scope, ns_str entry_src, ns_str entry_file,
+                              ns_line_loc **out_map, ns_str **out_external_modules) {
     ns_linker lk = {0};
     lk.scope = scope.len > 0 ? scope : ns_str_cstr(".");
     ns_link_source(&lk, entry_src, entry_file);
@@ -623,6 +630,14 @@ static ns_str ns_project_link(ns_str scope, ns_str entry_src, ns_str entry_file,
         for (i32 i = 0, l = ns_array_length(lk.ext_map); i < l; i++) ns_array_push(map, lk.ext_map[i]);
         for (i32 i = 0, l = ns_array_length(lk.body_map); i < l; i++) ns_array_push(map, lk.body_map[i]);
         *out_map = map;
+    }
+
+    if (out_external_modules != ns_null) {
+        ns_str *modules = ns_null;
+        for (i32 i = 0, l = ns_array_length(lk.ext_seen); i < l; i++) {
+            ns_array_push(modules, ns_str_concat(lk.ext_seen[i], ns_str_cstr("")));
+        }
+        *out_external_modules = modules;
     }
 
     ns_str_free(lk.ext);
@@ -943,7 +958,7 @@ static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, n
 
 static ns_ssa_module *ns_compile_build_input(ns_build_input *in) {
     ns_line_loc *map = ns_null;
-    ns_str merged = ns_project_link(in->scope, in->source, in->filename, &map);
+    ns_str merged = ns_project_link(in->scope, in->source, in->filename, &map, ns_null);
     return ns_compile_source_to_ssa(merged, in->filename, map);
 }
 
@@ -1365,6 +1380,177 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_info("build", "executable %.*s\n", output.len, output.data);
 }
 
+static ns_str ns_project_absolute_path(ns_str path) {
+    if (ns_path_is_absolute(path)) return ns_str_concat(path, ns_str_cstr(""));
+    ns_str cwd = ns_getcwd();
+    if (path.len == 0 || ns_str_equals(path, ns_str_cstr("."))) return cwd;
+    ns_str absolute = ns_path_join(cwd, path);
+    ns_str_free(cwd);
+    return absolute;
+}
+
+static ns_bool ns_project_runtime_root_valid(ns_str root) {
+    if (root.data == ns_null || root.len == 0) return false;
+    ns_str source = ns_path_join(root, ns_str_cstr("src/ns_vm_eval.c"));
+    ns_str header = ns_path_join(root, ns_str_cstr("include/ns_vm.h"));
+    ns_str std_ref = ns_path_join(root, ns_str_cstr("ref/std.ns"));
+    ns_str std_lib = ns_path_join(root, ns_str_cstr("lib/std.ns"));
+    ns_bool valid = ns_file_exists(source) && ns_file_exists(header) &&
+                    (ns_file_exists(std_ref) || ns_file_exists(std_lib));
+    ns_str_free(source);
+    ns_str_free(header);
+    ns_str_free(std_ref);
+    ns_str_free(std_lib);
+    return valid;
+}
+
+static ns_str ns_project_current_executable(void) {
+#if defined(NS_DARWIN)
+    return ns_build_darwin_current_executable();
+#elif defined(_WIN32)
+    char buf[4096];
+    DWORD len = GetModuleFileNameA(ns_null, buf, (DWORD)sizeof(buf));
+    if (len == 0 || len >= sizeof(buf)) return ns_str_null;
+    return ns_str_concat(ns_str_range(buf, (i32)len), ns_str_cstr(""));
+#else
+    char buf[4096];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len <= 0) return ns_str_null;
+    buf[len] = '\0';
+    return ns_str_concat(ns_str_range(buf, (i32)len), ns_str_cstr(""));
+#endif
+}
+
+static ns_str ns_project_runtime_root(ns_str executable) {
+    const char *override = getenv("NS_RUNTIME_ROOT");
+    if (override && override[0]) {
+        ns_str root = ns_project_absolute_path(ns_str_cstr((char*)override));
+        if (ns_project_runtime_root_valid(root)) return root;
+        ns_exit(1, "project", "NS_RUNTIME_ROOT is not a valid ns runtime SDK: %s\n", override);
+    }
+
+    ns_str bin = ns_path_dirname_safe(executable);
+    ns_str install = ns_path_parent(bin);
+    ns_str shared = ns_path_join(install, ns_str_cstr("share/ns-runtime"));
+    if (ns_project_runtime_root_valid(shared)) return shared;
+    ns_str_free(shared);
+
+    // Development-tree layout: <repo>/bin/ns with src/, include/, and lib/ at
+    // the repository root.
+    if (ns_project_runtime_root_valid(install)) {
+        return ns_str_concat(install, ns_str_cstr(""));
+    }
+
+    ns_str cwd = ns_getcwd();
+    if (ns_project_runtime_root_valid(cwd)) return cwd;
+    ns_str_free(cwd);
+    return ns_str_null;
+}
+
+#if defined(NS_DARWIN)
+static ns_bool ns_project_module_supported(ns_str module) {
+    return ns_str_equals(module, ns_str_cstr("std")) ||
+           ns_str_equals(module, ns_str_cstr("shader")) ||
+           ns_str_equals(module, ns_str_cstr("simd"));
+}
+#endif
+
+void ns_exec_project(ns_str path) {
+    ns_str start = path;
+    if (start.len == 0) start = ns_getcwd();
+    ns_str root = ns_project_root(start);
+    root = ns_project_absolute_path(root);
+
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str schema = ns_build_manifest_value(root, "schema");
+    ns_str name = ns_build_manifest_value(root, "name");
+    ns_str module_type = ns_build_manifest_value(root, "type");
+    ns_str version = ns_build_manifest_value(root, "version");
+    if (!ns_str_equals(schema, ns_str_cstr("ns.mod/v1"))) {
+        ns_exit(1, "project", "%.*s must declare schema = \"ns.mod/v1\".\n", manifest.len, manifest.data);
+    }
+    if (name.data == ns_null || name.len == 0) {
+        ns_exit(1, "project", "%.*s must declare a non-empty project name.\n", manifest.len, manifest.data);
+    }
+
+    ns_project_kind kind;
+    if (ns_build_type_is_app(module_type)) kind = NS_PROJECT_APP;
+    else if (ns_build_type_is_library(module_type)) kind = NS_PROJECT_LIBRARY;
+    else {
+        ns_exit(1, "project", "%.*s has unsupported type `%.*s`; expected app or library.\n",
+                manifest.len, manifest.data, module_type.len, module_type.data);
+    }
+    if (version.data == ns_null || version.len == 0) version = ns_str_cstr("0.1.0");
+
+    ns_str source_value = ns_build_manifest_value(root, "source");
+    ns_str source_dir = (source_value.data != ns_null && !ns_str_equals(source_value, ns_str_cstr(".")))
+                            ? ns_path_join(root, source_value)
+                            : ns_str_concat(root, ns_str_cstr(""));
+    ns_str *external_modules = ns_null;
+    ns_str linked = ns_str_null;
+    if (kind == NS_PROJECT_APP) {
+        ns_build_input in = ns_build_input_resolve(root);
+        linked = ns_project_link(source_dir, in.source, in.filename, ns_null, &external_modules);
+    }
+
+#if defined(NS_DARWIN)
+    if (kind == NS_PROJECT_APP) {
+        ns_str unsupported = ns_str_null;
+        for (i32 i = 0, l = ns_array_length(external_modules); i < l; i++) {
+            if (ns_project_module_supported(external_modules[i])) continue;
+            if (unsupported.len > 0) ns_str_append_len(&unsupported, ", ", 2);
+            ns_str_append(&unsupported, external_modules[i]);
+        }
+        if (unsupported.len > 0) {
+            ns_array_push(unsupported.data, '\0');
+            ns_exit(1, "project",
+                    "embedded Apple apps support std, shader, and simd only; unsupported modules: %s.\n",
+                    unsupported.data);
+        }
+    }
+#endif
+
+    ns_str executable = ns_project_current_executable();
+    if (executable.data == ns_null) ns_exit(1, "project", "failed to locate the ns executable.\n");
+    ns_str runtime_root = kind == NS_PROJECT_APP ? ns_project_runtime_root(executable) : ns_str_null;
+#if defined(NS_DARWIN)
+    if (kind == NS_PROJECT_APP && runtime_root.data == ns_null) {
+        ns_exit(1, "project", "language runtime SDK not found; reinstall ns or set NS_RUNTIME_ROOT.\n");
+    }
+#endif
+
+    ns_project_spec spec = {
+        .kind = kind,
+        .root = root,
+        .manifest = manifest,
+        .source_dir = source_dir,
+        .name = name,
+        .safe_name = ns_project_safe_name(name),
+        .version = version,
+        .linked_source = linked,
+        .ns_executable = executable,
+        .runtime_root = runtime_root,
+    };
+
+    ns_bool generated = false;
+#if defined(NS_DARWIN)
+    generated = ns_project_generate_xcode(&spec);
+#elif defined(_WIN32) || defined(NS_WIN)
+    generated = ns_project_generate_visual_studio(&spec);
+#else
+    ns_exit(1, "project", "IDE project generation is supported on Darwin and Windows hosts only.\n");
+#endif
+    if (!generated) ns_exit(1, "project", "failed to generate IDE project.\n");
+
+#if defined(NS_DARWIN)
+    ns_info("project", "Xcode project %.*s/bin/%.*s.xcodeproj\n",
+            root.len, root.data, spec.safe_name.len, spec.safe_name.data);
+#else
+    ns_info("project", "Visual Studio solution %.*s/bin/%.*s.sln\n",
+            root.len, root.data, spec.safe_name.len, spec.safe_name.data);
+#endif
+}
+
 void ns_exec_run(ns_str filename) {
     // No file argument: run the project's declared entry from its ns.mod.
     if (filename.len == 0) filename = ns_manifest_entry_file();
@@ -1390,7 +1576,7 @@ void ns_exec_run(ns_str filename) {
 #endif
     }
     ns_line_loc *map = ns_null;
-    ns_str merged = ns_project_link(scope, source, filename, &map);
+    ns_str merged = ns_project_link(scope, source, filename, &map, ns_null);
 
     ns_return_value ret_v = ns_eval_with_map(&vm, merged, filename, map);
     if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
@@ -1408,7 +1594,7 @@ static i32 ns_run_test_file(ns_str filename) {
 
     ns_str scope = ns_project_root(filename);
     ns_line_loc *map = ns_null;
-    ns_str merged = ns_project_link(scope, source, filename, &map);
+    ns_str merged = ns_project_link(scope, source, filename, &map, ns_null);
 
     ns_return_value ret_v = ns_eval_with_map(&tvm, merged, filename, map);
     if (ns_return_is_error(ret_v)) {
@@ -1679,6 +1865,8 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_test(option.filename);
     } else if (option.build) {
         ns_exec_build(option.filename, option.output, option.build_kind);
+    } else if (option.project) {
+        ns_exec_project(option.filename);
     } else if (option.tokenize_only) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {
