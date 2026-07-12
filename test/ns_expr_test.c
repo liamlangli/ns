@@ -535,7 +535,7 @@ int main() {
             "fn main() bool {\n"
             "    let p = point { x: 0.0, y: 0.0 }\n"
             "    set_x(ref p)\n"
-            "    return true\n"
+            "    return p.x == 1.0\n"
             "}\n";
         ns_expect(ns_expr_eval_bool(src), "single-line function body with an assignment statement.");
     }

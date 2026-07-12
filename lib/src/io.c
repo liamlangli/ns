@@ -42,5 +42,5 @@ i32 io_save_image(const char *path, const io_image *img) {
     if (result == 0) {
         ns_error("io", "Failed to save image to file: %s\n", path);
     }
-    return 1;
+    return result;
 }

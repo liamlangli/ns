@@ -1562,11 +1562,13 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     case NS_TOKEN_REF:
         if (ns_type_is_ref(v.t)) return ns_return_ok(value, v);
         if (ns_type_is_const(v.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "cannot take reference of const value.");
-        u64 offset = ns_eval_alloc(vm, sizeof(u64));
-        ns_value dst = {.o = offset};
-        dst.t = ns_type_encode(v.t.type, v.t.index, true, true, true);
-        ns_eval_copy(vm, dst, v, ns_type_size(vm, v.t));
-        return ns_return_ok(value, dst);
+        // A reference to a stack value must retain the referent's offset.  The
+        // old implementation allocated only a pointer-sized temporary and then
+        // copied the complete value into it.  Structs larger than a pointer
+        // overflowed that allocation, and the temporary could be reclaimed or
+        // overwritten before an FFI call used it.
+        v.t = ns_type_encode(v.t.type, v.t.index, true, true, true);
+        return ns_return_ok(value, v);
     default:
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown unary ops.");
     }
