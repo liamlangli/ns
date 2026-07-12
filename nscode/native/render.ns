@@ -120,6 +120,7 @@ fn col_yellow() u32 { return ui_pack_color("#f2c86b") }
 fn col_red() u32 { return ui_pack_color("#ff7b86") }
 fn col_editor_bg() u32 { return ui_pack_color("#0f1117") }
 fn col_editor_panel() u32 { return ui_pack_color("#171a22") }
+fn col_editor_tab() u32 { return ui_pack_color("#1c212a") }
 fn col_editor_panel_hi() u32 { return ui_pack_color("#202633") }
 fn col_editor_gutter() u32 { return ui_pack_color("#222733") }
 fn col_editor_cursor() u32 { return ui_pack_color("#f4d35e") }
@@ -253,28 +254,18 @@ fn draw_centered_text(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: 
 }
 
 fn mode_switch_x(w: f64) f64 {
-    let x = w - 454.0
-    if x < 190.0 {
-        x = 190.0
-    }
-    if (x + 150.0) > (w - 16.0) {
-        x = w - 166.0
-    }
-    if x < 86.0 {
-        x = 86.0
-    }
-    return x
+    return 14.0
 }
 
-fn mode_switch_y() f64 {
-    return 7.0
+fn mode_switch_y(h: f64) f64 {
+    return h - 68.0
 }
 
-fn handle_mode_switch_input(v: ref view, w: f64) {
+fn handle_mode_switch_input(v: ref view, w: f64, h: f64) {
     let switch_w = 150.0
     let switch_h = 28.0
     let switch_x = mode_switch_x(w)
-    let switch_y = mode_switch_y()
+    let switch_y = mode_switch_y(h)
     let gap = 4.0
     let button_w = (switch_w - gap) * 0.5
     let code_x = switch_x
@@ -417,11 +408,8 @@ fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     let code_x = x + pad
     let agent_x = x + pad + half_w
 
-    ui_fill_round_rect(r, x, y, w, h, 5.0, col_surface_hi(), 0.0)
-    ui_fill_rect(r, x, y, w, 1.0, col_line(), 0.0)
-    ui_fill_rect(r, x, y + h - 1.0, w, 1.0, col_line(), 0.0)
-    ui_fill_rect(r, x, y, 1.0, h, col_line(), 0.0)
-    ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_line(), 0.0)
+    ui_fill_round_rect(r, x, y, w, h, 7.0, col_surface_hi(), 0.0)
+    ui_stroke_round_rect(r, x, y, w, h, 7.0, 1.0, col_line(), 0.0)
     let active_x = agent_x
     if g_mode == MODE_CODE() {
         active_x = code_x
@@ -455,7 +443,7 @@ fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
 
 fn chat_row_h() f64 { return 30.0 }
 fn chat_row_stride() f64 { return 36.0 }
-fn chat_rows_top() f64 { return 84.0 }
+fn chat_rows_top() f64 { return 54.0 }
 fn chat_btn_d() f64 { return 22.0 }
 fn chat_menu_items() i32 { return 3 }
 
@@ -648,9 +636,8 @@ fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     ui_fill_rect(r, x, y, w, h, col_rail(), 0.0)
     ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_line(), 0.0)
     ui_push_clip(r, x, y, w, h)
-    draw_text_clipped(r, x + 18.0, y + 18.0, w - 36.0, 24.0, "NSCode Agent", title_px(), col_text())
-    draw_label(r, x + 18.0, y + 48.0, "CHAT HISTORY")
-    draw_rule(r, x + 18.0, y + 72.0, w - 36.0)
+    draw_label(r, x + 18.0, y + 18.0, "CHAT HISTORY")
+    draw_rule(r, x + 18.0, y + 42.0, w - 36.0)
     let row_y = y + chat_rows_top()
     for i in 0 to g_chat_count {
         draw_chat_row(r, v, x, row_y, w, i)
@@ -659,7 +646,7 @@ fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     if g_chat_archived > 0 {
         draw_label(r, x + 18.0, row_y + 8.0, "ARCHIVED " + itos(g_chat_archived))
     }
-    let foot_y = y + h - 86.0
+    let foot_y = y + h - 124.0
     if foot_y > (row_y + 60.0) {
         ui_fill_round_rect(r, x + 14.0, foot_y, w - 28.0, 62.0, 4.0, col_surface(), 0.0)
         draw_label(r, x + 28.0, foot_y + 13.0, "WORKSPACE")
@@ -1680,7 +1667,7 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
 }
 
 fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let tab_h = 42.0
+    let tab_h = 36.0
     let line_h = code_line_h()
     let body_y = y + tab_h
     let body_h = h - tab_h
@@ -1711,25 +1698,58 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     ui_fill_rect(r, x, y, w, h, col_editor_bg(), 0.0)
     ui_fill_rect(r, x, y, w, tab_h, col_editor_panel(), 0.0)
     ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_line(), 0.0)
-    let tab_name = "untitled"
-    if g_workspace_active >= 0 {
-        tab_name = os_entry_name(g_workspace_active)
+    let tab_x = x + 14.0
+    ui_push_clip(r, x, y, w, tab_h)
+    for ti in 0 to g_workspace_tab_count {
+        let tab_index = g_workspace_tabs[ti] as i32
+        let tab_name = os_entry_name(tab_index)
+        let dirty = workspace_entry_dirty(tab_index)
+        let tab_w = ui_text_width(r, tab_name, small_px(), FONT_MONO()) + 72.0
+        if tab_w < 132.0 {
+            tab_w = 132.0
+        }
+        if tab_w > 240.0 {
+            tab_w = 240.0
+        }
+        let active = tab_index == g_workspace_active
+        let tab_bg = col_editor_tab()
+        if active {
+            tab_bg = col_editor_panel_hi()
+        } else if hit(v, tab_x, y + 7.0, tab_w, 29.0) {
+            tab_bg = ui_pack_color("#232a34")
+        }
+        ui_fill_round_rect(r, tab_x, y + 7.0, tab_w, 29.0, 5.0, tab_bg, 0.0)
+        // Keep only the two top corners rounded: the tab joins the editor body.
+        ui_fill_rect(r, tab_x, y + 31.0, tab_w, 5.0, tab_bg, 0.0)
+        draw_tree_file_icon(r, tab_x + 12.0, y + 14.0, col_blue())
+        draw_text_clipped(r, tab_x + 34.0, text_center_y(r, y + 7.0, 29.0, small_px()), tab_w - 62.0, 16.0, tab_name, small_px(), col_text())
+        let close_cx = tab_x + tab_w - 18.0
+        let close_cy = y + 21.5
+        let close_hot = hit(v, close_cx - 10.0, close_cy - 10.0, 20.0, 20.0)
+        if close_hot {
+            ui_fill_circle(r, close_cx, close_cy, 9.0, col_surface(), 0.0)
+        }
+        if dirty {
+            if close_hot == false {
+                ui_fill_circle(r, close_cx, close_cy, 4.0, col_muted(), 0.0)
+            }
+        }
+        if dirty == false || close_hot {
+            ui_stroke_line(r, close_cx - 4.0, close_cy - 4.0, close_cx + 4.0, close_cy + 4.0, 1.2, col_muted(), 0.5)
+            ui_stroke_line(r, close_cx - 4.0, close_cy + 4.0, close_cx + 4.0, close_cy - 4.0, 1.2, col_muted(), 0.5)
+        }
+        if v.mouse_pressed {
+            if close_hot {
+                workspace_close_tab(tab_index)
+            } else if hit(v, tab_x, y + 7.0, tab_w, 29.0) {
+                activate_workspace_file(tab_index)
+            }
+        }
+        tab_x = tab_x + tab_w + 2.0
     }
-    if workspace_entry_dirty(g_workspace_active) {
-        tab_name = tab_name + " *"
-    }
-    let tab_w = ui_text_width(r, tab_name, small_px(), FONT_MONO()) + 48.0
-    if tab_w < 132.0 {
-        tab_w = 132.0
-    }
-    if tab_w > 240.0 {
-        tab_w = 240.0
-    }
-    ui_fill_round_rect(r, x + 14.0, y + 9.0, tab_w, 32.0, 4.0, col_editor_panel_hi(), 0.0)
-    draw_tree_file_icon(r, x + 26.0, y + 16.0, col_blue())
-    draw_text_clipped(r, x + 48.0, text_center_y(r, y + 9.0, 32.0, small_px()), tab_w - 42.0, 16.0, tab_name, small_px(), col_text())
+    ui_pop_clip(r)
 
-    ui_fill_rect(r, x, body_y, gutter_w, body_h, col_editor_gutter(), 0.0)
+    ui_fill_rect(r, x, body_y, gutter_w, body_h, col_editor_bg(), 0.0)
     ui_fill_rect(r, x + gutter_w - 1.0, body_y, 1.0, body_h, col_line(), 0.0)
     let first = ((g_code_scroll - 18.0 - line_h) / line_h) as i32
     if first < 0 {
@@ -1799,7 +1819,7 @@ fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     ui_fill_rect(r, 0.0, 0.0, w, h, col_editor_bg(), 0.0)
     draw_file_tree(r, v, 0.0, app_y, tree_w, app_h)
     draw_code_editor(r, v, tree_w, app_y, w - tree_w, app_h)
-    draw_mode_switch(r, v, mode_switch_x(w), mode_switch_y(), 150.0, 28.0)
+    draw_mode_switch(r, v, mode_switch_x(w), mode_switch_y(h), 150.0, 28.0)
     draw_status_bar(r, 0.0, h - status_h, w)
 }
 
@@ -1829,7 +1849,7 @@ fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
     draw_history(r, v, 0.0, app_y, history_w, app_h)
     draw_conversation(r, v, history_w, app_y, w - history_w, app_h)
-    draw_mode_switch(r, v, mode_switch_x(w), mode_switch_y(), 150.0, 28.0)
+    draw_mode_switch(r, v, mode_switch_x(w), mode_switch_y(h), 150.0, 28.0)
     draw_status_bar(r, 0.0, h - status_h, w)
 }
 
@@ -1841,7 +1861,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     // cast value; mask to a sane canvas range first.
     let w = (ui_canvas_width(r) & 1048575) as f64
     let h = (ui_canvas_height(r) & 1048575) as f64
-    handle_mode_switch_input(v, w)
+    handle_mode_switch_input(v, w, h)
     if g_mode == MODE_CODE() {
         render_code(r, v, w, h)
     } else {

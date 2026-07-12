@@ -64,9 +64,9 @@ fn tap(r: ref ui_renderer, v: ref view, k: i32) {
     frame(r, v)
 }
 
-// Geometry mirrored from render.ns: file tree, tab strip 42px, gutter 72px +
+// Geometry mirrored from render.ns: file tree, tab strip 36px, gutter 72px +
 // 16px text inset, compact code line height, first row top 18px below the tab strip.
-fn body_y() f64 { return 42.0 }
+fn body_y() f64 { return 36.0 }
 fn text_x() f64 { return file_tree_width(1024.0) + 88.0 }
 fn line_h() f64 { return code_line_h() }
 
@@ -113,11 +113,11 @@ fn main() i32 {
     // of the content mode switch.
     frame(r, v)
     check("boots in agent mode", g_mode == 1)
-    click(r, v, 600.0, 20.0)
+    click(r, v, 50.0, 714.0)
     check("code button switches mode", g_mode == 0)
-    click(r, v, 690.0, 20.0)
+    click(r, v, 125.0, 714.0)
     check("agent button switches back", g_mode == 1)
-    click(r, v, 600.0, 20.0)
+    click(r, v, 50.0, 714.0)
     check("mode switch is repeatable", g_mode == 0)
 
     // Click on line 1 ("    let count = 42") column 8: caret relocates there.
@@ -208,7 +208,7 @@ fn main() i32 {
     // the delay far away so the send/terminate checks are deterministic.
     g_reply_delay = 3600.0
     reset_clicks()
-    click(r, v, 690.0, 20.0)
+    click(r, v, 125.0, 714.0)
     check("agent button returns to agent mode", g_mode == 1)
     frame(r, v)
     check("conversation is seeded", g_msg_count == 2)
@@ -289,18 +289,18 @@ fn main() i32 {
 
     // ---- chat history: single-line rows with a hover row menu --------------
     // Geometry mirrored from render.ns at w=1024 (history rail 276 wide): rows
-    // start at y=84 with a 36px stride and 30px height; the "..." button sits
+    // start at y=54 with a 36px stride and 30px height; the "..." button sits
     // at x 240..262 in the row, the menu items at g_chat_menu_x/y after open.
     reset_clicks()
     check("history is seeded", g_chat_count == 4)
     check("first chat starts selected", g_selected_chat == 0)
 
     // Clicking a row body selects it.
-    click(r, v, 100.0, 171.0)
+    click(r, v, 100.0, 141.0)
     check("row click selects chat", g_selected_chat == 2)
 
     // Clicking the row-end menu button opens the row menu instead of selecting.
-    click(r, v, 251.0, 171.0)
+    click(r, v, 251.0, 141.0)
     check("row menu button opens menu", g_chat_menu_chat == 2)
     check("menu rect is measured", g_chat_menu_w > 0.0)
 
@@ -312,14 +312,14 @@ fn main() i32 {
     check("selection follows the pinned chat", g_selected_chat == 0)
 
     // Unpin clears the flag; with no other pinned chats the row stays first.
-    click(r, v, 251.0, 99.0)
+    click(r, v, 251.0, 69.0)
     check("menu opens on the pinned row", g_chat_menu_chat == 0)
     click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + 13.0)
     check("unpin clears the flag", chat_is_pinned(0) == false)
     check_s("unpinned chat keeps its slot", chat_title(0), "GPU text pass")
 
     // Archive removes the row and bumps the archived counter.
-    click(r, v, 251.0, 135.0)
+    click(r, v, 251.0, 105.0)
     check("menu opens on second row", g_chat_menu_chat == 1)
     click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + pop_item_h() + 13.0)
     check("archive removes the row", g_chat_count == 3)
@@ -327,14 +327,14 @@ fn main() i32 {
     check_s("later rows shift up on archive", chat_title(1), "Parser diagnostics for editor modules")
 
     // Delete removes the row without touching the archive counter.
-    click(r, v, 251.0, 135.0)
+    click(r, v, 251.0, 105.0)
     click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + pop_item_h() * 2.0 + 13.0)
     check("delete removes the row", g_chat_count == 2)
     check("delete leaves the archive counter", g_chat_archived == 1)
     check_s("last chat survives", chat_title(1), "Diff review before commit")
 
     // A click outside the open menu dismisses it without acting.
-    click(r, v, 251.0, 99.0)
+    click(r, v, 251.0, 69.0)
     check("menu reopens on first row", g_chat_menu_chat == 0)
     click(r, v, 600.0, 300.0)
     check("outside click closes the menu", g_chat_menu_chat == -1)
