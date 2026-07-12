@@ -6,7 +6,23 @@
 
 #ifdef NS_WIN
 #include <windows.h>
+#else
+#include <dirent.h>
+#include <sys/stat.h>
 #endif
+
+#define OS_MAX_ENTRIES 4096
+#define OS_MAX_PATH 4096
+
+typedef struct os_file_entry {
+    char name[OS_MAX_PATH];
+    char path[OS_MAX_PATH];
+    i32 depth;
+    i32 is_dir;
+} os_file_entry;
+
+static os_file_entry os_entries[OS_MAX_ENTRIES];
+static i32 os_entry_count = 0;
 
 static u64 os_epoch_ns(void) {
 #ifdef NS_WIN
@@ -140,4 +156,115 @@ const char *os_read_file(const char *path) {
 const char *os_read_file_part(const char *path, i64 offset, i64 size) {
     if (!path) return "";
     return os_take_read_buffer(ns_os_read_file_part(ns_str_cstr((char *)path), offset, size));
+}
+
+static i32 os_name_compare(const void *lhs, const void *rhs) {
+    const char *a = *(const char *const *)lhs;
+    const char *b = *(const char *const *)rhs;
+    return strcmp(a, b);
+}
+
+static void os_entry_push(const char *name, const char *path, i32 depth, i32 is_dir) {
+    if (os_entry_count >= OS_MAX_ENTRIES) return;
+    os_file_entry *entry = &os_entries[os_entry_count++];
+    snprintf(entry->name, sizeof(entry->name), "%s", name);
+    snprintf(entry->path, sizeof(entry->path), "%s", path);
+    entry->depth = depth;
+    entry->is_dir = is_dir;
+}
+
+#ifdef NS_WIN
+static void os_dir_scan_recursive(const char *root, i32 depth) {
+    char pattern[OS_MAX_PATH];
+    snprintf(pattern, sizeof(pattern), "%s\\*", root);
+    WIN32_FIND_DATAA found;
+    HANDLE handle = FindFirstFileA(pattern, &found);
+    if (handle == INVALID_HANDLE_VALUE) return;
+
+    char **names = NULL;
+    i32 count = 0;
+    do {
+        if (strcmp(found.cFileName, ".") == 0 || strcmp(found.cFileName, "..") == 0) continue;
+        char **grown = realloc(names, sizeof(char *) * (size_t)(count + 1));
+        if (!grown) break;
+        names = grown;
+        names[count++] = _strdup(found.cFileName);
+    } while (FindNextFileA(handle, &found));
+    FindClose(handle);
+    qsort(names, (size_t)count, sizeof(char *), os_name_compare);
+
+    for (i32 i = 0; i < count && os_entry_count < OS_MAX_ENTRIES; i++) {
+        char path[OS_MAX_PATH];
+        snprintf(path, sizeof(path), "%s\\%s", root, names[i]);
+        DWORD attrs = GetFileAttributesA(path);
+        i32 is_dir = attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        os_entry_push(names[i], path, depth, is_dir);
+        if (is_dir && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) == 0) os_dir_scan_recursive(path, depth + 1);
+        free(names[i]);
+    }
+    free(names);
+}
+#else
+static void os_dir_scan_recursive(const char *root, i32 depth) {
+    DIR *dir = opendir(root);
+    if (!dir) return;
+
+    char **names = NULL;
+    i32 count = 0;
+    struct dirent *item;
+    while ((item = readdir(dir)) != NULL) {
+        if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0) continue;
+        char **grown = realloc(names, sizeof(char *) * (size_t)(count + 1));
+        if (!grown) break;
+        names = grown;
+        names[count] = strdup(item->d_name);
+        if (!names[count]) break;
+        count++;
+    }
+    closedir(dir);
+    qsort(names, (size_t)count, sizeof(char *), os_name_compare);
+
+    for (i32 i = 0; i < count && os_entry_count < OS_MAX_ENTRIES; i++) {
+        char path[OS_MAX_PATH];
+        snprintf(path, sizeof(path), "%s/%s", root, names[i]);
+        struct stat info;
+        i32 is_dir = lstat(path, &info) == 0 && S_ISDIR(info.st_mode);
+        os_entry_push(names[i], path, depth, is_dir);
+        if (is_dir) os_dir_scan_recursive(path, depth + 1);
+        free(names[i]);
+    }
+    free(names);
+}
+#endif
+
+i32 os_dir_scan(const char *path) {
+    os_entry_count = 0;
+    if (!path || !path[0]) return 0;
+    os_dir_scan_recursive(path, 0);
+    return os_entry_count;
+}
+
+static os_file_entry *os_entry_at(i32 index) {
+    if (index < 0 || index >= os_entry_count) return NULL;
+    return &os_entries[index];
+}
+
+const char *os_entry_name(i32 index) {
+    os_file_entry *entry = os_entry_at(index);
+    return entry ? entry->name : "";
+}
+
+const char *os_entry_path(i32 index) {
+    os_file_entry *entry = os_entry_at(index);
+    return entry ? entry->path : "";
+}
+
+i32 os_entry_depth(i32 index) {
+    os_file_entry *entry = os_entry_at(index);
+    return entry ? entry->depth : -1;
+}
+
+i32 os_entry_is_dir(i32 index) {
+    os_file_entry *entry = os_entry_at(index);
+    return entry ? entry->is_dir : 0;
 }

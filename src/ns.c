@@ -977,7 +977,7 @@ static ns_build_input ns_build_input_resolve(ns_str path) {
 
     in.source = ns_os_read_file(in.filename);
     if (in.source.data == ns_null || in.source.len == 0) {
-        ns_exit(1, "build", "invalid input file %.*s.\n", in.filename.len, in.filename.data);
+        ns_exit(1, "build", "empty file or folder %.*s.\n", in.filename.len, in.filename.data);
     }
 
     if (in.has_manifest) {
@@ -1556,7 +1556,7 @@ void ns_exec_run(ns_str filename) {
 
     ns_str source = ns_os_read_file(filename);
     if (source.data == ns_null || source.len == 0)
-        ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
+        ns_exit(1, "ns", "empty file or folder %.*s.\n", filename.len, filename.data);
 
     ns_str scope = ns_str_null;
     if (!ns_find_project_root(filename, &scope)) {
@@ -1684,7 +1684,7 @@ void ns_exec_test(ns_str path) {
 void ns_exec_eval(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_os_read_file(filename);
-    if (source.len == 0) ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
+    if (source.len == 0) ns_exit(1, "ns", "empty file or folder %.*s.\n", filename.len, filename.data);
     ns_return_value ret_v = ns_eval(&vm, source, filename);
     if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
     ns_str ret = ns_fmt_value(&vm, ret_v.r);
@@ -1776,7 +1776,7 @@ void ns_exec_shader(ns_str filename, ns_str target_s, ns_str entry, ns_str outpu
     }
 
     ns_str source = ns_os_read_file(filename);
-    if (source.len == 0) ns_exit(1, "shader", "invalid input file %.*s.\n", filename.len, filename.data);
+    if (source.len == 0) ns_exit(1, "shader", "empty file or folder %.*s.\n", filename.len, filename.data);
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     if (ns_return_is_error(ret)) ns_return_assert(ret);
     ret = ns_vm_parse(&vm, &ctx); // runs `use` imports so simd structs resolve

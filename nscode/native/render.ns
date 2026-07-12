@@ -23,6 +23,11 @@ let g_file_scroll = [f64](2048)
 let g_last_frame_time: f64 = 0.0
 let g_fps: f64 = 0.0
 let g_fps_i: i32 = 0
+let g_file_icon_atlas: i32 = 0
+
+fn set_file_icon_atlas(atlas: i32) {
+    g_file_icon_atlas = atlas
+}
 
 // Code view input state: mouse drag selection, click streak (double/triple
 // click) and the previous frame's key levels for edge detection.
@@ -1554,22 +1559,39 @@ fn activate_workspace_file(index: i32) {
 }
 
 fn draw_tree_arrow(r: ref ui_renderer, x: f64, y: f64, expanded: bool, color: u32) {
+    let thickness = 1.8
+    let radius = thickness * 0.5
     if expanded {
-        ui_fill_triangle(r, x, y + 3.0, x + 8.0, y + 3.0, x + 4.0, y + 8.0, color, 0.0)
+        ui_stroke_line(r, x + 1.5, y + 3.0, x + 4.5, y + 6.2, thickness, color, 0.5)
+        ui_stroke_line(r, x + 4.5, y + 6.2, x + 7.5, y + 3.0, thickness, color, 0.5)
+        ui_fill_circle(r, x + 1.5, y + 3.0, radius, color, 0.5)
+        ui_fill_circle(r, x + 4.5, y + 6.2, radius, color, 0.5)
+        ui_fill_circle(r, x + 7.5, y + 3.0, radius, color, 0.5)
     } else {
-        ui_fill_triangle(r, x + 2.0, y + 1.0, x + 2.0, y + 9.0, x + 7.0, y + 5.0, color, 0.0)
+        ui_stroke_line(r, x + 2.5, y + 1.5, x + 5.7, y + 4.7, thickness, color, 0.5)
+        ui_stroke_line(r, x + 5.7, y + 4.7, x + 2.5, y + 7.9, thickness, color, 0.5)
+        ui_fill_circle(r, x + 2.5, y + 1.5, radius, color, 0.5)
+        ui_fill_circle(r, x + 5.7, y + 4.7, radius, color, 0.5)
+        ui_fill_circle(r, x + 2.5, y + 7.9, radius, color, 0.5)
     }
 }
 
 fn draw_tree_folder_icon(r: ref ui_renderer, x: f64, y: f64, color: u32) {
-    ui_fill_rect(r, x + 1.0, y + 2.0, 6.0, 3.0, color, 0.0)
-    ui_stroke_rect(r, x, y + 4.0, 14.0, 10.0, 1.0, color, 0.0)
+    // Recess the tab slightly and darken its stroke so it reads as a separate
+    // back plate instead of merging into the filled folder body.
+    ui_fill_round_rect(r, x + 1.5, y + 2.0, 7.0, 5.0, 2.0, ui_pack_color("#465663"), 0.5)
+    ui_fill_round_rect(r, x, y + 5.0, 15.0, 10.0, 2.0, color, 0.5)
 }
 
 fn draw_tree_file_icon(r: ref ui_renderer, x: f64, y: f64, color: u32) {
     ui_stroke_rect(r, x + 2.0, y + 1.0, 10.0, 14.0, 1.0, color, 0.0)
     ui_stroke_line(r, x + 5.0, y + 6.0, x + 10.0, y + 6.0, 1.0, color, 0.0)
     ui_stroke_line(r, x + 5.0, y + 9.0, x + 10.0, y + 9.0, 1.0, color, 0.0)
+}
+
+fn draw_workspace_file_icon(r: ref ui_renderer, x: f64, y: f64) {
+    let atlas: i32 = g_file_icon_atlas
+    ui_atlas_draw(r, atlas, x, y, 16.0, 16.0)
 }
 
 fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
@@ -1617,7 +1639,7 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
                         ui_fill_rect(r, x, row_y, w - 1.0, tree_row_h(), col_surface_hi(), 0.0)
                     }
 
-                    let depth = fs_entry_depth(i) & 255
+                    let depth = os_entry_depth(i) & 255
                     let depth_f: f64 = 0.0
                     loop depth > 0 {
                         depth_f = depth_f + 1.0
@@ -1628,19 +1650,19 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
                     if workspace_entry_editable(i) == false {
                         icon_color = col_muted()
                     }
-                    if fs_entry_is_dir(i) != 0 {
+                    if os_entry_is_dir(i) != 0 {
                         draw_tree_arrow(r, indent, row_y + 8.0, workspace_entry_expanded(i), col_muted())
                         draw_tree_folder_icon(r, indent + 15.0, row_y + 6.0, col_blue())
                     } else {
-                        draw_tree_file_icon(r, indent + 15.0, row_y + 5.0, icon_color)
+                        draw_workspace_file_icon(r, indent + 14.0, row_y + 5.0)
                     }
-                    draw_text_clipped(r, indent + 38.0, text_center_y(r, row_y, tree_row_h(), small_px()), w - (indent - x) - 54.0, 16.0, fs_entry_name(i), small_px(), icon_color)
+                    draw_text_clipped(r, indent + 38.0, text_center_y(r, row_y, tree_row_h(), small_px()), w - (indent - x) - 54.0, 16.0, os_entry_name(i), small_px(), icon_color)
                     if workspace_entry_dirty(i) {
                         ui_fill_circle(r, x + w - 12.0, row_y + tree_row_h() * 0.5, 3.0, col_yellow(), 0.0)
                     }
                     if v.mouse_pressed {
                         if hovered {
-                            if fs_entry_is_dir(i) != 0 {
+                            if os_entry_is_dir(i) != 0 {
                                 workspace_toggle_entry(i)
                             } else {
                                 activate_workspace_file(i)
@@ -1688,7 +1710,7 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_line(), 0.0)
     let tab_name = "untitled"
     if g_workspace_active >= 0 {
-        tab_name = fs_entry_name(g_workspace_active)
+        tab_name = os_entry_name(g_workspace_active)
     }
     if workspace_entry_dirty(g_workspace_active) {
         tab_name = tab_name + " *"

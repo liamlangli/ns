@@ -270,6 +270,14 @@ static void view_osx_update_mouse(NSEvent *event) {
 
 //------------------------------------------------------------------------------
 @implementation ViewMTKView
+// This view consumes physical key events directly and is not an
+// NSTextInputClient.  Explicitly opt out of AppKit's input-method context so
+// recent macOS releases do not try to wake the InputMethodKit Mach port for a
+// client that cannot accept composed text.
+- (NSTextInputContext*)inputContext {
+    return nil;
+}
+
 - (void)mouseDown:(NSEvent*)event {
     view_osx_update_mouse(event);
     view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_LEFT, VIEW_BUTTON_ACTION_PRESS);

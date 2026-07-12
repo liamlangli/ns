@@ -12,6 +12,7 @@
 #define UI_MAX_COMMANDS 4096
 #define UI_MAX_CLIPS 32
 #define UI_MAX_GPU_CLIPS 4096
+#define UI_MAX_TEXTURES 32
 #define UI_FONT_MAIN 0
 #define UI_FONT_MONO 1
 #define UI_WHITE_TEXTURE 1
@@ -132,6 +133,10 @@ typedef struct ui_renderer {
     gpu_pipeline pipeline_msdf;
     gpu_binding binding_white_image;
     gpu_binding binding_font_msdf;
+    gpu_texture textures[UI_MAX_TEXTURES];
+    gpu_binding texture_bindings[UI_MAX_TEXTURES];
+    i32 texture_widths[UI_MAX_TEXTURES];
+    i32 texture_heights[UI_MAX_TEXTURES];
     gpu_mesh mesh;
     gpu_render_pass screen_pass;
     ns_bool gpu_ready;
@@ -139,6 +144,8 @@ typedef struct ui_renderer {
 
 void ui_renderer_destroy(ui_renderer *r);
 void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);
+static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 h, f64 radius);
+static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inner, i32 n, u32 outer_color, u32 inner_color);
 
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
@@ -596,8 +603,25 @@ void ui_stroke_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 thickness, u
 }
 
 void ui_stroke_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, f64 thickness, u32 rgba, f64 feather) {
-    ns_unused(radius);
-    ui_stroke_rect(r, x, y, w, h, thickness, rgba, feather);
+    if (!r || w <= 0.0 || h <= 0.0 || thickness <= 0.0) return;
+    const f64 f = ui_clamp_f64(ui_resolve_feather(feather), 0.0, thickness * 0.5);
+    const f64 half = thickness * 0.5;
+    f64 outer[4 * 9 * 2], outer_solid[4 * 9 * 2];
+    f64 inner_solid[4 * 9 * 2], inner[4 * 9 * 2];
+    i32 n = 0, n2 = 0;
+    ui_round_rect_points(outer, &n, x - half, y - half, w + thickness, h + thickness, radius + half);
+    ui_round_rect_points(outer_solid, &n2, x - half + f, y - half + f,
+                         w + thickness - f * 2.0, h + thickness - f * 2.0, fmax(0.01, radius + half - f));
+    ui_round_rect_points(inner_solid, &n2, x + half - f, y + half - f,
+                         w - thickness + f * 2.0, h - thickness + f * 2.0, fmax(0.01, radius - half + f));
+    ui_round_rect_points(inner, &n2, x + half, y + half,
+                         w - thickness, h - thickness, fmax(0.01, radius - half));
+    if (n < 3 || n2 != n) return;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    const u32 transparent = ui_color_alpha_mul(rgba, 0.0);
+    ui_draw_round_ring(r, outer, outer_solid, n, transparent, rgba);
+    ui_draw_round_ring(r, outer_solid, inner_solid, n, rgba, rgba);
+    ui_draw_round_ring(r, inner_solid, inner, n, rgba, transparent);
 }
 
 void ui_stroke_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 rtl, f64 rtr, f64 rbl, f64 rbr, f64 thickness, u32 rgba, f64 feather) {
@@ -754,9 +778,106 @@ ui_renderer *ui_renderer_create(view *v) {
 
 void ui_renderer_destroy(ui_renderer *r) {
     if (!r) return;
+    for (i32 i = 0; i < UI_MAX_TEXTURES; i++) {
+        if (r->texture_bindings[i].id) gpu_destroy_binding(r->texture_bindings[i]);
+        if (r->textures[i].id) gpu_destroy_texture(r->textures[i]);
+    }
     for (i32 i = 0; i < 2; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
     free(r);
+}
+
+static i32 ui_register_rgba_texture(ui_renderer *r, const u8 *data, i32 width, i32 height) {
+    if (!r || !data || width <= 0 || height <= 0) return 0;
+    for (i32 slot = 0; slot < UI_MAX_TEXTURES; slot++) {
+        if (r->textures[slot].id) continue;
+        gpu_texture texture = gpu_create_texture(&(gpu_texture_desc){
+            .width = width, .height = height, .depth = 1,
+            .data = (ns_data){(void*)data, (size_t)width * (size_t)height * 4},
+            .format = PIXELFORMAT_RGBA8,
+            .type = TEXTURE_2D,
+            .usage = TEXTURE_USAGE_READ,
+            .resource_usage = USAGE_DEFAULT,
+        });
+        if (!texture.id) return 0;
+        gpu_binding binding = gpu_create_binding(&(gpu_binding_desc){
+            .pipeline = r->pipeline_image,
+            .buffers = {
+                {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
+                {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
+            },
+            .textures = {{.texture = texture, .name = ns_str_cstr("tex")}},
+        });
+        if (!binding.id) {
+            gpu_destroy_texture(texture);
+            return 0;
+        }
+        r->textures[slot] = texture;
+        r->texture_bindings[slot] = binding;
+        r->texture_widths[slot] = width;
+        r->texture_heights[slot] = height;
+        return slot + 3;
+    }
+    return 0;
+}
+
+i32 ui_atlas_load(ui_renderer *r, const char *path) {
+    if (!r || !path || !path[0]) return 0;
+    io_image *image = io_load_image(path);
+    if (!image || !image->data || image->width <= 0 || image->height <= 0) return 0;
+    size_t pixels = (size_t)image->width * (size_t)image->height;
+    u8 *rgba = (u8*)malloc(pixels * 4);
+    if (!rgba) {
+        free(image->data);
+        free(image);
+        return 0;
+    }
+    for (size_t i = 0; i < pixels; i++) {
+        const i32 c = image->channels;
+        rgba[i * 4 + 0] = image->data[i * c + 0];
+        rgba[i * 4 + 1] = c > 1 ? image->data[i * c + 1] : image->data[i * c + 0];
+        rgba[i * 4 + 2] = c > 2 ? image->data[i * c + 2] : image->data[i * c + 0];
+        rgba[i * 4 + 3] = c > 3 ? image->data[i * c + 3] : 255;
+    }
+    i32 texture_id = ui_register_rgba_texture(r, rgba, image->width, image->height);
+    free(rgba);
+    free(image->data);
+    free(image);
+    return texture_id;
+}
+
+void ui_atlas_destroy(ui_renderer *r, i32 atlas) {
+    if (!r || atlas < 3 || atlas >= UI_MAX_TEXTURES + 3) return;
+    i32 slot = atlas - 3;
+    if (r->texture_bindings[slot].id) gpu_destroy_binding(r->texture_bindings[slot]);
+    if (r->textures[slot].id) gpu_destroy_texture(r->textures[slot]);
+    r->texture_bindings[slot] = (gpu_binding){0};
+    r->textures[slot] = (gpu_texture){0};
+    r->texture_widths[slot] = 0;
+    r->texture_heights[slot] = 0;
+}
+
+i32 ui_atlas_width(ui_renderer *r, i32 atlas) {
+    return r && atlas >= 3 && atlas < UI_MAX_TEXTURES + 3 ? r->texture_widths[atlas - 3] : 0;
+}
+i32 ui_atlas_height(ui_renderer *r, i32 atlas) {
+    return r && atlas >= 3 && atlas < UI_MAX_TEXTURES + 3 ? r->texture_heights[atlas - 3] : 0;
+}
+
+void ui_atlas_draw_region(ui_renderer *r, i32 atlas, f64 x, f64 y, f64 w, f64 h,
+                          f64 atlas_x, f64 atlas_y, f64 atlas_w, f64 atlas_h, u32 rgba) {
+    i32 width = ui_atlas_width(r, atlas);
+    i32 height = ui_atlas_height(r, atlas);
+    if (!r || width <= 0 || height <= 0 || w <= 0 || h <= 0) return;
+    r->current_texture_id = atlas;
+    ui_push_quad_ex(r, x, y, x + w, y + h,
+                    atlas_x / width, atlas_y / height,
+                    (atlas_x + atlas_w) / width, (atlas_y + atlas_h) / height,
+                    rgba, UI_KIND_IMAGE, 0, 0, 0);
+}
+
+void ui_atlas_draw(ui_renderer *r, i32 atlas, f64 x, f64 y, f64 w, f64 h) {
+    ui_atlas_draw_region(r, atlas, x, y, w, h, 0, 0, ui_atlas_width(r, atlas), ui_atlas_height(r, atlas), 0xffffffffu);
 }
 
 void ui_resize(ui_renderer *r) {
@@ -810,6 +931,10 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         if (cmd->kind == UI_KIND_MSDF) {
             gpu_set_pipeline(r->pipeline_msdf);
             gpu_set_binding(r->binding_font_msdf);
+        } else if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3 &&
+                   r->texture_bindings[cmd->texture_id - 3].id) {
+            gpu_set_pipeline(r->pipeline_image);
+            gpu_set_binding(r->texture_bindings[cmd->texture_id - 3]);
         } else {
             gpu_set_pipeline(r->pipeline_image);
             gpu_set_binding(r->binding_white_image);
@@ -916,20 +1041,36 @@ static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 
     *out_n = n;
 }
 
-void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather) {
-    feather = ui_resolve_feather(feather);
-    ns_unused(feather);
-    if (!r || w <= 0 || h <= 0) return;
-    f64 pts[4 * 9 * 2];
-    i32 n = 0;
-    ui_round_rect_points(pts, &n, x, y, w, h, radius);
-    if (n < 3) return;
-    r->current_texture_id = UI_WHITE_TEXTURE;
-    f64 u = 0, v = 0;
-    f64 x0 = pts[0], y0 = pts[1];
-    for (i32 i = 1; i < n - 1; i++) {
-        ui_push_tri(r, x0, y0, pts[i * 2], pts[i * 2 + 1], pts[(i + 1) * 2], pts[(i + 1) * 2 + 1], u, v, rgba);
+static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inner, i32 n, u32 outer_color, u32 inner_color) {
+    for (i32 i = 0; i < n; i++) {
+        const i32 j = (i + 1) % n;
+        ui_push_tri_colors(r,
+            outer[i * 2], outer[i * 2 + 1], outer_color,
+            inner[i * 2], inner[i * 2 + 1], inner_color,
+            inner[j * 2], inner[j * 2 + 1], inner_color);
+        ui_push_tri_colors(r,
+            outer[i * 2], outer[i * 2 + 1], outer_color,
+            inner[j * 2], inner[j * 2 + 1], inner_color,
+            outer[j * 2], outer[j * 2 + 1], outer_color);
     }
+}
+
+void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather) {
+    if (!r || w <= 0 || h <= 0) return;
+    const f64 f = ui_clamp_f64(ui_resolve_feather(feather), 0.0, fmin(w, h) * 0.5);
+    f64 outer[4 * 9 * 2], inner[4 * 9 * 2];
+    i32 n = 0, inner_n = 0;
+    ui_round_rect_points(outer, &n, x, y, w, h, radius);
+    ui_round_rect_points(inner, &inner_n, x + f, y + f, w - f * 2.0, h - f * 2.0, fmax(0.01, radius - f));
+    if (n < 3 || inner_n != n) return;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    const f64 cx = x + w * 0.5;
+    const f64 cy = y + h * 0.5;
+    for (i32 i = 0; i < n; i++) {
+        const i32 j = (i + 1) % n;
+        ui_push_tri(r, cx, cy, inner[i * 2], inner[i * 2 + 1], inner[j * 2], inner[j * 2 + 1], 0, 0, rgba);
+    }
+    ui_draw_round_ring(r, outer, inner, n, ui_color_alpha_mul(rgba, 0.0), rgba);
 }
 
 void ui_fill_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 rtl, f64 rtr, f64 rbl, f64 rbr, u32 rgba, f64 feather) {

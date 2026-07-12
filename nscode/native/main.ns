@@ -45,6 +45,8 @@ fn main() {
     if ok {
         print("gpu device acquired\n")
         let r = ui_renderer_create(v)
+        let file_icon = ui_atlas_load(r, "sample/ns.png")
+        set_file_icon_atlas(file_icon)
         v.on_frame({ frame_view in
             ui_begin_frame(r)
             render_frame(r, frame_view)

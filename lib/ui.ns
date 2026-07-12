@@ -200,6 +200,8 @@ struct ui_layer {
     handle: any
 }
 
+// A GPU-backed image atlas. Pixel regions can be drawn as textured quads;
+// loading a normal image and drawing the full region is also supported.
 // ===========================================================================
 // Renderer: lifecycle
 // ===========================================================================
@@ -228,6 +230,15 @@ ref fn ui_flush(r: ref ui_renderer, clear: ui_color_rgba)
 // Logical drawable size in physical pixels.
 ref fn ui_canvas_width(r: ref ui_renderer) i32
 ref fn ui_canvas_height(r: ref ui_renderer) i32
+
+// Load an image file into a renderer-owned atlas texture. PNG/JPEG channel
+// layouts are normalized to RGBA by the native UI library.
+ref fn ui_atlas_load(r: ref ui_renderer, path: str) i32
+ref fn ui_atlas_destroy(r: ref ui_renderer, atlas: i32)
+ref fn ui_atlas_width(r: ref ui_renderer, atlas: i32) i32
+ref fn ui_atlas_height(r: ref ui_renderer, atlas: i32) i32
+ref fn ui_atlas_draw(r: ref ui_renderer, atlas: i32, x: f64, y: f64, w: f64, h: f64)
+ref fn ui_atlas_draw_region(r: ref ui_renderer, atlas: i32, x: f64, y: f64, w: f64, h: f64, atlas_x: f64, atlas_y: f64, atlas_w: f64, atlas_h: f64, rgba: u32)
 
 // Place a child of child_w/child_h inside a container rect using UI_ALIGN_* flags.
 ref fn ui_layout(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64, align: i32) ref ui_rect
