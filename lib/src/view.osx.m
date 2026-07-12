@@ -185,7 +185,13 @@ i32 view_osx_key_map(i32 k) {
         ![event isARepeat]) {
         view_osx_request_terminate();
     }
-    else if ([event type] == NSEventTypeKeyUp && ([event modifierFlags] & NSEventModifierFlagCommand)) {
+    else if ([event type] == NSEventTypeKeyDown ||
+             [event type] == NSEventTypeKeyUp ||
+             [event type] == NSEventTypeFlagsChanged) {
+        // This backend has no AppKit menu and ViewMTKView owns keyboard input.
+        // Sending key events through NSApplication needlessly invokes AppKit's
+        // menu-key translation path.  On newer macOS builds that path also
+        // emits an NSSoftLinking warning for a private HIToolbox symbol.
         [[self keyWindow] sendEvent:event];
     }
     else {

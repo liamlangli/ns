@@ -102,6 +102,8 @@ let g_chat_menu_btn_x: f64 = 0.0
 let g_chat_menu_btn_y: f64 = 0.0
 
 fn font_px() f64 { return 14.0 }
+fn code_font_px() f64 { return 12.0 }
+fn code_line_h() f64 { return 20.0 }
 fn small_px() f64 { return 12.0 }
 fn title_px() f64 { return 18.0 }
 
@@ -1514,7 +1516,7 @@ fn draw_code_line(r: ref ui_renderer, li: i32, text_x: f64, row_y: f64, char_w: 
                     de = view_end
                 }
                 let tx = text_x + ((ds - first_col) as f64) * char_w
-                ui_draw_text(r, tx, row_y, token_text_part(t, ds - ts, de - ds), font_px(), token_color(token_kind(t)), FONT_MONO())
+                ui_draw_text(r, tx, row_y, token_text_part(t, ds - ts, de - ds), code_font_px(), token_color(token_kind(t)), FONT_MONO())
             }
         }
     }
@@ -1679,17 +1681,18 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
 
 fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let tab_h = 42.0
-    let line_h = 24.0
+    let line_h = code_line_h()
     let body_y = y + tab_h
     let body_h = h - tab_h
     let gutter_w = 72.0
 
-    let char_w = ui_mono_char_width(r, font_px(), FONT_MONO())
+    let char_w = ui_mono_char_width(r, code_font_px(), FONT_MONO())
     if char_w <= 0.0 {
-        char_w = font_px() * 0.6
+        char_w = code_font_px() * 0.6
     }
     let text_x = x + gutter_w + 16.0
-    let visible_cols = ((w - gutter_w - 24.0) / char_w) as i32 + 2
+    let text_w = w - gutter_w - 24.0
+    let visible_cols = (text_w / char_w) as i32 + 1
 
     process_code_mouse(v, x, body_y, w, body_h, text_x, line_h, char_w)
     process_code_keys(v)
@@ -1775,7 +1778,9 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
                     num_color = col_text()
                 }
                 draw_text_clipped(r, x + 20.0, text_center_y(r, row_top, line_h, small_px()), 34.0, 18.0, itos(i + 1), small_px(), num_color)
-                draw_code_line(r, i, text_x, text_center_y(r, row_top, line_h, font_px()), char_w, g_coloff, visible_cols)
+                ui_push_clip(r, text_x, body_y, text_w, body_h)
+                draw_code_line(r, i, text_x, text_center_y(r, row_top, line_h, code_font_px()), char_w, g_coloff, visible_cols)
+                ui_pop_clip(r)
             }
         }
     }

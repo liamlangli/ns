@@ -65,10 +65,10 @@ fn tap(r: ref ui_renderer, v: ref view, k: i32) {
 }
 
 // Geometry mirrored from render.ns: file tree, tab strip 42px, gutter 72px +
-// 16px text inset, 24px line height, first row top 18px below the tab strip.
+// 16px text inset, compact code line height, first row top 18px below the tab strip.
 fn body_y() f64 { return 42.0 }
 fn text_x() f64 { return file_tree_width(1024.0) + 88.0 }
-fn line_h() f64 { return 24.0 }
+fn line_h() f64 { return code_line_h() }
 
 fn row_mid_y(li: i32) f64 {
     return body_y() + 18.0 + (li as f64) * line_h() + 11.0
@@ -106,7 +106,7 @@ fn main() i32 {
 
     let v = view_create("frame test", 1024, 768)
     let r = ui_renderer_create(v)
-    let char_w = ui_mono_char_width(r, 14.0, 1)
+    let char_w = ui_mono_char_width(r, code_font_px(), 1)
     check("renderer created", char_w > 0.0)
 
     // The app boots in agent mode; a settle frame, then click the "Code" half

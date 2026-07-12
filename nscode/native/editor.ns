@@ -37,6 +37,13 @@ let g_coloff: i32 = 0  // first column shown
 let g_rows: i32 = 40   // visible text rows (set from the framebuffer in render)
 let g_cols: i32 = 120  // visible columns (set from the framebuffer in render)
 
+// Line geometry is rebuilt only when the document changes. Rendering can then
+// address any line without rescanning all bytes before it on every frame.
+fn line_index_cap() i32 { return 65536 }
+let g_line_starts = [i32](65536)
+let g_line_count: i32 = 1
+let g_doc_version: i32 = 0
+
 // VIEW_KEY_* codes (lib/include/view.h). ns has no enums; constants are
 // zero-argument fns, matching the convention in nscode/cli/keys.ns.
 fn VK_ENTER() i32 { return 257 }
@@ -68,6 +75,21 @@ fn dc(i: i32) i32 {
     return (g_doc[i] as i32) & 255
 }
 
+fn rebuild_line_index() {
+    g_line_count = 1
+    g_line_starts[0] = 0
+    let n = doc_len()
+    for i in 0 to n {
+        if dc(i) == 10 {
+            if g_line_count < line_index_cap() {
+                g_line_starts[g_line_count] = i + 1
+                g_line_count = g_line_count + 1
+            }
+        }
+    }
+    g_doc_version = g_doc_version + 1
+}
+
 // Non-negative integer to decimal string (used for line numbers). Template
 // strings mis-parse in the current interpreter, so this is done by hand.
 fn itos(n: i32) str {
@@ -88,6 +110,7 @@ fn itos(n: i32) str {
 // Seed the buffer with the bytes of `s` (resets the document first).
 fn load_str(s: str) {
     g_doc = s
+    rebuild_line_index()
     g_cur = 0
     g_anchor = -1
     g_rowoff = 0
@@ -97,14 +120,7 @@ fn load_str(s: str) {
 // ---- line geometry over the flat string -----------------------------------
 
 fn line_count() i32 {
-    let c = 1
-    let n = doc_len()
-    for i in 0 to n {
-        if dc(i) == 10 {
-            c = c + 1
-        }
-    }
-    return c
+    return g_line_count
 }
 
 // Byte offset where document line `target` begins.
@@ -112,54 +128,39 @@ fn line_start(target: i32) i32 {
     if target <= 0 {
         return 0
     }
-    let l = 0
-    let n = doc_len()
-    for i in 0 to n {
-        if dc(i) == 10 {
-            l = l + 1
-            if l == target {
-                return i + 1
-            }
-        }
+    if target < g_line_count {
+        return g_line_starts[target] as i32
     }
-    return n
+    return doc_len()
 }
 
 // Length (excluding the newline) of the line beginning at byte offset `off`.
 fn line_len(off: i32) i32 {
-    let m = 0
-    let n = doc_len()
-    for i in off to n {
-        if dc(i) == 10 {
-            return m
-        }
-        m = m + 1
+    let li = line_of(off)
+    if li < (g_line_count - 1) {
+        return ((g_line_starts[li + 1] as i32) - off) - 1
     }
-    return m
+    return doc_len() - off
 }
 
 // Document line containing byte offset `off`.
 fn line_of(off: i32) i32 {
-    let l = 0
-    for i in 0 to off {
-        if dc(i) == 10 {
-            l = l + 1
+    let lo = 0
+    let hi = g_line_count
+    loop (lo + 1) < hi {
+        let mid = (lo + hi) / 2
+        if (g_line_starts[mid] as i32) <= off {
+            lo = mid
+        } else {
+            hi = mid
         }
     }
-    return l
+    return lo
 }
 
 // Column of byte offset `off` within its line.
 fn col_of(off: i32) i32 {
-    let c = 0
-    for i in 0 to off {
-        if dc(i) == 10 {
-            c = 0
-        } else {
-            c = c + 1
-        }
-    }
-    return c
+    return off - line_start(line_of(off))
 }
 
 fn cur_line() i32 {
@@ -257,6 +258,7 @@ fn delete_selection() {
     let b = sel_max()
     let rest = doc_len() - b
     g_doc = substr(g_doc, 0, a) + substr(g_doc, b, rest)
+    rebuild_line_index()
     g_cur = a
     g_anchor = -1
 }
@@ -381,6 +383,7 @@ fn insert_str(s: str) {
     }
     let rest = doc_len() - g_cur
     g_doc = substr(g_doc, 0, g_cur) + s + substr(g_doc, g_cur, rest)
+    rebuild_line_index()
     g_cur = g_cur + s.len
     g_anchor = -1
 }
@@ -396,6 +399,7 @@ fn delete_back() {
         if g_cur > 0 {
             let rest = doc_len() - g_cur
             g_doc = substr(g_doc, 0, g_cur - 1) + substr(g_doc, g_cur, rest)
+            rebuild_line_index()
             g_cur = g_cur - 1
         }
     }
@@ -408,6 +412,7 @@ fn delete_forward() {
         if g_cur < doc_len() {
             let rest = (doc_len() - g_cur) - 1
             g_doc = substr(g_doc, 0, g_cur) + substr(g_doc, g_cur + 1, rest)
+            rebuild_line_index()
         }
     }
 }
@@ -683,6 +688,16 @@ let g_tok_kind = [i32](192)
 let g_tok_count: i32 = 0
 let g_tok_line_off: i32 = 0 // byte offset of the line last passed to tokenize_line
 
+// A small direct-mapped cache covers several viewports. Edits advance
+// g_doc_version, invalidating cached lines without clearing the backing arrays.
+fn tok_cache_slots() i32 { return 128 }
+let g_tok_cache_line = [i32](128)
+let g_tok_cache_version = [i32](128)
+let g_tok_cache_count = [i32](128)
+let g_tok_cache_start = [i32](24576)
+let g_tok_cache_len = [i32](24576)
+let g_tok_cache_kind = [i32](24576)
+
 fn token_count() i32 {
     return g_tok_count
 }
@@ -858,6 +873,21 @@ fn is_type_word(w: str) bool {
 // Scan document line `li` into the g_tok_* arrays. Columns are relative to the
 // line start. Returns the number of tokens found.
 fn tokenize_line(li: i32) i32 {
+    let slot = li % tok_cache_slots()
+    if (g_tok_cache_line[slot] as i32) == li {
+        if (g_tok_cache_version[slot] as i32) == g_doc_version {
+            g_tok_count = g_tok_cache_count[slot] as i32
+            g_tok_line_off = line_start(li)
+            let base = slot * tok_cap()
+            for i in 0 to g_tok_count {
+                g_tok_start[i] = g_tok_cache_start[base + i]
+                g_tok_len[i] = g_tok_cache_len[base + i]
+                g_tok_kind[i] = g_tok_cache_kind[base + i]
+            }
+            return g_tok_count
+        }
+    }
+
     g_tok_count = 0
     let s = line_start(li)
     g_tok_line_off = s
@@ -958,6 +988,15 @@ fn tokenize_line(li: i32) i32 {
             add_token(p, q - p, TK_PUNCT())
             p = q
         }
+    }
+    g_tok_cache_line[slot] = li
+    g_tok_cache_version[slot] = g_doc_version
+    g_tok_cache_count[slot] = g_tok_count
+    let base = slot * tok_cap()
+    for i in 0 to g_tok_count {
+        g_tok_cache_start[base + i] = g_tok_start[i]
+        g_tok_cache_len[base + i] = g_tok_len[i]
+        g_tok_cache_kind[base + i] = g_tok_kind[i]
     }
     return g_tok_count
 }

@@ -139,6 +139,14 @@ fn test_tokenizer() {
     expect_token("string literal", 1, 11, 4, TK_STRING())
     expect_token("plus", 2, 16, 1, TK_PUNCT())
     expect_token("a ident", 3, 18, 1, TK_TEXT())
+
+    let cached = tokenize_line(2)
+    check_i("token cache hit", cached, 4)
+    place_cursor(2, 11, false)
+    insert_str("x")
+    let changed = tokenize_line(2)
+    check_i("token cache invalidates after edit", changed, 5)
+    expect_token("edited token is rescanned", 1, 11, 1, TK_TEXT())
 }
 
 fn test_key_char() {
