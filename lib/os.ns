@@ -30,6 +30,12 @@ ref fn os_date_string() str
 ref fn os_locale_date_string() str
 ref fn os_locale_date_time_string() str
 
+// File access. os_file_size returns -1 on failure. Ranged reads truncate at
+// EOF and return an empty string when the file or requested range is invalid.
+ref fn os_file_size(path: str) i64
+ref fn os_read_file(path: str) str
+ref fn os_read_file_part(path: str, offset: i64, size: i64) str
+
 // Show a native open-file dialog when the platform backend supports one.
 // Returns an empty string when the dialog is cancelled or unavailable.
 ref fn os_open_file_dialog(title: str) str

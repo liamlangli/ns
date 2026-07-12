@@ -15,10 +15,6 @@ name = "std"
 version = ">=0.1.0"
 
 [[dependencies.runtime]]
-name = "fs"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
 name = "view"
 version = ">=0.1.0"
 

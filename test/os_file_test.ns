@@ -1,0 +1,7 @@
+use std
+use os
+
+assert(os_file_size("test/os_file_test.ns") > 8)
+assert(os_read_file_part("test/os_file_test.ns", 0, 3) == "use")
+assert(os_read_file_part("test/os_file_test.ns", 4, 3) == "std")
+assert(os_read_file("test/does-not-exist") == "")

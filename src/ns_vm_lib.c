@@ -161,7 +161,7 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     i32 lib_index = (i32)ns_array_length(vm->libs) - 1;
 
     ns_str path = ns_path_join(ref_path, ns_str_concat(lib_name, ns_str_cstr(".ns")));
-    ns_str source = ns_fs_read_file(path);
+    ns_str source = ns_os_read_file(path);
     ns_ast_parse(&ctx, source, path);
 
     ns_str prev = vm->lib;

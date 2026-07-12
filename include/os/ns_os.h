@@ -20,5 +20,10 @@ ns_str ns_path_dirname(ns_str src);
 ns_str ns_path_join(ns_str lhs, ns_str rhs);
 ns_str ns_path_home();
 
-// fs
-ns_str ns_fs_read_file(ns_str path);
+// Return the file size in bytes, or -1 when the file cannot be inspected.
+i64 ns_os_file_size(ns_str path);
+// Read up to `size` bytes starting at `offset`. Reads are truncated at EOF;
+// invalid ranges and I/O failures return ns_str_null.
+ns_str ns_os_read_file_part(ns_str path, i64 offset, i64 size);
+// Read the complete file.
+ns_str ns_os_read_file(ns_str path);

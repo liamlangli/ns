@@ -1,5 +1,7 @@
 #include "ns_os.h"
 
+#include <limits.h>
+
 // os
 ns_str ns_os_exec(ns_str cmd) {
 #ifdef NS_XCLIB
@@ -97,20 +99,75 @@ ns_str ns_path_home() {
     return data;
 }
 
-// fs
-ns_str ns_fs_read_file(ns_str path) {
+static ns_bool ns_os_file_seek(FILE *file, i64 offset, i32 origin) {
+#ifdef _WIN32
+    return _fseeki64(file, offset, origin) == 0;
+#else
+    return fseeko(file, (off_t)offset, origin) == 0;
+#endif
+}
+
+static i64 ns_os_file_tell(FILE *file) {
+#ifdef _WIN32
+    return (i64)_ftelli64(file);
+#else
+    return (i64)ftello(file);
+#endif
+}
+
+i64 ns_os_file_size(ns_str path) {
     FILE *file = fopen(path.data, "rb");
-    if (!file) {
+    if (!file) return -1;
+    if (!ns_os_file_seek(file, 0, SEEK_END)) {
+        fclose(file);
+        return -1;
+    }
+    i64 size = ns_os_file_tell(file);
+    fclose(file);
+    return size;
+}
+
+ns_str ns_os_read_file_part(ns_str path, i64 offset, i64 size) {
+    if (offset < 0 || size < 0 || size > INT32_MAX) return ns_str_null;
+
+    FILE *file = fopen(path.data, "rb");
+    if (!file) return ns_str_null;
+    if (!ns_os_file_seek(file, 0, SEEK_END)) {
+        fclose(file);
         return ns_str_null;
     }
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    fseek(file, 0, SEEK_SET);
-    char *buffer = (char *)ns_malloc(size + 1);
-    fread(buffer, 1, size, file);
+
+    i64 file_size = ns_os_file_tell(file);
+    if (file_size < 0 || offset > file_size) {
+        fclose(file);
+        return ns_str_null;
+    }
+    if (size > file_size - offset) size = file_size - offset;
+    if (!ns_os_file_seek(file, offset, SEEK_SET)) {
+        fclose(file);
+        return ns_str_null;
+    }
+
+    char *buffer = (char *)ns_malloc((size_t)size + 1);
+    if (!buffer) {
+        fclose(file);
+        return ns_str_null;
+    }
+    size_t read_size = fread(buffer, 1, (size_t)size, file);
+    if (read_size < (size_t)size && ferror(file)) {
+        free(buffer);
+        fclose(file);
+        return ns_str_null;
+    }
     fclose(file);
-    buffer[size] = '\0';
-    ns_str data = ns_str_range(buffer, size);
+    buffer[read_size] = '\0';
+    ns_str data = ns_str_range(buffer, (i32)read_size);
     data.dynamic = true;
     return data;
+}
+
+ns_str ns_os_read_file(ns_str path) {
+    i64 size = ns_os_file_size(path);
+    if (size < 0) return ns_str_null;
+    return ns_os_read_file_part(path, 0, size);
 }

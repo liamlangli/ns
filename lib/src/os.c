@@ -1,4 +1,5 @@
 #include "os.h"
+#include "ns_os.h"
 
 #include <locale.h>
 #include <time.h>
@@ -114,4 +115,29 @@ const char *os_locale_date_string(void) {
 
 const char *os_locale_date_time_string(void) {
     return os_strftime_now("%c");
+}
+
+static char *os_read_buffer = NULL;
+
+static const char *os_take_read_buffer(ns_str data) {
+    free(os_read_buffer);
+    os_read_buffer = NULL;
+    if (data.data == ns_null) return "";
+    os_read_buffer = data.data;
+    return os_read_buffer;
+}
+
+i64 os_file_size(const char *path) {
+    if (!path) return -1;
+    return ns_os_file_size(ns_str_cstr((char *)path));
+}
+
+const char *os_read_file(const char *path) {
+    if (!path) return "";
+    return os_take_read_buffer(ns_os_read_file(ns_str_cstr((char *)path)));
+}
+
+const char *os_read_file_part(const char *path, i64 offset, i64 size) {
+    if (!path) return "";
+    return os_take_read_buffer(ns_os_read_file_part(ns_str_cstr((char *)path), offset, size));
 }

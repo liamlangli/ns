@@ -32,7 +32,6 @@ $(NS_BINDIR)/lib/%.o: lib/src/%.m
 	$(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
 
 NS_IO_DYLIB = $(NS_BINDIR)/io$(NS_DYLIB_SUFFIX)
-NS_FS_DYLIB = $(NS_BINDIR)/fs$(NS_DYLIB_SUFFIX)
 NS_OS_DYLIB = $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX)
 NS_NET_DYLIB = $(NS_BINDIR)/net$(NS_DYLIB_SUFFIX)
 NS_HTTP_DYLIB = $(NS_BINDIR)/http$(NS_DYLIB_SUFFIX)
@@ -42,7 +41,6 @@ NS_GPU_DYLIB = $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX)
 NS_UI_DYLIB = $(NS_BINDIR)/ui$(NS_DYLIB_SUFFIX)
 
 NS_IO_OBJS = $(NS_BINDIR)/lib/io.o
-NS_FS_OBJS = $(NS_BINDIR)/lib/fs.o
 NS_OS_OBJS = $(NS_BINDIR)/lib/os.o
 NS_NET_OBJS = $(NS_BINDIR)/lib/net.o
 NS_HTTP_OBJS = $(NS_BINDIR)/lib/http.o
@@ -68,7 +66,6 @@ endif
 
 NS_STD_SHARED = \
 	$(NS_IO_DYLIB) \
-	$(NS_FS_DYLIB) \
 	$(NS_OS_DYLIB) \
 	$(NS_NET_DYLIB) \
 	$(NS_HTTP_DYLIB) \
@@ -82,9 +79,6 @@ std: $(NS_STD_SHARED)
 shared: std
 
 $(NS_IO_DYLIB): $(NS_IO_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
-
-$(NS_FS_DYLIB): $(NS_FS_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
 
 $(NS_OS_DYLIB): $(NS_OS_OBJS) | $(NS_BINDIR)

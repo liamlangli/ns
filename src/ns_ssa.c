@@ -286,7 +286,7 @@ static void ns_ssa_import_module_consts(ns_ssa_builder *b, ns_str lib_name) {
 #endif
 
     ns_str path = ns_path_join(ref_path, ns_str_concat(lib_name, ns_str_cstr(".ns")));
-    ns_str source = ns_fs_read_file(path);
+    ns_str source = ns_os_read_file(path);
     if (source.data == ns_null || source.len == 0) return;
 
     ns_ast_ctx lib_ctx = {0};

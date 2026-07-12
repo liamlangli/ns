@@ -114,9 +114,6 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_net.c \
 	src/ns_json.c \
 	src/ns_shader.c \
-	src/ns_project.c \
-	src/ns_project_xcode.c \
-	src/ns_project_vs.c \
 	src/ns_repl.c \
 	src/ns_def.c \
 	src/ns_asm.c
@@ -167,7 +164,7 @@ NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 # Native feature modules (lib/*) are compiled position-independent and built as
 # dylibs/so files. Keep them out of bin/ns so the interpreter remains
 # language-only; ref fn calls resolve them through dlopen()/dlsym().
-NS_LIBFN_SRCS = lib/src/io.c lib/src/fs.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/ui.c
+NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/ui.c
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
@@ -181,7 +178,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_shader_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_project_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_shader_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -238,7 +235,7 @@ test: $(NS_TEST_TARGETS)
 	$(NS_BINDIR)/ns_shader_test
 	$(NS_BINDIR)/ns_token_test
 	$(NS_BINDIR)/ns_buffer_test
-	$(NS_BINDIR)/ns_project_test
+	$(NS_BINDIR)/ns_os_test
 
 include lib/Makefile
 include sample/c/Makefile

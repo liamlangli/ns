@@ -15,7 +15,6 @@ use gpu
 use ui
 use editor
 use workspace
-use fs
 use render
 
 let g_fail = 0

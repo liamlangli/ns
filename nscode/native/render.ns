@@ -7,7 +7,6 @@ use view
 use ui
 use editor
 use workspace
-use fs
 use os
 use std
 

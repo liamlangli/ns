@@ -8,7 +8,6 @@
 #include "ns_pe.h"
 #include "ns_shader.h"
 #include "ns_profile.h"
-#include "ns_project.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -45,7 +44,6 @@ typedef struct ns_compile_option_t {
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
-    ns_bool project: 2; // `ns project <path>` - generate a host IDE project
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
@@ -65,8 +63,6 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.test = true;
         } else if (i == 1 && strcmp(argv[i], "build") == 0) {
             option.build = true;
-        } else if (i == 1 && strcmp(argv[i], "project") == 0) {
-            option.project = true;
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--token") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
@@ -149,7 +145,6 @@ void ns_help() {
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
-    printf("  project [path]    generate an editable IDE project from the nearest ns.mod\n");
     printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
 
 }
@@ -285,7 +280,7 @@ static void ns_profile_begin(i32 argc, i8 **argv) {
 
 void ns_exec_tokenize(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) { 
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -295,7 +290,7 @@ void ns_exec_tokenize(ns_str filename) {
 
 void ns_exec_ast(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) { 
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -307,7 +302,7 @@ void ns_exec_ast(ns_str filename) {
 
 void ns_exec_symbol(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) { 
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -322,7 +317,7 @@ void ns_exec_symbol(ns_str filename) {
 
 void ns_exec_ssa(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) {
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -340,7 +335,7 @@ void ns_exec_ssa(ns_str filename) {
 
 void ns_exec_aarch(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) {
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -367,7 +362,7 @@ void ns_exec_aarch(ns_str filename) {
 
 void ns_exec_macho(ns_str filename, ns_str output) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) {
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -393,7 +388,7 @@ void ns_exec_macho(ns_str filename, ns_str output) {
 
 void ns_exec_macho_object(ns_str filename, ns_str output) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) {
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -419,7 +414,7 @@ void ns_exec_macho_object(ns_str filename, ns_str output) {
 
 void ns_exec_wasm(ns_str filename, ns_str output) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) {
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -445,7 +440,7 @@ void ns_exec_wasm(ns_str filename, ns_str output) {
 
 void ns_exec_pe(ns_str filename, ns_str output) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) {
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
@@ -525,7 +520,7 @@ static ns_str ns_path_parent(ns_str dir) {
 }
 
 static ns_bool ns_file_exists(ns_str path) {
-    ns_str data = ns_fs_read_file(path);
+    ns_str data = ns_os_read_file(path);
     if (data.data == ns_null) return false;
     ns_str_free(data);
     return true;
@@ -586,7 +581,7 @@ static void ns_link_source(ns_linker *lk, ns_str src, ns_str file) {
             ns_str name = ns_str_slice(src, ns_s, ns_e);
 
             ns_str path = ns_path_join(lk->scope, ns_str_concat(name, ns_str_cstr(".ns")));
-            ns_str mod_src = ns_fs_read_file(path);
+            ns_str mod_src = ns_os_read_file(path);
             if (mod_src.data != ns_null) {
                 ns_link_module(lk, name, mod_src, path);   // local module -> inline
             } else if (!ns_name_in(lk->ext_seen, name)) {
@@ -712,7 +707,7 @@ static ns_str ns_manifest_value(ns_str src, const char *key) {
 // `source` dir. Supports both `entry = "..."` and `entries = ["...", ...]`.
 static ns_str ns_manifest_entry_file_for_root(ns_str root) {
     ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
-    ns_str mod = ns_fs_read_file(manifest);
+    ns_str mod = ns_os_read_file(manifest);
     if (mod.data == ns_null)
         ns_exit(1, "ns", "cannot read manifest %.*s.\n", manifest.len, manifest.data);
 
@@ -773,7 +768,7 @@ static ns_bool ns_find_project_root(ns_str path, ns_str *out) {
 
 static ns_str ns_build_manifest_value(ns_str root, const char *key) {
     ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
-    ns_str mod = ns_fs_read_file(manifest);
+    ns_str mod = ns_os_read_file(manifest);
     if (mod.data == ns_null) return ns_str_null;
     return ns_manifest_value(mod, key);
 }
@@ -862,7 +857,7 @@ static ns_str ns_build_app_output(ns_str output) {
 }
 
 static void ns_copy_file_or_exit(ns_str src, ns_str dst) {
-    ns_str data = ns_fs_read_file(src);
+    ns_str data = ns_os_read_file(src);
     if (data.data == ns_null) ns_exit(1, "build", "failed to read icon %.*s.\n", src.len, src.data);
 
     FILE *file = fopen(dst.data, "wb");
@@ -980,7 +975,7 @@ static ns_build_input ns_build_input_resolve(ns_str path) {
         in.has_manifest = ns_file_exists(ns_path_join(in.scope, ns_str_cstr("ns.mod")));
     }
 
-    in.source = ns_fs_read_file(in.filename);
+    in.source = ns_os_read_file(in.filename);
     if (in.source.data == ns_null || in.source.len == 0) {
         ns_exit(1, "build", "invalid input file %.*s.\n", in.filename.len, in.filename.data);
     }
@@ -1380,6 +1375,7 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_info("build", "executable %.*s\n", output.len, output.data);
 }
 
+#if 0 // IDE project generator sources are not present in this repository.
 static ns_str ns_project_absolute_path(ns_str path) {
     if (ns_path_is_absolute(path)) return ns_str_concat(path, ns_str_cstr(""));
     ns_str cwd = ns_getcwd();
@@ -1551,12 +1547,14 @@ void ns_exec_project(ns_str path) {
 #endif
 }
 
+#endif
+
 void ns_exec_run(ns_str filename) {
     // No file argument: run the project's declared entry from its ns.mod.
     if (filename.len == 0) filename = ns_manifest_entry_file();
     if (ns_is_dir(filename)) filename = ns_manifest_entry_file_for_root(ns_project_root(filename));
 
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.data == ns_null || source.len == 0)
         ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
 
@@ -1586,7 +1584,7 @@ void ns_exec_run(ns_str filename) {
 // (0 == all assertions passed).
 static i32 ns_run_test_file(ns_str filename) {
     ns_vm tvm = {0};
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.data == ns_null || source.len == 0) {
         ns_warn("test", "skip empty/unreadable file %.*s.\n", filename.len, filename.data);
         return 1;
@@ -1685,7 +1683,7 @@ void ns_exec_test(ns_str path) {
 
 void ns_exec_eval(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) ns_exit(1, "ns", "invalid input file %.*s.\n", filename.len, filename.data);
     ns_return_value ret_v = ns_eval(&vm, source, filename);
     if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
@@ -1777,7 +1775,7 @@ void ns_exec_shader(ns_str filename, ns_str target_s, ns_str entry, ns_str outpu
         ns_exit(1, "shader", "unknown target %.*s (expected msl | glsl | hlsl).\n", target_s.len, target_s.data);
     }
 
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) ns_exit(1, "shader", "invalid input file %.*s.\n", filename.len, filename.data);
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     if (ns_return_is_error(ret)) ns_return_assert(ret);
@@ -1865,8 +1863,6 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_test(option.filename);
     } else if (option.build) {
         ns_exec_build(option.filename, option.output, option.build_kind);
-    } else if (option.project) {
-        ns_exec_project(option.filename);
     } else if (option.tokenize_only) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {

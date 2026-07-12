@@ -45,7 +45,7 @@ void ns_repl_load(ns_vm *vm, ns_str arg) {
     ns_str filename = ns_str_slice(arg, 0, arg.len);
 
     if (filename.len == 0) ns_error("ns", "no input file.\n");
-    ns_str source = ns_fs_read_file(filename);
+    ns_str source = ns_os_read_file(filename);
     if (source.len == 0) { 
         ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
         return;
