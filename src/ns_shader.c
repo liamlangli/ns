@@ -3,7 +3,7 @@
 // ns fn -> shader source transcoder. The emitter walks the fn-body AST directly
 // (like ns_ast_print.c) because shader source needs structured control flow;
 // type facts come from the VM symbol table populated by ns_vm_parse. Only the
-// shader subset of ns is accepted: scalars, simd vectors (Float2/3/4/4x4), user
+// shader subset of ns is accepted: scalars, simd vectors (float2/3/4 and mat4), user
 // structs, arithmetic/logic, if/for/loop and calls to other user fns. Anything
 // else produces a source-located error instead of silently emitting bad code.
 
@@ -120,12 +120,12 @@ ns_str ns_shader_entry_name(ns_shader_target t, ns_str fn_name) {
 // ---------------------------------------------------------------------------
 static ns_bool ns_shader_is_main_tu(ns_symbol *s) { return s->lib.len == 0 || ns_str_equals(s->lib, ns_str_cstr("main")); }
 
-// Float2/3/4 -> component count, Float4x4 -> 16, otherwise 0.
+// float2/3/4 -> component count, mat4 -> 16, otherwise 0.
 static i32 ns_shader_simd_dim(ns_str name) {
-    if (ns_str_equals(name, ns_str_cstr("Float2"))) return 2;
-    if (ns_str_equals(name, ns_str_cstr("Float3"))) return 3;
-    if (ns_str_equals(name, ns_str_cstr("Float4"))) return 4;
-    if (ns_str_equals(name, ns_str_cstr("Float4x4"))) return 16;
+    if (ns_str_equals(name, ns_str_cstr("float2"))) return 2;
+    if (ns_str_equals(name, ns_str_cstr("float3"))) return 3;
+    if (ns_str_equals(name, ns_str_cstr("float4"))) return 4;
+    if (ns_str_equals(name, ns_str_cstr("mat4"))) return 16;
     return 0;
 }
 
@@ -156,7 +156,7 @@ static ns_symbol *ns_shader_find_global(ns_vm *vm, ns_str name) {
     return ns_null;
 }
 
-// Resolve a struct name (or a type alias of one, e.g. Quaternion) to its struct
+// Resolve a struct name (or a type alias of one, e.g. quatf) to its struct
 // symbol index in vm->symbols, or -1.
 static i32 ns_shader_struct_index(ns_vm *vm, ns_str name) {
     ns_symbol *s = ns_shader_find_global(vm, name);
@@ -166,7 +166,7 @@ static i32 ns_shader_struct_index(ns_vm *vm, ns_str name) {
     return -1;
 }
 
-// The stage-io position field: `position: Float4`.
+// The stage-io position field: `position: float4`.
 static ns_bool ns_shader_is_position_field(ns_vm *vm, ns_struct_field *f) {
     if (!ns_str_equals(f->name, ns_str_cstr("position"))) return false;
     if (!ns_type_is(f->t, NS_TYPE_STRUCT)) return false;
@@ -511,7 +511,7 @@ static ns_return_void ns_shader_emit_desig(ns_shader_emit *e, ns_ast_t *n, ns_st
     }
     ns_symbol *s = &e->vm->symbols[st_index];
     i32 dim = ns_shader_is_simd(s) ? ns_shader_simd_dim(s->name) : 0;
-    if (dim == 16) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: Float4x4 designated init is not supported yet.");
+    if (dim == 16) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: mat4 designated init is not supported yet.");
 
     // per struct field (declaration order): the matching field expr node, or 0
     i32 field_count = (i32)ns_array_length(s->st.fields);
@@ -635,10 +635,10 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         if (ns_type_is(lt, NS_TYPE_STRING) || ns_type_is(rt, NS_TYPE_STRING)) {
             return ns_return_error(void, loc, NS_ERR_EVAL, "shader: string operations are not supported in shader fns.");
         }
-        // Float4x4 math needs per-target rewriting (mul() on HLSL); deferred.
+        // mat4 math needs per-target rewriting (mul() on HLSL); deferred.
         if ((ns_type_is(lt, NS_TYPE_STRUCT) && ns_shader_simd_dim(e->vm->symbols[ns_type_index(lt)].name) == 16) ||
             (ns_type_is(rt, NS_TYPE_STRUCT) && ns_shader_simd_dim(e->vm->symbols[ns_type_index(rt)].name) == 16)) {
-            return ns_return_error(void, loc, NS_ERR_EVAL, "shader: Float4x4 operators are not supported yet.");
+            return ns_return_error(void, loc, NS_ERR_EVAL, "shader: mat4 operators are not supported yet.");
         }
         ns_shader_try(ns_shader_emit_expr(e, n->binary_expr.left, dst));
         ns_shader_cstr(dst, " ");
@@ -663,7 +663,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         }
         ns_str field = r->primary_expr.token.val;
         ns_type lt = ns_shader_infer(e, n->member_expr.left);
-        // Float4x4 columns (col0..col3) index the matrix in every target.
+        // mat4 columns (col0..col3) index the matrix in every target.
         if (ns_type_is(lt, NS_TYPE_STRUCT) && ns_shader_simd_dim(e->vm->symbols[ns_type_index(lt)].name) == 16) {
             if (field.len == 4 && strncmp(field.data, "col", 3) == 0 && field.data[3] >= '0' && field.data[3] <= '3') {
                 ns_shader_try(ns_shader_emit_expr(e, n->member_expr.left, dst));
@@ -672,7 +672,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                 ns_shader_cstr(dst, "]");
                 return ns_return_ok_void;
             }
-            return ns_return_error(void, loc, NS_ERR_EVAL, "shader: unknown Float4x4 member.");
+            return ns_return_error(void, loc, NS_ERR_EVAL, "shader: unknown mat4 member.");
         }
         if (ns_str_equals(field, ns_str_cstr("len")) || ns_str_equals(field, ns_str_cstr("size")) || ns_str_equals(field, ns_str_cstr("cap"))) {
             return ns_return_error(void, loc, NS_ERR_EVAL, "shader: container members are not supported in shader fns.");
@@ -1203,14 +1203,14 @@ static ns_return_void ns_shader_classify_entry(ns_shader_emit *e, ns_shader_entr
             if (ns_shader_is_position_field(e->vm, &io->st.fields[f])) has_position = true;
         }
         if (!has_position) {
-            return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a vertex entry's return struct needs a `position: Float4` field.");
+            return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a vertex entry's return struct needs a `position: float4` field.");
         }
         if (!ns_shader_index_in(e->vs_inputs, in_index)) ns_array_push(e->vs_inputs, in_index);
         if (!ns_shader_index_in(e->stage_ios, io_index)) ns_array_push(e->stage_ios, io_index);
     } else {
         ns_bool ret_ok = ns_type_is(s->fn.ret, NS_TYPE_STRUCT) && ns_shader_is_simd(&e->vm->symbols[ns_type_index(s->fn.ret)]) &&
                          ns_shader_simd_dim(e->vm->symbols[ns_type_index(s->fn.ret)].name) == 4;
-        if (!ret_ok) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a fragment entry must return Float4.");
+        if (!ret_ok) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a fragment entry must return float4.");
         if (!ns_shader_index_in(e->stage_ios, in_index)) ns_array_push(e->stage_ios, in_index);
     }
     return ns_return_ok_void;

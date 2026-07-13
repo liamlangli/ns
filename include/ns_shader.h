@@ -10,10 +10,10 @@
 //   - NS_SHADER_HLSL:        HLSL (DirectX 12)
 //
 // Shader entries are ordinary ns fns (see sample/ns/shader.ns): a vertex fn maps
-// an input struct to a stage-io struct whose `position: Float4` field is the clip
-// position, and a fragment fn maps the stage-io struct to a Float4 color. The
+// an input struct to a stage-io struct whose `position: float4` field is the clip
+// position, and a fragment fn maps the stage-io struct to a float4 color. The
 // supported language subset covers scalars, the simd vector structs
-// (Float2/3/4/4x4), user structs, arithmetic/logic, if/for/loop and calls to
+// (float2/3/4 and mat4), user structs, arithmetic/logic, if/for/loop and calls to
 // other user fns; anything else fails with a source-located error.
 
 typedef enum ns_shader_target {
@@ -51,8 +51,8 @@ ns_return_str ns_shader_transpile(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_index, ns_s
 ns_shader_target ns_shader_target_from_str(ns_str s);
 ns_str ns_shader_target_name(ns_shader_target t);
 
-// vertex: fn name starts with "vs", or returns a struct with a `position: Float4`
-// field; fragment: name starts with "fs"/"ps", or returns Float4. AUTO on failure.
+// vertex: fn name starts with "vs", or returns a struct with a `position: float4`
+// field; fragment: name starts with "fs"/"ps", or returns float4. AUTO on failure.
 ns_shader_stage ns_shader_stage_infer(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_index);
 
 // Entry-point name to feed gpu_shader_stage_desc.entry: the fn name for MSL/HLSL,

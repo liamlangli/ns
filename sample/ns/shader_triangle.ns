@@ -15,27 +15,27 @@ use shader
 use view
 use gpu
 
-struct VertexData {
-    position: Float3,
-    color: Float4
+struct vertex_data {
+    position: float3,
+    color: float4
 }
 
-struct FragmentInput {
-    position: Float4,
-    color: Float4
+struct fragment_input {
+    position: float4,
+    color: float4
 }
 
 let g_resources = [0u, 0u, 0u, 0u]
 
-fn vs_main(data: VertexData) FragmentInput {
+fn vs_main(data: vertex_data) fragment_input {
     let pos = data.position
-    return FragmentInput {
-        position: Float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
+    return fragment_input {
+        position: float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
         color: data.color,
     }
 }
 
-fn fs_main(data: FragmentInput) Float4 {
+fn fs_main(data: fragment_input) float4 {
     return data.color
 }
 

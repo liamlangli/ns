@@ -1,30 +1,29 @@
 mod simd
 
-struct Float2 {
+struct float2 {
     x: f32,
     y: f32
 }
 
-struct Float3 {
+struct float3 {
     x: f32,
     y: f32,
     z: f32
 }
 
-struct Float4 {
+struct float4 {
     x: f32,
     y: f32,
     z: f32,
     w: f32
 }
 
-type Quaternion = Float4
+type quatf = float4
 
-struct Float4x4 {
-    col0: Float4,
-    col1: Float4,
-    col2: Float4,
-    col3: Float4
+struct mat4 {
+    col0: float4,
+    col1: float4,
+    col2: float4,
+    col3: float4
 }
-
 

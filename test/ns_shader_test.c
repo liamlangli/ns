@@ -26,16 +26,16 @@ static const char *ns_shader_test_src =
     "use std\n"
     "use simd\n"
     "struct VertexData {\n"
-    "    position: Float3,\n"
-    "    uv: Float2\n"
+    "    position: float3,\n"
+    "    uv: float2\n"
     "}\n"
     "struct FragmentInput {\n"
-    "    position: Float4,\n"
-    "    uv: Float2,\n"
-    "    color: Float4\n"
+    "    position: float4,\n"
+    "    uv: float2,\n"
+    "    color: float4\n"
     "}\n"
-    "fn brighten(c: Float4, gain: f32) Float4 {\n"
-    "    return Float4 { x: c.x * gain, y: c.y * gain, z: c.z * gain, w: c.w }\n"
+    "fn brighten(c: float4, gain: f32) float4 {\n"
+    "    return float4 { x: c.x * gain, y: c.y * gain, z: c.z * gain, w: c.w }\n"
     "}\n"
     "fn half_gain(a: f32) f32 {\n"
     "    return a + 0.25h + 0.25hb\n"
@@ -43,15 +43,15 @@ static const char *ns_shader_test_src =
     "fn vs_main(data: VertexData) FragmentInput {\n"
     "    let pos = data.position\n"
     "    return FragmentInput {\n"
-    "        position: Float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },\n"
+    "        position: float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },\n"
     "        uv: data.uv,\n"
-    "        color: Float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },\n"
+    "        color: float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },\n"
     "    }\n"
     "}\n"
-    "fn fs_main(data: FragmentInput) Float4 {\n"
+    "fn fs_main(data: FragmentInput) float4 {\n"
     "    return brighten(data.color, half_gain(0.5 as f32))\n"
     "}\n"
-    "fn bad_print(data: FragmentInput) Float4 {\n"
+    "fn bad_print(data: FragmentInput) float4 {\n"
     "    print(\"no\")\n"
     "    return data.color\n"
     "}\n"
@@ -108,6 +108,16 @@ int main() {
     // the repl-recover escape hatch is set
     setenv("NS_REPL_RECOVER", "1", 1);
 
+    ns_expect(ns_shader_eval_bool(
+                  "use simd\n"
+                  "fn main() bool {\n"
+                  "    let v = float2 { x: 1.0, y: 2.0 }\n"
+                  "    let q: quatf = float4 { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }\n"
+                  "    let m = mat4 { col0: q, col1: q, col2: q, col3: q }\n"
+                  "    return v.x == 1.0 && q.w == 1.0\n"
+                  "}\n"),
+              "simd exposes snake-case float vectors, quatf, and mat4.");
+
     ns_vm vm = {0};
     ns_ast_ctx ctx = {0};
     ns_return_bool parsed = ns_ast_parse(&ctx, ns_str_cstr((i8 *)ns_shader_test_src), ns_str_cstr("<ns_shader_test>"));
@@ -142,7 +152,7 @@ int main() {
             ns_expect(ns_shader_test_has(r.r, "fragment float4 fs_main(FragmentInput data [[stage_in]])"), "msl fragment entry signature.");
             ns_expect(ns_shader_test_has(r.r, "[[attribute(0)]]"), "msl vertex input attributes.");
             ns_expect(ns_shader_test_has(r.r, "float4 position [[position]]"), "msl stage-io position attribute.");
-            ns_expect(ns_shader_test_has(r.r, "float4(pos.x, pos.y, pos.z, 1.0)"), "msl Float4 literal becomes a constructor.");
+            ns_expect(ns_shader_test_has(r.r, "float4(pos.x, pos.y, pos.z, 1.0)"), "msl float4 literal becomes a constructor.");
             ns_expect(ns_shader_test_has(r.r, "float4 brighten(float4 c, float gain)"), "msl helper fn emitted.");
             ns_expect(ns_shader_test_has(r.r, "half(0.25)"), "msl half and brain-float suffixes lower to half.");
             ns_expect(ns_shader_test_has(r.r, "float3 pos = data.position"), "msl let binding types are inferred.");
@@ -211,14 +221,14 @@ int main() {
         const char *src =
             "use simd\n"
             "use shader\n"
-            "struct VertexData { position: Float3, uv: Float2 }\n"
-            "struct FragmentInput { position: Float4, uv: Float2, color: Float4 }\n"
+            "struct VertexData { position: float3, uv: float2 }\n"
+            "struct FragmentInput { position: float4, uv: float2, color: float4 }\n"
             "fn vs_main(data: VertexData) FragmentInput {\n"
             "    let pos = data.position\n"
             "    return FragmentInput {\n"
-            "        position: Float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },\n"
+            "        position: float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },\n"
             "        uv: data.uv,\n"
-            "        color: Float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },\n"
+            "        color: float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },\n"
             "    }\n"
             "}\n"
             "fn main() bool {\n"

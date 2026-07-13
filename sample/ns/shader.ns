@@ -6,26 +6,26 @@ use simd
 use shader
 
 struct VertexData {
-    position: Float3,
-    uv: Float2
+    position: float3,
+    uv: float2
 }
 
 struct FragmentInput {
-    position: Float4,
-    uv: Float2,
-    color: Float4
+    position: float4,
+    uv: float2,
+    color: float4
 }
 
 fn vs_main(data: VertexData) FragmentInput {
     let pos = data.position
     return FragmentInput {
-        position: Float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
+        position: float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
         uv: data.uv,
-        color: Float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },
+        color: float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },
     }
 }
 
-fn fs_main(data: FragmentInput) Float4 {
+fn fs_main(data: FragmentInput) float4 {
     return data.color
 }
 
