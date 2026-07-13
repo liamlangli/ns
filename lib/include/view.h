@@ -138,6 +138,13 @@ typedef enum view_keycode {
     VIEW_KEY_MENU = 348,
 } view_keycode;
 
+typedef enum view_key_modifier {
+    VIEW_KEY_MOD_SHIFT = 1 << 0,
+    VIEW_KEY_MOD_CONTROL = 1 << 1,
+    VIEW_KEY_MOD_ALT = 1 << 2,
+    VIEW_KEY_MOD_SUPER = 1 << 3,
+} view_key_modifier;
+
 typedef struct view {
     ns_str title;
     i32 width;
@@ -185,7 +192,14 @@ void view_on_mouse_move(view *v, f64 x, f64 y);
 void view_on_mouse_btn(view *v, view_mouse_button button, view_button_action action);
 void view_on_key_action(view *v, view_keycode key, view_button_action action);
 ns_bool view_is_key_pressed(view *v, view_keycode key);
+// Consume one latched key-down edge and return its modifier mask, or -1 when
+// no press arrived since the previous frame. Unlike level polling, this keeps
+// short press/release pairs from being lost between rendered frames.
+i32 view_take_key_press(view *v, view_keycode key);
+void view_clear_key_presses(view *v);
 
 // Clipboard functions
-ns_str view_get_clipboard(view *v);
-void view_set_clipboard(view *v, ns_str text);
+// `str` crosses the ns FFI as a UTF-8 C string pointer. Returned text only
+// needs to remain valid until the FFI bridge copies it into the VM.
+const char *view_get_clipboard(view *v);
+void view_set_clipboard(view *v, const char *text);

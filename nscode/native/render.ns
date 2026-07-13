@@ -10,11 +10,23 @@ use workspace
 use os
 use std
 
-fn FONT_MONO() i32 { return 1 }
 fn MODE_CODE() i32 { return 0 }
 fn MODE_AGENT() i32 { return 1 }
+fn MODE_SETTINGS() i32 { return 2 }
+fn UI_FOCUS_NONE() i32 { return 0 }
+fn UI_FOCUS_MAIN_MENU() i32 { return 1 }
+fn UI_FOCUS_POPUP() i32 { return 2 }
+fn UI_FOCUS_CHAT_MENU() i32 { return 3 }
 
 let g_mode: i32 = 1
+let g_settings_return_mode: i32 = 1
+let g_setting_font_family: i32 = 1
+let g_setting_font_size: i32 = 1
+let g_setting_theme: i32 = 0
+let g_setting_language: i32 = 0
+let g_settings_loaded = false
+let g_settings_persist = true
+let g_settings_root_override = ""
 let g_selected_chat: i32 = 0
 let g_dialog_scroll: f64 = 0.0
 let g_code_scroll: f64 = 0.0
@@ -24,29 +36,46 @@ let g_last_frame_time: f64 = 0.0
 let g_fps: f64 = 0.0
 let g_fps_i: i32 = 0
 let g_file_icon_atlas: i32 = 0
+// Overlay focus is exclusive. Regular controls use hit(), which is disabled
+// while an overlay owns focus; the owner uses focus_hit() instead.
+let g_ui_focus: i32 = 0
+
+// Shared application menu. It is rendered above both Code and Agent content;
+// -1 means no dropdown is open, otherwise the value is the top-level item.
+let g_main_menu_open: i32 = -1
+let g_main_menu_x: f64 = 0.0
+let g_main_menu_y: f64 = 0.0
+let g_main_menu_w: f64 = 0.0
 
 fn set_file_icon_atlas(atlas: i32) {
     g_file_icon_atlas = atlas
 }
 
-// Code view input state: mouse drag selection, click streak (double/triple
-// click) and the previous frame's key levels for edge detection.
+// Code view input state: mouse drag selection and click streak
+// (double/triple click). Key-down edges are latched by the native view layer.
 let g_code_drag = false
 let g_last_click_time: f64 = 0.0
 let g_last_click_line: i32 = -1
 let g_click_streak: i32 = 0
-let g_key_prev = [u8](512)
 let g_caret_follow = false
+let g_minimap_drag = false
+// Last rendered minimap geometry is exposed for input handling and headless
+// interaction tests.
+let g_minimap_x: f64 = 0.0
+let g_minimap_y: f64 = 0.0
+let g_minimap_w: f64 = 0.0
+let g_minimap_h: f64 = 0.0
+let g_minimap_view_y: f64 = 0.0
+let g_minimap_view_h: f64 = 0.0
 
 // Agent view state: the conversation transcript (role + text per message), the
 // codex-style composer (multi-line input, attachments, permission level and
-// module selectors) and the simulated session lifecycle. String arrays are not
+// module selectors). String arrays are not
 // supported by the runtime yet, so message/attachment text lives in i32-keyed
 // dictionaries addressed by the parallel counters.
 let g_msg_text = [i32: str](64)
 let g_msg_role = [i32](64)
 let g_msg_count: i32 = 0
-let g_convo_seeded = false
 
 let g_input_text = ""
 let g_input_focus = true
@@ -56,8 +85,6 @@ let g_attach_name = [i32: str](8)
 let g_attach_count: i32 = 0
 let g_attach_seq: i32 = 0
 let g_running = false
-let g_run_started: f64 = 0.0
-let g_reply_delay: f64 = 2.4
 let g_dialog_follow = false
 let g_dialog_content_h: f64 = 0.0
 
@@ -84,16 +111,23 @@ let g_pop_y: f64 = 0.0
 let g_pop_w: f64 = 0.0
 
 // Chat history model: titles and pinned flags live in i32-keyed stores (same
-// string-array workaround as the transcript). Pinned chats stay at the top of
-// the list; archive/delete remove the row (archived rows only keep a counter
-// until a real store exists). The row menu (pin/archive/delete) follows the
+// string-array workaround as the transcript). Each chat owns a fixed message
+// block, and the complete model is persisted under <project>/.ns/chat.
+// Pinned chats stay at the top of the list; archive/delete remove the row.
+// The row menu (pin/archive/delete) follows the
 // selector-popup pattern: rects are written while drawing and last frame's
 // menu is resolved against this frame's click.
 let g_chat_title = [i32: str](16)
 let g_chat_pinned = [i32](16)
+let g_chat_msg_count = [i32](16)
+let g_chat_msg_text = [i32: str](1024)
+let g_chat_msg_role = [i32](1024)
 let g_chat_count: i32 = 0
-let g_chats_seeded = false
 let g_chat_archived: i32 = 0
+let g_chat_store_loaded = false
+let g_chat_persist = true
+let g_chat_store_cursor: i32 = 0
+let g_chat_store_ok = true
 let g_chat_menu_chat: i32 = -1
 let g_chat_menu_x: f64 = 0.0
 let g_chat_menu_y: f64 = 0.0
@@ -101,67 +135,527 @@ let g_chat_menu_w: f64 = 0.0
 let g_chat_menu_btn_x: f64 = 0.0
 let g_chat_menu_btn_y: f64 = 0.0
 
-fn font_px() f64 { return 14.0 }
-fn code_font_px() f64 { return 12.0 }
-fn code_line_h() f64 { return 20.0 }
-fn small_px() f64 { return 12.0 }
-fn title_px() f64 { return 18.0 }
+// The UI face is configurable; the code grid remains monospaced so caret and
+// selection columns stay exact even when the surrounding shell uses Sans UI.
+fn FONT_MONO() i32 { return g_setting_font_family }
+fn CODE_FONT() i32 { return 1 }
 
-fn col_bg() u32 { return ui_pack_color("#121417") }
-fn col_rail() u32 { return ui_pack_color("#171b20") }
-fn col_surface() u32 { return ui_pack_color("#1e242b") }
-fn col_surface_hi() u32 { return ui_pack_color("#27313a") }
-fn col_line() u32 { return ui_pack_color("#34404a") }
-fn col_text() u32 { return ui_pack_color("#d7dde5") }
-fn col_muted() u32 { return ui_pack_color("#83909e") }
-fn col_accent() u32 { return ui_pack_color("#61d394") }
-fn col_blue() u32 { return ui_pack_color("#7aa8ff") }
-fn col_yellow() u32 { return ui_pack_color("#f2c86b") }
-fn col_red() u32 { return ui_pack_color("#ff7b86") }
-fn col_editor_bg() u32 { return ui_pack_color("#0f1117") }
-fn col_editor_panel() u32 { return ui_pack_color("#171a22") }
-fn col_editor_tab() u32 { return ui_pack_color("#1c212a") }
-fn col_editor_panel_hi() u32 { return ui_pack_color("#202633") }
-fn col_editor_gutter() u32 { return ui_pack_color("#222733") }
-fn col_editor_cursor() u32 { return ui_pack_color("#f4d35e") }
-fn col_editor_sel() u32 { return ui_pack_color("#2b4a6") }
+fn code_font_px() f64 {
+    if g_setting_font_size == 0 {
+        return 11.0
+    }
+    if g_setting_font_size == 2 {
+        return 14.0
+    }
+    return 12.0
+}
+fn font_px() f64 { return code_font_px() }
+fn code_line_h() f64 {
+    if g_setting_font_size == 0 {
+        return 18.0
+    }
+    if g_setting_font_size == 2 {
+        return 24.0
+    }
+    return 20.0
+}
+fn code_wheel_scale() f64 { return 6.0 }
+fn small_px() f64 {
+    if g_setting_font_size == 2 {
+        return 13.0
+    }
+    if g_setting_font_size == 0 {
+        return 11.0
+    }
+    return 12.0
+}
 
-// Syntax palette for the code view, keyed by the editor token kinds.
-fn col_syn_keyword() u32 { return ui_pack_color("#c678dd") }
-fn col_syn_type() u32 { return ui_pack_color("#56b6c2") }
-fn col_syn_number() u32 { return ui_pack_color("#d19a66") }
-fn col_syn_string() u32 { return ui_pack_color("#98c379") }
-fn col_syn_comment() u32 { return ui_pack_color("#5f6b7a") }
-fn col_syn_punct() u32 { return ui_pack_color("#9aa5b1") }
-fn col_syn_call() u32 { return ui_pack_color("#7aa8ff") }
+fn col_bg() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#f4f6f8")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#000000")
+    }
+    return ui_pack_color("#121417")
+}
+fn col_rail() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#e7ebef")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#080808")
+    }
+    return ui_pack_color("#171b20")
+}
+fn col_surface() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#ffffff")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#111111")
+    }
+    return ui_pack_color("#1e242b")
+}
+fn col_surface_hi() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#dfe6ed")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#222222")
+    }
+    return ui_pack_color("#27313a")
+}
+fn col_line() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#c4cdd7")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#ffffff")
+    }
+    return ui_pack_color("#34404a")
+}
+fn col_text() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#202832")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#ffffff")
+    }
+    return ui_pack_color("#d7dde5")
+}
+fn col_muted() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#637180")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#c8c8c8")
+    }
+    return ui_pack_color("#83909e")
+}
+fn col_accent() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#168554")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#00ff88")
+    }
+    return ui_pack_color("#61d394")
+}
+fn col_blue() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#2868c7")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#66b2ff")
+    }
+    return ui_pack_color("#7aa8ff")
+}
+fn col_yellow() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#946500")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#ffe066")
+    }
+    return ui_pack_color("#f2c86b")
+}
+fn col_red() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#c43745")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#ff5c6c")
+    }
+    return ui_pack_color("#ff7b86")
+}
+fn col_editor_bg() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#fbfcfd")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#000000")
+    }
+    return ui_pack_color("#0f1117")
+}
+fn col_editor_panel() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#edf1f5")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#080808")
+    }
+    return ui_pack_color("#171a22")
+}
+fn col_editor_tab() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#ffffff")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#151515")
+    }
+    return ui_pack_color("#1c212a")
+}
+fn col_editor_panel_hi() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#dde5ed")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#202020")
+    }
+    return ui_pack_color("#202633")
+}
+// The line-number gutter is part of the code canvas, not a separate panel.
+fn col_editor_gutter() u32 { return col_editor_bg() }
+fn col_editor_cursor() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#9d6300")
+    }
+    return ui_pack_color("#f4d35e")
+}
+fn col_editor_sel() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#c9dcf5")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#134d35")
+    }
+    return ui_pack_color("#2b4a6f")
+}
+fn col_minimap_bg() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_rgba_floats(0.88, 0.91, 0.94, 0.5)
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_rgba_floats(0.0, 0.0, 0.0, 0.5)
+    }
+    return ui_pack_rgba_floats(0.055, 0.063, 0.086, 0.5)
+}
+fn col_minimap_view() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_rgba_floats(0.20, 0.32, 0.44, 0.2)
+    }
+    return ui_pack_rgba_floats(0.52, 0.60, 0.69, 0.2)
+}
+fn col_agent_history() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#e9eef3")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#080808")
+    }
+    return ui_pack_color("#181e26")
+}
+fn col_agent_conversation() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#f7f9fb")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#000000")
+    }
+    return ui_pack_color("#10141a")
+}
+fn col_agent_composer() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#ffffff")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#111111")
+    }
+    return ui_pack_color("#202832")
+}
+fn col_menu_bg() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#f1f4f7")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#000000")
+    }
+    return ui_pack_color("#15191f")
+}
+fn col_menu_hover() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#dce5ed")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#252525")
+    }
+    return ui_pack_color("#252c35")
+}
+fn col_status_bg() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#e8edf2")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#000000")
+    }
+    return ui_pack_color("#14181d")
+}
+fn col_status_text() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#536170")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#ffffff")
+    }
+    return ui_pack_color("#687581")
+}
+fn col_status_line() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#cbd3dc")
+    }
+    if g_setting_theme == 2 {
+        return ui_pack_color("#ffffff")
+    }
+    return ui_pack_color("#242c34")
+}
 
-fn token_color(kind: i32) u32 {
+// `nanoscript` is the native editor's default syntax highlight. Its core
+// palette uses the ns green (#61d394) and pure white at different brightness
+// levels, with yellow-green reserved for string literals.
+fn col_nanoscript_green() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#087a4a")
+    }
+    return ui_pack_color("#61d394")
+}
+fn col_nanoscript_green_bright() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#096b43")
+    }
+    return ui_pack_color("#6be8a3")
+}
+fn col_nanoscript_yellow_green() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#68751f")
+    }
+    return ui_pack_color("#b7dc6f")
+}
+fn col_nanoscript_white() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#202832")
+    }
+    return ui_pack_color("#e1e1e1")
+}
+fn col_nanoscript_white_dim() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#46515c")
+    }
+    return ui_pack_color("#a6a6a6")
+}
+fn col_nanoscript_white_deep() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#7a8490")
+    }
+    return ui_pack_color("#737373")
+}
+
+fn nanoscript_token_color(kind: i32) u32 {
     if kind == TK_KEYWORD() {
-        return col_syn_keyword()
+        return col_nanoscript_green_bright()
     }
     if kind == TK_TYPE() {
-        return col_syn_type()
+        return col_nanoscript_green()
     }
     if kind == TK_NUMBER() {
-        return col_syn_number()
+        return col_nanoscript_white()
     }
     if kind == TK_STRING() {
-        return col_syn_string()
+        return col_nanoscript_yellow_green()
     }
     if kind == TK_COMMENT() {
-        return col_syn_comment()
+        return col_nanoscript_white_deep()
     }
     if kind == TK_PUNCT() {
-        return col_syn_punct()
+        return col_nanoscript_white_dim()
     }
     if kind == TK_CALL() {
-        return col_syn_call()
+        return col_nanoscript_white()
     }
-    return col_text()
+    return col_nanoscript_white_dim()
+}
+
+fn token_color(kind: i32) u32 {
+    if g_setting_language == 1 {
+        if kind == TK_KEYWORD() {
+            return col_blue()
+        }
+        if kind == TK_TYPE() {
+            return ui_pack_color("#4ec9b0")
+        }
+        if kind == TK_STRING() {
+            return ui_pack_color("#ce9178")
+        }
+        if kind == TK_COMMENT() {
+            return ui_pack_color("#6a9955")
+        }
+        if kind == TK_NUMBER() {
+            return ui_pack_color("#b5cea8")
+        }
+        if kind == TK_CALL() {
+            return ui_pack_color("#dcdcaa")
+        }
+        return col_text()
+    }
+    if g_setting_language == 2 {
+        if kind == TK_KEYWORD() {
+            return col_yellow()
+        }
+        if kind == TK_TYPE() {
+            return col_blue()
+        }
+        if kind == TK_STRING() {
+            return ui_pack_color("#a8d08d")
+        }
+        if kind == TK_COMMENT() {
+            return col_muted()
+        }
+        if kind == TK_NUMBER() {
+            return ui_pack_color("#c6a0f6")
+        }
+        if kind == TK_CALL() {
+            return ui_pack_color("#8aadf4")
+        }
+        return col_text()
+    }
+    return nanoscript_token_color(kind)
+}
+
+// Minimap syntax colors mirror the main nanoscript palette at a uniform 50%
+// alpha so the dense fill-rect field stays subordinate to the source text.
+fn minimap_token_color(kind: i32) u32 {
+    if g_setting_language == 1 {
+        if kind == TK_KEYWORD() {
+            return ui_pack_rgba_floats(0.25, 0.55, 0.95, 0.5)
+        }
+        if kind == TK_TYPE() {
+            return ui_pack_rgba_floats(0.31, 0.79, 0.69, 0.5)
+        }
+        if kind == TK_STRING() {
+            return ui_pack_rgba_floats(0.81, 0.57, 0.47, 0.5)
+        }
+    }
+    if g_setting_language == 2 {
+        if kind == TK_KEYWORD() {
+            return ui_pack_rgba_floats(0.95, 0.79, 0.42, 0.5)
+        }
+        if kind == TK_TYPE() {
+            return ui_pack_rgba_floats(0.48, 0.66, 1.0, 0.5)
+        }
+        if kind == TK_STRING() {
+            return ui_pack_rgba_floats(0.66, 0.82, 0.55, 0.5)
+        }
+    }
+    if kind == TK_KEYWORD() {
+        return ui_pack_rgba_floats(0.42, 0.91, 0.64, 0.5)
+    }
+    if kind == TK_TYPE() {
+        return ui_pack_rgba_floats(0.38, 0.83, 0.58, 0.5)
+    }
+    if kind == TK_STRING() {
+        return ui_pack_rgba_floats(0.72, 0.86, 0.44, 0.5)
+    }
+    if kind == TK_COMMENT() {
+        return ui_pack_rgba_floats(0.45, 0.45, 0.45, 0.5)
+    }
+    if kind == TK_NUMBER() {
+        return ui_pack_rgba_floats(0.88, 0.88, 0.88, 0.5)
+    }
+    if kind == TK_CALL() {
+        return ui_pack_rgba_floats(0.88, 0.88, 0.88, 0.5)
+    }
+    return ui_pack_rgba_floats(0.65, 0.65, 0.65, 0.5)
 }
 
 fn clear_color() ui_color_rgba {
+    if g_setting_theme == 1 {
+        return ui_color_rgba { r: 0.957, g: 0.965, b: 0.973, a: 1.0 }
+    }
+    if g_setting_theme == 2 {
+        return ui_color_rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+    }
     return ui_color_rgba { r: 0.071, g: 0.078, b: 0.090, a: 1.0 }
+}
+
+fn setting_language_label() str {
+    if g_setting_language == 1 {
+        return "TypeScript"
+    }
+    if g_setting_language == 2 {
+        return "Python"
+    }
+    return "Nano Script"
+}
+
+fn setting_theme_label() str {
+    if g_setting_theme == 1 {
+        return "Light"
+    }
+    if g_setting_theme == 2 {
+        return "High Contrast"
+    }
+    return "Dark"
+}
+
+fn settings_home() str {
+    if g_settings_root_override != "" {
+        return g_settings_root_override
+    }
+    let home = os_env("HOME")
+    if home == "" {
+        home = os_env("USERPROFILE")
+    }
+    if home == "" {
+        home = os_cwd()
+    }
+    return home
+}
+
+fn settings_dir() str {
+    return settings_home() + "/.ns/nscode"
+}
+
+fn settings_path() str {
+    return settings_dir() + "/settings.db"
+}
+
+fn settings_save() bool {
+    if g_settings_persist == false {
+        return true
+    }
+    if os_make_dirs(settings_dir()) == 0 {
+        return false
+    }
+    let data = "NSSET1|" + itos(g_setting_font_family) + "|" + itos(g_setting_font_size) + "|" + itos(g_setting_theme) + "|" + itos(g_setting_language)
+    let fd = open(settings_path(), "wb")
+    if fd == 0 {
+        return false
+    }
+    write(fd, data)
+    close(fd)
+    return true
+}
+
+fn settings_load() bool {
+    g_settings_loaded = true
+    let fd = open(settings_path(), "rb")
+    if fd == 0 {
+        return false
+    }
+    let data = read(fd)
+    close(fd)
+    if data.len < 14 {
+        return false
+    }
+    if substr(data, 0, 6) != "NSSET1" {
+        return false
+    }
+    g_setting_font_family = clamp_i(byte_at(data, 7) - 48, 0, 1)
+    g_setting_font_size = clamp_i(byte_at(data, 9) - 48, 0, 2)
+    g_setting_theme = clamp_i(byte_at(data, 11) - 48, 0, 2)
+    g_setting_language = clamp_i(byte_at(data, 13) - 48, 0, 2)
+    set_syntax_language(g_setting_language)
+    return true
 }
 
 fn clamp(v: f64, lo: f64, hi: f64) f64 {
@@ -181,7 +675,7 @@ fn scroll_max(content_h: f64, body_h: f64) f64 {
     return 0.0
 }
 
-fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
+fn raw_hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
     if v.mouse_x < x {
         return false
     }
@@ -197,6 +691,34 @@ fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
     return true
 }
 
+fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
+    if g_ui_focus != UI_FOCUS_NONE() {
+        return false
+    }
+    return raw_hit(v, x, y, w, h)
+}
+
+fn focus_hit(v: ref view, owner: i32, x: f64, y: f64, w: f64, h: f64) bool {
+    if g_ui_focus == UI_FOCUS_NONE() {
+        return raw_hit(v, x, y, w, h)
+    }
+    if g_ui_focus == owner {
+        return raw_hit(v, x, y, w, h)
+    }
+    return false
+}
+
+fn sync_ui_focus() {
+    g_ui_focus = UI_FOCUS_NONE()
+    if g_main_menu_open >= 0 {
+        g_ui_focus = UI_FOCUS_MAIN_MENU()
+    } else if g_pop_kind != 0 {
+        g_ui_focus = UI_FOCUS_POPUP()
+    } else if g_chat_menu_chat >= 0 {
+        g_ui_focus = UI_FOCUS_CHAT_MENU()
+    }
+}
+
 fn reset_view_input(v: ref view) {
     v.mouse_pressed = false
     v.mouse_released = false
@@ -206,10 +728,7 @@ fn reset_view_input(v: ref view) {
     v.mouse_middle_released = false
     v.scroll_x = 0.0
     v.scroll_y = 0.0
-}
-
-fn draw_rule(r: ref ui_renderer, x: f64, y: f64, w: f64) {
-    ui_fill_rect(r, x, y, w, 1.0, col_line(), 0.0)
+    view_clear_key_presses(v)
 }
 
 fn draw_label(r: ref ui_renderer, x: f64, y: f64, text: str) {
@@ -253,6 +772,452 @@ fn draw_centered_text(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: 
     }
 }
 
+// ---- shared main menu -----------------------------------------------------
+
+fn main_menu_h() f64 { return 30.0 }
+fn main_menu_count() i32 { return 5 }
+fn main_menu_item_h() f64 { return 28.0 }
+
+fn main_menu_label(i: i32) str {
+    if i == 0 {
+        return "File"
+    }
+    if i == 1 {
+        return "Edit"
+    }
+    if i == 2 {
+        return "View"
+    }
+    if i == 3 {
+        return "Window"
+    }
+    return "Help"
+}
+
+fn main_menu_item_count(menu: i32) i32 {
+    if menu == 0 {
+        return 5
+    }
+    if menu == 1 {
+        return 6
+    }
+    if menu == 2 {
+        return 2
+    }
+    if menu == 3 {
+        return 1
+    }
+    return 2
+}
+
+fn main_menu_item_label(menu: i32, item: i32) str {
+    if menu == 0 {
+        if item == 0 {
+            return "New Window"
+        }
+        if item == 1 {
+            return "Open Folder..."
+        }
+        if item == 2 {
+            return "Settings..."
+        }
+        if item == 3 {
+            return "Save"
+        }
+        return "Close Editor"
+    }
+    if menu == 1 {
+        if item == 0 {
+            return "Undo"
+        }
+        if item == 1 {
+            return "Redo"
+        }
+        if item == 2 {
+            return "Cut"
+        }
+        if item == 3 {
+            return "Copy"
+        }
+        if item == 4 {
+            return "Paste"
+        }
+        return "Select All"
+    }
+    if menu == 2 {
+        if item == 0 {
+            return "Code"
+        }
+        return "Agent"
+    }
+    if menu == 3 {
+        return "Reset Layout"
+    }
+    if item == 0 {
+        return "Keyboard Shortcuts"
+    }
+    return "About NSCode"
+}
+
+fn main_menu_item_shortcut(menu: i32, item: i32) str {
+    if menu == 0 {
+        if item == 3 {
+            return "Ctrl/Cmd+S"
+        }
+        if item == 4 {
+            return "Ctrl/Cmd+W"
+        }
+        return ""
+    }
+    if menu == 1 {
+        if item == 0 {
+            return "Ctrl/Cmd+Z"
+        }
+        if item == 1 {
+            return "Ctrl/Cmd+Shift+Z"
+        }
+        if item == 2 {
+            return "Ctrl/Cmd+X"
+        }
+        if item == 3 {
+            return "Ctrl/Cmd+C"
+        }
+        if item == 4 {
+            return "Ctrl/Cmd+V"
+        }
+        return "Ctrl/Cmd+A"
+    }
+    return ""
+}
+
+fn main_menu_separator_after(menu: i32, item: i32) bool {
+    if menu == 0 {
+        if item == 1 {
+            return true
+        }
+        if item == 2 {
+            return true
+        }
+    }
+    if menu == 1 {
+        if item == 1 {
+            return true
+        }
+        if item == 4 {
+            return true
+        }
+    }
+    return false
+}
+
+fn main_menu_separator_gap() f64 { return 10.0 }
+
+fn main_menu_item_y(menu: i32, item: i32) f64 {
+    let y = main_menu_h() + 3.0
+    for i in 0 to item {
+        y = y + main_menu_item_h()
+        if main_menu_separator_after(menu, i) {
+            y = y + main_menu_separator_gap()
+        }
+    }
+    return y
+}
+
+fn main_menu_dropdown_h(menu: i32) f64 {
+    let h = 8.0
+    let count = main_menu_item_count(menu)
+    for i in 0 to count {
+        h = h + main_menu_item_h()
+        if main_menu_separator_after(menu, i) {
+            h = h + main_menu_separator_gap()
+        }
+    }
+    return h
+}
+
+fn main_menu_item_at(menu: i32, mouse_y: f64) i32 {
+    let result: i32 = -1
+    let count = main_menu_item_count(menu)
+    for i in 0 to count {
+        let iy = main_menu_item_y(menu, i)
+        if result < 0 {
+            if mouse_y >= iy {
+                if mouse_y < (iy + main_menu_item_h()) {
+                    result = i
+                }
+            }
+        }
+    }
+    return result
+}
+
+fn main_menu_item_enabled(menu: i32, item: i32) bool {
+    if menu == 1 {
+        if g_mode != MODE_CODE() {
+            return false
+        }
+        if item == 0 {
+            return can_undo()
+        }
+        if item == 1 {
+            return can_redo()
+        }
+        if item == 2 {
+            return has_selection()
+        }
+        if item == 3 {
+            return has_selection()
+        }
+        if item == 5 {
+            return doc_len() > 0
+        }
+    }
+    return true
+}
+
+fn main_menu_button_w(r: ref ui_renderer, i: i32) f64 {
+    return ui_text_width(r, main_menu_label(i), small_px(), FONT_MONO()) + 24.0
+}
+
+fn main_menu_anchor_x(r: ref ui_renderer, index: i32) f64 {
+    let x = 8.0
+    for i in 0 to index {
+        x = x + main_menu_button_w(r, i)
+    }
+    return x
+}
+
+fn main_menu_dropdown_w(menu: i32) f64 {
+    if menu == 0 {
+        return 190.0
+    }
+    if menu == 1 {
+        return 180.0
+    }
+    if menu == 2 {
+        return 168.0
+    }
+    if menu == 3 {
+        return 180.0
+    }
+    return 210.0
+}
+
+fn main_menu_dropdown_x(r: ref ui_renderer, menu: i32, canvas_w: f64) f64 {
+    let x = main_menu_anchor_x(r, menu)
+    let pw = main_menu_dropdown_w(menu)
+    if x + pw > canvas_w - 4.0 {
+        x = canvas_w - pw - 4.0
+    }
+    if x < 4.0 {
+        x = 4.0
+    }
+    return x
+}
+
+fn main_menu_run_action(v: ref view, menu: i32, item: i32) {
+    if menu == 0 {
+        if item == 0 {
+            let folder = os_open_folder_dialog("Choose a folder for the new NSCode window")
+            if folder != "" {
+                os_launch_ns_project(folder, g_native_entry)
+            }
+        } else if item == 1 {
+            let folder = os_open_folder_dialog("Open a project folder")
+            if folder != "" {
+                workspace_open_root(folder)
+                chat_load_project()
+                g_code_scroll = 0.0
+                g_tree_scroll = 0.0
+                g_dialog_scroll = 0.0
+            }
+        } else if item == 2 {
+            if g_mode != MODE_SETTINGS() {
+                g_settings_return_mode = g_mode
+            }
+            g_mode = MODE_SETTINGS()
+        } else if item == 3 {
+            workspace_save_active()
+        } else if g_workspace_active >= 0 {
+            workspace_close_tab(g_workspace_active)
+        }
+    } else if menu == 1 {
+        if g_mode == MODE_CODE() {
+            if item == 0 {
+                undo()
+            } else if item == 1 {
+                redo()
+            } else if item == 2 {
+                if has_selection() {
+                    view_set_clipboard(v, selected_text())
+                    delete_selection()
+                }
+            } else if item == 3 {
+                if has_selection() {
+                    view_set_clipboard(v, selected_text())
+                }
+            } else if item == 4 {
+                let clip = view_get_clipboard(v)
+                if clip != "" {
+                    paste_str(clip)
+                }
+            } else {
+                select_all()
+            }
+            g_caret_follow = true
+        }
+    } else if menu == 2 {
+        if item == 0 {
+            g_mode = MODE_CODE()
+        } else {
+            g_mode = MODE_AGENT()
+        }
+    } else if menu == 3 {
+        g_dialog_scroll = 0.0
+        g_code_scroll = 0.0
+        g_tree_scroll = 0.0
+        g_dialog_follow = true
+    }
+}
+
+fn main_menu_top_at(r: ref ui_renderer, v: ref view) i32 {
+    let result: i32 = -1
+    for i in 0 to main_menu_count() {
+        if result < 0 {
+            let bx = main_menu_anchor_x(r, i)
+            let bw = main_menu_button_w(r, i)
+            if focus_hit(v, UI_FOCUS_MAIN_MENU(), bx, 0.0, bw, main_menu_h()) {
+                result = i
+            }
+        }
+    }
+    return result
+}
+
+fn main_menu_in_dropdown(r: ref ui_renderer, v: ref view, w: f64, menu: i32) bool {
+    if menu < 0 {
+        return false
+    }
+    let px = main_menu_dropdown_x(r, menu, w)
+    let py = main_menu_h() - 1.0
+    return focus_hit(v, UI_FOCUS_MAIN_MENU(), px, py, main_menu_dropdown_w(menu), main_menu_dropdown_h(menu))
+}
+
+// A click on any top-level option enters menu focus. While focused, hovering a
+// different top-level option switches its dropdown without another click.
+// Clicking a dropdown action or leaving both the top options and active
+// dropdown exits focus. Focused menus consume outside clicks so they cannot
+// leak through into the editor or agent content beneath them.
+fn handle_main_menu_input(r: ref ui_renderer, v: ref view, w: f64) {
+    let top = main_menu_top_at(r, v)
+
+    if g_main_menu_open < 0 {
+        if v.mouse_pressed {
+            if top >= 0 {
+                g_main_menu_open = top
+                g_pop_kind = 0
+                g_chat_menu_chat = -1
+                g_ui_focus = UI_FOCUS_MAIN_MENU()
+                g_code_drag = false
+                v.mouse_pressed = false
+                v.mouse_down = false
+            }
+        }
+    } else {
+        // Hover-switch first so dropdown hit-testing uses the newly active menu.
+        if top >= 0 {
+            g_main_menu_open = top
+        }
+
+        let menu = g_main_menu_open
+        let in_dropdown = main_menu_in_dropdown(r, v, w, menu)
+        if v.mouse_pressed {
+            if top >= 0 {
+                // A top-level click keeps the menu focused; hover already chose
+                // the active dropdown above.
+                g_main_menu_open = top
+            } else if in_dropdown {
+                let item = main_menu_item_at(menu, v.mouse_y)
+                if item >= 0 {
+                    if main_menu_item_enabled(menu, item) {
+                        main_menu_run_action(v, menu, item)
+                    }
+                }
+                g_main_menu_open = -1
+            } else {
+                g_main_menu_open = -1
+            }
+            g_code_drag = false
+            v.mouse_pressed = false
+            v.mouse_down = false
+        } else if top < 0 {
+            if in_dropdown == false {
+                g_main_menu_open = -1
+                g_code_drag = false
+            }
+        }
+        // While focused, the menu owns the left-button level as well as its
+        // edge. This prevents drag/click logic beneath the dropdown from seeing
+        // the same physical press.
+        v.mouse_down = false
+    }
+}
+
+fn draw_main_menu(r: ref ui_renderer, v: ref view, w: f64) {
+    let bar_h = main_menu_h()
+    ui_fill_rect(r, 0.0, 0.0, w, bar_h, col_menu_bg(), 0.0)
+    ui_fill_rect(r, 0.0, bar_h - 1.0, w, 1.0, col_status_line(), 0.0)
+
+    for i in 0 to main_menu_count() {
+        let bx = main_menu_anchor_x(r, i)
+        let bw = main_menu_button_w(r, i)
+        if g_main_menu_open == i {
+            ui_fill_round_rect(r, bx, 3.0, bw, bar_h - 6.0, 4.0, col_menu_hover(), 0.0)
+        } else if focus_hit(v, UI_FOCUS_MAIN_MENU(), bx, 0.0, bw, bar_h) {
+            ui_fill_round_rect(r, bx, 3.0, bw, bar_h - 6.0, 4.0, col_surface(), 0.0)
+        }
+        ui_draw_text(r, bx + 12.0, text_center_y(r, 0.0, bar_h, small_px()), main_menu_label(i), small_px(), col_text(), FONT_MONO())
+    }
+
+    if g_main_menu_open >= 0 {
+        let menu = g_main_menu_open
+        let px = main_menu_dropdown_x(r, menu, w)
+        let py = bar_h - 1.0
+        let pw = main_menu_dropdown_w(menu)
+        let count = main_menu_item_count(menu)
+        let ph = main_menu_dropdown_h(menu)
+        g_main_menu_x = px
+        g_main_menu_y = main_menu_item_y(menu, 0)
+        g_main_menu_w = pw
+
+        ui_fill_round_rect(r, px, py, pw, ph, 6.0, col_surface(), 0.0)
+        ui_stroke_round_rect(r, px, py, pw, ph, 6.0, 1.0, col_line(), 0.0)
+        for i in 0 to count {
+            let iy = main_menu_item_y(menu, i)
+            let enabled = main_menu_item_enabled(menu, i)
+            if enabled {
+                if focus_hit(v, UI_FOCUS_MAIN_MENU(), px + 4.0, iy, pw - 8.0, main_menu_item_h()) {
+                    ui_fill_round_rect(r, px + 4.0, iy, pw - 8.0, main_menu_item_h(), 4.0, col_menu_hover(), 0.0)
+                }
+            }
+            let fg = col_text()
+            if enabled == false {
+                fg = col_muted()
+            }
+            ui_draw_text(r, px + 14.0, text_center_y(r, iy, main_menu_item_h(), small_px()), main_menu_item_label(menu, i), small_px(), fg, FONT_MONO())
+            let shortcut = main_menu_item_shortcut(menu, i)
+            if shortcut != "" {
+                let sw = ui_text_width(r, shortcut, small_px(), FONT_MONO())
+                ui_draw_text(r, px + pw - sw - 14.0, text_center_y(r, iy, main_menu_item_h(), small_px()), shortcut, small_px(), col_muted(), FONT_MONO())
+            }
+            if main_menu_separator_after(menu, i) {
+                let sy = iy + main_menu_item_h() + main_menu_separator_gap() * 0.5
+                ui_fill_rect(r, px + 10.0, sy, pw - 20.0, 1.0, col_line(), 0.0)
+            }
+        }
+    }
+}
+
 fn mode_switch_x(w: f64) f64 {
     return 14.0
 }
@@ -262,19 +1227,28 @@ fn mode_switch_y(h: f64) f64 {
 }
 
 fn handle_mode_switch_input(v: ref view, w: f64, h: f64) {
-    let switch_w = 150.0
-    let switch_h = 28.0
-    let switch_x = mode_switch_x(w)
-    let switch_y = mode_switch_y(h)
-    let gap = 4.0
-    let button_w = (switch_w - gap) * 0.5
-    let code_x = switch_x
-    let agent_x = switch_x + button_w + gap
-    if v.mouse_pressed {
-        if hit(v, code_x, switch_y, button_w, switch_h) {
-            g_mode = MODE_CODE()
-        } else if hit(v, agent_x, switch_y, button_w, switch_h) {
-            g_mode = MODE_AGENT()
+    if g_mode != MODE_SETTINGS() {
+        let switch_w = 150.0
+        let switch_h = 28.0
+        let switch_x = mode_switch_x(w)
+        let switch_y = mode_switch_y(h)
+        let gap = 4.0
+        let button_w = (switch_w - gap) * 0.5
+        let code_x = switch_x
+        let agent_x = switch_x + button_w + gap
+        if v.mouse_pressed {
+            let switched = false
+            if hit(v, code_x, switch_y, button_w, switch_h) {
+                g_mode = MODE_CODE()
+                switched = true
+            } else if hit(v, agent_x, switch_y, button_w, switch_h) {
+                g_mode = MODE_AGENT()
+                switched = true
+            }
+            if switched {
+                v.mouse_pressed = false
+                v.mouse_down = false
+            }
         }
     }
 }
@@ -297,6 +1271,10 @@ fn fps_text() str {
 
 fn chat_cap() i32 { return 16 }
 
+fn chat_msg_index(chat: i32, message: i32) i32 {
+    return chat * msg_cap() + message
+}
+
 fn chat_title(i: i32) str {
     return g_chat_title[i]
 }
@@ -312,55 +1290,268 @@ fn chat_add(title: str) {
     if g_chat_count < chat_cap() {
         g_chat_title[g_chat_count] = title
         g_chat_pinned[g_chat_count] = 0
+        g_chat_msg_count[g_chat_count] = 0
         g_chat_count = g_chat_count + 1
     }
 }
 
-fn seed_chats() {
-    if g_chats_seeded == false {
-        g_chats_seeded = true
-        chat_add("Agentic native shell layout and wiring")
-        chat_add("Parser diagnostics for editor modules")
-        chat_add("GPU text pass")
-        chat_add("Diff review before commit")
+fn chat_copy_messages(src: i32, dst: i32) {
+    g_chat_msg_count[dst] = g_chat_msg_count[src]
+    for i in 0 to msg_cap() {
+        let src_index = chat_msg_index(src, i)
+        let dst_index = chat_msg_index(dst, i)
+        g_chat_msg_text[dst_index] = g_chat_msg_text[src_index]
+        g_chat_msg_role[dst_index] = g_chat_msg_role[src_index]
     }
 }
 
-// Move the chat at `from` to `to`, shifting the rows in between; the selection
-// follows the chat it was on.
+fn chat_swap(a: i32, b: i32) {
+    let title = g_chat_title[a]
+    let pinned = g_chat_pinned[a] as i32
+    let count = g_chat_msg_count[a]
+    let temp_text = [i32: str](64)
+    let temp_role = [i32](64)
+    for i in 0 to msg_cap() {
+        let ai = chat_msg_index(a, i)
+        temp_text[i] = g_chat_msg_text[ai]
+        temp_role[i] = g_chat_msg_role[ai]
+    }
+    g_chat_title[a] = g_chat_title[b]
+    g_chat_pinned[a] = g_chat_pinned[b]
+    chat_copy_messages(b, a)
+    g_chat_title[b] = title
+    g_chat_pinned[b] = pinned
+    g_chat_msg_count[b] = count
+    for i in 0 to msg_cap() {
+        let bi = chat_msg_index(b, i)
+        g_chat_msg_text[bi] = temp_text[i]
+        g_chat_msg_role[bi] = temp_role[i]
+    }
+    if g_selected_chat == a {
+        g_selected_chat = b
+    } else if g_selected_chat == b {
+        g_selected_chat = a
+    }
+}
+
+// Move a chat through adjacent swaps so its entire transcript travels with it.
 fn chat_move(src: i32, dst: i32) {
-    if src != dst {
-        let title = g_chat_title[src]
-        let pinned = g_chat_pinned[src] as i32
-        if src < dst {
-            for i in src to dst {
-                g_chat_title[i] = g_chat_title[i + 1]
-                g_chat_pinned[i] = g_chat_pinned[i + 1]
-            }
-            if g_selected_chat == src {
-                g_selected_chat = dst
-            } else if g_selected_chat > src {
-                if g_selected_chat <= dst {
-                    g_selected_chat = g_selected_chat - 1
-                }
-            }
-        } else {
-            for k in dst to src {
-                let i = src - 1 - (k - dst)
-                g_chat_title[i + 1] = g_chat_title[i]
-                g_chat_pinned[i + 1] = g_chat_pinned[i]
-            }
-            if g_selected_chat == src {
-                g_selected_chat = dst
-            } else if g_selected_chat >= dst {
-                if g_selected_chat < src {
-                    g_selected_chat = g_selected_chat + 1
-                }
+    if src < dst {
+        for i in src to dst {
+            chat_swap(i, i + 1)
+        }
+    } else if src > dst {
+        for k in dst to src {
+            let i = src - (k - dst)
+            chat_swap(i, i - 1)
+        }
+    }
+}
+
+fn chat_store_path() str {
+    return g_workspace_root + "/.ns/chat/conversations.db"
+}
+
+fn chat_field(value: str) str {
+    return itos(value.len) + ":" + value
+}
+
+fn chat_parse_i32(value: str) i32 {
+    let n: i32 = 0
+    for i in 0 to value.len {
+        let digit = byte_at(value, i) - 48
+        if digit >= 0 {
+            if digit <= 9 {
+                n = n * 10 + digit
             }
         }
-        g_chat_title[dst] = title
-        g_chat_pinned[dst] = pinned
     }
+    return n
+}
+
+fn chat_take_field(data: str) str {
+    if g_chat_store_ok == false {
+        return ""
+    }
+    let size: i32 = 0
+    let digits: i32 = 0
+    loop g_chat_store_cursor < data.len {
+        let b = byte_at(data, g_chat_store_cursor)
+        if b == 58 {
+            g_chat_store_cursor = g_chat_store_cursor + 1
+            break
+        }
+        if b < 48 {
+            g_chat_store_ok = false
+            return ""
+        }
+        if b > 57 {
+            g_chat_store_ok = false
+            return ""
+        }
+        size = size * 10 + b - 48
+        digits = digits + 1
+        g_chat_store_cursor = g_chat_store_cursor + 1
+    }
+    if digits == 0 {
+        g_chat_store_ok = false
+        return ""
+    }
+    if g_chat_store_cursor + size > data.len {
+        g_chat_store_ok = false
+        return ""
+    }
+    let value = substr(data, g_chat_store_cursor, size)
+    g_chat_store_cursor = g_chat_store_cursor + size
+    return value
+}
+
+fn chat_store_current() {
+    if g_selected_chat >= 0 {
+        if g_selected_chat < g_chat_count {
+            g_chat_msg_count[g_selected_chat] = g_msg_count
+            for i in 0 to msg_cap() {
+                let dst = chat_msg_index(g_selected_chat, i)
+                g_chat_msg_text[dst] = g_msg_text[i]
+                g_chat_msg_role[dst] = g_msg_role[i]
+            }
+        }
+    }
+}
+
+fn chat_load_selected() {
+    g_msg_count = 0
+    for i in 0 to msg_cap() {
+        g_msg_text[i] = ""
+        g_msg_role[i] = 0
+    }
+    if g_selected_chat >= 0 {
+        if g_selected_chat < g_chat_count {
+            g_msg_count = g_chat_msg_count[g_selected_chat]
+            for i in 0 to g_msg_count {
+                let src = chat_msg_index(g_selected_chat, i)
+                g_msg_text[i] = g_chat_msg_text[src]
+                g_msg_role[i] = g_chat_msg_role[src]
+            }
+        }
+    }
+    g_dialog_scroll = 0.0
+    g_dialog_follow = true
+}
+
+fn chat_select(index: i32) {
+    if index >= 0 {
+        if index < g_chat_count {
+            chat_store_current()
+            g_selected_chat = index
+            chat_load_selected()
+            chat_save_project()
+        }
+    }
+}
+
+fn chat_save_project() bool {
+    chat_store_current()
+    if g_chat_persist == false {
+        return true
+    }
+    let dir = g_workspace_root + "/.ns/chat"
+    if os_make_dirs(dir) == 0 {
+        return false
+    }
+    let data = chat_field("NSCHAT1")
+    data = data + chat_field(itos(g_chat_count))
+    data = data + chat_field(itos(g_chat_archived))
+    data = data + chat_field(itos(g_selected_chat))
+    for chat in 0 to g_chat_count {
+        data = data + chat_field(g_chat_title[chat])
+        data = data + chat_field(itos(g_chat_pinned[chat] as i32))
+        let count = g_chat_msg_count[chat]
+        data = data + chat_field(itos(count))
+        for message in 0 to count {
+            let index = chat_msg_index(chat, message)
+            data = data + chat_field(itos(g_chat_msg_role[index] as i32))
+            data = data + chat_field(g_chat_msg_text[index])
+        }
+    }
+    let fd = open(chat_store_path(), "wb")
+    if fd == 0 {
+        return false
+    }
+    write(fd, data)
+    close(fd)
+    return true
+}
+
+fn chat_clear_project() {
+    g_chat_count = 0
+    g_chat_archived = 0
+    g_selected_chat = -1
+    g_msg_count = 0
+    for chat in 0 to chat_cap() {
+        g_chat_title[chat] = ""
+        g_chat_pinned[chat] = 0
+        g_chat_msg_count[chat] = 0
+        for message in 0 to msg_cap() {
+            let index = chat_msg_index(chat, message)
+            g_chat_msg_text[index] = ""
+            g_chat_msg_role[index] = 0
+        }
+    }
+    for i in 0 to msg_cap() {
+        g_msg_text[i] = ""
+        g_msg_role[i] = 0
+    }
+}
+
+fn chat_load_project() bool {
+    chat_clear_project()
+    g_chat_store_loaded = true
+    let fd = open(chat_store_path(), "rb")
+    if fd == 0 {
+        return false
+    }
+    let data = read(fd)
+    close(fd)
+    g_chat_store_cursor = 0
+    g_chat_store_ok = true
+    if chat_take_field(data) != "NSCHAT1" {
+        return false
+    }
+    let count = chat_parse_i32(chat_take_field(data))
+    if count > chat_cap() {
+        g_chat_store_ok = false
+        return false
+    }
+    g_chat_count = count
+    g_chat_archived = chat_parse_i32(chat_take_field(data))
+    g_selected_chat = chat_parse_i32(chat_take_field(data))
+    for chat in 0 to g_chat_count {
+        g_chat_title[chat] = chat_take_field(data)
+        g_chat_pinned[chat] = chat_parse_i32(chat_take_field(data))
+        let message_count = chat_parse_i32(chat_take_field(data))
+        if message_count > msg_cap() {
+            g_chat_store_ok = false
+            return false
+        }
+        g_chat_msg_count[chat] = message_count
+        for message in 0 to message_count {
+            let index = chat_msg_index(chat, message)
+            g_chat_msg_role[index] = chat_parse_i32(chat_take_field(data))
+            g_chat_msg_text[index] = chat_take_field(data)
+        }
+    }
+    if g_chat_store_ok == false {
+        chat_clear_project()
+        return false
+    }
+    if g_chat_count == 0 {
+        g_selected_chat = -1
+    } else {
+        g_selected_chat = clamp_i(g_selected_chat, 0, g_chat_count - 1)
+    }
+    chat_load_selected()
+    return true
 }
 
 fn chat_pinned_count() i32 {
@@ -389,6 +1580,7 @@ fn chat_remove(idx: i32) {
     for i in idx to g_chat_count - 1 {
         g_chat_title[i] = g_chat_title[i + 1]
         g_chat_pinned[i] = g_chat_pinned[i + 1]
+        chat_copy_messages(i + 1, i)
     }
     g_chat_count = g_chat_count - 1
     if g_selected_chat > idx {
@@ -398,8 +1590,11 @@ fn chat_remove(idx: i32) {
         g_selected_chat = g_chat_count - 1
     }
     if g_selected_chat < 0 {
-        g_selected_chat = 0
+        if g_chat_count > 0 {
+            g_selected_chat = 0
+        }
     }
+    chat_load_selected()
 }
 
 fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
@@ -441,10 +1636,10 @@ fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
     }
 }
 
-fn chat_row_h() f64 { return 30.0 }
-fn chat_row_stride() f64 { return 36.0 }
-fn chat_rows_top() f64 { return 54.0 }
-fn chat_btn_d() f64 { return 22.0 }
+fn chat_row_h() f64 { return 24.0 }
+fn chat_row_stride() f64 { return 28.0 }
+fn chat_rows_top() f64 { return 14.0 }
+fn chat_btn_d() f64 { return 18.0 }
 fn chat_menu_items() i32 { return 3 }
 
 // Text colour with an explicit alpha (col_text is #d7dde5).
@@ -518,12 +1713,15 @@ fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i
                     g_chat_menu_chat = idx
                     g_chat_menu_btn_x = bx
                     g_chat_menu_btn_y = by
+                    g_ui_focus = UI_FOCUS_CHAT_MENU()
                     g_click_used = true
+                    v.mouse_pressed = false
+                    v.mouse_down = false
                 }
             }
             if g_click_used == false {
                 if hot {
-                    g_selected_chat = idx
+                    chat_select(idx)
                 }
             }
         }
@@ -552,9 +1750,9 @@ fn draw_chat_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, idx: i
         }
         ui_fill_round_rect(r, bx, by, chat_btn_d(), chat_btn_d(), 4.0, bbg, 0.0)
         let dcy = by + chat_btn_d() * 0.5
-        ui_fill_circle(r, bx + 6.0, dcy, 1.5, col_text(), 0.5)
-        ui_fill_circle(r, bx + 11.0, dcy, 1.5, col_text(), 0.5)
-        ui_fill_circle(r, bx + 16.0, dcy, 1.5, col_text(), 0.5)
+        ui_fill_circle(r, bx + 5.0, dcy, 1.25, col_text(), 0.5)
+        ui_fill_circle(r, bx + 9.0, dcy, 1.25, col_text(), 0.5)
+        ui_fill_circle(r, bx + 13.0, dcy, 1.25, col_text(), 0.5)
     }
 }
 
@@ -582,6 +1780,7 @@ fn chat_menu_action(chat: i32, item: i32) {
     } else {
         chat_remove(chat)
     }
+    chat_save_project()
 }
 
 // Resolve last frame's chat row menu against this frame's click: an item click
@@ -591,15 +1790,17 @@ fn handle_chat_menu_input(v: ref view) {
     if g_chat_menu_chat >= 0 {
         if v.mouse_pressed {
             let mh = 3.0 * pop_item_h()
-            if hit(v, g_chat_menu_x, g_chat_menu_y, g_chat_menu_w, mh) {
+            if focus_hit(v, UI_FOCUS_CHAT_MENU(), g_chat_menu_x, g_chat_menu_y, g_chat_menu_w, mh) {
                 let idx = ((v.mouse_y - g_chat_menu_y) / pop_item_h()) as i32
                 idx = clamp_i(idx, 0, chat_menu_items() - 1)
                 chat_menu_action(g_chat_menu_chat, idx)
                 g_click_used = true
-            } else if hit(v, g_chat_menu_btn_x, g_chat_menu_btn_y, chat_btn_d(), chat_btn_d()) {
+            } else if focus_hit(v, UI_FOCUS_CHAT_MENU(), g_chat_menu_btn_x, g_chat_menu_btn_y, chat_btn_d(), chat_btn_d()) {
                 g_click_used = true
             }
             g_chat_menu_chat = -1
+            v.mouse_pressed = false
+            v.mouse_down = false
         }
     }
 }
@@ -621,7 +1822,7 @@ fn draw_chat_menu(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     ui_stroke_round_rect(r, px, py, mw, mh, 8.0, 1.0, col_line(), 0.0)
     for i in 0 to chat_menu_items() {
         let iy = py + 6.0 + (i as f64) * pop_item_h()
-        if hit(v, px, iy, mw, pop_item_h()) {
+        if focus_hit(v, UI_FOCUS_CHAT_MENU(), px, iy, mw, pop_item_h()) {
             ui_fill_rect(r, px + 4.0, iy, mw - 8.0, pop_item_h(), col_surface_hi(), 0.0)
         }
         let fg = col_text()
@@ -633,11 +1834,8 @@ fn draw_chat_menu(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
 }
 
 fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_rail(), 0.0)
-    ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_line(), 0.0)
+    ui_fill_rect(r, x, y, w, h, col_agent_history(), 0.0)
     ui_push_clip(r, x, y, w, h)
-    draw_label(r, x + 18.0, y + 18.0, "CHAT HISTORY")
-    draw_rule(r, x + 18.0, y + 42.0, w - 36.0)
     let row_y = y + chat_rows_top()
     for i in 0 to g_chat_count {
         draw_chat_row(r, v, x, row_y, w, i)
@@ -650,7 +1848,7 @@ fn draw_history(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     if foot_y > (row_y + 60.0) {
         ui_fill_round_rect(r, x + 14.0, foot_y, w - 28.0, 62.0, 4.0, col_surface(), 0.0)
         draw_label(r, x + 28.0, foot_y + 13.0, "WORKSPACE")
-        draw_text_clipped(r, x + 28.0, foot_y + 34.0, w - 56.0, 16.0, "/Users/demi/os/ns", small_px(), col_accent())
+        draw_text_clipped(r, x + 28.0, foot_y + 34.0, w - 56.0, 16.0, g_workspace_root, small_px(), col_accent())
     }
     ui_pop_clip(r)
     if g_chat_menu_chat >= 0 {
@@ -666,7 +1864,7 @@ fn ROLE_EVENT() i32 { return 2 }
 
 fn msg_cap() i32 { return 64 }
 fn attach_cap() i32 { return 4 }
-fn input_line_h() f64 { return 20.0 }
+fn input_line_h() f64 { return code_line_h() }
 fn ctl_h() f64 { return 26.0 }
 fn send_d() f64 { return 30.0 }
 fn pop_item_h() f64 { return 26.0 }
@@ -720,13 +1918,23 @@ fn push_msg(role: i32, text: str) {
     }
 }
 
-fn seed_conversation() {
-    if g_convo_seeded == false {
-        g_convo_seeded = true
-        push_msg(ROLE_USER(), "Keep low-level UI in C." + nl() + "Move editor and app behavior into nscode/native.")
-        push_msg(ROLE_AGENT(), "Working plan:" + nl() + "1. Separate kernel and app -- ui.c keeps renderer primitives only." + nl() + "2. Install NS callbacks -- main.ns creates the renderer and calls render_frame." + nl() + "3. Move shell rendering -- render.ns owns chat, code view and scroll state." + nl() + "4. Build and visually review the running app.")
-        g_dialog_follow = false
+fn chat_title_from_message(text: str) str {
+    let n = text.len
+    if n > 48 {
+        n = 48
     }
+    for i in 0 to n {
+        if i < n {
+            if byte_at(text, i) == 10 {
+                n = i
+            }
+        }
+    }
+    let title = substr(text, 0, n)
+    if title == "" {
+        return "New conversation"
+    }
+    return title
 }
 
 fn add_attachment() {
@@ -746,7 +1954,9 @@ fn remove_attachment(idx: i32) {
     }
 }
 
-// Post the composer content as a user message and start a (simulated) session.
+// Post real composer content into the selected project's persistent transcript.
+// No synthetic agent reply is generated; an agent/backend can append messages
+// to the same project store and they will be shown on the next project load.
 fn composer_send() {
     let has_content = false
     if g_input_text != "" {
@@ -770,30 +1980,23 @@ fn composer_send() {
             }
             text = text + "[attachments: " + names + "]"
         }
+        if g_selected_chat < 0 {
+            chat_add(chat_title_from_message(text))
+            g_selected_chat = g_chat_count - 1
+            chat_load_selected()
+        }
         push_msg(ROLE_USER(), text)
         g_input_text = ""
         g_attach_count = 0
-        g_running = true
-        g_run_started = os_time()
+        g_running = false
+        chat_save_project()
     }
 }
 
 fn session_terminate() {
     if g_running {
         g_running = false
-        push_msg(ROLE_EVENT(), "session terminated by user")
-    }
-}
-
-// The conversation backend is still simulated: a running session posts an
-// agent reply after a short delay (g_reply_delay; the frame tests retune it).
-fn update_session() {
-    if g_running {
-        let dt = os_time() - g_run_started
-        if dt > g_reply_delay {
-            g_running = false
-            push_msg(ROLE_AGENT(), "Done. Worked in " + module_label(g_module) + " with " + perm_label(g_perm) + " permissions. Switch to Code mode to review the result.")
-        }
+        chat_save_project()
     }
 }
 
@@ -803,16 +2006,14 @@ fn update_session() {
 // deletes, enter sends (shift+enter inserts a newline), cmd/ctrl+V pastes and
 // escape interrupts the running session.
 fn process_composer_keys(v: ref view) {
-    let shift = shift_down(v)
-    let cmd = cmd_down(v)
     if key_edge(v, 256) {
         session_terminate()
     }
     if g_input_focus {
         if key_edge(v, 257) {
-            if shift {
+            if key_event_shift() {
                 g_input_text = g_input_text + nl()
-            } else if cmd == false {
+            } else if key_event_cmd() == false {
                 composer_send()
             }
         }
@@ -822,18 +2023,20 @@ fn process_composer_keys(v: ref view) {
                 g_input_text = substr(g_input_text, 0, n - 1)
             }
         }
-        if cmd {
-            if key_edge(v, 86) {
-                let clip = view_get_clipboard(v)
-                if clip != "" {
-                    g_input_text = g_input_text + clip
-                }
-            }
-        } else {
-            // Printable keys: space, punctuation, digits and letters (32..96).
-            for k in 32 to 97 {
-                if key_edge(v, k) {
-                    let c = key_char(k, shift)
+        // Printable keys: space, punctuation, digits and letters (32..96).
+        // Modifiers come from the latched key event, so a quick Cmd+V cannot
+        // turn into a plain "v" if Command is released before the next frame.
+        for k in 32 to 97 {
+            if key_edge(v, k) {
+                if key_event_cmd() {
+                    if k == 86 {
+                        let clip = view_get_clipboard(v)
+                        if clip != "" {
+                            g_input_text = g_input_text + clip
+                        }
+                    }
+                } else {
+                    let c = key_char(k, key_event_shift())
                     if c != "" {
                         g_input_text = g_input_text + c
                     }
@@ -952,7 +2155,7 @@ fn handle_popup_input(v: ref view) {
         if v.mouse_pressed {
             let count = pop_count() & 15
             let ph = pop_count_f() * pop_item_h()
-            if hit(v, g_pop_x, g_pop_y, g_pop_w, ph) {
+            if focus_hit(v, UI_FOCUS_POPUP(), g_pop_x, g_pop_y, g_pop_w, ph) {
                 let idx = ((v.mouse_y - g_pop_y) / pop_item_h()) as i32
                 idx = clamp_i(idx, 0, count - 1)
                 if g_pop_kind == 1 {
@@ -961,12 +2164,14 @@ fn handle_popup_input(v: ref view) {
                     g_module = idx
                 }
                 g_click_used = true
-            } else if hit(v, g_perm_btn_x, g_perm_btn_y, g_perm_btn_w, ctl_h()) {
+            } else if focus_hit(v, UI_FOCUS_POPUP(), g_perm_btn_x, g_perm_btn_y, g_perm_btn_w, ctl_h()) {
                 g_click_used = true
-            } else if hit(v, g_module_btn_x, g_module_btn_y, g_module_btn_w, ctl_h()) {
+            } else if focus_hit(v, UI_FOCUS_POPUP(), g_module_btn_x, g_module_btn_y, g_module_btn_w, ctl_h()) {
                 g_click_used = true
             }
             g_pop_kind = 0
+            v.mouse_pressed = false
+            v.mouse_down = false
         }
     }
 }
@@ -1005,7 +2210,7 @@ fn draw_popup(r: ref ui_renderer, v: ref view) {
                 selected = true
             }
         }
-        if hit(v, px, iy, pw, pop_item_h()) {
+        if focus_hit(v, UI_FOCUS_POPUP(), px, iy, pw, pop_item_h()) {
             ui_fill_rect(r, px + 4.0, iy, pw - 8.0, pop_item_h(), col_surface_hi(), 0.0)
         }
         let fg = col_text()
@@ -1019,7 +2224,17 @@ fn draw_popup(r: ref ui_renderer, v: ref view) {
 
 // ---- composer -------------------------------------------------------------------
 
-// One selector pill (label + down triangle). Stores its rect for hit tests and
+fn draw_chevron_down(r: ref ui_renderer, cx: f64, cy: f64, color: u32) {
+    let thickness = 1.8
+    let radius = thickness * 0.5
+    ui_stroke_line(r, cx - 3.0, cy - 1.6, cx, cy + 1.6, thickness, color, 0.5)
+    ui_stroke_line(r, cx, cy + 1.6, cx + 3.0, cy - 1.6, thickness, color, 0.5)
+    ui_fill_circle(r, cx - 3.0, cy - 1.6, radius, color, 0.5)
+    ui_fill_circle(r, cx, cy + 1.6, radius, color, 0.5)
+    ui_fill_circle(r, cx + 3.0, cy - 1.6, radius, color, 0.5)
+}
+
+// One selector pill (label + rounded down chevron). Stores its rect for hit tests and
 // the popup anchor, opens the popup on click, returns the next control x.
 fn draw_selector(r: ref ui_renderer, v: ref view, x: f64, y: f64, text: str, kind: i32) f64 {
     let tw = ui_text_width(r, text, small_px(), FONT_MONO())
@@ -1029,9 +2244,7 @@ fn draw_selector(r: ref ui_renderer, v: ref view, x: f64, y: f64, text: str, kin
     let bw = tw + 34.0
     ui_fill_round_rect(r, x, y, bw, ctl_h(), 13.0, col_surface_hi(), 0.0)
     ui_draw_text(r, x + 12.0, text_center_y(r, y, ctl_h(), small_px()), text, small_px(), col_text(), FONT_MONO())
-    let t_x = x + bw - 16.0
-    let t_y = y + 11.0
-    ui_fill_triangle(r, t_x, t_y, t_x + 8.0, t_y, t_x + 4.0, t_y + 5.0, col_muted(), 0.0)
+    draw_chevron_down(r, x + bw - 12.0, y + ctl_h() * 0.5, col_muted())
     if kind == 1 {
         g_perm_btn_x = x
         g_perm_btn_y = y
@@ -1045,11 +2258,31 @@ fn draw_selector(r: ref ui_renderer, v: ref view, x: f64, y: f64, text: str, kin
         if g_click_used == false {
             if hit(v, x, y, bw, ctl_h()) {
                 g_pop_kind = kind
+                g_ui_focus = UI_FOCUS_POPUP()
                 g_click_used = true
+                v.mouse_pressed = false
+                v.mouse_down = false
             }
         }
     }
     return x + bw + 10.0
+}
+
+// Match the rounded line-and-dot arrow language used by the Code file tree,
+// rotated upward for the send action.
+fn draw_send_arrow(r: ref ui_renderer, cx: f64, cy: f64, color: u32) {
+    let thickness = 1.8
+    let radius = thickness * 0.5
+    let tip_y = cy - 6.0
+    let wing_y = cy - 1.0
+    let tail_y = cy + 6.0
+    ui_stroke_line(r, cx, tail_y, cx, tip_y, thickness, color, 0.5)
+    ui_stroke_line(r, cx - 5.0, wing_y, cx, tip_y, thickness, color, 0.5)
+    ui_stroke_line(r, cx + 5.0, wing_y, cx, tip_y, thickness, color, 0.5)
+    ui_fill_circle(r, cx, tip_y, radius, color, 0.5)
+    ui_fill_circle(r, cx - 5.0, wing_y, radius, color, 0.5)
+    ui_fill_circle(r, cx + 5.0, wing_y, radius, color, 0.5)
+    ui_fill_circle(r, cx, tail_y, radius, color, 0.5)
 }
 
 // The codex-style composer: rounded container with attachment chips, the
@@ -1070,12 +2303,7 @@ fn draw_composer(r: ref ui_renderer, v: ref view, char_w: f64, cols: i32, shown_
         }
     }
 
-    ui_fill_round_rect(r, x, y, w, h, 10.0, col_surface(), 0.0)
-    let border = col_line()
-    if g_input_focus {
-        border = col_muted()
-    }
-    ui_stroke_round_rect(r, x, y, w, h, 10.0, 1.0, border, 0.0)
+    ui_fill_round_rect(r, x, y, w, h, 10.0, col_agent_composer(), 0.0)
 
     // attachment chips
     if g_attach_count > 0 {
@@ -1171,7 +2399,7 @@ fn draw_composer(r: ref ui_renderer, v: ref view, char_w: f64, cols: i32, shown_
             sfg = col_bg()
         }
         ui_fill_round_rect(r, sx, sy, send_d(), send_d(), send_d() * 0.5, sbg, 0.0)
-        ui_fill_triangle(r, sx + 15.0, sy + 8.0, sx + 8.0, sy + 19.0, sx + 22.0, sy + 19.0, sfg, 0.0)
+        draw_send_arrow(r, sx + send_d() * 0.5, sy + send_d() * 0.5, sfg)
     }
     if v.mouse_pressed {
         if g_click_used == false {
@@ -1229,16 +2457,13 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
     g_cmp_w = col_w
     g_cmp_h = cmp_h
 
-    ui_fill_rect(r, x, y, w, h, col_bg(), 0.0)
-    draw_text_clipped(r, x + 24.0, text_center_y(r, y, header_h, title_px()), w - 190.0, 24.0, "Agent Session", title_px(), col_text())
+    ui_fill_rect(r, x, y, w, h, col_agent_conversation(), 0.0)
     let pill_y = y + (header_h - 22.0) * 0.5
     if g_running {
         draw_pill(r, x + w - 118.0, pill_y, "running", col_surface(), col_yellow())
     } else {
         draw_pill(r, x + w - 118.0, pill_y, "ready", col_surface(), col_accent())
     }
-    draw_rule(r, x, y + header_h, w)
-
     // transcript
     let body_y = y + header_h
     let body_h = g_cmp_y - body_y - 10.0
@@ -1255,6 +2480,10 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
     let msg_cols = cols
     ui_push_clip(r, x, body_y, w, body_h)
     let yy = body_y + 16.0 - g_dialog_scroll
+    if g_msg_count == 0 {
+        draw_centered_text(r, col_x, body_y + body_h * 0.32, col_w, 22.0, "No conversations yet", font_px(), col_text())
+        draw_centered_text(r, col_x, body_y + body_h * 0.32 + 25.0, col_w, 18.0, "Messages are stored in this project's .ns/chat", small_px(), col_muted())
+    }
     for i in 0 to g_msg_count {
         let role = g_msg_role[i] as i32
         let text = g_msg_text[i]
@@ -1292,20 +2521,228 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
     }
 
     draw_composer(r, v, char_w, cols, shown_f, total_f, chips_h)
-    draw_centered_text(r, col_x, g_cmp_y + cmp_h + 2.0, col_w, hint_h - 4.0, "enter to send / shift+enter for newline / esc to stop", small_px(), col_muted())
+    draw_centered_text(r, col_x, g_cmp_y + cmp_h + 2.0, col_w, hint_h - 4.0, "enter to send / shift+enter for newline / saved in .ns/chat", small_px(), col_muted())
     if g_pop_kind != 0 {
         draw_popup(r, v)
     }
 }
 
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
-    ui_fill_rect(r, x, y, w, 28.0, col_accent(), 0.0)
+    ui_fill_rect(r, x, y, w, 28.0, col_status_bg(), 0.0)
+    ui_fill_rect(r, x, y, w, 1.0, col_status_line(), 0.0)
     let ty = text_center_y(r, y, 28.0, small_px())
-    ui_draw_text(r, x + 14.0, ty, "nscode/native", small_px(), col_bg(), FONT_MONO())
+    ui_draw_text(r, x + 14.0, ty, setting_language_label() + " | " + setting_theme_label(), small_px(), col_status_text(), FONT_MONO())
     if w > 620.0 {
-        ui_draw_text(r, x + w - 390.0, ty, "UI kernel in C, editor in NS", small_px(), col_bg(), FONT_MONO())
-        ui_draw_text(r, x + w - 120.0, ty, fps_text(), small_px(), col_bg(), FONT_MONO())
+        ui_draw_text(r, x + w - 390.0, ty, "UI kernel in C, editor in NS", small_px(), col_status_text(), FONT_MONO())
+        ui_draw_text(r, x + w - 120.0, ty, fps_text(), small_px(), col_status_text(), FONT_MONO())
     }
+}
+
+// ---- settings view ---------------------------------------------------------
+
+fn SETTING_FONT() i32 { return 0 }
+fn SETTING_SIZE() i32 { return 1 }
+fn SETTING_THEME() i32 { return 2 }
+fn SETTING_LANGUAGE() i32 { return 3 }
+
+fn settings_panel_w(w: f64) f64 {
+    let pw = w - 64.0
+    if pw > 820.0 {
+        pw = 820.0
+    }
+    if pw < 520.0 {
+        pw = w - 24.0
+    }
+    return pw
+}
+
+fn settings_panel_x(w: f64) f64 {
+    return (w - settings_panel_w(w)) * 0.5
+}
+
+fn settings_row_y(kind: i32) f64 {
+    return main_menu_h() + 126.0 + (kind as f64) * 82.0
+}
+
+fn settings_option_count(kind: i32) i32 {
+    if kind == SETTING_FONT() {
+        return 2
+    }
+    return 3
+}
+
+fn settings_option_label(kind: i32, item: i32) str {
+    if kind == SETTING_FONT() {
+        if item == 0 {
+            return "Sans UI"
+        }
+        return "Monospace"
+    }
+    if kind == SETTING_SIZE() {
+        if item == 0 {
+            return "Compact"
+        }
+        if item == 1 {
+            return "Default"
+        }
+        return "Large"
+    }
+    if kind == SETTING_THEME() {
+        if item == 0 {
+            return "Dark"
+        }
+        if item == 1 {
+            return "Light"
+        }
+        return "High Contrast"
+    }
+    if item == 0 {
+        return "Nano Script"
+    }
+    if item == 1 {
+        return "TypeScript"
+    }
+    return "Python"
+}
+
+fn settings_title(kind: i32) str {
+    if kind == SETTING_FONT() {
+        return "Interface font"
+    }
+    if kind == SETTING_SIZE() {
+        return "Font size"
+    }
+    if kind == SETTING_THEME() {
+        return "Theme"
+    }
+    return "Default language"
+}
+
+fn settings_detail(kind: i32) str {
+    if kind == SETTING_FONT() {
+        return "Code remains monospaced for exact cursor columns."
+    }
+    if kind == SETTING_SIZE() {
+        return "Adjusts editor, chat, menus and spacing."
+    }
+    if kind == SETTING_THEME() {
+        return "Changes every app surface immediately."
+    }
+    return "Controls syntax palette and the active language preference."
+}
+
+fn settings_current(kind: i32) i32 {
+    if kind == SETTING_FONT() {
+        return g_setting_font_family
+    }
+    if kind == SETTING_SIZE() {
+        return g_setting_font_size
+    }
+    if kind == SETTING_THEME() {
+        return g_setting_theme
+    }
+    return g_setting_language
+}
+
+fn settings_set(kind: i32, item: i32) {
+    if kind == SETTING_FONT() {
+        g_setting_font_family = clamp_i(item, 0, 1)
+    } else if kind == SETTING_SIZE() {
+        g_setting_font_size = clamp_i(item, 0, 2)
+    } else if kind == SETTING_THEME() {
+        g_setting_theme = clamp_i(item, 0, 2)
+    } else {
+        g_setting_language = clamp_i(item, 0, 2)
+        set_syntax_language(g_setting_language)
+    }
+    settings_save()
+}
+
+fn settings_segment_x(w: f64) f64 {
+    return settings_panel_x(w) + 270.0
+}
+
+fn settings_segment_w(w: f64) f64 {
+    return settings_panel_w(w) - 302.0
+}
+
+fn settings_option_x(w: f64, kind: i32, item: i32) f64 {
+    return settings_segment_x(w) + settings_segment_w(w) * (item as f64) / (settings_option_count(kind) as f64)
+}
+
+fn settings_option_w(w: f64, kind: i32) f64 {
+    return settings_segment_w(w) / (settings_option_count(kind) as f64)
+}
+
+fn draw_settings_row(r: ref ui_renderer, v: ref view, w: f64, kind: i32) {
+    let px = settings_panel_x(w)
+    let pw = settings_panel_w(w)
+    let y = settings_row_y(kind)
+    ui_fill_round_rect(r, px, y, pw, 68.0, 8.0, col_surface(), 0.0)
+    ui_stroke_round_rect(r, px, y, pw, 68.0, 8.0, 1.0, col_line(), 0.0)
+    ui_draw_text(r, px + 20.0, y + 12.0, settings_title(kind), font_px(), col_text(), FONT_MONO())
+    draw_text_clipped(r, px + 20.0, y + 37.0, 232.0, 18.0, settings_detail(kind), small_px(), col_muted())
+
+    let count = settings_option_count(kind)
+    let sy = y + 16.0
+    let sh = 36.0
+    ui_fill_round_rect(r, settings_segment_x(w), sy, settings_segment_w(w), sh, 6.0, col_rail(), 0.0)
+    for item in 0 to count {
+        let ox = settings_option_x(w, kind, item)
+        let ow = settings_option_w(w, kind)
+        let active = settings_current(kind) == item
+        if active {
+            ui_fill_round_rect(r, ox + 2.0, sy + 2.0, ow - 4.0, sh - 4.0, 4.0, col_accent(), 0.0)
+        } else if hit(v, ox, sy, ow, sh) {
+            ui_fill_round_rect(r, ox + 2.0, sy + 2.0, ow - 4.0, sh - 4.0, 4.0, col_surface_hi(), 0.0)
+        }
+        let fg = col_text()
+        if active {
+            fg = col_bg()
+        }
+        draw_centered_text(r, ox, sy, ow, sh, settings_option_label(kind, item), small_px(), fg)
+        if v.mouse_pressed {
+            if hit(v, ox, sy, ow, sh) {
+                settings_set(kind, item)
+                v.mouse_pressed = false
+                v.mouse_down = false
+            }
+        }
+    }
+}
+
+fn settings_done_x(w: f64) f64 {
+    return settings_panel_x(w) + settings_panel_w(w) - 92.0
+}
+
+fn render_settings(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    let status_h = 28.0
+    let app_y = main_menu_h()
+    ui_fill_rect(r, 0.0, app_y, w, h - app_y - status_h, col_bg(), 0.0)
+    let px = settings_panel_x(w)
+    ui_draw_text(r, px, app_y + 32.0, "Settings", 24.0, col_text(), FONT_MONO())
+    ui_draw_text(r, px, app_y + 68.0, "Global NSCode preferences", small_px(), col_muted(), FONT_MONO())
+
+    let dx = settings_done_x(w)
+    let dy = app_y + 28.0
+    if hit(v, dx, dy, 92.0, 34.0) {
+        ui_fill_round_rect(r, dx, dy, 92.0, 34.0, 6.0, col_surface_hi(), 0.0)
+    } else {
+        ui_fill_round_rect(r, dx, dy, 92.0, 34.0, 6.0, col_surface(), 0.0)
+    }
+    draw_centered_text(r, dx, dy, 92.0, 34.0, "Done", small_px(), col_text())
+    if v.mouse_pressed {
+        if hit(v, dx, dy, 92.0, 34.0) {
+            g_mode = g_settings_return_mode
+            v.mouse_pressed = false
+            v.mouse_down = false
+        }
+    }
+
+    for kind in 0 to 4 {
+        draw_settings_row(r, v, w, kind)
+    }
+    draw_status_bar(r, 0.0, h - status_h, w)
 }
 
 // ---- code view input -------------------------------------------------------
@@ -1321,33 +2758,27 @@ fn shift_down(v: ref view) bool {
 }
 
 // Control or Command (super), so shortcuts work on both Windows and macOS.
-fn cmd_down(v: ref view) bool {
-    if view_is_key_pressed(v, 341) {
-        return true
-    }
-    if view_is_key_pressed(v, 345) {
-        return true
-    }
-    if view_is_key_pressed(v, 343) {
-        return true
-    }
-    if view_is_key_pressed(v, 347) {
-        return true
-    }
-    return false
+let g_key_event_mods: i32 = 0
+
+fn key_event_shift() bool {
+    return (g_key_event_mods & 1) != 0
 }
 
-// True only on the frame key `k` transitions to pressed.
-fn key_edge(v: ref view, k: i32) bool {
-    let was = (g_key_prev[k] as i32) & 255
-    if view_is_key_pressed(v, k) {
-        g_key_prev[k] = 1 as u8
-        if was == 0 {
-            return true
-        }
-        return false
+fn key_event_cmd() bool {
+    if (g_key_event_mods & 2) != 0 {
+        return true
     }
-    g_key_prev[k] = 0 as u8
+    return (g_key_event_mods & 8) != 0
+}
+
+// Consume one native-latched key-down edge. The event retains the modifiers
+// that were active at keyDown time even if keyUp happens before this frame.
+fn key_edge(v: ref view, k: i32) bool {
+    let mods = view_take_key_press(v, k)
+    if mods >= 0 {
+        g_key_event_mods = mods
+        return true
+    }
     return false
 }
 
@@ -1355,7 +2786,6 @@ fn key_edge(v: ref view, k: i32) bool {
 // caret to be scrolled into view when anything happened.
 fn process_code_keys(v: ref view) {
     set_shift(shift_down(v))
-    let cmd = cmd_down(v)
 
     // Structural and navigation keys: enter(257), backspace(259), delete(261),
     // arrows/home/end/page (262..269). Tab(258) and insert(260) are skipped.
@@ -1363,7 +2793,8 @@ fn process_code_keys(v: ref view) {
         if k != 258 {
             if k != 260 {
                 if key_edge(v, k) {
-                    if cmd == false {
+                    if key_event_cmd() == false {
+                        set_shift(key_event_shift())
                         process_view_key(k)
                         g_caret_follow = true
                     }
@@ -1373,40 +2804,56 @@ fn process_code_keys(v: ref view) {
     }
 
     if key_edge(v, 258) {
-        if cmd == false {
-            insert_str("    ")
+        if key_event_cmd() == false {
+            insert_tab()
             g_caret_follow = true
         }
     }
 
-    if cmd {
-        if key_edge(v, 65) {
-            select_all()
-        }
-        if key_edge(v, 67) {
-            if has_selection() {
-                view_set_clipboard(v, selected_text())
-            }
-        }
-        if key_edge(v, 88) {
-            if has_selection() {
-                view_set_clipboard(v, selected_text())
-                delete_selection()
-                g_caret_follow = true
-            }
-        }
-        if key_edge(v, 86) {
-            let clip = view_get_clipboard(v)
-            if clip != "" {
-                insert_str(clip)
-                g_caret_follow = true
-            }
-        }
-    } else {
-        // Printable keys: space, punctuation, digits and letters (32..96).
-        let shifted = g_shift
-        for k in 32 to 97 {
-            if key_edge(v, k) {
+    // Printable keys and shortcuts share the same latched event path. This is
+    // what makes a fast Cmd+Z reliable even when both key transitions occur
+    // between two rendered frames.
+    for k in 32 to 97 {
+        if key_edge(v, k) {
+            let shifted = key_event_shift()
+            if key_event_cmd() {
+                if k == 90 {
+                    if shifted {
+                        redo()
+                    } else {
+                        undo()
+                    }
+                    g_caret_follow = true
+                } else if k == 89 {
+                    redo()
+                    g_caret_follow = true
+                } else if k == 65 {
+                    select_all()
+                } else if k == 67 {
+                    if has_selection() {
+                        view_set_clipboard(v, selected_text())
+                    }
+                } else if k == 88 {
+                    if has_selection() {
+                        view_set_clipboard(v, selected_text())
+                        delete_selection()
+                        g_caret_follow = true
+                    }
+                } else if k == 86 {
+                    let clip = view_get_clipboard(v)
+                    if clip != "" {
+                        paste_str(clip)
+                        g_caret_follow = true
+                    }
+                } else if k == 83 {
+                    workspace_save_active()
+                } else if k == 87 {
+                    if g_workspace_active >= 0 {
+                        workspace_close_tab(g_workspace_active)
+                        g_caret_follow = true
+                    }
+                }
+            } else {
                 let c = key_char(k, shifted)
                 if c != "" {
                     insert_str(c)
@@ -1503,10 +2950,118 @@ fn draw_code_line(r: ref ui_renderer, li: i32, text_x: f64, row_y: f64, char_w: 
                     de = view_end
                 }
                 let tx = text_x + ((ds - first_col) as f64) * char_w
-                ui_draw_text(r, tx, row_y, token_text_part(t, ds - ts, de - ds), code_font_px(), token_color(token_kind(t)), FONT_MONO())
+                ui_draw_text(r, tx, row_y, token_text_part(t, ds - ts, de - ds), code_font_px(), token_color(token_kind(t)), CODE_FONT())
             }
         }
     }
+}
+
+fn code_minimap_w(editor_w: f64) f64 {
+    if editor_w < 420.0 {
+        return 56.0
+    }
+    if editor_w < 680.0 {
+        return 68.0
+    }
+    return 82.0
+}
+
+fn minimap_line_step(total: i32, body_h: f64) f64 {
+    let step: f64 = 2.0
+    let available = body_h - 8.0
+    if total > 0 {
+        if (total as f64) * step > available {
+            step = available / (total as f64)
+        }
+    }
+    return step
+}
+
+fn minimap_sample_step(total: i32) i32 {
+    if total > 720 {
+        return total / 720 + 1
+    }
+    return 1
+}
+
+fn minimap_scroll_to_mouse(v: ref view, total: i32, body_h: f64, line_h: f64, max_scroll: f64) {
+    let step = minimap_line_step(total, body_h)
+    let visible_lines = body_h / line_h
+    let target_line = (v.mouse_y - g_minimap_y) / step
+    let target = (target_line - visible_lines * 0.5) * line_h
+    g_code_scroll = clamp(target, 0.0, max_scroll)
+    g_caret_follow = false
+}
+
+fn process_minimap_mouse(v: ref view, total: i32, body_h: f64, line_h: f64, max_scroll: f64) {
+    if v.mouse_pressed {
+        if hit(v, g_minimap_x, g_minimap_y, g_minimap_w, g_minimap_h) {
+            g_minimap_drag = true
+            g_code_drag = false
+            minimap_scroll_to_mouse(v, total, body_h, line_h, max_scroll)
+            // The minimap owns this press; do not let tab/editor click handlers
+            // observe the same edge.
+            v.mouse_pressed = false
+        }
+    }
+    if g_minimap_drag {
+        if v.mouse_down {
+            minimap_scroll_to_mouse(v, total, body_h, line_h, max_scroll)
+        }
+    }
+    if v.mouse_released {
+        g_minimap_drag = false
+    }
+}
+
+// Compact syntax map: each token becomes a small fill-rect using the same
+// semantic color as the main code renderer. Dense documents are sampled to
+// bound per-frame tokenizer work while preserving their overall shape.
+fn draw_code_minimap(r: ref ui_renderer, body_h: f64, total: i32, line_h: f64) {
+    ui_fill_rect(r, g_minimap_x, g_minimap_y - 4.0, g_minimap_w, body_h, col_minimap_bg(), 0.0)
+    ui_push_clip(r, g_minimap_x, g_minimap_y, g_minimap_w, g_minimap_h)
+
+    let step = minimap_line_step(total, body_h)
+    let sample = minimap_sample_step(total)
+    let char_scale = clamp((g_minimap_w - 12.0) / 100.0, 0.45, 0.9)
+    let block_h = clamp(step * 0.68, 0.45, 1.6)
+    let right = g_minimap_x + g_minimap_w - 5.0
+    let li: i32 = 0
+    loop li < total {
+        let row_y = g_minimap_y + (li as f64) * step
+        let n = tokenize_line(li)
+        for t in 0 to n {
+            let bx = g_minimap_x + 6.0 + (token_start(t) as f64) * char_scale
+            if bx < right {
+                let bw = (token_len(t) as f64) * char_scale
+                if bw < 1.0 {
+                    bw = 1.0
+                }
+                if bx + bw > right {
+                    bw = right - bx
+                }
+                if bw > 0.0 {
+                    ui_fill_rect(r, bx, row_y, bw, block_h, minimap_token_color(token_kind(t)), 0.0)
+                }
+            }
+        }
+        li = li + sample
+    }
+
+    let content_h = (total as f64) * step
+    let viewport_h = (body_h / line_h) * step
+    if viewport_h < 8.0 {
+        viewport_h = 8.0
+    }
+    if viewport_h > content_h {
+        viewport_h = content_h
+    }
+    let viewport_y = g_minimap_y + (g_code_scroll / line_h) * step
+    viewport_y = clamp(viewport_y, g_minimap_y, g_minimap_y + content_h - viewport_h)
+    g_minimap_view_y = viewport_y
+    g_minimap_view_h = viewport_h
+    ui_fill_rect(r, g_minimap_x + 2.0, viewport_y, g_minimap_w - 4.0, viewport_h, col_minimap_view(), 0.0)
+    ui_pop_clip(r)
 }
 
 fn file_tree_width(w: f64) f64 {
@@ -1551,11 +3106,7 @@ fn draw_tree_arrow(r: ref ui_renderer, x: f64, y: f64, expanded: bool, color: u3
     let thickness = 1.8
     let radius = thickness * 0.5
     if expanded {
-        ui_stroke_line(r, x + 1.5, y + 3.0, x + 4.5, y + 6.2, thickness, color, 0.5)
-        ui_stroke_line(r, x + 4.5, y + 6.2, x + 7.5, y + 3.0, thickness, color, 0.5)
-        ui_fill_circle(r, x + 1.5, y + 3.0, radius, color, 0.5)
-        ui_fill_circle(r, x + 4.5, y + 6.2, radius, color, 0.5)
-        ui_fill_circle(r, x + 7.5, y + 3.0, radius, color, 0.5)
+        draw_chevron_down(r, x + 4.5, y + 4.6, color)
     } else {
         ui_stroke_line(r, x + 2.5, y + 1.5, x + 5.7, y + 4.7, thickness, color, 0.5)
         ui_stroke_line(r, x + 5.7, y + 4.7, x + 2.5, y + 7.9, thickness, color, 0.5)
@@ -1590,9 +3141,7 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     let list_h = h - header_h - root_h
 
     ui_fill_rect(r, x, y, w, h, col_editor_panel(), 0.0)
-    ui_fill_rect(r, x + w - 1.0, y, 1.0, h, col_line(), 0.0)
     draw_text_clipped(r, x + 14.0, text_center_y(r, y, header_h, small_px()), w - 28.0, 16.0, "EXPLORER", small_px(), col_muted())
-    ui_fill_rect(r, x, y + header_h - 1.0, w, 1.0, col_line(), 0.0)
 
     let root_hover = hit(v, x, y + header_h, w, root_h)
     if root_hover {
@@ -1600,7 +3149,7 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     }
     draw_tree_arrow(r, x + 12.0, y + header_h + 10.0, g_workspace_root_expanded, col_text())
     draw_tree_folder_icon(r, x + 28.0, y + header_h + 7.0, col_accent())
-    draw_text_clipped(r, x + 50.0, text_center_y(r, y + header_h, root_h, small_px()), w - 60.0, 16.0, "nscode/native", small_px(), col_text())
+    draw_text_clipped(r, x + 50.0, text_center_y(r, y + header_h, root_h, small_px()), w - 60.0, 16.0, "PROJECT ROOT", small_px(), col_text())
     if v.mouse_pressed {
         if root_hover {
             g_workspace_root_expanded = g_workspace_root_expanded == false
@@ -1672,22 +3221,30 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     let body_y = y + tab_h
     let body_h = h - tab_h
     let gutter_w = 72.0
+    let minimap_w = code_minimap_w(w)
+    let code_w = w - minimap_w
 
-    let char_w = ui_mono_char_width(r, code_font_px(), FONT_MONO())
+    let char_w = ui_mono_char_width(r, code_font_px(), CODE_FONT())
     if char_w <= 0.0 {
         char_w = code_font_px() * 0.6
     }
     let text_x = x + gutter_w + 16.0
-    let text_w = w - gutter_w - 24.0
+    let text_w = code_w - gutter_w - 24.0
     let visible_cols = (text_w / char_w) as i32 + 1
 
-    process_code_mouse(v, x, body_y, w, body_h, text_x, line_h, char_w)
-    process_code_keys(v)
     let total = line_count()
     let content_h = (total as f64) * line_h + 40.0
     let max_scroll = scroll_max(content_h, body_h)
+    g_minimap_x = x + code_w
+    g_minimap_y = body_y + 4.0
+    g_minimap_w = minimap_w
+    g_minimap_h = body_h - 8.0
+
+    process_minimap_mouse(v, total, body_h, line_h, max_scroll)
+    process_code_mouse(v, x, body_y, code_w, body_h, text_x, line_h, char_w)
+    process_code_keys(v)
     if hit(v, x, body_y, w, body_h) {
-        g_code_scroll = clamp(g_code_scroll - v.scroll_y, 0.0, max_scroll)
+        g_code_scroll = clamp(g_code_scroll - v.scroll_y * code_wheel_scale(), 0.0, max_scroll)
     }
     if g_caret_follow {
         g_caret_follow = false
@@ -1697,7 +3254,6 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
 
     ui_fill_rect(r, x, y, w, h, col_editor_bg(), 0.0)
     ui_fill_rect(r, x, y, w, tab_h, col_editor_panel(), 0.0)
-    ui_fill_rect(r, x, y + tab_h - 1.0, w, 1.0, col_line(), 0.0)
     let tab_x = x + 14.0
     ui_push_clip(r, x, y, w, tab_h)
     for ti in 0 to g_workspace_tab_count {
@@ -1749,8 +3305,9 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     }
     ui_pop_clip(r)
 
-    ui_fill_rect(r, x, body_y, gutter_w, body_h, col_editor_bg(), 0.0)
-    ui_fill_rect(r, x + gutter_w - 1.0, body_y, 1.0, body_h, col_line(), 0.0)
+    // Repaint with the same color as the code canvas. There is intentionally no
+    // gutter edge/stroke, so the number bar and source area read as one surface.
+    ui_fill_rect(r, x, body_y, gutter_w, body_h, col_editor_gutter(), 0.0)
     let first = ((g_code_scroll - 18.0 - line_h) / line_h) as i32
     if first < 0 {
         first = 0
@@ -1763,7 +3320,7 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     let cursor_line = cur_line()
     let cursor_col = cur_col()
     let selected = has_selection()
-    ui_push_clip(r, x, body_y, w, body_h)
+    ui_push_clip(r, x, body_y, code_w, body_h)
     for i in first to last {
         // Row rect (row_top, line_h) matches the mouse_line hit mapping; the
         // text y inside it comes from text_center_y so the glyphs sit mid-row.
@@ -1771,7 +3328,7 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
         if row_top + line_h >= body_y {
             if row_top <= body_y + body_h {
                 if i == cursor_line {
-                    ui_fill_rect(r, x + gutter_w, row_top, w - gutter_w, line_h, col_editor_panel(), 0.0)
+                    ui_fill_rect(r, x, row_top, code_w, line_h, col_editor_panel(), 0.0)
                 }
                 if selected {
                     let sb = line_sel_begin(i)
@@ -1808,12 +3365,13 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     let cursor_top = body_y + 18.0 + (cursor_line as f64) * line_h - g_code_scroll
     ui_fill_rect(r, cursor_x, cursor_top + 2.0, 2.0, line_h - 4.0, col_editor_cursor(), 0.0)
     ui_pop_clip(r)
+    draw_code_minimap(r, body_h, total, line_h)
 }
 
 fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let status_h = 28.0
-    let app_y = 0.0
-    let app_h = h - status_h
+    let app_y = main_menu_h()
+    let app_h = h - status_h - app_y
     let tree_w = file_tree_width(w)
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_editor_bg(), 0.0)
@@ -1835,13 +3393,13 @@ fn history_width(w: f64) f64 {
 
 fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let status_h = 28.0
-    let app_y = 0.0
-    let app_h = h - status_h
+    let app_y = main_menu_h()
+    let app_h = h - status_h - app_y
     let history_w = history_width(w)
 
-    seed_chats()
-    seed_conversation()
-    update_session()
+    if g_chat_store_loaded == false {
+        chat_load_project()
+    }
     handle_popup_input(v)
     handle_chat_menu_input(v)
     process_composer_keys(v)
@@ -1861,10 +3419,15 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     // cast value; mask to a sane canvas range first.
     let w = (ui_canvas_width(r) & 1048575) as f64
     let h = (ui_canvas_height(r) & 1048575) as f64
+    sync_ui_focus()
+    handle_main_menu_input(r, v, w)
     handle_mode_switch_input(v, w, h)
     if g_mode == MODE_CODE() {
         render_code(r, v, w, h)
-    } else {
+    } else if g_mode == MODE_AGENT() {
         render_agent(r, v, w, h)
+    } else {
+        render_settings(r, v, w, h)
     }
+    draw_main_menu(r, v, w)
 }

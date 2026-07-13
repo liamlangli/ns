@@ -1,0 +1,307 @@
+// nscode/native/workspace.ns
+// ---------------------------------------------------------------------------
+// Workspace/file model for the Code view. Directory metadata comes from the
+// read-only directory APIs in the `os` FFI module; open editor buffers, cursor positions and dirty
+// state stay in NS memory so switching files never discards unsaved edits.
+
+use std
+use os
+use editor
+
+fn workspace_cap() i32 { return 2048 }
+
+// The native app launcher enters the project root before starting ns. Using
+// "." therefore opens the caller's project instead of this app's own sources.
+let g_workspace_root = "."
+let g_native_entry = ""
+let g_workspace_ready = false
+let g_workspace_count: i32 = 0
+let g_workspace_active: i32 = -1
+let g_workspace_root_expanded = true
+let g_workspace_tabs = [i32](2048)
+let g_workspace_tab_count: i32 = 0
+
+let g_workspace_dir_expanded = [u8](2048)
+let g_workspace_loaded = [u8](2048)
+let g_workspace_text = [i32: str](2048)
+let g_workspace_original = [i32: str](2048)
+let g_workspace_cur = [i32](2048)
+let g_workspace_anchor = [i32](2048)
+let g_workspace_coloff = [i32](2048)
+
+fn workspace_read_file(path: str) str {
+    let fd = open(path, "rb")
+    if fd == 0 {
+        return ""
+    }
+    let data = read(fd)
+    close(fd)
+    return data
+}
+
+fn workspace_has_suffix(text: str, suffix: str) bool {
+    if suffix.len > text.len {
+        return false
+    }
+    return substr(text, text.len - suffix.len, suffix.len) == suffix
+}
+
+// Binary assets remain visible in the tree but are intentionally not loaded
+// into the text editor.
+fn workspace_entry_editable(index: i32) bool {
+    if os_entry_is_dir(index) != 0 {
+        return false
+    }
+    let name = os_entry_name(index)
+    if name == "ns.mod" {
+        return true
+    }
+    if workspace_has_suffix(name, ".ns") {
+        return true
+    }
+    if workspace_has_suffix(name, ".md") {
+        return true
+    }
+    if workspace_has_suffix(name, ".txt") {
+        return true
+    }
+    if workspace_has_suffix(name, ".json") {
+        return true
+    }
+    return false
+}
+
+fn workspace_cache_active() {
+    if g_workspace_active >= 0 {
+        let index = g_workspace_active
+        g_workspace_text[index] = g_doc
+        g_workspace_cur[index] = g_cur
+        g_workspace_anchor[index] = g_anchor
+        g_workspace_coloff[index] = g_coloff
+        g_workspace_loaded[index] = 1 as u8
+    }
+}
+
+fn workspace_tab_position(index: i32) i32 {
+    for i in 0 to g_workspace_tab_count {
+        if g_workspace_tabs[i] == index {
+            return i
+        }
+    }
+    return -1
+}
+
+fn workspace_add_tab(index: i32) {
+    if workspace_tab_position(index) < 0 {
+        if g_workspace_tab_count < workspace_cap() {
+            g_workspace_tabs[g_workspace_tab_count] = index
+            g_workspace_tab_count = g_workspace_tab_count + 1
+        }
+    }
+}
+
+fn workspace_open(index: i32) bool {
+    if index < 0 {
+        return false
+    }
+    if index >= g_workspace_count {
+        return false
+    }
+    if workspace_entry_editable(index) == false {
+        return false
+    }
+    if index == g_workspace_active {
+        workspace_add_tab(index)
+        return true
+    }
+
+    workspace_cache_active()
+    if ((g_workspace_loaded[index] as i32) & 255) == 0 {
+        let text = workspace_read_file(os_entry_path(index))
+        g_workspace_text[index] = text
+        g_workspace_original[index] = text
+        g_workspace_cur[index] = 0
+        g_workspace_anchor[index] = -1
+        g_workspace_coloff[index] = 0
+        g_workspace_loaded[index] = 1 as u8
+    }
+
+    load_str_for_history(g_workspace_text[index], index + 1)
+    g_cur = clamp_i(g_workspace_cur[index], 0, doc_len())
+    let anchor = g_workspace_anchor[index]
+    if anchor >= 0 {
+        g_anchor = clamp_i(anchor, 0, doc_len())
+    }
+    g_coloff = g_workspace_coloff[index]
+    g_workspace_active = index
+    workspace_add_tab(index)
+    return true
+}
+
+fn workspace_close_tab(index: i32) {
+    let position = workspace_tab_position(index)
+    if position >= 0 {
+        workspace_cache_active()
+        for i in position to g_workspace_tab_count - 1 {
+            g_workspace_tabs[i] = g_workspace_tabs[i + 1]
+        }
+        g_workspace_tab_count = g_workspace_tab_count - 1
+
+        if index == g_workspace_active {
+            g_workspace_active = -1
+            if g_workspace_tab_count > 0 {
+                let next = position
+                if next >= g_workspace_tab_count {
+                    next = g_workspace_tab_count - 1
+                }
+                workspace_open(g_workspace_tabs[next])
+            } else {
+                load_str_for_history("", 0)
+            }
+        }
+    }
+}
+
+// Persist the active editor buffer. File access stays in the app-side
+// workspace module (backed by the std FFI declarations), rather than adding
+// editor or filesystem behavior to the language interpreter.
+fn workspace_save_active() bool {
+    if g_workspace_active < 0 {
+        return false
+    }
+    let index = g_workspace_active
+    let fd = open(os_entry_path(index), "wb")
+    if fd == 0 {
+        return false
+    }
+    write(fd, g_doc)
+    close(fd)
+    g_workspace_text[index] = g_doc
+    g_workspace_original[index] = g_doc
+    g_workspace_loaded[index] = 1 as u8
+    return true
+}
+
+fn workspace_entry_dirty(index: i32) bool {
+    if index < 0 {
+        return false
+    }
+    if ((g_workspace_loaded[index] as i32) & 255) == 0 {
+        return false
+    }
+    if index == g_workspace_active {
+        return g_doc != g_workspace_original[index]
+    }
+    return g_workspace_text[index] != g_workspace_original[index]
+}
+
+fn workspace_entry_visible(index: i32) bool {
+    if g_workspace_root_expanded == false {
+        return false
+    }
+    let parent = os_entry_parent(index)
+    loop parent >= 0 {
+        if ((g_workspace_dir_expanded[parent] as i32) & 255) == 0 {
+            return false
+        }
+        parent = os_entry_parent(parent)
+    }
+    return true
+}
+
+fn workspace_toggle_entry(index: i32) {
+    if os_entry_is_dir(index) != 0 {
+        if ((g_workspace_dir_expanded[index] as i32) & 255) == 0 {
+            g_workspace_dir_expanded[index] = 1 as u8
+        } else {
+            g_workspace_dir_expanded[index] = 0 as u8
+        }
+    }
+}
+
+fn workspace_entry_expanded(index: i32) bool {
+    return ((g_workspace_dir_expanded[index] as i32) & 255) != 0
+}
+
+fn workspace_expand_ancestors(index: i32) {
+    let parent = os_entry_parent(index)
+    loop parent >= 0 {
+        g_workspace_dir_expanded[parent] = 1 as u8
+        parent = os_entry_parent(parent)
+    }
+}
+
+fn workspace_find(name: str) i32 {
+    for i in 0 to g_workspace_count {
+        if os_entry_name(i) == name {
+            return i
+        }
+    }
+    return -1
+}
+
+fn workspace_init() bool {
+    if g_workspace_ready {
+        return g_workspace_count > 0
+    }
+    g_workspace_ready = true
+    let scanned = os_dir_scan(g_workspace_root)
+    if scanned < 0 {
+        g_workspace_count = 0
+        return false
+    }
+    g_workspace_count = scanned & 4095
+    if g_workspace_count > workspace_cap() {
+        g_workspace_count = workspace_cap()
+    }
+
+    let initial = workspace_find("main.ns")
+    if initial < 0 {
+        for i in 0 to g_workspace_count {
+            if initial < 0 {
+                if workspace_entry_editable(i) {
+                    initial = i
+                }
+            }
+        }
+    }
+    if initial >= 0 {
+        // Keep a large project tree compact, but reveal the initially opened
+        // file so the explorer and active tab start in sync.
+        workspace_expand_ancestors(initial)
+        return workspace_open(initial)
+    }
+    return false
+}
+
+fn workspace_set_native_entry(path: str) {
+    g_native_entry = path
+}
+
+// Replace the current project model in-place. The native window stays alive,
+// while tabs, buffers, expansion state and editor history are reset before the
+// new root is scanned.
+fn workspace_open_root(path: str) bool {
+    if path == "" {
+        return false
+    }
+    workspace_cache_active()
+    g_workspace_root = path
+    g_workspace_ready = false
+    g_workspace_count = 0
+    g_workspace_active = -1
+    g_workspace_tab_count = 0
+    g_workspace_root_expanded = true
+    for i in 0 to workspace_cap() {
+        g_workspace_tabs[i] = 0
+        g_workspace_dir_expanded[i] = 0 as u8
+        g_workspace_loaded[i] = 0 as u8
+        g_workspace_text[i] = ""
+        g_workspace_original[i] = ""
+        g_workspace_cur[i] = 0
+        g_workspace_anchor[i] = -1
+        g_workspace_coloff[i] = 0
+    }
+    load_str_for_history("", 0)
+    return workspace_init()
+}

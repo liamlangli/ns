@@ -114,6 +114,9 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_net.c \
 	src/ns_json.c \
 	src/ns_shader.c \
+	src/ns_project.c \
+	src/ns_project_xcode.c \
+	src/ns_project_vs.c \
 	src/ns_repl.c \
 	src/ns_def.c \
 	src/ns_asm.c
@@ -178,7 +181,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_shader_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_shader_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -223,7 +226,7 @@ $(NS_LIB): $(NS_LIB_OBJS)
 so: $(NS_LIB_OBJS)
 	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(NS_BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
 
-$(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) | $(NS_LIB)
+$(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 # libns.a must precede $(NS_LDFLAGS): with ld's default --as-needed, shared
 # libs listed before the archive that references them (ffi, readline) are
 # dropped and the link fails with undefined references.
@@ -236,6 +239,7 @@ test: $(NS_TEST_TARGETS)
 	$(NS_BINDIR)/ns_token_test
 	$(NS_BINDIR)/ns_buffer_test
 	$(NS_BINDIR)/ns_os_test
+	$(NS_BINDIR)/ns_project_test
 
 include lib/Makefile
 include sample/c/Makefile

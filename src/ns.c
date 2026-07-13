@@ -8,6 +8,7 @@
 #include "ns_pe.h"
 #include "ns_shader.h"
 #include "ns_profile.h"
+#include "ns_project.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -44,6 +45,7 @@ typedef struct ns_compile_option_t {
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
+    ns_bool project: 2; // `ns project <path>` - generate a native IDE project
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
@@ -63,6 +65,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.test = true;
         } else if (i == 1 && strcmp(argv[i], "build") == 0) {
             option.build = true;
+        } else if (i == 1 && strcmp(argv[i], "project") == 0) {
+            option.project = true;
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--token") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
@@ -145,6 +149,7 @@ void ns_help() {
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
+    printf("  project [path]    generate a native IDE project from ns.mod\n");
     printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
 
 }
@@ -1375,7 +1380,6 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_info("build", "executable %.*s\n", output.len, output.data);
 }
 
-#if 0 // IDE project generator sources are not present in this repository.
 static ns_str ns_project_absolute_path(ns_str path) {
     if (ns_path_is_absolute(path)) return ns_str_concat(path, ns_str_cstr(""));
     ns_str cwd = ns_getcwd();
@@ -1443,13 +1447,11 @@ static ns_str ns_project_runtime_root(ns_str executable) {
     return ns_str_null;
 }
 
-#if defined(NS_DARWIN)
-static ns_bool ns_project_module_supported(ns_str module) {
+static ns_bool ns_project_module_embeddable(ns_str module) {
     return ns_str_equals(module, ns_str_cstr("std")) ||
            ns_str_equals(module, ns_str_cstr("shader")) ||
            ns_str_equals(module, ns_str_cstr("simd"));
 }
-#endif
 
 void ns_exec_project(ns_str path) {
     ns_str start = path;
@@ -1489,22 +1491,12 @@ void ns_exec_project(ns_str path) {
         linked = ns_project_link(source_dir, in.source, in.filename, ns_null, &external_modules);
     }
 
-#if defined(NS_DARWIN)
+    ns_bool host_build = false;
     if (kind == NS_PROJECT_APP) {
-        ns_str unsupported = ns_str_null;
         for (i32 i = 0, l = ns_array_length(external_modules); i < l; i++) {
-            if (ns_project_module_supported(external_modules[i])) continue;
-            if (unsupported.len > 0) ns_str_append_len(&unsupported, ", ", 2);
-            ns_str_append(&unsupported, external_modules[i]);
-        }
-        if (unsupported.len > 0) {
-            ns_array_push(unsupported.data, '\0');
-            ns_exit(1, "project",
-                    "embedded Apple apps support std, shader, and simd only; unsupported modules: %s.\n",
-                    unsupported.data);
+            if (!ns_project_module_embeddable(external_modules[i])) host_build = true;
         }
     }
-#endif
 
     ns_str executable = ns_project_current_executable();
     if (executable.data == ns_null) ns_exit(1, "project", "failed to locate the ns executable.\n");
@@ -1517,6 +1509,7 @@ void ns_exec_project(ns_str path) {
 
     ns_project_spec spec = {
         .kind = kind,
+        .host_build = host_build,
         .root = root,
         .manifest = manifest,
         .source_dir = source_dir,
@@ -1546,8 +1539,6 @@ void ns_exec_project(ns_str path) {
             root.len, root.data, spec.safe_name.len, spec.safe_name.data);
 #endif
 }
-
-#endif
 
 void ns_exec_run(ns_str filename) {
     // No file argument: run the project's declared entry from its ns.mod.
@@ -1863,6 +1854,8 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_test(option.filename);
     } else if (option.build) {
         ns_exec_build(option.filename, option.output, option.build_kind);
+    } else if (option.project) {
+        ns_exec_project(option.filename);
     } else if (option.tokenize_only) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {

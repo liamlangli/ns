@@ -36,14 +36,25 @@ ref fn os_file_size(path: str) i64
 ref fn os_read_file(path: str) str
 ref fn os_read_file_part(path: str, offset: i64, size: i64) str
 
-// Recursively snapshot a directory in stable name order. Entry accessors are
+// Recursively snapshot a directory in stable, directories-first name order.
+// Root .gitignore matches and .git metadata are omitted. Entry accessors are
 // valid until the next os_dir_scan call.
 ref fn os_dir_scan(path: str) i32
 ref fn os_entry_name(index: i32) str
 ref fn os_entry_path(index: i32) str
 ref fn os_entry_depth(index: i32) i32
+ref fn os_entry_parent(index: i32) i32
 ref fn os_entry_is_dir(index: i32) i32
 
 // Show a native open-file dialog when the platform backend supports one.
 // Returns an empty string when the dialog is cancelled or unavailable.
 ref fn os_open_file_dialog(title: str) str
+
+// Project/window helpers. Folder selection is native where the platform UI
+// backend supports it. os_launch_ns_project starts this interpreter again with
+// `run entry`, using `folder` as the child process working directory.
+ref fn os_open_folder_dialog(title: str) str
+ref fn os_cwd() str
+ref fn os_env(name: str) str
+ref fn os_make_dirs(path: str) i32
+ref fn os_launch_ns_project(folder: str, entry: str) i32

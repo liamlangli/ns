@@ -29,12 +29,12 @@ void view_run(view *v) {
     // No event loop without a native backend.
 }
 
-ns_str view_get_clipboard(view *v) {
+const char *view_get_clipboard(view *v) {
     ns_unused(v);
-    return (ns_str){0};
+    return ns_null;
 }
 
-void view_set_clipboard(view *v, ns_str text) {
+void view_set_clipboard(view *v, const char *text) {
     ns_unused(v);
     ns_unused(text);
 }

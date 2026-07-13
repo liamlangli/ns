@@ -207,15 +207,24 @@ int view_win_height(void) {
 
 // ---- clipboard -------------------------------------------------------------
 
-ns_str view_get_clipboard(view *v) {
+static char *view_clipboard_result;
+
+const char *view_get_clipboard(view *v) {
     ns_unused(v);
-    ns_str result = (ns_str){0};
-    if (!OpenClipboard(NULL)) return result;
-    HANDLE handle = GetClipboardData(CF_TEXT);
+    if (!OpenClipboard(NULL)) return NULL;
+    const char *result = NULL;
+    HANDLE handle = GetClipboardData(CF_UNICODETEXT);
     if (handle) {
-        char *text = (char *)GlobalLock(handle);
+        const wchar_t *text = (const wchar_t *)GlobalLock(handle);
         if (text) {
-            result = ns_str_cstr(text);
+            int len = WideCharToMultiByte(CP_UTF8, 0, text, -1, NULL, 0, NULL, NULL);
+            if (len > 0) {
+                view_clipboard_result = ns_realloc(view_clipboard_result, (size_t)len);
+                if (view_clipboard_result) {
+                    WideCharToMultiByte(CP_UTF8, 0, text, -1, view_clipboard_result, len, NULL, NULL);
+                    result = view_clipboard_result;
+                }
+            }
             GlobalUnlock(handle);
         }
     }
@@ -223,19 +232,22 @@ ns_str view_get_clipboard(view *v) {
     return result;
 }
 
-void view_set_clipboard(view *v, ns_str text) {
+void view_set_clipboard(view *v, const char *text) {
     ns_unused(v);
+    if (!text) text = "";
+    int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, NULL, 0);
+    if (len <= 0) return;
     if (!OpenClipboard(NULL)) return;
     EmptyClipboard();
-    const size_t len = (size_t)text.len;
-    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, len + 1);
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)len * sizeof(wchar_t));
     if (mem) {
-        char *dst = (char *)GlobalLock(mem);
+        wchar_t *dst = (wchar_t *)GlobalLock(mem);
         if (dst) {
-            memcpy(dst, text.data, len);
-            dst[len] = '\0';
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text, -1, dst, len);
             GlobalUnlock(mem);
-            SetClipboardData(CF_TEXT, mem);
+            if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+        } else {
+            GlobalFree(mem);
         }
     }
     CloseClipboard();

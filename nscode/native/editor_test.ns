@@ -86,6 +86,47 @@ fn test_editing_around_selection() {
     check_s("backspace deletes selection", line_text(1), "    (42)")
 }
 
+fn test_undo_redo() {
+    load_str("abc")
+    do_end(false)
+    insert_str("d")
+    insert_str("e")
+    check_s("typing edits document", g_doc, "abcde")
+    check("typing creates undo", can_undo())
+    check("undo coalesced typing", undo())
+    check_s("undo restores before typing", g_doc, "abc")
+    check("redo typing", redo())
+    check_s("redo restores typing", g_doc, "abcde")
+
+    check("undo before branch", undo())
+    insert_str("x")
+    check_s("new edit starts branch", g_doc, "abcx")
+    check("new edit clears redo", can_redo() == false)
+
+    delete_back()
+    delete_back()
+    check_s("repeated backspace edits", g_doc, "ab")
+    check("undo coalesced backspace", undo())
+    check_s("backspace undo restores group", g_doc, "abcx")
+
+    select_word_at(0, 1)
+    insert_str("value")
+    check_s("selection replacement edits", g_doc, "value")
+    check("undo selection replacement", undo())
+    check_s("selection replacement undo restores", g_doc, "abcx")
+    check("redo selection replacement", redo())
+    check_s("selection replacement redo restores", g_doc, "value")
+
+    load_str("")
+    insert_str("a")
+    insert_newline()
+    check_s("newline is separate edit", g_doc, unescape("a\n"))
+    check("undo newline", undo())
+    check_s("undo newline keeps typing", g_doc, "a")
+    check("undo preceding typing", undo())
+    check_s("second undo removes typing", g_doc, "")
+}
+
 fn expect_token(name: str, i: i32, start: i32, len: i32, kind: i32) {
     let ok = true
     if token_start(i) != start {
@@ -163,13 +204,29 @@ fn test_key_char() {
     check_s("non printable", key_char(262, false), "")
 }
 
+fn test_default_language() {
+    set_syntax_language(1)
+    check("typescript keyword set", is_keyword("const"))
+    check("typescript type set", is_type_word("string"))
+    set_syntax_language(2)
+    check("python keyword set", is_keyword("def"))
+    check("python type set", is_type_word("int"))
+    load_str("x = 1 # note")
+    let count = tokenize_line(0)
+    check("python hash comment tokenized", count == 4)
+    expect_token("python comment to eol", 3, 6, 6, TK_COMMENT())
+    set_syntax_language(0)
+}
+
 fn main() i32 {
     test_place_cursor()
     test_click_selection()
     test_word_line_selection()
     test_editing_around_selection()
+    test_undo_redo()
     test_tokenizer()
     test_key_char()
+    test_default_language()
     if g_fail == 0 {
         print("editor_test: all passed" + unescape("\n"))
     } else {

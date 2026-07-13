@@ -1,0 +1,63 @@
+// Persistent Agent conversation model test. Uses the platform temp directory
+// so it never creates project chat fixtures in the source checkout.
+
+use std
+use os
+use editor
+use workspace
+use render
+
+let g_fail = 0
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        g_fail = g_fail + 1
+        print("FAIL " + name + unescape("\n"))
+    }
+}
+
+fn check_s(name: str, got: str, want: str) {
+    check(name, got == want)
+}
+
+fn main() i32 {
+    let temp = os_env("TMPDIR")
+    if temp == "" {
+        temp = os_env("TEMP")
+    }
+    if temp == "" {
+        temp = "."
+    }
+    g_workspace_root = temp + "/nscode_native_chat_test"
+    g_chat_persist = true
+    chat_clear_project()
+    chat_add("真实 conversation")
+    g_selected_chat = 0
+    push_msg(ROLE_USER(), unescape("first line\nsecond line"))
+    push_msg(ROLE_AGENT(), "stored agent response")
+    g_chat_pinned[0] = 1
+
+    check("conversation saves", chat_save_project())
+    check("store file exists", os_file_size(chat_store_path()) > 0)
+
+    chat_clear_project()
+    check("conversation reloads", chat_load_project())
+    check("one chat reloads", g_chat_count == 1)
+    check_s("title reloads", g_chat_title[0], "真实 conversation")
+    check("pin reloads", chat_is_pinned(0))
+    check("message count reloads", g_msg_count == 2)
+    check("user role reloads", g_msg_role[0] == ROLE_USER())
+    check_s("multiline user message reloads", g_msg_text[0], unescape("first line\nsecond line"))
+    check("agent role reloads", g_msg_role[1] == ROLE_AGENT())
+    check_s("agent message reloads", g_msg_text[1], "stored agent response")
+
+    if g_fail == 0 {
+        print("chat_test: all passed" + unescape("\n"))
+    } else {
+        print("chat_test: " + itos(g_fail) + " FAILED" + unescape("\n"))
+    }
+    assert g_fail == 0
+    return g_fail
+}

@@ -22,28 +22,56 @@ use std
 use view
 use gpu
 use ui
+use os
 use editor
 use workspace
 use render
 
 fn seed_document() {
     // Double-quoted string literals are not escape-processed, so run the text
-    // through std.unescape to turn "\n" into real newline bytes. The snippet
+    // through std.unescape to turn backslash-n pairs into real newline bytes.
+    // Keep every source literal on one physical line so both standalone-file
+    // and project-directory entry parsing follow the same stable path. The snippet
     // exercises the code view: keywords, types, numbers, strings, comments,
     // calls -- click to place the caret, drag to select, and type to edit.
-    let src = "// ns native editor\n// rendered through the ui module\n\nuse std\n\nstruct point {\n    x: f64,\n    y: f64\n}\n\nfn dist(a: point, b: point) f64 {\n    let dx = a.x - b.x\n    let dy = a.y - b.y\n    return sqrt(dx * dx + dy * dy)\n}\n\nfn main() {\n    let origin = point { x: 0.0, y: 0.0 }\n    let unit = point { x: 3.0, y: 4.0 }\n    print(" + '"dist "' + " + itos(dist(origin, unit) as i32))\n    if true {\n        print(" + '"editable"' + ")\n    }\n}\n"
+    let src = "// ns native editor\n"
+    src = src + "// rendered through the ui module\n\n"
+    src = src + "use std\n\n"
+    src = src + "struct point {\n"
+    src = src + "    x: f64,\n"
+    src = src + "    y: f64\n"
+    src = src + "}\n\n"
+    src = src + "fn dist(a: point, b: point) f64 {\n"
+    src = src + "    let dx = a.x - b.x\n"
+    src = src + "    let dy = a.y - b.y\n"
+    src = src + "    return sqrt(dx * dx + dy * dy)\n"
+    src = src + "}\n\n"
+    src = src + "fn main() {\n"
+    src = src + "    let origin = point { x: 0.0, y: 0.0 }\n"
+    src = src + "    let unit = point { x: 3.0, y: 4.0 }\n"
+    src = src + "    print(" + '"dist "' + " + itos(dist(origin, unit) as i32))\n"
+    src = src + "    if true {\n"
+    src = src + "        print(" + '"editable"' + ")\n"
+    src = src + "    }\n"
+    src = src + "}\n"
     load_str(unescape(src))
 }
 
 fn main() {
     seed_document()
+    let native_entry = os_env("NSCODE_NATIVE_ENTRY")
+    if native_entry == "" {
+        native_entry = os_cwd() + "/nscode/native"
+    }
+    workspace_set_native_entry(native_entry)
     workspace_init()
+    settings_load()
 
     let v = view_create("NSCode Native", 1024, 768)
 
     let ok = gpu_request_device(v)
     if ok {
-        print("gpu device acquired\n")
+        print(unescape("gpu device acquired\n"))
         let r = ui_renderer_create(v)
         let file_icon = ui_atlas_load(r, "sample/ns.png")
         set_file_icon_atlas(file_icon)
@@ -57,7 +85,7 @@ fn main() {
             ui_renderer_destroy(r)
         })
     } else {
-        print("no GPU backend on this platform; rendering is a no-op\n")
+        print(unescape("no GPU backend on this platform; rendering is a no-op\n"))
     }
 
     // Enter the event loop (returns immediately where there is no backend).

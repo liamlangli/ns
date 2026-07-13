@@ -42,6 +42,30 @@ static view _view;
 static void view_osx_update_mouse(NSEvent *event);
 static void view_osx_request_terminate(void);
 
+static void view_osx_sync_modifiers(NSEventModifierFlags flags) {
+    const ns_bool command_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_SUPER);
+    const ns_bool control_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_CONTROL);
+    const ns_bool shift_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_SHIFT);
+    const ns_bool alt_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_ALT);
+
+    if ((flags & NSEventModifierFlagCommand) && !command_pressed)
+        view_on_key_action(&_view, VIEW_KEY_LEFT_SUPER, VIEW_BUTTON_ACTION_PRESS);
+    if (!(flags & NSEventModifierFlagCommand) && command_pressed)
+        view_on_key_action(&_view, VIEW_KEY_LEFT_SUPER, VIEW_BUTTON_ACTION_RELEASE);
+    if ((flags & NSEventModifierFlagControl) && !control_pressed)
+        view_on_key_action(&_view, VIEW_KEY_LEFT_CONTROL, VIEW_BUTTON_ACTION_PRESS);
+    if (!(flags & NSEventModifierFlagControl) && control_pressed)
+        view_on_key_action(&_view, VIEW_KEY_LEFT_CONTROL, VIEW_BUTTON_ACTION_RELEASE);
+    if ((flags & NSEventModifierFlagShift) && !shift_pressed)
+        view_on_key_action(&_view, VIEW_KEY_LEFT_SHIFT, VIEW_BUTTON_ACTION_PRESS);
+    if (!(flags & NSEventModifierFlagShift) && shift_pressed)
+        view_on_key_action(&_view, VIEW_KEY_LEFT_SHIFT, VIEW_BUTTON_ACTION_RELEASE);
+    if ((flags & NSEventModifierFlagOption) && !alt_pressed)
+        view_on_key_action(&_view, VIEW_KEY_LEFT_ALT, VIEW_BUTTON_ACTION_PRESS);
+    if (!(flags & NSEventModifierFlagOption) && alt_pressed)
+        view_on_key_action(&_view, VIEW_KEY_LEFT_ALT, VIEW_BUTTON_ACTION_RELEASE);
+}
+
 static f64 view_osx_current_display_ratio(void) {
     CGFloat ratio = 0.0;
     if (view_window) {
@@ -317,6 +341,9 @@ static void view_osx_update_mouse(NSEvent *event) {
 }
 
 - (void)keyDown:(NSEvent*)event {
+    // Capture the modifiers carried by this exact key event. Relying only on a
+    // preceding flagsChanged delivery can make a quick Cmd+Z look like plain Z.
+    view_osx_sync_modifiers([event modifierFlags]);
     const i32 key = view_osx_key_map((i32)[event keyCode]);
     if (key >= 0 && ![event isARepeat]) {
         view_on_key_action(&_view, key, VIEW_BUTTON_ACTION_PRESS);
@@ -324,43 +351,7 @@ static void view_osx_update_mouse(NSEvent *event) {
 }
 
 - (void)flagsChanged:(NSEvent*)event {
-    NSEventModifierFlags flags = [event modifierFlags];
-    ns_bool command_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_SUPER);
-    ns_bool control_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_CONTROL);
-    ns_bool shift_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_SHIFT);
-    ns_bool alt_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_ALT);
-    
-    if (flags & NSEventModifierFlagCommand && !command_pressed) {
-        view_on_key_action(&_view, VIEW_KEY_LEFT_SUPER, VIEW_BUTTON_ACTION_PRESS);
-    }
-
-    if (!(flags & NSEventModifierFlagCommand) && command_pressed) {
-        view_on_key_action(&_view, VIEW_KEY_LEFT_SUPER, VIEW_BUTTON_ACTION_RELEASE);
-    }
-
-    if (flags & NSEventModifierFlagControl && !control_pressed) {
-        view_on_key_action(&_view, VIEW_KEY_LEFT_CONTROL, VIEW_BUTTON_ACTION_PRESS);
-    }
-
-    if (!(flags & NSEventModifierFlagControl) && control_pressed) {
-        view_on_key_action(&_view, VIEW_KEY_LEFT_CONTROL, VIEW_BUTTON_ACTION_RELEASE);
-    }
-
-    if (flags & NSEventModifierFlagShift && !shift_pressed) {
-        view_on_key_action(&_view, VIEW_KEY_LEFT_SHIFT, VIEW_BUTTON_ACTION_PRESS);
-    }
-
-    if (!(flags & NSEventModifierFlagShift) && shift_pressed) {
-        view_on_key_action(&_view, VIEW_KEY_LEFT_SHIFT, VIEW_BUTTON_ACTION_RELEASE);
-    }
-
-    if (flags & NSEventModifierFlagOption && !alt_pressed) {
-        view_on_key_action(&_view, VIEW_KEY_LEFT_ALT, VIEW_BUTTON_ACTION_PRESS);
-    }
-
-    if (!(flags & NSEventModifierFlagOption) && alt_pressed) {
-        view_on_key_action(&_view, VIEW_KEY_LEFT_ALT, VIEW_BUTTON_ACTION_RELEASE);
-    }
+    view_osx_sync_modifiers([event modifierFlags]);
 }
 
 - (void)keyUp:(NSEvent*)event {
@@ -466,12 +457,27 @@ void view_run(view *v) {
     [NSApp run];
 }
 
-ns_str view_get_clipboard(view *v) {
+static char *view_clipboard_result;
+
+const char *view_get_clipboard(view *v) {
     ns_unused(v);
-    return ns_str_null;
+    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+    NSString *value = [pasteboard stringForType:NSPasteboardTypeString];
+    if (!value) return ns_null;
+    const char *utf8 = [value UTF8String];
+    if (!utf8) return ns_null;
+    size_t len = strlen(utf8);
+    view_clipboard_result = ns_realloc(view_clipboard_result, len + 1);
+    if (!view_clipboard_result) return ns_null;
+    memcpy(view_clipboard_result, utf8, len + 1);
+    return view_clipboard_result;
 }
 
-void view_set_clipboard(view *v, ns_str text) {
+void view_set_clipboard(view *v, const char *text) {
     ns_unused(v);
-    ns_unused(text);
+    NSString *value = [NSString stringWithUTF8String:text ? text : ""];
+    if (!value) return;
+    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+    [pasteboard clearContents];
+    [pasteboard setString:value forType:NSPasteboardTypeString];
 }

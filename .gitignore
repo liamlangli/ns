@@ -9,6 +9,7 @@ bin
 .cache
 *.log
 ns.profile
+.ns/chat/
 
 # cmake
 build

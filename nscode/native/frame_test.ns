@@ -64,9 +64,10 @@ fn tap(r: ref ui_renderer, v: ref view, k: i32) {
     frame(r, v)
 }
 
-// Geometry mirrored from render.ns: file tree, tab strip 36px, gutter 72px +
-// 16px text inset, compact code line height, first row top 18px below the tab strip.
-fn body_y() f64 { return 36.0 }
+// Geometry mirrored from render.ns: shared 30px main menu, tab strip 36px,
+// gutter 72px + 16px text inset, compact code line height, first row top 18px
+// below the tab strip.
+fn body_y() f64 { return main_menu_h() + 36.0 }
 fn text_x() f64 { return file_tree_width(1024.0) + 88.0 }
 fn line_h() f64 { return code_line_h() }
 
@@ -79,7 +80,7 @@ fn col_x(char_w: f64, col: i32) f64 {
 }
 
 fn tree_entry_mid_y(index: i32) f64 {
-    let yy: f64 = 72.0 + tree_row_h() * 0.5
+    let yy: f64 = main_menu_h() + 72.0 + tree_row_h() * 0.5
     for i in 0 to g_workspace_count {
         if workspace_entry_visible(i) {
             if i == index {
@@ -89,6 +90,10 @@ fn tree_entry_mid_y(index: i32) f64 {
         }
     }
     return -1.0
+}
+
+fn chat_row_mid_y(index: i32) f64 {
+    return main_menu_h() + chat_rows_top() + (index as f64) * chat_row_stride() + chat_row_h() * 0.5
 }
 
 // Frames run far faster than the 0.45s multi-click window, so successive test
@@ -102,23 +107,101 @@ fn reset_clicks() {
 
 fn main() i32 {
     workspace_init()
+    // Keep UI interaction tests in memory; persistence has a dedicated model
+    // round trip below and must not write fixture messages into this checkout.
+    g_chat_persist = false
+    g_chat_store_loaded = true
+    chat_clear_project()
+    g_settings_persist = false
     load_str(unescape("fn main() {\n    let count = 42\n    print(count)\n}\n"))
 
     let v = view_create("frame test", 1024, 768)
     let r = ui_renderer_create(v)
     let char_w = ui_mono_char_width(r, code_font_px(), 1)
     check("renderer created", char_w > 0.0)
+    check("number bar shares code background", col_editor_gutter() == col_editor_bg())
+
+    // Native backends expose UTF-8 clipboard text through the view FFI. Keep
+    // the user's clipboard intact after the round trip. Linux has no native
+    // backend yet, so its empty clipboard stub is intentionally skipped.
+    let clipboard_before = view_get_clipboard(v)
+    view_set_clipboard(v, "nscode clipboard test")
+    let clipboard_after = view_get_clipboard(v)
+    if clipboard_after != "" {
+        check_s("native clipboard round trip", clipboard_after, "nscode clipboard test")
+    }
+    view_set_clipboard(v, clipboard_before)
 
     // The app boots in agent mode; a settle frame, then click the "Code" half
     // of the content mode switch.
     frame(r, v)
     check("boots in agent mode", g_mode == 1)
+
+    // The main menu is shared by both modes. It opens a real dropdown, eats
+    // overlapping content clicks, and View actions can change modes.
+    click(r, v, main_menu_anchor_x(r, 0) + 12.0, main_menu_h() * 0.5)
+    check("main menu opens in agent mode", g_main_menu_open == 0)
+    check("main menu dropdown is measured", g_main_menu_w > 0.0)
+    check_s("file menu starts with new window", main_menu_item_label(0, 0), "New Window")
+    check_s("file menu includes folder picker", main_menu_item_label(0, 1), "Open Folder...")
+    check("file project actions are separated", main_menu_separator_after(0, 1))
+    check_s("file menu includes settings", main_menu_item_label(0, 2), "Settings...")
+    check("settings is separated from file actions", main_menu_separator_after(0, 2))
+    check("focused menu blocks regular hover", hit(v, main_menu_anchor_x(r, 0), 0.0, 60.0, main_menu_h()) == false)
+    v.mouse_down = true
+    v.mouse_pressed = true
+    frame(r, v)
+    check("focused menu consumes mouse down", v.mouse_down == false)
+    v.mouse_x = main_menu_anchor_x(r, 1) + 12.0
+    v.mouse_y = main_menu_h() * 0.5
+    frame(r, v)
+    check("hover switches focused main menu", g_main_menu_open == 1)
+    v.mouse_x = g_main_menu_x + 20.0
+    v.mouse_y = main_menu_item_y(1, 0) + main_menu_item_h() * 0.5
+    frame(r, v)
+    check("dropdown hover keeps menu focused", g_main_menu_open == 1)
+    v.mouse_x = 600.0
+    v.mouse_y = 300.0
+    frame(r, v)
+    check("leaving menu regions closes focus", g_main_menu_open == -1)
+
+    // Settings is a real view. Every segmented control updates immediately;
+    // restore defaults before continuing geometry-sensitive editor checks.
+    click(r, v, main_menu_anchor_x(r, 0) + 12.0, main_menu_h() * 0.5)
+    click(r, v, g_main_menu_x + 20.0, main_menu_item_y(0, 2) + main_menu_item_h() * 0.5)
+    check("settings menu opens settings view", g_mode == MODE_SETTINGS())
+    click(r, v, settings_option_x(1024.0, SETTING_FONT(), 0) + settings_option_w(1024.0, SETTING_FONT()) * 0.5, settings_row_y(SETTING_FONT()) + 34.0)
+    check("settings changes interface font", g_setting_font_family == 0 && FONT_MONO() == 0)
+    click(r, v, settings_option_x(1024.0, SETTING_SIZE(), 2) + settings_option_w(1024.0, SETTING_SIZE()) * 0.5, settings_row_y(SETTING_SIZE()) + 34.0)
+    check("settings changes font size", g_setting_font_size == 2 && code_font_px() == 14.0)
+    click(r, v, settings_option_x(1024.0, SETTING_THEME(), 1) + settings_option_w(1024.0, SETTING_THEME()) * 0.5, settings_row_y(SETTING_THEME()) + 34.0)
+    check("settings changes theme", g_setting_theme == 1)
+    click(r, v, settings_option_x(1024.0, SETTING_LANGUAGE(), 2) + settings_option_w(1024.0, SETTING_LANGUAGE()) * 0.5, settings_row_y(SETTING_LANGUAGE()) + 34.0)
+    check_s("settings changes default language", setting_language_label(), "Python")
+    click(r, v, settings_option_x(1024.0, SETTING_FONT(), 1) + settings_option_w(1024.0, SETTING_FONT()) * 0.5, settings_row_y(SETTING_FONT()) + 34.0)
+    click(r, v, settings_option_x(1024.0, SETTING_SIZE(), 1) + settings_option_w(1024.0, SETTING_SIZE()) * 0.5, settings_row_y(SETTING_SIZE()) + 34.0)
+    click(r, v, settings_option_x(1024.0, SETTING_THEME(), 0) + settings_option_w(1024.0, SETTING_THEME()) * 0.5, settings_row_y(SETTING_THEME()) + 34.0)
+    click(r, v, settings_option_x(1024.0, SETTING_LANGUAGE(), 0) + settings_option_w(1024.0, SETTING_LANGUAGE()) * 0.5, settings_row_y(SETTING_LANGUAGE()) + 34.0)
+    click(r, v, settings_done_x(1024.0) + 46.0, main_menu_h() + 45.0)
+    check("settings done returns to previous view", g_mode == MODE_AGENT())
+
+    click(r, v, main_menu_anchor_x(r, 2) + 12.0, main_menu_h() * 0.5)
+    check("view menu opens", g_main_menu_open == 2)
+    click(r, v, g_main_menu_x + 20.0, g_main_menu_y + 10.0)
+    check("view menu switches to code", g_mode == 0)
+    click(r, v, main_menu_anchor_x(r, 2) + 12.0, main_menu_h() * 0.5)
+    click(r, v, g_main_menu_x + 20.0, g_main_menu_y + main_menu_item_h() + 10.0)
+    check("main menu is shared by code mode", g_mode == 1)
+
     click(r, v, 50.0, 714.0)
     check("code button switches mode", g_mode == 0)
     click(r, v, 125.0, 714.0)
     check("agent button switches back", g_mode == 1)
     click(r, v, 50.0, 714.0)
     check("mode switch is repeatable", g_mode == 0)
+    check("code minimap is measured", g_minimap_w > 0.0 && g_minimap_h > 0.0)
+    check("code minimap sits at right edge", g_minimap_x + g_minimap_w == 1024.0)
+    check("minimap viewport frame is visible", g_minimap_view_h > 0.0)
 
     // Click on line 1 ("    let count = 42") column 8: caret relocates there.
     click(r, v, col_x(char_w, 8), row_mid_y(1))
@@ -182,6 +265,34 @@ fn main() i32 {
     tap(r, v, 257)
     check("enter splits line", line_count() == 6)
 
+    // Undo/redo work when a complete shortcut press/release happens between
+    // frames (the real Cmd+Z failure mode), and through the visible Edit menu.
+    tap(r, v, 65)
+    let after_type = g_doc
+    view_on_key_action(v, 341, 0)
+    view_on_key_action(v, 90, 0)
+    view_on_key_action(v, 90, 1)
+    view_on_key_action(v, 341, 1)
+    frame(r, v)
+    check("latched ctrl+z undoes typing", g_doc != after_type)
+    view_on_key_action(v, 341, 0)
+    view_on_key_action(v, 340, 0)
+    view_on_key_action(v, 90, 0)
+    view_on_key_action(v, 90, 1)
+    view_on_key_action(v, 340, 1)
+    view_on_key_action(v, 341, 1)
+    frame(r, v)
+    check_s("latched ctrl+shift+z redoes typing", g_doc, after_type)
+    check("edit menu separates undo group", main_menu_separator_after(1, 1))
+    check("edit menu separates clipboard group", main_menu_separator_after(1, 4))
+    click(r, v, main_menu_anchor_x(r, 1) + 12.0, main_menu_h() * 0.5)
+    click(r, v, g_main_menu_x + 20.0, main_menu_item_y(1, 0) + main_menu_item_h() * 0.5)
+    check("edit menu undo click runs", g_doc != after_type)
+    check("dropdown action closes menu focus", g_main_menu_open == -1)
+    click(r, v, main_menu_anchor_x(r, 1) + 12.0, main_menu_h() * 0.5)
+    click(r, v, g_main_menu_x + 20.0, main_menu_item_y(1, 1) + main_menu_item_h() * 0.5)
+    check_s("edit menu redo click runs", g_doc, after_type)
+
     // Ctrl+A selects the whole document.
     view_on_key_action(v, 341, 0)
     tap(r, v, 65)
@@ -191,27 +302,28 @@ fn main() i32 {
     // ---- workspace tree: collapse and buffered file switching -------------
     let editor_index = workspace_find("editor.ns")
     check("tree discovers editor.ns", editor_index >= 0)
-    click(r, v, 100.0, 57.0)
+    click(r, v, 100.0, main_menu_h() + 57.0)
     check("root row collapses the tree", g_workspace_root_expanded == false)
-    click(r, v, 100.0, 57.0)
+    click(r, v, 100.0, main_menu_h() + 57.0)
     check("root row expands the tree", g_workspace_root_expanded)
     click(r, v, 100.0, tree_entry_mid_y(editor_index))
     check("file row switches active buffer", g_workspace_active == editor_index)
     check("switched file has source", g_doc.len > 0)
+    click(r, v, g_minimap_x + g_minimap_w * 0.5, g_minimap_y + g_minimap_h - 2.0)
+    check("minimap click scrolls long file", g_code_scroll > 0.0)
+    check("minimap viewport follows scroll", g_minimap_view_y > g_minimap_y)
     let main_index = workspace_find("main.ns")
     click(r, v, 100.0, tree_entry_mid_y(main_index))
     check("tree switches back to main", g_workspace_active == main_index)
     check("main's edited buffer survives", line_count() == 6)
 
-    // ---- agent mode: codex-style composer ----------------------------------
-    // Sessions would otherwise auto-complete after g_reply_delay seconds; park
-    // the delay far away so the send/terminate checks are deterministic.
-    g_reply_delay = 3600.0
+    // ---- agent mode: persistent, non-mock conversation model ---------------
     reset_clicks()
     click(r, v, 125.0, 714.0)
     check("agent button returns to agent mode", g_mode == 1)
     frame(r, v)
-    check("conversation is seeded", g_msg_count == 2)
+    check("conversation starts without mock messages", g_msg_count == 0)
+    check("history starts without mock chats", g_chat_count == 0)
     check("composer rect is measured", g_cmp_w > 0.0)
 
     // Clicking the transcript blurs the input, clicking the composer focuses.
@@ -228,22 +340,23 @@ fn main() i32 {
     view_on_key_action(v, 340, 0)
     tap(r, v, 257)
     view_on_key_action(v, 340, 1)
-    check("shift+enter does not send", g_msg_count == 2)
+    check("shift+enter does not send", g_msg_count == 0)
     tap(r, v, 79)
     tap(r, v, 75)
     check_s("shift+enter makes multiline input", g_input_text, unescape("hi\nok"))
 
-    // Enter sends: user message appended, input cleared, session running.
+    // Enter creates the first real conversation and appends the user message.
     tap(r, v, 257)
-    check("enter sends the message", g_msg_count == 3)
+    check("enter sends the message", g_msg_count == 1)
+    check("first send creates history", g_chat_count == 1)
     check_s("send clears the input", g_input_text, "")
-    check("send starts the session", g_running == true)
-    check_s("user message is stored", g_msg_text[2], unescape("hi\nok"))
+    check("send does not start a mock session", g_running == false)
+    check_s("user message is stored", g_msg_text[0], unescape("hi\nok"))
+    check_s("history title comes from content", chat_title(0), "hi")
 
-    // Escape terminates the running session and posts an event line.
+    // Escape has no synthetic lifecycle event when no backend is running.
     tap(r, v, 256)
-    check("esc terminates the session", g_running == false)
-    check("terminate posts an event", g_msg_count == 4)
+    check("escape leaves real transcript unchanged", g_msg_count == 1)
 
     // The attach button adds a chip; the chip close cross removes it.
     reset_clicks()
@@ -258,6 +371,7 @@ fn main() i32 {
     reset_clicks()
     click(r, v, g_perm_btn_x + 10.0, g_perm_btn_y + 10.0)
     check("perm button opens popup", g_pop_kind == 1)
+    check("popup focus blocks underlying hover", hit(v, g_cmp_x, g_cmp_y, g_cmp_w, g_cmp_h) == false)
     click(r, v, g_pop_x + 20.0, g_pop_y + pop_item_h() * 2.0 + 13.0)
     check("popup selects full access", g_perm == 2)
     check("popup closes after selecting", g_pop_kind == 0)
@@ -268,40 +382,41 @@ fn main() i32 {
     click(r, v, g_pop_x + 20.0, g_pop_y + pop_item_h() + 13.0)
     check("popup selects module", g_module == 1)
 
-    // Send button posts attachments alone; while running it becomes stop.
+    // Send button posts attachments alone without generating fake replies.
     click(r, v, g_attach_btn_x + 13.0, g_attach_btn_y + 13.0)
     check("second attachment lands", g_attach_count == 1)
     click(r, v, g_send_btn_x + 15.0, g_send_btn_y + 15.0)
-    check("send button posts the message", g_msg_count == 5)
-    check("send button starts the session", g_running == true)
+    check("send button posts the message", g_msg_count == 2)
+    check("send button stays ready without backend", g_running == false)
     check("send clears attachments", g_attach_count == 0)
-    click(r, v, g_send_btn_x + 15.0, g_send_btn_y + 15.0)
-    check("stop button terminates the session", g_running == false)
-    check("stop posts an event", g_msg_count == 6)
 
-    // With no delay the simulated agent reply lands on the next frame.
-    g_reply_delay = 0.0
+    // A normal follow-up adds exactly the real user message.
     tap(r, v, 88)
     tap(r, v, 257)
     frame(r, v)
-    check("agent reply lands", g_msg_count == 8)
-    check("session returns to ready", g_running == false)
+    check("follow-up adds one user message", g_msg_count == 3)
+    check("no simulated agent reply lands", g_running == false)
 
     // ---- chat history: single-line rows with a hover row menu --------------
     // Geometry mirrored from render.ns at w=1024 (history rail 276 wide): rows
-    // start at y=54 with a 36px stride and 30px height; the "..." button sits
-    // at x 240..262 in the row, the menu items at g_chat_menu_x/y after open.
+    // start below the 30px main menu, with a 28px stride and 24px height; the
+    // "..." button sits at x 244..262, with menu items at g_chat_menu_x/y.
     reset_clicks()
-    check("history is seeded", g_chat_count == 4)
+    chat_add("Parser diagnostics for editor modules")
+    chat_add("GPU text pass")
+    chat_add("Diff review before commit")
+    frame(r, v)
+    check("history contains real plus fixture chats", g_chat_count == 4)
     check("first chat starts selected", g_selected_chat == 0)
 
     // Clicking a row body selects it.
-    click(r, v, 100.0, 141.0)
+    click(r, v, 100.0, chat_row_mid_y(2))
     check("row click selects chat", g_selected_chat == 2)
 
     // Clicking the row-end menu button opens the row menu instead of selecting.
-    click(r, v, 251.0, 141.0)
+    click(r, v, 251.0, chat_row_mid_y(2))
     check("row menu button opens menu", g_chat_menu_chat == 2)
+    check("chat menu focus blocks row hover", hit(v, 10.0, chat_row_mid_y(2) - 10.0, 240.0, chat_row_h()) == false)
     check("menu rect is measured", g_chat_menu_w > 0.0)
 
     // Pin moves the chat to the top and the selection follows it.
@@ -312,14 +427,14 @@ fn main() i32 {
     check("selection follows the pinned chat", g_selected_chat == 0)
 
     // Unpin clears the flag; with no other pinned chats the row stays first.
-    click(r, v, 251.0, 69.0)
+    click(r, v, 251.0, chat_row_mid_y(0))
     check("menu opens on the pinned row", g_chat_menu_chat == 0)
     click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + 13.0)
     check("unpin clears the flag", chat_is_pinned(0) == false)
     check_s("unpinned chat keeps its slot", chat_title(0), "GPU text pass")
 
     // Archive removes the row and bumps the archived counter.
-    click(r, v, 251.0, 105.0)
+    click(r, v, 251.0, chat_row_mid_y(1))
     check("menu opens on second row", g_chat_menu_chat == 1)
     click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + pop_item_h() + 13.0)
     check("archive removes the row", g_chat_count == 3)
@@ -327,14 +442,14 @@ fn main() i32 {
     check_s("later rows shift up on archive", chat_title(1), "Parser diagnostics for editor modules")
 
     // Delete removes the row without touching the archive counter.
-    click(r, v, 251.0, 105.0)
+    click(r, v, 251.0, chat_row_mid_y(1))
     click(r, v, g_chat_menu_x + 20.0, g_chat_menu_y + pop_item_h() * 2.0 + 13.0)
     check("delete removes the row", g_chat_count == 2)
     check("delete leaves the archive counter", g_chat_archived == 1)
     check_s("last chat survives", chat_title(1), "Diff review before commit")
 
     // A click outside the open menu dismisses it without acting.
-    click(r, v, 251.0, 69.0)
+    click(r, v, 251.0, chat_row_mid_y(0))
     check("menu reopens on first row", g_chat_menu_chat == 0)
     click(r, v, 600.0, 300.0)
     check("outside click closes the menu", g_chat_menu_chat == -1)
