@@ -4,6 +4,8 @@ use std
 use os
 use editor
 
+let g_workspace_root = "nscode/native"
+let g_native_entry = ""
 let g_workspace_count: i32 = 0
 let g_workspace_active: i32 = -1
 let g_workspace_root_expanded = true
@@ -18,6 +20,48 @@ let g_workspace_cursors = [i32](4096)
 let g_workspace_anchors = [i32](4096)
 let g_workspace_rowoffs = [i32](4096)
 let g_workspace_coloffs = [i32](4096)
+let g_workspace_visible = [i32](4096)
+let g_workspace_visible_count: i32 = 0
+let g_workspace_visibility_dirty = true
+let g_workspace_writes_enabled = true
+let g_refresh_tab_path = [i32: str](4096)
+let g_refresh_tab_text = [i32: str](4096)
+let g_refresh_tab_original = [i32: str](4096)
+let g_refresh_tab_cursor = [i32](4096)
+let g_refresh_tab_anchor = [i32](4096)
+let g_refresh_tab_rowoff = [i32](4096)
+let g_refresh_tab_coloff = [i32](4096)
+let g_refresh_tab_dirty = [i32](4096)
+let g_refresh_dir_path = [i32: str](4096)
+let g_refresh_dir_expanded = [i32](4096)
+
+fn workspace_root_name(path: str) str {
+    if path == "" {
+        return "."
+    }
+    let end = path.len
+    loop end > 1 {
+        let c = (path[end - 1] as i32) & 255
+        if c == 47 || c == 92 {
+            end = end - 1
+        } else {
+            break
+        }
+    }
+    let start = end - 1
+    loop start >= 0 {
+        let c = (path[start] as i32) & 255
+        if c == 47 || c == 92 {
+            start = start + 1
+            break
+        }
+        start = start - 1
+    }
+    if start < 0 {
+        start = 0
+    }
+    return substr(path, start, end - start)
+}
 
 fn workspace_has_suffix(name: str, suffix: str) bool {
     if name.len < suffix.len {
@@ -73,6 +117,37 @@ fn workspace_find(name: str) i32 {
     return -1
 }
 
+fn workspace_find_path(path: str) i32 {
+    for i in 0 to g_workspace_count {
+        if os_entry_path(i) == path {
+            return i
+        }
+    }
+    return -1
+}
+
+fn workspace_join_root(name: str) str {
+    if g_workspace_root.len > 0 {
+        let last = (g_workspace_root[g_workspace_root.len - 1] as i32) & 255
+        if last == 47 || last == 92 {
+            return g_workspace_root + name
+        }
+    }
+    return g_workspace_root + "/" + name
+}
+
+fn workspace_unique_path(stem: str, suffix: str) str {
+    let name = stem + suffix
+    let path = workspace_join_root(name)
+    let serial: i32 = 2
+    loop os_file_size(path) >= 0 {
+        name = stem + "_" + itos(serial) + suffix
+        path = workspace_join_root(name)
+        serial = serial + 1
+    }
+    return path
+}
+
 fn workspace_entry_expanded(index: i32) bool {
     if index < 0 || index >= g_workspace_count {
         return false
@@ -87,18 +162,33 @@ fn workspace_entry_visible(index: i32) bool {
     if index < 0 || index >= g_workspace_count {
         return false
     }
-    let expected = os_entry_depth(index) - 1
-    let i = index - 1
-    loop i >= 0 && expected >= 0 {
-        if os_entry_depth(i) == expected {
-            if os_entry_is_dir(i) != 0 && workspace_entry_expanded(i) == false {
-                return false
-            }
-            expected = expected - 1
+    let parent = os_entry_parent(index)
+    loop parent >= 0 {
+        if workspace_entry_expanded(parent) == false {
+            return false
         }
-        i = i - 1
+        parent = os_entry_parent(parent)
     }
     return true
+}
+
+fn workspace_mark_visibility_dirty() {
+    g_workspace_visibility_dirty = true
+}
+
+fn workspace_rebuild_visible() {
+    if g_workspace_visibility_dirty {
+        g_workspace_visible_count = 0
+        if g_workspace_root_expanded {
+            for i in 0 to g_workspace_count {
+                if workspace_entry_visible(i) {
+                    g_workspace_visible[g_workspace_visible_count] = i
+                    g_workspace_visible_count = g_workspace_visible_count + 1
+                }
+            }
+        }
+        g_workspace_visibility_dirty = false
+    }
 }
 
 fn workspace_toggle_entry(index: i32) {
@@ -109,6 +199,7 @@ fn workspace_toggle_entry(index: i32) {
             } else {
                 g_workspace_expanded[index] = 0
             }
+            workspace_mark_visibility_dirty()
         }
     }
 }
@@ -200,14 +291,37 @@ fn workspace_entry_dirty(index: i32) bool {
     return g_workspace_buffers[index] != g_workspace_originals[index]
 }
 
+fn workspace_set_native_entry(path: str) {
+    g_native_entry = path
+}
+
+fn workspace_save_active() bool {
+    if g_workspace_writes_enabled == false {
+        return false
+    }
+    if g_workspace_active < 0 {
+        return false
+    }
+    let fd = open(os_entry_path(g_workspace_active), "wb")
+    if fd == 0 {
+        return false
+    }
+    write(fd, g_doc)
+    close(fd)
+    g_workspace_buffers[g_workspace_active] = g_doc
+    g_workspace_originals[g_workspace_active] = g_doc
+    return true
+}
+
 fn workspace_init() {
-    g_workspace_count = os_dir_scan("nscode/native")
+    g_workspace_count = os_dir_scan(g_workspace_root)
     g_workspace_root_expanded = true
     for i in 0 to g_workspace_count {
         if os_entry_is_dir(i) != 0 {
             g_workspace_expanded[i] = 1
         }
     }
+    workspace_mark_visibility_dirty()
 
     let main_index = workspace_find("main.ns")
     if main_index >= 0 {
@@ -223,4 +337,171 @@ fn workspace_init() {
         g_workspace_cursors[main_index] = g_cur
         g_workspace_anchors[main_index] = g_anchor
     }
+    os_watch_start(g_workspace_root)
+}
+
+fn workspace_refresh_from_disk() {
+    workspace_store_active()
+    let old_tab_count = g_workspace_tab_count
+    let active_path = ""
+    if g_workspace_active >= 0 {
+        active_path = os_entry_path(g_workspace_active)
+    }
+    for pos in 0 to old_tab_count {
+        let index = g_workspace_tabs[pos] as i32
+        g_refresh_tab_path[pos] = os_entry_path(index)
+        g_refresh_tab_text[pos] = g_workspace_buffers[index]
+        g_refresh_tab_original[pos] = g_workspace_originals[index]
+        g_refresh_tab_cursor[pos] = g_workspace_cursors[index]
+        g_refresh_tab_anchor[pos] = g_workspace_anchors[index]
+        g_refresh_tab_rowoff[pos] = g_workspace_rowoffs[index]
+        g_refresh_tab_coloff[pos] = g_workspace_coloffs[index]
+        if g_workspace_buffers[index] != g_workspace_originals[index] {
+            g_refresh_tab_dirty[pos] = 1
+        } else {
+            g_refresh_tab_dirty[pos] = 0
+        }
+    }
+    let old_dir_count: i32 = 0
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 {
+            g_refresh_dir_path[old_dir_count] = os_entry_path(i)
+            g_refresh_dir_expanded[old_dir_count] = g_workspace_expanded[i]
+            old_dir_count = old_dir_count + 1
+        }
+    }
+
+    g_workspace_count = os_dir_scan(g_workspace_root)
+    if g_workspace_count < 0 {
+        g_workspace_count = 0
+    }
+    g_workspace_active = -1
+    g_workspace_tab_count = 0
+    for i in 0 to 4096 {
+        g_workspace_expanded[i] = 0
+        g_workspace_opened[i] = 0
+        g_workspace_tabs[i] = 0
+    }
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 {
+            g_workspace_expanded[i] = 1
+        }
+    }
+    for pos in 0 to old_dir_count {
+        let index = workspace_find_path(g_refresh_dir_path[pos])
+        if index >= 0 {
+            g_workspace_expanded[index] = g_refresh_dir_expanded[pos]
+        }
+    }
+
+    let restored_active: i32 = -1
+    for pos in 0 to old_tab_count {
+        let index = workspace_find_path(g_refresh_tab_path[pos])
+        if index >= 0 {
+            let text = g_refresh_tab_text[pos]
+            let original = g_refresh_tab_original[pos]
+            if g_refresh_tab_dirty[pos] == 0 {
+                text = os_read_file(os_entry_path(index))
+                original = text
+            }
+            g_workspace_buffers[index] = text
+            g_workspace_originals[index] = original
+            g_workspace_cursors[index] = g_refresh_tab_cursor[pos]
+            g_workspace_anchors[index] = g_refresh_tab_anchor[pos]
+            g_workspace_rowoffs[index] = g_refresh_tab_rowoff[pos]
+            g_workspace_coloffs[index] = g_refresh_tab_coloff[pos]
+            g_workspace_opened[index] = 1
+            workspace_add_tab(index)
+            if g_refresh_tab_path[pos] == active_path {
+                restored_active = index
+            }
+        }
+    }
+    if restored_active >= 0 {
+        workspace_open(restored_active)
+    } else if g_workspace_tab_count > 0 {
+        workspace_open(g_workspace_tabs[0])
+    } else {
+        let initial = workspace_find("main.ns")
+        if initial < 0 {
+            for i in 0 to g_workspace_count {
+                if initial < 0 && workspace_entry_editable(i) {
+                    initial = i
+                }
+            }
+        }
+        if initial >= 0 {
+            workspace_open(initial)
+        } else {
+            load_str("")
+        }
+    }
+    workspace_mark_visibility_dirty()
+    os_watch_start(g_workspace_root)
+}
+
+fn workspace_poll_changes() {
+    if (os_watch_poll() & 255) != 0 {
+        workspace_refresh_from_disk()
+    }
+}
+
+fn workspace_create_file() bool {
+    let path = workspace_unique_path("untitled", ".ns")
+    let fd = open(path, "wb")
+    if fd == 0 {
+        return false
+    }
+    close(fd)
+    workspace_refresh_from_disk()
+    let index = workspace_find_path(path)
+    if index >= 0 {
+        workspace_open(index)
+    }
+    return index >= 0
+}
+
+fn workspace_create_folder() bool {
+    let path = workspace_unique_path("new_folder", "")
+    if os_make_dirs(path) == 0 {
+        return false
+    }
+    workspace_refresh_from_disk()
+    return workspace_find_path(path) >= 0
+}
+
+fn workspace_collapse_all() {
+    g_workspace_root_expanded = true
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 {
+            g_workspace_expanded[i] = 0
+        }
+    }
+    workspace_mark_visibility_dirty()
+}
+
+fn workspace_open_root(path: str) bool {
+    if path == "" {
+        return false
+    }
+    workspace_store_active()
+    os_watch_stop()
+    g_workspace_root = path
+    g_workspace_count = 0
+    g_workspace_active = -1
+    g_workspace_tab_count = 0
+    g_workspace_root_expanded = true
+    workspace_mark_visibility_dirty()
+    for i in 0 to 4096 {
+        g_workspace_expanded[i] = 0
+        g_workspace_opened[i] = 0
+        g_workspace_tabs[i] = 0
+        g_workspace_cursors[i] = 0
+        g_workspace_anchors[i] = -1
+        g_workspace_rowoffs[i] = 0
+        g_workspace_coloffs[i] = 0
+    }
+    load_str("")
+    workspace_init()
+    return g_workspace_count > 0
 }

@@ -46,6 +46,12 @@ ref fn os_entry_depth(index: i32) i32
 ref fn os_entry_parent(index: i32) i32
 ref fn os_entry_is_dir(index: i32) i32
 
+// Recursively watch one workspace root. poll is non-blocking and returns 1
+// after the operating system reports any file-tree change.
+ref fn os_watch_start(path: str) i32
+ref fn os_watch_poll() i32
+ref fn os_watch_stop()
+
 // Show a native open-file dialog when the platform backend supports one.
 // Returns an empty string when the dialog is cancelled or unavailable.
 ref fn os_open_file_dialog(title: str) str

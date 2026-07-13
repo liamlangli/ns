@@ -67,6 +67,15 @@ let g_minimap_w: f64 = 0.0
 let g_minimap_h: f64 = 0.0
 let g_minimap_view_y: f64 = 0.0
 let g_minimap_view_h: f64 = 0.0
+let g_minimap_scroll: f64 = 0.0
+let g_minimap_last_code_scroll: f64 = -1.0
+let g_minimap_batch: i32 = 0
+let g_minimap_batch_ready = false
+let g_minimap_batch_doc_version: i32 = -1
+let g_minimap_batch_total: i32 = -1
+let g_minimap_batch_language: i32 = -1
+let g_minimap_batch_w: f64 = -1.0
+let g_minimap_batch_build_count: i32 = 0
 
 // Agent view state: the conversation transcript (role + text per message), the
 // codex-style composer (multi-line input, attachments, permission level and
@@ -2966,28 +2975,21 @@ fn code_minimap_w(editor_w: f64) f64 {
     return 82.0
 }
 
-fn minimap_line_step(total: i32, body_h: f64) f64 {
-    let step: f64 = 2.0
-    let available = body_h - 8.0
-    if total > 0 {
-        if (total as f64) * step > available {
-            step = available / (total as f64)
-        }
-    }
-    return step
+fn code_gutter_w() f64 { return 52.0 }
+fn code_text_inset() f64 { return 12.0 }
+
+fn code_line_number_x(r: ref ui_renderer, editor_x: f64, text: str) f64 {
+    return editor_x + code_gutter_w() - 10.0 - ui_text_width(r, text, small_px(), FONT_MONO())
 }
 
-fn minimap_sample_step(total: i32) i32 {
-    if total > 720 {
-        return total / 720 + 1
-    }
-    return 1
+fn minimap_line_step(total: i32, body_h: f64) f64 {
+    return 2.0
 }
 
 fn minimap_scroll_to_mouse(v: ref view, total: i32, body_h: f64, line_h: f64, max_scroll: f64) {
     let step = minimap_line_step(total, body_h)
     let visible_lines = body_h / line_h
-    let target_line = (v.mouse_y - g_minimap_y) / step
+    let target_line = (v.mouse_y - g_minimap_y + g_minimap_scroll) / step
     let target = (target_line - visible_lines * 0.5) * line_h
     g_code_scroll = clamp(target, 0.0, max_scroll)
     g_caret_follow = false
@@ -3014,24 +3016,36 @@ fn process_minimap_mouse(v: ref view, total: i32, body_h: f64, line_h: f64, max_
     }
 }
 
-// Compact syntax map: each token becomes a small fill-rect using the same
-// semantic color as the main code renderer. Dense documents are sampled to
-// bound per-frame tokenizer work while preserving their overall shape.
-fn draw_code_minimap(r: ref ui_renderer, body_h: f64, total: i32, line_h: f64) {
-    ui_fill_rect(r, g_minimap_x, g_minimap_y - 4.0, g_minimap_w, body_h, col_minimap_bg(), 0.0)
-    ui_push_clip(r, g_minimap_x, g_minimap_y, g_minimap_w, g_minimap_h)
+fn minimap_batch_changed(total: i32, body_h: f64) bool {
+    if g_minimap_batch == 0 || g_minimap_batch_ready == false {
+        return true
+    }
+    if g_minimap_batch_doc_version != g_doc_version || g_minimap_batch_total != total {
+        return true
+    }
+    if g_minimap_batch_language != g_setting_language {
+        return true
+    }
+    if g_minimap_batch_w != g_minimap_w {
+        return true
+    }
+    return false
+}
 
+// Emit the original minimap geometry either into a retained GPU batch or into
+// the immediate renderer as a fallback. Sampling, token positions and colors
+// intentionally match the original minimap exactly.
+fn emit_code_minimap_tokens(r: ref ui_renderer, batch: i32, origin_x: f64, origin_y: f64, body_h: f64, total: i32) {
     let step = minimap_line_step(total, body_h)
-    let sample = minimap_sample_step(total)
     let char_scale = clamp((g_minimap_w - 12.0) / 100.0, 0.45, 0.9)
     let block_h = clamp(step * 0.68, 0.45, 1.6)
-    let right = g_minimap_x + g_minimap_w - 5.0
+    let right = origin_x + g_minimap_w - 5.0
     let li: i32 = 0
     loop li < total {
-        let row_y = g_minimap_y + (li as f64) * step
+        let row_y = origin_y + (li as f64) * step
         let n = tokenize_line(li)
         for t in 0 to n {
-            let bx = g_minimap_x + 6.0 + (token_start(t) as f64) * char_scale
+            let bx = origin_x + 6.0 + (token_start(t) as f64) * char_scale
             if bx < right {
                 let bw = (token_len(t) as f64) * char_scale
                 if bw < 1.0 {
@@ -3041,13 +3055,71 @@ fn draw_code_minimap(r: ref ui_renderer, body_h: f64, total: i32, line_h: f64) {
                     bw = right - bx
                 }
                 if bw > 0.0 {
-                    ui_fill_rect(r, bx, row_y, bw, block_h, minimap_token_color(token_kind(t)), 0.0)
+                    let color = minimap_token_color(token_kind(t))
+                    if batch > 0 {
+                        ui_rect_batch_add(r, batch, bx, row_y, bw, block_h, color)
+                    } else {
+                        ui_fill_rect(r, bx, row_y, bw, block_h, color, 0.0)
+                    }
                 }
             }
         }
-        li = li + sample
+        li = li + 1
+    }
+}
+
+fn rebuild_code_minimap_batch(r: ref ui_renderer, body_h: f64, total: i32) bool {
+    if g_minimap_batch == 0 {
+        g_minimap_batch = ui_rect_batch_create(r)
+    }
+    if g_minimap_batch == 0 {
+        return false
+    }
+    ui_rect_batch_begin(r, g_minimap_batch)
+    emit_code_minimap_tokens(r, g_minimap_batch, 0.0, 0.0, body_h, total)
+    g_minimap_batch_ready = ui_rect_batch_end(r, g_minimap_batch)
+    g_minimap_batch_doc_version = g_doc_version
+    g_minimap_batch_total = total
+    g_minimap_batch_language = g_setting_language
+    g_minimap_batch_w = g_minimap_w
+    g_minimap_batch_build_count = g_minimap_batch_build_count + 1
+    g_minimap_last_code_scroll = -1.0
+    return g_minimap_batch_ready
+}
+
+fn sync_minimap_scroll(total: i32, body_h: f64, line_h: f64) {
+    let step = minimap_line_step(total, body_h)
+    let content_h = (total as f64) * step
+    let max_scroll = scroll_max(content_h, g_minimap_h)
+    g_minimap_scroll = clamp(g_minimap_scroll, 0.0, max_scroll)
+    if g_minimap_last_code_scroll != g_code_scroll {
+        let view_top = (g_code_scroll / line_h) * step
+        let view_h = (body_h / line_h) * step
+        if view_top < g_minimap_scroll {
+            g_minimap_scroll = view_top
+        } else if view_top + view_h > g_minimap_scroll + g_minimap_h {
+            g_minimap_scroll = view_top + view_h - g_minimap_h
+        }
+        g_minimap_scroll = clamp(g_minimap_scroll, 0.0, max_scroll)
+        g_minimap_last_code_scroll = g_code_scroll
+    }
+}
+
+fn draw_code_minimap(r: ref ui_renderer, body_h: f64, total: i32, line_h: f64) {
+    ui_fill_rect(r, g_minimap_x, g_minimap_y - 4.0, g_minimap_w, body_h, col_minimap_bg(), 0.0)
+    ui_push_clip(r, g_minimap_x, g_minimap_y, g_minimap_w, g_minimap_h)
+
+    if minimap_batch_changed(total, body_h) {
+        rebuild_code_minimap_batch(r, body_h, total)
+    }
+    sync_minimap_scroll(total, body_h, line_h)
+    if g_minimap_batch_ready {
+        ui_rect_batch_draw_at(r, g_minimap_batch, g_minimap_x, g_minimap_y - g_minimap_scroll)
+    } else {
+        emit_code_minimap_tokens(r, 0, g_minimap_x, g_minimap_y - g_minimap_scroll, body_h, total)
     }
 
+    let step = minimap_line_step(total, body_h)
     let content_h = (total as f64) * step
     let viewport_h = (body_h / line_h) * step
     if viewport_h < 8.0 {
@@ -3056,8 +3128,10 @@ fn draw_code_minimap(r: ref ui_renderer, body_h: f64, total: i32, line_h: f64) {
     if viewport_h > content_h {
         viewport_h = content_h
     }
-    let viewport_y = g_minimap_y + (g_code_scroll / line_h) * step
-    viewport_y = clamp(viewport_y, g_minimap_y, g_minimap_y + content_h - viewport_h)
+    if viewport_h > g_minimap_h {
+        viewport_h = g_minimap_h
+    }
+    let viewport_y = g_minimap_y + (g_code_scroll / line_h) * step - g_minimap_scroll
     g_minimap_view_y = viewport_y
     g_minimap_view_h = viewport_h
     ui_fill_rect(r, g_minimap_x + 2.0, viewport_y, g_minimap_w - 4.0, viewport_h, col_minimap_view(), 0.0)
@@ -3077,15 +3151,8 @@ fn file_tree_width(w: f64) f64 {
 fn tree_row_h() f64 { return 26.0 }
 
 fn workspace_visible_height() f64 {
-    let height: f64 = 0.0
-    if g_workspace_root_expanded {
-        for i in 0 to g_workspace_count {
-            if workspace_entry_visible(i) {
-                height = height + tree_row_h()
-            }
-        }
-    }
-    return height
+    workspace_rebuild_visible()
+    return (g_workspace_visible_count as f64) * tree_row_h()
 }
 
 fn activate_workspace_file(index: i32) {
@@ -3134,6 +3201,39 @@ fn draw_workspace_file_icon(r: ref ui_renderer, x: f64, y: f64) {
     ui_atlas_draw(r, atlas, x, y, 16.0, 16.0)
 }
 
+fn draw_explorer_action(r: ref ui_renderer, v: ref view, x: f64, y: f64, kind: i32) bool {
+    let hot = hit(v, x, y, 22.0, 22.0)
+    if hot {
+        ui_fill_round_rect(r, x, y, 22.0, 22.0, 4.0, col_surface_hi(), 0.0)
+    }
+    let color = col_muted()
+    if hot {
+        color = col_text()
+    }
+    if kind == 0 {
+        ui_stroke_round_rect(r, x + 5.0, y + 3.5, 12.0, 15.0, 2.0, 1.2, color, 0.0)
+        ui_fill_round_rect(r, x + 7.5, y + 8.0, 7.0, 1.2, 0.6, color, 0.0)
+        ui_fill_round_rect(r, x + 7.5, y + 11.5, 7.0, 1.2, 0.6, color, 0.0)
+    } else if kind == 1 {
+        draw_tree_folder_icon(r, x + 3.0, y + 2.0, color)
+    } else if kind == 2 {
+        ui_stroke_round_rect(r, x + 5.0, y + 5.0, 12.0, 12.0, 2.0, 1.5, color, 0.0)
+        let arrow_thickness = 1.8
+        let arrow_radius = arrow_thickness * 0.5
+        ui_stroke_line(r, x + 13.0, y + 9.25, x + 16.5, y + 12.75, arrow_thickness, color, 0.5)
+        ui_stroke_line(r, x + 16.5, y + 12.75, x + 20.0, y + 9.25, arrow_thickness, color, 0.5)
+        ui_fill_circle(r, x + 13.0, y + 9.25, arrow_radius, color, 0.5)
+        ui_fill_circle(r, x + 16.5, y + 12.75, arrow_radius, color, 0.5)
+        ui_fill_circle(r, x + 20.0, y + 9.25, arrow_radius, color, 0.5)
+    } else {
+        ui_stroke_line(r, x + 5.0, y + 7.0, x + 11.0, y + 12.0, 1.5, color, 0.5)
+        ui_stroke_line(r, x + 17.0, y + 7.0, x + 11.0, y + 12.0, 1.5, color, 0.5)
+        ui_stroke_line(r, x + 5.0, y + 12.0, x + 11.0, y + 17.0, 1.5, color, 0.5)
+        ui_stroke_line(r, x + 17.0, y + 12.0, x + 11.0, y + 17.0, 1.5, color, 0.5)
+    }
+    return hot && v.mouse_pressed
+}
+
 fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     let header_h = 42.0
     let root_h = 30.0
@@ -3141,7 +3241,28 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     let list_h = h - header_h - root_h
 
     ui_fill_rect(r, x, y, w, h, col_editor_panel(), 0.0)
-    draw_text_clipped(r, x + 14.0, text_center_y(r, y, header_h, small_px()), w - 28.0, 16.0, "EXPLORER", small_px(), col_muted())
+    draw_text_clipped(r, x + 14.0, text_center_y(r, y, header_h, small_px()), w - 122.0, 16.0, "EXPLORER", small_px(), col_muted())
+    let action_y = y + 10.0
+    let action_x = x + w - 102.0
+    let action = -1
+    for kind in 0 to 4 {
+        if draw_explorer_action(r, v, action_x + (kind as f64) * 24.0, action_y, kind) {
+            action = kind
+        }
+    }
+    if action == 0 {
+        workspace_create_file()
+    } else if action == 1 {
+        workspace_create_folder()
+    } else if action == 2 {
+        workspace_refresh_from_disk()
+    } else if action == 3 {
+        workspace_collapse_all()
+        g_tree_scroll = 0.0
+    }
+    if action >= 0 {
+        v.mouse_pressed = false
+    }
 
     let root_hover = hit(v, x, y + header_h, w, root_h)
     if root_hover {
@@ -3149,10 +3270,11 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     }
     draw_tree_arrow(r, x + 12.0, y + header_h + 10.0, g_workspace_root_expanded, col_text())
     draw_tree_folder_icon(r, x + 28.0, y + header_h + 7.0, col_accent())
-    draw_text_clipped(r, x + 50.0, text_center_y(r, y + header_h, root_h, small_px()), w - 60.0, 16.0, "PROJECT ROOT", small_px(), col_text())
+    draw_text_clipped(r, x + 50.0, text_center_y(r, y + header_h, root_h, small_px()), w - 60.0, 16.0, workspace_root_name(g_workspace_root), small_px(), col_text())
     if v.mouse_pressed {
         if root_hover {
             g_workspace_root_expanded = g_workspace_root_expanded == false
+            workspace_mark_visibility_dirty()
         }
     }
 
@@ -3164,11 +3286,17 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     g_tree_scroll = clamp(g_tree_scroll, 0.0, max_scroll)
 
     ui_push_clip(r, x, list_y, w - 1.0, list_h)
-    let row_y = list_y - g_tree_scroll
-    for i in 0 to g_workspace_count {
-        if workspace_entry_visible(i) {
-            if row_y + tree_row_h() >= list_y {
-                if row_y <= list_y + list_h {
+    let first_row = (g_tree_scroll / tree_row_h()) as i32
+    if first_row < 0 {
+        first_row = 0
+    }
+    let last_row = first_row + (list_h / tree_row_h()) as i32 + 2
+    if last_row > g_workspace_visible_count {
+        last_row = g_workspace_visible_count
+    }
+    let row_y = list_y + (first_row as f64) * tree_row_h() - g_tree_scroll
+    for visible_pos in first_row to last_row {
+        let i = g_workspace_visible[visible_pos] as i32
                     let hovered = hit(v, x, row_y, w - 1.0, tree_row_h())
                     if i == g_workspace_active {
                         ui_fill_rect(r, x, row_y, w - 1.0, tree_row_h(), col_editor_panel_hi(), 0.0)
@@ -3207,10 +3335,7 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
                             }
                         }
                     }
-                }
-            }
-            row_y = row_y + tree_row_h()
-        }
+        row_y = row_y + tree_row_h()
     }
     ui_pop_clip(r)
 }
@@ -3220,7 +3345,7 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     let line_h = code_line_h()
     let body_y = y + tab_h
     let body_h = h - tab_h
-    let gutter_w = 72.0
+    let gutter_w = code_gutter_w()
     let minimap_w = code_minimap_w(w)
     let code_w = w - minimap_w
 
@@ -3228,8 +3353,8 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     if char_w <= 0.0 {
         char_w = code_font_px() * 0.6
     }
-    let text_x = x + gutter_w + 16.0
-    let text_w = code_w - gutter_w - 24.0
+    let text_x = x + gutter_w + code_text_inset()
+    let text_w = code_w - gutter_w - code_text_inset() - 8.0
     let visible_cols = (text_w / char_w) as i32 + 1
 
     let total = line_count()
@@ -3240,10 +3365,15 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     g_minimap_w = minimap_w
     g_minimap_h = body_h - 8.0
 
+    let minimap_content_h = (total as f64) * minimap_line_step(total, body_h)
+    let minimap_max_scroll = scroll_max(minimap_content_h, g_minimap_h)
+    if hit(v, g_minimap_x, g_minimap_y, g_minimap_w, g_minimap_h) {
+        g_minimap_scroll = clamp(g_minimap_scroll - v.scroll_y * code_wheel_scale(), 0.0, minimap_max_scroll)
+    }
     process_minimap_mouse(v, total, body_h, line_h, max_scroll)
     process_code_mouse(v, x, body_y, code_w, body_h, text_x, line_h, char_w)
     process_code_keys(v)
-    if hit(v, x, body_y, w, body_h) {
+    if hit(v, x, body_y, code_w, body_h) {
         g_code_scroll = clamp(g_code_scroll - v.scroll_y * code_wheel_scale(), 0.0, max_scroll)
     }
     if g_caret_follow {
@@ -3354,7 +3484,9 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
                 if i == cursor_line {
                     num_color = col_text()
                 }
-                draw_text_clipped(r, x + 20.0, text_center_y(r, row_top, line_h, small_px()), 34.0, 18.0, itos(i + 1), small_px(), num_color)
+                let line_number = itos(i + 1)
+                let line_number_x = code_line_number_x(r, x, line_number)
+                draw_text_clipped(r, line_number_x, text_center_y(r, row_top, line_h, small_px()), gutter_w - (line_number_x - x) - 10.0, 18.0, line_number, small_px(), num_color)
                 ui_push_clip(r, text_x, body_y, text_w, body_h)
                 draw_code_line(r, i, text_x, text_center_y(r, row_top, line_h, code_font_px()), char_w, g_coloff, visible_cols)
                 ui_pop_clip(r)
@@ -3413,6 +3545,7 @@ fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
 
 fn render_frame(r: ref ui_renderer, v: ref view) {
     update_fps()
+    workspace_poll_changes()
     ui_resize(r)
     // ref-fn i32 returns can carry garbage upper bits (same class of quirk as
     // the masked byte reads in editor.ns), which poisons f64 arithmetic on the

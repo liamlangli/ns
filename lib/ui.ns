@@ -287,6 +287,17 @@ ref fn ui_pop_clip(r: ref ui_renderer)
 // True when the rect is fully outside the active clip (skip drawing it).
 ref fn ui_rect_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) bool
 
+// Retained rectangle batches own a dedicated GPU vertex buffer. Rebuild one
+// only when its geometry changes, then submit the whole batch as one draw
+// command without consuming the renderer's per-frame vertex buffer.
+ref fn ui_rect_batch_create(r: ref ui_renderer) i32
+ref fn ui_rect_batch_destroy(r: ref ui_renderer, batch_id: i32)
+ref fn ui_rect_batch_begin(r: ref ui_renderer, batch_id: i32)
+ref fn ui_rect_batch_add(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, w: f64, h: f64, rgba: u32)
+ref fn ui_rect_batch_end(r: ref ui_renderer, batch_id: i32) bool
+ref fn ui_rect_batch_draw(r: ref ui_renderer, batch_id: i32)
+ref fn ui_rect_batch_draw_at(r: ref ui_renderer, batch_id: i32, dx: f64, dy: f64)
+
 // Set the host cursor (an empty string clears it).
 ref fn ui_set_cursor(r: ref ui_renderer, cursor: str)
 

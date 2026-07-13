@@ -13,6 +13,7 @@
 #define UI_MAX_CLIPS 32
 #define UI_MAX_GPU_CLIPS 4096
 #define UI_MAX_TEXTURES 32
+#define UI_MAX_RECT_BATCHES 16
 #define UI_FONT_MAIN 0
 #define UI_FONT_MONO 1
 #define UI_WHITE_TEXTURE 1
@@ -78,8 +79,22 @@ typedef struct ui_command {
     i32 vertex_count;
     i32 texture_id;
     i32 kind;
+    i32 rect_batch_id;
+    f64 offset_x, offset_y;
     i32 clip_x, clip_y, clip_w, clip_h;
 } ui_command;
+
+typedef struct ui_rect_batch {
+    ui_vertex *vertices;
+    i32 vertex_count;
+    i32 vertex_capacity;
+    i32 gpu_vertex_capacity;
+    gpu_buffer vertex_buffer;
+    gpu_buffer offset_buffer;
+    gpu_binding binding;
+    gpu_mesh mesh;
+    ns_bool used;
+} ui_rect_batch;
 
 typedef struct ui_glyph {
     i32 code;
@@ -128,8 +143,10 @@ typedef struct ui_renderer {
     gpu_buffer clip_buffer;
     gpu_buffer vertex_buffer;
     gpu_shader shader_image;
+    gpu_shader shader_batch;
     gpu_shader shader_msdf;
     gpu_pipeline pipeline_image;
+    gpu_pipeline pipeline_batch;
     gpu_pipeline pipeline_msdf;
     gpu_binding binding_white_image;
     gpu_binding binding_font_msdf;
@@ -137,6 +154,7 @@ typedef struct ui_renderer {
     gpu_binding texture_bindings[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
     i32 texture_heights[UI_MAX_TEXTURES];
+    ui_rect_batch rect_batches[UI_MAX_RECT_BATCHES];
     gpu_mesh mesh;
     gpu_render_pass screen_pass;
     ns_bool gpu_ready;
@@ -155,6 +173,10 @@ static const char *ui_shader_src =
 "vertex VOut ui_vs(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]]) {\n"
 "  VOut o; float2 ndc = float2((in.pos.x / screen.x) * 2.0 - 1.0, 1.0 - (in.pos.y / screen.y) * 2.0);\n"
 "  o.pos = float4(ndc, 0.0, 1.0); o.pixel = in.pos; o.uv = in.uv; o.col = float4(in.col) / 255.0; o.params = in.params; return o;\n"
+"}\n"
+"vertex VOut ui_vs_batch(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]], constant float2 &offset [[buffer(2)]]) {\n"
+"  VOut o; float2 pixel = in.pos + offset; float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
+"  o.pos = float4(ndc, 0.0, 1.0); o.pixel = pixel; o.uv = in.uv; o.col = float4(in.col) / 255.0; o.params = in.params; return o;\n"
 "}\n"
 "static inline half ui_median3(half r, half g, half b) { return max(min(r, g), min(max(r, g), b)); }\n"
 "static inline bool ui_clip_discard(VOut in, constant float4 *clip_rects) {\n"
@@ -379,17 +401,20 @@ static void ui_emit_command(ui_renderer *r, i32 base, i32 count, i32 kind) {
     if (r->command_count >= UI_MAX_COMMANDS) return;
     ui_clip c = ui_current_clip(r);
     if (c.w <= 0 || c.h <= 0) return;
-    ui_command *cmd = &r->commands[r->command_count - 1];
-    if (r->command_count > 0 &&
-        cmd->vertex_offset + cmd->vertex_count == base &&
-        cmd->texture_id == r->current_texture_id &&
-        cmd->kind == kind &&
-        cmd->clip_x == (i32)floor(c.x) &&
-        cmd->clip_y == (i32)floor(c.y) &&
-        cmd->clip_w == (i32)ceil(c.w) &&
-        cmd->clip_h == (i32)ceil(c.h)) {
-        cmd->vertex_count += count;
-        return;
+    ui_command *cmd = NULL;
+    if (r->command_count > 0) {
+        cmd = &r->commands[r->command_count - 1];
+        if (cmd->rect_batch_id == 0 &&
+            cmd->vertex_offset + cmd->vertex_count == base &&
+            cmd->texture_id == r->current_texture_id &&
+            cmd->kind == kind &&
+            cmd->clip_x == (i32)floor(c.x) &&
+            cmd->clip_y == (i32)floor(c.y) &&
+            cmd->clip_w == (i32)ceil(c.w) &&
+            cmd->clip_h == (i32)ceil(c.h)) {
+            cmd->vertex_count += count;
+            return;
+        }
     }
 
     cmd = &r->commands[r->command_count++];
@@ -398,6 +423,7 @@ static void ui_emit_command(ui_renderer *r, i32 base, i32 count, i32 kind) {
         .vertex_count = count,
         .texture_id = r->current_texture_id,
         .kind = kind,
+        .rect_batch_id = 0,
         .clip_x = (i32)floor(c.x),
         .clip_y = (i32)floor(c.y),
         .clip_w = (i32)ceil(c.w),
@@ -524,10 +550,31 @@ void ui_fill_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, u32 rgba, f64 fe
 }
 
 void ui_fill_triangle(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 x2, f64 y2, u32 rgba, f64 feather) {
-    ns_unused(feather);
     if (!r) return;
     r->current_texture_id = UI_WHITE_TEXTURE;
-    ui_push_tri(r, x0, y0, x1, y1, x2, y2, 0, 0, rgba);
+    f64 f = ui_resolve_feather(feather);
+    if (f <= 0.0) {
+        ui_push_tri(r, x0, y0, x1, y1, x2, y2, 0, 0, rgba);
+        return;
+    }
+    f64 cx = (x0 + x1 + x2) / 3.0;
+    f64 cy = (y0 + y1 + y2) / 3.0;
+    f64 r0 = hypot(x0 - cx, y0 - cy);
+    f64 r1 = hypot(x1 - cx, y1 - cy);
+    f64 r2 = hypot(x2 - cx, y2 - cy);
+    f64 radius = fmax(0.000001, fmin(r0, fmin(r1, r2)));
+    f64 inset = ui_clamp_f64(f / radius, 0.0, 0.9);
+    f64 ix0 = x0 + (cx - x0) * inset, iy0 = y0 + (cy - y0) * inset;
+    f64 ix1 = x1 + (cx - x1) * inset, iy1 = y1 + (cy - y1) * inset;
+    f64 ix2 = x2 + (cx - x2) * inset, iy2 = y2 + (cy - y2) * inset;
+    u32 transparent = ui_color_alpha_mul(rgba, 0.0);
+    ui_push_tri_colors(r, ix0, iy0, rgba, ix1, iy1, rgba, ix2, iy2, rgba);
+    ui_push_tri_colors(r, x0, y0, transparent, x1, y1, transparent, ix1, iy1, rgba);
+    ui_push_tri_colors(r, x0, y0, transparent, ix1, iy1, rgba, ix0, iy0, rgba);
+    ui_push_tri_colors(r, x1, y1, transparent, x2, y2, transparent, ix2, iy2, rgba);
+    ui_push_tri_colors(r, x1, y1, transparent, ix2, iy2, rgba, ix1, iy1, rgba);
+    ui_push_tri_colors(r, x2, y2, transparent, x0, y0, transparent, ix0, iy0, rgba);
+    ui_push_tri_colors(r, x2, y2, transparent, ix0, iy0, rgba, ix2, iy2, rgba);
 }
 
 void ui_stroke_line(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 thickness, u32 rgba, f64 feather) {
@@ -678,6 +725,9 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     shader_desc.fragment.source = ns_str_cstr(ui_shader_src);
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_image");
     r->shader_image = gpu_create_shader(&shader_desc);
+    shader_desc.vertex.entry = ns_str_cstr("ui_vs_batch");
+    r->shader_batch = gpu_create_shader(&shader_desc);
+    shader_desc.vertex.entry = ns_str_cstr("ui_vs");
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_msdf");
     r->shader_msdf = gpu_create_shader(&shader_desc);
 
@@ -706,6 +756,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     pipe.sample_count = 1;
     pipe.shader = r->shader_image;
     r->pipeline_image = gpu_create_pipeline(&pipe);
+    pipe.shader = r->shader_batch;
+    r->pipeline_batch = gpu_create_pipeline(&pipe);
     pipe.shader = r->shader_msdf;
     r->pipeline_msdf = gpu_create_pipeline(&pipe);
 
@@ -731,7 +783,7 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     });
     r->screen_pass = (gpu_render_pass){.id = 0};
     r->gpu_ready = r->screen_buffer.id && r->clip_buffer.id && r->vertex_buffer.id && r->white_texture.id &&
-                   r->font_texture.id && r->pipeline_image.id && r->pipeline_msdf.id &&
+                   r->font_texture.id && r->pipeline_image.id && r->pipeline_batch.id && r->pipeline_msdf.id &&
                    r->binding_white_image.id && r->binding_font_msdf.id && r->mesh.id;
 }
 
@@ -778,6 +830,14 @@ ui_renderer *ui_renderer_create(view *v) {
 
 void ui_renderer_destroy(ui_renderer *r) {
     if (!r) return;
+    for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
+        ui_rect_batch *batch = &r->rect_batches[i];
+        if (batch->binding.id) gpu_destroy_binding(batch->binding);
+        if (batch->mesh.id) gpu_destroy_mesh(batch->mesh);
+        if (batch->vertex_buffer.id) gpu_destroy_buffer(batch->vertex_buffer);
+        if (batch->offset_buffer.id) gpu_destroy_buffer(batch->offset_buffer);
+        free(batch->vertices);
+    }
     for (i32 i = 0; i < UI_MAX_TEXTURES; i++) {
         if (r->texture_bindings[i].id) gpu_destroy_binding(r->texture_bindings[i]);
         if (r->textures[i].id) gpu_destroy_texture(r->textures[i]);
@@ -785,6 +845,153 @@ void ui_renderer_destroy(ui_renderer *r) {
     for (i32 i = 0; i < 2; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
     free(r);
+}
+
+static ui_rect_batch *ui_rect_batch_get(ui_renderer *r, i32 batch_id) {
+    if (!r || batch_id <= 0 || batch_id > UI_MAX_RECT_BATCHES) return NULL;
+    ui_rect_batch *batch = &r->rect_batches[batch_id - 1];
+    return batch->used ? batch : NULL;
+}
+
+i32 ui_rect_batch_create(ui_renderer *r) {
+    if (!r) return 0;
+    for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
+        ui_rect_batch *batch = &r->rect_batches[i];
+        if (batch->used) continue;
+        memset(batch, 0, sizeof(*batch));
+        batch->used = true;
+        return i + 1;
+    }
+    return 0;
+}
+
+void ui_rect_batch_destroy(ui_renderer *r, i32 batch_id) {
+    ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
+    if (!batch) return;
+    if (batch->binding.id) gpu_destroy_binding(batch->binding);
+    if (batch->mesh.id) gpu_destroy_mesh(batch->mesh);
+    if (batch->vertex_buffer.id) gpu_destroy_buffer(batch->vertex_buffer);
+    if (batch->offset_buffer.id) gpu_destroy_buffer(batch->offset_buffer);
+    free(batch->vertices);
+    memset(batch, 0, sizeof(*batch));
+}
+
+void ui_rect_batch_begin(ui_renderer *r, i32 batch_id) {
+    ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
+    if (!batch) return;
+    batch->vertex_count = 0;
+}
+
+static ns_bool ui_rect_batch_reserve(ui_rect_batch *batch, i32 additional) {
+    if (!batch || additional <= 0) return false;
+    i32 required = batch->vertex_count + additional;
+    if (required <= batch->vertex_capacity) return true;
+    i32 capacity = batch->vertex_capacity > 0 ? batch->vertex_capacity : 4096;
+    while (capacity < required) {
+        if (capacity > 1073741823) return false;
+        capacity *= 2;
+    }
+    ui_vertex *vertices = (ui_vertex*)realloc(batch->vertices, (size_t)capacity * sizeof(ui_vertex));
+    if (!vertices) return false;
+    batch->vertices = vertices;
+    batch->vertex_capacity = capacity;
+    return true;
+}
+
+void ui_rect_batch_add(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h, u32 rgba) {
+    ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
+    if (!batch || w <= 0.0 || h <= 0.0 || !ui_rect_batch_reserve(batch, 6)) return;
+    f32 x0 = (f32)x, y0 = (f32)y, x1 = (f32)(x + w), y1 = (f32)(y + h);
+    ui_vertex quad[6] = {
+        {.x = x0, .y = y0, .color = rgba},
+        {.x = x1, .y = y0, .color = rgba},
+        {.x = x1, .y = y1, .color = rgba},
+        {.x = x0, .y = y0, .color = rgba},
+        {.x = x1, .y = y1, .color = rgba},
+        {.x = x0, .y = y1, .color = rgba},
+    };
+    memcpy(batch->vertices + batch->vertex_count, quad, sizeof(quad));
+    batch->vertex_count += 6;
+}
+
+ns_bool ui_rect_batch_end(ui_renderer *r, i32 batch_id) {
+    ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
+    if (!batch) return false;
+    if (batch->vertex_count <= 0) return true;
+    if (!batch->offset_buffer.id) {
+        f32 offset[2] = {0.0f, 0.0f};
+        batch->offset_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
+            .size = sizeof(offset),
+            .data = (ns_data){offset, sizeof(offset)},
+            .type = BUFFER_UNIFORM,
+            .usage = USAGE_DEFAULT,
+        });
+    }
+    if (!batch->binding.id && batch->offset_buffer.id) {
+        batch->binding = gpu_create_binding(&(gpu_binding_desc){
+            .pipeline = r->pipeline_batch,
+            .buffers = {
+                {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
+                {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
+                {.buffer = batch->offset_buffer, .name = ns_str_cstr("offset")},
+            },
+            .textures = {{.texture = r->white_texture, .name = ns_str_cstr("tex")}},
+        });
+    }
+    if (!batch->offset_buffer.id || !batch->binding.id) return false;
+    if (!batch->vertex_buffer.id || !batch->mesh.id || batch->vertex_count > batch->gpu_vertex_capacity) {
+        if (batch->mesh.id) gpu_destroy_mesh(batch->mesh);
+        if (batch->vertex_buffer.id) gpu_destroy_buffer(batch->vertex_buffer);
+        batch->mesh = (gpu_mesh){0};
+        batch->vertex_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
+            .size = batch->vertex_capacity * UI_VERTEX_STRIDE,
+            .data = (ns_data){batch->vertices, (size_t)batch->vertex_count * UI_VERTEX_STRIDE},
+            .type = BUFFER_VERTEX,
+            .usage = USAGE_DEFAULT,
+        });
+        if (!batch->vertex_buffer.id) {
+            batch->gpu_vertex_capacity = 0;
+            return false;
+        }
+        gpu_update_buffer_desc(batch->vertex_buffer, (ns_data){
+            batch->vertices, (size_t)batch->vertex_count * UI_VERTEX_STRIDE
+        });
+        batch->gpu_vertex_capacity = batch->vertex_capacity;
+        batch->mesh = gpu_create_mesh(&(gpu_mesh_desc){
+            .buffers = {batch->vertex_buffer},
+            .pipeline = r->pipeline_batch,
+        });
+    } else {
+        gpu_update_buffer_desc(batch->vertex_buffer, (ns_data){
+            batch->vertices, (size_t)batch->vertex_count * UI_VERTEX_STRIDE
+        });
+    }
+    return batch->mesh.id != 0;
+}
+
+void ui_rect_batch_draw_at(ui_renderer *r, i32 batch_id, f64 dx, f64 dy) {
+    ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
+    if (!batch || !batch->mesh.id || batch->vertex_count <= 0 || r->command_count >= UI_MAX_COMMANDS) return;
+    ui_clip c = ui_current_clip(r);
+    if (c.w <= 0.0 || c.h <= 0.0) return;
+    ui_command *cmd = &r->commands[r->command_count++];
+    *cmd = (ui_command){
+        .vertex_offset = 0,
+        .vertex_count = batch->vertex_count,
+        .texture_id = UI_WHITE_TEXTURE,
+        .kind = UI_KIND_IMAGE,
+        .rect_batch_id = batch_id,
+        .offset_x = dx,
+        .offset_y = dy,
+        .clip_x = (i32)floor(c.x),
+        .clip_y = (i32)floor(c.y),
+        .clip_w = (i32)ceil(c.w),
+        .clip_h = (i32)ceil(c.h),
+    };
+}
+
+void ui_rect_batch_draw(ui_renderer *r, i32 batch_id) {
+    ui_rect_batch_draw_at(r, batch_id, 0.0, 0.0);
 }
 
 static i32 ui_register_rgba_texture(ui_renderer *r, const u8 *data, i32 width, i32 height) {
@@ -928,7 +1135,15 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         if (cmd->clip_w <= 0 || cmd->clip_h <= 0) continue;
         gpu_set_scissor((i32)floor(cmd->clip_x * s), (i32)floor(cmd->clip_y * s),
                         (i32)ceil(cmd->clip_w * s), (i32)ceil(cmd->clip_h * s));
-        if (cmd->kind == UI_KIND_MSDF) {
+        ui_rect_batch *batch = NULL;
+        if (cmd->rect_batch_id > 0) {
+            batch = ui_rect_batch_get(r, cmd->rect_batch_id);
+            if (!batch || !batch->mesh.id || !batch->binding.id || !batch->offset_buffer.id) continue;
+            f32 offset[2] = {(f32)cmd->offset_x, (f32)cmd->offset_y};
+            gpu_update_buffer_desc(batch->offset_buffer, (ns_data){offset, sizeof(offset)});
+            gpu_set_pipeline(r->pipeline_batch);
+            gpu_set_binding(batch->binding);
+        } else if (cmd->kind == UI_KIND_MSDF) {
             gpu_set_pipeline(r->pipeline_msdf);
             gpu_set_binding(r->binding_font_msdf);
         } else if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3 &&
@@ -939,7 +1154,11 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             gpu_set_pipeline(r->pipeline_image);
             gpu_set_binding(r->binding_white_image);
         }
-        gpu_set_mesh(r->mesh);
+        if (batch) {
+            gpu_set_mesh(batch->mesh);
+        } else {
+            gpu_set_mesh(r->mesh);
+        }
         gpu_draw(cmd->vertex_offset, cmd->vertex_count, 1);
     }
     gpu_end_pass();

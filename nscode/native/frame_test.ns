@@ -65,10 +65,10 @@ fn tap(r: ref ui_renderer, v: ref view, k: i32) {
 }
 
 // Geometry mirrored from render.ns: shared 30px main menu, tab strip 36px,
-// gutter 72px + 16px text inset, compact code line height, first row top 18px
+// Compact gutter + text inset, compact code line height, first row top 18px
 // below the tab strip.
 fn body_y() f64 { return main_menu_h() + 36.0 }
-fn text_x() f64 { return file_tree_width(1024.0) + 88.0 }
+fn text_x() f64 { return file_tree_width(1024.0) + code_gutter_w() + code_text_inset() }
 fn line_h() f64 { return code_line_h() }
 
 fn row_mid_y(li: i32) f64 {
@@ -106,6 +106,7 @@ fn reset_clicks() {
 }
 
 fn main() i32 {
+    g_workspace_writes_enabled = false
     workspace_init()
     // Keep UI interaction tests in memory; persistence has a dedicated model
     // round trip below and must not write fixture messages into this checkout.
@@ -120,6 +121,10 @@ fn main() i32 {
     let char_w = ui_mono_char_width(r, code_font_px(), 1)
     check("renderer created", char_w > 0.0)
     check("number bar shares code background", col_editor_gutter() == col_editor_bg())
+    check("number bar uses compact width", code_gutter_w() == 52.0)
+    let one_digit_right = code_line_number_x(r, 0.0, "9") + ui_text_width(r, "9", small_px(), FONT_MONO())
+    let three_digit_right = code_line_number_x(r, 0.0, "999") + ui_text_width(r, "999", small_px(), FONT_MONO())
+    check("line numbers share a right edge", one_digit_right == three_digit_right)
 
     // Native backends expose UTF-8 clipboard text through the view FFI. Keep
     // the user's clipboard intact after the round trip. Linux has no native
@@ -202,6 +207,11 @@ fn main() i32 {
     check("code minimap is measured", g_minimap_w > 0.0 && g_minimap_h > 0.0)
     check("code minimap sits at right edge", g_minimap_x + g_minimap_w == 1024.0)
     check("minimap viewport frame is visible", g_minimap_view_h > 0.0)
+    check("minimap line height stays fixed for long files", minimap_line_step(100000, g_minimap_h) == 2.0)
+    check("code minimap builds a retained batch", g_minimap_batch_ready && g_minimap_batch_build_count > 0)
+    let minimap_builds = g_minimap_batch_build_count
+    frame(r, v)
+    check("unchanged minimap reuses retained batch", g_minimap_batch_build_count == minimap_builds)
 
     // Click on line 1 ("    let count = 42") column 8: caret relocates there.
     click(r, v, col_x(char_w, 8), row_mid_y(1))
@@ -250,6 +260,7 @@ fn main() i32 {
     tap(r, v, 82)
     view_on_key_action(v, 340, 1)
     check_s("typing replaces selection", line_text(2), "    PRint(count)")
+    check("document change rebuilds minimap batch", g_minimap_batch_build_count > minimap_builds)
 
     // Plain letters, backspace and enter.
     tap(r, v, 259)
@@ -309,6 +320,15 @@ fn main() i32 {
     click(r, v, 100.0, tree_entry_mid_y(editor_index))
     check("file row switches active buffer", g_workspace_active == editor_index)
     check("switched file has source", g_doc.len > 0)
+    let code_scroll_before_minimap_wheel = g_code_scroll
+    let batch_builds_before_minimap_wheel = g_minimap_batch_build_count
+    v.mouse_x = g_minimap_x + g_minimap_w * 0.5
+    v.mouse_y = g_minimap_y + g_minimap_h * 0.5
+    v.scroll_y = -20.0
+    frame(r, v)
+    check("minimap wheel scrolls minimap content", g_minimap_scroll > 0.0)
+    check("minimap wheel leaves editor scroll unchanged", g_code_scroll == code_scroll_before_minimap_wheel)
+    check("minimap scroll reuses retained batch", g_minimap_batch_build_count == batch_builds_before_minimap_wheel)
     click(r, v, g_minimap_x + g_minimap_w * 0.5, g_minimap_y + g_minimap_h - 2.0)
     check("minimap click scrolls long file", g_code_scroll > 0.0)
     check("minimap viewport follows scroll", g_minimap_view_y > g_minimap_y)

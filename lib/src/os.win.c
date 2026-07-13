@@ -10,6 +10,29 @@
 
 #endif // NS_WIN
 
+static HANDLE os_watch_handle = INVALID_HANDLE_VALUE;
+
+void os_watch_stop(void) {
+    if (os_watch_handle != INVALID_HANDLE_VALUE) FindCloseChangeNotification(os_watch_handle);
+    os_watch_handle = INVALID_HANDLE_VALUE;
+}
+
+i32 os_watch_start(const char *path) {
+    os_watch_stop();
+    if (!path || !path[0]) return 0;
+    os_watch_handle = FindFirstChangeNotificationA(path, TRUE,
+        FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME |
+        FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_ATTRIBUTES);
+    return os_watch_handle != INVALID_HANDLE_VALUE;
+}
+
+i32 os_watch_poll(void) {
+    if (os_watch_handle == INVALID_HANDLE_VALUE) return 0;
+    if (WaitForSingleObject(os_watch_handle, 0) != WAIT_OBJECT_0) return 0;
+    FindNextChangeNotification(os_watch_handle);
+    return 1;
+}
+
 const char *os_open_file_dialog(const char *title) {
     static char path[MAX_PATH];
     path[0] = '\0';

@@ -4,7 +4,7 @@ ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_DYLIB_CREATE = -dynamiclib
 	NS_DYLIB_COMMON = -fPIC -g -Wl,-install_name,@rpath/$(@F) -Wl,-rpath,@loader_path -undefined dynamic_lookup
 	NS_DYLIB_DEPS = $(NS_LDFLAGS)
-	NS_OS_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_COCOA_LDFLAGS)
+	NS_OS_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_COCOA_LDFLAGS) -framework CoreServices
 	NS_VIEW_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_COCOA_LDFLAGS) $(NS_METAL_LDFLAGS)
 	NS_GPU_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_METAL_LDFLAGS)
 else ifeq ($(NS_OS), $(NS_LINUX))

@@ -1,4 +1,5 @@
 use std
+use os
 use editor
 use workspace
 
@@ -14,20 +15,67 @@ fn check(name: str, ok: bool) {
 }
 
 fn main() i32 {
+    check("workspace root label uses folder name", workspace_root_name("nscode/native") == "native")
+    check("workspace root label ignores trailing slash", workspace_root_name("/tmp/project/") == "project")
     load_str("edited main")
     workspace_init()
     let main_index = workspace_find("main.ns")
     let editor_index = workspace_find("editor.ns")
     check("workspace scans main.ns", main_index >= 0)
     check("workspace scans editor.ns", editor_index >= 0)
+    workspace_rebuild_visible()
+    check("expanded workspace caches visible entries", g_workspace_visible_count == g_workspace_count)
+    g_workspace_root_expanded = false
+    workspace_mark_visibility_dirty()
+    workspace_rebuild_visible()
+    check("collapsed workspace clears visible cache", g_workspace_visible_count == 0)
+    g_workspace_root_expanded = true
+    workspace_mark_visibility_dirty()
     check("main starts active", g_workspace_active == main_index)
     check("editor opens", workspace_open(editor_index))
     check("editor has source", g_doc.len > 0)
     check("main reopens", workspace_open(main_index))
     check("main buffer survives", g_doc == "edited main")
+    workspace_refresh_from_disk()
+    main_index = workspace_find("main.ns")
+    editor_index = workspace_find("editor.ns")
+    check("refresh remaps active tab by path", g_workspace_active == main_index)
+    check("refresh preserves unsaved buffer", g_doc == "edited main")
     check("opening files creates tabs", g_workspace_tab_count == 2)
     check("closing active tab succeeds", workspace_close_tab(main_index))
     check("closing selects neighbor tab", g_workspace_active == editor_index)
     check("closed tab leaves one tab", g_workspace_tab_count == 1)
+
+    let watch_root = "/tmp/ns_workspace_watch_test"
+    os_make_dirs(watch_root)
+    check("workspace watcher starts", os_watch_start(watch_root) != 0)
+    check("workspace watcher is idle without changes", os_watch_poll() == 0)
+    let watch_file = open(watch_root + "/change.ns", "wb")
+    write(watch_file, "changed")
+    close(watch_file)
+    let changed = false
+    let watch_deadline = os_time() + 1.0
+    loop changed == false && os_time() < watch_deadline {
+        changed = os_watch_poll() != 0
+    }
+    check("workspace watcher reports file changes", changed)
+    os_watch_stop()
+
+    check("temporary workspace opens", workspace_open_root(watch_root))
+    let before_create_file = g_workspace_count
+    check("explorer action creates file", workspace_create_file())
+    check("created file appears after refresh", g_workspace_count == before_create_file + 1)
+    let before_create_folder = g_workspace_count
+    check("explorer action creates folder", workspace_create_folder())
+    check("created folder appears after refresh", g_workspace_count == before_create_folder + 1)
+    workspace_collapse_all()
+    let expanded_folder = false
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 && workspace_entry_expanded(i) {
+            expanded_folder = true
+        }
+    }
+    check("explorer action collapses every folder", expanded_folder == false)
+    os_watch_stop()
     return g_fail
 }
