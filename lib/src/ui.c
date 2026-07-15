@@ -223,6 +223,19 @@ typedef struct ui_widgets {
     u32 active_id;
 } ui_widgets;
 
+ui_input *ui_input_empty(void) {
+    static ui_input input;
+    memset(&input, 0, sizeof(input));
+    input.zoom_factor = 1.0;
+    return &input;
+}
+
+ui_theme *ui_theme_empty(void) {
+    static ui_theme theme;
+    memset(&theme, 0, sizeof(theme));
+    return &theme;
+}
+
 void ui_renderer_destroy(ui_renderer *r);
 void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);
 void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather);
@@ -897,6 +910,74 @@ ui_renderer *ui_renderer_create(view *v) {
     return r;
 }
 
+ns_bool ui_load_font(ui_renderer *r, const char *json_path, const char *image_path) {
+    if (!r || !json_path || !image_path) return false;
+    size_t json_len = 0;
+    char *json = ui_read_file(json_path, &json_len);
+    ns_unused(json_len);
+    io_image *image = io_load_image(image_path);
+    if (!json || !image || !image->data || image->channels != 4) {
+        free(json);
+        if (image) { free(image->data); free(image); }
+        return false;
+    }
+
+    const i32 tex_w = (i32)ui_json_key_number(json, "width", image->width);
+    const i32 tex_h = (i32)ui_json_key_number(json, "height", image->height);
+    ui_font main_font = {0};
+    ui_font mono_font = {0};
+    ns_bool loaded = ui_load_font_face(json, "FONT_MAIN", tex_w, tex_h, &main_font) &&
+                     ui_load_font_face(json, "FONT_MONO", tex_w, tex_h, &mono_font);
+    free(json);
+    if (!loaded) {
+        free(main_font.glyphs);
+        free(mono_font.glyphs);
+        free(image->data);
+        free(image);
+        return false;
+    }
+
+    gpu_texture texture = gpu_create_texture(&(gpu_texture_desc){
+        .width = image->width, .height = image->height, .depth = 1,
+        .data = (ns_data){image->data, (size_t)(image->width * image->height * image->channels)},
+        .format = PIXELFORMAT_RGBA8,
+        .type = TEXTURE_2D,
+        .usage = TEXTURE_USAGE_READ,
+        .resource_usage = USAGE_DEFAULT,
+    });
+    free(image->data);
+    free(image);
+    if (!texture.id) {
+        free(main_font.glyphs);
+        free(mono_font.glyphs);
+        return false;
+    }
+    gpu_binding binding = gpu_create_binding(&(gpu_binding_desc){
+        .pipeline = r->pipeline_msdf,
+        .buffers = {
+            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
+            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
+        },
+        .textures = {{.texture = texture, .name = ns_str_cstr("tex")}},
+    });
+    if (!binding.id) {
+        gpu_destroy_texture(texture);
+        free(main_font.glyphs);
+        free(mono_font.glyphs);
+        return false;
+    }
+
+    free(r->fonts[UI_FONT_MAIN].glyphs);
+    free(r->fonts[UI_FONT_MONO].glyphs);
+    if (r->binding_font_msdf.id) gpu_destroy_binding(r->binding_font_msdf);
+    if (r->font_texture.id) gpu_destroy_texture(r->font_texture);
+    r->fonts[UI_FONT_MAIN] = main_font;
+    r->fonts[UI_FONT_MONO] = mono_font;
+    r->font_texture = texture;
+    r->binding_font_msdf = binding;
+    return true;
+}
+
 void ui_renderer_destroy(ui_renderer *r) {
     if (!r) return;
     for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
@@ -1475,6 +1556,12 @@ ui_gizmo_result *ui_gizmo(ui_scene *scene, i32 mode, f64 x, f64 y, f64 z, f64 px
     if(released)scene->active_axis=-1; return &scene->gizmo_result;
 }
 
+ui_gizmo_result *ui_gizmo_compact(ui_scene *scene, i32 mode, f64 *input) {
+    if (!input) return ui_gizmo(scene, mode, 0.0, 0.0, 0.0, 0.0, 0.0, false, false, false);
+    return ui_gizmo(scene, mode, input[0], input[1], input[2], input[3], input[4],
+                    input[5] != 0.0, input[6] != 0.0, input[7] != 0.0);
+}
+
 static u32 ui_widget_hash(const char *text) {
     u32 h = 2166136261u;
     if (!text) return h;
@@ -1534,6 +1621,17 @@ f64 ui_slider(ui_widgets *w, const char *id, f64 x, f64 y, f64 width, f64 height
     return value;
 }
 
+f64 ui_slider_rect(ui_widgets *w, const char *id, ui_rect *rect, f64 value, f64 min, f64 max) {
+    if (!rect) return value;
+    return ui_slider(w, id, rect->x, rect->y, rect->w, rect->h, value, min, max, false);
+}
+
+f64 ui_slider_id(ui_widgets *w, i32 id, ui_rect *rect, f64 value, f64 min, f64 max) {
+    char name[32];
+    snprintf(name, sizeof(name), "slider-%d", id);
+    return ui_slider_rect(w, name, rect, value, min, max);
+}
+
 ui_color_rgba *ui_color_picker(ui_widgets *w, const char *id, f64 x, f64 y, f64 width, f64 height, ui_color_rgba *value) {
     static ui_color_rgba result;
     result = value ? *value : (ui_color_rgba){1.0, 1.0, 1.0, 1.0};
@@ -1555,6 +1653,21 @@ ui_color_rgba *ui_color_picker(ui_widgets *w, const char *id, f64 x, f64 y, f64 
     }
     ui_stroke_circle(w->renderer, x + result.r * width, y + (1.0 - result.g) * height, 5.0, 2.0, 0xffffffffu, 0.0);
     return &result;
+}
+
+ui_color_rgba *ui_color_picker_rect(ui_widgets *w, const char *id, ui_rect *rect, ui_color_rgba *value) {
+    static ui_color_rgba fallback;
+    if (!rect) {
+        fallback = value ? *value : (ui_color_rgba){1.0, 1.0, 1.0, 1.0};
+        return &fallback;
+    }
+    return ui_color_picker(w, id, rect->x, rect->y, rect->w, rect->h, value);
+}
+
+ui_color_rgba *ui_color_picker_id(ui_widgets *w, i32 id, ui_rect *rect, ui_color_rgba *value) {
+    char name[32];
+    snprintf(name, sizeof(name), "color-%d", id);
+    return ui_color_picker_rect(w, name, rect, value);
 }
 
 ui_hit *ui_hit_region(ui_widgets *w, f64 x, f64 y, f64 width, f64 height) {

@@ -124,6 +124,12 @@ struct ui_input {
     gizmo_manipulating: bool
 }
 
+// Zero-initialized value helpers for VM code. Struct declarations without an
+// initializer are type-only in the interpreter, so native hosts provide the
+// concrete empty values used to assemble a frame snapshot and default theme.
+ref fn ui_input_empty() ui_input
+ref fn ui_theme_empty() ui_theme
+
 // ---- widget state ---------------------------------------------------------
 
 // Persistent vertical scroll offset for list / scroll-area widgets.
@@ -243,6 +249,8 @@ ref fn ui_renderer_destroy(r: ref ui_renderer)
 
 // Load the optional Chinese (FONT_ZH) atlas at runtime. Returns true on success.
 ref fn ui_load_chinese_font(r: ref ui_renderer, json_path: str, image_path: str) bool
+// Replace the main and mono SDF font faces from a standard ui atlas JSON.
+ref fn ui_load_font(r: ref ui_renderer, json_path: str, image_path: str) bool
 
 // Match the renderer's drawable size to the bound view, or set it explicitly.
 ref fn ui_resize(r: ref ui_renderer)
@@ -279,6 +287,7 @@ ref fn ui_scene_draw_lines(scene: ref ui_scene, positions: [f32], point_count: i
 ref fn ui_scene_draw_points(scene: ref ui_scene, positions: [f32], point_count: i32, rgba: u32, radius: f64)
 ref fn ui_scene_end(scene: ref ui_scene)
 ref fn ui_gizmo(scene: ref ui_scene, mode: i32, x: f64, y: f64, z: f64, pointer_x: f64, pointer_y: f64, pointer_down: bool, pointer_pressed: bool, pointer_released: bool) ref ui_gizmo_result
+ref fn ui_gizmo_compact(scene: ref ui_scene, mode: i32, input: [f64]) ref ui_gizmo_result
 
 // Load an image file into a renderer-owned atlas texture. PNG/JPEG channel
 // layouts are normalized to RGBA by the native UI library.
@@ -393,6 +402,8 @@ ref fn ui_toggle(w: ref ui_widgets, id: str, x: f64, y: f64, value: bool, label:
 
 // Horizontal slider; returns the (possibly dragged) value.
 ref fn ui_slider(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, value: f64, min: f64, max: f64, show_value: bool) f64
+ref fn ui_slider_rect(w: ref ui_widgets, id: str, rect: ui_rect, value: f64, min: f64, max: f64) f64
+ref fn ui_slider_id(w: ref ui_widgets, id: i32, rect: ui_rect, value: f64, min: f64, max: f64) f64
 
 // Scrollable selection list; returns the selected index.
 ref fn ui_list(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, items: [str], selected: i32, scroll: ref ui_scroll_state) i32
@@ -429,6 +440,8 @@ ref fn ui_number_input(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, h
 
 // HSV colour picker; returns the chosen colour.
 ref fn ui_color_picker(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, value: ui_color_rgba) ui_color_rgba
+ref fn ui_color_picker_rect(w: ref ui_widgets, id: str, rect: ui_rect, value: ui_color_rgba) ui_color_rgba
+ref fn ui_color_picker_id(w: ref ui_widgets, id: i32, rect: ui_rect, value: ui_color_rgba) ui_color_rgba
 
 // Multi-line, selectable text view.
 ref fn ui_create_text_view_state() ui_text_view_state
