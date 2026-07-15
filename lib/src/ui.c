@@ -21,6 +21,8 @@
 #define UI_KIND_IMAGE 0
 #define UI_KIND_MSDF 1
 #define UI_DEFAULT_FEATHER 0.5
+#define UI_SCENE_MAX_MESHES 64
+#define UI_SCENE_VERTEX_FLOATS 10
 
 typedef struct io_image {
     i32 width;
@@ -159,6 +161,46 @@ typedef struct ui_renderer {
     gpu_render_pass screen_pass;
     ns_bool gpu_ready;
 } ui_renderer;
+
+typedef struct ui_scene_mesh {
+    f32 *vertices;
+    u32 *indices;
+    i32 vertex_count;
+    i32 index_count;
+    ns_bool used;
+} ui_scene_mesh;
+
+typedef struct ui_gizmo_result {
+    ns_bool active;
+    ns_bool changed;
+    i32 axis;
+    f64 tx, ty, tz;
+    f64 rx, ry, rz;
+    f64 sx, sy, sz;
+} ui_gizmo_result;
+
+typedef struct ui_scene {
+    void *handle;
+    ui_renderer *renderer;
+    ui_scene_mesh meshes[UI_SCENE_MAX_MESHES];
+    f32 view_projection[16];
+    f64 x, y, width, height;
+    i32 active_axis;
+    f64 last_pointer_x, last_pointer_y;
+    ui_gizmo_result gizmo_result;
+    ns_bool begun;
+} ui_scene;
+
+typedef struct ui_scene_projected {
+    f64 x, y, z, w;
+    u32 color;
+    f64 nx, ny, nz;
+} ui_scene_projected;
+
+typedef struct ui_scene_triangle {
+    ui_scene_projected a, b, c;
+    f64 depth;
+} ui_scene_triangle;
 
 void ui_renderer_destroy(ui_renderer *r);
 void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);

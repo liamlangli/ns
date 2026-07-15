@@ -182,6 +182,52 @@ const char *os_read_file_part(const char *path, i64 offset, i64 size) {
     return os_take_read_buffer(ns_os_read_file_part(ns_str_cstr((char *)path), offset, size));
 }
 
+i32 os_write_file_atomic(const char *path, const char *text) {
+    if (!path || !path[0] || !text) return 0;
+    char temporary[OS_MAX_PATH];
+    if (snprintf(temporary, sizeof(temporary), "%s.tmp", path) >= (int)sizeof(temporary)) return 0;
+    FILE *file = fopen(temporary, "wb");
+    if (!file) return 0;
+    size_t len = strlen(text);
+    ns_bool ok = fwrite(text, 1, len, file) == len;
+    if (fflush(file) != 0) ok = false;
+#if !defined(NS_WIN)
+    if (ok && fsync(fileno(file)) != 0) ok = false;
+#endif
+    if (fclose(file) != 0) ok = false;
+    if (!ok) {
+        remove(temporary);
+        return 0;
+    }
+#ifdef NS_WIN
+    remove(path);
+#endif
+    if (rename(temporary, path) != 0) {
+        remove(temporary);
+        return 0;
+    }
+    return 1;
+}
+
+const char *os_app_data_dir(const char *app_name) {
+    static char path[OS_MAX_PATH];
+    const char *name = app_name && app_name[0] ? app_name : "ns";
+#ifdef NS_WIN
+    const char *root = getenv("LOCALAPPDATA");
+    if (!root || !root[0]) root = getenv("USERPROFILE");
+    snprintf(path, sizeof(path), "%s\\%s", root ? root : ".", name);
+#elif defined(__APPLE__)
+    const char *root = getenv("HOME");
+    snprintf(path, sizeof(path), "%s/Library/Application Support/%s", root ? root : ".", name);
+#else
+    const char *root = getenv("XDG_DATA_HOME");
+    if (root && root[0]) snprintf(path, sizeof(path), "%s/%s", root, name);
+    else snprintf(path, sizeof(path), "%s/.local/share/%s", getenv("HOME") ? getenv("HOME") : ".", name);
+#endif
+    os_make_dirs(path);
+    return path;
+}
+
 const char *os_cwd(void) {
     static char path[OS_MAX_PATH];
 #ifdef NS_WIN

@@ -54,6 +54,20 @@ const char *os_open_file_dialog(const char *title) {
     return path;
 }
 
+const char *os_save_file_dialog(const char *title, const char *suggested_name) {
+    static char path[MAX_PATH];
+    path[0] = '\0';
+    if (suggested_name && suggested_name[0]) snprintf(path, sizeof(path), "%s", suggested_name);
+    OPENFILENAMEA dialog = {0};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.lpstrFile = path;
+    dialog.nMaxFile = sizeof(path);
+    dialog.lpstrTitle = title && title[0] ? title : "Save File";
+    dialog.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameA(&dialog)) path[0] = '\0';
+    return path;
+}
+
 const char *os_open_folder_dialog(const char *title) {
     static char path[MAX_PATH];
     path[0] = '\0';

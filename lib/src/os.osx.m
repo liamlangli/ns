@@ -111,6 +111,28 @@ const char *os_open_file_dialog(const char *title) {
     return path;
 }
 
+const char *os_save_file_dialog(const char *title, const char *suggested_name) {
+    static char path[4096];
+    path[0] = '\0';
+    @autoreleasepool {
+        __block NSString *selected = nil;
+        void (^show_panel)(void) = ^{
+            NSSavePanel *panel = [NSSavePanel savePanel];
+            panel.canCreateDirectories = YES;
+            if (title && title[0]) panel.message = [NSString stringWithUTF8String:title];
+            if (suggested_name && suggested_name[0]) panel.nameFieldStringValue = [NSString stringWithUTF8String:suggested_name];
+            if ([panel runModal] == NSModalResponseOK) selected = [[[panel URL] path] retain];
+        };
+        if ([NSThread isMainThread]) show_panel();
+        else dispatch_sync(dispatch_get_main_queue(), show_panel);
+        if (selected) {
+            snprintf(path, sizeof(path), "%s", [selected fileSystemRepresentation]);
+            [selected release];
+        }
+    }
+    return path;
+}
+
 const char *os_open_folder_dialog(const char *title) {
     static char path[4096];
     path[0] = '\0';

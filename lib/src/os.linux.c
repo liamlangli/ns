@@ -57,6 +57,12 @@ const char *os_open_file_dialog(const char *title) {
     return "";
 }
 
+const char *os_save_file_dialog(const char *title, const char *suggested_name) {
+    ns_unused(title);
+    ns_unused(suggested_name);
+    return "";
+}
+
 const char *os_open_folder_dialog(const char *title) {
     ns_unused(title);
     return "";

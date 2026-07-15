@@ -145,6 +145,52 @@ typedef enum view_key_modifier {
     VIEW_KEY_MOD_SUPER = 1 << 3,
 } view_key_modifier;
 
+// Unified pointer stream used by native editors and drawing applications.
+// Mouse compatibility fields remain on `view`; this queue adds multi-touch,
+// Pencil metadata and indirect-pointer events without changing that API.
+typedef enum view_input_device {
+    VIEW_INPUT_DEVICE_MOUSE = 0,
+    VIEW_INPUT_DEVICE_TOUCH = 1,
+    VIEW_INPUT_DEVICE_PENCIL = 2,
+    VIEW_INPUT_DEVICE_INDIRECT = 3,
+    VIEW_INPUT_DEVICE_TOOL = 4,
+} view_input_device;
+
+typedef enum view_input_phase {
+    VIEW_INPUT_PHASE_HOVER = 0,
+    VIEW_INPUT_PHASE_BEGAN = 1,
+    VIEW_INPUT_PHASE_MOVED = 2,
+    VIEW_INPUT_PHASE_ENDED = 3,
+    VIEW_INPUT_PHASE_CANCELLED = 4,
+    VIEW_INPUT_PHASE_TOOL_ACTION = 5,
+} view_input_phase;
+
+typedef enum view_tool_action {
+    VIEW_TOOL_ACTION_NONE = 0,
+    VIEW_TOOL_ACTION_PENCIL_DOUBLE_TAP = 1,
+    VIEW_TOOL_ACTION_PENCIL_SQUEEZE = 2,
+} view_tool_action;
+
+typedef struct view_input_event {
+    i32 device;
+    i32 phase;
+    i32 pointer_id;
+    i32 modifiers;
+    f64 x, y;
+    f64 dx, dy;
+    f64 pressure;
+    f64 altitude;
+    f64 azimuth;
+    f64 timestamp;
+    i32 tool_action;
+} view_input_event;
+
+typedef struct view_gesture_state {
+    f64 pan_x, pan_y;
+    f64 zoom_factor;
+    f64 rotation;
+} view_gesture_state;
+
 typedef struct view {
     ns_str title;
     i32 width;
@@ -197,6 +243,18 @@ ns_bool view_is_key_pressed(view *v, view_keycode key);
 // short press/release pairs from being lost between rendered frames.
 i32 view_take_key_press(view *v, view_keycode key);
 void view_clear_key_presses(view *v);
+
+// Platform backends feed the unified stream through these helpers. Events are
+// valid until view_input_reset(), normally called after the ns frame callback.
+void view_on_pointer_event(view *v, i32 device, i32 phase, i32 pointer_id,
+                           f64 x, f64 y, f64 pressure, f64 altitude,
+                           f64 azimuth, f64 timestamp, i32 modifiers);
+void view_on_tool_action(view *v, i32 action, f64 timestamp);
+void view_on_gesture(view *v, f64 pan_x, f64 pan_y, f64 zoom_factor, f64 rotation);
+i32 view_input_count(view *v);
+view_input_event *view_input_at(view *v, i32 index);
+view_gesture_state *view_gesture(view *v);
+void view_input_reset(view *v);
 
 // Clipboard functions
 // `str` crosses the ns FFI as a UTF-8 C string pointer. Returned text only

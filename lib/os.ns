@@ -35,6 +35,10 @@ ref fn os_locale_date_time_string() str
 ref fn os_file_size(path: str) i64
 ref fn os_read_file(path: str) str
 ref fn os_read_file_part(path: str, offset: i64, size: i64) str
+// Atomically replace a UTF-8 text file and return 1 on success.
+ref fn os_write_file_atomic(path: str, text: str) i32
+// Writable per-user application-support directory; it is created on demand.
+ref fn os_app_data_dir(app_name: str) str
 
 // Recursively snapshot a directory in stable, directories-first name order.
 // Root .gitignore matches and .git metadata are omitted. Entry accessors are
@@ -55,6 +59,8 @@ ref fn os_watch_stop()
 // Show a native open-file dialog when the platform backend supports one.
 // Returns an empty string when the dialog is cancelled or unavailable.
 ref fn os_open_file_dialog(title: str) str
+// Native save-file panel. Returns an empty string when cancelled/unavailable.
+ref fn os_save_file_dialog(title: str, suggested_name: str) str
 
 // Project/window helpers. Folder selection is native where the platform UI
 // backend supports it. os_launch_ns_project starts this interpreter again with
