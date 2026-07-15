@@ -232,7 +232,8 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 # dropped and the link fails with undefined references.
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
-test: $(NS_TEST_TARGETS)
+.PHONY: test
+test: $(NS_TEST_TARGETS) $(TARGET)
 	$(NS_BINDIR)/ns_json_test
 	$(NS_BINDIR)/ns_expr_test
 	$(NS_BINDIR)/ns_shader_test
@@ -240,6 +241,7 @@ test: $(NS_TEST_TARGETS)
 	$(NS_BINDIR)/ns_buffer_test
 	$(NS_BINDIR)/ns_os_test
 	$(NS_BINDIR)/ns_project_test
+	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 
 include lib/Makefile
 include sample/c/Makefile

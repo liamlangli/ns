@@ -61,7 +61,12 @@ fn main() {
     seed_document()
     let native_entry = os_env("NSCODE_NATIVE_ENTRY")
     if native_entry == "" {
-        native_entry = os_cwd() + "/nscode/native"
+        let cwd = os_cwd()
+        if os_file_size(cwd + "/ns.mod") >= 0 {
+            native_entry = cwd
+        } else {
+            native_entry = cwd + "/nscode/native"
+        }
     }
     workspace_set_native_entry(native_entry)
     workspace_init()
@@ -73,7 +78,7 @@ fn main() {
     if ok {
         print(unescape("gpu device acquired\n"))
         let r = ui_renderer_create(v)
-        let file_icon = ui_atlas_load(r, "sample/ns.png")
+        let file_icon = ui_atlas_load(r, native_entry + "/icon.png")
         set_file_icon_atlas(file_icon)
         v.on_frame({ frame_view in
             ui_begin_frame(r)

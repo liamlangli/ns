@@ -145,6 +145,8 @@ typedef struct ns_vm {
     ns_lib *libs;
     ns_str lib;
     ns_str ref_path;
+    ns_str lib_path;
+    ns_str lib_fallback_path;
     i8* stack;
 
     // mode
@@ -238,6 +240,11 @@ i32 ns_struct_field_index(ns_symbol *st, ns_str s);
 // shader.ns. The VM borrows ref_path; its storage must remain valid while an
 // evaluation can import modules. Pass ns_str_null to restore the default path.
 void ns_vm_set_ref_path(ns_vm *vm, ns_str ref_path);
+// Set the directory used to load FFI dynamic libraries. Like ref_path, the VM
+// borrows this string for the lifetime of evaluations that may import modules.
+void ns_vm_set_lib_path(ns_vm *vm, ns_str lib_path);
+// Optional second FFI directory tried only when loading from lib_path fails.
+void ns_vm_set_lib_fallback_path(ns_vm *vm, ns_str lib_path);
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib);
 ns_lib* ns_lib_find(ns_vm *vm, ns_str lib);
 

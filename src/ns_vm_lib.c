@@ -160,6 +160,14 @@ void ns_vm_set_ref_path(ns_vm *vm, ns_str ref_path) {
     vm->ref_path = ref_path;
 }
 
+void ns_vm_set_lib_path(ns_vm *vm, ns_str lib_path) {
+    vm->lib_path = lib_path;
+}
+
+void ns_vm_set_lib_fallback_path(ns_vm *vm, ns_str lib_path) {
+    vm->lib_fallback_path = lib_path;
+}
+
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     ns_ast_ctx ctx = {0};
 #ifdef NS_DEBUG
@@ -201,13 +209,21 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     } else {
 #ifndef NS_XCLIB
 #ifdef NS_DEBUG
-        ns_str lib_path = ns_str_cstr(NS_LIB_PATH);
+        ns_str lib_path = vm->lib_path.data ? vm->lib_path : ns_str_cstr(NS_LIB_PATH);
 #else
-        ns_str lib_path = ns_path_join(home, ns_str_cstr(NS_LIB_PATH));
+        ns_str lib_path = vm->lib_path.data
+            ? vm->lib_path
+            : ns_path_join(home, ns_str_cstr(NS_LIB_PATH));
 #endif // NS_DEBUG
         ns_str lib_link_path = ns_path_join(lib_path, ns_str_concat(lib_name, ns_lib_ext));
         dlerror();
         void* lib_ptr = dlopen(lib_link_path.data, RTLD_LAZY | RTLD_GLOBAL);
+        if (lib_ptr == ns_null && vm->lib_fallback_path.data) {
+            lib_link_path = ns_path_join(vm->lib_fallback_path,
+                                         ns_str_concat(lib_name, ns_lib_ext));
+            dlerror();
+            lib_ptr = dlopen(lib_link_path.data, RTLD_LAZY | RTLD_GLOBAL);
+        }
         vm->libs[lib_index].path = lib_link_path;
         vm->libs[lib_index].lib = lib_ptr;
         return &vm->libs[lib_index];

@@ -35,7 +35,7 @@ bin/ns test ns/parser_test.ns   # run the parser test entry
 bin/ns test ns/                 # discover & run every *_test.ns in the dir
 
 # from inside the project directory, `ns run` needs no file argument: it
-# finds the nearest ns.mod and runs the entry the manifest declares.
+# uses ns.mod in that directory (or main.ns when there is no manifest).
 cd ns && ../bin/ns run          # runs the manifest's entry (demo_main.ns)
 ```
 

@@ -143,7 +143,7 @@ void ns_help() {
     printf("  --profile         write ns.profile: elapsed time plus a per-symbol ffi breakdown\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
-    printf("  run  [file.ns]    run a project entry, or run a standalone file when no ns.mod is found\n");
+    printf("  run  [file.ns]    run cwd/ns.mod, otherwise cwd/main.ns, or an explicit input\n");
     printf("  test <path>       run a test entry, or every *_test.ns under a dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
@@ -728,12 +728,21 @@ static ns_str ns_manifest_entry_file_for_root(ns_str root) {
     return ns_path_join(base, entry);
 }
 
-// Resolve the entry source file `ns run` should execute when no file is given:
-// walk up from the current directory to the nearest `ns.mod`.
-static ns_str ns_manifest_entry_file(void) {
+// Resolve the entry source file `ns run` should execute when no file is given.
+// A manifest in the current directory takes precedence over main.ns. Unlike
+// project/build discovery, bare `ns run` deliberately does not walk upward:
+// its implicit input is always selected from the current directory.
+static ns_str ns_default_run_entry(void) {
     ns_str cwd = ns_getcwd();
-    ns_str root = ns_project_root(cwd);
-    return ns_manifest_entry_file_for_root(root);
+    ns_str manifest = ns_path_join(cwd, ns_str_cstr("ns.mod"));
+    if (ns_file_exists(manifest)) return ns_manifest_entry_file_for_root(cwd);
+
+    ns_str main = ns_path_join(cwd, ns_str_cstr("main.ns"));
+    if (ns_file_exists(main)) return main;
+
+    ns_exit(1, "ns", "cannot run %.*s: neither ns.mod nor main.ns was found.\n",
+            cwd.len, cwd.data);
+    return ns_str_null;
 }
 
 typedef enum {
@@ -1421,6 +1430,38 @@ static ns_str ns_project_current_executable(void) {
 #endif
 }
 
+// Configure module declarations and FFI libraries relative to the running ns
+// executable, so debug builds keep working after `make install` and commands
+// can be launched from any working directory. Supported layouts are:
+//   installed: <root>/bin/ns, <root>/ref/*.ns, <root>/lib/*.{dylib,so,dll}
+//   source:    <repo>/bin/ns, <repo>/lib/*.ns, preferring installed FFI libs
+//              and falling back to <repo>/bin/*.{dylib,so,dll}
+static void ns_configure_vm_runtime_paths(ns_vm *target) {
+    ns_str executable = ns_project_current_executable();
+    if (executable.data == ns_null) return;
+
+    ns_str bin = ns_path_dirname_safe(executable);
+    ns_str root = ns_path_parent(bin);
+    ns_str installed_ref = ns_path_join(root, ns_str_cstr("ref"));
+    ns_str installed_std = ns_path_join(installed_ref, ns_str_cstr("std.ns"));
+    if (ns_file_exists(installed_std)) {
+        ns_vm_set_ref_path(target, installed_ref);
+        ns_vm_set_lib_path(target, ns_path_join(root, ns_str_cstr("lib")));
+        return;
+    }
+
+    ns_str source_ref = ns_path_join(root, ns_str_cstr("lib"));
+    ns_str source_std = ns_path_join(source_ref, ns_str_cstr("std.ns"));
+    if (ns_file_exists(source_std)) {
+        ns_vm_set_ref_path(target, source_ref);
+        // A Debug interpreter should exercise the installed runtime when one
+        // is available, while remaining usable before the first install.
+        ns_str home = ns_path_home();
+        ns_vm_set_lib_path(target, ns_path_join(home, ns_str_cstr("ns/lib")));
+        ns_vm_set_lib_fallback_path(target, ns_str_concat(bin, ns_str_cstr("")));
+    }
+}
+
 static ns_str ns_project_runtime_root(ns_str executable) {
     const char *override = getenv("NS_RUNTIME_ROOT");
     if (override && override[0]) {
@@ -1541,8 +1582,8 @@ void ns_exec_project(ns_str path) {
 }
 
 void ns_exec_run(ns_str filename) {
-    // No file argument: run the project's declared entry from its ns.mod.
-    if (filename.len == 0) filename = ns_manifest_entry_file();
+    // No file argument: prefer cwd/ns.mod, then fall back to cwd/main.ns.
+    if (filename.len == 0) filename = ns_default_run_entry();
     if (ns_is_dir(filename)) filename = ns_manifest_entry_file_for_root(ns_project_root(filename));
 
     ns_str source = ns_os_read_file(filename);
@@ -1575,6 +1616,7 @@ void ns_exec_run(ns_str filename) {
 // (0 == all assertions passed).
 static i32 ns_run_test_file(ns_str filename) {
     ns_vm tvm = {0};
+    ns_configure_vm_runtime_paths(&tvm);
     ns_str source = ns_os_read_file(filename);
     if (source.data == ns_null || source.len == 0) {
         ns_warn("test", "skip empty/unreadable file %.*s.\n", filename.len, filename.data);
@@ -1847,6 +1889,8 @@ i32 main(i32 argc, i8** argv) {
     }
 
     if (option.profile) ns_profile_begin(argc, argv);
+
+    ns_configure_vm_runtime_paths(&vm);
 
     if (option.run) {
         ns_exec_run(option.filename);

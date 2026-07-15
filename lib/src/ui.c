@@ -1,3 +1,7 @@
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #include "gpu.h"
 #include "ns_type.h"
 #include "view.h"
@@ -6,6 +10,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #define UI_VERTEX_STRIDE 36
 #define UI_INITIAL_VERTEX_CAP 131072
@@ -16,8 +26,10 @@
 #define UI_MAX_RECT_BATCHES 16
 #define UI_FONT_MAIN 0
 #define UI_FONT_MONO 1
+#define UI_FONT_ZH 2
 #define UI_WHITE_TEXTURE 1
 #define UI_FONT_TEXTURE 2
+#define UI_FONT_ZH_TEXTURE (UI_MAX_TEXTURES + 3)
 #define UI_KIND_IMAGE 0
 #define UI_KIND_MSDF 1
 #define UI_DEFAULT_FEATHER 0.5
@@ -32,6 +44,65 @@ typedef struct io_image {
 } io_image;
 
 extern io_image *io_load_image(const char *path);
+
+#define UI_PATH_MAX 4096
+
+static const char ui_module_anchor = 0;
+
+static ns_bool ui_file_readable(const char *path) {
+    FILE *file = path ? fopen(path, "rb") : NULL;
+    if (!file) return false;
+    fclose(file);
+    return true;
+}
+
+static ns_bool ui_module_directory(char out[UI_PATH_MAX]) {
+#if defined(_WIN32)
+    HMODULE module = NULL;
+    if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            &ui_module_anchor, &module)) return false;
+    DWORD len = GetModuleFileNameA(module, out, UI_PATH_MAX);
+    if (len == 0 || len >= UI_PATH_MAX) return false;
+#else
+    Dl_info info = {0};
+    if (dladdr(&ui_module_anchor, &info) == 0 || !info.dli_fname) return false;
+    i32 len = snprintf(out, UI_PATH_MAX, "%s", info.dli_fname);
+    if (len <= 0 || len >= UI_PATH_MAX) return false;
+#endif
+    char *slash = strrchr(out, '/');
+#if defined(_WIN32)
+    char *backslash = strrchr(out, '\\');
+    if (!slash || (backslash && backslash > slash)) slash = backslash;
+#endif
+    if (!slash) return false;
+    *slash = '\0';
+    return true;
+}
+
+// Resolve bundled UI resources independently of the process working
+// directory. Installed dylibs live under <root>/lib with assets under
+// <root>/ref/assets; source-tree dylibs live in <repo>/bin with assets under
+// <repo>/lib/assets. NS_UI_ASSET_ROOT remains available for custom packaging.
+static ns_bool ui_resolve_asset(const char *name, char out[UI_PATH_MAX]) {
+    const char *override = getenv("NS_UI_ASSET_ROOT");
+    if (override && override[0]) {
+        i32 len = snprintf(out, UI_PATH_MAX, "%s/%s", override, name);
+        if (len > 0 && len < UI_PATH_MAX && ui_file_readable(out)) return true;
+    }
+
+    char module_dir[UI_PATH_MAX];
+    if (ui_module_directory(module_dir)) {
+        const char *layouts[] = {"../ref/assets", "../lib/assets"};
+        for (u32 i = 0; i < sizeof(layouts) / sizeof(layouts[0]); i++) {
+            i32 len = snprintf(out, UI_PATH_MAX, "%s/%s/%s", module_dir, layouts[i], name);
+            if (len > 0 && len < UI_PATH_MAX && ui_file_readable(out)) return true;
+        }
+    }
+
+    i32 len = snprintf(out, UI_PATH_MAX, "lib/assets/%s", name);
+    return len > 0 && len < UI_PATH_MAX && ui_file_readable(out);
+}
 
 typedef struct ui_color_rgba {
     f64 r;
@@ -138,9 +209,10 @@ typedef struct ui_renderer {
     i32 gpu_clip_count;
     i32 current_texture_id;
 
-    ui_font fonts[2];
+    ui_font fonts[3];
     gpu_texture white_texture;
     gpu_texture font_texture;
+    gpu_texture font_zh_texture;
     gpu_buffer screen_buffer;
     gpu_buffer clip_buffer;
     gpu_buffer vertex_buffer;
@@ -152,6 +224,7 @@ typedef struct ui_renderer {
     gpu_pipeline pipeline_msdf;
     gpu_binding binding_white_image;
     gpu_binding binding_font_msdf;
+    gpu_binding binding_font_zh_msdf;
     gpu_texture textures[UI_MAX_TEXTURES];
     gpu_binding texture_bindings[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
@@ -221,6 +294,7 @@ typedef struct ui_widgets {
     ui_renderer *renderer;
     ui_input input;
     u32 active_id;
+    ns_bool light;
 } ui_widgets;
 
 ui_input *ui_input_empty(void) {
@@ -387,7 +461,7 @@ static void ui_detect_cap_metrics(ui_font *font) {
 }
 
 static ns_bool ui_load_font_face(char *json, const char *face_name, i32 tex_w, i32 tex_h, ui_font *font) {
-    char *face = ui_find_key(json, face_name);
+    char *face = (face_name && face_name[0]) ? ui_find_key(json, face_name) : json;
     if (!face) return false;
     char *chars_key = ui_find_key(face, "chars");
     if (!chars_key) return false;
@@ -434,8 +508,13 @@ static ns_bool ui_load_font_face(char *json, const char *face_name, i32 tex_w, i
 }
 
 static ns_bool ui_load_fonts(ui_renderer *r) {
+    char json_path[UI_PATH_MAX];
+    if (!ui_resolve_asset("latin_mono.json", json_path)) {
+        fprintf(stderr, "ui: cannot locate latin_mono.json\n");
+        return false;
+    }
     size_t len = 0;
-    char *json = ui_read_file("lib/assets/latin_mono.json", &len);
+    char *json = ui_read_file(json_path, &len);
     ns_unused(len);
     if (!json) return false;
     i32 tex_w = (i32)ui_json_key_number(json, "width", 512);
@@ -786,7 +865,11 @@ static void ui_create_gpu_resources(ui_renderer *r) {
         .resource_usage = USAGE_DEFAULT,
     });
 
-    io_image *img = io_load_image("lib/assets/latin_mono.png");
+    char image_path[UI_PATH_MAX];
+    io_image *img = ui_resolve_asset("latin_mono.png", image_path)
+                        ? io_load_image(image_path)
+                        : NULL;
+    if (!img) fprintf(stderr, "ui: cannot locate or load latin_mono.png\n");
     if (img && img->data && img->channels == 4) {
         r->font_texture = gpu_create_texture(&(gpu_texture_desc){
             .width = img->width, .height = img->height, .depth = 1,
@@ -978,6 +1061,67 @@ ns_bool ui_load_font(ui_renderer *r, const char *json_path, const char *image_pa
     return true;
 }
 
+ns_bool ui_load_chinese_font(ui_renderer *r, const char *json_path, const char *image_path) {
+    if (!r || !json_path || !image_path) return false;
+    size_t json_len = 0;
+    char *json = ui_read_file(json_path, &json_len);
+    ns_unused(json_len);
+    io_image *image = io_load_image(image_path);
+    if (!json || !image || !image->data || image->channels != 4) {
+        free(json);
+        if (image) { free(image->data); free(image); }
+        return false;
+    }
+
+    const i32 tex_w = (i32)ui_json_key_number(json, "width", image->width);
+    const i32 tex_h = (i32)ui_json_key_number(json, "height", image->height);
+    ui_font zh_font = {0};
+    ns_bool loaded = ui_load_font_face(json, NULL, tex_w, tex_h, &zh_font);
+    free(json);
+    if (!loaded) {
+        free(zh_font.glyphs);
+        free(image->data);
+        free(image);
+        return false;
+    }
+
+    gpu_texture texture = gpu_create_texture(&(gpu_texture_desc){
+        .width = image->width, .height = image->height, .depth = 1,
+        .data = (ns_data){image->data, (size_t)(image->width * image->height * image->channels)},
+        .format = PIXELFORMAT_RGBA8,
+        .type = TEXTURE_2D,
+        .usage = TEXTURE_USAGE_READ,
+        .resource_usage = USAGE_DEFAULT,
+    });
+    free(image->data);
+    free(image);
+    if (!texture.id) {
+        free(zh_font.glyphs);
+        return false;
+    }
+    gpu_binding binding = gpu_create_binding(&(gpu_binding_desc){
+        .pipeline = r->pipeline_msdf,
+        .buffers = {
+            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
+            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
+        },
+        .textures = {{.texture = texture, .name = ns_str_cstr("tex")}},
+    });
+    if (!binding.id) {
+        gpu_destroy_texture(texture);
+        free(zh_font.glyphs);
+        return false;
+    }
+
+    free(r->fonts[UI_FONT_ZH].glyphs);
+    if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
+    if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
+    r->fonts[UI_FONT_ZH] = zh_font;
+    r->font_zh_texture = texture;
+    r->binding_font_zh_msdf = binding;
+    return true;
+}
+
 void ui_renderer_destroy(ui_renderer *r) {
     if (!r) return;
     for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
@@ -992,7 +1136,9 @@ void ui_renderer_destroy(ui_renderer *r) {
         if (r->texture_bindings[i].id) gpu_destroy_binding(r->texture_bindings[i]);
         if (r->textures[i].id) gpu_destroy_texture(r->textures[i]);
     }
-    for (i32 i = 0; i < 2; i++) free(r->fonts[i].glyphs);
+    if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
+    if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
+    for (i32 i = 0; i < 3; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
     free(r);
 }
@@ -1295,7 +1441,11 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             gpu_set_binding(batch->binding);
         } else if (cmd->kind == UI_KIND_MSDF) {
             gpu_set_pipeline(r->pipeline_msdf);
-            gpu_set_binding(r->binding_font_msdf);
+            if (cmd->texture_id == UI_FONT_ZH_TEXTURE && r->binding_font_zh_msdf.id) {
+                gpu_set_binding(r->binding_font_zh_msdf);
+            } else {
+                gpu_set_binding(r->binding_font_msdf);
+            }
         } else if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3 &&
                    r->texture_bindings[cmd->texture_id - 3].id) {
             gpu_set_pipeline(r->pipeline_image);
@@ -1499,7 +1649,7 @@ void ui_scene_draw_mesh(ui_scene *scene, i32 mesh_id, f32 *model, i32 flags) {
             t->b.x, t->b.y, ui_scene_shade(t->b.color, light, flags & 8),
             t->c.x, t->c.y, ui_scene_shade(t->c.color, light, flags & 8));
         if (flags & 2) {
-            u32 edge = flags & 8 ? 0xff94d361u : 0x995d6670u;
+            u32 edge = flags & 8 ? 0xfff56e4cu : 0x996c757du;
             ui_stroke_line(scene->renderer, t->a.x, t->a.y, t->b.x, t->b.y, 1.0, edge, 0.0);
             ui_stroke_line(scene->renderer, t->b.x, t->b.y, t->c.x, t->c.y, 1.0, edge, 0.0);
             ui_stroke_line(scene->renderer, t->c.x, t->c.y, t->a.x, t->a.y, 1.0, edge, 0.0);
@@ -1582,10 +1732,29 @@ ui_widgets *ui_widgets_create(ui_renderer *r) {
 
 void ui_widgets_destroy(ui_widgets *w) { free(w); }
 
+void ui_widgets_set_light(ui_widgets *w, ns_bool enabled) { if (w) w->light = enabled; }
+
 void ui_widgets_begin_frame(ui_widgets *w, ui_theme *theme, ui_input *input) {
     ns_unused(theme);
     if (!w || !input) return;
     w->input = *input;
+}
+
+void ui_widgets_begin_view(ui_widgets *w, ui_theme *theme, view *v, ns_bool gizmo_manipulating) {
+    ns_unused(theme);
+    if (!w || !v) return;
+    memset(&w->input, 0, sizeof(w->input));
+    w->input.mouse_x = v->mouse_x;
+    w->input.mouse_y = v->mouse_y;
+    w->input.mouse_down = v->mouse_down;
+    w->input.mouse_pressed = v->mouse_pressed;
+    w->input.mouse_released = v->mouse_released;
+    w->input.mouse_middle_down = v->mouse_middle_down;
+    w->input.mouse_right_pressed = v->mouse_right_pressed;
+    w->input.mouse_right_down = v->mouse_right_down;
+    w->input.zoom_factor = 1.0;
+    w->input.wheel_y = v->scroll_y;
+    w->input.gizmo_manipulating = gizmo_manipulating;
 }
 
 void ui_widgets_end_frame(ui_widgets *w) { ns_unused(w); }
@@ -1593,11 +1762,14 @@ void ui_widgets_end_frame(ui_widgets *w) { ns_unused(w); }
 ns_bool ui_button(ui_widgets *w, const char *id, f64 x, f64 y, f64 width, f64 height, const char *label, ns_bool active) {
     if (!w || !w->renderer) return false;
     ns_bool hover = ui_widget_hover(w, x, y, width, height);
-    u32 bg = active ? 0xff4b805fu : (hover ? 0xff343b45u : 0xff262c34u);
-    u32 border = active ? 0xff61d394u : 0xff48515du;
+    u32 bg = w->light ? (active ? 0xffffe4dbu : (hover ? 0xfffff5e7u : 0xfffaf9f8u))
+                      : (active ? 0xff4b805fu : (hover ? 0xff343b45u : 0xff262c34u));
+    u32 border = w->light ? (active ? 0xfff56e4cu : 0xffe6e2deu)
+                          : (active ? 0xff61d394u : 0xff48515du);
+    u32 text_color = w->light ? 0xff292521u : 0xffedf2f7u;
     ui_fill_round_rect(w->renderer, x, y, width, height, 7.0, bg, 0.0);
     ui_stroke_round_rect(w->renderer, x, y, width, height, 7.0, 1.0, border, 0.0);
-    if (label) ui_draw_text(w->renderer, x + 9.0, y + (height - 13.0) * 0.5, label, 13.0, 0xffedf2f7u, UI_FONT_MAIN);
+    if (label) ui_draw_text(w->renderer, x + 9.0, y + (height - 13.0) * 0.5, label, 13.0, text_color, UI_FONT_MAIN);
     u32 hash = ui_widget_hash(id);
     if (hover && w->input.mouse_pressed) w->active_id = hash;
     ns_bool clicked = hover && w->input.mouse_released && w->active_id == hash;
@@ -1767,46 +1939,88 @@ void ui_fill_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f
     ui_fill_round_rect(r, x, y, w, h, rbr, rgba, feather);
 }
 
+static i32 ui_utf8_next(const unsigned char **cursor) {
+    const unsigned char *p = *cursor;
+    if (!p || !*p) return 0;
+    i32 code = *p++;
+    if (code < 0x80) { *cursor = p; return code; }
+    if ((code & 0xe0) == 0xc0 && (p[0] & 0xc0) == 0x80) {
+        code = ((code & 0x1f) << 6) | (p[0] & 0x3f);
+        p += 1;
+    } else if ((code & 0xf0) == 0xe0 && (p[0] & 0xc0) == 0x80 && (p[1] & 0xc0) == 0x80) {
+        code = ((code & 0x0f) << 12) | ((p[0] & 0x3f) << 6) | (p[1] & 0x3f);
+        p += 2;
+    } else if ((code & 0xf8) == 0xf0 && (p[0] & 0xc0) == 0x80 &&
+               (p[1] & 0xc0) == 0x80 && (p[2] & 0xc0) == 0x80) {
+        code = ((code & 0x07) << 18) | ((p[0] & 0x3f) << 12) |
+               ((p[1] & 0x3f) << 6) | (p[2] & 0x3f);
+        p += 3;
+    } else {
+        code = 0xfffd;
+    }
+    *cursor = p;
+    return code;
+}
+
+static ui_font *ui_primary_font(ui_renderer *r, i32 font_type) {
+    if (font_type == UI_FONT_MONO) return &r->fonts[UI_FONT_MONO];
+    if (font_type == UI_FONT_ZH && r->fonts[UI_FONT_ZH].glyph_count > 0) return &r->fonts[UI_FONT_ZH];
+    return &r->fonts[UI_FONT_MAIN];
+}
+
+static ui_font *ui_font_for_code(ui_renderer *r, i32 font_type, i32 code, ui_glyph **glyph) {
+    ui_font *font = ui_primary_font(r, font_type);
+    *glyph = ui_font_glyph(font, code);
+    if (!*glyph && font != &r->fonts[UI_FONT_ZH] && r->fonts[UI_FONT_ZH].glyph_count > 0) {
+        ui_glyph *zh_glyph = ui_font_glyph(&r->fonts[UI_FONT_ZH], code);
+        if (zh_glyph) { font = &r->fonts[UI_FONT_ZH]; *glyph = zh_glyph; }
+    }
+    if (!*glyph && font != &r->fonts[UI_FONT_MAIN]) {
+        ui_glyph *main_glyph = ui_font_glyph(&r->fonts[UI_FONT_MAIN], code);
+        if (main_glyph) { font = &r->fonts[UI_FONT_MAIN]; *glyph = main_glyph; }
+    }
+    if (!*glyph) *glyph = ui_font_glyph(font, 32);
+    return font;
+}
+
 void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
     if (!r || !text || font_px <= 0) return;
-    ui_font *primary = &r->fonts[(font_type == UI_FONT_MONO) ? UI_FONT_MONO : UI_FONT_MAIN];
+    ui_font *primary = ui_primary_font(r, font_type);
     f64 cx = x;
     f64 cy = y;
-    f64 baseline_y = cy + primary->baseline * (font_px / primary->font_size);
-    for (const unsigned char *p = (const unsigned char*)text; *p; p++) {
-        if (*p == '\n') {
+    const unsigned char *p = (const unsigned char*)text;
+    while (*p) {
+        i32 code = ui_utf8_next(&p);
+        if (code == '\n') {
             cx = x;
             cy += primary->line_height * (font_px / primary->font_size);
-            baseline_y = cy + primary->baseline * (font_px / primary->font_size);
             continue;
         }
-        i32 code = *p;
-        ui_glyph *g = ui_font_glyph(primary, code);
-        if (!g) g = ui_font_glyph(primary, 32);
+        ui_glyph *g = NULL;
+        ui_font *font = ui_font_for_code(r, font_type, code, &g);
         if (!g) continue;
-        f64 scale = font_px / primary->font_size;
+        f64 scale = font_px / font->font_size;
         if (g->width > 0 && g->height > 0) {
             f64 x0 = cx + g->x_offset * scale;
-            f64 y0 = baseline_y - (primary->baseline - g->y_offset) * scale;
+            f64 y0 = cy + g->y_offset * scale;
             f64 x1 = x0 + g->width * scale;
             f64 y1 = y0 + g->height * scale;
-            r->current_texture_id = UI_FONT_TEXTURE;
+            r->current_texture_id = (font == &r->fonts[UI_FONT_ZH]) ? UI_FONT_ZH_TEXTURE : UI_FONT_TEXTURE;
             ui_push_quad_ex(r, x0, y0, x1, y1,
-                            g->atlas_x / primary->texture_width,
-                            g->atlas_y / primary->texture_height,
-                            (g->atlas_x + g->width) / primary->texture_width,
-                            (g->atlas_y + g->height) / primary->texture_height,
+                            g->atlas_x / font->texture_width,
+                            g->atlas_y / font->texture_height,
+                            (g->atlas_x + g->width) / font->texture_width,
+                            (g->atlas_y + g->height) / font->texture_height,
                             rgba, UI_KIND_MSDF, 5.0, 0.0, 1.0);
         }
         cx += g->x_advance * scale;
     }
 }
 
-static f64 ui_text_char_advance(ui_font *font, unsigned char c, f64 font_px) {
-    if (!font || font->font_size <= 0.0) return font_px * 0.55;
-    ui_glyph *g = ui_font_glyph(font, c);
-    if (!g) g = ui_font_glyph(font, 32);
-    return g ? g->x_advance * (font_px / font->font_size) : font_px * 0.55;
+static f64 ui_text_char_advance(ui_renderer *r, i32 font_type, i32 code, f64 font_px) {
+    ui_glyph *g = NULL;
+    ui_font *font = ui_font_for_code(r, font_type, code, &g);
+    return g && font->font_size > 0.0 ? g->x_advance * (font_px / font->font_size) : font_px * 0.55;
 }
 
 static void ui_draw_text_range(ui_renderer *r, f64 x, f64 y, const char *text, i32 len, f64 font_px, u32 rgba, i32 font_type) {
@@ -1823,7 +2037,7 @@ f64 ui_draw_text_wrapped(ui_renderer *r, f64 x, f64 y, f64 w, const char *text, 
     if (!r || !text || font_px <= 0.0) return 0.0;
     if (w <= 0.0) return 0.0;
 
-    ui_font *font = &r->fonts[(font_type == UI_FONT_MONO) ? UI_FONT_MONO : UI_FONT_MAIN];
+    ui_font *font = ui_primary_font(r, font_type);
     const f64 line_h = font->font_size > 0.0 ? font->line_height * (font_px / font->font_size) : font_px;
     const char *line_start = text;
     const char *p = text;
@@ -1842,11 +2056,14 @@ f64 ui_draw_text_wrapped(ui_renderer *r, f64 x, f64 y, f64 w, const char *text, 
             continue;
         }
 
-        if (*p == ' ' || *p == '\t') last_space = p;
-        line_w += ui_text_char_advance(font, (unsigned char)*p, font_px);
+        const char *char_start = p;
+        const unsigned char *next = (const unsigned char*)p;
+        i32 code = ui_utf8_next(&next);
+        if (code == ' ' || code == '\t') last_space = char_start;
+        line_w += ui_text_char_advance(r, font_type, code, font_px);
 
-        if (line_w > w && p > line_start) {
-            const char *break_at = last_space && last_space >= line_start ? last_space : p;
+        if (line_w > w && char_start > line_start) {
+            const char *break_at = last_space && last_space >= line_start ? last_space : char_start;
             ui_draw_text_range(r, x, cy, line_start, (i32)(break_at - line_start), font_px, rgba, font_type);
             cy += line_h;
 
@@ -1858,7 +2075,7 @@ f64 ui_draw_text_wrapped(ui_renderer *r, f64 x, f64 y, f64 w, const char *text, 
             continue;
         }
 
-        p++;
+        p = (const char*)next;
     }
 
     if (p > line_start) {
@@ -1871,13 +2088,13 @@ f64 ui_draw_text_wrapped(ui_renderer *r, f64 x, f64 y, f64 w, const char *text, 
 
 f64 ui_text_line_height(ui_renderer *r, f64 font_px, i32 font_type) {
     if (!r) return font_px;
-    ui_font *font = &r->fonts[(font_type == UI_FONT_MONO) ? UI_FONT_MONO : UI_FONT_MAIN];
+    ui_font *font = ui_primary_font(r, font_type);
     return font->font_size > 0 ? font->line_height * (font_px / font->font_size) : font_px;
 }
 
 f64 ui_text_v_center_y(ui_renderer *r, f64 y, f64 h, f64 font_px, i32 font_type) {
     if (!r) return y + (h - font_px) * 0.5;
-    ui_font *font = &r->fonts[(font_type == UI_FONT_MONO) ? UI_FONT_MONO : UI_FONT_MAIN];
+    ui_font *font = ui_primary_font(r, font_type);
     if (font->font_size <= 0.0) return y + (h - font_px) * 0.5;
     // ui_draw_text takes the top of the line box, whose glyphs sit below
     // center (the box reserves room for descenders and line gap). Return the
@@ -1888,12 +2105,12 @@ f64 ui_text_v_center_y(ui_renderer *r, f64 y, f64 h, f64 font_px, i32 font_type)
 
 f64 ui_text_width(ui_renderer *r, const char *text, f64 font_px, i32 font_type) {
     if (!r || !text) return 0;
-    ui_font *font = &r->fonts[(font_type == UI_FONT_MONO) ? UI_FONT_MONO : UI_FONT_MAIN];
     f64 width = 0;
-    for (const unsigned char *p = (const unsigned char*)text; *p && *p != '\n'; p++) {
-        ui_glyph *g = ui_font_glyph(font, *p);
-        if (!g) g = ui_font_glyph(font, 32);
-        width += g ? g->x_advance * (font_px / font->font_size) : font_px * 0.55;
+    const unsigned char *p = (const unsigned char*)text;
+    while (*p) {
+        i32 code = ui_utf8_next(&p);
+        if (code == '\n') break;
+        width += ui_text_char_advance(r, font_type, code, font_px);
     }
     return width;
 }

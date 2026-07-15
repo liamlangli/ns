@@ -26,9 +26,10 @@ Local modules need not be declared: every `use <name>` is resolved against the
 project's own source first, so any sibling `<name>.ns` is included in the build
 automatically. Only external `dependencies.runtime` need listing.
 
-Running `ns run` with no file argument compiles and runs the whole project: it
-walks up from the current directory to the nearest `ns.mod` and executes the
-`entry` (or first of `entries`) it declares, resolved against the `source` dir.
+Running `ns run` with no file argument first checks for `ns.mod` in the current
+directory and executes the `entry` (or first of `entries`) it declares, resolved
+against the `source` dir. If the current directory has no `ns.mod`, it runs
+`main.ns` there instead. It reports an error only when neither file exists.
 
 Running `ns build` with no file argument compiles the current module into an
 artifact under `<module>/bin`: `type = "app"` produces an executable, while

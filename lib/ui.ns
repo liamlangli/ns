@@ -127,8 +127,8 @@ struct ui_input {
 // Zero-initialized value helpers for VM code. Struct declarations without an
 // initializer are type-only in the interpreter, so native hosts provide the
 // concrete empty values used to assemble a frame snapshot and default theme.
-ref fn ui_input_empty() ui_input
-ref fn ui_theme_empty() ui_theme
+ref fn ui_input_empty() ref ui_input
+ref fn ui_theme_empty() ref ui_theme
 
 // ---- widget state ---------------------------------------------------------
 
@@ -385,10 +385,12 @@ ref fn ui_columns_for_width(r: ref ui_renderer, width: f64, font_px: f64, font_t
 // Bind an immediate-mode widget layer to a renderer.
 ref fn ui_widgets_create(r: ref ui_renderer) ref ui_widgets
 ref fn ui_widgets_destroy(w: ref ui_widgets)
+ref fn ui_widgets_set_light(w: ref ui_widgets, enabled: bool)
 
 // Begin/end the widget frame. Call between the renderer's begin_frame and
 // flush; deferred popups (open dropdowns / colour pickers) are drawn on end.
-ref fn ui_widgets_begin_frame(w: ref ui_widgets, theme: ui_theme, input: ui_input)
+ref fn ui_widgets_begin_frame(w: ref ui_widgets, theme: ref ui_theme, input: ref ui_input)
+ref fn ui_widgets_begin_view(w: ref ui_widgets, theme: ref ui_theme, v: ref view, gizmo_manipulating: bool)
 ref fn ui_widgets_end_frame(w: ref ui_widgets)
 
 // A section header; returns the y just below it.
