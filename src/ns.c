@@ -46,6 +46,8 @@ typedef struct ns_compile_option_t {
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
     ns_bool project: 2; // `ns project <path>` - generate a native IDE project
+    ns_bool init: 2;    // `ns init [path]` - scaffold an ns project in place
+    ns_bool create: 2;  // `ns create <name>` - scaffold an ns project in a new folder
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
@@ -67,6 +69,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.build = true;
         } else if (i == 1 && strcmp(argv[i], "project") == 0) {
             option.project = true;
+        } else if (i == 1 && strcmp(argv[i], "init") == 0) {
+            option.init = true;
+        } else if (i == 1 && strcmp(argv[i], "create") == 0) {
+            option.create = true;
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--token") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
@@ -143,6 +149,9 @@ void ns_help() {
     printf("  --profile         write ns.profile: elapsed time plus a per-symbol ffi breakdown\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
+    printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
+    printf("                    writes ns.mod, main.ns, README.md and .gitignore\n");
+    printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  run  [file.ns]    run cwd/ns.mod, otherwise cwd/main.ns, or an explicit input\n");
     printf("  test <path>       run a test entry, or every *_test.ns under a dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
@@ -860,6 +869,10 @@ static void ns_write_text_file(ns_str path, ns_str text) {
     fclose(file);
 }
 
+static void ns_str_append_cstr(ns_str *s, const char *cstr) {
+    ns_str_append_len(s, cstr, (i32)strlen(cstr));
+}
+
 #if defined(NS_DARWIN)
 static ns_bool ns_str_ends_with(ns_str s, ns_str suffix) {
     return s.len >= suffix.len && strncmp(s.data + s.len - suffix.len, suffix.data, suffix.len) == 0;
@@ -882,10 +895,6 @@ static void ns_copy_file_or_exit(ns_str src, ns_str dst) {
     }
     fclose(file);
     ns_str_free(data);
-}
-
-static void ns_str_append_cstr(ns_str *s, const char *cstr) {
-    ns_str_append_len(s, cstr, (i32)strlen(cstr));
 }
 
 static ns_str ns_xml_escape(ns_str s) {
@@ -1581,6 +1590,158 @@ void ns_exec_project(ns_str path) {
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// `ns init [path]` / `ns create <name>` project scaffolding
+// ---------------------------------------------------------------------------
+// Both commands write the same skeleton (ns.mod, main.ns, README.md,
+// .gitignore). `init` targets an existing directory (default: cwd) and keeps
+// any file already present; `create` requires a fresh directory so it never
+// collides with user content.
+
+// Last path component, trailing separators ignored. Unlike ns_path_filename
+// this keeps dots, so a directory like `my.app` yields its full name.
+static ns_str ns_path_last_component(ns_str path) {
+    i32 end = path.len;
+    while (end > 0 && path.data[end - 1] == NS_PATH_SEPARATOR) end--;
+    i32 start = end;
+    while (start > 0 && path.data[start - 1] != NS_PATH_SEPARATOR) start--;
+    return ns_str_slice(path, start, end);
+}
+
+// Scaffold names are embedded in TOML strings and generated source, so keep
+// them to characters that need no escaping in either.
+static ns_bool ns_scaffold_name_valid(ns_str name) {
+    if (name.len == 0) return false;
+    for (i32 i = 0; i < name.len; i++) {
+        i8 c = name.data[i];
+        if (!(ns_is_ident_char(c) || c == '-' || c == '.')) return false;
+    }
+    return true;
+}
+
+static ns_str ns_scaffold_manifest_text(ns_str name) {
+    ns_str s = ns_str_null;
+    ns_str_append_cstr(&s, "schema = \"ns.mod/v1\"\n");
+    ns_str_append_cstr(&s, "name = \"");
+    ns_str_append(&s, name);
+    ns_str_append_cstr(&s, "\"\n");
+    ns_str_append_cstr(&s, "version = \"0.1.0\"\n");
+    ns_str_append_cstr(&s, "type = \"app\"\n");
+    ns_str_append_cstr(&s, "description = \"A Nano Script project.\"\n");
+    ns_str_append_cstr(&s, "source = \".\"\n");
+    ns_str_append_cstr(&s, "entry = \"main.ns\"\n");
+    ns_str_append_cstr(&s, "\n");
+    ns_str_append_cstr(&s, "[[dependencies.runtime]]\n");
+    ns_str_append_cstr(&s, "name = \"std\"\n");
+    ns_str_append_cstr(&s, "version = \">=0.1.0\"\n");
+    return s;
+}
+
+static ns_str ns_scaffold_main_text(ns_str name) {
+    ns_str s = ns_str_null;
+    ns_str_append_cstr(&s, "use std\n");
+    ns_str_append_cstr(&s, "\n");
+    ns_str_append_cstr(&s, "fn main() {\n");
+    ns_str_append_cstr(&s, "    print(\"hello, ");
+    ns_str_append(&s, name);
+    ns_str_append_cstr(&s, "!\\n\")\n");
+    ns_str_append_cstr(&s, "}\n");
+    return s;
+}
+
+static ns_str ns_scaffold_readme_text(ns_str name) {
+    ns_str s = ns_str_null;
+    ns_str_append_cstr(&s, "# ");
+    ns_str_append(&s, name);
+    ns_str_append_cstr(&s, "\n");
+    ns_str_append_cstr(&s, "\n");
+    ns_str_append_cstr(&s, "A Nano Script project.\n");
+    ns_str_append_cstr(&s, "\n");
+    ns_str_append_cstr(&s, "## Run\n");
+    ns_str_append_cstr(&s, "\n");
+    ns_str_append_cstr(&s, "```bash\n");
+    ns_str_append_cstr(&s, "ns run\n");
+    ns_str_append_cstr(&s, "```\n");
+    ns_str_append_cstr(&s, "\n");
+    ns_str_append_cstr(&s, "## Build\n");
+    ns_str_append_cstr(&s, "\n");
+    ns_str_append_cstr(&s, "```bash\n");
+    ns_str_append_cstr(&s, "ns build\n");
+    ns_str_append_cstr(&s, "```\n");
+    return s;
+}
+
+static ns_str ns_scaffold_gitignore_text(void) {
+    ns_str s = ns_str_null;
+    ns_str_append_cstr(&s, "bin\n");
+    ns_str_append_cstr(&s, ".DS_Store\n");
+    ns_str_append_cstr(&s, "*.log\n");
+    ns_str_append_cstr(&s, "ns.profile\n");
+    return s;
+}
+
+// Write one scaffold file unless it already exists; existing files are kept
+// so `ns init` can fill in the gaps of a partially set up directory.
+static void ns_scaffold_write(ns_str root, const char *filename, ns_str text, const char *tag) {
+    ns_str path = ns_path_join(root, ns_str_cstr((char*)filename));
+    if (ns_file_exists(path)) {
+        ns_warn(tag, "skip existing %.*s.\n", path.len, path.data);
+    } else {
+        ns_write_text_file(path, text);
+        ns_info(tag, "wrote %.*s\n", path.len, path.data);
+    }
+    ns_str_free(path);
+    ns_str_free(text);
+}
+
+static void ns_scaffold_project(ns_str root, ns_str name, const char *tag) {
+    if (!ns_scaffold_name_valid(name)) {
+        ns_exit(1, tag, "invalid project name `%.*s`; use letters, digits, `_`, `-` or `.`.\n", name.len, name.data);
+    }
+    ns_scaffold_write(root, "ns.mod", ns_scaffold_manifest_text(name), tag);
+    ns_scaffold_write(root, "main.ns", ns_scaffold_main_text(name), tag);
+    ns_scaffold_write(root, "README.md", ns_scaffold_readme_text(name), tag);
+    ns_scaffold_write(root, ".gitignore", ns_scaffold_gitignore_text(), tag);
+}
+
+void ns_exec_init(ns_str path) {
+    ns_str root = path.len == 0 ? ns_getcwd() : ns_str_concat(path, ns_str_cstr(""));
+    if (!ns_is_dir(root)) {
+        ns_mkdir_p(root);
+        if (!ns_is_dir(root)) ns_exit(1, "init", "failed to create directory %.*s.\n", root.len, root.data);
+    }
+
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    if (ns_file_exists(manifest)) {
+        ns_exit(1, "init", "%.*s already exists; already an ns project.\n", manifest.len, manifest.data);
+    }
+    ns_str_free(manifest);
+
+    // resolve to an absolute path so `.` still yields a meaningful name
+    ns_str name = ns_path_last_component(ns_project_absolute_path(root));
+    ns_scaffold_project(root, name, "init");
+    ns_info("init", "project %.*s ready; run it with `ns run`.\n", name.len, name.data);
+}
+
+void ns_exec_create(ns_str path) {
+    if (path.len == 0) ns_exit(1, "create", "no project name; usage: ns create <name>.\n");
+    if (ns_is_dir(path) || ns_file_exists(path)) {
+        ns_exit(1, "create", "%.*s already exists; use `ns init %.*s` to scaffold in place.\n",
+                path.len, path.data, path.len, path.data);
+    }
+
+    ns_str name = ns_path_last_component(path);
+    if (!ns_scaffold_name_valid(name)) {
+        ns_exit(1, "create", "invalid project name `%.*s`; use letters, digits, `_`, `-` or `.`.\n", name.len, name.data);
+    }
+
+    ns_mkdir_p(path);
+    if (!ns_is_dir(path)) ns_exit(1, "create", "failed to create directory %.*s.\n", path.len, path.data);
+
+    ns_scaffold_project(path, name, "create");
+    ns_info("create", "project %.*s created; `cd %.*s` then `ns run`.\n", name.len, name.data, path.len, path.data);
+}
+
 void ns_exec_run(ns_str filename) {
     // No file argument: prefer cwd/ns.mod, then fall back to cwd/main.ns.
     if (filename.len == 0) filename = ns_default_run_entry();
@@ -1900,6 +2061,10 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_build(option.filename, option.output, option.build_kind);
     } else if (option.project) {
         ns_exec_project(option.filename);
+    } else if (option.init) {
+        ns_exec_init(option.filename);
+    } else if (option.create) {
+        ns_exec_create(option.filename);
     } else if (option.tokenize_only) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {
