@@ -9,6 +9,12 @@ ref fn close(fd: u64) void
 
 // libm
 ref fn sqrt(x: f64) f64
+ref fn sin(x: f64) f64
+ref fn cos(x: f64) f64
+ref fn tan(x: f64) f64
+ref fn atan2(y: f64, x: f64) f64
+ref fn ftos(x: f64) str
+ref fn stof(x: str) f64
 
 // string (str is utf8-encoded; substr indexes bytes, utf8_len counts codepoints)
 ref fn substr(s: str, start: i32, len: i32) str

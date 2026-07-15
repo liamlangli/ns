@@ -202,8 +202,32 @@ typedef struct ui_scene_triangle {
     f64 depth;
 } ui_scene_triangle;
 
+typedef struct ui_theme { void *handle; } ui_theme;
+typedef struct ui_hit { ns_bool hovered; ns_bool pressed; } ui_hit;
+typedef struct ui_input {
+    f64 mouse_x, mouse_y;
+    ns_bool mouse_down, mouse_pressed, mouse_released;
+    ns_bool mouse_middle_down, mouse_right_pressed, mouse_right_down;
+    f64 pan_dx, pan_dy, zoom_factor, wheel_y;
+    const char *typed_text, *ime_composition;
+    ns_bool key_backspace, key_delete, key_enter, key_escape;
+    ns_bool key_left, key_right, key_up, key_down, key_home, key_end;
+    ns_bool key_page_up, key_page_down, key_a, key_c;
+    ns_bool shift, ctrl, meta, alt, gizmo_manipulating;
+} ui_input;
+
+typedef struct ui_widgets {
+    void *handle;
+    ui_renderer *renderer;
+    ui_input input;
+    u32 active_id;
+} ui_widgets;
+
 void ui_renderer_destroy(ui_renderer *r);
 void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);
+void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather);
+void ui_stroke_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, f64 thickness, u32 rgba, f64 feather);
+void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type);
 static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 h, f64 radius);
 static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inner, i32 n, u32 outer_color, u32 inner_color);
 
@@ -858,6 +882,9 @@ ui_renderer *ui_renderer_create(view *v) {
     if (!r) return NULL;
     r->handle = r;
     r->v = v;
+    // ui owns its GPU dependency; view + ui applications need no direct gpu
+    // import. Backends keep repeated requests for the same view idempotent.
+    gpu_request_device(v);
     ui_sync_view_metrics(r);
     r->vertex_capacity = UI_INITIAL_VERTEX_CAP;
     r->vertices = (ui_vertex*)calloc((size_t)r->vertex_capacity, sizeof(ui_vertex));
@@ -1258,6 +1285,292 @@ void ui_push_clip_round(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius) 
 void ui_pop_clip(ui_renderer *r) {
     if (r && r->clip_count > 1) r->clip_count--;
 }
+
+void ui_flush_overlay(ui_renderer *r, ui_color_rgba *clear) {
+    ui_flush(r, clear);
+}
+
+static u32 ui_scene_pack(f64 r, f64 g, f64 b, f64 a) {
+    r = ui_clamp_f64(r, 0.0, 1.0); g = ui_clamp_f64(g, 0.0, 1.0);
+    b = ui_clamp_f64(b, 0.0, 1.0); a = ui_clamp_f64(a, 0.0, 1.0);
+    return ((u32)(a * 255.0 + 0.5) << 24) | ((u32)(b * 255.0 + 0.5) << 16) |
+           ((u32)(g * 255.0 + 0.5) << 8) | (u32)(r * 255.0 + 0.5);
+}
+
+static u32 ui_scene_shade(u32 color, f64 light, ns_bool selected) {
+    f64 r = (f64)(color & 0xffu) / 255.0;
+    f64 g = (f64)((color >> 8) & 0xffu) / 255.0;
+    f64 b = (f64)((color >> 16) & 0xffu) / 255.0;
+    f64 a = (f64)((color >> 24) & 0xffu) / 255.0;
+    light = ui_clamp_f64(light, 0.18, 1.0);
+    if (selected) { r = r * light * 0.75 + 0.12; g = g * light * 0.75 + 0.22; b = b * light * 0.75 + 0.15; }
+    else { r *= light; g *= light; b *= light; }
+    return ui_scene_pack(r, g, b, a);
+}
+
+static void ui_scene_mul_point(const f32 *m, f64 x, f64 y, f64 z, f64 *ox, f64 *oy, f64 *oz, f64 *ow) {
+    *ox = m[0] * x + m[4] * y + m[8] * z + m[12];
+    *oy = m[1] * x + m[5] * y + m[9] * z + m[13];
+    *oz = m[2] * x + m[6] * y + m[10] * z + m[14];
+    *ow = m[3] * x + m[7] * y + m[11] * z + m[15];
+}
+
+static ui_scene_projected ui_scene_project(ui_scene *scene, const f32 *model, f64 x, f64 y, f64 z,
+                                            f64 nx, f64 ny, f64 nz, u32 color) {
+    f64 wx, wy, wz, ww, cx, cy, cz, cw;
+    ui_scene_mul_point(model, x, y, z, &wx, &wy, &wz, &ww);
+    if (fabs(ww) > 0.000001 && fabs(ww - 1.0) > 0.000001) { wx /= ww; wy /= ww; wz /= ww; }
+    ui_scene_mul_point(scene->view_projection, wx, wy, wz, &cx, &cy, &cz, &cw);
+    f64 nnx = model[0] * nx + model[4] * ny + model[8] * nz;
+    f64 nny = model[1] * nx + model[5] * ny + model[9] * nz;
+    f64 nnz = model[2] * nx + model[6] * ny + model[10] * nz;
+    f64 nl = sqrt(nnx * nnx + nny * nny + nnz * nnz);
+    if (nl > 0.000001) { nnx /= nl; nny /= nl; nnz /= nl; }
+    ui_scene_projected out = {.w = cw, .color = color, .nx = nnx, .ny = nny, .nz = nnz};
+    if (fabs(cw) > 0.000001) {
+        f64 ndc_x = cx / cw, ndc_y = cy / cw;
+        out.z = cz / cw;
+        out.x = scene->x + (ndc_x * 0.5 + 0.5) * scene->width;
+        out.y = scene->y + (0.5 - ndc_y * 0.5) * scene->height;
+    }
+    return out;
+}
+
+static int ui_scene_triangle_compare(const void *a, const void *b) {
+    const ui_scene_triangle *ta = (const ui_scene_triangle *)a, *tb = (const ui_scene_triangle *)b;
+    return ta->depth < tb->depth ? 1 : (ta->depth > tb->depth ? -1 : 0);
+}
+
+ui_scene *ui_scene_create(ui_renderer *r) {
+    if (!r) return NULL;
+    ui_scene *scene = (ui_scene *)calloc(1, sizeof(ui_scene));
+    if (scene) { scene->handle = scene; scene->renderer = r; scene->active_axis = -1; }
+    return scene;
+}
+
+void ui_scene_destroy(ui_scene *scene) {
+    if (!scene) return;
+    for (i32 i = 1; i < UI_SCENE_MAX_MESHES; i++) { free(scene->meshes[i].vertices); free(scene->meshes[i].indices); }
+    free(scene);
+}
+
+i32 ui_scene_mesh_create(ui_scene *scene) {
+    if (!scene) return 0;
+    for (i32 i = 1; i < UI_SCENE_MAX_MESHES; i++) if (!scene->meshes[i].used) { scene->meshes[i].used = true; return i; }
+    return 0;
+}
+
+ns_bool ui_scene_mesh_update(ui_scene *scene, i32 mesh_id, f32 *vertices, i32 vertex_count, u32 *indices, i32 index_count) {
+    if (!scene || mesh_id <= 0 || mesh_id >= UI_SCENE_MAX_MESHES || !scene->meshes[mesh_id].used ||
+        !vertices || vertex_count < 0 || !indices || index_count < 0) return false;
+    ui_scene_mesh *mesh = &scene->meshes[mesh_id];
+    size_t vb = (size_t)vertex_count * UI_SCENE_VERTEX_FLOATS * sizeof(f32), ib = (size_t)index_count * sizeof(u32);
+    f32 *nv = vb ? (f32 *)malloc(vb) : NULL; u32 *ni = ib ? (u32 *)malloc(ib) : NULL;
+    if ((vb && !nv) || (ib && !ni)) { free(nv); free(ni); return false; }
+    if (vb) memcpy(nv, vertices, vb); if (ib) memcpy(ni, indices, ib);
+    free(mesh->vertices); free(mesh->indices);
+    mesh->vertices = nv; mesh->indices = ni; mesh->vertex_count = vertex_count; mesh->index_count = index_count;
+    return true;
+}
+
+void ui_scene_mesh_destroy(ui_scene *scene, i32 mesh_id) {
+    if (!scene || mesh_id <= 0 || mesh_id >= UI_SCENE_MAX_MESHES) return;
+    free(scene->meshes[mesh_id].vertices); free(scene->meshes[mesh_id].indices);
+    memset(&scene->meshes[mesh_id], 0, sizeof(scene->meshes[mesh_id]));
+}
+
+void ui_scene_begin(ui_scene *scene, f64 x, f64 y, f64 width, f64 height, f32 *view_projection, u32 background) {
+    if (!scene || !scene->renderer || !view_projection || width <= 0.0 || height <= 0.0) return;
+    scene->x = x; scene->y = y; scene->width = width; scene->height = height;
+    memcpy(scene->view_projection, view_projection, sizeof(scene->view_projection));
+    ui_fill_rect(scene->renderer, x, y, width, height, background, 0.0);
+    ui_push_clip(scene->renderer, x, y, width, height); scene->begun = true;
+}
+
+void ui_scene_draw_mesh(ui_scene *scene, i32 mesh_id, f32 *model, i32 flags) {
+    if (!scene || !scene->begun || !model || mesh_id <= 0 || mesh_id >= UI_SCENE_MAX_MESHES) return;
+    ui_scene_mesh *mesh = &scene->meshes[mesh_id];
+    if (!mesh->used || !mesh->vertices || !mesh->indices || mesh->index_count < 3) return;
+    i32 count = mesh->index_count / 3, valid = 0;
+    ui_scene_triangle *triangles = (ui_scene_triangle *)malloc((size_t)count * sizeof(ui_scene_triangle));
+    if (!triangles) return;
+    for (i32 i = 0; i < count; i++) {
+        u32 ids[3] = {mesh->indices[i * 3], mesh->indices[i * 3 + 1], mesh->indices[i * 3 + 2]};
+        if (ids[0] >= (u32)mesh->vertex_count || ids[1] >= (u32)mesh->vertex_count || ids[2] >= (u32)mesh->vertex_count) continue;
+        ui_scene_projected p[3];
+        for (i32 j = 0; j < 3; j++) {
+            f32 *v = &mesh->vertices[ids[j] * UI_SCENE_VERTEX_FLOATS];
+            p[j] = ui_scene_project(scene, model, v[0], v[1], v[2], v[3], v[4], v[5], ui_scene_pack(v[6], v[7], v[8], v[9]));
+        }
+        if (p[0].w <= 0.0001 || p[1].w <= 0.0001 || p[2].w <= 0.0001) continue;
+        f64 area = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[1].y - p[0].y) * (p[2].x - p[0].x);
+        if (!(flags & 4) && area >= 0.0) continue;
+        triangles[valid++] = (ui_scene_triangle){p[0], p[1], p[2], (p[0].z + p[1].z + p[2].z) / 3.0};
+    }
+    qsort(triangles, (size_t)valid, sizeof(ui_scene_triangle), ui_scene_triangle_compare);
+    for (i32 i = 0; i < valid; i++) {
+        ui_scene_triangle *t = &triangles[i];
+        f64 nx = (t->a.nx + t->b.nx + t->c.nx) / 3.0, ny = (t->a.ny + t->b.ny + t->c.ny) / 3.0;
+        f64 nz = (t->a.nz + t->b.nz + t->c.nz) / 3.0;
+        f64 light = 0.32 + 0.68 * fmax(0.0, nx * -0.32 + ny * 0.72 + nz * 0.62);
+        if (flags & 1) ui_push_tri_colors(scene->renderer,
+            t->a.x, t->a.y, ui_scene_shade(t->a.color, light, flags & 8),
+            t->b.x, t->b.y, ui_scene_shade(t->b.color, light, flags & 8),
+            t->c.x, t->c.y, ui_scene_shade(t->c.color, light, flags & 8));
+        if (flags & 2) {
+            u32 edge = flags & 8 ? 0xff94d361u : 0x995d6670u;
+            ui_stroke_line(scene->renderer, t->a.x, t->a.y, t->b.x, t->b.y, 1.0, edge, 0.0);
+            ui_stroke_line(scene->renderer, t->b.x, t->b.y, t->c.x, t->c.y, 1.0, edge, 0.0);
+            ui_stroke_line(scene->renderer, t->c.x, t->c.y, t->a.x, t->a.y, 1.0, edge, 0.0);
+        }
+    }
+    free(triangles);
+}
+
+static ns_bool ui_scene_project_position(ui_scene *scene, f32 *p, f64 *x, f64 *y) {
+    static const f32 identity[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    ui_scene_projected out = ui_scene_project(scene, identity, p[0], p[1], p[2], 0, 0, 1, 0xffffffffu);
+    if (out.w <= 0.0001) return false; *x = out.x; *y = out.y; return true;
+}
+
+void ui_scene_draw_lines(ui_scene *scene, f32 *positions, i32 point_count, u32 rgba, f64 thickness) {
+    if (!scene || !scene->begun || !positions) return;
+    for (i32 i = 0; i + 1 < point_count; i += 2) { f64 x0,y0,x1,y1;
+        if (ui_scene_project_position(scene, &positions[i*3], &x0, &y0) && ui_scene_project_position(scene, &positions[(i+1)*3], &x1, &y1))
+            ui_stroke_line(scene->renderer, x0, y0, x1, y1, thickness, rgba, 0.0); }
+}
+
+void ui_scene_draw_points(ui_scene *scene, f32 *positions, i32 point_count, u32 rgba, f64 radius) {
+    if (!scene || !scene->begun || !positions) return;
+    for (i32 i = 0; i < point_count; i++) { f64 x,y; if (ui_scene_project_position(scene, &positions[i*3], &x, &y)) ui_fill_circle(scene->renderer, x, y, radius, rgba, 0.0); }
+}
+
+void ui_scene_end(ui_scene *scene) { if (scene && scene->begun) { ui_pop_clip(scene->renderer); scene->begun = false; } }
+
+static f64 ui_scene_distance_segment(f64 px, f64 py, f64 ax, f64 ay, f64 bx, f64 by) {
+    f64 vx = bx-ax, vy = by-ay, vv = vx*vx+vy*vy;
+    f64 t = vv > 0.000001 ? ((px-ax)*vx+(py-ay)*vy)/vv : 0.0; t = ui_clamp_f64(t,0.0,1.0);
+    return hypot(px-(ax+vx*t), py-(ay+vy*t));
+}
+
+ui_gizmo_result *ui_gizmo(ui_scene *scene, i32 mode, f64 x, f64 y, f64 z, f64 px, f64 py,
+                           ns_bool down, ns_bool pressed, ns_bool released) {
+    if (!scene || !scene->renderer) return NULL;
+    memset(&scene->gizmo_result, 0, sizeof(scene->gizmo_result)); scene->gizmo_result.axis = scene->active_axis;
+    scene->gizmo_result.sx = scene->gizmo_result.sy = scene->gizmo_result.sz = 1.0;
+    f32 lines[18] = {(f32)x,(f32)y,(f32)z,(f32)(x+1),(f32)y,(f32)z,
+                     (f32)x,(f32)y,(f32)z,(f32)x,(f32)(y+1),(f32)z,
+                     (f32)x,(f32)y,(f32)z,(f32)x,(f32)y,(f32)(z+1)};
+    f64 cx,cy,ex[3],ey[3]; if (!ui_scene_project_position(scene, lines, &cx, &cy)) return &scene->gizmo_result;
+    for (i32 a=0;a<3;a++) ui_scene_project_position(scene,&lines[(a*2+1)*3],&ex[a],&ey[a]);
+    u32 colors[3]={0xff5c68f2u,0xff63d46au,0xffff985cu};
+    for(i32 a=0;a<3;a++){ui_stroke_line(scene->renderer,cx,cy,ex[a],ey[a],scene->active_axis==a?5.0:3.0,colors[a],0.0);ui_fill_circle(scene->renderer,ex[a],ey[a],mode==1?5.0:6.0,colors[a],0.0);}
+    if(pressed){f64 best=12.0;scene->active_axis=-1;for(i32 a=0;a<3;a++){f64 d=ui_scene_distance_segment(px,py,cx,cy,ex[a],ey[a]);if(d<best){best=d;scene->active_axis=a;}}scene->last_pointer_x=px;scene->last_pointer_y=py;}
+    if(down&&scene->active_axis>=0){i32 a=scene->active_axis;f64 vx=ex[a]-cx,vy=ey[a]-cy,l=hypot(vx,vy);if(l<.0001)l=1;vx/=l;vy/=l;f64 delta=(px-scene->last_pointer_x)*vx+(py-scene->last_pointer_y)*vy;
+        scene->gizmo_result.active=true;scene->gizmo_result.changed=fabs(delta)>.000001;scene->gizmo_result.axis=a;
+        if(mode==0){f64 q=delta/80.0;if(a==0)scene->gizmo_result.tx=q;if(a==1)scene->gizmo_result.ty=q;if(a==2)scene->gizmo_result.tz=q;}
+        else if(mode==1){f64 q=delta*.012;if(a==0)scene->gizmo_result.rx=q;if(a==1)scene->gizmo_result.ry=q;if(a==2)scene->gizmo_result.rz=q;}
+        else{f64 q=fmax(.05,1.0+delta/100.0);if(a==0)scene->gizmo_result.sx=q;if(a==1)scene->gizmo_result.sy=q;if(a==2)scene->gizmo_result.sz=q;}
+        scene->last_pointer_x=px;scene->last_pointer_y=py;}
+    if(released)scene->active_axis=-1; return &scene->gizmo_result;
+}
+
+static u32 ui_widget_hash(const char *text) {
+    u32 h = 2166136261u;
+    if (!text) return h;
+    while (*text) { h ^= (u8)*text++; h *= 16777619u; }
+    return h ? h : 1u;
+}
+
+static ns_bool ui_widget_hover(ui_widgets *w, f64 x, f64 y, f64 width, f64 height) {
+    return w && w->input.mouse_x >= x && w->input.mouse_y >= y && w->input.mouse_x < x + width && w->input.mouse_y < y + height;
+}
+
+ui_widgets *ui_widgets_create(ui_renderer *r) {
+    if (!r) return NULL;
+    ui_widgets *w = (ui_widgets *)calloc(1, sizeof(ui_widgets));
+    if (w) { w->handle = w; w->renderer = r; }
+    return w;
+}
+
+void ui_widgets_destroy(ui_widgets *w) { free(w); }
+
+void ui_widgets_begin_frame(ui_widgets *w, ui_theme *theme, ui_input *input) {
+    ns_unused(theme);
+    if (!w || !input) return;
+    w->input = *input;
+}
+
+void ui_widgets_end_frame(ui_widgets *w) { ns_unused(w); }
+
+ns_bool ui_button(ui_widgets *w, const char *id, f64 x, f64 y, f64 width, f64 height, const char *label, ns_bool active) {
+    if (!w || !w->renderer) return false;
+    ns_bool hover = ui_widget_hover(w, x, y, width, height);
+    u32 bg = active ? 0xff4b805fu : (hover ? 0xff343b45u : 0xff262c34u);
+    u32 border = active ? 0xff61d394u : 0xff48515du;
+    ui_fill_round_rect(w->renderer, x, y, width, height, 7.0, bg, 0.0);
+    ui_stroke_round_rect(w->renderer, x, y, width, height, 7.0, 1.0, border, 0.0);
+    if (label) ui_draw_text(w->renderer, x + 9.0, y + (height - 13.0) * 0.5, label, 13.0, 0xffedf2f7u, UI_FONT_MAIN);
+    u32 hash = ui_widget_hash(id);
+    if (hover && w->input.mouse_pressed) w->active_id = hash;
+    ns_bool clicked = hover && w->input.mouse_released && w->active_id == hash;
+    if (w->input.mouse_released) w->active_id = 0;
+    return clicked;
+}
+
+f64 ui_slider(ui_widgets *w, const char *id, f64 x, f64 y, f64 width, f64 height,
+              f64 value, f64 min, f64 max, ns_bool show_value) {
+    ns_unused(show_value);
+    if (!w || !w->renderer || max <= min) return value;
+    ns_bool hover = ui_widget_hover(w, x, y, width, height);
+    u32 hash = ui_widget_hash(id);
+    if (hover && w->input.mouse_pressed) w->active_id = hash;
+    if (w->active_id == hash && w->input.mouse_down) value = min + ui_clamp_f64((w->input.mouse_x - x) / width, 0.0, 1.0) * (max - min);
+    if (w->input.mouse_released && w->active_id == hash) w->active_id = 0;
+    f64 t = ui_clamp_f64((value - min) / (max - min), 0.0, 1.0);
+    ui_fill_round_rect(w->renderer, x, y + height * 0.4, width, height * 0.2, height * 0.1, 0xff414a55u, 0.0);
+    ui_fill_round_rect(w->renderer, x, y + height * 0.4, width * t, height * 0.2, height * 0.1, 0xff61d394u, 0.0);
+    ui_fill_circle(w->renderer, x + width * t, y + height * 0.5, height * 0.28, 0xffedf2f7u, 0.0);
+    return value;
+}
+
+ui_color_rgba *ui_color_picker(ui_widgets *w, const char *id, f64 x, f64 y, f64 width, f64 height, ui_color_rgba *value) {
+    static ui_color_rgba result;
+    result = value ? *value : (ui_color_rgba){1.0, 1.0, 1.0, 1.0};
+    if (!w || !w->renderer) return &result;
+    u32 hash = ui_widget_hash(id);
+    ns_bool hover = ui_widget_hover(w, x, y, width, height);
+    if (hover && w->input.mouse_pressed) w->active_id = hash;
+    if (w->active_id == hash && w->input.mouse_down) {
+        result.r = ui_clamp_f64((w->input.mouse_x - x) / width, 0.0, 1.0);
+        result.g = ui_clamp_f64(1.0 - (w->input.mouse_y - y) / height, 0.0, 1.0);
+        result.b = ui_clamp_f64(1.0 - fabs(result.r - result.g), 0.0, 1.0);
+    }
+    if (w->input.mouse_released && w->active_id == hash) w->active_id = 0;
+    const i32 cells = 12;
+    for (i32 iy = 0; iy < cells; iy++) for (i32 ix = 0; ix < cells; ix++) {
+        f64 rr = (f64)ix / (cells - 1), gg = 1.0 - (f64)iy / (cells - 1);
+        ui_fill_rect(w->renderer, x + width * ix / cells, y + height * iy / cells, width / cells + 1.0, height / cells + 1.0,
+                     ui_scene_pack(rr, gg, 1.0 - fabs(rr - gg), 1.0), 0.0);
+    }
+    ui_stroke_circle(w->renderer, x + result.r * width, y + (1.0 - result.g) * height, 5.0, 2.0, 0xffffffffu, 0.0);
+    return &result;
+}
+
+ui_hit *ui_hit_region(ui_widgets *w, f64 x, f64 y, f64 width, f64 height) {
+    static ui_hit hit;
+    hit.hovered = ui_widget_hover(w, x, y, width, height);
+    hit.pressed = hit.hovered && w && w->input.mouse_pressed;
+    return &hit;
+}
+
+ns_bool ui_is_mouse_down(ui_widgets *w) { return w ? w->input.mouse_down : false; }
+ns_bool ui_is_mouse_pressed(ui_widgets *w) { return w ? w->input.mouse_pressed : false; }
+ns_bool ui_is_escape_pressed(ui_widgets *w) { return w ? w->input.key_escape : false; }
+ns_bool ui_is_enter_pressed(ui_widgets *w) { return w ? w->input.key_enter : false; }
+ns_bool ui_has_keyboard_focus(ui_widgets *w) { ns_unused(w); return false; }
+f64 ui_widgets_mouse_x(ui_widgets *w) { return w ? w->input.mouse_x : 0.0; }
+f64 ui_widgets_mouse_y(ui_widgets *w) { return w ? w->input.mouse_y : 0.0; }
 
 ns_bool ui_rect_clipped(ui_renderer *r, f64 x, f64 y, f64 w, f64 h) {
     if (!r) return true;

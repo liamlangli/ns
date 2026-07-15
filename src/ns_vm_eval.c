@@ -901,6 +901,22 @@ ns_return_void ns_eval_assert_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+    if (n->jump_stmt.expr <= 0) {
+        if (ns_array_length(vm->call_stack) == 0) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return stmt not in fn.");
+        }
+        ns_call *call = &vm->call_stack[ns_array_length(vm->call_stack) - 1];
+        if (call->callee == ns_null) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return stmt not in fn.");
+        }
+        ns_fn_symbol *fn = ns_symbol_get_fn(call->callee);
+        if (!ns_type_is(fn->ret, NS_TYPE_VOID)) {
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "return stmt requires a value in a non-void fn.");
+        }
+        call->ret_set = true;
+        return ns_return_ok(value, call->ret);
+    }
+
     ns_return_value ret_ret = ns_eval_expr(vm, ctx, n->jump_stmt.expr);
     if (ns_return_is_error(ret_ret)) return ret_ret;
 
@@ -932,7 +948,10 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_return_void ns_eval_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     switch (n->jump_stmt.label.type) {
-    case NS_TOKEN_RETURN: ns_eval_return_stmt(vm, ctx, i); break;
+    case NS_TOKEN_RETURN: {
+        ns_return_value ret = ns_eval_return_stmt(vm, ctx, i);
+        if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
+    } break;
     case NS_TOKEN_BREAK:
     case NS_TOKEN_CONTINUE: {
         i32 cl = ns_array_length(vm->call_stack);

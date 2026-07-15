@@ -525,6 +525,7 @@ static void gpu_mtl_capture_end_if_started(void) {
 }
 
 ns_bool gpu_request_device(view* v) {
+    if (_state.valid && _state.device.device != nil && _state.owner_view == v) return true;
     _state.owner_view = v;
     _state.semaphore = dispatch_semaphore_create(1);
     if (v != NULL && v->gpu_device != NULL) {

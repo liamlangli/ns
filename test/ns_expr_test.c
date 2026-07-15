@@ -435,6 +435,25 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "ref param mutates caller's struct.");
     }
 
+    // --- bare return from a void function ---
+    {
+        const char *src =
+            "struct point { x: f64, y: f64 }\n"
+            "fn set_once(v: ref point) void {\n"
+            "    v.x = 1.0\n"
+            "    return;\n"
+            "    v.x = 2.0\n"
+            "}\n"
+            "fn noop() void { return }\n"
+            "fn main() bool {\n"
+            "    let p = point { x: 0.0, y: 0.0 }\n"
+            "    set_once(ref p)\n"
+            "    noop()\n"
+            "    return p.x == 1.0\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "bare return exits void functions, including single-line bodies.");
+    }
+
     // --- block/closure expr: no captures, stored via typed var-def, then called.
     // Regression: ns_eval_local_var_def only accepted an exact type-index match,
     // but a closure's own synthesized NS_TYPE_FN symbol never equals a declared

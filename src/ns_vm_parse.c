@@ -1506,11 +1506,17 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     switch (n->jump_stmt.label.type) {
     case NS_TOKEN_RETURN: {
         szt l = ns_array_length(vm->call_stack);
-        if (l == 0) {
+        if (l == 0 || vm->call_stack[l - 1].callee == ns_null) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt not in fn.");
         }
         ns_symbol *callee = vm->call_stack[l - 1].callee;
         ns_fn_symbol *fn = ns_symbol_get_fn(callee);
+        if (n->jump_stmt.expr <= 0) {
+            if (!ns_type_is(fn->ret, NS_TYPE_VOID)) {
+                return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt requires a value in a non-void fn.");
+            }
+            break;
+        }
         // the return expr adopts the fn return type so number literals unify
         ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->jump_stmt.expr, fn->ret);
         if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};

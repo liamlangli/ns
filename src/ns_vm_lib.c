@@ -99,6 +99,24 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
     } else if (ns_str_equals_STR(call->callee->name, "sqrt")) {
         ns_value x = vm->symbol_stack[call->arg_offset].val;
         call->ret = (ns_value){.t = ns_type_f64, .f64 = sqrt(x.f64)};
+    } else if (ns_str_equals_STR(call->callee->name, "sin")) {
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = sin(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
+    } else if (ns_str_equals_STR(call->callee->name, "cos")) {
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = cos(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
+    } else if (ns_str_equals_STR(call->callee->name, "tan")) {
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = tan(ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val))};
+    } else if (ns_str_equals_STR(call->callee->name, "atan2")) {
+        f64 y = ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val);
+        f64 x = ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset + 1].val);
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = atan2(y, x)};
+    } else if (ns_str_equals_STR(call->callee->name, "ftos")) {
+        static char number[64];
+        f64 x = ns_eval_number_f64(vm, vm->symbol_stack[call->arg_offset].val);
+        snprintf(number, sizeof(number), "%.9g", x);
+        call->ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, ns_str_cstr(number))};
+    } else if (ns_str_equals_STR(call->callee->name, "stof")) {
+        ns_str s = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
+        call->ret = (ns_value){.t = ns_type_f64, .f64 = strtod(s.data, ns_null)};
     } else if (ns_str_equals_STR(call->callee->name, "substr")) {
         // substr(s, start, len) -> str : a copy of the [start, start+len) slice,
         // clamped to the bounds of s. Lets ns code turn a source span into text.

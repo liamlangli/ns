@@ -726,12 +726,8 @@ static void ns_wasm_emit_block(ns_wasm_fn_ctx *ctx, i32 block_idx, i32 fallthrou
     case NS_SSA_OP_RET:
         if (term->a >= 0) {
             ns_wasm_local_get(ctx, term->a);
-            ns_wasm_u8(&ctx->code, NS_WASM_RETURN);
-        } else {
-            // Void RET in dead/unreachable code — emit unreachable (polymorphic
-            // bottom type satisfies any WASM type requirement).
-            ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
         }
+        ns_wasm_u8(&ctx->code, NS_WASM_RETURN);
         break;
 
     case NS_SSA_OP_JMP:

@@ -133,6 +133,17 @@ ns_return_bool ns_parse_jump_stmt(ns_ast_ctx *ctx) {
         }
         ns_restore_state(ctx, end_state);
 
+        // A bare return may also end immediately before the closing brace of a
+        // single-line body (`fn f() void { return }`). Leave the brace for the
+        // enclosing compound-statement parser.
+        ns_parse_next_token(ctx);
+        if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+            ns_restore_state(ctx, end_state);
+            ns_ast_push(ctx, n);
+            return ns_return_ok(bool, true);
+        }
+        ns_restore_state(ctx, end_state);
+
         ret = ns_parse_expr(ctx);
         if (ns_return_is_error(ret)) return ret;
         if (ret.r) {
