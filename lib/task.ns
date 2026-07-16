@@ -3,14 +3,20 @@ mod task
 // language-level concurrency (see doc/async_and_task.md)
 //
 // A `task` is created by calling an `async fn`, or by dispatching a zero-arg
-// block or fn value onto a worker thread with `dispatch`. Variables a
+// block or fn value onto a queue level with `dispatch`. Variables a
 // dispatched block references are captured automatically and carried into
 // the worker: plain values are copied at dispatch time, references (refs,
 // arrays, dicts, strings) share their referent. `await expr` suspends the
 // current task until the task expr completes and yields its result.
 
-// run a zero-arg block or fn value on a worker thread; returns its task handle
-ref fn dispatch(f: any) task
+// Logical queue levels. Dispatching to the current level uses an inline
+// coroutine on the current thread; crossing levels starts a worker thread.
+fn queue_main() i32 { return 0 }
+fn queue_worker() i32 { return 1 }
+fn queue_idle() i32 { return 2 }
+
+// run a zero-arg block or fn value at `queue_*`; returns its task handle
+ref fn dispatch(queue: any, f: any) task
 
 // block the current task until t finishes or is cancelled
 ref fn wait(t: task) void

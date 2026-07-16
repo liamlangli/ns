@@ -51,6 +51,9 @@ static const char *ns_shader_test_src =
     "fn fs_main(data: FragmentInput) float4 {\n"
     "    return brighten(data.color, half_gain(0.5 as f32))\n"
     "}\n"
+    "fn cs_main() void {\n"
+    "    let n = 40 + 2\n"
+    "}\n"
     "fn bad_print(data: FragmentInput) float4 {\n"
     "    print(\"no\")\n"
     "    return data.color\n"
@@ -127,7 +130,8 @@ int main() {
 
     i32 vs = ns_shader_test_fn(&vm, "vs_main");
     i32 fs = ns_shader_test_fn(&vm, "fs_main");
-    ns_expect(vs >= 0 && fs >= 0, "vs_main and fs_main symbols exist.");
+    i32 cs = ns_shader_test_fn(&vm, "cs_main");
+    ns_expect(vs >= 0 && fs >= 0 && cs >= 0, "shader entry symbols exist.");
 
     // --- target/stage helpers ---
     ns_expect(ns_shader_target_from_str(ns_str_cstr("msl")) == NS_SHADER_MSL, "target msl resolves.");
@@ -136,6 +140,7 @@ int main() {
     ns_expect(ns_shader_target_from_str(ns_str_cstr("wgsl")) == NS_SHADER_TARGET_UNKNOWN, "unknown target rejected.");
     ns_expect(ns_shader_stage_infer(&vm, &ctx, vs) == NS_SHADER_STAGE_VERTEX, "vs_main infers vertex stage.");
     ns_expect(ns_shader_stage_infer(&vm, &ctx, fs) == NS_SHADER_STAGE_FRAGMENT, "fs_main infers fragment stage.");
+    ns_expect(ns_shader_stage_infer(&vm, &ctx, cs) == NS_SHADER_STAGE_COMPUTE, "cs_main infers compute stage.");
     ns_str glsl_entry = ns_shader_entry_name(NS_SHADER_GLSL_VULKAN, ns_str_cstr("vs_main"));
     ns_expect(ns_str_equals(glsl_entry, ns_str_cstr("main")), "glsl entry name is main.");
     ns_str msl_entry = ns_shader_entry_name(NS_SHADER_MSL, ns_str_cstr("vs_main"));
@@ -158,6 +163,23 @@ int main() {
             ns_expect(ns_shader_test_has(r.r, "float3 pos = data.position"), "msl let binding types are inferred.");
             ns_array_free(r.r.data);
         }
+    }
+
+    // --- compute: zero-parameter void fns become native compute entries ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "kernel void cs_main()"), "msl compute entry transpiles.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "[numthreads(1, 1, 1)]"), "hlsl compute entry transpiles.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "layout(local_size_x = 1") &&
+                      ns_shader_test_has(r.r, "cs_main();"),
+                  "glsl compute entry transpiles.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 
     // --- HLSL: both stages in one source ---
@@ -238,6 +260,16 @@ int main() {
             "    return msl.len > 0 && glsl.len > 0 && entry == \"main\"\n"
             "}\n";
         ns_expect(ns_shader_eval_bool(src), "runtime shader_transpile via use shader.");
+    }
+
+    // --- gpu module owns the dispatch_gpu wrapper and reaches the dynamically
+    // loaded backend; without a requested device submission returns false ---
+    {
+        const char *src =
+            "use gpu\n"
+            "fn cs_noop() void { let n = 1 }\n"
+            "fn main() bool { return !dispatch_gpu(cs_noop, 1, 1, 1) }\n";
+        ns_expect(ns_shader_eval_bool(src), "dispatch_gpu transpiles compute code and calls the gpu dylib backend.");
     }
 
     return 0;

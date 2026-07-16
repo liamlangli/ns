@@ -63,6 +63,12 @@ typedef enum {
     NS_TASK_CANCELLED,
 } ns_task_state;
 
+typedef enum {
+    NS_QUEUE_MAIN = 0,
+    NS_QUEUE_WORKER = 1,
+    NS_QUEUE_IDLE = 2,
+} ns_queue_level;
+
 // the eval-context fields of ns_vm that belong to a single task
 typedef struct ns_task_ectx {
     ns_call *call_stack;
@@ -79,6 +85,8 @@ typedef struct ns_task {
     volatile i32 state;      // ns_task_state; written under the vm lock
     volatile ns_bool cancel; // cooperative cancellation request
     ns_bool joined;
+    ns_bool thread_started;
+    ns_queue_level level;
     ns_value result;         // snapshot of the body's return value
     ns_vm *vm;
     ns_ast_ctx *ctx;
@@ -161,6 +169,7 @@ static ns_task_rt *ns_task_rt_get(ns_vm *vm) {
     ns_task_cond_init(&rt->done_cv);
     rt->main_task.id = 0;
     rt->main_task.state = NS_TASK_RUNNING;
+    rt->main_task.level = NS_QUEUE_MAIN;
     rt->main_task.vm = vm;
     rt->next_id = 1;
     rt->slice = NS_TASK_SLICE;
@@ -416,13 +425,14 @@ static void ns_task_thread_join(ns_task_thread th) {
 }
 #endif
 
-static ns_task *ns_task_create(ns_vm *vm, ns_ast_ctx *ctx) {
+static ns_task *ns_task_create(ns_vm *vm, ns_ast_ctx *ctx, ns_queue_level level) {
     ns_task_rt *rt = ns_task_rt_get(vm);
     ns_task *t = (ns_task *)ns_malloc(sizeof(ns_task));
     memset(t, 0, sizeof(ns_task));
     t->id = rt->next_id++;
     t->vm = vm;
     t->ctx = ctx;
+    t->level = level;
     t->state = NS_TASK_PENDING;
     t->result = ns_nil;
     t->next = rt->tasks;
@@ -431,15 +441,63 @@ static ns_task *ns_task_create(ns_vm *vm, ns_ast_ctx *ctx) {
     return t;
 }
 
-static ns_return_value ns_task_start(ns_vm *vm, ns_task *t, ns_type handle_t, ns_code_loc loc) {
+// Run a same-level dispatch as an inline stackful coroutine. The parent's VM
+// eval context is parked, a fresh task context is installed, and the closure
+// runs on the current OS thread. The child completes before dispatch returns;
+// suspension can still hand the VM lock to work running on other levels.
+static void ns_task_run_inline(ns_vm *vm, ns_task *t) {
     ns_task_rt *rt = (ns_task_rt *)vm->task_rt;
+    ns_task *parent = rt->current;
+    ns_task_ectx_save(vm, &parent->ectx);
+    ns_task_ectx_load(vm, &t->ectx);
+    rt->current = t;
+    t->state = NS_TASK_RUNNING;
+
+    ns_bool failed = false;
+    ns_value ret = ns_nil;
+    if (!t->cancel) {
+        ns_return_value r = ns_task_invoke(vm, t->ctx, t);
+        if (ns_return_is_error(r)) {
+            failed = true;
+            ns_warn("task", "task #%d failed: %.*s\n", t->id, r.e.msg.len, r.e.msg.data);
+        } else {
+            ret = r.r;
+        }
+    }
+    if (!failed && !t->cancel) {
+        t->result = ns_task_snapshot_value(vm, ret);
+        t->state = NS_TASK_DONE;
+    } else {
+        t->result = ns_nil;
+        t->state = NS_TASK_CANCELLED;
+    }
+    rt->live--;
+
+    ns_array_free(vm->call_stack);
+    ns_array_free(vm->scope_stack);
+    ns_array_free(vm->symbol_stack);
+    ns_array_free(vm->stack);
+    vm->stack_depth = 0;
+    ns_task_ectx_load(vm, &parent->ectx);
+    rt->current = parent;
+    t->joined = true;
+    ns_task_cond_broadcast(&rt->done_cv);
+}
+
+static ns_return_value ns_task_start(ns_vm *vm, ns_task *t, ns_type handle_t, ns_code_loc loc, ns_bool inline_same_level) {
+    ns_task_rt *rt = (ns_task_rt *)vm->task_rt;
+    ns_value handle = (ns_value){.t = handle_t, .o = (u64)t};
+    if (inline_same_level && rt->current && rt->current->level == t->level) {
+        ns_task_run_inline(vm, t);
+        return ns_return_ok(value, handle);
+    }
     if (!ns_task_thread_create(&t->thread, t)) {
         rt->live--;
         t->state = NS_TASK_CANCELLED;
         t->joined = true;
         return ns_return_error(value, loc, NS_ERR_RUNTIME, "failed to start task thread.");
     }
-    ns_value handle = (ns_value){.t = handle_t, .o = (u64)t};
+    t->thread_started = true;
     return ns_return_ok(value, handle);
 }
 
@@ -552,10 +610,10 @@ ns_return_value ns_task_spawn_async_call(ns_vm *vm, ns_ast_ctx *ctx, ns_symbol *
     }
     ns_scope_exit(vm);
 
-    ns_task *t = ns_task_create(vm, ctx);
+    ns_task *t = ns_task_create(vm, ctx, NS_QUEUE_WORKER);
     t->callee = callee_index;
     t->args = args;
-    return ns_task_start(vm, t, handle_t, loc);
+    return ns_task_start(vm, t, handle_t, loc, false);
 }
 
 // `task` module intrinsics; called from ns_eval_call_expr with the call frame
@@ -566,7 +624,20 @@ ns_return_bool ns_task_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_code_loc loc = vm->loc;
 
     if (ns_str_equals(name, ns_str_cstr("dispatch"))) {
-        ns_value closure = vm->symbol_stack[call->arg_offset].val;
+        ns_value queue = vm->symbol_stack[call->arg_offset].val;
+        i32 level_i = -1;
+        if (ns_type_is(queue.t, NS_TYPE_FN)) {
+            ns_symbol *tag = &vm->symbols[ns_type_index(queue.t)];
+            if (ns_str_equals(tag->lib, ns_str_cstr("task"))) {
+                if (ns_str_equals(tag->name, ns_str_cstr("queue_main"))) level_i = NS_QUEUE_MAIN;
+                else if (ns_str_equals(tag->name, ns_str_cstr("queue_worker"))) level_i = NS_QUEUE_WORKER;
+                else if (ns_str_equals(tag->name, ns_str_cstr("queue_idle"))) level_i = NS_QUEUE_IDLE;
+            }
+        }
+        if (level_i < 0) {
+            return ns_return_error(bool, loc, NS_ERR_RUNTIME, "dispatch queue must be queue_main, queue_worker, or queue_idle.");
+        }
+        ns_value closure = vm->symbol_stack[call->arg_offset + 1].val;
         if (!ns_type_is(closure.t, NS_TYPE_FN) && !ns_type_is(closure.t, NS_TYPE_BLOCK)) {
             return ns_return_error(bool, loc, NS_ERR_RUNTIME, "dispatch expects a block or fn value.");
         }
@@ -576,7 +647,7 @@ ns_return_bool ns_task_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
             return ns_return_error(bool, loc, NS_ERR_RUNTIME, "dispatch closure must take no arguments.");
         }
         ns_type handle_t = ns_task_find_type(vm, fn->ret);
-        ns_task *t = ns_task_create(vm, ctx);
+        ns_task *t = ns_task_create(vm, ctx, (ns_queue_level)level_i);
         t->callee = (i32)ns_type_index(closure.t);
         if (sym->type == NS_SYMBOL_BLOCK && sym->bc.st.stride > 0) {
             // snapshot the captures so the task outlives the dispatching scope
@@ -585,7 +656,7 @@ ns_return_bool ns_task_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
             const void *src = ns_type_in_stack(closure.t) ? (const void *)&vm->stack[closure.o] : (const void *)closure.o;
             memcpy(t->cap_base, src, (szt)stride);
         }
-        ns_return_value ret = ns_task_start(vm, t, handle_t, loc);
+        ns_return_value ret = ns_task_start(vm, t, handle_t, loc, true);
         if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
         call = ns_array_last(vm->call_stack); // spawn may grow the call stack storage
         call->ret = ret.r;
@@ -663,7 +734,7 @@ void ns_task_eval_exit(ns_vm *vm) {
     rt->main_holds = false;
     ns_task_unlock(vm);
     for (ns_task *t = rt->tasks; t; t = t->next) {
-        if (!t->joined) {
+        if (t->thread_started && !t->joined) {
             ns_task_thread_join(t->thread);
             t->joined = true;
         }

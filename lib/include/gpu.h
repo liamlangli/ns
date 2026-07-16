@@ -320,6 +320,7 @@ void gpu_end_pass(void);
 void gpu_commit(void);
 
 const char *gpu_shader_target(void);
+ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z);
 u32 gpu_create_buffer(i32 byte_len, i32 usage);
 void gpu_update_buffer(u32 buffer_id, void *data, i32 byte_len);
 u32 gpu_create_shader_source(const char *vertex_source, const char *fragment_source, const char *vertex_entry, const char *fragment_entry);

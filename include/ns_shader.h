@@ -27,6 +27,7 @@ typedef enum ns_shader_stage {
     NS_SHADER_STAGE_AUTO = 0, // infer from fn name/signature
     NS_SHADER_STAGE_VERTEX,
     NS_SHADER_STAGE_FRAGMENT,
+    NS_SHADER_STAGE_COMPUTE,
 } ns_shader_stage;
 
 ns_return_define(str, ns_str);

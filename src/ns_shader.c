@@ -1043,6 +1043,10 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
     if (e->target == NS_SHADER_MSL) {
         if (stage == NS_SHADER_STAGE_VERTEX) ns_shader_cstr(&e->out, "vertex ");
         if (stage == NS_SHADER_STAGE_FRAGMENT) ns_shader_cstr(&e->out, "fragment ");
+        if (stage == NS_SHADER_STAGE_COMPUTE) ns_shader_cstr(&e->out, "kernel ");
+    }
+    if (e->target == NS_SHADER_HLSL && stage == NS_SHADER_STAGE_COMPUTE) {
+        ns_shader_cstr(&e->out, "[numthreads(1, 1, 1)]\n");
     }
     ns_shader_try(ns_shader_type_name(e, s->fn.ret, &e->out, loc));
     ns_shader_cstr(&e->out, " ");
@@ -1070,6 +1074,12 @@ static ns_return_void ns_shader_emit_glsl_wrapper(ns_shader_emit *e, ns_shader_e
     ns_symbol *s = &e->vm->symbols[entry->fn_index];
     ns_ast_t *fn_node = &e->ctx->nodes[s->fn.ast];
     ns_code_loc loc = ns_shader_loc(e, fn_node);
+    if (entry->stage == NS_SHADER_STAGE_COMPUTE) {
+        ns_shader_cstr(&e->out, "layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;\n\nvoid main() {\n    ");
+        ns_shader_str(&e->out, s->name);
+        ns_shader_cstr(&e->out, "();\n}\n");
+        return ns_return_ok_void;
+    }
     ns_symbol *in_st = &e->vm->symbols[ns_type_index(s->fn.args[0].val.t)];
 
     if (entry->stage == NS_SHADER_STAGE_VERTEX) {
@@ -1165,6 +1175,7 @@ ns_shader_stage ns_shader_stage_infer(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_index) 
     if (ns_str_starts_with(s->name, ns_str_cstr("vs_")) || ns_str_equals(s->name, ns_str_cstr("vs"))) return NS_SHADER_STAGE_VERTEX;
     if (ns_str_starts_with(s->name, ns_str_cstr("fs_")) || ns_str_starts_with(s->name, ns_str_cstr("ps_")) || ns_str_equals(s->name, ns_str_cstr("fs")))
         return NS_SHADER_STAGE_FRAGMENT;
+    if (ns_str_starts_with(s->name, ns_str_cstr("cs_")) || ns_str_equals(s->name, ns_str_cstr("cs"))) return NS_SHADER_STAGE_COMPUTE;
 
     ns_type ret = s->fn.ret;
     if (!ns_type_is(ret, NS_TYPE_STRUCT)) return NS_SHADER_STAGE_AUTO;
@@ -1183,6 +1194,13 @@ static ns_return_void ns_shader_classify_entry(ns_shader_emit *e, ns_shader_entr
     ns_symbol *s = &e->vm->symbols[entry->fn_index];
     ns_ast_t *fn_node = &e->ctx->nodes[s->fn.ast];
     ns_code_loc loc = ns_shader_loc(e, fn_node);
+
+    if (entry->stage == NS_SHADER_STAGE_COMPUTE) {
+        if (ns_array_length(s->fn.args) != 0 || !ns_type_is(s->fn.ret, NS_TYPE_VOID)) {
+            return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a compute entry must take no parameters and return void.");
+        }
+        return ns_return_ok_void;
+    }
 
     if ((i32)ns_array_length(s->fn.args) != 1 || !ns_type_is(s->fn.args[0].val.t, NS_TYPE_STRUCT)) {
         return ns_return_error(void, loc, NS_ERR_EVAL, "shader: an entry fn must take exactly one struct parameter.");
@@ -1369,7 +1387,8 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_str stage_s = ns_eval_str(vm, vm->symbol_stack[call->arg_offset + 2].val);
         if (ns_str_equals(stage_s, ns_str_cstr("vertex"))) stage = NS_SHADER_STAGE_VERTEX;
         else if (ns_str_equals(stage_s, ns_str_cstr("fragment"))) stage = NS_SHADER_STAGE_FRAGMENT;
-        else return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: unknown stage, expected vertex | fragment.");
+        else if (ns_str_equals(stage_s, ns_str_cstr("compute"))) stage = NS_SHADER_STAGE_COMPUTE;
+        else return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: unknown stage, expected vertex | fragment | compute.");
     }
 
     ns_return_str src = ns_shader_transpile(vm, ctx, fn_index, target, stage);

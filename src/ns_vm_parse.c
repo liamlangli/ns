@@ -1082,7 +1082,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     i32 next = n->next;
-    ns_type arg0_t = ns_type_unknown;
+    ns_type arg1_t = ns_type_unknown;
     for (i32 a_i = 0, l = n->call_expr.arg_count; a_i < l; ++a_i) {
         ns_ast_t arg = ctx->nodes[next];
         // re-fetch each iteration: parsing a block arg pushes a global symbol,
@@ -1094,7 +1094,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_t)) return ret_t;
 
         ns_type t = ret_t.r;
-        if (a_i == 0) arg0_t = t;
+        if (a_i == 1) arg1_t = t;
         next = arg.next;
         // a numeric param accepts any numeric arg (converted when the call
         // pushes args in ns_eval_call_expr), matching designated-expr fields
@@ -1105,13 +1105,13 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
     fn_record = &vm->symbols[ns_type_index(fn)];
 
-    // `dispatch(f)` runs a zero-arg closure on a worker thread; the call's
+    // `dispatch(queue, f)` runs a zero-arg closure on a queue level; the call's
     // static type carries the closure's result type: task[R].
     if (fn_record->fn.fn.t.ref && ns_str_equals_STR(fn_record->lib, "task") && ns_str_equals_STR(fn_record->name, "dispatch")) {
-        if (n->call_expr.arg_count != 1 || !(ns_type_is(arg0_t, NS_TYPE_FN) || ns_type_is(arg0_t, NS_TYPE_BLOCK))) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "dispatch expects a single block or fn argument.");
+        if (n->call_expr.arg_count != 2 || !(ns_type_is(arg1_t, NS_TYPE_FN) || ns_type_is(arg1_t, NS_TYPE_BLOCK))) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "dispatch expects a queue tag followed by a block or fn argument.");
         }
-        ns_fn_symbol *cfn = ns_symbol_get_fn(&vm->symbols[ns_type_index(arg0_t)]);
+        ns_fn_symbol *cfn = ns_symbol_get_fn(&vm->symbols[ns_type_index(arg1_t)]);
         if (ns_array_length(cfn->args) > 0) {
             return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "dispatch closure must take no arguments.");
         }

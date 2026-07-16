@@ -997,6 +997,52 @@ id<MTLLibrary> _mtl_library_from_code(ns_str src) {
     return lib;
 }
 
+ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z) {
+    if (!_state.valid || _state.device.device == nil || _state.cmd_queue == nil || !source || !entry ||
+        threads_x <= 0 || threads_y <= 0 || threads_z <= 0) {
+        return false;
+    }
+
+    id<MTLLibrary> library = _mtl_library_from_code(ns_str_cstr((char *)source));
+    if (library == nil) return false;
+    NSString *entry_name = [NSString stringWithUTF8String: entry];
+    id<MTLFunction> function = [library newFunctionWithName: entry_name];
+    if (function == nil) {
+#ifndef ENABLE_ARC
+        [library release];
+#endif
+        return false;
+    }
+
+    NSError *error = nil;
+    id<MTLComputePipelineState> pipeline = [_state.device.device newComputePipelineStateWithFunction: function error: &error];
+    if (pipeline == nil) {
+        NSLog(@"Failed to create compute pipeline: %@", error);
+#ifndef ENABLE_ARC
+        [function release];
+        [library release];
+#endif
+        return false;
+    }
+
+    id<MTLCommandBuffer> command_buffer = [_state.cmd_queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+    [encoder setComputePipelineState: pipeline];
+    [encoder dispatchThreads: MTLSizeMake((NSUInteger)threads_x, (NSUInteger)threads_y, (NSUInteger)threads_z)
+       threadsPerThreadgroup: MTLSizeMake(1, 1, 1)];
+    [encoder endEncoding];
+    [command_buffer commit];
+    [command_buffer waitUntilCompleted];
+    ns_bool ok = command_buffer.status == MTLCommandBufferStatusCompleted;
+
+#ifndef ENABLE_ARC
+    [pipeline release];
+    [function release];
+    [library release];
+#endif
+    return ok;
+}
+
 gpu_shader gpu_create_shader(gpu_shader_desc *desc) {
     id<MTLLibrary> vertex_lib = nil;
     id<MTLLibrary> fragment_lib = nil;

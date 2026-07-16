@@ -1,6 +1,7 @@
 mod gpu
 
 use view
+use shader
 
 // Native GPU primitives, implemented per platform (Metal on Apple, DirectX 12 on
 // Windows; a no-op fallback on Linux), compiled to gpu.dylib/gpu.so and
@@ -37,6 +38,7 @@ ref fn gpu_destroy_device()
 // ---- scalar resource creation for ns FFI ----------------------------------
 
 ref fn gpu_shader_target() str
+ref fn gpu_dispatch_compute_source(source: str, entry: str, threads_x: i32, threads_y: i32, threads_z: i32) bool
 ref fn gpu_create_buffer(byte_len: i32, usage: i32) u32
 ref fn gpu_update_buffer(buffer_id: u32, data: [any], byte_len: i32)
 ref fn gpu_create_shader_source(vertex_source: str, fragment_source: str, vertex_entry: str, fragment_entry: str) u32
@@ -49,6 +51,15 @@ ref fn gpu_destroy_mesh_id(mesh_id: u32)
 ref fn gpu_begin_render_pass_id(pass_id: u32)
 ref fn gpu_set_pipeline_id(pipeline_id: u32)
 ref fn gpu_set_mesh_id(mesh_id: u32)
+
+// Transpile a zero-parameter ns fn explicitly returning void into a native compute shader and run
+// it over the requested thread grid. A GPU device must already be acquired.
+fn dispatch_gpu(f: any, threads_x: i32, threads_y: i32, threads_z: i32) bool {
+    let target = gpu_shader_target()
+    let source = shader_transpile_stage(f, target, "compute")
+    let entry = shader_entry(f, target)
+    return gpu_dispatch_compute_source(source, entry, threads_x, threads_y, threads_z)
+}
 
 // ---- per-frame submission (FFI-safe: handles + scalars) -------------------
 

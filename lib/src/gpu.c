@@ -53,6 +53,15 @@ void gpu_draw(int base, int count, int instance_count) { ns_unused(base); ns_unu
 void gpu_end_pass(void) {}
 void gpu_commit(void) {}
 
+ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z) {
+    ns_unused(source);
+    ns_unused(entry);
+    ns_unused(threads_x);
+    ns_unused(threads_y);
+    ns_unused(threads_z);
+    return false;
+}
+
 #endif
 
 const char *gpu_shader_target(void) {

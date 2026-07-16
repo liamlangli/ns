@@ -1,12 +1,12 @@
 # async, await and the dispatch api
 
 Language-level concurrency for ns is built from one primitive: the **task**.
-A task is a unit of work that runs concurrently with the code that created it
-and is observed through a first-class `task` handle. Tasks are created two
-ways, both of which return a `task` handle immediately:
+A task is a unit of work observed through a first-class `task` handle. Tasks
+are created two ways; cross-level work returns its handle immediately, while
+same-level dispatch returns an already-completed handle after its inline run:
 
 - calling an `async fn`
-- passing a block or a function value to `dispatch`
+- passing a queue tag plus a block or function value to `dispatch`
 
 ```ns
 use task
@@ -21,14 +21,14 @@ fn main() {
     let t = work(21)            // t: task[i32]; the body starts concurrently
     let r = await t             // suspend until finished, r == 42
 
-    // dispatch a block onto a worker thread. every variable the block
+    // dispatch a block onto the worker level. every variable the block
     // references is captured automatically and carried into the task.
     let base = 10
-    let d = dispatch() { in return base + 32 }
+    let d = dispatch(queue_worker) { in return base + 32 }
     let x = await d             // x == 42
 
     // a task can be waited on without consuming its result, or cancelled
-    let s = dispatch() { in
+    let s = dispatch(queue_idle) { in
         let i = 0
         loop i < 1000 {
             sleep(10)           // cooperative suspension point
@@ -49,7 +49,7 @@ VM-internal module: its functions are interpreter intrinsics, not FFI calls.
 
 | fn | signature | behavior |
 | -- | -- | -- |
-| `dispatch` | `(f: any) task` | run a zero-arg block or fn value on a new worker thread; returns its task handle |
+| `dispatch` | `(queue: any, f: any) task` | run a zero-arg block or fn value at `queue_main`, `queue_worker`, or `queue_idle`; same-level dispatch uses an inline coroutine |
 | `wait` | `(t: task) void` | block the current task until `t` finishes or is cancelled |
 | `cancel` | `(t: task) void` | request cooperative cancellation of `t` |
 | `done` | `(t: task) bool` | true once `t` has finished (normally or cancelled) |
@@ -75,7 +75,8 @@ let v = await expr   // expr must be task-typed
 - Calling an `async fn f(...) T` type-checks its arguments exactly like a
   normal call but the call expression has type `task[T]`, never `T`.
   `return` statements inside the async body still check against `T`.
-- `dispatch(f)` requires `f` to be a block or fn value taking no arguments;
+- `dispatch(queue, f)` requires a `queue_main`, `queue_worker`, or `queue_idle`
+  tag and an `f` that is a block or fn value taking no arguments;
   the call has type `task[R]` where `R` is the closure's return type. A
   block without an explicit return type infers it from its first `return`
   statement. Dispatching an `async fn` value is rejected — call it instead.
@@ -86,9 +87,11 @@ The interpreter implements tasks as **stackful concurrency**: every task owns
 a real execution stack for the whole of its run, so `await`, `wait` and
 `sleep` may appear at any depth of the call chain (unlike stackless
 coroutines, no function-coloring or state-machine transform is needed). In
-the current runtime each task's stack is an OS worker thread created at spawn
-time; the design permits swapping this for user-space fibers later without
-changing language semantics.
+Cross-level tasks use an OS worker thread. A dispatch targeting the caller's
+current logical level parks the caller's eval context and runs the child as an
+inline coroutine on the same OS thread, avoiding thread creation and handoff.
+The inline child completes before `dispatch` returns; its task handle is already
+done and remains compatible with `await`, `wait`, and result typing.
 
 Interpreter state (the eval stacks, symbol tables, string table) is guarded
 by a single **vm lock**. Exactly one task interprets code at a time; the lock
@@ -147,6 +150,29 @@ requests cancellation of every task still running and joins the worker
 threads before returning. Use `await`/`wait` to guarantee completion of work
 you care about. Task handles remain valid to query (`done`, `cancelled`)
 afterwards.
+
+## GPU dispatch
+
+`dispatch_gpu` lives in `lib/gpu.ns`, so GPU execution stays outside `bin/ns`
+and is resolved through the platform GPU dynamic library. The entry is an
+ordinary ns function that is transpiled to MSL on Metal, HLSL on DirectX 12,
+or GLSL on the fallback target:
+
+```ns
+use gpu
+
+fn cs_prepare() void {
+    let seed = 42
+}
+
+// A device must already have been acquired with gpu_request_device(view).
+let submitted = dispatch_gpu(cs_prepare, 64, 1, 1)
+```
+
+The current compute ABI intentionally accepts a zero-parameter function with
+an explicit `void` result. The three dimensions specify the dispatched thread
+grid; generated shaders use a `1 x 1 x 1` local group size. Buffer/resource
+parameters and invocation-id inputs are reserved for the next ABI extension.
 
 ## kernel fns (future work)
 

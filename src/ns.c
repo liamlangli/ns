@@ -140,7 +140,7 @@ void ns_help() {
     printf("  --wasm            emit webassembly module (.wasm)\n");
     printf("  --pe              emit windows pe executable (.exe, amd64)\n");
     printf("  --shader <target> transpile shader fns to msl | glsl | hlsl source\n");
-    printf("  --entry <name>    shader entry fn (default: every vs_*/fs_*/ps_* fn)\n");
+    printf("  --entry <name>    shader entry fn (default: every vs_*/fs_*/ps_*/cs_* fn)\n");
     printf("  --shader-bin      also compile the shader source when the platform\n");
     printf("                    toolchain is installed (xcrun metal / glslc / dxc)\n");
     printf("  -s --symbol       print symbol table\n");
@@ -1922,7 +1922,7 @@ static void ns_shader_compile_binary(ns_shader_target target, ns_str src_path, n
 #endif
     } break;
     case NS_SHADER_GLSL_VULKAN: {
-        const char *stage_name = stage == NS_SHADER_STAGE_VERTEX ? "vertex" : "fragment";
+        const char *stage_name = stage == NS_SHADER_STAGE_VERTEX ? "vertex" : stage == NS_SHADER_STAGE_COMPUTE ? "compute" : "fragment";
         if (ns_shader_tool_exists("glslc")) {
             snprintf(cmd, sizeof(cmd), "glslc -fshader-stage=%s %s -o %s.spv", stage_name, q.data, q.data);
         } else if (ns_shader_tool_exists("glslangValidator")) {
@@ -1939,7 +1939,7 @@ static void ns_shader_compile_binary(ns_shader_target target, ns_str src_path, n
             ns_warn("shader", "dxc not found; wrote source only.\n");
             break;
         }
-        const char *profile = stage == NS_SHADER_STAGE_VERTEX ? "vs_6_0" : "ps_6_0";
+        const char *profile = stage == NS_SHADER_STAGE_VERTEX ? "vs_6_0" : stage == NS_SHADER_STAGE_COMPUTE ? "cs_6_0" : "ps_6_0";
         snprintf(cmd, sizeof(cmd), "dxc -T %s -E %.*s %s -Fo %s.%.*s.dxil", profile, entry_name.len, entry_name.data, q.data, q.data, entry_name.len,
                  entry_name.data);
         if (system(cmd) != 0) ns_warn("shader", "dxil compile failed for %.*s.\n", src_path.len, src_path.data);
@@ -1977,7 +1977,7 @@ void ns_exec_shader(ns_str filename, ns_str target_s, ns_str entry, ns_str outpu
     ret = ns_vm_parse(&vm, &ctx); // runs `use` imports so simd structs resolve
     if (ns_return_is_error(ret)) ns_return_assert(ret);
 
-    // entries: --entry name, otherwise every main-TU vs_*/fs_*/ps_* fn
+    // entries: --entry name, otherwise every main-TU vs_*/fs_*/ps_*/cs_* fn
     ns_shader_entry_desc *entries = ns_null;
     for (i32 i = 0, l = (i32)ns_array_length(vm.symbols); i < l; ++i) {
         ns_symbol *s = &vm.symbols[i];
@@ -1986,18 +1986,18 @@ void ns_exec_shader(ns_str filename, ns_str target_s, ns_str entry, ns_str outpu
         if (entry.len > 0) {
             if (!ns_str_equals(s->name, entry)) continue;
         } else if (!(ns_str_starts_with(s->name, ns_str_cstr("vs_")) || ns_str_starts_with(s->name, ns_str_cstr("fs_")) ||
-                     ns_str_starts_with(s->name, ns_str_cstr("ps_")))) {
+                     ns_str_starts_with(s->name, ns_str_cstr("ps_")) || ns_str_starts_with(s->name, ns_str_cstr("cs_")))) {
             continue;
         }
         ns_shader_stage stage = ns_shader_stage_infer(&vm, &ctx, i);
         if (stage == NS_SHADER_STAGE_AUTO) {
-            ns_exit(1, "shader", "cannot infer the stage of %.*s; name it vs_*/fs_* or adjust its signature.\n", s->name.len, s->name.data);
+            ns_exit(1, "shader", "cannot infer the stage of %.*s; name it vs_*/fs_*/cs_* or adjust its signature.\n", s->name.len, s->name.data);
         }
         ns_array_push(entries, ((ns_shader_entry_desc){.fn_index = i, .stage = stage}));
     }
     if (ns_array_length(entries) == 0) {
         if (entry.len > 0) ns_exit(1, "shader", "entry fn %.*s not found.\n", entry.len, entry.data);
-        ns_exit(1, "shader", "no shader entry fns found (name them vs_*/fs_*/ps_* or pass --entry).\n");
+        ns_exit(1, "shader", "no shader entry fns found (name them vs_*/fs_*/ps_*/cs_* or pass --entry).\n");
     }
 
     if (target == NS_SHADER_GLSL_VULKAN) {
@@ -2006,7 +2006,9 @@ void ns_exec_shader(ns_str filename, ns_str target_s, ns_str entry, ns_str outpu
             ns_symbol *s = &vm.symbols[entries[i].fn_index];
             ns_return_str src = ns_shader_transpile_program(&vm, &ctx, &entries[i], 1, target);
             if (ns_return_is_error(src)) ns_return_assert(src);
-            ns_str suffix = entries[i].stage == NS_SHADER_STAGE_VERTEX ? ns_str_cstr(".vert") : ns_str_cstr(".frag");
+            ns_str suffix = entries[i].stage == NS_SHADER_STAGE_VERTEX ? ns_str_cstr(".vert")
+                            : entries[i].stage == NS_SHADER_STAGE_COMPUTE ? ns_str_cstr(".comp")
+                                                                         : ns_str_cstr(".frag");
             if (output.len == 0 && l > 1) printf("// ---- %.*s ----\n", s->name.len, s->name.data);
             ns_shader_emit_output(output, suffix, src.r, bin, target, ns_shader_entry_name(target, s->name), entries[i].stage);
             ns_array_free(src.r.data);

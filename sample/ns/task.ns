@@ -32,9 +32,9 @@ fn main() {
     let pair = fib_pair(10)
     print(`fib(10) + fib(11) = {await pair}\n`) // 144
 
-    // dispatch a block onto a worker thread; `base` is captured automatically
+    // dispatch a block onto the worker level; `base` is captured automatically
     let base = 1000
-    let d = dispatch() { in
+    let d = dispatch(queue_worker) { in
         sleep(20)
         return base + 337
     }
@@ -42,7 +42,7 @@ fn main() {
     print(`dispatch result: {await d}\n`) // 1337
 
     // cooperative cancellation
-    let s = dispatch() { in
+    let s = dispatch(queue_idle) { in
         let i = 0
         loop i < 1000000 {
             sleep(5)

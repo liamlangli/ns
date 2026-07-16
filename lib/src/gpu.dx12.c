@@ -473,6 +473,64 @@ void gpu_commit(void) {
     gpu_dx12_wait_for_gpu();
 }
 
+ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z) {
+    if (!_state.valid || !source || !entry || threads_x <= 0 || threads_y <= 0 || threads_z <= 0) return false;
+
+    ID3DBlob *shader = NULL;
+    ID3DBlob *errors = NULL;
+    HRESULT hr = D3DCompile(source, strlen(source), NULL, NULL, NULL, entry, "cs_5_1", 0, 0, &shader, &errors);
+    if (errors) ID3DBlob_Release(errors);
+    if (FAILED(hr) || !shader) return false;
+
+    D3D12_ROOT_SIGNATURE_DESC root_desc = {0};
+    root_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    ID3DBlob *root_blob = NULL;
+    hr = D3D12SerializeRootSignature(&root_desc, D3D_ROOT_SIGNATURE_VERSION_1, &root_blob, &errors);
+    if (errors) ID3DBlob_Release(errors);
+    if (FAILED(hr) || !root_blob) {
+        ID3DBlob_Release(shader);
+        return false;
+    }
+
+    ID3D12RootSignature *root = NULL;
+    hr = ID3D12Device_CreateRootSignature(_state.device, 0, ID3DBlob_GetBufferPointer(root_blob),
+                                          ID3DBlob_GetBufferSize(root_blob), &IID_ID3D12RootSignature, (void **)&root);
+    ID3DBlob_Release(root_blob);
+    if (FAILED(hr) || !root) {
+        ID3DBlob_Release(shader);
+        return false;
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC pipeline_desc = {0};
+    pipeline_desc.pRootSignature = root;
+    pipeline_desc.CS.pShaderBytecode = ID3DBlob_GetBufferPointer(shader);
+    pipeline_desc.CS.BytecodeLength = ID3DBlob_GetBufferSize(shader);
+    ID3D12PipelineState *pipeline = NULL;
+    hr = ID3D12Device_CreateComputePipelineState(_state.device, &pipeline_desc, &IID_ID3D12PipelineState, (void **)&pipeline);
+    ID3DBlob_Release(shader);
+    if (FAILED(hr) || !pipeline) {
+        ID3D12RootSignature_Release(root);
+        return false;
+    }
+
+    hr = ID3D12CommandAllocator_Reset(_state.command_allocator);
+    if (SUCCEEDED(hr)) hr = ID3D12GraphicsCommandList_Reset(_state.command_list, _state.command_allocator, pipeline);
+    if (SUCCEEDED(hr)) {
+        ID3D12GraphicsCommandList_SetComputeRootSignature(_state.command_list, root);
+        ID3D12GraphicsCommandList_Dispatch(_state.command_list, (UINT)threads_x, (UINT)threads_y, (UINT)threads_z);
+        hr = ID3D12GraphicsCommandList_Close(_state.command_list);
+    }
+    if (SUCCEEDED(hr)) {
+        ID3D12CommandList *lists[] = {(ID3D12CommandList *)_state.command_list};
+        ID3D12CommandQueue_ExecuteCommandLists(_state.queue, 1, lists);
+        gpu_dx12_wait_for_gpu();
+    }
+
+    ID3D12PipelineState_Release(pipeline);
+    ID3D12RootSignature_Release(root);
+    return SUCCEEDED(hr);
+}
+
 // ---- pixel format helpers (backend agnostic) -------------------------------
 
 int gpu_pixel_format_size(gpu_pixel_format format) {

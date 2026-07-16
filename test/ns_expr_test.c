@@ -654,7 +654,7 @@ int main() {
             "use task\n"
             "fn main() bool {\n"
             "    let base = 10\n"
-            "    let t = dispatch() { in return base + 32 }\n"
+            "    let t = dispatch(queue_worker) { in return base + 32 }\n"
             "    base = 100\n"
             "    return await t == 42\n"
             "}\n";
@@ -666,7 +666,7 @@ int main() {
         const char *src =
             "use task\n"
             "fn main() bool {\n"
-            "    let t = dispatch() { in return 1 }\n"
+            "    let t = dispatch(queue_worker) { in return 1 }\n"
             "    wait(t)\n"
             "    return done(t) && !cancelled(t)\n"
             "}\n";
@@ -679,7 +679,7 @@ int main() {
         const char *src =
             "use task\n"
             "fn main() bool {\n"
-            "    let t = dispatch() { in\n"
+            "    let t = dispatch(queue_worker) { in\n"
             "        let i = 0\n"
             "        loop i < 100000 {\n"
             "            sleep(5)\n"
@@ -734,10 +734,37 @@ int main() {
         const char *src =
             "use task\n"
             "fn main() bool {\n"
-            "    let t = dispatch({ in return 40 + 2 })\n"
+            "    let t = dispatch(queue_worker, { in return 40 + 2 })\n"
             "    return await t == 42\n"
             "}\n";
         ns_expect(ns_expr_eval_bool(src), "dispatched block infers its return type.");
+    }
+
+    // --- dispatching to the current logical level uses the inline coroutine
+    // path; the task is complete when dispatch returns ---
+    {
+        const char *src =
+            "use task\n"
+            "fn main() bool {\n"
+            "    let t = dispatch(queue_main) { in return 42 }\n"
+            "    return done(t) && (await t) == 42\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "same-level dispatch completes on the inline coroutine path.");
+    }
+
+    // --- a worker dispatching more work to queue_worker stays on its worker
+    // thread and composes through a completed task handle ---
+    {
+        const char *src =
+            "use task\n"
+            "fn main() bool {\n"
+            "    let outer = dispatch(queue_worker) { in\n"
+            "        let inner = dispatch(queue_worker) { in return 40 + 2 }\n"
+            "        return done(inner) && (await inner) == 42\n"
+            "    }\n"
+            "    return await outer\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "nested same-level worker dispatch uses the inline coroutine path.");
     }
 
     // --- tasks compose: an async fn may spawn and await other tasks ---

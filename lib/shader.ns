@@ -19,7 +19,8 @@ mod shader
 // (vs_* / fs_* / ps_*) or its signature.
 ref fn shader_transpile(f: any, target: str) str
 
-// Transpile with an explicit stage: "vertex" | "fragment".
+// Transpile with an explicit stage: "vertex" | "fragment" | "compute".
+// Compute entries currently take no parameters and return void.
 ref fn shader_transpile_stage(f: any, target: str, stage: str) str
 
 // Entry-point name for gpu_shader_stage_desc.entry: the fn name for msl/hlsl,
