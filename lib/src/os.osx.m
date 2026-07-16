@@ -78,7 +78,7 @@ const char *os_open_file_dialog(const char *title) {
     path[0] = '\0';
 
     @autoreleasepool {
-        __block NSString *selected = nil;
+        __block NSString *selected = NULL;
         void (^show_panel)(void) = ^{
             NSOpenPanel *panel = [NSOpenPanel openPanel];
             panel.canChooseFiles = YES;
@@ -117,7 +117,7 @@ const char *os_save_file_dialog(const char *title, const char *suggested_name) {
     static char path[4096];
     path[0] = '\0';
     @autoreleasepool {
-        __block NSString *selected = nil;
+        __block NSString *selected = NULL;
         void (^show_panel)(void) = ^{
             NSSavePanel *panel = [NSSavePanel savePanel];
             panel.canCreateDirectories = YES;
@@ -139,7 +139,7 @@ const char *os_open_folder_dialog(const char *title) {
     static char path[4096];
     path[0] = '\0';
     @autoreleasepool {
-        __block NSString *selected = nil;
+        __block NSString *selected = NULL;
         void (^show_panel)(void) = ^{
             NSOpenPanel *panel = [NSOpenPanel openPanel];
             panel.canChooseFiles = NO;

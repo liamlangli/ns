@@ -149,5 +149,23 @@ int main() {
                   "old numeric suffixes are identifiers and suffixes do not split identifiers.");
     }
 
+    // A minus immediately followed by a number remains an operator. Negative
+    // values are represented by the parser as unary expressions, which keeps
+    // subtraction unambiguous without requiring whitespace (`width-54.0`).
+    {
+        i32 n = ns_token_lex("width-54.0 -2 5--3", ts, 16);
+        ns_expect(n == 9 &&
+                      ns_token_is(ts[0], NS_TOKEN_IDENTIFIER, "width") &&
+                      ns_token_is(ts[1], NS_TOKEN_ADD_OP, "-") &&
+                      ns_token_is(ts[2], NS_TOKEN_FLT_LITERAL, "54.0") &&
+                      ns_token_is(ts[3], NS_TOKEN_ADD_OP, "-") &&
+                      ns_token_is(ts[4], NS_TOKEN_INT_LITERAL, "2") &&
+                      ns_token_is(ts[5], NS_TOKEN_INT_LITERAL, "5") &&
+                      ns_token_is(ts[6], NS_TOKEN_ADD_OP, "-") &&
+                      ns_token_is(ts[7], NS_TOKEN_ADD_OP, "-") &&
+                      ns_token_is(ts[8], NS_TOKEN_INT_LITERAL, "3"),
+                  "minus before numeric literals always lexes as an operator.");
+    }
+
     return 0;
 }

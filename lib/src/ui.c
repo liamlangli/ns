@@ -396,17 +396,57 @@ static const char *ui_scene_grid_shader_src =
 "  if (ray_t < 0.0 || ray_t > 1.0) return float4(0.0);\n"
 "  float2 ground = mix(near_p, far_p, ray_t).xz;\n"
 "  float extent = grid.params.x;\n"
-"  float edge = 1.0 - smoothstep(extent * 0.78, extent, max(abs(ground.x), abs(ground.y)));\n"
+"  float radial = length(ground);\n"
+"  float edge_width = max(fwidth(radial) * 1.5, extent * 0.008);\n"
+"  float edge = 1.0 - smoothstep(extent - edge_width, extent, radial);\n"
 "  if (edge <= 0.0) return float4(0.0);\n"
 "  float minor = grid_coverage(ground, grid.params.y, 0.52);\n"
 "  float major = grid_coverage(ground, grid.params.z, 1.15);\n"
-"  float3 base = float3(0.961, 0.953, 0.945);\n"
-"  float3 minor_color = float3(0.855, 0.831, 0.812);\n"
-"  float3 major_color = float3(0.710, 0.675, 0.643);\n"
-"  float3 color = mix(base, minor_color, minor * 0.72);\n"
-"  color = mix(color, major_color, major * 0.88);\n"
-"  return float4(color, edge);\n"
+"  float line = max(minor, major);\n"
+"  return float4(0.0, 0.0, 0.0, line * edge);\n"
 "}\n";
+
+static ns_bool ui_mat4_inverse(const f32 m[16], f32 out[16]) {
+    f32 inv[16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] +
+             m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] -
+             m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] +
+             m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] -
+              m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] -
+             m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] +
+             m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] -
+             m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] +
+              m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] +
+             m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] -
+             m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] +
+              m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] -
+              m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] -
+             m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] +
+             m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] -
+              m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] +
+              m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+
+    f32 determinant = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
+    if (fabsf(determinant) <= 1e-8f) return false;
+    determinant = 1.0f / determinant;
+    for (i32 i = 0; i < 16; i++) out[i] = inv[i] * determinant;
+    return true;
+}
 
 static f64 ui_clamp_f64(f64 v, f64 lo, f64 hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -891,7 +931,6 @@ void ui_stroke_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
 }
 
 static void ui_create_gpu_resources(ui_renderer *r) {
-    ns_unused(ui_scene_grid_shader_src);
     f32 screen[2] = {(f32)r->width, (f32)r->height};
     r->screen_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
         .size = sizeof(screen),
@@ -907,6 +946,11 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->vertex_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
         .size = r->vertex_capacity * UI_VERTEX_STRIDE,
         .type = BUFFER_VERTEX,
+        .usage = USAGE_DEFAULT,
+    });
+    r->scene_grid_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
+        .size = (int)sizeof(ui_scene_grid_uniforms),
+        .type = BUFFER_UNIFORM,
         .usage = USAGE_DEFAULT,
     });
 
@@ -947,6 +991,11 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     shader_desc.vertex.entry = ns_str_cstr("ui_vs");
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_msdf");
     r->shader_msdf = gpu_create_shader(&shader_desc);
+    shader_desc.vertex.source = ns_str_cstr(ui_scene_grid_shader_src);
+    shader_desc.vertex.entry = ns_str_cstr("ui_scene_grid_vs");
+    shader_desc.fragment.source = ns_str_cstr(ui_scene_grid_shader_src);
+    shader_desc.fragment.entry = ns_str_cstr("ui_scene_grid_fs");
+    r->shader_scene_grid = gpu_create_shader(&shader_desc);
 
     gpu_pipeline_desc pipe = {0};
     pipe.layout.buffers[0] = (gpu_vertex_buffer_layout_state){.stride = UI_VERTEX_STRIDE, .step_func = VERTEX_STEP_PER_VERTEX, .step_rate = 1};
@@ -965,7 +1014,14 @@ static void ui_create_gpu_resources(ui_renderer *r) {
         .dst_factor_alpha = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
         .op_alpha = BLEND_OP_ADD,
     };
-    pipe.depth.format = PIXELFORMAT_NONE;
+    // Apple views expose a Depth32Float attachment on their screen render
+    // pass. Metal requires every pipeline used by that pass to declare the
+    // same attachment format, even when the draw does not use depth testing.
+    // Keep UI ordering unchanged by accepting every fragment without writing
+    // depth.
+    pipe.depth.format = PIXELFORMAT_DEPTH;
+    pipe.depth.compare_func = COMPARE_ALWAYS;
+    pipe.depth.write_enabled = false;
     pipe.primitive_type = PRIMITIVE_TRIANGLES;
     pipe.index_type = INDEX_NONE;
     pipe.cull_mode = CULL_NONE;
@@ -977,6 +1033,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->pipeline_batch = gpu_create_pipeline(&pipe);
     pipe.shader = r->shader_msdf;
     r->pipeline_msdf = gpu_create_pipeline(&pipe);
+    pipe.shader = r->shader_scene_grid;
+    r->pipeline_scene_grid = gpu_create_pipeline(&pipe);
 
     r->binding_white_image = gpu_create_binding(&(gpu_binding_desc){
         .pipeline = r->pipeline_image,
@@ -994,14 +1052,22 @@ static void ui_create_gpu_resources(ui_renderer *r) {
         },
         .textures = {{.texture = r->font_texture, .name = ns_str_cstr("tex")}},
     });
+    r->binding_scene_grid = gpu_create_binding(&(gpu_binding_desc){
+        .pipeline = r->pipeline_scene_grid,
+        .buffers = {
+            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
+            {.buffer = r->scene_grid_buffer, .name = ns_str_cstr("grid")},
+        },
+    });
     r->mesh = gpu_create_mesh(&(gpu_mesh_desc){
         .buffers = {r->vertex_buffer},
         .pipeline = r->pipeline_image,
     });
     r->screen_pass = (gpu_render_pass){.id = 0};
     r->gpu_ready = r->screen_buffer.id && r->clip_buffer.id && r->vertex_buffer.id && r->white_texture.id &&
-                   r->font_texture.id && r->pipeline_image.id && r->pipeline_batch.id && r->pipeline_msdf.id &&
-                   r->binding_white_image.id && r->binding_font_msdf.id && r->mesh.id;
+                   r->font_texture.id && r->scene_grid_buffer.id && r->pipeline_image.id &&
+                   r->pipeline_batch.id && r->pipeline_msdf.id && r->pipeline_scene_grid.id &&
+                   r->binding_white_image.id && r->binding_font_msdf.id && r->binding_scene_grid.id && r->mesh.id;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -1193,6 +1259,10 @@ void ui_renderer_destroy(ui_renderer *r) {
     }
     if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
     if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
+    if (r->binding_scene_grid.id) gpu_destroy_binding(r->binding_scene_grid);
+    if (r->scene_grid_buffer.id) gpu_destroy_buffer(r->scene_grid_buffer);
+    if (r->pipeline_scene_grid.id) gpu_destroy_pipeline(r->pipeline_scene_grid);
+    if (r->shader_scene_grid.id) gpu_destroy_shader(r->shader_scene_grid);
     for (i32 i = 0; i < 3; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
     free(r);
@@ -1494,6 +1564,9 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             gpu_update_buffer_desc(batch->offset_buffer, (ns_data){offset, sizeof(offset)});
             gpu_set_pipeline(r->pipeline_batch);
             gpu_set_binding(batch->binding);
+        } else if (cmd->kind == UI_KIND_SCENE_GRID) {
+            gpu_set_pipeline(r->pipeline_scene_grid);
+            gpu_set_binding(r->binding_scene_grid);
         } else if (cmd->kind == UI_KIND_MSDF) {
             gpu_set_pipeline(r->pipeline_msdf);
             if (cmd->texture_id == UI_FONT_ZH_TEXTURE && r->binding_font_zh_msdf.id) {
@@ -1671,6 +1744,24 @@ void ui_scene_begin(ui_scene *scene, f64 x, f64 y, f64 width, f64 height, f32 *v
     memcpy(scene->view_projection, view_projection, sizeof(scene->view_projection));
     ui_fill_rect(scene->renderer, x, y, width, height, background, 0.0);
     ui_push_clip(scene->renderer, x, y, width, height); scene->begun = true;
+}
+
+void ui_scene_draw_grid(ui_scene *scene, f64 extent, f64 minor_spacing, f64 major_spacing) {
+    if (!scene || !scene->begun || extent <= 0.0 || minor_spacing <= 0.0 || major_spacing <= 0.0) return;
+    ui_renderer *r = scene->renderer;
+    ui_scene_grid_uniforms grid = {0};
+    if (!r || !ui_mat4_inverse(scene->view_projection, grid.inverse_view_projection)) return;
+    grid.viewport[0] = (f32)scene->x;
+    grid.viewport[1] = (f32)scene->y;
+    grid.viewport[2] = (f32)scene->width;
+    grid.viewport[3] = (f32)scene->height;
+    grid.params[0] = (f32)extent;
+    grid.params[1] = (f32)minor_spacing;
+    grid.params[2] = (f32)major_spacing;
+    gpu_update_buffer_desc(r->scene_grid_buffer, (ns_data){&grid, sizeof(grid)});
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    ui_push_quad_ex(r, scene->x, scene->y, scene->x + scene->width, scene->y + scene->height,
+                    0.0, 0.0, 1.0, 1.0, 0xffffffffu, UI_KIND_SCENE_GRID, 0.0, 0.0, 0.0);
 }
 
 void ui_scene_draw_mesh(ui_scene *scene, i32 mesh_id, f32 *model, i32 flags) {

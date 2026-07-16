@@ -135,6 +135,35 @@ ns_return_bool ns_parse_expr_rewind(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, true);
 }
 
+static ns_bool ns_parse_trailing_block_ahead(ns_ast_ctx *ctx) {
+    ns_ast_state state = ns_save_state(ctx);
+    ns_bool result = false;
+
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) goto done;
+    ns_token_skip_eol(ctx);
+    if (!ns_parse_next_token(ctx)) goto done;
+
+    if (ctx->token.type == NS_TOKEN_IN) {
+        result = true;
+        goto done;
+    }
+
+    while (ctx->token.type == NS_TOKEN_IDENTIFIER) {
+        if (!ns_parse_next_token(ctx)) goto done;
+        if (ctx->token.type == NS_TOKEN_IN) {
+            result = true;
+            goto done;
+        }
+        if (ctx->token.type != NS_TOKEN_COMMA && ctx->token.type != NS_TOKEN_EOL) goto done;
+        ns_token_skip_eol(ctx);
+        if (!ns_parse_next_token(ctx)) goto done;
+    }
+
+done:
+    ns_restore_state(ctx, state);
+    return result;
+}
+
 ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
@@ -171,9 +200,7 @@ ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
 
     // check for trailing block
     ns_ast_state block_state = ns_save_state(ctx);
-    ns_parse_next_token(ctx);
-    if (ctx->token.type == NS_TOKEN_OPEN_BRACE) {
-        ns_restore_state(ctx, block_state);
+    if (ns_parse_trailing_block_ahead(ctx)) {
         ns_return_bool block_ret = ns_parse_block_expr(ctx);
         if (ns_return_is_error(block_ret)) return block_ret;
         if (block_ret.r) {
@@ -191,10 +218,11 @@ ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
                 ctx->nodes[arg].next = block_expr;
             }
             call->call_expr.arg_count++;
+            ctx->current = call_index;
+            return ns_return_ok(bool, true);
         }
-    } else {
-        ns_restore_state(ctx, block_state);
     }
+    ns_restore_state(ctx, block_state);
 
     ctx->current = call_index;
     return ns_return_ok(bool, true);

@@ -79,6 +79,7 @@ extern i32 ui_scene_mesh_create(void *);
 extern ns_bool ui_scene_mesh_update(void *, i32, void *, i32, void *, i32);
 extern void ui_scene_mesh_destroy(void *, i32);
 extern void ui_scene_begin(void *, f64, f64, f64, f64, void *, u32);
+extern void ui_scene_draw_grid(void *, f64, f64, f64);
 extern void ui_scene_draw_mesh(void *, i32, void *, i32);
 extern void ui_scene_draw_lines(void *, void *, i32, u32, f64);
 extern void ui_scene_draw_points(void *, void *, i32, u32, f64);
@@ -462,6 +463,11 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     }
     else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_begin")) {
         ui_scene_begin(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_embedded_arg_pointer(vm, 5), ns_eval_number_u32(vm, ns_embedded_arg(vm, 6)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_draw_grid")) {
+        ui_scene_draw_grid(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)));
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }

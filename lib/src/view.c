@@ -26,9 +26,10 @@ void view_on_mouse_move(view* v, f64 x, f64 y) {
     if (!v) return;
     v->mouse_x = x;
     v->mouse_y = y;
+    ns_bool dragging = v->mouse_down || v->mouse_right_down || v->mouse_middle_down;
     view_on_pointer_event(v, VIEW_INPUT_DEVICE_MOUSE,
-                          v->mouse_down ? VIEW_INPUT_PHASE_MOVED : VIEW_INPUT_PHASE_HOVER,
-                          0, x, y, v->mouse_down ? 1.0 : 0.0, 0.0, 0.0, 0.0,
+                          dragging ? VIEW_INPUT_PHASE_MOVED : VIEW_INPUT_PHASE_HOVER,
+                          0, x, y, dragging ? 1.0 : 0.0, 0.0, 0.0, 0.0,
                           view_key_modifiers());
 }
 
@@ -105,6 +106,12 @@ void view_on_gesture(view *v, f64 pan_x, f64 pan_y, f64 zoom_factor, f64 rotatio
     view_gestures.pan_y += pan_y;
     if (zoom_factor > 0.0) view_gestures.zoom_factor *= zoom_factor;
     view_gestures.rotation += rotation;
+}
+
+void view_on_orbit_gesture(view *v, f64 orbit_x, f64 orbit_y) {
+    if (!v) return;
+    view_gestures.orbit_x += orbit_x;
+    view_gestures.orbit_y += orbit_y;
 }
 
 i32 view_input_count(view *v) {

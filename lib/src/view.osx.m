@@ -341,6 +341,23 @@ static void view_osx_update_mouse(NSEvent *event) {
     view_osx_update_mouse(event);
 }
 
+- (void)otherMouseDown:(NSEvent*)event {
+    if ([event buttonNumber] != 2) return;
+    view_osx_update_mouse(event);
+    view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_MIDDLE, VIEW_BUTTON_ACTION_PRESS);
+}
+
+- (void)otherMouseUp:(NSEvent*)event {
+    if ([event buttonNumber] != 2) return;
+    view_osx_update_mouse(event);
+    view_on_mouse_btn(&_view, VIEW_MOUSE_BUTTON_MIDDLE, VIEW_BUTTON_ACTION_RELEASE);
+}
+
+- (void)otherMouseDragged:(NSEvent*)event {
+    if ([event buttonNumber] != 2) return;
+    view_osx_update_mouse(event);
+}
+
 - (void)keyDown:(NSEvent*)event {
     // Capture the modifiers carried by this exact key event. Relying only on a
     // preceding flagsChanged delivery can make a quick Cmd+Z look like plain Z.

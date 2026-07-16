@@ -625,23 +625,11 @@ case 'l': {
             t->type = NS_TOKEN_RETURN_TYPE;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
-        } else if (s[i + 1] >= '0' && s[i + 1] <= '9') {
-            i++;
-            while (s[i] >= '0' && s[i] <= '9') {
-                i++;
-            }
-            if (s[i] == '.') {
-                // parse float literal
-                i = ns_token_float_literal(t, s, f + 1);
-                t->val.data--;
-                t->val.len++;
-                to = i;
-            } else {
-                i = ns_token_number_suffix(t, s, i);
-                t->val = ns_str_range(s + f, i - f);
-                to = i;
-            }
         } else {
+            // Keep '-' as an operator even when it directly precedes a number.
+            // The parser handles negative values as unary expressions. Treating
+            // the sign as part of the literal makes `width-54.0` tokenize as two
+            // operands and silently drops the subtraction.
             t->type = NS_TOKEN_ADD_OP;
             t->val = ns_str_range(s + f, 1);
             to = i + 1;

@@ -23,6 +23,41 @@ static MTLTextureType _mtl_texture_type(gpu_texture_type type) {
 }
 
 static MTLPixelFormat _mtl_pixel_format(gpu_pixel_format format) {
+#if TARGET_OS_IOS
+    if (@available(iOS 16.4, *)) {
+        switch (format) {
+            case PIXELFORMAT_BC1_RGBA: return MTLPixelFormatBC1_RGBA;
+            case PIXELFORMAT_BC2_RGBA: return MTLPixelFormatBC2_RGBA;
+            case PIXELFORMAT_BC3_RGBA: return MTLPixelFormatBC3_RGBA;
+            case PIXELFORMAT_BC3_SRGBA: return MTLPixelFormatBC3_RGBA_sRGB;
+            case PIXELFORMAT_BC4_R: return MTLPixelFormatBC4_RUnorm;
+            case PIXELFORMAT_BC4_RSN: return MTLPixelFormatBC4_RSnorm;
+            case PIXELFORMAT_BC5_RG: return MTLPixelFormatBC5_RGUnorm;
+            case PIXELFORMAT_BC5_RGSN: return MTLPixelFormatBC5_RGSnorm;
+            case PIXELFORMAT_BC6H_RGBF: return MTLPixelFormatBC6H_RGBFloat;
+            case PIXELFORMAT_BC6H_RGBUF: return MTLPixelFormatBC6H_RGBUfloat;
+            case PIXELFORMAT_BC7_RGBA: return MTLPixelFormatBC7_RGBAUnorm;
+            case PIXELFORMAT_BC7_SRGBA: return MTLPixelFormatBC7_RGBAUnorm_sRGB;
+            default: break;
+        }
+    }
+#else
+    switch (format) {
+        case PIXELFORMAT_BC1_RGBA: return MTLPixelFormatBC1_RGBA;
+        case PIXELFORMAT_BC2_RGBA: return MTLPixelFormatBC2_RGBA;
+        case PIXELFORMAT_BC3_RGBA: return MTLPixelFormatBC3_RGBA;
+        case PIXELFORMAT_BC3_SRGBA: return MTLPixelFormatBC3_RGBA_sRGB;
+        case PIXELFORMAT_BC4_R: return MTLPixelFormatBC4_RUnorm;
+        case PIXELFORMAT_BC4_RSN: return MTLPixelFormatBC4_RSnorm;
+        case PIXELFORMAT_BC5_RG: return MTLPixelFormatBC5_RGUnorm;
+        case PIXELFORMAT_BC5_RGSN: return MTLPixelFormatBC5_RGSnorm;
+        case PIXELFORMAT_BC6H_RGBF: return MTLPixelFormatBC6H_RGBFloat;
+        case PIXELFORMAT_BC6H_RGBUF: return MTLPixelFormatBC6H_RGBUfloat;
+        case PIXELFORMAT_BC7_RGBA: return MTLPixelFormatBC7_RGBAUnorm;
+        case PIXELFORMAT_BC7_SRGBA: return MTLPixelFormatBC7_RGBAUnorm_sRGB;
+        default: break;
+    }
+#endif
     switch (format) {
         case PIXELFORMAT_R8: return MTLPixelFormatR8Unorm;
         case PIXELFORMAT_R8SN: return MTLPixelFormatR8Snorm;
@@ -67,20 +102,20 @@ static MTLPixelFormat _mtl_pixel_format(gpu_pixel_format format) {
         case PIXELFORMAT_RGBA32F: return MTLPixelFormatRGBA32Float;
         case PIXELFORMAT_DEPTH: return MTLPixelFormatDepth32Float;
         case PIXELFORMAT_DEPTH_STENCIL: return MTLPixelFormatDepth32Float_Stencil8;
-        case PIXELFORMAT_BC1_RGBA: return MTLPixelFormatBC1_RGBA;
-        case PIXELFORMAT_BC2_RGBA: return MTLPixelFormatBC2_RGBA;
-        case PIXELFORMAT_BC3_RGBA: return MTLPixelFormatBC3_RGBA;
-        case PIXELFORMAT_BC3_SRGBA: return MTLPixelFormatBC3_RGBA_sRGB;
-        case PIXELFORMAT_BC4_R: return MTLPixelFormatBC4_RUnorm;
-        case PIXELFORMAT_BC4_RSN: return MTLPixelFormatBC4_RSnorm;
-        case PIXELFORMAT_BC5_RG: return MTLPixelFormatBC5_RGUnorm;
-        case PIXELFORMAT_BC5_RGSN: return MTLPixelFormatBC5_RGSnorm;
-        case PIXELFORMAT_BC6H_RGBF: return MTLPixelFormatBC6H_RGBFloat;
-        case PIXELFORMAT_BC6H_RGBUF: return MTLPixelFormatBC6H_RGBUfloat;
-        case PIXELFORMAT_BC7_RGBA: return MTLPixelFormatBC7_RGBAUnorm;
-        case PIXELFORMAT_BC7_SRGBA: return MTLPixelFormatBC7_RGBAUnorm_sRGB;
         case _PIXELFORMAT_DEFAULT:
         case PIXELFORMAT_NONE:
+        case PIXELFORMAT_BC1_RGBA:
+        case PIXELFORMAT_BC2_RGBA:
+        case PIXELFORMAT_BC3_RGBA:
+        case PIXELFORMAT_BC3_SRGBA:
+        case PIXELFORMAT_BC4_R:
+        case PIXELFORMAT_BC4_RSN:
+        case PIXELFORMAT_BC5_RG:
+        case PIXELFORMAT_BC5_RGSN:
+        case PIXELFORMAT_BC6H_RGBF:
+        case PIXELFORMAT_BC6H_RGBUF:
+        case PIXELFORMAT_BC7_RGBA:
+        case PIXELFORMAT_BC7_SRGBA:
         case PIXELFORMAT_PVRTC_RGB_2BPP:
         case PIXELFORMAT_PVRTC_RGB_4BPP:
         case PIXELFORMAT_PVRTC_RGBA_2BPP:
@@ -703,7 +738,7 @@ bool ustring_match(ns_str a, NSString *b) {
 }
 
 i32 get_parameter_index(ns_str a, MTLRenderPipelineReflection *reflection) {
-    if (@available(iOS 16.0, *)) {
+    if (@available(macOS 13.0, iOS 16.0, tvOS 16.0, visionOS 1.0, *)) {
         for (u32 i = 0; i < reflection.vertexBindings.count; ++i) {
             id<MTLBinding> binding = reflection.vertexBindings[i];
             if (ustring_match(a, binding.name)) {

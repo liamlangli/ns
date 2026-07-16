@@ -291,9 +291,6 @@ ns_return_bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
         ns_ast_push(ctx, n);
         return ns_return_ok(bool, true);
     }
-
-    ns_restore_state(ctx, state);
-    return ns_return_ok(bool, false);
 }
 
 ns_return_bool ns_parse_iteration_stmt(ns_ast_ctx *ctx) {

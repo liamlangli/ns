@@ -69,23 +69,30 @@ int main(void) {
 
     char app_root[] = "/tmp/ns-project-app-XXXXXX";
     ns_expect(mkdtemp(app_root) != ns_null, "project test creates app fixture directory.");
+    char app_assets[PATH_MAX], app_asset_file[PATH_MAX];
+    path(app_assets, app_root, "assets");
+    path(app_asset_file, app_root, "assets/project-asset.txt");
+    ns_expect(mkdir(app_assets, 0755) == 0 && append_text(app_asset_file, "bundled\n"),
+              "project test creates a project asset fixture.");
     ns_project_spec app = app_spec(app_root, runtime,
                                    "use std\nfn main() { print(`generated`) }\n");
 
     ns_expect(ns_project_generate_xcode(&app), "Xcode app project generation succeeds.");
     ns_expect(ns_project_generate_visual_studio(&app), "Visual Studio app project generation succeeds.");
 
-    char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX];
-    char view_ios[PATH_MAX], os_ios[PATH_MAX], ui_native[PATH_MAX], ui_asset[PATH_MAX];
+    char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX], bridge_header[PATH_MAX];
+    char view_ios[PATH_MAX], os_ios[PATH_MAX], ui_native[PATH_MAX], ui_asset[PATH_MAX], ios_plist[PATH_MAX];
     char sln[PATH_MAX], vcx[PATH_MAX], vlocal[PATH_MAX], vgenerated[PATH_MAX];
     path(pbx, app_root, "bin/demo-app.xcodeproj/project.pbxproj");
     path(linked, app_root, "bin/demo-app.nsproject/Generated/LinkedProject.ns");
     path(xlocal, app_root, "bin/demo-app.nsproject/Config/NS.Local.xcconfig");
     path(xgenerated, app_root, "bin/demo-app.nsproject/Config/NS.Generated.xcconfig");
+    path(bridge_header, app_root, "bin/demo-app.nsproject/Sources/NSBridge.h");
     path(view_ios, app_root, "bin/demo-app.nsproject/Native/src/view.ios.m");
     path(os_ios, app_root, "bin/demo-app.nsproject/Native/src/os.ios.m");
     path(ui_native, app_root, "bin/demo-app.nsproject/Native/src/ui.c");
     path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
+    path(ios_plist, app_root, "bin/demo-app.nsproject/Info/iOS-Info.plist");
     path(sln, app_root, "bin/demo-app.sln");
     path(vcx, app_root, "bin/demo-app.vcxproj");
     path(vlocal, app_root, "bin/demo-app.nsproject/Config/NS.Local.props");
@@ -96,6 +103,11 @@ int main(void) {
     ns_expect(text_has(pbx, "SDKROOT = xros"), "Xcode project contains a visionOS target.");
     ns_expect(text_has(pbx, "path = \"demo-app.nsproject\"") && !text_has(pbx, "../demo-app.nsproject"),
               "Xcode project resolves its managed sibling directory from SRCROOT.");
+    ns_expect(text_has(pbx, "name = \"Project Sources\"") && text_has(pbx, app_root),
+              "Xcode project navigator exposes the real Nano Script source directory.");
+    ns_expect(text_has(pbx, "name = \"Project Assets\"") && text_has(pbx, "Project Assets in Resources") &&
+                  text_has(pbx, app_assets),
+              "Xcode app targets bundle a project's assets directory as a folder resource.");
     ns_expect(text_has(pbx, "Native/src/view.ios.m") && text_has(pbx, "Native/src/os.ios.m") &&
                   text_has(pbx, "Native/src/ui.c"),
               "Xcode native targets compile the embedded view, UI, and OS forwarders.");
@@ -104,14 +116,28 @@ int main(void) {
     char embedded_ffi[PATH_MAX];
     path(embedded_ffi, app_root, "bin/demo-app.nsproject/Runtime/src/ns_embedded_ffi.c");
     ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
-                  text_has(embedded_ffi, "gpu_begin_render_pass(*(gpu_render_pass *)"),
+                  text_has(embedded_ffi, "gpu_begin_render_pass(*(gpu_render_pass *)") &&
+                  text_has(embedded_ffi, "extern void ui_scene_draw_grid(void *, f64, f64, f64);"),
               "embedded forwarding preserves pointer and value native struct ABIs.");
     ns_expect(access(ui_asset, R_OK) == 0 && text_has(pbx, "latin_mono.json in Resources"),
               "Xcode app targets bundle the UI runtime assets.");
+    ns_expect(text_has(ios_plist, "UIInterfaceOrientationPortraitUpsideDown") &&
+                  text_has(ios_plist, "UISupportedInterfaceOrientations~ipad"),
+              "Xcode iOS app declares every supported phone and tablet orientation.");
     ns_expect(text_has(xgenerated, "NS_BUNDLE_IDENTIFIER = ns.demo-app"), "Xcode project uses the sanitized bundle identifier.");
     ns_expect(text_has(xgenerated, "NS_EXECUTABLE = /tmp/ns\\ tools/bin/ns") &&
                   !text_has(xgenerated, "NS_EXECUTABLE = \""),
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
+    ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") &&
+                  text_has(pbx, "\"-framework\", AppIntents") &&
+                  text_has(pbx, "NSProjectGeneratorVersion = 5"),
+              "Xcode configuration keeps intentional embedded ABI narrowing and unused metadata extraction quiet.");
+    ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
+              "Xcode bridging header uses an include guard without main-file pragma warnings.");
+    char bridge_source[PATH_MAX];
+    path(bridge_source, app_root, "bin/demo-app.nsproject/Sources/NSBridge.c");
+    ns_expect(text_has(bridge_source, "chdir(resource_root)"),
+              "Xcode app execution resolves relative project assets from the application bundle.");
     ns_expect(text_has(pbx, "NS.Generated.xcconfig"), "Xcode project imports generated configuration.");
     ns_expect(text_has(linked, "print(`generated`)"), "Xcode project writes linked NS source.");
     ns_expect(text_has(sln, "Visual Studio Version 17"), "Visual Studio 2022 solution is generated.");
@@ -148,6 +174,11 @@ int main(void) {
               "Xcode hosted app delegates build and test to the host ns toolchain.");
     ns_expect(!text_has(hosted_pbx, "SDKROOT = iphoneos"),
               "Xcode hosted app does not claim unsupported portable Apple targets.");
+    hosted.host_build = false;
+    ns_expect(ns_project_generate_xcode(&hosted), "Xcode generated legacy app upgrade succeeds.");
+    ns_expect(text_has(hosted_pbx, "SDKROOT = iphoneos") && text_has(hosted_pbx, "isa = PBXNativeTarget;") &&
+                  !text_has(hosted_pbx, "isa = PBXLegacyTarget;") && text_has(hosted_pbx, "Project Sources"),
+              "Xcode upgrades an ns-generated legacy app to native multi-platform targets.");
 
     char library_root[] = "/tmp/ns-project-library-XXXXXX";
     ns_expect(mkdtemp(library_root) != ns_null, "project test creates library fixture directory.");

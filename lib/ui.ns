@@ -282,6 +282,7 @@ ref fn ui_scene_mesh_create(scene: ref ui_scene) i32
 ref fn ui_scene_mesh_update(scene: ref ui_scene, mesh_id: i32, vertices: [f32], vertex_count: i32, indices: [u32], index_count: i32) bool
 ref fn ui_scene_mesh_destroy(scene: ref ui_scene, mesh_id: i32)
 ref fn ui_scene_begin(scene: ref ui_scene, x: f64, y: f64, width: f64, height: f64, view_projection: [f32], background: u32)
+ref fn ui_scene_draw_grid(scene: ref ui_scene, extent: f64, minor_spacing: f64, major_spacing: f64)
 ref fn ui_scene_draw_mesh(scene: ref ui_scene, mesh_id: i32, model: [f32], flags: i32)
 ref fn ui_scene_draw_lines(scene: ref ui_scene, positions: [f32], point_count: i32, rgba: u32, thickness: f64)
 ref fn ui_scene_draw_points(scene: ref ui_scene, positions: [f32], point_count: i32, rgba: u32, radius: f64)

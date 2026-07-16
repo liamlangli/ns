@@ -74,7 +74,9 @@ struct view_gesture_state {
     pan_x: f64,
     pan_y: f64,
     zoom_factor: f64,
-    rotation: f64
+    rotation: f64,
+    orbit_x: f64,
+    orbit_y: f64
 }
 
 ref fn view_create(title: str, width: i32, height: i32) ref view

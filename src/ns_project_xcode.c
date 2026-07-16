@@ -103,6 +103,39 @@ static ns_bool ns_xcode_file_exists(const char *path) {
     return stat(path, &info) == 0 && S_ISREG(info.st_mode);
 }
 
+static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_bool expects_project_assets) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return false;
+    }
+    long size = ftell(file);
+    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return false;
+    }
+    char *text = (char *)malloc((size_t)size + 1);
+    if (!text) {
+        fclose(file);
+        return false;
+    }
+    size_t read = fread(text, 1, (size_t)size, file);
+    ns_bool ok = read == (size_t)size && !ferror(file);
+    fclose(file);
+    text[read] = '\0';
+    ns_bool generated_legacy = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXLegacyTarget;") &&
+                               strstr(text, "name = \"NS Build\";") && strstr(text, "name = \"NS Test\";") &&
+                               !strstr(text, "isa = PBXNativeTarget;");
+    ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
+                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 5;");
+    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 5;") &&
+                                               ((expects_project_assets && !strstr(text, "Project Assets in Resources")) ||
+                                                (!expects_project_assets && strstr(text, "Project Assets in Resources")));
+    free(text);
+    return generated_legacy || generated_native_old || generated_native_assets_mismatch;
+}
+
 static ns_bool ns_xcode_dir_exists(const char *path) {
     struct stat info;
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
@@ -352,6 +385,8 @@ static const size_t ns_xcode_ui_asset_count = sizeof(ns_xcode_ui_assets) / sizeo
 
 #define NS_XCODE_RUNTIME_SOURCE_BASE 10u
 #define NS_XCODE_FEATURE_SOURCE_BASE (NS_XCODE_RUNTIME_SOURCE_BASE + (unsigned)ns_xcode_runtime_source_count)
+#define NS_XCODE_PROJECT_SOURCE_FILE_ID 90u
+#define NS_XCODE_PROJECT_ASSET_FILE_ID 91u
 
 static unsigned ns_xcode_resource_file_id(size_t index) {
     return index < 3 ? 5u + (unsigned)index : 50u + (unsigned)index - 3u;
@@ -504,7 +539,8 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root) {
         "    }\n"
         "}\n";
     static const char bridge_header[] =
-        "#pragma once\n"
+        "#ifndef NS_BRIDGE_H\n"
+        "#define NS_BRIDGE_H\n"
         "\n"
         "#ifdef __cplusplus\n"
         "extern \"C\" {\n"
@@ -512,6 +548,8 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root) {
         "const char * _Nonnull ns_run_linked_project(const char * _Nonnull resource_root);\n"
         "#ifdef __cplusplus\n"
         "}\n"
+        "#endif\n"
+        "\n"
         "#endif\n";
     static const char bridge_source[] =
         "#include \"NSBridge.h\"\n"
@@ -519,10 +557,16 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root) {
         "#include \"ns_os.h\"\n"
         "\n"
         "#include <stdio.h>\n"
+        "#include <unistd.h>\n"
         "\n"
         "static char ns_app_status[1024];\n"
         "\n"
         "const char *ns_run_linked_project(const char *resource_root) {\n"
+        "    if (chdir(resource_root) != 0) {\n"
+        "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not enter resource directory: %s\", resource_root);\n"
+        "        fprintf(stderr, \"ns: %s\\n\", ns_app_status);\n"
+        "        return ns_app_status;\n"
+        "    }\n"
         "    ns_vm vm = {0};\n"
         "    ns_vm_set_ref_path(&vm, ns_str_cstr((char *)resource_root));\n"
         "    ns_str root = ns_str_cstr((char *)resource_root);\n"
@@ -595,6 +639,27 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
         ns_xcode_buffer_free(&plist);
         return false;
     }
+    if (strcmp(platform, "iOS") == 0 &&
+        !ns_xcode_buffer_append(&plist,
+                                "  <key>UISupportedInterfaceOrientations</key>\n"
+                                "  <array>\n"
+                                "    <string>UIInterfaceOrientationPortrait</string>\n"
+                                "    <string>UIInterfaceOrientationPortraitUpsideDown</string>\n"
+                                "    <string>UIInterfaceOrientationLandscapeLeft</string>\n"
+                                "    <string>UIInterfaceOrientationLandscapeRight</string>\n"
+                                "  </array>\n"
+                                "  <key>UISupportedInterfaceOrientations~ipad</key>\n"
+                                "  <array>\n"
+                                "    <string>UIInterfaceOrientationPortrait</string>\n"
+                                "    <string>UIInterfaceOrientationPortraitUpsideDown</string>\n"
+                                "    <string>UIInterfaceOrientationLandscapeLeft</string>\n"
+                                "    <string>UIInterfaceOrientationLandscapeRight</string>\n"
+                                "  </array>\n")) {
+        free(escaped_name);
+        free(escaped_version);
+        ns_xcode_buffer_free(&plist);
+        return false;
+    }
     if (!ns_xcode_buffer_append(&plist, "</dict>\n</plist>\n")) {
         free(escaped_name);
         free(escaped_version);
@@ -630,6 +695,7 @@ static ns_bool ns_xcode_write_config(const ns_project_spec *spec, const char *ma
                                          "NS_BUNDLE_IDENTIFIER = ns.%s\n"
                                          "SWIFT_VERSION = 5.0\n"
                                          "CLANG_C_LANGUAGE_STANDARD = gnu17\n"
+                                         "WARNING_CFLAGS = $(inherited) -Wno-shorten-64-to-32\n"
                                          "GCC_PREPROCESSOR_DEFINITIONS = $(inherited) NS_XCLIB=1 NS_DARWIN=1\n"
                                          "HEADER_SEARCH_PATHS = $(inherited) \"$(SRCROOT)/%s.nsproject/Runtime/include\" "
                                          "\"$(SRCROOT)/%s.nsproject/Runtime/include/os\" "
@@ -700,6 +766,34 @@ static ns_bool ns_xcode_append_file_reference(ns_xcode_buffer *pbx, unsigned ind
     return ok;
 }
 
+static ns_bool ns_xcode_append_source_folder_reference(ns_xcode_buffer *pbx, const char *path) {
+    char id[25];
+    ns_xcode_id(id, 40, NS_XCODE_PROJECT_SOURCE_FILE_ID);
+    char *escaped_path = ns_xcode_escape(path);
+    ns_bool ok = escaped_path &&
+                 ns_xcode_buffer_appendf(pbx,
+                                         "\t\t%s /* Project Sources */ = {isa = PBXFileReference; "
+                                         "lastKnownFileType = folder; name = \"Project Sources\"; path = \"%s\"; "
+                                         "sourceTree = \"<absolute>\"; };\n",
+                                         id, escaped_path);
+    free(escaped_path);
+    return ok;
+}
+
+static ns_bool ns_xcode_append_asset_folder_reference(ns_xcode_buffer *pbx, const char *path) {
+    char id[25];
+    ns_xcode_id(id, 40, NS_XCODE_PROJECT_ASSET_FILE_ID);
+    char *escaped_path = ns_xcode_escape(path);
+    ns_bool ok = escaped_path &&
+                 ns_xcode_buffer_appendf(pbx,
+                                         "\t\t%s /* Project Assets */ = {isa = PBXFileReference; "
+                                         "lastKnownFileType = folder; name = \"Project Assets\"; path = \"%s\"; "
+                                         "sourceTree = \"<absolute>\"; };\n",
+                                         id, escaped_path);
+    free(escaped_path);
+    return ok;
+}
+
 static ns_bool ns_xcode_append_build_file(ns_xcode_buffer *pbx, unsigned target, unsigned file, const char *name,
                                           const char *phase) {
     char build_id[25];
@@ -722,8 +816,8 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
     char *escaped_target = ns_xcode_escape(target_name);
     char *escaped_safe = ns_xcode_escape(safe_name);
     const char *frameworks = strcmp(platform, "macOS") == 0
-        ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore)"
-        : "(\"$(inherited)\", \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit)";
+        ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", AppIntents, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore)"
+        : "(\"$(inherited)\", \"-framework\", AppIntents, \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit)";
     ns_xcode_buffer plist_path = {0};
     ns_xcode_buffer bridge_path = {0};
     ns_bool ok = escaped_target && escaped_safe &&
@@ -825,7 +919,7 @@ static ns_bool ns_xcode_append_sources_phase(ns_xcode_buffer *pbx, unsigned targ
                                   "\t\t};\n");
 }
 
-static ns_bool ns_xcode_append_resources_phase(ns_xcode_buffer *pbx, unsigned target) {
+static ns_bool ns_xcode_append_resources_phase(ns_xcode_buffer *pbx, unsigned target, ns_bool has_project_assets) {
     char phase_id[25];
     ns_xcode_id(phase_id, 12, target);
     if (!ns_xcode_buffer_appendf(pbx,
@@ -848,6 +942,11 @@ static ns_bool ns_xcode_append_resources_phase(ns_xcode_buffer *pbx, unsigned ta
         char id[25];
         ns_xcode_id(id, 50, target * 100 + ns_xcode_asset_file_id(i));
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* %s in Resources */,\n", id, ns_xcode_ui_assets[i])) return false;
+    }
+    if (has_project_assets) {
+        char project_assets_id[25];
+        ns_xcode_id(project_assets_id, 50, target * 100 + NS_XCODE_PROJECT_ASSET_FILE_ID);
+        if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* Project Assets in Resources */,\n", project_assets_id)) return false;
     }
     return ns_xcode_buffer_append(pbx,
                                   "\t\t\t);\n"
@@ -944,13 +1043,23 @@ static ns_bool ns_xcode_append_target_config_list(ns_xcode_buffer *pbx, unsigned
 }
 
 static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char *project_file, const char *safe_name) {
-    if (ns_xcode_file_exists(project_file)) return true;
+    char *source_root = ns_xcode_str_dup(spec->root);
+    char *asset_root = source_root ? ns_xcode_path_join(source_root, "assets") : NULL;
+    ns_bool has_project_assets = asset_root && ns_xcode_dir_exists(asset_root);
+    ns_bool overwrite_project = ns_xcode_generated_project_needs_upgrade(project_file, has_project_assets);
+    if (ns_xcode_file_exists(project_file) && !overwrite_project) {
+        free(source_root);
+        free(asset_root);
+        return true;
+    }
 
     ns_xcode_buffer script = {0};
     ns_xcode_buffer pbx = {0};
     char *escaped_script = NULL;
     char *escaped_safe = ns_xcode_escape(safe_name);
     if (!escaped_safe ||
+        !source_root ||
+        !asset_root ||
         !ns_xcode_buffer_append(&script, "set -e\n\"$NS_EXECUTABLE\" project \"$NS_PROJECT_ROOT\"\n")) {
         goto fail;
     }
@@ -979,6 +1088,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         for (size_t i = 0; i < ns_xcode_ui_asset_count; ++i) {
             if (!ns_xcode_append_build_file(&pbx, target, ns_xcode_asset_file_id(i), ns_xcode_ui_assets[i], "Resources")) goto fail;
         }
+        if (has_project_assets &&
+            !ns_xcode_append_build_file(&pbx, target, NS_XCODE_PROJECT_ASSET_FILE_ID, "Project Assets", "Resources")) goto fail;
         for (size_t i = 0; i < ns_xcode_runtime_source_count; ++i) {
             if (!ns_xcode_append_build_file(&pbx, target, NS_XCODE_RUNTIME_SOURCE_BASE + (unsigned)i, ns_xcode_runtime_sources[i], "Sources")) goto fail;
         }
@@ -995,7 +1106,9 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         !ns_xcode_append_file_reference(&pbx, 6, "text", "shader.ns", "Resources/shader.ns") ||
         !ns_xcode_append_file_reference(&pbx, 7, "text", "simd.ns", "Resources/simd.ns") ||
         !ns_xcode_append_file_reference(&pbx, 8, "text.xcconfig", "NS.Generated.xcconfig", "Config/NS.Generated.xcconfig") ||
-        !ns_xcode_append_file_reference(&pbx, 9, "text.xcconfig", "NS.Local.xcconfig", "Config/NS.Local.xcconfig")) {
+        !ns_xcode_append_file_reference(&pbx, 9, "text.xcconfig", "NS.Local.xcconfig", "Config/NS.Local.xcconfig") ||
+        !ns_xcode_append_source_folder_reference(&pbx, source_root) ||
+        (has_project_assets && !ns_xcode_append_asset_folder_reference(&pbx, asset_root))) {
         goto fail;
     }
     for (size_t i = 3; i < ns_xcode_resource_module_count; ++i) {
@@ -1047,15 +1160,23 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         }
     }
     if (!ns_xcode_buffer_append(&pbx, "/* End PBXFileReference section */\n\n/* Begin PBXGroup section */\n")) goto fail;
-    char main_group[25], products_group[25], managed_group[25];
+    char main_group[25], products_group[25], managed_group[25], source_folder[25], asset_folder[25];
     ns_xcode_id(main_group, 2, 1);
     ns_xcode_id(products_group, 2, 2);
     ns_xcode_id(managed_group, 2, 3);
-    if (!ns_xcode_buffer_appendf(&pbx,
-                                 "\t\t%s = {isa = PBXGroup; children = (%s /* %s.nsproject */, %s /* Products */); "
-                                 "sourceTree = \"<group>\"; };\n"
-                                 "\t\t%s /* Products */ = {isa = PBXGroup; children = (",
-                                 main_group, managed_group, escaped_safe, products_group, products_group)) {
+    ns_xcode_id(source_folder, 40, NS_XCODE_PROJECT_SOURCE_FILE_ID);
+    ns_xcode_id(asset_folder, 40, NS_XCODE_PROJECT_ASSET_FILE_ID);
+    if (!(has_project_assets
+              ? ns_xcode_buffer_appendf(&pbx,
+                                        "\t\t%s = {isa = PBXGroup; children = (%s /* Project Sources */, %s /* Project Assets */, %s /* %s.nsproject */, %s /* Products */); "
+                                        "sourceTree = \"<group>\"; };\n"
+                                        "\t\t%s /* Products */ = {isa = PBXGroup; children = (",
+                                        main_group, source_folder, asset_folder, managed_group, escaped_safe, products_group, products_group)
+              : ns_xcode_buffer_appendf(&pbx,
+                                        "\t\t%s = {isa = PBXGroup; children = (%s /* Project Sources */, %s /* %s.nsproject */, %s /* Products */); "
+                                        "sourceTree = \"<group>\"; };\n"
+                                        "\t\t%s /* Products */ = {isa = PBXGroup; children = (",
+                                        main_group, source_folder, managed_group, escaped_safe, products_group, products_group))) {
         goto fail;
     }
     for (unsigned target = 1; target <= 3; ++target) {
@@ -1140,6 +1261,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
             "\t\t\t\tBuildIndependentTargetsInParallel = YES;\n"
             "\t\t\t\tLastSwiftUpdateCheck = 1600;\n"
             "\t\t\t\tLastUpgradeCheck = 1600;\n"
+            "\t\t\t\tNSProjectGeneratorVersion = 5;\n"
             "\t\t\t\tTargetAttributes = {\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
@@ -1165,7 +1287,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         goto fail;
     }
     for (unsigned target = 1; target <= 3; ++target) {
-        if (!ns_xcode_append_resources_phase(&pbx, target)) {
+        if (!ns_xcode_append_resources_phase(&pbx, target, has_project_assets)) {
             for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
             goto fail;
         }
@@ -1246,9 +1368,11 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
                                  "\trootObject = %s /* Project object */;\n"
                                  "}\n",
                                  project_id) ||
-        !ns_xcode_write(project_file, pbx.data, pbx.len, false)) {
+        !ns_xcode_write(project_file, pbx.data, pbx.len, overwrite_project)) {
         goto fail;
     }
+    free(source_root);
+    free(asset_root);
     free(escaped_script);
     free(escaped_safe);
     ns_xcode_buffer_free(&script);
@@ -1258,6 +1382,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
 
 fail:
     fprintf(stderr, "project: failed to generate Xcode app project\n");
+    free(source_root);
+    free(asset_root);
     free(escaped_script);
     free(escaped_safe);
     ns_xcode_buffer_free(&script);

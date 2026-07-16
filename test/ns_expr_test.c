@@ -36,6 +36,29 @@ int main() {
 
     {
         const char *src =
+            "fn limit() i32 { return 2 }\n"
+            "fn base() i32 { return 0 }\n"
+            "fn main() bool {\n"
+            "    let arr = [i32](2)\n"
+            "    for i in 0 to limit() { arr[base() + i] = i + 1 }\n"
+            "    return arr[0] == 1 && arr[1] == 2\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "call-ending for ranges do not consume the compound body as a trailing block.");
+    }
+
+    {
+        const char *src =
+            "fn center_y(height: f64) f64 { return height-54.0 }\n"
+            "fn side(width: f64, height: f64) f64 { return center_y(height) + width }\n"
+            "fn menu(width: f64, height: f64) f64 { return side(width, height) }\n"
+            "fn main() bool { return menu(402.0, 874.0) == 1222.0 }\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "subtraction without whitespace survives nested numeric calls.");
+    }
+
+    {
+        const char *src =
             "fn main() bool {\n"
             "    let arr: [f32] = [0, 1, 2]\n"
             "    return arr.len == 3 && arr[0] == 0.0 && arr[1] == 1.0 && arr[2] == 2.0\n"

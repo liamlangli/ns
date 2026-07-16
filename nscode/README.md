@@ -8,7 +8,8 @@ Editors for Nano Script. This directory groups the different NSCode front-ends:
   editor). See `cli/README.md`.
 - **`app/`** — *(planned)* a native GUI editor.
 - **`nslang/`** — a VS Code extension providing syntax highlighting for `.ns`
-  files (TextMate grammar + language configuration). See `nslang/README.md`.
+  files, the native NSCode color theme, and TOML language-mode association for
+  `ns.mod` manifests.
 
 ## Terminal editor quick start
 

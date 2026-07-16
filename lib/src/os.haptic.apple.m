@@ -30,7 +30,7 @@ void os_vibrate(f64 intensity, f64 duration) {
         if (![capability supportsHaptics]) return;
 
         @synchronized([CHHapticEngine class]) {
-            NSError *error = nil;
+            NSError *error = NULL;
             if (!os_haptic_engine) {
                 os_haptic_engine = [[CHHapticEngine alloc] initAndReturnError:&error];
                 if (!os_haptic_engine) return;
@@ -39,9 +39,9 @@ void os_vibrate(f64 intensity, f64 duration) {
             }
 
             if (os_haptic_player) {
-                [os_haptic_player stopAtTime:CHHapticTimeImmediate error:nil];
+                [os_haptic_player stopAtTime:CHHapticTimeImmediate error:NULL];
                 OS_HAPTIC_RELEASE(os_haptic_player);
-                os_haptic_player = nil;
+                os_haptic_player = NULL;
             }
 
             CHHapticEventParameter *strength = [[CHHapticEventParameter alloc]
@@ -61,7 +61,7 @@ void os_vibrate(f64 intensity, f64 duration) {
                          error:&error];
             id<CHHapticPatternPlayer> player = pattern
                 ? [os_haptic_engine createPlayerWithPattern:pattern error:&error]
-                : nil;
+                : NULL;
 
             if (player && [os_haptic_engine startAndReturnError:&error] &&
                 [player startAtTime:CHHapticTimeImmediate error:&error]) {

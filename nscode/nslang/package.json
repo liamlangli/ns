@@ -2,7 +2,7 @@
     "name": "nslang",
     "displayName": "Nano Script",
     "description": "Syntax highlighting for the Nano Script (ns) language.",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "publisher": "liamlangli",
     "license": "MIT",
     "icon": "icons/ns.png",
@@ -45,9 +45,16 @@
                 "path": "./syntaxes/ns.tmLanguage.json"
             }
         ],
+        "themes": [
+            {
+                "label": "Nano Script",
+                "uiTheme": "vs-dark",
+                "path": "./themes/nanoscript-color-theme.json"
+            }
+        ],
         "configurationDefaults": {
             "files.associations": {
-                "ns.mod": "toml"
+                "**/ns.mod": "toml"
             }
         }
     }
