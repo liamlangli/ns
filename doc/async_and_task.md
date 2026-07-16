@@ -107,9 +107,11 @@ Each task keeps its own eval context (call stack, scope stack, symbol stack,
 value stack); acquiring the vm lock swaps the owner's context into the vm.
 This gives concurrent, interleaved execution with I/O overlap — the same
 model as Python's GIL or JavaScript workers sharing a runtime — while keeping
-the single-threaded interpreter core untouched. Native FFI calls currently
-run while holding the lock, so a long blocking native call delays other
-tasks.
+the single-threaded interpreter core untouched. Native FFI calls normally run
+while holding the lock, so a long blocking native call delays other tasks. The
+blocking `os_lock_acquire` and `os_semaphore_wait` calls are synchronization-
+aware exceptions: they hand off the VM lock while waiting, then restore the
+calling task's eval context before returning.
 
 ## capture and value-passing semantics
 

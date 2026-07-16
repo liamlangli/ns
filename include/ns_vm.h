@@ -188,6 +188,10 @@ ns_return_bool ns_task_vm_call(ns_vm *vm, ns_ast_ctx *ctx); // `task` module int
 ns_str ns_task_fmt(ns_vm *vm, ns_value task_v);
 void ns_task_eval_enter(ns_vm *vm); // re-acquire the vm lock when a top-level eval begins
 void ns_task_eval_exit(ns_vm *vm);  // cancel + join outstanding tasks when a top-level eval ends
+// Temporarily hand off the VM lock around a known-blocking foreign call.
+// The opaque owner token is null when the task runtime is inactive.
+void *ns_task_ffi_leave(ns_vm *vm);
+void ns_task_ffi_reenter(ns_vm *vm, void *owner);
 
 // vm parse stage
 void ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r);

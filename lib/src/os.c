@@ -4,12 +4,14 @@
 #include <locale.h>
 #include <time.h>
 #include <errno.h>
+#include <limits.h>
 
 #ifdef NS_WIN
 #include <windows.h>
 #include <direct.h>
 #else
 #include <dirent.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -33,6 +35,177 @@ typedef struct os_scan_child {
 
 static os_file_entry os_entries[OS_MAX_ENTRIES];
 static i32 os_entry_count = 0;
+
+struct os_lock {
+#ifdef NS_WIN
+    SRWLOCK native;
+#else
+    pthread_mutex_t native;
+#endif
+};
+
+struct os_semaphore {
+#ifdef NS_WIN
+    SRWLOCK lock;
+    CONDITION_VARIABLE condition;
+#else
+    pthread_mutex_t lock;
+    pthread_cond_t condition;
+#endif
+    i32 count;
+    i32 max_count;
+};
+
+os_lock *os_lock_create(void) {
+    os_lock *lock = (os_lock *)malloc(sizeof(os_lock));
+    if (!lock) return NULL;
+#ifdef NS_WIN
+    InitializeSRWLock(&lock->native);
+#else
+    if (pthread_mutex_init(&lock->native, NULL) != 0) {
+        free(lock);
+        return NULL;
+    }
+#endif
+    return lock;
+}
+
+i32 os_lock_acquire(os_lock *lock) {
+    if (!lock) return 0;
+#ifdef NS_WIN
+    AcquireSRWLockExclusive(&lock->native);
+    return 1;
+#else
+    return pthread_mutex_lock(&lock->native) == 0;
+#endif
+}
+
+i32 os_lock_try_acquire(os_lock *lock) {
+    if (!lock) return 0;
+#ifdef NS_WIN
+    return TryAcquireSRWLockExclusive(&lock->native) != 0;
+#else
+    return pthread_mutex_trylock(&lock->native) == 0;
+#endif
+}
+
+i32 os_lock_release(os_lock *lock) {
+    if (!lock) return 0;
+#ifdef NS_WIN
+    ReleaseSRWLockExclusive(&lock->native);
+    return 1;
+#else
+    return pthread_mutex_unlock(&lock->native) == 0;
+#endif
+}
+
+void os_lock_destroy(os_lock *lock) {
+    if (!lock) return;
+#ifndef NS_WIN
+    pthread_mutex_destroy(&lock->native);
+#endif
+    free(lock);
+}
+
+os_semaphore *os_semaphore_create_bounded(i32 initial_count, i32 max_count) {
+    if (initial_count < 0 || max_count <= 0 || initial_count > max_count) return NULL;
+    os_semaphore *semaphore = (os_semaphore *)malloc(sizeof(os_semaphore));
+    if (!semaphore) return NULL;
+#ifdef NS_WIN
+    InitializeSRWLock(&semaphore->lock);
+    InitializeConditionVariable(&semaphore->condition);
+#else
+    if (pthread_mutex_init(&semaphore->lock, NULL) != 0) {
+        free(semaphore);
+        return NULL;
+    }
+    if (pthread_cond_init(&semaphore->condition, NULL) != 0) {
+        pthread_mutex_destroy(&semaphore->lock);
+        free(semaphore);
+        return NULL;
+    }
+#endif
+    semaphore->count = initial_count;
+    semaphore->max_count = max_count;
+    return semaphore;
+}
+
+os_semaphore *os_semaphore_create(i32 initial_count) {
+    return os_semaphore_create_bounded(initial_count, INT_MAX);
+}
+
+i32 os_semaphore_wait(os_semaphore *semaphore) {
+    if (!semaphore) return 0;
+#ifdef NS_WIN
+    AcquireSRWLockExclusive(&semaphore->lock);
+    while (semaphore->count == 0) {
+        SleepConditionVariableSRW(&semaphore->condition, &semaphore->lock, INFINITE, 0);
+    }
+    semaphore->count--;
+    ReleaseSRWLockExclusive(&semaphore->lock);
+    return 1;
+#else
+    if (pthread_mutex_lock(&semaphore->lock) != 0) return 0;
+    while (semaphore->count == 0) {
+        if (pthread_cond_wait(&semaphore->condition, &semaphore->lock) != 0) {
+            pthread_mutex_unlock(&semaphore->lock);
+            return 0;
+        }
+    }
+    semaphore->count--;
+    return pthread_mutex_unlock(&semaphore->lock) == 0;
+#endif
+}
+
+i32 os_semaphore_try_wait(os_semaphore *semaphore) {
+    if (!semaphore) return 0;
+#ifdef NS_WIN
+    AcquireSRWLockExclusive(&semaphore->lock);
+#else
+    if (pthread_mutex_lock(&semaphore->lock) != 0) return 0;
+#endif
+    i32 acquired = semaphore->count > 0;
+    if (acquired) semaphore->count--;
+#ifdef NS_WIN
+    ReleaseSRWLockExclusive(&semaphore->lock);
+#else
+    pthread_mutex_unlock(&semaphore->lock);
+#endif
+    return acquired;
+}
+
+i32 os_semaphore_signal(os_semaphore *semaphore) {
+    if (!semaphore) return 0;
+#ifdef NS_WIN
+    AcquireSRWLockExclusive(&semaphore->lock);
+#else
+    if (pthread_mutex_lock(&semaphore->lock) != 0) return 0;
+#endif
+    i32 signalled = semaphore->count < semaphore->max_count;
+    if (signalled) {
+        semaphore->count++;
+#ifdef NS_WIN
+        WakeConditionVariable(&semaphore->condition);
+#else
+        pthread_cond_signal(&semaphore->condition);
+#endif
+    }
+#ifdef NS_WIN
+    ReleaseSRWLockExclusive(&semaphore->lock);
+#else
+    pthread_mutex_unlock(&semaphore->lock);
+#endif
+    return signalled;
+}
+
+void os_semaphore_destroy(os_semaphore *semaphore) {
+    if (!semaphore) return;
+#ifndef NS_WIN
+    pthread_cond_destroy(&semaphore->condition);
+    pthread_mutex_destroy(&semaphore->lock);
+#endif
+    free(semaphore);
+}
 
 #define OS_MAX_IGNORE_RULES 256
 

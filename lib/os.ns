@@ -13,6 +13,32 @@ struct os_date {
     utc_offset_minutes: i32
 }
 
+// Opaque native synchronization handles. Locks are non-recursive. Destroy a
+// handle only after every task/native thread has stopped using it.
+struct os_lock {
+    handle: any
+}
+
+struct os_semaphore {
+    handle: any
+}
+
+ref fn os_lock_create() ref os_lock
+ref fn os_lock_acquire(lock: ref os_lock) bool
+ref fn os_lock_try_acquire(lock: ref os_lock) bool
+ref fn os_lock_release(lock: ref os_lock) bool
+ref fn os_lock_destroy(lock: ref os_lock)
+
+// Create an unbounded semaphore, or a bounded semaphore whose count never
+// exceeds max_count. Invalid counts return a nil handle.
+ref fn os_semaphore_create(initial_count: i32) ref os_semaphore
+ref fn os_semaphore_create_bounded(initial_count: i32, max_count: i32) ref os_semaphore
+ref fn os_semaphore_wait(semaphore: ref os_semaphore) bool
+ref fn os_semaphore_try_wait(semaphore: ref os_semaphore) bool
+// Signal returns false rather than exceeding a bounded semaphore's maximum.
+ref fn os_semaphore_signal(semaphore: ref os_semaphore) bool
+ref fn os_semaphore_destroy(semaphore: ref os_semaphore)
+
 // Current Unix time in seconds with sub-second precision.
 ref fn os_time() f64
 

@@ -1,0 +1,52 @@
+use os
+use task
+
+fn main() {
+    let lock = os_lock_create()
+    assert(os_lock_acquire(lock))
+    assert(!os_lock_try_acquire(lock))
+    assert(os_lock_release(lock))
+    assert(os_lock_try_acquire(lock))
+    assert(os_lock_release(lock))
+    os_lock_destroy(lock)
+
+    let semaphore = os_semaphore_create_bounded(1, 2)
+    assert(os_semaphore_wait(semaphore))
+    assert(!os_semaphore_try_wait(semaphore))
+    assert(os_semaphore_signal(semaphore))
+    assert(os_semaphore_signal(semaphore))
+    assert(!os_semaphore_signal(semaphore))
+    assert(os_semaphore_wait(semaphore))
+    assert(os_semaphore_try_wait(semaphore))
+    os_semaphore_destroy(semaphore)
+
+    let unbounded = os_semaphore_create(0)
+    assert(os_semaphore_signal(unbounded))
+    assert(os_semaphore_wait(unbounded))
+    os_semaphore_destroy(unbounded)
+
+    // Contended blocking operations must yield the interpreter lock so the
+    // task that owns/signals the primitive can run.
+    let task_lock = os_lock_create()
+    assert(os_lock_acquire(task_lock))
+    let blocked = dispatch(queue_worker) { in
+        let acquired = os_lock_acquire(task_lock)
+        os_lock_release(task_lock)
+        return acquired
+    }
+    sleep(5)
+    assert(os_lock_release(task_lock))
+    let lock_result = await blocked
+    assert(lock_result)
+    os_lock_destroy(task_lock)
+
+    let gate = os_semaphore_create(0)
+    let waiter = dispatch(queue_worker) { in
+        return os_semaphore_wait(gate)
+    }
+    sleep(5)
+    assert(os_semaphore_signal(gate))
+    let semaphore_result = await waiter
+    assert(semaphore_result)
+    os_semaphore_destroy(gate)
+}

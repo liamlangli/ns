@@ -15,6 +15,21 @@ typedef struct os_date {
     i32 utc_offset_minutes;
 } os_date;
 
+typedef struct os_lock os_lock;
+typedef struct os_semaphore os_semaphore;
+
+os_lock *os_lock_create(void);
+i32 os_lock_acquire(os_lock *lock);
+i32 os_lock_try_acquire(os_lock *lock);
+i32 os_lock_release(os_lock *lock);
+void os_lock_destroy(os_lock *lock);
+os_semaphore *os_semaphore_create(i32 initial_count);
+os_semaphore *os_semaphore_create_bounded(i32 initial_count, i32 max_count);
+i32 os_semaphore_wait(os_semaphore *semaphore);
+i32 os_semaphore_try_wait(os_semaphore *semaphore);
+i32 os_semaphore_signal(os_semaphore *semaphore);
+void os_semaphore_destroy(os_semaphore *semaphore);
+
 f64 os_time(void);
 u64 os_time_ms(void);
 u64 os_time_us(void);

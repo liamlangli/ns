@@ -147,6 +147,19 @@ static void ns_task_unlock(ns_vm *vm) {
     ns_task_mutex_unlock(&rt->gil);
 }
 
+void *ns_task_ffi_leave(ns_vm *vm) {
+    ns_task_rt *rt = (ns_task_rt *)vm->task_rt;
+    if (!rt || !rt->current) return ns_null;
+    ns_task *owner = rt->current;
+    ns_task_unlock(vm);
+    return owner;
+}
+
+void ns_task_ffi_reenter(ns_vm *vm, void *owner) {
+    if (!owner) return;
+    ns_task_lock(vm, (ns_task *)owner);
+}
+
 // suspend the owner on the completion condvar; the lock is re-taken and the
 // owner's context re-installed before returning
 static void ns_task_wait_done(ns_vm *vm) {

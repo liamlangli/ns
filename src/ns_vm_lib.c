@@ -34,7 +34,9 @@ typedef struct ffi_ctx {
     u64 stack_offset;
 } ffi_ctx;
 
-static ffi_ctx _ffi_ctx = {0};
+// A blocking FFI call may hand the VM lock to another task, which can enter
+// FFI on a different worker thread. Keep argument staging private per thread.
+static _Thread_local ffi_ctx _ffi_ctx = {0};
 #endif // NS_XCLIB
 
 ns_return_bool ns_vm_call_std(ns_vm *vm) {
@@ -374,8 +376,20 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     // Time the native call so `--profile` can attribute wall-clock cost per
     // foreign symbol. The clock read is skipped entirely when profiling is off.
     f64 ffi_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
-    ffi_call(&cif, FFI_FN(fn->fn.fn_ptr), &vm->stack[v.o], _ffi_ctx.values);
-    if (ns_profile.enabled) ns_profile_record_ffi(fn->name, fn->lib, ffi_start_ms, ns_profile_now_ms() - ffi_start_ms);
+    void *result = &vm->stack[v.o];
+    void *fn_ptr = fn->fn.fn_ptr;
+    ns_str fn_name = fn->name;
+    ns_str fn_lib = fn->lib;
+    ns_bool blocking_os_sync = ns_str_equals_STR(fn->lib, "os") &&
+        (ns_str_equals_STR(fn->name, "os_lock_acquire") ||
+         ns_str_equals_STR(fn->name, "os_semaphore_wait"));
+    void *ffi_owner = blocking_os_sync ? ns_task_ffi_leave(vm) : ns_null;
+    ffi_call(&cif, FFI_FN(fn_ptr), result, _ffi_ctx.values);
+    ns_task_ffi_reenter(vm, ffi_owner);
+    // Another task may have grown the call stack while the lock was handed
+    // off, so refresh this pointer before storing the result.
+    call = ns_array_last(vm->call_stack);
+    if (ns_profile.enabled) ns_profile_record_ffi(fn_name, fn_lib, ffi_start_ms, ns_profile_now_ms() - ffi_start_ms);
     if (ns_type_is_ref(t)) {
         // Native code returns an absolute pointer to the result. Represent it as
         // an absolute-address ref value (stack=false, .o = the pointer) so that
