@@ -194,7 +194,7 @@ NS_ENTRY_OBJ = $(NS_BINDIR)/src/ns.o
 TARGET = $(NS_BINDIR)/ns
 
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
-NS_DIRS = bin/src bin/lib
+NS_DIRS = bin bin/src bin/lib
 
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std
 
@@ -237,7 +237,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
-test: $(NS_TEST_TARGETS) $(TARGET)
+test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX)
 	$(NS_BINDIR)/ns_json_test
 	$(NS_BINDIR)/ns_expr_test
 	$(NS_BINDIR)/ns_shader_test

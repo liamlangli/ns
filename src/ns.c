@@ -1443,8 +1443,8 @@ static ns_str ns_project_current_executable(void) {
 // executable, so debug builds keep working after `make install` and commands
 // can be launched from any working directory. Supported layouts are:
 //   installed: <root>/bin/ns, <root>/ref/*.ns, <root>/lib/*.{dylib,so,dll}
-//   source:    <repo>/bin/ns, <repo>/lib/*.ns, preferring installed FFI libs
-//              and falling back to <repo>/bin/*.{dylib,so,dll}
+//   source:    <repo>/bin/ns, <repo>/lib/*.ns, preferring matching FFI libs
+//              in <repo>/bin and falling back to the installed runtime
 static void ns_configure_vm_runtime_paths(ns_vm *target) {
     ns_str executable = ns_project_current_executable();
     if (executable.data == ns_null) return;
@@ -1463,11 +1463,12 @@ static void ns_configure_vm_runtime_paths(ns_vm *target) {
     ns_str source_std = ns_path_join(source_ref, ns_str_cstr("std.ns"));
     if (ns_file_exists(source_std)) {
         ns_vm_set_ref_path(target, source_ref);
-        // A Debug interpreter should exercise the installed runtime when one
-        // is available, while remaining usable before the first install.
+        // Source declarations and native modules must stay in sync. Prefer
+        // this build's bin directory, while remaining usable before the first
+        // native-module build when an installed runtime is available.
+        ns_vm_set_lib_path(target, ns_str_concat(bin, ns_str_cstr("")));
         ns_str home = ns_path_home();
-        ns_vm_set_lib_path(target, ns_path_join(home, ns_str_cstr("ns/lib")));
-        ns_vm_set_lib_fallback_path(target, ns_str_concat(bin, ns_str_cstr("")));
+        ns_vm_set_lib_fallback_path(target, ns_path_join(home, ns_str_cstr("ns/lib")));
     }
 }
 
