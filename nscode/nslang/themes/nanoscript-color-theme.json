@@ -1,0 +1,82 @@
+{
+    "$schema": "vscode://schemas/color-theme",
+    "name": "Nano Script",
+    "type": "dark",
+    "semanticHighlighting": false,
+    "colors": {
+        "editor.background": "#0F1117",
+        "editor.foreground": "#A6A6A6",
+        "editorCursor.foreground": "#F4D35E",
+        "editor.selectionBackground": "#2B4A6F",
+        "editor.inactiveSelectionBackground": "#2B4A6F99",
+        "editor.lineHighlightBackground": "#171A22",
+        "editorLineNumber.foreground": "#83909E",
+        "editorLineNumber.activeForeground": "#D7DDE5",
+        "editorGutter.background": "#0F1117"
+    },
+    "tokenColors": [
+        {
+            "name": "Nano Script text and punctuation",
+            "scope": [
+                "source.ns",
+                "variable.other.ns",
+                "entity.name.type.ns"
+            ],
+            "settings": {
+                "foreground": "#A6A6A6",
+                "fontStyle": ""
+            }
+        },
+        {
+            "name": "Nano Script keywords",
+            "scope": [
+                "keyword.control.ns",
+                "keyword.declaration.ns",
+                "keyword.declaration.fn.ns",
+                "keyword.operator.word.ns",
+                "keyword.other.ns",
+                "constant.language.boolean.ns",
+                "constant.language.nil.ns"
+            ],
+            "settings": {
+                "foreground": "#6BE8A3",
+                "fontStyle": ""
+            }
+        },
+        {
+            "name": "Nano Script primitive types",
+            "scope": "storage.type.primitive.ns",
+            "settings": {
+                "foreground": "#61D394",
+                "fontStyle": ""
+            }
+        },
+        {
+            "name": "Nano Script strings",
+            "scope": "source.ns string",
+            "settings": {
+                "foreground": "#B7DC6F",
+                "fontStyle": ""
+            }
+        },
+        {
+            "name": "Nano Script comments",
+            "scope": "source.ns comment",
+            "settings": {
+                "foreground": "#737373",
+                "fontStyle": ""
+            }
+        },
+        {
+            "name": "Nano Script numbers and functions",
+            "scope": [
+                "source.ns constant.numeric",
+                "source.ns entity.name.function"
+            ],
+            "settings": {
+                "foreground": "#E1E1E1",
+                "fontStyle": ""
+            }
+        }
+    ]
+}
