@@ -9,6 +9,7 @@
 #include "ns_shader.h"
 #include "ns_profile.h"
 #include "ns_project.h"
+#include "ns_agents_md.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -150,7 +151,7 @@ void ns_help() {
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
-    printf("                    writes ns.mod, main.ns, README.md and .gitignore\n");
+    printf("                    writes ns.mod, main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  run  [file.ns]    run cwd/ns.mod, otherwise cwd/main.ns, or an explicit input\n");
     printf("  test <path>       run a test entry, or every *_test.ns under a dir\n");
@@ -1595,9 +1596,9 @@ void ns_exec_project(ns_str path) {
 // `ns init [path]` / `ns create <name>` project scaffolding
 // ---------------------------------------------------------------------------
 // Both commands write the same skeleton (ns.mod, main.ns, README.md,
-// .gitignore). `init` targets an existing directory (default: cwd) and keeps
-// any file already present; `create` requires a fresh directory so it never
-// collides with user content.
+// AGENTS.md, .gitignore). `init` targets an existing directory (default: cwd)
+// and keeps any file already present; `create` requires a fresh directory so
+// it never collides with user content.
 
 // Last path component, trailing separators ignored. Unlike ns_path_filename
 // this keeps dots, so a directory like `my.app` yields its full name.
@@ -1681,6 +1682,12 @@ static ns_str ns_scaffold_gitignore_text(void) {
     return s;
 }
 
+static ns_str ns_scaffold_agents_text(void) {
+    ns_str s = ns_str_null;
+    ns_str_append_cstr(&s, ns_scaffold_agents_markdown);
+    return s;
+}
+
 // Write one scaffold file unless it already exists; existing files are kept
 // so `ns init` can fill in the gaps of a partially set up directory.
 static void ns_scaffold_write(ns_str root, const char *filename, ns_str text, const char *tag) {
@@ -1702,6 +1709,7 @@ static void ns_scaffold_project(ns_str root, ns_str name, const char *tag) {
     ns_scaffold_write(root, "ns.mod", ns_scaffold_manifest_text(name), tag);
     ns_scaffold_write(root, "main.ns", ns_scaffold_main_text(name), tag);
     ns_scaffold_write(root, "README.md", ns_scaffold_readme_text(name), tag);
+    ns_scaffold_write(root, "AGENTS.md", ns_scaffold_agents_text(), tag);
     ns_scaffold_write(root, ".gitignore", ns_scaffold_gitignore_text(), tag);
 }
 

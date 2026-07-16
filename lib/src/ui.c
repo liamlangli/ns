@@ -32,6 +32,7 @@
 #define UI_FONT_ZH_TEXTURE (UI_MAX_TEXTURES + 3)
 #define UI_KIND_IMAGE 0
 #define UI_KIND_MSDF 1
+#define UI_KIND_SCENE_GRID 2
 #define UI_DEFAULT_FEATHER 0.5
 #define UI_SCENE_MAX_MESHES 64
 #define UI_SCENE_VERTEX_FLOATS 10
@@ -157,6 +158,12 @@ typedef struct ui_command {
     i32 clip_x, clip_y, clip_w, clip_h;
 } ui_command;
 
+typedef struct ui_scene_grid_uniforms {
+    f32 inverse_view_projection[16];
+    f32 viewport[4];
+    f32 params[4];
+} ui_scene_grid_uniforms;
+
 typedef struct ui_rect_batch {
     ui_vertex *vertices;
     i32 vertex_count;
@@ -219,12 +226,16 @@ typedef struct ui_renderer {
     gpu_shader shader_image;
     gpu_shader shader_batch;
     gpu_shader shader_msdf;
+    gpu_shader shader_scene_grid;
     gpu_pipeline pipeline_image;
     gpu_pipeline pipeline_batch;
     gpu_pipeline pipeline_msdf;
+    gpu_pipeline pipeline_scene_grid;
     gpu_binding binding_white_image;
     gpu_binding binding_font_msdf;
     gpu_binding binding_font_zh_msdf;
+    gpu_buffer scene_grid_buffer;
+    gpu_binding binding_scene_grid;
     gpu_texture textures[UI_MAX_TEXTURES];
     gpu_binding texture_bindings[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
@@ -352,6 +363,49 @@ static const char *ui_shader_src =
 "  float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
 "  float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / max(in.params.z, 1.0) + 0.5, 0.0, 1.0);\n"
 "  return float4(in.col.rgb, in.col.a * opacity);\n"
+"}\n";
+
+static const char *ui_scene_grid_shader_src =
+"#include <metal_stdlib>\n"
+"using namespace metal;\n"
+"struct VIn { float2 pos [[attribute(0)]]; float2 uv [[attribute(1)]]; uchar4 col [[attribute(2)]]; float4 params [[attribute(3)]]; };\n"
+"struct VOut { float4 pos [[position]]; float2 pixel; };\n"
+"struct GridUniforms { float4x4 inverse_view_projection; float4 viewport; float4 params; };\n"
+"vertex VOut ui_scene_grid_vs(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]]) {\n"
+"  VOut o; float2 ndc = float2((in.pos.x / screen.x) * 2.0 - 1.0, 1.0 - (in.pos.y / screen.y) * 2.0);\n"
+"  o.pos = float4(ndc, 0.0, 1.0); o.pixel = in.pos; return o;\n"
+"}\n"
+"static inline float grid_coverage(float2 p, float spacing, float radius_pixels) {\n"
+"  float2 deriv = max(abs(dfdx(p)) + abs(dfdy(p)), float2(1e-6));\n"
+"  float2 cell = abs(fract(p / spacing - 0.5) - 0.5) * spacing;\n"
+"  float2 pixel_distance = cell / deriv;\n"
+"  float2 line = 1.0 - smoothstep(float2(max(radius_pixels - 0.5, 0.0)), float2(radius_pixels + 0.5), pixel_distance);\n"
+"  float frequency_fade = 1.0 - smoothstep(spacing * 0.45, spacing * 0.95, max(deriv.x, deriv.y));\n"
+"  return max(line.x, line.y) * frequency_fade;\n"
+"}\n"
+"fragment float4 ui_scene_grid_fs(VOut in [[stage_in]], constant GridUniforms &grid [[buffer(2)]]) {\n"
+"  float2 uv = (in.pixel - grid.viewport.xy) / grid.viewport.zw;\n"
+"  float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n"
+"  float4 near_h = grid.inverse_view_projection * float4(ndc, -1.0, 1.0);\n"
+"  float4 far_h = grid.inverse_view_projection * float4(ndc, 1.0, 1.0);\n"
+"  float3 near_p = near_h.xyz / max(abs(near_h.w), 1e-6) * sign(near_h.w);\n"
+"  float3 far_p = far_h.xyz / max(abs(far_h.w), 1e-6) * sign(far_h.w);\n"
+"  float denom = far_p.y - near_p.y;\n"
+"  if (abs(denom) < 1e-6) return float4(0.0);\n"
+"  float ray_t = -near_p.y / denom;\n"
+"  if (ray_t < 0.0 || ray_t > 1.0) return float4(0.0);\n"
+"  float2 ground = mix(near_p, far_p, ray_t).xz;\n"
+"  float extent = grid.params.x;\n"
+"  float edge = 1.0 - smoothstep(extent * 0.78, extent, max(abs(ground.x), abs(ground.y)));\n"
+"  if (edge <= 0.0) return float4(0.0);\n"
+"  float minor = grid_coverage(ground, grid.params.y, 0.52);\n"
+"  float major = grid_coverage(ground, grid.params.z, 1.15);\n"
+"  float3 base = float3(0.961, 0.953, 0.945);\n"
+"  float3 minor_color = float3(0.855, 0.831, 0.812);\n"
+"  float3 major_color = float3(0.710, 0.675, 0.643);\n"
+"  float3 color = mix(base, minor_color, minor * 0.72);\n"
+"  color = mix(color, major_color, major * 0.88);\n"
+"  return float4(color, edge);\n"
 "}\n";
 
 static f64 ui_clamp_f64(f64 v, f64 lo, f64 hi) {

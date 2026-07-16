@@ -92,6 +92,8 @@ endif
 NS_CFLAGS += $(NS_GPU_INC)
 
 NS_BINDIR = bin
+NS_AGENTS_HEADER = $(NS_BINDIR)/ns_agents_md.h
+NS_INC += -I$(NS_BINDIR)
 
 NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
@@ -201,7 +203,14 @@ all: $(NS_DIRS) $(TARGET) $(NS_LIB) std
 $(NS_DIRS):
 	$(NS_MKDIR) $(NS_DIRS)
 
-$(NS_ENTRY_OBJ): $(NS_ENTRY) $(NS_HEADERS) | $(NS_DIRS)
+$(NS_AGENTS_HEADER): AGENTS.md | $(NS_DIRS)
+	{ \
+		printf '%s\n' 'static const char ns_scaffold_agents_markdown[] ='; \
+		sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/\\n"/' $<; \
+		printf '%s\n' ';'; \
+	} > $@
+
+$(NS_ENTRY_OBJ): $(NS_ENTRY) $(NS_HEADERS) $(NS_AGENTS_HEADER) | $(NS_DIRS)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
 $(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) | $(NS_BINDIR)
