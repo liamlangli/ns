@@ -16,6 +16,7 @@ SCALARS = {"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "
 class Argument:
     name: str
     type: str
+    native_pointer: bool = False
 
 
 @dataclass
@@ -24,6 +25,7 @@ class Function:
     name: str
     args: list[Argument]
     result: str
+    native_result_pointer: bool = False
 
 
 def split_args(text: str) -> list[str]:
@@ -44,13 +46,24 @@ def split_args(text: str) -> list[str]:
     return parts
 
 
-def parse_module(path: Path) -> tuple[set[str], dict[str, str], list[Function]]:
+def parse_module(path: Path) -> tuple[dict[str, list[Argument]], dict[str, str], list[Function]]:
     source = path.read_text(encoding="utf-8")
     module_match = re.search(r"(?m)^mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*$", source)
     if not module_match:
         raise ValueError(f"{path}: missing module declaration")
     module = module_match.group(1)
-    structs = set(re.findall(r"(?m)^struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{", source))
+    structs: dict[str, list[Argument]] = {}
+    for match in re.finditer(r"(?ms)^struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{(.*?)\}", source):
+        fields: list[Argument] = []
+        for item in split_args(match.group(2)):
+            item = re.sub(r"//.*", "", item).strip()
+            if not item:
+                continue
+            name, separator, type_name = item.partition(":")
+            if not separator:
+                raise ValueError(f"{path}: invalid struct field {item!r}")
+            fields.append(Argument(name.strip(), type_name.strip()))
+        structs[match.group(1)] = fields
     aliases = {
         match.group(1): match.group(2).strip()
         for match in re.finditer(r"(?m)^type\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^|\n]+)\s*$", source)
@@ -102,16 +115,31 @@ def c_type(type_name: str, structs: set[str], aliases: dict[str, str], result: b
         return "ns_bool"
     if type_kind in SCALARS:
         return type_kind
-    if type_kind in {"ref", "array", "struct"}:
+    if type_kind == "struct":
+        return resolve(type_name, aliases)
+    if type_kind in {"ref", "array"}:
         return "void *"
     raise AssertionError(type_kind)
 
 
-def arg_expr(index: int, type_name: str, structs: set[str], aliases: dict[str, str]) -> str:
+def native_c_type(type_name: str, native_pointer: bool, structs: set[str], aliases: dict[str, str]) -> str:
+    result = c_type(type_name, structs, aliases)
+    if kind(type_name, structs, aliases) == "struct" and native_pointer:
+        return f"{result} *"
+    return result
+
+
+def arg_expr(index: int, argument: Argument, structs: set[str], aliases: dict[str, str]) -> str:
+    type_name = argument.type
     type_kind = kind(type_name, structs, aliases)
     if type_kind == "str":
         return f"ns_embedded_arg_str(vm, {index})"
-    if type_kind in {"ref", "array", "struct"}:
+    if type_kind == "struct":
+        if argument.native_pointer:
+            return f"({c_type(type_name, structs, aliases)} *)ns_embedded_arg_pointer(vm, {index})"
+        native_type = c_type(type_name, structs, aliases)
+        return f"*({native_type} *)ns_embedded_arg_pointer(vm, {index})"
+    if type_kind in {"ref", "array"}:
         return f"ns_embedded_arg_pointer(vm, {index})"
     if type_kind == "bool":
         return f"ns_eval_bool(vm, ns_embedded_arg(vm, {index}))"
@@ -120,20 +148,67 @@ def arg_expr(index: int, type_name: str, structs: set[str], aliases: dict[str, s
     raise AssertionError(type_kind)
 
 
-def emit(functions: list[Function], structs: set[str], aliases: dict[str, str]) -> str:
+def implemented_functions(paths: list[Path], functions: list[Function]) -> set[str]:
+    names = {function.name for function in functions}
+    implemented: set[str] = set()
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        for name in names - implemented:
+            function = next(candidate for candidate in functions if candidate.name == name)
+            pattern = re.compile(rf"(?m)^[ \t]*(?!static\b)[^#\n()=;]*\b{re.escape(name)}[ \t]*\(")
+            for match in pattern.finditer(source):
+                depth = 1
+                args_start = match.end()
+                index = match.end()
+                while index < len(source) and depth:
+                    if source[index] == "(":
+                        depth += 1
+                    elif source[index] == ")":
+                        depth -= 1
+                    index += 1
+                if depth:
+                    continue
+                while index < len(source) and source[index].isspace():
+                    index += 1
+                if index < len(source) and source[index] == "{":
+                    declaration = source[match.start():args_start]
+                    result_text = declaration[:declaration.rfind(name)]
+                    function.native_result_pointer = "*" in result_text
+                    native_args = split_args(source[args_start:index - 1])
+                    if len(native_args) == len(function.args):
+                        for argument, native_arg in zip(function.args, native_args):
+                            argument.native_pointer = "*" in native_arg
+                    implemented.add(name)
+                    break
+    return implemented
+
+
+def emit(functions: list[Function], structs: dict[str, list[Argument]], aliases: dict[str, str]) -> str:
     lines = [
         "/* Generated by tools/gen_embedded_ffi.py. Do not edit by hand. */",
         '#include "ns_vm.h"',
         "#include <string.h>",
         "",
         "#if defined(NS_XCLIB)",
-        "#define NS_EMBEDDED_WEAK __attribute__((weak_import))",
         "",
     ]
+    used_structs = {
+        resolve(type_name, aliases)
+        for function in functions
+        for type_name in [function.result, *(argument.type for argument in function.args)]
+        if kind(type_name, set(structs), aliases) == "struct"
+    }
+    for name in sorted(used_structs):
+        lines.append("typedef struct {")
+        for field in structs[name]:
+            lines.append(f"    {c_type(field.type, set(structs), aliases)} {field.name};")
+        lines.append(f"}} {name};")
+    if used_structs:
+        lines.append("")
     for function in functions:
-        result = c_type(function.result, structs, aliases, result=True)
-        args = ", ".join(c_type(arg.type, structs, aliases) for arg in function.args) or "void"
-        lines.append(f"extern {result} {function.name}({args}) NS_EMBEDDED_WEAK;")
+        result = native_c_type(function.result, function.native_result_pointer, set(structs), aliases)
+        args = ", ".join(native_c_type(arg.type, arg.native_pointer, set(structs), aliases) for arg in function.args) or "void"
+        lines.append(f"extern {result} {function.name}({args});")
     lines += [
         "",
         "static ns_value ns_embedded_arg(ns_vm *vm, i32 index) {",
@@ -179,11 +254,10 @@ def emit(functions: list[Function], structs: set[str], aliases: dict[str, str]) 
     ]
     for index, function in enumerate(functions):
         prefix = "if" if index == 0 else "else if"
-        args = ", ".join(arg_expr(i, arg.type, structs, aliases) for i, arg in enumerate(function.args))
-        result_kind = kind(function.result, structs, aliases)
+        args = ", ".join(arg_expr(i, arg, set(structs), aliases) for i, arg in enumerate(function.args))
+        result_kind = kind(function.result, set(structs), aliases)
         lines += [
             f'    {prefix} (ns_str_equals_STR(fn->lib, "{function.module}") && ns_str_equals_STR(fn->name, "{function.name}")) {{',
-            f'        if (!{function.name}) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "embedded native function unavailable: {function.module}.{function.name}");',
         ]
         invocation = f"{function.name}({args})"
         if result_kind == "void":
@@ -199,9 +273,13 @@ def emit(functions: list[Function], structs: set[str], aliases: dict[str, str]) 
         elif result_kind == "array":
             lines += [f"        void *result = {invocation};", "        ns_embedded_return_array(vm, result);"]
         elif result_kind == "struct":
-            lines += [f"        void *result = {invocation};", "        ns_embedded_return_struct(vm, result);"]
+            native_type = c_type(function.result, set(structs), aliases, result=True)
+            if function.native_result_pointer:
+                lines += [f"        {native_type} *result = {invocation};", "        ns_embedded_return_struct(vm, result);"]
+            else:
+                lines += [f"        {native_type} result = {invocation};", "        ns_embedded_return_struct(vm, &result);"]
         else:
-            native_type = c_type(function.result, structs, aliases, result=True)
+            native_type = c_type(function.result, set(structs), aliases, result=True)
             lines += [f"        {native_type} result = {invocation};", "        ns_embedded_return_scalar(vm, &result, sizeof(result));"]
         lines += ["        return ns_return_ok(bool, true);", "    }"]
     lines += [
@@ -216,10 +294,11 @@ def emit(functions: list[Function], structs: set[str], aliases: dict[str, str]) 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--native-source", action="append", default=[], type=Path)
     parser.add_argument("modules", nargs="+", type=Path)
     args = parser.parse_args()
 
-    structs: set[str] = set()
+    structs: dict[str, list[Argument]] = {}
     aliases: dict[str, str] = {}
     functions: list[Function] = []
     for module in args.modules:
@@ -227,6 +306,9 @@ def main() -> None:
         structs.update(module_structs)
         aliases.update(module_aliases)
         functions.extend(module_functions)
+    if args.native_source:
+        implemented = implemented_functions(args.native_source, functions)
+        functions = [function for function in functions if function.name in implemented]
     args.output.write_text(emit(functions, structs, aliases), encoding="utf-8")
 
 

@@ -76,11 +76,16 @@ int main(void) {
     ns_expect(ns_project_generate_visual_studio(&app), "Visual Studio app project generation succeeds.");
 
     char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX];
+    char view_ios[PATH_MAX], os_ios[PATH_MAX], ui_native[PATH_MAX], ui_asset[PATH_MAX];
     char sln[PATH_MAX], vcx[PATH_MAX], vlocal[PATH_MAX], vgenerated[PATH_MAX];
     path(pbx, app_root, "bin/demo-app.xcodeproj/project.pbxproj");
     path(linked, app_root, "bin/demo-app.nsproject/Generated/LinkedProject.ns");
     path(xlocal, app_root, "bin/demo-app.nsproject/Config/NS.Local.xcconfig");
     path(xgenerated, app_root, "bin/demo-app.nsproject/Config/NS.Generated.xcconfig");
+    path(view_ios, app_root, "bin/demo-app.nsproject/Native/src/view.ios.m");
+    path(os_ios, app_root, "bin/demo-app.nsproject/Native/src/os.ios.m");
+    path(ui_native, app_root, "bin/demo-app.nsproject/Native/src/ui.c");
+    path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
     path(sln, app_root, "bin/demo-app.sln");
     path(vcx, app_root, "bin/demo-app.vcxproj");
     path(vlocal, app_root, "bin/demo-app.nsproject/Config/NS.Local.props");
@@ -89,7 +94,24 @@ int main(void) {
     ns_expect(text_has(pbx, "SDKROOT = macosx"), "Xcode project contains a macOS target.");
     ns_expect(text_has(pbx, "SDKROOT = iphoneos"), "Xcode project contains an iOS target.");
     ns_expect(text_has(pbx, "SDKROOT = xros"), "Xcode project contains a visionOS target.");
+    ns_expect(text_has(pbx, "path = \"demo-app.nsproject\"") && !text_has(pbx, "../demo-app.nsproject"),
+              "Xcode project resolves its managed sibling directory from SRCROOT.");
+    ns_expect(text_has(pbx, "Native/src/view.ios.m") && text_has(pbx, "Native/src/os.ios.m") &&
+                  text_has(pbx, "Native/src/ui.c"),
+              "Xcode native targets compile the embedded view, UI, and OS forwarders.");
+    ns_expect(access(view_ios, R_OK) == 0 && access(os_ios, R_OK) == 0 && access(ui_native, R_OK) == 0,
+              "Xcode project copies Apple feature sources into the managed project.");
+    char embedded_ffi[PATH_MAX];
+    path(embedded_ffi, app_root, "bin/demo-app.nsproject/Runtime/src/ns_embedded_ffi.c");
+    ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
+                  text_has(embedded_ffi, "gpu_begin_render_pass(*(gpu_render_pass *)"),
+              "embedded forwarding preserves pointer and value native struct ABIs.");
+    ns_expect(access(ui_asset, R_OK) == 0 && text_has(pbx, "latin_mono.json in Resources"),
+              "Xcode app targets bundle the UI runtime assets.");
     ns_expect(text_has(xgenerated, "NS_BUNDLE_IDENTIFIER = ns.demo-app"), "Xcode project uses the sanitized bundle identifier.");
+    ns_expect(text_has(xgenerated, "NS_EXECUTABLE = /tmp/ns\\ tools/bin/ns") &&
+                  !text_has(xgenerated, "NS_EXECUTABLE = \""),
+              "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
     ns_expect(text_has(pbx, "NS.Generated.xcconfig"), "Xcode project imports generated configuration.");
     ns_expect(text_has(linked, "print(`generated`)"), "Xcode project writes linked NS source.");
     ns_expect(text_has(sln, "Visual Studio Version 17"), "Visual Studio 2022 solution is generated.");

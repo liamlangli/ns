@@ -94,7 +94,7 @@ static ns_bool ui_resolve_asset(const char *name, char out[UI_PATH_MAX]) {
 
     char module_dir[UI_PATH_MAX];
     if (ui_module_directory(module_dir)) {
-        const char *layouts[] = {"../ref/assets", "../lib/assets"};
+        const char *layouts[] = {".", "assets", "../ref/assets", "../lib/assets"};
         for (u32 i = 0; i < sizeof(layouts) / sizeof(layouts[0]); i++) {
             i32 len = snprintf(out, UI_PATH_MAX, "%s/%s/%s", module_dir, layouts[i], name);
             if (len > 0 && len < UI_PATH_MAX && ui_file_readable(out)) return true;
@@ -891,6 +891,7 @@ void ui_stroke_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
 }
 
 static void ui_create_gpu_resources(ui_renderer *r) {
+    ns_unused(ui_scene_grid_shader_src);
     f32 screen[2] = {(f32)r->width, (f32)r->height};
     r->screen_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
         .size = sizeof(screen),

@@ -1,8 +1,10 @@
+#include <TargetConditionals.h>
+#if TARGET_OS_OSX
+
 #include "os.h"
 
 #include <Cocoa/Cocoa.h>
 #include <CoreServices/CoreServices.h>
-#include <TargetConditionals.h>
 #include <stdio.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -185,3 +187,4 @@ i32 os_launch_ns_project(const char *folder, const char *entry) {
     }
     return 1;
 }
+#endif

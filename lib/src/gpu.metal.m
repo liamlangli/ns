@@ -540,12 +540,17 @@ ns_bool gpu_request_device(view* v) {
     }
 
     if (v != NULL && v->native_window != NULL) {
+#if TARGET_OS_OSX
         NSWindow *window = (__bridge NSWindow *)v->native_window;
         NSView *content_view = [window contentView];
         if ([content_view isKindOfClass: [MTKView class]]) {
             _state.view = (MTKView *)content_view;
             [_state.view setDevice: _state.device.device];
         }
+#else
+        _state.view = (__bridge MTKView *)v->native_window;
+        [_state.view setDevice:_state.device.device];
+#endif
     }
 
     _state.valid = true;

@@ -1,4 +1,5 @@
 #include <TargetConditionals.h>
+#if TARGET_OS_OSX
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Metal/Metal.h>
@@ -481,3 +482,4 @@ void view_set_clipboard(view *v, const char *text) {
     [pasteboard clearContents];
     [pasteboard setString:value forType:NSPasteboardTypeString];
 }
+#endif
