@@ -1,0 +1,37 @@
+use audio
+
+fn main() i32 {
+    if !audio_init() {
+        return 1
+    }
+    if audio_load_sfx("test/does-not-exist.wav") != 0 {
+        return 1
+    }
+    if audio_last_error() == "" {
+        return 1
+    }
+    let music = audio_load_music("/tmp/ns-audio-test.wav")
+    let sfx = audio_load_sfx("/tmp/ns-audio-test.wav")
+    if music == 0 || sfx == 0 {
+        return 1
+    }
+    if audio_duration(music) <= 0.0 || audio_duration(sfx) <= 0.0 {
+        return 1
+    }
+    audio_set_volume(music, 0.25)
+    audio_set_master_volume(0.5)
+    if !audio_play(music, true) || !audio_play(sfx, false) || !audio_play(sfx, false) {
+        return 1
+    }
+    audio_pause(music)
+    if !audio_seek(music, 0.0) || !audio_resume(music) {
+        return 1
+    }
+    audio_stop(sfx)
+    audio_stop(music)
+    audio_unload(sfx)
+    audio_unload(music)
+    audio_stop_all()
+    audio_shutdown()
+    return 0
+}

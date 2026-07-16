@@ -7,6 +7,7 @@ ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_OS_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_COCOA_LDFLAGS) -framework CoreServices
 	NS_VIEW_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_COCOA_LDFLAGS) $(NS_METAL_LDFLAGS)
 	NS_GPU_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_METAL_LDFLAGS)
+	NS_AUDIO_DYLIB_DEPS = $(NS_LDFLAGS) -framework AVFAudio -framework Foundation
 else ifeq ($(NS_OS), $(NS_LINUX))
 	NS_DYLIB_CREATE = -shared
 	NS_DYLIB_COMMON = -fPIC -g -Wl,-soname,$(@F) -Wl,-rpath,'$$ORIGIN'
@@ -23,6 +24,7 @@ NS_OS_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
 NS_VIEW_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
 NS_GPU_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
 NS_UI_DYLIB_DEPS ?= $(NS_GPU_DYLIB_DEPS)
+NS_AUDIO_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
 
 # Position-independent compile rules for the C and Objective-C feature sources.
 $(NS_BINDIR)/lib/%.o: lib/src/%.c
@@ -39,6 +41,7 @@ NS_TERM_DYLIB = $(NS_BINDIR)/term$(NS_DYLIB_SUFFIX)
 NS_VIEW_DYLIB = $(NS_BINDIR)/view$(NS_DYLIB_SUFFIX)
 NS_GPU_DYLIB = $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX)
 NS_UI_DYLIB = $(NS_BINDIR)/ui$(NS_DYLIB_SUFFIX)
+NS_AUDIO_DYLIB = $(NS_BINDIR)/audio$(NS_DYLIB_SUFFIX)
 
 NS_IO_OBJS = $(NS_BINDIR)/lib/io.o
 NS_OS_OBJS = $(NS_BINDIR)/lib/os.o
@@ -47,6 +50,7 @@ NS_HTTP_OBJS = $(NS_BINDIR)/lib/http.o
 NS_VIEW_OBJS = $(NS_BINDIR)/lib/view.o
 NS_GPU_OBJS = $(NS_BINDIR)/lib/gpu.o
 NS_UI_OBJS = $(NS_BINDIR)/lib/ui.o
+NS_AUDIO_OBJS =
 
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.linux.o
@@ -57,6 +61,7 @@ else ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.posix.o
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.osx.o
 	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.metal.o
+	NS_AUDIO_OBJS = $(NS_BINDIR)/lib/audio.apple.o
 else ifeq ($(NS_OS), $(NS_WIN))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.win.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.win.o
@@ -73,6 +78,10 @@ NS_STD_SHARED = \
 	$(NS_GPU_DYLIB) \
 	$(NS_VIEW_DYLIB) \
 	$(NS_UI_DYLIB)
+
+ifeq ($(NS_OS), $(NS_DARWIN))
+	NS_STD_SHARED += $(NS_AUDIO_DYLIB)
+endif
 
 std: $(NS_STD_SHARED)
 
@@ -101,3 +110,6 @@ $(NS_VIEW_DYLIB): $(NS_VIEW_OBJS) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_
 
 $(NS_UI_DYLIB): $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) -o $@ $(NS_UI_DYLIB_DEPS)
+
+$(NS_AUDIO_DYLIB): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_AUDIO_DYLIB_DEPS)

@@ -162,6 +162,8 @@ With filename and no analysis/emit flag, it evaluates and prints result.
   `http` (`lib/http.ns`, `lib/src/http.c`) adds HTTP/1.1 helpers and a complete
   static file server (`http_serve_static`). See `doc/net.md` and the
   `sample/ns/http_server.ns` / `sample/ns/tcp_echo.ns` examples.
+- `audio` (`lib/audio.ns`, `lib/src/audio.apple.m`) loads and plays music and
+  overlapping sound effects on macOS, iOS, and visionOS. See `doc/audio.md`.
 
 ---
 

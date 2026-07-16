@@ -1,0 +1,39 @@
+mod audio
+
+// Apple audio playback, implemented by lib/src/audio.apple.m and loaded from
+// audio.dylib. Handles are opaque positive integers; 0 means load failure.
+//
+// Music handles own one resumable player. SFX handles keep decoded source data
+// and may create multiple simultaneous voices when audio_play() is called.
+
+let AUDIO_MUSIC = 1
+let AUDIO_SFX = 2
+
+// Initializes platform audio services. Calls are otherwise initialized lazily,
+// but calling this during app startup lets errors be reported early.
+ref fn audio_init() bool
+ref fn audio_shutdown()
+
+ref fn audio_load(path: str, kind: i32) i32
+ref fn audio_load_music(path: str) i32
+ref fn audio_load_sfx(path: str) i32
+ref fn audio_unload(handle: i32)
+
+// Starts from the beginning. SFX calls may overlap; music restarts its player.
+ref fn audio_play(handle: i32, looping: bool) bool
+ref fn audio_pause(handle: i32)
+ref fn audio_resume(handle: i32) bool
+ref fn audio_stop(handle: i32)
+ref fn audio_stop_all()
+
+// Per-asset and master volume use the normalized 0.0...1.0 range.
+ref fn audio_set_volume(handle: i32, volume: f64)
+ref fn audio_set_master_volume(volume: f64)
+ref fn audio_is_playing(handle: i32) bool
+
+ref fn audio_duration(handle: i32) f64
+ref fn audio_position(handle: i32) f64
+ref fn audio_seek(handle: i32, seconds: f64) bool
+
+// Most recent load, session, handle, or playback diagnostic; empty when none.
+ref fn audio_last_error() str
