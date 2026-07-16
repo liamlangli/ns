@@ -39,6 +39,7 @@ const char *os_time_string(void);
 const char *os_date_string(void);
 const char *os_locale_date_string(void);
 const char *os_locale_date_time_string(void);
+void os_vibrate(f64 intensity, f64 duration);
 i64 os_file_size(const char *path);
 const char *os_read_file(const char *path);
 const char *os_read_file_part(const char *path, i64 offset, i64 size);

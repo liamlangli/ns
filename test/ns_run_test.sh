@@ -33,4 +33,5 @@ cd "$root"
 "$ns" run test/os_file_test.ns
 if [ "$(uname -s)" = "Darwin" ]; then
     sh test/audio_apple_test.sh "$ns"
+    sh test/os_haptic_apple_compile.sh
 fi

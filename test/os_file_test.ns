@@ -5,3 +5,8 @@ assert(os_file_size("test/os_file_test.ns") > 8)
 assert(os_read_file_part("test/os_file_test.ns", 0, 3) == "use")
 assert(os_read_file_part("test/os_file_test.ns", 4, 3) == "std")
 assert(os_read_file("test/does-not-exist") == "")
+
+// Invalid vibration requests are always safe no-ops, including on devices
+// which actually support haptics. These calls also verify the native symbol.
+os_vibrate(0.0, 1.0)
+os_vibrate(1.0, 0.0)

@@ -56,6 +56,11 @@ ref fn os_date_string() str
 ref fn os_locale_date_string() str
 ref fn os_locale_date_time_string() str
 
+// Start a continuous device vibration, replacing any vibration already playing.
+// Intensity is clamped to 0.0...1.0 and duration is measured in seconds.
+// Non-positive values and unsupported platforms/devices are silently ignored.
+ref fn os_vibrate(intensity: f64, duration: f64)
+
 // File access. os_file_size returns -1 on failure. Ranged reads truncate at
 // EOF and return an empty string when the file or requested range is invalid.
 ref fn os_file_size(path: str) i64

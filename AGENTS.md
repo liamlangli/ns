@@ -202,7 +202,7 @@ rules.
 | `task` | VM-internal async task, dispatch, waiting, cancellation, status, queue, and sleep primitives. |
 | `simd` | Pure-ns data types `float2`, `float3`, `float4`, `quatf`, and `mat4`, also used at shader boundaries. |
 | `shader` | VM-internal transpilation of ordinary ns functions to MSL, GLSL 450, or HLSL shader source and entry names. Shader code accepts only the supported numeric/struct subset. |
-| `os` | Native time/date, file and directory operations, environment/app-data paths, recursive scans/watches, dialogs, child project launch, locks, and semaphores. |
+| `os` | Native time/date, file and directory operations, environment/app-data paths, recursive scans/watches, dialogs, child project launch, device vibration, locks, and semaphores. |
 | `io` | Native image loading and saving through `io_image` (`width`, `height`, `channels`, byte data). |
 | `net` | Blocking native TCP/UDP sockets, shared receive-buffer access, file sending, and socket lifecycle. File descriptors are integer handles. |
 | `http` | Minimal blocking HTTP/1.1 request parsing, responses/files/status helpers, client GET, and a complete static-file server built on `net`. |

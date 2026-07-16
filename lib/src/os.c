@@ -330,6 +330,13 @@ const char *os_locale_date_time_string(void) {
     return os_strftime_now("%c");
 }
 
+#if !defined(__APPLE__)
+void os_vibrate(f64 intensity, f64 duration) {
+    ns_unused(intensity);
+    ns_unused(duration);
+}
+#endif
+
 static char *os_read_buffer = NULL;
 
 static const char *os_take_read_buffer(ns_str data) {

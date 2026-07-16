@@ -178,7 +178,7 @@ ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
 	# Apple: force the Metal backend.
-	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m
+	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/os.haptic.apple.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m
 else ifeq ($(NS_OS), $(NS_WIN))
 	# Windows: force the DirectX 12 backend.
 	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c lib/src/gpu.dx12.c

@@ -4,7 +4,7 @@ ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_DYLIB_CREATE = -dynamiclib
 	NS_DYLIB_COMMON = -fPIC -g -Wl,-install_name,@rpath/$(@F) -Wl,-rpath,@loader_path -undefined dynamic_lookup
 	NS_DYLIB_DEPS = $(NS_LDFLAGS)
-	NS_OS_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_COCOA_LDFLAGS) -framework CoreServices
+	NS_OS_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_COCOA_LDFLAGS) -framework CoreServices -framework CoreHaptics
 	NS_VIEW_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_COCOA_LDFLAGS) $(NS_METAL_LDFLAGS)
 	NS_GPU_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_METAL_LDFLAGS)
 	NS_AUDIO_DYLIB_DEPS = $(NS_LDFLAGS) -framework AVFAudio -framework Foundation
@@ -57,7 +57,7 @@ ifeq ($(NS_OS), $(NS_LINUX))
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.posix.o
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.linux.o
 else ifeq ($(NS_OS), $(NS_DARWIN))
-	NS_OS_OBJS += $(NS_BINDIR)/lib/os.osx.o
+	NS_OS_OBJS += $(NS_BINDIR)/lib/os.osx.o $(NS_BINDIR)/lib/os.haptic.apple.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.posix.o
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.osx.o
 	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.metal.o
