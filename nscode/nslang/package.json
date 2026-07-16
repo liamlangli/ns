@@ -2,7 +2,7 @@
     "name": "nslang",
     "displayName": "Nano Script",
     "description": "Syntax highlighting for the Nano Script (ns) language.",
-    "version": "0.2.0",
+    "version": "0.1.1",
     "publisher": "liamlangli",
     "license": "MIT",
     "icon": "icons/ns.png",
