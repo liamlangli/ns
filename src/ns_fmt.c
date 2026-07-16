@@ -33,6 +33,8 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
         ns_str s = ns_eval_str(vm, n);
         return (ns_str){.data = s.data, .len = s.len, .dynamic = 0};
     }
+    case NS_TYPE_TASK:
+        return ns_task_fmt(vm, n);
     default:
         return ns_str_cstr("nil");
     }

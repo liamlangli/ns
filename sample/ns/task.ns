@@ -1,0 +1,56 @@
+use std
+use task
+
+// async fn: calling it starts a concurrent task and returns a task handle
+async fn fib_task(n: i32) i32 {
+    let a = 0
+    let b = 1
+    for i in 0 to n {
+        let t = a + b
+        a = b
+        b = t
+    }
+    return a
+}
+
+// a task may itself await other tasks
+async fn fib_pair(n: i32) i32 {
+    let x = fib_task(n)
+    let y = fib_task(n + 1)
+    return (await x) + (await y)
+}
+
+fn main() {
+    // spawn a few async calls; they run while main keeps going
+    let t10 = fib_task(10)
+    let t20 = fib_task(20)
+    print(`spawned {t10} and {t20}\n`)
+    print(`fib(10) = {await t10}\n`)  // 55
+    print(`fib(20) = {await t20}\n`)  // 6765
+
+    // fib(n) + fib(n+1) == fib(n+2)
+    let pair = fib_pair(10)
+    print(`fib(10) + fib(11) = {await pair}\n`) // 144
+
+    // dispatch a block onto a worker thread; `base` is captured automatically
+    let base = 1000
+    let d = dispatch() { in
+        sleep(20)
+        return base + 337
+    }
+    print(`dispatch running: {d}\n`)
+    print(`dispatch result: {await d}\n`) // 1337
+
+    // cooperative cancellation
+    let s = dispatch() { in
+        let i = 0
+        loop i < 1000000 {
+            sleep(5)
+            i = i + 1
+        }
+        return i
+    }
+    cancel(s)
+    wait(s)
+    print(`cancelled: {cancelled(s)} {s}\n`)
+}

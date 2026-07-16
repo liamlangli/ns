@@ -311,11 +311,11 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
     // destination so heap-backed locations (e.g. array elements) work too.
     i8 *dptr = ns_type_in_stack(dst.t) ? &vm->stack[dst.o] : (i8 *)dst.o;
 
-    // Arrays, dicts, sets, strings and fns are reference values stored as a single u64 handle
+    // Arrays, dicts, sets, strings, fns and tasks are reference values stored as a single u64 handle
     // (a heap pointer or str_list index). Their value type carries mut=1, so they
     // never reach the const switch below; handle them uniformly here.
     if (ns_type_is_array(src.t) || ns_type_is(src.t, NS_TYPE_STRING) || ns_type_is(src.t, NS_TYPE_FN) ||
-        ns_type_is(src.t, NS_TYPE_DICT) || ns_type_is(src.t, NS_TYPE_SET)) {
+        ns_type_is(src.t, NS_TYPE_DICT) || ns_type_is(src.t, NS_TYPE_SET) || ns_type_is(src.t, NS_TYPE_TASK)) {
         u64 handle = ns_type_in_stack(src.t) ? *(u64 *)&vm->stack[src.o] : src.o;
         *(u64 *)dptr = handle;
         return ns_return_ok(value, dst);
@@ -768,6 +768,12 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_symbol *sym = &vm->symbols[ns_type_index(callee.t)];
     ns_fn_symbol *fn = ns_symbol_get_fn(sym);
 
+    // an async fn call runs its body as a concurrent task; the call expression
+    // evaluates to the task handle immediately
+    if (sym->type == NS_SYMBOL_FN && fn->fn_type == NS_FN_ASYNC && !fn->fn.t.ref) {
+        return ns_task_spawn_async_call(vm, ctx, sym, i);
+    }
+
     ns_value ret_val = (ns_value){.t = ns_type_set_stack(fn->ret, true), .o = 0};
     i32 ret_size = ns_type_size(vm, fn->ret);
     if (ret_size > 0) {
@@ -808,17 +814,34 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_array_push(vm->call_stack, call);
     if (fn->fn.t.ref) {
-        // `mod shader` fns are VM-internal intrinsics (like std) but need the ast
-        // ctx to walk fn bodies, so they dispatch here where ctx is in scope.
-        ns_return_bool ret = ns_str_equals(sym->lib, ns_str_cstr("shader")) ? ns_shader_vm_call(vm, ctx) : ns_vm_call_ref(vm);
+        // `mod shader` and `mod task` fns are VM-internal intrinsics (like std)
+        // but need the ast ctx to walk fn bodies, so they dispatch here where
+        // ctx is in scope.
+        vm->loc = ns_ast_state_loc(ctx, n->state);
+        ns_return_bool ret = ns_str_equals(sym->lib, ns_str_cstr("shader")) ? ns_shader_vm_call(vm, ctx)
+                           : ns_str_equals(sym->lib, ns_str_cstr("task"))   ? ns_task_vm_call(vm, ctx)
+                                                                            : ns_vm_call_ref(vm);
         if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     } else {
         if (sym->type == NS_SYMBOL_BLOCK) { // push block captured field to stack
             szt field_count = ns_array_length(sym->bc.st.fields);
             u64 o = callee.o;
+            ns_bool in_stack = ns_type_in_stack(callee.t);
             for (szt f_i = 0; f_i < field_count; ++f_i) {
                 ns_struct_field *field = &sym->bc.st.fields[f_i];
-                ns_value v = (ns_value){.t = ns_type_set_stack(field->t, true), .o = o + field->o};
+                ns_value v;
+                if (in_stack) {
+                    v = (ns_value){.t = ns_type_set_stack(field->t, true), .o = o + field->o};
+                } else {
+                    // a heap-snapshotted closure (e.g. one that crossed a task
+                    // boundary) addresses its captures absolutely; a ref field's
+                    // slot stores the captured pointer itself. mut=1 keeps the
+                    // non-stack value a dereferenced location, not an immediate.
+                    i8 *slot = (i8 *)o + field->o;
+                    v = ns_type_is_ref(field->t)
+                        ? (ns_value){.t = ns_type_set_stack(field->t, false), .o = *(u64 *)slot}
+                        : (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = (u64)slot};
+                }
                 ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = field->name, .val = v, .parsed = true};
                 ns_array_push(vm->symbol_stack, arg);
             }
@@ -864,9 +887,10 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
             // The snapshot is heap memory, so address fields absolutely. A ref
             // field stores the captured pointer in its slot; dereference it so
             // the value carries the pointer (matching native ref representation).
+            // mut=1: a non-stack mut=0 value would read as an immediate.
             ns_value v = ns_type_is_ref(field->t)
                 ? (ns_value){.t = ns_type_set_stack(field->t, false), .o = *(u64 *)slot}
-                : (ns_value){.t = ns_type_set_stack(field->t, false), .o = (u64)slot};
+                : (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = (u64)slot};
             ns_symbol cap = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = field->name, .val = v, .parsed = true};
             ns_array_push(vm->symbol_stack, cap);
         }
@@ -1578,6 +1602,8 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
         return ns_return_ok(value, ret);
     }
+    case NS_TOKEN_AWAIT: // suspend until the task operand completes, yield its result
+        return ns_task_await(vm, v, ns_ast_state_loc(ctx, n->state));
     case NS_TOKEN_REF:
         if (ns_type_is_ref(v.t)) return ns_return_ok(value, v);
         if (ns_type_is_const(v.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "cannot take reference of const value.");
@@ -1791,8 +1817,12 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_type_is(dst_t, NS_TYPE_INFER)) {
         dst_t = v.t;
         store_t = v.t;
-    } else if (ns_type_is(dst_t, NS_TYPE_UNION) || ns_type_is(dst_t, NS_TYPE_FN)) {
-        if (!ns_type_match(vm, dst_t, v.t)) {
+    } else if (ns_type_is(dst_t, NS_TYPE_UNION) || ns_type_is(dst_t, NS_TYPE_FN) || ns_type_is(dst_t, NS_TYPE_TASK)) {
+        ns_bool ok = ns_type_match(vm, dst_t, v.t);
+        // a task handle is self-describing, so a task[R] slot also accepts a
+        // generic `task` value (e.g. one produced without a parse pass)
+        if (!ok && ns_type_is(dst_t, NS_TYPE_TASK)) ok = ns_type_match(vm, v.t, dst_t);
+        if (!ok) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "var def type mismatch.", dst_t, v.t));
         }
         store_t = v.t;
@@ -1872,8 +1902,12 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_type_is(dst_t, NS_TYPE_INFER)) {
         dst_t = src.t;
         store_t = src.t;
-    } else if (ns_type_is(dst_t, NS_TYPE_UNION) || ns_type_is(dst_t, NS_TYPE_FN)) {
-        if (!ns_type_match(vm, dst_t, src.t)) {
+    } else if (ns_type_is(dst_t, NS_TYPE_UNION) || ns_type_is(dst_t, NS_TYPE_FN) || ns_type_is(dst_t, NS_TYPE_TASK)) {
+        ns_bool ok = ns_type_match(vm, dst_t, src.t);
+        // a task handle is self-describing, so a task[R] slot also accepts a
+        // generic `task` value (e.g. one produced without a parse pass)
+        if (!ok && ns_type_is(dst_t, NS_TYPE_TASK)) ok = ns_type_match(vm, src.t, dst_t);
+        if (!ok) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "local var def type mismatch.", dst_t, src.t));
         }
         store_t = src.t;
@@ -1950,6 +1984,12 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     vm->stack_depth++;
 
     for (i32 e_i = 0, l = n->compound_stmt.count; e_i < l; e_i++) {
+        // task safepoint: offer the vm lock to other tasks once per time slice
+        // and unwind when the current task has been cancelled
+        if (vm->task_rt && !ns_task_step(vm)) {
+            vm->stack_depth = stack_depth;
+            return ns_return_ok_void;
+        }
         i32 next = expr->next;
         expr = &ctx->nodes[expr->next];
         switch (expr->type) {
@@ -1992,7 +2032,19 @@ ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok_void;
 }
 
+static ns_return_value ns_eval_ast_impl(ns_vm *vm, ns_ast_ctx *ctx);
+
+// Top-level evaluation entry. Re-acquires the vm lock when a previous eval in
+// this vm started the task runtime (REPL), and on exit cancels + joins tasks
+// still running: tasks never outlive the ast they interpret.
 ns_return_value ns_eval_ast(ns_vm *vm, ns_ast_ctx *ctx) {
+    ns_task_eval_enter(vm);
+    ns_return_value ret = ns_eval_ast_impl(vm, ctx);
+    ns_task_eval_exit(vm);
+    return ret;
+}
+
+static ns_return_value ns_eval_ast_impl(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_return_bool ret_parse = ns_vm_parse(vm, ctx);
     if (ns_return_is_error(ret_parse)) return ns_return_change_type(value, ret_parse);
     ns_bool main_mod = vm->lib.len == 0 || ns_str_equals_STR(vm->lib, "main");

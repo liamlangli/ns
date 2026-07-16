@@ -139,32 +139,31 @@ ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
     ns_ast_t n = {.type = NS_AST_CALL_EXPR, .state = state, .call_expr = { .callee = callee, .arg_count = 0}};
-    if (ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
-        ns_ast_push(ctx, n);
-        return ns_return_ok(bool, true);
-    }
+    // an empty arg list still falls through to the trailing-block check below,
+    // so `f() { in ... }` attaches the block as the only argument
+    if (!ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
+        i32 next = 0;
+        do {
+            ret = ns_parse_expr(ctx);
+            if (ns_return_is_error(ret)) return ret;
+            if (!ret.r) break;
 
-    i32 next = 0;
-    do {
-        ret = ns_parse_expr(ctx);
-        if (ns_return_is_error(ret)) return ret;
-        if (!ret.r) break;
+            next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
+            n.call_expr.arg_count++;
 
-        next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
-        n.call_expr.arg_count++;
+            ns_parse_next_token(ctx);
+            if (ctx->token.type == NS_TOKEN_COMMA) {
+                continue;
+            } else if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
+                break;
+            } else {
+                return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "expected ',' or ')'");
+            }
+        } while (ret.r);
 
-        ns_parse_next_token(ctx);
-        if (ctx->token.type == NS_TOKEN_COMMA) {
-            continue;
-        } else if (ctx->token.type == NS_TOKEN_CLOSE_PAREN) {
-            break;
-        } else {
-            return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "expected ',' or ')'");
+        if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
+            return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "expected ')'");
         }
-    } while (ret.r);
-
-    if (ctx->token.type != NS_TOKEN_CLOSE_PAREN) {
-        return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "expected ')'");
     }
 
     ns_ast_push(ctx, n);
@@ -630,6 +629,7 @@ ns_return_bool ns_parse_unary_expr(ns_ast_ctx *ctx) {
     ns_bool is_unary = ctx->token.type == NS_TOKEN_BIT_INVERT_OP ||
                        ctx->token.type == NS_TOKEN_CMP_OP ||
                        ctx->token.type == NS_TOKEN_REF ||
+                       ctx->token.type == NS_TOKEN_AWAIT ||
                        (ctx->token.type == NS_TOKEN_ADD_OP && ns_str_equals_STR(ctx->token.val, "-"));
     if (!is_unary) {
         ns_restore_state(ctx, state);
@@ -831,6 +831,17 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                 ns_parse_stack_push_operand(ctx, ns_ast_push_expr(ctx, state, ctx->current));
                 break;
             }
+        } break;
+
+        case NS_TOKEN_AWAIT: { // prefix `await expr` suspends on a task operand
+            ns_restore_state(ctx, state);
+            ns_return_bool ret = ns_parse_unary_expr(ctx);
+            if (ns_return_is_error(ret)) return ret;
+            if (ret.r) {
+                ns_parse_stack_push_operand(ctx, ctx->current);
+                break;
+            }
+            return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected expression after 'await'");
         } break;
 
         case NS_TOKEN_AS: {

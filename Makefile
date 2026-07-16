@@ -74,7 +74,8 @@ else
 # -rdynamic exports bin/ns symbols to FFI-loaded modules (bin/*.so reference
 # runtime helpers like _ns_malloc; macOS resolves these against the host
 # executable automatically, Linux only with an exported dynamic symbol table).
-NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -rdynamic
+# -pthread: the task runtime (src/ns_task.c) runs tasks on worker threads.
+NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -rdynamic -pthread
 endif
 
 NS_DEBUG_CFLAGS = -g -O0 $(NS_WARN_CFLAGS) -DNS_DEBUG
@@ -109,6 +110,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_pe.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
+	src/ns_task.c \
 	src/ns_vm_lib.c \
 	src/ns_vm_print.c \
 	src/ns_net.c \
@@ -135,6 +137,7 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 	src/ns_ast_print.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
+	src/ns_task.c \
 	src/ns_vm_lib.c \
 	src/ns_vm_print.c \
 	src/ns_json.c \
@@ -155,6 +158,7 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_macho.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
+	src/ns_task.c \
 	src/ns_vm_print.c \
 	src/ns_net.c \
 	src/ns_json.c \
@@ -255,7 +259,7 @@ install: all
 	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
-	cp lib/std.ns lib/shader.ns lib/simd.ns $(NS_INSTALL_ROOT)/share/ns-runtime/ref/
+	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns $(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec cp {} $(NS_INSTALL_ROOT)/lib \;
 	@echo "Installed ns to $(NS_INSTALL_DISPLAY)"
 	@echo "Please add $(NS_INSTALL_DISPLAY)/bin to your system PATH."

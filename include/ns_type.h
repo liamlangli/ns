@@ -302,6 +302,7 @@ typedef enum {
     NS_TYPE_UNION,
     NS_TYPE_DICT,
     NS_TYPE_SET,
+    NS_TYPE_TASK,
 } ns_value_type;
 
 typedef enum {

@@ -43,6 +43,11 @@ ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s) {
 ns_bool ns_type_match(ns_vm *vm, ns_type r, ns_type p) {
     if (ns_type_is(r, NS_TYPE_ANY)) return true; // an `any` slot accepts every provided type
     if (ns_type_equals(r, p)) return true;
+    else if (ns_type_is(r, NS_TYPE_TASK) && ns_type_is(p, NS_TYPE_TASK)) {
+        // a bare `task` slot (result type any) accepts every task; task types
+        // with concrete result types must match exactly (handled above)
+        return ns_type_is(vm->symbols[ns_type_index(r)].ct.val, NS_TYPE_ANY);
+    }
     else if (ns_type_is(r, NS_TYPE_UNION)) {
         // A value is assignable to a union when its concrete type matches the
         // union itself or any of the union's member types.
@@ -88,6 +93,13 @@ ns_str ns_vm_container_type_name(ns_vm *vm, ns_value_type kind, ns_type key, ns_
     ns_str key_name = ns_vm_get_type_name(vm, key);
     ns_str val_name = ns_vm_get_type_name(vm, val);
     ns_str name = {.dynamic = true};
+    if (kind == NS_TYPE_TASK) {
+        ns_str_append(&name, ns_str_cstr("task["));
+        ns_str_append(&name, val_name);
+        ns_str_append(&name, ns_str_cstr("]"));
+        ns_array_push(name.data, '\0');
+        return name;
+    }
     if (kind == NS_TYPE_SET) {
         ns_str_append(&name, ns_str_cstr("set["));
         ns_str_append(&name, key_name);
@@ -164,6 +176,7 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
     case NS_TYPE_ARRAY:
     case NS_TYPE_DICT:
     case NS_TYPE_SET:
+    case NS_TYPE_TASK: // a task value is an opaque runtime handle
     case NS_TYPE_FN: return ns_ptr_size;
     // A str field is laid out as the C `ns_str` struct (data ptr + len + flag),
     // so its slot must match that ABI size for struct field offsets to line up
@@ -299,11 +312,14 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     case NS_TYPE_F64: return is_ref ? ns_str_cstr("ref_f64") : ns_str_cstr("f64");
     case NS_TYPE_BOOL: return is_ref ? ns_str_cstr("ref_bool") : ns_str_cstr("bool");
     case NS_TYPE_STRING: return ns_str_cstr("str");
+    case NS_TYPE_ANY: return ns_str_cstr("any");
+    case NS_TYPE_VOID: return ns_str_cstr("void");
     case NS_TYPE_FN:
     case NS_TYPE_STRUCT:
     case NS_TYPE_UNION:
     case NS_TYPE_DICT:
-    case NS_TYPE_SET: {
+    case NS_TYPE_SET:
+    case NS_TYPE_TASK: {
         u64 ti = ns_type_index(t);
         if (ti > ns_array_length(vm->symbols)) {
             return ns_str_null;
@@ -436,6 +452,8 @@ ns_return_type ns_vm_parse_type_by_token(ns_vm *vm, ns_token_t t, ns_code_loc lo
         return ns_return_ok(type, r->val.t);
     case NS_SYMBOL_UNION:
         return ns_return_ok(type, r->un.t);
+    case NS_SYMBOL_CONTAINER: // interned container types (dict/set/task) usable by name, e.g. `task`
+        return ns_return_ok(type, r->ct.t);
     default: {
         return ns_return_error(type, loc, NS_ERR_SYNTAX, "unknown symbol.");
     } break;
@@ -563,6 +581,7 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
             ns_return_type ret = ns_vm_parse_type(vm, ctx, ret_type);
             if (ns_return_is_error(ret)) return ns_return_change_type(void, ret);
             fn->fn.ret = ns_type_set_mut(ret.r, true);
+            fn->fn.fn_type = n->fn_def.type; // async fns spawn a task per call
 
             fn->fn.arg_required = n->fn_def.arg_required;
             ns_array_set_length(fn->fn.args, n->fn_def.arg_count);
@@ -644,6 +663,9 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_scope_exit(vm);
         ns_array_pop(vm->call_stack);
         fn = &vm->symbols[i];
+        // return stmts refine an inferred return type on the frame's stable
+        // copy; carry it back to the registered symbol
+        if (ns_type_is(fn->fn.ret, NS_TYPE_INFER)) fn->fn.ret = fn_sym.fn.ret;
         fn->fn.fn = (ns_value){.t = ns_type_encode(NS_TYPE_FN, i, is_ref, false, true) };
         fn->parsed = true;
     }
@@ -1060,6 +1082,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     i32 next = n->next;
+    ns_type arg0_t = ns_type_unknown;
     for (i32 a_i = 0, l = n->call_expr.arg_count; a_i < l; ++a_i) {
         ns_ast_t arg = ctx->nodes[next];
         // re-fetch each iteration: parsing a block arg pushes a global symbol,
@@ -1071,6 +1094,7 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(ret_t)) return ret_t;
 
         ns_type t = ret_t.r;
+        if (a_i == 0) arg0_t = t;
         next = arg.next;
         // a numeric param accepts any numeric arg (converted when the call
         // pushes args in ns_eval_call_expr), matching designated-expr fields
@@ -1080,6 +1104,29 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
     }
     fn_record = &vm->symbols[ns_type_index(fn)];
+
+    // `dispatch(f)` runs a zero-arg closure on a worker thread; the call's
+    // static type carries the closure's result type: task[R].
+    if (fn_record->fn.fn.t.ref && ns_str_equals_STR(fn_record->lib, "task") && ns_str_equals_STR(fn_record->name, "dispatch")) {
+        if (n->call_expr.arg_count != 1 || !(ns_type_is(arg0_t, NS_TYPE_FN) || ns_type_is(arg0_t, NS_TYPE_BLOCK))) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "dispatch expects a single block or fn argument.");
+        }
+        ns_fn_symbol *cfn = ns_symbol_get_fn(&vm->symbols[ns_type_index(arg0_t)]);
+        if (ns_array_length(cfn->args) > 0) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "dispatch closure must take no arguments.");
+        }
+        if (cfn->fn_type == NS_FN_ASYNC) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "dispatch target must not be async; call it directly instead.");
+        }
+        ns_type task_t = ns_task_type(vm, cfn->ret);
+        return ns_return_ok(type, task_t);
+    }
+
+    // calling an async fn spawns a task; the call's value is the task handle
+    if (fn_record->type == NS_SYMBOL_FN && fn_record->fn.fn_type == NS_FN_ASYNC) {
+        ns_type task_t = ns_task_type(vm, fn_record->fn.ret);
+        return ns_return_ok(type, task_t);
+    }
     return ns_return_ok(type, fn_record->fn.ret);
 }
 
@@ -1225,6 +1272,12 @@ ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_ok(type, t);
     case NS_TOKEN_REF:
         return ns_return_ok(type, ns_type_set_ref(t, true));
+    case NS_TOKEN_AWAIT: { // await task[R] -> R
+        if (!ns_type_is(t, NS_TYPE_TASK)) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "await expr type mismatch.", "task", t));
+        }
+        return ns_return_ok(type, vm->symbols[ns_type_index(t)].ct.val);
+    }
     default:
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown unary ops.");
     }
@@ -1512,6 +1565,11 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_symbol *callee = vm->call_stack[l - 1].callee;
         ns_fn_symbol *fn = ns_symbol_get_fn(callee);
         if (n->jump_stmt.expr <= 0) {
+            // a bare return in a fn/block without a declared return type fixes it to void
+            if (ns_type_is(fn->ret, NS_TYPE_INFER)) {
+                fn->ret = ns_type_void;
+                break;
+            }
             if (!ns_type_is(fn->ret, NS_TYPE_VOID)) {
                 return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "return stmt requires a value in a non-void fn.");
             }
@@ -1521,6 +1579,13 @@ ns_return_void ns_vm_parse_jump_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->jump_stmt.expr, fn->ret);
         if (ns_return_is_error(ret_t)) return (ns_return_void){.s = ret_t.s, .e = ret_t.e};
         ns_type t = ret_t.r;
+
+        // a fn/block without a declared return type infers it from its first
+        // return stmt (`{ in return 42 }` types as () -> i32)
+        if (ns_type_is(fn->ret, NS_TYPE_INFER)) {
+            fn->ret = ns_type_set_mut(t, true);
+            break;
+        }
 
         // a numeric return slot accepts any numeric expr (converted in
         // ns_eval_return_stmt), matching call args and designated-expr fields

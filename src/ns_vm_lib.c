@@ -190,6 +190,10 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     ns_str source = ns_os_read_file(path);
     ns_ast_parse(&ctx, source, path);
 
+    // the task module's declarations reference the `task` type; register it
+    // before parsing the module source
+    if (ns_str_equals(lib_name, ns_str_cstr("task"))) ns_task_register_module(vm);
+
     ns_str prev = vm->lib;
     vm->lib = lib_name;
     vm->symbol_gen++; // lib-preferred lookup order changed; drop cached resolutions
@@ -201,8 +205,9 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     vm->lib = prev;
     vm->symbol_gen++;
 
-    // std and shader are VM-internal (dispatched in the interpreter, no dylib)
-    if (ns_str_equals(lib_name, ns_str_cstr("std")) || ns_str_equals(lib_name, ns_str_cstr("shader"))) {
+    // std, shader and task are VM-internal (dispatched in the interpreter, no dylib)
+    if (ns_str_equals(lib_name, ns_str_cstr("std")) || ns_str_equals(lib_name, ns_str_cstr("shader")) ||
+        ns_str_equals(lib_name, ns_str_cstr("task"))) {
         vm->libs[lib_index].path = ns_str_null;
         vm->libs[lib_index].lib = ns_null;
         return &vm->libs[lib_index];
@@ -463,6 +468,8 @@ ns_return_bool ns_vm_call_ref(ns_vm *vm) {
     ns_symbol *fn = call->callee;
 
     if (ns_str_equals(fn->lib, ns_str_cstr("std"))) return ns_vm_call_std(vm);
+    // task fns need the ast ctx; ns_eval_call_expr routes them to ns_task_vm_call
+    if (ns_str_equals(fn->lib, ns_str_cstr("task"))) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "task fn called without ast context.");
 #ifndef NS_XCLIB
     if (fn->fn.fn_ptr)  return ns_vm_call_ffi(vm);
 

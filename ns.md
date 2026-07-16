@@ -119,6 +119,8 @@ With filename and no analysis/emit flag, it evaluates and prints result.
   - `ns_vm_parse.c` — maps AST into VM structures/symbols
   - `ns_vm_eval.c` — evaluator/runtime execution
   - `ns_vm_lib.c` — runtime library bindings/integration
+  - `ns_task.c` — async/await + dispatch task runtime (worker threads behind a
+    cooperative vm lock; see `doc/async_and_task.md` and `lib/task.ns`)
   - `ns_vm_print.c` — VM state/symbol print helpers
   - `ns_repl.c` — REPL shell behavior
 
@@ -153,6 +155,9 @@ With filename and no analysis/emit flag, it evaluates and prints result.
   compiled position-independent into the binary and resolved through the static
   symbol table in `src/ns_vm_lib.c`.
 - `std`, `io`, `view`, `gpu`, `term`, and the networking pair `net` / `http`.
+- `task` (`lib/task.ns`) is VM-internal like `std`/`shader`: `dispatch`, `await`
+  (keyword), `wait`, `cancel`, `done`, `cancelled`, `sleep` — the language-level
+  concurrency api (see `doc/async_and_task.md`, `sample/ns/task.ns`).
 - `net` (`lib/net.ns`, `lib/src/net.c`) provides TCP/UDP socket primitives;
   `http` (`lib/http.ns`, `lib/src/http.c`) adds HTTP/1.1 helpers and a complete
   static file server (`http_serve_static`). See `doc/net.md` and the

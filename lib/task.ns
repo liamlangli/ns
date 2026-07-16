@@ -1,0 +1,28 @@
+mod task
+
+// language-level concurrency (see doc/async_and_task.md)
+//
+// A `task` is created by calling an `async fn`, or by dispatching a zero-arg
+// block or fn value onto a worker thread with `dispatch`. Variables a
+// dispatched block references are captured automatically and carried into
+// the worker: plain values are copied at dispatch time, references (refs,
+// arrays, dicts, strings) share their referent. `await expr` suspends the
+// current task until the task expr completes and yields its result.
+
+// run a zero-arg block or fn value on a worker thread; returns its task handle
+ref fn dispatch(f: any) task
+
+// block the current task until t finishes or is cancelled
+ref fn wait(t: task) void
+
+// request cooperative cancellation of t
+ref fn cancel(t: task) void
+
+// true once t has finished (normally or cancelled)
+ref fn done(t: task) bool
+
+// true when t ended due to cancellation (or a runtime error)
+ref fn cancelled(t: task) bool
+
+// suspend the current task; other tasks run during the sleep
+ref fn sleep(ms: i32) void

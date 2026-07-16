@@ -31,6 +31,7 @@ typedef struct ns_fn_symbol {
     ns_symbol *args;
     i32 arg_required;
     void *fn_ptr;
+    ns_fn_type fn_type; // NS_FN_ASYNC: calls spawn a task and yield a task handle
 } ns_fn_symbol;
 
 typedef struct ns_struct_field {
@@ -156,6 +157,11 @@ typedef struct ns_vm {
     ns_code_loc loc;
 
     i32 stack_depth;
+
+    // task runtime (async/await + dispatch), created lazily on first spawn.
+    // Non-null means other tasks may be runnable and the vm lock protocol is
+    // active; see src/ns_task.c and doc/async_and_task.md.
+    void *task_rt;
 } ns_vm;
 
 #define NS_MAX_STACK_DEPTH 255
@@ -168,6 +174,20 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 ns_bool ns_type_match(ns_vm *vm, ns_type require, ns_type provide); // check if provide type can be converted to require type
 ns_number_type ns_vm_number_type(ns_type t);
 ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r);
+
+// vm task (async/await + dispatch). Tasks are stackful: each runs on its own
+// worker thread; a single vm lock serializes interpreter execution and is
+// handed over at await/wait/sleep/statement boundaries (doc/async_and_task.md).
+ns_type ns_vm_intern_container_type(ns_vm *vm, ns_value_type kind, ns_type key, ns_type val);
+ns_type ns_task_type(ns_vm *vm, ns_type val); // intern task type with result type `val`
+void ns_task_register_module(ns_vm *vm);      // push the bare `task` type symbol (on `use task`)
+ns_bool ns_task_step(ns_vm *vm);              // statement safepoint; false when the current task is cancelled
+ns_return_value ns_task_spawn_async_call(ns_vm *vm, ns_ast_ctx *ctx, ns_symbol *sym, i32 call_i);
+ns_return_value ns_task_await(ns_vm *vm, ns_value task_v, ns_code_loc loc);
+ns_return_bool ns_task_vm_call(ns_vm *vm, ns_ast_ctx *ctx); // `task` module intrinsics (dispatch/wait/...)
+ns_str ns_task_fmt(ns_vm *vm, ns_value task_v);
+void ns_task_eval_enter(ns_vm *vm); // re-acquire the vm lock when a top-level eval begins
+void ns_task_eval_exit(ns_vm *vm);  // cancel + join outstanding tasks when a top-level eval ends
 
 // vm parse stage
 void ns_vm_push_symbol_global(ns_vm *vm, ns_symbol r);

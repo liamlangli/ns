@@ -620,5 +620,144 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "std open/read/close handles stored in locals.");
     }
 
+    // --- async fn call spawns a task; await yields its typed result ---
+    {
+        const char *src =
+            "use task\n"
+            "async fn work(n: i32) i32 {\n"
+            "    return n * 2\n"
+            "}\n"
+            "fn main() bool {\n"
+            "    let t = work(21)\n"
+            "    return await t == 42\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "async fn call returns a task and await yields its result.");
+    }
+
+    // --- await composes directly over an async call expression ---
+    {
+        const char *src =
+            "use task\n"
+            "async fn add(a: i32, b: i32) i32 {\n"
+            "    return a + b\n"
+            "}\n"
+            "fn main() bool {\n"
+            "    return (await add(20, 22)) == 42\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "await applies directly to an async call.");
+    }
+
+    // --- dispatch runs a block on a worker thread; free variables are
+    // captured automatically and snapshotted at dispatch time ---
+    {
+        const char *src =
+            "use task\n"
+            "fn main() bool {\n"
+            "    let base = 10\n"
+            "    let t = dispatch() { in return base + 32 }\n"
+            "    base = 100\n"
+            "    return await t == 42\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "dispatch captures referenced variables into the task.");
+    }
+
+    // --- task handles report completion; wait blocks without a result ---
+    {
+        const char *src =
+            "use task\n"
+            "fn main() bool {\n"
+            "    let t = dispatch() { in return 1 }\n"
+            "    wait(t)\n"
+            "    return done(t) && !cancelled(t)\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "wait/done/cancelled observe task completion.");
+    }
+
+    // --- cancellation is cooperative: the task unwinds at its next
+    // suspension point and reports cancelled ---
+    {
+        const char *src =
+            "use task\n"
+            "fn main() bool {\n"
+            "    let t = dispatch() { in\n"
+            "        let i = 0\n"
+            "        loop i < 100000 {\n"
+            "            sleep(5)\n"
+            "            i = i + 1\n"
+            "        }\n"
+            "        return i\n"
+            "    }\n"
+            "    cancel(t)\n"
+            "    wait(t)\n"
+            "    return done(t) && cancelled(t)\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "cancel stops a running task cooperatively.");
+    }
+
+    // --- concurrent tasks make independent progress (await order does not
+    // matter, results stay attached to their handles) ---
+    {
+        const char *src =
+            "use task\n"
+            "async fn id(n: i32) i32 {\n"
+            "    sleep(10)\n"
+            "    return n\n"
+            "}\n"
+            "fn main() bool {\n"
+            "    let a = id(1)\n"
+            "    let b = id(2)\n"
+            "    let c = id(3)\n"
+            "    let rc = await c\n"
+            "    let ra = await a\n"
+            "    let rb = await b\n"
+            "    return ra == 1 && rb == 2 && rc == 3\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "concurrent tasks resolve independently of await order.");
+    }
+
+    // --- task results cross the thread boundary for reference-shaped values ---
+    {
+        const char *src =
+            "use task\n"
+            "async fn greet(name: str) str {\n"
+            "    return name + \"!\"\n"
+            "}\n"
+            "fn main() bool {\n"
+            "    return (await greet(\"ns\")) == \"ns!\"\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "task results carry strings across the boundary.");
+    }
+
+    // --- a block without a declared return type infers it from its first
+    // return stmt, so dispatch types as task[i32] ---
+    {
+        const char *src =
+            "use task\n"
+            "fn main() bool {\n"
+            "    let t = dispatch({ in return 40 + 2 })\n"
+            "    return await t == 42\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "dispatched block infers its return type.");
+    }
+
+    // --- tasks compose: an async fn may spawn and await other tasks ---
+    {
+        const char *src =
+            "use task\n"
+            "async fn leaf(n: i32) i32 {\n"
+            "    sleep(5)\n"
+            "    return n\n"
+            "}\n"
+            "async fn branch(n: i32) i32 {\n"
+            "    let a = leaf(n)\n"
+            "    let b = leaf(n + 1)\n"
+            "    return (await a) + (await b)\n"
+            "}\n"
+            "fn main() bool {\n"
+            "    return (await branch(10)) == 21\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "a task awaits tasks it spawned itself.");
+    }
+
     return 0;
 }
