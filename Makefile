@@ -1,5 +1,6 @@
 # FLAGS
 MAKEFLAGS += --no-print-directory -j
+.DEFAULT_GOAL := all
 
 # PLATFORNM
 OS := $(shell uname -s 2>/dev/null || echo Windows)
