@@ -463,17 +463,75 @@ void *ns_callback_bridge_create(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure) {
     return code;
 }
 #else
-// XCFramework build: FFI not supported
+// Embedded Apple apps cannot use libffi closures or load dylibs at runtime.
+// Native modules are linked into the app and called by a generated typed
+// dispatcher; callbacks use a fixed set of executable C trampolines.
+ns_return_bool ns_vm_call_embedded(ns_vm *vm);
+
 ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
-    (void)vm;
-    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "FFI calls not supported in XCFramework build.");
+    return ns_vm_call_embedded(vm);
 }
 
+typedef struct ns_callback_bridge {
+    ns_vm *vm;
+    ns_ast_ctx *ctx;
+    ns_value closure;
+    void *cap_base;
+} ns_callback_bridge;
+
+#define NS_EMBEDDED_CALLBACK_CAPACITY 16
+static ns_callback_bridge ns_embedded_callbacks[NS_EMBEDDED_CALLBACK_CAPACITY];
+static i32 ns_embedded_callback_count;
+
+static void ns_embedded_callback_invoke(i32 index, void *arg) {
+    if (index < 0 || index >= ns_embedded_callback_count) return;
+    ns_callback_bridge *bridge = &ns_embedded_callbacks[index];
+    ns_return_value result = ns_eval_invoke_callback(bridge->vm, bridge->ctx, bridge->closure, bridge->cap_base, arg);
+    if (ns_return_is_error(result)) ns_return_assert(result);
+}
+
+#define NS_EMBEDDED_TRAMPOLINE(index) \
+    static void ns_embedded_trampoline_##index(void *arg) { ns_embedded_callback_invoke(index, arg); }
+NS_EMBEDDED_TRAMPOLINE(0)
+NS_EMBEDDED_TRAMPOLINE(1)
+NS_EMBEDDED_TRAMPOLINE(2)
+NS_EMBEDDED_TRAMPOLINE(3)
+NS_EMBEDDED_TRAMPOLINE(4)
+NS_EMBEDDED_TRAMPOLINE(5)
+NS_EMBEDDED_TRAMPOLINE(6)
+NS_EMBEDDED_TRAMPOLINE(7)
+NS_EMBEDDED_TRAMPOLINE(8)
+NS_EMBEDDED_TRAMPOLINE(9)
+NS_EMBEDDED_TRAMPOLINE(10)
+NS_EMBEDDED_TRAMPOLINE(11)
+NS_EMBEDDED_TRAMPOLINE(12)
+NS_EMBEDDED_TRAMPOLINE(13)
+NS_EMBEDDED_TRAMPOLINE(14)
+NS_EMBEDDED_TRAMPOLINE(15)
+#undef NS_EMBEDDED_TRAMPOLINE
+
+static void *const ns_embedded_trampolines[NS_EMBEDDED_CALLBACK_CAPACITY] = {
+    ns_embedded_trampoline_0, ns_embedded_trampoline_1, ns_embedded_trampoline_2, ns_embedded_trampoline_3,
+    ns_embedded_trampoline_4, ns_embedded_trampoline_5, ns_embedded_trampoline_6, ns_embedded_trampoline_7,
+    ns_embedded_trampoline_8, ns_embedded_trampoline_9, ns_embedded_trampoline_10, ns_embedded_trampoline_11,
+    ns_embedded_trampoline_12, ns_embedded_trampoline_13, ns_embedded_trampoline_14, ns_embedded_trampoline_15,
+};
+
 void *ns_callback_bridge_create(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure) {
-    (void)vm;
-    (void)ctx;
-    (void)closure;
-    return ns_null;
+    if (ns_embedded_callback_count >= NS_EMBEDDED_CALLBACK_CAPACITY) return ns_null;
+    i32 index = ns_embedded_callback_count++;
+    ns_callback_bridge *bridge = &ns_embedded_callbacks[index];
+    bridge->vm = vm;
+    bridge->ctx = ctx;
+    bridge->closure = closure;
+    bridge->cap_base = ns_null;
+
+    ns_symbol *symbol = &vm->symbols[ns_type_index(closure.t)];
+    if (symbol->type == NS_SYMBOL_BLOCK && symbol->bc.st.stride > 0) {
+        bridge->cap_base = ns_malloc(symbol->bc.st.stride);
+        memcpy(bridge->cap_base, &vm->stack[closure.o], symbol->bc.st.stride);
+    }
+    return ns_embedded_trampolines[index];
 }
 #endif // NS_XCLIB
 
@@ -522,9 +580,6 @@ ns_return_bool ns_vm_call_ref(ns_vm *vm) {
     fn->fn.fn_ptr = fn_ptr;
     return ns_vm_call_ffi(vm);
 #else
-    // XCFramework build: no FFI or dynamic library support
-    (void)call;
-    (void)fn;
-    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "External library calls not supported in XCFramework build.");
+    return ns_vm_call_embedded(vm);
 #endif // NS_XCLIB
 }

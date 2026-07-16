@@ -40,7 +40,7 @@ fn vs_main(data: vertex_data) fragment_input {
     }
 }
 
-// Convert a distance along an order-three Hilbert curve into a grid point.
+// Convert a distance along an order-four Hilbert curve into a grid point.
 // Keeping this as ordinary ns code makes the helper part of the transpiled
 // shader rather than a precomputed vertex list on the CPU.
 fn hilbert_point(index: i32) grid_point {
@@ -49,7 +49,7 @@ fn hilbert_point(index: i32) grid_point {
     let t = index
     let scale = 1
 
-    for level in 0 to 3 {
+    for level in 0 to 4 {
         let half_t = t / 2
         let rx = half_t & 1
         let turn = t ^ rx
@@ -93,11 +93,11 @@ fn min_value(a: f32, b: f32) f32 {
 }
 
 fn segment_distance(px: f32, py: f32, a: grid_point, b: grid_point) f32 {
-    // Map the 8x8 grid into the center of the normalized viewport.
-    let ax = 0.08 + (a.x as f32) * 0.84 / 7.0
-    let ay = 0.08 + (a.y as f32) * 0.84 / 7.0
-    let bx = 0.08 + (b.x as f32) * 0.84 / 7.0
-    let by = 0.08 + (b.y as f32) * 0.84 / 7.0
+    // Map the 16x16 grid into the center of the normalized viewport.
+    let ax = 0.08 + (a.x as f32) * 0.84 / 15.0
+    let ay = 0.08 + (a.y as f32) * 0.84 / 15.0
+    let bx = 0.08 + (b.x as f32) * 0.84 / 15.0
+    let by = 0.08 + (b.y as f32) * 0.84 / 15.0
     let abx = bx - ax
     let aby = by - ay
     let apx = px - ax
@@ -114,21 +114,21 @@ fn fs_main(data: fragment_input) float4 {
     let uv = data.uv
     let nearest = 2.0
 
-    for index in 0 to 63 {
+    for index in 0 to 255 {
         let a = hilbert_point(index)
         let b = hilbert_point(index + 1)
         nearest = min_value(nearest, segment_distance(uv.x, uv.y, a, b))
     }
 
-    let line_distance = 0.010 - nearest
-    let glow_distance = 0.035 - nearest
-    let line = clamp_value(line_distance / 0.004, 0.0, 1.0)
-    let glow = clamp_value(glow_distance / 0.035, 0.0, 1.0)
-    let horizon = 0.08 + uv.y * 0.10
+    let line_distance = 0.0045 - nearest
+    let glow_distance = 0.014 - nearest
+    let line = clamp_value(line_distance / 0.002, 0.0, 1.0)
+    let glow = clamp_value(glow_distance / 0.014, 0.0, 1.0)
+    let gray = 0.025 + glow * 0.20 + line * 0.775
     return float4 {
-        x: horizon + glow * 0.12 + line * 0.78,
-        y: 0.04 + glow * 0.38 + line * 0.56,
-        z: 0.12 + glow * 0.62 + line * 0.82,
+        x: gray,
+        y: gray,
+        z: gray,
         w: 1.0,
     }
 }

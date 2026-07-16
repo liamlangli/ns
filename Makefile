@@ -141,10 +141,16 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 	src/ns_vm_eval.c \
 	src/ns_task.c \
 	src/ns_vm_lib.c \
+	src/ns_embedded_ffi.c \
 	src/ns_vm_print.c \
 	src/ns_json.c \
 	src/ns_shader.c \
 	src/ns_def.c
+
+.PHONY: regen-embedded-ffi
+regen-embedded-ffi:
+	python3 tools/gen_embedded_ffi.py --output src/ns_embedded_ffi.c \
+		lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns
 
 # iOS subset: exclude repl and vm_lib (depend on readline/libffi not available on iOS)
 NS_IOS_LIB_SRCS = src/ns_fmt.c \
