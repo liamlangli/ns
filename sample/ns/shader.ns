@@ -1,50 +1,206 @@
-// Write both logic and shaders in ns: ordinary fns over simd structs are
-// transcoded to platform shader source at runtime with `use shader`
-// (or ahead of time with `ns --shader <msl|glsl|hlsl> sample/ns/shader.ns`).
+// Render a Hilbert curve with shaders written in ns.
+//
+// Run from the repo root after building the standard dynamic libraries:
+//
+//   make std
+//   bin/ns sample/ns/shader.ns
+//
+// `use shader` transpiles vs_main/fs_main to the active Metal, Vulkan, or
+// DirectX shader language. The fragment shader uses helpers, integer bitwise
+// operations, a range loop, casts, and math intrinsics to draw the curve.
+
 use std
 use simd
 use shader
+use view
+use gpu
 
-struct VertexData {
+struct vertex_data {
     position: float3,
     uv: float2
 }
 
-struct FragmentInput {
+struct fragment_input {
     position: float4,
-    uv: float2,
-    color: float4
+    uv: float2
 }
 
-fn vs_main(data: VertexData) FragmentInput {
+struct grid_point {
+    x: i32,
+    y: i32
+}
+
+let g_resources = [0u, 0u, 0u, 0u]
+
+fn vs_main(data: vertex_data) fragment_input {
     let pos = data.position
-    return FragmentInput {
+    return fragment_input {
         position: float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
         uv: data.uv,
-        color: float4 { x: 1.0, y: 1.0, z: 1.0, w: 1.0 },
     }
 }
 
-fn fs_main(data: FragmentInput) float4 {
-    return data.color
+// Convert a distance along an order-three Hilbert curve into a grid point.
+// Keeping this as ordinary ns code makes the helper part of the transpiled
+// shader rather than a precomputed vertex list on the CPU.
+fn hilbert_point(index: i32) grid_point {
+    let x = 0
+    let y = 0
+    let t = index
+    let scale = 1
+
+    for level in 0 to 3 {
+        let half_t = t / 2
+        let rx = half_t & 1
+        let turn = t ^ rx
+        let ry = turn & 1
+
+        if ry == 0 {
+            if rx == 1 {
+                x = scale - 1 - x
+                y = scale - 1 - y
+            }
+
+            let old_x = x
+            x = y
+            y = old_x
+        }
+
+        x = x + scale * rx
+        y = y + scale * ry
+        t = t / 4
+        scale = scale * 2
+    }
+
+    return grid_point { x: x, y: y }
+}
+
+fn clamp_value(value: f32, low: f32, high: f32) f32 {
+    if value < low {
+        return low
+    }
+    if value > high {
+        return high
+    }
+    return value
+}
+
+fn min_value(a: f32, b: f32) f32 {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn segment_distance(px: f32, py: f32, a: grid_point, b: grid_point) f32 {
+    // Map the 8x8 grid into the center of the normalized viewport.
+    let ax = 0.08 + (a.x as f32) * 0.84 / 7.0
+    let ay = 0.08 + (a.y as f32) * 0.84 / 7.0
+    let bx = 0.08 + (b.x as f32) * 0.84 / 7.0
+    let by = 0.08 + (b.y as f32) * 0.84 / 7.0
+    let abx = bx - ax
+    let aby = by - ay
+    let apx = px - ax
+    let apy = py - ay
+    let projection = apx * abx + apy * aby
+    let segment_length_squared = abx * abx + aby * aby
+    let along = clamp_value(projection / segment_length_squared, 0.0, 1.0)
+    let dx = apx - abx * along
+    let dy = apy - aby * along
+    return sqrt(dx * dx + dy * dy)
+}
+
+fn fs_main(data: fragment_input) float4 {
+    let uv = data.uv
+    let nearest = 2.0
+
+    for index in 0 to 63 {
+        let a = hilbert_point(index)
+        let b = hilbert_point(index + 1)
+        nearest = min_value(nearest, segment_distance(uv.x, uv.y, a, b))
+    }
+
+    let line_distance = 0.010 - nearest
+    let glow_distance = 0.035 - nearest
+    let line = clamp_value(line_distance / 0.004, 0.0, 1.0)
+    let glow = clamp_value(glow_distance / 0.035, 0.0, 1.0)
+    let horizon = 0.08 + uv.y * 0.10
+    return float4 {
+        x: horizon + glow * 0.12 + line * 0.78,
+        y: 0.04 + glow * 0.38 + line * 0.56,
+        z: 0.12 + glow * 0.62 + line * 0.82,
+        w: 1.0,
+    }
+}
+
+fn create_pipeline(target: str) {
+    // Two triangles cover the viewport; uv is interpolated for fs_main.
+    let vertices = [
+        -1.0, -1.0, 0.0, 0.0, 0.0,
+        1.0, -1.0, 0.0, 1.0, 0.0,
+        1.0, 1.0, 0.0, 1.0, 1.0,
+        -1.0, -1.0, 0.0, 0.0, 0.0,
+        1.0, 1.0, 0.0, 1.0, 1.0,
+        -1.0, 1.0, 0.0, 0.0, 1.0,
+    ]
+
+    let attr_offsets = [0, 12]
+    let attr_sizes = [3, 2]
+    let attr_formats = [GPU_ATTRIBUTE_FORMAT_FLOAT, GPU_ATTRIBUTE_FORMAT_FLOAT]
+
+    let vertex_bytes = vertices.len * 4
+    g_resources[0] = gpu_create_buffer(vertex_bytes, GPU_USAGE_DEFAULT)
+    gpu_update_buffer(g_resources[0], vertices, vertex_bytes)
+    let vs_src = shader_transpile_stage(vs_main, target, "vertex")
+    let fs_src = shader_transpile_stage(fs_main, target, "fragment")
+    let vs_entry = shader_entry(vs_main, target)
+    let fs_entry = shader_entry(fs_main, target)
+    g_resources[1] = gpu_create_shader_source(vs_src, fs_src, vs_entry, fs_entry)
+    g_resources[2] = gpu_create_pipeline_layout(g_resources[1], 20, attr_offsets, attr_sizes, attr_formats, 2, GPU_PIXELFORMAT_BGRA8, GPU_PRIMITIVE_TRIANGLES)
+    g_resources[3] = gpu_create_mesh_1(g_resources[2], g_resources[0])
+}
+
+fn draw_pattern(v: ref view) {
+    gpu_begin_render_pass_id(0u)
+    gpu_set_viewport(0, 0, v.framebuffer_width, v.framebuffer_height)
+    gpu_set_scissor(0, 0, v.framebuffer_width, v.framebuffer_height)
+    gpu_set_pipeline_id(g_resources[2])
+    gpu_set_mesh_id(g_resources[3])
+    gpu_draw(0, 6, 1)
+    gpu_end_pass()
+    gpu_commit()
+}
+
+fn destroy_pipeline() {
+    gpu_destroy_mesh_id(g_resources[3])
+    gpu_destroy_pipeline_id(g_resources[2])
+    gpu_destroy_shader_id(g_resources[1])
+    gpu_destroy_buffer_id(g_resources[0])
 }
 
 fn main() {
-    print("// ---- msl ----\n")
-    print(shader_transpile(vs_main, "msl"))
-    print(shader_transpile(fs_main, "msl"))
+    let v = view_create("ns Hilbert curve shader", 720, 720)
 
-    print("// ---- glsl (vulkan) ----\n")
-    print(shader_transpile(vs_main, "glsl"))
-    print(shader_transpile(fs_main, "glsl"))
+    if gpu_request_device(v) {
+        let target = gpu_shader_target()
+        create_pipeline(target)
 
-    print("// ---- hlsl (dx12) ----\n")
-    print(shader_transpile(vs_main, "hlsl"))
-    print(shader_transpile(fs_main, "hlsl"))
+        if g_resources[0] != 0u && g_resources[1] != 0u && g_resources[2] != 0u && g_resources[3] != 0u {
+            print(`rendering a Hilbert curve with transpiled {target} shaders\n`)
+        } else {
+            print("Hilbert shader pipeline was not created\n")
+        }
 
-    // entry name to hand to gpu_shader_stage_desc.entry
-    let glsl_entry = shader_entry(vs_main, "glsl")
-    let msl_entry = shader_entry(vs_main, "msl")
-    print(`glsl entry: {glsl_entry}\n`)
-    print(`msl entry: {msl_entry}\n`)
+        v.on_frame({ frame_view in
+            draw_pattern(frame_view)
+        })
+
+        v.on_terminate({ dead_view in
+            destroy_pipeline()
+        })
+    } else {
+        print("no GPU backend on this platform; rendering is a no-op\n")
+    }
+
+    view_run(v)
 }
