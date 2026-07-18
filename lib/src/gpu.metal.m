@@ -988,6 +988,8 @@ void gpu_begin_render_pass(gpu_render_pass pass) {
         _pass.desc.colorAttachments[0].clearColor = MTLClearColorMake(0.06, 0.07, 0.08, 1.0);
         _pass.desc.depthAttachment.texture = _state.swapchain.depth_stencil_texture;
         _pass.desc.depthAttachment.storeAction = MTLStoreActionDontCare;
+        _pass.desc.depthAttachment.loadAction = MTLLoadActionClear;
+        _pass.desc.depthAttachment.clearDepth = 1.0;
     }
     _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor: _pass.desc];
 }

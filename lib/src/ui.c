@@ -34,6 +34,7 @@
 #define UI_KIND_MSDF 1
 #define UI_KIND_SCENE_GRID 2
 #define UI_KIND_ARC_SDF 3
+#define UI_KIND_SCENE_MESH 4
 #define UI_DEFAULT_FEATHER 0.5
 #define UI_SCENE_MAX_MESHES 64
 #define UI_SCENE_VERTEX_FLOATS 10
@@ -229,17 +230,20 @@ typedef struct ui_renderer {
     gpu_shader shader_batch;
     gpu_shader shader_msdf;
     gpu_shader shader_scene_grid;
+    gpu_shader shader_scene_mesh;
     gpu_shader shader_arc_sdf;
     gpu_pipeline pipeline_image;
     gpu_pipeline pipeline_batch;
     gpu_pipeline pipeline_msdf;
     gpu_pipeline pipeline_scene_grid;
+    gpu_pipeline pipeline_scene_mesh;
     gpu_pipeline pipeline_arc_sdf;
     gpu_binding binding_white_image;
     gpu_binding binding_font_msdf;
     gpu_binding binding_font_zh_msdf;
     gpu_buffer scene_grid_buffer;
     gpu_binding binding_scene_grid;
+    gpu_binding binding_scene_mesh;
     gpu_binding binding_arc_sdf;
     gpu_texture textures[UI_MAX_TEXTURES];
     gpu_binding texture_bindings[UI_MAX_TEXTURES];
@@ -347,6 +351,10 @@ static const char *ui_shader_src =
 "vertex VOut ui_vs_batch(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]], constant float2 &offset [[buffer(2)]]) {\n"
 "  VOut o; float2 pixel = in.pos + offset; float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
 "  o.pos = float4(ndc, 0.0, 1.0); o.pixel = pixel; o.uv = in.uv; o.col = float4(in.col) / 255.0; o.params = in.params; return o;\n"
+"}\n"
+"vertex VOut ui_vs_scene(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]]) {\n"
+"  VOut o; float2 ndc = float2((in.pos.x / screen.x) * 2.0 - 1.0, 1.0 - (in.pos.y / screen.y) * 2.0);\n"
+"  o.pos = float4(ndc, in.params.x * 0.5 + 0.5, 1.0); o.pixel = in.pos; o.uv = in.uv; o.col = float4(in.col) / 255.0; o.params = in.params; return o;\n"
 "}\n"
 "static inline half ui_median3(half r, half g, half b) { return max(min(r, g), min(max(r, g), b)); }\n"
 "static inline bool ui_clip_discard(VOut in, constant float4 *clip_rects) {\n"
@@ -779,6 +787,27 @@ static void ui_push_tri_colors(ui_renderer *r, f64 x0, f64 y0, u32 c0, f64 x1, f
     ui_emit_command(r, base, 3, UI_KIND_IMAGE);
 }
 
+static void ui_push_scene_triangle(ui_renderer *r,
+                                   f64 x0, f64 y0, f64 z0, u32 c0,
+                                   f64 x1, f64 y1, f64 z1, u32 c1,
+                                   f64 x2, f64 y2, f64 z2, u32 c2) {
+    ui_clip clip = ui_current_clip(r);
+    f64 min_x = fmin(x0, fmin(x1, x2));
+    f64 min_y = fmin(y0, fmin(y1, y2));
+    f64 max_x = fmax(x0, fmax(x1, x2));
+    f64 max_y = fmax(y0, fmax(y1, y2));
+    if (max_x <= clip.x || max_y <= clip.y || min_x >= clip.x + clip.w || min_y >= clip.y + clip.h) return;
+    const f64 clip_param = ui_clip_param(r, clip);
+    i32 base = r->vertex_count;
+    if (!ui_push_vertex(r, x0, y0, 0, 0, c0, z0, 0, 0, clip_param) ||
+        !ui_push_vertex(r, x1, y1, 0, 0, c1, z1, 0, 0, clip_param) ||
+        !ui_push_vertex(r, x2, y2, 0, 0, c2, z2, 0, 0, clip_param)) {
+        r->vertex_count = base;
+        return;
+    }
+    ui_emit_command(r, base, 3, UI_KIND_SCENE_MESH);
+}
+
 void ui_fill_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, u32 rgba, f64 feather) {
     if (!r || radius <= 0.0) return;
     r->current_texture_id = UI_WHITE_TEXTURE;
@@ -1040,6 +1069,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     shader_desc.fragment.source = ns_str_cstr(ui_shader_src);
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_image");
     r->shader_image = gpu_create_shader(&shader_desc);
+    shader_desc.vertex.entry = ns_str_cstr("ui_vs_scene");
+    r->shader_scene_mesh = gpu_create_shader(&shader_desc);
     shader_desc.vertex.entry = ns_str_cstr("ui_vs_batch");
     r->shader_batch = gpu_create_shader(&shader_desc);
     shader_desc.vertex.entry = ns_str_cstr("ui_vs");
@@ -1093,6 +1124,10 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->pipeline_arc_sdf = gpu_create_pipeline(&pipe);
     pipe.shader = r->shader_scene_grid;
     r->pipeline_scene_grid = gpu_create_pipeline(&pipe);
+    pipe.shader = r->shader_scene_mesh;
+    pipe.depth.compare_func = COMPARE_LESS_EQUAL;
+    pipe.depth.write_enabled = true;
+    r->pipeline_scene_mesh = gpu_create_pipeline(&pipe);
 
     r->binding_white_image = gpu_create_binding(&(gpu_binding_desc){
         .pipeline = r->pipeline_image,
@@ -1117,6 +1152,14 @@ static void ui_create_gpu_resources(ui_renderer *r) {
             {.buffer = r->scene_grid_buffer, .name = ns_str_cstr("grid")},
         },
     });
+    r->binding_scene_mesh = gpu_create_binding(&(gpu_binding_desc){
+        .pipeline = r->pipeline_scene_mesh,
+        .buffers = {
+            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
+            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
+        },
+        .textures = {{.texture = r->white_texture, .name = ns_str_cstr("tex")}},
+    });
     r->binding_arc_sdf = gpu_create_binding(&(gpu_binding_desc){
         .pipeline = r->pipeline_arc_sdf,
         .buffers = {
@@ -1132,8 +1175,9 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->gpu_ready = r->screen_buffer.id && r->clip_buffer.id && r->vertex_buffer.id && r->white_texture.id &&
                    r->font_texture.id && r->scene_grid_buffer.id && r->pipeline_image.id &&
                    r->pipeline_batch.id && r->pipeline_msdf.id && r->pipeline_scene_grid.id &&
-                   r->pipeline_arc_sdf.id && r->binding_white_image.id && r->binding_font_msdf.id &&
-                   r->binding_scene_grid.id && r->binding_arc_sdf.id && r->mesh.id;
+                   r->pipeline_scene_mesh.id && r->pipeline_arc_sdf.id && r->binding_white_image.id &&
+                   r->binding_font_msdf.id && r->binding_scene_grid.id && r->binding_scene_mesh.id &&
+                   r->binding_arc_sdf.id && r->mesh.id;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -1326,11 +1370,14 @@ void ui_renderer_destroy(ui_renderer *r) {
     if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
     if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
     if (r->binding_scene_grid.id) gpu_destroy_binding(r->binding_scene_grid);
+    if (r->binding_scene_mesh.id) gpu_destroy_binding(r->binding_scene_mesh);
     if (r->binding_arc_sdf.id) gpu_destroy_binding(r->binding_arc_sdf);
     if (r->scene_grid_buffer.id) gpu_destroy_buffer(r->scene_grid_buffer);
     if (r->pipeline_scene_grid.id) gpu_destroy_pipeline(r->pipeline_scene_grid);
+    if (r->pipeline_scene_mesh.id) gpu_destroy_pipeline(r->pipeline_scene_mesh);
     if (r->pipeline_arc_sdf.id) gpu_destroy_pipeline(r->pipeline_arc_sdf);
     if (r->shader_scene_grid.id) gpu_destroy_shader(r->shader_scene_grid);
+    if (r->shader_scene_mesh.id) gpu_destroy_shader(r->shader_scene_mesh);
     if (r->shader_arc_sdf.id) gpu_destroy_shader(r->shader_arc_sdf);
     for (i32 i = 0; i < 3; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
@@ -1641,6 +1688,9 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         } else if (cmd->kind == UI_KIND_SCENE_GRID) {
             gpu_set_pipeline(r->pipeline_scene_grid);
             gpu_set_binding(r->binding_scene_grid);
+        } else if (cmd->kind == UI_KIND_SCENE_MESH) {
+            gpu_set_pipeline(r->pipeline_scene_mesh);
+            gpu_set_binding(r->binding_scene_mesh);
         } else if (cmd->kind == UI_KIND_ARC_SDF) {
             gpu_set_pipeline(r->pipeline_arc_sdf);
             gpu_set_binding(r->binding_arc_sdf);
@@ -1742,6 +1792,22 @@ static u32 ui_scene_shade(u32 color, f64 light, ns_bool selected) {
     if (selected) { r = r * light * 0.75 + 0.12; g = g * light * 0.75 + 0.22; b = b * light * 0.75 + 0.15; }
     else { r *= light; g *= light; b *= light; }
     return ui_scene_pack(r, g, b, a);
+}
+
+static void ui_scene_stroke_depth(ui_renderer *r,
+                                  f64 x0, f64 y0, f64 z0,
+                                  f64 x1, f64 y1, f64 z1, u32 color) {
+    f64 dx = x1 - x0, dy = y1 - y0;
+    f64 length = hypot(dx, dy);
+    if (length <= 0.000001) return;
+    f64 px = (0.0 - dy) * 0.5 / length;
+    f64 py = dx * 0.5 / length;
+    ui_push_scene_triangle(r, x0 + px, y0 + py, z0, color,
+                           x1 + px, y1 + py, z1, color,
+                           x1 - px, y1 - py, z1, color);
+    ui_push_scene_triangle(r, x0 + px, y0 + py, z0, color,
+                           x1 - px, y1 - py, z1, color,
+                           x0 - px, y0 - py, z0, color);
 }
 
 static void ui_scene_mul_point(const f32 *m, f64 x, f64 y, f64 z, f64 *ox, f64 *oy, f64 *oz, f64 *ow) {
@@ -1867,15 +1933,15 @@ void ui_scene_draw_mesh(ui_scene *scene, i32 mesh_id, f32 *model, i32 flags) {
         f64 nx = (t->a.nx + t->b.nx + t->c.nx) / 3.0, ny = (t->a.ny + t->b.ny + t->c.ny) / 3.0;
         f64 nz = (t->a.nz + t->b.nz + t->c.nz) / 3.0;
         f64 light = 0.32 + 0.68 * fmax(0.0, nx * -0.32 + ny * 0.72 + nz * 0.62);
-        if (flags & 1) ui_push_tri_colors(scene->renderer,
-            t->a.x, t->a.y, ui_scene_shade(t->a.color, light, flags & 8),
-            t->b.x, t->b.y, ui_scene_shade(t->b.color, light, flags & 8),
-            t->c.x, t->c.y, ui_scene_shade(t->c.color, light, flags & 8));
+        if (flags & 1) ui_push_scene_triangle(scene->renderer,
+            t->a.x, t->a.y, t->a.z, ui_scene_shade(t->a.color, light, flags & 8),
+            t->b.x, t->b.y, t->b.z, ui_scene_shade(t->b.color, light, flags & 8),
+            t->c.x, t->c.y, t->c.z, ui_scene_shade(t->c.color, light, flags & 8));
         if (flags & 2) {
             u32 edge = flags & 8 ? 0xfff56e4cu : 0x996c757du;
-            ui_stroke_line(scene->renderer, t->a.x, t->a.y, t->b.x, t->b.y, 1.0, edge, 0.0);
-            ui_stroke_line(scene->renderer, t->b.x, t->b.y, t->c.x, t->c.y, 1.0, edge, 0.0);
-            ui_stroke_line(scene->renderer, t->c.x, t->c.y, t->a.x, t->a.y, 1.0, edge, 0.0);
+            ui_scene_stroke_depth(scene->renderer, t->a.x, t->a.y, t->a.z, t->b.x, t->b.y, t->b.z, edge);
+            ui_scene_stroke_depth(scene->renderer, t->b.x, t->b.y, t->b.z, t->c.x, t->c.y, t->c.z, edge);
+            ui_scene_stroke_depth(scene->renderer, t->c.x, t->c.y, t->c.z, t->a.x, t->a.y, t->a.z, edge);
         }
     }
     free(triangles);
