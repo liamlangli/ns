@@ -100,6 +100,7 @@ extern void ui_stroke_round_rect(void *, f64, f64, f64, f64, f64, f64, u32, f64)
 extern void ui_stroke_round_rect_per_corner(void *, f64, f64, f64, f64, f64, f64, f64, f64, f64, u32, f64);
 extern void ui_stroke_rect(void *, f64, f64, f64, f64, f64, u32, f64);
 extern void ui_fill_triangle(void *, f64, f64, f64, f64, f64, f64, u32, f64);
+extern void ui_fill_arc(void *, f64, f64, f64, f64, f64, f64, u32, f64);
 extern void ui_fill_circle(void *, f64, f64, f64, u32, f64);
 extern void ui_stroke_circle(void *, f64, f64, f64, f64, u32, f64);
 extern void ui_stroke_line(void *, f64, f64, f64, f64, f64, u32, f64);
@@ -568,6 +569,11 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     }
     else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_fill_triangle")) {
         ui_fill_triangle(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_fill_arc")) {
+        ui_fill_arc(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)));
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }

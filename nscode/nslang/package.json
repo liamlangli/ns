@@ -1,11 +1,16 @@
 {
     "name": "nslang",
     "displayName": "Nano Script",
-    "description": "Syntax highlighting for the Nano Script (ns) language.",
-    "version": "0.1.1",
+    "description": "Nano Script language support, including project run and build commands.",
+    "version": "0.2.0",
     "publisher": "liamlangli",
     "license": "MIT",
     "icon": "icons/ns.png",
+    "main": "./extension.js",
+    "activationEvents": [
+        "onCommand:nslang.run",
+        "onCommand:nslang.build"
+    ],
     "scripts": {
         "pack": "cp ../../README.md README.md && cp ../../LICENSE LICENSE && vsce package"
     },
@@ -52,6 +57,45 @@
                 "path": "./themes/nanoscript-color-theme.json"
             }
         ],
+        "commands": [
+            {
+                "command": "nslang.run",
+                "title": "Run Project",
+                "category": "Nano Script",
+                "icon": "$(play)"
+            },
+            {
+                "command": "nslang.build",
+                "title": "Build Project",
+                "category": "Nano Script",
+                "icon": "$(tools)"
+            }
+        ],
+        "menus": {
+            "editor/title": [
+                {
+                    "command": "nslang.run",
+                    "when": "resourceLangId == ns",
+                    "group": "navigation@1"
+                },
+                {
+                    "command": "nslang.build",
+                    "when": "resourceLangId == ns",
+                    "group": "navigation@2"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "Nano Script",
+            "properties": {
+                "nslang.executablePath": {
+                    "type": "string",
+                    "default": "ns",
+                    "scope": "resource",
+                    "description": "Path or command name for the Nano Script executable used by Run Project and Build Project."
+                }
+            }
+        },
         "configurationDefaults": {
             "files.associations": {
                 "**/ns.mod": "toml"

@@ -313,6 +313,8 @@ ref fn ui_stroke_round_rect(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, 
 ref fn ui_stroke_round_rect_per_corner(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, rtl: f64, rtr: f64, rbl: f64, rbr: f64, thickness: f64, rgba: u32, feather: f64)
 ref fn ui_stroke_rect(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, thickness: f64, rgba: u32, feather: f64)
 ref fn ui_fill_triangle(r: ref ui_renderer, x0: f64, y0: f64, x1: f64, y1: f64, x2: f64, y2: f64, rgba: u32, feather: f64)
+// Draw a rounded annular arc with one quad and an analytic fragment SDF.
+ref fn ui_fill_arc(r: ref ui_renderer, cx: f64, cy: f64, radius: f64, thickness: f64, angle_start: f64, angle_end: f64, rgba: u32, feather: f64)
 ref fn ui_fill_circle(r: ref ui_renderer, cx: f64, cy: f64, radius: f64, rgba: u32, feather: f64)
 ref fn ui_stroke_circle(r: ref ui_renderer, cx: f64, cy: f64, radius: f64, thickness: f64, rgba: u32, feather: f64)
 ref fn ui_stroke_line(r: ref ui_renderer, x0: f64, y0: f64, x1: f64, y1: f64, thickness: f64, rgba: u32, feather: f64)

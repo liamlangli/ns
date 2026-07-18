@@ -12,6 +12,17 @@ Nano Script
 
 If you're new to Nano Script, start with the Playground URL above and run/edit the sample code directly in your browser.
 
+## Run and build from VS Code
+
+Open a `.ns` file and use the **Run Project** (play) or **Build Project** (tools)
+button in the editor title bar. The same actions are available from the Command
+Palette as **Nano Script: Run Project** and **Nano Script: Build Project**.
+
+The extension finds the nearest parent `ns.mod` and runs `ns run` or `ns build`
+from that project directory in VS Code's integrated task terminal. If the file
+is not part of a manifest project, it passes the active file directly. Set
+`nslang.executablePath` when the `ns` executable is not available on `PATH`.
+
 ## Design Goal
 - Minimal syntax and keywords for ease of learning and use.
 - Supports both interpretation and compilation.

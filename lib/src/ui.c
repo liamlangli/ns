@@ -33,6 +33,7 @@
 #define UI_KIND_IMAGE 0
 #define UI_KIND_MSDF 1
 #define UI_KIND_SCENE_GRID 2
+#define UI_KIND_ARC_SDF 3
 #define UI_DEFAULT_FEATHER 0.5
 #define UI_SCENE_MAX_MESHES 64
 #define UI_SCENE_VERTEX_FLOATS 10
@@ -227,15 +228,18 @@ typedef struct ui_renderer {
     gpu_shader shader_batch;
     gpu_shader shader_msdf;
     gpu_shader shader_scene_grid;
+    gpu_shader shader_arc_sdf;
     gpu_pipeline pipeline_image;
     gpu_pipeline pipeline_batch;
     gpu_pipeline pipeline_msdf;
     gpu_pipeline pipeline_scene_grid;
+    gpu_pipeline pipeline_arc_sdf;
     gpu_binding binding_white_image;
     gpu_binding binding_font_msdf;
     gpu_binding binding_font_zh_msdf;
     gpu_buffer scene_grid_buffer;
     gpu_binding binding_scene_grid;
+    gpu_binding binding_arc_sdf;
     gpu_texture textures[UI_MAX_TEXTURES];
     gpu_binding texture_bindings[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
@@ -324,6 +328,7 @@ ui_theme *ui_theme_empty(void) {
 void ui_renderer_destroy(ui_renderer *r);
 void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);
 void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather);
+void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness, f64 angle_start, f64 angle_end, u32 rgba, f64 feather);
 void ui_stroke_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, f64 thickness, u32 rgba, f64 feather);
 void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type);
 static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 h, f64 radius);
@@ -362,6 +367,18 @@ static const char *ui_shader_src =
 "  float2 unit_range = float2(range) / tex_size; float2 screen_texel = max(fwidth(in.uv), float2(1e-6));\n"
 "  float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
 "  float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / max(in.params.z, 1.0) + 0.5, 0.0, 1.0);\n"
+"  return float4(in.col.rgb, in.col.a * opacity);\n"
+"}\n"
+"fragment float4 ui_fs_arc_sdf(VOut in [[stage_in]], constant float4 *clip_rects [[buffer(0)]]) {\n"
+"  if (ui_clip_discard(in, clip_rects)) { discard_fragment(); }\n"
+"  float radius = max(in.params.x, 0.0001); float half_width = max(in.params.y, 0.0);\n"
+"  float half_angle = clamp(in.params.z, 0.0, 3.14159265); float radial = length(in.uv);\n"
+"  float angle = atan2(in.uv.y, in.uv.x); float half_arc = radius * half_angle;\n"
+"  float corner = min(half_width * 0.44, half_arc * 0.48);\n"
+"  float2 extent = max(float2(half_arc, half_width) - float2(corner), float2(0.0));\n"
+"  float2 q = abs(float2(angle * radius, radial - radius)) - extent;\n"
+"  float distance = length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - corner;\n"
+"  float aa = max(fwidth(distance), 0.35); float opacity = 1.0 - smoothstep(-aa, aa, distance);\n"
 "  return float4(in.col.rgb, in.col.a * opacity);\n"
 "}\n";
 
@@ -829,6 +846,42 @@ void ui_fill_triangle(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 x2, f6
     ui_push_tri_colors(r, x2, y2, transparent, ix0, iy0, rgba, ix2, iy2, rgba);
 }
 
+void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness,
+                 f64 angle_start, f64 angle_end, u32 rgba, f64 feather) {
+    if (!r || radius <= 0.0 || thickness <= 0.0 || angle_start == angle_end) return;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    const f64 half_width = thickness * 0.5;
+    const f64 half_angle = fmin(fabs(angle_end - angle_start) * 0.5, M_PI);
+    const f64 mid_angle = (angle_start + angle_end) * 0.5;
+    const f64 padding = fmax(1.0, ui_resolve_feather(feather) * 2.0);
+    const f64 bound = radius + half_width + padding;
+    const f64 x0 = cx - bound, y0 = cy - bound, x1 = cx + bound, y1 = cy + bound;
+    const ui_clip clip = ui_current_clip(r);
+    if (x1 <= clip.x || y1 <= clip.y || x0 >= clip.x + clip.w || y0 >= clip.y + clip.h) return;
+
+    const f64 cosine = cos(mid_angle), sine = sin(mid_angle);
+    const f64 px[4] = {x0, x1, x1, x0};
+    const f64 py[4] = {y0, y0, y1, y1};
+    f64 local_x[4], local_y[4];
+    for (i32 i = 0; i < 4; i++) {
+        const f64 dx = px[i] - cx, dy = py[i] - cy;
+        local_x[i] = cosine * dx + sine * dy;
+        local_y[i] = -sine * dx + cosine * dy;
+    }
+    const i32 order[6] = {0, 1, 2, 0, 2, 3};
+    const f64 clip_param = ui_clip_param(r, clip);
+    const i32 base = r->vertex_count;
+    for (i32 i = 0; i < 6; i++) {
+        const i32 vertex = order[i];
+        if (!ui_push_vertex(r, px[vertex], py[vertex], local_x[vertex], local_y[vertex], rgba,
+                            radius, half_width, half_angle, clip_param)) {
+            r->vertex_count = base;
+            return;
+        }
+    }
+    ui_emit_command(r, base, 6, UI_KIND_ARC_SDF);
+}
+
 void ui_stroke_line(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 thickness, u32 rgba, f64 feather) {
     ns_unused(feather);
     if (!r || thickness <= 0.0) return;
@@ -991,6 +1044,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     shader_desc.vertex.entry = ns_str_cstr("ui_vs");
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_msdf");
     r->shader_msdf = gpu_create_shader(&shader_desc);
+    shader_desc.fragment.entry = ns_str_cstr("ui_fs_arc_sdf");
+    r->shader_arc_sdf = gpu_create_shader(&shader_desc);
     shader_desc.vertex.source = ns_str_cstr(ui_scene_grid_shader_src);
     shader_desc.vertex.entry = ns_str_cstr("ui_scene_grid_vs");
     shader_desc.fragment.source = ns_str_cstr(ui_scene_grid_shader_src);
@@ -1033,6 +1088,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->pipeline_batch = gpu_create_pipeline(&pipe);
     pipe.shader = r->shader_msdf;
     r->pipeline_msdf = gpu_create_pipeline(&pipe);
+    pipe.shader = r->shader_arc_sdf;
+    r->pipeline_arc_sdf = gpu_create_pipeline(&pipe);
     pipe.shader = r->shader_scene_grid;
     r->pipeline_scene_grid = gpu_create_pipeline(&pipe);
 
@@ -1059,6 +1116,13 @@ static void ui_create_gpu_resources(ui_renderer *r) {
             {.buffer = r->scene_grid_buffer, .name = ns_str_cstr("grid")},
         },
     });
+    r->binding_arc_sdf = gpu_create_binding(&(gpu_binding_desc){
+        .pipeline = r->pipeline_arc_sdf,
+        .buffers = {
+            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
+            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
+        },
+    });
     r->mesh = gpu_create_mesh(&(gpu_mesh_desc){
         .buffers = {r->vertex_buffer},
         .pipeline = r->pipeline_image,
@@ -1067,7 +1131,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->gpu_ready = r->screen_buffer.id && r->clip_buffer.id && r->vertex_buffer.id && r->white_texture.id &&
                    r->font_texture.id && r->scene_grid_buffer.id && r->pipeline_image.id &&
                    r->pipeline_batch.id && r->pipeline_msdf.id && r->pipeline_scene_grid.id &&
-                   r->binding_white_image.id && r->binding_font_msdf.id && r->binding_scene_grid.id && r->mesh.id;
+                   r->pipeline_arc_sdf.id && r->binding_white_image.id && r->binding_font_msdf.id &&
+                   r->binding_scene_grid.id && r->binding_arc_sdf.id && r->mesh.id;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -1260,9 +1325,12 @@ void ui_renderer_destroy(ui_renderer *r) {
     if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
     if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
     if (r->binding_scene_grid.id) gpu_destroy_binding(r->binding_scene_grid);
+    if (r->binding_arc_sdf.id) gpu_destroy_binding(r->binding_arc_sdf);
     if (r->scene_grid_buffer.id) gpu_destroy_buffer(r->scene_grid_buffer);
     if (r->pipeline_scene_grid.id) gpu_destroy_pipeline(r->pipeline_scene_grid);
+    if (r->pipeline_arc_sdf.id) gpu_destroy_pipeline(r->pipeline_arc_sdf);
     if (r->shader_scene_grid.id) gpu_destroy_shader(r->shader_scene_grid);
+    if (r->shader_arc_sdf.id) gpu_destroy_shader(r->shader_arc_sdf);
     for (i32 i = 0; i < 3; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
     free(r);
@@ -1567,6 +1635,9 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         } else if (cmd->kind == UI_KIND_SCENE_GRID) {
             gpu_set_pipeline(r->pipeline_scene_grid);
             gpu_set_binding(r->binding_scene_grid);
+        } else if (cmd->kind == UI_KIND_ARC_SDF) {
+            gpu_set_pipeline(r->pipeline_arc_sdf);
+            gpu_set_binding(r->binding_arc_sdf);
         } else if (cmd->kind == UI_KIND_MSDF) {
             gpu_set_pipeline(r->pipeline_msdf);
             if (cmd->texture_id == UI_FONT_ZH_TEXTURE && r->binding_font_zh_msdf.id) {
