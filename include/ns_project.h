@@ -21,6 +21,8 @@ typedef struct ns_project_spec {
     ns_str name;
     ns_str safe_name;
     ns_str version;
+    // Absolute path to the manifest icon, or null when the app has no icon.
+    ns_str icon;
     ns_str linked_source;
     ns_str ns_executable;
     // Directory containing src/, include/, and ref/ for the embeddable,

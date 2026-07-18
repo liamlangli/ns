@@ -258,6 +258,8 @@ ref fn ui_resize_to(r: ref ui_renderer, width: i32, height: i32)
 
 // Request `frames` further redraws (adaptive render burst).
 ref fn ui_request_render(r: ref ui_renderer, frames: i32)
+// Request one redraw after a delay without keeping the display loop awake.
+ref fn ui_request_render_after(r: ref ui_renderer, milliseconds: i32)
 
 // Start a new frame of draw commands.
 ref fn ui_begin_frame(r: ref ui_renderer)

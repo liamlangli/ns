@@ -102,13 +102,17 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
 - (void)mtkView:(MTKView *)metal_view drawableSizeWillChange:(CGSize)size {
     (void)size;
     view_ios_sync_metrics(metal_view);
+    view_request_frame(&view_ios_state, 1);
 }
 - (void)drawInMTKView:(MTKView *)metal_view {
+    if (!view_take_frame_request(&view_ios_state)) return;
     view_ios_sync_metrics(metal_view);
     view_callback frame = (view_callback)view_ios_state.on_frame;
-    if (!frame) return;
-    gpu_mtl_begin_frame(metal_view);
-    frame(&view_ios_state);
+    if (frame) {
+        gpu_mtl_begin_frame(metal_view);
+        frame(&view_ios_state);
+    }
+    view_complete_frame(&view_ios_state);
 }
 @end
 
@@ -175,7 +179,7 @@ view *view_create(const char *title, i32 width, i32 height) {
         view_ios_metal_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
         view_ios_metal_view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
         view_ios_metal_view.paused = YES;
-        view_ios_metal_view.enableSetNeedsDisplay = NO;
+        view_ios_metal_view.enableSetNeedsDisplay = YES;
         view_ios_delegate = [[NSIOSViewDelegate alloc] init];
         view_ios_metal_view.delegate = view_ios_delegate;
         view_ios_gesture_target = [[NSIOSGestureTarget alloc] init];
@@ -216,10 +220,23 @@ void view_run(view *value) {
     if (!value) return;
     view_callback launch = (view_callback)value->on_launch;
     if (launch) launch(value);
-    dispatch_async(dispatch_get_main_queue(), ^{ view_ios_metal_view.paused = NO; });
+    view_request_frame(value, 1);
     dispatch_semaphore_wait(view_ios_done, DISPATCH_TIME_FOREVER);
     view_callback terminate = (view_callback)value->on_terminate;
     if (terminate) terminate(value);
+}
+
+void view_platform_request_frame(view *value) {
+    ns_unused(value);
+    if (!view_ios_metal_view) return;
+    dispatch_async(dispatch_get_main_queue(), ^{ [view_ios_metal_view setNeedsDisplay]; });
+}
+
+void view_platform_request_frame_after(view *value, i32 milliseconds) {
+    ns_unused(value);
+    if (!view_ios_metal_view) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)milliseconds * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{ view_request_frame(&view_ios_state, 1); });
 }
 
 const char *view_get_clipboard(view *value) {

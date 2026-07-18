@@ -7,6 +7,9 @@
 
 #import <CoreHaptics/CoreHaptics.h>
 #import <Foundation/Foundation.h>
+#if TARGET_OS_IOS
+#import <UIKit/UIKit.h>
+#endif
 
 #include <math.h>
 
@@ -20,6 +23,35 @@
 
 static CHHapticEngine *os_haptic_engine;
 static id<CHHapticPatternPlayer> os_haptic_player;
+
+#if TARGET_OS_IOS
+static UIImpactFeedbackGenerator *os_impact_generator;
+
+static UIImpactFeedbackGenerator *os_medium_impact_generator(void) {
+    if (!os_impact_generator) {
+        os_impact_generator = [[UIImpactFeedbackGenerator alloc]
+            initWithStyle:UIImpactFeedbackStyleMedium];
+    }
+    return os_impact_generator;
+}
+
+void os_impact_prepare(void) {
+    if (![NSThread isMainThread]) return;
+    @autoreleasepool {
+        [os_medium_impact_generator() prepare];
+    }
+}
+
+void os_impact(void) {
+    if (![NSThread isMainThread]) return;
+    @autoreleasepool {
+        [os_medium_impact_generator() impactOccurred];
+    }
+}
+#else
+void os_impact_prepare(void) {}
+void os_impact(void) {}
+#endif
 
 void os_vibrate(f64 intensity, f64 duration) {
     if (!isfinite(intensity) || !isfinite(duration) || !(intensity > 0.0) || !(duration > 0.0)) return;
@@ -82,5 +114,8 @@ void os_vibrate(f64 intensity, f64 duration) {
     ns_unused(intensity);
     ns_unused(duration);
 }
+
+void os_impact_prepare(void) {}
+void os_impact(void) {}
 
 #endif

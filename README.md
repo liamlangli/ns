@@ -122,6 +122,8 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
 
 Run `ns project [path]` in or below a directory containing `ns.mod`. On Darwin,
 it creates `bin/<safe-name>.xcodeproj` with macOS, iOS, and visionOS app targets.
+For app manifests with `icon = "path/to/image.png"`, the generated Xcode project
+contains the resized macOS/iOS AppIcon set and a visionOS icon stack.
 On Windows, it creates a Visual Studio 2022 x64 NMake solution at
 `bin/<safe-name>.sln`. App projects embed the language-only runtime plus `std`
 and shader support, with pure-language modules such as `simd`; native UI, GPU,

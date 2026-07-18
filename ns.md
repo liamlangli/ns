@@ -101,7 +101,8 @@ Common commands:
   `doc/nsm.md` for generated paths and runtime limitations.
 - `ns.mod` app manifests may set `icon = "path/to/image.png"`; the path is
   relative to the manifest root. `ns run` passes it to the native view runtime,
-  and Darwin app builds package it as the bundle icon.
+  Darwin app builds package it as the bundle icon, and `ns project` generates
+  the macOS, iOS, and visionOS Xcode app-icon assets from it.
 
 No filename defaults to version + REPL.
 With filename and no analysis/emit flag, it evaluates and prints result.

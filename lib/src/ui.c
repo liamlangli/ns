@@ -1592,8 +1592,13 @@ void ui_resize_to(ui_renderer *r, i32 width, i32 height) {
 }
 
 void ui_request_render(ui_renderer *r, i32 frames) {
-    ns_unused(r);
-    ns_unused(frames);
+    if (!r) return;
+    view_request_frame(r->v, frames);
+}
+
+void ui_request_render_after(ui_renderer *r, i32 milliseconds) {
+    if (!r) return;
+    view_request_frame_after(r->v, milliseconds);
 }
 
 void ui_begin_frame(ui_renderer *r) {

@@ -19,6 +19,17 @@ static view _view;
 static HWND _hwnd;
 static HINSTANCE _hinstance;
 static ns_bool _quit;
+#define VIEW_FRAME_TIMER_ID 1
+
+void view_platform_request_frame(view *v) {
+    ns_unused(v);
+    if (_hwnd) InvalidateRect(_hwnd, NULL, FALSE);
+}
+
+void view_platform_request_frame_after(view *v, i32 milliseconds) {
+    ns_unused(v);
+    if (_hwnd) SetTimer(_hwnd, VIEW_FRAME_TIMER_ID, (UINT)milliseconds, NULL);
+}
 
 // Win32 virtual-key -> VIEW_KEY_* mapping (parallels view_osx_key_map).
 static i32 view_win_key_map(i32 vk) {
@@ -108,6 +119,24 @@ static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
             view_on_resize(&_view, w, h);
             return 0;
         }
+        case WM_PAINT: {
+            PAINTSTRUCT paint;
+            BeginPaint(hwnd, &paint);
+            if (view_take_frame_request(&_view)) {
+                view_on_frame frame = (view_on_frame)_view.on_frame;
+                if (frame) frame(&_view);
+            }
+            EndPaint(hwnd, &paint);
+            view_complete_frame(&_view);
+            return 0;
+        }
+        case WM_TIMER:
+            if (wparam == VIEW_FRAME_TIMER_ID) {
+                KillTimer(hwnd, VIEW_FRAME_TIMER_ID);
+                view_request_frame(&_view, 1);
+                return 0;
+            }
+            return DefWindowProc(hwnd, msg, wparam, lparam);
         case WM_DESTROY: {
             view_on_terminate terminate = (view_on_terminate)_view.on_terminate;
             if (terminate) terminate(&_view);
@@ -171,19 +200,15 @@ void view_run(view *v) {
 
     view_on_launch launch = (view_on_launch)_view.on_launch;
     if (launch) launch(&_view);
+    view_request_frame(&_view, 1);
 
-    // Main loop: pump messages, then render a frame.
+    // The message loop sleeps until input, resize, or animation work requests
+    // another frame. WM_PAINT retains the previous swap-chain image otherwise.
     MSG message;
     _quit = false;
-    while (!_quit) {
-        while (PeekMessage(&message, NULL, 0, 0, PM_REMOVE)) {
-            if (message.message == WM_QUIT) { _quit = true; break; }
-            TranslateMessage(&message);
-            DispatchMessage(&message);
-        }
-        if (_quit) break;
-        view_on_frame frame = (view_on_frame)_view.on_frame;
-        if (frame) frame(&_view);
+    while (!_quit && GetMessage(&message, NULL, 0, 0) > 0) {
+        TranslateMessage(&message);
+        DispatchMessage(&message);
     }
 }
 

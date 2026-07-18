@@ -335,6 +335,9 @@ void os_vibrate(f64 intensity, f64 duration) {
     ns_unused(intensity);
     ns_unused(duration);
 }
+
+void os_impact_prepare(void) {}
+void os_impact(void) {}
 #endif
 
 static char *os_read_buffer = NULL;

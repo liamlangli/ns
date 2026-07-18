@@ -56,6 +56,7 @@ extern void view_on_gesture(void *, f64, f64, f64, f64);
 extern i32 view_input_count(void *);
 extern void * view_input_at(void *, i32);
 extern void * view_gesture(void *);
+extern ns_bool view_input_pending(void *);
 extern void view_input_reset(void *);
 extern const char * view_get_clipboard(void *);
 extern void view_set_clipboard(void *, const char *);
@@ -68,6 +69,7 @@ extern ns_bool ui_load_font(void *, const char *, const char *);
 extern void ui_resize(void *);
 extern void ui_resize_to(void *, i32, i32);
 extern void ui_request_render(void *, i32);
+extern void ui_request_render_after(void *, i32);
 extern void ui_begin_frame(void *);
 extern void ui_flush(void *, ui_color_rgba *);
 extern void ui_flush_overlay(void *, ui_color_rgba *);
@@ -167,6 +169,8 @@ extern const char * os_date_string(void);
 extern const char * os_locale_date_string(void);
 extern const char * os_locale_date_time_string(void);
 extern void os_vibrate(f64, f64);
+extern void os_impact_prepare(void);
+extern void os_impact(void);
 extern i64 os_file_size(const char *);
 extern const char * os_read_file(const char *);
 extern const char * os_read_file_part(const char *, i64, i64);
@@ -351,6 +355,11 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
         ns_embedded_return_pointer(vm, result);
         return ns_return_ok(bool, true);
     }
+    else if (ns_str_equals_STR(fn->lib, "view") && ns_str_equals_STR(fn->name, "view_input_pending")) {
+        ns_bool result = view_input_pending(ns_embedded_arg_pointer(vm, 0));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
     else if (ns_str_equals_STR(fn->lib, "view") && ns_str_equals_STR(fn->name, "view_input_reset")) {
         view_input_reset(ns_embedded_arg_pointer(vm, 0));
         call->ret = ns_nil;
@@ -409,6 +418,11 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     }
     else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_request_render")) {
         ui_request_render(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_request_render_after")) {
+        ui_request_render_after(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)));
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }
@@ -908,6 +922,16 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     }
     else if (ns_str_equals_STR(fn->lib, "os") && ns_str_equals_STR(fn->name, "os_vibrate")) {
         os_vibrate(ns_eval_number_f64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "os") && ns_str_equals_STR(fn->name, "os_impact_prepare")) {
+        os_impact_prepare();
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "os") && ns_str_equals_STR(fn->name, "os_impact")) {
+        os_impact();
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }

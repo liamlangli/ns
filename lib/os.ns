@@ -61,6 +61,11 @@ ref fn os_locale_date_time_string() str
 // Non-positive values and unsupported platforms/devices are silently ignored.
 ref fn os_vibrate(intensity: f64, duration: f64)
 
+// Prepare and play the platform's standard medium impact feedback. On iOS
+// this uses UIImpactFeedbackGenerator; unsupported platforms silently ignore it.
+ref fn os_impact_prepare()
+ref fn os_impact()
+
 // File access. os_file_size returns -1 on failure. Ranged reads truncate at
 // EOF and return an empty string when the file or requested range is invalid.
 ref fn os_file_size(path: str) i64

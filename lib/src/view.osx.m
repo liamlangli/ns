@@ -37,11 +37,22 @@ static id view_window_delegate;
 static id<MTLDevice> view_mtl_device;
 static id view_mtk_view_delegate;
 static MTKView* view_mtk_view;
+static dispatch_semaphore_t view_osx_done;
+static ns_bool view_osx_hosted;
+static ns_bool view_osx_finished;
 
 static view _view;
 
 static void view_osx_update_mouse(NSEvent *event);
 static void view_osx_request_terminate(void);
+
+static void view_osx_finish(void) {
+    if (view_osx_finished) return;
+    view_osx_finished = true;
+    view_on_terminate terminate = (view_on_terminate)_view.on_terminate;
+    if (terminate) terminate(&_view);
+    if (view_osx_done) dispatch_semaphore_signal(view_osx_done);
+}
 
 static void view_osx_sync_modifiers(NSEventModifierFlags flags) {
     const ns_bool command_pressed = view_is_key_pressed(&_view, VIEW_KEY_LEFT_SUPER);
@@ -239,10 +250,7 @@ i32 view_osx_key_map(i32 k) {
 
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication*)sender {
     (void)sender;
-    view_on_terminate terminate = (view_on_terminate)_view.on_terminate;
-    if (terminate) {
-        terminate(&_view);
-    }
+    view_osx_finish();
     return NSTerminateNow;
 }
 @end
@@ -251,6 +259,7 @@ i32 view_osx_key_map(i32 k) {
 @implementation ViewWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow*)sender {
     (void)sender;
+    view_osx_finish();
     view_osx_request_terminate();
     return YES;
 }
@@ -287,15 +296,18 @@ static void view_osx_update_mouse(NSEvent *event) {
 - (void)mtkView:(nonnull MTKView*)view drawableSizeWillChange:(CGSize)size {
     (void)size;
     view_osx_sync_mtk_view_metrics(view);
+    view_request_frame(&_view, 1);
 }
 
 - (void)drawInMTKView:(nonnull MTKView*)view {
+    if (!view_take_frame_request(&_view)) return;
     view_osx_sync_mtk_view_metrics(view);
     view_on_frame frame = (view_on_frame)_view.on_frame;
     if (frame) {
         gpu_mtl_begin_frame(view);
         frame(&_view);
     }
+    view_complete_frame(&_view);
 }
 @end
 
@@ -400,10 +412,13 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     view_title = title;
 
     [ViewApp sharedApplication];
+    view_osx_hosted = [NSApp isRunning];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     view_osx_apply_manifest_icon();
-    id delegate = [[ViewAppDelegate alloc] init];
-    [NSApp setDelegate:delegate];
+    if (!view_osx_hosted) {
+        id delegate = [[ViewAppDelegate alloc] init];
+        [NSApp setDelegate:delegate];
+    }
 
     view_window_delegate = [[ViewWindowDelegate alloc] init];
     const NSUInteger style =
@@ -411,11 +426,15 @@ void view_osx_create(i32 w, i32 h, const char* title) {
         NSWindowStyleMaskClosable |
         NSWindowStyleMaskMiniaturizable |
         NSWindowStyleMaskResizable;
-    view_window = [[NSWindow alloc]
-        initWithContentRect:NSMakeRect(0, 0, view_width, view_height)
-        styleMask: style
-        backing: NSBackingStoreBuffered
-        defer: NO];
+    view_window = view_osx_hosted ? [NSApp keyWindow] : nil;
+    if (!view_window && view_osx_hosted) view_window = [[NSApp windows] firstObject];
+    if (!view_window) {
+        view_window = [[NSWindow alloc]
+            initWithContentRect:NSMakeRect(0, 0, view_width, view_height)
+            styleMask: style
+            backing: NSBackingStoreBuffered
+            defer: NO];
+    }
     [view_window setTitle:[NSString stringWithUTF8String: view_title]];
     [view_window setAcceptsMouseMovedEvents: YES];
     [view_window center];
@@ -427,6 +446,8 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     [view_mtk_view setDevice: view_mtl_device];
     [view_mtk_view setColorPixelFormat: MTLPixelFormatBGRA8Unorm];
     [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatDepth32Float];
+    [view_mtk_view setPaused:YES];
+    [view_mtk_view setEnableSetNeedsDisplay:YES];
     view_mtk_view_delegate = [[ViewDelegate alloc] init];
     [view_mtk_view setDelegate: view_mtk_view_delegate];
     [view_window setContentView: view_mtk_view];
@@ -462,7 +483,11 @@ view* view_create(const char *title, i32 width, i32 height) {
     _view.framebuffer_width = width;
     _view.framebuffer_height = height;
     _view.title = ns_str_cstr((char*)title);
-    view_osx_create(width, height, title);
+    view_osx_finished = false;
+    view_osx_done = dispatch_semaphore_create(0);
+    void (^create_view)(void) = ^{ view_osx_create(width, height, title); };
+    if ([NSThread isMainThread]) create_view();
+    else dispatch_sync(dispatch_get_main_queue(), create_view);
     return &_view;
 }
 
@@ -471,16 +496,44 @@ view* view_create_no_title(const char *title, i32 width, i32 height) {
 }
 
 void view_run(view *v) {
-    (void)v;
+    if (!v) return;
+    if (view_osx_hosted) {
+        view_on_launch launch = (view_on_launch)v->on_launch;
+        if (launch) launch(v);
+        view_request_frame(v, 1);
+        dispatch_semaphore_wait(view_osx_done, DISPATCH_TIME_FOREVER);
+        return;
+    }
+    view_request_frame(v, 1);
     [NSApp run];
+}
+
+void view_platform_request_frame(view *v) {
+    (void)v;
+    if (!view_mtk_view) return;
+    void (^request)(void) = ^{ [view_mtk_view setNeedsDisplay:YES]; };
+    if ([NSThread isMainThread]) request();
+    else dispatch_async(dispatch_get_main_queue(), request);
+}
+
+void view_platform_request_frame_after(view *v, i32 milliseconds) {
+    (void)v;
+    if (!view_mtk_view) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)milliseconds * NSEC_PER_MSEC),
+                   dispatch_get_main_queue(), ^{ view_request_frame(&_view, 1); });
 }
 
 static char *view_clipboard_result;
 
 const char *view_get_clipboard(view *v) {
     ns_unused(v);
-    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
-    NSString *value = [pasteboard stringForType:NSPasteboardTypeString];
+    __block NSString *value = nil;
+    void (^read)(void) = ^{
+        NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+        value = [pasteboard stringForType:NSPasteboardTypeString];
+    };
+    if ([NSThread isMainThread]) read();
+    else dispatch_sync(dispatch_get_main_queue(), read);
     if (!value) return ns_null;
     const char *utf8 = [value UTF8String];
     if (!utf8) return ns_null;
@@ -495,8 +548,12 @@ void view_set_clipboard(view *v, const char *text) {
     ns_unused(v);
     NSString *value = [NSString stringWithUTF8String:text ? text : ""];
     if (!value) return;
-    NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
-    [pasteboard clearContents];
-    [pasteboard setString:value forType:NSPasteboardTypeString];
+    void (^write)(void) = ^{
+        NSPasteboard *pasteboard = [NSPasteboard generalPasteboard];
+        [pasteboard clearContents];
+        [pasteboard setString:value forType:NSPasteboardTypeString];
+    };
+    if ([NSThread isMainThread]) write();
+    else dispatch_sync(dispatch_get_main_queue(), write);
 }
 #endif

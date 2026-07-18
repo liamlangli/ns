@@ -29,6 +29,15 @@ void view_run(view *v) {
     // No event loop without a native backend.
 }
 
+void view_platform_request_frame(view *v) {
+    ns_unused(v);
+}
+
+void view_platform_request_frame_after(view *v, i32 milliseconds) {
+    ns_unused(v);
+    ns_unused(milliseconds);
+}
+
 const char *view_get_clipboard(view *v) {
     ns_unused(v);
     return ns_null;

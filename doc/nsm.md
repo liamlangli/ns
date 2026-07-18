@@ -57,6 +57,12 @@ network/HTTP, and external or dynamically loaded FFI modules are not available;
 generation reports unsupported dependencies instead of silently producing a
 broken app.
 
+When an app manifest declares `icon = "path/to/image.png"`, `ns project`
+generates `Assets.xcassets` below the managed `.nsproject` directory. It resizes
+the source image for every macOS icon slot, supplies the iOS 1024-pixel icon,
+creates a visionOS image stack, and configures each Xcode target to compile the
+`AppIcon` asset.
+
 On Windows, it creates `bin/<safe-name>.sln` and
 `bin/<safe-name>.vcxproj` for Visual Studio 2022. App projects are x64 NMake
 projects in Debug and Release configurations: Build invokes
@@ -71,9 +77,10 @@ Darwin. They do not create iOS or visionOS library artifacts; portable native
 library output remains dependent on a stable NS ABI and the required object and
 archive backends.
 
-Generated IDE skeletons remain editable. The Xcode `project.pbxproj`, Visual
-Studio solution, and project files are created only when absent and are not
-rewritten by later `ns project` runs. Generated support files are refreshed in
+Generated IDE skeletons remain editable. Later `ns project` runs preserve the
+Xcode `project.pbxproj`, Visual Studio solution, and project files unless a
+generated-project schema upgrade or structural resource change is required.
+Generated support files are refreshed in
 the clearly marked `bin/<safe-name>.nsproject` directory. Files named
 `Config/NS.Generated.xcconfig` or `Config/NS.Generated.props` are managed and
 refreshed; the matching `NS.Local.xcconfig` or `NS.Local.props` overrides are

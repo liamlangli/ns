@@ -1521,6 +1521,7 @@ void ns_exec_project(ns_str path) {
     ns_str name = ns_build_manifest_value(root, "name");
     ns_str module_type = ns_build_manifest_value(root, "type");
     ns_str version = ns_build_manifest_value(root, "version");
+    ns_str icon = ns_path_resolve(root, ns_build_manifest_value(root, "icon"));
     if (!ns_str_equals(schema, ns_str_cstr("ns.mod/v1"))) {
         ns_exit(1, "project", "%.*s must declare schema = \"ns.mod/v1\".\n", manifest.len, manifest.data);
     }
@@ -1573,6 +1574,7 @@ void ns_exec_project(ns_str path) {
         .name = name,
         .safe_name = ns_project_safe_name(name),
         .version = version,
+        .icon = icon,
         .linked_source = linked,
         .ns_executable = executable,
         .runtime_root = runtime_root,

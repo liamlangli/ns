@@ -15,6 +15,11 @@
 #define ns_xcode_mkdir(path) mkdir(path, 0755)
 #endif
 
+#if defined(__APPLE__)
+#include <fcntl.h>
+#include <sys/wait.h>
+#endif
+
 typedef struct ns_xcode_buffer {
     char *data;
     size_t len;
@@ -103,7 +108,8 @@ static ns_bool ns_xcode_file_exists(const char *path) {
     return stat(path, &info) == 0 && S_ISREG(info.st_mode);
 }
 
-static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_bool expects_project_assets) {
+static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_bool expects_project_assets,
+                                                        ns_bool expects_app_icon) {
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     if (fseek(file, 0, SEEK_END) != 0) {
@@ -128,12 +134,15 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_boo
                                strstr(text, "name = \"NS Build\";") && strstr(text, "name = \"NS Test\";") &&
                                !strstr(text, "isa = PBXNativeTarget;");
     ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
-                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 5;");
-    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 5;") &&
+                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 6;");
+    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 6;") &&
                                                ((expects_project_assets && !strstr(text, "Project Assets in Resources")) ||
                                                 (!expects_project_assets && strstr(text, "Project Assets in Resources")));
+    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 6;") &&
+                                             ((expects_app_icon && !strstr(text, "App Icon Assets in Resources")) ||
+                                              (!expects_app_icon && strstr(text, "App Icon Assets in Resources")));
     free(text);
-    return generated_legacy || generated_native_old || generated_native_assets_mismatch;
+    return generated_legacy || generated_native_old || generated_native_assets_mismatch || generated_native_icon_mismatch;
 }
 
 static ns_bool ns_xcode_dir_exists(const char *path) {
@@ -225,6 +234,165 @@ static ns_bool ns_xcode_copy(const char *source, const char *destination) {
     if (fclose(output) != 0) ok = false;
     if (!ok) fprintf(stderr, "project: failed copying %s to %s\n", source, destination);
     return ok;
+}
+
+#if defined(__APPLE__)
+static ns_bool ns_xcode_resize_icon(const char *source, const char *destination, unsigned pixels, const char *format) {
+    char size[16];
+    snprintf(size, sizeof(size), "%u", pixels);
+    pid_t child = fork();
+    if (child < 0) {
+        fprintf(stderr, "project: cannot start icon conversion: %s\n", strerror(errno));
+        return false;
+    }
+    if (child == 0) {
+        int quiet = open("/dev/null", O_WRONLY);
+        if (quiet >= 0) {
+            dup2(quiet, STDOUT_FILENO);
+            close(quiet);
+        }
+        execl("/usr/bin/sips", "sips", "-s", "format", format, "-z", size, size, source, "--out", destination,
+              (char *)NULL);
+        _exit(127);
+    }
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno == EINTR) continue;
+        fprintf(stderr, "project: failed waiting for icon conversion: %s\n", strerror(errno));
+        return false;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "project: failed converting app icon %s\n", source);
+        return false;
+    }
+    return true;
+}
+#endif
+
+static ns_bool ns_xcode_write_app_icon(const ns_project_spec *spec, const char *managed_root) {
+    if (!spec->icon.data || spec->icon.len <= 0) return true;
+
+#if !defined(__APPLE__)
+    ns_unused(managed_root);
+    fprintf(stderr, "project: Xcode app icon generation requires macOS\n");
+    return false;
+#else
+    char *source = ns_xcode_str_dup(spec->icon);
+    char *resources = ns_xcode_path_join(managed_root, "Resources");
+    char *catalog = resources ? ns_xcode_path_join(resources, "Assets.xcassets") : NULL;
+    char *appicon = catalog ? ns_xcode_path_join(catalog, "AppIcon.appiconset") : NULL;
+    char *vision = catalog ? ns_xcode_path_join(catalog, "AppIcon.solidimagestack") : NULL;
+    char *front = vision ? ns_xcode_path_join(vision, "Front.solidimagestacklayer") : NULL;
+    char *middle = vision ? ns_xcode_path_join(vision, "Middle.solidimagestacklayer") : NULL;
+    char *back = vision ? ns_xcode_path_join(vision, "Back.solidimagestacklayer") : NULL;
+    char *front_content = front ? ns_xcode_path_join(front, "Content.imageset") : NULL;
+    char *middle_content = middle ? ns_xcode_path_join(middle, "Content.imageset") : NULL;
+    char *back_content = back ? ns_xcode_path_join(back, "Content.imageset") : NULL;
+    ns_bool ok = source && resources && catalog && appicon && vision && front && middle && back && front_content &&
+                 middle_content && back_content;
+    if (!ok || !ns_xcode_file_exists(source)) {
+        fprintf(stderr, "project: icon file not found: %s\n", source ? source : "(null)");
+        ok = false;
+        goto cleanup;
+    }
+
+    static const char catalog_contents[] =
+        "{\n"
+        "  \"info\" : {\n"
+        "    \"author\" : \"ns\",\n"
+        "    \"version\" : 1\n"
+        "  }\n"
+        "}\n";
+    static const char appicon_contents[] =
+        "{\n"
+        "  \"images\" : [\n"
+        "    { \"filename\" : \"AppIcon-mac-16.png\", \"idiom\" : \"mac\", \"scale\" : \"1x\", \"size\" : \"16x16\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-16@2x.png\", \"idiom\" : \"mac\", \"scale\" : \"2x\", \"size\" : \"16x16\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-32.png\", \"idiom\" : \"mac\", \"scale\" : \"1x\", \"size\" : \"32x32\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-32@2x.png\", \"idiom\" : \"mac\", \"scale\" : \"2x\", \"size\" : \"32x32\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-128.png\", \"idiom\" : \"mac\", \"scale\" : \"1x\", \"size\" : \"128x128\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-128@2x.png\", \"idiom\" : \"mac\", \"scale\" : \"2x\", \"size\" : \"128x128\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-256.png\", \"idiom\" : \"mac\", \"scale\" : \"1x\", \"size\" : \"256x256\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-256@2x.png\", \"idiom\" : \"mac\", \"scale\" : \"2x\", \"size\" : \"256x256\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-512.png\", \"idiom\" : \"mac\", \"scale\" : \"1x\", \"size\" : \"512x512\" },\n"
+        "    { \"filename\" : \"AppIcon-mac-512@2x.png\", \"idiom\" : \"mac\", \"scale\" : \"2x\", \"size\" : \"512x512\" },\n"
+        "    { \"filename\" : \"AppIcon-ios-1024.png\", \"idiom\" : \"universal\", \"platform\" : \"ios\", \"size\" : \"1024x1024\" }\n"
+        "  ],\n"
+        "  \"info\" : { \"author\" : \"ns\", \"version\" : 1 }\n"
+        "}\n";
+    static const char vision_contents[] =
+        "{\n"
+        "  \"info\" : { \"author\" : \"ns\", \"version\" : 1 },\n"
+        "  \"layers\" : [\n"
+        "    { \"filename\" : \"Front.solidimagestacklayer\" },\n"
+        "    { \"filename\" : \"Middle.solidimagestacklayer\" },\n"
+        "    { \"filename\" : \"Back.solidimagestacklayer\" }\n"
+        "  ]\n"
+        "}\n";
+    static const char layer_contents[] =
+        "{ \"info\" : { \"author\" : \"ns\", \"version\" : 1 } }\n";
+    static const char empty_vision_image[] =
+        "{\n"
+        "  \"images\" : [ { \"idiom\" : \"vision\", \"scale\" : \"2x\" } ],\n"
+        "  \"info\" : { \"author\" : \"ns\", \"version\" : 1 }\n"
+        "}\n";
+    static const char back_vision_image[] =
+        "{\n"
+        "  \"images\" : [ { \"filename\" : \"AppIcon-vision-1024.jpg\", \"idiom\" : \"vision\", \"scale\" : \"2x\" } ],\n"
+        "  \"info\" : { \"author\" : \"ns\", \"version\" : 1 }\n"
+        "}\n";
+
+#define NS_XCODE_WRITE_JSON(root, name, contents) do { \
+        char *json_path = ns_xcode_path_join((root), (name)); \
+        if (!json_path || !ns_xcode_write(json_path, (contents), sizeof(contents) - 1, true)) ok = false; \
+        free(json_path); \
+        if (!ok) goto cleanup; \
+    } while (0)
+
+    NS_XCODE_WRITE_JSON(catalog, "Contents.json", catalog_contents);
+    NS_XCODE_WRITE_JSON(appicon, "Contents.json", appicon_contents);
+    NS_XCODE_WRITE_JSON(vision, "Contents.json", vision_contents);
+    NS_XCODE_WRITE_JSON(front, "Contents.json", layer_contents);
+    NS_XCODE_WRITE_JSON(middle, "Contents.json", layer_contents);
+    NS_XCODE_WRITE_JSON(back, "Contents.json", layer_contents);
+    NS_XCODE_WRITE_JSON(front_content, "Contents.json", empty_vision_image);
+    NS_XCODE_WRITE_JSON(middle_content, "Contents.json", empty_vision_image);
+    NS_XCODE_WRITE_JSON(back_content, "Contents.json", back_vision_image);
+#undef NS_XCODE_WRITE_JSON
+
+    static const char *const mac_names[] = {
+        "AppIcon-mac-16.png", "AppIcon-mac-16@2x.png", "AppIcon-mac-32.png", "AppIcon-mac-32@2x.png",
+        "AppIcon-mac-128.png", "AppIcon-mac-128@2x.png", "AppIcon-mac-256.png", "AppIcon-mac-256@2x.png",
+        "AppIcon-mac-512.png", "AppIcon-mac-512@2x.png",
+    };
+    static const unsigned mac_pixels[] = {16, 32, 32, 64, 128, 256, 256, 512, 512, 1024};
+    for (size_t i = 0; i < sizeof(mac_pixels) / sizeof(mac_pixels[0]); ++i) {
+        char *destination = ns_xcode_path_join(appicon, mac_names[i]);
+        ok = destination && ns_xcode_resize_icon(source, destination, mac_pixels[i], "png");
+        free(destination);
+        if (!ok) goto cleanup;
+    }
+    char *ios_icon = ns_xcode_path_join(appicon, "AppIcon-ios-1024.png");
+    char *vision_icon = ns_xcode_path_join(back_content, "AppIcon-vision-1024.jpg");
+    ok = ios_icon && vision_icon && ns_xcode_resize_icon(source, ios_icon, 1024, "png") &&
+         ns_xcode_resize_icon(source, vision_icon, 1024, "jpeg");
+    free(ios_icon);
+    free(vision_icon);
+
+cleanup:
+    free(source);
+    free(resources);
+    free(catalog);
+    free(appicon);
+    free(vision);
+    free(front);
+    free(middle);
+    free(back);
+    free(front_content);
+    free(middle_content);
+    free(back_content);
+    return ok;
+#endif
 }
 
 static char *ns_xcode_escape(const char *text) {
@@ -387,6 +555,7 @@ static const size_t ns_xcode_ui_asset_count = sizeof(ns_xcode_ui_assets) / sizeo
 #define NS_XCODE_FEATURE_SOURCE_BASE (NS_XCODE_RUNTIME_SOURCE_BASE + (unsigned)ns_xcode_runtime_source_count)
 #define NS_XCODE_PROJECT_SOURCE_FILE_ID 90u
 #define NS_XCODE_PROJECT_ASSET_FILE_ID 91u
+#define NS_XCODE_APP_ICON_FILE_ID 92u
 
 static unsigned ns_xcode_resource_file_id(size_t index) {
     return index < 3 ? 5u + (unsigned)index : 50u + (unsigned)index - 3u;
@@ -721,6 +890,7 @@ static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *man
                                     const char *linked_source, const char *safe_name, const char *version) {
     if (!ns_xcode_validate_modules(linked_source)) return false;
     if (!ns_xcode_write_app_sources(managed_root)) return false;
+    if (!ns_xcode_write_app_icon(spec, managed_root)) return false;
     for (size_t i = 0; i < ns_xcode_runtime_source_count; ++i) {
         if (!ns_xcode_copy_relative(runtime_root, managed_root, "src", "Runtime/src", ns_xcode_runtime_sources[i])) return false;
     }
@@ -808,7 +978,7 @@ static ns_bool ns_xcode_append_build_file(ns_xcode_buffer *pbx, unsigned target,
 static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned target, unsigned variant, const char *target_name,
                                                  const char *safe_name, const char *platform, const char *sdk,
                                                  const char *supported, const char *deployment_key, const char *deployment_value,
-                                                 const char *device_family) {
+                                                 const char *device_family, ns_bool has_app_icon) {
     char config_id[25];
     char generated_id[25];
     ns_xcode_id(config_id, 72, target * 10 + variant);
@@ -829,6 +999,7 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
                      "\t\t\tisa = XCBuildConfiguration;\n"
                      "\t\t\tbaseConfigurationReference = %s /* NS.Generated.xcconfig */;\n"
                      "\t\t\tbuildSettings = {\n"
+                     "%s"
                      "\t\t\t\tCODE_SIGN_STYLE = Automatic;\n"
                      "\t\t\t\tDEVELOPMENT_TEAM = \"\";\n"
                      "\t\t\t\tENABLE_USER_SCRIPT_SANDBOXING = NO;\n"
@@ -845,8 +1016,10 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
                      "\t\t\t};\n"
                      "\t\t\tname = %s;\n"
                      "\t\t};\n",
-                     config_id, variant == 1 ? "Debug" : "Release", generated_id, plist_path.data, frameworks, escaped_safe, sdk, supported,
-                     bridge_path.data, device_family, deployment_key, deployment_value, variant == 1 ? "Debug" : "Release");
+                     config_id, variant == 1 ? "Debug" : "Release", generated_id,
+                     has_app_icon ? "\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;\n" : "", plist_path.data,
+                     frameworks, escaped_safe, sdk, supported, bridge_path.data, device_family, deployment_key, deployment_value,
+                     variant == 1 ? "Debug" : "Release");
     free(escaped_target);
     free(escaped_safe);
     ns_xcode_buffer_free(&plist_path);
@@ -919,7 +1092,8 @@ static ns_bool ns_xcode_append_sources_phase(ns_xcode_buffer *pbx, unsigned targ
                                   "\t\t};\n");
 }
 
-static ns_bool ns_xcode_append_resources_phase(ns_xcode_buffer *pbx, unsigned target, ns_bool has_project_assets) {
+static ns_bool ns_xcode_append_resources_phase(ns_xcode_buffer *pbx, unsigned target, ns_bool has_project_assets,
+                                               ns_bool has_app_icon) {
     char phase_id[25];
     ns_xcode_id(phase_id, 12, target);
     if (!ns_xcode_buffer_appendf(pbx,
@@ -942,6 +1116,11 @@ static ns_bool ns_xcode_append_resources_phase(ns_xcode_buffer *pbx, unsigned ta
         char id[25];
         ns_xcode_id(id, 50, target * 100 + ns_xcode_asset_file_id(i));
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* %s in Resources */,\n", id, ns_xcode_ui_assets[i])) return false;
+    }
+    if (has_app_icon) {
+        char app_icon_id[25];
+        ns_xcode_id(app_icon_id, 50, target * 100 + NS_XCODE_APP_ICON_FILE_ID);
+        if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* App Icon Assets in Resources */,\n", app_icon_id)) return false;
     }
     if (has_project_assets) {
         char project_assets_id[25];
@@ -1046,7 +1225,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
     char *source_root = ns_xcode_str_dup(spec->root);
     char *asset_root = source_root ? ns_xcode_path_join(source_root, "assets") : NULL;
     ns_bool has_project_assets = asset_root && ns_xcode_dir_exists(asset_root);
-    ns_bool overwrite_project = ns_xcode_generated_project_needs_upgrade(project_file, has_project_assets);
+    ns_bool has_app_icon = spec->icon.data && spec->icon.len > 0;
+    ns_bool overwrite_project = ns_xcode_generated_project_needs_upgrade(project_file, has_project_assets, has_app_icon);
     if (ns_xcode_file_exists(project_file) && !overwrite_project) {
         free(source_root);
         free(asset_root);
@@ -1088,6 +1268,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         for (size_t i = 0; i < ns_xcode_ui_asset_count; ++i) {
             if (!ns_xcode_append_build_file(&pbx, target, ns_xcode_asset_file_id(i), ns_xcode_ui_assets[i], "Resources")) goto fail;
         }
+        if (has_app_icon &&
+            !ns_xcode_append_build_file(&pbx, target, NS_XCODE_APP_ICON_FILE_ID, "App Icon Assets", "Resources")) goto fail;
         if (has_project_assets &&
             !ns_xcode_append_build_file(&pbx, target, NS_XCODE_PROJECT_ASSET_FILE_ID, "Project Assets", "Resources")) goto fail;
         for (size_t i = 0; i < ns_xcode_runtime_source_count; ++i) {
@@ -1107,6 +1289,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         !ns_xcode_append_file_reference(&pbx, 7, "text", "simd.ns", "Resources/simd.ns") ||
         !ns_xcode_append_file_reference(&pbx, 8, "text.xcconfig", "NS.Generated.xcconfig", "Config/NS.Generated.xcconfig") ||
         !ns_xcode_append_file_reference(&pbx, 9, "text.xcconfig", "NS.Local.xcconfig", "Config/NS.Local.xcconfig") ||
+        (has_app_icon && !ns_xcode_append_file_reference(&pbx, NS_XCODE_APP_ICON_FILE_ID, "folder.assetcatalog",
+                                                         "Assets.xcassets", "Resources/Assets.xcassets")) ||
         !ns_xcode_append_source_folder_reference(&pbx, source_root) ||
         (has_project_assets && !ns_xcode_append_asset_folder_reference(&pbx, asset_root))) {
         goto fail;
@@ -1200,6 +1384,11 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         ns_xcode_id(id, 40, managed_fixed[i]);
         if (!ns_xcode_buffer_appendf(&pbx, "\t\t\t\t%s /* %s */,\n", id, managed_names[i])) goto fail;
     }
+    if (has_app_icon) {
+        char id[25];
+        ns_xcode_id(id, 40, NS_XCODE_APP_ICON_FILE_ID);
+        if (!ns_xcode_buffer_appendf(&pbx, "\t\t\t\t%s /* Assets.xcassets */,\n", id)) goto fail;
+    }
     for (size_t i = 3; i < ns_xcode_resource_module_count; ++i) {
         char id[25];
         ns_xcode_id(id, 40, ns_xcode_resource_file_id(i));
@@ -1261,7 +1450,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
             "\t\t\t\tBuildIndependentTargetsInParallel = YES;\n"
             "\t\t\t\tLastSwiftUpdateCheck = 1600;\n"
             "\t\t\t\tLastUpgradeCheck = 1600;\n"
-            "\t\t\t\tNSProjectGeneratorVersion = 5;\n"
+            "\t\t\t\tNSProjectGeneratorVersion = 6;\n"
             "\t\t\t\tTargetAttributes = {\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
@@ -1287,7 +1476,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         goto fail;
     }
     for (unsigned target = 1; target <= 3; ++target) {
-        if (!ns_xcode_append_resources_phase(&pbx, target, has_project_assets)) {
+        if (!ns_xcode_append_resources_phase(&pbx, target, has_project_assets, has_app_icon)) {
             for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
             goto fail;
         }
@@ -1321,17 +1510,17 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
                                 "/* Begin XCBuildConfiguration section */\n") ||
         !ns_xcode_append_project_config(&pbx, 1) || !ns_xcode_append_project_config(&pbx, 2) ||
         !ns_xcode_append_app_target_config(&pbx, 1, 1, target_names[0].data, safe_name, "macOS", "macosx", "macosx",
-                                           "MACOSX_DEPLOYMENT_TARGET", "12.0", "6") ||
+                                           "MACOSX_DEPLOYMENT_TARGET", "12.0", "6", has_app_icon) ||
         !ns_xcode_append_app_target_config(&pbx, 1, 2, target_names[0].data, safe_name, "macOS", "macosx", "macosx",
-                                           "MACOSX_DEPLOYMENT_TARGET", "12.0", "6") ||
+                                           "MACOSX_DEPLOYMENT_TARGET", "12.0", "6", has_app_icon) ||
         !ns_xcode_append_app_target_config(&pbx, 2, 1, target_names[1].data, safe_name, "iOS", "iphoneos",
-                                           "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2") ||
+                                           "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2", has_app_icon) ||
         !ns_xcode_append_app_target_config(&pbx, 2, 2, target_names[1].data, safe_name, "iOS", "iphoneos",
-                                           "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2") ||
+                                           "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2", has_app_icon) ||
         !ns_xcode_append_app_target_config(&pbx, 3, 1, target_names[2].data, safe_name, "visionOS", "xros", "xros xrsimulator",
-                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7") ||
+                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7", has_app_icon) ||
         !ns_xcode_append_app_target_config(&pbx, 3, 2, target_names[2].data, safe_name, "visionOS", "xros", "xros xrsimulator",
-                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7")) {
+                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7", has_app_icon)) {
         for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
         goto fail;
     }

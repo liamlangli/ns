@@ -10,3 +10,5 @@ assert(os_read_file("test/does-not-exist") == "")
 // which actually support haptics. These calls also verify the native symbol.
 os_vibrate(0.0, 1.0)
 os_vibrate(1.0, 0.0)
+os_impact_prepare()
+os_impact()

@@ -12,6 +12,33 @@ static view_gesture_state view_gestures = {.zoom_factor = 1.0};
 static f64 view_pointer_x[VIEW_POINTER_SLOTS];
 static f64 view_pointer_y[VIEW_POINTER_SLOTS];
 static ns_bool view_pointer_known[VIEW_POINTER_SLOTS];
+static i32 view_requested_frames;
+
+void view_request_frame(view *v, i32 frames) {
+    if (!v || frames <= 0) return;
+    ns_bool was_idle = view_requested_frames <= 0;
+    if (frames > view_requested_frames) view_requested_frames = frames;
+    if (was_idle) view_platform_request_frame(v);
+}
+
+void view_request_frame_after(view *v, i32 milliseconds) {
+    if (!v) return;
+    if (milliseconds <= 0) {
+        view_request_frame(v, 1);
+        return;
+    }
+    view_platform_request_frame_after(v, milliseconds);
+}
+
+ns_bool view_take_frame_request(view *v) {
+    if (!v || view_requested_frames <= 0) return false;
+    view_requested_frames--;
+    return true;
+}
+
+void view_complete_frame(view *v) {
+    if (v && view_requested_frames > 0) view_platform_request_frame(v);
+}
 
 static i32 view_key_modifiers(void) {
     i32 mods = 0;
@@ -26,6 +53,9 @@ void view_on_mouse_move(view* v, f64 x, f64 y) {
     if (!v) return;
     v->mouse_x = x;
     v->mouse_y = y;
+    // AppKit can redeliver a stationary hover when an on-demand Metal view is
+    // invalidated. Do not turn that duplicate into another frame request.
+    if (view_pointer_known[0] && view_pointer_x[0] == x && view_pointer_y[0] == y) return;
     ns_bool dragging = v->mouse_down || v->mouse_right_down || v->mouse_middle_down;
     view_on_pointer_event(v, VIEW_INPUT_DEVICE_MOUSE,
                           dragging ? VIEW_INPUT_PHASE_MOVED : VIEW_INPUT_PHASE_HOVER,
@@ -37,6 +67,7 @@ void view_on_scroll(view* v, f64 x, f64 y) {
     if (!v) return;
     v->scroll_x += x;
     v->scroll_y += y;
+    view_request_frame(v, 1);
 }
 
 void view_on_mouse_btn(view* v, view_mouse_button button, view_button_action action) {
@@ -59,6 +90,7 @@ void view_on_mouse_btn(view* v, view_mouse_button button, view_button_action act
         v->mouse_middle_released = v->mouse_middle_released || !pressed;
         v->mouse_middle_down = pressed;
     }
+    view_request_frame(v, 1);
 }
 
 void view_on_pointer_event(view *v, i32 device, i32 phase, i32 pointer_id,
@@ -88,6 +120,7 @@ void view_on_pointer_event(view *v, i32 device, i32 phase, i32 pointer_id,
         .timestamp = timestamp,
         .tool_action = VIEW_TOOL_ACTION_NONE,
     };
+    view_request_frame(v, 1);
 }
 
 void view_on_tool_action(view *v, i32 action, f64 timestamp) {
@@ -98,6 +131,7 @@ void view_on_tool_action(view *v, i32 action, f64 timestamp) {
         .timestamp = timestamp,
         .tool_action = action,
     };
+    view_request_frame(v, 1);
 }
 
 void view_on_gesture(view *v, f64 pan_x, f64 pan_y, f64 zoom_factor, f64 rotation) {
@@ -106,12 +140,14 @@ void view_on_gesture(view *v, f64 pan_x, f64 pan_y, f64 zoom_factor, f64 rotatio
     view_gestures.pan_y += pan_y;
     if (zoom_factor > 0.0) view_gestures.zoom_factor *= zoom_factor;
     view_gestures.rotation += rotation;
+    view_request_frame(v, 1);
 }
 
 void view_on_orbit_gesture(view *v, f64 orbit_x, f64 orbit_y) {
     if (!v) return;
     view_gestures.orbit_x += orbit_x;
     view_gestures.orbit_y += orbit_y;
+    view_request_frame(v, 1);
 }
 
 i32 view_input_count(view *v) {
@@ -125,6 +161,21 @@ view_input_event *view_input_at(view *v, i32 index) {
 
 view_gesture_state *view_gesture(view *v) {
     return v ? &view_gestures : ns_null;
+}
+
+ns_bool view_input_pending(view *v) {
+    if (!v) return false;
+    if (view_event_count > 0 || v->scroll_x != 0.0 || v->scroll_y != 0.0 ||
+        v->mouse_pressed || v->mouse_released ||
+        v->mouse_right_pressed || v->mouse_right_released ||
+        v->mouse_middle_pressed || v->mouse_middle_released ||
+        view_gestures.pan_x != 0.0 || view_gestures.pan_y != 0.0 ||
+        view_gestures.zoom_factor != 1.0 || view_gestures.rotation != 0.0 ||
+        view_gestures.orbit_x != 0.0 || view_gestures.orbit_y != 0.0) return true;
+    for (i32 key = 0; key <= VIEW_KEY_MENU; key++) {
+        if (view_key_presses[key] != 0) return true;
+    }
+    return false;
 }
 
 void view_input_reset(view *v) {
@@ -148,6 +199,7 @@ void view_on_key_action(view* v, view_keycode key, view_button_action action) {
     if (action == VIEW_BUTTON_ACTION_PRESS) {
         view_key_presses[key] = view_key_modifiers() + 1;
     }
+    view_request_frame(v, 1);
     if (key == VIEW_KEY_F12 && action == VIEW_BUTTON_ACTION_PRESS) {
         view_capture_require(v);
     }
@@ -177,6 +229,7 @@ void view_on_resize(view *v, i32 width, i32 height) {
     v->height = height;
     v->framebuffer_width = (i32)((f64)width * v->ui_scale);
     v->framebuffer_height = (i32)((f64)height * v->ui_scale);
+    view_request_frame(v, 1);
 }
 
 void view_close(view *v) {
@@ -187,4 +240,5 @@ void view_close(view *v) {
 void view_capture_require(view *v) {
     if (!v) return;
     v->capture_required = true;
+    view_request_frame(v, 1);
 }

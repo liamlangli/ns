@@ -101,6 +101,9 @@ ref fn view_on_gesture(v: ref view, pan_x: f64, pan_y: f64, zoom_factor: f64, ro
 ref fn view_input_count(v: ref view) i32
 ref fn view_input_at(v: ref view, index: i32) ref view_input_event
 ref fn view_gesture(v: ref view) ref view_gesture_state
+// True while an unconsumed pointer, gesture, scroll, button, or key edge is
+// waiting for the next application frame.
+ref fn view_input_pending(v: ref view) bool
 ref fn view_input_reset(v: ref view)
 
 ref fn view_get_clipboard(v: ref view) str

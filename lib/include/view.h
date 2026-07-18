@@ -232,6 +232,15 @@ void view_run(view *v);
 void view_close(view *v);
 void view_capture_require(view *v);
 
+// Schedule a bounded burst of frames. Native backends keep the last presented
+// drawable on screen and sleep when no requests remain.
+void view_request_frame(view *v, i32 frames);
+void view_request_frame_after(view *v, i32 milliseconds);
+ns_bool view_take_frame_request(view *v);
+void view_complete_frame(view *v);
+void view_platform_request_frame(view *v);
+void view_platform_request_frame_after(view *v, i32 milliseconds);
+
 // View event handling functions
 void view_on_scroll(view *v, f64 x, f64 y);
 void view_on_resize(view *v, i32 width, i32 height);
@@ -256,6 +265,7 @@ void view_on_orbit_gesture(view *v, f64 orbit_x, f64 orbit_y);
 i32 view_input_count(view *v);
 view_input_event *view_input_at(view *v, i32 index);
 view_gesture_state *view_gesture(view *v);
+ns_bool view_input_pending(view *v);
 void view_input_reset(view *v);
 
 // Clipboard functions

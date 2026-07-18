@@ -76,23 +76,35 @@ int main(void) {
               "project test creates a project asset fixture.");
     ns_project_spec app = app_spec(app_root, runtime,
                                    "use std\nfn main() { print(`generated`) }\n");
+#if defined(__APPLE__)
+    char app_icon_source[PATH_MAX];
+    path(app_icon_source, runtime, "lib/assets/latin_mono.png");
+    app.icon = ns_str_cstr((i8*)app_icon_source);
+#endif
 
     ns_expect(ns_project_generate_xcode(&app), "Xcode app project generation succeeds.");
     ns_expect(ns_project_generate_visual_studio(&app), "Visual Studio app project generation succeeds.");
 
     char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX], bridge_header[PATH_MAX];
-    char view_ios[PATH_MAX], os_ios[PATH_MAX], ui_native[PATH_MAX], ui_asset[PATH_MAX], ios_plist[PATH_MAX];
+    char view_osx[PATH_MAX], view_ios[PATH_MAX], os_ios[PATH_MAX], ui_native[PATH_MAX], ui_asset[PATH_MAX], ios_plist[PATH_MAX];
+    char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX], vision_icon_image[PATH_MAX];
     char sln[PATH_MAX], vcx[PATH_MAX], vlocal[PATH_MAX], vgenerated[PATH_MAX];
     path(pbx, app_root, "bin/demo-app.xcodeproj/project.pbxproj");
     path(linked, app_root, "bin/demo-app.nsproject/Generated/LinkedProject.ns");
     path(xlocal, app_root, "bin/demo-app.nsproject/Config/NS.Local.xcconfig");
     path(xgenerated, app_root, "bin/demo-app.nsproject/Config/NS.Generated.xcconfig");
     path(bridge_header, app_root, "bin/demo-app.nsproject/Sources/NSBridge.h");
+    path(view_osx, app_root, "bin/demo-app.nsproject/Native/src/view.osx.m");
     path(view_ios, app_root, "bin/demo-app.nsproject/Native/src/view.ios.m");
     path(os_ios, app_root, "bin/demo-app.nsproject/Native/src/os.ios.m");
     path(ui_native, app_root, "bin/demo-app.nsproject/Native/src/ui.c");
     path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
     path(ios_plist, app_root, "bin/demo-app.nsproject/Info/iOS-Info.plist");
+    path(app_icon_json, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json");
+    path(app_icon_png, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-mac-16.png");
+    path(vision_icon_json, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json");
+    path(vision_icon_image, app_root,
+         "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.solidimagestack/Back.solidimagestacklayer/Content.imageset/AppIcon-vision-1024.jpg");
     path(sln, app_root, "bin/demo-app.sln");
     path(vcx, app_root, "bin/demo-app.vcxproj");
     path(vlocal, app_root, "bin/demo-app.nsproject/Config/NS.Local.props");
@@ -113,6 +125,10 @@ int main(void) {
               "Xcode native targets compile the embedded view, UI, and OS forwarders.");
     ns_expect(access(view_ios, R_OK) == 0 && access(os_ios, R_OK) == 0 && access(ui_native, R_OK) == 0,
               "Xcode project copies Apple feature sources into the managed project.");
+    ns_expect(text_has(view_osx, "dispatch_sync(dispatch_get_main_queue(), create_view)") &&
+                  text_has(view_osx, "if (view_osx_hosted)") &&
+                  text_has(view_osx, "dispatch_semaphore_wait(view_osx_done"),
+              "embedded macOS view creation and lifecycle stay on the AppKit main thread.");
     char embedded_ffi[PATH_MAX];
     path(embedded_ffi, app_root, "bin/demo-app.nsproject/Runtime/src/ns_embedded_ffi.c");
     ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
@@ -121,6 +137,15 @@ int main(void) {
               "embedded forwarding preserves pointer and value native struct ABIs.");
     ns_expect(access(ui_asset, R_OK) == 0 && text_has(pbx, "latin_mono.json in Resources"),
               "Xcode app targets bundle the UI runtime assets.");
+#if defined(__APPLE__)
+    ns_expect(text_has(pbx, "App Icon Assets in Resources") && text_has(pbx, "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon"),
+              "Xcode app targets compile the generated AppIcon asset catalog.");
+    ns_expect(text_has(app_icon_json, "AppIcon-ios-1024.png") && text_has(app_icon_json, "AppIcon-mac-512@2x.png") &&
+                  access(app_icon_png, R_OK) == 0,
+              "Xcode project generation creates the iOS and macOS AppIcon set from the manifest icon.");
+    ns_expect(text_has(vision_icon_json, "Back.solidimagestacklayer") && access(vision_icon_image, R_OK) == 0,
+              "Xcode project generation creates a visionOS AppIcon image stack from the manifest icon.");
+#endif
     ns_expect(text_has(ios_plist, "UIInterfaceOrientationPortraitUpsideDown") &&
                   text_has(ios_plist, "UISupportedInterfaceOrientations~ipad"),
               "Xcode iOS app declares every supported phone and tablet orientation.");
@@ -130,7 +155,7 @@ int main(void) {
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") &&
                   text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 5"),
+                  text_has(pbx, "NSProjectGeneratorVersion = 6"),
               "Xcode configuration keeps intentional embedded ABI narrowing and unused metadata extraction quiet.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
