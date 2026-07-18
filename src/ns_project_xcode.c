@@ -134,11 +134,11 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_boo
                                strstr(text, "name = \"NS Build\";") && strstr(text, "name = \"NS Test\";") &&
                                !strstr(text, "isa = PBXNativeTarget;");
     ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
-                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 6;");
-    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 6;") &&
+                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 7;");
+    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 7;") &&
                                                ((expects_project_assets && !strstr(text, "Project Assets in Resources")) ||
                                                 (!expects_project_assets && strstr(text, "Project Assets in Resources")));
-    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 6;") &&
+    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 7;") &&
                                              ((expects_app_icon && !strstr(text, "App Icon Assets in Resources")) ||
                                               (!expects_app_icon && strstr(text, "App Icon Assets in Resources")));
     free(text);
@@ -986,8 +986,8 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
     char *escaped_target = ns_xcode_escape(target_name);
     char *escaped_safe = ns_xcode_escape(safe_name);
     const char *frameworks = strcmp(platform, "macOS") == 0
-        ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", AppIntents, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore)"
-        : "(\"$(inherited)\", \"-framework\", AppIntents, \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit)";
+        ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore)"
+        : "(\"$(inherited)\", \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit)";
     ns_xcode_buffer plist_path = {0};
     ns_xcode_buffer bridge_path = {0};
     ns_bool ok = escaped_target && escaped_safe &&
@@ -1450,7 +1450,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
             "\t\t\t\tBuildIndependentTargetsInParallel = YES;\n"
             "\t\t\t\tLastSwiftUpdateCheck = 1600;\n"
             "\t\t\t\tLastUpgradeCheck = 1600;\n"
-            "\t\t\t\tNSProjectGeneratorVersion = 6;\n"
+            "\t\t\t\tNSProjectGeneratorVersion = 7;\n"
             "\t\t\t\tTargetAttributes = {\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"

@@ -85,7 +85,8 @@ static ns_bool ui_module_directory(char out[UI_PATH_MAX]) {
 // Resolve bundled UI resources independently of the process working
 // directory. Installed dylibs live under <root>/lib with assets under
 // <root>/ref/assets; source-tree dylibs live in <repo>/bin with assets under
-// <repo>/lib/assets. NS_UI_ASSET_ROOT remains available for custom packaging.
+// <repo>/lib/assets; generated macOS apps keep them in Contents/Resources.
+// NS_UI_ASSET_ROOT remains available for custom packaging.
 static ns_bool ui_resolve_asset(const char *name, char out[UI_PATH_MAX]) {
     const char *override = getenv("NS_UI_ASSET_ROOT");
     if (override && override[0]) {
@@ -95,7 +96,7 @@ static ns_bool ui_resolve_asset(const char *name, char out[UI_PATH_MAX]) {
 
     char module_dir[UI_PATH_MAX];
     if (ui_module_directory(module_dir)) {
-        const char *layouts[] = {".", "assets", "../ref/assets", "../lib/assets"};
+        const char *layouts[] = {".", "assets", "../Resources", "../ref/assets", "../lib/assets"};
         for (u32 i = 0; i < sizeof(layouts) / sizeof(layouts[0]); i++) {
             i32 len = snprintf(out, UI_PATH_MAX, "%s/%s/%s", module_dir, layouts[i], name);
             if (len > 0 && len < UI_PATH_MAX && ui_file_readable(out)) return true;

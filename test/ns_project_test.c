@@ -86,7 +86,7 @@ int main(void) {
     ns_expect(ns_project_generate_visual_studio(&app), "Visual Studio app project generation succeeds.");
 
     char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX], bridge_header[PATH_MAX];
-    char view_osx[PATH_MAX], view_ios[PATH_MAX], os_ios[PATH_MAX], ui_native[PATH_MAX], ui_asset[PATH_MAX], ios_plist[PATH_MAX];
+    char view_osx[PATH_MAX], view_ios[PATH_MAX], os_ios[PATH_MAX], gpu_metal[PATH_MAX], ui_native[PATH_MAX], ui_asset[PATH_MAX], ios_plist[PATH_MAX];
     char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX], vision_icon_image[PATH_MAX];
     char sln[PATH_MAX], vcx[PATH_MAX], vlocal[PATH_MAX], vgenerated[PATH_MAX];
     path(pbx, app_root, "bin/demo-app.xcodeproj/project.pbxproj");
@@ -97,6 +97,7 @@ int main(void) {
     path(view_osx, app_root, "bin/demo-app.nsproject/Native/src/view.osx.m");
     path(view_ios, app_root, "bin/demo-app.nsproject/Native/src/view.ios.m");
     path(os_ios, app_root, "bin/demo-app.nsproject/Native/src/os.ios.m");
+    path(gpu_metal, app_root, "bin/demo-app.nsproject/Native/src/gpu.metal.m");
     path(ui_native, app_root, "bin/demo-app.nsproject/Native/src/ui.c");
     path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
     path(ios_plist, app_root, "bin/demo-app.nsproject/Info/iOS-Info.plist");
@@ -123,12 +124,20 @@ int main(void) {
     ns_expect(text_has(pbx, "Native/src/view.ios.m") && text_has(pbx, "Native/src/os.ios.m") &&
                   text_has(pbx, "Native/src/ui.c"),
               "Xcode native targets compile the embedded view, UI, and OS forwarders.");
-    ns_expect(access(view_ios, R_OK) == 0 && access(os_ios, R_OK) == 0 && access(ui_native, R_OK) == 0,
+    ns_expect(access(view_ios, R_OK) == 0 && access(os_ios, R_OK) == 0 && access(gpu_metal, R_OK) == 0 && access(ui_native, R_OK) == 0,
               "Xcode project copies Apple feature sources into the managed project.");
     ns_expect(text_has(view_osx, "dispatch_sync(dispatch_get_main_queue(), create_view)") &&
                   text_has(view_osx, "if (view_osx_hosted)") &&
                   text_has(view_osx, "dispatch_semaphore_wait(view_osx_done"),
               "embedded macOS view creation and lifecycle stay on the AppKit main thread.");
+    ns_expect(text_has(gpu_metal, "if ([NSThread isMainThread]) attach_view()") &&
+                  text_has(gpu_metal, "dispatch_sync(dispatch_get_main_queue(), attach_view)"),
+              "embedded Metal setup keeps NSWindow and MTKView access on the AppKit main thread.");
+    ns_expect(text_has(gpu_metal, "gpu_pipeline_mtl _pipeline = {0}") &&
+                  text_has(gpu_metal, "_pipeline.reflection = [reflection retain]"),
+              "embedded Metal pipelines own initialized reflection state through renderer shutdown.");
+    ns_expect(text_has(ui_native, "\"../Resources\""),
+              "embedded UI resolves its font atlas from a generated macOS application bundle.");
     char embedded_ffi[PATH_MAX];
     path(embedded_ffi, app_root, "bin/demo-app.nsproject/Runtime/src/ns_embedded_ffi.c");
     ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
@@ -154,9 +163,9 @@ int main(void) {
                   !text_has(xgenerated, "NS_EXECUTABLE = \""),
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") &&
-                  text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 6"),
-              "Xcode configuration keeps intentional embedded ABI narrowing and unused metadata extraction quiet.");
+                  !text_has(pbx, "\"-framework\", AppIntents") &&
+                  text_has(pbx, "NSProjectGeneratorVersion = 7"),
+              "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
     char bridge_source[PATH_MAX];

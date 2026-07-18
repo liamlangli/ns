@@ -576,12 +576,19 @@ ns_bool gpu_request_device(view* v) {
 
     if (v != NULL && v->native_window != NULL) {
 #if TARGET_OS_OSX
-        NSWindow *window = (__bridge NSWindow *)v->native_window;
-        NSView *content_view = [window contentView];
-        if ([content_view isKindOfClass: [MTKView class]]) {
-            _state.view = (MTKView *)content_view;
-            [_state.view setDevice: _state.device.device];
-        }
+        // Hosted apps run the Nano Script VM on a worker so view_run() can
+        // wait without blocking SwiftUI's main actor. Keep AppKit access on
+        // the main thread even when GPU setup originates from that worker.
+        void (^attach_view)(void) = ^{
+            NSWindow *window = (__bridge NSWindow *)v->native_window;
+            NSView *content_view = [window contentView];
+            if ([content_view isKindOfClass: [MTKView class]]) {
+                _state.view = (MTKView *)content_view;
+                [_state.view setDevice: _state.device.device];
+            }
+        };
+        if ([NSThread isMainThread]) attach_view();
+        else dispatch_sync(dispatch_get_main_queue(), attach_view);
 #else
         _state.view = (__bridge MTKView *)v->native_window;
         [_state.view setDevice:_state.device.device];
@@ -1145,7 +1152,7 @@ gpu_shader gpu_create_shader(gpu_shader_desc *desc) {
 
 gpu_pipeline gpu_create_pipeline(gpu_pipeline_desc *desc) {
     MTLVertexDescriptor *vertex_desc = [MTLVertexDescriptor vertexDescriptor];
-    gpu_pipeline_mtl _pipeline;
+    gpu_pipeline_mtl _pipeline = {0};
     bool vertex_buffer_enabled[GPU_VERTEX_BUFFER_COUNT];
     memset(vertex_buffer_enabled, 0, sizeof(vertex_buffer_enabled));
     for (NSUInteger attr_index = 0; attr_index < GPU_ATTRIBUTE_COUNT; ++attr_index) {
@@ -1204,8 +1211,6 @@ gpu_pipeline gpu_create_pipeline(gpu_pipeline_desc *desc) {
 #ifndef ENABLE_ARC
     [pip_desc release];
 #endif
-    _pipeline.reflection = reflection;
-
     if (nil == pso) {
         NSLog(@"Error: %@", err);
         NSLog(@"Source: %s", [err.localizedDescription UTF8String]);
@@ -1240,10 +1245,23 @@ gpu_pipeline gpu_create_pipeline(gpu_pipeline_desc *desc) {
         [ds_desc release];
 #endif
         if (nil == dso) {
+#ifndef ENABLE_ARC
+            [pso release];
+#endif
             return (gpu_pipeline){ .id = 0 };
         }
         _pipeline.dso = dso;
     }
+
+    // The reflection out parameter is autoreleased even though the pipeline
+    // state itself follows the new-method ownership rule. Retain it while it
+    // is stored in the resource pool so gpu_destroy_pipeline() owns exactly
+    // the release it performs during renderer shutdown.
+#ifndef ENABLE_ARC
+    _pipeline.reflection = [reflection retain];
+#else
+    _pipeline.reflection = reflection;
+#endif
 
     _pipeline.depth_stencil_format = _mtl_pixel_format(desc->depth.format);
     _pipeline.cull_mode = _mtl_cull_mode(desc->cull_mode);
