@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0
+## 0.1.2
 
 - Add editor-title buttons and command-palette entries to run or build the
   current Nano Script project in VS Code's integrated task terminal.

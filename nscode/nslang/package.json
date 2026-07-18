@@ -2,15 +2,11 @@
     "name": "nslang",
     "displayName": "Nano Script",
     "description": "Nano Script language support, including project run and build commands.",
-    "version": "0.2.0",
+    "version": "0.1.2",
     "publisher": "liamlangli",
     "license": "MIT",
     "icon": "icons/ns.png",
     "main": "./extension.js",
-    "activationEvents": [
-        "onCommand:nslang.run",
-        "onCommand:nslang.build"
-    ],
     "scripts": {
         "pack": "cp ../../README.md README.md && cp ../../LICENSE LICENSE && vsce package"
     },
