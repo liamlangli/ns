@@ -183,6 +183,7 @@ extern ns_bool gpu_request_device(void *);
 extern void gpu_destroy_device(void);
 extern const char * gpu_shader_target(void);
 extern ns_bool gpu_dispatch_compute_source(const char *, const char *, i32, i32, i32);
+extern ns_bool gpu_dispatch_compute_texture_source(const char *, const char *, u32, i32, i32, i32);
 extern u32 gpu_create_buffer(i32, i32);
 extern u32 gpu_create_index_buffer(i32, i32);
 extern u32 gpu_create_uniform_buffer(i32, i32);
@@ -1005,6 +1006,11 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     }
     else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_dispatch_compute_source")) {
         ns_bool result = gpu_dispatch_compute_source(ns_embedded_arg_str(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 4)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_dispatch_compute_texture_source")) {
+        ns_bool result = gpu_dispatch_compute_texture_source(ns_embedded_arg_str(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_u32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 4)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 5)));
         ns_embedded_return_scalar(vm, &result, sizeof(result));
         return ns_return_ok(bool, true);
     }

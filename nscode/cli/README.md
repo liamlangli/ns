@@ -39,8 +39,8 @@ creates it.
   geometry derived by scanning for `\n`, cursor as a byte offset, rendering with
   ANSI escapes, input dispatch, and file I/O.
 - `keys.ns` — key-code constants matching `lib/include/term.h`.
-- `buffer_test.ns` — headless tests for the buffer logic (no TTY needed):
-  `bin/ns test nscode/cli/buffer_test.ns`.
+- `test/buffer_test.ns` — headless tests for the buffer logic (no TTY needed).
+  Run all suites with `bin/ns test nscode/cli`.
 
 ## Implementation notes
 

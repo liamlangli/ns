@@ -1,10 +1,10 @@
-// nscode/native/editor_test.ns
+// nscode/native/test/editor_test.ns
 // ---------------------------------------------------------------------------
 // Headless checks for the document model in editor.ns: cursor placement,
 // word/line selection, per-line selection spans, the syntax tokenizer and the
 // typed-key character mapping. Runs on any platform (no view/gpu needed):
 //
-//   bin/ns run nscode/native/editor_test.ns
+//   bin/ns test nscode/native/test/editor_test.ns
 
 use std
 use editor

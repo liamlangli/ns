@@ -154,7 +154,7 @@ void ns_help() {
     printf("                    writes ns.mod, main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  run  [file.ns]    run cwd/ns.mod, otherwise cwd/main.ns, or an explicit input\n");
-    printf("  test <path>       run a test entry, or every *_test.ns under a dir\n");
+    printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
@@ -1881,8 +1881,32 @@ static void ns_exec_test_dir(ns_str dir) {
     if (failed != 0) exit(1);
 }
 
+// Resolve a project directory to the conventional test directory beside its
+// ns.mod. An omitted path starts at cwd and may find a manifest in a parent;
+// an explicit project directory must contain ns.mod itself so arbitrary test
+// directories keep their existing meaning.
+static ns_str ns_project_test_dir(ns_str path) {
+    ns_str root = path;
+    if (root.len == 0) root = ns_project_root(ns_getcwd());
+
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_bool is_project = ns_file_exists(manifest);
+    ns_str_free(manifest);
+    if (!is_project) return ns_str_null;
+
+    return ns_path_join(root, ns_str_cstr("test"));
+}
+
 void ns_exec_test(ns_str path) {
-    if (path.len == 0) ns_error("ns", "no test file or directory.\n");
+    ns_str test_dir = ns_project_test_dir(path);
+    if (test_dir.data != ns_null) {
+        if (!ns_is_dir(test_dir)) {
+            ns_warn("test", "no test directory at %.*s\n", test_dir.len, test_dir.data);
+            return;
+        }
+        ns_exec_test_dir(test_dir);
+        return;
+    }
     if (ns_is_dir(path)) {
         ns_exec_test_dir(path);
         return;

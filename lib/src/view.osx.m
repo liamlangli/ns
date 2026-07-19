@@ -240,8 +240,10 @@ i32 view_osx_key_map(i32 k) {
 @implementation ViewAppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification {
     (void)aNotification;
-    // The window is created in view_create(); the run loop only needs to fire
-    // the ns on_launch callback (set between view_create and view_run).
+    // Standalone processes only become activatable after AppKit finishes
+    // launching, so repeat the order/activation done during view_create().
+    [NSApp activateIgnoringOtherApps:YES];
+    [view_window makeKeyAndOrderFront:nil];
     view_on_launch launch = (view_on_launch)_view.on_launch;
     if (launch) {
         launch(&_view);
@@ -452,6 +454,9 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     [view_mtk_view setDelegate: view_mtk_view_delegate];
     [view_window setContentView: view_mtk_view];
     [view_window makeKeyAndOrderFront: nil];
+    // Hosted applications are already running and do not receive this
+    // backend's applicationDidFinishLaunching callback.
+    [NSApp activateIgnoringOtherApps:YES];
     const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
     view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
 

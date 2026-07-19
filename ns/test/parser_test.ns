@@ -1,7 +1,7 @@
-// ns/parser_test.ns
+// ns/test/parser_test.ns
 // Unit tests for the self-hosted parser (ns/parser.ns).
 //
-// A self-contained test entry: `ns test ns/` (or `ns test ns/parser_test.ns`)
+// A self-contained test entry: `ns test ns/` (or `ns test ns/test/parser_test.ns`)
 // compiles the project scope - inlining the local `lexer`, `parser` and
 // `harness` modules - and runs `main`, whose return value is the exit status.
 //

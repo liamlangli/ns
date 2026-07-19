@@ -6,7 +6,6 @@ type = "library"
 description = "Self-hosted Nano Script front-end and test harness."
 source = "."
 entries = ["demo_main.ns"]
-tests = ["lexer_test.ns", "parser_test.ns"]
 exclude = ["README.md", ".gitignore"]
 
 [[dependencies.runtime]]

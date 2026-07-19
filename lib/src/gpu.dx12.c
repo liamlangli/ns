@@ -531,6 +531,19 @@ ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 t
     return SUCCEEDED(hr);
 }
 
+ns_bool gpu_dispatch_compute_texture_source(const char *source, const char *entry, u32 texture_id,
+                                            i32 threads_x, i32 threads_y, i32 threads_z) {
+    // DX12 texture allocation/UAV descriptors are not implemented yet, so a
+    // writable texture cannot be bound safely on this backend.
+    ns_unused(source);
+    ns_unused(entry);
+    ns_unused(texture_id);
+    ns_unused(threads_x);
+    ns_unused(threads_y);
+    ns_unused(threads_z);
+    return false;
+}
+
 // ---- pixel format helpers (backend agnostic) -------------------------------
 
 int gpu_pixel_format_size(gpu_pixel_format format) {

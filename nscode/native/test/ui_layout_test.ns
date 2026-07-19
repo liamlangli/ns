@@ -1,10 +1,10 @@
-// nscode/native/ui_layout_test.ns
+// nscode/native/test/ui_layout_test.ns
 // ---------------------------------------------------------------------------
 // Regression tests for ui_layout alignment flags as seen through `use ui`.
 //
 // Run with:
 //
-//   bin/ns test nscode/native/ui_layout_test.ns
+//   bin/ns test nscode/native/test/ui_layout_test.ns
 //
 // The literal-flag case isolates ui_layout/bitwise handling. The imported
 // constant case catches regressions where external module `let` constants

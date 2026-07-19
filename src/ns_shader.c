@@ -39,6 +39,8 @@ typedef struct ns_shader_emit {
     ns_bool uses_shadow_map;
     ns_bool uses_texture_map;
     ns_bool uses_scene_uniforms;
+    ns_bool uses_global_id;
+    ns_bool uses_write_texture;
 } ns_shader_emit;
 
 #define ns_shader_try(x)                                                                                                                             \
@@ -263,6 +265,10 @@ static const ns_shader_builtin ns_shader_builtins[] = {
     {"shader_scene_selected", "ns_scene_selected", "ns_scene_selected", "ns_scene_selected", true},
     {"shader_scene_textured", "ns_scene_textured", "ns_scene_textured", "ns_scene_textured", true},
     {"shader_scene_receives_shadow", "ns_scene_receives_shadow", "ns_scene_receives_shadow", "ns_scene_receives_shadow", true},
+    {"shader_global_id_x", "ns_global_id_x", "ns_global_id_x", "ns_global_id_x", true},
+    {"shader_global_id_y", "ns_global_id_y", "ns_global_id_y", "ns_global_id_y", true},
+    {"shader_global_id_z", "ns_global_id_z", "ns_global_id_z", "ns_global_id_z", true},
+    {"shader_write_texture", "ns_write_texture", "ns_write_texture", "ns_write_texture", false},
 };
 
 static const ns_shader_builtin *ns_shader_find_builtin(ns_str name) {
@@ -321,13 +327,7 @@ static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
         ns_str name = callee->primary_expr.token.val;
         const ns_shader_builtin *b = ns_shader_find_builtin(name);
         if (b) {
-            if (ns_str_starts_with(name, ns_str_cstr("shader_transform_")) ||
-                ns_str_equals(name, ns_str_cstr("shader_shadow_clip_position")) ||
-                ns_str_starts_with(name, ns_str_cstr("shader_scene_"))) {
-                ns_symbol *decl = ns_shader_find_global(e->vm, name);
-                if (decl && decl->type == NS_SYMBOL_FN) return decl->fn.ret;
-            }
-            if (ns_str_equals(name, ns_str_cstr("shader_sample_texture"))) {
+            if (ns_str_starts_with(name, ns_str_cstr("shader_"))) {
                 ns_symbol *decl = ns_shader_find_global(e->vm, name);
                 if (decl && decl->type == NS_SYMBOL_FN) return decl->fn.ret;
             }
@@ -417,6 +417,14 @@ static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth
         if (callee->type == NS_AST_PRIMARY_EXPR &&
             ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_sample_texture"))) {
             e->uses_texture_map = true;
+        }
+        if (callee->type == NS_AST_PRIMARY_EXPR &&
+            ns_str_starts_with(callee->primary_expr.token.val, ns_str_cstr("shader_global_id_"))) {
+            e->uses_global_id = true;
+        }
+        if (callee->type == NS_AST_PRIMARY_EXPR &&
+            ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_write_texture"))) {
+            e->uses_write_texture = true;
         }
         if (callee->type == NS_AST_PRIMARY_EXPR &&
             (ns_str_starts_with(callee->primary_expr.token.val, ns_str_cstr("shader_transform_")) ||
@@ -732,6 +740,55 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             ns_bool textured = ns_str_equals(name, ns_str_cstr("shader_scene_textured"));
             ns_bool receives_shadow = ns_str_equals(name, ns_str_cstr("shader_scene_receives_shadow"));
             ns_bool sample_texture = ns_str_equals(name, ns_str_cstr("shader_sample_texture"));
+            ns_bool global_x = ns_str_equals(name, ns_str_cstr("shader_global_id_x"));
+            ns_bool global_y = ns_str_equals(name, ns_str_cstr("shader_global_id_y"));
+            ns_bool global_z = ns_str_equals(name, ns_str_cstr("shader_global_id_z"));
+            ns_bool write_texture = ns_str_equals(name, ns_str_cstr("shader_write_texture"));
+            if (global_x || global_y || global_z) {
+                if (n->call_expr.arg_count != 0) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: global id intrinsic takes no arguments.");
+                const char component = global_x ? 'x' : global_y ? 'y' : 'z';
+                if (e->target == NS_SHADER_GLSL_VULKAN) {
+                    ns_shader_cstr(dst, "int(gl_GlobalInvocationID.");
+                    ns_str_append_len(dst, (const i8 *)&component, 1);
+                    ns_shader_cstr(dst, ")");
+                } else {
+                    ns_shader_cstr(dst, "int(ns_global_id.");
+                    ns_str_append_len(dst, (const i8 *)&component, 1);
+                    ns_shader_cstr(dst, ")");
+                }
+                return ns_return_ok_void;
+            }
+            if (write_texture) {
+                if (n->call_expr.arg_count != 3) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_write_texture expects x, y and float4 color arguments.");
+                i32 x = n->next;
+                i32 y = e->ctx->nodes[x].next;
+                i32 color = e->ctx->nodes[y].next;
+                if (e->target == NS_SHADER_MSL) {
+                    ns_shader_cstr(dst, "ns_write_texture.write(");
+                    ns_shader_try(ns_shader_emit_expr(e, color, dst));
+                    ns_shader_cstr(dst, ", uint2(");
+                    ns_shader_try(ns_shader_emit_expr(e, x, dst));
+                    ns_shader_cstr(dst, ", ");
+                    ns_shader_try(ns_shader_emit_expr(e, y, dst));
+                    ns_shader_cstr(dst, "))");
+                } else if (e->target == NS_SHADER_GLSL_VULKAN) {
+                    ns_shader_cstr(dst, "imageStore(ns_write_texture, ivec2(");
+                    ns_shader_try(ns_shader_emit_expr(e, x, dst));
+                    ns_shader_cstr(dst, ", ");
+                    ns_shader_try(ns_shader_emit_expr(e, y, dst));
+                    ns_shader_cstr(dst, "), ");
+                    ns_shader_try(ns_shader_emit_expr(e, color, dst));
+                    ns_shader_cstr(dst, ")");
+                } else {
+                    ns_shader_cstr(dst, "ns_write_texture[int2(");
+                    ns_shader_try(ns_shader_emit_expr(e, x, dst));
+                    ns_shader_cstr(dst, ", ");
+                    ns_shader_try(ns_shader_emit_expr(e, y, dst));
+                    ns_shader_cstr(dst, ")] = ");
+                    ns_shader_try(ns_shader_emit_expr(e, color, dst));
+                }
+                return ns_return_ok_void;
+            }
             if (selected || textured || receives_shadow) {
                 if (n->call_expr.arg_count != 0) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: scene parameter intrinsic takes no arguments.");
                 if (e->target == NS_SHADER_HLSL) {
@@ -1146,6 +1203,13 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         ns_shader_str(&e->out, s->fn.args[a].name);
         if (e->target == NS_SHADER_MSL && stage != NS_SHADER_STAGE_AUTO) ns_shader_cstr(&e->out, " [[stage_in]]");
     }
+    if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_COMPUTE && e->uses_global_id) {
+        ns_shader_cstr(&e->out, "uint3 ns_global_id [[thread_position_in_grid]]");
+    }
+    if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_COMPUTE && e->uses_write_texture) {
+        if (e->uses_global_id) ns_shader_cstr(&e->out, ", ");
+        ns_shader_cstr(&e->out, "texture2d<float, access::write> ns_write_texture [[texture(0)]]");
+    }
     if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_FRAGMENT && e->uses_shadow_map) {
         ns_shader_cstr(&e->out, ", depth2d<float> ns_shadow_map [[texture(0)]]");
     }
@@ -1154,6 +1218,9 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
     }
     if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_VERTEX && e->uses_scene_uniforms) {
         ns_shader_cstr(&e->out, ", constant ns_scene_uniforms& ns_uniforms [[buffer(1)]]");
+    }
+    if (e->target == NS_SHADER_HLSL && stage == NS_SHADER_STAGE_COMPUTE && e->uses_global_id) {
+        ns_shader_cstr(&e->out, "uint3 ns_global_id : SV_DispatchThreadID");
     }
     ns_shader_cstr(&e->out, ")");
     if (e->target == NS_SHADER_HLSL && stage == NS_SHADER_STAGE_FRAGMENT) ns_shader_cstr(&e->out, " : SV_Target");
@@ -1411,6 +1478,12 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     if (target == NS_SHADER_MSL) ns_shader_cstr(&e.out, "#include <metal_stdlib>\nusing namespace metal;\n\n");
     if (target == NS_SHADER_GLSL_VULKAN) ns_shader_cstr(&e.out, "#version 450\n\n");
     if (target == NS_SHADER_HLSL) ns_shader_cstr(&e.out, "\n");
+    if (e.uses_write_texture && target == NS_SHADER_GLSL_VULKAN) {
+        ns_shader_cstr(&e.out, "layout(set = 0, binding = 0, rgba8) uniform writeonly image2D ns_write_texture;\n\n");
+    }
+    if (e.uses_write_texture && target == NS_SHADER_HLSL) {
+        ns_shader_cstr(&e.out, "RWTexture2D<float4> ns_write_texture : register(u0);\n\n");
+    }
     if (e.uses_scene_uniforms && target == NS_SHADER_MSL) {
         ns_shader_cstr(&e.out,
             "struct ns_scene_uniforms {\n"

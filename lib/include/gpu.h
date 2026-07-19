@@ -321,6 +321,8 @@ void gpu_commit(void);
 
 const char *gpu_shader_target(void);
 ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z);
+ns_bool gpu_dispatch_compute_texture_source(const char *source, const char *entry, u32 texture_id,
+                                            i32 threads_x, i32 threads_y, i32 threads_z);
 u32 gpu_create_buffer(i32 byte_len, i32 usage);
 u32 gpu_create_index_buffer(i32 byte_len, i32 usage);
 u32 gpu_create_uniform_buffer(i32 byte_len, i32 usage);

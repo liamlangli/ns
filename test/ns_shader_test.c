@@ -75,6 +75,12 @@ static const char *ns_shader_test_src =
     "fn cs_main() void {\n"
     "    let n = 40 + 2\n"
     "}\n"
+    "fn cs_texture() void {\n"
+    "    let x = shader_global_id_x()\n"
+    "    let y = shader_global_id_y()\n"
+    "    let z = shader_global_id_z()\n"
+    "    shader_write_texture(x, y, float4 { x: 0.25, y: 0.5, z: 0.75, w: (z + 1) as f32 })\n"
+    "}\n"
     "fn bad_print(data: FragmentInput) float4 {\n"
     "    print(\"no\")\n"
     "    return data.color\n"
@@ -155,7 +161,8 @@ int main() {
     i32 vs_scene = ns_shader_test_fn(&vm, "vs_scene");
     i32 fs_texture = ns_shader_test_fn(&vm, "fs_texture");
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
-    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && cs >= 0,
+    i32 cs_texture = ns_shader_test_fn(&vm, "cs_texture");
+    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && cs >= 0 && cs_texture >= 0,
               "shader entry symbols exist.");
 
     // --- target/stage helpers ---
@@ -257,6 +264,27 @@ int main() {
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 
+    // --- compute texture output and invocation coordinates ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "[[thread_position_in_grid]]") &&
+                      ns_shader_test_has(r.r, "texture2d<float, access::write>") && ns_shader_test_has(r.r, "ns_write_texture.write("),
+                  "msl compute texture intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "RWTexture2D<float4>") &&
+                      ns_shader_test_has(r.r, "SV_DispatchThreadID") && ns_shader_test_has(r.r, "ns_write_texture[int2("),
+                  "hlsl compute texture intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "writeonly image2D ns_write_texture") &&
+                      ns_shader_test_has(r.r, "gl_GlobalInvocationID.x") && ns_shader_test_has(r.r, "imageStore("),
+                  "glsl compute texture intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
     // --- HLSL: both stages in one source ---
     {
         ns_shader_entry_desc entries[2] = {{.fn_index = vs, .stage = NS_SHADER_STAGE_AUTO}, {.fn_index = fs, .stage = NS_SHADER_STAGE_AUTO}};
@@ -343,8 +371,13 @@ int main() {
         const char *src =
             "use gpu\n"
             "fn cs_noop() void {}\n"
-            "fn main() bool { return !dispatch_gpu(cs_noop, 1, 1, 1) }\n";
-        ns_expect(ns_shader_eval_bool(src), "dispatch_gpu transpiles compute code and calls the gpu dylib backend.");
+            "fn main() bool {\n"
+            "    let target = gpu_shader_target()\n"
+            "    let source = shader_transpile_stage(cs_noop, target, \"compute\")\n"
+            "    let entry = shader_entry(cs_noop, target)\n"
+            "    return !dispatch_gpu(cs_noop, 1, 1, 1) && !gpu_dispatch_compute_texture_source(source, entry, 0u, 1, 1, 1)\n"
+            "}\n";
+        ns_expect(ns_shader_eval_bool(src), "gpu compute dispatch paths transpile code and call the gpu dylib backend.");
     }
 
     return 0;

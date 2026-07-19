@@ -1,4 +1,4 @@
-// nscode/cli/term_ffi_test.ns
+// nscode/cli/test/term_ffi_test.ns
 // ---------------------------------------------------------------------------
 // Smoke test that the terminal native module is loaded through FFI.
 use term

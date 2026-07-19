@@ -31,8 +31,9 @@ The common commands are:
 - `ns create <name>`: create a new directory and scaffold a project in it.
 - `ns run [file.ns]`: interpret an explicit file; without an argument, use the
   current project's manifest entry and otherwise fall back to `main.ns`.
-- `ns test <path>`: run one test entry or all `*_test.ns` files below a
-  directory.
+- `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
+  directory beside the nearest `ns.mod`; a project-directory path does the
+  same. An explicit test file or non-project directory is also supported.
 - `ns build [path]`: build a script or module. Manifest type `app` produces an
   executable and type `library` produces a static library.
 - `ns project [path]`: generate the supported host-native IDE project below

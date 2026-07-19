@@ -21,29 +21,30 @@ interpreter's ref path — there was no local module import. That is no longer
 needed: `ns` now **compiles a project by scope**.
 
 When you `ns run` or `ns test` a file, the interpreter resolves every
-`use <name>` against the **directory of that entry file** first. If
-`<dir>/<name>.ns` exists it is compiled in as a local module; otherwise the
-`use` is treated as an external library import (e.g. `use std`). So the modules
-in this directory simply `use` one another, and `ns` links them itself.
+`use <name>` against the project's source tree first. If a local `<name>.ns`
+exists it is compiled in; otherwise the `use` is treated as an external library
+import (e.g. `use std`). So the modules in this directory simply `use` one
+another, and `ns` links them itself.
 
 ```sh
 # from the repository root, after `make` has produced bin/ns:
 
 bin/ns run  ns/demo_main.ns     # tokenize a sample and print the token stream
-bin/ns test ns/lexer_test.ns    # run one test entry  (exit code = failures)
-bin/ns test ns/parser_test.ns   # run the parser test entry
-bin/ns test ns/                 # discover & run every *_test.ns in the dir
+bin/ns test ns/                 # discover & run ns/test/*_test.ns
+bin/ns test ns/test/lexer_test.ns  # run one test entry (exit code = failures)
 
 # from inside the project directory, `ns run` needs no file argument: it
 # uses ns.mod in that directory (or main.ns when there is no manifest).
 cd ns && ../bin/ns run          # runs the manifest's entry (demo_main.ns)
+../bin/ns test                  # runs every test/*_test.ns; no manifest list
 ```
 
 `ns test <file>` runs a test entry and uses the i32 returned by its `main`
-(the harness's failure count) as the process exit status. `ns test <dir>`
-discovers every `*_test.ns` file, runs each in a fresh VM, prints a per-suite
-PASS/FAIL line, and exits non-zero if any suite failed. `ns run` compiles the
-project scope and executes `main`.
+(the harness's failure count) as the process exit status. `ns test` and
+`ns test <project-dir>` discover every `test/*_test.ns` beside `ns.mod`.
+An explicit non-project directory is scanned directly. Every suite runs in a
+fresh VM, gets a per-suite PASS/FAIL line, and contributes to the final status.
+No test list is needed in `ns.mod`.
 
 ## Layout
 
@@ -53,8 +54,9 @@ ns/
   parser.ns         the parser           (struct Node, NK_* consts; uses lexer)
   harness.ns        soft-assert unit-test harness (expect / expect_eq / ...)
   demo_main.ns      run entry: tokenize a sample and dump the tokens
-  lexer_test.ns     test entry for the lexer  (use std/lexer/harness)
-  parser_test.ns    test entry for the parser (use std/lexer/parser/harness)
+  test/
+    lexer_test.ns   test entry for the lexer  (use std/lexer/harness)
+    parser_test.ns  test entry for the parser (use std/lexer/parser/harness)
 ```
 
 Every entry file declares its own imports (`use std`, `use lexer`, …); there

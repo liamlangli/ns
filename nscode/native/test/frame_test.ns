@@ -1,4 +1,4 @@
-// nscode/native/frame_test.ns
+// nscode/native/test/frame_test.ns
 // ---------------------------------------------------------------------------
 // Headless interaction test for the native code editor. On Linux view_create
 // returns a real (no-op) view struct and the gpu calls are safe stubs, so the
@@ -7,7 +7,7 @@
 // calling view_on_key_action. Run from the repo root (the ui renderer loads
 // lib/assets/latin_mono.* relative to the cwd):
 //
-//   bin/ns run nscode/native/frame_test.ns
+//   bin/ns test nscode/native/test/frame_test.ns
 
 use std
 use view

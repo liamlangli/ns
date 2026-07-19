@@ -1053,11 +1053,15 @@ id<MTLLibrary> _mtl_library_from_code(ns_str src) {
     return lib;
 }
 
-ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z) {
+static ns_bool gpu_dispatch_compute_source_with_texture(const char *source, const char *entry, u32 texture_id,
+                                                        i32 threads_x, i32 threads_y, i32 threads_z) {
     if (!_state.valid || _state.device.device == nil || _state.cmd_queue == nil || !source || !entry ||
         threads_x <= 0 || threads_y <= 0 || threads_z <= 0) {
         return false;
     }
+    if (texture_id && texture_id >= _state.texture_count) return false;
+    id<MTLTexture> output_texture = texture_id ? _state.textures[texture_id].texture : nil;
+    if (texture_id && output_texture == nil) return false;
 
     id<MTLLibrary> library = _mtl_library_from_code(ns_str_cstr((char *)source));
     if (library == nil) return false;
@@ -1084,8 +1088,11 @@ ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 t
     id<MTLCommandBuffer> command_buffer = [_state.cmd_queue commandBuffer];
     id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
     [encoder setComputePipelineState: pipeline];
+    if (output_texture) [encoder setTexture: output_texture atIndex: 0];
+    const NSUInteger group_width = MIN((NSUInteger)8, (NSUInteger)threads_x);
+    const NSUInteger group_height = MIN((NSUInteger)8, (NSUInteger)threads_y);
     [encoder dispatchThreads: MTLSizeMake((NSUInteger)threads_x, (NSUInteger)threads_y, (NSUInteger)threads_z)
-       threadsPerThreadgroup: MTLSizeMake(1, 1, 1)];
+       threadsPerThreadgroup: MTLSizeMake(group_width, group_height, 1)];
     [encoder endEncoding];
     [command_buffer commit];
     [command_buffer waitUntilCompleted];
@@ -1097,6 +1104,16 @@ ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 t
     [library release];
 #endif
     return ok;
+}
+
+ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z) {
+    return gpu_dispatch_compute_source_with_texture(source, entry, 0, threads_x, threads_y, threads_z);
+}
+
+ns_bool gpu_dispatch_compute_texture_source(const char *source, const char *entry, u32 texture_id,
+                                            i32 threads_x, i32 threads_y, i32 threads_z) {
+    if (!texture_id) return false;
+    return gpu_dispatch_compute_source_with_texture(source, entry, texture_id, threads_x, threads_y, threads_z);
 }
 
 gpu_shader gpu_create_shader(gpu_shader_desc *desc) {

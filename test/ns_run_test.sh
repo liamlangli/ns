@@ -12,7 +12,8 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 scaffold_tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-scaffold.XXXXXX")
 run_tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-run-test.XXXXXX")
-trap 'rm -rf "$scaffold_tmp" "$run_tmp"' EXIT HUP INT TERM
+test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-test-test.XXXXXX")
+trap 'rm -rf "$scaffold_tmp" "$run_tmp" "$test_tmp"' EXIT HUP INT TERM
 
 cd "$scaffold_tmp"
 "$ns" create created
@@ -72,3 +73,36 @@ if ! grep -q 'neither ns.mod nor main.ns was found' "$run_tmp/missing.out"; then
 fi
 
 printf '%s\n' 'PASS: ns run selects cwd/ns.mod, then cwd/main.ns, without walking upward.'
+
+mkdir -p "$test_tmp/project/test"
+printf '%s\n' \
+    'schema = "ns.mod/v1"' \
+    'name = "test-discovery"' \
+    'version = "0.1.0"' \
+    'type = "app"' \
+    'source = "."' \
+    'entry = "main.ns"' > "$test_tmp/project/ns.mod"
+printf '%s\n' \
+    'fn project_answer() i32 {' \
+    '    return 42' \
+    '}' > "$test_tmp/project/answer.ns"
+printf '%s\n' \
+    'use answer' \
+    'fn main() i32 {' \
+    '    if project_answer() == 42 {' \
+    '        return 0' \
+    '    }' \
+    '    return 1' \
+    '}' > "$test_tmp/project/test/answer_test.ns"
+# Root-level *_test.ns files are not project tests under the convention.
+printf '%s\n' 'this file must not be selected' > "$test_tmp/project/root_test.ns"
+# Non-test modules in test/ are ignored too.
+printf '%s\n' 'this helper must not be selected' > "$test_tmp/project/test/helper.ns"
+
+(cd "$test_tmp/project" && "$ns" test)
+(cd "$test_tmp/project/test" && "$ns" test)
+"$ns" test "$test_tmp/project"
+"$ns" test "$test_tmp/project/test"
+"$ns" test "$test_tmp/project/test/answer_test.ns"
+
+printf '%s\n' 'PASS: ns test discovers <project>/test/*_test.ns without manifest entries.'

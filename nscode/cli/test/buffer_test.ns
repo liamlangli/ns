@@ -1,10 +1,10 @@
-// nscode/cli/buffer_test.ns
+// nscode/cli/test/buffer_test.ns
 // ---------------------------------------------------------------------------
 // Tests for the editor's pure buffer logic -- editing, line geometry, cursor
 // movement and a file save/open round-trip. None of this needs a TTY or raw
 // mode, so it runs headless:
 //
-//   bin/ns test nscode/cli/buffer_test.ns      (exit code = failure count)
+//   bin/ns test nscode/cli                     (exit code = failure count)
 //
 // Self-contained (no external harness) so it has no dependency outside lib.
 use std
