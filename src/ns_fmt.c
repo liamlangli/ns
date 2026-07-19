@@ -10,7 +10,43 @@
     return (ns_str){.data=d, .len=s, .dynamic=1}; \
 }
 
+static u64 ns_fmt_enum_bits(ns_vm *vm, ns_value n) {
+    ns_value v = ns_eval_enum_underlying_value(vm, n);
+    switch (v.t.type) {
+    case NS_TYPE_I8: return (u64)(i64)ns_eval_number_i8(vm, v);
+    case NS_TYPE_U8: return ns_eval_number_u8(vm, v);
+    case NS_TYPE_I16: return (u64)(i64)ns_eval_number_i16(vm, v);
+    case NS_TYPE_U16: return ns_eval_number_u16(vm, v);
+    case NS_TYPE_I32: return (u64)(i64)ns_eval_number_i32(vm, v);
+    case NS_TYPE_U32: return ns_eval_number_u32(vm, v);
+    case NS_TYPE_I64: return (u64)ns_eval_number_i64(vm, v);
+    case NS_TYPE_U64: return ns_eval_number_u64(vm, v);
+    default: return 0;
+    }
+}
+
 ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
+    if (ns_type_is(n.t, NS_TYPE_ENUM)) {
+        ns_symbol *en = &vm->symbols[ns_type_index(n.t)];
+        u64 bits = ns_fmt_enum_bits(vm, n);
+        for (i32 i = 0, l = (i32)ns_array_length(en->en.members); i < l; ++i) {
+            if (en->en.members[i].value == bits) {
+                ns_str member = en->en.members[i].name;
+                i32 len = en->name.len + 1 + member.len;
+                i8 *data = ns_malloc((szt)len + 1);
+                snprintf(data, (szt)len + 1, "%.*s.%.*s", en->name.len, en->name.data,
+                         member.len, member.data);
+                return (ns_str){.data = data, .len = len, .dynamic = true};
+            }
+        }
+        ns_str number = ns_fmt_value(vm, ns_eval_enum_underlying_value(vm, n));
+        i32 len = en->name.len + number.len + 2;
+        i8 *data = ns_malloc((szt)len + 1);
+        snprintf(data, (szt)len + 1, "%.*s(%.*s)", en->name.len, en->name.data,
+                 number.len, number.data);
+        ns_str_free(number);
+        return (ns_str){.data = data, .len = len, .dynamic = true};
+    }
     switch (n.t.type) {
     case NS_TYPE_I8: ns_fmt_print_number(i8)
     case NS_TYPE_U8: ns_fmt_print_number(u8)

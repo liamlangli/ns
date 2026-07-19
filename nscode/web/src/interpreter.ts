@@ -8,14 +8,15 @@ const TK = {
     FN: 'fn', LET: 'let', RETURN: 'return',
     IF: 'if', ELSE: 'else', FOR: 'for', IN: 'in', TO: 'to',
     USE: 'use', BREAK: 'break', CONTINUE: 'continue', AS: 'as',
-    TYPE: 'type', STRUCT: 'struct',
+    TYPE: 'type', STRUCT: 'struct', ENUM: 'enum',
     IDENT: 'IDENT',
     LPAREN: '(', RPAREN: ')', LBRACE: '{', RBRACE: '}',
     LBRACKET: '[', RBRACKET: ']',
     COMMA: ',', COLON: ':', SEMI: ';', DOT: '.', ARROW: '->',
     PLUS: '+', MINUS: '-', STAR: '*', SLASH: '/', PERCENT: '%',
     EQ: '==', NEQ: '!=', LT: '<', LE: '<=', GT: '>', GE: '>=',
-    AND: '&&', OR: '||', BANG: '!', AMPERSAND: '&', PIPE: '|',
+    AND: '&&', OR: '||', BANG: '!', AMPERSAND: '&', PIPE: '|', CARET: '^', TILDE: '~',
+    SHL: '<<', SHR: '>>',
     ASSIGN: '=', PLUS_ASSIGN: '+=', MINUS_ASSIGN: '-=',
     STAR_ASSIGN: '*=', SLASH_ASSIGN: '/=',
     BACKTICK: '`', EOF: 'EOF',
@@ -25,14 +26,14 @@ type tk_value = typeof TK[keyof typeof TK];
 
 const KEYWORDS = new Set([
     'fn','let','return','if','else','for','in','to','use',
-    'break','continue','as','type','struct','true','false',
+    'break','continue','as','type','struct','enum','true','false',
 ]);
 
 class token {
     type: string;
-    value: number | string | boolean | null;
+    value: number | bigint | string | boolean | null;
     line: number;
-    constructor(type: string, value: number | string | boolean | null, line: number) {
+    constructor(type: string, value: number | bigint | string | boolean | null, line: number) {
         this.type = type; this.value = value; this.line = line;
     }
 }
@@ -51,19 +52,33 @@ function lex(src: string): token[] {
         if (src[i]! >= '0' && src[i]! <= '9') {
             let j = i;
             let is_float = false;
-            while (j < n && (src[j]! >= '0' && src[j]! <= '9' || src[j] === '_')) j++;
-            if (j < n && src[j] === '.' && src[j+1]! >= '0' && src[j+1]! <= '9') {
+            let base = 10;
+            if (src[i] === '0' && (src[i+1] === 'x' || src[i+1] === 'X' || src[i+1] === 'b' || src[i+1] === 'B' || src[i+1] === 'o' || src[i+1] === 'O')) {
+                base = src[i+1]!.toLowerCase() === 'x' ? 16 : src[i+1]!.toLowerCase() === 'b' ? 2 : 8;
+                j += 2;
+                const digit = (c: string): boolean => base === 16 ? /[0-9a-fA-F_]/.test(c) : base === 2 ? /[01_]/.test(c) : /[0-7_]/.test(c);
+                while (j < n && digit(src[j]!)) j++;
+            } else {
+                while (j < n && (src[j]! >= '0' && src[j]! <= '9' || src[j] === '_')) j++;
+            }
+            if (base === 10 && j < n && src[j] === '.' && src[j+1]! >= '0' && src[j+1]! <= '9') {
                 is_float = true; j++;
                 while (j < n && (src[j]! >= '0' && src[j]! <= '9')) j++;
             }
-            if (j < n && (src[j] === 'e' || src[j] === 'E')) {
+            if (base === 10 && j < n && (src[j] === 'e' || src[j] === 'E')) {
                 is_float = true; j++;
                 if (j < n && (src[j] === '+' || src[j] === '-')) j++;
                 while (j < n && src[j]! >= '0' && src[j]! <= '9') j++;
             }
             const raw = src.slice(i, j).replace(/_/g,'');
+            while (j < n && /[a-zA-Z]/.test(src[j]!)) j++; // numeric width suffix
+            let integer: number | bigint = 0;
+            if (!is_float) {
+                const exact = BigInt(raw);
+                integer = exact <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(exact) : exact;
+            }
             tokens.push(new token(is_float ? TK.FLOAT : TK.INT,
-                is_float ? parseFloat(raw) : parseInt(raw, 10), line));
+                is_float ? parseFloat(raw) : integer, line));
             i = j; continue;
         }
         if (src[i] === '"') {
@@ -132,7 +147,7 @@ function lex(src: string): token[] {
         const two = src.slice(i, i+2);
         const two_map: Record<string, string> = {
             '==': TK.EQ, '!=': TK.NEQ, '<=': TK.LE, '>=': TK.GE,
-            '&&': TK.AND, '||': TK.OR, '->': TK.ARROW,
+            '&&': TK.AND, '||': TK.OR, '->': TK.ARROW, '<<': TK.SHL, '>>': TK.SHR,
             '+=': TK.PLUS_ASSIGN, '-=': TK.MINUS_ASSIGN,
             '*=': TK.STAR_ASSIGN, '/=': TK.SLASH_ASSIGN,
         };
@@ -144,7 +159,7 @@ function lex(src: string): token[] {
             '+': TK.PLUS, '-': TK.MINUS, '*': TK.STAR,
             '/': TK.SLASH, '%': TK.PERCENT,
             '<': TK.LT, '>': TK.GT, '=': TK.ASSIGN,
-            '!': TK.BANG, '&': TK.AMPERSAND, '|': TK.PIPE,
+            '!': TK.BANG, '&': TK.AMPERSAND, '|': TK.PIPE, '^': TK.CARET, '~': TK.TILDE,
         };
         if (one_map[src[i]!]) { tokens.push(new token(one_map[src[i]!]!, src[i]!, line)); i++; continue; }
         i++;
@@ -175,7 +190,50 @@ export interface ns_fn {
     closure? : env_scope;
 }
 
-export type ns_value = number | string | boolean | null | ns_fn | ns_value[];
+export interface ns_enum_value {
+    __enum: true;
+    enum_name: string;
+    member_name: string | null;
+    value: bigint;
+}
+
+export interface ns_enum_type {
+    __enum_type: true;
+    name: string;
+    underlying: string;
+    members: Record<string, ns_enum_value>;
+}
+
+export type ns_value = number | bigint | string | boolean | null | ns_fn | ns_enum_value | ns_enum_type | ns_value[];
+
+function is_enum_value(v: ns_value): v is ns_enum_value {
+    return !!v && typeof v === 'object' && (v as ns_enum_value).__enum === true;
+}
+
+function is_enum_type(v: ns_value): v is ns_enum_type {
+    return !!v && typeof v === 'object' && (v as ns_enum_type).__enum_type === true;
+}
+
+function numeric_value(v: ns_value): number | bigint {
+    if (is_enum_value(v)) return v.value;
+    if (typeof v === 'number' || typeof v === 'bigint') return v;
+    throw new ns_error('numeric operation requires a number');
+}
+
+function numeric_pair(a: ns_value, b: ns_value): [number | bigint, number | bigint] {
+    let left = numeric_value(a), right = numeric_value(b);
+    if (typeof left === 'bigint' || typeof right === 'bigint') {
+        if (typeof left === 'number') {
+            if (!Number.isInteger(left)) throw new ns_error('cannot mix floating point and enum integers');
+            left = BigInt(left);
+        }
+        if (typeof right === 'number') {
+            if (!Number.isInteger(right)) throw new ns_error('cannot mix floating point and enum integers');
+            right = BigInt(right);
+        }
+    }
+    return [left, right];
+}
 
 class ns_parser {
     private tokens: token[];
@@ -202,6 +260,7 @@ class ns_parser {
         if (t.type === TK.USE)    return this.parse_use();
         if (t.type === TK.TYPE)   return this.parse_type_alias();
         if (t.type === TK.STRUCT) return this.parse_struct();
+        if (t.type === TK.ENUM)   return this.parse_enum();
         if (t.type === TK.IF)     return this.parse_if();
         if (t.type === TK.FOR)    return this.parse_for();
         if (t.type === TK.LBRACE) return this.parse_block();
@@ -239,11 +298,12 @@ class ns_parser {
         const line = this.peek().line;
         this.expect(TK.LET);
         const name = this.expect(TK.IDENT).value as string;
-        if (this.eat(TK.COLON)) this.parse_type();
+        let declared_type: string | null = null;
+        if (this.eat(TK.COLON)) declared_type = this.parse_type();
         let init: ast_node | null = null;
         if (this.eat(TK.ASSIGN)) init = this.parse_expr();
         this.eat(TK.SEMI);
-        return { kind: 'LetStmt', name, init, line };
+        return { kind: 'LetStmt', name, declared_type, init, line };
     }
     parse_use(): ast_node {
         this.expect(TK.USE);
@@ -256,7 +316,7 @@ class ns_parser {
         this.expect(TK.IDENT);
         this.expect(TK.ASSIGN);
         while (!this.at(TK.EOF) && !this.at(TK.FN) && !this.at(TK.LET) &&
-               !this.at(TK.TYPE) && !this.at(TK.USE)) {
+               !this.at(TK.TYPE) && !this.at(TK.ENUM) && !this.at(TK.USE)) {
             if (this.at(TK.LBRACE)) { this.parse_block(); break; }
             this.advance();
         }
@@ -267,6 +327,27 @@ class ns_parser {
         this.expect(TK.IDENT);
         this.parse_block();
         return { kind: 'StructDef' };
+    }
+    parse_enum(): ast_node {
+        const line = this.peek().line;
+        this.expect(TK.ENUM);
+        const name = this.expect(TK.IDENT).value as string;
+        let underlying = 'i32';
+        if (this.eat(TK.COLON)) underlying = this.parse_type();
+        this.expect(TK.LBRACE);
+        const members: ast_node[] = [];
+        while (!this.at(TK.RBRACE) && !this.at(TK.EOF)) {
+            const member = this.expect(TK.IDENT);
+            let value: ast_node | null = null;
+            if (this.eat(TK.ASSIGN)) value = this.parse_expr();
+            members.push({ name: member.value as string, value, line: member.line });
+            if (!this.eat(TK.COMMA) && !this.at(TK.RBRACE)) {
+                throw new parse_error("expected ',' after enum member", this.peek().line);
+            }
+        }
+        this.expect(TK.RBRACE);
+        if (members.length === 0) throw new parse_error('enum must contain at least one member', line);
+        return { kind: 'EnumDef', name, underlying, members, line };
     }
     parse_block(): ast_node {
         this.expect(TK.LBRACE);
@@ -343,22 +424,45 @@ class ns_parser {
         return left;
     }
     parse_and(): ast_node {
-        let left = this.parse_cmp();
+        let left = this.parse_bit_or();
         while (this.at(TK.AND)) {
             const line = this.peek().line; this.advance();
-            left = { kind: 'Binary', op: '&&', left, right: this.parse_cmp(), line };
+            left = { kind: 'Binary', op: '&&', left, right: this.parse_bit_or(), line };
         }
         return left;
     }
+    parse_bit_or(): ast_node {
+        let left = this.parse_bit_xor();
+        while (this.at(TK.PIPE)) { const line = this.peek().line; this.advance(); left = { kind: 'Binary', op: '|', left, right: this.parse_bit_xor(), line }; }
+        return left;
+    }
+    parse_bit_xor(): ast_node {
+        let left = this.parse_bit_and();
+        while (this.at(TK.CARET)) { const line = this.peek().line; this.advance(); left = { kind: 'Binary', op: '^', left, right: this.parse_bit_and(), line }; }
+        return left;
+    }
+    parse_bit_and(): ast_node {
+        let left = this.parse_cmp();
+        while (this.at(TK.AMPERSAND)) { const line = this.peek().line; this.advance(); left = { kind: 'Binary', op: '&', left, right: this.parse_cmp(), line }; }
+        return left;
+    }
     parse_cmp(): ast_node {
-        const left = this.parse_add();
+        const left = this.parse_shift();
         const cmp_ops: Record<string, string> = {
             [TK.EQ]:'==', [TK.NEQ]:'!=', [TK.LT]:'<', [TK.LE]:'<=', [TK.GT]:'>', [TK.GE]:'>=',
         };
         const op = cmp_ops[this.peek().type];
         if (op) {
             const line = this.peek().line; this.advance();
-            return { kind: 'Binary', op, left, right: this.parse_add(), line };
+            return { kind: 'Binary', op, left, right: this.parse_shift(), line };
+        }
+        return left;
+    }
+    parse_shift(): ast_node {
+        let left = this.parse_add();
+        while (this.at(TK.SHL) || this.at(TK.SHR)) {
+            const op = this.peek().type; const line = this.peek().line; this.advance();
+            left = { kind: 'Binary', op, left, right: this.parse_add(), line };
         }
         return left;
     }
@@ -383,9 +487,9 @@ class ns_parser {
             const line = this.peek().line; this.advance();
             return { kind: 'Unary', op: '-', expr: this.parse_unary(), line };
         }
-        if (this.at(TK.BANG)) {
+        if (this.at(TK.BANG) || this.at(TK.TILDE)) {
             const line = this.peek().line; this.advance();
-            return { kind: 'Unary', op: '!', expr: this.parse_unary(), line };
+            return { kind: 'Unary', op: this.tokens[this.pos - 1]!.type, expr: this.parse_unary(), line };
         }
         return this.parse_postfix();
     }
@@ -405,7 +509,9 @@ class ns_parser {
                 const field = this.expect(TK.IDENT).value as string;
                 base = { kind: 'Field', obj: base, field, line };
             } else if (this.at(TK.AS)) {
-                this.advance(); this.parse_type();
+                const line = this.peek().line;
+                this.advance();
+                base = { kind: 'Cast', expr: base, type: this.parse_type(), line };
             } else { break; }
         }
         return base;
@@ -557,9 +663,76 @@ export class ns_interpreter {
         try { this.eval_program(ast, this.globals); }
         catch (e) { if (e instanceof return_signal) return; this.error('Runtime error: ' + (e as Error).message); }
     }
-    private eval_program(ast: ast_node, env : env_scope): void {
-        for (const stmt of ast.stmts as ast_node[]) if (stmt.kind === 'FnDef') env.def(stmt.name as string, { __fn: true, def: stmt, closure : env_scope });
-        for (const stmt of ast.stmts as ast_node[]) if (stmt.kind !== 'FnDef') this.eval_stmt(stmt, env_scope);
+    eval_program(ast: ast_node, env : env_scope): void {
+        for (const stmt of ast.stmts as ast_node[]) {
+            if (stmt.kind === 'EnumDef') this.eval_enum_def(stmt, env);
+        }
+        for (const stmt of ast.stmts as ast_node[]) if (stmt.kind === 'FnDef') env.def(stmt.name as string, { __fn: true, def: stmt, closure : env });
+        for (const stmt of ast.stmts as ast_node[]) if (stmt.kind !== 'FnDef' && stmt.kind !== 'EnumDef') this.eval_stmt(stmt, env);
+    }
+    private eval_enum_def(stmt: ast_node, env: env_scope): void {
+        const integer_types: Record<string, [boolean, number]> = {
+            i8: [true, 8], u8: [false, 8], i16: [true, 16], u16: [false, 16],
+            i32: [true, 32], u32: [false, 32], i64: [true, 64], u64: [false, 64],
+        };
+        const spec = integer_types[stmt.underlying as string];
+        if (!spec) throw new ns_error('enum underlying type must be an integer type', stmt.line as number);
+        const prior = new Map<string, bigint>();
+        const used = new Set<string>();
+        const members: Record<string, ns_enum_value> = {};
+        let previous = -1n;
+        for (const member of stmt.members as ast_node[]) {
+            if (prior.has(member.name as string)) throw new ns_error('duplicate enum member name', member.line as number);
+            const value = member.value ? this.eval_enum_const(member.value as ast_node, prior) : previous + 1n;
+            const [signed, bits] = spec;
+            const min = signed ? -(1n << BigInt(bits - 1)) : 0n;
+            const max = signed ? (1n << BigInt(bits - 1)) - 1n : (1n << BigInt(bits)) - 1n;
+            if (value < min || value > max) throw new ns_error('enum member value is outside its underlying type range', member.line as number);
+            const key = value.toString();
+            if (used.has(key)) throw new ns_error('duplicate enum member value', member.line as number);
+            used.add(key);
+            prior.set(member.name as string, value);
+            members[member.name as string] = {
+                __enum: true, enum_name: stmt.name as string,
+                member_name: member.name as string, value,
+            };
+            previous = value;
+        }
+        env.def(stmt.name as string, {
+            __enum_type: true, name: stmt.name as string,
+            underlying: stmt.underlying as string, members,
+        });
+    }
+    private eval_enum_const(node: ast_node, prior: Map<string, bigint>): bigint {
+        if (node.kind === 'Lit' && (typeof node.value === 'number' || typeof node.value === 'bigint')) {
+            if (typeof node.value === 'number' && !Number.isInteger(node.value)) throw new ns_error('invalid enum constant expression');
+            return BigInt(node.value);
+        }
+        if (node.kind === 'Ident') {
+            const value = prior.get(node.name as string);
+            if (value === undefined) throw new ns_error('enum constant expression may only reference preceding members', node.line as number);
+            return value;
+        }
+        if (node.kind === 'Unary') {
+            const value = this.eval_enum_const(node.expr as ast_node, prior);
+            if (node.op === '-') return -value;
+            if (node.op === '~') return ~value;
+        }
+        if (node.kind === 'Binary') {
+            const left = this.eval_enum_const(node.left as ast_node, prior);
+            const right = this.eval_enum_const(node.right as ast_node, prior);
+            if ((node.op === '/' || node.op === '%') && right === 0n) throw new ns_error('division by zero in enum constant expression', node.line as number);
+            if ((node.op === '<<' || node.op === '>>') && (right < 0n || right >= 128n)) {
+                throw new ns_error('invalid shift in enum constant expression', node.line as number);
+            }
+            switch (node.op as string) {
+            case '+': return left + right; case '-': return left - right; case '*': return left * right;
+            case '/': return left / right; case '%': return left % right;
+            case '<<': return left << right; case '>>': return left >> right;
+            case '&': return left & right; case '|': return left | right; case '^': return left ^ right;
+            }
+        }
+        throw new ns_error('invalid enum constant expression', node.line as number);
     }
     private eval_block(block: ast_node, env : env_scope): ns_value | return_signal | break_signal | continue_signal {
         const local = new env_scope(env);
@@ -571,31 +744,42 @@ export class ns_interpreter {
     }
     private eval_stmt(stmt: ast_node, env : env_scope): ns_value | return_signal | break_signal | continue_signal {
         switch (stmt.kind as string) {
-        case 'FnDef' : env_scope.def(stmt.name as string, { __fn: true, def: stmt, closure : env_scope }); break;
-        case 'LetStmt': { const val = stmt.init ? this.eval_expr(stmt.init as ast_node, env_scope) : null; env.def(stmt.name as string, val); break; }
-        case 'ReturnStmt': return new return_signal(stmt.value ? this.eval_expr(stmt.value as ast_node, env_scope) : null);
+        case 'FnDef' : env.def(stmt.name as string, { __fn: true, def: stmt, closure : env }); break;
+        case 'LetStmt': {
+            let val = stmt.init ? this.eval_expr(stmt.init as ast_node, env) : null;
+            // Keep the playground's intentionally lightweight type model, but
+            // honor the one observable enum conversion: assigning an enum to
+            // its explicitly written underlying integer type.
+            if (is_enum_value(val) && stmt.declared_type) {
+                const enum_type = env.get(val.enum_name);
+                if (is_enum_type(enum_type) && enum_type.underlying === stmt.declared_type) val = val.value;
+            }
+            env.def(stmt.name as string, val);
+            break;
+        }
+        case 'ReturnStmt': return new return_signal(stmt.value ? this.eval_expr(stmt.value as ast_node, env) : null);
         case 'Break':    return new break_signal();
         case 'Continue': return new continue_signal();
-        case 'IfStmt':   return this.eval_if(stmt, env_scope);
-        case 'ForStmt':  return this.eval_for(stmt, env_scope);
-        case 'ExprStmt': this.eval_expr(stmt.expr as ast_node, env_scope); break;
-        case 'Block':    return this.eval_block(stmt, env_scope);
-        case 'UseStmt': case 'TypeAlias': case 'StructDef': break;
+        case 'IfStmt':   return this.eval_if(stmt, env);
+        case 'ForStmt':  return this.eval_for(stmt, env);
+        case 'ExprStmt': this.eval_expr(stmt.expr as ast_node, env); break;
+        case 'Block':    return this.eval_block(stmt, env);
+        case 'UseStmt': case 'TypeAlias': case 'StructDef': case 'EnumDef': break;
         }
         return null;
     }
     private eval_if(stmt: ast_node, env : env_scope): ns_value | return_signal | break_signal | continue_signal {
-        const cond = this.eval_expr(stmt.cond as ast_node, env_scope);
-        if (cond) return this.eval_block(stmt.then as ast_node, env_scope);
+        const cond = this.eval_expr(stmt.cond as ast_node, env);
+        if (cond) return this.eval_block(stmt.then as ast_node, env);
         if (stmt.alt) {
-            if ((stmt.alt as ast_node).kind === 'IfStmt') return this.eval_if(stmt.alt as ast_node, env_scope);
-            return this.eval_block(stmt.alt as ast_node, env_scope);
+            if ((stmt.alt as ast_node).kind === 'IfStmt') return this.eval_if(stmt.alt as ast_node, env);
+            return this.eval_block(stmt.alt as ast_node, env);
         }
         return null;
     }
     private eval_for(stmt: ast_node, env : env_scope): ns_value | return_signal | break_signal | continue_signal {
-        const from = this.eval_expr(stmt.from as ast_node, env_scope) as number;
-        const to   = this.eval_expr(stmt.to as ast_node, env_scope) as number;
+        const from = this.eval_expr(stmt.from as ast_node, env) as number;
+        const to   = this.eval_expr(stmt.to as ast_node, env) as number;
         const local = new env_scope(env);
         local.def(stmt.var as string, from);
         for (let i = from; i < to; i++) {
@@ -612,13 +796,17 @@ export class ns_interpreter {
         case 'Lit':    return node.value as ns_value;
         case 'Ident':  return env.get(node.name as string);
         case 'Assign': {
-            let val = this.eval_expr(node.value as ast_node, env_scope);
-            if (node.op === '+=') val = (env.get((node.target as ast_node).name as string) as number) + (val as number);
-            if (node.op === '-=') val = (env.get((node.target as ast_node).name as string) as number) - (val as number);
-            if (node.op === '*=') val = (env.get((node.target as ast_node).name as string) as number) * (val as number);
-            if (node.op === '/=') val = (env.get((node.target as ast_node).name as string) as number) / (val as number);
+            let val = this.eval_expr(node.value as ast_node, env);
+            if (node.op !== '=') {
+                const current = this.eval_expr(node.target as ast_node, env);
+                const [left, right] = numeric_pair(current, val);
+                if (node.op === '+=') val = (left as any) + (right as any);
+                if (node.op === '-=') val = (left as any) - (right as any);
+                if (node.op === '*=') val = (left as any) * (right as any);
+                if (node.op === '/=') val = (left as any) / (right as any);
+            }
             if ((node.target as ast_node).kind === 'Field') {
-                const obj = this.eval_expr((node.target as ast_node).obj as ast_node, env_scope);
+                const obj = this.eval_expr((node.target as ast_node).obj as ast_node, env);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 if (obj && typeof obj === 'object') (obj as any)[(node.target as ast_node).field as string] = val;
             } else if ((node.target as ast_node).kind === 'Ident') {
@@ -627,46 +815,78 @@ export class ns_interpreter {
             return val;
         }
         case 'Binary': {
-            if (node.op === '&&') return this.eval_expr(node.left as ast_node, env_scope) && this.eval_expr(node.right as ast_node, env_scope);
-            if (node.op === '||') return this.eval_expr(node.left as ast_node, env_scope) || this.eval_expr(node.right as ast_node, env_scope);
-            const l = this.eval_expr(node.left as ast_node, env_scope);
-            const r = this.eval_expr(node.right as ast_node, env_scope);
+            if (node.op === '&&') return this.eval_expr(node.left as ast_node, env) && this.eval_expr(node.right as ast_node, env);
+            if (node.op === '||') return this.eval_expr(node.left as ast_node, env) || this.eval_expr(node.right as ast_node, env);
+            const l = this.eval_expr(node.left as ast_node, env);
+            const r = this.eval_expr(node.right as ast_node, env);
+            if (node.op === '+' && (typeof l === 'string' || typeof r === 'string')) return ns_str(l) + ns_str(r);
+            const l_numeric = typeof l === 'number' || typeof l === 'bigint' || is_enum_value(l);
+            const r_numeric = typeof r === 'number' || typeof r === 'bigint' || is_enum_value(r);
+            if ((node.op === '==' || node.op === '!=') && (!l_numeric || !r_numeric)) {
+                return node.op === '==' ? l === r : l !== r;
+            }
+            const [left, right] = numeric_pair(l, r);
             switch (node.op as string) {
-            case '+':  return typeof l === 'string' || typeof r === 'string' ? String(l) + String(r) : (l as number) + (r as number);
-            case '-':  return (l as number) - (r as number);
-            case '*':  return (l as number) * (r as number);
-            case '/':  if (r === 0) throw new ns_error('division by zero', node.line as number); return (l as number) / (r as number);
-            case '%':  return (l as number) % (r as number);
-            case '==': return l === r;
-            case '!=': return l !== r;
-            case '<':  return (l as number) < (r as number);
-            case '<=': return (l as number) <= (r as number);
-            case '>':  return (l as number) > (r as number);
-            case '>=': return (l as number) >= (r as number);
+            case '+':  return (left as any) + (right as any);
+            case '-':  return (left as any) - (right as any);
+            case '*':  return (left as any) * (right as any);
+            case '/':  if (right === 0 || right === 0n) throw new ns_error('division by zero', node.line as number); return (left as any) / (right as any);
+            case '%':  return (left as any) % (right as any);
+            case '<<': return BigInt(left) << BigInt(right); case '>>': return BigInt(left) >> BigInt(right);
+            case '&':  return BigInt(left) & BigInt(right); case '|': return BigInt(left) | BigInt(right); case '^': return BigInt(left) ^ BigInt(right);
+            case '==': return left === right;
+            case '!=': return left !== right;
+            case '<':  return left < right;
+            case '<=': return left <= right;
+            case '>':  return left > right;
+            case '>=': return left >= right;
             }
             break;
         }
         case 'Unary': {
-            const v = this.eval_expr(node.expr as ast_node, env_scope);
-            if (node.op === '-') return -(v as number);
+            const v = this.eval_expr(node.expr as ast_node, env);
+            if (node.op === '-') { const n = numeric_value(v); return typeof n === 'bigint' ? -n : -n; }
+            if (node.op === '~') return ~BigInt(numeric_value(v));
             if (node.op === '!') return !v;
             break;
         }
-        case 'Call': return this.eval_call(node, env_scope);
+        case 'Cast': {
+            const value = this.eval_expr(node.expr as ast_node, env);
+            let target: ns_value;
+            try { target = env.get(node.type as string); }
+            catch (_) { return value; } // Web keeps non-enum casts intentionally lightweight.
+            if (!is_enum_type(target)) return value;
+            const raw = numeric_value(value);
+            if (typeof raw === 'number' && !Number.isInteger(raw)) throw new ns_error('enum cast requires an integer value', node.line as number);
+            const exact = BigInt(raw);
+            const signed = target.underlying.startsWith('i');
+            const bits = Number(target.underlying.slice(1));
+            const min = signed ? -(1n << BigInt(bits - 1)) : 0n;
+            const max = signed ? (1n << BigInt(bits - 1)) - 1n : (1n << BigInt(bits)) - 1n;
+            if (exact < min || exact > max) throw new ns_error('integer value is outside enum range', node.line as number);
+            for (const member of Object.values(target.members)) if (member.value === exact) return member;
+            return { __enum: true, enum_name: target.name, member_name: null, value: exact };
+        }
+        case 'Call': return this.eval_call(node, env);
         case 'Field': {
-            const obj = this.eval_expr(node.obj as ast_node, env_scope);
+            const obj = this.eval_expr(node.obj as ast_node, env);
             if (obj == null) throw new ns_error(`null field access '.${node.field as string}'`, node.line as number);
+            if (is_enum_type(obj)) {
+                const member = obj.members[node.field as string];
+                if (!member) throw new ns_error(`unknown enum member '${node.field as string}'`, node.line as number);
+                return member;
+            }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             return ((obj as any)[node.field as string] as ns_value) ?? null;
         }
         case 'Template': {
             let s = '';
-            for (const p of node.parts as ast_node[]) s += ns_str(this.eval_expr(p, env_scope));
+            for (const p of node.parts as ast_node[]) s += ns_str(this.eval_expr(p, env));
             return s;
         }
-        case 'Lambda':    return { __fn: true, lambda: node, closure : env_scope };
-        case 'FnExpr':    return { __fn: true, def: node, closure : env_scope };
-        case 'BlockExpr': return this.eval_block(node.block as ast_node, env_scope) as ns_value;
+        case 'Lambda':    return { __fn: true, lambda: node, closure : env };
+        case 'FnExpr':    return { __fn: true, def: node, closure : env };
+        case 'BlockExpr': return this.eval_block(node.block as ast_node, env) as ns_value;
         }
         return null;
     }
@@ -678,9 +898,9 @@ export class ns_interpreter {
                 try { fn = env.get((node.callee as ast_node).name as string); }
                 catch (_) { throw new ns_error(`undefined function '${(node.callee as ast_node).name as string}'`, node.line as number); }
             } else if ((node.callee as ast_node).kind === 'Field') {
-                const obj = this.eval_expr((node.callee as ast_node).obj as ast_node, env_scope);
+                const obj = this.eval_expr((node.callee as ast_node).obj as ast_node, env);
                 const method = (node.callee as ast_node).field as string;
-                const args   = (node.args as ast_node[]).map(a => this.eval_expr(a, env_scope));
+                const args   = (node.args as ast_node[]).map(a => this.eval_expr(a, env));
                 if (Array.isArray(obj)) {
                     if (method === 'push') { (obj as ns_value[]).push(...args); return null; }
                     if (method === 'len')  return (obj as ns_value[]).length;
@@ -691,23 +911,23 @@ export class ns_interpreter {
                 }
                 return null;
             } else {
-                fn = this.eval_expr(node.callee as ast_node, env_scope);
+                fn = this.eval_expr(node.callee as ast_node, env);
             }
             if (!fn || typeof fn !== 'object' || !(fn as ns_fn).__fn) throw new ns_error(`'${String((node.callee as ast_node).name ?? '?')}' is not a function`, node.line as number);
             const nsfn = fn as ns_fn;
             if (nsfn.call) {
-                const args = (node.args as ast_node[]).map(a => this.eval_expr(a, env_scope));
+                const args = (node.args as ast_node[]).map(a => this.eval_expr(a, env));
                 return nsfn.call(args) ?? null;
             }
             const def    = nsfn.def ?? nsfn.lambda;
             const params: ast_node[] = (def as ast_node).params ?? [];
-            const args   = (node.args as ast_node[]).map(a => this.eval_expr(a, env_scope));
+            const args   = (node.args as ast_node[]).map(a => this.eval_expr(a, env));
             if (node.trailing_block) {
                 args.push({ __fn: true,
                     lambda: { kind: 'Lambda', params: params.length > args.length ?
                         [(params[params.length-1] as ast_node).name ?? 'value'] : [],
                         body: (node.trailing_block as ast_node).stmts },
-                    closure : env_scope });
+                    closure : env });
             }
             const local = new env_scope(nsfn.closure ?? this.globals);
             params.forEach((p: ast_node, i: number) => {
@@ -725,6 +945,8 @@ function ns_str(v: ns_value): string {
     if (v === null || v === undefined) return 'null';
     if (typeof v === 'boolean') return v ? 'true' : 'false';
     if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(v);
+    if (typeof v === 'bigint') return v.toString();
+    if (is_enum_value(v)) return v.member_name ? `${v.enum_name}.${v.member_name}` : `${v.enum_name}(${v.value.toString()})`;
     if (typeof v === 'object' && (v as ns_fn).__fn) return '<fn>';
     if (typeof v === 'object') return JSON.stringify(v);
     return String(v);

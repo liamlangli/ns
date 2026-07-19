@@ -180,6 +180,35 @@ static void ns_wasm_i64leb(u8 **out, i64 v) {
     }
 }
 
+// SSA integer constants can contain the full u64 range. Parse through u64 so
+// values above INT64_MAX keep their exact bit pattern when encoded as i64.
+static i64 ns_wasm_integer_bits(ns_str s) {
+    i32 i = 0;
+    ns_bool negative = false;
+    if (i < s.len && (s.data[i] == '-' || s.data[i] == '+')) {
+        negative = s.data[i] == '-';
+        i++;
+    }
+    u32 base = 10;
+    if (i + 1 < s.len && s.data[i] == '0' && (s.data[i + 1] == 'x' || s.data[i + 1] == 'X')) {
+        base = 16;
+        i += 2;
+    }
+    u64 value = 0;
+    for (; i < s.len; i++) {
+        i8 c = s.data[i];
+        u32 digit;
+        if (c >= '0' && c <= '9') digit = (u32)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (u32)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = (u32)(c - 'A' + 10);
+        else break;
+        if (digit >= base) break;
+        value = value * base + digit;
+    }
+    if (negative) value = 0u - value;
+    return (i64)value;
+}
+
 static void ns_wasm_f32bytes(u8 **out, f32 v) {
     u32 bits; memcpy(&bits, &v, 4);
     ns_array_push(*out, (u8)(bits));
@@ -302,6 +331,11 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
                 }
                 // else keep i32
                 break;
+            case NS_SSA_OP_CAST:
+            case NS_SSA_OP_CALL:
+                if (inst->type.type != NS_TYPE_UNKNOWN)
+                    vt[inst->dst] = ns_wasm_valtype(inst->type.type);
+                break;
             default:
                 break;
             }
@@ -316,6 +350,11 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
                 ns_ssa_inst *inst = &fn->insts[bb->insts[ii]];
                 if (inst->dst < 0 || inst->dst >= n) continue;
                 if (inst->op == NS_SSA_OP_PARAM || inst->op == NS_SSA_OP_CONST) continue;
+
+                if (inst->type.type != NS_TYPE_UNKNOWN) {
+                    vt[inst->dst] = ns_wasm_valtype(inst->type.type);
+                    continue;
+                }
 
                 // Comparison results are always i32 (bool)
                 switch (inst->op) {
@@ -528,7 +567,7 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         switch (vt) {
         case NS_WASM_I64:
             ns_wasm_u8(&ctx->code, NS_WASM_I64_CONST);
-            ns_wasm_i64leb(&ctx->code, ns_str_to_i64(inst->name));
+            ns_wasm_i64leb(&ctx->code, ns_wasm_integer_bits(inst->name));
             break;
         case NS_WASM_F32: {
             f32 fv = (f32)ns_str_to_f64(inst->name);
@@ -1113,27 +1152,26 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
 
         // Local declarations:
         // WASM params are locals 0..np-1 (already bound, not declared).
-        // Additional locals np..nv-1 need to be declared.
-        // We group them by type for a compact encoding.
+        // Additional locals np..nv-1 need to be declared. WASM assigns local
+        // indices in declaration order, so only coalesce adjacent equal types;
+        // grouping every i32 before every i64 would detach SSA value ids from
+        // their local indices when a function mixes widths.
         u8 *locals_sec = ns_null;
         i32 n_extra = nv - np;
         if (n_extra > 0) {
-            // Count each type
-            u32 cnt_i32 = 0, cnt_i64 = 0, cnt_f32 = 0, cnt_f64 = 0;
-            for (i32 vi = np; vi < nv; vi++) {
-                switch (vt[vi]) {
-                case NS_WASM_I64: cnt_i64++; break;
-                case NS_WASM_F32: cnt_f32++; break;
-                case NS_WASM_F64: cnt_f64++; break;
-                default:          cnt_i32++; break;
+            u32 n_groups = 1;
+            for (i32 vi = np + 1; vi < nv; vi++) {
+                if (vt[vi] != vt[vi - 1]) n_groups++;
+            }
+            ns_wasm_u32leb(&locals_sec, n_groups);
+            i32 run_start = np;
+            for (i32 vi = np + 1; vi <= nv; vi++) {
+                if (vi == nv || vt[vi] != vt[run_start]) {
+                    ns_wasm_u32leb(&locals_sec, (u32)(vi - run_start));
+                    ns_wasm_u8(&locals_sec, vt[run_start]);
+                    run_start = vi;
                 }
             }
-            u32 n_groups = (cnt_i32 > 0) + (cnt_i64 > 0) + (cnt_f32 > 0) + (cnt_f64 > 0);
-            ns_wasm_u32leb(&locals_sec, n_groups);
-            if (cnt_i32) { ns_wasm_u32leb(&locals_sec, cnt_i32); ns_wasm_u8(&locals_sec, NS_WASM_I32); }
-            if (cnt_i64) { ns_wasm_u32leb(&locals_sec, cnt_i64); ns_wasm_u8(&locals_sec, NS_WASM_I64); }
-            if (cnt_f32) { ns_wasm_u32leb(&locals_sec, cnt_f32); ns_wasm_u8(&locals_sec, NS_WASM_F32); }
-            if (cnt_f64) { ns_wasm_u32leb(&locals_sec, cnt_f64); ns_wasm_u8(&locals_sec, NS_WASM_F64); }
         } else {
             ns_wasm_u32leb(&locals_sec, 0); // 0 local groups
         }

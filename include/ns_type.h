@@ -251,7 +251,11 @@ typedef enum {
     NS_TOKEN_RETURN_TYPE,   // ->
 
     NS_TOKEN_EOL,
-    NS_TOKEN_EOF
+    NS_TOKEN_EOF,
+
+    // Keep new language tokens after EOF so the existing numeric token ABI
+    // used by NSCode's WebAssembly tokenizer remains stable.
+    NS_TOKEN_ENUM
 } ns_token_type;
 
 typedef enum {
@@ -303,6 +307,7 @@ typedef enum {
     NS_TYPE_DICT,
     NS_TYPE_SET,
     NS_TYPE_TASK,
+    NS_TYPE_ENUM,
 } ns_value_type;
 
 typedef enum {

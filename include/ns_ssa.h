@@ -75,6 +75,9 @@ typedef struct ns_ssa_fn {
 
 typedef struct ns_ssa_module {
     ns_ssa_fn *fns;
+    // Generated constants (for example auto-valued enum members) must remain
+    // alive until all machine-code/WebAssembly emitters have consumed the SSA.
+    ns_str *owned_strings;
 } ns_ssa_module;
 
 ns_str ns_ssa_op_to_string(ns_ssa_op op);

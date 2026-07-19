@@ -19,7 +19,8 @@
 //     are spelled out via the `c_*` helpers for readability.
 
 // ---- token kinds ----------------------------------------------------------
-// ns has no enums; token kinds are small integer constants exposed as fns.
+// Token kinds remain small integer constants exposed as fns so this bootstrap
+// lexer does not depend on the feature it is tokenizing.
 fn TK_EOF() i32 { return 0 }
 fn TK_ERROR() i32 { return 1 }
 fn TK_INT() i32 { return 2 }
@@ -52,6 +53,7 @@ fn TK_AWAIT() i32 { return 29 }
 fn TK_TRUE() i32 { return 30 }
 fn TK_FALSE() i32 { return 31 }
 fn TK_NIL() i32 { return 32 }
+fn TK_ENUM() i32 { return 33 }
 
 fn TK_COMMA() i32 { return 50 }
 fn TK_DOT() i32 { return 51 }
@@ -158,6 +160,7 @@ fn keyword_kind(src: str, start: i32, len: i32) i32 {
     if w == "let" { return TK_LET() }
     if w == "fn" { return TK_FN() }
     if w == "struct" { return TK_STRUCT() }
+    if w == "enum" { return TK_ENUM() }
     if w == "type" { return TK_TYPE_KW() }
     if w == "return" { return TK_RETURN() }
     if w == "if" { return TK_IF() }

@@ -1,5 +1,6 @@
 #include "ns_ssa.h"
 #include "ns_os.h"
+#include "ns_vm.h"
 
 #ifdef NS_DEBUG
     #define NS_SSA_REF_PATH "lib"
@@ -26,6 +27,7 @@ typedef struct ns_ssa_loop_ctx {
 
 typedef struct ns_ssa_builder {
     ns_ast_ctx *ctx;
+    ns_vm *vm;
     ns_ssa_module *m;
     ns_ssa_fn *fn;
     i32 block;
@@ -73,12 +75,46 @@ static ns_type ns_ssa_type_from_token(ns_token_type t) {
     }
 }
 
-static ns_type ns_ssa_type_from_label(ns_ast_ctx *ctx, i32 type_label_ast) {
+static ns_type ns_ssa_type_from_label(ns_ssa_builder *b, i32 type_label_ast) {
     if (type_label_ast <= 0) return ns_type_unknown;
-    ns_ast_t *n = &ctx->nodes[type_label_ast];
+    ns_ast_t *n = &b->ctx->nodes[type_label_ast];
     if (n->type != NS_AST_TYPE_LABEL) return ns_type_unknown;
     if (n->type_label.is_fn || n->type_label.is_array) return ns_type_unknown;
-    return ns_ssa_type_from_token(n->type_label.name.type);
+    ns_type t = ns_ssa_type_from_token(n->type_label.name.type);
+    if (!ns_type_is(t, NS_TYPE_UNKNOWN)) return t;
+    ns_symbol *s = ns_vm_find_symbol(b->vm, n->type_label.name.val, false);
+    if (s && s->type == NS_SYMBOL_ENUM) return s->en.underlying;
+    return ns_type_unknown;
+}
+
+static ns_ast_t *ns_ssa_unwrap_expr(ns_ssa_builder *b, i32 i) {
+    if (i <= 0) return ns_null;
+    ns_ast_t *n = &b->ctx->nodes[i];
+    while (n->type == NS_AST_EXPR) n = &b->ctx->nodes[n->expr.body];
+    return n;
+}
+
+static ns_symbol *ns_ssa_enum_from_expr(ns_ssa_builder *b, i32 i) {
+    ns_ast_t *n = ns_ssa_unwrap_expr(b, i);
+    if (!n || n->type != NS_AST_PRIMARY_EXPR || n->primary_expr.token.type != NS_TOKEN_IDENTIFIER) return ns_null;
+    ns_symbol *s = ns_vm_find_symbol(b->vm, n->primary_expr.token.val, false);
+    return s && s->type == NS_SYMBOL_ENUM ? s : ns_null;
+}
+
+static ns_str ns_ssa_enum_literal(ns_ssa_builder *b, ns_symbol *s, u64 value) {
+    char buf[32];
+    i32 len;
+    ns_type t = s->en.underlying;
+    if (ns_type_is(t, NS_TYPE_I8) || ns_type_is(t, NS_TYPE_I16) ||
+        ns_type_is(t, NS_TYPE_I32) || ns_type_is(t, NS_TYPE_I64)) {
+        len = snprintf(buf, sizeof(buf), "%lld", (long long)(i64)value);
+    } else {
+        len = snprintf(buf, sizeof(buf), "%llu", (unsigned long long)value);
+    }
+    ns_str owned = ns_str_range(ns_malloc((szt)len + 1), len);
+    memcpy(owned.data, buf, (szt)len + 1);
+    ns_array_push(b->m->owned_strings, owned);
+    return owned;
 }
 
 ns_str ns_ssa_op_to_string(ns_ssa_op op) {
@@ -416,6 +452,15 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
         return ns_ssa_emit_value(b, op, v, -1, ns_type_unknown, ns_str_null, n->unary_expr.op, i);
     }
     case NS_AST_CALL_EXPR: {
+        ns_type result_type = ns_type_unknown;
+        ns_ast_t *callee_node = ns_ssa_unwrap_expr(b, n->call_expr.callee);
+        if (callee_node && callee_node->type == NS_AST_PRIMARY_EXPR &&
+            callee_node->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+            ns_symbol *symbol = ns_vm_find_symbol(b->vm, callee_node->primary_expr.token.val, false);
+            if (symbol && symbol->type == NS_SYMBOL_FN) {
+                result_type = ns_enum_underlying_type(b->vm, symbol->fn.ret);
+            }
+        }
         i32 callee = ns_ssa_lower_expr(b, n->call_expr.callee);
         i32 next = n->next;
         for (i32 ai = 0; ai < n->call_expr.arg_count && next > 0; ++ai) {
@@ -425,15 +470,31 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             ns_ssa_emit_raw(b, arg);
             next = b->ctx->nodes[next].next;
         }
-        return ns_ssa_emit_value(b, NS_SSA_OP_CALL, callee, n->call_expr.arg_count, ns_type_unknown, ns_str_null, (ns_token_t){0}, i);
+        return ns_ssa_emit_value(b, NS_SSA_OP_CALL, callee, n->call_expr.arg_count,
+                                 result_type, ns_str_null, (ns_token_t){0}, i);
     }
     case NS_AST_CAST_EXPR: {
         i32 src = ns_ssa_lower_expr(b, n->cast_expr.expr);
-        return ns_ssa_emit_value(b, NS_SSA_OP_CAST, src, -1, ns_type_unknown, ns_str_null, n->cast_expr.type, i);
+        ns_return_type parsed = ns_vm_parse_type_by_token(b->vm, n->cast_expr.type,
+                                                          ns_ast_state_loc(b->ctx, n->state));
+        ns_type dst = ns_return_is_error(parsed) ? ns_type_unknown : parsed.r;
+        dst = ns_enum_underlying_type(b->vm, dst);
+        return ns_ssa_emit_value(b, NS_SSA_OP_CAST, src, -1, dst, ns_str_null, n->cast_expr.type, i);
     }
     case NS_AST_MEMBER_EXPR: {
+        ns_symbol *en = ns_ssa_enum_from_expr(b, n->member_expr.left);
+        ns_ast_t *member = ns_ssa_unwrap_expr(b, n->member_expr.right);
+        if (en && member && member->type == NS_AST_PRIMARY_EXPR) {
+            i32 mi = ns_enum_member_index(en, member->primary_expr.token.val);
+            if (mi >= 0) {
+                ns_str literal = ns_ssa_enum_literal(b, en, en->en.members[mi].value);
+                ns_token_t token = {.type = NS_TOKEN_INT_LITERAL, .val = literal};
+                return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, en->en.underlying,
+                                         literal, token, i);
+            }
+        }
         i32 obj = ns_ssa_lower_expr(b, n->member_expr.left);
-        i32 field = ns_ssa_lower_expr(b, n->next);
+        i32 field = ns_ssa_lower_expr(b, n->member_expr.right);
         i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_MEMBER, obj, -1, ns_type_unknown, ns_str_null, (ns_token_t){0}, i);
         ns_ssa_inst *inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
         inst->b = field;
@@ -656,6 +717,7 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
     case NS_AST_MODULE_STMT:
     case NS_AST_TYPE_DEF:
     case NS_AST_STRUCT_DEF:
+    case NS_AST_ENUM_DEF:
     case NS_AST_FN_DEF:
     case NS_AST_OP_FN_DEF:
         break;
@@ -711,7 +773,7 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     i32 arg = arg_head;
     for (i32 ai = 0; ai < arg_count && arg > 0; ++ai) {
         ns_ast_t *an = &b->ctx->nodes[arg];
-        ns_type arg_type = ns_ssa_type_from_label(b->ctx, an->arg.type);
+        ns_type arg_type = ns_ssa_type_from_label(b, an->arg.type);
         i32 v = ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, ai, arg_type, an->arg.name.val, an->arg.name, arg);
         ns_ssa_env_bind(b, an->arg.name.val, v, arg_type);
         arg = an->next;
@@ -739,6 +801,17 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
     ns_ssa_builder b = {0};
     b.ctx = ctx;
     b.m = m;
+
+    // The VM semantic pass is shared by interpretation and compilation. It
+    // resolves enum values once, enforces nominal typing, and gives SSA the
+    // underlying integer representation used by every native backend.
+    ns_vm semantic_vm = {0};
+    ns_return_bool semantic = ns_vm_parse(&semantic_vm, ctx);
+    if (ns_return_is_error(semantic)) {
+        ns_ssa_module_free(m);
+        return ns_return_change_type(ptr, semantic);
+    }
+    b.vm = &semantic_vm;
 
     ns_ssa_collect_module_consts(&b, ctx);
 
@@ -810,6 +883,10 @@ void ns_ssa_module_free(ns_ssa_module *m) {
         ns_array_free(fn->insts);
     }
     ns_array_free(m->fns);
+    for (i32 i = 0, l = (i32)ns_array_length(m->owned_strings); i < l; ++i) {
+        ns_free(m->owned_strings[i].data);
+    }
+    ns_array_free(m->owned_strings);
     ns_free(m);
 }
 

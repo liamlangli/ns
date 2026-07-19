@@ -126,8 +126,11 @@ typedef enum {
     NS_TOKEN_EOL,
     NS_TOKEN_EOF,
 
-    /* Web tokenizer extension; the C frontend does not currently expose this. */
+    /* Preserve the existing Web-only token id used by the checked-in WASM. */
     NS_TOKEN_KERNEL,
+
+    /* Appended so every pre-existing Web token keeps its numeric value. */
+    NS_TOKEN_ENUM,
 } ns_token_type;
 
 typedef struct {
@@ -355,6 +358,7 @@ static i32 ns_next_token(ns_token_t *t, ns_str src, i32 f) {
 
     case 'e': {
         if (strncmp(s + f, "else", 4) == 0)        { ns_range_token(NS_TOKEN_ELSE, 4) }
+        else if (strncmp(s + f, "enum", 4) == 0)   { ns_range_token(NS_TOKEN_ENUM, 4) }
         else goto identifier;
     } break;
 

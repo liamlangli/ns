@@ -63,6 +63,7 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_SHIFT_OP);
         ns_str_case(NS_TOKEN_LOGIC_OP);
         ns_str_case(NS_TOKEN_RETURN_TYPE);
+        ns_str_case(NS_TOKEN_ENUM);
     default:
         ns_error("token", "unknown token %d\n", t);
     }
@@ -346,6 +347,8 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
     {
         if (strncmp(s + f, "else", 4) == 0) {
             ns_range_token(NS_TOKEN_ELSE, 4)
+        } else if (strncmp(s + f, "enum", 4) == 0) {
+            ns_range_token(NS_TOKEN_ENUM, 4)
         } else {
             goto identifier;
         }

@@ -5,7 +5,7 @@
 // escape-decoded by the native layer into the >= 1000 codes below. These MUST
 // match the NS_KEY_* constants in lib/include/term.h.
 //
-// ns has no enums; integer constants are exposed as zero-argument fns, the same
+// Bootstrap key constants are exposed as zero-argument fns, the same
 // convention used by the self-hosted lexer (ns/lexer.ns).
 
 fn KEY_ARROW_LEFT() i32 { return 1000 }

@@ -2,6 +2,15 @@
 
 #include "ns_type.h"
 
+typedef enum os_platform_kind {
+    OS_PLATFORM_UNKNOWN = 0,
+    OS_PLATFORM_MACOS = 1,
+    OS_PLATFORM_IOS = 2,
+    OS_PLATFORM_VISIONOS = 3,
+    OS_PLATFORM_WINDOWS = 4,
+    OS_PLATFORM_LINUX = 5,
+} os_platform_kind;
+
 typedef struct os_date {
     i32 year;
     i32 month;
@@ -18,6 +27,7 @@ typedef struct os_date {
 typedef struct os_lock os_lock;
 typedef struct os_semaphore os_semaphore;
 
+i32 os_platform(void);
 os_lock *os_lock_create(void);
 i32 os_lock_acquire(os_lock *lock);
 i32 os_lock_try_acquire(os_lock *lock);

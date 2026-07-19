@@ -1,0 +1,24 @@
+use std
+
+enum os_platform: u8 {
+    unknown = 0,
+    macos,
+    linux = macos + 4,
+}
+
+enum file_mask: u64 {
+    none = 0,
+    all = 18446744073709551615,
+}
+
+fn full_mask() u64 {
+    return file_mask.all
+}
+
+fn main() bool {
+    let platform = os_platform.macos
+    let raw: u8 = platform
+    let restored = raw as os_platform
+    print(`{platform}\n`)
+    return raw == 1 && restored == os_platform.macos && (os_platform.linux | 2) == 7 && (full_mask() as file_mask) == file_mask.all
+}

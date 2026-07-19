@@ -11,6 +11,7 @@ typedef enum {
     NS_SYMBOL_BLOCK,
     NS_SYMBOL_TYPE,
     NS_SYMBOL_UNION,
+    NS_SYMBOL_ENUM,
     NS_SYMBOL_CONTAINER
 } ns_symbol_type;
 
@@ -75,6 +76,18 @@ typedef struct ns_union_symbol {
     ns_type *members;
 } ns_union_symbol;
 
+typedef struct ns_enum_member {
+    ns_str name;
+    u64 value; // underlying integer bits
+} ns_enum_member;
+
+typedef struct ns_enum_symbol {
+    i32 ast;
+    ns_type t;
+    ns_type underlying;
+    ns_enum_member *members;
+} ns_enum_symbol;
+
 typedef struct ns_container_symbol {
     ns_type t;
     ns_type key;
@@ -92,6 +105,7 @@ typedef struct ns_symbol {
         ns_struct_symbol st;
         ns_block_symbol bc;
         ns_union_symbol un;
+        ns_enum_symbol en;
         ns_container_symbol ct;
         ns_type t;
     };
@@ -172,6 +186,8 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
 
 // type
 ns_bool ns_type_match(ns_vm *vm, ns_type require, ns_type provide); // check if provide type can be converted to require type
+ns_type ns_enum_underlying_type(ns_vm *vm, ns_type t);
+i32 ns_enum_member_index(ns_symbol *s, ns_str name);
 ns_number_type ns_vm_number_type(ns_type t);
 ns_type ns_vm_number_type_upgrade(ns_type l, ns_type r);
 
@@ -221,6 +237,7 @@ ns_eval_value_def(u64)
 ns_eval_value_def(f32)
 ns_eval_value_def(f64)
 ns_bool ns_eval_bool(ns_vm *vm, ns_value n);
+ns_value ns_eval_enum_underlying_value(ns_vm *vm, ns_value n);
 ns_str ns_eval_str(ns_vm *vm, ns_value n);
 void *ns_eval_array_raw(ns_vm *vm, ns_value n);
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);

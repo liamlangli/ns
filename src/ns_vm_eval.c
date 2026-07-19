@@ -77,6 +77,9 @@ static void *ns_eval_array_data(ns_vm *vm, ns_value v) {
 }
 
 ns_bool ns_eval_number_assign_compatible(ns_vm *vm, ns_type dst, ns_type src) {
+    if (ns_type_is(dst, NS_TYPE_ENUM)) return false;
+    dst = ns_enum_underlying_type(vm, dst);
+    src = ns_enum_underlying_type(vm, src);
     if (!ns_type_is_number(dst) || !ns_type_is_number(src)) return false;
     if (ns_type_is_float(src) && !ns_type_is_float(dst)) return false;
 
@@ -86,7 +89,19 @@ ns_bool ns_eval_number_assign_compatible(ns_vm *vm, ns_type dst, ns_type src) {
     return true;
 }
 
+ns_value ns_eval_enum_underlying_value(ns_vm *vm, ns_value v) {
+    if (!ns_type_is(v.t, NS_TYPE_ENUM)) return v;
+    ns_type underlying = ns_enum_underlying_type(vm, v.t);
+    underlying.mut = v.t.mut;
+    underlying.stack = v.t.stack;
+    underlying.ref = v.t.ref;
+    ns_value out = v;
+    out.t = underlying;
+    return out;
+}
+
 static i64 ns_eval_to_i64(ns_vm *vm, ns_value v) {
+    v = ns_eval_enum_underlying_value(vm, v);
     switch (v.t.type) {
     case NS_TYPE_I8: return ns_eval_number_i8(vm, v);
     case NS_TYPE_I16: return ns_eval_number_i16(vm, v);
@@ -104,6 +119,7 @@ static i64 ns_eval_to_i64(ns_vm *vm, ns_value v) {
 }
 
 static u64 ns_eval_to_u64(ns_vm *vm, ns_value v) {
+    v = ns_eval_enum_underlying_value(vm, v);
     switch (v.t.type) {
     case NS_TYPE_I8: return (u64)ns_eval_number_i8(vm, v);
     case NS_TYPE_I16: return (u64)ns_eval_number_i16(vm, v);
@@ -121,6 +137,7 @@ static u64 ns_eval_to_u64(ns_vm *vm, ns_value v) {
 }
 
 static f64 ns_eval_to_f64(ns_vm *vm, ns_value v) {
+    v = ns_eval_enum_underlying_value(vm, v);
     switch (v.t.type) {
     case NS_TYPE_I8: return (f64)ns_eval_number_i8(vm, v);
     case NS_TYPE_I16: return (f64)ns_eval_number_i16(vm, v);
@@ -147,6 +164,7 @@ static u64 ns_hash_bytes(const u8 *data, i32 len) {
 }
 
 static u64 ns_eval_hash_value(ns_vm *vm, ns_value v) {
+    v = ns_eval_enum_underlying_value(vm, v);
     if (ns_type_is(v.t, NS_TYPE_STRING)) {
         ns_str s = ns_eval_str(vm, v);
         return ns_hash_bytes((u8 *)s.data, s.len);
@@ -164,6 +182,8 @@ static u64 ns_eval_hash_value(ns_vm *vm, ns_value v) {
 }
 
 static ns_bool ns_eval_value_equals(ns_vm *vm, ns_value a, ns_value b) {
+    a = ns_eval_enum_underlying_value(vm, a);
+    b = ns_eval_enum_underlying_value(vm, b);
     if (ns_type_is(a.t, NS_TYPE_STRING) && ns_type_is(b.t, NS_TYPE_STRING)) {
         return ns_str_equals(ns_eval_str(vm, a), ns_eval_str(vm, b));
     }
@@ -221,7 +241,7 @@ static ns_value ns_eval_dict_value(ns_dict_table *table, u8 *ptr, ns_bool write_
 }
 
 static ns_return_value ns_eval_dict_find(ns_vm *vm, ns_value table_v, ns_value key, ns_bool create, ns_code_loc loc) {
-    if (!ns_type_is_number(key.t) && !ns_type_is(key.t, NS_TYPE_STRING)) {
+    if (!ns_type_is_number(ns_enum_underlying_type(vm, key.t)) && !ns_type_is(key.t, NS_TYPE_STRING)) {
         return ns_return_error(value, loc, NS_ERR_EVAL, "dict key type not hashable.");
     }
 
@@ -252,7 +272,13 @@ static ns_return_value ns_eval_dict_find(ns_vm *vm, ns_value table_v, ns_value k
 }
 
 ns_return_value ns_eval_cast_number(ns_vm *vm, ns_value v, ns_type dst, ns_code_loc loc) {
-    if (ns_type_equals(v.t, dst)) return ns_return_ok(value, v);
+    // A same-width cast still has to materialize stack/heap-backed scalars.
+    // Returning their address unchanged and later retagging it as an immediate
+    // enum would turn the storage offset into the enum's numeric value.
+    if (ns_type_equals(v.t, dst) && ns_type_is_const(v.t) && !ns_type_in_stack(v.t)) {
+        return ns_return_ok(value, v);
+    }
+    v = ns_eval_enum_underlying_value(vm, v);
     if (!ns_type_is_number(v.t) || !ns_type_is_number(dst)) {
         return ns_return_error(value, loc, NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "numeric cast type mismatch.", dst, v.t));
     }
@@ -320,6 +346,8 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
         *(u64 *)dptr = handle;
         return ns_return_ok(value, dst);
     }
+
+    if (ns_type_is(src.t, NS_TYPE_ENUM)) src = ns_eval_enum_underlying_value(vm, src);
 
     if (ns_type_is_const(src.t)) {
         switch (src.t.type)
@@ -798,7 +826,9 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         // already accepted the pair in ns_vm_parse_call_expr)
         if (a_i < (i32)ns_array_length(fn->args)) {
             ns_type pt = fn->args[a_i].val.t;
-            if (!ns_type_is_ref(pt) && ns_type_is_number(pt) && ns_type_is_number(v.t) && !ns_type_equals(pt, v.t)) {
+            if (!ns_type_is_ref(pt) && !ns_type_is(pt, NS_TYPE_ENUM) &&
+                ns_type_is_number(ns_enum_underlying_type(vm, pt)) &&
+                ns_type_is_number(ns_enum_underlying_type(vm, v.t)) && !ns_type_equals(pt, v.t)) {
                 ns_return_value cast_ret = ns_eval_cast_number(vm, v, pt, ns_ast_state_loc(ctx, n->state));
                 if (ns_return_is_error(cast_ret)) return cast_ret;
                 v = cast_ret.r;
@@ -821,7 +851,11 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_return_bool ret = ns_str_equals(sym->lib, ns_str_cstr("shader")) ? ns_shader_vm_call(vm, ctx)
                            : ns_str_equals(sym->lib, ns_str_cstr("task"))   ? ns_task_vm_call(vm, ctx)
                                                                             : ns_vm_call_ref(vm);
-        if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
+        if (ns_return_is_error(ret)) {
+            ns_array_pop(vm->call_stack);
+            ns_scope_exit(vm);
+            return ns_return_change_type(value, ret);
+        }
     } else {
         if (sym->type == NS_SYMBOL_BLOCK) { // push block captured field to stack
             szt field_count = ns_array_length(sym->bc.st.fields);
@@ -851,7 +885,14 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
         ns_eval_profile_scope_end(sym, profile_depth, profile_start_ms);
-        if (ns_return_is_error(ret)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "call expr error.");
+        // Preserve the original message and source location. Replacing every
+        // nested failure with "call expr error" hid actionable diagnostics
+        // such as a missing native symbol or an assertion inside the callee.
+        if (ns_return_is_error(ret)) {
+            ns_array_pop(vm->call_stack);
+            ns_scope_exit(vm);
+            return ns_return_change_type(value, ret);
+        }
     }
     call = ns_array_pop(vm->call_stack);
     ns_scope_exit(vm);
@@ -950,7 +991,9 @@ ns_return_value ns_eval_return_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_fn_symbol *fn = ns_symbol_get_fn(call->callee);
         // a numeric return converts to the fn's numeric return type (the parse
         // pass already accepted the pair in ns_vm_parse_jump_stmt)
-        if (!ns_type_is_ref(fn->ret) && ns_type_is_number(fn->ret) && ns_type_is_number(ret.t) && !ns_type_equals(fn->ret, ret.t)) {
+        if (!ns_type_is_ref(fn->ret) && !ns_type_is(fn->ret, NS_TYPE_ENUM) &&
+            ns_type_is_number(ns_enum_underlying_type(vm, fn->ret)) &&
+            ns_type_is_number(ns_enum_underlying_type(vm, ret.t)) && !ns_type_equals(fn->ret, ret.t)) {
             ns_return_value cast_ret = ns_eval_cast_number(vm, ret, fn->ret, ns_ast_state_loc(ctx, n->state));
             if (ns_return_is_error(cast_ret)) return cast_ret;
             ret = cast_ret.r;
@@ -1194,6 +1237,9 @@ ns_return_value ns_eval_binary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_return_is_error(ret_r)) return ns_return_change_type(value, ret_r);
     ns_value r = ret_r.r;
 
+    l = ns_eval_enum_underlying_value(vm, l);
+    r = ns_eval_enum_underlying_value(vm, r);
+
     if (ns_type_equals(l.t, r.t)) {
         return ns_eval_binary_ops(vm, ctx, l, r, i); // same type apply binary operator
     }
@@ -1393,7 +1439,9 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_value val = ret_val.r;
 
         // numeric fields accept any numeric value; the switch below converts it
-        ns_bool number_ok = ns_type_is_number(field->t) && ns_type_is_number(val.t);
+        ns_bool number_ok = !ns_type_is(field->t, NS_TYPE_ENUM) &&
+                            ns_type_is_number(ns_enum_underlying_type(vm, field->t)) &&
+                            ns_type_is_number(ns_enum_underlying_type(vm, val.t));
         if (!number_ok && !ns_type_equals(field->t, val.t) && !ns_type_match(vm, field->t, val.t)) { // type mismatch
             // ns_str f_type = ns_vm_get_type_name(vm, field->t);
             // ns_str v_type = ns_vm_get_type_name(vm, val.t);
@@ -1402,6 +1450,10 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         // For a union field, store the concrete member that was actually provided.
         ns_type t = ns_type_is(field->t, NS_TYPE_UNION) ? val.t : field->t;
+        if (ns_type_is(t, NS_TYPE_ENUM)) {
+            t = ns_enum_underlying_type(vm, t);
+            val = ns_eval_enum_underlying_value(vm, val);
+        }
         if (ns_type_is_array(t)) {
             *(u64*)(data + field->o) = (u64)ns_eval_array_raw(vm, val);
         } else if (ns_type_is_number(t)) {
@@ -1437,6 +1489,37 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, ret);
 }
 
+static ns_return_value ns_eval_cast_enum(ns_vm *vm, ns_value v, ns_type enum_t, ns_code_loc loc) {
+    ns_type underlying = ns_enum_underlying_type(vm, enum_t);
+    v = ns_eval_enum_underlying_value(vm, v);
+    if (!ns_type_is_number(v.t) || ns_type_is_float(v.t) || ns_type_is(v.t, NS_TYPE_BOOL)) {
+        return ns_return_error(value, loc, NS_ERR_EVAL, "enum cast requires an integer value.");
+    }
+
+    i32 bits = ns_type_size(vm, underlying) * 8;
+    ns_bool fits = true;
+    if (ns_type_unsigned(underlying)) {
+        if (ns_type_signed(v.t) && ns_eval_to_i64(vm, v) < 0) fits = false;
+        u64 max = bits == 64 ? UINT64_MAX : ((1ULL << bits) - 1);
+        if (ns_eval_to_u64(vm, v) > max) fits = false;
+    } else {
+        i64 min = bits == 64 ? INT64_MIN : -(1LL << (bits - 1));
+        i64 max = bits == 64 ? INT64_MAX : ((1LL << (bits - 1)) - 1);
+        if (ns_type_unsigned(v.t)) {
+            if (ns_eval_to_u64(vm, v) > (u64)max) fits = false;
+        } else {
+            i64 n = ns_eval_to_i64(vm, v);
+            if (n < min || n > max) fits = false;
+        }
+    }
+    if (!fits) return ns_return_error(value, loc, NS_ERR_EVAL, "integer value is outside enum range.");
+
+    ns_return_value cast = ns_eval_cast_number(vm, v, underlying, loc);
+    if (ns_return_is_error(cast)) return cast;
+    cast.r.t = ns_type_set_stack(ns_type_set_mut(enum_t, false), false);
+    return cast;
+}
+
 ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_type ret_t = ns_vm_parse_type(vm, ctx, n);
@@ -1459,7 +1542,10 @@ ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     // Union widening: the value already carries its concrete member tag, so
     // casting it to the union type is an identity at runtime.
     if (ns_type_is(t, NS_TYPE_UNION)) return ns_return_ok(value, v);
-    if (ns_type_is_number(t) && ns_type_is_number(v.t)) {
+    if (ns_type_is(t, NS_TYPE_ENUM)) {
+        return ns_eval_cast_enum(vm, v, t, ns_ast_state_loc(ctx, n->state));
+    }
+    if (ns_type_is_number(t) && ns_type_is_number(ns_enum_underlying_type(vm, v.t))) {
         return ns_eval_cast_number(vm, v, t, ns_ast_state_loc(ctx, n->state));
     } else {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented cast expr.");
@@ -1470,6 +1556,27 @@ ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+
+    ns_ast_t *left = &ctx->nodes[n->member_expr.left];
+    if (left->type == NS_AST_PRIMARY_EXPR && left->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+        ns_symbol *candidate = ns_vm_find_symbol(vm, left->primary_expr.token.val, false);
+        if (candidate && candidate->type == NS_SYMBOL_ENUM) {
+            ns_ast_t *member = &ctx->nodes[n->member_expr.right];
+            if (member->type != NS_AST_PRIMARY_EXPR) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, member->state), NS_ERR_EVAL,
+                                       "invalid enum member expression.");
+            }
+            i32 member_i = ns_enum_member_index(candidate, member->primary_expr.token.val);
+            if (member_i < 0) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, member->state), NS_ERR_EVAL,
+                                       "unknown enum member.");
+            }
+            ns_value value = {.t = ns_type_set_stack(candidate->en.t, false),
+                              .u64 = candidate->en.members[member_i].value};
+            return ns_return_ok(value, value);
+        }
+    }
+
     ns_return_value ret_st = ns_eval_expr(vm, ctx, n->member_expr.left);
     if (ns_return_is_error(ret_st)) return ret_st;
     ns_value st = ret_st.r;
@@ -1546,6 +1653,9 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->unary_expr.expr);
     if (ns_return_is_error(ret_v)) return ret_v;
     ns_value v = ret_v.r;
+    if (n->unary_expr.op.type == NS_TOKEN_ADD_OP || n->unary_expr.op.type == NS_TOKEN_BIT_INVERT_OP) {
+        v = ns_eval_enum_underlying_value(vm, v);
+    }
 
     ns_token_t op = n->unary_expr.op;
     switch (op.type) {
@@ -1652,7 +1762,9 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                 if (!ns_eval_number_assign_compatible(vm, element_type, elem_v.t) && !ns_type_match(vm, element_type, elem_v.t)) {
                     return ns_return_error(value, ns_ast_state_loc(ctx, elem.state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "array literal element type mismatch.", element_type, elem_v.t));
                 }
-                if (ns_type_is_number(element_type) && ns_type_is_number(elem_v.t)) {
+                if (!ns_type_is(element_type, NS_TYPE_ENUM) &&
+                    ns_type_is_number(ns_enum_underlying_type(vm, element_type)) &&
+                    ns_type_is_number(ns_enum_underlying_type(vm, elem_v.t))) {
                     ns_return_value cast_ret = ns_eval_cast_number(vm, elem_v, element_type, ns_ast_state_loc(ctx, elem.state));
                     if (ns_return_is_error(cast_ret)) return cast_ret;
                     elem_v = cast_ret.r;
@@ -2099,6 +2211,7 @@ static ns_return_value ns_eval_ast_impl(ns_vm *vm, ns_ast_ctx *ctx) {
             case NS_AST_OP_FN_DEF:
             case NS_AST_STRUCT_DEF:
             case NS_AST_TYPE_DEF:
+            case NS_AST_ENUM_DEF:
                 break; // already parsed, no need to re-evaluate
             default: {
                 ns_code_loc loc = (ns_code_loc){.f = ctx->filename, .l = n->state.l, .o = n->state.o};
@@ -2144,6 +2257,7 @@ static ns_return_value ns_eval_ast_impl(ns_vm *vm, ns_ast_ctx *ctx) {
                 if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
             } break;
             case NS_AST_TYPE_DEF:
+            case NS_AST_ENUM_DEF:
             case NS_AST_USE_STMT:
             case NS_AST_MODULE_STMT:
             case NS_AST_FN_DEF:

@@ -6,6 +6,10 @@
 #include <errno.h>
 #include <limits.h>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #ifdef NS_WIN
 #include <windows.h>
 #include <direct.h>
@@ -35,6 +39,22 @@ typedef struct os_scan_child {
 
 static os_file_entry os_entries[OS_MAX_ENTRIES];
 static i32 os_entry_count = 0;
+
+i32 os_platform(void) {
+#if defined(__APPLE__) && defined(TARGET_OS_VISION) && TARGET_OS_VISION
+    return OS_PLATFORM_VISIONOS;
+#elif defined(__APPLE__) && TARGET_OS_IOS
+    return OS_PLATFORM_IOS;
+#elif defined(__APPLE__) && TARGET_OS_OSX
+    return OS_PLATFORM_MACOS;
+#elif defined(NS_WIN) || defined(_WIN32)
+    return OS_PLATFORM_WINDOWS;
+#elif defined(NS_LINUX) || defined(__linux__)
+    return OS_PLATFORM_LINUX;
+#else
+    return OS_PLATFORM_UNKNOWN;
+#endif
+}
 
 struct os_lock {
 #ifdef NS_WIN

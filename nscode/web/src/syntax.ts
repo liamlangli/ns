@@ -13,6 +13,7 @@ export const TT = {
     UNKNOWN:     9,
     FUNC_DEF:    10,
     FUNC_CALL:   11,
+    CONSTANT:    12,
 } as const;
 
 export type token_type = typeof TT[keyof typeof TT];
@@ -36,6 +37,7 @@ export const TOKEN_COLOR: readonly [number, number, number, number][] = [
     [0.92, 0.92, 0.92, 1.0],  // UNKNOWN    — white
     [0.86, 0.86, 0.67, 1.0],  // FUNC_DEF   — golden yellow
     [0.67, 0.86, 0.86, 1.0],  // FUNC_CALL  — light cyan
+    [0.90, 0.75, 0.49, 1.0],  // CONSTANT   — orange
 ];
 
 // ---------- WASM token-type → JS TT mapping ---------------------------------
@@ -67,6 +69,7 @@ const C_TOKEN = {
     RETURN_TYPE: 70,
     EOL: 71, EOF: 72,
     KERNEL: 73,
+    ENUM: 74,
 } as const;
 
 const _tt_map = new Int8Array(128).fill(TT.UNKNOWN);
@@ -75,7 +78,7 @@ const _kw: number[] = [
     C_TOKEN.CONTINUE, C_TOKEN.DO, C_TOKEN.LOOP, C_TOKEN.ELSE, C_TOKEN.FALSE,
     C_TOKEN.FOR, C_TOKEN.TO, C_TOKEN.IF, C_TOKEN.USE, C_TOKEN.IN, C_TOKEN.LET, C_TOKEN.NIL,
     C_TOKEN.MATCH, C_TOKEN.MODULE, C_TOKEN.RETURN, C_TOKEN.REF, C_TOKEN.STRUCT, C_TOKEN.TRUE,
-    C_TOKEN.TYPE, C_TOKEN.KERNEL, C_TOKEN.OPS,
+    C_TOKEN.TYPE, C_TOKEN.ENUM, C_TOKEN.KERNEL, C_TOKEN.OPS,
     C_TOKEN.FN,
 ];
 const _ty: number[] = [
@@ -118,7 +121,7 @@ interface wasm_exports {
 let _wasm: wasm_exports | null = null;
 
 function _wasm_contract_ok(w: wasm_exports): boolean {
-    const probe = 'vertex fragment fn';
+    const probe = 'vertex fragment fn enum';
     const bytes = new TextEncoder().encode(probe);
     const src_ptr = w.get_src_buf();
     new Uint8Array(w.memory.buffer, src_ptr, bytes.length).set(bytes);
@@ -133,10 +136,11 @@ function _wasm_contract_ok(w: wasm_exports): boolean {
         const text = probe.slice(offset, offset + len);
         if (text.trim().length > 0) words.push({ type, text });
     }
-    return words.length >= 3
+    return words.length >= 4
         && words[0]!.text === 'vertex' && words[0]!.type === C_TOKEN.IDENTIFIER
         && words[1]!.text === 'fragment' && words[1]!.type === C_TOKEN.IDENTIFIER
-        && words[2]!.text === 'fn' && words[2]!.type === C_TOKEN.FN;
+        && words[2]!.text === 'fn' && words[2]!.type === C_TOKEN.FN
+        && words[3]!.text === 'enum' && words[3]!.type === C_TOKEN.ENUM;
 }
 
 async function _load_wasm(): Promise<void> {
@@ -194,7 +198,7 @@ function _wasm_tokenize_line(line: string): token[] {
 const NS_KEYWORDS = new Set([
     'fn','let','return','if','else','for','in','to','type','use','break',
     'continue','as','true','false','struct','nil','loop','do','match','mod',
-    'async','await','assert','ref','ops','kernel',
+    'async','await','assert','ref','ops','kernel','enum',
 ]);
 const NS_TYPES = new Set([
     'i8','u8','i16','u16','i32','u32','i64','u64','f32','f64','bool','str','void','any',
@@ -260,9 +264,12 @@ function _js_tokenize_line(line: string): token[] {
  * - FUNC_DEF: identifier immediately after the `fn` keyword
  * - FUNC_CALL: identifier followed by `(`
  */
-function _classify_functions(tokens: token[]): token[] {
+function _classify_symbols(tokens: token[]): token[] {
     const result = tokens.slice();
     const n = result.length;
+    let enum_decl = false;
+    let enum_body = false;
+    let enum_member = false;
 
     const prev_real = (i: number): number => {
         for (let j = i - 1; j >= 0; j--) {
@@ -280,6 +287,16 @@ function _classify_functions(tokens: token[]): token[] {
 
     for (let i = 0; i < n; i++) {
         const tok = result[i]!;
+        if (tok.type === TT.KEYWORD && tok.text === 'enum') {
+            enum_decl = true;
+            continue;
+        }
+        if (tok.type === TT.PUNCTUATION) {
+            if (tok.text === '{' && enum_decl) { enum_body = true; enum_member = true; }
+            if (tok.text === ',' && enum_body) enum_member = true;
+            if (tok.text === '}' && enum_body) { enum_body = false; enum_decl = false; enum_member = false; }
+            continue;
+        }
         if (tok.type !== TT.IDENTIFIER) continue;
 
         const pi = prev_real(i);
@@ -288,10 +305,19 @@ function _classify_functions(tokens: token[]): token[] {
         const next_tok = ni >= 0 ? result[ni] : null;
 
         const after_fn     = prev_tok?.type === TT.KEYWORD && prev_tok.text === 'fn';
+        const after_enum   = prev_tok?.type === TT.KEYWORD && prev_tok.text === 'enum';
         const before_paren = next_tok?.type === TT.PUNCTUATION && next_tok.text === '(';
+        const after_dot    = prev_tok?.type === TT.PUNCTUATION && prev_tok.text === '.';
 
-        if (after_fn) {
+        if (enum_body && enum_member) {
+            result[i] = { type: TT.CONSTANT, text: tok.text };
+            enum_member = false;
+        } else if (after_fn) {
             result[i] = { type: TT.FUNC_DEF, text: tok.text };
+        } else if (after_enum) {
+            result[i] = { type: TT.TYPE, text: tok.text };
+        } else if (after_dot) {
+            result[i] = { type: TT.CONSTANT, text: tok.text };
         } else if (before_paren) {
             result[i] = { type: TT.FUNC_CALL, text: tok.text };
         }
@@ -305,5 +331,5 @@ function _classify_functions(tokens: token[]): token[] {
 /** Tokenize one line of NS source. Uses WASM when loaded, JS fallback otherwise. */
 export function tokenize_line(line: string): token[] {
     const raw = _wasm ? _wasm_tokenize_line(line) : _js_tokenize_line(line);
-    return _classify_functions(raw);
+    return _classify_symbols(raw);
 }

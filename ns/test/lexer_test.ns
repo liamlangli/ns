@@ -18,20 +18,21 @@ fn lex_into(src: str, toks: [Tok]) i32 {
 
 fn test_keywords() void {
     print("test_keywords\n")
-    let src = "let fn struct return if else for in to loop"
+    let src = "let fn struct enum return if else for in to loop"
     let toks = [Tok](src.len + 4)
     let n = lex_into(src, toks)
-    expect_eq(n, 10, "keyword token count")
+    expect_eq(n, 11, "keyword token count")
     expect_eq(toks[0].kind, TK_LET(), "let")
     expect_eq(toks[1].kind, TK_FN(), "fn")
     expect_eq(toks[2].kind, TK_STRUCT(), "struct")
-    expect_eq(toks[3].kind, TK_RETURN(), "return")
-    expect_eq(toks[4].kind, TK_IF(), "if")
-    expect_eq(toks[5].kind, TK_ELSE(), "else")
-    expect_eq(toks[6].kind, TK_FOR(), "for")
-    expect_eq(toks[7].kind, TK_IN(), "in")
-    expect_eq(toks[8].kind, TK_TO(), "to")
-    expect_eq(toks[9].kind, TK_LOOP(), "loop")
+    expect_eq(toks[3].kind, TK_ENUM(), "enum")
+    expect_eq(toks[4].kind, TK_RETURN(), "return")
+    expect_eq(toks[5].kind, TK_IF(), "if")
+    expect_eq(toks[6].kind, TK_ELSE(), "else")
+    expect_eq(toks[7].kind, TK_FOR(), "for")
+    expect_eq(toks[8].kind, TK_IN(), "in")
+    expect_eq(toks[9].kind, TK_TO(), "to")
+    expect_eq(toks[10].kind, TK_LOOP(), "loop")
 }
 
 fn test_ident_not_keyword() void {

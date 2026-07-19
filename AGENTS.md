@@ -96,6 +96,10 @@ fn main() {
   key is an error; assigning a missing key inserts it.
 - Define plain aggregate data with `struct`, aliases or unions with `type`, and
   function types with `(Args) -> Result`.
+- Define a nominal integer-backed type with `enum`. Its underlying type defaults
+  to `i32` and may be any builtin signed or unsigned integer type. Access members
+  as `Enum.member`; enums implicitly lower to their underlying integer, while an
+  integer requires an explicit `as Enum` cast.
 - A union such as `type number = i32 | f64` accepts any member. Narrow or
   convert explicitly with `as`; there is no match-based union destructuring.
 - `ref value` creates a mutable reference to mutable data. A copied plain value
@@ -109,6 +113,11 @@ struct point {
     y: f32
 }
 
+enum os_platform: u8 {
+    unknown = 0,
+    macos,
+}
+
 type number = i32 | f64
 type transform = (point) -> point
 
@@ -117,6 +126,8 @@ let samples = [f32](128)
 let counts = [str: i32](32)
 let n: number = 42
 let exact = n as i32
+let platform = os_platform.macos
+let raw: u8 = platform
 ```
 
 ### Functions, blocks, and operators

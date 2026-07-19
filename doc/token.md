@@ -7,6 +7,7 @@
 - default
 - do
 - else
+- enum
 - f32
 - f64
 - fn

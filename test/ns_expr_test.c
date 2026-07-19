@@ -1,4 +1,5 @@
 #include "ns_test.h"
+#include "ns_fmt.h"
 #include "ns_vm.h"
 
 // Evaluate a self-contained ns program whose `main` returns a bool, and report
@@ -13,6 +14,14 @@ static ns_bool ns_expr_eval_bool(const char *src) {
     return ns_eval_bool(&vm, r.r);
 }
 
+static ns_bool ns_expr_error_contains(const char *src, const char *message) {
+    setenv("NS_REPL_RECOVER", "1", 1);
+    ns_vm vm = {0};
+    ns_return_value r = ns_eval(&vm, ns_str_cstr((i8 *)src), ns_str_cstr("<ns-enum-error-test>"));
+    unsetenv("NS_REPL_RECOVER");
+    return ns_return_is_error(r) && ns_str_index_of(r.e.msg, ns_str_cstr((i8 *)message)) >= 0;
+}
+
 int main() {
     {
         ns_vm vm = {0};
@@ -23,6 +32,23 @@ int main() {
         ns_return_value r = ns_eval(&vm, ns_str_cstr((i8 *)src), ns_str_cstr("<ref-path-test>"));
         ns_expect(!ns_return_is_error(r) && ns_eval_bool(&vm, r.r),
                   "VM resolves modules from a configured reference path.");
+    }
+
+    {
+        // A nested call must retain the actionable inner diagnostic instead of
+        // replacing it with the generic "call expr error" message.
+        setenv("NS_REPL_RECOVER", "1", 1);
+        ns_vm vm = {0};
+        const char *src =
+            "fn fail() i32 { let values = [1] return values[2] }\n"
+            "fn wrapper() i32 { return fail() }\n"
+            "fn main() i32 { return wrapper() }\n";
+        ns_return_value r = ns_eval(&vm, ns_str_cstr((i8 *)src), ns_str_cstr("<nested-call-error>"));
+        ns_expect(ns_return_is_error(r) && ns_str_equals_STR(r.e.msg, "array index out of bounds."),
+                  "nested calls preserve the concrete inner error message.");
+        ns_expect(r.e.loc.l == 1,
+                  "nested calls preserve the inner error source location.");
+        unsetenv("NS_REPL_RECOVER");
     }
 
     {
@@ -631,16 +657,17 @@ int main() {
 
         const char *src =
             "use std\n"
+            "enum file_handle: u64 { invalid = 0, }\n"
             "fn main() bool {\n"
-            "    let fd = open(\"bin/ns_std_file_test.txt\", \"rb\")\n"
-            "    if fd == 0 {\n"
+            "    let fd = open(\"bin/ns_std_file_test.txt\", \"rb\") as file_handle\n"
+            "    if fd == file_handle.invalid {\n"
             "        return false\n"
             "    }\n"
             "    let data = read(fd)\n"
             "    close(fd)\n"
             "    return data == \"hello profile\"\n"
             "}\n";
-        ns_expect(ns_expr_eval_bool(src), "std open/read/close handles stored in locals.");
+        ns_expect(ns_expr_eval_bool(src), "enum-backed FFI handles use their u64 ABI in locals and native calls.");
     }
 
     // --- async fn call spawns a task; await yields its typed result ---
@@ -808,6 +835,119 @@ int main() {
             "}\n";
         ns_expect(ns_expr_eval_bool(src), "a task awaits tasks it spawned itself.");
     }
+
+    // --- nominal enums, constants, storage and integer lowering ---
+    {
+        const char *src =
+            "enum os_platform: u8 { unknown = 0, macos, linux = macos + 4, other, }\n"
+            "enum signed_code { low = -2, next, mask = (1 << 4) | 3, }\n"
+            "struct host { platform: os_platform }\n"
+            "fn identity(value: os_platform) os_platform { return value }\n"
+            "fn main() bool {\n"
+            "    let platform = identity(os_platform.macos)\n"
+            "    let raw: u8 = platform\n"
+            "    let restored = raw as os_platform\n"
+            "    let item = host { platform: restored }\n"
+            "    let values = [os_platform](2)\n"
+            "    values[0] = os_platform.unknown\n"
+            "    values[1] = item.platform\n"
+            "    let labels = [os_platform: i32](4)\n"
+            "    labels[os_platform.macos] = 7\n"
+            "    return raw == 1 && restored == os_platform.macos && values[1] == platform && labels[restored] == 7 && os_platform.other == 6 && signed_code.next == -1 && signed_code.mask == 19 && (os_platform.linux | 2) == 7 && os_platform.linux > platform\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "enums support constants, functions, structs, containers, casts and integer operations.");
+    }
+
+    {
+        ns_vm vm = {0};
+        const char *named =
+            "enum os_platform: u8 { unknown = 0, macos, }\n"
+            "fn main() os_platform { return os_platform.macos }\n";
+        ns_return_value r = ns_eval(&vm, ns_str_cstr((i8 *)named), ns_str_cstr("<enum-format-named>"));
+        ns_str text = ns_return_is_error(r) ? ns_str_null : ns_fmt_value(&vm, r.r);
+        ns_expect(!ns_return_is_error(r) && ns_str_equals(text, ns_str_cstr("os_platform.macos")),
+                  "named enum values format as Enum.member.");
+        ns_str_free(text);
+    }
+
+    {
+        const char *src =
+            "enum e_i8: i8 { min = -128, max = 127, }\n"
+            "enum e_u8: u8 { min = 0, max = 255, }\n"
+            "enum e_i16: i16 { min = -32768, max = 32767, }\n"
+            "enum e_u16: u16 { min = 0, max = 65535, }\n"
+            "enum e_i32: i32 { min = -2147483648, max = 2147483647, }\n"
+            "enum e_u32: u32 { min = 0, max = 4294967295, }\n"
+            "enum e_i64: i64 { min = -9223372036854775808, max = 9223372036854775807, }\n"
+            "enum e_u64: u64 { min = 0, max = 18446744073709551615, }\n"
+            "fn main() bool {\n"
+            "    let i8v: i8 = e_i8.min\n"
+            "    let u8v: u8 = e_u8.max\n"
+            "    let i16v: i16 = e_i16.min\n"
+            "    let u16v: u16 = e_u16.max\n"
+            "    let i32v: i32 = e_i32.min\n"
+            "    let u32v: u32 = e_u32.max\n"
+            "    let i64v: i64 = e_i64.min\n"
+            "    let u64v: u64 = e_u64.max\n"
+            "    return (i8v as e_i8) == e_i8.min && (u8v as e_u8) == e_u8.max && (i16v as e_i16) == e_i16.min && (u16v as e_u16) == e_u16.max && (i32v as e_i32) == e_i32.min && (u32v as e_u32) == e_u32.max && (i64v as e_i64) == e_i64.min && (u64v as e_u64) == e_u64.max\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "all eight enum underlying integer types accept their boundary values.");
+    }
+
+    {
+        ns_vm vm = {0};
+        const char *unnamed =
+            "enum os_platform: u8 { unknown = 0, macos, }\n"
+            "fn main() os_platform { return 3 as os_platform }\n";
+        ns_return_value r = ns_eval(&vm, ns_str_cstr((i8 *)unnamed), ns_str_cstr("<enum-format-unnamed>"));
+        ns_str text = ns_return_is_error(r) ? ns_str_null : ns_fmt_value(&vm, r.r);
+        ns_expect(!ns_return_is_error(r) && ns_str_equals(text, ns_str_cstr("os_platform(3)")),
+                  "unnamed enum values format as Enum(value).");
+        ns_str_free(text);
+    }
+
+    ns_expect(ns_expr_error_contains(
+                  "enum state: u8 { off = 0, on, }\nfn main() state { return 1 }\n",
+                  "expected state, got i32"),
+              "integers do not implicitly convert to enums.");
+    ns_expect(ns_expr_error_contains(
+                  "enum first { value = 0, }\nenum second { value = 0, }\nfn main() first { return second.value }\n",
+                  "expected first, got second"),
+              "different enum types are not implicitly compatible.");
+    ns_expect(ns_expr_error_contains("enum empty { }\n", "at least one member"),
+              "enum definitions must be non-empty.");
+    ns_expect(ns_expr_error_contains(
+                  "enum state: u8 { off = 0, on, }\nfn main() state { return on }\n",
+                  "unknown type"),
+              "enum members are not injected into the global scope.");
+    ns_expect(ns_expr_error_contains("enum bad: f32 { value = 0, }\n", "integer type"),
+              "enum underlying types must be builtin integers.");
+    ns_expect(ns_expr_error_contains("enum bad: u8 { a = 1, b = 1, }\n", "duplicate enum member value"),
+              "duplicate enum values are rejected.");
+    ns_expect(ns_expr_error_contains("enum bad: u8 { a = b, b = 1, }\n", "preceding members"),
+              "forward enum member references are rejected.");
+    ns_expect(ns_expr_error_contains("enum bad: u8 { a = 1 / 0, }\n", "division by zero"),
+              "division by zero in enum constants is rejected.");
+    ns_expect(ns_expr_error_contains("enum bad { a = 1 << -1, }\n", "invalid shift"),
+              "invalid shifts in enum constants are rejected.");
+    ns_expect(ns_expr_error_contains(
+                  "enum bad { a = 170141183460469231731687303715884105727 + 1, }\n",
+                  "overflow in enum constant expression"),
+              "enum constant-expression overflow is rejected.");
+    ns_expect(ns_expr_error_contains("enum bad: u8 { max = 255, overflow, }\n", "outside its underlying type range"),
+              "automatic enum increments are range checked.");
+    ns_expect(ns_expr_error_contains("enum bad: u8 { a = 1, a = 2, }\n", "duplicate enum member name"),
+              "duplicate enum member names are rejected.");
+    ns_expect(ns_expr_error_contains(
+                  "enum state: u8 { off = 0, on, }\nfn main() state { return 1.0 as state }\n",
+                  "cast expr type mismatch"),
+              "floating-point values cannot be cast to enums.");
+    ns_expect(ns_expr_error_contains(
+                  "enum state: u8 { off = 0, on, }\nfn main() state { return 256 as state }\n",
+                  "outside enum range"),
+              "integer-to-enum casts enforce the underlying range.");
 
     return 0;
 }

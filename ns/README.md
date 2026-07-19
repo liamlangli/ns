@@ -7,7 +7,7 @@ interpreter built from the repository root.
 
 It is developed in stages:
 
-- [x] **Stage 1 — Lexer** (`lexer.ns`): complete, **78 assertions passing**.
+- [x] **Stage 1 — Lexer** (`lexer.ns`): complete, **94 assertions passing**.
 - [x] **Stage 2 — Parser** (`parser.ns`): recursive-descent expression/statement
       parser producing a flat AST, **57 assertions passing**.
 - [ ] Stage 3 — Type checker in ns.
@@ -94,14 +94,15 @@ the interpreter currently supports:
 - **`&&` / `||` are not short-circuit** in the host, so every source read goes
   through `lx_at` / `p_kind`, which return safe sentinels past end-of-input.
 - **Token and node kinds are integer constants exposed as `fn`s** (`TK_LET()`,
-  `NK_BINARY()`), since the language has no enums.
+  `NK_BINARY()`), keeping this bootstrap front-end independent of the enum
+  feature it tokenizes.
 - **Characters are byte values**, named via `c_*` helpers (`c_nl()` = 10, …).
 - **`main()` is auto-invoked** by the runtime; test entries `return
   test_summary()` so the failure count becomes the exit status.
 
 ## What the front-end supports
 
-**Lexer** — keywords (`use let fn struct type return if else for in to loop do
+**Lexer** — keywords (`use let fn struct enum type return if else for in to loop do
 break continue assert as ops async await true false nil`), primitive type
 keywords, identifiers, integer/hex/float literals, `'…'` / `"…"` strings and
 `` `…` `` format strings, line (`//`) and block (`/* */`) comments, newlines as

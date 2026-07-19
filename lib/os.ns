@@ -1,5 +1,16 @@
 mod os
 
+// Runtime platform identifiers. Compare os_platform() directly with one of
+// these values, for example `os_platform()==OS_PLATFORM_IOS`.
+let OS_PLATFORM_UNKNOWN = 0
+let OS_PLATFORM_MACOS = 1
+let OS_PLATFORM_IOS = 2
+let OS_PLATFORM_VISIONOS = 3
+let OS_PLATFORM_WINDOWS = 4
+let OS_PLATFORM_LINUX = 5
+
+ref fn os_platform() i32
+
 struct os_date {
     year: i32,
     month: i32,

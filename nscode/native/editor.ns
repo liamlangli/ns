@@ -64,8 +64,8 @@ let g_history_cur = [i32](131136)
 let g_history_anchor = [i32](131136)
 let g_history_group: i32 = 0
 
-// VIEW_KEY_* codes (lib/include/view.h). ns has no enums; constants are
-// zero-argument fns, matching the convention in nscode/cli/keys.ns.
+// VIEW_KEY_* codes (lib/include/view.h). These remain zero-argument fns,
+// matching the bootstrap convention in nscode/cli/keys.ns.
 fn VK_ENTER() i32 { return 257 }
 fn VK_BACKSPACE() i32 { return 259 }
 fn VK_DELETE() i32 { return 261 }
@@ -894,6 +894,7 @@ fn TK_STRING() i32 { return 4 }
 fn TK_COMMENT() i32 { return 5 }
 fn TK_PUNCT() i32 { return 6 }
 fn TK_CALL() i32 { return 7 }
+fn TK_CONSTANT() i32 { return 8 }
 
 fn tok_cap() i32 { return 192 }
 
@@ -1064,6 +1065,9 @@ fn is_keyword(w: str) bool {
     if w == "struct" {
         return true
     }
+    if w == "enum" {
+        return true
+    }
     if w == "use" {
         return true
     }
@@ -1177,6 +1181,100 @@ fn is_type_word(w: str) bool {
     return false
 }
 
+// Return whether `off` is inside an ns enum body. Syntax highlighting is
+// cached per line, so reconstruct this small amount of declaration state from
+// the text before the line instead of making cache results order-dependent.
+fn enum_body_at(off: i32) bool {
+    let p = 0
+    let pending = false
+    let body = false
+    let quote = 0
+    loop p < off {
+        let b = dc(p)
+        if quote != 0 {
+            if b == 92 {
+                p = p + 2
+            } else {
+                if b == quote {
+                    quote = 0
+                }
+                p = p + 1
+            }
+        } else if b == 34 || b == 39 || b == 96 {
+            quote = b
+            p = p + 1
+        } else if b == 47 && (p + 1) < off && dc(p + 1) == 47 {
+            p = p + 2
+            loop p < off && dc(p) != 10 {
+                p = p + 1
+            }
+        } else if is_word_byte(b) {
+            let q = p + 1
+            loop q < off && is_word_byte(dc(q)) {
+                q = q + 1
+            }
+            if !body && substr(g_doc, p, q - p) == "enum" {
+                pending = true
+            }
+            p = q
+        } else {
+            if pending && b == 123 {
+                body = true
+                pending = false
+            } else if body && b == 125 {
+                body = false
+            }
+            p = p + 1
+        }
+    }
+    return body
+}
+
+fn enum_name_declared(name: str, off: i32) bool {
+    let p = 0
+    let need_name = false
+    let quote = 0
+    loop p < off {
+        let b = dc(p)
+        if quote != 0 {
+            if b == 92 {
+                p = p + 2
+            } else {
+                if b == quote {
+                    quote = 0
+                }
+                p = p + 1
+            }
+        } else if b == 34 || b == 39 || b == 96 {
+            quote = b
+            p = p + 1
+        } else if b == 47 && (p + 1) < off && dc(p + 1) == 47 {
+            p = p + 2
+            loop p < off && dc(p) != 10 {
+                p = p + 1
+            }
+        } else if is_word_byte(b) {
+            let q = p + 1
+            loop q < off && is_word_byte(dc(q)) {
+                q = q + 1
+            }
+            let w = substr(g_doc, p, q - p)
+            if need_name {
+                if w == name {
+                    return true
+                }
+                need_name = false
+            } else if w == "enum" {
+                need_name = true
+            }
+            p = q
+        } else {
+            p = p + 1
+        }
+    }
+    return false
+}
+
 // Scan document line `li` into the g_tok_* arrays. Columns are relative to the
 // line start. Returns the number of tokens found.
 fn tokenize_line(li: i32) i32 {
@@ -1200,6 +1298,13 @@ fn tokenize_line(li: i32) i32 {
     g_tok_line_off = s
     let m = line_len(s)
     let p = 0
+    let enum_body = false
+    if g_syntax_language == 0 {
+        enum_body = enum_body_at(s)
+    }
+    let enum_decl = enum_body
+    let enum_need_name = false
+    let enum_need_member = enum_body
     loop p < m {
         let b = dc(s + p)
         if b == 32 {
@@ -1259,10 +1364,41 @@ fn tokenize_line(li: i32) i32 {
             }
             let w = substr(g_doc, s + p, q - p)
             let kind = TK_TEXT()
-            if is_keyword(w) {
+            if enum_need_name {
+                kind = TK_TYPE()
+                enum_need_name = false
+            } else if enum_body {
+                if enum_need_member {
+                    kind = TK_CONSTANT()
+                    enum_need_member = false
+                } else if is_keyword(w) {
+                    kind = TK_KEYWORD()
+                } else if is_type_word(w) {
+                    kind = TK_TYPE()
+                } else {
+                    kind = TK_CONSTANT()
+                }
+            } else if is_keyword(w) {
                 kind = TK_KEYWORD()
+                if g_syntax_language == 0 {
+                    if w == "enum" {
+                        enum_decl = true
+                        enum_need_name = true
+                    }
+                }
             } else if is_type_word(w) {
                 kind = TK_TYPE()
+            } else if g_syntax_language == 0 {
+                if p > 0 && dc(s + p - 1) == 46 && g_tok_count >= 2 {
+                    if enum_name_declared(token_text(g_tok_count - 2), s + p) {
+                        kind = TK_CONSTANT()
+                    }
+                } else if enum_name_declared(w, s + p) {
+                    kind = TK_TYPE()
+                }
+                if kind == TK_TEXT() && q < m && dc(s + q) == 40 {
+                    kind = TK_CALL()
+                }
             } else {
                 // an identifier directly followed by '(' reads as a call
                 if q < m {
@@ -1301,6 +1437,23 @@ fn tokenize_line(li: i32) i32 {
                 q = q + 1
             }
             add_token(p, q - p, TK_PUNCT())
+            if enum_decl {
+                for ep in p to q {
+                    let eb = dc(s + ep)
+                    if eb == 123 {
+                        enum_body = true
+                        enum_need_member = true
+                    } else if eb == 44 {
+                        if enum_body {
+                            enum_need_member = true
+                        }
+                    } else if eb == 125 {
+                        enum_body = false
+                        enum_decl = false
+                        enum_need_member = false
+                    }
+                }
+            }
             p = q
         }
     }

@@ -18,6 +18,8 @@ typedef enum {
     NS_AST_STRUCT_DEF,
     NS_AST_FIELD_DEF,
     NS_AST_TYPE_DEF,
+    NS_AST_ENUM_DEF,
+    NS_AST_ENUM_MEMBER,
 
     NS_AST_EXPR,
     NS_AST_STR_FMT_EXPR,
@@ -151,6 +153,17 @@ typedef struct ns_ast_type_def {
     i32 type;       // first type label node
     i32 count;      // number of type labels; >1 means a union type (A | B | ...)
 } ns_ast_type_def;
+
+typedef struct ns_ast_enum_def {
+    ns_token_t name;
+    ns_token_t underlying;
+    i32 count;
+} ns_ast_enum_def;
+
+typedef struct ns_ast_enum_member {
+    ns_token_t name;
+    i32 expr; // 0 means the value is inferred from the preceding member
+} ns_ast_enum_member;
 
 typedef struct ns_ast_binary_expr {
     i32 left;
@@ -288,6 +301,8 @@ typedef struct ns_ast_t {
         ns_ast_var_def var_def;
         ns_ast_struct_def struct_def;
         ns_ast_type_def type_def;
+        ns_ast_enum_def enum_def;
+        ns_ast_enum_member enum_member;
         ns_ast_struct_field field_def;
 
         ns_ast_expr expr;
@@ -383,6 +398,7 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_op_fn_define(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_struct_def(ns_ast_ctx *ctx);
+ns_return_bool ns_parse_enum_def(ns_ast_ctx *ctx);
 ns_return_bool ns_parse_type_label(ns_ast_ctx *ctx);
 
 // stmt fn

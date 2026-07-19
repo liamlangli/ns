@@ -29,6 +29,14 @@ static ns_bool ns_token_num_is(ns_token_t t, ns_token_type type, const char *val
 int main() {
     ns_token_t ts[16];
 
+    {
+        i32 n = ns_token_lex("enum enum_value enumerable", ts, 16);
+        ns_expect(n == 3 && ns_token_is(ts[0], NS_TOKEN_ENUM, "enum") &&
+                      ns_token_is(ts[1], NS_TOKEN_IDENTIFIER, "enum_value") &&
+                      ns_token_is(ts[2], NS_TOKEN_IDENTIFIER, "enumerable"),
+                  "enum is a keyword only at an identifier boundary.");
+    }
+
     // utf8 identifiers tokenize as single NS_TOKEN_IDENTIFIER tokens
     {
         i32 n = ns_token_lex("let 名字 = 1", ts, 16);

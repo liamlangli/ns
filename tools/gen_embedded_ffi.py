@@ -283,7 +283,10 @@ def emit(functions: list[Function], structs: dict[str, list[Argument]], aliases:
             lines += [f"        {native_type} result = {invocation};", "        ns_embedded_return_scalar(vm, &result, sizeof(result));"]
         lines += ["        return ns_return_ok(bool, true);", "    }"]
     lines += [
-        "    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, \"embedded native function is not forwarded\");",
+        "    static char message[512];",
+        "    snprintf(message, sizeof(message), \"embedded native function is not forwarded: %.*s.%.*s\",",
+        "             fn->lib.len, fn->lib.data, fn->name.len, fn->name.data);",
+        "    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);",
         "}",
         "#endif",
         "",

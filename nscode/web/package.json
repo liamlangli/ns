@@ -4,6 +4,7 @@
     "dev": "vite --host localhost",
     "typecheck": "tsc --noEmit",
     "build": "node scripts/build.mjs",
+    "test": "node scripts/test.mjs",
     "ci": "node scripts/ci.mjs"
   },
   "devDependencies": {

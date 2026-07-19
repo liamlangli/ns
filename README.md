@@ -60,6 +60,16 @@ struct Point {
    y: f32
 }
 
+// define a nominal enum; the underlying integer type defaults to i32
+enum os_platform: u8 {
+    unknown = 0,
+    macos,
+}
+
+let platform = os_platform.macos
+let raw: u8 = platform
+let restored = raw as os_platform
+
 // operator override
 fn ops(+)(lhs: Point, rhs: Point): Point {
     return Point(lhs.x + rhs.x, lhs.y + rhs.y)
@@ -114,6 +124,9 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
     return d
 }
 ```
+
+See [Enum types](doc/enum.md) for constant-expression, conversion, formatting,
+and underlying-range rules.
 
 ## Components
 - `ns`: The Nano Script compiler and interpreter that can compiles and executes Nano Script source code.

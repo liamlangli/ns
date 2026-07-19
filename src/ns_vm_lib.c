@@ -244,7 +244,8 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
 }
 
 #ifndef NS_XCLIB
-ffi_type ns_ffi_map_type(ns_type t) {
+ffi_type ns_ffi_map_type(ns_vm *vm, ns_type t) {
+    t = ns_enum_underlying_type(vm, t);
     if (ns_type_is_array(t)) return ffi_type_pointer;
     if (t.ref) return ffi_type_pointer;
     switch (t.type)
@@ -308,7 +309,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
             // native call); stash it so values[i] points at a live pointer.
             _ffi_ctx.value_refs[i] = ns_type_in_stack(v.t) ? (void*)((i8*)vm->stack + v.o) : (void*)v.o;
             _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
-            _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
+            _ffi_ctx.type_refs[i] = ns_ffi_map_type(vm, v.t);
             _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
             continue;
         }
@@ -317,7 +318,7 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
             void *data = ns_eval_array_raw(vm, v);
             _ffi_ctx.value_refs[i] = data;
             _ffi_ctx.values[i] = &_ffi_ctx.value_refs[i];
-            _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
+            _ffi_ctx.type_refs[i] = ns_ffi_map_type(vm, v.t);
             _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
             continue;
         }
@@ -352,12 +353,12 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
                 _ffi_ctx.values[i] = dst;
             }break;
         }
-        _ffi_ctx.type_refs[i] = ns_ffi_map_type(v.t);
+        _ffi_ctx.type_refs[i] = ns_ffi_map_type(vm, v.t);
         _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
     }
     ns_scope_exit(vm);
 
-    ffi_type ret_type = ns_ffi_map_type(fn->fn.ret);
+    ffi_type ret_type = ns_ffi_map_type(vm, fn->fn.ret);
     ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI, call->arg_count, &ret_type, _ffi_ctx.types);
     if (status != FFI_OK) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to prep ffi call.");

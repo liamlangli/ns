@@ -14,6 +14,8 @@ ns_str ns_ast_type_to_string(ns_ast_type type) {
         ns_str_case(NS_AST_STRUCT_DEF)
         ns_str_case(NS_AST_OP_FN_DEF)
         ns_str_case(NS_AST_TYPE_DEF)
+        ns_str_case(NS_AST_ENUM_DEF)
+        ns_str_case(NS_AST_ENUM_MEMBER)
         ns_str_case(NS_AST_EXPR)
         ns_str_case(NS_AST_BINARY_EXPR)
         ns_str_case(NS_AST_UNARY_EXPR)
@@ -197,6 +199,26 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
             }
         }
     } break;
+    case NS_AST_ENUM_DEF: {
+        printf(ns_color_log "enum " ns_color_nil);
+        ns_str_printf(n->enum_def.name.val);
+        printf(ns_color_log ": " ns_color_nil);
+        ns_str_printf(n->enum_def.underlying.val);
+        printf(" { ");
+        i32 member = n->next;
+        for (i32 k = 0; k < n->enum_def.count; ++k) {
+            ns_ast_t *m = &ctx->nodes[member];
+            ns_str_printf(m->enum_member.name.val);
+            if (m->enum_member.expr) printf(" = [%d]", m->enum_member.expr);
+            if (k + 1 < n->enum_def.count) printf(", ");
+            member = m->next;
+        }
+        printf(" }");
+    } break;
+    case NS_AST_ENUM_MEMBER:
+        ns_str_printf(n->enum_member.name.val);
+        if (n->enum_member.expr) printf(" = [%d]", n->enum_member.expr);
+        break;
     case NS_AST_BLOCK_EXPR: {
         printf("{");
         ns_ast_t *arg = n;

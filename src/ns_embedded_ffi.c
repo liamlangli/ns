@@ -135,6 +135,7 @@ extern ui_color_rgba * ui_color_picker_rect(void *, const char *, ui_rect *, ui_
 extern ui_color_rgba * ui_color_picker_id(void *, i32, ui_rect *, ui_color_rgba *);
 extern u32 ui_pack_color(const char *);
 extern u32 ui_pack_rgba_floats(f64, f64, f64, f64);
+extern i32 os_platform(void);
 extern void * os_lock_create(void);
 extern ns_bool os_lock_acquire(void *);
 extern ns_bool os_lock_try_acquire(void *);
@@ -754,6 +755,11 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
         ns_embedded_return_scalar(vm, &result, sizeof(result));
         return ns_return_ok(bool, true);
     }
+    else if (ns_str_equals_STR(fn->lib, "os") && ns_str_equals_STR(fn->name, "os_platform")) {
+        i32 result = os_platform();
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
     else if (ns_str_equals_STR(fn->lib, "os") && ns_str_equals_STR(fn->name, "os_lock_create")) {
         void *result = os_lock_create();
         ns_embedded_return_pointer(vm, result);
@@ -1204,6 +1210,9 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
         ns_embedded_return_scalar(vm, &result, sizeof(result));
         return ns_return_ok(bool, true);
     }
-    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "embedded native function is not forwarded");
+    static char message[512];
+    snprintf(message, sizeof(message), "embedded native function is not forwarded: %.*s.%.*s",
+             fn->lib.len, fn->lib.data, fn->name.len, fn->name.data);
+    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);
 }
 #endif

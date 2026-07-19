@@ -1,6 +1,12 @@
 use std
 use os
 
+assert(OS_PLATFORM_UNKNOWN==0)
+assert(OS_PLATFORM_MACOS!=OS_PLATFORM_IOS)
+assert(OS_PLATFORM_IOS!=OS_PLATFORM_VISIONOS)
+assert(OS_PLATFORM_WINDOWS!=OS_PLATFORM_LINUX)
+assert(os_platform()>=OS_PLATFORM_MACOS&&os_platform()<=OS_PLATFORM_LINUX)
+
 assert(os_file_size("test/os_file_test.ns") > 8)
 assert(os_read_file_part("test/os_file_test.ns", 0, 3) == "use")
 assert(os_read_file_part("test/os_file_test.ns", 4, 3) == "std")

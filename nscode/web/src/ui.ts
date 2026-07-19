@@ -302,6 +302,7 @@ const TT_KIND = [
     'plain',       // 9  UNKNOWN
     'function',    // 10 FUNC_DEF
     'function',    // 11 FUNC_CALL
+    'number',      // 12 CONSTANT
 ];
 
 function ns_editor_tokenize(line) {

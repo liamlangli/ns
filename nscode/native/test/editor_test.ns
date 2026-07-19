@@ -188,6 +188,27 @@ fn test_tokenizer() {
     let changed = tokenize_line(2)
     check_i("token cache invalidates after edit", changed, 5)
     expect_token("edited token is rescanned", 1, 11, 1, TK_TEXT())
+
+    load_str("enum os_platform: u8 { unknown = 0, macos, }")
+    let ne = tokenize_line(0)
+    check("enum token count", ne >= 12)
+    expect_token("enum keyword", 0, 0, 4, TK_KEYWORD())
+    expect_token("enum type name", 1, 5, 11, TK_TYPE())
+    expect_token("enum underlying type", 3, 18, 2, TK_TYPE())
+    expect_token("enum first member", 5, 23, 7, TK_CONSTANT())
+    expect_token("enum second member", 9, 36, 5, TK_CONSTANT())
+
+    load_str(unescape("enum os_platform: u8 {\n    unknown = 0,\n    macos,\n}\nlet platform = os_platform.macos"))
+    let multiline_first = tokenize_line(1)
+    check("multiline enum first member tokens", multiline_first >= 3)
+    expect_token("multiline enum first member", 0, 4, 7, TK_CONSTANT())
+    let multiline_second = tokenize_line(2)
+    check("multiline enum second member tokens", multiline_second >= 2)
+    expect_token("multiline enum second member", 0, 4, 5, TK_CONSTANT())
+    let qualified = tokenize_line(4)
+    check("qualified enum access tokens", qualified >= 6)
+    expect_token("qualified enum type", 3, 15, 11, TK_TYPE())
+    expect_token("qualified enum member", 5, 27, 5, TK_CONSTANT())
 }
 
 fn test_key_char() {

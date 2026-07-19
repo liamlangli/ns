@@ -26,6 +26,7 @@ static const char *ns_shader_test_src =
     "use std\n"
     "use simd\n"
     "use shader\n"
+    "enum shade: u8 { dark = 2, light, }\n"
     "struct VertexData {\n"
     "    position: float3,\n"
     "    uv: float2\n"
@@ -41,6 +42,9 @@ static const char *ns_shader_test_src =
     "fn half_gain(a: f32) f32 {\n"
     "    return a + 0.25h + 0.25hb\n"
     "}\n"
+    "fn enum_gain() f32 {\n"
+    "    return shade.light as f32\n"
+    "}\n"
     "fn vs_main(data: VertexData) FragmentInput {\n"
     "    let pos = data.position\n"
     "    return FragmentInput {\n"
@@ -50,7 +54,7 @@ static const char *ns_shader_test_src =
     "    }\n"
     "}\n"
     "fn fs_main(data: FragmentInput) float4 {\n"
-    "    return brighten(data.color, half_gain(0.5 as f32))\n"
+    "    return brighten(data.color, half_gain(0.5 as f32) + enum_gain())\n"
     "}\n"
     "fn fs_shadow(data: FragmentInput) float4 {\n"
     "    let uv = data.uv\n"
@@ -192,6 +196,7 @@ int main() {
             ns_expect(ns_shader_test_has(r.r, "float4(pos.x, pos.y, pos.z, 1.0)"), "msl float4 literal becomes a constructor.");
             ns_expect(ns_shader_test_has(r.r, "float4 brighten(float4 c, float gain)"), "msl helper fn emitted.");
             ns_expect(ns_shader_test_has(r.r, "half(0.25)"), "msl half and brain-float suffixes lower to half.");
+            ns_expect(ns_shader_test_has(r.r, "float(3)"), "msl enum members lower to their integer constants.");
             ns_expect(ns_shader_test_has(r.r, "float3 pos = data.position"), "msl let binding types are inferred.");
             ns_array_free(r.r.data);
         }

@@ -643,6 +643,101 @@ ns_return_bool ns_parse_struct_def(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
+static ns_bool ns_enum_underlying_token(ns_token_type t) {
+    switch (t) {
+    case NS_TOKEN_TYPE_I8:
+    case NS_TOKEN_TYPE_U8:
+    case NS_TOKEN_TYPE_I16:
+    case NS_TOKEN_TYPE_U16:
+    case NS_TOKEN_TYPE_I32:
+    case NS_TOKEN_TYPE_U32:
+    case NS_TOKEN_TYPE_I64:
+    case NS_TOKEN_TYPE_U64:
+        return true;
+    default:
+        return false;
+    }
+}
+
+ns_return_bool ns_parse_enum_def(ns_ast_ctx *ctx) {
+    ns_ast_state state = ns_save_state(ctx);
+    if (!ns_token_require(ctx, NS_TOKEN_ENUM)) {
+        ns_restore_state(ctx, state);
+        return ns_return_ok(bool, false);
+    }
+    if (!ns_parse_identifier(ctx)) {
+        return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "expected enum name.");
+    }
+
+    ns_ast_t def = {.type = NS_AST_ENUM_DEF, .state = state,
+                    .enum_def = {.name = ctx->token, .count = 0}};
+    def.enum_def.underlying = (ns_token_t){.type = NS_TOKEN_TYPE_I32, .val = ns_str_cstr("i32"),
+                                           .line = ctx->token.line, .line_start = ctx->token.line_start};
+
+    ns_ast_state type_state = ns_save_state(ctx);
+    if (ns_token_require(ctx, NS_TOKEN_COLON)) {
+        ns_parse_next_token(ctx);
+        if (!ns_enum_underlying_token(ctx->token.type)) {
+            return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX,
+                                   "enum underlying type must be an integer type.");
+        }
+        def.enum_def.underlying = ctx->token;
+    } else {
+        ns_restore_state(ctx, type_state);
+    }
+
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) {
+        return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "expected '{' after enum name.");
+    }
+
+    ns_token_skip_eol(ctx);
+    i32 tail = 0;
+    for (;;) {
+        ns_ast_state member_state = ns_save_state(ctx);
+        if (!ns_parse_identifier(ctx)) {
+            return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX,
+                                   def.enum_def.count == 0 ? "enum must define at least one member."
+                                                           : "expected enum member name.");
+        }
+        ns_ast_t member = {.type = NS_AST_ENUM_MEMBER, .state = member_state,
+                           .enum_member = {.name = ctx->token, .expr = 0}};
+
+        ns_ast_state assign_state = ns_save_state(ctx);
+        if (ns_token_require(ctx, NS_TOKEN_ASSIGN)) {
+            ns_return_bool expr = ns_parse_expr(ctx);
+            if (ns_return_is_error(expr)) return expr;
+            if (!expr.r) {
+                return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX,
+                                       "expected integer constant expression after '='.");
+            }
+            member.enum_member.expr = ctx->current;
+        } else {
+            ns_restore_state(ctx, assign_state);
+        }
+
+        i32 member_i = ns_ast_push(ctx, member);
+        if (tail == 0) def.next = member_i;
+        else ctx->nodes[tail].next = member_i;
+        tail = member_i;
+        def.enum_def.count++;
+
+        ns_parse_next_token(ctx);
+        if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) break;
+        if (ctx->token.type != NS_TOKEN_COMMA) {
+            return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX,
+                                   "expected ',' or '}' after enum member.");
+        }
+
+        ns_token_skip_eol(ctx);
+        ns_ast_state trailing = ns_save_state(ctx);
+        if (ns_token_require(ctx, NS_TOKEN_CLOSE_BRACE)) break;
+        ns_restore_state(ctx, trailing);
+    }
+
+    ns_ast_push(ctx, def);
+    return ns_return_ok(bool, true);
+}
+
 i32 ns_ast_struct_field_index(ns_ast_ctx *ctx, i32 st, ns_str name) {
     ns_ast_t *n = &ctx->nodes[st];
     i32 count = n->struct_def.count;

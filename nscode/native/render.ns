@@ -469,6 +469,9 @@ fn nanoscript_token_color(kind: i32) u32 {
     if kind == TK_NUMBER() {
         return col_nanoscript_white()
     }
+    if kind == TK_CONSTANT() {
+        return col_nanoscript_white()
+    }
     if kind == TK_STRING() {
         return col_nanoscript_yellow_green()
     }
@@ -568,6 +571,9 @@ fn minimap_token_color(kind: i32) u32 {
         return ui_pack_rgba_floats(0.45, 0.45, 0.45, 0.5)
     }
     if kind == TK_NUMBER() {
+        return ui_pack_rgba_floats(0.88, 0.88, 0.88, 0.5)
+    }
+    if kind == TK_CONSTANT() {
         return ui_pack_rgba_floats(0.88, 0.88, 0.88, 0.5)
     }
     if kind == TK_CALL() {

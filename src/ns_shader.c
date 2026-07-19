@@ -183,6 +183,7 @@ static ns_bool ns_shader_is_position_field(ns_vm *vm, ns_struct_field *f) {
 // type naming
 // ---------------------------------------------------------------------------
 static ns_return_void ns_shader_type_name(ns_shader_emit *e, ns_type t, ns_str *dst, ns_code_loc loc) {
+    t = ns_enum_underlying_type(e->vm, t);
     if (ns_type_is_ref(t)) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: ref types are not supported in shader fns.");
     if (ns_type_is_array(t)) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: array types are not supported in shader fns.");
     switch (t.type) {
@@ -211,6 +212,7 @@ static ns_return_void ns_shader_type_name(ns_shader_emit *e, ns_type t, ns_str *
 }
 
 static ns_return_void ns_shader_zero_value(ns_shader_emit *e, ns_type t, ns_str *dst, ns_code_loc loc) {
+    t = ns_enum_underlying_type(e->vm, t);
     switch (t.type) {
     case NS_TYPE_F32:
     case NS_TYPE_F64: ns_shader_cstr(dst, "0.0"); break;
@@ -306,12 +308,18 @@ static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
         case NS_TOKEN_FLT_LITERAL: return ns_type_f32;
         case NS_TOKEN_TRUE:
         case NS_TOKEN_FALSE: return ns_type_bool;
-        case NS_TOKEN_IDENTIFIER: return ns_shader_local_type(e, n->primary_expr.token.val);
+        case NS_TOKEN_IDENTIFIER: {
+            ns_type local = ns_shader_local_type(e, n->primary_expr.token.val);
+            if (!ns_type_is_unknown(local)) return local;
+            ns_symbol *s = ns_vm_find_symbol(e->vm, n->primary_expr.token.val, false);
+            return s && s->type == NS_SYMBOL_ENUM ? s->en.t : ns_type_unknown;
+        }
         default: return ns_type_unknown;
         }
     }
     case NS_AST_MEMBER_EXPR: {
         ns_type lt = ns_shader_infer(e, n->member_expr.left);
+        if (ns_type_is(lt, NS_TYPE_ENUM)) return lt;
         if (!ns_type_is(lt, NS_TYPE_STRUCT)) return ns_type_unknown;
         ns_ast_t *r = &e->ctx->nodes[n->member_expr.right];
         if (r->type != NS_AST_PRIMARY_EXPR) return ns_type_unknown;
@@ -352,6 +360,8 @@ static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
         }
         ns_type lt = ns_shader_infer(e, n->binary_expr.left);
         ns_type rt = ns_shader_infer(e, n->binary_expr.right);
+        lt = ns_enum_underlying_type(e->vm, lt);
+        rt = ns_enum_underlying_type(e->vm, rt);
         if (ns_type_is(lt, NS_TYPE_STRUCT)) return lt;
         if (ns_type_is(rt, NS_TYPE_STRUCT)) return rt;
         if (ns_type_is_float(lt) || ns_type_is_float(rt)) return ns_type_f32;
@@ -706,6 +716,22 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         }
         ns_str field = r->primary_expr.token.val;
         ns_type lt = ns_shader_infer(e, n->member_expr.left);
+        if (ns_type_is(lt, NS_TYPE_ENUM)) {
+            ns_symbol *en = &e->vm->symbols[ns_type_index(lt)];
+            i32 member = ns_enum_member_index(en, field);
+            if (member < 0) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: unknown enum member.");
+            char literal[32];
+            ns_type underlying = en->en.underlying;
+            i32 len;
+            if (ns_type_is(underlying, NS_TYPE_I8) || ns_type_is(underlying, NS_TYPE_I16) ||
+                ns_type_is(underlying, NS_TYPE_I32) || ns_type_is(underlying, NS_TYPE_I64)) {
+                len = snprintf(literal, sizeof(literal), "%lld", (long long)(i64)en->en.members[member].value);
+            } else {
+                len = snprintf(literal, sizeof(literal), "%llu", (unsigned long long)en->en.members[member].value);
+            }
+            ns_str_append_len(dst, literal, len);
+            return ns_return_ok_void;
+        }
         // mat4 columns (col0..col3) index the matrix in every target.
         if (ns_type_is(lt, NS_TYPE_STRUCT) && ns_shader_simd_dim(e->vm->symbols[ns_type_index(lt)].name) == 16) {
             if (field.len == 4 && strncmp(field.data, "col", 3) == 0 && field.data[3] >= '0' && field.data[3] <= '3') {
@@ -857,7 +883,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
     case NS_AST_CAST_EXPR: {
         ns_return_type rt = ns_vm_parse_type_by_token(e->vm, n->cast_expr.type, loc);
         if (ns_return_is_error(rt)) return ns_return_change_type(void, rt);
-        ns_type t = rt.r;
+        ns_type t = ns_enum_underlying_type(e->vm, rt.r);
         if (!ns_type_is_number(t) && !ns_type_is(t, NS_TYPE_BOOL)) {
             return ns_return_error(void, loc, NS_ERR_EVAL, "shader: only numeric casts are supported in shader fns.");
         }
