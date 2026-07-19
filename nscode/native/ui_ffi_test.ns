@@ -1,0 +1,35 @@
+use std
+use view
+use gpu
+use ui
+
+fn main() i32 {
+    let v = view_create("ui ffi test", 320, 200)
+    if !gpu_request_device(v) {
+        view_close(v)
+        return 0
+    }
+
+    let r = ui_renderer_create(v)
+    let widgets = ui_widgets_create(r)
+    let theme = ui_theme_empty()
+    let input = ui_input_empty()
+    input.mouse_x = 321.5
+    input.mouse_y = 123.25
+
+    // These are pointer-backed structs across the FFI boundary. Declaring
+    // them as value structs made libffi reinterpret mouse_x as an address.
+    ui_widgets_begin_frame(widgets, theme, input)
+    let ok = ui_widgets_mouse_x(widgets) == 321.5 && ui_widgets_mouse_y(widgets) == 123.25
+
+    ui_widgets_destroy(widgets)
+    ui_renderer_destroy(r)
+    view_close(v)
+
+    if ok {
+        print("ui_ffi_test: passed\n")
+        return 0
+    }
+    print("ui_ffi_test: failed\n")
+    return 1
+}
