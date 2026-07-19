@@ -40,6 +40,36 @@ static ns_bool append_text(const char *path, const char *text) {
     return fclose(file) == 0 && ok;
 }
 
+static ns_bool replace_text_after(const char *path, const char *anchor, const char *needle, const char *replacement) {
+    char *source = read_text(path);
+    if (!source) return false;
+    char *start = strstr(source, anchor);
+    char *found = start ? strstr(start, needle) : ns_null;
+    if (!found) {
+        free(source);
+        return false;
+    }
+    size_t prefix_len = (size_t)(found - source);
+    size_t needle_len = strlen(needle);
+    size_t replacement_len = strlen(replacement);
+    size_t suffix_len = strlen(found + needle_len);
+    char *updated = malloc(prefix_len + replacement_len + suffix_len + 1);
+    if (!updated) {
+        free(source);
+        return false;
+    }
+    memcpy(updated, source, prefix_len);
+    memcpy(updated + prefix_len, replacement, replacement_len);
+    memcpy(updated + prefix_len + replacement_len, found + needle_len, suffix_len + 1);
+    FILE *file = fopen(path, "wb");
+    ns_bool ok = file && fwrite(updated, 1, prefix_len + replacement_len + suffix_len, file) ==
+                                  prefix_len + replacement_len + suffix_len;
+    if (file && fclose(file) != 0) ok = false;
+    free(updated);
+    free(source);
+    return ok;
+}
+
 static void path(char out[PATH_MAX], const char *root, const char *suffix) {
     snprintf(out, PATH_MAX, "%s/%s", root, suffix);
 }
@@ -198,6 +228,18 @@ int main(void) {
               "Xcode regeneration refreshes linked source.");
     ns_expect(text_has(vgenerated, "C:\\Program Files\\ns\\ns.exe"),
               "Visual Studio regeneration refreshes generated properties.");
+
+    ns_expect(replace_text_after(pbx, "4E5350520000004800000015 /* Debug */", "DEVELOPMENT_TEAM = \"\";",
+                                 "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
+                  replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
+                                     "DEVELOPMENT_TEAM = IOSRELSE2;") &&
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 7;", "NSProjectGeneratorVersion = 7;",
+                                     "NSProjectGeneratorVersion = 6;"),
+              "project test simulates iOS signing choices before a structural refresh.");
+    ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
+    ns_expect(text_has(pbx, "DEVELOPMENT_TEAM = \"IOSDEBUG1\";") &&
+                  text_has(pbx, "DEVELOPMENT_TEAM = \"IOSRELSE2\";"),
+              "Xcode structural refresh preserves iOS development teams by configuration.");
 
     char hosted_root[] = "/tmp/ns-project-hosted-app-XXXXXX";
     ns_expect(mkdtemp(hosted_root) != ns_null, "project test creates hosted app fixture directory.");

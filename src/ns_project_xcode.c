@@ -1,5 +1,6 @@
 #include "ns_project.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -478,6 +479,91 @@ fail:
 
 static void ns_xcode_id(char out[25], unsigned group, unsigned index) {
     snprintf(out, 25, "%08X%08X%08X", 0x4E535052u, group, index);
+}
+
+typedef struct ns_xcode_signing_teams {
+    char *values[3][2];
+} ns_xcode_signing_teams;
+
+static char *ns_xcode_read_development_team(const char *path, unsigned target, unsigned variant) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return NULL;
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    long size = ftell(file);
+    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    char *text = (char *)malloc((size_t)size + 1);
+    if (!text) {
+        fclose(file);
+        return NULL;
+    }
+    size_t read = fread(text, 1, (size_t)size, file);
+    ns_bool ok = read == (size_t)size && !ferror(file);
+    fclose(file);
+    text[read] = '\0';
+    if (!ok) {
+        free(text);
+        return NULL;
+    }
+
+    char id[25];
+    char marker[64];
+    ns_xcode_id(id, 72, target * 10 + variant);
+    snprintf(marker, sizeof(marker), "%s /* %s */ = {", id, variant == 1 ? "Debug" : "Release");
+    char *configuration = strstr(text, marker);
+    char *configuration_end = configuration ? strstr(configuration, "\n\t\t};") : NULL;
+    static const char setting[] = "DEVELOPMENT_TEAM = ";
+    char *value = configuration ? strstr(configuration, setting) : NULL;
+    if (!value || !configuration_end || value >= configuration_end) {
+        free(text);
+        return NULL;
+    }
+    value += sizeof(setting) - 1;
+    ns_bool quoted = *value == '"';
+    if (quoted) ++value;
+    char *end = quoted ? strchr(value, '"') : strchr(value, ';');
+    if (!end || end > configuration_end) {
+        free(text);
+        return NULL;
+    }
+    while (end > value && isspace((unsigned char)end[-1])) --end;
+    if (end == value) {
+        free(text);
+        return NULL;
+    }
+    for (char *p = value; p < end; ++p) {
+        if (!isalnum((unsigned char)*p) && *p != '-' && *p != '_' && *p != '.') {
+            free(text);
+            return NULL;
+        }
+    }
+    size_t len = (size_t)(end - value);
+    char *team = (char *)malloc(len + 1);
+    if (team) {
+        memcpy(team, value, len);
+        team[len] = '\0';
+    }
+    free(text);
+    return team;
+}
+
+static void ns_xcode_read_signing_teams(const char *path, ns_xcode_signing_teams *teams) {
+    for (unsigned target = 1; target <= 3; ++target) {
+        for (unsigned variant = 1; variant <= 2; ++variant) {
+            teams->values[target - 1][variant - 1] = ns_xcode_read_development_team(path, target, variant);
+        }
+    }
+}
+
+static void ns_xcode_signing_teams_free(ns_xcode_signing_teams *teams) {
+    for (unsigned target = 0; target < 3; ++target) {
+        for (unsigned variant = 0; variant < 2; ++variant) free(teams->values[target][variant]);
+    }
 }
 
 static const char *const ns_xcode_runtime_sources[] = {
@@ -978,19 +1064,20 @@ static ns_bool ns_xcode_append_build_file(ns_xcode_buffer *pbx, unsigned target,
 static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned target, unsigned variant, const char *target_name,
                                                  const char *safe_name, const char *platform, const char *sdk,
                                                  const char *supported, const char *deployment_key, const char *deployment_value,
-                                                 const char *device_family, ns_bool has_app_icon) {
+                                                 const char *device_family, ns_bool has_app_icon, const char *development_team) {
     char config_id[25];
     char generated_id[25];
     ns_xcode_id(config_id, 72, target * 10 + variant);
     ns_xcode_id(generated_id, 40, 8);
     char *escaped_target = ns_xcode_escape(target_name);
     char *escaped_safe = ns_xcode_escape(safe_name);
+    char *escaped_team = ns_xcode_escape(development_team ? development_team : "");
     const char *frameworks = strcmp(platform, "macOS") == 0
         ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore)"
         : "(\"$(inherited)\", \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit)";
     ns_xcode_buffer plist_path = {0};
     ns_xcode_buffer bridge_path = {0};
-    ns_bool ok = escaped_target && escaped_safe &&
+    ns_bool ok = escaped_target && escaped_safe && escaped_team &&
                  ns_xcode_buffer_appendf(&plist_path, "%s.nsproject/Info/%s-Info.plist", safe_name, platform) &&
                  ns_xcode_buffer_appendf(&bridge_path, "%s.nsproject/Sources/NSBridge.h", safe_name) &&
                  ns_xcode_buffer_appendf(
@@ -1001,7 +1088,7 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
                      "\t\t\tbuildSettings = {\n"
                      "%s"
                      "\t\t\t\tCODE_SIGN_STYLE = Automatic;\n"
-                     "\t\t\t\tDEVELOPMENT_TEAM = \"\";\n"
+                     "\t\t\t\tDEVELOPMENT_TEAM = \"%s\";\n"
                      "\t\t\t\tENABLE_USER_SCRIPT_SANDBOXING = NO;\n"
                      "\t\t\t\tGENERATE_INFOPLIST_FILE = NO;\n"
                      "\t\t\t\tINFOPLIST_FILE = \"%s\";\n"
@@ -1017,11 +1104,12 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
                      "\t\t\tname = %s;\n"
                      "\t\t};\n",
                      config_id, variant == 1 ? "Debug" : "Release", generated_id,
-                     has_app_icon ? "\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;\n" : "", plist_path.data,
+                     has_app_icon ? "\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;\n" : "", escaped_team, plist_path.data,
                      frameworks, escaped_safe, sdk, supported, bridge_path.data, device_family, deployment_key, deployment_value,
                      variant == 1 ? "Debug" : "Release");
     free(escaped_target);
     free(escaped_safe);
+    free(escaped_team);
     ns_xcode_buffer_free(&plist_path);
     ns_xcode_buffer_free(&bridge_path);
     return ok;
@@ -1232,6 +1320,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         free(asset_root);
         return true;
     }
+    ns_xcode_signing_teams signing_teams = {0};
+    if (overwrite_project) ns_xcode_read_signing_teams(project_file, &signing_teams);
 
     ns_xcode_buffer script = {0};
     ns_xcode_buffer pbx = {0};
@@ -1510,17 +1600,19 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
                                 "/* Begin XCBuildConfiguration section */\n") ||
         !ns_xcode_append_project_config(&pbx, 1) || !ns_xcode_append_project_config(&pbx, 2) ||
         !ns_xcode_append_app_target_config(&pbx, 1, 1, target_names[0].data, safe_name, "macOS", "macosx", "macosx",
-                                           "MACOSX_DEPLOYMENT_TARGET", "12.0", "6", has_app_icon) ||
+                                           "MACOSX_DEPLOYMENT_TARGET", "12.0", "6", has_app_icon, signing_teams.values[0][0]) ||
         !ns_xcode_append_app_target_config(&pbx, 1, 2, target_names[0].data, safe_name, "macOS", "macosx", "macosx",
-                                           "MACOSX_DEPLOYMENT_TARGET", "12.0", "6", has_app_icon) ||
+                                           "MACOSX_DEPLOYMENT_TARGET", "12.0", "6", has_app_icon, signing_teams.values[0][1]) ||
         !ns_xcode_append_app_target_config(&pbx, 2, 1, target_names[1].data, safe_name, "iOS", "iphoneos",
-                                           "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2", has_app_icon) ||
+                                           "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2", has_app_icon,
+                                           signing_teams.values[1][0]) ||
         !ns_xcode_append_app_target_config(&pbx, 2, 2, target_names[1].data, safe_name, "iOS", "iphoneos",
-                                           "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2", has_app_icon) ||
+                                           "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2", has_app_icon,
+                                           signing_teams.values[1][1]) ||
         !ns_xcode_append_app_target_config(&pbx, 3, 1, target_names[2].data, safe_name, "visionOS", "xros", "xros xrsimulator",
-                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7", has_app_icon) ||
+                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7", has_app_icon, signing_teams.values[2][0]) ||
         !ns_xcode_append_app_target_config(&pbx, 3, 2, target_names[2].data, safe_name, "visionOS", "xros", "xros xrsimulator",
-                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7", has_app_icon)) {
+                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7", has_app_icon, signing_teams.values[2][1])) {
         for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
         goto fail;
     }
@@ -1564,6 +1656,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
     free(asset_root);
     free(escaped_script);
     free(escaped_safe);
+    ns_xcode_signing_teams_free(&signing_teams);
     ns_xcode_buffer_free(&script);
     ns_xcode_buffer_free(&pbx);
     ns_unused(spec);
@@ -1575,6 +1668,7 @@ fail:
     free(asset_root);
     free(escaped_script);
     free(escaped_safe);
+    ns_xcode_signing_teams_free(&signing_teams);
     ns_xcode_buffer_free(&script);
     ns_xcode_buffer_free(&pbx);
     return false;
