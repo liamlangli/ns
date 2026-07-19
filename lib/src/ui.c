@@ -32,12 +32,8 @@
 #define UI_FONT_ZH_TEXTURE (UI_MAX_TEXTURES + 3)
 #define UI_KIND_IMAGE 0
 #define UI_KIND_MSDF 1
-#define UI_KIND_SCENE_GRID 2
-#define UI_KIND_ARC_SDF 3
-#define UI_KIND_SCENE_MESH 4
+#define UI_KIND_ARC_SDF 2
 #define UI_DEFAULT_FEATHER 0.5
-#define UI_SCENE_MAX_MESHES 64
-#define UI_SCENE_VERTEX_FLOATS 10
 
 typedef struct io_image {
     i32 width;
@@ -161,12 +157,6 @@ typedef struct ui_command {
     i32 clip_x, clip_y, clip_w, clip_h;
 } ui_command;
 
-typedef struct ui_scene_grid_uniforms {
-    f32 inverse_view_projection[16];
-    f32 viewport[4];
-    f32 params[4];
-} ui_scene_grid_uniforms;
-
 typedef struct ui_rect_batch {
     ui_vertex *vertices;
     i32 vertex_count;
@@ -229,21 +219,14 @@ typedef struct ui_renderer {
     gpu_shader shader_image;
     gpu_shader shader_batch;
     gpu_shader shader_msdf;
-    gpu_shader shader_scene_grid;
-    gpu_shader shader_scene_mesh;
     gpu_shader shader_arc_sdf;
     gpu_pipeline pipeline_image;
     gpu_pipeline pipeline_batch;
     gpu_pipeline pipeline_msdf;
-    gpu_pipeline pipeline_scene_grid;
-    gpu_pipeline pipeline_scene_mesh;
     gpu_pipeline pipeline_arc_sdf;
     gpu_binding binding_white_image;
     gpu_binding binding_font_msdf;
     gpu_binding binding_font_zh_msdf;
-    gpu_buffer scene_grid_buffer;
-    gpu_binding binding_scene_grid;
-    gpu_binding binding_scene_mesh;
     gpu_binding binding_arc_sdf;
     gpu_texture textures[UI_MAX_TEXTURES];
     gpu_binding texture_bindings[UI_MAX_TEXTURES];
@@ -254,46 +237,6 @@ typedef struct ui_renderer {
     gpu_render_pass screen_pass;
     ns_bool gpu_ready;
 } ui_renderer;
-
-typedef struct ui_scene_mesh {
-    f32 *vertices;
-    u32 *indices;
-    i32 vertex_count;
-    i32 index_count;
-    ns_bool used;
-} ui_scene_mesh;
-
-typedef struct ui_gizmo_result {
-    ns_bool active;
-    ns_bool changed;
-    i32 axis;
-    f64 tx, ty, tz;
-    f64 rx, ry, rz;
-    f64 sx, sy, sz;
-} ui_gizmo_result;
-
-typedef struct ui_scene {
-    void *handle;
-    ui_renderer *renderer;
-    ui_scene_mesh meshes[UI_SCENE_MAX_MESHES];
-    f32 view_projection[16];
-    f64 x, y, width, height;
-    i32 active_axis;
-    f64 last_pointer_x, last_pointer_y;
-    ui_gizmo_result gizmo_result;
-    ns_bool begun;
-} ui_scene;
-
-typedef struct ui_scene_projected {
-    f64 x, y, z, w;
-    u32 color;
-    f64 nx, ny, nz;
-} ui_scene_projected;
-
-typedef struct ui_scene_triangle {
-    ui_scene_projected a, b, c;
-    f64 depth;
-} ui_scene_triangle;
 
 typedef struct ui_theme { void *handle; } ui_theme;
 typedef struct ui_hit { ns_bool hovered; ns_bool pressed; } ui_hit;
@@ -352,10 +295,6 @@ static const char *ui_shader_src =
 "  VOut o; float2 pixel = in.pos + offset; float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
 "  o.pos = float4(ndc, 0.0, 1.0); o.pixel = pixel; o.uv = in.uv; o.col = float4(in.col) / 255.0; o.params = in.params; return o;\n"
 "}\n"
-"vertex VOut ui_vs_scene(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]]) {\n"
-"  VOut o; float2 ndc = float2((in.pos.x / screen.x) * 2.0 - 1.0, 1.0 - (in.pos.y / screen.y) * 2.0);\n"
-"  o.pos = float4(ndc, in.params.x * 0.5 + 0.5, 1.0); o.pixel = in.pos; o.uv = in.uv; o.col = float4(in.col) / 255.0; o.params = in.params; return o;\n"
-"}\n"
 "static inline half ui_median3(half r, half g, half b) { return max(min(r, g), min(max(r, g), b)); }\n"
 "static inline bool ui_clip_discard(VOut in, constant float4 *clip_rects) {\n"
 "  uint clip_idx = uint(round(max(in.params.w, 0.0)));\n"
@@ -390,89 +329,6 @@ static const char *ui_shader_src =
 "  float aa = max(fwidth(distance), 0.35); float opacity = 1.0 - smoothstep(-aa, aa, distance);\n"
 "  return float4(in.col.rgb, in.col.a * opacity);\n"
 "}\n";
-
-static const char *ui_scene_grid_shader_src =
-"#include <metal_stdlib>\n"
-"using namespace metal;\n"
-"struct VIn { float2 pos [[attribute(0)]]; float2 uv [[attribute(1)]]; uchar4 col [[attribute(2)]]; float4 params [[attribute(3)]]; };\n"
-"struct VOut { float4 pos [[position]]; float2 pixel; };\n"
-"struct GridUniforms { float4x4 inverse_view_projection; float4 viewport; float4 params; };\n"
-"vertex VOut ui_scene_grid_vs(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]]) {\n"
-"  VOut o; float2 ndc = float2((in.pos.x / screen.x) * 2.0 - 1.0, 1.0 - (in.pos.y / screen.y) * 2.0);\n"
-"  o.pos = float4(ndc, 0.0, 1.0); o.pixel = in.pos; return o;\n"
-"}\n"
-"static inline float grid_coverage(float2 p, float spacing, float radius_pixels) {\n"
-"  float2 deriv = max(abs(dfdx(p)) + abs(dfdy(p)), float2(1e-6));\n"
-"  float2 cell = abs(fract(p / spacing - 0.5) - 0.5) * spacing;\n"
-"  float2 pixel_distance = cell / deriv;\n"
-"  float2 line = 1.0 - smoothstep(float2(max(radius_pixels - 0.5, 0.0)), float2(radius_pixels + 0.5), pixel_distance);\n"
-"  float frequency_fade = 1.0 - smoothstep(spacing * 0.45, spacing * 0.95, max(deriv.x, deriv.y));\n"
-"  return max(line.x, line.y) * frequency_fade;\n"
-"}\n"
-"fragment float4 ui_scene_grid_fs(VOut in [[stage_in]], constant GridUniforms &grid [[buffer(2)]]) {\n"
-"  float2 uv = (in.pixel - grid.viewport.xy) / grid.viewport.zw;\n"
-"  float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n"
-"  float4 near_h = grid.inverse_view_projection * float4(ndc, -1.0, 1.0);\n"
-"  float4 far_h = grid.inverse_view_projection * float4(ndc, 1.0, 1.0);\n"
-"  float3 near_p = near_h.xyz / max(abs(near_h.w), 1e-6) * sign(near_h.w);\n"
-"  float3 far_p = far_h.xyz / max(abs(far_h.w), 1e-6) * sign(far_h.w);\n"
-"  float denom = far_p.y - near_p.y;\n"
-"  if (abs(denom) < 1e-6) return float4(0.0);\n"
-"  float ray_t = -near_p.y / denom;\n"
-"  if (ray_t < 0.0 || ray_t > 1.0) return float4(0.0);\n"
-"  float2 ground = mix(near_p, far_p, ray_t).xz;\n"
-"  float extent = grid.params.x;\n"
-"  float radial = length(ground);\n"
-"  float edge_width = max(fwidth(radial) * 1.5, extent * 0.008);\n"
-"  float edge = 1.0 - smoothstep(extent - edge_width, extent, radial);\n"
-"  if (edge <= 0.0) return float4(0.0);\n"
-"  float minor = grid_coverage(ground, grid.params.y, 0.52);\n"
-"  float major = grid_coverage(ground, grid.params.z, 1.15);\n"
-"  float line = max(minor, major);\n"
-"  return float4(0.0, 0.0, 0.0, line * edge);\n"
-"}\n";
-
-static ns_bool ui_mat4_inverse(const f32 m[16], f32 out[16]) {
-    f32 inv[16];
-    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] +
-             m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
-    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] -
-             m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
-    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] +
-             m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
-    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] -
-              m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
-    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] -
-             m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
-    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] +
-             m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
-    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] -
-             m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
-    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] +
-              m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
-    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] +
-             m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
-    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] -
-             m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
-    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] +
-              m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
-    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] -
-              m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
-    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] -
-             m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
-    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] +
-             m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
-    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] -
-              m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
-    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] +
-              m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
-
-    f32 determinant = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
-    if (fabsf(determinant) <= 1e-8f) return false;
-    determinant = 1.0f / determinant;
-    for (i32 i = 0; i < 16; i++) out[i] = inv[i] * determinant;
-    return true;
-}
 
 static f64 ui_clamp_f64(f64 v, f64 lo, f64 hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -787,27 +643,6 @@ static void ui_push_tri_colors(ui_renderer *r, f64 x0, f64 y0, u32 c0, f64 x1, f
     ui_emit_command(r, base, 3, UI_KIND_IMAGE);
 }
 
-static void ui_push_scene_triangle(ui_renderer *r,
-                                   f64 x0, f64 y0, f64 z0, u32 c0,
-                                   f64 x1, f64 y1, f64 z1, u32 c1,
-                                   f64 x2, f64 y2, f64 z2, u32 c2) {
-    ui_clip clip = ui_current_clip(r);
-    f64 min_x = fmin(x0, fmin(x1, x2));
-    f64 min_y = fmin(y0, fmin(y1, y2));
-    f64 max_x = fmax(x0, fmax(x1, x2));
-    f64 max_y = fmax(y0, fmax(y1, y2));
-    if (max_x <= clip.x || max_y <= clip.y || min_x >= clip.x + clip.w || min_y >= clip.y + clip.h) return;
-    const f64 clip_param = ui_clip_param(r, clip);
-    i32 base = r->vertex_count;
-    if (!ui_push_vertex(r, x0, y0, 0, 0, c0, z0, 0, 0, clip_param) ||
-        !ui_push_vertex(r, x1, y1, 0, 0, c1, z1, 0, 0, clip_param) ||
-        !ui_push_vertex(r, x2, y2, 0, 0, c2, z2, 0, 0, clip_param)) {
-        r->vertex_count = base;
-        return;
-    }
-    ui_emit_command(r, base, 3, UI_KIND_SCENE_MESH);
-}
-
 void ui_fill_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, u32 rgba, f64 feather) {
     if (!r || radius <= 0.0) return;
     r->current_texture_id = UI_WHITE_TEXTURE;
@@ -1031,12 +866,6 @@ static void ui_create_gpu_resources(ui_renderer *r) {
         .type = BUFFER_VERTEX,
         .usage = USAGE_DEFAULT,
     });
-    r->scene_grid_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
-        .size = (int)sizeof(ui_scene_grid_uniforms),
-        .type = BUFFER_UNIFORM,
-        .usage = USAGE_DEFAULT,
-    });
-
     u32 white = 0xffffffffu;
     r->white_texture = gpu_create_texture(&(gpu_texture_desc){
         .width = 1, .height = 1, .depth = 1,
@@ -1069,8 +898,6 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     shader_desc.fragment.source = ns_str_cstr(ui_shader_src);
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_image");
     r->shader_image = gpu_create_shader(&shader_desc);
-    shader_desc.vertex.entry = ns_str_cstr("ui_vs_scene");
-    r->shader_scene_mesh = gpu_create_shader(&shader_desc);
     shader_desc.vertex.entry = ns_str_cstr("ui_vs_batch");
     r->shader_batch = gpu_create_shader(&shader_desc);
     shader_desc.vertex.entry = ns_str_cstr("ui_vs");
@@ -1078,11 +905,6 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->shader_msdf = gpu_create_shader(&shader_desc);
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_arc_sdf");
     r->shader_arc_sdf = gpu_create_shader(&shader_desc);
-    shader_desc.vertex.source = ns_str_cstr(ui_scene_grid_shader_src);
-    shader_desc.vertex.entry = ns_str_cstr("ui_scene_grid_vs");
-    shader_desc.fragment.source = ns_str_cstr(ui_scene_grid_shader_src);
-    shader_desc.fragment.entry = ns_str_cstr("ui_scene_grid_fs");
-    r->shader_scene_grid = gpu_create_shader(&shader_desc);
 
     gpu_pipeline_desc pipe = {0};
     pipe.layout.buffers[0] = (gpu_vertex_buffer_layout_state){.stride = UI_VERTEX_STRIDE, .step_func = VERTEX_STEP_PER_VERTEX, .step_rate = 1};
@@ -1122,12 +944,6 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->pipeline_msdf = gpu_create_pipeline(&pipe);
     pipe.shader = r->shader_arc_sdf;
     r->pipeline_arc_sdf = gpu_create_pipeline(&pipe);
-    pipe.shader = r->shader_scene_grid;
-    r->pipeline_scene_grid = gpu_create_pipeline(&pipe);
-    pipe.shader = r->shader_scene_mesh;
-    pipe.depth.compare_func = COMPARE_LESS_EQUAL;
-    pipe.depth.write_enabled = true;
-    r->pipeline_scene_mesh = gpu_create_pipeline(&pipe);
 
     r->binding_white_image = gpu_create_binding(&(gpu_binding_desc){
         .pipeline = r->pipeline_image,
@@ -1145,21 +961,6 @@ static void ui_create_gpu_resources(ui_renderer *r) {
         },
         .textures = {{.texture = r->font_texture, .name = ns_str_cstr("tex")}},
     });
-    r->binding_scene_grid = gpu_create_binding(&(gpu_binding_desc){
-        .pipeline = r->pipeline_scene_grid,
-        .buffers = {
-            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-            {.buffer = r->scene_grid_buffer, .name = ns_str_cstr("grid")},
-        },
-    });
-    r->binding_scene_mesh = gpu_create_binding(&(gpu_binding_desc){
-        .pipeline = r->pipeline_scene_mesh,
-        .buffers = {
-            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-        },
-        .textures = {{.texture = r->white_texture, .name = ns_str_cstr("tex")}},
-    });
     r->binding_arc_sdf = gpu_create_binding(&(gpu_binding_desc){
         .pipeline = r->pipeline_arc_sdf,
         .buffers = {
@@ -1173,10 +974,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     });
     r->screen_pass = (gpu_render_pass){.id = 0};
     r->gpu_ready = r->screen_buffer.id && r->clip_buffer.id && r->vertex_buffer.id && r->white_texture.id &&
-                   r->font_texture.id && r->scene_grid_buffer.id && r->pipeline_image.id &&
-                   r->pipeline_batch.id && r->pipeline_msdf.id && r->pipeline_scene_grid.id &&
-                   r->pipeline_scene_mesh.id && r->pipeline_arc_sdf.id && r->binding_white_image.id &&
-                   r->binding_font_msdf.id && r->binding_scene_grid.id && r->binding_scene_mesh.id &&
+                   r->font_texture.id && r->pipeline_image.id && r->pipeline_batch.id &&
+                   r->pipeline_msdf.id && r->pipeline_arc_sdf.id && r->binding_white_image.id && r->binding_font_msdf.id &&
                    r->binding_arc_sdf.id && r->mesh.id;
 }
 
@@ -1369,15 +1168,8 @@ void ui_renderer_destroy(ui_renderer *r) {
     }
     if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
     if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
-    if (r->binding_scene_grid.id) gpu_destroy_binding(r->binding_scene_grid);
-    if (r->binding_scene_mesh.id) gpu_destroy_binding(r->binding_scene_mesh);
     if (r->binding_arc_sdf.id) gpu_destroy_binding(r->binding_arc_sdf);
-    if (r->scene_grid_buffer.id) gpu_destroy_buffer(r->scene_grid_buffer);
-    if (r->pipeline_scene_grid.id) gpu_destroy_pipeline(r->pipeline_scene_grid);
-    if (r->pipeline_scene_mesh.id) gpu_destroy_pipeline(r->pipeline_scene_mesh);
     if (r->pipeline_arc_sdf.id) gpu_destroy_pipeline(r->pipeline_arc_sdf);
-    if (r->shader_scene_grid.id) gpu_destroy_shader(r->shader_scene_grid);
-    if (r->shader_scene_mesh.id) gpu_destroy_shader(r->shader_scene_mesh);
     if (r->shader_arc_sdf.id) gpu_destroy_shader(r->shader_arc_sdf);
     for (i32 i = 0; i < 3; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
@@ -1685,12 +1477,6 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             gpu_update_buffer_desc(batch->offset_buffer, (ns_data){offset, sizeof(offset)});
             gpu_set_pipeline(r->pipeline_batch);
             gpu_set_binding(batch->binding);
-        } else if (cmd->kind == UI_KIND_SCENE_GRID) {
-            gpu_set_pipeline(r->pipeline_scene_grid);
-            gpu_set_binding(r->binding_scene_grid);
-        } else if (cmd->kind == UI_KIND_SCENE_MESH) {
-            gpu_set_pipeline(r->pipeline_scene_mesh);
-            gpu_set_binding(r->binding_scene_mesh);
         } else if (cmd->kind == UI_KIND_ARC_SDF) {
             gpu_set_pipeline(r->pipeline_arc_sdf);
             gpu_set_binding(r->binding_arc_sdf);
@@ -1776,229 +1562,11 @@ void ui_flush_overlay(ui_renderer *r, ui_color_rgba *clear) {
     ui_flush(r, clear);
 }
 
-static u32 ui_scene_pack(f64 r, f64 g, f64 b, f64 a) {
+static u32 ui_pack_rgba01(f64 r, f64 g, f64 b, f64 a) {
     r = ui_clamp_f64(r, 0.0, 1.0); g = ui_clamp_f64(g, 0.0, 1.0);
     b = ui_clamp_f64(b, 0.0, 1.0); a = ui_clamp_f64(a, 0.0, 1.0);
     return ((u32)(a * 255.0 + 0.5) << 24) | ((u32)(b * 255.0 + 0.5) << 16) |
            ((u32)(g * 255.0 + 0.5) << 8) | (u32)(r * 255.0 + 0.5);
-}
-
-static u32 ui_scene_shade(u32 color, f64 light, ns_bool selected) {
-    f64 r = (f64)(color & 0xffu) / 255.0;
-    f64 g = (f64)((color >> 8) & 0xffu) / 255.0;
-    f64 b = (f64)((color >> 16) & 0xffu) / 255.0;
-    f64 a = (f64)((color >> 24) & 0xffu) / 255.0;
-    light = ui_clamp_f64(light, 0.18, 1.0);
-    if (selected) { r = r * light * 0.75 + 0.12; g = g * light * 0.75 + 0.22; b = b * light * 0.75 + 0.15; }
-    else { r *= light; g *= light; b *= light; }
-    return ui_scene_pack(r, g, b, a);
-}
-
-static void ui_scene_stroke_depth(ui_renderer *r,
-                                  f64 x0, f64 y0, f64 z0,
-                                  f64 x1, f64 y1, f64 z1, u32 color) {
-    f64 dx = x1 - x0, dy = y1 - y0;
-    f64 length = hypot(dx, dy);
-    if (length <= 0.000001) return;
-    f64 px = (0.0 - dy) * 0.5 / length;
-    f64 py = dx * 0.5 / length;
-    ui_push_scene_triangle(r, x0 + px, y0 + py, z0, color,
-                           x1 + px, y1 + py, z1, color,
-                           x1 - px, y1 - py, z1, color);
-    ui_push_scene_triangle(r, x0 + px, y0 + py, z0, color,
-                           x1 - px, y1 - py, z1, color,
-                           x0 - px, y0 - py, z0, color);
-}
-
-static void ui_scene_mul_point(const f32 *m, f64 x, f64 y, f64 z, f64 *ox, f64 *oy, f64 *oz, f64 *ow) {
-    *ox = m[0] * x + m[4] * y + m[8] * z + m[12];
-    *oy = m[1] * x + m[5] * y + m[9] * z + m[13];
-    *oz = m[2] * x + m[6] * y + m[10] * z + m[14];
-    *ow = m[3] * x + m[7] * y + m[11] * z + m[15];
-}
-
-static ui_scene_projected ui_scene_project(ui_scene *scene, const f32 *model, f64 x, f64 y, f64 z,
-                                            f64 nx, f64 ny, f64 nz, u32 color) {
-    f64 wx, wy, wz, ww, cx, cy, cz, cw;
-    ui_scene_mul_point(model, x, y, z, &wx, &wy, &wz, &ww);
-    if (fabs(ww) > 0.000001 && fabs(ww - 1.0) > 0.000001) { wx /= ww; wy /= ww; wz /= ww; }
-    ui_scene_mul_point(scene->view_projection, wx, wy, wz, &cx, &cy, &cz, &cw);
-    f64 nnx = model[0] * nx + model[4] * ny + model[8] * nz;
-    f64 nny = model[1] * nx + model[5] * ny + model[9] * nz;
-    f64 nnz = model[2] * nx + model[6] * ny + model[10] * nz;
-    f64 nl = sqrt(nnx * nnx + nny * nny + nnz * nnz);
-    if (nl > 0.000001) { nnx /= nl; nny /= nl; nnz /= nl; }
-    ui_scene_projected out = {.w = cw, .color = color, .nx = nnx, .ny = nny, .nz = nnz};
-    if (fabs(cw) > 0.000001) {
-        f64 ndc_x = cx / cw, ndc_y = cy / cw;
-        out.z = cz / cw;
-        out.x = scene->x + (ndc_x * 0.5 + 0.5) * scene->width;
-        out.y = scene->y + (0.5 - ndc_y * 0.5) * scene->height;
-    }
-    return out;
-}
-
-static int ui_scene_triangle_compare(const void *a, const void *b) {
-    const ui_scene_triangle *ta = (const ui_scene_triangle *)a, *tb = (const ui_scene_triangle *)b;
-    return ta->depth < tb->depth ? 1 : (ta->depth > tb->depth ? -1 : 0);
-}
-
-ui_scene *ui_scene_create(ui_renderer *r) {
-    if (!r) return NULL;
-    ui_scene *scene = (ui_scene *)calloc(1, sizeof(ui_scene));
-    if (scene) { scene->handle = scene; scene->renderer = r; scene->active_axis = -1; }
-    return scene;
-}
-
-void ui_scene_destroy(ui_scene *scene) {
-    if (!scene) return;
-    for (i32 i = 1; i < UI_SCENE_MAX_MESHES; i++) { free(scene->meshes[i].vertices); free(scene->meshes[i].indices); }
-    free(scene);
-}
-
-i32 ui_scene_mesh_create(ui_scene *scene) {
-    if (!scene) return 0;
-    for (i32 i = 1; i < UI_SCENE_MAX_MESHES; i++) if (!scene->meshes[i].used) { scene->meshes[i].used = true; return i; }
-    return 0;
-}
-
-ns_bool ui_scene_mesh_update(ui_scene *scene, i32 mesh_id, f32 *vertices, i32 vertex_count, u32 *indices, i32 index_count) {
-    if (!scene || mesh_id <= 0 || mesh_id >= UI_SCENE_MAX_MESHES || !scene->meshes[mesh_id].used ||
-        !vertices || vertex_count < 0 || !indices || index_count < 0) return false;
-    ui_scene_mesh *mesh = &scene->meshes[mesh_id];
-    size_t vb = (size_t)vertex_count * UI_SCENE_VERTEX_FLOATS * sizeof(f32), ib = (size_t)index_count * sizeof(u32);
-    f32 *nv = vb ? (f32 *)malloc(vb) : NULL; u32 *ni = ib ? (u32 *)malloc(ib) : NULL;
-    if ((vb && !nv) || (ib && !ni)) { free(nv); free(ni); return false; }
-    if (vb) memcpy(nv, vertices, vb); if (ib) memcpy(ni, indices, ib);
-    free(mesh->vertices); free(mesh->indices);
-    mesh->vertices = nv; mesh->indices = ni; mesh->vertex_count = vertex_count; mesh->index_count = index_count;
-    return true;
-}
-
-void ui_scene_mesh_destroy(ui_scene *scene, i32 mesh_id) {
-    if (!scene || mesh_id <= 0 || mesh_id >= UI_SCENE_MAX_MESHES) return;
-    free(scene->meshes[mesh_id].vertices); free(scene->meshes[mesh_id].indices);
-    memset(&scene->meshes[mesh_id], 0, sizeof(scene->meshes[mesh_id]));
-}
-
-void ui_scene_begin(ui_scene *scene, f64 x, f64 y, f64 width, f64 height, f32 *view_projection, u32 background) {
-    if (!scene || !scene->renderer || !view_projection || width <= 0.0 || height <= 0.0) return;
-    scene->x = x; scene->y = y; scene->width = width; scene->height = height;
-    memcpy(scene->view_projection, view_projection, sizeof(scene->view_projection));
-    ui_fill_rect(scene->renderer, x, y, width, height, background, 0.0);
-    ui_push_clip(scene->renderer, x, y, width, height); scene->begun = true;
-}
-
-void ui_scene_draw_grid(ui_scene *scene, f64 extent, f64 minor_spacing, f64 major_spacing) {
-    if (!scene || !scene->begun || extent <= 0.0 || minor_spacing <= 0.0 || major_spacing <= 0.0) return;
-    ui_renderer *r = scene->renderer;
-    ui_scene_grid_uniforms grid = {0};
-    if (!r || !ui_mat4_inverse(scene->view_projection, grid.inverse_view_projection)) return;
-    grid.viewport[0] = (f32)scene->x;
-    grid.viewport[1] = (f32)scene->y;
-    grid.viewport[2] = (f32)scene->width;
-    grid.viewport[3] = (f32)scene->height;
-    grid.params[0] = (f32)extent;
-    grid.params[1] = (f32)minor_spacing;
-    grid.params[2] = (f32)major_spacing;
-    gpu_update_buffer_desc(r->scene_grid_buffer, (ns_data){&grid, sizeof(grid)});
-    r->current_texture_id = UI_WHITE_TEXTURE;
-    ui_push_quad_ex(r, scene->x, scene->y, scene->x + scene->width, scene->y + scene->height,
-                    0.0, 0.0, 1.0, 1.0, 0xffffffffu, UI_KIND_SCENE_GRID, 0.0, 0.0, 0.0);
-}
-
-void ui_scene_draw_mesh(ui_scene *scene, i32 mesh_id, f32 *model, i32 flags) {
-    if (!scene || !scene->begun || !model || mesh_id <= 0 || mesh_id >= UI_SCENE_MAX_MESHES) return;
-    ui_scene_mesh *mesh = &scene->meshes[mesh_id];
-    if (!mesh->used || !mesh->vertices || !mesh->indices || mesh->index_count < 3) return;
-    i32 count = mesh->index_count / 3, valid = 0;
-    ui_scene_triangle *triangles = (ui_scene_triangle *)malloc((size_t)count * sizeof(ui_scene_triangle));
-    if (!triangles) return;
-    for (i32 i = 0; i < count; i++) {
-        u32 ids[3] = {mesh->indices[i * 3], mesh->indices[i * 3 + 1], mesh->indices[i * 3 + 2]};
-        if (ids[0] >= (u32)mesh->vertex_count || ids[1] >= (u32)mesh->vertex_count || ids[2] >= (u32)mesh->vertex_count) continue;
-        ui_scene_projected p[3];
-        for (i32 j = 0; j < 3; j++) {
-            f32 *v = &mesh->vertices[ids[j] * UI_SCENE_VERTEX_FLOATS];
-            p[j] = ui_scene_project(scene, model, v[0], v[1], v[2], v[3], v[4], v[5], ui_scene_pack(v[6], v[7], v[8], v[9]));
-        }
-        if (p[0].w <= 0.0001 || p[1].w <= 0.0001 || p[2].w <= 0.0001) continue;
-        f64 area = (p[1].x - p[0].x) * (p[2].y - p[0].y) - (p[1].y - p[0].y) * (p[2].x - p[0].x);
-        if (!(flags & 4) && area >= 0.0) continue;
-        triangles[valid++] = (ui_scene_triangle){p[0], p[1], p[2], (p[0].z + p[1].z + p[2].z) / 3.0};
-    }
-    qsort(triangles, (size_t)valid, sizeof(ui_scene_triangle), ui_scene_triangle_compare);
-    for (i32 i = 0; i < valid; i++) {
-        ui_scene_triangle *t = &triangles[i];
-        f64 nx = (t->a.nx + t->b.nx + t->c.nx) / 3.0, ny = (t->a.ny + t->b.ny + t->c.ny) / 3.0;
-        f64 nz = (t->a.nz + t->b.nz + t->c.nz) / 3.0;
-        f64 light = 0.32 + 0.68 * fmax(0.0, nx * -0.32 + ny * 0.72 + nz * 0.62);
-        if (flags & 1) ui_push_scene_triangle(scene->renderer,
-            t->a.x, t->a.y, t->a.z, ui_scene_shade(t->a.color, light, flags & 8),
-            t->b.x, t->b.y, t->b.z, ui_scene_shade(t->b.color, light, flags & 8),
-            t->c.x, t->c.y, t->c.z, ui_scene_shade(t->c.color, light, flags & 8));
-        if (flags & 2) {
-            u32 edge = flags & 8 ? 0xfff56e4cu : 0x996c757du;
-            ui_scene_stroke_depth(scene->renderer, t->a.x, t->a.y, t->a.z, t->b.x, t->b.y, t->b.z, edge);
-            ui_scene_stroke_depth(scene->renderer, t->b.x, t->b.y, t->b.z, t->c.x, t->c.y, t->c.z, edge);
-            ui_scene_stroke_depth(scene->renderer, t->c.x, t->c.y, t->c.z, t->a.x, t->a.y, t->a.z, edge);
-        }
-    }
-    free(triangles);
-}
-
-static ns_bool ui_scene_project_position(ui_scene *scene, f32 *p, f64 *x, f64 *y) {
-    static const f32 identity[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
-    ui_scene_projected out = ui_scene_project(scene, identity, p[0], p[1], p[2], 0, 0, 1, 0xffffffffu);
-    if (out.w <= 0.0001) return false; *x = out.x; *y = out.y; return true;
-}
-
-void ui_scene_draw_lines(ui_scene *scene, f32 *positions, i32 point_count, u32 rgba, f64 thickness) {
-    if (!scene || !scene->begun || !positions) return;
-    for (i32 i = 0; i + 1 < point_count; i += 2) { f64 x0,y0,x1,y1;
-        if (ui_scene_project_position(scene, &positions[i*3], &x0, &y0) && ui_scene_project_position(scene, &positions[(i+1)*3], &x1, &y1))
-            ui_stroke_line(scene->renderer, x0, y0, x1, y1, thickness, rgba, 0.0); }
-}
-
-void ui_scene_draw_points(ui_scene *scene, f32 *positions, i32 point_count, u32 rgba, f64 radius) {
-    if (!scene || !scene->begun || !positions) return;
-    for (i32 i = 0; i < point_count; i++) { f64 x,y; if (ui_scene_project_position(scene, &positions[i*3], &x, &y)) ui_fill_circle(scene->renderer, x, y, radius, rgba, 0.0); }
-}
-
-void ui_scene_end(ui_scene *scene) { if (scene && scene->begun) { ui_pop_clip(scene->renderer); scene->begun = false; } }
-
-static f64 ui_scene_distance_segment(f64 px, f64 py, f64 ax, f64 ay, f64 bx, f64 by) {
-    f64 vx = bx-ax, vy = by-ay, vv = vx*vx+vy*vy;
-    f64 t = vv > 0.000001 ? ((px-ax)*vx+(py-ay)*vy)/vv : 0.0; t = ui_clamp_f64(t,0.0,1.0);
-    return hypot(px-(ax+vx*t), py-(ay+vy*t));
-}
-
-ui_gizmo_result *ui_gizmo(ui_scene *scene, i32 mode, f64 x, f64 y, f64 z, f64 px, f64 py,
-                           ns_bool down, ns_bool pressed, ns_bool released) {
-    if (!scene || !scene->renderer) return NULL;
-    memset(&scene->gizmo_result, 0, sizeof(scene->gizmo_result)); scene->gizmo_result.axis = scene->active_axis;
-    scene->gizmo_result.sx = scene->gizmo_result.sy = scene->gizmo_result.sz = 1.0;
-    f32 lines[18] = {(f32)x,(f32)y,(f32)z,(f32)(x+1),(f32)y,(f32)z,
-                     (f32)x,(f32)y,(f32)z,(f32)x,(f32)(y+1),(f32)z,
-                     (f32)x,(f32)y,(f32)z,(f32)x,(f32)y,(f32)(z+1)};
-    f64 cx,cy,ex[3],ey[3]; if (!ui_scene_project_position(scene, lines, &cx, &cy)) return &scene->gizmo_result;
-    for (i32 a=0;a<3;a++) ui_scene_project_position(scene,&lines[(a*2+1)*3],&ex[a],&ey[a]);
-    u32 colors[3]={0xff5c68f2u,0xff63d46au,0xffff985cu};
-    for(i32 a=0;a<3;a++){ui_stroke_line(scene->renderer,cx,cy,ex[a],ey[a],scene->active_axis==a?5.0:3.0,colors[a],0.0);ui_fill_circle(scene->renderer,ex[a],ey[a],mode==1?5.0:6.0,colors[a],0.0);}
-    if(pressed){f64 best=12.0;scene->active_axis=-1;for(i32 a=0;a<3;a++){f64 d=ui_scene_distance_segment(px,py,cx,cy,ex[a],ey[a]);if(d<best){best=d;scene->active_axis=a;}}scene->last_pointer_x=px;scene->last_pointer_y=py;}
-    if(down&&scene->active_axis>=0){i32 a=scene->active_axis;f64 vx=ex[a]-cx,vy=ey[a]-cy,l=hypot(vx,vy);if(l<.0001)l=1;vx/=l;vy/=l;f64 delta=(px-scene->last_pointer_x)*vx+(py-scene->last_pointer_y)*vy;
-        scene->gizmo_result.active=true;scene->gizmo_result.changed=fabs(delta)>.000001;scene->gizmo_result.axis=a;
-        if(mode==0){f64 q=delta/80.0;if(a==0)scene->gizmo_result.tx=q;if(a==1)scene->gizmo_result.ty=q;if(a==2)scene->gizmo_result.tz=q;}
-        else if(mode==1){f64 q=delta*.012;if(a==0)scene->gizmo_result.rx=q;if(a==1)scene->gizmo_result.ry=q;if(a==2)scene->gizmo_result.rz=q;}
-        else{f64 q=fmax(.05,1.0+delta/100.0);if(a==0)scene->gizmo_result.sx=q;if(a==1)scene->gizmo_result.sy=q;if(a==2)scene->gizmo_result.sz=q;}
-        scene->last_pointer_x=px;scene->last_pointer_y=py;}
-    if(released)scene->active_axis=-1; return &scene->gizmo_result;
-}
-
-ui_gizmo_result *ui_gizmo_compact(ui_scene *scene, i32 mode, f64 *input) {
-    if (!input) return ui_gizmo(scene, mode, 0.0, 0.0, 0.0, 0.0, 0.0, false, false, false);
-    return ui_gizmo(scene, mode, input[0], input[1], input[2], input[3], input[4],
-                    input[5] != 0.0, input[6] != 0.0, input[7] != 0.0);
 }
 
 static u32 ui_widget_hash(const char *text) {
@@ -2110,7 +1678,7 @@ ui_color_rgba *ui_color_picker(ui_widgets *w, const char *id, f64 x, f64 y, f64 
     for (i32 iy = 0; iy < cells; iy++) for (i32 ix = 0; ix < cells; ix++) {
         f64 rr = (f64)ix / (cells - 1), gg = 1.0 - (f64)iy / (cells - 1);
         ui_fill_rect(w->renderer, x + width * ix / cells, y + height * iy / cells, width / cells + 1.0, height / cells + 1.0,
-                     ui_scene_pack(rr, gg, 1.0 - fabs(rr - gg), 1.0), 0.0);
+                     ui_pack_rgba01(rr, gg, 1.0 - fabs(rr - gg), 1.0), 0.0);
     }
     ui_stroke_circle(w->renderer, x + result.r * width, y + (1.0 - result.g) * height, 5.0, 2.0, 0xffffffffu, 0.0);
     return &result;

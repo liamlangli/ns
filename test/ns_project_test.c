@@ -142,8 +142,10 @@ int main(void) {
     path(embedded_ffi, app_root, "bin/demo-app.nsproject/Runtime/src/ns_embedded_ffi.c");
     ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
                   text_has(embedded_ffi, "gpu_begin_render_pass(*(gpu_render_pass *)") &&
-                  text_has(embedded_ffi, "extern void ui_scene_draw_grid(void *, f64, f64, f64);"),
-              "embedded forwarding preserves pointer and value native struct ABIs.");
+                  text_has(embedded_ffi, "extern u32 gpu_create_pipeline_layout_indexed_ex") &&
+                  text_has(embedded_ffi, "extern u32 gpu_create_buffer_texture_binding") &&
+                  !text_has(embedded_ffi, "ui_scene_"),
+              "embedded forwarding preserves GPU ABIs without restoring the removed UI scene layer.");
     ns_expect(access(ui_asset, R_OK) == 0 && text_has(pbx, "latin_mono.json in Resources"),
               "Xcode app targets bundle the UI runtime assets.");
 #if defined(__APPLE__)

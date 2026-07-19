@@ -36,6 +36,9 @@ typedef struct ns_shader_emit {
     i32 *stage_ios; // struct symbol indices used as stage io (vs out == fs in)
 
     ns_shader_local *locals;
+    ns_bool uses_shadow_map;
+    ns_bool uses_texture_map;
+    ns_bool uses_scene_uniforms;
 } ns_shader_emit;
 
 #define ns_shader_try(x)                                                                                                                             \
@@ -252,6 +255,14 @@ static const ns_shader_builtin ns_shader_builtins[] = {
     {"length", "length", "length", "length", true}, {"distance", "distance", "distance", "distance", true},
     {"lerp", "mix", "mix", "lerp", false},         {"mix", "mix", "mix", "lerp", false},
     {"fract", "fract", "fract", "frac", false},
+    {"shader_sample_shadow", "ns_shadow_compare", "ns_shadow_compare", "ns_shadow_compare", true},
+    {"shader_sample_texture", "ns_texture_sample", "ns_texture_sample", "ns_texture_sample", false},
+    {"shader_transform_position", "ns_transform_position", "ns_transform_position", "ns_transform_position", false},
+    {"shader_transform_normal", "ns_transform_normal", "ns_transform_normal", "ns_transform_normal", false},
+    {"shader_shadow_clip_position", "ns_shadow_clip_position", "ns_shadow_clip_position", "ns_shadow_clip_position", false},
+    {"shader_scene_selected", "ns_scene_selected", "ns_scene_selected", "ns_scene_selected", true},
+    {"shader_scene_textured", "ns_scene_textured", "ns_scene_textured", "ns_scene_textured", true},
+    {"shader_scene_receives_shadow", "ns_scene_receives_shadow", "ns_scene_receives_shadow", "ns_scene_receives_shadow", true},
 };
 
 static const ns_shader_builtin *ns_shader_find_builtin(ns_str name) {
@@ -310,6 +321,16 @@ static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
         ns_str name = callee->primary_expr.token.val;
         const ns_shader_builtin *b = ns_shader_find_builtin(name);
         if (b) {
+            if (ns_str_starts_with(name, ns_str_cstr("shader_transform_")) ||
+                ns_str_equals(name, ns_str_cstr("shader_shadow_clip_position")) ||
+                ns_str_starts_with(name, ns_str_cstr("shader_scene_"))) {
+                ns_symbol *decl = ns_shader_find_global(e->vm, name);
+                if (decl && decl->type == NS_SYMBOL_FN) return decl->fn.ret;
+            }
+            if (ns_str_equals(name, ns_str_cstr("shader_sample_texture"))) {
+                ns_symbol *decl = ns_shader_find_global(e->vm, name);
+                if (decl && decl->type == NS_SYMBOL_FN) return decl->fn.ret;
+            }
             if (b->scalar_ret) return ns_type_f32;
             return n->call_expr.arg_count > 0 ? ns_shader_infer(e, n->next) : ns_type_unknown;
         }
@@ -389,6 +410,20 @@ static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth
     case NS_AST_CAST_EXPR: return ns_shader_collect_expr(e, n->cast_expr.expr, depth + 1);
     case NS_AST_CALL_EXPR: {
         ns_ast_t *callee = &e->ctx->nodes[n->call_expr.callee];
+        if (callee->type == NS_AST_PRIMARY_EXPR &&
+            ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_sample_shadow"))) {
+            e->uses_shadow_map = true;
+        }
+        if (callee->type == NS_AST_PRIMARY_EXPR &&
+            ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_sample_texture"))) {
+            e->uses_texture_map = true;
+        }
+        if (callee->type == NS_AST_PRIMARY_EXPR &&
+            (ns_str_starts_with(callee->primary_expr.token.val, ns_str_cstr("shader_transform_")) ||
+             ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_shadow_clip_position")) ||
+             ns_str_starts_with(callee->primary_expr.token.val, ns_str_cstr("shader_scene_")))) {
+            e->uses_scene_uniforms = true;
+        }
         if (callee->type == NS_AST_PRIMARY_EXPR && !ns_shader_find_builtin(callee->primary_expr.token.val)) {
             ns_symbol *s = ns_shader_find_global(e->vm, callee->primary_expr.token.val);
             if (s && s->type == NS_SYMBOL_FN) {
@@ -690,7 +725,59 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         ns_str name = callee->primary_expr.token.val;
         const ns_shader_builtin *b = ns_shader_find_builtin(name);
         if (b) {
+            ns_bool transform_position = ns_str_equals(name, ns_str_cstr("shader_transform_position"));
+            ns_bool transform_normal = ns_str_equals(name, ns_str_cstr("shader_transform_normal"));
+            ns_bool shadow_position = ns_str_equals(name, ns_str_cstr("shader_shadow_clip_position"));
+            ns_bool selected = ns_str_equals(name, ns_str_cstr("shader_scene_selected"));
+            ns_bool textured = ns_str_equals(name, ns_str_cstr("shader_scene_textured"));
+            ns_bool receives_shadow = ns_str_equals(name, ns_str_cstr("shader_scene_receives_shadow"));
+            ns_bool sample_texture = ns_str_equals(name, ns_str_cstr("shader_sample_texture"));
+            if (selected || textured || receives_shadow) {
+                if (n->call_expr.arg_count != 0) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: scene parameter intrinsic takes no arguments.");
+                if (e->target == NS_SHADER_HLSL) {
+                    ns_shader_cstr(dst, selected ? "ns_scene_params.x" : textured ? "ns_scene_params.y" : "ns_scene_params.z");
+                } else {
+                    ns_shader_cstr(dst, selected ? "ns_uniforms.params.x" : textured ? "ns_uniforms.params.y" : "ns_uniforms.params.z");
+                }
+                return ns_return_ok_void;
+            }
+            if (transform_position || transform_normal || shadow_position) {
+                if (n->call_expr.arg_count != 1) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: transform intrinsic expects one float3 argument.");
+                if (e->target == NS_SHADER_HLSL) {
+                    if (transform_position) ns_shader_cstr(dst, "mul(ns_view_projection, mul(ns_model, float4(");
+                    if (transform_normal) ns_shader_cstr(dst, "normalize((mul(ns_model, float4(");
+                    if (shadow_position) ns_shader_cstr(dst, "mul(ns_light_view_projection, mul(ns_model, float4(");
+                    ns_shader_try(ns_shader_emit_expr(e, n->next, dst));
+                    if (transform_position || shadow_position) ns_shader_cstr(dst, ", 1.0)))");
+                    if (transform_normal) ns_shader_cstr(dst, ", 0.0))).xyz)");
+                } else {
+                    if (transform_position) ns_shader_cstr(dst, "(ns_uniforms.view_projection * (ns_uniforms.model * ");
+                    if (transform_normal) ns_shader_cstr(dst, "normalize((ns_uniforms.model * ");
+                    if (shadow_position) ns_shader_cstr(dst, "(ns_uniforms.light_view_projection * (ns_uniforms.model * ");
+                    ns_shader_cstr(dst, e->target == NS_SHADER_GLSL_VULKAN ? "vec4(" : "float4(");
+                    ns_shader_try(ns_shader_emit_expr(e, n->next, dst));
+                    if (transform_position || shadow_position) ns_shader_cstr(dst, ", 1.0)))");
+                    if (transform_normal) ns_shader_cstr(dst, ", 0.0)).xyz)");
+                }
+                return ns_return_ok_void;
+            }
+            if (sample_texture) {
+                if (n->call_expr.arg_count != 1) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_sample_texture expects one float2 argument.");
+                ns_shader_cstr(dst, e->target == NS_SHADER_MSL ? "ns_texture_sample(ns_texture_map, " : "ns_texture_sample(");
+                ns_shader_try(ns_shader_emit_expr(e, n->next, dst));
+                ns_shader_cstr(dst, ")");
+                return ns_return_ok_void;
+            }
             ns_shader_cstr(dst, ns_shader_builtin_name(b, e->target));
+            if (ns_str_equals(name, ns_str_cstr("shader_sample_shadow")) && e->target == NS_SHADER_MSL) {
+                ns_shader_cstr(dst, "(ns_shadow_map, ");
+                if (n->call_expr.arg_count != 1) {
+                    return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_sample_shadow expects one float3 argument.");
+                }
+                ns_shader_try(ns_shader_emit_expr(e, n->next, dst));
+                ns_shader_cstr(dst, ")");
+                return ns_return_ok_void;
+            }
         } else {
             ns_symbol *s = ns_shader_find_global(e->vm, name);
             if (!s || s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || !ns_shader_is_main_tu(s)) {
@@ -1059,6 +1146,15 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         ns_shader_str(&e->out, s->fn.args[a].name);
         if (e->target == NS_SHADER_MSL && stage != NS_SHADER_STAGE_AUTO) ns_shader_cstr(&e->out, " [[stage_in]]");
     }
+    if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_FRAGMENT && e->uses_shadow_map) {
+        ns_shader_cstr(&e->out, ", depth2d<float> ns_shadow_map [[texture(0)]]");
+    }
+    if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_FRAGMENT && e->uses_texture_map) {
+        ns_shader_cstr(&e->out, ", texture2d<float> ns_texture_map [[texture(1)]]");
+    }
+    if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_VERTEX && e->uses_scene_uniforms) {
+        ns_shader_cstr(&e->out, ", constant ns_scene_uniforms& ns_uniforms [[buffer(1)]]");
+    }
     ns_shader_cstr(&e->out, ")");
     if (e->target == NS_SHADER_HLSL && stage == NS_SHADER_STAGE_FRAGMENT) ns_shader_cstr(&e->out, " : SV_Target");
     ns_shader_cstr(&e->out, " ");
@@ -1315,6 +1411,86 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     if (target == NS_SHADER_MSL) ns_shader_cstr(&e.out, "#include <metal_stdlib>\nusing namespace metal;\n\n");
     if (target == NS_SHADER_GLSL_VULKAN) ns_shader_cstr(&e.out, "#version 450\n\n");
     if (target == NS_SHADER_HLSL) ns_shader_cstr(&e.out, "\n");
+    if (e.uses_scene_uniforms && target == NS_SHADER_MSL) {
+        ns_shader_cstr(&e.out,
+            "struct ns_scene_uniforms {\n"
+            "    float4x4 model;\n"
+            "    float4x4 view_projection;\n"
+            "    float4x4 light_view_projection;\n"
+            "    float4 params;\n"
+            "};\n\n");
+    }
+    if (e.uses_scene_uniforms && target == NS_SHADER_GLSL_VULKAN) {
+        ns_shader_cstr(&e.out,
+            "layout(set = 0, binding = 2, std140) uniform ns_scene_uniform_block {\n"
+            "    mat4 model; mat4 view_projection; mat4 light_view_projection; vec4 params;\n"
+            "} ns_uniforms;\n\n");
+    }
+    if (e.uses_scene_uniforms && target == NS_SHADER_HLSL) {
+        ns_shader_cstr(&e.out,
+            "cbuffer ns_uniforms : register(b0) {\n"
+            "    column_major float4x4 ns_model;\n"
+            "    column_major float4x4 ns_view_projection;\n"
+            "    column_major float4x4 ns_light_view_projection;\n"
+            "    float4 ns_scene_params;\n"
+            "};\n\n");
+    }
+    if (e.uses_shadow_map && target == NS_SHADER_MSL) {
+        ns_shader_cstr(&e.out,
+            "inline float ns_shadow_compare(depth2d<float> map, float3 coord) {\n"
+            "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) return 1.0;\n"
+            "    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear, compare_func::less_equal);\n"
+            "    float2 texel = 1.0 / float2(map.get_width(), map.get_height());\n"
+            "    float lit = 0.0;\n"
+            "    for (int y = -1; y <= 1; ++y) for (int x = -1; x <= 1; ++x)\n"
+            "        lit += map.sample_compare(s, coord.xy + float2(x, y) * texel, coord.z - 0.005);\n"
+            "    return lit / 9.0;\n"
+            "}\n\n");
+    }
+    if (e.uses_shadow_map && target == NS_SHADER_GLSL_VULKAN) {
+        ns_shader_cstr(&e.out,
+            "layout(set = 0, binding = 0) uniform sampler2DShadow ns_shadow_map;\n"
+            "float ns_shadow_compare(vec3 coord) {\n"
+            "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) return 1.0;\n"
+            "    vec2 texel = 1.0 / vec2(textureSize(ns_shadow_map, 0)); float lit = 0.0;\n"
+            "    for (int y = -1; y <= 1; ++y) for (int x = -1; x <= 1; ++x)\n"
+            "        lit += texture(ns_shadow_map, vec3(coord.xy + vec2(x, y) * texel, coord.z - 0.005));\n"
+            "    return lit / 9.0;\n"
+            "}\n\n");
+    }
+    if (e.uses_shadow_map && target == NS_SHADER_HLSL) {
+        ns_shader_cstr(&e.out,
+            "Texture2D<float> ns_shadow_map : register(t0);\n"
+            "SamplerComparisonState ns_shadow_sampler : register(s0);\n"
+            "float ns_shadow_compare(float3 coord) {\n"
+            "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) return 1.0;\n"
+            "    uint w, h; ns_shadow_map.GetDimensions(w, h); float lit = 0.0;\n"
+            "    float2 texel = 1.0 / float2(w, h);\n"
+            "    for (int y = -1; y <= 1; ++y) for (int x = -1; x <= 1; ++x)\n"
+            "        lit += ns_shadow_map.SampleCmpLevelZero(ns_shadow_sampler, coord.xy + float2(x, y) * texel, coord.z - 0.005);\n"
+            "    return lit / 9.0;\n"
+            "}\n\n");
+    }
+    if (e.uses_texture_map && target == NS_SHADER_MSL) {
+        ns_shader_cstr(&e.out,
+            "inline float4 ns_texture_sample(texture2d<float> map, float2 coord) {\n"
+            "    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);\n"
+            "    return map.sample(s, coord);\n"
+            "}\n\n");
+    }
+    if (e.uses_texture_map && target == NS_SHADER_GLSL_VULKAN) {
+        ns_shader_cstr(&e.out,
+            "layout(set = 0, binding = 1) uniform sampler2D ns_texture_map;\n"
+            "vec4 ns_texture_sample(vec2 coord) { return texture(ns_texture_map, coord); }\n\n");
+    }
+    if (e.uses_texture_map && target == NS_SHADER_HLSL) {
+        ns_shader_cstr(&e.out,
+            "Texture2D<float4> ns_texture_map : register(t1);\n"
+            "float4 ns_texture_sample(float2 coord) {\n"
+            "    uint w, h; ns_texture_map.GetDimensions(w, h);\n"
+            "    return ns_texture_map.Load(int3(int2(saturate(coord) * float2(w - 1, h - 1)), 0));\n"
+            "}\n\n");
+    }
 
     // structs (dependency order), helper fns (callees first), entries
     for (i32 i = 0, l = (i32)ns_array_length(e.structs); i < l; ++i) {

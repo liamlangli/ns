@@ -456,6 +456,7 @@ typedef struct gpu_state_mtl {
     u32 binding_count;
     u32 mesh_count;
     u32 render_pass_count;
+    u32 screen_pass_count;
 
 } gpu_state_mtl;
 
@@ -611,10 +612,12 @@ ns_bool gpu_request_device(view* v) {
     _state.binding_count = 1;
     _state.mesh_count = 1;
     _state.render_pass_count = 1;
+    _state.screen_pass_count = 0;
     _state.render_passes[0] = (gpu_render_pass_mtl){
         .desc = [MTLRenderPassDescriptor new],
         .screen = true,
     };
+    _state.render_passes[0].desc.colorAttachments[0].clearColor = MTLClearColorMake(0.06, 0.07, 0.08, 1.0);
     
     return true;
 }
@@ -644,7 +647,10 @@ gpu_texture gpu_create_texture(gpu_texture_desc *desc) {
         _desc.arrayLength = 1;
     
     _desc.resourceOptions = _mtl_resource_options(desc->resource_usage);
-    _desc.usage = MTLTextureUsageShaderRead;
+    _desc.usage = 0;
+    if (desc->usage == TEXTURE_USAGE_DEFAULT || (desc->usage & TEXTURE_USAGE_READ)) _desc.usage |= MTLTextureUsageShaderRead;
+    if (desc->usage & TEXTURE_USAGE_WRITE) _desc.usage |= MTLTextureUsageShaderWrite;
+    if (desc->usage & TEXTURE_USAGE_RENDER_TARGET) _desc.usage |= MTLTextureUsageRenderTarget;
 
     id<MTLTexture> texture = [_state.device.device newTextureWithDescriptor: _desc];
     gpu_texture_mtl _texture = (gpu_texture_mtl){
@@ -925,7 +931,7 @@ gpu_render_pass gpu_create_render_pass(gpu_render_pass_desc *desc) {
             gpu_color c = color->clear_value;
             pass_desc.colorAttachments[i].clearColor = MTLClearColorMake(c.r, c.g, c.b, c.a);
         }
-        if (desc->depth.desc.texture.id == 0) {
+        if (desc->depth.desc.texture.id != 0) {
             const gpu_texture_mtl depth_stencil_texture = _state.textures[desc->depth.desc.texture.id];
             pass_desc.depthAttachment.texture = depth_stencil_texture.texture;
             pass_desc.depthAttachment.storeAction = MTLStoreActionStore;
@@ -966,6 +972,7 @@ void gpu_mtl_begin_frame(MTKView *view) {
     _state.cmd_buffer = [_state.cmd_queue commandBuffer];
     [_state.cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> _) { dispatch_semaphore_signal(_state.semaphore); }];
     _state.cur_drawable = [view currentDrawable];
+    _state.screen_pass_count = 0;
 }
 
 void gpu_begin_render_pass(gpu_render_pass pass) {
@@ -984,12 +991,12 @@ void gpu_begin_render_pass(gpu_render_pass pass) {
         }
         _pass.desc.colorAttachments[0].texture = _state.cur_drawable.texture;
         _pass.desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-        _pass.desc.colorAttachments[0].loadAction = MTLLoadActionClear;
-        _pass.desc.colorAttachments[0].clearColor = MTLClearColorMake(0.06, 0.07, 0.08, 1.0);
+        _pass.desc.colorAttachments[0].loadAction = _state.screen_pass_count == 0 ? MTLLoadActionClear : MTLLoadActionLoad;
         _pass.desc.depthAttachment.texture = _state.swapchain.depth_stencil_texture;
         _pass.desc.depthAttachment.storeAction = MTLStoreActionDontCare;
         _pass.desc.depthAttachment.loadAction = MTLLoadActionClear;
         _pass.desc.depthAttachment.clearDepth = 1.0;
+        _state.screen_pass_count += 1;
     }
     _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor: _pass.desc];
 }

@@ -25,6 +25,7 @@
 static const char *ns_shader_test_src =
     "use std\n"
     "use simd\n"
+    "use shader\n"
     "struct VertexData {\n"
     "    position: float3,\n"
     "    uv: float2\n"
@@ -50,6 +51,26 @@ static const char *ns_shader_test_src =
     "}\n"
     "fn fs_main(data: FragmentInput) float4 {\n"
     "    return brighten(data.color, half_gain(0.5 as f32))\n"
+    "}\n"
+    "fn fs_shadow(data: FragmentInput) float4 {\n"
+    "    let uv = data.uv\n"
+    "    let position = data.position\n"
+    "    let visibility = shader_sample_shadow(float3 { x: uv.x, y: uv.y, z: position.z })\n"
+    "    return brighten(data.color, visibility)\n"
+    "}\n"
+    "fn vs_scene(data: VertexData) FragmentInput {\n"
+    "    let normal = shader_transform_normal(data.position)\n"
+    "    let shadow_position = shader_shadow_clip_position(data.position)\n"
+    "    return FragmentInput {\n"
+    "        position: shader_transform_position(data.position),\n"
+    "        uv: data.uv,\n"
+    "        color: float4 { x: normal.x, y: normal.y, z: shadow_position.z, w: shader_scene_selected() },\n"
+    "    }\n"
+    "}\n"
+    "fn fs_texture(data: FragmentInput) float4 {\n"
+    "    let texture_color = shader_sample_texture(data.uv)\n"
+    "    let gain = shader_scene_selected() + shader_scene_textured() + shader_scene_receives_shadow()\n"
+    "    return brighten(texture_color, gain)\n"
     "}\n"
     "fn cs_main() void {\n"
     "    let n = 40 + 2\n"
@@ -130,8 +151,12 @@ int main() {
 
     i32 vs = ns_shader_test_fn(&vm, "vs_main");
     i32 fs = ns_shader_test_fn(&vm, "fs_main");
+    i32 fs_shadow = ns_shader_test_fn(&vm, "fs_shadow");
+    i32 vs_scene = ns_shader_test_fn(&vm, "vs_scene");
+    i32 fs_texture = ns_shader_test_fn(&vm, "fs_texture");
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
-    ns_expect(vs >= 0 && fs >= 0 && cs >= 0, "shader entry symbols exist.");
+    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && cs >= 0,
+              "shader entry symbols exist.");
 
     // --- target/stage helpers ---
     ns_expect(ns_shader_target_from_str(ns_str_cstr("msl")) == NS_SHADER_MSL, "target msl resolves.");
@@ -163,6 +188,56 @@ int main() {
             ns_expect(ns_shader_test_has(r.r, "float3 pos = data.position"), "msl let binding types are inferred.");
             ns_array_free(r.r.data);
         }
+    }
+
+    // --- GPU-resident scene intrinsics: matrices, flags, and material texture ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, vs_scene, NS_SHADER_MSL, NS_SHADER_STAGE_VERTEX);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "struct ns_scene_uniforms") &&
+                      ns_shader_test_has(r.r, "[[buffer(1)]]") && ns_shader_test_has(r.r, "ns_uniforms.view_projection") &&
+                      ns_shader_test_has(r.r, "ns_uniforms.light_view_projection") && ns_shader_test_has(r.r, "ns_uniforms.model"),
+                  "msl scene vertex intrinsics use the shared transform uniform buffer.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, vs_scene, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_VERTEX);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "uniform ns_scene_uniform_block") &&
+                      ns_shader_test_has(r.r, "ns_uniforms.view_projection") && ns_shader_test_has(r.r, "ns_uniforms.model"),
+                  "glsl scene vertex intrinsics use the shared transform uniform block.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, vs_scene, NS_SHADER_HLSL, NS_SHADER_STAGE_VERTEX);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "cbuffer ns_uniforms") &&
+                      ns_shader_test_has(r.r, "mul(ns_view_projection") && ns_shader_test_has(r.r, "mul(ns_model"),
+                  "hlsl scene vertex intrinsics use the shared transform constant buffer.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_texture, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "texture2d<float> ns_texture_map [[texture(1)]]") &&
+                      ns_shader_test_has(r.r, "ns_texture_sample(ns_texture_map") && ns_shader_test_has(r.r, "ns_uniforms.params"),
+                  "msl material texture and scene flags lower to GPU resources.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- shadow-map intrinsic: resource declaration + 3x3 PCF lowering ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, fs_shadow, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "depth2d<float> ns_shadow_map [[texture(0)]]") &&
+                      ns_shader_test_has(r.r, "sample_compare") && ns_shader_test_has(r.r, "compare_func::less_equal") &&
+                      ns_shader_test_has(r.r, "lit / 9.0"),
+                  "msl shadow sampling binds a comparison depth texture and emits PCF.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_shadow, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "uniform sampler2DShadow ns_shadow_map") &&
+                      ns_shader_test_has(r.r, "texture(ns_shadow_map, vec3") && ns_shader_test_has(r.r, "lit / 9.0"),
+                  "glsl shadow sampling uses comparison sampling with PCF.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_shadow, NS_SHADER_HLSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "SamplerComparisonState ns_shadow_sampler") &&
+                      ns_shader_test_has(r.r, "SampleCmpLevelZero") && ns_shader_test_has(r.r, "lit / 9.0"),
+                  "hlsl shadow sampling uses comparison sampling with PCF.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 
     // --- compute: zero-parameter void fns become native compute entries ---
@@ -267,7 +342,7 @@ int main() {
     {
         const char *src =
             "use gpu\n"
-            "fn cs_noop() void { let n = 1 }\n"
+            "fn cs_noop() void {}\n"
             "fn main() bool { return !dispatch_gpu(cs_noop, 1, 1, 1) }\n";
         ns_expect(ns_shader_eval_bool(src), "dispatch_gpu transpiles compute code and calls the gpu dylib backend.");
     }

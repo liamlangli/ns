@@ -1,5 +1,7 @@
 mod shader
 
+use simd
+
 // Transcode ns fns to shader source text at runtime. These fns are VM-internal
 // intrinsics (like std): the transpiler walks the fn-body ast inside the
 // interpreter, so there is no shader dylib.
@@ -26,3 +28,22 @@ ref fn shader_transpile_stage(f: any, target: str, stage: str) str
 // Entry-point name for gpu_shader_stage_desc.entry: the fn name for msl/hlsl,
 // "main" for glsl (the generated wrapper).
 ref fn shader_entry(f: any, target: str) str
+
+// Fragment-only shadow-map lookup. `coord.xy` is normalized texture space and
+// `coord.z` is the receiver depth in the light projection. The transpiler
+// lowers this to a small 3x3 PCF comparison against the depth texture bound as
+// `ns_shadow_map`; it is not evaluated by the Nano Script VM.
+ref fn shader_sample_shadow(coord: float3) f32
+
+// Scene transform intrinsics backed by the `ns_uniforms` buffer supplied by a
+// generic gpu binding. They keep application-owned vertex shaders in ns while
+// moving model/camera/light matrix work onto the GPU.
+ref fn shader_transform_position(position: float3) float4
+ref fn shader_transform_normal(normal: float3) float3
+ref fn shader_shadow_clip_position(position: float3) float4
+ref fn shader_scene_selected() f32
+ref fn shader_scene_textured() f32
+ref fn shader_scene_receives_shadow() f32
+
+// Sample the regular RGBA texture bound as `ns_texture_map` at texture slot 1.
+ref fn shader_sample_texture(coord: float2) float4

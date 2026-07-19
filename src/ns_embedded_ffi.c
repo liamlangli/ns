@@ -75,19 +75,6 @@ extern void ui_flush(void *, ui_color_rgba *);
 extern void ui_flush_overlay(void *, ui_color_rgba *);
 extern i32 ui_canvas_width(void *);
 extern i32 ui_canvas_height(void *);
-extern void * ui_scene_create(void *);
-extern void ui_scene_destroy(void *);
-extern i32 ui_scene_mesh_create(void *);
-extern ns_bool ui_scene_mesh_update(void *, i32, void *, i32, void *, i32);
-extern void ui_scene_mesh_destroy(void *, i32);
-extern void ui_scene_begin(void *, f64, f64, f64, f64, void *, u32);
-extern void ui_scene_draw_grid(void *, f64, f64, f64);
-extern void ui_scene_draw_mesh(void *, i32, void *, i32);
-extern void ui_scene_draw_lines(void *, void *, i32, u32, f64);
-extern void ui_scene_draw_points(void *, void *, i32, u32, f64);
-extern void ui_scene_end(void *);
-extern void * ui_gizmo(void *, i32, f64, f64, f64, f64, f64, ns_bool, ns_bool, ns_bool);
-extern void * ui_gizmo_compact(void *, i32, void *);
 extern i32 ui_atlas_load(void *, const char *);
 extern void ui_atlas_destroy(void *, i32);
 extern i32 ui_atlas_width(void *, i32);
@@ -197,17 +184,32 @@ extern void gpu_destroy_device(void);
 extern const char * gpu_shader_target(void);
 extern ns_bool gpu_dispatch_compute_source(const char *, const char *, i32, i32, i32);
 extern u32 gpu_create_buffer(i32, i32);
+extern u32 gpu_create_index_buffer(i32, i32);
+extern u32 gpu_create_uniform_buffer(i32, i32);
 extern void gpu_update_buffer(u32, void *, i32);
+extern void gpu_update_texture_id(u32, void *, i32);
 extern u32 gpu_create_shader_source(const char *, const char *, const char *, const char *);
 extern u32 gpu_create_pipeline_layout(u32, i32, void *, void *, void *, i32, i32, i32);
+extern u32 gpu_create_pipeline_layout_ex(u32, i32, void *, void *, void *, i32, i32, i32, i32, i32, ns_bool, i32, ns_bool);
+extern u32 gpu_create_pipeline_layout_indexed_ex(u32, i32, void *, void *, void *, i32, i32, i32, i32, i32, i32, ns_bool, i32, ns_bool);
 extern u32 gpu_create_mesh_1(u32, u32);
+extern u32 gpu_create_mesh_indexed(u32, u32, u32, i32);
+extern u32 gpu_create_texture_2d(i32, i32, i32, i32);
+extern u32 gpu_create_texture_binding(u32, u32, const char *);
+extern u32 gpu_create_buffer_texture_binding(u32, u32, const char *, u32, const char *, u32, const char *);
+extern u32 gpu_create_depth_pass(u32);
+extern u32 gpu_create_screen_pass(f64, f64, f64, f64);
+extern void gpu_destroy_texture_id(u32);
+extern void gpu_destroy_binding_id(u32);
 extern void gpu_destroy_buffer_id(u32);
 extern void gpu_destroy_shader_id(u32);
 extern void gpu_destroy_pipeline_id(u32);
 extern void gpu_destroy_mesh_id(u32);
+extern void gpu_destroy_render_pass_id(u32);
 extern void gpu_begin_render_pass_id(u32);
 extern void gpu_set_pipeline_id(u32);
 extern void gpu_set_mesh_id(u32);
+extern void gpu_set_binding_id(u32);
 extern void gpu_begin_render_pass(gpu_render_pass);
 extern void gpu_set_viewport(i32, i32, i32, i32);
 extern void gpu_set_scissor(i32, i32, i32, i32);
@@ -449,71 +451,6 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_canvas_height")) {
         i32 result = ui_canvas_height(ns_embedded_arg_pointer(vm, 0));
         ns_embedded_return_scalar(vm, &result, sizeof(result));
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_create")) {
-        void *result = ui_scene_create(ns_embedded_arg_pointer(vm, 0));
-        ns_embedded_return_pointer(vm, result);
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_destroy")) {
-        ui_scene_destroy(ns_embedded_arg_pointer(vm, 0));
-        call->ret = ns_nil;
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_mesh_create")) {
-        i32 result = ui_scene_mesh_create(ns_embedded_arg_pointer(vm, 0));
-        ns_embedded_return_scalar(vm, &result, sizeof(result));
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_mesh_update")) {
-        ns_bool result = ui_scene_mesh_update(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_pointer(vm, 2), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_embedded_arg_pointer(vm, 4), ns_eval_number_i32(vm, ns_embedded_arg(vm, 5)));
-        ns_embedded_return_scalar(vm, &result, sizeof(result));
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_mesh_destroy")) {
-        ui_scene_mesh_destroy(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)));
-        call->ret = ns_nil;
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_begin")) {
-        ui_scene_begin(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_embedded_arg_pointer(vm, 5), ns_eval_number_u32(vm, ns_embedded_arg(vm, 6)));
-        call->ret = ns_nil;
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_draw_grid")) {
-        ui_scene_draw_grid(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)));
-        call->ret = ns_nil;
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_draw_mesh")) {
-        ui_scene_draw_mesh(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_pointer(vm, 2), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)));
-        call->ret = ns_nil;
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_draw_lines")) {
-        ui_scene_draw_lines(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_pointer(vm, 1), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)));
-        call->ret = ns_nil;
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_draw_points")) {
-        ui_scene_draw_points(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_pointer(vm, 1), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)));
-        call->ret = ns_nil;
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_scene_end")) {
-        ui_scene_end(ns_embedded_arg_pointer(vm, 0));
-        call->ret = ns_nil;
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_gizmo")) {
-        void *result = ui_gizmo(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_bool(vm, ns_embedded_arg(vm, 7)), ns_eval_bool(vm, ns_embedded_arg(vm, 8)), ns_eval_bool(vm, ns_embedded_arg(vm, 9)));
-        ns_embedded_return_pointer(vm, result);
-        return ns_return_ok(bool, true);
-    }
-    else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_gizmo_compact")) {
-        void *result = ui_gizmo_compact(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_pointer(vm, 2));
-        ns_embedded_return_pointer(vm, result);
         return ns_return_ok(bool, true);
     }
     else if (ns_str_equals_STR(fn->lib, "ui") && ns_str_equals_STR(fn->name, "ui_atlas_load")) {
@@ -1076,8 +1013,23 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
         ns_embedded_return_scalar(vm, &result, sizeof(result));
         return ns_return_ok(bool, true);
     }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_index_buffer")) {
+        u32 result = gpu_create_index_buffer(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_uniform_buffer")) {
+        u32 result = gpu_create_uniform_buffer(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
     else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_update_buffer")) {
         gpu_update_buffer(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_embedded_arg_pointer(vm, 1), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_update_texture_id")) {
+        gpu_update_texture_id(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_embedded_arg_pointer(vm, 1), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }
@@ -1091,9 +1043,59 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
         ns_embedded_return_scalar(vm, &result, sizeof(result));
         return ns_return_ok(bool, true);
     }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_pipeline_layout_ex")) {
+        u32 result = gpu_create_pipeline_layout_ex(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_pointer(vm, 2), ns_embedded_arg_pointer(vm, 3), ns_embedded_arg_pointer(vm, 4), ns_eval_number_i32(vm, ns_embedded_arg(vm, 5)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 6)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 7)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 8)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 9)), ns_eval_bool(vm, ns_embedded_arg(vm, 10)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 11)), ns_eval_bool(vm, ns_embedded_arg(vm, 12)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_pipeline_layout_indexed_ex")) {
+        u32 result = gpu_create_pipeline_layout_indexed_ex(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_pointer(vm, 2), ns_embedded_arg_pointer(vm, 3), ns_embedded_arg_pointer(vm, 4), ns_eval_number_i32(vm, ns_embedded_arg(vm, 5)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 6)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 7)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 8)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 9)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 10)), ns_eval_bool(vm, ns_embedded_arg(vm, 11)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 12)), ns_eval_bool(vm, ns_embedded_arg(vm, 13)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
     else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_mesh_1")) {
         u32 result = gpu_create_mesh_1(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 1)));
         ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_mesh_indexed")) {
+        u32 result = gpu_create_mesh_indexed(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_texture_2d")) {
+        u32 result = gpu_create_texture_2d(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_texture_binding")) {
+        u32 result = gpu_create_texture_binding(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_str(vm, 2));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_buffer_texture_binding")) {
+        u32 result = gpu_create_buffer_texture_binding(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 1)), ns_embedded_arg_str(vm, 2), ns_eval_number_u32(vm, ns_embedded_arg(vm, 3)), ns_embedded_arg_str(vm, 4), ns_eval_number_u32(vm, ns_embedded_arg(vm, 5)), ns_embedded_arg_str(vm, 6));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_depth_pass")) {
+        u32 result = gpu_create_depth_pass(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_create_screen_pass")) {
+        u32 result = gpu_create_screen_pass(ns_eval_number_f64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_destroy_texture_id")) {
+        gpu_destroy_texture_id(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_destroy_binding_id")) {
+        gpu_destroy_binding_id(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }
     else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_destroy_buffer_id")) {
@@ -1116,6 +1118,11 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_destroy_render_pass_id")) {
+        gpu_destroy_render_pass_id(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
     else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_begin_render_pass_id")) {
         gpu_begin_render_pass_id(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
         call->ret = ns_nil;
@@ -1128,6 +1135,11 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     }
     else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_set_mesh_id")) {
         gpu_set_mesh_id(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_set_binding_id")) {
+        gpu_set_binding_id(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }

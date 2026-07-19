@@ -206,36 +206,6 @@ struct ui_layer {
     handle: any
 }
 
-// CPU-projected 3D scene layered into the same batched renderer as the 2D UI.
-// Mesh vertices use a fixed 10-float layout: position.xyz, normal.xyz,
-// colour.rgba. Matrices are column-major 4x4 float arrays.
-struct ui_scene {
-    handle: any
-}
-
-struct ui_gizmo_result {
-    active: bool,
-    changed: bool,
-    axis: i32,
-    tx: f64,
-    ty: f64,
-    tz: f64,
-    rx: f64,
-    ry: f64,
-    rz: f64,
-    sx: f64,
-    sy: f64,
-    sz: f64
-}
-
-let UI_SCENE_SOLID = 1
-let UI_SCENE_WIREFRAME = 2
-let UI_SCENE_DOUBLE_SIDED = 4
-let UI_SCENE_SELECTED = 8
-let UI_GIZMO_MOVE = 0
-let UI_GIZMO_ROTATE = 1
-let UI_GIZMO_SCALE = 2
-
 // A GPU-backed image atlas. Pixel regions can be drawn as textured quads;
 // loading a normal image and drawing the full region is also supported.
 // ===========================================================================
@@ -273,24 +243,6 @@ ref fn ui_flush_overlay(r: ref ui_renderer, clear: ui_color_rgba)
 // Logical drawable size in physical pixels.
 ref fn ui_canvas_width(r: ref ui_renderer) i32
 ref fn ui_canvas_height(r: ref ui_renderer) i32
-
-// ===========================================================================
-// 3D scene layer
-// ===========================================================================
-
-ref fn ui_scene_create(r: ref ui_renderer) ref ui_scene
-ref fn ui_scene_destroy(scene: ref ui_scene)
-ref fn ui_scene_mesh_create(scene: ref ui_scene) i32
-ref fn ui_scene_mesh_update(scene: ref ui_scene, mesh_id: i32, vertices: [f32], vertex_count: i32, indices: [u32], index_count: i32) bool
-ref fn ui_scene_mesh_destroy(scene: ref ui_scene, mesh_id: i32)
-ref fn ui_scene_begin(scene: ref ui_scene, x: f64, y: f64, width: f64, height: f64, view_projection: [f32], background: u32)
-ref fn ui_scene_draw_grid(scene: ref ui_scene, extent: f64, minor_spacing: f64, major_spacing: f64)
-ref fn ui_scene_draw_mesh(scene: ref ui_scene, mesh_id: i32, model: [f32], flags: i32)
-ref fn ui_scene_draw_lines(scene: ref ui_scene, positions: [f32], point_count: i32, rgba: u32, thickness: f64)
-ref fn ui_scene_draw_points(scene: ref ui_scene, positions: [f32], point_count: i32, rgba: u32, radius: f64)
-ref fn ui_scene_end(scene: ref ui_scene)
-ref fn ui_gizmo(scene: ref ui_scene, mode: i32, x: f64, y: f64, z: f64, pointer_x: f64, pointer_y: f64, pointer_down: bool, pointer_pressed: bool, pointer_released: bool) ref ui_gizmo_result
-ref fn ui_gizmo_compact(scene: ref ui_scene, mode: i32, input: [f64]) ref ui_gizmo_result
 
 // Load an image file into a renderer-owned atlas texture. PNG/JPEG channel
 // layouts are normalized to RGBA by the native UI library.
