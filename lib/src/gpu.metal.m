@@ -153,6 +153,13 @@ static MTLResourceOptions _mtl_resource_options(gpu_usage usage) {
     return MTLResourceStorageModeShared;
 }
 
+static MTLResourceOptions _mtl_buffer_resource_options(gpu_usage usage) {
+    // Metal only permits memoryless storage for textures. Preserve any other
+    // requested storage mode and fall back to shared when memoryless was the
+    // only mode supplied.
+    return _mtl_resource_options((gpu_usage)(usage & ~USAGE_MEMORYLESS));
+}
+
 static MTLLoadAction _mtl_load_action(gpu_load_action action) {
     switch (action) {
         case LOAD_ACTION_CLEAR: return MTLLoadActionClear;
@@ -724,7 +731,7 @@ void gpu_update_texture(gpu_texture texture, ns_data data) {
 gpu_buffer gpu_create_buffer_desc(gpu_buffer_desc *desc) {
     assert(desc->size > 0);
 
-    MTLResourceOptions options = _mtl_resource_options(desc->usage);
+    MTLResourceOptions options = _mtl_buffer_resource_options(desc->usage);
     if (desc->type == BUFFER_UNIFORM || desc->type == BUFFER_STORAGE) {
         options = MTLResourceStorageModeShared;
         if (desc->type == BUFFER_UNIFORM) options |= MTLResourceCPUCacheModeWriteCombined;
@@ -1209,7 +1216,10 @@ gpu_pipeline gpu_create_pipeline(gpu_pipeline_desc *desc) {
     MTLRenderPipelineDescriptor *pip_desc = [MTLRenderPipelineDescriptor new];
     pip_desc.vertexDescriptor = vertex_desc;
     pip_desc.vertexFunction = shader.vertex_func;
-    pip_desc.fragmentFunction = shader.fragment_func;
+    // A depth-only pipeline has no color attachment. Supplying a fragment
+    // function that writes color makes Metal reject the descriptor because
+    // there is no valid color pixel format for its output.
+    pip_desc.fragmentFunction = desc->color_count > 0 ? shader.fragment_func : nil;
     pip_desc.rasterSampleCount = desc->sample_count > 1 ? desc->sample_count : 1;
     pip_desc.alphaToCoverageEnabled = desc->alpha_to_coverage;
     pip_desc.alphaToOneEnabled = NO;

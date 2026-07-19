@@ -1460,15 +1460,31 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         const size_t clip_len = r->gpu_clip_count > 0 ? (size_t)r->gpu_clip_count * sizeof(ui_gpu_clip) : sizeof(empty_clip);
         gpu_update_buffer_desc(r->clip_buffer, (ns_data){(void*)clip_data, clip_len});
     }
-    const f64 s = r->content_scale > 0.0 ? r->content_scale : 1.0;
+    const f64 fallback_scale = r->content_scale > 0.0 ? r->content_scale : 1.0;
+    const i32 framebuffer_width = r->v && r->v->framebuffer_width > 0
+                                      ? r->v->framebuffer_width
+                                      : (i32)(r->width * fallback_scale + 0.5);
+    const i32 framebuffer_height = r->v && r->v->framebuffer_height > 0
+                                       ? r->v->framebuffer_height
+                                       : (i32)(r->height * fallback_scale + 0.5);
+    const f64 sx = (f64)framebuffer_width / (f64)r->width;
+    const f64 sy = (f64)framebuffer_height / (f64)r->height;
     gpu_begin_render_pass(r->screen_pass);
-    gpu_set_viewport(0, 0, (i32)(r->width * s + 0.5), (i32)(r->height * s + 0.5));
+    gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
     ns_unused(clear);
     for (i32 i = 0; i < r->command_count; i++) {
         ui_command *cmd = &r->commands[i];
         if (cmd->clip_w <= 0 || cmd->clip_h <= 0) continue;
-        gpu_set_scissor((i32)floor(cmd->clip_x * s), (i32)floor(cmd->clip_y * s),
-                        (i32)ceil(cmd->clip_w * s), (i32)ceil(cmd->clip_h * s));
+        i32 x0 = (i32)floor(cmd->clip_x * sx);
+        i32 y0 = (i32)floor(cmd->clip_y * sy);
+        i32 x1 = (i32)ceil((cmd->clip_x + cmd->clip_w) * sx);
+        i32 y1 = (i32)ceil((cmd->clip_y + cmd->clip_h) * sy);
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > framebuffer_width) x1 = framebuffer_width;
+        if (y1 > framebuffer_height) y1 = framebuffer_height;
+        if (x1 <= x0 || y1 <= y0) continue;
+        gpu_set_scissor(x0, y0, x1 - x0, y1 - y0);
         ui_rect_batch *batch = NULL;
         if (cmd->rect_batch_id > 0) {
             batch = ui_rect_batch_get(r, cmd->rect_batch_id);

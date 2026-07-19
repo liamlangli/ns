@@ -114,6 +114,10 @@ static void view_osx_sync_mtk_view_metrics(MTKView *mtk_view) {
         height = ratio > 0.0 ? drawable.height / ratio : drawable.height;
     }
     view_osx_sync_metrics(width, height);
+    if (drawable.width > 0.0 && drawable.height > 0.0) {
+        _view.framebuffer_width = (i32)(drawable.width + 0.5);
+        _view.framebuffer_height = (i32)(drawable.height + 0.5);
+    }
 }
 
 static void view_osx_apply_manifest_icon(void) {

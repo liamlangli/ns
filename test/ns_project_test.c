@@ -163,9 +163,21 @@ int main(void) {
     ns_expect(text_has(gpu_metal, "if ([NSThread isMainThread]) attach_view()") &&
                   text_has(gpu_metal, "dispatch_sync(dispatch_get_main_queue(), attach_view)"),
               "embedded Metal setup keeps NSWindow and MTKView access on the AppKit main thread.");
+    ns_expect(text_has(gpu_metal, "_mtl_buffer_resource_options(desc->usage)") &&
+                  text_has(gpu_metal, "usage & ~USAGE_MEMORYLESS"),
+              "embedded Metal strips texture-only memoryless storage from buffers.");
+    ns_expect(text_has(gpu_metal, "desc->color_count > 0 ? shader.fragment_func : nil"),
+              "embedded Metal omits fragment functions from depth-only pipelines.");
     ns_expect(text_has(gpu_metal, "gpu_pipeline_mtl _pipeline = {0}") &&
                   text_has(gpu_metal, "_pipeline.reflection = [reflection retain]"),
               "embedded Metal pipelines own initialized reflection state through renderer shutdown.");
+    ns_expect(text_has(view_ios, "CGSize drawable = metal_view.drawableSize") &&
+                  text_has(view_ios, "framebuffer_width = (i32)(drawable.width + 0.5)"),
+              "embedded iOS view metrics use the exact Metal drawable extent.");
+    ns_expect(text_has(ui_native, "gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height)") &&
+                  text_has(ui_native, "if (x1 > framebuffer_width) x1 = framebuffer_width") &&
+                  text_has(ui_native, "gpu_set_scissor(x0, y0, x1 - x0, y1 - y0)"),
+              "embedded UI scissors are clamped to the render-pass extent.");
     ns_expect(text_has(ui_native, "\"../Resources\""),
               "embedded UI resolves its font atlas from a generated macOS application bundle.");
     char embedded_ffi[PATH_MAX];

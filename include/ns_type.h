@@ -122,7 +122,7 @@ typedef struct ns_str {
 #define ns_str_free(s) if ((s).dynamic) ns_free((void *)(s).data)
 
 #define ns_str_equals(a, b) ((a).len == (b).len && strncmp((a).data, (b).data, (a).len) == 0)
-#define ns_str_equals_STR(s, S) ((!(s).data) ? 0 : (strncmp((s).data, (S), strlen(S)) == 0))
+#define ns_str_equals_STR(s, S) ((s).data && (s).len == (i32)strlen(S) && strncmp((s).data, (S), (s).len) == 0)
 #define ns_str_starts_with(a, b) ((a).len >= (b).len && strncmp((a).data, (b).data, (b).len) == 0)
 #define ns_str_printf(s) (printf("%.*s", (s).len, (s).data))
 #define ns_str_append(a, b) (ns_str_append_len((a), (b).data, (b).len))

@@ -43,6 +43,9 @@ static void define_array_fn(ns_vm *vm, const char *name, void *fn) {
 
 int main() {
     setenv("NS_REPL_RECOVER", "1", 1);
+    ns_expect(ns_str_equals_STR(ns_str_cstr("gpu_create_buffer"), "gpu_create_buffer") &&
+                  !ns_str_equals_STR(ns_str_cstr("gpu_create_buffer_texture_binding"), "gpu_create_buffer"),
+              "fixed-string equality rejects longer names that only share a prefix.");
 
     {
         ns_vm vm = {0};

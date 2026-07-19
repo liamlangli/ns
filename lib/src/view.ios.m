@@ -24,12 +24,15 @@ static void view_ios_sync_metrics(MTKView *metal_view) {
     CGFloat scale = metal_view.contentScaleFactor;
     if (scale <= 0.0) scale = 1.0;
     CGSize size = metal_view.bounds.size;
+    CGSize drawable = metal_view.drawableSize;
     view_ios_state.display_ratio = scale;
     view_ios_state.ui_scale = scale;
     view_ios_state.width = (i32)size.width;
     view_ios_state.height = (i32)size.height;
-    view_ios_state.framebuffer_width = (i32)(size.width * scale + 0.5);
-    view_ios_state.framebuffer_height = (i32)(size.height * scale + 0.5);
+    // drawableSize is the render-pass extent. Multiplying bounds by the
+    // nominal content scale can differ by one pixel on scaled iPad displays.
+    view_ios_state.framebuffer_width = (i32)(drawable.width + 0.5);
+    view_ios_state.framebuffer_height = (i32)(drawable.height + 0.5);
 }
 
 static UIWindow *view_ios_key_window(void) {
