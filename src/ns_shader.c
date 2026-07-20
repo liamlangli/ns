@@ -1632,6 +1632,28 @@ ns_return_str ns_shader_transpile(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_index, ns_s
 // ---------------------------------------------------------------------------
 // `mod shader` intrinsic dispatch (mirrors ns_vm_call_std)
 // ---------------------------------------------------------------------------
+// Packed component count of one vertex-input field: f32 -> 1, float2/3/4 ->
+// 2/3/4. Vertex buffers driven through the scalar-ID gpu helpers are tightly
+// packed 32-bit float data, so any other field type is rejected.
+static ns_return_bool ns_shader_vertex_field_components(ns_vm *vm, ns_struct_field *field, i32 *dim) {
+    ns_type t = ns_enum_underlying_type(vm, field->t);
+    if (ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64)) {
+        *dim = 1;
+        return ns_return_ok(bool, true);
+    }
+    if (ns_type_is(t, NS_TYPE_STRUCT)) {
+        ns_symbol *s = &vm->symbols[ns_type_index(t)];
+        if (ns_shader_is_simd(s)) {
+            i32 d = ns_shader_simd_dim(s->name);
+            if (d >= 2 && d <= 4) {
+                *dim = d;
+                return ns_return_ok(bool, true);
+            }
+        }
+    }
+    return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: vertex input fields must be f32 or float2/3/4 to reflect a vertex layout.");
+}
+
 ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_str name = call->callee->name;
@@ -1639,7 +1661,11 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_bool is_transpile = ns_str_equals(name, ns_str_cstr("shader_transpile"));
     ns_bool is_transpile_stage = ns_str_equals(name, ns_str_cstr("shader_transpile_stage"));
     ns_bool is_entry = ns_str_equals(name, ns_str_cstr("shader_entry"));
-    if (!is_transpile && !is_transpile_stage && !is_entry) {
+    ns_bool is_vertex_stride = ns_str_equals(name, ns_str_cstr("shader_vertex_stride"));
+    ns_bool is_attr_count = ns_str_equals(name, ns_str_cstr("shader_vertex_attr_count"));
+    ns_bool is_attr_offset = ns_str_equals(name, ns_str_cstr("shader_vertex_attr_offset"));
+    ns_bool is_attr_size = ns_str_equals(name, ns_str_cstr("shader_vertex_attr_size"));
+    if (!is_transpile && !is_transpile_stage && !is_entry && !is_vertex_stride && !is_attr_count && !is_attr_offset && !is_attr_size) {
         return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "unknown shader fn.");
     }
 
@@ -1648,6 +1674,35 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
         return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: the first argument must be a fn.");
     }
     i32 fn_index = (i32)ns_type_index(fv.t);
+
+    if (is_vertex_stride || is_attr_count || is_attr_offset || is_attr_size) {
+        ns_symbol *s = &vm->symbols[fn_index];
+        if (s->type != NS_SYMBOL_FN || (i32)ns_array_length(s->fn.args) != 1 || !ns_type_is(s->fn.args[0].val.t, NS_TYPE_STRUCT) ||
+            ns_shader_is_simd(&vm->symbols[ns_type_index(s->fn.args[0].val.t)])) {
+            return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: vertex layout reflection needs a vertex fn taking one user struct parameter.");
+        }
+        ns_symbol *in = &vm->symbols[ns_type_index(s->fn.args[0].val.t)];
+        i32 count = (i32)ns_array_length(in->st.fields);
+        i32 attr = -1;
+        if (is_attr_offset || is_attr_size) {
+            attr = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
+            if (attr < 0 || attr >= count) {
+                return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: vertex attribute index out of range.");
+            }
+        }
+        i32 offset = 0, result = count;
+        for (i32 f = 0; f < count; ++f) {
+            i32 dim = 0;
+            ns_return_bool rd = ns_shader_vertex_field_components(vm, &in->st.fields[f], &dim);
+            if (ns_return_is_error(rd)) return rd;
+            if (f == attr) result = is_attr_offset ? offset : dim;
+            offset += dim * 4;
+        }
+        if (is_vertex_stride) result = offset;
+        call->ret = (ns_value){.t = ns_type_i32, .i32 = result};
+        return ns_return_ok(bool, true);
+    }
+
     ns_str target_s = ns_eval_str(vm, vm->symbol_stack[call->arg_offset + 1].val);
     ns_shader_target target = ns_shader_target_from_str(target_s);
 

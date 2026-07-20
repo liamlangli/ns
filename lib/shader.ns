@@ -29,6 +29,15 @@ ref fn shader_transpile_stage(f: any, target: str, stage: str) str
 // "main" for glsl (the generated wrapper).
 ref fn shader_entry(f: any, target: str) str
 
+// Vertex-layout reflection over a vertex fn's input struct, for pipeline
+// creation without hand-written layout tables. Offsets and the stride assume
+// tightly packed 32-bit float data (the layout gpu vertex buffers upload), so
+// input fields must be f32 or float2/3/4; attr sizes are component counts.
+ref fn shader_vertex_stride(f: any) i32
+ref fn shader_vertex_attr_count(f: any) i32
+ref fn shader_vertex_attr_offset(f: any, index: i32) i32
+ref fn shader_vertex_attr_size(f: any, index: i32) i32
+
 // Fragment-only shadow-map lookup. `coord.xy` is normalized texture space and
 // `coord.z` is the receiver depth in the light projection. The transpiler
 // lowers this to a small 3x3 PCF comparison against the depth texture bound as

@@ -370,6 +370,29 @@ int main() {
         ns_expect(ns_shader_eval_bool(src), "runtime shader_transpile via use shader.");
     }
 
+    // --- vertex-layout reflection intrinsics over the vertex input struct ---
+    {
+        const char *src =
+            "use simd\n"
+            "use shader\n"
+            "struct VertexData { position: float3, uv: float2, weight: f32 }\n"
+            "struct FragmentInput { position: float4, uv: float2 }\n"
+            "fn vs_main(data: VertexData) FragmentInput {\n"
+            "    let pos = data.position\n"
+            "    return FragmentInput {\n"
+            "        position: float4 { x: pos.x, y: pos.y, z: pos.z, w: data.weight },\n"
+            "        uv: data.uv,\n"
+            "    }\n"
+            "}\n"
+            "fn main() bool {\n"
+            "    let stride_ok = shader_vertex_stride(vs_main) == 24 && shader_vertex_attr_count(vs_main) == 3\n"
+            "    let offsets_ok = shader_vertex_attr_offset(vs_main, 0) == 0 && shader_vertex_attr_offset(vs_main, 1) == 12 && shader_vertex_attr_offset(vs_main, 2) == 20\n"
+            "    let sizes_ok = shader_vertex_attr_size(vs_main, 0) == 3 && shader_vertex_attr_size(vs_main, 1) == 2 && shader_vertex_attr_size(vs_main, 2) == 1\n"
+            "    return stride_ok && offsets_ok && sizes_ok\n"
+            "}\n";
+        ns_expect(ns_shader_eval_bool(src), "vertex-layout reflection packs f32/float2/3/4 fields.");
+    }
+
     // --- gpu module owns the dispatch_gpu wrapper and reaches the dynamically
     // loaded backend; without a requested device submission returns false ---
     {

@@ -92,6 +92,49 @@ fn dispatch_gpu(f: any, threads_x: i32, threads_y: i32, threads_z: i32) bool {
     return gpu_dispatch_compute_source(source, entry, threads_x, threads_y, threads_z)
 }
 
+// Create a graphics pipeline directly from ns vertex and fragment fns plus the
+// color/primitive fixed-function state. The fns are transpiled for the active
+// backend and the vertex layout is reflected from the vertex fn's input struct
+// (tightly packed f32/float2/3/4 fields), so no shader source or layout tables
+// cross the API. The backend compiles the shader into the pipeline state, so
+// the intermediate shader object is released before returning; the returned
+// pipeline is destroyed with gpu_destroy_pipeline_id alone. Returns 0 when the
+// backend rejects the shader or pipeline (or no device is acquired).
+fn gpu_create_pipeline_ex(vs: any, fs: any, color_format: i32, primitive_type: i32) u32 {
+    // The backend layout state carries at most 8 vertex attributes
+    // (GPU_ATTRIBUTE_COUNT), which also bounds the tables below.
+    let attr_count = shader_vertex_attr_count(vs)
+    if attr_count > 8 {
+        return 0u
+    }
+
+    let target = gpu_shader_target()
+    let vs_src = shader_transpile_stage(vs, target, "vertex")
+    let fs_src = shader_transpile_stage(fs, target, "fragment")
+    let shader_id = gpu_create_shader_source(vs_src, fs_src, shader_entry(vs, target), shader_entry(fs, target))
+    if shader_id == 0u {
+        return 0u
+    }
+
+    let attr_offsets = [0, 0, 0, 0, 0, 0, 0, 0]
+    let attr_sizes = [0, 0, 0, 0, 0, 0, 0, 0]
+    let attr_formats = [0, 0, 0, 0, 0, 0, 0, 0]
+    for i in 0 to attr_count {
+        attr_offsets[i] = shader_vertex_attr_offset(vs, i)
+        attr_sizes[i] = shader_vertex_attr_size(vs, i)
+        attr_formats[i] = GPU_ATTRIBUTE_FORMAT_FLOAT
+    }
+
+    let pipeline_id = gpu_create_pipeline_layout(shader_id, shader_vertex_stride(vs), attr_offsets, attr_sizes, attr_formats, attr_count, color_format, primitive_type)
+    gpu_destroy_shader_id(shader_id)
+    return pipeline_id
+}
+
+// gpu_create_pipeline_ex with screen defaults: BGRA8 color and triangles.
+fn gpu_create_pipeline(vs: any, fs: any) u32 {
+    return gpu_create_pipeline_ex(vs, fs, GPU_PIXELFORMAT_BGRA8, GPU_PRIMITIVE_TRIANGLES)
+}
+
 // ---- per-frame submission (FFI-safe: handles + scalars) -------------------
 
 ref fn gpu_begin_render_pass(pass: gpu_render_pass)

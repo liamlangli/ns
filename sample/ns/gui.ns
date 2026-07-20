@@ -27,10 +27,18 @@ fn fs_main(data: FragmentInput) float4 {
 }
 
 fn main() {
-    let view = view_create("ns", 800, 600)
-    let gpu = gpu_request_device()
-    let pipeline = gpu_create_pipeline(gpu, vs_main, fs_main)
+    let v = view_create("ns", 800, 600)
 
-    view.on_launch({ view in
-    })
+    if gpu_request_device(v) {
+        // The vertex/fragment fns are the whole pipeline description: they are
+        // transpiled for the active backend and the vertex layout is reflected
+        // from VertexData internally.
+        let pipeline = gpu_create_pipeline(vs_main, fs_main)
+
+        v.on_terminate({ dead_view in
+            gpu_destroy_pipeline_id(pipeline)
+        })
+    }
+
+    view_run(v)
 }
