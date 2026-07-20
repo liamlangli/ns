@@ -304,6 +304,7 @@ ns_str ns_ops_name(ns_token_t op) {
             return ns_str_cstr("gt");
         else if (ns_str_equals_STR(op.val, ">="))
             return ns_str_cstr("ge");
+        return ns_str_null;
     default:
         return ns_str_null;
     }
@@ -886,7 +887,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         if (ns_return_is_error(ret)) return ret;
         
         ns_scope_exit(vm);
-        ns_array_pop(vm->call_stack);
+        (void)ns_array_pop(vm->call_stack);
         fn = &vm->symbols[i];
         // return stmts refine an inferred return type on the frame's stable
         // copy; carry it back to the registered symbol
@@ -1164,7 +1165,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
     ns_return_void stmt_ret = ns_vm_parse_compound_stmt(vm, ctx, n->block_expr.body);
     if (ns_return_is_error(stmt_ret)) return ns_return_change_type(type, stmt_ret);
     ns_scope_exit(vm);
-    ns_array_pop(vm->call_stack);
+    (void)ns_array_pop(vm->call_stack);
 
     i32 index = ns_array_length(vm->symbols);
     n->block_expr.rt.index = index;
@@ -2127,7 +2128,7 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
     ns_scope_exit(vm);
-    ns_array_pop(vm->call_stack);
+    (void)ns_array_pop(vm->call_stack);
     return ns_return_ok_void;
 }
 

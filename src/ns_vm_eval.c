@@ -460,7 +460,7 @@ ns_scope* ns_scope_exit(ns_vm *vm) {
     ns_scope *scope = ns_array_last(vm->scope_stack);
     ns_array_set_length(vm->stack, scope->stack_top);
     ns_array_set_length(vm->symbol_stack, scope->symbol_top);
-    ns_array_pop(vm->scope_stack);
+    (void)ns_array_pop(vm->scope_stack);
     return scope;
 }
 
@@ -852,7 +852,7 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                            : ns_str_equals(sym->lib, ns_str_cstr("task"))   ? ns_task_vm_call(vm, ctx)
                                                                             : ns_vm_call_ref(vm);
         if (ns_return_is_error(ret)) {
-            ns_array_pop(vm->call_stack);
+            (void)ns_array_pop(vm->call_stack);
             ns_scope_exit(vm);
             return ns_return_change_type(value, ret);
         }
@@ -889,7 +889,7 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         // nested failure with "call expr error" hid actionable diagnostics
         // such as a missing native symbol or an assertion inside the callee.
         if (ns_return_is_error(ret)) {
-            ns_array_pop(vm->call_stack);
+            (void)ns_array_pop(vm->call_stack);
             ns_scope_exit(vm);
             return ns_return_change_type(value, ret);
         }
@@ -942,7 +942,7 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
     ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
     ns_eval_profile_scope_end(sym, profile_depth, profile_start_ms);
     if (ns_return_is_error(ret)) {
-        ns_array_pop(vm->call_stack);
+        (void)ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);
         return ns_return_change_type(value, ret);
     }
@@ -2220,7 +2220,7 @@ static ns_return_value ns_eval_ast_impl(ns_vm *vm, ns_ast_ctx *ctx) {
             }
         }
         ns_scope_exit(vm);
-        ns_array_pop(vm->call_stack);
+        (void)ns_array_pop(vm->call_stack);
         main_ret = (ns_value){.t = ns_type_i32, .i32 = 0};
     } else {
         for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
