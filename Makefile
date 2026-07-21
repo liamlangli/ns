@@ -255,7 +255,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
-test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX)
+test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX)
 	$(NS_BINDIR)/ns_json_test
 	$(NS_BINDIR)/ns_expr_test
 	$(NS_BINDIR)/ns_compile_test
