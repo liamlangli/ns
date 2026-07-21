@@ -924,6 +924,8 @@ static ns_str ns_project_module_name(ns_str path) {
     return ns_str_slice(path, start, end);
 }
 
+static ns_str ns_manifest_entry_file_for_root(ns_str root);
+
 // Link all project sources. Files under test/ and other *_test.ns entries are
 // excluded by default. Test execution adds only the selected test entry.
 static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_file, ns_bool test_entry,
@@ -935,6 +937,12 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     ns_str source_value = ns_manifest_value(manifest, "source");
     ns_str project_relative = (source_value.data == ns_null || ns_str_equals(source_value, ns_str_cstr(".")))
                                   ? ns_str_cstr("") : source_value;
+    ns_str project_type = ns_manifest_value(manifest, "type");
+    ns_bool app_project = ns_str_equals(project_type, ns_str_cstr("app")) ||
+                          ns_str_equals(project_type, ns_str_cstr("application"));
+    // An app's manifest entry owns its own main and must not shadow the main
+    // in a selected test. Library entries remain part of their testable API.
+    ns_str project_entry = test_entry && app_project ? ns_manifest_entry_file_for_root(root) : ns_str_null;
     ns_project_source *sources = ns_null;
     ns_project_sources_scan(source_dir, project_relative, ns_str_cstr(""), excludes, &sources);
     qsort(sources, ns_array_length(sources), sizeof(ns_project_source), ns_project_source_cmp);
@@ -945,9 +953,11 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
         ns_project_source source = sources[i];
         ns_bool selected = ns_str_equals(source.path, entry_file);
+        ns_bool app_entry = test_entry && !selected && ns_str_equals(source.path, project_entry);
         ns_bool is_test = ns_str_has_suffix(source.relative, "_test.ns");
         ns_bool in_test_dir = strncmp(source.relative.data, "test/", 5) == 0 ||
                               strstr(source.relative.data, "/test/") != ns_null;
+        if (app_entry) continue;
         if ((is_test || in_test_dir) && !(test_entry && selected)) continue;
         ns_str name = ns_project_module_name(source.path);
         if (!ns_name_in(lk.local_names, name)) ns_array_push(lk.local_names, name);
@@ -962,10 +972,12 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
         ns_project_source source = sources[i];
         ns_bool selected = ns_str_equals(source.path, entry_file);
+        ns_bool app_entry = test_entry && !selected && ns_str_equals(source.path, project_entry);
         ns_bool is_test = ns_str_has_suffix(source.relative, "_test.ns");
         ns_bool in_test_dir = strncmp(source.relative.data, "test/", 5) == 0 ||
                               strstr(source.relative.data, "/test/") != ns_null;
         if (selected) continue;
+        if (app_entry) continue;
         if (is_test || in_test_dir) continue;
         ns_str text = ns_os_read_file(source.path);
         if (text.data != ns_null) ns_link_source(&lk, text, source.path);
@@ -985,6 +997,8 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     ns_str_free(manifest);
     ns_str_free(manifest_path);
     ns_str_free(source_value);
+    ns_str_free(project_type);
+    ns_str_free(project_entry);
     return ns_link_finish(&lk, out_map, out_external_modules);
 }
 

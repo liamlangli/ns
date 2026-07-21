@@ -128,6 +128,11 @@ printf '%s\n' \
     'fn project_answer() i32 {' \
     '    return 42' \
     '}' > "$test_tmp/project/answer.ns"
+# The application entry must not shadow the selected test entry's main.
+printf '%s\n' \
+    'fn main() i32 {' \
+    '    return 1' \
+    '}' > "$test_tmp/project/main.ns"
 printf '%s\n' \
     'use answer' \
     'fn main() i32 {' \

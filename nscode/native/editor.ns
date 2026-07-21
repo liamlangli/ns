@@ -783,7 +783,7 @@ fn chr(c: i32) str {
     if c > 126 {
         return ""
     }
-    return substr("#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~", c - 35, 1)
+    return substr("#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~", c - 35, 1)
 }
 
 // Character produced by key code `k` with the shift state, or "" when the key
