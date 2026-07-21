@@ -43,9 +43,10 @@ The common commands are:
 - `ns --help`: show compiler targets and all current flags.
 
 The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
-`type`, `source`, and `entry` (or `entries`). Local modules are discovered from
-the project source tree. Only external runtime dependencies need entries under
-`[[dependencies.runtime]]`.
+`type`, `source`, `entry` (or `entries`), and `exclude`. Project compilation
+recursively includes every `.ns` file under `source`; local files do not need a
+`use` declaration. Paths removed by `exclude` are not compiled. Only external
+runtime dependencies need entries under `[[dependencies.runtime]]`.
 
 ```toml
 schema = "ns.mod/v1"
@@ -74,9 +75,12 @@ being downgraded. Re-running without intervening edits makes no further changes.
 
 ### Modules and entry points
 
-- Declare a module with `mod name` and import one with `use name`.
-- A local `use foo` resolves to the project's own `foo.ns` before external
-  runtime modules.
+- Declare a module with `mod name` and import an external or built-in module
+  with `use name`.
+- In a manifest project, all non-excluded `.ns` files under `source` are linked
+  recursively. A `use` for a project-local module is accepted but unnecessary.
+- Test sources under `test/` and files named `*_test.ns` are excluded from
+  normal project builds automatically; `ns test` adds the selected test entry.
 - Applications normally define `fn main() { ... }`.
 - `//` starts a line comment.
 - Statements are newline-terminated; semicolons are not required. A line

@@ -2,8 +2,8 @@
 // Unit tests for the self-hosted parser (ns/parser.ns).
 //
 // A self-contained test entry: `ns test ns/` (or `ns test ns/test/parser_test.ns`)
-// compiles the project scope - inlining the local `lexer`, `parser` and
-// `harness` modules - and runs `main`, whose return value is the exit status.
+// compiles the recursive project source set plus this entry and runs `main`,
+// whose return value is the exit status. Local uses remain valid but optional.
 //
 // Each test parses a small source string and asserts on the shape of the
 // resulting AST (node kinds, operator text, child links).

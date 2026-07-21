@@ -20,6 +20,10 @@ cd "$scaffold_tmp"
 for file in ns.mod main.ns README.md AGENTS.md .gitignore; do
     test -f "created/$file"
 done
+if grep -q 'test/' created/ns.mod; then
+    printf '%s\n' 'FAIL: scaffold redundantly excludes default test sources.' >&2
+    exit 1
+fi
 cmp "$root/AGENTS.md" created/AGENTS.md
 
 mkdir initialized
@@ -65,7 +69,8 @@ printf '%s\n' \
     'schema = "ns.mod/v1"' \
     'entry = "entry.ns"' > "$run_tmp/manifest-priority/ns.mod"
 printf '%s\n' 'use std' 'fn main() {' '}' > "$run_tmp/manifest-priority/entry.ns"
-printf '%s\n' 'this main file must not be selected' > "$run_tmp/manifest-priority/main.ns"
+# This remains project source, but must not replace the manifest entry.
+printf '%s\n' 'fn project_helper() i32 {' '    return 1' '}' > "$run_tmp/manifest-priority/main.ns"
 
 (cd "$run_tmp/main-only" && "$ns" run)
 (cd "$run_tmp/manifest-priority" && "$ns" run)
@@ -81,6 +86,35 @@ if ! grep -q 'neither ns.mod nor main.ns was found' "$run_tmp/missing.out"; then
 fi
 
 printf '%s\n' 'PASS: ns run selects cwd/ns.mod, then cwd/main.ns, without walking upward.'
+
+mkdir -p "$run_tmp/recursive/src/nested" "$run_tmp/recursive/src/ignored" "$run_tmp/recursive/src/wild" "$run_tmp/recursive/src/test"
+printf '%s\n' \
+    'schema = "ns.mod/v1"' \
+    'name = "recursive-project"' \
+    'version = "0.1.0"' \
+    'type = "app"' \
+    'source = "src"' \
+    'entry = "main.ns"' \
+    'exclude = ["ignored/", "nested/excluded.ns", "wild/*.ns"]' > "$run_tmp/recursive/ns.mod"
+printf '%s\n' \
+    'fn main() i32 {' \
+    '    assert recursive_answer() == 42' \
+    '    return 0' \
+    '}' > "$run_tmp/recursive/src/main.ns"
+printf '%s\n' \
+    'use std' \
+    'fn recursive_answer() i32 {' \
+    '    return 42' \
+    '}' > "$run_tmp/recursive/src/nested/answer.ns"
+printf '%s\n' 'this excluded source must not be compiled' > "$run_tmp/recursive/src/nested/excluded.ns"
+printf '%s\n' 'this excluded directory must not be compiled' > "$run_tmp/recursive/src/ignored/broken.ns"
+printf '%s\n' 'this glob-excluded source must not be compiled' > "$run_tmp/recursive/src/wild/broken.ns"
+printf '%s\n' 'this default-excluded test directory must not be compiled' > "$run_tmp/recursive/src/test/broken.ns"
+printf '%s\n' 'this default-excluded test file must not be compiled' > "$run_tmp/recursive/src/unused_test.ns"
+
+(cd "$run_tmp/recursive" && "$ns" run)
+
+printf '%s\n' 'PASS: ns projects recursively link sources and honor manifest/default test excludes.'
 
 mkdir -p "$test_tmp/project/test"
 printf '%s\n' \

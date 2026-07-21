@@ -1,11 +1,10 @@
 // ns/test/lexer_test.ns
 // Unit tests for the self-hosted tokenizer (ns/lexer.ns).
 //
-// This is a self-contained test entry: it imports the standard library, the
-// lexer module under test, and the test harness. `ns test ns/` (or
-// `ns test ns/test/lexer_test.ns`) compiles the project scope - inlining the local
-// `lexer` and `harness` modules - and runs `main`, whose return value is the
-// process exit status.
+// This is a self-contained test entry: it imports the standard library.
+// `ns test ns/` (or `ns test ns/test/lexer_test.ns`) compiles the recursive
+// project source set plus this entry and runs `main`, whose return value is the
+// process exit status. The older local uses below are accepted but unnecessary.
 use std
 use lexer
 use harness

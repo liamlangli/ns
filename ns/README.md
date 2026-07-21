@@ -16,15 +16,13 @@ It is developed in stages:
 ## Scope-based project compilation (no Makefile)
 
 Earlier the modules here had to be "linked" by **concatenating** sources in a
-Makefile, because Nano Script's `use` only imported modules from the
-interpreter's ref path — there was no local module import. That is no longer
-needed: `ns` now **compiles a project by scope**.
+Makefile. That is no longer needed: `ns` now **compiles a project by scope**.
 
-When you `ns run` or `ns test` a file, the interpreter resolves every
-`use <name>` against the project's source tree first. If a local `<name>.ns`
-exists it is compiled in; otherwise the `use` is treated as an external library
-import (e.g. `use std`). So the modules in this directory simply `use` one
-another, and `ns` links them itself.
+When you `ns run` or `ns build` a manifest project, every non-excluded `.ns`
+file below its `source` directory is compiled recursively. Project-local files
+do not need `use`; only external libraries such as `std` do. Test directories
+and `*_test.ns` files are skipped automatically during normal builds, while
+`ns test` adds each selected test entry to the shared project sources.
 
 ```sh
 # from the repository root, after `make` has produced bin/ns:
@@ -59,8 +57,8 @@ ns/
     parser_test.ns  test entry for the parser (use std/lexer/parser/harness)
 ```
 
-Every entry file declares its own imports (`use std`, `use lexer`, …); there
-are no generated/concatenated artifacts and no Makefile.
+The older local `use lexer`/`use parser` lines remain valid but are redundant;
+there are no generated/concatenated artifacts and no Makefile.
 
 ## Runtime fixes that made self-hosting possible
 

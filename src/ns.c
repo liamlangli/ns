@@ -488,20 +488,22 @@ void ns_exec_pe(ns_str filename, ns_str output) {
 // ---------------------------------------------------------------------------
 // Scope-based project compile
 // ---------------------------------------------------------------------------
-// Nano Script's `use` only imports modules from the interpreter's ref path,
-// so a multi-file program in a working directory ("project scope") cannot
-// import its own local modules. The linker below resolves `use <name>` against
-// the nearest manifest root first: when `<root>/<name>.ns` exists it is
-// inlined (its body merged into a single translation unit, after stripping its
-// own `mod`/local-`use` lines), otherwise the `use` is kept as an external
-// library import (e.g. `use std`). This lets the self-hosted `ns-in-ns` project
-// be compiled, run and tested directly by `ns`, without a Makefile to
-// concatenate sources by hand. Scope projects must have an `ns.mod` TOML
-// manifest at their root; for now the runtime only requires its presence.
+// A manifest project is one translation unit: every .ns file below its source
+// directory is linked recursively unless `exclude` in ns.mod removes it.
+// Project-local `use` lines are therefore optional and are stripped when
+// present; external imports (for example `use std`) are hoisted and deduped.
+// A standalone file keeps the older sibling-module import behavior.
+
+typedef struct ns_project_source {
+    ns_str path;
+    ns_str relative;
+} ns_project_source;
 
 typedef struct ns_linker {
     ns_str scope;          // directory used to resolve local modules
+    ns_bool project_all;   // source set is complete; never pull excluded siblings
     ns_str *seen;          // module names already inlined (dedup)
+    ns_str *local_names;   // module names supplied by the project source set
     ns_str *ext_seen;      // external lib names already emitted (dedup)
     ns_str body;           // accumulated module + entry bodies
     ns_str ext;            // accumulated external `use` lines
@@ -519,6 +521,11 @@ static ns_bool ns_name_in(ns_str *names, ns_str name) {
 static ns_bool ns_is_ident_char(i8 c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
            (c >= '0' && c <= '9') || c == '_';
+}
+
+static ns_bool ns_str_has_suffix(ns_str s, const char *suffix) {
+    i32 n = (i32)strlen(suffix);
+    return s.len >= n && strncmp(s.data + s.len - n, suffix, n) == 0;
 }
 
 static ns_bool ns_is_dir(ns_str path);
@@ -601,16 +608,25 @@ static void ns_link_source(ns_linker *lk, ns_str src, ns_str file) {
             while (ns_e < le && ns_is_ident_char(src.data[ns_e])) ns_e++;
             ns_str name = ns_str_slice(src, ns_s, ns_e);
 
-            ns_str path = ns_path_join(lk->scope, ns_str_concat(name, ns_str_cstr(".ns")));
-            ns_str mod_src = ns_os_read_file(path);
-            if (mod_src.data != ns_null) {
-                ns_link_module(lk, name, mod_src, path);   // local module -> inline
+            if (ns_name_in(lk->local_names, name)) {
+                // Every local source is already part of the project
+                // translation unit, so the import is redundant.
             } else if (!ns_name_in(lk->ext_seen, name)) {
-                ns_array_push(lk->ext_seen, name);   // external lib -> keep `use`
-                ns_str_append_len(&lk->ext, "use ", 4);
-                ns_str_append_len(&lk->ext, name.data, name.len);
-                ns_str_append_len(&lk->ext, "\n", 1);
-                ns_array_push(lk->ext_map, ((ns_line_loc){.f = file, .l = line}));
+                ns_str path = ns_str_null;
+                ns_str mod_src = ns_str_null;
+                if (!lk->project_all) {
+                    path = ns_path_join(lk->scope, ns_str_concat(name, ns_str_cstr(".ns")));
+                    mod_src = ns_os_read_file(path);
+                }
+                if (mod_src.data != ns_null) {
+                    ns_link_module(lk, name, mod_src, path); // standalone sibling module
+                } else {
+                    ns_array_push(lk->ext_seen, name);   // external lib -> keep `use`
+                    ns_str_append_len(&lk->ext, "use ", 4);
+                    ns_str_append_len(&lk->ext, name.data, name.len);
+                    ns_str_append_len(&lk->ext, "\n", 1);
+                    ns_array_push(lk->ext_map, ((ns_line_loc){.f = file, .l = line}));
+                }
             }
             continue; // the `use` line itself never reaches the merged body
         }
@@ -623,46 +639,48 @@ static void ns_link_source(ns_linker *lk, ns_str src, ns_str file) {
     }
 }
 
-// Merge the entry source plus every local module it transitively `use`s into a
-// single source string (external `use`s hoisted to the top). The result is
-// null-terminated and owns its buffer. When `out_map` is non-NULL it receives a
-// source map (one entry per line of the merged output, in output order) so
-// diagnostics can be mapped back to their original file and line.
-static ns_str ns_project_link(ns_str scope, ns_str entry_src, ns_str entry_file,
-                              ns_line_loc **out_map, ns_str **out_external_modules) {
-    ns_linker lk = {0};
-    lk.scope = scope.len > 0 ? scope : ns_str_cstr(".");
-    ns_link_source(&lk, entry_src, entry_file);
-
+// Finish a linked translation unit (external `use`s hoisted to the top). The
+// result is null-terminated and owns its buffer. When `out_map` is non-NULL it
+// receives one source location per output line for diagnostic remapping.
+static ns_str ns_link_finish(ns_linker *lk, ns_line_loc **out_map, ns_str **out_external_modules) {
     ns_str out = ns_str_null;
-    if (lk.ext.len > 0) ns_str_append_len(&out, lk.ext.data, lk.ext.len);
-    if (lk.body.len > 0) ns_str_append_len(&out, lk.body.data, lk.body.len);
+    if (lk->ext.len > 0) ns_str_append_len(&out, lk->ext.data, lk->ext.len);
+    if (lk->body.len > 0) ns_str_append_len(&out, lk->body.data, lk->body.len);
     ns_array_push(out.data, '\0');
     out.dynamic = false; // backed by ns_array, freed at process exit
 
     // The map mirrors `out`: external `use` lines first, then the body lines.
     if (out_map != ns_null) {
         ns_line_loc *map = ns_null;
-        for (i32 i = 0, l = ns_array_length(lk.ext_map); i < l; i++) ns_array_push(map, lk.ext_map[i]);
-        for (i32 i = 0, l = ns_array_length(lk.body_map); i < l; i++) ns_array_push(map, lk.body_map[i]);
+        for (i32 i = 0, l = ns_array_length(lk->ext_map); i < l; i++) ns_array_push(map, lk->ext_map[i]);
+        for (i32 i = 0, l = ns_array_length(lk->body_map); i < l; i++) ns_array_push(map, lk->body_map[i]);
         *out_map = map;
     }
 
     if (out_external_modules != ns_null) {
         ns_str *modules = ns_null;
-        for (i32 i = 0, l = ns_array_length(lk.ext_seen); i < l; i++) {
-            ns_array_push(modules, ns_str_concat(lk.ext_seen[i], ns_str_cstr("")));
+        for (i32 i = 0, l = ns_array_length(lk->ext_seen); i < l; i++) {
+            ns_array_push(modules, ns_str_concat(lk->ext_seen[i], ns_str_cstr("")));
         }
         *out_external_modules = modules;
     }
 
-    ns_str_free(lk.ext);
-    ns_str_free(lk.body);
-    ns_array_free(lk.seen);
-    ns_array_free(lk.ext_seen);
-    ns_array_free(lk.ext_map);
-    ns_array_free(lk.body_map);
+    ns_str_free(lk->ext);
+    ns_str_free(lk->body);
+    ns_array_free(lk->seen);
+    ns_array_free(lk->local_names);
+    ns_array_free(lk->ext_seen);
+    ns_array_free(lk->ext_map);
+    ns_array_free(lk->body_map);
     return out;
+}
+
+static ns_str ns_project_link(ns_str scope, ns_str entry_src, ns_str entry_file,
+                              ns_line_loc **out_map, ns_str **out_external_modules) {
+    ns_linker lk = {0};
+    lk.scope = scope.len > 0 ? scope : ns_str_cstr(".");
+    ns_link_source(&lk, entry_src, entry_file);
+    return ns_link_finish(&lk, out_map, out_external_modules);
 }
 
 // Absolute current working directory (heap-owned), or "." if it can't be read.
@@ -722,6 +740,252 @@ static ns_str ns_manifest_value(ns_str src, const char *key) {
         return ns_str_concat(ns_str_slice(src, vs, p), ns_str_cstr(""));
     }
     return ns_str_null;
+}
+
+// Return every quoted value assigned to a top-level TOML key. This is used for
+// string arrays such as `exclude = ["generated.ns", "vendor/**"]`.
+static ns_str *ns_manifest_values(ns_str src, const char *key) {
+    ns_str *values = ns_null;
+    i32 klen = (i32)strlen(key);
+    for (i32 i = 0; i < src.len;) {
+        i32 ls = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        i32 le = i;
+        if (i < src.len) i++;
+
+        i32 p = ls;
+        while (p < le && (src.data[p] == ' ' || src.data[p] == '\t' || src.data[p] == '\r')) p++;
+        if (le - p < klen || strncmp(src.data + p, key, klen) != 0) continue;
+        p += klen;
+        while (p < le && (src.data[p] == ' ' || src.data[p] == '\t')) p++;
+        if (p >= le || src.data[p++] != '=') continue;
+        while (p < le && src.data[p] != '[' && src.data[p] != '"') p++;
+        ns_bool array = p < le && src.data[p] == '[';
+        if (array) p++;
+        i32 end = array ? src.len : le;
+        while (p < end) {
+            if (array && src.data[p] == ']') break;
+            if (!array && src.data[p] == '\n') break;
+            if (src.data[p] != '"') { p++; continue; }
+            i32 start = ++p;
+            while (p < end && src.data[p] != '"') p++;
+            if (p >= end) break;
+            ns_array_push(values, ns_str_slice(src, start, p));
+            p++;
+        }
+        break;
+    }
+    return values;
+}
+
+static ns_str ns_project_source_dir(ns_str root) {
+    ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str manifest = ns_os_read_file(manifest_path);
+    ns_str source = ns_manifest_value(manifest, "source");
+    ns_str result;
+    if (source.data == ns_null || ns_str_equals(source, ns_str_cstr("."))) {
+        result = ns_str_concat(root, ns_str_cstr(""));
+    } else {
+        result = ns_path_join(root, source);
+    }
+    ns_str_free(source);
+    ns_str_free(manifest);
+    ns_str_free(manifest_path);
+    return result;
+}
+
+static ns_bool ns_glob_match(const char *pattern, const char *text) {
+    while (*pattern) {
+        if (*pattern == '*') {
+            ns_bool recursive = pattern[1] == '*';
+            pattern += recursive ? 2 : 1;
+            if (recursive && *pattern == '/') pattern++;
+            do {
+                if (ns_glob_match(pattern, text)) return true;
+                if (!*text || (!recursive && *text == '/')) break;
+                text++;
+            } while (true);
+            return false;
+        }
+        if (!*text || (*pattern != '?' && *pattern != *text)) return false;
+        pattern++;
+        text++;
+    }
+    return *text == '\0';
+}
+
+static ns_str ns_path_normalized(ns_str path) {
+    i32 start = path.len >= 2 && path.data[0] == '.' &&
+                (path.data[1] == '/' || path.data[1] == '\\') ? 2 : 0;
+    i8 *data = ns_malloc(path.len - start + 1);
+    for (i32 i = start; i < path.len; i++) {
+        data[i - start] = path.data[i] == '\\' ? '/' : path.data[i];
+    }
+    data[path.len - start] = '\0';
+    return ns_str_range(data, path.len - start);
+}
+
+static ns_bool ns_project_path_excluded(ns_str *patterns, ns_str relative, ns_str source_relative) {
+    ns_str paths[2] = {ns_path_normalized(relative), ns_path_normalized(source_relative)};
+    ns_bool excluded = false;
+    for (i32 p = 0, count = ns_array_length(patterns); p < count && !excluded; p++) {
+        ns_str normalized = ns_path_normalized(patterns[p]);
+        while (normalized.len > 0 && normalized.data[normalized.len - 1] == '/') normalized.len--;
+        normalized.data[normalized.len] = '\0';
+        for (i32 i = 0; i < 2 && !excluded; i++) {
+            ns_str candidate = paths[i];
+            ns_bool directory = patterns[p].len > 0 &&
+                                (patterns[p].data[patterns[p].len - 1] == '/' ||
+                                 patterns[p].data[patterns[p].len - 1] == '\\');
+            if (directory) {
+                excluded = candidate.len >= normalized.len &&
+                           strncmp(candidate.data, normalized.data, normalized.len) == 0 &&
+                           (candidate.len == normalized.len || candidate.data[normalized.len] == '/');
+            } else {
+                excluded = ns_glob_match(normalized.data, candidate.data);
+            }
+        }
+        ns_str_free(normalized);
+    }
+    ns_str_free(paths[0]);
+    ns_str_free(paths[1]);
+    return excluded;
+}
+
+static ns_str ns_relative_join(ns_str lhs, const char *rhs) {
+    i32 rhs_len = (i32)strlen(rhs);
+    i32 slash = lhs.len > 0 ? 1 : 0;
+    i8 *data = ns_malloc(lhs.len + slash + rhs_len + 1);
+    if (lhs.len > 0) memcpy(data, lhs.data, lhs.len);
+    if (slash) data[lhs.len] = '/';
+    memcpy(data + lhs.len + slash, rhs, rhs_len);
+    data[lhs.len + slash + rhs_len] = '\0';
+    return ns_str_range(data, lhs.len + slash + rhs_len);
+}
+
+static void ns_project_sources_scan(ns_str dir, ns_str project_relative, ns_str source_relative,
+                                    ns_str *excludes, ns_project_source **out) {
+#if defined(_WIN32)
+    ns_str pattern = ns_path_join(dir, ns_str_cstr("*"));
+    WIN32_FIND_DATAA fd;
+    HANDLE handle = FindFirstFileA(pattern.data, &fd);
+    if (handle == INVALID_HANDLE_VALUE) return;
+    do {
+        const char *name = fd.cFileName;
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+#else
+    DIR *handle = opendir(dir.data);
+    if (!handle) return;
+    struct dirent *entry;
+    while ((entry = readdir(handle)) != ns_null) {
+        const char *name = entry->d_name;
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+#endif
+        ns_str path = ns_path_join(dir, ns_str_cstr((char*)name));
+        ns_str rel = ns_relative_join(project_relative, name);
+        ns_str source_rel = ns_relative_join(source_relative, name);
+        ns_bool directory = ns_is_dir(path);
+        // `bin` is generated output, never project source even when source=".".
+        ns_bool generated = project_relative.len == 0 && strcmp(name, "bin") == 0;
+        ns_bool excluded = generated || ns_project_path_excluded(excludes, rel, source_rel);
+        if (!excluded && directory) {
+            ns_project_sources_scan(path, rel, source_rel, excludes, out);
+        } else if (!excluded && ns_str_has_suffix(path, ".ns")) {
+            ns_array_push(*out, ((ns_project_source){.path = path, .relative = rel}));
+            continue;
+        }
+        ns_str_free(path);
+        ns_str_free(rel);
+        ns_str_free(source_rel);
+#if defined(_WIN32)
+    } while (FindNextFileA(handle, &fd));
+    FindClose(handle);
+#else
+    }
+    closedir(handle);
+#endif
+}
+
+static int ns_project_source_cmp(const void *a, const void *b) {
+    const ns_project_source *lhs = a;
+    const ns_project_source *rhs = b;
+    i32 n = lhs->relative.len < rhs->relative.len ? lhs->relative.len : rhs->relative.len;
+    i32 order = strncmp(lhs->relative.data, rhs->relative.data, n);
+    return order != 0 ? order : lhs->relative.len - rhs->relative.len;
+}
+
+static ns_str ns_project_module_name(ns_str path) {
+    i32 start = 0;
+    for (i32 i = 0; i < path.len; i++) {
+        if (path.data[i] == '/' || path.data[i] == '\\') start = i + 1;
+    }
+    i32 end = path.len;
+    if (end - start >= 3 && strncmp(path.data + end - 3, ".ns", 3) == 0) end -= 3;
+    return ns_str_slice(path, start, end);
+}
+
+// Link all project sources. Files under test/ and other *_test.ns entries are
+// excluded by default. Test execution adds only the selected test entry.
+static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_file, ns_bool test_entry,
+                                  ns_line_loc **out_map, ns_str **out_external_modules) {
+    ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str manifest = ns_os_read_file(manifest_path);
+    ns_str *excludes = ns_manifest_values(manifest, "exclude");
+    ns_str source_dir = ns_project_source_dir(root);
+    ns_str source_value = ns_manifest_value(manifest, "source");
+    ns_str project_relative = (source_value.data == ns_null || ns_str_equals(source_value, ns_str_cstr(".")))
+                                  ? ns_str_cstr("") : source_value;
+    ns_project_source *sources = ns_null;
+    ns_project_sources_scan(source_dir, project_relative, ns_str_cstr(""), excludes, &sources);
+    qsort(sources, ns_array_length(sources), sizeof(ns_project_source), ns_project_source_cmp);
+
+    ns_linker lk = {0};
+    lk.scope = source_dir;
+    lk.project_all = true;
+    for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
+        ns_project_source source = sources[i];
+        ns_bool selected = ns_str_equals(source.path, entry_file);
+        ns_bool is_test = ns_str_has_suffix(source.relative, "_test.ns");
+        ns_bool in_test_dir = strncmp(source.relative.data, "test/", 5) == 0 ||
+                              strstr(source.relative.data, "/test/") != ns_null;
+        if ((is_test || in_test_dir) && !(test_entry && selected)) continue;
+        ns_str name = ns_project_module_name(source.path);
+        if (!ns_name_in(lk.local_names, name)) ns_array_push(lk.local_names, name);
+        else ns_str_free(name);
+    }
+    ns_str selected_name = ns_project_module_name(entry_file);
+    if (!ns_name_in(lk.local_names, selected_name)) ns_array_push(lk.local_names, selected_name);
+    else ns_str_free(selected_name);
+
+    // Put the selected entry last so project declarations are available before
+    // its executable top-level code, while preserving deterministic ordering.
+    for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
+        ns_project_source source = sources[i];
+        ns_bool selected = ns_str_equals(source.path, entry_file);
+        ns_bool is_test = ns_str_has_suffix(source.relative, "_test.ns");
+        ns_bool in_test_dir = strncmp(source.relative.data, "test/", 5) == 0 ||
+                              strstr(source.relative.data, "/test/") != ns_null;
+        if (selected) continue;
+        if (is_test || in_test_dir) continue;
+        ns_str text = ns_os_read_file(source.path);
+        if (text.data != ns_null) ns_link_source(&lk, text, source.path);
+        ns_str_free(text);
+    }
+    ns_link_source(&lk, entry_src, entry_file);
+
+    for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
+        // Source-map entries retain file names through parsing/evaluation.
+        // Keep those path buffers alive when a map was requested.
+        if (out_map == ns_null) ns_str_free(sources[i].path);
+        ns_str_free(sources[i].relative);
+    }
+    for (i32 i = 0, count = ns_array_length(excludes); i < count; i++) ns_str_free(excludes[i]);
+    ns_array_free(sources);
+    ns_array_free(excludes);
+    ns_str_free(manifest);
+    ns_str_free(manifest_path);
+    ns_str_free(source_value);
+    return ns_link_finish(&lk, out_map, out_external_modules);
 }
 
 // Resolve the entry source file declared by `root/ns.mod`, relative to its
@@ -983,7 +1247,9 @@ static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, n
 
 static ns_ssa_module *ns_compile_build_input(ns_build_input *in) {
     ns_line_loc *map = ns_null;
-    ns_str merged = ns_project_link(in->scope, in->source, in->filename, &map, ns_null);
+    ns_str merged = in->has_manifest
+                        ? ns_project_link_all(in->scope, in->source, in->filename, false, &map, ns_null)
+                        : ns_project_link(in->scope, in->source, in->filename, &map, ns_null);
     return ns_compile_source_to_ssa(merged, in->filename, map);
 }
 
@@ -1553,7 +1819,7 @@ void ns_exec_project(ns_str path) {
     ns_str linked = ns_str_null;
     if (kind == NS_PROJECT_APP) {
         ns_build_input in = ns_build_input_resolve(root);
-        linked = ns_project_link(source_dir, in.source, in.filename, ns_null, &external_modules);
+        linked = ns_project_link_all(root, in.source, in.filename, false, ns_null, &external_modules);
     }
 
     ns_bool host_build = false;
@@ -1990,7 +2256,8 @@ void ns_exec_update(ns_str path) {
 
 void ns_exec_run(ns_str filename) {
     // No file argument: prefer cwd/ns.mod, then fall back to cwd/main.ns.
-    if (filename.len == 0) filename = ns_default_run_entry();
+    ns_bool implicit = filename.len == 0;
+    if (implicit) filename = ns_default_run_entry();
     if (ns_is_dir(filename)) filename = ns_manifest_entry_file_for_root(ns_project_root(filename));
 
     ns_str source = ns_os_read_file(filename);
@@ -1998,7 +2265,18 @@ void ns_exec_run(ns_str filename) {
         ns_exit(1, "ns", "empty file or folder %.*s.\n", filename.len, filename.data);
 
     ns_str scope = ns_str_null;
-    if (!ns_find_project_root(filename, &scope)) {
+    ns_bool project = false;
+    if (implicit) {
+        ns_str cwd = ns_getcwd();
+        ns_str local_manifest = ns_path_join(cwd, ns_str_cstr("ns.mod"));
+        project = ns_file_exists(local_manifest);
+        if (project) scope = cwd;
+        ns_str_free(local_manifest);
+        if (!project) ns_str_free(cwd);
+    } else {
+        project = ns_find_project_root(filename, &scope);
+    }
+    if (!project) {
         ns_return_value ret_v = ns_eval(&vm, source, filename);
         if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
         return;
@@ -2013,7 +2291,7 @@ void ns_exec_run(ns_str filename) {
 #endif
     }
     ns_line_loc *map = ns_null;
-    ns_str merged = ns_project_link(scope, source, filename, &map, ns_null);
+    ns_str merged = ns_project_link_all(scope, source, filename, false, &map, ns_null);
 
     ns_return_value ret_v = ns_eval_with_map(&vm, merged, filename, map);
     if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
@@ -2032,7 +2310,7 @@ static i32 ns_run_test_file(ns_str filename) {
 
     ns_str scope = ns_project_root(filename);
     ns_line_loc *map = ns_null;
-    ns_str merged = ns_project_link(scope, source, filename, &map, ns_null);
+    ns_str merged = ns_project_link_all(scope, source, filename, true, &map, ns_null);
 
     ns_return_value ret_v = ns_eval_with_map(&tvm, merged, filename, map);
     if (ns_return_is_error(ret_v)) {

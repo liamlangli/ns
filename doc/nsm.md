@@ -15,16 +15,23 @@ type = "app"
 description = "Example module."
 source = "src"
 entry = "main.ns"
-exclude = ["README.md", "build/"]
+exclude = ["generated/**"]
 
 [[dependencies.runtime]]
 name = "std"
 version = ">=0.1.0"
 ```
 
-Local modules need not be declared: every `use <name>` is resolved against the
-project's own source first, so any sibling `<name>.ns` is included in the build
-automatically. Only external `dependencies.runtime` need listing.
+Project source is recursive: every `.ns` file below `source` is compiled and
+linked without a local `use` declaration. `exclude` removes project-relative or
+source-relative files, directories (a trailing `/`), and glob patterns from
+that source set. Generated `bin/` output is always ignored. A local `use` is
+accepted for compatibility but is redundant; `use` is needed for built-in and
+external modules. Only external `dependencies.runtime` need listing.
+
+Test sources do not need manifest exclusions. Normal project compilation skips
+directories named `test` and files named `*_test.ns` automatically. `ns test`
+adds only the selected test entry to the project's non-test source set.
 
 Running `ns run` with no file argument first checks for `ns.mod` in the current
 directory and executes the `entry` (or first of `entries`) it declares, resolved
@@ -33,9 +40,11 @@ against the `source` dir. If the current directory has no `ns.mod`, it runs
 
 Running `ns build` with no file argument compiles the current module into an
 artifact under `<module>/bin`: `type = "app"` produces an executable, while
-`type = "library"` produces a static library. `ns build <file.ns>` builds a
-single script and links any local sibling modules it imports. Use `-o <path>` to
-set the output path, or `--exe` / `--lib` to force the artifact kind.
+`type = "library"` produces a static library. Any build input inside a manifest
+project uses that project's recursive source set. A file outside a project is
+built as a standalone script and may link local sibling modules it imports. Use
+`-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact
+kind.
 
 Running `ns update [path]` finds the nearest `ns.mod` and migrates project
 metadata to the format bundled with the current executable. It preserves
