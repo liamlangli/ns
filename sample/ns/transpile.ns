@@ -1,0 +1,37 @@
+// Ordinary ns functions become the shaders for this triangle.
+
+use simd
+use gpu
+use view
+
+struct vertex_data { position: float3, color: float4 }
+struct fragment_input { position: float4, color: float4 }
+
+fn vs_main(data: vertex_data) fragment_input {
+    let p = data.position
+    return fragment_input { float4 { p.x, p.y, p.z, 1.0 }, data.color }
+}
+fn fs_main(data: fragment_input) float4 { return data.color }
+
+fn main() {
+    let v = view_create("ns shader triangle", 640, 480)
+    if gpu_request_device(v) {
+        let vertices = [
+            -0.5, -0.5, 0.0, 1.0, 0.0, 0.0, 1.0,
+             0.5, -0.5, 0.0, 0.0, 1.0, 0.0, 1.0,
+             0.0,  0.5, 0.0, 0.0, 0.0, 1.0, 1.0,
+        ]
+        let buffer = gpu_create_buffer(vertices.len * 4, GPU_USAGE_DEFAULT)
+        gpu_update_buffer(buffer, vertices, vertices.len * 4)
+        let pipeline = gpu_create_pipeline(vs_main, fs_main)
+        let mesh = gpu_create_mesh_1(pipeline, buffer)
+        v.on_frame({ frame_view in
+            gpu_begin_render_pass_id(0u)
+            gpu_set_viewport(0, 0, frame_view.framebuffer_width, frame_view.framebuffer_height); gpu_set_scissor(0, 0, frame_view.framebuffer_width, frame_view.framebuffer_height)
+            gpu_set_pipeline_id(pipeline); gpu_set_mesh_id(mesh)
+            gpu_draw(0, 3, 1); gpu_end_pass(); gpu_commit()
+        })
+        v.on_terminate({ dead_view in gpu_destroy_mesh_id(mesh); gpu_destroy_pipeline_id(pipeline); gpu_destroy_buffer_id(buffer) })
+    }
+    view_run(v)
+}
