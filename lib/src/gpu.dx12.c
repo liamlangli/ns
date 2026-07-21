@@ -466,7 +466,10 @@ void gpu_end_pass(void) {
 }
 
 void gpu_commit(void) {
-    if (!_state.valid) return;
+    if (!_state.valid) {
+        gpu_v2_frame_end();
+        return;
+    }
     ID3D12CommandList *lists[] = {(ID3D12CommandList *)_state.command_list};
     ID3D12CommandQueue_ExecuteCommandLists(_state.queue, 1, lists);
     IDXGISwapChain3_Present(_state.swapchain, 1, 0);

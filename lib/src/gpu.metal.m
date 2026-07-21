@@ -1016,7 +1016,10 @@ void gpu_end_pass() {
 }
 
 void gpu_commit() {
-    assert(nil != _state.cmd_buffer);
+    if (!_state.valid || nil == _state.cmd_buffer) {
+        gpu_v2_frame_end();
+        return;
+    }
     assert(nil == _state.cmd_encoder);
 
     if (nil != _state.cur_drawable) {
