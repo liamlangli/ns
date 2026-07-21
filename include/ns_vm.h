@@ -33,6 +33,10 @@ typedef struct ns_fn_symbol {
     i32 arg_required;
     void *fn_ptr;
     ns_fn_type fn_type; // NS_FN_ASYNC: calls spawn a task and yield a task handle
+    // AST context that owns `ast`/`body`. A fn parsed from a lib module keeps
+    // its module's context here so calls from another context evaluate the
+    // body against the right nodes; NULL means the caller's context.
+    ns_ast_ctx *ctx;
 } ns_fn_symbol;
 
 typedef struct ns_struct_field {

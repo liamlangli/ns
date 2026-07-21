@@ -1675,6 +1675,14 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     }
     i32 fn_index = (i32)ns_type_index(fv.t);
 
+    // Transpile/reflection walk the target fn's AST, which lives in the
+    // context the fn was parsed from — not necessarily the caller's (e.g. a
+    // script fn handed to a lib fn like gpu_shader_graphics).
+    {
+        ns_symbol *fsym = &vm->symbols[fn_index];
+        if (fsym->type == NS_SYMBOL_FN && fsym->fn.ctx) ctx = fsym->fn.ctx;
+    }
+
     if (is_vertex_stride || is_attr_count || is_attr_offset || is_attr_size) {
         ns_symbol *s = &vm->symbols[fn_index];
         if (s->type != NS_SYMBOL_FN || (i32)ns_array_length(s->fn.args) != 1 || !ns_type_is(s->fn.args[0].val.t, NS_TYPE_STRUCT) ||

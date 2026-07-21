@@ -171,7 +171,11 @@ void ns_vm_set_lib_fallback_path(ns_vm *vm, ns_str lib_path) {
 }
 
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
-    ns_ast_ctx ctx = {0};
+    // The module's AST outlives this call: fn symbols keep node indices plus
+    // a pointer to this context (ns_fn_symbol.ctx), so it must stay alive for
+    // the VM's lifetime.
+    ns_ast_ctx *ctx = (ns_ast_ctx *)ns_malloc(sizeof(ns_ast_ctx));
+    memset(ctx, 0, sizeof(ns_ast_ctx));
 #ifdef NS_DEBUG
     ns_str ref_path = vm->ref_path.data ? vm->ref_path : ns_str_cstr(NS_REF_PATH);
 #else
@@ -190,7 +194,7 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
 
     ns_str path = ns_path_join(ref_path, ns_str_concat(lib_name, ns_str_cstr(".ns")));
     ns_str source = ns_os_read_file(path);
-    ns_ast_parse(&ctx, source, path);
+    ns_ast_parse(ctx, source, path);
 
     // the task module's declarations reference the `task` type; register it
     // before parsing the module source
@@ -200,9 +204,9 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     vm->lib = lib_name;
     vm->symbol_gen++; // lib-preferred lookup order changed; drop cached resolutions
 
-    ns_return_bool ret = ns_vm_parse(vm, &ctx);
+    ns_return_bool ret = ns_vm_parse(vm, ctx);
     ns_return_assert(ret);
-    ns_return_value init_ret = ns_eval_module_globals(vm, &ctx);
+    ns_return_value init_ret = ns_eval_module_globals(vm, ctx);
     ns_return_assert(init_ret);
     vm->lib = prev;
     vm->symbol_gen++;

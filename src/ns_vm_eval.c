@@ -883,7 +883,9 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
         f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
         i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
-        ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
+        // The body's node indices belong to the context the fn was parsed
+        // from (a lib module's context differs from the caller's).
+        ns_return_void ret = ns_eval_compound_stmt(vm, fn->ctx ? fn->ctx : ctx, fn->body);
         ns_eval_profile_scope_end(sym, profile_depth, profile_start_ms);
         // Preserve the original message and source location. Replacing every
         // nested failure with "call expr error" hid actionable diagnostics
@@ -939,7 +941,7 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
 
     f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
     i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
-    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
+    ns_return_void ret = ns_eval_compound_stmt(vm, fn->ctx ? fn->ctx : ctx, fn->body);
     ns_eval_profile_scope_end(sym, profile_depth, profile_start_ms);
     if (ns_return_is_error(ret)) {
         (void)ns_array_pop(vm->call_stack);
@@ -1468,6 +1470,7 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             case NS_TYPE_I64: *(i64*)(data + field->o) = ns_eval_number_i64(vm, val); break;
             case NS_TYPE_F32: *(f32*)(data + field->o) = ns_eval_number_f32(vm, val); break;
             case NS_TYPE_F64: *(f64*)(data + field->o) = ns_eval_number_f64(vm, val); break;
+            case NS_TYPE_BOOL: *(ns_bool*)(data + field->o) = ns_eval_bool(vm, val); break;
             default:
                 break;
             }
@@ -1478,7 +1481,9 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                 memcpy(data, (void*)val.o, stride);
             }
         } else if (ns_type_is(t, NS_TYPE_STRING)) {
-            return ns_return_error(value, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unimplemented string field.");
+            // A string value is a str_list handle: immediate in .o, or stored
+            // in a stack slot — the same representation assignment stores.
+            *(u64*)(data + field->o) = ns_type_in_stack(val.t) ? *(u64 *)&vm->stack[val.o] : val.o;
         } else {
             return ns_return_error(value, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unimplemented field type.");
         }

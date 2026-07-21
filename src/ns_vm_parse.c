@@ -569,14 +569,14 @@ ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
         {
         case NS_AST_FN_DEF: {
             if (!main_mod && ns_str_equals_STR(n->fn_def.name.val, "main")) continue; // skip main in lib
-            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->fn_def.body}, .lib =  vm->lib };
+            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->fn_def.body, .ctx = ctx}, .lib =  vm->lib };
             fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->fn_def.is_ref, false, true);
             fn.name = n->fn_def.name.val;
             ns_vm_push_symbol_global(vm, fn);
         } break;
 
         case NS_AST_OP_FN_DEF: {
-            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->ops_fn_def.body}, .lib =  vm->lib};
+            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->ops_fn_def.body, .ctx = ctx}, .lib =  vm->lib};
             fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->ops_fn_def.is_ref, false, true);
             ns_ast_t l = ctx->nodes[n->ops_fn_def.left];
             ns_ast_t r = ctx->nodes[n->ops_fn_def.right];
@@ -924,7 +924,7 @@ ns_return_void ns_vm_parse_type_def(ns_vm *vm, ns_ast_ctx *ctx) {
 
             ns_vm_push_symbol_global(vm, u);
         } else if (t->type_label.is_fn) { // if t is fn, create a new fn type
-            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n->type_def.type, .body = 0}, .lib = vm->lib, .parsed = true};
+            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n->type_def.type, .body = 0, .ctx = ctx}, .lib = vm->lib, .parsed = true};
             fn.name = n->type_def.name.val;
 
             ns_ast_t *arg = &ctx->nodes[n->type_def.type];
@@ -1092,7 +1092,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
     snprintf(block_buff, s + 1, "%.*s:%d:%d", ctx->filename.len, ctx->filename.data, n->state.l, n->state.o);
     ns_str block_name = (ns_str){.data = block_buff, .len = s, .dynamic = 1};
 
-    ns_fn_symbol sym_fn = {.ast = 0, .body = n->block_expr.body, .arg_required = n->block_expr.arg_count, .ret = ns_type_infer};
+    ns_fn_symbol sym_fn = {.ast = 0, .body = n->block_expr.body, .arg_required = n->block_expr.arg_count, .ret = ns_type_infer, .ctx = ctx};
     ns_symbol sym = (ns_symbol){.type = NS_SYMBOL_BLOCK, .name = block_name, .parsed = true, .bc.fn = sym_fn, .lib = vm->lib};
 
     ns_symbol *fn_t = nil;
