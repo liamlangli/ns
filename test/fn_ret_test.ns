@@ -1,0 +1,49 @@
+// Function return-type syntax: the colon before the result is accepted
+// (`fn name(args): T`), and the bare form (`fn name(args) T`) still works, as
+// does omitting the return type. Regression for the colon form failing to
+// parse with "expected function body".
+use std
+
+// ---- colon form -------------------------------------------------------------
+fn add(a: i32, b: i32): i32 {
+    return a + b
+}
+
+// colon form with no args
+fn answer(): i32 {
+    return 42
+}
+
+// ---- bare form (no colon) ---------------------------------------------------
+fn mul(a: i32, b: i32) i32 {
+    return a * b
+}
+
+// ---- no return type ---------------------------------------------------------
+fn shout() {
+    print("hi\n")
+}
+
+// ---- colon form returning a struct ------------------------------------------
+struct point { x: i32, y: i32 }
+fn origin(): point {
+    return point(0, 0)
+}
+
+// ---- colon form on an operator overload -------------------------------------
+fn ops(+)(a: point, b: point): point {
+    return point(a.x + b.x, a.y + b.y)
+}
+
+shout()
+assert add(2, 3) == 5
+assert answer() == 42
+assert mul(4, 5) == 20
+
+let o = origin()
+assert o.x == 0 && o.y == 0
+
+let s = point(1, 2) + point(3, 4)
+assert s.x == 4 && s.y == 6
+
+print("fn return-type syntax test passed\n")

@@ -477,8 +477,10 @@ ns_return_bool ns_parse_op_fn_define(ns_ast_ctx *ctx) {
         return ns_return_ok(bool, false);
     }
 
-    // optional
+    // optional return type; the colon before the result is accepted
+    // (`fn ops(+)(...) : T` as well as `... T`).
     ns_ast_state type_state = ns_save_state(ctx);
+    ns_token_require(ctx, NS_TOKEN_COLON);
     ret = ns_parse_type_label(ctx);
     if (ns_return_is_error(ret)) return ret;
     if (ret.r) {
@@ -566,8 +568,11 @@ ns_return_bool ns_parse_fn_define(ns_ast_ctx *ctx) {
         return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected ')'");
     }
 
-    // optional
+    // optional return type: `fn f() T { }` or `fn f(): T { }` (the colon
+    // before the result is accepted). Consume an optional `:` first, then the
+    // type; on no type, back out to before the colon.
     ns_ast_state type_state = ns_save_state(ctx);
+    ns_token_require(ctx, NS_TOKEN_COLON);
     ret = ns_parse_type_label(ctx);
     if (ns_return_is_error(ret)) return ret;
     if (ret.r) {
