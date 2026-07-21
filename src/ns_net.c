@@ -177,7 +177,7 @@ ns_bool ns_udp_serve(u16 port, ns_on_data on_data) {
 
     // main loop to receive and respond to messages
     while (1) {
-        szt n = recvfrom(socket_fd, ns_net_buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_addr, &addr_len);
+        i64 n = (i64)recvfrom(socket_fd, ns_net_buffer, BUFFER_SIZE, 0, (struct sockaddr *)&client_addr, &addr_len);
         if (n < 0 || n > BUFFER_SIZE) {
             ns_warn("ns_net", "receive failed.\n");
             continue;

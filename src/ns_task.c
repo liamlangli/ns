@@ -360,7 +360,7 @@ static ns_return_value ns_task_invoke(ns_vm *vm, ns_ast_ctx *ctx, ns_task *t) {
         }
     }
 
-    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->body);
+    ns_return_void ret = ns_eval_compound_stmt(vm, fn->ctx ? fn->ctx : ctx, fn->body);
     if (ns_return_is_error(ret)) {
         (void)ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);

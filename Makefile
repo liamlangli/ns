@@ -148,14 +148,12 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 	src/ns_shader.c \
 	src/ns_def.c
 
+# The generator is Nano Script (tools/gen_embedded_ffi.ns); the embedded
+# module and native-source lists live in its main(). It needs the interpreter
+# plus the os/term feature dylibs it reads and writes files through.
 .PHONY: regen-embedded-ffi
-regen-embedded-ffi:
-	python3 tools/gen_embedded_ffi.py --output src/ns_embedded_ffi.c \
-		--native-source lib/src/view.c --native-source lib/src/view.osx.m --native-source lib/src/view.ios.m \
-		--native-source lib/src/ui.c \
-		--native-source lib/src/os.c --native-source lib/src/os.osx.m --native-source lib/src/os.ios.m --native-source lib/src/os.haptic.apple.m \
-		--native-source lib/src/gpu.c --native-source lib/src/gpu.metal.m --native-source lib/src/io.c \
-		lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns
+regen-embedded-ffi: $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/term$(NS_DYLIB_SUFFIX)
+	$(TARGET)$(NS_SUFFIX) run tools/gen_embedded_ffi.ns
 
 # iOS subset: exclude repl and vm_lib (depend on readline/libffi not available on iOS)
 NS_IOS_LIB_SRCS = src/ns_fmt.c \

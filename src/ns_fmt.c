@@ -144,5 +144,13 @@ ns_str ns_fmt_eval(ns_vm *vm, ns_str fmt) {
         }
     }
     ret.len = ns_array_length(ret.data);
-    return ns_str_unescape(ret);
+    // String values already carry decoded escape bytes (literals decode at
+    // materialization), so emit them verbatim. Return a flat copy: callers
+    // free with ns_str_free, which must not see the array backing.
+    i8 *flat = (i8 *)ns_malloc((szt)ret.len + 1);
+    if (ret.len > 0) memcpy(flat, ret.data, (szt)ret.len);
+    flat[ret.len] = '\0';
+    ns_str out = (ns_str){.data = flat, .len = ret.len, .dynamic = 1};
+    ns_array_free(ret.data);
+    return out;
 }

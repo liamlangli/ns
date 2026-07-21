@@ -471,6 +471,7 @@ void gpu_commit(void) {
     ID3D12CommandQueue_ExecuteCommandLists(_state.queue, 1, lists);
     IDXGISwapChain3_Present(_state.swapchain, 1, 0);
     gpu_dx12_wait_for_gpu();
+    gpu_v2_frame_end();
 }
 
 ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z) {

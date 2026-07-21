@@ -1,0 +1,960 @@
+// Generate the typed native-call dispatcher used by embedded Apple apps.
+//
+// Port of the retired tools/gen_embedded_ffi.py. Reads the ref fn
+// declarations of the embedded modules (lib/*.ns), marks the ones actually
+// implemented by the bundled native sources (recording pointer-ness of
+// native argument/result types), and emits src/ns_embedded_ffi.c: signature
+// invokers deduplicated by body, a name-sorted dispatch table, and the
+// memoized binary-search dispatcher.
+//
+// Run from the repository root: bin/ns run tools/gen_embedded_ffi.ns
+// (wired as `make regen-embedded-ffi`).
+use std
+use os
+use term
+
+let OUTPUT = "src/ns_embedded_ffi.c"
+
+// ---- parsed declarations ---------------------------------------------------
+
+let g_struct_name = [str](128)
+let g_struct_field_start = [i32](128)
+let g_struct_field_count = [i32](128)
+let g_struct_count = 0
+let g_field_name = [str](1024)
+let g_field_type = [str](1024)
+let g_field_total = 0
+
+let g_alias_from = [str](128)
+let g_alias_to = [str](128)
+let g_alias_count = 0
+
+let g_fn_name = [str](512)
+let g_fn_result = [str](512)
+let g_fn_result_ptr = [i32](512)
+let g_fn_arg_start = [i32](512)
+let g_fn_arg_count = [i32](512)
+let g_fn_impl = [i32](512)
+let g_fn_count = 0
+let g_arg_type = [str](2048)
+let g_arg_ptr = [i32](2048)
+let g_arg_total = 0
+
+// fn indices sorted by name, for the native-source scan
+let g_sorted = [i32](512)
+let g_sorted_count = 0
+
+// depth-0 comma split scratch
+let g_part = [str](64)
+let g_part_count = 0
+
+// output lines (a line may contain embedded newlines)
+let g_out = [str](8192)
+let g_out_count = 0
+
+let NL = ""
+let Q = ""
+
+// ---- small string helpers ---------------------------------------------------
+
+fn is_space(c: i32) bool {
+    return c == 32 || c == 9 || c == 13 || c == 10
+}
+
+fn is_ident(c: i32) bool {
+    if c >= 97 && c <= 122 {
+        return true
+    }
+    if c >= 65 && c <= 90 {
+        return true
+    }
+    if c >= 48 && c <= 57 {
+        return true
+    }
+    return c == 95
+}
+
+fn s_trim(s: str) str {
+    let b = 0
+    let e = s.len
+    loop b < e && is_space(s[b]) {
+        b = b + 1
+    }
+    loop e > b && is_space(s[e - 1]) {
+        e = e - 1
+    }
+    return substr(s, b, e - b)
+}
+
+fn s_contains_ch(s: str, c: i32) bool {
+    for i in 0 to s.len {
+        if s[i] == c {
+            return true
+        }
+    }
+    return false
+}
+
+// starts_at(src, i, word): word matches src at byte offset i
+fn starts_at(s: str, at: i32, word: str) bool {
+    if at + word.len > s.len {
+        return false
+    }
+    for k in 0 to word.len {
+        if s[at + k] != word[k] {
+            return false
+        }
+    }
+    return true
+}
+
+fn s_starts_with(s: str, word: str) bool {
+    return starts_at(s, 0, word)
+}
+
+// strcmp over two ns strings
+fn s_cmp(a: str, b: str) i32 {
+    let n = a.len
+    if b.len < n {
+        n = b.len
+    }
+    for i in 0 to n {
+        if a[i] != b[i] {
+            return a[i] - b[i]
+        }
+    }
+    return a.len - b.len
+}
+
+fn line_end(s: str, from: i32) i32 {
+    let i = from
+    loop i < s.len && s[i] != 10 {
+        i = i + 1
+    }
+    return i
+}
+
+fn skip_spaces(s: str, from: i32) i32 {
+    let i = from
+    loop i < s.len && is_space(s[i]) {
+        i = i + 1
+    }
+    return i
+}
+
+fn ident_end(s: str, from: i32) i32 {
+    let i = from
+    loop i < s.len && is_ident(s[i]) {
+        i = i + 1
+    }
+    return i
+}
+
+// remove every //-to-end-of-line span
+fn strip_comments(s: str) str {
+    let out = ""
+    let i = 0
+    let start = 0
+    loop i + 1 < s.len {
+        if s[i] == 47 && s[i + 1] == 47 {
+            out = out + substr(s, start, i - start)
+            let e = line_end(s, i)
+            i = e
+            start = e
+        } else {
+            i = i + 1
+        }
+    }
+    return out + substr(s, start, s.len - start)
+}
+
+// split on commas at [] / () depth zero into g_part
+fn split_args(s: str) {
+    g_part_count = 0
+    if s_trim(s) == "" {
+        return
+    }
+    let depth = 0
+    let start = 0
+    for i in 0 to s.len {
+        let c = s[i]
+        if c == 91 || c == 40 {
+            depth = depth + 1
+        } else if c == 93 || c == 41 {
+            depth = depth - 1
+        } else if c == 44 && depth == 0 {
+            g_part[g_part_count] = s_trim(substr(s, start, i - start))
+            g_part_count = g_part_count + 1
+            start = i + 1
+        }
+    }
+    g_part[g_part_count] = s_trim(substr(s, start, s.len - start))
+    g_part_count = g_part_count + 1
+}
+
+fn fail(message: str) {
+    print("gen_embedded_ffi: " + message + NL)
+    assert false
+}
+
+// ---- module parsing (lib/*.ns) ----------------------------------------------
+
+fn parse_struct(src: str, at: i32) i32 {
+    let i = at + 7
+    let e = ident_end(src, i)
+    let name = substr(src, i, e - i)
+    i = skip_spaces(src, e)
+    if i >= src.len || src[i] != 123 {
+        return line_end(src, at)
+    }
+    let body_start = i + 1
+    let close = body_start
+    loop close < src.len && src[close] != 125 {
+        close = close + 1
+    }
+    if close >= src.len {
+        fail("unterminated struct " + name)
+    }
+
+    g_struct_name[g_struct_count] = name
+    g_struct_field_start[g_struct_count] = g_field_total
+    split_args(substr(src, body_start, close - body_start))
+    let parts = g_part_count
+    let fields = 0
+    for p in 0 to parts {
+        let item = s_trim(strip_comments(g_part[p]))
+        if item == "" {
+            continue
+        }
+        let colon = 0
+        loop colon < item.len && item[colon] != 58 {
+            colon = colon + 1
+        }
+        if colon >= item.len {
+            fail("invalid struct field: " + item)
+        }
+        g_field_name[g_field_total] = s_trim(substr(item, 0, colon))
+        g_field_type[g_field_total] = s_trim(substr(item, colon + 1, item.len - colon - 1))
+        g_field_total = g_field_total + 1
+        fields = fields + 1
+    }
+    g_struct_field_count[g_struct_count] = fields
+    g_struct_count = g_struct_count + 1
+    return close + 1
+}
+
+fn parse_alias(line: str) {
+    let i = 5
+    let e = ident_end(line, i)
+    let name = substr(line, i, e - i)
+    i = skip_spaces(line, e)
+    if i >= line.len || line[i] != 61 {
+        return
+    }
+    let rhs = substr(line, i + 1, line.len - i - 1)
+    if s_contains_ch(rhs, 124) {
+        return // unions are not aliases
+    }
+    g_alias_from[g_alias_count] = name
+    g_alias_to[g_alias_count] = s_trim(rhs)
+    g_alias_count = g_alias_count + 1
+}
+
+fn parse_ref_fn(line: str) {
+    let i = 7
+    let e = ident_end(line, i)
+    let name = substr(line, i, e - i)
+    if name == "" || e >= line.len || line[e] != 40 {
+        return
+    }
+    let depth = 1
+    let close = e + 1
+    loop close < line.len && depth > 0 {
+        if line[close] == 40 {
+            depth = depth + 1
+        } else if line[close] == 41 {
+            depth = depth - 1
+            if depth == 0 {
+                break
+            }
+        }
+        close = close + 1
+    }
+    if depth != 0 {
+        fail("unterminated ref fn args: " + name)
+    }
+
+    g_fn_name[g_fn_count] = name
+    g_fn_arg_start[g_fn_count] = g_arg_total
+    split_args(substr(line, e + 1, close - e - 1))
+    let count = 0
+    for p in 0 to g_part_count {
+        let item = g_part[p]
+        if item == "" {
+            continue
+        }
+        let colon = 0
+        loop colon < item.len && item[colon] != 58 {
+            colon = colon + 1
+        }
+        if colon >= item.len {
+            fail("invalid argument: " + item)
+        }
+        g_arg_type[g_arg_total] = s_trim(substr(item, colon + 1, item.len - colon - 1))
+        g_arg_ptr[g_arg_total] = 0
+        g_arg_total = g_arg_total + 1
+        count = count + 1
+    }
+    g_fn_arg_count[g_fn_count] = count
+
+    let rest = substr(line, close + 1, line.len - close - 1)
+    let cut = rest.len
+    for k in 0 to rest.len {
+        if k + 1 < rest.len && rest[k] == 47 && rest[k + 1] == 47 {
+            cut = k
+            break
+        }
+    }
+    let result = s_trim(substr(rest, 0, cut))
+    if result == "" {
+        result = "void"
+    }
+    g_fn_result[g_fn_count] = result
+    g_fn_result_ptr[g_fn_count] = 0
+    g_fn_impl[g_fn_count] = 0
+    g_fn_count = g_fn_count + 1
+}
+
+fn parse_module(path: str) {
+    let src = os_read_file(path)
+    if src == "" {
+        fail("cannot read module: " + path)
+    }
+    let i = 0
+    loop i < src.len {
+        if starts_at(src, i, "struct ") {
+            i = parse_struct(src, i)
+        } else if starts_at(src, i, "type ") {
+            parse_alias(substr(src, i, line_end(src, i) - i))
+        } else if starts_at(src, i, "ref fn ") {
+            parse_ref_fn(substr(src, i, line_end(src, i) - i))
+        }
+        i = line_end(src, i) + 1
+    }
+}
+
+// ---- native source scan (pointer-ness + implemented set) ---------------------
+
+fn sorted_insert(fi: i32) {
+    let lo = 0
+    loop lo < g_sorted_count && s_cmp(g_fn_name[g_sorted[lo]], g_fn_name[fi]) < 0 {
+        lo = lo + 1
+    }
+    let k = g_sorted_count
+    loop k > lo {
+        g_sorted[k] = g_sorted[k - 1]
+        k = k - 1
+    }
+    g_sorted[lo] = fi
+    g_sorted_count = g_sorted_count + 1
+}
+
+fn build_sorted_index() {
+    g_sorted_count = 0
+    for i in 0 to g_fn_count {
+        sorted_insert(i)
+    }
+}
+
+fn find_fn(name: str) i32 {
+    let lo = 0
+    let hi = g_sorted_count - 1
+    loop lo <= hi {
+        let mid = lo + (hi - lo) / 2
+        let cmp = s_cmp(name, g_fn_name[g_sorted[mid]])
+        if cmp == 0 {
+            return g_sorted[mid]
+        }
+        if cmp < 0 {
+            hi = mid - 1
+        } else {
+            lo = mid + 1
+        }
+    }
+    return -1
+}
+
+// A definition line: optional indentation (not `static`), a prefix free of
+// # ( ) = ; up to an identifier, `(`, a matched argument list, then `{`.
+fn scan_native_line(src: str, at: i32, at_end: i32) {
+    let lp = at
+    loop lp < at_end && src[lp] != 40 {
+        lp = lp + 1
+    }
+    if lp >= at_end {
+        return
+    }
+
+    let ie = lp
+    loop ie > at && (src[ie - 1] == 32 || src[ie - 1] == 9) {
+        ie = ie - 1
+    }
+    let ib = ie
+    loop ib > at && is_ident(src[ib - 1]) {
+        ib = ib - 1
+    }
+    if ib == ie {
+        return
+    }
+    let name = substr(src, ib, ie - ib)
+
+    let fi = find_fn(name)
+    if fi < 0 {
+        return
+    }
+    if g_fn_impl[fi] != 0 {
+        return
+    }
+
+    for k in at to ib {
+        let c = src[k]
+        if c == 35 || c == 41 || c == 61 || c == 59 {
+            return
+        }
+    }
+    let first = skip_spaces(src, at)
+    if starts_at(src, first, "static") && !is_ident(src[first + 6]) {
+        return
+    }
+
+    let depth = 1
+    let rp = lp + 1
+    loop rp < src.len && depth > 0 {
+        if src[rp] == 40 {
+            depth = depth + 1
+        } else if src[rp] == 41 {
+            depth = depth - 1
+            if depth == 0 {
+                break
+            }
+        }
+        rp = rp + 1
+    }
+    if depth != 0 {
+        return
+    }
+    let body = skip_spaces(src, rp + 1)
+    if body >= src.len || src[body] != 123 {
+        return
+    }
+
+    g_fn_impl[fi] = 1
+    g_fn_result_ptr[fi] = 0
+    if s_contains_ch(substr(src, at, ib - at), 42) {
+        g_fn_result_ptr[fi] = 1
+    }
+    split_args(substr(src, lp + 1, rp - lp - 1))
+    if g_part_count == g_fn_arg_count[fi] {
+        for a in 0 to g_part_count {
+            let flag = 0
+            if s_contains_ch(g_part[a], 42) {
+                flag = 1
+            }
+            g_arg_ptr[g_fn_arg_start[fi] + a] = flag
+        }
+    }
+}
+
+fn scan_native(path: str) {
+    let src = os_read_file(path)
+    if src == "" {
+        fail("cannot read native source: " + path)
+    }
+    let i = 0
+    loop i < src.len {
+        let e = line_end(src, i)
+        scan_native_line(src, i, e)
+        i = e + 1
+    }
+}
+
+// ---- type mapping (mirrors the retired python tool) ---------------------------
+
+fn is_scalar(t: str) bool {
+    if t == "i8" || t == "i16" || t == "i32" || t == "i64" {
+        return true
+    }
+    if t == "u8" || t == "u16" || t == "u32" || t == "u64" {
+        return true
+    }
+    return t == "f32" || t == "f64" || t == "bool"
+}
+
+// follow the alias chain; the last declaration of a name wins
+fn resolve(t: str) str {
+    let cur = t
+    let steps = 0
+    loop steps < 16 {
+        let next = ""
+        let found = false
+        let i = g_alias_count
+        loop i > 0 {
+            i = i - 1
+            if g_alias_from[i] == cur {
+                next = g_alias_to[i]
+                found = true
+                break
+            }
+        }
+        if !found {
+            return cur
+        }
+        cur = next
+        steps = steps + 1
+    }
+    return cur
+}
+
+// last declaration of a struct name wins
+fn find_struct(name: str) i32 {
+    let i = g_struct_count
+    loop i > 0 {
+        i = i - 1
+        if g_struct_name[i] == name {
+            return i
+        }
+    }
+    return -1
+}
+
+fn kind_of(t: str) str {
+    let r = resolve(t)
+    if r == "void" || r == "str" || is_scalar(r) {
+        return r
+    }
+    if s_starts_with(r, "ref ") {
+        return "ref"
+    }
+    if r.len > 0 && r[0] == 91 {
+        return "array"
+    }
+    if find_struct(r) >= 0 {
+        return "struct"
+    }
+    fail("unsupported embedded FFI type: " + t)
+    return ""
+}
+
+fn c_type(t: str) str {
+    let k = kind_of(t)
+    if k == "void" {
+        return "void"
+    }
+    if k == "str" {
+        return "const char *"
+    }
+    if k == "bool" {
+        return "ns_bool"
+    }
+    if is_scalar(k) {
+        return k
+    }
+    if k == "struct" {
+        return resolve(t)
+    }
+    return "void *"
+}
+
+fn native_c_type(t: str, ptr: i32) str {
+    let r = c_type(t)
+    if ptr != 0 && kind_of(t) == "struct" {
+        return r + " *"
+    }
+    return r
+}
+
+fn itos(n: i32) str {
+    return `{n}`
+}
+
+fn arg_expr(index: i32, t: str, ptr: i32) str {
+    let k = kind_of(t)
+    let idx = itos(index)
+    if k == "str" {
+        return "ns_embedded_arg_str(vm, " + idx + ")"
+    }
+    if k == "struct" {
+        if ptr != 0 {
+            return "(" + c_type(t) + " *)ns_embedded_arg_pointer(vm, " + idx + ")"
+        }
+        return "*(" + c_type(t) + " *)ns_embedded_arg_pointer(vm, " + idx + ")"
+    }
+    if k == "ref" || k == "array" {
+        return "ns_embedded_arg_pointer(vm, " + idx + ")"
+    }
+    if k == "bool" {
+        return "ns_eval_bool(vm, ns_embedded_arg(vm, " + idx + "))"
+    }
+    return "ns_eval_number_" + k + "(vm, ns_embedded_arg(vm, " + idx + "))"
+}
+
+// Body of a signature invoker: marshals args, calls `target`, stores the
+// result. Identical signatures produce identical text, which deduplicates
+// invokers below.
+fn invoke_body(fi: i32) str {
+    let rk = kind_of(g_fn_result[fi])
+    let ret_c = native_c_type(g_fn_result[fi], g_fn_result_ptr[fi])
+    let astart = g_fn_arg_start[fi]
+    let acount = g_fn_arg_count[fi]
+    let arg_cs = ""
+    let args = ""
+    for a in 0 to acount {
+        if a > 0 {
+            arg_cs = arg_cs + ", "
+            args = args + ", "
+        }
+        arg_cs = arg_cs + native_c_type(g_arg_type[astart + a], g_arg_ptr[astart + a])
+        args = args + arg_expr(a, g_arg_type[astart + a], g_arg_ptr[astart + a])
+    }
+    if acount == 0 {
+        arg_cs = "void"
+    }
+    let invocation = "((" + ret_c + " (*)(" + arg_cs + "))target)(" + args + ")"
+
+    let body = ""
+    if rk == "void" {
+        body = "    " + invocation + ";" + NL
+        body = body + "    ns_call *call = ns_array_last(vm->call_stack);" + NL
+        body = body + "    call->ret = ns_nil;" + NL
+    } else if rk == "str" {
+        body = "    const char *result = " + invocation + ";" + NL
+        body = body + "    ns_call *call = ns_array_last(vm->call_stack);" + NL
+        body = body + "    call->ret.t = ns_type_str;" + NL
+        body = body + "    call->ret.o = ns_vm_push_string(vm, result ? ns_str_cstr((char *)result) : ns_str_null);" + NL
+    } else if rk == "ref" {
+        body = "    void *result = " + invocation + ";" + NL
+        body = body + "    ns_embedded_return_pointer(vm, result);" + NL
+    } else if rk == "array" {
+        body = "    void *result = " + invocation + ";" + NL
+        body = body + "    ns_embedded_return_array(vm, result);" + NL
+    } else if rk == "struct" {
+        let ct = c_type(g_fn_result[fi])
+        if g_fn_result_ptr[fi] != 0 {
+            body = "    " + ct + " *result = " + invocation + ";" + NL
+            body = body + "    ns_embedded_return_struct(vm, result);" + NL
+        } else {
+            body = "    " + ct + " result = " + invocation + ";" + NL
+            body = body + "    ns_embedded_return_struct(vm, &result);" + NL
+        }
+    } else {
+        let ct2 = c_type(g_fn_result[fi])
+        body = "    " + ct2 + " result = " + invocation + ";" + NL
+        body = body + "    ns_embedded_return_scalar(vm, &result, sizeof(result));" + NL
+    }
+    return body + "    return ns_return_ok(bool, true);"
+}
+
+// ---- emission ----------------------------------------------------------------
+
+let g_used_struct = [str](64)
+let g_used_count = 0
+
+// dispatch entries: implemented fns deduped by name (first wins), name-sorted
+let g_emit = [i32](512)
+let g_emit_count = 0
+
+let g_sig_body = [str](256)
+let g_sig_count = 0
+let g_entry_sig = [i32](512)
+
+fn out(line: str) {
+    g_out[g_out_count] = line
+    g_out_count = g_out_count + 1
+}
+
+fn note_struct(t: str) {
+    if kind_of(t) != "struct" {
+        return
+    }
+    let r = resolve(t)
+    for i in 0 to g_used_count {
+        if g_used_struct[i] == r {
+            return
+        }
+    }
+    g_used_struct[g_used_count] = r
+    g_used_count = g_used_count + 1
+}
+
+fn sort_used() {
+    for i in 1 to g_used_count {
+        let v = g_used_struct[i]
+        let k = i
+        loop k > 0 {
+            if s_cmp(g_used_struct[k - 1], v) <= 0 {
+                break
+            }
+            g_used_struct[k] = g_used_struct[k - 1]
+            k = k - 1
+        }
+        g_used_struct[k] = v
+    }
+}
+
+fn build_emit_list() {
+    for i in 0 to g_fn_count {
+        if g_fn_impl[i] == 0 {
+            continue
+        }
+        let dup = false
+        for j in 0 to g_emit_count {
+            if g_fn_name[g_emit[j]] == g_fn_name[i] {
+                dup = true
+                break
+            }
+        }
+        if dup {
+            continue
+        }
+        let lo = 0
+        loop lo < g_emit_count && s_cmp(g_fn_name[g_emit[lo]], g_fn_name[i]) < 0 {
+            lo = lo + 1
+        }
+        let k = g_emit_count
+        loop k > lo {
+            g_emit[k] = g_emit[k - 1]
+            k = k - 1
+        }
+        g_emit[lo] = i
+        g_emit_count = g_emit_count + 1
+    }
+}
+
+fn build_signatures() {
+    for i in 0 to g_emit_count {
+        let body = invoke_body(g_emit[i])
+        let sig = -1
+        for s in 0 to g_sig_count {
+            if g_sig_body[s] == body {
+                sig = s
+                break
+            }
+        }
+        if sig < 0 {
+            sig = g_sig_count
+            g_sig_body[g_sig_count] = body
+            g_sig_count = g_sig_count + 1
+        }
+        g_entry_sig[i] = sig
+    }
+}
+
+fn emit_helpers() {
+    out("")
+    out("static ns_value ns_embedded_arg(ns_vm *vm, i32 index) {")
+    out("    ns_call *call = ns_array_last(vm->call_stack);")
+    out("    return vm->symbol_stack[call->arg_offset + index].val;")
+    out("}")
+    out("")
+    out("static const char *ns_embedded_arg_str(ns_vm *vm, i32 index) {")
+    out("    return ns_eval_str(vm, ns_embedded_arg(vm, index)).data;")
+    out("}")
+    out("")
+    out("static void *ns_embedded_arg_pointer(ns_vm *vm, i32 index) {")
+    out("    ns_value value = ns_embedded_arg(vm, index);")
+    out("    if (ns_type_is_array(value.t)) return ns_eval_array_raw(vm, value);")
+    out("    if (ns_type_is_ref(value.t)) return ns_type_in_stack(value.t) ? (void *)&vm->stack[value.o] : (void *)value.o;")
+    out("    return ns_type_in_stack(value.t) ? (void *)&vm->stack[value.o] : (void *)value.o;")
+    out("}")
+    out("")
+    out("static void ns_embedded_return_scalar(ns_vm *vm, const void *value, size_t size) {")
+    out("    ns_call *call = ns_array_last(vm->call_stack);")
+    out("    memcpy(&vm->stack[call->ret.o], value, size);")
+    out("}")
+    out("")
+    out("static void ns_embedded_return_pointer(ns_vm *vm, void *value) {")
+    out("    ns_call *call = ns_array_last(vm->call_stack);")
+    out("    call->ret.t = ns_type_set_stack(call->callee->fn.ret, false);")
+    out("    call->ret.o = (u64)value;")
+    out("}")
+    out("")
+    out("static void ns_embedded_return_struct(ns_vm *vm, const void *value) {")
+    out("    ns_call *call = ns_array_last(vm->call_stack);")
+    out("    if (value) memcpy(&vm->stack[call->ret.o], value, (size_t)ns_type_size(vm, call->callee->fn.ret));")
+    out("}")
+    out("")
+    out("static void ns_embedded_return_array(ns_vm *vm, void *value) {")
+    out("    ns_call *call = ns_array_last(vm->call_stack);")
+    out("    *(u64 *)&vm->stack[call->ret.o] = (u64)value;")
+    out("}")
+    out("")
+}
+
+fn emit_dispatcher() {
+    out("typedef struct ns_embedded_entry {")
+    out("    const char *name;")
+    out("    void *target;")
+    out("    ns_embedded_invoke invoke;")
+    out("} ns_embedded_entry;")
+    out("")
+    out("// Sorted by strcmp(name) for the binary search in ns_vm_call_embedded.")
+    out("static const ns_embedded_entry ns_embedded_entries[] = {")
+    for i in 0 to g_emit_count {
+        let name = g_fn_name[g_emit[i]]
+        out("    { " + Q + name + Q + ", (void *)" + name + ", ns_embedded_sig" + itos(g_entry_sig[i]) + " },")
+    }
+    out("};")
+    out("")
+    out("// strcmp over an ns_str (data, len) and a NUL-terminated entry name.")
+    out("static i32 ns_embedded_name_cmp(ns_str name, const char *entry) {")
+    out("    const u8 *a = (const u8 *)name.data;")
+    out("    const u8 *b = (const u8 *)entry;")
+    out("    i32 i = 0;")
+    out("    while (i < name.len && b[i]) {")
+    out("        if (a[i] != b[i]) return (i32)a[i] - (i32)b[i];")
+    out("        ++i;")
+    out("    }")
+    out("    if (i < name.len) return (i32)a[i];")
+    out("    return -(i32)b[i];")
+    out("}")
+    out("")
+    out("// Binary search over ns_embedded_entries, memoized per fn symbol: the")
+    out("// dlsym/libffi path is compiled out under NS_XCLIB, so fn->fn.fn_ptr is")
+    out("// free to store the resolved entry index + 1.")
+    out("ns_return_bool ns_vm_call_embedded(ns_vm *vm) {")
+    out("    ns_call *call = ns_array_last(vm->call_stack);")
+    out("    ns_symbol *fn = call->callee;")
+    out("    size_t memo = (size_t)fn->fn.fn_ptr;")
+    out("    if (memo) {")
+    out("        const ns_embedded_entry *entry = &ns_embedded_entries[memo - 1];")
+    out("        return entry->invoke(vm, entry->target);")
+    out("    }")
+    out("    i32 lo = 0;")
+    out("    i32 hi = (i32)(sizeof(ns_embedded_entries) / sizeof(ns_embedded_entries[0])) - 1;")
+    out("    while (lo <= hi) {")
+    out("        i32 mid = lo + (hi - lo) / 2;")
+    out("        i32 cmp = ns_embedded_name_cmp(fn->name, ns_embedded_entries[mid].name);")
+    out("        if (cmp == 0) {")
+    out("            fn->fn.fn_ptr = (void *)(size_t)(mid + 1);")
+    out("            return ns_embedded_entries[mid].invoke(vm, ns_embedded_entries[mid].target);")
+    out("        }")
+    out("        if (cmp < 0) hi = mid - 1; else lo = mid + 1;")
+    out("    }")
+    out("    static char message[512];")
+    out("    snprintf(message, sizeof(message), " + Q + "embedded native function is not forwarded: %.*s.%.*s" + Q + ",")
+    out("             fn->lib.len, fn->lib.data, fn->name.len, fn->name.data);")
+    out("    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);")
+    out("}")
+    out("#endif")
+    out("")
+}
+
+fn emit_all() {
+    out("/* Generated by tools/gen_embedded_ffi.ns. Do not edit by hand. */")
+    out("#include " + Q + "ns_vm.h" + Q)
+    out("#include <string.h>")
+    out("")
+    out("#if defined(NS_XCLIB)")
+    out("")
+
+    for i in 0 to g_fn_count {
+        if g_fn_impl[i] == 0 {
+            continue
+        }
+        note_struct(g_fn_result[i])
+        for a in 0 to g_fn_arg_count[i] {
+            note_struct(g_arg_type[g_fn_arg_start[i] + a])
+        }
+    }
+    sort_used()
+    for i in 0 to g_used_count {
+        out("typedef struct {")
+        let si = find_struct(g_used_struct[i])
+        let fs = g_struct_field_start[si]
+        for f in 0 to g_struct_field_count[si] {
+            out("    " + c_type(g_field_type[fs + f]) + " " + g_field_name[fs + f] + ";")
+        }
+        out("} " + g_used_struct[i] + ";")
+    }
+    if g_used_count > 0 {
+        out("")
+    }
+
+    for i in 0 to g_fn_count {
+        if g_fn_impl[i] == 0 {
+            continue
+        }
+        let arg_cs = ""
+        for a in 0 to g_fn_arg_count[i] {
+            if a > 0 {
+                arg_cs = arg_cs + ", "
+            }
+            arg_cs = arg_cs + native_c_type(g_arg_type[g_fn_arg_start[i] + a], g_arg_ptr[g_fn_arg_start[i] + a])
+        }
+        if g_fn_arg_count[i] == 0 {
+            arg_cs = "void"
+        }
+        out("extern " + native_c_type(g_fn_result[i], g_fn_result_ptr[i]) + " " + g_fn_name[i] + "(" + arg_cs + ");")
+    }
+
+    emit_helpers()
+    out("typedef ns_return_bool (*ns_embedded_invoke)(ns_vm *vm, void *target);")
+    out("")
+    for s in 0 to g_sig_count {
+        out("static ns_return_bool ns_embedded_sig" + itos(s) + "(ns_vm *vm, void *target) {")
+        out(g_sig_body[s])
+        out("}")
+        out("")
+    }
+    emit_dispatcher()
+}
+
+fn write_output(path: str) {
+    term_path_reset()
+    for i in 0 to path.len {
+        term_path_push(path[i])
+    }
+    if term_open_write() != 0 {
+        fail("cannot open output: " + path)
+    }
+    for i in 0 to g_out_count {
+        if i > 0 {
+            term_putc_file(10)
+        }
+        let line = g_out[i]
+        for k in 0 to line.len {
+            term_putc_file(line[k])
+        }
+    }
+    term_close_write()
+}
+
+fn main() {
+    NL = unescape("\n")
+    Q = unescape("\"")
+
+    parse_module("lib/view.ns")
+    parse_module("lib/ui.ns")
+    parse_module("lib/os.ns")
+    parse_module("lib/gpu.ns")
+    parse_module("lib/io.ns")
+
+    build_sorted_index()
+    scan_native("lib/src/view.c")
+    scan_native("lib/src/view.osx.m")
+    scan_native("lib/src/view.ios.m")
+    scan_native("lib/src/ui.c")
+    scan_native("lib/src/os.c")
+    scan_native("lib/src/os.osx.m")
+    scan_native("lib/src/os.ios.m")
+    scan_native("lib/src/os.haptic.apple.m")
+    scan_native("lib/src/gpu.c")
+    scan_native("lib/src/gpu.metal.m")
+    scan_native("lib/src/io.c")
+
+    build_emit_list()
+    build_signatures()
+    emit_all()
+    write_output(OUTPUT)
+    print("gen_embedded_ffi: " + itos(g_emit_count) + " fns, " + itos(g_sig_count) + " signatures -> " + OUTPUT + NL)
+}

@@ -56,12 +56,13 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         u64 fd = (u64)fopen(path.data, mode.data);
         call->ret = (ns_value){.t = ns_type_u64, .u64 = fd};
     } else if (ns_str_equals_STR(call->callee->name, "write")) {
+        // String values carry decoded escape bytes already (literals decode
+        // at materialization); write them out verbatim.
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         ns_value data = vm->symbol_stack[call->arg_offset + 1].val;
         ns_str s = ns_eval_str(vm, data);
-        ns_str ss = ns_str_unescape(s);
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
-        i32 len = fwrite(ss.data, ss.len, 1, f);
+        i32 len = fwrite(s.data, s.len, 1, f);
         call->ret = (ns_value){.t = ns_type_u64, .u64 = (u64)len};
     } else if (ns_str_equals_STR(call->callee->name, "read")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
@@ -171,7 +172,11 @@ void ns_vm_set_lib_fallback_path(ns_vm *vm, ns_str lib_path) {
 }
 
 ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
-    ns_ast_ctx ctx = {0};
+    // The module's AST outlives this call: fn symbols keep node indices plus
+    // a pointer to this context (ns_fn_symbol.ctx), so it must stay alive for
+    // the VM's lifetime.
+    ns_ast_ctx *ctx = (ns_ast_ctx *)ns_malloc(sizeof(ns_ast_ctx));
+    memset(ctx, 0, sizeof(ns_ast_ctx));
 #ifdef NS_DEBUG
     ns_str ref_path = vm->ref_path.data ? vm->ref_path : ns_str_cstr(NS_REF_PATH);
 #else
@@ -190,7 +195,7 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
 
     ns_str path = ns_path_join(ref_path, ns_str_concat(lib_name, ns_str_cstr(".ns")));
     ns_str source = ns_os_read_file(path);
-    ns_ast_parse(&ctx, source, path);
+    ns_ast_parse(ctx, source, path);
 
     // the task module's declarations reference the `task` type; register it
     // before parsing the module source
@@ -200,9 +205,9 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     vm->lib = lib_name;
     vm->symbol_gen++; // lib-preferred lookup order changed; drop cached resolutions
 
-    ns_return_bool ret = ns_vm_parse(vm, &ctx);
+    ns_return_bool ret = ns_vm_parse(vm, ctx);
     ns_return_assert(ret);
-    ns_return_value init_ret = ns_eval_module_globals(vm, &ctx);
+    ns_return_value init_ret = ns_eval_module_globals(vm, ctx);
     ns_return_assert(init_ret);
     vm->lib = prev;
     vm->symbol_gen++;

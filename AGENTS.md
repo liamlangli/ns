@@ -70,7 +70,8 @@ belong in `bin/` and should not be treated as source.
   runtime modules.
 - Applications normally define `fn main() { ... }`.
 - `//` starts a line comment.
-- Statements are newline-terminated; semicolons are not required.
+- Statements are newline-terminated; semicolons are not required. A line
+  ending in a binary operator continues the expression on the next line.
 
 ```ns
 use std
@@ -88,12 +89,16 @@ fn main() {
 - Scalar types are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`,
   `f32`, `f64`, `bool`, `str`, `any`, and `void`.
 - `str` is UTF-8. Standard substring offsets are byte offsets; use `utf8_len`
-  when code-point count is required.
+  when code-point count is required. String literals decode escape sequences
+  (`\n`, `\t`, `\"`, `\\`, `\u{...}`) when they become values, and `s[i]`
+  reads byte `i` as an i32 code.
 - Arrays use `[T]`, dictionaries use `[K: V]`, and sets use `set[T]`.
   Constructors take a capacity/count hint, for example `[u8](1024)`,
   `[str: i32](64)`, and `set[str](64)`.
 - Dictionaries currently use fixed-capacity open addressing. Reading a missing
-  key is an error; assigning a missing key inserts it.
+  key is an error; assigning a missing key inserts it. Membership operations
+  are the builtins `has(c, k)`, `insert(s, v)` (sets), and `remove(c, k)`,
+  shared by dicts and sets; each returns a bool.
 - Define plain aggregate data with `struct`, aliases or unions with `type`, and
   function types with `(Args) -> Result`.
 - Define a nominal integer-backed type with `enum`. Its underlying type defaults
@@ -146,9 +151,9 @@ let raw: u8 = platform
 - Backtick strings interpolate expressions, for example
   `` `result = {value}` ``.
 - Supported operator families include arithmetic (`+ - * / %`), comparison,
-  equality, logical (`! && ||`), bitwise (`~ & | ^ << >>`), assignment, and
-  explicit `as` casts. Parenthesize mixed expressions when intent is not
-  obvious.
+  equality, logical (`! && ||`; `&&` and `||` short-circuit), bitwise
+  (`~ & | ^ << >>`), assignment, and explicit `as` casts. Parenthesize mixed
+  expressions when intent is not obvious.
 
 ```ns
 type binary_op = (i32, i32) -> i32
@@ -221,7 +226,7 @@ rules.
 | `term` | Native raw-terminal input, dimensions, buffered byte output, file byte I/O, and startup filename access for terminal apps. |
 | `audio` | Apple native music/SFX loading, playback, pause/resume/seek, volume, duration/position, and error reporting. Handles are opaque integers. |
 | `view` | Native application window/view lifecycle plus keyboard, pointer, gesture, clipboard, frame callback, size, scale, and GPU-device state. |
-| `gpu` | Platform GPU device/resource handles, buffers, shaders, pipelines, meshes, render-pass submission, drawing, and compute shader dispatch. Apple uses Metal, Windows uses DirectX 12, and unsupported backends may return failure. |
+| `gpu` | Platform GPU access. The v2 surface (doc/gpu.md) treats the GPU as a processor with memory: 64-bit addresses from `gpu_malloc`, bindless u32 texture/sampler indices, one root pointer per draw/dispatch, and a frame ring for transient data; it runs host-side headless. The legacy v1 surface (buffers, pipelines, meshes, bindings, render passes) remains during migration. Apple uses Metal, Windows uses DirectX 12, and unsupported backends may return failure. |
 | `ui` | Immediate-mode native UI rendering, layout, themes, input snapshots, widgets, scrolling, text editing/views, images, and renderer primitives on top of `view` and `gpu`. |
 
 `std`, `task`, and `shader` are backed by interpreter intrinsics; `simd` is pure

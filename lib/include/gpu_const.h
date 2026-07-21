@@ -284,3 +284,45 @@ typedef enum gpu_texture_usage {
     TEXTURE_USAGE_WRITE = 1 << 1,
     TEXTURE_USAGE_RENDER_TARGET = 1 << 2
 } gpu_texture_usage;
+
+// ---- v2 constants (doc/gpu.md) ---------------------------------------------
+
+// Capability bits reported by gpu_caps(). 0 means no device (null backend).
+typedef enum gpu_caps_flags {
+    GPU_CAP_RAW_POINTERS      = 1 << 0, // gpu_addr is a real GPU VA; gpu_addr_host works
+    GPU_CAP_BINDLESS_TEXTURES = 1 << 1, // texture indices readable from GPU memory
+    GPU_CAP_INDIRECT_DRAW     = 1 << 2,
+    GPU_CAP_ASYNC_COMPUTE     = 1 << 3, // split barriers overlap for real
+    GPU_CAP_READBACK          = 1 << 4,
+} gpu_caps_flags;
+
+typedef enum gpu_mem_flags {
+    GPU_MEM_DEVICE = 0, // GPU-only memory
+    GPU_MEM_SHARED = 1, // CPU-visible, persistently mapped
+} gpu_mem_flags;
+
+// Fixed blend presets cover the states real programs use; the full blend
+// equation space stays out of the v2 key on purpose (see doc/gpu.md).
+typedef enum gpu_blend_preset {
+    GPU_BLEND_OFF = 0,
+    GPU_BLEND_ALPHA,         // src_alpha / one_minus_src_alpha
+    GPU_BLEND_PREMULTIPLIED, // one / one_minus_src_alpha
+    GPU_BLEND_ADDITIVE,      // one / one
+} gpu_blend_preset;
+
+// gpu_begin_pass load_flags: two bits per color attachment (0..3), then depth.
+// value per attachment: 0 = clear, 1 = load, 2 = dontcare (gpu_load_action).
+enum {
+    GPU_PASS_COLOR0_SHIFT = 0,
+    GPU_PASS_COLOR1_SHIFT = 2,
+    GPU_PASS_COLOR2_SHIFT = 4,
+    GPU_PASS_COLOR3_SHIFT = 6,
+    GPU_PASS_DEPTH_SHIFT = 8,
+    GPU_PASS_LOAD_MASK = 0x3,
+};
+
+enum {
+    GPU_V2_ALLOC_ALIGN = 256,        // every allocation starts 256-byte aligned
+    GPU_V2_FRAME_RING_SIZE = GPU_UB_SIZE,
+    GPU_V2_STATE_POOL_SIZE = 256,
+};

@@ -277,7 +277,9 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
     ctx->source.len = source_len;
 
     if (n.str_fmt.expr_count == 0) {
+        // No interpolation: the format string is a plain literal operand.
         n = (ns_ast_t){.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
+        ns_ast_push(ctx, n);
         return ns_return_ok(bool, true);
     }
 
@@ -518,35 +520,28 @@ ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st) {
 }
 
 ns_return_bool ns_parse_member_expr(ns_ast_ctx *ctx, i32 operand) {
-    ns_return_bool ret;
+    // Build member chains left-associatively: `o.mid.a` is `(o.mid).a`, so
+    // every member node's right is a plain field identifier and the type
+    // checker/evaluator resolve the chain by recursing into left.
     ns_ast_state state = ns_save_state(ctx);
-    if (ns_token_require(ctx, NS_TOKEN_DOT)) {
-        if (ns_token_require(ctx, NS_TOKEN_IDENTIFIER)) {
-            ns_ast_t token = {.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
-            i32 t = ns_ast_push(ctx, token);
-            
-            ns_ast_state member_state = ns_save_state(ctx);
-            // Store the field node in member_expr.right (not .next): .next is
-            // reused by argument-list/sibling linking and would otherwise be
-            // overwritten, detaching the field.
-            ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .state = member_state, .member_expr = {.left = operand, .right = t}};
-
-            ret = ns_parse_member_expr(ctx, t);
-            if (ns_return_is_error(ret)) return ret;
-            if (ret.r) { // recursive member expr
-                n.member_expr.right = ctx->current;
-            } else {
-                ns_restore_state(ctx, member_state);
-            }
-            ns_ast_push(ctx, n);
-            return ns_return_ok(bool, true);
-        } else {
+    ns_bool any = false;
+    while (ns_token_require(ctx, NS_TOKEN_DOT)) {
+        if (!ns_token_require(ctx, NS_TOKEN_IDENTIFIER)) {
             return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected identifier after '.'");
         }
+        // Store the field node in member_expr.right (not .next): .next is
+        // reused by argument-list/sibling linking and would otherwise be
+        // overwritten, detaching the field.
+        ns_ast_t token = {.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
+        i32 t = ns_ast_push(ctx, token);
+        ns_ast_t n = {.type = NS_AST_MEMBER_EXPR, .state = state, .member_expr = {.left = operand, .right = t}};
+        operand = ns_ast_push(ctx, n);
+        any = true;
+        state = ns_save_state(ctx);
     }
 
     ns_restore_state(ctx, state);
-    return ns_return_ok(bool, false);
+    return ns_return_ok(bool, any);
 }
 
 /*
@@ -928,11 +923,22 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                     return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected block expression");
                 i32 expr_index = ns_ast_push_expr(ctx, state, ctx->current);
                 ns_parse_stack_push_operand(ctx, expr_index);
-                
-                break;    
+
+                break;
             }
         }
     } break;
+
+        case NS_TOKEN_EOL: {
+            // A trailing binary operator continues the expression on the
+            // next line (`a == 1 ||` newline `b == 2`); anywhere else the
+            // newline terminates it. A dangling operator was a syntax error
+            // before, so no valid program changes meaning.
+            if (ns_parse_stack_leading_operator(ctx)) {
+                break;
+            }
+            goto rewind;
+        } break;
 
         default:
             goto rewind;

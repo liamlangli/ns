@@ -304,6 +304,7 @@ ns_str ns_ops_name(ns_token_t op) {
             return ns_str_cstr("gt");
         else if (ns_str_equals_STR(op.val, ">="))
             return ns_str_cstr("ge");
+        return ns_str_null;
     default:
         return ns_str_null;
     }
@@ -568,14 +569,14 @@ ns_return_void ns_vm_parse_name(ns_vm *vm, ns_ast_ctx *ctx) {
         {
         case NS_AST_FN_DEF: {
             if (!main_mod && ns_str_equals_STR(n->fn_def.name.val, "main")) continue; // skip main in lib
-            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->fn_def.body}, .lib =  vm->lib };
+            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->fn_def.body, .ctx = ctx}, .lib =  vm->lib };
             fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->fn_def.is_ref, false, true);
             fn.name = n->fn_def.name.val;
             ns_vm_push_symbol_global(vm, fn);
         } break;
 
         case NS_AST_OP_FN_DEF: {
-            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->ops_fn_def.body}, .lib =  vm->lib};
+            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = s, .body = n->ops_fn_def.body, .ctx = ctx}, .lib =  vm->lib};
             fn.fn.fn.t = ns_type_encode(NS_TYPE_FN, symbol_index, n->ops_fn_def.is_ref, false, true);
             ns_ast_t l = ctx->nodes[n->ops_fn_def.left];
             ns_ast_t r = ctx->nodes[n->ops_fn_def.right];
@@ -886,7 +887,7 @@ ns_return_void ns_vm_parse_fn_def_body(ns_vm *vm, ns_ast_ctx *ctx) {
         if (ns_return_is_error(ret)) return ret;
         
         ns_scope_exit(vm);
-        ns_array_pop(vm->call_stack);
+        (void)ns_array_pop(vm->call_stack);
         fn = &vm->symbols[i];
         // return stmts refine an inferred return type on the frame's stable
         // copy; carry it back to the registered symbol
@@ -923,7 +924,7 @@ ns_return_void ns_vm_parse_type_def(ns_vm *vm, ns_ast_ctx *ctx) {
 
             ns_vm_push_symbol_global(vm, u);
         } else if (t->type_label.is_fn) { // if t is fn, create a new fn type
-            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n->type_def.type, .body = 0}, .lib = vm->lib, .parsed = true};
+            ns_symbol fn = (ns_symbol){.type = NS_SYMBOL_FN, .fn = {.ast = n->type_def.type, .body = 0, .ctx = ctx}, .lib = vm->lib, .parsed = true};
             fn.name = n->type_def.name.val;
 
             ns_ast_t *arg = &ctx->nodes[n->type_def.type];
@@ -1091,7 +1092,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
     snprintf(block_buff, s + 1, "%.*s:%d:%d", ctx->filename.len, ctx->filename.data, n->state.l, n->state.o);
     ns_str block_name = (ns_str){.data = block_buff, .len = s, .dynamic = 1};
 
-    ns_fn_symbol sym_fn = {.ast = 0, .body = n->block_expr.body, .arg_required = n->block_expr.arg_count, .ret = ns_type_infer};
+    ns_fn_symbol sym_fn = {.ast = 0, .body = n->block_expr.body, .arg_required = n->block_expr.arg_count, .ret = ns_type_infer, .ctx = ctx};
     ns_symbol sym = (ns_symbol){.type = NS_SYMBOL_BLOCK, .name = block_name, .parsed = true, .bc.fn = sym_fn, .lib = vm->lib};
 
     ns_symbol *fn_t = nil;
@@ -1164,7 +1165,7 @@ ns_return_type ns_vm_parse_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type
     ns_return_void stmt_ret = ns_vm_parse_compound_stmt(vm, ctx, n->block_expr.body);
     if (ns_return_is_error(stmt_ret)) return ns_return_change_type(type, stmt_ret);
     ns_scope_exit(vm);
-    ns_array_pop(vm->call_stack);
+    (void)ns_array_pop(vm->call_stack);
 
     i32 index = ns_array_length(vm->symbols);
     n->block_expr.rt.index = index;
@@ -1275,6 +1276,43 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_ty
 ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *callee_n = &ctx->nodes[n->call_expr.callee];
+
+    // Container membership builtins: has(c, k) / insert(s, v) / remove(c, k)
+    // over the shared dict/set hash table, typed here because generic
+    // container parameters cannot be declared as ref fns. A user fn with the
+    // same name shadows the builtin.
+    if (callee_n->type == NS_AST_PRIMARY_EXPR && callee_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER &&
+        n->call_expr.arg_count == 2) {
+        ns_str bname = callee_n->primary_expr.token.val;
+        ns_bool is_insert = ns_str_equals_STR(bname, "insert");
+        if (is_insert || ns_str_equals_STR(bname, "has") || ns_str_equals_STR(bname, "remove")) {
+            ns_symbol *user = ns_vm_find_symbol(vm, bname, true);
+            if (!user || user->type != NS_SYMBOL_FN) {
+                i32 a0 = n->next;
+                ns_ast_t arg0 = ctx->nodes[a0];
+                ns_return_type ret_c = ns_vm_parse_expr(vm, ctx, a0, ns_type_infer);
+                if (ns_return_is_error(ret_c)) return ret_c;
+                ns_type ct = ret_c.r;
+                ns_bool container_ok = is_insert ? ns_type_is(ct, NS_TYPE_SET)
+                                                 : (ns_type_is(ct, NS_TYPE_DICT) || ns_type_is(ct, NS_TYPE_SET));
+                if (!container_ok) {
+                    return ns_return_error(type, ns_ast_state_loc(ctx, arg0.state), NS_ERR_EVAL,
+                                           is_insert ? "insert expects a set." : "has/remove expect a dict or set.");
+                }
+                ns_type key_t = vm->symbols[ns_type_index(ct)].ct.key;
+                i32 a1 = arg0.next;
+                ns_ast_t arg1 = ctx->nodes[a1];
+                ns_return_type ret_k = ns_vm_parse_expr(vm, ctx, a1, key_t);
+                if (ns_return_is_error(ret_k)) return ret_k;
+                if (!ns_type_match(vm, key_t, ret_k.r)) {
+                    return ns_return_error(type, ns_ast_state_loc(ctx, arg1.state), NS_ERR_EVAL,
+                                           ns_vm_type_mismatch_msg(vm, "container key type mismatch.", key_t, ret_k.r));
+                }
+                return ns_return_ok(type, ns_type_bool);
+            }
+        }
+    }
+
     ns_return_type ret_callee = ns_vm_parse_expr(vm, ctx, n->call_expr.callee, ns_type_nil);
     if (ns_return_is_error(ret_callee)) return ret_callee;
 
@@ -1285,6 +1323,34 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_symbol *fn_record = &vm->symbols[ns_type_index(fn)];
     if (!fn_record || fn_record->type != NS_SYMBOL_FN) {
+        // Positional struct construction: `point(0, 0)` fills the fields in
+        // declaration order, one argument per field.
+        if (fn_record && fn_record->type == NS_SYMBOL_STRUCT) {
+            i32 st_index = (i32)ns_type_index(fn);
+            i32 field_count = (i32)ns_array_length(fn_record->st.fields);
+            if (n->call_expr.arg_count != field_count) {
+                return ns_return_error(type, ns_ast_state_loc(ctx, callee_n->state), NS_ERR_EVAL, "struct constructor argument count mismatch.");
+            }
+            i32 ctor_next = n->next;
+            for (i32 a_i = 0; a_i < field_count; ++a_i) {
+                ns_ast_t arg = ctx->nodes[ctor_next];
+                // re-fetch each iteration: parsing an argument may grow
+                // vm->symbols and move the struct record
+                ns_type f_t = vm->symbols[st_index].st.fields[a_i].t;
+                ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, ctor_next, f_t);
+                if (ns_return_is_error(ret_t)) return ret_t;
+                ns_type t = ret_t.r;
+                ctor_next = arg.next;
+                // a numeric field accepts any numeric arg, matching
+                // designated-expr fields
+                ns_bool number_ok = !ns_type_is(f_t, NS_TYPE_ENUM) &&
+                                    ns_vm_number_like(vm, f_t) && ns_vm_number_like(vm, t);
+                if (!number_ok && !ns_type_equals(t, f_t) && !ns_type_match(vm, f_t, t)) {
+                    return ns_return_error(type, ns_ast_state_loc(ctx, arg.state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "struct constructor type mismatch.", f_t, t));
+                }
+            }
+            return ns_return_ok(type, vm->symbols[st_index].st.st.t);
+        }
         return ns_return_error(type, ns_ast_state_loc(ctx, callee_n->state), NS_ERR_EVAL, "unknown callee.");
     }
 
@@ -2030,7 +2096,8 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *n = &ctx->nodes[s_i];
         switch (n->type) {
             case NS_AST_EXPR:
-            case NS_AST_CALL_EXPR: {
+            case NS_AST_CALL_EXPR:
+            case NS_AST_BINARY_EXPR: { // top-level assignment statements
                 ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i, ns_type_infer);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
             } break;
@@ -2083,7 +2150,8 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *n = &ctx->nodes[s_i];
         switch (n->type) {
             case NS_AST_EXPR:
-            case NS_AST_CALL_EXPR: {
+            case NS_AST_CALL_EXPR:
+            case NS_AST_BINARY_EXPR: { // top-level assignment statements
                 ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i, ns_type_infer);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
             } break;
@@ -2127,7 +2195,7 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
         }
     }
     ns_scope_exit(vm);
-    ns_array_pop(vm->call_stack);
+    (void)ns_array_pop(vm->call_stack);
     return ns_return_ok_void;
 }
 
@@ -2146,9 +2214,12 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     // ns_vm_parse_name, so only their type encoding (not layout) is needed here.
     ns_vm_parse_global(ns_vm_parse_type_def);
     ns_vm_parse_global(ns_vm_parse_fn_def_type);
-    ns_vm_parse_global(ns_vm_parse_var_def);
+    // Struct layouts must be complete before global var defs: a top-level
+    // `let` may initialize with a struct literal or positional constructor,
+    // whose field checks need the resolved fields.
     ns_vm_parse_global(ns_vm_parse_struct_def);
     ns_vm_parse_global(ns_vm_parse_struct_def_ref);
+    ns_vm_parse_global(ns_vm_parse_var_def);
     ns_vm_parse_global(ns_vm_parse_fn_def_body);
 
     ns_bool main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"), false) != ns_null;
