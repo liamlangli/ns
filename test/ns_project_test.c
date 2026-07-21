@@ -183,11 +183,12 @@ int main(void) {
     char embedded_ffi[PATH_MAX];
     path(embedded_ffi, app_root, "bin/demo-app.nsproject/Runtime/src/ns_embedded_ffi.c");
     ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
-                  text_has(embedded_ffi, "gpu_begin_render_pass(*(gpu_render_pass *)") &&
+                  text_has(embedded_ffi, "extern void gpu_begin_render_pass(gpu_render_pass);") &&
+                  text_has(embedded_ffi, "(*(gpu_render_pass *)ns_embedded_arg_pointer(vm, 0))") &&
                   text_has(embedded_ffi, "extern u32 gpu_create_pipeline_layout_indexed_ex") &&
                   text_has(embedded_ffi, "extern u32 gpu_create_buffer_texture_binding") &&
                   text_has(embedded_ffi, "extern i32 os_platform(void);") &&
-                  text_has(embedded_ffi, "i32 result = os_platform();") &&
+                  text_has(embedded_ffi, "{ \"os_platform\", (void *)os_platform,") &&
                   text_has(embedded_ffi, "embedded native function is not forwarded: %.*s.%.*s") &&
                   !text_has(embedded_ffi, "ui_scene_"),
               "embedded forwarding preserves native ABIs and names missing functions precisely.");
