@@ -1,0 +1,162 @@
+// Non-range generator expressions: `for v in subject` over arrays, strings,
+// and arbitrary iterator structs driven by the `next(it): bool` protocol.
+use std
+
+// ---- array subject: the loop var binds each element ------------------------
+let arr = [10, 20, 30]
+let arr_sum = 0
+let arr_count = 0
+for v in arr {
+    arr_sum = arr_sum + v
+    arr_count = arr_count + 1
+}
+assert arr_sum == 60
+assert arr_count == 3
+
+// break and continue keep their structured roles
+let arr_partial = 0
+for v in arr {
+    if v == 20 {
+        continue
+    }
+    if v == 30 {
+        break
+    }
+    arr_partial = arr_partial + v
+}
+assert arr_partial == 10
+
+// element writes through the loop var land in the array
+let mut_arr = [1, 2, 3]
+for v in mut_arr {
+    v = v * 2
+}
+assert mut_arr[0] == 2 && mut_arr[1] == 4 && mut_arr[2] == 6
+
+// reference-typed elements load their handle, like arr[i]
+let words = ["a", "bc", "def"]
+let word_bytes = 0
+for w in words {
+    word_bytes = word_bytes + w.len
+}
+assert word_bytes == 6
+
+// float elements
+let fs = [1.5, 2.5]
+let f_sum = 0.0
+for f in fs {
+    f_sum = f_sum + f
+}
+assert f_sum == 4.0
+
+// ---- string subject: each byte as an i32 code, like s[i] -------------------
+let text = "abc"
+let byte_sum = 0
+for c in text {
+    byte_sum = byte_sum + c
+}
+assert byte_sum == 97 + 98 + 99
+
+// ---- struct subject: the iterator protocol ----------------------------------
+// `for v in it` calls `next(it)` before each round; a true result publishes
+// the current element in `it.value`, false ends the loop.
+struct counter {
+    i: i32,
+    end: i32,
+    value: i32
+}
+
+fn next(it: counter) bool {
+    if it.i >= it.end {
+        return false
+    }
+    it.value = it.i
+    it.i = it.i + 1
+    return true
+}
+
+let c = counter(2, 6, 0)
+let c_sum = 0
+let c_rounds = 0
+for v in c {
+    c_sum = c_sum + v
+    c_rounds = c_rounds + 1
+}
+assert c_sum == 2 + 3 + 4 + 5
+assert c_rounds == 4
+
+// the subject advances in place: a drained iterator stays done
+let c_again = 0
+for v in c {
+    c_again = c_again + 1
+}
+assert c_again == 0
+
+// break stops the drive fn from being called further
+let c2 = counter(0, 100, 0)
+let c2_rounds = 0
+for v in c2 {
+    c2_rounds = c2_rounds + 1
+    if v == 4 {
+        break
+    }
+}
+assert c2_rounds == 5
+assert c2.i == 5
+
+// a second iterator struct resolves its own `next` by subject type
+struct doubler {
+    n: i32,
+    limit: i32,
+    value: i32
+}
+
+fn next(it: doubler) bool {
+    if it.n > it.limit {
+        return false
+    }
+    it.value = it.n
+    it.n = it.n * 2
+    return true
+}
+
+let d = doubler(1, 16, 0)
+let d_sum = 0
+for v in d {
+    d_sum = d_sum + v
+}
+assert d_sum == 1 + 2 + 4 + 8 + 16
+
+// non-i32 element type carried by `value`
+struct halver {
+    x: f64,
+    value: f64
+}
+
+fn next(it: halver) bool {
+    if it.x < 1.0 {
+        return false
+    }
+    it.value = it.x
+    it.x = it.x / 2.0
+    return true
+}
+
+let h = halver(4.0, 0.0)
+let h_sum = 0.0
+for v in h {
+    h_sum = h_sum + v
+}
+assert h_sum == 7.0
+
+// nested: an iterator loop inside a range loop, sharing the outer state
+let total = 0
+for round in 0 to 2 {
+    let cc = counter(0, 3, 0)
+    for v in cc {
+        total = total + v
+    }
+}
+assert total == 6
+
+print("gen expr test passed\n")

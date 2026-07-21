@@ -216,6 +216,10 @@ typedef struct ns_ast_gen_expr {
     i32 from;
     i32 to;
     ns_bool range;
+    struct {
+        i32 next_fn;     // symbol index of the resolved `next(it): bool` fn, filled at vm-parse
+        i32 value_field; // index of the subject struct's `value` field
+    } rt; // iterator protocol resolution for a struct subject (non-range)
 } ns_ast_gen_expr;
 
 typedef struct ns_ast_use_stmt {

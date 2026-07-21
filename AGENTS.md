@@ -172,6 +172,12 @@ fn apply(a: i32, b: i32, op: binary_op): i32 {
 - Conditions are explicit boolean expressions: `if condition { ... } else
   { ... }`.
 - Iterate ranges/generators with `for value in start to end { ... }`.
+- `for v in subject { ... }` also iterates an array's elements, a string's
+  bytes (as i32 codes, like `s[i]`), or any struct implementing the iterator
+  protocol: a `fn next(it: T) bool` that advances the struct and publishes
+  the current element in its `value` field, returning false when drained.
+  `next` is resolved by the subject's type, so each iterator struct declares
+  its own; the subject advances in place.
 - Use `loop condition { ... }` for a pre-test loop and `do { ... } loop
   condition` for a post-test loop.
 - `break`, `continue`, and `return` have their usual structured-control roles.

@@ -1199,6 +1199,33 @@ static ns_bool ns_loop_should_stop(ns_vm *vm) {
     return call->ret_set;
 }
 
+// Iterator protocol: invoke the resolved `next(it): bool` with the loop
+// subject as its single argument. The subject value is passed as-is (its
+// storage view), so field writes inside `next` advance the subject in place.
+static ns_return_value ns_eval_call_gen_next(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_i, ns_value subject) {
+    ns_symbol *sym = &vm->symbols[fn_i];
+    ns_fn_symbol *fn = &sym->fn;
+
+    ns_value ret_val = (ns_value){.t = ns_type_set_stack(fn->ret, true), .o = 0};
+    i32 ret_size = ns_type_size(vm, fn->ret);
+    if (ret_size > 0) ret_val.o = ns_eval_alloc(vm, ret_size);
+
+    ns_call call = (ns_call){.callee = sym, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 1};
+    ns_scope_enter(vm);
+    ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->args[0].name, .val = subject, .parsed = true};
+    ns_array_push(vm->symbol_stack, arg);
+    ns_array_push(vm->call_stack, call);
+    ns_return_void ret = ns_eval_compound_stmt(vm, fn->ctx ? fn->ctx : ctx, fn->body);
+    if (ns_return_is_error(ret)) {
+        (void)ns_array_pop(vm->call_stack);
+        ns_scope_exit(vm);
+        return ns_return_change_type(value, ret);
+    }
+    call = ns_array_pop(vm->call_stack);
+    ns_scope_exit(vm);
+    return ns_return_ok(value, call.ret);
+}
+
 ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *gen = &ctx->nodes[n->for_stmt.generator];
@@ -1238,7 +1265,99 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             if (ns_loop_should_stop(vm)) break; // break or return
         }
     } else {
-        // TODO, generator expr from generable subject.
+        ns_return_value ret_sub = ns_eval_expr(vm, ctx, gen->gen_expr.from);
+        if (ns_return_is_error(ret_sub)) {
+            ns_scope_exit(vm);
+            return ns_return_change_type(void, ret_sub);
+        }
+        ns_value subject = ret_sub.r;
+        ns_str name = gen->gen_expr.name.val;
+        i32 ii = ns_array_length(vm->symbol_stack);
+
+        if (ns_type_is_array(subject.t)) {
+            ns_type elem_t = subject.t;
+            elem_t.array = false;
+            elem_t.stack = false;
+            elem_t.mut = true;
+            i32 stride = ns_type_size(vm, elem_t);
+            ns_array_push(vm->symbol_stack, ((ns_symbol){.type = NS_SYMBOL_VALUE, .name = name, .val = { .t = elem_t }, .parsed = true}));
+            for (i32 e_i = 0;; ++e_i) {
+                // re-read base and length each round: the body may grow the
+                // array and relocate its heap storage
+                void *base = ns_eval_array_data(vm, subject);
+                i32 len = base ? (i32)ns_buffer_len(base) : 0;
+                if (e_i >= len) break;
+                u8 *data = (u8 *)base + (u64)stride * (u64)e_i;
+                // mirror ns_eval_index_expr: reference-typed elements keep a
+                // u64 handle in the slot, so a read loads the handle
+                ns_value ev = (ns_type_is_array(elem_t) || ns_type_is(elem_t, NS_TYPE_STRING) ||
+                               ns_type_is(elem_t, NS_TYPE_DICT) || ns_type_is(elem_t, NS_TYPE_SET) ||
+                               ns_type_is(elem_t, NS_TYPE_FN) || ns_type_is(elem_t, NS_TYPE_TASK))
+                                  ? (ns_value){.t = elem_t, .o = *(u64 *)data}
+                                  : (ns_value){.t = elem_t, .o = (u64)data};
+                vm->symbol_stack[ii].val = ev;
+                ns_scope_enter(vm);
+                ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->for_stmt.body);
+                ns_scope_exit(vm);
+                if (ns_return_is_error(ret)) {
+                    ns_scope_exit(vm);
+                    return ret;
+                }
+                if (ns_loop_should_stop(vm)) break; // break or return
+            }
+        } else if (ns_type_is(subject.t, NS_TYPE_STRING)) {
+            ns_array_push(vm->symbol_stack, ((ns_symbol){.type = NS_SYMBOL_VALUE, .name = name, .val = { .t = ns_type_i32 }, .parsed = true}));
+            for (i32 c_i = 0;; ++c_i) {
+                // re-read per round: the body may push strings and relocate
+                // the interned string storage backing the subject
+                ns_str s = ns_eval_str(vm, subject);
+                if (c_i >= s.len) break;
+                // each byte as an i32 code, like s[i]
+                vm->symbol_stack[ii].val = (ns_value){.t = ns_type_i32, .i32 = (i32)(u8)s.data[c_i]};
+                ns_scope_enter(vm);
+                ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->for_stmt.body);
+                ns_scope_exit(vm);
+                if (ns_return_is_error(ret)) {
+                    ns_scope_exit(vm);
+                    return ret;
+                }
+                if (ns_loop_should_stop(vm)) break; // break or return
+            }
+        } else {
+            // struct subject: `next(it): bool` advances, `value` carries the
+            // element; both were resolved by ns_vm_parse_gen_expr
+            ns_symbol *st = &vm->symbols[ns_type_index(subject.t)];
+            ns_struct_field *field = &st->st.fields[gen->gen_expr.rt.value_field];
+            ns_type vt = field->t;
+            vt.stack = ns_type_in_stack(subject.t);
+            vt.mut = true;
+            u64 field_o = field->o;
+            ns_array_push(vm->symbol_stack, ((ns_symbol){.type = NS_SYMBOL_VALUE, .name = name, .val = { .t = vt }, .parsed = true}));
+            while (1) {
+                // scope the call so its bool slot is reclaimed every round
+                ns_scope_enter(vm);
+                ns_return_value ret_next = ns_eval_call_gen_next(vm, ctx, gen->gen_expr.rt.next_fn, subject);
+                if (ns_return_is_error(ret_next)) {
+                    ns_scope_exit(vm);
+                    ns_scope_exit(vm);
+                    return ns_return_change_type(void, ret_next);
+                }
+                ns_bool go = ns_eval_bool(vm, ret_next.r);
+                ns_scope_exit(vm);
+                if (!go) break;
+                // bind the loop var to the subject's value field, matching
+                // member-expr addressing (stack vs absolute)
+                vm->symbol_stack[ii].val = (ns_value){.t = vt, .o = subject.o + field_o};
+                ns_scope_enter(vm);
+                ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->for_stmt.body);
+                ns_scope_exit(vm);
+                if (ns_return_is_error(ret)) {
+                    ns_scope_exit(vm);
+                    return ret;
+                }
+                if (ns_loop_should_stop(vm)) break; // break or return
+            }
+        }
     }
     ns_scope_exit(vm);
     return ns_return_ok_void;

@@ -1489,8 +1489,23 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_vm_parse_expr(vm, ctx, n->member_expr.right, ns_type_infer);
 }
 
-ns_bool ns_vm_parse_type_generable(ns_type t) {
-    return ns_type_is(t, NS_TYPE_STRING) || ns_type_is(t, NS_TYPE_ARRAY);
+// Iterator protocol: a struct subject of `for v in subject` advances by a
+// script fn `next` whose single parameter is the subject's struct type and
+// whose result is bool. Resolution is by parameter type so several iterator
+// structs may each declare their own `next` (plain name lookup would only
+// ever find the first).
+i32 ns_vm_find_gen_next_fn(ns_vm *vm, ns_type t) {
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+        ns_symbol *s = &vm->symbols[i];
+        if (s->type != NS_SYMBOL_FN || !ns_str_equals_STR(s->name, "next")) continue;
+        if (ns_array_length(s->fn.args) != 1) continue;
+        ns_type at = s->fn.args[0].val.t;
+        if (!ns_type_is(at, NS_TYPE_STRUCT) || ns_type_index(at) != ns_type_index(t)) continue;
+        if (!ns_type_is(s->fn.ret, NS_TYPE_BOOL)) continue;
+        if (s->fn.fn.t.ref || s->fn.fn_type == NS_FN_ASYNC) continue; // script fns only
+        return i;
+    }
+    return -1;
 }
 
 ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
@@ -1512,10 +1527,39 @@ ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_return_type from_ret = ns_vm_parse_expr(vm, ctx, n->gen_expr.from, ns_type_infer);
         if (ns_return_is_error(from_ret)) return from_ret;
         ns_type from_t = from_ret.r;
-        if (!ns_vm_parse_type_generable(from_t)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "gen expr type mismatch.", "string or array", from_t));
+
+        // array subject: the loop var is the element type
+        if (ns_type_is_array(from_t)) {
+            ns_type elem_t = from_t;
+            elem_t.array = false;
+            elem_t.stack = false;
+            return ns_return_ok(type, elem_t);
         }
-        return ns_return_ok(type, from_t);
+        // string subject: the loop var reads each byte as an i32 code, like s[i]
+        if (ns_type_is(from_t, NS_TYPE_STRING)) {
+            return ns_return_ok(type, ns_type_i32);
+        }
+        // struct subject: `next(it): bool` advances the iterator and the
+        // subject's `value` field carries the element the loop var binds to
+        if (ns_type_is(from_t, NS_TYPE_STRUCT)) {
+            i32 fn_i = ns_vm_find_gen_next_fn(vm, from_t);
+            if (fn_i == -1) {
+                return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "gen expr subject requires a fn next(it): bool for its type.");
+            }
+            ns_symbol *st = &vm->symbols[ns_type_index(from_t)];
+            i32 f_i = ns_struct_field_index(st, ns_str_cstr("value"));
+            if (f_i == -1) {
+                return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "gen expr subject requires a `value` field carrying the current element.");
+            }
+            // re-take the node: parsing the subject may not grow ctx->nodes
+            // today, but symbol interning during it can move vm->symbols, so
+            // keep only indices across the calls above
+            n = &ctx->nodes[i];
+            n->gen_expr.rt.next_fn = fn_i;
+            n->gen_expr.rt.value_field = f_i;
+            return ns_return_ok(type, st->st.fields[f_i].t);
+        }
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "gen expr type mismatch.", "string, array, or struct with fn next", from_t));
     }
 }
 
