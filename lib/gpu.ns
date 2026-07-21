@@ -14,12 +14,9 @@ use shader
 
 struct gpu_device { handle: any }
 
-// Opaque GPU resource handles. `id` is a slot index into the backend pools; 0 is
-// the invalid handle.
-struct gpu_texture { id: i32 }
-struct gpu_sampler { id: i32 }
-struct gpu_buffer { id: i32 }
-struct gpu_shader { id: i32 }
+// Opaque v1 resource handles. `id` is a slot index into the backend pools;
+// 0 is the invalid handle. Texture/sampler/buffer/shader handles are rich v2
+// structs declared further down.
 struct gpu_pipeline { id: i32 }
 struct gpu_binding { id: i32 }
 struct gpu_mesh { id: i32 }
@@ -232,20 +229,250 @@ ref fn gpu_dispatch_indirect(args: u64)
 ref fn gpu_signal_after(addr: u64, value: u64)
 ref fn gpu_wait_before(addr: u64, value: u64)
 
+// Backend-exact pixel format layout math, shared with the C side.
+ref fn gpu_pixel_format_size(format: i32) i32
+ref fn gpu_pixel_format_row_pitch(format: i32, width: i32, row_alignment: i32) i32
+ref fn gpu_pixel_format_surface_pitch(format: i32, width: i32, height: i32, row_alignment: i32) i32
+
+// ---- v2 rich resource handles ----------------------------------------------
+//
+// The raw *_create calls above return bare u32 resource ids across the FFI.
+// The structs below keep that id (`resource_id`, 0 = invalid) together with
+// the description the resource was created from, so CPU code can size
+// uploads, derive layouts, validate ranges, and rebuild resources without
+// separate bookkeeping. The structs never cross the FFI; only resource_id
+// and addresses do.
+
+struct gpu_texture {
+    resource_id: u32,
+    width: i32,
+    height: i32,
+    depth_or_layers: i32,
+    format: i32,
+    usage: u32,
+    mip_count: i32,
+    kind: i32
+}
+
+struct gpu_sampler {
+    resource_id: u32,
+    min_filter: i32,
+    mag_filter: i32,
+    mip_filter: i32,
+    wrap_u: i32,
+    wrap_v: i32,
+    wrap_w: i32,
+    compare_func: i32,
+    max_anisotropy: i32
+}
+
+// Compute shaders keep their entry in `vertex_entry`; fragment_entry is "".
+struct gpu_shader {
+    resource_id: u32,
+    compute: bool,
+    target: str,
+    vertex_entry: str,
+    fragment_entry: str
+}
+
+struct gpu_render_state {
+    resource_id: u32,
+    primitive_type: i32,
+    cull_mode: i32,
+    face_winding: i32,
+    depth_compare: i32,
+    depth_write: bool,
+    blend_preset: i32,
+    color_mask: u32
+}
+
+// A GPU allocation with its extent, so suballocation and transfers can be
+// bounds-checked CPU-side before an address ever reaches the backend.
+struct gpu_memory {
+    addr: u64,
+    size: u64,
+    flags: u32
+}
+
+fn gpu_texture_new(width: i32, height: i32, depth_or_layers: i32, format: i32, usage: u32, mip_count: i32, kind: i32) gpu_texture {
+    let id = gpu_texture_create(width, height, depth_or_layers, format, usage, mip_count, kind)
+    return gpu_texture {
+        resource_id: id,
+        width: width,
+        height: height,
+        depth_or_layers: depth_or_layers,
+        format: format,
+        usage: usage,
+        mip_count: mip_count,
+        kind: kind,
+    }
+}
+
+fn gpu_texture_new_2d(width: i32, height: i32, format: i32, usage: u32) gpu_texture {
+    return gpu_texture_new(width, height, 1, format, usage, 1, GPU_TEXTURE_2D)
+}
+
+// Empty handle for unused pass attachments.
+fn gpu_texture_none() gpu_texture {
+    return gpu_texture {
+        resource_id: 0u,
+        width: 0,
+        height: 0,
+        depth_or_layers: 0,
+        format: GPU_PIXELFORMAT_NONE,
+        usage: 0u,
+        mip_count: 0,
+        kind: GPU_TEXTURE_2D,
+    }
+}
+
+fn gpu_texture_valid(tex: gpu_texture) bool {
+    return tex.resource_id != 0u
+}
+
+// Tightly packed byte size of one mip-0 slice.
+fn gpu_texture_bytes(tex: gpu_texture) u64 {
+    return gpu_pixel_format_surface_pitch(tex.format, tex.width, tex.height, 1) as u64
+}
+
+fn gpu_texture_update(tex: gpu_texture, mip: i32, layer: i32, data: [any], size: u64) {
+    gpu_texture_upload(tex.resource_id, mip, layer, data, size)
+}
+
+// Upload a full tightly packed mip-0 slice; the size comes from the handle.
+fn gpu_texture_update_all(tex: gpu_texture, data: [any]) {
+    gpu_texture_upload(tex.resource_id, 0, 0, data, gpu_texture_bytes(tex))
+}
+
+fn gpu_texture_release(tex: gpu_texture) {
+    gpu_texture_destroy(tex.resource_id)
+}
+
+fn gpu_sampler_new(min_filter: i32, mag_filter: i32, mip_filter: i32, wrap_u: i32, wrap_v: i32, wrap_w: i32, compare_func: i32, max_anisotropy: i32) gpu_sampler {
+    let id = gpu_sampler_create(min_filter, mag_filter, mip_filter, wrap_u, wrap_v, wrap_w, compare_func, max_anisotropy)
+    return gpu_sampler {
+        resource_id: id,
+        min_filter: min_filter,
+        mag_filter: mag_filter,
+        mip_filter: mip_filter,
+        wrap_u: wrap_u,
+        wrap_v: wrap_v,
+        wrap_w: wrap_w,
+        compare_func: compare_func,
+        max_anisotropy: max_anisotropy,
+    }
+}
+
+fn gpu_sampler_valid(smp: gpu_sampler) bool {
+    return smp.resource_id != 0u
+}
+
+fn gpu_sampler_release(smp: gpu_sampler) {
+    gpu_sampler_destroy(smp.resource_id)
+}
+
+fn gpu_render_state_new(primitive_type: i32, cull_mode: i32, face_winding: i32, depth_compare: i32, depth_write: bool, blend_preset: i32, color_mask: u32) gpu_render_state {
+    let id = gpu_state_create(primitive_type, cull_mode, face_winding, depth_compare, depth_write, blend_preset, color_mask)
+    return gpu_render_state {
+        resource_id: id,
+        primitive_type: primitive_type,
+        cull_mode: cull_mode,
+        face_winding: face_winding,
+        depth_compare: depth_compare,
+        depth_write: depth_write,
+        blend_preset: blend_preset,
+        color_mask: color_mask,
+    }
+}
+
+fn gpu_render_state_bind(state: gpu_render_state) {
+    gpu_set_state(state.resource_id)
+}
+
+fn gpu_memory_alloc(size: u64, flags: u32) gpu_memory {
+    return gpu_memory { addr: gpu_malloc(size, flags), size: size, flags: flags }
+}
+
+fn gpu_memory_valid(mem: gpu_memory) bool {
+    return mem.addr != 0
+}
+
+// Address of a byte offset inside the allocation; 0 when out of range.
+fn gpu_memory_at(mem: gpu_memory, offset: u64) u64 {
+    if offset >= mem.size {
+        return 0
+    }
+    return mem.addr + offset
+}
+
+fn gpu_memory_write(mem: gpu_memory, offset: u64, data: [any], size: u64) {
+    if offset + size > mem.size {
+        return
+    }
+    gpu_write(mem.addr + offset, data, size)
+}
+
+fn gpu_memory_read(mem: gpu_memory, offset: u64, dst: [any], size: u64) bool {
+    if offset + size > mem.size {
+        return false
+    }
+    return gpu_read(mem.addr + offset, dst, size)
+}
+
+fn gpu_memory_free(mem: gpu_memory) {
+    gpu_free(mem.addr)
+}
+
 // Transpile ns vertex/fragment fns for the active backend into a v2 shader.
 // Unlike v1 pipelines, the result carries no vertex layout or attachment
 // formats and can be drawn with any state in any pass.
-fn gpu_shader_graphics(vs: any, fs: any) u32 {
+fn gpu_shader_graphics(vs: any, fs: any) gpu_shader {
     let target = gpu_shader_target()
     let vs_src = shader_transpile_stage(vs, target, "vertex")
     let fs_src = shader_transpile_stage(fs, target, "fragment")
-    return gpu_shader_graphics_create(vs_src, fs_src, shader_entry(vs, target), shader_entry(fs, target))
+    let vs_entry = shader_entry(vs, target)
+    let fs_entry = shader_entry(fs, target)
+    return gpu_shader {
+        resource_id: gpu_shader_graphics_create(vs_src, fs_src, vs_entry, fs_entry),
+        compute: false,
+        target: target,
+        vertex_entry: vs_entry,
+        fragment_entry: fs_entry,
+    }
 }
 
 // Transpile a compute ns fn into a persistent v2 shader dispatched with
 // gpu_dispatch, replacing the recompile-per-dispatch dispatch_gpu path.
-fn gpu_shader_compute(f: any) u32 {
+fn gpu_shader_compute(f: any) gpu_shader {
     let target = gpu_shader_target()
     let source = shader_transpile_stage(f, target, "compute")
-    return gpu_shader_compute_create(source, shader_entry(f, target))
+    let entry = shader_entry(f, target)
+    return gpu_shader {
+        resource_id: gpu_shader_compute_create(source, entry),
+        compute: true,
+        target: target,
+        vertex_entry: entry,
+        fragment_entry: "",
+    }
+}
+
+fn gpu_shader_valid(shader: gpu_shader) bool {
+    return shader.resource_id != 0u
+}
+
+fn gpu_shader_bind(shader: gpu_shader) {
+    gpu_set_shader(shader.resource_id)
+}
+
+fn gpu_shader_release(shader: gpu_shader) {
+    gpu_shader_destroy(shader.resource_id)
+}
+
+// Begin a pass targeting rich texture handles (gpu_texture_none() marks an
+// unused attachment) and set the viewport to the color target size.
+fn gpu_pass_begin_target(color: gpu_texture, depth: gpu_texture, load_flags: u32, r: f64, g: f64, b: f64, a: f64, depth_clear: f64) {
+    gpu_pass_begin(color.resource_id, 0u, 0u, 0u, depth.resource_id, load_flags, r, g, b, a, depth_clear)
+    if color.width > 0 && color.height > 0 {
+        gpu_set_viewport(0, 0, color.width, color.height)
+    }
 }

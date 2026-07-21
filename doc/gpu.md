@@ -344,6 +344,39 @@ as `[any]` plus a byte size. `gpu_addr_host` stays C-only — a raw host
 pointer has no useful ns representation. Constants for capability bits,
 memory flags, blend presets, load actions, and texture kinds sit alongside.
 
+### Rich resource handles
+
+On top of the raw ids, `lib/gpu.ns` defines CPU-side handle structs that
+keep the id (`resource_id`, 0 = invalid) together with the description the
+resource was created from. The structs never cross the FFI — only ids and
+addresses do — so the metadata is free, exact, and available headless:
+
+```ns
+struct gpu_texture      { resource_id, width, height, depth_or_layers, format, usage, mip_count, kind }
+struct gpu_sampler      { resource_id, min/mag/mip filters, wraps, compare_func, max_anisotropy }
+struct gpu_shader       { resource_id, compute, target, vertex_entry, fragment_entry }
+struct gpu_render_state { resource_id, primitive, cull, winding, depth, blend, mask }
+struct gpu_memory       { addr, size, flags }
+```
+
+What the metadata buys on the CPU side:
+
+- `gpu_texture_bytes(tex)` sizes uploads from format and extent
+  (`gpu_pixel_format_*` layout math is declared to ns for this), and
+  `gpu_texture_update_all(tex, data)` uploads a full mip-0 slice with no
+  caller-side size bookkeeping.
+- `gpu_memory_write/read/at` bounds-check offsets against the allocation's
+  extent before an address ever reaches the backend.
+- `gpu_pass_begin_target(color, depth, ...)` targets rich handles and sets
+  the viewport from the color attachment's size.
+- `gpu_render_state_new` round-trips the same value-cached id as the raw
+  call while keeping every field readable.
+
+Constructors are `gpu_texture_new`/`gpu_texture_new_2d`/`gpu_texture_none`,
+`gpu_sampler_new`, `gpu_render_state_new`, `gpu_memory_alloc`; teardown is
+`gpu_*_release`/`gpu_memory_free`; binding is `gpu_shader_bind` /
+`gpu_render_state_bind`.
+
 Two sugar fns wrap the `shader` transpiler, replacing v1's
 `gpu_create_pipeline` and the recompile-per-dispatch `dispatch_gpu`:
 
@@ -351,9 +384,9 @@ Two sugar fns wrap the `shader` transpiler, replacing v1's
 // Transpile ns fns for the active backend. Unlike a v1 pipeline the result
 // carries no vertex layout or attachment formats and can be drawn with any
 // state in any pass; the compute variant returns a persistent shader for
-// gpu_dispatch.
-fn gpu_shader_graphics(vs: any, fs: any) u32
-fn gpu_shader_compute(f: any) u32
+// gpu_dispatch. The returned gpu_shader records target and entry names.
+fn gpu_shader_graphics(vs: any, fs: any) gpu_shader
+fn gpu_shader_compute(f: any) gpu_shader
 ```
 
 A frame, before and after:

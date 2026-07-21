@@ -250,6 +250,9 @@ extern void gpu_dispatch(i32, i32, i32);
 extern void gpu_dispatch_indirect(u64);
 extern void gpu_signal_after(u64, u64);
 extern void gpu_wait_before(u64, u64);
+extern i32 gpu_pixel_format_size(i32);
+extern i32 gpu_pixel_format_row_pitch(i32, i32, i32);
+extern i32 gpu_pixel_format_surface_pitch(i32, i32, i32, i32);
 extern void * io_load_image(const char *);
 extern ns_bool io_save_image(const char *, void *);
 
@@ -1372,6 +1375,21 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_wait_before")) {
         gpu_wait_before(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u64(vm, ns_embedded_arg(vm, 1)));
         call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_pixel_format_size")) {
+        i32 result = gpu_pixel_format_size(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_pixel_format_row_pitch")) {
+        i32 result = gpu_pixel_format_row_pitch(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_pixel_format_surface_pitch")) {
+        i32 result = gpu_pixel_format_surface_pitch(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
         return ns_return_ok(bool, true);
     }
     else if (ns_str_equals_STR(fn->lib, "io") && ns_str_equals_STR(fn->name, "io_load_image")) {

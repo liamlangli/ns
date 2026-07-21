@@ -1,10 +1,29 @@
 // Portable v2 gpu core (doc/gpu.md). Virtual addressing, host-backed
-// memory, the frame ring, and the state registry are exact on every
-// platform; without a requested device gpu_caps() is 0, resource creation
-// returns 0, and submission calls are safe no-ops, so the whole surface is
-// exercised headless here.
+// memory, the frame ring, the state registry, and the rich CPU-side
+// resource handles are exact on every platform; without a requested device
+// gpu_caps() is 0, resource creation returns 0, and submission calls are
+// safe no-ops, so the whole surface is exercised headless here.
 use std
+use simd
 use gpu
+
+// Shader fn pair for the gpu_shader_graphics sugar (transpiled in the VM,
+// exact on every platform; only resource_id depends on a device).
+struct v2_vertex { position: float3, uv: float2, weight: f32 }
+struct v2_varying { position: float4, uv: float2 }
+
+fn v2_vs(data: v2_vertex) v2_varying {
+    let pos = data.position
+    return v2_varying {
+        position: float4 { x: pos.x, y: pos.y, z: pos.z, w: data.weight },
+        uv: data.uv,
+    }
+}
+
+fn v2_fs(data: v2_varying) float4 {
+    let uv = data.uv
+    return float4 { x: uv.x, y: uv.y, z: 0.0, w: 1.0 }
+}
 
 // Without a device there are no capabilities.
 assert gpu_caps() == 0u
@@ -99,3 +118,55 @@ assert b != 0
 assert gpu_read(b, zeros, 16)
 gpu_free(b)
 gpu_free(d)
+
+// -- rich resource handles: resource_id + creation metadata --------------------
+let tex = gpu_texture_new_2d(64, 32, GPU_PIXELFORMAT_RGBA8, 1u)
+assert tex.resource_id == 0u          // headless: no device, id stays invalid
+assert gpu_texture_valid(tex) == false
+assert tex.width == 64 && tex.height == 32 && tex.depth_or_layers == 1
+assert tex.format == GPU_PIXELFORMAT_RGBA8
+assert tex.mip_count == 1 && tex.kind == GPU_TEXTURE_2D
+assert gpu_texture_bytes(tex) == 8192 // 64 * 32 * 4
+gpu_texture_update(tex, 0, 0, src, 16)
+gpu_texture_update_all(tex, src)
+gpu_texture_release(tex)
+assert gpu_texture_valid(gpu_texture_none()) == false
+
+let smp = gpu_sampler_new(2, 2, 0, 1, 1, 1, 0, 1)
+assert smp.resource_id == 0u && smp.min_filter == 2 && smp.wrap_u == 1
+gpu_sampler_release(smp)
+
+// The wrapper reaches the same value-cached registry as the raw call.
+let rs = gpu_render_state_new(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, 0, GPU_COMPARE_LESS_EQUAL, true, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
+assert rs.resource_id == s1
+assert rs.depth_write && rs.blend_preset == GPU_BLEND_ALPHA
+gpu_render_state_bind(rs)
+
+// gpu_memory carries the extent, so ranges are validated CPU-side before an
+// address ever reaches the backend.
+let mem = gpu_memory_alloc(1024, GPU_MEM_SHARED)
+assert gpu_memory_valid(mem)
+assert mem.size == 1024 && mem.flags == GPU_MEM_SHARED
+gpu_memory_write(mem, 32, src, 16)
+let mdst = [i32](4)
+assert gpu_memory_read(mem, 32, mdst, 16)
+assert mdst[0] == 11 && mdst[3] == 44
+assert gpu_memory_at(mem, 8) == mem.addr + 8
+assert gpu_memory_at(mem, 1024) == 0
+assert gpu_memory_read(mem, 1016, mdst, 16) == false
+gpu_memory_write(mem, 1016, src, 16)  // out of range: rejected, no effect
+gpu_memory_free(mem)
+
+// Transpiled shader handles keep target and entry metadata even headless.
+let sh = gpu_shader_graphics(v2_vs, v2_fs)
+assert sh.compute == false
+assert sh.resource_id == 0u
+assert utf8_len(sh.target) > 0
+assert utf8_len(sh.vertex_entry) > 0
+gpu_shader_bind(sh)
+gpu_shader_release(sh)
+
+// The pass helper takes rich handles and is a safe no-op headless.
+gpu_pass_begin_target(gpu_texture_none(), gpu_texture_none(), 0u, 0.0, 0.0, 0.0, 1.0, 1.0)
+gpu_pass_end()
+gpu_commit()
