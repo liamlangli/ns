@@ -71,8 +71,14 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
     }
     case NS_TYPE_TASK:
         return ns_task_fmt(vm, n);
-    default:
+    default: {
+        // Structs and other aggregates have no built-in representation; a user
+        // `fn to_str(value: T) str` provides one. Used for interpolation of a
+        // value directly and of container elements when iterating.
+        ns_str custom = ns_eval_to_str(vm, n);
+        if (custom.data) return custom;
         return ns_str_cstr("nil");
+    }
     }
 }
 

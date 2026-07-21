@@ -243,6 +243,9 @@ ns_eval_value_def(f64)
 ns_bool ns_eval_bool(ns_vm *vm, ns_value n);
 ns_value ns_eval_enum_underlying_value(ns_vm *vm, ns_value n);
 ns_str ns_eval_str(ns_vm *vm, ns_value n);
+// Custom formatting: invoke a user `fn to_str(value: T) str` for v's type;
+// null result (data == NULL) means no match, so use built-in formatting.
+ns_str ns_eval_to_str(ns_vm *vm, ns_value v);
 void *ns_eval_array_raw(ns_vm *vm, ns_value n);
 u64 ns_eval_alloc(ns_vm *vm, i32 stride);
 ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size);

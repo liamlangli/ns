@@ -1226,6 +1226,56 @@ static ns_return_value ns_eval_call_gen_next(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_
     return ns_return_ok(value, call.ret);
 }
 
+// Custom formatting hook: resolve `fn to_str(value: T) str` by the value's
+// type and invoke it, returning the produced string as a non-owning view into
+// the vm's interned string storage (dynamic=0, matching ns_fmt_value's string
+// case). Returns a null ns_str (data == NULL) when no matching to_str exists or
+// the call fails, so the caller falls back to built-in formatting. Resolution
+// is by parameter type, so several user types may each declare their own
+// to_str (a plain-name lookup would only ever find the first).
+ns_str ns_eval_to_str(ns_vm *vm, ns_value v) {
+    i32 fn_i = -1;
+    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
+        ns_symbol *s = &vm->symbols[i];
+        if (s->type != NS_SYMBOL_FN || !ns_str_equals_STR(s->name, "to_str")) continue;
+        if (ns_array_length(s->fn.args) != 1) continue;
+        ns_type at = s->fn.args[0].val.t;
+        if (at.type != v.t.type || ns_type_index(at) != ns_type_index(v.t)) continue;
+        if (!ns_type_is(s->fn.ret, NS_TYPE_STRING)) continue;
+        if (s->fn.fn.t.ref || s->fn.fn_type == NS_FN_ASYNC || !s->fn.ctx) continue; // script fns only
+        fn_i = i;
+        break;
+    }
+    if (fn_i < 0) return ns_str_null;
+
+    ns_symbol *sym = &vm->symbols[fn_i];
+    ns_fn_symbol *fn = &sym->fn;
+
+    ns_value ret_val = (ns_value){.t = ns_type_set_stack(fn->ret, true), .o = 0};
+    i32 ret_size = ns_type_size(vm, fn->ret);
+    if (ret_size > 0) ret_val.o = ns_eval_alloc(vm, ret_size);
+
+    ns_call call = (ns_call){.callee = sym, .scope_top = ns_array_length(vm->scope_stack), .ret = ret_val, .ret_set = false, .arg_offset = ns_array_length(vm->symbol_stack), .arg_count = 1};
+    ns_scope_enter(vm);
+    ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->args[0].name, .val = v, .parsed = true};
+    ns_array_push(vm->symbol_stack, arg);
+    ns_array_push(vm->call_stack, call);
+    ns_return_void ret = ns_eval_compound_stmt(vm, fn->ctx, fn->body);
+    if (ns_return_is_error(ret)) {
+        // fall back to built-in formatting; ns_fmt_value has no error channel
+        (void)ns_array_pop(vm->call_stack);
+        ns_scope_exit(vm);
+        return ns_str_null;
+    }
+    call = ns_array_pop(vm->call_stack);
+    ns_scope_exit(vm);
+
+    // The bytes live in vm->str_list and outlive this call; return a non-owning
+    // view so the fmt caller's ns_str_free won't release interned storage.
+    ns_str s = ns_eval_str(vm, call.ret);
+    return (ns_str){.data = s.data, .len = s.len, .dynamic = 0};
+}
+
 ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *gen = &ctx->nodes[n->for_stmt.generator];

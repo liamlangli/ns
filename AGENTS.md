@@ -147,9 +147,13 @@ let raw: u8 = platform
 - Define external/native functions with `ref fn`; these are resolved as VM
   intrinsics or through FFI rather than implemented by an ns body.
 - Overload an operator for a user type with `fn ops(operator)(...)` and provide
-  `fn to_str(value): str` for formatted string conversion.
+  `fn to_str(value) str` for formatted string conversion.
 - Backtick strings interpolate expressions, for example
-  `` `result = {value}` ``.
+  `` `result = {value}` ``. A value with no built-in representation (a struct,
+  and so a struct element iterated from a container) formats through a
+  `fn to_str(value) str` declared for its type; resolution is by parameter
+  type, so each type declares its own. Without one, such a value renders as
+  `nil`.
 - Supported operator families include arithmetic (`+ - * / %`), comparison,
   equality, logical (`! && ||`; `&&` and `||` short-circuit), bitwise
   (`~ & | ^ << >>`), assignment, and explicit `as` casts. Parenthesize mixed

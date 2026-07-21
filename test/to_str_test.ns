@@ -1,0 +1,69 @@
+// Custom string conversion in interpolation: a user `fn to_str(value: T) str`
+// makes a value of type T printable inside backtick strings and print() format
+// strings, including container elements (e.g. a struct element of an array,
+// or a struct-typed dict value).
+use std
+
+struct point { x: i32, y: i32 }
+struct color { r: i32, g: i32, b: i32 }
+struct plain { v: i32 }
+
+// resolution is by parameter type, so each type declares its own to_str
+fn to_str(p: point) str {
+    return `({p.x}, {p.y})`
+}
+fn to_str(c: color) str {
+    return `#{c.r},{c.g},{c.b}`
+}
+
+// ---- a value interpolated directly -----------------------------------------
+let a = point(1, 2)
+let sa = `a = {a}`
+assert sa == "a = (1, 2)"
+
+// each type resolves its own to_str
+let c = color(3, 4, 5)
+let sc = `c = {c}`
+assert sc == "c = #3,4,5"
+
+// a type without to_str falls back to the built-in placeholder, no crash
+let pl = plain(9)
+let spl = `{pl}`
+assert spl == "nil"
+
+// ---- nested: a to_str that interpolates another struct's to_str ------------
+struct segment { a: point, b: point }
+fn to_str(s: segment) str {
+    return `[{s.a} -> {s.b}]`
+}
+let seg = segment(point(0, 0), point(6, 7))
+let sseg = `{seg}`
+assert sseg == "[(0, 0) -> (6, 7)]"
+
+// ---- container elements print via to_str -----------------------------------
+// struct elements of an array
+let pts = [point(1, 1), point(2, 2), point(3, 3)]
+let p0 = `{pts[0]}`
+let p1 = `{pts[1]}`
+let p2 = `{pts[2]}`
+assert p0 == "(1, 1)"
+assert p1 == "(2, 2)"
+assert p2 == "(3, 3)"
+
+// a struct-typed dict value
+let places = [str: point](8)
+places["home"] = point(10, 20)
+let home = `home = {places["home"]}`
+assert home == "home = (10, 20)"
+
+// ---- iterating a container and printing each element via to_str -------------
+// (the driving use case: for v in subject prints elements through to_str)
+for p in pts {
+    print(`p = {p}\n`)
+}
+
+// ---- the print() format-string path uses to_str too ------------------------
+// (exercises ns_fmt_eval, not just backtick interpolation)
+print("segment {seg} head {seg.a}\n")
+
+print("to_str test passed\n")
