@@ -2,7 +2,7 @@
     "name": "nslang",
     "displayName": "Nano Script",
     "description": "Nano Script language support, including project run and build commands.",
-    "version": "0.1.2",
+    "version": "0.1.3",
     "publisher": "liamlangli",
     "license": "MIT",
     "icon": "icons/ns.png",

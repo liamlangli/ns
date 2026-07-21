@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Recognize `lit` as a Nano Script declaration keyword.
+
 ## 0.1.2
 
 - Add editor-title buttons and command-palette entries to run or build the

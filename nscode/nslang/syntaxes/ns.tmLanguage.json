@@ -109,7 +109,7 @@
                 },
                 {
                     "name": "keyword.declaration.ns",
-                    "match": "\\b(fn|let|const|struct|enum|type|mod|use|ref|ops|kernel|async)\\b"
+                    "match": "\\b(fn|let|lit|const|struct|enum|type|mod|use|ref|ops|kernel|async)\\b"
                 },
                 {
                     "name": "keyword.operator.word.ns",
