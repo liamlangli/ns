@@ -1323,6 +1323,28 @@ ns_return_void ns_eval_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                 }
                 if (ns_loop_should_stop(vm)) break; // break or return
             }
+        } else if (ns_type_is(subject.t, NS_TYPE_DICT) || ns_type_is(subject.t, NS_TYPE_SET)) {
+            // dict/set subject: bind each key (a set's element, a dict's key;
+            // a dict body reads the value with d[k]). Walk the open-addressed
+            // slots. The table is fixed-capacity so its pointer stays stable
+            // across body mutations; only occupied slots (state 1) are visited.
+            ns_type key_t = vm->symbols[ns_type_index(subject.t)].ct.key;
+            ns_array_push(vm->symbol_stack, ((ns_symbol){.type = NS_SYMBOL_VALUE, .name = name, .val = { .t = key_t }, .parsed = true}));
+            ns_dict_table *table = ns_eval_dict_table(vm, subject);
+            i32 cap = table ? table->cap : 0;
+            for (i32 s_i = 0; s_i < cap; ++s_i) {
+                u8 *slot = ns_eval_dict_slot(table, s_i);
+                if (slot[0] != 1) continue; // skip empty (0) and tombstone (2)
+                vm->symbol_stack[ii].val = ns_eval_slot_value(table, slot + table->key_off, table->key_type);
+                ns_scope_enter(vm);
+                ns_return_void ret = ns_eval_compound_stmt(vm, ctx, n->for_stmt.body);
+                ns_scope_exit(vm);
+                if (ns_return_is_error(ret)) {
+                    ns_scope_exit(vm);
+                    return ret;
+                }
+                if (ns_loop_should_stop(vm)) break; // break or return
+            }
         } else {
             // struct subject: `next(it): bool` advances, `value` carries the
             // element; both were resolved by ns_vm_parse_gen_expr

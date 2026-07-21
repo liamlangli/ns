@@ -1539,6 +1539,11 @@ ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_type_is(from_t, NS_TYPE_STRING)) {
             return ns_return_ok(type, ns_type_i32);
         }
+        // dict/set subject: the loop var binds each key (set element); a dict
+        // body reads the value through d[k]
+        if (ns_type_is(from_t, NS_TYPE_DICT) || ns_type_is(from_t, NS_TYPE_SET)) {
+            return ns_return_ok(type, vm->symbols[ns_type_index(from_t)].ct.key);
+        }
         // struct subject: `next(it): bool` advances the iterator and the
         // subject's `value` field carries the element the loop var binds to
         if (ns_type_is(from_t, NS_TYPE_STRUCT)) {
@@ -1559,7 +1564,7 @@ ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             n->gen_expr.rt.value_field = f_i;
             return ns_return_ok(type, st->st.fields[f_i].t);
         }
-        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "gen expr type mismatch.", "string, array, or struct with fn next", from_t));
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "gen expr type mismatch.", "string, array, dict, set, or struct with fn next", from_t));
     }
 }
 

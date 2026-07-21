@@ -57,6 +57,72 @@ for c in text {
 }
 assert byte_sum == 97 + 98 + 99
 
+// ---- set subject: the loop var binds each element --------------------------
+let ids = set[i32](8)
+assert insert(ids, 3) && insert(ids, 7) && insert(ids, 11)
+let id_sum = 0
+let id_count = 0
+for id in ids {
+    id_sum = id_sum + id
+    id_count = id_count + 1
+}
+assert id_sum == 3 + 7 + 11
+assert id_count == 3
+
+// removed elements are not visited (tombstoned slots are skipped)
+assert remove(ids, 7)
+let id_sum2 = 0
+for id in ids {
+    id_sum2 = id_sum2 + id
+}
+assert id_sum2 == 3 + 11
+
+// string-keyed set
+let tags = set[str](8)
+assert insert(tags, "a") && insert(tags, "bc")
+let tag_bytes = 0
+for t in tags {
+    tag_bytes = tag_bytes + t.len
+}
+assert tag_bytes == 3
+
+// ---- dict subject: the loop var binds each key; d[k] reads the value -------
+let ages = [str: i32](8)
+ages["amy"] = 30
+ages["bob"] = 12
+let key_bytes = 0
+let val_sum = 0
+let entries = 0
+for k in ages {
+    key_bytes = key_bytes + k.len
+    val_sum = val_sum + ages[k]
+    entries = entries + 1
+}
+assert key_bytes == 6
+assert val_sum == 42
+assert entries == 2
+
+// numeric-keyed dict
+let names = [i32: str](8)
+names[7] = "seven"
+names[11] = "eleven"
+let key_sum = 0
+let name_bytes = 0
+for k in names {
+    key_sum = key_sum + k
+    name_bytes = name_bytes + names[k].len
+}
+assert key_sum == 18
+assert name_bytes == 11
+
+// break inside a dict loop stops iteration
+let seen = 0
+for k in names {
+    seen = seen + 1
+    break
+}
+assert seen == 1
+
 // ---- struct subject: the iterator protocol ----------------------------------
 // `for v in it` calls `next(it)` before each round; a true result publishes
 // the current element in `it.value`, false ends the loop.
