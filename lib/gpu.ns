@@ -146,3 +146,106 @@ ref fn gpu_set_mesh(mesh: gpu_mesh)
 ref fn gpu_draw(base: i32, count: i32, instance_count: i32)
 ref fn gpu_end_pass()
 ref fn gpu_commit()
+
+// ---- v2: the GPU as a processor with memory (doc/gpu.md) -------------------
+//
+// GPU memory is addressed by 64-bit values from gpu_malloc; suballocation is
+// plain address arithmetic within one allocation. Textures and samplers are
+// u32 bindless heap indices, plain data that can live in structs, arrays, or
+// GPU memory. Shader input is one root pointer; there are no mesh, binding,
+// or pipeline objects. Works headless everywhere: without a device the
+// memory calls run host-side and everything else safely no-ops.
+
+// Capability bits reported by gpu_caps(); 0 means no device.
+let GPU_CAP_RAW_POINTERS = 1u
+let GPU_CAP_BINDLESS_TEXTURES = 2u
+let GPU_CAP_INDIRECT_DRAW = 4u
+let GPU_CAP_ASYNC_COMPUTE = 8u
+let GPU_CAP_READBACK = 16u
+
+let GPU_MEM_DEVICE = 0u
+let GPU_MEM_SHARED = 1u
+
+let GPU_BLEND_OFF = 0
+let GPU_BLEND_ALPHA = 1
+let GPU_BLEND_PREMULTIPLIED = 2
+let GPU_BLEND_ADDITIVE = 3
+
+// gpu_pass_begin load_flags: a gpu load action (clear 0, load 1, dontcare 2)
+// packed per attachment: color0 at bit 0, color1 at 2, color2 at 4, color3 at
+// 6, depth at 8.
+let GPU_LOAD_CLEAR = 0u
+let GPU_LOAD_LOAD = 1u
+let GPU_LOAD_DONTCARE = 2u
+
+let GPU_COLOR_MASK_ALL = 15u
+
+let GPU_TEXTURE_2D = 0
+let GPU_TEXTURE_CUBE = 1
+let GPU_TEXTURE_3D = 2
+let GPU_TEXTURE_ARRAY = 3
+
+ref fn gpu_caps() u32
+
+ref fn gpu_malloc(size: u64, flags: u32) u64
+ref fn gpu_free(addr: u64)
+ref fn gpu_write(dst: u64, data: [any], size: u64)
+ref fn gpu_read(src: u64, dst: [any], size: u64) bool
+// Transient per-frame allocation, recycled by gpu_commit; align 0 selects the
+// 256-byte default that is safe on every backend.
+ref fn gpu_frame_alloc(size: u64, align: u32) u64
+
+ref fn gpu_texture_create(width: i32, height: i32, depth_or_layers: i32, format: i32, usage: u32, mip_count: i32, kind: i32) u32
+ref fn gpu_texture_upload(tex: u32, mip: i32, layer: i32, data: [any], size: u64)
+ref fn gpu_texture_destroy(tex: u32)
+ref fn gpu_sampler_create(min_filter: i32, mag_filter: i32, mip_filter: i32, wrap_u: i32, wrap_v: i32, wrap_w: i32, compare_func: i32, max_anisotropy: i32) u32
+ref fn gpu_sampler_destroy(smp: u32)
+
+ref fn gpu_shader_graphics_create(vs_src: str, fs_src: str, vs_entry: str, fs_entry: str) u32
+ref fn gpu_shader_compute_create(src: str, entry: str) u32
+ref fn gpu_shader_destroy(shader: u32)
+
+// Immutable value-cached render-state key: equal arguments return the same
+// id. Not a pipeline; the backend hashes (shader, state, pass formats) into
+// its internal pipeline cache on first use.
+ref fn gpu_state_create(primitive_type: i32, cull_mode: i32, face_winding: i32, depth_compare: i32, depth_write: bool, blend_preset: i32, color_mask: u32) u32
+
+// Attachments are texture indices, 0 = unused.
+ref fn gpu_pass_begin(color0: u32, color1: u32, color2: u32, color3: u32, depth: u32, load_flags: u32, r: f64, g: f64, b: f64, a: f64, depth_clear: f64)
+ref fn gpu_screen_pass_begin(r: f64, g: f64, b: f64, a: f64)
+ref fn gpu_pass_end()
+
+ref fn gpu_set_shader(shader: u32)
+ref fn gpu_set_state(state: u32)
+ref fn gpu_set_root(args: u64)
+// Copy a small argument struct into the frame ring and bind it as the root
+// pointer in one call.
+ref fn gpu_set_root_data(data: [any], size: u64)
+ref fn gpu_draw_vertices(vertex_base: i32, vertex_count: i32, instance_count: i32)
+ref fn gpu_draw_indexed(indices: u64, index_type: i32, index_count: i32, instance_count: i32, base_vertex: i32)
+ref fn gpu_draw_indirect(args: u64, draw_count: i32, stride: i32)
+ref fn gpu_dispatch(x: i32, y: i32, z: i32)
+ref fn gpu_dispatch_indirect(args: u64)
+
+// Futex-style split barriers; degrade to the implicit inter-pass barrier on
+// tiers without GPU_CAP_ASYNC_COMPUTE.
+ref fn gpu_signal_after(addr: u64, value: u64)
+ref fn gpu_wait_before(addr: u64, value: u64)
+
+// Transpile ns vertex/fragment fns for the active backend into a v2 shader.
+// Unlike v1 pipelines, the result carries no vertex layout or attachment
+// formats and can be drawn with any state in any pass.
+fn gpu_shader_graphics(vs: any, fs: any) u32 {
+    let target = gpu_shader_target()
+    let vs_src = shader_transpile_stage(vs, target, "vertex")
+    let fs_src = shader_transpile_stage(fs, target, "fragment")
+    return gpu_shader_graphics_create(vs_src, fs_src, shader_entry(vs, target), shader_entry(fs, target))
+}
+
+// Transpile a compute ns fn into a persistent v2 shader dispatched with
+// gpu_dispatch, replacing the recompile-per-dispatch dispatch_gpu path.
+fn gpu_shader_compute(f: any) u32 {
+    let target = gpu_shader_target()
+    let source = shader_transpile_stage(f, target, "compute")
+    return gpu_shader_compute_create(source, shader_entry(f, target))
+}

@@ -1028,6 +1028,7 @@ void gpu_commit() {
     gpu_mtl_capture_end_if_started();
     _state.cmd_buffer = nil;
     _state.frame_index += 1;
+    gpu_v2_frame_end();
 }
 
 id<MTLLibrary> _mtl_library_from_bytecode(ns_data src) {

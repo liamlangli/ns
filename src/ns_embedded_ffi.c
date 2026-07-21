@@ -221,6 +221,35 @@ extern void gpu_set_mesh(gpu_mesh);
 extern void gpu_draw(i32, i32, i32);
 extern void gpu_end_pass(void);
 extern void gpu_commit(void);
+extern u32 gpu_caps(void);
+extern u64 gpu_malloc(u64, u32);
+extern void gpu_free(u64);
+extern void gpu_write(u64, void *, u64);
+extern ns_bool gpu_read(u64, void *, u64);
+extern u64 gpu_frame_alloc(u64, u32);
+extern u32 gpu_texture_create(i32, i32, i32, i32, u32, i32, i32);
+extern void gpu_texture_upload(u32, i32, i32, void *, u64);
+extern void gpu_texture_destroy(u32);
+extern u32 gpu_sampler_create(i32, i32, i32, i32, i32, i32, i32, i32);
+extern void gpu_sampler_destroy(u32);
+extern u32 gpu_shader_graphics_create(const char *, const char *, const char *, const char *);
+extern u32 gpu_shader_compute_create(const char *, const char *);
+extern void gpu_shader_destroy(u32);
+extern u32 gpu_state_create(i32, i32, i32, i32, ns_bool, i32, u32);
+extern void gpu_pass_begin(u32, u32, u32, u32, u32, u32, f64, f64, f64, f64, f64);
+extern void gpu_screen_pass_begin(f64, f64, f64, f64);
+extern void gpu_pass_end(void);
+extern void gpu_set_shader(u32);
+extern void gpu_set_state(u32);
+extern void gpu_set_root(u64);
+extern void gpu_set_root_data(void *, u64);
+extern void gpu_draw_vertices(i32, i32, i32);
+extern void gpu_draw_indexed(u64, i32, i32, i32, i32);
+extern void gpu_draw_indirect(u64, i32, i32);
+extern void gpu_dispatch(i32, i32, i32);
+extern void gpu_dispatch_indirect(u64);
+extern void gpu_signal_after(u64, u64);
+extern void gpu_wait_before(u64, u64);
 extern void * io_load_image(const char *);
 extern ns_bool io_save_image(const char *, void *);
 
@@ -1197,6 +1226,151 @@ ns_return_bool ns_vm_call_embedded(ns_vm *vm) {
     }
     else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_commit")) {
         gpu_commit();
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_caps")) {
+        u32 result = gpu_caps();
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_malloc")) {
+        u64 result = gpu_malloc(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 1)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_free")) {
+        gpu_free(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_write")) {
+        gpu_write(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_embedded_arg_pointer(vm, 1), ns_eval_number_u64(vm, ns_embedded_arg(vm, 2)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_read")) {
+        ns_bool result = gpu_read(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_embedded_arg_pointer(vm, 1), ns_eval_number_u64(vm, ns_embedded_arg(vm, 2)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_frame_alloc")) {
+        u64 result = gpu_frame_alloc(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 1)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_texture_create")) {
+        u32 result = gpu_texture_create(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 4)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 5)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 6)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_texture_upload")) {
+        gpu_texture_upload(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_embedded_arg_pointer(vm, 3), ns_eval_number_u64(vm, ns_embedded_arg(vm, 4)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_texture_destroy")) {
+        gpu_texture_destroy(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_sampler_create")) {
+        u32 result = gpu_sampler_create(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 4)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 5)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 6)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 7)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_sampler_destroy")) {
+        gpu_sampler_destroy(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_shader_graphics_create")) {
+        u32 result = gpu_shader_graphics_create(ns_embedded_arg_str(vm, 0), ns_embedded_arg_str(vm, 1), ns_embedded_arg_str(vm, 2), ns_embedded_arg_str(vm, 3));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_shader_compute_create")) {
+        u32 result = gpu_shader_compute_create(ns_embedded_arg_str(vm, 0), ns_embedded_arg_str(vm, 1));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_shader_destroy")) {
+        gpu_shader_destroy(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_state_create")) {
+        u32 result = gpu_state_create(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_eval_bool(vm, ns_embedded_arg(vm, 4)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 5)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 6)));
+        ns_embedded_return_scalar(vm, &result, sizeof(result));
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_pass_begin")) {
+        gpu_pass_begin(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 4)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 9)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 10)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_screen_pass_begin")) {
+        gpu_screen_pass_begin(ns_eval_number_f64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_pass_end")) {
+        gpu_pass_end();
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_set_shader")) {
+        gpu_set_shader(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_set_state")) {
+        gpu_set_state(ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_set_root")) {
+        gpu_set_root(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_set_root_data")) {
+        gpu_set_root_data(ns_embedded_arg_pointer(vm, 0), ns_eval_number_u64(vm, ns_embedded_arg(vm, 1)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_draw_vertices")) {
+        gpu_draw_vertices(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_draw_indexed")) {
+        gpu_draw_indexed(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 4)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_draw_indirect")) {
+        gpu_draw_indirect(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_dispatch")) {
+        gpu_dispatch(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_dispatch_indirect")) {
+        gpu_dispatch_indirect(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_signal_after")) {
+        gpu_signal_after(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u64(vm, ns_embedded_arg(vm, 1)));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    else if (ns_str_equals_STR(fn->lib, "gpu") && ns_str_equals_STR(fn->name, "gpu_wait_before")) {
+        gpu_wait_before(ns_eval_number_u64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u64(vm, ns_embedded_arg(vm, 1)));
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }

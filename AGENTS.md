@@ -221,7 +221,7 @@ rules.
 | `term` | Native raw-terminal input, dimensions, buffered byte output, file byte I/O, and startup filename access for terminal apps. |
 | `audio` | Apple native music/SFX loading, playback, pause/resume/seek, volume, duration/position, and error reporting. Handles are opaque integers. |
 | `view` | Native application window/view lifecycle plus keyboard, pointer, gesture, clipboard, frame callback, size, scale, and GPU-device state. |
-| `gpu` | Platform GPU device/resource handles, buffers, shaders, pipelines, meshes, render-pass submission, drawing, and compute shader dispatch. Apple uses Metal, Windows uses DirectX 12, and unsupported backends may return failure. |
+| `gpu` | Platform GPU access. The v2 surface (doc/gpu.md) treats the GPU as a processor with memory: 64-bit addresses from `gpu_malloc`, bindless u32 texture/sampler indices, one root pointer per draw/dispatch, and a frame ring for transient data; it runs host-side headless. The legacy v1 surface (buffers, pipelines, meshes, bindings, render passes) remains during migration. Apple uses Metal, Windows uses DirectX 12, and unsupported backends may return failure. |
 | `ui` | Immediate-mode native UI rendering, layout, themes, input snapshots, widgets, scrolling, text editing/views, images, and renderer primitives on top of `view` and `gpu`. |
 
 `std`, `task`, and `shader` are backed by interpreter intrinsics; `simd` is pure

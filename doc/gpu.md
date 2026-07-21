@@ -147,6 +147,13 @@ Everything below is FFI-safe: scalars, `u64` addresses, `u32` indices,
 pointers+lengths. No descriptor structs cross the boundary; no arrays are
 fixed at 8.
 
+Naming note: while v1 and v2 coexist, v2 entry points that would collide
+with a live v1 symbol take a v2 spelling — `gpu_texture_create` (v1
+`gpu_create_texture`), `gpu_draw_vertices` (v1 `gpu_draw`),
+`gpu_pass_begin`/`gpu_pass_end`/`gpu_screen_pass_begin` (v1
+`gpu_begin_render_pass`/`gpu_end_pass`/`gpu_create_screen_pass`). When v1
+is deleted these become the only names.
+
 ### Device and frame
 
 ```c
@@ -154,8 +161,7 @@ ns_bool gpu_request_device(view *v);
 void    gpu_destroy_device(void);
 u32     gpu_caps(void);
 
-void gpu_begin_frame(void);   // optional; first pass implies it
-void gpu_commit(void);        // submit + present, recycles frame ring
+void gpu_commit(void);        // submit + present, recycles the frame ring
 ```
 
 ### Memory
@@ -190,21 +196,18 @@ always valid within one allocation.
 ### Textures and samplers
 
 ```c
-// Returns a bindless heap index; 0 is invalid. The index is plain data:
-// store it in structs, arrays, or GPU memory.
-typedef u32 gpu_texture;
-typedef u32 gpu_sampler;
+// Returns a bindless heap index (plain u32); 0 is invalid. The index is
+// plain data: store it in structs, arrays, or GPU memory.
+u32  gpu_texture_create(i32 width, i32 height, i32 depth_or_layers,
+                        i32 format, u32 usage, i32 mip_count, i32 kind);
+void gpu_texture_upload(u32 tex, i32 mip, i32 layer,
+                        const void *data, u64 size);
+void gpu_texture_destroy(u32 tex);
 
-gpu_texture gpu_create_texture(i32 width, i32 height, i32 depth_or_layers,
-                               i32 format, u32 usage, i32 mip_count, i32 type);
-void        gpu_texture_upload(gpu_texture tex, i32 mip, i32 layer,
-                               const void *data, u64 size);
-void        gpu_destroy_texture(gpu_texture tex);
-
-gpu_sampler gpu_create_sampler(i32 min_filter, i32 mag_filter, i32 mip_filter,
-                               i32 wrap_u, i32 wrap_v, i32 wrap_w,
-                               i32 compare_func, i32 max_anisotropy);
-void        gpu_destroy_sampler(gpu_sampler smp);
+u32  gpu_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,
+                        i32 wrap_u, i32 wrap_v, i32 wrap_w,
+                        i32 compare_func, i32 max_anisotropy);
+void gpu_sampler_destroy(u32 smp);
 ```
 
 `usage` keeps v1's read/write/render-target bits; storage (UAV) access uses
@@ -214,21 +217,21 @@ observation that real programs need a handful.
 ### Shaders and render state
 
 ```c
-typedef u32 gpu_shader;      // compiled program: vertex+fragment, or compute
-typedef u32 gpu_state;       // immutable render-state key (NOT a PSO)
+// shader = compiled program (vertex+fragment, or compute); state = immutable
+// render-state key (NOT a PSO). Both plain u32 ids, 0 invalid.
+u32  gpu_shader_graphics_create(const char *vs_src, const char *fs_src,
+                                const char *vs_entry, const char *fs_entry);
+u32  gpu_shader_compute_create(const char *src, const char *entry);
+void gpu_shader_destroy(u32 shader);
 
-gpu_shader gpu_create_shader_graphics(const char *vs_src, const char *fs_src,
-                                      const char *vs_entry, const char *fs_entry);
-gpu_shader gpu_create_shader_compute(const char *src, const char *entry);
-void       gpu_destroy_shader(gpu_shader shader);
-
-// Cheap, value-cached. No shader, no vertex layout, no attachment formats —
-// those come from the bound shader and the active pass. The backend hashes
-// (shader, state, pass formats) into its internal PSO cache on first use.
-gpu_state gpu_create_state(i32 primitive_type, i32 cull_mode, i32 face_winding,
-                           i32 depth_compare, ns_bool depth_write,
-                           i32 blend_preset,   // off / alpha / premultiplied / additive
-                           u32 color_mask);
+// Cheap, value-cached: equal arguments return the same id. No shader, no
+// vertex layout, no attachment formats — those come from the bound shader
+// and the active pass. The backend hashes (shader, state, pass formats)
+// into its internal PSO cache on first use.
+u32 gpu_state_create(i32 primitive_type, i32 cull_mode, i32 face_winding,
+                     i32 depth_compare, ns_bool depth_write,
+                     i32 blend_preset,   // off / alpha / premultiplied / additive
+                     u32 color_mask);
 ```
 
 No `gpu_pipeline`, no `gpu_binding`, no `gpu_mesh`, no vertex layout tables.
@@ -236,31 +239,31 @@ No `gpu_pipeline`, no `gpu_binding`, no `gpu_mesh`, no vertex layout tables.
 ### Passes
 
 ```c
-// Attachments are texture indices; 0 = unused. No pass objects.
-void gpu_begin_pass(gpu_texture color0, gpu_texture color1,
-                    gpu_texture color2, gpu_texture color3,
-                    gpu_texture depth,
-                    u32 load_flags,          // per-attachment clear/load bits
+// Attachments are texture indices; 0 = unused. No pass objects. load_flags
+// packs a gpu_load_action (clear/load/dontcare) per attachment
+// (GPU_PASS_COLOR0_SHIFT .. GPU_PASS_DEPTH_SHIFT).
+void gpu_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
+                    u32 depth, u32 load_flags,
                     f64 r, f64 g, f64 b, f64 a, f64 depth_clear);
-void gpu_begin_screen_pass(f64 r, f64 g, f64 b, f64 a);
-void gpu_end_pass(void);
+void gpu_screen_pass_begin(f64 r, f64 g, f64 b, f64 a);
+void gpu_pass_end(void);
 
-void gpu_set_viewport(i32 x, i32 y, i32 w, i32 h);
+void gpu_set_viewport(i32 x, i32 y, i32 w, i32 h);   // shared with v1
 void gpu_set_scissor(i32 x, i32 y, i32 w, i32 h);
 ```
 
 ### Binding and drawing
 
 ```c
-void gpu_set_shader(gpu_shader shader);
-void gpu_set_state(gpu_state state);
+void gpu_set_shader(u32 shader);
+void gpu_set_state(u32 state);
 
 // The single root argument. Either point at GPU memory you manage...
 void gpu_set_root(gpu_addr args);
 // ...or copy a small struct into the frame ring and point at that.
 void gpu_set_root_data(const void *data, u64 size);
 
-void gpu_draw(i32 vertex_base, i32 vertex_count, i32 instance_count);
+void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count);
 void gpu_draw_indexed(gpu_addr indices, i32 index_type,
                       i32 index_count, i32 instance_count, i32 base_vertex);
 
@@ -334,61 +337,23 @@ Transpiler work this needs (`shader` module):
 
 ## ns surface (`lib/gpu.ns` v2)
 
+The declarations live in the "v2" section of `lib/gpu.ns` and mirror the C
+surface one-to-one with FFI-safe scalars: addresses are `u64`, texture /
+sampler / shader / state ids are `u32`, and bulk data crosses the boundary
+as `[any]` plus a byte size. `gpu_addr_host` stays C-only — a raw host
+pointer has no useful ns representation. Constants for capability bits,
+memory flags, blend presets, load actions, and texture kinds sit alongside.
+
+Two sugar fns wrap the `shader` transpiler, replacing v1's
+`gpu_create_pipeline` and the recompile-per-dispatch `dispatch_gpu`:
+
 ```ns
-mod gpu
-
-use view
-use shader
-
-type gpu_addr = u64
-type gpu_texture = u32
-type gpu_sampler = u32
-type gpu_shader = u32
-type gpu_state = u32
-
-ref fn gpu_request_device(v: ref view) bool
-ref fn gpu_caps() u32
-
-ref fn gpu_malloc(size: u64, flags: u32) gpu_addr
-ref fn gpu_free(addr: gpu_addr)
-ref fn gpu_write(dst: gpu_addr, data: [any], size: u64)
-ref fn gpu_frame_alloc(size: u64, align: u32) gpu_addr
-
-ref fn gpu_create_texture(width: i32, height: i32, depth: i32, format: i32,
-                          usage: u32, mips: i32, kind: i32) gpu_texture
-ref fn gpu_texture_upload(tex: gpu_texture, mip: i32, layer: i32, data: [any], size: u64)
-ref fn gpu_create_sampler(min: i32, mag: i32, mip: i32, wu: i32, wv: i32, ww: i32,
-                          compare: i32, aniso: i32) gpu_sampler
-
-ref fn gpu_create_shader_graphics(vs: str, fs: str, vs_entry: str, fs_entry: str) gpu_shader
-ref fn gpu_create_shader_compute(src: str, entry: str) gpu_shader
-ref fn gpu_create_state(primitive: i32, cull: i32, winding: i32, depth_compare: i32,
-                        depth_write: bool, blend: i32, color_mask: u32) gpu_state
-
-ref fn gpu_begin_screen_pass(r: f64, g: f64, b: f64, a: f64)
-ref fn gpu_begin_pass(c0: gpu_texture, c1: gpu_texture, c2: gpu_texture, c3: gpu_texture,
-                      depth: gpu_texture, load_flags: u32,
-                      r: f64, g: f64, b: f64, a: f64, depth_clear: f64)
-ref fn gpu_end_pass()
-
-ref fn gpu_set_shader(s: gpu_shader)
-ref fn gpu_set_state(s: gpu_state)
-ref fn gpu_set_root(args: gpu_addr)
-ref fn gpu_set_root_data(data: [any], size: u64)
-ref fn gpu_draw(base: i32, count: i32, instances: i32)
-ref fn gpu_draw_indexed(indices: gpu_addr, index_type: i32, count: i32,
-                        instances: i32, base_vertex: i32)
-ref fn gpu_draw_indirect(args: gpu_addr, draw_count: i32, stride: i32)
-ref fn gpu_dispatch(x: i32, y: i32, z: i32)
-ref fn gpu_dispatch_indirect(args: gpu_addr)
-ref fn gpu_signal_after(addr: gpu_addr, value: u64)
-ref fn gpu_wait_before(addr: gpu_addr, value: u64)
-ref fn gpu_commit()
-
-// Sugar: transpile ns fns for the active backend, as v1's gpu_create_pipeline
-// does today, but returning a shader that works with any state/pass.
-fn gpu_shader_graphics(vs: any, fs: any) gpu_shader { ... }
-fn gpu_shader_compute(f: any) gpu_shader { ... }
+// Transpile ns fns for the active backend. Unlike a v1 pipeline the result
+// carries no vertex layout or attachment formats and can be drawn with any
+// state in any pass; the compute variant returns a persistent shader for
+// gpu_dispatch.
+fn gpu_shader_graphics(vs: any, fs: any) u32
+fn gpu_shader_compute(f: any) u32
 ```
 
 A frame, before and after:
@@ -407,12 +372,12 @@ gpu_draw(0, index_count, 1)
 
 // v2: data is data; the draw names everything it needs
 let args = sprite_args(g_vertices, view_size(), g_atlas, g_linear)
-gpu_begin_screen_pass(0.1, 0.1, 0.1, 1.0)
+gpu_screen_pass_begin(0.1, 0.1, 0.1, 1.0)
 gpu_set_shader(g_shader)
 gpu_set_state(g_alpha_blend)
-gpu_set_root_data(ref args, 24u)
+gpu_set_root_data(ref args, 24)
 gpu_draw_indexed(g_indices, GPU_INDEX_UINT32, index_count, 1, 0)
-gpu_end_pass()
+gpu_pass_end()
 gpu_commit()
 ```
 
@@ -420,15 +385,15 @@ And a compute-fed indirect draw, impossible in v1:
 
 ```ns
 gpu_set_shader(g_cull_compute)
-gpu_set_root_data(ref cull_args, 32u)
-gpu_dispatch(instance_count / 64 + 1, 1, 1)     // writes gpu_draw args + count
+gpu_set_root_data(ref cull_args, 32)
+gpu_dispatch(instance_count / 64 + 1, 1, 1)     // writes draw args + count
 
-gpu_begin_screen_pass(0, 0, 0, 1)
+gpu_screen_pass_begin(0.0, 0.0, 0.0, 1.0)
 gpu_set_shader(g_scene_shader)
 gpu_set_state(g_opaque)
 gpu_set_root(g_scene_args)                       // resides in GPU memory
 gpu_draw_indirect(g_indirect_args, max_draws, 16)
-gpu_end_pass()
+gpu_pass_end()
 ```
 
 ## Backend notes
@@ -459,9 +424,15 @@ gpu_end_pass()
 
 ## Migration plan
 
-Phase 0 — carve the seam. Land v2 entry points beside v1 in `gpu.h` /
-`gpu.ns`; null backend for all of them; `gpu_caps()` everywhere. No callers
-change.
+Phase 0 — carve the seam. **Landed.** v2 entry points live beside v1 in
+`gpu.h` / `gpu_const.h` / `gpu.ns`; the portable core in `lib/src/gpu.c`
+(compiled on every platform) owns virtual addressing with host-backed
+memory on the null tier, `gpu_write`/`gpu_read`, the frame ring rotated by
+`gpu_v2_frame_end()` from each backend's `gpu_commit`, the value-cached
+state registry, and `gpu_caps()`. Backends will register `gpu_v2_ops` (the
+seam struct in `gpu.h`) from `gpu_request_device`; until then resource
+creation returns 0 and submission is a safe no-op. Covered headless by
+`test/gpu_v2_test.ns`. No callers changed.
 
 Phase 1 — Metal core. Memory (`gpu_malloc`/`gpu_write`/`gpu_frame_alloc`),
 texture heap indices, `gpu_create_state` + PSO cache, root pointer,
