@@ -56,12 +56,13 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         u64 fd = (u64)fopen(path.data, mode.data);
         call->ret = (ns_value){.t = ns_type_u64, .u64 = fd};
     } else if (ns_str_equals_STR(call->callee->name, "write")) {
+        // String values carry decoded escape bytes already (literals decode
+        // at materialization); write them out verbatim.
         ns_value fd = vm->symbol_stack[call->arg_offset].val;
         ns_value data = vm->symbol_stack[call->arg_offset + 1].val;
         ns_str s = ns_eval_str(vm, data);
-        ns_str ss = ns_str_unescape(s);
         FILE *f = (FILE*)ns_eval_number_u64(vm, fd);
-        i32 len = fwrite(ss.data, ss.len, 1, f);
+        i32 len = fwrite(s.data, s.len, 1, f);
         call->ret = (ns_value){.t = ns_type_u64, .u64 = (u64)len};
     } else if (ns_str_equals_STR(call->callee->name, "read")) {
         ns_value fd = vm->symbol_stack[call->arg_offset].val;

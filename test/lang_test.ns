@@ -1,0 +1,110 @@
+// Core language semantics locked in by the interpreter fixes:
+// short-circuit logic ops, escape decoding at literal materialization,
+// trailing-operator line continuation, top-level assignment statements,
+// positional struct constructors, and regressions for reference-typed
+// array elements and bool/str/nested-struct fields.
+use std
+
+struct point { x: f32, y: f32 }
+struct inner { a: f32, b: f32 }
+struct outer { pre: i32, mid: inner, post: i32 }
+struct named { id: u32, tag: str, live: bool }
+
+// ---- top-level assignment statements ---------------------------------------
+let g_counter = 0
+g_counter = g_counter + 1
+g_counter = g_counter + 2
+assert g_counter == 3
+
+let g_slots = [i32](4)
+g_slots[1] = 42
+assert g_slots[0] == 0 && g_slots[1] == 42
+
+let g_labels = [str](4)
+g_labels[0] = "zero"
+assert g_labels[0] == "zero"
+
+// ---- short-circuit && and || ------------------------------------------------
+let g_hits = 0
+fn bump() bool {
+    g_hits = g_hits + 1
+    return true
+}
+
+// the right side must not evaluate when the left side decides: arr[i] is out
+// of bounds and would error if reached
+let arr = [10, 20, 30]
+let i = 5
+assert !(i < 3 && arr[i] == 10)
+assert i > 3 || arr[i] == 10
+
+g_hits = 0
+let sc_and = false && bump()
+assert !sc_and && g_hits == 0
+let sc_or = true || bump()
+assert sc_or && g_hits == 0
+let sc_and2 = true && bump()
+assert sc_and2 && g_hits == 1
+let sc_or2 = false || bump()
+assert sc_or2 && g_hits == 2
+
+// ---- string escapes decode when the literal becomes a value ------------------
+let nl = "\n"
+assert nl.len == 1 && nl[0] == 10
+let q = "say \"hi\""
+assert q.len == 8
+assert q[4] == 34 && q[7] == 34
+let tabbed = "a\tb"
+assert tabbed.len == 3 && tabbed[1] == 9
+let back = "a\\b"
+assert back.len == 3 && back[1] == 92
+// unescape of an already-decoded value is the identity
+assert unescape("\n") == "\n"
+// format strings decode literal segments and splice values verbatim
+let fmt = `v={40 + 2}!\n`
+assert fmt == "v=42!\n"
+assert fmt.len == 6 && fmt[5] == 10
+
+// ---- trailing-operator line continuation --------------------------------------
+let flag = 10 == 5 ||
+    20 == 20
+assert flag
+let sum = 1 +
+    2 +
+    3
+assert sum == 6
+let guarded = i == 5 &&
+    arr[0] == 10 &&
+    arr[2] == 30
+assert guarded
+
+// ---- positional struct constructors -------------------------------------------
+let origin = point(0, 0)
+assert origin.x == 0.0 && origin.y == 0.0
+let pos = point(3, 4.5)
+assert pos.x == 3.0 && pos.y == 4.5
+
+// bool and str fields land intact, and match the designated spelling
+let nv = named(7u, "hero", true)
+assert nv.id == 7u && nv.tag == "hero" && nv.live
+let dv = named { id: 7u, tag: "hero", live: true }
+assert dv.id == nv.id && dv.tag == nv.tag && dv.live == nv.live
+
+// nested struct fields copy into their own slot without clobbering neighbors
+let nested = outer(1, inner(0.5, 0.25), 2)
+assert nested.pre == 1 && nested.post == 2
+assert nested.mid.a == 0.5 && nested.mid.b == 0.25
+let nested_d = outer { pre: 7, mid: inner { a: 1.5, b: 2.5 }, post: 9 }
+assert nested_d.pre == 7 && nested_d.post == 9
+assert nested_d.mid.a == 1.5 && nested_d.mid.b == 2.5
+
+// ---- reference-typed array elements ---------------------------------------------
+let names = [str](3)
+names[0] = "cc"
+names[1] = "aa"
+names[2] = "bb"
+let tmp = names[0]
+names[0] = names[1]
+names[1] = tmp
+assert names[0] == "aa" && names[1] == "cc" && names[2] == "bb"
+assert names[0].len == 2 && names[0][0] == 97

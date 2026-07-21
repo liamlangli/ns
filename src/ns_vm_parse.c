@@ -1286,6 +1286,34 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     ns_symbol *fn_record = &vm->symbols[ns_type_index(fn)];
     if (!fn_record || fn_record->type != NS_SYMBOL_FN) {
+        // Positional struct construction: `point(0, 0)` fills the fields in
+        // declaration order, one argument per field.
+        if (fn_record && fn_record->type == NS_SYMBOL_STRUCT) {
+            i32 st_index = (i32)ns_type_index(fn);
+            i32 field_count = (i32)ns_array_length(fn_record->st.fields);
+            if (n->call_expr.arg_count != field_count) {
+                return ns_return_error(type, ns_ast_state_loc(ctx, callee_n->state), NS_ERR_EVAL, "struct constructor argument count mismatch.");
+            }
+            i32 ctor_next = n->next;
+            for (i32 a_i = 0; a_i < field_count; ++a_i) {
+                ns_ast_t arg = ctx->nodes[ctor_next];
+                // re-fetch each iteration: parsing an argument may grow
+                // vm->symbols and move the struct record
+                ns_type f_t = vm->symbols[st_index].st.fields[a_i].t;
+                ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, ctor_next, f_t);
+                if (ns_return_is_error(ret_t)) return ret_t;
+                ns_type t = ret_t.r;
+                ctor_next = arg.next;
+                // a numeric field accepts any numeric arg, matching
+                // designated-expr fields
+                ns_bool number_ok = !ns_type_is(f_t, NS_TYPE_ENUM) &&
+                                    ns_vm_number_like(vm, f_t) && ns_vm_number_like(vm, t);
+                if (!number_ok && !ns_type_equals(t, f_t) && !ns_type_match(vm, f_t, t)) {
+                    return ns_return_error(type, ns_ast_state_loc(ctx, arg.state), NS_ERR_EVAL, ns_vm_type_mismatch_msg(vm, "struct constructor type mismatch.", f_t, t));
+                }
+            }
+            return ns_return_ok(type, vm->symbols[st_index].st.st.t);
+        }
         return ns_return_error(type, ns_ast_state_loc(ctx, callee_n->state), NS_ERR_EVAL, "unknown callee.");
     }
 
@@ -2031,7 +2059,8 @@ ns_return_void ns_vm_parse_global_expr(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *n = &ctx->nodes[s_i];
         switch (n->type) {
             case NS_AST_EXPR:
-            case NS_AST_CALL_EXPR: {
+            case NS_AST_CALL_EXPR:
+            case NS_AST_BINARY_EXPR: { // top-level assignment statements
                 ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i, ns_type_infer);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
             } break;
@@ -2084,7 +2113,8 @@ ns_return_void ns_vm_parse_global_as_main(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *n = &ctx->nodes[s_i];
         switch (n->type) {
             case NS_AST_EXPR:
-            case NS_AST_CALL_EXPR: {
+            case NS_AST_CALL_EXPR:
+            case NS_AST_BINARY_EXPR: { // top-level assignment statements
                 ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, s_i, ns_type_infer);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);
             } break;
@@ -2147,9 +2177,12 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     // ns_vm_parse_name, so only their type encoding (not layout) is needed here.
     ns_vm_parse_global(ns_vm_parse_type_def);
     ns_vm_parse_global(ns_vm_parse_fn_def_type);
-    ns_vm_parse_global(ns_vm_parse_var_def);
+    // Struct layouts must be complete before global var defs: a top-level
+    // `let` may initialize with a struct literal or positional constructor,
+    // whose field checks need the resolved fields.
     ns_vm_parse_global(ns_vm_parse_struct_def);
     ns_vm_parse_global(ns_vm_parse_struct_def_ref);
+    ns_vm_parse_global(ns_vm_parse_var_def);
     ns_vm_parse_global(ns_vm_parse_fn_def_body);
 
     ns_bool main_fn = ns_vm_find_symbol(vm, ns_str_cstr("main"), false) != ns_null;
