@@ -1574,13 +1574,16 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (!st || st->type != NS_SYMBOL_STRUCT) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown struct.");
     }
+    i32 field_count = (i32)ns_array_length(st->st.fields);
+    if (n->desig_expr.positional && n->desig_expr.count > field_count) {
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "too many positional fields in designated expr.");
+    }
 
     ns_ast_t *field = n;
     for (i32 f_i = 0, l = n->desig_expr.count; f_i < l; ++f_i) {
         i32 next = field->next;
         field = &ctx->nodes[next];
-        ns_str name = field->field_def.name.val;
-        i32 field_i = ns_struct_field_index(st, name);
+        i32 field_i = n->desig_expr.positional ? f_i : ns_struct_field_index(st, field->field_def.name.val);
         if (field_i == -1) {
             return ns_return_error(type, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown field.");
         }

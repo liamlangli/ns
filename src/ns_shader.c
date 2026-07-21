@@ -575,11 +575,18 @@ static ns_return_void ns_shader_emit_desig(ns_shader_emit *e, ns_ast_t *n, ns_st
     for (i32 f = 0; f < n->desig_expr.count; ++f) {
         ns_ast_t *field = &e->ctx->nodes[fi];
         ns_bool found = false;
-        for (i32 k = 0; k < field_count; ++k) {
-            if (ns_str_equals(s->st.fields[k].name, field->field_def.name.val)) {
-                provided[k] = field->field_def.expr;
+        if (n->desig_expr.positional) {
+            if (f < field_count) {
+                provided[f] = field->field_def.expr;
                 found = true;
-                break;
+            }
+        } else {
+            for (i32 k = 0; k < field_count; ++k) {
+                if (ns_str_equals(s->st.fields[k].name, field->field_def.name.val)) {
+                    provided[k] = field->field_def.expr;
+                    found = true;
+                    break;
+                }
             }
         }
         if (!found) {

@@ -59,7 +59,7 @@ static const char *ns_shader_test_src =
     "fn fs_shadow(data: FragmentInput) float4 {\n"
     "    let uv = data.uv\n"
     "    let position = data.position\n"
-    "    let visibility = shader_sample_shadow(float3 { x: uv.x, y: uv.y, z: position.z })\n"
+    "    let visibility = shader_sample_shadow(float3 { uv.x, uv.y, position.z })\n"
     "    return brighten(data.color, visibility)\n"
     "}\n"
     "fn vs_scene(data: VertexData) FragmentInput {\n"

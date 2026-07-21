@@ -1839,27 +1839,19 @@ ns_return_value ns_eval_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *expr = n;
     for (i32 e_i = 0, l = n->desig_expr.count; e_i < l; e_i++) {
         expr = &ctx->nodes[expr->next];
-        ns_str name = expr->field_def.name.val;
 
         // re-resolve each iteration: evaluating a field expression may grow
         // vm->symbols and move the struct symbol
         st = &vm->symbols[st_index];
-        ns_struct_field *field = ns_null;
-        for (i32 j = 0, jl = ns_array_length(st->st.fields); j < jl; ++j) {
-            field = &st->st.fields[j];
-            if (ns_str_equals(field->name, name)) {
-                break;
-            }
-        }
-
-        if (field == ns_null) {
+        i32 field_i = expr->field_def.rt.index;
+        if (field_i < 0 || field_i >= (i32)ns_array_length(st->st.fields)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, expr->state), NS_ERR_EVAL, "unknown field.");
         }
 
         ns_return_value ret_val = ns_eval_expr(vm, ctx, expr->field_def.expr);
         if (ns_return_is_error(ret_val)) return ret_val;
 
-        ns_return_value ret_store = ns_eval_store_struct_field(vm, o, &vm->symbols[st_index].st.fields[field - st->st.fields], ret_val.r, ns_ast_state_loc(ctx, expr->state));
+        ns_return_value ret_store = ns_eval_store_struct_field(vm, o, &vm->symbols[st_index].st.fields[field_i], ret_val.r, ns_ast_state_loc(ctx, expr->state));
         if (ns_return_is_error(ret_store)) return ret_store;
     }
 

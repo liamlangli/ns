@@ -265,6 +265,7 @@ typedef struct ns_ast_compound_stmt {
 typedef struct ns_ast_desig_expr {
     ns_token_t name;
     i32 count;
+    ns_bool positional;
     struct {
         ns_sym_cache cache; // struct symbol lookup cache, filled at eval
     } rt;
@@ -353,6 +354,9 @@ typedef struct as_parse_context_t {
     i32 *op_stack;
     i32 *expr_stack;
     ns_ast_expr_scope *scopes;
+    // At this expression nesting depth, an opening brace begins a control-flow
+    // body rather than a positional designated expression. Zero disables it.
+    i32 block_expr_depth;
 
     ns_token_t token, last_token;
     ns_str source;

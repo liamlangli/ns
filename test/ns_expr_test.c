@@ -456,6 +456,45 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "struct literal (desig expr) and member access.");
     }
 
+    {
+        const char *src =
+            "struct sample { x: i32, y: i32, z: i32 }\n"
+            "fn all_zero(value: sample) bool { return value.x == 0 && value.y == 0 && value.z == 0 }\n"
+            "fn main() bool {\n"
+            "    let value = sample { 10, 20, 30 }\n"
+            "    if all_zero(sample { 0, 0, 0 }) {\n"
+            "        return value.x == 10 && value.y == 20 && value.z == 30\n"
+            "    }\n"
+            "    return false\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "positional struct literal fields follow declaration order, including inside conditions.");
+    }
+
+    {
+        const char *src =
+            "struct flag { enabled: bool }\n"
+            "fn main() bool {\n"
+            "    if flag { enabled: true }.enabled { return true }\n"
+            "    return false\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "named struct literals remain valid at the top level of control-flow conditions.");
+    }
+
+    ns_expect(ns_expr_error_contains(
+                  "struct sample { x: i32, y: i32, z: i32 }\nfn main() sample { return sample { 0, y: 0, 0 } }\n",
+                  "cannot mix positional and named fields"),
+              "struct literals reject positional fields followed by named fields.");
+    ns_expect(ns_expr_error_contains(
+                  "struct sample { x: i32, y: i32, z: i32 }\nfn main() sample { return sample { x: 0, 0, z: 0 } }\n",
+                  "cannot mix named and positional fields"),
+              "struct literals reject named fields followed by positional fields.");
+    ns_expect(ns_expr_error_contains(
+                  "struct sample { x: i32, y: i32 }\nfn main() sample { return sample { 0, 0, 0 } }\n",
+                  "too many positional fields"),
+              "positional struct literals reject values beyond the declared fields.");
+
     // --- index expr on array, plus array .len member ---
     {
         const char *src =

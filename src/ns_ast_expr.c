@@ -165,6 +165,19 @@ done:
     return result;
 }
 
+static ns_bool ns_parse_named_designated_ahead(ns_ast_ctx *ctx) {
+    ns_ast_state state = ns_save_state(ctx);
+    ns_bool result = false;
+    if (!ns_token_require(ctx, NS_TOKEN_OPEN_BRACE)) goto done;
+    ns_token_skip_eol(ctx);
+    if (!ns_token_require(ctx, NS_TOKEN_IDENTIFIER)) goto done;
+    result = ns_token_require(ctx, NS_TOKEN_COLON);
+
+done:
+    ns_restore_state(ctx, state);
+    return result;
+}
+
 ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
@@ -476,7 +489,17 @@ ns_return_bool ns_parse_designated_field(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
-// struct { a: 1, b: 2 }
+static ns_return_bool ns_parse_positional_field(ns_ast_ctx *ctx) {
+    ns_ast_state state = ns_save_state(ctx);
+    ns_return_bool ret = ns_parse_expr(ctx);
+    if (ns_return_is_error(ret) || !ret.r) return ret;
+
+    ns_ast_t n = {.type = NS_AST_FIELD_DEF, .state = state, .field_def = {.expr = ctx->current}};
+    ns_ast_push(ctx, n);
+    return ns_return_ok(bool, true);
+}
+
+// struct { a: 1, b: 2 } or struct { 1, 2 }; the two forms may not mix.
 ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
@@ -490,11 +513,35 @@ ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st) {
     
 
     i32 next = 0;
+    i32 mode = 0; // 1: named, 2: positional
     ns_token_skip_eol(ctx);
     do {
+        ns_ast_state field_state = ns_save_state(ctx);
+        ns_parse_next_token(ctx);
+        if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+            ns_restore_state(ctx, field_state);
+            break;
+        }
+        ns_restore_state(ctx, field_state);
+
         ret = ns_parse_designated_field(ctx);
         if (ns_return_is_error(ret)) return ret;
-        if (!ret.r) break;
+        if (ret.r) {
+            if (mode == 2) {
+                return ns_return_error(bool, ns_ast_state_loc(ctx, ctx->nodes[ctx->current].state), NS_ERR_SYNTAX,
+                                       "designated expr cannot mix positional and named fields.");
+            }
+            mode = 1;
+        } else {
+            ret = ns_parse_positional_field(ctx);
+            if (ns_return_is_error(ret)) return ret;
+            if (!ret.r) break;
+            if (mode == 1) {
+                return ns_return_error(bool, ns_ast_state_loc(ctx, ctx->nodes[ctx->current].state), NS_ERR_SYNTAX,
+                                       "designated expr cannot mix named and positional fields.");
+            }
+            mode = 2;
+        }
 
         next = next == 0 ? n.next = ctx->current : (ctx->nodes[next].next = ctx->current);
         n.desig_expr.count++;
@@ -516,6 +563,7 @@ ns_return_bool ns_parse_designated_expr(ns_ast_ctx *ctx, i32 st) {
         return ns_return_ok(bool, false);
     }
 
+    n.desig_expr.positional = mode == 2;
     ns_ast_push(ctx, n);
     return ns_return_ok(bool, true);
 }
@@ -888,6 +936,11 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
         case NS_TOKEN_OPEN_BRACKET:
         case NS_TOKEN_OPEN_BRACE: {
             if (ns_parse_stack_leading_operand(ctx)) {
+                if (ctx->token.type == NS_TOKEN_OPEN_BRACE &&
+                    ctx->block_expr_depth == (i32)ns_array_length(ctx->scopes)) {
+                    ns_restore_state(ctx, state);
+                    if (!ns_parse_named_designated_ahead(ctx)) goto rewind;
+                }
                 i32 operand = ns_parse_stack_pop(ctx);
                 ns_restore_state(ctx, state);
                 if (operand == 0) {

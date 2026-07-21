@@ -1,6 +1,22 @@
 #include "ns_ast.h"
 #include "ns_token.h"
 
+static ns_return_bool ns_parse_expr_before_block(ns_ast_ctx *ctx) {
+    i32 previous = ctx->block_expr_depth;
+    ctx->block_expr_depth = (i32)ns_array_length(ctx->scopes) + 1;
+    ns_return_bool ret = ns_parse_expr(ctx);
+    ctx->block_expr_depth = previous;
+    return ret;
+}
+
+static ns_return_bool ns_parse_gen_expr_before_block(ns_ast_ctx *ctx) {
+    i32 previous = ctx->block_expr_depth;
+    ctx->block_expr_depth = (i32)ns_array_length(ctx->scopes) + 1;
+    ns_return_bool ret = ns_parse_gen_expr(ctx);
+    ctx->block_expr_depth = previous;
+    return ret;
+}
+
 ns_bool ns_parse_module_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     if (ns_token_require(ctx, NS_TOKEN_MODULE) &&
@@ -169,7 +185,7 @@ ns_return_bool ns_parse_if_stmt(ns_ast_ctx *ctx) {
     }
 
     // if expression statement [else statement]
-    ret = ns_parse_expr(ctx);
+    ret = ns_parse_expr_before_block(ctx);
     if (ns_return_is_error(ret)) return ret;
     if (!ret.r) {
         ns_restore_state(ctx, state);
@@ -223,7 +239,7 @@ ns_return_bool ns_parse_for_stmt(ns_ast_ctx *ctx) {
         return ns_return_ok(bool, false);
     }
     
-    ret = ns_parse_gen_expr(ctx);
+    ret = ns_parse_gen_expr_before_block(ctx);
     if (ns_return_is_error(ret)) return ret;
     if (ret.r) {
         ns_ast_t n = {.type = NS_AST_FOR_STMT, .state = state, .for_stmt.generator = ctx->current};
@@ -255,7 +271,7 @@ ns_return_bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
 
     if (!n.loop_stmt.do_first && ns_token_require(ctx, NS_TOKEN_LOOP)) {
         n.loop_stmt.do_first = false;
-        ret = ns_parse_expr(ctx);
+        ret = ns_parse_expr_before_block(ctx);
         if (ns_return_is_error(ret)) return ret;
         if (!ret.r) {
             return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "expected expression after 'loop' statement");

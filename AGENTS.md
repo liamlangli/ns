@@ -135,6 +135,10 @@ let platform = os_platform.macos
 let raw: u8 = platform
 ```
 
+Struct literals may initialize fields either entirely by name
+(`point { x: 0, y: 0 }`) or entirely by declaration order (`point { 0, 0 }`).
+A single literal cannot mix named and positional fields.
+
 ### Functions, blocks, and operators
 
 - Define functions with `fn name(args): result { ... }`. The colon before the

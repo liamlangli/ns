@@ -337,8 +337,11 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         ns_ast_t *field = n;
         for (i32 f_i = 0; f_i < count; f_i++) {
             field = &ctx->nodes[field->next];
-            ns_str_printf(field->field_def.name.val);
-            printf(": [%d]", field->field_def.expr);
+            if (!n->desig_expr.positional) {
+                ns_str_printf(field->field_def.name.val);
+                printf(": ");
+            }
+            printf("[%d]", field->field_def.expr);
             if (f_i != count - 1) {
                 printf(", ");
             }
@@ -551,9 +554,11 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
             i32 count = n->desig_expr.count;
             ns_ast_t *field = &ctx->nodes[n->next];
             for (i32 f_i = 0; f_i < count; f_i++) {
-                printf(ns_color_ign);
-                ns_str_printf(field->field_def.name.val);
-                printf(": " ns_color_nil);
+                if (!n->desig_expr.positional) {
+                    printf(ns_color_ign);
+                    ns_str_printf(field->field_def.name.val);
+                    printf(": " ns_color_nil);
+                }
                 ns_ast_print_node(ctx, field->field_def.expr, depth);
                 if (f_i != count - 1) {
                     printf(", ");
