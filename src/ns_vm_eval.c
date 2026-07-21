@@ -18,6 +18,7 @@
 
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create);
+ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i);
 static ns_return_value ns_eval_struct_ctor(ns_vm *vm, ns_ast_ctx *ctx, i32 i, i32 st_index);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
@@ -496,6 +497,33 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_return_value cast_ret = ns_eval_cast_number(vm, r, l.t, ns_ast_state_loc(ctx, n->state));
         if (ns_return_is_error(cast_ret)) return cast_ret;
         r = cast_ret.r;
+    }
+
+    // Compound assignment (`a += b`): apply the arithmetic to the current
+    // value before the store. The node's op briefly swaps to its arithmetic
+    // spelling so the shared binary-op dispatch applies, then is restored.
+    if (n->binary_expr.op.type == NS_TOKEN_ASSIGN_OP && n->binary_expr.op.val.len > 1) {
+        if (ns_type_is(l.t, NS_TYPE_STRING) && !ns_type_in_stack(l.t)) {
+            // a string element lvalue carries a slot address, which the
+            // string reader cannot distinguish from a handle
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "compound assignment on a string element is unsupported; assign the concatenation instead.");
+        }
+        ns_token_t aop = n->binary_expr.op;
+        ns_token_t arith = aop;
+        arith.val = ns_str_range(aop.val.data, aop.val.len - 1);
+        switch (aop.val.data[0]) {
+        case '+': case '-': arith.type = NS_TOKEN_ADD_OP; break;
+        case '*': case '/': case '%': arith.type = NS_TOKEN_MUL_OP; break;
+        case '<': case '>': arith.type = NS_TOKEN_SHIFT_OP; break;
+        case '&': case '|': case '^': arith.type = NS_TOKEN_BITWISE_OP; break;
+        default:
+            return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unsupported compound assignment operator.");
+        }
+        n->binary_expr.op = arith;
+        ns_return_value ret_op = ns_eval_binary_ops(vm, ctx, l, r, i);
+        n->binary_expr.op = aop;
+        if (ns_return_is_error(ret_op)) return ret_op;
+        r = ret_op.r;
     }
 
     i32 s_l = ns_type_size(vm, l.t);
@@ -1367,9 +1395,11 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ret = ns_type_is(lt, NS_TYPE_F32) ? (ns_value){.t = ns_type_f32, .f32 = (f32)fv}
                                           : (ns_value){.t = ns_type_f64, .f64 = fv};
     } break;
-    case NS_TOKEN_STR_LITERAL: {
-        // Escape sequences decode once, when the literal becomes a runtime
-        // value; consumers (print/write/FFI) receive the real bytes.
+    case NS_TOKEN_STR_LITERAL:
+    case NS_TOKEN_STR_FORMAT: {
+        // A format string without interpolation is a plain literal. Escape
+        // sequences decode once, when the literal becomes a runtime value;
+        // consumers (print/write/FFI) receive the real bytes.
         if (t.val.len > 0 && memchr(t.val.data, '\\', (size_t)t.val.len)) {
             ns_str u = ns_str_unescape(t.val);
             ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, u)};
@@ -1378,7 +1408,6 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, t.val)};
         }
     } break;
-    case NS_TOKEN_STR_FORMAT: 
     case NS_TOKEN_TRUE: ret = ns_true; break;
     case NS_TOKEN_FALSE: ret = ns_false; break;
     case NS_TOKEN_IDENTIFIER: ret = ns_eval_find_value_cached(vm, t.val, &n->primary_expr.rt.cache); break;

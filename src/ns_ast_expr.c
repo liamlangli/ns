@@ -277,7 +277,9 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
     ctx->source.len = source_len;
 
     if (n.str_fmt.expr_count == 0) {
+        // No interpolation: the format string is a plain literal operand.
         n = (ns_ast_t){.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
+        ns_ast_push(ctx, n);
         return ns_return_ok(bool, true);
     }
 

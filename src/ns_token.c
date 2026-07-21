@@ -567,7 +567,8 @@ case 'l': {
     case '&':
     case '|': {
         if (s[i + 1] == '=') {
-            t->type = NS_TOKEN_BITWISE_OP;
+            // compound assignment, same as ^= / += / <<=
+            t->type = NS_TOKEN_ASSIGN_OP;
             t->val = ns_str_range(s + f, 2);
             to = i + 2;
         } else if (s[i + 1] == lead) {

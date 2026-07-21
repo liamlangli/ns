@@ -108,3 +108,86 @@ names[0] = names[1]
 names[1] = tmp
 assert names[0] == "aa" && names[1] == "cc" && names[2] == "bb"
 assert names[0].len == 2 && names[0][0] == 97
+
+// ---- compound assignment -----------------------------------------------------
+let g_acc = 10
+g_acc += 5
+assert g_acc == 15
+g_acc -= 3
+assert g_acc == 12
+
+let g_msg = "a"
+g_msg += "b"
+fn extend_msg() {
+    g_msg += "c"
+}
+extend_msg()
+assert g_msg == "abc"
+
+fn compound_ops() {
+    let x = 3
+    x += 4
+    assert x == 7
+    x *= 2
+    assert x == 14
+    x /= 7
+    assert x == 2
+    x %= 2
+    assert x == 0
+
+    let bits = 1
+    bits <<= 4
+    assert bits == 16
+    bits |= 3
+    assert bits == 19
+    bits &= 17
+    assert bits == 17
+    bits >>= 4
+    assert bits == 1
+    bits ^= 5
+    assert bits == 4
+
+    let f: f32 = 1.5
+    f *= 2.0
+    assert f == 3.0
+    f /= 4.0
+    assert f == 0.75
+
+    let u: u64 = 100
+    u += 24
+    assert u == 124
+
+    let cells = [1, 2, 3]
+    cells[1] += 10
+    assert cells[1] == 12
+}
+compound_ops()
+
+// ---- format strings without interpolation --------------------------------------
+let plain_fmt = `no interp here`
+assert plain_fmt == "no interp here"
+let brace_lit = `lit \{brace}`
+assert brace_lit == "lit {brace}"
+let brace_mix = `mix {1 + 2} \{raw}`
+assert brace_mix == "mix 3 {raw}"
+
+// ---- member chains as assignment targets ----------------------------------------
+fn member_targets() {
+    let o = outer(1, inner(2.0, 3.0), 4)
+    o.mid.a = 9.5
+    assert o.mid.a == 9.5 && o.mid.b == 3.0
+    o.post += 6
+    assert o.post == 10
+
+    let pts = [point](4)
+    pts[0] = point(1.0, 2.0)
+    assert pts[0].x == 1.0 && pts[0].y == 2.0
+    pts[1].x = 5.0
+    assert pts[1].x == 5.0 && pts[0].x == 1.0
+}
+member_targets()
+
+// a trailing operator continues past a trailing comment too
+let commented = 1 == 1 || // right side is on the next line
+    2 == 3
+assert commented
