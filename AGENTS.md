@@ -29,6 +29,8 @@ The common commands are:
 - `ns init [path]`: scaffold a project in an existing directory, keeping files
   that are already present.
 - `ns create <name>`: create a new directory and scaffold a project in it.
+- `ns update [path]`: find the nearest project and migrate its manifest and
+  support files to the format bundled with the current `ns` executable.
 - `ns run [file.ns]`: interpret an explicit file; without an argument, use the
   current project's manifest entry and otherwise fall back to `main.ns`.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
@@ -60,6 +62,13 @@ version = ">=0.1.0"
 
 Build output, generated IDE projects, profiles, and other generated artifacts
 belong in `bin/` and should not be treated as source.
+
+`ns update` preserves application source and custom manifest fields. It
+upgrades a missing or `ns.mod/v0` schema marker to `ns.mod/v1`, refreshes the
+canonical `AGENTS.md`, and additively merges current `.gitignore` rules.
+Changed originals are retained in `bin/ns-update-backup/`, with numbered names
+for distinct later revisions. Unknown newer schemas are rejected instead of
+being downgraded. Re-running without intervening edits makes no further changes.
 
 ## Language guide
 

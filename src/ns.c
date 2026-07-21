@@ -26,6 +26,8 @@
 #endif
 
 #define STB_DS_IMPLEMENTATION
+#define NS_MANIFEST_SCHEMA_CURRENT "ns.mod/v1"
+#define NS_MANIFEST_SCHEMA_LEGACY "ns.mod/v0"
 
 static ns_vm vm = {0};
 static ns_ast_ctx ctx = {0};
@@ -49,6 +51,7 @@ typedef struct ns_compile_option_t {
     ns_bool project: 2; // `ns project <path>` - generate a native IDE project
     ns_bool init: 2;    // `ns init [path]` - scaffold an ns project in place
     ns_bool create: 2;  // `ns create <name>` - scaffold an ns project in a new folder
+    ns_bool update: 2;  // `ns update [path]` - migrate project metadata to the current format
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
@@ -74,6 +77,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.init = true;
         } else if (i == 1 && strcmp(argv[i], "create") == 0) {
             option.create = true;
+        } else if (i == 1 && strcmp(argv[i], "update") == 0) {
+            option.update = true;
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--token") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
@@ -153,6 +158,7 @@ void ns_help() {
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
     printf("                    writes ns.mod, main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
+    printf("  update [path]     migrate ns.mod and refresh project support files\n");
     printf("  run  [file.ns]    run cwd/ns.mod, otherwise cwd/main.ns, or an explicit input\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
@@ -1522,8 +1528,9 @@ void ns_exec_project(ns_str path) {
     ns_str module_type = ns_build_manifest_value(root, "type");
     ns_str version = ns_build_manifest_value(root, "version");
     ns_str icon = ns_path_resolve(root, ns_build_manifest_value(root, "icon"));
-    if (!ns_str_equals(schema, ns_str_cstr("ns.mod/v1"))) {
-        ns_exit(1, "project", "%.*s must declare schema = \"ns.mod/v1\".\n", manifest.len, manifest.data);
+    if (!ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_CURRENT))) {
+        ns_exit(1, "project", "%.*s must declare schema = \"" NS_MANIFEST_SCHEMA_CURRENT "\".\n",
+                manifest.len, manifest.data);
     }
     if (name.data == ns_null || name.len == 0) {
         ns_exit(1, "project", "%.*s must declare a non-empty project name.\n", manifest.len, manifest.data);
@@ -1630,7 +1637,7 @@ static ns_bool ns_scaffold_name_valid(ns_str name) {
 
 static ns_str ns_scaffold_manifest_text(ns_str name) {
     ns_str s = ns_str_null;
-    ns_str_append_cstr(&s, "schema = \"ns.mod/v1\"\n");
+    ns_str_append_cstr(&s, "schema = \"" NS_MANIFEST_SCHEMA_CURRENT "\"\n");
     ns_str_append_cstr(&s, "name = \"");
     ns_str_append(&s, name);
     ns_str_append_cstr(&s, "\"\n");
@@ -1680,12 +1687,14 @@ static ns_str ns_scaffold_readme_text(ns_str name) {
     return s;
 }
 
+static const char *ns_scaffold_gitignore_rules[] = {"bin", ".DS_Store", "*.log", "ns.profile"};
+
 static ns_str ns_scaffold_gitignore_text(void) {
     ns_str s = ns_str_null;
-    ns_str_append_cstr(&s, "bin\n");
-    ns_str_append_cstr(&s, ".DS_Store\n");
-    ns_str_append_cstr(&s, "*.log\n");
-    ns_str_append_cstr(&s, "ns.profile\n");
+    for (i32 i = 0; i < (i32)(sizeof(ns_scaffold_gitignore_rules) / sizeof(ns_scaffold_gitignore_rules[0])); i++) {
+        ns_str_append_cstr(&s, ns_scaffold_gitignore_rules[i]);
+        ns_str_append_cstr(&s, "\n");
+    }
     return s;
 }
 
@@ -1756,6 +1765,227 @@ void ns_exec_create(ns_str path) {
 
     ns_scaffold_project(path, name, "create");
     ns_info("create", "project %.*s created; `cd %.*s` then `ns run`.\n", name.len, name.data, path.len, path.data);
+}
+
+// ---------------------------------------------------------------------------
+// `ns update [path]` project metadata migration
+// ---------------------------------------------------------------------------
+// Application source and README content are never rewritten. The command owns
+// the manifest schema marker, the canonical agent guide, and additive ignore
+// rules. Original changed files are retained below bin/ns-update-backup.
+
+static ns_bool ns_update_line_equals(ns_str text, const char *wanted) {
+    i32 wanted_len = (i32)strlen(wanted);
+    for (i32 i = 0; i < text.len;) {
+        i32 start = i;
+        while (i < text.len && text.data[i] != '\n') i++;
+        i32 end = i;
+        if (end > start && text.data[end - 1] == '\r') end--;
+        if (end - start == wanted_len && strncmp(text.data + start, wanted, wanted_len) == 0) return true;
+        if (i < text.len) i++;
+    }
+    return false;
+}
+
+static void ns_update_write_text(ns_str path, ns_str text) {
+    FILE *file = fopen(path.data, "wb");
+    if (!file) ns_exit(1, "update", "failed to write %.*s.\n", path.len, path.data);
+    if (text.len > 0 && fwrite(text.data, 1, text.len, file) != (size_t)text.len) {
+        fclose(file);
+        ns_exit(1, "update", "failed to write %.*s.\n", path.len, path.data);
+    }
+    fclose(file);
+}
+
+static void ns_update_backup(ns_str root, const char *filename, ns_str text) {
+    ns_str bin = ns_path_join(root, ns_str_cstr("bin"));
+    ns_str backup_dir = ns_path_join(bin, ns_str_cstr("ns-update-backup"));
+    ns_mkdir_p(backup_dir);
+    ns_str backup = ns_path_join(backup_dir, ns_str_cstr((char*)filename));
+    i32 revision = 0;
+    while (ns_file_exists(backup)) {
+        ns_str previous = ns_os_read_file(backup);
+        ns_bool already_saved = previous.data != ns_null && ns_str_equals(previous, text);
+        ns_str_free(previous);
+        if (already_saved) {
+            ns_str_free(backup);
+            ns_str_free(backup_dir);
+            ns_str_free(bin);
+            return;
+        }
+        ns_str_free(backup);
+        revision++;
+        char backup_name[4096];
+        snprintf(backup_name, sizeof(backup_name), "%s.%d", filename, revision);
+        backup = ns_path_join(backup_dir, ns_str_cstr(backup_name));
+    }
+    ns_update_write_text(backup, text);
+    ns_info("update", "backed up %s to %.*s\n", filename, backup.len, backup.data);
+    ns_str_free(backup);
+    ns_str_free(backup_dir);
+    ns_str_free(bin);
+}
+
+// Return the byte span inside the quoted value assigned to a top-level key.
+static ns_bool ns_update_manifest_value_span(ns_str src, const char *key, i32 *start, i32 *end) {
+    i32 key_len = (i32)strlen(key);
+    for (i32 i = 0; i < src.len;) {
+        i32 line_start = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        i32 line_end = i;
+        if (i < src.len) i++;
+
+        i32 p = line_start;
+        while (p < line_end && (src.data[p] == ' ' || src.data[p] == '\t' || src.data[p] == '\r')) p++;
+        if (line_end - p < key_len || strncmp(src.data + p, key, key_len) != 0) continue;
+        p += key_len;
+        while (p < line_end && (src.data[p] == ' ' || src.data[p] == '\t')) p++;
+        if (p >= line_end || src.data[p++] != '=') continue;
+        while (p < line_end && src.data[p] != '"') p++;
+        if (p >= line_end) continue;
+        *start = ++p;
+        while (p < line_end && src.data[p] != '"') p++;
+        if (p >= line_end) continue;
+        *end = p;
+        return true;
+    }
+    return false;
+}
+
+static ns_bool ns_update_manifest_has_assignment(ns_str src, const char *key) {
+    i32 key_len = (i32)strlen(key);
+    for (i32 i = 0; i < src.len;) {
+        i32 line_start = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        i32 line_end = i;
+        if (i < src.len) i++;
+
+        i32 p = line_start;
+        while (p < line_end && (src.data[p] == ' ' || src.data[p] == '\t' || src.data[p] == '\r')) p++;
+        if (line_end - p < key_len || strncmp(src.data + p, key, key_len) != 0) continue;
+        p += key_len;
+        while (p < line_end && (src.data[p] == ' ' || src.data[p] == '\t')) p++;
+        if (p < line_end && src.data[p] == '=') return true;
+    }
+    return false;
+}
+
+static ns_str ns_update_manifest_text(ns_str src, ns_bool *changed) {
+    ns_str schema = ns_manifest_value(src, "schema");
+    *changed = false;
+    if (schema.data == ns_null) {
+        if (ns_update_manifest_has_assignment(src, "schema")) {
+            ns_exit(1, "update", "cannot parse schema; use schema = \"" NS_MANIFEST_SCHEMA_CURRENT "\".\n");
+        }
+        ns_str out = ns_str_null;
+        ns_str_append_cstr(&out, "schema = \"" NS_MANIFEST_SCHEMA_CURRENT "\"\n");
+        ns_str_append(&out, src);
+        *changed = true;
+        return out;
+    }
+    if (ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_CURRENT))) {
+        ns_str_free(schema);
+        return ns_str_null;
+    }
+    if (!ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_LEGACY))) {
+        ns_exit(1, "update", "unsupported manifest schema `%.*s`; this ns supports " NS_MANIFEST_SCHEMA_CURRENT ".\n",
+                schema.len, schema.data);
+    }
+
+    i32 start = 0;
+    i32 end = 0;
+    if (!ns_update_manifest_value_span(src, "schema", &start, &end)) {
+        ns_exit(1, "update", "cannot parse the schema assignment in ns.mod.\n");
+    }
+    ns_str out = ns_str_null;
+    ns_str_append_len(&out, src.data, start);
+    ns_str_append_cstr(&out, NS_MANIFEST_SCHEMA_CURRENT);
+    ns_str_append_len(&out, src.data + end, src.len - end);
+    ns_str_free(schema);
+    *changed = true;
+    return out;
+}
+
+static ns_str ns_update_gitignore_text(ns_str current, ns_bool *changed) {
+    ns_str out = ns_str_null;
+    if (current.data != ns_null) ns_str_append(&out, current);
+    *changed = false;
+    for (i32 i = 0; i < (i32)(sizeof(ns_scaffold_gitignore_rules) / sizeof(ns_scaffold_gitignore_rules[0])); i++) {
+        const char *rule = ns_scaffold_gitignore_rules[i];
+        ns_bool present = current.data != ns_null && ns_update_line_equals(current, rule);
+        if (!present && strcmp(rule, "bin") == 0 && current.data != ns_null) {
+            present = ns_update_line_equals(current, "bin/");
+        }
+        if (present) continue;
+        if (out.len > 0 && out.data[out.len - 1] != '\n') ns_str_append_cstr(&out, "\n");
+        ns_str_append_cstr(&out, rule);
+        ns_str_append_cstr(&out, "\n");
+        *changed = true;
+    }
+    return out;
+}
+
+static void ns_update_replace(ns_str root, const char *filename, ns_str current, ns_str replacement) {
+    ns_str path = ns_path_join(root, ns_str_cstr((char*)filename));
+    if (current.data != ns_null) ns_update_backup(root, filename, current);
+    ns_update_write_text(path, replacement);
+    ns_info("update", "%s %.*s\n", current.data == ns_null ? "created" : "updated", path.len, path.data);
+    ns_str_free(path);
+}
+
+void ns_exec_update(ns_str path) {
+    ns_str start = path.len == 0 ? ns_getcwd() : path;
+    ns_str found_root = ns_str_null;
+    if (!ns_find_project_root(start, &found_root)) {
+        ns_exit(1, "update", "no ns.mod found at or above %.*s.\n", start.len, start.data);
+    }
+    ns_str root = ns_project_absolute_path(found_root);
+    ns_str_free(found_root);
+    ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str manifest = ns_os_read_file(manifest_path);
+    if (manifest.data == ns_null) ns_exit(1, "update", "cannot read %.*s.\n", manifest_path.len, manifest_path.data);
+
+    i32 changed_count = 0;
+    ns_bool changed = false;
+    ns_str migrated = ns_update_manifest_text(manifest, &changed);
+    if (changed) {
+        ns_update_replace(root, "ns.mod", manifest, migrated);
+        changed_count++;
+    }
+
+    ns_str agents_path = ns_path_join(root, ns_str_cstr("AGENTS.md"));
+    ns_str agents = ns_os_read_file(agents_path);
+    ns_str canonical_agents = ns_scaffold_agents_text();
+    if (agents.data == ns_null || !ns_str_equals(agents, canonical_agents)) {
+        ns_update_replace(root, "AGENTS.md", agents, canonical_agents);
+        changed_count++;
+    }
+
+    ns_str ignore_path = ns_path_join(root, ns_str_cstr(".gitignore"));
+    ns_str ignore = ns_os_read_file(ignore_path);
+    ns_str merged_ignore = ns_update_gitignore_text(ignore, &changed);
+    if (changed) {
+        ns_update_replace(root, ".gitignore", ignore, merged_ignore);
+        changed_count++;
+    }
+
+    if (changed_count == 0) {
+        ns_info("update", "%.*s is already up to date (" NS_MANIFEST_SCHEMA_CURRENT ").\n", root.len, root.data);
+    } else {
+        ns_info("update", "migrated %.*s to " NS_MANIFEST_SCHEMA_CURRENT "; changed %d file%s.\n",
+                root.len, root.data, changed_count, changed_count == 1 ? "" : "s");
+    }
+
+    ns_str_free(merged_ignore);
+    ns_str_free(ignore);
+    ns_str_free(ignore_path);
+    ns_str_free(canonical_agents);
+    ns_str_free(agents);
+    ns_str_free(agents_path);
+    ns_str_free(migrated);
+    ns_str_free(manifest);
+    ns_str_free(manifest_path);
+    ns_str_free(root);
 }
 
 void ns_exec_run(ns_str filename) {
@@ -2107,6 +2337,8 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_init(option.filename);
     } else if (option.create) {
         ns_exec_create(option.filename);
+    } else if (option.update) {
+        ns_exec_update(option.filename);
     } else if (option.tokenize_only) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {

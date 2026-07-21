@@ -265,6 +265,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX)
 	$(NS_BINDIR)/ns_buffer_test
 	$(NS_BINDIR)/ns_os_test
 	$(NS_BINDIR)/ns_project_test
+	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 
 include lib/Makefile

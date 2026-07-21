@@ -134,6 +134,14 @@ and underlying-range rules.
 See [Literal constants](doc/lit.md) for `lit` initializer and optimization
 rules.
 
+## Update a project
+
+Run `ns update [path]` after installing a newer Nano Script toolchain. It finds
+the nearest `ns.mod`, migrates supported older manifest metadata, refreshes the
+bundled `AGENTS.md`, and additively updates `.gitignore`. Application source and
+custom manifest fields are preserved; originals of replaced files are kept in
+`bin/ns-update-backup/`.
+
 ## Components
 - `ns`: The Nano Script compiler and interpreter that can compiles and executes Nano Script source code.
 

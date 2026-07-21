@@ -87,6 +87,8 @@ Common commands:
   `glslangValidator` → SPIR-V, `dxc` → DXIL) and only warns when it is not
 - `-s|--symbol` print symbol table
 - `-v|--version`, `-h|--help`
+- `init [path]`, `create <name>` scaffold Nano Script projects; `update [path]`
+  migrates the nearest project's metadata to the current bundled format
 - `-o|--output` output path for emitters
 - `build [path]` compile and link a script/module to an executable or static
   library; infers module artifact type from `ns.mod` and accepts `--exe` /

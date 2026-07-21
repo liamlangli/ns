@@ -37,6 +37,15 @@ artifact under `<module>/bin`: `type = "app"` produces an executable, while
 single script and links any local sibling modules it imports. Use `-o <path>` to
 set the output path, or `--exe` / `--lib` to force the artifact kind.
 
+Running `ns update [path]` finds the nearest `ns.mod` and migrates project
+metadata to the format bundled with the current executable. It preserves
+custom manifest fields and source files, upgrades a missing or `ns.mod/v0`
+schema marker to `ns.mod/v1`, refreshes `AGENTS.md`, and additively merges the
+standard generated-file rules into `.gitignore`. Before replacing an existing
+file, it keeps the original under `bin/ns-update-backup/`. Distinct later
+revisions use numbered backup names. Unknown newer schemas are rejected, and
+an already-current project is left unchanged.
+
 ### IDE projects
 
 `ns project [path]` finds the nearest `ns.mod`, starting at `path` or the current
