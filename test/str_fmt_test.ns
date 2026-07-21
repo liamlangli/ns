@@ -1,0 +1,58 @@
+// Backtick interpolation at statement boundaries. A str-format expression is
+// an operand like any other, so a statement ending in one terminates at the
+// newline: the following statement must parse independently. Regression for a
+// bug where NS_AST_STR_FMT_EXPR was not recognized as an operand, so the parser
+// treated the newline as a trailing-operator continuation and swallowed the
+// next statement (crashing or mis-parsing).
+use std
+
+fn noop() {
+}
+
+// ---- a backtick-let followed by an expression statement --------------------
+// (the exact shape that used to crash / mis-parse)
+let s = "z"
+let one = `{s}`
+noop()
+print("after backtick-let ")
+assert one == "z"
+
+// followed by a bare call
+let two = `v={s}`
+noop()
+assert two == "v=z"
+
+// ---- backtick as the right operand of a concatenation assignment -----------
+let acc = ""
+acc = acc + `{s};`
+acc = acc + `{s};`
+assert acc == "z;z;"
+
+// ---- accumulate interpolated pieces across a loop --------------------------
+struct point { x: i32, y: i32 }
+fn to_str(p: point) str {
+    return `({p.x},{p.y})`
+}
+let pts = [point(1, 1), point(2, 2), point(3, 3)]
+let joined = ""
+for p in pts {
+    let piece = `{p};`
+    joined = joined + piece
+}
+assert joined == "(1,1);(2,2);(3,3);"
+
+// ---- consecutive backtick statements, then other statement kinds -----------
+let a = `a{s}`
+let b = `b{s}`
+noop()
+if a == "az" {
+    print("branch ok ")
+}
+assert a == "az" && b == "bz"
+
+// ---- a backtick expression statement on its own, then more -----------------
+print(`standalone {s}\n`)
+let after = 42
+assert after == 42
+
+print("str fmt boundary test passed\n")

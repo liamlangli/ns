@@ -52,6 +52,7 @@ ns_bool ns_parse_is_operand(ns_ast_t n) {
     case NS_AST_DESIG_EXPR:
     case NS_AST_ARRAY_EXPR:
     case NS_AST_BLOCK_EXPR:
+    case NS_AST_STR_FMT_EXPR:
     case NS_AST_EXPR:
         return true;
     default:

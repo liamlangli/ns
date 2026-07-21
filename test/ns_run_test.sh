@@ -36,6 +36,7 @@ cd "$root"
 "$ns" run test/container_test.ns
 "$ns" run test/gen_expr_test.ns
 "$ns" run test/to_str_test.ns
+"$ns" run test/str_fmt_test.ns
 "$ns" run test/os_file_test.ns
 "$ns" run test/gpu_pipeline_test.ns
 "$ns" run test/gpu_v2_test.ns
