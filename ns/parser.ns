@@ -15,7 +15,7 @@
 //   * unary   (OP a)             -> a=operand node, tok=op token
 //   * call    (callee(args...))  -> a=callee node, b=first arg node, c=arg count
 //                                   arguments are chained via each node's `next`
-//   * let  (let name = value)    -> a=name token, b=value node
+//   * let/lit (name = value)     -> a=name token, b=value node
 //   * return (return value)      -> a=value node
 //   * expr-statement             -> a=expr node
 //
@@ -43,6 +43,7 @@ fn NK_CALL() i32 { return 12 }
 fn NK_LET() i32 { return 20 }
 fn NK_RETURN() i32 { return 21 }
 fn NK_EXPR() i32 { return 22 }
+fn NK_LIT() i32 { return 23 }
 
 // ---- AST node record ------------------------------------------------------
 // `next` links sibling call arguments (-1 = none).
@@ -277,7 +278,7 @@ fn p_stmt(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
     p_skip_eol(toks, n)
     let k = p_kind(toks, n)
 
-    if k == TK_LET() {
+    if k == TK_LET() || k == TK_LIT() {
         p_advance()
         let name = p_pos   // identifier token index
         p_advance()
@@ -289,7 +290,9 @@ fn p_stmt(src: str, toks: [Tok], n: i32, nodes: [Node]) i32 {
             p_advance()
         }
         let val = p_expr(src, toks, n, nodes)
-        return nd(nodes, NK_LET(), name, val, 0, name)
+        let kind = NK_LET()
+        if k == TK_LIT() { kind = NK_LIT() }
+        return nd(nodes, kind, name, val, 0, name)
     }
 
     if k == TK_RETURN() {

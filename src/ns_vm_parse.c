@@ -1032,12 +1032,74 @@ ns_return_void ns_vm_parse_struct_def_ref(ns_vm *vm, ns_ast_ctx *ctx) {
     return ns_return_ok_void;
 }
 
+// `lit` is a compile-time binding, so its initializer must be closed over
+// other compile-time values. Keeping this check syntactic makes the contract
+// independent of the interpreter and safe for every code-generation backend.
+static ns_bool ns_vm_lit_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+    if (i <= 0) return false;
+    ns_ast_t *n = &ctx->nodes[i];
+    switch (n->type) {
+    case NS_AST_EXPR:
+        return ns_vm_lit_expr(vm, ctx, n->expr.body);
+    case NS_AST_PRIMARY_EXPR: {
+        ns_token_type t = n->primary_expr.token.type;
+        if (t == NS_TOKEN_INT_LITERAL || t == NS_TOKEN_FLT_LITERAL ||
+            t == NS_TOKEN_STR_LITERAL || t == NS_TOKEN_TRUE || t == NS_TOKEN_FALSE)
+            return true;
+        if (t == NS_TOKEN_IDENTIFIER) {
+            ns_symbol *s = ns_vm_find_symbol(vm, n->primary_expr.token.val, false);
+            return s && s->type == NS_SYMBOL_VALUE && s->is_lit;
+        }
+        return false;
+    }
+    case NS_AST_UNARY_EXPR:
+        return ns_vm_lit_expr(vm, ctx, n->unary_expr.expr);
+    case NS_AST_BINARY_EXPR:
+        if (n->binary_expr.op.type == NS_TOKEN_ASSIGN || n->binary_expr.op.type == NS_TOKEN_ASSIGN_OP)
+            return false;
+        return ns_vm_lit_expr(vm, ctx, n->binary_expr.left) &&
+               ns_vm_lit_expr(vm, ctx, n->binary_expr.right);
+    case NS_AST_CAST_EXPR:
+        return ns_vm_lit_expr(vm, ctx, n->cast_expr.expr);
+    case NS_AST_MEMBER_EXPR: {
+        // A qualified enum member is a literal value. Struct fields and
+        // container metadata remain runtime expressions.
+        ns_ast_t *left = &ctx->nodes[n->member_expr.left];
+        while (left->type == NS_AST_EXPR) left = &ctx->nodes[left->expr.body];
+        if (left->type != NS_AST_PRIMARY_EXPR || left->primary_expr.token.type != NS_TOKEN_IDENTIFIER)
+            return false;
+        ns_symbol *s = ns_vm_find_symbol(vm, left->primary_expr.token.val, false);
+        return s && s->type == NS_SYMBOL_ENUM;
+    }
+    default:
+        return false;
+    }
+}
+
+static ns_bool ns_vm_lit_type(ns_type t) {
+    return ns_type_is_number(t) || ns_type_is(t, NS_TYPE_STRING) || ns_type_is(t, NS_TYPE_ENUM);
+}
+
+// Return the root identifier of an assignable expression (`x`, `x.field`,
+// `x[index]`). This lets the semantic pass reject both rebinding a lit and
+// mutating data reached through one.
+static ns_token_t *ns_vm_assign_root(ns_ast_ctx *ctx, i32 i) {
+    if (i <= 0) return ns_null;
+    ns_ast_t *n = &ctx->nodes[i];
+    if (n->type == NS_AST_EXPR) return ns_vm_assign_root(ctx, n->expr.body);
+    if (n->type == NS_AST_PRIMARY_EXPR && n->primary_expr.token.type == NS_TOKEN_IDENTIFIER)
+        return &n->primary_expr.token;
+    if (n->type == NS_AST_MEMBER_EXPR) return ns_vm_assign_root(ctx, n->member_expr.left);
+    if (n->type == NS_AST_INDEX_EXPR) return ns_vm_assign_root(ctx, n->index_expr.table);
+    return ns_null;
+}
+
 ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
     for (i32 i = ctx->section_begin, l = ctx->section_end; i < l; ++i) {
         ns_ast_t *n = &ctx->nodes[ctx->sections[i]];
         if (n->type != NS_AST_VAR_DEF)
             continue;
-        ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true, .lib = vm->lib};
+        ns_symbol r = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true, .is_lit = n->var_def.is_lit, .lib = vm->lib};
         r.name = n->var_def.name.val;
 
         ns_bool type_required = n->var_def.type != 0;
@@ -1059,6 +1121,24 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
         } else {
             r.val.t = ret.r;
             n->var_def.type_size = ns_type_size(vm, r.val.t);
+        }
+
+        if (n->var_def.is_lit) {
+            ns_return_type expr_t = ns_vm_parse_expr(vm, ctx, n->var_def.expr, r.val.t);
+            if (ns_return_is_error(expr_t)) return ns_return_change_type(void, expr_t);
+            if (!ns_vm_lit_expr(vm, ctx, n->var_def.expr)) {
+                return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX,
+                                       "lit initializer must be a literal constant expression.");
+            }
+            if (!ns_vm_lit_type(r.val.t)) {
+                return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX,
+                                       "lit supports only number, bool, string, and enum values.");
+            }
+            if (!ns_type_equals(r.val.t, expr_t.r) && !ns_vm_assign_number_compatible(vm, r.val.t, expr_t.r) &&
+                !ns_type_match(vm, r.val.t, expr_t.r)) {
+                return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX,
+                                       ns_vm_type_mismatch_msg(vm, "lit definition type mismatch.", r.val.t, expr_t.r));
+            }
         }
 
         if (n->var_def.type_size == -1) {
@@ -1847,6 +1927,14 @@ ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_type ret_l = ns_vm_parse_expr(vm, ctx, n->binary_expr.left, ns_type_infer);
     if (ns_return_is_error(ret_l)) return ret_l;
+    ns_token_t *root = ns_vm_assign_root(ctx, n->binary_expr.left);
+    if (root) {
+        ns_symbol *s = ns_vm_find_symbol(vm, root->val, false);
+        if (s && s->type == NS_SYMBOL_VALUE && s->is_lit) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX,
+                                   "can't assign to lit value.");
+        }
+    }
     // the right side adopts the assign target type so number literals unify
     ns_return_type ret_r = ns_vm_parse_expr(vm, ctx, n->binary_expr.right, ret_l.r);
     if (ns_return_is_error(ret_r)) return ret_r;
@@ -2066,7 +2154,7 @@ ns_return_void ns_vm_parse_for_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
-    ns_symbol s = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true};
+    ns_symbol s = (ns_symbol){.type = NS_SYMBOL_VALUE, .parsed = true, .is_lit = n->var_def.is_lit};
     s.name = n->var_def.name.val;
 
     ns_ast_t *type = &ctx->nodes[n->var_def.type];
@@ -2084,6 +2172,16 @@ ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
         s.val.t = ns_type_is(l, NS_TYPE_INFER) ? t : l;
         n->var_def.type_size = ns_type_size(vm, s.val.t);
+    }
+    if (n->var_def.is_lit) {
+        if (!ns_vm_lit_expr(vm, ctx, n->var_def.expr)) {
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX,
+                                   "lit initializer must be a literal constant expression.");
+        }
+        if (!ns_vm_lit_type(s.val.t)) {
+            return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX,
+                                   "lit supports only number, bool, string, and enum values.");
+        }
     }
     ns_array_push(vm->symbol_stack, s);
     return ns_return_ok_void;

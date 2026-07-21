@@ -5,6 +5,7 @@
 
 int main(void) {
     const char *source =
+        "lit folded = 6 * 7\n"
         "enum byte_code: u8 { zero = 0, one, }\n"
         "enum wide_mask: u64 { none = 0, all = 18446744073709551615, }\n"
         "fn byte_value() u8 { return byte_code.one }\n"
@@ -29,6 +30,7 @@ int main(void) {
     ns_bool wide_constant = false;
     ns_bool byte_cast = false;
     ns_bool wide_cast = false;
+    ns_bool folded_lit = false;
     for (i32 fi = 0, fl = (i32)ns_array_length(module->fns); fi < fl; ++fi) {
         ns_ssa_fn *fn = &module->fns[fi];
         for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
@@ -39,10 +41,13 @@ int main(void) {
                 ns_str_equals(inst->name, ns_str_cstr("18446744073709551615"))) wide_constant = true;
             if (inst->op == NS_SSA_OP_CAST && ns_type_is(inst->type, NS_TYPE_U8)) byte_cast = true;
             if (inst->op == NS_SSA_OP_CAST && ns_type_is(inst->type, NS_TYPE_U64)) wide_cast = true;
+            if (inst->op == NS_SSA_OP_CONST && ns_type_is(inst->type, NS_TYPE_I32) &&
+                ns_str_equals(inst->name, ns_str_cstr("42"))) folded_lit = true;
         }
     }
     ns_expect(byte_constant && wide_constant, "enum members lower to exact u8 and u64 SSA constants.");
     ns_expect(byte_cast && wide_cast, "integer-to-enum casts lower to their underlying SSA types.");
+    ns_expect(folded_lit, "a global lit constant expression is folded into an SSA constant.");
 
     ns_str output = ns_str_cstr("/tmp/ns_ssa_enum_test.wasm");
     ns_return_bool emitted = ns_wasm_emit(module, output);

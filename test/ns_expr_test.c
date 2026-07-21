@@ -24,6 +24,40 @@ static ns_bool ns_expr_error_contains(const char *src, const char *message) {
 
 int main() {
     {
+        const char *src =
+            "lit global_base = 40\n"
+            "lit global_answer: i64 = (global_base + 2) as i64\n"
+            "fn main() bool {\n"
+            "    lit local_answer = global_base + 2\n"
+            "    lit message = \"constant\"\n"
+            "    return local_answer == 42 && global_answer == 42l && message == \"constant\"\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "global and local lit definitions evaluate constant expressions.");
+    }
+
+    ns_expect(ns_expr_error_contains(
+                  "fn main() bool {\n    lit answer = 42\n    answer = 0\n    return true\n}\n",
+                  "can't assign to lit value"),
+              "a local lit cannot be reassigned.");
+    ns_expect(ns_expr_error_contains(
+                  "lit answer = 42\nfn main() bool {\n    answer += 1\n    return true\n}\n",
+                  "can't assign to lit value"),
+              "a global lit cannot be reassigned.");
+    ns_expect(ns_expr_error_contains(
+                  "fn value() i32 { return 42 }\nfn main() bool {\n    lit answer = value()\n    return true\n}\n",
+                  "literal constant expression"),
+              "a lit initializer rejects runtime calls.");
+    ns_expect(ns_expr_error_contains(
+                  "fn main() bool {\n    let value = 42\n    lit answer = value\n    return true\n}\n",
+                  "literal constant expression"),
+              "a lit initializer rejects ordinary variable references.");
+    ns_expect(ns_expr_error_contains(
+                  "fn main() bool {\n    lit answer: i32\n    return true\n}\n",
+                  "requires an initializer"),
+              "a lit definition requires an initializer.");
+
+    {
         ns_vm vm = {0};
         ns_vm_set_ref_path(&vm, ns_str_cstr("test/ref"));
         const char *src =

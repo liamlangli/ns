@@ -757,6 +757,7 @@ i32 ns_ast_struct_field_index(ns_ast_ctx *ctx, i32 st, ns_str name) {
 
 /**
  * let name = expr
+ * lit name = constant_expr
  * ref name = expr
  */
 ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx) {
@@ -765,18 +766,19 @@ ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx) {
 
     // identifier [type_declare] = expression
     ns_parse_next_token(ctx);
-    if (!(ctx->token.type == NS_TOKEN_REF || ctx->token.type == NS_TOKEN_LET)) {
+    if (!(ctx->token.type == NS_TOKEN_REF || ctx->token.type == NS_TOKEN_LET || ctx->token.type == NS_TOKEN_LIT)) {
         ns_restore_state(ctx, state);
         return ns_return_ok(bool, false);
     }
 
     ns_bool is_ref = ctx->token.type == NS_TOKEN_REF;
+    ns_bool is_lit = ctx->token.type == NS_TOKEN_LIT;
     if (!ns_parse_identifier(ctx)) {
         ns_restore_state(ctx, state);
         return ns_return_ok(bool, false);
     }
 
-    ns_ast_t n = {.type = NS_AST_VAR_DEF, .state = state, .var_def = {.name = ctx->token, .expr = 0, .is_ref = is_ref, .type = 0}};
+    ns_ast_t n = {.type = NS_AST_VAR_DEF, .state = state, .var_def = {.name = ctx->token, .expr = 0, .is_ref = is_ref, .is_lit = is_lit, .type = 0}};
 
     ns_ast_state type_state = ns_save_state(ctx);
     ns_bool has_type = true;
@@ -804,6 +806,9 @@ ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx) {
             return ns_return_ok(bool, true);
         }
     } else {
+        if (is_lit) {
+            return ns_return_error(bool, ns_ast_state_loc(ctx, state), NS_ERR_SYNTAX, "lit definition requires an initializer.");
+        }
         if (!has_type) {
             ns_restore_state(ctx, assign_state);
             return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "variable type must be specified");

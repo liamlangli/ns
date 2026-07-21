@@ -42,6 +42,10 @@ let a = 1 // default int literal type is i32; default float literal type is f32
 let pi: f64 = 3.141592653
 let hello: str = "hello world" // string literal
 
+// define compile-time literal constants (global or local)
+lit answer = 6 * 7
+lit precise: f64 = answer as f64
+
 // operators (see doc/operators.md for the full set)
 let ready = true
 let blocked = !ready              // unary logical not
@@ -127,6 +131,8 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
 
 See [Enum types](doc/enum.md) for constant-expression, conversion, formatting,
 and underlying-range rules.
+See [Literal constants](doc/lit.md) for `lit` initializer and optimization
+rules.
 
 ## Components
 - `ns`: The Nano Script compiler and interpreter that can compiles and executes Nano Script source code.

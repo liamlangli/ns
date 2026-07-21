@@ -240,7 +240,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         ns_ast_print_type_label(ctx, n->arg.type, true);
         break;
     case NS_AST_VAR_DEF:
-        printf(ns_color_log "let " ns_color_nil);
+        printf(ns_color_log "%s " ns_color_nil, n->var_def.is_lit ? "lit" : (n->var_def.is_ref ? "ref" : "let"));
         ns_str_printf(n->var_def.name.val);
         ns_ast_print_type_label(ctx, n->var_def.type, true);
         if (n->var_def.expr) {
@@ -523,6 +523,8 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
         case NS_AST_VAR_DEF:
             if (n->var_def.is_ref) {
                 printf(ns_color_log "ref " ns_color_nil);
+            } else if (n->var_def.is_lit) {
+                printf(ns_color_log "lit " ns_color_nil);
             } else {
                 printf(ns_color_log "let " ns_color_nil);
             }

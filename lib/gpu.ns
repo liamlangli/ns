@@ -22,22 +22,22 @@ struct gpu_binding { id: i32 }
 struct gpu_mesh { id: i32 }
 struct gpu_render_pass { id: i32 }
 
-let GPU_USAGE_DEFAULT = 0
-let GPU_ATTRIBUTE_FORMAT_FLOAT = 1
-let GPU_PIXELFORMAT_NONE = 1
-let GPU_PIXELFORMAT_RGBA8 = 23
-let GPU_PIXELFORMAT_BGRA8 = 28
-let GPU_PIXELFORMAT_DEPTH = 43
-let GPU_TEXTURE_USAGE_READ = 1
-let GPU_TEXTURE_USAGE_WRITE = 2
-let GPU_TEXTURE_USAGE_RENDER_TARGET = 4
-let GPU_PRIMITIVE_TRIANGLES = 4
-let GPU_PRIMITIVE_LINES = 1
-let GPU_INDEX_NONE = 0
-let GPU_INDEX_UINT32 = 2
-let GPU_COMPARE_LESS_EQUAL = 4
-let GPU_CULL_NONE = 0
-let GPU_CULL_BACK = 2
+lit GPU_USAGE_DEFAULT = 0
+lit GPU_ATTRIBUTE_FORMAT_FLOAT = 1
+lit GPU_PIXELFORMAT_NONE = 1
+lit GPU_PIXELFORMAT_RGBA8 = 23
+lit GPU_PIXELFORMAT_BGRA8 = 28
+lit GPU_PIXELFORMAT_DEPTH = 43
+lit GPU_TEXTURE_USAGE_READ = 1
+lit GPU_TEXTURE_USAGE_WRITE = 2
+lit GPU_TEXTURE_USAGE_RENDER_TARGET = 4
+lit GPU_PRIMITIVE_TRIANGLES = 4
+lit GPU_PRIMITIVE_LINES = 1
+lit GPU_INDEX_NONE = 0
+lit GPU_INDEX_UINT32 = 2
+lit GPU_COMPARE_LESS_EQUAL = 4
+lit GPU_CULL_NONE = 0
+lit GPU_CULL_BACK = 2
 
 // Acquire the platform GPU device for `v`. Returns true on success. On platforms
 // without a backend this returns false.
@@ -154,33 +154,33 @@ ref fn gpu_commit()
 // memory calls run host-side and everything else safely no-ops.
 
 // Capability bits reported by gpu_caps(); 0 means no device.
-let GPU_CAP_RAW_POINTERS = 1u
-let GPU_CAP_BINDLESS_TEXTURES = 2u
-let GPU_CAP_INDIRECT_DRAW = 4u
-let GPU_CAP_ASYNC_COMPUTE = 8u
-let GPU_CAP_READBACK = 16u
+lit GPU_CAP_RAW_POINTERS = 1u
+lit GPU_CAP_BINDLESS_TEXTURES = 2u
+lit GPU_CAP_INDIRECT_DRAW = 4u
+lit GPU_CAP_ASYNC_COMPUTE = 8u
+lit GPU_CAP_READBACK = 16u
 
-let GPU_MEM_DEVICE = 0u
-let GPU_MEM_SHARED = 1u
+lit GPU_MEM_DEVICE = 0u
+lit GPU_MEM_SHARED = 1u
 
-let GPU_BLEND_OFF = 0
-let GPU_BLEND_ALPHA = 1
-let GPU_BLEND_PREMULTIPLIED = 2
-let GPU_BLEND_ADDITIVE = 3
+lit GPU_BLEND_OFF = 0
+lit GPU_BLEND_ALPHA = 1
+lit GPU_BLEND_PREMULTIPLIED = 2
+lit GPU_BLEND_ADDITIVE = 3
 
 // gpu_pass_begin load_flags: a gpu load action (clear 0, load 1, dontcare 2)
 // packed per attachment: color0 at bit 0, color1 at 2, color2 at 4, color3 at
 // 6, depth at 8.
-let GPU_LOAD_CLEAR = 0u
-let GPU_LOAD_LOAD = 1u
-let GPU_LOAD_DONTCARE = 2u
+lit GPU_LOAD_CLEAR = 0u
+lit GPU_LOAD_LOAD = 1u
+lit GPU_LOAD_DONTCARE = 2u
 
-let GPU_COLOR_MASK_ALL = 15u
+lit GPU_COLOR_MASK_ALL = 15u
 
-let GPU_TEXTURE_2D = 0
-let GPU_TEXTURE_CUBE = 1
-let GPU_TEXTURE_3D = 2
-let GPU_TEXTURE_ARRAY = 3
+lit GPU_TEXTURE_2D = 0
+lit GPU_TEXTURE_CUBE = 1
+lit GPU_TEXTURE_3D = 2
+lit GPU_TEXTURE_ARRAY = 3
 
 ref fn gpu_caps() u32
 

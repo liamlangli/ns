@@ -28,17 +28,17 @@ use gpu
 //   lib/assets/latin_mono.webp - the signed-distance-field atlas image
 // FONT_ZH (PingFang SC, Chinese) is NOT bundled here; load it at runtime if
 // CJK glyphs are required.
-let UI_FONT_MAIN = 0
-let UI_FONT_MONO = 1
-let UI_FONT_ZH = 2
+lit UI_FONT_MAIN = 0
+lit UI_FONT_MONO = 1
+lit UI_FONT_ZH = 2
 
 // Alignment flags for ui_layout().
-let UI_ALIGN_LEFT = 1
-let UI_ALIGN_RIGHT = 2
-let UI_ALIGN_TOP = 4
-let UI_ALIGN_BOTTOM = 8
-let UI_ALIGN_CENTER_HORIZONTAL = 16
-let UI_ALIGN_CENTER_VERTICAL = 32
+lit UI_ALIGN_LEFT = 1
+lit UI_ALIGN_RIGHT = 2
+lit UI_ALIGN_TOP = 4
+lit UI_ALIGN_BOTTOM = 8
+lit UI_ALIGN_CENTER_HORIZONTAL = 16
+lit UI_ALIGN_CENTER_VERTICAL = 32
 
 // ---- shared value types ---------------------------------------------------
 

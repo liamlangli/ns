@@ -2323,6 +2323,34 @@ ns_return_value ns_eval_block_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, ret);
 }
 
+// Materialize a lit as an immediate value. Most constant expressions already
+// produce immediates, but this also normalizes the few evaluator paths whose
+// temporary type carries a stack flag (for example logical negation).
+static ns_value ns_eval_lit_value(ns_vm *vm, ns_value v, ns_type t) {
+    ns_value out = {.t = ns_type_set_stack(ns_type_set_mut(t, false), false)};
+    ns_type value_t = ns_type_is(t, NS_TYPE_ENUM) ? ns_enum_underlying_type(vm, t) : t;
+    ns_value value = ns_eval_enum_underlying_value(vm, v);
+    switch (value_t.type) {
+    case NS_TYPE_I8: out.i8 = ns_eval_number_i8(vm, value); break;
+    case NS_TYPE_I16: out.i16 = ns_eval_number_i16(vm, value); break;
+    case NS_TYPE_I32: out.i32 = ns_eval_number_i32(vm, value); break;
+    case NS_TYPE_I64: out.i64 = ns_eval_number_i64(vm, value); break;
+    case NS_TYPE_U8: out.u8 = ns_eval_number_u8(vm, value); break;
+    case NS_TYPE_U16: out.u16 = ns_eval_number_u16(vm, value); break;
+    case NS_TYPE_U32: out.u32 = ns_eval_number_u32(vm, value); break;
+    case NS_TYPE_U64: out.u64 = ns_eval_number_u64(vm, value); break;
+    case NS_TYPE_F32: out.f32 = ns_eval_number_f32(vm, value); break;
+    case NS_TYPE_F64: out.f64 = ns_eval_number_f64(vm, value); break;
+    case NS_TYPE_BOOL: out.b = ns_eval_bool(vm, value); break;
+    case NS_TYPE_STRING:
+        out.o = ns_type_in_stack(v.t) ? *(u64 *)&vm->stack[v.o] : v.o;
+        break;
+    default:
+        return ns_nil; // guarded by the semantic lit-type check
+    }
+    return out;
+}
+
 ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_symbol *val = ns_vm_find_symbol(vm, n->var_def.name.val, false);
@@ -2365,6 +2393,13 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (ns_return_is_error(cast_ret)) return cast_ret;
         v = cast_ret.r;
         store_t = dst_t;
+    }
+
+    if (n->var_def.is_lit) {
+        ns_value literal = ns_eval_lit_value(vm, v, store_t);
+        val->val = literal;
+        val->is_lit = true;
+        return ns_return_ok(value, literal);
     }
 
     // Reference values (arrays, dicts, sets, strings, fns) are stored as an 8-byte handle;
@@ -2410,7 +2445,6 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown type size.");
     }
 
-    ns_value ret = (ns_value){.o = ns_eval_alloc(vm, size)};
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->var_def.expr);
     if (ns_return_is_error(ret_v)) return ret_v;
     if (n->var_def.is_ref && ns_type_is_ref(ret_v.r.t)) {
@@ -2452,6 +2486,14 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         store_t = dst_t;
     }
 
+    if (n->var_def.is_lit) {
+        ns_value literal = ns_eval_lit_value(vm, src, store_t);
+        ns_symbol symbol = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = n->var_def.name.val,
+                                       .val = literal, .parsed = true, .is_lit = true};
+        ns_array_push(vm->symbol_stack, symbol);
+        return ns_return_ok(value, literal);
+    }
+
     // A capturing block value points at its capture struct on the stack; bind
     // it directly (as a call-arg closure would be). Copying `size` bytes here
     // would truncate the captures to the declared fn type's 8-byte handle and
@@ -2474,6 +2516,7 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     // Copy only the concrete member's bytes; the union slot may be larger.
     i32 copy_size = ns_type_is(dst_t, NS_TYPE_UNION) ? ns_type_size(vm, src.t) : size;
+    ns_value ret = (ns_value){.o = ns_eval_alloc(vm, size)};
     ret.t = ns_type_set_stack(store_t, true);
     ns_eval_copy(vm, ret, src, copy_size);
     ns_array_set_length(vm->stack, ret.o + size);

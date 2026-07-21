@@ -103,6 +103,7 @@ typedef struct ns_symbol {
     ns_str name;
     ns_str lib;
     ns_bool parsed;
+    ns_bool is_lit;
     union {
         ns_value val;
         ns_fn_symbol fn;

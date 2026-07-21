@@ -153,6 +153,19 @@ fn test_let_typed() void {
     expect_str(node_token_text(src, toks, nodes, val), "7", "value text 7")
 }
 
+fn test_lit_stmt() void {
+    print("test_lit_stmt\n")
+    let src = "lit answer = 6 * 7"
+    let toks = [Tok](src.len + 4)
+    let nodes = [Node](src.len + 4)
+    let roots = [i32](src.len + 4)
+    let rc = parse1(src, toks, nodes, roots)
+    let stmt = roots[0]
+    expect_eq(nodes[stmt].kind, NK_LIT(), "lit statement")
+    expect_str(node_token_text(src, toks, nodes, stmt), "answer", "lit name")
+    expect_eq(nodes[nodes[stmt].b].kind, NK_BINARY(), "lit value is binary")
+}
+
 fn test_return_stmt() void {
     print("test_return_stmt\n")
     let src = "return a + b"
@@ -245,6 +258,7 @@ fn main() i32 {
     test_unary()
     test_let_stmt()
     test_let_typed()
+    test_lit_stmt()
     test_return_stmt()
     test_call()
     test_call_nested_args()

@@ -30,6 +30,14 @@ int main() {
     ns_token_t ts[16];
 
     {
+        i32 n = ns_token_lex("lit answer = 42 literal", ts, 16);
+        ns_expect(n == 5 && ns_token_is(ts[0], NS_TOKEN_LIT, "lit") &&
+                      ns_token_is(ts[1], NS_TOKEN_IDENTIFIER, "answer") &&
+                      ns_token_is(ts[4], NS_TOKEN_IDENTIFIER, "literal"),
+                  "lit is a keyword only at an identifier boundary.");
+    }
+
+    {
         i32 n = ns_token_lex("enum enum_value enumerable", ts, 16);
         ns_expect(n == 3 && ns_token_is(ts[0], NS_TOKEN_ENUM, "enum") &&
                       ns_token_is(ts[1], NS_TOKEN_IDENTIFIER, "enum_value") &&

@@ -13,6 +13,7 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_STR_FORMAT);
         ns_str_case(NS_TOKEN_COMMENT);
         ns_str_case(NS_TOKEN_LET);
+        ns_str_case(NS_TOKEN_LIT);
         ns_str_case(NS_TOKEN_MATCH);
         ns_str_case(NS_TOKEN_MODULE);
         ns_str_case(NS_TOKEN_FN);
@@ -399,6 +400,8 @@ i32 ns_next_token(ns_token_t *t, ns_str src, ns_str filename, i32 f) {
 case 'l': {
         if (strncmp(s + f, "let", 3) == 0) {
             ns_range_token(NS_TOKEN_LET, 3)
+        } else if (strncmp(s + f, "lit", 3) == 0) {
+            ns_range_token(NS_TOKEN_LIT, 3)
         } else if (strncmp(s + f, "loop", 4) == 0) {
             ns_range_token(NS_TOKEN_LOOP, 4)
         } else {

@@ -363,6 +363,14 @@ int main() {
         "    return restored == wide_mask.all && wide_mask.none == 0\n"
         "}\n"), "64-bit enum constants survive the wide-immediate path.");
 
+    ns_expect(ns_compile_true(
+        "use os\n"
+        "lit base = 6 * 7\n"
+        "fn main() bool {\n"
+        "    lit answer = base\n"
+        "    return answer == 42 && OS_PLATFORM_MACOS == 1\n"
+        "}\n"), "global, local, and imported lit constants compile and run.");
+
     // ── a small end-to-end program returning a non-boolean status ─────────
     ns_expect(ns_compile_returns(
         "fn gcd(a: i32, b: i32) i32 {\n"

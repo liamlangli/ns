@@ -54,6 +54,7 @@ fn TK_TRUE() i32 { return 30 }
 fn TK_FALSE() i32 { return 31 }
 fn TK_NIL() i32 { return 32 }
 fn TK_ENUM() i32 { return 33 }
+fn TK_LIT() i32 { return 34 }
 
 fn TK_COMMA() i32 { return 50 }
 fn TK_DOT() i32 { return 51 }
@@ -158,6 +159,7 @@ fn keyword_kind(src: str, start: i32, len: i32) i32 {
     let w = substr(src, start, len)
     if w == "use" { return TK_USE() }
     if w == "let" { return TK_LET() }
+    if w == "lit" { return TK_LIT() }
     if w == "fn" { return TK_FN() }
     if w == "struct" { return TK_STRUCT() }
     if w == "enum" { return TK_ENUM() }
@@ -209,6 +211,7 @@ fn kind_name(k: i32) str {
     if k == TK_TYPE() { return "TYPE" }
     if k == TK_USE() { return "use" }
     if k == TK_LET() { return "let" }
+    if k == TK_LIT() { return "lit" }
     if k == TK_FN() { return "fn" }
     if k == TK_STRUCT() { return "struct" }
     if k == TK_TYPE_KW() { return "type" }

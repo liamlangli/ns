@@ -13,12 +13,12 @@ mod http
 // http_send_* helpers to reply.
 
 // Method codes returned by http_recv_request() / http_method().
-let HTTP_GET = 0
-let HTTP_HEAD = 1
-let HTTP_POST = 2
-let HTTP_PUT = 3
-let HTTP_DELETE = 4
-let HTTP_OTHER = 5
+lit HTTP_GET = 0
+lit HTTP_HEAD = 1
+lit HTTP_POST = 2
+lit HTTP_PUT = 3
+lit HTTP_DELETE = 4
+lit HTTP_OTHER = 5
 
 // ---- request parsing ------------------------------------------------------
 

@@ -188,6 +188,7 @@ typedef enum {
     NS_TOKEN_USE,
     NS_TOKEN_IN,
     NS_TOKEN_LET,
+    NS_TOKEN_LIT,
     NS_TOKEN_NIL,
     NS_TOKEN_MATCH,
     NS_TOKEN_MODULE,

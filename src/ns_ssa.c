@@ -275,29 +275,62 @@ static ns_bool ns_ssa_global_const_seen(ns_ssa_builder *b, ns_str name) {
     return false;
 }
 
-static ns_bool ns_ssa_const_from_expr(ns_ast_ctx *ctx, i32 expr, ns_token_t *token, ns_type *type) {
+static ns_bool ns_ssa_const_from_value(ns_ssa_builder *b, ns_value value, ns_token_t *token, ns_type *type) {
+    if (ns_type_is(value.t, NS_TYPE_ENUM)) value = ns_eval_enum_underlying_value(b->vm, value);
+    char text[96];
+    i32 len = 0;
+    token->type = NS_TOKEN_INT_LITERAL;
+    switch (value.t.type) {
+    case NS_TYPE_I8: len = snprintf(text, sizeof(text), "%d", (i32)ns_eval_number_i8(b->vm, value)); break;
+    case NS_TYPE_I16: len = snprintf(text, sizeof(text), "%d", (i32)ns_eval_number_i16(b->vm, value)); break;
+    case NS_TYPE_I32: len = snprintf(text, sizeof(text), "%d", ns_eval_number_i32(b->vm, value)); break;
+    case NS_TYPE_I64: len = snprintf(text, sizeof(text), "%lld", (long long)ns_eval_number_i64(b->vm, value)); break;
+    case NS_TYPE_U8: len = snprintf(text, sizeof(text), "%u", (u32)ns_eval_number_u8(b->vm, value)); break;
+    case NS_TYPE_U16: len = snprintf(text, sizeof(text), "%u", (u32)ns_eval_number_u16(b->vm, value)); break;
+    case NS_TYPE_U32: len = snprintf(text, sizeof(text), "%u", ns_eval_number_u32(b->vm, value)); break;
+    case NS_TYPE_U64: len = snprintf(text, sizeof(text), "%llu", (unsigned long long)ns_eval_number_u64(b->vm, value)); break;
+    case NS_TYPE_F32:
+        token->type = NS_TOKEN_FLT_LITERAL;
+        len = snprintf(text, sizeof(text), "%.9g", (double)ns_eval_number_f32(b->vm, value));
+        break;
+    case NS_TYPE_F64:
+        token->type = NS_TOKEN_FLT_LITERAL;
+        token->suffix = NS_NUM_SUFFIX_F64;
+        len = snprintf(text, sizeof(text), "%.17g", ns_eval_number_f64(b->vm, value));
+        break;
+    case NS_TYPE_BOOL: len = snprintf(text, sizeof(text), "%d", ns_eval_bool(b->vm, value) ? 1 : 0); break;
+    default:
+        return false; // strings are interpreter literals; native string constants are not implemented yet
+    }
+    i8 *copy = ns_malloc((szt)len + 1);
+    memcpy(copy, text, (szt)len + 1);
+    token->val = ns_str_range(copy, len);
+    ns_array_push(b->m->owned_strings, token->val);
+    *type = value.t;
+    return true;
+}
+
+// Preserve the compiler's historical treatment of a top-level `let` whose
+// initializer is a single integer/bool literal. New constant expressions
+// should use `lit`; this compatibility path intentionally does not grow.
+static ns_bool ns_ssa_legacy_let_const(ns_ast_ctx *ctx, i32 expr, ns_token_t *token, ns_type *type) {
     if (expr <= 0) return false;
     ns_ast_t *n = &ctx->nodes[expr];
-    if (n->type == NS_AST_EXPR) return ns_ssa_const_from_expr(ctx, n->expr.body, token, type);
+    if (n->type == NS_AST_EXPR) return ns_ssa_legacy_let_const(ctx, n->expr.body, token, type);
     if (n->type != NS_AST_PRIMARY_EXPR) return false;
-
     ns_token_t t = n->primary_expr.token;
-    switch (t.type) {
-    case NS_TOKEN_INT_LITERAL:
+    if (t.type == NS_TOKEN_INT_LITERAL) {
         *token = t;
         *type = ns_type_i32;
         return true;
-    case NS_TOKEN_TRUE:
-        *token = (ns_token_t){.type = NS_TOKEN_INT_LITERAL, .val = ns_str_cstr("1")};
-        *type = ns_type_bool;
-        return true;
-    case NS_TOKEN_FALSE:
-        *token = (ns_token_t){.type = NS_TOKEN_INT_LITERAL, .val = ns_str_cstr("0")};
-        *type = ns_type_bool;
-        return true;
-    default:
-        return false;
     }
+    if (t.type == NS_TOKEN_TRUE || t.type == NS_TOKEN_FALSE) {
+        *token = (ns_token_t){.type = NS_TOKEN_INT_LITERAL,
+                              .val = t.type == NS_TOKEN_TRUE ? ns_str_cstr("1") : ns_str_cstr("0")};
+        *type = ns_type_bool;
+        return true;
+    }
+    return false;
 }
 
 static void ns_ssa_seed_global_consts(ns_ssa_builder *b) {
@@ -328,7 +361,10 @@ static void ns_ssa_import_module_consts(ns_ssa_builder *b, ns_str lib_name) {
     ns_ast_ctx lib_ctx = {0};
     ns_return_bool parsed = ns_ast_parse(&lib_ctx, source, path);
     if (ns_return_is_error(parsed)) return;
+    ns_str previous_lib = b->vm->lib;
+    b->vm->lib = lib_name;
     ns_ssa_collect_module_consts(b, &lib_ctx);
+    b->vm->lib = previous_lib;
 }
 
 static void ns_ssa_collect_module_consts(ns_ssa_builder *b, ns_ast_ctx *ctx) {
@@ -344,7 +380,13 @@ static void ns_ssa_collect_module_consts(ns_ssa_builder *b, ns_ast_ctx *ctx) {
 
         ns_token_t token = {0};
         ns_type type = ns_type_unknown;
-        if (!ns_ssa_const_from_expr(ctx, n->var_def.expr, &token, &type)) continue;
+        if (n->var_def.is_lit) {
+            ns_symbol *symbol = ns_vm_find_symbol(b->vm, n->var_def.name.val, false);
+            if (!symbol || symbol->type != NS_SYMBOL_VALUE || !symbol->is_lit) continue;
+            if (!ns_ssa_const_from_value(b, symbol->val, &token, &type)) continue;
+        } else if (!ns_ssa_legacy_let_const(ctx, n->var_def.expr, &token, &type)) {
+            continue;
+        }
 
         ns_ssa_global_const global = {.name = n->var_def.name.val, .token = token, .type = type};
         ns_array_push(b->globals, global);
@@ -879,6 +921,20 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
     }
     b.vm = &semantic_vm;
 
+    // Evaluate only declared literals. Their semantic checker excludes calls
+    // and mutable data, so this has no runtime side effects and turns constant
+    // expressions into one canonical value for all native backends.
+    for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
+        i32 s = ctx->sections[i];
+        ns_ast_t *n = &ctx->nodes[s];
+        if (n->type != NS_AST_VAR_DEF || !n->var_def.is_lit) continue;
+        ns_return_value evaluated = ns_eval_var_def(&semantic_vm, ctx, s);
+        if (ns_return_is_error(evaluated)) {
+            ns_ssa_module_free(m);
+            return ns_return_change_type(ptr, evaluated);
+        }
+    }
+
     ns_ssa_collect_module_consts(&b, ctx);
 
     ns_bool has_init = false;
@@ -918,7 +974,8 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
         for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
             i32 s = ctx->sections[i];
             ns_ast_t *n = &ctx->nodes[s];
-            if (n->type == NS_AST_FN_DEF || n->type == NS_AST_OP_FN_DEF) continue;
+            if (n->type == NS_AST_FN_DEF || n->type == NS_AST_OP_FN_DEF ||
+                (n->type == NS_AST_VAR_DEF && n->var_def.is_lit)) continue;
             if (b.fn->blocks[b.block].terminated) break;
             ns_ssa_lower_stmt(&b, s);
         }
