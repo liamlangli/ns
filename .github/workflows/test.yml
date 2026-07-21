@@ -20,15 +20,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libreadline-dev libffi-dev
 
-      # `make test` builds libns.a and the C test binaries, then runs them.
+      # `make test` builds the interpreter, required native modules and C test
+      # binaries, then runs the core suites.
       # -Werror is disabled for the same GCC 13 warnings noted in build.yml.
       - name: Test
         run: make test NS_WERROR=0
-
-      # The NSCode editor tests are written in ns itself. The project test
-      # command discovers every *_test.ns suite under nscode/native/test/.
-      - name: Build interpreter and native modules
-        run: make NS_WERROR=0
-
-      - name: NSCode editor tests
-        run: bin/ns test nscode/native
