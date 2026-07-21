@@ -468,14 +468,10 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_value ret_l;
     if (ctx->nodes[n->binary_expr.left].type == NS_AST_INDEX_EXPR) {
-        ns_ast_t *idx = &ctx->nodes[n->binary_expr.left];
-        ns_return_value ret_table = ns_eval_expr(vm, ctx, idx->index_expr.table);
-        if (ns_return_is_error(ret_table)) return ns_return_change_type(value, ret_table);
-        if (ns_type_is(ret_table.r.t, NS_TYPE_DICT)) {
-            ret_l = ns_eval_index_expr_with_create(vm, ctx, n->binary_expr.left, true);
-        } else {
-            ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
-        }
+        // Dict targets insert the missing key; array targets need the lvalue
+        // (slot address) form — a plain read loads reference-typed elements
+        // (strings, nested containers) as immediate handles instead.
+        ret_l = ns_eval_index_expr_with_create(vm, ctx, n->binary_expr.left, true);
     } else {
         ret_l = ns_eval_expr(vm, ctx, n->binary_expr.left);
     }
@@ -1870,6 +1866,17 @@ ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i
     // (stack=false) and keep it mutable so it can be assigned to.
     element_type.stack = false;
     element_type.mut = true;
+    // Reference-typed elements (strings, nested arrays, dicts, sets, fns,
+    // tasks) keep a u64 handle in the slot. A read loads the handle so the
+    // value carries the immediate representation every consumer of non-stack
+    // reference values expects; only an assignment target keeps the slot
+    // address for the store.
+    if (!create && (ns_type_is_array(element_type) || ns_type_is(element_type, NS_TYPE_STRING) ||
+                    ns_type_is(element_type, NS_TYPE_DICT) || ns_type_is(element_type, NS_TYPE_SET) ||
+                    ns_type_is(element_type, NS_TYPE_FN) || ns_type_is(element_type, NS_TYPE_TASK))) {
+        ns_value val = (ns_value){.t = element_type, .o = *(u64 *)data};
+        return ns_return_ok(value, val);
+    }
     ns_value val = (ns_value){.t = element_type, .o = (u64)data};
     return ns_return_ok(value, val);
 }
