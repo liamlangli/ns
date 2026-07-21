@@ -19,8 +19,7 @@
             "name": "Nano Script text and punctuation",
             "scope": [
                 "source.ns",
-                "variable.other.ns",
-                "entity.name.type.ns"
+                "variable.other.ns"
             ],
             "settings": {
                 "foreground": "#A6A6A6",
@@ -48,6 +47,17 @@
             "scope": "storage.type.primitive.ns",
             "settings": {
                 "foreground": "#61D394",
+                "fontStyle": ""
+            }
+        },
+        {
+            "name": "Nano Script declared type names",
+            "scope": [
+                "entity.name.type.ns",
+                "meta.enum.ns entity.name.type.enum.ns"
+            ],
+            "settings": {
+                "foreground": "#B3B3B3",
                 "fontStyle": ""
             }
         },
