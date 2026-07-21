@@ -85,6 +85,19 @@ fn main() {
 
 - Bind values with `let name = expression`; add `: type` when an explicit label
   is useful or required.
+- Declare a global or local compile-time literal constant with
+  `lit name = constant_expression`. `lit` uses the same optional type label and
+  inference rules as `let`, but always requires an initializer and cannot be
+  reassigned or mutated through a member/index expression.
+- A `lit` initializer may contain literal values, preceding `lit` bindings,
+  enum members, parentheses, casts, and pure unary or binary operators. Calls,
+  ordinary `let`/`ref` values, containers, structs, blocks, and other runtime
+  expressions are not allowed. Supported result types are numbers, `bool`,
+  `str`, and enums.
+- Scalar `lit` bindings remain immediate values in the interpreter rather than
+  occupying writable stack slots. Native compilation evaluates global numeric,
+  boolean, and enum `lit` expressions and seeds functions with the resulting
+  SSA constants; local `lit` bindings retain an immutable SSA value.
 - Integer literals default to `i32`; floating-point literals default to `f32`.
 - Scalar types are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`,
   `f32`, `f64`, `bool`, `str`, `any`, and `void`.
@@ -133,6 +146,9 @@ let n: number = 42
 let exact = n as i32
 let platform = os_platform.macos
 let raw: u8 = platform
+
+lit base = 40
+lit answer: i64 = (base + 2) as i64
 ```
 
 Struct literals may initialize fields either entirely by name
@@ -261,6 +277,10 @@ check the implementation/declaration for the target platform.
 - Preserve Nano Script's explicit, minimal, data-oriented design. Prefer a
   concrete type and a small function over hidden behavior or a generic
   abstraction.
+- Use `lit` rather than `let` for module constants and local compile-time
+  values that satisfy the literal-expression restrictions. Keep runtime or
+  intentionally mutable bindings as `let`, and do not weaken `lit` validation
+  merely to admit values that require evaluation at runtime.
 - Follow nearby `.ns` syntax and naming; do not import syntax from Swift,
   JavaScript, Rust, or another language unless the parser already supports it.
 - Put reusable pure-language code in `.ns` modules. Put platform services behind
