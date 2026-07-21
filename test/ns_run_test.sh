@@ -33,6 +33,7 @@ test "$(cat preserved/AGENTS.md)" = '# project-specific agent rules'
 
 cd "$root"
 "$ns" run test/lang_test.ns
+"$ns" run test/container_test.ns
 "$ns" run test/os_file_test.ns
 "$ns" run test/gpu_pipeline_test.ns
 "$ns" run test/gpu_v2_test.ns

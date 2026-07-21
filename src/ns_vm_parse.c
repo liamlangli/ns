@@ -1276,6 +1276,43 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_ty
 ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_ast_t *callee_n = &ctx->nodes[n->call_expr.callee];
+
+    // Container membership builtins: has(c, k) / insert(s, v) / remove(c, k)
+    // over the shared dict/set hash table, typed here because generic
+    // container parameters cannot be declared as ref fns. A user fn with the
+    // same name shadows the builtin.
+    if (callee_n->type == NS_AST_PRIMARY_EXPR && callee_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER &&
+        n->call_expr.arg_count == 2) {
+        ns_str bname = callee_n->primary_expr.token.val;
+        ns_bool is_insert = ns_str_equals_STR(bname, "insert");
+        if (is_insert || ns_str_equals_STR(bname, "has") || ns_str_equals_STR(bname, "remove")) {
+            ns_symbol *user = ns_vm_find_symbol(vm, bname, true);
+            if (!user || user->type != NS_SYMBOL_FN) {
+                i32 a0 = n->next;
+                ns_ast_t arg0 = ctx->nodes[a0];
+                ns_return_type ret_c = ns_vm_parse_expr(vm, ctx, a0, ns_type_infer);
+                if (ns_return_is_error(ret_c)) return ret_c;
+                ns_type ct = ret_c.r;
+                ns_bool container_ok = is_insert ? ns_type_is(ct, NS_TYPE_SET)
+                                                 : (ns_type_is(ct, NS_TYPE_DICT) || ns_type_is(ct, NS_TYPE_SET));
+                if (!container_ok) {
+                    return ns_return_error(type, ns_ast_state_loc(ctx, arg0.state), NS_ERR_EVAL,
+                                           is_insert ? "insert expects a set." : "has/remove expect a dict or set.");
+                }
+                ns_type key_t = vm->symbols[ns_type_index(ct)].ct.key;
+                i32 a1 = arg0.next;
+                ns_ast_t arg1 = ctx->nodes[a1];
+                ns_return_type ret_k = ns_vm_parse_expr(vm, ctx, a1, key_t);
+                if (ns_return_is_error(ret_k)) return ret_k;
+                if (!ns_type_match(vm, key_t, ret_k.r)) {
+                    return ns_return_error(type, ns_ast_state_loc(ctx, arg1.state), NS_ERR_EVAL,
+                                           ns_vm_type_mismatch_msg(vm, "container key type mismatch.", key_t, ret_k.r));
+                }
+                return ns_return_ok(type, ns_type_bool);
+            }
+        }
+    }
+
     ns_return_type ret_callee = ns_vm_parse_expr(vm, ctx, n->call_expr.callee, ns_type_nil);
     if (ns_return_is_error(ret_callee)) return ret_callee;
 

@@ -242,35 +242,107 @@ static ns_value ns_eval_dict_value(ns_dict_table *table, u8 *ptr, ns_bool write_
     return v;
 }
 
-static ns_return_value ns_eval_dict_find(ns_vm *vm, ns_value table_v, ns_value key, ns_bool create, ns_code_loc loc) {
-    if (!ns_type_is_number(ns_enum_underlying_type(vm, key.t)) && !ns_type_is(key.t, NS_TYPE_STRING)) {
-        return ns_return_error(value, loc, NS_ERR_EVAL, "dict key type not hashable.");
-    }
+static ns_bool ns_eval_dict_key_hashable(ns_vm *vm, ns_value key) {
+    return ns_type_is_number(ns_enum_underlying_type(vm, key.t)) || ns_type_is(key.t, NS_TYPE_STRING);
+}
 
-    ns_dict_table *table = ns_eval_dict_table(vm, table_v);
+// Probe the open-addressed table for `key`. Slot states: 0 empty, 1 occupied,
+// 2 tombstone (removed; kept so later entries in the probe chain stay
+// reachable). Returns the occupied slot holding the key, or NULL. When
+// insert_slot is non-null it receives the first reusable slot (tombstone or
+// empty) along the probe path, for insertion.
+static u8 *ns_eval_dict_probe(ns_vm *vm, ns_dict_table *table, ns_value key, u8 **insert_slot) {
+    if (insert_slot) *insert_slot = ns_null;
+    if (!table || table->cap <= 0) return ns_null;
     u64 h = ns_eval_hash_value(vm, key);
     i32 start = (i32)(h % (u64)table->cap);
+    u8 *reuse = ns_null;
     for (i32 step = 0; step < table->cap; ++step) {
         i32 index = (start + step) % table->cap;
         u8 *slot = ns_eval_dict_slot(table, index);
         if (slot[0] == 0) {
-            if (!create) break;
-            if (table->len >= table->cap) {
-                return ns_return_error(value, loc, NS_ERR_EVAL, "dict capacity exceeded.");
-            }
-            slot[0] = 1;
-            table->len++;
-            ns_value dst_key = {.t = ns_type_set_stack(ns_type_set_mut(table->key_type, true), false), .o = (u64)(slot + table->key_off)};
-            ns_eval_copy(vm, dst_key, key, table->key_size);
-            return ns_return_ok(value, ns_eval_dict_value(table, slot + table->val_off, create));
+            if (!reuse) reuse = slot;
+            break;
         }
-
+        if (slot[0] == 2) {
+            if (!reuse) reuse = slot;
+            continue;
+        }
         ns_value slot_key = ns_eval_slot_value(table, slot + table->key_off, table->key_type);
-        if (ns_eval_value_equals(vm, slot_key, key)) {
-            return ns_return_ok(value, ns_eval_dict_value(table, slot + table->val_off, create));
+        if (ns_eval_value_equals(vm, slot_key, key)) return slot;
+    }
+    if (insert_slot) *insert_slot = reuse;
+    return ns_null;
+}
+
+static void ns_eval_dict_slot_insert(ns_vm *vm, ns_dict_table *table, u8 *slot, ns_value key) {
+    slot[0] = 1;
+    table->len++;
+    ns_value dst_key = {.t = ns_type_set_stack(ns_type_set_mut(table->key_type, true), false), .o = (u64)(slot + table->key_off)};
+    ns_eval_copy(vm, dst_key, key, table->key_size);
+}
+
+static ns_return_value ns_eval_dict_find(ns_vm *vm, ns_value table_v, ns_value key, ns_bool create, ns_code_loc loc) {
+    if (!ns_eval_dict_key_hashable(vm, key)) {
+        return ns_return_error(value, loc, NS_ERR_EVAL, "dict key type not hashable.");
+    }
+
+    ns_dict_table *table = ns_eval_dict_table(vm, table_v);
+    u8 *insert_slot = ns_null;
+    u8 *slot = ns_eval_dict_probe(vm, table, key, &insert_slot);
+    if (slot) {
+        return ns_return_ok(value, ns_eval_dict_value(table, slot + table->val_off, create));
+    }
+    if (!create) {
+        return ns_return_error(value, loc, NS_ERR_EVAL, "dict key not found.");
+    }
+    if (!insert_slot || table->len >= table->cap) {
+        return ns_return_error(value, loc, NS_ERR_EVAL, "dict capacity exceeded.");
+    }
+    ns_eval_dict_slot_insert(vm, table, insert_slot, key);
+    return ns_return_ok(value, ns_eval_dict_value(table, insert_slot + table->val_off, create));
+}
+
+// has(c, k) / insert(s, v) / remove(c, k): membership operations over the
+// shared dict/set hash table. kind: 0 has, 1 insert, 2 remove.
+static ns_return_value ns_eval_container_builtin(ns_vm *vm, ns_ast_ctx *ctx, i32 i, i32 kind) {
+    ns_ast_t *n = &ctx->nodes[i];
+    i32 a0 = n->next;
+    i32 a1 = ctx->nodes[a0].next;
+    ns_code_loc loc = ns_ast_state_loc(ctx, n->state);
+
+    ns_return_value ret_c = ns_eval_expr(vm, ctx, a0);
+    if (ns_return_is_error(ret_c)) return ret_c;
+    ns_return_value ret_k = ns_eval_expr(vm, ctx, a1);
+    if (ns_return_is_error(ret_k)) return ret_k;
+    ns_value key = ret_k.r;
+
+    if (!ns_eval_dict_key_hashable(vm, key)) {
+        return ns_return_error(value, loc, NS_ERR_EVAL, "container key type not hashable.");
+    }
+    ns_dict_table *table = ns_eval_dict_table(vm, ret_c.r);
+    u8 *insert_slot = ns_null;
+    u8 *slot = ns_eval_dict_probe(vm, table, key, &insert_slot);
+
+    ns_bool result = false;
+    if (kind == 0) { // has
+        result = slot != ns_null;
+    } else if (kind == 1) { // insert
+        if (!slot) {
+            if (!insert_slot || !table || table->len >= table->cap) {
+                return ns_return_error(value, loc, NS_ERR_EVAL, "set capacity exceeded.");
+            }
+            ns_eval_dict_slot_insert(vm, table, insert_slot, key);
+            result = true;
+        }
+    } else { // remove: tombstone the slot so probe chains stay intact
+        if (slot) {
+            slot[0] = 2;
+            table->len--;
+            result = true;
         }
     }
-    return ns_return_error(value, loc, NS_ERR_EVAL, "dict key not found.");
+    return ns_return_ok(value, result ? ns_true : ns_false);
 }
 
 ns_return_value ns_eval_cast_number(ns_vm *vm, ns_value v, ns_type dst, ns_code_loc loc) {
@@ -808,6 +880,24 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         i8 *dptr = ns_type_in_stack(dst.t) ? &vm->stack[dst.o] : (i8 *)dst.o;
         *(void **)dptr = trampoline;
         return ns_return_ok(value, ns_nil);
+    }
+
+    // Container membership builtins: has(c, k) / insert(s, v) / remove(c, k).
+    // A user fn with the same name shadows the builtin (mirrors the parse-side
+    // routing in ns_vm_parse_call_expr).
+    if (callee_n->type == NS_AST_PRIMARY_EXPR && callee_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER &&
+        n->call_expr.arg_count == 2) {
+        ns_str bname = callee_n->primary_expr.token.val;
+        i32 kind = ns_str_equals_STR(bname, "has")      ? 0
+                 : ns_str_equals_STR(bname, "insert")   ? 1
+                 : ns_str_equals_STR(bname, "remove")   ? 2
+                                                        : -1;
+        if (kind >= 0) {
+            ns_symbol *user = ns_vm_find_symbol(vm, bname, true);
+            if (!user || user->type != NS_SYMBOL_FN) {
+                return ns_eval_container_builtin(vm, ctx, i, kind);
+            }
+        }
     }
 
     ns_return_value ret_callee = ns_eval_expr(vm, ctx, n->call_expr.callee);

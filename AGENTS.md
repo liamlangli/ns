@@ -96,7 +96,9 @@ fn main() {
   Constructors take a capacity/count hint, for example `[u8](1024)`,
   `[str: i32](64)`, and `set[str](64)`.
 - Dictionaries currently use fixed-capacity open addressing. Reading a missing
-  key is an error; assigning a missing key inserts it.
+  key is an error; assigning a missing key inserts it. Membership operations
+  are the builtins `has(c, k)`, `insert(s, v)` (sets), and `remove(c, k)`,
+  shared by dicts and sets; each returns a bool.
 - Define plain aggregate data with `struct`, aliases or unions with `type`, and
   function types with `(Args) -> Result`.
 - Define a nominal integer-backed type with `enum`. Its underlying type defaults

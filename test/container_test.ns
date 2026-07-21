@@ -1,0 +1,65 @@
+// Dict and set membership operations over the shared open-addressed table:
+// has(c, k), insert(s, v), remove(c, k). Removal tombstones the slot so
+// probe chains stay intact; insertion reuses tombstones. A user fn named
+// has/insert/remove shadows the builtin for the whole file.
+use std
+
+// ---- dict ------------------------------------------------------------------
+let ages = [str: i32](8)
+ages["amy"] = 32
+ages["bob"] = 41
+assert has(ages, "amy") && has(ages, "bob")
+assert !has(ages, "carol")
+assert ages.len == 2
+
+assert remove(ages, "amy")
+assert !remove(ages, "amy")
+assert !has(ages, "amy")
+assert ages.len == 1
+
+// a removed key can be assigned again through the normal index path
+ages["amy"] = 33
+assert ages["amy"] == 33
+assert has(ages, "amy") && ages.len == 2
+
+// numeric keys share the same table implementation
+let names = [i32: str](8)
+names[7] = "seven"
+names[11] = "eleven"
+assert has(names, 7) && has(names, 11) && !has(names, 13)
+assert remove(names, 7) && !has(names, 7)
+assert names[11] == "eleven"
+
+// ---- set --------------------------------------------------------------------
+let tags = set[str](4)
+assert tags.len == 0
+assert insert(tags, "red")
+assert insert(tags, "green")
+assert !insert(tags, "red") // already present
+assert tags.len == 2
+assert has(tags, "red") && has(tags, "green")
+assert !has(tags, "blue")
+assert remove(tags, "red")
+assert !remove(tags, "red")
+assert !has(tags, "red") && has(tags, "green")
+assert tags.len == 1
+
+// tombstone reuse at full capacity: fill, remove, refill
+let ids = set[i32](4)
+assert insert(ids, 1) && insert(ids, 2) && insert(ids, 3) && insert(ids, 4)
+assert ids.len == 4
+assert remove(ids, 2) && remove(ids, 4)
+assert ids.len == 2
+assert insert(ids, 20) && insert(ids, 40)
+assert ids.len == 4
+assert has(ids, 1) && has(ids, 3) && has(ids, 20) && has(ids, 40)
+assert !has(ids, 2) && !has(ids, 4)
+
+// membership results feed ordinary control flow
+let hits = 0
+for i in 0 to 50 {
+    if has(ids, i) {
+        hits += 1
+    }
+}
+assert hits == 4
