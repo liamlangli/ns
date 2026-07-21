@@ -518,7 +518,11 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
     }
 }
 
-static void ns_ssa_merge_env(ns_ssa_builder *b, ns_ssa_binding *base, ns_ssa_binding *then_env, ns_bool then_reach, ns_ssa_binding *else_env, ns_bool else_reach, i32 ast) {
+// A phi records where each of its two inputs flows in from so a native backend
+// can materialize it with copies on the incoming edges. The source blocks are
+// stashed in the otherwise-unused target0/target1 fields (a phi is never a
+// terminator): target0 is the predecessor for input a, target1 for input b.
+static void ns_ssa_merge_env(ns_ssa_builder *b, ns_ssa_binding *base, ns_ssa_binding *then_env, ns_bool then_reach, ns_ssa_binding *else_env, ns_bool else_reach, i32 ast, i32 then_block, i32 else_block) {
     b->env = ns_ssa_env_clone(base);
     if (!then_reach && !else_reach) return;
     if (then_reach && !else_reach) {
@@ -544,6 +548,8 @@ static void ns_ssa_merge_env(ns_ssa_builder *b, ns_ssa_binding *base, ns_ssa_bin
         i32 phi = ns_ssa_emit_value(b, NS_SSA_OP_PHI, v_then, -1, binding->type, binding->name, (ns_token_t){0}, ast);
         ns_ssa_inst *inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
         inst->b = v_else;
+        inst->target0 = then_block;
+        inst->target1 = else_block;
         binding->value = phi;
     }
 }
@@ -551,6 +557,7 @@ static void ns_ssa_merge_env(ns_ssa_builder *b, ns_ssa_binding *base, ns_ssa_bin
 static void ns_ssa_lower_if(ns_ssa_builder *b, i32 i) {
     ns_ast_t *n = &b->ctx->nodes[i];
     i32 cond = ns_ssa_lower_expr(b, n->if_stmt.condition);
+    i32 entry_block = b->block;
     i32 then_block = ns_ssa_new_block(b, n->if_stmt.body);
     i32 else_block = n->if_stmt.else_body ? ns_ssa_new_block(b, n->if_stmt.else_body) : -1;
     i32 merge_block = ns_ssa_new_block(b, i);
@@ -563,16 +570,22 @@ static void ns_ssa_lower_if(ns_ssa_builder *b, i32 i) {
     b->env = ns_ssa_env_clone(base);
     ns_ssa_lower_compound(b, n->if_stmt.body);
     ns_bool then_reach = !b->fn->blocks[b->block].terminated;
+    // The block that actually reaches the merge may be a nested block created
+    // while lowering the then/else body, not the region's first block.
+    i32 then_exit = b->block;
     if (then_reach) ns_ssa_emit_jump(b, merge_block, i);
     ns_ssa_binding *then_env = ns_ssa_env_clone(b->env);
 
     ns_ssa_binding *else_env = NULL;
     ns_bool else_reach = true;
+    // With no else body the false edge flows straight from the condition block.
+    i32 else_exit = entry_block;
     if (n->if_stmt.else_body) {
         b->block = else_block;
         b->env = ns_ssa_env_clone(base);
         ns_ssa_lower_compound(b, n->if_stmt.else_body);
         else_reach = !b->fn->blocks[b->block].terminated;
+        else_exit = b->block;
         if (else_reach) ns_ssa_emit_jump(b, merge_block, i);
         else_env = ns_ssa_env_clone(b->env);
     } else {
@@ -582,21 +595,59 @@ static void ns_ssa_lower_if(ns_ssa_builder *b, i32 i) {
     b->block = merge_block;
     b->fn->blocks[merge_block].terminated = false;
     ns_array_free(b->env);
-    ns_ssa_merge_env(b, base, then_env, then_reach, else_env, else_reach, i);
+    ns_ssa_merge_env(b, base, then_env, then_reach, else_env, else_reach, i, then_exit, else_exit);
 
     ns_array_free(base);
     ns_array_free(then_env);
     ns_array_free(else_env);
 }
 
+// Seed the loop header with a phi for every live binding: input a is the value
+// coming from the preheader, input b the value produced on the back edge. Body
+// code reads the phi values, so a variable reassigned in the loop is observed
+// with its updated value on the next iteration instead of its pre-loop value.
+static i32 *ns_ssa_loop_header_phis(ns_ssa_builder *b, i32 header, i32 preheader, i32 body_block, i32 ast) {
+    ns_ssa_binding *pre_env = ns_ssa_env_clone(b->env);
+    i32 nbind = (i32)ns_array_length(b->env);
+    i32 *phi_inst = ns_null;
+    ns_array_set_length(phi_inst, nbind > 0 ? nbind : 0);
+    for (i32 k = 0; k < nbind; ++k) {
+        ns_ssa_binding *bd = &b->env[k];
+        i32 phi = ns_ssa_emit_value(b, NS_SSA_OP_PHI, pre_env[k].value, -1, bd->type, bd->name, (ns_token_t){0}, ast);
+        i32 idx = ns_array_last(b->fn->blocks[header].insts)[0];
+        b->fn->insts[idx].b = pre_env[k].value; // placeholder until the back edge is known
+        b->fn->insts[idx].target0 = preheader;
+        b->fn->insts[idx].target1 = body_block;
+        phi_inst[k] = idx;
+        bd->value = phi;
+    }
+    ns_array_free(pre_env);
+    return phi_inst;
+}
+
+// After the body is lowered, wire each header phi's back-edge input (b) to the
+// binding's current value and record the block the back edge leaves from.
+static void ns_ssa_loop_close_phis(ns_ssa_builder *b, i32 *phi_inst, i32 body_exit) {
+    for (i32 k = 0, l = (i32)ns_array_length(phi_inst); k < l; ++k) {
+        ns_ssa_inst *phi = &b->fn->insts[phi_inst[k]];
+        phi->b = ns_ssa_env_get_value(b->env, phi->name, phi->dst);
+        phi->target1 = body_exit;
+    }
+}
+
 static void ns_ssa_lower_loop(ns_ssa_builder *b, i32 i) {
     ns_ast_t *n = &b->ctx->nodes[i];
+    i32 preheader = b->block;
     i32 cond_block = ns_ssa_new_block(b, n->loop_stmt.condition);
     i32 body_block = ns_ssa_new_block(b, n->loop_stmt.body);
     i32 exit_block = ns_ssa_new_block(b, i);
 
     ns_ssa_emit_jump(b, cond_block, i);
     b->block = cond_block;
+    b->fn->blocks[cond_block].terminated = false;
+
+    i32 *phi_inst = ns_ssa_loop_header_phis(b, cond_block, preheader, body_block, i);
+    ns_ssa_binding *header_env = ns_ssa_env_clone(b->env);
 
     if (n->loop_stmt.condition > 0) {
         i32 cond = ns_ssa_lower_expr(b, n->loop_stmt.condition);
@@ -609,14 +660,20 @@ static void ns_ssa_lower_loop(ns_ssa_builder *b, i32 i) {
     ns_array_push(b->loops, loop);
 
     b->block = body_block;
+    ns_array_free(b->env);
+    b->env = ns_ssa_env_clone(header_env);
     ns_ssa_lower_compound(b, n->loop_stmt.body);
     if (!b->fn->blocks[b->block].terminated) {
+        ns_ssa_loop_close_phis(b, phi_inst, b->block);
         ns_ssa_emit_jump(b, cond_block, i);
     }
 
     (void)ns_array_pop(b->loops);
+    ns_array_free(phi_inst);
     b->block = exit_block;
     b->fn->blocks[b->block].terminated = false;
+    ns_array_free(b->env);
+    b->env = header_env; // values live after the loop are the header phis
 }
 
 static void ns_ssa_lower_for(ns_ssa_builder *b, i32 i) {
@@ -629,14 +686,18 @@ static void ns_ssa_lower_for(ns_ssa_builder *b, i32 i) {
 
     i32 from = ns_ssa_lower_expr(b, g->gen_expr.from);
     ns_ssa_env_bind(b, g->gen_expr.name.val, from, ns_type_i32);
+    i32 preheader = b->block;
 
     i32 cond_block = ns_ssa_new_block(b, g->gen_expr.to);
     i32 body_block = ns_ssa_new_block(b, n->for_stmt.body);
-    i32 step_block = ns_ssa_new_block(b, i);
     i32 exit_block = ns_ssa_new_block(b, i);
     ns_ssa_emit_jump(b, cond_block, i);
 
     b->block = cond_block;
+    b->fn->blocks[cond_block].terminated = false;
+    i32 *phi_inst = ns_ssa_loop_header_phis(b, cond_block, preheader, body_block, i);
+    ns_ssa_binding *header_env = ns_ssa_env_clone(b->env);
+
     i32 iter = ns_ssa_env_get_value(b->env, g->gen_expr.name.val, from);
     i32 to = ns_ssa_lower_expr(b, g->gen_expr.to);
     i32 cond = ns_ssa_emit_value(b, NS_SSA_OP_LT, iter, -1, ns_type_bool, ns_str_null, (ns_token_t){0}, i);
@@ -644,26 +705,31 @@ static void ns_ssa_lower_for(ns_ssa_builder *b, i32 i) {
     cond_inst->b = to;
     ns_ssa_emit_branch(b, cond, body_block, exit_block, i);
 
-    ns_ssa_loop_ctx loop = {.break_block = exit_block, .continue_block = step_block};
+    ns_ssa_loop_ctx loop = {.break_block = exit_block, .continue_block = cond_block};
     ns_array_push(b->loops, loop);
 
     b->block = body_block;
+    ns_array_free(b->env);
+    b->env = ns_ssa_env_clone(header_env);
     ns_ssa_lower_compound(b, n->for_stmt.body);
     if (!b->fn->blocks[b->block].terminated) {
-        ns_ssa_emit_jump(b, step_block, i);
+        // The increment is the tail of the back edge: iter = iter + 1.
+        iter = ns_ssa_env_get_value(b->env, g->gen_expr.name.val, iter);
+        i32 one = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32, ns_str_cstr("1"), (ns_token_t){0}, i);
+        i32 next = ns_ssa_emit_value(b, NS_SSA_OP_ADD, iter, -1, ns_type_i32, g->gen_expr.name.val, (ns_token_t){0}, i);
+        ns_ssa_inst *next_inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
+        next_inst->b = one;
+        ns_ssa_env_bind(b, g->gen_expr.name.val, next, ns_type_i32);
+        ns_ssa_loop_close_phis(b, phi_inst, b->block);
+        ns_ssa_emit_jump(b, cond_block, i);
     }
 
-    b->block = step_block;
-    i32 one = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32, ns_str_cstr("1"), (ns_token_t){0}, i);
-    i32 next = ns_ssa_emit_value(b, NS_SSA_OP_ADD, iter, -1, ns_type_i32, g->gen_expr.name.val, (ns_token_t){0}, i);
-    ns_ssa_inst *next_inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
-    next_inst->b = one;
-    ns_ssa_env_bind(b, g->gen_expr.name.val, next, ns_type_i32);
-    ns_ssa_emit_jump(b, cond_block, i);
-
     (void)ns_array_pop(b->loops);
+    ns_array_free(phi_inst);
     b->block = exit_block;
     b->fn->blocks[b->block].terminated = false;
+    ns_array_free(b->env);
+    b->env = header_env;
 }
 
 static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
