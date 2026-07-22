@@ -278,7 +278,8 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/src $(NS_INSTALL_ROOT)/share/ns-runtime/include \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets
-	$(NS_CP) $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin
+	cp $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new
+	mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
 	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
 	cp lib/ns-wasm.js $(NS_INSTALL_ROOT)/ref/ns-wasm.js
 	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref

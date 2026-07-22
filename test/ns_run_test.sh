@@ -10,6 +10,11 @@ fi
 ns=$1
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
+if ! "$ns" --help | grep -q 'wasm server port (default 9001'; then
+    printf '%s\n' 'FAIL: ns help does not report the wasm server default port 9001.' >&2
+    exit 1
+fi
+
 scaffold_tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-scaffold.XXXXXX")
 run_tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-run-test.XXXXXX")
 test_tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-test-test.XXXXXX")

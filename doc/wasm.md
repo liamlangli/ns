@@ -30,16 +30,20 @@ fn frame(time_ms: f64, width: i32, height: i32) {
 ```
 
 The middleware invokes `frame` from `requestAnimationFrame`. WebGPU is the only
-GPU backend; there is no WebGL fallback. `gpu_request_device(nil)` reports
-whether an adapter/device is available, and GPU imports return failure values
-or safely do nothing when it is not. Device loss triggers a new adapter/device
-request. The Wasm module exports `memory`, `__ns_alloc`, `__ns_init`, `main`,
-and optional `frame`. Shader functions named `vs_*`, `fs_*`, `ps_*`, or `cs_*`
-are transpiled to WGSL during the build and stored with vertex reflection in
-the `ns.shaders` custom section.
+GPU backend; there is no WebGL fallback. `view_create` returns a `ref view`
+backed by the generated HTML canvas. Its logical/framebuffer dimensions,
+display ratio, pointer/buttons/scroll, keyboard edges, gesture state, and
+clipboard cache are maintained by the browser middleware. Pass that view to
+the normal typed `gpu_request_device(v: ref view)` API; it reports whether the
+automatically requested adapter/device is available. GPU calls return failure
+values or safely do nothing when it is not. Device loss triggers a new
+adapter/device request. The Wasm module exports `memory`, `__ns_alloc`,
+`__ns_init`, `main`, and optional `frame`. Shader functions named `vs_*`,
+`fs_*`, `ps_*`, or `cs_*` are transpiled to WGSL during the build and stored
+with vertex reflection in the `ns.shaders` custom section.
 
-`ns run [path] --port <n>` builds first, binds only `127.0.0.1`, and serves the
-bundle without opening a browser. The default port is 8080; port 0 asks the OS
+`ns run [path] --port <n>` builds first, binds only to localhost, and serves the
+bundle without opening a browser. The default port is 9001; port 0 asks the OS
 for a free port and prints the selected URL. Responses use `Cache-Control:
 no-store`; `.wasm` is served as `application/wasm`; GET, HEAD, and traversal
 rejection are handled explicitly.
@@ -57,12 +61,14 @@ reload.
 The browser ABI supports typed scalar and enum computation, mutable globals,
 functions/control flow, UTF-8 literal strings, checked arrays, plain structs,
 portable `std` imports, `simd`, WGSL shader metadata, and browser `gpu`
-imports. Arrays use a wasm32 descriptor containing data, length, and capacity;
-plain structs use compiler-resolved field offsets in linear memory. Unsupported
-dynamic or host-only operations produce source-located build diagnostics; in
-particular arbitrary `any`, unions, task/async, closures, dicts/sets, and the
-`view`, `ui`, `os`, `io`, `net`, `http`, and `audio` modules are not browser
-features.
+and canvas-backed `view` imports. Arrays use a wasm32 descriptor containing
+data, length, and capacity; plain structs use compiler-resolved field offsets
+in linear memory. Unsupported dynamic or host-only operations produce
+source-located build diagnostics; in particular arbitrary `any`, unions,
+task/async, closures, dicts/sets, and the `ui`, `os`, `io`, `net`, `http`, and
+`audio` modules are not browser features. The browser event loop remains owned
+by the generated shell, so `view_run` is nonblocking and the exported `frame`
+function is the frame callback.
 
 Standalone `ns --wasm file.ns -o file.wasm` uses the same validated emitter but
 does not generate a browser shell.

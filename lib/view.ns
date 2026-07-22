@@ -79,9 +79,13 @@ struct view_gesture_state {
     orbit_y: f64
 }
 
+// On a Wasm project this returns the generated HTML canvas's view record. The
+// browser owns the event loop and keeps its metrics and input fields current.
 ref fn view_create(title: str, width: i32, height: i32) ref view
 // Compatibility alias; native backends use platform titlebars and controls.
 ref fn view_create_no_title(title: str, width: i32, height: i32) ref view
+// Native targets enter their platform event loop. The browser implementation
+// is nonblocking because the generated shell drives the exported frame fn.
 ref fn view_run(v: ref view)
 ref fn view_close(v: ref view)
 ref fn view_capture_require(v: ref view)

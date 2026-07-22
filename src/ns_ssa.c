@@ -398,12 +398,15 @@ static void ns_ssa_import_module_consts(ns_ssa_builder *b, ns_str lib_name) {
     if (ns_ssa_str_seen(b->import_seen, lib_name)) return;
     ns_array_push(b->import_seen, lib_name);
 
+    ns_str ref_path = b->vm->ref_path;
+    if (ref_path.data == ns_null) {
 #ifdef NS_DEBUG
-    ns_str ref_path = ns_str_cstr(NS_SSA_REF_PATH);
+        ref_path = ns_str_cstr(NS_SSA_REF_PATH);
 #else
-    ns_str home = ns_path_home();
-    ns_str ref_path = ns_path_join(home, ns_str_cstr(NS_SSA_REF_PATH));
+        ns_str home = ns_path_home();
+        ref_path = ns_path_join(home, ns_str_cstr(NS_SSA_REF_PATH));
 #endif
+    }
 
     ns_str path = ns_path_join(ref_path, ns_str_concat(lib_name, ns_str_cstr(".ns")));
     ns_str source = ns_os_read_file(path);
@@ -1221,7 +1224,8 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     b->loops = NULL;
 }
 
-ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
+ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
+                                              ns_str lib_path, ns_str lib_fallback_path) {
     if (ctx == NULL || ns_array_length(ctx->nodes) == 0) {
         return ns_return_error(ptr, ns_code_loc_nil, NS_ERR_SYNTAX, "ast ctx is empty");
     }
@@ -1238,6 +1242,9 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
     // resolves enum values once, enforces nominal typing, and gives SSA the
     // underlying integer representation used by every native backend.
     ns_vm semantic_vm = {0};
+    ns_vm_set_ref_path(&semantic_vm, ref_path);
+    ns_vm_set_lib_path(&semantic_vm, lib_path);
+    ns_vm_set_lib_fallback_path(&semantic_vm, lib_fallback_path);
     ns_return_bool semantic = ns_vm_parse(&semantic_vm, ctx);
     if (ns_return_is_error(semantic)) {
         ns_ssa_module_free(m);
@@ -1322,6 +1329,10 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
     ns_array_free(b.import_seen);
 
     return ns_return_ok(ptr, m);
+}
+
+ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
+    return ns_ssa_build_with_runtime_paths(ctx, ns_str_null, ns_str_null, ns_str_null);
 }
 
 void ns_ssa_module_free(ns_ssa_module *m) {

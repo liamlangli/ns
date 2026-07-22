@@ -28,9 +28,14 @@
 #define STB_DS_IMPLEMENTATION
 #define NS_MANIFEST_SCHEMA_CURRENT "ns.mod/v1"
 #define NS_MANIFEST_SCHEMA_LEGACY "ns.mod/v0"
+#define NS_WASM_DEFAULT_PORT 9001
 
 static ns_vm vm = {0};
 static ns_ast_ctx ctx = {0};
+
+static ns_return_ptr ns_ssa_build_for_cli(ns_ast_ctx *ast) {
+    return ns_ssa_build_with_runtime_paths(ast, vm.ref_path, vm.lib_path, vm.lib_fallback_path);
+}
 
 typedef struct ns_compile_option_t {
     ns_bool tokenize_only: 2;
@@ -170,7 +175,7 @@ void ns_help() {
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
     printf("  run  [file.ns]    run native source; wasm projects build and serve bin/\n");
-    printf("       --port <n>    wasm dev-server port (default 8080; 0 chooses an available port)\n");
+    printf("       --port <n>    wasm server port (default 9001; 0 chooses an available port)\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
@@ -358,7 +363,7 @@ void ns_exec_ssa(ns_str filename) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *m = ssa_ret.r;
     ns_ssa_print(m);
@@ -376,7 +381,7 @@ void ns_exec_aarch(ns_str filename) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -407,7 +412,7 @@ void ns_exec_macho(ns_str filename, ns_str output) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -433,7 +438,7 @@ void ns_exec_macho_object(ns_str filename, ns_str output) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -459,7 +464,7 @@ void ns_exec_wasm(ns_str filename, ns_str output) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -485,7 +490,7 @@ void ns_exec_pe(ns_str filename, ns_str output) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -1383,7 +1388,7 @@ static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, n
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     return ssa_ret.r;
 }
@@ -2539,7 +2544,7 @@ void ns_exec_run(ns_str filename, i32 port, ns_bool port_set) {
         ns_str output_root = ns_path_join(scope, ns_str_cstr("bin"));
         ns_str executable = ns_project_current_executable();
         char port_text[16];
-        snprintf(port_text, sizeof(port_text), "%d", port_set ? port : 8080);
+        snprintf(port_text, sizeof(port_text), "%d", port_set ? port : NS_WASM_DEFAULT_PORT);
 #if defined(_WIN32)
         _putenv_s("NS_WASM_ROOT", scope.data);
         _putenv_s("NS_WASM_BIN", output_root.data);

@@ -121,5 +121,7 @@ typedef struct ns_ssa_module {
 
 ns_str ns_ssa_op_to_string(ns_ssa_op op);
 ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx);
+ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
+                                              ns_str lib_path, ns_str lib_fallback_path);
 void ns_ssa_print(ns_ssa_module *m);
 void ns_ssa_module_free(ns_ssa_module *m);

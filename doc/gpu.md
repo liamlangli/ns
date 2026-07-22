@@ -455,7 +455,9 @@ gpu_pass_end()
   configures the full-page canvas, maps legacy and v2 imports to WebGPU
   resources and command passes, and rebuilds after device loss. Build-time
   WGSL and vertex reflection come from the Wasm `ns.shaders` custom section,
-  so the browser never compiles Nano Script source.
+  so the browser never compiles Nano Script source. `view_create` returns the
+  canvas-backed `ref view` passed to the unchanged typed
+  `gpu_request_device(v: ref view)` API.
 - **Linux/null.** Same no-op fallback contract as v1: every call safe,
   `gpu_request_device` returns false, `gpu_caps()` returns 0.
 

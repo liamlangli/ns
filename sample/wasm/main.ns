@@ -1,5 +1,6 @@
 use std
 use simd
+use view
 use gpu
 
 struct vertex_data {
@@ -26,9 +27,10 @@ fn fs_triangle(data: fragment_input) float4 {
 let triangle_pipeline = 0u
 let triangle_vertices = 0u
 let triangle_mesh = 0u
+let canvas_view = view_create("Nano Script Wasm + WebGPU", 960, 540)
 
 fn main() {
-    if gpu_request_device(nil) {
+    if gpu_request_device(canvas_view) {
         print("WebGPU ready\n")
         let vertices = [
              0.0, -0.7, 0.0, 1.0, 0.2, 0.2, 1.0,

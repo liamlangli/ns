@@ -8,11 +8,18 @@ globalThis.GPUBufferUsage = { COPY_SRC: 1, COPY_DST: 2, STORAGE: 4, VERTEX: 8, I
 globalThis.GPUTextureUsage = { COPY_DST: 1, COPY_SRC: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 };
 
 let configured = null;
+const canvasEvents = new Map();
+const windowEvents = new Map();
 const canvas = {
   clientWidth: 320,
   clientHeight: 180,
   width: 0,
   height: 0,
+  style: {},
+  setAttribute() {},
+  addEventListener(name, handler) { canvasEvents.set(name, handler); },
+  getBoundingClientRect() { return { left: 0, top: 0 }; },
+  focus() {},
   getContext(kind) {
     assert.equal(kind, 'webgpu');
     return { configure(value) { configured = value; }, getCurrentTexture() { return { createView() { return {}; } }; } };
@@ -39,7 +46,11 @@ const device = {
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
   gpu: { async requestAdapter() { return { async requestDevice() { return device; } }; }, getPreferredCanvasFormat() { return 'bgra8unorm'; } },
 } });
-Object.defineProperty(globalThis, 'window', { configurable: true, value: { devicePixelRatio: 2 } });
+Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+  devicePixelRatio: 2,
+  addEventListener(name, handler) { windowEvents.set(name, handler); },
+} });
+Object.defineProperty(globalThis, 'document', { configurable: true, value: { title: '' } });
 
 const runtime = new NSBrowserRuntime(canvas);
 runtime.memory = new WebAssembly.Memory({ initial: 1 });
@@ -52,7 +63,23 @@ assert.equal(configured.format, 'bgra8unorm');
 const stringPointer = runtime.writeString('hello wasm');
 assert.equal(runtime.readString(stringPointer), 'hello wasm');
 assert.equal(runtime.readString(runtime.std('substr', [stringPointer, 6, 4])), 'wasm');
-assert.equal(runtime.gpu('gpu_request_device', [0]), 1);
+const titlePointer = runtime.writeString('Canvas view');
+const canvasView = runtime.invoke('view', 'view_create', [titlePointer, 960, 540]);
+assert.equal(document.title, 'Canvas view');
+assert.equal(runtime.view().getInt32(canvasView + 4, true), 320);
+assert.equal(runtime.view().getInt32(canvasView + 12, true), 640);
+assert.equal(runtime.view().getFloat64(canvasView + 88, true), 2);
+assert.equal(runtime.gpu('gpu_request_device', [canvasView]), 1);
+assert.equal(runtime.gpu('gpu_request_device', [canvasView + 4]), 0);
+assert.equal(runtime.view().getUint32(canvasView + 108, true), 1);
+canvasEvents.get('pointermove')({ clientX: 12, clientY: 18, pointerType: 'mouse', pointerId: 1, timeStamp: 10 });
+assert.equal(runtime.view().getFloat64(canvasView + 20, true), 12);
+assert.equal(runtime.viewImport('view_input_count', [canvasView]), 1);
+windowEvents.get('keydown')({ key: 'A' });
+assert.equal(runtime.viewImport('view_is_key_pressed', [canvasView, 65]), 1);
+assert.equal(runtime.viewImport('view_take_key_press', [canvasView, 65]), 0);
+runtime.viewImport('view_input_reset', [canvasView]);
+assert.equal(runtime.viewImport('view_input_count', [canvasView]), 0);
 assert.equal(runtime.gpu('gpu_caps', []), 6);
 const buffer = runtime.gpu('gpu_create_buffer', [32, 0]);
 assert(buffer > 0);
@@ -100,4 +127,4 @@ const fallback = new NSBrowserRuntime(canvas);
 assert.equal(await fallback.initializeGPU(), false);
 assert.equal(fallback.gpu('gpu_request_device', [0]), 0);
 
-console.log('PASS: mocked WebGPU middleware initializes, resizes, loads shader metadata, dispatches imports, and falls back without an adapter.');
+console.log('PASS: mocked canvas view/WebGPU middleware initializes, tracks input and metrics, loads shader metadata, dispatches imports, and falls back without an adapter.');

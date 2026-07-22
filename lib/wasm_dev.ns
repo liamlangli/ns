@@ -36,11 +36,11 @@ fn wasm_dev_serve() {
     let requested_port = stof(os_env("NS_WASM_PORT")) as i32
     let listener = wasm_dev_listen(requested_port)
     if listener < 0 {
-        print(`failed to bind 127.0.0.1:{requested_port}\n`)
+        print(`failed to bind localhost:{requested_port}\n`)
         return
     }
     let port = wasm_dev_bound_port(listener)
-    print(`Nano Script Wasm dev server: http://127.0.0.1:{port}/\n`)
+    print(`ns wasm server: http://localhost:{port}/\n`)
 
     let clients = [i32](64)
     let client_count = 0

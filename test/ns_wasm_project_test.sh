@@ -18,9 +18,12 @@ const net = require('net');
 const ns = process.argv[2];
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-wasm-project-'));
 const source = (answer = 84) => `use std
+use view
+use gpu
 struct point { x: i32, y: i32 }
 struct box { p: point, name: str, values: [i32] }
 let global_counter = 40
+let browser_view = view_create("Wasm test", 640, 360)
 fn touch(q: point) i32 {
     q.x = 99
     return q.x
@@ -46,7 +49,12 @@ fn answer() i32 {
         p.x - 6 + p2.x - 100 + touched - 99 + box1.p.x - 6 + box2.p.x - 70 +
         box1.name.len - 4 + box1.values[0] - 9
 }
-fn main() i32 { return answer() - ${answer} }
+fn main() i32 {
+    if gpu_request_device(browser_view) {
+        return answer() - ${answer}
+    }
+    return 1
+}
 fn frame(time_ms: f64, width: i32, height: i32) { }
 `;
 fs.writeFileSync(path.join(root, 'ns.mod'), 'schema = "ns.mod/v1"\nname = "wasm-e2e"\ntype = "app"\ntarget = "wasm"\nsource = "."\nentry = "main.ns"\n');
@@ -88,17 +96,23 @@ assert.match(new TextDecoder().decode(shaderSections[0]), /@vertex/);
 
 const unsupportedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-wasm-unsupported-'));
 fs.writeFileSync(path.join(unsupportedRoot, 'ns.mod'), 'schema = "ns.mod/v1"\nname = "unsupported"\ntype = "app"\ntarget = "wasm"\nsource = "."\nentry = "main.ns"\n');
-fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use view\nfn main() {}\n');
+fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use os\nfn main() {}\n');
 const unsupportedBuild = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedBuild.status, 0);
-assert.match(unsupportedBuild.stdout + unsupportedBuild.stderr, /does not support module `view`/);
+assert.match(unsupportedBuild.stdout + unsupportedBuild.stderr, /does not support module `os`/);
 fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use std\nfn main() { let fd = open("x", "r") }\n');
 const unsupportedImport = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedImport.status, 0);
 assert.match(unsupportedImport.stdout + unsupportedImport.stderr, /does not support import `std\.open`/);
+fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use gpu\nfn main() { gpu_request_device(1) }\n');
+const untypedDeviceRequest = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
+assert.notStrictEqual(untypedDeviceRequest.status, 0);
+assert.match(untypedDeviceRequest.stdout + untypedDeviceRequest.stderr, /type mismatch|expected ref view/);
 fs.rmSync(unsupportedRoot, { recursive: true, force: true });
 
-const child = spawn(ns, ['run', root, '--port', '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+// Exercise the documented project-local form: `cd <project> && ns run`.
+// Runtime module paths must remain anchored to the ns executable, not cwd.
+const child = spawn(ns, ['run', '--port', '0'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
 let output = '';
 child.stdout.on('data', d => { output += d; process.stdout.write(d); });
 child.stderr.on('data', d => { output += d; process.stderr.write(d); });
@@ -110,7 +124,7 @@ const deadline = async (predicate, ms = 10000) => {
 };
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const rawRequest = (port, request) => new Promise((resolve, reject) => {
-  const socket = net.createConnection({ host: '127.0.0.1', port }, () => socket.write(request));
+  const socket = net.createConnection({ host: 'localhost', port }, () => socket.write(request));
   let response = '';
   socket.on('data', chunk => {
     response += chunk;
@@ -121,12 +135,15 @@ const rawRequest = (port, request) => new Promise((resolve, reject) => {
 
 (async () => {
   try {
-    const match = await deadline(() => output.match(/http:\/\/127\.0\.0\.1:(\d+)\//));
-    const port = Number(match[1]), base = `http://127.0.0.1:${port}`;
+    const match = await deadline(() => output.match(/ns wasm server: http:\/\/localhost:(\d+)\//));
+    const port = Number(match[1]), base = `http://localhost:${port}`;
     const wasmPath = path.join(root, 'bin', 'wasm-e2e.wasm');
     const wasm = fs.readFileSync(wasmPath);
     assert(WebAssembly.validate(wasm));
-    const instance = await WebAssembly.instantiate(wasm, {});
+    const instance = await WebAssembly.instantiate(wasm, {
+      view: { view_create: () => 512 },
+      gpu: { gpu_request_device: pointer => pointer === 512 ? 1 : 0 },
+    });
     instance.instance.exports.__ns_init();
     assert.strictEqual(instance.instance.exports.main(), 0);
     for (const file of ['/', '/ns-wasm.js', '/wasm-e2e.wasm']) assert.strictEqual((await fetch(base + file)).status, 200);
@@ -142,8 +159,8 @@ const rawRequest = (port, request) => new Promise((resolve, reject) => {
       'GET /__ns/reload HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n');
     assert.match(handshake, /Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK\+xOo=\r\n/i);
 
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/__ns/reload`);
-    const socket2 = new WebSocket(`ws://127.0.0.1:${port}/__ns/reload`);
+    const socket = new WebSocket(`ws://localhost:${port}/__ns/reload`);
+    const socket2 = new WebSocket(`ws://localhost:${port}/__ns/reload`);
     await Promise.all([socket, socket2].map(client => new Promise((resolve, reject) => {
       client.onopen = resolve; client.onerror = reject;
     })));

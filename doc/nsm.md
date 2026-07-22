@@ -50,7 +50,7 @@ kind.
 
 For a browser project, keep `type = "app"` and set `target = "wasm"`.
 `ns build` then emits a browser bundle (`.wasm`, `ns-wasm.js`, and
-`index.html`) under `bin`, while `ns run --port 8080` builds and starts the
+`index.html`) under `bin`, while `ns run --port 9001` builds and starts the
 loopback-only live-reload server. Port 0 selects an available port. See
 `doc/wasm.md` for the lifecycle, browser ABI, WebGPU middleware, and supported
 language subset.
