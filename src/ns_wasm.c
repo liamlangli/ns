@@ -24,9 +24,14 @@ static const u8 ns_wasm_version[4] = {0x01, 0x00, 0x00, 0x00};
 
 // Section ids
 #define NS_WASM_SECT_TYPE      1
+#define NS_WASM_SECT_IMPORT    2
 #define NS_WASM_SECT_FUNCTION  3
+#define NS_WASM_SECT_MEMORY    5
+#define NS_WASM_SECT_GLOBAL    6
 #define NS_WASM_SECT_EXPORT    7
+#define NS_WASM_SECT_ELEMENT   9
 #define NS_WASM_SECT_CODE     10
+#define NS_WASM_SECT_DATA     11
 
 // Value types
 #define NS_WASM_I32   0x7F
@@ -50,6 +55,28 @@ static const u8 ns_wasm_version[4] = {0x01, 0x00, 0x00, 0x00};
 #define NS_WASM_DROP         0x1A
 #define NS_WASM_LOCAL_GET    0x20
 #define NS_WASM_LOCAL_SET    0x21
+#define NS_WASM_LOCAL_TEE    0x22
+#define NS_WASM_GLOBAL_GET   0x23
+#define NS_WASM_GLOBAL_SET   0x24
+#define NS_WASM_MEMORY_SIZE  0x3F
+#define NS_WASM_MEMORY_GROW  0x40
+#define NS_WASM_MISC_PREFIX  0xFC
+#define NS_WASM_MEMORY_COPY  0x0A
+
+#define NS_WASM_I32_LOAD     0x28
+#define NS_WASM_I64_LOAD     0x29
+#define NS_WASM_F32_LOAD     0x2A
+#define NS_WASM_F64_LOAD     0x2B
+#define NS_WASM_I32_LOAD8_S  0x2C
+#define NS_WASM_I32_LOAD8_U  0x2D
+#define NS_WASM_I32_LOAD16_S 0x2E
+#define NS_WASM_I32_LOAD16_U 0x2F
+#define NS_WASM_I32_STORE    0x36
+#define NS_WASM_I64_STORE    0x37
+#define NS_WASM_F32_STORE    0x38
+#define NS_WASM_F64_STORE    0x39
+#define NS_WASM_I32_STORE8   0x3A
+#define NS_WASM_I32_STORE16  0x3B
 
 #define NS_WASM_I32_CONST    0x41
 #define NS_WASM_I64_CONST    0x42
@@ -146,11 +173,23 @@ static const u8 ns_wasm_version[4] = {0x01, 0x00, 0x00, 0x00};
 #define NS_WASM_I64_EXTEND_I32_S   0xAC
 #define NS_WASM_I64_EXTEND_I32_U   0xAD
 #define NS_WASM_F32_CONVERT_I32_S  0xB2
+#define NS_WASM_F32_CONVERT_I32_U  0xB3
 #define NS_WASM_F32_CONVERT_I64_S  0xB4
+#define NS_WASM_F32_CONVERT_I64_U  0xB5
 #define NS_WASM_F32_DEMOTE_F64     0xB6
 #define NS_WASM_F64_CONVERT_I32_S  0xB7
+#define NS_WASM_F64_CONVERT_I32_U  0xB8
 #define NS_WASM_F64_CONVERT_I64_S  0xB9
+#define NS_WASM_F64_CONVERT_I64_U  0xBA
 #define NS_WASM_F64_PROMOTE_F32    0xBB
+#define NS_WASM_I32_TRUNC_F32_S    0xA8
+#define NS_WASM_I32_TRUNC_F32_U    0xA9
+#define NS_WASM_I32_TRUNC_F64_S    0xAA
+#define NS_WASM_I32_TRUNC_F64_U    0xAB
+#define NS_WASM_I64_TRUNC_F32_S    0xAE
+#define NS_WASM_I64_TRUNC_F32_U    0xAF
+#define NS_WASM_I64_TRUNC_F64_S    0xB0
+#define NS_WASM_I64_TRUNC_F64_U    0xB1
 
 // ──────────────────────────────────────────────────────────────────────────
 // LEB128 / byte helpers
@@ -222,6 +261,10 @@ static void ns_wasm_f64bytes(u8 **out, f64 v) {
     for (i32 i = 0; i < 8; i++) ns_array_push(*out, (u8)(bits >> (i * 8)));
 }
 
+static void ns_wasm_u32bytes(u8 **out, u32 v) {
+    for (i32 i = 0; i < 4; ++i) ns_array_push(*out, (u8)(v >> (i * 8)));
+}
+
 // Emit a section: id byte, u32leb size, then the content bytes
 static void ns_wasm_section(u8 **out, u8 id, u8 *content) {
     ns_wasm_u8(out, id);
@@ -252,6 +295,12 @@ static u8 ns_wasm_valtype(ns_value_type t) {
     }
 }
 
+static u8 ns_wasm_type_valtype(ns_type t) {
+    if (ns_type_is_array(t) || ns_type_is(t, NS_TYPE_STRUCT) || ns_type_is(t, NS_TYPE_STRING) ||
+        ns_type_is(t, NS_TYPE_ANY) || ns_type_is_ref(t)) return NS_WASM_I32;
+    return ns_wasm_valtype(t.type);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Function context
 // ──────────────────────────────────────────────────────────────────────────
@@ -268,10 +317,14 @@ typedef struct {
     u8            *code;        // instruction bytes being built
     i32            n_params;    // number of function parameters
     i32            n_values;    // total SSA value slots (params + locals)
+    i32            pc_local;    // dispatcher local used for structured CFG lowering
     u8            *vtypes;      // WASM valtype for each SSA value index
+    u8            *unsigneds;   // integer signedness for each SSA value index
     ns_wasm_label *labels;      // label stack (index 0 = bottom, top = last element)
     ns_ssa_fn     *all_fns;     // all functions in the module (for CALL lookup)
     i32            n_fns;
+    ns_ssa_import *imports;
+    i32            n_imports;
 } ns_wasm_fn_ctx;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -288,7 +341,12 @@ static ns_bool ns_wasm_is_float_lit(ns_str s) {
 
 // Build vtypes array: one WASM type per SSA value index.
 // Returns n_values (= max value index + 1).
-static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
+static ns_bool ns_wasm_type_unsigned(ns_type t) {
+    return ns_type_is(t, NS_TYPE_U8) || ns_type_is(t, NS_TYPE_U16) ||
+           ns_type_is(t, NS_TYPE_U32) || ns_type_is(t, NS_TYPE_U64);
+}
+
+static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out, u8 **unsigneds_out) {
     // First pass: find max value index
     i32 max_val = 0;
     for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; bi++) {
@@ -305,6 +363,9 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
     u8 *vt = ns_null;
     ns_array_set_length(vt, n);
     memset(vt, NS_WASM_I32, (szt)n); // default: i32
+    u8 *us = ns_null;
+    ns_array_set_length(us, n);
+    memset(us, 0, (szt)n);
 
     // First pass: set known types
     for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; bi++) {
@@ -316,11 +377,13 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
             switch (inst->op) {
             case NS_SSA_OP_PARAM:
                 if (inst->type.type != NS_TYPE_UNKNOWN)
-                    vt[inst->dst] = ns_wasm_valtype(inst->type.type);
+                    vt[inst->dst] = ns_wasm_type_valtype(inst->type);
+                us[inst->dst] = ns_wasm_type_unsigned(inst->type);
                 break;
             case NS_SSA_OP_CONST:
                 if (inst->type.type != NS_TYPE_UNKNOWN) {
-                    vt[inst->dst] = ns_wasm_valtype(inst->type.type);
+                    vt[inst->dst] = ns_wasm_type_valtype(inst->type);
+                    us[inst->dst] = ns_wasm_type_unsigned(inst->type);
                 } else if (inst->token.type == NS_TOKEN_FLT_LITERAL) {
                     vt[inst->dst] = inst->token.suffix == NS_NUM_SUFFIX_F64 ? NS_WASM_F64 : NS_WASM_F32;
                 } else if (inst->token.type == NS_TOKEN_INT_LITERAL &&
@@ -334,7 +397,8 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
             case NS_SSA_OP_CAST:
             case NS_SSA_OP_CALL:
                 if (inst->type.type != NS_TYPE_UNKNOWN)
-                    vt[inst->dst] = ns_wasm_valtype(inst->type.type);
+                    vt[inst->dst] = ns_wasm_type_valtype(inst->type);
+                us[inst->dst] = ns_wasm_type_unsigned(inst->type);
                 break;
             default:
                 break;
@@ -352,7 +416,8 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
                 if (inst->op == NS_SSA_OP_PARAM || inst->op == NS_SSA_OP_CONST) continue;
 
                 if (inst->type.type != NS_TYPE_UNKNOWN) {
-                    vt[inst->dst] = ns_wasm_valtype(inst->type.type);
+                    vt[inst->dst] = ns_wasm_type_valtype(inst->type);
+                    us[inst->dst] = ns_wasm_type_unsigned(inst->type);
                     continue;
                 }
 
@@ -372,12 +437,14 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out) {
                 // Propagate from first operand
                 if (inst->a >= 0 && inst->a < n) {
                     vt[inst->dst] = vt[inst->a];
+                    us[inst->dst] = us[inst->a];
                 }
             }
         }
     }
 
     *vtypes_out = vt;
+    *unsigneds_out = us;
     return n;
 }
 
@@ -446,7 +513,7 @@ static void ns_wasm_jump_to(ns_wasm_fn_ctx *ctx, i32 block_idx, i32 fallthrough_
 // ──────────────────────────────────────────────────────────────────────────
 
 // Map (SSA op, wasm type) → WASM arithmetic/comparison opcode
-static u8 ns_wasm_arith_op(ns_ssa_op op, u8 wtype) {
+static u8 ns_wasm_arith_op(ns_ssa_op op, u8 wtype, ns_bool is_unsigned) {
     switch (op) {
     case NS_SSA_OP_ADD:
         return wtype == NS_WASM_I64 ? NS_WASM_I64_ADD :
@@ -461,15 +528,17 @@ static u8 ns_wasm_arith_op(ns_ssa_op op, u8 wtype) {
                wtype == NS_WASM_F32 ? NS_WASM_F32_MUL :
                wtype == NS_WASM_F64 ? NS_WASM_F64_MUL : NS_WASM_I32_MUL;
     case NS_SSA_OP_DIV:
-        return wtype == NS_WASM_I64 ? NS_WASM_I64_DIV_S :
+        return wtype == NS_WASM_I64 ? (is_unsigned ? NS_WASM_I64_DIV_U : NS_WASM_I64_DIV_S) :
                wtype == NS_WASM_F32 ? NS_WASM_F32_DIV :
-               wtype == NS_WASM_F64 ? NS_WASM_F64_DIV : NS_WASM_I32_DIV_S;
+               wtype == NS_WASM_F64 ? NS_WASM_F64_DIV : (is_unsigned ? NS_WASM_I32_DIV_U : NS_WASM_I32_DIV_S);
     case NS_SSA_OP_MOD:
-        return wtype == NS_WASM_I64 ? NS_WASM_I64_REM_S : NS_WASM_I32_REM_S;
+        return wtype == NS_WASM_I64 ? (is_unsigned ? NS_WASM_I64_REM_U : NS_WASM_I64_REM_S) :
+               (is_unsigned ? NS_WASM_I32_REM_U : NS_WASM_I32_REM_S);
     case NS_SSA_OP_SHL:
         return wtype == NS_WASM_I64 ? NS_WASM_I64_SHL : NS_WASM_I32_SHL;
     case NS_SSA_OP_SHR:
-        return wtype == NS_WASM_I64 ? NS_WASM_I64_SHR_S : NS_WASM_I32_SHR_S;
+        return wtype == NS_WASM_I64 ? (is_unsigned ? NS_WASM_I64_SHR_U : NS_WASM_I64_SHR_S) :
+               (is_unsigned ? NS_WASM_I32_SHR_U : NS_WASM_I32_SHR_S);
     case NS_SSA_OP_BAND:
         return wtype == NS_WASM_I64 ? NS_WASM_I64_AND : NS_WASM_I32_AND;
     case NS_SSA_OP_BOR:
@@ -489,21 +558,21 @@ static u8 ns_wasm_arith_op(ns_ssa_op op, u8 wtype) {
                wtype == NS_WASM_F32 ? NS_WASM_F32_NE :
                wtype == NS_WASM_F64 ? NS_WASM_F64_NE : NS_WASM_I32_NE;
     case NS_SSA_OP_LT:
-        return wtype == NS_WASM_I64 ? NS_WASM_I64_LT_S :
+        return wtype == NS_WASM_I64 ? (is_unsigned ? NS_WASM_I64_LT_U : NS_WASM_I64_LT_S) :
                wtype == NS_WASM_F32 ? NS_WASM_F32_LT :
-               wtype == NS_WASM_F64 ? NS_WASM_F64_LT : NS_WASM_I32_LT_S;
+               wtype == NS_WASM_F64 ? NS_WASM_F64_LT : (is_unsigned ? NS_WASM_I32_LT_U : NS_WASM_I32_LT_S);
     case NS_SSA_OP_LE:
-        return wtype == NS_WASM_I64 ? NS_WASM_I64_LE_S :
+        return wtype == NS_WASM_I64 ? (is_unsigned ? NS_WASM_I64_LE_U : NS_WASM_I64_LE_S) :
                wtype == NS_WASM_F32 ? NS_WASM_F32_LE :
-               wtype == NS_WASM_F64 ? NS_WASM_F64_LE : NS_WASM_I32_LE_S;
+               wtype == NS_WASM_F64 ? NS_WASM_F64_LE : (is_unsigned ? NS_WASM_I32_LE_U : NS_WASM_I32_LE_S);
     case NS_SSA_OP_GT:
-        return wtype == NS_WASM_I64 ? NS_WASM_I64_GT_S :
+        return wtype == NS_WASM_I64 ? (is_unsigned ? NS_WASM_I64_GT_U : NS_WASM_I64_GT_S) :
                wtype == NS_WASM_F32 ? NS_WASM_F32_GT :
-               wtype == NS_WASM_F64 ? NS_WASM_F64_GT : NS_WASM_I32_GT_S;
+               wtype == NS_WASM_F64 ? NS_WASM_F64_GT : (is_unsigned ? NS_WASM_I32_GT_U : NS_WASM_I32_GT_S);
     case NS_SSA_OP_GE:
-        return wtype == NS_WASM_I64 ? NS_WASM_I64_GE_S :
+        return wtype == NS_WASM_I64 ? (is_unsigned ? NS_WASM_I64_GE_U : NS_WASM_I64_GE_S) :
                wtype == NS_WASM_F32 ? NS_WASM_F32_GE :
-               wtype == NS_WASM_F64 ? NS_WASM_F64_GE : NS_WASM_I32_GE_S;
+               wtype == NS_WASM_F64 ? NS_WASM_F64_GE : (is_unsigned ? NS_WASM_I32_GE_U : NS_WASM_I32_GE_S);
     default:
         return NS_WASM_NOP;
     }
@@ -512,7 +581,15 @@ static u8 ns_wasm_arith_op(ns_ssa_op op, u8 wtype) {
 // Find the function index for a given name
 static i32 ns_wasm_fn_index(ns_wasm_fn_ctx *ctx, ns_str name) {
     for (i32 i = 0; i < ctx->n_fns; i++) {
-        if (ns_str_equals(ctx->all_fns[i].name, name)) return i;
+        if (ns_str_equals(ctx->all_fns[i].name, name)) return ctx->n_imports + i;
+    }
+    return -1;
+}
+
+static i32 ns_wasm_import_index(ns_wasm_fn_ctx *ctx, ns_str module, ns_str name) {
+    for (i32 i = 0; i < ctx->n_imports; ++i) {
+        if (ns_str_equals(ctx->imports[i].module, module) &&
+            ns_str_equals(ctx->imports[i].name, name)) return i;
     }
     return -1;
 }
@@ -527,6 +604,47 @@ static ns_ssa_inst *ns_wasm_find_param_def(ns_ssa_fn *fn, i32 val) {
         }
     }
     return ns_null;
+}
+
+static void ns_wasm_memarg(ns_wasm_fn_ctx *ctx, u32 offset) {
+    ns_wasm_u32leb(&ctx->code, 0); // conservative byte alignment is always valid
+    ns_wasm_u32leb(&ctx->code, offset);
+}
+
+static u8 ns_wasm_load_op(ns_type type) {
+    if (ns_type_is(type, NS_TYPE_I8)) return NS_WASM_I32_LOAD8_S;
+    if (ns_type_is(type, NS_TYPE_U8)) return NS_WASM_I32_LOAD8_U;
+    if (ns_type_is(type, NS_TYPE_I16)) return NS_WASM_I32_LOAD16_S;
+    if (ns_type_is(type, NS_TYPE_U16)) return NS_WASM_I32_LOAD16_U;
+    u8 valtype = ns_wasm_type_valtype(type);
+    return valtype == NS_WASM_I64 ? NS_WASM_I64_LOAD :
+           valtype == NS_WASM_F32 ? NS_WASM_F32_LOAD :
+           valtype == NS_WASM_F64 ? NS_WASM_F64_LOAD : NS_WASM_I32_LOAD;
+}
+
+static u8 ns_wasm_store_op(ns_type type) {
+    if (ns_type_is(type, NS_TYPE_I8) || ns_type_is(type, NS_TYPE_U8)) return NS_WASM_I32_STORE8;
+    if (ns_type_is(type, NS_TYPE_I16) || ns_type_is(type, NS_TYPE_U16)) return NS_WASM_I32_STORE16;
+    u8 valtype = ns_wasm_type_valtype(type);
+    return valtype == NS_WASM_I64 ? NS_WASM_I64_STORE :
+           valtype == NS_WASM_F32 ? NS_WASM_F32_STORE :
+           valtype == NS_WASM_F64 ? NS_WASM_F64_STORE : NS_WASM_I32_STORE;
+}
+
+static void ns_wasm_bounds_check(ns_wasm_fn_ctx *ctx, i32 descriptor, i32 index) {
+    ns_wasm_local_get(ctx, index);
+    ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 0);
+    ns_wasm_u8(&ctx->code, NS_WASM_I32_LT_S);
+    ns_wasm_u8(&ctx->code, NS_WASM_IF); ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
+    ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
+    ns_wasm_u8(&ctx->code, NS_WASM_END);
+    ns_wasm_local_get(ctx, index);
+    ns_wasm_local_get(ctx, descriptor);
+    ns_wasm_u8(&ctx->code, NS_WASM_I32_LOAD); ns_wasm_memarg(ctx, 4);
+    ns_wasm_u8(&ctx->code, NS_WASM_I32_GE_U);
+    ns_wasm_u8(&ctx->code, NS_WASM_IF); ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
+    ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
+    ns_wasm_u8(&ctx->code, NS_WASM_END);
 }
 
 // Emit one non-terminator instruction
@@ -564,7 +682,10 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
     case NS_SSA_OP_CONST: {
         if (inst->dst < 0) break;
         u8 vt = (inst->dst < ctx->n_values) ? ctx->vtypes[inst->dst] : NS_WASM_I32;
-        switch (vt) {
+        if (ns_type_is(inst->type, NS_TYPE_STRING)) {
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+            ns_wasm_i64leb(&ctx->code, inst->c);
+        } else switch (vt) {
         case NS_WASM_I64:
             ns_wasm_u8(&ctx->code, NS_WASM_I64_CONST);
             ns_wasm_i64leb(&ctx->code, ns_wasm_integer_bits(inst->name));
@@ -581,7 +702,9 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         } break;
         default:
             ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
-            ns_wasm_i64leb(&ctx->code, (i64)ns_str_to_i32(inst->name));
+            if (inst->token.type == NS_TOKEN_TRUE) ns_wasm_i64leb(&ctx->code, 1);
+            else if (inst->token.type == NS_TOKEN_FALSE || inst->token.type == NS_TOKEN_NIL) ns_wasm_i64leb(&ctx->code, 0);
+            else ns_wasm_i64leb(&ctx->code, (i64)ns_str_to_i32(inst->name));
             break;
         }
         ns_wasm_local_set(ctx, inst->dst);
@@ -595,13 +718,7 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         break;
 
     case NS_SSA_OP_PHI:
-        // PHI nodes: we use the "incoming0" value (inst->a) as a conservative
-        // approximation.  Proper PHI lowering requires out-of-SSA passes which
-        // are beyond the scope of this first implementation.
-        if (inst->dst >= 0 && inst->a >= 0) {
-            ns_wasm_local_get(ctx, inst->a);
-            ns_wasm_local_set(ctx, inst->dst);
-        }
+        // Materialized on predecessor edges by ns_wasm_emit_phi_moves.
         break;
 
     case NS_SSA_OP_ARG:
@@ -609,29 +726,174 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         if (inst->a >= 0) ns_wasm_local_get(ctx, inst->a);
         break;
 
+    case NS_SSA_OP_GLOBAL_GET:
+        if (inst->dst >= 0 && inst->c >= 0) {
+            ns_wasm_u8(&ctx->code, NS_WASM_GLOBAL_GET);
+            ns_wasm_u32leb(&ctx->code, (u32)inst->c + 1u);
+            ns_wasm_local_set(ctx, inst->dst);
+        }
+        break;
+
+    case NS_SSA_OP_GLOBAL_SET:
+        if (inst->a >= 0 && inst->c >= 0) {
+            ns_wasm_local_get(ctx, inst->a);
+            ns_wasm_u8(&ctx->code, NS_WASM_GLOBAL_SET);
+            ns_wasm_u32leb(&ctx->code, (u32)inst->c + 1u);
+        }
+        break;
+
+    case NS_SSA_OP_ALLOC:
+        if (inst->dst >= 0 && inst->c >= 0) {
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+            ns_wasm_i64leb(&ctx->code, inst->c);
+            ns_wasm_u8(&ctx->code, NS_WASM_CALL);
+            ns_wasm_u32leb(&ctx->code, (u32)(ctx->n_imports + ctx->n_fns));
+            ns_wasm_local_set(ctx, inst->dst);
+        }
+        break;
+
+    case NS_SSA_OP_CLONE:
+        if (inst->dst >= 0 && inst->a >= 0 && inst->c > 0) {
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+            ns_wasm_i64leb(&ctx->code, inst->c);
+            ns_wasm_u8(&ctx->code, NS_WASM_CALL);
+            ns_wasm_u32leb(&ctx->code, (u32)(ctx->n_imports + ctx->n_fns));
+            ns_wasm_local_set(ctx, inst->dst);
+            ns_wasm_local_get(ctx, inst->dst);
+            ns_wasm_local_get(ctx, inst->a);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+            ns_wasm_i64leb(&ctx->code, inst->c);
+            ns_wasm_u8(&ctx->code, NS_WASM_MISC_PREFIX);
+            ns_wasm_u32leb(&ctx->code, NS_WASM_MEMORY_COPY);
+            ns_wasm_u32leb(&ctx->code, 0);
+            ns_wasm_u32leb(&ctx->code, 0);
+        }
+        break;
+
+    case NS_SSA_OP_LOAD:
+        if (inst->dst >= 0 && inst->a >= 0 && inst->c >= 0) {
+            ns_wasm_local_get(ctx, inst->a);
+            if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type)) {
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+                ns_wasm_i64leb(&ctx->code, inst->c);
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_ADD);
+            } else {
+                ns_wasm_u8(&ctx->code, ns_wasm_load_op(inst->type));
+                ns_wasm_memarg(ctx, (u32)inst->c);
+            }
+            ns_wasm_local_set(ctx, inst->dst);
+        }
+        break;
+
+    case NS_SSA_OP_STORE:
+        if (inst->a >= 0 && inst->b >= 0 && inst->c >= 0) {
+            ns_wasm_local_get(ctx, inst->a);
+            if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type)) {
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+                ns_wasm_i64leb(&ctx->code, inst->c);
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_ADD);
+                ns_wasm_local_get(ctx, inst->b);
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+                ns_wasm_i64leb(&ctx->code, inst->target0);
+                ns_wasm_u8(&ctx->code, NS_WASM_MISC_PREFIX);
+                ns_wasm_u32leb(&ctx->code, NS_WASM_MEMORY_COPY);
+                ns_wasm_u32leb(&ctx->code, 0);
+                ns_wasm_u32leb(&ctx->code, 0);
+            } else {
+                ns_wasm_local_get(ctx, inst->b);
+                ns_wasm_u8(&ctx->code, ns_wasm_store_op(inst->type));
+                ns_wasm_memarg(ctx, (u32)inst->c);
+            }
+        }
+        break;
+
+    case NS_SSA_OP_ARRAY_NEW:
+        if (inst->dst >= 0 && inst->a >= 0 && inst->c > 0) {
+            ns_wasm_local_get(ctx, inst->a);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 0);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_LT_S);
+            ns_wasm_u8(&ctx->code, NS_WASM_IF); ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
+            ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
+            ns_wasm_u8(&ctx->code, NS_WASM_END);
+            ns_wasm_local_get(ctx, inst->a);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, inst->c);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_MUL);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 16);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_ADD);
+            ns_wasm_u8(&ctx->code, NS_WASM_CALL);
+            ns_wasm_u32leb(&ctx->code, (u32)(ctx->n_imports + ctx->n_fns));
+            ns_wasm_local_set(ctx, inst->dst);
+            ns_wasm_local_get(ctx, inst->dst);
+            ns_wasm_local_get(ctx, inst->dst);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, 16);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_ADD);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_STORE); ns_wasm_memarg(ctx, 0);
+            for (u32 offset = 4; offset <= 8; offset += 4) {
+                ns_wasm_local_get(ctx, inst->dst);
+                ns_wasm_local_get(ctx, inst->a);
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_STORE); ns_wasm_memarg(ctx, offset);
+            }
+        }
+        break;
+
+    case NS_SSA_OP_ARRAY_STORE:
+        if (inst->a >= 0 && inst->b >= 0 && inst->target0 >= 0 && inst->c > 0) {
+            ns_wasm_bounds_check(ctx, inst->a, inst->target0);
+            ns_wasm_local_get(ctx, inst->a);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_LOAD); ns_wasm_memarg(ctx, 0);
+            ns_wasm_local_get(ctx, inst->target0);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, inst->c);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_MUL);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_ADD);
+            ns_wasm_local_get(ctx, inst->b);
+            if (ns_type_is(inst->type, NS_TYPE_STRUCT)) {
+                ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, inst->c);
+                ns_wasm_u8(&ctx->code, NS_WASM_MISC_PREFIX); ns_wasm_u32leb(&ctx->code, NS_WASM_MEMORY_COPY);
+                ns_wasm_u32leb(&ctx->code, 0); ns_wasm_u32leb(&ctx->code, 0);
+            } else {
+                ns_wasm_u8(&ctx->code, ns_wasm_store_op(inst->type)); ns_wasm_memarg(ctx, 0);
+            }
+        }
+        break;
+
     case NS_SSA_OP_CALL: {
-        // Callee: look up PARAM instruction defining value inst->a
-        ns_str callee_name = ns_str_null;
-        if (inst->a >= 0) {
+        ns_str callee_name = inst->name;
+        if (ns_str_is_empty(callee_name) && inst->a >= 0) {
             ns_ssa_inst *def = ns_wasm_find_param_def(ctx->fn, inst->a);
             if (def) callee_name = def->name;
         }
-        i32 fi = ns_wasm_fn_index(ctx, callee_name);
+        i32 fi = ns_str_is_empty(inst->module)
+            ? ns_wasm_fn_index(ctx, callee_name)
+            : ns_wasm_import_index(ctx, inst->module, callee_name);
         if (fi < 0) {
-            ns_warn("wasm", "fn %.*s: cannot resolve callee '%.*s', emitting unreachable\n",
-                    ctx->fn->name.len, ctx->fn->name.data,
-                    callee_name.len, callee_name.data);
-            ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
             break;
         }
         ns_wasm_u8(&ctx->code, NS_WASM_CALL);
         ns_wasm_u32leb(&ctx->code, (u32)fi);
-        if (inst->dst >= 0) {
+        if (inst->dst >= 0 && !ns_type_is(inst->type, NS_TYPE_VOID)) {
             ns_wasm_local_set(ctx, inst->dst);
         }
         // If dst < 0 and callee returns non-void, caller must drop the result.
         // We assume: dst < 0 ⇒ callee is void (conservative; may need DROP).
     } break;
+
+    case NS_SSA_OP_INDEX:
+        if (inst->dst >= 0 && inst->a >= 0 && inst->b >= 0 && inst->c > 0) {
+            ns_wasm_bounds_check(ctx, inst->a, inst->b);
+            ns_wasm_local_get(ctx, inst->a);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_LOAD); ns_wasm_memarg(ctx, 0);
+            ns_wasm_local_get(ctx, inst->b);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST); ns_wasm_i64leb(&ctx->code, inst->c);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_MUL);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_ADD);
+            if (!ns_type_is(inst->type, NS_TYPE_STRUCT)) {
+                ns_type load_type = inst->type;
+                if (inst->c == 1 && ns_type_is(inst->type, NS_TYPE_I32)) load_type = ns_type_u8;
+                ns_wasm_u8(&ctx->code, ns_wasm_load_op(load_type)); ns_wasm_memarg(ctx, 0);
+            }
+            ns_wasm_local_set(ctx, inst->dst);
+        }
+        break;
 
     case NS_SSA_OP_NEG: {
         if (inst->a < 0 || inst->dst < 0) break;
@@ -668,25 +930,35 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         if (inst->a < 0 || inst->dst < 0) break;
         u8 src_vt = (inst->a < ctx->n_values) ? ctx->vtypes[inst->a] : NS_WASM_I32;
         u8 dst_vt = (inst->dst < ctx->n_values) ? ctx->vtypes[inst->dst] : NS_WASM_I32;
+        ns_bool src_unsigned = inst->a < ctx->n_values && ctx->unsigneds[inst->a];
+        ns_bool dst_unsigned = inst->dst < ctx->n_values && ctx->unsigneds[inst->dst];
         ns_wasm_local_get(ctx, inst->a);
         if (src_vt == dst_vt) {
             // No conversion needed
         } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_I64) {
-            ns_wasm_u8(&ctx->code, NS_WASM_I64_EXTEND_I32_S);
+            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_I64_EXTEND_I32_U : NS_WASM_I64_EXTEND_I32_S);
         } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_I32) {
             ns_wasm_u8(&ctx->code, NS_WASM_I32_WRAP_I64);
         } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_F32) {
-            ns_wasm_u8(&ctx->code, NS_WASM_F32_CONVERT_I32_S);
+            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F32_CONVERT_I32_U : NS_WASM_F32_CONVERT_I32_S);
         } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_F64) {
-            ns_wasm_u8(&ctx->code, NS_WASM_F64_CONVERT_I32_S);
+            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F64_CONVERT_I32_U : NS_WASM_F64_CONVERT_I32_S);
         } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_F32) {
-            ns_wasm_u8(&ctx->code, NS_WASM_F32_CONVERT_I64_S);
+            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F32_CONVERT_I64_U : NS_WASM_F32_CONVERT_I64_S);
         } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_F64) {
-            ns_wasm_u8(&ctx->code, NS_WASM_F64_CONVERT_I64_S);
+            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F64_CONVERT_I64_U : NS_WASM_F64_CONVERT_I64_S);
         } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_F64) {
             ns_wasm_u8(&ctx->code, NS_WASM_F64_PROMOTE_F32);
         } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_F32) {
             ns_wasm_u8(&ctx->code, NS_WASM_F32_DEMOTE_F64);
+        } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_I32) {
+            ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I32_TRUNC_F32_U : NS_WASM_I32_TRUNC_F32_S);
+        } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_I32) {
+            ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I32_TRUNC_F64_U : NS_WASM_I32_TRUNC_F64_S);
+        } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_I64) {
+            ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I64_TRUNC_F32_U : NS_WASM_I64_TRUNC_F32_S);
+        } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_I64) {
+            ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I64_TRUNC_F64_U : NS_WASM_I64_TRUNC_F64_S);
         }
         // else: unsupported cast, no conversion
         ns_wasm_local_set(ctx, inst->dst);
@@ -704,7 +976,8 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         u8 op_vt = (inst->a < ctx->n_values) ? ctx->vtypes[inst->a] : NS_WASM_I32;
         ns_wasm_local_get(ctx, inst->a);
         ns_wasm_local_get(ctx, inst->b);
-        u8 opcode = ns_wasm_arith_op(inst->op, op_vt);
+        ns_bool is_unsigned = inst->a < ctx->n_values && ctx->unsigneds[inst->a];
+        u8 opcode = ns_wasm_arith_op(inst->op, op_vt, is_unsigned);
         ns_wasm_u8(&ctx->code, opcode);
         ns_wasm_local_set(ctx, inst->dst);
     } break;
@@ -725,13 +998,94 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
         break;
 
-    // MEMBER / INDEX / STR_FMT etc. not supported yet — fall through to default
     default:
-        ns_warn("wasm", "fn %.*s: unsupported SSA op %d, emitting nop\n",
-                ctx->fn->name.len, ctx->fn->name.data, (i32)inst->op);
-        ns_wasm_u8(&ctx->code, NS_WASM_NOP);
         break;
     }
+}
+
+static void ns_wasm_emit_phi_moves(ns_wasm_fn_ctx *ctx, i32 predecessor, i32 target) {
+    if (target < 0 || target >= (i32)ns_array_length(ctx->fn->blocks)) return;
+    ns_ssa_block *bb = &ctx->fn->blocks[target];
+    for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ++ii) {
+        ns_ssa_inst *phi = &ctx->fn->insts[bb->insts[ii]];
+        if (phi->op != NS_SSA_OP_PHI) continue;
+        i32 source = phi->target0 == predecessor ? phi->a :
+                     phi->target1 == predecessor ? phi->b : -1;
+        if (source >= 0 && source != phi->dst) {
+            ns_wasm_local_get(ctx, source);
+            ns_wasm_local_set(ctx, phi->dst);
+        }
+    }
+}
+
+// Lower arbitrary reducible SSA control flow through a compact pc dispatcher.
+// This is intentionally less clever than shape-specific block nesting, but it
+// gives every CFG edge a concrete place to materialize PHIs and remains valid
+// for nested conditionals, loops, break, and continue.
+static void ns_wasm_emit_dispatch(ns_wasm_fn_ctx *ctx) {
+    ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+    ns_wasm_i64leb(&ctx->code, ctx->fn->entry);
+    ns_wasm_local_set(ctx, ctx->pc_local);
+
+    ns_wasm_u8(&ctx->code, NS_WASM_LOOP);
+    ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
+
+    for (i32 bi = 0, bl = (i32)ns_array_length(ctx->fn->blocks); bi < bl; ++bi) {
+        ns_ssa_block *bb = &ctx->fn->blocks[bi];
+        ns_wasm_local_get(ctx, ctx->pc_local);
+        ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+        ns_wasm_i64leb(&ctx->code, bi);
+        ns_wasm_u8(&ctx->code, NS_WASM_I32_EQ);
+        ns_wasm_u8(&ctx->code, NS_WASM_IF);
+        ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
+
+        i32 count = (i32)ns_array_length(bb->insts);
+        ns_ssa_inst *term = count > 0 ? &ctx->fn->insts[bb->insts[count - 1]] : ns_null;
+        i32 body_count = term && (term->op == NS_SSA_OP_RET || term->op == NS_SSA_OP_JMP ||
+                                  term->op == NS_SSA_OP_BR || term->op == NS_SSA_OP_TRAP)
+            ? count - 1 : count;
+        for (i32 ii = 0; ii < body_count; ++ii) {
+            ns_wasm_emit_inst(ctx, &ctx->fn->insts[bb->insts[ii]]);
+        }
+
+        if (!term || body_count == count) {
+            ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
+        } else if (term->op == NS_SSA_OP_RET) {
+            if (term->a >= 0) ns_wasm_local_get(ctx, term->a);
+            ns_wasm_u8(&ctx->code, NS_WASM_RETURN);
+        } else if (term->op == NS_SSA_OP_TRAP) {
+            ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
+        } else if (term->op == NS_SSA_OP_JMP) {
+            ns_wasm_emit_phi_moves(ctx, bi, term->target0);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+            ns_wasm_i64leb(&ctx->code, term->target0);
+            ns_wasm_local_set(ctx, ctx->pc_local);
+        } else {
+            ns_wasm_local_get(ctx, term->a);
+            ns_wasm_u8(&ctx->code, NS_WASM_IF);
+            ns_wasm_u8(&ctx->code, NS_WASM_BTVOID);
+            ns_wasm_emit_phi_moves(ctx, bi, term->target0);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+            ns_wasm_i64leb(&ctx->code, term->target0);
+            ns_wasm_local_set(ctx, ctx->pc_local);
+            ns_wasm_u8(&ctx->code, NS_WASM_ELSE);
+            ns_wasm_emit_phi_moves(ctx, bi, term->target1);
+            ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
+            ns_wasm_i64leb(&ctx->code, term->target1);
+            ns_wasm_local_set(ctx, ctx->pc_local);
+            ns_wasm_u8(&ctx->code, NS_WASM_END);
+        }
+
+        ns_wasm_u8(&ctx->code, NS_WASM_BR);
+        ns_wasm_u32leb(&ctx->code, 1); // leave the block test and continue the dispatcher loop
+        ns_wasm_u8(&ctx->code, NS_WASM_END);
+    }
+
+    ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
+    ns_wasm_u8(&ctx->code, NS_WASM_END);
+    // A loop with a void block type does not itself prove a function result;
+    // make the impossible fallthrough explicit for non-void functions.
+    ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -958,6 +1312,10 @@ static void ns_wasm_emit_range(ns_wasm_fn_ctx *ctx, i32 start, i32 end,
 
 // Infer the return type of a function by examining its RET instructions.
 static u8 ns_wasm_fn_ret_type(ns_ssa_fn *fn, u8 *vtypes, i32 n_values) {
+    if (!ns_type_is(fn->ret, NS_TYPE_UNKNOWN) && !ns_type_is(fn->ret, NS_TYPE_VOID)) {
+        return ns_wasm_type_valtype(fn->ret);
+    }
+    if (ns_type_is(fn->ret, NS_TYPE_VOID)) return 0;
     for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; bi++) {
         ns_ssa_block *bb = &fn->blocks[bi];
         for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ii++) {
@@ -991,17 +1349,35 @@ static i32 ns_wasm_fn_param_count(ns_ssa_fn *fn) {
 
 // Emit the type section: one functype per function.
 static void ns_wasm_build_type_section(u8 **out, ns_ssa_module *ssa,
-                                       u8 **all_vtypes, i32 *all_nvals) {
+                                       u8 **all_vtypes, u8 **all_unsigneds, i32 *all_nvals) {
     u8 *sec = ns_null;
     i32 n_fns = (i32)ns_array_length(ssa->fns);
-    ns_wasm_u32leb(&sec, (u32)n_fns);
+    i32 n_imports = (i32)ns_array_length(ssa->imports);
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 2));
+
+    for (i32 ii = 0; ii < n_imports; ++ii) {
+        ns_ssa_import *import = &ssa->imports[ii];
+        ns_wasm_u8(&sec, 0x60);
+        ns_wasm_u32leb(&sec, (u32)ns_array_length(import->params));
+        for (i32 pi = 0, pl = (i32)ns_array_length(import->params); pi < pl; ++pi) {
+            ns_wasm_u8(&sec, ns_wasm_type_valtype(import->params[pi]));
+        }
+        if (!ns_type_is(import->ret, NS_TYPE_VOID)) {
+            ns_wasm_u32leb(&sec, 1);
+            ns_wasm_u8(&sec, ns_wasm_type_valtype(import->ret));
+        } else {
+            ns_wasm_u32leb(&sec, 0);
+        }
+    }
 
     for (i32 fi = 0; fi < n_fns; fi++) {
         ns_ssa_fn *fn = &ssa->fns[fi];
 
         u8 *vt = ns_null;
-        i32 nv = ns_wasm_infer_types(fn, &vt);
+        u8 *us = ns_null;
+        i32 nv = ns_wasm_infer_types(fn, &vt, &us);
         all_vtypes[fi] = vt;
+        all_unsigneds[fi] = us;
         all_nvals[fi] = nv;
 
         i32 np = ns_wasm_fn_param_count(fn);
@@ -1030,34 +1406,131 @@ static void ns_wasm_build_type_section(u8 **out, ns_ssa_module *ssa,
         }
     }
 
+    // __ns_alloc(i32) -> i32
+    ns_wasm_u8(&sec, 0x60);
+    ns_wasm_u32leb(&sec, 1);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u32leb(&sec, 1);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    // __ns_init() -> void
+    ns_wasm_u8(&sec, 0x60);
+    ns_wasm_u32leb(&sec, 0);
+    ns_wasm_u32leb(&sec, 0);
+
     ns_wasm_section(out, NS_WASM_SECT_TYPE, sec);
     ns_array_free(sec);
 }
 
 // Emit the function section: type indices (one per function, all 0..n-1 in order)
-static void ns_wasm_build_function_section(u8 **out, i32 n_fns) {
+static void ns_wasm_build_import_section(u8 **out, ns_ssa_module *ssa) {
+    i32 n_imports = (i32)ns_array_length(ssa->imports);
+    if (n_imports == 0) return;
     u8 *sec = ns_null;
-    ns_wasm_u32leb(&sec, (u32)n_fns);
-    for (i32 i = 0; i < n_fns; i++) {
-        ns_wasm_u32leb(&sec, (u32)i); // type index == function index (one type per fn)
+    ns_wasm_u32leb(&sec, (u32)n_imports);
+    for (i32 i = 0; i < n_imports; ++i) {
+        ns_ssa_import *import = &ssa->imports[i];
+        ns_wasm_u32leb(&sec, (u32)import->module.len);
+        for (i32 c = 0; c < import->module.len; ++c) ns_wasm_u8(&sec, (u8)import->module.data[c]);
+        ns_wasm_u32leb(&sec, (u32)import->name.len);
+        for (i32 c = 0; c < import->name.len; ++c) ns_wasm_u8(&sec, (u8)import->name.data[c]);
+        ns_wasm_u8(&sec, 0x00);
+        ns_wasm_u32leb(&sec, (u32)i);
     }
+    ns_wasm_section(out, NS_WASM_SECT_IMPORT, sec);
+    ns_array_free(sec);
+}
+
+static void ns_wasm_build_function_section(u8 **out, i32 n_imports, i32 n_fns) {
+    u8 *sec = ns_null;
+    ns_wasm_u32leb(&sec, (u32)(n_fns + 2));
+    for (i32 i = 0; i < n_fns; i++) {
+        ns_wasm_u32leb(&sec, (u32)(n_imports + i));
+    }
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns));
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 1));
     ns_wasm_section(out, NS_WASM_SECT_FUNCTION, sec);
     ns_array_free(sec);
 }
 
 // Emit the export section: export all functions by name
+static void ns_wasm_build_memory_section(u8 **out, u32 heap_start) {
+    u8 *sec = ns_null;
+    u32 pages = (heap_start + 65535u) / 65536u;
+    if (pages == 0) pages = 1;
+    ns_wasm_u32leb(&sec, 1);
+    ns_wasm_u8(&sec, 0x00);
+    ns_wasm_u32leb(&sec, pages);
+    ns_wasm_section(out, NS_WASM_SECT_MEMORY, sec);
+    ns_array_free(sec);
+}
+
+static void ns_wasm_build_global_section(u8 **out, ns_ssa_module *ssa, u32 heap_start) {
+    u8 *sec = ns_null;
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(ssa->globals) + 2u);
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u8(&sec, 0x01);
+    ns_wasm_u8(&sec, NS_WASM_I32_CONST);
+    ns_wasm_i64leb(&sec, heap_start);
+    ns_wasm_u8(&sec, NS_WASM_END);
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->globals); i < l; ++i) {
+        u8 type = ns_wasm_type_valtype(ssa->globals[i].type);
+        ns_wasm_u8(&sec, type);
+        ns_wasm_u8(&sec, 0x01);
+        if (type == NS_WASM_I64) {
+            ns_wasm_u8(&sec, NS_WASM_I64_CONST); ns_wasm_i64leb(&sec, 0);
+        } else if (type == NS_WASM_F32) {
+            ns_wasm_u8(&sec, NS_WASM_F32_CONST); ns_wasm_f32bytes(&sec, 0);
+        } else if (type == NS_WASM_F64) {
+            ns_wasm_u8(&sec, NS_WASM_F64_CONST); ns_wasm_f64bytes(&sec, 0);
+        } else {
+            ns_wasm_u8(&sec, NS_WASM_I32_CONST); ns_wasm_i64leb(&sec, 0);
+        }
+        ns_wasm_u8(&sec, NS_WASM_END);
+    }
+    // Private idempotence flag for __ns_init.
+    ns_wasm_u8(&sec, NS_WASM_I32);
+    ns_wasm_u8(&sec, 0x01);
+    ns_wasm_u8(&sec, NS_WASM_I32_CONST); ns_wasm_i64leb(&sec, 0);
+    ns_wasm_u8(&sec, NS_WASM_END);
+    ns_wasm_section(out, NS_WASM_SECT_GLOBAL, sec);
+    ns_array_free(sec);
+}
+
+static void ns_wasm_name(u8 **out, const char *name) {
+    u32 len = (u32)strlen(name);
+    ns_wasm_u32leb(out, len);
+    for (u32 i = 0; i < len; ++i) ns_wasm_u8(out, (u8)name[i]);
+}
+
 static void ns_wasm_build_export_section(u8 **out, ns_ssa_module *ssa) {
     u8 *sec = ns_null;
     i32 n_fns = (i32)ns_array_length(ssa->fns);
-    ns_wasm_u32leb(&sec, (u32)n_fns);
+    i32 n_imports = (i32)ns_array_length(ssa->imports);
+    ns_wasm_u32leb(&sec, (u32)(n_fns + 3));
     for (i32 fi = 0; fi < n_fns; fi++) {
         ns_ssa_fn *fn = &ssa->fns[fi];
         ns_wasm_u32leb(&sec, (u32)fn->name.len);
         for (i32 c = 0; c < fn->name.len; c++) ns_wasm_u8(&sec, (u8)fn->name.data[c]);
         ns_wasm_u8(&sec, 0x00); // kind: function
-        ns_wasm_u32leb(&sec, (u32)fi);
+        ns_wasm_u32leb(&sec, (u32)(n_imports + fi));
     }
+    ns_wasm_name(&sec, "memory");
+    ns_wasm_u8(&sec, 0x02);
+    ns_wasm_u32leb(&sec, 0);
+    ns_wasm_name(&sec, "__ns_alloc");
+    ns_wasm_u8(&sec, 0x00);
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns));
+    ns_wasm_name(&sec, "__ns_init");
+    ns_wasm_u8(&sec, 0x00);
+    ns_wasm_u32leb(&sec, (u32)(n_imports + n_fns + 1));
     ns_wasm_section(out, NS_WASM_SECT_EXPORT, sec);
+    ns_array_free(sec);
+}
+
+static void ns_wasm_build_element_section(u8 **out) {
+    u8 *sec = ns_null;
+    ns_wasm_u32leb(&sec, 0); // indirect calls/closures are intentionally absent in browser v1
+    ns_wasm_section(out, NS_WASM_SECT_ELEMENT, sec);
     ns_array_free(sec);
 }
 
@@ -1126,10 +1599,10 @@ static void ns_wasm_detect_loops(ns_ssa_fn *fn,
 
 // Emit the code section
 static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
-                                       u8 **all_vtypes, i32 *all_nvals) {
+                                       u8 **all_vtypes, u8 **all_unsigneds, i32 *all_nvals) {
     u8 *sec = ns_null;
     i32 n_fns = (i32)ns_array_length(ssa->fns);
-    ns_wasm_u32leb(&sec, (u32)n_fns);
+    ns_wasm_u32leb(&sec, (u32)(n_fns + 2));
 
     for (i32 fi = 0; fi < n_fns; fi++) {
         ns_ssa_fn *fn = &ssa->fns[fi];
@@ -1137,7 +1610,8 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
         i32  nv = all_nvals[fi];
         i32  np = ns_wasm_fn_param_count(fn);
 
-        // Detect loops
+        // Keep the structured lowering helpers compiled while the dispatcher
+        // is the authoritative path; the dispatcher handles all CFG shapes.
         i32 *lheads = ns_null, *lends = ns_null, n_loops = 0;
         ns_wasm_detect_loops(fn, &lheads, &lends, &n_loops);
 
@@ -1146,9 +1620,13 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
         ctx.fn       = fn;
         ctx.n_params = np;
         ctx.n_values = nv;
+        ctx.pc_local = nv;
         ctx.vtypes   = vt;
+        ctx.unsigneds = all_unsigneds[fi];
         ctx.all_fns  = ssa->fns;
         ctx.n_fns    = n_fns;
+        ctx.imports  = ssa->imports;
+        ctx.n_imports = (i32)ns_array_length(ssa->imports);
 
         // Local declarations:
         // WASM params are locals 0..np-1 (already bound, not declared).
@@ -1163,24 +1641,34 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
             for (i32 vi = np + 1; vi < nv; vi++) {
                 if (vt[vi] != vt[vi - 1]) n_groups++;
             }
-            ns_wasm_u32leb(&locals_sec, n_groups);
+            // One additional i32 group stores the CFG dispatcher pc unless the
+            // final SSA local group is already i32, in which case extend it.
+            ns_bool merge_pc = vt[nv - 1] == NS_WASM_I32;
+            ns_wasm_u32leb(&locals_sec, n_groups + (merge_pc ? 0 : 1));
             i32 run_start = np;
             for (i32 vi = np + 1; vi <= nv; vi++) {
                 if (vi == nv || vt[vi] != vt[run_start]) {
-                    ns_wasm_u32leb(&locals_sec, (u32)(vi - run_start));
+                    u32 run_count = (u32)(vi - run_start);
+                    if (vi == nv && vt[run_start] == NS_WASM_I32) run_count++;
+                    ns_wasm_u32leb(&locals_sec, run_count);
                     ns_wasm_u8(&locals_sec, vt[run_start]);
                     run_start = vi;
                 }
             }
+            if (!merge_pc) {
+                ns_wasm_u32leb(&locals_sec, 1);
+                ns_wasm_u8(&locals_sec, NS_WASM_I32);
+            }
         } else {
-            ns_wasm_u32leb(&locals_sec, 0); // 0 local groups
+            ns_wasm_u32leb(&locals_sec, 1);
+            ns_wasm_u32leb(&locals_sec, 1);
+            ns_wasm_u8(&locals_sec, NS_WASM_I32);
         }
 
         // Emit function body instructions
         i32 n_blocks = (i32)ns_array_length(fn->blocks);
-        if (n_blocks > 0) {
-            ns_wasm_emit_range(&ctx, 0, n_blocks - 1, lheads, lends, n_loops, -1);
-        }
+        if (false && n_blocks > 0) ns_wasm_emit_range(&ctx, 0, n_blocks - 1, lheads, lends, n_loops, -1);
+        if (n_blocks > 0) ns_wasm_emit_dispatch(&ctx);
 
         // WASM functions must end with END opcode
         ns_wasm_u8(&ctx.code, NS_WASM_END);
@@ -1199,13 +1687,346 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
         ns_array_free(lends);
     }
 
+    // __ns_alloc: aligned bump allocation with checked memory growth.
+    u8 *alloc = ns_null;
+    ns_wasm_u32leb(&alloc, 1);
+    ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u8(&alloc, NS_WASM_I32);
+    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_SET); ns_wasm_u32leb(&alloc, 1);
+    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_I32_ADD);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 7);
+    ns_wasm_u8(&alloc, NS_WASM_I32_ADD);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, -8);
+    ns_wasm_u8(&alloc, NS_WASM_I32_AND);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_TEE); ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u8(&alloc, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u8(&alloc, NS_WASM_MEMORY_SIZE); ns_wasm_u8(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 16);
+    ns_wasm_u8(&alloc, NS_WASM_I32_SHL);
+    ns_wasm_u8(&alloc, NS_WASM_I32_GT_U);
+    ns_wasm_u8(&alloc, NS_WASM_IF); ns_wasm_u8(&alloc, NS_WASM_BTVOID);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 2);
+    ns_wasm_u8(&alloc, NS_WASM_MEMORY_SIZE); ns_wasm_u8(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 16);
+    ns_wasm_u8(&alloc, NS_WASM_I32_SHL);
+    ns_wasm_u8(&alloc, NS_WASM_I32_SUB);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 65535);
+    ns_wasm_u8(&alloc, NS_WASM_I32_ADD);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, 16);
+    ns_wasm_u8(&alloc, NS_WASM_I32_SHR_U);
+    ns_wasm_u8(&alloc, NS_WASM_MEMORY_GROW); ns_wasm_u8(&alloc, 0);
+    ns_wasm_u8(&alloc, NS_WASM_I32_CONST); ns_wasm_i64leb(&alloc, -1);
+    ns_wasm_u8(&alloc, NS_WASM_I32_EQ);
+    ns_wasm_u8(&alloc, NS_WASM_IF); ns_wasm_u8(&alloc, NS_WASM_BTVOID);
+    ns_wasm_u8(&alloc, NS_WASM_UNREACHABLE);
+    ns_wasm_u8(&alloc, NS_WASM_END);
+    ns_wasm_u8(&alloc, NS_WASM_END);
+    ns_wasm_u8(&alloc, NS_WASM_LOCAL_GET); ns_wasm_u32leb(&alloc, 1);
+    ns_wasm_u8(&alloc, NS_WASM_END);
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(alloc));
+    for (u32 i = 0; i < (u32)ns_array_length(alloc); ++i) ns_array_push(sec, alloc[i]);
+    ns_array_free(alloc);
+
+    // __ns_init calls top-level module initialization exactly once per instance.
+    u8 *init = ns_null;
+    ns_wasm_u32leb(&init, 0);
+    u32 init_global = (u32)ns_array_length(ssa->globals) + 1u;
+    ns_wasm_u8(&init, NS_WASM_GLOBAL_GET); ns_wasm_u32leb(&init, init_global);
+    ns_wasm_u8(&init, NS_WASM_I32_EQZ);
+    ns_wasm_u8(&init, NS_WASM_IF); ns_wasm_u8(&init, NS_WASM_BTVOID);
+    for (i32 fi = 0; fi < n_fns; ++fi) {
+        if (ns_str_equals(ssa->fns[fi].name, ns_str_cstr("__module_init"))) {
+            ns_wasm_u8(&init, NS_WASM_CALL);
+            ns_wasm_u32leb(&init, (u32)(ns_array_length(ssa->imports) + fi));
+            break;
+        }
+    }
+    ns_wasm_u8(&init, NS_WASM_I32_CONST); ns_wasm_i64leb(&init, 1);
+    ns_wasm_u8(&init, NS_WASM_GLOBAL_SET); ns_wasm_u32leb(&init, init_global);
+    ns_wasm_u8(&init, NS_WASM_END);
+    ns_wasm_u8(&init, NS_WASM_END);
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(init));
+    for (u32 i = 0; i < (u32)ns_array_length(init); ++i) ns_array_push(sec, init[i]);
+    ns_array_free(init);
+
     ns_wasm_section(out, NS_WASM_SECT_CODE, sec);
+    ns_array_free(sec);
+}
+
+static u8 *ns_wasm_prepare_data(ns_ssa_module *ssa, u32 *heap_start) {
+    u8 *data = ns_null;
+    ns_array_set_length(data, 1024);
+    memset(data, 0, 1024);
+    for (i32 fi = 0, fl = (i32)ns_array_length(ssa->fns); fi < fl; ++fi) {
+        ns_ssa_fn *fn = &ssa->fns[fi];
+        for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
+            ns_ssa_inst *inst = &fn->insts[ii];
+            if (inst->op != NS_SSA_OP_CONST || !ns_type_is(inst->type, NS_TYPE_STRING)) continue;
+            ns_str value = ns_str_unescape(inst->name);
+            u32 descriptor = (u32)((ns_array_length(data) + 7u) & ~7u);
+            ns_array_set_length(data, descriptor);
+            u32 bytes = descriptor + 8;
+            ns_wasm_u32bytes(&data, bytes);
+            ns_wasm_u32bytes(&data, (u32)value.len);
+            for (i32 i = 0; i < value.len; ++i) ns_wasm_u8(&data, (u8)value.data[i]);
+            inst->c = (i32)descriptor;
+            ns_str_free(value);
+        }
+    }
+    *heap_start = (u32)((ns_array_length(data) + 15u) & ~15u);
+    return data;
+}
+
+static void ns_wasm_build_data_section(u8 **out, u8 *data) {
+    if (ns_array_length(data) == 0) return;
+    u8 *sec = ns_null;
+    ns_wasm_u32leb(&sec, 1);
+    ns_wasm_u32leb(&sec, 0);
+    ns_wasm_u8(&sec, NS_WASM_I32_CONST);
+    ns_wasm_i64leb(&sec, 0);
+    ns_wasm_u8(&sec, NS_WASM_END);
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(data));
+    for (u32 i = 0; i < (u32)ns_array_length(data); ++i) ns_array_push(sec, data[i]);
+    ns_wasm_section(out, NS_WASM_SECT_DATA, sec);
+    ns_array_free(sec);
+}
+
+static void ns_wasm_build_shader_custom_section(u8 **out, ns_ssa_module *ssa) {
+    u8 *sec = ns_null;
+    ns_wasm_name(&sec, "ns.shaders");
+    ns_wasm_u32leb(&sec, 1);
+    ns_wasm_u32leb(&sec, (u32)ns_array_length(ssa->shaders));
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->shaders); i < l; ++i) {
+        ns_ssa_shader *shader = &ssa->shaders[i];
+        ns_wasm_u32leb(&sec, shader->id);
+        ns_wasm_u8(&sec, (u8)shader->stage);
+        ns_wasm_u32leb(&sec, (u32)shader->name.len);
+        for (i32 c = 0; c < shader->name.len; ++c) ns_wasm_u8(&sec, (u8)shader->name.data[c]);
+        ns_wasm_u32leb(&sec, (u32)shader->wgsl.len);
+        for (i32 c = 0; c < shader->wgsl.len; ++c) ns_wasm_u8(&sec, (u8)shader->wgsl.data[c]);
+        ns_wasm_u32leb(&sec, (u32)shader->vertex_stride);
+        ns_wasm_u32leb(&sec, (u32)ns_array_length(shader->vertex_offsets));
+        for (i32 a = 0, al = (i32)ns_array_length(shader->vertex_offsets); a < al; ++a) {
+            ns_wasm_u32leb(&sec, (u32)shader->vertex_offsets[a]);
+            ns_wasm_u32leb(&sec, (u32)shader->vertex_sizes[a]);
+        }
+    }
+    ns_wasm_section(out, 0, sec);
     ns_array_free(sec);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // Public API
 // ──────────────────────────────────────────────────────────────────────────
+
+static ns_bool ns_wasm_supported_module(ns_str module) {
+    return ns_str_equals(module, ns_str_cstr("std")) ||
+           ns_str_equals(module, ns_str_cstr("gpu")) ||
+           ns_str_equals(module, ns_str_cstr("shader"));
+}
+
+static ns_bool ns_wasm_name_in(ns_str name, const char *names) {
+    const char *begin = names;
+    while (*begin) {
+        const char *end = strchr(begin, '|');
+        if (!end) end = begin + strlen(begin);
+        if (name.len == end - begin && strncmp(name.data, begin, (szt)name.len) == 0) return true;
+        begin = *end ? end + 1 : end;
+    }
+    return false;
+}
+
+static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
+    if (ns_str_equals(module, ns_str_cstr("std"))) {
+        return ns_wasm_name_in(name,
+            "print|sqrt|sin|cos|tan|atan2|ftos|stof|substr|unescape|utf8_len");
+    }
+    if (ns_str_equals(module, ns_str_cstr("shader"))) {
+        return ns_wasm_name_in(name,
+            "shader_transpile|shader_transpile_stage|shader_entry|shader_vertex_stride|"
+            "shader_vertex_attr_count|shader_vertex_attr_offset|shader_vertex_attr_size");
+    }
+    if (ns_str_equals(module, ns_str_cstr("gpu"))) {
+        return ns_wasm_name_in(name,
+            "dispatch_gpu|gpu_create_pipeline|gpu_create_pipeline_ex|gpu_texture_new|gpu_texture_new_2d|"
+            "gpu_texture_none|gpu_texture_valid|gpu_texture_bytes|gpu_texture_update|gpu_texture_update_all|"
+            "gpu_texture_release|gpu_sampler_new|gpu_sampler_valid|gpu_sampler_release|gpu_render_state_new|"
+            "gpu_render_state_bind|gpu_memory_alloc|gpu_memory_valid|gpu_memory_at|gpu_memory_write|"
+            "gpu_memory_read|gpu_memory_free|gpu_shader_graphics|gpu_shader_compute|gpu_shader_valid|"
+            "gpu_shader_bind|gpu_shader_release|gpu_pass_begin_target|gpu_request_device|gpu_destroy_device|"
+            "gpu_shader_target|gpu_dispatch_compute_source|"
+            "gpu_dispatch_compute_texture_source|gpu_create_buffer|gpu_create_index_buffer|"
+            "gpu_create_uniform_buffer|gpu_update_buffer|gpu_update_texture_id|gpu_create_shader_source|"
+            "gpu_create_pipeline_layout|gpu_create_pipeline_layout_ex|gpu_create_pipeline_layout_indexed_ex|"
+            "gpu_create_mesh_1|gpu_create_mesh_indexed|gpu_create_texture_2d|gpu_create_texture_binding|"
+            "gpu_create_buffer_texture_binding|gpu_create_depth_pass|gpu_create_screen_pass|"
+            "gpu_destroy_texture_id|gpu_destroy_binding_id|gpu_destroy_buffer_id|gpu_destroy_shader_id|"
+            "gpu_destroy_pipeline_id|gpu_destroy_mesh_id|gpu_destroy_render_pass_id|gpu_begin_render_pass_id|"
+            "gpu_set_pipeline_id|gpu_set_mesh_id|gpu_set_binding_id|gpu_begin_render_pass|gpu_set_viewport|"
+            "gpu_set_scissor|gpu_set_pipeline|gpu_set_binding|gpu_set_mesh|gpu_draw|gpu_end_pass|gpu_commit|"
+            "gpu_caps|gpu_malloc|gpu_free|gpu_write|gpu_read|gpu_frame_alloc|gpu_texture_create|"
+            "gpu_texture_upload|gpu_texture_destroy|gpu_sampler_create|gpu_sampler_destroy|"
+            "gpu_shader_graphics_create|gpu_shader_compute_create|gpu_shader_destroy|gpu_state_create|"
+            "gpu_pass_begin|gpu_screen_pass_begin|gpu_pass_end|gpu_set_shader|gpu_set_state|gpu_set_root|"
+            "gpu_set_root_data|gpu_draw_vertices|gpu_draw_indexed|gpu_draw_indirect|gpu_dispatch|"
+            "gpu_dispatch_indirect|gpu_signal_after|gpu_wait_before|gpu_pixel_format_size|"
+            "gpu_pixel_format_row_pitch|gpu_pixel_format_surface_pitch");
+    }
+    return false;
+}
+
+static ns_bool ns_wasm_portable_use(ns_str module) {
+    return ns_wasm_supported_module(module) || ns_str_equals(module, ns_str_cstr("simd"));
+}
+
+static ns_bool ns_wasm_unsupported_type(ns_type type) {
+    return ns_type_is(type, NS_TYPE_ANY) || ns_type_is(type, NS_TYPE_DICT) ||
+           ns_type_is(type, NS_TYPE_SET) || ns_type_is(type, NS_TYPE_TASK) ||
+           ns_type_is(type, NS_TYPE_BLOCK) || ns_type_is(type, NS_TYPE_FN) ||
+           ns_type_is(type, NS_TYPE_UNION);
+}
+
+static ns_bool ns_wasm_emittable_op(ns_ssa_op op) {
+    switch (op) {
+    case NS_SSA_OP_UNDEF: case NS_SSA_OP_CONST: case NS_SSA_OP_PARAM:
+    case NS_SSA_OP_COPY: case NS_SSA_OP_PHI: case NS_SSA_OP_CAST:
+    case NS_SSA_OP_CALL: case NS_SSA_OP_ARG: case NS_SSA_OP_GLOBAL_GET:
+    case NS_SSA_OP_GLOBAL_SET: case NS_SSA_OP_ALLOC: case NS_SSA_OP_CLONE: case NS_SSA_OP_LOAD:
+    case NS_SSA_OP_STORE: case NS_SSA_OP_ARRAY_NEW: case NS_SSA_OP_ARRAY_STORE:
+    case NS_SSA_OP_INDEX: case NS_SSA_OP_NEG: case NS_SSA_OP_NOT:
+    case NS_SSA_OP_ADD: case NS_SSA_OP_SUB: case NS_SSA_OP_MUL:
+    case NS_SSA_OP_DIV: case NS_SSA_OP_MOD: case NS_SSA_OP_SHL:
+    case NS_SSA_OP_SHR: case NS_SSA_OP_BAND: case NS_SSA_OP_BOR:
+    case NS_SSA_OP_BXOR: case NS_SSA_OP_AND: case NS_SSA_OP_OR:
+    case NS_SSA_OP_EQ: case NS_SSA_OP_NE: case NS_SSA_OP_LT:
+    case NS_SSA_OP_LE: case NS_SSA_OP_GT: case NS_SSA_OP_GE:
+    case NS_SSA_OP_ASSERT: case NS_SSA_OP_BR: case NS_SSA_OP_JMP:
+    case NS_SSA_OP_RET:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static ns_bool ns_wasm_is_shader_fn(ns_ssa_module *ssa, ns_str name) {
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->shaders); i < l; ++i) {
+        if (ns_str_equals(ssa->shaders[i].name, name)) return true;
+    }
+    return false;
+}
+
+static ns_bool ns_wasm_has_target(ns_ssa_module *ssa, ns_ssa_inst *call) {
+    if (!ns_str_is_empty(call->module)) {
+        for (i32 i = 0, l = (i32)ns_array_length(ssa->imports); i < l; ++i) {
+            if (ns_str_equals(ssa->imports[i].module, call->module) && ns_str_equals(ssa->imports[i].name, call->name)) return true;
+        }
+        return false;
+    }
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
+        if (ns_str_equals(ssa->fns[i].name, call->name)) return true;
+    }
+    return false;
+}
+
+static ns_return_bool ns_wasm_validate(ns_ssa_module *ssa) {
+    static char message[512];
+    if (ssa->ctx) {
+        for (i32 i = 0, l = (i32)ns_array_length(ssa->ctx->nodes); i < l; ++i) {
+            ns_ast_t *node = &ssa->ctx->nodes[i];
+            if (node->type != NS_AST_USE_STMT || ns_wasm_portable_use(node->use_stmt.lib.val)) continue;
+            snprintf(message, sizeof(message), "wasm target does not support module `%.*s`.",
+                     node->use_stmt.lib.val.len, node->use_stmt.lib.val.data);
+            return ns_return_error(bool, ns_ast_state_loc(ssa->ctx, node->state), NS_ERR_EVAL, message);
+        }
+    }
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->imports); i < l; ++i) {
+        if (!ns_wasm_supported_module(ssa->imports[i].module)) {
+            snprintf(message, sizeof(message), "wasm target does not support module `%.*s`.",
+                     ssa->imports[i].module.len, ssa->imports[i].module.data);
+            return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);
+        }
+    }
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->globals); i < l; ++i) {
+        if (!ns_wasm_unsupported_type(ssa->globals[i].type)) continue;
+        snprintf(message, sizeof(message), "wasm target does not support global `%.*s` with this type.",
+                 ssa->globals[i].name.len, ssa->globals[i].name.data);
+        return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);
+    }
+    for (i32 fi = 0, fl = (i32)ns_array_length(ssa->fns); fi < fl; ++fi) {
+        ns_ssa_fn *fn = &ssa->fns[fi];
+        if (ns_wasm_unsupported_type(fn->ret)) {
+            snprintf(message, sizeof(message), "wasm target does not support the result type of fn `%.*s`.",
+                     fn->name.len, fn->name.data);
+            return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);
+        }
+        for (i32 pi = 0, pl = (i32)ns_array_length(fn->params); pi < pl; ++pi) {
+            if (!ns_wasm_unsupported_type(fn->params[pi])) continue;
+            snprintf(message, sizeof(message), "wasm target does not support parameter %d of fn `%.*s`.",
+                     pi + 1, fn->name.len, fn->name.data);
+            return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);
+        }
+        u8 *types = ns_null, *unsigneds = ns_null;
+        i32 value_count = ns_wasm_infer_types(fn, &types, &unsigneds);
+        for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
+            ns_ssa_inst *inst = &fn->insts[ii];
+            ns_code_loc loc = inst->ast > 0 && ssa->ctx && inst->ast < (i32)ns_array_length(ssa->ctx->nodes)
+                ? ns_ast_state_loc(ssa->ctx, ssa->ctx->nodes[inst->ast].state) : ns_code_loc_nil;
+            if (ns_wasm_unsupported_type(inst->type)) {
+                snprintf(message, sizeof(message), "wasm target does not support this value type in fn `%.*s`.",
+                         fn->name.len, fn->name.data);
+                ns_array_free(types); ns_array_free(unsigneds);
+                return ns_return_error(bool, loc, NS_ERR_EVAL, message);
+            }
+            if (!ns_wasm_emittable_op(inst->op)) {
+                snprintf(message, sizeof(message), "wasm target does not support `%.*s` in fn `%.*s`.",
+                         ns_ssa_op_to_string(inst->op).len, ns_ssa_op_to_string(inst->op).data,
+                         fn->name.len, fn->name.data);
+                ns_array_free(types); ns_array_free(unsigneds);
+                return ns_return_error(bool, loc, NS_ERR_EVAL, message);
+            }
+            if (inst->op == NS_SSA_OP_CALL && !ns_str_is_empty(inst->module) &&
+                !ns_wasm_supported_import(inst->module, inst->name)) {
+                snprintf(message, sizeof(message), "wasm target does not support import `%.*s.%.*s`.",
+                         inst->module.len, inst->module.data, inst->name.len, inst->name.data);
+                ns_array_free(types); ns_array_free(unsigneds);
+                return ns_return_error(bool, loc, NS_ERR_EVAL, message);
+            }
+            if (inst->op == NS_SSA_OP_CALL && (!ns_wasm_has_target(ssa, inst) || ns_str_is_empty(inst->name))) {
+                snprintf(message, sizeof(message), "wasm target cannot resolve direct call in fn `%.*s`.", fn->name.len, fn->name.data);
+                ns_array_free(types); ns_array_free(unsigneds);
+                return ns_return_error(bool, loc, NS_ERR_EVAL, message);
+            }
+            if (inst->op == NS_SSA_OP_PARAM && inst->c < 0) {
+                ns_bool direct_callee = false;
+                for (i32 ci = 0; ci < il; ++ci) {
+                    if (fn->insts[ci].op == NS_SSA_OP_CALL && fn->insts[ci].a == inst->dst) { direct_callee = true; break; }
+                }
+                if (!direct_callee) {
+                    snprintf(message, sizeof(message), "wasm target cannot lower unresolved global or function value `%.*s`.",
+                             inst->name.len, inst->name.data);
+                    ns_array_free(types); ns_array_free(unsigneds);
+                    return ns_return_error(bool, loc, NS_ERR_EVAL, message);
+                }
+            }
+            if (inst->op == NS_SSA_OP_CONST && ns_type_is(inst->type, NS_TYPE_STRING) && inst->token.type != NS_TOKEN_STR_LITERAL) {
+                ns_array_free(types); ns_array_free(unsigneds);
+                return ns_return_error(bool, loc, NS_ERR_EVAL,
+                                       "wasm target does not yet support interpolated strings; build the string from portable std operations.");
+            }
+            if (inst->op == NS_SSA_OP_MOD && inst->a >= 0 && inst->a < value_count &&
+                (types[inst->a] == NS_WASM_F32 || types[inst->a] == NS_WASM_F64)) {
+                ns_array_free(types); ns_array_free(unsigneds);
+                return ns_return_error(bool, loc, NS_ERR_EVAL, "wasm target does not support floating-point remainder.");
+            }
+        }
+        ns_array_free(types); ns_array_free(unsigneds);
+    }
+    return ns_return_ok(bool, true);
+}
 
 ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
     if (!ssa) {
@@ -1214,13 +2035,34 @@ ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
     if (ns_str_is_empty(output_path)) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_SYNTAX, "empty output path");
     }
+    // Shader entry functions are compiled ahead of time into the ns.shaders
+    // custom section. They are function values on the CPU side (lowered to
+    // compiler-assigned integer IDs), not callable Wasm functions. Excluding
+    // their CPU SSA bodies also keeps shader-only structs and stage I/O out of
+    // the wasm32 host ABI without weakening diagnostics for ordinary code.
+    ns_ssa_module host = *ssa;
+    host.fns = ns_null;
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
+        if (!ns_wasm_is_shader_fn(ssa, ssa->fns[i].name)) ns_array_push(host.fns, ssa->fns[i]);
+    }
 
-    i32 n_fns = (i32)ns_array_length(ssa->fns);
+    ns_return_bool validation = ns_wasm_validate(&host);
+    if (ns_return_is_error(validation)) {
+        ns_array_free(host.fns);
+        return validation;
+    }
+
+    i32 n_fns = (i32)ns_array_length(host.fns);
+    i32 n_imports = (i32)ns_array_length(host.imports);
+    u32 heap_start = 0;
+    u8 *data = ns_wasm_prepare_data(&host, &heap_start);
 
     // Per-function type info (allocated in type section pass, freed at end)
     u8 **all_vtypes = (u8 **)ns_malloc((szt)n_fns * sizeof(u8 *));
+    u8 **all_unsigneds = (u8 **)ns_malloc((szt)n_fns * sizeof(u8 *));
     i32  *all_nvals = (i32  *)ns_malloc((szt)n_fns * sizeof(i32));
     memset(all_vtypes, 0, (szt)n_fns * sizeof(u8 *));
+    memset(all_unsigneds, 0, (szt)n_fns * sizeof(u8 *));
     memset(all_nvals,  0, (szt)n_fns * sizeof(i32));
 
     u8 *buf = ns_null;
@@ -1230,19 +2072,29 @@ ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
     for (i32 i = 0; i < 4; i++) ns_array_push(buf, ns_wasm_version[i]);
 
     // Type section (also populates all_vtypes / all_nvals)
-    ns_wasm_build_type_section(&buf, ssa, all_vtypes, all_nvals);
+    ns_wasm_build_type_section(&buf, &host, all_vtypes, all_unsigneds, all_nvals);
+
+    ns_wasm_build_import_section(&buf, &host);
 
     // Function section
-    ns_wasm_build_function_section(&buf, n_fns);
+    ns_wasm_build_function_section(&buf, n_imports, n_fns);
+
+    ns_wasm_build_memory_section(&buf, heap_start);
+    ns_wasm_build_global_section(&buf, &host, heap_start);
 
     // Export section
-    ns_wasm_build_export_section(&buf, ssa);
+    ns_wasm_build_export_section(&buf, &host);
+    ns_wasm_build_element_section(&buf);
 
     // Code section
-    ns_wasm_build_code_section(&buf, ssa, all_vtypes, all_nvals);
+    ns_wasm_build_code_section(&buf, &host, all_vtypes, all_unsigneds, all_nvals);
+
+    ns_wasm_build_data_section(&buf, data);
+    ns_wasm_build_shader_custom_section(&buf, ssa);
 
     // Write output file
-    FILE *f = fopen(output_path.data, "wb");
+    ns_str temporary = ns_str_concat(output_path, ns_str_cstr(".tmp"));
+    FILE *f = fopen(temporary.data, "wb");
     ns_return_bool ret;
     if (!f) {
         ret = ns_return_error(bool, ns_code_loc_nil, NS_ERR_RUNTIME, "failed to open wasm output file");
@@ -1252,17 +2104,30 @@ ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
         if (written != ns_array_length(buf)) {
             ret = ns_return_error(bool, ns_code_loc_nil, NS_ERR_RUNTIME, "failed to write wasm output");
         } else {
-            ret = ns_return_ok(bool, true);
+#if defined(_WIN32)
+            remove(output_path.data);
+#endif
+            if (rename(temporary.data, output_path.data) != 0) {
+                ret = ns_return_error(bool, ns_code_loc_nil, NS_ERR_RUNTIME, "failed to replace wasm output");
+            } else {
+                ret = ns_return_ok(bool, true);
+            }
         }
     }
+    if (ns_return_is_error(ret)) remove(temporary.data);
 
     // Free per-function vtypes
     for (i32 i = 0; i < n_fns; i++) {
         if (all_vtypes[i]) ns_array_free(all_vtypes[i]);
+        if (all_unsigneds[i]) ns_array_free(all_unsigneds[i]);
     }
     ns_free(all_vtypes);
+    ns_free(all_unsigneds);
     ns_free(all_nvals);
     ns_array_free(buf);
+    ns_array_free(data);
+    ns_array_free(host.fns);
+    ns_str_free(temporary);
 
     return ret;
 }

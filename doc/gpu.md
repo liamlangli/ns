@@ -446,12 +446,16 @@ gpu_pass_end()
   one 64-bit root constant (the root address) + the shared descriptor heap.
   Barriers: enhanced barriers with a global scope between passes; split
   barriers via fence signals on the compute queue.
-- **WebGPU (nscode/web and a future native wasm target).** Portable tier:
+- **WebGPU (`target = "wasm"`).** Portable browser tier:
   pooled buffers in bind group 0, root struct in a uniform slot, textures
   patched into bind group 1 per draw using the transpiler's root reflection.
   No indirect-count draws; `gpu_draw_indirect` loops on the CPU or degrades
   to `draw_count` fixed submissions. Caps report no raw pointers, no async
-  compute.
+  compute. The generated `ns-wasm.js` middleware requests the adapter/device,
+  configures the full-page canvas, maps legacy and v2 imports to WebGPU
+  resources and command passes, and rebuilds after device loss. Build-time
+  WGSL and vertex reflection come from the Wasm `ns.shaders` custom section,
+  so the browser never compiles Nano Script source.
 - **Linux/null.** Same no-op fallback contract as v1: every call safe,
   `gpu_request_device` returns false, `gpu_caps()` returns 0.
 
@@ -480,8 +484,10 @@ Phase 3 — consumers. Port `lib/src/ui.c` (draw-list rendering collapses
 onto `gpu_frame_alloc` + one root struct) and `nscode/native`. Persistent
 compute shaders replace `gpu_dispatch_compute_source` in `dispatch_gpu`.
 
-Phase 4 — DX12 and WebGPU tiers, indirect + split barriers where caps
-allow.
+Phase 4 — browser and DX12 tiers. **Browser core landed.** Wasm projects use
+WebGPU for buffer/texture resources, render and compute submission, indirect
+commands, root data, and pre-transpiled WGSL metadata. DX12 and the remaining
+capability-dependent split-barrier work continue in this phase.
 
 Phase 5 — deprecate v1. `gpu_mesh`/`gpu_binding`/`gpu_pipeline_layout*`
 first become pure-ns compatibility wrappers over v2 in `lib/gpu.ns`, then

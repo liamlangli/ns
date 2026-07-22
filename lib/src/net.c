@@ -70,6 +70,9 @@ int net_tcp_listen(int port) {
 
     int yes = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
+#ifdef SO_NOSIGPIPE
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&yes, sizeof(yes));
+#endif
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -93,6 +96,10 @@ int net_tcp_accept(int server_fd) {
     socklen_t len = sizeof(client);
     int fd = (int)accept(server_fd, (struct sockaddr *)&client, &len);
     if (fd < 0) return -1;
+#ifdef SO_NOSIGPIPE
+    int yes = 1;
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&yes, sizeof(yes));
+#endif
     return fd;
 }
 
@@ -189,7 +196,11 @@ int net_buf_byte(int i) {
 static int net_send_all(int fd, const char *data, int len) {
     int sent = 0;
     while (sent < len) {
+#ifdef MSG_NOSIGNAL
+        int n = (int)send(fd, data + sent, (size_t)(len - sent), MSG_NOSIGNAL);
+#else
         int n = (int)send(fd, data + sent, (size_t)(len - sent), 0);
+#endif
         if (n <= 0) return sent > 0 ? sent : -1;
         sent += n;
     }

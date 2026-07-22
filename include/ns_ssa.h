@@ -13,6 +13,14 @@ typedef enum {
     NS_SSA_OP_CAST,
     NS_SSA_OP_CALL,
     NS_SSA_OP_ARG,
+    NS_SSA_OP_GLOBAL_GET,
+    NS_SSA_OP_GLOBAL_SET,
+    NS_SSA_OP_ALLOC,
+    NS_SSA_OP_CLONE,
+    NS_SSA_OP_LOAD,
+    NS_SSA_OP_STORE,
+    NS_SSA_OP_ARRAY_NEW,
+    NS_SSA_OP_ARRAY_STORE,
     NS_SSA_OP_MEMBER,
     NS_SSA_OP_INDEX,
     NS_SSA_OP_NEG,
@@ -53,6 +61,9 @@ typedef struct ns_ssa_inst {
     i32 ast;
     ns_type type;
     ns_str name;
+    // Source namespace for a resolved direct call (for example "std" or
+    // "gpu"). Empty for project-local functions.
+    ns_str module;
     ns_token_t token;
 } ns_ssa_inst;
 
@@ -69,12 +80,40 @@ typedef struct ns_ssa_fn {
     ns_str name;
     i32 ast;
     i32 entry;
+    ns_type *params;
+    ns_type ret;
     ns_ssa_block *blocks;
     ns_ssa_inst *insts;
 } ns_ssa_fn;
 
+typedef struct ns_ssa_import {
+    ns_str module;
+    ns_str name;
+    ns_type *params;
+    ns_type ret;
+} ns_ssa_import;
+
+typedef struct ns_ssa_global {
+    ns_str name;
+    ns_type type;
+} ns_ssa_global;
+
+typedef struct ns_ssa_shader {
+    u32 id;
+    i32 stage;
+    ns_str name;
+    ns_str wgsl;
+    i32 vertex_stride;
+    i32 *vertex_offsets;
+    i32 *vertex_sizes;
+} ns_ssa_shader;
+
 typedef struct ns_ssa_module {
+    ns_ast_ctx *ctx;
     ns_ssa_fn *fns;
+    ns_ssa_import *imports;
+    ns_ssa_global *globals;
+    ns_ssa_shader *shaders;
     // Generated constants (for example auto-valued enum members) must remain
     // alive until all machine-code/WebAssembly emitters have consumed the SSA.
     ns_str *owned_strings;

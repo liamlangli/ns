@@ -41,7 +41,9 @@ lit GPU_CULL_BACK = 2
 
 // Acquire the platform GPU device for `v`. Returns true on success. On platforms
 // without a backend this returns false.
-ref fn gpu_request_device(v: ref view) bool
+// `nil` selects a headless/default device. Native view-backed applications may
+// still pass their view handle; browser Wasm projects use the automatic canvas.
+ref fn gpu_request_device(v: any) bool
 ref fn gpu_destroy_device()
 
 // ---- scalar resource creation for ns FFI ----------------------------------

@@ -1,0 +1,97 @@
+mod wasm_dev
+
+use std
+use os
+use task
+
+ref fn wasm_dev_listen(port: i32) i32
+ref fn wasm_dev_bound_port(fd: i32) i32
+ref fn wasm_dev_accept(fd: i32) i32
+ref fn wasm_dev_recv_request(fd: i32) i32
+ref fn wasm_dev_is_reload() bool
+ref fn wasm_dev_serve_static(fd: i32, root: str) i32
+ref fn wasm_dev_upgrade(fd: i32) i32
+ref fn wasm_dev_send_text(fd: i32, text: str) i32
+ref fn wasm_dev_close(fd: i32) i32
+ref fn wasm_dev_fingerprint(root: str) u64
+ref fn wasm_dev_rebuild(root: str) bool
+
+fn wasm_dev_broadcast(clients: [i32], count: i32, text: str) i32 {
+    let write = 0
+    for i in 0 to count {
+        let client = clients[i]
+        if wasm_dev_send_text(client, text) == 0 {
+            clients[write] = client
+            write = write + 1
+        } else {
+            wasm_dev_close(client)
+        }
+    }
+    return write
+}
+
+fn wasm_dev_serve() {
+    let project_root = os_env("NS_WASM_ROOT")
+    let output_root = os_env("NS_WASM_BIN")
+    let requested_port = stof(os_env("NS_WASM_PORT")) as i32
+    let listener = wasm_dev_listen(requested_port)
+    if listener < 0 {
+        print(`failed to bind 127.0.0.1:{requested_port}\n`)
+        return
+    }
+    let port = wasm_dev_bound_port(listener)
+    print(`Nano Script Wasm dev server: http://127.0.0.1:{port}/\n`)
+
+    let clients = [i32](64)
+    let client_count = 0
+    let fingerprint = wasm_dev_fingerprint(project_root)
+    let pending = false
+    let changed_at: u64 = 0
+
+    loop true {
+        let client = wasm_dev_accept(listener)
+        if client >= 0 {
+            if wasm_dev_recv_request(client) == 0 {
+                if wasm_dev_is_reload() {
+                    if wasm_dev_upgrade(client) == 0 && client_count < 64 {
+                        clients[client_count] = client
+                        client_count = client_count + 1
+                    } else {
+                        wasm_dev_close(client)
+                    }
+                } else {
+                    wasm_dev_serve_static(client, output_root)
+                    wasm_dev_close(client)
+                }
+            } else {
+                wasm_dev_close(client)
+            }
+        }
+
+        let next_fingerprint = wasm_dev_fingerprint(project_root)
+        if next_fingerprint != fingerprint {
+            fingerprint = next_fingerprint
+            pending = true
+            changed_at = os_time_ns()
+        }
+        if pending && os_time_ns() - changed_at >= (100000000 as u64) {
+            pending = false
+            let build_fingerprint = fingerprint
+            let build_ok = wasm_dev_rebuild(project_root)
+            let after_build = wasm_dev_fingerprint(project_root)
+            if after_build != build_fingerprint {
+                // An edit landed while the synchronous compiler was running.
+                // Debounce and build the newest snapshot before notifying the
+                // browser, so no source revision is silently skipped.
+                fingerprint = after_build
+                pending = true
+                changed_at = os_time_ns()
+            } else if build_ok {
+                client_count = wasm_dev_broadcast(clients, client_count, "{\"type\":\"reload\"}")
+            } else {
+                client_count = wasm_dev_broadcast(clients, client_count, "{\"type\":\"build-error\"}")
+            }
+        }
+        sleep(10)
+    }
+}

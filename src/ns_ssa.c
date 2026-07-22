@@ -1,6 +1,7 @@
 #include "ns_ssa.h"
 #include "ns_os.h"
 #include "ns_vm.h"
+#include "ns_shader.h"
 
 #ifdef NS_DEBUG
     #define NS_SSA_REF_PATH "lib"
@@ -49,6 +50,7 @@ typedef struct ns_ssa_builder {
     .ast = (ast_i), \
     .type = ns_type_unknown, \
     .name = ns_str_null, \
+    .module = ns_str_null, \
     .token = (ns_token_t){0}, \
 })
 
@@ -128,6 +130,14 @@ ns_str ns_ssa_op_to_string(ns_ssa_op op) {
         ns_str_case(NS_SSA_OP_CAST)
         ns_str_case(NS_SSA_OP_CALL)
         ns_str_case(NS_SSA_OP_ARG)
+        ns_str_case(NS_SSA_OP_GLOBAL_GET)
+        ns_str_case(NS_SSA_OP_GLOBAL_SET)
+        ns_str_case(NS_SSA_OP_ALLOC)
+        ns_str_case(NS_SSA_OP_CLONE)
+        ns_str_case(NS_SSA_OP_LOAD)
+        ns_str_case(NS_SSA_OP_STORE)
+        ns_str_case(NS_SSA_OP_ARRAY_NEW)
+        ns_str_case(NS_SSA_OP_ARRAY_STORE)
         ns_str_case(NS_SSA_OP_MEMBER)
         ns_str_case(NS_SSA_OP_INDEX)
         ns_str_case(NS_SSA_OP_NEG)
@@ -275,6 +285,70 @@ static ns_bool ns_ssa_global_const_seen(ns_ssa_builder *b, ns_str name) {
     return false;
 }
 
+static i32 ns_ssa_global_index(ns_ssa_builder *b, ns_str name) {
+    for (i32 i = 0, l = (i32)ns_array_length(b->m->globals); i < l; ++i) {
+        if (ns_str_equals(b->m->globals[i].name, name)) return i;
+    }
+    return -1;
+}
+
+static ns_type ns_ssa_value_type(ns_ssa_builder *b, i32 value) {
+    if (value < 0) return ns_type_unknown;
+    for (i32 i = (i32)ns_array_length(b->fn->insts) - 1; i >= 0; --i) {
+        if (b->fn->insts[i].dst == value) return b->fn->insts[i].type;
+    }
+    return ns_type_unknown;
+}
+
+static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type);
+
+static i32 ns_ssa_wasm32_align(i32 offset, i32 size) {
+    i32 alignment = ns_min(4, size);
+    return alignment > 1 ? (offset + alignment - 1) & ~(alignment - 1) : offset;
+}
+
+static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field) {
+    i32 offset = 0;
+    for (i32 i = 0; i <= field; ++i) {
+        i32 size = ns_ssa_wasm32_size(b, st->st.fields[i].t);
+        offset = ns_ssa_wasm32_align(offset, size);
+        if (i == field) return offset;
+        offset += size;
+    }
+    return -1;
+}
+
+static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type) {
+    type = ns_enum_underlying_type(b->vm, type);
+    if (ns_type_is_ref(type) || ns_type_is_array(type) ||
+        ns_type_is(type, NS_TYPE_STRING) || ns_type_is(type, NS_TYPE_FN) ||
+        ns_type_is(type, NS_TYPE_TASK) || ns_type_is(type, NS_TYPE_ANY)) return 4;
+    if (ns_type_is(type, NS_TYPE_I8) || ns_type_is(type, NS_TYPE_U8)) return 1;
+    if (ns_type_is(type, NS_TYPE_I16) || ns_type_is(type, NS_TYPE_U16)) return 2;
+    if (ns_type_is(type, NS_TYPE_I64) || ns_type_is(type, NS_TYPE_U64) ||
+        ns_type_is(type, NS_TYPE_F64)) return 8;
+    if (ns_type_is(type, NS_TYPE_STRUCT)) {
+        ns_symbol *st = &b->vm->symbols[ns_type_index(type)];
+        i32 size = 0;
+        for (i32 i = 0, l = (i32)ns_array_length(st->st.fields); i < l; ++i) {
+            i32 field_size = ns_ssa_wasm32_size(b, st->st.fields[i].t);
+            size = ns_ssa_wasm32_align(size, field_size) + field_size;
+        }
+        return size;
+    }
+    return 4;
+}
+
+// Plain structs are values in Nano Script. The Wasm ABI represents them by a
+// linear-memory address, so copy their bytes whenever they cross an ordinary
+// value boundary. Reference-backed fields remain shared, as they do natively.
+static i32 ns_ssa_clone_struct(ns_ssa_builder *b, i32 value, i32 ast) {
+    ns_type type = ns_ssa_value_type(b, value);
+    if (!ns_type_is(type, NS_TYPE_STRUCT) || ns_type_is_ref(type)) return value;
+    return ns_ssa_emit_value(b, NS_SSA_OP_CLONE, value, ns_ssa_wasm32_size(b, type),
+                             type, ns_str_null, (ns_token_t){0}, ast);
+}
+
 static ns_bool ns_ssa_const_from_value(ns_ssa_builder *b, ns_value value, ns_token_t *token, ns_type *type) {
     if (ns_type_is(value.t, NS_TYPE_ENUM)) value = ns_eval_enum_underlying_value(b->vm, value);
     char text[96];
@@ -308,29 +382,6 @@ static ns_bool ns_ssa_const_from_value(ns_ssa_builder *b, ns_value value, ns_tok
     ns_array_push(b->m->owned_strings, token->val);
     *type = value.t;
     return true;
-}
-
-// Preserve the compiler's historical treatment of a top-level `let` whose
-// initializer is a single integer/bool literal. New constant expressions
-// should use `lit`; this compatibility path intentionally does not grow.
-static ns_bool ns_ssa_legacy_let_const(ns_ast_ctx *ctx, i32 expr, ns_token_t *token, ns_type *type) {
-    if (expr <= 0) return false;
-    ns_ast_t *n = &ctx->nodes[expr];
-    if (n->type == NS_AST_EXPR) return ns_ssa_legacy_let_const(ctx, n->expr.body, token, type);
-    if (n->type != NS_AST_PRIMARY_EXPR) return false;
-    ns_token_t t = n->primary_expr.token;
-    if (t.type == NS_TOKEN_INT_LITERAL) {
-        *token = t;
-        *type = ns_type_i32;
-        return true;
-    }
-    if (t.type == NS_TOKEN_TRUE || t.type == NS_TOKEN_FALSE) {
-        *token = (ns_token_t){.type = NS_TOKEN_INT_LITERAL,
-                              .val = t.type == NS_TOKEN_TRUE ? ns_str_cstr("1") : ns_str_cstr("0")};
-        *type = ns_type_bool;
-        return true;
-    }
-    return false;
 }
 
 static void ns_ssa_seed_global_consts(ns_ssa_builder *b) {
@@ -384,12 +435,28 @@ static void ns_ssa_collect_module_consts(ns_ssa_builder *b, ns_ast_ctx *ctx) {
             ns_symbol *symbol = ns_vm_find_symbol(b->vm, n->var_def.name.val, false);
             if (!symbol || symbol->type != NS_SYMBOL_VALUE || !symbol->is_lit) continue;
             if (!ns_ssa_const_from_value(b, symbol->val, &token, &type)) continue;
-        } else if (!ns_ssa_legacy_let_const(ctx, n->var_def.expr, &token, &type)) {
+        } else {
             continue;
         }
 
         ns_ssa_global_const global = {.name = n->var_def.name.val, .token = token, .type = type};
         ns_array_push(b->globals, global);
+    }
+}
+
+static void ns_ssa_collect_module_globals(ns_ssa_builder *b) {
+    for (i32 i = b->ctx->section_begin; i < b->ctx->section_end; ++i) {
+        ns_ast_t *n = &b->ctx->nodes[b->ctx->sections[i]];
+        if (n->type != NS_AST_VAR_DEF || n->var_def.is_lit ||
+            ns_ssa_global_const_seen(b, n->var_def.name.val)) continue;
+        ns_symbol *symbol = ns_vm_find_symbol(b->vm, n->var_def.name.val, false);
+        ns_type type = symbol && symbol->type == NS_SYMBOL_VALUE ? symbol->val.t : ns_type_unknown;
+        if (ns_type_is(type, NS_TYPE_UNKNOWN) && n->var_def.expr > 0) {
+            ns_return_type parsed = ns_vm_parse_expr(b->vm, b->ctx, n->var_def.expr, ns_type_infer);
+            if (!ns_return_is_error(parsed)) type = parsed.r;
+        }
+        if (ns_type_is(type, NS_TYPE_ENUM)) type = ns_enum_underlying_type(b->vm, type);
+        ns_array_push(b->m->globals, ((ns_ssa_global){.name = n->var_def.name.val, .type = type}));
     }
 }
 
@@ -428,9 +495,74 @@ static i32 ns_ssa_lower_primary(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
     if (token.type == NS_TOKEN_IDENTIFIER) {
         i32 idx = ns_ssa_env_find(b->env, token.val);
         if (idx >= 0) return b->env[idx].value;
+        i32 global = ns_ssa_global_index(b, token.val);
+        if (global >= 0) {
+            return ns_ssa_emit_value(b, NS_SSA_OP_GLOBAL_GET, -1, global,
+                                     b->m->globals[global].type, token.val, token, i);
+        }
+        for (i32 si = 0, sl = (i32)ns_array_length(b->m->shaders); si < sl; ++si) {
+            if (!ns_str_equals(b->m->shaders[si].name, token.val)) continue;
+            char literal[16];
+            i32 len = snprintf(literal, sizeof(literal), "%u", b->m->shaders[si].id);
+            ns_str owned = ns_str_range(ns_malloc((szt)len + 1), len);
+            memcpy(owned.data, literal, (szt)len);
+            owned.data[len] = '\0';
+            ns_array_push(b->m->owned_strings, owned);
+            ns_token_t id_token = {.type = NS_TOKEN_INT_LITERAL, .val = owned};
+            return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32, owned, id_token, i);
+        }
         return ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, -1, ns_type_unknown, token.val, token, i);
     }
-    return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_unknown, token.val, token, i);
+    ns_type type = n->primary_expr.t;
+    if (token.type == NS_TOKEN_STR_LITERAL || token.type == NS_TOKEN_STR_FORMAT) type = ns_type_str;
+    if (token.type == NS_TOKEN_TRUE || token.type == NS_TOKEN_FALSE) type = ns_type_bool;
+    return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, type, token.val, token, i);
+}
+
+static ns_bool ns_ssa_shader_name(ns_str name) {
+    return ns_str_starts_with(name, ns_str_cstr("vs_")) ||
+           ns_str_starts_with(name, ns_str_cstr("fs_")) ||
+           ns_str_starts_with(name, ns_str_cstr("ps_")) ||
+           ns_str_starts_with(name, ns_str_cstr("cs_"));
+}
+
+static ns_return_bool ns_ssa_collect_shaders(ns_ssa_builder *b) {
+    for (i32 i = 0, l = (i32)ns_array_length(b->vm->symbols); i < l; ++i) {
+        ns_symbol *symbol = &b->vm->symbols[i];
+        if (symbol->type != NS_SYMBOL_FN || !ns_ssa_shader_name(symbol->name) ||
+            (!ns_str_is_empty(symbol->lib) && !ns_str_equals(symbol->lib, ns_str_cstr("main")))) continue;
+        ns_shader_stage stage = ns_shader_stage_infer(b->vm, b->ctx, i);
+        if (stage == NS_SHADER_STAGE_AUTO) continue;
+        ns_return_str source = ns_shader_transpile(b->vm, b->ctx, i, NS_SHADER_WGSL, stage);
+        if (ns_return_is_error(source)) return ns_return_change_type(bool, source);
+        ns_ssa_shader shader = {.id = (u32)ns_array_length(b->m->shaders) + 1,
+                                .stage = stage, .name = symbol->name, .wgsl = source.r};
+        if (stage == NS_SHADER_STAGE_VERTEX && ns_array_length(symbol->fn.args) > 0 &&
+            ns_type_is(symbol->fn.args[0].val.t, NS_TYPE_STRUCT)) {
+            ns_symbol *input = &b->vm->symbols[ns_type_index(symbol->fn.args[0].val.t)];
+            shader.vertex_stride = ns_ssa_wasm32_size(b, symbol->fn.args[0].val.t);
+            for (i32 f = 0, fl = (i32)ns_array_length(input->st.fields); f < fl; ++f) {
+                ns_array_push(shader.vertex_offsets, ns_ssa_wasm32_field_offset(b, input, f));
+                ns_array_push(shader.vertex_sizes, ns_ssa_wasm32_size(b, input->st.fields[f].t));
+            }
+        }
+        ns_array_push(b->m->shaders, shader);
+    }
+    return ns_return_ok(bool, true);
+}
+
+static void ns_ssa_record_import(ns_ssa_builder *b, ns_symbol *symbol) {
+    if (!symbol || symbol->type != NS_SYMBOL_FN || ns_str_is_empty(symbol->lib)) return;
+    for (i32 i = 0, l = (i32)ns_array_length(b->m->imports); i < l; ++i) {
+        ns_ssa_import *import = &b->m->imports[i];
+        if (ns_str_equals(import->module, symbol->lib) && ns_str_equals(import->name, symbol->name)) return;
+    }
+    ns_ssa_import import = {.module = symbol->lib, .name = symbol->name,
+                            .ret = ns_enum_underlying_type(b->vm, symbol->fn.ret)};
+    for (i32 i = 0, l = (i32)ns_array_length(symbol->fn.args); i < l; ++i) {
+        ns_array_push(import.params, ns_enum_underlying_type(b->vm, symbol->fn.args[i].val.t));
+    }
+    ns_array_push(b->m->imports, import);
 }
 
 static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
@@ -442,9 +574,60 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
     }
 
     if (ln->type == NS_AST_PRIMARY_EXPR && ln->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
-        i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_COPY, rhs, -1, ns_type_unknown, ln->primary_expr.token.val, ln->primary_expr.token, i);
-        ns_ssa_env_bind(b, ln->primary_expr.token.val, dst, ns_type_unknown);
+        rhs = ns_ssa_clone_struct(b, rhs, i);
+        i32 local = ns_ssa_env_find(b->env, ln->primary_expr.token.val);
+        i32 global = ns_ssa_global_index(b, ln->primary_expr.token.val);
+        if (local < 0 && global >= 0) {
+            ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_GLOBAL_SET, i);
+            store.a = rhs;
+            store.c = global;
+            store.type = b->m->globals[global].type;
+            store.name = ln->primary_expr.token.val;
+            ns_ssa_emit_raw(b, store);
+            return rhs;
+        }
+        ns_type rhs_type = ns_ssa_value_type(b, rhs);
+        i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_COPY, rhs, -1, rhs_type, ln->primary_expr.token.val, ln->primary_expr.token, i);
+        ns_ssa_env_bind(b, ln->primary_expr.token.val, dst, rhs_type);
         return dst;
+    }
+
+    if (ln->type == NS_AST_INDEX_EXPR) {
+        i32 table = ns_ssa_lower_expr(b, ln->index_expr.table);
+        i32 index = ns_ssa_lower_expr(b, ln->index_expr.expr);
+        ns_type table_type = ns_ssa_value_type(b, table);
+        if (ns_type_is_array(table_type)) {
+            ns_type element = table_type;
+            element.array = false;
+            ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_ARRAY_STORE, i);
+            store.a = table;
+            store.b = rhs;
+            store.target0 = index;
+            store.c = ns_ssa_wasm32_size(b, element);
+            store.type = element;
+            ns_ssa_emit_raw(b, store);
+            return rhs;
+        }
+    }
+
+    if (ln->type == NS_AST_MEMBER_EXPR) {
+        i32 object = ns_ssa_lower_expr(b, ln->member_expr.left);
+        ns_type object_type = ns_ssa_value_type(b, object);
+        ns_ast_t *member = ns_ssa_unwrap_expr(b, ln->member_expr.right);
+        if (ns_type_is(object_type, NS_TYPE_STRUCT) && member && member->type == NS_AST_PRIMARY_EXPR) {
+            ns_symbol *st = &b->vm->symbols[ns_type_index(object_type)];
+            i32 field = ns_struct_field_index(st, member->primary_expr.token.val);
+            if (field >= 0) {
+                ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, i);
+                store.a = object;
+                store.b = rhs;
+                store.c = ns_ssa_wasm32_field_offset(b, st, field);
+                store.target0 = ns_ssa_wasm32_size(b, st->st.fields[field].t);
+                store.type = st->st.fields[field].t;
+                ns_ssa_emit_raw(b, store);
+                return rhs;
+            }
+        }
     }
 
     ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
@@ -475,7 +658,12 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             ns_ssa_emit_raw(b, trap);
             return -1;
         }
-        i32 dst = ns_ssa_emit_value(b, op, lhs, -1, ns_type_unknown, ns_str_null, n->binary_expr.op, i);
+        ns_type result_type = ns_ssa_value_type(b, lhs);
+        if (op == NS_SSA_OP_EQ || op == NS_SSA_OP_NE || op == NS_SSA_OP_LT || op == NS_SSA_OP_LE ||
+            op == NS_SSA_OP_GT || op == NS_SSA_OP_GE || op == NS_SSA_OP_AND || op == NS_SSA_OP_OR) {
+            result_type = ns_type_bool;
+        }
+        i32 dst = ns_ssa_emit_value(b, op, lhs, -1, result_type, ns_str_null, n->binary_expr.op, i);
         ns_ssa_inst *inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
         inst->b = rhs;
         return dst;
@@ -495,25 +683,34 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
     }
     case NS_AST_CALL_EXPR: {
         ns_type result_type = ns_type_unknown;
+        ns_str callee_name = ns_str_null;
+        ns_str callee_module = ns_str_null;
         ns_ast_t *callee_node = ns_ssa_unwrap_expr(b, n->call_expr.callee);
         if (callee_node && callee_node->type == NS_AST_PRIMARY_EXPR &&
             callee_node->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
             ns_symbol *symbol = ns_vm_find_symbol(b->vm, callee_node->primary_expr.token.val, false);
             if (symbol && symbol->type == NS_SYMBOL_FN) {
                 result_type = ns_enum_underlying_type(b->vm, symbol->fn.ret);
+                callee_name = symbol->name;
+                callee_module = symbol->lib;
+                ns_ssa_record_import(b, symbol);
             }
         }
         i32 callee = ns_ssa_lower_expr(b, n->call_expr.callee);
         i32 next = n->next;
         for (i32 ai = 0; ai < n->call_expr.arg_count && next > 0; ++ai) {
             i32 av = ns_ssa_lower_expr(b, next);
+            av = ns_ssa_clone_struct(b, av, next);
             ns_ssa_inst arg = NS_SSA_INST_INIT(NS_SSA_OP_ARG, next);
             arg.a = av;
             ns_ssa_emit_raw(b, arg);
             next = b->ctx->nodes[next].next;
         }
-        return ns_ssa_emit_value(b, NS_SSA_OP_CALL, callee, n->call_expr.arg_count,
-                                 result_type, ns_str_null, (ns_token_t){0}, i);
+        i32 value = ns_ssa_emit_value(b, NS_SSA_OP_CALL, callee, n->call_expr.arg_count,
+                                      result_type, callee_name, (ns_token_t){0}, i);
+        ns_ssa_inst *call = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
+        call->module = callee_module;
+        return value;
     }
     case NS_AST_CAST_EXPR: {
         i32 src = ns_ssa_lower_expr(b, n->cast_expr.expr);
@@ -536,19 +733,115 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             }
         }
         i32 obj = ns_ssa_lower_expr(b, n->member_expr.left);
+        ns_type object_type = ns_ssa_value_type(b, obj);
+        if (member && member->type == NS_AST_PRIMARY_EXPR &&
+            (ns_type_is_array(object_type) || ns_type_is(object_type, NS_TYPE_STRING)) &&
+            (ns_str_equals_STR(member->primary_expr.token.val, "len") ||
+             ns_str_equals_STR(member->primary_expr.token.val, "size") ||
+             ns_str_equals_STR(member->primary_expr.token.val, "cap"))) {
+            i32 offset = ns_str_equals_STR(member->primary_expr.token.val, "cap") && ns_type_is_array(object_type) ? 8 : 4;
+            return ns_ssa_emit_value(b, NS_SSA_OP_LOAD, obj, offset, ns_type_i32,
+                                     member->primary_expr.token.val, member->primary_expr.token, i);
+        }
+        if (ns_type_is(object_type, NS_TYPE_STRUCT) && member && member->type == NS_AST_PRIMARY_EXPR) {
+            ns_symbol *st = &b->vm->symbols[ns_type_index(object_type)];
+            i32 field = ns_struct_field_index(st, member->primary_expr.token.val);
+            if (field >= 0) {
+                i32 result = ns_ssa_emit_value(b, NS_SSA_OP_LOAD, obj,
+                                               ns_ssa_wasm32_field_offset(b, st, field),
+                                               st->st.fields[field].t, member->primary_expr.token.val,
+                                               member->primary_expr.token, i);
+                b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].target0 =
+                    ns_ssa_wasm32_size(b, st->st.fields[field].t);
+                return result;
+            }
+        }
         i32 field = ns_ssa_lower_expr(b, n->member_expr.right);
         i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_MEMBER, obj, -1, ns_type_unknown, ns_str_null, (ns_token_t){0}, i);
-        ns_ssa_inst *inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
-        inst->b = field;
+        b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = field;
         return dst;
     }
     case NS_AST_INDEX_EXPR: {
         i32 table = ns_ssa_lower_expr(b, n->index_expr.table);
         i32 idx = ns_ssa_lower_expr(b, n->index_expr.expr);
-        i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_INDEX, table, -1, ns_type_unknown, ns_str_null, (ns_token_t){0}, i);
+        ns_type table_type = ns_ssa_value_type(b, table);
+        ns_type element = ns_type_unknown;
+        i32 stride = 0;
+        if (ns_type_is_array(table_type)) {
+            element = table_type;
+            element.array = false;
+            stride = ns_ssa_wasm32_size(b, element);
+        } else if (ns_type_is(table_type, NS_TYPE_STRING)) {
+            element = ns_type_i32;
+            stride = 1;
+        }
+        i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_INDEX, table, stride, element, ns_str_null, (ns_token_t){0}, i);
         ns_ssa_inst *inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
         inst->b = idx;
         return dst;
+    }
+    case NS_AST_DESIG_EXPR: {
+        ns_symbol *st = ns_vm_find_symbol(b->vm, n->desig_expr.name.val, true);
+        if (!st || st->type != NS_SYMBOL_STRUCT) break;
+        i32 object = ns_ssa_emit_value(b, NS_SSA_OP_ALLOC, -1, ns_ssa_wasm32_size(b, st->st.st.t),
+                                       st->st.st.t, n->desig_expr.name.val, n->desig_expr.name, i);
+        ns_ast_t *field_node = n;
+        for (i32 field_i = 0; field_i < n->desig_expr.count; ++field_i) {
+            field_node = &b->ctx->nodes[field_node->next];
+            i32 resolved = field_node->field_def.rt.index;
+            i32 value = ns_ssa_lower_expr(b, field_node->field_def.expr);
+            ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, field_node->field_def.expr);
+            store.a = object;
+            store.b = value;
+            store.c = ns_ssa_wasm32_field_offset(b, st, resolved);
+            store.target0 = ns_ssa_wasm32_size(b, st->st.fields[resolved].t);
+            store.type = st->st.fields[resolved].t;
+            ns_ssa_emit_raw(b, store);
+        }
+        return object;
+    }
+    case NS_AST_ARRAY_EXPR: {
+        ns_type array_type = n->array_expr.rt;
+        if (ns_type_is(array_type, NS_TYPE_DICT) || ns_type_is(array_type, NS_TYPE_SET)) break;
+        ns_type element = array_type;
+        element.array = false;
+        i32 stride = ns_ssa_wasm32_size(b, element);
+        i32 count;
+        if (n->array_expr.literal) {
+            char count_text[24];
+            i32 count_len = snprintf(count_text, sizeof(count_text), "%d", n->array_expr.elem_count);
+            ns_str owned = ns_str_range(ns_malloc((szt)count_len + 1), count_len);
+            memcpy(owned.data, count_text, (szt)count_len + 1);
+            ns_array_push(b->m->owned_strings, owned);
+            count = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32, owned,
+                                      (ns_token_t){.type = NS_TOKEN_INT_LITERAL, .val = owned}, i);
+        } else {
+            count = ns_ssa_lower_expr(b, n->array_expr.count_expr);
+        }
+        i32 array = ns_ssa_emit_value(b, NS_SSA_OP_ARRAY_NEW, count, stride, array_type,
+                                      ns_str_null, (ns_token_t){0}, i);
+        if (n->array_expr.literal) {
+            i32 next = n->next;
+            for (i32 element_i = 0; element_i < n->array_expr.elem_count; ++element_i) {
+                i32 value = ns_ssa_lower_expr(b, next);
+                char index_text[24];
+                i32 index_len = snprintf(index_text, sizeof(index_text), "%d", element_i);
+                ns_str owned = ns_str_range(ns_malloc((szt)index_len + 1), index_len);
+                memcpy(owned.data, index_text, (szt)index_len + 1);
+                ns_array_push(b->m->owned_strings, owned);
+                i32 index = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32, owned,
+                                              (ns_token_t){.type = NS_TOKEN_INT_LITERAL, .val = owned}, next);
+                ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_ARRAY_STORE, next);
+                store.a = array;
+                store.b = value;
+                store.target0 = index;
+                store.c = stride;
+                store.type = element;
+                ns_ssa_emit_raw(b, store);
+                next = b->ctx->nodes[next].next;
+            }
+        }
+        return array;
     }
     case NS_AST_STR_FMT_EXPR:
         return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, n->str_fmt.fmt, (ns_token_t){0}, i);
@@ -558,6 +851,9 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
         return -1;
     }
     }
+    ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
+    ns_ssa_emit_raw(b, trap);
+    return -1;
 }
 
 // A phi records where each of its two inputs flows in from so a native backend
@@ -782,10 +1078,22 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
         i32 value = -1;
         if (n->var_def.expr > 0) {
             value = ns_ssa_lower_expr(b, n->var_def.expr);
+            value = ns_ssa_clone_struct(b, value, n->var_def.expr);
         } else {
             value = ns_ssa_emit_value(b, NS_SSA_OP_UNDEF, -1, -1, ns_type_unknown, n->var_def.name.val, n->var_def.name, i);
         }
-        ns_ssa_env_bind(b, n->var_def.name.val, value, ns_type_unknown);
+        i32 global = ns_ssa_global_index(b, n->var_def.name.val);
+        if (ns_str_equals(b->fn->name, ns_str_cstr("__module_init")) && global >= 0) {
+            ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_GLOBAL_SET, i);
+            store.a = value;
+            store.c = global;
+            store.type = b->m->globals[global].type;
+            store.name = n->var_def.name.val;
+            ns_ssa_emit_raw(b, store);
+        } else {
+            ns_type value_type = ns_ssa_value_type(b, value);
+            ns_ssa_env_bind(b, n->var_def.name.val, value, value_type);
+        }
     } break;
     case NS_AST_ASSERT_STMT: {
         i32 cond = ns_ssa_lower_expr(b, n->assert_stmt.expr);
@@ -797,6 +1105,7 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
         switch (n->jump_stmt.label.type) {
         case NS_TOKEN_RETURN: {
             i32 ret = n->jump_stmt.expr > 0 ? ns_ssa_lower_expr(b, n->jump_stmt.expr) : -1;
+            ret = ns_ssa_clone_struct(b, ret, n->jump_stmt.expr);
             ns_ssa_emit_ret(b, ret, i);
         } break;
         case NS_TOKEN_BREAK: {
@@ -868,6 +1177,15 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     fn.name = name;
     fn.ast = ast;
     fn.entry = 0;
+    ns_symbol *fn_symbol = ns_vm_find_symbol(b->vm, name, false);
+    fn.ret = fn_symbol && fn_symbol->type == NS_SYMBOL_FN
+        ? ns_enum_underlying_type(b->vm, fn_symbol->fn.ret) : ns_type_void;
+    ns_ast_t *definition = &b->ctx->nodes[ast];
+    i32 ret_ast = definition->type == NS_AST_FN_DEF ? definition->fn_def.ret :
+                  definition->type == NS_AST_OP_FN_DEF ? definition->ops_fn_def.ret : 0;
+    ns_type declared_ret = ns_ssa_type_from_label(b, ret_ast);
+    if (!ns_type_is(declared_ret, NS_TYPE_UNKNOWN)) fn.ret = declared_ret;
+    if (ns_type_is(fn.ret, NS_TYPE_INFER) || ns_type_is(fn.ret, NS_TYPE_UNKNOWN)) fn.ret = ns_type_void;
     ns_array_push(b->m->fns, fn);
     b->fn = &b->m->fns[ns_array_length(b->m->fns) - 1];
     b->block = ns_ssa_new_block(b, ast);
@@ -876,16 +1194,21 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     ns_array_free(b->env);
     b->env = NULL;
     b->loops = NULL;
-    ns_ssa_seed_global_consts(b);
-
     i32 arg = arg_head;
     for (i32 ai = 0; ai < arg_count && arg > 0; ++ai) {
         ns_ast_t *an = &b->ctx->nodes[arg];
-        ns_type arg_type = ns_ssa_type_from_label(b, an->arg.type);
+        ns_type arg_type = fn_symbol && fn_symbol->type == NS_SYMBOL_FN &&
+                           ai < (i32)ns_array_length(fn_symbol->fn.args)
+            ? ns_enum_underlying_type(b->vm, fn_symbol->fn.args[ai].val.t)
+            : ns_ssa_type_from_label(b, an->arg.type);
+        ns_array_push(b->fn->params, arg_type);
         i32 v = ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, ai, arg_type, an->arg.name.val, an->arg.name, arg);
         ns_ssa_env_bind(b, an->arg.name.val, v, arg_type);
         arg = an->next;
     }
+    // Parameters must occupy Wasm locals 0..n-1. Seed module literals only
+    // after parameter values have been allocated.
+    ns_ssa_seed_global_consts(b);
 
     ns_ssa_lower_compound(b, body);
     if (!b->fn->blocks[b->block].terminated) {
@@ -905,6 +1228,7 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
 
     ns_ssa_module *m = ns_malloc(sizeof(ns_ssa_module));
     memset(m, 0, sizeof(*m));
+    m->ctx = ctx;
 
     ns_ssa_builder b = {0};
     b.ctx = ctx;
@@ -936,6 +1260,12 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
     }
 
     ns_ssa_collect_module_consts(&b, ctx);
+    ns_ssa_collect_module_globals(&b);
+    ns_return_bool shaders = ns_ssa_collect_shaders(&b);
+    if (ns_return_is_error(shaders)) {
+        ns_ssa_module_free(m);
+        return ns_return_change_type(ptr, shaders);
+    }
 
     ns_bool has_init = false;
     i32 init_ast = 0;
@@ -963,6 +1293,7 @@ ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {
         fn.name = ns_str_cstr("__module_init");
         fn.ast = init_ast;
         fn.entry = 0;
+        fn.ret = ns_type_void;
         ns_array_push(m->fns, fn);
         b.fn = &m->fns[ns_array_length(m->fns) - 1];
         b.block = ns_ssa_new_block(&b, init_ast);
@@ -1004,8 +1335,20 @@ void ns_ssa_module_free(ns_ssa_module *m) {
         }
         ns_array_free(fn->blocks);
         ns_array_free(fn->insts);
+        ns_array_free(fn->params);
     }
     ns_array_free(m->fns);
+    for (i32 i = 0, l = (i32)ns_array_length(m->imports); i < l; ++i) {
+        ns_array_free(m->imports[i].params);
+    }
+    ns_array_free(m->imports);
+    ns_array_free(m->globals);
+    for (i32 i = 0, l = (i32)ns_array_length(m->shaders); i < l; ++i) {
+        ns_array_free(m->shaders[i].wgsl.data);
+        ns_array_free(m->shaders[i].vertex_offsets);
+        ns_array_free(m->shaders[i].vertex_sizes);
+    }
+    ns_array_free(m->shaders);
     for (i32 i = 0, l = (i32)ns_array_length(m->owned_strings); i < l; ++i) {
         ns_free(m->owned_strings[i].data);
     }

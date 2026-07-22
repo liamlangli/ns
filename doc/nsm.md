@@ -12,6 +12,8 @@ name = "example"
 version = "0.1.0"
 author = "Example Author <author@example.com>"
 type = "app"
+# Optional browser target; omit for a native project.
+# target = "wasm"
 description = "Example module."
 source = "src"
 entry = "main.ns"
@@ -45,6 +47,13 @@ project uses that project's recursive source set. A file outside a project is
 built as a standalone script and may link local sibling modules it imports. Use
 `-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact
 kind.
+
+For a browser project, keep `type = "app"` and set `target = "wasm"`.
+`ns build` then emits a browser bundle (`.wasm`, `ns-wasm.js`, and
+`index.html`) under `bin`, while `ns run --port 8080` builds and starts the
+loopback-only live-reload server. Port 0 selects an available port. See
+`doc/wasm.md` for the lifecycle, browser ABI, WebGPU middleware, and supported
+language subset.
 
 Running `ns update [path]` finds the nearest `ns.mod` and migrates project
 metadata to the format bundled with the current executable. It preserves

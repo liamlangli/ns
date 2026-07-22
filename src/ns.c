@@ -60,6 +60,8 @@ typedef struct ns_compile_option_t {
     ns_str entry;
     ns_str output;
     ns_str filename;
+    i32 port;
+    ns_bool port_set;
 } ns_compile_option_t;
 
 ns_compile_option_t parse_options(i32 argc, i8** argv) {
@@ -117,8 +119,16 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
         } else if (strcmp(argv[i], "--shader-bin") == 0) {
             option.shader_bin = true;
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "%s needs a path.\n", argv[i]);
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
+        } else if (strcmp(argv[i], "--port") == 0) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--port needs a number.\n");
+            char *end = ns_null;
+            long port = strtol(argv[++i], &end, 10);
+            if (!end || *end || port < 0 || port > 65535) ns_exit(1, "usage", "invalid port %s.\n", argv[i]);
+            option.port = (i32)port;
+            option.port_set = true;
         } else {
             if (option.filename.len == 0) {
                 option.filename = ns_str_cstr(argv[i]); // unmatched argument is treated as filename
@@ -145,7 +155,7 @@ void ns_help() {
     printf("  --macho-o         emit mach-o object file (.o, arm64)\n");
     printf("  --wasm            emit webassembly module (.wasm)\n");
     printf("  --pe              emit windows pe executable (.exe, amd64)\n");
-    printf("  --shader <target> transpile shader fns to msl | glsl | hlsl source\n");
+    printf("  --shader <target> transpile shader fns to msl | glsl | hlsl | wgsl source\n");
     printf("  --entry <name>    shader entry fn (default: every vs_*/fs_*/ps_*/cs_* fn)\n");
     printf("  --shader-bin      also compile the shader source when the platform\n");
     printf("                    toolchain is installed (xcrun metal / glslc / dxc)\n");
@@ -159,7 +169,8 @@ void ns_help() {
     printf("                    writes ns.mod, main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
-    printf("  run  [file.ns]    run cwd/ns.mod, otherwise cwd/main.ns, or an explicit input\n");
+    printf("  run  [file.ns]    run native source; wasm projects build and serve bin/\n");
+    printf("       --port <n>    wasm dev-server port (default 8080; 0 chooses an available port)\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
@@ -1052,6 +1063,7 @@ typedef struct ns_build_input {
     ns_str scope;
     ns_str name;
     ns_str module_type;
+    ns_str target;
     ns_str icon;
     ns_bool has_manifest;
 } ns_build_input;
@@ -1115,6 +1127,32 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
     return ns_path_join(bin, artifact);
 }
 
+static ns_str ns_wasm_safe_name(ns_str name) {
+    ns_str safe = ns_str_null;
+    for (i32 i = 0; i < name.len; ++i) {
+        i8 c = name.data[i];
+        ns_bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                     (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+        i8 value = ok ? c : '-';
+        ns_str_append_len(&safe, &value, 1);
+    }
+    if (safe.len == 0) ns_str_append_len(&safe, "app", 3);
+    ns_array_push(safe.data, '\0');
+    return safe;
+}
+
+static ns_str ns_path_basename_with_extension(ns_str path) {
+    i32 start = 0;
+    for (i32 i = 0; i < path.len; ++i) {
+        if (path.data[i] == '/' || path.data[i] == '\\') start = i + 1;
+    }
+    return ns_str_slice(path, start, path.len);
+}
+
+static ns_bool ns_build_target_is_wasm(ns_build_input *in) {
+    return ns_str_equals(in->target, ns_str_cstr("wasm"));
+}
+
 static void ns_mkdir_one(ns_str dir) {
     if (dir.len == 0) return;
 #if defined(_WIN32)
@@ -1152,6 +1190,97 @@ static void ns_write_text_file(ns_str path, ns_str text) {
         ns_exit(1, "build", "failed to write %.*s.\n", path.len, path.data);
     }
     fclose(file);
+}
+
+static void ns_copy_file_contents(ns_str src, ns_str dst) {
+    ns_str data = ns_os_read_file(src);
+    if (data.data == ns_null) ns_exit(1, "build", "failed to read %.*s.\n", src.len, src.data);
+    ns_build_ensure_output_dir(dst);
+    FILE *file = fopen(dst.data, "wb");
+    if (!file || (data.len > 0 && fwrite(data.data, 1, data.len, file) != (size_t)data.len)) {
+        if (file) fclose(file);
+        ns_str_free(data);
+        ns_exit(1, "build", "failed to copy %.*s to %.*s.\n", src.len, src.data, dst.len, dst.data);
+    }
+    fclose(file);
+    ns_str_free(data);
+}
+
+static void ns_copy_tree(ns_str src, ns_str dst) {
+    if (!ns_is_dir(src)) return;
+    ns_mkdir_p(dst);
+#if defined(_WIN32)
+    ns_str pattern = ns_path_join(src, ns_str_cstr("*"));
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern.data, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+        ns_str from = ns_path_join(src, ns_str_cstr(fd.cFileName));
+        ns_str to = ns_path_join(dst, ns_str_cstr(fd.cFileName));
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ns_copy_tree(from, to);
+        else ns_copy_file_contents(from, to);
+        ns_str_free(from); ns_str_free(to);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR *dir = opendir(src.data);
+    if (!dir) return;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != ns_null) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        ns_str from = ns_path_join(src, ns_str_cstr(entry->d_name));
+        ns_str to = ns_path_join(dst, ns_str_cstr(entry->d_name));
+        if (ns_is_dir(from)) ns_copy_tree(from, to);
+        else ns_copy_file_contents(from, to);
+        ns_str_free(from); ns_str_free(to);
+    }
+    closedir(dir);
+#endif
+}
+
+static void ns_remove_tree(ns_str path) {
+#if defined(_WIN32)
+    DWORD attributes = GetFileAttributesA(path.data);
+    if (attributes == INVALID_FILE_ATTRIBUTES) return;
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) && !(attributes & FILE_ATTRIBUTE_REPARSE_POINT)) {
+        ns_str pattern = ns_path_join(path, ns_str_cstr("*"));
+        WIN32_FIND_DATAA fd;
+        HANDLE h = FindFirstFileA(pattern.data, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0) continue;
+                ns_str child = ns_path_join(path, ns_str_cstr(fd.cFileName));
+                ns_remove_tree(child);
+                ns_str_free(child);
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+        ns_str_free(pattern);
+        RemoveDirectoryA(path.data);
+    } else {
+        DeleteFileA(path.data);
+    }
+#else
+    struct stat st;
+    if (lstat(path.data, &st) != 0) return;
+    if (S_ISDIR(st.st_mode)) {
+        DIR *dir = opendir(path.data);
+        if (dir) {
+            struct dirent *entry;
+            while ((entry = readdir(dir)) != ns_null) {
+                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+                ns_str child = ns_path_join(path, ns_str_cstr(entry->d_name));
+                ns_remove_tree(child);
+                ns_str_free(child);
+            }
+            closedir(dir);
+        }
+        rmdir(path.data);
+    } else {
+        remove(path.data);
+    }
+#endif
 }
 
 static void ns_str_append_cstr(ns_str *s, const char *cstr) {
@@ -1293,10 +1422,105 @@ static ns_build_input ns_build_input_resolve(ns_str path) {
     if (in.has_manifest) {
         in.name = ns_build_manifest_value(in.scope, "name");
         in.module_type = ns_build_manifest_value(in.scope, "type");
+        in.target = ns_build_manifest_value(in.scope, "target");
         in.icon = ns_path_resolve(in.scope, ns_build_manifest_value(in.scope, "icon"));
     }
     if (in.name.data == ns_null) in.name = ns_path_filename(in.filename);
     return in;
+}
+
+static ns_str ns_project_current_executable(void);
+static ns_bool ns_build_type_is_app(ns_str t);
+
+static ns_str ns_wasm_runtime_source(void) {
+    ns_str executable = ns_project_current_executable();
+    ns_str bin = ns_path_dirname_safe(executable);
+    ns_str root = ns_path_parent(bin);
+    ns_str source = ns_path_join(root, ns_str_cstr("lib/ns-wasm.js"));
+    if (ns_file_exists(source)) return source;
+    ns_str_free(source);
+    source = ns_path_join(root, ns_str_cstr("ref/ns-wasm.js"));
+    if (ns_file_exists(source)) return source;
+    ns_exit(1, "build", "installed wasm middleware ns-wasm.js was not found.\n");
+    return ns_str_null;
+}
+
+static ns_ssa_fn *ns_wasm_find_function(ns_ssa_module *ssa, const char *name) {
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
+        if (ns_str_equals(ssa->fns[i].name, ns_str_cstr((char *)name))) return &ssa->fns[i];
+    }
+    return ns_null;
+}
+
+static void ns_wasm_validate_browser_entry(ns_ssa_module *ssa) {
+    ns_ssa_fn *main_fn = ns_wasm_find_function(ssa, "main");
+    if (!main_fn) ns_exit(1, "build", "wasm app requires fn main() or fn main() i32.\n");
+    if (ns_array_length(main_fn->params) != 0 ||
+        (!ns_type_is(main_fn->ret, NS_TYPE_VOID) && !ns_type_is(main_fn->ret, NS_TYPE_I32))) {
+        ns_exit(1, "build", "wasm main must have signature fn main() or fn main() i32.\n");
+    }
+    ns_ssa_fn *frame = ns_wasm_find_function(ssa, "frame");
+    if (frame && (ns_array_length(frame->params) != 3 ||
+                  !ns_type_is(frame->params[0], NS_TYPE_F64) ||
+                  !ns_type_is(frame->params[1], NS_TYPE_I32) ||
+                  !ns_type_is(frame->params[2], NS_TYPE_I32) ||
+                  !ns_type_is(frame->ret, NS_TYPE_VOID))) {
+        ns_exit(1, "build", "optional wasm frame must be fn frame(time_ms: f64, width: i32, height: i32).\n");
+    }
+}
+
+static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_kind) {
+    if (!in->has_manifest) ns_exit(1, "build", "target = \"wasm\" requires ns.mod.\n");
+    if (!ns_build_type_is_app(in->module_type) || requested_kind == NS_BUILD_LIB) {
+        ns_exit(1, "build", "wasm v1 supports type = \"app\" only.\n");
+    }
+    ns_str safe = ns_wasm_safe_name(in->name);
+    if (output.len == 0) {
+        ns_str filename = ns_str_concat(safe, ns_str_cstr(".wasm"));
+        output = ns_path_join(ns_path_join(in->scope, ns_str_cstr("bin")), filename);
+    }
+    ns_build_ensure_output_dir(output);
+    ns_ssa_module *ssa = ns_compile_build_input(in);
+    ns_wasm_validate_browser_entry(ssa);
+
+    ns_str temporary = ns_str_concat(output, ns_str_cstr(".tmp"));
+    ns_return_bool emitted = ns_wasm_emit(ssa, temporary);
+    ns_ssa_module_free(ssa);
+    if (ns_return_is_error(emitted)) {
+        remove(temporary.data);
+        ns_return_assert(emitted);
+    }
+#if defined(_WIN32)
+    remove(output.data);
+#endif
+    if (rename(temporary.data, output.data) != 0) {
+        remove(temporary.data);
+        ns_exit(1, "build", "failed to replace %.*s.\n", output.len, output.data);
+    }
+
+    ns_str out_dir = ns_path_dirname_safe(output);
+    ns_str runtime_dst = ns_path_join(out_dir, ns_str_cstr("ns-wasm.js"));
+    ns_str runtime_src = ns_wasm_runtime_source();
+    ns_copy_file_contents(runtime_src, runtime_dst);
+
+    ns_str artifact = ns_path_basename_with_extension(output);
+    ns_str html = ns_str_null;
+    ns_str_append_cstr(&html, "<!doctype html>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
+    ns_str_append_cstr(&html, "<title>Nano Script</title>\n<style>html,body,canvas{width:100%;height:100%;margin:0;display:block;background:#111}</style>\n");
+    ns_str_append_cstr(&html, "<canvas id=\"ns-canvas\"></canvas>\n<script type=\"module\">import { boot } from './ns-wasm.js'; boot('./");
+    ns_str_append_len(&html, artifact.data, artifact.len);
+    ns_str_append_cstr(&html, "');</script>\n");
+    ns_array_push(html.data, '\0');
+    ns_write_text_file(ns_path_join(out_dir, ns_str_cstr("index.html")), html);
+
+    ns_str source_dir = ns_project_source_dir(in->scope);
+    ns_str assets = ns_path_join(source_dir, ns_str_cstr("assets"));
+    ns_str output_assets = ns_path_join(out_dir, ns_str_cstr("assets"));
+    if (!ns_str_equals(assets, output_assets)) {
+        ns_remove_tree(output_assets);
+        ns_copy_tree(assets, output_assets);
+    }
+    ns_info("build", "wasm bundle %.*s\n", out_dir.len, out_dir.data);
 }
 
 static ns_bool ns_build_type_is_library(ns_str t) {
@@ -1617,6 +1841,14 @@ static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module
 
 void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_build_input in = ns_build_input_resolve(path);
+    if (in.target.len > 0 && !ns_build_target_is_wasm(&in)) {
+        ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
+                in.target.len, in.target.data);
+    }
+    if (ns_build_target_is_wasm(&in)) {
+        ns_exec_build_wasm(&in, output, requested_kind);
+        return;
+    }
     ns_build_kind kind = ns_build_resolve_kind(&in, requested_kind);
     if (output.len == 0) output = ns_build_default_output(&in, kind);
     ns_build_ensure_output_dir(output);
@@ -2268,7 +2500,7 @@ void ns_exec_update(ns_str path) {
     ns_str_free(root);
 }
 
-void ns_exec_run(ns_str filename) {
+void ns_exec_run(ns_str filename, i32 port, ns_bool port_set) {
     // No file argument: prefer cwd/ns.mod, then fall back to cwd/main.ns.
     ns_bool implicit = filename.len == 0;
     if (implicit) filename = ns_default_run_entry();
@@ -2293,6 +2525,36 @@ void ns_exec_run(ns_str filename) {
     if (!project) {
         ns_return_value ret_v = ns_eval(&vm, source, filename);
         if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
+        return;
+    }
+
+    ns_str target = ns_build_manifest_value(scope, "target");
+    if (target.len > 0 && !ns_str_equals(target, ns_str_cstr("wasm"))) {
+        ns_exit(1, "run", "unsupported project target `%.*s`; expected `wasm` or omit target for a native run.\n",
+                target.len, target.data);
+    }
+    if (ns_str_equals(target, ns_str_cstr("wasm"))) {
+        setvbuf(stdout, ns_null, _IOLBF, 0);
+        ns_exec_build(scope, ns_str_null, NS_BUILD_AUTO);
+        ns_str output_root = ns_path_join(scope, ns_str_cstr("bin"));
+        ns_str executable = ns_project_current_executable();
+        char port_text[16];
+        snprintf(port_text, sizeof(port_text), "%d", port_set ? port : 8080);
+#if defined(_WIN32)
+        _putenv_s("NS_WASM_ROOT", scope.data);
+        _putenv_s("NS_WASM_BIN", output_root.data);
+        _putenv_s("NS_WASM_PORT", port_text);
+        _putenv_s("NS_EXECUTABLE", executable.data);
+#else
+        setenv("NS_WASM_ROOT", scope.data, 1);
+        setenv("NS_WASM_BIN", output_root.data, 1);
+        setenv("NS_WASM_PORT", port_text, 1);
+        setenv("NS_EXECUTABLE", executable.data, 1);
+#endif
+        ns_return_value served = ns_eval(&vm,
+            ns_str_cstr("use wasm_dev\nfn main() { wasm_dev_serve() }\n"),
+            ns_str_cstr("<wasm-dev-server>"));
+        if (ns_return_is_error(served)) ns_return_assert(served);
         return;
     }
 
@@ -2528,7 +2790,7 @@ void ns_exec_shader(ns_str filename, ns_str target_s, ns_str entry, ns_str outpu
     if (filename.len == 0) ns_exit(1, "shader", "no input file.\n");
     ns_shader_target target = ns_shader_target_from_str(target_s);
     if (target == NS_SHADER_TARGET_UNKNOWN) {
-        ns_exit(1, "shader", "unknown target %.*s (expected msl | glsl | hlsl).\n", target_s.len, target_s.data);
+        ns_exit(1, "shader", "unknown target %.*s (expected msl | glsl | hlsl | wgsl).\n", target_s.len, target_s.data);
     }
 
     ns_str source = ns_os_read_file(filename);
@@ -2618,7 +2880,7 @@ i32 main(i32 argc, i8** argv) {
     ns_configure_vm_runtime_paths(&vm);
 
     if (option.run) {
-        ns_exec_run(option.filename);
+        ns_exec_run(option.filename, option.port, option.port_set);
     } else if (option.test) {
         ns_exec_test(option.filename);
     } else if (option.build) {

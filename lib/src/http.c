@@ -14,6 +14,7 @@
     #include <winsock2.h>
 #else
     #include <sys/socket.h>
+    #include <sys/time.h>
 #endif
 
 // ---- parsed-request state -------------------------------------------------
@@ -63,13 +64,26 @@ static int http_method_code(const char *m, int len) {
 
 int http_recv_request(int fd) {
     char buf[8192];
-    int n = (int)recv(fd, buf, sizeof(buf) - 1, 0);
-    if (n <= 0) {
-        g_method = -1;
-        g_path_len = 0;
-        return -1;
+    int n = 0;
+#ifdef NS_WIN
+    DWORD timeout = 2000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout));
+#else
+    struct timeval timeout = {.tv_sec = 2};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+#endif
+    while (n < (int)sizeof(buf) - 1) {
+        int received = (int)recv(fd, buf + n, sizeof(buf) - 1 - (size_t)n, 0);
+        if (received <= 0) {
+            g_method = -1;
+            g_path_len = 0;
+            return -1;
+        }
+        n += received;
+        buf[n] = '\0';
+        if (strstr(buf, "\r\n\r\n")) break;
     }
-    buf[n] = '\0';
+    if (!strstr(buf, "\r\n\r\n")) return -1;
 
     // Request line: METHOD SP TARGET SP VERSION CRLF
     int i = 0;
@@ -144,6 +158,7 @@ int http_send_response(int fd, int status, const char *content_type,
                         "HTTP/1.1 %d %s\r\n"
                         "Content-Type: %s\r\n"
                         "Content-Length: %d\r\n"
+                        "Cache-Control: no-store\r\n"
                         "Connection: close\r\n"
                         "\r\n",
                         status, http_status_text(status), content_type, body_len);
@@ -151,6 +166,7 @@ int http_send_response(int fd, int status, const char *content_type,
         hlen = snprintf(header, sizeof(header),
                         "HTTP/1.1 %d %s\r\n"
                         "Content-Length: %d\r\n"
+                        "Cache-Control: no-store\r\n"
                         "Connection: close\r\n"
                         "\r\n",
                         status, http_status_text(status), body_len);
@@ -171,10 +187,12 @@ int http_send_file(int fd, const char *path) {
                         "HTTP/1.1 200 OK\r\n"
                         "Content-Type: %s\r\n"
                         "Content-Length: %d\r\n"
+                        "Cache-Control: no-store\r\n"
                         "Connection: close\r\n"
                         "\r\n",
                         http_content_type(path), size);
     if (net_send(fd, header, hlen) < 0) return -1;
+    if (g_method == NS_HTTP_HEAD) return 0;
     return net_send_file(fd, path);
 }
 

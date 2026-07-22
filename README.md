@@ -23,6 +23,16 @@ from that project directory in VS Code's integrated task terminal. If the file
 is not part of a manifest project, it passes the active file directly. Set
 `nslang.executablePath` when the `ns` executable is not available on `PATH`.
 
+## Build a Wasm + WebGPU project
+
+Set `target = "wasm"` beside `type = "app"` in `ns.mod`. `ns build` produces
+the browser-ready Wasm, JavaScript middleware, and HTML shell under `bin/`.
+`ns run --port 0` builds, binds a loopback development server, prints the
+selected URL, and reloads connected browsers after successful edits while
+preserving the last good bundle after build errors. WebGPU is initialized by
+the standard middleware; see [the Wasm project guide](doc/wasm.md) and
+[sample/wasm-webgpu](sample/wasm-webgpu).
+
 ## Design Goal
 - Minimal syntax and keywords for ease of learning and use.
 - Supports both interpretation and compilation.

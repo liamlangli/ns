@@ -85,6 +85,7 @@ static ns_str ns_shader_literal_body(ns_token_t t) {
 }
 
 static const char *ns_shader_half_type(ns_shader_target target) {
+    if (target == NS_SHADER_WGSL) return "f32";
     return target == NS_SHADER_GLSL_VULKAN ? "float16_t" : "half";
 }
 
@@ -102,6 +103,7 @@ ns_shader_target ns_shader_target_from_str(ns_str s) {
     if (ns_str_equals(s, ns_str_cstr("msl")) || ns_str_equals(s, ns_str_cstr("metal"))) return NS_SHADER_MSL;
     if (ns_str_equals(s, ns_str_cstr("glsl")) || ns_str_equals(s, ns_str_cstr("vulkan")) || ns_str_equals(s, ns_str_cstr("spirv"))) return NS_SHADER_GLSL_VULKAN;
     if (ns_str_equals(s, ns_str_cstr("hlsl")) || ns_str_equals(s, ns_str_cstr("dx12")) || ns_str_equals(s, ns_str_cstr("dxil"))) return NS_SHADER_HLSL;
+    if (ns_str_equals(s, ns_str_cstr("wgsl")) || ns_str_equals(s, ns_str_cstr("webgpu"))) return NS_SHADER_WGSL;
     return NS_SHADER_TARGET_UNKNOWN;
 }
 
@@ -110,6 +112,7 @@ ns_str ns_shader_target_name(ns_shader_target t) {
     case NS_SHADER_MSL: return ns_str_cstr("msl");
     case NS_SHADER_GLSL_VULKAN: return ns_str_cstr("glsl");
     case NS_SHADER_HLSL: return ns_str_cstr("hlsl");
+    case NS_SHADER_WGSL: return ns_str_cstr("wgsl");
     default: return ns_str_cstr("unknown");
     }
 }
@@ -139,6 +142,15 @@ static ns_bool ns_shader_is_simd(ns_symbol *s) {
 }
 
 static const char *ns_shader_simd_name(ns_shader_target target, i32 dim) {
+    if (target == NS_SHADER_WGSL) {
+        switch (dim) {
+        case 2: return "vec2<f32>";
+        case 3: return "vec3<f32>";
+        case 4: return "vec4<f32>";
+        case 16: return "mat4x4<f32>";
+        default: return "f32";
+        }
+    }
     switch (dim) {
     case 2: return target == NS_SHADER_GLSL_VULKAN ? "vec2" : "float2";
     case 3: return target == NS_SHADER_GLSL_VULKAN ? "vec3" : "float3";
@@ -188,13 +200,13 @@ static ns_return_void ns_shader_type_name(ns_shader_emit *e, ns_type t, ns_str *
     if (ns_type_is_array(t)) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: array types are not supported in shader fns.");
     switch (t.type) {
     case NS_TYPE_F32:
-    case NS_TYPE_F64: ns_shader_cstr(dst, "float"); break; // f64 demoted: shaders are f32
+    case NS_TYPE_F64: ns_shader_cstr(dst, e->target == NS_SHADER_WGSL ? "f32" : "float"); break; // f64 demoted: shaders are f32
     case NS_TYPE_I8:
     case NS_TYPE_I16:
-    case NS_TYPE_I32: ns_shader_cstr(dst, "int"); break;
+    case NS_TYPE_I32: ns_shader_cstr(dst, e->target == NS_SHADER_WGSL ? "i32" : "int"); break;
     case NS_TYPE_U8:
     case NS_TYPE_U16:
-    case NS_TYPE_U32: ns_shader_cstr(dst, "uint"); break;
+    case NS_TYPE_U32: ns_shader_cstr(dst, e->target == NS_SHADER_WGSL ? "u32" : "uint"); break;
     case NS_TYPE_BOOL: ns_shader_cstr(dst, "bool"); break;
     case NS_TYPE_VOID: ns_shader_cstr(dst, "void"); break;
     case NS_TYPE_STRUCT: {
@@ -284,7 +296,8 @@ static const char *ns_shader_builtin_name(const ns_shader_builtin *b, ns_shader_
     switch (t) {
     case NS_SHADER_MSL: return b->msl;
     case NS_SHADER_GLSL_VULKAN: return b->glsl;
-    default: return b->hlsl;
+    case NS_SHADER_HLSL: return b->hlsl;
+    default: return b->glsl;
     }
 }
 
@@ -618,9 +631,14 @@ static ns_return_void ns_shader_emit_desig(ns_shader_emit *e, ns_ast_t *n, ns_st
     i32 tmp = e->tmp_id++;
     ns_str decl = {.data = ns_null, .len = 0, .dynamic = true};
     ns_shader_pad(&decl, e->indent);
-    ns_shader_str(&decl, s->name);
-    ns_shader_cstr(&decl, " ns_t");
+    if (e->target == NS_SHADER_WGSL) ns_shader_cstr(&decl, "var ns_t");
+    else ns_shader_str(&decl, s->name);
+    if (e->target != NS_SHADER_WGSL) ns_shader_cstr(&decl, " ns_t");
     ns_shader_i32(&decl, tmp);
+    if (e->target == NS_SHADER_WGSL) {
+        ns_shader_cstr(&decl, ": ");
+        ns_shader_str(&decl, s->name);
+    }
     ns_shader_cstr(&decl, ";\n");
     for (i32 f = 0; f < field_count; ++f) {
         ns_shader_pad(&decl, e->indent);
@@ -785,7 +803,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                     ns_str_append_len(dst, (const i8 *)&component, 1);
                     ns_shader_cstr(dst, ")");
                 } else {
-                    ns_shader_cstr(dst, "int(ns_global_id.");
+                    ns_shader_cstr(dst, e->target == NS_SHADER_WGSL ? "i32(ns_global_id." : "int(ns_global_id.");
                     ns_str_append_len(dst, (const i8 *)&component, 1);
                     ns_shader_cstr(dst, ")");
                 }
@@ -806,6 +824,14 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                     ns_shader_cstr(dst, "))");
                 } else if (e->target == NS_SHADER_GLSL_VULKAN) {
                     ns_shader_cstr(dst, "imageStore(ns_write_texture, ivec2(");
+                    ns_shader_try(ns_shader_emit_expr(e, x, dst));
+                    ns_shader_cstr(dst, ", ");
+                    ns_shader_try(ns_shader_emit_expr(e, y, dst));
+                    ns_shader_cstr(dst, "), ");
+                    ns_shader_try(ns_shader_emit_expr(e, color, dst));
+                    ns_shader_cstr(dst, ")");
+                } else if (e->target == NS_SHADER_WGSL) {
+                    ns_shader_cstr(dst, "textureStore(ns_write_texture, vec2<i32>(");
                     ns_shader_try(ns_shader_emit_expr(e, x, dst));
                     ns_shader_cstr(dst, ", ");
                     ns_shader_try(ns_shader_emit_expr(e, y, dst));
@@ -844,7 +870,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                     if (transform_position) ns_shader_cstr(dst, "(ns_uniforms.view_projection * (ns_uniforms.model * ");
                     if (transform_normal) ns_shader_cstr(dst, "normalize((ns_uniforms.model * ");
                     if (shadow_position) ns_shader_cstr(dst, "(ns_uniforms.light_view_projection * (ns_uniforms.model * ");
-                    ns_shader_cstr(dst, e->target == NS_SHADER_GLSL_VULKAN ? "vec4(" : "float4(");
+                    ns_shader_cstr(dst, e->target == NS_SHADER_WGSL ? "vec4<f32>(" : e->target == NS_SHADER_GLSL_VULKAN ? "vec4(" : "float4(");
                     ns_shader_try(ns_shader_emit_expr(e, n->next, dst));
                     if (transform_position || shadow_position) ns_shader_cstr(dst, ", 1.0)))");
                     if (transform_normal) ns_shader_cstr(dst, ", 0.0)).xyz)");
@@ -983,10 +1009,20 @@ static ns_return_void ns_shader_emit_stmt(ns_shader_emit *e, i32 i) {
         }
 
         ns_str line = {.data = ns_null, .len = 0, .dynamic = true};
-        ns_return_void r = ns_shader_type_name(e, t, &line, loc);
-        if (!ns_return_is_error(r)) {
-            ns_shader_cstr(&line, " ");
+        ns_return_void r = ns_return_ok_void;
+        if (e->target == NS_SHADER_WGSL) {
+            ns_shader_cstr(&line, "var ");
             ns_shader_str(&line, n->var_def.name.val);
+            ns_shader_cstr(&line, ": ");
+            r = ns_shader_type_name(e, t, &line, loc);
+        } else {
+            r = ns_shader_type_name(e, t, &line, loc);
+        }
+        if (!ns_return_is_error(r)) {
+            if (e->target != NS_SHADER_WGSL) {
+                ns_shader_cstr(&line, " ");
+                ns_shader_str(&line, n->var_def.name.val);
+            }
             if (n->var_def.expr != 0) {
                 ns_shader_cstr(&line, " = ");
                 r = ns_shader_emit_expr(e, n->var_def.expr, &line);
@@ -1061,16 +1097,23 @@ static ns_return_void ns_shader_emit_stmt(ns_shader_emit *e, i32 i) {
         ns_str name = gen->gen_expr.name.val;
         ns_shader_flush_pre(e);
         ns_shader_pad(&e->out, e->indent);
-        ns_shader_cstr(&e->out, "for (int ");
+        ns_shader_cstr(&e->out, e->target == NS_SHADER_WGSL ? "for (var " : "for (int ");
         ns_shader_str(&e->out, name);
+        if (e->target == NS_SHADER_WGSL) ns_shader_cstr(&e->out, ": i32");
         ns_shader_cstr(&e->out, " = ");
         ns_shader_str(&e->out, from);
         ns_shader_cstr(&e->out, "; ");
         ns_shader_str(&e->out, name);
         ns_shader_cstr(&e->out, " < ");
         ns_shader_str(&e->out, to);
-        ns_shader_cstr(&e->out, "; ++");
-        ns_shader_str(&e->out, name);
+        ns_shader_cstr(&e->out, "; ");
+        if (e->target == NS_SHADER_WGSL) {
+            ns_shader_str(&e->out, name);
+            ns_shader_cstr(&e->out, "++");
+        } else {
+            ns_shader_cstr(&e->out, "++");
+            ns_shader_str(&e->out, name);
+        }
         ns_shader_cstr(&e->out, ") ");
         ns_array_free(from.data);
         ns_array_free(to.data);
@@ -1168,9 +1211,22 @@ static ns_return_void ns_shader_emit_struct(ns_shader_emit *e, i32 st_index) {
     for (i32 f = 0, l = (i32)ns_array_length(s->st.fields); f < l; ++f) {
         ns_struct_field *field = &s->st.fields[f];
         ns_shader_cstr(&e->out, "    ");
-        ns_shader_try(ns_shader_type_name(e, field->t, &e->out, loc));
-        ns_shader_cstr(&e->out, " ");
-        ns_shader_str(&e->out, field->name);
+        if (e->target == NS_SHADER_WGSL) {
+            if (is_vs_in) {
+                ns_shader_cstr(&e->out, "@location("); ns_shader_i32(&e->out, f); ns_shader_cstr(&e->out, ") ");
+            } else if (is_io && ns_shader_is_position_field(e->vm, field)) {
+                ns_shader_cstr(&e->out, "@builtin(position) ");
+            } else if (is_io) {
+                ns_shader_cstr(&e->out, "@location("); ns_shader_i32(&e->out, texcoord++); ns_shader_cstr(&e->out, ") ");
+            }
+            ns_shader_str(&e->out, field->name);
+            ns_shader_cstr(&e->out, ": ");
+            ns_shader_try(ns_shader_type_name(e, field->t, &e->out, loc));
+        } else {
+            ns_shader_try(ns_shader_type_name(e, field->t, &e->out, loc));
+            ns_shader_cstr(&e->out, " ");
+            ns_shader_str(&e->out, field->name);
+        }
         if (e->target == NS_SHADER_MSL) {
             if (is_vs_in) {
                 ns_shader_cstr(&e->out, " [[attribute(");
@@ -1198,7 +1254,7 @@ static ns_return_void ns_shader_emit_struct(ns_shader_emit *e, i32 st_index) {
                 }
             }
         }
-        ns_shader_cstr(&e->out, ";\n");
+        ns_shader_cstr(&e->out, e->target == NS_SHADER_WGSL ? ",\n" : ";\n");
     }
     ns_shader_cstr(&e->out, "};\n\n");
     return ns_return_ok_void;
@@ -1217,6 +1273,35 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         ns_array_push(e->locals, ((ns_shader_local){.name = s->fn.args[a].name, .t = s->fn.args[a].val.t}));
     }
 
+    if (e->target == NS_SHADER_WGSL) {
+        if (stage == NS_SHADER_STAGE_VERTEX) ns_shader_cstr(&e->out, "@vertex ");
+        if (stage == NS_SHADER_STAGE_FRAGMENT) ns_shader_cstr(&e->out, "@fragment ");
+        if (stage == NS_SHADER_STAGE_COMPUTE) ns_shader_cstr(&e->out, "@compute @workgroup_size(1, 1, 1) ");
+        ns_shader_cstr(&e->out, "fn ");
+        ns_shader_str(&e->out, s->name);
+        ns_shader_cstr(&e->out, "(");
+        for (i32 a = 0, l = (i32)ns_array_length(s->fn.args); a < l; ++a) {
+            if (a > 0) ns_shader_cstr(&e->out, ", ");
+            ns_shader_str(&e->out, s->fn.args[a].name);
+            ns_shader_cstr(&e->out, ": ");
+            ns_shader_try(ns_shader_type_name(e, s->fn.args[a].val.t, &e->out, loc));
+        }
+        if (stage == NS_SHADER_STAGE_COMPUTE && e->uses_global_id) {
+            if (ns_array_length(s->fn.args) > 0) ns_shader_cstr(&e->out, ", ");
+            ns_shader_cstr(&e->out, "@builtin(global_invocation_id) ns_global_id: vec3<u32>");
+        }
+        ns_shader_cstr(&e->out, ")");
+        if (!ns_type_is(s->fn.ret, NS_TYPE_VOID)) {
+            ns_shader_cstr(&e->out, " -> ");
+            if (stage == NS_SHADER_STAGE_FRAGMENT) ns_shader_cstr(&e->out, "@location(0) ");
+            ns_shader_try(ns_shader_type_name(e, s->fn.ret, &e->out, loc));
+        }
+        ns_shader_cstr(&e->out, " ");
+        e->indent = 0;
+        ns_shader_try(ns_shader_emit_block(e, s->fn.body));
+        ns_shader_cstr(&e->out, "\n\n");
+        return ns_return_ok_void;
+    }
     if (e->target == NS_SHADER_MSL) {
         if (stage == NS_SHADER_STAGE_VERTEX) ns_shader_cstr(&e->out, "vertex ");
         if (stage == NS_SHADER_STAGE_FRAGMENT) ns_shader_cstr(&e->out, "fragment ");
@@ -1435,7 +1520,7 @@ static ns_return_void ns_shader_classify_entry(ns_shader_emit *e, ns_shader_entr
 // ---------------------------------------------------------------------------
 ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_entry_desc *entries, i32 count, ns_shader_target target) {
     if (target == NS_SHADER_TARGET_UNKNOWN) {
-        return ns_return_error(str, ns_code_loc_nil, NS_ERR_EVAL, "shader: unknown target, expected msl | glsl | hlsl.");
+        return ns_return_error(str, ns_code_loc_nil, NS_ERR_EVAL, "shader: unknown target, expected msl | glsl | hlsl | wgsl.");
     }
     if (count <= 0) return ns_return_error(str, ns_code_loc_nil, NS_ERR_EVAL, "shader: no entry fns to transpile.");
     if (target == NS_SHADER_GLSL_VULKAN && count > 1) {
@@ -1511,11 +1596,15 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     if (target == NS_SHADER_MSL) ns_shader_cstr(&e.out, "#include <metal_stdlib>\nusing namespace metal;\n\n");
     if (target == NS_SHADER_GLSL_VULKAN) ns_shader_cstr(&e.out, "#version 450\n\n");
     if (target == NS_SHADER_HLSL) ns_shader_cstr(&e.out, "\n");
+    if (target == NS_SHADER_WGSL) ns_shader_cstr(&e.out, "\n");
     if (e.uses_write_texture && target == NS_SHADER_GLSL_VULKAN) {
         ns_shader_cstr(&e.out, "layout(set = 0, binding = 0, rgba8) uniform writeonly image2D ns_write_texture;\n\n");
     }
     if (e.uses_write_texture && target == NS_SHADER_HLSL) {
         ns_shader_cstr(&e.out, "RWTexture2D<float4> ns_write_texture : register(u0);\n\n");
+    }
+    if (e.uses_write_texture && target == NS_SHADER_WGSL) {
+        ns_shader_cstr(&e.out, "@group(0) @binding(0) var ns_write_texture: texture_storage_2d<rgba8unorm, write>;\n\n");
     }
     if (e.uses_scene_uniforms && target == NS_SHADER_MSL) {
         ns_shader_cstr(&e.out,
@@ -1540,6 +1629,16 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "    column_major float4x4 ns_light_view_projection;\n"
             "    float4 ns_scene_params;\n"
             "};\n\n");
+    }
+    if (e.uses_scene_uniforms && target == NS_SHADER_WGSL) {
+        ns_shader_cstr(&e.out,
+            "struct ns_scene_uniforms {\n"
+            "    model: mat4x4<f32>,\n"
+            "    view_projection: mat4x4<f32>,\n"
+            "    light_view_projection: mat4x4<f32>,\n"
+            "    params: vec4<f32>,\n"
+            "};\n"
+            "@group(0) @binding(2) var<uniform> ns_uniforms: ns_scene_uniforms;\n\n");
     }
     if (e.uses_shadow_map && target == NS_SHADER_MSL) {
         ns_shader_cstr(&e.out,
@@ -1577,6 +1676,14 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "    return lit / 9.0;\n"
             "}\n\n");
     }
+    if (e.uses_shadow_map && target == NS_SHADER_WGSL) {
+        ns_shader_cstr(&e.out,
+            "@group(0) @binding(0) var ns_shadow_map: texture_depth_2d;\n"
+            "@group(0) @binding(1) var ns_shadow_sampler: sampler_comparison;\n"
+            "fn ns_shadow_compare(coord: vec3<f32>) -> f32 {\n"
+            "    return textureSampleCompare(ns_shadow_map, ns_shadow_sampler, coord.xy, coord.z - 0.005);\n"
+            "}\n\n");
+    }
     if (e.uses_texture_map && target == NS_SHADER_MSL) {
         ns_shader_cstr(&e.out,
             "inline float4 ns_texture_sample(texture2d<float> map, float2 coord) {\n"
@@ -1595,6 +1702,14 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "float4 ns_texture_sample(float2 coord) {\n"
             "    uint w, h; ns_texture_map.GetDimensions(w, h);\n"
             "    return ns_texture_map.Load(int3(int2(saturate(coord) * float2(w - 1, h - 1)), 0));\n"
+            "}\n\n");
+    }
+    if (e.uses_texture_map && target == NS_SHADER_WGSL) {
+        ns_shader_cstr(&e.out,
+            "@group(0) @binding(3) var ns_texture_map: texture_2d<f32>;\n"
+            "@group(0) @binding(4) var ns_texture_sampler: sampler;\n"
+            "fn ns_texture_sample(coord: vec2<f32>) -> vec4<f32> {\n"
+            "    return textureSample(ns_texture_map, ns_texture_sampler, coord);\n"
             "}\n\n");
     }
 

@@ -173,7 +173,7 @@ int main() {
     ns_expect(ns_shader_target_from_str(ns_str_cstr("msl")) == NS_SHADER_MSL, "target msl resolves.");
     ns_expect(ns_shader_target_from_str(ns_str_cstr("glsl")) == NS_SHADER_GLSL_VULKAN, "target glsl resolves.");
     ns_expect(ns_shader_target_from_str(ns_str_cstr("hlsl")) == NS_SHADER_HLSL, "target hlsl resolves.");
-    ns_expect(ns_shader_target_from_str(ns_str_cstr("wgsl")) == NS_SHADER_TARGET_UNKNOWN, "unknown target rejected.");
+    ns_expect(ns_shader_target_from_str(ns_str_cstr("wgsl")) == NS_SHADER_WGSL, "target wgsl resolves.");
     ns_expect(ns_shader_stage_infer(&vm, &ctx, vs) == NS_SHADER_STAGE_VERTEX, "vs_main infers vertex stage.");
     ns_expect(ns_shader_stage_infer(&vm, &ctx, fs) == NS_SHADER_STAGE_FRAGMENT, "fs_main infers fragment stage.");
     ns_expect(ns_shader_stage_infer(&vm, &ctx, cs) == NS_SHADER_STAGE_COMPUTE, "cs_main infers compute stage.");
@@ -181,6 +181,22 @@ int main() {
     ns_expect(ns_str_equals(glsl_entry, ns_str_cstr("main")), "glsl entry name is main.");
     ns_str msl_entry = ns_shader_entry_name(NS_SHADER_MSL, ns_str_cstr("vs_main"));
     ns_expect(ns_str_equals(msl_entry, ns_str_cstr("vs_main")), "msl entry name is the fn name.");
+
+    // --- WGSL: WebGPU stage IO and entry annotations ---
+    {
+        ns_shader_entry_desc entries[2] = {{.fn_index = vs, .stage = NS_SHADER_STAGE_AUTO}, {.fn_index = fs, .stage = NS_SHADER_STAGE_AUTO}};
+        ns_return_str r = ns_shader_transpile_program(&vm, &ctx, entries, 2, NS_SHADER_WGSL);
+        ns_expect(!ns_return_is_error(r), "wgsl program transpiles.");
+        if (!ns_return_is_error(r)) {
+            ns_expect(ns_shader_test_has(r.r, "@vertex fn vs_main") && ns_shader_test_has(r.r, "@fragment fn fs_main"),
+                      "wgsl stage entry annotations are present.");
+            ns_expect(ns_shader_test_has(r.r, "@location(0) position: vec3<f32>") &&
+                          ns_shader_test_has(r.r, "@builtin(position) position: vec4<f32>"),
+                      "wgsl vertex inputs and clip position use WebGPU attributes.");
+            ns_expect(ns_shader_test_has(r.r, "-> @location(0) vec4<f32>"), "wgsl fragment result has a color location.");
+            ns_array_free(r.r.data);
+        }
+    }
 
     // --- MSL: both stages in one source ---
     {
@@ -267,6 +283,11 @@ int main() {
                       ns_shader_test_has(r.r, "cs_main();"),
                   "glsl compute entry transpiles.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@compute @workgroup_size(1, 1, 1)"),
+                  "wgsl compute entry transpiles.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 
     // --- compute texture output and invocation coordinates ---
@@ -287,6 +308,12 @@ int main() {
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "writeonly image2D ns_write_texture") &&
                       ns_shader_test_has(r.r, "gl_GlobalInvocationID.x") && ns_shader_test_has(r.r, "imageStore("),
                   "glsl compute texture intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "texture_storage_2d<rgba8unorm, write>") &&
+                      ns_shader_test_has(r.r, "@builtin(global_invocation_id)") && ns_shader_test_has(r.r, "textureStore("),
+                  "wgsl compute resources and invocation coordinates transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

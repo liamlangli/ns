@@ -182,7 +182,7 @@ NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 # Native feature modules (lib/*) are compiled position-independent and built as
 # dylibs/so files. Keep them out of bin/ns so the interpreter remains
 # language-only; ref fn calls resolve them through dlopen()/dlsym().
-NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/ui.c
+NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/wasm_dev.c lib/src/ui.c
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
@@ -255,7 +255,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
-test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX)
+test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/wasm_dev$(NS_DYLIB_SUFFIX)
 	$(NS_BINDIR)/ns_json_test
 	$(NS_BINDIR)/ns_expr_test
 	$(NS_BINDIR)/ns_compile_test
@@ -267,6 +267,8 @@ test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR
 	$(NS_BINDIR)/ns_project_test
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	node test/ns_wasm_runtime_test.mjs
 
 include lib/Makefile
 include sample/c/Makefile
@@ -278,6 +280,7 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets
 	$(NS_CP) $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin
 	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
+	cp lib/ns-wasm.js $(NS_INSTALL_ROOT)/ref/ns-wasm.js
 	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/

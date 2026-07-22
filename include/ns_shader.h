@@ -8,6 +8,7 @@
 //   - NS_SHADER_MSL:         Metal Shading Language (Apple / Metal)
 //   - NS_SHADER_GLSL_VULKAN: GLSL 450 with Vulkan layout qualifiers (SPIR-V ready)
 //   - NS_SHADER_HLSL:        HLSL (DirectX 12)
+//   - NS_SHADER_WGSL:        WGSL (WebGPU)
 //
 // Shader entries are ordinary ns fns (see sample/ns/shader.ns): a vertex fn maps
 // an input struct to a stage-io struct whose `position: float4` field is the clip
@@ -21,6 +22,7 @@ typedef enum ns_shader_target {
     NS_SHADER_MSL,
     NS_SHADER_GLSL_VULKAN,
     NS_SHADER_HLSL,
+    NS_SHADER_WGSL,
 } ns_shader_target;
 
 typedef enum ns_shader_stage {
@@ -47,7 +49,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
 // Single-entry convenience; NS_SHADER_STAGE_AUTO infers the stage.
 ns_return_str ns_shader_transpile(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_index, ns_shader_target target, ns_shader_stage stage);
 
-// "msl" | "glsl" | "hlsl" -> target enum (UNKNOWN on mismatch), and the reverse
+// "msl" | "glsl" | "hlsl" | "wgsl" -> target enum (UNKNOWN on mismatch), and the reverse
 // for messages and file suffixes.
 ns_shader_target ns_shader_target_from_str(ns_str s);
 ns_str ns_shader_target_name(ns_shader_target t);

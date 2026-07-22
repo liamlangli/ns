@@ -5,11 +5,20 @@
 
 int main(void) {
     const char *source =
+        "use std\n"
         "lit folded = 6 * 7\n"
         "enum byte_code: u8 { zero = 0, one, }\n"
         "enum wide_mask: u64 { none = 0, all = 18446744073709551615, }\n"
         "fn byte_value() u8 { return byte_code.one }\n"
         "fn wide_value() u64 { return wide_mask.all }\n"
+        "fn widths() i32 {\n"
+        "    if 1b == 1b && 255ub == 255ub && 123s == 123s && 456us == 456us && 789u == 789u { return 1 }\n"
+        "    return 0\n"
+        "}\n"
+        "fn signed_math() i64 { return (-100000l) / 3l }\n"
+        "fn half(x: f64) f64 { return x / 2.0d }\n"
+        "fn float_value() f64 { return half(5.0d) + 0.25d }\n"
+        "fn portable_sin() f64 { return sin(0.0d) }\n"
         "fn main() i32 {\n"
         "    let byte_restored = byte_value() as byte_code\n"
         "    let wide_restored = wide_value() as wide_mask\n"
@@ -55,6 +64,13 @@ int main(void) {
     ns_str wasm = ns_os_read_file(output);
     ns_expect(wasm.len >= 8 && wasm.data[0] == 0 && wasm.data[1] == 'a' && wasm.data[2] == 's' && wasm.data[3] == 'm',
               "emitted enum WebAssembly has the expected module header.");
+    int node_status = system("node -e \"const fs=require('fs');const b=fs.readFileSync('/tmp/ns_ssa_enum_test.wasm');"
+                             "if(!WebAssembly.validate(b))process.exit(1);const m=new WebAssembly.Module(b);"
+                             "const i=new WebAssembly.Instance(m,{std:{sin:Math.sin}});i.exports.__ns_init();"
+                             "if(i.exports.main()!==0)process.exit(2);const before=i.exports.memory.buffer.byteLength;"
+                             "if(i.exports.widths()!==1||i.exports.signed_math()!==-33333n||i.exports.float_value()!==2.75||i.exports.portable_sin()!==0)process.exit(3);"
+                             "i.exports.__ns_alloc(before+64);if(i.exports.memory.buffer.byteLength<=before)process.exit(4);\"");
+    ns_expect(node_status == 0, "emitted WebAssembly validates, instantiates, executes, and grows memory in Node.");
     ns_str_free(wasm);
     remove(output.data);
     ns_ssa_module_free(module);

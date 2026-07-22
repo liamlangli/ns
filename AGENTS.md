@@ -31,19 +31,24 @@ The common commands are:
 - `ns create <name>`: create a new directory and scaffold a project in it.
 - `ns update [path]`: find the nearest project and migrate its manifest and
   support files to the format bundled with the current `ns` executable.
-- `ns run [file.ns]`: interpret an explicit file; without an argument, use the
-  current project's manifest entry and otherwise fall back to `main.ns`.
+- `ns run [file.ns]`: interpret an explicit native file; without an argument,
+  use the current project's manifest entry and otherwise fall back to
+  `main.ns`. A Wasm project builds and starts its loopback live-reload server.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported.
 - `ns build [path]`: build a script or module. Manifest type `app` produces an
-  executable and type `library` produces a static library.
+  executable, type `library` produces a static library, and an app with
+  `target = "wasm"` produces its browser bundle.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`.
 - `ns --help`: show compiler targets and all current flags.
 
 The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
-`type`, `source`, `entry` (or `entries`), and `exclude`. Project compilation
+`type`, optional `target`, `source`, `entry` (or `entries`), and `exclude`.
+`target = "wasm"` keeps `type = "app"` and makes `ns build` emit a browser
+bundle; `ns run --port <n>` serves it on loopback with WebSocket live reload.
+Project compilation
 recursively includes every `.ns` file under `source`; local files do not need a
 `use` declaration. Paths removed by `exclude` are not compiled. Only external
 runtime dependencies need entries under `[[dependencies.runtime]]`.
@@ -263,7 +268,7 @@ rules.
 | `std` | Core libc/libm and string helpers: printing, basic file descriptors, math, numeric/string conversion, substring/unescape, and UTF-8 length. |
 | `task` | VM-internal async task, dispatch, waiting, cancellation, status, queue, and sleep primitives. |
 | `simd` | Pure-ns data types `float2`, `float3`, `float4`, `quatf`, and `mat4`, also used at shader boundaries. |
-| `shader` | VM-internal transpilation of ordinary ns functions to MSL, GLSL 450, or HLSL shader source and entry names. Shader code accepts only the supported numeric/struct subset. |
+| `shader` | VM-internal transpilation of ordinary ns functions to MSL, GLSL 450, HLSL, or WGSL shader source and entry names. Shader code accepts only the supported numeric/struct subset. |
 | `os` | Native time/date, file and directory operations, environment/app-data paths, recursive scans/watches, dialogs, child project launch, device vibration, locks, and semaphores. |
 | `io` | Native image loading and saving through `io_image` (`width`, `height`, `channels`, byte data). |
 | `net` | Blocking native TCP/UDP sockets, shared receive-buffer access, file sending, and socket lifecycle. File descriptors are integer handles. |

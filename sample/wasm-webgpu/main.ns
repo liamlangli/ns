@@ -1,0 +1,54 @@
+use std
+use simd
+use gpu
+
+struct vertex_data {
+    position: float3,
+    color: float4
+}
+
+struct fragment_input {
+    position: float4,
+    color: float4
+}
+
+fn vs_triangle(data: vertex_data) fragment_input {
+    return fragment_input {
+        position: float4 { x: data.position.x, y: data.position.y, z: data.position.z, w: 1.0 },
+        color: data.color,
+    }
+}
+
+fn fs_triangle(data: fragment_input) float4 {
+    return data.color
+}
+
+let triangle_pipeline = 0u
+let triangle_vertices = 0u
+let triangle_mesh = 0u
+
+fn main() {
+    if gpu_request_device(nil) {
+        print("WebGPU ready\n")
+        let vertices = [
+             0.0, -0.7, 0.0, 1.0, 0.2, 0.2, 1.0,
+             0.7,  0.7, 0.0, 0.2, 1.0, 0.3, 1.0,
+            -0.7,  0.7, 0.0, 0.2, 0.4, 1.0, 1.0,
+        ]
+        triangle_pipeline = gpu_create_pipeline(vs_triangle, fs_triangle)
+        triangle_vertices = gpu_create_buffer(84, GPU_USAGE_DEFAULT)
+        gpu_update_buffer(triangle_vertices, vertices, 84)
+        triangle_mesh = gpu_create_mesh_1(triangle_pipeline, triangle_vertices)
+    } else {
+        print("WebGPU is not available; rendering calls are safe no-ops\n")
+    }
+}
+
+fn frame(time_ms: f64, width: i32, height: i32) {
+    let pulse = (sin(time_ms * 0.001) + 1.0) * 0.15
+    gpu_screen_pass_begin(0.04 + pulse, 0.08, 0.16 + pulse, 1.0)
+    gpu_set_mesh_id(triangle_mesh)
+    gpu_draw(0, 3, 1)
+    gpu_pass_end()
+    gpu_commit()
+}
