@@ -49,11 +49,12 @@ built as a standalone script and may link local sibling modules it imports. Use
 kind.
 
 For a browser project, keep `type = "app"` and set `target = "wasm"`.
-`ns build` then emits a browser bundle (`.wasm`, `ns-wasm.js`, and
+`ns build` then emits a browser bundle (`.wasm`, `.wasm.map`, `ns-wasm.js`, and
 `index.html`) under `bin`, while `ns run --port 9001` builds and starts the
 loopback-only live-reload server. Port 0 selects an available port. See
 `doc/wasm.md` for the lifecycle, browser ABI, WebGPU middleware, and supported
-language subset.
+language subset. The HTML title uses the manifest `name`; `icon` becomes the
+favicon, falling back to Nano Script's installed `ns.svg` when omitted.
 
 Running `ns update [path]` finds the nearest `ns.mod` and migrates project
 metadata to the format bundled with the current executable. It preserves

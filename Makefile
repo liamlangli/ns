@@ -282,6 +282,7 @@ install: all
 	mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
 	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
 	cp lib/ns-wasm.js $(NS_INSTALL_ROOT)/ref/ns-wasm.js
+	cp sample/ns.svg $(NS_INSTALL_ROOT)/ref/ns.svg
 	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
@@ -295,7 +296,11 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/
 	cp lib/assets/latin_mono.json lib/assets/latin_mono.webp lib/assets/latin_mono.png \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/
-	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec cp {} $(NS_INSTALL_ROOT)/lib \;
+	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\
+		for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
+			cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new"; \
+			mv -f "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name"; \
+		done' sh {} +
 	@echo "Installed ns to $(NS_INSTALL_DISPLAY)"
 	@echo "Please add $(NS_INSTALL_DISPLAY)/bin to your system PATH."
 	@case "$${SHELL##*/}" in \

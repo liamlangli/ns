@@ -1292,6 +1292,21 @@ static void ns_str_append_cstr(ns_str *s, const char *cstr) {
     ns_str_append_len(s, cstr, (i32)strlen(cstr));
 }
 
+static ns_str ns_html_escape(ns_str s) {
+    ns_str out = ns_str_null;
+    for (i32 i = 0; i < s.len; i++) {
+        switch (s.data[i]) {
+            case '&': ns_str_append_len(&out, "&amp;", 5); break;
+            case '<': ns_str_append_len(&out, "&lt;", 4); break;
+            case '>': ns_str_append_len(&out, "&gt;", 4); break;
+            case '"': ns_str_append_len(&out, "&quot;", 6); break;
+            default: ns_str_append_len(&out, s.data + i, 1); break;
+        }
+    }
+    ns_array_push(out.data, '\0');
+    return out;
+}
+
 #if defined(NS_DARWIN)
 static ns_bool ns_str_ends_with(ns_str s, ns_str suffix) {
     return s.len >= suffix.len && strncmp(s.data + s.len - suffix.len, suffix.data, suffix.len) == 0;
@@ -1450,6 +1465,50 @@ static ns_str ns_wasm_runtime_source(void) {
     return ns_str_null;
 }
 
+static ns_str ns_wasm_default_icon_source(void) {
+    ns_str executable = ns_project_current_executable();
+    ns_str bin = ns_path_dirname_safe(executable);
+    ns_str root = ns_path_parent(bin);
+    ns_str sample = ns_path_join(root, ns_str_cstr("sample"));
+    ns_str source = ns_path_join(sample, ns_str_cstr("ns.svg"));
+    if (ns_file_exists(source)) return source;
+    ns_str_free(source);
+    source = ns_path_join(root, ns_str_cstr("ref/ns.svg"));
+    if (ns_file_exists(source)) return source;
+    ns_exit(1, "build", "installed default wasm icon ns.svg was not found.\n");
+    return ns_str_null;
+}
+
+static ns_str ns_wasm_favicon_filename(ns_str icon) {
+    ns_str basename = ns_path_basename_with_extension(icon);
+    i32 dot = -1;
+    for (i32 i = 0; i < basename.len; ++i) {
+        if (basename.data[i] == '.') dot = i;
+    }
+    ns_str filename = ns_str_null;
+    ns_str_append_cstr(&filename, "favicon");
+    if (dot >= 0) {
+        ns_bool safe = true;
+        for (i32 i = dot + 1; i < basename.len; ++i) {
+            i8 c = basename.data[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))) {
+                safe = false;
+                break;
+            }
+        }
+        if (safe && dot + 1 < basename.len) {
+            ns_str_append_len(&filename, ".", 1);
+            for (i32 i = dot + 1; i < basename.len; ++i) {
+                i8 c = basename.data[i];
+                if (c >= 'A' && c <= 'Z') c = (i8)(c - 'A' + 'a');
+                ns_str_append_len(&filename, &c, 1);
+            }
+        }
+    }
+    ns_array_push(filename.data, '\0');
+    return filename;
+}
+
 static ns_ssa_fn *ns_wasm_find_function(ns_ssa_module *ssa, const char *name) {
     for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
         if (ns_str_equals(ssa->fns[i].name, ns_str_cstr((char *)name))) return &ssa->fns[i];
@@ -1488,19 +1547,31 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
     ns_ssa_module *ssa = ns_compile_build_input(in);
     ns_wasm_validate_browser_entry(ssa);
 
+    ns_str artifact = ns_path_basename_with_extension(output);
+    ns_str map_url = ns_str_concat(artifact, ns_str_cstr(".map"));
+    ns_str map_output = ns_str_concat(output, ns_str_cstr(".map"));
     ns_str temporary = ns_str_concat(output, ns_str_cstr(".tmp"));
-    ns_return_bool emitted = ns_wasm_emit(ssa, temporary);
+    ns_str map_temporary = ns_str_concat(map_output, ns_str_cstr(".tmp"));
+    ns_return_bool emitted = ns_wasm_emit_source_mapped(ssa, temporary, map_temporary,
+                                                        map_url, in->scope);
     ns_ssa_module_free(ssa);
     if (ns_return_is_error(emitted)) {
         remove(temporary.data);
+        remove(map_temporary.data);
         ns_return_assert(emitted);
     }
 #if defined(_WIN32)
     remove(output.data);
+    remove(map_output.data);
 #endif
     if (rename(temporary.data, output.data) != 0) {
         remove(temporary.data);
+        remove(map_temporary.data);
         ns_exit(1, "build", "failed to replace %.*s.\n", output.len, output.data);
+    }
+    if (rename(map_temporary.data, map_output.data) != 0) {
+        remove(map_temporary.data);
+        ns_exit(1, "build", "failed to replace %.*s.\n", map_output.len, map_output.data);
     }
 
     ns_str out_dir = ns_path_dirname_safe(output);
@@ -1508,10 +1579,19 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
     ns_str runtime_src = ns_wasm_runtime_source();
     ns_copy_file_contents(runtime_src, runtime_dst);
 
-    ns_str artifact = ns_path_basename_with_extension(output);
+    ns_bool uses_default_icon = in->icon.data == ns_null || in->icon.len == 0;
+    ns_str icon_src = uses_default_icon ? ns_wasm_default_icon_source() : in->icon;
+    ns_str favicon = uses_default_icon ? ns_str_cstr("ns.svg") : ns_wasm_favicon_filename(icon_src);
+    ns_copy_file_contents(icon_src, ns_path_join(out_dir, favicon));
+
     ns_str html = ns_str_null;
+    ns_str title = ns_html_escape(in->name);
     ns_str_append_cstr(&html, "<!doctype html>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
-    ns_str_append_cstr(&html, "<title>Nano Script</title>\n<style>html,body,canvas{width:100%;height:100%;margin:0;display:block;background:#111}</style>\n");
+    ns_str_append_cstr(&html, "<title>");
+    ns_str_append_len(&html, title.data, title.len);
+    ns_str_append_cstr(&html, "</title>\n<link rel=\"icon\" href=\"./");
+    ns_str_append_len(&html, favicon.data, favicon.len);
+    ns_str_append_cstr(&html, "\">\n<style>html,body,canvas{width:100%;height:100%;margin:0;display:block;background:#111}canvas{outline:none}</style>\n");
     ns_str_append_cstr(&html, "<canvas id=\"ns-canvas\"></canvas>\n<script type=\"module\">import { boot } from './ns-wasm.js'; boot('./");
     ns_str_append_len(&html, artifact.data, artifact.len);
     ns_str_append_cstr(&html, "');</script>\n");

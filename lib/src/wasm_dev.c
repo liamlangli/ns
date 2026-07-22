@@ -192,8 +192,12 @@ static const char *mime_type(const char *path) {
     if (strcmp(dot, ".js") == 0) return "text/javascript; charset=utf-8";
     if (strcmp(dot, ".css") == 0) return "text/css; charset=utf-8";
     if (strcmp(dot, ".wasm") == 0) return "application/wasm";
+    if (strcmp(dot, ".map") == 0) return "application/json; charset=utf-8";
     if (strcmp(dot, ".json") == 0) return "application/json; charset=utf-8";
     if (strcmp(dot, ".png") == 0) return "image/png";
+    if (strcmp(dot, ".jpg") == 0 || strcmp(dot, ".jpeg") == 0) return "image/jpeg";
+    if (strcmp(dot, ".gif") == 0) return "image/gif";
+    if (strcmp(dot, ".ico") == 0) return "image/x-icon";
     if (strcmp(dot, ".webp") == 0) return "image/webp";
     if (strcmp(dot, ".svg") == 0) return "image/svg+xml";
     return "application/octet-stream";

@@ -39,7 +39,7 @@ The common commands are:
   same. An explicit test file or non-project directory is also supported.
 - `ns build [path]`: build a script or module. Manifest type `app` produces an
   executable, type `library` produces a static library, and an app with
-  `target = "wasm"` produces its browser bundle.
+  `target = "wasm"` produces its browser bundle and `.wasm.map` source map.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`.
 - `ns --help`: show compiler targets and all current flags.
@@ -47,7 +47,8 @@ The common commands are:
 The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
 `type`, optional `target`, `source`, `entry` (or `entries`), and `exclude`.
 `target = "wasm"` keeps `type = "app"` and makes `ns build` emit a browser
-bundle; `ns run --port <n>` serves it on loopback with WebSocket live reload.
+bundle; its HTML title uses `name`, and its favicon uses `icon` or the installed
+default `ns.svg`. `ns run --port <n>` serves it on loopback with WebSocket live reload.
 Project compilation
 recursively includes every `.ns` file under `source`; local files do not need a
 `use` declaration. Paths removed by `exclude` are not compiled. Only external

@@ -10,6 +10,7 @@ globalThis.GPUTextureUsage = { COPY_DST: 1, COPY_SRC: 2, TEXTURE_BINDING: 4, STO
 let configured = null;
 const canvasEvents = new Map();
 const windowEvents = new Map();
+let capturedPointer = 0;
 const canvas = {
   clientWidth: 320,
   clientHeight: 180,
@@ -18,6 +19,9 @@ const canvas = {
   style: {},
   setAttribute() {},
   addEventListener(name, handler) { canvasEvents.set(name, handler); },
+  setPointerCapture(pointer) { capturedPointer = pointer; },
+  hasPointerCapture(pointer) { return capturedPointer === pointer; },
+  releasePointerCapture(pointer) { if (capturedPointer === pointer) capturedPointer = 0; },
   getBoundingClientRect() { return { left: 0, top: 0 }; },
   focus() {},
   getContext(kind) {
@@ -50,9 +54,12 @@ Object.defineProperty(globalThis, 'window', { configurable: true, value: {
   devicePixelRatio: 2,
   addEventListener(name, handler) { windowEvents.set(name, handler); },
 } });
-Object.defineProperty(globalThis, 'document', { configurable: true, value: { title: '' } });
+Object.defineProperty(globalThis, 'document', { configurable: true, value: { title: 'Manifest project' } });
 
 const runtime = new NSBrowserRuntime(canvas);
+let contextMenuPrevented = false;
+canvasEvents.get('contextmenu')({ preventDefault() { contextMenuPrevented = true; } });
+assert.equal(contextMenuPrevented, true);
 runtime.memory = new WebAssembly.Memory({ initial: 1 });
 let heap = 1024;
 runtime.instance = { exports: { __ns_alloc(size) { const p = heap; heap += Number(size); return p; } } };
@@ -65,16 +72,22 @@ assert.equal(runtime.readString(stringPointer), 'hello wasm');
 assert.equal(runtime.readString(runtime.std('substr', [stringPointer, 6, 4])), 'wasm');
 const titlePointer = runtime.writeString('Canvas view');
 const canvasView = runtime.invoke('view', 'view_create', [titlePointer, 960, 540]);
-assert.equal(document.title, 'Canvas view');
+assert.equal(document.title, 'Manifest project');
 assert.equal(runtime.view().getInt32(canvasView + 4, true), 320);
 assert.equal(runtime.view().getInt32(canvasView + 12, true), 640);
 assert.equal(runtime.view().getFloat64(canvasView + 88, true), 2);
 assert.equal(runtime.gpu('gpu_request_device', [canvasView]), 1);
 assert.equal(runtime.gpu('gpu_request_device', [canvasView + 4]), 0);
 assert.equal(runtime.view().getUint32(canvasView + 108, true), 1);
+canvasEvents.get('pointerdown')({ clientX: 10, clientY: 16, pointerType: 'mouse', pointerId: 7, button: 0 });
+assert.equal(capturedPointer, 7);
+assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);
 canvasEvents.get('pointermove')({ clientX: 12, clientY: 18, pointerType: 'mouse', pointerId: 1, timeStamp: 10 });
 assert.equal(runtime.view().getFloat64(canvasView + 20, true), 12);
-assert.equal(runtime.viewImport('view_input_count', [canvasView]), 1);
+assert.equal(runtime.viewImport('view_input_count', [canvasView]), 3);
+canvasEvents.get('pointerup')({ clientX: 12, clientY: 18, pointerType: 'mouse', pointerId: 7, button: 0 });
+assert.equal(capturedPointer, 0);
+assert.equal(runtime.view().getInt32(canvasView + 52, true), 0);
 windowEvents.get('keydown')({ key: 'A' });
 assert.equal(runtime.viewImport('view_is_key_pressed', [canvasView, 65]), 1);
 assert.equal(runtime.viewImport('view_take_key_press', [canvasView, 65]), 0);

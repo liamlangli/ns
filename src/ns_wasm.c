@@ -12,6 +12,7 @@
 // searches the stack from the top (depth 0 = innermost open label).
 
 #include "ns_wasm.h"
+#include "ns_os.h"
 #include <errno.h>
 #include <math.h>
 
@@ -208,6 +209,15 @@ static void ns_wasm_u32leb(u8 **out, u32 v) {
     } while (v);
 }
 
+static u32 ns_wasm_u32leb_size(u32 v) {
+    u32 size = 1;
+    while (v >= 0x80) {
+        v >>= 7;
+        size++;
+    }
+    return size;
+}
+
 static void ns_wasm_i64leb(u8 **out, i64 v) {
     for (;;) {
         u8 b = (u8)(v & 0x7F);
@@ -311,6 +321,11 @@ typedef struct {
     ns_bool  is_loop;   // true → `loop` (br goes to start), false → `block` (br goes past end)
 } ns_wasm_label;
 
+typedef struct {
+    u32 offset;
+    i32 ast;
+} ns_wasm_source_mapping;
+
 // Per-function code-generation context
 typedef struct {
     ns_ssa_fn     *fn;
@@ -325,6 +340,7 @@ typedef struct {
     i32            n_fns;
     ns_ssa_import *imports;
     i32            n_imports;
+    ns_wasm_source_mapping *mappings; // offsets relative to this function's instruction stream
 } ns_wasm_fn_ctx;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -649,6 +665,7 @@ static void ns_wasm_bounds_check(ns_wasm_fn_ctx *ctx, i32 descriptor, i32 index)
 
 // Emit one non-terminator instruction
 static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
+    u32 instruction_offset = (u32)ns_array_length(ctx->code);
     switch (inst->op) {
 
     case NS_SSA_OP_PARAM:
@@ -1001,6 +1018,21 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
     default:
         break;
     }
+
+    if (inst->ast > 0 && (u32)ns_array_length(ctx->code) > instruction_offset) {
+        ns_array_push(ctx->mappings, ((ns_wasm_source_mapping){
+            .offset = instruction_offset,
+            .ast = inst->ast,
+        }));
+    }
+}
+
+static void ns_wasm_mark_source(ns_wasm_fn_ctx *ctx, i32 ast) {
+    if (ast <= 0) return;
+    ns_array_push(ctx->mappings, ((ns_wasm_source_mapping){
+        .offset = (u32)ns_array_length(ctx->code),
+        .ast = ast,
+    }));
 }
 
 static void ns_wasm_emit_phi_moves(ns_wasm_fn_ctx *ctx, i32 predecessor, i32 target) {
@@ -1047,6 +1079,8 @@ static void ns_wasm_emit_dispatch(ns_wasm_fn_ctx *ctx) {
         for (i32 ii = 0; ii < body_count; ++ii) {
             ns_wasm_emit_inst(ctx, &ctx->fn->insts[bb->insts[ii]]);
         }
+
+        if (term && body_count < count) ns_wasm_mark_source(ctx, term->ast);
 
         if (!term || body_count == count) {
             ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
@@ -1114,6 +1148,7 @@ static void ns_wasm_emit_block(ns_wasm_fn_ctx *ctx, i32 block_idx, i32 fallthrou
     if (term_idx < 0) return; // empty block
 
     ns_ssa_inst *term = &ctx->fn->insts[bb->insts[term_idx]];
+    ns_wasm_mark_source(ctx, term->ast);
 
     switch (term->op) {
     case NS_SSA_OP_RET:
@@ -1599,8 +1634,10 @@ static void ns_wasm_detect_loops(ns_ssa_fn *fn,
 
 // Emit the code section
 static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
-                                       u8 **all_vtypes, u8 **all_unsigneds, i32 *all_nvals) {
+                                       u8 **all_vtypes, u8 **all_unsigneds, i32 *all_nvals,
+                                       ns_wasm_source_mapping **source_mappings) {
     u8 *sec = ns_null;
+    i32 first_mapping = (i32)ns_array_length(*source_mappings);
     i32 n_fns = (i32)ns_array_length(ssa->fns);
     ns_wasm_u32leb(&sec, (u32)(n_fns + 2));
 
@@ -1675,6 +1712,13 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
 
         // Assemble function body: locals_sec + ctx.code, prefixed by body size
         u32 body_size = (u32)(ns_array_length(locals_sec) + ns_array_length(ctx.code));
+        u32 code_offset = (u32)ns_array_length(sec) + ns_wasm_u32leb_size(body_size) +
+                          (u32)ns_array_length(locals_sec);
+        for (i32 mi = 0, ml = (i32)ns_array_length(ctx.mappings); mi < ml; ++mi) {
+            ns_wasm_source_mapping mapping = ctx.mappings[mi];
+            mapping.offset += code_offset;
+            ns_array_push(*source_mappings, mapping);
+        }
         ns_wasm_u32leb(&sec, body_size);
         for (u32 i = 0; i < (u32)ns_array_length(locals_sec); i++) ns_array_push(sec, locals_sec[i]);
         for (u32 i = 0; i < (u32)ns_array_length(ctx.code);    i++) ns_array_push(sec, ctx.code[i]);
@@ -1682,6 +1726,7 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
         // Cleanup
         ns_array_free(ctx.code);
         ns_array_free(ctx.labels);
+        ns_array_free(ctx.mappings);
         ns_array_free(locals_sec);
         ns_array_free(lheads);
         ns_array_free(lends);
@@ -1753,6 +1798,11 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
     for (u32 i = 0; i < (u32)ns_array_length(init); ++i) ns_array_push(sec, init[i]);
     ns_array_free(init);
 
+    u32 section_content_offset = (u32)ns_array_length(*out) + 1u +
+                                 ns_wasm_u32leb_size((u32)ns_array_length(sec));
+    for (i32 mi = first_mapping, ml = (i32)ns_array_length(*source_mappings); mi < ml; ++mi) {
+        (*source_mappings)[mi].offset += section_content_offset;
+    }
     ns_wasm_section(out, NS_WASM_SECT_CODE, sec);
     ns_array_free(sec);
 }
@@ -1817,6 +1867,185 @@ static void ns_wasm_build_shader_custom_section(u8 **out, ns_ssa_module *ssa) {
     }
     ns_wasm_section(out, 0, sec);
     ns_array_free(sec);
+}
+
+static void ns_wasm_build_source_mapping_url_section(u8 **out, ns_str map_url) {
+    if (map_url.data == ns_null || map_url.len == 0) return;
+    u8 *sec = ns_null;
+    ns_wasm_name(&sec, "sourceMappingURL");
+    ns_wasm_u32leb(&sec, (u32)map_url.len);
+    for (i32 i = 0; i < map_url.len; ++i) ns_wasm_u8(&sec, (u8)map_url.data[i]);
+    ns_wasm_section(out, 0, sec);
+    ns_array_free(sec);
+}
+
+typedef struct {
+    ns_str path;
+    ns_str name;
+    ns_str content;
+} ns_wasm_source_file;
+
+static void ns_wasm_str_append_cstr(ns_str *out, const char *text) {
+    ns_str_append_len(out, text, (i32)strlen(text));
+}
+
+static void ns_wasm_json_string(ns_str *out, ns_str value) {
+    static const char hex[] = "0123456789abcdef";
+    ns_str_append_len(out, "\"", 1);
+    for (i32 i = 0; i < value.len; ++i) {
+        u8 c = (u8)value.data[i];
+        switch (c) {
+        case '\"': ns_str_append_len(out, "\\\"", 2); break;
+        case '\\': ns_str_append_len(out, "\\\\", 2); break;
+        case '\b': ns_str_append_len(out, "\\b", 2); break;
+        case '\f': ns_str_append_len(out, "\\f", 2); break;
+        case '\n': ns_str_append_len(out, "\\n", 2); break;
+        case '\r': ns_str_append_len(out, "\\r", 2); break;
+        case '\t': ns_str_append_len(out, "\\t", 2); break;
+        default:
+            if (c < 0x20) {
+                char escaped[6] = {'\\', 'u', '0', '0', hex[c >> 4], hex[c & 15]};
+                ns_str_append_len(out, escaped, 6);
+            } else {
+                ns_str_append_len(out, (const i8 *)&value.data[i], 1);
+            }
+            break;
+        }
+    }
+    ns_str_append_len(out, "\"", 1);
+}
+
+static void ns_wasm_base64_vlq(ns_str *out, i64 signed_value) {
+    static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    u64 value = signed_value < 0 ? (((u64)(-signed_value) << 1u) | 1u)
+                                 : ((u64)signed_value << 1u);
+    do {
+        u8 digit = (u8)(value & 31u);
+        value >>= 5u;
+        if (value != 0) digit |= 32u;
+        ns_str_append_len(out, digits + digit, 1);
+    } while (value != 0);
+}
+
+static ns_str ns_wasm_source_name(ns_str source_root, ns_str path) {
+    i32 start = 0;
+    if (source_root.data != ns_null && source_root.len > 0 && path.len > source_root.len &&
+        ns_str_starts_with(path, source_root) &&
+        (path.data[source_root.len] == '/' || path.data[source_root.len] == '\\')) {
+        start = source_root.len + 1;
+    }
+    ns_str name = ns_str_null;
+    for (i32 i = start; i < path.len; ++i) {
+        i8 c = path.data[i] == '\\' ? '/' : path.data[i];
+        ns_str_append_len(&name, &c, 1);
+    }
+    return name;
+}
+
+static i32 ns_wasm_source_index(ns_wasm_source_file **sources, ns_str source_root, ns_str path) {
+    for (i32 i = 0, l = (i32)ns_array_length(*sources); i < l; ++i) {
+        if (ns_str_equals((*sources)[i].path, path)) return i;
+    }
+    ns_wasm_source_file source = {
+        .path = ns_str_concat(path, ns_str_cstr("")),
+        .name = ns_wasm_source_name(source_root, path),
+        .content = ns_os_read_file(path),
+    };
+    ns_array_push(*sources, source);
+    return (i32)ns_array_length(*sources) - 1;
+}
+
+static ns_return_bool ns_wasm_write_source_map(ns_ssa_module *ssa, ns_str map_path,
+                                                ns_str map_url, ns_str source_root,
+                                                ns_wasm_source_mapping *mappings) {
+    ns_wasm_source_file *sources = ns_null;
+    for (i32 i = 0, l = (i32)ns_array_length(mappings); i < l; ++i) {
+        i32 ast = mappings[i].ast;
+        if (!ssa->ctx || ast <= 0 || ast >= (i32)ns_array_length(ssa->ctx->nodes)) continue;
+        ns_code_loc loc = ns_ast_state_loc(ssa->ctx, ssa->ctx->nodes[ast].state);
+        if (loc.f.data != ns_null && loc.f.len > 0) ns_wasm_source_index(&sources, source_root, loc.f);
+    }
+
+    ns_str json = ns_str_null;
+    ns_wasm_str_append_cstr(&json, "{\"version\":3,\"file\":");
+    ns_str generated_name = map_url;
+    if (map_url.len > 4 && strncmp(map_url.data + map_url.len - 4, ".map", 4) == 0) {
+        generated_name = ns_str_slice(map_url, 0, map_url.len - 4);
+    }
+    ns_wasm_json_string(&json, generated_name);
+    ns_wasm_str_append_cstr(&json, ",\"sources\":[");
+    for (i32 i = 0, l = (i32)ns_array_length(sources); i < l; ++i) {
+        if (i > 0) ns_str_append_len(&json, ",", 1);
+        ns_wasm_json_string(&json, sources[i].name);
+    }
+    ns_wasm_str_append_cstr(&json, "],\"sourcesContent\":[");
+    for (i32 i = 0, l = (i32)ns_array_length(sources); i < l; ++i) {
+        if (i > 0) ns_str_append_len(&json, ",", 1);
+        if (sources[i].content.data == ns_null) ns_wasm_str_append_cstr(&json, "null");
+        else ns_wasm_json_string(&json, sources[i].content);
+    }
+    ns_wasm_str_append_cstr(&json, "],\"names\":[],\"mappings\":\"");
+
+    i64 previous_generated = 0;
+    i64 previous_source = 0;
+    i64 previous_line = 0;
+    i64 previous_column = 0;
+    i32 last_source = -1, last_line = -1, last_column = -1;
+    u32 last_offset = 0;
+    ns_bool wrote_segment = false;
+    for (i32 i = 0, l = (i32)ns_array_length(mappings); i < l; ++i) {
+        i32 ast = mappings[i].ast;
+        if (!ssa->ctx || ast <= 0 || ast >= (i32)ns_array_length(ssa->ctx->nodes)) continue;
+        ns_code_loc loc = ns_ast_state_loc(ssa->ctx, ssa->ctx->nodes[ast].state);
+        if (loc.f.data == ns_null || loc.f.len == 0 || loc.l <= 0) continue;
+        i32 source = ns_wasm_source_index(&sources, source_root, loc.f);
+        i32 line = loc.l - 1;
+        i32 column = loc.o < 0 ? 0 : loc.o;
+        if (wrote_segment && source == last_source && line == last_line && column == last_column) continue;
+        if (wrote_segment && mappings[i].offset <= last_offset) continue;
+        if (wrote_segment) ns_str_append_len(&json, ",", 1);
+        ns_wasm_base64_vlq(&json, (i64)mappings[i].offset - previous_generated);
+        ns_wasm_base64_vlq(&json, (i64)source - previous_source);
+        ns_wasm_base64_vlq(&json, (i64)line - previous_line);
+        ns_wasm_base64_vlq(&json, (i64)column - previous_column);
+        previous_generated = mappings[i].offset;
+        previous_source = source;
+        previous_line = line;
+        previous_column = column;
+        last_source = source;
+        last_line = line;
+        last_column = column;
+        last_offset = mappings[i].offset;
+        wrote_segment = true;
+    }
+    ns_wasm_str_append_cstr(&json, "\"}\n");
+
+    ns_str temporary = ns_str_concat(map_path, ns_str_cstr(".tmp"));
+    FILE *file = fopen(temporary.data, "wb");
+    ns_return_bool result;
+    if (!file) {
+        result = ns_return_error(bool, ns_code_loc_nil, NS_ERR_RUNTIME, "failed to open wasm source map output file");
+    } else {
+        szt written = fwrite(json.data, 1, (szt)json.len, file);
+        fclose(file);
+        if (written != (szt)json.len || rename(temporary.data, map_path.data) != 0) {
+            result = ns_return_error(bool, ns_code_loc_nil, NS_ERR_RUNTIME, "failed to write wasm source map");
+        } else {
+            result = ns_return_ok(bool, true);
+        }
+    }
+    if (ns_return_is_error(result)) remove(temporary.data);
+
+    if (generated_name.data != map_url.data) ns_str_free(generated_name);
+    for (i32 i = 0, l = (i32)ns_array_length(sources); i < l; ++i) {
+        ns_str_free(sources[i].path);
+        ns_str_free(sources[i].name);
+        ns_str_free(sources[i].content);
+    }
+    ns_array_free(sources);
+    ns_array_free(json.data);
+    ns_str_free(temporary);
+    return result;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2037,7 +2266,9 @@ static ns_return_bool ns_wasm_validate(ns_ssa_module *ssa) {
     return ns_return_ok(bool, true);
 }
 
-ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
+static ns_return_bool ns_wasm_emit_internal(ns_ssa_module *ssa, ns_str output_path,
+                                            ns_str map_path, ns_str map_url,
+                                            ns_str source_root) {
     if (!ssa) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_SYNTAX, "null ssa module");
     }
@@ -2075,6 +2306,7 @@ ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
     memset(all_nvals,  0, (szt)n_fns * sizeof(i32));
 
     u8 *buf = ns_null;
+    ns_wasm_source_mapping *source_mappings = ns_null;
 
     // Magic + version
     for (i32 i = 0; i < 4; i++) ns_array_push(buf, ns_wasm_magic[i]);
@@ -2096,10 +2328,12 @@ ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
     ns_wasm_build_element_section(&buf);
 
     // Code section
-    ns_wasm_build_code_section(&buf, &host, all_vtypes, all_unsigneds, all_nvals);
+    ns_wasm_build_code_section(&buf, &host, all_vtypes, all_unsigneds, all_nvals,
+                               &source_mappings);
 
     ns_wasm_build_data_section(&buf, data);
     ns_wasm_build_shader_custom_section(&buf, ssa);
+    ns_wasm_build_source_mapping_url_section(&buf, map_url);
 
     // Write output file
     ns_str temporary = ns_str_concat(output_path, ns_str_cstr(".tmp"));
@@ -2124,6 +2358,11 @@ ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
         }
     }
     if (ns_return_is_error(ret)) remove(temporary.data);
+    if (!ns_return_is_error(ret) && map_path.data != ns_null && map_path.len > 0) {
+        ns_return_bool mapped = ns_wasm_write_source_map(ssa, map_path, map_url,
+                                                         source_root, source_mappings);
+        if (ns_return_is_error(mapped)) ret = mapped;
+    }
 
     // Free per-function vtypes
     for (i32 i = 0; i < n_fns; i++) {
@@ -2135,8 +2374,19 @@ ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
     ns_free(all_nvals);
     ns_array_free(buf);
     ns_array_free(data);
+    ns_array_free(source_mappings);
     ns_array_free(host.fns);
     ns_str_free(temporary);
 
     return ret;
+}
+
+ns_return_bool ns_wasm_emit(ns_ssa_module *ssa, ns_str output_path) {
+    return ns_wasm_emit_internal(ssa, output_path, ns_str_null, ns_str_null, ns_str_null);
+}
+
+ns_return_bool ns_wasm_emit_source_mapped(ns_ssa_module *ssa, ns_str output_path,
+                                          ns_str map_path, ns_str map_url,
+                                          ns_str source_root) {
+    return ns_wasm_emit_internal(ssa, output_path, map_path, map_url, source_root);
 }

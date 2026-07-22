@@ -3,53 +3,297 @@ use simd
 use view
 use gpu
 
-struct vertex_data {
-    position: float3,
-    color: float4
+// A full-canvas primitive supplies one camera ray to every fragment. The
+// Cornell room and both boxes are traced as one-sided triangle meshes.
+struct ray_vertex {
+    position: float2,
+    ray: float2,
+    camera_yaw: f32,
+    camera_pitch: f32
 }
 
 struct fragment_input {
     position: float4,
-    color: float4
+    ray: float2,
+    camera_yaw: f32,
+    camera_pitch: f32
 }
 
-fn vs_triangle(data: vertex_data) fragment_input {
+struct ray_hit {
+    distance: f32,
+    normal: float3,
+    color: float3,
+    emission: float3
+}
+
+fn make_float3(x: f32, y: f32, z: f32) float3 {
+    return float3 { x: x, y: y, z: z }
+}
+
+fn add3(a: float3, b: float3) float3 {
+    return make_float3(a.x + b.x, a.y + b.y, a.z + b.z)
+}
+
+fn sub3(a: float3, b: float3) float3 {
+    return make_float3(a.x - b.x, a.y - b.y, a.z - b.z)
+}
+
+fn mul3(value: float3, scale: f32) float3 {
+    return make_float3(value.x * scale, value.y * scale, value.z * scale)
+}
+
+fn hadamard3(a: float3, b: float3) float3 {
+    return make_float3(a.x * b.x, a.y * b.y, a.z * b.z)
+}
+
+fn dot3(a: float3, b: float3) f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn cross3(a: float3, b: float3) float3 {
+    return make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+}
+
+fn normalize3(value: float3) float3 {
+    let inverse_length = 1.0 / (sqrt(dot3(value, value) as f64) as f32)
+    return mul3(value, inverse_length)
+}
+
+fn minimum(a: f32, b: f32) f32 {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn maximum(a: f32, b: f32) f32 {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn saturate(value: f32) f32 {
+    return maximum(0.0, minimum(1.0, value))
+}
+
+// Moller-Trumbore intersection with back-face culling. A triangle is visible
+// only from the side selected by its vertex winding.
+fn trace_triangle(current: ray_hit, origin: float3, direction: float3, a: float3, b: float3, c: float3, color: float3, emission: float3) ray_hit {
+    let edge_ab = sub3(b, a)
+    let edge_ac = sub3(c, a)
+    let perpendicular = cross3(direction, edge_ac)
+    let determinant = dot3(edge_ab, perpendicular)
+    if determinant <= 0.00001 {
+        return current
+    }
+
+    let inverse_determinant = 1.0 / determinant
+    let from_a = sub3(origin, a)
+    let coordinate_u = dot3(from_a, perpendicular) * inverse_determinant
+    if coordinate_u < 0.0 || coordinate_u > 1.0 {
+        return current
+    }
+
+    let perpendicular_v = cross3(from_a, edge_ab)
+    let coordinate_v = dot3(direction, perpendicular_v) * inverse_determinant
+    if coordinate_v < 0.0 || coordinate_u + coordinate_v > 1.0 {
+        return current
+    }
+
+    let distance = dot3(edge_ac, perpendicular_v) * inverse_determinant
+    if distance <= 0.001 || distance >= current.distance {
+        return current
+    }
+    return ray_hit { distance: distance, normal: normalize3(cross3(edge_ab, edge_ac)), color: color, emission: emission }
+}
+
+fn trace_quad(current: ray_hit, origin: float3, direction: float3, a: float3, b: float3, c: float3, d: float3, color: float3, emission: float3) ray_hit {
+    let nearest = trace_triangle(current, origin, direction, a, b, c, color, emission)
+    return trace_triangle(nearest, origin, direction, a, c, d, color, emission)
+}
+
+fn trace_box(current: ray_hit, origin: float3, direction: float3, box_min: float3, box_max: float3, color: float3) ray_hit {
+    let p000 = make_float3(box_min.x, box_min.y, box_min.z)
+    let p001 = make_float3(box_min.x, box_min.y, box_max.z)
+    let p010 = make_float3(box_min.x, box_max.y, box_min.z)
+    let p011 = make_float3(box_min.x, box_max.y, box_max.z)
+    let p100 = make_float3(box_max.x, box_min.y, box_min.z)
+    let p101 = make_float3(box_max.x, box_min.y, box_max.z)
+    let p110 = make_float3(box_max.x, box_max.y, box_min.z)
+    let p111 = make_float3(box_max.x, box_max.y, box_max.z)
+    let dark = make_float3(0.0, 0.0, 0.0)
+    let nearest = trace_quad(current, origin, direction, p001, p101, p111, p011, color, dark)
+    nearest = trace_quad(nearest, origin, direction, p000, p010, p110, p100, color, dark)
+    nearest = trace_quad(nearest, origin, direction, p000, p001, p011, p010, color, dark)
+    nearest = trace_quad(nearest, origin, direction, p100, p110, p111, p101, color, dark)
+    nearest = trace_quad(nearest, origin, direction, p010, p011, p111, p110, color, dark)
+    return trace_quad(nearest, origin, direction, p000, p100, p101, p001, color, dark)
+}
+
+fn trace_scene(origin: float3, direction: float3) ray_hit {
+    let white = make_float3(0.73, 0.70, 0.63)
+    let red = make_float3(0.72, 0.055, 0.035)
+    let green = make_float3(0.045, 0.48, 0.14)
+    let dark = make_float3(0.0, 0.0, 0.0)
+    let light = make_float3(12.0, 9.0, 5.8)
+    let nearest = ray_hit { distance: 1000.0, normal: dark, color: dark, emission: dark }
+
+    // Open-front Cornell room. Every rectangular wall is exactly two
+    // one-sided triangles wound toward the room interior.
+    nearest = trace_quad(nearest, origin, direction, make_float3(-1.55, -1.25, 0.95), make_float3(1.55, -1.25, 0.95), make_float3(1.55, -1.25, -2.55), make_float3(-1.55, -1.25, -2.55), white, dark)
+    nearest = trace_quad(nearest, origin, direction, make_float3(-1.55, 1.25, -2.55), make_float3(1.55, 1.25, -2.55), make_float3(1.55, 1.25, 0.95), make_float3(-1.55, 1.25, 0.95), white, dark)
+    nearest = trace_quad(nearest, origin, direction, make_float3(-1.55, -1.25, -2.55), make_float3(1.55, -1.25, -2.55), make_float3(1.55, 1.25, -2.55), make_float3(-1.55, 1.25, -2.55), white, dark)
+    nearest = trace_quad(nearest, origin, direction, make_float3(-1.55, -1.25, -2.55), make_float3(-1.55, 1.25, -2.55), make_float3(-1.55, 1.25, 0.95), make_float3(-1.55, -1.25, 0.95), red, dark)
+    nearest = trace_quad(nearest, origin, direction, make_float3(1.55, -1.25, -2.55), make_float3(1.55, -1.25, 0.95), make_float3(1.55, 1.25, 0.95), make_float3(1.55, 1.25, -2.55), green, dark)
+
+    // The ceiling emitter is also a downward-facing one-sided quad.
+    nearest = trace_quad(nearest, origin, direction, make_float3(-0.46, 1.235, -1.09), make_float3(0.46, 1.235, -1.09), make_float3(0.46, 1.235, -0.41), make_float3(-0.46, 1.235, -0.41), make_float3(1.0, 0.92, 0.72), light)
+
+    nearest = trace_box(nearest, origin, direction, make_float3(-1.05, -1.25, -1.18), make_float3(-0.12, -0.28, -0.20), make_float3(0.72, 0.66, 0.53))
+    return trace_box(nearest, origin, direction, make_float3(0.12, -1.25, -1.82), make_float3(0.92, 0.40, -0.94), make_float3(0.58, 0.64, 0.70))
+}
+
+fn light_visibility(point: float3, normal: float3, light_position: float3) f32 {
+    let offset_point = add3(point, mul3(normal, 0.004))
+    let to_light = sub3(light_position, offset_point)
+    let light_distance = sqrt(dot3(to_light, to_light) as f64) as f32
+    let shadow_hit = trace_scene(offset_point, mul3(to_light, 1.0 / light_distance))
+    if shadow_hit.distance < light_distance - 0.012 {
+        return 0.0
+    }
+    return 1.0
+}
+
+fn light_contribution(point: float3, normal: float3, light_position: float3) f32 {
+    let to_light = sub3(light_position, point)
+    let distance_squared = dot3(to_light, to_light)
+    let light_direction = mul3(to_light, 1.0 / (sqrt(distance_squared as f64) as f32))
+    let diffuse = maximum(dot3(normal, light_direction), 0.0)
+    let attenuation_denominator = 1.0 + distance_squared * 0.09
+    return diffuse * light_visibility(point, normal, light_position) / attenuation_denominator
+}
+
+fn tone_map(color: float3) float3 {
+    let denominator_r = color.x + 0.72
+    let denominator_g = color.y + 0.72
+    let denominator_b = color.z + 0.72
+    let mapped_r = color.x / denominator_r
+    let mapped_g = color.y / denominator_g
+    let mapped_b = color.z / denominator_b
+    return make_float3(sqrt(saturate(mapped_r) as f64) as f32, sqrt(saturate(mapped_g) as f64) as f32, sqrt(saturate(mapped_b) as f64) as f32)
+}
+
+fn vs_cornell(data: ray_vertex) fragment_input {
     return fragment_input {
-        position: float4 { x: data.position.x, y: data.position.y, z: data.position.z, w: 1.0 },
-        color: data.color,
+        position: float4 { x: data.position.x, y: data.position.y, z: 0.0, w: 1.0 },
+        ray: data.ray,
+        camera_yaw: data.camera_yaw,
+        camera_pitch: data.camera_pitch,
     }
 }
 
-fn fs_triangle(data: fragment_input) float4 {
-    return data.color
+fn fs_cornell(data: fragment_input) float4 {
+    let yaw_sine = sin(data.camera_yaw as f64) as f32
+    let yaw_cosine = cos(data.camera_yaw as f64) as f32
+    let pitch_sine = sin(data.camera_pitch as f64) as f32
+    let pitch_cosine = cos(data.camera_pitch as f64) as f32
+    let camera_distance = 4.47
+    let camera_x = yaw_sine * pitch_cosine * camera_distance
+    let camera_y = 0.04 + pitch_sine * camera_distance
+    let camera_z = -0.82 + yaw_cosine * pitch_cosine * camera_distance
+    let camera = make_float3(camera_x, camera_y, camera_z)
+    let camera_focus = make_float3(0.0, -0.10, -0.82)
+    let forward = normalize3(sub3(camera_focus, camera))
+    let right = normalize3(cross3(forward, make_float3(0.0, 1.0, 0.0)))
+    let up = cross3(right, forward)
+    let direction = normalize3(add3(add3(mul3(forward, 1.72), mul3(right, data.ray.x)), mul3(up, data.ray.y)))
+    let nearest = trace_scene(camera, direction)
+
+    if nearest.distance >= 999.0 {
+        let radius_squared = data.ray.x * data.ray.x + data.ray.y * data.ray.y
+        let vignette = saturate(1.0 - radius_squared * 0.18)
+        return float4 { x: 0.010 * vignette, y: 0.013 * vignette, z: 0.020 * vignette, w: 1.0 }
+    }
+
+    if dot3(nearest.emission, nearest.emission) > 0.0 {
+        return float4 { x: 1.0, y: 0.94, z: 0.78, w: 1.0 }
+    }
+
+    let point = add3(camera, mul3(direction, nearest.distance))
+    let light_a = light_contribution(point, nearest.normal, make_float3(-0.30, 1.20, -0.95))
+    let light_b = light_contribution(point, nearest.normal, make_float3(0.30, 1.20, -0.95))
+    let light_c = light_contribution(point, nearest.normal, make_float3(-0.30, 1.20, -0.55))
+    let light_d = light_contribution(point, nearest.normal, make_float3(0.30, 1.20, -0.55))
+    let light_sum = light_a + light_b + light_c + light_d
+    let direct = light_sum * 1.45
+    let ambient = make_float3(0.070 + nearest.normal.x * 0.018, 0.064, 0.058 - nearest.normal.x * 0.014)
+    let warm_light = make_float3(1.0, 0.80, 0.58)
+    let lighting = add3(ambient, mul3(warm_light, direct))
+    let mapped = tone_map(hadamard3(nearest.color, lighting))
+    let radius_squared = data.ray.x * data.ray.x + data.ray.y * data.ray.y
+    let vignette = saturate(1.0 - radius_squared * 0.09)
+    return float4 { x: mapped.x * vignette, y: mapped.y * vignette, z: mapped.z * vignette, w: 1.0 }
 }
 
-let triangle_pipeline = 0u
-let triangle_vertices = 0u
-let triangle_mesh = 0u
-let canvas_view = view_create("Nano Script Wasm + WebGPU", 960, 540)
+let cornell_pipeline = 0u
+let ray_vertices = 0u
+let ray_mesh = 0u
+let canvas_view = view_create("Nano Script — Triangle Ray Traced Cornell Box", 960, 540)
+let camera_yaw = 0.0
+let camera_pitch = 0.0
+let camera_target_yaw = 0.0
+let camera_target_pitch = 0.0
+let drag_last_x = 0.0
+let drag_last_y = 0.0
+let camera_dragging = false
 
 fn main() {
     if gpu_request_device(canvas_view) {
-        print("WebGPU ready\n")
-        let vertices = [
-             0.0, -0.7, 0.0, 1.0, 0.2, 0.2, 1.0,
-             0.7,  0.7, 0.0, 0.2, 1.0, 0.3, 1.0,
-            -0.7,  0.7, 0.0, 0.2, 0.4, 1.0, 1.0,
-        ]
-        triangle_pipeline = gpu_create_pipeline(vs_triangle, fs_triangle)
-        triangle_vertices = gpu_create_buffer(84, GPU_USAGE_DEFAULT)
-        gpu_update_buffer(triangle_vertices, vertices, 84)
-        triangle_mesh = gpu_create_mesh_1(triangle_pipeline, triangle_vertices)
+        print("WebGPU triangle ray tracer ready\n")
+        cornell_pipeline = gpu_create_pipeline(vs_cornell, fs_cornell)
+        ray_vertices = gpu_create_buffer(72, GPU_USAGE_DEFAULT)
+        ray_mesh = gpu_create_mesh_1(cornell_pipeline, ray_vertices)
     } else {
         print("WebGPU is not available; rendering calls are safe no-ops\n")
     }
 }
 
 fn frame(time_ms: f64, width: i32, height: i32) {
-    let pulse = (sin(time_ms * 0.001) + 1.0) * 0.15
-    gpu_screen_pass_begin(0.04 + pulse, 0.08, 0.16 + pulse, 1.0)
-    gpu_set_mesh_id(triangle_mesh)
+    let mouse_x = canvas_view.mouse_x as f32
+    let mouse_y = canvas_view.mouse_y as f32
+    if canvas_view.mouse_down {
+        if camera_dragging {
+            let drag_x = mouse_x - drag_last_x
+            let drag_y = mouse_y - drag_last_y
+            camera_target_yaw = camera_target_yaw - drag_x * 0.006
+            camera_target_pitch = camera_target_pitch + drag_y * 0.006
+            if camera_target_pitch < (0.0 - 0.72) {
+                camera_target_pitch = 0.0 - 0.72
+            }
+            if camera_target_pitch > 0.72 {
+                camera_target_pitch = 0.72
+            }
+        }
+        drag_last_x = mouse_x
+        drag_last_y = mouse_y
+        camera_dragging = true
+    } else {
+        camera_dragging = false
+    }
+
+    camera_yaw = camera_yaw + (camera_target_yaw - camera_yaw) * 0.16
+    camera_pitch = camera_pitch + (camera_target_pitch - camera_pitch) * 0.16
+
+    let aspect = (width as f32) / (height as f32)
+    let vertices = [
+        -1.0, -1.0, -aspect, -1.0, camera_yaw, camera_pitch,
+         3.0, -1.0,  3.0 * aspect, -1.0, camera_yaw, camera_pitch,
+        -1.0,  3.0, -aspect,  3.0, camera_yaw, camera_pitch,
+    ]
+    gpu_update_buffer(ray_vertices, vertices, 72)
+    gpu_screen_pass_begin(0.008, 0.011, 0.018, 1.0)
+    gpu_set_mesh_id(ray_mesh)
     gpu_draw(0, 3, 1)
     gpu_pass_end()
     gpu_commit()

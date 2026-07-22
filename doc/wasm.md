@@ -13,11 +13,23 @@ source = "."
 entry = "main.ns"
 ```
 
-`ns build` writes `bin/<safe-name>.wasm`, `bin/ns-wasm.js`, and
-`bin/index.html`. If `<source>/assets` exists, its tree is synchronized into
+`ns build` writes `bin/<safe-name>.wasm`, `bin/<safe-name>.wasm.map`,
+`bin/ns-wasm.js`, and `bin/index.html`. The generated page title is the manifest
+`name`. Its favicon is copied from the manifest `icon`; without one, the
+official `ns.svg` installed with Nano Script is copied into the bundle and
+used instead. A canvas `view_create` title is retained as its accessibility
+label and does not replace the page title. If `<source>/assets` exists, its tree is synchronized into
 `bin/assets` without removing unrelated output. `-o path/app.wasm` puts all
-three browser artifacts beside that path. Wasm replacement is atomic: a failed
+browser artifacts and the selected favicon beside that path. Wasm replacement is atomic: a failed
 compile leaves the previous runnable artifact intact.
+
+The Wasm module carries the standard `sourceMappingURL` custom section pointing
+to its sibling Source Map v3 file. Generated columns are absolute byte offsets
+in the Wasm binary, as required by the WebAssembly debugging convention. The
+map preserves original project filenames and line/column locations across the
+merged translation unit and embeds `sourcesContent`, so Chrome DevTools can
+display and debug `.ns` sources without exposing the project source tree as
+ordinary static files.
 
 The application must export `fn main()` or `fn main() i32`. The middleware
 initializes its full-page canvas and WebGPU device first, calls `__ns_init`, and
@@ -33,7 +45,9 @@ The middleware invokes `frame` from `requestAnimationFrame`. WebGPU is the only
 GPU backend; there is no WebGL fallback. `view_create` returns a `ref view`
 backed by the generated HTML canvas. Its logical/framebuffer dimensions,
 display ratio, pointer/buttons/scroll, keyboard edges, gesture state, and
-clipboard cache are maintained by the browser middleware. Pass that view to
+clipboard cache are maintained by the browser middleware. The shell suppresses
+the canvas focus outline and context menu; pointer drags retain capture until
+release, including when the pointer moves outside the canvas. Pass that view to
 the normal typed `gpu_request_device(v: ref view)` API; it reports whether the
 automatically requested adapter/device is available. GPU calls return failure
 values or safely do nothing when it is not. Device loss triggers a new
@@ -45,7 +59,8 @@ with vertex reflection in the `ns.shaders` custom section.
 `ns run [path] --port <n>` builds first, binds only to localhost, and serves the
 bundle without opening a browser. The default port is 9001; port 0 asks the OS
 for a free port and prints the selected URL. Responses use `Cache-Control:
-no-store`; `.wasm` is served as `application/wasm`; GET, HEAD, and traversal
+no-store`; `.wasm` is served as `application/wasm`, `.wasm.map` as
+`application/json`; GET, HEAD, and traversal
 rejection are handled explicitly.
 
 The installed `wasm_dev.ns` module owns the accept loop, project fingerprint,
