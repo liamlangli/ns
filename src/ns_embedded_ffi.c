@@ -183,43 +183,8 @@ extern i32 os_launch_ns_project(const char *, const char *);
 extern ns_bool gpu_request_device(void *);
 extern void gpu_destroy_device(void);
 extern const char * gpu_shader_target(void);
-extern ns_bool gpu_dispatch_compute_source(const char *, const char *, i32, i32, i32);
-extern ns_bool gpu_dispatch_compute_texture_source(const char *, const char *, u32, i32, i32, i32);
-extern u32 gpu_create_buffer(i32, i32);
-extern u32 gpu_create_index_buffer(i32, i32);
-extern u32 gpu_create_uniform_buffer(i32, i32);
-extern void gpu_update_buffer(u32, void *, i32);
-extern void gpu_update_texture_id(u32, void *, i32);
-extern u32 gpu_create_shader_source(const char *, const char *, const char *, const char *);
-extern u32 gpu_create_pipeline_layout(u32, i32, void *, void *, void *, i32, i32, i32);
-extern u32 gpu_create_pipeline_layout_ex(u32, i32, void *, void *, void *, i32, i32, i32, i32, i32, ns_bool, i32, ns_bool);
-extern u32 gpu_create_pipeline_layout_indexed_ex(u32, i32, void *, void *, void *, i32, i32, i32, i32, i32, i32, ns_bool, i32, ns_bool);
-extern u32 gpu_create_mesh_1(u32, u32);
-extern u32 gpu_create_mesh_indexed(u32, u32, u32, i32);
-extern u32 gpu_create_texture_2d(i32, i32, i32, i32);
-extern u32 gpu_create_texture_binding(u32, u32, const char *);
-extern u32 gpu_create_buffer_texture_binding(u32, u32, const char *, u32, const char *, u32, const char *);
-extern u32 gpu_create_depth_pass(u32);
-extern u32 gpu_create_screen_pass(f64, f64, f64, f64);
-extern void gpu_destroy_texture_id(u32);
-extern void gpu_destroy_binding_id(u32);
-extern void gpu_destroy_buffer_id(u32);
-extern void gpu_destroy_shader_id(u32);
-extern void gpu_destroy_pipeline_id(u32);
-extern void gpu_destroy_mesh_id(u32);
-extern void gpu_destroy_render_pass_id(u32);
-extern void gpu_begin_render_pass_id(u32);
-extern void gpu_set_pipeline_id(u32);
-extern void gpu_set_mesh_id(u32);
-extern void gpu_set_binding_id(u32);
-extern void gpu_begin_render_pass(gpu_render_pass);
 extern void gpu_set_viewport(i32, i32, i32, i32);
 extern void gpu_set_scissor(i32, i32, i32, i32);
-extern void gpu_set_pipeline(gpu_pipeline);
-extern void gpu_set_binding(gpu_binding);
-extern void gpu_set_mesh(gpu_mesh);
-extern void gpu_draw(i32, i32, i32);
-extern void gpu_end_pass(void);
 extern void gpu_commit(void);
 extern u32 gpu_caps(void);
 extern u64 gpu_malloc(u64, u32);
@@ -1025,41 +990,14 @@ typedef struct ns_embedded_entry {
 
 // Sorted by strcmp(name) for the binary search in ns_vm_call_embedded.
 static const ns_embedded_entry ns_embedded_entries[] = {
-    { "gpu_begin_render_pass", (void *)gpu_begin_render_pass, ns_embedded_sig0 },
-    { "gpu_begin_render_pass_id", (void *)gpu_begin_render_pass_id, ns_embedded_sig1 },
     { "gpu_caps", (void *)gpu_caps, ns_embedded_sig2 },
     { "gpu_commit", (void *)gpu_commit, ns_embedded_sig3 },
-    { "gpu_create_buffer", (void *)gpu_create_buffer, ns_embedded_sig4 },
-    { "gpu_create_buffer_texture_binding", (void *)gpu_create_buffer_texture_binding, ns_embedded_sig5 },
-    { "gpu_create_depth_pass", (void *)gpu_create_depth_pass, ns_embedded_sig6 },
-    { "gpu_create_index_buffer", (void *)gpu_create_index_buffer, ns_embedded_sig4 },
-    { "gpu_create_mesh_1", (void *)gpu_create_mesh_1, ns_embedded_sig7 },
-    { "gpu_create_mesh_indexed", (void *)gpu_create_mesh_indexed, ns_embedded_sig8 },
-    { "gpu_create_pipeline_layout", (void *)gpu_create_pipeline_layout, ns_embedded_sig9 },
-    { "gpu_create_pipeline_layout_ex", (void *)gpu_create_pipeline_layout_ex, ns_embedded_sig10 },
-    { "gpu_create_pipeline_layout_indexed_ex", (void *)gpu_create_pipeline_layout_indexed_ex, ns_embedded_sig11 },
-    { "gpu_create_screen_pass", (void *)gpu_create_screen_pass, ns_embedded_sig12 },
-    { "gpu_create_shader_source", (void *)gpu_create_shader_source, ns_embedded_sig13 },
-    { "gpu_create_texture_2d", (void *)gpu_create_texture_2d, ns_embedded_sig14 },
-    { "gpu_create_texture_binding", (void *)gpu_create_texture_binding, ns_embedded_sig15 },
-    { "gpu_create_uniform_buffer", (void *)gpu_create_uniform_buffer, ns_embedded_sig4 },
-    { "gpu_destroy_binding_id", (void *)gpu_destroy_binding_id, ns_embedded_sig1 },
-    { "gpu_destroy_buffer_id", (void *)gpu_destroy_buffer_id, ns_embedded_sig1 },
     { "gpu_destroy_device", (void *)gpu_destroy_device, ns_embedded_sig3 },
-    { "gpu_destroy_mesh_id", (void *)gpu_destroy_mesh_id, ns_embedded_sig1 },
-    { "gpu_destroy_pipeline_id", (void *)gpu_destroy_pipeline_id, ns_embedded_sig1 },
-    { "gpu_destroy_render_pass_id", (void *)gpu_destroy_render_pass_id, ns_embedded_sig1 },
-    { "gpu_destroy_shader_id", (void *)gpu_destroy_shader_id, ns_embedded_sig1 },
-    { "gpu_destroy_texture_id", (void *)gpu_destroy_texture_id, ns_embedded_sig1 },
     { "gpu_dispatch", (void *)gpu_dispatch, ns_embedded_sig16 },
-    { "gpu_dispatch_compute_source", (void *)gpu_dispatch_compute_source, ns_embedded_sig17 },
-    { "gpu_dispatch_compute_texture_source", (void *)gpu_dispatch_compute_texture_source, ns_embedded_sig18 },
     { "gpu_dispatch_indirect", (void *)gpu_dispatch_indirect, ns_embedded_sig19 },
-    { "gpu_draw", (void *)gpu_draw, ns_embedded_sig16 },
     { "gpu_draw_indexed", (void *)gpu_draw_indexed, ns_embedded_sig20 },
     { "gpu_draw_indirect", (void *)gpu_draw_indirect, ns_embedded_sig21 },
     { "gpu_draw_vertices", (void *)gpu_draw_vertices, ns_embedded_sig16 },
-    { "gpu_end_pass", (void *)gpu_end_pass, ns_embedded_sig3 },
     { "gpu_frame_alloc", (void *)gpu_frame_alloc, ns_embedded_sig22 },
     { "gpu_free", (void *)gpu_free, ns_embedded_sig19 },
     { "gpu_malloc", (void *)gpu_malloc, ns_embedded_sig22 },
@@ -1073,12 +1011,6 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "gpu_sampler_create", (void *)gpu_sampler_create, ns_embedded_sig29 },
     { "gpu_sampler_destroy", (void *)gpu_sampler_destroy, ns_embedded_sig1 },
     { "gpu_screen_pass_begin", (void *)gpu_screen_pass_begin, ns_embedded_sig30 },
-    { "gpu_set_binding", (void *)gpu_set_binding, ns_embedded_sig31 },
-    { "gpu_set_binding_id", (void *)gpu_set_binding_id, ns_embedded_sig1 },
-    { "gpu_set_mesh", (void *)gpu_set_mesh, ns_embedded_sig32 },
-    { "gpu_set_mesh_id", (void *)gpu_set_mesh_id, ns_embedded_sig1 },
-    { "gpu_set_pipeline", (void *)gpu_set_pipeline, ns_embedded_sig33 },
-    { "gpu_set_pipeline_id", (void *)gpu_set_pipeline_id, ns_embedded_sig1 },
     { "gpu_set_root", (void *)gpu_set_root, ns_embedded_sig19 },
     { "gpu_set_root_data", (void *)gpu_set_root_data, ns_embedded_sig34 },
     { "gpu_set_scissor", (void *)gpu_set_scissor, ns_embedded_sig35 },
@@ -1094,8 +1026,6 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "gpu_texture_create", (void *)gpu_texture_create, ns_embedded_sig40 },
     { "gpu_texture_destroy", (void *)gpu_texture_destroy, ns_embedded_sig1 },
     { "gpu_texture_upload", (void *)gpu_texture_upload, ns_embedded_sig41 },
-    { "gpu_update_buffer", (void *)gpu_update_buffer, ns_embedded_sig42 },
-    { "gpu_update_texture_id", (void *)gpu_update_texture_id, ns_embedded_sig42 },
     { "gpu_wait_before", (void *)gpu_wait_before, ns_embedded_sig38 },
     { "gpu_write", (void *)gpu_write, ns_embedded_sig43 },
     { "io_load_image", (void *)io_load_image, ns_embedded_sig44 },

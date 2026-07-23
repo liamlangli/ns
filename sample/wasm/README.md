@@ -1,16 +1,21 @@
-# Nano Script Wasm Ray Tracer
+# Nano Script Wasm Compute Path Tracer
 
 From this directory, run `ns run --port 0` and open the printed loopback URL.
-The sample compiles Nano Script vertex and fragment functions to WGSL and ray
-traces a Cornell box on the full-page WebGPU canvas. The open-front room, two
-boxes, and ceiling light are meshes of explicitly wound, one-sided triangles.
-The fragment shader computes four-sample area-light shadows, tone mapping, and
-vignetting. Drag the canvas with the left mouse button to orbit the camera;
-the camera eases toward the dragged angle and does not rotate on its own. A single full-canvas primitive
-only launches the per-pixel rays; no triangle is present in the rendered scene.
+The sample compiles Nano Script compute, vertex, and fragment functions to WGSL.
+The compute shader traces a Cornell box with multi-bounce diffuse transport,
+next-event estimation, shadow rays, Russian roulette, and power-heuristic MIS.
+Two RG11B10F textures hold a progressive running average while the camera is
+still. A fullscreen pass applies ACES-style tone mapping and writes the result
+to the browser's 8-bit swapchain.
 
-The canvas-backed `ref view` is passed to `gpu_request_device`. The sample
-continues safely when WebGPU is unavailable.
+Drag with the left mouse button to orbit. Camera motion is applied directly,
+without damping, and immediately resets accumulation. Resize also recreates
+and resets the accumulation textures.
+
+The canvas-backed `ref view` is passed to `gpu_request_device`. Browsers with
+`texture-formats-tier1` use RG11B10F as a storage texture directly; the Wasm
+bridge falls back internally to RGBA16F when that optional feature is missing.
+The public Nano Script code remains on the v2 GPU API in either case.
 
 Editing any project input triggers a debounced rebuild and browser reload.
 The emitted `.wasm.map` lets Chrome DevTools show the original `.ns` source.

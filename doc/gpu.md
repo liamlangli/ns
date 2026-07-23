@@ -1,4 +1,4 @@
-# GPU Module v2 Design
+# GPU Module v2
 
 > Reference: Sebastian Aaltonen, ["No Graphics API"](https://www.sebastianaaltonen.com/blog/no-graphics-api)
 > (Dec 2025). Related reading: the
@@ -6,14 +6,15 @@
 > ["Thoughts on No Graphics API"](https://www.corsix.org/content/thoughts-on-no-graphics-api),
 > and ["Writing a bindless GPU abstraction layer"](https://www.kevin-gibson.com/blog/writing-a-bindless-gpu-abstraction-layer/).
 
-## Goal
+## Public API
 
-Redesign the `gpu` built-in module around the ideas in "No Graphics API":
+The `gpu` built-in module is designed around the ideas in "No Graphics API":
 treat the GPU as a processor with memory rather than a state machine with
-bound objects. The result is a smaller, flatter API that removes the
-combinatorial FFI wrappers of v1 and makes new rendering techniques (dynamic
-geometry, compute pipelines, GPU-driven drawing) expressible from ns without
-touching C.
+bound objects. Nano Script exposes only this v2 surface. The old mesh,
+binding, pipeline-layout, named-resource, and source-per-dispatch entry points
+have been removed from `lib/gpu.ns` and from native/Wasm FFI registration.
+Native UI backends may retain private descriptor structures as implementation
+details; they are not callable from Nano Script.
 
 ## The article's argument, in short
 
@@ -43,10 +44,10 @@ Graphics APIs still expose abstractions designed for 2015 hardware:
   `gpuSignalAfter(addr, value)` / `gpuWaitBefore(addr, value)` on a memory
   location.
 
-## What v1 gets wrong today
+## Why v1 was removed
 
-The v1 surface (`lib/include/gpu.h`, `lib/gpu.ns`) is a sokol-style
-descriptor API plus a scalar FFI tail. Concrete inflexibilities:
+The removed v1 surface was a sokol-style descriptor API plus a scalar FFI
+tail. Its concrete inflexibilities were:
 
 1. **Combinatorial wrappers.** Every binding shape needs a new C symbol:
    `gpu_create_texture_binding` (1 texture), `gpu_create_buffer_texture_binding`
@@ -377,11 +378,11 @@ Constructors are `gpu_texture_new`/`gpu_texture_new_2d`/`gpu_texture_none`,
 `gpu_*_release`/`gpu_memory_free`; binding is `gpu_shader_bind` /
 `gpu_render_state_bind`.
 
-Two sugar fns wrap the `shader` transpiler, replacing v1's
+Two sugar fns wrap the `shader` transpiler, replacing the old
 `gpu_create_pipeline` and the recompile-per-dispatch `dispatch_gpu`:
 
 ```ns
-// Transpile ns fns for the active backend. Unlike a v1 pipeline the result
+// Transpile ns fns for the active backend. The result
 // carries no vertex layout or attachment formats and can be drawn with any
 // state in any pass; the compute variant returns a persistent shader for
 // gpu_dispatch. The returned gpu_shader records target and entry names.
@@ -389,21 +390,10 @@ fn gpu_shader_graphics(vs: any, fs: any) gpu_shader
 fn gpu_shader_compute(f: any) gpu_shader
 ```
 
-A frame, before and after:
+A migrated frame:
 
 ```ns
-// v1: shader -> pipeline(+layout) -> mesh(pipeline+buffers) -> binding(pipeline+names)
-let pipeline = gpu_create_pipeline_layout_ex(shader_id, stride, offs, sizes, fmts, n,
-                                             color_fmt, prim, depth_fmt, cmp, true, cull, true)
-let mesh = gpu_create_mesh_indexed(pipeline, vbuf, ibuf, GPU_INDEX_UINT32)
-let binding = gpu_create_texture_binding(pipeline, tex, "u_texture")
-gpu_begin_render_pass_id(pass)
-gpu_set_pipeline_id(pipeline)
-gpu_set_mesh_id(mesh)
-gpu_set_binding_id(binding)
-gpu_draw(0, index_count, 1)
-
-// v2: data is data; the draw names everything it needs
+// Data is data; the draw names everything it needs.
 let args = sprite_args(g_vertices, view_size(), g_atlas, g_linear)
 gpu_screen_pass_begin(0.1, 0.1, 0.1, 1.0)
 gpu_set_shader(g_shader)
@@ -461,39 +451,13 @@ gpu_pass_end()
 - **Linux/null.** Same no-op fallback contract as v1: every call safe,
   `gpu_request_device` returns false, `gpu_caps()` returns 0.
 
-## Migration plan
+## Migration status
 
-Phase 0 — carve the seam. **Landed.** v2 entry points live beside v1 in
-`gpu.h` / `gpu_const.h` / `gpu.ns`; the portable core in `lib/src/gpu.c`
-(compiled on every platform) owns virtual addressing with host-backed
-memory on the null tier, `gpu_write`/`gpu_read`, the frame ring rotated by
-`gpu_v2_frame_end()` from each backend's `gpu_commit`, the value-cached
-state registry, and `gpu_caps()`. Backends will register `gpu_v2_ops` (the
-seam struct in `gpu.h`) from `gpu_request_device`; until then resource
-creation returns 0 and submission is a safe no-op. Covered headless by
-`test/gpu_v2_test.ns`. No callers changed.
-
-Phase 1 — Metal core. Memory (`gpu_malloc`/`gpu_write`/`gpu_frame_alloc`),
-texture heap indices, `gpu_create_state` + PSO cache, root pointer,
-`gpu_draw`/`gpu_draw_indexed`. Port `sample/ns/shader.ns` and
-`test/gpu_pipeline_test.ns` to v2 as the acceptance bar.
-
-Phase 2 — shader transpiler. `gpu_addr`/`gpu_load`/`gpu_store`,
-heap-index texture sampling, `vertex_id`/`instance_id`/`thread_id`
-builtins, root-struct reflection emission.
-
-Phase 3 — consumers. Port `lib/src/ui.c` (draw-list rendering collapses
-onto `gpu_frame_alloc` + one root struct) and `nscode/native`. Persistent
-compute shaders replace `gpu_dispatch_compute_source` in `dispatch_gpu`.
-
-Phase 4 — browser and DX12 tiers. **Browser core landed.** Wasm projects use
-WebGPU for buffer/texture resources, render and compute submission, indirect
-commands, root data, and pre-transpiled WGSL metadata. DX12 and the remaining
-capability-dependent split-barrier work continue in this phase.
-
-Phase 5 — deprecate v1. `gpu_mesh`/`gpu_binding`/`gpu_pipeline_layout*`
-first become pure-ns compatibility wrappers over v2 in `lib/gpu.ns`, then
-the C symbols and the per-shape FFI tail are deleted.
+The Nano Script and Wasm import surfaces are v2-only. Samples and tests use
+persistent graphics/compute shaders, root data, GPU addresses, and bindless
+texture IDs. Browser WebGPU supports compute storage textures and requests
+the optional `texture-formats-tier1` feature for `R11G11B10F`, falling back
+internally to `RGBA16F` when the feature is unavailable.
 
 ## Open questions
 

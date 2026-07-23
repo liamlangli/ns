@@ -5,9 +5,8 @@
 //   make std
 //   bin/ns sample/ns/shader.ns
 //
-// gpu_create_pipeline(vs_main, fs_main) transpiles the fns to the active
-// Metal, Vulkan, or DirectX shader language and reflects the vertex layout
-// from vertex_data internally. The fragment shader uses helpers, integer
+// gpu_shader_graphics(vs_main, fs_main) transpiles the fns to the active
+// Metal, Vulkan, or DirectX shader language. The fragment shader uses helpers, integer
 // bitwise operations, a range loop, casts, and math intrinsics to draw the
 // curve.
 
@@ -16,11 +15,6 @@ use simd
 use shader
 use view
 use gpu
-
-struct vertex_data {
-    position: float3,
-    uv: float2
-}
 
 struct fragment_input {
     position: float4,
@@ -32,13 +26,17 @@ struct grid_point {
     y: i32
 }
 
-let g_resources = [0u, 0u, 0u]
+let g_resources = [0u, 0u]
 
-fn vs_main(data: vertex_data) fragment_input {
-    let pos = data.position
+fn vs_main() fragment_input {
+    let vertex = shader_vertex_id()
+    let x = -1.0
+    let y = -1.0
+    if vertex == 1 { x = 3.0 }
+    if vertex == 2 { y = 3.0 }
     return fragment_input {
-        position: float4 { x: pos.x, y: pos.y, z: pos.z, w: 1.0 },
-        uv: data.uv,
+        position: float4 { x: x, y: y, z: 0.0, w: 1.0 },
+        uv: float2 { x: (x + 1.0) * 0.5, y: (y + 1.0) * 0.5 },
     }
 }
 
@@ -136,40 +134,23 @@ fn fs_main(data: fragment_input) float4 {
 }
 
 fn create_pipeline() {
-    // Two triangles cover the viewport; uv is interpolated for fs_main.
-    let vertices = [
-        -1.0, -1.0, 0.0, 0.0, 0.0,
-        1.0, -1.0, 0.0, 1.0, 0.0,
-        1.0, 1.0, 0.0, 1.0, 1.0,
-        -1.0, -1.0, 0.0, 0.0, 0.0,
-        1.0, 1.0, 0.0, 1.0, 1.0,
-        -1.0, 1.0, 0.0, 0.0, 1.0,
-    ]
-
-    let vertex_bytes = vertices.len * 4
-    g_resources[0] = gpu_create_buffer(vertex_bytes, GPU_USAGE_DEFAULT)
-    gpu_update_buffer(g_resources[0], vertices, vertex_bytes)
-    // gpu_create_pipeline transpiles vs_main/fs_main for the active backend and
-    // reflects the vertex layout from vertex_data, so the fns are the whole API.
-    g_resources[1] = gpu_create_pipeline(vs_main, fs_main)
-    g_resources[2] = gpu_create_mesh_1(g_resources[1], g_resources[0])
+    g_resources[0] = gpu_shader_graphics(vs_main, fs_main).resource_id
+    g_resources[1] = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, 0, 0, false, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
 }
 
 fn draw_pattern(v: ref view) {
-    gpu_begin_render_pass_id(0u)
+    gpu_screen_pass_begin(0.02, 0.02, 0.02, 1.0)
     gpu_set_viewport(0, 0, v.framebuffer_width, v.framebuffer_height)
     gpu_set_scissor(0, 0, v.framebuffer_width, v.framebuffer_height)
-    gpu_set_pipeline_id(g_resources[1])
-    gpu_set_mesh_id(g_resources[2])
-    gpu_draw(0, 6, 1)
-    gpu_end_pass()
+    gpu_set_shader(g_resources[0])
+    gpu_set_state(g_resources[1])
+    gpu_draw_vertices(0, 3, 1)
+    gpu_pass_end()
     gpu_commit()
 }
 
 fn destroy_pipeline() {
-    gpu_destroy_mesh_id(g_resources[2])
-    gpu_destroy_pipeline_id(g_resources[1])
-    gpu_destroy_buffer_id(g_resources[0])
+    gpu_shader_destroy(g_resources[0])
 }
 
 fn main() {
@@ -179,7 +160,7 @@ fn main() {
         let target = gpu_shader_target()
         create_pipeline()
 
-        if g_resources[0] != 0u && g_resources[1] != 0u && g_resources[2] != 0u {
+        if g_resources[0] != 0u && g_resources[1] != 0u {
             print(`rendering a Hilbert curve with transpiled {target} shaders\n`)
         } else {
             print("Hilbert shader pipeline was not created\n")

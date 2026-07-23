@@ -8,25 +8,17 @@ use shader
 // resolved through FFI.
 //
 // As with the other native modules, the interface exposed to ns is the FFI-safe
-// subset: scalars, `str`, `ref` pointers, arrays, and small resource IDs. The C
-// backend still owns the full descriptor structs; ns drives them through the
-// scalar ID helpers below.
+// subset: scalars, `str`, `ref` pointers, arrays, 64-bit GPU addresses, and
+// bindless texture/sampler IDs. Native renderer implementation details are not
+// part of the Nano Script API.
 
 struct gpu_device { handle: any }
 
-// Opaque v1 resource handles. `id` is a slot index into the backend pools;
-// 0 is the invalid handle. Texture/sampler/buffer/shader handles are rich v2
-// structs declared further down.
-struct gpu_pipeline { id: i32 }
-struct gpu_binding { id: i32 }
-struct gpu_mesh { id: i32 }
-struct gpu_render_pass { id: i32 }
-
-lit GPU_USAGE_DEFAULT = 0
-lit GPU_ATTRIBUTE_FORMAT_FLOAT = 1
 lit GPU_PIXELFORMAT_NONE = 1
 lit GPU_PIXELFORMAT_RGBA8 = 23
 lit GPU_PIXELFORMAT_BGRA8 = 28
+lit GPU_PIXELFORMAT_RG11B10F = 30
+lit GPU_PIXELFORMAT_RGBA16F = 39
 lit GPU_PIXELFORMAT_DEPTH = 43
 lit GPU_TEXTURE_USAGE_READ = 1
 lit GPU_TEXTURE_USAGE_WRITE = 2
@@ -46,104 +38,10 @@ lit GPU_CULL_BACK = 2
 ref fn gpu_request_device(v: ref view) bool
 ref fn gpu_destroy_device()
 
-// ---- scalar resource creation for ns FFI ----------------------------------
-
+// Active backend shader language used by the v2 shader constructors.
 ref fn gpu_shader_target() str
-ref fn gpu_dispatch_compute_source(source: str, entry: str, threads_x: i32, threads_y: i32, threads_z: i32) bool
-ref fn gpu_dispatch_compute_texture_source(source: str, entry: str, texture_id: u32, threads_x: i32, threads_y: i32, threads_z: i32) bool
-ref fn gpu_create_buffer(byte_len: i32, usage: i32) u32
-ref fn gpu_create_index_buffer(byte_len: i32, usage: i32) u32
-ref fn gpu_create_uniform_buffer(byte_len: i32, usage: i32) u32
-ref fn gpu_update_buffer(buffer_id: u32, data: [any], byte_len: i32)
-ref fn gpu_update_texture_id(texture_id: u32, data: [any], byte_len: i32)
-ref fn gpu_create_shader_source(vertex_source: str, fragment_source: str, vertex_entry: str, fragment_entry: str) u32
-ref fn gpu_create_pipeline_layout(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32) u32
-// Extended graphics pipeline creation used by native 3D renderers. The shader
-// still comes from ordinary ns vertex/fragment functions transpiled by
-// `shader`; this helper only exposes fixed-function depth/cull/blend state.
-ref fn gpu_create_pipeline_layout_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
-ref fn gpu_create_pipeline_layout_indexed_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32, index_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
-ref fn gpu_create_mesh_1(pipeline_id: u32, vertex_buffer_id: u32) u32
-ref fn gpu_create_mesh_indexed(pipeline_id: u32, vertex_buffer_id: u32, index_buffer_id: u32, index_type: i32) u32
-ref fn gpu_create_texture_2d(width: i32, height: i32, format: i32, usage: i32) u32
-ref fn gpu_create_texture_binding(pipeline_id: u32, texture_id: u32, name: str) u32
-ref fn gpu_create_buffer_texture_binding(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture1_id: u32, texture1_name: str) u32
-ref fn gpu_create_depth_pass(depth_texture_id: u32) u32
-ref fn gpu_create_screen_pass(r: f64, g: f64, b: f64, a: f64) u32
-ref fn gpu_destroy_texture_id(texture_id: u32)
-ref fn gpu_destroy_binding_id(binding_id: u32)
-ref fn gpu_destroy_buffer_id(buffer_id: u32)
-ref fn gpu_destroy_shader_id(shader_id: u32)
-ref fn gpu_destroy_pipeline_id(pipeline_id: u32)
-ref fn gpu_destroy_mesh_id(mesh_id: u32)
-ref fn gpu_destroy_render_pass_id(pass_id: u32)
-ref fn gpu_begin_render_pass_id(pass_id: u32)
-ref fn gpu_set_pipeline_id(pipeline_id: u32)
-ref fn gpu_set_mesh_id(mesh_id: u32)
-ref fn gpu_set_binding_id(binding_id: u32)
-
-// Transpile a zero-parameter ns fn explicitly returning void into a native compute shader and run
-// it over the requested thread grid. A GPU device must already be acquired.
-fn dispatch_gpu(f: any, threads_x: i32, threads_y: i32, threads_z: i32) bool {
-    let target = gpu_shader_target()
-    let source = shader_transpile_stage(f, target, "compute")
-    let entry = shader_entry(f, target)
-    return gpu_dispatch_compute_source(source, entry, threads_x, threads_y, threads_z)
-}
-
-// Create a graphics pipeline directly from ns vertex and fragment fns plus the
-// color/primitive fixed-function state. The fns are transpiled for the active
-// backend and the vertex layout is reflected from the vertex fn's input struct
-// (tightly packed f32/float2/3/4 fields), so no shader source or layout tables
-// cross the API. The backend compiles the shader into the pipeline state, so
-// the intermediate shader object is released before returning; the returned
-// pipeline is destroyed with gpu_destroy_pipeline_id alone. Returns 0 when the
-// backend rejects the shader or pipeline (or no device is acquired).
-fn gpu_create_pipeline_ex(vs: any, fs: any, color_format: i32, primitive_type: i32) u32 {
-    // The backend layout state carries at most 8 vertex attributes
-    // (GPU_ATTRIBUTE_COUNT), which also bounds the tables below.
-    let attr_count = shader_vertex_attr_count(vs)
-    if attr_count > 8 {
-        return 0u
-    }
-
-    let target = gpu_shader_target()
-    let vs_src = shader_transpile_stage(vs, target, "vertex")
-    let fs_src = shader_transpile_stage(fs, target, "fragment")
-    let shader_id = gpu_create_shader_source(vs_src, fs_src, shader_entry(vs, target), shader_entry(fs, target))
-    if shader_id == 0u {
-        return 0u
-    }
-
-    let attr_offsets = [0, 0, 0, 0, 0, 0, 0, 0]
-    let attr_sizes = [0, 0, 0, 0, 0, 0, 0, 0]
-    let attr_formats = [0, 0, 0, 0, 0, 0, 0, 0]
-    for i in 0 to attr_count {
-        attr_offsets[i] = shader_vertex_attr_offset(vs, i)
-        attr_sizes[i] = shader_vertex_attr_size(vs, i)
-        attr_formats[i] = GPU_ATTRIBUTE_FORMAT_FLOAT
-    }
-
-    let pipeline_id = gpu_create_pipeline_layout(shader_id, shader_vertex_stride(vs), attr_offsets, attr_sizes, attr_formats, attr_count, color_format, primitive_type)
-    gpu_destroy_shader_id(shader_id)
-    return pipeline_id
-}
-
-// gpu_create_pipeline_ex with screen defaults: BGRA8 color and triangles.
-fn gpu_create_pipeline(vs: any, fs: any) u32 {
-    return gpu_create_pipeline_ex(vs, fs, GPU_PIXELFORMAT_BGRA8, GPU_PRIMITIVE_TRIANGLES)
-}
-
-// ---- per-frame submission (FFI-safe: handles + scalars) -------------------
-
-ref fn gpu_begin_render_pass(pass: gpu_render_pass)
 ref fn gpu_set_viewport(x: i32, y: i32, width: i32, height: i32)
 ref fn gpu_set_scissor(x: i32, y: i32, width: i32, height: i32)
-ref fn gpu_set_pipeline(pipeline: gpu_pipeline)
-ref fn gpu_set_binding(binding: gpu_binding)
-ref fn gpu_set_mesh(mesh: gpu_mesh)
-ref fn gpu_draw(base: i32, count: i32, instance_count: i32)
-ref fn gpu_end_pass()
 ref fn gpu_commit()
 
 // ---- v2: the GPU as a processor with memory (doc/gpu.md) -------------------
@@ -426,7 +324,7 @@ fn gpu_memory_free(mem: gpu_memory) {
 }
 
 // Transpile ns vertex/fragment fns for the active backend into a v2 shader.
-// Unlike v1 pipelines, the result carries no vertex layout or attachment
+// The result carries no vertex layout or attachment
 // formats and can be drawn with any state in any pass.
 fn gpu_shader_graphics(vs: any, fs: any) gpu_shader {
     let target = gpu_shader_target()
@@ -444,7 +342,7 @@ fn gpu_shader_graphics(vs: any, fs: any) gpu_shader {
 }
 
 // Transpile a compute ns fn into a persistent v2 shader dispatched with
-// gpu_dispatch, replacing the recompile-per-dispatch dispatch_gpu path.
+// gpu_dispatch. The shader object is persistent and compiled once.
 fn gpu_shader_compute(f: any) gpu_shader {
     let target = gpu_shader_target()
     let source = shader_transpile_stage(f, target, "compute")

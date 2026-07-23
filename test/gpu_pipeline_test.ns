@@ -1,6 +1,6 @@
 // Vertex-layout reflection and fn-based pipeline creation over the gpu
 // scalar-ID API. The reflection intrinsics are VM-side and exact on every
-// platform. gpu_create_pipeline transpiles the fn pair in the VM and reaches
+// platform. gpu_shader_graphics transpiles the fn pair in the VM and reaches
 // the native backend; without a requested GPU device the returned id is
 // backend-defined (0 where shaders cannot be built headless), so only the
 // call path is exercised here.
@@ -33,5 +33,5 @@ assert(shader_vertex_attr_size(vs_main, 0) == 3)
 assert(shader_vertex_attr_size(vs_main, 1) == 2)
 assert(shader_vertex_attr_size(vs_main, 2) == 1)
 
-let pipeline = gpu_create_pipeline(vs_main, fs_main)
-gpu_destroy_pipeline_id(pipeline)
+let shader = gpu_shader_graphics(vs_main, fs_main)
+gpu_shader_release(shader)

@@ -22,7 +22,8 @@ use simd
 ref fn shader_transpile(f: any, target: str) str
 
 // Transpile with an explicit stage: "vertex" | "fragment" | "compute".
-// Compute entries currently take no parameters and return void.
+// Compute entries take no parameters and return void. GPU resources and the
+// root argument are accessed through the stage intrinsics below.
 ref fn shader_transpile_stage(f: any, target: str, stage: str) str
 
 // Entry-point name for gpu_shader_stage_desc.entry: the fn name for msl/hlsl,
@@ -57,10 +58,14 @@ ref fn shader_scene_receives_shadow() f32
 // Sample the regular RGBA texture bound as `ns_texture_map` at texture slot 1.
 ref fn shader_sample_texture(coord: float2) float4
 
-// Compute-stage intrinsics. Invocation coordinates identify the current thread
-// in the dispatched grid. shader_write_texture stores one RGBA value in the
-// writable 2D texture bound by gpu_dispatch_compute_texture_source.
+// v2 stage intrinsics. Invocation coordinates identify the current compute
+// thread. The read/write texture IDs live in root words 0 and 1; the portable
+// WebGPU tier patches those bindless IDs into the shader's bind group.
+// shader_root_f32 addresses the root as tightly packed 32-bit words.
 ref fn shader_global_id_x() i32
 ref fn shader_global_id_y() i32
 ref fn shader_global_id_z() i32
+ref fn shader_vertex_id() i32
+ref fn shader_root_f32(index: i32) f32
+ref fn shader_read_texture(x: i32, y: i32) float4
 ref fn shader_write_texture(x: i32, y: i32, color: float4)

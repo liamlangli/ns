@@ -45,6 +45,9 @@ static const char *ns_shader_test_src =
     "fn enum_gain() f32 {\n"
     "    return shade.light as f32\n"
     "}\n"
+    "fn grouped_math(a: f32, b: f32, c: f32) f32 {\n"
+    "    return (a + b) * c\n"
+    "}\n"
     "fn vs_main(data: VertexData) FragmentInput {\n"
     "    let pos = data.position\n"
     "    return FragmentInput {\n"
@@ -54,7 +57,7 @@ static const char *ns_shader_test_src =
     "    }\n"
     "}\n"
     "fn fs_main(data: FragmentInput) float4 {\n"
-    "    return brighten(data.color, half_gain(0.5 as f32) + enum_gain())\n"
+    "    return brighten(data.color, grouped_math(half_gain(0.5 as f32), enum_gain(), 0.5))\n"
     "}\n"
     "fn fs_shadow(data: FragmentInput) float4 {\n"
     "    let uv = data.uv\n"
@@ -194,6 +197,8 @@ int main() {
                           ns_shader_test_has(r.r, "@builtin(position) position: vec4<f32>"),
                       "wgsl vertex inputs and clip position use WebGPU attributes.");
             ns_expect(ns_shader_test_has(r.r, "-> @location(0) vec4<f32>"), "wgsl fragment result has a color location.");
+            ns_expect(ns_shader_test_has(r.r, "return ((a + b) * c);"),
+                      "shader binary expressions preserve AST grouping.");
             ns_array_free(r.r.data);
         }
     }
@@ -275,17 +280,17 @@ int main() {
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
-        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "[numthreads(1, 1, 1)]"), "hlsl compute entry transpiles.");
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "[numthreads(8, 8, 1)]"), "hlsl compute entry transpiles.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
-        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "layout(local_size_x = 1") &&
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "layout(local_size_x = 8") &&
                       ns_shader_test_has(r.r, "cs_main();"),
                   "glsl compute entry transpiles.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
-        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@compute @workgroup_size(1, 1, 1)"),
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@compute @workgroup_size(8, 8, 1)"),
                   "wgsl compute entry transpiles.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
@@ -311,7 +316,7 @@ int main() {
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
-        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "texture_storage_2d<rgba8unorm, write>") &&
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "texture_storage_2d<rg11b10ufloat, write>") &&
                       ns_shader_test_has(r.r, "@builtin(global_invocation_id)") && ns_shader_test_has(r.r, "textureStore("),
                   "wgsl compute resources and invocation coordinates transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
@@ -420,19 +425,19 @@ int main() {
         ns_expect(ns_shader_eval_bool(src), "vertex-layout reflection packs f32/float2/3/4 fields.");
     }
 
-    // --- gpu module owns the dispatch_gpu wrapper and reaches the dynamically
-    // loaded backend; without a requested device submission returns false ---
+    // --- gpu module owns persistent v2 compute shaders; without a requested
+    // device shader creation returns an invalid handle and submission no-ops ---
     {
         const char *src =
             "use gpu\n"
             "fn cs_noop() void {}\n"
             "fn main() bool {\n"
-            "    let target = gpu_shader_target()\n"
-            "    let source = shader_transpile_stage(cs_noop, target, \"compute\")\n"
-            "    let entry = shader_entry(cs_noop, target)\n"
-            "    return !dispatch_gpu(cs_noop, 1, 1, 1) && !gpu_dispatch_compute_texture_source(source, entry, 0u, 1, 1, 1)\n"
+            "    let compute = gpu_shader_compute(cs_noop)\n"
+            "    gpu_shader_bind(compute)\n"
+            "    gpu_dispatch(1, 1, 1)\n"
+            "    return !gpu_shader_valid(compute)\n"
             "}\n";
-        ns_expect(ns_shader_eval_bool(src), "gpu compute dispatch paths transpile code and call the gpu dylib backend.");
+        ns_expect(ns_shader_eval_bool(src), "gpu v2 compute path transpiles once and safely reaches the headless backend.");
     }
 
     return 0;

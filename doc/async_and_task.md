@@ -155,10 +155,10 @@ afterwards.
 
 ## GPU dispatch
 
-`dispatch_gpu` lives in `lib/gpu.ns`, so GPU execution stays outside `bin/ns`
-and is resolved through the platform GPU dynamic library. The entry is an
-ordinary ns function that is transpiled to MSL on Metal, HLSL on DirectX 12,
-or GLSL on the fallback target:
+`gpu_shader_compute` transpiles an ordinary Nano Script function once to MSL
+on Metal, HLSL on DirectX 12, WGSL in the browser, or GLSL on the fallback
+target. Bind that persistent v2 shader and dispatch workgroups through the
+platform GPU dynamic library:
 
 ```ns
 use gpu
@@ -168,13 +168,15 @@ fn cs_prepare() void {
 }
 
 // A device must already have been acquired with gpu_request_device(view).
-let submitted = dispatch_gpu(cs_prepare, 64, 1, 1)
+let shader = gpu_shader_compute(cs_prepare)
+gpu_shader_bind(shader)
+gpu_dispatch(8, 1, 1)
 ```
 
-The current compute ABI intentionally accepts a zero-parameter function with
-an explicit `void` result. The three dimensions specify the dispatched thread
-grid; generated shaders use a `1 x 1 x 1` local group size. Buffer/resource
-parameters and invocation-id inputs are reserved for the next ABI extension.
+The compute entry accepts a zero-parameter function with an explicit `void`
+result. The three dimensions are workgroup counts; generated shaders use an
+`8 x 8 x 1` local size. Invocation IDs, one root-data block, and sampled plus
+storage textures are available through the shader intrinsics.
 
 ## kernel fns (future work)
 

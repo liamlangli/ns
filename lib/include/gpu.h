@@ -320,42 +320,6 @@ void gpu_end_pass(void);
 void gpu_commit(void);
 
 const char *gpu_shader_target(void);
-ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z);
-ns_bool gpu_dispatch_compute_texture_source(const char *source, const char *entry, u32 texture_id,
-                                            i32 threads_x, i32 threads_y, i32 threads_z);
-u32 gpu_create_buffer(i32 byte_len, i32 usage);
-u32 gpu_create_index_buffer(i32 byte_len, i32 usage);
-u32 gpu_create_uniform_buffer(i32 byte_len, i32 usage);
-void gpu_update_buffer(u32 buffer_id, void *data, i32 byte_len);
-void gpu_update_texture_id(u32 texture_id, void *data, i32 byte_len);
-u32 gpu_create_shader_source(const char *vertex_source, const char *fragment_source, const char *vertex_entry, const char *fragment_entry);
-u32 gpu_create_pipeline_layout(u32 shader_id, i32 vertex_stride, i32 *attr_offsets, i32 *attr_sizes, i32 *attr_formats, i32 attr_count,
-                               i32 color_format, i32 primitive_type);
-u32 gpu_create_pipeline_layout_ex(u32 shader_id, i32 vertex_stride, i32 *attr_offsets, i32 *attr_sizes, i32 *attr_formats, i32 attr_count,
-                                  i32 color_format, i32 primitive_type, i32 depth_format, i32 depth_compare,
-                                  ns_bool depth_write, i32 cull_mode, ns_bool blend_enabled);
-u32 gpu_create_pipeline_layout_indexed_ex(u32 shader_id, i32 vertex_stride, i32 *attr_offsets, i32 *attr_sizes, i32 *attr_formats, i32 attr_count,
-                                          i32 color_format, i32 primitive_type, i32 index_type, i32 depth_format, i32 depth_compare,
-                                          ns_bool depth_write, i32 cull_mode, ns_bool blend_enabled);
-u32 gpu_create_mesh_1(u32 pipeline_id, u32 vertex_buffer_id);
-u32 gpu_create_mesh_indexed(u32 pipeline_id, u32 vertex_buffer_id, u32 index_buffer_id, i32 index_type);
-u32 gpu_create_texture_2d(i32 width, i32 height, i32 format, i32 usage);
-u32 gpu_create_texture_binding(u32 pipeline_id, u32 texture_id, const char *name);
-u32 gpu_create_buffer_texture_binding(u32 pipeline_id, u32 buffer_id, const char *buffer_name,
-                                      u32 texture0_id, const char *texture0_name, u32 texture1_id, const char *texture1_name);
-u32 gpu_create_depth_pass(u32 depth_texture_id);
-u32 gpu_create_screen_pass(f64 r, f64 g, f64 b, f64 a);
-void gpu_destroy_texture_id(u32 texture_id);
-void gpu_destroy_binding_id(u32 binding_id);
-void gpu_destroy_buffer_id(u32 buffer_id);
-void gpu_destroy_shader_id(u32 shader_id);
-void gpu_destroy_pipeline_id(u32 pipeline_id);
-void gpu_destroy_mesh_id(u32 mesh_id);
-void gpu_destroy_render_pass_id(u32 pass_id);
-void gpu_begin_render_pass_id(u32 pass_id);
-void gpu_set_pipeline_id(u32 pipeline_id);
-void gpu_set_mesh_id(u32 mesh_id);
-void gpu_set_binding_id(u32 binding_id);
 
 int gpu_pixel_format_row_count(gpu_pixel_format format, int height);
 int gpu_pixel_format_size(gpu_pixel_format format);
