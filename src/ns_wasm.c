@@ -633,6 +633,24 @@ static i32 ns_wasm_import_index(ns_wasm_fn_ctx *ctx, ns_str module, ns_str name)
     return -1;
 }
 
+static ns_type ns_wasm_call_result_type(ns_wasm_fn_ctx *ctx, ns_str module, ns_str name,
+                                        ns_type fallback) {
+    if (!ns_type_is(fallback, NS_TYPE_UNKNOWN) && !ns_type_is(fallback, NS_TYPE_INFER)) {
+        return fallback;
+    }
+    if (!ns_str_is_empty(module)) {
+        for (i32 i = 0; i < ctx->n_imports; ++i) {
+            if (ns_str_equals(ctx->imports[i].module, module) &&
+                ns_str_equals(ctx->imports[i].name, name)) return ctx->imports[i].ret;
+        }
+    } else {
+        for (i32 i = 0; i < ctx->n_fns; ++i) {
+            if (ns_str_equals(ctx->all_fns[i].name, name)) return ctx->all_fns[i].ret;
+        }
+    }
+    return fallback;
+}
+
 // Find the PARAM instruction that defines SSA value `val` in function `fn`
 static ns_ssa_inst *ns_wasm_find_param_def(ns_ssa_fn *fn, i32 val) {
     for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; bi++) {
@@ -910,7 +928,8 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         }
         ns_wasm_u8(&ctx->code, NS_WASM_CALL);
         ns_wasm_u32leb(&ctx->code, (u32)fi);
-        if (inst->dst >= 0 && !ns_type_is(inst->type, NS_TYPE_VOID)) {
+        ns_type result = ns_wasm_call_result_type(ctx, inst->module, callee_name, inst->type);
+        if (inst->dst >= 0 && !ns_type_is(result, NS_TYPE_VOID)) {
             ns_wasm_local_set(ctx, inst->dst);
         }
         // If dst < 0 and callee returns non-void, caller must drop the result.
@@ -2216,7 +2235,9 @@ static ns_return_bool ns_wasm_write_source_map(ns_ssa_module *ssa, ns_str map_pa
 static ns_bool ns_wasm_supported_module(ns_str module) {
     return ns_str_equals(module, ns_str_cstr("std")) ||
            ns_str_equals(module, ns_str_cstr("gpu")) ||
+           ns_str_equals(module, ns_str_cstr("os")) ||
            ns_str_equals(module, ns_str_cstr("shader")) ||
+           ns_str_equals(module, ns_str_cstr("ui")) ||
            ns_str_equals(module, ns_str_cstr("view"));
 }
 
@@ -2234,7 +2255,15 @@ static ns_bool ns_wasm_name_in(ns_str name, const char *names) {
 static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
     if (ns_str_equals(module, ns_str_cstr("std"))) {
         return ns_wasm_name_in(name,
-            "print|sqrt|sin|cos|tan|atan2|ftos|stof|substr|unescape|utf8_len");
+            "print|sqrt|sin|cos|tan|atan2|ftos|stof|itos|stoi|substr|unescape|utf8_len|"
+            "open|close|read|write");
+    }
+    if (ns_str_equals(module, ns_str_cstr("os"))) {
+        return ns_wasm_name_in(name,
+            "os_time|os_file_size|os_read_file|os_write_file_atomic|os_dir_scan|"
+            "os_entry_name|os_entry_path|os_entry_depth|os_entry_parent|os_entry_is_dir|"
+            "os_watch_start|os_watch_poll|os_watch_stop|os_open_folder_dialog|os_cwd|"
+            "os_env|os_make_dirs|os_launch_ns_project");
     }
     if (ns_str_equals(module, ns_str_cstr("shader"))) {
         return ns_wasm_name_in(name,
@@ -2274,6 +2303,16 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "gpu_set_root_data|gpu_draw_vertices|gpu_draw_indexed|gpu_draw_indirect|gpu_dispatch|"
             "gpu_dispatch_indirect|gpu_signal_after|gpu_wait_before|gpu_pixel_format_size|"
             "gpu_pixel_format_row_pitch|gpu_pixel_format_surface_pitch");
+    }
+    if (ns_str_equals(module, ns_str_cstr("ui"))) {
+        return ns_wasm_name_in(name,
+            "ui_renderer_create|ui_renderer_destroy|ui_resize|ui_begin_frame|ui_flush|"
+            "ui_canvas_width|ui_canvas_height|ui_atlas_load|ui_atlas_draw|ui_push_clip|"
+            "ui_pop_clip|ui_fill_rect|ui_fill_round_rect|ui_fill_circle|ui_stroke_line|"
+            "ui_stroke_rect|ui_stroke_round_rect|ui_draw_text|ui_text_v_center_y|"
+            "ui_text_width|ui_mono_char_width|ui_pack_color|ui_pack_rgba_floats|"
+            "ui_rect_batch_create|ui_rect_batch_begin|ui_rect_batch_add|ui_rect_batch_end|"
+            "ui_rect_batch_draw_at");
     }
     return false;
 }

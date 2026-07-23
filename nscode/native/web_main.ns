@@ -1,0 +1,34 @@
+use view
+use gpu
+use ui
+use editor
+use workspace
+use render
+use startup
+
+let g_web_view: ref view = nil
+let g_web_renderer: ref ui_renderer = nil
+let g_web_ready = false
+
+fn main() {
+    seed_document()
+    workspace_set_native_entry("nscode/native")
+    workspace_init()
+    settings_load()
+
+    g_web_view = view_create("NSCode", 1024, 768)
+    if gpu_request_device(g_web_view) {
+        g_web_renderer = ui_renderer_create(g_web_view)
+        g_web_ready = true
+    }
+    view_run(g_web_view)
+}
+
+fn frame(time_ms: f64, width: i32, height: i32) {
+    if g_web_ready {
+        ui_begin_frame(g_web_renderer)
+        render_frame(g_web_renderer, g_web_view)
+        ui_flush(g_web_renderer, clear_color())
+        reset_view_input(g_web_view)
+    }
+}

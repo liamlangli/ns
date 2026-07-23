@@ -7,9 +7,10 @@ This file is an onboarding map for the whole repository. It is meant to help an 
 **Nano Script** is a minimal, data-oriented functional programming language with:
 - an interpreter/runtime,
 - a compiler pipeline with multiple backend emitters,
-- and a browser playground.
+- and NSCode editor front-ends for native, browser, and terminal use.
 
-At repo level, the project is polyglot but mostly **C** for core tooling and **TypeScript/JavaScript** for web/editor integrations.
+At repo level, the project is mostly **C** for core tooling, **Nano Script**
+for NSCode, and dependency-free **JavaScript** for the Wasm browser runtime.
 
 ---
 
@@ -38,8 +39,9 @@ Entrypoint and CLI routing are in `src/ns.c`.
 - `src/` — Core compiler/interpreter/runtime implementation in C.
 - `include/` — Public headers for lexer/parser/VM/SSA/backends/platform utils.
 - `lib/` — Standard/runtime dynamic libraries and Nano Script standard modules (`*.ns`) plus OS/GPU/view C implementations.
-- `nscode/` — NSCode editors. `nscode/web/` is the WebGPU browser playground;
-  `nscode/cli/` is the terminal editor written in ns (uses the `term` module).
+- `nscode/` — NSCode editors. `nscode/native/` is the shared GUI editor used
+  by desktop builds and GitHub Pages; `nscode/cli/` is the terminal editor
+  written in ns (uses the `term` module).
 - `sample/ns/` — Language feature examples (expressions, parse, fib, GUI, etc.).
 - `sample/c/` — C embedding sample.
 - `test/` — C tests (currently JSON-focused test target in root Makefile).
@@ -144,10 +146,13 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 
 ## 7) Language/tooling ecosystem in this repo
 
-### Browser playground (`nscode/web/`)
-- WebGPU-based in-browser Nano Script playground/editor.
-- Uses the Vite dev server on `localhost`, which satisfies WebGPU's secure context requirement without a local certificate.
-- Includes interpreter/editor/rendering modules in `nscode/web/src/`.
+### Native and browser NSCode (`nscode/native/`)
+- The editor, workspace, and app renderer are written in Nano Script.
+- `main.ns` is the desktop entry; `web_main.ns` is the Wasm frame entry.
+- `ns.web.mod` is overlaid by the Pages workflow so both targets share the
+  same source without changing the normal native manifest.
+- Browser rendering and persisted browser files are provided by
+  `lib/ns-wasm.js`.
 
 ### Terminal editor (`nscode/cli/`)
 - A "kilo"-style text editor written in ns, run with `bin/ns run nscode/cli/main.ns`.
@@ -180,7 +185,7 @@ For fast onboarding, recommended order:
 4. `doc/ssa.md` — SSA & backend design intent
 5. `doc/block.md`, `doc/ref.md`, `doc/operators.md`, `doc/token.md` — language semantics cheatsheets
 6. `sample/ns/*.ns` — practical examples to test parsing/execution and language features
-7. `nscode/web/README.md` — browser playground setup
+7. `nscode/native/README.md` — native/browser NSCode setup
 
 ---
 
@@ -202,9 +207,10 @@ Touch likely areas in this order:
 4. headers in `include/`
 5. tests/samples for emitted artifact flow
 
-### C) “Work on web playground UX/rendering”
-- `nscode/web/src/editor.ts`, `ui.ts`, `renderer.js`, `gpu.ts`, `syntax.ts`
-- local run via `npm run dev`
+### C) “Work on NSCode UX/rendering”
+- `nscode/native/editor.ns`, `workspace.ns`, and `render.ns`
+- native run via `bin/ns run nscode/native`
+- browser ABI/runtime changes in `src/ns_wasm.c` and `lib/ns-wasm.js`
 
 ---
 
@@ -235,36 +241,38 @@ make
 # Run tests
 make test
 
-# Build browser playground (in nscode)
-cd nscode/web && npm install && npm run dev
+# Test the shared NSCode source
+./bin/ns test nscode/native
 ```
 
 ---
 
 ## 12) One-paragraph summary
 
-This repo is a full Nano Script toolchain: a C-based language core (lexer/parser/type/VM), SSA-based lowering pipeline with multiple emitters (AArch64/Mach-O/PE/WASM), runtime/std modules, and a WebGPU browser playground. For most engineering tasks, start at `src/ns.c` + `Makefile`, then jump to front-end (`ns_token`/`ns_ast*`) and execution (`ns_vm_*`) or backend (`ns_ssa` + emitter files) depending on whether the task is language semantics or code generation.
+This repo is a full Nano Script toolchain: a C-based language core
+(lexer/parser/type/VM), SSA-based lowering pipeline with multiple emitters
+(AArch64/Mach-O/PE/WASM), runtime/std modules, and a shared Nano Script NSCode
+app for desktop and browser. For most engineering tasks, start at `src/ns.c` +
+`Makefile`, then jump to front-end (`ns_token`/`ns_ast*`) and execution
+(`ns_vm_*`) or backend (`ns_ssa` + emitter files) depending on whether the task
+is language semantics or code generation.
 ---
 
 ## 12) Naming convention baseline
 
-For the `nscode/web/` codebase, use **snake_case** consistently for:
+For the `nscode/native/` codebase, use **snake_case** consistently for:
 - filenames,
 - variable names, and
 - function names.
 
-When refactoring or adding new code in `nscode/web/`, prefer snake_case names and avoid introducing new camelCase/PascalCase identifiers unless required by external APIs.
+When refactoring or adding new Nano Script code in `nscode/native/`, prefer
+snake_case names and avoid introducing new camelCase/PascalCase identifiers
+unless required by external APIs.
 
-## 13) NSCode memory note: runtime timing telemetry
+## 13) NSCode browser parity note
 
-When working in `nscode/web/src/main.js`, preserve the output-panel timing contract added for script runs:
-
-- Every run should print timing rows for:
-  - `CPU parse: ... ms`
-  - `GPU parse: ... ms` (or `N/A` if GPU parser is unavailable)
-  - `Execute: ... ms` (or `N/A` on parse failure)
-  - `Total: ... ms`
-- GPU parser status should be visible to users (unavailable / parse failure / overflow warning).
-- This timing output applies to example scripts loaded from the file tree as well as arbitrary edited code, because all are executed through the same `run_code()` path.
-
-If future refactors touch interpreter or parser integration, keep these output lines and semantics stable unless explicitly requested otherwise.
+Keep `main.ns` and `web_main.ns` thin. Shared editor behavior belongs in
+`editor.ns`, `workspace.ns`, `render.ns`, or another reusable `.ns` module.
+When the browser build needs another native service, update the Wasm import
+allowlist and `lib/ns-wasm.js` together, then validate both
+`test/ns_wasm_project_test.sh` and `test/ns_wasm_runtime_test.mjs`.

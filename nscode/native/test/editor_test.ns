@@ -149,6 +149,10 @@ fn expect_token(name: str, i: i32, start: i32, len: i32, kind: i32) {
 }
 
 fn test_tokenizer() {
+    load_str("")
+    check_i("document byte before start is sentinel", dc(-1), 0)
+    check_i("document byte at end is sentinel", dc(0), 0)
+
     // '"' cannot appear inside a double-quoted literal (no escape processing),
     // so the quoted "hi" is spliced in from a single-quoted literal.
     let src = "fn add(a: i32) i32 {\n    let x = 42 // answer\n    return " + '"hi"' + " + a\n}\n"

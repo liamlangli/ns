@@ -64,7 +64,9 @@ fn string_ops() i32 {
     }
     return 0
 }
+fn no_result() { }
 fn main() i32 {
+    no_result()
     if gpu_request_device(browser_view) {
         return answer() - ${answer}
     }
@@ -195,14 +197,14 @@ assert.match(new TextDecoder().decode(shaderSections[0]), /@vertex/);
 
 const unsupportedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-wasm-unsupported-'));
 fs.writeFileSync(path.join(unsupportedRoot, 'ns.mod'), 'schema = "ns.mod/v1"\nname = "unsupported"\ntype = "app"\ntarget = "wasm"\nsource = "."\nentry = "main.ns"\n');
-fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use os\nfn main() {}\n');
+fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use http\nfn main() {}\n');
 const unsupportedBuild = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedBuild.status, 0);
-assert.match(unsupportedBuild.stdout + unsupportedBuild.stderr, /does not support module `os`/);
-fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use std\nfn main() { let fd = open("x", "r") }\n');
+assert.match(unsupportedBuild.stdout + unsupportedBuild.stderr, /does not support module `http`/);
+fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use os\nfn main() { let p = os_platform() }\n');
 const unsupportedImport = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedImport.status, 0);
-assert.match(unsupportedImport.stdout + unsupportedImport.stderr, /does not support import `std\.open`/);
+assert.match(unsupportedImport.stdout + unsupportedImport.stderr, /does not support import `os\.os_platform`/);
 fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use gpu\nfn main() { gpu_request_device(1) }\n');
 const untypedDeviceRequest = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(untypedDeviceRequest.status, 0);

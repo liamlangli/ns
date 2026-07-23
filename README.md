@@ -6,11 +6,12 @@ Nano Script
 > A minimal, data-oriented functional programming language.
 
 ## Play Nano Script in your browser
-- Playground (GitHub Pages): https://liamlangli.github.io/ns/nscode/
+- NSCode (GitHub Pages): https://liamlangli.github.io/ns/nscode/
 - Landing page https://liamlangli.github.io/ns/
 - NSCode project page in this repo: https://github.com/liamlangli/ns/tree/main/nscode
 
-If you're new to Nano Script, start with the Playground URL above and run/edit the sample code directly in your browser.
+If you're new to Nano Script, open NSCode above and edit the sample code
+directly in your browser.
 
 ## Run and build from VS Code
 

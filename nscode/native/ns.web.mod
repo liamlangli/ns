@@ -1,13 +1,14 @@
 schema = "ns.mod/v1"
-name = "nscode-native"
+name = "nscode"
 version = "0.1.0"
 author = "liamlangli <lilang8936@gmail.com>"
 type = "app"
-description = "Native code editor for Nano Script, rendered through the ui module."
+target = "wasm"
+description = "NSCode browser build, sharing the native editor and renderer."
 source = "."
-entry = "main.ns"
+entry = "web_main.ns"
 icon = "icon.png"
-exclude = ["README.md", "web_main.ns"]
+exclude = ["README.md", "main.ns"]
 
 [[dependencies.runtime]]
 name = "std"

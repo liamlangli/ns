@@ -59,7 +59,7 @@ let g_history_id: i32 = 0
 let g_history_ready = [u8](2049)
 let g_history_count = [i32](2049)
 let g_history_pos = [i32](2049)
-let g_history_doc = [i32: str](131136)
+let g_history_doc = [str](131136)
 let g_history_cur = [i32](131136)
 let g_history_anchor = [i32](131136)
 let g_history_group: i32 = 0
@@ -90,8 +90,12 @@ fn doc_len() i32 {
     return g_doc.len
 }
 
-// Byte value at offset i. The mask keeps any over-read in range.
+// Byte value at offset i. Scanners deliberately probe one byte beyond a token
+// boundary, so return a NUL sentinel outside the document on every backend.
 fn dc(i: i32) i32 {
+    if i < 0 || i >= doc_len() {
+        return 0
+    }
     return (g_doc[i] as i32) & 255
 }
 

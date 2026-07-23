@@ -1,14 +1,14 @@
 # NSCode
 
-Editors for Nano Script. This directory groups the different NSCode front-ends:
+Editors for Nano Script. This directory groups the NSCode app and its supporting
+tools:
 
-- **`web/`** — the dependency-free browser playground. Its language backend is
-  written in Nano Script and compiled to Wasm by `ns build`; plain browser
-  JavaScript provides the editor shell. It is deployed to GitHub Pages under
-  `/nscode/`. See `web/README.md`.
+- **`native/`** — the shared NSCode editor and agent shell, written in Nano
+  Script. `main.ns` runs through the native view/UI backends, while
+  `web_main.ns` packages the same editor and renderer for GitHub Pages through
+  Wasm and the browser Canvas UI backend. See `native/README.md`.
 - **`cli/`** — a terminal text editor written **in ns itself** (a "kilo"-style
   editor). See `cli/README.md`.
-- **`app/`** — *(planned)* a native GUI editor.
 - **`nslang/`** — a VS Code extension providing syntax highlighting for `.ns`
   files, project run/build buttons, the native NSCode color theme, and TOML
   language-mode association for `ns.mod` manifests.

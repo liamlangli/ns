@@ -135,9 +135,68 @@ const computeEntry = runtime.writeString('cs');
 assert.equal(runtime.gpu('gpu_dispatch_compute_source', [computeSource, computeEntry, 2, 3, 4]), 1);
 assert.deepEqual(computeDispatch, [2, 3, 4]);
 
+const uiCalls = [];
+const uiContext = {
+  save() { uiCalls.push('save'); },
+  restore() { uiCalls.push('restore'); },
+  setTransform() {},
+  fillRect() { uiCalls.push('fillRect'); },
+  beginPath() {},
+  rect() {},
+  roundRect() {},
+  clip() {},
+  fill() { uiCalls.push('fill'); },
+  stroke() {},
+  strokeRect() {},
+  arc() {},
+  moveTo() {},
+  lineTo() {},
+  fillText(text) { uiCalls.push(`text:${text}`); },
+  drawImage() {},
+  measureText(text) { return { width: text.length * 8 }; },
+};
+const uiCanvas = {
+  clientWidth: 480,
+  clientHeight: 270,
+  width: 0,
+  height: 0,
+  style: {},
+  setAttribute() {},
+  addEventListener() {},
+  focus() {},
+  getBoundingClientRect() { return { left: 0, top: 0 }; },
+  getContext(kind) { assert.equal(kind, '2d'); return uiContext; },
+};
+const uiRuntime = new NSBrowserRuntime(uiCanvas);
+uiRuntime.memory = new WebAssembly.Memory({ initial: 1 });
+let uiHeap = 2048;
+uiRuntime.instance = { exports: { __ns_alloc(size) { const p = uiHeap; uiHeap += Number(size); return p; } } };
+assert.equal(uiRuntime.initializeCanvasUI(), true);
+const uiTitle = uiRuntime.writeString('NSCode');
+const uiView = uiRuntime.viewImport('view_create', [uiTitle, 480, 270]);
+assert.equal(uiRuntime.gpu('gpu_request_device', [uiView]), 1);
+const renderer = uiRuntime.ui('ui_renderer_create', [uiView]);
+uiRuntime.ui('ui_begin_frame', [renderer]);
+uiRuntime.ui('ui_fill_rect', [renderer, 4, 5, 30, 20, uiRuntime.ui('ui_pack_color', [uiRuntime.writeString('#112233')]), 0]);
+uiRuntime.ui('ui_draw_text', [renderer, 8, 9, uiRuntime.writeString('native UI'), 14, 0xffffffff, 1]);
+const clear = uiRuntime.allocStruct(32);
+for (const [offset, value] of [[0, 0.1], [8, 0.2], [16, 0.3], [24, 1]]) uiRuntime.view().setFloat64(clear + offset, value, true);
+uiRuntime.ui('ui_flush', [renderer, clear]);
+assert(uiCalls.includes('fillRect'));
+assert(uiCalls.includes('text:native UI'));
+const filePath = uiRuntime.writeString('/home/web/settings.db');
+const writeMode = uiRuntime.writeString('wb');
+const file = uiRuntime.std('open', [filePath, writeMode]);
+uiRuntime.std('write', [file, uiRuntime.writeString('saved')]);
+uiRuntime.std('close', [file]);
+const readFile = uiRuntime.std('open', [filePath, uiRuntime.writeString('rb')]);
+assert.equal(uiRuntime.readString(uiRuntime.std('read', [readFile])), 'saved');
+uiRuntime.std('close', [readFile]);
+assert.equal(uiRuntime.os('os_dir_scan', [uiRuntime.writeString('nscode/native')]), 4);
+
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: { async requestAdapter() { return null; } } } });
 const fallback = new NSBrowserRuntime(canvas);
 assert.equal(await fallback.initializeGPU(), false);
 assert.equal(fallback.gpu('gpu_request_device', [0]), 0);
 
-console.log('PASS: mocked canvas view/WebGPU middleware initializes, tracks input and metrics, loads shader metadata, dispatches imports, and falls back without an adapter.');
+console.log('PASS: mocked browser middleware covers view/WebGPU, Canvas UI, browser files, shader metadata, and adapter fallback.');

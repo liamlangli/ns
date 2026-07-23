@@ -28,12 +28,12 @@ let g_settings_loaded = false
 let g_settings_persist = true
 let g_settings_root_override = ""
 let g_selected_chat: i32 = 0
-let g_dialog_scroll: f64 = 0.0
-let g_code_scroll: f64 = 0.0
-let g_tree_scroll: f64 = 0.0
+let g_dialog_scroll: f64 = 0.0 as f64
+let g_code_scroll: f64 = 0.0 as f64
+let g_tree_scroll: f64 = 0.0 as f64
 let g_file_scroll = [f64](2048)
-let g_last_frame_time: f64 = 0.0
-let g_fps: f64 = 0.0
+let g_last_frame_time: f64 = 0.0 as f64
+let g_fps: f64 = 0.0 as f64
 let g_fps_i: i32 = 0
 let g_file_icon_atlas: i32 = 0
 // Overlay focus is exclusive. Regular controls use hit(), which is disabled
@@ -43,9 +43,9 @@ let g_ui_focus: i32 = 0
 // Shared application menu. It is rendered above both Code and Agent content;
 // -1 means no dropdown is open, otherwise the value is the top-level item.
 let g_main_menu_open: i32 = -1
-let g_main_menu_x: f64 = 0.0
-let g_main_menu_y: f64 = 0.0
-let g_main_menu_w: f64 = 0.0
+let g_main_menu_x: f64 = 0.0 as f64
+let g_main_menu_y: f64 = 0.0 as f64
+let g_main_menu_w: f64 = 0.0 as f64
 
 fn set_file_icon_atlas(atlas: i32) {
     g_file_icon_atlas = atlas
@@ -54,35 +54,34 @@ fn set_file_icon_atlas(atlas: i32) {
 // Code view input state: mouse drag selection and click streak
 // (double/triple click). Key-down edges are latched by the native view layer.
 let g_code_drag = false
-let g_last_click_time: f64 = 0.0
+let g_last_click_time: f64 = 0.0 as f64
 let g_last_click_line: i32 = -1
 let g_click_streak: i32 = 0
 let g_caret_follow = false
 let g_minimap_drag = false
 // Last rendered minimap geometry is exposed for input handling and headless
 // interaction tests.
-let g_minimap_x: f64 = 0.0
-let g_minimap_y: f64 = 0.0
-let g_minimap_w: f64 = 0.0
-let g_minimap_h: f64 = 0.0
-let g_minimap_view_y: f64 = 0.0
-let g_minimap_view_h: f64 = 0.0
-let g_minimap_scroll: f64 = 0.0
-let g_minimap_last_code_scroll: f64 = -1.0
+let g_minimap_x: f64 = 0.0 as f64
+let g_minimap_y: f64 = 0.0 as f64
+let g_minimap_w: f64 = 0.0 as f64
+let g_minimap_h: f64 = 0.0 as f64
+let g_minimap_view_y: f64 = 0.0 as f64
+let g_minimap_view_h: f64 = 0.0 as f64
+let g_minimap_scroll: f64 = 0.0 as f64
+let g_minimap_last_code_scroll: f64 = (-1.0) as f64
 let g_minimap_batch: i32 = 0
 let g_minimap_batch_ready = false
 let g_minimap_batch_doc_version: i32 = -1
 let g_minimap_batch_total: i32 = -1
 let g_minimap_batch_language: i32 = -1
-let g_minimap_batch_w: f64 = -1.0
+let g_minimap_batch_w: f64 = (-1.0) as f64
 let g_minimap_batch_build_count: i32 = 0
 
 // Agent view state: the conversation transcript (role + text per message), the
 // codex-style composer (multi-line input, attachments, permission level and
-// module selectors). String arrays are not
-// supported by the runtime yet, so message/attachment text lives in i32-keyed
-// dictionaries addressed by the parallel counters.
-let g_msg_text = [i32: str](64)
+// module selectors). Parallel arrays keep the indexed stores concrete and
+// portable across native and Wasm.
+let g_msg_text = [str](64)
 let g_msg_role = [i32](64)
 let g_msg_count: i32 = 0
 
@@ -90,46 +89,46 @@ let g_input_text = ""
 let g_input_focus = true
 let g_perm: i32 = 1
 let g_module: i32 = 0
-let g_attach_name = [i32: str](8)
+let g_attach_name = [str](8)
 let g_attach_count: i32 = 0
 let g_attach_seq: i32 = 0
 let g_running = false
 let g_dialog_follow = false
-let g_dialog_content_h: f64 = 0.0
+let g_dialog_content_h: f64 = 0.0 as f64
 
 // Composer/popup hit rects, written while drawing so click handling and the
 // headless frame tests can address the controls without mirroring layout math.
 let g_click_used = false
 let g_pop_kind: i32 = 0
-let g_cmp_x: f64 = 0.0
-let g_cmp_y: f64 = 0.0
-let g_cmp_w: f64 = 0.0
-let g_cmp_h: f64 = 0.0
-let g_attach_btn_x: f64 = 0.0
-let g_attach_btn_y: f64 = 0.0
-let g_perm_btn_x: f64 = 0.0
-let g_perm_btn_y: f64 = 0.0
-let g_perm_btn_w: f64 = 0.0
-let g_module_btn_x: f64 = 0.0
-let g_module_btn_y: f64 = 0.0
-let g_module_btn_w: f64 = 0.0
-let g_send_btn_x: f64 = 0.0
-let g_send_btn_y: f64 = 0.0
-let g_pop_x: f64 = 0.0
-let g_pop_y: f64 = 0.0
-let g_pop_w: f64 = 0.0
+let g_cmp_x: f64 = 0.0 as f64
+let g_cmp_y: f64 = 0.0 as f64
+let g_cmp_w: f64 = 0.0 as f64
+let g_cmp_h: f64 = 0.0 as f64
+let g_attach_btn_x: f64 = 0.0 as f64
+let g_attach_btn_y: f64 = 0.0 as f64
+let g_perm_btn_x: f64 = 0.0 as f64
+let g_perm_btn_y: f64 = 0.0 as f64
+let g_perm_btn_w: f64 = 0.0 as f64
+let g_module_btn_x: f64 = 0.0 as f64
+let g_module_btn_y: f64 = 0.0 as f64
+let g_module_btn_w: f64 = 0.0 as f64
+let g_send_btn_x: f64 = 0.0 as f64
+let g_send_btn_y: f64 = 0.0 as f64
+let g_pop_x: f64 = 0.0 as f64
+let g_pop_y: f64 = 0.0 as f64
+let g_pop_w: f64 = 0.0 as f64
 
-// Chat history model: titles and pinned flags live in i32-keyed stores (same
-// string-array workaround as the transcript). Each chat owns a fixed message
-// block, and the complete model is persisted under <project>/.ns/chat.
+// Chat history model: titles and pinned flags live in indexed stores. Each chat
+// owns a fixed message block, and the complete model is persisted under
+// <project>/.ns/chat.
 // Pinned chats stay at the top of the list; archive/delete remove the row.
 // The row menu (pin/archive/delete) follows the
 // selector-popup pattern: rects are written while drawing and last frame's
 // menu is resolved against this frame's click.
-let g_chat_title = [i32: str](16)
+let g_chat_title = [str](16)
 let g_chat_pinned = [i32](16)
 let g_chat_msg_count = [i32](16)
-let g_chat_msg_text = [i32: str](1024)
+let g_chat_msg_text = [str](1024)
 let g_chat_msg_role = [i32](1024)
 let g_chat_count: i32 = 0
 let g_chat_archived: i32 = 0
@@ -138,11 +137,11 @@ let g_chat_persist = true
 let g_chat_store_cursor: i32 = 0
 let g_chat_store_ok = true
 let g_chat_menu_chat: i32 = -1
-let g_chat_menu_x: f64 = 0.0
-let g_chat_menu_y: f64 = 0.0
-let g_chat_menu_w: f64 = 0.0
-let g_chat_menu_btn_x: f64 = 0.0
-let g_chat_menu_btn_y: f64 = 0.0
+let g_chat_menu_x: f64 = 0.0 as f64
+let g_chat_menu_y: f64 = 0.0 as f64
+let g_chat_menu_w: f64 = 0.0 as f64
+let g_chat_menu_btn_x: f64 = 0.0 as f64
+let g_chat_menu_btn_y: f64 = 0.0 as f64
 
 // The UI face is configurable; the code grid remains monospaced so caret and
 // selection columns stay exact even when the surrounding shell uses Sans UI.
@@ -939,7 +938,7 @@ fn main_menu_item_y(menu: i32, item: i32) f64 {
 }
 
 fn main_menu_dropdown_h(menu: i32) f64 {
-    let h = 8.0
+    let h: f64 = 8.0
     let count = main_menu_item_count(menu)
     for i in 0 to count {
         h = h + main_menu_item_h()
@@ -995,7 +994,7 @@ fn main_menu_button_w(r: ref ui_renderer, i: i32) f64 {
 }
 
 fn main_menu_anchor_x(r: ref ui_renderer, index: i32) f64 {
-    let x = 8.0
+    let x: f64 = 8.0
     for i in 0 to index {
         x = x + main_menu_button_w(r, i)
     }
@@ -1243,11 +1242,11 @@ fn mode_switch_y(h: f64) f64 {
 
 fn handle_mode_switch_input(v: ref view, w: f64, h: f64) {
     if g_mode != MODE_SETTINGS() {
-        let switch_w = 150.0
-        let switch_h = 28.0
+        let switch_w: f64 = 150.0
+        let switch_h: f64 = 28.0
         let switch_x = mode_switch_x(w)
         let switch_y = mode_switch_y(h)
-        let gap = 4.0
+        let gap: f64 = 4.0
         let button_w = (switch_w - gap) * 0.5
         let code_x = switch_x
         let agent_x = switch_x + button_w + gap
@@ -1324,7 +1323,7 @@ fn chat_swap(a: i32, b: i32) {
     let title = g_chat_title[a]
     let pinned = g_chat_pinned[a] as i32
     let count = g_chat_msg_count[a]
-    let temp_text = [i32: str](64)
+    let temp_text = [str](64)
     let temp_role = [i32](64)
     for i in 0 to msg_cap() {
         let ai = chat_msg_index(a, i)
@@ -1613,7 +1612,7 @@ fn chat_remove(idx: i32) {
 }
 
 fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let pad = 3.0
+    let pad: f64 = 3.0
     let half_w = (w - pad * 2.0) * 0.5
     let code_x = x + pad
     let agent_x = x + pad + half_w
@@ -1638,8 +1637,8 @@ fn draw_mode_switch(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
 }
 
 fn draw_fps(r: ref ui_renderer, x: f64, y: f64, w: f64) {
-    let badge_w = 132.0
-    let badge_h = 28.0
+    let badge_w: f64 = 132.0
+    let badge_h: f64 = 28.0
     let badge_x = x + w - badge_w - 10.0
     let badge_y = y + 5.0
     let text = fps_text()
@@ -1804,7 +1803,7 @@ fn chat_menu_action(chat: i32, item: i32) {
 fn handle_chat_menu_input(v: ref view) {
     if g_chat_menu_chat >= 0 {
         if v.mouse_pressed {
-            let mh = 3.0 * pop_item_h()
+            let mh: f64 = 3.0 * pop_item_h()
             if focus_hit(v, UI_FOCUS_CHAT_MENU(), g_chat_menu_x, g_chat_menu_y, g_chat_menu_w, mh) {
                 let idx = ((v.mouse_y - g_chat_menu_y) / pop_item_h()) as i32
                 idx = clamp_i(idx, 0, chat_menu_items() - 1)
@@ -1823,8 +1822,8 @@ fn handle_chat_menu_input(v: ref view) {
 // The pin/archive/delete menu anchored to a row's "..." button, right-aligned
 // inside the history rail. Drawn after the rows so it floats above them.
 fn draw_chat_menu(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let mw = 112.0
-    let mh = 3.0 * pop_item_h() + 12.0
+    let mw: f64 = 112.0
+    let mh: f64 = 3.0 * pop_item_h() + 12.0
     let px = x + w - mw - 12.0
     let py = g_chat_menu_btn_y + chat_btn_d() + 4.0
     if (py + mh) > (y + h - 8.0) {
@@ -1896,16 +1895,13 @@ fn perm_label(i: i32) str {
     return "Auto"
 }
 
-fn module_count() i32 { return 4 }
+fn module_count() i32 { return 3 }
 
 fn module_label(i: i32) str {
     if i == 1 {
         return "nscode/cli"
     }
     if i == 2 {
-        return "nscode/web"
-    }
-    if i == 3 {
         return "lib/ui"
     }
     return "nscode/native"
@@ -2240,7 +2236,7 @@ fn draw_popup(r: ref ui_renderer, v: ref view) {
 // ---- composer -------------------------------------------------------------------
 
 fn draw_chevron_down(r: ref ui_renderer, cx: f64, cy: f64, color: u32) {
-    let thickness = 1.8
+    let thickness: f64 = 1.8
     let radius = thickness * 0.5
     ui_stroke_line(r, cx - 3.0, cy - 1.6, cx, cy + 1.6, thickness, color, 0.5)
     ui_stroke_line(r, cx, cy + 1.6, cx + 3.0, cy - 1.6, thickness, color, 0.5)
@@ -2286,7 +2282,7 @@ fn draw_selector(r: ref ui_renderer, v: ref view, x: f64, y: f64, text: str, kin
 // Match the rounded line-and-dot arrow language used by the Code file tree,
 // rotated upward for the send action.
 fn draw_send_arrow(r: ref ui_renderer, cx: f64, cy: f64, color: u32) {
-    let thickness = 1.8
+    let thickness: f64 = 1.8
     let radius = thickness * 0.5
     let tip_y = cy - 6.0
     let wing_y = cy - 1.0
@@ -2308,7 +2304,7 @@ fn draw_composer(r: ref ui_renderer, v: ref view, char_w: f64, cols: i32, shown_
     let y = g_cmp_y
     let w = g_cmp_w
     let h = g_cmp_h
-    let pad = 14.0
+    let pad: f64 = 14.0
 
     if v.mouse_pressed {
         if g_click_used == false {
@@ -2435,7 +2431,7 @@ fn draw_composer(r: ref ui_renderer, v: ref view, char_w: f64, cols: i32, shown_
 // Codex-style agent view: the transcript flows down a centered column and the
 // composer stays pinned at the bottom center of the pane.
 fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let header_h = 52.0
+    let header_h: f64 = 52.0
     let col_w = w - 48.0
     if col_w > 760.0 {
         col_w = 760.0
@@ -2451,7 +2447,7 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
     }
 
     // composer geometry first: the input grows with its wrapped line count
-    let pad = 14.0
+    let pad: f64 = 14.0
     let cols = ((col_w - pad * 2.0) / char_w) as i32
     if cols < 8 {
         cols = 8
@@ -2465,8 +2461,8 @@ fn draw_conversation(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h:
     if g_attach_count > 0 {
         chips_h = 32.0
     }
-    let hint_h = 24.0
-    let cmp_h = 12.0 + chips_h + shown_f * input_line_h() + 6.0 + 40.0
+    let hint_h: f64 = 24.0
+    let cmp_h: f64 = 12.0 + chips_h + shown_f * input_line_h() + 6.0 + 40.0
     g_cmp_x = col_x
     g_cmp_y = y + h - hint_h - cmp_h
     g_cmp_w = col_w
@@ -2700,7 +2696,7 @@ fn draw_settings_row(r: ref ui_renderer, v: ref view, w: f64, kind: i32) {
 
     let count = settings_option_count(kind)
     let sy = y + 16.0
-    let sh = 36.0
+    let sh: f64 = 36.0
     ui_fill_round_rect(r, settings_segment_x(w), sy, settings_segment_w(w), sh, 6.0, col_rail(), 0.0)
     for item in 0 to count {
         let ox = settings_option_x(w, kind, item)
@@ -2731,7 +2727,7 @@ fn settings_done_x(w: f64) f64 {
 }
 
 fn render_settings(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
-    let status_h = 28.0
+    let status_h: f64 = 28.0
     let app_y = main_menu_h()
     ui_fill_rect(r, 0.0, app_y, w, h - app_y - status_h, col_bg(), 0.0)
     let px = settings_panel_x(w)
@@ -3089,7 +3085,7 @@ fn rebuild_code_minimap_batch(r: ref ui_renderer, body_h: f64, total: i32) bool 
     g_minimap_batch_language = g_setting_language
     g_minimap_batch_w = g_minimap_w
     g_minimap_batch_build_count = g_minimap_batch_build_count + 1
-    g_minimap_last_code_scroll = -1.0
+    g_minimap_last_code_scroll = (-1.0) as f64
     return g_minimap_batch_ready
 }
 
@@ -3176,7 +3172,7 @@ fn activate_workspace_file(index: i32) {
 }
 
 fn draw_tree_arrow(r: ref ui_renderer, x: f64, y: f64, expanded: bool, color: u32) {
-    let thickness = 1.8
+    let thickness: f64 = 1.8
     let radius = thickness * 0.5
     if expanded {
         draw_chevron_down(r, x + 4.5, y + 4.6, color)
@@ -3224,7 +3220,7 @@ fn draw_explorer_action(r: ref ui_renderer, v: ref view, x: f64, y: f64, kind: i
         draw_tree_folder_icon(r, x + 3.0, y + 2.0, color)
     } else if kind == 2 {
         ui_stroke_round_rect(r, x + 5.0, y + 5.0, 12.0, 12.0, 2.0, 1.5, color, 0.0)
-        let arrow_thickness = 1.8
+        let arrow_thickness: f64 = 1.8
         let arrow_radius = arrow_thickness * 0.5
         ui_stroke_line(r, x + 13.0, y + 9.25, x + 16.5, y + 12.75, arrow_thickness, color, 0.5)
         ui_stroke_line(r, x + 16.5, y + 12.75, x + 20.0, y + 9.25, arrow_thickness, color, 0.5)
@@ -3241,8 +3237,8 @@ fn draw_explorer_action(r: ref ui_renderer, v: ref view, x: f64, y: f64, kind: i
 }
 
 fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let header_h = 42.0
-    let root_h = 30.0
+    let header_h: f64 = 42.0
+    let root_h: f64 = 30.0
     let list_y = y + header_h + root_h
     let list_h = h - header_h - root_h
 
@@ -3347,7 +3343,7 @@ fn draw_file_tree(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
 }
 
 fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let tab_h = 36.0
+    let tab_h: f64 = 36.0
     let line_h = code_line_h()
     let body_y = y + tab_h
     let body_h = h - tab_h
@@ -3507,7 +3503,7 @@ fn draw_code_editor(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
 }
 
 fn render_code(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
-    let status_h = 28.0
+    let status_h: f64 = 28.0
     let app_y = main_menu_h()
     let app_h = h - status_h - app_y
     let tree_w = file_tree_width(w)
@@ -3530,7 +3526,7 @@ fn history_width(w: f64) f64 {
 }
 
 fn render_agent(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
-    let status_h = 28.0
+    let status_h: f64 = 28.0
     let app_y = main_menu_h()
     let app_h = h - status_h - app_y
     let history_w = history_width(w)

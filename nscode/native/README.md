@@ -8,9 +8,10 @@ the screen.
 
 The `ui` renderer is bound to the view's GPU device, whose backend is selected
 automatically per platform (see `lib/include/gpu.h`): **Metal on Apple, DirectX
-12 on Windows**. Linux has no native backend yet, so the window/GPU calls are
+12 on Windows**, and the browser Canvas backend in the Wasm build used by
+GitHub Pages. Linux has no native backend yet, so the window/GPU calls are
 no-ops there and the program exits cleanly. Only amd64 and aarch64 are
-supported.
+supported for desktop builds.
 
 ## Build & run
 
@@ -24,6 +25,10 @@ Nano Script frame callback, and renders the agentic coding shell each frame.
 On Linux `view_create` returns a no-op view, `gpu_request_device` returns
 false, the renderer is skipped, and the program prints that no GPU backend is
 available.
+
+The Pages workflow runs the native headless suites, overlays `ns.web.mod`, and
+builds the same directory as a Wasm app. `web_main.ns` supplies the browser
+frame entry without changing the native callback-based entry point.
 
 ## Code view (Code mode)
 
@@ -92,6 +97,9 @@ asterisk on the editor tab.
 
 - `main.ns` - entry point: seeds the editor model, creates the window, requests
   the GPU device, creates the UI renderer, and installs Nano Script callbacks.
+- `web_main.ns` - Wasm entry point used by GitHub Pages.
+- `startup.ns` - initial editor document shared by native and browser entries.
+- `ns.web.mod` - browser build manifest overlaid by the Pages workflow.
 - `render.ns` - active app renderer. It owns the agent shell, code view, mode
   switch, TreeView, mouse/keyboard editor input, and pane scroll state.
 - `workspace.ns` - filesystem snapshot and multi-file buffer state used by the
@@ -125,7 +133,7 @@ of the pane:
 - **Permission level** - a selector pill (Read Only / Auto / Full Access)
   that opens an upward popup menu.
 - **Module** - a second selector pill choosing the workspace module the
-  session targets (nscode/native, nscode/cli, nscode/web, lib/ui).
+  session targets (nscode/native, nscode/cli, lib/ui).
 - **Send** - the round accent button appends the real composer content to the
   selected project conversation. It does not manufacture a mock response.
 

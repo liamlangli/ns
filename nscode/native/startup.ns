@@ -1,0 +1,28 @@
+use std
+use editor
+
+fn seed_document() {
+    // Keep the initial buffer available on platforms where the workspace
+    // cannot expose a local filesystem, including the GitHub Pages build.
+    let src = "// ns native editor\n"
+    src = src + "// rendered through the ui module\n\n"
+    src = src + "use std\n\n"
+    src = src + "struct point {\n"
+    src = src + "    x: f64,\n"
+    src = src + "    y: f64\n"
+    src = src + "}\n\n"
+    src = src + "fn dist(a: point, b: point) f64 {\n"
+    src = src + "    let dx = a.x - b.x\n"
+    src = src + "    let dy = a.y - b.y\n"
+    src = src + "    return sqrt(dx * dx + dy * dy)\n"
+    src = src + "}\n\n"
+    src = src + "fn main() {\n"
+    src = src + "    let origin = point { x: 0.0, y: 0.0 }\n"
+    src = src + "    let unit = point { x: 3.0, y: 4.0 }\n"
+    src = src + "    print(" + '"dist "' + " + itos(dist(origin, unit) as i32))\n"
+    src = src + "    if true {\n"
+    src = src + "        print(" + '"editable"' + ")\n"
+    src = src + "    }\n"
+    src = src + "}\n"
+    load_str(unescape(src))
+}
