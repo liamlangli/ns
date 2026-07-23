@@ -1,57 +1,63 @@
-# NSCode — NanoScript Playground
+# NSCode for the web
 
-A WebGPU-based code editor and interpreter for NanoScript, running entirely in the browser.
+NSCode is a dependency-free Nano Script playground. Its tokenizer, diagnostics,
+and execution engine are written in Nano Script and compiled to WebAssembly by
+`ns build`; a small plain-JavaScript adapter connects that backend to the browser
+editor.
 
-## Requirements
+There is no npm install, bundler, WebGPU, or `ui` module requirement.
 
-- A browser with WebGPU support (Chrome 113+, Edge 113+)
-- Node.js 18+
+## Build and test
 
-## Local Development
-
-WebGPU requires a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts). `localhost` is treated as a secure context, so the Vite dev server can run over plain HTTP without a local certificate.
-
-```sh
-npm run dev
-# → http://localhost:8443
-```
-
-Or specify a custom port:
+From the repository root:
 
 ```sh
-npm run dev -- --port 9000
-# → http://localhost:9000
+make bin/ns
+bin/ns test nscode/web
+bin/ns build nscode/web
 ```
 
-Open `http://localhost:8443` in a browser with WebGPU support.
-
-## Deploy
-
-Deploy the static app to `/var/www/ns`:
+The static site is written to `nscode/web/bin/`. To build it and start the
+loopback live-reload server:
 
 ```sh
-npm run ci
+cd nscode/web
+../../bin/ns run --port 8443
 ```
 
-Deploy to a different directory:
+Then open `http://localhost:8443`. Any modern browser with WebAssembly and ES
+module support is sufficient.
 
-```sh
-npm run ci -- /tmp/ns-deploy
+## Architecture
+
+```text
+web/
+|-- ns.mod             # Wasm application manifest; no external dependencies
+|-- backend.ns         # Public backend entry points
+|-- tokenizer.ns       # Nano Script lexer and highlight spans
+|-- runtime.ns         # Nano Script playground evaluator and diagnostics
+|-- test/
+|   `-- backend_test.ns
+|-- index.html          # Custom ns Wasm HTML shell
+`-- assets/
+    |-- app.js          # DOM/Wasm adapter
+    `-- app.css         # Responsive editor presentation
 ```
 
-## Project Structure
+The browser calls `ns_highlight`, `ns_diagnostics`, and `ns_run` in
+`nscode.wasm`. Strings cross the standard `ns-wasm.js` descriptor ABI. Source
+stays local to the browser; Open and Save use local files, and editing state is
+kept in `localStorage`.
 
-```
-nscode/
-├── index.html          # Entry point
-├── vite.config.ts      # Vite dev server config
-├── src/
-│   ├── main.ts         # App entry, event loop
-│   ├── editor.ts       # Text editor buffer
-│   ├── interpreter.ts  # NanoScript interpreter
-│   ├── ui.ts           # UI adapter backed by @liamlangli/ui
-│   ├── draw.ts         # Draw list types and helpers
-│   ├── gpu.ts          # Legacy WebGPU backend
-│   └── syntax.ts       # Syntax highlighting
-└── public/             # Static assets
-```
+The embedded evaluator intentionally targets an educational language subset:
+typed function declarations and calls, recursion, `let`/`lit`, assignment,
+numbers, strings, booleans, interpolation, arithmetic and comparisons,
+`if`/`else`, half-open `for ... in ... to ...` ranges, and common numeric
+helpers. The normal `ns` compiler remains the authority for complete language
+and project builds.
+
+## Generated output
+
+`bin/` is generated and must not be edited. `ns build` copies the custom HTML
+shell and `assets/`, then writes `nscode.wasm`, its source map, the standard
+Wasm browser adapter, and the default Nano Script favicon beside them.

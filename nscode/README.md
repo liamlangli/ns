@@ -2,8 +2,10 @@
 
 Editors for Nano Script. This directory groups the different NSCode front-ends:
 
-- **`web/`** — the WebGPU browser playground/editor (TypeScript + Vite). This is
-  what is deployed to GitHub Pages under `/nscode/`. See `web/README.md`.
+- **`web/`** — the dependency-free browser playground. Its language backend is
+  written in Nano Script and compiled to Wasm by `ns build`; plain browser
+  JavaScript provides the editor shell. It is deployed to GitHub Pages under
+  `/nscode/`. See `web/README.md`.
 - **`cli/`** — a terminal text editor written **in ns itself** (a "kilo"-style
   editor). See `cli/README.md`.
 - **`app/`** — *(planned)* a native GUI editor.

@@ -14,6 +14,8 @@ author = "Example Author <author@example.com>"
 type = "app"
 # Optional browser target; omit for a native project.
 # target = "wasm"
+# Optional custom Wasm page with {{wasm}}, {{title}}, and {{favicon}} markers.
+# shell = "index.html"
 description = "Example module."
 source = "src"
 entry = "main.ns"
@@ -54,7 +56,9 @@ For a browser project, keep `type = "app"` and set `target = "wasm"`.
 loopback-only live-reload server. Port 0 selects an available port. See
 `doc/wasm.md` for the lifecycle, browser ABI, WebGPU middleware, and supported
 language subset. The HTML title uses the manifest `name`; `icon` becomes the
-favicon, falling back to Nano Script's installed `ns.svg` when omitted.
+favicon, falling back to Nano Script's installed `ns.svg` when omitted. Set
+`shell` to use a custom project HTML page; the build expands its `{{wasm}}`,
+`{{title}}`, and `{{favicon}}` placeholders and copies it as `bin/index.html`.
 
 Running `ns update [path]` finds the nearest `ns.mod` and migrates project
 metadata to the format bundled with the current executable. It preserves

@@ -23,19 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
       - name: Build NSCode app
-        working-directory: nscode/web
         run: |
-          # The lockfile pins @liamlangli/ui over git+ssh; the runner has no SSH
-          # key, so fetch the public dependency over HTTPS instead.
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-          npm ci
-          npm run build   # compiles src/main.ts → dist/main.js (+ assets)
+          make bin/ns
+          bin/ns test nscode/web
+          bin/ns build nscode/web
 
       - name: Assemble site
         run: |
@@ -45,10 +37,10 @@ jobs:
           cp index.html _site/index.html
           mkdir -p _site/sample
           cp sample/ns.png sample/ns.svg _site/sample/
-          # Bypass Jekyll so files like ns_token.wasm are served verbatim.
+          # Bypass Jekyll so the generated Wasm bundle is served verbatim.
           touch _site/.nojekyll
           # Compiled NSCode playground served under /nscode/.
-          cp -r nscode/web/dist/. _site/nscode/
+          cp -r nscode/web/bin/. _site/nscode/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

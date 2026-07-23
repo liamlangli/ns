@@ -11,6 +11,8 @@ type = "app"
 target = "wasm"
 source = "."
 entry = "main.ns"
+# Optional custom browser page:
+# shell = "index.html"
 ```
 
 `ns build` writes `bin/<safe-name>.wasm`, `bin/<safe-name>.wasm.map`,
@@ -22,6 +24,14 @@ label and does not replace the page title. If `<source>/assets` exists, its tree
 `bin/assets` without removing unrelated output. `-o path/app.wasm` puts all
 browser artifacts and the selected favicon beside that path. Wasm replacement is atomic: a failed
 compile leaves the previous runnable artifact intact.
+
+For a custom browser UI, set `shell` to an HTML file relative to the manifest.
+The builder copies it to `bin/index.html` after expanding three stable markers:
+`{{wasm}}` is the generated module filename, `{{title}}` is the HTML-escaped
+manifest name, and `{{favicon}}` is the copied favicon filename. The standard
+`ns-wasm.js` module remains available beside the page, and a project `assets/`
+tree is still synchronized into the bundle. Omitting `shell` retains the
+generated full-page canvas shell.
 
 The Wasm module carries the standard `sourceMappingURL` custom section pointing
 to its sibling Source Map v3 file. Generated columns are absolute byte offsets
@@ -71,10 +81,12 @@ SIGPIPE-safe frames, stable path/size/nanosecond-mtime fingerprints, and a
 synchronous `ns build`. `/__ns/reload` sends `{"type":"reload"}` after a good
 build or `{"type":"build-error"}` after a failed one. The browser keeps the
 last good app running and shows an error overlay until the next successful
-reload.
+reload. The middleware opens this development socket only on loopback pages;
+deployed static bundles do not reconnect to a nonexistent endpoint.
 
 The browser ABI supports typed scalar and enum computation, mutable globals,
-functions/control flow, UTF-8 literal strings, checked arrays, plain structs,
+functions/control flow, UTF-8 strings including runtime concatenation and
+lexicographic comparison, checked arrays, plain structs,
 portable `std` imports, `simd`, WGSL shader metadata, and browser `gpu`
 and canvas-backed `view` imports. Arrays use a wasm32 descriptor containing
 data, length, and capacity; plain structs use compiler-resolved field offsets

@@ -48,7 +48,9 @@ The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
 `type`, optional `target`, `source`, `entry` (or `entries`), and `exclude`.
 `target = "wasm"` keeps `type = "app"` and makes `ns build` emit a browser
 bundle; its HTML title uses `name`, and its favicon uses `icon` or the installed
-default `ns.svg`. `ns run --port <n>` serves it on loopback with WebSocket live reload.
+default `ns.svg`. A browser project may set `shell` to a custom HTML file using
+the `{{wasm}}`, `{{title}}`, and `{{favicon}}` placeholders. `ns run --port <n>`
+serves the bundle on loopback with WebSocket live reload.
 Project compilation
 recursively includes every `.ns` file under `source`; local files do not need a
 `use` declaration. Paths removed by `exclude` are not compiled. Only external

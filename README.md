@@ -27,6 +27,8 @@ is not part of a manifest project, it passes the active file directly. Set
 
 Set `target = "wasm"` beside `type = "app"` in `ns.mod`. `ns build` produces
 the browser-ready Wasm, JavaScript middleware, and HTML shell under `bin/`.
+Set `shell` to a project HTML file when the app needs custom markup; the build
+expands `{{wasm}}`, `{{title}}`, and `{{favicon}}` in that shell.
 `ns run --port 0` builds, binds a loopback development server, prints the
 selected URL, and reloads connected browsers after successful edits while
 preserving the last good bundle after build errors. WebGPU is initialized by

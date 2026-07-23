@@ -1,0 +1,1105 @@
+// A compact, deterministic Nano Script execution core for the browser
+// playground. It intentionally implements the expression/control-flow subset
+// used by the bundled examples while the production compiler remains the
+// authority for native/project builds.
+
+use std
+
+lit VALUE_NIL = 0
+lit VALUE_NUMBER = 1
+lit VALUE_BOOL = 2
+lit VALUE_TEXT = 3
+
+lit RUNTIME_BINDING_CAPACITY = 2048
+lit RUNTIME_FUNCTION_CAPACITY = 128
+lit RUNTIME_PARAMETER_CAPACITY = 512
+lit RUNTIME_ARGUMENT_CAPACITY = 512
+lit RUNTIME_CALL_DEPTH_LIMIT = 64
+lit RUNTIME_STEP_LIMIT = 200000
+
+struct runtime_value {
+    kind: i32,
+    number: f64,
+    text: str,
+    boolean: bool
+}
+
+let runtime_position = 0
+let runtime_ok = true
+let runtime_diagnostic = ""
+let runtime_output = ""
+let runtime_returning = false
+let runtime_return_value = runtime_value { kind: VALUE_NIL, number: 0.0, text: "", boolean: false }
+let runtime_call_depth = 0
+let runtime_steps = 0
+
+let runtime_binding_names = [str](RUNTIME_BINDING_CAPACITY)
+let runtime_binding_kinds = [i32](0)
+let runtime_binding_numbers = [f64](0)
+let runtime_binding_texts = [str](0)
+let runtime_binding_booleans = [u8](0)
+let runtime_binding_count = 0
+let runtime_local_base = 0
+
+let runtime_argument_kinds = [i32](0)
+let runtime_argument_numbers = [f64](0)
+let runtime_argument_texts = [str](0)
+let runtime_argument_booleans = [u8](0)
+let runtime_argument_count = 0
+
+let runtime_function_names = [str](RUNTIME_FUNCTION_CAPACITY)
+let runtime_function_body_start = [i32](RUNTIME_FUNCTION_CAPACITY)
+let runtime_function_body_end = [i32](RUNTIME_FUNCTION_CAPACITY)
+let runtime_function_parameter_start = [i32](RUNTIME_FUNCTION_CAPACITY)
+let runtime_function_parameter_count = [i32](RUNTIME_FUNCTION_CAPACITY)
+let runtime_function_count = 0
+let runtime_parameter_names = [str](RUNTIME_PARAMETER_CAPACITY)
+let runtime_parameter_count = 0
+
+fn runtime_nil() runtime_value {
+    return runtime_value { kind: VALUE_NIL, number: 0.0, text: "", boolean: false }
+}
+
+fn runtime_number(value: f64) runtime_value {
+    return runtime_value { kind: VALUE_NUMBER, number: value, text: "", boolean: false }
+}
+
+fn runtime_bool(value: bool) runtime_value {
+    return runtime_value { kind: VALUE_BOOL, number: 0.0, text: "", boolean: value }
+}
+
+fn runtime_text(value: str) runtime_value {
+    return runtime_value { kind: VALUE_TEXT, number: 0.0, text: value, boolean: false }
+}
+
+fn runtime_truthy(value: runtime_value) bool {
+    if value.kind == VALUE_BOOL {
+        return value.boolean
+    }
+    if value.kind == VALUE_NUMBER {
+        return value.number != 0.0
+    }
+    if value.kind == VALUE_TEXT {
+        return value.text.len > 0
+    }
+    return false
+}
+
+fn runtime_format(value: runtime_value) str {
+    if value.kind == VALUE_TEXT {
+        return value.text
+    }
+    if value.kind == VALUE_BOOL {
+        if value.boolean {
+            return "true"
+        }
+        return "false"
+    }
+    if value.kind == VALUE_NUMBER {
+        return ftos(value.number)
+    }
+    return "nil"
+}
+
+fn runtime_skip_comments_at(index: i32) i32 {
+    let next = index
+    loop next < web_token_count {
+        if web_token_kinds[next] != TOKEN_COMMENT {
+            break
+        }
+        next = next + 1
+    }
+    return next
+}
+
+fn runtime_current_text() str {
+    runtime_position = runtime_skip_comments_at(runtime_position)
+    if runtime_position >= web_token_count {
+        return ""
+    }
+    return web_token_text(runtime_position)
+}
+
+fn runtime_fail(message: str) i32 {
+    if runtime_ok {
+        runtime_ok = false
+        let index = runtime_skip_comments_at(runtime_position)
+        let line = 1
+        let column = 1
+        if index < web_token_count {
+            line = web_token_lines[index]
+            column = web_token_columns[index]
+        }
+        runtime_diagnostic = "error " + web_int_text(line) + ":" + web_int_text(column) + ": " + message
+    }
+    return 0
+}
+
+fn runtime_take(text: str) bool {
+    runtime_position = runtime_skip_comments_at(runtime_position)
+    if runtime_position < web_token_count {
+        if web_token_text(runtime_position) == text {
+            runtime_position = runtime_position + 1
+            return true
+        }
+    }
+    return false
+}
+
+fn runtime_expect(text: str) bool {
+    if runtime_take(text) {
+        return true
+    }
+    runtime_fail("expected `" + text + "`")
+    return false
+}
+
+fn runtime_find_close(open_index: i32, open_text: str, close_text: str) i32 {
+    let depth = 0
+    for index in open_index to web_token_count {
+        let text = web_token_text(index)
+        if text == open_text {
+            depth = depth + 1
+        } else if text == close_text {
+            depth = depth - 1
+            if depth == 0 {
+                return index
+            }
+        }
+    }
+    return -1
+}
+
+fn runtime_lookup_index(name: str) i32 {
+    let index = runtime_binding_count - 1
+    loop index >= 0 {
+        if runtime_binding_names[index] == name {
+            return index
+        }
+        index = index - 1
+    }
+    return -1
+}
+
+fn runtime_binding_value_at(index: i32) runtime_value {
+    return runtime_value {
+        kind: runtime_binding_kinds[index],
+        number: runtime_binding_numbers[index],
+        text: runtime_binding_texts[index],
+        boolean: runtime_binding_booleans[index] != 0 as u8,
+    }
+}
+
+fn runtime_store_binding(index: i32, value: runtime_value) i32 {
+    runtime_binding_kinds[index] = value.kind
+    runtime_binding_numbers[index] = value.number
+    runtime_binding_texts[index] = value.text
+    if value.boolean {
+        runtime_binding_booleans[index] = 1 as u8
+    } else {
+        runtime_binding_booleans[index] = 0 as u8
+    }
+    return index
+}
+
+fn runtime_argument_value_at(index: i32) runtime_value {
+    return runtime_value {
+        kind: runtime_argument_kinds[index],
+        number: runtime_argument_numbers[index],
+        text: runtime_argument_texts[index],
+        boolean: runtime_argument_booleans[index] != 0 as u8,
+    }
+}
+
+fn runtime_store_argument(index: i32, value: runtime_value) i32 {
+    runtime_argument_kinds[index] = value.kind
+    runtime_argument_numbers[index] = value.number
+    runtime_argument_texts[index] = value.text
+    if value.boolean {
+        runtime_argument_booleans[index] = 1 as u8
+    } else {
+        runtime_argument_booleans[index] = 0 as u8
+    }
+    return index
+}
+
+fn runtime_lookup(name: str) runtime_value {
+    let index = runtime_lookup_index(name)
+    if index < 0 {
+        runtime_fail("unknown value `" + name + "`")
+        return runtime_nil()
+    }
+    return runtime_binding_value_at(index)
+}
+
+fn runtime_declare(name: str, value: runtime_value) i32 {
+    let index = runtime_binding_count - 1
+    loop index >= runtime_local_base {
+        if runtime_binding_names[index] == name {
+            runtime_store_binding(index, value)
+            return 0
+        }
+        index = index - 1
+    }
+    if runtime_binding_count >= RUNTIME_BINDING_CAPACITY {
+        runtime_fail("too many runtime values")
+        return 0
+    }
+    runtime_binding_names[runtime_binding_count] = name
+    runtime_store_binding(runtime_binding_count, value)
+    runtime_binding_count = runtime_binding_count + 1
+    return 1
+}
+
+fn runtime_assign(name: str, value: runtime_value) i32 {
+    let index = runtime_lookup_index(name)
+    if index < 0 {
+        runtime_fail("cannot assign unknown value `" + name + "`")
+        return 0
+    }
+    runtime_store_binding(index, value)
+    return 1
+}
+
+fn runtime_function_index(name: str) i32 {
+    for index in 0 to runtime_function_count {
+        if runtime_function_names[index] == name {
+            return index
+        }
+    }
+    return -1
+}
+
+fn runtime_scan_function_at(index: i32) i32 {
+    if web_token_text(index) != "fn" {
+        return index + 1
+    }
+    let name_index = runtime_skip_comments_at(index + 1)
+    if name_index >= web_token_count {
+        return index + 1
+    }
+    if web_token_kinds[name_index] != TOKEN_IDENTIFIER {
+        return index + 1
+    }
+    let open_paren = runtime_skip_comments_at(name_index + 1)
+    if open_paren >= web_token_count {
+        return index + 1
+    }
+    if web_token_text(open_paren) != "(" {
+        return index + 1
+    }
+    let close_paren = runtime_find_close(open_paren, "(", ")")
+    if close_paren < 0 {
+        runtime_position = open_paren
+        runtime_fail("unterminated function parameter list")
+        return web_token_count
+    }
+    let open_body = runtime_skip_comments_at(close_paren + 1)
+    loop open_body < web_token_count {
+        if web_token_text(open_body) == "{" {
+            break
+        }
+        open_body = open_body + 1
+    }
+    if open_body >= web_token_count {
+        return close_paren + 1
+    }
+    let close_body = runtime_find_close(open_body, "{", "}")
+    if close_body < 0 {
+        runtime_position = open_body
+        runtime_fail("unterminated function body")
+        return web_token_count
+    }
+    if runtime_function_count >= RUNTIME_FUNCTION_CAPACITY {
+        runtime_position = index
+        runtime_fail("too many functions")
+        return web_token_count
+    }
+    let function_index = runtime_function_count
+    runtime_function_names[function_index] = web_token_text(name_index)
+    runtime_function_body_start[function_index] = open_body + 1
+    runtime_function_body_end[function_index] = close_body
+    runtime_function_parameter_start[function_index] = runtime_parameter_count
+    runtime_function_parameter_count[function_index] = 0
+    runtime_function_count = runtime_function_count + 1
+
+    let parameter = runtime_skip_comments_at(open_paren + 1)
+    loop parameter < close_paren {
+        if web_token_kinds[parameter] == TOKEN_IDENTIFIER {
+            if runtime_parameter_count >= RUNTIME_PARAMETER_CAPACITY {
+                runtime_position = parameter
+                runtime_fail("too many function parameters")
+                return web_token_count
+            }
+            runtime_parameter_names[runtime_parameter_count] = web_token_text(parameter)
+            runtime_parameter_count = runtime_parameter_count + 1
+            runtime_function_parameter_count[function_index] = runtime_function_parameter_count[function_index] + 1
+            loop parameter < close_paren {
+                if web_token_text(parameter) == "," {
+                    break
+                }
+                parameter = parameter + 1
+            }
+            if parameter < close_paren {
+                parameter = parameter + 1
+            }
+        } else {
+            parameter = parameter + 1
+        }
+        parameter = runtime_skip_comments_at(parameter)
+    }
+    return close_body + 1
+}
+
+fn runtime_scan_functions() i32 {
+    runtime_function_count = 0
+    runtime_parameter_count = 0
+    let index = 0
+    loop index < web_token_count {
+        index = runtime_scan_function_at(index)
+        if runtime_ok == false {
+            return 0
+        }
+    }
+    return runtime_function_count
+}
+
+fn runtime_number_literal(text: str) f64 {
+    let length = text.len
+    loop length > 0 {
+        let c = web_byte_at(text, length - 1)
+        if web_is_digit(c) || c == 46 {
+            break
+        }
+        length = length - 1
+    }
+    return stof(substr(text, 0, length))
+}
+
+fn runtime_template(raw: str) str {
+    let out = ""
+    let index = 0
+    loop index < raw.len {
+        if web_byte_at(raw, index) == 123 {
+            let close = index + 1
+            loop close < raw.len {
+                if web_byte_at(raw, close) == 125 {
+                    break
+                }
+                close = close + 1
+            }
+            if close < raw.len {
+                let name = substr(raw, index + 1, close - index - 1)
+                let value = runtime_lookup(name)
+                if runtime_ok == false {
+                    return out
+                }
+                out = out + runtime_format(value)
+                index = close + 1
+            } else {
+                out = out + substr(raw, index, 1)
+                index = index + 1
+            }
+        } else {
+            out = out + substr(raw, index, 1)
+            index = index + 1
+        }
+    }
+    return unescape(out)
+}
+
+fn runtime_equal(left: runtime_value, right: runtime_value) bool {
+    if left.kind != right.kind {
+        if left.kind == VALUE_NUMBER && right.kind == VALUE_BOOL {
+            return (left.number != 0.0) == right.boolean
+        }
+        if left.kind == VALUE_BOOL && right.kind == VALUE_NUMBER {
+            return left.boolean == (right.number != 0.0)
+        }
+        return false
+    }
+    if left.kind == VALUE_NUMBER {
+        return left.number == right.number
+    }
+    if left.kind == VALUE_BOOL {
+        return left.boolean == right.boolean
+    }
+    if left.kind == VALUE_TEXT {
+        return left.text == right.text
+    }
+    return true
+}
+
+fn runtime_call_user(function_index: i32, argument_start: i32, argument_count: i32) runtime_value {
+    if runtime_call_depth >= RUNTIME_CALL_DEPTH_LIMIT {
+        runtime_fail("call depth limit reached")
+        return runtime_nil()
+    }
+    let expected = runtime_function_parameter_count[function_index]
+    if argument_count != expected {
+        runtime_fail("function `" + runtime_function_names[function_index] + "` expects " + web_int_text(expected) + " argument(s), received " + web_int_text(argument_count))
+        return runtime_nil()
+    }
+    let saved_position = runtime_position
+    let saved_binding_count = runtime_binding_count
+    let saved_local_base = runtime_local_base
+    let saved_returning = runtime_returning
+    let saved_return_value = runtime_return_value
+
+    runtime_call_depth = runtime_call_depth + 1
+    runtime_local_base = runtime_binding_count
+    let parameter_start = runtime_function_parameter_start[function_index]
+    for index in 0 to expected {
+        runtime_declare(runtime_parameter_names[parameter_start + index], runtime_argument_value_at(argument_start + index))
+    }
+    runtime_returning = false
+    runtime_return_value = runtime_nil()
+    runtime_execute_range(runtime_function_body_start[function_index], runtime_function_body_end[function_index])
+    let result = runtime_return_value
+
+    runtime_binding_count = saved_binding_count
+    runtime_local_base = saved_local_base
+    runtime_returning = saved_returning
+    runtime_return_value = saved_return_value
+    runtime_position = saved_position
+    runtime_call_depth = runtime_call_depth - 1
+    return result
+}
+
+fn runtime_call(name: str, argument_start: i32, argument_count: i32) runtime_value {
+    if name == "print" || name == "println" {
+        if argument_count != 1 {
+            runtime_fail(name + " expects one argument, received " + web_int_text(argument_count))
+            return runtime_nil()
+        }
+        runtime_output = runtime_output + runtime_format(runtime_argument_value_at(argument_start))
+        if name == "println" {
+            runtime_output = runtime_output + unescape("\n")
+        }
+        return runtime_nil()
+    }
+    if name == "sqrt" || name == "sin" || name == "cos" || name == "tan" {
+        let argument = runtime_argument_value_at(argument_start)
+        if argument_count != 1 || argument.kind != VALUE_NUMBER {
+            runtime_fail(name + " expects one number")
+            return runtime_nil()
+        }
+        if name == "sqrt" {
+            return runtime_number(sqrt(argument.number))
+        }
+        if name == "sin" {
+            return runtime_number(sin(argument.number))
+        }
+        if name == "cos" {
+            return runtime_number(cos(argument.number))
+        }
+        return runtime_number(tan(argument.number))
+    }
+    if name == "ftos" {
+        let argument = runtime_argument_value_at(argument_start)
+        if argument_count != 1 || argument.kind != VALUE_NUMBER {
+            runtime_fail("ftos expects one number")
+            return runtime_nil()
+        }
+        return runtime_text(ftos(argument.number))
+    }
+    let function_index = runtime_function_index(name)
+    if function_index < 0 {
+        runtime_fail("unknown function `" + name + "`")
+        return runtime_nil()
+    }
+    return runtime_call_user(function_index, argument_start, argument_count)
+}
+
+fn runtime_parse_primary() runtime_value {
+    runtime_position = runtime_skip_comments_at(runtime_position)
+    if runtime_ok == false || runtime_position >= web_token_count {
+        return runtime_nil()
+    }
+    let token_kind = web_token_kinds[runtime_position]
+    let token_start = web_token_starts[runtime_position]
+    let token_length = web_token_lengths[runtime_position]
+    let text = web_token_text(runtime_position)
+    if token_kind == TOKEN_NUMBER {
+        runtime_position = runtime_position + 1
+        return runtime_number(runtime_number_literal(text))
+    }
+    if token_kind == TOKEN_STRING {
+        runtime_position = runtime_position + 1
+        if token_length < 2 {
+            return runtime_text("")
+        }
+        let inner = substr(web_source, token_start + 1, token_length - 2)
+        if web_byte_at(web_source, token_start) == 96 {
+            return runtime_text(runtime_template(inner))
+        }
+        return runtime_text(unescape(inner))
+    }
+    if text == "true" {
+        runtime_position = runtime_position + 1
+        return runtime_bool(true)
+    }
+    if text == "false" {
+        runtime_position = runtime_position + 1
+        return runtime_bool(false)
+    }
+    if text == "nil" {
+        runtime_position = runtime_position + 1
+        return runtime_nil()
+    }
+    if text == "(" {
+        runtime_position = runtime_position + 1
+        let value = runtime_parse_expression()
+        runtime_expect(")")
+        return value
+    }
+    if token_kind == TOKEN_IDENTIFIER {
+        let name = text
+        runtime_position = runtime_position + 1
+        if runtime_take("(") {
+            let argument_start = runtime_argument_count
+            if runtime_take(")") == false {
+                loop runtime_ok {
+                    if runtime_argument_count >= RUNTIME_ARGUMENT_CAPACITY {
+                        runtime_fail("too many call arguments")
+                        return runtime_nil()
+                    }
+                    let argument = runtime_parse_expression()
+                    runtime_store_argument(runtime_argument_count, argument)
+                    runtime_argument_count = runtime_argument_count + 1
+                    if runtime_take(")") {
+                        break
+                    }
+                    if runtime_expect(",") == false {
+                        return runtime_nil()
+                    }
+                }
+            }
+            let result = runtime_call(name, argument_start, runtime_argument_count - argument_start)
+            runtime_argument_count = argument_start
+            return result
+        }
+        return runtime_lookup(name)
+    }
+    runtime_fail("expected an expression, found `" + text + "`")
+    return runtime_nil()
+}
+
+fn runtime_parse_unary() runtime_value {
+    if runtime_take("!") {
+        return runtime_bool(runtime_truthy(runtime_parse_unary()) == false)
+    }
+    if runtime_take("-") {
+        let value = runtime_parse_unary()
+        if value.kind != VALUE_NUMBER {
+            runtime_fail("unary - expects a number")
+            return runtime_nil()
+        }
+        return runtime_number(0.0 - value.number)
+    }
+    if runtime_take("+") {
+        return runtime_parse_unary()
+    }
+    return runtime_parse_primary()
+}
+
+fn runtime_parse_multiply() runtime_value {
+    let left = runtime_parse_unary()
+    loop runtime_ok {
+        let operation = runtime_current_text()
+        if operation != "*" && operation != "/" && operation != "%" {
+            break
+        }
+        runtime_position = runtime_position + 1
+        let right = runtime_parse_unary()
+        if left.kind != VALUE_NUMBER || right.kind != VALUE_NUMBER {
+            runtime_fail("arithmetic expects numbers")
+            return runtime_nil()
+        }
+        if operation == "*" {
+            left = runtime_number(left.number * right.number)
+        } else if operation == "/" {
+            if right.number == 0.0 {
+                runtime_fail("division by zero")
+                return runtime_nil()
+            }
+            left = runtime_number(left.number / right.number)
+        } else {
+            let lhs = left.number as i64
+            let rhs = right.number as i64
+            if rhs == 0 {
+                runtime_fail("remainder by zero")
+                return runtime_nil()
+            }
+            left = runtime_number((lhs % rhs) as f64)
+        }
+    }
+    return left
+}
+
+fn runtime_parse_add() runtime_value {
+    let left = runtime_parse_multiply()
+    loop runtime_ok {
+        let operation = runtime_current_text()
+        if operation != "+" && operation != "-" {
+            break
+        }
+        runtime_position = runtime_position + 1
+        let right = runtime_parse_multiply()
+        if operation == "+" && (left.kind == VALUE_TEXT || right.kind == VALUE_TEXT) {
+            left = runtime_text(runtime_format(left) + runtime_format(right))
+        } else {
+            if left.kind != VALUE_NUMBER || right.kind != VALUE_NUMBER {
+                runtime_fail("arithmetic expects numbers")
+                return runtime_nil()
+            }
+            if operation == "+" {
+                left = runtime_number(left.number + right.number)
+            } else {
+                left = runtime_number(left.number - right.number)
+            }
+        }
+    }
+    return left
+}
+
+fn runtime_parse_compare() runtime_value {
+    let left = runtime_parse_add()
+    loop runtime_ok {
+        let operation = runtime_current_text()
+        if operation != "<" && operation != "<=" && operation != ">" && operation != ">=" {
+            break
+        }
+        runtime_position = runtime_position + 1
+        let right = runtime_parse_add()
+        if left.kind != VALUE_NUMBER || right.kind != VALUE_NUMBER {
+            runtime_fail("comparison expects numbers")
+            return runtime_nil()
+        }
+        let result = false
+        if operation == "<" {
+            result = left.number < right.number
+        } else if operation == "<=" {
+            result = left.number <= right.number
+        } else if operation == ">" {
+            result = left.number > right.number
+        } else {
+            result = left.number >= right.number
+        }
+        left = runtime_bool(result)
+    }
+    return left
+}
+
+fn runtime_parse_equality() runtime_value {
+    let left = runtime_parse_compare()
+    loop runtime_ok {
+        let operation = runtime_current_text()
+        if operation != "==" && operation != "!=" {
+            break
+        }
+        runtime_position = runtime_position + 1
+        let right = runtime_parse_compare()
+        let equal = runtime_equal(left, right)
+        if operation == "!=" {
+            equal = equal == false
+        }
+        left = runtime_bool(equal)
+    }
+    return left
+}
+
+fn runtime_parse_and() runtime_value {
+    let left = runtime_parse_equality()
+    loop runtime_take("&&") {
+        let right = runtime_parse_equality()
+        left = runtime_bool(runtime_truthy(left) && runtime_truthy(right))
+    }
+    return left
+}
+
+fn runtime_parse_expression() runtime_value {
+    let left = runtime_parse_and()
+    loop runtime_take("||") {
+        let right = runtime_parse_and()
+        left = runtime_bool(runtime_truthy(left) || runtime_truthy(right))
+    }
+    return left
+}
+
+fn runtime_skip_declaration() i32 {
+    let line = web_token_lines[runtime_position]
+    runtime_position = runtime_position + 1
+    loop runtime_position < web_token_count {
+        if web_token_lines[runtime_position] != line {
+            break
+        }
+        runtime_position = runtime_position + 1
+    }
+    return runtime_position
+}
+
+fn runtime_skip_braced_declaration() i32 {
+    let index = runtime_position
+    loop index < web_token_count {
+        if web_token_text(index) == "{" {
+            break
+        }
+        index = index + 1
+    }
+    if index >= web_token_count {
+        runtime_skip_declaration()
+        return runtime_position
+    }
+    let close = runtime_find_close(index, "{", "}")
+    if close < 0 {
+        runtime_position = index
+        runtime_fail("unterminated declaration")
+        return runtime_position
+    }
+    runtime_position = close + 1
+    return runtime_position
+}
+
+fn runtime_skip_if_at(index: i32) i32 {
+    let open = index
+    loop open < web_token_count {
+        if web_token_text(open) == "{" {
+            break
+        }
+        open = open + 1
+    }
+    if open >= web_token_count {
+        return index + 1
+    }
+    let close = runtime_find_close(open, "{", "}")
+    if close < 0 {
+        return web_token_count
+    }
+    let next = runtime_skip_comments_at(close + 1)
+    if next < web_token_count {
+        if web_token_text(next) == "else" {
+            next = runtime_skip_comments_at(next + 1)
+            if next < web_token_count {
+                if web_token_text(next) == "if" {
+                    return runtime_skip_if_at(next)
+                }
+                if web_token_text(next) == "{" {
+                    let else_close = runtime_find_close(next, "{", "}")
+                    if else_close >= 0 {
+                        return else_close + 1
+                    }
+                }
+            }
+        }
+    }
+    return close + 1
+}
+
+fn runtime_execute_statement(end: i32) i32 {
+    runtime_position = runtime_skip_comments_at(runtime_position)
+    if runtime_position >= end || runtime_ok == false || runtime_returning {
+        return runtime_position
+    }
+    runtime_steps = runtime_steps + 1
+    if runtime_steps > RUNTIME_STEP_LIMIT {
+        runtime_fail("execution step limit reached")
+        return runtime_position
+    }
+    let text = runtime_current_text()
+
+    if text == "use" || text == "mod" || text == "type" {
+        runtime_skip_declaration()
+        return runtime_position
+    }
+    if text == "struct" || text == "enum" {
+        runtime_skip_braced_declaration()
+        return runtime_position
+    }
+    if text == "ref" {
+        runtime_skip_declaration()
+        return runtime_position
+    }
+    if text == "fn" {
+        let function_index = runtime_skip_comments_at(runtime_position + 1)
+        let open = function_index
+        loop open < web_token_count {
+            if web_token_text(open) == "{" {
+                break
+            }
+            open = open + 1
+        }
+        if open < web_token_count {
+            let close = runtime_find_close(open, "{", "}")
+            if close >= 0 {
+                runtime_position = close + 1
+                return runtime_position
+            }
+        }
+        runtime_fail("unterminated function declaration")
+        return runtime_position
+    }
+    if text == "let" || text == "lit" {
+        runtime_position = runtime_position + 1
+        runtime_position = runtime_skip_comments_at(runtime_position)
+        if runtime_position >= web_token_count || web_token_kinds[runtime_position] != TOKEN_IDENTIFIER {
+            runtime_fail("expected a value name")
+            return runtime_position
+        }
+        let name = web_token_text(runtime_position)
+        runtime_position = runtime_position + 1
+        if runtime_take(":") {
+            loop runtime_position < web_token_count {
+                if runtime_current_text() == "=" {
+                    break
+                }
+                runtime_position = runtime_position + 1
+            }
+        }
+        if runtime_expect("=") == false {
+            return runtime_position
+        }
+        runtime_declare(name, runtime_parse_expression())
+        return runtime_position
+    }
+    if text == "return" {
+        let return_line = web_token_lines[runtime_position]
+        runtime_position = runtime_position + 1
+        runtime_position = runtime_skip_comments_at(runtime_position)
+        let has_return_value = false
+        if runtime_position < end {
+            if web_token_lines[runtime_position] == return_line {
+                if runtime_current_text() != "}" {
+                    has_return_value = true
+                }
+            }
+        }
+        if has_return_value {
+            runtime_return_value = runtime_parse_expression()
+        } else {
+            runtime_return_value = runtime_nil()
+        }
+        runtime_returning = true
+        return runtime_position
+    }
+    if text == "if" {
+        let if_start = runtime_position
+        runtime_position = runtime_position + 1
+        let condition = runtime_parse_expression()
+        if runtime_expect("{") == false {
+            return runtime_position
+        }
+        let open = runtime_skip_comments_at(runtime_position - 1)
+        let close = runtime_find_close(open, "{", "}")
+        if close < 0 {
+            runtime_fail("unterminated if body")
+            return runtime_position
+        }
+        if runtime_truthy(condition) {
+            runtime_execute_range(open + 1, close)
+            runtime_position = runtime_skip_if_at(if_start)
+        } else {
+            runtime_position = runtime_skip_comments_at(close + 1)
+            if runtime_position < end {
+                if runtime_current_text() == "else" {
+                    runtime_position = runtime_position + 1
+                    if runtime_current_text() == "if" {
+                        runtime_execute_statement(end)
+                    } else if runtime_expect("{") {
+                        let else_open = runtime_skip_comments_at(runtime_position - 1)
+                        let else_close = runtime_find_close(else_open, "{", "}")
+                        if else_close < 0 {
+                            runtime_fail("unterminated else body")
+                            return runtime_position
+                        }
+                        runtime_execute_range(else_open + 1, else_close)
+                        runtime_position = else_close + 1
+                    }
+                }
+            }
+        }
+        return runtime_position
+    }
+    if text == "for" {
+        runtime_position = runtime_position + 1
+        runtime_position = runtime_skip_comments_at(runtime_position)
+        if runtime_position >= web_token_count || web_token_kinds[runtime_position] != TOKEN_IDENTIFIER {
+            runtime_fail("expected a loop value name")
+            return runtime_position
+        }
+        let name = web_token_text(runtime_position)
+        runtime_position = runtime_position + 1
+        if runtime_expect("in") == false {
+            return runtime_position
+        }
+        let first = runtime_parse_expression()
+        if runtime_expect("to") == false {
+            return runtime_position
+        }
+        let last = runtime_parse_expression()
+        if first.kind != VALUE_NUMBER || last.kind != VALUE_NUMBER {
+            runtime_fail("for bounds must be numbers")
+            return runtime_position
+        }
+        if runtime_expect("{") == false {
+            return runtime_position
+        }
+        let open = runtime_skip_comments_at(runtime_position - 1)
+        let close = runtime_find_close(open, "{", "}")
+        if close < 0 {
+            runtime_fail("unterminated for body")
+            return runtime_position
+        }
+        let value = first.number as i64
+        let limit = last.number as i64
+        loop value < limit && runtime_ok && runtime_returning == false {
+            runtime_declare(name, runtime_number(value as f64))
+            runtime_execute_range(open + 1, close)
+            value = value + 1
+        }
+        runtime_position = close + 1
+        return runtime_position
+    }
+    if text == "{" {
+        let open = runtime_position
+        let close = runtime_find_close(open, "{", "}")
+        if close < 0 {
+            runtime_fail("unterminated block")
+            return runtime_position
+        }
+        runtime_execute_range(open + 1, close)
+        runtime_position = close + 1
+        return runtime_position
+    }
+
+    let next = runtime_skip_comments_at(runtime_position + 1)
+    if web_token_kinds[runtime_position] == TOKEN_IDENTIFIER {
+        if next < web_token_count {
+            if web_token_text(next) == "=" {
+                let name = web_token_text(runtime_position)
+                runtime_position = next + 1
+                runtime_assign(name, runtime_parse_expression())
+                return runtime_position
+            }
+        }
+    }
+    runtime_parse_expression()
+    return runtime_position
+}
+
+fn runtime_execute_range(start: i32, end: i32) i32 {
+    runtime_position = start
+    loop runtime_position < end && runtime_ok && runtime_returning == false {
+        let before = runtime_position
+        runtime_execute_statement(end)
+        if runtime_position == before && runtime_ok {
+            runtime_fail("executor made no progress")
+        }
+    }
+    return runtime_position
+}
+
+fn runtime_validate_pairs() i32 {
+    let parens = 0
+    let braces = 0
+    let brackets = 0
+    for index in 0 to web_token_count {
+        let text = web_token_text(index)
+        if text == "(" {
+            parens = parens + 1
+        } else if text == ")" {
+            parens = parens - 1
+        } else if text == "{" {
+            braces = braces + 1
+        } else if text == "}" {
+            braces = braces - 1
+        } else if text == "[" {
+            brackets = brackets + 1
+        } else if text == "]" {
+            brackets = brackets - 1
+        }
+        if parens < 0 || braces < 0 || brackets < 0 {
+            runtime_position = index
+            runtime_fail("unexpected closing delimiter")
+            return 0
+        }
+    }
+    if parens != 0 || braces != 0 || brackets != 0 {
+        runtime_position = web_token_count - 1
+        runtime_fail("unclosed delimiter")
+    }
+    if runtime_ok {
+        return 1
+    }
+    return 0
+}
+
+fn runtime_prepare(source: str) i32 {
+    if runtime_binding_kinds.len == 0 {
+        runtime_binding_names = [str](RUNTIME_BINDING_CAPACITY)
+        runtime_binding_kinds = [i32](RUNTIME_BINDING_CAPACITY)
+        runtime_binding_numbers = [f64](RUNTIME_BINDING_CAPACITY)
+        runtime_binding_texts = [str](RUNTIME_BINDING_CAPACITY)
+        runtime_binding_booleans = [u8](RUNTIME_BINDING_CAPACITY)
+        runtime_argument_kinds = [i32](RUNTIME_ARGUMENT_CAPACITY)
+        runtime_argument_numbers = [f64](RUNTIME_ARGUMENT_CAPACITY)
+        runtime_argument_texts = [str](RUNTIME_ARGUMENT_CAPACITY)
+        runtime_argument_booleans = [u8](RUNTIME_ARGUMENT_CAPACITY)
+        runtime_function_names = [str](RUNTIME_FUNCTION_CAPACITY)
+        runtime_function_body_start = [i32](RUNTIME_FUNCTION_CAPACITY)
+        runtime_function_body_end = [i32](RUNTIME_FUNCTION_CAPACITY)
+        runtime_function_parameter_start = [i32](RUNTIME_FUNCTION_CAPACITY)
+        runtime_function_parameter_count = [i32](RUNTIME_FUNCTION_CAPACITY)
+        runtime_parameter_names = [str](RUNTIME_PARAMETER_CAPACITY)
+    }
+    runtime_position = 0
+    runtime_ok = true
+    runtime_diagnostic = ""
+    runtime_output = ""
+    runtime_returning = false
+    runtime_return_value = runtime_nil()
+    runtime_call_depth = 0
+    runtime_steps = 0
+    runtime_binding_count = 0
+    runtime_local_base = 0
+    runtime_argument_count = 0
+    web_scan(source)
+    if web_lex_error.len > 0 {
+        runtime_fail(web_lex_error)
+        return 0
+    }
+    runtime_validate_pairs()
+    if runtime_ok {
+        runtime_scan_functions()
+    }
+    if runtime_ok {
+        return 1
+    }
+    return 0
+}
+
+fn ns_diagnostics(source: str) str {
+    runtime_prepare(source)
+    return runtime_diagnostic
+}
+
+fn ns_run(source: str) str {
+    runtime_prepare(source)
+    if runtime_ok {
+        runtime_execute_range(0, web_token_count - 1)
+    }
+    if runtime_ok == false {
+        if runtime_output.len > 0 {
+            return runtime_output + runtime_diagnostic + unescape("\n")
+        }
+        return runtime_diagnostic + unescape("\n")
+    }
+    return runtime_output
+}
+
+fn ns_run_ok() i32 {
+    if runtime_ok {
+        return 1
+    }
+    return 0
+}

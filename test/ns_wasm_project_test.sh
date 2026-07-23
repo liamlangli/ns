@@ -53,6 +53,17 @@ fn answer() i32 {
         p.x - 6 + p2.x - 100 + touched - 99 + box1.p.x - 6 + box2.p.x - 70 +
         box1.name.len - 4 + box1.values[0] - 9
 }
+fn string_ops() i32 {
+    let joined = "nano" + "script"
+    if joined == "nanoscript" {
+        if "alpha" < "beta" {
+            if "same" <= "same" && "zeta" > "eta" && "zeta" >= "zeta" && "left" != "right" {
+                return joined.len
+            }
+        }
+    }
+    return 0
+}
 fn main() i32 {
     if gpu_request_device(browser_view) {
         return answer() - ${answer}
@@ -61,13 +72,13 @@ fn main() i32 {
 }
 fn frame(time_ms: f64, width: i32, height: i32) { }
 `;
-const manifest = (name = 'wasm-e2e', icon = '') => `schema = "ns.mod/v1"
+const manifest = (name = 'wasm-e2e', icon = '', shell = '') => `schema = "ns.mod/v1"
 name = "${name}"
 type = "app"
 target = "wasm"
 source = "."
 entry = "main.ns"
-${icon ? `icon = "${icon}"\n` : ''}`;
+${icon ? `icon = "${icon}"\n` : ''}${shell ? `shell = "${shell}"\n` : ''}`;
 fs.writeFileSync(path.join(root, 'ns.mod'), manifest());
 fs.writeFileSync(path.join(root, 'main.ns'), source());
 fs.writeFileSync(path.join(root, 'helper.ns'), helperSource);
@@ -90,6 +101,15 @@ assert.match(defaultHtml, /<title>wasm-e2e<\/title>/);
 assert.match(defaultHtml, /<link rel="icon" href="\.\/ns\.svg">/);
 assert.match(defaultHtml, /canvas\{outline:none\}/);
 assert.match(fs.readFileSync(path.join(root, 'dist', 'ns.svg'), 'utf8'), /^<svg/);
+
+const customShell = '<!doctype html><title>{{title}}</title><link rel="icon" href="{{favicon}}"><script type="module">globalThis.wasm = "{{wasm}}";</script>\n';
+fs.writeFileSync(path.join(root, 'shell.html'), customShell);
+fs.writeFileSync(path.join(root, 'ns.mod'), manifest('custom & shell', '', 'shell.html'));
+const customShellOutput = path.join(root, 'shell-dist', 'browser.wasm');
+const customShellBuild = spawnSync(ns, ['build', root, '-o', customShellOutput], { encoding: 'utf8' });
+assert.strictEqual(customShellBuild.status, 0, customShellBuild.stdout + customShellBuild.stderr);
+assert.strictEqual(fs.readFileSync(path.join(root, 'shell-dist', 'index.html'), 'utf8'),
+  '<!doctype html><title>custom &amp; shell</title><link rel="icon" href="ns.svg"><script type="module">globalThis.wasm = "browser.wasm";</script>\n');
 
 const projectIcon = '<svg xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="8"/></svg>\n';
 fs.writeFileSync(path.join(root, 'project-icon.svg'), projectIcon);
@@ -226,6 +246,7 @@ const rawRequest = (port, request) => new Promise((resolve, reject) => {
     });
     instance.instance.exports.__ns_init();
     assert.strictEqual(instance.instance.exports.main(), 0);
+    assert.strictEqual(instance.instance.exports.string_ops(), 10);
     for (const file of ['/', '/ns-wasm.js', '/ns.svg', '/wasm-e2e.wasm', '/wasm-e2e.wasm.map']) assert.strictEqual((await fetch(base + file)).status, 200);
     assert.strictEqual((await fetch(base + '/ns.svg')).headers.get('content-type'), 'image/svg+xml');
     const servedMap = await fetch(base + '/wasm-e2e.wasm.map');

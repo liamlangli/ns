@@ -1070,6 +1070,7 @@ typedef struct ns_build_input {
     ns_str module_type;
     ns_str target;
     ns_str icon;
+    ns_str shell;
     ns_bool has_manifest;
 } ns_build_input;
 
@@ -1444,6 +1445,7 @@ static ns_build_input ns_build_input_resolve(ns_str path) {
         in.module_type = ns_build_manifest_value(in.scope, "type");
         in.target = ns_build_manifest_value(in.scope, "target");
         in.icon = ns_path_resolve(in.scope, ns_build_manifest_value(in.scope, "icon"));
+        in.shell = ns_path_resolve(in.scope, ns_build_manifest_value(in.scope, "shell"));
     }
     if (in.name.data == ns_null) in.name = ns_path_filename(in.filename);
     return in;
@@ -1507,6 +1509,24 @@ static ns_str ns_wasm_favicon_filename(ns_str icon) {
     }
     ns_array_push(filename.data, '\0');
     return filename;
+}
+
+// Expand the three stable placeholders accepted by a custom Wasm HTML shell.
+// Keeping this deliberately small makes the shell a static asset rather than
+// introducing a template language into the project manifest.
+static ns_str ns_wasm_shell_replace(ns_str source, const char *token, ns_str value) {
+    ns_str out = ns_str_null;
+    i32 token_len = (i32)strlen(token);
+    for (i32 i = 0; i < source.len;) {
+        if (i + token_len <= source.len && strncmp(source.data + i, token, (size_t)token_len) == 0) {
+            ns_str_append_len(&out, value.data, value.len);
+            i += token_len;
+        } else {
+            ns_str_append_len(&out, source.data + i, 1);
+            i++;
+        }
+    }
+    return out;
 }
 
 static ns_ssa_fn *ns_wasm_find_function(ns_ssa_module *ssa, const char *name) {
@@ -1584,18 +1604,31 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
     ns_str favicon = uses_default_icon ? ns_str_cstr("ns.svg") : ns_wasm_favicon_filename(icon_src);
     ns_copy_file_contents(icon_src, ns_path_join(out_dir, favicon));
 
-    ns_str html = ns_str_null;
     ns_str title = ns_html_escape(in->name);
-    ns_str_append_cstr(&html, "<!doctype html>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
-    ns_str_append_cstr(&html, "<title>");
-    ns_str_append_len(&html, title.data, title.len);
-    ns_str_append_cstr(&html, "</title>\n<link rel=\"icon\" href=\"./");
-    ns_str_append_len(&html, favicon.data, favicon.len);
-    ns_str_append_cstr(&html, "\">\n<style>html,body,canvas{width:100%;height:100%;margin:0;display:block;background:#111}canvas{outline:none}</style>\n");
-    ns_str_append_cstr(&html, "<canvas id=\"ns-canvas\"></canvas>\n<script type=\"module\">import { boot } from './ns-wasm.js'; boot('./");
-    ns_str_append_len(&html, artifact.data, artifact.len);
-    ns_str_append_cstr(&html, "');</script>\n");
-    ns_array_push(html.data, '\0');
+    ns_str html = ns_str_null;
+    if (in->shell.data != ns_null && in->shell.len > 0) {
+        ns_str custom = ns_os_read_file(in->shell);
+        if (custom.data == ns_null) {
+            ns_exit(1, "build", "wasm shell file not found: %.*s.\n", in->shell.len, in->shell.data);
+        }
+        ns_str expanded = ns_wasm_shell_replace(custom, "{{wasm}}", artifact);
+        ns_str_free(custom);
+        custom = ns_wasm_shell_replace(expanded, "{{title}}", title);
+        ns_str_free(expanded);
+        expanded = ns_wasm_shell_replace(custom, "{{favicon}}", favicon);
+        ns_str_free(custom);
+        html = expanded;
+    } else {
+        ns_str_append_cstr(&html, "<!doctype html>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
+        ns_str_append_cstr(&html, "<title>");
+        ns_str_append_len(&html, title.data, title.len);
+        ns_str_append_cstr(&html, "</title>\n<link rel=\"icon\" href=\"./");
+        ns_str_append_len(&html, favicon.data, favicon.len);
+        ns_str_append_cstr(&html, "\">\n<style>html,body,canvas{width:100%;height:100%;margin:0;display:block;background:#111}canvas{outline:none}</style>\n");
+        ns_str_append_cstr(&html, "<canvas id=\"ns-canvas\"></canvas>\n<script type=\"module\">import { boot } from './ns-wasm.js'; boot('./");
+        ns_str_append_len(&html, artifact.data, artifact.len);
+        ns_str_append_cstr(&html, "');</script>\n");
+    }
     ns_write_text_file(ns_path_join(out_dir, ns_str_cstr("index.html")), html);
 
     ns_str source_dir = ns_project_source_dir(in->scope);
