@@ -60,9 +60,6 @@ typedef struct ns_compile_option_t {
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
-    i32 serve_port;
-    ns_bool serve_port_set;
-    i8 serve_open;      // -1: manifest/default, 0: no, 1: yes
     i32 positional_count;
     ns_str shader_target;
     ns_str entry;
@@ -74,7 +71,6 @@ typedef struct ns_compile_option_t {
 
 ns_compile_option_t parse_options(i32 argc, i8** argv) {
     ns_compile_option_t option = {0};
-    option.serve_open = -1;
     for (i32 i = 1; i < argc; i++) {
         if (i == 1 && strcmp(argv[i], "run") == 0) {
             option.run = true;
@@ -114,18 +110,6 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.show_help = true;
         } else if (strcmp(argv[i], "--profile") == 0) {
             option.profile = true;
-        } else if (strcmp(argv[i], "--port") == 0) {
-            if (i + 1 >= argc) ns_exit(1, "usage", "--port requires a value.\n");
-            char *end = ns_null;
-            long port = strtol(argv[++i], &end, 10);
-            if (!end || *end || port < 1 || port > 65535)
-                ns_exit(1, "usage", "invalid --port value `%s`; expected 1..65535.\n", argv[i]);
-            option.serve_port = (i32)port;
-            option.serve_port_set = true;
-        } else if (strcmp(argv[i], "--open") == 0) {
-            option.serve_open = 1;
-        } else if (strcmp(argv[i], "--no-open") == 0) {
-            option.serve_open = 0;
         } else if (strcmp(argv[i], "--exe") == 0) {
             option.build_kind = 1;
         } else if (strcmp(argv[i], "--app") == 0) {
@@ -184,9 +168,6 @@ void ns_help() {
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
     printf("  --profile         write ns.profile: elapsed time plus a per-symbol ffi breakdown\n");
-    printf("  --port <port>     wasm dev-server port (overrides serve_port)\n");
-    printf("  --open            open a wasm project in the default browser\n");
-    printf("  --no-open         do not open a browser (overrides serve_open)\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
@@ -1180,10 +1161,6 @@ static ns_str ns_path_basename_with_extension(ns_str path) {
     return ns_str_slice(path, start, path.len);
 }
 
-static ns_bool ns_build_target_is_wasm(ns_build_input *in) {
-    return ns_str_equals(in->target, ns_str_cstr("wasm"));
-}
-
 static void ns_mkdir_one(ns_str dir) {
     if (dir.len == 0) return;
 #if defined(_WIN32)
@@ -2110,7 +2087,7 @@ static void ns_wasm_remove_old_owned(ns_str bundle_dir) {
     ns_str_free(manifest_path);
 }
 
-static const char *ns_wasm_runtime_source =
+static const char *ns_wasm_embedded_runtime_source =
 "const decoder = new TextDecoder();\n"
 "function text(memory, ptr, len = -1) {\n"
 "  if (!ptr) return ''; const bytes = new Uint8Array(memory.buffer);\n"
@@ -2203,7 +2180,7 @@ static void ns_build_wasm_app(ns_build_input *in, ns_str output, ns_ssa_module *
     ns_str *owned = ns_null;
     ns_array_push(owned, ns_str_concat(wasm_name, ns_str_cstr("")));
     ns_str runtime_path = ns_path_join(bundle_dir, ns_str_cstr("ns.runtime.js"));
-    ns_write_text_file(runtime_path, ns_str_cstr((char*)ns_wasm_runtime_source));
+    ns_write_text_file(runtime_path, ns_str_cstr((char*)ns_wasm_embedded_runtime_source));
     ns_array_push(owned, ns_str_cstr("ns.runtime.js"));
     ns_str index_path = ns_path_join(bundle_dir, ns_str_cstr("index.html"));
     ns_write_text_file(index_path, ns_wasm_default_index(wasm_name));
@@ -2231,11 +2208,11 @@ static void ns_build_wasm_app(ns_build_input *in, ns_str output, ns_ssa_module *
 
 void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_build_input in = ns_build_input_resolve(path);
-    if (in.target.len > 0 && !ns_build_target_is_wasm(&in)) {
+    if (in.target.len > 0 && !ns_build_target_is_wasm(in.target)) {
         ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
                 in.target.len, in.target.data);
     }
-    if (ns_build_target_is_wasm(&in)) {
+    if (ns_build_target_is_wasm(in.target)) {
         ns_exec_build_wasm(&in, output, requested_kind);
         return;
     }
