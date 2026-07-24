@@ -60,6 +60,9 @@ typedef struct ns_compile_option_t {
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
+    i32 serve_port;
+    ns_bool serve_port_set;
+    i8 serve_open;      // -1: manifest/default, 0: no, 1: yes
     i32 positional_count;
     ns_str shader_target;
     ns_str entry;
@@ -71,6 +74,7 @@ typedef struct ns_compile_option_t {
 
 ns_compile_option_t parse_options(i32 argc, i8** argv) {
     ns_compile_option_t option = {0};
+    option.serve_open = -1;
     for (i32 i = 1; i < argc; i++) {
         if (i == 1 && strcmp(argv[i], "run") == 0) {
             option.run = true;
@@ -110,6 +114,18 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.show_help = true;
         } else if (strcmp(argv[i], "--profile") == 0) {
             option.profile = true;
+        } else if (strcmp(argv[i], "--port") == 0) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--port requires a value.\n");
+            char *end = ns_null;
+            long port = strtol(argv[++i], &end, 10);
+            if (!end || *end || port < 1 || port > 65535)
+                ns_exit(1, "usage", "invalid --port value `%s`; expected 1..65535.\n", argv[i]);
+            option.serve_port = (i32)port;
+            option.serve_port_set = true;
+        } else if (strcmp(argv[i], "--open") == 0) {
+            option.serve_open = 1;
+        } else if (strcmp(argv[i], "--no-open") == 0) {
+            option.serve_open = 0;
         } else if (strcmp(argv[i], "--exe") == 0) {
             option.build_kind = 1;
         } else if (strcmp(argv[i], "--app") == 0) {
@@ -168,6 +184,9 @@ void ns_help() {
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
     printf("  --profile         write ns.profile: elapsed time plus a per-symbol ffi breakdown\n");
+    printf("  --port <port>     wasm dev-server port (overrides serve_port)\n");
+    printf("  --open            open a wasm project in the default browser\n");
+    printf("  --no-open         do not open a browser (overrides serve_open)\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
@@ -1062,6 +1081,9 @@ typedef enum {
     NS_BUILD_APP = 3,
 } ns_build_kind;
 
+static ns_bool ns_build_target_is_wasm(ns_str target);
+static ns_str ns_path_last_component(ns_str path);
+
 typedef struct ns_build_input {
     ns_str filename;
     ns_str source;
@@ -1110,7 +1132,10 @@ static ns_str ns_build_default_name(ns_build_input *in) {
 static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
     ns_str name = in->name.data != ns_null ? in->name : ns_build_default_name(in);
     ns_str artifact;
-    if (kind == NS_BUILD_LIB) {
+    if (ns_build_target_is_wasm(in->target)) {
+        ns_str safe = ns_project_safe_name(name);
+        artifact = ns_str_concat(safe, ns_str_cstr(".wasm"));
+    } else if (kind == NS_BUILD_LIB) {
         artifact = ns_str_concat(ns_str_cstr("lib"), name);
         artifact = ns_str_concat(artifact, ns_str_cstr(".a"));
     } else if (kind == NS_BUILD_APP) {
@@ -1649,6 +1674,10 @@ static ns_bool ns_build_type_is_app(ns_str t) {
     return ns_str_equals(t, ns_str_cstr("app")) || ns_str_equals(t, ns_str_cstr("application"));
 }
 
+static ns_bool ns_build_target_is_wasm(ns_str target) {
+    return ns_str_equals(target, ns_str_cstr("wasm"));
+}
+
 static ns_build_kind ns_build_resolve_kind(ns_build_input *in, u8 requested) {
     if (requested == NS_BUILD_EXE) return NS_BUILD_EXE;
     if (requested == NS_BUILD_LIB) return NS_BUILD_LIB;
@@ -1957,6 +1986,249 @@ static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module
 }
 #endif
 
+static ns_bool ns_wasm_bundle_reserved(ns_str relative, ns_str wasm_name) {
+    i32 first_end = 0;
+    while (first_end < relative.len && relative.data[first_end] != '/' && relative.data[first_end] != '\\') first_end++;
+    ns_str first = ns_str_slice(relative, 0, first_end);
+    return ns_str_equals(first, wasm_name) ||
+           ns_str_equals(first, ns_str_cstr("ns.runtime.js")) ||
+           ns_str_equals(first, ns_str_cstr("__ns")) ||
+           ns_str_equals(first, ns_str_cstr(".ns-wasm-files"));
+}
+
+static void ns_copy_binary_file(ns_str source, ns_str destination) {
+    ns_str data = ns_os_read_file(source);
+    if (data.data == ns_null) ns_exit(1, "wasm", "failed to read %.*s.\n", source.len, source.data);
+    ns_build_ensure_output_dir(destination);
+    FILE *file = fopen(destination.data, "wb");
+    if (!file) ns_exit(1, "wasm", "failed to write %.*s.\n", destination.len, destination.data);
+    if (data.len > 0 && fwrite(data.data, 1, (size_t)data.len, file) != (size_t)data.len) {
+        fclose(file);
+        ns_exit(1, "wasm", "failed to write %.*s.\n", destination.len, destination.data);
+    }
+    fclose(file);
+    ns_str_free(data);
+}
+
+static ns_str ns_wasm_relative_join(ns_str lhs, ns_str rhs) {
+    if (lhs.len == 0) return ns_str_concat(rhs, ns_str_cstr(""));
+    ns_str out = ns_str_concat(lhs, ns_str_cstr("/"));
+    return ns_str_concat(out, rhs);
+}
+
+static void ns_wasm_copy_tree(ns_str source, ns_str destination, ns_str relative,
+                              ns_str wasm_name, ns_bool reserved_check, ns_bool validate_only,
+                              ns_str **owned) {
+    if (!ns_is_dir(source)) return;
+#if defined(_WIN32)
+    ns_str pattern = ns_path_join(source, ns_str_cstr("*"));
+    WIN32_FIND_DATAA fd;
+    HANDLE find = FindFirstFileA(pattern.data, &fd);
+    if (find == INVALID_HANDLE_VALUE) return;
+    do {
+        const char *name_c = fd.cFileName;
+        if (strcmp(name_c, ".") == 0 || strcmp(name_c, "..") == 0) continue;
+        ns_str name = ns_str_cstr((char*)name_c);
+        ns_str child_source = ns_path_join(source, name);
+        ns_str child_relative = ns_wasm_relative_join(relative, name);
+        ns_str child_destination = ns_path_join(destination, name);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            ns_wasm_copy_tree(child_source, child_destination, child_relative, wasm_name,
+                              reserved_check, validate_only, owned);
+        } else {
+            if (reserved_check && ns_wasm_bundle_reserved(child_relative, wasm_name))
+                ns_exit(1, "wasm", "web overlay cannot replace reserved file `%.*s`.\n",
+                        child_relative.len, child_relative.data);
+            if (!validate_only) {
+                ns_copy_binary_file(child_source, child_destination);
+                ns_array_push(*owned, ns_str_concat(child_relative, ns_str_cstr("")));
+            }
+        }
+        ns_str_free(child_source);
+        ns_str_free(child_relative);
+        ns_str_free(child_destination);
+    } while (FindNextFileA(find, &fd));
+    FindClose(find);
+    ns_str_free(pattern);
+#else
+    DIR *dir = opendir(source.data);
+    if (!dir) return;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != ns_null) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        ns_str name = ns_str_cstr(entry->d_name);
+        ns_str child_source = ns_path_join(source, name);
+        ns_str child_relative = ns_wasm_relative_join(relative, name);
+        ns_str child_destination = ns_path_join(destination, name);
+        struct stat st;
+        if (lstat(child_source.data, &st) != 0 || S_ISLNK(st.st_mode)) {
+            ns_str_free(child_source);
+            ns_str_free(child_relative);
+            ns_str_free(child_destination);
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            ns_wasm_copy_tree(child_source, child_destination, child_relative, wasm_name,
+                              reserved_check, validate_only, owned);
+        } else if (S_ISREG(st.st_mode)) {
+            if (reserved_check && ns_wasm_bundle_reserved(child_relative, wasm_name))
+                ns_exit(1, "wasm", "web overlay cannot replace reserved file `%.*s`.\n",
+                        child_relative.len, child_relative.data);
+            if (!validate_only) {
+                ns_copy_binary_file(child_source, child_destination);
+                ns_array_push(*owned, ns_str_concat(child_relative, ns_str_cstr("")));
+            }
+        }
+        ns_str_free(child_source);
+        ns_str_free(child_relative);
+        ns_str_free(child_destination);
+    }
+    closedir(dir);
+#endif
+}
+
+static void ns_wasm_remove_old_owned(ns_str bundle_dir) {
+    ns_str manifest_path = ns_path_join(bundle_dir, ns_str_cstr(".ns-wasm-files"));
+    ns_str manifest = ns_os_read_file(manifest_path);
+    for (i32 i = 0; manifest.data != ns_null && i < manifest.len;) {
+        i32 start = i;
+        while (i < manifest.len && manifest.data[i] != '\n' && manifest.data[i] != '\r') i++;
+        ns_str rel = ns_str_slice(manifest, start, i);
+        while (i < manifest.len && (manifest.data[i] == '\n' || manifest.data[i] == '\r')) i++;
+        if (rel.len == 0 || rel.data[0] == '/' || rel.data[0] == '\\') continue;
+        ns_bool safe = true;
+        for (i32 p = 0; p + 1 < rel.len; p++) {
+            if (rel.data[p] == '.' && rel.data[p + 1] == '.') { safe = false; break; }
+        }
+        if (!safe) continue;
+        ns_str path = ns_path_join(bundle_dir, rel);
+        remove(path.data);
+        ns_str_free(path);
+    }
+    remove(manifest_path.data);
+    ns_str_free(manifest);
+    ns_str_free(manifest_path);
+}
+
+static const char *ns_wasm_runtime_source =
+"const decoder = new TextDecoder();\n"
+"function text(memory, ptr, len = -1) {\n"
+"  if (!ptr) return ''; const bytes = new Uint8Array(memory.buffer);\n"
+"  if (len < 0) { len = 0; while (bytes[ptr + len]) len++; }\n"
+"  return decoder.decode(bytes.subarray(ptr, ptr + len));\n"
+"}\n"
+"function reloadSocket() {\n"
+"  if (location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') return null;\n"
+"  let stopped = false, socket = null;\n"
+"  const connect = () => {\n"
+"    if (stopped) return; const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';\n"
+"    socket = new WebSocket(`${protocol}//${location.host}/__ns/reload`);\n"
+"    socket.onmessage = e => { if (e.data === 'reload') location.reload(); else if (e.data === 'build-error') console.error('Nano Script rebuild failed; keeping the last good app.'); };\n"
+"    socket.onclose = () => { if (!stopped) setTimeout(connect, 500); };\n"
+"  }; connect(); return () => { stopped = true; if (socket) socket.close(); };\n"
+"}\n"
+"export async function start(options = {}) {\n"
+"  if (!navigator.gpu) throw new Error('WebGPU is required by this Nano Script application.');\n"
+"  const adapter = await navigator.gpu.requestAdapter();\n"
+"  if (!adapter) throw new Error('No WebGPU adapter is available.');\n"
+"  const device = await adapter.requestDevice();\n"
+"  const canvas = options.canvas || document.querySelector('canvas');\n"
+"  const url = options.wasmURL || './app.wasm';\n"
+"  const bytes = await (await fetch(url)).arrayBuffer();\n"
+"  const module = await WebAssembly.compile(bytes);\n"
+"  let exports = null;\n"
+"  const host = {};\n"
+"  for (const item of WebAssembly.Module.imports(module)) {\n"
+"    if (item.module !== 'ns' || item.kind !== 'function') continue;\n"
+"    host[item.name] = (...args) => {\n"
+"      if (item.name === 'print') { console.log(text(exports.memory, args[0])); return 0; }\n"
+"      if (item.name === 'gpu_shader_target') return 0;\n"
+"      throw new Error(`Unsupported Nano Script browser import: ${item.name}`);\n"
+"    };\n"
+"  }\n"
+"  const instance = await WebAssembly.instantiate(module, { ns: host }); exports = instance.exports;\n"
+"  if (exports.__ns_init) exports.__ns_init(); if (exports.main) exports.main();\n"
+"  const stopReload = reloadSocket();\n"
+"  return { exports, memory: exports.memory, device, canvas, stop() { if (stopReload) stopReload(); } };\n"
+"}\n";
+
+static ns_str ns_wasm_default_index(ns_str wasm_name) {
+    ns_str html = ns_str_null;
+    ns_str_append_cstr(&html, "<!doctype html>\n<html><head><meta charset=\"utf-8\">\n");
+    ns_str_append_cstr(&html, "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n");
+    ns_str_append_cstr(&html, "<style>html,body,canvas{margin:0;width:100%;height:100%;display:block;background:#1e1e24}</style></head>\n");
+    ns_str_append_cstr(&html, "<body><canvas></canvas><script type=\"module\">\nimport { start } from './ns.runtime.js';\n");
+    ns_str_append_cstr(&html, "start({ wasmURL: './");
+    ns_str_append(&html, wasm_name);
+    ns_str_append_cstr(&html, "', canvas: document.querySelector('canvas') }).catch(error => { console.error(error); document.body.textContent = error.message; });\n");
+    ns_str_append_cstr(&html, "</script></body></html>\n");
+    return html;
+}
+
+static void ns_wasm_write_owned_manifest(ns_str bundle_dir, ns_str *owned) {
+    ns_str body = ns_str_null;
+    for (i32 i = 0, count = (i32)ns_array_length(owned); i < count; i++) {
+        ns_str_append(&body, owned[i]);
+        ns_str_append_cstr(&body, "\n");
+    }
+    ns_str path = ns_path_join(bundle_dir, ns_str_cstr(".ns-wasm-files"));
+    ns_write_text_file(path, body);
+    ns_str_free(path);
+    ns_str_free(body);
+}
+
+static void ns_build_wasm_app(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
+    if (!ns_build_type_is_app(in->module_type)) {
+        ns_ssa_module_free(ssa);
+        ns_exit(1, "build", "target = \"wasm\" currently supports type = \"app\" only.\n");
+    }
+    ns_str bundle_dir = ns_path_dirname_safe(output);
+    ns_str wasm_name = ns_path_last_component(output);
+    ns_mkdir_p(bundle_dir);
+
+    ns_str web = ns_path_join(in->scope, ns_str_cstr("web"));
+    ns_wasm_copy_tree(web, bundle_dir, ns_str_cstr(""), wasm_name, true, true, ns_null);
+
+    ns_str temporary = ns_str_concat(output, ns_str_cstr(".tmp"));
+    ns_return_bool emitted = ns_wasm_emit(ssa, temporary);
+    ns_ssa_module_free(ssa);
+    if (ns_return_is_error(emitted)) ns_return_assert(emitted);
+
+    ns_wasm_remove_old_owned(bundle_dir);
+    if (rename(temporary.data, output.data) != 0) {
+        remove(temporary.data);
+        ns_exit(1, "build", "failed to replace %.*s.\n", output.len, output.data);
+    }
+
+    ns_str *owned = ns_null;
+    ns_array_push(owned, ns_str_concat(wasm_name, ns_str_cstr("")));
+    ns_str runtime_path = ns_path_join(bundle_dir, ns_str_cstr("ns.runtime.js"));
+    ns_write_text_file(runtime_path, ns_str_cstr((char*)ns_wasm_runtime_source));
+    ns_array_push(owned, ns_str_cstr("ns.runtime.js"));
+    ns_str index_path = ns_path_join(bundle_dir, ns_str_cstr("index.html"));
+    ns_write_text_file(index_path, ns_wasm_default_index(wasm_name));
+    ns_array_push(owned, ns_str_cstr("index.html"));
+
+    ns_str assets = ns_path_join(in->scope, ns_str_cstr("assets"));
+    ns_str assets_out = ns_path_join(bundle_dir, ns_str_cstr("assets"));
+    ns_wasm_copy_tree(assets, assets_out, ns_str_cstr("assets"), wasm_name, false, false, &owned);
+    ns_wasm_copy_tree(web, bundle_dir, ns_str_cstr(""), wasm_name, true, false, &owned);
+
+    ns_wasm_write_owned_manifest(bundle_dir, owned);
+    for (i32 i = 0, count = (i32)ns_array_length(owned); i < count; i++) {
+        if (owned[i].dynamic) ns_str_free(owned[i]);
+    }
+    ns_array_free(owned);
+    ns_str_free(web);
+    ns_str_free(assets);
+    ns_str_free(assets_out);
+    ns_str_free(runtime_path);
+    ns_str_free(index_path);
+    ns_str_free(temporary);
+    ns_info("build", "wasm app %.*s\n", bundle_dir.len, bundle_dir.data);
+    ns_str_free(bundle_dir);
+}
+
 void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_build_input in = ns_build_input_resolve(path);
     if (in.target.len > 0 && !ns_build_target_is_wasm(&in)) {
@@ -1972,6 +2244,11 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_build_ensure_output_dir(output);
 
     ns_ssa_module *ssa = ns_compile_build_input(&in);
+
+    if (ns_build_target_is_wasm(in.target)) {
+        ns_build_wasm_app(&in, output, ssa);
+        return;
+    }
 
     if (kind == NS_BUILD_LIB) {
         ns_asm_target target;
@@ -2156,6 +2433,7 @@ void ns_exec_project(ns_str path) {
     ns_str schema = ns_build_manifest_value(root, "schema");
     ns_str name = ns_build_manifest_value(root, "name");
     ns_str module_type = ns_build_manifest_value(root, "type");
+    ns_str project_target = ns_build_manifest_value(root, "target");
     ns_str version = ns_build_manifest_value(root, "version");
     ns_str icon = ns_path_resolve(root, ns_build_manifest_value(root, "icon"));
     if (!ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_CURRENT))) {
@@ -2164,6 +2442,13 @@ void ns_exec_project(ns_str path) {
     }
     if (name.data == ns_null || name.len == 0) {
         ns_exit(1, "project", "%.*s must declare a non-empty project name.\n", manifest.len, manifest.data);
+    }
+
+    if (ns_build_target_is_wasm(project_target)) {
+        if (!ns_build_type_is_app(module_type))
+            ns_exit(1, "project", "target = \"wasm\" currently supports type = \"app\" only.\n");
+        ns_exec_build(root, ns_str_null, NS_BUILD_AUTO);
+        return;
     }
 
     ns_project_kind kind;

@@ -37,6 +37,9 @@ int http_method(void);
 // string stripped), and access to its bytes.
 int http_path_len(void);
 int http_path_byte(int i);  // 0..255, or -1 when out of range
+int http_websocket_is_upgrade(void);
+int http_websocket_accept(int fd);
+int http_websocket_send_text(int fd, const char *text, int len);
 
 // ---- response building ----------------------------------------------------
 
@@ -54,6 +57,7 @@ int http_send_file(int fd, const char *path);
 // Send a status-only response (e.g. 404, 500) with a small HTML body describing
 // the status. Returns 0 on success, -1 on error.
 int http_send_status(int fd, int status);
+int http_send_static_request(int fd, const char *root);
 
 // ---- complete static file server ------------------------------------------
 

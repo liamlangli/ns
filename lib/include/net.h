@@ -28,10 +28,12 @@
 // Sets SO_REUSEADDR so a restarted server can re-bind immediately. Returns the
 // listening socket fd, or -1 on error.
 int net_tcp_listen(int port);
+int net_tcp_listen_local(int port);
 
 // Block until a client connects to the listening socket `server_fd`. Returns
 // the connected client fd, or -1 on error.
 int net_tcp_accept(int server_fd);
+int net_set_nonblocking(int fd, int enabled);
 
 // Open a TCP connection to `host` (a hostname or dotted-quad) on `port`.
 // Returns the connected socket fd, or -1 on error.

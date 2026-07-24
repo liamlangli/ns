@@ -17,8 +17,14 @@ mod net
 // Bind to `port` on all interfaces and listen. Returns the listening fd, or -1.
 ref fn net_tcp_listen(port: i32) i32
 
+// Bind only to the loopback interface. Used by local development servers.
+ref fn net_tcp_listen_local(port: i32) i32
+
 // Block until a client connects to `server_fd`. Returns the client fd, or -1.
 ref fn net_tcp_accept(server_fd: i32) i32
+
+// Enable or disable nonblocking I/O on a socket. Returns 0 on success.
+ref fn net_set_nonblocking(fd: i32, enabled: bool) i32
 
 // Connect to `host`:`port` (host may be a name or dotted-quad). Returns fd/-1.
 ref fn net_tcp_connect(host: str, port: i32) i32

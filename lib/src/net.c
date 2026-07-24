@@ -20,6 +20,7 @@
     #define NS_SOCK_ERR    SOCKET_ERROR
     #define ns_close_sock(fd) closesocket(fd)
 #else
+    #include <fcntl.h>
     #include <unistd.h>
     #include <arpa/inet.h>
     #include <netdb.h>
@@ -62,7 +63,7 @@ static int net_startup(void) {
 
 // ---- TCP ------------------------------------------------------------------
 
-int net_tcp_listen(int port) {
+static int net_tcp_listen_address(int port, unsigned long address) {
     if (net_startup() != 0) return -1;
 
     int fd = (int)socket(AF_INET, SOCK_STREAM, 0);
@@ -77,7 +78,7 @@ int net_tcp_listen(int port) {
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_addr.s_addr = htonl(address);
     addr.sin_port = htons((unsigned short)port);
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == NS_SOCK_ERR) {
@@ -91,6 +92,10 @@ int net_tcp_listen(int port) {
     return fd;
 }
 
+int net_tcp_listen(int port) { return net_tcp_listen_address(port, INADDR_ANY); }
+
+int net_tcp_listen_local(int port) { return net_tcp_listen_address(port, INADDR_LOOPBACK); }
+
 int net_tcp_accept(int server_fd) {
     struct sockaddr_in client;
     socklen_t len = sizeof(client);
@@ -101,6 +106,19 @@ int net_tcp_accept(int server_fd) {
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&yes, sizeof(yes));
 #endif
     return fd;
+}
+
+int net_set_nonblocking(int fd, int enabled) {
+#ifdef NS_WIN
+    u_long mode = enabled ? 1 : 0;
+    return ioctlsocket((SOCKET)fd, FIONBIO, &mode) == 0 ? 0 : -1;
+#else
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) return -1;
+    if (enabled) flags |= O_NONBLOCK;
+    else flags &= ~O_NONBLOCK;
+    return fcntl(fd, F_SETFL, flags) == 0 ? 0 : -1;
+#endif
 }
 
 int net_tcp_connect(const char *host, int port) {

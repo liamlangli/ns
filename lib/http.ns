@@ -35,6 +35,10 @@ ref fn http_path_len() i32
 // Byte `i` of the parsed request path (0..255), or -1 when out of range.
 ref fn http_path_byte(i: i32) i32
 
+ref fn http_websocket_is_upgrade() bool
+ref fn http_websocket_accept(fd: i32) i32
+ref fn http_websocket_send_text(fd: i32, text: str, len: i32) i32
+
 // ---- response building ----------------------------------------------------
 
 // Send a complete response: status line, optional Content-Type (skipped when
@@ -48,6 +52,9 @@ ref fn http_send_file(fd: i32, path: str) i32
 
 // Send a status-only response (e.g. 404, 500) with a small HTML body.
 ref fn http_send_status(fd: i32, status: i32) i32
+
+// Serve the most recently parsed request from `root`.
+ref fn http_send_static_request(fd: i32, root: str) i32
 
 // ---- complete static file server ------------------------------------------
 

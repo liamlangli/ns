@@ -7,6 +7,8 @@
 #include "http.h"
 #include "net.h"
 
+#include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -23,6 +25,47 @@
 static int g_method = -1;
 static char g_path[NS_HTTP_PATH_CAP];
 static int g_path_len = 0;
+static char g_websocket_key[256];
+static int g_websocket_upgrade = 0;
+
+static int ascii_equal_ci(const char *a, const char *b, int len) {
+    for (int i = 0; i < len; i++) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + ('a' - 'A'));
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + ('a' - 'A'));
+        if (ca != cb) return 0;
+    }
+    return 1;
+}
+
+static void http_parse_websocket_headers(const char *buf, int n) {
+    g_websocket_key[0] = '\0';
+    g_websocket_upgrade = 0;
+    for (int i = 0; i + 2 < n;) {
+        while (i < n && buf[i] != '\n') i++;
+        if (i < n) i++;
+        if (i >= n || buf[i] == '\r' || buf[i] == '\n') break;
+        int name_start = i;
+        while (i < n && buf[i] != ':' && buf[i] != '\r' && buf[i] != '\n') i++;
+        if (i >= n || buf[i] != ':') continue;
+        int name_len = i - name_start;
+        i++;
+        while (i < n && (buf[i] == ' ' || buf[i] == '\t')) i++;
+        int value_start = i;
+        while (i < n && buf[i] != '\r' && buf[i] != '\n') i++;
+        int value_len = i - value_start;
+        if (name_len == 7 && ascii_equal_ci(buf + name_start, "upgrade", 7) &&
+            value_len == 9 && ascii_equal_ci(buf + value_start, "websocket", 9)) {
+            g_websocket_upgrade = 1;
+        }
+        if (name_len == 17 && ascii_equal_ci(buf + name_start, "sec-websocket-key", 17)) {
+            if (value_len >= (int)sizeof(g_websocket_key)) value_len = (int)sizeof(g_websocket_key) - 1;
+            memcpy(g_websocket_key, buf + value_start, (size_t)value_len);
+            g_websocket_key[value_len] = '\0';
+        }
+    }
+    if (!g_websocket_key[0]) g_websocket_upgrade = 0;
+}
 
 static int hex_val(char c) {
     if (c >= '0' && c <= '9') return c - '0';
@@ -84,6 +127,7 @@ int http_recv_request(int fd) {
         if (strstr(buf, "\r\n\r\n")) break;
     }
     if (!strstr(buf, "\r\n\r\n")) return -1;
+    http_parse_websocket_headers(buf, n);
 
     // Request line: METHOD SP TARGET SP VERSION CRLF
     int i = 0;
@@ -106,6 +150,95 @@ int http_path_len(void) { return g_path_len; }
 int http_path_byte(int i) {
     if (i < 0 || i >= g_path_len) return -1;
     return (int)(unsigned char)g_path[i];
+}
+
+int http_websocket_is_upgrade(void) { return g_websocket_upgrade; }
+
+static uint32_t sha1_rotl(uint32_t value, int bits) {
+    return (value << bits) | (value >> (32 - bits));
+}
+
+static void sha1_digest(const unsigned char *data, size_t len, unsigned char out[20]) {
+    uint64_t bit_len = (uint64_t)len * 8;
+    size_t padded = len + 1;
+    while ((padded % 64) != 56) padded++;
+    unsigned char *message = (unsigned char *)calloc(padded + 8, 1);
+    if (!message) { memset(out, 0, 20); return; }
+    memcpy(message, data, len);
+    message[len] = 0x80;
+    for (int i = 0; i < 8; i++) message[padded + i] = (unsigned char)(bit_len >> (56 - i * 8));
+
+    uint32_t h0 = 0x67452301u, h1 = 0xefcdab89u, h2 = 0x98badcfeu;
+    uint32_t h3 = 0x10325476u, h4 = 0xc3d2e1f0u;
+    for (size_t offset = 0; offset < padded + 8; offset += 64) {
+        uint32_t w[80];
+        for (int i = 0; i < 16; i++) {
+            size_t p = offset + (size_t)i * 4;
+            w[i] = ((uint32_t)message[p] << 24) | ((uint32_t)message[p + 1] << 16) |
+                   ((uint32_t)message[p + 2] << 8) | (uint32_t)message[p + 3];
+        }
+        for (int i = 16; i < 80; i++) w[i] = sha1_rotl(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
+        uint32_t a = h0, b = h1, c = h2, d = h3, e = h4;
+        for (int i = 0; i < 80; i++) {
+            uint32_t f, k;
+            if (i < 20) { f = (b & c) | ((~b) & d); k = 0x5a827999u; }
+            else if (i < 40) { f = b ^ c ^ d; k = 0x6ed9eba1u; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdcu; }
+            else { f = b ^ c ^ d; k = 0xca62c1d6u; }
+            uint32_t temp = sha1_rotl(a, 5) + f + e + k + w[i];
+            e = d; d = c; c = sha1_rotl(b, 30); b = a; a = temp;
+        }
+        h0 += a; h1 += b; h2 += c; h3 += d; h4 += e;
+    }
+    free(message);
+    uint32_t words[5] = {h0, h1, h2, h3, h4};
+    for (int i = 0; i < 5; i++) {
+        out[i * 4] = (unsigned char)(words[i] >> 24);
+        out[i * 4 + 1] = (unsigned char)(words[i] >> 16);
+        out[i * 4 + 2] = (unsigned char)(words[i] >> 8);
+        out[i * 4 + 3] = (unsigned char)words[i];
+    }
+}
+
+static void base64_encode(const unsigned char *data, int len, char *out) {
+    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int p = 0;
+    for (int i = 0; i < len; i += 3) {
+        int remain = len - i;
+        uint32_t value = (uint32_t)data[i] << 16;
+        if (remain > 1) value |= (uint32_t)data[i + 1] << 8;
+        if (remain > 2) value |= data[i + 2];
+        out[p++] = table[(value >> 18) & 63];
+        out[p++] = table[(value >> 12) & 63];
+        out[p++] = remain > 1 ? table[(value >> 6) & 63] : '=';
+        out[p++] = remain > 2 ? table[value & 63] : '=';
+    }
+    out[p] = '\0';
+}
+
+int http_websocket_accept(int fd) {
+    if (!g_websocket_upgrade || !g_websocket_key[0]) return -1;
+    char source[320];
+    int n = snprintf(source, sizeof(source), "%s258EAFA5-E914-47DA-95CA-C5AB0DC85B11", g_websocket_key);
+    unsigned char digest[20];
+    char accept[32];
+    sha1_digest((const unsigned char *)source, (size_t)n, digest);
+    base64_encode(digest, 20, accept);
+    char response[512];
+    int response_len = snprintf(response, sizeof(response),
+                                "HTTP/1.1 101 Switching Protocols\r\n"
+                                "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                                "Sec-WebSocket-Accept: %s\r\n\r\n", accept);
+    return net_send(fd, response, response_len) < 0 ? -1 : 0;
+}
+
+int http_websocket_send_text(int fd, const char *text, int len) {
+    if (!text || len < 0 || len > 125) return -1;
+    unsigned char frame[127];
+    frame[0] = 0x81;
+    frame[1] = (unsigned char)len;
+    if (len > 0) memcpy(frame + 2, text, (size_t)len);
+    return net_send(fd, (const char *)frame, len + 2);
 }
 
 // ---- status / content-type tables -----------------------------------------
