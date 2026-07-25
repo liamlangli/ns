@@ -22,14 +22,23 @@ io_image* io_load_image(const char *path) {
         return NULL;
     }
 
+    img->width = 0;
+    img->height = 0;
+    img->channels = 0;
+    img->data = NULL;
     img->data = stbi_load(path, &img->width, &img->height, &img->channels, 0);
     if (img->data == NULL) {
-        free(img);
         ns_error("io", "Failed to load image from file: %s\n", path);
-        return NULL;
+        return img;
     }
 
     return img;
+}
+
+void io_image_destroy(io_image *img) {
+    if (img == NULL) return;
+    stbi_image_free(img->data);
+    ns_free(img);
 }
 
 i32 io_save_image(const char *path, const io_image *img) {

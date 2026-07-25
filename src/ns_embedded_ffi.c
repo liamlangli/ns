@@ -218,6 +218,7 @@ extern void gpu_wait_before(u64, u64);
 extern i32 gpu_pixel_format_size(i32);
 extern i32 gpu_pixel_format_row_pitch(i32, i32, i32);
 extern i32 gpu_pixel_format_surface_pitch(i32, i32, i32, i32);
+extern void io_image_destroy(void *);
 extern void * io_load_image(const char *);
 extern ns_bool io_save_image(const char *, void *);
 
@@ -1028,6 +1029,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "gpu_texture_upload", (void *)gpu_texture_upload, ns_embedded_sig41 },
     { "gpu_wait_before", (void *)gpu_wait_before, ns_embedded_sig38 },
     { "gpu_write", (void *)gpu_write, ns_embedded_sig43 },
+    { "io_image_destroy", (void *)io_image_destroy, ns_embedded_sig52 },
     { "io_load_image", (void *)io_load_image, ns_embedded_sig44 },
     { "io_save_image", (void *)io_save_image, ns_embedded_sig45 },
     { "os_app_data_dir", (void *)os_app_data_dir, ns_embedded_sig46 },

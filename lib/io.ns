@@ -8,4 +8,5 @@ struct io_image {
 }
 
 ref fn io_load_image(path: str) ref io_image
+ref fn io_image_destroy(img: ref io_image)
 ref fn io_save_image(path: str, img: ref io_image) bool

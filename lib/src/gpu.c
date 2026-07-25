@@ -713,7 +713,16 @@ u32 gpu_texture_create(i32 width, i32 height, i32 depth_or_layers,
 
 void gpu_texture_upload(u32 tex, i32 mip, i32 layer, const void *data, u64 size) {
     if (!tex || !data || size == 0) return;
-    if (_v2.ops && _v2.ops->texture_upload) _v2.ops->texture_upload(tex, mip, layer, data, size);
+    if (_v2.ops && _v2.ops->texture_upload) {
+        _v2.ops->texture_upload(tex, mip, layer, data, size);
+        return;
+    }
+    // The current Metal/DX12 renderers still allocate textures through the v1
+    // compatibility API. Keep the raw upload entry point usable with those
+    // texture ids until the backends register the complete v2 ops table.
+    if (mip == 0 && layer == 0 && size <= (u64)SIZE_MAX) {
+        gpu_update_texture((gpu_texture){tex}, (ns_data){(void *)data, (szt)size});
+    }
 }
 
 void gpu_texture_destroy(u32 tex) {
