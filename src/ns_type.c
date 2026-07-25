@@ -224,6 +224,9 @@ void *ns_buffer_alloc(szt elem_size, szt len, ns_type elem_type) {
 ns_str ns_type_name(ns_type t) {
     switch (t.type) {
     case NS_TYPE_UNKNOWN: return ns_str_null;
+    case NS_TYPE_NIL: return ns_str_cstr("nil");
+    case NS_TYPE_ANY: return ns_str_cstr("any");
+    case NS_TYPE_VOID: return ns_str_cstr("void");
     case NS_TYPE_I8: return ns_str_cstr("i8");
     case NS_TYPE_I16: return ns_str_cstr("i16");
     case NS_TYPE_I32: return ns_str_cstr("i32");
@@ -235,6 +238,7 @@ ns_str ns_type_name(ns_type t) {
     case NS_TYPE_F32: return ns_str_cstr("f32");
     case NS_TYPE_F64: return ns_str_cstr("f64");
     case NS_TYPE_BOOL: return ns_str_cstr("bool");
+    case NS_TYPE_TYPE: return ns_str_cstr("type");
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_FN: return ns_str_cstr("fn");
     case NS_TYPE_STRUCT: return ns_str_cstr("struct");

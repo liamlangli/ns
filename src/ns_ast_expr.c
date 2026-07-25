@@ -428,7 +428,22 @@ ns_return_bool ns_parse_primary_expr(ns_ast_ctx *ctx) {
         case NS_TOKEN_STR_LITERAL:
         case NS_TOKEN_TRUE:
         case NS_TOKEN_FALSE:
-        case NS_TOKEN_NIL: {
+        case NS_TOKEN_NIL:
+        case NS_TOKEN_TYPE:
+        case NS_TOKEN_TYPE_I8:
+        case NS_TOKEN_TYPE_I16:
+        case NS_TOKEN_TYPE_I32:
+        case NS_TOKEN_TYPE_I64:
+        case NS_TOKEN_TYPE_U8:
+        case NS_TOKEN_TYPE_U16:
+        case NS_TOKEN_TYPE_U32:
+        case NS_TOKEN_TYPE_U64:
+        case NS_TOKEN_TYPE_F32:
+        case NS_TOKEN_TYPE_F64:
+        case NS_TOKEN_TYPE_BOOL:
+        case NS_TOKEN_TYPE_STR:
+        case NS_TOKEN_TYPE_ANY:
+        case NS_TOKEN_TYPE_VOID: {
             ns_ast_t n = {.type = NS_AST_PRIMARY_EXPR, .state = state, .primary_expr = {.token = ctx->token}};
             ns_ast_push(ctx, n);
             return ns_return_ok(bool, true);
@@ -836,7 +851,22 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
         case NS_TOKEN_STR_LITERAL:
         case NS_TOKEN_TRUE:
         case NS_TOKEN_FALSE:
-        case NS_TOKEN_NIL: {
+        case NS_TOKEN_NIL:
+        case NS_TOKEN_TYPE:
+        case NS_TOKEN_TYPE_I8:
+        case NS_TOKEN_TYPE_I16:
+        case NS_TOKEN_TYPE_I32:
+        case NS_TOKEN_TYPE_I64:
+        case NS_TOKEN_TYPE_U8:
+        case NS_TOKEN_TYPE_U16:
+        case NS_TOKEN_TYPE_U32:
+        case NS_TOKEN_TYPE_U64:
+        case NS_TOKEN_TYPE_F32:
+        case NS_TOKEN_TYPE_F64:
+        case NS_TOKEN_TYPE_BOOL:
+        case NS_TOKEN_TYPE_STR:
+        case NS_TOKEN_TYPE_ANY:
+        case NS_TOKEN_TYPE_VOID: {
             ns_restore_state(ctx, state);
 
             ret = ns_parse_primary_expr(ctx);

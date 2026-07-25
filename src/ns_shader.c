@@ -2069,9 +2069,127 @@ static ns_return_bool ns_shader_vertex_field_components(ns_vm *vm, ns_struct_fie
     return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: vertex input fields must be f32 or float2/3/4 to reflect a vertex layout.");
 }
 
+typedef struct ns_shader_group_resource {
+    u64 object;
+    i32 slot;
+    ns_value_type value_type;
+    ns_bool texture;
+} ns_shader_group_resource;
+
+static ns_struct_field *ns_shader_struct_field_named(ns_symbol *st, const char *name) {
+    ns_str field_name = ns_str_cstr((i8 *)name);
+    for (i32 i = 0, l = (i32)ns_array_length(st->st.fields); i < l; ++i) {
+        if (ns_str_equals(st->st.fields[i].name, field_name)) return &st->st.fields[i];
+    }
+    return ns_null;
+}
+
+// Resource definitions are recognized structurally; no application texture
+// name or slot is built into the shader runtime.
+static ns_return_bool ns_shader_group_resource_at(ns_vm *vm, ns_value group, i32 index,
+                                                   ns_shader_group_resource *out) {
+    if (!ns_type_is(group.t, NS_TYPE_STRUCT)) {
+        return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                               "shader: a bind group must be a strongly typed user struct.");
+    }
+    ns_symbol *group_st = &vm->symbols[ns_type_index(group.t)];
+    i32 count = (i32)ns_array_length(group_st->st.fields);
+    if (index < 0 || index >= count) {
+        return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                               "shader: bind-group resource index out of range.");
+    }
+
+    ns_struct_field *group_field = &group_st->st.fields[index];
+    if (!ns_type_is(group_field->t, NS_TYPE_STRUCT)) {
+        return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                               "shader: every bind-group field must be a typed resource definition struct.");
+    }
+    ns_symbol *resource_st = &vm->symbols[ns_type_index(group_field->t)];
+    ns_struct_field *object = ns_shader_struct_field_named(resource_st, "object");
+    ns_struct_field *slot = ns_shader_struct_field_named(resource_st, "slot");
+    ns_struct_field *value_type = ns_shader_struct_field_named(resource_st, "value_type");
+    ns_bool texture = object && ns_type_is(object->t, NS_TYPE_U32);
+    ns_bool buffer = object && ns_type_is(object->t, NS_TYPE_U64);
+    if ((!texture && !buffer) || !slot || !ns_type_is(slot->t, NS_TYPE_I32) ||
+        !value_type || !ns_type_is(value_type->t, NS_TYPE_TYPE)) {
+        return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                               "shader: resource definition requires object: u32|u64, slot: i32, value_type: type.");
+    }
+
+    i8 *group_data = ns_type_in_stack(group.t) ? &vm->stack[group.o] : (i8 *)group.o;
+    i8 *resource_data = group_data + group_field->o;
+    ns_shader_group_resource resource = {0};
+    resource.texture = texture;
+    memcpy(&resource.slot, resource_data + slot->o, sizeof(resource.slot));
+    i32 type_id = 0;
+    memcpy(&type_id, resource_data + value_type->o, sizeof(type_id));
+    if (type_id < NS_TYPE_I8 || type_id > NS_TYPE_BOOL) {
+        return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                               "shader: resource value_type must be a concrete builtin scalar type.");
+    }
+    resource.value_type = (ns_value_type)type_id;
+    if (resource.slot < 0) {
+        return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                               "shader: resource slot must be non-negative.");
+    }
+    if (texture) {
+        u32 id = 0;
+        memcpy(&id, resource_data + object->o, sizeof(id));
+        resource.object = id;
+    } else {
+        memcpy(&resource.object, resource_data + object->o, sizeof(resource.object));
+    }
+
+    // Buffer and texture slots are separate namespaces.
+    for (i32 i = 0; i < index; ++i) {
+        ns_shader_group_resource previous = {0};
+        ns_return_bool decoded = ns_shader_group_resource_at(vm, group, i, &previous);
+        if (ns_return_is_error(decoded)) return decoded;
+        if (previous.texture == resource.texture && previous.slot == resource.slot) {
+            return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                                   "shader: duplicate resource slot in bind group.");
+        }
+    }
+    *out = resource;
+    return ns_return_ok(bool, true);
+}
+
 ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_str name = call->callee->name;
+
+    ns_bool is_group_count = ns_str_equals(name, ns_str_cstr("shader_group_binding_count"));
+    ns_bool is_group_object = ns_str_equals(name, ns_str_cstr("shader_group_binding_object"));
+    ns_bool is_group_slot = ns_str_equals(name, ns_str_cstr("shader_group_binding_slot"));
+    ns_bool is_group_value_type = ns_str_equals(name, ns_str_cstr("shader_group_binding_value_type"));
+    ns_bool is_group_texture = ns_str_equals(name, ns_str_cstr("shader_group_binding_is_texture"));
+    if (is_group_count || is_group_object || is_group_slot || is_group_value_type || is_group_texture) {
+        ns_value group = vm->symbol_stack[call->arg_offset].val;
+        if (!ns_type_is(group.t, NS_TYPE_STRUCT)) {
+            return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                                   "shader: a bind group must be a strongly typed user struct.");
+        }
+        ns_symbol *group_st = &vm->symbols[ns_type_index(group.t)];
+        i32 count = (i32)ns_array_length(group_st->st.fields);
+        for (i32 i = 0; i < count; ++i) {
+            ns_shader_group_resource ignored = {0};
+            ns_return_bool decoded = ns_shader_group_resource_at(vm, group, i, &ignored);
+            if (ns_return_is_error(decoded)) return decoded;
+        }
+        if (is_group_count) {
+            call->ret = (ns_value){.t = ns_type_i32, .i32 = count};
+            return ns_return_ok(bool, true);
+        }
+        i32 index = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
+        ns_shader_group_resource resource = {0};
+        ns_return_bool decoded = ns_shader_group_resource_at(vm, group, index, &resource);
+        if (ns_return_is_error(decoded)) return decoded;
+        if (is_group_object) call->ret = (ns_value){.t = ns_type_u64, .u64 = resource.object};
+        else if (is_group_slot) call->ret = (ns_value){.t = ns_type_i32, .i32 = resource.slot};
+        else if (is_group_value_type) call->ret = (ns_value){.t = ns_type_type, .i32 = (i32)resource.value_type};
+        else call->ret = (ns_value){.t = ns_type_bool, .b = resource.texture};
+        return ns_return_ok(bool, true);
+    }
 
     ns_bool is_transpile = ns_str_equals(name, ns_str_cstr("shader_transpile"));
     ns_bool is_transpile_stage = ns_str_equals(name, ns_str_cstr("shader_transpile_stage"));

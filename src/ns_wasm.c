@@ -292,7 +292,7 @@ static u8 ns_wasm_valtype(ns_value_type t) {
     case NS_TYPE_I8:  case NS_TYPE_U8:
     case NS_TYPE_I16: case NS_TYPE_U16:
     case NS_TYPE_I32: case NS_TYPE_U32:
-    case NS_TYPE_BOOL:
+    case NS_TYPE_BOOL: case NS_TYPE_TYPE:
         return NS_WASM_I32;
     case NS_TYPE_I64: case NS_TYPE_U64:
         return NS_WASM_I64;

@@ -48,6 +48,11 @@ ns_str ns_fmt_value(ns_vm *vm, ns_value n) {
         return (ns_str){.data = data, .len = len, .dynamic = true};
     }
     switch (n.t.type) {
+    case NS_TYPE_TYPE: {
+        i32 id = ns_type_in_stack(n.t) ? *(i32 *)&vm->stack[n.o] : n.i32;
+        if (id < NS_TYPE_UNKNOWN || id > NS_TYPE_TYPE) return ns_str_cstr("unknown");
+        return ns_type_name((ns_type){.type = (ns_value_type)id});
+    }
     case NS_TYPE_I8: ns_fmt_print_number(i8)
     case NS_TYPE_U8: ns_fmt_print_number(u8)
     case NS_TYPE_I16: ns_fmt_print_number(i16)
@@ -87,7 +92,8 @@ ns_str ns_fmt_type_str(ns_type t) {
     {
     case NS_TYPE_I8:
     case NS_TYPE_I16:
-    case NS_TYPE_BOOL: return ns_str_cstr("%d");
+    case NS_TYPE_BOOL:
+    case NS_TYPE_TYPE: return ns_str_cstr("%d");
     case NS_TYPE_I32: return ns_str_cstr("%d");
     case NS_TYPE_I64: return ns_str_cstr("%ld");
     case NS_TYPE_U8:

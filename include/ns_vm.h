@@ -227,6 +227,7 @@ ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s);
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t);
 ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n);
+ns_type ns_vm_parse_generic_type(ns_token_t t);
 ns_return_type ns_vm_parse_type_by_token(ns_vm *vm, ns_token_t t, ns_code_loc loc);
 
 // eval fn

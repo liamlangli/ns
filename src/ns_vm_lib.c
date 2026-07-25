@@ -258,7 +258,8 @@ ffi_type ns_ffi_map_type(ns_vm *vm, ns_type t) {
         case NS_TYPE_I8: return ffi_type_sint8;
         case NS_TYPE_I16: return ffi_type_sint16; break;
         case NS_TYPE_BOOL:
-        case NS_TYPE_I32: return ffi_type_sint32; break;
+        case NS_TYPE_I32:
+        case NS_TYPE_TYPE: return ffi_type_sint32; break;
         case NS_TYPE_I64: return ffi_type_sint64; break;
         case NS_TYPE_U8: return ffi_type_uint8; break;
         case NS_TYPE_U16: return ffi_type_uint16;

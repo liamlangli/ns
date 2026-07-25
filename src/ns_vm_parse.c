@@ -201,7 +201,8 @@ i32 ns_type_size(ns_vm *vm, ns_type t) {
     case NS_TYPE_BOOL:
     case NS_TYPE_I32:
     case NS_TYPE_U32:
-    case NS_TYPE_F32: return 4;
+    case NS_TYPE_F32:
+    case NS_TYPE_TYPE: return 4;
     case NS_TYPE_I64:
     case NS_TYPE_U64:
     case NS_TYPE_F64: return 8;
@@ -347,6 +348,7 @@ ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     case NS_TYPE_F32: return is_ref ? ns_str_cstr("ref_f32") : ns_str_cstr("f32");
     case NS_TYPE_F64: return is_ref ? ns_str_cstr("ref_f64") : ns_str_cstr("f64");
     case NS_TYPE_BOOL: return is_ref ? ns_str_cstr("ref_bool") : ns_str_cstr("bool");
+    case NS_TYPE_TYPE: return is_ref ? ns_str_cstr("ref_type") : ns_str_cstr("type");
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_ANY: return ns_str_cstr("any");
     case NS_TYPE_VOID: return ns_str_cstr("void");
@@ -448,6 +450,7 @@ ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture) {
 ns_type ns_vm_parse_generic_type(ns_token_t t) {
     ns_type ret = ns_type_encode(NS_TYPE_UNKNOWN, 0, false, false, true);
     switch (t.type) {
+    case NS_TOKEN_TYPE: ret.type = NS_TYPE_TYPE; break;
     case NS_TOKEN_NIL: ret.type = NS_TYPE_NIL; break;
     case NS_TOKEN_TYPE_ANY: ret.type = NS_TYPE_ANY; break;
     case NS_TOKEN_TYPE_VOID: ret.type = NS_TYPE_VOID; break;
@@ -1046,6 +1049,8 @@ static ns_bool ns_vm_lit_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (t == NS_TOKEN_INT_LITERAL || t == NS_TOKEN_FLT_LITERAL ||
             t == NS_TOKEN_STR_LITERAL || t == NS_TOKEN_TRUE || t == NS_TOKEN_FALSE)
             return true;
+        if (t == NS_TOKEN_TYPE || (t >= NS_TOKEN_TYPE_I8 && t <= NS_TOKEN_TYPE_VOID))
+            return true;
         if (t == NS_TOKEN_IDENTIFIER) {
             ns_symbol *s = ns_vm_find_symbol(vm, n->primary_expr.token.val, false);
             return s && s->type == NS_SYMBOL_VALUE && s->is_lit;
@@ -1077,7 +1082,8 @@ static ns_bool ns_vm_lit_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 }
 
 static ns_bool ns_vm_lit_type(ns_type t) {
-    return ns_type_is_number(t) || ns_type_is(t, NS_TYPE_STRING) || ns_type_is(t, NS_TYPE_ENUM);
+    return ns_type_is_number(t) || ns_type_is(t, NS_TYPE_STRING) ||
+           ns_type_is(t, NS_TYPE_ENUM) || ns_type_is(t, NS_TYPE_TYPE);
 }
 
 // Return the root identifier of an assignable expression (`x`, `x.field`,
@@ -1344,6 +1350,23 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_ty
         return ns_return_ok(type, ns_type_bool);
     case NS_TOKEN_NIL:
         return ns_return_ok(type, ns_type_nil);
+    case NS_TOKEN_TYPE:
+    case NS_TOKEN_TYPE_I8:
+    case NS_TOKEN_TYPE_I16:
+    case NS_TOKEN_TYPE_I32:
+    case NS_TOKEN_TYPE_I64:
+    case NS_TOKEN_TYPE_U8:
+    case NS_TOKEN_TYPE_U16:
+    case NS_TOKEN_TYPE_U32:
+    case NS_TOKEN_TYPE_U64:
+    case NS_TOKEN_TYPE_F32:
+    case NS_TOKEN_TYPE_F64:
+    case NS_TOKEN_TYPE_BOOL:
+    case NS_TOKEN_TYPE_STR:
+    case NS_TOKEN_TYPE_ANY:
+    case NS_TOKEN_TYPE_VOID:
+        n->primary_expr.t = ns_type_type;
+        return ns_return_ok(type, ns_type_type);
     case NS_TOKEN_IDENTIFIER:
         return ns_vm_parse_type_by_token(vm, n->primary_expr.token, ns_ast_state_loc(ctx, n->state));
     default:
@@ -1912,6 +1935,12 @@ ns_return_type ns_vm_parse_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_type t, i32
         ns_type ret = ns_vm_parse_binary_override(vm, t, t, op);
         if (!ns_type_is_unknown(ret)) return ns_return_ok(type, ret);
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown string binary ops");
+    } else if (ns_type_is(t, NS_TYPE_TYPE)) {
+        if (n->binary_expr.op.type == NS_TOKEN_EQ_OP) {
+            return ns_return_ok(type, ns_type_bool);
+        }
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL,
+                               "type values only support equality operators");
     } else {
         ns_token_t op = n->binary_expr.op;
         ns_type ret = ns_vm_parse_binary_override(vm, t, t, op);

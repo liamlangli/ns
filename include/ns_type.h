@@ -309,6 +309,8 @@ typedef enum {
     NS_TYPE_SET,
     NS_TYPE_TASK,
     NS_TYPE_ENUM,
+    // First-class type descriptor. Runtime payload is an ns_value_type i32.
+    NS_TYPE_TYPE,
 } ns_value_type;
 
 typedef enum {
@@ -353,6 +355,7 @@ typedef struct ns_type {
 #define ns_type_void    (ns_type){.type = NS_TYPE_VOID, .mut = 0}
 #define ns_type_nil     (ns_type){.type = NS_TYPE_NIL, .mut = 0}
 #define ns_type_bool    (ns_type){.type = NS_TYPE_BOOL, .mut = 0}
+#define ns_type_type    (ns_type){.type = NS_TYPE_TYPE, .mut = 0}
 #define ns_type_str     (ns_type){.type = NS_TYPE_STRING, .mut = 1}
 #define ns_type_array   (ns_type){.type = NS_TYPE_ARRAY, .mut = 1}
 
@@ -374,6 +377,7 @@ typedef struct ns_type {
 #define ns_type_is_unknown(t) (ns_type_is(t, NS_TYPE_UNKNOWN))
 
 ns_bool ns_type_is_number(ns_type t);
+ns_str ns_type_name(ns_type t);
 
 typedef struct ns_value {
     ns_type t;  // type

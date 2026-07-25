@@ -20,6 +20,7 @@ ns_str ns_token_type_to_string(ns_token_type t) {
         ns_str_case(NS_TOKEN_IN);
         ns_str_case(NS_TOKEN_SPACE);
         ns_str_case(NS_TOKEN_STRUCT);
+        ns_str_case(NS_TOKEN_TYPE);
         ns_str_case(NS_TOKEN_IDENTIFIER);
         ns_str_case(NS_TOKEN_TYPE_ANY);
         ns_str_case(NS_TOKEN_TYPE_VOID);

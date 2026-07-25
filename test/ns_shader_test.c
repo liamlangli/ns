@@ -424,6 +424,30 @@ int main() {
     // --- runtime dispatch through `use shader` ---
     {
         const char *src =
+            "use shader\n"
+            "struct material_group { albedo: shader_texture, vertices: shader_buffer }\n"
+            "fn main() bool {\n"
+            "    let group = material_group {\n"
+            "        albedo: shader_texture { object: 17u, slot: 3, value_type: u8 },\n"
+            "        vertices: shader_buffer { object: 4096ul, slot: 1, value_type: i8 },\n"
+            "    }\n"
+            "    return shader_group_binding_count(group) == 2 &&\n"
+            "           shader_group_binding_object(group, 0) == 17ul &&\n"
+            "           shader_group_binding_slot(group, 0) == 3 &&\n"
+            "           shader_group_binding_value_type(group, 0) == u8 &&\n"
+            "           shader_group_binding_is_texture(group, 0) &&\n"
+            "           shader_group_binding_object(group, 1) == 4096ul &&\n"
+            "           shader_group_binding_slot(group, 1) == 1 &&\n"
+            "           shader_group_binding_value_type(group, 1) == i8 &&\n"
+            "           !shader_group_binding_is_texture(group, 1)\n"
+            "}\n";
+        ns_expect(ns_shader_eval_bool(src),
+                  "strong bind-group structs reflect explicit objects, slots and first-class value types.");
+    }
+
+    // --- runtime dispatch through `use shader` ---
+    {
+        const char *src =
             "use simd\n"
             "use shader\n"
             "struct VertexData { position: float3, uv: float2 }\n"

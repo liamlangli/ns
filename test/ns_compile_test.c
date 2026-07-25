@@ -151,6 +151,13 @@ static ns_bool ns_compile_returns(const char *src, i64 expected) {
 }
 
 int main() {
+    ns_expect(ns_compile_true(
+        "fn same_type(value: type) type { return value }\n"
+        "fn main() bool {\n"
+        "    let scalar: type = u8\n"
+        "    return scalar == u8 && same_type(i8) == i8 && u8 != i8\n"
+        "}\n"), "first-class type values compile to their i32 runtime ids.");
+
     // ── additive / multiplicative operators, int ──────────────────────────
     ns_expect(ns_compile_true(
         "fn main() bool {\n"

@@ -35,6 +35,7 @@ ns_bool ns_token_require(ns_ast_ctx *ctx, ns_token_type t) {
 
 ns_bool ns_token_can_be_type(ns_token_type t) {
     switch (t) {
+    case NS_TOKEN_TYPE:
     case NS_TOKEN_TYPE_ANY:
     case NS_TOKEN_TYPE_VOID:
     case NS_TOKEN_TYPE_I8:

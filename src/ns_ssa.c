@@ -355,6 +355,10 @@ static ns_bool ns_ssa_const_from_value(ns_ssa_builder *b, ns_value value, ns_tok
     i32 len = 0;
     token->type = NS_TOKEN_INT_LITERAL;
     switch (value.t.type) {
+    case NS_TYPE_TYPE: {
+        i32 id = ns_type_in_stack(value.t) ? *(i32 *)&b->vm->stack[value.o] : value.i32;
+        len = snprintf(text, sizeof(text), "%d", id);
+    } break;
     case NS_TYPE_I8: len = snprintf(text, sizeof(text), "%d", (i32)ns_eval_number_i8(b->vm, value)); break;
     case NS_TYPE_I16: len = snprintf(text, sizeof(text), "%d", (i32)ns_eval_number_i16(b->vm, value)); break;
     case NS_TYPE_I32: len = snprintf(text, sizeof(text), "%d", ns_eval_number_i32(b->vm, value)); break;
@@ -495,6 +499,18 @@ static ns_ssa_op ns_ssa_binary_op(ns_token_t op) {
 
 static i32 ns_ssa_lower_primary(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
     ns_token_t token = n->primary_expr.token;
+    if (token.type == NS_TOKEN_TYPE ||
+        (token.type >= NS_TOKEN_TYPE_I8 && token.type <= NS_TOKEN_TYPE_VOID)) {
+        ns_type represented = ns_vm_parse_generic_type(token);
+        char literal[16];
+        i32 len = snprintf(literal, sizeof(literal), "%d", (i32)represented.type);
+        ns_str owned = ns_str_range(ns_malloc((szt)len + 1), len);
+        memcpy(owned.data, literal, (szt)len);
+        owned.data[len] = '\0';
+        ns_array_push(b->m->owned_strings, owned);
+        ns_token_t id_token = {.type = NS_TOKEN_INT_LITERAL, .val = owned};
+        return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_type, owned, id_token, i);
+    }
     if (token.type == NS_TOKEN_IDENTIFIER) {
         i32 idx = ns_ssa_env_find(b->env, token.val);
         if (idx >= 0) return b->env[idx].value;
@@ -1388,6 +1404,7 @@ static ns_str ns_ssa_type_to_str(ns_type t) {
     case NS_TYPE_F32: return ns_str_cstr("f32");
     case NS_TYPE_F64: return ns_str_cstr("f64");
     case NS_TYPE_BOOL: return ns_str_cstr("bool");
+    case NS_TYPE_TYPE: return ns_str_cstr("type");
     case NS_TYPE_STRING: return ns_str_cstr("str");
     case NS_TYPE_VOID: return ns_str_cstr("void");
     default: return ns_str_cstr("unknown");

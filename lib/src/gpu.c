@@ -81,6 +81,12 @@ ns_bool gpu_dispatch_compute_texture_source(const char *source, const char *entr
     return false;
 }
 
+ns_bool gpu_dispatch_compute_texture_source_slot(const char *source, const char *entry, u32 texture_id, i32 texture_slot,
+                                                 i32 threads_x, i32 threads_y, i32 threads_z) {
+    ns_unused(texture_slot);
+    return gpu_dispatch_compute_texture_source(source, entry, texture_id, threads_x, threads_y, threads_z);
+}
+
 #endif
 
 const char *gpu_shader_target(void) {
@@ -340,6 +346,40 @@ u32 gpu_create_buffer_texture_binding(u32 pipeline_id, u32 buffer_id, const char
         desc.textures[1] = (gpu_binding_texture_desc){
             .texture = (gpu_texture){texture1_id},
             .name = ns_str_cstr((char *)texture1_name),
+        };
+    }
+    return gpu_create_binding(&desc).id;
+}
+
+u32 gpu_create_buffer_texture_binding_slots(u32 pipeline_id, u32 buffer_id, const char *buffer_name,
+                                            u32 texture0_id, const char *texture0_name, i32 texture0_slot,
+                                            u32 texture1_id, const char *texture1_name, i32 texture1_slot) {
+    if (!pipeline_id || !buffer_id || !buffer_name || !buffer_name[0]) return 0;
+    if (!texture0_id && texture1_id) return 0;
+    if (texture0_id && (!texture0_name || !texture0_name[0] || texture0_slot < 0 ||
+                        texture0_slot >= GPU_SHADER_TEXTURE_COUNT)) return 0;
+    if (texture1_id && (!texture1_name || !texture1_name[0] || texture1_slot < 0 ||
+                        texture1_slot >= GPU_SHADER_TEXTURE_COUNT)) return 0;
+    gpu_binding_desc desc = {0};
+    desc.pipeline = (gpu_pipeline){pipeline_id};
+    desc.buffers[0] = (gpu_binding_buffer_desc){
+        .buffer = (gpu_buffer){buffer_id},
+        .name = ns_str_cstr((char *)buffer_name),
+    };
+    if (texture0_id) {
+        desc.textures[0] = (gpu_binding_texture_desc){
+            .texture = (gpu_texture){texture0_id},
+            .name = ns_str_cstr((char *)texture0_name),
+            .slot = texture0_slot,
+            .slot_explicit = true,
+        };
+    }
+    if (texture1_id) {
+        desc.textures[1] = (gpu_binding_texture_desc){
+            .texture = (gpu_texture){texture1_id},
+            .name = ns_str_cstr((char *)texture1_name),
+            .slot = texture1_slot,
+            .slot_explicit = true,
         };
     }
     return gpu_create_binding(&desc).id;

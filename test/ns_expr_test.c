@@ -25,6 +25,26 @@ static ns_bool ns_expr_error_contains(const char *src, const char *message) {
 int main() {
     {
         const char *src =
+            "struct resource_type { value_type: type }\n"
+            "fn same_type(value: type) type { return value }\n"
+            "fn main() bool {\n"
+            "    let scalar: type = i8\n"
+            "    let resource = resource_type { value_type: u8 }\n"
+            "    lit float_type: type = f32\n"
+            "    return scalar == i8 && resource.value_type == u8 &&\n"
+            "           same_type(float_type) == f32 && u8 != i8\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "builtin types are first-class type values in fields, args, returns and lit values.");
+    }
+
+    ns_expect(ns_expr_error_contains(
+                  "fn main() bool { return u8 + i8 == u8 }\n",
+                  "type values only support equality operators"),
+              "type values keep distinct semantics despite their i32 runtime representation.");
+
+    {
+        const char *src =
             "lit global_base = 40\n"
             "lit global_answer: i64 = (global_base + 2) as i64\n"
             "fn main() bool {\n"

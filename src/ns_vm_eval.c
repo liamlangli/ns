@@ -165,6 +165,10 @@ static u64 ns_hash_bytes(const u8 *data, i32 len) {
     return h;
 }
 
+static i32 ns_eval_type_value(ns_vm *vm, ns_value v) {
+    return ns_type_in_stack(v.t) ? *(i32 *)&vm->stack[v.o] : v.i32;
+}
+
 static u64 ns_eval_hash_value(ns_vm *vm, ns_value v) {
     v = ns_eval_enum_underlying_value(vm, v);
     if (ns_type_is(v.t, NS_TYPE_STRING)) {
@@ -180,6 +184,7 @@ static u64 ns_eval_hash_value(ns_vm *vm, ns_value v) {
         n ^= n >> 33;
         return n;
     }
+    if (ns_type_is(v.t, NS_TYPE_TYPE)) return (u64)(u32)ns_eval_type_value(vm, v);
     return 0;
 }
 
@@ -192,6 +197,9 @@ static ns_bool ns_eval_value_equals(ns_vm *vm, ns_value a, ns_value b) {
     if (ns_type_is_number(a.t) && ns_type_is_number(b.t)) {
         if (ns_type_is_float(a.t) || ns_type_is_float(b.t)) return ns_eval_to_f64(vm, a) == ns_eval_to_f64(vm, b);
         return ns_eval_to_u64(vm, a) == ns_eval_to_u64(vm, b);
+    }
+    if (ns_type_is(a.t, NS_TYPE_TYPE) && ns_type_is(b.t, NS_TYPE_TYPE)) {
+        return ns_eval_type_value(vm, a) == ns_eval_type_value(vm, b);
     }
     return false;
 }
@@ -437,6 +445,7 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
         case NS_TYPE_F32: *(f32*)dptr = src.f32; break;
         case NS_TYPE_F64: *(f64*)dptr = src.f64; break;
         case NS_TYPE_BOOL: *(ns_bool*)dptr = src.b; break;
+        case NS_TYPE_TYPE: *(i32*)dptr = src.i32; break;
         case NS_TYPE_STRING: *(u64*)dptr = src.o; break;
         case NS_TYPE_FN: *(u64*)dptr = src.o; break;
         case NS_TYPE_STRUCT: memcpy(dptr, &vm->stack[src.o], size); break;
@@ -1529,6 +1538,17 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
             }
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented string ops.");
         }
+        case NS_TYPE_TYPE: {
+            ns_token_t op = n->binary_expr.op;
+            if (op.type != NS_TOKEN_EQ_OP) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL,
+                                       "type values only support equality operators");
+            }
+            ns_bool eq = ns_eval_type_value(vm, l) == ns_eval_type_value(vm, r);
+            ns_bool ne = ns_str_equals_STR(op.val, "!=") || ns_str_equals_STR(op.val, "!==");
+            ns_value result = {.t = ns_type_bool, .b = ne ? !eq : eq};
+            return ns_return_ok(value, result);
+        }
         default:
             break;
         }
@@ -1691,6 +1711,24 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_TOKEN_TRUE: ret = ns_true; break;
     case NS_TOKEN_FALSE: ret = ns_false; break;
+    case NS_TOKEN_TYPE:
+    case NS_TOKEN_TYPE_I8:
+    case NS_TOKEN_TYPE_I16:
+    case NS_TOKEN_TYPE_I32:
+    case NS_TOKEN_TYPE_I64:
+    case NS_TOKEN_TYPE_U8:
+    case NS_TOKEN_TYPE_U16:
+    case NS_TOKEN_TYPE_U32:
+    case NS_TOKEN_TYPE_U64:
+    case NS_TOKEN_TYPE_F32:
+    case NS_TOKEN_TYPE_F64:
+    case NS_TOKEN_TYPE_BOOL:
+    case NS_TOKEN_TYPE_STR:
+    case NS_TOKEN_TYPE_ANY:
+    case NS_TOKEN_TYPE_VOID: {
+        ns_type represented = ns_vm_parse_generic_type(t);
+        ret = (ns_value){.t = ns_type_type, .i32 = (i32)represented.type};
+    } break;
     case NS_TOKEN_IDENTIFIER: ret = ns_eval_find_value_cached(vm, t.val, &n->primary_expr.rt.cache); break;
     default: {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented primary expr type.");
@@ -1804,6 +1842,8 @@ static ns_return_value ns_eval_store_struct_field(ns_vm *vm, i32 o, ns_struct_fi
         default:
             break;
         }
+    } else if (ns_type_is(t, NS_TYPE_TYPE)) {
+        *(i32*)dst = ns_eval_type_value(vm, val);
     } else if (ns_type_is(t, NS_TYPE_STRUCT)) {
         // copy the nested struct into its own field slot, sized by the field
         i32 size = ns_type_size(vm, t);
@@ -2342,6 +2382,7 @@ static ns_value ns_eval_lit_value(ns_vm *vm, ns_value v, ns_type t) {
     case NS_TYPE_F32: out.f32 = ns_eval_number_f32(vm, value); break;
     case NS_TYPE_F64: out.f64 = ns_eval_number_f64(vm, value); break;
     case NS_TYPE_BOOL: out.b = ns_eval_bool(vm, value); break;
+    case NS_TYPE_TYPE: out.i32 = ns_eval_type_value(vm, value); break;
     case NS_TYPE_STRING:
         out.o = ns_type_in_stack(v.t) ? *(u64 *)&vm->stack[v.o] : v.o;
         break;

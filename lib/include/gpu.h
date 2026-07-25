@@ -193,6 +193,8 @@ typedef struct gpu_binding_texture_desc {
     gpu_texture texture;
     gpu_sampler sampler;
     ns_str name;
+    i32 slot;
+    ns_bool slot_explicit;
 } gpu_binding_texture_desc;
 
 typedef struct gpu_binding_buffer_desc {

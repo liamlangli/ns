@@ -2,6 +2,31 @@ mod shader
 
 use simd
 
+// Resource values carried by strongly typed user bind-group structs. Slots are
+// supplied by the resource definition; neither shader nor gpu assigns them
+// from builtin names or declaration order. `value_type` is a first-class type
+// value (u8, i8, f32, ...), represented as i32 at the ABI boundary.
+struct shader_texture {
+    object: u32,
+    slot: i32,
+    value_type: type
+}
+
+struct shader_buffer {
+    object: u64,
+    slot: i32,
+    value_type: type
+}
+
+// Structural bind-group reflection. `group` must be a user struct and every
+// field must be a shader_texture or shader_buffer-shaped resource definition.
+// The functions reject negative/duplicate slots rather than repairing them.
+ref fn shader_group_binding_count(group: any) i32
+ref fn shader_group_binding_object(group: any, index: i32) u64
+ref fn shader_group_binding_slot(group: any, index: i32) i32
+ref fn shader_group_binding_value_type(group: any, index: i32) type
+ref fn shader_group_binding_is_texture(group: any, index: i32) bool
+
 // Transcode ns fns to shader source text at runtime. These fns are VM-internal
 // intrinsics (like std): the transpiler walks the fn-body ast inside the
 // interpreter, so there is no shader dylib.
@@ -55,13 +80,13 @@ ref fn shader_scene_selected() f32
 ref fn shader_scene_textured() f32
 ref fn shader_scene_receives_shadow() f32
 
-// Sample the regular RGBA texture bound as `ns_texture_map` at texture slot 1.
+// Legacy regular-RGBA texture sampling intrinsic.
 ref fn shader_sample_texture(coord: float2) float4
 // Read the nearest texel from `ns_texture_map`. Use this when a one-to-one
 // fullscreen pass must preserve high-frequency source pixels.
 ref fn shader_sample_texture_nearest(coord: float2) float4
-// Sample the single-channel selection mask bound as `ns_mask_map` at texture
-// slot 2. The value is returned in `.x` on every backend.
+// Legacy single-channel mask sampling intrinsic. The value is returned in `.x`
+// on every backend.
 ref fn shader_sample_mask(coord: float2) float4
 
 // v2 stage intrinsics. Invocation coordinates identify the current compute

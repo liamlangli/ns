@@ -53,6 +53,9 @@ ref fn gpu_destroy_device()
 // helpers keep existing applications buildable and include the two-target
 // path needed for an R8 selection mask.
 ref fn gpu_dispatch_compute_texture_source(source: str, entry: str, texture_id: u32, threads_x: i32, threads_y: i32, threads_z: i32) bool
+// Explicit-slot variant. `texture_slot` must match the slot supplied by the
+// compute shader's resource definition.
+ref fn gpu_dispatch_compute_texture_source_slot(source: str, entry: str, texture_id: u32, texture_slot: i32, threads_x: i32, threads_y: i32, threads_z: i32) bool
 ref fn gpu_create_buffer(byte_len: i32, usage: i32) u32
 ref fn gpu_create_index_buffer(byte_len: i32, usage: i32) u32
 ref fn gpu_create_uniform_buffer(byte_len: i32, usage: i32) u32
@@ -64,7 +67,15 @@ ref fn gpu_create_pipeline_layout_indexed_mrt_ex(shader_id: u32, vertex_stride: 
 ref fn gpu_create_mesh_1(pipeline_id: u32, vertex_buffer_id: u32) u32
 ref fn gpu_create_mesh_indexed(pipeline_id: u32, vertex_buffer_id: u32, index_buffer_id: u32, index_type: i32) u32
 ref fn gpu_create_texture_2d(width: i32, height: i32, format: i32, usage: i32) u32
+// Legacy name-reflection entry point. New code must use an explicit resource
+// layout; the GPU module never maps shader builtin names to slots.
 ref fn gpu_create_buffer_texture_binding(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture1_id: u32, texture1_name: str) u32
+// Bind fragment textures to concrete shader texture slots. Names still select
+// the shader stage and validate the reflected resource. Binding creation fails
+// if a slot disagrees with shader reflection or is reused in the same stage;
+// slots are never inferred from declaration order. Texture arguments must be
+// packed from texture0 (texture1 cannot be present by itself).
+ref fn gpu_create_buffer_texture_binding_slots(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture0_slot: i32, texture1_id: u32, texture1_name: str, texture1_slot: i32) u32
 ref fn gpu_create_depth_pass(depth_texture_id: u32) u32
 ref fn gpu_create_mrt_pass(color0_texture_id: u32, color1_texture_id: u32, depth_texture_id: u32, r: f64, g: f64, b: f64, a: f64) u32
 ref fn gpu_create_screen_pass(r: f64, g: f64, b: f64, a: f64) u32
