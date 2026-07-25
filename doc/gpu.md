@@ -10,11 +10,11 @@
 
 The `gpu` built-in module is designed around the ideas in "No Graphics API":
 treat the GPU as a processor with memory rather than a state machine with
-bound objects. Nano Script exposes only this v2 surface. The old mesh,
-binding, pipeline-layout, named-resource, and source-per-dispatch entry points
-have been removed from `lib/gpu.ns` and from native/Wasm FFI registration.
-Native UI backends may retain private descriptor structures as implementation
-details; they are not callable from Nano Script.
+bound objects. New code should use the v2 surface. A narrow scalar v1
+compatibility tail remains for existing native renderers; it includes an MRT
+pipeline/pass path for a BGRA scene target plus an R8 mask. Native descriptor
+structures remain implementation details and are not callable from Nano
+Script.
 
 ## The article's argument, in short
 
@@ -44,10 +44,11 @@ Graphics APIs still expose abstractions designed for 2015 hardware:
   `gpuSignalAfter(addr, value)` / `gpuWaitBefore(addr, value)` on a memory
   location.
 
-## Why v1 was removed
+## Why v1 is compatibility-only
 
-The removed v1 surface was a sokol-style descriptor API plus a scalar FFI
-tail. Its concrete inflexibilities were:
+The v1 surface was a sokol-style descriptor API plus a scalar FFI tail. Only
+the small compatibility subset needed by existing applications remains; its
+concrete inflexibilities are:
 
 1. **Combinatorial wrappers.** Every binding shape needs a new C symbol:
    `gpu_create_texture_binding` (1 texture), `gpu_create_buffer_texture_binding`

@@ -36,6 +36,10 @@ static const char *ns_shader_test_src =
     "    uv: float2,\n"
     "    color: float4\n"
     "}\n"
+    "struct FragmentOutput {\n"
+    "    color0: float4,\n"
+    "    color1: float4\n"
+    "}\n"
     "fn brighten(c: float4, gain: f32) float4 {\n"
     "    return float4 { x: c.x * gain, y: c.y * gain, z: c.z * gain, w: c.w }\n"
     "}\n"
@@ -76,8 +80,14 @@ static const char *ns_shader_test_src =
     "}\n"
     "fn fs_texture(data: FragmentInput) float4 {\n"
     "    let texture_color = shader_sample_texture(data.uv)\n"
+    "    let exact_color = shader_sample_texture_nearest(data.uv)\n"
     "    let gain = shader_scene_selected() + shader_scene_textured() + shader_scene_receives_shadow()\n"
-    "    return brighten(texture_color, gain)\n"
+    "    let mixed = float4 { x: texture_color.x, y: exact_color.y, z: texture_color.z, w: texture_color.w }\n"
+    "    return brighten(mixed, gain)\n"
+    "}\n"
+    "fn fs_mrt(data: FragmentInput) FragmentOutput {\n"
+    "    let mask = shader_sample_mask(data.uv)\n"
+    "    return FragmentOutput { color0: data.color, color1: mask }\n"
     "}\n"
     "fn cs_main() void {\n"
     "    let n = 40 + 2\n"
@@ -167,9 +177,10 @@ int main() {
     i32 fs_shadow = ns_shader_test_fn(&vm, "fs_shadow");
     i32 vs_scene = ns_shader_test_fn(&vm, "vs_scene");
     i32 fs_texture = ns_shader_test_fn(&vm, "fs_texture");
+    i32 fs_mrt = ns_shader_test_fn(&vm, "fs_mrt");
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
     i32 cs_texture = ns_shader_test_fn(&vm, "cs_texture");
-    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && cs >= 0 && cs_texture >= 0,
+    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && cs >= 0 && cs_texture >= 0,
               "shader entry symbols exist.");
 
     // --- target/stage helpers ---
@@ -246,8 +257,40 @@ int main() {
 
         r = ns_shader_transpile(&vm, &ctx, fs_texture, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "texture2d<float> ns_texture_map [[texture(1)]]") &&
-                      ns_shader_test_has(r.r, "ns_texture_sample(ns_texture_map") && ns_shader_test_has(r.r, "ns_uniforms.params"),
+                      ns_shader_test_has(r.r, "ns_texture_sample(ns_texture_map") &&
+                      ns_shader_test_has(r.r, "ns_texture_sample_nearest(ns_texture_map") &&
+                      ns_shader_test_has(r.r, "map.read(pixel)") && ns_shader_test_has(r.r, "ns_uniforms.params"),
                   "msl material texture and scene flags lower to GPU resources.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- fragment MRT output structs and the regular R8 mask sampler ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, fs_mrt, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "color0 [[color(0)]]") &&
+                      ns_shader_test_has(r.r, "color1 [[color(1)]]") &&
+                      ns_shader_test_has(r.r, "texture2d<float> ns_mask_map [[texture(2)]]"),
+                  "msl fragment output struct maps to MRT slots and binds the mask.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_mrt, NS_SHADER_HLSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "color0 : SV_Target0") &&
+                      ns_shader_test_has(r.r, "color1 : SV_Target1") &&
+                      ns_shader_test_has(r.r, "Texture2D<float4> ns_mask_map : register(t2)"),
+                  "hlsl fragment output struct maps to MRT targets and binds the mask.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_mrt, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "layout(location = 0) out vec4 ns_frag_color0") &&
+                      ns_shader_test_has(r.r, "layout(location = 1) out vec4 ns_frag_color1") &&
+                      ns_shader_test_has(r.r, "ns_frag_color1 = ns_ret.color1"),
+                  "glsl fragment wrapper writes both MRT locations.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_mrt, NS_SHADER_WGSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@location(0) color0") &&
+                      ns_shader_test_has(r.r, "@location(1) color1"),
+                  "wgsl fragment output struct maps to both color locations.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

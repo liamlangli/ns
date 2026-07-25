@@ -224,6 +224,54 @@ u32 gpu_create_pipeline_layout_indexed_ex(u32 shader_id, i32 vertex_stride, i32 
     return gpu_create_pipeline(&desc).id;
 }
 
+u32 gpu_create_pipeline_layout_indexed_mrt_ex(u32 shader_id, i32 vertex_stride, i32 *attr_offsets, i32 *attr_sizes, i32 *attr_formats, i32 attr_count,
+                                              i32 color0_format, i32 color1_format, i32 primitive_type, i32 index_type, i32 depth_format,
+                                              i32 depth_compare, ns_bool depth_write, i32 cull_mode, ns_bool blend_enabled) {
+    if (attr_count < 0) attr_count = 0;
+    if (attr_count > GPU_ATTRIBUTE_COUNT) attr_count = GPU_ATTRIBUTE_COUNT;
+
+    gpu_pipeline_desc desc = {0};
+    desc.shader = (gpu_shader){shader_id};
+    desc.layout.buffers[0] = (gpu_vertex_buffer_layout_state){
+        .stride = vertex_stride,
+        .step_func = VERTEX_STEP_PER_VERTEX,
+        .step_rate = 1,
+    };
+    for (i32 i = 0; i < attr_count; i++) {
+        desc.layout.attributes[i] = (gpu_vertex_attribute_state){
+            .buffer_index = 0,
+            .offset = attr_offsets ? attr_offsets[i] : 0,
+            .size = attr_sizes ? attr_sizes[i] : 0,
+            .format = attr_formats ? (gpu_attribute_format)attr_formats[i] : ATTRIBUTE_FORMAT_INVALID,
+        };
+    }
+    desc.depth.format = (gpu_pixel_format)depth_format;
+    desc.depth.compare_func = (gpu_compare_func)depth_compare;
+    desc.depth.write_enabled = depth_write;
+    desc.color_count = color1_format == PIXELFORMAT_NONE ? 1 : 2;
+    desc.colors[0].format = (gpu_pixel_format)color0_format;
+    desc.colors[0].color_mask = COLOR_MASK_ALL;
+    desc.colors[0].blend = (gpu_blend_state){
+        .enabled = blend_enabled,
+        .src_factor = BLEND_FACTOR_SRC_ALPHA,
+        .dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .op = BLEND_OP_ADD,
+        .src_factor_alpha = BLEND_FACTOR_ONE,
+        .dst_factor_alpha = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        .op_alpha = BLEND_OP_ADD,
+    };
+    if (desc.color_count > 1) {
+        desc.colors[1].format = (gpu_pixel_format)color1_format;
+        desc.colors[1].color_mask = COLOR_MASK_ALL;
+    }
+    desc.primitive_type = (gpu_primitive_type)primitive_type;
+    desc.index_type = (gpu_index_type)index_type;
+    desc.cull_mode = (gpu_cull_mode)cull_mode;
+    desc.face_winding = FACE_WINDING_CCW;
+    desc.sample_count = 1;
+    return gpu_create_pipeline(&desc).id;
+}
+
 u32 gpu_create_pipeline_layout_ex(u32 shader_id, i32 vertex_stride, i32 *attr_offsets, i32 *attr_sizes, i32 *attr_formats, i32 attr_count,
                                   i32 color_format, i32 primitive_type, i32 depth_format, i32 depth_compare,
                                   ns_bool depth_write, i32 cull_mode, ns_bool blend_enabled) {
@@ -322,6 +370,33 @@ u32 gpu_create_screen_pass(f64 r, f64 g, f64 b, f64 a) {
             .clear_value = 1.0f,
         },
         .screen = true,
+    }).id;
+}
+
+u32 gpu_create_mrt_pass(u32 color0_texture_id, u32 color1_texture_id, u32 depth_texture_id,
+                        f64 r, f64 g, f64 b, f64 a) {
+    if (!color0_texture_id || !color1_texture_id || !depth_texture_id) return 0;
+    return gpu_create_render_pass(&(gpu_render_pass_desc){
+        .colors = {
+            {
+                .desc = {.texture = (gpu_texture){color0_texture_id}},
+                .load_action = LOAD_ACTION_CLEAR,
+                .store_action = STORE_ACTION_STORE,
+                .clear_value = {(f32)r, (f32)g, (f32)b, (f32)a},
+            },
+            {
+                .desc = {.texture = (gpu_texture){color1_texture_id}},
+                .load_action = LOAD_ACTION_CLEAR,
+                .store_action = STORE_ACTION_STORE,
+                .clear_value = {0.0f, 0.0f, 0.0f, 0.0f},
+            },
+        },
+        .depth = {
+            .desc = {.texture = (gpu_texture){depth_texture_id}},
+            .load_action = LOAD_ACTION_CLEAR,
+            .store_action = STORE_ACTION_STORE,
+            .clear_value = 1.0f,
+        },
     }).id;
 }
 

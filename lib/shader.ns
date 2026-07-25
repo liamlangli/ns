@@ -57,6 +57,12 @@ ref fn shader_scene_receives_shadow() f32
 
 // Sample the regular RGBA texture bound as `ns_texture_map` at texture slot 1.
 ref fn shader_sample_texture(coord: float2) float4
+// Read the nearest texel from `ns_texture_map`. Use this when a one-to-one
+// fullscreen pass must preserve high-frequency source pixels.
+ref fn shader_sample_texture_nearest(coord: float2) float4
+// Sample the single-channel selection mask bound as `ns_mask_map` at texture
+// slot 2. The value is returned in `.x` on every backend.
+ref fn shader_sample_mask(coord: float2) float4
 
 // v2 stage intrinsics. Invocation coordinates identify the current compute
 // thread. The read/write texture IDs live in root words 0 and 1; the portable
