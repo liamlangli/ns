@@ -5,44 +5,9 @@ Nano Script
 
 > A minimal, data-oriented functional programming language.
 
-## Play Nano Script in your browser
-- NSCode (GitHub Pages): https://liamlangli.github.io/ns/nscode/
-- Landing page https://liamlangli.github.io/ns/
-- NSCode project page in this repo: https://github.com/liamlangli/ns/tree/main/nscode
+[nscode playground](https://liamlangli.github.io/ns/)
 
-If you're new to Nano Script, open NSCode above and edit the sample code
-directly in your browser.
-
-## Run and build from VS Code
-
-Open a `.ns` file and use the **Run Project** (play) or **Build Project** (tools)
-button in the editor title bar. The same actions are available from the Command
-Palette as **Nano Script: Run Project** and **Nano Script: Build Project**.
-
-The extension finds the nearest parent `ns.mod` and runs `ns run` or `ns build`
-from that project directory in VS Code's integrated task terminal. If the file
-is not part of a manifest project, it passes the active file directly. Set
-`nslang.executablePath` when the `ns` executable is not available on `PATH`.
-
-## Build a Wasm + WebGPU project
-
-Set `target = "wasm"` beside `type = "app"` in `ns.mod`. `ns build` produces
-the browser-ready Wasm, JavaScript middleware, and HTML shell under `bin/`.
-Set `shell` to a project HTML file when the app needs custom markup; the build
-expands `{{wasm}}`, `{{title}}`, and `{{favicon}}` in that shell.
-`ns run --port 0` builds, binds a loopback development server, prints the
-selected URL, and reloads connected browsers after successful edits while
-preserving the last good bundle after build errors. WebGPU is initialized by
-the standard middleware; see [the Wasm project guide](doc/wasm.md) and
-[sample/wasm-webgpu](sample/wasm-webgpu).
-
-## Design Goal
-- Minimal syntax and keywords for ease of learning and use.
-- Supports both interpretation and compilation.
-- Utilizes an explicit type system, avoiding generic types.
-- Follows a data-oriented programming approach.
-
-## Syntax Preview
+## Syntax
 ```swift
 // this is a comment
 
@@ -142,39 +107,8 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
 }
 ```
 
-See [Enum types](doc/enum.md) for constant-expression, conversion, formatting,
-and underlying-range rules.
-See [Literal constants](doc/lit.md) for `lit` initializer and optimization
-rules.
-
-## Update a project
-
-Run `ns update [path]` after installing a newer Nano Script toolchain. It finds
-the nearest `ns.mod`, migrates supported older manifest metadata, refreshes the
-bundled `AGENTS.md`, and additively updates `.gitignore`. Application source and
-custom manifest fields are preserved; originals of replaced files are kept in
-`bin/ns-update-backup/`.
-
-## Components
-- `ns`: The Nano Script compiler and interpreter that can compiles and executes Nano Script source code.
-
-## Generate an IDE project
-
-Run `ns project [path]` in or below a directory containing `ns.mod`. On Darwin,
-it creates `bin/<safe-name>.xcodeproj` with macOS, iOS, and visionOS app targets.
-For app manifests with `icon = "path/to/image.png"`, the generated Xcode project
-contains the resized macOS/iOS AppIcon set and a visionOS icon stack.
-On Windows, it creates a Visual Studio 2022 x64 NMake solution at
-`bin/<safe-name>.sln`. App projects embed the language-only runtime plus `std`
-and shader support, with pure-language modules such as `simd`; native UI, GPU,
-terminal, network/HTTP, and external FFI modules are not included. Library
-manifests generate build/test utility projects, and other hosts report that
-project generation is unsupported.
-
-Generated support files are refreshed on later runs, but IDE project files and
-local configuration overrides are preserved. See [the module guide](doc/nsm.md)
-for output paths, target behavior, and limitations.
-
-## Build Options
-- `NS_DEBUG`: Debug mode.
-- `NS_JIT`: Enable Just-In-Time compiler.
+## Design Goal
+- Minimal syntax and keywords for ease of learning and use.
+- Supports both interpretation and compilation.
+- Utilizes an explicit type system, avoiding generic types.
+- Follows a data-oriented programming approach.
