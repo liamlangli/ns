@@ -29,6 +29,7 @@ typedef struct { f32 r, g, b, a; } gpu_color;
 
 typedef struct gpu_texture_desc {
     int width, height, depth;
+    int sample_count;
     ns_data data;
     gpu_pixel_format format;
     gpu_texture_type type;
@@ -184,6 +185,42 @@ typedef struct gpu_pipeline_desc {
     ns_str label;
 } gpu_pipeline_desc;
 
+// FFI-safe pipeline description used by Nano Script callers. It keeps the
+// public state data-oriented while the native descriptor above retains its
+// fixed-size backend arrays.
+typedef struct gpu_vertex_layout_desc {
+    i32 vertex_stride;
+    i32 *attr_offsets;
+    i32 *attr_sizes;
+    i32 *attr_formats;
+    i32 attr_count;
+} gpu_vertex_layout_desc;
+
+typedef struct gpu_mesh_state {
+    i32 primitive_type;
+    i32 index_type;
+    i32 cull_mode;
+    i32 face_winding;
+} gpu_mesh_state;
+
+typedef struct gpu_color_target_desc {
+    i32 format;
+    u32 color_mask;
+    gpu_blend_state blend;
+    ns_bool write_enabled;
+} gpu_color_target_desc;
+
+typedef struct gpu_pipeline_state_desc {
+    u32 shader_id;
+    gpu_vertex_layout_desc vertex_layout;
+    gpu_mesh_state mesh;
+    gpu_color_target_desc color0;
+    gpu_color_target_desc color1;
+    gpu_depth_state depth;
+    i32 sample_count;
+    ns_bool alpha_to_coverage;
+} gpu_pipeline_state_desc;
+
 typedef struct gpu_stage_binding {
     gpu_texture textures[GPU_SHADER_TEXTURE_COUNT];
     gpu_sampler samplers[GPU_SHADER_SAMPLER_COUNT];
@@ -254,6 +291,7 @@ typedef struct gpu_attachment_desc {
 
 typedef struct gpu_render_pass_color_attachment {
     gpu_attachment_desc desc;
+    gpu_attachment_desc resolve_desc;
     gpu_load_action load_action;
     gpu_store_action store_action;
     gpu_color clear_value;
@@ -294,6 +332,7 @@ gpu_sampler gpu_create_sampler(gpu_sampler_desc *desc);
 gpu_buffer gpu_create_buffer_desc(gpu_buffer_desc *desc);
 gpu_shader gpu_create_shader(gpu_shader_desc *desc);
 gpu_pipeline gpu_create_pipeline(gpu_pipeline_desc *desc);
+u32 gpu_create_pipeline_state(gpu_pipeline_state_desc *desc);
 gpu_binding gpu_create_binding(gpu_binding_desc *desc);
 gpu_mesh gpu_create_mesh(gpu_mesh_desc *desc);
 gpu_render_pass gpu_create_render_pass(gpu_render_pass_desc *desc);

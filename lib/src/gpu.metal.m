@@ -643,11 +643,16 @@ void gpu_destroy_device() {
 gpu_texture gpu_create_texture(gpu_texture_desc *desc) {
     assert(desc->width > 0);
     assert(desc->height > 0);
+    const int sample_count = desc->sample_count > 1 ? desc->sample_count : 1;
+    if (sample_count > 1 && ![_state.device.device supportsTextureSampleCount:(NSUInteger)sample_count]) {
+        return (gpu_texture){0};
+    }
     MTLTextureDescriptor *_desc = [MTLTextureDescriptor new];
-    _desc.textureType = _mtl_texture_type(desc->type);
+    _desc.textureType = sample_count > 1 ? MTLTextureType2DMultisample : _mtl_texture_type(desc->type);
     _desc.pixelFormat = _mtl_pixel_format(desc->format);
     _desc.width = (NSUInteger)desc->width;
     _desc.height = (NSUInteger)desc->height;
+    _desc.sampleCount = (NSUInteger)sample_count;
     if (desc->type == TEXTURE_3D)
         _desc.depth = (NSUInteger)desc->depth;
     else
@@ -945,7 +950,12 @@ gpu_render_pass gpu_create_render_pass(gpu_render_pass_desc *desc) {
             const gpu_render_pass_color_attachment *color = &desc->colors[i];
             if (color->desc.texture.id == 0) break;
             pass_desc.colorAttachments[i].texture = _state.textures[color->desc.texture.id].texture;
-            pass_desc.colorAttachments[i].storeAction = MTLStoreActionStore;
+            if (color->resolve_desc.texture.id != 0) {
+                pass_desc.colorAttachments[i].resolveTexture = _state.textures[color->resolve_desc.texture.id].texture;
+                pass_desc.colorAttachments[i].storeAction = MTLStoreActionMultisampleResolve;
+            } else {
+                pass_desc.colorAttachments[i].storeAction = MTLStoreActionStore;
+            }
             pass_desc.colorAttachments[i].loadAction = _mtl_load_action(color->load_action);
             gpu_color c = color->clear_value;
             pass_desc.colorAttachments[i].clearColor = MTLClearColorMake(c.r, c.g, c.b, c.a);

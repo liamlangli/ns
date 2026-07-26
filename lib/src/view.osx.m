@@ -33,6 +33,7 @@ static i32 view_width;
 static i32 view_height;
 static const char* view_title;
 static NSWindow* view_window;
+static id view_app_delegate;
 static id view_window_delegate;
 static id<MTLDevice> view_mtl_device;
 static id view_mtk_view_delegate;
@@ -45,6 +46,23 @@ static view _view;
 
 static void view_osx_update_mouse(NSEvent *event);
 static void view_osx_request_terminate(void);
+
+static void view_osx_activate_window(void) {
+    if (!view_window) return;
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [[NSRunningApplication currentApplication]
+        activateWithOptions:NSApplicationActivateAllWindows];
+    [NSApp activateIgnoringOtherApps:YES];
+    [view_window makeMainWindow];
+    [view_window makeKeyAndOrderFront:nil];
+    if (view_mtk_view) [view_window makeFirstResponder:view_mtk_view];
+}
+
+static void view_osx_request_activation(void) {
+    void (^activate)(void) = ^{ view_osx_activate_window(); };
+    if ([NSThread isMainThread]) activate();
+    else dispatch_async(dispatch_get_main_queue(), activate);
+}
 
 static void view_osx_finish(void) {
     if (view_osx_finished) return;
@@ -244,10 +262,10 @@ i32 view_osx_key_map(i32 k) {
 @implementation ViewAppDelegate
 - (void)applicationDidFinishLaunching:(NSNotification*)aNotification {
     (void)aNotification;
-    // Standalone processes only become activatable after AppKit finishes
-    // launching, so repeat the order/activation done during view_create().
-    [NSApp activateIgnoringOtherApps:YES];
-    [view_window makeKeyAndOrderFront:nil];
+    // A script launched by `ns run` is hosted by the interpreter executable.
+    // Claim foreground activation only after AppKit has finished launching,
+    // then make the target view the key input responder.
+    view_osx_activate_window();
     view_on_launch launch = (view_on_launch)_view.on_launch;
     if (launch) {
         launch(&_view);
@@ -420,10 +438,14 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     [ViewApp sharedApplication];
     view_osx_hosted = [NSApp isRunning];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+    if (!view_osx_hosted && view_title && view_title[0] != '\0') {
+        NSString *application_name = [NSString stringWithUTF8String:view_title];
+        if (application_name) [[NSProcessInfo processInfo] setProcessName:application_name];
+    }
     view_osx_apply_manifest_icon();
     if (!view_osx_hosted) {
-        id delegate = [[ViewAppDelegate alloc] init];
-        [NSApp setDelegate:delegate];
+        view_app_delegate = [[ViewAppDelegate alloc] init];
+        [NSApp setDelegate:view_app_delegate];
     }
 
     view_window_delegate = [[ViewWindowDelegate alloc] init];
@@ -457,10 +479,13 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     view_mtk_view_delegate = [[ViewDelegate alloc] init];
     [view_mtk_view setDelegate: view_mtk_view_delegate];
     [view_window setContentView: view_mtk_view];
-    [view_window makeKeyAndOrderFront: nil];
-    // Hosted applications are already running and do not receive this
-    // backend's applicationDidFinishLaunching callback.
-    [NSApp activateIgnoringOtherApps:YES];
+    if (view_osx_hosted) {
+        // Hosted applications are already running and do not receive this
+        // backend's applicationDidFinishLaunching callback.
+        view_osx_activate_window();
+    } else {
+        [view_window orderFront:nil];
+    }
     const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
     view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
 
@@ -510,10 +535,18 @@ void view_run(view *v) {
         view_on_launch launch = (view_on_launch)v->on_launch;
         if (launch) launch(v);
         view_request_frame(v, 1);
+        view_osx_request_activation();
         dispatch_semaphore_wait(view_osx_done, DISPATCH_TIME_FOREVER);
         return;
     }
+    // finishLaunching delivers applicationDidFinishLaunching while the
+    // application's callbacks are already installed. Reassert activation on
+    // the next main-loop turn because terminal-launched processes otherwise
+    // commonly leave Terminal as the active application.
+    [NSApp finishLaunching];
+    view_osx_activate_window();
     view_request_frame(v, 1);
+    dispatch_async(dispatch_get_main_queue(), ^{ view_osx_activate_window(); });
     [NSApp run];
 }
 

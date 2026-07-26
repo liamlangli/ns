@@ -40,6 +40,89 @@ lit GPU_INDEX_UINT32 = 2
 lit GPU_COMPARE_LESS_EQUAL = 4
 lit GPU_CULL_NONE = 0
 lit GPU_CULL_BACK = 2
+lit GPU_FACE_WINDING_CCW = 0
+lit GPU_FACE_WINDING_CW = 1
+lit GPU_BLEND_FACTOR_ZERO = 0
+lit GPU_BLEND_FACTOR_ONE = 1
+lit GPU_BLEND_FACTOR_SRC_ALPHA = 4
+lit GPU_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA = 5
+lit GPU_BLEND_OP_ADD = 0
+
+struct gpu_vertex_layout_desc {
+    vertex_stride: i32,
+    attr_offsets: [i32],
+    attr_sizes: [i32],
+    attr_formats: [i32],
+    attr_count: i32
+}
+
+struct gpu_mesh_state {
+    primitive_type: i32,
+    index_type: i32,
+    cull_mode: i32,
+    face_winding: i32
+}
+
+struct gpu_blend_state {
+    enabled: bool,
+    src_factor: i32,
+    dst_factor: i32,
+    op: i32,
+    src_factor_alpha: i32,
+    dst_factor_alpha: i32,
+    op_alpha: i32
+}
+
+struct gpu_color_target_desc {
+    format: i32,
+    color_mask: u32,
+    blend: gpu_blend_state,
+    write_enabled: bool
+}
+
+struct gpu_depth_state {
+    format: i32,
+    compare_func: i32,
+    write_enabled: bool,
+    bias: f32,
+    bias_slope_scale: f32,
+    bias_clamp: f32
+}
+
+struct gpu_pipeline_state_desc {
+    shader_id: u32,
+    vertex_layout: gpu_vertex_layout_desc,
+    mesh: gpu_mesh_state,
+    color0: gpu_color_target_desc,
+    color1: gpu_color_target_desc,
+    depth: gpu_depth_state,
+    sample_count: i32,
+    alpha_to_coverage: bool
+}
+
+fn gpu_blend_off() gpu_blend_state {
+    return gpu_blend_state {
+        enabled:false,
+        src_factor:GPU_BLEND_FACTOR_ONE,
+        dst_factor:GPU_BLEND_FACTOR_ZERO,
+        op:GPU_BLEND_OP_ADD,
+        src_factor_alpha:GPU_BLEND_FACTOR_ONE,
+        dst_factor_alpha:GPU_BLEND_FACTOR_ZERO,
+        op_alpha:GPU_BLEND_OP_ADD,
+    }
+}
+
+fn gpu_blend_alpha() gpu_blend_state {
+    return gpu_blend_state {
+        enabled:true,
+        src_factor:GPU_BLEND_FACTOR_SRC_ALPHA,
+        dst_factor:GPU_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        op:GPU_BLEND_OP_ADD,
+        src_factor_alpha:GPU_BLEND_FACTOR_ONE,
+        dst_factor_alpha:GPU_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+        op_alpha:GPU_BLEND_OP_ADD,
+    }
+}
 
 // Acquire the platform GPU device for `v`. Returns true on success. On platforms
 // without a backend this returns false.
@@ -64,9 +147,11 @@ ref fn gpu_create_shader_source(vertex_source: str, fragment_source: str, vertex
 ref fn gpu_create_pipeline_layout_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
 ref fn gpu_create_pipeline_layout_indexed_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32, index_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
 ref fn gpu_create_pipeline_layout_indexed_mrt_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color0_format: i32, color1_format: i32, primitive_type: i32, index_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
+ref fn gpu_create_pipeline_state(desc: ref gpu_pipeline_state_desc) u32
 ref fn gpu_create_mesh_1(pipeline_id: u32, vertex_buffer_id: u32) u32
 ref fn gpu_create_mesh_indexed(pipeline_id: u32, vertex_buffer_id: u32, index_buffer_id: u32, index_type: i32) u32
 ref fn gpu_create_texture_2d(width: i32, height: i32, format: i32, usage: i32) u32
+ref fn gpu_create_texture_2d_msaa(width: i32, height: i32, format: i32, usage: i32, sample_count: i32) u32
 // Legacy name-reflection entry point. New code must use an explicit resource
 // layout; the GPU module never maps shader builtin names to slots.
 ref fn gpu_create_buffer_texture_binding(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture1_id: u32, texture1_name: str) u32
@@ -78,6 +163,7 @@ ref fn gpu_create_buffer_texture_binding(pipeline_id: u32, buffer_id: u32, buffe
 ref fn gpu_create_buffer_texture_binding_slots(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture0_slot: i32, texture1_id: u32, texture1_name: str, texture1_slot: i32) u32
 ref fn gpu_create_depth_pass(depth_texture_id: u32) u32
 ref fn gpu_create_mrt_pass(color0_texture_id: u32, color1_texture_id: u32, depth_texture_id: u32, r: f64, g: f64, b: f64, a: f64) u32
+ref fn gpu_create_mrt_msaa_pass(color0_msaa_texture_id: u32, color0_resolve_texture_id: u32, color1_msaa_texture_id: u32, color1_resolve_texture_id: u32, depth_msaa_texture_id: u32, r: f64, g: f64, b: f64, a: f64) u32
 ref fn gpu_create_screen_pass(r: f64, g: f64, b: f64, a: f64) u32
 ref fn gpu_destroy_texture_id(texture_id: u32)
 ref fn gpu_destroy_binding_id(binding_id: u32)

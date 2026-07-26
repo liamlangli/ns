@@ -158,7 +158,11 @@ int main(void) {
               "Xcode project copies Apple feature sources into the managed project.");
     ns_expect(text_has(view_osx, "dispatch_sync(dispatch_get_main_queue(), create_view)") &&
                   text_has(view_osx, "if (view_osx_hosted)") &&
-                  text_has(view_osx, "dispatch_semaphore_wait(view_osx_done"),
+                  text_has(view_osx, "dispatch_semaphore_wait(view_osx_done") &&
+                  text_has(view_osx, "setProcessName:application_name") &&
+                  text_has(view_osx, "NSRunningApplication currentApplication") &&
+                  text_has(view_osx, "makeFirstResponder:view_mtk_view") &&
+                  text_has(view_osx, "[NSApp finishLaunching]"),
               "embedded macOS view creation and lifecycle stay on the AppKit main thread.");
     ns_expect(text_has(gpu_metal, "if ([NSThread isMainThread]) attach_view()") &&
                   text_has(gpu_metal, "dispatch_sync(dispatch_get_main_queue(), attach_view)"),
