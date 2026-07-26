@@ -506,7 +506,7 @@ fn resolve(t: str) str {
                 break
             }
         }
-        if !found {
+        if found == false {
             return cur
         }
         cur = next

@@ -154,6 +154,10 @@ int main(void) {
     ns_expect(text_has(pbx, "Native/src/view.ios.m") && text_has(pbx, "Native/src/os.ios.m") &&
                   text_has(pbx, "Native/src/ui.c"),
               "Xcode native targets compile the embedded view, UI, and OS forwarders.");
+    ns_expect(text_has(pbx, "4E5350520000002800000007 /* simd.ns */") &&
+                  text_has(pbx, "4E5350520000002800000037 /* dynamic.ns */") &&
+                  !text_has(pbx, "4E5350520000002800000007 /* dynamic.ns */"),
+              "Xcode runtime modules use distinct file-reference IDs.");
     ns_expect(access(view_ios, R_OK) == 0 && access(os_ios, R_OK) == 0 && access(gpu_metal, R_OK) == 0 && access(ui_native, R_OK) == 0,
               "Xcode project copies Apple feature sources into the managed project.");
     ns_expect(text_has(view_osx, "dispatch_sync(dispatch_get_main_queue(), create_view)") &&
@@ -187,10 +191,12 @@ int main(void) {
     char embedded_ffi[PATH_MAX];
     path(embedded_ffi, app_root, "bin/demo-app.nsproject/Runtime/src/ns_embedded_ffi.c");
     ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
+                  text_has(embedded_ffi, "extern u32 gpu_create_shader_source(const char *, const char *, const char *, const char *);") &&
+                  text_has(embedded_ffi, "{ \"gpu_create_shader_source\", (void *)gpu_create_shader_source,") &&
                   text_has(embedded_ffi, "extern u32 gpu_shader_compute_create") &&
                   text_has(embedded_ffi, "extern void gpu_draw_vertices") &&
-                  !text_has(embedded_ffi, "extern u32 gpu_create_pipeline_layout_indexed_ex") &&
-                  !text_has(embedded_ffi, "extern u32 gpu_create_buffer_texture_binding") &&
+                  text_has(embedded_ffi, "extern u32 gpu_create_pipeline_layout_indexed_ex") &&
+                  text_has(embedded_ffi, "extern u32 gpu_create_buffer_texture_binding_slots") &&
                   text_has(embedded_ffi, "extern i32 os_platform(void);") &&
                   text_has(embedded_ffi, "{ \"os_platform\", (void *)os_platform,") &&
                   text_has(embedded_ffi, "embedded native function is not forwarded: %.*s.%.*s") &&
@@ -216,7 +222,7 @@ int main(void) {
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 7"),
+                  text_has(pbx, "NSProjectGeneratorVersion = 8"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
@@ -253,8 +259,8 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 7;", "NSProjectGeneratorVersion = 7;",
-                                     "NSProjectGeneratorVersion = 6;"),
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 8;", "NSProjectGeneratorVersion = 8;",
+                                     "NSProjectGeneratorVersion = 7;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
     ns_expect(text_has(pbx, "DEVELOPMENT_TEAM = \"IOSDEBUG1\";") &&

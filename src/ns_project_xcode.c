@@ -135,11 +135,11 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_boo
                                strstr(text, "name = \"NS Build\";") && strstr(text, "name = \"NS Test\";") &&
                                !strstr(text, "isa = PBXNativeTarget;");
     ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
-                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 7;");
-    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 7;") &&
+                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 8;");
+    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 8;") &&
                                                ((expects_project_assets && !strstr(text, "Project Assets in Resources")) ||
                                                 (!expects_project_assets && strstr(text, "Project Assets in Resources")));
-    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 7;") &&
+    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 8;") &&
                                              ((expects_app_icon && !strstr(text, "App Icon Assets in Resources")) ||
                                               (!expects_app_icon && strstr(text, "App Icon Assets in Resources")));
     free(text);
@@ -1378,7 +1378,6 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         !ns_xcode_append_file_reference(&pbx, 5, "text", "std.ns", "Resources/std.ns") ||
         !ns_xcode_append_file_reference(&pbx, 6, "text", "shader.ns", "Resources/shader.ns") ||
         !ns_xcode_append_file_reference(&pbx, 7, "text", "simd.ns", "Resources/simd.ns") ||
-        !ns_xcode_append_file_reference(&pbx, 7, "text", "dynamic.ns", "Resources/dynamic.ns") ||
         !ns_xcode_append_file_reference(&pbx, 8, "text.xcconfig", "NS.Generated.xcconfig", "Config/NS.Generated.xcconfig") ||
         !ns_xcode_append_file_reference(&pbx, 9, "text.xcconfig", "NS.Local.xcconfig", "Config/NS.Local.xcconfig") ||
         (has_app_icon && !ns_xcode_append_file_reference(&pbx, NS_XCODE_APP_ICON_FILE_ID, "folder.assetcatalog",
@@ -1470,7 +1469,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
     }
     const unsigned managed_fixed[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
     const char *const managed_names[] = {"NSApp.swift", "NSBridge.c", "NSBridge.h", "LinkedProject.ns", "std.ns",
-                                         "shader.ns", "simd.ns", "dynamic.ns", "NS.Generated.xcconfig", "NS.Local.xcconfig"};
+                                         "shader.ns", "simd.ns", "NS.Generated.xcconfig", "NS.Local.xcconfig"};
     for (size_t i = 0; i < sizeof(managed_fixed) / sizeof(managed_fixed[0]); ++i) {
         char id[25];
         ns_xcode_id(id, 40, managed_fixed[i]);
@@ -1542,7 +1541,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
             "\t\t\t\tBuildIndependentTargetsInParallel = YES;\n"
             "\t\t\t\tLastSwiftUpdateCheck = 1600;\n"
             "\t\t\t\tLastUpgradeCheck = 1600;\n"
-            "\t\t\t\tNSProjectGeneratorVersion = 7;\n"
+            "\t\t\t\tNSProjectGeneratorVersion = 8;\n"
             "\t\t\t\tTargetAttributes = {\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
