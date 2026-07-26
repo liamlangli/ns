@@ -89,6 +89,24 @@ ref fn shader_sample_texture_nearest(coord: float2) float4
 // on every backend.
 ref fn shader_sample_mask(coord: float2) float4
 
+// ---- host execution of compute fns -----------------------------------------
+//
+// A compute fn is an ordinary ns fn, so the interpreter can run it directly
+// once the resources its stage intrinsics read are bound host-side: a float4
+// image pair (four f32 per texel, row-major, `width` texels per row), the 16
+// root words, and the invocation coordinate. Calling the fn then executes one
+// invocation, which is how compute kernels are tested without a device and
+// how a gpu-less backend runs the same kernels the device would.
+//
+// `shader_host_bind` fails when either image is shorter than width * height
+// texels. The bindings are process-wide, so release them when done.
+ref fn shader_host_bind(read: [f32], write: [f32], width: i32, height: i32) bool
+ref fn shader_host_root(words: [f32]) bool
+ref fn shader_host_invocation(x: i32, y: i32, z: i32)
+// Swap the bound read and write images, as a dispatch boundary does.
+ref fn shader_host_swap()
+ref fn shader_host_release()
+
 // v2 stage intrinsics. Invocation coordinates identify the current compute
 // thread. The read/write texture IDs live in root words 0 and 1; the portable
 // WebGPU tier patches those bindless IDs into the shader's bind group.

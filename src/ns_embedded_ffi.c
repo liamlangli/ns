@@ -191,6 +191,7 @@ extern u64 gpu_malloc(u64, u32);
 extern void gpu_free(u64);
 extern void gpu_write(u64, void *, u64);
 extern ns_bool gpu_read(u64, void *, u64);
+extern ns_bool gpu_read_texture_pixel_async(u32, i32, i32, u32, u32 *);
 extern u64 gpu_frame_alloc(u64, u32);
 extern u32 gpu_texture_create(i32, i32, i32, i32, u32, i32, i32);
 extern void gpu_texture_upload(u32, i32, i32, void *, u64);
@@ -983,6 +984,17 @@ static ns_return_bool ns_embedded_sig110(ns_vm *vm, void *target) {
     return ns_return_ok(bool, true);
 }
 
+static ns_return_bool ns_embedded_sig111(ns_vm *vm, void *target) {
+    ns_bool result = ((ns_bool (*)(u32, i32, i32, u32, void *))target)(
+        ns_eval_number_u32(vm, ns_embedded_arg(vm, 0)),
+        ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)),
+        ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)),
+        ns_eval_number_u32(vm, ns_embedded_arg(vm, 3)),
+        ns_embedded_arg_pointer(vm, 4));
+    ns_embedded_return_scalar(vm, &result, sizeof(result));
+    return ns_return_ok(bool, true);
+}
+
 typedef struct ns_embedded_entry {
     const char *name;
     void *target;
@@ -1008,6 +1020,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "gpu_pixel_format_size", (void *)gpu_pixel_format_size, ns_embedded_sig25 },
     { "gpu_pixel_format_surface_pitch", (void *)gpu_pixel_format_surface_pitch, ns_embedded_sig26 },
     { "gpu_read", (void *)gpu_read, ns_embedded_sig27 },
+    { "gpu_read_texture_pixel_async", (void *)gpu_read_texture_pixel_async, ns_embedded_sig111 },
     { "gpu_request_device", (void *)gpu_request_device, ns_embedded_sig28 },
     { "gpu_sampler_create", (void *)gpu_sampler_create, ns_embedded_sig29 },
     { "gpu_sampler_destroy", (void *)gpu_sampler_destroy, ns_embedded_sig1 },

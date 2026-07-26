@@ -194,6 +194,7 @@ typedef struct gpu_vertex_layout_desc {
     i32 *attr_sizes;
     i32 *attr_formats;
     i32 attr_count;
+    ns_bool per_instance;
 } gpu_vertex_layout_desc;
 
 typedef struct gpu_mesh_state {
@@ -349,6 +350,7 @@ void gpu_destroy_render_pass(gpu_render_pass pass);
 gpu_pipeline_reflection gpu_pipeline_get_reflection(gpu_pipeline pipeline);
 void gpu_update_texture(gpu_texture texture, ns_data data);
 void gpu_update_buffer_desc(gpu_buffer buffer, ns_data data);
+ns_bool gpu_read_texture_pixel_async(u32 texture_id, i32 x, i32 y, u32 request_id, u32 *result);
 
 void gpu_begin_render_pass(gpu_render_pass pass);
 void gpu_set_viewport(int x, int y, int width, int height);

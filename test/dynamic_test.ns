@@ -1,0 +1,298 @@
+// The dynamic module: the state-image layout, the four pipeline stages, the
+// GJK/EPA narrow phase, and the compute kernels themselves. Everything here
+// runs headless: without a device the world runs its kernels through
+// `shader_host_*`, and transpiling them needs no device at all. Run from the
+// repo root so the debug NS_REF_PATH ("lib") resolves lib/dynamic.ns.
+use std
+use simd
+use shader
+use dynamic
+
+// A cube of `half` extents as its eight corners, the hull a box collides as.
+fn cube_hull(half: f32) [f32] {
+    let hull = [f32](24)
+    for corner in 0 to 8 {
+        let sx = 0.0 - 1.0
+        let sy = 0.0 - 1.0
+        let sz = 0.0 - 1.0
+        if (corner & 1) != 0 {
+            sx = 1.0
+        }
+        if (corner & 2) != 0 {
+            sy = 1.0
+        }
+        if (corner & 4) != 0 {
+            sz = 1.0
+        }
+        hull[corner * 3] = sx * half
+        hull[corner * 3 + 1] = sy * half
+        hull[corner * 3 + 2] = sz * half
+    }
+    return hull
+}
+
+fn add_box(w: ref dynamic_world, half: f32, position: float3, mass: f32) i32 {
+    let extents = dynamic_v3(half, half, half)
+    let body = dynamic_body_box(extents, mass)
+    body.position = position
+    let index = dynamic_world_add(w, body)
+    dynamic_world_set_hull(w, index, cube_hull(half), 8)
+    return index
+}
+
+fn add_sphere(w: ref dynamic_world, radius: f32, position: float3, mass: f32) i32 {
+    let body = dynamic_body_sphere(radius, mass)
+    body.position = position
+    return dynamic_world_add(w, body)
+}
+
+fn contact_of(w: dynamic_world, index: i32, slot: i32) float4 {
+    return dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_CONTACT + slot)
+}
+
+fn free_world(bodies: i32) dynamic_world {
+    let config = dynamic_config_default()
+    config.bounds_enabled = false
+    config.gravity = dynamic_v3(0.0, 0.0, 0.0)
+    config.iterations = 1
+    return dynamic_world_create(bodies, config)
+}
+
+// -- layout -----------------------------------------------------------------
+
+// Pair, contact and contact-point slots follow the body rows, then the hull.
+assert DYNAMIC_ROW_CONTACT == DYNAMIC_ROW_PAIR + DYNAMIC_MAX_CONTACTS
+assert DYNAMIC_ROW_POINT == DYNAMIC_ROW_CONTACT + DYNAMIC_MAX_CONTACTS
+assert DYNAMIC_ROW_HULL == DYNAMIC_ROW_POINT + DYNAMIC_MAX_CONTACTS
+assert DYNAMIC_ROW_COUNT == DYNAMIC_ROW_HULL + DYNAMIC_MAX_HULL_VERTICES
+
+// A world never has fewer columns than the configuration row needs.
+let tiny = dynamic_world_create(1, dynamic_config_default())
+assert tiny.capacity == DYNAMIC_CONFIG_COLUMNS
+
+// Without a requested device the compute path is unavailable, so the kernels
+// run host-side instead.
+assert gpu_caps() == 0u
+let gpu_config = dynamic_config_default()
+gpu_config.prefer_gpu = true
+let headless = dynamic_world_create(8, gpu_config)
+assert dynamic_world_backend(headless) == DYNAMIC_BACKEND_CPU
+assert dynamic_world_backend_name(headless) == "cpu"
+assert dynamic_world_state_texture(headless) == 0u
+
+// -- bodies -----------------------------------------------------------------
+
+let world = dynamic_world_create(8, dynamic_config_default())
+let index = add_box(world, 0.5, dynamic_v3(0.0, 4.0, 0.0), 2.0)
+assert index == 0
+assert world.count == 1
+assert dynamic_world_hull_count(world, 0) == 8
+
+let stored = dynamic_world_body(world, 0)
+assert stored.position.y == 4.0
+assert stored.inv_mass == 0.5
+assert stored.orientation.w == 1.0
+// The bounding radius covers the hull corners: sqrt(3) * 0.5.
+let bound = dynamic_state_read(world.state, world.capacity, 0, DYNAMIC_ROW_POSITION).w
+assert bound > 0.86 && bound < 0.87
+
+// A sphere is the hull of one point swept by its radius.
+let ball = add_sphere(world, 0.4, dynamic_v3(2.0, 4.0, 0.0), 1.0)
+assert dynamic_world_hull_count(world, ball) == 1
+assert dynamic_world_body(world, ball).margin == 0.4
+
+// A full world reports the failure instead of overwriting a body.
+let small = dynamic_world_create(4, dynamic_config_default())
+for i in 0 to 4 {
+    assert add_sphere(small, 0.2, dynamic_v3((i as f32) * 3.0, 1.0, 0.0), 1.0) == i
+}
+assert add_sphere(small, 0.2, dynamic_v3(0.0, 1.0, 0.0), 1.0) == 0 - 1
+assert small.count == 4
+
+// -- integration ------------------------------------------------------------
+
+// One step of free fall matches semi-implicit Euler.
+let falling = dynamic_world_create(4, dynamic_config_default())
+add_sphere(falling, 0.3, dynamic_v3(0.0, 6.0, 0.0), 1.0)
+dynamic_world_step(falling)
+let dropped = dynamic_world_body(falling, 0)
+assert dropped.position.y < 6.0
+assert dropped.velocity.y < 0.0
+
+// Angular velocity turns the orientation and keeps the quaternion normalized.
+let spinning = free_world(4)
+let spinner = dynamic_body_box(dynamic_v3(0.4, 0.4, 0.4), 1.0)
+spinner.position = dynamic_v3(0.0, 2.0, 0.0)
+spinner.angular_velocity = dynamic_v3(0.0, 4.0, 0.0)
+spinner.angular_damping = 0.0
+let spin_index = dynamic_world_add(spinning, spinner)
+dynamic_world_set_hull(spinning, spin_index, cube_hull(0.4), 8)
+for step in 0 to 10 {
+    dynamic_world_step(spinning)
+}
+let turned = dynamic_world_body(spinning, 0)
+let length = turned.orientation.x * turned.orientation.x + turned.orientation.y * turned.orientation.y +
+    turned.orientation.z * turned.orientation.z + turned.orientation.w * turned.orientation.w
+assert length > 0.999 && length < 1.001
+assert turned.orientation.y > 0.1 || turned.orientation.y < 0.0 - 0.1
+assert turned.position.y == 2.0
+
+// A body with no inverse mass is static.
+let anchored = dynamic_world_create(4, dynamic_config_default())
+add_box(anchored, 0.5, dynamic_v3(0.0, 5.0, 0.0), 0.0)
+for step in 0 to 20 {
+    dynamic_world_step(anchored)
+}
+let held = dynamic_world_body(anchored, 0)
+assert held.position.y == 5.0
+assert held.velocity.y == 0.0
+
+// -- narrow phase: GJK for overlap, EPA for the manifold --------------------
+
+// Two boxes overlapping along x by 0.2: the normal and depth are exact for
+// flat faces, and the normal points from the partner to the body.
+let boxes = free_world(4)
+add_box(boxes, 0.5, dynamic_v3(0.0, 3.0, 0.0), 1.0)
+add_box(boxes, 0.5, dynamic_v3(0.8, 3.0, 0.0), 1.0)
+dynamic_world_step(boxes)
+let manifold = contact_of(boxes, 0, 0)
+assert manifold.w > 0.19 && manifold.w < 0.21
+assert manifold.x < 0.0 - 0.99
+assert manifold.y > 0.0 - 0.01 && manifold.y < 0.01
+// The partner sees the same contact mirrored.
+let mirrored = contact_of(boxes, 1, 0)
+assert mirrored.x > 0.99
+assert mirrored.w > 0.19 && mirrored.w < 0.21
+
+// A box and a sphere resting on its top face, penetrating by 0.1.
+let mixed = free_world(4)
+add_box(mixed, 0.5, dynamic_v3(0.0, 3.0, 0.0), 1.0)
+add_sphere(mixed, 0.4, dynamic_v3(0.0, 3.8, 0.0), 1.0)
+dynamic_world_step(mixed)
+let sphere_contact = contact_of(mixed, 1, 0)
+assert sphere_contact.w > 0.09 && sphere_contact.w < 0.11
+assert sphere_contact.y > 0.99
+let contact_point = dynamic_state_read(mixed.state, mixed.capacity, 1, DYNAMIC_ROW_POINT)
+assert contact_point.y > 3.44 && contact_point.y < 3.46
+
+// Bodies out of reach produce no contacts at all.
+let apart = free_world(4)
+add_box(apart, 0.5, dynamic_v3(0.0 - 3.0, 3.0, 0.0), 1.0)
+add_box(apart, 0.5, dynamic_v3(3.0, 3.0, 0.0), 1.0)
+dynamic_world_step(apart)
+assert dynamic_world_contact_count(apart, 0) == 0
+assert dynamic_world_contact_count(apart, 1) == 0
+
+// The broad phase keeps at most DYNAMIC_MAX_CONTACTS partners per body.
+let crowded = dynamic_world_create(8, dynamic_config_default())
+add_sphere(crowded, 0.5, dynamic_v3(0.0, 4.0, 0.0), 1.0)
+for i in 0 to 6 {
+    let angle = (i as f32) * 1.0472
+    let x = cos(angle as f64) as f32 * 0.6
+    let z = sin(angle as f64) as f32 * 0.6
+    add_sphere(crowded, 0.5, dynamic_v3(x, 4.0, z), 1.0)
+}
+dynamic_world_step(crowded)
+assert dynamic_world_contact_count(crowded, 0) == DYNAMIC_MAX_CONTACTS
+
+// -- constraint solve -------------------------------------------------------
+
+// An overlapping pair is pushed apart along the contact normal.
+let pushed = free_world(4)
+add_box(pushed, 0.5, dynamic_v3(0.0, 3.0, 0.0), 1.0)
+add_box(pushed, 0.5, dynamic_v3(0.8, 3.0, 0.0), 1.0)
+for step in 0 to 20 {
+    dynamic_world_step(pushed)
+}
+let left = dynamic_world_body(pushed, 0)
+let right = dynamic_world_body(pushed, 1)
+assert right.position.x - left.position.x > 0.85
+
+// A dropped box settles flat on the floor plane, one half extent above it.
+let resting = dynamic_world_create(4, dynamic_config_default())
+add_box(resting, 0.4, dynamic_v3(0.0, 3.0, 0.0), 1.0)
+for step in 0 to 180 {
+    dynamic_world_step(resting)
+}
+let settled = dynamic_world_body(resting, 0)
+assert settled.position.y > 0.36 && settled.position.y < 0.42
+assert settled.velocity.y > 0.0 - 0.05 && settled.velocity.y < 0.05
+// It stayed flat: the orientation is still near identity.
+assert settled.orientation.w > 0.99 || settled.orientation.w < 0.0 - 0.99
+
+// A sphere dropped onto a box comes to rest on its top face, not through it.
+let stacked = dynamic_world_create(4, dynamic_config_default())
+add_box(stacked, 0.4, dynamic_v3(0.0, 2.0, 0.0), 1.0)
+add_sphere(stacked, 0.35, dynamic_v3(0.05, 3.4, 0.0), 1.0)
+for step in 0 to 180 {
+    dynamic_world_step(stacked)
+}
+let base = dynamic_world_body(stacked, 0)
+let top = dynamic_world_body(stacked, 1)
+assert top.position.y > base.position.y + 0.6
+assert dynamic_world_contact_count(stacked, 1) >= 1
+
+// -- determinism ------------------------------------------------------------
+
+// The same scene and the same steps produce the same state, which is what lets
+// the host path stand in for the dispatched pipeline.
+let run_a = dynamic_world_create(8, dynamic_config_default())
+let run_b = dynamic_world_create(8, dynamic_config_default())
+for i in 0 to 4 {
+    let position = dynamic_v3((i as f32) * 0.3 - 0.45, 1.6 + (i as f32) * 1.1, 0.0)
+    add_box(run_a, 0.35, position, 1.0)
+    add_box(run_b, 0.35, position, 1.0)
+}
+for step in 0 to 60 {
+    dynamic_world_step(run_a)
+    dynamic_world_step(run_b)
+}
+for i in 0 to 4 {
+    let first = dynamic_world_body(run_a, i)
+    let second = dynamic_world_body(run_b, i)
+    assert first.position.x == second.position.x
+    assert first.position.y == second.position.y
+    assert first.position.z == second.position.z
+    assert first.orientation.w == second.orientation.w
+}
+
+// Nothing escapes the world bounds.
+for i in 0 to 4 {
+    let inside = dynamic_world_body(run_a, i)
+    assert inside.position.y > 0.0 - 0.1
+    assert inside.position.x > run_a.config.bounds_min.x - 0.5
+    assert inside.position.x < run_a.config.bounds_max.x + 0.5
+}
+
+// -- clearing and release ---------------------------------------------------
+
+dynamic_world_clear(run_b)
+assert run_b.count == 0
+assert dynamic_world_contact_count(run_b, 0) == 0
+// Releasing a world that never held device resources leaves it usable.
+dynamic_world_release(run_b)
+assert dynamic_world_backend(run_b) == DYNAMIC_BACKEND_CPU
+
+// -- compute kernels ---------------------------------------------------------
+
+// The four stages are ordinary ns fns that the shader module transpiles for
+// every backend language, from the module they are declared in. The narrow
+// phase carries GJK and EPA, including their fixed-capacity local arrays.
+let targets = ["msl", "glsl", "hlsl", "wgsl"]
+for target in targets {
+    let broad = shader_transpile_stage(cs_dynamic_broad_phase, target, "compute")
+    let narrow = shader_transpile_stage(cs_dynamic_narrow_phase, target, "compute")
+    let solve = shader_transpile_stage(cs_dynamic_solve, target, "compute")
+    let integrate = shader_transpile_stage(cs_dynamic_integrate, target, "compute")
+    assert broad.len > 0 && narrow.len > 0 && solve.len > 0 && integrate.len > 0
+    // The narrow phase is the largest of the four: it holds the polytope.
+    assert narrow.len > solve.len
+}
+
+// Entry names follow the backend convention: the fn name everywhere except
+// glsl, which wraps the entry in main().
+assert shader_entry(cs_dynamic_solve, "msl") == "cs_dynamic_solve"
+assert shader_entry(cs_dynamic_solve, "wgsl") == "cs_dynamic_solve"
+assert shader_entry(cs_dynamic_solve, "glsl") == "main"
+
+print("dynamic: convex pipeline, gjk/epa manifolds, determinism and kernels ok\n")

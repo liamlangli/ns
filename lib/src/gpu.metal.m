@@ -414,6 +414,13 @@ typedef struct gpu_pass_mtl {
     int width, height;
 } gpu_pass_mtl;
 
+typedef struct gpu_pixel_readback_mtl {
+    id<MTLBuffer> buffer;
+    volatile ns_bool pending;
+    volatile ns_bool complete;
+    u32 request_id;
+} gpu_pixel_readback_mtl;
+
 typedef struct gpu_swapchain_mtl {
     int width, height, sample_count;
     gpu_pixel_format color_format;
@@ -464,6 +471,7 @@ typedef struct gpu_state_mtl {
     u32 mesh_count;
     u32 render_pass_count;
     u32 screen_pass_count;
+    gpu_pixel_readback_mtl pixel_readbacks[3];
 
 } gpu_state_mtl;
 
@@ -630,6 +638,12 @@ ns_bool gpu_request_device(view* v) {
 }
 
 void gpu_destroy_device() {
+    for (i32 i = 0; i < 3; ++i) {
+#ifndef ENABLE_ARC
+        [_state.pixel_readbacks[i].buffer release];
+#endif
+        _state.pixel_readbacks[i] = (gpu_pixel_readback_mtl){0};
+    }
 #ifndef ENABLE_ARC
     [_state.cmd_encoder release];
     [_state.cmd_buffer release];
@@ -731,6 +745,82 @@ void gpu_update_texture(gpu_texture texture, ns_data data) {
             withBytes: data.data
             bytesPerRow: (NSUInteger)bytes_per_row];
     }
+}
+
+ns_bool gpu_read_texture_pixel_async(u32 texture_id, i32 x, i32 y, u32 request_id, u32 *result) {
+    if (result) {
+        result[0] = 0;
+        result[1] = 0;
+        result[2] = 0;
+    }
+
+    i32 completed_index = -1;
+    for (i32 i = 0; i < 3; ++i) {
+        gpu_pixel_readback_mtl *slot = &_state.pixel_readbacks[i];
+        if (slot->pending && slot->complete &&
+            (completed_index < 0 || slot->request_id < _state.pixel_readbacks[completed_index].request_id)) {
+            completed_index = i;
+        }
+    }
+
+    ns_bool has_result = false;
+    if (completed_index >= 0) {
+        gpu_pixel_readback_mtl *slot = &_state.pixel_readbacks[completed_index];
+        if (result && slot->buffer && [slot->buffer contents]) {
+            memcpy(&result[0], [slot->buffer contents], sizeof(u32));
+            result[1] = slot->request_id;
+            has_result = true;
+        }
+        slot->pending = false;
+        slot->complete = false;
+    }
+
+    if (!texture_id || texture_id >= _state.texture_count || !_state.cmd_buffer || _state.cmd_encoder ||
+        x < 0 || y < 0) {
+        return has_result;
+    }
+    gpu_texture_mtl *texture = &_state.textures[texture_id];
+    if (!texture->texture || texture->format != PIXELFORMAT_RGBA8 ||
+        x >= (i32)texture->width || y >= (i32)texture->height) {
+        return has_result;
+    }
+
+    i32 free_index = -1;
+    for (i32 i = 0; i < 3; ++i) {
+        if (!_state.pixel_readbacks[i].pending) {
+            free_index = i;
+            break;
+        }
+    }
+    if (free_index < 0) return has_result;
+
+    gpu_pixel_readback_mtl *slot = &_state.pixel_readbacks[free_index];
+    if (!slot->buffer) {
+        slot->buffer = [_state.device.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
+        if (!slot->buffer) return has_result;
+    }
+    slot->pending = true;
+    slot->complete = false;
+    slot->request_id = request_id;
+    memset([slot->buffer contents], 0, sizeof(u32));
+
+    id<MTLBlitCommandEncoder> encoder = [_state.cmd_buffer blitCommandEncoder];
+    [encoder copyFromTexture:texture->texture
+                 sourceSlice:0
+                 sourceLevel:0
+                sourceOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0)
+                  sourceSize:MTLSizeMake(1, 1, 1)
+                    toBuffer:slot->buffer
+           destinationOffset:0
+      destinationBytesPerRow:256
+    destinationBytesPerImage:256];
+    [encoder endEncoding];
+    [_state.cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> command_buffer) {
+        ns_unused(command_buffer);
+        slot->complete = true;
+    }];
+    if (result) result[2] = 1;
+    return has_result;
 }
 
 gpu_buffer gpu_create_buffer_desc(gpu_buffer_desc *desc) {

@@ -1,0 +1,110 @@
+// Host execution of compute fns, and the fixed-capacity local arrays a shader
+// fn may declare. A compute fn is an ordinary ns fn, so binding the image pair,
+// the root words and an invocation coordinate lets the interpreter run it one
+// invocation at a time -- the same fns a device would dispatch. Run from the
+// repo root so the debug NS_REF_PATH ("lib") resolves lib/shader.ns.
+use std
+use simd
+use shader
+
+lit IMAGE_WIDTH = 4
+lit IMAGE_HEIGHT = 3
+lit SLOTS = 4
+
+// Writes the read texel plus one, its own coordinate, and a root word.
+fn cs_probe() void {
+    let x = shader_global_id_x()
+    let y = shader_global_id_y()
+    if x >= (shader_root_f32(0) as i32) {
+        return
+    }
+    let source = shader_read_texture(x, y)
+    shader_write_texture(x, y, float4 { x: source.x + 1.0, y: (x + y) as f32, z: shader_root_f32(1), w: 7.0 })
+}
+
+// Sums a column into a fixed local array, then writes the total. Local arrays
+// are the only container a shader fn accepts.
+fn cs_reduce() void {
+    let x = shader_global_id_x()
+    let slots = [f32](SLOTS)
+    let used = 0
+    for y in 0 to IMAGE_HEIGHT {
+        if used < slots.len {
+            slots[used] = shader_read_texture(x, y).x
+            used = used + 1
+        }
+    }
+    let total = 0.0
+    for i in 0 to used {
+        total = total + slots[i]
+    }
+    shader_write_texture(x, 0, float4 { x: total, y: used as f32, z: slots.len as f32, w: 1.0 })
+}
+
+fn texel(image: [f32], x: i32, y: i32, channel: i32) f32 {
+    return image[(y * IMAGE_WIDTH + x) * 4 + channel]
+}
+
+let texels = IMAGE_WIDTH * IMAGE_HEIGHT * 4
+let read_image = [f32](texels)
+let write_image = [f32](texels)
+for i in 0 to texels {
+    read_image[i] = 10.0
+}
+
+let root = [f32](16)
+root[0] = IMAGE_WIDTH as f32
+root[1] = 0.5
+
+// An image shorter than width * height texels is rejected.
+let too_small = [f32](8)
+assert shader_host_bind(too_small, write_image, IMAGE_WIDTH, IMAGE_HEIGHT) == false
+
+assert shader_host_bind(read_image, write_image, IMAGE_WIDTH, IMAGE_HEIGHT)
+assert shader_host_root(root)
+
+for y in 0 to IMAGE_HEIGHT {
+    for x in 0 to IMAGE_WIDTH {
+        shader_host_invocation(x, y, 0)
+        cs_probe()
+    }
+}
+
+// Every invocation saw its own coordinate, the bound read image, and the root.
+assert texel(write_image, 2, 1, 0) == 11.0
+assert texel(write_image, 2, 1, 1) == 3.0
+assert texel(write_image, 2, 1, 2) == 0.5
+assert texel(write_image, 2, 1, 3) == 7.0
+assert texel(write_image, 0, 0, 1) == 0.0
+// Columns past the root's width bound wrote nothing.
+assert texel(write_image, 3, 0, 3) == 7.0
+
+// A swap makes the stage's output the next stage's input, as a dispatch
+// boundary does.
+shader_host_swap()
+shader_host_invocation(1, 0, 0)
+cs_probe()
+assert texel(read_image, 1, 0, 0) == 12.0
+
+// Local arrays: the reduce kernel sums the three rows of its column. Swapping
+// back makes the seeded image the input again, with the 12 written above.
+shader_host_swap()
+for x in 0 to IMAGE_WIDTH {
+    shader_host_invocation(x, 0, 0)
+    cs_reduce()
+}
+assert texel(write_image, 0, 0, 1) == 3.0
+assert texel(write_image, 0, 0, 2) == (SLOTS as f32)
+assert texel(write_image, 0, 0, 0) == 30.0
+assert texel(write_image, 1, 0, 0) == 32.0
+
+shader_host_release()
+
+// Every stage intrinsic still transpiles for the four backend languages.
+let targets = ["msl", "glsl", "hlsl", "wgsl"]
+for target in targets {
+    assert shader_transpile_stage(cs_probe, target, "compute").len > 0
+    assert shader_transpile_stage(cs_reduce, target, "compute").len > 0
+}
+
+print("shader: host compute execution and local arrays ok\n")

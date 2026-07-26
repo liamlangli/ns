@@ -50,6 +50,18 @@ gpu_pipeline_reflection gpu_pipeline_get_reflection(gpu_pipeline pipeline) {
 }
 void gpu_update_texture(gpu_texture texture, ns_data data) { ns_unused(texture); ns_unused(data); }
 void gpu_update_buffer_desc(gpu_buffer buffer, ns_data data) { ns_unused(buffer); ns_unused(data); }
+ns_bool gpu_read_texture_pixel_async(u32 texture_id, i32 x, i32 y, u32 request_id, u32 *result) {
+    ns_unused(texture_id);
+    ns_unused(x);
+    ns_unused(y);
+    ns_unused(request_id);
+    if (result) {
+        result[0] = 0;
+        result[1] = 0;
+        result[2] = 0;
+    }
+    return false;
+}
 
 void gpu_begin_render_pass(gpu_render_pass pass) { ns_unused(pass); }
 void gpu_set_viewport(int x, int y, int width, int height) { ns_unused(x); ns_unused(y); ns_unused(width); ns_unused(height); }
@@ -292,7 +304,7 @@ u32 gpu_create_pipeline_state(gpu_pipeline_state_desc *state) {
     desc.shader = (gpu_shader){state->shader_id};
     desc.layout.buffers[0] = (gpu_vertex_buffer_layout_state){
         .stride = state->vertex_layout.vertex_stride,
-        .step_func = VERTEX_STEP_PER_VERTEX,
+        .step_func = state->vertex_layout.per_instance ? VERTEX_STEP_PER_INSTANCE : VERTEX_STEP_PER_VERTEX,
         .step_rate = 1,
     };
     for (i32 i = 0; i < attr_count; ++i) {
@@ -478,7 +490,7 @@ u32 gpu_create_screen_pass(f64 r, f64 g, f64 b, f64 a) {
 
 u32 gpu_create_mrt_pass(u32 color0_texture_id, u32 color1_texture_id, u32 depth_texture_id,
                         f64 r, f64 g, f64 b, f64 a) {
-    if (!color0_texture_id || !color1_texture_id || !depth_texture_id) return 0;
+    if (!color0_texture_id || !depth_texture_id) return 0;
     return gpu_create_render_pass(&(gpu_render_pass_desc){
         .colors = {
             {

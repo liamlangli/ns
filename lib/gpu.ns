@@ -29,6 +29,7 @@ lit GPU_PIXELFORMAT_RGBA8 = 23
 lit GPU_PIXELFORMAT_BGRA8 = 28
 lit GPU_PIXELFORMAT_RG11B10F = 30
 lit GPU_PIXELFORMAT_RGBA16F = 39
+lit GPU_PIXELFORMAT_RGBA32F = 42
 lit GPU_PIXELFORMAT_DEPTH = 43
 lit GPU_TEXTURE_USAGE_READ = 1
 lit GPU_TEXTURE_USAGE_WRITE = 2
@@ -53,7 +54,8 @@ struct gpu_vertex_layout_desc {
     attr_offsets: [i32],
     attr_sizes: [i32],
     attr_formats: [i32],
-    attr_count: i32
+    attr_count: i32,
+    per_instance: bool
 }
 
 struct gpu_mesh_state {
@@ -152,6 +154,10 @@ ref fn gpu_create_mesh_1(pipeline_id: u32, vertex_buffer_id: u32) u32
 ref fn gpu_create_mesh_indexed(pipeline_id: u32, vertex_buffer_id: u32, index_buffer_id: u32, index_type: i32) u32
 ref fn gpu_create_texture_2d(width: i32, height: i32, format: i32, usage: i32) u32
 ref fn gpu_create_texture_2d_msaa(width: i32, height: i32, format: i32, usage: i32, sample_count: i32) u32
+// Poll a previously queued 1x1 RGBA8 readback and queue the current pixel
+// without stalling the CPU. result[0] is packed RGBA, result[1] is the
+// completed request id, and result[2] reports whether this request was queued.
+ref fn gpu_read_texture_pixel_async(texture_id: u32, x: i32, y: i32, request_id: u32, result: [u32]) bool
 // Legacy name-reflection entry point. New code must use an explicit resource
 // layout; the GPU module never maps shader builtin names to slots.
 ref fn gpu_create_buffer_texture_binding(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture1_id: u32, texture1_name: str) u32

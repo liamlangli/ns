@@ -1,0 +1,208 @@
+// nscode/dynamic/render.ns
+// ---------------------------------------------------------------------------
+// The 3D renderer, on the gpu module directly: one triangle pipeline with a
+// depth test, one vertex buffer rebuilt each frame, and one screen pass. The
+// `ui` renderer is only used for the overlay in main.ns.
+//
+// The vertex shader is a pass-through because the `shader` module does not
+// lower mat4 operators yet: matrix.ns applies the model, view and projection
+// transforms and hands the GPU clip-space positions with a shaded colour. Flat
+// per-triangle lighting keeps the vertex format to a position and a colour.
+
+use std
+use simd
+use gpu
+use shader
+use matrix
+use shapes
+use dynamic
+
+lit RENDER_MAX_TRIANGLES = 2048
+lit RENDER_FLOATS_PER_VERTEX = 8
+lit RENDER_FLOATS_PER_TRIANGLE = 24
+
+struct render_vertex {
+    clip: float4,
+    tint: float4
+}
+
+struct render_fragment {
+    position: float4,
+    color: float4
+}
+
+fn vs_dynamic(data: render_vertex) render_fragment {
+    return render_fragment { position: data.clip, color: data.tint }
+}
+
+fn fs_dynamic(data: render_fragment) float4 {
+    return data.color
+}
+
+struct render_state {
+    shader_id: u32,
+    pipeline: u32,
+    vertex_buffer: u32,
+    mesh: u32,
+    pass: u32,
+    vertices: [f32],
+    triangle_count: i32,
+    ready: bool
+}
+
+// The renderer keeps its resources in a module-level value: a frame callback is
+// a closure, and closures capture plain values by copy.
+let state = render_state {
+    shader_id: 0u,
+    pipeline: 0u,
+    vertex_buffer: 0u,
+    mesh: 0u,
+    pass: 0u,
+    vertices: [f32](RENDER_MAX_TRIANGLES * RENDER_FLOATS_PER_TRIANGLE),
+    triangle_count: 0,
+    ready: false,
+}
+
+fn render_create() bool {
+    let target = gpu_shader_target()
+    let vertex_source = shader_transpile_stage(vs_dynamic, target, "vertex")
+    let fragment_source = shader_transpile_stage(fs_dynamic, target, "fragment")
+    state.shader_id = gpu_create_shader_source(vertex_source, fragment_source, shader_entry(vs_dynamic, target), shader_entry(fs_dynamic, target))
+    if state.shader_id == 0u {
+        return false
+    }
+
+    // Vertex layout comes from the shader's own input struct.
+    let stride = shader_vertex_stride(vs_dynamic)
+    let attr_count = shader_vertex_attr_count(vs_dynamic)
+    let offsets = [i32](attr_count)
+    let sizes = [i32](attr_count)
+    let formats = [i32](attr_count)
+    for i in 0 to attr_count {
+        offsets[i] = shader_vertex_attr_offset(vs_dynamic, i)
+        sizes[i] = shader_vertex_attr_size(vs_dynamic, i)
+        formats[i] = GPU_ATTRIBUTE_FORMAT_FLOAT
+    }
+    state.pipeline = gpu_create_pipeline_layout_ex(state.shader_id, stride, offsets, sizes, formats, attr_count, GPU_PIXELFORMAT_BGRA8, GPU_PRIMITIVE_TRIANGLES, GPU_PIXELFORMAT_DEPTH, GPU_COMPARE_LESS_EQUAL, true, GPU_CULL_NONE, false)
+    if state.pipeline == 0u {
+        return false
+    }
+
+    state.vertex_buffer = gpu_create_buffer(RENDER_MAX_TRIANGLES * RENDER_FLOATS_PER_TRIANGLE * 4, GPU_USAGE_DEFAULT)
+    state.mesh = gpu_create_mesh_1(state.pipeline, state.vertex_buffer)
+    state.pass = gpu_create_screen_pass(0.06, 0.07, 0.09, 1.0)
+    state.ready = state.vertex_buffer != 0u && state.mesh != 0u
+    return state.ready
+}
+
+fn render_release() {
+    if state.mesh != 0u {
+        gpu_destroy_mesh_id(state.mesh)
+    }
+    if state.vertex_buffer != 0u {
+        gpu_destroy_buffer_id(state.vertex_buffer)
+    }
+    if state.pipeline != 0u {
+        gpu_destroy_pipeline_id(state.pipeline)
+    }
+    if state.shader_id != 0u {
+        gpu_destroy_shader_id(state.shader_id)
+    }
+    if state.pass != 0u {
+        gpu_destroy_render_pass_id(state.pass)
+    }
+    state.ready = false
+}
+
+fn render_begin() {
+    state.triangle_count = 0
+}
+
+fn render_write_vertex(base: i32, clip: float4, tint: float4) {
+    state.vertices[base] = clip.x
+    state.vertices[base + 1] = clip.y
+    state.vertices[base + 2] = clip.z
+    state.vertices[base + 3] = clip.w
+    state.vertices[base + 4] = tint.x
+    state.vertices[base + 5] = tint.y
+    state.vertices[base + 6] = tint.z
+    state.vertices[base + 7] = tint.w
+}
+
+fn render_triangle(a: float4, b: float4, c: float4, tint: float4) {
+    if state.triangle_count >= RENDER_MAX_TRIANGLES {
+        return
+    }
+    let base = state.triangle_count * RENDER_FLOATS_PER_TRIANGLE
+    render_write_vertex(base, a, tint)
+    render_write_vertex(base + RENDER_FLOATS_PER_VERTEX, b, tint)
+    render_write_vertex(base + RENDER_FLOATS_PER_VERTEX * 2, c, tint)
+    state.triangle_count = state.triangle_count + 1
+}
+
+// Draw one shape instance. `model_view_projection` already carries the body's
+// rotation and position; the rotated triangle normal is only used for shading.
+fn render_shape(mesh: shape_mesh, model: mat4, view_projection: mat4, orientation: float4, base_color: float3, light: float3) {
+    let clip = matrix_mul(view_projection, model)
+    for triangle in 0 to mesh.triangle_count {
+        let base = triangle * 9
+        let a = float3 { x: mesh.vertices[base], y: mesh.vertices[base + 1], z: mesh.vertices[base + 2] }
+        let b = float3 { x: mesh.vertices[base + 3], y: mesh.vertices[base + 4], z: mesh.vertices[base + 5] }
+        let c = float3 { x: mesh.vertices[base + 6], y: mesh.vertices[base + 7], z: mesh.vertices[base + 8] }
+        let normal_base = triangle * 3
+        let local_normal = float3 { x: mesh.normals[normal_base], y: mesh.normals[normal_base + 1], z: mesh.normals[normal_base + 2] }
+        let world_normal = dynamic_quat_rotate(orientation, local_normal)
+        let lambert = dynamic_dot3(world_normal, light)
+        if lambert < 0.0 {
+            lambert = 0.0
+        }
+        let shade = 0.28 + lambert * 0.72
+        let tint = float4 { x: base_color.x * shade, y: base_color.y * shade, z: base_color.z * shade, w: 1.0 }
+        render_triangle(matrix_transform_point(clip, a), matrix_transform_point(clip, b), matrix_transform_point(clip, c), tint)
+    }
+}
+
+// A thin box between two points, for drawing the world bounds as beams.
+fn render_beam(view_projection: mat4, start: float3, finish: float3, thickness: f32, tint: float4) {
+    let center = float3 { x: (start.x + finish.x) * 0.5, y: (start.y + finish.y) * 0.5, z: (start.z + finish.z) * 0.5 }
+    let half = float3 {
+        x: dynamic_max(dynamic_abs(finish.x - start.x) * 0.5, thickness),
+        y: dynamic_max(dynamic_abs(finish.y - start.y) * 0.5, thickness),
+        z: dynamic_max(dynamic_abs(finish.z - start.z) * 0.5, thickness),
+    }
+    let corners = [
+        0.0 - 1.0, 0.0 - 1.0, 0.0 - 1.0, 1.0, 0.0 - 1.0, 0.0 - 1.0, 1.0, 1.0, 0.0 - 1.0, 0.0 - 1.0, 1.0, 0.0 - 1.0, 0.0 - 1.0, 0.0 - 1.0, 1.0, 1.0, 0.0 - 1.0, 1.0, 1.0, 1.0, 1.0, 0.0 - 1.0, 1.0, 1.0, ]
+    let quads = [0, 1, 2, 3, 4, 7, 6, 5, 0, 4, 5, 1, 3, 2, 6, 7, 0, 3, 7, 4, 1, 5, 6, 2]
+    let points = [float4](8)
+    for i in 0 to 8 {
+        let local = float3 { x: center.x + corners[i * 3] * half.x, y: center.y + corners[i * 3 + 1] * half.y, z: center.z + corners[i * 3 + 2] * half.z }
+        points[i] = matrix_transform_point(view_projection, local)
+    }
+    for face in 0 to 6 {
+        let a = points[quads[face * 4]]
+        let b = points[quads[face * 4 + 1]]
+        let c = points[quads[face * 4 + 2]]
+        let d = points[quads[face * 4 + 3]]
+        render_triangle(a, b, c, tint)
+        render_triangle(a, c, d, tint)
+    }
+}
+
+// Upload and submit. The ui overlay draws into the same frame afterwards, so
+// the pass is ended but the frame is not committed here.
+fn render_flush() {
+    if state.ready == false || state.triangle_count == 0 {
+        return
+    }
+    let floats = state.triangle_count * RENDER_FLOATS_PER_TRIANGLE
+    gpu_update_buffer(state.vertex_buffer, state.vertices, floats * 4)
+    gpu_begin_render_pass_id(state.pass)
+    gpu_set_pipeline_id(state.pipeline)
+    gpu_set_mesh_id(state.mesh)
+    gpu_draw(0, state.triangle_count * 3, 1)
+    gpu_end_pass()
+}
+
+fn render_triangle_count() i32 {
+    return state.triangle_count
+}

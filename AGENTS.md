@@ -271,7 +271,7 @@ rules.
 | `std` | Core libc/libm and string helpers: printing, basic file descriptors, math, numeric/string conversion, substring/unescape, and UTF-8 length. |
 | `task` | VM-internal async task, dispatch, waiting, cancellation, status, queue, and sleep primitives. |
 | `simd` | Pure-ns data types `float2`, `float3`, `float4`, `quatf`, and `mat4`, also used at shader boundaries. |
-| `shader` | VM-internal transpilation of ordinary ns functions to MSL, GLSL 450, HLSL, or WGSL shader source and entry names. Shader code accepts only the supported numeric/struct subset. |
+| `shader` | VM-internal transpilation of ordinary ns functions to MSL, GLSL 450, HLSL, or WGSL shader source and entry names. Shader code accepts only the supported numeric/struct subset, plus fixed-capacity local arrays (`let faces = [i32](72)`, constant length, no array parameters or returns). A `lit` folds into the generated source, and a fn a shader calls may live in a `use`d module. `shader_host_bind`/`_root`/`_invocation`/`_swap`/`_release` bind an image pair, the root words and an invocation coordinate so the interpreter can run a compute fn one invocation at a time, without a device. |
 | `os` | Native time/date, file and directory operations, environment/app-data paths, recursive scans/watches, dialogs, child project launch, device vibration, locks, and semaphores. |
 | `io` | Native image loading and saving through `io_image` (`width`, `height`, `channels`, byte data). |
 | `net` | Blocking native TCP/UDP sockets, shared receive-buffer access, file sending, and socket lifecycle. File descriptors are integer handles. |
@@ -281,9 +281,10 @@ rules.
 | `view` | Application window/view lifecycle plus keyboard, pointer, gesture, clipboard, frame callback, size, scale, and GPU-device state. Wasm projects use the generated HTML canvas as the view backend. |
 | `gpu` | Platform GPU access. The v2-only Nano Script surface (doc/gpu.md) treats the GPU as a processor with memory: 64-bit addresses from `gpu_malloc`, bindless u32 texture/sampler indices, one root pointer per draw/dispatch, and a frame ring for transient data; it runs host-side headless. Apple uses Metal, Windows uses DirectX 12, and unsupported backends may return failure. |
 | `ui` | Immediate-mode native UI rendering, layout, themes, input snapshots, widgets, scrolling, text editing/views, images, and renderer primitives on top of `view` and `gpu`. |
+| `dynamic` | Pure-ns rigid-body simulation for convex shapes as four gpu compute kernels: broad phase, narrow phase (GJK for overlap, EPA for the manifold), constraint solve, and integration (doc/dynamic.md). A body is a point hull plus a sweep radius, so one support function covers spheres, boxes and convex meshes. The same kernels run host-side through the `shader` host intrinsics when no compute device can carry the RGBA32F state image, which is every current native backend. |
 
-`std`, `task`, and `shader` are backed by interpreter intrinsics; `simd` is pure
-Nano Script. The other feature modules are declarations backed by dynamically
+`std`, `task`, and `shader` are backed by interpreter intrinsics; `simd` and
+`dynamic` are pure Nano Script. The other feature modules are declarations backed by dynamically
 loaded native libraries. Their APIs intentionally stay within the supported
 FFI surface: scalars, strings, refs, arrays, small structs, and opaque numeric
 or pointer handles.

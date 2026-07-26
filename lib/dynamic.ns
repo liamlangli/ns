@@ -1,0 +1,1692 @@
+mod dynamic
+
+use std
+use simd
+use gpu
+use shader
+
+// GPU compute rigid-body dynamics for convex shapes, arranged as the classic
+// simulation pipeline: broad phase, narrow phase, constraint solve, and
+// integration. Every stage is one compute kernel, so the module is pure Nano
+// Script: there is no dynamic.dylib and no new FFI.
+//
+// ---- shapes ----------------------------------------------------------------
+//
+// A body is a convex point hull plus a margin radius, which covers everything
+// the module simulates with one support function: a sphere is one point with
+// the radius as margin, a cube is eight points, and a convex mesh is its
+// vertices. Narrow phase runs GJK on the Minkowski difference of two such
+// shapes and EPA on the resulting simplex for the penetration normal, depth,
+// and contact point.
+//
+// ---- state image -----------------------------------------------------------
+//
+// The whole world lives in one float4 image of `capacity` columns (one column
+// per body) and DYNAMIC_ROW_COUNT rows:
+//
+//     row 0                      configuration (columns 0..3, see below)
+//     row 1                      position.xyz, bounding radius
+//     row 2                      orientation quaternion
+//     row 3                      linear velocity.xyz, inverse mass
+//     row 4                      angular velocity.xyz, margin radius
+//     row 5                      restitution, friction, linear and angular damping
+//     row 6                      inverse inertia diagonal (body space), hull vertex count
+//     row 7 + k                  pair slot k: partner + 1 (0 = empty) and the
+//                                accumulated normal and two friction impulses
+//     row 11 + k                 contact slot k: normal.xyz (partner -> body), depth
+//     row 15 + k                 contact slot k: contact point.xyz
+//     row 19 + i                 hull vertex i in body space
+//
+// Each stage dispatches over the whole image. A texel is written by exactly
+// one invocation: the first row of a block is its owner and writes the whole
+// block, the other rows of that block write nothing, and every row the stage
+// does not own is copied through. No stage needs atomics or a prefix scan.
+//
+// ---- backends --------------------------------------------------------------
+//
+// The kernels are ordinary ns fns. With `config.prefer_gpu` and a device whose
+// v2 tier can carry the state image, `dynamic_world_step` dispatches them;
+// otherwise it runs the very same fns through `shader_host_*`, one invocation
+// at a time, against the host copy of the image. There is no second
+// implementation of the physics to keep in sync -- only the loop that drives
+// the invocations differs.
+//
+// `prefer_gpu` is off by default because the state image needs RGBA32F texels:
+// MSL declares a compute write target without a format and works as soon as a
+// backend registers v2 compute, but the WGSL and GLSL emitters still hard-code
+// the rg11b10 storage format of the accumulation-buffer case. See
+// doc/dynamic.md.
+//
+// The v2 surface has no texture readback, so a GPU world cannot be queried
+// with `dynamic_world_body`; render it from `dynamic_world_state_texture`
+// instead. `dynamic_world_backend` reports which path is live.
+
+lit DYNAMIC_MAX_CONTACTS = 4
+lit DYNAMIC_MAX_HULL_VERTICES = 16
+
+lit DYNAMIC_ROW_CONFIG = 0
+lit DYNAMIC_ROW_POSITION = 1
+lit DYNAMIC_ROW_ORIENTATION = 2
+lit DYNAMIC_ROW_VELOCITY = 3
+lit DYNAMIC_ROW_ANGULAR = 4
+lit DYNAMIC_ROW_MATERIAL = 5
+lit DYNAMIC_ROW_INERTIA = 6
+lit DYNAMIC_ROW_PAIR = 7
+lit DYNAMIC_ROW_CONTACT = DYNAMIC_ROW_PAIR + DYNAMIC_MAX_CONTACTS
+lit DYNAMIC_ROW_POINT = DYNAMIC_ROW_CONTACT + DYNAMIC_MAX_CONTACTS
+lit DYNAMIC_ROW_HULL = DYNAMIC_ROW_POINT + DYNAMIC_MAX_CONTACTS
+lit DYNAMIC_ROW_COUNT = DYNAMIC_ROW_HULL + DYNAMIC_MAX_HULL_VERTICES
+
+// Configuration texels, all in row DYNAMIC_ROW_CONFIG.
+lit DYNAMIC_CONFIG_STEP = 0       // substep dt, slop, bias, relaxation
+lit DYNAMIC_CONFIG_GRAVITY = 1    // gravity.xyz, broad-phase margin
+lit DYNAMIC_CONFIG_BOUNDS_MIN = 2 // bounds_min.xyz, bounds enabled
+lit DYNAMIC_CONFIG_BOUNDS_MAX = 3 // bounds_max.xyz, bounds restitution
+lit DYNAMIC_CONFIG_COLUMNS = 4
+
+lit DYNAMIC_BACKEND_CPU = 0
+lit DYNAMIC_BACKEND_GPU = 1
+
+lit DYNAMIC_STAGE_BROAD = 0
+lit DYNAMIC_STAGE_NARROW = 1
+lit DYNAMIC_STAGE_SOLVE = 2
+lit DYNAMIC_STAGE_INTEGRATE = 3
+
+lit DYNAMIC_SHAPE_SPHERE = 0
+lit DYNAMIC_SHAPE_BOX = 1
+lit DYNAMIC_SHAPE_HULL = 2
+
+// Compute kernels are dispatched with the transpiler's fixed 8x8x1 group.
+lit DYNAMIC_GROUP_SIZE = 8
+
+lit DYNAMIC_EPSILON = 0.000001
+// Contacts approaching slower than this bounce with no restitution, which is
+// what stops a resting stack from jittering.
+lit DYNAMIC_REST_SPEED = 1.0
+
+// GJK and EPA bounds. The polytope lives in a shader invocation's own
+// registers, so the limits stay small; a hull of DYNAMIC_MAX_HULL_VERTICES
+// points converges well inside them.
+lit DYNAMIC_GJK_ITERATIONS = 24
+lit DYNAMIC_EPA_ITERATIONS = 14
+lit DYNAMIC_EPA_MAX_VERTICES = 28
+lit DYNAMIC_EPA_MAX_FACES = 72
+lit DYNAMIC_EPA_MAX_EDGES = 24
+
+struct dynamic_body {
+    position: float3,
+    orientation: float4,
+    velocity: float3,
+    angular_velocity: float3,
+    inv_mass: f32,
+    inv_inertia: float3,
+    // Radius of the sphere swept over the point hull. A sphere is a hull of
+    // one point with this radius; a cube and a mesh set it to zero.
+    margin: f32,
+    restitution: f32,
+    friction: f32,
+    damping: f32,
+    angular_damping: f32
+}
+
+struct dynamic_config {
+    gravity: float3,
+    // Seconds advanced by one `dynamic_world_step`, split into `substeps`.
+    dt: f32,
+    substeps: i32,
+    iterations: i32,
+    // Penetration tolerated before the positional bias pushes bodies apart.
+    slop: f32,
+    // Baumgarte factor of the positional bias, in 0..1.
+    bias: f32,
+    // Under-relaxation of the impulses, in 0..1. A dispatch solves bodies in
+    // parallel against the previous velocities, so a value of 1 can overshoot
+    // when one body has several contacts.
+    relaxation: f32,
+    // Distance by which the broad phase inflates a body's bounds.
+    margin: f32,
+    bounds_min: float3,
+    bounds_max: float3,
+    bounds_enabled: bool,
+    bounds_restitution: f32,
+    // Run the compute pipeline when the device supports it. Off by default;
+    // see the backend notes at the top of this file.
+    prefer_gpu: bool
+}
+
+// The per-substep constants every kernel reads out of the config row.
+struct dynamic_step_params {
+    dt: f32,
+    slop: f32,
+    bias: f32,
+    relaxation: f32,
+    gravity: float3,
+    margin: f32,
+    bounds_min: float3,
+    bounds_max: float3,
+    bounds_enabled: f32,
+    bounds_restitution: f32
+}
+
+struct dynamic_contact {
+    normal: float3,
+    point: float3,
+    depth: f32,
+    // 1 when the pair touches, 0 otherwise. Shader code has no optionals.
+    hit: f32
+}
+
+struct dynamic_world {
+    capacity: i32,
+    count: i32,
+    config: dynamic_config,
+    backend: i32,
+    // Host copy of the state image and the stage's write target. The host
+    // path binds these two as the compute read/write images.
+    state: [f32],
+    next: [f32],
+    root: [f32],
+    read_texture: u32,
+    write_texture: u32,
+    broad_shader: u32,
+    narrow_shader: u32,
+    solve_shader: u32,
+    integrate_shader: u32
+}
+
+// ---------------------------------------------------------------------------
+// vector and quaternion helpers (the shader subset: scalars and simd vectors)
+// ---------------------------------------------------------------------------
+
+fn dynamic_v3(x: f32, y: f32, z: f32) float3 {
+    return float3 { x: x, y: y, z: z }
+}
+
+fn dynamic_add3(a: float3, b: float3) float3 {
+    return dynamic_v3(a.x + b.x, a.y + b.y, a.z + b.z)
+}
+
+fn dynamic_sub3(a: float3, b: float3) float3 {
+    return dynamic_v3(a.x - b.x, a.y - b.y, a.z - b.z)
+}
+
+fn dynamic_scale3(v: float3, s: f32) float3 {
+    return dynamic_v3(v.x * s, v.y * s, v.z * s)
+}
+
+fn dynamic_mul3(a: float3, b: float3) float3 {
+    return dynamic_v3(a.x * b.x, a.y * b.y, a.z * b.z)
+}
+
+fn dynamic_dot3(a: float3, b: float3) f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn dynamic_cross3(a: float3, b: float3) float3 {
+    return dynamic_v3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+}
+
+fn dynamic_length3(v: float3) f32 {
+    return sqrt(dynamic_dot3(v, v) as f64) as f32
+}
+
+fn dynamic_normalize3(v: float3) float3 {
+    let length = dynamic_length3(v)
+    if length <= DYNAMIC_EPSILON {
+        return dynamic_v3(0.0, 0.0, 0.0)
+    }
+    return dynamic_scale3(v, 1.0 / length)
+}
+
+fn dynamic_min(a: f32, b: f32) f32 {
+    if a < b {
+        return a
+    }
+    return b
+}
+
+fn dynamic_max(a: f32, b: f32) f32 {
+    if a > b {
+        return a
+    }
+    return b
+}
+
+fn dynamic_abs(v: f32) f32 {
+    return dynamic_max(v, 0.0 - v)
+}
+
+fn dynamic_clamp(v: f32, low: f32, high: f32) f32 {
+    return dynamic_min(dynamic_max(v, low), high)
+}
+
+fn dynamic_xyz(v: float4) float3 {
+    return dynamic_v3(v.x, v.y, v.z)
+}
+
+fn dynamic_float4(v: float3, w: f32) float4 {
+    return float4 { x: v.x, y: v.y, z: v.z, w: w }
+}
+
+// Any unit vector perpendicular to `v`, for building a friction basis.
+fn dynamic_perpendicular3(v: float3) float3 {
+    let axis = dynamic_v3(1.0, 0.0, 0.0)
+    if dynamic_abs(v.x) > 0.7 {
+        axis = dynamic_v3(0.0, 1.0, 0.0)
+    }
+    return dynamic_normalize3(dynamic_cross3(v, axis))
+}
+
+fn dynamic_quat_identity() float4 {
+    return float4 { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+}
+
+fn dynamic_quat_mul(a: float4, b: float4) float4 {
+    return float4 {
+        x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        y: a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        z: a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    }
+}
+
+fn dynamic_quat_normalize(q: float4) float4 {
+    let length = sqrt((q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w) as f64) as f32
+    if length <= DYNAMIC_EPSILON {
+        return dynamic_quat_identity()
+    }
+    let inverse = 1.0 / length
+    return float4 { x: q.x * inverse, y: q.y * inverse, z: q.z * inverse, w: q.w * inverse }
+}
+
+// v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v)
+fn dynamic_quat_rotate(q: float4, v: float3) float3 {
+    let axis = dynamic_xyz(q)
+    let inner = dynamic_add3(dynamic_cross3(axis, v), dynamic_scale3(v, q.w))
+    return dynamic_add3(v, dynamic_scale3(dynamic_cross3(axis, inner), 2.0))
+}
+
+fn dynamic_quat_rotate_inverse(q: float4, v: float3) float3 {
+    let conjugate = float4 { x: 0.0 - q.x, y: 0.0 - q.y, z: 0.0 - q.z, w: q.w }
+    return dynamic_quat_rotate(conjugate, v)
+}
+
+fn dynamic_quat_from_axis_angle(axis: float3, angle: f32) float4 {
+    let direction = dynamic_normalize3(axis)
+    let half = angle * 0.5
+    let s = sin(half as f64) as f32
+    return float4 { x: direction.x * s, y: direction.y * s, z: direction.z * s, w: cos(half as f64) as f32 }
+}
+
+// World-space inverse inertia applied to `v`: rotate into body space, scale by
+// the diagonal, rotate back. Body inertia tensors here are always diagonal.
+fn dynamic_apply_inv_inertia(orientation: float4, inv_inertia: float3, v: float3) float3 {
+    let local = dynamic_quat_rotate_inverse(orientation, v)
+    return dynamic_quat_rotate(orientation, dynamic_mul3(local, inv_inertia))
+}
+
+// The same tensor as a matrix, R * diag * transpose(R), built once per body per
+// solver iteration. A contact then costs three multiply-adds per application
+// instead of a pair of quaternion rotations.
+struct dynamic_basis {
+    col0: float3,
+    col1: float3,
+    col2: float3
+}
+
+fn dynamic_inertia_basis(orientation: float4, inv_inertia: float3) dynamic_basis {
+    let x = dynamic_v3(1.0, 0.0, 0.0)
+    let y = dynamic_v3(0.0, 1.0, 0.0)
+    let z = dynamic_v3(0.0, 0.0, 1.0)
+    return dynamic_basis {
+        col0: dynamic_apply_inv_inertia(orientation, inv_inertia, x),
+        col1: dynamic_apply_inv_inertia(orientation, inv_inertia, y),
+        col2: dynamic_apply_inv_inertia(orientation, inv_inertia, z),
+    }
+}
+
+fn dynamic_basis_zero() dynamic_basis {
+    let zero = dynamic_v3(0.0, 0.0, 0.0)
+    return dynamic_basis { col0: zero, col1: zero, col2: zero }
+}
+
+fn dynamic_apply_basis(basis: dynamic_basis, v: float3) float3 {
+    let scaled = dynamic_add3(dynamic_scale3(basis.col0, v.x), dynamic_scale3(basis.col1, v.y))
+    return dynamic_add3(scaled, dynamic_scale3(basis.col2, v.z))
+}
+
+// ---------------------------------------------------------------------------
+// state image access
+// ---------------------------------------------------------------------------
+
+fn dynamic_gpu_capacity() i32 {
+    return shader_root_f32(2) as i32
+}
+
+fn dynamic_gpu_count() i32 {
+    return shader_root_f32(3) as i32
+}
+
+fn dynamic_gpu_params() dynamic_step_params {
+    let step = shader_read_texture(DYNAMIC_CONFIG_STEP, DYNAMIC_ROW_CONFIG)
+    let gravity = shader_read_texture(DYNAMIC_CONFIG_GRAVITY, DYNAMIC_ROW_CONFIG)
+    let bounds_min = shader_read_texture(DYNAMIC_CONFIG_BOUNDS_MIN, DYNAMIC_ROW_CONFIG)
+    let bounds_max = shader_read_texture(DYNAMIC_CONFIG_BOUNDS_MAX, DYNAMIC_ROW_CONFIG)
+    return dynamic_step_params {
+        dt: step.x,
+        slop: step.y,
+        bias: step.z,
+        relaxation: step.w,
+        gravity: dynamic_xyz(gravity),
+        margin: gravity.w,
+        bounds_min: dynamic_xyz(bounds_min),
+        bounds_max: dynamic_xyz(bounds_max),
+        bounds_enabled: bounds_min.w,
+        bounds_restitution: bounds_max.w,
+    }
+}
+
+// A body's shape, read once so the support function that GJK and EPA call
+// dozens of times per pair touches only the hull rows.
+struct dynamic_shape {
+    column: i32,
+    center: float3,
+    orientation: float4,
+    margin: f32,
+    hull_count: i32
+}
+
+fn dynamic_shape_of(column: i32) dynamic_shape {
+    let position = shader_read_texture(column, DYNAMIC_ROW_POSITION)
+    let orientation = shader_read_texture(column, DYNAMIC_ROW_ORIENTATION)
+    let angular = shader_read_texture(column, DYNAMIC_ROW_ANGULAR)
+    let inertia = shader_read_texture(column, DYNAMIC_ROW_INERTIA)
+    return dynamic_shape {
+        column: column,
+        center: dynamic_xyz(position),
+        orientation: orientation,
+        margin: angular.w,
+        hull_count: inertia.w as i32,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// narrow phase: GJK for overlap, EPA for the penetration manifold
+// ---------------------------------------------------------------------------
+//
+// Both run in one fn because a shader has no way to hand a simplex or a
+// polytope back across a call: local arrays are values in registers, not
+// references, and no target passes them as parameters. That is also why the
+// support point is computed inline rather than in its own fn: the two hulls
+// are rotated into world space once, into local arrays the loops below index,
+// and no fn could take those arrays as parameters.
+//
+// The GJK loop leaves a tetrahedron enclosing the origin of the Minkowski
+// difference, and EPA expands it towards the nearest face of that difference,
+// which is the contact normal and depth. Witness points on each body are
+// carried alongside every polytope vertex, so the contact point is the
+// barycentric mix of the closest face's witnesses.
+
+fn dynamic_collide(a: i32, b: i32) dynamic_contact {
+    let miss = dynamic_contact {
+        normal: dynamic_v3(0.0, 1.0, 0.0),
+        point: dynamic_v3(0.0, 0.0, 0.0),
+        depth: 0.0,
+        hit: 0.0,
+    }
+
+    let simplex = [float3](4)
+    let witness_a = [float3](4)
+    let witness_b = [float3](4)
+    let count = 0
+
+    let shape_a = dynamic_shape_of(a)
+    let shape_b = dynamic_shape_of(b)
+
+    // World-space hulls, read and rotated once. Support then costs one dot
+    // product per point instead of a texel fetch and a rotation.
+    let world_a = [float3](DYNAMIC_MAX_HULL_VERTICES)
+    let world_b = [float3](DYNAMIC_MAX_HULL_VERTICES)
+    for i in 0 to shape_a.hull_count {
+        let vertex = shader_read_texture(a, DYNAMIC_ROW_HULL + i)
+        world_a[i] = dynamic_add3(shape_a.center, dynamic_quat_rotate(shape_a.orientation, dynamic_xyz(vertex)))
+    }
+    for i in 0 to shape_b.hull_count {
+        let vertex = shader_read_texture(b, DYNAMIC_ROW_HULL + i)
+        world_b[i] = dynamic_add3(shape_b.center, dynamic_quat_rotate(shape_b.orientation, dynamic_xyz(vertex)))
+    }
+
+    let direction = dynamic_sub3(shape_a.center, shape_b.center)
+    if dynamic_dot3(direction, direction) <= DYNAMIC_EPSILON {
+        direction = dynamic_v3(1.0, 0.0, 0.0)
+    }
+
+    // ---- GJK ---------------------------------------------------------------
+    let enclosing = false
+    for iteration in 0 to DYNAMIC_GJK_ITERATIONS {
+        let unit = dynamic_normalize3(direction)
+        let best_a = world_a[0]
+        let reach_a = dynamic_dot3(best_a, unit)
+        for i in 1 to shape_a.hull_count {
+            let candidate = dynamic_dot3(world_a[i], unit)
+            if candidate > reach_a {
+                reach_a = candidate
+                best_a = world_a[i]
+            }
+        }
+        let best_b = world_b[0]
+        let reach_b = 0.0 - dynamic_dot3(best_b, unit)
+        for i in 1 to shape_b.hull_count {
+            let candidate = 0.0 - dynamic_dot3(world_b[i], unit)
+            if candidate > reach_b {
+                reach_b = candidate
+                best_b = world_b[i]
+            }
+        }
+        let point_a = dynamic_add3(best_a, dynamic_scale3(unit, shape_a.margin))
+        let point_b = dynamic_sub3(best_b, dynamic_scale3(unit, shape_b.margin))
+        let support = dynamic_sub3(point_a, point_b)
+        if dynamic_dot3(support, direction) < 0.0 {
+            return miss
+        }
+
+        simplex[count] = support
+        witness_a[count] = point_a
+        witness_b[count] = point_b
+        count = count + 1
+
+        // Reduce the simplex to the feature nearest the origin and pick the
+        // next search direction; a tetrahedron containing the origin ends GJK.
+        if count == 1 {
+            direction = dynamic_scale3(simplex[0], 0.0 - 1.0)
+            if dynamic_dot3(direction, direction) <= DYNAMIC_EPSILON {
+                direction = dynamic_v3(1.0, 0.0, 0.0)
+            }
+        }
+        if count == 2 {
+            let ab = dynamic_sub3(simplex[0], simplex[1])
+            let ao = dynamic_scale3(simplex[1], 0.0 - 1.0)
+            direction = dynamic_cross3(dynamic_cross3(ab, ao), ab)
+            if dynamic_dot3(direction, direction) <= DYNAMIC_EPSILON {
+                direction = dynamic_perpendicular3(ab)
+            }
+        }
+        if count == 3 {
+            let ab = dynamic_sub3(simplex[1], simplex[2])
+            let ac = dynamic_sub3(simplex[0], simplex[2])
+            let ao = dynamic_scale3(simplex[2], 0.0 - 1.0)
+            let normal = dynamic_cross3(ab, ac)
+            if dynamic_dot3(normal, ao) < 0.0 {
+                normal = dynamic_scale3(normal, 0.0 - 1.0)
+            }
+            direction = normal
+            if dynamic_dot3(direction, direction) <= DYNAMIC_EPSILON {
+                return miss
+            }
+        }
+        if count == 4 {
+            // The three faces that contain the newest vertex. GJK does not
+            // fix the winding of its simplex, so each face normal is oriented
+            // away from the vertex the face excludes before the origin is
+            // tested against it. A face the origin lies outside of becomes
+            // the new simplex; if there is none, the origin is enclosed.
+            let d = simplex[3]
+            let ao = dynamic_scale3(d, 0.0 - 1.0)
+            let dropped = 0 - 1
+            let face = dynamic_v3(0.0, 0.0, 0.0)
+            for f in 0 to 3 {
+                if dropped < 0 {
+                    let excluded = 0
+                    let first = simplex[2]
+                    let second = simplex[1]
+                    if f == 1 {
+                        excluded = 1
+                        first = simplex[0]
+                        second = simplex[2]
+                    }
+                    if f == 2 {
+                        excluded = 2
+                        first = simplex[1]
+                        second = simplex[0]
+                    }
+                    let normal = dynamic_cross3(dynamic_sub3(first, d), dynamic_sub3(second, d))
+                    if dynamic_dot3(normal, dynamic_sub3(simplex[excluded], d)) > 0.0 {
+                        normal = dynamic_scale3(normal, 0.0 - 1.0)
+                    }
+                    if dynamic_dot3(normal, ao) > 0.0 {
+                        dropped = excluded
+                        face = normal
+                    }
+                }
+            }
+            if dropped < 0 {
+                enclosing = true
+                break
+            }
+            // Keep the two survivors plus the newest point.
+            let keep0 = 0
+            let keep1 = 1
+            if dropped == 0 {
+                keep0 = 1
+                keep1 = 2
+            }
+            if dropped == 1 {
+                keep0 = 0
+                keep1 = 2
+            }
+            let s0 = simplex[keep0]
+            let s1 = simplex[keep1]
+            let a0 = witness_a[keep0]
+            let a1 = witness_a[keep1]
+            let b0 = witness_b[keep0]
+            let b1 = witness_b[keep1]
+            simplex[0] = s0
+            simplex[1] = s1
+            simplex[2] = simplex[3]
+            witness_a[0] = a0
+            witness_a[1] = a1
+            witness_a[2] = witness_a[3]
+            witness_b[0] = b0
+            witness_b[1] = b1
+            witness_b[2] = witness_b[3]
+            count = 3
+            direction = face
+        }
+    }
+    if enclosing == false {
+        return miss
+    }
+
+    // ---- EPA ---------------------------------------------------------------
+    let vertices = [float3](DYNAMIC_EPA_MAX_VERTICES)
+    let vertices_a = [float3](DYNAMIC_EPA_MAX_VERTICES)
+    let vertices_b = [float3](DYNAMIC_EPA_MAX_VERTICES)
+    let faces = [i32](DYNAMIC_EPA_MAX_FACES * 3)
+    let normals = [float3](DYNAMIC_EPA_MAX_FACES)
+    let distances = [f32](DYNAMIC_EPA_MAX_FACES)
+    let edges = [i32](DYNAMIC_EPA_MAX_EDGES * 2)
+
+    for i in 0 to 4 {
+        vertices[i] = simplex[i]
+        vertices_a[i] = witness_a[i]
+        vertices_b[i] = witness_b[i]
+    }
+    let vertex_count = 4
+    let face_count = 4
+    faces[0] = 0
+    faces[1] = 1
+    faces[2] = 2
+    faces[3] = 0
+    faces[4] = 2
+    faces[5] = 3
+    faces[6] = 0
+    faces[7] = 3
+    faces[8] = 1
+    faces[9] = 1
+    faces[10] = 3
+    faces[11] = 2
+
+    // Outward normal and origin distance of every face; the winding of the
+    // GJK tetrahedron is not known, so each face is oriented away from the
+    // origin explicitly.
+    for f in 0 to face_count {
+        let v0 = vertices[faces[f * 3]]
+        let v1 = vertices[faces[f * 3 + 1]]
+        let v2 = vertices[faces[f * 3 + 2]]
+        let normal = dynamic_normalize3(dynamic_cross3(dynamic_sub3(v1, v0), dynamic_sub3(v2, v0)))
+        let distance = dynamic_dot3(normal, v0)
+        if distance < 0.0 {
+            normal = dynamic_scale3(normal, 0.0 - 1.0)
+            distance = 0.0 - distance
+            let swap = faces[f * 3 + 1]
+            faces[f * 3 + 1] = faces[f * 3 + 2]
+            faces[f * 3 + 2] = swap
+        }
+        normals[f] = normal
+        distances[f] = distance
+    }
+
+    let best_face = 0
+    for iteration in 0 to DYNAMIC_EPA_ITERATIONS {
+        best_face = 0
+        let best_distance = distances[0]
+        for f in 1 to face_count {
+            if distances[f] < best_distance {
+                best_distance = distances[f]
+                best_face = f
+            }
+        }
+
+        let normal = normals[best_face]
+        let best_a = world_a[0]
+        let support_a = dynamic_dot3(best_a, normal)
+        for i in 1 to shape_a.hull_count {
+            let candidate = dynamic_dot3(world_a[i], normal)
+            if candidate > support_a {
+                support_a = candidate
+                best_a = world_a[i]
+            }
+        }
+        let best_b = world_b[0]
+        let support_b = 0.0 - dynamic_dot3(best_b, normal)
+        for i in 1 to shape_b.hull_count {
+            let candidate = 0.0 - dynamic_dot3(world_b[i], normal)
+            if candidate > support_b {
+                support_b = candidate
+                best_b = world_b[i]
+            }
+        }
+        let point_a = dynamic_add3(best_a, dynamic_scale3(normal, shape_a.margin))
+        let point_b = dynamic_sub3(best_b, dynamic_scale3(normal, shape_b.margin))
+        let support = dynamic_sub3(point_a, point_b)
+        let reach = dynamic_dot3(normal, support)
+        if reach - best_distance < 0.0001 {
+            break
+        }
+        if vertex_count >= DYNAMIC_EPA_MAX_VERTICES {
+            break
+        }
+
+        // Remove every face the new point can see and collect the horizon:
+        // an edge shared by two removed faces cancels out, the rest bounds
+        // the hole the new point closes.
+        let edge_count = 0
+        let f = 0
+        loop f < face_count {
+            if dynamic_dot3(normals[f], dynamic_sub3(support, vertices[faces[f * 3]])) > 0.0 {
+                for e in 0 to 3 {
+                    let edge_from = faces[f * 3 + e]
+                    let edge_to = faces[f * 3 + (e + 1) % 3]
+                    let shared = 0 - 1
+                    for k in 0 to edge_count {
+                        if edges[k * 2] == edge_to && edges[k * 2 + 1] == edge_from {
+                            shared = k
+                        }
+                    }
+                    if shared >= 0 {
+                        edges[shared * 2] = edges[(edge_count - 1) * 2]
+                        edges[shared * 2 + 1] = edges[(edge_count - 1) * 2 + 1]
+                        edge_count = edge_count - 1
+                    } else if edge_count < DYNAMIC_EPA_MAX_EDGES {
+                        edges[edge_count * 2] = edge_from
+                        edges[edge_count * 2 + 1] = edge_to
+                        edge_count = edge_count + 1
+                    }
+                }
+                // Compact the face list in place.
+                faces[f * 3] = faces[(face_count - 1) * 3]
+                faces[f * 3 + 1] = faces[(face_count - 1) * 3 + 1]
+                faces[f * 3 + 2] = faces[(face_count - 1) * 3 + 2]
+                normals[f] = normals[face_count - 1]
+                distances[f] = distances[face_count - 1]
+                face_count = face_count - 1
+            } else {
+                f = f + 1
+            }
+        }
+        if edge_count == 0 {
+            break
+        }
+
+        vertices[vertex_count] = support
+        vertices_a[vertex_count] = point_a
+        vertices_b[vertex_count] = point_b
+        let added = vertex_count
+        vertex_count = vertex_count + 1
+
+        for k in 0 to edge_count {
+            if face_count < DYNAMIC_EPA_MAX_FACES {
+                let v0 = vertices[edges[k * 2]]
+                let v1 = vertices[edges[k * 2 + 1]]
+                let face_normal = dynamic_normalize3(dynamic_cross3(dynamic_sub3(v1, v0), dynamic_sub3(support, v0)))
+                let face_distance = dynamic_dot3(face_normal, v0)
+                if face_distance < 0.0 {
+                    face_normal = dynamic_scale3(face_normal, 0.0 - 1.0)
+                    face_distance = 0.0 - face_distance
+                    faces[face_count * 3] = edges[k * 2 + 1]
+                    faces[face_count * 3 + 1] = edges[k * 2]
+                } else {
+                    faces[face_count * 3] = edges[k * 2]
+                    faces[face_count * 3 + 1] = edges[k * 2 + 1]
+                }
+                faces[face_count * 3 + 2] = added
+                normals[face_count] = face_normal
+                distances[face_count] = face_distance
+                face_count = face_count + 1
+            }
+        }
+    }
+
+    // Contact data from the closest face: its normal, its origin distance as
+    // the penetration depth, and the witness points mixed by the barycentric
+    // coordinates of the origin projected onto that face.
+    let i0 = faces[best_face * 3]
+    let i1 = faces[best_face * 3 + 1]
+    let i2 = faces[best_face * 3 + 2]
+    let v0 = vertices[i0]
+    let v1 = vertices[i1]
+    let v2 = vertices[i2]
+    let normal = normals[best_face]
+    let projected = dynamic_scale3(normal, distances[best_face])
+
+    let e1 = dynamic_sub3(v1, v0)
+    let e2 = dynamic_sub3(v2, v0)
+    let to_point = dynamic_sub3(projected, v0)
+    let d11 = dynamic_dot3(e1, e1)
+    let d12 = dynamic_dot3(e1, e2)
+    let d22 = dynamic_dot3(e2, e2)
+    let dp1 = dynamic_dot3(to_point, e1)
+    let dp2 = dynamic_dot3(to_point, e2)
+    let determinant = d11 * d22 - d12 * d12
+    let bary1 = 0.0
+    let bary2 = 0.0
+    if dynamic_abs(determinant) > DYNAMIC_EPSILON {
+        bary1 = (d22 * dp1 - d12 * dp2) / determinant
+        bary2 = (d11 * dp2 - d12 * dp1) / determinant
+    }
+    bary1 = dynamic_clamp(bary1, 0.0, 1.0)
+    bary2 = dynamic_clamp(bary2, 0.0, 1.0 - bary1)
+    let bary0 = 1.0 - bary1 - bary2
+
+    let on_a = dynamic_add3(dynamic_add3(dynamic_scale3(vertices_a[i0], bary0), dynamic_scale3(vertices_a[i1], bary1)), dynamic_scale3(vertices_a[i2], bary2))
+    let on_b = dynamic_add3(dynamic_add3(dynamic_scale3(vertices_b[i0], bary0), dynamic_scale3(vertices_b[i1], bary1)), dynamic_scale3(vertices_b[i2], bary2))
+
+    // The closest face of the Minkowski difference gives the translation that
+    // separates the pair as `distance * normal` applied to b, so the contact
+    // normal -- the direction a must move along -- is its opposite.
+    return dynamic_contact {
+        normal: dynamic_scale3(normal, 0.0 - 1.0),
+        point: dynamic_scale3(dynamic_add3(on_a, on_b), 0.5),
+        depth: distances[best_face],
+        hit: 1.0,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// constraint solve
+// ---------------------------------------------------------------------------
+
+// One contact of the velocity solve, from the point of view of body `a`. Both
+// bodies run this independently and each applies only its own share, which is
+// what keeps a dispatched solve free of atomics; `relaxation` bounds the
+// resulting overshoot. The accumulated impulses are clamped as totals so a
+// resting contact keeps what earlier iterations and steps found.
+struct dynamic_impulse {
+    velocity: float3,
+    angular_velocity: float3,
+    normal_impulse: f32,
+    tangent_impulse: f32
+}
+
+fn dynamic_solve_contact(velocity: float3, angular: float3, basis: dynamic_basis, inv_mass: f32, center: float3, other_velocity: float3, other_angular: float3, other_basis: dynamic_basis, other_inv_mass: f32, other_center: float3, contact: dynamic_contact, restitution: f32, friction: f32, accumulated_normal: f32, accumulated_tangent: f32, params: dynamic_step_params) dynamic_impulse {
+    let unchanged = dynamic_impulse {
+        velocity: velocity,
+        angular_velocity: angular,
+        normal_impulse: accumulated_normal,
+        tangent_impulse: accumulated_tangent,
+    }
+    if contact.hit < 0.5 || inv_mass + other_inv_mass <= DYNAMIC_EPSILON {
+        return unchanged
+    }
+
+    let arm = dynamic_sub3(contact.point, center)
+    let other_arm = dynamic_sub3(contact.point, other_center)
+    let solved_velocity = velocity
+    let solved_angular = angular
+
+    // Effective mass along the normal, including both angular arms.
+    let normal_arm = dynamic_cross3(arm, contact.normal)
+    let other_normal_arm = dynamic_cross3(other_arm, contact.normal)
+    let normal_mass = inv_mass + other_inv_mass +
+        dynamic_dot3(contact.normal, dynamic_cross3(dynamic_apply_basis(basis, normal_arm), arm)) +
+        dynamic_dot3(contact.normal, dynamic_cross3(dynamic_apply_basis(other_basis, other_normal_arm), other_arm))
+    if normal_mass <= DYNAMIC_EPSILON {
+        return unchanged
+    }
+
+    let relative = dynamic_sub3(dynamic_add3(solved_velocity, dynamic_cross3(solved_angular, arm)), dynamic_add3(other_velocity, dynamic_cross3(other_angular, other_arm)))
+    let normal_speed = dynamic_dot3(relative, contact.normal)
+
+    // Positional error is repaired through the velocity, not by moving the
+    // body, so a resting contact never gains energy from the correction.
+    let penetration = dynamic_max(0.0, contact.depth - params.slop)
+    let bias_speed = params.bias * penetration / params.dt
+    let bounce = 0.0
+    if normal_speed < 0.0 - DYNAMIC_REST_SPEED {
+        bounce = 0.0 - restitution * normal_speed
+    }
+
+    let lambda = (0.0 - normal_speed + bias_speed + bounce) / normal_mass * params.relaxation
+    let total_normal = dynamic_max(0.0, accumulated_normal + lambda)
+    let applied = total_normal - accumulated_normal
+    solved_velocity = dynamic_add3(solved_velocity, dynamic_scale3(contact.normal, applied * inv_mass))
+    solved_angular = dynamic_add3(solved_angular, dynamic_apply_basis(basis, dynamic_scale3(normal_arm, applied)))
+
+    // Coulomb friction along the one tangent the contact is actually sliding
+    // on, bounded by the normal impulse this contact has accumulated.
+    let total_tangent = accumulated_tangent
+    let sliding = dynamic_sub3(dynamic_add3(solved_velocity, dynamic_cross3(solved_angular, arm)), dynamic_add3(other_velocity, dynamic_cross3(other_angular, other_arm)))
+    let tangential = dynamic_sub3(sliding, dynamic_scale3(contact.normal, dynamic_dot3(sliding, contact.normal)))
+    let tangent_speed = dynamic_length3(tangential)
+    if tangent_speed > DYNAMIC_EPSILON {
+        let tangent = dynamic_scale3(tangential, 1.0 / tangent_speed)
+        let arm_tangent = dynamic_cross3(arm, tangent)
+        let other_arm_tangent = dynamic_cross3(other_arm, tangent)
+        let tangent_mass = inv_mass + other_inv_mass +
+            dynamic_dot3(tangent, dynamic_cross3(dynamic_apply_basis(basis, arm_tangent), arm)) +
+            dynamic_dot3(tangent, dynamic_cross3(dynamic_apply_basis(other_basis, other_arm_tangent), other_arm))
+        if tangent_mass > DYNAMIC_EPSILON {
+            let limit = friction * total_normal
+            let tangent_lambda = (0.0 - tangent_speed) / tangent_mass * params.relaxation
+            total_tangent = dynamic_clamp(accumulated_tangent + tangent_lambda, 0.0 - limit, limit)
+            let tangent_applied = total_tangent - accumulated_tangent
+            solved_velocity = dynamic_add3(solved_velocity, dynamic_scale3(tangent, tangent_applied * inv_mass))
+            solved_angular = dynamic_add3(solved_angular, dynamic_apply_basis(basis, dynamic_scale3(arm_tangent, tangent_applied)))
+        }
+    }
+
+    return dynamic_impulse {
+        velocity: solved_velocity,
+        angular_velocity: solved_angular,
+        normal_impulse: total_normal,
+        tangent_impulse: total_tangent,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// compute kernels: one dispatch per stage over the whole state image
+// ---------------------------------------------------------------------------
+//
+// Root words: 0 read texture, 1 write texture, 2 capacity, 3 body count. The
+// per-substep constants travel in the config row instead, which keeps the
+// 16-word root the same for every stage.
+//
+// A stage owns a block of rows. The first row of the block is the owner: it
+// computes once and writes the whole block, and the other rows of the block
+// return without writing. Everything outside the block is copied through.
+
+fn dynamic_kernel_copy_through(column: i32, row: i32) void {
+    shader_write_texture(column, row, shader_read_texture(column, row))
+}
+
+fn cs_dynamic_broad_phase() void {
+    let column = shader_global_id_x()
+    let row = shader_global_id_y()
+    if column >= dynamic_gpu_capacity() || row >= DYNAMIC_ROW_COUNT {
+        return
+    }
+    if row < DYNAMIC_ROW_PAIR || row >= DYNAMIC_ROW_CONTACT {
+        dynamic_kernel_copy_through(column, row)
+        return
+    }
+    // Only the first pair row runs; it writes every pair slot of this body.
+    if row != DYNAMIC_ROW_PAIR {
+        return
+    }
+
+    let empty = float4 { x: 0.0, y: 0.0, z: 0.0, w: 0.0 }
+    let count = dynamic_gpu_count()
+    if column >= count {
+        for slot in 0 to DYNAMIC_MAX_CONTACTS {
+            shader_write_texture(column, DYNAMIC_ROW_PAIR + slot, empty)
+        }
+        return
+    }
+
+    // The pair rows are about to be rewritten, so the impulses a persisting
+    // contact should keep are read out first.
+    let previous = [float4](DYNAMIC_MAX_CONTACTS)
+    for slot in 0 to DYNAMIC_MAX_CONTACTS {
+        previous[slot] = shader_read_texture(column, DYNAMIC_ROW_PAIR + slot)
+    }
+
+    let params = dynamic_gpu_params()
+    let self = shader_read_texture(column, DYNAMIC_ROW_POSITION)
+    let found = 0
+    for other in 0 to count {
+        if other != column && found < DYNAMIC_MAX_CONTACTS {
+            let bounds = shader_read_texture(other, DYNAMIC_ROW_POSITION)
+            let delta = dynamic_sub3(dynamic_xyz(self), dynamic_xyz(bounds))
+            let reach = self.w + bounds.w + params.margin
+            if dynamic_dot3(delta, delta) <= reach * reach {
+                let partner = (other + 1) as f32
+                let warm = float4 { x: partner, y: 0.0, z: 0.0, w: 0.0 }
+                for slot in 0 to DYNAMIC_MAX_CONTACTS {
+                    if previous[slot].x == partner {
+                        warm = float4 { x: partner, y: previous[slot].y, z: previous[slot].z, w: previous[slot].w }
+                    }
+                }
+                shader_write_texture(column, DYNAMIC_ROW_PAIR + found, warm)
+                found = found + 1
+            }
+        }
+    }
+    for slot in found to DYNAMIC_MAX_CONTACTS {
+        shader_write_texture(column, DYNAMIC_ROW_PAIR + slot, empty)
+    }
+}
+
+fn cs_dynamic_narrow_phase() void {
+    let column = shader_global_id_x()
+    let row = shader_global_id_y()
+    if column >= dynamic_gpu_capacity() || row >= DYNAMIC_ROW_COUNT {
+        return
+    }
+    if row < DYNAMIC_ROW_CONTACT || row >= DYNAMIC_ROW_HULL {
+        dynamic_kernel_copy_through(column, row)
+        return
+    }
+    // A contact row owns its slot's manifold and contact point; the point
+    // rows are written from here, so they run no invocation of their own.
+    if row >= DYNAMIC_ROW_POINT {
+        return
+    }
+
+    let slot = row - DYNAMIC_ROW_CONTACT
+    let no_contact = float4 { x: 0.0, y: 1.0, z: 0.0, w: 0.0 }
+    let origin = float4 { x: 0.0, y: 0.0, z: 0.0, w: 0.0 }
+    let pair = shader_read_texture(column, DYNAMIC_ROW_PAIR + slot)
+    if pair.x < 0.5 || column >= dynamic_gpu_count() {
+        shader_write_texture(column, row, no_contact)
+        shader_write_texture(column, DYNAMIC_ROW_POINT + slot, origin)
+        return
+    }
+
+    let contact = dynamic_collide(column, (pair.x as i32) - 1)
+    if contact.hit < 0.5 {
+        shader_write_texture(column, row, no_contact)
+        shader_write_texture(column, DYNAMIC_ROW_POINT + slot, origin)
+        return
+    }
+    shader_write_texture(column, row, dynamic_float4(contact.normal, contact.depth))
+    shader_write_texture(column, DYNAMIC_ROW_POINT + slot, dynamic_float4(contact.point, 1.0))
+}
+
+// The six world-bound half-spaces, solved as static contacts. Every hull
+// vertex below a plane becomes its own contact, which is what gives a resting
+// box a manifold instead of a single wobbling point.
+fn dynamic_solve_bounds_kernel(column: i32, velocity: float3, angular: float3, params: dynamic_step_params) dynamic_impulse {
+    let position = shader_read_texture(column, DYNAMIC_ROW_POSITION)
+    let orientation = shader_read_texture(column, DYNAMIC_ROW_ORIENTATION)
+    let linear = shader_read_texture(column, DYNAMIC_ROW_VELOCITY)
+    let angular_row = shader_read_texture(column, DYNAMIC_ROW_ANGULAR)
+    let material = shader_read_texture(column, DYNAMIC_ROW_MATERIAL)
+    let inertia = shader_read_texture(column, DYNAMIC_ROW_INERTIA)
+
+    let result = dynamic_impulse {
+        velocity: velocity,
+        angular_velocity: angular,
+        normal_impulse: 0.0,
+        tangent_impulse: 0.0,
+    }
+    if params.bounds_enabled < 0.5 || linear.w <= DYNAMIC_EPSILON {
+        return result
+    }
+
+    let center = dynamic_xyz(position)
+    let hull_count = inertia.w as i32
+    let restitution = material.x * params.bounds_restitution
+    let basis = dynamic_inertia_basis(orientation, dynamic_xyz(inertia))
+    let static_basis = dynamic_basis_zero()
+    let margin = angular_row.w
+    let bound = position.w
+    let zero = dynamic_v3(0.0, 0.0, 0.0)
+
+    // The hull is rotated into world space once, then each plane the body can
+    // reach at all takes one dot product per point.
+    let world = [float3](DYNAMIC_MAX_HULL_VERTICES)
+    for i in 0 to hull_count {
+        let vertex = shader_read_texture(column, DYNAMIC_ROW_HULL + i)
+        world[i] = dynamic_add3(center, dynamic_quat_rotate(orientation, dynamic_xyz(vertex)))
+    }
+
+    for plane in 0 to 6 {
+        let normal = dynamic_v3(0.0, 1.0, 0.0)
+        let offset = params.bounds_min.y
+        if plane == 1 {
+            normal = dynamic_v3(0.0, 0.0 - 1.0, 0.0)
+            offset = 0.0 - params.bounds_max.y
+        }
+        if plane == 2 {
+            normal = dynamic_v3(1.0, 0.0, 0.0)
+            offset = params.bounds_min.x
+        }
+        if plane == 3 {
+            normal = dynamic_v3(0.0 - 1.0, 0.0, 0.0)
+            offset = 0.0 - params.bounds_max.x
+        }
+        if plane == 4 {
+            normal = dynamic_v3(0.0, 0.0, 1.0)
+            offset = params.bounds_min.z
+        }
+        if plane == 5 {
+            normal = dynamic_v3(0.0, 0.0, 0.0 - 1.0)
+            offset = 0.0 - params.bounds_max.z
+        }
+        // Reject the plane outright when the whole body is clear of it.
+        if dynamic_dot3(normal, center) - offset <= bound {
+            for i in 0 to hull_count {
+                let point = world[i]
+                let depth = margin + offset - dynamic_dot3(normal, point)
+                if depth > 0.0 {
+                    let contact = dynamic_contact {
+                        normal: normal,
+                        point: dynamic_add3(point, dynamic_scale3(normal, margin)),
+                        depth: depth,
+                        hit: 1.0,
+                    }
+                    let solved = dynamic_solve_contact(result.velocity, result.angular_velocity, basis, linear.w, center, zero, zero, static_basis, 0.0, zero, contact, restitution, material.y, 0.0, 0.0, params)
+                    result.velocity = solved.velocity
+                    result.angular_velocity = solved.angular_velocity
+                }
+            }
+        }
+    }
+    return result
+}
+
+fn cs_dynamic_solve() void {
+    let column = shader_global_id_x()
+    let row = shader_global_id_y()
+    if column >= dynamic_gpu_capacity() || row >= DYNAMIC_ROW_COUNT {
+        return
+    }
+    let owned = row == DYNAMIC_ROW_VELOCITY || row == DYNAMIC_ROW_ANGULAR || (row >= DYNAMIC_ROW_PAIR && row < DYNAMIC_ROW_CONTACT)
+    if owned == false {
+        dynamic_kernel_copy_through(column, row)
+        return
+    }
+    // The velocity row owns the whole solve: it writes both velocity rows and
+    // every pair slot's accumulated impulses.
+    if row != DYNAMIC_ROW_VELOCITY {
+        return
+    }
+    if column >= dynamic_gpu_count() {
+        dynamic_kernel_copy_through(column, DYNAMIC_ROW_VELOCITY)
+        dynamic_kernel_copy_through(column, DYNAMIC_ROW_ANGULAR)
+        for slot in 0 to DYNAMIC_MAX_CONTACTS {
+            dynamic_kernel_copy_through(column, DYNAMIC_ROW_PAIR + slot)
+        }
+        return
+    }
+
+    let params = dynamic_gpu_params()
+    let position = shader_read_texture(column, DYNAMIC_ROW_POSITION)
+    let orientation = shader_read_texture(column, DYNAMIC_ROW_ORIENTATION)
+    let linear = shader_read_texture(column, DYNAMIC_ROW_VELOCITY)
+    let angular = shader_read_texture(column, DYNAMIC_ROW_ANGULAR)
+    let material = shader_read_texture(column, DYNAMIC_ROW_MATERIAL)
+    let inertia = shader_read_texture(column, DYNAMIC_ROW_INERTIA)
+
+    let velocity = dynamic_xyz(linear)
+    let spin = dynamic_xyz(angular)
+    let center = dynamic_xyz(position)
+    let basis = dynamic_inertia_basis(orientation, dynamic_xyz(inertia))
+
+    for slot in 0 to DYNAMIC_MAX_CONTACTS {
+        let pair = shader_read_texture(column, DYNAMIC_ROW_PAIR + slot)
+        let updated = pair
+        if pair.x >= 0.5 {
+            let other = (pair.x as i32) - 1
+            let manifold = shader_read_texture(column, DYNAMIC_ROW_CONTACT + slot)
+            let point = shader_read_texture(column, DYNAMIC_ROW_POINT + slot)
+            let other_position = shader_read_texture(other, DYNAMIC_ROW_POSITION)
+            let other_orientation = shader_read_texture(other, DYNAMIC_ROW_ORIENTATION)
+            let other_linear = shader_read_texture(other, DYNAMIC_ROW_VELOCITY)
+            let other_angular = shader_read_texture(other, DYNAMIC_ROW_ANGULAR)
+            let other_material = shader_read_texture(other, DYNAMIC_ROW_MATERIAL)
+            let other_inertia = shader_read_texture(other, DYNAMIC_ROW_INERTIA)
+            let hit = 1.0
+            if manifold.w <= 0.0 || point.w <= 0.0 {
+                hit = 0.0
+            }
+            let contact = dynamic_contact {
+                normal: dynamic_xyz(manifold),
+                point: dynamic_xyz(point),
+                depth: manifold.w,
+                hit: hit,
+            }
+            // Pair properties are the mean of the two materials.
+            let other_basis = dynamic_inertia_basis(other_orientation, dynamic_xyz(other_inertia))
+            let solved = dynamic_solve_contact(velocity, spin, basis, linear.w, center, dynamic_xyz(other_linear), dynamic_xyz(other_angular), other_basis, other_linear.w, dynamic_xyz(other_position), contact, (material.x + other_material.x) * 0.5, (material.y + other_material.y) * 0.5, pair.y, pair.z, params)
+            velocity = solved.velocity
+            spin = solved.angular_velocity
+            updated = float4 { x: pair.x, y: solved.normal_impulse, z: solved.tangent_impulse, w: 0.0 }
+        }
+        shader_write_texture(column, DYNAMIC_ROW_PAIR + slot, updated)
+    }
+
+    let bounded = dynamic_solve_bounds_kernel(column, velocity, spin, params)
+    shader_write_texture(column, DYNAMIC_ROW_VELOCITY, dynamic_float4(bounded.velocity, linear.w))
+    shader_write_texture(column, DYNAMIC_ROW_ANGULAR, dynamic_float4(bounded.angular_velocity, angular.w))
+}
+
+fn cs_dynamic_integrate() void {
+    let column = shader_global_id_x()
+    let row = shader_global_id_y()
+    if column >= dynamic_gpu_capacity() || row >= DYNAMIC_ROW_COUNT {
+        return
+    }
+    let owned = row >= DYNAMIC_ROW_POSITION && row <= DYNAMIC_ROW_ANGULAR
+    if owned == false {
+        dynamic_kernel_copy_through(column, row)
+        return
+    }
+    // The position row owns integration and writes all four moving rows.
+    if row != DYNAMIC_ROW_POSITION {
+        return
+    }
+
+    let position = shader_read_texture(column, DYNAMIC_ROW_POSITION)
+    let orientation = shader_read_texture(column, DYNAMIC_ROW_ORIENTATION)
+    let linear = shader_read_texture(column, DYNAMIC_ROW_VELOCITY)
+    let angular = shader_read_texture(column, DYNAMIC_ROW_ANGULAR)
+    if column >= dynamic_gpu_count() || linear.w <= DYNAMIC_EPSILON {
+        shader_write_texture(column, DYNAMIC_ROW_POSITION, position)
+        shader_write_texture(column, DYNAMIC_ROW_ORIENTATION, orientation)
+        shader_write_texture(column, DYNAMIC_ROW_VELOCITY, linear)
+        shader_write_texture(column, DYNAMIC_ROW_ANGULAR, angular)
+        return
+    }
+
+    // Semi-implicit Euler. Gravity enters the velocity here, so the next
+    // step's solver sees it before any contact is resolved.
+    let params = dynamic_gpu_params()
+    let material = shader_read_texture(column, DYNAMIC_ROW_MATERIAL)
+    let velocity = dynamic_add3(dynamic_xyz(linear), dynamic_scale3(params.gravity, params.dt))
+    velocity = dynamic_scale3(velocity, dynamic_clamp(1.0 - material.z * params.dt, 0.0, 1.0))
+    let spin = dynamic_scale3(dynamic_xyz(angular), dynamic_clamp(1.0 - material.w * params.dt, 0.0, 1.0))
+
+    let moved = dynamic_add3(dynamic_xyz(position), dynamic_scale3(velocity, params.dt))
+    // q' = normalize(q + 0.5 * dt * (w, 0) * q)
+    let spin_quat = float4 { x: spin.x, y: spin.y, z: spin.z, w: 0.0 }
+    let derivative = dynamic_quat_mul(spin_quat, orientation)
+    let turned = dynamic_quat_normalize(float4 {
+        x: orientation.x + derivative.x * 0.5 * params.dt,
+        y: orientation.y + derivative.y * 0.5 * params.dt,
+        z: orientation.z + derivative.z * 0.5 * params.dt,
+        w: orientation.w + derivative.w * 0.5 * params.dt,
+    })
+
+    shader_write_texture(column, DYNAMIC_ROW_POSITION, dynamic_float4(moved, position.w))
+    shader_write_texture(column, DYNAMIC_ROW_ORIENTATION, turned)
+    shader_write_texture(column, DYNAMIC_ROW_VELOCITY, dynamic_float4(velocity, linear.w))
+    shader_write_texture(column, DYNAMIC_ROW_ANGULAR, dynamic_float4(spin, angular.w))
+}
+
+// ---------------------------------------------------------------------------
+// host-side state image
+// ---------------------------------------------------------------------------
+
+fn dynamic_state_index(capacity: i32, column: i32, row: i32) i32 {
+    return (row * capacity + column) * 4
+}
+
+fn dynamic_state_read(data: [f32], capacity: i32, column: i32, row: i32) float4 {
+    let base = dynamic_state_index(capacity, column, row)
+    return float4 { x: data[base], y: data[base + 1], z: data[base + 2], w: data[base + 3] }
+}
+
+fn dynamic_state_write(data: [f32], capacity: i32, column: i32, row: i32, value: float4) {
+    let base = dynamic_state_index(capacity, column, row)
+    data[base] = value.x
+    data[base + 1] = value.y
+    data[base + 2] = value.z
+    data[base + 3] = value.w
+}
+
+fn dynamic_state_floats(capacity: i32) i32 {
+    return capacity * DYNAMIC_ROW_COUNT * 4
+}
+
+// ---------------------------------------------------------------------------
+// shapes
+// ---------------------------------------------------------------------------
+
+fn dynamic_body_default() dynamic_body {
+    return dynamic_body {
+        position: dynamic_v3(0.0, 0.0, 0.0),
+        orientation: dynamic_quat_identity(),
+        velocity: dynamic_v3(0.0, 0.0, 0.0),
+        angular_velocity: dynamic_v3(0.0, 0.0, 0.0),
+        inv_mass: 1.0,
+        inv_inertia: dynamic_v3(6.0, 6.0, 6.0),
+        margin: 0.0,
+        restitution: 0.2,
+        friction: 0.5,
+        damping: 0.02,
+        angular_damping: 0.05,
+    }
+}
+
+// Solid-sphere inertia, as a hull of one point with the radius as margin.
+fn dynamic_body_sphere(radius: f32, mass: f32) dynamic_body {
+    let body = dynamic_body_default()
+    body.margin = radius
+    if mass <= 0.0 {
+        body.inv_mass = 0.0
+        body.inv_inertia = dynamic_v3(0.0, 0.0, 0.0)
+        return body
+    }
+    body.inv_mass = 1.0 / mass
+    let inertia = 0.4 * mass * radius * radius
+    body.inv_inertia = dynamic_v3(1.0 / inertia, 1.0 / inertia, 1.0 / inertia)
+    return body
+}
+
+// Solid-box inertia from half extents.
+fn dynamic_body_box(half_extents: float3, mass: f32) dynamic_body {
+    let body = dynamic_body_default()
+    if mass <= 0.0 {
+        body.inv_mass = 0.0
+        body.inv_inertia = dynamic_v3(0.0, 0.0, 0.0)
+        return body
+    }
+    body.inv_mass = 1.0 / mass
+    let x2 = half_extents.x * half_extents.x * 4.0
+    let y2 = half_extents.y * half_extents.y * 4.0
+    let z2 = half_extents.z * half_extents.z * 4.0
+    let scale = mass / 12.0
+    body.inv_inertia = dynamic_v3(1.0 / (scale * (y2 + z2)), 1.0 / (scale * (x2 + z2)), 1.0 / (scale * (x2 + y2)))
+    return body
+}
+
+// Convex-hull inertia approximated by the box of its extents, which is what a
+// rigid-body demo needs and what most engines fall back to without a mesh
+// integrator.
+fn dynamic_body_hull(extents: float3, mass: f32) dynamic_body {
+    return dynamic_body_box(extents, mass)
+}
+
+// ---------------------------------------------------------------------------
+// world
+// ---------------------------------------------------------------------------
+
+fn dynamic_config_default() dynamic_config {
+    return dynamic_config {
+        gravity: dynamic_v3(0.0, 0.0 - 9.81, 0.0),
+        dt: 1.0 / 60.0,
+        substeps: 1,
+        iterations: 4,
+        slop: 0.005,
+        bias: 0.2,
+        relaxation: 0.8,
+        margin: 0.08,
+        bounds_min: dynamic_v3(0.0 - 3.0, 0.0, 0.0 - 3.0),
+        bounds_max: dynamic_v3(3.0, 7.0, 3.0),
+        bounds_enabled: true,
+        bounds_restitution: 1.0,
+        prefer_gpu: false,
+    }
+}
+
+fn dynamic_world_params(w: dynamic_world) dynamic_step_params {
+    let substeps = w.config.substeps
+    if substeps < 1 {
+        substeps = 1
+    }
+    let enabled = 0.0
+    if w.config.bounds_enabled {
+        enabled = 1.0
+    }
+    return dynamic_step_params {
+        dt: w.config.dt / (substeps as f32),
+        slop: w.config.slop,
+        bias: w.config.bias,
+        relaxation: w.config.relaxation,
+        gravity: w.config.gravity,
+        margin: w.config.margin,
+        bounds_min: w.config.bounds_min,
+        bounds_max: w.config.bounds_max,
+        bounds_enabled: enabled,
+        bounds_restitution: w.config.bounds_restitution,
+    }
+}
+
+fn dynamic_write_config_row(w: ref dynamic_world) {
+    let params = dynamic_world_params(w)
+    dynamic_state_write(w.state, w.capacity, DYNAMIC_CONFIG_STEP, DYNAMIC_ROW_CONFIG, float4 { x: params.dt, y: params.slop, z: params.bias, w: params.relaxation })
+    dynamic_state_write(w.state, w.capacity, DYNAMIC_CONFIG_GRAVITY, DYNAMIC_ROW_CONFIG, dynamic_float4(params.gravity, params.margin))
+    dynamic_state_write(w.state, w.capacity, DYNAMIC_CONFIG_BOUNDS_MIN, DYNAMIC_ROW_CONFIG, dynamic_float4(params.bounds_min, params.bounds_enabled))
+    dynamic_state_write(w.state, w.capacity, DYNAMIC_CONFIG_BOUNDS_MAX, DYNAMIC_ROW_CONFIG, dynamic_float4(params.bounds_max, params.bounds_restitution))
+}
+
+// Compile the four kernels and allocate the ping-pong state textures. Returns
+// false on any tier that cannot run them, which leaves the world on the CPU.
+fn dynamic_gpu_setup(w: ref dynamic_world) bool {
+    if gpu_caps() == 0u {
+        return false
+    }
+    let usage = (GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_WRITE) as u32
+    w.read_texture = gpu_texture_create(w.capacity, DYNAMIC_ROW_COUNT, 1, GPU_PIXELFORMAT_RGBA32F, usage, 1, GPU_TEXTURE_2D)
+    w.write_texture = gpu_texture_create(w.capacity, DYNAMIC_ROW_COUNT, 1, GPU_PIXELFORMAT_RGBA32F, usage, 1, GPU_TEXTURE_2D)
+    if w.read_texture == 0u || w.write_texture == 0u {
+        return false
+    }
+    w.broad_shader = gpu_shader_compute(cs_dynamic_broad_phase).resource_id
+    w.narrow_shader = gpu_shader_compute(cs_dynamic_narrow_phase).resource_id
+    w.solve_shader = gpu_shader_compute(cs_dynamic_solve).resource_id
+    w.integrate_shader = gpu_shader_compute(cs_dynamic_integrate).resource_id
+    return w.broad_shader != 0u && w.narrow_shader != 0u && w.solve_shader != 0u && w.integrate_shader != 0u
+}
+
+// A world holds `capacity` bodies. The state image needs at least the four
+// configuration columns.
+fn dynamic_world_create(capacity: i32, config: dynamic_config) dynamic_world {
+    let columns = capacity
+    if columns < DYNAMIC_CONFIG_COLUMNS {
+        columns = DYNAMIC_CONFIG_COLUMNS
+    }
+    let w = dynamic_world {
+        capacity: columns,
+        count: 0,
+        config: config,
+        backend: DYNAMIC_BACKEND_CPU,
+        state: [f32](dynamic_state_floats(columns)),
+        next: [f32](dynamic_state_floats(columns)),
+        root: [f32](16),
+        read_texture: 0u,
+        write_texture: 0u,
+        broad_shader: 0u,
+        narrow_shader: 0u,
+        solve_shader: 0u,
+        integrate_shader: 0u,
+    }
+    dynamic_write_config_row(w)
+    if config.prefer_gpu {
+        if dynamic_gpu_setup(w) {
+            w.backend = DYNAMIC_BACKEND_GPU
+        }
+    }
+    return w
+}
+
+fn dynamic_world_release(w: ref dynamic_world) {
+    if w.backend != DYNAMIC_BACKEND_GPU {
+        return
+    }
+    gpu_texture_destroy(w.read_texture)
+    gpu_texture_destroy(w.write_texture)
+    gpu_shader_destroy(w.broad_shader)
+    gpu_shader_destroy(w.narrow_shader)
+    gpu_shader_destroy(w.solve_shader)
+    gpu_shader_destroy(w.integrate_shader)
+    w.read_texture = 0u
+    w.write_texture = 0u
+    w.backend = DYNAMIC_BACKEND_CPU
+}
+
+fn dynamic_world_backend(w: dynamic_world) i32 {
+    return w.backend
+}
+
+fn dynamic_world_backend_name(w: dynamic_world) str {
+    if w.backend == DYNAMIC_BACKEND_GPU {
+        return "gpu"
+    }
+    return "cpu"
+}
+
+// The state image a GPU world simulates into. Renderers read body rows from
+// it directly; it is 0 on a CPU world.
+fn dynamic_world_state_texture(w: dynamic_world) u32 {
+    return w.read_texture
+}
+
+fn dynamic_world_set_body(w: ref dynamic_world, index: i32, body: dynamic_body) {
+    if index < 0 || index >= w.count {
+        return
+    }
+    // The bounding radius covers the hull and its margin, and is what the
+    // broad phase tests.
+    let bound = body.margin
+    let hull_count = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_INERTIA).w as i32
+    for i in 0 to hull_count {
+        let vertex = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_HULL + i)
+        let reach = dynamic_length3(dynamic_xyz(vertex)) + body.margin
+        if reach > bound {
+            bound = reach
+        }
+    }
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_POSITION, dynamic_float4(body.position, bound))
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_ORIENTATION, dynamic_quat_normalize(body.orientation))
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_VELOCITY, dynamic_float4(body.velocity, body.inv_mass))
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_ANGULAR, dynamic_float4(body.angular_velocity, body.margin))
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_MATERIAL, float4 { x: body.restitution, y: body.friction, z: body.damping, w: body.angular_damping })
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_INERTIA, dynamic_float4(body.inv_inertia, hull_count as f32))
+}
+
+// Replace the point hull of `index`. Vertices are body-space positions; a
+// sphere needs none, a cube passes its eight corners, and a convex mesh its
+// vertices, up to DYNAMIC_MAX_HULL_VERTICES.
+fn dynamic_world_set_hull(w: ref dynamic_world, index: i32, vertices: [f32], count: i32) {
+    if index < 0 || index >= w.count {
+        return
+    }
+    let hull_count = count
+    if hull_count > DYNAMIC_MAX_HULL_VERTICES {
+        hull_count = DYNAMIC_MAX_HULL_VERTICES
+    }
+    // One point is the minimum: it is the centre of a sphere-swept shape.
+    if hull_count < 1 {
+        hull_count = 1
+    }
+    let inertia = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_INERTIA)
+    let position = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_POSITION)
+    let angular = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_ANGULAR)
+    let bound = angular.w
+    for i in 0 to hull_count {
+        let vertex = dynamic_v3(vertices[i * 3], vertices[i * 3 + 1], vertices[i * 3 + 2])
+        dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_HULL + i, dynamic_float4(vertex, 0.0))
+        let reach = dynamic_length3(vertex) + angular.w
+        if reach > bound {
+            bound = reach
+        }
+    }
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_INERTIA, dynamic_float4(dynamic_xyz(inertia), hull_count as f32))
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_POSITION, dynamic_float4(dynamic_xyz(position), bound))
+}
+
+// Append a body. Returns its index, or -1 when the world is full.
+fn dynamic_world_add(w: ref dynamic_world, body: dynamic_body) i32 {
+    if w.count >= w.capacity {
+        return 0 - 1
+    }
+    let index = w.count
+    w.count = index + 1
+    for slot in 0 to DYNAMIC_MAX_CONTACTS {
+        let empty = float4 { x: 0.0, y: 0.0, z: 0.0, w: 0.0 }
+        dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_PAIR + slot, empty)
+        dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_CONTACT + slot, empty)
+        dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_POINT + slot, empty)
+    }
+    // Every body has at least one hull point, so a sphere is the hull of the
+    // origin swept by its margin and the support function needs no special
+    // case for it.
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_HULL, float4 { x: 0.0, y: 0.0, z: 0.0, w: 0.0 })
+    dynamic_state_write(w.state, w.capacity, index, DYNAMIC_ROW_INERTIA, dynamic_float4(body.inv_inertia, 1.0))
+    dynamic_world_set_body(w, index, body)
+    return index
+}
+
+// Read a body back. Valid on a CPU world; a GPU world keeps the simulated
+// state in its textures, which the v2 surface cannot read back.
+fn dynamic_world_body(w: dynamic_world, index: i32) dynamic_body {
+    if index < 0 || index >= w.count {
+        return dynamic_body_default()
+    }
+    let position = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_POSITION)
+    let orientation = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_ORIENTATION)
+    let velocity = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_VELOCITY)
+    let angular = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_ANGULAR)
+    let material = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_MATERIAL)
+    let inertia = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_INERTIA)
+    return dynamic_body {
+        position: dynamic_xyz(position),
+        orientation: orientation,
+        velocity: dynamic_xyz(velocity),
+        angular_velocity: dynamic_xyz(angular),
+        inv_mass: velocity.w,
+        inv_inertia: dynamic_xyz(inertia),
+        margin: angular.w,
+        restitution: material.x,
+        friction: material.y,
+        damping: material.z,
+        angular_damping: material.w,
+    }
+}
+
+fn dynamic_world_hull_count(w: dynamic_world, index: i32) i32 {
+    if index < 0 || index >= w.count {
+        return 0
+    }
+    return dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_INERTIA).w as i32
+}
+
+fn dynamic_world_hull_vertex(w: dynamic_world, index: i32, vertex: i32) float3 {
+    if index < 0 || index >= w.count || vertex < 0 || vertex >= DYNAMIC_MAX_HULL_VERTICES {
+        return dynamic_v3(0.0, 0.0, 0.0)
+    }
+    return dynamic_xyz(dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_HULL + vertex))
+}
+
+// Contacts the last narrow phase produced for `index`.
+fn dynamic_world_contact_count(w: dynamic_world, index: i32) i32 {
+    if index < 0 || index >= w.count {
+        return 0
+    }
+    let contacts = 0
+    for slot in 0 to DYNAMIC_MAX_CONTACTS {
+        let manifold = dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_CONTACT + slot)
+        if manifold.w > 0.0 {
+            contacts = contacts + 1
+        }
+    }
+    return contacts
+}
+
+fn dynamic_world_clear(w: ref dynamic_world) {
+    let floats = dynamic_state_floats(w.capacity)
+    for i in 0 to floats {
+        w.state[i] = 0.0
+        w.next[i] = 0.0
+    }
+    w.count = 0
+    dynamic_write_config_row(w)
+}
+
+// ---------------------------------------------------------------------------
+// stage dispatch
+// ---------------------------------------------------------------------------
+
+fn dynamic_write_root(w: ref dynamic_world) {
+    w.root[0] = w.read_texture as f32
+    w.root[1] = w.write_texture as f32
+    w.root[2] = w.capacity as f32
+    w.root[3] = w.count as f32
+    for i in 4 to 16 {
+        w.root[i] = 0.0
+    }
+}
+
+fn dynamic_gpu_stage(w: ref dynamic_world, shader: u32) {
+    dynamic_write_root(w)
+    gpu_set_shader(shader)
+    gpu_set_root_data(w.root, 64)
+    let groups_x = (w.capacity + DYNAMIC_GROUP_SIZE - 1) / DYNAMIC_GROUP_SIZE
+    let groups_y = (DYNAMIC_ROW_COUNT + DYNAMIC_GROUP_SIZE - 1) / DYNAMIC_GROUP_SIZE
+    gpu_dispatch(groups_x, groups_y, 1)
+    let done = w.read_texture
+    w.read_texture = w.write_texture
+    w.write_texture = done
+}
+
+// Run one stage kernel on the host, one invocation at a time. Only the rows
+// that own a write are invoked: the rows a stage copies through need no
+// invocation because the host binds one image as both read and write, so
+// untouched texels already hold their value.
+fn dynamic_host_stage(w: ref dynamic_world, stage: i32) {
+    dynamic_write_root(w)
+    shader_host_bind(w.state, w.state, w.capacity, DYNAMIC_ROW_COUNT)
+    shader_host_root(w.root)
+
+    let row = DYNAMIC_ROW_PAIR
+    if stage == DYNAMIC_STAGE_NARROW {
+        row = DYNAMIC_ROW_CONTACT
+    }
+    if stage == DYNAMIC_STAGE_SOLVE {
+        row = DYNAMIC_ROW_VELOCITY
+    }
+    if stage == DYNAMIC_STAGE_INTEGRATE {
+        row = DYNAMIC_ROW_POSITION
+    }
+    // Narrow phase owns one invocation per contact slot; the other stages own
+    // a single invocation per body.
+    let rows = 1
+    if stage == DYNAMIC_STAGE_NARROW {
+        rows = DYNAMIC_MAX_CONTACTS
+    }
+
+    for offset in 0 to rows {
+        for column in 0 to w.count {
+            shader_host_invocation(column, row + offset, 0)
+            if stage == DYNAMIC_STAGE_BROAD {
+                cs_dynamic_broad_phase()
+            } else if stage == DYNAMIC_STAGE_NARROW {
+                cs_dynamic_narrow_phase()
+            } else if stage == DYNAMIC_STAGE_SOLVE {
+                cs_dynamic_solve()
+            } else {
+                cs_dynamic_integrate()
+            }
+        }
+    }
+    shader_host_release()
+}
+
+// Push the host state image into the read texture. Call it after seeding or
+// editing bodies; a GPU world owns its state from then on.
+fn dynamic_world_upload(w: ref dynamic_world) {
+    if w.backend != DYNAMIC_BACKEND_GPU {
+        return
+    }
+    dynamic_write_config_row(w)
+    gpu_texture_upload(w.read_texture, 0, 0, w.state, (dynamic_state_floats(w.capacity) * 4) as u64)
+}
+
+// Advance the world by `config.dt`, running the pipeline on whichever backend
+// the world was created with.
+fn dynamic_world_step(w: ref dynamic_world) {
+    if w.count == 0 {
+        return
+    }
+    let substeps = w.config.substeps
+    if substeps < 1 {
+        substeps = 1
+    }
+    let iterations = w.config.iterations
+    if iterations < 1 {
+        iterations = 1
+    }
+    if w.backend != DYNAMIC_BACKEND_GPU {
+        dynamic_write_config_row(w)
+    }
+
+    for substep in 0 to substeps {
+        if w.backend == DYNAMIC_BACKEND_GPU {
+            dynamic_gpu_stage(w, w.broad_shader)
+            dynamic_gpu_stage(w, w.narrow_shader)
+            for iteration in 0 to iterations {
+                dynamic_gpu_stage(w, w.solve_shader)
+            }
+            dynamic_gpu_stage(w, w.integrate_shader)
+        } else {
+            dynamic_host_stage(w, DYNAMIC_STAGE_BROAD)
+            dynamic_host_stage(w, DYNAMIC_STAGE_NARROW)
+            for iteration in 0 to iterations {
+                dynamic_host_stage(w, DYNAMIC_STAGE_SOLVE)
+            }
+            dynamic_host_stage(w, DYNAMIC_STAGE_INTEGRATE)
+        }
+    }
+}

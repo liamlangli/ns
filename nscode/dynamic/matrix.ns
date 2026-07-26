@@ -1,0 +1,112 @@
+// nscode/dynamic/matrix.ns
+// ---------------------------------------------------------------------------
+// The 4x4 transforms the sample needs. The `shader` module does not lower mat4
+// operators yet, so the camera and model transforms are applied here and the
+// vertex shader receives clip-space positions directly.
+//
+// A mat4 is four float4 columns, and a point is transformed as
+// col0 * x + col1 * y + col2 * z + col3.
+
+use std
+use simd
+
+fn matrix_column(x: f32, y: f32, z: f32, w: f32) float4 {
+    return float4 { x: x, y: y, z: z, w: w }
+}
+
+fn matrix_identity() mat4 {
+    return mat4 {
+        col0: matrix_column(1.0, 0.0, 0.0, 0.0),
+        col1: matrix_column(0.0, 1.0, 0.0, 0.0),
+        col2: matrix_column(0.0, 0.0, 1.0, 0.0),
+        col3: matrix_column(0.0, 0.0, 0.0, 1.0),
+    }
+}
+
+fn matrix_axis(v: float3) float3 {
+    let length = sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as f64) as f32
+    if length <= 0.000001 {
+        return float3 { x: 0.0, y: 0.0, z: 0.0 }
+    }
+    return float3 { x: v.x / length, y: v.y / length, z: v.z / length }
+}
+
+fn matrix_cross(a: float3, b: float3) float3 {
+    return float3 { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }
+}
+
+fn matrix_dot(a: float3, b: float3) f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn matrix_transform_point(m: mat4, p: float3) float4 {
+    return float4 {
+        x: m.col0.x * p.x + m.col1.x * p.y + m.col2.x * p.z + m.col3.x,
+        y: m.col0.y * p.x + m.col1.y * p.y + m.col2.y * p.z + m.col3.y,
+        z: m.col0.z * p.x + m.col1.z * p.y + m.col2.z * p.z + m.col3.z,
+        w: m.col0.w * p.x + m.col1.w * p.y + m.col2.w * p.z + m.col3.w,
+    }
+}
+
+fn matrix_mul_column(a: mat4, c: float4) float4 {
+    return float4 {
+        x: a.col0.x * c.x + a.col1.x * c.y + a.col2.x * c.z + a.col3.x * c.w,
+        y: a.col0.y * c.x + a.col1.y * c.y + a.col2.y * c.z + a.col3.y * c.w,
+        z: a.col0.z * c.x + a.col1.z * c.y + a.col2.z * c.z + a.col3.z * c.w,
+        w: a.col0.w * c.x + a.col1.w * c.y + a.col2.w * c.z + a.col3.w * c.w,
+    }
+}
+
+fn matrix_mul(a: mat4, b: mat4) mat4 {
+    return mat4 {
+        col0: matrix_mul_column(a, b.col0),
+        col1: matrix_mul_column(a, b.col1),
+        col2: matrix_mul_column(a, b.col2),
+        col3: matrix_mul_column(a, b.col3),
+    }
+}
+
+// Right-handed view matrix looking from `eye` at `target`.
+fn matrix_look_at(eye: float3, target: float3, up: float3) mat4 {
+    let forward = matrix_axis(float3 { x: target.x - eye.x, y: target.y - eye.y, z: target.z - eye.z })
+    let right = matrix_axis(matrix_cross(forward, up))
+    let above = matrix_cross(right, forward)
+    return mat4 {
+        col0: matrix_column(right.x, above.x, 0.0 - forward.x, 0.0),
+        col1: matrix_column(right.y, above.y, 0.0 - forward.y, 0.0),
+        col2: matrix_column(right.z, above.z, 0.0 - forward.z, 0.0),
+        col3: matrix_column(0.0 - matrix_dot(right, eye), 0.0 - matrix_dot(above, eye), matrix_dot(forward, eye), 1.0),
+    }
+}
+
+// Reverse-less depth in 0..1 with a right-handed view, which is what the
+// backends' default less-equal depth test expects.
+fn matrix_perspective(fov_y: f32, aspect: f32, near: f32, far: f32) mat4 {
+    let focal = 1.0 / (tan((fov_y * 0.5) as f64) as f32)
+    let range = near - far
+    return mat4 {
+        col0: matrix_column(focal / aspect, 0.0, 0.0, 0.0),
+        col1: matrix_column(0.0, focal, 0.0, 0.0),
+        col2: matrix_column(0.0, 0.0, far / range, 0.0 - 1.0),
+        col3: matrix_column(0.0, 0.0, near * far / range, 0.0),
+    }
+}
+
+// Rotation from a unit quaternion, with a translation, as one model matrix.
+fn matrix_from_quaternion(q: float4, translation: float3, scale: f32) mat4 {
+    let xx = q.x * q.x
+    let yy = q.y * q.y
+    let zz = q.z * q.z
+    let xy = q.x * q.y
+    let xz = q.x * q.z
+    let yz = q.y * q.z
+    let wx = q.w * q.x
+    let wy = q.w * q.y
+    let wz = q.w * q.z
+    return mat4 {
+        col0: matrix_column((1.0 - 2.0 * (yy + zz)) * scale, (2.0 * (xy + wz)) * scale, (2.0 * (xz - wy)) * scale, 0.0),
+        col1: matrix_column((2.0 * (xy - wz)) * scale, (1.0 - 2.0 * (xx + zz)) * scale, (2.0 * (yz + wx)) * scale, 0.0),
+        col2: matrix_column((2.0 * (xz + wy)) * scale, (2.0 * (yz - wx)) * scale, (1.0 - 2.0 * (xx + yy)) * scale, 0.0),
+        col3: matrix_column(translation.x, translation.y, translation.z, 1.0),
+    }
+}

@@ -2268,7 +2268,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
     if (ns_str_equals(module, ns_str_cstr("shader"))) {
         return ns_wasm_name_in(name,
             "shader_transpile|shader_transpile_stage|shader_entry|shader_vertex_stride|"
-            "shader_vertex_attr_count|shader_vertex_attr_offset|shader_vertex_attr_size");
+            "shader_vertex_attr_count|shader_vertex_attr_offset|shader_vertex_attr_size|"
+            "shader_host_bind|shader_host_root|shader_host_invocation|shader_host_swap|shader_host_release");
     }
     if (ns_str_equals(module, ns_str_cstr("view"))) {
         return ns_wasm_name_in(name,
@@ -2276,7 +2277,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "view_on_resize|view_on_mouse_move|view_on_mouse_btn|view_on_key_action|view_is_key_pressed|"
             "view_take_key_press|view_clear_key_presses|view_on_pointer_event|view_on_tool_action|"
             "view_on_gesture|view_input_count|view_input_at|view_gesture|view_input_pending|"
-            "view_input_reset|view_get_clipboard|view_set_clipboard");
+            "view_input_reset|view_get_clipboard|view_set_clipboard|view_request_frame|"
+            "view_request_frame_after");
     }
     if (ns_str_equals(module, ns_str_cstr("gpu"))) {
         return ns_wasm_name_in(name,
@@ -2309,7 +2311,10 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
 }
 
 static ns_bool ns_wasm_portable_use(ns_str module) {
-    return ns_wasm_supported_module(module) || ns_str_equals(module, ns_str_cstr("simd"));
+    // simd and dynamic are pure Nano Script: they carry no native imports of
+    // their own, only the modules already supported above.
+    return ns_wasm_supported_module(module) || ns_str_equals(module, ns_str_cstr("simd")) ||
+           ns_str_equals(module, ns_str_cstr("dynamic"));
 }
 
 static ns_bool ns_wasm_unsupported_type(ns_type type) {

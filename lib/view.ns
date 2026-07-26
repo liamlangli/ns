@@ -90,6 +90,12 @@ ref fn view_run(v: ref view)
 ref fn view_close(v: ref view)
 ref fn view_capture_require(v: ref view)
 
+// Frames are drawn on demand. Queue `frames` more of them, or one after a
+// delay; an animation or a simulation asks for the next frame from inside the
+// current one to keep running.
+ref fn view_request_frame(v: ref view, frames: i32)
+ref fn view_request_frame_after(v: ref view, milliseconds: i32)
+
 ref fn view_on_scroll(v: ref view, x: f64, y: f64)
 ref fn view_on_resize(v: ref view, width: i32, height: i32)
 ref fn view_on_mouse_move(v: ref view, x: f64, y: f64)

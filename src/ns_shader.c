@@ -8,13 +8,63 @@
 // else produces a source-located error instead of silently emitting bad code.
 
 #define NS_SHADER_MAX_DEPTH 64
+// Local arrays live in a shader's register/stack budget, so the length stays
+// small enough that every backend can hold one.
+#define NS_SHADER_MAX_ARRAY_LEN 256
+// The root argument is four float4s on every backend.
+#define NS_SHADER_ROOT_WORDS 16
 
 static char ns_shader_err[512];
 
 typedef struct ns_shader_local {
     ns_str name;
     ns_type t;
+    // Length of a fixed-capacity local array, 0 for every other binding.
+    i32 array_len;
 } ns_shader_local;
+
+// Resources a fn reaches through the stage intrinsics. GLSL and WGSL declare
+// them at module scope, so any fn can name them; MSL binds them as entry-point
+// parameters, and HLSL binds the invocation ids as entry semantics. A helper
+// fn therefore receives what it (or anything it calls) uses as extra
+// parameters, and its call sites pass them along.
+enum ns_shader_use {
+    NS_SHADER_USE_GLOBAL_ID = 1 << 0,
+    NS_SHADER_USE_VERTEX_ID = 1 << 1,
+    NS_SHADER_USE_WRITE_TEXTURE = 1 << 2,
+    NS_SHADER_USE_READ_TEXTURE = 1 << 3,
+    NS_SHADER_USE_ROOT = 1 << 4,
+    NS_SHADER_USE_SHADOW_MAP = 1 << 5,
+    NS_SHADER_USE_TEXTURE_MAP = 1 << 6,
+    NS_SHADER_USE_MASK_MAP = 1 << 7,
+    NS_SHADER_USE_SCENE_UNIFORMS = 1 << 8,
+};
+
+typedef struct ns_shader_resource_binding {
+    u32 bit;
+    const char *msl_param;  // null when MSL does not bind it per entry
+    const char *hlsl_param; // null when HLSL declares it at module scope
+    const char *name;
+} ns_shader_resource_binding;
+
+// Declaration order, shared by entry signatures, helper signatures and calls.
+static const ns_shader_resource_binding ns_shader_resources[] = {
+    {NS_SHADER_USE_GLOBAL_ID, "uint3 ns_global_id", "uint3 ns_global_id", "ns_global_id"},
+    {NS_SHADER_USE_VERTEX_ID, "uint ns_vertex_id", "uint ns_vertex_id", "ns_vertex_id"},
+    {NS_SHADER_USE_WRITE_TEXTURE, "texture2d<float, access::write> ns_write_texture", ns_null, "ns_write_texture"},
+    {NS_SHADER_USE_READ_TEXTURE, "texture2d<float, access::read> ns_read_texture", ns_null, "ns_read_texture"},
+    {NS_SHADER_USE_ROOT, "constant float4* ns_root", ns_null, "ns_root"},
+    {NS_SHADER_USE_SHADOW_MAP, "depth2d<float> ns_shadow_map", ns_null, "ns_shadow_map"},
+    {NS_SHADER_USE_TEXTURE_MAP, "texture2d<float> ns_texture_map", ns_null, "ns_texture_map"},
+    {NS_SHADER_USE_MASK_MAP, "texture2d<float> ns_mask_map", ns_null, "ns_mask_map"},
+    {NS_SHADER_USE_SCENE_UNIFORMS, "constant ns_scene_uniforms& ns_uniforms", ns_null, "ns_uniforms"},
+};
+
+// Per-fn record of the resources it and its callees reach.
+typedef struct ns_shader_fn_use {
+    i32 fn_index;
+    u32 mask;
+} ns_shader_fn_use;
 
 typedef struct ns_shader_emit {
     ns_vm *vm;
@@ -29,6 +79,7 @@ typedef struct ns_shader_emit {
     i32 *structs;  // user struct symbol indices, dependency order
     i32 *fns;      // helper fn symbol indices, callees first
     i32 *fn_visit; // fn DFS stack for recursion detection
+    ns_shader_fn_use *fn_uses; // resources each collected fn reaches
 
     ns_shader_entry_desc *entries;
 
@@ -132,6 +183,14 @@ ns_str ns_shader_entry_name(ns_shader_target t, ns_str fn_name) {
 // ---------------------------------------------------------------------------
 static ns_bool ns_shader_is_main_tu(ns_symbol *s) { return s->lib.len == 0 || ns_str_equals(s->lib, ns_str_cstr("main")); }
 
+// Node indices are relative to the translation unit that parsed them, so a
+// transpiled fn and every fn it calls must live in the unit being walked.
+// That unit is the caller's file for an application shader and the module's
+// own file for a shader shipped by a `use`d module (lib/dynamic.ns).
+static ns_bool ns_shader_in_unit(ns_ast_ctx *ctx, ns_symbol *s) {
+    return s->fn.ctx == ns_null || s->fn.ctx == ctx;
+}
+
 // float2/3/4 -> component count, mat4 -> 16, otherwise 0.
 static i32 ns_shader_simd_dim(ns_str name) {
     if (ns_str_equals(name, ns_str_cstr("float2"))) return 2;
@@ -175,6 +234,16 @@ static ns_symbol *ns_shader_find_global(ns_vm *vm, ns_str name) {
         if (ns_str_equals(vm->symbols[i].name, name)) return &vm->symbols[i];
     }
     return ns_null;
+}
+
+// Callee lookup. A fn is only transpilable from the unit it was parsed in, so
+// the unit being emitted wins over a same-named fn anywhere else.
+static ns_symbol *ns_shader_find_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_str name) {
+    for (i32 i = 0, l = (i32)ns_array_length(vm->symbols); i < l; ++i) {
+        ns_symbol *s = &vm->symbols[i];
+        if (s->type == NS_SYMBOL_FN && s->fn.ctx == ctx && ns_str_equals(s->name, name)) return s;
+    }
+    return ns_shader_find_global(vm, name);
 }
 
 // Resolve a struct name (or a type alias of one, e.g. quatf) to its struct
@@ -320,6 +389,103 @@ static ns_type ns_shader_local_type(ns_shader_emit *e, ns_str name) {
     return ns_type_unknown;
 }
 
+// Declared length of a fixed-capacity local array, or 0.
+static i32 ns_shader_local_array_len(ns_shader_emit *e, ns_str name) {
+    for (i32 i = (i32)ns_array_length(e->locals) - 1; i >= 0; --i) {
+        if (ns_str_equals(e->locals[i].name, name)) return e->locals[i].array_len;
+    }
+    return 0;
+}
+
+// Element type of an array type, or unknown. An array type carries its
+// element's type and symbol index with the array flag set.
+static ns_type ns_shader_array_element(ns_type t) {
+    if (!ns_type_is_array(t)) return ns_type_unknown;
+    return (ns_type){.type = t.type, .ref = t.ref, .array = false, .mut = t.mut, .stack = true, .index = t.index};
+}
+
+// A global `lit` is a compile-time constant with no counterpart in any shader
+// language, so it folds to its value. Locals shadow globals, so a name bound
+// inside the shader fn is never folded.
+static ns_symbol *ns_shader_lit_symbol(ns_shader_emit *e, ns_str name) {
+    if (!ns_type_is_unknown(ns_shader_local_type(e, name))) return ns_null;
+    ns_symbol *s = ns_shader_find_global(e->vm, name);
+    return s && s->type == NS_SYMBOL_VALUE && s->is_lit ? s : ns_null;
+}
+
+// Integer constant expression over literals and `lit` bindings: the same
+// arithmetic a `lit` initializer allows, which is what a local array length is
+// written with (`[i32](FACES * 3)`).
+static ns_return_void ns_shader_const_expr(ns_shader_emit *e, i32 node, i64 *out, ns_code_loc loc) {
+    const char *shape = "shader: a local array needs a constant length, for example [float3](4).";
+    if (node == 0) return ns_return_error(void, loc, NS_ERR_EVAL, shape);
+    ns_ast_t *n = &e->ctx->nodes[node];
+    if (n->type == NS_AST_EXPR) return ns_shader_const_expr(e, n->expr.body, out, loc);
+    if (n->type == NS_AST_CAST_EXPR) return ns_shader_const_expr(e, n->cast_expr.expr, out, loc);
+    if (n->type == NS_AST_UNARY_EXPR) {
+        i64 operand = 0;
+        ns_shader_try(ns_shader_const_expr(e, n->unary_expr.expr, &operand, loc));
+        if (n->unary_expr.op.type != NS_TOKEN_ADD_OP) return ns_return_error(void, loc, NS_ERR_EVAL, shape);
+        if (ns_str_equals(n->unary_expr.op.val, ns_str_cstr("-"))) operand = -operand;
+        *out = operand;
+        return ns_return_ok_void;
+    }
+    if (n->type == NS_AST_BINARY_EXPR) {
+        i64 left = 0;
+        i64 right = 0;
+        ns_shader_try(ns_shader_const_expr(e, n->binary_expr.left, &left, loc));
+        ns_shader_try(ns_shader_const_expr(e, n->binary_expr.right, &right, loc));
+        ns_str op = n->binary_expr.op.val;
+        if (ns_str_equals(op, ns_str_cstr("+"))) *out = left + right;
+        else if (ns_str_equals(op, ns_str_cstr("-"))) *out = left - right;
+        else if (ns_str_equals(op, ns_str_cstr("*"))) *out = left * right;
+        else if (ns_str_equals(op, ns_str_cstr("/")) && right != 0) *out = left / right;
+        else if (ns_str_equals(op, ns_str_cstr("%")) && right != 0) *out = left % right;
+        else return ns_return_error(void, loc, NS_ERR_EVAL, shape);
+        return ns_return_ok_void;
+    }
+    if (n->type != NS_AST_PRIMARY_EXPR) return ns_return_error(void, loc, NS_ERR_EVAL, shape);
+
+    if (n->primary_expr.token.type == NS_TOKEN_INT_LITERAL) {
+        char digits[32];
+        ns_str body = ns_shader_literal_body(n->primary_expr.token);
+        if (body.len <= 0 || body.len >= (i32)sizeof(digits)) return ns_return_error(void, loc, NS_ERR_EVAL, shape);
+        memcpy(digits, body.data, (szt)body.len);
+        digits[body.len] = 0;
+        *out = strtoll(digits, ns_null, 10);
+        return ns_return_ok_void;
+    }
+    if (n->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+        ns_symbol *s = ns_shader_lit_symbol(e, n->primary_expr.token.val);
+        ns_type t = s ? ns_enum_underlying_type(e->vm, s->val.t) : ns_type_unknown;
+        if (!s || ns_type_is_float(t) || !ns_type_is_number(t)) return ns_return_error(void, loc, NS_ERR_EVAL, shape);
+        ns_value v = s->val;
+        v.t = t;
+        if (ns_type_is(t, NS_TYPE_I32)) *out = ns_eval_number_i32(e->vm, v);
+        else if (ns_type_is(t, NS_TYPE_U32)) *out = ns_eval_number_u32(e->vm, v);
+        else *out = ns_eval_number_i64(e->vm, v);
+        return ns_return_ok_void;
+    }
+    return ns_return_error(void, loc, NS_ERR_EVAL, shape);
+}
+
+// Constant length of a local array declaration. A shader array is sized at
+// compile time on every backend.
+static ns_return_void ns_shader_const_i32(ns_shader_emit *e, i32 node, ns_bool literal, i32 *out, ns_code_loc loc) {
+    if (literal) {
+        return ns_return_error(void, loc, NS_ERR_EVAL,
+                               "shader: an array literal is not supported in a shader fn; declare a length, for example [float3](4).");
+    }
+    i64 value = 0;
+    ns_shader_try(ns_shader_const_expr(e, node, &value, loc));
+    if (value <= 0 || value > NS_SHADER_MAX_ARRAY_LEN) {
+        snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: a local array length must be between 1 and %d.", NS_SHADER_MAX_ARRAY_LEN);
+        return ns_return_error(void, loc, NS_ERR_EVAL, ns_shader_err);
+    }
+    *out = (i32)value;
+    return ns_return_ok_void;
+}
+
 static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
     ns_ast_t *n = &e->ctx->nodes[i];
     switch (n->type) {
@@ -333,15 +499,19 @@ static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
         case NS_TOKEN_IDENTIFIER: {
             ns_type local = ns_shader_local_type(e, n->primary_expr.token.val);
             if (!ns_type_is_unknown(local)) return local;
+            ns_symbol *lit = ns_shader_lit_symbol(e, n->primary_expr.token.val);
+            if (lit) return lit->val.t;
             ns_symbol *s = ns_vm_find_symbol(e->vm, n->primary_expr.token.val, false);
             return s && s->type == NS_SYMBOL_ENUM ? s->en.t : ns_type_unknown;
         }
         default: return ns_type_unknown;
         }
     }
+    case NS_AST_INDEX_EXPR: return ns_shader_array_element(ns_shader_infer(e, n->index_expr.table));
     case NS_AST_MEMBER_EXPR: {
         ns_type lt = ns_shader_infer(e, n->member_expr.left);
         if (ns_type_is(lt, NS_TYPE_ENUM)) return lt;
+        if (ns_type_is_array(lt)) return ns_type_i32; // `.len` of a fixed array
         if (!ns_type_is(lt, NS_TYPE_STRUCT)) return ns_type_unknown;
         ns_ast_t *r = &e->ctx->nodes[n->member_expr.right];
         if (r->type != NS_AST_PRIMARY_EXPR) return ns_type_unknown;
@@ -426,6 +596,60 @@ static ns_return_void ns_shader_collect_type(ns_shader_emit *e, ns_type t, ns_co
     return ns_return_ok_void;
 }
 
+static u32 ns_shader_use_mask(ns_shader_emit *e) {
+    u32 mask = 0;
+    if (e->uses_global_id) mask |= NS_SHADER_USE_GLOBAL_ID;
+    if (e->uses_vertex_id) mask |= NS_SHADER_USE_VERTEX_ID;
+    if (e->uses_write_texture) mask |= NS_SHADER_USE_WRITE_TEXTURE;
+    if (e->uses_read_texture) mask |= NS_SHADER_USE_READ_TEXTURE;
+    if (e->uses_root) mask |= NS_SHADER_USE_ROOT;
+    if (e->uses_shadow_map) mask |= NS_SHADER_USE_SHADOW_MAP;
+    if (e->uses_texture_map) mask |= NS_SHADER_USE_TEXTURE_MAP;
+    if (e->uses_mask_map) mask |= NS_SHADER_USE_MASK_MAP;
+    if (e->uses_scene_uniforms) mask |= NS_SHADER_USE_SCENE_UNIFORMS;
+    return mask;
+}
+
+static void ns_shader_set_use_mask(ns_shader_emit *e, u32 mask) {
+    e->uses_global_id = (mask & NS_SHADER_USE_GLOBAL_ID) != 0;
+    e->uses_vertex_id = (mask & NS_SHADER_USE_VERTEX_ID) != 0;
+    e->uses_write_texture = (mask & NS_SHADER_USE_WRITE_TEXTURE) != 0;
+    e->uses_read_texture = (mask & NS_SHADER_USE_READ_TEXTURE) != 0;
+    e->uses_root = (mask & NS_SHADER_USE_ROOT) != 0;
+    e->uses_shadow_map = (mask & NS_SHADER_USE_SHADOW_MAP) != 0;
+    e->uses_texture_map = (mask & NS_SHADER_USE_TEXTURE_MAP) != 0;
+    e->uses_mask_map = (mask & NS_SHADER_USE_MASK_MAP) != 0;
+    e->uses_scene_uniforms = (mask & NS_SHADER_USE_SCENE_UNIFORMS) != 0;
+}
+
+static u32 ns_shader_fn_mask(ns_shader_emit *e, i32 fn_index) {
+    for (i32 i = 0, l = (i32)ns_array_length(e->fn_uses); i < l; ++i) {
+        if (e->fn_uses[i].fn_index == fn_index) return e->fn_uses[i].mask;
+    }
+    return 0;
+}
+
+// The parameter (declaration) or argument (call) a target threads for `bit`,
+// or null when the target reaches it without one.
+static const char *ns_shader_resource_param(ns_shader_target target, const ns_shader_resource_binding *r) {
+    if (target == NS_SHADER_MSL) return r->msl_param;
+    if (target == NS_SHADER_HLSL) return r->hlsl_param;
+    return ns_null;
+}
+
+// Append the threaded parameters or arguments of `mask`. `declare` emits typed
+// parameters, otherwise the resource names.
+static void ns_shader_emit_resource_list(ns_shader_emit *e, ns_str *dst, u32 mask, ns_bool declare, ns_bool *first) {
+    for (szt i = 0; i < sizeof(ns_shader_resources) / sizeof(ns_shader_resources[0]); ++i) {
+        const ns_shader_resource_binding *r = &ns_shader_resources[i];
+        const char *param = ns_shader_resource_param(e->target, r);
+        if (!param || !(mask & r->bit)) continue;
+        if (!*first) ns_shader_cstr(dst, ", ");
+        ns_shader_cstr(dst, declare ? param : r->name);
+        *first = false;
+    }
+}
+
 static ns_return_void ns_shader_collect_fn(ns_shader_emit *e, i32 fn_index, ns_bool is_entry, i32 depth);
 
 static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth) {
@@ -482,7 +706,7 @@ static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth
             e->uses_scene_uniforms = true;
         }
         if (callee->type == NS_AST_PRIMARY_EXPR && !ns_shader_find_builtin(callee->primary_expr.token.val)) {
-            ns_symbol *s = ns_shader_find_global(e->vm, callee->primary_expr.token.val);
+            ns_symbol *s = ns_shader_find_fn(e->vm, e->ctx, callee->primary_expr.token.val);
             if (s && s->type == NS_SYMBOL_FN) {
                 ns_shader_try(ns_shader_collect_fn(e, (i32)(s - e->vm->symbols), false, depth + 1));
             }
@@ -570,8 +794,8 @@ static ns_return_void ns_shader_collect_fn(ns_shader_emit *e, i32 fn_index, ns_b
         snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: `%.*s` is not a transpilable fn (native ref fns have no body).", s->name.len, s->name.data);
         return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, ns_shader_err);
     }
-    if (!ns_shader_is_main_tu(s)) {
-        snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: fn `%.*s` must be defined in the current translation unit.", s->name.len, s->name.data);
+    if (!ns_shader_in_unit(e->ctx, s)) {
+        snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: fn `%.*s` must be defined in the same file as the shader entry.", s->name.len, s->name.data);
         return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, ns_shader_err);
     }
 
@@ -582,10 +806,17 @@ static ns_return_void ns_shader_collect_fn(ns_shader_emit *e, i32 fn_index, ns_b
         ns_shader_try(ns_shader_collect_type(e, s->fn.args[a].val.t, loc));
     }
 
+    // Collect this fn's resource usage on its own, then fold it back into the
+    // caller's: what a callee reaches, its caller has to thread through.
+    u32 outer = ns_shader_use_mask(e);
+    ns_shader_set_use_mask(e, 0);
     ns_array_push(e->fn_visit, fn_index);
     ns_return_void body = ns_shader_collect_stmt(e, s->fn.body, depth + 1);
     ns_array_set_length(e->fn_visit, ns_array_length(e->fn_visit) - 1);
+    u32 used = ns_shader_use_mask(e);
+    ns_shader_set_use_mask(e, outer | used);
     if (ns_return_is_error(body)) return body;
+    ns_array_push(e->fn_uses, ((ns_shader_fn_use){.fn_index = fn_index, .mask = used}));
 
     if (!is_entry) ns_array_push(e->fns, fn_index); // post-order: callees first
     return ns_return_ok_void;
@@ -696,6 +927,46 @@ static ns_return_void ns_shader_emit_desig(ns_shader_emit *e, ns_ast_t *n, ns_st
     return ns_return_ok_void;
 }
 
+// Emit a folded `lit` constant. Enums lower to their underlying integer, and
+// floats always carry a decimal point because GLSL does not convert an integer
+// literal to float implicitly.
+static ns_return_void ns_shader_emit_lit(ns_shader_emit *e, ns_symbol *s, ns_code_loc loc, ns_str *dst) {
+    ns_type t = ns_enum_underlying_type(e->vm, s->val.t);
+    char literal[64];
+    i32 len;
+    if (ns_type_is(t, NS_TYPE_BOOL)) {
+        ns_shader_cstr(dst, s->val.b ? "true" : "false");
+        return ns_return_ok_void;
+    }
+    // Each width reads its own union member; the value carries no wider
+    // representation to convert from.
+    ns_value v = s->val;
+    v.t = t;
+    switch (t.type) {
+    case NS_TYPE_I8: len = snprintf(literal, sizeof(literal), "%d", (i32)ns_eval_number_i8(e->vm, v)); break;
+    case NS_TYPE_I16: len = snprintf(literal, sizeof(literal), "%d", (i32)ns_eval_number_i16(e->vm, v)); break;
+    case NS_TYPE_I32: len = snprintf(literal, sizeof(literal), "%d", ns_eval_number_i32(e->vm, v)); break;
+    case NS_TYPE_I64: len = snprintf(literal, sizeof(literal), "%lld", (long long)ns_eval_number_i64(e->vm, v)); break;
+    case NS_TYPE_U8: len = snprintf(literal, sizeof(literal), "%u", (u32)ns_eval_number_u8(e->vm, v)); break;
+    case NS_TYPE_U16: len = snprintf(literal, sizeof(literal), "%u", (u32)ns_eval_number_u16(e->vm, v)); break;
+    case NS_TYPE_U32: len = snprintf(literal, sizeof(literal), "%u", ns_eval_number_u32(e->vm, v)); break;
+    case NS_TYPE_U64: len = snprintf(literal, sizeof(literal), "%llu", (unsigned long long)ns_eval_number_u64(e->vm, v)); break;
+    case NS_TYPE_F32: len = snprintf(literal, sizeof(literal), "%.9g", (f64)ns_eval_number_f32(e->vm, v)); break;
+    case NS_TYPE_F64: len = snprintf(literal, sizeof(literal), "%.17g", ns_eval_number_f64(e->vm, v)); break;
+    default:
+        return ns_return_error(void, loc, NS_ERR_EVAL, "shader: only number, bool and enum lit values are supported in shader fns.");
+    }
+    // GLSL has no implicit int-to-float conversion, so a float value always
+    // carries a decimal point.
+    if (ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64)) {
+        if (len > 0 && !strpbrk(literal, ".eEnN") && len + 2 < (i32)sizeof(literal)) {
+            len += snprintf(literal + len, sizeof(literal) - (szt)len, ".0");
+        }
+    }
+    ns_str_append_len(dst, literal, len);
+    return ns_return_ok_void;
+}
+
 static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst) {
     ns_ast_t *n = &e->ctx->nodes[i];
     ns_code_loc loc = ns_shader_loc(e, n);
@@ -725,7 +996,12 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             }
             return ns_return_ok_void;
         }
-        case NS_TOKEN_IDENTIFIER:
+        case NS_TOKEN_IDENTIFIER: {
+            ns_symbol *lit = ns_shader_lit_symbol(e, n->primary_expr.token.val);
+            if (lit) return ns_shader_emit_lit(e, lit, loc, dst);
+            ns_shader_str(dst, n->primary_expr.token.val);
+            return ns_return_ok_void;
+        }
         case NS_TOKEN_TRUE:
         case NS_TOKEN_FALSE:
             ns_shader_str(dst, n->primary_expr.token.val);
@@ -815,6 +1091,15 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             return ns_return_error(void, loc, NS_ERR_EVAL, "shader: unknown mat4 member.");
         }
         if (ns_str_equals(field, ns_str_cstr("len")) || ns_str_equals(field, ns_str_cstr("size")) || ns_str_equals(field, ns_str_cstr("cap"))) {
+            // A fixed-capacity local array knows its length at transpile time.
+            ns_ast_t *table = &e->ctx->nodes[n->member_expr.left];
+            if (ns_type_is_array(lt) && table->type == NS_AST_PRIMARY_EXPR) {
+                i32 len = ns_shader_local_array_len(e, table->primary_expr.token.val);
+                if (len > 0) {
+                    ns_shader_i32(dst, len);
+                    return ns_return_ok_void;
+                }
+            }
             return ns_return_error(void, loc, NS_ERR_EVAL, "shader: container members are not supported in shader fns.");
         }
         ns_shader_try(ns_shader_emit_expr(e, n->member_expr.left, dst));
@@ -828,6 +1113,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             return ns_return_error(void, loc, NS_ERR_EVAL, "shader: only direct fn calls are supported in shader fns.");
         }
         ns_str name = callee->primary_expr.token.val;
+        u32 callee_mask = 0;
         const ns_shader_builtin *b = ns_shader_find_builtin(name);
         if (b) {
             ns_bool transform_position = ns_str_equals(name, ns_str_cstr("shader_transform_position"));
@@ -993,12 +1279,13 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                 return ns_return_ok_void;
             }
         } else {
-            ns_symbol *s = ns_shader_find_global(e->vm, name);
-            if (!s || s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || !ns_shader_is_main_tu(s)) {
+            ns_symbol *s = ns_shader_find_fn(e->vm, e->ctx, name);
+            if (!s || s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || !ns_shader_in_unit(e->ctx, s)) {
                 snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: cannot call `%.*s` from a shader fn (not a user fn in this file).", name.len, name.data);
                 return ns_return_error(void, loc, NS_ERR_EVAL, ns_shader_err);
             }
             ns_shader_str(dst, name);
+            callee_mask = ns_shader_fn_mask(e, (i32)(s - e->vm->symbols));
         }
         ns_shader_cstr(dst, "(");
         i32 next = n->next;
@@ -1007,6 +1294,9 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             ns_shader_try(ns_shader_emit_expr(e, next, dst));
             next = e->ctx->nodes[next].next;
         }
+        // Pass on whatever the callee reaches through the stage intrinsics.
+        ns_bool first_resource = n->call_expr.arg_count == 0;
+        ns_shader_emit_resource_list(e, dst, callee_mask, false, &first_resource);
         ns_shader_cstr(dst, ")");
         return ns_return_ok_void;
     }
@@ -1041,8 +1331,23 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         return ns_return_ok_void;
     }
     case NS_AST_STR_FMT_EXPR: return ns_return_error(void, loc, NS_ERR_EVAL, "shader: string formatting is not supported in shader fns.");
-    case NS_AST_INDEX_EXPR: return ns_return_error(void, loc, NS_ERR_EVAL, "shader: index expressions are not supported in shader fns yet.");
-    case NS_AST_ARRAY_EXPR: return ns_return_error(void, loc, NS_ERR_EVAL, "shader: arrays are not supported in shader fns.");
+    case NS_AST_INDEX_EXPR: {
+        // Only the fixed-capacity local arrays declared below are indexable;
+        // every other container is still rejected by its declaration.
+        ns_type table = ns_shader_infer(e, n->index_expr.table);
+        if (!ns_type_is_array(table)) {
+            return ns_return_error(void, loc, NS_ERR_EVAL, "shader: only fixed-length local arrays can be indexed in shader fns.");
+        }
+        ns_shader_try(ns_shader_emit_expr(e, n->index_expr.table, dst));
+        ns_shader_cstr(dst, "[");
+        ns_shader_try(ns_shader_emit_expr(e, n->index_expr.expr, dst));
+        ns_shader_cstr(dst, "]");
+        return ns_return_ok_void;
+    }
+    case NS_AST_ARRAY_EXPR:
+        // An array constructor only appears as a local declaration's
+        // initializer, which the var-def statement emits as a declared length.
+        return ns_return_error(void, loc, NS_ERR_EVAL, "shader: an array value can only initialize a local array binding in a shader fn.");
     case NS_AST_BLOCK_EXPR: return ns_return_error(void, loc, NS_ERR_EVAL, "shader: closures are not supported in shader fns.");
     default: return ns_return_error(void, loc, NS_ERR_EVAL, "shader: unsupported expression in shader fn.");
     }
@@ -1092,6 +1397,50 @@ static ns_return_void ns_shader_emit_stmt(ns_shader_emit *e, i32 i) {
     switch (n->type) {
     case NS_AST_VAR_DEF: {
         if (n->var_def.is_ref) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: ref bindings are not supported in shader fns.");
+        // `let name = [T](N)` with a constant N is the one container shape a
+        // shader accepts: a fixed-capacity local array, which every target
+        // declares by value with no initializer. Element writes come from
+        // ordinary indexed assignments.
+        if (n->var_def.expr != 0 && e->ctx->nodes[n->var_def.expr].type == NS_AST_ARRAY_EXPR) {
+            ns_ast_t *array = &e->ctx->nodes[n->var_def.expr];
+            i32 length = 0;
+            ns_shader_try(ns_shader_const_i32(e, array->array_expr.count_expr, array->array_expr.literal, &length, loc));
+            ns_type element = ns_shader_array_element(array->array_expr.rt);
+            if (ns_type_is_unknown(element)) {
+                return ns_return_error(void, loc, NS_ERR_EVAL, "shader: cannot infer the element type of a local array.");
+            }
+            ns_shader_try(ns_shader_collect_type(e, element, loc));
+
+            ns_str line = {.data = ns_null, .len = 0, .dynamic = true};
+            ns_return_void r = ns_return_ok_void;
+            if (e->target == NS_SHADER_WGSL) {
+                ns_shader_cstr(&line, "var ");
+                ns_shader_str(&line, n->var_def.name.val);
+                ns_shader_cstr(&line, ": array<");
+                r = ns_shader_type_name(e, element, &line, loc);
+                ns_shader_cstr(&line, ", ");
+                ns_shader_i32(&line, length);
+                ns_shader_cstr(&line, ">");
+            } else {
+                r = ns_shader_type_name(e, element, &line, loc);
+                ns_shader_cstr(&line, " ");
+                ns_shader_str(&line, n->var_def.name.val);
+                ns_shader_cstr(&line, "[");
+                ns_shader_i32(&line, length);
+                ns_shader_cstr(&line, "]");
+            }
+            if (ns_return_is_error(r)) {
+                ns_array_free(line.data);
+                return r;
+            }
+            ns_shader_flush_pre(e);
+            ns_shader_pad(&e->out, e->indent);
+            ns_shader_str(&e->out, line);
+            ns_shader_cstr(&e->out, ";\n");
+            ns_array_free(line.data);
+            ns_array_push(e->locals, ((ns_shader_local){.name = n->var_def.name.val, .t = array->array_expr.rt, .array_len = length}));
+            return ns_return_ok_void;
+        }
         ns_type t = ns_type_unknown;
         if (n->var_def.type != 0) {
             ns_return_type rt = ns_vm_parse_type(e->vm, e->ctx, &e->ctx->nodes[n->var_def.type]);
@@ -1504,6 +1853,12 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         if (ns_array_length(s->fn.args) > 0) ns_shader_cstr(&e->out, ", ");
         ns_shader_cstr(&e->out, "uint ns_vertex_id : SV_VertexID");
     }
+    // A helper fn takes the resources it reaches as plain parameters, in the
+    // same order its call sites pass them.
+    if (stage == NS_SHADER_STAGE_AUTO) {
+        ns_bool first = ns_array_length(s->fn.args) == 0;
+        ns_shader_emit_resource_list(e, &e->out, ns_shader_fn_mask(e, fn_index), true, &first);
+    }
     ns_shader_cstr(&e->out, ")");
     if (e->target == NS_SHADER_HLSL && stage == NS_SHADER_STAGE_FRAGMENT &&
         !(ns_type_is(s->fn.ret, NS_TYPE_STRUCT) && ns_shader_is_fragment_output(e->vm, (i32)ns_type_index(s->fn.ret)))) {
@@ -1742,6 +2097,18 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
         return ns_return_error(str, ns_code_loc_nil, NS_ERR_EVAL, "shader: glsl emits one source per stage; transpile entries one at a time.");
     }
 
+    // `lit` bindings fold into the emitted source, so their values must exist
+    // before any expression is emitted. Callers that only type-check the main
+    // translation unit (the shader CLI, transpiler tests) never evaluate them.
+    // Their semantic checker excludes calls and mutable data, so evaluating a
+    // literal constant expression here has no runtime side effects.
+    for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
+        i32 node = ctx->sections[i];
+        if (ctx->nodes[node].type != NS_AST_VAR_DEF || !ctx->nodes[node].var_def.is_lit) continue;
+        ns_return_value evaluated = ns_eval_var_def(vm, ctx, node);
+        if (ns_return_is_error(evaluated)) return ns_return_change_type(str, evaluated);
+    }
+
     ns_shader_emit e = {0};
     e.vm = vm;
     e.ctx = ctx;
@@ -1756,6 +2123,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
         ns_array_free(e.structs);                                                                                                                    \
         ns_array_free(e.fns);                                                                                                                        \
         ns_array_free(e.fn_visit);                                                                                                                   \
+        ns_array_free(e.fn_uses);                                                                                                                   \
         ns_array_free(e.entries);                                                                                                                    \
         ns_array_free(e.vs_inputs);                                                                                                                  \
         ns_array_free(e.stage_ios);                                                                                                                  \
@@ -1771,8 +2139,8 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             ns_shader_fail(r);
         }
         ns_symbol *s = &vm->symbols[entry.fn_index];
-        if (s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || s->fn.body == 0 || !ns_shader_is_main_tu(s)) {
-            snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: `%.*s` is not a transpilable fn (must be a non-ref fn defined in this file).",
+        if (s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || s->fn.body == 0 || !ns_shader_in_unit(ctx, s)) {
+            snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: `%.*s` is not a transpilable fn (must be a non-ref fn defined in the transpiled file).",
                      s->name.len, s->name.data);
             ns_return_void r = ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, ns_shader_err);
             ns_shader_fail(r);
@@ -2032,6 +2400,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     ns_array_free(e.structs);
     ns_array_free(e.fns);
     ns_array_free(e.fn_visit);
+    ns_array_free(e.fn_uses);
     ns_array_free(e.entries);
     ns_array_free(e.vs_inputs);
     ns_array_free(e.stage_ios);
@@ -2154,9 +2523,131 @@ static ns_return_bool ns_shader_group_resource_at(ns_vm *vm, ns_value group, i32
     return ns_return_ok(bool, true);
 }
 
+// ---------------------------------------------------------------------------
+// host execution of compute fns
+// ---------------------------------------------------------------------------
+//
+// The stage intrinsics a compute fn calls are ordinary VM fns, so binding the
+// resources they read lets the interpreter run the fn one invocation at a
+// time. Textures are plain f32 arrays of four components per texel.
+typedef struct ns_shader_host {
+    f32 *read;
+    f32 *write;
+    i32 width, height;
+    f32 root[NS_SHADER_ROOT_WORDS];
+    i32 global_id[3];
+    ns_bool bound;
+} ns_shader_host;
+
+static ns_shader_host _host = {0};
+
+static i32 ns_shader_host_texel(i32 x, i32 y) {
+    if (!_host.bound || x < 0 || y < 0 || x >= _host.width || y >= _host.height) return -1;
+    return (y * _host.width + x) * 4;
+}
+
+static ns_return_bool ns_shader_host_vm_call(ns_vm *vm, ns_str name, ns_call *call) {
+    if (ns_str_equals(name, ns_str_cstr("shader_host_bind"))) {
+        f32 *read = (f32 *)ns_eval_array_raw(vm, vm->symbol_stack[call->arg_offset].val);
+        f32 *write = (f32 *)ns_eval_array_raw(vm, vm->symbol_stack[call->arg_offset + 1].val);
+        i32 width = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 2].val);
+        i32 height = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 3].val);
+        szt texels = (szt)(width > 0 ? width : 0) * (szt)(height > 0 ? height : 0);
+        ns_bool ok = read && write && width > 0 && height > 0 &&
+                     ns_array_length(read) >= texels * 4 && ns_array_length(write) >= texels * 4;
+        if (ok) {
+            _host.read = read;
+            _host.write = write;
+            _host.width = width;
+            _host.height = height;
+            _host.bound = true;
+        }
+        call->ret = (ns_value){.t = ns_type_bool, .b = ok};
+        return ns_return_ok(bool, true);
+    }
+    if (ns_str_equals(name, ns_str_cstr("shader_host_root"))) {
+        f32 *words = (f32 *)ns_eval_array_raw(vm, vm->symbol_stack[call->arg_offset].val);
+        ns_bool ok = words && ns_array_length(words) >= NS_SHADER_ROOT_WORDS;
+        if (ok) memcpy(_host.root, words, sizeof(_host.root));
+        call->ret = (ns_value){.t = ns_type_bool, .b = ok};
+        return ns_return_ok(bool, true);
+    }
+    if (ns_str_equals(name, ns_str_cstr("shader_host_invocation"))) {
+        for (i32 i = 0; i < 3; ++i) {
+            _host.global_id[i] = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + i].val);
+        }
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    if (ns_str_equals(name, ns_str_cstr("shader_host_swap"))) {
+        f32 *read = _host.read;
+        _host.read = _host.write;
+        _host.write = read;
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+    if (ns_str_equals(name, ns_str_cstr("shader_host_release"))) {
+        memset(&_host, 0, sizeof(_host));
+        call->ret = ns_nil;
+        return ns_return_ok(bool, true);
+    }
+
+    ns_bool global_x = ns_str_equals(name, ns_str_cstr("shader_global_id_x"));
+    ns_bool global_y = ns_str_equals(name, ns_str_cstr("shader_global_id_y"));
+    ns_bool global_z = ns_str_equals(name, ns_str_cstr("shader_global_id_z"));
+    if (global_x || global_y || global_z) {
+        call->ret = (ns_value){.t = ns_type_i32, .i32 = _host.global_id[global_x ? 0 : global_y ? 1 : 2]};
+        return ns_return_ok(bool, true);
+    }
+    if (ns_str_equals(name, ns_str_cstr("shader_root_f32"))) {
+        i32 index = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset].val);
+        f32 word = index >= 0 && index < NS_SHADER_ROOT_WORDS ? _host.root[index] : 0.0f;
+        call->ret = (ns_value){.t = ns_type_f32, .f32 = word};
+        return ns_return_ok(bool, true);
+    }
+    if (ns_str_equals(name, ns_str_cstr("shader_read_texture")) || ns_str_equals(name, ns_str_cstr("shader_write_texture"))) {
+        if (!_host.bound) {
+            return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
+                                   "shader: texture intrinsics need shader_host_bind outside a transpiled shader.");
+        }
+        i32 x = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset].val);
+        i32 y = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
+        i32 texel = ns_shader_host_texel(x, y);
+        ns_type float4_t = call->callee->fn.ret;
+        if (ns_str_equals(name, ns_str_cstr("shader_write_texture"))) {
+            ns_value color = vm->symbol_stack[call->arg_offset + 2].val;
+            if (texel >= 0) {
+                // A float4 is four f32 fields in declaration order.
+                for (i32 i = 0; i < 4; ++i) {
+                    ns_value field = (ns_value){.t = ns_type_set_stack(ns_type_f32, true), .o = color.o + (u64)i * sizeof(f32)};
+                    _host.write[texel + i] = ns_eval_number_f32(vm, field);
+                }
+            }
+            call->ret = ns_nil;
+            return ns_return_ok(bool, true);
+        }
+        i32 size = 4 * (i32)sizeof(f32);
+        ns_value out = (ns_value){.t = ns_type_set_stack(float4_t, true), .o = ns_eval_alloc(vm, size)};
+        for (i32 i = 0; i < 4; ++i) {
+            f32 value = texel >= 0 ? _host.read[texel + i] : 0.0f;
+            memcpy(&vm->stack[out.o + (u64)i * sizeof(f32)], &value, sizeof(f32));
+        }
+        ns_array_set_length(vm->stack, out.o + (u64)size);
+        call->ret = out;
+        return ns_return_ok(bool, true);
+    }
+    return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "unknown shader fn.");
+}
+
 ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_str name = call->callee->name;
+
+    if (ns_str_starts_with(name, ns_str_cstr("shader_host_")) || ns_str_starts_with(name, ns_str_cstr("shader_global_id_")) ||
+        ns_str_equals(name, ns_str_cstr("shader_root_f32")) || ns_str_equals(name, ns_str_cstr("shader_read_texture")) ||
+        ns_str_equals(name, ns_str_cstr("shader_write_texture"))) {
+        return ns_shader_host_vm_call(vm, name, call);
+    }
 
     ns_bool is_group_count = ns_str_equals(name, ns_str_cstr("shader_group_binding_count"));
     ns_bool is_group_object = ns_str_equals(name, ns_str_cstr("shader_group_binding_object"));

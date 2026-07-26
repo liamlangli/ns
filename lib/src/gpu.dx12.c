@@ -477,6 +477,19 @@ void gpu_commit(void) {
     gpu_v2_frame_end();
 }
 
+ns_bool gpu_read_texture_pixel_async(u32 texture_id, i32 x, i32 y, u32 request_id, u32 *result) {
+    ns_unused(texture_id);
+    ns_unused(x);
+    ns_unused(y);
+    ns_unused(request_id);
+    if (result) {
+        result[0] = 0;
+        result[1] = 0;
+        result[2] = 0;
+    }
+    return false;
+}
+
 ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z) {
     if (!_state.valid || !source || !entry || threads_x <= 0 || threads_y <= 0 || threads_z <= 0) return false;
 

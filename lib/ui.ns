@@ -326,6 +326,10 @@ ref fn ui_replay_layer(r: ref ui_renderer, layer: ref ui_layer, dx: f64, dy: f64
 // ===========================================================================
 
 ref fn ui_draw_text(r: ref ui_renderer, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
+// Center UTF-8 text on a circular baseline. Glyph positions follow the arc and
+// each glyph rotates to the local tangent; increasing angles flow clockwise in
+// the renderer's screen coordinate system.
+ref fn ui_draw_text_arc(r: ref ui_renderer, cx: f64, cy: f64, radius: f64, center_angle: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
 ref fn ui_draw_text_wrapped(r: ref ui_renderer, x: f64, y: f64, w: f64, text: str, font_px: f64, rgba: u32, font_type: i32) f64
 ref fn ui_wrap_text(r: ref ui_renderer, text: str, font_px: f64, max_w: f64, font_type: i32) [str]
 ref fn ui_text_line_height(r: ref ui_renderer, font_px: f64, font_type: i32) f64

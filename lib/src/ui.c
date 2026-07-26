@@ -279,6 +279,7 @@ void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, 
 void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness, f64 angle_start, f64 angle_end, u32 rgba, f64 feather);
 void ui_stroke_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, f64 thickness, u32 rgba, f64 feather);
 void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type);
+void ui_draw_text_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 center_angle, const char *text, f64 font_px, u32 rgba, i32 font_type);
 static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 h, f64 radius);
 static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inner, i32 n, u32 outer_color, u32 inner_color);
 
@@ -597,6 +598,40 @@ static void ui_push_quad_ex(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 
         !ui_push_vertex(r, cx0, cy1, cu0, cv1, color, range, weight, softness, clip_param)) {
         r->vertex_count = base;
         return;
+    }
+    ui_emit_command(r, base, 6, kind);
+}
+
+static void ui_push_quad_rotated(ui_renderer *r, f64 origin_x, f64 origin_y, f64 cosine, f64 sine,
+                                 f64 x0, f64 y0, f64 x1, f64 y1,
+                                 f64 u0, f64 v0, f64 u1, f64 v1,
+                                 u32 color, i32 kind, f64 range, f64 weight, f64 softness) {
+    const f64 local_x[4] = {x0, x1, x1, x0};
+    const f64 local_y[4] = {y0, y0, y1, y1};
+    const f64 uv_x[4] = {u0, u1, u1, u0};
+    const f64 uv_y[4] = {v0, v0, v1, v1};
+    f64 px[4], py[4];
+    f64 min_x = 1e30, min_y = 1e30, max_x = -1e30, max_y = -1e30;
+    for (i32 i = 0; i < 4; i++) {
+        px[i] = origin_x + cosine * local_x[i] - sine * local_y[i];
+        py[i] = origin_y + sine * local_x[i] + cosine * local_y[i];
+        min_x = fmin(min_x, px[i]);
+        min_y = fmin(min_y, py[i]);
+        max_x = fmax(max_x, px[i]);
+        max_y = fmax(max_y, py[i]);
+    }
+    ui_clip clip = ui_current_clip(r);
+    if (max_x <= clip.x || max_y <= clip.y || min_x >= clip.x + clip.w || min_y >= clip.y + clip.h) return;
+    const i32 order[6] = {0, 1, 2, 0, 2, 3};
+    const f64 clip_param = ui_clip_param(r, clip);
+    const i32 base = r->vertex_count;
+    for (i32 i = 0; i < 6; i++) {
+        const i32 vertex = order[i];
+        if (!ui_push_vertex(r, px[vertex], py[vertex], uv_x[vertex], uv_y[vertex],
+                            color, range, weight, softness, clip_param)) {
+            r->vertex_count = base;
+            return;
+        }
     }
     ui_emit_command(r, base, 6, kind);
 }
@@ -1894,6 +1929,50 @@ static f64 ui_text_char_advance(ui_renderer *r, i32 font_type, i32 code, f64 fon
     ui_glyph *g = NULL;
     ui_font *font = ui_font_for_code(r, font_type, code, &g);
     return g && font->font_size > 0.0 ? g->x_advance * (font_px / font->font_size) : font_px * 0.55;
+}
+
+void ui_draw_text_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 center_angle,
+                      const char *text, f64 font_px, u32 rgba, i32 font_type) {
+    if (!r || !text || radius <= 0.0 || font_px <= 0.0) return;
+    f64 total_width = 0.0;
+    const unsigned char *measure = (const unsigned char*)text;
+    while (*measure) {
+        const i32 code = ui_utf8_next(&measure);
+        if (code == '\n') break;
+        total_width += ui_text_char_advance(r, font_type, code, font_px);
+    }
+
+    f64 cursor = -total_width * 0.5;
+    const unsigned char *p = (const unsigned char*)text;
+    while (*p) {
+        const i32 code = ui_utf8_next(&p);
+        if (code == '\n') break;
+        ui_glyph *g = NULL;
+        ui_font *font = ui_font_for_code(r, font_type, code, &g);
+        if (!g) continue;
+        const f64 scale = font_px / font->font_size;
+        const f64 advance = g->x_advance * scale;
+        const f64 angle = center_angle + (cursor + advance * 0.5) / radius;
+        const f64 rotation = angle + M_PI * 0.5;
+        const f64 origin_x = cx + cos(angle) * radius;
+        const f64 origin_y = cy + sin(angle) * radius;
+        if (g->width > 0 && g->height > 0) {
+            const f64 line_top = -(font->cap_top + font->baseline) * 0.5 * scale;
+            const f64 x0 = g->x_offset * scale - advance * 0.5;
+            const f64 y0 = line_top + g->y_offset * scale;
+            const f64 x1 = x0 + g->width * scale;
+            const f64 y1 = y0 + g->height * scale;
+            r->current_texture_id = (font == &r->fonts[UI_FONT_ZH]) ? UI_FONT_ZH_TEXTURE : UI_FONT_TEXTURE;
+            ui_push_quad_rotated(r, origin_x, origin_y, cos(rotation), sin(rotation),
+                                 x0, y0, x1, y1,
+                                 g->atlas_x / font->texture_width,
+                                 g->atlas_y / font->texture_height,
+                                 (g->atlas_x + g->width) / font->texture_width,
+                                 (g->atlas_y + g->height) / font->texture_height,
+                                 rgba, UI_KIND_MSDF, 5.0, 0.0, 1.0);
+        }
+        cursor += advance;
+    }
 }
 
 static void ui_draw_text_range(ui_renderer *r, f64 x, f64 y, const char *text, i32 len, f64 font_px, u32 rgba, i32 font_type) {

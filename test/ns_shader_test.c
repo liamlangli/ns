@@ -89,8 +89,26 @@ static const char *ns_shader_test_src =
     "    let mask = shader_sample_mask(data.uv)\n"
     "    return FragmentOutput { color0: data.color, color1: mask }\n"
     "}\n"
+    "lit ROW_STRIDE = 3 * 4\n"
+    "lit GRAVITY: f32 = -10.0\n"
+    "lit ENABLED = true\n"
     "fn cs_main() void {\n"
     "    let n = 40 + 2\n"
+    "}\n"
+    "fn shade_probe(x: i32, y: i32) float4 {\n"
+    "    return shader_read_texture(x, y)\n"
+    "}\n"
+    "fn cs_helper() void {\n"
+    "    let scratch = [float4](ROW_STRIDE / 3)\n"
+    "    scratch[1] = shade_probe(shader_global_id_x(), shader_global_id_y())\n"
+    "    shader_write_texture(shader_global_id_x(), shader_global_id_y(), scratch[1])\n"
+    "}\n"
+    "fn cs_lit() void {\n"
+    "    let row = shader_global_id_y() % ROW_STRIDE\n"
+    "    let fall = GRAVITY * 0.5\n"
+    "    if ENABLED {\n"
+    "        shader_write_texture(shader_global_id_x(), row, float4 { x: fall, y: 0.0, z: 0.0, w: 1.0 })\n"
+    "    }\n"
     "}\n"
     "fn cs_texture() void {\n"
     "    let x = shader_global_id_x()\n"
@@ -335,6 +353,54 @@ int main() {
         r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@compute @workgroup_size(8, 8, 1)"),
                   "wgsl compute entry transpiles.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- lit constants fold into the emitted source ---
+    {
+        i32 cs_lit = ns_shader_test_fn(&vm, "cs_lit");
+        ns_expect(cs_lit >= 0, "cs_lit entry symbol exists.");
+
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, cs_lit, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "% 12") && ns_shader_test_has(r.r, "-10.0 * 0.5") &&
+                      ns_shader_test_has(r.r, "if (true)") && !ns_shader_test_has(r.r, "ROW_STRIDE"),
+                  "wgsl folds int, float and bool lit values.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        // GLSL has no implicit int-to-float conversion, so a float lit always
+        // carries a decimal point.
+        r = ns_shader_transpile(&vm, &ctx, cs_lit, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "-10.0 * 0.5") && !ns_shader_test_has(r.r, "GRAVITY"),
+                  "glsl folds a float lit with a decimal point.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- helper fns: local arrays, and resources threaded where a target
+    // --- binds them per entry rather than at module scope ---
+    {
+        i32 cs_helper = ns_shader_test_fn(&vm, "cs_helper");
+        ns_expect(cs_helper >= 0, "cs_helper entry symbol exists.");
+
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, cs_helper, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "float4 scratch[4]") &&
+                      ns_shader_test_has(r.r, "float4 shade_probe(int x, int y, texture2d<float, access::read> ns_read_texture)") &&
+                      ns_shader_test_has(r.r, "shade_probe(int(ns_global_id.x), int(ns_global_id.y), ns_read_texture)"),
+                  "msl declares local arrays and threads entry-bound resources through helper fns.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_helper, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "var scratch: array<vec4<f32>, 4>") &&
+                      ns_shader_test_has(r.r, "fn shade_probe(x: i32, y: i32) -> vec4<f32>") &&
+                      ns_shader_test_has(r.r, "shade_probe(i32(ns_global_id.x), i32(ns_global_id.y))"),
+                  "wgsl declares local arrays and reaches module-scope resources without threading.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_helper, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "vec4 scratch[4]"), "glsl declares local arrays.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_helper, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "float4 scratch[4]"), "hlsl declares local arrays.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

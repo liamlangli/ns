@@ -1,0 +1,369 @@
+// nscode/dynamic/main.ns
+// ---------------------------------------------------------------------------
+// A 3D test bench for the `dynamic` built-in module. Run it with:
+//
+//   bin/ns run nscode/dynamic
+//
+// It opens a native window, acquires the platform GPU device, and drives a
+// world of convex bodies -- cubes, a hexagonal prism, tetrahedra and spheres --
+// through the module's pipeline once per frame: broad phase, narrow phase
+// (GJK for overlap, EPA for the penetration manifold), constraint solve, and
+// integration. The bodies are drawn as shaded triangles through the `gpu`
+// module (render.ns); `ui` only draws the overlay.
+//
+// Frames are continuous: the frame callback requests the next one, so the
+// simulation keeps running whether or not there is input.
+//
+// Controls
+//   drag         orbit the camera
+//   scroll       zoom
+//   left click   drop a body at the cursor's aim
+//   space        pause and resume
+//   R            reseed the scene
+//
+// Backends: the module's four kernels are dispatched when the world is created
+// with `prefer_gpu` and the device's v2 tier can carry an RGBA32F state image
+// (see doc/dynamic.md). On the current native backends v2 compute is not
+// registered, so the same kernels run through `shader_host_*` on the CPU and
+// the HUD reports `cpu`.
+
+use std
+use simd
+use view
+use gpu
+use ui
+use os
+use dynamic
+use matrix
+use shapes
+use render
+
+lit SIM_CAPACITY = 18
+lit SIM_SEED_BODIES = 9
+lit SIM_KEY_SPACE = 32
+lit SIM_KEY_R = 82
+
+// A slightly cheaper solve than the module default: the pipeline runs in the
+// interpreter here, and the HUD reports what each step costs.
+fn sim_config() dynamic_config {
+    let config = dynamic_config_default()
+    config.iterations = 3
+    return config
+}
+
+let sim_world = dynamic_world_create(SIM_CAPACITY, sim_config())
+let sim_shapes = [shape_mesh](SHAPE_KINDS)
+let sim_body_shape = [i32](SIM_CAPACITY)
+let sim_paused = false
+let sim_step_us = 0
+let sim_render_us = 0
+let sim_frames = 0
+let sim_fps = 0
+let sim_fps_frames = 0
+let sim_fps_mark = 0
+
+let sim_camera_yaw = 0.7
+let sim_camera_pitch = 0.42
+let sim_camera_distance = 11.0
+let sim_dragging = false
+let sim_drag_x: f64 = 0.0
+let sim_drag_y: f64 = 0.0
+
+// ---------------------------------------------------------------------------
+// scene
+// ---------------------------------------------------------------------------
+
+fn sim_build_shapes() {
+    sim_shapes[SHAPE_CUBE] = shape_box(float3 { x: 0.42, y: 0.42, z: 0.42 })
+    sim_shapes[SHAPE_TETRA] = shape_tetrahedron(0.46)
+    sim_shapes[SHAPE_SPHERE] = shape_sphere(0.38)
+    sim_shapes[SHAPE_PRISM] = shape_prism(0.44, 0.30)
+}
+
+fn sim_spawn(kind: i32, position: float3, spin: float3) i32 {
+    let mesh = sim_shapes[kind]
+    let body = shape_body(mesh, 1.0)
+    body.position = position
+    body.angular_velocity = spin
+    body.restitution = 0.12
+    body.friction = 0.55
+    let index = dynamic_world_add(sim_world, body)
+    if index < 0 {
+        return index
+    }
+    if mesh.margin <= 0.0 {
+        dynamic_world_set_hull(sim_world, index, mesh.hull, mesh.hull_count)
+    }
+    sim_body_shape[index] = kind
+    return index
+}
+
+// A fixed layout so two runs of the same build are comparable.
+fn sim_reset() {
+    dynamic_world_clear(sim_world)
+    for i in 0 to SIM_SEED_BODIES {
+        let kind = i % SHAPE_KINDS
+        let angle = (i as f32) * 1.87
+        let radius = 0.35 + ((i % 3) as f32) * 0.55
+        let position = float3 {
+            x: cos(angle as f64) as f32 * radius,
+            y: 0.75 + (i as f32) * 0.92,
+            z: sin(angle as f64) as f32 * radius,
+        }
+        let spin = float3 { x: 0.4 - (i as f32) * 0.1, y: (i as f32) * 0.15, z: 0.2 }
+        sim_spawn(kind, position, spin)
+    }
+    dynamic_world_upload(sim_world)
+}
+
+// ---------------------------------------------------------------------------
+// camera
+// ---------------------------------------------------------------------------
+
+fn sim_camera_target() float3 {
+    let low = sim_world.config.bounds_min
+    let high = sim_world.config.bounds_max
+    return float3 { x: (low.x + high.x) * 0.5, y: low.y + 1.2, z: (low.z + high.z) * 0.5 }
+}
+
+fn sim_camera_eye() float3 {
+    let target = sim_camera_target()
+    let cos_pitch = cos(sim_camera_pitch as f64) as f32
+    return float3 {
+        x: target.x + (sin(sim_camera_yaw as f64) as f32) * cos_pitch * sim_camera_distance,
+        y: target.y + (sin(sim_camera_pitch as f64) as f32) * sim_camera_distance,
+        z: target.z + (cos(sim_camera_yaw as f64) as f32) * cos_pitch * sim_camera_distance,
+    }
+}
+
+fn sim_view_projection(width: f64, height: f64) mat4 {
+    let aspect = 1.0
+    if height > 0.0 {
+        aspect = (width / height) as f32
+    }
+    let projection = matrix_perspective(0.9, aspect, 0.1, 60.0)
+    let up = float3 { x: 0.0, y: 1.0, z: 0.0 }
+    let camera = matrix_look_at(sim_camera_eye(), sim_camera_target(), up)
+    return matrix_mul(projection, camera)
+}
+
+// ---------------------------------------------------------------------------
+// drawing
+// ---------------------------------------------------------------------------
+
+fn sim_shape_color(kind: i32, contacts: i32) float3 {
+    let color = float3 { x: 0.38, y: 0.62, z: 0.92 }
+    if kind == SHAPE_TETRA {
+        color = float3 { x: 0.95, y: 0.72, z: 0.32 }
+    }
+    if kind == SHAPE_SPHERE {
+        color = float3 { x: 0.52, y: 0.85, z: 0.58 }
+    }
+    if kind == SHAPE_PRISM {
+        color = float3 { x: 0.86, y: 0.45, z: 0.58 }
+    }
+    if contacts > 0 {
+        color = float3 { x: color.x * 0.75 + 0.25, y: color.y * 0.75 + 0.12, z: color.z * 0.75 }
+    }
+    return color
+}
+
+fn sim_draw_bounds(view_projection: mat4) {
+    let low = sim_world.config.bounds_min
+    let high = sim_world.config.bounds_max
+    let floor_tint = float4 { x: 0.16, y: 0.18, z: 0.23, w: 1.0 }
+    let edge_tint = float4 { x: 0.30, y: 0.34, z: 0.42, w: 1.0 }
+
+    // The floor slab, then the four uprights of the containing box.
+    let floor_low = float3 { x: low.x, y: low.y - 0.06, z: low.z }
+    let floor_high = float3 { x: high.x, y: low.y, z: high.z }
+    render_beam(view_projection, floor_low, floor_high, 0.03, floor_tint)
+
+    let corners = [low.x, low.z, high.x, low.z, high.x, high.z, low.x, high.z]
+    for i in 0 to 4 {
+        let x = corners[i * 2]
+        let z = corners[i * 2 + 1]
+        let bottom = float3 { x: x, y: low.y, z: z }
+        let top = float3 { x: x, y: high.y, z: z }
+        render_beam(view_projection, bottom, top, 0.025, edge_tint)
+    }
+}
+
+fn sim_draw_world(view_projection: mat4) {
+    let light = float3 { x: 0.42, y: 0.78, z: 0.46 }
+    let light_length = sqrt((light.x * light.x + light.y * light.y + light.z * light.z) as f64) as f32
+    light = float3 { x: light.x / light_length, y: light.y / light_length, z: light.z / light_length }
+
+    sim_draw_bounds(view_projection)
+    for i in 0 to sim_world.count {
+        let body = dynamic_world_body(sim_world, i)
+        let kind = sim_body_shape[i]
+        let mesh = sim_shapes[kind]
+        let model = matrix_from_quaternion(body.orientation, body.position, 1.0)
+        let color = sim_shape_color(kind, dynamic_world_contact_count(sim_world, i))
+        render_shape(mesh, model, view_projection, body.orientation, color, light)
+    }
+}
+
+fn sim_total_contacts() i32 {
+    let total = 0
+    for i in 0 to sim_world.count {
+        total = total + dynamic_world_contact_count(sim_world, i)
+    }
+    return total
+}
+
+fn sim_draw_overlay(r: ref ui_renderer, triangles: i32) {
+    let text_color = ui_pack_rgba_floats(0.82, 0.86, 0.93, 1.0)
+    let dim_color = ui_pack_rgba_floats(0.55, 0.60, 0.68, 1.0)
+    let state = "running"
+    if sim_paused {
+        state = "paused"
+    }
+    let backend = dynamic_world_backend_name(sim_world)
+    let headline = `dynamic 3d  |  {backend} backend  |  {sim_world.count} bodies  |  {sim_total_contacts()} contacts  |  gjk/epa + solve {sim_step_us}us  |  {triangles} tris {sim_render_us}us  |  {sim_fps} fps  |  {state}`
+    ui_draw_text(r, 18.0, 16.0, headline, 13.0, text_color, UI_FONT_MONO)
+    ui_draw_text(r, 18.0, 34.0, "drag orbit  .  scroll zoom  .  left click drop  .  space pause  .  R reseed", 12.0, dim_color, UI_FONT_MONO)
+}
+
+// ---------------------------------------------------------------------------
+// input
+// ---------------------------------------------------------------------------
+
+fn sim_handle_input(v: ref view) {
+    let mouse_x = v.mouse_x
+    let mouse_y = v.mouse_y
+    if v.mouse_down {
+        if sim_dragging {
+            sim_camera_yaw = sim_camera_yaw - ((mouse_x - sim_drag_x) as f32) * 0.008
+            sim_camera_pitch = sim_camera_pitch + ((mouse_y - sim_drag_y) as f32) * 0.008
+            if sim_camera_pitch > 1.45 {
+                sim_camera_pitch = 1.45
+            }
+            if sim_camera_pitch < 0.0 - 0.35 {
+                sim_camera_pitch = 0.0 - 0.35
+            }
+        }
+        sim_drag_x = mouse_x
+        sim_drag_y = mouse_y
+        sim_dragging = true
+    } else {
+        sim_dragging = false
+    }
+
+    if v.scroll_y != 0.0 {
+        sim_camera_distance = sim_camera_distance - (v.scroll_y as f32) * 0.5
+        if sim_camera_distance < 3.5 {
+            sim_camera_distance = 3.5
+        }
+        if sim_camera_distance > 24.0 {
+            sim_camera_distance = 24.0
+        }
+    }
+
+    // A click drops the next shape high above the middle of the world.
+    if v.mouse_released && sim_dragging == false {
+        let kind = sim_frames % SHAPE_KINDS
+        let target = sim_camera_target()
+        let position = float3 { x: target.x + 0.2, y: sim_world.config.bounds_max.y - 0.8, z: target.z - 0.2 }
+        let spin = float3 { x: 0.6, y: 1.2, z: 0.0 - 0.4 }
+        sim_spawn(kind, position, spin)
+        dynamic_world_upload(sim_world)
+    }
+
+    if view_take_key_press(v, SIM_KEY_SPACE) > 0 {
+        sim_paused = !(sim_paused)
+    }
+    if view_take_key_press(v, SIM_KEY_R) > 0 {
+        sim_reset()
+    }
+}
+
+fn sim_reset_view_input(v: ref view) {
+    v.mouse_pressed = false
+    v.mouse_released = false
+    v.mouse_right_pressed = false
+    v.mouse_right_released = false
+    v.scroll_x = 0.0
+    v.scroll_y = 0.0
+    view_clear_key_presses(v)
+}
+
+// ---------------------------------------------------------------------------
+// frame
+// ---------------------------------------------------------------------------
+
+fn sim_frame(r: ref ui_renderer, v: ref view) {
+    // Keep the simulation running without input: ask for the next frame from
+    // inside this one.
+    view_request_frame(v, 1)
+    sim_handle_input(v)
+
+    if !(sim_paused) {
+        let started = os_time_us()
+        dynamic_world_step(sim_world)
+        sim_step_us = (os_time_us() - started) as i32
+    }
+
+    let render_started = os_time_us()
+    let width = (ui_canvas_width(r) & 1048575) as f64
+    let height = (ui_canvas_height(r) & 1048575) as f64
+    let view_projection = sim_view_projection(width, height)
+    render_begin()
+    sim_draw_world(view_projection)
+    render_flush()
+    sim_render_us = (os_time_us() - render_started) as i32
+
+    // The overlay draws into the same frame; ui_flush ends it and presents.
+    ui_begin_frame(r)
+    ui_resize(r)
+    sim_draw_overlay(r, render_triangle_count())
+    ui_flush(r, ui_color_rgba { r: 0.06, g: 0.07, b: 0.09, a: 1.0 })
+    sim_frames = sim_frames + 1
+
+    // Frames are self-driven, so the rate is worth showing: it is what the
+    // pipeline and the renderer together cost.
+    sim_fps_frames = sim_fps_frames + 1
+    let now = (os_time_us() / 1000) as i32
+    if sim_fps_mark == 0 {
+        sim_fps_mark = now
+    } else if now - sim_fps_mark >= 500 {
+        sim_fps = sim_fps_frames * 1000 / (now - sim_fps_mark)
+        sim_fps_frames = 0
+        sim_fps_mark = now
+    }
+    sim_reset_view_input(v)
+}
+
+fn main() {
+    sim_build_shapes()
+    sim_reset()
+    print(`dynamic 3d world ready on the {dynamic_world_backend_name(sim_world)} backend\n`)
+
+    let v = view_create("NS Dynamic World 3D", 1180, 760)
+    if gpu_request_device(v) {
+        let r = ui_renderer_create(v)
+        if render_create() == false {
+            print("the gpu pipeline could not be created; nothing will be drawn\n")
+        }
+        v.on_frame({ frame_view in
+            sim_frame(r, frame_view)
+        })
+        v.on_terminate({ dead_view in
+            render_release()
+            ui_renderer_destroy(r)
+            dynamic_world_release(sim_world)
+        })
+    } else {
+        // Hostless targets: step the world so the pipeline still runs, then
+        // report where the bodies came to rest.
+        print("no GPU backend on this platform; stepping headless\n")
+        for step in 0 to 120 {
+            dynamic_world_step(sim_world)
+        }
+        let sample = dynamic_world_body(sim_world, 0)
+        print(`body 0 rests at y={sample.position.y}\n`)
+    }
+
+    view_run(v)
+}

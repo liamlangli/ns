@@ -2397,6 +2397,7 @@ static ns_bool ns_project_module_embeddable(ns_str module) {
            ns_str_equals(module, ns_str_cstr("ui")) ||
            ns_str_equals(module, ns_str_cstr("os")) ||
            ns_str_equals(module, ns_str_cstr("gpu")) ||
+           ns_str_equals(module, ns_str_cstr("dynamic")) ||
            ns_str_equals(module, ns_str_cstr("io"));
 }
 

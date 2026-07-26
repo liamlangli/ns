@@ -611,7 +611,7 @@ static const char *const ns_xcode_feature_headers[] = {
 };
 
 static const char *const ns_xcode_resource_modules[] = {
-    "std.ns", "shader.ns", "simd.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns",
+    "std.ns", "shader.ns", "simd.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns", "dynamic.ns",
 };
 
 static const char *const ns_xcode_ui_assets[] = {
@@ -753,13 +753,14 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
         if ((len == 3 && strncmp(start, "std", len) == 0) || (len == 6 && strncmp(start, "shader", len) == 0) ||
             (len == 4 && strncmp(start, "simd", len) == 0) || (len == 4 && strncmp(start, "view", len) == 0) ||
             (len == 2 && strncmp(start, "ui", len) == 0) || (len == 2 && strncmp(start, "os", len) == 0) ||
-            (len == 3 && strncmp(start, "gpu", len) == 0) || (len == 2 && strncmp(start, "io", len) == 0)) {
+            (len == 3 && strncmp(start, "gpu", len) == 0) || (len == 2 && strncmp(start, "io", len) == 0) ||
+            (len == 7 && strncmp(start, "dynamic", len) == 0)) {
             line = *end ? end + 1 : end;
             continue;
         }
         fprintf(stderr,
                 "project: module '%.*s' requires external FFI, which generated Apple apps do not support; "
-                "use only language modules plus embedded Apple modules std, shader, simd, view, ui, os, gpu, and io\n",
+                "use only language modules plus embedded Apple modules std, shader, simd, view, ui, os, gpu, io, and dynamic\n",
                 (int)len, start);
         return false;
     }
@@ -1377,6 +1378,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         !ns_xcode_append_file_reference(&pbx, 5, "text", "std.ns", "Resources/std.ns") ||
         !ns_xcode_append_file_reference(&pbx, 6, "text", "shader.ns", "Resources/shader.ns") ||
         !ns_xcode_append_file_reference(&pbx, 7, "text", "simd.ns", "Resources/simd.ns") ||
+        !ns_xcode_append_file_reference(&pbx, 7, "text", "dynamic.ns", "Resources/dynamic.ns") ||
         !ns_xcode_append_file_reference(&pbx, 8, "text.xcconfig", "NS.Generated.xcconfig", "Config/NS.Generated.xcconfig") ||
         !ns_xcode_append_file_reference(&pbx, 9, "text.xcconfig", "NS.Local.xcconfig", "Config/NS.Local.xcconfig") ||
         (has_app_icon && !ns_xcode_append_file_reference(&pbx, NS_XCODE_APP_ICON_FILE_ID, "folder.assetcatalog",
@@ -1468,7 +1470,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
     }
     const unsigned managed_fixed[] = {1, 2, 3, 4, 5, 6, 7, 8, 9};
     const char *const managed_names[] = {"NSApp.swift", "NSBridge.c", "NSBridge.h", "LinkedProject.ns", "std.ns",
-                                         "shader.ns", "simd.ns", "NS.Generated.xcconfig", "NS.Local.xcconfig"};
+                                         "shader.ns", "simd.ns", "dynamic.ns", "NS.Generated.xcconfig", "NS.Local.xcconfig"};
     for (size_t i = 0; i < sizeof(managed_fixed) / sizeof(managed_fixed[0]); ++i) {
         char id[25];
         ns_xcode_id(id, 40, managed_fixed[i]);
