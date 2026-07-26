@@ -12,6 +12,20 @@ assert(os_read_file_part("test/os_file_test.ns", 0, 3) == "use")
 assert(os_read_file_part("test/os_file_test.ns", 4, 3) == "std")
 assert(os_read_file("test/does-not-exist") == "")
 
+os_make_dirs("bin")
+let binary=[u8](5)
+binary[0]=0
+binary[1]=1
+binary[2]=127
+binary[3]=128
+binary[4]=255
+assert(os_write_file_bytes_atomic("bin/os_file_test.bin",binary,binary.len)==1)
+let binary_read=[u8](5)
+assert(os_read_file_bytes("bin/os_file_test.bin",binary_read,binary_read.len)==5)
+for byte in 0 to binary.len {
+    assert(binary_read[byte]==binary[byte])
+}
+
 // Invalid vibration requests are always safe no-ops, including on devices
 // which actually support haptics. These calls also verify the native symbol.
 os_vibrate(0.0, 1.0)

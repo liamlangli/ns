@@ -92,8 +92,18 @@ static const char *ns_shader_test_src =
     "lit ROW_STRIDE = 3 * 4\n"
     "lit GRAVITY: f32 = -10.0\n"
     "lit ENABLED = true\n"
+    "fn shader_sqrt(radial_squared: f32) f32 {\n"
+    "    return sqrt(1.0 - radial_squared) as f32\n"
+    "}\n"
     "fn cs_main() void {\n"
     "    let n = 40 + 2\n"
+    "    let front = shader_sqrt(0.25)\n"
+    "    if n == 42 {\n"
+    "        n += 1\n"
+    "    }\n"
+    "    loop n < 44 {\n"
+    "        n += 1\n"
+    "    }\n"
     "}\n"
     "fn shade_probe(x: i32, y: i32) float4 {\n"
     "    return shader_read_texture(x, y)\n"
@@ -337,7 +347,12 @@ int main() {
     // --- compute: zero-parameter void fns become native compute entries ---
     {
         ns_return_str r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
-        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "kernel void cs_main()"), "msl compute entry transpiles.");
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "kernel void cs_main()") &&
+                      ns_shader_test_has(r.r, "if (n == 42)") && !ns_shader_test_has(r.r, "if ((n == 42))") &&
+                      ns_shader_test_has(r.r, "while (n < 44)") &&
+                      ns_shader_test_has(r.r, "float(sqrt(1.0 - radial_squared))") &&
+                      !ns_shader_test_has(r.r, "sqrt((1.0 - radial_squared))"),
+                  "msl compute entry transpiles without redundant delimiter parentheses.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, cs, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);

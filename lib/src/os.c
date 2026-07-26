@@ -387,12 +387,30 @@ const char *os_read_file_part(const char *path, i64 offset, i64 size) {
 
 i32 os_write_file_atomic(const char *path, const char *text) {
     if (!path || !path[0] || !text) return 0;
+    return os_write_file_bytes_atomic(path, (const u8 *)text, (i32)strlen(text));
+}
+
+i64 os_read_file_bytes(const char *path, u8 *data, i32 capacity) {
+    if (!path || !path[0] || !data || capacity < 0) return -1;
+    FILE *file = fopen(path, "rb");
+    if (!file) return -1;
+    size_t read_size = fread(data, 1, (size_t)capacity, file);
+    if (read_size < (size_t)capacity && ferror(file)) {
+        fclose(file);
+        return -1;
+    }
+    if (fclose(file) != 0) return -1;
+    return (i64)read_size;
+}
+
+i32 os_write_file_bytes_atomic(const char *path, const u8 *data, i32 size) {
+    if (!path || !path[0] || (!data && size > 0) || size < 0) return 0;
     char temporary[OS_MAX_PATH];
     if (snprintf(temporary, sizeof(temporary), "%s.tmp", path) >= (int)sizeof(temporary)) return 0;
     FILE *file = fopen(temporary, "wb");
     if (!file) return 0;
-    size_t len = strlen(text);
-    ns_bool ok = fwrite(text, 1, len, file) == len;
+    size_t len = (size_t)size;
+    ns_bool ok = fwrite(data, 1, len, file) == len;
     if (fflush(file) != 0) ok = false;
 #if !defined(NS_WIN)
     if (ok && fsync(fileno(file)) != 0) ok = false;

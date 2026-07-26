@@ -107,6 +107,7 @@ typedef struct ns_shader_emit {
 #define ns_shader_loc(e, n) ns_ast_state_loc((e)->ctx, (n)->state)
 
 static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst);
+static ns_return_void ns_shader_emit_delimited_expr(ns_shader_emit *e, i32 i, ns_str *dst);
 static ns_return_void ns_shader_emit_stmt(ns_shader_emit *e, i32 i);
 static ns_return_void ns_shader_collect_stmt(ns_shader_emit *e, i32 i, i32 depth);
 
@@ -1291,7 +1292,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         i32 next = n->next;
         for (i32 a = 0; a < n->call_expr.arg_count; ++a) {
             if (a > 0) ns_shader_cstr(dst, ", ");
-            ns_shader_try(ns_shader_emit_expr(e, next, dst));
+            ns_shader_try(ns_shader_emit_delimited_expr(e, next, dst));
             next = e->ctx->nodes[next].next;
         }
         // Pass on whatever the callee reaches through the stage intrinsics.
@@ -1351,6 +1352,30 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
     case NS_AST_BLOCK_EXPR: return ns_return_error(void, loc, NS_ERR_EVAL, "shader: closures are not supported in shader fns.");
     default: return ns_return_error(void, loc, NS_ERR_EVAL, "shader: unsupported expression in shader fn.");
     }
+}
+
+// Call arguments and control-flow syntax already delimit their expression. A
+// binary expression also carries an outer pair to preserve its AST grouping,
+// so emitting it normally produces forms such as `sqrt((a - b))` and
+// `if ((a == b))`. Strip only that redundant outer pair; nested binary
+// expressions keep their own grouping.
+static ns_return_void ns_shader_emit_delimited_expr(ns_shader_emit *e, i32 i, ns_str *dst) {
+    while (e->ctx->nodes[i].type == NS_AST_EXPR) i = e->ctx->nodes[i].expr.body;
+    if (e->ctx->nodes[i].type != NS_AST_BINARY_EXPR) return ns_shader_emit_expr(e, i, dst);
+
+    ns_str expr = {.data = ns_null, .len = 0, .dynamic = true};
+    ns_return_void r = ns_shader_emit_expr(e, i, &expr);
+    if (ns_return_is_error(r)) {
+        ns_array_free(expr.data);
+        return r;
+    }
+    if (expr.len >= 2 && expr.data[0] == '(' && expr.data[expr.len - 1] == ')') {
+        ns_str_append_len(dst, expr.data + 1, expr.len - 2);
+    } else {
+        ns_shader_str(dst, expr);
+    }
+    ns_array_free(expr.data);
+    return ns_return_ok_void;
 }
 
 // ---------------------------------------------------------------------------
@@ -1508,7 +1533,7 @@ static ns_return_void ns_shader_emit_stmt(ns_shader_emit *e, i32 i) {
     }
     case NS_AST_IF_STMT: {
         ns_str cond = {.data = ns_null, .len = 0, .dynamic = true};
-        ns_return_void r = ns_shader_emit_expr(e, n->if_stmt.condition, &cond);
+        ns_return_void r = ns_shader_emit_delimited_expr(e, n->if_stmt.condition, &cond);
         if (ns_return_is_error(r)) {
             ns_array_free(cond.data);
             return r;
@@ -1573,7 +1598,7 @@ static ns_return_void ns_shader_emit_stmt(ns_shader_emit *e, i32 i) {
     }
     case NS_AST_LOOP_STMT: {
         ns_str cond = {.data = ns_null, .len = 0, .dynamic = true};
-        ns_return_void r = ns_shader_emit_expr(e, n->loop_stmt.condition, &cond);
+        ns_return_void r = ns_shader_emit_delimited_expr(e, n->loop_stmt.condition, &cond);
         if (ns_return_is_error(r)) {
             ns_array_free(cond.data);
             return r;

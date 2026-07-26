@@ -84,6 +84,10 @@ ref fn os_read_file(path: str) str
 ref fn os_read_file_part(path: str, offset: i64, size: i64) str
 // Atomically replace a UTF-8 text file and return 1 on success.
 ref fn os_write_file_atomic(path: str, text: str) i32
+// Read up to capacity raw bytes into data. Returns bytes read, or -1 on error.
+ref fn os_read_file_bytes(path: str, data: [u8], capacity: i32) i64
+// Atomically replace a binary file with size raw bytes from data.
+ref fn os_write_file_bytes_atomic(path: str, data: [u8], size: i32) i32
 // Writable per-user application-support directory; it is created on demand.
 ref fn os_app_data_dir(app_name: str) str
 

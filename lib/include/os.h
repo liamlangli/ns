@@ -56,6 +56,8 @@ i64 os_file_size(const char *path);
 const char *os_read_file(const char *path);
 const char *os_read_file_part(const char *path, i64 offset, i64 size);
 i32 os_write_file_atomic(const char *path, const char *text);
+i64 os_read_file_bytes(const char *path, u8 *data, i32 capacity);
+i32 os_write_file_bytes_atomic(const char *path, const u8 *data, i32 size);
 const char *os_app_data_dir(const char *app_name);
 i32 os_dir_scan(const char *path);
 const char *os_entry_name(i32 index);
