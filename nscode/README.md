@@ -10,14 +10,3 @@ tools:
 - **`nslang/`** — a VS Code extension providing syntax highlighting for `.ns`
   files, project run/build buttons, the native NSCode color theme, and TOML
   language-mode association for `ns.mod` manifests.
-
-## Terminal editor quick start
-
-```bash
-make                                            # build bin/ns (includes the term module)
-NSCODE_FILE=notes.txt bin/ns run nscode/cli/main.ns
-```
-
-The terminal editor relies on the native `term` module (`lib/term.ns`,
-`lib/src/term.posix.c`, `lib/src/term.win.c`) for raw-mode terminal control,
-which is compiled into `bin/ns` and works on Linux, macOS and Windows.
