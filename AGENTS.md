@@ -42,6 +42,11 @@ The common commands are:
   `target = "wasm"` produces its browser bundle and `.wasm.map` source map.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`.
+- `ns lint [path]`: report style findings for a file, a directory, or the
+  project below the current directory. Exits non-zero when an `error` severity
+  finding remains.
+- `ns lint_fix [path]`: rewrite the fixable findings in place. `ns lint --fix`
+  is the same command.
 - `ns --help`: show compiler targets and all current flags.
 
 The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
@@ -67,6 +72,19 @@ entry = "main.ns"
 [[dependencies.runtime]]
 name = "std"
 version = ">=0.1.0"
+```
+
+An optional `[lint]` table customizes the linter for the project. Each rule
+takes `"error"`, `"warn"` or `"off"`, and the two scalar options set the
+indentation width and the nested-name budget. Omitted keys keep the defaults,
+so only the changed lines are needed. See `doc/lint.md` for every rule.
+
+```toml
+[lint]
+indent = 4
+nested_name_max = 8
+struct_label = "warn"
+nested_name = "off"
 ```
 
 Build output, generated IDE projects, profiles, and other generated artifacts
@@ -305,6 +323,8 @@ check the implementation/declaration for the target platform.
   merely to admit values that require evaluation at runtime.
 - Follow nearby `.ns` syntax and naming; do not import syntax from Swift,
   JavaScript, Rust, or another language unless the parser already supports it.
+  Run `ns lint` on changed sources, and `ns lint_fix` to settle the mechanical
+  findings, rather than hand-formatting them.
 - Put reusable pure-language code in `.ns` modules. Put platform services behind
   `lib/*.ns` declarations and FFI-loaded dynamic libraries.
 - Keep the `ns` interpreter language-only. Do not link UI, terminal, view, GPU,

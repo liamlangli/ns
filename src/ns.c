@@ -9,6 +9,7 @@
 #include "ns_shader.h"
 #include "ns_profile.h"
 #include "ns_project.h"
+#include "ns_lint.h"
 #include "ns_agents_md.h"
 
 #if defined(_WIN32)
@@ -57,6 +58,8 @@ typedef struct ns_compile_option_t {
     ns_bool init: 2;    // `ns init [path]` - scaffold an ns project in place
     ns_bool create: 2;  // `ns create <name>` - scaffold an ns project in a new folder
     ns_bool update: 2;  // `ns update [path]` - migrate project metadata to the current format
+    ns_bool lint: 2;    // `ns lint [path]` - report style findings
+    ns_bool lint_fix: 2; // `ns lint_fix [path]` - rewrite the fixable findings
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
@@ -86,6 +89,13 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.create = true;
         } else if (i == 1 && strcmp(argv[i], "update") == 0) {
             option.update = true;
+        } else if (i == 1 && strcmp(argv[i], "lint") == 0) {
+            option.lint = true;
+        } else if (i == 1 && (strcmp(argv[i], "lint_fix") == 0 || strcmp(argv[i], "lint-fix") == 0)) {
+            option.lint = true;
+            option.lint_fix = true;
+        } else if (strcmp(argv[i], "--fix") == 0) {
+            option.lint_fix = true;
         } else if (strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--token") == 0) {
             option.tokenize_only = true;
         } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--ast") == 0) {
@@ -183,6 +193,9 @@ void ns_help() {
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
     printf("  project [path]    generate a native IDE project from ns.mod\n");
     printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
+    printf("  lint [path]       check the style of a file, a directory or the whole project\n");
+    printf("  lint_fix [path]   rewrite the fixable findings in place (`ns lint --fix`)\n");
+    printf("                    rules come from the [lint] table of ns.mod\n");
 
 }
 
@@ -3080,6 +3093,112 @@ void ns_exec_test(ns_str path) {
     if (code != 0) exit(1);
 }
 
+// ---------------------------------------------------------------------------
+// `ns lint [path]` / `ns lint_fix [path]`
+// ---------------------------------------------------------------------------
+// Rules come from the `[lint]` table of the nearest ns.mod, so a project owns
+// its own style. A file argument lints that file; a directory - or no argument,
+// meaning the current directory - lints every `.ns` source below it, honoring
+// the manifest's `exclude`. Test sources are ordinary sources here.
+
+static void ns_exec_lint(ns_str path, ns_bool fix) {
+    const char *tag = fix ? "lint_fix" : "lint";
+    ns_str target = path.len > 0 ? path : ns_getcwd();
+    ns_bool directory = ns_is_dir(target);
+    if (!directory && !ns_file_exists(target)) ns_exit(1, tag, "cannot read %.*s.\n", target.len, target.data);
+
+    ns_str root = ns_str_null;
+    ns_bool has_root = ns_find_project_root(target, &root);
+    ns_lint_config cfg;
+    ns_lint_config_default(&cfg);
+    ns_str *excludes = ns_null;
+    if (has_root) {
+        ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
+        ns_str manifest = ns_os_read_file(manifest_path);
+        ns_lint_config_from_manifest(&cfg, manifest);
+        excludes = ns_manifest_values(manifest, "exclude");
+        ns_str_free(manifest);
+        ns_str_free(manifest_path);
+    }
+
+    ns_project_source *sources = ns_null;
+    if (!directory) {
+        ns_array_push(sources, ((ns_project_source){.path = target, .relative = ns_str_null}));
+    } else {
+        // Linting a project root follows the manifest's source directory; any
+        // other directory is scanned as given.
+        ns_str scan = target;
+        ns_str relative = ns_str_cstr("");
+        if (has_root && ns_str_equals(root, target)) {
+            scan = ns_project_source_dir(root);
+            ns_str source_value = ns_build_manifest_value(root, "source");
+            if (source_value.data != ns_null && !ns_str_equals(source_value, ns_str_cstr("."))) relative = source_value;
+        }
+        ns_project_sources_scan(scan, relative, ns_str_cstr(""), excludes, &sources);
+        qsort(sources, ns_array_length(sources), sizeof(ns_project_source), ns_project_source_cmp);
+    }
+
+    if (ns_array_length(sources) == 0) {
+        ns_warn(tag, "no .ns sources under %.*s\n", target.len, target.data);
+        ns_array_free(sources);
+        return;
+    }
+
+    ns_lint_result result = {0};
+    i32 rewritten = 0;
+    for (i32 i = 0, count = (i32)ns_array_length(sources); i < count; i++) {
+        ns_str file = sources[i].path;
+        ns_str source = ns_os_read_file(file);
+        if (source.data == ns_null) {
+            ns_warn(tag, "cannot read %.*s\n", file.len, file.data);
+            continue;
+        }
+        i32 first = (i32)ns_array_length(result.diagnostics);
+        if (fix) {
+            ns_str fixed = ns_lint_fix(&cfg, source, file, &result);
+            if (fixed.data != ns_null) {
+                ns_write_text_file(file, fixed);
+                ns_array_free(fixed.data);
+                rewritten++;
+            }
+        } else {
+            ns_lint_source(&cfg, source, file, &result);
+        }
+        for (i32 d = first, n = (i32)ns_array_length(result.diagnostics); d < n; d++) {
+            ns_lint_diagnostic_print(&result.diagnostics[d]);
+        }
+        ns_str_free(source);
+    }
+
+    i32 errors = 0, warnings = 0;
+    for (i32 d = 0, n = (i32)ns_array_length(result.diagnostics); d < n; d++) {
+        ns_lint_diagnostic *diagnostic = &result.diagnostics[d];
+        if (diagnostic->fixed && fix) continue;
+        if (diagnostic->severity == NS_LINT_ERROR) errors++;
+        else warnings++;
+    }
+
+    if (fix) {
+        ns_info(tag, "%d fixes in %d files; %d errors, %d warnings left in %d files.\n", result.fixed, rewritten, errors, warnings, result.files);
+    } else if (errors == 0 && warnings == 0) {
+        ns_info(tag, "%d files clean.\n", result.files);
+    } else {
+        ns_info(tag, "%d errors, %d warnings in %d files (%d fixable, run `ns lint_fix`).\n", errors, warnings, result.files, result.fixable);
+    }
+
+    ns_lint_result_free(&result);
+    if (directory) {
+        for (i32 i = 0, count = (i32)ns_array_length(sources); i < count; i++) {
+            ns_str_free(sources[i].path);
+            ns_str_free(sources[i].relative);
+        }
+    }
+    for (i32 i = 0, count = (i32)ns_array_length(excludes); i < count; i++) ns_str_free(excludes[i]);
+    ns_array_free(excludes);
+    ns_array_free(sources);
+    if (errors > 0) exit(1);
+}
+
 void ns_exec_eval(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_os_read_file(filename);
@@ -3274,6 +3393,8 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_create(option.filename);
     } else if (option.update) {
         ns_exec_update(option.filename);
+    } else if (option.lint) {
+        ns_exec_lint(option.filename, option.lint_fix);
     } else if (option.tokenize_only) {
         ns_exec_tokenize(option.filename);
     } else if (option.ast_only) {
