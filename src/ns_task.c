@@ -352,9 +352,27 @@ static ns_return_value ns_task_invoke(ns_vm *vm, ns_ast_ctx *ctx, ns_task *t) {
             i8 *slot = (i8 *)t->cap_base + field->o;
             // mut=1: a non-stack value with mut=0 would be read as an immediate
             // (union bits) instead of dereferencing the snapshot slot
-            ns_value v = ns_type_is_ref(field->t)
-                ? (ns_value){.t = ns_type_set_stack(field->t, false), .o = *(u64 *)slot}
-                : (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = (u64)slot};
+            ns_value v;
+            if (ns_type_is_ref(field->t)) {
+                v = (ns_value){.t = ns_type_set_stack(field->t, false), .o = *(u64 *)slot};
+            } else if (ns_type_is(field->t, NS_TYPE_STRING) && !ns_type_is_array(field->t)) {
+                // Strings are always str_list indices, including when their
+                // capture field lives in a heap snapshot. Passing the address
+                // of the field as `.o` makes ns_eval_str treat that address as
+                // an enormous table index and crashes the worker.
+                v = (ns_value){.t = ns_type_str, .o = *(u64 *)slot};
+            } else if (ns_type_is_array(field->t) ||
+                       ns_type_is(field->t, NS_TYPE_DICT) ||
+                       ns_type_is(field->t, NS_TYPE_SET) ||
+                       ns_type_is(field->t, NS_TYPE_FN) ||
+                       ns_type_is(field->t, NS_TYPE_TASK)) {
+                // Reference-backed values store an opaque heap handle in the
+                // capture field. Preserve that handle so workers share the
+                // referent instead of treating the field address as a handle.
+                v = (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = *(u64 *)slot};
+            } else {
+                v = (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = (u64)slot};
+            }
             ns_symbol cap = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = field->name, .val = v, .parsed = true};
             ns_array_push(vm->symbol_stack, cap);
         }

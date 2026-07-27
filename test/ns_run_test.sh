@@ -52,6 +52,7 @@ cd "$root"
 "$ns" run test/gpu_v2_test.ns
 "$ns" run test/shader_host_test.ns
 "$ns" run test/dynamic_test.ns
+"$ns" run test/task_net_test.ns
 if [ "$(uname -s)" = "Darwin" ]; then
     sh test/audio_apple_test.sh "$ns"
     sh test/os_haptic_apple_compile.sh

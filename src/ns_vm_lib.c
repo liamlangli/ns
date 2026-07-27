@@ -390,7 +390,22 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     ns_bool blocking_os_sync = ns_str_equals_STR(fn->lib, "os") &&
         (ns_str_equals_STR(fn->name, "os_lock_acquire") ||
          ns_str_equals_STR(fn->name, "os_semaphore_wait"));
-    void *ffi_owner = blocking_os_sync ? ns_task_ffi_leave(vm) : ns_null;
+    // Socket calls may block on DNS, connect, accept, receive, or backpressure.
+    // Let another task interpret while the kernel owns this task's thread.
+    // The FFI argument/result slots remain in the parked task's private stack
+    // and are reinstalled before the result is copied back below.
+    ns_bool blocking_net = ns_str_equals_STR(fn->lib, "net") &&
+        (ns_str_equals_STR(fn->name, "net_tcp_accept") ||
+         ns_str_equals_STR(fn->name, "net_tcp_connect") ||
+         ns_str_equals_STR(fn->name, "net_recv") ||
+         ns_str_equals_STR(fn->name, "net_udp_recv") ||
+         ns_str_equals_STR(fn->name, "net_send") ||
+         ns_str_equals_STR(fn->name, "net_send_str") ||
+         ns_str_equals_STR(fn->name, "net_send_buf") ||
+         ns_str_equals_STR(fn->name, "net_udp_reply") ||
+         ns_str_equals_STR(fn->name, "net_udp_send") ||
+         ns_str_equals_STR(fn->name, "net_send_file"));
+    void *ffi_owner = (blocking_os_sync || blocking_net) ? ns_task_ffi_leave(vm) : ns_null;
     ffi_call(&cif, FFI_FN(fn_ptr), result, _ffi_ctx.values);
     ns_task_ffi_reenter(vm, ffi_owner);
     // Another task may have grown the call stack while the lock was handed

@@ -8,13 +8,13 @@
 //   * scalar `i32` arguments and return values, and
 //   * `str` arguments (passed to C as a `const char*`).
 // It never returns a `str` or a `ref struct` (those do not round-trip through
-// the interpreter's FFI). Received bytes are therefore staged in a shared
-// file-scope buffer and read back one byte at a time with net_buf_byte(), the
-// same approach term.posix.c uses for files.
+// the interpreter's FFI). Received bytes are therefore staged in a
+// thread-local buffer and read back one byte at a time with net_buf_byte(),
+// the same approach term.posix.c uses for files.
 //
-// Sockets are identified by their integer file descriptor. The model is
-// blocking and single-threaded, matching the terminal editor's event loop: a
-// server calls net_tcp_listen() once, then loops over net_tcp_accept().
+// Sockets are identified by their integer file descriptor. Blocking calls
+// release the Nano Script interpreter lock, so they are suitable for worker
+// tasks. Each worker has independent receive/UDP-reply staging state.
 //
 // Two implementations provide the same symbols:
 //   * lib/src/net.c        -- Linux + macOS (BSD sockets)
@@ -49,21 +49,22 @@ int net_udp_bind(int port);
 // socket fd, or -1 on error.
 int net_udp_socket(void);
 
-// ---- receive (into the shared buffer) -------------------------------------
+// ---- receive (into the calling thread's buffer) ---------------------------
 
 // Receive up to the buffer capacity from a connected TCP socket `fd` into the
-// shared receive buffer. Returns the number of bytes read (0 when the peer has
-// closed the connection), or -1 on error.
+// calling thread's receive buffer. Returns the number of bytes read (0 when
+// the peer has closed the connection), or -1 on error.
 int net_recv(int fd);
 
-// Receive one UDP datagram on `fd` into the shared receive buffer, remembering
-// the sender so net_udp_reply() can answer it. Returns the byte count, or -1.
+// Receive one UDP datagram on `fd` into the calling thread's receive buffer,
+// remembering the sender so net_udp_reply() can answer it. Returns the byte
+// count, or -1.
 int net_udp_recv(int fd);
 
-// Number of bytes currently held in the shared receive buffer.
+// Number of bytes currently held in the calling thread's receive buffer.
 int net_buf_len(void);
 
-// Byte `i` of the shared receive buffer as 0..255, or -1 when out of range.
+// Byte `i` of the calling thread's receive buffer as 0..255, or -1.
 int net_buf_byte(int i);
 
 // ---- send -----------------------------------------------------------------
@@ -77,9 +78,10 @@ int net_send(int fd, const char *data, int len);
 // lines). Returns the number of bytes sent, or -1.
 int net_send_str(int fd, const char *s);
 
-// Send the first `len` bytes of the shared receive buffer over `fd`. This lets
-// a server forward exactly what net_recv() read without copying the bytes back
-// out through the FFI (e.g. an echo server). Returns bytes sent, or -1.
+// Send the first `len` bytes of the calling thread's receive buffer over `fd`.
+// This lets a server forward exactly what net_recv() read without copying the
+// bytes back out through the FFI (e.g. an echo server). Returns bytes sent, or
+// -1.
 int net_send_buf(int fd, int len);
 
 // Reply to the sender of the most recent net_udp_recv() on `fd`. Returns the

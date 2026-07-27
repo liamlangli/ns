@@ -5,12 +5,12 @@ mod net
 //
 // The interface is SCALAR (i32 in / i32 out) plus `str` arguments, the subset
 // that marshals reliably through the interpreter's FFI. Sockets are identified
-// by their integer file descriptor. Received bytes are staged in a shared
+// by their integer file descriptor. Received bytes are staged in a thread-local
 // buffer and read back one at a time with net_buf_byte(); payloads are sent
 // with an explicit length so binary data is handled correctly.
 //
-// The model is blocking and single-threaded: a server calls net_tcp_listen()
-// once and then loops over net_tcp_accept().
+// Blocking calls yield the interpreter lock, so servers and clients can run in
+// worker tasks without freezing the main task.
 
 // ---- TCP ------------------------------------------------------------------
 
@@ -37,20 +37,20 @@ ref fn net_udp_bind(port: i32) i32
 // Create an unbound UDP socket for sending. Returns fd, or -1.
 ref fn net_udp_socket() i32
 
-// ---- receive (into the shared buffer) -------------------------------------
+// ---- receive (into the calling thread's buffer) ---------------------------
 
-// Receive from TCP `fd` into the shared buffer. Returns byte count (0 = peer
-// closed), or -1.
+// Receive from TCP `fd` into the calling thread's buffer. Returns byte count
+// (0 = peer closed), or -1.
 ref fn net_recv(fd: i32) i32
 
 // Receive one UDP datagram on `fd`, remembering the sender for net_udp_reply.
 // Returns byte count, or -1.
 ref fn net_udp_recv(fd: i32) i32
 
-// Bytes currently in the shared receive buffer.
+// Bytes currently in the calling thread's receive buffer.
 ref fn net_buf_len() i32
 
-// Byte `i` of the shared receive buffer (0..255), or -1 when out of range.
+// Byte `i` of the calling thread's receive buffer (0..255), or -1.
 ref fn net_buf_byte(i: i32) i32
 
 // ---- send -----------------------------------------------------------------
@@ -62,9 +62,9 @@ ref fn net_send(fd: i32, data: str, len: i32) i32
 // Send NUL-terminated text `s` over `fd`. Returns bytes sent, or -1.
 ref fn net_send_str(fd: i32, s: str) i32
 
-// Send the first `len` bytes of the shared receive buffer over `fd`, forwarding
-// exactly what net_recv() read (e.g. for an echo server). Returns bytes sent,
-// or -1.
+// Send the first `len` bytes of the calling thread's receive buffer over `fd`,
+// forwarding exactly what net_recv() read (e.g. for an echo server). Returns
+// bytes sent, or -1.
 ref fn net_send_buf(fd: i32, len: i32) i32
 
 // Reply to the sender of the most recent net_udp_recv() on `fd`. Returns -1/n.

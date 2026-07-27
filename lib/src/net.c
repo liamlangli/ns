@@ -32,20 +32,19 @@
     #define ns_close_sock(fd) close(fd)
 #endif
 
-// Shared staging buffer for received bytes. A blocking, single-threaded server
-// fully consumes one datagram / read before issuing the next, so a single
-// buffer is sufficient and keeps the interface scalar (see net.h).
+// Per-thread staging keeps net_recv()/net_buf_byte() pairs independent when
+// Nano Script dispatches blocking socket work to multiple worker tasks.
 #define NS_NET_BUF_CAP 65536
-static char g_buf[NS_NET_BUF_CAP];
-static int g_buf_len = 0;
+static _Thread_local char g_buf[NS_NET_BUF_CAP];
+static _Thread_local int g_buf_len = 0;
 
 // Sender of the most recent net_udp_recv(), so net_udp_reply() can answer it.
 #ifndef NS_WIN
-static struct sockaddr_in g_udp_from;
-static socklen_t g_udp_from_len = 0;
+static _Thread_local struct sockaddr_in g_udp_from;
+static _Thread_local socklen_t g_udp_from_len = 0;
 #else
-static struct sockaddr_in g_udp_from;
-static int g_udp_from_len = 0;
+static _Thread_local struct sockaddr_in g_udp_from;
+static _Thread_local int g_udp_from_len = 0;
 #endif
 
 // One-time Winsock initialisation (no-op elsewhere).
@@ -301,5 +300,10 @@ int net_send_file(int fd, const char *path) {
 // ---- lifecycle ------------------------------------------------------------
 
 int net_close(int fd) {
+#ifdef NS_WIN
+    shutdown((SOCKET)fd, SD_BOTH);
+#else
+    shutdown(fd, SHUT_RDWR);
+#endif
     return ns_close_sock(fd) == 0 ? 0 : -1;
 }
