@@ -453,6 +453,18 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "unary not on a parenthesized expr.");
     }
 
+    // --- a statement block after a unary condition is not a designated
+    // expression attached to the operand. ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let visible = false\n"
+            "    if !visible { return true }\n"
+            "    return false\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "if block stays separate from a unary bool operand.");
+    }
+
     // --- unary not on call and member operands, plus double negation. ---
     {
         const char *src =

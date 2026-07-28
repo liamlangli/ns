@@ -234,6 +234,15 @@ int main() {
         "    return (!a == false) && !b && !(1 == 2) && (!(1 == 1) == false)\n"
         "}\n"), "unary not on bool variables and parenthesized expressions.");
 
+    // ── a statement block after a unary condition is not parsed as a
+    // designated expression attached to the operand ────────────────────────
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let visible = false\n"
+        "    if !visible { return true }\n"
+        "    return false\n"
+        "}\n"), "if block stays separate from a unary bool operand.");
+
     // ── cast results as arithmetic operands (integer casts) ───────────────
     ns_expect(ns_compile_true(
         "fn main() bool {\n"

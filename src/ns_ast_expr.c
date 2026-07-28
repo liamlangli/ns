@@ -639,12 +639,21 @@ ns_return_bool ns_parse_postfix_expr(ns_ast_ctx *ctx, i32 operand) {
         }
     }
 
-    // parse postfix { [a: expr]*, [b: expr]* }
+    // Parse postfix { [a: expr]*, [b: expr]* }. When an expression is being
+    // parsed immediately before a statement block (`if !visible { ... }`),
+    // the brace belongs to that statement unless it unambiguously starts a
+    // named designated expression. This check also matters when this function
+    // is reached through a unary operand; otherwise the statement body is
+    // consumed as `visible { ... }` and its first statement gets the misleading
+    // diagnostic "unexpected expr."
     ns_restore_state(ctx, state);
-    ret = ns_parse_designated_expr(ctx, operand);
-    if (ns_return_is_error(ret)) return ret;
-    if (ret.r) {
-        return ns_return_ok(bool, true);
+    if (ctx->block_expr_depth != (i32)ns_array_length(ctx->scopes) ||
+        ns_parse_named_designated_ahead(ctx)) {
+        ret = ns_parse_designated_expr(ctx, operand);
+        if (ns_return_is_error(ret)) return ret;
+        if (ret.r) {
+            return ns_return_ok(bool, true);
+        }
     }
 
     //  parse postfix '[' expr ']'
