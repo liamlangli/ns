@@ -2407,11 +2407,14 @@ ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx) {
     // if is not main module, skip top level expr, parse top level var def as global var def
     // if is main module and main fn exists, parse top level expr as global expr, top level var def as global var def
     // if is main module and main fn not exists, create main fn and parse top level expr as main fn body, top level var def as local var def
-    if (!main_mod || vm->repl) {
+    if (!main_mod) {
         // Module globals were registered by the common parse pass above; non-main
         // modules intentionally skip executable top-level expressions here.
     } else {
-        if (main_fn) {
+        // REPL expressions are evaluated directly instead of through a
+        // synthesized main function, but they still need the same semantic
+        // validation as top-level expressions in a module with main.
+        if (main_fn || vm->repl) {
             ret = ns_vm_parse_global_expr(vm, ctx);
             if (ns_return_is_error(ret)) return ns_return_change_type(bool, ret);
         } else {

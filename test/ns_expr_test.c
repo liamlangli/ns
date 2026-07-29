@@ -89,6 +89,21 @@ int main() {
     }
 
     {
+        // REPL submissions are evaluated directly, so their top-level
+        // expressions must still be type-checked before reaching std intrinsics.
+        setenv("NS_REPL_RECOVER", "1", 1);
+        ns_vm vm = {.repl = true};
+        const char *src =
+            "use std\n"
+            "use io\n"
+            "print(io)\n";
+        ns_return_value r = ns_eval(&vm, ns_str_cstr((i8 *)src), ns_str_cstr("<repl-type-check>"));
+        ns_expect(ns_return_is_error(r) && ns_str_equals_STR(r.e.msg, "unknown type."),
+                  "REPL rejects an unknown print argument instead of evaluating it as a string.");
+        unsetenv("NS_REPL_RECOVER");
+    }
+
+    {
         // A nested call must retain the actionable inner diagnostic instead of
         // replacing it with the generic "call expr error" message.
         setenv("NS_REPL_RECOVER", "1", 1);
