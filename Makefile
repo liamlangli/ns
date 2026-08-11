@@ -300,6 +300,8 @@ install: all
 		lib/include/stb_image.h lib/include/stb_image_resize2.h lib/include/stb_image_write.h \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/
 	cp lib/assets/latin_mono.json lib/assets/latin_mono.webp lib/assets/latin_mono.png \
+		lib/assets/bitmap_font.json lib/assets/bitmap_font.png \
+		lib/assets/bitmap_zh_cn.json lib/assets/bitmap_zh_cn.png \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/
 	cp third_party/box3d/LICENSE $(NS_INSTALL_ROOT)/share/licenses/box3d/LICENSE
 	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\

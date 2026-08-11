@@ -621,6 +621,7 @@ static const char *const ns_xcode_resource_modules[] = {
 
 static const char *const ns_xcode_ui_assets[] = {
     "latin_mono.json", "latin_mono.webp", "latin_mono.png",
+    "bitmap_font.json", "bitmap_font.png", "bitmap_zh_cn.json", "bitmap_zh_cn.png",
 };
 
 static const char *const ns_xcode_runtime_headers[] = {

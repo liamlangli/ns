@@ -117,7 +117,7 @@ int main(void) {
 
     char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX], bridge_header[PATH_MAX];
     char view_osx[PATH_MAX], view_ios[PATH_MAX], os_ios[PATH_MAX], gpu_metal[PATH_MAX], ui_native[PATH_MAX], net_native[PATH_MAX];
-    char task_module[PATH_MAX], net_module[PATH_MAX], ui_asset[PATH_MAX], ios_plist[PATH_MAX];
+    char task_module[PATH_MAX], net_module[PATH_MAX], ui_asset[PATH_MAX], bitmap_asset[PATH_MAX], ios_plist[PATH_MAX];
     char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX];
     char vision_middle_image[PATH_MAX], vision_back_image[PATH_MAX];
     char sln[PATH_MAX], vcx[PATH_MAX], vlocal[PATH_MAX], vgenerated[PATH_MAX];
@@ -135,6 +135,7 @@ int main(void) {
     path(task_module, app_root, "bin/demo-app.nsproject/Resources/task.ns");
     path(net_module, app_root, "bin/demo-app.nsproject/Resources/net.ns");
     path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
+    path(bitmap_asset, app_root, "bin/demo-app.nsproject/Resources/bitmap_zh_cn.png");
     path(ios_plist, app_root, "bin/demo-app.nsproject/Info/iOS-Info.plist");
     path(app_icon_json, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json");
     path(app_icon_png, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-mac-16.png");
@@ -202,6 +203,8 @@ int main(void) {
     char embedded_ffi[PATH_MAX];
     path(embedded_ffi, app_root, "bin/demo-app.nsproject/Runtime/src/ns_embedded_ffi.c");
     ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
+                  text_has(embedded_ffi, "extern ns_bool ui_load_builtin_bitmap_font(void *);") &&
+                  text_has(embedded_ffi, "{ \"ui_load_bitmap_font\", (void *)ui_load_bitmap_font,") &&
                   text_has(embedded_ffi, "extern u32 gpu_create_shader_source(const char *, const char *, const char *, const char *);") &&
                   text_has(embedded_ffi, "{ \"gpu_create_shader_source\", (void *)gpu_create_shader_source,") &&
                   text_has(embedded_ffi, "extern u32 gpu_shader_compute_create") &&
@@ -215,7 +218,10 @@ int main(void) {
                   text_has(embedded_ffi, "embedded native function is not forwarded: %.*s.%.*s") &&
                   !text_has(embedded_ffi, "ui_scene_"),
               "embedded forwarding preserves native ABIs and names missing functions precisely.");
-    ns_expect(access(ui_asset, R_OK) == 0 && text_has(pbx, "latin_mono.json in Resources"),
+    ns_expect(access(ui_asset, R_OK) == 0 && access(bitmap_asset, R_OK) == 0 &&
+                  text_has(pbx, "latin_mono.json in Resources") &&
+                  text_has(pbx, "bitmap_font.json in Resources") &&
+                  text_has(pbx, "bitmap_zh_cn.png in Resources"),
               "Xcode app targets bundle the UI runtime assets.");
 #if defined(__APPLE__)
     ns_expect(text_has(pbx, "App Icon Assets in Resources") && text_has(pbx, "ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon"),

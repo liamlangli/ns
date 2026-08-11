@@ -56,6 +56,9 @@ extern void * ui_renderer_create(void *);
 extern void ui_renderer_destroy(void *);
 extern ns_bool ui_load_chinese_font(void *, const char *, const char *);
 extern ns_bool ui_load_font(void *, const char *, const char *);
+extern ns_bool ui_load_bitmap_font(void *, const char *, const char *);
+extern ns_bool ui_load_bitmap_chinese_font(void *, const char *, const char *);
+extern ns_bool ui_load_builtin_bitmap_font(void *);
 extern void ui_resize(void *);
 extern void ui_resize_to(void *, i32, i32);
 extern void ui_request_render(void *, i32);
@@ -1269,6 +1272,9 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "ui_is_mouse_down", (void *)ui_is_mouse_down, ns_embedded_sig32 },
     { "ui_is_mouse_pressed", (void *)ui_is_mouse_pressed, ns_embedded_sig32 },
     { "ui_layout", (void *)ui_layout, ns_embedded_sig90 },
+    { "ui_load_bitmap_chinese_font", (void *)ui_load_bitmap_chinese_font, ns_embedded_sig91 },
+    { "ui_load_bitmap_font", (void *)ui_load_bitmap_font, ns_embedded_sig91 },
+    { "ui_load_builtin_bitmap_font", (void *)ui_load_builtin_bitmap_font, ns_embedded_sig32 },
     { "ui_load_chinese_font", (void *)ui_load_chinese_font, ns_embedded_sig91 },
     { "ui_load_font", (void *)ui_load_font, ns_embedded_sig91 },
     { "ui_measure_text", (void *)ui_measure_text, ns_embedded_sig92 },

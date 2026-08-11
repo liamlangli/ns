@@ -27,13 +27,20 @@
 #define UI_FONT_MAIN 0
 #define UI_FONT_MONO 1
 #define UI_FONT_ZH 2
+#define UI_FONT_BITMAP 3
+#define UI_FONT_BITMAP_ZH 4
+#define UI_FONT_COUNT 5
 #define UI_WHITE_TEXTURE 1
 #define UI_FONT_TEXTURE 2
 #define UI_FONT_ZH_TEXTURE (UI_MAX_TEXTURES + 3)
+#define UI_FONT_BITMAP_TEXTURE (UI_MAX_TEXTURES + 4)
+#define UI_FONT_BITMAP_ZH_TEXTURE (UI_MAX_TEXTURES + 5)
 #define UI_KIND_IMAGE 0
 #define UI_KIND_MSDF 1
 #define UI_KIND_ARC_SDF 2
+#define UI_KIND_BITMAP 3
 #define UI_DEFAULT_FEATHER 0.5
+#define UI_BITMAP_FONT_SIZE 10.0
 
 typedef struct io_image {
     i32 width;
@@ -209,24 +216,30 @@ typedef struct ui_renderer {
     i32 gpu_clip_count;
     i32 current_texture_id;
 
-    ui_font fonts[3];
+    ui_font fonts[UI_FONT_COUNT];
     gpu_texture white_texture;
     gpu_texture font_texture;
     gpu_texture font_zh_texture;
+    gpu_texture font_bitmap_texture;
+    gpu_texture font_bitmap_zh_texture;
     gpu_buffer screen_buffer;
     gpu_buffer clip_buffer;
     gpu_buffer vertex_buffer;
     gpu_shader shader_image;
     gpu_shader shader_batch;
     gpu_shader shader_msdf;
+    gpu_shader shader_bitmap;
     gpu_shader shader_arc_sdf;
     gpu_pipeline pipeline_image;
     gpu_pipeline pipeline_batch;
     gpu_pipeline pipeline_msdf;
+    gpu_pipeline pipeline_bitmap;
     gpu_pipeline pipeline_arc_sdf;
     gpu_binding binding_white_image;
     gpu_binding binding_font_msdf;
     gpu_binding binding_font_zh_msdf;
+    gpu_binding binding_font_bitmap;
+    gpu_binding binding_font_bitmap_zh;
     gpu_binding binding_arc_sdf;
     gpu_texture textures[UI_MAX_TEXTURES];
     gpu_binding texture_bindings[UI_MAX_TEXTURES];
@@ -317,6 +330,12 @@ static const char *ui_shader_src =
 "  float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
 "  float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / max(in.params.z, 1.0) + 0.5, 0.0, 1.0);\n"
 "  return float4(in.col.rgb, in.col.a * opacity);\n"
+"}\n"
+"fragment float4 ui_fs_bitmap(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]], constant float4 *clip_rects [[buffer(0)]]) {\n"
+"  if (ui_clip_discard(in, clip_rects)) { discard_fragment(); }\n"
+"  constexpr sampler samp(mag_filter::nearest, min_filter::nearest, mip_filter::none, address::clamp_to_edge);\n"
+"  float4 sample = tex.sample(samp, in.uv); float coverage = min(sample.r, sample.a);\n"
+"  return float4(in.col.rgb, in.col.a * coverage);\n"
 "}\n"
 "fragment float4 ui_fs_arc_sdf(VOut in [[stage_in]], constant float4 *clip_rects [[buffer(0)]]) {\n"
 "  if (ui_clip_discard(in, clip_rects)) { discard_fragment(); }\n"
@@ -482,6 +501,128 @@ static ns_bool ui_load_font_face(char *json, const char *face_name, i32 tex_w, i
     qsort(font->glyphs, (size_t)font->glyph_count, sizeof(ui_glyph), ui_glyph_cmp);
     ui_detect_cap_metrics(font);
     return true;
+}
+
+static ns_bool ui_font_append_glyph(ui_font *font, i32 *capacity, ui_glyph glyph) {
+    if (font->glyph_count >= *capacity) {
+        *capacity *= 2;
+        ui_glyph *next = (ui_glyph*)realloc(font->glyphs, (size_t)*capacity * sizeof(ui_glyph));
+        if (!next) return false;
+        font->glyphs = next;
+    }
+    font->glyphs[font->glyph_count++] = glyph;
+    return true;
+}
+
+// Construct bitmap Latin format:
+// [{"c":65,"xo":0,"yo":2,"xa":6,"uv":[62,18,6,7]}, ...]
+static ns_bool ui_load_bitmap_latin_face(char *json, i32 tex_w, i32 tex_h, ui_font *font) {
+    i32 capacity = 128;
+    font->glyphs = (ui_glyph*)calloc((size_t)capacity, sizeof(ui_glyph));
+    if (!font->glyphs) return false;
+    font->texture_width = tex_w;
+    font->texture_height = tex_h;
+    font->font_size = UI_BITMAP_FONT_SIZE;
+    font->line_height = UI_BITMAP_FONT_SIZE;
+
+    char *cursor = json;
+    while ((cursor = strchr(cursor, '{')) != NULL) {
+        char *end = strchr(cursor, '}');
+        if (!end) break;
+        char *uv = ui_find_key(cursor, "uv");
+        if (!uv || uv > end) {
+            cursor = end + 1;
+            continue;
+        }
+        uv = strchr(uv, '[');
+        if (!uv || uv > end) return false;
+        uv++;
+        ui_glyph glyph = {0};
+        glyph.code = (i32)ui_json_key_number(cursor, "c", -1);
+        glyph.x_offset = ui_json_key_number(cursor, "xo", 0);
+        glyph.y_offset = ui_json_key_number(cursor, "yo", 0);
+        glyph.x_advance = ui_json_key_number(cursor, "xa", 6);
+        glyph.atlas_x = ui_parse_number(&uv);
+        glyph.atlas_y = ui_parse_number(&uv);
+        glyph.width = ui_parse_number(&uv);
+        glyph.height = ui_parse_number(&uv);
+        if (glyph.code >= 0 && !ui_font_append_glyph(font, &capacity, glyph)) return false;
+        cursor = end + 1;
+    }
+    if (font->glyph_count <= 0) return false;
+    qsort(font->glyphs, (size_t)font->glyph_count, sizeof(ui_glyph), ui_glyph_cmp);
+    ui_detect_cap_metrics(font);
+    return true;
+}
+
+// Construct bitmap CJK format:
+// {"19968":[0,0,10,10], ...}
+static ns_bool ui_load_bitmap_chinese_face(char *json, i32 tex_w, i32 tex_h, ui_font *font) {
+    i32 capacity = 8192;
+    font->glyphs = (ui_glyph*)calloc((size_t)capacity, sizeof(ui_glyph));
+    if (!font->glyphs) return false;
+    font->texture_width = tex_w;
+    font->texture_height = tex_h;
+    font->font_size = UI_BITMAP_FONT_SIZE;
+    font->line_height = UI_BITMAP_FONT_SIZE;
+    font->cap_top = 0.0;
+    font->baseline = UI_BITMAP_FONT_SIZE;
+
+    char *cursor = json;
+    while ((cursor = strchr(cursor, '"')) != NULL) {
+        char *key_end = strchr(cursor + 1, '"');
+        if (!key_end) break;
+        char *number_end = NULL;
+        long code = strtol(cursor + 1, &number_end, 10);
+        if (number_end != key_end) {
+            cursor = key_end + 1;
+            continue;
+        }
+        char *values = strchr(key_end, '[');
+        if (!values) break;
+        values++;
+        ui_glyph glyph = {0};
+        glyph.code = (i32)code;
+        glyph.atlas_x = ui_parse_number(&values);
+        glyph.atlas_y = ui_parse_number(&values);
+        glyph.width = ui_parse_number(&values);
+        glyph.height = ui_parse_number(&values);
+        glyph.x_advance = glyph.width;
+        if (!ui_font_append_glyph(font, &capacity, glyph)) return false;
+        cursor = values;
+    }
+    if (font->glyph_count <= 0) return false;
+    qsort(font->glyphs, (size_t)font->glyph_count, sizeof(ui_glyph), ui_glyph_cmp);
+    return true;
+}
+
+static gpu_texture ui_create_font_texture(io_image *image) {
+    if (!image || !image->data || image->width <= 0 || image->height <= 0 || image->channels <= 0) {
+        return (gpu_texture){0};
+    }
+    const size_t pixel_count = (size_t)image->width * (size_t)image->height;
+    u8 *rgba = image->data;
+    if (image->channels != 4) {
+        rgba = (u8*)malloc(pixel_count * 4);
+        if (!rgba) return (gpu_texture){0};
+        for (size_t i = 0; i < pixel_count; i++) {
+            const u8 value = image->data[i * (size_t)image->channels];
+            rgba[i * 4 + 0] = value;
+            rgba[i * 4 + 1] = value;
+            rgba[i * 4 + 2] = value;
+            rgba[i * 4 + 3] = 255;
+        }
+    }
+    gpu_texture texture = gpu_create_texture(&(gpu_texture_desc){
+        .width = image->width, .height = image->height, .depth = 1,
+        .data = (ns_data){rgba, pixel_count * 4},
+        .format = PIXELFORMAT_RGBA8,
+        .type = TEXTURE_2D,
+        .usage = TEXTURE_USAGE_READ,
+        .resource_usage = USAGE_DEFAULT,
+    });
+    if (rgba != image->data) free(rgba);
+    return texture;
 }
 
 static ns_bool ui_load_fonts(ui_renderer *r) {
@@ -938,6 +1079,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     shader_desc.vertex.entry = ns_str_cstr("ui_vs");
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_msdf");
     r->shader_msdf = gpu_create_shader(&shader_desc);
+    shader_desc.fragment.entry = ns_str_cstr("ui_fs_bitmap");
+    r->shader_bitmap = gpu_create_shader(&shader_desc);
     shader_desc.fragment.entry = ns_str_cstr("ui_fs_arc_sdf");
     r->shader_arc_sdf = gpu_create_shader(&shader_desc);
 
@@ -977,6 +1120,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->pipeline_batch = gpu_create_pipeline(&pipe);
     pipe.shader = r->shader_msdf;
     r->pipeline_msdf = gpu_create_pipeline(&pipe);
+    pipe.shader = r->shader_bitmap;
+    r->pipeline_bitmap = gpu_create_pipeline(&pipe);
     pipe.shader = r->shader_arc_sdf;
     r->pipeline_arc_sdf = gpu_create_pipeline(&pipe);
 
@@ -1010,8 +1155,8 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->screen_pass = (gpu_render_pass){.id = 0};
     r->gpu_ready = r->screen_buffer.id && r->clip_buffer.id && r->vertex_buffer.id && r->white_texture.id &&
                    r->font_texture.id && r->pipeline_image.id && r->pipeline_batch.id &&
-                   r->pipeline_msdf.id && r->pipeline_arc_sdf.id && r->binding_white_image.id && r->binding_font_msdf.id &&
-                   r->binding_arc_sdf.id && r->mesh.id;
+                   r->pipeline_msdf.id && r->pipeline_bitmap.id && r->pipeline_arc_sdf.id &&
+                   r->binding_white_image.id && r->binding_font_msdf.id && r->binding_arc_sdf.id && r->mesh.id;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -1187,6 +1332,90 @@ ns_bool ui_load_chinese_font(ui_renderer *r, const char *json_path, const char *
     return true;
 }
 
+typedef ns_bool (*ui_bitmap_face_loader)(char*, i32, i32, ui_font*);
+
+static ns_bool ui_load_bitmap_face(ui_renderer *r, const char *json_path, const char *image_path,
+                                   i32 font_index, ui_bitmap_face_loader load_face) {
+    if (!r || !json_path || !image_path || !load_face || !r->pipeline_bitmap.id) return false;
+    size_t json_len = 0;
+    char *json = ui_read_file(json_path, &json_len);
+    ns_unused(json_len);
+    io_image *image = io_load_image(image_path);
+    if (!json || !image || !image->data) {
+        free(json);
+        if (image) { free(image->data); free(image); }
+        return false;
+    }
+
+    ui_font font = {0};
+    const ns_bool loaded = load_face(json, image->width, image->height, &font);
+    free(json);
+    if (!loaded) {
+        free(font.glyphs);
+        free(image->data);
+        free(image);
+        return false;
+    }
+
+    gpu_texture texture = ui_create_font_texture(image);
+    free(image->data);
+    free(image);
+    if (!texture.id) {
+        free(font.glyphs);
+        return false;
+    }
+    gpu_binding binding = gpu_create_binding(&(gpu_binding_desc){
+        .pipeline = r->pipeline_bitmap,
+        .buffers = {
+            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
+            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
+        },
+        .textures = {{.texture = texture, .name = ns_str_cstr("tex")}},
+    });
+    if (!binding.id) {
+        gpu_destroy_texture(texture);
+        free(font.glyphs);
+        return false;
+    }
+
+    gpu_texture *target_texture = font_index == UI_FONT_BITMAP_ZH
+                                      ? &r->font_bitmap_zh_texture
+                                      : &r->font_bitmap_texture;
+    gpu_binding *target_binding = font_index == UI_FONT_BITMAP_ZH
+                                      ? &r->binding_font_bitmap_zh
+                                      : &r->binding_font_bitmap;
+    free(r->fonts[font_index].glyphs);
+    if (target_binding->id) gpu_destroy_binding(*target_binding);
+    if (target_texture->id) gpu_destroy_texture(*target_texture);
+    r->fonts[font_index] = font;
+    *target_texture = texture;
+    *target_binding = binding;
+    return true;
+}
+
+ns_bool ui_load_bitmap_font(ui_renderer *r, const char *json_path, const char *image_path) {
+    return ui_load_bitmap_face(r, json_path, image_path, UI_FONT_BITMAP, ui_load_bitmap_latin_face);
+}
+
+ns_bool ui_load_bitmap_chinese_font(ui_renderer *r, const char *json_path, const char *image_path) {
+    return ui_load_bitmap_face(r, json_path, image_path, UI_FONT_BITMAP_ZH, ui_load_bitmap_chinese_face);
+}
+
+ns_bool ui_load_builtin_bitmap_font(ui_renderer *r) {
+    char latin_json[UI_PATH_MAX];
+    char latin_image[UI_PATH_MAX];
+    char chinese_json[UI_PATH_MAX];
+    char chinese_image[UI_PATH_MAX];
+    if (!ui_resolve_asset("bitmap_font.json", latin_json) ||
+        !ui_resolve_asset("bitmap_font.png", latin_image) ||
+        !ui_resolve_asset("bitmap_zh_cn.json", chinese_json) ||
+        !ui_resolve_asset("bitmap_zh_cn.png", chinese_image)) {
+        return false;
+    }
+    if (!ui_load_bitmap_font(r, latin_json, latin_image)) return false;
+    return ui_load_bitmap_chinese_font(r, chinese_json, chinese_image);
+}
+
 void ui_renderer_destroy(ui_renderer *r) {
     if (!r) return;
     for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
@@ -1203,10 +1432,16 @@ void ui_renderer_destroy(ui_renderer *r) {
     }
     if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
     if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
+    if (r->binding_font_bitmap.id) gpu_destroy_binding(r->binding_font_bitmap);
+    if (r->binding_font_bitmap_zh.id) gpu_destroy_binding(r->binding_font_bitmap_zh);
+    if (r->font_bitmap_texture.id) gpu_destroy_texture(r->font_bitmap_texture);
+    if (r->font_bitmap_zh_texture.id) gpu_destroy_texture(r->font_bitmap_zh_texture);
+    if (r->pipeline_bitmap.id) gpu_destroy_pipeline(r->pipeline_bitmap);
+    if (r->shader_bitmap.id) gpu_destroy_shader(r->shader_bitmap);
     if (r->binding_arc_sdf.id) gpu_destroy_binding(r->binding_arc_sdf);
     if (r->pipeline_arc_sdf.id) gpu_destroy_pipeline(r->pipeline_arc_sdf);
     if (r->shader_arc_sdf.id) gpu_destroy_shader(r->shader_arc_sdf);
-    for (i32 i = 0; i < 3; i++) free(r->fonts[i].glyphs);
+    for (i32 i = 0; i < UI_FONT_COUNT; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
     free(r);
 }
@@ -1537,6 +1772,15 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
                 gpu_set_binding(r->binding_font_zh_msdf);
             } else {
                 gpu_set_binding(r->binding_font_msdf);
+            }
+        } else if (cmd->kind == UI_KIND_BITMAP) {
+            gpu_set_pipeline(r->pipeline_bitmap);
+            if (cmd->texture_id == UI_FONT_BITMAP_ZH_TEXTURE && r->binding_font_bitmap_zh.id) {
+                gpu_set_binding(r->binding_font_bitmap_zh);
+            } else if (r->binding_font_bitmap.id) {
+                gpu_set_binding(r->binding_font_bitmap);
+            } else {
+                continue;
             }
         } else if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3 &&
                    r->texture_bindings[cmd->texture_id - 3].id) {
@@ -1873,12 +2117,20 @@ static i32 ui_utf8_next(const unsigned char **cursor) {
 static ui_font *ui_primary_font(ui_renderer *r, i32 font_type) {
     if (font_type == UI_FONT_MONO) return &r->fonts[UI_FONT_MONO];
     if (font_type == UI_FONT_ZH && r->fonts[UI_FONT_ZH].glyph_count > 0) return &r->fonts[UI_FONT_ZH];
+    if (font_type == UI_FONT_BITMAP && r->fonts[UI_FONT_BITMAP].glyph_count > 0) return &r->fonts[UI_FONT_BITMAP];
     return &r->fonts[UI_FONT_MAIN];
 }
 
 static ui_font *ui_font_for_code(ui_renderer *r, i32 font_type, i32 code, ui_glyph **glyph) {
     ui_font *font = ui_primary_font(r, font_type);
     *glyph = ui_font_glyph(font, code);
+    if (font_type == UI_FONT_BITMAP && font == &r->fonts[UI_FONT_BITMAP]) {
+        if (!*glyph && r->fonts[UI_FONT_BITMAP_ZH].glyph_count > 0) {
+            ui_glyph *chinese = ui_font_glyph(&r->fonts[UI_FONT_BITMAP_ZH], code);
+            if (chinese) { font = &r->fonts[UI_FONT_BITMAP_ZH]; *glyph = chinese; }
+        }
+        return font;
+    }
     if (!*glyph && font != &r->fonts[UI_FONT_ZH] && r->fonts[UI_FONT_ZH].glyph_count > 0) {
         ui_glyph *zh_glyph = ui_font_glyph(&r->fonts[UI_FONT_ZH], code);
         if (zh_glyph) { font = &r->fonts[UI_FONT_ZH]; *glyph = zh_glyph; }
@@ -1889,6 +2141,21 @@ static ui_font *ui_font_for_code(ui_renderer *r, i32 font_type, i32 code, ui_gly
     }
     if (!*glyph) *glyph = ui_font_glyph(font, 32);
     return font;
+}
+
+static ns_bool ui_font_is_bitmap(ui_renderer *r, ui_font *font) {
+    return font == &r->fonts[UI_FONT_BITMAP] || font == &r->fonts[UI_FONT_BITMAP_ZH];
+}
+
+static i32 ui_font_texture_id(ui_renderer *r, ui_font *font) {
+    if (font == &r->fonts[UI_FONT_BITMAP]) return UI_FONT_BITMAP_TEXTURE;
+    if (font == &r->fonts[UI_FONT_BITMAP_ZH]) return UI_FONT_BITMAP_ZH_TEXTURE;
+    if (font == &r->fonts[UI_FONT_ZH]) return UI_FONT_ZH_TEXTURE;
+    return UI_FONT_TEXTURE;
+}
+
+static f64 ui_missing_glyph_advance(i32 font_type, f64 font_px) {
+    return font_type == UI_FONT_BITMAP ? font_px * 0.6 : font_px * 0.55;
 }
 
 void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
@@ -1906,20 +2173,28 @@ void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u
         }
         ui_glyph *g = NULL;
         ui_font *font = ui_font_for_code(r, font_type, code, &g);
-        if (!g) continue;
+        if (!g) {
+            cx += ui_missing_glyph_advance(font_type, font_px);
+            continue;
+        }
         f64 scale = font_px / font->font_size;
         if (g->width > 0 && g->height > 0) {
             f64 x0 = cx + g->x_offset * scale;
             f64 y0 = cy + g->y_offset * scale;
+            const ns_bool bitmap = ui_font_is_bitmap(r, font);
+            if (bitmap) {
+                x0 = floor(x0);
+                y0 = floor(y0);
+            }
             f64 x1 = x0 + g->width * scale;
             f64 y1 = y0 + g->height * scale;
-            r->current_texture_id = (font == &r->fonts[UI_FONT_ZH]) ? UI_FONT_ZH_TEXTURE : UI_FONT_TEXTURE;
+            r->current_texture_id = ui_font_texture_id(r, font);
             ui_push_quad_ex(r, x0, y0, x1, y1,
                             g->atlas_x / font->texture_width,
                             g->atlas_y / font->texture_height,
                             (g->atlas_x + g->width) / font->texture_width,
                             (g->atlas_y + g->height) / font->texture_height,
-                            rgba, UI_KIND_MSDF, 5.0, 0.0, 1.0);
+                            rgba, bitmap ? UI_KIND_BITMAP : UI_KIND_MSDF, 5.0, 0.0, 1.0);
         }
         cx += g->x_advance * scale;
     }
@@ -1928,7 +2203,9 @@ void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u
 static f64 ui_text_char_advance(ui_renderer *r, i32 font_type, i32 code, f64 font_px) {
     ui_glyph *g = NULL;
     ui_font *font = ui_font_for_code(r, font_type, code, &g);
-    return g && font->font_size > 0.0 ? g->x_advance * (font_px / font->font_size) : font_px * 0.55;
+    return g && font->font_size > 0.0
+               ? g->x_advance * (font_px / font->font_size)
+               : ui_missing_glyph_advance(font_type, font_px);
 }
 
 void ui_draw_text_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 center_angle,
@@ -1949,7 +2226,10 @@ void ui_draw_text_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 center_ang
         if (code == '\n') break;
         ui_glyph *g = NULL;
         ui_font *font = ui_font_for_code(r, font_type, code, &g);
-        if (!g) continue;
+        if (!g) {
+            cursor += ui_missing_glyph_advance(font_type, font_px);
+            continue;
+        }
         const f64 scale = font_px / font->font_size;
         const f64 advance = g->x_advance * scale;
         const f64 angle = center_angle + (cursor + advance * 0.5) / radius;
@@ -1962,14 +2242,15 @@ void ui_draw_text_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 center_ang
             const f64 y0 = line_top + g->y_offset * scale;
             const f64 x1 = x0 + g->width * scale;
             const f64 y1 = y0 + g->height * scale;
-            r->current_texture_id = (font == &r->fonts[UI_FONT_ZH]) ? UI_FONT_ZH_TEXTURE : UI_FONT_TEXTURE;
+            const ns_bool bitmap = ui_font_is_bitmap(r, font);
+            r->current_texture_id = ui_font_texture_id(r, font);
             ui_push_quad_rotated(r, origin_x, origin_y, cos(rotation), sin(rotation),
                                  x0, y0, x1, y1,
                                  g->atlas_x / font->texture_width,
                                  g->atlas_y / font->texture_height,
                                  (g->atlas_x + g->width) / font->texture_width,
                                  (g->atlas_y + g->height) / font->texture_height,
-                                 rgba, UI_KIND_MSDF, 5.0, 0.0, 1.0);
+                                 rgba, bitmap ? UI_KIND_BITMAP : UI_KIND_MSDF, 5.0, 0.0, 1.0);
         }
         cursor += advance;
     }

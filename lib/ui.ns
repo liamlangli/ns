@@ -22,7 +22,9 @@ use gpu
 
 // ---- font primitives ------------------------------------------------------
 
-// Font face selectors, matching FONT_MAIN / FONT_MONO / FONT_ZH in the builder.
+// Font face selectors. MAIN / MONO / ZH use smooth signed-distance-field
+// atlases. BITMAP uses a nearest-sampled pixel atlas and automatically falls
+// back to its optional bitmap Chinese atlas for non-Latin code points.
 // The English (Latin) font ships in the standard library:
 //   lib/assets/latin_mono.json - glyph atlas metrics (FONT_MAIN + FONT_MONO)
 //   lib/assets/latin_mono.webp - the signed-distance-field atlas image
@@ -31,6 +33,7 @@ use gpu
 lit UI_FONT_MAIN = 0
 lit UI_FONT_MONO = 1
 lit UI_FONT_ZH = 2
+lit UI_FONT_BITMAP = 3
 
 // Alignment flags for ui_layout().
 lit UI_ALIGN_LEFT = 1
@@ -221,6 +224,15 @@ ref fn ui_renderer_destroy(r: ref ui_renderer)
 ref fn ui_load_chinese_font(r: ref ui_renderer, json_path: str, image_path: str) bool
 // Replace the main and mono SDF font faces from a standard ui atlas JSON.
 ref fn ui_load_font(r: ref ui_renderer, json_path: str, image_path: str) bool
+// Load Construct-style bitmap font atlases. The Latin JSON is an array of
+// {c,xo,yo,xa,uv:[x,y,w,h]} entries; the Chinese JSON maps codepoint strings
+// to [x,y,w,h]. Bitmap text uses a 10 px design line, so font_px values of
+// 10, 20, 30... produce crisp integer scales through ui_draw_text and all
+// existing measurement/wrapping helpers.
+ref fn ui_load_bitmap_font(r: ref ui_renderer, json_path: str, image_path: str) bool
+ref fn ui_load_bitmap_chinese_font(r: ref ui_renderer, json_path: str, image_path: str) bool
+// Lazily load the Latin + Chinese bitmap atlases shipped with the ui module.
+ref fn ui_load_builtin_bitmap_font(r: ref ui_renderer) bool
 
 // Match the renderer's drawable size to the bound view, or set it explicitly.
 ref fn ui_resize(r: ref ui_renderer)

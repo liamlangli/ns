@@ -11,6 +11,13 @@ fn main() i32 {
     }
 
     let r = ui_renderer_create(v)
+    let bitmap_loaded = ui_load_builtin_bitmap_font(r)
+    let bitmap_metrics = ui_text_width(r, "ABC", 10.0, UI_FONT_BITMAP) == 18.0 &&
+        ui_text_width(r, "A一", 10.0, UI_FONT_BITMAP) == 16.0 &&
+        ui_text_line_height(r, 20.0, UI_FONT_BITMAP) == 20.0
+    ui_begin_frame(r)
+    ui_draw_text(r, 4.0, 4.0, "Bitmap 字体", 20.0, 0xffffffffu, UI_FONT_BITMAP)
+    ui_flush(r, ui_color_rgba { 0.04, 0.05, 0.07, 1.0 })
     let widgets = ui_widgets_create(r)
     let theme = ui_theme_empty()
     let input = ui_input_empty()
@@ -20,7 +27,8 @@ fn main() i32 {
     // These are pointer-backed structs across the FFI boundary. Declaring
     // them as value structs made libffi reinterpret mouse_x as an address.
     ui_widgets_begin_frame(widgets, theme, input)
-    let ok = ui_widgets_mouse_x(widgets) == 321.5 && ui_widgets_mouse_y(widgets) == 123.25
+    let ok = bitmap_loaded && bitmap_metrics &&
+        ui_widgets_mouse_x(widgets) == 321.5 && ui_widgets_mouse_y(widgets) == 123.25
 
     ui_widgets_destroy(widgets)
     ui_renderer_destroy(r)
