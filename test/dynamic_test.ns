@@ -1,14 +1,9 @@
-// The dynamic module: the state-image layout, the four pipeline stages, the
-// GJK/EPA narrow phase, and the compute kernels themselves. Everything here
-// runs headless: without a device the world runs its kernels through
-// `shader_host_*`, and transpiling them needs no device at all. Run from the
-// repo root so the debug NS_REF_PATH ("lib") resolves lib/dynamic.ns.
+// Box3D backend coverage. Run from the repository root so the debug ref/lib
+// paths resolve lib/dynamic.ns and bin/dynamic.dylib.
 use std
 use simd
-use shader
 use dynamic
 
-// A cube of `half` extents as its eight corners, the hull a box collides as.
 fn cube_hull(half: f32) [f32] {
     let hull = [f32](24)
     for corner in 0 to 8 {
@@ -32,8 +27,7 @@ fn cube_hull(half: f32) [f32] {
 }
 
 fn add_box(w: ref dynamic_world, half: f32, position: float3, mass: f32) i32 {
-    let extents = dynamic_v3(half, half, half)
-    let body = dynamic_body_box(extents, mass)
+    let body = dynamic_body_box(dynamic_v3(half, half, half), mass)
     body.position = position
     let index = dynamic_world_add(w, body)
     dynamic_world_set_hull(w, index, cube_hull(half), 8)
@@ -46,72 +40,57 @@ fn add_sphere(w: ref dynamic_world, radius: f32, position: float3, mass: f32) i3
     return dynamic_world_add(w, body)
 }
 
-fn contact_of(w: dynamic_world, index: i32, slot: i32) float4 {
-    return dynamic_state_read(w.state, w.capacity, index, DYNAMIC_ROW_CONTACT + slot)
-}
-
-fn free_world(bodies: i32) dynamic_world {
+fn free_world(capacity: i32) dynamic_world {
     let config = dynamic_config_default()
-    config.bounds_enabled = false
     config.gravity = dynamic_v3(0.0, 0.0, 0.0)
-    config.iterations = 1
-    return dynamic_world_create(bodies, config)
+    config.bounds_enabled = false
+    return dynamic_world_create(capacity, config)
 }
 
-// -- layout -----------------------------------------------------------------
-
-// Pair, contact and contact-point slots follow the body rows, then the hull.
+// Stable compatibility layout for render/query code.
 assert DYNAMIC_ROW_CONTACT == DYNAMIC_ROW_PAIR + DYNAMIC_MAX_CONTACTS
 assert DYNAMIC_ROW_POINT == DYNAMIC_ROW_CONTACT + DYNAMIC_MAX_CONTACTS
 assert DYNAMIC_ROW_HULL == DYNAMIC_ROW_POINT + DYNAMIC_MAX_CONTACTS
 assert DYNAMIC_ROW_COUNT == DYNAMIC_ROW_HULL + DYNAMIC_MAX_HULL_VERTICES
 
-// A world never has fewer columns than the configuration row needs.
 let tiny = dynamic_world_create(1, dynamic_config_default())
 assert tiny.capacity == DYNAMIC_CONFIG_COLUMNS
+assert tiny.native != (0 as u64)
+assert dynamic_world_backend(tiny) == DYNAMIC_BACKEND_BOX3D
+assert dynamic_world_backend(tiny) == DYNAMIC_BACKEND_CPU
+assert dynamic_world_backend_name(tiny) == "box3d"
+assert dynamic_world_state_texture(tiny) == 0u
+dynamic_world_release(tiny)
+assert tiny.native == (0 as u64)
 
-// Without a requested device the compute path is unavailable, so the kernels
-// run host-side instead.
-assert gpu_caps() == 0u
-let gpu_config = dynamic_config_default()
-gpu_config.prefer_gpu = true
-let headless = dynamic_world_create(8, gpu_config)
-assert dynamic_world_backend(headless) == DYNAMIC_BACKEND_CPU
-assert dynamic_world_backend_name(headless) == "cpu"
-assert dynamic_world_state_texture(headless) == 0u
-
-// -- bodies -----------------------------------------------------------------
-
+// Bodies retain the old data-oriented representation while Box3D owns motion.
 let world = dynamic_world_create(8, dynamic_config_default())
-let index = add_box(world, 0.5, dynamic_v3(0.0, 4.0, 0.0), 2.0)
-assert index == 0
+let box_index = add_box(world, 0.5, dynamic_v3(0.0, 4.0, 0.0), 2.0)
+assert box_index == 0
 assert world.count == 1
-assert dynamic_world_hull_count(world, 0) == 8
-
-let stored = dynamic_world_body(world, 0)
+assert dynamic_world_hull_count(world, box_index) == 8
+assert dynamic_world_hull_vertex(world, box_index, 0).x == 0.0 - 0.5
+let stored = dynamic_world_body(world, box_index)
 assert stored.position.y == 4.0
 assert stored.inv_mass == 0.5
 assert stored.orientation.w == 1.0
-// The bounding radius covers the hull corners: sqrt(3) * 0.5.
-let bound = dynamic_state_read(world.state, world.capacity, 0, DYNAMIC_ROW_POSITION).w
+let bound = dynamic_state_read(world.state, world.capacity, box_index, DYNAMIC_ROW_POSITION).w
 assert bound > 0.86 && bound < 0.87
 
-// A sphere is the hull of one point swept by its radius.
-let ball = add_sphere(world, 0.4, dynamic_v3(2.0, 4.0, 0.0), 1.0)
-assert dynamic_world_hull_count(world, ball) == 1
-assert dynamic_world_body(world, ball).margin == 0.4
+let sphere_index = add_sphere(world, 0.4, dynamic_v3(2.0, 4.0, 0.0), 1.0)
+assert dynamic_world_hull_count(world, sphere_index) == 1
+assert dynamic_world_body(world, sphere_index).margin == 0.4
 
-// A full world reports the failure instead of overwriting a body.
+// Capacity failure never overwrites an existing native body.
 let small = dynamic_world_create(4, dynamic_config_default())
 for i in 0 to 4 {
-    assert add_sphere(small, 0.2, dynamic_v3((i as f32) * 3.0, 1.0, 0.0), 1.0) == i
+    assert add_sphere(small, 0.2, dynamic_v3((i as f32) * 0.6, 1.0, 0.0), 1.0) == i
 }
-assert add_sphere(small, 0.2, dynamic_v3(0.0, 1.0, 0.0), 1.0) == 0 - 1
+assert add_sphere(small, 0.2, dynamic_v3(0.0, 2.0, 0.0), 1.0) == 0 - 1
 assert small.count == 4
+dynamic_world_release(small)
 
-// -- integration ------------------------------------------------------------
-
-// One step of free fall matches semi-implicit Euler.
+// Gravity and semi-implicit integration are now supplied by Box3D.
 let falling = dynamic_world_create(4, dynamic_config_default())
 add_sphere(falling, 0.3, dynamic_v3(0.0, 6.0, 0.0), 1.0)
 dynamic_world_step(falling)
@@ -119,7 +98,15 @@ let dropped = dynamic_world_body(falling, 0)
 assert dropped.position.y < 6.0
 assert dropped.velocity.y < 0.0
 
-// Angular velocity turns the orientation and keeps the quaternion normalized.
+// Runtime configuration changes are forwarded before every step.
+falling.config.gravity = dynamic_v3(0.0, 9.81, 0.0)
+for step in 0 to 10 {
+    dynamic_world_step(falling)
+}
+assert dynamic_world_body(falling, 0).velocity.y > 0.0
+dynamic_world_release(falling)
+
+// Angular state uses the same x/y/z/w quaternion convention as Box3D.
 let spinning = free_world(4)
 let spinner = dynamic_body_box(dynamic_v3(0.4, 0.4, 0.4), 1.0)
 spinner.position = dynamic_v3(0.0, 2.0, 0.0)
@@ -131,13 +118,14 @@ for step in 0 to 10 {
     dynamic_world_step(spinning)
 }
 let turned = dynamic_world_body(spinning, 0)
-let length = turned.orientation.x * turned.orientation.x + turned.orientation.y * turned.orientation.y +
+let quat_length = turned.orientation.x * turned.orientation.x + turned.orientation.y * turned.orientation.y +
     turned.orientation.z * turned.orientation.z + turned.orientation.w * turned.orientation.w
-assert length > 0.999 && length < 1.001
-assert turned.orientation.y > 0.1 || turned.orientation.y < 0.0 - 0.1
+assert quat_length > 0.999 && quat_length < 1.001
+assert dynamic_abs(turned.orientation.y) > 0.1
 assert turned.position.y == 2.0
+dynamic_world_release(spinning)
 
-// A body with no inverse mass is static.
+// A zero-mass body maps to a Box3D static body.
 let anchored = dynamic_world_create(4, dynamic_config_default())
 add_box(anchored, 0.5, dynamic_v3(0.0, 5.0, 0.0), 0.0)
 for step in 0 to 20 {
@@ -146,153 +134,83 @@ for step in 0 to 20 {
 let held = dynamic_world_body(anchored, 0)
 assert held.position.y == 5.0
 assert held.velocity.y == 0.0
+dynamic_world_release(anchored)
 
-// -- narrow phase: GJK for overlap, EPA for the manifold --------------------
-
-// Two boxes overlapping along x by 0.2: the normal and depth are exact for
-// flat faces, and the normal points from the partner to the body.
+// Box3D supplies broad phase, manifold generation, and the Soft Step solver.
 let boxes = free_world(4)
 add_box(boxes, 0.5, dynamic_v3(0.0, 3.0, 0.0), 1.0)
 add_box(boxes, 0.5, dynamic_v3(0.8, 3.0, 0.0), 1.0)
 dynamic_world_step(boxes)
-let manifold = contact_of(boxes, 0, 0)
-assert manifold.w > 0.19 && manifold.w < 0.21
-assert manifold.x < 0.0 - 0.99
-assert manifold.y > 0.0 - 0.01 && manifold.y < 0.01
-// The partner sees the same contact mirrored.
-let mirrored = contact_of(boxes, 1, 0)
-assert mirrored.x > 0.99
-assert mirrored.w > 0.19 && mirrored.w < 0.21
+assert dynamic_world_contact_count(boxes, 0) >= 1
+assert dynamic_world_contact_count(boxes, 1) >= 1
+let left_contact = dynamic_state_read(boxes.state, boxes.capacity, 0, DYNAMIC_ROW_CONTACT)
+let right_contact = dynamic_state_read(boxes.state, boxes.capacity, 1, DYNAMIC_ROW_CONTACT)
+assert left_contact.x < 0.0 - 0.9
+assert right_contact.x > 0.9
 
-// A box and a sphere resting on its top face, penetrating by 0.1.
-let mixed = free_world(4)
-add_box(mixed, 0.5, dynamic_v3(0.0, 3.0, 0.0), 1.0)
-add_sphere(mixed, 0.4, dynamic_v3(0.0, 3.8, 0.0), 1.0)
-dynamic_world_step(mixed)
-let sphere_contact = contact_of(mixed, 1, 0)
-assert sphere_contact.w > 0.09 && sphere_contact.w < 0.11
-assert sphere_contact.y > 0.99
-let contact_point = dynamic_state_read(mixed.state, mixed.capacity, 1, DYNAMIC_ROW_POINT)
-assert contact_point.y > 3.44 && contact_point.y < 3.46
-
-// Bodies out of reach produce no contacts at all.
-let apart = free_world(4)
-add_box(apart, 0.5, dynamic_v3(0.0 - 3.0, 3.0, 0.0), 1.0)
-add_box(apart, 0.5, dynamic_v3(3.0, 3.0, 0.0), 1.0)
-dynamic_world_step(apart)
-assert dynamic_world_contact_count(apart, 0) == 0
-assert dynamic_world_contact_count(apart, 1) == 0
-
-// The broad phase keeps at most DYNAMIC_MAX_CONTACTS partners per body.
-let crowded = dynamic_world_create(8, dynamic_config_default())
-add_sphere(crowded, 0.5, dynamic_v3(0.0, 4.0, 0.0), 1.0)
-for i in 0 to 6 {
-    let angle = (i as f32) * 1.0472
-    let x = cos(angle as f64) as f32 * 0.6
-    let z = sin(angle as f64) as f32 * 0.6
-    add_sphere(crowded, 0.5, dynamic_v3(x, 4.0, z), 1.0)
-}
-dynamic_world_step(crowded)
-assert dynamic_world_contact_count(crowded, 0) == DYNAMIC_MAX_CONTACTS
-
-// -- constraint solve -------------------------------------------------------
-
-// An overlapping pair is pushed apart along the contact normal.
-let pushed = free_world(4)
-add_box(pushed, 0.5, dynamic_v3(0.0, 3.0, 0.0), 1.0)
-add_box(pushed, 0.5, dynamic_v3(0.8, 3.0, 0.0), 1.0)
 for step in 0 to 20 {
-    dynamic_world_step(pushed)
+    dynamic_world_step(boxes)
 }
-let left = dynamic_world_body(pushed, 0)
-let right = dynamic_world_body(pushed, 1)
-assert right.position.x - left.position.x > 0.85
+let left = dynamic_world_body(boxes, 0)
+let right = dynamic_world_body(boxes, 1)
+assert right.position.x - left.position.x > 0.9
+dynamic_world_release(boxes)
 
-// A dropped box settles flat on the floor plane, one half extent above it.
+// Two points plus a margin select Box3D's capsule primitive.
+let capsules = free_world(4)
+let capsule_body = dynamic_body_sphere(0.2, 1.0)
+let capsule_index = dynamic_world_add(capsules, capsule_body)
+let capsule_points = [0.0, 0.0 - 0.5, 0.0, 0.0, 0.5, 0.0]
+dynamic_world_set_hull(capsules, capsule_index, capsule_points, 2)
+add_sphere(capsules, 0.3, dynamic_v3(0.4, 0.0, 0.0), 1.0)
+dynamic_world_step(capsules)
+assert dynamic_world_contact_count(capsules, capsule_index) >= 1
+dynamic_world_release(capsules)
+
+// The configured bounds are six static Box3D hulls.
 let resting = dynamic_world_create(4, dynamic_config_default())
 add_box(resting, 0.4, dynamic_v3(0.0, 3.0, 0.0), 1.0)
 for step in 0 to 180 {
     dynamic_world_step(resting)
 }
 let settled = dynamic_world_body(resting, 0)
-assert settled.position.y > 0.36 && settled.position.y < 0.42
-assert settled.velocity.y > 0.0 - 0.05 && settled.velocity.y < 0.05
-// It stayed flat: the orientation is still near identity.
-assert settled.orientation.w > 0.99 || settled.orientation.w < 0.0 - 0.99
+assert settled.position.y > 0.38 && settled.position.y < 0.43
+assert dynamic_abs(settled.velocity.y) < 0.05
+assert dynamic_abs(settled.orientation.w) > 0.99
+dynamic_world_release(resting)
 
-// A sphere dropped onto a box comes to rest on its top face, not through it.
+// Persistent dynamic-body contacts are mirrored into the compatibility rows.
 let stacked = dynamic_world_create(4, dynamic_config_default())
-add_box(stacked, 0.4, dynamic_v3(0.0, 2.0, 0.0), 1.0)
-add_sphere(stacked, 0.35, dynamic_v3(0.05, 3.4, 0.0), 1.0)
+add_box(stacked, 0.4, dynamic_v3(0.0, 0.4, 0.0), 0.0)
+add_sphere(stacked, 0.35, dynamic_v3(0.05, 2.0, 0.0), 1.0)
 for step in 0 to 180 {
     dynamic_world_step(stacked)
 }
 let base = dynamic_world_body(stacked, 0)
 let top = dynamic_world_body(stacked, 1)
-assert top.position.y > base.position.y + 0.6
+assert top.position.y > base.position.y + 0.65
 assert dynamic_world_contact_count(stacked, 1) >= 1
+dynamic_world_release(stacked)
 
-// -- determinism ------------------------------------------------------------
+// Host edits followed by upload update the Box3D body.
+let uploaded = free_world(4)
+add_sphere(uploaded, 0.25, dynamic_v3(0.0, 1.0, 0.0), 1.0)
+let edited = dynamic_world_body(uploaded, 0)
+edited.position = dynamic_v3(2.0, 3.0, 4.0)
+edited.velocity = dynamic_v3(1.0, 0.0, 0.0)
+dynamic_world_set_body(uploaded, 0, edited)
+dynamic_world_step(uploaded)
+let moved = dynamic_world_body(uploaded, 0)
+assert moved.position.x > 2.0
+assert moved.position.y == 3.0
+assert moved.position.z == 4.0
 
-// The same scene and the same steps produce the same state, which is what lets
-// the host path stand in for the dispatched pipeline.
-let run_a = dynamic_world_create(8, dynamic_config_default())
-let run_b = dynamic_world_create(8, dynamic_config_default())
-for i in 0 to 4 {
-    let position = dynamic_v3((i as f32) * 0.3 - 0.45, 1.6 + (i as f32) * 1.1, 0.0)
-    add_box(run_a, 0.35, position, 1.0)
-    add_box(run_b, 0.35, position, 1.0)
-}
-for step in 0 to 60 {
-    dynamic_world_step(run_a)
-    dynamic_world_step(run_b)
-}
-for i in 0 to 4 {
-    let first = dynamic_world_body(run_a, i)
-    let second = dynamic_world_body(run_b, i)
-    assert first.position.x == second.position.x
-    assert first.position.y == second.position.y
-    assert first.position.z == second.position.z
-    assert first.orientation.w == second.orientation.w
-}
+dynamic_world_clear(uploaded)
+assert uploaded.count == 0
+assert dynamic_world_contact_count(uploaded, 0) == 0
+add_sphere(uploaded, 0.2, dynamic_v3(0.0, 1.0, 0.0), 1.0)
+assert uploaded.count == 1
+dynamic_world_release(uploaded)
 
-// Nothing escapes the world bounds.
-for i in 0 to 4 {
-    let inside = dynamic_world_body(run_a, i)
-    assert inside.position.y > 0.0 - 0.1
-    assert inside.position.x > run_a.config.bounds_min.x - 0.5
-    assert inside.position.x < run_a.config.bounds_max.x + 0.5
-}
-
-// -- clearing and release ---------------------------------------------------
-
-dynamic_world_clear(run_b)
-assert run_b.count == 0
-assert dynamic_world_contact_count(run_b, 0) == 0
-// Releasing a world that never held device resources leaves it usable.
-dynamic_world_release(run_b)
-assert dynamic_world_backend(run_b) == DYNAMIC_BACKEND_CPU
-
-// -- compute kernels ---------------------------------------------------------
-
-// The four stages are ordinary ns fns that the shader module transpiles for
-// every backend language, from the module they are declared in. The narrow
-// phase carries GJK and EPA, including their fixed-capacity local arrays.
-let targets = ["msl", "glsl", "hlsl", "wgsl"]
-for target in targets {
-    let broad = shader_transpile_stage(cs_dynamic_broad_phase, target, "compute")
-    let narrow = shader_transpile_stage(cs_dynamic_narrow_phase, target, "compute")
-    let solve = shader_transpile_stage(cs_dynamic_solve, target, "compute")
-    let integrate = shader_transpile_stage(cs_dynamic_integrate, target, "compute")
-    assert broad.len > 0 && narrow.len > 0 && solve.len > 0 && integrate.len > 0
-    // The narrow phase is the largest of the four: it holds the polytope.
-    assert narrow.len > solve.len
-}
-
-// Entry names follow the backend convention: the fn name everywhere except
-// glsl, which wraps the entry in main().
-assert shader_entry(cs_dynamic_solve, "msl") == "cs_dynamic_solve"
-assert shader_entry(cs_dynamic_solve, "wgsl") == "cs_dynamic_solve"
-assert shader_entry(cs_dynamic_solve, "glsl") == "main"
-
-print("dynamic: convex pipeline, gjk/epa manifolds, determinism and kernels ok\n")
+dynamic_world_release(world)
+print("dynamic Box3D tests passed\n")

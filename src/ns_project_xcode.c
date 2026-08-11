@@ -135,11 +135,11 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_boo
                                strstr(text, "name = \"NS Build\";") && strstr(text, "name = \"NS Test\";") &&
                                !strstr(text, "isa = PBXNativeTarget;");
     ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
-                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 8;");
-    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 8;") &&
+                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 9;");
+    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 9;") &&
                                                ((expects_project_assets && !strstr(text, "Project Assets in Resources")) ||
                                                 (!expects_project_assets && strstr(text, "Project Assets in Resources")));
-    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 8;") &&
+    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 9;") &&
                                              ((expects_app_icon && !strstr(text, "App Icon Assets in Resources")) ||
                                               (!expects_app_icon && strstr(text, "App Icon Assets in Resources")));
     free(text);
@@ -337,7 +337,7 @@ static ns_bool ns_xcode_write_app_icon(const ns_project_spec *spec, const char *
         "  \"images\" : [ { \"idiom\" : \"vision\", \"scale\" : \"2x\" } ],\n"
         "  \"info\" : { \"author\" : \"ns\", \"version\" : 1 }\n"
         "}\n";
-    static const char back_vision_image[] =
+    static const char vision_image[] =
         "{\n"
         "  \"images\" : [ { \"filename\" : \"AppIcon-vision-1024.jpg\", \"idiom\" : \"vision\", \"scale\" : \"2x\" } ],\n"
         "  \"info\" : { \"author\" : \"ns\", \"version\" : 1 }\n"
@@ -357,8 +357,8 @@ static ns_bool ns_xcode_write_app_icon(const ns_project_spec *spec, const char *
     NS_XCODE_WRITE_JSON(middle, "Contents.json", layer_contents);
     NS_XCODE_WRITE_JSON(back, "Contents.json", layer_contents);
     NS_XCODE_WRITE_JSON(front_content, "Contents.json", empty_vision_image);
-    NS_XCODE_WRITE_JSON(middle_content, "Contents.json", empty_vision_image);
-    NS_XCODE_WRITE_JSON(back_content, "Contents.json", back_vision_image);
+    NS_XCODE_WRITE_JSON(middle_content, "Contents.json", vision_image);
+    NS_XCODE_WRITE_JSON(back_content, "Contents.json", vision_image);
 #undef NS_XCODE_WRITE_JSON
 
     static const char *const mac_names[] = {
@@ -374,11 +374,14 @@ static ns_bool ns_xcode_write_app_icon(const ns_project_spec *spec, const char *
         if (!ok) goto cleanup;
     }
     char *ios_icon = ns_xcode_path_join(appicon, "AppIcon-ios-1024.png");
-    char *vision_icon = ns_xcode_path_join(back_content, "AppIcon-vision-1024.jpg");
-    ok = ios_icon && vision_icon && ns_xcode_resize_icon(source, ios_icon, 1024, "png") &&
-         ns_xcode_resize_icon(source, vision_icon, 1024, "jpeg");
+    char *vision_middle_icon = ns_xcode_path_join(middle_content, "AppIcon-vision-1024.jpg");
+    char *vision_back_icon = ns_xcode_path_join(back_content, "AppIcon-vision-1024.jpg");
+    ok = ios_icon && vision_middle_icon && vision_back_icon && ns_xcode_resize_icon(source, ios_icon, 1024, "png") &&
+         ns_xcode_resize_icon(source, vision_middle_icon, 1024, "jpeg") &&
+         ns_xcode_resize_icon(source, vision_back_icon, 1024, "jpeg");
     free(ios_icon);
-    free(vision_icon);
+    free(vision_middle_icon);
+    free(vision_back_icon);
 
 cleanup:
     free(source);
@@ -588,6 +591,7 @@ static const char *const ns_xcode_runtime_sources[] = {
 
 static const char *const ns_xcode_feature_sources[] = {
     "io.c",
+    "net.c",
     "os.c",
     "os.osx.m",
     "os.ios.m",
@@ -601,6 +605,7 @@ static const char *const ns_xcode_feature_sources[] = {
 };
 
 static const char *const ns_xcode_feature_headers[] = {
+    "net.h",
     "os.h",
     "view.h",
     "gpu.h",
@@ -611,7 +616,7 @@ static const char *const ns_xcode_feature_headers[] = {
 };
 
 static const char *const ns_xcode_resource_modules[] = {
-    "std.ns", "shader.ns", "simd.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns", "dynamic.ns",
+    "std.ns", "shader.ns", "simd.ns", "task.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns", "net.ns",
 };
 
 static const char *const ns_xcode_ui_assets[] = {
@@ -750,17 +755,18 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
         const char *start = p;
         while (p < end && ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9') || *p == '_')) ++p;
         size_t len = (size_t)(p - start);
-        if ((len == 3 && strncmp(start, "std", len) == 0) || (len == 6 && strncmp(start, "shader", len) == 0) ||
+        if ((len == 3 && strncmp(start, "std", len) == 0) || (len == 4 && strncmp(start, "task", len) == 0) ||
+            (len == 6 && strncmp(start, "shader", len) == 0) ||
             (len == 4 && strncmp(start, "simd", len) == 0) || (len == 4 && strncmp(start, "view", len) == 0) ||
             (len == 2 && strncmp(start, "ui", len) == 0) || (len == 2 && strncmp(start, "os", len) == 0) ||
             (len == 3 && strncmp(start, "gpu", len) == 0) || (len == 2 && strncmp(start, "io", len) == 0) ||
-            (len == 7 && strncmp(start, "dynamic", len) == 0)) {
+            (len == 3 && strncmp(start, "net", len) == 0)) {
             line = *end ? end + 1 : end;
             continue;
         }
         fprintf(stderr,
                 "project: module '%.*s' requires external FFI, which generated Apple apps do not support; "
-                "use only language modules plus embedded Apple modules std, shader, simd, view, ui, os, gpu, io, and dynamic\n",
+                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, and net\n",
                 (int)len, start);
         return false;
     }
@@ -1541,7 +1547,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
             "\t\t\t\tBuildIndependentTargetsInParallel = YES;\n"
             "\t\t\t\tLastSwiftUpdateCheck = 1600;\n"
             "\t\t\t\tLastUpgradeCheck = 1600;\n"
-            "\t\t\t\tNSProjectGeneratorVersion = 8;\n"
+            "\t\t\t\tNSProjectGeneratorVersion = 9;\n"
             "\t\t\t\tTargetAttributes = {\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"

@@ -6,10 +6,8 @@
 //
 // It opens a native window, acquires the platform GPU device, and drives a
 // world of convex bodies -- cubes, a hexagonal prism, tetrahedra and spheres --
-// through the module's pipeline once per frame: broad phase, narrow phase
-// (GJK for overlap, EPA for the penetration manifold), constraint solve, and
-// integration. The bodies are drawn as shaded triangles through the `gpu`
-// module (render.ns); `ui` only draws the overlay.
+// through Box3D once per frame. The bodies are drawn as shaded triangles
+// through the `gpu` module (render.ns); `ui` only draws the overlay.
 //
 // Frames are continuous: the frame callback requests the next one, so the
 // simulation keeps running whether or not there is input.
@@ -21,11 +19,8 @@
 //   space        pause and resume
 //   R            reseed the scene
 //
-// Backends: the module's four kernels are dispatched when the world is created
-// with `prefer_gpu` and the device's v2 tier can carry an RGBA32F state image
-// (see doc/dynamic.md). On the current native backends v2 compute is not
-// registered, so the same kernels run through `shader_host_*` on the CPU and
-// the HUD reports `cpu`.
+// Backend: the simulation is Box3D v0.1.0 running in dynamic.dylib/.so. The
+// module mirrors body and contact state back to Nano Script for rendering.
 
 use std
 use simd
@@ -43,8 +38,8 @@ lit SIM_SEED_BODIES = 9
 lit SIM_KEY_SPACE = 32
 lit SIM_KEY_R = 82
 
-// A slightly cheaper solve than the module default: the pipeline runs in the
-// interpreter here, and the HUD reports what each step costs.
+// A slightly cheaper solve than the module default. Box3D receives
+// substeps * iterations as its Soft Step substep count.
 fn sim_config() dynamic_config {
     let config = dynamic_config_default()
     config.iterations = 3
@@ -221,7 +216,7 @@ fn sim_draw_overlay(r: ref ui_renderer, triangles: i32) {
         state = "paused"
     }
     let backend = dynamic_world_backend_name(sim_world)
-    let headline = `dynamic 3d  |  {backend} backend  |  {sim_world.count} bodies  |  {sim_total_contacts()} contacts  |  gjk/epa + solve {sim_step_us}us  |  {triangles} tris {sim_render_us}us  |  {sim_fps} fps  |  {state}`
+    let headline = `dynamic 3d  |  {backend} backend  |  {sim_world.count} bodies  |  {sim_total_contacts()} contacts  |  physics {sim_step_us}us  |  {triangles} tris {sim_render_us}us  |  {sim_fps} fps  |  {state}`
     ui_draw_text(r, 18.0, 16.0, headline, 13.0, text_color, UI_FONT_MONO)
     ui_draw_text(r, 18.0, 34.0, "drag orbit  .  scroll zoom  .  left click drop  .  space pause  .  R reseed", 12.0, dim_color, UI_FONT_MONO)
 }

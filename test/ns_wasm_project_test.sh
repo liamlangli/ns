@@ -201,6 +201,10 @@ fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use http\nfn main() {}\
 const unsupportedBuild = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedBuild.status, 0);
 assert.match(unsupportedBuild.stdout + unsupportedBuild.stderr, /does not support module `http`/);
+fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use dynamic\nfn main() {}\n');
+const unsupportedDynamic = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
+assert.notStrictEqual(unsupportedDynamic.status, 0);
+assert.match(unsupportedDynamic.stdout + unsupportedDynamic.stderr, /does not support module `dynamic`/);
 fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use os\nfn main() { let p = os_platform() }\n');
 const unsupportedImport = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedImport.status, 0);

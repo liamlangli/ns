@@ -82,12 +82,11 @@ application targets named `<safe-name> macOS`, `<safe-name> iOS`, and
 `<safe-name> visionOS`, with automatic signing and the default bundle identifier
 `ns.<safe-name>`; no development team is preset. The embedded interpreter runs
 the linked entry on a background task; status appears in the app, while `print`
-output and diagnostics appear in the Xcode console. The app bundles `std.ns`,
-`shader.ns`, and the pure-language `simd.ns`; it otherwise supports only the
-language runtime and pure-language modules. Native UI, view, GPU, terminal,
-network/HTTP, and external or dynamically loaded FFI modules are not available;
-generation reports unsupported dependencies instead of silently producing a
-broken app.
+output and diagnostics appear in the Xcode console. Generated Apple apps embed
+the official `std`, `task`, `shader`, `simd`, `view`, `ui`, `os`, `gpu`, `io`,
+`net`, and `dynamic` modules. Other external or dynamically loaded FFI modules
+are not available; generation falls back to host build/test targets instead of
+silently producing a broken app.
 
 When an app manifest declares `icon = "path/to/image.png"`, `ns project`
 generates `Assets.xcassets` below the managed `.nsproject` directory. It resizes

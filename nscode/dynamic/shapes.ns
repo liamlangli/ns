@@ -1,9 +1,9 @@
 // nscode/dynamic/shapes.ns
 // ---------------------------------------------------------------------------
 // The convex shapes the sample simulates and draws. Each shape appears twice:
-// as the point hull the `dynamic` module collides (GJK support points) and as
-// the triangle list the renderer transforms. Both come from the same vertex
-// table, so what is drawn is what is simulated.
+// as the point set Box3D turns into a convex hull and as the triangle list the
+// renderer transforms. Both come from the same vertex table, so what is drawn
+// is what is simulated.
 
 use std
 use simd
@@ -69,13 +69,13 @@ fn shape_push_triangle(mesh: ref shape_mesh, a: float3, b: float3, c: float3) {
 
 fn shape_empty(triangles: i32, hull_points: i32) shape_mesh {
     return shape_mesh {
-        vertices: [f32](triangles * 9),
-        normals: [f32](triangles * 3),
-        triangle_count: 0,
-        hull: [f32](hull_points * 3),
-        hull_count: 0,
-        margin: 0.0,
-        extent: shape_v3(0.0, 0.0, 0.0),
+        [f32](triangles * 9),
+        [f32](triangles * 3),
+        0,
+        [f32](hull_points * 3),
+        0,
+        0.0,
+        shape_v3(0.0, 0.0, 0.0),
     }
 }
 
@@ -143,8 +143,7 @@ fn shape_tetrahedron(radius: f32) shape_mesh {
     return mesh
 }
 
-// A hexagonal prism: a convex mesh whose twelve hull points exercise the same
-// GJK path as the cube with a shape no analytic test would cover.
+// A hexagonal prism: Box3D constructs a convex hull from these twelve points.
 fn shape_prism(radius: f32, half_height: f32) shape_mesh {
     let mesh = shape_empty(20, 12)
     mesh.extent = shape_v3(radius, half_height, radius)
@@ -196,8 +195,8 @@ fn shape_sphere_point(radius: f32, theta: f32, phi: f32) float3 {
     return shape_v3(sin_theta * (cos(phi as f64) as f32) * radius, (cos(theta as f64) as f32) * radius, sin_theta * (sin(phi as f64) as f32) * radius)
 }
 
-// A sphere: one hull point swept by `radius`, so GJK treats it as exactly
-// round. It is drawn as a latitude/longitude shell of 32 triangles.
+// A sphere: one hull point plus `radius` maps to Box3D's sphere primitive. It
+// is drawn as a latitude/longitude shell of 32 triangles.
 fn shape_sphere(radius: f32) shape_mesh {
     let segments = 8
     let bands = 3

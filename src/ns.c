@@ -2404,13 +2404,14 @@ static ns_str ns_project_runtime_root(ns_str executable) {
 
 static ns_bool ns_project_module_embeddable(ns_str module) {
     return ns_str_equals(module, ns_str_cstr("std")) ||
+           ns_str_equals(module, ns_str_cstr("task")) ||
            ns_str_equals(module, ns_str_cstr("shader")) ||
            ns_str_equals(module, ns_str_cstr("simd")) ||
            ns_str_equals(module, ns_str_cstr("view")) ||
            ns_str_equals(module, ns_str_cstr("ui")) ||
            ns_str_equals(module, ns_str_cstr("os")) ||
            ns_str_equals(module, ns_str_cstr("gpu")) ||
-           ns_str_equals(module, ns_str_cstr("dynamic")) ||
+           ns_str_equals(module, ns_str_cstr("net")) ||
            ns_str_equals(module, ns_str_cstr("io"));
 }
 

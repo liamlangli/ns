@@ -280,7 +280,8 @@ install: all
 	$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/src $(NS_INSTALL_ROOT)/share/ns-runtime/include \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src \
-		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets
+		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets \
+		$(NS_INSTALL_ROOT)/share/licenses/box3d
 	cp $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new
 	mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
 	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
@@ -290,16 +291,17 @@ install: all
 	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
 	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
-		lib/dynamic.ns \
+		lib/net.ns lib/dynamic.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
-	cp lib/src/io.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
+	cp lib/src/io.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/gpu.c lib/src/gpu.metal.m \
 		lib/src/ui.c $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/
-	cp lib/include/os.h lib/include/view.h lib/include/gpu.h lib/include/gpu_const.h \
+	cp lib/include/net.h lib/include/os.h lib/include/view.h lib/include/gpu.h lib/include/gpu_const.h \
 		lib/include/stb_image.h lib/include/stb_image_resize2.h lib/include/stb_image_write.h \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/
 	cp lib/assets/latin_mono.json lib/assets/latin_mono.webp lib/assets/latin_mono.png \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/
+	cp third_party/box3d/LICENSE $(NS_INSTALL_ROOT)/share/licenses/box3d/LICENSE
 	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\
 		for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
 			cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new"; \

@@ -299,10 +299,10 @@ rules.
 | `view` | Application window/view lifecycle plus keyboard, pointer, gesture, clipboard, frame callback, size, scale, and GPU-device state. Wasm projects use the generated HTML canvas as the view backend. |
 | `gpu` | Platform GPU access. The v2-only Nano Script surface (doc/gpu.md) treats the GPU as a processor with memory: 64-bit addresses from `gpu_malloc`, bindless u32 texture/sampler indices, one root pointer per draw/dispatch, and a frame ring for transient data; it runs host-side headless. Apple uses Metal, Windows uses DirectX 12, and unsupported backends may return failure. |
 | `ui` | Immediate-mode native UI rendering, layout, themes, input snapshots, widgets, scrolling, text editing/views, images, and renderer primitives on top of `view` and `gpu`. |
-| `dynamic` | Pure-ns rigid-body simulation for convex shapes as four gpu compute kernels: broad phase, narrow phase (GJK for overlap, EPA for the manifold), constraint solve, and integration (doc/dynamic.md). A body is a point hull plus a sweep radius, so one support function covers spheres, boxes and convex meshes. The same kernels run host-side through the `shader` host intrinsics when no compute device can carry the RGBA32F state image, which is every current native backend. |
+| `dynamic` | Native 3D rigid-body simulation backed by vendored Box3D v0.1.0 (doc/dynamic.md). The Nano Script wrapper keeps plain body/config structs and a host state mirror while `dynamic.dylib`/`dynamic.so` owns broad phase, collision manifolds, continuous collision, and the Soft Step solver. One hull point plus a margin maps to a sphere, two points plus a margin map to a capsule, and larger point sets become Box3D convex hulls. Native desktop only; Wasm and generated Apple IDE apps reject this external FFI module. |
 
-`std`, `task`, and `shader` are backed by interpreter intrinsics; `simd` and
-`dynamic` are pure Nano Script. The other feature modules are declarations backed by dynamically
+`std`, `task`, and `shader` are backed by interpreter intrinsics, and `simd` is
+pure Nano Script. The other feature modules are declarations backed by dynamically
 loaded native libraries. Their APIs intentionally stay within the supported
 FFI surface: scalars, strings, refs, arrays, small structs, and opaque numeric
 or pointer handles.

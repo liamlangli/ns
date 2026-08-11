@@ -1,4 +1,7 @@
-NS_LIB_INC = $(NS_INC) -Ilib/include
+NS_LIB_INC = $(NS_INC) -Ilib/include -Ithird_party/box3d/include
+NS_BOX3D_INC = -Ithird_party/box3d/include -Ithird_party/box3d/src
+NS_BOX3D_OBJDIR = $(NS_BINDIR)/box3d
+NS_BOX3D_HEADERS = $(wildcard third_party/box3d/include/box3d/*.h third_party/box3d/src/*.h third_party/box3d/src/*.inl)
 
 ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_DYLIB_CREATE = -dynamiclib
@@ -43,6 +46,7 @@ NS_VIEW_DYLIB = $(NS_BINDIR)/view$(NS_DYLIB_SUFFIX)
 NS_GPU_DYLIB = $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX)
 NS_UI_DYLIB = $(NS_BINDIR)/ui$(NS_DYLIB_SUFFIX)
 NS_AUDIO_DYLIB = $(NS_BINDIR)/audio$(NS_DYLIB_SUFFIX)
+NS_DYNAMIC_DYLIB = $(NS_BINDIR)/dynamic$(NS_DYLIB_SUFFIX)
 
 NS_IO_OBJS = $(NS_BINDIR)/lib/io.o
 NS_OS_OBJS = $(NS_BINDIR)/lib/os.o
@@ -53,6 +57,11 @@ NS_VIEW_OBJS = $(NS_BINDIR)/lib/view.o
 NS_GPU_OBJS = $(NS_BINDIR)/lib/gpu.o
 NS_UI_OBJS = $(NS_BINDIR)/lib/ui.o
 NS_AUDIO_OBJS =
+NS_BOX3D_SRCS = $(wildcard third_party/box3d/src/*.c)
+NS_BOX3D_OBJS = $(NS_BOX3D_SRCS:third_party/box3d/src/%.c=$(NS_BOX3D_OBJDIR)/%.o)
+NS_DYNAMIC_OBJS = $(NS_BINDIR)/lib/dynamic.o $(NS_BOX3D_OBJS)
+
+$(NS_BINDIR)/lib/dynamic.o: lib/include/dynamic.h $(NS_BOX3D_HEADERS)
 
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.linux.o
@@ -80,7 +89,8 @@ NS_STD_SHARED = \
 	$(NS_TERM_DYLIB) \
 	$(NS_GPU_DYLIB) \
 	$(NS_VIEW_DYLIB) \
-	$(NS_UI_DYLIB)
+	$(NS_UI_DYLIB) \
+	$(NS_DYNAMIC_DYLIB)
 
 ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_STD_SHARED += $(NS_AUDIO_DYLIB)
@@ -89,6 +99,12 @@ endif
 std: $(NS_STD_SHARED)
 
 shared: std
+
+$(NS_BOX3D_OBJDIR):
+	$(NS_MKDIR) $@
+
+$(NS_BOX3D_OBJDIR)/%.o: third_party/box3d/src/%.c $(NS_BOX3D_HEADERS) | $(NS_BOX3D_OBJDIR)
+	$(NS_CC) -c -fPIC -g -O2 -std=gnu17 $< -o $@ $(NS_BOX3D_INC) $(NS_PLATFORM_DEF) -Wno-error
 
 $(NS_IO_DYLIB): $(NS_IO_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
@@ -119,3 +135,6 @@ $(NS_UI_DYLIB): $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) | 
 
 $(NS_AUDIO_DYLIB): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_AUDIO_DYLIB_DEPS)
+
+$(NS_DYNAMIC_DYLIB): $(NS_DYNAMIC_OBJS) | $(NS_BINDIR)
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_DYNAMIC_OBJS) -o $@ $(NS_DYLIB_DEPS)

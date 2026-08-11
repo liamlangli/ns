@@ -2311,10 +2311,9 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
 }
 
 static ns_bool ns_wasm_portable_use(ns_str module) {
-    // simd and dynamic are pure Nano Script: they carry no native imports of
-    // their own, only the modules already supported above.
-    return ns_wasm_supported_module(module) || ns_str_equals(module, ns_str_cstr("simd")) ||
-           ns_str_equals(module, ns_str_cstr("dynamic"));
+    // simd is pure Nano Script and carries no native imports of its own.
+    // dynamic is native-only because its simulation backend is Box3D.
+    return ns_wasm_supported_module(module) || ns_str_equals(module, ns_str_cstr("simd"));
 }
 
 static ns_bool ns_wasm_unsupported_type(ns_type type) {
