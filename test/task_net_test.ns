@@ -1,0 +1,94 @@
+use net
+use task
+
+fn main() {
+    let port=18473
+    let listener=net_tcp_listen_local(port)
+    assert listener>=0
+    let expected="worker ping"
+    let shared=[i32](1)
+    let server=dispatch(queue_worker) { in
+        let client=net_tcp_accept(listener)
+        if client<0 { return false }
+        let count=net_recv(client)
+        shared[0]=count
+        if count!=expected.len {
+            net_close(client)
+            return false
+        }
+        for i in 0 to count {
+            if net_buf_byte(i)!=((expected[i] as i32)&255) {
+                net_close(client)
+                return false
+            }
+        }
+        let sent=net_send_str(client,"worker pong")
+        net_close(client)
+        return sent==11
+    }
+    sleep(5)
+    let client=net_tcp_connect("127.0.0.1",port)
+    assert client>=0
+    assert net_send_str(client,expected)==expected.len
+    assert net_recv(client)==11
+    let reply="worker pong"
+    for i in 0 to reply.len { assert net_buf_byte(i)==((reply[i] as i32)&255) }
+    net_close(client)
+    assert await server
+    assert shared[0]==expected.len
+    net_close(listener)
+
+    // Concurrent receivers keep independent native staging buffers.
+    let listener_a=net_tcp_listen_local(18474)
+    let listener_b=net_tcp_listen_local(18475)
+    assert listener_a>=0&&listener_b>=0
+    let ready=[i32](2)
+    let server_a=dispatch(queue_worker) { in
+        let peer=net_tcp_accept(listener_a)
+        if peer<0||net_recv(peer)!=1 { return false }
+        ready[0]=1
+        loop ready[1]==0 { sleep(1) }
+        let matches=net_buf_byte(0)==65
+        net_close(peer)
+        return matches
+    }
+    let server_b=dispatch(queue_worker) { in
+        let peer=net_tcp_accept(listener_b)
+        if peer<0||net_recv(peer)!=1 { return false }
+        ready[1]=1
+        loop ready[0]==0 { sleep(1) }
+        let matches=net_buf_byte(0)==66
+        net_close(peer)
+        return matches
+    }
+    let client_a=net_tcp_connect("127.0.0.1",18474)
+    let client_b=net_tcp_connect("127.0.0.1",18475)
+    assert client_a>=0&&client_b>=0
+    assert net_send_str(client_a,"A")==1
+    assert net_send_str(client_b,"B")==1
+    assert await server_a
+    assert await server_b
+    net_close(client_a)
+    net_close(client_b)
+    net_close(listener_a)
+    net_close(listener_b)
+
+    // Closing a socket from the main task wakes a worker blocked in recv.
+    let cancel_listener=net_tcp_listen_local(18476)
+    assert cancel_listener>=0
+    let worker_socket=[i32](1)
+    worker_socket[0]=0-1
+    let blocked=dispatch(queue_worker) { in
+        let fd=net_tcp_connect("127.0.0.1",18476)
+        if fd<0 { return false }
+        worker_socket[0]=fd
+        return net_recv(fd)<=0
+    }
+    let cancel_peer=net_tcp_accept(cancel_listener)
+    assert cancel_peer>=0
+    loop worker_socket[0]<0 { sleep(1) }
+    net_close(worker_socket[0])
+    assert await blocked
+    net_close(cancel_peer)
+    net_close(cancel_listener)
+}
