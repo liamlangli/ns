@@ -2,8 +2,8 @@
 
 `dynamic` is Nano Script's native 3D rigid-body module. Its simulation backend
 is [Box3D](https://github.com/erincatto/box3d) v0.1.0, pinned at commit
-`8441b4a06d6d09dcfb0b0f704df4d847d1437b92` and vendored under
-`third_party/box3d/` under the MIT license.
+`8441b4a06d6d09dcfb0b0f704df4d847d1437b92`. The build downloads it into the
+ignored `third_party/box3d/` directory under the MIT license.
 
 The Nano Script API stays explicitly typed and data-oriented. A world contains
 plain `dynamic_body` and `dynamic_config` values plus an opaque native handle;
@@ -125,9 +125,11 @@ and release it.
 ## Build and platform support
 
 Box3D is portable C17 and is compiled directly into the dynamic feature
-library by `lib/Makefile`. The normal `make`, `make std`, and install flows
-produce and install `dynamic.dylib` on macOS or `dynamic.so` on Linux/Windows.
-The core Box3D library needs only the C runtime and `libm` on Unix.
+library by `lib/Makefile`. Run `make box3d` to download the pinned source
+explicitly; the normal `make`, `make std`, and install flows also download it
+when absent. They produce and install `dynamic.dylib` on macOS or `dynamic.so`
+on Linux/Windows. The core Box3D library needs only the C runtime and `libm` on
+Unix.
 
 The previous module was pure Nano Script and could be lowered to Wasm or
 embedded in generated Apple IDE projects. The Box3D backend uses external

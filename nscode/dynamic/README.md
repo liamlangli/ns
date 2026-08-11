@@ -46,8 +46,9 @@ only for the overlay text.
 
 ## Backend
 
-The simulation runs through vendored Box3D v0.1.0 in `dynamic.dylib` or
-`dynamic.so`; the HUD reports `box3d`. The module mirrors transforms and
-contacts into its Nano Script state array so this sample can keep rendering
-with the existing code. See [doc/dynamic.md](../../doc/dynamic.md) for shape,
-configuration, and platform details.
+The simulation runs through the pinned Box3D v0.1.0 download in
+`dynamic.dylib` or `dynamic.so`; the HUD reports `box3d`. The module mirrors
+transforms and contacts into its Nano Script state array so this sample can
+keep rendering with the existing code. See
+[doc/dynamic.md](../../doc/dynamic.md) for shape, configuration, and platform
+details.

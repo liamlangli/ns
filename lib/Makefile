@@ -2,6 +2,8 @@ NS_LIB_INC = $(NS_INC) -Ilib/include -Ithird_party/box3d/include
 NS_BOX3D_INC = -Ithird_party/box3d/include -Ithird_party/box3d/src
 NS_BOX3D_OBJDIR = $(NS_BINDIR)/box3d
 NS_BOX3D_HEADERS = $(wildcard third_party/box3d/include/box3d/*.h third_party/box3d/src/*.h third_party/box3d/src/*.inl)
+NS_BOX3D_SCRIPT = scripts/download_box3d.sh
+NS_BOX3D_PRESENT = $(wildcard third_party/box3d/include/box3d/box3d.h)
 
 ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_DYLIB_CREATE = -dynamiclib
@@ -100,6 +102,10 @@ std: $(NS_STD_SHARED)
 
 shared: std
 
+.PHONY: box3d
+box3d:
+	$(NS_BOX3D_SCRIPT)
+
 $(NS_BOX3D_OBJDIR):
 	$(NS_MKDIR) $@
 
@@ -136,5 +142,10 @@ $(NS_UI_DYLIB): $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) | 
 $(NS_AUDIO_DYLIB): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_AUDIO_DYLIB_DEPS)
 
+ifeq ($(NS_BOX3D_PRESENT),)
+$(NS_DYNAMIC_DYLIB): box3d | $(NS_BINDIR)
+	$(MAKE) $@
+else
 $(NS_DYNAMIC_DYLIB): $(NS_DYNAMIC_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_DYNAMIC_OBJS) -o $@ $(NS_DYLIB_DEPS)
+endif

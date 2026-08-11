@@ -15,5 +15,8 @@ ns.profile
 build
 .build
 
+# downloaded third-party sources
+third_party/box3d/
+
 # Claude Code session data
 .claude/
