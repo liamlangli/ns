@@ -82,6 +82,7 @@ extern void ui_stroke_round_rect(void *, f64, f64, f64, f64, f64, f64, u32, f64)
 extern void ui_stroke_round_rect_per_corner(void *, f64, f64, f64, f64, f64, f64, f64, f64, f64, u32, f64);
 extern void ui_stroke_rect(void *, f64, f64, f64, f64, f64, u32, f64);
 extern void ui_fill_triangle(void *, f64, f64, f64, f64, f64, f64, u32, f64);
+extern void ui_fill_triangle_colors(void *, f64, f64, u32, f64, f64, u32, f64, f64, u32);
 extern void ui_fill_arc(void *, f64, f64, f64, f64, f64, f64, u32, f64);
 extern void ui_fill_circle(void *, f64, f64, f64, u32, f64);
 extern void ui_stroke_circle(void *, f64, f64, f64, f64, u32, f64);
@@ -876,179 +877,186 @@ static ns_return_bool ns_embedded_sig87(ns_vm *vm, void *target) {
 }
 
 static ns_return_bool ns_embedded_sig88(ns_vm *vm, void *target) {
-    ((void (*)(void *, ui_color_rgba *))target)(ns_embedded_arg_pointer(vm, 0), (ui_color_rgba *)ns_embedded_arg_pointer(vm, 1));
+    ((void (*)(void *, f64, f64, u32, f64, f64, u32, f64, f64, u32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 6)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 9)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
 static ns_return_bool ns_embedded_sig89(ns_vm *vm, void *target) {
+    ((void (*)(void *, ui_color_rgba *))target)(ns_embedded_arg_pointer(vm, 0), (ui_color_rgba *)ns_embedded_arg_pointer(vm, 1));
+    ns_call *call = ns_array_last(vm->call_stack);
+    call->ret = ns_nil;
+    return ns_return_ok(bool, true);
+}
+
+static ns_return_bool ns_embedded_sig90(ns_vm *vm, void *target) {
     ui_hit *result = ((ui_hit * (*)(void *, f64, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)));
     ns_embedded_return_struct(vm, result);
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig90(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig91(ns_vm *vm, void *target) {
     void *result = ((void * (*)(f64, f64, f64, f64, f64, f64, i32))target)(ns_eval_number_f64(vm, ns_embedded_arg(vm, 0)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 6)));
     ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig91(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig92(ns_vm *vm, void *target) {
     ns_bool result = ((ns_bool (*)(void *, const char *, const char *))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_embedded_arg_str(vm, 2));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig92(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig93(ns_vm *vm, void *target) {
     ui_text_size *result = ((ui_text_size * (*)(void *, const char *, f64, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)));
     ns_embedded_return_struct(vm, result);
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig93(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig94(ns_vm *vm, void *target) {
     f64 result = ((f64 (*)(void *, f64, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig94(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig95(ns_vm *vm, void *target) {
     u32 result = ((u32 (*)(const char *))target)(ns_embedded_arg_str(vm, 0));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig95(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig96(ns_vm *vm, void *target) {
     ((void (*)(void *, f64, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig96(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig97(ns_vm *vm, void *target) {
     ((void (*)(void *, f64, f64, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig97(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig98(ns_vm *vm, void *target) {
     ((void (*)(void *, i32, f64, f64, f64, f64, u32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 6)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig98(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig99(ns_vm *vm, void *target) {
     ((void (*)(void *, i32, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig99(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig100(ns_vm *vm, void *target) {
     ns_bool result = ((ns_bool (*)(void *, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig100(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig101(ns_vm *vm, void *target) {
     ns_bool result = ((ns_bool (*)(void *, f64, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig101(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig102(ns_vm *vm, void *target) {
     void *result = ((void * (*)(void *))target)(ns_embedded_arg_pointer(vm, 0));
     ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig102(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig103(ns_vm *vm, void *target) {
     ((void (*)(void *, i32, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig103(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig104(ns_vm *vm, void *target) {
     f64 result = ((f64 (*)(void *, const char *, f64, f64, f64, f64, f64, f64, f64, ns_bool))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)), ns_eval_bool(vm, ns_embedded_arg(vm, 9)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig104(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig105(ns_vm *vm, void *target) {
     f64 result = ((f64 (*)(void *, i32, ui_rect *, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), (ui_rect *)ns_embedded_arg_pointer(vm, 2), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig105(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig106(ns_vm *vm, void *target) {
     f64 result = ((f64 (*)(void *, const char *, ui_rect *, f64, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), (ui_rect *)ns_embedded_arg_pointer(vm, 2), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig106(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig107(ns_vm *vm, void *target) {
     ((void (*)(void *, void *, i32, f64, u32, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_pointer(vm, 1), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig107(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig108(ns_vm *vm, void *target) {
     ((void (*)(void *, f64, f64, f64, f64, f64, f64, f64, f64, f64, u32, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 9)), ns_eval_number_u32(vm, ns_embedded_arg(vm, 10)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 11)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig108(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig109(ns_vm *vm, void *target) {
     f64 result = ((f64 (*)(void *, f64, f64, f64, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 3)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 4)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig109(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig110(ns_vm *vm, void *target) {
     f64 result = ((f64 (*)(void *, const char *, f64, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig110(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig111(ns_vm *vm, void *target) {
     ((void (*)(void *, void *, void *))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_pointer(vm, 1), ns_embedded_arg_pointer(vm, 2));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig111(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig112(ns_vm *vm, void *target) {
     ((void (*)(void *, void *, void *, ns_bool))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_pointer(vm, 1), ns_embedded_arg_pointer(vm, 2), ns_eval_bool(vm, ns_embedded_arg(vm, 3)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig112(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig113(ns_vm *vm, void *target) {
     f64 result = ((f64 (*)(void *))target)(ns_embedded_arg_pointer(vm, 0));
     ns_embedded_return_scalar(vm, &result, sizeof(result));
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig113(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig114(ns_vm *vm, void *target) {
     ((void (*)(void *, ns_bool))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_bool(vm, ns_embedded_arg(vm, 1)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig114(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig115(ns_vm *vm, void *target) {
     void *result = ((void * (*)(const char *, i32, i32))target)(ns_embedded_arg_str(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
     ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig115(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig116(ns_vm *vm, void *target) {
     const char *result = ((const char * (*)(void *))target)(ns_embedded_arg_pointer(vm, 0));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret.t = ns_type_str;
@@ -1056,34 +1064,34 @@ static ns_return_bool ns_embedded_sig115(ns_vm *vm, void *target) {
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig116(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig117(ns_vm *vm, void *target) {
     void *result = ((void * (*)(void *, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)));
     ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig117(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig118(ns_vm *vm, void *target) {
     ((void (*)(void *, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig118(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig119(ns_vm *vm, void *target) {
     ((void (*)(void *, i32, i32, i32, f64, f64, f64, f64, f64, f64, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 9)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 10)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig119(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig120(ns_vm *vm, void *target) {
     ((void (*)(void *, i32, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig120(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig121(ns_vm *vm, void *target) {
     ((void (*)(void *, const char *))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
@@ -1262,87 +1270,88 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "ui_fill_round_rect", (void *)ui_fill_round_rect, ns_embedded_sig86 },
     { "ui_fill_round_rect_per_corner", (void *)ui_fill_round_rect_per_corner, ns_embedded_sig87 },
     { "ui_fill_triangle", (void *)ui_fill_triangle, ns_embedded_sig83 },
-    { "ui_flush", (void *)ui_flush, ns_embedded_sig88 },
-    { "ui_flush_overlay", (void *)ui_flush_overlay, ns_embedded_sig88 },
+    { "ui_fill_triangle_colors", (void *)ui_fill_triangle_colors, ns_embedded_sig88 },
+    { "ui_flush", (void *)ui_flush, ns_embedded_sig89 },
+    { "ui_flush_overlay", (void *)ui_flush_overlay, ns_embedded_sig89 },
     { "ui_has_keyboard_focus", (void *)ui_has_keyboard_focus, ns_embedded_sig32 },
-    { "ui_hit_region", (void *)ui_hit_region, ns_embedded_sig89 },
+    { "ui_hit_region", (void *)ui_hit_region, ns_embedded_sig90 },
     { "ui_input_empty", (void *)ui_input_empty, ns_embedded_sig57 },
     { "ui_is_enter_pressed", (void *)ui_is_enter_pressed, ns_embedded_sig32 },
     { "ui_is_escape_pressed", (void *)ui_is_escape_pressed, ns_embedded_sig32 },
     { "ui_is_mouse_down", (void *)ui_is_mouse_down, ns_embedded_sig32 },
     { "ui_is_mouse_pressed", (void *)ui_is_mouse_pressed, ns_embedded_sig32 },
-    { "ui_layout", (void *)ui_layout, ns_embedded_sig90 },
-    { "ui_load_bitmap_chinese_font", (void *)ui_load_bitmap_chinese_font, ns_embedded_sig91 },
-    { "ui_load_bitmap_font", (void *)ui_load_bitmap_font, ns_embedded_sig91 },
+    { "ui_layout", (void *)ui_layout, ns_embedded_sig91 },
+    { "ui_load_bitmap_chinese_font", (void *)ui_load_bitmap_chinese_font, ns_embedded_sig92 },
+    { "ui_load_bitmap_font", (void *)ui_load_bitmap_font, ns_embedded_sig92 },
     { "ui_load_builtin_bitmap_font", (void *)ui_load_builtin_bitmap_font, ns_embedded_sig32 },
-    { "ui_load_chinese_font", (void *)ui_load_chinese_font, ns_embedded_sig91 },
-    { "ui_load_font", (void *)ui_load_font, ns_embedded_sig91 },
-    { "ui_measure_text", (void *)ui_measure_text, ns_embedded_sig92 },
-    { "ui_mono_char_width", (void *)ui_mono_char_width, ns_embedded_sig93 },
-    { "ui_pack_color", (void *)ui_pack_color, ns_embedded_sig94 },
+    { "ui_load_chinese_font", (void *)ui_load_chinese_font, ns_embedded_sig92 },
+    { "ui_load_font", (void *)ui_load_font, ns_embedded_sig92 },
+    { "ui_measure_text", (void *)ui_measure_text, ns_embedded_sig93 },
+    { "ui_mono_char_width", (void *)ui_mono_char_width, ns_embedded_sig94 },
+    { "ui_pack_color", (void *)ui_pack_color, ns_embedded_sig95 },
     { "ui_pack_rgba_floats", (void *)ui_pack_rgba_floats, ns_embedded_sig15 },
     { "ui_pop_clip", (void *)ui_pop_clip, ns_embedded_sig45 },
-    { "ui_push_clip", (void *)ui_push_clip, ns_embedded_sig95 },
-    { "ui_push_clip_round", (void *)ui_push_clip_round, ns_embedded_sig96 },
-    { "ui_rect_batch_add", (void *)ui_rect_batch_add, ns_embedded_sig97 },
+    { "ui_push_clip", (void *)ui_push_clip, ns_embedded_sig96 },
+    { "ui_push_clip_round", (void *)ui_push_clip_round, ns_embedded_sig97 },
+    { "ui_rect_batch_add", (void *)ui_rect_batch_add, ns_embedded_sig98 },
     { "ui_rect_batch_begin", (void *)ui_rect_batch_begin, ns_embedded_sig70 },
     { "ui_rect_batch_create", (void *)ui_rect_batch_create, ns_embedded_sig76 },
     { "ui_rect_batch_destroy", (void *)ui_rect_batch_destroy, ns_embedded_sig70 },
     { "ui_rect_batch_draw", (void *)ui_rect_batch_draw, ns_embedded_sig70 },
-    { "ui_rect_batch_draw_at", (void *)ui_rect_batch_draw_at, ns_embedded_sig98 },
-    { "ui_rect_batch_end", (void *)ui_rect_batch_end, ns_embedded_sig99 },
-    { "ui_rect_clipped", (void *)ui_rect_clipped, ns_embedded_sig100 },
-    { "ui_renderer_create", (void *)ui_renderer_create, ns_embedded_sig101 },
+    { "ui_rect_batch_draw_at", (void *)ui_rect_batch_draw_at, ns_embedded_sig99 },
+    { "ui_rect_batch_end", (void *)ui_rect_batch_end, ns_embedded_sig100 },
+    { "ui_rect_clipped", (void *)ui_rect_clipped, ns_embedded_sig101 },
+    { "ui_renderer_create", (void *)ui_renderer_create, ns_embedded_sig102 },
     { "ui_renderer_destroy", (void *)ui_renderer_destroy, ns_embedded_sig45 },
     { "ui_request_render", (void *)ui_request_render, ns_embedded_sig70 },
     { "ui_request_render_after", (void *)ui_request_render_after, ns_embedded_sig70 },
     { "ui_resize", (void *)ui_resize, ns_embedded_sig45 },
-    { "ui_resize_to", (void *)ui_resize_to, ns_embedded_sig102 },
-    { "ui_slider", (void *)ui_slider, ns_embedded_sig103 },
-    { "ui_slider_id", (void *)ui_slider_id, ns_embedded_sig104 },
-    { "ui_slider_rect", (void *)ui_slider_rect, ns_embedded_sig105 },
+    { "ui_resize_to", (void *)ui_resize_to, ns_embedded_sig103 },
+    { "ui_slider", (void *)ui_slider, ns_embedded_sig104 },
+    { "ui_slider_id", (void *)ui_slider_id, ns_embedded_sig105 },
+    { "ui_slider_rect", (void *)ui_slider_rect, ns_embedded_sig106 },
     { "ui_stroke_circle", (void *)ui_stroke_circle, ns_embedded_sig85 },
     { "ui_stroke_line", (void *)ui_stroke_line, ns_embedded_sig86 },
-    { "ui_stroke_polyline", (void *)ui_stroke_polyline, ns_embedded_sig106 },
+    { "ui_stroke_polyline", (void *)ui_stroke_polyline, ns_embedded_sig107 },
     { "ui_stroke_rect", (void *)ui_stroke_rect, ns_embedded_sig86 },
     { "ui_stroke_round_rect", (void *)ui_stroke_round_rect, ns_embedded_sig83 },
-    { "ui_stroke_round_rect_per_corner", (void *)ui_stroke_round_rect_per_corner, ns_embedded_sig107 },
-    { "ui_text_line_height", (void *)ui_text_line_height, ns_embedded_sig93 },
-    { "ui_text_v_center_y", (void *)ui_text_v_center_y, ns_embedded_sig108 },
-    { "ui_text_width", (void *)ui_text_width, ns_embedded_sig109 },
+    { "ui_stroke_round_rect_per_corner", (void *)ui_stroke_round_rect_per_corner, ns_embedded_sig108 },
+    { "ui_text_line_height", (void *)ui_text_line_height, ns_embedded_sig94 },
+    { "ui_text_v_center_y", (void *)ui_text_v_center_y, ns_embedded_sig109 },
+    { "ui_text_width", (void *)ui_text_width, ns_embedded_sig110 },
     { "ui_theme_empty", (void *)ui_theme_empty, ns_embedded_sig57 },
-    { "ui_widgets_begin_frame", (void *)ui_widgets_begin_frame, ns_embedded_sig110 },
-    { "ui_widgets_begin_view", (void *)ui_widgets_begin_view, ns_embedded_sig111 },
-    { "ui_widgets_create", (void *)ui_widgets_create, ns_embedded_sig101 },
+    { "ui_widgets_begin_frame", (void *)ui_widgets_begin_frame, ns_embedded_sig111 },
+    { "ui_widgets_begin_view", (void *)ui_widgets_begin_view, ns_embedded_sig112 },
+    { "ui_widgets_create", (void *)ui_widgets_create, ns_embedded_sig102 },
     { "ui_widgets_destroy", (void *)ui_widgets_destroy, ns_embedded_sig45 },
     { "ui_widgets_end_frame", (void *)ui_widgets_end_frame, ns_embedded_sig45 },
-    { "ui_widgets_mouse_x", (void *)ui_widgets_mouse_x, ns_embedded_sig112 },
-    { "ui_widgets_mouse_y", (void *)ui_widgets_mouse_y, ns_embedded_sig112 },
-    { "ui_widgets_set_light", (void *)ui_widgets_set_light, ns_embedded_sig113 },
+    { "ui_widgets_mouse_x", (void *)ui_widgets_mouse_x, ns_embedded_sig113 },
+    { "ui_widgets_mouse_y", (void *)ui_widgets_mouse_y, ns_embedded_sig113 },
+    { "ui_widgets_set_light", (void *)ui_widgets_set_light, ns_embedded_sig114 },
     { "view_capture_require", (void *)view_capture_require, ns_embedded_sig45 },
     { "view_clear_key_presses", (void *)view_clear_key_presses, ns_embedded_sig45 },
     { "view_close", (void *)view_close, ns_embedded_sig45 },
-    { "view_create", (void *)view_create, ns_embedded_sig114 },
-    { "view_create_no_title", (void *)view_create_no_title, ns_embedded_sig114 },
-    { "view_gesture", (void *)view_gesture, ns_embedded_sig101 },
-    { "view_get_clipboard", (void *)view_get_clipboard, ns_embedded_sig115 },
-    { "view_input_at", (void *)view_input_at, ns_embedded_sig116 },
+    { "view_create", (void *)view_create, ns_embedded_sig115 },
+    { "view_create_no_title", (void *)view_create_no_title, ns_embedded_sig115 },
+    { "view_gesture", (void *)view_gesture, ns_embedded_sig102 },
+    { "view_get_clipboard", (void *)view_get_clipboard, ns_embedded_sig116 },
+    { "view_input_at", (void *)view_input_at, ns_embedded_sig117 },
     { "view_input_count", (void *)view_input_count, ns_embedded_sig76 },
     { "view_input_pending", (void *)view_input_pending, ns_embedded_sig32 },
     { "view_input_reset", (void *)view_input_reset, ns_embedded_sig45 },
-    { "view_is_key_pressed", (void *)view_is_key_pressed, ns_embedded_sig99 },
-    { "view_on_gesture", (void *)view_on_gesture, ns_embedded_sig95 },
-    { "view_on_key_action", (void *)view_on_key_action, ns_embedded_sig102 },
-    { "view_on_mouse_btn", (void *)view_on_mouse_btn, ns_embedded_sig102 },
-    { "view_on_mouse_move", (void *)view_on_mouse_move, ns_embedded_sig117 },
-    { "view_on_pointer_event", (void *)view_on_pointer_event, ns_embedded_sig118 },
-    { "view_on_resize", (void *)view_on_resize, ns_embedded_sig102 },
-    { "view_on_scroll", (void *)view_on_scroll, ns_embedded_sig117 },
-    { "view_on_tool_action", (void *)view_on_tool_action, ns_embedded_sig119 },
+    { "view_is_key_pressed", (void *)view_is_key_pressed, ns_embedded_sig100 },
+    { "view_on_gesture", (void *)view_on_gesture, ns_embedded_sig96 },
+    { "view_on_key_action", (void *)view_on_key_action, ns_embedded_sig103 },
+    { "view_on_mouse_btn", (void *)view_on_mouse_btn, ns_embedded_sig103 },
+    { "view_on_mouse_move", (void *)view_on_mouse_move, ns_embedded_sig118 },
+    { "view_on_pointer_event", (void *)view_on_pointer_event, ns_embedded_sig119 },
+    { "view_on_resize", (void *)view_on_resize, ns_embedded_sig103 },
+    { "view_on_scroll", (void *)view_on_scroll, ns_embedded_sig118 },
+    { "view_on_tool_action", (void *)view_on_tool_action, ns_embedded_sig120 },
     { "view_request_frame", (void *)view_request_frame, ns_embedded_sig70 },
     { "view_request_frame_after", (void *)view_request_frame_after, ns_embedded_sig70 },
     { "view_run", (void *)view_run, ns_embedded_sig45 },
-    { "view_set_clipboard", (void *)view_set_clipboard, ns_embedded_sig120 },
+    { "view_set_clipboard", (void *)view_set_clipboard, ns_embedded_sig121 },
     { "view_take_key_press", (void *)view_take_key_press, ns_embedded_sig73 },
 };
 

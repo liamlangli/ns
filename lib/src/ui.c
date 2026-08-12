@@ -887,6 +887,15 @@ void ui_fill_triangle(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 x2, f6
     ui_push_tri_colors(r, x2, y2, transparent, ix0, iy0, rgba, ix2, iy2, rgba);
 }
 
+void ui_fill_triangle_colors(ui_renderer *r,
+                             f64 x0, f64 y0, u32 rgba0,
+                             f64 x1, f64 y1, u32 rgba1,
+                             f64 x2, f64 y2, u32 rgba2) {
+    if (!r) return;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    ui_push_tri_colors(r, x0, y0, rgba0, x1, y1, rgba1, x2, y2, rgba2);
+}
+
 void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness,
                  f64 angle_start, f64 angle_end, u32 rgba, f64 feather) {
     if (!r || radius <= 0.0 || thickness <= 0.0 || angle_start == angle_end) return;
