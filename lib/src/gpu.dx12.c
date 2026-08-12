@@ -115,13 +115,14 @@ ns_bool gpu_request_device(view *v) {
                              &IID_ID3D12Fence, (void **)&_state.fence);
     _state.fence_event = CreateEvent(NULL, FALSE, FALSE, NULL);
     _state.valid = true;
-    gpu_v2_set_backend(&_dx12_v2_ops, 0);
+    // Shader/root binding is not implemented by this incremental backend yet.
+    gpu_v2_set_backend(&_dx12_v2_ops, 0, 0);
     return true;
 }
 
 void gpu_destroy_device(void) {
     if (!_state.valid) return;
-    gpu_v2_set_backend(NULL, 0);
+    gpu_v2_set_backend(NULL, 0, 0);
     gpu_dx12_wait_for_gpu();
     for (u32 i = 0; i < GPU_RESOURCE_POOL_SIZE; ++i) {
         if (_state.memory[i].resource) {

@@ -27,6 +27,7 @@ fn v2_fs(data: v2_varying) float4 {
 
 // Without a device there are no capabilities.
 assert gpu_caps() == 0u
+assert gpu_storage_slot_count() == 0u
 
 // -- memory: allocation, address arithmetic, roundtrip ----------------------
 assert gpu_malloc(0, GPU_MEM_DEVICE) == 0

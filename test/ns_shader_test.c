@@ -130,6 +130,7 @@ static const char *ns_shader_test_src =
     "    let index = shader_global_id_x()\n"
     "    shader_buffer_store_i32(0, index, shader_buffer_i32(0, index) + 7)\n"
     "    shader_buffer_store_i32(1, index, shader_buffer_i32(1, index) + 11)\n"
+    "    shader_buffer_store_i32(7, index, shader_buffer_i32(7, index) + 13)\n"
     "}\n"
     "fn bad_print(data: FragmentInput) float4 {\n"
     "    print(\"no\")\n"
@@ -254,7 +255,8 @@ int main() {
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "device int* ns_storage_buffer_0 [[buffer(3)]]") &&
                       ns_shader_test_has(r.r, "ns_storage_buffer_0[index] =") &&
                       ns_shader_test_has(r.r, "device int* ns_storage_buffer_1 [[buffer(4)]]") &&
-                      ns_shader_test_has(r.r, "ns_storage_buffer_1[index] ="),
+                      ns_shader_test_has(r.r, "ns_storage_buffer_1[index] =") &&
+                      ns_shader_test_has(r.r, "device int* ns_storage_buffer_7 [[buffer(10)]]"),
                   "msl storage-buffer intrinsics transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
@@ -262,7 +264,8 @@ int main() {
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "RWByteAddressBuffer ns_storage_buffer_0 : register(u3)") &&
                       ns_shader_test_has(r.r, "ns_storage_buffer_0.Store(") &&
                       ns_shader_test_has(r.r, "RWByteAddressBuffer ns_storage_buffer_1 : register(u4)") &&
-                      ns_shader_test_has(r.r, "ns_storage_buffer_1.Store("),
+                      ns_shader_test_has(r.r, "ns_storage_buffer_1.Store(") &&
+                      ns_shader_test_has(r.r, "RWByteAddressBuffer ns_storage_buffer_7 : register(u10)"),
                   "hlsl storage-buffer intrinsics transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
@@ -270,7 +273,8 @@ int main() {
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "buffer ns_storage_block_0") &&
                       ns_shader_test_has(r.r, "ns_storage_buffer_0[index] =") &&
                       ns_shader_test_has(r.r, "buffer ns_storage_block_1") &&
-                      ns_shader_test_has(r.r, "ns_storage_buffer_1[index] ="),
+                      ns_shader_test_has(r.r, "ns_storage_buffer_1[index] =") &&
+                      ns_shader_test_has(r.r, "binding = 10") && ns_shader_test_has(r.r, "buffer ns_storage_block_7"),
                   "glsl storage-buffer intrinsics transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
@@ -278,7 +282,8 @@ int main() {
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "var<storage, read_write> ns_storage_buffer_0") &&
                       ns_shader_test_has(r.r, "ns_storage_buffer_0[index] =") &&
                       ns_shader_test_has(r.r, "var<storage, read_write> ns_storage_buffer_1") &&
-                      ns_shader_test_has(r.r, "ns_storage_buffer_1[index] ="),
+                      ns_shader_test_has(r.r, "ns_storage_buffer_1[index] =") &&
+                      ns_shader_test_has(r.r, "@group(0) @binding(14) var<storage, read_write> ns_storage_buffer_7"),
                   "wgsl storage-buffer intrinsics transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }

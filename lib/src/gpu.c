@@ -88,6 +88,7 @@ typedef struct gpu_v2_slot {
 typedef struct gpu_v2_core {
     const gpu_v2_ops *ops;
     u32 caps;
+    u32 storage_slot_count;
 
     gpu_v2_slot *slots;
     u32 slot_count;
@@ -102,13 +103,50 @@ typedef struct gpu_v2_core {
 
 static gpu_v2_core _v2 = {0};
 
-void gpu_v2_set_backend(const gpu_v2_ops *ops, u32 caps) {
+void gpu_v2_set_backend(const gpu_v2_ops *ops, u32 caps, u32 storage_slot_count) {
     _v2.ops = ops;
     _v2.caps = ops ? caps : 0;
+    _v2.storage_slot_count = ops ? storage_slot_count : 0;
 }
 
 u32 gpu_caps(void) {
     return _v2.caps;
+}
+
+u32 gpu_storage_slot_count(void) {
+    return _v2.storage_slot_count;
+}
+
+// Generated shaders name every storage resource ns_storage_buffer_<slot> on
+// all targets. Find the highest referenced slot without imposing a compiler
+// ceiling; the active backend's runtime limit is authoritative.
+static u32 gpu_shader_storage_slot_count(const char *source) {
+    static const char prefix[] = "ns_storage_buffer_";
+    u32 count = 0;
+    if (!source) return 0;
+    const char *at = source;
+    while ((at = strstr(at, prefix)) != NULL) {
+        at += sizeof(prefix) - 1;
+        if (*at < '0' || *at > '9') continue;
+        u64 index = 0;
+        while (*at >= '0' && *at <= '9') {
+            u64 digit = (u64)(*at - '0');
+            if (index > (0xffffffffu - digit) / 10u) index = 0xffffffffu;
+            else index = index * 10u + digit;
+            at++;
+        }
+        u32 required = index >= 0xffffffffu ? 0xffffffffu : (u32)index + 1;
+        if (required > count) count = required;
+    }
+    return count;
+}
+
+static ns_bool gpu_shader_storage_slots_valid(const char *source, const char *operation) {
+    u32 required = gpu_shader_storage_slot_count(source);
+    if (required <= _v2.storage_slot_count) return true;
+    ns_warn("gpu", "%s: shader requires %u storage slots, but the current platform supports %u.\n",
+            operation, required, _v2.storage_slot_count);
+    return false;
 }
 
 static gpu_addr gpu_v2_encode(u32 slot, u64 offset) {
@@ -299,12 +337,15 @@ u32 gpu_shader_graphics_create(const char *vs_src, const char *fs_src,
                                const char *vs_entry, const char *fs_entry) {
     if (!vs_src || !fs_src || !vs_entry || !fs_entry) return 0;
     if (!_v2.ops || !_v2.ops->shader_graphics_create) return 0;
+    if (!gpu_shader_storage_slots_valid(vs_src, "gpu_shader_graphics_create") ||
+        !gpu_shader_storage_slots_valid(fs_src, "gpu_shader_graphics_create")) return 0;
     return _v2.ops->shader_graphics_create(vs_src, fs_src, vs_entry, fs_entry);
 }
 
 u32 gpu_shader_compute_create(const char *src, const char *entry) {
     if (!src || !entry) return 0;
     if (!_v2.ops || !_v2.ops->shader_compute_create) return 0;
+    if (!gpu_shader_storage_slots_valid(src, "gpu_shader_compute_create")) return 0;
     return _v2.ops->shader_compute_create(src, entry);
 }
 
@@ -374,7 +415,7 @@ void gpu_set_storage(gpu_addr addr) {
 }
 
 void gpu_set_storage_at(i32 index, gpu_addr addr) {
-    if (index < 0 || index >= 2) return;
+    if (index < 0 || (u32)index >= _v2.storage_slot_count) return;
     u32 slot;
     u64 offset;
     if (!gpu_v2_decode(addr, &slot, &offset)) return;

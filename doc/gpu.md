@@ -119,6 +119,7 @@ fixed at 8.
 ns_bool gpu_request_device(view *v);
 void    gpu_destroy_device(void);
 u32     gpu_caps(void);
+u32     gpu_storage_slot_count(void); // 0 without a device
 
 void gpu_commit(void);        // submit + present, recycles the frame ring
 ```
@@ -222,8 +223,9 @@ void gpu_set_root(gpu_addr args);
 // ...or copy a small struct into the frame ring and point at that.
 void gpu_set_root_data(const void *data, u64 size);
 
-// Portable fixed storage slots used by the current shader subset. These helpers
-// go away once typed gpu_addr dereference is lowered directly in shaders.
+// Portable storage slots used by the current shader subset. The active
+// platform's zero-based slot count is reported by gpu_storage_slot_count();
+// shader creation fails when source refers to a slot outside that range.
 void gpu_set_storage(gpu_addr addr);
 void gpu_set_storage_at(i32 index, gpu_addr addr);
 

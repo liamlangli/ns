@@ -34,6 +34,7 @@ const writes = [];
 let computeDispatch = null;
 const device = {
   lost: new Promise(() => {}),
+  limits: { maxStorageBuffersPerShaderStage: 8, maxBindingsPerBindGroup: 1000 },
   queue: { writeBuffer(...args) { writes.push(args); }, submit() {} },
   createBuffer(desc) { return { desc, destroy() {} }; },
   createTexture(desc) { return { desc, createView() { return {}; }, destroy() {} }; },
@@ -94,6 +95,7 @@ assert.equal(runtime.viewImport('view_take_key_press', [canvasView, 65]), 0);
 runtime.viewImport('view_input_reset', [canvasView]);
 assert.equal(runtime.viewImport('view_input_count', [canvasView]), 0);
 assert.equal(runtime.gpu('gpu_caps', []), 6);
+assert.equal(runtime.gpu('gpu_storage_slot_count', []), 8);
 const buffer = runtime.gpu('gpu_malloc', [32n, 0]);
 assert(buffer > 0n);
 const texture = runtime.gpu('gpu_texture_new_2d', [8, 4, 23, 0]);
@@ -138,6 +140,13 @@ const computeShader = runtime.gpu('gpu_shader_compute_create', [computeSource, c
 runtime.gpu('gpu_set_shader', [computeShader]);
 runtime.gpu('gpu_dispatch', [2, 3, 4]);
 assert.deepEqual(computeDispatch, [2, 3, 4]);
+const oversizedStorageSource = runtime.writeString('@group(0) @binding(15) var<storage, read_write> ns_storage_buffer_8: array<i32>;');
+const oldConsoleError = console.error;
+let storageLimitError = '';
+console.error = message => { storageLimitError = String(message); };
+assert.equal(runtime.gpu('gpu_shader_compute_create', [oversizedStorageSource, computeEntry]), 0);
+console.error = oldConsoleError;
+assert.match(storageLimitError, /requires 9 storage slots.*supports 8/);
 
 const uiCalls = [];
 const uiContext = {

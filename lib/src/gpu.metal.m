@@ -12,6 +12,15 @@
 
 #include "gpu.h"
 
+// Metal exposes 31 buffer argument indices (0...30) per shader stage. Nano
+// Script reserves 0...2 for root/uniform plumbing, leaving the rest as
+// shader_buffer_* storage slots.
+enum {
+    GPU_MTL_STORAGE_BINDING_BASE = 3,
+    GPU_MTL_BUFFER_BINDING_COUNT = 31,
+    GPU_MTL_STORAGE_SLOT_COUNT = GPU_MTL_BUFFER_BINDING_COUNT - GPU_MTL_STORAGE_BINDING_BASE,
+};
+
 static MTLTextureType _mtl_texture_type(gpu_texture_type type) {
     switch (type) {
         case TEXTURE_2D: return MTLTextureType2D;
@@ -279,8 +288,9 @@ typedef struct gpu_state_mtl {
     gpu_v2_state_desc v2_render_state;
     id<MTLBuffer> v2_root_buffer;
     u64 v2_root_offset;
-    id<MTLBuffer> v2_storage_buffers[2];
-    u64 v2_storage_offsets[2];
+    id<MTLBuffer> *v2_storage_buffers;
+    u64 *v2_storage_offsets;
+    u32 v2_storage_slot_count;
     MTLPixelFormat v2_pass_colors[4];
     MTLPixelFormat v2_pass_depth;
 
@@ -435,14 +445,39 @@ ns_bool gpu_request_device(view* v) {
     _state.texture_count = 1;
     _state.sampler_count = 1;
     _state.screen_pass_count = 0;
+    free(_state.v2_storage_buffers);
+    free(_state.v2_storage_offsets);
+    _state.v2_storage_slot_count = GPU_MTL_STORAGE_SLOT_COUNT;
+    _state.v2_storage_buffers = calloc(_state.v2_storage_slot_count, sizeof(*_state.v2_storage_buffers));
+    _state.v2_storage_offsets = calloc(_state.v2_storage_slot_count, sizeof(*_state.v2_storage_offsets));
+    if (!_state.v2_storage_buffers || !_state.v2_storage_offsets) {
+        free(_state.v2_storage_buffers);
+        free(_state.v2_storage_offsets);
+        _state.v2_storage_buffers = nil;
+        _state.v2_storage_offsets = NULL;
+        _state.v2_storage_slot_count = 0;
+        _state.valid = false;
+        return false;
+    }
     gpu_v2_set_backend(&_mtl_v2_ops,
-                       GPU_CAP_BINDLESS_TEXTURES | GPU_CAP_INDIRECT_DRAW | GPU_CAP_READBACK);
+                       GPU_CAP_BINDLESS_TEXTURES | GPU_CAP_INDIRECT_DRAW | GPU_CAP_READBACK,
+                       _state.v2_storage_slot_count);
     
     return true;
 }
 
 void gpu_destroy_device() {
-    gpu_v2_set_backend(NULL, 0);
+    if (!_state.valid) return;
+    // Stop new frames before draining the command buffer submitted by the
+    // last draw. Its completion handler owns the outstanding semaphore
+    // signal, so releasing the semaphore while that frame is still running
+    // makes libdispatch trap during application shutdown.
+    _state.valid = false;
+    if (_state.semaphore != nil) {
+        dispatch_semaphore_wait(_state.semaphore, DISPATCH_TIME_FOREVER);
+        dispatch_semaphore_signal(_state.semaphore);
+    }
+    gpu_v2_set_backend(NULL, 0, 0);
     for (i32 i = 0; i < GPU_RESOURCE_POOL_SIZE; ++i) {
 #ifndef ENABLE_ARC
         [_state.v2_memory[i] release];
@@ -450,6 +485,11 @@ void gpu_destroy_device() {
         _state.v2_memory[i] = nil;
         _state.v2_memory_size[i] = 0;
     }
+    free(_state.v2_storage_buffers);
+    free(_state.v2_storage_offsets);
+    _state.v2_storage_buffers = nil;
+    _state.v2_storage_offsets = NULL;
+    _state.v2_storage_slot_count = 0;
 #ifndef ENABLE_ARC
     [_state.cmd_encoder release];
     [_state.cmd_buffer release];
@@ -458,6 +498,7 @@ void gpu_destroy_device() {
     [_state.device.device release];
     dispatch_release(_state.semaphore);
 #endif
+    memset(&_state, 0, sizeof(_state));
 }
 
 void gpu_mtl_begin_frame(MTKView *view) {
@@ -863,8 +904,10 @@ static void mtl_v2_set_root(u32 slot, u64 offset, gpu_addr addr) {
 
 static void mtl_v2_set_storage(u32 binding, u32 slot, u64 offset, gpu_addr addr) {
     ns_unused(addr);
-    if (binding < 3 || binding > 4 || slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot]) return;
-    u32 index = binding - 3;
+    if (binding < GPU_MTL_STORAGE_BINDING_BASE ||
+        binding - GPU_MTL_STORAGE_BINDING_BASE >= _state.v2_storage_slot_count ||
+        slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot]) return;
+    u32 index = binding - GPU_MTL_STORAGE_BINDING_BASE;
     _state.v2_storage_buffers[index] = _state.v2_memory[slot];
     _state.v2_storage_offsets[index] = offset;
 }
@@ -874,8 +917,8 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
     if (compute) {
         id<MTLComputeCommandEncoder> compute_encoder = (id<MTLComputeCommandEncoder>)encoder;
         if (shader->uses_root && _state.v2_root_buffer) [compute_encoder setBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
-        for (u32 i = 0; i < 2; ++i) {
-            if (_state.v2_storage_buffers[i]) [compute_encoder setBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:3 + i];
+        for (u32 i = 0; i < _state.v2_storage_slot_count; ++i) {
+            if (_state.v2_storage_buffers[i]) [compute_encoder setBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:GPU_MTL_STORAGE_BINDING_BASE + i];
         }
     } else {
         id<MTLRenderCommandEncoder> render_encoder = (id<MTLRenderCommandEncoder>)encoder;
@@ -883,10 +926,10 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
             [render_encoder setVertexBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
             [render_encoder setFragmentBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
         }
-        for (u32 i = 0; i < 2; ++i) {
+        for (u32 i = 0; i < _state.v2_storage_slot_count; ++i) {
             if (_state.v2_storage_buffers[i]) {
-                [render_encoder setVertexBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:3 + i];
-                [render_encoder setFragmentBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:3 + i];
+                [render_encoder setVertexBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:GPU_MTL_STORAGE_BINDING_BASE + i];
+                [render_encoder setFragmentBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:GPU_MTL_STORAGE_BINDING_BASE + i];
             }
         }
     }

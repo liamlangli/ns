@@ -85,6 +85,9 @@ lit GPU_TEXTURE_3D = 2
 lit GPU_TEXTURE_ARRAY = 3
 
 ref fn gpu_caps() u32
+// Number of zero-based shader_buffer_* storage slots supported by the active
+// GPU platform. Returns 0 until a device is available.
+ref fn gpu_storage_slot_count() u32
 
 ref fn gpu_malloc(size: u64, flags: u32) u64
 ref fn gpu_free(addr: u64)

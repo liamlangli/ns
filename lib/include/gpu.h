@@ -52,6 +52,9 @@ int gpu_pixel_format_row_pitch(gpu_pixel_format format, int width, int row_align
 typedef u64 gpu_addr;
 
 u32 gpu_caps(void);
+// Number of zero-based shader_buffer_* slots exposed by the active backend.
+// Returns 0 without a device.
+u32 gpu_storage_slot_count(void);
 
 // ---- memory ----------------------------------------------------------------
 // Works with or without a device: the null tier keeps allocations host-side
@@ -173,5 +176,5 @@ typedef struct gpu_v2_ops {
     void (*wait_before)(u32 slot, u64 offset, u64 value);
 } gpu_v2_ops;
 
-void gpu_v2_set_backend(const gpu_v2_ops *ops, u32 caps);
+void gpu_v2_set_backend(const gpu_v2_ops *ops, u32 caps, u32 storage_slot_count);
 void gpu_v2_frame_end(void); // backends call this from gpu_commit to recycle the ring

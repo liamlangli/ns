@@ -2289,7 +2289,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "gpu_memory_read|gpu_memory_free|gpu_shader_graphics|gpu_shader_compute|gpu_shader_valid|"
             "gpu_shader_bind|gpu_shader_release|gpu_pass_begin_target|gpu_request_device|gpu_destroy_device|"
             "gpu_shader_target|gpu_set_viewport|gpu_set_scissor|gpu_commit|"
-            "gpu_caps|gpu_malloc|gpu_free|gpu_write|gpu_read|gpu_frame_alloc|gpu_texture_create|"
+            "gpu_caps|gpu_storage_slot_count|gpu_malloc|gpu_free|gpu_write|gpu_read|gpu_frame_alloc|gpu_texture_create|"
             "gpu_texture_upload|gpu_texture_destroy|gpu_sampler_create|gpu_sampler_destroy|"
             "gpu_shader_graphics_create|gpu_shader_compute_create|gpu_shader_destroy|gpu_state_create|"
             "gpu_pass_begin|gpu_screen_pass_begin|gpu_pass_end|gpu_set_shader|gpu_set_state|gpu_set_root|"
