@@ -227,6 +227,7 @@ typedef struct gpu_shader_mtl {
     bool uses_root;
     bool uses_read_texture;
     bool uses_write_texture;
+    bool uses_write_texture_secondary;
     bool uses_texture_map;
     bool uses_mask_map;
     bool uses_shadow_map;
@@ -599,12 +600,13 @@ void gpu_set_scissor(int x, int y, int width, int height) {
 
 // Nano Script GPU v2 backend.
 
-static ns_bool mtl_v2_mem_create(u32 slot, u64 size, u32 flags, u64 *base_va) {
+static ns_bool mtl_v2_mem_create(u32 slot, u64 size, u32 flags, const char *name, u64 *base_va) {
     ns_unused(flags);
-    if (slot >= GPU_RESOURCE_POOL_SIZE || size == 0 || size > (u64)NSUIntegerMax) return false;
+    if (slot >= GPU_RESOURCE_POOL_SIZE || size == 0 || size > (u64)NSUIntegerMax || !name || !name[0]) return false;
     id<MTLBuffer> buffer = [_state.device.device newBufferWithLength:(NSUInteger)size
                                                              options:MTLResourceStorageModeShared];
     if (!buffer) return false;
+    buffer.label = [NSString stringWithUTF8String:name];
     _state.v2_memory[slot] = buffer;
     _state.v2_memory_size[slot] = size;
     if (base_va) *base_va = 0;
@@ -782,6 +784,7 @@ static u32 mtl_v2_shader_graphics_create(const char *vs_src, const char *fs_src,
     record->uses_root = mtl_source_uses(vs_src, "ns_root") || mtl_source_uses(fs_src, "ns_root");
     record->uses_read_texture = mtl_source_uses(vs_src, "ns_read_texture") || mtl_source_uses(fs_src, "ns_read_texture");
     record->uses_write_texture = mtl_source_uses(vs_src, "ns_write_texture") || mtl_source_uses(fs_src, "ns_write_texture");
+    record->uses_write_texture_secondary = mtl_source_uses(vs_src, "ns_secondary_write_texture") || mtl_source_uses(fs_src, "ns_secondary_write_texture");
     record->uses_texture_map = mtl_source_uses(vs_src, "ns_texture_map") || mtl_source_uses(fs_src, "ns_texture_map");
     record->uses_mask_map = mtl_source_uses(vs_src, "ns_mask_map") || mtl_source_uses(fs_src, "ns_mask_map");
     record->uses_shadow_map = mtl_source_uses(vs_src, "ns_shadow_map") || mtl_source_uses(fs_src, "ns_shadow_map");
@@ -813,6 +816,7 @@ static u32 mtl_v2_shader_compute_create(const char *src, const char *entry) {
         .uses_root = mtl_source_uses(src, "ns_root"),
         .uses_read_texture = mtl_source_uses(src, "ns_read_texture"),
         .uses_write_texture = mtl_source_uses(src, "ns_write_texture"),
+        .uses_write_texture_secondary = mtl_source_uses(src, "ns_secondary_write_texture"),
     };
     return id;
 }
@@ -937,12 +941,15 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
     const f32 *words = (const f32 *)((const u8 *)[_state.v2_root_buffer contents] + _state.v2_root_offset);
     u32 texture0 = words[0] > 0.0f ? (u32)(words[0] + 0.5f) : 0;
     u32 texture1 = words[1] > 0.0f ? (u32)(words[1] + 0.5f) : 0;
+    u32 texture2 = words[2] > 0.0f ? (u32)(words[2] + 0.5f) : 0;
     if (compute) {
         id<MTLComputeCommandEncoder> compute_encoder = (id<MTLComputeCommandEncoder>)encoder;
         if (shader->uses_read_texture && texture0 < _state.texture_count)
             [compute_encoder setTexture:_state.textures[texture0].texture atIndex:0];
         if (shader->uses_write_texture && texture1 < _state.texture_count)
             [compute_encoder setTexture:_state.textures[texture1].texture atIndex:1];
+        if (shader->uses_write_texture_secondary && texture2 < _state.texture_count)
+            [compute_encoder setTexture:_state.textures[texture2].texture atIndex:15];
     } else {
         id<MTLRenderCommandEncoder> render_encoder = (id<MTLRenderCommandEncoder>)encoder;
         if (shader->uses_shadow_map && texture0 < _state.texture_count)

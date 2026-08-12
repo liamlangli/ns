@@ -20,6 +20,7 @@ fn cs_probe() void {
     }
     let source = shader_read_texture(x, y)
     shader_write_texture(x, y, float4 { x: source.x + 1.0, y: (x + y) as f32, z: shader_root_f32(1), w: 7.0 })
+    shader_write_texture_secondary(x, y, float4 { x: source.x + 2.0, y: (x * y) as f32, z: 3.0, w: 4.0 })
 }
 
 // Sums a column into a fixed local array, then writes the total. Local arrays
@@ -48,6 +49,7 @@ fn texel(image: [f32], x: i32, y: i32, channel: i32) f32 {
 let texels = IMAGE_WIDTH * IMAGE_HEIGHT * 4
 let read_image = [f32](texels)
 let write_image = [f32](texels)
+let secondary_image = [f32](texels)
 for i in 0 to texels {
     read_image[i] = 10.0
 }
@@ -61,6 +63,8 @@ let too_small = [f32](8)
 assert shader_host_bind(too_small, write_image, IMAGE_WIDTH, IMAGE_HEIGHT) == false
 
 assert shader_host_bind(read_image, write_image, IMAGE_WIDTH, IMAGE_HEIGHT)
+assert shader_host_bind_secondary(too_small) == false
+assert shader_host_bind_secondary(secondary_image)
 assert shader_host_root(root)
 
 for y in 0 to IMAGE_HEIGHT {
@@ -78,6 +82,9 @@ assert texel(write_image, 2, 1, 3) == 7.0
 assert texel(write_image, 0, 0, 1) == 0.0
 // Columns past the root's width bound wrote nothing.
 assert texel(write_image, 3, 0, 3) == 7.0
+assert texel(secondary_image, 2, 1, 0) == 12.0
+assert texel(secondary_image, 2, 1, 1) == 2.0
+assert texel(secondary_image, 2, 1, 3) == 4.0
 
 // A swap makes the stage's output the next stage's input, as a dispatch
 // boundary does.

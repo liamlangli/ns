@@ -134,7 +134,7 @@ enum gpu_mem_flags {
     GPU_MEM_SHARED = 1,                  // CPU-visible, persistently mapped
 };
 
-gpu_addr gpu_malloc(u64 size, u32 flags);
+gpu_addr gpu_malloc(u64 size, u32 flags, const char *name);
 void     gpu_free(gpu_addr addr);
 
 // Write/read through the frame's transfer stream (device memory) or memcpy
@@ -151,7 +151,9 @@ gpu_addr gpu_frame_alloc(u64 size, u32 align);
 ```
 
 Suballocation is user-side address arithmetic; `gpu_addr + offset` is
-always valid within one allocation.
+always valid within one allocation. Every allocation requires a non-empty,
+specific debug `name`; the backend exposes it to GPU capture and debugging
+tools (for example, as an `MTLBuffer` label or a DirectX 12 object name).
 
 ### Textures and samplers
 
@@ -241,6 +243,11 @@ void gpu_dispatch_indirect(gpu_addr args);
 
 Compute uses the same flow: `gpu_set_shader(compute)`, `gpu_set_root*`,
 `gpu_dispatch`.
+
+Compute texture intrinsics bind the read texture from root word 0, the primary
+writable texture from word 1, and the optional RGBA8 secondary writable texture
+from word 2. `shader_write_texture_secondary` lets one invocation emit an
+auxiliary target without a second dispatch.
 
 ### Synchronization
 
@@ -339,7 +346,7 @@ What the metadata buys on the CPU side:
   call while keeping every field readable.
 
 Constructors are `gpu_texture_new`/`gpu_texture_new_2d`/`gpu_texture_none`,
-`gpu_sampler_new`, `gpu_render_state_new`, `gpu_memory_alloc`; teardown is
+`gpu_sampler_new`, `gpu_render_state_new`, `gpu_memory_alloc(size, flags, name)`; teardown is
 `gpu_*_release`/`gpu_memory_free`; binding is `gpu_shader_bind` /
 `gpu_render_state_bind`.
 

@@ -1494,7 +1494,7 @@ static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset) {
     if (!r->storage || required > r->storage_capacity) {
         u64 capacity = r->storage_capacity > 0 ? r->storage_capacity : 4096;
         while (capacity < required) capacity *= 2;
-        gpu_addr storage = gpu_malloc(capacity, GPU_MEM_SHARED);
+        gpu_addr storage = gpu_malloc(capacity, GPU_MEM_SHARED, "ui renderer storage");
         if (!storage) return false;
         if (r->storage) gpu_free(r->storage);
         r->storage = storage;

@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
+#include <stdlib.h>
 #include <string.h>
 
 extern void *view_win_hwnd(void);
@@ -143,9 +144,21 @@ void gpu_destroy_device(void) {
     memset(&_state, 0, sizeof(_state));
 }
 
-static ns_bool dx12_mem_create(u32 slot, u64 size, u32 flags, u64 *base_va) {
+static void dx12_resource_set_name(ID3D12Resource *resource, const char *name) {
+    if (!resource || !name || !name[0]) return;
+    int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, NULL, 0);
+    if (length <= 0) return;
+    WCHAR *wide_name = (WCHAR *)malloc((size_t)length * sizeof(*wide_name));
+    if (!wide_name) return;
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, name, -1, wide_name, length) > 0) {
+        ID3D12Resource_SetName(resource, wide_name);
+    }
+    free(wide_name);
+}
+
+static ns_bool dx12_mem_create(u32 slot, u64 size, u32 flags, const char *name, u64 *base_va) {
     ns_unused(flags);
-    if (slot >= GPU_RESOURCE_POOL_SIZE || size == 0) return false;
+    if (slot >= GPU_RESOURCE_POOL_SIZE || size == 0 || !name || !name[0]) return false;
     D3D12_HEAP_PROPERTIES heap = {0};
     heap.Type = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC desc = {0};
@@ -160,6 +173,7 @@ static ns_bool dx12_mem_create(u32 slot, u64 size, u32 flags, u64 *base_va) {
     if (FAILED(ID3D12Device_CreateCommittedResource(_state.device, &heap, D3D12_HEAP_FLAG_NONE,
                                                     &desc, D3D12_RESOURCE_STATE_GENERIC_READ, NULL,
                                                     &IID_ID3D12Resource, (void **)&memory->resource))) return false;
+    dx12_resource_set_name(memory->resource, name);
     if (FAILED(ID3D12Resource_Map(memory->resource, 0, NULL, &memory->mapped))) {
         ID3D12Resource_Release(memory->resource);
         memset(memory, 0, sizeof(*memory));

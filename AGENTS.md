@@ -317,6 +317,9 @@ check the implementation/declaration for the target platform.
 - Preserve Nano Script's explicit, minimal, data-oriented design. Prefer a
   concrete type and a small function over hidden behavior or a generic
   abstraction.
+- Give every GPU buffer allocation a stable, concrete, purpose-specific debug
+  name; a slot, index, or generic placeholder such as `buffer` is not a
+  sufficient name.
 - Use `lit` rather than `let` for module constants and local compile-time
   values that satisfy the literal-expression restrictions. Keep runtime or
   intentionally mutable bindings as `let`, and do not weaken `lit` validation

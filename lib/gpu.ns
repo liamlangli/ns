@@ -89,7 +89,8 @@ ref fn gpu_caps() u32
 // GPU platform. Returns 0 until a device is available.
 ref fn gpu_storage_slot_count() u32
 
-ref fn gpu_malloc(size: u64, flags: u32) u64
+// name is required and identifies the allocation in GPU debugging tools.
+ref fn gpu_malloc(size: u64, flags: u32, name: str) u64
 ref fn gpu_free(addr: u64)
 ref fn gpu_write(dst: u64, data: [any], size: u64)
 ref fn gpu_read(src: u64, dst: [any], size: u64) bool
@@ -301,8 +302,8 @@ fn gpu_render_state_bind(state: gpu_render_state) {
     gpu_set_state(state.resource_id)
 }
 
-fn gpu_memory_alloc(size: u64, flags: u32) gpu_memory {
-    return gpu_memory { gpu_malloc(size, flags), size, flags }
+fn gpu_memory_alloc(size: u64, flags: u32, name: str) gpu_memory {
+    return gpu_memory { gpu_malloc(size, flags, name), size, flags }
 }
 
 fn gpu_memory_valid(mem: gpu_memory) bool {

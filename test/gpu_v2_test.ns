@@ -30,9 +30,10 @@ assert gpu_caps() == 0u
 assert gpu_storage_slot_count() == 0u
 
 // -- memory: allocation, address arithmetic, roundtrip ----------------------
-assert gpu_malloc(0, GPU_MEM_DEVICE) == 0
+assert gpu_malloc(0, GPU_MEM_DEVICE, "zero-sized test buffer") == 0
+assert gpu_malloc(16, GPU_MEM_DEVICE, "") == 0
 
-let a = gpu_malloc(1024, GPU_MEM_SHARED)
+let a = gpu_malloc(1024, GPU_MEM_SHARED, "roundtrip shared test buffer")
 assert a != 0
 
 // Fresh allocations read back zeroed.
@@ -53,7 +54,7 @@ assert gpu_read(0, dst, 16) == false
 
 // Device memory is host-backed on the null tier, so headless programs keep
 // deterministic reads.
-let d = gpu_malloc(2048, GPU_MEM_DEVICE)
+let d = gpu_malloc(2048, GPU_MEM_DEVICE, "headless device test buffer")
 assert d != 0
 gpu_write(d + 256, src, 16)
 assert gpu_read(d + 256, dst, 16)
@@ -116,7 +117,7 @@ gpu_commit()
 // -- free and slot reuse -------------------------------------------------------
 gpu_free(a)
 assert gpu_read(a, dst, 16) == false
-let b = gpu_malloc(512, GPU_MEM_SHARED)
+let b = gpu_malloc(512, GPU_MEM_SHARED, "reused slot test buffer")
 assert b != 0
 assert gpu_read(b, zeros, 16)
 gpu_free(b)
@@ -147,7 +148,7 @@ gpu_render_state_bind(rs)
 
 // gpu_memory carries the extent, so ranges are validated CPU-side before an
 // address ever reaches the backend.
-let mem = gpu_memory_alloc(1024, GPU_MEM_SHARED)
+let mem = gpu_memory_alloc(1024, GPU_MEM_SHARED, "gpu memory wrapper test buffer")
 assert gpu_memory_valid(mem)
 assert mem.size == 1024 && mem.flags == GPU_MEM_SHARED
 gpu_memory_write(mem, 32, src, 16)

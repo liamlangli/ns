@@ -41,6 +41,7 @@ enum ns_shader_use {
     NS_SHADER_USE_MASK_MAP = 1 << 7,
     NS_SHADER_USE_SCENE_UNIFORMS = 1 << 8,
     NS_SHADER_USE_STORAGE_BUFFER = 1 << 9,
+    NS_SHADER_USE_WRITE_TEXTURE_SECONDARY = 1 << 10,
 };
 
 typedef struct ns_shader_resource_binding {
@@ -55,6 +56,7 @@ static const ns_shader_resource_binding ns_shader_resources[] = {
     {NS_SHADER_USE_GLOBAL_ID, "uint3 ns_global_id", "uint3 ns_global_id", "ns_global_id"},
     {NS_SHADER_USE_VERTEX_ID, "uint ns_vertex_id", "uint ns_vertex_id", "ns_vertex_id"},
     {NS_SHADER_USE_WRITE_TEXTURE, "texture2d<float, access::write> ns_write_texture", ns_null, "ns_write_texture"},
+    {NS_SHADER_USE_WRITE_TEXTURE_SECONDARY, "texture2d<float, access::write> ns_secondary_write_texture", ns_null, "ns_secondary_write_texture"},
     {NS_SHADER_USE_READ_TEXTURE, "texture2d<float, access::read> ns_read_texture", ns_null, "ns_read_texture"},
     {NS_SHADER_USE_ROOT, "constant float4* ns_root", ns_null, "ns_root"},
     {NS_SHADER_USE_SHADOW_MAP, "depth2d<float> ns_shadow_map", ns_null, "ns_shadow_map"},
@@ -100,6 +102,7 @@ typedef struct ns_shader_emit {
     ns_bool uses_root;
     ns_bool uses_read_texture;
     ns_bool uses_write_texture;
+    ns_bool uses_write_texture_secondary;
     i32 *storage_buffers;
 } ns_shader_emit;
 
@@ -369,6 +372,7 @@ static const ns_shader_builtin ns_shader_builtins[] = {
     {"shader_buffer_store_i32", "ns_storage_buffer", "ns_storage_buffer", "ns_storage_buffer", true},
     {"shader_read_texture", "ns_read_texture", "ns_read_texture", "ns_read_texture", false},
     {"shader_write_texture", "ns_write_texture", "ns_write_texture", "ns_write_texture", false},
+    {"shader_write_texture_secondary", "ns_secondary_write_texture", "ns_secondary_write_texture", "ns_secondary_write_texture", false},
 };
 
 static const ns_shader_builtin *ns_shader_find_builtin(ns_str name) {
@@ -632,6 +636,7 @@ static u32 ns_shader_use_mask(ns_shader_emit *e) {
     if (e->uses_global_id) mask |= NS_SHADER_USE_GLOBAL_ID;
     if (e->uses_vertex_id) mask |= NS_SHADER_USE_VERTEX_ID;
     if (e->uses_write_texture) mask |= NS_SHADER_USE_WRITE_TEXTURE;
+    if (e->uses_write_texture_secondary) mask |= NS_SHADER_USE_WRITE_TEXTURE_SECONDARY;
     if (e->uses_read_texture) mask |= NS_SHADER_USE_READ_TEXTURE;
     if (e->uses_root) mask |= NS_SHADER_USE_ROOT;
     if (e->uses_shadow_map) mask |= NS_SHADER_USE_SHADOW_MAP;
@@ -646,6 +651,7 @@ static void ns_shader_set_use_mask(ns_shader_emit *e, u32 mask) {
     e->uses_global_id = (mask & NS_SHADER_USE_GLOBAL_ID) != 0;
     e->uses_vertex_id = (mask & NS_SHADER_USE_VERTEX_ID) != 0;
     e->uses_write_texture = (mask & NS_SHADER_USE_WRITE_TEXTURE) != 0;
+    e->uses_write_texture_secondary = (mask & NS_SHADER_USE_WRITE_TEXTURE_SECONDARY) != 0;
     e->uses_read_texture = (mask & NS_SHADER_USE_READ_TEXTURE) != 0;
     e->uses_root = (mask & NS_SHADER_USE_ROOT) != 0;
     e->uses_shadow_map = (mask & NS_SHADER_USE_SHADOW_MAP) != 0;
@@ -754,6 +760,10 @@ static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth
         if (callee->type == NS_AST_PRIMARY_EXPR &&
             ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_write_texture"))) {
             e->uses_write_texture = true;
+        }
+        if (callee->type == NS_AST_PRIMARY_EXPR &&
+            ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_write_texture_secondary"))) {
+            e->uses_write_texture_secondary = true;
         }
         if (callee->type == NS_AST_PRIMARY_EXPR &&
             (ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_buffer_i32")) ||
@@ -1210,6 +1220,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             ns_bool buffer_store_i32 = ns_str_equals(name, ns_str_cstr("shader_buffer_store_i32"));
             ns_bool read_texture = ns_str_equals(name, ns_str_cstr("shader_read_texture"));
             ns_bool write_texture = ns_str_equals(name, ns_str_cstr("shader_write_texture"));
+            ns_bool write_texture_secondary = ns_str_equals(name, ns_str_cstr("shader_write_texture_secondary"));
             if (global_x || global_y || global_z) {
                 if (n->call_expr.arg_count != 0) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: global id intrinsic takes no arguments.");
                 const char component = global_x ? 'x' : global_y ? 'y' : 'z';
@@ -1304,13 +1315,15 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                 else ns_shader_cstr(dst, "))");
                 return ns_return_ok_void;
             }
-            if (write_texture) {
-                if (n->call_expr.arg_count != 3) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_write_texture expects x, y and float4 color arguments.");
+            if (write_texture || write_texture_secondary) {
+                if (n->call_expr.arg_count != 3) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: write texture intrinsic expects x, y and float4 color arguments.");
                 i32 x = n->next;
                 i32 y = e->ctx->nodes[x].next;
                 i32 color = e->ctx->nodes[y].next;
+                const char *texture_name = write_texture_secondary ? "ns_secondary_write_texture" : "ns_write_texture";
                 if (e->target == NS_SHADER_MSL) {
-                    ns_shader_cstr(dst, "ns_write_texture.write(");
+                    ns_shader_cstr(dst, texture_name);
+                    ns_shader_cstr(dst, ".write(");
                     ns_shader_try(ns_shader_emit_expr(e, color, dst));
                     ns_shader_cstr(dst, ", uint2(");
                     ns_shader_try(ns_shader_emit_expr(e, x, dst));
@@ -1318,7 +1331,9 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                     ns_shader_try(ns_shader_emit_expr(e, y, dst));
                     ns_shader_cstr(dst, "))");
                 } else if (e->target == NS_SHADER_GLSL_VULKAN) {
-                    ns_shader_cstr(dst, "imageStore(ns_write_texture, ivec2(");
+                    ns_shader_cstr(dst, "imageStore(");
+                    ns_shader_cstr(dst, texture_name);
+                    ns_shader_cstr(dst, ", ivec2(");
                     ns_shader_try(ns_shader_emit_expr(e, x, dst));
                     ns_shader_cstr(dst, ", ");
                     ns_shader_try(ns_shader_emit_expr(e, y, dst));
@@ -1326,7 +1341,9 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                     ns_shader_try(ns_shader_emit_expr(e, color, dst));
                     ns_shader_cstr(dst, ")");
                 } else if (e->target == NS_SHADER_WGSL) {
-                    ns_shader_cstr(dst, "textureStore(ns_write_texture, vec2<i32>(");
+                    ns_shader_cstr(dst, "textureStore(");
+                    ns_shader_cstr(dst, texture_name);
+                    ns_shader_cstr(dst, ", vec2<i32>(");
                     ns_shader_try(ns_shader_emit_expr(e, x, dst));
                     ns_shader_cstr(dst, ", ");
                     ns_shader_try(ns_shader_emit_expr(e, y, dst));
@@ -1334,7 +1351,8 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                     ns_shader_try(ns_shader_emit_expr(e, color, dst));
                     ns_shader_cstr(dst, ")");
                 } else {
-                    ns_shader_cstr(dst, "ns_write_texture[int2(");
+                    ns_shader_cstr(dst, texture_name);
+                    ns_shader_cstr(dst, "[int2(");
                     ns_shader_try(ns_shader_emit_expr(e, x, dst));
                     ns_shader_cstr(dst, ", ");
                     ns_shader_try(ns_shader_emit_expr(e, y, dst));
@@ -1974,6 +1992,11 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         ns_shader_cstr(&e->out, "texture2d<float, access::write> ns_write_texture [[texture(1)]]");
         has_hidden_arg = true;
     }
+    if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_COMPUTE && e->uses_write_texture_secondary) {
+        if (ns_array_length(s->fn.args) > 0 || has_hidden_arg) ns_shader_cstr(&e->out, ", ");
+        ns_shader_cstr(&e->out, "texture2d<float, access::write> ns_secondary_write_texture [[texture(15)]]");
+        has_hidden_arg = true;
+    }
     if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_COMPUTE && e->uses_read_texture) {
         if (ns_array_length(s->fn.args) > 0 || has_hidden_arg) ns_shader_cstr(&e->out, ", ");
         ns_shader_cstr(&e->out, "texture2d<float, access::read> ns_read_texture [[texture(0)]]");
@@ -2366,6 +2389,15 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     if (e.uses_write_texture && target == NS_SHADER_WGSL) {
         ns_shader_cstr(&e.out, "@group(0) @binding(1) var ns_write_texture: texture_storage_2d<rg11b10ufloat, write>;\n\n");
     }
+    if (e.uses_write_texture_secondary && target == NS_SHADER_GLSL_VULKAN) {
+        ns_shader_cstr(&e.out, "layout(set = 0, binding = 15, rgba8) uniform writeonly image2D ns_secondary_write_texture;\n\n");
+    }
+    if (e.uses_write_texture_secondary && target == NS_SHADER_HLSL) {
+        ns_shader_cstr(&e.out, "RWTexture2D<float4> ns_secondary_write_texture : register(u15);\n\n");
+    }
+    if (e.uses_write_texture_secondary && target == NS_SHADER_WGSL) {
+        ns_shader_cstr(&e.out, "@group(0) @binding(15) var ns_secondary_write_texture: texture_storage_2d<rgba8unorm, write>;\n\n");
+    }
     for (i32 i = 0, l = (i32)ns_array_length(e.storage_buffers); i < l; ++i) {
         i32 index = e.storage_buffers[i];
         if (target == NS_SHADER_GLSL_VULKAN) {
@@ -2729,6 +2761,7 @@ static ns_return_bool ns_shader_group_resource_at(ns_vm *vm, ns_value group, i32
 typedef struct ns_shader_host {
     f32 *read;
     f32 *write;
+    f32 *write_secondary;
     i32 width, height;
     f32 root[NS_SHADER_ROOT_WORDS];
     i32 global_id[3];
@@ -2754,10 +2787,19 @@ static ns_return_bool ns_shader_host_vm_call(ns_vm *vm, ns_str name, ns_call *ca
         if (ok) {
             _host.read = read;
             _host.write = write;
+            _host.write_secondary = ns_null;
             _host.width = width;
             _host.height = height;
             _host.bound = true;
         }
+        call->ret = (ns_value){.t = ns_type_bool, .b = ok};
+        return ns_return_ok(bool, true);
+    }
+    if (ns_str_equals(name, ns_str_cstr("shader_host_bind_secondary"))) {
+        f32 *write = (f32 *)ns_eval_array_raw(vm, vm->symbol_stack[call->arg_offset].val);
+        szt texels = (szt)(_host.width > 0 ? _host.width : 0) * (szt)(_host.height > 0 ? _host.height : 0);
+        ns_bool ok = _host.bound && write && ns_array_length(write) >= texels * 4;
+        if (ok) _host.write_secondary = write;
         call->ret = (ns_value){.t = ns_type_bool, .b = ok};
         return ns_return_ok(bool, true);
     }
@@ -2809,7 +2851,8 @@ static ns_return_bool ns_shader_host_vm_call(ns_vm *vm, ns_str name, ns_call *ca
         call->ret = ns_nil;
         return ns_return_ok(bool, true);
     }
-    if (ns_str_equals(name, ns_str_cstr("shader_read_texture")) || ns_str_equals(name, ns_str_cstr("shader_write_texture"))) {
+    if (ns_str_equals(name, ns_str_cstr("shader_read_texture")) || ns_str_equals(name, ns_str_cstr("shader_write_texture")) ||
+        ns_str_equals(name, ns_str_cstr("shader_write_texture_secondary"))) {
         if (!_host.bound) {
             return ns_return_error(bool, vm->loc, NS_ERR_EVAL,
                                    "shader: texture intrinsics need shader_host_bind outside a transpiled shader.");
@@ -2818,13 +2861,15 @@ static ns_return_bool ns_shader_host_vm_call(ns_vm *vm, ns_str name, ns_call *ca
         i32 y = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
         i32 texel = ns_shader_host_texel(x, y);
         ns_type float4_t = call->callee->fn.ret;
-        if (ns_str_equals(name, ns_str_cstr("shader_write_texture"))) {
+        if (ns_str_equals(name, ns_str_cstr("shader_write_texture")) || ns_str_equals(name, ns_str_cstr("shader_write_texture_secondary"))) {
             ns_value color = vm->symbol_stack[call->arg_offset + 2].val;
+            f32 *destination = ns_str_equals(name, ns_str_cstr("shader_write_texture_secondary")) ? _host.write_secondary : _host.write;
+            if (!destination) return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: secondary write texture is not bound.");
             if (texel >= 0) {
                 // A float4 is four f32 fields in declaration order.
                 for (i32 i = 0; i < 4; ++i) {
                     ns_value field = (ns_value){.t = ns_type_set_stack(ns_type_f32, true), .o = color.o + (u64)i * sizeof(f32)};
-                    _host.write[texel + i] = ns_eval_number_f32(vm, field);
+                    destination[texel + i] = ns_eval_number_f32(vm, field);
                 }
             }
             call->ret = ns_nil;
@@ -2849,7 +2894,7 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
 
     if (ns_str_starts_with(name, ns_str_cstr("shader_host_")) || ns_str_starts_with(name, ns_str_cstr("shader_global_id_")) ||
         ns_str_equals(name, ns_str_cstr("shader_root_f32")) || ns_str_equals(name, ns_str_cstr("shader_read_texture")) ||
-        ns_str_equals(name, ns_str_cstr("shader_write_texture")) || ns_str_equals(name, ns_str_cstr("shader_buffer_i32")) ||
+        ns_str_equals(name, ns_str_cstr("shader_write_texture")) || ns_str_equals(name, ns_str_cstr("shader_write_texture_secondary")) || ns_str_equals(name, ns_str_cstr("shader_buffer_i32")) ||
         ns_str_equals(name, ns_str_cstr("shader_buffer_store_i32"))) {
         return ns_shader_host_vm_call(vm, name, call);
     }

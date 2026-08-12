@@ -180,8 +180,8 @@ static ns_bool gpu_v2_decode(gpu_addr addr, u32 *out_slot, u64 *out_offset) {
     return true;
 }
 
-gpu_addr gpu_malloc(u64 size, u32 flags) {
-    if (size == 0 || size > GPU_V2_OFFSET_MASK) return 0;
+gpu_addr gpu_malloc(u64 size, u32 flags, const char *name) {
+    if (size == 0 || size > GPU_V2_OFFSET_MASK || !name || !name[0]) return 0;
 
     u32 slot = _v2.slot_count;
     for (u32 i = 0; i < _v2.slot_count; i++) {
@@ -202,7 +202,7 @@ gpu_addr gpu_malloc(u64 size, u32 flags) {
 
     if (_v2.ops && _v2.ops->mem_create) {
         u64 base_va = 0;
-        if (!_v2.ops->mem_create(slot, size, flags, &base_va)) return 0;
+        if (!_v2.ops->mem_create(slot, size, flags, name, &base_va)) return 0;
         s->backend = true;
         s->base_va = base_va;
     } else {
@@ -278,7 +278,7 @@ gpu_addr gpu_frame_alloc(u64 size, u32 align) {
     if (align == 0 || (align & (align - 1)) != 0) align = GPU_V2_ALLOC_ALIGN;
 
     if (!_v2.ring_base) {
-        _v2.ring_base = gpu_malloc(GPU_V2_FRAME_RING_SIZE, GPU_MEM_SHARED);
+        _v2.ring_base = gpu_malloc(GPU_V2_FRAME_RING_SIZE, GPU_MEM_SHARED, "ns frame ring");
         if (!_v2.ring_base) return 0;
         _v2.ring_head = 0;
         _v2.ring_section = 0;

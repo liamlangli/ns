@@ -60,7 +60,7 @@ u32 gpu_storage_slot_count(void);
 // Works with or without a device: the null tier keeps allocations host-side
 // (programs run headless, nothing renders), real tiers back them with GPU
 // memory. Allocation size is limited to 1 TiB by the virtual encoding.
-gpu_addr gpu_malloc(u64 size, u32 flags);       // gpu_mem_flags
+gpu_addr gpu_malloc(u64 size, u32 flags, const char *name); // gpu_mem_flags; non-empty debug name
 void     gpu_free(gpu_addr addr);               // addr must be an allocation base
 void     gpu_write(gpu_addr dst, const void *src, u64 size);
 ns_bool  gpu_read(gpu_addr src, void *dst, u64 size);
@@ -139,7 +139,7 @@ typedef struct gpu_v2_state_desc {
 typedef struct gpu_v2_ops {
     // memory: create backing for slot; may return a real device base address
     // through base_va (0 keeps the slot on virtual addressing).
-    ns_bool (*mem_create)(u32 slot, u64 size, u32 flags, u64 *base_va);
+    ns_bool (*mem_create)(u32 slot, u64 size, u32 flags, const char *name, u64 *base_va);
     void    (*mem_destroy)(u32 slot);
     void    (*mem_write)(u32 slot, u64 offset, const void *src, u64 size);
     ns_bool (*mem_read)(u32 slot, u64 offset, void *dst, u64 size);

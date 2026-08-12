@@ -125,6 +125,7 @@ static const char *ns_shader_test_src =
     "    let y = shader_global_id_y()\n"
     "    let z = shader_global_id_z()\n"
     "    shader_write_texture(x, y, float4 { x: 0.25, y: 0.5, z: 0.75, w: (z + 1) as f32 })\n"
+    "    shader_write_texture_secondary(x, y, float4 { x: 1.0, y: 0.75, z: 0.5, w: 0.25 })\n"
     "}\n"
     "fn cs_buffer() void {\n"
     "    let index = shader_global_id_x()\n"
@@ -469,25 +470,29 @@ int main() {
     {
         ns_return_str r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "[[thread_position_in_grid]]") &&
-                      ns_shader_test_has(r.r, "texture2d<float, access::write>") && ns_shader_test_has(r.r, "ns_write_texture.write("),
+                      ns_shader_test_has(r.r, "texture2d<float, access::write>") && ns_shader_test_has(r.r, "ns_write_texture.write(") &&
+                      ns_shader_test_has(r.r, "ns_secondary_write_texture [[texture(15)]]") && ns_shader_test_has(r.r, "ns_secondary_write_texture.write("),
                   "msl compute texture intrinsics transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "RWTexture2D<float4>") &&
-                      ns_shader_test_has(r.r, "SV_DispatchThreadID") && ns_shader_test_has(r.r, "ns_write_texture[int2("),
+                      ns_shader_test_has(r.r, "SV_DispatchThreadID") && ns_shader_test_has(r.r, "ns_write_texture[int2(") &&
+                      ns_shader_test_has(r.r, "ns_secondary_write_texture : register(u15)") && ns_shader_test_has(r.r, "ns_secondary_write_texture[int2("),
                   "hlsl compute texture intrinsics transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "writeonly image2D ns_write_texture") &&
-                      ns_shader_test_has(r.r, "gl_GlobalInvocationID.x") && ns_shader_test_has(r.r, "imageStore("),
+                      ns_shader_test_has(r.r, "gl_GlobalInvocationID.x") && ns_shader_test_has(r.r, "imageStore(") &&
+                      ns_shader_test_has(r.r, "writeonly image2D ns_secondary_write_texture") && ns_shader_test_has(r.r, "binding = 15, rgba8"),
                   "glsl compute texture intrinsics transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, cs_texture, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "texture_storage_2d<rg11b10ufloat, write>") &&
-                      ns_shader_test_has(r.r, "@builtin(global_invocation_id)") && ns_shader_test_has(r.r, "textureStore("),
+                      ns_shader_test_has(r.r, "@builtin(global_invocation_id)") && ns_shader_test_has(r.r, "textureStore(") &&
+                      ns_shader_test_has(r.r, "@binding(15) var ns_secondary_write_texture: texture_storage_2d<rgba8unorm, write>"),
                   "wgsl compute resources and invocation coordinates transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
