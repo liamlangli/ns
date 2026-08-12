@@ -1245,6 +1245,52 @@ ns_bool gpu_dispatch_compute_texture_source_slot(const char *source, const char 
     return gpu_dispatch_compute_source_with_texture(source, entry, texture_id, texture_slot, threads_x, threads_y, threads_z);
 }
 
+ns_bool gpu_dispatch_compute_buffer_source_slot(const char *source, const char *entry, u32 buffer_id, i32 buffer_slot,
+                                                i32 threads_x, i32 threads_y, i32 threads_z) {
+    if (!_state.valid || _state.device.device == nil || _state.cmd_queue == nil || !source || !entry ||
+        !buffer_id || buffer_id >= _state.buffer_count || buffer_slot < 0 || buffer_slot >= GPU_SHADER_BUFFER_COUNT ||
+        threads_x <= 0 || threads_y <= 0 || threads_z <= 0) return false;
+    id<MTLBuffer> storage = _state.buffers[buffer_id].buffer;
+    if (storage == nil) return false;
+    id<MTLLibrary> library = _mtl_library_from_code(ns_str_cstr((char *)source));
+    if (library == nil) return false;
+    id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:entry]];
+    if (function == nil) {
+#ifndef ENABLE_ARC
+        [library release];
+#endif
+        return false;
+    }
+    NSError *error = nil;
+    id<MTLComputePipelineState> pipeline = [_state.device.device newComputePipelineStateWithFunction:function error:&error];
+    if (pipeline == nil) {
+        NSLog(@"Failed to create storage-buffer compute pipeline: %@", error);
+#ifndef ENABLE_ARC
+        [function release];
+        [library release];
+#endif
+        return false;
+    }
+    id<MTLCommandBuffer> command_buffer = [_state.cmd_queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
+    [encoder setComputePipelineState:pipeline];
+    [encoder setBuffer:storage offset:0 atIndex:(NSUInteger)buffer_slot];
+    const NSUInteger group_width = MIN((NSUInteger)8, (NSUInteger)threads_x);
+    const NSUInteger group_height = MIN((NSUInteger)8, (NSUInteger)threads_y);
+    [encoder dispatchThreads:MTLSizeMake((NSUInteger)threads_x, (NSUInteger)threads_y, (NSUInteger)threads_z)
+       threadsPerThreadgroup:MTLSizeMake(group_width, group_height, 1)];
+    [encoder endEncoding];
+    [command_buffer commit];
+    [command_buffer waitUntilCompleted];
+    ns_bool ok = command_buffer.status == MTLCommandBufferStatusCompleted;
+#ifndef ENABLE_ARC
+    [pipeline release];
+    [function release];
+    [library release];
+#endif
+    return ok;
+}
+
 gpu_shader gpu_create_shader(gpu_shader_desc *desc) {
     id<MTLLibrary> vertex_lib = nil;
     id<MTLLibrary> fragment_lib = nil;

@@ -126,6 +126,10 @@ static const char *ns_shader_test_src =
     "    let z = shader_global_id_z()\n"
     "    shader_write_texture(x, y, float4 { x: 0.25, y: 0.5, z: 0.75, w: (z + 1) as f32 })\n"
     "}\n"
+    "fn cs_buffer() void {\n"
+    "    let index = shader_global_id_x()\n"
+    "    shader_buffer_store_i32(index, shader_buffer_i32(index) + 7)\n"
+    "}\n"
     "fn bad_print(data: FragmentInput) float4 {\n"
     "    print(\"no\")\n"
     "    return data.color\n"
@@ -208,7 +212,8 @@ int main() {
     i32 fs_mrt = ns_shader_test_fn(&vm, "fs_mrt");
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
     i32 cs_texture = ns_shader_test_fn(&vm, "cs_texture");
-    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && cs >= 0 && cs_texture >= 0,
+    i32 cs_buffer = ns_shader_test_fn(&vm, "cs_buffer");
+    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && cs >= 0 && cs_texture >= 0 && cs_buffer >= 0,
               "shader entry symbols exist.");
 
     // --- target/stage helpers ---
@@ -240,6 +245,33 @@ int main() {
                       "shader binary expressions preserve AST grouping.");
             ns_array_free(r.r.data);
         }
+    }
+
+    // --- random-access storage buffer reads and writes ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, cs_buffer, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "device int* ns_storage_buffer [[buffer(3)]]") &&
+                      ns_shader_test_has(r.r, "ns_storage_buffer[index] ="),
+                  "msl storage-buffer intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_buffer, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "RWByteAddressBuffer ns_storage_buffer : register(u3)") &&
+                      ns_shader_test_has(r.r, "ns_storage_buffer.Store("),
+                  "hlsl storage-buffer intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_buffer, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "buffer ns_storage_block") &&
+                      ns_shader_test_has(r.r, "ns_storage_buffer[index] ="),
+                  "glsl storage-buffer intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_buffer, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "var<storage, read_write> ns_storage_buffer") &&
+                      ns_shader_test_has(r.r, "ns_storage_buffer[index] ="),
+                  "wgsl storage-buffer intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 
     // --- MSL: both stages in one source ---

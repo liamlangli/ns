@@ -99,6 +99,18 @@ ns_bool gpu_dispatch_compute_texture_source_slot(const char *source, const char 
     return gpu_dispatch_compute_texture_source(source, entry, texture_id, threads_x, threads_y, threads_z);
 }
 
+ns_bool gpu_dispatch_compute_buffer_source_slot(const char *source, const char *entry, u32 buffer_id, i32 buffer_slot,
+                                                i32 threads_x, i32 threads_y, i32 threads_z) {
+    ns_unused(source);
+    ns_unused(entry);
+    ns_unused(buffer_id);
+    ns_unused(buffer_slot);
+    ns_unused(threads_x);
+    ns_unused(threads_y);
+    ns_unused(threads_z);
+    return false;
+}
+
 #endif
 
 const char *gpu_shader_target(void) {
@@ -134,6 +146,15 @@ u32 gpu_create_uniform_buffer(i32 byte_len, i32 usage) {
     return gpu_create_buffer_desc(&(gpu_buffer_desc){
         .size = byte_len,
         .type = BUFFER_UNIFORM,
+        .usage = (gpu_usage)usage,
+    }).id;
+}
+
+u32 gpu_create_storage_buffer(i32 byte_len, i32 usage) {
+    if (byte_len < 0) byte_len = 0;
+    return gpu_create_buffer_desc(&(gpu_buffer_desc){
+        .size = byte_len,
+        .type = BUFFER_STORAGE,
         .usage = (gpu_usage)usage,
     }).id;
 }
@@ -460,6 +481,47 @@ u32 gpu_create_buffer_texture_binding_slots(u32 pipeline_id, u32 buffer_id, cons
     return gpu_create_binding(&desc).id;
 }
 
+u32 gpu_create_buffers_texture_binding_slots(u32 pipeline_id,
+                                             u32 uniform_buffer_id, const char *uniform_buffer_name,
+                                             u32 storage_buffer_id, const char *storage_buffer_name,
+                                             u32 texture0_id, const char *texture0_name, i32 texture0_slot,
+                                             u32 texture1_id, const char *texture1_name, i32 texture1_slot) {
+    if (!pipeline_id || !uniform_buffer_id || !uniform_buffer_name || !uniform_buffer_name[0] ||
+        !storage_buffer_id || !storage_buffer_name || !storage_buffer_name[0]) return 0;
+    if (!texture0_id && texture1_id) return 0;
+    if (texture0_id && (!texture0_name || !texture0_name[0] || texture0_slot < 0 ||
+                        texture0_slot >= GPU_SHADER_TEXTURE_COUNT)) return 0;
+    if (texture1_id && (!texture1_name || !texture1_name[0] || texture1_slot < 0 ||
+                        texture1_slot >= GPU_SHADER_TEXTURE_COUNT)) return 0;
+    gpu_binding_desc desc = {0};
+    desc.pipeline = (gpu_pipeline){pipeline_id};
+    desc.buffers[0] = (gpu_binding_buffer_desc){
+        .buffer = (gpu_buffer){uniform_buffer_id},
+        .name = ns_str_cstr((char *)uniform_buffer_name),
+    };
+    desc.buffers[1] = (gpu_binding_buffer_desc){
+        .buffer = (gpu_buffer){storage_buffer_id},
+        .name = ns_str_cstr((char *)storage_buffer_name),
+    };
+    if (texture0_id) {
+        desc.textures[0] = (gpu_binding_texture_desc){
+            .texture = (gpu_texture){texture0_id},
+            .name = ns_str_cstr((char *)texture0_name),
+            .slot = texture0_slot,
+            .slot_explicit = true,
+        };
+    }
+    if (texture1_id) {
+        desc.textures[1] = (gpu_binding_texture_desc){
+            .texture = (gpu_texture){texture1_id},
+            .name = ns_str_cstr((char *)texture1_name),
+            .slot = texture1_slot,
+            .slot_explicit = true,
+        };
+    }
+    return gpu_create_binding(&desc).id;
+}
+
 u32 gpu_create_depth_pass(u32 depth_texture_id) {
     if (!depth_texture_id) return 0;
     return gpu_create_render_pass(&(gpu_render_pass_desc){
@@ -490,7 +552,7 @@ u32 gpu_create_screen_pass(f64 r, f64 g, f64 b, f64 a) {
 
 u32 gpu_create_mrt_pass(u32 color0_texture_id, u32 color1_texture_id, u32 depth_texture_id,
                         f64 r, f64 g, f64 b, f64 a) {
-    if (!color0_texture_id || !depth_texture_id) return 0;
+    if (!color0_texture_id) return 0;
     return gpu_create_render_pass(&(gpu_render_pass_desc){
         .colors = {
             {

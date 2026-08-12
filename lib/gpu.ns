@@ -142,9 +142,13 @@ ref fn gpu_dispatch_compute_texture_source(source: str, entry: str, texture_id: 
 // Explicit-slot variant. `texture_slot` must match the slot supplied by the
 // compute shader's resource definition.
 ref fn gpu_dispatch_compute_texture_source_slot(source: str, entry: str, texture_id: u32, texture_slot: i32, threads_x: i32, threads_y: i32, threads_z: i32) bool
+// Compile and dispatch a compute shader with one random-access storage buffer
+// bound at the explicit shader buffer slot.
+ref fn gpu_dispatch_compute_buffer_source_slot(source: str, entry: str, buffer_id: u32, buffer_slot: i32, threads_x: i32, threads_y: i32, threads_z: i32) bool
 ref fn gpu_create_buffer(byte_len: i32, usage: i32) u32
 ref fn gpu_create_index_buffer(byte_len: i32, usage: i32) u32
 ref fn gpu_create_uniform_buffer(byte_len: i32, usage: i32) u32
+ref fn gpu_create_storage_buffer(byte_len: i32, usage: i32) u32
 ref fn gpu_update_buffer(buffer_id: u32, data: [any], byte_len: i32)
 ref fn gpu_create_shader_source(vertex_source: str, fragment_source: str, vertex_entry: str, fragment_entry: str) u32
 ref fn gpu_create_pipeline_layout_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
@@ -168,6 +172,9 @@ ref fn gpu_create_buffer_texture_binding(pipeline_id: u32, buffer_id: u32, buffe
 // slots are never inferred from declaration order. Texture arguments must be
 // packed from texture0 (texture1 cannot be present by itself).
 ref fn gpu_create_buffer_texture_binding_slots(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture0_slot: i32, texture1_id: u32, texture1_name: str, texture1_slot: i32) u32
+// Bind the ordinary root/uniform buffer plus one shader-addressed storage
+// buffer and up to two textures.
+ref fn gpu_create_buffers_texture_binding_slots(pipeline_id: u32, uniform_buffer_id: u32, uniform_buffer_name: str, storage_buffer_id: u32, storage_buffer_name: str, texture0_id: u32, texture0_name: str, texture0_slot: i32, texture1_id: u32, texture1_name: str, texture1_slot: i32) u32
 ref fn gpu_create_depth_pass(depth_texture_id: u32) u32
 ref fn gpu_create_mrt_pass(color0_texture_id: u32, color1_texture_id: u32, depth_texture_id: u32, r: f64, g: f64, b: f64, a: f64) u32
 ref fn gpu_create_mrt_msaa_pass(color0_msaa_texture_id: u32, color0_resolve_texture_id: u32, color1_msaa_texture_id: u32, color1_resolve_texture_id: u32, depth_msaa_texture_id: u32, r: f64, g: f64, b: f64, a: f64) u32

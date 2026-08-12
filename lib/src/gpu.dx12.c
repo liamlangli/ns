@@ -567,6 +567,18 @@ ns_bool gpu_dispatch_compute_texture_source_slot(const char *source, const char 
     return gpu_dispatch_compute_texture_source(source, entry, texture_id, threads_x, threads_y, threads_z);
 }
 
+ns_bool gpu_dispatch_compute_buffer_source_slot(const char *source, const char *entry, u32 buffer_id, i32 buffer_slot,
+                                                i32 threads_x, i32 threads_y, i32 threads_z) {
+    ns_unused(source);
+    ns_unused(entry);
+    ns_unused(buffer_id);
+    ns_unused(buffer_slot);
+    ns_unused(threads_x);
+    ns_unused(threads_y);
+    ns_unused(threads_z);
+    return false;
+}
+
 // ---- pixel format helpers (backend agnostic) -------------------------------
 
 int gpu_pixel_format_size(gpu_pixel_format format) {
