@@ -183,21 +183,19 @@ int main(void) {
     ns_expect(text_has(gpu_metal, "if ([NSThread isMainThread]) attach_view()") &&
                   text_has(gpu_metal, "dispatch_sync(dispatch_get_main_queue(), attach_view)"),
               "embedded Metal setup keeps NSWindow and MTKView access on the AppKit main thread.");
-    ns_expect(text_has(gpu_metal, "_mtl_buffer_resource_options(desc->usage)") &&
-                  text_has(gpu_metal, "usage & ~USAGE_MEMORYLESS"),
-              "embedded Metal strips texture-only memoryless storage from buffers.");
-    ns_expect(text_has(gpu_metal, "desc->color_count > 0 ? shader.fragment_func : nil"),
-              "embedded Metal omits fragment functions from depth-only pipelines.");
-    ns_expect(text_has(gpu_metal, "gpu_pipeline_mtl _pipeline = {0}") &&
-                  text_has(gpu_metal, "_pipeline.reflection = [reflection retain]"),
-              "embedded Metal pipelines own initialized reflection state through renderer shutdown.");
+    ns_expect(text_has(gpu_metal, "mtl_v2_mem_create") &&
+                  text_has(gpu_metal, "mtl_v2_bind_root") &&
+                  text_has(gpu_metal, "mtl_v2_ensure_pipeline"),
+              "embedded Metal uses the v2 address, root, and cached-state renderer.");
     ns_expect(text_has(view_ios, "CGSize drawable = metal_view.drawableSize") &&
                   text_has(view_ios, "framebuffer_width = (i32)(drawable.width + 0.5)"),
               "embedded iOS view metrics use the exact Metal drawable extent.");
     ns_expect(text_has(ui_native, "gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height)") &&
                   text_has(ui_native, "if (x1 > framebuffer_width) x1 = framebuffer_width") &&
-                  text_has(ui_native, "gpu_set_scissor(x0, y0, x1 - x0, y1 - y0)"),
-              "embedded UI scissors are clamped to the render-pass extent.");
+                  text_has(ui_native, "gpu_set_scissor(x0, y0, x1 - x0, y1 - y0)") &&
+                  text_has(ui_native, "gpu_set_storage(r->storage)") &&
+                  text_has(ui_native, "gpu_draw_vertices("),
+              "embedded UI uses v2 storage and draws with framebuffer-clamped scissors.");
     ns_expect(text_has(ui_native, "\"../Resources\""),
               "embedded UI resolves its font atlas from a generated macOS application bundle.");
     char embedded_ffi[PATH_MAX];
@@ -205,12 +203,8 @@ int main(void) {
     ns_expect(text_has(embedded_ffi, "extern void ui_flush(void *, ui_color_rgba *);") &&
                   text_has(embedded_ffi, "extern ns_bool ui_load_builtin_bitmap_font(void *);") &&
                   text_has(embedded_ffi, "{ \"ui_load_bitmap_font\", (void *)ui_load_bitmap_font,") &&
-                  text_has(embedded_ffi, "extern u32 gpu_create_shader_source(const char *, const char *, const char *, const char *);") &&
-                  text_has(embedded_ffi, "{ \"gpu_create_shader_source\", (void *)gpu_create_shader_source,") &&
                   text_has(embedded_ffi, "extern u32 gpu_shader_compute_create") &&
                   text_has(embedded_ffi, "extern void gpu_draw_vertices") &&
-                  text_has(embedded_ffi, "extern u32 gpu_create_pipeline_layout_indexed_ex") &&
-                  text_has(embedded_ffi, "extern u32 gpu_create_buffer_texture_binding_slots") &&
                   text_has(embedded_ffi, "extern i32 os_platform(void);") &&
                   text_has(embedded_ffi, "{ \"os_platform\", (void *)os_platform,") &&
                   text_has(embedded_ffi, "extern i32 net_tcp_connect(const char *, i32);") &&

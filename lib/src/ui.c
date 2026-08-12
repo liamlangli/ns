@@ -168,11 +168,7 @@ typedef struct ui_rect_batch {
     ui_vertex *vertices;
     i32 vertex_count;
     i32 vertex_capacity;
-    i32 gpu_vertex_capacity;
-    gpu_buffer vertex_buffer;
-    gpu_buffer offset_buffer;
-    gpu_binding binding;
-    gpu_mesh mesh;
+    u64 gpu_offset;
     ns_bool used;
 } ui_rect_batch;
 
@@ -217,39 +213,35 @@ typedef struct ui_renderer {
     i32 current_texture_id;
 
     ui_font fonts[UI_FONT_COUNT];
-    gpu_texture white_texture;
-    gpu_texture font_texture;
-    gpu_texture font_zh_texture;
-    gpu_texture font_bitmap_texture;
-    gpu_texture font_bitmap_zh_texture;
-    gpu_buffer screen_buffer;
-    gpu_buffer clip_buffer;
-    gpu_buffer vertex_buffer;
-    gpu_shader shader_image;
-    gpu_shader shader_batch;
-    gpu_shader shader_msdf;
-    gpu_shader shader_bitmap;
-    gpu_shader shader_arc_sdf;
-    gpu_pipeline pipeline_image;
-    gpu_pipeline pipeline_batch;
-    gpu_pipeline pipeline_msdf;
-    gpu_pipeline pipeline_bitmap;
-    gpu_pipeline pipeline_arc_sdf;
-    gpu_binding binding_white_image;
-    gpu_binding binding_font_msdf;
-    gpu_binding binding_font_zh_msdf;
-    gpu_binding binding_font_bitmap;
-    gpu_binding binding_font_bitmap_zh;
-    gpu_binding binding_arc_sdf;
-    gpu_texture textures[UI_MAX_TEXTURES];
-    gpu_binding texture_bindings[UI_MAX_TEXTURES];
+    u32 white_texture;
+    u32 font_texture;
+    u32 font_zh_texture;
+    u32 font_bitmap_texture;
+    u32 font_bitmap_zh_texture;
+    u32 shader_image;
+    u32 shader_msdf;
+    u32 shader_bitmap;
+    u32 shader_arc_sdf;
+    u32 render_state;
+    u32 textures[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
     i32 texture_heights[UI_MAX_TEXTURES];
     ui_rect_batch rect_batches[UI_MAX_RECT_BATCHES];
-    gpu_mesh mesh;
-    gpu_render_pass screen_pass;
+    gpu_addr storage;
+    u64 storage_capacity;
     ns_bool gpu_ready;
 } ui_renderer;
+
+typedef struct ui_gpu_root {
+    f32 texture_id;
+    f32 unused_texture_id;
+    f32 screen_width;
+    f32 screen_height;
+    f32 offset_x;
+    f32 offset_y;
+    u32 vertex_offset;
+    u32 clip_offset;
+} ui_gpu_root;
 
 typedef struct ui_theme { void *handle; } ui_theme;
 typedef struct ui_hit { ns_bool hovered; ns_bool pressed; } ui_hit;
@@ -299,46 +291,51 @@ static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inne
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
-"struct VIn { float2 pos [[attribute(0)]]; float2 uv [[attribute(1)]]; uchar4 col [[attribute(2)]]; float4 params [[attribute(3)]]; };\n"
+"struct UiRoot { float texture_id; float unused_texture_id; float screen_width; float screen_height; float offset_x; float offset_y; uint vertex_offset; uint clip_offset; };\n"
 "struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; };\n"
-"vertex VOut ui_vs(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]]) {\n"
-"  VOut o; float2 ndc = float2((in.pos.x / screen.x) * 2.0 - 1.0, 1.0 - (in.pos.y / screen.y) * 2.0);\n"
-"  o.pos = float4(ndc, 0.0, 1.0); o.pixel = in.pos; o.uv = in.uv; o.col = float4(in.col) / 255.0; o.params = in.params; return o;\n"
-"}\n"
-"vertex VOut ui_vs_batch(VIn in [[stage_in]], constant float2 &screen [[buffer(1)]], constant float2 &offset [[buffer(2)]]) {\n"
-"  VOut o; float2 pixel = in.pos + offset; float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
-"  o.pos = float4(ndc, 0.0, 1.0); o.pixel = pixel; o.uv = in.uv; o.col = float4(in.col) / 255.0; o.params = in.params; return o;\n"
+"vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
+"  uint base = ns_root.vertex_offset / 4u + vertex_id * 9u;\n"
+"  float2 pixel = float2(as_type<float>(ns_storage_buffer[base]), as_type<float>(ns_storage_buffer[base + 1u])) + float2(ns_root.offset_x, ns_root.offset_y);\n"
+"  float2 uv = float2(as_type<float>(ns_storage_buffer[base + 2u]), as_type<float>(ns_storage_buffer[base + 3u]));\n"
+"  uint color = ns_storage_buffer[base + 4u];\n"
+"  float4 params = float4(as_type<float>(ns_storage_buffer[base + 5u]), as_type<float>(ns_storage_buffer[base + 6u]), as_type<float>(ns_storage_buffer[base + 7u]), as_type<float>(ns_storage_buffer[base + 8u]));\n"
+"  float2 screen = float2(ns_root.screen_width, ns_root.screen_height);\n"
+"  float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
+"  VOut o; o.pos = float4(ndc, 0.0, 1.0); o.pixel = pixel; o.uv = uv;\n"
+"  o.col = float4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
+"  o.params = params; return o;\n"
 "}\n"
 "static inline half ui_median3(half r, half g, half b) { return max(min(r, g), min(max(r, g), b)); }\n"
-"static inline bool ui_clip_discard(VOut in, constant float4 *clip_rects) {\n"
+"static inline bool ui_clip_discard(VOut in, constant UiRoot &ns_root, device const uint *ns_storage_buffer) {\n"
 "  uint clip_idx = uint(round(max(in.params.w, 0.0)));\n"
 "  if (clip_idx == 0u) { return false; }\n"
-"  float4 c = clip_rects[clip_idx - 1u];\n"
+"  uint base = ns_root.clip_offset / 4u + (clip_idx - 1u) * 4u;\n"
+"  float4 c = float4(as_type<float>(ns_storage_buffer[base]), as_type<float>(ns_storage_buffer[base + 1u]), as_type<float>(ns_storage_buffer[base + 2u]), as_type<float>(ns_storage_buffer[base + 3u]));\n"
 "  return in.pixel.x < c.x || in.pixel.y < c.y || in.pixel.x >= c.z || in.pixel.y >= c.w;\n"
 "}\n"
-"fragment float4 ui_fs_image(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]], constant float4 *clip_rects [[buffer(0)]]) {\n"
-"  if (ui_clip_discard(in, clip_rects)) { discard_fragment(); }\n"
+"fragment float4 ui_fs_image(VOut in [[stage_in]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]], texture2d<float> ns_texture_map [[texture(1)]]) {\n"
+"  if (ui_clip_discard(in, ns_root, ns_storage_buffer)) { discard_fragment(); }\n"
 "  constexpr sampler samp(mag_filter::linear, min_filter::linear, address::clamp_to_edge);\n"
-"  return tex.sample(samp, in.uv) * in.col;\n"
+"  return ns_texture_map.sample(samp, in.uv) * in.col;\n"
 "}\n"
-"fragment float4 ui_fs_msdf(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]], constant float4 *clip_rects [[buffer(0)]]) {\n"
-"  if (ui_clip_discard(in, clip_rects)) { discard_fragment(); }\n"
+"fragment float4 ui_fs_msdf(VOut in [[stage_in]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]], texture2d<float> ns_texture_map [[texture(1)]]) {\n"
+"  if (ui_clip_discard(in, ns_root, ns_storage_buffer)) { discard_fragment(); }\n"
 "  constexpr sampler samp(mag_filter::linear, min_filter::linear, address::clamp_to_edge);\n"
-"  float4 s = tex.sample(samp, in.uv); half sd = ui_median3(half(s.r), half(s.g), half(s.b));\n"
-"  float2 tex_size = float2(tex.get_width(), tex.get_height()); float range = max(in.params.x, 0.5);\n"
+"  float4 s = ns_texture_map.sample(samp, in.uv); half sd = ui_median3(half(s.r), half(s.g), half(s.b));\n"
+"  float2 tex_size = float2(ns_texture_map.get_width(), ns_texture_map.get_height()); float range = max(in.params.x, 0.5);\n"
 "  float2 unit_range = float2(range) / tex_size; float2 screen_texel = max(fwidth(in.uv), float2(1e-6));\n"
 "  float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
 "  float opacity = clamp(((float(sd) - 0.5) * px_range + in.params.y) / max(in.params.z, 1.0) + 0.5, 0.0, 1.0);\n"
 "  return float4(in.col.rgb, in.col.a * opacity);\n"
 "}\n"
-"fragment float4 ui_fs_bitmap(VOut in [[stage_in]], texture2d<float> tex [[texture(0)]], constant float4 *clip_rects [[buffer(0)]]) {\n"
-"  if (ui_clip_discard(in, clip_rects)) { discard_fragment(); }\n"
+"fragment float4 ui_fs_bitmap(VOut in [[stage_in]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]], texture2d<float> ns_texture_map [[texture(1)]]) {\n"
+"  if (ui_clip_discard(in, ns_root, ns_storage_buffer)) { discard_fragment(); }\n"
 "  constexpr sampler samp(mag_filter::nearest, min_filter::nearest, mip_filter::none, address::clamp_to_edge);\n"
-"  float4 sample = tex.sample(samp, in.uv); float coverage = min(sample.r, sample.a);\n"
+"  float4 sample = ns_texture_map.sample(samp, in.uv); float coverage = min(sample.r, sample.a);\n"
 "  return float4(in.col.rgb, in.col.a * coverage);\n"
 "}\n"
-"fragment float4 ui_fs_arc_sdf(VOut in [[stage_in]], constant float4 *clip_rects [[buffer(0)]]) {\n"
-"  if (ui_clip_discard(in, clip_rects)) { discard_fragment(); }\n"
+"fragment float4 ui_fs_arc_sdf(VOut in [[stage_in]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
+"  if (ui_clip_discard(in, ns_root, ns_storage_buffer)) { discard_fragment(); }\n"
 "  float radius = max(in.params.x, 0.0001); float half_width = max(in.params.y, 0.0);\n"
 "  float half_angle = clamp(in.params.z, 0.0, 3.14159265); float radial = length(in.uv);\n"
 "  float angle = atan2(in.uv.y, in.uv.x); float half_arc = radius * half_angle;\n"
@@ -596,15 +593,26 @@ static ns_bool ui_load_bitmap_chinese_face(char *json, i32 tex_w, i32 tex_h, ui_
     return true;
 }
 
-static gpu_texture ui_create_font_texture(io_image *image) {
+static u32 ui_create_rgba_texture(const void *data, i32 width, i32 height) {
+    if (!data || width <= 0 || height <= 0) return 0;
+    u32 texture = gpu_texture_create(width, height, 1, PIXELFORMAT_RGBA8,
+                                     TEXTURE_USAGE_READ, 1, TEXTURE_2D);
+    if (texture) {
+        gpu_texture_upload(texture, 0, 0, data,
+                           (u64)(size_t)width * (u64)(size_t)height * 4u);
+    }
+    return texture;
+}
+
+static u32 ui_create_font_texture(io_image *image) {
     if (!image || !image->data || image->width <= 0 || image->height <= 0 || image->channels <= 0) {
-        return (gpu_texture){0};
+        return 0;
     }
     const size_t pixel_count = (size_t)image->width * (size_t)image->height;
     u8 *rgba = image->data;
     if (image->channels != 4) {
         rgba = (u8*)malloc(pixel_count * 4);
-        if (!rgba) return (gpu_texture){0};
+        if (!rgba) return 0;
         for (size_t i = 0; i < pixel_count; i++) {
             const u8 value = image->data[i * (size_t)image->channels];
             rgba[i * 4 + 0] = value;
@@ -613,14 +621,7 @@ static gpu_texture ui_create_font_texture(io_image *image) {
             rgba[i * 4 + 3] = 255;
         }
     }
-    gpu_texture texture = gpu_create_texture(&(gpu_texture_desc){
-        .width = image->width, .height = image->height, .depth = 1,
-        .data = (ns_data){rgba, pixel_count * 4},
-        .format = PIXELFORMAT_RGBA8,
-        .type = TEXTURE_2D,
-        .usage = TEXTURE_USAGE_READ,
-        .resource_usage = USAGE_DEFAULT,
-    });
+    u32 texture = ui_create_rgba_texture(rgba, image->width, image->height);
     if (rgba != image->data) free(rgba);
     return texture;
 }
@@ -1034,32 +1035,8 @@ void ui_stroke_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
 }
 
 static void ui_create_gpu_resources(ui_renderer *r) {
-    f32 screen[2] = {(f32)r->width, (f32)r->height};
-    r->screen_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
-        .size = sizeof(screen),
-        .data = (ns_data){screen, sizeof(screen)},
-        .type = BUFFER_UNIFORM,
-        .usage = USAGE_DEFAULT,
-    });
-    r->clip_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
-        .size = (int)sizeof(r->gpu_clips),
-        .type = BUFFER_UNIFORM,
-        .usage = USAGE_DEFAULT,
-    });
-    r->vertex_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
-        .size = r->vertex_capacity * UI_VERTEX_STRIDE,
-        .type = BUFFER_VERTEX,
-        .usage = USAGE_DEFAULT,
-    });
     u32 white = 0xffffffffu;
-    r->white_texture = gpu_create_texture(&(gpu_texture_desc){
-        .width = 1, .height = 1, .depth = 1,
-        .data = (ns_data){&white, sizeof(white)},
-        .format = PIXELFORMAT_RGBA8,
-        .type = TEXTURE_2D,
-        .usage = TEXTURE_USAGE_READ,
-        .resource_usage = USAGE_DEFAULT,
-    });
+    r->white_texture = ui_create_rgba_texture(&white, 1, 1);
 
     char image_path[UI_PATH_MAX];
     io_image *img = ui_resolve_asset("latin_mono.png", image_path)
@@ -1067,105 +1044,21 @@ static void ui_create_gpu_resources(ui_renderer *r) {
                         : NULL;
     if (!img) fprintf(stderr, "ui: cannot locate or load latin_mono.png\n");
     if (img && img->data && img->channels == 4) {
-        r->font_texture = gpu_create_texture(&(gpu_texture_desc){
-            .width = img->width, .height = img->height, .depth = 1,
-            .data = (ns_data){img->data, (size_t)(img->width * img->height * img->channels)},
-            .format = PIXELFORMAT_RGBA8,
-            .type = TEXTURE_2D,
-            .usage = TEXTURE_USAGE_READ,
-            .resource_usage = USAGE_DEFAULT,
-        });
+        r->font_texture = ui_create_rgba_texture(img->data, img->width, img->height);
+    }
+    if (img) {
+        free(img->data);
+        free(img);
     }
 
-    gpu_shader_desc shader_desc = {0};
-    shader_desc.vertex.source = ns_str_cstr(ui_shader_src);
-    shader_desc.vertex.entry = ns_str_cstr("ui_vs");
-    shader_desc.fragment.source = ns_str_cstr(ui_shader_src);
-    shader_desc.fragment.entry = ns_str_cstr("ui_fs_image");
-    r->shader_image = gpu_create_shader(&shader_desc);
-    shader_desc.vertex.entry = ns_str_cstr("ui_vs_batch");
-    r->shader_batch = gpu_create_shader(&shader_desc);
-    shader_desc.vertex.entry = ns_str_cstr("ui_vs");
-    shader_desc.fragment.entry = ns_str_cstr("ui_fs_msdf");
-    r->shader_msdf = gpu_create_shader(&shader_desc);
-    shader_desc.fragment.entry = ns_str_cstr("ui_fs_bitmap");
-    r->shader_bitmap = gpu_create_shader(&shader_desc);
-    shader_desc.fragment.entry = ns_str_cstr("ui_fs_arc_sdf");
-    r->shader_arc_sdf = gpu_create_shader(&shader_desc);
-
-    gpu_pipeline_desc pipe = {0};
-    pipe.layout.buffers[0] = (gpu_vertex_buffer_layout_state){.stride = UI_VERTEX_STRIDE, .step_func = VERTEX_STEP_PER_VERTEX, .step_rate = 1};
-    pipe.layout.attributes[0] = (gpu_vertex_attribute_state){.buffer_index = 0, .offset = 0, .size = 2, .format = ATTRIBUTE_FORMAT_FLOAT};
-    pipe.layout.attributes[1] = (gpu_vertex_attribute_state){.buffer_index = 0, .offset = 8, .size = 2, .format = ATTRIBUTE_FORMAT_FLOAT};
-    pipe.layout.attributes[2] = (gpu_vertex_attribute_state){.buffer_index = 0, .offset = 16, .size = 4, .format = ATTRIBUTE_FORMAT_UBYTE};
-    pipe.layout.attributes[3] = (gpu_vertex_attribute_state){.buffer_index = 0, .offset = 20, .size = 4, .format = ATTRIBUTE_FORMAT_FLOAT};
-    pipe.color_count = 1;
-    pipe.colors[0].format = PIXELFORMAT_BGRA8;
-    pipe.colors[0].blend = (gpu_blend_state){
-        .enabled = true,
-        .src_factor = BLEND_FACTOR_SRC_ALPHA,
-        .dst_factor = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        .op = BLEND_OP_ADD,
-        .src_factor_alpha = BLEND_FACTOR_ONE,
-        .dst_factor_alpha = BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        .op_alpha = BLEND_OP_ADD,
-    };
-    // Apple views expose a Depth32Float attachment on their screen render
-    // pass. Metal requires every pipeline used by that pass to declare the
-    // same attachment format, even when the draw does not use depth testing.
-    // Keep UI ordering unchanged by accepting every fragment without writing
-    // depth.
-    pipe.depth.format = PIXELFORMAT_DEPTH;
-    pipe.depth.compare_func = COMPARE_ALWAYS;
-    pipe.depth.write_enabled = false;
-    pipe.primitive_type = PRIMITIVE_TRIANGLES;
-    pipe.index_type = INDEX_NONE;
-    pipe.cull_mode = CULL_NONE;
-    pipe.face_winding = FACE_WINDING_CCW;
-    pipe.sample_count = 1;
-    pipe.shader = r->shader_image;
-    r->pipeline_image = gpu_create_pipeline(&pipe);
-    pipe.shader = r->shader_batch;
-    r->pipeline_batch = gpu_create_pipeline(&pipe);
-    pipe.shader = r->shader_msdf;
-    r->pipeline_msdf = gpu_create_pipeline(&pipe);
-    pipe.shader = r->shader_bitmap;
-    r->pipeline_bitmap = gpu_create_pipeline(&pipe);
-    pipe.shader = r->shader_arc_sdf;
-    r->pipeline_arc_sdf = gpu_create_pipeline(&pipe);
-
-    r->binding_white_image = gpu_create_binding(&(gpu_binding_desc){
-        .pipeline = r->pipeline_image,
-        .buffers = {
-            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-        },
-        .textures = {{.texture = r->white_texture, .name = ns_str_cstr("tex")}},
-    });
-    r->binding_font_msdf = gpu_create_binding(&(gpu_binding_desc){
-        .pipeline = r->pipeline_msdf,
-        .buffers = {
-            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-        },
-        .textures = {{.texture = r->font_texture, .name = ns_str_cstr("tex")}},
-    });
-    r->binding_arc_sdf = gpu_create_binding(&(gpu_binding_desc){
-        .pipeline = r->pipeline_arc_sdf,
-        .buffers = {
-            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-        },
-    });
-    r->mesh = gpu_create_mesh(&(gpu_mesh_desc){
-        .buffers = {r->vertex_buffer},
-        .pipeline = r->pipeline_image,
-    });
-    r->screen_pass = (gpu_render_pass){.id = 0};
-    r->gpu_ready = r->screen_buffer.id && r->clip_buffer.id && r->vertex_buffer.id && r->white_texture.id &&
-                   r->font_texture.id && r->pipeline_image.id && r->pipeline_batch.id &&
-                   r->pipeline_msdf.id && r->pipeline_bitmap.id && r->pipeline_arc_sdf.id &&
-                   r->binding_white_image.id && r->binding_font_msdf.id && r->binding_arc_sdf.id && r->mesh.id;
+    r->shader_image = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_image");
+    r->shader_msdf = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_msdf");
+    r->shader_bitmap = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_bitmap");
+    r->shader_arc_sdf = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_arc_sdf");
+    r->render_state = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
+                                       COMPARE_ALWAYS, false, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
+    r->gpu_ready = r->white_texture && r->font_texture && r->shader_image &&
+                   r->shader_msdf && r->shader_bitmap && r->shader_arc_sdf && r->render_state;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -1239,44 +1132,20 @@ ns_bool ui_load_font(ui_renderer *r, const char *json_path, const char *image_pa
         return false;
     }
 
-    gpu_texture texture = gpu_create_texture(&(gpu_texture_desc){
-        .width = image->width, .height = image->height, .depth = 1,
-        .data = (ns_data){image->data, (size_t)(image->width * image->height * image->channels)},
-        .format = PIXELFORMAT_RGBA8,
-        .type = TEXTURE_2D,
-        .usage = TEXTURE_USAGE_READ,
-        .resource_usage = USAGE_DEFAULT,
-    });
+    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height);
     free(image->data);
     free(image);
-    if (!texture.id) {
+    if (!texture) {
         free(main_font.glyphs);
         free(mono_font.glyphs);
         return false;
     }
-    gpu_binding binding = gpu_create_binding(&(gpu_binding_desc){
-        .pipeline = r->pipeline_msdf,
-        .buffers = {
-            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-        },
-        .textures = {{.texture = texture, .name = ns_str_cstr("tex")}},
-    });
-    if (!binding.id) {
-        gpu_destroy_texture(texture);
-        free(main_font.glyphs);
-        free(mono_font.glyphs);
-        return false;
-    }
-
     free(r->fonts[UI_FONT_MAIN].glyphs);
     free(r->fonts[UI_FONT_MONO].glyphs);
-    if (r->binding_font_msdf.id) gpu_destroy_binding(r->binding_font_msdf);
-    if (r->font_texture.id) gpu_destroy_texture(r->font_texture);
+    if (r->font_texture) gpu_texture_destroy(r->font_texture);
     r->fonts[UI_FONT_MAIN] = main_font;
     r->fonts[UI_FONT_MONO] = mono_font;
     r->font_texture = texture;
-    r->binding_font_msdf = binding;
     return true;
 }
 
@@ -1304,40 +1173,17 @@ ns_bool ui_load_chinese_font(ui_renderer *r, const char *json_path, const char *
         return false;
     }
 
-    gpu_texture texture = gpu_create_texture(&(gpu_texture_desc){
-        .width = image->width, .height = image->height, .depth = 1,
-        .data = (ns_data){image->data, (size_t)(image->width * image->height * image->channels)},
-        .format = PIXELFORMAT_RGBA8,
-        .type = TEXTURE_2D,
-        .usage = TEXTURE_USAGE_READ,
-        .resource_usage = USAGE_DEFAULT,
-    });
+    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height);
     free(image->data);
     free(image);
-    if (!texture.id) {
+    if (!texture) {
         free(zh_font.glyphs);
         return false;
     }
-    gpu_binding binding = gpu_create_binding(&(gpu_binding_desc){
-        .pipeline = r->pipeline_msdf,
-        .buffers = {
-            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-        },
-        .textures = {{.texture = texture, .name = ns_str_cstr("tex")}},
-    });
-    if (!binding.id) {
-        gpu_destroy_texture(texture);
-        free(zh_font.glyphs);
-        return false;
-    }
-
     free(r->fonts[UI_FONT_ZH].glyphs);
-    if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
-    if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
+    if (r->font_zh_texture) gpu_texture_destroy(r->font_zh_texture);
     r->fonts[UI_FONT_ZH] = zh_font;
     r->font_zh_texture = texture;
-    r->binding_font_zh_msdf = binding;
     return true;
 }
 
@@ -1345,7 +1191,7 @@ typedef ns_bool (*ui_bitmap_face_loader)(char*, i32, i32, ui_font*);
 
 static ns_bool ui_load_bitmap_face(ui_renderer *r, const char *json_path, const char *image_path,
                                    i32 font_index, ui_bitmap_face_loader load_face) {
-    if (!r || !json_path || !image_path || !load_face || !r->pipeline_bitmap.id) return false;
+    if (!r || !json_path || !image_path || !load_face || !r->shader_bitmap) return false;
     size_t json_len = 0;
     char *json = ui_read_file(json_path, &json_len);
     ns_unused(json_len);
@@ -1366,39 +1212,20 @@ static ns_bool ui_load_bitmap_face(ui_renderer *r, const char *json_path, const 
         return false;
     }
 
-    gpu_texture texture = ui_create_font_texture(image);
+    u32 texture = ui_create_font_texture(image);
     free(image->data);
     free(image);
-    if (!texture.id) {
+    if (!texture) {
         free(font.glyphs);
         return false;
     }
-    gpu_binding binding = gpu_create_binding(&(gpu_binding_desc){
-        .pipeline = r->pipeline_bitmap,
-        .buffers = {
-            {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-            {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-        },
-        .textures = {{.texture = texture, .name = ns_str_cstr("tex")}},
-    });
-    if (!binding.id) {
-        gpu_destroy_texture(texture);
-        free(font.glyphs);
-        return false;
-    }
-
-    gpu_texture *target_texture = font_index == UI_FONT_BITMAP_ZH
-                                      ? &r->font_bitmap_zh_texture
-                                      : &r->font_bitmap_texture;
-    gpu_binding *target_binding = font_index == UI_FONT_BITMAP_ZH
-                                      ? &r->binding_font_bitmap_zh
-                                      : &r->binding_font_bitmap;
+    u32 *target_texture = font_index == UI_FONT_BITMAP_ZH
+                              ? &r->font_bitmap_zh_texture
+                              : &r->font_bitmap_texture;
     free(r->fonts[font_index].glyphs);
-    if (target_binding->id) gpu_destroy_binding(*target_binding);
-    if (target_texture->id) gpu_destroy_texture(*target_texture);
+    if (*target_texture) gpu_texture_destroy(*target_texture);
     r->fonts[font_index] = font;
     *target_texture = texture;
-    *target_binding = binding;
     return true;
 }
 
@@ -1428,28 +1255,21 @@ ns_bool ui_load_builtin_bitmap_font(ui_renderer *r) {
 void ui_renderer_destroy(ui_renderer *r) {
     if (!r) return;
     for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
-        ui_rect_batch *batch = &r->rect_batches[i];
-        if (batch->binding.id) gpu_destroy_binding(batch->binding);
-        if (batch->mesh.id) gpu_destroy_mesh(batch->mesh);
-        if (batch->vertex_buffer.id) gpu_destroy_buffer(batch->vertex_buffer);
-        if (batch->offset_buffer.id) gpu_destroy_buffer(batch->offset_buffer);
-        free(batch->vertices);
+        free(r->rect_batches[i].vertices);
     }
     for (i32 i = 0; i < UI_MAX_TEXTURES; i++) {
-        if (r->texture_bindings[i].id) gpu_destroy_binding(r->texture_bindings[i]);
-        if (r->textures[i].id) gpu_destroy_texture(r->textures[i]);
+        if (r->textures[i]) gpu_texture_destroy(r->textures[i]);
     }
-    if (r->binding_font_zh_msdf.id) gpu_destroy_binding(r->binding_font_zh_msdf);
-    if (r->font_zh_texture.id) gpu_destroy_texture(r->font_zh_texture);
-    if (r->binding_font_bitmap.id) gpu_destroy_binding(r->binding_font_bitmap);
-    if (r->binding_font_bitmap_zh.id) gpu_destroy_binding(r->binding_font_bitmap_zh);
-    if (r->font_bitmap_texture.id) gpu_destroy_texture(r->font_bitmap_texture);
-    if (r->font_bitmap_zh_texture.id) gpu_destroy_texture(r->font_bitmap_zh_texture);
-    if (r->pipeline_bitmap.id) gpu_destroy_pipeline(r->pipeline_bitmap);
-    if (r->shader_bitmap.id) gpu_destroy_shader(r->shader_bitmap);
-    if (r->binding_arc_sdf.id) gpu_destroy_binding(r->binding_arc_sdf);
-    if (r->pipeline_arc_sdf.id) gpu_destroy_pipeline(r->pipeline_arc_sdf);
-    if (r->shader_arc_sdf.id) gpu_destroy_shader(r->shader_arc_sdf);
+    if (r->white_texture) gpu_texture_destroy(r->white_texture);
+    if (r->font_texture) gpu_texture_destroy(r->font_texture);
+    if (r->font_zh_texture) gpu_texture_destroy(r->font_zh_texture);
+    if (r->font_bitmap_texture) gpu_texture_destroy(r->font_bitmap_texture);
+    if (r->font_bitmap_zh_texture) gpu_texture_destroy(r->font_bitmap_zh_texture);
+    if (r->shader_image) gpu_shader_destroy(r->shader_image);
+    if (r->shader_msdf) gpu_shader_destroy(r->shader_msdf);
+    if (r->shader_bitmap) gpu_shader_destroy(r->shader_bitmap);
+    if (r->shader_arc_sdf) gpu_shader_destroy(r->shader_arc_sdf);
+    if (r->storage) gpu_free(r->storage);
     for (i32 i = 0; i < UI_FONT_COUNT; i++) free(r->fonts[i].glyphs);
     free(r->vertices);
     free(r);
@@ -1476,10 +1296,6 @@ i32 ui_rect_batch_create(ui_renderer *r) {
 void ui_rect_batch_destroy(ui_renderer *r, i32 batch_id) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
     if (!batch) return;
-    if (batch->binding.id) gpu_destroy_binding(batch->binding);
-    if (batch->mesh.id) gpu_destroy_mesh(batch->mesh);
-    if (batch->vertex_buffer.id) gpu_destroy_buffer(batch->vertex_buffer);
-    if (batch->offset_buffer.id) gpu_destroy_buffer(batch->offset_buffer);
     free(batch->vertices);
     memset(batch, 0, sizeof(*batch));
 }
@@ -1524,62 +1340,12 @@ void ui_rect_batch_add(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h,
 
 ns_bool ui_rect_batch_end(ui_renderer *r, i32 batch_id) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
-    if (!batch) return false;
-    if (batch->vertex_count <= 0) return true;
-    if (!batch->offset_buffer.id) {
-        f32 offset[2] = {0.0f, 0.0f};
-        batch->offset_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
-            .size = sizeof(offset),
-            .data = (ns_data){offset, sizeof(offset)},
-            .type = BUFFER_UNIFORM,
-            .usage = USAGE_DEFAULT,
-        });
-    }
-    if (!batch->binding.id && batch->offset_buffer.id) {
-        batch->binding = gpu_create_binding(&(gpu_binding_desc){
-            .pipeline = r->pipeline_batch,
-            .buffers = {
-                {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-                {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-                {.buffer = batch->offset_buffer, .name = ns_str_cstr("offset")},
-            },
-            .textures = {{.texture = r->white_texture, .name = ns_str_cstr("tex")}},
-        });
-    }
-    if (!batch->offset_buffer.id || !batch->binding.id) return false;
-    if (!batch->vertex_buffer.id || !batch->mesh.id || batch->vertex_count > batch->gpu_vertex_capacity) {
-        if (batch->mesh.id) gpu_destroy_mesh(batch->mesh);
-        if (batch->vertex_buffer.id) gpu_destroy_buffer(batch->vertex_buffer);
-        batch->mesh = (gpu_mesh){0};
-        batch->vertex_buffer = gpu_create_buffer_desc(&(gpu_buffer_desc){
-            .size = batch->vertex_capacity * UI_VERTEX_STRIDE,
-            .data = (ns_data){batch->vertices, (size_t)batch->vertex_count * UI_VERTEX_STRIDE},
-            .type = BUFFER_VERTEX,
-            .usage = USAGE_DEFAULT,
-        });
-        if (!batch->vertex_buffer.id) {
-            batch->gpu_vertex_capacity = 0;
-            return false;
-        }
-        gpu_update_buffer_desc(batch->vertex_buffer, (ns_data){
-            batch->vertices, (size_t)batch->vertex_count * UI_VERTEX_STRIDE
-        });
-        batch->gpu_vertex_capacity = batch->vertex_capacity;
-        batch->mesh = gpu_create_mesh(&(gpu_mesh_desc){
-            .buffers = {batch->vertex_buffer},
-            .pipeline = r->pipeline_batch,
-        });
-    } else {
-        gpu_update_buffer_desc(batch->vertex_buffer, (ns_data){
-            batch->vertices, (size_t)batch->vertex_count * UI_VERTEX_STRIDE
-        });
-    }
-    return batch->mesh.id != 0;
+    return batch != NULL;
 }
 
 void ui_rect_batch_draw_at(ui_renderer *r, i32 batch_id, f64 dx, f64 dy) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
-    if (!batch || !batch->mesh.id || batch->vertex_count <= 0 || r->command_count >= UI_MAX_COMMANDS) return;
+    if (!batch || batch->vertex_count <= 0 || r->command_count >= UI_MAX_COMMANDS) return;
     ui_clip c = ui_current_clip(r);
     if (c.w <= 0.0 || c.h <= 0.0) return;
     ui_command *cmd = &r->commands[r->command_count++];
@@ -1605,30 +1371,10 @@ void ui_rect_batch_draw(ui_renderer *r, i32 batch_id) {
 static i32 ui_register_rgba_texture(ui_renderer *r, const u8 *data, i32 width, i32 height) {
     if (!r || !data || width <= 0 || height <= 0) return 0;
     for (i32 slot = 0; slot < UI_MAX_TEXTURES; slot++) {
-        if (r->textures[slot].id) continue;
-        gpu_texture texture = gpu_create_texture(&(gpu_texture_desc){
-            .width = width, .height = height, .depth = 1,
-            .data = (ns_data){(void*)data, (size_t)width * (size_t)height * 4},
-            .format = PIXELFORMAT_RGBA8,
-            .type = TEXTURE_2D,
-            .usage = TEXTURE_USAGE_READ,
-            .resource_usage = USAGE_DEFAULT,
-        });
-        if (!texture.id) return 0;
-        gpu_binding binding = gpu_create_binding(&(gpu_binding_desc){
-            .pipeline = r->pipeline_image,
-            .buffers = {
-                {.buffer = r->screen_buffer, .name = ns_str_cstr("screen")},
-                {.buffer = r->clip_buffer, .name = ns_str_cstr("clip_rects")},
-            },
-            .textures = {{.texture = texture, .name = ns_str_cstr("tex")}},
-        });
-        if (!binding.id) {
-            gpu_destroy_texture(texture);
-            return 0;
-        }
+        if (r->textures[slot]) continue;
+        u32 texture = ui_create_rgba_texture(data, width, height);
+        if (!texture) return 0;
         r->textures[slot] = texture;
-        r->texture_bindings[slot] = binding;
         r->texture_widths[slot] = width;
         r->texture_heights[slot] = height;
         return slot + 3;
@@ -1664,10 +1410,8 @@ i32 ui_atlas_load(ui_renderer *r, const char *path) {
 void ui_atlas_destroy(ui_renderer *r, i32 atlas) {
     if (!r || atlas < 3 || atlas >= UI_MAX_TEXTURES + 3) return;
     i32 slot = atlas - 3;
-    if (r->texture_bindings[slot].id) gpu_destroy_binding(r->texture_bindings[slot]);
-    if (r->textures[slot].id) gpu_destroy_texture(r->textures[slot]);
-    r->texture_bindings[slot] = (gpu_binding){0};
-    r->textures[slot] = (gpu_texture){0};
+    if (r->textures[slot]) gpu_texture_destroy(r->textures[slot]);
+    r->textures[slot] = 0;
     r->texture_widths[slot] = 0;
     r->texture_heights[slot] = 0;
 }
@@ -1698,16 +1442,12 @@ void ui_atlas_draw(ui_renderer *r, i32 atlas, f64 x, f64 y, f64 w, f64 h) {
 void ui_resize(ui_renderer *r) {
     if (!r) return;
     ui_sync_view_metrics(r);
-    f32 screen[2] = {(f32)r->width, (f32)r->height};
-    if (r->screen_buffer.id) gpu_update_buffer_desc(r->screen_buffer, (ns_data){screen, sizeof(screen)});
 }
 
 void ui_resize_to(ui_renderer *r, i32 width, i32 height) {
     if (!r) return;
     r->width = width > 0 ? width : 1;
     r->height = height > 0 ? height : 1;
-    f32 screen[2] = {(f32)r->width, (f32)r->height};
-    if (r->screen_buffer.id) gpu_update_buffer_desc(r->screen_buffer, (ns_data){screen, sizeof(screen)});
 }
 
 void ui_request_render(ui_renderer *r, i32 frames) {
@@ -1730,15 +1470,75 @@ void ui_begin_frame(ui_renderer *r) {
     r->current_texture_id = UI_WHITE_TEXTURE;
 }
 
+static u64 ui_align_u64(u64 value, u64 alignment) {
+    return (value + alignment - 1u) & ~(alignment - 1u);
+}
+
+static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset) {
+    if (!r || !clip_offset) return false;
+    u64 cursor = (u64)(u32)r->vertex_count * UI_VERTEX_STRIDE;
+    cursor = ui_align_u64(cursor, 16);
+    *clip_offset = (u32)cursor;
+    const u64 clip_size = r->gpu_clip_count > 0
+                              ? (u64)(u32)r->gpu_clip_count * sizeof(ui_gpu_clip)
+                              : sizeof(ui_gpu_clip);
+    cursor = ui_align_u64(cursor + clip_size, 16);
+    for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
+        ui_rect_batch *batch = &r->rect_batches[i];
+        batch->gpu_offset = cursor;
+        if (batch->used && batch->vertex_count > 0) {
+            cursor = ui_align_u64(cursor + (u64)(u32)batch->vertex_count * UI_VERTEX_STRIDE, 16);
+        }
+    }
+    const u64 required = cursor > 0 ? cursor : 16;
+    if (!r->storage || required > r->storage_capacity) {
+        u64 capacity = r->storage_capacity > 0 ? r->storage_capacity : 4096;
+        while (capacity < required) capacity *= 2;
+        gpu_addr storage = gpu_malloc(capacity, GPU_MEM_SHARED);
+        if (!storage) return false;
+        if (r->storage) gpu_free(r->storage);
+        r->storage = storage;
+        r->storage_capacity = capacity;
+    }
+    if (r->vertex_count > 0) {
+        gpu_write(r->storage, r->vertices, (u64)(u32)r->vertex_count * UI_VERTEX_STRIDE);
+    }
+    ui_gpu_clip empty_clip = {0};
+    const void *clips = r->gpu_clip_count > 0 ? (const void *)r->gpu_clips : (const void *)&empty_clip;
+    gpu_write(r->storage + *clip_offset, clips, clip_size);
+    for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
+        ui_rect_batch *batch = &r->rect_batches[i];
+        if (batch->used && batch->vertex_count > 0) {
+            gpu_write(r->storage + batch->gpu_offset, batch->vertices,
+                      (u64)(u32)batch->vertex_count * UI_VERTEX_STRIDE);
+        }
+    }
+    return true;
+}
+
+static u32 ui_command_texture(ui_renderer *r, const ui_command *cmd) {
+    if (cmd->rect_batch_id > 0 || cmd->kind == UI_KIND_ARC_SDF) return r->white_texture;
+    if (cmd->kind == UI_KIND_MSDF) {
+        return cmd->texture_id == UI_FONT_ZH_TEXTURE && r->font_zh_texture
+                   ? r->font_zh_texture
+                   : r->font_texture;
+    }
+    if (cmd->kind == UI_KIND_BITMAP) {
+        return cmd->texture_id == UI_FONT_BITMAP_ZH_TEXTURE
+                   ? r->font_bitmap_zh_texture
+                   : r->font_bitmap_texture;
+    }
+    if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3) {
+        u32 texture = r->textures[cmd->texture_id - 3];
+        if (texture) return texture;
+    }
+    return r->white_texture;
+}
+
 void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     if (!r || !r->gpu_ready) return;
-    gpu_update_buffer_desc(r->vertex_buffer, (ns_data){r->vertices, (size_t)r->vertex_count * UI_VERTEX_STRIDE});
-    if (r->clip_buffer.id) {
-        ui_gpu_clip empty_clip = {0};
-        const void *clip_data = r->gpu_clip_count > 0 ? (const void*)r->gpu_clips : (const void*)&empty_clip;
-        const size_t clip_len = r->gpu_clip_count > 0 ? (size_t)r->gpu_clip_count * sizeof(ui_gpu_clip) : sizeof(empty_clip);
-        gpu_update_buffer_desc(r->clip_buffer, (ns_data){(void*)clip_data, clip_len});
-    }
+    u32 clip_offset = 0;
+    if (!ui_upload_storage(r, &clip_offset)) return;
     const f64 fallback_scale = r->content_scale > 0.0 ? r->content_scale : 1.0;
     const i32 framebuffer_width = r->v && r->v->framebuffer_width > 0
                                       ? r->v->framebuffer_width
@@ -1748,9 +1548,14 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
                                        : (i32)(r->height * fallback_scale + 0.5);
     const f64 sx = (f64)framebuffer_width / (f64)r->width;
     const f64 sy = (f64)framebuffer_height / (f64)r->height;
-    gpu_begin_render_pass(r->screen_pass);
-    gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
+    // ui_color_rgba is passed by value at the ns surface and the native FFI
+    // adapter retains the historical opaque pointer ABI. The old renderer did
+    // not dereference it either; keep that ABI and use the established default.
     ns_unused(clear);
+    gpu_screen_pass_begin(0.0, 0.0, 0.0, 1.0);
+    gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
+    gpu_set_state(r->render_state);
+    gpu_set_storage(r->storage);
     for (i32 i = 0; i < r->command_count; i++) {
         ui_command *cmd = &r->commands[i];
         if (cmd->clip_w <= 0 || cmd->clip_h <= 0) continue;
@@ -1765,48 +1570,33 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         if (x1 <= x0 || y1 <= y0) continue;
         gpu_set_scissor(x0, y0, x1 - x0, y1 - y0);
         ui_rect_batch *batch = NULL;
+        u32 shader = r->shader_image;
         if (cmd->rect_batch_id > 0) {
             batch = ui_rect_batch_get(r, cmd->rect_batch_id);
-            if (!batch || !batch->mesh.id || !batch->binding.id || !batch->offset_buffer.id) continue;
-            f32 offset[2] = {(f32)cmd->offset_x, (f32)cmd->offset_y};
-            gpu_update_buffer_desc(batch->offset_buffer, (ns_data){offset, sizeof(offset)});
-            gpu_set_pipeline(r->pipeline_batch);
-            gpu_set_binding(batch->binding);
+            if (!batch || batch->vertex_count <= 0) continue;
         } else if (cmd->kind == UI_KIND_ARC_SDF) {
-            gpu_set_pipeline(r->pipeline_arc_sdf);
-            gpu_set_binding(r->binding_arc_sdf);
+            shader = r->shader_arc_sdf;
         } else if (cmd->kind == UI_KIND_MSDF) {
-            gpu_set_pipeline(r->pipeline_msdf);
-            if (cmd->texture_id == UI_FONT_ZH_TEXTURE && r->binding_font_zh_msdf.id) {
-                gpu_set_binding(r->binding_font_zh_msdf);
-            } else {
-                gpu_set_binding(r->binding_font_msdf);
-            }
+            shader = r->shader_msdf;
         } else if (cmd->kind == UI_KIND_BITMAP) {
-            gpu_set_pipeline(r->pipeline_bitmap);
-            if (cmd->texture_id == UI_FONT_BITMAP_ZH_TEXTURE && r->binding_font_bitmap_zh.id) {
-                gpu_set_binding(r->binding_font_bitmap_zh);
-            } else if (r->binding_font_bitmap.id) {
-                gpu_set_binding(r->binding_font_bitmap);
-            } else {
-                continue;
-            }
-        } else if (cmd->texture_id >= 3 && cmd->texture_id < UI_MAX_TEXTURES + 3 &&
-                   r->texture_bindings[cmd->texture_id - 3].id) {
-            gpu_set_pipeline(r->pipeline_image);
-            gpu_set_binding(r->texture_bindings[cmd->texture_id - 3]);
-        } else {
-            gpu_set_pipeline(r->pipeline_image);
-            gpu_set_binding(r->binding_white_image);
+            shader = r->shader_bitmap;
         }
-        if (batch) {
-            gpu_set_mesh(batch->mesh);
-        } else {
-            gpu_set_mesh(r->mesh);
-        }
-        gpu_draw(cmd->vertex_offset, cmd->vertex_count, 1);
+        u32 texture = ui_command_texture(r, cmd);
+        if (!texture) continue;
+        ui_gpu_root root = {
+            .texture_id = (f32)texture,
+            .screen_width = (f32)r->width,
+            .screen_height = (f32)r->height,
+            .offset_x = (f32)cmd->offset_x,
+            .offset_y = (f32)cmd->offset_y,
+            .vertex_offset = batch ? (u32)batch->gpu_offset : 0,
+            .clip_offset = clip_offset,
+        };
+        gpu_set_shader(shader);
+        gpu_set_root_data(&root, sizeof(root));
+        gpu_draw_vertices(batch ? 0 : cmd->vertex_offset, cmd->vertex_count, 1);
     }
-    gpu_end_pass();
+    gpu_pass_end();
     gpu_commit();
     r->vertex_count = 0;
     r->command_count = 0;

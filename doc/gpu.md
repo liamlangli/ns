@@ -1,4 +1,4 @@
-# GPU Module v2
+# GPU Module
 
 > Reference: Sebastian Aaltonen, ["No Graphics API"](https://www.sebastianaaltonen.com/blog/no-graphics-api)
 > (Dec 2025). Related reading: the
@@ -10,11 +10,8 @@
 
 The `gpu` built-in module is designed around the ideas in "No Graphics API":
 treat the GPU as a processor with memory rather than a state machine with
-bound objects. New code should use the v2 surface. A narrow scalar v1
-compatibility tail remains for existing native renderers; it includes an MRT
-pipeline/pass path for a BGRA scene target plus an R8 mask. Native descriptor
-structures remain implementation details and are not callable from Nano
-Script.
+bound objects. This memory-addressed API is the only Nano Script GPU surface,
+including the native UI renderer and platform backends.
 
 ## The article's argument, in short
 
@@ -44,39 +41,6 @@ Graphics APIs still expose abstractions designed for 2015 hardware:
   `gpuSignalAfter(addr, value)` / `gpuWaitBefore(addr, value)` on a memory
   location.
 
-## Why v1 is compatibility-only
-
-The v1 surface was a sokol-style descriptor API plus a scalar FFI tail. Only
-the small compatibility subset needed by existing applications remains; its
-concrete inflexibilities are:
-
-1. **Combinatorial wrappers.** Every binding shape needs a new C symbol:
-   `gpu_create_texture_binding` (1 texture), `gpu_create_buffer_texture_binding`
-   (exactly 1 buffer + 2 textures), `gpu_create_mesh_1`,
-   `gpu_create_mesh_indexed`, `gpu_create_pipeline_layout`,
-   `_layout_ex`, `_layout_indexed_ex`… A third texture or a second uniform
-   buffer means editing C on three backends.
-2. **Geometry welded to pipelines.** `gpu_mesh` captures vertex buffers *and*
-   a pipeline; `gpu_binding` captures a pipeline too. Sharing one vertex pool
-   across shaders, or drawing one mesh with two shaders, needs duplicate
-   objects.
-3. **Vertex layout baked into the PSO.** `gpu_pipeline_desc.layout` fixes
-   stride/offset/format per pipeline (max 8 attributes), so every vertex
-   format change is a new pipeline, and interleaved vs. deinterleaved data is
-   an API-level decision instead of a shader detail.
-4. **Name-based binding.** Bindings resolve uniform/texture slots by string
-   name against shader reflection at create time — per-object, per-pipeline
-   descriptor churn the article shows modern hardware doesn't need.
-5. **Compute is a dead end.** `gpu_dispatch_compute_source` recompiles source
-   on every dispatch, binds at most one texture, and cannot see any buffer.
-   Compute cannot feed a draw.
-6. **No dynamic data path.** Updating a buffer mid-frame
-   (`gpu_update_buffer`) has no ring/streaming story; `ui.c` works around it
-   with its own buffer juggling (145 gpu call sites).
-7. **No sync control at all.** Single implicit queue, `gpu_commit()` at frame
-   end. Fine on Metal's tracked resources; already awkward on DX12, and a
-   wall for async compute or GPU-driven techniques.
-
 ## What we adopt, and what we deliberately do not
 
 Adopted:
@@ -99,15 +63,15 @@ Not adopted (and why):
 
 - **Removing render passes.** Tile-based GPUs (all Apple targets) and WebGPU
   require pass boundaries with load/store actions. We keep `begin_pass` /
-  `end_pass`, but passes are plain calls with attachment arguments — the v1
-  `gpu_render_pass` object goes away.
+  `end_pass`, but passes are plain calls with attachment arguments and no
+  public pass object.
 - **Removing pipeline state entirely.** Metal, DX12, and WebGPU all compile
   monolithic pipelines under the hood. Instead of exposing that, the backend
   keeps an internal PSO cache keyed by (shader, render state, attachment
   formats). The *API* stops forcing users to enumerate permutations; the
   cache pays the cost once per new combination.
 - **User-visible texture layout transitions.** Backends keep handling
-  layout/decompression internally, as v1 already does.
+  layout/decompression internally.
 - **Raw 256-bit descriptors in user memory.** Portability tiering (below)
   needs the module to own descriptor storage.
 
@@ -143,18 +107,11 @@ enum gpu_caps_flags {
 u32 gpu_caps(void);
 ```
 
-## Core API (C, `lib/include/gpu.h` v2)
+## Core API (C, `lib/include/gpu.h`)
 
 Everything below is FFI-safe: scalars, `u64` addresses, `u32` indices,
 pointers+lengths. No descriptor structs cross the boundary; no arrays are
 fixed at 8.
-
-Naming note: while v1 and v2 coexist, v2 entry points that would collide
-with a live v1 symbol take a v2 spelling — `gpu_texture_create` (v1
-`gpu_create_texture`), `gpu_draw_vertices` (v1 `gpu_draw`),
-`gpu_pass_begin`/`gpu_pass_end`/`gpu_screen_pass_begin` (v1
-`gpu_begin_render_pass`/`gpu_end_pass`/`gpu_create_screen_pass`). When v1
-is deleted these become the only names.
 
 ### Device and frame
 
@@ -212,7 +169,7 @@ u32  gpu_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,
 void gpu_sampler_destroy(u32 smp);
 ```
 
-`usage` keeps v1's read/write/render-target bits; storage (UAV) access uses
+`usage` uses read/write/render-target bits; storage (UAV) access uses
 the same index. Samplers come from a small global heap — the article's
 observation that real programs need a handful.
 
@@ -250,7 +207,7 @@ void gpu_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
 void gpu_screen_pass_begin(f64 r, f64 g, f64 b, f64 a);
 void gpu_pass_end(void);
 
-void gpu_set_viewport(i32 x, i32 y, i32 w, i32 h);   // shared with v1
+void gpu_set_viewport(i32 x, i32 y, i32 w, i32 h);
 void gpu_set_scissor(i32 x, i32 y, i32 w, i32 h);
 ```
 
@@ -265,6 +222,10 @@ void gpu_set_root(gpu_addr args);
 // ...or copy a small struct into the frame ring and point at that.
 void gpu_set_root_data(const void *data, u64 size);
 
+// Portable fixed storage slot used by the current shader subset. This helper
+// goes away once typed gpu_addr dereference is lowered directly in shaders.
+void gpu_set_storage(gpu_addr addr);
+
 void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count);
 void gpu_draw_indexed(gpu_addr indices, i32 index_type,
                       i32 index_count, i32 instance_count, i32 base_vertex);
@@ -276,7 +237,7 @@ void gpu_dispatch_indirect(gpu_addr args);
 ```
 
 Compute uses the same flow: `gpu_set_shader(compute)`, `gpu_set_root*`,
-`gpu_dispatch`. The v1 recompile-per-dispatch path disappears.
+`gpu_dispatch`.
 
 ### Synchronization
 
@@ -337,9 +298,9 @@ Transpiler work this needs (`shader` module):
   fields are addresses/textures) — used only by portable-tier backends, never
   by user code.
 
-## ns surface (`lib/gpu.ns` v2)
+## ns surface (`lib/gpu.ns`)
 
-The declarations live in the "v2" section of `lib/gpu.ns` and mirror the C
+The declarations in `lib/gpu.ns` mirror the C
 surface one-to-one with FFI-safe scalars: addresses are `u64`, texture /
 sampler / shader / state ids are `u32`, and bulk data crosses the boundary
 as `[any]` plus a byte size. `gpu_addr_host` stays C-only — a raw host
@@ -379,8 +340,7 @@ Constructors are `gpu_texture_new`/`gpu_texture_new_2d`/`gpu_texture_none`,
 `gpu_*_release`/`gpu_memory_free`; binding is `gpu_shader_bind` /
 `gpu_render_state_bind`.
 
-Two sugar fns wrap the `shader` transpiler, replacing the old
-`gpu_create_pipeline` and the recompile-per-dispatch `dispatch_gpu`:
+Two sugar fns wrap the `shader` transpiler and create persistent shader values:
 
 ```ns
 // Transpile ns fns for the active backend. The result
@@ -405,7 +365,7 @@ gpu_pass_end()
 gpu_commit()
 ```
 
-And a compute-fed indirect draw, impossible in v1:
+And a compute-fed indirect draw:
 
 ```ns
 gpu_set_shader(g_cull_compute)
@@ -422,14 +382,12 @@ gpu_pass_end()
 
 ## Backend notes
 
-- **Metal (first target).** `MTLHeap` + `newBufferWithLength` for
-  `gpu_malloc`; `gpuAddress` gives real VAs (GPU_CAP_RAW_POINTERS on
-  Apple-silicon UMA, SHARED == DEVICE). Textures live in one argument-buffer
-  heap; `useResource:` / `useHeap:` covers residency per pass. Root pointer
-  via `setVertexBytes`/`setFragmentBytes` of 8 bytes, or the frame ring.
-  PSO cache keyed by (shader, state, pass formats). Implicit hazard tracking
-  already gives the default barrier model; split barriers map to
-  `MTLEvent`/`MTLSharedEvent` between encoders.
+- **Metal (first target).** `gpu_malloc` uses persistently mapped shared
+  `MTLBuffer` allocations behind portable virtual addresses. Root and storage
+  addresses bind the corresponding buffer plus offset; texture ids in the root
+  select resources for the current shader. Render pipelines are compiled from
+  (shader, state, pass formats), and Metal's tracked resources provide the
+  default ordering model.
 - **DX12.** Pool allocations in large committed buffers;
   `GetGPUVirtualAddress` exists, but HLSL lacks raw pointers, so addresses
   stay pooled (`pool << 40 | offset`) and derefs compile to
@@ -443,13 +401,13 @@ gpu_pass_end()
   No indirect-count draws; `gpu_draw_indirect` loops on the CPU or degrades
   to `draw_count` fixed submissions. Caps report no raw pointers, no async
   compute. The generated `ns-wasm.js` middleware requests the adapter/device,
-  configures the full-page canvas, maps legacy and v2 imports to WebGPU
+  configures the full-page canvas, maps GPU imports to WebGPU
   resources and command passes, and rebuilds after device loss. Build-time
   WGSL and vertex reflection come from the Wasm `ns.shaders` custom section,
   so the browser never compiles Nano Script source. `view_create` returns the
   canvas-backed `ref view` passed to the unchanged typed
   `gpu_request_device(v: ref view)` API.
-- **Linux/null.** Same no-op fallback contract as v1: every call safe,
+- **Linux/null.** Every call is safe,
   `gpu_request_device` returns false, `gpu_caps()` returns 0.
 
 ## Migration status
@@ -472,4 +430,4 @@ internally to `RGBA16F` when the feature is unavailable.
   `gpu_malloc` time (WebGPU usage bits are immutable); a `GPU_MEM_INDEX`
   flag or transparent dual-pool allocation — leaning transparent.
 - Whether pass attachments beyond 4 colors matter for ns programs before
-  Vulkan lands (v1 also caps at 4).
+  Vulkan lands.

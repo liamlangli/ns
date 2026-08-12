@@ -135,31 +135,6 @@ static MTLPixelFormat _mtl_pixel_format(gpu_pixel_format format) {
     return MTLPixelFormatInvalid;
 }
 
-static bool _mtl_pixel_format_is_pvrtc(gpu_pixel_format format) {
-    return format == PIXELFORMAT_PVRTC_RGB_2BPP ||
-        format == PIXELFORMAT_PVRTC_RGB_4BPP ||
-        format == PIXELFORMAT_PVRTC_RGBA_2BPP ||
-        format == PIXELFORMAT_PVRTC_RGBA_4BPP;
-}
-
-static bool _mtl_stencil_enabled_format(gpu_pixel_format format) {
-    return format == PIXELFORMAT_DEPTH_STENCIL;
-}
-
-static MTLResourceOptions _mtl_resource_options(gpu_usage usage) {
-    if (usage & USAGE_PRIVATE) return MTLResourceStorageModePrivate;
-    if (usage & USAGE_SHARED) return MTLResourceStorageModeShared;
-    if (usage & USAGE_MEMORYLESS) return MTLResourceStorageModeMemoryless;
-    return MTLResourceStorageModeShared;
-}
-
-static MTLResourceOptions _mtl_buffer_resource_options(gpu_usage usage) {
-    // Metal only permits memoryless storage for textures. Preserve any other
-    // requested storage mode and fall back to shared when memoryless was the
-    // only mode supplied.
-    return _mtl_resource_options((gpu_usage)(usage & ~USAGE_MEMORYLESS));
-}
-
 static MTLLoadAction _mtl_load_action(gpu_load_action action) {
     switch (action) {
         case LOAD_ACTION_CLEAR: return MTLLoadActionClear;
@@ -167,102 +142,6 @@ static MTLLoadAction _mtl_load_action(gpu_load_action action) {
         case LOAD_ACTION_DONTCARE: return MTLLoadActionDontCare;
     }
     return MTLLoadActionDontCare;
-}
-
-static MTLVertexFormat _mtl_vertex_format(gpu_attribute_format format, int size) {
-    switch (format) {
-        case ATTRIBUTE_FORMAT_FLOAT:
-            if (size == 1) return MTLVertexFormatFloat;
-            if (size == 2) return MTLVertexFormatFloat2;
-            if (size == 3) return MTLVertexFormatFloat3;
-            if (size == 4) return MTLVertexFormatFloat4;
-            break;
-        case ATTRIBUTE_FORMAT_HALF:
-            if (size == 1) return MTLVertexFormatHalf;
-            if (size == 2) return MTLVertexFormatHalf2;
-            if (size == 3) return MTLVertexFormatHalf3;
-            if (size == 4) return MTLVertexFormatHalf4;
-            break;
-        case ATTRIBUTE_FORMAT_UINT:
-            if (size == 1) return MTLVertexFormatUInt;
-            if (size == 2) return MTLVertexFormatUInt2;
-            if (size == 3) return MTLVertexFormatUInt3;
-            if (size == 4) return MTLVertexFormatUInt4;
-            break;
-        case ATTRIBUTE_FORMAT_INT:
-            if (size == 1) return MTLVertexFormatInt;
-            if (size == 2) return MTLVertexFormatInt2;
-            if (size == 3) return MTLVertexFormatInt3;
-            if (size == 4) return MTLVertexFormatInt4;
-            break;
-        case ATTRIBUTE_FORMAT_USHORT:
-            if (size == 1) return MTLVertexFormatUShort;
-            if (size == 2) return MTLVertexFormatUShort2;
-            if (size == 3) return MTLVertexFormatUShort3;
-            if (size == 4) return MTLVertexFormatUShort4;
-            break;
-        case ATTRIBUTE_FORMAT_SHORT:
-            if (size == 1) return MTLVertexFormatShort;
-            if (size == 2) return MTLVertexFormatShort2;
-            if (size == 3) return MTLVertexFormatShort3;
-            if (size == 4) return MTLVertexFormatShort4;
-            break;
-        case ATTRIBUTE_FORMAT_BYTE:
-            if (size == 1) return MTLVertexFormatChar;
-            if (size == 2) return MTLVertexFormatChar2;
-            if (size == 3) return MTLVertexFormatChar3;
-            if (size == 4) return MTLVertexFormatChar4;
-            break;
-        case ATTRIBUTE_FORMAT_UBYTE:
-            if (size == 1) return MTLVertexFormatUChar;
-            if (size == 2) return MTLVertexFormatUChar2;
-            if (size == 3) return MTLVertexFormatUChar3;
-            if (size == 4) return MTLVertexFormatUChar4;
-            break;
-        case ATTRIBUTE_FORMAT_INVALID:
-            break;
-    }
-    return MTLVertexFormatInvalid;
-}
-
-static MTLVertexStepFunction _mtl_vertex_step_function(gpu_vertex_step step) {
-    switch (step) {
-        case VERTEX_STEP_PER_VERTEX: return MTLVertexStepFunctionPerVertex;
-        case VERTEX_STEP_PER_INSTANCE: return MTLVertexStepFunctionPerInstance;
-    }
-    return MTLVertexStepFunctionPerVertex;
-}
-
-static MTLBlendOperation _mtl_blend_operation(gpu_blend_op op) {
-    switch (op) {
-        case BLEND_OP_ADD: return MTLBlendOperationAdd;
-        case BLEND_OP_SUBTRACT: return MTLBlendOperationSubtract;
-        case BLEND_OP_REVERSE_SUBTRACT: return MTLBlendOperationReverseSubtract;
-        case BLEND_OP_MIN: return MTLBlendOperationMin;
-        case BLEND_OP_MAX: return MTLBlendOperationMax;
-    }
-    return MTLBlendOperationAdd;
-}
-
-static MTLBlendFactor _mtl_blend_factor(gpu_blend_factor factor) {
-    switch (factor) {
-        case BLEND_FACTOR_ZERO: return MTLBlendFactorZero;
-        case BLEND_FACTOR_ONE: return MTLBlendFactorOne;
-        case BLEND_FACTOR_SRC_COLOR: return MTLBlendFactorSourceColor;
-        case BLEND_FACTOR_ONE_MINUS_SRC_COLOR: return MTLBlendFactorOneMinusSourceColor;
-        case BLEND_FACTOR_SRC_ALPHA: return MTLBlendFactorSourceAlpha;
-        case BLEND_FACTOR_ONE_MINUS_SRC_ALPHA: return MTLBlendFactorOneMinusSourceAlpha;
-        case BLEND_FACTOR_DST_COLOR: return MTLBlendFactorDestinationColor;
-        case BLEND_FACTOR_ONE_MINUS_DST_COLOR: return MTLBlendFactorOneMinusDestinationColor;
-        case BLEND_FACTOR_DST_ALPHA: return MTLBlendFactorDestinationAlpha;
-        case BLEND_FACTOR_ONE_MINUS_DST_ALPHA: return MTLBlendFactorOneMinusDestinationAlpha;
-        case BLEND_FACTOR_SRC_ALPHA_SATURATED: return MTLBlendFactorSourceAlphaSaturated;
-        case BLEND_FACTOR_BLEND_COLOR: return MTLBlendFactorBlendColor;
-        case BLEND_FACTOR_ONE_MINUS_BLEND_COLOR: return MTLBlendFactorOneMinusBlendColor;
-        case BLEND_FACTOR_BLEND_ALPHA: return MTLBlendFactorBlendAlpha;
-        case BLEND_FACTOR_ONE_MINUS_BLEND_ALPHA: return MTLBlendFactorOneMinusBlendAlpha;
-    }
-    return MTLBlendFactorOne;
 }
 
 static MTLCompareFunction _mtl_compare_function(gpu_compare_func func) {
@@ -279,20 +158,6 @@ static MTLCompareFunction _mtl_compare_function(gpu_compare_func func) {
             return MTLCompareFunctionAlways;
     }
     return MTLCompareFunctionAlways;
-}
-
-static MTLStencilOperation _mtl_stencil_operation(gpu_stencil_op op) {
-    switch (op) {
-        case STENCIL_OP_KEEP: return MTLStencilOperationKeep;
-        case STENCIL_OP_ZERO: return MTLStencilOperationZero;
-        case STENCIL_OP_REPLACE: return MTLStencilOperationReplace;
-        case STENCIL_OP_INCR_CLAMP: return MTLStencilOperationIncrementClamp;
-        case STENCIL_OP_DECR_CLAMP: return MTLStencilOperationDecrementClamp;
-        case STENCIL_OP_INVERT: return MTLStencilOperationInvert;
-        case STENCIL_OP_INCR_WRAP: return MTLStencilOperationIncrementWrap;
-        case STENCIL_OP_DECR_WRAP: return MTLStencilOperationDecrementWrap;
-    }
-    return MTLStencilOperationKeep;
 }
 
 static MTLCullMode _mtl_cull_mode(gpu_cull_mode mode) {
@@ -341,6 +206,21 @@ typedef struct gpu_shader_mtl {
     id<MTLLibrary> fragment_lib;
     id<MTLFunction> vertex_func;
     id<MTLFunction> fragment_func;
+    id<MTLLibrary> compute_lib;
+    id<MTLFunction> compute_func;
+    id<MTLComputePipelineState> compute_pso;
+    id<MTLRenderPipelineState> v2_pso;
+    id<MTLDepthStencilState> v2_dso;
+    gpu_v2_state_desc v2_state;
+    MTLPixelFormat v2_colors[4];
+    MTLPixelFormat v2_depth;
+    bool v2_pipeline_valid;
+    bool uses_root;
+    bool uses_read_texture;
+    bool uses_write_texture;
+    bool uses_texture_map;
+    bool uses_mask_map;
+    bool uses_shadow_map;
 } gpu_shader_mtl;
 
 typedef struct gpu_texture_mtl {
@@ -356,70 +236,6 @@ typedef struct gpu_sampler_mtl {
     gpu_filter min_filter, mag_filter, mip_filter;
     gpu_wrap wrap_u, wrap_v, wrap_w;
 } gpu_sampler_mtl;
-
-typedef struct gpu_buffer_mtl {
-    id<MTLBuffer> buffer;
-    MTLResourceOptions options;
-} gpu_buffer_mtl;
-
-typedef struct gpu_mesh_mtl {
-    gpu_buffer buffers[GPU_SHADER_BUFFER_COUNT];
-    u32 buffer_offsets[GPU_SHADER_BUFFER_COUNT];
-    gpu_buffer index_buffer;
-    u32 index_buffer_offset;
-} gpu_mesh_mtl;
-
-typedef struct gpu_binding_buffer_desc_mtl {
-    gpu_buffer buffer;
-    u32 offset;
-    u32 index;
-} gpu_binding_buffer_desc_mtl;
-
-typedef struct gpu_binding_texture_desc_mtl {
-    gpu_texture texture;
-    u32 index;
-} gpu_binding_texture_desc_mtl;
-
-typedef struct gpu_binding_mtl {
-    u32 vertex_buffer_count;
-    u32 fragment_buffer_count;
-    u32 vertex_texture_count;
-    u32 fragment_texture_count;
-    gpu_binding_buffer_desc_mtl vertex_buffers[GPU_SHADER_BUFFER_COUNT];
-    gpu_binding_buffer_desc_mtl fragment_buffers[GPU_SHADER_BUFFER_COUNT];
-    gpu_binding_texture_desc_mtl vertex_textures[GPU_SHADER_TEXTURE_COUNT];
-    gpu_binding_texture_desc_mtl fragment_textures[GPU_SHADER_TEXTURE_COUNT];
-} gpu_binding_mtl;
-
-typedef struct gpu_render_pass_mtl {
-    MTLRenderPassDescriptor* desc;
-    bool screen;
-} gpu_render_pass_mtl;
-
-typedef struct gpu_pipeline_mtl {
-    id<MTLRenderPipelineState> pso;
-    id<MTLDepthStencilState> dso;
-    MTLRenderPipelineReflection* reflection;
-    bool instanced, indexed;
-
-    MTLPrimitiveType primitive_type;
-    MTLIndexType index_type;
-    MTLCullMode cull_mode;
-    MTLWinding winding;
-    MTLPixelFormat depth_stencil_format;
-    u32 stencil_ref;
-} gpu_pipeline_mtl;
-
-typedef struct gpu_pass_mtl {
-    int width, height;
-} gpu_pass_mtl;
-
-typedef struct gpu_pixel_readback_mtl {
-    id<MTLBuffer> buffer;
-    volatile ns_bool pending;
-    volatile ns_bool complete;
-    u32 request_id;
-} gpu_pixel_readback_mtl;
 
 typedef struct gpu_swapchain_mtl {
     int width, height, sample_count;
@@ -443,10 +259,6 @@ typedef struct gpu_state_mtl {
 
     gpu_swapchain_mtl swapchain;
 
-    gpu_pipeline_mtl cur_pipeline;
-    gpu_render_pass_mtl cur_render_pass;
-    gpu_mesh_mtl cur_mesh;
-    
     id<MTLCommandQueue> cmd_queue;
     id<MTLCommandBuffer> cmd_buffer;
     id<MTLRenderCommandEncoder> cmd_encoder;
@@ -456,26 +268,26 @@ typedef struct gpu_state_mtl {
     gpu_shader_mtl shaders[GPU_RESOURCE_POOL_SIZE];
     gpu_texture_mtl textures[GPU_RESOURCE_POOL_SIZE];
     gpu_sampler_mtl samplers[GPU_RESOURCE_POOL_SIZE];
-    gpu_buffer_mtl buffers[GPU_RESOURCE_POOL_SIZE];
-    gpu_pipeline_mtl pipelines[GPU_RESOURCE_POOL_SIZE];
-    gpu_binding_mtl bindings[GPU_RESOURCE_POOL_SIZE];
-    gpu_mesh_mtl meshes[GPU_RESOURCE_POOL_SIZE];
-    gpu_render_pass_mtl render_passes[GPU_RESOURCE_POOL_SIZE];
     
     u32 shader_count;
     u32 texture_count;
     u32 sampler_count;
-    u32 buffer_count;
-    u32 pipeline_count;
-    u32 binding_count;
-    u32 mesh_count;
-    u32 render_pass_count;
     u32 screen_pass_count;
-    gpu_pixel_readback_mtl pixel_readbacks[3];
+    id<MTLBuffer> v2_memory[GPU_RESOURCE_POOL_SIZE];
+    u64 v2_memory_size[GPU_RESOURCE_POOL_SIZE];
+    u32 v2_shader;
+    gpu_v2_state_desc v2_render_state;
+    id<MTLBuffer> v2_root_buffer;
+    u64 v2_root_offset;
+    id<MTLBuffer> v2_storage_buffer;
+    u64 v2_storage_offset;
+    MTLPixelFormat v2_pass_colors[4];
+    MTLPixelFormat v2_pass_depth;
 
 } gpu_state_mtl;
 
 static gpu_state_mtl _state = {0};
+static const gpu_v2_ops _mtl_v2_ops;
 
 static NSURL *gpu_mtl_capture_output_url(void) {
     NSString *cwd = [[NSFileManager defaultManager] currentDirectoryPath];
@@ -622,27 +434,21 @@ ns_bool gpu_request_device(view* v) {
     _state.shader_count = 1;
     _state.texture_count = 1;
     _state.sampler_count = 1;
-    _state.buffer_count = 1;
-    _state.pipeline_count = 1;
-    _state.binding_count = 1;
-    _state.mesh_count = 1;
-    _state.render_pass_count = 1;
     _state.screen_pass_count = 0;
-    _state.render_passes[0] = (gpu_render_pass_mtl){
-        .desc = [MTLRenderPassDescriptor new],
-        .screen = true,
-    };
-    _state.render_passes[0].desc.colorAttachments[0].clearColor = MTLClearColorMake(0.06, 0.07, 0.08, 1.0);
+    gpu_v2_set_backend(&_mtl_v2_ops,
+                       GPU_CAP_BINDLESS_TEXTURES | GPU_CAP_INDIRECT_DRAW | GPU_CAP_READBACK);
     
     return true;
 }
 
 void gpu_destroy_device() {
-    for (i32 i = 0; i < 3; ++i) {
+    gpu_v2_set_backend(NULL, 0);
+    for (i32 i = 0; i < GPU_RESOURCE_POOL_SIZE; ++i) {
 #ifndef ENABLE_ARC
-        [_state.pixel_readbacks[i].buffer release];
+        [_state.v2_memory[i] release];
 #endif
-        _state.pixel_readbacks[i] = (gpu_pixel_readback_mtl){0};
+        _state.v2_memory[i] = nil;
+        _state.v2_memory_size[i] = 0;
     }
 #ifndef ENABLE_ARC
     [_state.cmd_encoder release];
@@ -652,423 +458,6 @@ void gpu_destroy_device() {
     [_state.device.device release];
     dispatch_release(_state.semaphore);
 #endif
-}
-
-gpu_texture gpu_create_texture(gpu_texture_desc *desc) {
-    assert(desc->width > 0);
-    assert(desc->height > 0);
-    const int sample_count = desc->sample_count > 1 ? desc->sample_count : 1;
-    if (sample_count > 1 && ![_state.device.device supportsTextureSampleCount:(NSUInteger)sample_count]) {
-        return (gpu_texture){0};
-    }
-    MTLTextureDescriptor *_desc = [MTLTextureDescriptor new];
-    _desc.textureType = sample_count > 1 ? MTLTextureType2DMultisample : _mtl_texture_type(desc->type);
-    _desc.pixelFormat = _mtl_pixel_format(desc->format);
-    _desc.width = (NSUInteger)desc->width;
-    _desc.height = (NSUInteger)desc->height;
-    _desc.sampleCount = (NSUInteger)sample_count;
-    if (desc->type == TEXTURE_3D)
-        _desc.depth = (NSUInteger)desc->depth;
-    else
-        _desc.arrayLength = 1;
-    
-    _desc.resourceOptions = _mtl_resource_options(desc->resource_usage);
-    _desc.usage = 0;
-    if (desc->usage == TEXTURE_USAGE_DEFAULT || (desc->usage & TEXTURE_USAGE_READ)) _desc.usage |= MTLTextureUsageShaderRead;
-    if (desc->usage & TEXTURE_USAGE_WRITE) _desc.usage |= MTLTextureUsageShaderWrite;
-    if (desc->usage & TEXTURE_USAGE_RENDER_TARGET) _desc.usage |= MTLTextureUsageRenderTarget;
-
-    id<MTLTexture> texture = [_state.device.device newTextureWithDescriptor: _desc];
-    gpu_texture_mtl _texture = (gpu_texture_mtl){
-        .texture = texture,
-        .width = _desc.width,
-        .height = _desc.height,
-        .depth = _desc.depth,
-        .format = desc->format,
-        .type = desc->type,
-        .resource_options = _desc.resourceOptions,
-    };
-
-    _state.textures[_state.texture_count] = _texture;
-    gpu_texture result = { .id = _state.texture_count++ };
-
-    if (desc->data.len > 0) {
-        gpu_update_texture(result, desc->data);
-    }
-
-    return result;
-}
-
-void gpu_update_texture(gpu_texture texture, ns_data data) {
-    gpu_texture_mtl _texture = _state.textures[texture.id];
-    int width = (int)_texture.width;
-    int height = (int)_texture.height;
-    gpu_pixel_format format = _texture.format;
-
-    int bytes_per_row = 0;
-    int bytes_per_slice = 0;
-    if (!_mtl_pixel_format_is_pvrtc(format)) {
-        bytes_per_row = gpu_pixel_format_row_pitch(format, width, 1);
-        bytes_per_slice = gpu_pixel_format_surface_pitch(format, width, height, 1);
-    }
-
-    MTLRegion region;
-    int bytes_per_image;
-    if (_texture.type == TEXTURE_3D) {
-        region = MTLRegionMake3D(0, 0, 0, width, height, _texture.depth);
-        bytes_per_image = bytes_per_slice;
-    } else {
-        region = MTLRegionMake2D(0, 0, width, height);
-        bytes_per_image = 0;
-    }
-
-    if (_texture.resource_options & MTLResourceStorageModePrivate) {
-        id<MTLBuffer> staging_buffer = [_state.device.device newBufferWithLength: data.len options: MTLResourceStorageModeShared];
-        memcpy([staging_buffer contents], data.data, data.len);
-        id<MTLCommandBuffer> cmd_buffer = [_state.cmd_queue commandBuffer];
-        id<MTLBlitCommandEncoder> blit_encoder = [cmd_buffer blitCommandEncoder];
-        [blit_encoder copyFromBuffer: staging_buffer
-            sourceOffset: 0
-            sourceBytesPerRow: bytes_per_row
-            sourceBytesPerImage: bytes_per_image
-            sourceSize: region.size
-            toTexture: _texture.texture
-            destinationSlice: 0
-            destinationLevel: 0
-            destinationOrigin: MTLOriginMake(0, 0, 0)];
-        [blit_encoder endEncoding];
-        [cmd_buffer commit];
-        [cmd_buffer waitUntilCompleted];
-    } else {
-        [_texture.texture replaceRegion: MTLRegionMake2D(0, 0, _texture.width, _texture.height)
-            mipmapLevel: 0
-            withBytes: data.data
-            bytesPerRow: (NSUInteger)bytes_per_row];
-    }
-}
-
-ns_bool gpu_read_texture_pixel_async(u32 texture_id, i32 x, i32 y, u32 request_id, u32 *result) {
-    if (result) {
-        result[0] = 0;
-        result[1] = 0;
-        result[2] = 0;
-    }
-
-    i32 completed_index = -1;
-    for (i32 i = 0; i < 3; ++i) {
-        gpu_pixel_readback_mtl *slot = &_state.pixel_readbacks[i];
-        if (slot->pending && slot->complete &&
-            (completed_index < 0 || slot->request_id < _state.pixel_readbacks[completed_index].request_id)) {
-            completed_index = i;
-        }
-    }
-
-    ns_bool has_result = false;
-    if (completed_index >= 0) {
-        gpu_pixel_readback_mtl *slot = &_state.pixel_readbacks[completed_index];
-        if (result && slot->buffer && [slot->buffer contents]) {
-            memcpy(&result[0], [slot->buffer contents], sizeof(u32));
-            result[1] = slot->request_id;
-            has_result = true;
-        }
-        slot->pending = false;
-        slot->complete = false;
-    }
-
-    if (!texture_id || texture_id >= _state.texture_count || !_state.cmd_buffer || _state.cmd_encoder ||
-        x < 0 || y < 0) {
-        return has_result;
-    }
-    gpu_texture_mtl *texture = &_state.textures[texture_id];
-    if (!texture->texture || texture->format != PIXELFORMAT_RGBA8 ||
-        x >= (i32)texture->width || y >= (i32)texture->height) {
-        return has_result;
-    }
-
-    i32 free_index = -1;
-    for (i32 i = 0; i < 3; ++i) {
-        if (!_state.pixel_readbacks[i].pending) {
-            free_index = i;
-            break;
-        }
-    }
-    if (free_index < 0) return has_result;
-
-    gpu_pixel_readback_mtl *slot = &_state.pixel_readbacks[free_index];
-    if (!slot->buffer) {
-        slot->buffer = [_state.device.device newBufferWithLength:256 options:MTLResourceStorageModeShared];
-        if (!slot->buffer) return has_result;
-    }
-    slot->pending = true;
-    slot->complete = false;
-    slot->request_id = request_id;
-    memset([slot->buffer contents], 0, sizeof(u32));
-
-    id<MTLBlitCommandEncoder> encoder = [_state.cmd_buffer blitCommandEncoder];
-    [encoder copyFromTexture:texture->texture
-                 sourceSlice:0
-                 sourceLevel:0
-                sourceOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0)
-                  sourceSize:MTLSizeMake(1, 1, 1)
-                    toBuffer:slot->buffer
-           destinationOffset:0
-      destinationBytesPerRow:256
-    destinationBytesPerImage:256];
-    [encoder endEncoding];
-    [_state.cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> command_buffer) {
-        ns_unused(command_buffer);
-        slot->complete = true;
-    }];
-    if (result) result[2] = 1;
-    return has_result;
-}
-
-gpu_buffer gpu_create_buffer_desc(gpu_buffer_desc *desc) {
-    assert(desc->size > 0);
-
-    MTLResourceOptions options = _mtl_buffer_resource_options(desc->usage);
-    if (desc->type == BUFFER_UNIFORM || desc->type == BUFFER_STORAGE) {
-        options = MTLResourceStorageModeShared;
-        if (desc->type == BUFFER_UNIFORM) options |= MTLResourceCPUCacheModeWriteCombined;
-    }
-
-    id<MTLBuffer> buffer = [_state.device.device newBufferWithLength: desc->size options: options];
-    gpu_buffer_mtl _buffer = (gpu_buffer_mtl){ .buffer = buffer, .options = options };
-    _state.buffers[_state.buffer_count] = _buffer;
-    return (gpu_buffer){ .id = _state.buffer_count++ };
-}
-
-void gpu_update_buffer_desc(gpu_buffer buffer, ns_data data) {
-    gpu_buffer_mtl _buffer = _state.buffers[buffer.id];
-    void *contents = [_buffer.buffer contents];
-    if (contents != NULL) {
-        memcpy(contents, data.data, data.len);
-    }
-}
-
-bool ustring_match(ns_str a, NSString *b) {
-    NSUInteger len = [b lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
-    if ((NSUInteger)a.len != len) return false;
-    return strncmp(a.data, [b UTF8String], a.len) == 0;
-}
-
-i32 get_parameter_index(ns_str a, MTLRenderPipelineReflection *reflection) {
-    if (@available(macOS 13.0, iOS 16.0, tvOS 16.0, visionOS 1.0, *)) {
-        for (u32 i = 0; i < reflection.vertexBindings.count; ++i) {
-            id<MTLBinding> binding = reflection.vertexBindings[i];
-            if (ustring_match(a, binding.name)) {
-                return (i32)binding.index + 1;
-            }
-        }
-        for (u32 i = 0; i < reflection.fragmentBindings.count; ++i) {
-            
-            id<MTLBinding> binding = reflection.fragmentBindings[i];
-            if (ustring_match(a, binding.name)) {
-                return - ((i32)binding.index + 1);
-            }
-        }
-    }
-    return 0;
-}
-
-gpu_binding gpu_create_binding(gpu_binding_desc *desc) {
-    gpu_binding_mtl _binding = {0};
-    ns_bool vertex_texture_slots[GPU_SHADER_TEXTURE_COUNT] = {0};
-    ns_bool fragment_texture_slots[GPU_SHADER_TEXTURE_COUNT] = {0};
-    gpu_pipeline_mtl pipeline = _state.pipelines[desc->pipeline.id];
-
-    MTLRenderPipelineReflection *reflection = pipeline.reflection;
-    for (i32 i = 0; i < GPU_SHADER_BUFFER_COUNT; ++i) {
-        const gpu_binding_buffer_desc *buffer_state = &desc->buffers[i];
-        if (buffer_state->buffer.id == 0) break;
-        i32 index = get_parameter_index(buffer_state->name, reflection);
-        if (index == 0) continue;
-        gpu_binding_buffer_desc_mtl _desc = (gpu_binding_buffer_desc_mtl){.buffer = buffer_state->buffer, .offset = buffer_state->offset };
-        if (index > 0) {
-            _desc.index = (u32)(index - 1);
-            _binding.vertex_buffers[_binding.vertex_buffer_count++] = _desc;
-        } else {
-            _desc.index = (u32)(-index - 1);
-            _binding.fragment_buffers[_binding.fragment_buffer_count++] = _desc;
-        }
-    }
-
-    for (i32 i = 0; i < GPU_SHADER_TEXTURE_COUNT; ++i) {
-        const gpu_binding_texture_desc *texture_state = &desc->textures[i];
-        if (texture_state->texture.id == 0) break;
-        i32 index = get_parameter_index(texture_state->name, reflection);
-        if (index == 0) {
-            if (texture_state->slot_explicit) return (gpu_binding){0};
-            continue;
-        }
-        const u32 reflected_slot = index > 0 ? (u32)(index - 1) : (u32)(-index - 1);
-        if (texture_state->slot_explicit) {
-            if (reflected_slot != (u32)texture_state->slot) return (gpu_binding){0};
-            ns_bool *used_slots = index > 0 ? vertex_texture_slots : fragment_texture_slots;
-            if (used_slots[reflected_slot]) return (gpu_binding){0};
-            used_slots[reflected_slot] = true;
-        }
-        gpu_binding_texture_desc_mtl _desc = (gpu_binding_texture_desc_mtl){ .texture = texture_state->texture };
-        if (index > 0) {
-            _desc.index = texture_state->slot_explicit ? (u32)texture_state->slot : (u32)(index - 1);
-            _binding.vertex_textures[_binding.vertex_texture_count++] = _desc;
-        } else {
-            _desc.index = texture_state->slot_explicit ? (u32)texture_state->slot : (u32)(-index - 1);
-            _binding.fragment_textures[_binding.fragment_texture_count++] = _desc;
-        }
-    }
-
-    _state.bindings[_state.binding_count] = _binding;
-    return (gpu_binding){ .id = _state.binding_count++ };
-}
-
-gpu_mesh gpu_create_mesh(gpu_mesh_desc *desc) {
-    gpu_mesh_mtl _mesh = {0};
-    
-    for (int i = 0; i < GPU_VERTEX_BUFFER_COUNT; ++i) {
-        gpu_buffer buffer = desc->buffers[i];
-        if (buffer.id == 0) break;
-        _mesh.buffers[i] = buffer;
-        _mesh.buffer_offsets[i] = desc->buffer_offsets[i];
-    }
-
-    if (desc->index_buffer.id != 0) {
-        _mesh.index_buffer = desc->index_buffer;
-        _mesh.index_buffer_offset = desc->index_buffer_offset;
-    }
-    
-    _state.meshes[_state.mesh_count] = _mesh;
-    return (gpu_mesh){ .id = _state.mesh_count++ };
-}
-
-void gpu_destroy_texture(gpu_texture texture) {
-    if (texture.id == 0 || texture.id >= GPU_RESOURCE_POOL_SIZE) return;
-    gpu_texture_mtl *t = &_state.textures[texture.id];
-#ifndef ENABLE_ARC
-    if (t->texture) [t->texture release];
-#endif
-    memset(t, 0, sizeof(*t));
-}
-
-void gpu_destroy_sampler(gpu_sampler sampler) {
-    if (sampler.id == 0 || sampler.id >= GPU_RESOURCE_POOL_SIZE) return;
-    gpu_sampler_mtl *s = &_state.samplers[sampler.id];
-#ifndef ENABLE_ARC
-    if (s->sampler) [s->sampler release];
-#endif
-    memset(s, 0, sizeof(*s));
-}
-
-void gpu_destroy_buffer(gpu_buffer buffer) {
-    if (buffer.id == 0 || buffer.id >= GPU_RESOURCE_POOL_SIZE) return;
-    gpu_buffer_mtl *b = &_state.buffers[buffer.id];
-#ifndef ENABLE_ARC
-    if (b->buffer) [b->buffer release];
-#endif
-    memset(b, 0, sizeof(*b));
-}
-
-void gpu_destroy_shader(gpu_shader shader) {
-    if (shader.id == 0 || shader.id >= GPU_RESOURCE_POOL_SIZE) return;
-    gpu_shader_mtl *s = &_state.shaders[shader.id];
-#ifndef ENABLE_ARC
-    if (s->vertex_func) [s->vertex_func release];
-    if (s->fragment_func) [s->fragment_func release];
-    if (s->vertex_lib) [s->vertex_lib release];
-    if (s->fragment_lib) [s->fragment_lib release];
-#endif
-    memset(s, 0, sizeof(*s));
-}
-
-void gpu_destroy_pipeline(gpu_pipeline pipeline) {
-    if (pipeline.id == 0 || pipeline.id >= GPU_RESOURCE_POOL_SIZE) return;
-    gpu_pipeline_mtl *p = &_state.pipelines[pipeline.id];
-#ifndef ENABLE_ARC
-    if (p->pso) [p->pso release];
-    if (p->dso) [p->dso release];
-    if (p->reflection) [p->reflection release];
-#endif
-    memset(p, 0, sizeof(*p));
-}
-
-void gpu_destroy_binding(gpu_binding binding) {
-    if (binding.id == 0 || binding.id >= GPU_RESOURCE_POOL_SIZE) return;
-    memset(&_state.bindings[binding.id], 0, sizeof(gpu_binding_mtl));
-}
-
-void gpu_destroy_mesh(gpu_mesh mesh) {
-    if (mesh.id == 0 || mesh.id >= GPU_RESOURCE_POOL_SIZE) return;
-    memset(&_state.meshes[mesh.id], 0, sizeof(gpu_mesh_mtl));
-}
-
-void gpu_destroy_render_pass(gpu_render_pass pass) {
-    if (pass.id == 0 || pass.id >= GPU_RESOURCE_POOL_SIZE) return;
-    gpu_render_pass_mtl *p = &_state.render_passes[pass.id];
-#ifndef ENABLE_ARC
-    if (p->desc) [p->desc release];
-#endif
-    memset(p, 0, sizeof(*p));
-}
-
-gpu_render_pass gpu_create_render_pass(gpu_render_pass_desc *desc) {
-    gpu_render_pass_mtl _pass;
-    if (desc->screen) {
-        MTLRenderPassDescriptor *pass_desc = [MTLRenderPassDescriptor new];
-        pass_desc.colorAttachments[0].texture = _state.cur_drawable.texture;
-        pass_desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-        pass_desc.colorAttachments[0].loadAction = _mtl_load_action(desc->colors[0].load_action);
-        gpu_color c = desc->colors[0].clear_value;
-        pass_desc.colorAttachments[0].clearColor = MTLClearColorMake(c.r, c.g, c.b, c.a);
-    
-        if (_state.swapchain.depth_stencil_texture) {
-            pass_desc.depthAttachment.texture = _state.swapchain.depth_stencil_texture;
-            pass_desc.depthAttachment.storeAction = MTLStoreActionStore;
-            pass_desc.depthAttachment.loadAction = _mtl_load_action(desc->depth.load_action);
-            pass_desc.depthAttachment.clearDepth = desc->depth.clear_value;
-            if (_mtl_stencil_enabled_format(_state.swapchain.depth_stencil_format)) {
-                pass_desc.stencilAttachment.texture = _state.swapchain.depth_stencil_texture;
-                pass_desc.stencilAttachment.storeAction = MTLStoreActionStore;
-                pass_desc.stencilAttachment.loadAction = _mtl_load_action(desc->stencil.load_action);
-                pass_desc.stencilAttachment.clearStencil = desc->stencil.clear_value;
-            }
-        }
-        _pass.screen = true;
-        _pass.desc = pass_desc;
-    } else {
-        MTLRenderPassDescriptor *pass_desc = [MTLRenderPassDescriptor new];
-        for (int i = 0; i < GPU_SHADER_TEXTURE_COUNT; ++i) {
-            const gpu_render_pass_color_attachment *color = &desc->colors[i];
-            if (color->desc.texture.id == 0) break;
-            pass_desc.colorAttachments[i].texture = _state.textures[color->desc.texture.id].texture;
-            if (color->resolve_desc.texture.id != 0) {
-                pass_desc.colorAttachments[i].resolveTexture = _state.textures[color->resolve_desc.texture.id].texture;
-                pass_desc.colorAttachments[i].storeAction = MTLStoreActionMultisampleResolve;
-            } else {
-                pass_desc.colorAttachments[i].storeAction = MTLStoreActionStore;
-            }
-            pass_desc.colorAttachments[i].loadAction = _mtl_load_action(color->load_action);
-            gpu_color c = color->clear_value;
-            pass_desc.colorAttachments[i].clearColor = MTLClearColorMake(c.r, c.g, c.b, c.a);
-        }
-        if (desc->depth.desc.texture.id != 0) {
-            const gpu_texture_mtl depth_stencil_texture = _state.textures[desc->depth.desc.texture.id];
-            pass_desc.depthAttachment.texture = depth_stencil_texture.texture;
-            pass_desc.depthAttachment.storeAction = MTLStoreActionStore;
-            pass_desc.depthAttachment.loadAction = _mtl_load_action(desc->depth.load_action);
-            pass_desc.depthAttachment.clearDepth = desc->depth.clear_value;
-            if (_mtl_stencil_enabled_format(depth_stencil_texture.format)) {
-                pass_desc.stencilAttachment.texture = depth_stencil_texture.texture;
-                pass_desc.stencilAttachment.storeAction = MTLStoreActionStore;
-                pass_desc.stencilAttachment.loadAction = _mtl_load_action(desc->stencil.load_action);
-                pass_desc.stencilAttachment.clearStencil = desc->stencil.clear_value;
-            }
-        }
-        _pass.screen = false;
-        _pass.desc = pass_desc;
-    }
-
-    _state.render_passes[_state.render_pass_count] = _pass;
-    return (gpu_render_pass){ .id = _state.render_pass_count++ };
 }
 
 void gpu_mtl_begin_frame(MTKView *view) {
@@ -1092,39 +481,6 @@ void gpu_mtl_begin_frame(MTKView *view) {
     [_state.cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> _) { dispatch_semaphore_signal(_state.semaphore); }];
     _state.cur_drawable = [view currentDrawable];
     _state.screen_pass_count = 0;
-}
-
-void gpu_begin_render_pass(gpu_render_pass pass) {
-    if (_state.cur_drawable == nil && _state.cmd_buffer == nil && _state.view != nil) {
-        gpu_mtl_begin_frame(_state.view);
-    }
-
-    assert(_state.cmd_encoder == nil);
-    assert(_state.cur_drawable != nil);
-
-    gpu_render_pass_mtl _pass = _state.render_passes[pass.id];
-    if (_pass.screen) {
-        if (_pass.desc == nil) {
-            _pass.desc = [MTLRenderPassDescriptor new];
-            _pass.screen = true;
-        }
-        _pass.desc.colorAttachments[0].texture = _state.cur_drawable.texture;
-        _pass.desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-        _pass.desc.colorAttachments[0].loadAction = _state.screen_pass_count == 0 ? MTLLoadActionClear : MTLLoadActionLoad;
-        _pass.desc.depthAttachment.texture = _state.swapchain.depth_stencil_texture;
-        _pass.desc.depthAttachment.storeAction = MTLStoreActionDontCare;
-        _pass.desc.depthAttachment.loadAction = MTLLoadActionClear;
-        _pass.desc.depthAttachment.clearDepth = 1.0;
-        _state.screen_pass_count += 1;
-    }
-    _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor: _pass.desc];
-}
-
-void gpu_end_pass() {
-    if (nil != _state.cmd_encoder) {
-        [_state.cmd_encoder endEncoding];
-        _state.cmd_encoder = nil;
-    }
 }
 
 void gpu_commit() {
@@ -1176,309 +532,6 @@ id<MTLLibrary> _mtl_library_from_code(ns_str src) {
     return lib;
 }
 
-static ns_bool gpu_dispatch_compute_source_with_texture(const char *source, const char *entry, u32 texture_id, i32 texture_slot,
-                                                        i32 threads_x, i32 threads_y, i32 threads_z) {
-    if (!_state.valid || _state.device.device == nil || _state.cmd_queue == nil || !source || !entry ||
-        threads_x <= 0 || threads_y <= 0 || threads_z <= 0) {
-        return false;
-    }
-    if (texture_id && (texture_id >= _state.texture_count || texture_slot < 0 || texture_slot >= GPU_SHADER_TEXTURE_COUNT)) return false;
-    id<MTLTexture> output_texture = texture_id ? _state.textures[texture_id].texture : nil;
-    if (texture_id && output_texture == nil) return false;
-
-    id<MTLLibrary> library = _mtl_library_from_code(ns_str_cstr((char *)source));
-    if (library == nil) return false;
-    NSString *entry_name = [NSString stringWithUTF8String: entry];
-    id<MTLFunction> function = [library newFunctionWithName: entry_name];
-    if (function == nil) {
-#ifndef ENABLE_ARC
-        [library release];
-#endif
-        return false;
-    }
-
-    NSError *error = nil;
-    id<MTLComputePipelineState> pipeline = [_state.device.device newComputePipelineStateWithFunction: function error: &error];
-    if (pipeline == nil) {
-        NSLog(@"Failed to create compute pipeline: %@", error);
-#ifndef ENABLE_ARC
-        [function release];
-        [library release];
-#endif
-        return false;
-    }
-
-    id<MTLCommandBuffer> command_buffer = [_state.cmd_queue commandBuffer];
-    id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
-    [encoder setComputePipelineState: pipeline];
-    if (output_texture) [encoder setTexture: output_texture atIndex: (NSUInteger)texture_slot];
-    const NSUInteger group_width = MIN((NSUInteger)8, (NSUInteger)threads_x);
-    const NSUInteger group_height = MIN((NSUInteger)8, (NSUInteger)threads_y);
-    [encoder dispatchThreads: MTLSizeMake((NSUInteger)threads_x, (NSUInteger)threads_y, (NSUInteger)threads_z)
-       threadsPerThreadgroup: MTLSizeMake(group_width, group_height, 1)];
-    [encoder endEncoding];
-    [command_buffer commit];
-    [command_buffer waitUntilCompleted];
-    ns_bool ok = command_buffer.status == MTLCommandBufferStatusCompleted;
-
-#ifndef ENABLE_ARC
-    [pipeline release];
-    [function release];
-    [library release];
-#endif
-    return ok;
-}
-
-ns_bool gpu_dispatch_compute_source(const char *source, const char *entry, i32 threads_x, i32 threads_y, i32 threads_z) {
-    return gpu_dispatch_compute_source_with_texture(source, entry, 0, 0, threads_x, threads_y, threads_z);
-}
-
-ns_bool gpu_dispatch_compute_texture_source(const char *source, const char *entry, u32 texture_id,
-                                            i32 threads_x, i32 threads_y, i32 threads_z) {
-    if (!texture_id) return false;
-    return gpu_dispatch_compute_source_with_texture(source, entry, texture_id, 1, threads_x, threads_y, threads_z);
-}
-
-ns_bool gpu_dispatch_compute_texture_source_slot(const char *source, const char *entry, u32 texture_id, i32 texture_slot,
-                                                 i32 threads_x, i32 threads_y, i32 threads_z) {
-    if (!texture_id || texture_slot < 0 || texture_slot >= GPU_SHADER_TEXTURE_COUNT) return false;
-    return gpu_dispatch_compute_source_with_texture(source, entry, texture_id, texture_slot, threads_x, threads_y, threads_z);
-}
-
-ns_bool gpu_dispatch_compute_buffer_source_slot(const char *source, const char *entry, u32 buffer_id, i32 buffer_slot,
-                                                i32 threads_x, i32 threads_y, i32 threads_z) {
-    if (!_state.valid || _state.device.device == nil || _state.cmd_queue == nil || !source || !entry ||
-        !buffer_id || buffer_id >= _state.buffer_count || buffer_slot < 0 || buffer_slot >= GPU_SHADER_BUFFER_COUNT ||
-        threads_x <= 0 || threads_y <= 0 || threads_z <= 0) return false;
-    id<MTLBuffer> storage = _state.buffers[buffer_id].buffer;
-    if (storage == nil) return false;
-    id<MTLLibrary> library = _mtl_library_from_code(ns_str_cstr((char *)source));
-    if (library == nil) return false;
-    id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:entry]];
-    if (function == nil) {
-#ifndef ENABLE_ARC
-        [library release];
-#endif
-        return false;
-    }
-    NSError *error = nil;
-    id<MTLComputePipelineState> pipeline = [_state.device.device newComputePipelineStateWithFunction:function error:&error];
-    if (pipeline == nil) {
-        NSLog(@"Failed to create storage-buffer compute pipeline: %@", error);
-#ifndef ENABLE_ARC
-        [function release];
-        [library release];
-#endif
-        return false;
-    }
-    id<MTLCommandBuffer> command_buffer = [_state.cmd_queue commandBuffer];
-    id<MTLComputeCommandEncoder> encoder = [command_buffer computeCommandEncoder];
-    [encoder setComputePipelineState:pipeline];
-    [encoder setBuffer:storage offset:0 atIndex:(NSUInteger)buffer_slot];
-    const NSUInteger group_width = MIN((NSUInteger)8, (NSUInteger)threads_x);
-    const NSUInteger group_height = MIN((NSUInteger)8, (NSUInteger)threads_y);
-    [encoder dispatchThreads:MTLSizeMake((NSUInteger)threads_x, (NSUInteger)threads_y, (NSUInteger)threads_z)
-       threadsPerThreadgroup:MTLSizeMake(group_width, group_height, 1)];
-    [encoder endEncoding];
-    [command_buffer commit];
-    [command_buffer waitUntilCompleted];
-    ns_bool ok = command_buffer.status == MTLCommandBufferStatusCompleted;
-#ifndef ENABLE_ARC
-    [pipeline release];
-    [function release];
-    [library release];
-#endif
-    return ok;
-}
-
-gpu_shader gpu_create_shader(gpu_shader_desc *desc) {
-    id<MTLLibrary> vertex_lib = nil;
-    id<MTLLibrary> fragment_lib = nil;
-    id<MTLFunction> vertex_func = nil;
-    id<MTLFunction> fragment_func = nil;
-
-    if (desc->vertex.bytecode.len > 0 && desc->fragment.bytecode.len > 0) {
-        vertex_lib = _mtl_library_from_bytecode(desc->vertex.bytecode);
-        fragment_lib = _mtl_library_from_bytecode(desc->fragment.bytecode);
-        if (nil == vertex_lib || nil == fragment_lib) {
-#ifndef ENABLE_ARC
-            if (vertex_lib) [vertex_lib release];
-            if (fragment_lib) [fragment_lib release];
-#endif
-            return (gpu_shader){ .id = 0 };
-        }
-        vertex_func = [vertex_lib newFunctionWithName: [NSString stringWithUTF8String: desc->vertex.entry.data]];
-        fragment_func = [fragment_lib newFunctionWithName: [NSString stringWithUTF8String:desc->fragment.entry.data]];
-    } else if (desc->vertex.source.len > 0 && desc->fragment.source.len > 0) {
-        vertex_lib = _mtl_library_from_code(desc->vertex.source);
-        fragment_lib = _mtl_library_from_code(desc->fragment.source);
-        if (nil == vertex_lib || nil == fragment_lib) {
-#ifndef ENABLE_ARC
-            if (vertex_lib) [vertex_lib release];
-            if (fragment_lib) [fragment_lib release];
-#endif
-            return (gpu_shader){ .id = 0 };
-        }
-        vertex_func = [vertex_lib newFunctionWithName: [NSString stringWithUTF8String: desc->vertex.entry.data]];
-        fragment_func = [fragment_lib newFunctionWithName: [NSString stringWithUTF8String:desc->fragment.entry.data]];
-    } else {
-        return (gpu_shader){ .id = 0 };
-    }
-
-    if (nil == vertex_func) {
-        NSLog(@"Failed to create vertex function");
-#ifndef ENABLE_ARC
-        if (vertex_func) [vertex_func release];
-#endif
-        return (gpu_shader){ .id = 0 };
-    }
-
-    if (nil == fragment_func) {
-#ifndef ENABLE_ARC
-        if (fragment_func) [fragment_func release];
-#endif
-        return (gpu_shader){ .id = 0 };
-    }
-
-    gpu_shader_mtl _shader = (gpu_shader_mtl){
-        .vertex_lib = vertex_lib,
-        .fragment_lib = fragment_lib,
-        .vertex_func = vertex_func,
-        .fragment_func = fragment_func,
-    };
-    
-    _state.shaders[_state.shader_count] = _shader;
-    return (gpu_shader){.id = _state.shader_count++};
-}
-
-gpu_pipeline gpu_create_pipeline(gpu_pipeline_desc *desc) {
-    MTLVertexDescriptor *vertex_desc = [MTLVertexDescriptor vertexDescriptor];
-    gpu_pipeline_mtl _pipeline = {0};
-    bool vertex_buffer_enabled[GPU_VERTEX_BUFFER_COUNT];
-    memset(vertex_buffer_enabled, 0, sizeof(vertex_buffer_enabled));
-    for (NSUInteger attr_index = 0; attr_index < GPU_ATTRIBUTE_COUNT; ++attr_index) {
-        const gpu_vertex_attribute_state *attr_state = &desc->layout.attributes[attr_index];
-        if (attr_state->format == ATTRIBUTE_FORMAT_INVALID) {
-            break;
-        }
-        assert(attr_state->buffer_index < GPU_VERTEX_BUFFER_COUNT);
-        vertex_desc.attributes[attr_index].format = _mtl_vertex_format(attr_state->format, attr_state->size);
-        vertex_desc.attributes[attr_index].offset = attr_state->offset;
-        vertex_desc.attributes[attr_index].bufferIndex = attr_state->buffer_index;
-        vertex_buffer_enabled[attr_state->buffer_index] = true;
-    }
-
-    for (NSUInteger buffer_index = 0; buffer_index < GPU_VERTEX_BUFFER_COUNT; ++buffer_index) {
-        if (!vertex_buffer_enabled[buffer_index]) break;
-        const gpu_vertex_buffer_layout_state *buffer_state = &desc->layout.buffers[buffer_index];
-        assert(buffer_state->stride > 0);
-        vertex_desc.layouts[buffer_index].stride = buffer_state->stride;
-        vertex_desc.layouts[buffer_index].stepRate = buffer_state->step_rate;
-        vertex_desc.layouts[buffer_index].stepFunction = _mtl_vertex_step_function(buffer_state->step_func);
-        if (buffer_state->step_func == VERTEX_STEP_PER_INSTANCE) {
-            _pipeline.instanced = true;
-        }
-    }
-
-    gpu_shader_mtl shader = _state.shaders[desc->shader.id];
-    MTLRenderPipelineDescriptor *pip_desc = [MTLRenderPipelineDescriptor new];
-    pip_desc.vertexDescriptor = vertex_desc;
-    pip_desc.vertexFunction = shader.vertex_func;
-    // A depth-only pipeline has no color attachment. Supplying a fragment
-    // function that writes color makes Metal reject the descriptor because
-    // there is no valid color pixel format for its output.
-    pip_desc.fragmentFunction = desc->color_count > 0 ? shader.fragment_func : nil;
-    pip_desc.rasterSampleCount = desc->sample_count > 1 ? desc->sample_count : 1;
-    pip_desc.alphaToCoverageEnabled = desc->alpha_to_coverage;
-    pip_desc.alphaToOneEnabled = NO;
-    pip_desc.rasterizationEnabled = YES;
-    pip_desc.depthAttachmentPixelFormat = _mtl_pixel_format(desc->depth.format);
-    if (desc->depth.format == PIXELFORMAT_DEPTH_STENCIL) {
-        pip_desc.stencilAttachmentPixelFormat = _mtl_pixel_format(desc->depth.format);
-    }
-
-    for (NSUInteger i = 0; i < (NSUInteger)desc->color_count; ++i) {
-        const gpu_color_target_state *color_state = &desc->colors[i];
-        pip_desc.colorAttachments[i].pixelFormat = _mtl_pixel_format(color_state->format);
-        pip_desc.colorAttachments[i].blendingEnabled = color_state->blend.enabled;
-        pip_desc.colorAttachments[i].alphaBlendOperation = _mtl_blend_operation(color_state->blend.op_alpha);
-        pip_desc.colorAttachments[i].rgbBlendOperation = _mtl_blend_operation(color_state->blend.op);
-        pip_desc.colorAttachments[i].sourceRGBBlendFactor = _mtl_blend_factor(color_state->blend.src_factor);
-        pip_desc.colorAttachments[i].destinationRGBBlendFactor = _mtl_blend_factor(color_state->blend.dst_factor);
-        pip_desc.colorAttachments[i].sourceAlphaBlendFactor = _mtl_blend_factor(color_state->blend.src_factor_alpha);
-        pip_desc.colorAttachments[i].destinationAlphaBlendFactor = _mtl_blend_factor(color_state->blend.dst_factor_alpha);
-    }
-
-    NSError *err = nil;
-    MTLRenderPipelineReflection *reflection = nil;
-    id<MTLRenderPipelineState> pso = [_state.device.device newRenderPipelineStateWithDescriptor: pip_desc options: MTLPipelineOptionBindingInfo reflection: &reflection error: &err];
-#ifndef ENABLE_ARC
-    [pip_desc release];
-#endif
-    if (nil == pso) {
-        NSLog(@"Error: %@", err);
-        NSLog(@"Source: %s", [err.localizedDescription UTF8String]);
-        return (gpu_pipeline){ .id = 0 };
-    }
-    _pipeline.pso = pso;
-    
-    if (desc->depth.format != PIXELFORMAT_NONE) {
-        MTLDepthStencilDescriptor *ds_desc = [MTLDepthStencilDescriptor new];
-        ds_desc.depthCompareFunction = _mtl_compare_function(desc->depth.compare_func);
-        ds_desc.depthWriteEnabled = desc->depth.write_enabled;
-        
-        if (desc->stencil.enabled) {
-            const gpu_stencil_state *stencil = &desc->stencil;
-            ds_desc.backFaceStencil = [MTLStencilDescriptor new];
-            ds_desc.backFaceStencil.stencilFailureOperation = _mtl_stencil_operation(stencil->back.fail_op);
-            ds_desc.backFaceStencil.depthFailureOperation = _mtl_stencil_operation(stencil->back.depth_fail_op);
-            ds_desc.backFaceStencil.depthStencilPassOperation = _mtl_stencil_operation(stencil->back.pass_op);
-            ds_desc.backFaceStencil.stencilCompareFunction = _mtl_compare_function(stencil->back.compare_func);
-            ds_desc.backFaceStencil.readMask = stencil->read_mask;
-            ds_desc.backFaceStencil.writeMask = stencil->write_mask;
-            ds_desc.frontFaceStencil = [MTLStencilDescriptor new];
-            ds_desc.frontFaceStencil.stencilFailureOperation = _mtl_stencil_operation(stencil->front.fail_op);
-            ds_desc.frontFaceStencil.depthFailureOperation = _mtl_stencil_operation(stencil->front.depth_fail_op);
-            ds_desc.frontFaceStencil.depthStencilPassOperation = _mtl_stencil_operation(stencil->front.pass_op);
-            ds_desc.frontFaceStencil.stencilCompareFunction = _mtl_compare_function(stencil->front.compare_func);
-            ds_desc.frontFaceStencil.readMask = stencil->read_mask;
-            ds_desc.frontFaceStencil.writeMask = stencil->write_mask;
-        }
-        id<MTLDepthStencilState> dso = [_state.device.device newDepthStencilStateWithDescriptor: ds_desc];
-#ifndef ENABLE_ARC
-        [ds_desc release];
-#endif
-        if (nil == dso) {
-#ifndef ENABLE_ARC
-            [pso release];
-#endif
-            return (gpu_pipeline){ .id = 0 };
-        }
-        _pipeline.dso = dso;
-    }
-
-    // The reflection out parameter is autoreleased even though the pipeline
-    // state itself follows the new-method ownership rule. Retain it while it
-    // is stored in the resource pool so gpu_destroy_pipeline() owns exactly
-    // the release it performs during renderer shutdown.
-#ifndef ENABLE_ARC
-    _pipeline.reflection = [reflection retain];
-#else
-    _pipeline.reflection = reflection;
-#endif
-
-    _pipeline.depth_stencil_format = _mtl_pixel_format(desc->depth.format);
-    _pipeline.cull_mode = _mtl_cull_mode(desc->cull_mode);
-    _pipeline.winding = _mtl_winding(desc->face_winding);
-    _pipeline.primitive_type = _mtl_primitive_type(desc->primitive_type);
-    _pipeline.index_type = _mtl_index_type(desc->index_type);
-    _pipeline.indexed = desc->index_type != INDEX_NONE;
-    _pipeline.stencil_ref = desc->stencil.ref;
-    
-    _state.pipelines[_state.pipeline_count] = _pipeline;
-    return (gpu_pipeline){ .id = _state.pipeline_count++ };
-}
-
 void gpu_set_viewport(int x, int y, int width, int height) {
     assert(nil != _state.cmd_encoder);
     MTLViewport viewport = {
@@ -1503,77 +556,516 @@ void gpu_set_scissor(int x, int y, int width, int height) {
     [_state.cmd_encoder setScissorRect: scissor];
 }
 
-void gpu_set_pipeline(gpu_pipeline pipeline) {
-    assert(nil != _state.cmd_encoder);
+// Nano Script GPU v2 backend.
 
-    gpu_pipeline_mtl _pipeline = _state.pipelines[pipeline.id];
-    _state.cur_pipeline = _pipeline;
+static ns_bool mtl_v2_mem_create(u32 slot, u64 size, u32 flags, u64 *base_va) {
+    ns_unused(flags);
+    if (slot >= GPU_RESOURCE_POOL_SIZE || size == 0 || size > (u64)NSUIntegerMax) return false;
+    id<MTLBuffer> buffer = [_state.device.device newBufferWithLength:(NSUInteger)size
+                                                             options:MTLResourceStorageModeShared];
+    if (!buffer) return false;
+    _state.v2_memory[slot] = buffer;
+    _state.v2_memory_size[slot] = size;
+    if (base_va) *base_va = 0;
+    return true;
+}
 
-    [_state.cmd_encoder setCullMode: _pipeline.cull_mode];
-    [_state.cmd_encoder setFrontFacingWinding: _pipeline.winding];
-    [_state.cmd_encoder setRenderPipelineState: _pipeline.pso];
-    if (_pipeline.depth_stencil_format != MTLPixelFormatInvalid) {
-        [_state.cmd_encoder setDepthStencilState: _pipeline.dso];
+static void mtl_v2_mem_destroy(u32 slot) {
+    if (slot >= GPU_RESOURCE_POOL_SIZE) return;
+#ifndef ENABLE_ARC
+    [_state.v2_memory[slot] release];
+#endif
+    _state.v2_memory[slot] = nil;
+    _state.v2_memory_size[slot] = 0;
+}
+
+static void mtl_v2_mem_write(u32 slot, u64 offset, const void *src, u64 size) {
+    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot] || !src ||
+        offset > _state.v2_memory_size[slot] || size > _state.v2_memory_size[slot] - offset) return;
+    memcpy((u8 *)[_state.v2_memory[slot] contents] + offset, src, (size_t)size);
+}
+
+static ns_bool mtl_v2_mem_read(u32 slot, u64 offset, void *dst, u64 size) {
+    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot] || !dst ||
+        offset > _state.v2_memory_size[slot] || size > _state.v2_memory_size[slot] - offset) return false;
+    memcpy(dst, (u8 *)[_state.v2_memory[slot] contents] + offset, (size_t)size);
+    return true;
+}
+
+static void *mtl_v2_mem_host_ptr(u32 slot) {
+    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot]) return NULL;
+    return [_state.v2_memory[slot] contents];
+}
+
+static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
+                                 i32 format, u32 usage, i32 mip_count, i32 kind) {
+    if (width <= 0 || height <= 0 || depth_or_layers <= 0 ||
+        _state.texture_count >= GPU_RESOURCE_POOL_SIZE) return 0;
+    MTLTextureDescriptor *desc = [MTLTextureDescriptor new];
+    desc.textureType = _mtl_texture_type((gpu_texture_type)kind);
+    desc.pixelFormat = _mtl_pixel_format((gpu_pixel_format)format);
+    desc.width = (NSUInteger)width;
+    desc.height = (NSUInteger)height;
+    desc.mipmapLevelCount = (NSUInteger)(mip_count > 0 ? mip_count : 1);
+    if (kind == TEXTURE_3D) desc.depth = (NSUInteger)depth_or_layers;
+    else if (kind == TEXTURE_ARRAY) desc.arrayLength = (NSUInteger)depth_or_layers;
+    else desc.arrayLength = 1;
+    desc.resourceOptions = MTLResourceStorageModeShared;
+    desc.usage = 0;
+    if (usage == TEXTURE_USAGE_DEFAULT || (usage & TEXTURE_USAGE_READ)) desc.usage |= MTLTextureUsageShaderRead;
+    if (usage & TEXTURE_USAGE_WRITE) desc.usage |= MTLTextureUsageShaderWrite;
+    if (usage & TEXTURE_USAGE_RENDER_TARGET) desc.usage |= MTLTextureUsageRenderTarget;
+    id<MTLTexture> texture = [_state.device.device newTextureWithDescriptor:desc];
+#ifndef ENABLE_ARC
+    [desc release];
+#endif
+    if (!texture) return 0;
+    u32 id = _state.texture_count++;
+    _state.textures[id] = (gpu_texture_mtl){
+        .texture = texture,
+        .width = (NSUInteger)width,
+        .height = (NSUInteger)height,
+        .depth = (NSUInteger)depth_or_layers,
+        .format = (gpu_pixel_format)format,
+        .type = (gpu_texture_type)kind,
+        .resource_options = MTLResourceStorageModeShared,
+    };
+    return id;
+}
+
+static void mtl_v2_texture_upload(u32 tex, i32 mip, i32 layer, const void *data, u64 size) {
+    if (!tex || tex >= _state.texture_count || !data || size == 0 || mip < 0 || layer < 0) return;
+    gpu_texture_mtl *texture = &_state.textures[tex];
+    NSUInteger width = MAX((NSUInteger)1, texture->width >> mip);
+    NSUInteger height = MAX((NSUInteger)1, texture->height >> mip);
+    NSUInteger depth = texture->type == TEXTURE_3D
+                           ? MAX((NSUInteger)1, texture->depth >> mip)
+                           : 1;
+    NSUInteger row = (NSUInteger)gpu_pixel_format_row_pitch(texture->format, (i32)width, 1);
+    NSUInteger image = (NSUInteger)gpu_pixel_format_surface_pitch(texture->format, (i32)width, (i32)height, 1);
+    MTLRegion region = texture->type == TEXTURE_3D
+                           ? MTLRegionMake3D(0, 0, 0, width, height, depth)
+                           : MTLRegionMake2D(0, 0, width, height);
+    [texture->texture replaceRegion:region
+                       mipmapLevel:(NSUInteger)mip
+                             slice:(NSUInteger)layer
+                         withBytes:data
+                       bytesPerRow:row
+                     bytesPerImage:image];
+}
+
+static void mtl_v2_texture_destroy(u32 tex) {
+    if (!tex || tex >= GPU_RESOURCE_POOL_SIZE) return;
+#ifndef ENABLE_ARC
+    [_state.textures[tex].texture release];
+#endif
+    memset(&_state.textures[tex], 0, sizeof(_state.textures[tex]));
+}
+
+static u32 mtl_v2_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,
+                                 i32 wrap_u, i32 wrap_v, i32 wrap_w,
+                                 i32 compare_func, i32 max_anisotropy) {
+    if (_state.sampler_count >= GPU_RESOURCE_POOL_SIZE) return 0;
+    MTLSamplerDescriptor *desc = [MTLSamplerDescriptor new];
+    desc.minFilter = min_filter == FILTER_NEAREST ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
+    desc.magFilter = mag_filter == FILTER_NEAREST ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
+    desc.mipFilter = mip_filter == FILTER_NEAREST ? MTLSamplerMipFilterNearest
+                                                  : (mip_filter == FILTER_LINEAR ? MTLSamplerMipFilterLinear : MTLSamplerMipFilterNotMipmapped);
+    desc.sAddressMode = wrap_u == WRAP_REPEAT ? MTLSamplerAddressModeRepeat
+                                              : (wrap_u == WRAP_MIRRORED_REPEAT ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeClampToEdge);
+    desc.tAddressMode = wrap_v == WRAP_REPEAT ? MTLSamplerAddressModeRepeat
+                                              : (wrap_v == WRAP_MIRRORED_REPEAT ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeClampToEdge);
+    desc.rAddressMode = wrap_w == WRAP_REPEAT ? MTLSamplerAddressModeRepeat
+                                              : (wrap_w == WRAP_MIRRORED_REPEAT ? MTLSamplerAddressModeMirrorRepeat : MTLSamplerAddressModeClampToEdge);
+    desc.compareFunction = _mtl_compare_function((gpu_compare_func)compare_func);
+    desc.maxAnisotropy = (NSUInteger)(max_anisotropy > 0 ? max_anisotropy : 1);
+    id<MTLSamplerState> sampler = [_state.device.device newSamplerStateWithDescriptor:desc];
+#ifndef ENABLE_ARC
+    [desc release];
+#endif
+    if (!sampler) return 0;
+    u32 id = _state.sampler_count++;
+    _state.samplers[id] = (gpu_sampler_mtl){
+        .sampler = sampler,
+        .min_filter = (gpu_filter)min_filter,
+        .mag_filter = (gpu_filter)mag_filter,
+        .mip_filter = (gpu_filter)mip_filter,
+        .wrap_u = (gpu_wrap)wrap_u,
+        .wrap_v = (gpu_wrap)wrap_v,
+        .wrap_w = (gpu_wrap)wrap_w,
+    };
+    return id;
+}
+
+static void mtl_v2_sampler_destroy(u32 smp) {
+    if (!smp || smp >= GPU_RESOURCE_POOL_SIZE) return;
+#ifndef ENABLE_ARC
+    [_state.samplers[smp].sampler release];
+#endif
+    memset(&_state.samplers[smp], 0, sizeof(_state.samplers[smp]));
+}
+
+static bool mtl_source_uses(const char *source, const char *symbol) {
+    return source && strstr(source, symbol) != NULL;
+}
+
+static u32 mtl_v2_shader_graphics_create(const char *vs_src, const char *fs_src,
+                                         const char *vs_entry, const char *fs_entry) {
+    if (!vs_src || !fs_src || !vs_entry || !fs_entry ||
+        _state.shader_count >= GPU_RESOURCE_POOL_SIZE) return 0;
+    id<MTLLibrary> vertex_lib = _mtl_library_from_code(ns_str_cstr(vs_src));
+    id<MTLLibrary> fragment_lib = _mtl_library_from_code(ns_str_cstr(fs_src));
+    id<MTLFunction> vertex_func = vertex_lib
+                                      ? [vertex_lib newFunctionWithName:[NSString stringWithUTF8String:vs_entry]]
+                                      : nil;
+    id<MTLFunction> fragment_func = fragment_lib
+                                        ? [fragment_lib newFunctionWithName:[NSString stringWithUTF8String:fs_entry]]
+                                        : nil;
+    if (!vertex_lib || !fragment_lib || !vertex_func || !fragment_func) {
+#ifndef ENABLE_ARC
+        [vertex_func release];
+        [fragment_func release];
+        [vertex_lib release];
+        [fragment_lib release];
+#endif
+        return 0;
+    }
+    u32 id = _state.shader_count++;
+    gpu_shader_mtl *record = &_state.shaders[id];
+    *record = (gpu_shader_mtl){
+        .vertex_lib = vertex_lib,
+        .fragment_lib = fragment_lib,
+        .vertex_func = vertex_func,
+        .fragment_func = fragment_func,
+    };
+    record->uses_root = mtl_source_uses(vs_src, "ns_root") || mtl_source_uses(fs_src, "ns_root");
+    record->uses_read_texture = mtl_source_uses(vs_src, "ns_read_texture") || mtl_source_uses(fs_src, "ns_read_texture");
+    record->uses_write_texture = mtl_source_uses(vs_src, "ns_write_texture") || mtl_source_uses(fs_src, "ns_write_texture");
+    record->uses_texture_map = mtl_source_uses(vs_src, "ns_texture_map") || mtl_source_uses(fs_src, "ns_texture_map");
+    record->uses_mask_map = mtl_source_uses(vs_src, "ns_mask_map") || mtl_source_uses(fs_src, "ns_mask_map");
+    record->uses_shadow_map = mtl_source_uses(vs_src, "ns_shadow_map") || mtl_source_uses(fs_src, "ns_shadow_map");
+    return id;
+}
+
+static u32 mtl_v2_shader_compute_create(const char *src, const char *entry) {
+    if (_state.shader_count >= GPU_RESOURCE_POOL_SIZE) return 0;
+    id<MTLLibrary> library = _mtl_library_from_code(ns_str_cstr(src));
+    if (!library) return 0;
+    id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:entry]];
+    NSError *error = nil;
+    id<MTLComputePipelineState> pipeline = function
+        ? [_state.device.device newComputePipelineStateWithFunction:function error:&error]
+        : nil;
+    if (!pipeline) {
+        NSLog(@"Failed to create v2 compute shader: %@", error);
+#ifndef ENABLE_ARC
+        [function release];
+        [library release];
+#endif
+        return 0;
+    }
+    u32 id = _state.shader_count++;
+    _state.shaders[id] = (gpu_shader_mtl){
+        .compute_lib = library,
+        .compute_func = function,
+        .compute_pso = pipeline,
+        .uses_root = mtl_source_uses(src, "ns_root"),
+        .uses_read_texture = mtl_source_uses(src, "ns_read_texture"),
+        .uses_write_texture = mtl_source_uses(src, "ns_write_texture"),
+    };
+    return id;
+}
+
+static void mtl_v2_shader_destroy(u32 shader) {
+    if (!shader || shader >= GPU_RESOURCE_POOL_SIZE) return;
+    gpu_shader_mtl *record = &_state.shaders[shader];
+#ifndef ENABLE_ARC
+    [record->vertex_func release];
+    [record->fragment_func release];
+    [record->vertex_lib release];
+    [record->fragment_lib release];
+    [record->compute_pso release];
+    [record->compute_func release];
+    [record->compute_lib release];
+    [record->v2_pso release];
+    [record->v2_dso release];
+#endif
+    memset(record, 0, sizeof(*record));
+}
+
+static void mtl_v2_ensure_frame(void) {
+    if (_state.cmd_buffer == nil && _state.view != nil) gpu_mtl_begin_frame(_state.view);
+}
+
+static void mtl_v2_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
+                              u32 depth, u32 load_flags, gpu_color clear, f32 depth_clear) {
+    mtl_v2_ensure_frame();
+    if (_state.cmd_buffer == nil || _state.cmd_encoder != nil) return;
+    u32 colors[4] = {color0, color1, color2, color3};
+    MTLRenderPassDescriptor *desc = [MTLRenderPassDescriptor renderPassDescriptor];
+    memset(_state.v2_pass_colors, 0, sizeof(_state.v2_pass_colors));
+    _state.v2_pass_depth = MTLPixelFormatInvalid;
+    for (u32 i = 0; i < 4; ++i) {
+        if (!colors[i] || colors[i] >= _state.texture_count) continue;
+        gpu_texture_mtl *texture = &_state.textures[colors[i]];
+        desc.colorAttachments[i].texture = texture->texture;
+        desc.colorAttachments[i].storeAction = MTLStoreActionStore;
+        desc.colorAttachments[i].loadAction = _mtl_load_action((gpu_load_action)((load_flags >> (i * 2)) & 3));
+        desc.colorAttachments[i].clearColor = MTLClearColorMake(clear.r, clear.g, clear.b, clear.a);
+        _state.v2_pass_colors[i] = _mtl_pixel_format(texture->format);
+    }
+    if (depth && depth < _state.texture_count) {
+        gpu_texture_mtl *texture = &_state.textures[depth];
+        desc.depthAttachment.texture = texture->texture;
+        desc.depthAttachment.storeAction = MTLStoreActionStore;
+        desc.depthAttachment.loadAction = _mtl_load_action((gpu_load_action)((load_flags >> 8) & 3));
+        desc.depthAttachment.clearDepth = depth_clear;
+        _state.v2_pass_depth = _mtl_pixel_format(texture->format);
+    }
+    _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor:desc];
+}
+
+static void mtl_v2_screen_pass_begin(gpu_color clear) {
+    mtl_v2_ensure_frame();
+    if (_state.cmd_buffer == nil || _state.cmd_encoder != nil || _state.cur_drawable == nil) return;
+    MTLRenderPassDescriptor *desc = [MTLRenderPassDescriptor renderPassDescriptor];
+    desc.colorAttachments[0].texture = _state.cur_drawable.texture;
+    desc.colorAttachments[0].storeAction = MTLStoreActionStore;
+    desc.colorAttachments[0].loadAction = _state.screen_pass_count++ == 0 ? MTLLoadActionClear : MTLLoadActionLoad;
+    desc.colorAttachments[0].clearColor = MTLClearColorMake(clear.r, clear.g, clear.b, clear.a);
+    memset(_state.v2_pass_colors, 0, sizeof(_state.v2_pass_colors));
+    _state.v2_pass_colors[0] = _state.cur_drawable.texture.pixelFormat;
+    _state.v2_pass_depth = MTLPixelFormatInvalid;
+    _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor:desc];
+}
+
+static void mtl_v2_pass_end(void) {
+    if (_state.cmd_encoder) {
+        [_state.cmd_encoder endEncoding];
+        _state.cmd_encoder = nil;
     }
 }
 
-void gpu_set_binding(gpu_binding binding) {
-    assert(nil != _state.cmd_encoder);
-    gpu_binding_mtl _binding = _state.bindings[binding.id];
-
-    for (u32 i = 0; i < _binding.vertex_buffer_count; ++i) {
-        const gpu_binding_buffer_desc_mtl desc = _binding.vertex_buffers[i];
-        gpu_buffer_mtl buffer = _state.buffers[desc.buffer.id];
-        [_state.cmd_encoder setVertexBuffer: buffer.buffer offset: desc.offset atIndex: desc.index ];
-    }
-
-    for (u32 i = 0; i < _binding.fragment_buffer_count; ++i) {
-        const gpu_binding_buffer_desc_mtl desc = _binding.fragment_buffers[i];
-        gpu_buffer_mtl buffer = _state.buffers[desc.buffer.id];
-        [_state.cmd_encoder setFragmentBuffer: buffer.buffer offset: desc.offset atIndex: desc.index];
-    }
-
-    for (u32 i = 0; i < _binding.vertex_texture_count; ++i) {
-        const gpu_binding_texture_desc_mtl desc = _binding.vertex_textures[i];
-        gpu_texture_mtl texture = _state.textures[desc.texture.id];
-        [_state.cmd_encoder setVertexTexture: texture.texture atIndex: desc.index];
-    }
-
-    for (u32 i = 0; i < _binding.fragment_texture_count; ++i) {
-        const gpu_binding_texture_desc_mtl desc = _binding.fragment_textures[i];
-        gpu_texture_mtl texture = _state.textures[desc.texture.id];
-        [_state.cmd_encoder setFragmentTexture: texture.texture atIndex: desc.index];
-    }
+static void mtl_v2_set_shader(u32 shader) {
+    _state.v2_shader = shader;
 }
 
-void gpu_set_mesh(gpu_mesh mesh) {
-    assert(nil != _state.cmd_encoder);
-
-    gpu_mesh_mtl _mesh = _state.meshes[mesh.id];
-    for (int i = 0; i < GPU_VERTEX_BUFFER_COUNT; ++i) {
-        if (_mesh.buffers[i].id == 0) break;
-        gpu_buffer_mtl buffer = _state.buffers[_mesh.buffers[i].id];
-        NSUInteger offset = _mesh.buffer_offsets[i];
-        [_state.cmd_encoder setVertexBuffer: buffer.buffer offset: offset atIndex: i];
-    }
-    
-    _state.cur_mesh = _mesh;
+static void mtl_v2_set_state(const gpu_v2_state_desc *desc) {
+    if (desc) _state.v2_render_state = *desc;
 }
 
-void gpu_draw(int base, int count, int instance_count) {
-    if (_state.cur_pipeline.indexed) {
-        [_state.cmd_encoder
-            drawIndexedPrimitives: _state.cur_pipeline.primitive_type
-            indexCount: count
-            indexType: _state.cur_pipeline.index_type
-            indexBuffer: _state.buffers[_state.cur_mesh.index_buffer.id].buffer
-            indexBufferOffset: 0
-            instanceCount: instance_count];
+static void mtl_v2_set_root(u32 slot, u64 offset, gpu_addr addr) {
+    ns_unused(addr);
+    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot]) return;
+    _state.v2_root_buffer = _state.v2_memory[slot];
+    _state.v2_root_offset = offset;
+}
+
+static void mtl_v2_set_storage(u32 slot, u64 offset, gpu_addr addr) {
+    ns_unused(addr);
+    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot]) return;
+    _state.v2_storage_buffer = _state.v2_memory[slot];
+    _state.v2_storage_offset = offset;
+}
+
+static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encoder, bool compute) {
+    if (!shader) return;
+    if (compute) {
+        id<MTLComputeCommandEncoder> compute_encoder = (id<MTLComputeCommandEncoder>)encoder;
+        if (shader->uses_root && _state.v2_root_buffer) [compute_encoder setBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
+        if (_state.v2_storage_buffer) [compute_encoder setBuffer:_state.v2_storage_buffer offset:(NSUInteger)_state.v2_storage_offset atIndex:3];
     } else {
-        [_state.cmd_encoder
-            drawPrimitives: _state.cur_pipeline.primitive_type
-            vertexStart: base
-            vertexCount: count
-            instanceCount: instance_count];
+        id<MTLRenderCommandEncoder> render_encoder = (id<MTLRenderCommandEncoder>)encoder;
+        if (shader->uses_root && _state.v2_root_buffer) {
+            [render_encoder setVertexBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
+            [render_encoder setFragmentBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
+        }
+        if (_state.v2_storage_buffer) {
+            [render_encoder setVertexBuffer:_state.v2_storage_buffer offset:(NSUInteger)_state.v2_storage_offset atIndex:3];
+            [render_encoder setFragmentBuffer:_state.v2_storage_buffer offset:(NSUInteger)_state.v2_storage_offset atIndex:3];
+        }
+    }
+    if (!_state.v2_root_buffer) return;
+    const f32 *words = (const f32 *)((const u8 *)[_state.v2_root_buffer contents] + _state.v2_root_offset);
+    u32 texture0 = words[0] > 0.0f ? (u32)(words[0] + 0.5f) : 0;
+    u32 texture1 = words[1] > 0.0f ? (u32)(words[1] + 0.5f) : 0;
+    if (compute) {
+        id<MTLComputeCommandEncoder> compute_encoder = (id<MTLComputeCommandEncoder>)encoder;
+        if (shader->uses_read_texture && texture0 < _state.texture_count)
+            [compute_encoder setTexture:_state.textures[texture0].texture atIndex:0];
+        if (shader->uses_write_texture && texture1 < _state.texture_count)
+            [compute_encoder setTexture:_state.textures[texture1].texture atIndex:1];
+    } else {
+        id<MTLRenderCommandEncoder> render_encoder = (id<MTLRenderCommandEncoder>)encoder;
+        if (shader->uses_shadow_map && texture0 < _state.texture_count)
+            [render_encoder setFragmentTexture:_state.textures[texture0].texture atIndex:0];
+        if (shader->uses_texture_map && texture0 < _state.texture_count)
+            [render_encoder setFragmentTexture:_state.textures[texture0].texture atIndex:1];
+        if (shader->uses_mask_map && texture1 < _state.texture_count)
+            [render_encoder setFragmentTexture:_state.textures[texture1].texture atIndex:2];
     }
 }
+
+static ns_bool mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
+    if (!shader || !shader->vertex_func || !shader->fragment_func) return false;
+    bool same = shader->v2_pipeline_valid &&
+        memcmp(&shader->v2_state, &_state.v2_render_state, sizeof(gpu_v2_state_desc)) == 0 &&
+        memcmp(shader->v2_colors, _state.v2_pass_colors, sizeof(shader->v2_colors)) == 0 &&
+        shader->v2_depth == _state.v2_pass_depth;
+    if (same) return true;
+#ifndef ENABLE_ARC
+    [shader->v2_pso release];
+    [shader->v2_dso release];
+#endif
+    shader->v2_pso = nil;
+    shader->v2_dso = nil;
+    MTLRenderPipelineDescriptor *desc = [MTLRenderPipelineDescriptor new];
+    desc.vertexFunction = shader->vertex_func;
+    desc.fragmentFunction = shader->fragment_func;
+    for (u32 i = 0; i < 4; ++i) {
+        desc.colorAttachments[i].pixelFormat = _state.v2_pass_colors[i];
+        desc.colorAttachments[i].writeMask = (MTLColorWriteMask)_state.v2_render_state.color_mask;
+        if (_state.v2_render_state.blend_preset != GPU_BLEND_OFF) {
+            desc.colorAttachments[i].blendingEnabled = YES;
+            desc.colorAttachments[i].rgbBlendOperation = MTLBlendOperationAdd;
+            desc.colorAttachments[i].alphaBlendOperation = MTLBlendOperationAdd;
+            if (_state.v2_render_state.blend_preset == GPU_BLEND_ADDITIVE) {
+                desc.colorAttachments[i].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                desc.colorAttachments[i].destinationRGBBlendFactor = MTLBlendFactorOne;
+            } else if (_state.v2_render_state.blend_preset == GPU_BLEND_PREMULTIPLIED) {
+                desc.colorAttachments[i].sourceRGBBlendFactor = MTLBlendFactorOne;
+                desc.colorAttachments[i].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+            } else {
+                desc.colorAttachments[i].sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+                desc.colorAttachments[i].destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+            }
+            desc.colorAttachments[i].sourceAlphaBlendFactor = MTLBlendFactorOne;
+            desc.colorAttachments[i].destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+        }
+    }
+    desc.depthAttachmentPixelFormat = _state.v2_pass_depth;
+    NSError *error = nil;
+    shader->v2_pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc error:&error];
+#ifndef ENABLE_ARC
+    [desc release];
+#endif
+    if (!shader->v2_pso) {
+        NSLog(@"Failed to create v2 render pipeline: %@", error);
+        return false;
+    }
+    if (_state.v2_pass_depth != MTLPixelFormatInvalid) {
+        MTLDepthStencilDescriptor *depth = [MTLDepthStencilDescriptor new];
+        depth.depthCompareFunction = _mtl_compare_function((gpu_compare_func)_state.v2_render_state.depth_compare);
+        depth.depthWriteEnabled = _state.v2_render_state.depth_write;
+        shader->v2_dso = [_state.device.device newDepthStencilStateWithDescriptor:depth];
+#ifndef ENABLE_ARC
+        [depth release];
+#endif
+    }
+    shader->v2_state = _state.v2_render_state;
+    memcpy(shader->v2_colors, _state.v2_pass_colors, sizeof(shader->v2_colors));
+    shader->v2_depth = _state.v2_pass_depth;
+    shader->v2_pipeline_valid = true;
+    return true;
+}
+
+static gpu_shader_mtl *mtl_v2_prepare_draw(void) {
+    if (!_state.cmd_encoder || !_state.v2_shader || _state.v2_shader >= _state.shader_count) return NULL;
+    gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
+    if (!mtl_v2_ensure_pipeline(shader)) return NULL;
+    [_state.cmd_encoder setRenderPipelineState:shader->v2_pso];
+    [_state.cmd_encoder setCullMode:_mtl_cull_mode((gpu_cull_mode)_state.v2_render_state.cull_mode)];
+    [_state.cmd_encoder setFrontFacingWinding:_mtl_winding((gpu_face_winding)_state.v2_render_state.face_winding)];
+    if (shader->v2_dso) [_state.cmd_encoder setDepthStencilState:shader->v2_dso];
+    mtl_v2_bind_root(shader, _state.cmd_encoder, false);
+    return shader;
+}
+
+static void mtl_v2_draw(i32 vertex_base, i32 vertex_count, i32 instance_count) {
+    if (!mtl_v2_prepare_draw()) return;
+    [_state.cmd_encoder drawPrimitives:_mtl_primitive_type((gpu_primitive_type)_state.v2_render_state.primitive_type)
+                            vertexStart:(NSUInteger)vertex_base
+                            vertexCount:(NSUInteger)vertex_count
+                          instanceCount:(NSUInteger)instance_count];
+}
+
+static void mtl_v2_draw_indexed(u32 slot, u64 offset, i32 index_type,
+                                i32 index_count, i32 instance_count, i32 base_vertex) {
+    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot] || !mtl_v2_prepare_draw()) return;
+    [_state.cmd_encoder drawIndexedPrimitives:_mtl_primitive_type((gpu_primitive_type)_state.v2_render_state.primitive_type)
+                                   indexCount:(NSUInteger)index_count
+                                    indexType:_mtl_index_type((gpu_index_type)index_type)
+                                  indexBuffer:_state.v2_memory[slot]
+                            indexBufferOffset:(NSUInteger)offset
+                                instanceCount:(NSUInteger)instance_count
+                                   baseVertex:base_vertex
+                                 baseInstance:0];
+}
+
+static void mtl_v2_draw_indirect(u32 slot, u64 offset, i32 draw_count, i32 stride) {
+    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot] || !mtl_v2_prepare_draw()) return;
+    NSUInteger step = stride > 0 ? (NSUInteger)stride : sizeof(MTLDrawPrimitivesIndirectArguments);
+    for (i32 i = 0; i < draw_count; ++i) {
+        [_state.cmd_encoder drawPrimitives:_mtl_primitive_type((gpu_primitive_type)_state.v2_render_state.primitive_type)
+                           indirectBuffer:_state.v2_memory[slot]
+                     indirectBufferOffset:(NSUInteger)offset + (NSUInteger)i * step];
+    }
+}
+
+static void mtl_v2_dispatch(i32 x, i32 y, i32 z) {
+    if (!_state.v2_shader || _state.v2_shader >= _state.shader_count) return;
+    gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
+    if (!shader->compute_pso) return;
+    mtl_v2_ensure_frame();
+    if (_state.cmd_buffer == nil) return;
+    id<MTLComputeCommandEncoder> encoder = [_state.cmd_buffer computeCommandEncoder];
+    [encoder setComputePipelineState:shader->compute_pso];
+    mtl_v2_bind_root(shader, encoder, true);
+    NSUInteger width = MIN((NSUInteger)8, shader->compute_pso.maxTotalThreadsPerThreadgroup);
+    [encoder dispatchThreads:MTLSizeMake((NSUInteger)x, (NSUInteger)y, (NSUInteger)z)
+       threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+    [encoder endEncoding];
+}
+
+static void mtl_v2_dispatch_indirect(u32 slot, u64 offset) {
+    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot] ||
+        !_state.v2_shader || _state.v2_shader >= _state.shader_count) return;
+    gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
+    if (!shader->compute_pso) return;
+    mtl_v2_ensure_frame();
+    id<MTLComputeCommandEncoder> encoder = [_state.cmd_buffer computeCommandEncoder];
+    [encoder setComputePipelineState:shader->compute_pso];
+    mtl_v2_bind_root(shader, encoder, true);
+    [encoder dispatchThreadgroupsWithIndirectBuffer:_state.v2_memory[slot]
+                              indirectBufferOffset:(NSUInteger)offset
+                             threadsPerThreadgroup:MTLSizeMake(8, 1, 1)];
+    [encoder endEncoding];
+}
+
+static const gpu_v2_ops _mtl_v2_ops = {
+    .mem_create = mtl_v2_mem_create,
+    .mem_destroy = mtl_v2_mem_destroy,
+    .mem_write = mtl_v2_mem_write,
+    .mem_read = mtl_v2_mem_read,
+    .mem_host_ptr = mtl_v2_mem_host_ptr,
+    .texture_create = mtl_v2_texture_create,
+    .texture_upload = mtl_v2_texture_upload,
+    .texture_destroy = mtl_v2_texture_destroy,
+    .sampler_create = mtl_v2_sampler_create,
+    .sampler_destroy = mtl_v2_sampler_destroy,
+    .shader_graphics_create = mtl_v2_shader_graphics_create,
+    .shader_compute_create = mtl_v2_shader_compute_create,
+    .shader_destroy = mtl_v2_shader_destroy,
+    .pass_begin = mtl_v2_pass_begin,
+    .screen_pass_begin = mtl_v2_screen_pass_begin,
+    .pass_end = mtl_v2_pass_end,
+    .set_shader = mtl_v2_set_shader,
+    .set_state = mtl_v2_set_state,
+    .set_root = mtl_v2_set_root,
+    .set_storage = mtl_v2_set_storage,
+    .draw = mtl_v2_draw,
+    .draw_indexed = mtl_v2_draw_indexed,
+    .draw_indirect = mtl_v2_draw_indirect,
+    .dispatch = mtl_v2_dispatch,
+    .dispatch_indirect = mtl_v2_dispatch_indirect,
+};

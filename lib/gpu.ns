@@ -12,17 +12,6 @@ use shader
 // bindless texture/sampler IDs. Native renderer implementation details are not
 // part of the Nano Script API.
 
-struct gpu_device { handle: any }
-
-// Opaque compatibility handles used by existing native renderers while they
-// migrate their geometry submission to v2.
-struct gpu_pipeline { id: i32 }
-struct gpu_binding { id: i32 }
-struct gpu_mesh { id: i32 }
-struct gpu_render_pass { id: i32 }
-
-lit GPU_USAGE_DEFAULT = 0
-lit GPU_ATTRIBUTE_FORMAT_FLOAT = 1
 lit GPU_PIXELFORMAT_NONE = 1
 lit GPU_PIXELFORMAT_R8 = 2
 lit GPU_PIXELFORMAT_RGBA8 = 23
@@ -44,89 +33,6 @@ lit GPU_CULL_NONE = 0
 lit GPU_CULL_BACK = 2
 lit GPU_FACE_WINDING_CCW = 0
 lit GPU_FACE_WINDING_CW = 1
-lit GPU_BLEND_FACTOR_ZERO = 0
-lit GPU_BLEND_FACTOR_ONE = 1
-lit GPU_BLEND_FACTOR_SRC_ALPHA = 4
-lit GPU_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA = 5
-lit GPU_BLEND_OP_ADD = 0
-
-struct gpu_vertex_layout_desc {
-    vertex_stride: i32,
-    attr_offsets: [i32],
-    attr_sizes: [i32],
-    attr_formats: [i32],
-    attr_count: i32,
-    per_instance: bool
-}
-
-struct gpu_mesh_state {
-    primitive_type: i32,
-    index_type: i32,
-    cull_mode: i32,
-    face_winding: i32
-}
-
-struct gpu_blend_state {
-    enabled: bool,
-    src_factor: i32,
-    dst_factor: i32,
-    op: i32,
-    src_factor_alpha: i32,
-    dst_factor_alpha: i32,
-    op_alpha: i32
-}
-
-struct gpu_color_target_desc {
-    format: i32,
-    color_mask: u32,
-    blend: gpu_blend_state,
-    write_enabled: bool
-}
-
-struct gpu_depth_state {
-    format: i32,
-    compare_func: i32,
-    write_enabled: bool,
-    bias: f32,
-    bias_slope_scale: f32,
-    bias_clamp: f32
-}
-
-struct gpu_pipeline_state_desc {
-    shader_id: u32,
-    vertex_layout: gpu_vertex_layout_desc,
-    mesh: gpu_mesh_state,
-    color0: gpu_color_target_desc,
-    color1: gpu_color_target_desc,
-    depth: gpu_depth_state,
-    sample_count: i32,
-    alpha_to_coverage: bool
-}
-
-fn gpu_blend_off() gpu_blend_state {
-    return gpu_blend_state {
-        enabled:false,
-        src_factor:GPU_BLEND_FACTOR_ONE,
-        dst_factor:GPU_BLEND_FACTOR_ZERO,
-        op:GPU_BLEND_OP_ADD,
-        src_factor_alpha:GPU_BLEND_FACTOR_ONE,
-        dst_factor_alpha:GPU_BLEND_FACTOR_ZERO,
-        op_alpha:GPU_BLEND_OP_ADD,
-    }
-}
-
-fn gpu_blend_alpha() gpu_blend_state {
-    return gpu_blend_state {
-        enabled:true,
-        src_factor:GPU_BLEND_FACTOR_SRC_ALPHA,
-        dst_factor:GPU_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        op:GPU_BLEND_OP_ADD,
-        src_factor_alpha:GPU_BLEND_FACTOR_ONE,
-        dst_factor_alpha:GPU_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-        op_alpha:GPU_BLEND_OP_ADD,
-    }
-}
-
 // Acquire the platform GPU device for `v`. Returns true on success. On platforms
 // without a backend this returns false.
 // `nil` selects a headless/default device. Browser Wasm projects pass the
@@ -134,72 +40,13 @@ fn gpu_blend_alpha() gpu_blend_state {
 ref fn gpu_request_device(v: ref view) bool
 ref fn gpu_destroy_device()
 
-// ---- v1 scalar compatibility ----------------------------------------------
-// Descriptor structs remain private to the native backend. These FFI-safe
-// helpers keep existing applications buildable and include the two-target
-// path needed for an R8 selection mask.
-ref fn gpu_dispatch_compute_texture_source(source: str, entry: str, texture_id: u32, threads_x: i32, threads_y: i32, threads_z: i32) bool
-// Explicit-slot variant. `texture_slot` must match the slot supplied by the
-// compute shader's resource definition.
-ref fn gpu_dispatch_compute_texture_source_slot(source: str, entry: str, texture_id: u32, texture_slot: i32, threads_x: i32, threads_y: i32, threads_z: i32) bool
-// Compile and dispatch a compute shader with one random-access storage buffer
-// bound at the explicit shader buffer slot.
-ref fn gpu_dispatch_compute_buffer_source_slot(source: str, entry: str, buffer_id: u32, buffer_slot: i32, threads_x: i32, threads_y: i32, threads_z: i32) bool
-ref fn gpu_create_buffer(byte_len: i32, usage: i32) u32
-ref fn gpu_create_index_buffer(byte_len: i32, usage: i32) u32
-ref fn gpu_create_uniform_buffer(byte_len: i32, usage: i32) u32
-ref fn gpu_create_storage_buffer(byte_len: i32, usage: i32) u32
-ref fn gpu_update_buffer(buffer_id: u32, data: [any], byte_len: i32)
-ref fn gpu_create_shader_source(vertex_source: str, fragment_source: str, vertex_entry: str, fragment_entry: str) u32
-ref fn gpu_create_pipeline_layout_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
-ref fn gpu_create_pipeline_layout_indexed_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color_format: i32, primitive_type: i32, index_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
-ref fn gpu_create_pipeline_layout_indexed_mrt_ex(shader_id: u32, vertex_stride: i32, attr_offsets: [i32], attr_sizes: [i32], attr_formats: [i32], attr_count: i32, color0_format: i32, color1_format: i32, primitive_type: i32, index_type: i32, depth_format: i32, depth_compare: i32, depth_write: bool, cull_mode: i32, blend_enabled: bool) u32
-ref fn gpu_create_pipeline_state(desc: ref gpu_pipeline_state_desc) u32
-ref fn gpu_create_mesh_1(pipeline_id: u32, vertex_buffer_id: u32) u32
-ref fn gpu_create_mesh_indexed(pipeline_id: u32, vertex_buffer_id: u32, index_buffer_id: u32, index_type: i32) u32
-ref fn gpu_create_texture_2d(width: i32, height: i32, format: i32, usage: i32) u32
-ref fn gpu_create_texture_2d_msaa(width: i32, height: i32, format: i32, usage: i32, sample_count: i32) u32
-// Poll a previously queued 1x1 RGBA8 readback and queue the current pixel
-// without stalling the CPU. result[0] is packed RGBA, result[1] is the
-// completed request id, and result[2] reports whether this request was queued.
-ref fn gpu_read_texture_pixel_async(texture_id: u32, x: i32, y: i32, request_id: u32, result: [u32]) bool
-// Legacy name-reflection entry point. New code must use an explicit resource
-// layout; the GPU module never maps shader builtin names to slots.
-ref fn gpu_create_buffer_texture_binding(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture1_id: u32, texture1_name: str) u32
-// Bind fragment textures to concrete shader texture slots. Names still select
-// the shader stage and validate the reflected resource. Binding creation fails
-// if a slot disagrees with shader reflection or is reused in the same stage;
-// slots are never inferred from declaration order. Texture arguments must be
-// packed from texture0 (texture1 cannot be present by itself).
-ref fn gpu_create_buffer_texture_binding_slots(pipeline_id: u32, buffer_id: u32, buffer_name: str, texture0_id: u32, texture0_name: str, texture0_slot: i32, texture1_id: u32, texture1_name: str, texture1_slot: i32) u32
-// Bind the ordinary root/uniform buffer plus one shader-addressed storage
-// buffer and up to two textures.
-ref fn gpu_create_buffers_texture_binding_slots(pipeline_id: u32, uniform_buffer_id: u32, uniform_buffer_name: str, storage_buffer_id: u32, storage_buffer_name: str, texture0_id: u32, texture0_name: str, texture0_slot: i32, texture1_id: u32, texture1_name: str, texture1_slot: i32) u32
-ref fn gpu_create_depth_pass(depth_texture_id: u32) u32
-ref fn gpu_create_mrt_pass(color0_texture_id: u32, color1_texture_id: u32, depth_texture_id: u32, r: f64, g: f64, b: f64, a: f64) u32
-ref fn gpu_create_mrt_msaa_pass(color0_msaa_texture_id: u32, color0_resolve_texture_id: u32, color1_msaa_texture_id: u32, color1_resolve_texture_id: u32, depth_msaa_texture_id: u32, r: f64, g: f64, b: f64, a: f64) u32
-ref fn gpu_create_screen_pass(r: f64, g: f64, b: f64, a: f64) u32
-ref fn gpu_destroy_texture_id(texture_id: u32)
-ref fn gpu_destroy_binding_id(binding_id: u32)
-ref fn gpu_destroy_buffer_id(buffer_id: u32)
-ref fn gpu_destroy_shader_id(shader_id: u32)
-ref fn gpu_destroy_pipeline_id(pipeline_id: u32)
-ref fn gpu_destroy_mesh_id(mesh_id: u32)
-ref fn gpu_destroy_render_pass_id(pass_id: u32)
-ref fn gpu_begin_render_pass_id(pass_id: u32)
-ref fn gpu_set_pipeline_id(pipeline_id: u32)
-ref fn gpu_set_mesh_id(mesh_id: u32)
-ref fn gpu_set_binding_id(binding_id: u32)
-ref fn gpu_draw(base: i32, count: i32, instance_count: i32)
-ref fn gpu_end_pass()
-
-// Active backend shader language used by the v2 shader constructors.
+// Active backend shader language used by shader constructors.
 ref fn gpu_shader_target() str
 ref fn gpu_set_viewport(x: i32, y: i32, width: i32, height: i32)
 ref fn gpu_set_scissor(x: i32, y: i32, width: i32, height: i32)
 ref fn gpu_commit()
 
-// ---- v2: the GPU as a processor with memory (doc/gpu.md) -------------------
+// ---- the GPU as a processor with memory (doc/gpu.md) ----------------------
 //
 // GPU memory is addressed by 64-bit values from gpu_malloc; suballocation is
 // plain address arithmetic within one allocation. Textures and samplers are
@@ -270,6 +117,10 @@ ref fn gpu_pass_end()
 ref fn gpu_set_shader(shader: u32)
 ref fn gpu_set_state(state: u32)
 ref fn gpu_set_root(args: u64)
+// Bind GPU-addressed storage for the current shader's fixed storage slot.
+// This is the portable lowering used until typed gpu_addr dereference lands
+// in the shader subset.
+ref fn gpu_set_storage(addr: u64)
 // Copy a small argument struct into the frame ring and bind it as the root
 // pointer in one call.
 ref fn gpu_set_root_data(data: [any], size: u64)
@@ -352,14 +203,14 @@ struct gpu_memory {
 fn gpu_texture_new(width: i32, height: i32, depth_or_layers: i32, format: i32, usage: u32, mip_count: i32, kind: i32) gpu_texture {
     let id = gpu_texture_create(width, height, depth_or_layers, format, usage, mip_count, kind)
     return gpu_texture {
-        resource_id: id,
-        width: width,
-        height: height,
-        depth_or_layers: depth_or_layers,
-        format: format,
-        usage: usage,
-        mip_count: mip_count,
-        kind: kind,
+        id,
+        width,
+        height,
+        depth_or_layers,
+        format,
+        usage,
+        mip_count,
+        kind,
     }
 }
 
@@ -370,14 +221,14 @@ fn gpu_texture_new_2d(width: i32, height: i32, format: i32, usage: u32) gpu_text
 // Empty handle for unused pass attachments.
 fn gpu_texture_none() gpu_texture {
     return gpu_texture {
-        resource_id: 0u,
-        width: 0,
-        height: 0,
-        depth_or_layers: 0,
-        format: GPU_PIXELFORMAT_NONE,
-        usage: 0u,
-        mip_count: 0,
-        kind: GPU_TEXTURE_2D,
+        0u,
+        0,
+        0,
+        0,
+        GPU_PIXELFORMAT_NONE,
+        0u,
+        0,
+        GPU_TEXTURE_2D,
     }
 }
 
@@ -406,15 +257,15 @@ fn gpu_texture_release(tex: gpu_texture) {
 fn gpu_sampler_new(min_filter: i32, mag_filter: i32, mip_filter: i32, wrap_u: i32, wrap_v: i32, wrap_w: i32, compare_func: i32, max_anisotropy: i32) gpu_sampler {
     let id = gpu_sampler_create(min_filter, mag_filter, mip_filter, wrap_u, wrap_v, wrap_w, compare_func, max_anisotropy)
     return gpu_sampler {
-        resource_id: id,
-        min_filter: min_filter,
-        mag_filter: mag_filter,
-        mip_filter: mip_filter,
-        wrap_u: wrap_u,
-        wrap_v: wrap_v,
-        wrap_w: wrap_w,
-        compare_func: compare_func,
-        max_anisotropy: max_anisotropy,
+        id,
+        min_filter,
+        mag_filter,
+        mip_filter,
+        wrap_u,
+        wrap_v,
+        wrap_w,
+        compare_func,
+        max_anisotropy,
     }
 }
 
@@ -429,14 +280,14 @@ fn gpu_sampler_release(smp: gpu_sampler) {
 fn gpu_render_state_new(primitive_type: i32, cull_mode: i32, face_winding: i32, depth_compare: i32, depth_write: bool, blend_preset: i32, color_mask: u32) gpu_render_state {
     let id = gpu_state_create(primitive_type, cull_mode, face_winding, depth_compare, depth_write, blend_preset, color_mask)
     return gpu_render_state {
-        resource_id: id,
-        primitive_type: primitive_type,
-        cull_mode: cull_mode,
-        face_winding: face_winding,
-        depth_compare: depth_compare,
-        depth_write: depth_write,
-        blend_preset: blend_preset,
-        color_mask: color_mask,
+        id,
+        primitive_type,
+        cull_mode,
+        face_winding,
+        depth_compare,
+        depth_write,
+        blend_preset,
+        color_mask,
     }
 }
 
@@ -445,7 +296,7 @@ fn gpu_render_state_bind(state: gpu_render_state) {
 }
 
 fn gpu_memory_alloc(size: u64, flags: u32) gpu_memory {
-    return gpu_memory { addr: gpu_malloc(size, flags), size: size, flags: flags }
+    return gpu_memory { gpu_malloc(size, flags), size, flags }
 }
 
 fn gpu_memory_valid(mem: gpu_memory) bool {
@@ -488,11 +339,11 @@ fn gpu_shader_graphics(vs: any, fs: any) gpu_shader {
     let vs_entry = shader_entry(vs, target)
     let fs_entry = shader_entry(fs, target)
     return gpu_shader {
-        resource_id: gpu_shader_graphics_create(vs_src, fs_src, vs_entry, fs_entry),
-        compute: false,
-        target: target,
-        vertex_entry: vs_entry,
-        fragment_entry: fs_entry,
+        gpu_shader_graphics_create(vs_src, fs_src, vs_entry, fs_entry),
+        false,
+        target,
+        vs_entry,
+        fs_entry,
     }
 }
 
@@ -503,11 +354,11 @@ fn gpu_shader_compute(f: any) gpu_shader {
     let source = shader_transpile_stage(f, target, "compute")
     let entry = shader_entry(f, target)
     return gpu_shader {
-        resource_id: gpu_shader_compute_create(source, entry),
-        compute: true,
-        target: target,
-        vertex_entry: entry,
-        fragment_entry: "",
+        gpu_shader_compute_create(source, entry),
+        true,
+        target,
+        entry,
+        "",
     }
 }
 

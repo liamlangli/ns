@@ -1,7 +1,7 @@
 // nscode/dynamic/render.ns
 // ---------------------------------------------------------------------------
-// The 3D renderer, on the gpu module directly: one triangle pipeline with a
-// depth test, one vertex buffer rebuilt each frame, and one screen pass. The
+// The 3D renderer, on the gpu module directly: one graphics shader with a
+// depth-tested state key, one root-data upload each frame, and one screen pass. The
 // `ui` renderer is only used for the overlay in main.ns.
 //
 // The vertex shader is a pass-through because the `shader` module does not
@@ -21,18 +21,28 @@ lit RENDER_MAX_TRIANGLES = 2048
 lit RENDER_FLOATS_PER_VERTEX = 8
 lit RENDER_FLOATS_PER_TRIANGLE = 24
 
-struct render_vertex {
-    clip: float4,
-    tint: float4
-}
-
 struct render_fragment {
     position: float4,
     color: float4
 }
 
-fn vs_dynamic(data: render_vertex) render_fragment {
-    return render_fragment { position: data.clip, color: data.tint }
+fn vs_dynamic() render_fragment {
+    let vertex_index = shader_vertex_id()
+    let base = vertex_index * RENDER_FLOATS_PER_VERTEX
+    return render_fragment {
+        float4 {
+            x: shader_root_f32(base),
+            y: shader_root_f32(base + 1),
+            z: shader_root_f32(base + 2),
+            w: shader_root_f32(base + 3),
+        },
+        float4 {
+            x: shader_root_f32(base + 4),
+            y: shader_root_f32(base + 5),
+            z: shader_root_f32(base + 6),
+            w: shader_root_f32(base + 7),
+        },
+    }
 }
 
 fn fs_dynamic(data: render_fragment) float4 {
@@ -41,10 +51,7 @@ fn fs_dynamic(data: render_fragment) float4 {
 
 struct render_state {
     shader_id: u32,
-    pipeline: u32,
-    vertex_buffer: u32,
-    mesh: u32,
-    pass: u32,
+    render_state: u32,
     vertices: [f32],
     triangle_count: i32,
     ready: bool
@@ -53,63 +60,30 @@ struct render_state {
 // The renderer keeps its resources in a module-level value: a frame callback is
 // a closure, and closures capture plain values by copy.
 let state = render_state {
-    shader_id: 0u,
-    pipeline: 0u,
-    vertex_buffer: 0u,
-    mesh: 0u,
-    pass: 0u,
-    vertices: [f32](RENDER_MAX_TRIANGLES * RENDER_FLOATS_PER_TRIANGLE),
-    triangle_count: 0,
-    ready: false,
+    0u,
+    0u,
+    [f32](RENDER_MAX_TRIANGLES * RENDER_FLOATS_PER_TRIANGLE),
+    0,
+    false,
 }
 
 fn render_create() bool {
     let target = gpu_shader_target()
     let vertex_source = shader_transpile_stage(vs_dynamic, target, "vertex")
     let fragment_source = shader_transpile_stage(fs_dynamic, target, "fragment")
-    state.shader_id = gpu_create_shader_source(vertex_source, fragment_source, shader_entry(vs_dynamic, target), shader_entry(fs_dynamic, target))
+    state.shader_id = gpu_shader_graphics_create(vertex_source, fragment_source, shader_entry(vs_dynamic, target), shader_entry(fs_dynamic, target))
     if state.shader_id == 0u {
         return false
     }
 
-    // Vertex layout comes from the shader's own input struct.
-    let stride = shader_vertex_stride(vs_dynamic)
-    let attr_count = shader_vertex_attr_count(vs_dynamic)
-    let offsets = [i32](attr_count)
-    let sizes = [i32](attr_count)
-    let formats = [i32](attr_count)
-    for i in 0 to attr_count {
-        offsets[i] = shader_vertex_attr_offset(vs_dynamic, i)
-        sizes[i] = shader_vertex_attr_size(vs_dynamic, i)
-        formats[i] = GPU_ATTRIBUTE_FORMAT_FLOAT
-    }
-    state.pipeline = gpu_create_pipeline_layout_ex(state.shader_id, stride, offsets, sizes, formats, attr_count, GPU_PIXELFORMAT_BGRA8, GPU_PRIMITIVE_TRIANGLES, GPU_PIXELFORMAT_DEPTH, GPU_COMPARE_LESS_EQUAL, true, GPU_CULL_NONE, false)
-    if state.pipeline == 0u {
-        return false
-    }
-
-    state.vertex_buffer = gpu_create_buffer(RENDER_MAX_TRIANGLES * RENDER_FLOATS_PER_TRIANGLE * 4, GPU_USAGE_DEFAULT)
-    state.mesh = gpu_create_mesh_1(state.pipeline, state.vertex_buffer)
-    state.pass = gpu_create_screen_pass(0.06, 0.07, 0.09, 1.0)
-    state.ready = state.vertex_buffer != 0u && state.mesh != 0u
+    state.render_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_LESS_EQUAL, true, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
+    state.ready = state.render_state != 0u
     return state.ready
 }
 
 fn render_release() {
-    if state.mesh != 0u {
-        gpu_destroy_mesh_id(state.mesh)
-    }
-    if state.vertex_buffer != 0u {
-        gpu_destroy_buffer_id(state.vertex_buffer)
-    }
-    if state.pipeline != 0u {
-        gpu_destroy_pipeline_id(state.pipeline)
-    }
     if state.shader_id != 0u {
-        gpu_destroy_shader_id(state.shader_id)
-    }
-    if state.pass != 0u {
-        gpu_destroy_render_pass_id(state.pass)
+        gpu_shader_destroy(state.shader_id)
     }
     state.ready = false
 }
@@ -195,12 +169,12 @@ fn render_flush() {
         return
     }
     let floats = state.triangle_count * RENDER_FLOATS_PER_TRIANGLE
-    gpu_update_buffer(state.vertex_buffer, state.vertices, floats * 4)
-    gpu_begin_render_pass_id(state.pass)
-    gpu_set_pipeline_id(state.pipeline)
-    gpu_set_mesh_id(state.mesh)
-    gpu_draw(0, state.triangle_count * 3, 1)
-    gpu_end_pass()
+    gpu_screen_pass_begin(0.06, 0.07, 0.09, 1.0)
+    gpu_set_shader(state.shader_id)
+    gpu_set_state(state.render_state)
+    gpu_set_root_data(state.vertices, floats * 4)
+    gpu_draw_vertices(0, state.triangle_count * 3, 1)
+    gpu_pass_end()
 }
 
 fn render_triangle_count() i32 {
