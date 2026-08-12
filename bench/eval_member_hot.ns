@@ -1,0 +1,23 @@
+struct counters {
+    a: i32,
+    b: i32,
+    c: i32,
+    d: i32,
+    e: i32,
+    f: i32,
+    g: i32,
+    h: i32,
+    i: i32,
+    j: i32
+}
+
+fn main() bool {
+    let v = counters { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 }
+    let n = 0
+    loop n < 5000000 {
+        v.j = (v.j + v.i + 1) % 1000003
+        v.i = (v.i + v.j + n) % 1000003
+        n += 1
+    }
+    return v.i >= 0 && v.j >= 0
+}

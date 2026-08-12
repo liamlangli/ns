@@ -216,6 +216,71 @@ int main() {
         ns_expect(ns_expr_eval_bool(src), "struct-literal field initializer uses caller value.");
     }
 
+    // Eval caches static execution metadata, never a dynamic result. Warm every
+    // cache repeatedly while locals/globals/members and recursive/callee
+    // frames all change underneath the fixed AST.
+    {
+        const char *src =
+            "let cache_global = 0\n"
+            "struct cache_record { a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, value: i32 }\n"
+            "fn recursive_sum(n: i32) i32 {\n"
+            "    if n == 0 { return 0 }\n"
+            "    return n + recursive_sum(n - 1)\n"
+            "}\n"
+            "fn pick(index: i32, second: i32) i32 { return second }\n"
+            "fn cached_literal() str { return \"cached\\nliteral\" }\n"
+            "fn main() bool {\n"
+            "    let record = cache_record { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }\n"
+            "    let values = [i32](1)\n"
+            "    let local = 0\n"
+            "    let picked = 0\n"
+            "    for index in 0 to 100 {\n"
+            "        local += 1\n"
+            "        cache_global += 2\n"
+            "        record.value = local + cache_global\n"
+            "        values[0] = record.value\n"
+            "        picked = pick(index + 100, index)\n"
+            "    }\n"
+            "    return local == 100 && cache_global == 200 && record.value == 300 && values[0] == 300 && picked == 99 &&\n"
+            "           recursive_sum(10) == 55 &&\n"
+            "           cached_literal() == \"cached\\nliteral\"\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "warmed eval plans keep dynamic values and recursive frames live.");
+    }
+
+    // The same parsed AST can be semantically resolved and evaluated by a VM
+    // whose global symbol indices differ. Semantic cache resets must prevent
+    // one VM's inline cache from becoming another VM's address recipe.
+    {
+        const char *src =
+            "enum marker { zero = 0, two = 2 }\n"
+            "struct pair { left: i32, right: i32 }\n"
+            "fn answer(value: pair) i32 { return value.right + 40 }\n"
+            "fn main() bool {\n"
+            "    let value = pair { 1, 2 }\n"
+            "    return answer(value) == 42 && marker.two == (2 as marker) &&\n"
+            "           \"shared AST\" == \"shared AST\"\n"
+            "}\n";
+        ns_ast_ctx ast = {0};
+        ns_return_bool parsed = ns_ast_parse(&ast, ns_str_cstr((i8 *)src), ns_str_cstr("<eval-cache-vm-owner>"));
+        ns_vm first = {0};
+        ns_vm second = {0};
+        ns_symbol dummy = {.type = NS_SYMBOL_VALUE, .name = ns_str_cstr("__cache_shift"),
+                           .val = ns_true, .parsed = true};
+        ns_vm_push_symbol_global(&second, dummy);
+        ns_return_value first_ret = ns_return_ok(value, ns_nil);
+        ns_return_value second_ret = ns_return_ok(value, ns_nil);
+        if (!ns_return_is_error(parsed)) {
+            first_ret = ns_eval_ast(&first, &ast);
+            second_ret = ns_eval_ast(&second, &ast);
+        }
+        ns_expect(!ns_return_is_error(parsed) && !ns_return_is_error(first_ret) &&
+                      !ns_return_is_error(second_ret) && ns_eval_bool(&first, first_ret.r) &&
+                      ns_eval_bool(&second, second_ret.r),
+                  "eval plans are re-resolved when one AST is reused by another VM.");
+    }
+
     // Sanity: ordinary left-associative float arithmetic through call arguments
     // keeps working (`x + w - 1.0`).
     {

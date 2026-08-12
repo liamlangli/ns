@@ -1,0 +1,9 @@
+fn main() bool {
+    let total = 0
+    let i = 0
+    loop i < 5000000 {
+        total = (total + 123457 + i) % 1000003
+        i += 1
+    }
+    return total >= 0
+}

@@ -1,0 +1,13 @@
+fn mix(x: i32, y: i32) i32 {
+    return (x * 3 + y * 5 + 7) % 1000003
+}
+
+fn main() bool {
+    let total = 1
+    let i = 0
+    loop i < 2000000 {
+        total = mix(total, i)
+        i += 1
+    }
+    return total >= 0
+}

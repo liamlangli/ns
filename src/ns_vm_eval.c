@@ -467,37 +467,53 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
 // (and filled) when the innermost fn frame is the top call frame, so closure
 // block frames with per-site layouts never alias a same-named outer local.
 // GLOBAL entries hold a vm->symbols index, invalidated by vm->symbol_gen.
-// Every hit is verified by one name compare; any mismatch falls back to the
-// full scan and refills, so semantics (shadowing, lib preference) are unchanged.
+// The semantic pass clears per-VM entries before AST reuse. On a hit the fixed
+// AST site no longer repeats a name comparison: it applies the cached
+// frame-relative/global address recipe directly. Keep this small helper at the
+// eval call site: cached identifier reads are one of the hottest interpreter
+// operations and should not need another C call/return pair.
+static inline ns_symbol* ns_vm_symbol_cache_hit(ns_vm *vm, ns_sym_cache *c) {
+    if (!c) return ns_null;
+    i32 call_count = (i32)ns_array_length(vm->call_stack);
+    ns_bool top_is_fn = call_count > 0 && vm->call_stack[call_count - 1].callee &&
+                        vm->call_stack[call_count - 1].callee->type == NS_SYMBOL_FN;
+    if (top_is_fn && c->kind == NS_SYM_CACHE_LOCAL) {
+        ns_call *top_call = &vm->call_stack[call_count - 1];
+        i32 frame_symbol_top = vm->scope_stack[top_call->scope_top].symbol_top;
+        i32 j = frame_symbol_top + c->index;
+        if (j >= frame_symbol_top && j < (i32)ns_array_length(vm->symbol_stack)) {
+            return &vm->symbol_stack[j];
+        }
+    }
+    if (c->kind == NS_SYM_CACHE_GLOBAL && c->gen == vm->symbol_gen &&
+        c->index >= 0 && c->index < (i32)ns_array_length(vm->symbols)) {
+        return &vm->symbols[c->index];
+    }
+    return ns_null;
+}
+
 ns_symbol* ns_vm_find_symbol_cached(ns_vm *vm, ns_str s, ns_sym_cache *c) {
+    ns_symbol *cached = ns_vm_symbol_cache_hit(vm, c);
+    if (cached) return cached;
+
+    i32 call_count = (i32)ns_array_length(vm->call_stack);
+
     i32 l = ns_vm_get_last_call(vm);
     if (l >= 0) {
         ns_call *call = &vm->call_stack[l];
         i32 symbol_top = vm->scope_stack[call->scope_top].symbol_top;
         i32 symbol_count = ns_array_length(vm->symbol_stack);
-        ns_bool frame_stable = c && l == (i32)ns_array_length(vm->call_stack) - 1;
-
-        if (frame_stable && c->kind == NS_SYM_CACHE_LOCAL) {
-            i32 j = symbol_top + c->index;
-            if (j < symbol_count && ns_str_equals(vm->symbol_stack[j].name, s)) {
-                return &vm->symbol_stack[j];
-            }
-        }
+        ns_bool frame_stable = c && l == call_count - 1;
 
         for (i32 j = symbol_count - 1; j >= symbol_top; --j) {
             if (ns_str_equals(vm->symbol_stack[j].name, s)) {
                 if (c) {
                     if (frame_stable) *c = (ns_sym_cache){.kind = NS_SYM_CACHE_LOCAL, .index = j - symbol_top};
-                    else c->kind = NS_SYM_CACHE_NONE;
+                    else *c = (ns_sym_cache){0};
                 }
                 return &vm->symbol_stack[j];
             }
         }
-    }
-
-    if (c && c->kind == NS_SYM_CACHE_GLOBAL && c->gen == vm->symbol_gen &&
-        c->index < (i32)ns_array_length(vm->symbols) && ns_str_equals(vm->symbols[c->index].name, s)) {
-        return &vm->symbols[c->index];
     }
 
     for (i32 i = 0, n = ns_array_length(vm->symbols); i < n; i++) {
@@ -516,8 +532,7 @@ ns_symbol* ns_vm_find_symbol_cached(ns_vm *vm, ns_str s, ns_sym_cache *c) {
     return ns_null;
 }
 
-ns_value ns_eval_find_value_cached(ns_vm *vm, ns_str name, ns_sym_cache *c) {
-    ns_symbol *s = ns_vm_find_symbol_cached(vm, name, c);
+static inline ns_value ns_eval_symbol_value(ns_symbol *s) {
     if (!s) return ns_nil;
     switch (s->type)
     {
@@ -527,6 +542,12 @@ ns_value ns_eval_find_value_cached(ns_vm *vm, ns_str name, ns_sym_cache *c) {
     default: break;
     }
     return ns_nil;
+}
+
+static inline ns_value ns_eval_find_value_cached(ns_vm *vm, ns_str name, ns_sym_cache *c) {
+    ns_symbol *s = ns_vm_symbol_cache_hit(vm, c);
+    if (!s) s = ns_vm_find_symbol_cached(vm, name, c);
+    return ns_eval_symbol_value(s);
 }
 
 ns_value ns_eval_find_value(ns_vm *vm, ns_str name) {
@@ -789,6 +810,37 @@ ns_value ns_eval_number_mod(ns_vm *vm, ns_value l, ns_value r) {
 ns_return_value ns_eval_binary_ops_number(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_token_t op = n->binary_expr.op;
+    switch (n->binary_expr.rt) {
+    case NS_BINARY_CACHE_ADD: return ns_return_ok(value, ns_eval_binary_add(vm, l, r));
+    case NS_BINARY_CACHE_SUB: return ns_return_ok(value, ns_eval_binary_sub(vm, l, r));
+    case NS_BINARY_CACHE_MUL: return ns_return_ok(value, ns_eval_binary_mul(vm, l, r));
+    case NS_BINARY_CACHE_DIV: return ns_return_ok(value, ns_eval_binary_div(vm, l, r));
+    case NS_BINARY_CACHE_MOD: return ns_return_ok(value, ns_eval_number_mod(vm, l, r));
+    case NS_BINARY_CACHE_SHL:
+        if (ns_type_is_float(l.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "shift operator not supported for float type.");
+        return ns_return_ok(value, ns_eval_binary_shl(vm, l, r));
+    case NS_BINARY_CACHE_SHR:
+        if (ns_type_is_float(l.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "shift operator not supported for float type.");
+        return ns_return_ok(value, ns_eval_binary_shr(vm, l, r));
+    case NS_BINARY_CACHE_AND: return ns_return_ok(value, ns_eval_binary_and(vm, l, r));
+    case NS_BINARY_CACHE_OR: return ns_return_ok(value, ns_eval_binary_or(vm, l, r));
+    case NS_BINARY_CACHE_BAND:
+        if (ns_type_is_float(l.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "bitwise operator not supported for float type.");
+        return ns_return_ok(value, ns_eval_binary_band(vm, l, r));
+    case NS_BINARY_CACHE_BOR:
+        if (ns_type_is_float(l.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "bitwise operator not supported for float type.");
+        return ns_return_ok(value, ns_eval_binary_bor(vm, l, r));
+    case NS_BINARY_CACHE_BXOR:
+        if (ns_type_is_float(l.t)) return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "bitwise operator not supported for float type.");
+        return ns_return_ok(value, ns_eval_binary_bxor(vm, l, r));
+    case NS_BINARY_CACHE_LT: return ns_return_ok(value, ns_eval_binary_lt(vm, l, r));
+    case NS_BINARY_CACHE_LE: return ns_return_ok(value, ns_eval_binary_le(vm, l, r));
+    case NS_BINARY_CACHE_GT: return ns_return_ok(value, ns_eval_binary_gt(vm, l, r));
+    case NS_BINARY_CACHE_GE: return ns_return_ok(value, ns_eval_binary_ge(vm, l, r));
+    case NS_BINARY_CACHE_EQ: return ns_return_ok(value, ns_eval_binary_eq(vm, l, r));
+    case NS_BINARY_CACHE_NE: return ns_return_ok(value, ns_eval_binary_ne(vm, l, r));
+    default: break; // AST evaluated without the semantic pass: use token path
+    }
     switch (op.type) {
     case NS_TOKEN_ADD_OP: {
         ns_value n = ns_str_equals_STR(op.val, "+") ? ns_eval_binary_add(vm, l, r) : ns_eval_binary_sub(vm, l, r);
@@ -909,10 +961,20 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
     }
 
-    ns_return_value ret_callee = ns_eval_expr(vm, ctx, n->call_expr.callee);
-    if (ns_return_is_error(ret_callee)) return ret_callee;
-
-    ns_value callee = ret_callee.r;
+    ns_value callee;
+    ns_bool direct_hit = false;
+    if (n->call_expr.rt >= 0 && n->call_expr.rt < (i32)ns_array_length(vm->symbols)) {
+        ns_symbol *direct = &vm->symbols[n->call_expr.rt];
+        if (direct->type == NS_SYMBOL_FN || direct->type == NS_SYMBOL_STRUCT) {
+            callee = direct->type == NS_SYMBOL_STRUCT ? direct->st.st : direct->fn.fn;
+            direct_hit = true;
+        }
+    }
+    if (!direct_hit) {
+        ns_return_value ret_callee = ns_eval_expr(vm, ctx, n->call_expr.callee);
+        if (ns_return_is_error(ret_callee)) return ret_callee;
+        callee = ret_callee.r;
+    }
     if (ns_is_nil(callee)) {
         // An identifier naming a struct has no value; treat the call as a
         // positional constructor (`point(0, 0)`).
@@ -1668,6 +1730,11 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             default: lt = ns_type_i32; break;
             }
         }
+        if (n->primary_expr.rt.literal_valid &&
+            ns_type_equals(n->primary_expr.rt.literal.t, lt)) {
+            ret = n->primary_expr.rt.literal;
+            break;
+        }
         if (ns_type_unsigned(lt)) {
             ns_value uv = (ns_value){.t = ns_type_u64, .u64 = ns_eval_literal_u64(t.val)};
             if (ns_type_is(lt, NS_TYPE_U64)) { ret = uv; break; }
@@ -1692,12 +1759,21 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             }
             lt = t.suffix == NS_NUM_SUFFIX_F64 ? ns_type_f64 : ns_type_f32;
         }
+        if (n->primary_expr.rt.literal_valid &&
+            ns_type_equals(n->primary_expr.rt.literal.t, lt)) {
+            ret = n->primary_expr.rt.literal;
+            break;
+        }
         f64 fv = ns_str_to_f64(t.val);
         ret = ns_type_is(lt, NS_TYPE_F32) ? (ns_value){.t = ns_type_f32, .f32 = (f32)fv}
                                           : (ns_value){.t = ns_type_f64, .f64 = fv};
     } break;
     case NS_TOKEN_STR_LITERAL:
     case NS_TOKEN_STR_FORMAT: {
+        if (n->primary_expr.rt.literal_valid) {
+            ret = n->primary_expr.rt.literal;
+            break;
+        }
         // A format string without interpolation is a plain literal. Escape
         // sequences decode once, when the literal becomes a runtime value;
         // consumers (print/write/FFI) receive the real bytes.
@@ -1733,6 +1809,13 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     default: {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unimplemented primary expr type.");
     } break;
+    }
+    if (t.type == NS_TOKEN_INT_LITERAL || t.type == NS_TOKEN_FLT_LITERAL) {
+        n->primary_expr.rt.literal = ret;
+        n->primary_expr.rt.literal_valid = true;
+    } else if (t.type == NS_TOKEN_STR_LITERAL || t.type == NS_TOKEN_STR_FORMAT) {
+        n->primary_expr.rt.literal = ret;
+        n->primary_expr.rt.literal_valid = true;
     }
     return ns_return_ok(value, ret);
 }
@@ -1970,9 +2053,15 @@ static ns_return_value ns_eval_cast_enum(ns_vm *vm, ns_value v, ns_type enum_t, 
 
 ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
-    ns_return_type ret_t = ns_vm_parse_type(vm, ctx, n);
-    if (ns_return_is_error(ret_t)) return ns_return_change_type(value, ret_t);
-    ns_type t = ret_t.r;
+    ns_type t = n->cast_expr.rt;
+    if (ns_type_is_unknown(t)) {
+        // Expressions evaluated without the semantic pass (for example the
+        // lightweight format evaluator) retain the old resolving fallback.
+        ns_return_type ret_t = ns_vm_parse_type(vm, ctx, n);
+        if (ns_return_is_error(ret_t)) return ns_return_change_type(value, ret_t);
+        t = ret_t.r;
+        n->cast_expr.rt = t;
+    }
 
     ns_return_value ret_v = ns_eval_expr(vm, ctx, n->cast_expr.expr);
     if (ns_return_is_error(ret_v)) return ret_v;
@@ -2005,8 +2094,27 @@ ns_return_value ns_eval_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
 
+    if (n->member_expr.rt.kind == NS_MEMBER_CACHE_ENUM) {
+        i32 owner = n->member_expr.rt.owner;
+        i32 member = n->member_expr.rt.index;
+        if (owner >= 0 && owner < (i32)ns_array_length(vm->symbols)) {
+            ns_symbol *en = &vm->symbols[owner];
+            if (en->type == NS_SYMBOL_ENUM && member >= 0 && member < (i32)ns_array_length(en->en.members)) {
+                ns_value value = {.t = ns_type_set_stack(en->en.t, false),
+                                  .u64 = en->en.members[member].value};
+                return ns_return_ok(value, value);
+            }
+        }
+        return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL,
+                               "invalid cached enum member.");
+    }
+
+    // Fallback for an expression evaluated without ns_vm_parse (the format
+    // evaluator supports that mode). Normal program evaluation resolves this
+    // branch once in the semantic pass and uses the direct cache above.
     ns_ast_t *left = &ctx->nodes[n->member_expr.left];
-    if (left->type == NS_AST_PRIMARY_EXPR && left->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+    if (n->member_expr.rt.kind == NS_MEMBER_CACHE_NONE &&
+        left->type == NS_AST_PRIMARY_EXPR && left->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
         ns_symbol *candidate = ns_vm_find_symbol(vm, left->primary_expr.token.val, false);
         if (candidate && candidate->type == NS_SYMBOL_ENUM) {
             ns_ast_t *member = &ctx->nodes[n->member_expr.right];
@@ -2034,41 +2142,57 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_eval_member_expr(vm, ctx, n->member_expr.right);
     }
 
-    // primary expr
-    ns_str name = field->primary_expr.token.val;
-
     if (ns_type_is_array(st.t)) {
         void *data = ns_eval_array_data(vm, st);
-        i32 n = 0;
-        if (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size")) {
-            n = (i32)ns_buffer_len(data);
-        } else if (ns_str_equals_STR(name, "cap")) {
-            n = (i32)ns_buffer_cap(data);
+        i32 count;
+        if (n->member_expr.rt.kind == NS_MEMBER_CACHE_LEN) {
+            count = (i32)ns_buffer_len(data);
+        } else if (n->member_expr.rt.kind == NS_MEMBER_CACHE_CAP) {
+            count = (i32)ns_buffer_cap(data);
+        } else if (n->member_expr.rt.kind == NS_MEMBER_CACHE_NONE) {
+            ns_str name = field->primary_expr.token.val;
+            if (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size")) count = (i32)ns_buffer_len(data);
+            else if (ns_str_equals_STR(name, "cap")) count = (i32)ns_buffer_cap(data);
+            else return ns_return_error(value, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown array member.");
         } else {
             return ns_return_error(value, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown array member.");
         }
-        return ns_return_ok(value, ((ns_value){.t = ns_type_i32, .i32 = n}));
+        return ns_return_ok(value, ((ns_value){.t = ns_type_i32, .i32 = count}));
     }
 
     if (ns_type_is(st.t, NS_TYPE_DICT) || ns_type_is(st.t, NS_TYPE_SET)) {
         ns_dict_table *table = ns_eval_dict_table(vm, st);
-        i32 n = 0;
-        if (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size")) {
-            n = table ? table->len : 0;
-        } else if (ns_str_equals_STR(name, "cap")) {
-            n = table ? table->cap : 0;
+        i32 count;
+        if (n->member_expr.rt.kind == NS_MEMBER_CACHE_LEN) {
+            count = table ? table->len : 0;
+        } else if (n->member_expr.rt.kind == NS_MEMBER_CACHE_CAP) {
+            count = table ? table->cap : 0;
+        } else if (n->member_expr.rt.kind == NS_MEMBER_CACHE_NONE) {
+            ns_str name = field->primary_expr.token.val;
+            if (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size")) count = table ? table->len : 0;
+            else if (ns_str_equals_STR(name, "cap")) count = table ? table->cap : 0;
+            else return ns_return_error(value, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown container member.");
         } else {
             return ns_return_error(value, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown container member.");
         }
-        return ns_return_ok(value, ((ns_value){.t = ns_type_i32, .i32 = n}));
+        return ns_return_ok(value, ((ns_value){.t = ns_type_i32, .i32 = count}));
     }
 
     // string .len/.size/.cap yield byte-count metadata.
-    if (ns_type_is(st.t, NS_TYPE_STRING) && !ns_type_is_array(st.t) &&
-        (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size") || ns_str_equals_STR(name, "cap"))) {
+    if (ns_type_is(st.t, NS_TYPE_STRING) && !ns_type_is_array(st.t)) {
         ns_str s = ns_eval_str(vm, st);
-        i32 n = ns_str_equals_STR(name, "cap") && s.data ? (i32)ns_buffer_cap(s.data) : s.len;
-        ns_value lv = {.t = ns_type_i32, .i32 = n};
+        i32 count;
+        if (n->member_expr.rt.kind == NS_MEMBER_CACHE_LEN) count = s.len;
+        else if (n->member_expr.rt.kind == NS_MEMBER_CACHE_CAP) count = s.data ? (i32)ns_buffer_cap(s.data) : s.len;
+        else if (n->member_expr.rt.kind == NS_MEMBER_CACHE_NONE) {
+            ns_str name = field->primary_expr.token.val;
+            if (ns_str_equals_STR(name, "len") || ns_str_equals_STR(name, "size")) count = s.len;
+            else if (ns_str_equals_STR(name, "cap")) count = s.data ? (i32)ns_buffer_cap(s.data) : s.len;
+            else return ns_return_error(value, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown string member.");
+        } else {
+            return ns_return_error(value, ns_ast_state_loc(ctx, field->state), NS_ERR_EVAL, "unknown string member.");
+        }
+        ns_value lv = {.t = ns_type_i32, .i32 = count};
         return ns_return_ok(value, lv);
     }
 
@@ -2077,20 +2201,19 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown struct.");
     }
 
-    for (i32 f_i = 0, l = ns_array_length(st_type->st.fields); f_i < l; ++f_i) {
-        ns_struct_field *field = &st_type->st.fields[f_i];
-        if (ns_str_equals(field->name, name)) {
-            // The field inherits the struct's addressing (stack vs absolute)
-            // and mutability, so fields of a mutable struct - including
-            // heap-backed array elements - are themselves assignable.
-            ns_type ft = field->t;
-            ft.stack = ns_type_in_stack(st.t);
-            // A field reached through a ref is mutable: a ref is a mutable
-            // pointer to its target, so `v.field = x` is allowed for `v: ref T`.
-            ft.mut = st.t.mut || ns_type_is_ref(st.t);
-            ns_value val = (ns_value){.t = ft, .o = st.o + field->o};
-            return ns_return_ok(value, val);
-        }
+    i32 field_i = n->member_expr.rt.index;
+    if (n->member_expr.rt.kind == NS_MEMBER_CACHE_NONE) {
+        field_i = ns_struct_field_index(st_type, field->primary_expr.token.val);
+    }
+    if (field_i >= 0 && field_i < (i32)ns_array_length(st_type->st.fields)) {
+        ns_struct_field *member = &st_type->st.fields[field_i];
+        // The field inherits the struct's addressing (stack vs absolute) and
+        // mutability, so fields of a mutable struct remain assignable.
+        ns_type ft = member->t;
+        ft.stack = ns_type_in_stack(st.t);
+        ft.mut = st.t.mut || ns_type_is_ref(st.t);
+        ns_value val = (ns_value){.t = ft, .o = st.o + member->o};
+        return ns_return_ok(value, val);
     }
 
     return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown struct field.");
@@ -2231,11 +2354,14 @@ ns_return_value ns_eval_array_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_ok(value, v);
     }
 
-    ns_ast_t *t = &ctx->nodes[n->array_expr.type];
-
-    ns_return_type ret_t = ns_vm_parse_type(vm, ctx, t);
-    if (ns_return_is_error(ret_t)) return ns_return_change_type(value, ret_t);
-    ns_type type = ret_t.r;
+    ns_type type = n->array_expr.rt;
+    if (ns_type_is_unknown(type)) {
+        ns_ast_t *t = &ctx->nodes[n->array_expr.type];
+        ns_return_type ret_t = ns_vm_parse_type(vm, ctx, t);
+        if (ns_return_is_error(ret_t)) return ns_return_change_type(value, ret_t);
+        type = ret_t.r;
+        n->array_expr.rt = type;
+    }
 
     ns_return_value ret_count = ns_eval_expr(vm, ctx, n->array_expr.count_expr);
     if (ns_return_is_error(ret_count)) return ret_count;
@@ -2492,9 +2618,13 @@ ns_return_value ns_eval_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_ok(value, ret_v.r);
     }
 
-    ns_return_type ret_type = ns_vm_parse_type(vm, ctx, &ctx->nodes[n->var_def.type]);
-    if (ns_return_is_error(ret_type)) return ns_return_change_type(value, ret_type);
-    ns_type dst_t = ret_type.r;
+    ns_type dst_t = n->var_def.rt;
+    if (ns_type_is_unknown(dst_t)) {
+        ns_return_type ret_type = ns_vm_parse_type(vm, ctx, &ctx->nodes[n->var_def.type]);
+        if (ns_return_is_error(ret_type)) return ns_return_change_type(value, ret_type);
+        dst_t = ret_type.r;
+        n->var_def.rt = dst_t;
+    }
     ns_value src = ret_v.r;
 
     // A union- or fn-typed slot keeps the concrete assigned type tag at runtime

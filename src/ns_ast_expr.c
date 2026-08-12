@@ -181,7 +181,7 @@ done:
 ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
-    ns_ast_t n = {.type = NS_AST_CALL_EXPR, .state = state, .call_expr = { .callee = callee, .arg_count = 0}};
+    ns_ast_t n = {.type = NS_AST_CALL_EXPR, .state = state, .call_expr = { .callee = callee, .arg_count = 0, .rt = -1}};
     // an empty arg list still falls through to the trailing-block check below,
     // so `f() { in ... }` attaches the block as the only argument
     if (!ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {

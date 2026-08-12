@@ -1151,6 +1151,7 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "var def with invalid type.");
         }
 
+        n->var_def.rt = r.val.t;
         ns_vm_push_symbol_global(vm, r);
     }
     return ns_return_ok_void;
@@ -1344,6 +1345,10 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_ty
     }
     case NS_TOKEN_STR_LITERAL:
     case NS_TOKEN_STR_FORMAT:
+        // String handles belong to a VM's string table. A repeated semantic
+        // pass may evaluate this AST with another VM, so its lazy eval cache
+        // starts empty for this pass.
+        n->primary_expr.rt.literal_valid = false;
         return ns_return_ok(type, ns_type_str);
     case NS_TOKEN_TRUE:
     case NS_TOKEN_FALSE:
@@ -1368,6 +1373,7 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_ty
         n->primary_expr.t = ns_type_type;
         return ns_return_ok(type, ns_type_type);
     case NS_TOKEN_IDENTIFIER:
+        n->primary_expr.rt.cache = (ns_sym_cache){0};
         return ns_vm_parse_type_by_token(vm, n->primary_expr.token, ns_ast_state_loc(ctx, n->state));
     default:
         break;
@@ -1378,6 +1384,7 @@ ns_return_type ns_vm_parse_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_ty
 
 ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+    n->call_expr.rt = -1;
     ns_ast_t *callee_n = &ctx->nodes[n->call_expr.callee];
 
     // Container membership builtins: has(c, k) / insert(s, v) / remove(c, k)
@@ -1425,6 +1432,13 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_symbol *fn_record = &vm->symbols[ns_type_index(fn)];
+    if (callee_n->type == NS_AST_PRIMARY_EXPR &&
+        callee_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+        ns_symbol *direct = ns_vm_find_symbol(vm, callee_n->primary_expr.token.val, false);
+        if (direct && (direct->type == NS_SYMBOL_FN || direct->type == NS_SYMBOL_STRUCT)) {
+            n->call_expr.rt = (i32)(direct - vm->symbols);
+        }
+    }
     if (!fn_record || fn_record->type != NS_SYMBOL_FN) {
         // Positional struct construction: `point(0, 0)` fills the fields in
         // declaration order, one argument per field.
@@ -1527,6 +1541,9 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+    n->member_expr.rt.kind = NS_MEMBER_CACHE_NONE;
+    n->member_expr.rt.owner = 0;
+    n->member_expr.rt.index = -1;
     ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->member_expr.left, ns_type_infer);
     if (ns_return_is_error(ret_t)) return ret_t;
 
@@ -1539,10 +1556,14 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                                    "invalid enum member expression.");
         }
         ns_symbol *en = &vm->symbols[ns_type_index(t)];
-        if (ns_enum_member_index(en, member->primary_expr.token.val) < 0) {
+        i32 member_i = ns_enum_member_index(en, member->primary_expr.token.val);
+        if (member_i < 0) {
             return ns_return_error(type, ns_ast_state_loc(ctx, member->state), NS_ERR_EVAL,
                                    "unknown enum member.");
         }
+        n->member_expr.rt.kind = NS_MEMBER_CACHE_ENUM;
+        n->member_expr.rt.owner = (i32)ns_type_index(t);
+        n->member_expr.rt.index = member_i;
         return ns_return_ok(type, t);
     }
 
@@ -1553,6 +1574,9 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
          ns_str_equals_STR(lf.primary_expr.token.val, "cap"))) {
         if (ns_type_is_array(t) || (ns_type_is(t, NS_TYPE_STRING) && !ns_type_is_array(t)) ||
             ns_type_is(t, NS_TYPE_DICT) || ns_type_is(t, NS_TYPE_SET)) {
+            n->member_expr.rt.kind = ns_str_equals_STR(lf.primary_expr.token.val, "cap")
+                                       ? NS_MEMBER_CACHE_CAP
+                                       : NS_MEMBER_CACHE_LEN;
             return ns_return_ok(type, ns_type_i32);
         }
     }
@@ -1584,6 +1608,8 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         for (i32 f_i = 0, l = ns_array_length(st->fields); f_i < l; ++f_i) {
             ns_struct_field *f = &st->fields[f_i];
             if (ns_str_equals(f->name, name)) {
+                n->member_expr.rt.kind = NS_MEMBER_CACHE_STRUCT;
+                n->member_expr.rt.index = f_i;
                 return ns_return_ok(type, f->t);
             }
         }
@@ -1673,6 +1699,7 @@ ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
+    n->desig_expr.rt.cache = (ns_sym_cache){0};
     ns_symbol *st = ns_vm_find_symbol(vm, n->desig_expr.name.val, true);
     if (!st || st->type != NS_SYMBOL_STRUCT) {
         return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown struct.");
@@ -1845,6 +1872,7 @@ ns_return_type ns_vm_parse_cast_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_return_is_error(ret_cast)) return ret_cast;
 
     ns_type cast = ret_cast.r;
+    n->cast_expr.rt = cast;
     if (ns_type_equals(t, cast)) {
         return ns_return_ok(type, t);
     }
@@ -1905,6 +1933,29 @@ ns_bool ns_vm_assign_number_compatible(ns_vm *vm, ns_type dst, ns_type src) {
 ns_return_type ns_vm_parse_binary_ops_number(ns_ast_ctx *ctx, ns_type t, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_token_t op = n->binary_expr.op;
+    if (n->binary_expr.rt == NS_BINARY_CACHE_NONE) {
+        switch (op.type) {
+        case NS_TOKEN_ADD_OP: n->binary_expr.rt = op.val.data[0] == '+' ? NS_BINARY_CACHE_ADD : NS_BINARY_CACHE_SUB; break;
+        case NS_TOKEN_MUL_OP:
+            n->binary_expr.rt = op.val.data[0] == '*' ? NS_BINARY_CACHE_MUL
+                              : op.val.data[0] == '/' ? NS_BINARY_CACHE_DIV
+                                                     : NS_BINARY_CACHE_MOD;
+            break;
+        case NS_TOKEN_SHIFT_OP: n->binary_expr.rt = op.val.data[0] == '<' ? NS_BINARY_CACHE_SHL : NS_BINARY_CACHE_SHR; break;
+        case NS_TOKEN_LOGIC_OP: n->binary_expr.rt = op.val.data[0] == '&' ? NS_BINARY_CACHE_AND : NS_BINARY_CACHE_OR; break;
+        case NS_TOKEN_BITWISE_OP:
+            n->binary_expr.rt = op.val.data[0] == '&' ? NS_BINARY_CACHE_BAND
+                              : op.val.data[0] == '|' ? NS_BINARY_CACHE_BOR
+                                                    : NS_BINARY_CACHE_BXOR;
+            break;
+        case NS_TOKEN_REL_OP:
+            if (op.val.data[0] == '<') n->binary_expr.rt = op.val.len == 1 ? NS_BINARY_CACHE_LT : NS_BINARY_CACHE_LE;
+            else n->binary_expr.rt = op.val.len == 1 ? NS_BINARY_CACHE_GT : NS_BINARY_CACHE_GE;
+            break;
+        case NS_TOKEN_EQ_OP: n->binary_expr.rt = op.val.data[0] == '=' ? NS_BINARY_CACHE_EQ : NS_BINARY_CACHE_NE; break;
+        default: break;
+        }
+    }
     switch (op.type) {
     case NS_TOKEN_ADD_OP:
     case NS_TOKEN_MUL_OP:
@@ -2212,6 +2263,7 @@ ns_return_void ns_vm_parse_local_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                                    "lit supports only number, bool, string, and enum values.");
         }
     }
+    n->var_def.rt = s.val.t;
     ns_array_push(vm->symbol_stack, s);
     return ns_return_ok_void;
 }

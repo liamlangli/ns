@@ -68,6 +68,39 @@ typedef struct ns_sym_cache {
     u32 gen;   // vm->symbol_gen at fill time (GLOBAL only)
 } ns_sym_cache;
 
+// Static member-access plan resolved by the semantic pass. Evaluation still
+// reads the current object/value, but no longer repeats enum lookup, metadata
+// name matching, or a linear struct-field scan on every execution.
+typedef enum {
+    NS_MEMBER_CACHE_NONE = 0,
+    NS_MEMBER_CACHE_ENUM,
+    NS_MEMBER_CACHE_LEN,
+    NS_MEMBER_CACHE_CAP,
+    NS_MEMBER_CACHE_STRUCT,
+} ns_member_cache_kind;
+
+typedef enum {
+    NS_BINARY_CACHE_NONE = 0,
+    NS_BINARY_CACHE_ADD,
+    NS_BINARY_CACHE_SUB,
+    NS_BINARY_CACHE_MUL,
+    NS_BINARY_CACHE_DIV,
+    NS_BINARY_CACHE_MOD,
+    NS_BINARY_CACHE_SHL,
+    NS_BINARY_CACHE_SHR,
+    NS_BINARY_CACHE_AND,
+    NS_BINARY_CACHE_OR,
+    NS_BINARY_CACHE_BAND,
+    NS_BINARY_CACHE_BOR,
+    NS_BINARY_CACHE_BXOR,
+    NS_BINARY_CACHE_LT,
+    NS_BINARY_CACHE_LE,
+    NS_BINARY_CACHE_GT,
+    NS_BINARY_CACHE_GE,
+    NS_BINARY_CACHE_EQ,
+    NS_BINARY_CACHE_NE,
+} ns_binary_cache_kind;
+
 // Maps one line of a merged translation unit back to its source file + line.
 typedef struct ns_line_loc {
     ns_str f;
@@ -133,6 +166,7 @@ typedef struct ns_ast_var_def {
     i32 type_size;
     ns_bool is_ref;
     ns_bool is_lit;
+    ns_type rt; // declared/inferred type resolved at vm-parse
 } ns_ast_var_def;
 
 typedef struct ns_ast_struct_def {
@@ -170,11 +204,13 @@ typedef struct ns_ast_binary_expr {
     i32 left;
     i32 right;
     ns_token_t op;
+    i32 rt; // ns_binary_cache_kind, resolved from the immutable token
 } ns_ast_binary_expr;
 
 typedef struct ns_ast_cast_expr {
     i32 expr;
     ns_token_t type;
+    ns_type rt; // destination type resolved at vm-parse
 } ns_ast_cast_expr;
 
 typedef struct ns_ast_primary_expr {
@@ -182,6 +218,8 @@ typedef struct ns_ast_primary_expr {
     ns_type t; // literal type resolved at vm-parse (suffix or expected-type adoption)
     struct {
         ns_sym_cache cache; // identifier lookup cache, filled at eval
+        ns_value literal;   // immutable literal materialized once per semantic pass
+        ns_bool literal_valid;
     } rt;
 } ns_ast_primary_expr;
 
@@ -200,11 +238,17 @@ typedef struct ns_ast_member_expr {
     i32 left;
     i32 right; // field/primary node (or chained member). Kept separate from
                // ns_ast_t.next so argument-list linking cannot clobber it.
+    struct {
+        i32 kind;  // ns_member_cache_kind
+        i32 owner; // enum symbol index (NS_MEMBER_CACHE_ENUM only)
+        i32 index; // enum member or struct field index
+    } rt;
 } ns_ast_member_expr;
 
 typedef struct ns_ast_call_expr {
     i32 callee;
     i32 arg_count;
+    i32 rt; // direct callee/constructor symbol index, -1 for a dynamic callee
 } ns_ast_call_expr;
 
 typedef struct ns_ast_index_expr {
