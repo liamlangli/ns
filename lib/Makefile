@@ -63,8 +63,6 @@ NS_BOX3D_SRCS = $(wildcard third_party/box3d/src/*.c)
 NS_BOX3D_OBJS = $(NS_BOX3D_SRCS:third_party/box3d/src/%.c=$(NS_BOX3D_OBJDIR)/%.o)
 NS_DYNAMIC_OBJS = $(NS_BINDIR)/lib/dynamic.o $(NS_BOX3D_OBJS)
 
-$(NS_BINDIR)/lib/dynamic.o: lib/include/dynamic.h $(NS_BOX3D_HEADERS)
-
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.linux.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.posix.o
@@ -81,6 +79,8 @@ else ifeq ($(NS_OS), $(NS_WIN))
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.win.o
 	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.dx12.o
 endif
+
+$(NS_BINDIR)/lib/dynamic.o: lib/include/dynamic.h $(NS_BOX3D_HEADERS)
 
 NS_STD_SHARED = \
 	$(NS_IO_DYLIB) \
