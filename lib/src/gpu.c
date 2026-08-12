@@ -246,7 +246,9 @@ gpu_addr gpu_frame_alloc(u64 size, u32 align) {
         _v2.ring_section = 0;
     }
 
-    u64 section_size = GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT;
+    // Keep every swap section's base aligned: integer division of the 4 MiB
+    // ring by three otherwise produces the invalid Metal offset 0x155555.
+    u64 section_size = (GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT) & ~((u64)GPU_V2_ALLOC_ALIGN - 1);
     u64 head = (_v2.ring_head + align - 1) & ~((u64)align - 1);
     if (head + size > section_size) {
         ns_warn("gpu", "gpu_frame_alloc: frame ring exhausted.\n");
@@ -368,10 +370,15 @@ void gpu_set_root(gpu_addr args) {
 }
 
 void gpu_set_storage(gpu_addr addr) {
+    gpu_set_storage_at(0, addr);
+}
+
+void gpu_set_storage_at(i32 index, gpu_addr addr) {
+    if (index < 0 || index >= 2) return;
     u32 slot;
     u64 offset;
     if (!gpu_v2_decode(addr, &slot, &offset)) return;
-    if (_v2.ops && _v2.ops->set_storage) _v2.ops->set_storage(slot, offset, addr);
+    if (_v2.ops && _v2.ops->set_storage) _v2.ops->set_storage((u32)(3 + index), slot, offset, addr);
 }
 
 void gpu_set_root_data(const void *data, u64 size) {

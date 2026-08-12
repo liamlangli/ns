@@ -205,6 +205,7 @@ extern void gpu_set_shader(u32);
 extern void gpu_set_state(u32);
 extern void gpu_set_root(u64);
 extern void gpu_set_storage(u64);
+extern void gpu_set_storage_at(i32, u64);
 extern void gpu_set_root_data(void *, u64);
 extern void gpu_draw_vertices(i32, i32, i32);
 extern void gpu_draw_indexed(u64, i32, i32, i32, i32);
@@ -955,6 +956,13 @@ static ns_return_bool ns_embedded_sig103(ns_vm *vm, void *target) {
     return ns_return_ok(bool, true);
 }
 
+static ns_return_bool ns_embedded_sig104(ns_vm *vm, void *target) {
+    ((void (*)(i32, u64))target)(ns_eval_number_i32(vm, ns_embedded_arg(vm, 0)), ns_eval_number_u64(vm, ns_embedded_arg(vm, 1)));
+    ns_call *call = ns_array_last(vm->call_stack);
+    call->ret = ns_nil;
+    return ns_return_ok(bool, true);
+}
+
 typedef struct ns_embedded_entry {
     const char *name;
     void *target;
@@ -990,6 +998,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "gpu_set_shader", (void *)gpu_set_shader, ns_embedded_sig14 },
     { "gpu_set_state", (void *)gpu_set_state, ns_embedded_sig14 },
     { "gpu_set_storage", (void *)gpu_set_storage, ns_embedded_sig3 },
+    { "gpu_set_storage_at", (void *)gpu_set_storage_at, ns_embedded_sig104 },
     { "gpu_set_viewport", (void *)gpu_set_viewport, ns_embedded_sig17 },
     { "gpu_shader_compute_create", (void *)gpu_shader_compute_create, ns_embedded_sig18 },
     { "gpu_shader_destroy", (void *)gpu_shader_destroy, ns_embedded_sig14 },

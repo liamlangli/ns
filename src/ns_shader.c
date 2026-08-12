@@ -11,6 +11,7 @@
 // Local arrays live in a shader's register/stack budget, so the length stays
 // small enough that every backend can hold one.
 #define NS_SHADER_MAX_ARRAY_LEN 256
+#define NS_SHADER_MAX_STORAGE_BUFFERS 2
 // The root argument is four float4s on every backend.
 #define NS_SHADER_ROOT_WORDS 16
 
@@ -59,13 +60,13 @@ static const ns_shader_resource_binding ns_shader_resources[] = {
     {NS_SHADER_USE_TEXTURE_MAP, "texture2d<float> ns_texture_map", ns_null, "ns_texture_map"},
     {NS_SHADER_USE_MASK_MAP, "texture2d<float> ns_mask_map", ns_null, "ns_mask_map"},
     {NS_SHADER_USE_SCENE_UNIFORMS, "constant ns_scene_uniforms& ns_uniforms", ns_null, "ns_uniforms"},
-    {NS_SHADER_USE_STORAGE_BUFFER, "device int* ns_storage_buffer", ns_null, "ns_storage_buffer"},
 };
 
 // Per-fn record of the resources it and its callees reach.
 typedef struct ns_shader_fn_use {
     i32 fn_index;
     u32 mask;
+    u32 storage_buffer_mask;
 } ns_shader_fn_use;
 
 typedef struct ns_shader_emit {
@@ -98,7 +99,7 @@ typedef struct ns_shader_emit {
     ns_bool uses_root;
     ns_bool uses_read_texture;
     ns_bool uses_write_texture;
-    ns_bool uses_storage_buffer;
+    u32 storage_buffer_mask;
 } ns_shader_emit;
 
 #define ns_shader_try(x)                                                                                                                             \
@@ -492,6 +493,18 @@ static ns_return_void ns_shader_const_i32(ns_shader_emit *e, i32 node, ns_bool l
     return ns_return_ok_void;
 }
 
+static ns_return_void ns_shader_storage_buffer_index(ns_shader_emit *e, i32 node, i32 *out, ns_code_loc loc) {
+    i64 value = 0;
+    ns_return_void parsed = ns_shader_const_expr(e, node, &value, loc);
+    if (ns_return_is_error(parsed) || value < 0 || value >= NS_SHADER_MAX_STORAGE_BUFFERS) {
+        snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: storage buffer index must be a compile-time integer from 0 to %d.",
+                 NS_SHADER_MAX_STORAGE_BUFFERS - 1);
+        return ns_return_error(void, loc, NS_ERR_EVAL, ns_shader_err);
+    }
+    *out = (i32)value;
+    return ns_return_ok_void;
+}
+
 static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
     ns_ast_t *n = &e->ctx->nodes[i];
     switch (n->type) {
@@ -613,7 +626,7 @@ static u32 ns_shader_use_mask(ns_shader_emit *e) {
     if (e->uses_texture_map) mask |= NS_SHADER_USE_TEXTURE_MAP;
     if (e->uses_mask_map) mask |= NS_SHADER_USE_MASK_MAP;
     if (e->uses_scene_uniforms) mask |= NS_SHADER_USE_SCENE_UNIFORMS;
-    if (e->uses_storage_buffer) mask |= NS_SHADER_USE_STORAGE_BUFFER;
+    if (e->storage_buffer_mask != 0) mask |= NS_SHADER_USE_STORAGE_BUFFER;
     return mask;
 }
 
@@ -627,12 +640,18 @@ static void ns_shader_set_use_mask(ns_shader_emit *e, u32 mask) {
     e->uses_texture_map = (mask & NS_SHADER_USE_TEXTURE_MAP) != 0;
     e->uses_mask_map = (mask & NS_SHADER_USE_MASK_MAP) != 0;
     e->uses_scene_uniforms = (mask & NS_SHADER_USE_SCENE_UNIFORMS) != 0;
-    e->uses_storage_buffer = (mask & NS_SHADER_USE_STORAGE_BUFFER) != 0;
 }
 
 static u32 ns_shader_fn_mask(ns_shader_emit *e, i32 fn_index) {
     for (i32 i = 0, l = (i32)ns_array_length(e->fn_uses); i < l; ++i) {
         if (e->fn_uses[i].fn_index == fn_index) return e->fn_uses[i].mask;
+    }
+    return 0;
+}
+
+static u32 ns_shader_fn_storage_buffer_mask(ns_shader_emit *e, i32 fn_index) {
+    for (i32 i = 0, l = (i32)ns_array_length(e->fn_uses); i < l; ++i) {
+        if (e->fn_uses[i].fn_index == fn_index) return e->fn_uses[i].storage_buffer_mask;
     }
     return 0;
 }
@@ -654,6 +673,18 @@ static void ns_shader_emit_resource_list(ns_shader_emit *e, ns_str *dst, u32 mas
         if (!param || !(mask & r->bit)) continue;
         if (!*first) ns_shader_cstr(dst, ", ");
         ns_shader_cstr(dst, declare ? param : r->name);
+        *first = false;
+    }
+}
+
+static void ns_shader_emit_storage_buffer_list(ns_shader_emit *e, ns_str *dst, u32 storage_buffer_mask, ns_bool declare, ns_bool *first) {
+    if (e->target != NS_SHADER_MSL) return;
+    for (i32 index = 0; index < NS_SHADER_MAX_STORAGE_BUFFERS; ++index) {
+        if ((storage_buffer_mask & (1u << index)) == 0) continue;
+        if (!*first) ns_shader_cstr(dst, ", ");
+        if (declare) ns_shader_cstr(dst, "device int* ");
+        ns_shader_cstr(dst, "ns_storage_buffer_");
+        ns_shader_i32(dst, index);
         *first = false;
     }
 }
@@ -710,7 +741,9 @@ static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth
         if (callee->type == NS_AST_PRIMARY_EXPR &&
             (ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_buffer_i32")) ||
              ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_buffer_store_i32")))) {
-            e->uses_storage_buffer = true;
+            i32 buffer_index = 0;
+            ns_shader_try(ns_shader_storage_buffer_index(e, n->next, &buffer_index, ns_shader_loc(e, n)));
+            e->storage_buffer_mask |= 1u << buffer_index;
         }
         if (callee->type == NS_AST_PRIMARY_EXPR &&
             (ns_str_starts_with(callee->primary_expr.token.val, ns_str_cstr("shader_transform_")) ||
@@ -822,14 +855,18 @@ static ns_return_void ns_shader_collect_fn(ns_shader_emit *e, i32 fn_index, ns_b
     // Collect this fn's resource usage on its own, then fold it back into the
     // caller's: what a callee reaches, its caller has to thread through.
     u32 outer = ns_shader_use_mask(e);
+    u32 outer_storage_buffers = e->storage_buffer_mask;
     ns_shader_set_use_mask(e, 0);
+    e->storage_buffer_mask = 0;
     ns_array_push(e->fn_visit, fn_index);
     ns_return_void body = ns_shader_collect_stmt(e, s->fn.body, depth + 1);
     ns_array_set_length(e->fn_visit, ns_array_length(e->fn_visit) - 1);
     u32 used = ns_shader_use_mask(e);
+    u32 used_storage_buffers = e->storage_buffer_mask;
     ns_shader_set_use_mask(e, outer | used);
+    e->storage_buffer_mask = outer_storage_buffers | used_storage_buffers;
     if (ns_return_is_error(body)) return body;
-    ns_array_push(e->fn_uses, ((ns_shader_fn_use){.fn_index = fn_index, .mask = used}));
+    ns_array_push(e->fn_uses, ((ns_shader_fn_use){.fn_index = fn_index, .mask = used, .storage_buffer_mask = used_storage_buffers}));
 
     if (!is_entry) ns_array_push(e->fns, fn_index); // post-order: callees first
     return ns_return_ok_void;
@@ -1127,6 +1164,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         }
         ns_str name = callee->primary_expr.token.val;
         u32 callee_mask = 0;
+        u32 callee_storage_buffer_mask = 0;
         const ns_shader_builtin *b = ns_shader_find_builtin(name);
         if (b) {
             ns_bool transform_position = ns_str_equals(name, ns_str_cstr("shader_transform_position"));
@@ -1174,27 +1212,46 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                 return ns_return_ok_void;
             }
             if (buffer_i32) {
-                if (n->call_expr.arg_count != 1) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_buffer_i32 expects one element index.");
-                if (e->target == NS_SHADER_HLSL) ns_shader_cstr(dst, "asint(ns_storage_buffer.Load((");
-                else ns_shader_cstr(dst, "ns_storage_buffer[");
-                ns_shader_try(ns_shader_emit_expr(e, n->next, dst));
+                if (n->call_expr.arg_count != 2) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_buffer_i32 expects a buffer index and element index.");
+                i32 buffer_index = 0;
+                i32 buffer_arg = n->next;
+                i32 element_index = e->ctx->nodes[buffer_arg].next;
+                ns_shader_try(ns_shader_storage_buffer_index(e, buffer_arg, &buffer_index, loc));
+                if (e->target == NS_SHADER_HLSL) {
+                    ns_shader_cstr(dst, "asint(");
+                    ns_shader_cstr(dst, "ns_storage_buffer_");
+                    ns_shader_i32(dst, buffer_index);
+                    ns_shader_cstr(dst, ".Load((");
+                } else {
+                    ns_shader_cstr(dst, "ns_storage_buffer_");
+                    ns_shader_i32(dst, buffer_index);
+                    ns_shader_cstr(dst, "[");
+                }
+                ns_shader_try(ns_shader_emit_expr(e, element_index, dst));
                 if (e->target == NS_SHADER_HLSL) ns_shader_cstr(dst, ") * 4))");
                 else if (e->target == NS_SHADER_WGSL) ns_shader_cstr(dst, "]");
                 else ns_shader_cstr(dst, "]");
                 return ns_return_ok_void;
             }
             if (buffer_store_i32) {
-                if (n->call_expr.arg_count != 2) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_buffer_store_i32 expects an element index and value.");
-                i32 index = n->next;
+                if (n->call_expr.arg_count != 3) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_buffer_store_i32 expects a buffer index, element index and value.");
+                i32 buffer_arg = n->next;
+                i32 index = e->ctx->nodes[buffer_arg].next;
                 i32 value = e->ctx->nodes[index].next;
+                i32 buffer_index = 0;
+                ns_shader_try(ns_shader_storage_buffer_index(e, buffer_arg, &buffer_index, loc));
                 if (e->target == NS_SHADER_HLSL) {
-                    ns_shader_cstr(dst, "ns_storage_buffer.Store((");
+                    ns_shader_cstr(dst, "ns_storage_buffer_");
+                    ns_shader_i32(dst, buffer_index);
+                    ns_shader_cstr(dst, ".Store((");
                     ns_shader_try(ns_shader_emit_expr(e, index, dst));
                     ns_shader_cstr(dst, ") * 4, asuint(");
                     ns_shader_try(ns_shader_emit_expr(e, value, dst));
                     ns_shader_cstr(dst, "))");
                 } else {
-                    ns_shader_cstr(dst, "ns_storage_buffer[");
+                    ns_shader_cstr(dst, "ns_storage_buffer_");
+                    ns_shader_i32(dst, buffer_index);
+                    ns_shader_cstr(dst, "[");
                     ns_shader_try(ns_shader_emit_expr(e, index, dst));
                     ns_shader_cstr(dst, "] = ");
                     ns_shader_try(ns_shader_emit_expr(e, value, dst));
@@ -1329,6 +1386,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             }
             ns_shader_str(dst, name);
             callee_mask = ns_shader_fn_mask(e, (i32)(s - e->vm->symbols));
+            callee_storage_buffer_mask = ns_shader_fn_storage_buffer_mask(e, (i32)(s - e->vm->symbols));
         }
         ns_shader_cstr(dst, "(");
         i32 next = n->next;
@@ -1340,6 +1398,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         // Pass on whatever the callee reaches through the stage intrinsics.
         ns_bool first_resource = n->call_expr.arg_count == 0;
         ns_shader_emit_resource_list(e, dst, callee_mask, false, &first_resource);
+        ns_shader_emit_storage_buffer_list(e, dst, callee_storage_buffer_mask, false, &first_resource);
         ns_shader_cstr(dst, ")");
         return ns_return_ok_void;
     }
@@ -1900,10 +1959,17 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         ns_shader_cstr(&e->out, "constant float4* ns_root [[buffer(0)]]");
         has_hidden_arg = true;
     }
-    if (e->target == NS_SHADER_MSL && stage != NS_SHADER_STAGE_AUTO && e->uses_storage_buffer) {
-        if (ns_array_length(s->fn.args) > 0 || has_hidden_arg) ns_shader_cstr(&e->out, ", ");
-        ns_shader_cstr(&e->out, "device int* ns_storage_buffer [[buffer(3)]]");
-        has_hidden_arg = true;
+    if (e->target == NS_SHADER_MSL && stage != NS_SHADER_STAGE_AUTO) {
+        for (i32 index = 0; index < NS_SHADER_MAX_STORAGE_BUFFERS; ++index) {
+            if ((e->storage_buffer_mask & (1u << index)) == 0) continue;
+            if (ns_array_length(s->fn.args) > 0 || has_hidden_arg) ns_shader_cstr(&e->out, ", ");
+            ns_shader_cstr(&e->out, "device int* ns_storage_buffer_");
+            ns_shader_i32(&e->out, index);
+            ns_shader_cstr(&e->out, " [[buffer(");
+            ns_shader_i32(&e->out, 3 + index);
+            ns_shader_cstr(&e->out, ")]]");
+            has_hidden_arg = true;
+        }
     }
     if (e->target == NS_SHADER_MSL && stage == NS_SHADER_STAGE_FRAGMENT && e->uses_shadow_map) {
         ns_shader_cstr(&e->out, ", depth2d<float> ns_shadow_map [[texture(0)]]");
@@ -1930,6 +1996,7 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
     if (stage == NS_SHADER_STAGE_AUTO) {
         ns_bool first = ns_array_length(s->fn.args) == 0;
         ns_shader_emit_resource_list(e, &e->out, ns_shader_fn_mask(e, fn_index), true, &first);
+        ns_shader_emit_storage_buffer_list(e, &e->out, ns_shader_fn_storage_buffer_mask(e, fn_index), true, &first);
     }
     ns_shader_cstr(&e->out, ")");
     if (e->target == NS_SHADER_HLSL && stage == NS_SHADER_STAGE_FRAGMENT &&
@@ -2273,14 +2340,35 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     if (e.uses_write_texture && target == NS_SHADER_WGSL) {
         ns_shader_cstr(&e.out, "@group(0) @binding(1) var ns_write_texture: texture_storage_2d<rg11b10ufloat, write>;\n\n");
     }
-    if (e.uses_storage_buffer && target == NS_SHADER_GLSL_VULKAN) {
-        ns_shader_cstr(&e.out, "layout(set = 0, binding = 3, std430) buffer ns_storage_block { int values[]; } ns_storage;\n#define ns_storage_buffer ns_storage.values\n\n");
-    }
-    if (e.uses_storage_buffer && target == NS_SHADER_HLSL) {
-        ns_shader_cstr(&e.out, "RWByteAddressBuffer ns_storage_buffer : register(u3);\n\n");
-    }
-    if (e.uses_storage_buffer && target == NS_SHADER_WGSL) {
-        ns_shader_cstr(&e.out, "@group(0) @binding(3) var<storage, read_write> ns_storage_buffer: array<i32>;\n\n");
+    for (i32 index = 0; index < NS_SHADER_MAX_STORAGE_BUFFERS; ++index) {
+        if ((e.storage_buffer_mask & (1u << index)) == 0) continue;
+        if (target == NS_SHADER_GLSL_VULKAN) {
+            ns_shader_cstr(&e.out, "layout(set = 0, binding = ");
+            ns_shader_i32(&e.out, 3 + index);
+            ns_shader_cstr(&e.out, ", std430) buffer ns_storage_block_");
+            ns_shader_i32(&e.out, index);
+            ns_shader_cstr(&e.out, " { int values[]; } ns_storage_");
+            ns_shader_i32(&e.out, index);
+            ns_shader_cstr(&e.out, ";\n#define ns_storage_buffer_");
+            ns_shader_i32(&e.out, index);
+            ns_shader_cstr(&e.out, " ns_storage_");
+            ns_shader_i32(&e.out, index);
+            ns_shader_cstr(&e.out, ".values\n\n");
+        }
+        if (target == NS_SHADER_HLSL) {
+            ns_shader_cstr(&e.out, "RWByteAddressBuffer ns_storage_buffer_");
+            ns_shader_i32(&e.out, index);
+            ns_shader_cstr(&e.out, " : register(u");
+            ns_shader_i32(&e.out, 3 + index);
+            ns_shader_cstr(&e.out, ");\n\n");
+        }
+        if (target == NS_SHADER_WGSL) {
+            ns_shader_cstr(&e.out, "@group(0) @binding(");
+            ns_shader_i32(&e.out, 3 + index);
+            ns_shader_cstr(&e.out, ") var<storage, read_write> ns_storage_buffer_");
+            ns_shader_i32(&e.out, index);
+            ns_shader_cstr(&e.out, ": array<i32>;\n\n");
+        }
     }
     if (e.uses_root && target == NS_SHADER_MSL) {
         ns_shader_cstr(&e.out, "inline float ns_root_f32(constant float4* root, int index) { return root[index / 4][index % 4]; }\n\n");

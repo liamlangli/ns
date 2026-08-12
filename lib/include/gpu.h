@@ -99,6 +99,7 @@ void gpu_set_shader(u32 shader);
 void gpu_set_state(u32 state);
 void gpu_set_root(gpu_addr args);
 void gpu_set_storage(gpu_addr addr);
+void gpu_set_storage_at(i32 index, gpu_addr addr);
 void gpu_set_root_data(const void *data, u64 size); // frame-ring copy + set_root
 void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count);
 void gpu_draw_indexed(gpu_addr indices, i32 index_type,
@@ -161,7 +162,7 @@ typedef struct gpu_v2_ops {
     void (*set_shader)(u32 shader);
     void (*set_state)(const gpu_v2_state_desc *desc);
     void (*set_root)(u32 slot, u64 offset, gpu_addr addr);
-    void (*set_storage)(u32 slot, u64 offset, gpu_addr addr);
+    void (*set_storage)(u32 binding, u32 slot, u64 offset, gpu_addr addr);
     void (*draw)(i32 vertex_base, i32 vertex_count, i32 instance_count);
     void (*draw_indexed)(u32 index_slot, u64 index_offset, i32 index_type,
                          i32 index_count, i32 instance_count, i32 base_vertex);

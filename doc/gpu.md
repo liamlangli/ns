@@ -222,9 +222,10 @@ void gpu_set_root(gpu_addr args);
 // ...or copy a small struct into the frame ring and point at that.
 void gpu_set_root_data(const void *data, u64 size);
 
-// Portable fixed storage slot used by the current shader subset. This helper
-// goes away once typed gpu_addr dereference is lowered directly in shaders.
+// Portable fixed storage slots used by the current shader subset. These helpers
+// go away once typed gpu_addr dereference is lowered directly in shaders.
 void gpu_set_storage(gpu_addr addr);
+void gpu_set_storage_at(i32 index, gpu_addr addr);
 
 void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count);
 void gpu_draw_indexed(gpu_addr indices, i32 index_type,

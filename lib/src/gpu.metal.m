@@ -279,8 +279,8 @@ typedef struct gpu_state_mtl {
     gpu_v2_state_desc v2_render_state;
     id<MTLBuffer> v2_root_buffer;
     u64 v2_root_offset;
-    id<MTLBuffer> v2_storage_buffer;
-    u64 v2_storage_offset;
+    id<MTLBuffer> v2_storage_buffers[2];
+    u64 v2_storage_offsets[2];
     MTLPixelFormat v2_pass_colors[4];
     MTLPixelFormat v2_pass_depth;
 
@@ -861,11 +861,12 @@ static void mtl_v2_set_root(u32 slot, u64 offset, gpu_addr addr) {
     _state.v2_root_offset = offset;
 }
 
-static void mtl_v2_set_storage(u32 slot, u64 offset, gpu_addr addr) {
+static void mtl_v2_set_storage(u32 binding, u32 slot, u64 offset, gpu_addr addr) {
     ns_unused(addr);
-    if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot]) return;
-    _state.v2_storage_buffer = _state.v2_memory[slot];
-    _state.v2_storage_offset = offset;
+    if (binding < 3 || binding > 4 || slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot]) return;
+    u32 index = binding - 3;
+    _state.v2_storage_buffers[index] = _state.v2_memory[slot];
+    _state.v2_storage_offsets[index] = offset;
 }
 
 static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encoder, bool compute) {
@@ -873,16 +874,20 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
     if (compute) {
         id<MTLComputeCommandEncoder> compute_encoder = (id<MTLComputeCommandEncoder>)encoder;
         if (shader->uses_root && _state.v2_root_buffer) [compute_encoder setBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
-        if (_state.v2_storage_buffer) [compute_encoder setBuffer:_state.v2_storage_buffer offset:(NSUInteger)_state.v2_storage_offset atIndex:3];
+        for (u32 i = 0; i < 2; ++i) {
+            if (_state.v2_storage_buffers[i]) [compute_encoder setBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:3 + i];
+        }
     } else {
         id<MTLRenderCommandEncoder> render_encoder = (id<MTLRenderCommandEncoder>)encoder;
         if (shader->uses_root && _state.v2_root_buffer) {
             [render_encoder setVertexBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
             [render_encoder setFragmentBuffer:_state.v2_root_buffer offset:(NSUInteger)_state.v2_root_offset atIndex:0];
         }
-        if (_state.v2_storage_buffer) {
-            [render_encoder setVertexBuffer:_state.v2_storage_buffer offset:(NSUInteger)_state.v2_storage_offset atIndex:3];
-            [render_encoder setFragmentBuffer:_state.v2_storage_buffer offset:(NSUInteger)_state.v2_storage_offset atIndex:3];
+        for (u32 i = 0; i < 2; ++i) {
+            if (_state.v2_storage_buffers[i]) {
+                [render_encoder setVertexBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:3 + i];
+                [render_encoder setFragmentBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:3 + i];
+            }
         }
     }
     if (!_state.v2_root_buffer) return;

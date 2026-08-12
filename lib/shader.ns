@@ -116,11 +116,10 @@ ref fn shader_global_id_y() i32
 ref fn shader_global_id_z() i32
 ref fn shader_vertex_id() i32
 ref fn shader_root_f32(index: i32) f32
-// Random-access signed 32-bit storage buffer bound at shader buffer slot 3.
-// Graphics stages read it; compute stages may write it. Indices address i32
-// elements rather than bytes so every supported backend can update one voxel
-// without adjacent-byte races.
-ref fn shader_buffer_i32(index: i32) i32
-ref fn shader_buffer_store_i32(index: i32, value: i32)
+// Random-access signed 32-bit storage buffers. `buffer_index` is a compile-time
+// index into the stage's storage-buffer parameters; indices address i32
+// elements rather than bytes so writes never race adjacent packed values.
+ref fn shader_buffer_i32(buffer_index: i32, index: i32) i32
+ref fn shader_buffer_store_i32(buffer_index: i32, index: i32, value: i32)
 ref fn shader_read_texture(x: i32, y: i32) float4
 ref fn shader_write_texture(x: i32, y: i32, color: float4)
