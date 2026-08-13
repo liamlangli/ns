@@ -19,6 +19,7 @@
 #else
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -1823,6 +1824,67 @@ static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executabl
     ns_str_append(&cmd, q_rt);
     ns_str_append_cstr(&cmd, " ");
     ns_str_append(&cmd, q_strtab);
+
+    ns_str exe = ns_project_current_executable();
+    ns_str bin = ns_path_dirname_safe(exe);
+    ns_str root = ns_path_parent(bin);
+    ns_str lib_dirs[3];
+    i32 nlib_dirs = 0;
+    ns_str installed_lib = ns_path_join(root, ns_str_cstr("lib"));
+    ns_str home = ns_path_home();
+    ns_str home_lib = ns_path_join(home, ns_str_cstr("ns/lib"));
+    lib_dirs[nlib_dirs++] = bin;
+    lib_dirs[nlib_dirs++] = installed_lib;
+    lib_dirs[nlib_dirs++] = home_lib;
+    ns_str *linked = ns_null;
+    ns_str rpath_dir = ns_str_null;
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->imports); i < l; ++i) {
+        ns_str module = ssa->imports[i].module;
+        if (module.len == 0) continue;
+        if (ns_str_equals(module, ns_str_cstr("std")) ||
+            ns_str_equals(module, ns_str_cstr("task")) ||
+            ns_str_equals(module, ns_str_cstr("simd")) ||
+            ns_str_equals(module, ns_str_cstr("shader"))) continue;
+        ns_bool already = false;
+        for (i32 k = 0, kl = (i32)ns_array_length(linked); k < kl; ++k) {
+            if (ns_str_equals(linked[k], module)) { already = true; break; }
+        }
+        if (already) continue;
+        ns_str dylib = ns_str_null;
+        for (i32 d = 0; d < nlib_dirs; ++d) {
+            ns_str cand = ns_path_join(lib_dirs[d], ns_str_concat(module, ns_str_cstr(".dylib")));
+            if (ns_file_exists(cand)) {
+                dylib = cand;
+                if (rpath_dir.data == ns_null) rpath_dir = ns_str_concat(lib_dirs[d], ns_str_cstr(""));
+                break;
+            }
+            ns_str_free(cand);
+        }
+        if (dylib.data == ns_null) continue;
+        ns_str q_dylib = ns_shell_quote(dylib);
+        ns_str_append_cstr(&cmd, " ");
+        ns_str_append(&cmd, q_dylib);
+        ns_str_free(q_dylib);
+        ns_str_free(dylib);
+        ns_array_push(linked, module);
+    }
+    if (rpath_dir.data) {
+        ns_str_append_cstr(&cmd, " -Wl,-rpath,");
+        ns_str_append(&cmd, rpath_dir);
+    }
+    ns_str_append_cstr(&cmd, " -Wl,-rpath,@executable_path");
+    ns_str_append_cstr(&cmd, " -Wl,-rpath,@executable_path/../../../");
+    ns_str_append_cstr(&cmd, " -Wl,-rpath,@executable_path/../../../../lib");
+    ns_str_append_cstr(&cmd, " -Wl,-rpath,@executable_path/../../../../bin");
+    ns_array_free(linked);
+    ns_str_free(exe);
+    ns_str_free(bin);
+    ns_str_free(root);
+    ns_str_free(installed_lib);
+    ns_str_free(home);
+    ns_str_free(home_lib);
+    ns_str_free(rpath_dir);
+
     ns_str_append_cstr(&cmd, " -o ");
     ns_str_append(&cmd, q_executable);
     ns_array_push(cmd.data, '\0');
@@ -2831,6 +2893,57 @@ static ns_bool ns_profile_viewer_at(ns_str app) {
     return ok;
 }
 
+static ns_str ns_profile_app_executable(ns_str bundle) {
+    if (bundle.data == ns_null || bundle.len == 0) return ns_str_null;
+#if defined(NS_DARWIN)
+    ns_str macos = ns_path_join(bundle, ns_str_cstr("Contents/MacOS/nscode-profile"));
+    if (ns_file_exists(macos)) return macos;
+    ns_str_free(macos);
+#endif
+    if (ns_file_exists(bundle) && !ns_is_dir(bundle)) {
+        return ns_str_concat(bundle, ns_str_cstr(""));
+    }
+    return ns_str_null;
+}
+
+static ns_bool ns_profile_compiled_at(ns_str bundle) {
+    ns_str exe = ns_profile_app_executable(bundle);
+    ns_bool ok = exe.data != ns_null;
+    ns_str_free(exe);
+    return ok;
+}
+
+static ns_str ns_profile_find_compiled(void) {
+    ns_str executable = ns_project_current_executable();
+    ns_str home = ns_path_home();
+    ns_str candidates[6];
+    i32 n = 0;
+    if (executable.data != ns_null) {
+        ns_str bin = ns_path_dirname_safe(executable);
+        ns_str root = ns_path_parent(bin);
+        candidates[n++] = ns_path_join(bin, ns_str_cstr("nscode-profile.app"));
+        candidates[n++] = ns_path_join(root, ns_str_cstr("nscode/profile/bin/nscode-profile.app"));
+        candidates[n++] = ns_path_join(root, ns_str_cstr("share/nscode/profile/nscode-profile.app"));
+        ns_str_free(bin);
+        ns_str_free(root);
+    }
+    if (home.data != ns_null) {
+        candidates[n++] = ns_path_join(home, ns_str_cstr("ns/share/nscode/profile/nscode-profile.app"));
+        candidates[n++] = ns_path_join(home, ns_str_cstr("ns/bin/nscode-profile.app"));
+    }
+    ns_str found = ns_str_null;
+    for (i32 i = 0; i < n; i++) {
+        if (found.data == ns_null && ns_profile_compiled_at(candidates[i])) {
+            found = candidates[i];
+        } else {
+            ns_str_free(candidates[i]);
+        }
+    }
+    ns_str_free(executable);
+    ns_str_free(home);
+    return found;
+}
+
 static ns_str ns_profile_find_viewer(void) {
     ns_str executable = ns_project_current_executable();
     ns_str home = ns_path_home();
@@ -2843,6 +2956,8 @@ static ns_str ns_profile_find_viewer(void) {
         candidates[n++] = ns_path_join(root, ns_str_cstr("nscode/profile"));
         // `make install`: <prefix>/share/nscode/profile
         candidates[n++] = ns_path_join(root, ns_str_cstr("share/nscode/profile"));
+        ns_str_free(bin);
+        ns_str_free(root);
     }
     if (home.data != ns_null) {
         candidates[n++] = ns_path_join(home, ns_str_cstr("ns/share/nscode/profile"));
@@ -2856,7 +2971,29 @@ static ns_str ns_profile_find_viewer(void) {
             ns_str_free(candidates[i]);
         }
     }
+    ns_str_free(executable);
+    ns_str_free(home);
     return found;
+}
+
+static ns_bool ns_profile_launch_compiled(ns_str bundle) {
+    ns_str exe = ns_profile_app_executable(bundle);
+    if (exe.data == ns_null) return false;
+#if defined(_WIN32)
+    ns_str_free(exe);
+    return false;
+#else
+    pid_t pid = fork();
+    if (pid == 0) {
+        execl(exe.data, exe.data, (char *)0);
+        _exit(127);
+    }
+    ns_str_free(exe);
+    if (pid < 0) return false;
+    int status = 0;
+    waitpid(pid, &status, 0);
+    return true;
+#endif
 }
 
 static void ns_exec_profile_view(ns_str filename) {
@@ -2874,12 +3011,22 @@ static void ns_exec_profile_view(ns_str filename) {
     setenv("NS_PROFILE_FILE", path, 1);
 #endif
 
+    ns_str compiled = ns_profile_find_compiled();
+    if (compiled.data != ns_null) {
+        ns_info("profile", "opening compiled viewer for %s\n", path);
+        if (!ns_profile_launch_compiled(compiled)) {
+            ns_warn("profile", "failed to launch compiled viewer %.*s\n", compiled.len, compiled.data);
+        }
+        ns_str_free(compiled);
+        return;
+    }
+
     ns_str app = ns_profile_find_viewer();
     if (app.data == ns_null) {
         ns_warn("profile", "native viewer not found; open ns.profile.json in https://ui.perfetto.dev\n");
         return;
     }
-    ns_info("profile", "opening viewer for %s\n", path);
+    ns_info("profile", "opening interpreted viewer for %s\n", path);
     ns_exec_run(app, 0, false);
     ns_str_free(app);
 }

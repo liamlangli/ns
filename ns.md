@@ -65,7 +65,7 @@ Common commands:
 - `make test` — build and run tests (currently `bin/ns_json_test`)
 - `make run` — run `ns`
 - `make clean`
-- `make install` — install binaries/libs into `~/ns/...`, copy the nscode profile viewer to `~/ns/share/nscode/profile`, and ask the user to add `~/ns/bin` to `PATH`
+- `make install` — install binaries/libs into `~/ns/...`, install the compiled `nscode-profile.app` viewer to `~/ns/share/nscode/profile` and `~/ns/bin`, and ask the user to add `~/ns/bin` to `PATH`
 
 ---
 

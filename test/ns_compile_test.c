@@ -6,8 +6,8 @@
 // SSA → native code path. Each program is lowered to SSA, translated to host
 // machine code, linked in memory, and executed, and its `main` return value is
 // checked. AArch64 also covers strings, globals, arrays, structs, floats and
-// the std helpers that the native runtime implements. Closures, function
-// values and tasks remain interpreter-only.
+// the std helpers that the native runtime implements. Language `ref`, union
+// types, async/task, and `ref fn` FFI lower onto the same native runtime.
 
 #if defined(__x86_64__) || defined(__aarch64__)
 #define NS_COMPILE_TEST_NATIVE 1
@@ -876,6 +876,31 @@ int main() {
         "    }\n"
         "    return capture(5) == 13\n"
         "}\n"), "capturing closure stored via a typed var.");
+
+    ns_expect(ns_compile_true(
+        "type num = i32 | f64\n"
+        "fn main() bool {\n"
+        "    let a: num = 7\n"
+        "    let b: num = 3.5\n"
+        "    return (a as i32) == 7 && (b as f64) == 3.5 && (a as f64) == 7.0\n"
+        "}\n"), "union wrap, narrow, and numeric member conversion.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let a = 1\n"
+        "    let b = ref a\n"
+        "    let c = a\n"
+        "    b = 2\n"
+        "    return a == 2 && b == 2 && c == 1\n"
+        "}\n"), "ref aliases a local and assignment writes through.");
+
+    ns_expect(ns_compile_true(
+        "use task\n"
+        "async fn work(n: i32) i32 { return n * 2 }\n"
+        "fn main() bool {\n"
+        "    let t = work(21)\n"
+        "    return (await t) == 42\n"
+        "}\n"), "async fn call returns a task and await yields its result.");
 #endif
 
     return 0;

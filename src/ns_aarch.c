@@ -31,6 +31,7 @@ typedef struct ns_aarch_fixup {
 } ns_aarch_fixup;
 
 typedef struct ns_aarch_ctx {
+    ns_ssa_module *ssa;
     ns_ssa_fn *fn;
     u8 *text;
     /* block start offsets (byte index), indexed by block id */
@@ -228,6 +229,56 @@ static const char *ns_aarch_map_std(ns_str module, ns_str name) {
     if (ns_str_equals(name, ns_str_cstr("unescape"))) return "ns_rt_unescape";
     if (ns_str_equals(name, ns_str_cstr("utf8_len"))) return "ns_rt_utf8_len";
     return NULL;
+}
+
+static const char *ns_aarch_map_task(ns_str module, ns_str name) {
+    if (!ns_str_equals(module, ns_str_cstr("task"))) return NULL;
+    if (ns_str_equals(name, ns_str_cstr("dispatch"))) return "ns_rt_task_dispatch";
+    if (ns_str_equals(name, ns_str_cstr("wait"))) return "ns_rt_task_wait";
+    if (ns_str_equals(name, ns_str_cstr("cancel"))) return "ns_rt_task_cancel";
+    if (ns_str_equals(name, ns_str_cstr("done"))) return "ns_rt_task_done";
+    if (ns_str_equals(name, ns_str_cstr("cancelled"))) return "ns_rt_task_cancelled";
+    if (ns_str_equals(name, ns_str_cstr("sleep"))) return "ns_rt_task_sleep";
+    if (ns_str_equals(name, ns_str_cstr("queue_main"))) return "ns_rt_queue_main";
+    if (ns_str_equals(name, ns_str_cstr("queue_worker"))) return "ns_rt_queue_worker";
+    if (ns_str_equals(name, ns_str_cstr("queue_idle"))) return "ns_rt_queue_idle";
+    return NULL;
+}
+
+static ns_bool ns_aarch_is_ffi_module(ns_str module) {
+    if (module.len == 0) return false;
+    if (ns_str_equals(module, ns_str_cstr("std"))) return false;
+    if (ns_str_equals(module, ns_str_cstr("task"))) return false;
+    if (ns_str_equals(module, ns_str_cstr("simd"))) return false;
+    if (ns_str_equals(module, ns_str_cstr("shader"))) return false;
+    return true;
+}
+
+static ns_ssa_import *ns_aarch_find_import(ns_aarch_ctx *c, ns_str module, ns_str name) {
+    if (!c->ssa) return NULL;
+    for (i32 i = 0, l = (i32)ns_array_length(c->ssa->imports); i < l; ++i) {
+        ns_ssa_import *im = &c->ssa->imports[i];
+        if (ns_str_equals(im->module, module) && ns_str_equals(im->name, name)) return im;
+    }
+    return NULL;
+}
+
+static i32 ns_aarch_collect_call_args(ns_aarch_ctx *c, ns_ssa_inst *inst, i32 *args, i32 max_args) {
+    ns_ssa_block *bb = &c->fn->blocks[c->cur_block];
+    i32 nargs = inst->c > 0 ? inst->c : 0;
+    if (nargs > max_args) nargs = max_args;
+    i32 call_i = -1;
+    for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ++ii) {
+        if (&c->fn->insts[bb->insts[ii]] == inst) { call_i = ii; break; }
+    }
+    i32 got = 0;
+    for (i32 ii = call_i - 1; ii >= 0 && got < nargs; --ii) {
+        ns_ssa_inst *pi = &c->fn->insts[bb->insts[ii]];
+        if (pi->op != NS_SSA_OP_ARG) break;
+        args[nargs - 1 - got] = pi->a;
+        got++;
+    }
+    return got < nargs ? got : nargs;
 }
 
 static ns_type ns_aarch_value_type(ns_ssa_fn *fn, i32 value) {
@@ -682,11 +733,13 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_CALL: {
         ns_str peek_name = inst->name;
+        ns_bool peek_ffi = ns_aarch_is_ffi_module(inst->module);
         ns_bool indirect = peek_name.len == 0 && inst->a >= 0 &&
-                           ns_aarch_map_std(inst->module, inst->name) == NULL;
+                           ns_aarch_map_std(inst->module, inst->name) == NULL &&
+                           ns_aarch_map_task(inst->module, inst->name) == NULL;
         i32 nextra = c->nextra;
         i32 space = 0;
-        if (nextra > 0 && !indirect) {
+        if (nextra > 0 && !indirect && !peek_ffi) {
             space = (nextra * 8 + 15) & ~15;
             if (space <= 4095) ns_aarch_emit_u32(c, ns_aarch_sub_sp_imm(space));
             else {
@@ -704,6 +757,81 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         ns_str callee_name = inst->name;
         const char *std_rt = ns_aarch_map_std(inst->module, callee_name);
         if (std_rt) callee_name = ns_str_cstr((i8 *)std_rt);
+        const char *task_rt = ns_aarch_map_task(inst->module, callee_name);
+        if (task_rt) callee_name = ns_str_cstr((i8 *)task_rt);
+        ns_bool ffi = ns_aarch_is_ffi_module(inst->module) && callee_name.len > 0;
+        if (ffi) {
+            ns_ssa_import *im = ns_aarch_find_import(c, inst->module, inst->name);
+            i32 args[NS_AARCH_EXTRA_MAX + 8];
+            i32 nargs = ns_aarch_collect_call_args(c, inst, args, NS_AARCH_EXTRA_MAX + 8);
+            i32 igpr = 0;
+            i32 fpr = 0;
+            i32 stack_n = 0;
+            i32 stack_args[NS_AARCH_EXTRA_MAX];
+            for (i32 ai = 0; ai < nargs; ++ai) {
+                ns_type at = ns_type_unknown;
+                if (im && ai < (i32)ns_array_length(im->params)) at = im->params[ai];
+                else at = ns_aarch_value_type(c->fn, args[ai]);
+                ns_bool is_float = ns_aarch_is_float(at);
+                ns_bool is_str = ns_aarch_is_string(at) && !ns_type_is_array(at);
+                ns_bool is_ref = ns_type_is_ref(at);
+                if (is_float && fpr < 8) {
+                    ns_aarch_load_value(c, NS_AARCH_X9, args[ai]);
+                    ns_aarch_emit_u32(c, ns_aarch_fmov_dx(fpr, NS_AARCH_X9,
+                                                          ns_type_is(at, NS_TYPE_F64)));
+                    fpr++;
+                    continue;
+                }
+                i32 dest = -1;
+                if (igpr < 8) dest = igpr++;
+                else stack_args[stack_n++] = args[ai];
+                if (dest < 0) continue;
+                if (is_str) {
+                    ns_aarch_load_value(c, NS_AARCH_X0, args[ai]);
+                    ns_aarch_emit_rt_call(c, "ns_rt_to_cstr");
+                    if (dest != 0) ns_aarch_emit_u32(c, 0xAA0003E0u | ((u32)dest)); /* MOV Xd, X0 */
+                } else if (is_ref) {
+                    ns_aarch_load_value(c, NS_AARCH_X0, args[ai]);
+                    ns_aarch_emit_rt_call(c, "ns_rt_native_ptr");
+                    if (dest != 0) ns_aarch_emit_u32(c, 0xAA0003E0u | ((u32)dest));
+                } else {
+                    ns_aarch_load_value(c, dest, args[ai]);
+                }
+            }
+            if (stack_n > 0) {
+                space = (stack_n * 8 + 15) & ~15;
+                if (space <= 4095) ns_aarch_emit_u32(c, ns_aarch_sub_sp_imm(space));
+                else {
+                    ns_aarch_emit_const_u64(c, NS_AARCH_X9, (u64)(u32)space);
+                    ns_aarch_emit_u32(c, ns_aarch_sub_sp_ext(NS_AARCH_X9));
+                }
+                for (i32 ei = 0; ei < stack_n; ++ei) {
+                    ns_aarch_load_value(c, NS_AARCH_X9, stack_args[ei]);
+                    ns_aarch_emit_u32(c, 0xF9000000u | (((u32)ei & 0xFFFu) << 10) |
+                        ((u32)NS_AARCH_SP << 5) | (u32)NS_AARCH_X9);
+                }
+            }
+            u32 bl_off = (u32)ns_array_length(c->text);
+            ns_aarch_emit_u32(c, ns_aarch_bl(0));
+            ns_aarch_call_fixup cf = {.off = bl_off, .callee = callee_name, .kind = 0};
+            ns_array_push(c->call_fixups, cf);
+            ns_type ret = im ? im->ret : inst->type;
+            if (ns_aarch_is_float(ret)) {
+                ns_aarch_emit_u32(c, ns_aarch_fmov_xd(0, 0, ns_type_is(ret, NS_TYPE_F64)));
+            } else if (ns_aarch_is_string(ret) && !ns_type_is_array(ret)) {
+                ns_aarch_emit_rt_call(c, "ns_rt_from_cstr");
+            }
+            if (inst->dst >= 0) ns_aarch_store_value(c, inst->dst, 0);
+            if (space > 0) {
+                if (space <= 4095) {
+                    ns_aarch_emit_u32(c, 0x910003FFu | (((u32)space & 0xFFFu) << 10));
+                } else {
+                    ns_aarch_emit_const_u64(c, NS_AARCH_X9, (u64)(u32)space);
+                    ns_aarch_emit_u32(c, ns_aarch_add_sp_ext(NS_AARCH_X9));
+                }
+            }
+            break;
+        }
         if (callee_name.len == 0 && inst->a >= 0) {
             ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
             ns_aarch_emit_const_u64(c, 1, 0);
@@ -943,8 +1071,9 @@ static i32 ns_aarch_slot_count(ns_ssa_fn *fn) {
 }
 
 /* ── lower a single SSA function to machine code ─────────────────────────── */
-static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_fn *fn, ns_bool call_rt_init, ns_bool call_mod_init) {
+static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_bool call_rt_init, ns_bool call_mod_init) {
     ns_aarch_ctx c = {0};
+    c.ssa = ssa;
     c.fn = fn;
 
     i32 nslots = ns_aarch_slot_count(fn);
@@ -1046,7 +1175,7 @@ ns_return_ptr ns_aarch_from_ssa(ns_ssa_module *ssa) {
 
     for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
         ns_bool is_main = ns_str_equals_STR(ssa->fns[i].name, "main");
-        ns_aarch_fn_bin fn = ns_aarch_lower_fn(&ssa->fns[i], is_main, is_main && has_init);
+        ns_aarch_fn_bin fn = ns_aarch_lower_fn(ssa, &ssa->fns[i], is_main, is_main && has_init);
         ns_array_push(m->fns, fn);
     }
     if (!has_main && has_init) {

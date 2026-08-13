@@ -417,7 +417,8 @@ ns_return_value ns_eval_copy(ns_vm *vm, ns_value dst, ns_value src, i32 size) {
         return ns_return_error(value, vm->loc, NS_ERR_EVAL, "cannot assign to const.");
     }
 
-    if (ns_type_is_ref(dst.t)) return ns_return_ok(value, src); // ref semantics, return src
+    // A language `ref` aliases its referent. Assignment writes through to that
+    // storage rather than rebinding the ref handle.
 
     // A value's .o is interpreted relative to vm->stack when its `stack` flag is
     // set, and as an absolute address otherwise. Honor that flag for the

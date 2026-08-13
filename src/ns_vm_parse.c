@@ -594,7 +594,7 @@ ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n) {
     ns_type ret = ns_vm_parse_generic_type(t);
     if (ret.type != NS_TYPE_UNKNOWN) {
         if (is_array) { ret.array = true; ret.stack = true; }
-        return ns_return_ok(type, ret);
+        return ns_return_ok(type, ns_type_set_ref(ret, is_ref));
     }
 
     ns_return_type ret_t = ns_vm_parse_type_by_token(vm, t, ns_ast_state_loc(ctx, n->state));

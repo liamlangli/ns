@@ -38,8 +38,9 @@ The common commands are:
   write `ns.profile` plus Chrome-trace `ns.profile.json`, then print a
   colored CLI hot-path summary of VM scopes and FFI calls. `--profile` on any
   other command is the same collection.
-- `ns profiler [file]`: open the native GUI viewer for `ns.profile`, or for an
-  explicit profile file.
+- `ns profiler [file]`: open the compiled native GUI viewer for `ns.profile`,
+  or for an explicit profile file. `make` / `make install` build that viewer
+  with `ns build nscode/profile`.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported.

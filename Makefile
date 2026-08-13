@@ -210,7 +210,17 @@ TARGET = $(NS_BINDIR)/ns
 NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 NS_DIRS = bin bin/src bin/lib
 
+ifeq ($(NS_OS), $(NS_DARWIN))
+all: $(NS_DIRS) $(TARGET) $(NS_LIB) std profiler
+else
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std
+endif
+
+.PHONY: profiler
+profiler: $(TARGET) std
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) build $(CURDIR)/nscode/profile
+	$(NS_RMDIR) $(NS_BINDIR)/nscode-profile.app
+	$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_BINDIR)/nscode-profile.app
 
 $(NS_DIRS):
 	$(NS_MKDIR) $(NS_DIRS)
@@ -311,6 +321,12 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/
 	cp third_party/box3d/LICENSE $(NS_INSTALL_ROOT)/share/licenses/box3d/LICENSE
 	cp nscode/profile/ns.mod nscode/profile/main.ns $(NS_INSTALL_ROOT)/share/nscode/profile/
+	if [ -d nscode/profile/bin/nscode-profile.app ]; then \
+		$(NS_RMDIR) $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \
+		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \
+		$(NS_RMDIR) $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
+		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
+	fi
 	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\
 		for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
 			cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new"; \

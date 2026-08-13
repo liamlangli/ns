@@ -59,8 +59,24 @@ Internal ns→ns calls:
 - Return in `x0`.
 - `std.*` maps to `ns_rt_*` wrappers so libm/file I/O stay bit-pattern safe.
 
-External `ref fn` (later): real AAPCS64, including `d0–d7` for floats, and
-dylibs linked from `ssa->imports`.
+External `ref fn` uses real AAPCS64 (`x0–x7` plus `d0–d7` for floats, stack
+after that). `str` arguments become C `char*` via `ns_rt_to_cstr`; string
+returns are wrapped with `ns_rt_from_cstr`. Darwin `ns build` links each
+imported native module's `.dylib` from the runtime `lib`/`bin` directory.
+
+Language `ref` boxes a scalar local on first take (`ALLOC` + `STORE`) and
+rebinds the name so later reads `LOAD` and writes `STORE` through the box.
+`ref` of an already-ref value is identity. Heap values (structs, arrays,
+strings) keep their pointer and only set the ref bit.
+
+Unions are heap boxes `{i32 tag, i64 payload}`. Assigning or `as` to a union
+calls `ns_rt_union_new`; narrowing `u as T` calls `ns_rt_union_as` (numeric
+members convert).
+
+`async fn` calls lower to `ns_rt_task_spawn` (worker thread). `await` is
+`ns_rt_task_await`. The `task` module maps onto `ns_rt_task_*` /
+`ns_rt_queue_*`: `queue_main` runs inline, `queue_worker`/`queue_idle` start
+a pthread. `cancel` is cooperative at `sleep`/`await`.
 
 Heap addresses are 32-bit offsets into `ns_rt` linear memory (Wasm32 layout):
 array `{ptr,u32; len,u32; cap,u32}`, string `{bytes,u32; len,u32}`.
@@ -78,5 +94,7 @@ block becomes `$bN(env, args...)`; a named `fn` used as a value gets a
 the first argument and `BLR` the code pointer. `ADRP`+`ADD` materializes
 addresses (no absolute text relocations).
 
-Still lowering or ABI work: `ref`/`union`, `async`/`task`, full `ref fn`
-FFI. Wasm continues to reject those types.
+`v.on_frame({ ... })` stores an `ns_rt_callback` trampoline into the native
+function-pointer slot. Field access on a `ref` struct uses the VM's C layout
+(`field.o` / `field.s`), not the Wasm32 heap layout. Wasm continues to reject
+`ref` / `union` / `async` / `task`.
