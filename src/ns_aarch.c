@@ -1,5 +1,7 @@
 #include "ns_aarch.h"
 
+#include <string.h>
+
 /*
  * AArch64 code generator from SSA IR.
  *
@@ -13,9 +15,11 @@
  * x11 for the division temporary. Slot v lives at [SP + 8*v].
  */
 
+#define NS_AARCH_X0  0
 #define NS_AARCH_X9  9
 #define NS_AARCH_X10 10
 #define NS_AARCH_X11 11
+#define NS_AARCH_X16 16
 #define NS_AARCH_SP  31
 
 /* ── intra-function fixup ─────────────────────────────────────────────────── */
@@ -84,6 +88,11 @@ static u32 ns_aarch_sdiv_rrr(i32 rd, i32 rn, i32 rm) {
     return 0x9AC00C00u | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
 }
 
+/* UDIV Xd, Xn, Xm */
+static u32 ns_aarch_udiv_rrr(i32 rd, i32 rn, i32 rm) {
+    return 0x9AC00800u | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
+}
+
 /* MSUB Xd, Xn, Xm, Xa  (Xd = Xa - Xn*Xm, used for MOD) */
 static u32 ns_aarch_msub_rrrr(i32 rd, i32 rn, i32 rm, i32 ra) {
     return 0x9B008000u | ((u32)rm << 16) | ((u32)ra << 10) | ((u32)rn << 5) | (u32)rd;
@@ -117,6 +126,11 @@ static u32 ns_aarch_lslv_rrr(i32 rd, i32 rn, i32 rm) {
 /* LSRV Xd, Xn, Xm */
 static u32 ns_aarch_lsrv_rrr(i32 rd, i32 rn, i32 rm) {
     return 0x9AC02400u | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
+}
+
+/* ASRV Xd, Xn, Xm */
+static u32 ns_aarch_asrv_rrr(i32 rd, i32 rn, i32 rm) {
+    return 0x9AC02800u | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
 }
 
 /* CMP Xn, Xm  (SUBS XZR, Xn, Xm) */
@@ -178,6 +192,93 @@ static u32 ns_aarch_bl(i32 imm26) {
     return 0x94000000u | ((u32)imm26 & 0x3FFFFFFu);
 }
 
+static void ns_aarch_emit_rt_call(ns_aarch_ctx *c, const char *name) {
+    u32 bl_off = (u32)ns_array_length(c->text);
+    ns_aarch_emit_u32(c, ns_aarch_bl(0));
+    ns_aarch_call_fixup cf = {.off = bl_off, .callee = ns_str_cstr((i8 *)name)};
+    ns_array_push(c->call_fixups, cf);
+}
+
+static ns_bool ns_aarch_is_float(ns_type t) {
+    return ns_type_is(t, NS_TYPE_F32) || ns_type_is(t, NS_TYPE_F64);
+}
+
+static ns_bool ns_aarch_is_string(ns_type t) {
+    return ns_type_is(t, NS_TYPE_STRING);
+}
+
+static const char *ns_aarch_map_std(ns_str module, ns_str name) {
+    if (!ns_str_equals(module, ns_str_cstr("std"))) return NULL;
+    if (ns_str_equals(name, ns_str_cstr("print"))) return "ns_rt_print";
+    if (ns_str_equals(name, ns_str_cstr("open"))) return "ns_rt_open";
+    if (ns_str_equals(name, ns_str_cstr("read"))) return "ns_rt_read";
+    if (ns_str_equals(name, ns_str_cstr("write"))) return "ns_rt_write";
+    if (ns_str_equals(name, ns_str_cstr("close"))) return "ns_rt_close";
+    if (ns_str_equals(name, ns_str_cstr("sqrt"))) return "ns_rt_sqrt";
+    if (ns_str_equals(name, ns_str_cstr("sin"))) return "ns_rt_sin";
+    if (ns_str_equals(name, ns_str_cstr("cos"))) return "ns_rt_cos";
+    if (ns_str_equals(name, ns_str_cstr("tan"))) return "ns_rt_tan";
+    if (ns_str_equals(name, ns_str_cstr("atan2"))) return "ns_rt_atan2";
+    if (ns_str_equals(name, ns_str_cstr("ftos"))) return "ns_rt_ftos";
+    if (ns_str_equals(name, ns_str_cstr("stof"))) return "ns_rt_stof";
+    if (ns_str_equals(name, ns_str_cstr("substr"))) return "ns_rt_substr";
+    if (ns_str_equals(name, ns_str_cstr("unescape"))) return "ns_rt_unescape";
+    if (ns_str_equals(name, ns_str_cstr("utf8_len"))) return "ns_rt_utf8_len";
+    return NULL;
+}
+
+static ns_type ns_aarch_value_type(ns_ssa_fn *fn, i32 value) {
+    if (value < 0 || !fn) return ns_type_unknown;
+    for (i32 i = (i32)ns_array_length(fn->insts) - 1; i >= 0; --i) {
+        if (fn->insts[i].dst == value) return fn->insts[i].type;
+    }
+    return ns_type_unknown;
+}
+
+static i32 ns_aarch_load_size(ns_type t) {
+    if (ns_type_is(t, NS_TYPE_I8)) return 1;
+    if (ns_type_is(t, NS_TYPE_U8)) return -1;
+    if (ns_type_is(t, NS_TYPE_I16)) return 2;
+    if (ns_type_is(t, NS_TYPE_U16)) return -2;
+    if (ns_type_is(t, NS_TYPE_I64) || ns_type_is(t, NS_TYPE_U64) || ns_type_is(t, NS_TYPE_F64)) return 8;
+    if (ns_type_is(t, NS_TYPE_F32)) return 4;
+    return 4;
+}
+
+/* FMOV Dd, Xn / FMOV Sd, Wn */
+static u32 ns_aarch_fmov_dx(i32 rd, i32 rn, ns_bool f64) {
+    return (f64 ? 0x9E670000u : 0x1E270000u) | ((u32)rn << 5) | (u32)rd;
+}
+
+/* FMOV Xd, Dn / FMOV Wd, Sn */
+static u32 ns_aarch_fmov_xd(i32 rd, i32 rn, ns_bool f64) {
+    return (f64 ? 0x9E660000u : 0x1E260000u) | ((u32)rn << 5) | (u32)rd;
+}
+
+static u32 ns_aarch_fadd(i32 rd, i32 rn, i32 rm, ns_bool f64) {
+    return (f64 ? 0x1E602800u : 0x1E202800u) | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
+}
+
+static u32 ns_aarch_fsub(i32 rd, i32 rn, i32 rm, ns_bool f64) {
+    return (f64 ? 0x1E603800u : 0x1E203800u) | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
+}
+
+static u32 ns_aarch_fmul(i32 rd, i32 rn, i32 rm, ns_bool f64) {
+    return (f64 ? 0x1E600800u : 0x1E200800u) | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
+}
+
+static u32 ns_aarch_fdiv(i32 rd, i32 rn, i32 rm, ns_bool f64) {
+    return (f64 ? 0x1E601800u : 0x1E201800u) | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
+}
+
+static u32 ns_aarch_fneg(i32 rd, i32 rn, ns_bool f64) {
+    return (f64 ? 0x1E614000u : 0x1E214000u) | ((u32)rn << 5) | (u32)rd;
+}
+
+static u32 ns_aarch_fcmp(i32 rn, i32 rm, ns_bool f64) {
+    return (f64 ? 0x1E602000u : 0x1E202000u) | ((u32)rm << 16) | ((u32)rn << 5);
+}
+
 /* ── emit a 64-bit constant into rd ──────────────────────────────────────── */
 static void ns_aarch_emit_const_u64(ns_aarch_ctx *c, i32 rd, u64 val) {
     if (val == 0) {
@@ -198,16 +299,50 @@ static void ns_aarch_emit_const_u64(ns_aarch_ctx *c, i32 rd, u64 val) {
 }
 
 /* ── stack slot access ────────────────────────────────────────────────────── */
+/* Slot v lives at [SP + 8*v]. Unsigned scaled LDR/STR only reach slot < 4096;
+ * larger frames form the address in X16. */
+static void ns_aarch_slot_addr(ns_aarch_ctx *c, i32 v) {
+    ns_aarch_emit_const_u64(c, NS_AARCH_X16, (u64)(u32)v);
+    ns_aarch_emit_u32(c, 0x8B000C00u | ((u32)NS_AARCH_X16 << 16) |
+        ((u32)NS_AARCH_SP << 5) | (u32)NS_AARCH_X16); /* ADD X16, SP, X16, LSL #3 */
+}
+
 /* Load an SSA value into a register; a negative value id loads nothing. */
 static void ns_aarch_load_value(ns_aarch_ctx *c, i32 reg, i32 v) {
     if (v < 0) return;
-    ns_aarch_emit_u32(c, ns_aarch_ldr_slot(reg, v));
+    if (v < 4096) {
+        ns_aarch_emit_u32(c, ns_aarch_ldr_slot(reg, v));
+        return;
+    }
+    ns_aarch_slot_addr(c, v);
+    ns_aarch_emit_u32(c, 0xF9400000u | ((u32)NS_AARCH_X16 << 5) | (u32)reg);
 }
 
 /* Store a register into an SSA value's slot. */
 static void ns_aarch_store_value(ns_aarch_ctx *c, i32 v, i32 reg) {
     if (v < 0) return;
-    ns_aarch_emit_u32(c, ns_aarch_str_slot(reg, v));
+    if (v < 4096) {
+        ns_aarch_emit_u32(c, ns_aarch_str_slot(reg, v));
+        return;
+    }
+    ns_aarch_slot_addr(c, v);
+    ns_aarch_emit_u32(c, 0xF9000000u | ((u32)NS_AARCH_X16 << 5) | (u32)reg);
+}
+
+static void ns_aarch_emit_float_binop(ns_aarch_ctx *c, ns_ssa_inst *inst) {
+    ns_bool f64 = ns_type_is(inst->type, NS_TYPE_F64);
+    ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
+    ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
+    ns_aarch_emit_u32(c, ns_aarch_fmov_dx(0, NS_AARCH_X9, f64));
+    ns_aarch_emit_u32(c, ns_aarch_fmov_dx(1, NS_AARCH_X10, f64));
+    switch (inst->op) {
+    case NS_SSA_OP_ADD: ns_aarch_emit_u32(c, ns_aarch_fadd(0, 0, 1, f64)); break;
+    case NS_SSA_OP_SUB: ns_aarch_emit_u32(c, ns_aarch_fsub(0, 0, 1, f64)); break;
+    case NS_SSA_OP_MUL: ns_aarch_emit_u32(c, ns_aarch_fmul(0, 0, 1, f64)); break;
+    default:            ns_aarch_emit_u32(c, ns_aarch_fdiv(0, 0, 1, f64)); break;
+    }
+    ns_aarch_emit_u32(c, ns_aarch_fmov_xd(NS_AARCH_X9, 0, f64));
+    ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
 }
 
 /* ── parse constant string ────────────────────────────────────────────────── */
@@ -327,6 +462,28 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_CONST: {
         if (inst->dst < 0) break;
+        if (ns_type_is(inst->type, NS_TYPE_STRING)) {
+            ns_aarch_emit_const_u64(c, NS_AARCH_X0, (u64)(u32)inst->c);
+            ns_aarch_emit_rt_call(c, "ns_rt_intern");
+            ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+            break;
+        }
+        if (ns_type_is(inst->type, NS_TYPE_F64)) {
+            f64 fv = ns_str_to_f64(inst->name);
+            u64 bits = 0;
+            memcpy(&bits, &fv, 8);
+            ns_aarch_emit_const_u64(c, NS_AARCH_X9, bits);
+            ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+            break;
+        }
+        if (ns_type_is(inst->type, NS_TYPE_F32)) {
+            f32 fv = (f32)ns_str_to_f64(inst->name);
+            u32 bits = 0;
+            memcpy(&bits, &fv, 4);
+            ns_aarch_emit_const_u64(c, NS_AARCH_X9, bits);
+            ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+            break;
+        }
         u64 val = 0;
         if (!ns_aarch_parse_u64(inst->name, &val)) {
             ns_warn("aarch", "unsupported const '%.*s' in fn %.*s, using 0\n",
@@ -344,7 +501,36 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     case NS_SSA_OP_CAST: {
         if (inst->dst < 0 || inst->a < 0) break;
         ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        ns_aarch_narrow_x9(c, inst->type); /* truncate to a narrower integer target */
+        ns_type src_t = ns_aarch_value_type(c->fn, inst->a);
+        ns_bool src_f = ns_aarch_is_float(src_t);
+        ns_bool dst_f = ns_aarch_is_float(inst->type);
+        if (dst_f && src_f) {
+            ns_bool src64 = ns_type_is(src_t, NS_TYPE_F64);
+            ns_bool dst64 = ns_type_is(inst->type, NS_TYPE_F64);
+            if (src64 != dst64) {
+                ns_aarch_emit_u32(c, ns_aarch_fmov_dx(0, NS_AARCH_X9, src64));
+                ns_aarch_emit_u32(c, src64 ? 0x1E624000u : 0x1E22C000u); /* FCVT S0,D0 / D0,S0 */
+                ns_aarch_emit_u32(c, ns_aarch_fmov_xd(NS_AARCH_X9, 0, dst64));
+            }
+        } else if (dst_f && !src_f) {
+            ns_bool dst64 = ns_type_is(inst->type, NS_TYPE_F64);
+            ns_bool uns = ns_type_unsigned(src_t);
+            u32 scvtf = dst64 ? (uns ? 0x9E630000u : 0x9E620000u)
+                              : (uns ? 0x9E230000u : 0x9E220000u);
+            ns_aarch_emit_u32(c, scvtf | ((u32)NS_AARCH_X9 << 5)); /* [SU]CVTF D0/S0, X9 */
+            ns_aarch_emit_u32(c, ns_aarch_fmov_xd(NS_AARCH_X9, 0, dst64));
+        } else if (!dst_f && src_f) {
+            ns_bool src64 = ns_type_is(src_t, NS_TYPE_F64);
+            ns_bool uns = ns_type_unsigned(inst->type);
+            ns_aarch_emit_u32(c, ns_aarch_fmov_dx(0, NS_AARCH_X9, src64));
+            u32 fcvtz = src64 ? (uns ? 0x9E790000u : 0x9E780000u)
+                              : (uns ? 0x9E390000u : 0x9E380000u);
+            ns_aarch_emit_u32(c, fcvtz); /* FCVTZ[SU] X0, D0/S0 */
+            ns_aarch_emit_u32(c, 0xAA0003E9u); /* MOV X9, X0 */
+            ns_aarch_narrow_x9(c, inst->type);
+        } else {
+            ns_aarch_narrow_x9(c, inst->type);
+        }
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_ADD:
@@ -355,6 +541,20 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     case NS_SSA_OP_BXOR:
     case NS_SSA_OP_SHL:  case NS_SSA_OP_SHR: {
         if (inst->dst < 0) break;
+        ns_type at = ns_aarch_value_type(c->fn, inst->a);
+        if (inst->op == NS_SSA_OP_ADD &&
+            (ns_aarch_is_string(inst->type) || ns_aarch_is_string(at))) {
+            ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+            ns_aarch_load_value(c, 1, inst->b);
+            ns_aarch_emit_rt_call(c, "ns_rt_strcat");
+            ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+            break;
+        }
+        if ((inst->op == NS_SSA_OP_ADD || inst->op == NS_SSA_OP_SUB || inst->op == NS_SSA_OP_MUL) &&
+            ns_aarch_is_float(inst->type)) {
+            ns_aarch_emit_float_binop(c, inst);
+            break;
+        }
         ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
         ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
         switch (inst->op) {
@@ -365,15 +565,30 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         case NS_SSA_OP_BOR:  case NS_SSA_OP_OR:  ns_aarch_emit_u32(c, ns_aarch_orr_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
         case NS_SSA_OP_BXOR: ns_aarch_emit_u32(c, ns_aarch_eor_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
         case NS_SSA_OP_SHL:  ns_aarch_emit_u32(c, ns_aarch_lslv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
-        default:             ns_aarch_emit_u32(c, ns_aarch_lsrv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10)); break;
+        default:
+            if (ns_type_unsigned(at)) {
+                ns_aarch_emit_u32(c, ns_aarch_lsrv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+            } else {
+                ns_aarch_emit_u32(c, ns_aarch_asrv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+            }
+            break;
         }
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_DIV: {
         if (inst->dst < 0) break;
+        if (ns_aarch_is_float(inst->type)) {
+            ns_aarch_emit_float_binop(c, inst);
+            break;
+        }
+        ns_type at = ns_aarch_value_type(c->fn, inst->a);
         ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
         ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
-        ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+        if (ns_type_unsigned(at)) {
+            ns_aarch_emit_u32(c, ns_aarch_udiv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+        } else {
+            ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+        }
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_MOD: {
@@ -388,7 +603,15 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     case NS_SSA_OP_NEG: {
         if (inst->dst < 0) break;
         ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        ns_aarch_emit_u32(c, ns_aarch_neg_rr(NS_AARCH_X9, NS_AARCH_X9));
+        ns_type nt = ns_aarch_is_float(inst->type) ? inst->type : ns_aarch_value_type(c->fn, inst->a);
+        if (ns_aarch_is_float(nt)) {
+            ns_bool f64 = ns_type_is(nt, NS_TYPE_F64);
+            ns_aarch_emit_u32(c, ns_aarch_fmov_dx(0, NS_AARCH_X9, f64));
+            ns_aarch_emit_u32(c, ns_aarch_fneg(0, 0, f64));
+            ns_aarch_emit_u32(c, ns_aarch_fmov_xd(NS_AARCH_X9, 0, f64));
+        } else {
+            ns_aarch_emit_u32(c, ns_aarch_neg_rr(NS_AARCH_X9, NS_AARCH_X9));
+        }
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_NOT: {
@@ -402,17 +625,36 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     case NS_SSA_OP_LT: case NS_SSA_OP_LE:
     case NS_SSA_OP_GT: case NS_SSA_OP_GE: {
         if (inst->dst < 0) break;
-        ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
-        ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
-        ns_aarch_emit_u32(c, ns_aarch_cmp_rr(NS_AARCH_X9, NS_AARCH_X10));
+        ns_type at = ns_aarch_value_type(c->fn, inst->a);
+        ns_type bt = ns_aarch_value_type(c->fn, inst->b);
+        if (ns_aarch_is_string(at) || ns_aarch_is_string(bt)) {
+            ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+            ns_aarch_load_value(c, 1, inst->b);
+            ns_aarch_emit_rt_call(c, "ns_rt_strcmp");
+            ns_aarch_emit_u32(c, ns_aarch_movz(NS_AARCH_X10, 0, 0));
+            ns_aarch_emit_u32(c, ns_aarch_cmp_rr(NS_AARCH_X0, NS_AARCH_X10));
+        } else {
+            ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
+            ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
+            ns_bool use_fcmp = ns_aarch_is_float(at) || ns_aarch_is_float(bt);
+            if (use_fcmp) {
+                ns_bool f64 = ns_type_is(at, NS_TYPE_F64) || ns_type_is(bt, NS_TYPE_F64);
+                ns_aarch_emit_u32(c, ns_aarch_fmov_dx(0, NS_AARCH_X9, f64));
+                ns_aarch_emit_u32(c, ns_aarch_fmov_dx(1, NS_AARCH_X10, f64));
+                ns_aarch_emit_u32(c, ns_aarch_fcmp(0, 1, f64));
+            } else {
+                ns_aarch_emit_u32(c, ns_aarch_cmp_rr(NS_AARCH_X9, NS_AARCH_X10));
+            }
+        }
+        ns_bool uns = ns_type_unsigned(at) && !ns_aarch_is_float(at) && !ns_aarch_is_string(at);
         u32 inv_cond;
         switch (inst->op) {
         case NS_SSA_OP_EQ: inv_cond = 1u;  break; /* NE */
         case NS_SSA_OP_NE: inv_cond = 0u;  break; /* EQ */
-        case NS_SSA_OP_LT: inv_cond = 10u; break; /* GE */
-        case NS_SSA_OP_LE: inv_cond = 12u; break; /* GT */
-        case NS_SSA_OP_GT: inv_cond = 13u; break; /* LE */
-        default:           inv_cond = 11u; break; /* LT (for GE) */
+        case NS_SSA_OP_LT: inv_cond = uns ? 2u : 10u; break; /* HS / GE */
+        case NS_SSA_OP_LE: inv_cond = uns ? 8u : 12u; break; /* HI / GT */
+        case NS_SSA_OP_GT: inv_cond = uns ? 9u : 13u; break; /* LS / LE */
+        default:           inv_cond = uns ? 3u : 11u; break; /* LO / LT (for GE) */
         }
         ns_aarch_emit_u32(c, ns_aarch_cset_r(NS_AARCH_X9, inv_cond));
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
@@ -428,11 +670,15 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_CALL: {
         c->arg_seq = 0;
-        ns_str callee_name = ns_str_null;
-        i32 callee_val = inst->a;
-        for (i32 ii = 0; ii < (i32)ns_array_length(c->fn->insts); ++ii) {
-            if (c->fn->insts[ii].dst == callee_val) { callee_name = c->fn->insts[ii].name; break; }
+        ns_str callee_name = inst->name;
+        if (callee_name.len == 0) {
+            i32 callee_val = inst->a;
+            for (i32 ii = 0; ii < (i32)ns_array_length(c->fn->insts); ++ii) {
+                if (c->fn->insts[ii].dst == callee_val) { callee_name = c->fn->insts[ii].name; break; }
+            }
         }
+        const char *std_rt = ns_aarch_map_std(inst->module, callee_name);
+        if (std_rt) callee_name = ns_str_cstr((i8 *)std_rt);
         u32 bl_off = (u32)ns_array_length(c->text);
         ns_aarch_emit_u32(c, ns_aarch_bl(0));
         if (callee_name.len > 0) {
@@ -479,6 +725,116 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     case NS_SSA_OP_TRAP: {
         ns_aarch_emit_u32(c, ns_aarch_brk0());
     } break;
+    case NS_SSA_OP_GLOBAL_GET: {
+        if (inst->dst < 0) break;
+        ns_aarch_emit_const_u64(c, NS_AARCH_X0, (u64)(u32)inst->c);
+        ns_aarch_emit_rt_call(c, "ns_rt_gget");
+        ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+    } break;
+    case NS_SSA_OP_GLOBAL_SET: {
+        ns_aarch_emit_const_u64(c, NS_AARCH_X0, (u64)(u32)inst->c);
+        ns_aarch_load_value(c, 1, inst->a);
+        ns_aarch_emit_rt_call(c, "ns_rt_gset");
+    } break;
+    case NS_SSA_OP_ALLOC: {
+        if (inst->dst < 0) break;
+        ns_aarch_emit_const_u64(c, NS_AARCH_X0, (u64)(u32)(inst->c > 0 ? inst->c : 0));
+        ns_aarch_emit_rt_call(c, "ns_rt_alloc");
+        ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+    } break;
+    case NS_SSA_OP_CLONE: {
+        if (inst->dst < 0) break;
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        ns_aarch_emit_const_u64(c, 1, (u64)(u32)(inst->c > 0 ? inst->c : 0));
+        ns_aarch_emit_rt_call(c, "ns_rt_clone");
+        ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+    } break;
+    case NS_SSA_OP_LOAD: {
+        if (inst->dst < 0) break;
+        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type)) {
+            ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
+            ns_aarch_emit_const_u64(c, NS_AARCH_X10, (u64)(u32)inst->c);
+            ns_aarch_emit_u32(c, ns_aarch_add_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
+            ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
+            break;
+        }
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        ns_aarch_emit_const_u64(c, 1, (u64)(u32)inst->c);
+        ns_aarch_emit_const_u64(c, 2, (u64)(u32)ns_aarch_load_size(inst->type));
+        ns_aarch_emit_rt_call(c, "ns_rt_load");
+        ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+    } break;
+    case NS_SSA_OP_STORE: {
+        i32 size = inst->target0 > 0 ? inst->target0 : ns_aarch_load_size(inst->type);
+        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type) && size > 0) {
+            ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+            ns_aarch_emit_const_u64(c, 1, (u64)(u32)inst->c);
+            ns_aarch_load_value(c, 2, inst->b);
+            ns_aarch_emit_const_u64(c, 3, (u64)(u32)size);
+            ns_aarch_emit_rt_call(c, "ns_rt_copy");
+            break;
+        }
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        ns_aarch_emit_const_u64(c, 1, (u64)(u32)inst->c);
+        ns_aarch_load_value(c, 2, inst->b);
+        ns_aarch_emit_const_u64(c, 3, (u64)(u32)size);
+        ns_aarch_emit_rt_call(c, "ns_rt_store");
+    } break;
+    case NS_SSA_OP_ARRAY_NEW: {
+        if (inst->dst < 0) break;
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        ns_aarch_emit_const_u64(c, 1, (u64)(u32)(inst->c > 0 ? inst->c : 1));
+        ns_aarch_emit_rt_call(c, "ns_rt_array_new");
+        ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+    } break;
+    case NS_SSA_OP_ARRAY_STORE: {
+        i32 stride = inst->c > 0 ? inst->c : 4;
+        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type)) {
+            ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+            ns_aarch_load_value(c, 1, inst->target0);
+            ns_aarch_emit_const_u64(c, 2, (u64)(u32)stride);
+            ns_aarch_emit_rt_call(c, "ns_rt_array_slot");
+            ns_aarch_emit_const_u64(c, 1, 0);
+            ns_aarch_load_value(c, 2, inst->b);
+            ns_aarch_emit_const_u64(c, 3, (u64)(u32)stride);
+            ns_aarch_emit_rt_call(c, "ns_rt_copy");
+            break;
+        }
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        ns_aarch_load_value(c, 1, inst->target0);
+        ns_aarch_load_value(c, 2, inst->b);
+        ns_aarch_emit_const_u64(c, 3, (u64)(u32)stride);
+        ns_aarch_emit_rt_call(c, "ns_rt_array_store");
+    } break;
+    case NS_SSA_OP_INDEX: {
+        if (inst->dst < 0) break;
+        i64 stride = inst->c > 0 ? inst->c : 1;
+        if (ns_type_is(inst->type, NS_TYPE_STRUCT)) {
+            ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+            ns_aarch_load_value(c, 1, inst->b);
+            ns_aarch_emit_const_u64(c, 2, (u64)stride);
+            ns_aarch_emit_rt_call(c, "ns_rt_array_slot");
+            ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+            break;
+        }
+        /* String byte index is emitted as i32 with stride 1; load it unsigned. */
+        if (stride == 1 && ns_type_is(inst->type, NS_TYPE_I32)) stride = -1;
+        else if (ns_type_is(inst->type, NS_TYPE_U8)) stride = -1;
+        else if (ns_type_is(inst->type, NS_TYPE_U16)) stride = -2;
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        ns_aarch_load_value(c, 1, inst->b);
+        ns_aarch_emit_const_u64(c, 2, (u64)stride);
+        ns_aarch_emit_rt_call(c, "ns_rt_array_index");
+        ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+    } break;
+    case NS_SSA_OP_MEMBER: {
+        if (inst->dst < 0) break;
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        ns_aarch_load_value(c, 1, inst->b);
+        ns_aarch_emit_const_u64(c, 2, 8);
+        ns_aarch_emit_rt_call(c, "ns_rt_load");
+        ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+    } break;
     default:
         ns_warn("aarch", "unsupported ssa op %d in fn %.*s, emitting nop\n",
             inst->op, c->fn->name.len, c->fn->name.data);
@@ -497,7 +853,7 @@ static i32 ns_aarch_slot_count(ns_ssa_fn *fn) {
 }
 
 /* ── lower a single SSA function to machine code ─────────────────────────── */
-static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_fn *fn) {
+static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_fn *fn, ns_bool call_rt_init, ns_bool call_mod_init) {
     ns_aarch_ctx c = {0};
     c.fn = fn;
 
@@ -508,7 +864,16 @@ static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_fn *fn) {
     /* emit function prologue */
     ns_aarch_emit_u32(&c, 0xA9BF7BFDu); /* STP x29, x30, [sp, #-16]! */
     ns_aarch_emit_u32(&c, 0x910003FDu); /* MOV x29, sp */
-    if (frame > 0) ns_aarch_emit_u32(&c, ns_aarch_sub_sp_imm(frame)); /* SUB sp, sp, #frame */
+    if (frame > 0) {
+        if (frame <= 4095) {
+            ns_aarch_emit_u32(&c, ns_aarch_sub_sp_imm(frame));
+        } else {
+            ns_aarch_emit_const_u64(&c, NS_AARCH_X9, (u64)(u32)frame);
+            ns_aarch_emit_u32(&c, ns_aarch_sub_rrr(NS_AARCH_SP, NS_AARCH_SP, NS_AARCH_X9));
+        }
+    }
+    if (call_rt_init) ns_aarch_emit_rt_call(&c, "ns_rt_init");
+    if (call_mod_init) ns_aarch_emit_rt_call(&c, "__module_init");
 
     i32 num_blocks = (i32)ns_array_length(fn->blocks);
     ns_array_set_length(c.block_off, num_blocks);
@@ -556,10 +921,45 @@ ns_return_ptr ns_aarch_from_ssa(ns_ssa_module *ssa) {
             ns_arch_str(target.arch).len, ns_arch_str(target.arch).data);
     }
 
+    ns_bool has_init = false;
+    ns_bool has_main = false;
     for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
-        ns_aarch_fn_bin fn = ns_aarch_lower_fn(&ssa->fns[i]);
+        if (ns_str_equals_STR(ssa->fns[i].name, "__module_init")) has_init = true;
+        if (ns_str_equals_STR(ssa->fns[i].name, "main")) has_main = true;
+        for (i32 ii = 0, il = (i32)ns_array_length(ssa->fns[i].insts); ii < il; ++ii) {
+            ns_ssa_inst *inst = &ssa->fns[i].insts[ii];
+            if (inst->op != NS_SSA_OP_CONST || !ns_type_is(inst->type, NS_TYPE_STRING)) continue;
+            ns_str value = ns_str_unescape(inst->name);
+            i32 id = -1;
+            for (i32 s = 0; s < m->nstr; ++s) {
+                if (m->strlens[s] == value.len &&
+                    memcmp(m->strtab[s], value.data, (szt)value.len) == 0) {
+                    id = s;
+                    break;
+                }
+            }
+            if (id < 0) {
+                id = m->nstr;
+                m->strtab = realloc(m->strtab, sizeof(char *) * (szt)(id + 1));
+                m->strlens = realloc(m->strlens, sizeof(i32) * (szt)(id + 1));
+                char *copy = ns_malloc((szt)value.len + 1);
+                if (value.len > 0) memcpy(copy, value.data, (szt)value.len);
+                copy[value.len] = 0;
+                m->strtab[id] = copy;
+                m->strlens[id] = value.len;
+                m->nstr = id + 1;
+            }
+            inst->c = id;
+            ns_str_free(value);
+        }
+    }
+
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->fns); i < l; ++i) {
+        ns_bool is_main = ns_str_equals_STR(ssa->fns[i].name, "main");
+        ns_aarch_fn_bin fn = ns_aarch_lower_fn(&ssa->fns[i], is_main, is_main && has_init);
         ns_array_push(m->fns, fn);
     }
+    (void)has_main;
 
     return ns_return_ok(ptr, m);
 }
@@ -591,5 +991,8 @@ void ns_aarch_free(ns_aarch_module_bin *m) {
         ns_array_free(m->fns[i].call_fixups);
     }
     ns_array_free(m->fns);
+    for (i32 i = 0; i < m->nstr; ++i) ns_free(m->strtab[i]);
+    free(m->strtab);
+    free(m->strlens);
     ns_free(m);
 }

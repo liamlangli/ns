@@ -106,6 +106,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_expr.c \
 	src/ns_ast_print.c \
 	src/ns_ssa.c \
+	src/ns_native_rt.c \
 	src/ns_aarch.c \
 	src/ns_macho.c \
 	src/ns_wasm.c \
@@ -147,6 +148,7 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 	src/ns_vm_print.c \
 	src/ns_json.c \
 	src/ns_shader.c \
+	src/ns_native_rt.c \
 	src/ns_def.c
 
 # The generator is Nano Script (tools/gen_embedded_ffi.ns); the embedded

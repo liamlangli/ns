@@ -161,3 +161,97 @@ printf '%s\n' 'this helper must not be selected' > "$test_tmp/project/test/helpe
 "$ns" test "$test_tmp/project/test/answer_test.ns"
 
 printf '%s\n' 'PASS: ns test discovers <project>/test/*_test.ns without manifest entries.'
+
+if [ "$(uname -s)" = "Darwin" ]; then
+    build_tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-build-native.XXXXXX")
+    trap 'rm -rf "$scaffold_tmp" "$run_tmp" "$test_tmp" "$build_tmp"' EXIT HUP INT TERM
+
+    printf '%s\n' \
+        'fn add(a: i32, b: i32) i32 {' \
+        '    return a + b' \
+        '}' \
+        'fn main() i32 {' \
+        '    return add(40, 2)' \
+        '}' > "$build_tmp/add.ns"
+    "$ns" build --exe "$build_tmp/add.ns" -o "$build_tmp/add"
+    if ! file "$build_tmp/add" | grep -q 'Mach-O 64-bit executable arm64'; then
+        printf '%s\n' 'FAIL: ns build --exe did not emit a Mach-O arm64 executable.' >&2
+        exit 1
+    fi
+    if strings "$build_tmp/add" | grep -q 'nscode-native launcher'; then
+        printf '%s\n' 'FAIL: ns build --exe still embeds the ns-run launcher.' >&2
+        exit 1
+    fi
+    set +e
+    "$build_tmp/add"
+    add_status=$?
+    set -e
+    if [ "$add_status" -ne 42 ]; then
+        printf '%s\n' "FAIL: compiled add binary exited $add_status, expected 42." >&2
+        exit 1
+    fi
+
+    mkdir -p "$build_tmp/app"
+    printf '%s\n' \
+        'schema = "ns.mod/v1"' \
+        'name = "tiny-app"' \
+        'version = "0.1.0"' \
+        'type = "app"' \
+        'source = "."' \
+        'entry = "main.ns"' > "$build_tmp/app/ns.mod"
+    printf '%s\n' \
+        'fn main() i32 {' \
+        '    return 7' \
+        '}' > "$build_tmp/app/main.ns"
+    "$ns" build "$build_tmp/app"
+    app_bin="$build_tmp/app/bin/tiny-app.app/Contents/MacOS/tiny-app"
+    if [ ! -x "$app_bin" ]; then
+        printf '%s\n' 'FAIL: ns build app did not produce Contents/MacOS/tiny-app.' >&2
+        exit 1
+    fi
+    if ! file "$app_bin" | grep -q 'Mach-O 64-bit executable arm64'; then
+        printf '%s\n' 'FAIL: ns build app did not emit a Mach-O arm64 executable.' >&2
+        exit 1
+    fi
+    if strings "$app_bin" | grep -Eq 'nscode-native launcher|execl\(ns'; then
+        printf '%s\n' 'FAIL: ns build app still wraps ns run instead of compiling.' >&2
+        exit 1
+    fi
+    set +e
+    "$app_bin"
+    app_status=$?
+    set -e
+    if [ "$app_status" -ne 7 ]; then
+        printf '%s\n' "FAIL: compiled app exited $app_status, expected 7." >&2
+        exit 1
+    fi
+
+    printf '%s\n' \
+        'use std' \
+        'struct point { x: i32, y: i32 }' \
+        'let acc = 1' \
+        'fn main() i32 {' \
+        '    let s = "hi" + "!"' \
+        '    let a = [i32](2)' \
+        '    a[0] = 10' \
+        '    a[1] = 20' \
+        '    let p = point { 3, 4 }' \
+        '    let x: f64 = 1.5' \
+        '    acc = acc + a[0] + p.x' \
+        '    if s.len == 3 && a[1] == 20 && x + 2.5 == 4.0 && acc == 14 {' \
+        '        return 0' \
+        '    }' \
+        '    return 1' \
+        '}' > "$build_tmp/cover.ns"
+    "$ns" build --exe "$build_tmp/cover.ns" -o "$build_tmp/cover"
+    set +e
+    "$build_tmp/cover"
+    cover_status=$?
+    set -e
+    if [ "$cover_status" -ne 0 ]; then
+        printf '%s\n' "FAIL: compiled string/array/struct/float program exited $cover_status." >&2
+        exit 1
+    fi
+
+    printf '%s\n' 'PASS: ns build compiles native machine code for --exe and type=app.'
+fi

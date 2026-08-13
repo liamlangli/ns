@@ -7,7 +7,8 @@ use gpu
 use ui
 use os
 
-fn FONT_MONO() i32 { return 1 }
+fn FONT() i32 { return 1 }
+fn PX() f64 { return 12.0 }
 
 let g_path = ""
 let g_raw = ""
@@ -23,6 +24,7 @@ let g_timeline_events = ""
 let g_flame_frames = ""
 let g_status = "No profile loaded."
 let g_mode = 0
+let g_events_loaded = false
 let g_frame_count: i32 = 0
 let g_load_profile_pending = false
 let g_open_profile_pending = false
@@ -42,20 +44,27 @@ let g_node_count = 0
 let g_max_depth = 0
 let g_root_total: f64 = 0.0
 
-let g_hot_name = [i32: str](64)
-let g_hot_kind = [i32: str](64)
-let g_hot_self = [f64](64)
-let g_hot_total = [f64](64)
-let g_hot_calls = [i32](64)
+let g_hot_name = [i32: str](256)
+let g_hot_kind = [i32: str](256)
+let g_hot_self = [f64](256)
+let g_hot_total = [f64](256)
+let g_hot_calls = [i32](256)
 let g_hot_count = 0
 
-let g_ev_start = [f64](4096)
-let g_ev_duration = [f64](4096)
-let g_ev_self = [f64](4096)
-let g_ev_depth = [i32](4096)
-let g_ev_name = [i32: str](4096)
+let g_ev_start = [f64](8192)
+let g_ev_duration = [f64](8192)
+let g_ev_self = [f64](8192)
+let g_ev_depth = [i32](8192)
+let g_ev_calls = [i32](8192)
+let g_ev_name = [i32: str](8192)
 let g_ev_count = 0
+let g_ev_raw = 0
 let g_time_end: f64 = 0.0
+let g_t0: f64 = 0.0
+let g_t1: f64 = 1.0
+let g_drag = false
+let g_drag_x: f64 = 0.0
+let g_drag_t0: f64 = 0.0
 
 fn col_bg() u32 { return ui_pack_color("#101418") }
 fn col_panel() u32 { return ui_pack_color("#182026") }
@@ -213,6 +222,30 @@ fn parse_i32(s: str) i32 {
     return parse_f64(s) as i32
 }
 
+fn is_digit_word(s: str) bool {
+    if s.len == 0 {
+        return false
+    }
+    let i = 0
+    loop i < s.len {
+        let c = (s[i] as i32) & 255
+        let ok = false
+        if c >= 48 {
+            if c <= 57 {
+                ok = true
+            }
+        }
+        if c == 46 {
+            ok = true
+        }
+        if ok == false {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
 fn name_color(name: str) u32 {
     let h = 2166136261
     let i = 0
@@ -297,6 +330,9 @@ fn stack_frame(stack: str, start: i32) str {
 fn record_flame_line(line: str) {
     let p = skip_spaces(line, 6)
     let calls_s = word_at(line, p)
+    if is_digit_word(calls_s) == false {
+        return
+    }
     p = skip_spaces(line, p + calls_s.len)
     let total_s = word_at(line, p)
     p = skip_spaces(line, p + total_s.len)
@@ -337,7 +373,49 @@ fn record_flame_line(line: str) {
     }
 }
 
+fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str) {
+    g_ev_raw = g_ev_raw + 1
+    if g_ev_count > 0 {
+        let last = g_ev_count - 1
+        if g_ev_depth[last] == depth {
+            if g_ev_name[last] == name {
+                let end = g_ev_start[last] + g_ev_duration[last]
+                if start <= end + 0.05 {
+                    let new_end = start + dur
+                    if new_end > end {
+                        g_ev_duration[last] = new_end - g_ev_start[last]
+                    }
+                    g_ev_self[last] = g_ev_self[last] + self_ms
+                    g_ev_calls[last] = g_ev_calls[last] + 1
+                    if new_end > g_time_end {
+                        g_time_end = new_end
+                    }
+                    return
+                }
+            }
+        }
+    }
+    if g_ev_count >= g_ev_start.len {
+        return
+    }
+    let i = g_ev_count
+    g_ev_start[i] = start
+    g_ev_duration[i] = dur
+    g_ev_self[i] = self_ms
+    g_ev_depth[i] = depth
+    g_ev_calls[i] = 1
+    g_ev_name[i] = name
+    g_ev_count = g_ev_count + 1
+    let end = start + dur
+    if end > g_time_end {
+        g_time_end = end
+    }
+}
+
 fn record_fn_line(line: str) {
+    if starts_with(line, "fn_table:") {
+        return
+    }
     if g_hot_count >= g_hot_self.len {
         return
     }
@@ -370,9 +448,6 @@ fn record_fn_line(line: str) {
 }
 
 fn record_scope_event(line: str, has_self: bool) {
-    if g_ev_count >= g_ev_start.len {
-        return
-    }
     let p = skip_spaces(line, 12)
     let depth_s = word_at(line, p)
     p = skip_spaces(line, p + depth_s.len)
@@ -389,23 +464,10 @@ fn record_scope_event(line: str, has_self: bool) {
     if name.len == 0 {
         return
     }
-    let i = g_ev_count
-    g_ev_start[i] = parse_f64(start_s)
-    g_ev_duration[i] = parse_f64(dur_s)
-    g_ev_self[i] = parse_f64(self_s)
-    g_ev_depth[i] = parse_i32(depth_s)
-    g_ev_name[i] = name
-    g_ev_count = g_ev_count + 1
-    let end = g_ev_start[i] + g_ev_duration[i]
-    if end > g_time_end {
-        g_time_end = end
-    }
+    push_event(parse_f64(start_s), parse_f64(dur_s), parse_f64(self_s), parse_i32(depth_s), name)
 }
 
 fn record_ffi_event(line: str, has_depth: bool) {
-    if g_ev_count >= g_ev_start.len {
-        return
-    }
     let p = skip_spaces(line, 10)
     let depth = 0
     if has_depth {
@@ -426,28 +488,24 @@ fn record_ffi_event(line: str, has_depth: bool) {
     if name.len == 0 {
         return
     }
-    let i = g_ev_count
-    g_ev_start[i] = parse_f64(start_s)
-    g_ev_duration[i] = parse_f64(dur_s)
-    g_ev_self[i] = parse_f64(self_s)
-    g_ev_depth[i] = depth
-    g_ev_name[i] = name
-    g_ev_count = g_ev_count + 1
-    let end = g_ev_start[i] + g_ev_duration[i]
-    if end > g_time_end {
-        g_time_end = end
-    }
+    push_event(parse_f64(start_s), parse_f64(dur_s), parse_f64(self_s), depth, name)
 }
 
-fn parse_profile_body(src: str) {
-    g_node_count = 0
-    g_hot_count = 0
+fn parse_profile_body(src: str, want_events: bool) {
+    if want_events == false {
+        g_node_count = 0
+        g_hot_count = 0
+        g_max_depth = 0
+        g_root_total = 0.0
+        g_zoom = -1
+        g_hovered = -1
+    }
     g_ev_count = 0
+    g_ev_raw = 0
     g_time_end = 0.0
-    g_max_depth = 0
-    g_root_total = 0.0
-    g_zoom = -1
-    g_hovered = -1
+    g_t0 = 0.0
+    g_t1 = 1.0
+    g_drag = false
     let v4 = g_format == "ns-profile-v4"
 
     let i = 0
@@ -461,17 +519,37 @@ fn parse_profile_body(src: str) {
             }
         }
         let line = substr(src, start, i - start)
-        if starts_with(line, "flame:") {
-            record_flame_line(line)
-        } else {
-            if starts_with(line, "fn:") {
-                record_fn_line(line)
+        if want_events {
+            if starts_with(line, "scope_event:") {
+                record_scope_event(line, v4)
             } else {
-                if starts_with(line, "scope_event:") {
-                    record_scope_event(line, v4)
+                if starts_with(line, "ffi_event:") {
+                    record_ffi_event(line, v4)
+                }
+            }
+        } else {
+            let ev_line = false
+            if starts_with(line, "timeline:") {
+                ev_line = true
+            }
+            if starts_with(line, "scope_event:") {
+                ev_line = true
+            }
+            if starts_with(line, "ffi_event:") {
+                ev_line = true
+            }
+            if ev_line {
+                if g_node_count > 0 {
+                    break
+                }
+            } else {
+                if starts_with(line, "flame:") {
+                    if starts_with(line, "flame_frames:") == false {
+                        record_flame_line(line)
+                    }
                 } else {
-                    if starts_with(line, "ffi_event:") {
-                        record_ffi_event(line, v4)
+                    if starts_with(line, "fn:") {
+                        record_fn_line(line)
                     }
                 }
             }
@@ -541,7 +619,15 @@ fn layout_flame() {
     }
 }
 
-fn profile_line(src: str, key: str) str {
+fn header_value(line: str, key: str) str {
+    let prefix = key + ":"
+    if starts_with(line, prefix) == false {
+        return ""
+    }
+    return trim_left(substr(line, prefix.len, line.len - prefix.len))
+}
+
+fn parse_header(src: str) {
     let i = 0
     loop i < src.len {
         let start = i
@@ -553,15 +639,70 @@ fn profile_line(src: str, key: str) str {
             }
         }
         let line = substr(src, start, i - start)
-        let prefix = key + ":"
-        if starts_with(line, prefix) {
-            return trim_left(substr(line, prefix.len, line.len - prefix.len))
+        if starts_with(line, "fn_table:") {
+            return
+        }
+        if starts_with(line, "ffi_table:") {
+            return
+        }
+        if starts_with(line, "timeline:") {
+            return
+        }
+        if starts_with(line, "flame:") {
+            if starts_with(line, "flame_frames:") == false {
+                return
+            }
+        }
+        if starts_with(line, "scope_event:") {
+            return
+        }
+        if starts_with(line, "ffi_event:") {
+            return
+        }
+        let v = header_value(line, "format")
+        if v.len > 0 {
+            g_format = v
+        }
+        v = header_value(line, "elapsed_ms")
+        if v.len > 0 {
+            g_elapsed = v
+        }
+        v = header_value(line, "argv")
+        if v.len > 0 {
+            g_argv = v
+        }
+        v = header_value(line, "ffi_calls")
+        if v.len > 0 {
+            g_ffi_calls = v
+        }
+        v = header_value(line, "ffi_ms")
+        if v.len > 0 {
+            g_ffi_ms = v
+        }
+        v = header_value(line, "ffi_pct")
+        if v.len > 0 {
+            g_ffi_pct = v
+        }
+        v = header_value(line, "scope_calls")
+        if v.len > 0 {
+            g_scope_calls = v
+        }
+        v = header_value(line, "scope_self_ms")
+        if v.len > 0 {
+            g_scope_self = v
+        }
+        v = header_value(line, "timeline_events")
+        if v.len > 0 {
+            g_timeline_events = v
+        }
+        v = header_value(line, "flame_frames")
+        if v.len > 0 {
+            g_flame_frames = v
         }
         if i < src.len {
             i = i + 1
         }
     }
-    return ""
 }
 
 fn read_file(path: str) str {
@@ -589,8 +730,12 @@ fn clear_profile() {
     g_node_count = 0
     g_hot_count = 0
     g_ev_count = 0
+    g_ev_raw = 0
     g_time_end = 0.0
+    g_t0 = 0.0
+    g_t1 = 1.0
     g_zoom = -1
+    g_drag = false
 }
 
 fn load_profile(path: str) {
@@ -602,29 +747,22 @@ fn load_profile(path: str) {
     } else {
         g_path = path
         g_raw = data
-        g_format = profile_line(data, "format")
-        g_elapsed = profile_line(data, "elapsed_ms")
-        g_argv = profile_line(data, "argv")
-        g_ffi_calls = profile_line(data, "ffi_calls")
-        g_ffi_ms = profile_line(data, "ffi_ms")
-        g_ffi_pct = profile_line(data, "ffi_pct")
-        g_scope_calls = profile_line(data, "scope_calls")
-        g_scope_self = profile_line(data, "scope_self_ms")
-        g_timeline_events = profile_line(data, "timeline_events")
-        g_flame_frames = profile_line(data, "flame_frames")
-        parse_profile_body(data)
+        parse_header(data)
+        parse_profile_body(data, false)
+        g_events_loaded = false
         layout_flame()
+        g_t0 = 0.0
+        g_t1 = parse_f64(g_elapsed)
+        if g_t1 <= 0.0 {
+            g_t1 = 1.0
+        }
         if format_known(g_format) {
             g_status = "Profile loaded."
         } else {
             g_status = "Loaded file is not an ns-profile."
         }
         g_scroll = 0.0
-        if g_node_count > 0 {
-            g_mode = 0
-        } else {
-            g_mode = 1
-        }
+        g_mode = 0
     }
 }
 
@@ -650,10 +788,10 @@ fn draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, 
         }
     }
     ui_fill_rect(r, x, y, w, h, bg, 0.0)
-    let tw = ui_text_width(r, label, 10.0, FONT_MONO())
+    let tw = ui_text_width(r, label, PX(), FONT())
     let tx = x + (w - tw) * 0.5
-    let ty = ui_text_v_center_y(r, y, h, 10.0, FONT_MONO())
-    ui_draw_text(r, tx, ty, label, 10.0, fg, FONT_MONO())
+    let ty = ui_text_v_center_y(r, y, h, PX(), FONT())
+    ui_draw_text(r, tx, ty, label, PX(), fg, FONT())
     if g_frame_count > 2 {
         if v.mouse_pressed {
             if hit(v, x, y, w, h) {
@@ -665,10 +803,10 @@ fn draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, 
 }
 
 fn draw_metric(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str, color: u32) {
-    ui_fill_rect(r, x, y, w, 60.0, col_panel(), 0.0)
-    ui_draw_text(r, x + 10.0, y + 10.0, label, 10.0, col_muted(), FONT_MONO())
-    ui_push_clip(r, x + 10.0, y + 30.0, w - 20.0, 20.0)
-    ui_draw_text(r, x + 10.0, y + 30.0, value, 20.0, color, FONT_MONO())
+    ui_fill_rect(r, x, y, w, 36.0, col_panel(), 0.0)
+    ui_draw_text(r, x + 8.0, y + 4.0, label, PX(), col_muted(), FONT())
+    ui_push_clip(r, x + 8.0, y + 18.0, w - 16.0, 14.0)
+    ui_draw_text(r, x + 8.0, y + 18.0, value, PX(), color, FONT())
     ui_pop_clip(r)
 }
 
@@ -681,27 +819,28 @@ fn fmt_or_dash(s: str) str {
 
 fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
-    ui_draw_text(r, x + 10.0, y + 10.0, "hot self time", 10.0, col_muted(), FONT_MONO())
+    ui_draw_text(r, x + 8.0, y + 6.0, "hot self time", PX(), col_muted(), FONT())
     if g_hot_count == 0 {
-        ui_draw_text(r, x + 10.0, y + 40.0, "No fn table in this profile.", 10.0, col_muted(), FONT_MONO())
+        ui_draw_text(r, x + 8.0, y + 24.0, "No fn table.", PX(), col_muted(), FONT())
         return
     }
     let elapsed = parse_f64(g_elapsed)
     if elapsed <= 0.0 {
         elapsed = 1.0
     }
-    let row_h = 20.0
+    let row_h = 28.0
     let i = 0
     loop i < g_hot_count {
-        let ry = y + 30.0 + i as f64 * row_h
+        let ry = y + 22.0 + i as f64 * row_h
         if ry + row_h > y + h {
             break
         }
-        let pct = g_hot_self[i] / elapsed
-        let bar_w = max_f(2.0, (w - 20.0) * pct)
-        ui_fill_rect(r, x + 10.0, ry + 14.0, bar_w, 4.0, name_color(g_hot_name[i]), 0.0)
-        ui_push_clip(r, x + 10.0, ry, w - 20.0, 14.0)
-        ui_draw_text(r, x + 10.0, ry, g_hot_name[i], 10.0, col_text(), FONT_MONO())
+        let pct = g_hot_self[i] / elapsed * 100.0
+        let bar_w = max_f(2.0, (w - 16.0) * (g_hot_self[i] / elapsed))
+        ui_fill_rect(r, x + 8.0, ry + 16.0, bar_w, 4.0, name_color(g_hot_name[i]), 0.0)
+        ui_push_clip(r, x + 8.0, ry, w - 16.0, 14.0)
+        let line = `{g_hot_name[i]}  {g_hot_self[i]}ms  {pct}%  {g_hot_calls[i]}x`
+        ui_draw_text(r, x + 8.0, ry, line, PX(), col_text(), FONT())
         ui_pop_clip(r)
         i = i + 1
     }
@@ -724,14 +863,14 @@ fn node_visible(node: i32) bool {
 fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
     if g_node_count == 0 {
-        ui_draw_text(r, x + 10.0, y + 20.0, "No flame stacks in this profile.", 10.0, col_muted(), FONT_MONO())
-        ui_draw_text(r, x + 10.0, y + 40.0, "Run `ns profile` to generate ns-profile-v4.", 10.0, col_muted(), FONT_MONO())
+        ui_draw_text(r, x + 8.0, y + 12.0, "No flame stacks in this profile.", PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 8.0, y + 26.0, "Run `ns profile` to generate ns-profile-v4.", PX(), col_muted(), FONT())
         return
     }
 
-    let row_h = 20.0
-    let plot_y = y + 10.0
-    let plot_h = h - 40.0
+    let row_h = 18.0
+    let plot_y = y + 8.0
+    let plot_h = h - 28.0
     g_hovered = -1
 
     ui_push_clip(r, x, plot_y, w, plot_h)
@@ -740,7 +879,7 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
         if node_visible(i) {
             if g_node_w[i] > 0.0 {
                 let bx = x + g_node_x[i] * w
-                let bw = max_f(1.0, g_node_w[i] * w)
+                let bw = max_f(2.0, g_node_w[i] * w)
                 let by = plot_y + g_node_depth[i] as f64 * row_h
                 let bh = row_h - 1.0
                 if by + bh >= plot_y {
@@ -756,9 +895,10 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
                         } else {
                             ui_fill_rect(r, bx, by, bw, bh, color, 0.0)
                         }
-                        if bw > 40.0 {
-                            ui_push_clip(r, bx + 4.0, by, bw - 8.0, bh)
-                            ui_draw_text(r, bx + 4.0, by + 4.0, g_node_name[i], 10.0, col_bg(), FONT_MONO())
+                        if bw > 24.0 {
+                            ui_push_clip(r, bx + 3.0, by, bw - 6.0, bh)
+                            let label = `{g_node_name[i]} {g_node_calls[i]}x`
+                            ui_draw_text(r, bx + 3.0, by + 2.0, label, PX(), col_bg(), FONT())
                             ui_pop_clip(r)
                         }
                     }
@@ -776,34 +916,33 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
         }
     }
 
-    ui_fill_rect(r, x, y + h - 30.0, w, 1.0, col_line(), 0.0)
+    ui_fill_rect(r, x, y + h - 22.0, w, 1.0, col_line(), 0.0)
     if g_hovered >= 0 {
-        let detail = `{g_node_name[g_hovered]}  total {g_node_total[g_hovered]} ms  self {g_node_self[g_hovered]} ms`
-        ui_draw_text(r, x + 10.0, y + h - 20.0, detail, 10.0, col_text(), FONT_MONO())
+        let detail = `{g_node_name[g_hovered]}  total {g_node_total[g_hovered]} ms  self {g_node_self[g_hovered]} ms  {g_node_calls[g_hovered]}x`
+        ui_push_clip(r, x + 8.0, y + h - 18.0, w - 16.0, 14.0)
+        ui_draw_text(r, x + 8.0, y + h - 16.0, detail, PX(), col_text(), FONT())
+        ui_pop_clip(r)
     } else {
-        ui_draw_text(r, x + 10.0, y + h - 20.0, "click a frame to zoom, right-click to reset", 10.0, col_muted(), FONT_MONO())
+        ui_draw_text(r, x + 8.0, y + h - 16.0, "click zoom, right-click reset", PX(), col_muted(), FONT())
     }
 }
 
 fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
     if g_ev_count == 0 {
-        ui_draw_text(r, x + 10.0, y + 20.0, "No timeline events in this profile.", 10.0, col_muted(), FONT_MONO())
+        ui_draw_text(r, x + 8.0, y + 12.0, "No timeline events in this profile.", PX(), col_muted(), FONT())
         return
     }
 
-    let end_ms = g_time_end
-    if end_ms <= 0.0 {
-        end_ms = parse_f64(g_elapsed)
-    }
-    if end_ms <= 0.0 {
-        end_ms = 1.0
+    if g_t1 <= g_t0 {
+        g_t1 = g_t0 + 1.0
     }
 
-    let row_h = 20.0
-    let plot_y = y + 10.0
-    let plot_h = h - 40.0
-    let scale = w / end_ms
+    let row_h = 18.0
+    let plot_y = y + 8.0
+    let plot_h = h - 28.0
+    let span = g_t1 - g_t0
+    let scale = w / span
     let max_depth = 0
     let i = 0
     loop i < g_ev_count {
@@ -814,13 +953,54 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
 
     if hit(v, x, plot_y, w, plot_h) {
-        g_scroll = g_scroll - v.scroll_y * 20.0
-        let max_scroll = max_f(0.0, (max_depth + 1) as f64 * row_h - plot_h)
-        if g_scroll < 0.0 {
-            g_scroll = 0.0
+        if v.scroll_y != 0.0 {
+            let mx = (v.mouse_x - x) / w
+            let focus = g_t0 + span * mx
+            let factor = 1.25
+            if v.scroll_y > 0.0 {
+                factor = 0.8
+            }
+            let next = span * factor
+            if next < 0.05 {
+                next = 0.05
+            }
+            if next > g_time_end {
+                next = g_time_end
+            }
+            if next < 0.05 {
+                next = 0.05
+            }
+            g_t0 = focus - next * mx
+            g_t1 = g_t0 + next
+            if g_t0 < 0.0 {
+                g_t1 = g_t1 - g_t0
+                g_t0 = 0.0
+            }
         }
-        if g_scroll > max_scroll {
-            g_scroll = max_scroll
+        if v.mouse_pressed {
+            g_drag = true
+            g_drag_x = v.mouse_x
+            g_drag_t0 = g_t0
+        }
+        if v.mouse_right_pressed {
+            g_t0 = 0.0
+            g_t1 = g_time_end
+            if g_t1 <= 0.0 {
+                g_t1 = 1.0
+            }
+        }
+    }
+    if g_drag {
+        if v.mouse_down {
+            let dt = (g_drag_x - v.mouse_x) / scale
+            g_t0 = g_drag_t0 + dt
+            g_t1 = g_t0 + span
+            if g_t0 < 0.0 {
+                g_t1 = g_t1 - g_t0
+                g_t0 = 0.0
+            }
+        } else {
+            g_drag = false
         }
     }
 
@@ -828,23 +1008,29 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     ui_push_clip(r, x, plot_y, w, plot_h)
     i = 0
     loop i < g_ev_count {
-        let by = plot_y + g_ev_depth[i] as f64 * row_h - g_scroll
-        if by + row_h >= plot_y {
-            if by <= plot_y + plot_h {
-                let bx = x + g_ev_start[i] * scale
-                let bw = max_f(1.0, g_ev_duration[i] * scale)
-                let bh = row_h - 2.0
-                let color = name_color(g_ev_name[i])
-                if hit(v, bx, by, bw, bh) {
-                    hovered = i
-                    ui_fill_rect(r, bx, by, bw, bh, col_warn(), 0.0)
-                } else {
-                    ui_fill_rect(r, bx, by, bw, bh, color, 0.0)
-                }
-                if bw > 40.0 {
-                    ui_push_clip(r, bx + 4.0, by, bw - 8.0, bh)
-                    ui_draw_text(r, bx + 4.0, by + 4.0, g_ev_name[i], 10.0, col_bg(), FONT_MONO())
-                    ui_pop_clip(r)
+        let ev_end = g_ev_start[i] + g_ev_duration[i]
+        if ev_end >= g_t0 {
+            if g_ev_start[i] <= g_t1 {
+                let by = plot_y + g_ev_depth[i] as f64 * row_h - g_scroll
+                if by + row_h >= plot_y {
+                    if by <= plot_y + plot_h {
+                        let bx = x + (g_ev_start[i] - g_t0) * scale
+                        let bw = max_f(2.0, g_ev_duration[i] * scale)
+                        let bh = row_h - 1.0
+                        let color = name_color(g_ev_name[i])
+                        if hit(v, bx, by, bw, bh) {
+                            hovered = i
+                            ui_fill_rect(r, bx, by, bw, bh, col_warn(), 0.0)
+                        } else {
+                            ui_fill_rect(r, bx, by, bw, bh, color, 0.0)
+                        }
+                        if bw > 24.0 {
+                            ui_push_clip(r, bx + 3.0, by, bw - 6.0, bh)
+                            let label = `{g_ev_name[i]} {g_ev_calls[i]}x`
+                            ui_draw_text(r, bx + 3.0, by + 2.0, label, PX(), col_bg(), FONT())
+                            ui_pop_clip(r)
+                        }
+                    }
                 }
             }
         }
@@ -852,12 +1038,15 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
     ui_pop_clip(r)
 
-    ui_fill_rect(r, x, y + h - 30.0, w, 1.0, col_line(), 0.0)
+    ui_fill_rect(r, x, y + h - 22.0, w, 1.0, col_line(), 0.0)
     if hovered >= 0 {
-        let detail = `{g_ev_name[hovered]}  start {g_ev_start[hovered]} ms  dur {g_ev_duration[hovered]} ms`
-        ui_draw_text(r, x + 10.0, y + h - 20.0, detail, 10.0, col_text(), FONT_MONO())
+        let detail = `{g_ev_name[hovered]}  {g_ev_calls[hovered]}x  start {g_ev_start[hovered]} ms  dur {g_ev_duration[hovered]} ms`
+        ui_push_clip(r, x + 8.0, y + h - 18.0, w - 16.0, 14.0)
+        ui_draw_text(r, x + 8.0, y + h - 16.0, detail, PX(), col_text(), FONT())
+        ui_pop_clip(r)
     } else {
-        ui_draw_text(r, x + 10.0, y + h - 20.0, fmt_or_dash(g_timeline_events) + " timeline events", 10.0, col_muted(), FONT_MONO())
+        let shown = `{g_ev_count} spans / {g_ev_raw} calls   wheel zoom, drag pan`
+        ui_draw_text(r, x + 8.0, y + h - 16.0, shown, PX(), col_muted(), FONT())
     }
 }
 
@@ -875,9 +1064,9 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     draw_metric(r, x + (metric_w + 10.0) * 2.0, y, metric_w, "FLAME STACKS", fmt_or_dash(g_flame_frames), col_warn())
     draw_metric(r, x + (metric_w + 10.0) * 3.0, y, metric_w, "FFI CALLS", fmt_or_dash(g_ffi_calls), col_text())
 
-    let body_y = y + 70.0
-    let body_h = h - 70.0
-    let side_w = min_f(280.0, w * 0.28)
+    let body_y = y + 46.0
+    let body_h = h - 46.0
+    let side_w = min_f(260.0, w * 0.28)
     let chart_w = w - side_w - 10.0
     if body_h > 80.0 {
         if g_mode == 0 {
@@ -897,48 +1086,64 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
 
-    let pad = 20.0
-    let header_h = 70.0
+    let pad = 10.0
+    let header_h = 40.0
     ui_fill_rect(r, 0.0, 0.0, w, header_h, col_panel(), 0.0)
-    ui_draw_text(r, pad, 10.0, "NS Profile", 20.0, col_text(), FONT_MONO())
-    ui_draw_text(r, pad, 40.0, g_status, 10.0, col_muted(), FONT_MONO())
+    ui_draw_text(r, pad, 6.0, "NS Profile", PX(), col_text(), FONT())
+    ui_push_clip(r, pad, 22.0, 280.0, 14.0)
+    ui_draw_text(r, pad, 22.0, g_status, PX(), col_muted(), FONT())
+    ui_pop_clip(r)
 
-    let open_w = 120.0
-    let load_w = 140.0
-    let mode_w = 90.0
-    let by = 20.0
+    let open_w = 90.0
+    let load_w = 110.0
+    let mode_w = 60.0
+    let by = 8.0
     let open_x = w - pad - open_w
     let load_x = open_x - load_w - 10.0
     let time_x = load_x - mode_w - 10.0
     let flame_x = time_x - mode_w - 10.0
-    if draw_button(r, v, flame_x, by, mode_w, 30.0, "Flame", g_mode == 0) {
+    if draw_button(r, v, flame_x, by, mode_w, 24.0, "Flame", g_mode == 0) {
         g_mode = 0
     }
-    if draw_button(r, v, time_x, by, mode_w, 30.0, "Time", g_mode == 1) {
+    if draw_button(r, v, time_x, by, mode_w, 24.0, "Time", g_mode == 1) {
         g_mode = 1
+        if g_events_loaded == false {
+            if g_raw.len > 0 {
+                parse_profile_body(g_raw, true)
+                g_events_loaded = true
+                g_t0 = 0.0
+                g_t1 = g_time_end
+                if g_t1 <= 0.0 {
+                    g_t1 = parse_f64(g_elapsed)
+                }
+                if g_t1 <= 0.0 {
+                    g_t1 = 1.0
+                }
+            }
+        }
     }
-    if draw_button(r, v, load_x, by, load_w, 30.0, "Load ns.profile", false) {
+    if draw_button(r, v, load_x, by, load_w, 24.0, "Load file", false) {
         g_load_profile_pending = true
     }
-    if draw_button(r, v, open_x, by, open_w, 30.0, "Open Profile", true) {
+    if draw_button(r, v, open_x, by, open_w, 24.0, "Open", true) {
         g_open_profile_pending = true
     }
 
     ui_fill_rect(r, 0.0, header_h, w, 1.0, col_line(), 0.0)
 
     let body_x = pad
-    let body_y = header_h + 20.0
+    let body_y = header_h + 10.0
     let body_w = w - pad * 2.0
     let body_h = h - body_y - pad
 
     if body_w > 100.0 {
-        if body_h > 100.0 {
+        if body_h > 80.0 {
             if g_raw.len == 0 {
                 let cy = body_y + min_f(90.0, body_h * 0.3)
-                ui_draw_text(r, body_x, cy, "No profile loaded", 20.0, col_text(), FONT_MONO())
-                ui_draw_text(r, body_x, cy + 30.0, "Run `ns profile` then open ns.profile, or load ./ns.profile.", 10.0, col_muted(), FONT_MONO())
+                ui_draw_text(r, body_x, cy, "No profile loaded", PX(), col_text(), FONT())
+                ui_draw_text(r, body_x, cy + 16.0, "Run `ns profile` then `ns profiler`, or open ns.profile.", PX(), col_muted(), FONT())
                 if g_status == "Loaded file is not an ns-profile." {
-                    ui_draw_text(r, body_x, cy + 50.0, g_status, 10.0, col_warn(), FONT_MONO())
+                    ui_draw_text(r, body_x, cy + 32.0, g_status, PX(), col_warn(), FONT())
                 }
             } else {
                 draw_profile(r, v, body_x, body_y, body_w, body_h)

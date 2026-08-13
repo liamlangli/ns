@@ -5,16 +5,19 @@
 // tree-walking evaluator, these drive the other half of the toolchain: the
 // SSA → native code path. Each program is lowered to SSA, translated to host
 // machine code, linked in memory, and executed, and its `main` return value is
-// checked. Only the integer/bool/enum/control-flow subset the native backends
-// support is covered; floats, strings, arrays, structs, closures and tasks are
-// interpreter-only and are exercised by ns_expr_test.c.
+// checked. AArch64 also covers strings, globals, arrays, structs, floats and
+// the std helpers that the native runtime implements. Closures, dicts/sets and
+// tasks remain interpreter-only.
 
 #if defined(__x86_64__) || defined(__aarch64__)
 #define NS_COMPILE_TEST_NATIVE 1
 #endif
 
 #ifdef NS_COMPILE_TEST_NATIVE
+#include <dlfcn.h>
 #include <sys/mman.h>
+#include "ns_native_rt.h"
+#include "ns_aarch.h"
 
 #if defined(__x86_64__)
 #include "ns_amd64.h"
@@ -85,6 +88,18 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
         total += ns_array_length(m->fns[i].text);
         total = (total + 15) & ~15ull; // keep each function 16-byte aligned
     }
+    i32 nextern = 0;
+    for (i32 fi = 0; fi < nfns; ++fi) {
+        for (i32 ci = 0, cl = (i32)ns_array_length(m->fns[fi].call_fixups); ci < cl; ++ci) {
+            ns_bool local = false;
+            for (i32 k = 0; k < nfns; ++k) {
+                if (ns_str_equals(m->fns[k].name, m->fns[fi].call_fixups[ci].callee)) { local = true; break; }
+            }
+            if (!local) nextern++;
+        }
+    }
+    u64 veneer_off = total;
+    total += (u64)nextern * 16ull;
     if (total == 0) total = 16;
 
     // Map writable first, fill and patch, then flip to read+execute so the test
@@ -108,7 +123,29 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
             for (i32 k = 0; k < nfns; ++k) {
                 if (ns_str_equals(m->fns[k].name, callee)) { cidx = k; break; }
             }
-            if (cidx < 0) continue;
+            if (cidx < 0) {
+#if defined(__aarch64__)
+                char name[256];
+                i32 nlen = callee.len < 250 ? callee.len : 250;
+                memcpy(name, callee.data, (szt)nlen);
+                name[nlen] = 0;
+                void *sym = dlsym(RTLD_DEFAULT, name);
+                if (sym) {
+                    u64 stub = veneer_off;
+                    veneer_off += 16;
+                    u32 ldr = 0x58000050u; /* LDR X16, #8 */
+                    u32 brx = 0xD61F0200u; /* BR X16 */
+                    buf[stub + 0] = (u8)(ldr); buf[stub + 1] = (u8)(ldr >> 8);
+                    buf[stub + 2] = (u8)(ldr >> 16); buf[stub + 3] = (u8)(ldr >> 24);
+                    buf[stub + 4] = (u8)(brx); buf[stub + 5] = (u8)(brx >> 8);
+                    buf[stub + 6] = (u8)(brx >> 16); buf[stub + 7] = (u8)(brx >> 24);
+                    u64 abs = (u64)(uintptr_t)sym;
+                    memcpy(buf + stub + 8, &abs, 8);
+                    ns_compile_patch_call(buf, off[fi] + fn->call_fixups[ci].off, stub);
+                }
+#endif
+                continue;
+            }
             ns_compile_patch_call(buf, off[fi] + fn->call_fixups[ci].off, off[cidx]);
         }
     }
@@ -117,6 +154,11 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
     for (i32 i = 0; i < nfns; ++i) {
         if (ns_str_equals(m->fns[i].name, ns_str_cstr("main"))) { main_off = (i64)off[i]; break; }
     }
+
+#if defined(__aarch64__)
+    ns_rt_reset();
+    ns_rt_set_strtab((const char **)m->strtab, m->strlens, m->nstr);
+#endif
 
     i64 result = 0;
     if (main_off >= 0 && mprotect(buf, total, PROT_READ | PROT_EXEC) == 0) {
@@ -401,6 +443,183 @@ int main() {
         "}\n"
         "fn main() i32 { return gcd(48, 36) }\n", 12),
         "iterative gcd compiles and returns its integer result.");
+
+#if defined(__aarch64__)
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let s = \"hi\"\n"
+        "    return s.len == 2\n"
+        "}\n"), "string constants intern and expose .len.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let s = \"ab\" + \"cd\"\n"
+        "    return s.len == 4 && s[0] == 97 && s[3] == 100 && s == \"abcd\"\n"
+        "}\n"), "string concat, byte index and equality.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    return \"aa\" < \"ab\" && \"ab\" == \"ab\" && \"b\" > \"a\" && \"a\" != \"b\"\n"
+        "}\n"), "string relational comparisons.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let n = 42\n"
+        "    let s = `n={n}`\n"
+        "    return s == \"n=42\" && `ok` == \"ok\"\n"
+        "}\n"), "interpolated strings lower through itos and strcat.");
+
+    ns_expect(ns_compile_true(
+        "use std\n"
+        "fn main() bool {\n"
+        "    return substr(\"hello\", 1, 3) == \"ell\" && utf8_len(\"hi\") == 2 &&\n"
+        "           unescape(\"\\\\n\").len == 1\n"
+        "}\n"), "std substr, utf8_len and unescape compile.");
+
+    ns_expect(ns_compile_true(
+        "use std\n"
+        "fn main() bool {\n"
+        "    let x: f64 = 9.0\n"
+        "    return sqrt(x) == 3.0 && stof(ftos(2.5)) == 2.5\n"
+        "}\n"), "std math and ftos/stof compile.");
+
+    ns_expect(ns_compile_true(
+        "let acc = 1\n"
+        "fn bump() {\n"
+        "    acc = acc + 10\n"
+        "}\n"
+        "fn main() bool {\n"
+        "    bump()\n"
+        "    return acc == 11\n"
+        "}\n"), "module globals lower through get/set.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let a = [i32](3)\n"
+        "    a[0] = 10\n"
+        "    a[1] = 20\n"
+        "    return a.len == 3 && a[0] + a[1] == 30\n"
+        "}\n"), "arrays allocate, store, index and report len.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let a = [i32](4)\n"
+        "    a[0] = 1\n"
+        "    a[1] = 2\n"
+        "    a[2] = 3\n"
+        "    a[3] = 4\n"
+        "    let sum = 0\n"
+        "    for i in 0 to a.len { sum = sum + a[i] }\n"
+        "    return sum == 10\n"
+        "}\n"), "for-range over array length indexes elements.");
+
+    ns_expect(ns_compile_true(
+        "struct point { x: i32, y: i32 }\n"
+        "fn main() bool {\n"
+        "    let p = point { 3, 4 }\n"
+        "    return p.x + p.y == 7\n"
+        "}\n"), "struct literals allocate and field loads work.");
+
+    ns_expect(ns_compile_true(
+        "struct inner { a: i32 }\n"
+        "struct outer { i: inner, b: i32 }\n"
+        "fn main() bool {\n"
+        "    let o = outer { inner { 3 }, 4 }\n"
+        "    return o.i.a + o.b == 7\n"
+        "}\n"), "nested struct field loads compile.");
+
+    ns_expect(ns_compile_true(
+        "struct point { x: i32, y: i32 }\n"
+        "fn main() bool {\n"
+        "    let a = [point](2)\n"
+        "    a[0] = point { 1, 2 }\n"
+        "    a[1] = point { 3, 4 }\n"
+        "    return a[0].x + a[1].y == 5\n"
+        "}\n"), "arrays of structs store and index by value.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let x: f64 = 1.5\n"
+        "    let y: f64 = 2.5\n"
+        "    return x + y == 4.0 && y - x == 1.0 && x * y == y * x && (y / x) * x == y\n"
+        "}\n"), "f64 add/sub/mul/div compile.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let a: f64 = 1.1\n"
+        "    let b: f64 = 2.2\n"
+        "    return a < b && a != b && !(a == b) && (a + a) == b\n"
+        "}\n"), "f64 compares use the operand width, not bool.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let x: f32 = 1.5\n"
+        "    let y: f32 = 2.25\n"
+        "    let two: f32 = 2.0\n"
+        "    return x + y == 3.75 && x * two == 3.0 && -x == -1.5\n"
+        "}\n"), "f32 arithmetic, compare and negation.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let n = 3\n"
+        "    let x: f64 = 3.9\n"
+        "    let s: f32 = 1.5\n"
+        "    let want: f64 = 1.5\n"
+        "    return (n as f64) * 2.0 == 6.0 && (x as i32) == 3 && (s as f64) == want\n"
+        "}\n"), "int/float and f32/f64 casts compile.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    return (-8 >> 1) == -4 && (~0) == -1 && (~1) == -2\n"
+        "}\n"), "signed right shift and bitwise not.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let a: u64 = 18446744073709551615\n"
+        "    let b: u64 = 1\n"
+        "    let two: u64 = 2\n"
+        "    return a > b && (a / two) == 9223372036854775807\n"
+        "}\n"), "unsigned compare and division stay unsigned.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let x = 0\n"
+        "    let i = 0\n"
+        "    do {\n"
+        "        x = x + i\n"
+        "        i = i + 1\n"
+        "    } loop i < 5\n"
+        "    return x == 10\n"
+        "}\n"), "post-test do/loop compiles.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let x = 0\n"
+        "    loop true {\n"
+        "        if x == 3 { break }\n"
+        "        x = x + 1\n"
+        "    }\n"
+        "    return x == 3\n"
+        "}\n"), "break leaves a loop.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let x = 0\n"
+        "    for i in 0 to 5 {\n"
+        "        if i == 2 {\n"
+        "            continue\n"
+        "        }\n"
+        "        x = x + i\n"
+        "    }\n"
+        "    return x == 8\n"
+        "}\n"), "continue skips an iteration.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    assert 1 == 1\n"
+        "    return true\n"
+        "}\n"), "assert of a true condition does not trap.");
+#endif
 
     return 0;
 }

@@ -32,8 +32,20 @@
 #define NS_MACHO_SECTION_ATTR_PURE_INSTRUCTIONS 0x80000000U
 
 #define NS_MACHO_PLATFORM_MACOS 1U
+#define NS_MACHO_N_UNDF 0x00
 #define NS_MACHO_N_SECT 0x0e
 #define NS_MACHO_N_EXT 0x01
+#define NS_MACHO_ARM64_RELOC_BRANCH26 2
+
+typedef struct {
+    i32 r_address;
+    u32 r_info;
+} ns_macho_reloc;
+
+static u32 ns_macho_reloc_info(u32 sym, ns_bool pcrel, u32 len, ns_bool ext, u32 type) {
+    return (sym & 0x00ffffffu) | ((u32)(pcrel ? 1 : 0) << 24) | ((len & 3u) << 25) |
+           ((u32)(ext ? 1 : 0) << 27) | ((type & 15u) << 28);
+}
 
 typedef struct {
     u32 magic;
@@ -353,9 +365,39 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     }
     u64 code_size = code_cursor - text_offset;
 
-    /* ── symbol table: 1 local (ltmp0) + nfns globals ─────────────────────── */
-    u32 total_syms = 1 + (u32)nfns;
-    u64 symoff   = ns_macho_align_up(text_offset + code_size, 8);
+    /* Collect BL targets that are not defined in this module. */
+    ns_str *undef_names = ns_null;
+    typedef struct { i32 fi; i32 ci; i32 sym; } ns_macho_ext_call;
+    ns_macho_ext_call *ext_calls = ns_null;
+    for (i32 fi = 0; fi < nfns; ++fi) {
+        ns_aarch_fn_bin *fn = &aarch->fns[fi];
+        for (i32 ci = 0, ncf = (i32)ns_array_length(fn->call_fixups); ci < ncf; ++ci) {
+            ns_str callee = fn->call_fixups[ci].callee;
+            i32 local = -1;
+            for (i32 k = 0; k < nfns; ++k) {
+                if (ns_str_equals(aarch->fns[k].name, callee)) { local = k; break; }
+            }
+            if (local >= 0) continue;
+            i32 ui = -1;
+            for (i32 u = 0, ul = (i32)ns_array_length(undef_names); u < ul; ++u) {
+                if (ns_str_equals(undef_names[u], callee)) { ui = u; break; }
+            }
+            if (ui < 0) {
+                ui = (i32)ns_array_length(undef_names);
+                ns_array_push(undef_names, callee);
+            }
+            ns_macho_ext_call ec = {.fi = fi, .ci = ci, .sym = ui};
+            ns_array_push(ext_calls, ec);
+        }
+    }
+    i32 nundef = (i32)ns_array_length(undef_names);
+    i32 nreloc = nundef > 0 ? (i32)ns_array_length(ext_calls) : 0;
+
+    /* ── symbol table: 1 local (ltmp0) + nfns globals + nundef ───────────── */
+    u32 total_syms = 1 + (u32)nfns + (u32)nundef;
+    u64 reloc_off = ns_macho_align_up(text_offset + code_size, 8);
+    u64 reloc_bytes = (u64)nreloc * sizeof(ns_macho_reloc);
+    u64 symoff   = ns_macho_align_up(reloc_off + reloc_bytes, 8);
     u64 sym_bytes = (u64)total_syms * sizeof(ns_macho_nlist_64);
     u64 stroff   = symoff + sym_bytes;
 
@@ -367,6 +409,12 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     for (i32 i = 0; i < nfns; ++i) {
         global_syms[i] = ns_macho_symbol_name(aarch->fns[i].name);
         strsize += (u64)global_syms[i].len + 1;
+    }
+    ns_str *undef_syms = ns_null;
+    ns_array_set_length(undef_syms, nundef);
+    for (i32 i = 0; i < nundef; ++i) {
+        undef_syms[i] = ns_macho_symbol_name(undef_names[i]);
+        strsize += (u64)undef_syms[i].len + 1;
     }
     u64 file_size = stroff + strsize;
 
@@ -398,6 +446,8 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     sec.size   = code_size;
     sec.offset = (u32)text_offset;
     sec.align  = 2;
+    sec.reloff = nreloc > 0 ? (u32)reloc_off : 0;
+    sec.nreloc = (u32)nreloc;
     sec.flags  = NS_MACHO_SECTION_TYPE_REGULAR | NS_MACHO_SECTION_ATTR_SOME_INSTRUCTIONS | NS_MACHO_SECTION_ATTR_PURE_INSTRUCTIONS;
 
     ns_macho_build_version_command build = {0};
@@ -424,7 +474,7 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     dysym.iextdefsym = 1;
     dysym.nextdefsym = (u32)nfns;
     dysym.iundefsym  = 1 + (u32)nfns;
-    dysym.nundefsym  = 0;
+    dysym.nundefsym  = (u32)nundef;
 
     /* ── assemble output ───────────────────────────────────────────────────── */
     u8 *out = ns_null;
@@ -466,6 +516,17 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
         }
     }
 
+    /* ── external BL relocations ──────────────────────────────────────────── */
+    for (i32 i = 0; i < nreloc; ++i) {
+        ns_macho_ext_call *ec = &ext_calls[i];
+        ns_aarch_call_fixup *cf = &aarch->fns[ec->fi].call_fixups[ec->ci];
+        u32 addr = (u32)((fn_off[ec->fi] + cf->off) - text_offset);
+        ns_macho_reloc rel;
+        rel.r_address = (i32)addr;
+        rel.r_info = ns_macho_reloc_info(1 + (u32)nfns + (u32)ec->sym, true, 2, true, NS_MACHO_ARM64_RELOC_BRANCH26);
+        memcpy(&out[reloc_off + (u64)i * sizeof(rel)], &rel, sizeof(rel));
+    }
+
     /* ── symbol table ─────────────────────────────────────────────────────── */
     /* sym[0]: local ltmp0 */
     ns_macho_nlist_64 sym0 = {0};
@@ -486,6 +547,15 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
         memcpy(&out[symoff + (1 + (u32)i) * sizeof(ns_macho_nlist_64)], &sym, sizeof(sym));
         str_cursor += (u32)global_syms[i].len + 1;
     }
+    for (i32 i = 0; i < nundef; ++i) {
+        ns_macho_nlist_64 sym = {0};
+        sym.n_strx  = str_cursor;
+        sym.n_type  = NS_MACHO_N_UNDF | NS_MACHO_N_EXT;
+        sym.n_sect  = 0;
+        sym.n_value = 0;
+        memcpy(&out[symoff + (1 + (u32)nfns + (u32)i) * sizeof(ns_macho_nlist_64)], &sym, sizeof(sym));
+        str_cursor += (u32)undef_syms[i].len + 1;
+    }
 
     /* string table */
     u64 st = stroff;
@@ -496,12 +566,21 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
         st += global_syms[i].len;
         out[st++] = '\0';
     }
+    for (i32 i = 0; i < nundef; ++i) {
+        memcpy(&out[st], undef_syms[i].data, undef_syms[i].len);
+        st += undef_syms[i].len;
+        out[st++] = '\0';
+    }
 
     ns_return_bool wr = ns_macho_write_file(output_path, out);
     ns_array_free(out);
     ns_array_free(fn_off);
+    ns_array_free(undef_names);
+    ns_array_free(ext_calls);
     for (i32 i = 0; i < nfns; ++i) ns_str_free(global_syms[i]);
     ns_array_free(global_syms);
+    for (i32 i = 0; i < nundef; ++i) ns_str_free(undef_syms[i]);
+    ns_array_free(undef_syms);
     ns_aarch_free(aarch);
     return wr;
 }

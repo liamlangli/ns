@@ -16,6 +16,9 @@ typedef struct ns_aarch_fn_bin {
 
 typedef struct ns_aarch_module_bin {
     ns_aarch_fn_bin *fns;
+    char **strtab;
+    i32 *strlens;
+    i32 nstr;
 } ns_aarch_module_bin;
 
 ns_return_ptr ns_aarch_from_ssa(ns_ssa_module *ssa);

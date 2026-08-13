@@ -43,9 +43,11 @@ The common commands are:
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported.
-- `ns build [path]`: build a script or module. Manifest type `app` produces an
-  executable, type `library` produces a static library, and an app with
-  `target = "wasm"` produces its browser bundle and `.wasm.map` source map.
+- `ns build [path]`: compile a script or module to native machine code.
+  Manifest type `app` produces a host app bundle (Darwin) or executable,
+  type `library` produces a static library, and an app with `target = "wasm"`
+  produces its browser bundle and `.wasm.map` source map. `--exe` forces a
+  linked native executable. `ns build` does not fall back to `ns run`.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`.
 - `ns lint [path]`: report style findings for a file, a directory, or the

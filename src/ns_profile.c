@@ -296,9 +296,39 @@ static void ns_profile_sort_events(void) {
     qsort(ns_profile.events, (size_t)ns_profile.event_count, sizeof(ns_profile_event), ns_profile_event_cmp);
 }
 
+static ns_bool ns_profile_same_span(const ns_profile_event *a, const ns_profile_event *b) {
+    if (a->kind != b->kind) return false;
+    if (a->depth != b->depth) return false;
+    if (!ns_profile_str_eq(a->name, b->name) || !ns_profile_str_eq(a->lib, b->lib)) return false;
+    return b->start_ms <= a->start_ms + a->elapsed_ms + 0.05;
+}
+
+static i32 ns_profile_coalesce_events(void) {
+    ns_profile_sort_events();
+    if (ns_profile.event_count <= 1) return ns_profile.event_count;
+    i32 w = 0;
+    for (i32 r = 1; r < ns_profile.event_count; r++) {
+        ns_profile_event *a = &ns_profile.events[w];
+        ns_profile_event *b = &ns_profile.events[r];
+        if (ns_profile_same_span(a, b)) {
+            f64 a_end = a->start_ms + a->elapsed_ms;
+            f64 b_end = b->start_ms + b->elapsed_ms;
+            if (b_end > a_end) a->elapsed_ms = b_end - a->start_ms;
+            a->self_ms += b->self_ms;
+        } else {
+            w++;
+            if (w != r) ns_profile.events[w] = ns_profile.events[r];
+        }
+    }
+    return w + 1;
+}
+
 void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     f64 ffi_ms = ns_profile.ffi_total_ms;
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
+    i32 raw_events = ns_profile.event_count;
+    ns_profile.event_count = ns_profile_coalesce_events();
+
     i32 ffi_event_count = 0;
     i32 scope_event_count = 0;
     for (i32 i = 0; i < ns_profile.event_count; i++) {
@@ -325,30 +355,11 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     fprintf(f, "scope_symbols: %d\n", scope_symbols);
     fprintf(f, "scope_events: %d\n", scope_event_count);
     fprintf(f, "timeline_events: %d\n", ns_profile.event_count);
+    fprintf(f, "timeline_raw: %d\n", raw_events);
     fprintf(f, "flame_frames: %d\n", ns_profile.flame_count);
     fprintf(f, "argv:");
     for (i32 i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
     fprintf(f, "\n");
-
-    ns_profile_sort_events();
-
-    fprintf(f, "timeline: kind depth start_ms duration_ms self_ms symbol\n");
-    for (i32 i = 0; i < ns_profile.event_count; i++) {
-        ns_profile_event *e = &ns_profile.events[i];
-        if (e->kind == NS_PROFILE_EVENT_SCOPE) {
-            fprintf(f, "scope_event: %d %.3f %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
-        } else {
-            fprintf(f, "ffi_event: %d %.3f %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
-        }
-        ns_profile_write_symbol(f, e->lib, e->name);
-        fputc('\n', f);
-    }
-    if (ns_profile.events_dropped > 0) {
-        fprintf(f, "timeline_events_dropped: %llu\n", (unsigned long long)ns_profile.events_dropped);
-    }
-    if (ns_profile.stack_overflows > 0) {
-        fprintf(f, "stack_overflows: %llu\n", (unsigned long long)ns_profile.stack_overflows);
-    }
 
     ns_profile_fn_stat ordered[NS_PROFILE_MAX_FNS];
     memcpy(ordered, ns_profile.fns, sizeof(ns_profile_fn_stat) * (size_t)ns_profile.fn_count);
@@ -389,6 +400,25 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     }
     if (ns_profile.flames_dropped > 0) {
         fprintf(f, "flame_dropped: %llu\n", (unsigned long long)ns_profile.flames_dropped);
+    }
+
+    // Timeline last so viewers can stop after the aggregated tables.
+    fprintf(f, "timeline: kind depth start_ms duration_ms self_ms symbol\n");
+    for (i32 i = 0; i < ns_profile.event_count; i++) {
+        ns_profile_event *e = &ns_profile.events[i];
+        if (e->kind == NS_PROFILE_EVENT_SCOPE) {
+            fprintf(f, "scope_event: %d %.3f %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
+        } else {
+            fprintf(f, "ffi_event: %d %.3f %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
+        }
+        ns_profile_write_symbol(f, e->lib, e->name);
+        fputc('\n', f);
+    }
+    if (ns_profile.events_dropped > 0) {
+        fprintf(f, "timeline_events_dropped: %llu\n", (unsigned long long)ns_profile.events_dropped);
+    }
+    if (ns_profile.stack_overflows > 0) {
+        fprintf(f, "stack_overflows: %llu\n", (unsigned long long)ns_profile.stack_overflows);
     }
 }
 

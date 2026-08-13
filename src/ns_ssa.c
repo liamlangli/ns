@@ -24,6 +24,7 @@ typedef struct ns_ssa_global_const {
 typedef struct ns_ssa_loop_ctx {
     i32 break_block;
     i32 continue_block;
+    ns_str for_iter; /* set for for-range so continue increments the iterator */
 } ns_ssa_loop_ctx;
 
 typedef struct ns_ssa_builder {
@@ -344,7 +345,7 @@ static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type) {
 // value boundary. Reference-backed fields remain shared, as they do natively.
 static i32 ns_ssa_clone_struct(ns_ssa_builder *b, i32 value, i32 ast) {
     ns_type type = ns_ssa_value_type(b, value);
-    if (!ns_type_is(type, NS_TYPE_STRUCT) || ns_type_is_ref(type)) return value;
+    if (!ns_type_is(type, NS_TYPE_STRUCT) || ns_type_is_ref(type) || ns_type_is_array(type)) return value;
     return ns_ssa_emit_value(b, NS_SSA_OP_CLONE, value, ns_ssa_wasm32_size(b, type),
                              type, ns_str_null, (ns_token_t){0}, ast);
 }
@@ -689,6 +690,17 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
     }
     case NS_AST_UNARY_EXPR: {
         i32 v = ns_ssa_lower_expr(b, n->unary_expr.expr);
+        ns_type vt = ns_ssa_value_type(b, v);
+        if (ns_str_equals_STR(n->unary_expr.op.val, "~")) {
+            ns_str owned = ns_str_range(ns_malloc(3), 2);
+            memcpy(owned.data, "-1", 3);
+            ns_array_push(b->m->owned_strings, owned);
+            i32 ones = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i64, owned,
+                                        (ns_token_t){.type = NS_TOKEN_INT_LITERAL, .val = owned}, i);
+            i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_BXOR, v, -1, vt, ns_str_null, n->unary_expr.op, i);
+            b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = ones;
+            return dst;
+        }
         ns_ssa_op op = NS_SSA_OP_UNKNOWN;
         if (ns_str_equals_STR(n->unary_expr.op.val, "-")) op = NS_SSA_OP_NEG;
         if (ns_str_equals_STR(n->unary_expr.op.val, "!")) op = NS_SSA_OP_NOT;
@@ -698,7 +710,8 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             ns_ssa_emit_raw(b, trap);
             return -1;
         }
-        return ns_ssa_emit_value(b, op, v, -1, ns_type_unknown, ns_str_null, n->unary_expr.op, i);
+        if (op == NS_SSA_OP_NOT) vt = ns_type_bool;
+        return ns_ssa_emit_value(b, op, v, -1, vt, ns_str_null, n->unary_expr.op, i);
     }
     case NS_AST_CALL_EXPR: {
         ns_type result_type = ns_type_unknown;
@@ -862,8 +875,80 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
         }
         return array;
     }
-    case NS_AST_STR_FMT_EXPR:
-        return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, n->str_fmt.fmt, (ns_token_t){0}, i);
+    case NS_AST_STR_FMT_EXPR: {
+        ns_str fmt = n->str_fmt.fmt;
+        i32 acc = -1;
+        i32 expr = i;
+        i32 remaining = n->str_fmt.expr_count;
+        i32 lit_start = 0;
+        i32 j = 0;
+        while (j <= fmt.len) {
+            ns_bool hole = j < fmt.len && fmt.data[j] == '{' &&
+                           (j == 0 || fmt.data[j - 1] != '\\');
+            if (!hole && j < fmt.len) {
+                j++;
+                continue;
+            }
+            if (j > lit_start) {
+                ns_str chunk = ns_str_range(ns_malloc((szt)(j - lit_start) + 1), j - lit_start);
+                memcpy(chunk.data, fmt.data + lit_start, (szt)(j - lit_start));
+                chunk.data[j - lit_start] = 0;
+                ns_array_push(b->m->owned_strings, chunk);
+                i32 lit = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, chunk,
+                                            (ns_token_t){.type = NS_TOKEN_STR_LITERAL, .val = chunk}, i);
+                if (acc < 0) {
+                    acc = lit;
+                } else {
+                    ns_ssa_inst a0 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
+                    a0.a = acc;
+                    ns_ssa_emit_raw(b, a0);
+                    ns_ssa_inst a1 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
+                    a1.a = lit;
+                    ns_ssa_emit_raw(b, a1);
+                    acc = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 2, ns_type_str,
+                                            ns_str_cstr("ns_rt_strcat"), (ns_token_t){0}, i);
+                }
+            }
+            if (j >= fmt.len) break;
+            j++;
+            while (j < fmt.len && fmt.data[j] != '}') j++;
+            if (j < fmt.len) j++;
+            lit_start = j;
+            if (remaining <= 0) continue;
+            remaining--;
+            expr = b->ctx->nodes[expr].next;
+            i32 val = ns_ssa_lower_expr(b, expr);
+            ns_type vt = ns_ssa_value_type(b, val);
+            i32 piece = val;
+            if (!ns_type_is(vt, NS_TYPE_STRING)) {
+                const char *helper = ns_type_is_float(vt) ? "ns_rt_ftos" :
+                                     ns_type_is(vt, NS_TYPE_BOOL) ? "ns_rt_btos" :
+                                     ns_type_unsigned(vt) ? "ns_rt_utos" : "ns_rt_itos";
+                ns_ssa_inst a0 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
+                a0.a = val;
+                ns_ssa_emit_raw(b, a0);
+                piece = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 1, ns_type_str,
+                                          ns_str_cstr((i8 *)helper), (ns_token_t){0}, i);
+            }
+            if (acc < 0) {
+                acc = piece;
+            } else {
+                ns_ssa_inst a0 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
+                a0.a = acc;
+                ns_ssa_emit_raw(b, a0);
+                ns_ssa_inst a1 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
+                a1.a = piece;
+                ns_ssa_emit_raw(b, a1);
+                acc = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 2, ns_type_str,
+                                        ns_str_cstr("ns_rt_strcat"), (ns_token_t){0}, i);
+            }
+        }
+        if (acc < 0) {
+            return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, ns_str_cstr(""),
+                                     (ns_token_t){0}, i);
+        }
+        return acc;
+    }
     default: {
         ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
         ns_ssa_emit_raw(b, trap);
@@ -1013,7 +1098,7 @@ static void ns_ssa_lower_loop(ns_ssa_builder *b, i32 i) {
         ns_ssa_emit_jump(b, body_block, i);
     }
 
-    ns_ssa_loop_ctx loop = {.break_block = exit_block, .continue_block = cond_block};
+    ns_ssa_loop_ctx loop = {.break_block = exit_block, .continue_block = cond_block, .for_iter = ns_str_null};
     ns_array_push(b->loops, loop);
 
     b->block = body_block;
@@ -1062,7 +1147,11 @@ static void ns_ssa_lower_for(ns_ssa_builder *b, i32 i) {
     cond_inst->b = to;
     ns_ssa_emit_branch(b, cond, body_block, exit_block, i);
 
-    ns_ssa_loop_ctx loop = {.break_block = exit_block, .continue_block = cond_block};
+    ns_ssa_loop_ctx loop = {
+        .break_block = exit_block,
+        .continue_block = cond_block,
+        .for_iter = g->gen_expr.name.val,
+    };
     ns_array_push(b->loops, loop);
 
     b->block = body_block;
@@ -1137,7 +1226,32 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
         } break;
         case NS_TOKEN_CONTINUE: {
             if (ns_array_length(b->loops) > 0) {
-                ns_ssa_emit_jump(b, ns_array_last(b->loops)->continue_block, i);
+                ns_ssa_loop_ctx *loop = ns_array_last(b->loops);
+                if (loop->for_iter.len > 0) {
+                    i32 iter = ns_ssa_env_get_value(b->env, loop->for_iter, -1);
+                    i32 one = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32,
+                                                ns_str_cstr("1"), (ns_token_t){0}, i);
+                    i32 next = ns_ssa_emit_value(b, NS_SSA_OP_ADD, iter, -1, ns_type_i32,
+                                                 loop->for_iter, (ns_token_t){0}, i);
+                    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = one;
+                    ns_ssa_env_bind(b, loop->for_iter, next, ns_type_i32);
+                }
+                /* Continue may leave a nested block that is not a recorded phi
+                 * predecessor. Copy the current env into the header phi slots
+                 * so the back edge keeps updated values. */
+                ns_ssa_block *hb = &b->fn->blocks[loop->continue_block];
+                for (i32 hi = 0, hl = (i32)ns_array_length(hb->insts); hi < hl; ++hi) {
+                    ns_ssa_inst *phi = &b->fn->insts[hb->insts[hi]];
+                    if (phi->op != NS_SSA_OP_PHI) break;
+                    i32 src = ns_ssa_env_get_value(b->env, phi->name, -1);
+                    if (src < 0 || src == phi->dst) continue;
+                    ns_ssa_inst copy = NS_SSA_INST_INIT(NS_SSA_OP_COPY, i);
+                    copy.dst = phi->dst;
+                    copy.a = src;
+                    copy.type = phi->type;
+                    ns_ssa_emit_raw(b, copy);
+                }
+                ns_ssa_emit_jump(b, loop->continue_block, i);
             } else {
                 ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
                 ns_ssa_emit_raw(b, trap);
