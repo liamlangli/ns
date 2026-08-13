@@ -9,6 +9,7 @@
 #include "ns_shader.h"
 #include "ns_profile.h"
 #include "ns_project.h"
+#include "ns_build_cache.h"
 #include "ns_lint.h"
 #include "ns_ssa.h"
 #include "ns_agents_md.h"
@@ -58,6 +59,8 @@ typedef struct ns_compile_option_t {
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
+    ns_bool force: 2;   // `--force` - rebuild even when the recorded inputs are unchanged
+    ns_bool clean: 2;   // `ns clean [path]` - remove the files a build generates
     ns_bool project: 2; // `ns project <path>` - generate a native IDE project
     ns_bool init: 2;    // `ns init [path]` - scaffold an ns project in place
     ns_bool create: 2;  // `ns create <name>` - scaffold an ns project in a new folder
@@ -85,6 +88,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.test = true;
         } else if (i == 1 && strcmp(argv[i], "build") == 0) {
             option.build = true;
+        } else if (i == 1 && strcmp(argv[i], "clean") == 0) {
+            option.clean = true;
         } else if (i == 1 && strcmp(argv[i], "project") == 0) {
             option.project = true;
         } else if (i == 1 && strcmp(argv[i], "init") == 0) {
@@ -129,6 +134,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.show_help = true;
         } else if (strcmp(argv[i], "--profile") == 0) {
             option.profile = true;
+        } else if (strcmp(argv[i], "--force") == 0) {
+            option.force = true;
         } else if (strcmp(argv[i], "--exe") == 0) {
             option.build_kind = 1;
         } else if (strcmp(argv[i], "--app") == 0) {
@@ -202,6 +209,8 @@ void ns_help() {
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
+    printf("                    keeps the artifact when no input changed; --force rebuilds\n");
+    printf("  clean [path]      remove bin/ and the profiles a build generates\n");
     printf("  project [path]    generate a native IDE project from ns.mod\n");
     printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
     printf("  lint [path]       check the style of a file, a directory or the whole project\n");
@@ -898,6 +907,46 @@ static ns_str ns_project_module_name(ns_str path) {
 
 static ns_str ns_manifest_entry_file_for_root(ns_str root);
 
+// Sources under test/ and files named *_test.ns are not part of an ordinary
+// project build; `ns test` adds back only the selected test entry.
+static ns_bool ns_project_source_is_test(ns_project_source source) {
+    return ns_str_has_suffix(source.relative, "_test.ns") ||
+           strncmp(source.relative.data, "test/", 5) == 0 ||
+           strstr(source.relative.data, "/test/") != ns_null;
+}
+
+// Collect the manifest source set of `root` without linking it. The scan is
+// deterministic and reads no source file, so a build can compare the set
+// against its recorded inputs before deciding to compile.
+static ns_project_source *ns_project_sources(ns_str root) {
+    ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str manifest = ns_os_read_file(manifest_path);
+    ns_str *excludes = ns_manifest_values(manifest, "exclude");
+    ns_str source_dir = ns_project_source_dir(root);
+    ns_str source_value = ns_manifest_value(manifest, "source");
+    ns_str project_relative = (source_value.data == ns_null || ns_str_equals(source_value, ns_str_cstr(".")))
+                                  ? ns_str_cstr("") : source_value;
+    ns_project_source *sources = ns_null;
+    ns_project_sources_scan(source_dir, project_relative, ns_str_cstr(""), excludes, &sources);
+    qsort(sources, ns_array_length(sources), sizeof(ns_project_source), ns_project_source_cmp);
+
+    for (i32 i = 0, count = ns_array_length(excludes); i < count; i++) ns_str_free(excludes[i]);
+    ns_array_free(excludes);
+    ns_str_free(manifest);
+    ns_str_free(manifest_path);
+    ns_str_free(source_value);
+    ns_str_free(source_dir);
+    return sources;
+}
+
+static void ns_project_sources_free(ns_project_source *sources) {
+    for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
+        ns_str_free(sources[i].path);
+        ns_str_free(sources[i].relative);
+    }
+    ns_array_free(sources);
+}
+
 // Link all project sources. Files under test/ and other *_test.ns entries are
 // excluded by default. Test execution adds only the selected test entry.
 static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_file, ns_bool test_entry,
@@ -926,11 +975,8 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
         ns_project_source source = sources[i];
         ns_bool selected = ns_str_equals(source.path, entry_file);
         ns_bool app_entry = test_entry && !selected && ns_str_equals(source.path, project_entry);
-        ns_bool is_test = ns_str_has_suffix(source.relative, "_test.ns");
-        ns_bool in_test_dir = strncmp(source.relative.data, "test/", 5) == 0 ||
-                              strstr(source.relative.data, "/test/") != ns_null;
         if (app_entry) continue;
-        if ((is_test || in_test_dir) && !(test_entry && selected)) continue;
+        if (ns_project_source_is_test(source) && !(test_entry && selected)) continue;
         ns_str name = ns_project_module_name(source.path);
         if (!ns_name_in(lk.local_names, name)) ns_array_push(lk.local_names, name);
         else ns_str_free(name);
@@ -945,12 +991,9 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
         ns_project_source source = sources[i];
         ns_bool selected = ns_str_equals(source.path, entry_file);
         ns_bool app_entry = test_entry && !selected && ns_str_equals(source.path, project_entry);
-        ns_bool is_test = ns_str_has_suffix(source.relative, "_test.ns");
-        ns_bool in_test_dir = strncmp(source.relative.data, "test/", 5) == 0 ||
-                              strstr(source.relative.data, "/test/") != ns_null;
         if (selected) continue;
         if (app_entry) continue;
-        if (is_test || in_test_dir) continue;
+        if (ns_project_source_is_test(source)) continue;
         ns_str text = ns_os_read_file(source.path);
         if (text.data != ns_null) ns_link_source(&lk, text, source.path);
         ns_str_free(text);
@@ -1349,11 +1392,44 @@ static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, n
     return ssa_ret.r;
 }
 
-static ns_ssa_module *ns_compile_build_input(ns_build_input *in) {
+// Installed declaration file of an external `use` module, resolved the same
+// way the SSA builder resolves it. The path is returned even when the file is
+// absent so that installing the module later invalidates a recorded build.
+static ns_str ns_build_module_ref_path(ns_str name) {
+    if (vm.ref_path.data == ns_null || vm.ref_path.len == 0) return ns_str_null;
+    ns_str file = ns_str_concat(name, ns_str_cstr(".ns"));
+    ns_str path = ns_path_join(vm.ref_path, file);
+    ns_str_free(file);
+    return path;
+}
+
+// Stamp what the linker read: every file that contributed a line, plus the
+// declaration of each external module the merged unit still imports. Sibling
+// modules pulled in by `use` are only known here, after linking.
+static void ns_build_cache_add_linked(ns_build_cache *cache, ns_line_loc *map, ns_str *external) {
+    ns_str previous = ns_str_null;
+    for (i32 i = 0, l = (i32)ns_array_length(map); i < l; i++) {
+        // Lines of one file are contiguous, so this skips the repeat lookups.
+        if (previous.data != ns_null && ns_str_equals(previous, map[i].f)) continue;
+        previous = map[i].f;
+        ns_build_cache_add(cache, map[i].f);
+    }
+    for (i32 i = 0, l = (i32)ns_array_length(external); i < l; i++) {
+        ns_str path = ns_build_module_ref_path(external[i]);
+        ns_build_cache_add(cache, path);
+        ns_str_free(path);
+    }
+}
+
+static ns_ssa_module *ns_compile_build_input(ns_build_input *in, ns_build_cache *cache) {
     ns_line_loc *map = ns_null;
+    ns_str *external = ns_null;
     ns_str merged = in->has_manifest
-                        ? ns_project_link_all(in->scope, in->source, in->filename, false, &map, ns_null)
-                        : ns_project_link(in->scope, in->source, in->filename, &map, ns_null);
+                        ? ns_project_link_all(in->scope, in->source, in->filename, false, &map, &external)
+                        : ns_project_link(in->scope, in->source, in->filename, &map, &external);
+    if (cache != ns_null) ns_build_cache_add_linked(cache, map, external);
+    for (i32 i = 0, l = (i32)ns_array_length(external); i < l; i++) ns_str_free(external[i]);
+    ns_array_free(external);
     return ns_compile_source_to_ssa(merged, in->filename, map);
 }
 
@@ -1393,6 +1469,80 @@ static ns_build_input ns_build_input_resolve(ns_str path) {
 
 static ns_str ns_project_current_executable(void);
 static ns_bool ns_build_type_is_app(ns_str t);
+
+// The file or bundle directory a build produces. `ns build` keeps it when
+// every recorded input is unchanged, so the artifact must be checked by the
+// same path the emitters write.
+static ns_str ns_build_artifact_path(ns_build_kind kind, ns_str output) {
+    if (kind == NS_BUILD_APP && !ns_str_has_suffix(output, ".app")) {
+        return ns_str_concat(output, ns_str_cstr(".app"));
+    }
+    return ns_str_concat(output, ns_str_cstr(""));
+}
+
+// Everything besides the input files that decides what the artifact contains:
+// the toolchain version, the artifact kind, the host and project targets, and
+// the output path. A change here rebuilds even when no source changed.
+static ns_str ns_build_config(ns_build_input *in, ns_build_kind kind, ns_str output) {
+    ns_asm_target target;
+    ns_asm_get_current_target(&target);
+    ns_str arch = ns_arch_str(target.arch);
+    ns_str os = ns_os_str(target.os);
+
+    ns_str config = ns_str_null;
+    ns_str_append_cstr(&config, "ns ");
+    ns_str_append_i32(&config, (i32)VERSION_MAJOR);
+    ns_str_append_cstr(&config, ".");
+    ns_str_append_i32(&config, (i32)VERSION_MINOR);
+    ns_str_append_cstr(&config, " kind ");
+    ns_str_append_i32(&config, (i32)kind);
+    ns_str_append_cstr(&config, " host ");
+    ns_str_append(&config, arch);
+    ns_str_append_cstr(&config, "-");
+    ns_str_append(&config, os);
+    ns_str_append_cstr(&config, " target ");
+    ns_str_append(&config, in->target.len > 0 ? in->target : ns_str_cstr("native"));
+    ns_str_append_cstr(&config, " output ");
+    ns_str_append(&config, output);
+    ns_array_push(config.data, '\0');
+    return config;
+}
+
+// Stamp the inputs a build reads before it links: the running toolchain, the
+// entry, the manifest and its source set, and the resources a bundle packages.
+// Files the linker discovers are added afterwards by ns_compile_build_input,
+// and remain guarded by the recorded stamps of the previous build.
+static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
+    // A rebuilt ns emits different code from the same sources.
+    ns_str executable = ns_project_current_executable();
+    ns_build_cache_add(cache, executable);
+    ns_str_free(executable);
+
+    ns_build_cache_add(cache, in->filename);
+    if (!in->has_manifest) return;
+
+    ns_str manifest = ns_path_join(in->scope, ns_str_cstr("ns.mod"));
+    ns_build_cache_add(cache, manifest);
+    ns_str_free(manifest);
+    ns_build_cache_add(cache, in->icon);
+    ns_build_cache_add(cache, in->shell);
+
+    ns_project_source *sources = ns_project_sources(in->scope);
+    for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
+        if (!ns_project_source_is_test(sources[i])) ns_build_cache_add(cache, sources[i].path);
+    }
+    ns_project_sources_free(sources);
+
+    // Assets are copied into app and browser bundles, so they are inputs too.
+    ns_str source_dir = ns_project_source_dir(in->scope);
+    ns_str source_assets = ns_path_join(source_dir, ns_str_cstr("assets"));
+    ns_str scope_assets = ns_path_join(in->scope, ns_str_cstr("assets"));
+    ns_build_cache_add_tree(cache, source_assets);
+    ns_build_cache_add_tree(cache, scope_assets);
+    ns_str_free(source_assets);
+    ns_str_free(scope_assets);
+    ns_str_free(source_dir);
+}
 
 static ns_str ns_wasm_runtime_source(void) {
     ns_str executable = ns_project_current_executable();
@@ -1493,7 +1643,7 @@ static void ns_wasm_validate_browser_entry(ns_ssa_module *ssa) {
     }
 }
 
-static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_kind) {
+static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_kind, ns_bool force) {
     if (!in->has_manifest) ns_exit(1, "build", "target = \"wasm\" requires ns.mod.\n");
     if (!ns_build_type_is_app(in->module_type) || requested_kind == NS_BUILD_LIB) {
         ns_exit(1, "build", "wasm v1 supports type = \"app\" only.\n");
@@ -1504,7 +1654,23 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
         output = ns_path_join(ns_path_join(in->scope, ns_str_cstr("bin")), filename);
     }
     ns_build_ensure_output_dir(output);
-    ns_ssa_module *ssa = ns_compile_build_input(in);
+
+    // The module guards the whole bundle: everything else in bin/ is copied or
+    // generated from the same inputs.
+    ns_build_cache cache;
+    ns_str config = ns_build_config(in, NS_BUILD_APP, output);
+    ns_build_cache_open(&cache, output, config);
+    ns_array_free(config.data);
+    ns_build_cache_collect(&cache, in);
+    if (!force && ns_build_cache_fresh(&cache)) {
+        ns_str current = ns_path_dirname_safe(output);
+        ns_info("build", "up to date %.*s\n", current.len, current.data);
+        ns_build_cache_free(&cache);
+        ns_str_free(current);
+        return;
+    }
+
+    ns_ssa_module *ssa = ns_compile_build_input(in, &cache);
     ns_wasm_validate_browser_entry(ssa);
 
     ns_str artifact = ns_path_basename_with_extension(output);
@@ -1538,11 +1704,13 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
     ns_str runtime_dst = ns_path_join(out_dir, ns_str_cstr("ns-wasm.js"));
     ns_str runtime_src = ns_wasm_runtime_source();
     ns_copy_file_contents(runtime_src, runtime_dst);
+    ns_build_cache_add(&cache, runtime_src); // installed middleware, copied into the bundle
 
     ns_bool uses_default_icon = in->icon.data == ns_null || in->icon.len == 0;
     ns_str icon_src = uses_default_icon ? ns_wasm_default_icon_source() : in->icon;
     ns_str favicon = uses_default_icon ? ns_str_cstr("ns.svg") : ns_wasm_favicon_filename(icon_src);
     ns_copy_file_contents(icon_src, ns_path_join(out_dir, favicon));
+    ns_build_cache_add(&cache, icon_src);
 
     ns_str title = ns_html_escape(in->name);
     ns_str html = ns_str_null;
@@ -1579,6 +1747,8 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
         ns_copy_tree(assets, output_assets);
     }
     ns_info("build", "wasm bundle %.*s\n", out_dir.len, out_dir.data);
+    ns_build_cache_write(&cache);
+    ns_build_cache_free(&cache);
 }
 
 static ns_bool ns_build_type_is_library(ns_str t) {
@@ -2208,24 +2378,11 @@ static void ns_build_wasm_app(ns_build_input *in, ns_str output, ns_ssa_module *
     ns_str_free(bundle_dir);
 }
 
-void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
-    ns_build_input in = ns_build_input_resolve(path);
-    if (in.target.len > 0 && !ns_build_target_is_wasm(in.target)) {
-        ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
-                in.target.len, in.target.data);
-    }
-    if (ns_build_target_is_wasm(in.target)) {
-        ns_exec_build_wasm(&in, output, requested_kind);
-        return;
-    }
-    ns_build_kind kind = ns_build_resolve_kind(&in, requested_kind);
-    if (output.len == 0) output = ns_build_default_output(&in, kind);
-    ns_build_ensure_output_dir(output);
-
-    ns_ssa_module *ssa = ns_compile_build_input(&in);
-
-    if (ns_build_target_is_wasm(in.target)) {
-        ns_build_wasm_app(&in, output, ssa);
+// Compile `in` and write its artifact. Every branch either emits the artifact
+// or exits, so the caller records the build inputs only after a real build.
+static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output, ns_ssa_module *ssa) {
+    if (ns_build_target_is_wasm(in->target)) {
+        ns_build_wasm_app(in, output, ssa);
         return;
     }
 
@@ -2248,22 +2405,15 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     }
 
     if (kind == NS_BUILD_APP) {
-        ns_asm_target target;
-        ns_asm_get_current_target(&target);
-        if (target.os != NS_OS_DARWIN) {
-            ns_warn("build", "app bundle icon packaging is currently supported for mach-o targets only; emitting executable.\n");
-            kind = NS_BUILD_EXE;
-        } else {
 #if defined(NS_DARWIN)
-            ns_str app_output = ns_build_app_output(output);
-            ns_build_darwin_app(&in, app_output, ssa);
-            ns_ssa_module_free(ssa);
-            return;
+        ns_str app_output = ns_build_app_output(output);
+        ns_build_darwin_app(in, app_output, ssa);
+        ns_ssa_module_free(ssa);
+        return;
 #else
-            ns_ssa_module_free(ssa);
-            ns_exit(1, "build", "app bundle output is only available on Darwin builds.\n");
+        ns_ssa_module_free(ssa);
+        ns_exit(1, "build", "app bundle output is only available on Darwin builds.\n");
 #endif
-        }
     }
 
     ns_asm_target target;
@@ -2291,6 +2441,46 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind) {
     ns_info("build", "executable %.*s\n", output.len, output.data);
 }
 
+void ns_exec_build(ns_str path, ns_str output, u8 requested_kind, ns_bool force) {
+    ns_build_input in = ns_build_input_resolve(path);
+    if (in.target.len > 0 && !ns_build_target_is_wasm(in.target)) {
+        ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
+                in.target.len, in.target.data);
+    }
+    if (ns_build_target_is_wasm(in.target)) {
+        ns_exec_build_wasm(&in, output, requested_kind, force);
+        return;
+    }
+
+    ns_build_kind kind = ns_build_resolve_kind(&in, requested_kind);
+    ns_asm_target target;
+    ns_asm_get_current_target(&target);
+    if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) {
+        ns_warn("build", "app bundle icon packaging is currently supported for mach-o targets only; emitting executable.\n");
+        kind = NS_BUILD_EXE;
+    }
+    if (output.len == 0) output = ns_build_default_output(&in, kind);
+    ns_build_ensure_output_dir(output);
+
+    ns_str artifact = ns_build_artifact_path(kind, output);
+    ns_build_cache cache;
+    ns_str config = ns_build_config(&in, kind, output);
+    ns_build_cache_open(&cache, artifact, config);
+    ns_array_free(config.data);
+    ns_build_cache_collect(&cache, &in);
+    if (!force && ns_build_cache_fresh(&cache)) {
+        ns_info("build", "up to date %.*s\n", artifact.len, artifact.data);
+        ns_build_cache_free(&cache);
+        ns_str_free(artifact);
+        return;
+    }
+
+    ns_build_emit(&in, kind, output, ns_compile_build_input(&in, &cache));
+    ns_build_cache_write(&cache);
+    ns_build_cache_free(&cache);
+    ns_str_free(artifact);
+}
+
 static ns_str ns_project_absolute_path(ns_str path) {
     if (ns_path_is_absolute(path)) return ns_str_concat(path, ns_str_cstr(""));
     ns_str cwd = ns_getcwd();
@@ -2298,6 +2488,34 @@ static ns_str ns_project_absolute_path(ns_str path) {
     ns_str absolute = ns_path_join(cwd, path);
     ns_str_free(cwd);
     return absolute;
+}
+
+// Everything `ns` generates for a project: the bin/ output directory, which
+// also holds generated IDE projects and the build cache, and the profiles
+// written beside the manifest. This is the `bin`/`ns.profile` part of the
+// scaffolded .gitignore; source and user files are never touched.
+static const char *ns_clean_generated[] = {"bin", "ns.profile", "ns.profile.json"};
+
+// `ns clean [path]` - remove the generated files of the nearest project.
+void ns_exec_clean(ns_str path) {
+    ns_str base = ns_project_absolute_path(path);
+    if (!ns_is_dir(base)) base = ns_path_dirname_safe(base);
+
+    // A directory outside any project is cleaned on its own.
+    ns_str root = base;
+    ns_find_project_root(base, &root);
+
+    i32 removed = 0;
+    for (i32 i = 0; i < (i32)(sizeof(ns_clean_generated) / sizeof(ns_clean_generated[0])); i++) {
+        ns_str target = ns_path_join(root, ns_str_cstr(ns_clean_generated[i]));
+        if (ns_is_dir(target) || ns_file_exists(target)) {
+            ns_remove_tree(target);
+            ns_info("clean", "removed %.*s\n", target.len, target.data);
+            removed++;
+        }
+        ns_str_free(target);
+    }
+    if (removed == 0) ns_info("clean", "nothing to remove in %.*s\n", root.len, root.data);
 }
 
 static ns_bool ns_project_runtime_root_valid(ns_str root) {
@@ -2428,7 +2646,7 @@ void ns_exec_project(ns_str path) {
     if (ns_build_target_is_wasm(project_target)) {
         if (!ns_build_type_is_app(module_type))
             ns_exit(1, "project", "target = \"wasm\" currently supports type = \"app\" only.\n");
-        ns_exec_build(root, ns_str_null, NS_BUILD_AUTO);
+        ns_exec_build(root, ns_str_null, NS_BUILD_AUTO, false);
         return;
     }
 
@@ -3066,7 +3284,7 @@ void ns_exec_run(ns_str filename, i32 port, ns_bool port_set) {
     }
     if (ns_str_equals(target, ns_str_cstr("wasm"))) {
         setvbuf(stdout, ns_null, _IOLBF, 0);
-        ns_exec_build(scope, ns_str_null, NS_BUILD_AUTO);
+        ns_exec_build(scope, ns_str_null, NS_BUILD_AUTO, false);
         ns_str output_root = ns_path_join(scope, ns_str_cstr("bin"));
         ns_str executable = ns_project_current_executable();
         char port_text[16];
@@ -3525,7 +3743,9 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.test) {
         ns_exec_test(option.filename);
     } else if (option.build) {
-        ns_exec_build(option.filename, option.output, option.build_kind);
+        ns_exec_build(option.filename, option.output, option.build_kind, option.force);
+    } else if (option.clean) {
+        ns_exec_clean(option.filename);
     } else if (option.project) {
         ns_exec_project(option.filename);
     } else if (option.init) {

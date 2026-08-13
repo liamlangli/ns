@@ -122,6 +122,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_shader.c \
 	src/ns_lint.c \
 	src/ns_project.c \
+	src/ns_build_cache.c \
 	src/ns_project_xcode.c \
 	src/ns_project_vs.c \
 	src/ns_repl.c \
@@ -199,7 +200,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_lint_test.c test/ns_profile_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -278,11 +279,13 @@ test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR
 	$(NS_BINDIR)/ns_buffer_test
 	$(NS_BINDIR)/ns_os_test
 	$(NS_BINDIR)/ns_project_test
+	$(NS_BINDIR)/ns_build_cache_test
 	$(NS_BINDIR)/ns_lint_test
 	$(NS_BINDIR)/ns_profile_test
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_lint_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/ns_build_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_parity_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"

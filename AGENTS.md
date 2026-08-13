@@ -49,6 +49,17 @@ The common commands are:
   type `library` produces a static library, and an app with `target = "wasm"`
   produces its browser bundle and `.wasm.map` source map. `--exe` forces a
   linked native executable. `ns build` does not fall back to `ns run`.
+  Builds are incremental: every input a build reads is recorded with its last
+  modify time, size, and content hash in `bin/.ns-build/`, and a later build
+  that finds the artifact in place and every recorded input unchanged keeps the
+  artifact instead of recompiling. A touched file with unchanged contents does
+  not trigger a rebuild; an added, edited, or removed source, a changed
+  manifest, asset, or installed module declaration, a different artifact kind
+  or output path, and a rebuilt `ns` all do. `--force` compiles unconditionally.
+- `ns clean [path]`: remove what `ns` generates for the nearest project: the
+  `bin/` output directory, which also holds generated IDE projects and the
+  build cache, and `ns.profile`/`ns.profile.json` beside the manifest. Source
+  and other user files are never removed.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`.
 - `ns lint [path]`: report style findings for a file, a directory, or the

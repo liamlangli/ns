@@ -23,7 +23,11 @@ used instead. A canvas `view_create` title is retained as its accessibility
 label and does not replace the page title. If `<source>/assets` exists, its tree is synchronized into
 `bin/assets` without removing unrelated output. `-o path/app.wasm` puts all
 browser artifacts and the selected favicon beside that path. Wasm replacement is atomic: a failed
-compile leaves the previous runnable artifact intact.
+compile leaves the previous runnable artifact intact. The bundle is also
+incremental: `ns build` keeps it when the module is in place and every recorded
+input — sources, manifest, assets, shell, icon, the installed `ns-wasm.js`, and
+the `ns` executable — is unchanged since the recorded build. `--force` rebuilds
+it anyway, and `ns clean` removes the whole `bin/` bundle.
 
 For a custom browser UI, set `shell` to an HTML file relative to the manifest.
 The builder copies it to `bin/index.html` after expanding three stable markers:

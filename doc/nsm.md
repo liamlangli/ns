@@ -50,6 +50,20 @@ built as a standalone script and may link local sibling modules it imports. Use
 `-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact
 kind.
 
+A build records every input it reads under `bin/.ns-build/<artifact>.cache`
+with that input's last modify time, size, and content hash. The next build
+re-stats the same inputs, hashes only the ones whose time or size changed, and
+keeps the existing artifact when the artifact is still in place and every
+recorded input hashes to its recorded value; otherwise it recompiles. The
+record covers the manifest, the project source set, sibling modules and
+installed module declarations the linker read, packaged assets, and the `ns`
+executable itself, along with the artifact kind, host target, and output path.
+`--force` skips the check and compiles unconditionally.
+
+`ns clean [path]` removes what builds generate for the nearest project: the
+`bin/` directory, including generated IDE projects and the build cache, and
+`ns.profile` with `ns.profile.json` beside the manifest.
+
 For a browser project, keep `type = "app"` and set `target = "wasm"`.
 `ns build` then emits a browser bundle (`.wasm`, `.wasm.map`, `ns-wasm.js`, and
 `index.html`) under `bin`, while `ns run --port 9001` builds and starts the
