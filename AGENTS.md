@@ -34,6 +34,12 @@ The common commands are:
 - `ns run [file.ns]`: interpret an explicit native file; without an argument,
   use the current project's manifest entry and otherwise fall back to
   `main.ns`. A Wasm project builds and starts its loopback live-reload server.
+- `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
+  write `ns.profile` plus Chrome-trace `ns.profile.json`, then print a
+  colored CLI hot-path summary of VM scopes and FFI calls. `--profile` on any
+  other command is the same collection.
+- `ns profiler [file]`: open the native GUI viewer for `ns.profile`, or for an
+  explicit profile file.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported.

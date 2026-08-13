@@ -22,6 +22,11 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
 static ns_return_value ns_eval_struct_ctor(ns_vm *vm, ns_ast_ctx *ctx, i32 i, i32 st_index);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 
+static void ns_eval_profile_scope_begin(ns_symbol *sym) {
+    if (!ns_profile.enabled) return;
+    ns_profile_scope_enter(sym->name, sym->lib);
+}
+
 static void ns_eval_profile_scope_end(ns_symbol *sym, i32 depth, f64 start_ms) {
     if (!ns_profile.enabled) return;
     ns_profile_record_scope(sym->name, sym->lib, depth, start_ms, ns_profile_now_ms() - start_ms);
@@ -658,6 +663,7 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
 
     ns_fn_symbol *ops = ns_symbol_get_fn(fn);
     ns_ast_ctx *fn_ctx = ops->ctx ? ops->ctx : ctx;
+    ns_eval_profile_scope_begin(fn);
     f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
     i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
     ns_return_void ret = ns_eval_compound_stmt(vm, fn_ctx, ops->body);
@@ -1081,6 +1087,7 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             }
         }
 
+        ns_eval_profile_scope_begin(sym);
         f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
         i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
         // The body's node indices belong to the context the fn was parsed
@@ -1139,6 +1146,7 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
         }
     }
 
+    ns_eval_profile_scope_begin(sym);
     f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
     i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
     ns_return_void ret = ns_eval_compound_stmt(vm, fn->ctx ? fn->ctx : ctx, fn->body);
@@ -2973,6 +2981,7 @@ static ns_return_value ns_eval_ast_impl(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_scope_enter(vm);
         ns_array_push(vm->call_stack, call);
         ns_ast_t *fn = &ctx->nodes[main_fn->fn.ast];
+        ns_eval_profile_scope_begin(main_fn);
         f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
         i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
         ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn->fn_def.body);

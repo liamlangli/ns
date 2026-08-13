@@ -197,7 +197,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_lint_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_lint_test.c test/ns_profile_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -267,9 +267,11 @@ test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR
 	$(NS_BINDIR)/ns_os_test
 	$(NS_BINDIR)/ns_project_test
 	$(NS_BINDIR)/ns_lint_test
+	$(NS_BINDIR)/ns_profile_test
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_lint_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	node test/ns_wasm_runtime_test.mjs
 
@@ -281,7 +283,8 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/src $(NS_INSTALL_ROOT)/share/ns-runtime/include \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets \
-		$(NS_INSTALL_ROOT)/share/licenses/box3d
+		$(NS_INSTALL_ROOT)/share/licenses/box3d \
+		$(NS_INSTALL_ROOT)/share/nscode/profile
 	cp $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new
 	mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
 	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
@@ -304,6 +307,7 @@ install: all
 		lib/assets/bitmap_zh_cn.json lib/assets/bitmap_zh_cn.png \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/
 	cp third_party/box3d/LICENSE $(NS_INSTALL_ROOT)/share/licenses/box3d/LICENSE
+	cp nscode/profile/ns.mod nscode/profile/main.ns $(NS_INSTALL_ROOT)/share/nscode/profile/
 	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\
 		for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
 			cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new"; \

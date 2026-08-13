@@ -50,7 +50,9 @@ typedef struct ns_compile_option_t {
     ns_bool symbol_only: 2;
     ns_bool show_version: 2;
     ns_bool show_help: 2;
-    ns_bool profile: 2; // write ns.profile with elapsed wall-clock time
+    ns_bool profile: 2; // write ns.profile and print a colored hot-path summary
+    ns_bool profile_cmd: 2; // `ns profile [path]` - CLI run with profiling
+    ns_bool profile_view: 2; // `ns profiler [file]` - open the GUI viewer
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
@@ -89,6 +91,11 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.create = true;
         } else if (i == 1 && strcmp(argv[i], "update") == 0) {
             option.update = true;
+        } else if (i == 1 && strcmp(argv[i], "profile") == 0) {
+            option.profile_cmd = true;
+            option.profile = true;
+        } else if (i == 1 && strcmp(argv[i], "profiler") == 0) {
+            option.profile_view = true;
         } else if (i == 1 && strcmp(argv[i], "lint") == 0) {
             option.lint = true;
         } else if (i == 1 && (strcmp(argv[i], "lint_fix") == 0 || strcmp(argv[i], "lint-fix") == 0)) {
@@ -177,7 +184,7 @@ void ns_help() {
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
-    printf("  --profile         write ns.profile: elapsed time plus a per-symbol ffi breakdown\n");
+    printf("  --profile         write ns.profile + ns.profile.json and print a hot-path summary\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
@@ -186,6 +193,8 @@ void ns_help() {
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
     printf("  run  [file.ns]    run native source; wasm projects build and serve bin/\n");
     printf("       --port <n>    wasm server port (default 9001; 0 chooses an available port)\n");
+    printf("  profile [path]    run like `ns run` with profiling; print a CLI hot-path summary\n");
+    printf("  profiler [file]   open the GUI viewer for ns.profile (or file)\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path]      compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
@@ -201,30 +210,6 @@ void ns_help() {
 
 void ns_version() {
     ns_info("nanoscript", "v%d.%d\n", (int)VERSION_MAJOR, (int)VERSION_MINOR);
-}
-
-// Order the per-symbol FFI table by descending time so the hottest native
-// calls sort to the top of the emitted profile.
-static int ns_profile_fn_cmp(const void *a, const void *b) {
-    const ns_profile_fn_stat *x = a;
-    const ns_profile_fn_stat *y = b;
-    if (x->total_ms < y->total_ms) return 1;
-    if (x->total_ms > y->total_ms) return -1;
-    if (x->calls < y->calls) return 1;
-    if (x->calls > y->calls) return -1;
-    return 0;
-}
-
-static int ns_profile_event_cmp(const void *a, const void *b) {
-    const ns_profile_event *x = a;
-    const ns_profile_event *y = b;
-    if (x->start_ms < y->start_ms) return -1;
-    if (x->start_ms > y->start_ms) return 1;
-    if (x->kind == NS_PROFILE_EVENT_SCOPE && y->kind != NS_PROFILE_EVENT_SCOPE) return -1;
-    if (x->kind != NS_PROFILE_EVENT_SCOPE && y->kind == NS_PROFILE_EVENT_SCOPE) return 1;
-    if (x->depth < y->depth) return -1;
-    if (x->depth > y->depth) return 1;
-    return 0;
 }
 
 static f64 ns_profile_start_ms = 0.0;
@@ -243,69 +228,21 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
         ns_warn("profile", "failed to write ns.profile.\n");
         return;
     }
-
-    f64 ffi_ms = ns_profile.ffi_total_ms;
-    f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
-    i32 ffi_event_count = 0;
-    i32 scope_event_count = 0;
-    for (i32 i = 0; i < ns_profile.event_count; i++) {
-        ns_profile_event *e = &ns_profile.events[i];
-        if (e->kind == NS_PROFILE_EVENT_SCOPE) {
-            scope_event_count++;
-        } else {
-            ffi_event_count++;
-        }
-    }
-
-    fprintf(f, "format: ns-profile-v3\n");
-    fprintf(f, "elapsed_ms: %.3f\n", elapsed_ms);
-    fprintf(f, "ffi_calls: %llu\n", (unsigned long long)ns_profile.ffi_calls);
-    fprintf(f, "ffi_ms: %.3f\n", ffi_ms);
-    fprintf(f, "ffi_pct: %.1f\n", ffi_pct);
-    fprintf(f, "ffi_symbols: %d\n", ns_profile.fn_count);
-    fprintf(f, "ffi_events: %d\n", ffi_event_count);
-    fprintf(f, "scope_calls: %llu\n", (unsigned long long)ns_profile.scope_calls);
-    fprintf(f, "scope_events: %d\n", scope_event_count);
-    fprintf(f, "timeline_events: %d\n", ns_profile.event_count);
-    fprintf(f, "argv:");
-    for (i32 i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
-    fprintf(f, "\n");
-
-    qsort(ns_profile.events, ns_profile.event_count, sizeof(ns_profile_event), ns_profile_event_cmp);
-
-    fprintf(f, "timeline: kind depth start_ms duration_ms symbol\n");
-    for (i32 i = 0; i < ns_profile.event_count; i++) {
-        ns_profile_event *e = &ns_profile.events[i];
-        if (e->kind == NS_PROFILE_EVENT_SCOPE) {
-            fprintf(f, "scope_event: %d %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms);
-        } else {
-            fprintf(f, "ffi_event: %.3f %.3f ", e->start_ms, e->elapsed_ms);
-        }
-        if (e->lib.len > 0) fprintf(f, "%.*s::", e->lib.len, e->lib.data);
-        fprintf(f, "%.*s\n", e->name.len, e->name.data);
-    }
-    if (ns_profile.events_dropped > 0) {
-        fprintf(f, "timeline_events_dropped: %llu\n", (unsigned long long)ns_profile.events_dropped);
-    }
-
-    // Per-symbol breakdown, hottest first. Columns:
-    //   calls  total_ms  avg_ms  min_ms  max_ms  lib::name
-    qsort(ns_profile.fns, ns_profile.fn_count, sizeof(ns_profile_fn_stat), ns_profile_fn_cmp);
-    fprintf(f, "ffi_table: calls total_ms avg_ms min_ms max_ms symbol\n");
-    for (i32 i = 0; i < ns_profile.fn_count; i++) {
-        ns_profile_fn_stat *s = &ns_profile.fns[i];
-        f64 avg_ms = s->calls ? s->total_ms / (f64)s->calls : 0.0;
-        fprintf(f, "ffi: %llu %.3f %.4f %.4f %.4f ", (unsigned long long)s->calls, s->total_ms, avg_ms, s->min_ms, s->max_ms);
-        if (s->lib.len > 0) fprintf(f, "%.*s::", s->lib.len, s->lib.data);
-        fprintf(f, "%.*s\n", s->name.len, s->name.data);
-    }
-    if (ns_profile.fns_dropped > 0) {
-        fprintf(f, "ffi_dropped: %llu\n", (unsigned long long)ns_profile.fns_dropped);
-    }
+    ns_profile_write_text(f, elapsed_ms, argc, argv);
     fclose(f);
 
-    ns_info("profile", "wrote ns.profile (%.3f ms total, %llu vm scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
-            elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
+    ns_bool json_ok = ns_profile_write_chrome_path("ns.profile.json", elapsed_ms);
+    f64 ffi_ms = ns_profile.ffi_total_ms;
+    f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
+    if (json_ok) {
+        ns_info("profile", "wrote ns.profile and ns.profile.json (%.3f ms total, %llu vm scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
+                elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
+    } else {
+        ns_warn("profile", "wrote ns.profile but failed to write ns.profile.json.\n");
+        ns_info("profile", "wrote ns.profile (%.3f ms total, %llu vm scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
+                elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
+    }
+    ns_profile_print_summary(stdout, elapsed_ms);
 }
 
 static void ns_profile_emit_at_exit(void) {
@@ -314,6 +251,7 @@ static void ns_profile_emit_at_exit(void) {
 }
 
 static void ns_profile_begin(i32 argc, i8 **argv) {
+    ns_profile_reset();
     ns_profile_start_ms = ns_profile_now_ms();
     ns_profile_enable(ns_profile_start_ms);
     ns_profile_argc = argc;
@@ -327,6 +265,9 @@ static void ns_profile_begin(i32 argc, i8 **argv) {
         }
     }
 }
+
+static void ns_exec_profile_view(ns_str filename);
+void ns_exec_run(ns_str filename, i32 port, ns_bool port_set);
 
 void ns_exec_tokenize(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
@@ -2594,7 +2535,7 @@ static ns_str ns_scaffold_readme_text(ns_str name) {
     return s;
 }
 
-static const char *ns_scaffold_gitignore_rules[] = {"bin", ".DS_Store", "*.log", "ns.profile"};
+static const char *ns_scaffold_gitignore_rules[] = {"bin", ".DS_Store", "*.log", "ns.profile", "ns.profile.json"};
 
 static ns_str ns_scaffold_gitignore_text(void) {
     ns_str s = ns_str_null;
@@ -2893,6 +2834,68 @@ void ns_exec_update(ns_str path) {
     ns_str_free(manifest);
     ns_str_free(manifest_path);
     ns_str_free(root);
+}
+
+static ns_bool ns_profile_viewer_at(ns_str app) {
+    ns_str mod = ns_path_join(app, ns_str_cstr("ns.mod"));
+    ns_str entry = ns_path_join(app, ns_str_cstr("main.ns"));
+    ns_bool ok = ns_file_exists(mod) && ns_file_exists(entry);
+    ns_str_free(entry);
+    ns_str_free(mod);
+    return ok;
+}
+
+static ns_str ns_profile_find_viewer(void) {
+    ns_str executable = ns_project_current_executable();
+    ns_str home = ns_path_home();
+    ns_str candidates[4];
+    i32 n = 0;
+    if (executable.data != ns_null) {
+        ns_str bin = ns_path_dirname_safe(executable);
+        ns_str root = ns_path_parent(bin);
+        // Source tree: <repo>/nscode/profile
+        candidates[n++] = ns_path_join(root, ns_str_cstr("nscode/profile"));
+        // `make install`: <prefix>/share/nscode/profile
+        candidates[n++] = ns_path_join(root, ns_str_cstr("share/nscode/profile"));
+    }
+    if (home.data != ns_null) {
+        candidates[n++] = ns_path_join(home, ns_str_cstr("ns/share/nscode/profile"));
+        candidates[n++] = ns_path_join(home, ns_str_cstr("ns/nscode/profile"));
+    }
+    ns_str found = ns_str_null;
+    for (i32 i = 0; i < n; i++) {
+        if (found.data == ns_null && ns_profile_viewer_at(candidates[i])) {
+            found = candidates[i];
+        } else {
+            ns_str_free(candidates[i]);
+        }
+    }
+    return found;
+}
+
+static void ns_exec_profile_view(ns_str filename) {
+    const char *path = "ns.profile";
+    char path_buf[1024];
+    if (filename.len > 0) {
+        i32 n = filename.len < (i32)sizeof(path_buf) - 1 ? filename.len : (i32)sizeof(path_buf) - 1;
+        memcpy(path_buf, filename.data, (size_t)n);
+        path_buf[n] = 0;
+        path = path_buf;
+    }
+#if defined(_WIN32)
+    _putenv_s("NS_PROFILE_FILE", path);
+#else
+    setenv("NS_PROFILE_FILE", path, 1);
+#endif
+
+    ns_str app = ns_profile_find_viewer();
+    if (app.data == ns_null) {
+        ns_warn("profile", "native viewer not found; open ns.profile.json in https://ui.perfetto.dev\n");
+        return;
+    }
+    ns_info("profile", "opening viewer for %s\n", path);
+    ns_exec_run(app, 0, false);
+    ns_str_free(app);
 }
 
 void ns_exec_run(ns_str filename, i32 port, ns_bool port_set) {
@@ -3380,7 +3383,11 @@ i32 main(i32 argc, i8** argv) {
 
     ns_configure_vm_runtime_paths(&vm);
 
-    if (option.run) {
+    if (option.profile_view) {
+        ns_exec_profile_view(option.filename);
+    } else if (option.profile_cmd) {
+        ns_exec_run(option.filename, option.port, option.port_set);
+    } else if (option.run) {
         ns_exec_run(option.filename, option.port, option.port_set);
     } else if (option.test) {
         ns_exec_test(option.filename);
