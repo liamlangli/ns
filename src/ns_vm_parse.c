@@ -40,6 +40,48 @@ ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s) {
     return ns_null;
 }
 
+i32 ns_simd_vector_dim(ns_vm *vm, ns_type t) {
+    if (!ns_type_is(t, NS_TYPE_STRUCT)) return 0;
+    ns_symbol *s = &vm->symbols[ns_type_index(t)];
+    if (s->type != NS_SYMBOL_STRUCT || !ns_str_equals(s->lib, ns_str_cstr("simd"))) return 0;
+    if (ns_str_equals(s->name, ns_str_cstr("float2"))) return 2;
+    if (ns_str_equals(s->name, ns_str_cstr("float3"))) return 3;
+    if (ns_str_equals(s->name, ns_str_cstr("float4"))) return 4;
+    return 0;
+}
+
+ns_type ns_simd_type_for_dim(ns_vm *vm, i32 dim) {
+    const char *name = dim == 2 ? "float2" : dim == 3 ? "float3" : dim == 4 ? "float4" : ns_null;
+    if (!name) return ns_type_unknown;
+    ns_symbol *s = ns_vm_find_symbol(vm, ns_str_cstr(name), false);
+    return s && s->type == NS_SYMBOL_STRUCT ? s->st.st.t : ns_type_unknown;
+}
+
+i32 ns_simd_swizzle(ns_vm *vm, ns_type src, ns_str field, i32 out_idx[4]) {
+    i32 src_dim = ns_simd_vector_dim(vm, src);
+    if (src_dim <= 0 || field.len < 1 || field.len > 4) return 0;
+    i8 first = field.data[0];
+    ns_bool rgb = first == 'r' || first == 'g' || first == 'b' || first == 'a';
+    for (i32 i = 0; i < field.len; ++i) {
+        i32 idx = -1;
+        i8 c = field.data[i];
+        if (rgb) {
+            if (c == 'r') idx = 0;
+            else if (c == 'g') idx = 1;
+            else if (c == 'b') idx = 2;
+            else if (c == 'a') idx = 3;
+        } else {
+            if (c == 'x') idx = 0;
+            else if (c == 'y') idx = 1;
+            else if (c == 'z') idx = 2;
+            else if (c == 'w') idx = 3;
+        }
+        if (idx < 0 || idx >= src_dim) return 0;
+        if (out_idx) out_idx[i] = idx;
+    }
+    return field.len;
+}
+
 ns_bool ns_type_match(ns_vm *vm, ns_type r, ns_type p) {
     if (ns_type_is(r, NS_TYPE_ANY)) return true; // an `any` slot accepts every provided type
     if (ns_type_equals(r, p)) return true;
@@ -1613,6 +1655,20 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                 return ns_return_ok(type, f->t);
             }
         }
+        i32 swizzle = ns_simd_swizzle(vm, t, name, ns_null);
+        if (swizzle == 1) {
+            n->member_expr.rt.kind = NS_MEMBER_CACHE_SWIZZLE;
+            n->member_expr.rt.index = 1;
+            return ns_return_ok(type, ns_type_f32);
+        }
+        if (swizzle >= 2) {
+            ns_type st = ns_simd_type_for_dim(vm, swizzle);
+            if (!ns_type_is_unknown(st)) {
+                n->member_expr.rt.kind = NS_MEMBER_CACHE_SWIZZLE;
+                n->member_expr.rt.index = swizzle;
+                return ns_return_ok(type, st);
+            }
+        }
         return ns_return_error(type, ns_ast_state_loc(ctx, field.state), NS_ERR_EVAL, "unknown member.");
     }
     return ns_vm_parse_expr(vm, ctx, n->member_expr.right, ns_type_infer);
@@ -1746,10 +1802,9 @@ ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_token_t op = n->unary_expr.op;
     switch (op.type) {
     case NS_TOKEN_ADD_OP:
-        if (!ns_type_is_number(numeric)) {
-            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "unary expr type mismatch.", "number", t));
-        }
-        return ns_return_ok(type, numeric);
+        if (ns_type_is_number(numeric)) return ns_return_ok(type, numeric);
+        if (ns_str_equals_STR(op.val, "-") && ns_simd_vector_dim(vm, t) > 0) return ns_return_ok(type, t);
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_vm_type_mismatch_label_msg(vm, "unary expr type mismatch.", "number", t));
     case NS_TOKEN_CMP_OP:       // logical not: !bool -> bool
         if (!ns_type_is(t, NS_TYPE_BOOL)) {
             return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "logical not requires a bool operand.");
@@ -2007,6 +2062,14 @@ ns_return_type ns_vm_parse_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_ast_t *n = &ctx->nodes[i];
     ns_return_type ret_l = ns_vm_parse_expr(vm, ctx, n->binary_expr.left, ns_type_infer);
     if (ns_return_is_error(ret_l)) return ret_l;
+    {
+        i32 left = n->binary_expr.left;
+        while (ctx->nodes[left].type == NS_AST_EXPR) left = ctx->nodes[left].expr.body;
+        if (ctx->nodes[left].type == NS_AST_MEMBER_EXPR && ctx->nodes[left].member_expr.rt.kind == NS_MEMBER_CACHE_SWIZZLE) {
+            return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL,
+                                   "cannot assign to a simd swizzle.");
+        }
+    }
     ns_token_t *root = ns_vm_assign_root(ctx, n->binary_expr.left);
     if (root) {
         ns_symbol *s = ns_vm_find_symbol(vm, root->val, false);

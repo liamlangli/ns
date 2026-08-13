@@ -656,10 +656,11 @@ ns_return_value ns_eval_binary_override(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, 
     ns_symbol r_arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->fn.args[1].name, .val = r};
     ns_array_push(vm->symbol_stack, r_arg);
 
-    ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
+    ns_fn_symbol *ops = ns_symbol_get_fn(fn);
+    ns_ast_ctx *fn_ctx = ops->ctx ? ops->ctx : ctx;
     f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
     i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
-    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->ops_fn_def.body);
+    ns_return_void ret = ns_eval_compound_stmt(vm, fn_ctx, ops->body);
     ns_eval_profile_scope_end(fn, profile_depth, profile_start_ms);
     if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
     call = ns_array_pop(vm->call_stack);
@@ -1554,8 +1555,9 @@ ns_return_value ns_eval_call_ops_fn(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_value 
     ns_array_push(vm->symbol_stack, r_arg);
 
     ns_array_push(vm->call_stack, call);
-    ns_ast_t *fn_ast = &ctx->nodes[fn->fn.ast];
-    ns_return_void ret = ns_eval_compound_stmt(vm, ctx, fn_ast->ops_fn_def.body);
+    ns_fn_symbol *ops = ns_symbol_get_fn(fn);
+    ns_ast_ctx *fn_ctx = ops->ctx ? ops->ctx : ctx;
+    ns_return_void ret = ns_eval_compound_stmt(vm, fn_ctx, ops->body);
     if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
 
     call = ns_array_pop(vm->call_stack);
@@ -1616,7 +1618,7 @@ ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_va
         }
         ns_str l_t = ns_vm_get_type_name(vm, l.t);
         ns_str r_t = ns_vm_get_type_name(vm, r.t);
-        ns_str fn_name = ns_ops_override_name(l_t, r_t, n->ops_fn_def.ops);
+        ns_str fn_name = ns_ops_override_name(l_t, r_t, n->binary_expr.op);
         ns_symbol *fn = ns_vm_find_symbol(vm, fn_name, false);
         if (fn) {
             return ns_eval_call_ops_fn(vm, ctx, i, l, r, fn);
@@ -2141,6 +2143,28 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (field->type == NS_AST_MEMBER_EXPR) {
         return ns_eval_member_expr(vm, ctx, n->member_expr.right);
     }
+    if (field->type == NS_AST_PRIMARY_EXPR && ns_simd_vector_dim(vm, st.t) > 0) {
+        i32 idx[4];
+        i32 dest_dim = ns_simd_swizzle(vm, st.t, field->primary_expr.token.val, idx);
+        ns_bool known_field = ns_struct_field_index(&vm->symbols[ns_type_index(st.t)], field->primary_expr.token.val) >= 0;
+        if (dest_dim > 0 && (n->member_expr.rt.kind == NS_MEMBER_CACHE_SWIZZLE || !known_field)) {
+            i8 *src = ns_type_in_stack(st.t) ? &vm->stack[st.o] : (i8 *)(uintptr_t)st.o;
+            if (dest_dim == 1) {
+                ns_value ret = {.t = ns_type_f32, .f32 = ((f32 *)src)[idx[0]]};
+                return ns_return_ok(value, ret);
+            }
+            ns_type dt = ns_simd_type_for_dim(vm, dest_dim);
+            if (ns_type_is_unknown(dt)) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown simd swizzle type.");
+            }
+            i32 size = dest_dim * (i32)sizeof(f32);
+            u64 dest = ns_eval_alloc(vm, size);
+            f32 *out = (f32 *)&vm->stack[dest];
+            for (i32 c = 0; c < dest_dim; ++c) out[c] = ((f32 *)src)[idx[c]];
+            ns_value ret = {.t = ns_type_set_stack(dt, true), .o = dest};
+            return ns_return_ok(value, ret);
+        }
+    }
 
     if (ns_type_is_array(st.t)) {
         void *data = ns_eval_array_data(vm, st);
@@ -2216,6 +2240,28 @@ ns_return_value ns_eval_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         return ns_return_ok(value, val);
     }
 
+    if (field->type == NS_AST_PRIMARY_EXPR) {
+        i32 idx[4];
+        i32 dest_dim = ns_simd_swizzle(vm, st.t, field->primary_expr.token.val, idx);
+        if (dest_dim > 0) {
+            i8 *src = ns_type_in_stack(st.t) ? &vm->stack[st.o] : (i8 *)(uintptr_t)st.o;
+            if (dest_dim == 1) {
+                ns_value ret = {.t = ns_type_f32, .f32 = ((f32 *)src)[idx[0]]};
+                return ns_return_ok(value, ret);
+            }
+            ns_type dt = ns_simd_type_for_dim(vm, dest_dim);
+            if (ns_type_is_unknown(dt)) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown simd swizzle type.");
+            }
+            i32 size = dest_dim * (i32)sizeof(f32);
+            u64 dest = ns_eval_alloc(vm, size);
+            f32 *out = (f32 *)&vm->stack[dest];
+            for (i32 c = 0; c < dest_dim; ++c) out[c] = ((f32 *)src)[idx[c]];
+            ns_value ret = {.t = ns_type_set_stack(dt, true), .o = dest};
+            return ns_return_ok(value, ret);
+        }
+    }
+
     return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unknown struct field.");
 }
 
@@ -2231,6 +2277,16 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_token_t op = n->unary_expr.op;
     switch (op.type) {
     case NS_TOKEN_ADD_OP:
+        if (ns_str_equals_STR(op.val, "-") && ns_simd_vector_dim(vm, v.t) > 0) {
+            i32 dim = ns_simd_vector_dim(vm, v.t);
+            i32 size = dim * (i32)sizeof(f32);
+            i8 *src = ns_type_in_stack(v.t) ? &vm->stack[v.o] : (i8 *)(uintptr_t)v.o;
+            u64 dest = ns_eval_alloc(vm, size);
+            f32 *out = (f32 *)&vm->stack[dest];
+            for (i32 c = 0; c < dim; ++c) out[c] = -((f32 *)src)[c];
+            ns_value ret = {.t = ns_type_set_stack(v.t, true), .o = dest};
+            return ns_return_ok(value, ret);
+        }
         if (!ns_type_is_number(v.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_label_msg(vm, "unary expr type mismatch.", "number", v.t));
         }

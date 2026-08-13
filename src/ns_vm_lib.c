@@ -212,9 +212,9 @@ ns_lib* ns_lib_import(ns_vm *vm, ns_str lib_name) {
     vm->lib = prev;
     vm->symbol_gen++;
 
-    // std, shader and task are VM-internal (dispatched in the interpreter, no dylib)
-    if (ns_str_equals(lib_name, ns_str_cstr("std")) || ns_str_equals(lib_name, ns_str_cstr("shader")) ||
-        ns_str_equals(lib_name, ns_str_cstr("task"))) {
+    // std, simd, shader and task are VM-internal (interpreted ns, no dylib)
+    if (ns_str_equals(lib_name, ns_str_cstr("std")) || ns_str_equals(lib_name, ns_str_cstr("simd")) ||
+        ns_str_equals(lib_name, ns_str_cstr("shader")) || ns_str_equals(lib_name, ns_str_cstr("task"))) {
         vm->libs[lib_index].path = ns_str_null;
         vm->libs[lib_index].lib = ns_null;
         return &vm->libs[lib_index];

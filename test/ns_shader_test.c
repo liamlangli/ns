@@ -133,6 +133,18 @@ static const char *ns_shader_test_src =
     "    shader_buffer_store_i32(1, index, shader_buffer_i32(1, index) + 11)\n"
     "    shader_buffer_store_i32(7, index, shader_buffer_i32(7, index) + 13)\n"
     "}\n"
+    "fn cs_simd() void {\n"
+    "    let a = float3 { 1.0, 2.0, 3.0 }\n"
+    "    let b = float3 { 4.0, 5.0, 6.0 }\n"
+    "    let sum = a + b\n"
+    "    let scaled = sum * 0.5\n"
+    "    let n = normalize(scaled)\n"
+    "    let d = dot(n, b)\n"
+    "    let c = cross(a, b)\n"
+    "    let mixed = mix(a, b, 0.25)\n"
+    "    let rgb = float4 { 0.1, 0.2, 0.3, 1.0 }.xyz\n"
+    "    shader_write_texture(0, 0, float4 { d, c.x, n.y, mixed.z + rgb.x + scaled.z })\n"
+    "}\n"
     "fn bad_print(data: FragmentInput) float4 {\n"
     "    print(\"no\")\n"
     "    return data.color\n"
@@ -200,6 +212,28 @@ int main() {
                   "}\n"),
               "simd exposes snake-case float vectors, quatf, and mat4.");
 
+    ns_expect(ns_shader_eval_bool(
+                  "use simd\n"
+                  "fn main() bool {\n"
+                  "    let a = float3 { 1.0, 2.0, 3.0 }\n"
+                  "    let b = float3 { 4.0, 5.0, 6.0 }\n"
+                  "    let s = a + b\n"
+                  "    let p = a * 2.0\n"
+                  "    let q = 3.0 * a\n"
+                  "    let n = -a\n"
+                  "    let xy = a.xy\n"
+                  "    let d = dot(a, b)\n"
+                  "    let i = float3 { 1.0, 0.0, 0.0 }\n"
+                  "    let j = float3 { 0.0, 1.0, 0.0 }\n"
+                  "    let c = cross(i, j)\n"
+                  "    return s.x == 5.0 && s.y == 7.0 && s.z == 9.0 && p.x == 2.0 && q.z == 9.0 &&\n"
+                  "           n.x == -1.0 && n.y == -2.0 && n.z == -3.0 && xy.x == 1.0 && xy.y == 2.0 &&\n"
+                  "           d == 32.0 && c.x == 0.0 && c.y == 0.0 && c.z == 1.0 &&\n"
+                  "           min(3.0, 1.0) == 1.0 && max(3.0, 1.0) == 3.0 && abs(-2.0) == 2.0 &&\n"
+                  "           clamp(1.5, 0.0, 1.0) == 1.0\n"
+                  "}\n"),
+              "simd operators, swizzles, and math fns evaluate on the host.");
+
     ns_vm vm = {0};
     ns_ast_ctx ctx = {0};
     ns_return_bool parsed = ns_ast_parse(&ctx, ns_str_cstr((i8 *)ns_shader_test_src), ns_str_cstr("<ns_shader_test>"));
@@ -216,7 +250,9 @@ int main() {
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
     i32 cs_texture = ns_shader_test_fn(&vm, "cs_texture");
     i32 cs_buffer = ns_shader_test_fn(&vm, "cs_buffer");
-    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && cs >= 0 && cs_texture >= 0 && cs_buffer >= 0,
+    i32 cs_simd = ns_shader_test_fn(&vm, "cs_simd");
+    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && cs >= 0 && cs_texture >= 0 && cs_buffer >= 0 &&
+                  cs_simd >= 0,
               "shader entry symbols exist.");
 
     // --- target/stage helpers ---
@@ -286,6 +322,28 @@ int main() {
                       ns_shader_test_has(r.r, "ns_storage_buffer_1[index] =") &&
                       ns_shader_test_has(r.r, "@group(0) @binding(14) var<storage, read_write> ns_storage_buffer_7"),
                   "wgsl storage-buffer intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- SIMD operators and math fns lower to native vector ops ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, cs_simd, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "(a + b)") && ns_shader_test_has(r.r, "* 0.5") &&
+                      ns_shader_test_has(r.r, "normalize(") && ns_shader_test_has(r.r, "dot(") &&
+                      ns_shader_test_has(r.r, "cross(") && ns_shader_test_has(r.r, "mix(") &&
+                      ns_shader_test_has(r.r, ".xyz") && !ns_shader_test_has(r.r, "a.x + b.x"),
+                  "msl simd operators and math fns emit native vector ops.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_simd, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "(a + b)") && ns_shader_test_has(r.r, "normalize(") &&
+                      ns_shader_test_has(r.r, "dot(") && ns_shader_test_has(r.r, "mix("),
+                  "wgsl simd operators and math fns emit native vector ops.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, cs_simd, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "lerp(") && ns_shader_test_has(r.r, "(a + b)"),
+                  "hlsl mix lowers to lerp and keeps vector arithmetic.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

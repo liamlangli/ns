@@ -77,6 +77,7 @@ typedef enum {
     NS_MEMBER_CACHE_LEN,
     NS_MEMBER_CACHE_CAP,
     NS_MEMBER_CACHE_STRUCT,
+    NS_MEMBER_CACHE_SWIZZLE,
 } ns_member_cache_kind;
 
 typedef enum {

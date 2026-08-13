@@ -1,5 +1,13 @@
 mod simd
 
+use std
+
+// Concrete float vectors. ns_shader lowers these structs to the target's
+// native vector types (floatN / vecN). Arithmetic is overloaded below so
+// `a + b` and `v * s` stay binary expressions; the transpiler emits them as
+// native SIMD ops instead of component-wise helpers. Named fns (dot, cross,
+// normalize, length, ...) match the shader builtin table in ns_shader.c.
+
 struct float2 {
     x: f32,
     y: f32
@@ -27,3 +35,171 @@ struct mat4 {
     col3: float4
 }
 
+fn ops(+)(a: float2, b: float2) float2 {
+    return float2 { a.x + b.x, a.y + b.y }
+}
+
+fn ops(-)(a: float2, b: float2) float2 {
+    return float2 { a.x - b.x, a.y - b.y }
+}
+
+fn ops(*)(a: float2, b: float2) float2 {
+    return float2 { a.x * b.x, a.y * b.y }
+}
+
+fn ops(/)(a: float2, b: float2) float2 {
+    return float2 { a.x / b.x, a.y / b.y }
+}
+
+fn ops(+)(a: float2, s: f32) float2 {
+    return float2 { a.x + s, a.y + s }
+}
+
+fn ops(-)(a: float2, s: f32) float2 {
+    return float2 { a.x - s, a.y - s }
+}
+
+fn ops(*)(a: float2, s: f32) float2 {
+    return float2 { a.x * s, a.y * s }
+}
+
+fn ops(/)(a: float2, s: f32) float2 {
+    return float2 { a.x / s, a.y / s }
+}
+
+fn ops(+)(s: f32, a: float2) float2 {
+    return float2 { s + a.x, s + a.y }
+}
+
+fn ops(*)(s: f32, a: float2) float2 {
+    return float2 { s * a.x, s * a.y }
+}
+
+fn ops(+)(a: float3, b: float3) float3 {
+    return float3 { a.x + b.x, a.y + b.y, a.z + b.z }
+}
+
+fn ops(-)(a: float3, b: float3) float3 {
+    return float3 { a.x - b.x, a.y - b.y, a.z - b.z }
+}
+
+fn ops(*)(a: float3, b: float3) float3 {
+    return float3 { a.x * b.x, a.y * b.y, a.z * b.z }
+}
+
+fn ops(/)(a: float3, b: float3) float3 {
+    return float3 { a.x / b.x, a.y / b.y, a.z / b.z }
+}
+
+fn ops(+)(a: float3, s: f32) float3 {
+    return float3 { a.x + s, a.y + s, a.z + s }
+}
+
+fn ops(-)(a: float3, s: f32) float3 {
+    return float3 { a.x - s, a.y - s, a.z - s }
+}
+
+fn ops(*)(a: float3, s: f32) float3 {
+    return float3 { a.x * s, a.y * s, a.z * s }
+}
+
+fn ops(/)(a: float3, s: f32) float3 {
+    return float3 { a.x / s, a.y / s, a.z / s }
+}
+
+fn ops(+)(s: f32, a: float3) float3 {
+    return float3 { s + a.x, s + a.y, s + a.z }
+}
+
+fn ops(*)(s: f32, a: float3) float3 {
+    return float3 { s * a.x, s * a.y, s * a.z }
+}
+
+fn ops(+)(a: float4, b: float4) float4 {
+    return float4 { a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w }
+}
+
+fn ops(-)(a: float4, b: float4) float4 {
+    return float4 { a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w }
+}
+
+fn ops(*)(a: float4, b: float4) float4 {
+    return float4 { a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w }
+}
+
+fn ops(/)(a: float4, b: float4) float4 {
+    return float4 { a.x / b.x, a.y / b.y, a.z / b.z, a.w / b.w }
+}
+
+fn ops(+)(a: float4, s: f32) float4 {
+    return float4 { a.x + s, a.y + s, a.z + s, a.w + s }
+}
+
+fn ops(-)(a: float4, s: f32) float4 {
+    return float4 { a.x - s, a.y - s, a.z - s, a.w - s }
+}
+
+fn ops(*)(a: float4, s: f32) float4 {
+    return float4 { a.x * s, a.y * s, a.z * s, a.w * s }
+}
+
+fn ops(/)(a: float4, s: f32) float4 {
+    return float4 { a.x / s, a.y / s, a.z / s, a.w / s }
+}
+
+fn ops(+)(s: f32, a: float4) float4 {
+    return float4 { s + a.x, s + a.y, s + a.z, s + a.w }
+}
+
+fn ops(*)(s: f32, a: float4) float4 {
+    return float4 { s * a.x, s * a.y, s * a.z, s * a.w }
+}
+
+fn min(a: f32, b: f32) f32 {
+    if a < b { return a }
+    return b
+}
+
+fn max(a: f32, b: f32) f32 {
+    if a > b { return a }
+    return b
+}
+
+fn clamp(value: f32, lo: f32, hi: f32) f32 {
+    return min(hi, max(lo, value))
+}
+
+fn abs(value: f32) f32 {
+    if value < 0.0 { return 0.0 - value }
+    return value
+}
+
+fn lerp(a: f32, b: f32, t: f32) f32 {
+    return a + (b - a) * t
+}
+
+fn mix(a: float3, b: float3, t: f32) float3 {
+    return a * (1.0 - t) + b * t
+}
+
+fn dot(a: float3, b: float3) f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn cross(a: float3, b: float3) float3 {
+    return float3 { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x }
+}
+
+fn length(v: float3) f32 {
+    return sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as f64) as f32
+}
+
+fn distance(a: float3, b: float3) f32 {
+    return length(a - b)
+}
+
+fn normalize(v: float3) float3 {
+    let len = length(v)
+    if len < 0.000001 { return float3 { 0.0, 1.0, 0.0 } }
+    return v * (1.0 / len)
+}

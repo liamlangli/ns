@@ -224,6 +224,11 @@ i32 ns_vm_get_last_call(ns_vm *vm);
 ns_symbol* ns_vm_find_symbol(ns_vm *vm, ns_str s, ns_bool capture);
 ns_symbol* ns_vm_find_symbol_cached(ns_vm *vm, ns_str s, ns_sym_cache *c); // eval-only, no capture
 ns_fn_symbol* ns_symbol_get_fn(ns_symbol *s);
+// simd float2/3/4: component count, or 0. Swizzle fills out_idx[0..n) with
+// source component indices (xyzw or rgba) and returns the dest width, or 0.
+i32 ns_simd_vector_dim(ns_vm *vm, ns_type t);
+i32 ns_simd_swizzle(ns_vm *vm, ns_type src, ns_str field, i32 out_idx[4]);
+ns_type ns_simd_type_for_dim(ns_vm *vm, i32 dim);
 ns_return_bool ns_vm_parse(ns_vm *vm, ns_ast_ctx *ctx);
 ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t);
 ns_return_type ns_vm_parse_type(ns_vm *vm, ns_ast_ctx *ctx, ns_ast_t *n);

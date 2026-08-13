@@ -6,6 +6,12 @@
 // shader subset of ns is accepted: scalars, simd vectors (float2/3/4 and mat4), user
 // structs, arithmetic/logic, if/for/loop and calls to other user fns. Anything
 // else produces a source-located error instead of silently emitting bad code.
+//
+// SIMD: float2/3/4 map to native vectors. Binary operators stay operators in
+// the AST (`a + b`, `v * s`) and are emitted as native SIMD ops. Calls whose
+// names are in ns_shader_builtins (dot, cross, normalize, length, mix, min,
+// max, clamp, abs, ...) become the target's matching intrinsic rather than
+// the host-side simd.ns body. Swizzles such as `.xyz` pass through as-is.
 
 #define NS_SHADER_MAX_DEPTH 64
 // Local arrays live in a shader's register/stack budget, so the length stays
@@ -554,6 +560,9 @@ static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
         for (i32 f = 0, l = (i32)ns_array_length(s->st.fields); f < l; ++f) {
             if (ns_str_equals(s->st.fields[f].name, r->primary_expr.token.val)) return s->st.fields[f].t;
         }
+        i32 swizzle = ns_simd_swizzle(e->vm, lt, r->primary_expr.token.val, ns_null);
+        if (swizzle == 1) return ns_type_f32;
+        if (swizzle >= 2) return ns_simd_type_for_dim(e->vm, swizzle);
         return ns_type_unknown;
     }
     case NS_AST_CALL_EXPR: {
