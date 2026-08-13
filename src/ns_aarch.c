@@ -294,7 +294,9 @@ static i32 ns_aarch_load_size(ns_type t) {
     if (ns_type_is(t, NS_TYPE_U8)) return -1;
     if (ns_type_is(t, NS_TYPE_I16)) return 2;
     if (ns_type_is(t, NS_TYPE_U16)) return -2;
-    if (ns_type_is(t, NS_TYPE_I64) || ns_type_is(t, NS_TYPE_U64) || ns_type_is(t, NS_TYPE_F64)) return 8;
+    if (ns_type_is_ref(t) || ns_type_is(t, NS_TYPE_ANY) ||
+        ns_type_is(t, NS_TYPE_I64) || ns_type_is(t, NS_TYPE_U64) ||
+        ns_type_is(t, NS_TYPE_F64)) return 8;
     if (ns_type_is(t, NS_TYPE_F32)) return 4;
     return 4;
 }
@@ -776,39 +778,23 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             ns_ssa_import *im = ns_aarch_find_import(c, inst->module, inst->name);
             i32 args[NS_AARCH_EXTRA_MAX + 8];
             i32 nargs = ns_aarch_collect_call_args(c, inst, args, NS_AARCH_EXTRA_MAX + 8);
-            i32 igpr = 0;
-            i32 fpr = 0;
+            i32 dest_reg[NS_AARCH_EXTRA_MAX + 8];
             i32 stack_n = 0;
             i32 stack_args[NS_AARCH_EXTRA_MAX];
+            i32 igpr = 0;
+            i32 fpr = 0;
+            for (i32 ai = 0; ai < nargs; ++ai) dest_reg[ai] = -1;
             for (i32 ai = 0; ai < nargs; ++ai) {
                 ns_type at = ns_type_unknown;
                 if (im && ai < (i32)ns_array_length(im->params)) at = im->params[ai];
                 else at = ns_aarch_value_type(c->fn, args[ai]);
-                ns_bool is_float = ns_aarch_is_float(at);
-                ns_bool is_str = ns_aarch_is_string(at) && !ns_type_is_array(at);
-                ns_bool is_ref = ns_type_is_ref(at);
-                if (is_float && fpr < 8) {
-                    ns_aarch_load_value(c, NS_AARCH_X9, args[ai]);
-                    ns_aarch_emit_u32(c, ns_aarch_fmov_dx(fpr, NS_AARCH_X9,
-                                                          ns_type_is(at, NS_TYPE_F64)));
+                if (ns_aarch_is_float(at) && fpr < 8) {
+                    dest_reg[ai] = 8 + fpr;
                     fpr++;
                     continue;
                 }
-                i32 dest = -1;
-                if (igpr < 8) dest = igpr++;
+                if (igpr < 8) dest_reg[ai] = igpr++;
                 else stack_args[stack_n++] = args[ai];
-                if (dest < 0) continue;
-                if (is_str) {
-                    ns_aarch_load_value(c, NS_AARCH_X0, args[ai]);
-                    ns_aarch_emit_rt_call(c, "ns_rt_to_cstr");
-                    if (dest != 0) ns_aarch_emit_u32(c, 0xAA0003E0u | ((u32)dest)); /* MOV Xd, X0 */
-                } else if (is_ref) {
-                    ns_aarch_load_value(c, NS_AARCH_X0, args[ai]);
-                    ns_aarch_emit_rt_call(c, "ns_rt_native_ptr");
-                    if (dest != 0) ns_aarch_emit_u32(c, 0xAA0003E0u | ((u32)dest));
-                } else {
-                    ns_aarch_load_value(c, dest, args[ai]);
-                }
             }
             if (stack_n > 0) {
                 space = (stack_n * 8 + 15) & ~15;
@@ -818,9 +804,56 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                     ns_aarch_emit_u32(c, ns_aarch_sub_sp_ext(NS_AARCH_X9));
                 }
                 for (i32 ei = 0; ei < stack_n; ++ei) {
-                    ns_aarch_load_value(c, NS_AARCH_X9, stack_args[ei]);
+                    ns_type st = ns_aarch_value_type(c->fn, stack_args[ei]);
+                    ns_bool is_str = ns_aarch_is_string(st) && !ns_type_is_array(st);
+                    ns_bool is_ref = ns_type_is_ref(st);
+                    if (is_str || is_ref) {
+                        ns_aarch_load_value(c, NS_AARCH_X0, stack_args[ei]);
+                        ns_aarch_emit_rt_call(c, is_str ? "ns_rt_to_cstr" : "ns_rt_native_ptr");
+                        ns_aarch_emit_u32(c, 0xAA0003E9u); /* MOV X9, X0 */
+                    } else {
+                        ns_aarch_load_value(c, NS_AARCH_X9, stack_args[ei]);
+                    }
                     ns_aarch_emit_u32(c, 0xF9000000u | (((u32)ei & 0xFFFu) << 10) |
                         ((u32)NS_AARCH_SP << 5) | (u32)NS_AARCH_X9);
+                }
+            }
+            // str/ref helpers return in x0. Fill dest!=x0 first, dest==x0 last,
+            // so a later conversion cannot wipe gpu_malloc's size in x0.
+            for (i32 pass = 0; pass < 2; ++pass) {
+                for (i32 ai = 0; ai < nargs; ++ai) {
+                    ns_type at = ns_type_unknown;
+                    if (im && ai < (i32)ns_array_length(im->params)) at = im->params[ai];
+                    else at = ns_aarch_value_type(c->fn, args[ai]);
+                    ns_bool is_str = ns_aarch_is_string(at) && !ns_type_is_array(at);
+                    ns_bool is_ref = ns_type_is_ref(at);
+                    if (!is_str && !is_ref) continue;
+                    i32 dest = dest_reg[ai];
+                    if (dest < 0) continue;
+                    ns_bool dest_x0 = dest == 0;
+                    if (pass == 0 && dest_x0) continue;
+                    if (pass == 1 && !dest_x0) continue;
+                    ns_aarch_load_value(c, NS_AARCH_X0, args[ai]);
+                    ns_aarch_emit_rt_call(c, is_str ? "ns_rt_to_cstr" : "ns_rt_native_ptr");
+                    if (dest > 0 && dest < 8) {
+                        ns_aarch_emit_u32(c, 0xAA0003E0u | ((u32)dest)); /* MOV Xd, X0 */
+                    }
+                }
+            }
+            for (i32 ai = 0; ai < nargs; ++ai) {
+                ns_type at = ns_type_unknown;
+                if (im && ai < (i32)ns_array_length(im->params)) at = im->params[ai];
+                else at = ns_aarch_value_type(c->fn, args[ai]);
+                ns_bool is_str = ns_aarch_is_string(at) && !ns_type_is_array(at);
+                ns_bool is_ref = ns_type_is_ref(at);
+                if (is_str || is_ref) continue;
+                i32 dest = dest_reg[ai];
+                if (dest >= 8) {
+                    ns_aarch_load_value(c, NS_AARCH_X9, args[ai]);
+                    ns_aarch_emit_u32(c, ns_aarch_fmov_dx(dest - 8, NS_AARCH_X9,
+                                                          ns_type_is(at, NS_TYPE_F64)));
+                } else if (dest >= 0) {
+                    ns_aarch_load_value(c, dest, args[ai]);
                 }
             }
             u32 bl_off = (u32)ns_array_length(c->text);
@@ -977,7 +1010,10 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         }
         ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
         ns_aarch_emit_const_u64(c, 1, (u64)(u32)inst->c);
-        ns_aarch_emit_const_u64(c, 2, (u64)(u32)ns_aarch_load_size(inst->type));
+        {
+            i32 size = inst->target0 > 0 ? inst->target0 : ns_aarch_load_size(inst->type);
+            ns_aarch_emit_const_u64(c, 2, (u64)(u32)size);
+        }
         ns_aarch_emit_rt_call(c, "ns_rt_load");
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
     } break;
