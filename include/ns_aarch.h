@@ -4,8 +4,9 @@
 #include "asm/ns_asm.h"
 
 typedef struct ns_aarch_call_fixup {
-    u32 off;       /* byte offset of BL instruction in fn->text */
+    u32 off;       /* BL: byte offset of the instruction; ABS64: offset of the quad */
     ns_str callee; /* name of the callee function */
+    u8 kind;       /* 0 = BL imm26, 1 = ABS64 address */
 } ns_aarch_call_fixup;
 
 typedef struct ns_aarch_fn_bin {

@@ -48,6 +48,7 @@ typedef enum {
     NS_SSA_OP_JMP,
     NS_SSA_OP_RET,
     NS_SSA_OP_TRAP,
+    NS_SSA_OP_FNADDR,
 } ns_ssa_op;
 
 typedef struct ns_ssa_phi_edge {

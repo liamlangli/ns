@@ -35,7 +35,10 @@
 #define NS_MACHO_N_UNDF 0x00
 #define NS_MACHO_N_SECT 0x0e
 #define NS_MACHO_N_EXT 0x01
+#define NS_MACHO_ARM64_RELOC_UNSIGNED 0
 #define NS_MACHO_ARM64_RELOC_BRANCH26 2
+#define NS_MACHO_ARM64_RELOC_PAGE21 3
+#define NS_MACHO_ARM64_RELOC_PAGEOFF12 4
 
 typedef struct {
     i32 r_address;
@@ -365,19 +368,26 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     }
     u64 code_size = code_cursor - text_offset;
 
-    /* Collect BL targets that are not defined in this module. */
+    /* Collect undefined names and every relocation (external BL + all ABS64). */
     ns_str *undef_names = ns_null;
-    typedef struct { i32 fi; i32 ci; i32 sym; } ns_macho_ext_call;
+    typedef struct { i32 fi; i32 ci; i32 sym; u8 kind; ns_bool ext; } ns_macho_ext_call;
     ns_macho_ext_call *ext_calls = ns_null;
     for (i32 fi = 0; fi < nfns; ++fi) {
         ns_aarch_fn_bin *fn = &aarch->fns[fi];
         for (i32 ci = 0, ncf = (i32)ns_array_length(fn->call_fixups); ci < ncf; ++ci) {
-            ns_str callee = fn->call_fixups[ci].callee;
+            ns_aarch_call_fixup *cf = &fn->call_fixups[ci];
+            ns_str callee = cf->callee;
             i32 local = -1;
             for (i32 k = 0; k < nfns; ++k) {
                 if (ns_str_equals(aarch->fns[k].name, callee)) { local = k; break; }
             }
-            if (local >= 0) continue;
+            if (local >= 0) {
+                if (cf->kind == 1) {
+                    ns_macho_ext_call ec = {.fi = fi, .ci = ci, .sym = local, .kind = 1, .ext = false};
+                    ns_array_push(ext_calls, ec);
+                }
+                continue;
+            }
             i32 ui = -1;
             for (i32 u = 0, ul = (i32)ns_array_length(undef_names); u < ul; ++u) {
                 if (ns_str_equals(undef_names[u], callee)) { ui = u; break; }
@@ -386,12 +396,15 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
                 ui = (i32)ns_array_length(undef_names);
                 ns_array_push(undef_names, callee);
             }
-            ns_macho_ext_call ec = {.fi = fi, .ci = ci, .sym = ui};
+            ns_macho_ext_call ec = {.fi = fi, .ci = ci, .sym = ui, .kind = cf->kind, .ext = true};
             ns_array_push(ext_calls, ec);
         }
     }
     i32 nundef = (i32)ns_array_length(undef_names);
-    i32 nreloc = nundef > 0 ? (i32)ns_array_length(ext_calls) : 0;
+    i32 nreloc = 0;
+    for (i32 i = 0, l = (i32)ns_array_length(ext_calls); i < l; ++i) {
+        nreloc += ext_calls[i].kind == 1 ? 2 : 1;
+    }
 
     /* ── symbol table: 1 local (ltmp0) + nfns globals + nundef ───────────── */
     u32 total_syms = 1 + (u32)nfns + (u32)nundef;
@@ -505,6 +518,7 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
                 if (ns_str_equals(aarch->fns[k].name, cf->callee)) { callee_idx = k; break; }
             }
             if (callee_idx < 0) continue;
+            if (cf->kind == 1) continue;
             u64 bl_off  = fn_off[fi] + cf->off;
             u64 tgt_off = fn_off[callee_idx];
             i32 imm26   = (i32)((i64)(tgt_off - bl_off) / 4);
@@ -516,15 +530,28 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
         }
     }
 
-    /* ── external BL relocations ──────────────────────────────────────────── */
-    for (i32 i = 0; i < nreloc; ++i) {
+    /* ── external BL and ADRP/ADD relocations ─────────────────────────────── */
+    i32 rslot = 0;
+    for (i32 i = 0, l = (i32)ns_array_length(ext_calls); i < l; ++i) {
         ns_macho_ext_call *ec = &ext_calls[i];
         ns_aarch_call_fixup *cf = &aarch->fns[ec->fi].call_fixups[ec->ci];
         u32 addr = (u32)((fn_off[ec->fi] + cf->off) - text_offset);
-        ns_macho_reloc rel;
-        rel.r_address = (i32)addr;
-        rel.r_info = ns_macho_reloc_info(1 + (u32)nfns + (u32)ec->sym, true, 2, true, NS_MACHO_ARM64_RELOC_BRANCH26);
-        memcpy(&out[reloc_off + (u64)i * sizeof(rel)], &rel, sizeof(rel));
+        u32 sym = ec->ext ? (1 + (u32)nfns + (u32)ec->sym) : (1 + (u32)ec->sym);
+        if (ec->kind == 1) {
+            ns_macho_reloc rel0 = {0};
+            rel0.r_address = (i32)addr;
+            rel0.r_info = ns_macho_reloc_info(sym, true, 2, true, NS_MACHO_ARM64_RELOC_PAGE21);
+            memcpy(&out[reloc_off + (u64)rslot++ * sizeof(rel0)], &rel0, sizeof(rel0));
+            ns_macho_reloc rel1 = {0};
+            rel1.r_address = (i32)(addr + 4);
+            rel1.r_info = ns_macho_reloc_info(sym, false, 2, true, NS_MACHO_ARM64_RELOC_PAGEOFF12);
+            memcpy(&out[reloc_off + (u64)rslot++ * sizeof(rel1)], &rel1, sizeof(rel1));
+        } else {
+            ns_macho_reloc rel;
+            rel.r_address = (i32)addr;
+            rel.r_info = ns_macho_reloc_info(sym, true, 2, true, NS_MACHO_ARM64_RELOC_BRANCH26);
+            memcpy(&out[reloc_off + (u64)rslot++ * sizeof(rel)], &rel, sizeof(rel));
+        }
     }
 
     /* ── symbol table ─────────────────────────────────────────────────────── */

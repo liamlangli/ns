@@ -914,6 +914,10 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         }
         break;
 
+    case NS_SSA_OP_FNADDR:
+        ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
+        break;
+
     case NS_SSA_OP_CALL: {
         ns_str callee_name = inst->name;
         if (ns_str_is_empty(callee_name) && inst->a >= 0) {

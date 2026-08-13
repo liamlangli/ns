@@ -37,6 +37,28 @@ typedef i64 (*ns_compiled_main)(void);
 
 // Patch a same-module relative call at `site` (byte offset of the call/branch)
 // so it targets the function at byte offset `target`.
+static void ns_compile_patch_adrp_add(u8 *buf, u64 site, u64 target) {
+#if defined(__aarch64__)
+    u64 pc = (u64)(uintptr_t)(buf + site);
+    i64 page = (i64)((target & ~0xfffull) - (pc & ~0xfffull));
+    u32 rd = (u32)(buf[site] & 0x1f);
+    u32 immlo = (u32)((page >> 12) & 3);
+    u32 immhi = (u32)((page >> 14) & 0x1fffff);
+    u32 adrp = 0x90000000u | (immlo << 29) | (immhi << 5) | rd;
+    buf[site + 0] = (u8)(adrp);
+    buf[site + 1] = (u8)(adrp >> 8);
+    buf[site + 2] = (u8)(adrp >> 16);
+    buf[site + 3] = (u8)(adrp >> 24);
+    u32 add = 0x91000000u | (((u32)(target & 0xfffu)) << 10) | (rd << 5) | rd;
+    buf[site + 4] = (u8)(add);
+    buf[site + 5] = (u8)(add >> 8);
+    buf[site + 6] = (u8)(add >> 16);
+    buf[site + 7] = (u8)(add >> 24);
+#else
+    (void)buf; (void)site; (void)target;
+#endif
+}
+
 static void ns_compile_patch_call(u8 *buf, u64 site, u64 target) {
 #if defined(__x86_64__)
     // CALL rel32: rel = target - (site + 4), the field sits right after 0xE8.
@@ -131,22 +153,32 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
                 name[nlen] = 0;
                 void *sym = dlsym(RTLD_DEFAULT, name);
                 if (sym) {
-                    u64 stub = veneer_off;
-                    veneer_off += 16;
-                    u32 ldr = 0x58000050u; /* LDR X16, #8 */
-                    u32 brx = 0xD61F0200u; /* BR X16 */
-                    buf[stub + 0] = (u8)(ldr); buf[stub + 1] = (u8)(ldr >> 8);
-                    buf[stub + 2] = (u8)(ldr >> 16); buf[stub + 3] = (u8)(ldr >> 24);
-                    buf[stub + 4] = (u8)(brx); buf[stub + 5] = (u8)(brx >> 8);
-                    buf[stub + 6] = (u8)(brx >> 16); buf[stub + 7] = (u8)(brx >> 24);
-                    u64 abs = (u64)(uintptr_t)sym;
-                    memcpy(buf + stub + 8, &abs, 8);
-                    ns_compile_patch_call(buf, off[fi] + fn->call_fixups[ci].off, stub);
+                    if (fn->call_fixups[ci].kind == 1) {
+                        ns_compile_patch_adrp_add(buf, off[fi] + fn->call_fixups[ci].off,
+                                                  (u64)(uintptr_t)sym);
+                    } else {
+                        u64 stub = veneer_off;
+                        veneer_off += 16;
+                        u32 ldr = 0x58000050u; /* LDR X16, #8 */
+                        u32 brx = 0xD61F0200u; /* BR X16 */
+                        buf[stub + 0] = (u8)(ldr); buf[stub + 1] = (u8)(ldr >> 8);
+                        buf[stub + 2] = (u8)(ldr >> 16); buf[stub + 3] = (u8)(ldr >> 24);
+                        buf[stub + 4] = (u8)(brx); buf[stub + 5] = (u8)(brx >> 8);
+                        buf[stub + 6] = (u8)(brx >> 16); buf[stub + 7] = (u8)(brx >> 24);
+                        u64 abs = (u64)(uintptr_t)sym;
+                        memcpy(buf + stub + 8, &abs, 8);
+                        ns_compile_patch_call(buf, off[fi] + fn->call_fixups[ci].off, stub);
+                    }
                 }
 #endif
                 continue;
             }
-            ns_compile_patch_call(buf, off[fi] + fn->call_fixups[ci].off, off[cidx]);
+            if (fn->call_fixups[ci].kind == 1) {
+                ns_compile_patch_adrp_add(buf, off[fi] + fn->call_fixups[ci].off,
+                                          (u64)(uintptr_t)(buf + off[cidx]));
+            } else {
+                ns_compile_patch_call(buf, off[fi] + fn->call_fixups[ci].off, off[cidx]);
+            }
         }
     }
 
@@ -805,6 +837,45 @@ int main() {
         "    s = s + x\n"
         "    return s == 4.0\n"
         "}\n"), "f32 + f64 upgrades to f64 like the interpreter.");
+
+    ns_expect(ns_compile_true(
+        "type unary_op = (i32) -> i32\n"
+        "fn main() bool {\n"
+        "    let double: unary_op = { x in\n"
+        "        return x * 2\n"
+        "    }\n"
+        "    return double(21) == 42\n"
+        "}\n"), "no-capture closure stored and called.");
+
+    ns_expect(ns_compile_true(
+        "type op_fn = (i32, i32) -> i32\n"
+        "fn do_op(op: op_fn, a: i32, b: i32) i32 { return op(a, b) }\n"
+        "fn main() bool {\n"
+        "    return do_op({ a, b in\n"
+        "        return a - b\n"
+        "    }, 5, 3) == 2\n"
+        "}\n"), "no-capture closure passed as a call argument.");
+
+    ns_expect(ns_compile_true(
+        "type unary_op = (i32) -> i32\n"
+        "fn apply(v: i32, op: unary_op) i32 { return op(v) }\n"
+        "fn main() bool {\n"
+        "    let bias = 100\n"
+        "    return apply(5, { a in\n"
+        "        return a + bias\n"
+        "    }) == 105\n"
+        "}\n"), "capturing closure as a call argument.");
+
+    ns_expect(ns_compile_true(
+        "type unary_op = (i32) -> i32\n"
+        "fn main() bool {\n"
+        "    let sum = 7\n"
+        "    let bias = 1\n"
+        "    let capture: unary_op = { a in\n"
+        "        return a + sum + bias\n"
+        "    }\n"
+        "    return capture(5) == 13\n"
+        "}\n"), "capturing closure stored via a typed var.");
 #endif
 
     return 0;

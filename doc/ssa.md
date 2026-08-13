@@ -72,5 +72,11 @@ Integer/bool/enum arithmetic and compares, shifts (signed `ASRV` / unsigned
 load/store (struct memcpy), arrays, strings (intern, concat, compare, index),
 `std` math/file/string helpers, float negate/add/sub/mul/div/mod (`fmod`).
 
-Still lowering or ABI work: closures and function values, `ref`/`union`,
-`async`/`task`, full `ref fn` FFI. Wasm continues to reject those types.
+Function values are heap objects `{code_ptr, captures...}`. A `{ ... }`
+block becomes `$bN(env, args...)`; a named `fn` used as a value gets a
+`$vName` trampoline that ignores `env`. Indirect calls pass the object as
+the first argument and `BLR` the code pointer. `ADRP`+`ADD` materializes
+addresses (no absolute text relocations).
+
+Still lowering or ABI work: `ref`/`union`, `async`/`task`, full `ref fn`
+FFI. Wasm continues to reject those types.

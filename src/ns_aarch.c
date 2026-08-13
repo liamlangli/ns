@@ -681,9 +681,12 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         c->arg_seq++;
     } break;
     case NS_SSA_OP_CALL: {
+        ns_str peek_name = inst->name;
+        ns_bool indirect = peek_name.len == 0 && inst->a >= 0 &&
+                           ns_aarch_map_std(inst->module, inst->name) == NULL;
         i32 nextra = c->nextra;
         i32 space = 0;
-        if (nextra > 0) {
+        if (nextra > 0 && !indirect) {
             space = (nextra * 8 + 15) & ~15;
             if (space <= 4095) ns_aarch_emit_u32(c, ns_aarch_sub_sp_imm(space));
             else {
@@ -699,19 +702,56 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         c->arg_seq = 0;
         c->nextra = 0;
         ns_str callee_name = inst->name;
-        if (callee_name.len == 0) {
-            i32 callee_val = inst->a;
-            for (i32 ii = 0; ii < (i32)ns_array_length(c->fn->insts); ++ii) {
-                if (c->fn->insts[ii].dst == callee_val) { callee_name = c->fn->insts[ii].name; break; }
-            }
-        }
         const char *std_rt = ns_aarch_map_std(inst->module, callee_name);
         if (std_rt) callee_name = ns_str_cstr((i8 *)std_rt);
-        u32 bl_off = (u32)ns_array_length(c->text);
-        ns_aarch_emit_u32(c, ns_aarch_bl(0));
-        if (callee_name.len > 0) {
-            ns_aarch_call_fixup cf = {.off = bl_off, .callee = callee_name};
-            ns_array_push(c->call_fixups, cf);
+        if (callee_name.len == 0 && inst->a >= 0) {
+            ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+            ns_aarch_emit_const_u64(c, 1, 0);
+            ns_aarch_emit_const_u64(c, 2, 8);
+            ns_aarch_emit_rt_call(c, "ns_rt_load");
+            ns_aarch_emit_u32(c, 0xAA0003F1u); /* MOV X17, X0 — keep code off X16 */
+            ns_ssa_block *bb = &c->fn->blocks[c->cur_block];
+            i32 args[NS_AARCH_EXTRA_MAX + 8];
+            i32 nargs = inst->c > 0 ? inst->c : 0;
+            if (nargs > NS_AARCH_EXTRA_MAX + 8) nargs = NS_AARCH_EXTRA_MAX + 8;
+            i32 call_i = -1;
+            for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ++ii) {
+                if (&c->fn->insts[bb->insts[ii]] == inst) { call_i = ii; break; }
+            }
+            i32 got = 0;
+            for (i32 ii = call_i - 1; ii >= 0 && got < nargs; --ii) {
+                ns_ssa_inst *pi = &c->fn->insts[bb->insts[ii]];
+                if (pi->op != NS_SSA_OP_ARG) break;
+                args[nargs - 1 - got] = pi->a;
+                got++;
+            }
+            if (got < nargs) nargs = got;
+            i32 nextra_i = 0;
+            if (nargs > 8) {
+                nextra_i = nargs - 8;
+                i32 extra_space = (nextra_i * 8 + 15) & ~15;
+                if (extra_space <= 4095) ns_aarch_emit_u32(c, ns_aarch_sub_sp_imm(extra_space));
+                else {
+                    ns_aarch_emit_const_u64(c, NS_AARCH_X9, (u64)(u32)extra_space);
+                    ns_aarch_emit_u32(c, ns_aarch_sub_sp_ext(NS_AARCH_X9));
+                }
+                space = extra_space;
+                for (i32 ei = 0; ei < nextra_i; ++ei) {
+                    ns_aarch_load_value(c, NS_AARCH_X9, args[8 + ei]);
+                    ns_aarch_emit_u32(c, 0xF9000000u | (((u32)ei & 0xFFFu) << 10) |
+                        ((u32)NS_AARCH_SP << 5) | (u32)NS_AARCH_X9);
+                }
+            }
+            i32 nreg = nargs < 8 ? nargs : 8;
+            for (i32 ri = 0; ri < nreg; ++ri) ns_aarch_load_value(c, ri, args[ri]);
+            ns_aarch_emit_u32(c, 0xD63F0220u); /* BLR X17 */
+        } else {
+            u32 bl_off = (u32)ns_array_length(c->text);
+            ns_aarch_emit_u32(c, ns_aarch_bl(0));
+            if (callee_name.len > 0) {
+                ns_aarch_call_fixup cf = {.off = bl_off, .callee = callee_name, .kind = 0};
+                ns_array_push(c->call_fixups, cf);
+            }
         }
         if (inst->dst >= 0) ns_aarch_store_value(c, inst->dst, 0);
         if (space > 0) {
@@ -863,6 +903,19 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         ns_aarch_emit_const_u64(c, 2, (u64)stride);
         ns_aarch_emit_rt_call(c, "ns_rt_array_index");
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+    } break;
+    case NS_SSA_OP_FNADDR: {
+        if (inst->dst < 0) break;
+        i32 rd = NS_AARCH_X9;
+        /* ADRP Xd, #0 ; ADD Xd, Xd, #0 — linker/test fills PAGE21 + PAGEOFF12. */
+        u32 adrp_off = (u32)ns_array_length(c->text);
+        ns_aarch_emit_u32(c, 0x90000000u | (u32)rd);
+        ns_aarch_emit_u32(c, 0x91000000u | ((u32)rd << 5) | (u32)rd);
+        if (inst->name.len > 0) {
+            ns_aarch_call_fixup cf = {.off = adrp_off, .callee = inst->name, .kind = 1};
+            ns_array_push(c->call_fixups, cf);
+        }
+        ns_aarch_store_value(c, inst->dst, rd);
     } break;
     case NS_SSA_OP_MEMBER: {
         if (inst->dst < 0) break;

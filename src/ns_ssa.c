@@ -45,6 +45,12 @@ static ns_ssa_loop_ctx ns_ssa_loop_ctx_init(i32 break_block, i32 continue_block)
     };
 }
 
+typedef struct ns_ssa_capture {
+    ns_str name;
+    i32 offset;
+    ns_type type;
+} ns_ssa_capture;
+
 typedef struct ns_ssa_builder {
     ns_ast_ctx *ctx;
     ns_vm *vm;
@@ -56,6 +62,8 @@ typedef struct ns_ssa_builder {
     ns_ssa_global_const *globals;
     ns_str *import_seen;
     ns_ssa_loop_ctx *loops;
+    i32 capture_env;
+    ns_ssa_capture *captures;
 } ns_ssa_builder;
 
 #define NS_SSA_INST_INIT(kind, ast_i) ((ns_ssa_inst){ \
@@ -80,8 +88,14 @@ static i32 ns_ssa_emit_i32_const(ns_ssa_builder *b, i32 n, i32 ast);
 static i32 ns_ssa_env_get_value(ns_ssa_binding *env, ns_str name, i32 fallback);
 static ns_type ns_ssa_value_type(ns_ssa_builder *b, i32 value);
 static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type);
+static i32 ns_ssa_wasm32_align(i32 offset, i32 size);
 static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field);
 static i32 ns_ssa_clone_struct(ns_ssa_builder *b, i32 value, i32 ast);
+static i32 ns_ssa_global_index(ns_ssa_builder *b, ns_str name);
+static void ns_ssa_env_bind(ns_ssa_builder *b, ns_str name, i32 value, ns_type t);
+static void ns_ssa_flush_captures(ns_ssa_builder *b, i32 ast);
+static ns_str ns_ssa_ensure_block_fn(ns_ssa_builder *b, i32 symbol_index);
+static i32 ns_ssa_named_fn_value(ns_ssa_builder *b, ns_symbol *sym, i32 ast);
 
 static ns_type ns_ssa_type_from_token(ns_token_type t) {
     switch (t) {
@@ -112,6 +126,7 @@ static ns_type ns_ssa_type_from_label(ns_ssa_builder *b, i32 type_label_ast) {
     ns_symbol *s = ns_vm_find_symbol(b->vm, n->type_label.name.val, false);
     if (s && s->type == NS_SYMBOL_ENUM) return s->en.underlying;
     if (s && s->type == NS_SYMBOL_STRUCT) return s->st.st.t;
+    if (s && s->type == NS_SYMBOL_FN) return s->fn.fn.t;
     return ns_type_unknown;
 }
 
@@ -191,6 +206,7 @@ ns_str ns_ssa_op_to_string(ns_ssa_op op) {
         ns_str_case(NS_SSA_OP_JMP)
         ns_str_case(NS_SSA_OP_RET)
         ns_str_case(NS_SSA_OP_TRAP)
+        ns_str_case(NS_SSA_OP_FNADDR)
     default:
         return ns_str_cstr("NS_SSA_OP_UNKNOWN");
     }
@@ -471,6 +487,7 @@ static i32 ns_ssa_map_flags(ns_ssa_builder *b, ns_type t) {
 }
 
 static void ns_ssa_emit_ret(ns_ssa_builder *b, i32 value, i32 ast) {
+    ns_ssa_flush_captures(b, ast);
     ns_ssa_inst inst = NS_SSA_INST_INIT(NS_SSA_OP_RET, ast);
     inst.a = value;
     inst.type = ns_type_void;
@@ -508,6 +525,107 @@ static void ns_ssa_env_bind(ns_ssa_builder *b, ns_str name, i32 value, ns_type t
     } else {
         ns_array_push(b->env, binding);
     }
+}
+
+static ns_bool ns_ssa_fn_exists(ns_ssa_builder *b, ns_str name) {
+    for (i32 i = 0, l = (i32)ns_array_length(b->m->fns); i < l; ++i) {
+        if (ns_str_equals(b->m->fns[i].name, name)) return true;
+    }
+    return false;
+}
+
+static ns_str ns_ssa_owned_fmt(ns_ssa_builder *b, const char *fmt, i32 n) {
+    char buf[80];
+    i32 len = snprintf(buf, sizeof(buf), fmt, n);
+    if (len < 0) len = 0;
+    ns_str owned = ns_str_range(ns_malloc((szt)len + 1), len);
+    memcpy(owned.data, buf, (szt)len + 1);
+    ns_array_push(b->m->owned_strings, owned);
+    return owned;
+}
+
+static ns_str ns_ssa_owned_prefix(ns_ssa_builder *b, const char *prefix, ns_str rest) {
+    char buf[160];
+    i32 len = snprintf(buf, sizeof(buf), "%s%.*s", prefix, rest.len, rest.data);
+    if (len < 0) len = 0;
+    ns_str owned = ns_str_range(ns_malloc((szt)len + 1), len);
+    memcpy(owned.data, buf, (szt)len + 1);
+    ns_array_push(b->m->owned_strings, owned);
+    return owned;
+}
+
+static void ns_ssa_emit_store_off(ns_ssa_builder *b, i32 obj, i32 val, i32 off, ns_type t, i32 ast) {
+    ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, ast);
+    store.a = obj;
+    store.b = val;
+    store.c = off;
+    store.target0 = ns_type_is(t, NS_TYPE_I64) || ns_type_is(t, NS_TYPE_U64) ||
+                    ns_type_is(t, NS_TYPE_F64) ? 8 : ns_ssa_wasm32_size(b, t);
+    store.type = t;
+    ns_ssa_emit_raw(b, store);
+}
+
+static void ns_ssa_flush_captures(ns_ssa_builder *b, i32 ast) {
+    if (b->capture_env < 0) return;
+    for (i32 i = 0, l = (i32)ns_array_length(b->captures); i < l; ++i) {
+        ns_ssa_capture *c = &b->captures[i];
+        i32 val = ns_ssa_env_get_value(b->env, c->name, -1);
+        if (val < 0) continue;
+        ns_ssa_emit_store_off(b, b->capture_env, val, c->offset, c->type, ast);
+    }
+}
+
+static i32 ns_ssa_block_payload(ns_ssa_builder *b, ns_symbol *sym) {
+    if (!sym || sym->type != NS_SYMBOL_BLOCK) return 0;
+    i32 off = 0;
+    for (i32 i = 0, l = (i32)ns_array_length(sym->bc.st.fields); i < l; ++i) {
+        i32 sz = ns_ssa_wasm32_size(b, sym->bc.st.fields[i].t);
+        off = ns_ssa_wasm32_align(off, sz) + sz;
+    }
+    return off;
+}
+
+static i32 ns_ssa_block_field_off(ns_ssa_builder *b, ns_symbol *sym, i32 field) {
+    i32 off = 8;
+    for (i32 i = 0; i < field; ++i) {
+        i32 sz = ns_ssa_wasm32_size(b, sym->bc.st.fields[i].t);
+        off = ns_ssa_wasm32_align(off, sz) + sz;
+    }
+    i32 sz = ns_ssa_wasm32_size(b, sym->bc.st.fields[field].t);
+    return ns_ssa_wasm32_align(off, sz);
+}
+
+static ns_type ns_ssa_callable_ret(ns_ssa_builder *b, ns_type t) {
+    if (!ns_type_is(t, NS_TYPE_FN) && !ns_type_is(t, NS_TYPE_BLOCK)) return ns_type_unknown;
+    i32 idx = ns_type_index(t);
+    if (idx < 0 || idx >= (i32)ns_array_length(b->vm->symbols)) return ns_type_unknown;
+    ns_symbol *s = &b->vm->symbols[idx];
+    if (s->type != NS_SYMBOL_FN && s->type != NS_SYMBOL_BLOCK) return ns_type_unknown;
+    ns_fn_symbol *fn = ns_symbol_get_fn(s);
+    return fn ? ns_enum_underlying_type(b->vm, fn->ret) : ns_type_unknown;
+}
+
+static i32 ns_ssa_emit_callable(ns_ssa_builder *b, ns_str code, ns_symbol *cap_sym, ns_type t, i32 ast) {
+    i32 extra = ns_ssa_block_payload(b, cap_sym);
+    i32 obj = ns_ssa_emit_value(b, NS_SSA_OP_ALLOC, -1, 8 + extra, t, ns_str_null, (ns_token_t){0}, ast);
+    i32 addr = ns_ssa_emit_value(b, NS_SSA_OP_FNADDR, -1, -1, ns_type_i64, code, (ns_token_t){0}, ast);
+    ns_ssa_emit_store_off(b, obj, addr, 0, ns_type_i64, ast);
+    if (cap_sym && cap_sym->type == NS_SYMBOL_BLOCK) {
+        for (i32 i = 0, l = (i32)ns_array_length(cap_sym->bc.st.fields); i < l; ++i) {
+            ns_struct_field *f = &cap_sym->bc.st.fields[i];
+            i32 val = ns_ssa_env_get_value(b->env, f->name, -1);
+            if (val < 0) {
+                i32 g = ns_ssa_global_index(b, f->name);
+                if (g >= 0) {
+                    val = ns_ssa_emit_value(b, NS_SSA_OP_GLOBAL_GET, -1, g, b->m->globals[g].type,
+                                            f->name, (ns_token_t){0}, ast);
+                }
+            }
+            if (val < 0) continue;
+            ns_ssa_emit_store_off(b, obj, val, ns_ssa_block_field_off(b, cap_sym, i), f->t, ast);
+        }
+    }
+    return obj;
 }
 
 static ns_bool ns_ssa_str_seen(ns_str *items, ns_str name) {
@@ -769,6 +887,10 @@ static i32 ns_ssa_lower_primary(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             ns_token_t id_token = {.type = NS_TOKEN_INT_LITERAL, .val = owned};
             return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32, owned, id_token, i);
         }
+        ns_symbol *fn_sym = ns_vm_find_symbol(b->vm, token.val, false);
+        if (fn_sym && fn_sym->type == NS_SYMBOL_FN && !fn_sym->fn.fn.t.ref) {
+            return ns_ssa_named_fn_value(b, fn_sym, i);
+        }
         return ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, -1, ns_type_unknown, token.val, token, i);
     }
     ns_type type = n->primary_expr.t;
@@ -879,6 +1001,15 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
         i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_COPY, rhs, -1, rhs_type, ln->primary_expr.token.val, ln->primary_expr.token, i);
         ns_ssa_env_bind(b, ln->primary_expr.token.val, dst, rhs_type);
         ns_ssa_foreach_assign_writeback(b, ln->primary_expr.token.val, i);
+        if (b->capture_env >= 0) {
+            for (i32 ci = 0, cl = (i32)ns_array_length(b->captures); ci < cl; ++ci) {
+                if (ns_str_equals(b->captures[ci].name, ln->primary_expr.token.val)) {
+                    ns_ssa_emit_store_off(b, b->capture_env, dst, b->captures[ci].offset,
+                                          b->captures[ci].type, i);
+                    break;
+                }
+            }
+        }
         return dst;
     }
 
@@ -1067,11 +1198,26 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
         ns_str callee_module = ns_str_null;
         ns_ast_t *callee_node = ns_ssa_unwrap_expr(b, n->call_expr.callee);
         ns_symbol *callee_sym = ns_null;
-        if (n->call_expr.rt >= 0 && n->call_expr.rt < (i32)ns_array_length(b->vm->symbols)) {
-            callee_sym = &b->vm->symbols[n->call_expr.rt];
-        } else if (callee_node && callee_node->type == NS_AST_PRIMARY_EXPR &&
-                   callee_node->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
-            callee_sym = ns_vm_find_symbol(b->vm, callee_node->primary_expr.token.val, false);
+        ns_bool value_call = false;
+        if (callee_node && callee_node->type == NS_AST_PRIMARY_EXPR &&
+            callee_node->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+            ns_str cname = callee_node->primary_expr.token.val;
+            if (ns_ssa_env_find(b->env, cname) >= 0) value_call = true;
+            else {
+                i32 gi = ns_ssa_global_index(b, cname);
+                if (gi >= 0 && (ns_type_is(b->m->globals[gi].type, NS_TYPE_FN) ||
+                                ns_type_is(b->m->globals[gi].type, NS_TYPE_BLOCK))) {
+                    value_call = true;
+                }
+            }
+        }
+        if (!value_call) {
+            if (n->call_expr.rt >= 0 && n->call_expr.rt < (i32)ns_array_length(b->vm->symbols)) {
+                callee_sym = &b->vm->symbols[n->call_expr.rt];
+            } else if (callee_node && callee_node->type == NS_AST_PRIMARY_EXPR &&
+                       callee_node->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+                callee_sym = ns_vm_find_symbol(b->vm, callee_node->primary_expr.token.val, false);
+            }
         }
         if (callee_sym && callee_sym->type == NS_SYMBOL_STRUCT) {
             return ns_ssa_lower_struct_ctor(b, n, callee_sym, i);
@@ -1084,23 +1230,41 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             ns_ssa_record_import(b, callee_sym);
             skip_clone = ns_str_equals_STR(callee_sym->name, "next");
         }
-        i32 callee = ns_ssa_lower_expr(b, n->call_expr.callee);
+        i32 callee = -1;
+        if (value_call || callee_name.len == 0) {
+            callee = ns_ssa_lower_expr(b, n->call_expr.callee);
+        }
+        if (value_call || callee_name.len == 0) {
+            ns_type ct = ns_ssa_value_type(b, callee);
+            if (ns_type_is(ct, NS_TYPE_FN) || ns_type_is(ct, NS_TYPE_BLOCK)) {
+                value_call = true;
+                result_type = ns_ssa_callable_ret(b, ct);
+                callee_name = ns_str_null;
+            }
+        }
         i32 next = n->next;
         i32 first_arg = -1;
+        i32 *avals = ns_null;
+        if (value_call) ns_array_push(avals, callee);
         for (i32 ai = 0; ai < n->call_expr.arg_count && next > 0; ++ai) {
             i32 av = ns_ssa_lower_expr(b, next);
             if (!skip_clone) av = ns_ssa_clone_struct(b, av, next);
             if (ai == 0) first_arg = av;
-            ns_ssa_inst arg = NS_SSA_INST_INIT(NS_SSA_OP_ARG, next);
-            arg.a = av;
-            ns_ssa_emit_raw(b, arg);
+            ns_array_push(avals, av);
             next = b->ctx->nodes[next].next;
         }
         if (first_arg >= 0 && (ns_str_equals_STR(callee_name, "next") ||
                                ns_str_equals_STR(callee_name, "to_str"))) {
             callee_name = ns_ssa_typed_fn_name(b, callee_name, ns_ssa_value_type(b, first_arg));
         }
-        i32 value = ns_ssa_emit_value(b, NS_SSA_OP_CALL, callee, n->call_expr.arg_count,
+        for (i32 ai = 0, al = (i32)ns_array_length(avals); ai < al; ++ai) {
+            ns_ssa_inst arg = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
+            arg.a = avals[ai];
+            ns_ssa_emit_raw(b, arg);
+        }
+        i32 nargs = (i32)ns_array_length(avals);
+        ns_array_free(avals);
+        i32 value = ns_ssa_emit_value(b, NS_SSA_OP_CALL, callee, nargs,
                                       result_type, callee_name, (ns_token_t){0}, i);
         ns_ssa_inst *call = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
         call->module = callee_module;
@@ -1351,6 +1515,19 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                                      (ns_token_t){0}, i);
         }
         return acc;
+    }
+    case NS_AST_BLOCK_EXPR: {
+        i32 idx = n->block_expr.rt.index;
+        if (idx < 0 || idx >= (i32)ns_array_length(b->vm->symbols)) {
+            ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
+            ns_ssa_emit_raw(b, trap);
+            return -1;
+        }
+        ns_symbol *sym = &b->vm->symbols[idx];
+        ns_str code = ns_ssa_ensure_block_fn(b, idx);
+        ns_type t = (sym->type == NS_SYMBOL_BLOCK) ? sym->bc.val.t : sym->fn.fn.t;
+        ns_symbol *caps = sym->type == NS_SYMBOL_BLOCK ? sym : ns_null;
+        return ns_ssa_emit_callable(b, code, caps, t, i);
     }
     default: {
         ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
@@ -1879,6 +2056,143 @@ static void ns_ssa_lower_compound(ns_ssa_builder *b, i32 i) {
     }
 }
 
+static ns_str ns_ssa_ensure_block_fn(ns_ssa_builder *b, i32 symbol_index) {
+    ns_str name = ns_ssa_owned_fmt(b, "$b%d", symbol_index);
+    if (ns_ssa_fn_exists(b, name)) return name;
+    ns_symbol *sym = &b->vm->symbols[symbol_index];
+    ns_fn_symbol *fn = ns_symbol_get_fn(sym);
+    if (!fn) return name;
+
+    i32 saved_fn = (i32)(b->fn ? (b->fn - b->m->fns) : -1);
+    i32 saved_block = b->block;
+    i32 saved_next = b->next_value;
+    ns_ssa_binding *saved_env = b->env;
+    ns_ssa_loop_ctx *saved_loops = b->loops;
+    i32 saved_cap_env = b->capture_env;
+    ns_ssa_capture *saved_caps = b->captures;
+
+    ns_ssa_fn sfn = {0};
+    sfn.name = name;
+    sfn.ast = fn->body;
+    sfn.entry = 0;
+    sfn.ret = ns_enum_underlying_type(b->vm, fn->ret);
+    if (ns_type_is(sfn.ret, NS_TYPE_INFER) || ns_type_is(sfn.ret, NS_TYPE_UNKNOWN)) sfn.ret = ns_type_void;
+    ns_array_push(b->m->fns, sfn);
+    b->fn = &b->m->fns[ns_array_length(b->m->fns) - 1];
+    b->block = ns_ssa_new_block(b, fn->body);
+    b->next_value = 0;
+    b->env = NULL;
+    b->loops = NULL;
+    b->captures = NULL;
+    b->capture_env = -1;
+
+    ns_str env_name = ns_str_cstr("$env");
+    ns_array_push(b->fn->params, ns_type_i64);
+    i32 env = ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, 0, ns_type_i64, env_name, (ns_token_t){0}, fn->body);
+    ns_ssa_env_bind(b, env_name, env, ns_type_i64);
+    b->capture_env = env;
+
+    i32 nargs = (i32)ns_array_length(fn->args);
+    for (i32 ai = 0; ai < nargs; ++ai) {
+        ns_type at = ns_enum_underlying_type(b->vm, fn->args[ai].val.t);
+        ns_array_push(b->fn->params, at);
+        i32 v = ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, ai + 1, at, fn->args[ai].name,
+                                  (ns_token_t){0}, fn->body);
+        ns_ssa_env_bind(b, fn->args[ai].name, v, at);
+    }
+
+    if (sym->type == NS_SYMBOL_BLOCK) {
+        for (i32 fi = 0, fl = (i32)ns_array_length(sym->bc.st.fields); fi < fl; ++fi) {
+            ns_struct_field *f = &sym->bc.st.fields[fi];
+            i32 off = ns_ssa_block_field_off(b, sym, fi);
+            i32 v = ns_ssa_emit_value(b, NS_SSA_OP_LOAD, env, off, f->t, f->name,
+                                      (ns_token_t){0}, fn->body);
+            b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].target0 =
+                ns_ssa_wasm32_size(b, f->t);
+            ns_ssa_env_bind(b, f->name, v, f->t);
+            ns_ssa_capture cap = {.name = f->name, .offset = off, .type = f->t};
+            ns_array_push(b->captures, cap);
+        }
+    }
+
+    ns_ssa_seed_global_consts(b);
+    ns_ssa_lower_compound(b, fn->body);
+    if (!b->fn->blocks[b->block].terminated) ns_ssa_emit_ret(b, -1, fn->body);
+
+    ns_array_free(b->env);
+    ns_array_free(b->loops);
+    ns_array_free(b->captures);
+
+    b->env = saved_env;
+    b->loops = saved_loops;
+    b->captures = saved_caps;
+    b->capture_env = saved_cap_env;
+    b->next_value = saved_next;
+    b->block = saved_block;
+    b->fn = saved_fn >= 0 ? &b->m->fns[saved_fn] : ns_null;
+    return name;
+}
+
+static i32 ns_ssa_named_fn_value(ns_ssa_builder *b, ns_symbol *sym, i32 ast) {
+    ns_str wrap = ns_ssa_owned_prefix(b, "$v", sym->name);
+    if (!ns_ssa_fn_exists(b, wrap)) {
+        i32 saved_fn = (i32)(b->fn ? (b->fn - b->m->fns) : -1);
+        i32 saved_block = b->block;
+        i32 saved_next = b->next_value;
+        ns_ssa_binding *saved_env = b->env;
+        ns_ssa_loop_ctx *saved_loops = b->loops;
+        i32 saved_cap_env = b->capture_env;
+        ns_ssa_capture *saved_caps = b->captures;
+
+        ns_ssa_fn sfn = {0};
+        sfn.name = wrap;
+        sfn.ast = ast;
+        sfn.ret = ns_enum_underlying_type(b->vm, sym->fn.ret);
+        if (ns_type_is(sfn.ret, NS_TYPE_INFER) || ns_type_is(sfn.ret, NS_TYPE_UNKNOWN)) sfn.ret = ns_type_void;
+        ns_array_push(b->m->fns, sfn);
+        b->fn = &b->m->fns[ns_array_length(b->m->fns) - 1];
+        b->block = ns_ssa_new_block(b, ast);
+        b->next_value = 0;
+        b->env = NULL;
+        b->loops = NULL;
+        b->captures = NULL;
+        b->capture_env = -1;
+
+        ns_array_push(b->fn->params, ns_type_i64);
+        (void)ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, 0, ns_type_i64, ns_str_cstr("$env"),
+                                (ns_token_t){0}, ast);
+        i32 nargs = (i32)ns_array_length(sym->fn.args);
+        i32 *avals = ns_null;
+        for (i32 ai = 0; ai < nargs; ++ai) {
+            ns_type at = ns_enum_underlying_type(b->vm, sym->fn.args[ai].val.t);
+            ns_array_push(b->fn->params, at);
+            i32 v = ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, ai + 1, at, sym->fn.args[ai].name,
+                                      (ns_token_t){0}, ast);
+            ns_array_push(avals, v);
+        }
+        for (i32 ai = 0; ai < nargs; ++ai) {
+            ns_ssa_inst arg = NS_SSA_INST_INIT(NS_SSA_OP_ARG, ast);
+            arg.a = avals[ai];
+            ns_ssa_emit_raw(b, arg);
+        }
+        i32 ret = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, nargs, sfn.ret, sym->name,
+                                    (ns_token_t){0}, ast);
+        ns_ssa_emit_ret(b, ret, ast);
+        ns_array_free(avals);
+        ns_array_free(b->env);
+        ns_array_free(b->loops);
+
+        b->env = saved_env;
+        b->loops = saved_loops;
+        b->captures = saved_caps;
+        b->capture_env = saved_cap_env;
+        b->next_value = saved_next;
+        b->block = saved_block;
+        b->fn = saved_fn >= 0 ? &b->m->fns[saved_fn] : ns_null;
+    }
+    return ns_ssa_emit_callable(b, wrap, ns_null, sym->fn.fn.t, ast);
+}
+
 static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i32 arg_head, i32 arg_count) {
     ns_ssa_fn fn = {0};
     if ((ns_str_equals_STR(name, "to_str") || ns_str_equals_STR(name, "next")) &&
@@ -1914,6 +2228,8 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     ns_array_free(b->env);
     b->env = NULL;
     b->loops = NULL;
+    b->captures = NULL;
+    b->capture_env = -1;
     i32 arg = arg_head;
     for (i32 ai = 0; ai < arg_count && arg > 0; ++ai) {
         ns_ast_t *an = &b->ctx->nodes[arg];
@@ -1962,6 +2278,7 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
     ns_ssa_builder b = {0};
     b.ctx = ctx;
     b.m = m;
+    b.capture_env = -1;
 
     // The VM semantic pass is shared by interpretation and compilation. It
     // resolves enum values once, enforces nominal typing, and gives SSA the
@@ -2032,6 +2349,8 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
         b.next_value = 0;
         b.env = NULL;
         b.loops = NULL;
+        b.captures = NULL;
+        b.capture_env = -1;
         ns_ssa_seed_global_consts(&b);
 
         for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
