@@ -1152,8 +1152,7 @@ static void ns_wasm_emit_phi_moves(ns_wasm_fn_ctx *ctx, i32 predecessor, i32 tar
     for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ++ii) {
         ns_ssa_inst *phi = &ctx->fn->insts[bb->insts[ii]];
         if (phi->op != NS_SSA_OP_PHI) continue;
-        i32 source = phi->target0 == predecessor ? phi->a :
-                     phi->target1 == predecessor ? phi->b : -1;
+        i32 source = ns_ssa_phi_incoming(phi, predecessor);
         if (source >= 0 && source != phi->dst) {
             ns_wasm_local_get(ctx, source);
             ns_wasm_local_set(ctx, phi->dst);

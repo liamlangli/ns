@@ -24,8 +24,26 @@ typedef struct ns_ssa_global_const {
 typedef struct ns_ssa_loop_ctx {
     i32 break_block;
     i32 continue_block;
-    ns_str for_iter; /* set for for-range so continue increments the iterator */
+    i32 phi_block; /* header whose phis must be flushed on break */
+    ns_str for_iter; /* range or foreach index: continue increments it */
+    i32 foreach_subject;
+    ns_str foreach_elem;
+    i32 foreach_stride;    /* >0: write the loop var back through ARRAY_STORE */
+    i32 foreach_field_off; /* >=0: write the loop var back to subject.value */
 } ns_ssa_loop_ctx;
+
+static ns_ssa_loop_ctx ns_ssa_loop_ctx_init(i32 break_block, i32 continue_block) {
+    return (ns_ssa_loop_ctx){
+        .break_block = break_block,
+        .continue_block = continue_block,
+        .phi_block = continue_block,
+        .for_iter = ns_str_null,
+        .foreach_subject = -1,
+        .foreach_elem = ns_str_null,
+        .foreach_stride = 0,
+        .foreach_field_off = -1,
+    };
+}
 
 typedef struct ns_ssa_builder {
     ns_ast_ctx *ctx;
@@ -58,6 +76,12 @@ typedef struct ns_ssa_builder {
 static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i);
 static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i);
 static void ns_ssa_lower_compound(ns_ssa_builder *b, i32 i);
+static i32 ns_ssa_emit_i32_const(ns_ssa_builder *b, i32 n, i32 ast);
+static i32 ns_ssa_env_get_value(ns_ssa_binding *env, ns_str name, i32 fallback);
+static ns_type ns_ssa_value_type(ns_ssa_builder *b, i32 value);
+static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type);
+static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field);
+static i32 ns_ssa_clone_struct(ns_ssa_builder *b, i32 value, i32 ast);
 
 static ns_type ns_ssa_type_from_token(ns_token_type t) {
     switch (t) {
@@ -87,6 +111,7 @@ static ns_type ns_ssa_type_from_label(ns_ssa_builder *b, i32 type_label_ast) {
     if (!ns_type_is(t, NS_TYPE_UNKNOWN)) return t;
     ns_symbol *s = ns_vm_find_symbol(b->vm, n->type_label.name.val, false);
     if (s && s->type == NS_SYMBOL_ENUM) return s->en.underlying;
+    if (s && s->type == NS_SYMBOL_STRUCT) return s->st.st.t;
     return ns_type_unknown;
 }
 
@@ -190,6 +215,37 @@ static void ns_ssa_connect(ns_ssa_builder *b, i32 from, i32 to) {
     ns_array_push(b->fn->blocks[to].preds, from);
 }
 
+i32 ns_ssa_phi_incoming(ns_ssa_inst *phi, i32 pred) {
+    if (!phi) return -1;
+    for (i32 i = 0, l = (i32)ns_array_length(phi->phi_edges); i < l; ++i) {
+        if (phi->phi_edges[i].pred == pred) return phi->phi_edges[i].value;
+    }
+    if (phi->target0 == pred) return phi->a;
+    if (phi->target1 == pred) return phi->b;
+    return -1;
+}
+
+void ns_ssa_phi_set_incoming(ns_ssa_inst *phi, i32 pred, i32 value) {
+    if (!phi) return;
+    for (i32 i = 0, l = (i32)ns_array_length(phi->phi_edges); i < l; ++i) {
+        if (phi->phi_edges[i].pred == pred) {
+            phi->phi_edges[i].value = value;
+            if (phi->target0 == pred) phi->a = value;
+            if (phi->target1 == pred) phi->b = value;
+            return;
+        }
+    }
+    ns_ssa_phi_edge edge = {.pred = pred, .value = value};
+    ns_array_push(phi->phi_edges, edge);
+    if (phi->target0 < 0 || phi->target0 == pred) {
+        phi->target0 = pred;
+        phi->a = value;
+    } else if (phi->target1 < 0 || phi->target1 == pred) {
+        phi->target1 = pred;
+        phi->b = value;
+    }
+}
+
 static i32 ns_ssa_emit_raw(ns_ssa_builder *b, ns_ssa_inst inst) {
     i32 idx = (i32)ns_array_length(b->fn->insts);
     ns_array_push(b->fn->insts, inst);
@@ -230,6 +286,188 @@ static void ns_ssa_emit_jump(ns_ssa_builder *b, i32 target, i32 ast) {
     inst.type = ns_type_void;
     ns_ssa_emit_raw(b, inst);
     ns_ssa_connect(b, b->block, target);
+}
+
+static ns_str ns_ssa_typed_fn_name(ns_ssa_builder *b, ns_str prefix, ns_type t) {
+    char buf[160];
+    i32 n = 0;
+    if (ns_type_is(t, NS_TYPE_STRUCT) && (u32)ns_type_index(t) < (u32)ns_array_length(b->vm->symbols)) {
+        ns_str tag = b->vm->symbols[ns_type_index(t)].name;
+        n = snprintf(buf, sizeof(buf), "%.*s$%.*s", prefix.len, prefix.data, tag.len, tag.data);
+    } else {
+        const char *tag = "unknown";
+        if (ns_type_is(t, NS_TYPE_I8)) tag = "i8";
+        else if (ns_type_is(t, NS_TYPE_I16)) tag = "i16";
+        else if (ns_type_is(t, NS_TYPE_I32)) tag = "i32";
+        else if (ns_type_is(t, NS_TYPE_I64)) tag = "i64";
+        else if (ns_type_is(t, NS_TYPE_U8)) tag = "u8";
+        else if (ns_type_is(t, NS_TYPE_U16)) tag = "u16";
+        else if (ns_type_is(t, NS_TYPE_U32)) tag = "u32";
+        else if (ns_type_is(t, NS_TYPE_U64)) tag = "u64";
+        else if (ns_type_is(t, NS_TYPE_F32)) tag = "f32";
+        else if (ns_type_is(t, NS_TYPE_F64)) tag = "f64";
+        else if (ns_type_is(t, NS_TYPE_BOOL)) tag = "bool";
+        else if (ns_type_is(t, NS_TYPE_STRING)) tag = "str";
+        n = snprintf(buf, sizeof(buf), "%.*s$%s", prefix.len, prefix.data, tag);
+    }
+    if (n < 0) n = 0;
+    ns_str owned = ns_str_range(ns_malloc((szt)n + 1), n);
+    memcpy(owned.data, buf, (szt)n + 1);
+    ns_array_push(b->m->owned_strings, owned);
+    return owned;
+}
+
+static ns_str ns_ssa_to_str_symbol_name(ns_ssa_builder *b, ns_type t) {
+    return ns_ssa_typed_fn_name(b, ns_str_cstr("to_str"), t);
+}
+
+static ns_str ns_ssa_ops_fn_name(ns_ssa_builder *b, ns_ast_t *n) {
+    ns_ast_t *l = &b->ctx->nodes[n->ops_fn_def.left];
+    ns_ast_t *r = &b->ctx->nodes[n->ops_fn_def.right];
+    ns_type lt = ns_ssa_type_from_label(b, l->arg.type);
+    ns_type rt = ns_ssa_type_from_label(b, r->arg.type);
+    ns_str ln = ns_vm_get_type_name(b->vm, lt);
+    ns_str rn = ns_vm_get_type_name(b->vm, rt);
+    ns_str name = ns_ops_override_name(ln, rn, n->ops_fn_def.ops);
+    if (name.data) ns_array_push(b->m->owned_strings, name);
+    return name.len > 0 ? name : n->ops_fn_def.ops.val;
+}
+
+static ns_str ns_ssa_fresh_name(ns_ssa_builder *b, const char *prefix) {
+    char buf[40];
+    i32 n = snprintf(buf, sizeof(buf), "%s%d", prefix, b->next_value);
+    if (n < 0) n = 0;
+    ns_str owned = ns_str_range(ns_malloc((szt)n + 1), n);
+    memcpy(owned.data, buf, (szt)n + 1);
+    ns_array_push(b->m->owned_strings, owned);
+    return owned;
+}
+
+static i32 ns_ssa_emit_add_i32(ns_ssa_builder *b, i32 v, i32 n, ns_str name, i32 ast) {
+    i32 c = ns_ssa_emit_i32_const(b, n, ast);
+    i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_ADD, v, -1, ns_type_i32, name, (ns_token_t){0}, ast);
+    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = c;
+    return dst;
+}
+
+static i32 ns_ssa_emit_lt(ns_ssa_builder *b, i32 lhs, i32 rhs, i32 ast) {
+    i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_LT, lhs, -1, ns_type_bool, ns_str_null, (ns_token_t){0}, ast);
+    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = rhs;
+    return dst;
+}
+
+static i32 ns_ssa_emit_index(ns_ssa_builder *b, i32 table, i32 idx, i32 stride, ns_type elem, i32 ast) {
+    i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_INDEX, table, stride, elem, ns_str_null, (ns_token_t){0}, ast);
+    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = idx;
+    return dst;
+}
+
+static void ns_ssa_foreach_writeback(ns_ssa_builder *b, ns_ssa_loop_ctx *loop, i32 ast) {
+    if (loop->foreach_subject < 0 || loop->foreach_elem.len == 0) return;
+    i32 elem = ns_ssa_env_get_value(b->env, loop->foreach_elem, -1);
+    if (elem < 0) return;
+    ns_type et = ns_ssa_value_type(b, elem);
+    i32 subject = loop->foreach_subject;
+    if (loop->foreach_stride > 0 && loop->for_iter.len > 0) {
+        i32 idx = ns_ssa_env_get_value(b->env, loop->for_iter, -1);
+        if (idx < 0) return;
+        ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_ARRAY_STORE, ast);
+        store.a = subject;
+        store.b = elem;
+        store.target0 = idx;
+        store.c = loop->foreach_stride;
+        store.type = et;
+        ns_ssa_emit_raw(b, store);
+    }
+    if (loop->foreach_field_off >= 0) {
+        ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, ast);
+        store.a = subject;
+        store.b = elem;
+        store.c = loop->foreach_field_off;
+        store.target0 = ns_ssa_wasm32_size(b, et);
+        store.type = et;
+        ns_ssa_emit_raw(b, store);
+    }
+}
+
+static void ns_ssa_loop_flush_phis(ns_ssa_builder *b, i32 header) {
+    if (header < 0 || header >= (i32)ns_array_length(b->fn->blocks)) return;
+    ns_ssa_block *hb = &b->fn->blocks[header];
+    for (i32 hi = 0, hl = (i32)ns_array_length(hb->insts); hi < hl; ++hi) {
+        ns_ssa_inst *phi = &b->fn->insts[hb->insts[hi]];
+        if (phi->op != NS_SSA_OP_PHI) break;
+        i32 src = ns_ssa_env_get_value(b->env, phi->name, -1);
+        if (src < 0 || src == phi->dst) continue;
+        ns_ssa_inst copy = NS_SSA_INST_INIT(NS_SSA_OP_COPY, phi->ast);
+        copy.dst = phi->dst;
+        copy.a = src;
+        copy.type = phi->type;
+        copy.name = phi->name;
+        ns_ssa_emit_raw(b, copy);
+    }
+}
+
+static void ns_ssa_foreach_assign_writeback(ns_ssa_builder *b, ns_str name, i32 ast) {
+    for (i32 i = (i32)ns_array_length(b->loops) - 1; i >= 0; --i) {
+        ns_ssa_loop_ctx *loop = &b->loops[i];
+        if (loop->foreach_elem.len > 0 && ns_str_equals(loop->foreach_elem, name)) {
+            ns_ssa_foreach_writeback(b, loop, ast);
+            return;
+        }
+    }
+}
+
+static i32 ns_ssa_lower_struct_ctor(ns_ssa_builder *b, ns_ast_t *n, ns_symbol *st, i32 ast) {
+    i32 object = ns_ssa_emit_value(b, NS_SSA_OP_ALLOC, -1, ns_ssa_wasm32_size(b, st->st.st.t),
+                                   st->st.st.t, st->name, (ns_token_t){0}, ast);
+    i32 next = n->next;
+    i32 nfields = (i32)ns_array_length(st->st.fields);
+    for (i32 fi = 0; fi < n->call_expr.arg_count && fi < nfields && next > 0; ++fi) {
+        i32 val = ns_ssa_lower_expr(b, next);
+        val = ns_ssa_clone_struct(b, val, next);
+        ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, next);
+        store.a = object;
+        store.b = val;
+        store.c = ns_ssa_wasm32_field_offset(b, st, fi);
+        store.target0 = ns_ssa_wasm32_size(b, st->st.fields[fi].t);
+        store.type = st->st.fields[fi].t;
+        ns_ssa_emit_raw(b, store);
+        next = b->ctx->nodes[next].next;
+    }
+    return object;
+}
+
+static i32 ns_ssa_emit_i32_const(ns_ssa_builder *b, i32 n, i32 ast) {
+    char text[24];
+    i32 len = snprintf(text, sizeof(text), "%d", n);
+    ns_str owned = ns_str_range(ns_malloc((szt)len + 1), len);
+    memcpy(owned.data, text, (szt)len + 1);
+    ns_array_push(b->m->owned_strings, owned);
+    return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32, owned,
+                             (ns_token_t){.type = NS_TOKEN_INT_LITERAL, .val = owned}, ast);
+}
+
+static i32 ns_ssa_emit_named_call(ns_ssa_builder *b, const char *name, i32 *args, i32 nargs,
+                                  ns_type ret, i32 ast) {
+    for (i32 i = 0; i < nargs; ++i) {
+        ns_ssa_inst arg = NS_SSA_INST_INIT(NS_SSA_OP_ARG, ast);
+        arg.a = args[i];
+        ns_ssa_emit_raw(b, arg);
+    }
+    return ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, nargs, ret, ns_str_cstr((i8 *)name),
+                             (ns_token_t){0}, ast);
+}
+
+static i32 ns_ssa_map_flags(ns_ssa_builder *b, ns_type t) {
+    i32 flags = ns_type_is(t, NS_TYPE_SET) ? 1 : 0;
+    i32 idx = ns_type_index(t);
+    if (idx >= 0 && idx < (i32)ns_array_length(b->vm->symbols)) {
+        ns_type key = b->vm->symbols[idx].ct.key;
+        ns_type val = b->vm->symbols[idx].ct.val;
+        if (ns_type_is(key, NS_TYPE_STRING)) flags |= 2;
+        if (ns_type_is(val, NS_TYPE_STRING)) flags |= 4;
+    }
+    return flags;
 }
 
 static void ns_ssa_emit_ret(ns_ssa_builder *b, i32 value, i32 ast) {
@@ -593,6 +831,37 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
         ln = &b->ctx->nodes[ln->expr.body];
     }
 
+    if (n->binary_expr.op.type == NS_TOKEN_ASSIGN_OP && n->binary_expr.op.val.len > 1 &&
+        ln->type == NS_AST_PRIMARY_EXPR && ln->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+        ns_token_t arith = n->binary_expr.op;
+        arith.val.len -= 1;
+        ns_ssa_op op = NS_SSA_OP_UNKNOWN;
+        if (ns_str_equals_STR(arith.val, "+")) op = NS_SSA_OP_ADD;
+        else if (ns_str_equals_STR(arith.val, "-")) op = NS_SSA_OP_SUB;
+        else if (ns_str_equals_STR(arith.val, "*")) op = NS_SSA_OP_MUL;
+        else if (ns_str_equals_STR(arith.val, "/")) op = NS_SSA_OP_DIV;
+        else if (ns_str_equals_STR(arith.val, "%")) op = NS_SSA_OP_MOD;
+        else if (ns_str_equals_STR(arith.val, "&")) op = NS_SSA_OP_BAND;
+        else if (ns_str_equals_STR(arith.val, "|")) op = NS_SSA_OP_BOR;
+        else if (ns_str_equals_STR(arith.val, "^")) op = NS_SSA_OP_BXOR;
+        else if (ns_str_equals_STR(arith.val, "<<")) op = NS_SSA_OP_SHL;
+        else if (ns_str_equals_STR(arith.val, ">>")) op = NS_SSA_OP_SHR;
+        i32 cur = -1;
+        i32 local = ns_ssa_env_find(b->env, ln->primary_expr.token.val);
+        i32 global = ns_ssa_global_index(b, ln->primary_expr.token.val);
+        if (local >= 0) cur = b->env[local].value;
+        else if (global >= 0) {
+            cur = ns_ssa_emit_value(b, NS_SSA_OP_GLOBAL_GET, -1, global, b->m->globals[global].type,
+                                    ln->primary_expr.token.val, ln->primary_expr.token, i);
+        }
+        if (cur >= 0 && op != NS_SSA_OP_UNKNOWN) {
+            ns_type ct = ns_ssa_value_type(b, cur);
+            i32 next = ns_ssa_emit_value(b, op, cur, -1, ct, ns_str_null, arith, i);
+            b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = rhs;
+            rhs = next;
+        }
+    }
+
     if (ln->type == NS_AST_PRIMARY_EXPR && ln->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
         rhs = ns_ssa_clone_struct(b, rhs, i);
         i32 local = ns_ssa_env_find(b->env, ln->primary_expr.token.val);
@@ -609,6 +878,7 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
         ns_type rhs_type = ns_ssa_value_type(b, rhs);
         i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_COPY, rhs, -1, rhs_type, ln->primary_expr.token.val, ln->primary_expr.token, i);
         ns_ssa_env_bind(b, ln->primary_expr.token.val, dst, rhs_type);
+        ns_ssa_foreach_assign_writeback(b, ln->primary_expr.token.val, i);
         return dst;
     }
 
@@ -626,6 +896,11 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             store.c = ns_ssa_wasm32_size(b, element);
             store.type = element;
             ns_ssa_emit_raw(b, store);
+            return rhs;
+        }
+        if (ns_type_is(table_type, NS_TYPE_DICT)) {
+            i32 args[3] = {table, index, rhs};
+            ns_ssa_emit_named_call(b, "ns_rt_map_set", args, 3, ns_type_void, i);
             return rhs;
         }
     }
@@ -669,8 +944,48 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             return ns_ssa_lower_assign(b, n, i);
         }
         i32 lhs = ns_ssa_lower_expr(b, n->binary_expr.left);
-        i32 rhs = ns_ssa_lower_expr(b, n->binary_expr.right);
         ns_ssa_op op = ns_ssa_binary_op(n->binary_expr.op);
+        ns_type lhs_type = ns_ssa_value_type(b, lhs);
+        if ((op == NS_SSA_OP_AND || op == NS_SSA_OP_OR) && ns_type_is(lhs_type, NS_TYPE_BOOL)) {
+            i32 rhs_block = ns_ssa_new_block(b, n->binary_expr.right);
+            i32 merge = ns_ssa_new_block(b, i);
+            i32 lhs_exit = b->block;
+            if (op == NS_SSA_OP_AND) ns_ssa_emit_branch(b, lhs, rhs_block, merge, i);
+            else ns_ssa_emit_branch(b, lhs, merge, rhs_block, i);
+            b->block = rhs_block;
+            b->fn->blocks[rhs_block].terminated = false;
+            i32 rhs = ns_ssa_lower_expr(b, n->binary_expr.right);
+            i32 rhs_exit = b->block;
+            if (!b->fn->blocks[rhs_exit].terminated) ns_ssa_emit_jump(b, merge, i);
+            b->block = merge;
+            b->fn->blocks[merge].terminated = false;
+            i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_PHI, lhs, -1, ns_type_bool,
+                                        ns_str_null, n->binary_expr.op, i);
+            ns_ssa_inst *phi = &b->fn->insts[ns_array_last(b->fn->blocks[merge].insts)[0]];
+            ns_ssa_phi_set_incoming(phi, lhs_exit, lhs);
+            ns_ssa_phi_set_incoming(phi, rhs_exit, rhs);
+            return dst;
+        }
+        i32 rhs = ns_ssa_lower_expr(b, n->binary_expr.right);
+        ns_type rhs_type = ns_ssa_value_type(b, rhs);
+        if (ns_type_is(lhs_type, NS_TYPE_STRUCT) || ns_type_is(rhs_type, NS_TYPE_STRUCT)) {
+            ns_str ln = ns_vm_get_type_name(b->vm, lhs_type);
+            ns_str rn = ns_vm_get_type_name(b->vm, rhs_type);
+            ns_str fname = ns_ops_override_name(ln, rn, n->binary_expr.op);
+            if (fname.data) ns_array_push(b->m->owned_strings, fname);
+            ns_symbol *fn = fname.len > 0 ? ns_vm_find_symbol(b->vm, fname, true) : ns_null;
+            if (fn && fn->type == NS_SYMBOL_FN) {
+                i32 a0 = ns_ssa_clone_struct(b, lhs, n->binary_expr.left);
+                i32 a1 = ns_ssa_clone_struct(b, rhs, n->binary_expr.right);
+                i32 args[2] = {a0, a1};
+                return ns_ssa_emit_named_call(b, fname.data, args, 2, fn->fn.ret, i);
+            }
+            ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
+            trap.a = lhs;
+            trap.b = rhs;
+            ns_ssa_emit_raw(b, trap);
+            return -1;
+        }
         if (op == NS_SSA_OP_UNKNOWN) {
             ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
             trap.a = lhs;
@@ -678,7 +993,21 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             ns_ssa_emit_raw(b, trap);
             return -1;
         }
-        ns_type result_type = ns_ssa_value_type(b, lhs);
+        if (lhs_type.type != rhs_type.type &&
+            ns_type_is_number(lhs_type) && ns_type_is_number(rhs_type)) {
+            ns_type up = ns_vm_number_type_upgrade(lhs_type, rhs_type);
+            if (!ns_type_is(up, NS_TYPE_UNKNOWN) && up.type != lhs_type.type) {
+                lhs = ns_ssa_emit_value(b, NS_SSA_OP_CAST, lhs, -1, up, ns_str_null,
+                                        n->binary_expr.op, i);
+                lhs_type = up;
+            }
+            if (!ns_type_is(up, NS_TYPE_UNKNOWN) && up.type != rhs_type.type) {
+                rhs = ns_ssa_emit_value(b, NS_SSA_OP_CAST, rhs, -1, up, ns_str_null,
+                                        n->binary_expr.op, i);
+                rhs_type = up;
+            }
+        }
+        ns_type result_type = lhs_type;
         if (op == NS_SSA_OP_EQ || op == NS_SSA_OP_NE || op == NS_SSA_OP_LT || op == NS_SSA_OP_LE ||
             op == NS_SSA_OP_GT || op == NS_SSA_OP_GE || op == NS_SSA_OP_AND || op == NS_SSA_OP_OR) {
             result_type = ns_type_bool;
@@ -714,29 +1043,62 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
         return ns_ssa_emit_value(b, op, v, -1, vt, ns_str_null, n->unary_expr.op, i);
     }
     case NS_AST_CALL_EXPR: {
+        ns_ast_t *builtin = ns_ssa_unwrap_expr(b, n->call_expr.callee);
+        if (builtin && builtin->type == NS_AST_PRIMARY_EXPR &&
+            builtin->primary_expr.token.type == NS_TOKEN_IDENTIFIER &&
+            n->call_expr.arg_count == 2) {
+            ns_str bname = builtin->primary_expr.token.val;
+            ns_bool is_insert = ns_str_equals_STR(bname, "insert");
+            ns_bool is_has = ns_str_equals_STR(bname, "has");
+            ns_bool is_remove = ns_str_equals_STR(bname, "remove");
+            ns_symbol *user = ns_vm_find_symbol(b->vm, bname, false);
+            if ((is_insert || is_has || is_remove) && (!user || user->type != NS_SYMBOL_FN)) {
+                i32 a0n = n->next;
+                i32 a1n = a0n > 0 ? b->ctx->nodes[a0n].next : 0;
+                i32 c = ns_ssa_lower_expr(b, a0n);
+                i32 k = ns_ssa_lower_expr(b, a1n);
+                i32 args[2] = {c, k};
+                const char *rt = is_insert ? "ns_rt_map_insert" : is_has ? "ns_rt_map_has" : "ns_rt_map_remove";
+                return ns_ssa_emit_named_call(b, rt, args, 2, ns_type_bool, i);
+            }
+        }
         ns_type result_type = ns_type_unknown;
         ns_str callee_name = ns_str_null;
         ns_str callee_module = ns_str_null;
         ns_ast_t *callee_node = ns_ssa_unwrap_expr(b, n->call_expr.callee);
-        if (callee_node && callee_node->type == NS_AST_PRIMARY_EXPR &&
-            callee_node->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
-            ns_symbol *symbol = ns_vm_find_symbol(b->vm, callee_node->primary_expr.token.val, false);
-            if (symbol && symbol->type == NS_SYMBOL_FN) {
-                result_type = ns_enum_underlying_type(b->vm, symbol->fn.ret);
-                callee_name = symbol->name;
-                callee_module = symbol->lib;
-                ns_ssa_record_import(b, symbol);
-            }
+        ns_symbol *callee_sym = ns_null;
+        if (n->call_expr.rt >= 0 && n->call_expr.rt < (i32)ns_array_length(b->vm->symbols)) {
+            callee_sym = &b->vm->symbols[n->call_expr.rt];
+        } else if (callee_node && callee_node->type == NS_AST_PRIMARY_EXPR &&
+                   callee_node->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+            callee_sym = ns_vm_find_symbol(b->vm, callee_node->primary_expr.token.val, false);
+        }
+        if (callee_sym && callee_sym->type == NS_SYMBOL_STRUCT) {
+            return ns_ssa_lower_struct_ctor(b, n, callee_sym, i);
+        }
+        ns_bool skip_clone = false;
+        if (callee_sym && callee_sym->type == NS_SYMBOL_FN) {
+            result_type = ns_enum_underlying_type(b->vm, callee_sym->fn.ret);
+            callee_name = callee_sym->name;
+            callee_module = callee_sym->lib;
+            ns_ssa_record_import(b, callee_sym);
+            skip_clone = ns_str_equals_STR(callee_sym->name, "next");
         }
         i32 callee = ns_ssa_lower_expr(b, n->call_expr.callee);
         i32 next = n->next;
+        i32 first_arg = -1;
         for (i32 ai = 0; ai < n->call_expr.arg_count && next > 0; ++ai) {
             i32 av = ns_ssa_lower_expr(b, next);
-            av = ns_ssa_clone_struct(b, av, next);
+            if (!skip_clone) av = ns_ssa_clone_struct(b, av, next);
+            if (ai == 0) first_arg = av;
             ns_ssa_inst arg = NS_SSA_INST_INIT(NS_SSA_OP_ARG, next);
             arg.a = av;
             ns_ssa_emit_raw(b, arg);
             next = b->ctx->nodes[next].next;
+        }
+        if (first_arg >= 0 && (ns_str_equals_STR(callee_name, "next") ||
+                               ns_str_equals_STR(callee_name, "to_str"))) {
+            callee_name = ns_ssa_typed_fn_name(b, callee_name, ns_ssa_value_type(b, first_arg));
         }
         i32 value = ns_ssa_emit_value(b, NS_SSA_OP_CALL, callee, n->call_expr.arg_count,
                                       result_type, callee_name, (ns_token_t){0}, i);
@@ -767,11 +1129,12 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
         i32 obj = ns_ssa_lower_expr(b, n->member_expr.left);
         ns_type object_type = ns_ssa_value_type(b, obj);
         if (member && member->type == NS_AST_PRIMARY_EXPR &&
-            (ns_type_is_array(object_type) || ns_type_is(object_type, NS_TYPE_STRING)) &&
+            (ns_type_is_array(object_type) || ns_type_is(object_type, NS_TYPE_STRING) ||
+             ns_type_is(object_type, NS_TYPE_DICT) || ns_type_is(object_type, NS_TYPE_SET)) &&
             (ns_str_equals_STR(member->primary_expr.token.val, "len") ||
              ns_str_equals_STR(member->primary_expr.token.val, "size") ||
              ns_str_equals_STR(member->primary_expr.token.val, "cap"))) {
-            i32 offset = ns_str_equals_STR(member->primary_expr.token.val, "cap") && ns_type_is_array(object_type) ? 8 : 4;
+            i32 offset = ns_str_equals_STR(member->primary_expr.token.val, "cap") ? 8 : 4;
             return ns_ssa_emit_value(b, NS_SSA_OP_LOAD, obj, offset, ns_type_i32,
                                      member->primary_expr.token.val, member->primary_expr.token, i);
         }
@@ -806,6 +1169,12 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
         } else if (ns_type_is(table_type, NS_TYPE_STRING)) {
             element = ns_type_i32;
             stride = 1;
+        } else if (ns_type_is(table_type, NS_TYPE_DICT)) {
+            i32 args[2] = {table, idx};
+            ns_type val = ns_type_unknown;
+            i32 tidx = ns_type_index(table_type);
+            if (tidx >= 0 && tidx < (i32)ns_array_length(b->vm->symbols)) val = b->vm->symbols[tidx].ct.val;
+            return ns_ssa_emit_named_call(b, "ns_rt_map_get", args, 2, val, i);
         }
         i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_INDEX, table, stride, element, ns_str_null, (ns_token_t){0}, i);
         ns_ssa_inst *inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
@@ -834,7 +1203,14 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
     }
     case NS_AST_ARRAY_EXPR: {
         ns_type array_type = n->array_expr.rt;
-        if (ns_type_is(array_type, NS_TYPE_DICT) || ns_type_is(array_type, NS_TYPE_SET)) break;
+        if (ns_type_is(array_type, NS_TYPE_DICT) || ns_type_is(array_type, NS_TYPE_SET)) {
+            i32 count = n->array_expr.literal
+                ? ns_ssa_emit_i32_const(b, n->array_expr.elem_count, i)
+                : ns_ssa_lower_expr(b, n->array_expr.count_expr);
+            i32 flags = ns_ssa_emit_i32_const(b, ns_ssa_map_flags(b, array_type), i);
+            i32 args[2] = {count, flags};
+            return ns_ssa_emit_named_call(b, "ns_rt_map_new", args, 2, array_type, i);
+        }
         ns_type element = array_type;
         element.array = false;
         i32 stride = ns_ssa_wasm32_size(b, element);
@@ -921,14 +1297,41 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             ns_type vt = ns_ssa_value_type(b, val);
             i32 piece = val;
             if (!ns_type_is(vt, NS_TYPE_STRING)) {
-                const char *helper = ns_type_is_float(vt) ? "ns_rt_ftos" :
-                                     ns_type_is(vt, NS_TYPE_BOOL) ? "ns_rt_btos" :
-                                     ns_type_unsigned(vt) ? "ns_rt_utos" : "ns_rt_itos";
-                ns_ssa_inst a0 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
-                a0.a = val;
-                ns_ssa_emit_raw(b, a0);
-                piece = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 1, ns_type_str,
-                                          ns_str_cstr((i8 *)helper), (ns_token_t){0}, i);
+                ns_str callee = ns_str_null;
+                for (i32 si = 0, sl = (i32)ns_array_length(b->vm->symbols); si < sl; ++si) {
+                    ns_symbol *s = &b->vm->symbols[si];
+                    if (s->type != NS_SYMBOL_FN || !ns_str_equals_STR(s->name, "to_str")) continue;
+                    if ((i32)ns_array_length(s->fn.args) != 1) continue;
+                    ns_type at = s->fn.args[0].val.t;
+                    if (at.type != vt.type || ns_type_index(at) != ns_type_index(vt)) continue;
+                    if (!ns_type_is(s->fn.ret, NS_TYPE_STRING)) continue;
+                    if (s->fn.fn.t.ref || s->fn.fn_type == NS_FN_ASYNC) continue;
+                    callee = ns_ssa_to_str_symbol_name(b, vt);
+                    break;
+                }
+                if (callee.len == 0) {
+                    const char *helper = ns_type_is_float(vt) ? "ns_rt_ftos" :
+                                         ns_type_is(vt, NS_TYPE_BOOL) ? "ns_rt_btos" :
+                                         ns_type_is(vt, NS_TYPE_STRUCT) ? NULL :
+                                         ns_type_unsigned(vt) ? "ns_rt_utos" : "ns_rt_itos";
+                    if (!helper) {
+                        ns_str nils = ns_str_cstr("nil");
+                        piece = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, nils,
+                                                  (ns_token_t){.type = NS_TOKEN_STR_LITERAL, .val = nils}, i);
+                    } else {
+                        ns_ssa_inst a0 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
+                        a0.a = val;
+                        ns_ssa_emit_raw(b, a0);
+                        piece = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 1, ns_type_str,
+                                                  ns_str_cstr((i8 *)helper), (ns_token_t){0}, i);
+                    }
+                } else {
+                    ns_ssa_inst a0 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
+                    a0.a = val;
+                    ns_ssa_emit_raw(b, a0);
+                    piece = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 1, ns_type_str,
+                                              callee, (ns_token_t){0}, i);
+                }
             }
             if (acc < 0) {
                 acc = piece;
@@ -989,9 +1392,8 @@ static void ns_ssa_merge_env(ns_ssa_builder *b, ns_ssa_binding *base, ns_ssa_bin
 
         i32 phi = ns_ssa_emit_value(b, NS_SSA_OP_PHI, v_then, -1, binding->type, binding->name, (ns_token_t){0}, ast);
         ns_ssa_inst *inst = &b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]];
-        inst->b = v_else;
-        inst->target0 = then_block;
-        inst->target1 = else_block;
+        ns_ssa_phi_set_incoming(inst, then_block, v_then);
+        ns_ssa_phi_set_incoming(inst, else_block, v_else);
         binding->value = phi;
     }
 }
@@ -1049,6 +1451,7 @@ static void ns_ssa_lower_if(ns_ssa_builder *b, i32 i) {
 // code reads the phi values, so a variable reassigned in the loop is observed
 // with its updated value on the next iteration instead of its pre-loop value.
 static i32 *ns_ssa_loop_header_phis(ns_ssa_builder *b, i32 header, i32 preheader, i32 body_block, i32 ast) {
+    (void)body_block;
     ns_ssa_binding *pre_env = ns_ssa_env_clone(b->env);
     i32 nbind = (i32)ns_array_length(b->env);
     i32 *phi_inst = ns_null;
@@ -1057,9 +1460,7 @@ static i32 *ns_ssa_loop_header_phis(ns_ssa_builder *b, i32 header, i32 preheader
         ns_ssa_binding *bd = &b->env[k];
         i32 phi = ns_ssa_emit_value(b, NS_SSA_OP_PHI, pre_env[k].value, -1, bd->type, bd->name, (ns_token_t){0}, ast);
         i32 idx = ns_array_last(b->fn->blocks[header].insts)[0];
-        b->fn->insts[idx].b = pre_env[k].value; // placeholder until the back edge is known
-        b->fn->insts[idx].target0 = preheader;
-        b->fn->insts[idx].target1 = body_block;
+        ns_ssa_phi_set_incoming(&b->fn->insts[idx], preheader, pre_env[k].value);
         phi_inst[k] = idx;
         bd->value = phi;
     }
@@ -1072,8 +1473,8 @@ static i32 *ns_ssa_loop_header_phis(ns_ssa_builder *b, i32 header, i32 preheader
 static void ns_ssa_loop_close_phis(ns_ssa_builder *b, i32 *phi_inst, i32 body_exit) {
     for (i32 k = 0, l = (i32)ns_array_length(phi_inst); k < l; ++k) {
         ns_ssa_inst *phi = &b->fn->insts[phi_inst[k]];
-        phi->b = ns_ssa_env_get_value(b->env, phi->name, phi->dst);
-        phi->target1 = body_exit;
+        i32 value = ns_ssa_env_get_value(b->env, phi->name, phi->dst);
+        ns_ssa_phi_set_incoming(phi, body_exit, value);
     }
 }
 
@@ -1083,29 +1484,217 @@ static void ns_ssa_lower_loop(ns_ssa_builder *b, i32 i) {
     i32 cond_block = ns_ssa_new_block(b, n->loop_stmt.condition);
     i32 body_block = ns_ssa_new_block(b, n->loop_stmt.body);
     i32 exit_block = ns_ssa_new_block(b, i);
+    ns_bool do_first = n->loop_stmt.do_first;
 
-    ns_ssa_emit_jump(b, cond_block, i);
-    b->block = cond_block;
-    b->fn->blocks[cond_block].terminated = false;
+    if (do_first) ns_ssa_emit_jump(b, body_block, i);
+    else ns_ssa_emit_jump(b, cond_block, i);
 
-    i32 *phi_inst = ns_ssa_loop_header_phis(b, cond_block, preheader, body_block, i);
+    i32 phi_block = do_first ? body_block : cond_block;
+    i32 back_hint = do_first ? cond_block : body_block;
+    b->block = phi_block;
+    b->fn->blocks[phi_block].terminated = false;
+    i32 *phi_inst = ns_ssa_loop_header_phis(b, phi_block, preheader, back_hint, i);
     ns_ssa_binding *header_env = ns_ssa_env_clone(b->env);
 
+    ns_ssa_loop_ctx loop = ns_ssa_loop_ctx_init(exit_block, cond_block);
+    loop.phi_block = phi_block;
+    ns_array_push(b->loops, loop);
+
+    if (!do_first) {
+        if (n->loop_stmt.condition > 0) {
+            i32 cond = ns_ssa_lower_expr(b, n->loop_stmt.condition);
+            ns_ssa_emit_branch(b, cond, body_block, exit_block, i);
+        } else {
+            ns_ssa_emit_jump(b, body_block, i);
+        }
+        b->block = body_block;
+        b->fn->blocks[body_block].terminated = false;
+        ns_array_free(b->env);
+        b->env = ns_ssa_env_clone(header_env);
+        ns_ssa_lower_compound(b, n->loop_stmt.body);
+        if (!b->fn->blocks[b->block].terminated) {
+            ns_ssa_loop_close_phis(b, phi_inst, b->block);
+            ns_ssa_emit_jump(b, cond_block, i);
+        }
+        (void)ns_array_pop(b->loops);
+        ns_array_free(phi_inst);
+        b->block = exit_block;
+        b->fn->blocks[b->block].terminated = false;
+        ns_array_free(b->env);
+        b->env = header_env;
+        return;
+    }
+
+    ns_ssa_lower_compound(b, n->loop_stmt.body);
+    ns_ssa_binding *body_env = ns_ssa_env_clone(b->env);
+    if (!b->fn->blocks[b->block].terminated) ns_ssa_emit_jump(b, cond_block, i);
+
+    b->block = cond_block;
+    b->fn->blocks[cond_block].terminated = false;
+    ns_array_free(b->env);
+    b->env = ns_ssa_env_clone(body_env);
     if (n->loop_stmt.condition > 0) {
         i32 cond = ns_ssa_lower_expr(b, n->loop_stmt.condition);
         ns_ssa_emit_branch(b, cond, body_block, exit_block, i);
     } else {
         ns_ssa_emit_jump(b, body_block, i);
     }
+    ns_array_free(b->env);
+    b->env = body_env;
+    ns_ssa_loop_close_phis(b, phi_inst, cond_block);
 
-    ns_ssa_loop_ctx loop = {.break_block = exit_block, .continue_block = cond_block, .for_iter = ns_str_null};
+    (void)ns_array_pop(b->loops);
+    ns_array_free(phi_inst);
+    ns_array_free(header_env);
+    b->block = exit_block;
+    b->fn->blocks[b->block].terminated = false;
+}
+
+static void ns_ssa_foreach_step(ns_ssa_builder *b, ns_ssa_loop_ctx *loop, i32 ast) {
+    if (loop->for_iter.len == 0) return;
+    i32 iter = ns_ssa_env_get_value(b->env, loop->for_iter, -1);
+    if (iter < 0) return;
+    i32 next = ns_ssa_emit_add_i32(b, iter, 1, loop->for_iter, ast);
+    ns_ssa_env_bind(b, loop->for_iter, next, ns_type_i32);
+}
+
+static void ns_ssa_lower_foreach(ns_ssa_builder *b, i32 i) {
+    ns_ast_t *n = &b->ctx->nodes[i];
+    ns_ast_t *g = &b->ctx->nodes[n->for_stmt.generator];
+    i32 subject = ns_ssa_lower_expr(b, g->gen_expr.from);
+    ns_type subject_type = ns_ssa_value_type(b, subject);
+    ns_ast_t *from_n = ns_ssa_unwrap_expr(b, g->gen_expr.from);
+    if (from_n && from_n->type == NS_AST_PRIMARY_EXPR &&
+        from_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+        i32 cur = ns_ssa_env_get_value(b->env, from_n->primary_expr.token.val, subject);
+        if (cur >= 0) subject = cur;
+    }
+
+    ns_bool is_array = ns_type_is_array(subject_type);
+    ns_bool is_string = !is_array && ns_type_is(subject_type, NS_TYPE_STRING);
+    ns_bool is_map = !is_array && (ns_type_is(subject_type, NS_TYPE_DICT) || ns_type_is(subject_type, NS_TYPE_SET));
+    ns_bool is_struct = !is_array && ns_type_is(subject_type, NS_TYPE_STRUCT);
+
+    ns_str idx_name = ns_str_null;
+    if (is_array || is_string || is_map) {
+        idx_name = ns_ssa_fresh_name(b, "$fi");
+        i32 zero = ns_ssa_emit_i32_const(b, 0, i);
+        ns_ssa_env_bind(b, idx_name, zero, ns_type_i32);
+    }
+
+    i32 preheader = b->block;
+    i32 cond_block = ns_ssa_new_block(b, g->gen_expr.from);
+    i32 body_block = ns_ssa_new_block(b, n->for_stmt.body);
+    i32 probe_block = is_map ? ns_ssa_new_block(b, i) : -1;
+    i32 dead_block = is_map ? ns_ssa_new_block(b, i) : -1;
+    i32 exit_block = ns_ssa_new_block(b, i);
+    ns_ssa_emit_jump(b, cond_block, i);
+
+    b->block = cond_block;
+    b->fn->blocks[cond_block].terminated = false;
+    i32 *phi_inst = ns_ssa_loop_header_phis(b, cond_block, preheader, body_block, i);
+    ns_ssa_binding *header_env = ns_ssa_env_clone(b->env);
+    if (from_n && from_n->type == NS_AST_PRIMARY_EXPR &&
+        from_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+        i32 cur = ns_ssa_env_get_value(b->env, from_n->primary_expr.token.val, subject);
+        if (cur >= 0) subject = cur;
+    }
+
+    ns_ssa_loop_ctx loop = ns_ssa_loop_ctx_init(exit_block, cond_block);
+    loop.for_iter = idx_name;
+    loop.foreach_subject = subject;
+    loop.foreach_elem = g->gen_expr.name.val;
+
+    if (is_struct) {
+        ns_symbol *st = &b->vm->symbols[ns_type_index(subject_type)];
+        i32 field = g->gen_expr.rt.value_field;
+        if (field < 0) field = ns_struct_field_index(st, ns_str_cstr("value"));
+        ns_str next_name = ns_ssa_typed_fn_name(b, ns_str_cstr("next"), subject_type);
+        i32 args[1] = {subject};
+        i32 ok = ns_ssa_emit_named_call(b, next_name.data, args, 1, ns_type_bool, i);
+        ns_ssa_emit_branch(b, ok, body_block, exit_block, i);
+        if (field >= 0) loop.foreach_field_off = ns_ssa_wasm32_field_offset(b, st, field);
+    } else if (is_map) {
+        i32 idx = ns_ssa_env_get_value(b->env, idx_name, -1);
+        i32 cap = ns_ssa_emit_value(b, NS_SSA_OP_LOAD, subject, 8, ns_type_i32,
+                                    ns_str_null, (ns_token_t){0}, i);
+        i32 cond = ns_ssa_emit_lt(b, idx, cap, i);
+        ns_ssa_emit_branch(b, cond, probe_block, exit_block, i);
+        b->block = probe_block;
+        b->fn->blocks[probe_block].terminated = false;
+        i32 live_args[2] = {subject, idx};
+        i32 live = ns_ssa_emit_named_call(b, "ns_rt_map_slot_live", live_args, 2, ns_type_bool, i);
+        ns_ssa_emit_branch(b, live, body_block, dead_block, i);
+        b->block = dead_block;
+        b->fn->blocks[dead_block].terminated = false;
+        ns_array_free(b->env);
+        b->env = ns_ssa_env_clone(header_env);
+        ns_ssa_foreach_step(b, &loop, i);
+        ns_ssa_loop_close_phis(b, phi_inst, b->block);
+        ns_ssa_emit_jump(b, cond_block, i);
+    } else {
+        i32 idx = ns_ssa_env_get_value(b->env, idx_name, -1);
+        i32 len = ns_ssa_emit_value(b, NS_SSA_OP_LOAD, subject, 4, ns_type_i32,
+                                    ns_str_null, (ns_token_t){0}, i);
+        i32 cond = ns_ssa_emit_lt(b, idx, len, i);
+        ns_ssa_emit_branch(b, cond, body_block, exit_block, i);
+        if (is_array) {
+            ns_type elem = subject_type;
+            elem.array = false;
+            loop.foreach_stride = ns_ssa_wasm32_size(b, elem);
+        }
+    }
+
     ns_array_push(b->loops, loop);
 
     b->block = body_block;
     ns_array_free(b->env);
     b->env = ns_ssa_env_clone(header_env);
-    ns_ssa_lower_compound(b, n->loop_stmt.body);
+    if (from_n && from_n->type == NS_AST_PRIMARY_EXPR &&
+        from_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+        i32 cur = ns_ssa_env_get_value(b->env, from_n->primary_expr.token.val, subject);
+        if (cur >= 0) subject = cur;
+    }
+
+    ns_type elem_t = ns_type_unknown;
+    i32 elem = -1;
+    if (is_struct) {
+        ns_symbol *st = &b->vm->symbols[ns_type_index(subject_type)];
+        i32 field = g->gen_expr.rt.value_field;
+        if (field < 0) field = ns_struct_field_index(st, ns_str_cstr("value"));
+        if (field >= 0) {
+            elem_t = st->st.fields[field].t;
+            elem = ns_ssa_emit_value(b, NS_SSA_OP_LOAD, subject,
+                                     ns_ssa_wasm32_field_offset(b, st, field),
+                                     elem_t, g->gen_expr.name.val, g->gen_expr.name, i);
+            b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].target0 =
+                ns_ssa_wasm32_size(b, elem_t);
+        }
+    } else if (is_map) {
+        i32 tidx = ns_type_index(subject_type);
+        if (tidx >= 0 && tidx < (i32)ns_array_length(b->vm->symbols)) {
+            elem_t = b->vm->symbols[tidx].ct.key;
+        }
+        i32 idx = ns_ssa_env_get_value(b->env, idx_name, -1);
+        i32 key_args[2] = {subject, idx};
+        elem = ns_ssa_emit_named_call(b, "ns_rt_map_slot_key", key_args, 2, elem_t, i);
+    } else if (is_string) {
+        elem_t = ns_type_i32;
+        i32 idx = ns_ssa_env_get_value(b->env, idx_name, -1);
+        elem = ns_ssa_emit_index(b, subject, idx, 1, elem_t, i);
+    } else {
+        elem_t = subject_type;
+        elem_t.array = false;
+        i32 stride = ns_ssa_wasm32_size(b, elem_t);
+        i32 idx = ns_ssa_env_get_value(b->env, idx_name, -1);
+        elem = ns_ssa_emit_index(b, subject, idx, stride, elem_t, i);
+    }
+    if (elem >= 0) ns_ssa_env_bind(b, g->gen_expr.name.val, elem, elem_t);
+
+    ns_ssa_lower_compound(b, n->for_stmt.body);
     if (!b->fn->blocks[b->block].terminated) {
+        ns_ssa_foreach_writeback(b, ns_array_last(b->loops), i);
+        ns_ssa_foreach_step(b, ns_array_last(b->loops), i);
         ns_ssa_loop_close_phis(b, phi_inst, b->block);
         ns_ssa_emit_jump(b, cond_block, i);
     }
@@ -1115,14 +1704,14 @@ static void ns_ssa_lower_loop(ns_ssa_builder *b, i32 i) {
     b->block = exit_block;
     b->fn->blocks[b->block].terminated = false;
     ns_array_free(b->env);
-    b->env = header_env; // values live after the loop are the header phis
+    b->env = header_env;
 }
 
 static void ns_ssa_lower_for(ns_ssa_builder *b, i32 i) {
     ns_ast_t *n = &b->ctx->nodes[i];
     ns_ast_t *g = &b->ctx->nodes[n->for_stmt.generator];
     if (!g->gen_expr.range) {
-        ns_ssa_lower_compound(b, n->for_stmt.body);
+        ns_ssa_lower_foreach(b, i);
         return;
     }
 
@@ -1147,11 +1736,8 @@ static void ns_ssa_lower_for(ns_ssa_builder *b, i32 i) {
     cond_inst->b = to;
     ns_ssa_emit_branch(b, cond, body_block, exit_block, i);
 
-    ns_ssa_loop_ctx loop = {
-        .break_block = exit_block,
-        .continue_block = cond_block,
-        .for_iter = g->gen_expr.name.val,
-    };
+    ns_ssa_loop_ctx loop = ns_ssa_loop_ctx_init(exit_block, cond_block);
+    loop.for_iter = g->gen_expr.name.val;
     ns_array_push(b->loops, loop);
 
     b->block = body_block;
@@ -1218,7 +1804,10 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
         } break;
         case NS_TOKEN_BREAK: {
             if (ns_array_length(b->loops) > 0) {
-                ns_ssa_emit_jump(b, ns_array_last(b->loops)->break_block, i);
+                ns_ssa_loop_ctx *loop = ns_array_last(b->loops);
+                ns_ssa_foreach_writeback(b, loop, i);
+                ns_ssa_loop_flush_phis(b, loop->phi_block);
+                ns_ssa_emit_jump(b, loop->break_block, i);
             } else {
                 ns_ssa_inst trap = NS_SSA_INST_INIT(NS_SSA_OP_TRAP, i);
                 ns_ssa_emit_raw(b, trap);
@@ -1227,29 +1816,14 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
         case NS_TOKEN_CONTINUE: {
             if (ns_array_length(b->loops) > 0) {
                 ns_ssa_loop_ctx *loop = ns_array_last(b->loops);
-                if (loop->for_iter.len > 0) {
-                    i32 iter = ns_ssa_env_get_value(b->env, loop->for_iter, -1);
-                    i32 one = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_i32,
-                                                ns_str_cstr("1"), (ns_token_t){0}, i);
-                    i32 next = ns_ssa_emit_value(b, NS_SSA_OP_ADD, iter, -1, ns_type_i32,
-                                                 loop->for_iter, (ns_token_t){0}, i);
-                    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = one;
-                    ns_ssa_env_bind(b, loop->for_iter, next, ns_type_i32);
-                }
-                /* Continue may leave a nested block that is not a recorded phi
-                 * predecessor. Copy the current env into the header phi slots
-                 * so the back edge keeps updated values. */
+                ns_ssa_foreach_writeback(b, loop, i);
+                ns_ssa_foreach_step(b, loop, i);
                 ns_ssa_block *hb = &b->fn->blocks[loop->continue_block];
                 for (i32 hi = 0, hl = (i32)ns_array_length(hb->insts); hi < hl; ++hi) {
                     ns_ssa_inst *phi = &b->fn->insts[hb->insts[hi]];
                     if (phi->op != NS_SSA_OP_PHI) break;
                     i32 src = ns_ssa_env_get_value(b->env, phi->name, -1);
-                    if (src < 0 || src == phi->dst) continue;
-                    ns_ssa_inst copy = NS_SSA_INST_INIT(NS_SSA_OP_COPY, i);
-                    copy.dst = phi->dst;
-                    copy.a = src;
-                    copy.type = phi->type;
-                    ns_ssa_emit_raw(b, copy);
+                    if (src >= 0) ns_ssa_phi_set_incoming(phi, b->block, src);
                 }
                 ns_ssa_emit_jump(b, loop->continue_block, i);
             } else {
@@ -1307,6 +1881,19 @@ static void ns_ssa_lower_compound(ns_ssa_builder *b, i32 i) {
 
 static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i32 arg_head, i32 arg_count) {
     ns_ssa_fn fn = {0};
+    if ((ns_str_equals_STR(name, "to_str") || ns_str_equals_STR(name, "next")) &&
+        arg_count == 1 && arg_head > 0) {
+        ns_ast_t *an = &b->ctx->nodes[arg_head];
+        ns_type at = ns_ssa_type_from_label(b, an->arg.type);
+        if (ns_type_is(at, NS_TYPE_UNKNOWN) && an->arg.type > 0) {
+            ns_ast_t *tl = &b->ctx->nodes[an->arg.type];
+            if (tl->type == NS_AST_TYPE_LABEL) {
+                ns_symbol *st = ns_vm_find_symbol(b->vm, tl->type_label.name.val, false);
+                if (st && st->type == NS_SYMBOL_STRUCT) at = st->st.st.t;
+            }
+        }
+        if (!ns_type_is(at, NS_TYPE_UNKNOWN)) name = ns_ssa_typed_fn_name(b, name, at);
+    }
     fn.name = name;
     fn.ast = ast;
     fn.entry = 0;
@@ -1334,10 +1921,18 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
                            ai < (i32)ns_array_length(fn_symbol->fn.args)
             ? ns_enum_underlying_type(b->vm, fn_symbol->fn.args[ai].val.t)
             : ns_ssa_type_from_label(b, an->arg.type);
+        if (ns_type_is(arg_type, NS_TYPE_UNKNOWN) && an->arg.type > 0) {
+            ns_ast_t *tl = &b->ctx->nodes[an->arg.type];
+            if (tl->type == NS_AST_TYPE_LABEL) {
+                ns_symbol *st = ns_vm_find_symbol(b->vm, tl->type_label.name.val, false);
+                if (st && st->type == NS_SYMBOL_STRUCT) arg_type = st->st.st.t;
+            }
+        }
         ns_array_push(b->fn->params, arg_type);
         i32 v = ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, ai, arg_type, an->arg.name.val, an->arg.name, arg);
         ns_ssa_env_bind(b, an->arg.name.val, v, arg_type);
-        arg = an->next;
+        if (definition->type == NS_AST_OP_FN_DEF && ai == 0) arg = definition->ops_fn_def.right;
+        else arg = an->next;
     }
     // Parameters must occupy Wasm locals 0..n-1. Seed module literals only
     // after parameter values have been allocated.
@@ -1414,7 +2009,7 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
             ns_ssa_lower_fn(&b, s, n->fn_def.name.val, n->fn_def.body, n->next, n->fn_def.arg_count);
             break;
         case NS_AST_OP_FN_DEF:
-            ns_ssa_lower_fn(&b, s, n->ops_fn_def.ops.val, n->ops_fn_def.body, n->ops_fn_def.left, 2);
+            ns_ssa_lower_fn(&b, s, ns_ssa_ops_fn_name(&b, n), n->ops_fn_def.body, n->ops_fn_def.left, 2);
             break;
         default:
             if (!has_init) {
@@ -1475,6 +2070,9 @@ void ns_ssa_module_free(ns_ssa_module *m) {
             ns_array_free(fn->blocks[bi].succs);
         }
         ns_array_free(fn->blocks);
+        for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
+            ns_array_free(fn->insts[ii].phi_edges);
+        }
         ns_array_free(fn->insts);
         ns_array_free(fn->params);
     }

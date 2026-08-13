@@ -20,7 +20,9 @@
 #define NS_AARCH_X10 10
 #define NS_AARCH_X11 11
 #define NS_AARCH_X16 16
+#define NS_AARCH_FP  29
 #define NS_AARCH_SP  31
+#define NS_AARCH_EXTRA_MAX 64
 
 /* ── intra-function fixup ─────────────────────────────────────────────────── */
 typedef struct ns_aarch_fixup {
@@ -39,6 +41,8 @@ typedef struct ns_aarch_ctx {
     i32 cur_block;     /* block currently being emitted (for edge copies) */
     /* argument passing counter (reset after each CALL) */
     i32 arg_seq;
+    i32 extra_args[NS_AARCH_EXTRA_MAX];
+    i32 nextra;
 } ns_aarch_ctx;
 
 /* ── encoding helpers ─────────────────────────────────────────────────────── */
@@ -76,6 +80,15 @@ static u32 ns_aarch_add_rrr(i32 rd, i32 rn, i32 rm) {
 /* SUB Xd, Xn, Xm */
 static u32 ns_aarch_sub_rrr(i32 rd, i32 rn, i32 rm) {
     return 0xCB000000u | ((u32)rm << 16) | ((u32)rn << 5) | (u32)rd;
+}
+
+/* ADD/SUB SP, SP, Xm, UXTX #0 — Rd/Rn=31 is SP here, not XZR. */
+static u32 ns_aarch_add_sp_ext(i32 rm) {
+    return 0x8B2063FFu | ((u32)rm << 16);
+}
+
+static u32 ns_aarch_sub_sp_ext(i32 rm) {
+    return 0xCB2063FFu | ((u32)rm << 16);
 }
 
 /* MUL Xd, Xn, Xm  (MADD Xd, Xn, Xm, XZR) */
@@ -160,16 +173,6 @@ static u32 ns_aarch_cbnz(i32 rt, i32 imm19) {
 /* CBZ Xt, imm19  (branch if == 0) */
 static u32 ns_aarch_cbz(i32 rt, i32 imm19) {
     return 0xB4000000u | (((u32)imm19 & 0x7FFFFu) << 5) | (u32)rt;
-}
-
-/* LDR Xt, [SP, #(8*slot)] — unsigned scaled offset, slot < 4096 */
-static u32 ns_aarch_ldr_slot(i32 rt, i32 slot) {
-    return 0xF9400000u | (((u32)slot & 0xFFFu) << 10) | ((u32)NS_AARCH_SP << 5) | (u32)rt;
-}
-
-/* STR Xt, [SP, #(8*slot)] */
-static u32 ns_aarch_str_slot(i32 rt, i32 slot) {
-    return 0xF9000000u | (((u32)slot & 0xFFFu) << 10) | ((u32)NS_AARCH_SP << 5) | (u32)rt;
 }
 
 /* SUB SP, SP, #imm12 (imm 0..4095, unshifted) */
@@ -299,33 +302,33 @@ static void ns_aarch_emit_const_u64(ns_aarch_ctx *c, i32 rd, u64 val) {
 }
 
 /* ── stack slot access ────────────────────────────────────────────────────── */
-/* Slot v lives at [SP + 8*v]. Unsigned scaled LDR/STR only reach slot < 4096;
- * larger frames form the address in X16. */
-static void ns_aarch_slot_addr(ns_aarch_ctx *c, i32 v) {
-    ns_aarch_emit_const_u64(c, NS_AARCH_X16, (u64)(u32)v);
-    ns_aarch_emit_u32(c, 0x8B000C00u | ((u32)NS_AARCH_X16 << 16) |
-        ((u32)NS_AARCH_SP << 5) | (u32)NS_AARCH_X16); /* ADD X16, SP, X16, LSL #3 */
+/* Slot v lives at [x29, #-8*(v+1)] so outgoing stack args can move SP. */
+static void ns_aarch_addr_from_fp(ns_aarch_ctx *c, i32 bytes) {
+    ns_aarch_emit_const_u64(c, NS_AARCH_X16, (u64)(u32)bytes);
+    ns_aarch_emit_u32(c, ns_aarch_sub_rrr(NS_AARCH_X16, NS_AARCH_FP, NS_AARCH_X16));
 }
 
-/* Load an SSA value into a register; a negative value id loads nothing. */
 static void ns_aarch_load_value(ns_aarch_ctx *c, i32 reg, i32 v) {
     if (v < 0) return;
-    if (v < 4096) {
-        ns_aarch_emit_u32(c, ns_aarch_ldr_slot(reg, v));
+    i32 off = 8 * (v + 1);
+    if (off <= 255) {
+        ns_aarch_emit_u32(c, 0xF8400000u | (((u32)(-off) & 0x1FFu) << 12) |
+            ((u32)NS_AARCH_FP << 5) | (u32)reg); /* LDUR Xt, [x29, #-off] */
         return;
     }
-    ns_aarch_slot_addr(c, v);
+    ns_aarch_addr_from_fp(c, off);
     ns_aarch_emit_u32(c, 0xF9400000u | ((u32)NS_AARCH_X16 << 5) | (u32)reg);
 }
 
-/* Store a register into an SSA value's slot. */
 static void ns_aarch_store_value(ns_aarch_ctx *c, i32 v, i32 reg) {
     if (v < 0) return;
-    if (v < 4096) {
-        ns_aarch_emit_u32(c, ns_aarch_str_slot(reg, v));
+    i32 off = 8 * (v + 1);
+    if (off <= 255) {
+        ns_aarch_emit_u32(c, 0xF8000000u | (((u32)(-off) & 0x1FFu) << 12) |
+            ((u32)NS_AARCH_FP << 5) | (u32)reg); /* STUR Xt, [x29, #-off] */
         return;
     }
-    ns_aarch_slot_addr(c, v);
+    ns_aarch_addr_from_fp(c, off);
     ns_aarch_emit_u32(c, 0xF9000000u | ((u32)NS_AARCH_X16 << 5) | (u32)reg);
 }
 
@@ -434,9 +437,7 @@ static void ns_aarch_emit_edge_copies(ns_aarch_ctx *c, i32 from, i32 to) {
     for (i32 ii = 0, il = (i32)ns_array_length(tb->insts); ii < il; ++ii) {
         ns_ssa_inst *inst = &c->fn->insts[tb->insts[ii]];
         if (inst->op != NS_SSA_OP_PHI) break; /* phis lead the block */
-        i32 src = -1;
-        if (inst->target0 == from) src = inst->a;
-        else if (inst->target1 == from) src = inst->b;
+        i32 src = ns_ssa_phi_incoming(inst, from);
         if (src < 0 || inst->dst < 0 || src == inst->dst) continue;
         ns_aarch_load_value(c, NS_AARCH_X9, src);
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
@@ -455,10 +456,15 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_PARAM: {
-        /* Real parameters carry an arg index 0..7; other PARAM nodes (e.g. a
-         * callee name placeholder) hold no runtime value. */
-        if (inst->dst < 0 || inst->c < 0 || inst->c >= 8) break;
-        ns_aarch_store_value(c, inst->dst, inst->c);
+        if (inst->dst < 0 || inst->c < 0) break;
+        if (inst->c < 8) {
+            ns_aarch_store_value(c, inst->dst, inst->c);
+            break;
+        }
+        i32 imm12 = 2 + (inst->c - 8); /* [x29, #16 + 8*(c-8)] */
+        ns_aarch_emit_u32(c, 0xF9400000u | (((u32)imm12 & 0xFFFu) << 10) |
+            ((u32)NS_AARCH_FP << 5) | (u32)NS_AARCH_X9);
+        ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_CONST: {
         if (inst->dst < 0) break;
@@ -592,8 +598,15 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_MOD: {
-        /* Xd = Xn - (Xn / Xm) * Xm  (SDIV + MSUB) */
         if (inst->dst < 0) break;
+        if (ns_aarch_is_float(inst->type)) {
+            ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+            ns_aarch_load_value(c, 1, inst->b);
+            ns_aarch_emit_rt_call(c, ns_type_is(inst->type, NS_TYPE_F32) ? "ns_rt_fmodf" : "ns_rt_fmod");
+            ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
+            break;
+        }
+        /* Xd = Xn - (Xn / Xm) * Xm  (SDIV + MSUB) */
         ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
         ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
         ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X11, NS_AARCH_X9, NS_AARCH_X10));
@@ -660,16 +673,31 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_ARG: {
-        if (c->arg_seq >= 8) {
-            ns_warn("aarch", "more than 8 args in fn %.*s, arg %d skipped\n",
-                c->fn->name.len, c->fn->name.data, c->arg_seq);
-            c->arg_seq++;
+        if (c->arg_seq < 8) {
+            ns_aarch_load_value(c, c->arg_seq++, inst->a);
             break;
         }
-        ns_aarch_load_value(c, c->arg_seq++, inst->a);
+        if (c->nextra < NS_AARCH_EXTRA_MAX) c->extra_args[c->nextra++] = inst->a;
+        c->arg_seq++;
     } break;
     case NS_SSA_OP_CALL: {
+        i32 nextra = c->nextra;
+        i32 space = 0;
+        if (nextra > 0) {
+            space = (nextra * 8 + 15) & ~15;
+            if (space <= 4095) ns_aarch_emit_u32(c, ns_aarch_sub_sp_imm(space));
+            else {
+                ns_aarch_emit_const_u64(c, NS_AARCH_X9, (u64)(u32)space);
+                ns_aarch_emit_u32(c, ns_aarch_sub_sp_ext(NS_AARCH_X9));
+            }
+            for (i32 ei = 0; ei < nextra; ++ei) {
+                ns_aarch_load_value(c, NS_AARCH_X9, c->extra_args[ei]);
+                ns_aarch_emit_u32(c, 0xF9000000u | (((u32)ei & 0xFFFu) << 10) |
+                    ((u32)NS_AARCH_SP << 5) | (u32)NS_AARCH_X9); /* STR X9, [sp, #8*ei] */
+            }
+        }
         c->arg_seq = 0;
+        c->nextra = 0;
         ns_str callee_name = inst->name;
         if (callee_name.len == 0) {
             i32 callee_val = inst->a;
@@ -686,6 +714,14 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             ns_array_push(c->call_fixups, cf);
         }
         if (inst->dst >= 0) ns_aarch_store_value(c, inst->dst, 0);
+        if (space > 0) {
+            if (space <= 4095) {
+                ns_aarch_emit_u32(c, 0x910003FFu | (((u32)space & 0xFFFu) << 10)); /* ADD SP, SP, #space */
+            } else {
+                ns_aarch_emit_const_u64(c, NS_AARCH_X9, (u64)(u32)space);
+                ns_aarch_emit_u32(c, ns_aarch_add_sp_ext(NS_AARCH_X9));
+            }
+        }
     } break;
     case NS_SSA_OP_BR: {
         ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
@@ -712,6 +748,7 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_RET: {
         if (inst->a >= 0) ns_aarch_load_value(c, 0, inst->a);
+        else ns_aarch_emit_u32(c, ns_aarch_movz(0, 0, 0));
         ns_aarch_emit_u32(c, ns_aarch_mov_sp_fp());   /* MOV sp, x29 */
         ns_aarch_emit_u32(c, 0xA8C17BFDu);            /* LDP x29, x30, [sp], #16 */
         ns_aarch_emit_u32(c, ns_aarch_ret());
@@ -869,7 +906,7 @@ static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_fn *fn, ns_bool call_rt_init, ns
             ns_aarch_emit_u32(&c, ns_aarch_sub_sp_imm(frame));
         } else {
             ns_aarch_emit_const_u64(&c, NS_AARCH_X9, (u64)(u32)frame);
-            ns_aarch_emit_u32(&c, ns_aarch_sub_rrr(NS_AARCH_SP, NS_AARCH_SP, NS_AARCH_X9));
+            ns_aarch_emit_u32(&c, ns_aarch_sub_sp_ext(NS_AARCH_X9));
         }
     }
     if (call_rt_init) ns_aarch_emit_rt_call(&c, "ns_rt_init");
@@ -959,7 +996,18 @@ ns_return_ptr ns_aarch_from_ssa(ns_ssa_module *ssa) {
         ns_aarch_fn_bin fn = ns_aarch_lower_fn(&ssa->fns[i], is_main, is_main && has_init);
         ns_array_push(m->fns, fn);
     }
-    (void)has_main;
+    if (!has_main && has_init) {
+        ns_aarch_ctx c = {0};
+        ns_aarch_emit_u32(&c, 0xA9BF7BFDu); /* STP x29, x30, [sp, #-16]! */
+        ns_aarch_emit_u32(&c, 0x910003FDu); /* MOV x29, sp */
+        ns_aarch_emit_rt_call(&c, "ns_rt_init");
+        ns_aarch_emit_rt_call(&c, "__module_init");
+        ns_aarch_emit_u32(&c, ns_aarch_movz(0, 0, 0));
+        ns_aarch_emit_u32(&c, 0xA8C17BFDu); /* LDP x29, x30, [sp], #16 */
+        ns_aarch_emit_u32(&c, ns_aarch_ret());
+        ns_aarch_fn_bin main_fn = {.name = ns_str_cstr("main"), .text = c.text, .call_fixups = c.call_fixups};
+        ns_array_push(m->fns, main_fn);
+    }
 
     return ns_return_ok(ptr, m);
 }

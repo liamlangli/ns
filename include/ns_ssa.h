@@ -50,6 +50,11 @@ typedef enum {
     NS_SSA_OP_TRAP,
 } ns_ssa_op;
 
+typedef struct ns_ssa_phi_edge {
+    i32 pred;
+    i32 value;
+} ns_ssa_phi_edge;
+
 typedef struct ns_ssa_inst {
     ns_ssa_op op;
     i32 dst;
@@ -65,6 +70,8 @@ typedef struct ns_ssa_inst {
     // "gpu"). Empty for project-local functions.
     ns_str module;
     ns_token_t token;
+    /* Extra phi predecessors beyond a/target0 and b/target1. */
+    ns_ssa_phi_edge *phi_edges;
 } ns_ssa_inst;
 
 typedef struct ns_ssa_block {
@@ -120,6 +127,8 @@ typedef struct ns_ssa_module {
 } ns_ssa_module;
 
 ns_str ns_ssa_op_to_string(ns_ssa_op op);
+i32 ns_ssa_phi_incoming(ns_ssa_inst *phi, i32 pred);
+void ns_ssa_phi_set_incoming(ns_ssa_inst *phi, i32 pred, i32 value);
 ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx);
 ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
                                               ns_str lib_path, ns_str lib_fallback_path);

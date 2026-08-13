@@ -6,8 +6,8 @@
 // SSA → native code path. Each program is lowered to SSA, translated to host
 // machine code, linked in memory, and executed, and its `main` return value is
 // checked. AArch64 also covers strings, globals, arrays, structs, floats and
-// the std helpers that the native runtime implements. Closures, dicts/sets and
-// tasks remain interpreter-only.
+// the std helpers that the native runtime implements. Closures, function
+// values and tasks remain interpreter-only.
 
 #if defined(__x86_64__) || defined(__aarch64__)
 #define NS_COMPILE_TEST_NATIVE 1
@@ -182,14 +182,23 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
 static ns_bool ns_compile_true(const char *src) {
     ns_bool ok = false;
     i64 r = ns_compile_run(src, &ok);
-    return ok && r == 1;
+    if (!ok || r != 1) {
+        fprintf(stderr, "compile_true: ok=%d r=%lld\n", (int)ok, (long long)r);
+        return false;
+    }
+    return true;
 }
 
 // Convenience for programs written as `fn main() i32`.
 static ns_bool ns_compile_returns(const char *src, i64 expected) {
     ns_bool ok = false;
     i64 r = ns_compile_run(src, &ok);
-    return ok && r == expected;
+    if (!ok || r != expected) {
+        fprintf(stderr, "compile_returns: ok=%d r=%lld expected=%lld\n",
+            (int)ok, (long long)r, (long long)expected);
+        return false;
+    }
+    return true;
 }
 
 int main() {
@@ -619,6 +628,183 @@ int main() {
         "    assert 1 == 1\n"
         "    return true\n"
         "}\n"), "assert of a true condition does not trap.");
+
+    ns_expect(ns_compile_true(
+        "fn bump(hits: i32) i32 { return hits + 1 }\n"
+        "fn main() bool {\n"
+        "    let hits = 0\n"
+        "    let a = [10, 20, 30]\n"
+        "    let i = 5\n"
+        "    let skipped = i < 3 && a[i] == 10\n"
+        "    let took = false || true\n"
+        "    return !skipped && took\n"
+        "}\n"), "bool && and || short-circuit and skip the unused side.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let x = 0\n"
+        "    do {\n"
+        "        x = 1\n"
+        "    } loop false\n"
+        "    return x == 1\n"
+        "}\n"), "do/loop runs the body before testing the condition.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let x: f64 = 7.5\n"
+        "    let y: f64 = 2.0\n"
+        "    return (x % y) == 1.5\n"
+        "}\n"), "f64 modulo uses fmod.");
+
+    ns_expect(ns_compile_true(
+        "struct point { x: i32, y: i32 }\n"
+        "fn to_str(p: point) str {\n"
+        "    return `({p.x},{p.y})`\n"
+        "}\n"
+        "fn main() bool {\n"
+        "    let p = point { 1, 2 }\n"
+        "    return `{p}` == \"(1,2)\"\n"
+        "}\n"), "interpolation resolves a user to_str by argument type.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let ages = [str: i32](8)\n"
+        "    ages[\"amy\"] = 32\n"
+        "    ages[\"bob\"] = 41\n"
+        "    return has(ages, \"amy\") && !has(ages, \"carol\") && ages.len == 2 &&\n"
+        "           remove(ages, \"amy\") && ages.len == 1 && ages[\"bob\"] == 41\n"
+        "}\n"), "dicts insert, has, remove, len and index.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let tags = set[str](4)\n"
+        "    return insert(tags, \"red\") && insert(tags, \"green\") && !insert(tags, \"red\") &&\n"
+        "           tags.len == 2 && has(tags, \"red\") && remove(tags, \"red\") && tags.len == 1\n"
+        "}\n"), "sets insert, has, remove and tombstone reuse.");
+
+    ns_expect(ns_compile_true(
+        "fn nine(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32) i32 {\n"
+        "    return a + b + c + d + e + f + g + h + i\n"
+        "}\n"
+        "fn main() bool { return nine(1, 2, 3, 4, 5, 6, 7, 8, 9) == 45 }\n"),
+        "nine integer arguments pass through registers and the stack.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let ids = set[i32](4)\n"
+        "    insert(ids, 1)\n"
+        "    insert(ids, 2)\n"
+        "    insert(ids, 3)\n"
+        "    insert(ids, 4)\n"
+        "    remove(ids, 2)\n"
+        "    remove(ids, 4)\n"
+        "    insert(ids, 20)\n"
+        "    insert(ids, 40)\n"
+        "    let hits = 0\n"
+        "    for i in 0 to 50 {\n"
+        "        if has(ids, i) { hits += 1 }\n"
+        "    }\n"
+        "    return hits == 4 && has(ids, 20) && !has(ids, 2)\n"
+        "}\n"), "set tombstones reuse slots and += updates a local.");
+
+    ns_expect(ns_compile_true(
+        "struct point { x: i32, y: i32 }\n"
+        "fn ops(+)(a: point, b: point): point {\n"
+        "    return point(a.x + b.x, a.y + b.y)\n"
+        "}\n"
+        "fn origin(): point { return point(0, 0) }\n"
+        "fn main() bool {\n"
+        "    let o = origin()\n"
+        "    let s = point(1, 2) + point(3, 4)\n"
+        "    return o.x == 0 && o.y == 0 && s.x == 4 && s.y == 6\n"
+        "}\n"), "positional struct constructors and ops(+) compile.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let arr = [10, 20, 30]\n"
+        "    let sum = 0\n"
+        "    for v in arr {\n"
+        "        if v == 20 {\n"
+        "            continue\n"
+        "        }\n"
+        "        sum = sum + v\n"
+        "    }\n"
+        "    let mut_arr = [1, 2, 3]\n"
+        "    for v in mut_arr {\n"
+        "        v = v * 2\n"
+        "    }\n"
+        "    return sum == 40 && mut_arr[0] == 2 && mut_arr[1] == 4 && mut_arr[2] == 6\n"
+        "}\n"), "for-in over an array writes back and honors continue.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let text = \"abc\"\n"
+        "    let byte_sum = 0\n"
+        "    for c in text {\n"
+        "        byte_sum = byte_sum + c\n"
+        "    }\n"
+        "    let ids = set[i32](8)\n"
+        "    insert(ids, 3)\n"
+        "    insert(ids, 7)\n"
+        "    insert(ids, 11)\n"
+        "    remove(ids, 7)\n"
+        "    let id_sum = 0\n"
+        "    let id_count = 0\n"
+        "    for id in ids {\n"
+        "        id_sum = id_sum + id\n"
+        "        id_count = id_count + 1\n"
+        "    }\n"
+        "    return byte_sum == 294 && id_sum == 14 && id_count == 2\n"
+        "}\n"), "for-in over a string and a set skips tombstones.");
+
+    ns_expect(ns_compile_true(
+        "struct counter { i: i32, end: i32, value: i32 }\n"
+        "fn next(it: counter) bool {\n"
+        "    if it.i >= it.end { return false }\n"
+        "    it.value = it.i\n"
+        "    it.i = it.i + 1\n"
+        "    return true\n"
+        "}\n"
+        "fn main() bool {\n"
+        "    let c = counter(2, 6, 0)\n"
+        "    let sum = 0\n"
+        "    let rounds = 0\n"
+        "    for v in c {\n"
+        "        sum = sum + v\n"
+        "        rounds = rounds + 1\n"
+        "    }\n"
+        "    return sum == 14 && rounds == 4 && c.i == 6\n"
+        "}\n"), "for-in drives fn next(it) and advances the subject in place.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let words = [\"a\", \"bc\", \"def\"]\n"
+        "    let n = 0\n"
+        "    for w in words {\n"
+        "        n = n + w.len\n"
+        "    }\n"
+        "    return n == 6\n"
+        "}\n"), "for-in over [str] indexes handles, not bytes.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let x = 0\n"
+        "    for i in 0 to 10 {\n"
+        "        x = x + 1\n"
+        "        if i == 3 {\n"
+        "            break\n"
+        "        }\n"
+        "    }\n"
+        "    return x == 4\n"
+        "}\n"), "break flushes loop-carried locals so they are visible after the loop.");
+
+    ns_expect(ns_compile_true(
+        "fn main() bool {\n"
+        "    let s = 0.0\n"
+        "    let x: f64 = 4.0\n"
+        "    s = s + x\n"
+        "    return s == 4.0\n"
+        "}\n"), "f32 + f64 upgrades to f64 like the interpreter.");
 #endif
 
     return 0;

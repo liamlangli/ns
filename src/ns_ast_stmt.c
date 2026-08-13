@@ -290,7 +290,6 @@ ns_return_bool ns_parse_loop_stmt(ns_ast_ctx *ctx) {
     n.loop_stmt.body = ctx->current;
     if (n.loop_stmt.do_first) {
         if (ns_token_require(ctx, NS_TOKEN_LOOP)) {
-            n.loop_stmt.do_first = false;
             ret = ns_parse_expr(ctx);
             if (ns_return_is_error(ret)) return ret;
             if (ret.r) {
