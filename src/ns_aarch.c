@@ -419,9 +419,21 @@ static ns_bool ns_aarch_parse_u64(ns_str s, u64 *out) {
         if (start >= s.len) return false;
     }
 
-    if (start + 1 < s.len && s.data[start] == '0' && (s.data[start + 1] == 'x' || s.data[start + 1] == 'X')) {
+    i32 end = s.len;
+    while (end > start) {
+        i8 suf = s.data[end - 1];
+        if (suf == 'u' || suf == 'U' || suf == 'i' || suf == 'I' ||
+            suf == 'l' || suf == 'L') {
+            end--;
+            continue;
+        }
+        break;
+    }
+    if (end <= start) return false;
+
+    if (start + 1 < end && s.data[start] == '0' && (s.data[start + 1] == 'x' || s.data[start + 1] == 'X')) {
         u64 v = 0;
-        for (i32 i = start + 2; i < s.len; ++i) {
+        for (i32 i = start + 2; i < end; ++i) {
             i8 ch = s.data[i];
             u64 d;
             if (ch >= '0' && ch <= '9') d = (u64)(ch - '0');
@@ -437,13 +449,13 @@ static ns_bool ns_aarch_parse_u64(ns_str s, u64 *out) {
     }
 
     ns_bool has_dot = false;
-    for (i32 i = start; i < s.len; ++i) {
+    for (i32 i = start; i < end; ++i) {
         if (s.data[i] == '.') { has_dot = true; break; }
         if (s.data[i] < '0' || s.data[i] > '9') return false;
     }
     if (!has_dot) {
         u64 v = 0;
-        for (i32 i = start; i < s.len; ++i) {
+        for (i32 i = start; i < end; ++i) {
             if (s.data[i] < '0' || s.data[i] > '9') return false;
             u64 d = v * 10u + (u64)(s.data[i] - '0');
             if (d < v) return false; /* overflow */

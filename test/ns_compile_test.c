@@ -470,6 +470,15 @@ int main() {
         "    return answer == 42 && OS_PLATFORM_MACOS == 1\n"
         "}\n"), "global, local, and imported lit constants compile and run.");
 
+    ns_expect(ns_compile_true(
+        "use simd\n"
+        "fn main() bool {\n"
+        "    let a = float3 { 0.0, 3.0, 4.0 }\n"
+        "    let n = normalize(a)\n"
+        "    let d = dot(n, n)\n"
+        "    return d > 0.99 && d < 1.01 && n.y > 0.5\n"
+        "}\n"), "imported simd helpers compile into the native object.");
+
     // ── a small end-to-end program returning a non-boolean status ─────────
     ns_expect(ns_compile_returns(
         "fn gcd(a: i32, b: i32) i32 {\n"

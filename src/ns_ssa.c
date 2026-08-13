@@ -65,6 +65,8 @@ typedef struct ns_ssa_builder {
     i32 capture_env;
     ns_ssa_capture *captures;
     ns_str *ref_names;
+    ns_str *shader_only;
+    ns_return_str fold_error;
 } ns_ssa_builder;
 
 #define NS_SSA_INST_INIT(kind, ast_i) ((ns_ssa_inst){ \
@@ -1130,6 +1132,245 @@ static ns_bool ns_ssa_shader_name(ns_str name) {
            ns_str_starts_with(name, ns_str_cstr("cs_"));
 }
 
+static ns_bool ns_ssa_shader_stage_intrinsic(ns_str name) {
+    return ns_str_equals_STR(name, "shader_buffer_i32") ||
+           ns_str_equals_STR(name, "shader_buffer_store_i32") ||
+           ns_str_equals_STR(name, "shader_sample_mask") ||
+           ns_str_equals_STR(name, "shader_sample_texture") ||
+           ns_str_equals_STR(name, "shader_sample_texture_nearest") ||
+           ns_str_equals_STR(name, "shader_sample_shadow") ||
+           ns_str_equals_STR(name, "shader_global_id_x") ||
+           ns_str_equals_STR(name, "shader_global_id_y") ||
+           ns_str_equals_STR(name, "shader_global_id_z") ||
+           ns_str_equals_STR(name, "shader_vertex_id") ||
+           ns_str_equals_STR(name, "shader_root_f32") ||
+           ns_str_equals_STR(name, "shader_read_texture") ||
+           ns_str_equals_STR(name, "shader_write_texture") ||
+           ns_str_equals_STR(name, "shader_write_texture_secondary") ||
+           ns_str_equals_STR(name, "shader_transform_position") ||
+           ns_str_equals_STR(name, "shader_transform_normal") ||
+           ns_str_equals_STR(name, "shader_shadow_clip_position") ||
+           ns_str_equals_STR(name, "shader_scene_selected") ||
+           ns_str_equals_STR(name, "shader_scene_textured") ||
+           ns_str_equals_STR(name, "shader_scene_receives_shadow");
+}
+
+static ns_bool ns_ssa_calls_shader_stage(ns_ssa_builder *b, i32 i);
+
+static ns_bool ns_ssa_calls_shader_stage_chain(ns_ssa_builder *b, i32 i, i32 count) {
+    for (i32 n = 0; n < count && i > 0; ++n) {
+        if (ns_ssa_calls_shader_stage(b, i)) return true;
+        i = b->ctx->nodes[i].next;
+    }
+    return false;
+}
+
+static ns_bool ns_ssa_calls_shader_stage(ns_ssa_builder *b, i32 i) {
+    if (i <= 0) return false;
+    ns_ast_t *n = &b->ctx->nodes[i];
+    switch (n->type) {
+    case NS_AST_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->expr.body);
+    case NS_AST_UNARY_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->unary_expr.expr);
+    case NS_AST_BINARY_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->binary_expr.left) ||
+               ns_ssa_calls_shader_stage(b, n->binary_expr.right);
+    case NS_AST_CALL_EXPR: {
+        ns_ast_t *callee = ns_ssa_unwrap_expr(b, n->call_expr.callee);
+        if (callee && callee->type == NS_AST_PRIMARY_EXPR &&
+            callee->primary_expr.token.type == NS_TOKEN_IDENTIFIER &&
+            ns_ssa_shader_stage_intrinsic(callee->primary_expr.token.val)) {
+            return true;
+        }
+        if (ns_ssa_calls_shader_stage(b, n->call_expr.callee)) return true;
+        return ns_ssa_calls_shader_stage_chain(b, n->next, n->call_expr.arg_count);
+    }
+    case NS_AST_CAST_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->cast_expr.expr);
+    case NS_AST_MEMBER_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->member_expr.left) ||
+               ns_ssa_calls_shader_stage(b, n->member_expr.right);
+    case NS_AST_INDEX_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->index_expr.table) ||
+               ns_ssa_calls_shader_stage(b, n->index_expr.expr);
+    case NS_AST_ARRAY_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->array_expr.count_expr) ||
+               ns_ssa_calls_shader_stage_chain(b, n->next, n->array_expr.elem_count);
+    case NS_AST_DESIG_EXPR:
+        return ns_ssa_calls_shader_stage_chain(b, n->next, n->desig_expr.count);
+    case NS_AST_BLOCK_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->block_expr.body);
+    case NS_AST_STR_FMT_EXPR:
+        return ns_ssa_calls_shader_stage_chain(b, n->next, n->str_fmt.expr_count);
+    case NS_AST_VAR_DEF:
+        return ns_ssa_calls_shader_stage(b, n->var_def.expr);
+    case NS_AST_FN_DEF:
+        return ns_ssa_calls_shader_stage(b, n->fn_def.body);
+    case NS_AST_OP_FN_DEF:
+        return ns_ssa_calls_shader_stage(b, n->ops_fn_def.body);
+    case NS_AST_ASSERT_STMT:
+        return ns_ssa_calls_shader_stage(b, n->assert_stmt.expr);
+    case NS_AST_JUMP_STMT:
+        return ns_ssa_calls_shader_stage(b, n->jump_stmt.expr);
+    case NS_AST_IF_STMT:
+        return ns_ssa_calls_shader_stage(b, n->if_stmt.condition) ||
+               ns_ssa_calls_shader_stage(b, n->if_stmt.body) ||
+               ns_ssa_calls_shader_stage(b, n->if_stmt.else_body);
+    case NS_AST_LOOP_STMT:
+        return ns_ssa_calls_shader_stage(b, n->loop_stmt.condition) ||
+               ns_ssa_calls_shader_stage(b, n->loop_stmt.body);
+    case NS_AST_FOR_STMT:
+        return ns_ssa_calls_shader_stage(b, n->for_stmt.generator) ||
+               ns_ssa_calls_shader_stage(b, n->for_stmt.body);
+    case NS_AST_GEN_EXPR:
+        return ns_ssa_calls_shader_stage(b, n->gen_expr.from) ||
+               ns_ssa_calls_shader_stage(b, n->gen_expr.to);
+    case NS_AST_COMPOUND_STMT:
+        return ns_ssa_calls_shader_stage_chain(b, n->next, n->compound_stmt.count);
+    case NS_AST_LABELED_STMT:
+        return ns_ssa_calls_shader_stage(b, n->label_stmt.condition) ||
+               ns_ssa_calls_shader_stage(b, n->label_stmt.stmt);
+    default:
+        return false;
+    }
+}
+
+static void ns_ssa_collect_callees(ns_ssa_builder *b, i32 i, ns_str **names);
+
+static void ns_ssa_collect_callees_chain(ns_ssa_builder *b, i32 i, i32 count, ns_str **names) {
+    for (i32 n = 0; n < count && i > 0; ++n) {
+        ns_ssa_collect_callees(b, i, names);
+        i = b->ctx->nodes[i].next;
+    }
+}
+
+static void ns_ssa_collect_callees(ns_ssa_builder *b, i32 i, ns_str **names) {
+    if (i <= 0) return;
+    ns_ast_t *n = &b->ctx->nodes[i];
+    switch (n->type) {
+    case NS_AST_EXPR:
+        ns_ssa_collect_callees(b, n->expr.body, names);
+        break;
+    case NS_AST_UNARY_EXPR:
+        ns_ssa_collect_callees(b, n->unary_expr.expr, names);
+        break;
+    case NS_AST_BINARY_EXPR:
+        ns_ssa_collect_callees(b, n->binary_expr.left, names);
+        ns_ssa_collect_callees(b, n->binary_expr.right, names);
+        break;
+    case NS_AST_CALL_EXPR: {
+        ns_ast_t *callee = ns_ssa_unwrap_expr(b, n->call_expr.callee);
+        if (callee && callee->type == NS_AST_PRIMARY_EXPR &&
+            callee->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+            ns_str name = callee->primary_expr.token.val;
+            if (!ns_ssa_name_listed(*names, name)) ns_array_push(*names, name);
+        }
+        ns_ssa_collect_callees(b, n->call_expr.callee, names);
+        ns_ssa_collect_callees_chain(b, n->next, n->call_expr.arg_count, names);
+        break;
+    }
+    case NS_AST_CAST_EXPR:
+        ns_ssa_collect_callees(b, n->cast_expr.expr, names);
+        break;
+    case NS_AST_MEMBER_EXPR:
+        ns_ssa_collect_callees(b, n->member_expr.left, names);
+        ns_ssa_collect_callees(b, n->member_expr.right, names);
+        break;
+    case NS_AST_INDEX_EXPR:
+        ns_ssa_collect_callees(b, n->index_expr.table, names);
+        ns_ssa_collect_callees(b, n->index_expr.expr, names);
+        break;
+    case NS_AST_ARRAY_EXPR:
+        ns_ssa_collect_callees(b, n->array_expr.count_expr, names);
+        ns_ssa_collect_callees_chain(b, n->next, n->array_expr.elem_count, names);
+        break;
+    case NS_AST_DESIG_EXPR:
+        ns_ssa_collect_callees_chain(b, n->next, n->desig_expr.count, names);
+        break;
+    case NS_AST_BLOCK_EXPR:
+        ns_ssa_collect_callees(b, n->block_expr.body, names);
+        break;
+    case NS_AST_STR_FMT_EXPR:
+        ns_ssa_collect_callees_chain(b, n->next, n->str_fmt.expr_count, names);
+        break;
+    case NS_AST_VAR_DEF:
+        ns_ssa_collect_callees(b, n->var_def.expr, names);
+        break;
+    case NS_AST_FN_DEF:
+        ns_ssa_collect_callees(b, n->fn_def.body, names);
+        break;
+    case NS_AST_OP_FN_DEF:
+        ns_ssa_collect_callees(b, n->ops_fn_def.body, names);
+        break;
+    case NS_AST_ASSERT_STMT:
+        ns_ssa_collect_callees(b, n->assert_stmt.expr, names);
+        break;
+    case NS_AST_JUMP_STMT:
+        ns_ssa_collect_callees(b, n->jump_stmt.expr, names);
+        break;
+    case NS_AST_IF_STMT:
+        ns_ssa_collect_callees(b, n->if_stmt.condition, names);
+        ns_ssa_collect_callees(b, n->if_stmt.body, names);
+        ns_ssa_collect_callees(b, n->if_stmt.else_body, names);
+        break;
+    case NS_AST_LOOP_STMT:
+        ns_ssa_collect_callees(b, n->loop_stmt.condition, names);
+        ns_ssa_collect_callees(b, n->loop_stmt.body, names);
+        break;
+    case NS_AST_FOR_STMT:
+        ns_ssa_collect_callees(b, n->for_stmt.generator, names);
+        ns_ssa_collect_callees(b, n->for_stmt.body, names);
+        break;
+    case NS_AST_GEN_EXPR:
+        ns_ssa_collect_callees(b, n->gen_expr.from, names);
+        ns_ssa_collect_callees(b, n->gen_expr.to, names);
+        break;
+    case NS_AST_COMPOUND_STMT:
+        ns_ssa_collect_callees_chain(b, n->next, n->compound_stmt.count, names);
+        break;
+    case NS_AST_LABELED_STMT:
+        ns_ssa_collect_callees(b, n->label_stmt.condition, names);
+        ns_ssa_collect_callees(b, n->label_stmt.stmt, names);
+        break;
+    default:
+        break;
+    }
+}
+
+static void ns_ssa_collect_shader_only_fns(ns_ssa_builder *b) {
+    typedef struct { ns_str name; i32 body; } ns_ssa_fn_seed;
+    ns_ssa_fn_seed *fns = ns_null;
+    for (i32 i = b->ctx->section_begin; i < b->ctx->section_end; ++i) {
+        ns_ast_t *n = &b->ctx->nodes[b->ctx->sections[i]];
+        if (n->type != NS_AST_FN_DEF) continue;
+        ns_str name = n->fn_def.name.val;
+        ns_ssa_fn_seed seed = {.name = name, .body = n->fn_def.body};
+        ns_array_push(fns, seed);
+        if (ns_ssa_shader_name(name) || ns_ssa_calls_shader_stage(b, n->fn_def.body)) {
+            if (!ns_ssa_name_listed(b->shader_only, name)) ns_array_push(b->shader_only, name);
+        }
+    }
+
+    ns_bool changed = true;
+    while (changed) {
+        changed = false;
+        for (i32 fi = 0, fl = (i32)ns_array_length(fns); fi < fl; ++fi) {
+            if (ns_ssa_name_listed(b->shader_only, fns[fi].name)) continue;
+            ns_str *callees = ns_null;
+            ns_ssa_collect_callees(b, fns[fi].body, &callees);
+            for (i32 ci = 0, cl = (i32)ns_array_length(callees); ci < cl; ++ci) {
+                if (!ns_ssa_name_listed(b->shader_only, callees[ci])) continue;
+                ns_array_push(b->shader_only, fns[fi].name);
+                changed = true;
+                break;
+            }
+            ns_array_free(callees);
+        }
+    }
+    ns_array_free(fns);
+}
+
 static ns_return_bool ns_ssa_collect_shaders(ns_ssa_builder *b) {
     for (i32 i = 0, l = (i32)ns_array_length(b->vm->symbols); i < l; ++i) {
         ns_symbol *symbol = &b->vm->symbols[i];
@@ -1167,6 +1408,86 @@ static void ns_ssa_record_import(ns_ssa_builder *b, ns_symbol *symbol) {
         ns_array_push(import.params, ns_enum_underlying_type(b->vm, symbol->fn.args[i].val.t));
     }
     ns_array_push(b->m->imports, import);
+}
+
+static ns_shader_target ns_ssa_native_shader_target(void) {
+#if defined(__APPLE__)
+    return NS_SHADER_MSL;
+#else
+    return NS_SHADER_HLSL;
+#endif
+}
+
+static ns_str ns_ssa_unquote(ns_str s) {
+    if (s.len >= 2 && s.data[0] == '"' && s.data[s.len - 1] == '"') {
+        return (ns_str){.data = s.data + 1, .len = s.len - 2};
+    }
+    return s;
+}
+
+static ns_ast_t *ns_ssa_call_arg(ns_ssa_builder *b, ns_ast_t *n, i32 arg_index) {
+    i32 next = n->next;
+    for (i32 ai = 0; ai < arg_index && next > 0; ++ai) {
+        next = b->ctx->nodes[next].next;
+    }
+    return ns_ssa_unwrap_expr(b, next);
+}
+
+static ns_str ns_ssa_call_arg_token(ns_ssa_builder *b, ns_ast_t *n, i32 arg_index) {
+    ns_ast_t *arg = ns_ssa_call_arg(b, n, arg_index);
+    if (!arg || arg->type != NS_AST_PRIMARY_EXPR) return ns_str_null;
+    return ns_ssa_unquote(arg->primary_expr.token.val);
+}
+
+static i32 ns_ssa_emit_str_const(ns_ssa_builder *b, ns_str text, i32 ast) {
+    ns_str owned = ns_str_range(ns_malloc((szt)text.len + 1), text.len);
+    if (text.len > 0 && text.data) memcpy(owned.data, text.data, (szt)text.len);
+    owned.data[text.len] = 0;
+    ns_array_push(b->m->owned_strings, owned);
+    return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, owned,
+                             (ns_token_t){.type = NS_TOKEN_STR_LITERAL, .val = owned}, ast);
+}
+
+// Fold shader_transpile / shader_transpile_stage / shader_entry when the first
+// argument is a known fn. Native builds have no VM, so these must become
+// string constants. The host's shader language is used (MSL on Apple).
+static i32 ns_ssa_fold_shader_call(ns_ssa_builder *b, ns_ast_t *n, i32 ast,
+                                   ns_str callee_name, ns_str callee_module) {
+    if (!ns_str_equals(callee_module, ns_str_cstr("shader"))) return -1;
+    ns_bool is_transpile = ns_str_equals_STR(callee_name, "shader_transpile");
+    ns_bool is_transpile_stage = ns_str_equals_STR(callee_name, "shader_transpile_stage");
+    ns_bool is_entry = ns_str_equals_STR(callee_name, "shader_entry");
+    if (!is_transpile && !is_transpile_stage && !is_entry) return -1;
+
+    ns_str fn_name = ns_ssa_call_arg_token(b, n, 0);
+    if (fn_name.len == 0) return -1;
+    ns_symbol *fn_sym = ns_vm_find_symbol(b->vm, fn_name, false);
+    if (!fn_sym || fn_sym->type != NS_SYMBOL_FN) return -1;
+    i32 fn_index = (i32)(fn_sym - b->vm->symbols);
+    ns_shader_target target = ns_ssa_native_shader_target();
+
+    if (is_entry) {
+        return ns_ssa_emit_str_const(b, ns_shader_entry_name(target, fn_sym->name), ast);
+    }
+
+    ns_shader_stage stage = NS_SHADER_STAGE_AUTO;
+    if (is_transpile_stage) {
+        ns_str stage_s = ns_ssa_call_arg_token(b, n, 2);
+        if (ns_str_equals(stage_s, ns_str_cstr("vertex"))) stage = NS_SHADER_STAGE_VERTEX;
+        else if (ns_str_equals(stage_s, ns_str_cstr("fragment"))) stage = NS_SHADER_STAGE_FRAGMENT;
+        else if (ns_str_equals(stage_s, ns_str_cstr("compute"))) stage = NS_SHADER_STAGE_COMPUTE;
+        else return -1;
+    }
+
+    ns_ast_ctx *fn_ctx = fn_sym->fn.ctx ? fn_sym->fn.ctx : b->ctx;
+    ns_return_str src = ns_shader_transpile(b->vm, fn_ctx, fn_index, target, stage);
+    if (ns_return_is_error(src)) {
+        b->fold_error = src;
+        return -1;
+    }
+    i32 value = ns_ssa_emit_str_const(b, src.r, ast);
+    ns_array_free(src.r.data);
+    return value;
 }
 
 static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
@@ -1563,7 +1884,16 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             result_type = ns_enum_underlying_type(b->vm, callee_sym->fn.ret);
             callee_name = callee_sym->name;
             callee_module = callee_sym->lib;
-            ns_ssa_record_import(b, callee_sym);
+            i32 folded = ns_ssa_fold_shader_call(b, n, i, callee_name, callee_module);
+            if (folded >= 0) return folded;
+            if (ns_return_is_error(b->fold_error)) return -1;
+            // Only `ref fn` crosses the FFI boundary. Regular bodies from
+            // simd.ns / gpu.ns wrappers are compiled into this object.
+            if (callee_sym->fn.fn.t.ref) {
+                ns_ssa_record_import(b, callee_sym);
+            } else {
+                callee_module = ns_str_null;
+            }
             skip_clone = ns_str_equals_STR(callee_sym->name, "next");
             async_call = callee_sym->fn.fn_type == NS_FN_ASYNC && !callee_sym->fn.fn.t.ref;
         }
@@ -2665,6 +2995,48 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     b->loops = NULL;
 }
 
+static ns_bool ns_ssa_embed_module(ns_str lib) {
+    return ns_str_equals(lib, ns_str_cstr("simd")) ||
+           ns_str_equals(lib, ns_str_cstr("std")) ||
+           ns_str_equals(lib, ns_str_cstr("task"));
+}
+
+static ns_bool ns_ssa_skip_imported_fn(ns_str name) {
+    // These wrappers call shader_transpile with `any` fn values, which the
+    // native backend cannot fold. Call sites should use shader_transpile_stage
+    // plus gpu_shader_*_create instead.
+    return ns_str_equals_STR(name, "gpu_shader_graphics") ||
+           ns_str_equals_STR(name, "gpu_shader_compute");
+}
+
+static void ns_ssa_lower_imported_fns(ns_ssa_builder *b) {
+    ns_ast_ctx *saved = b->ctx;
+    i32 nsymbols = (i32)ns_array_length(b->vm->symbols);
+    for (i32 i = 0; i < nsymbols; ++i) {
+        ns_symbol *sym = &b->vm->symbols[i];
+        if (sym->type != NS_SYMBOL_FN) continue;
+        if (sym->fn.fn.t.ref) continue;
+        if (sym->fn.body <= 0 || sym->fn.ast <= 0) continue;
+        if (!ns_ssa_embed_module(sym->lib)) continue;
+        if (ns_ssa_shader_name(sym->name)) continue;
+        if (ns_ssa_skip_imported_fn(sym->name)) continue;
+        if (ns_ssa_fn_exists(b, sym->name)) continue;
+
+        ns_ast_ctx *fn_ctx = sym->fn.ctx ? sym->fn.ctx : saved;
+        if (!fn_ctx || sym->fn.ast >= (i32)ns_array_length(fn_ctx->nodes)) continue;
+        ns_ast_t *n = &fn_ctx->nodes[sym->fn.ast];
+        b->ctx = fn_ctx;
+        ns_ssa_collect_ref_in(b, sym->fn.body);
+        if (n->type == NS_AST_FN_DEF) {
+            ns_ssa_lower_fn(b, sym->fn.ast, sym->name, n->fn_def.body, n->next, n->fn_def.arg_count);
+        } else if (n->type == NS_AST_OP_FN_DEF) {
+            ns_ssa_lower_fn(b, sym->fn.ast, sym->name, n->ops_fn_def.body, n->ops_fn_def.left, 2);
+        }
+        if (ns_return_is_error(b->fold_error)) break;
+    }
+    b->ctx = saved;
+}
+
 ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
                                               ns_str lib_path, ns_str lib_fallback_path) {
     if (ctx == NULL || ns_array_length(ctx->nodes) == 0) {
@@ -2710,6 +3082,7 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
 
     ns_ssa_collect_module_consts(&b, ctx);
     ns_ssa_collect_module_globals(&b);
+    ns_ssa_collect_shader_only_fns(&b);
     for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
         ns_ssa_collect_ref_in(&b, ctx->sections[i]);
     }
@@ -2726,6 +3099,7 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
         ns_ast_t *n = &ctx->nodes[s];
         switch (n->type) {
         case NS_AST_FN_DEF:
+            if (ns_ssa_name_listed(b.shader_only, n->fn_def.name.val)) break;
             ns_ssa_lower_fn(&b, s, n->fn_def.name.val, n->fn_def.body, n->next, n->fn_def.arg_count);
             break;
         case NS_AST_OP_FN_DEF:
@@ -2772,9 +3146,21 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
         ns_array_free(b.loops);
     }
 
+    if (ns_return_is_error(b.fold_error)) {
+        ns_ssa_module_free(m);
+        return ns_return_change_type(ptr, b.fold_error);
+    }
+
+    ns_ssa_lower_imported_fns(&b);
+    if (ns_return_is_error(b.fold_error)) {
+        ns_ssa_module_free(m);
+        return ns_return_change_type(ptr, b.fold_error);
+    }
+
     ns_array_free(b.globals);
     ns_array_free(b.import_seen);
     ns_array_free(b.ref_names);
+    ns_array_free(b.shader_only);
 
     return ns_return_ok(ptr, m);
 }
