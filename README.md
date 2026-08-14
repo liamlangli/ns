@@ -62,6 +62,10 @@ fn to_str(p: Point): str {
     return `{p.x}, {p.y}`  // str formatter
 }
 
+// same-name fns: later defs are stored as name_FirstArgType
+fn length(v: float3) f32 { return sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as f64) as f32 }
+fn length(v: float2) f32 { return sqrt((v.x * v.x + v.y * v.y) as f64) as f32 }
+
 let point_a = Point(0, 0)
 let point_b = Point(1, 1)
 print(a + b) // use override add fn, expect result [1, 1]

@@ -188,6 +188,9 @@ typedef struct ns_vm {
 // ops fn
 ns_str ns_ops_name(ns_token_t op);
 ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op);
+// A later `fn` with the same name is stored as `name_FirstArgType`.
+ns_str ns_fn_overload_name(ns_str name, ns_str type_name);
+ns_symbol *ns_vm_find_fn_overload(ns_vm *vm, ns_str name, i32 arg_count, ns_type first_arg, ns_bool have_first);
 
 // type
 ns_bool ns_type_match(ns_vm *vm, ns_type require, ns_type provide); // check if provide type can be converted to require type

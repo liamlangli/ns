@@ -194,7 +194,23 @@ fn length(v: float3) f32 {
     return sqrt((v.x * v.x + v.y * v.y + v.z * v.z) as f64) as f32
 }
 
+fn length(v: float2) f32 {
+    return sqrt((v.x * v.x + v.y * v.y) as f64) as f32
+}
+
+fn length(v: float4) f32 {
+    return sqrt((v.x * v.x + v.y * v.y + v.z * v.z + v.w * v.w) as f64) as f32
+}
+
 fn distance(a: float3, b: float3) f32 {
+    return length(a - b)
+}
+
+fn distance(a: float2, b: float2) f32 {
+    return length(a - b)
+}
+
+fn distance(a: float4, b: float4) f32 {
     return length(a - b)
 }
 
@@ -202,4 +218,24 @@ fn normalize(v: float3) float3 {
     let len = length(v)
     if len < 0.000001 { return float3 { 0.0, 1.0, 0.0 } }
     return v * (1.0 / len)
+}
+
+fn normalize(v: float2) float2 {
+    let len = length(v)
+    if len < 0.000001 { return float2 { 0.0, 1.0 } }
+    return v * (1.0 / len)
+}
+
+fn normalize(v: float4) float4 {
+    let len = length(v)
+    if len < 0.000001 { return float4 { 0.0, 1.0, 0.0, 0.0 } }
+    return v * (1.0 / len)
+}
+
+fn dot(a: float2, b: float2) f32 {
+    return a.x * b.x + a.y * b.y
+}
+
+fn dot(a: float4, b: float4) f32 {
+    return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
 }

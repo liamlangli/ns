@@ -237,6 +237,11 @@ A single literal cannot mix named and positional fields.
   `fn name(args) result`.
 - Functions are values and may be passed where a compatible function type is
   expected.
+- Several `fn` definitions may share a name when their first parameter types
+  differ. The first keeps the bare name; later ones are stored as
+  `name_FirstArgType` (`length(v: float2)` becomes `length_float2`). A call
+  tries the bare name, then the mangled label if the argument type does not
+  match. `ref fn` FFI symbols keep their exported name.
 - Blocks/closures use `{ arg, ... in ... }`, capture referenced outer values,
   and can be stored in an explicitly typed binding.
 - Define external/native functions with `ref fn`; these are resolved as VM

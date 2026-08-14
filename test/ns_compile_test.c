@@ -910,6 +910,16 @@ int main() {
         "    let t = work(21)\n"
         "    return (await t) == 42\n"
         "}\n"), "async fn call returns a task and await yields its result.");
+
+    ns_expect(ns_compile_true(
+        "struct float2 { x: f32, y: f32 }\n"
+        "struct float3 { x: f32, y: f32, z: f32 }\n"
+        "fn length(v: float3) f32 { return v.x + v.y + v.z }\n"
+        "fn length(v: float2) f32 { return v.x + v.y }\n"
+        "fn main() bool {\n"
+        "    return length(float2 { 1.0, 2.0 }) == 3.0 &&\n"
+        "           length(float3 { 1.0, 2.0, 3.0 }) == 6.0\n"
+        "}\n"), "later fn defs with the same name compile as name_FirstArgType.");
 #endif
 
     return 0;

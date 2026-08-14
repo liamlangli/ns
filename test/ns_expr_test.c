@@ -1134,5 +1134,19 @@ int main() {
                   "outside enum range"),
               "integer-to-enum casts enforce the underlying range.");
 
+    {
+        const char *src =
+            "struct float2 { x: f32, y: f32 }\n"
+            "struct float3 { x: f32, y: f32, z: f32 }\n"
+            "fn length(v: float3) f32 { return v.x + v.y + v.z }\n"
+            "fn length(v: float2) f32 { return v.x + v.y }\n"
+            "fn main() bool {\n"
+            "    return length(float2 { 1.0, 2.0 }) == 3.0 &&\n"
+            "           length(float3 { 1.0, 2.0, 3.0 }) == 6.0\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "later fn defs with the same name resolve by first-arg type.");
+    }
+
     return 0;
 }

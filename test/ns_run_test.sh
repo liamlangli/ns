@@ -47,6 +47,7 @@ cd "$root"
 "$ns" run test/to_str_test.ns
 "$ns" run test/str_fmt_test.ns
 "$ns" run test/fn_ret_test.ns
+"$ns" run test/fn_overload_test.ns
 "$ns" run test/os_file_test.ns
 "$ns" run test/gpu_pipeline_test.ns
 "$ns" run test/gpu_v2_test.ns

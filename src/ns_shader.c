@@ -10,7 +10,7 @@
 // SIMD: float2/3/4 map to native vectors. Binary operators stay operators in
 // the AST (`a + b`, `v * s`) and are emitted as native SIMD ops. Calls whose
 // names are in ns_shader_builtins (dot, cross, normalize, length, mix, min,
-// max, clamp, abs, ...) become the target's matching intrinsic rather than
+// max, clamp, abs, ddx, ddy, ...) become the target's matching intrinsic rather than
 // the host-side simd.ns body. Swizzles such as `.xyz` pass through as-is.
 
 #define NS_SHADER_MAX_DEPTH 64
@@ -359,6 +359,8 @@ static const ns_shader_builtin ns_shader_builtins[] = {
     {"length", "length", "length", "length", true}, {"distance", "distance", "distance", "distance", true},
     {"lerp", "mix", "mix", "lerp", false},         {"mix", "mix", "mix", "lerp", false},
     {"fract", "fract", "fract", "frac", false},
+    // Fragment derivatives. WGSL names are remapped in ns_shader_builtin_name.
+    {"ddx", "dfdx", "dFdx", "ddx", false},         {"ddy", "dfdy", "dFdy", "ddy", false},
     {"shader_sample_shadow", "ns_shadow_compare", "ns_shadow_compare", "ns_shadow_compare", true},
     {"shader_sample_texture", "ns_texture_sample", "ns_texture_sample", "ns_texture_sample", false},
     {"shader_sample_texture_nearest", "ns_texture_sample_nearest", "ns_texture_sample_nearest", "ns_texture_sample_nearest", false},
@@ -389,6 +391,11 @@ static const ns_shader_builtin *ns_shader_find_builtin(ns_str name) {
 }
 
 static const char *ns_shader_builtin_name(const ns_shader_builtin *b, ns_shader_target t) {
+    if (t == NS_SHADER_WGSL) {
+        if (ns_str_equals(ns_str_cstr(b->name), ns_str_cstr("ddx"))) return "dpdx";
+        if (ns_str_equals(ns_str_cstr(b->name), ns_str_cstr("ddy"))) return "dpdy";
+        return b->glsl;
+    }
     switch (t) {
     case NS_SHADER_MSL: return b->msl;
     case NS_SHADER_GLSL_VULKAN: return b->glsl;
@@ -788,7 +795,11 @@ static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth
             e->uses_scene_uniforms = true;
         }
         if (callee->type == NS_AST_PRIMARY_EXPR && !ns_shader_find_builtin(callee->primary_expr.token.val)) {
-            ns_symbol *s = ns_shader_find_fn(e->vm, e->ctx, callee->primary_expr.token.val);
+            ns_symbol *s = ns_null;
+            if (n->call_expr.rt >= 0 && n->call_expr.rt < (i32)ns_array_length(e->vm->symbols)) {
+                s = &e->vm->symbols[n->call_expr.rt];
+            }
+            if (!s || s->type != NS_SYMBOL_FN) s = ns_shader_find_fn(e->vm, e->ctx, callee->primary_expr.token.val);
             if (s && s->type == NS_SYMBOL_FN) {
                 ns_shader_try(ns_shader_collect_fn(e, (i32)(s - e->vm->symbols), false, depth + 1));
             }
@@ -1431,12 +1442,16 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                 return ns_return_ok_void;
             }
         } else {
-            ns_symbol *s = ns_shader_find_fn(e->vm, e->ctx, name);
+            ns_symbol *s = ns_null;
+            if (n->call_expr.rt >= 0 && n->call_expr.rt < (i32)ns_array_length(e->vm->symbols)) {
+                s = &e->vm->symbols[n->call_expr.rt];
+            }
+            if (!s || s->type != NS_SYMBOL_FN) s = ns_shader_find_fn(e->vm, e->ctx, name);
             if (!s || s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || !ns_shader_in_unit(e->ctx, s)) {
                 snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: cannot call `%.*s` from a shader fn (not a user fn in this file).", name.len, name.data);
                 return ns_return_error(void, loc, NS_ERR_EVAL, ns_shader_err);
             }
-            ns_shader_str(dst, name);
+            ns_shader_str(dst, s->name);
             callee_mask = ns_shader_fn_mask(e, (i32)(s - e->vm->symbols));
             callee_storage_buffers = ns_shader_fn_storage_buffers(e, (i32)(s - e->vm->symbols));
         }
@@ -2906,6 +2921,12 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_str_equals(name, ns_str_cstr("shader_write_texture")) || ns_str_equals(name, ns_str_cstr("shader_write_texture_secondary")) || ns_str_equals(name, ns_str_cstr("shader_buffer_i32")) ||
         ns_str_equals(name, ns_str_cstr("shader_buffer_store_i32"))) {
         return ns_shader_host_vm_call(vm, name, call);
+    }
+
+    if (ns_str_equals(name, ns_str_cstr("ddx")) || ns_str_equals(name, ns_str_cstr("ddy"))) {
+        // Fragment derivatives have no host meaning; a CPU call is a zero.
+        call->ret = (ns_value){.t = ns_type_f32, .f32 = 0.0f};
+        return ns_return_ok(bool, true);
     }
 
     ns_bool is_group_count = ns_str_equals(name, ns_str_cstr("shader_group_binding_count"));

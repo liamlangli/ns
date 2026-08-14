@@ -89,6 +89,11 @@ static const char *ns_shader_test_src =
     "    let mask = shader_sample_mask(data.uv)\n"
     "    return FragmentOutput { color0: data.color, color1: mask }\n"
     "}\n"
+    "fn fs_grad(data: FragmentInput) float4 {\n"
+    "    let signed_d = data.uv.x - 0.5\n"
+    "    let pixel = ddx(signed_d) * ddx(signed_d) + ddy(signed_d) * ddy(signed_d)\n"
+    "    return float4 { pixel, pixel, pixel, 1.0 }\n"
+    "}\n"
     "lit ROW_STRIDE = 3 * 4\n"
     "lit GRAVITY: f32 = -10.0\n"
     "lit ENABLED = true\n"
@@ -247,12 +252,13 @@ int main() {
     i32 vs_scene = ns_shader_test_fn(&vm, "vs_scene");
     i32 fs_texture = ns_shader_test_fn(&vm, "fs_texture");
     i32 fs_mrt = ns_shader_test_fn(&vm, "fs_mrt");
+    i32 fs_grad = ns_shader_test_fn(&vm, "fs_grad");
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
     i32 cs_texture = ns_shader_test_fn(&vm, "cs_texture");
     i32 cs_buffer = ns_shader_test_fn(&vm, "cs_buffer");
     i32 cs_simd = ns_shader_test_fn(&vm, "cs_simd");
-    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && cs >= 0 && cs_texture >= 0 && cs_buffer >= 0 &&
-                  cs_simd >= 0,
+    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && fs_grad >= 0 && cs >= 0 &&
+                  cs_texture >= 0 && cs_buffer >= 0 && cs_simd >= 0,
               "shader entry symbols exist.");
 
     // --- target/stage helpers ---
@@ -344,6 +350,29 @@ int main() {
         r = ns_shader_transpile(&vm, &ctx, cs_simd, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "lerp(") && ns_shader_test_has(r.r, "(a + b)"),
                   "hlsl mix lowers to lerp and keeps vector arithmetic.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- fragment derivatives lower to each target's intrinsic ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, fs_grad, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "dfdx(") && ns_shader_test_has(r.r, "dfdy("),
+                  "msl ddx/ddy lower to dfdx/dfdy.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_grad, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "dFdx(") && ns_shader_test_has(r.r, "dFdy("),
+                  "glsl ddx/ddy lower to dFdx/dFdy.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_grad, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "ddx(") && ns_shader_test_has(r.r, "ddy("),
+                  "hlsl ddx/ddy keep their names.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_grad, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "dpdx(") && ns_shader_test_has(r.r, "dpdy("),
+                  "wgsl ddx/ddy lower to dpdx/dpdy.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

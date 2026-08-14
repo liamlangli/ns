@@ -313,37 +313,33 @@ static void ns_ssa_emit_jump(ns_ssa_builder *b, i32 target, i32 ast) {
     ns_ssa_connect(b, b->block, target);
 }
 
-static ns_str ns_ssa_typed_fn_name(ns_ssa_builder *b, ns_str prefix, ns_type t) {
-    char buf[160];
-    i32 n = 0;
-    if (ns_type_is(t, NS_TYPE_STRUCT) && (u32)ns_type_index(t) < (u32)ns_array_length(b->vm->symbols)) {
-        ns_str tag = b->vm->symbols[ns_type_index(t)].name;
-        n = snprintf(buf, sizeof(buf), "%.*s$%.*s", prefix.len, prefix.data, tag.len, tag.data);
-    } else {
-        const char *tag = "unknown";
-        if (ns_type_is(t, NS_TYPE_I8)) tag = "i8";
-        else if (ns_type_is(t, NS_TYPE_I16)) tag = "i16";
-        else if (ns_type_is(t, NS_TYPE_I32)) tag = "i32";
-        else if (ns_type_is(t, NS_TYPE_I64)) tag = "i64";
-        else if (ns_type_is(t, NS_TYPE_U8)) tag = "u8";
-        else if (ns_type_is(t, NS_TYPE_U16)) tag = "u16";
-        else if (ns_type_is(t, NS_TYPE_U32)) tag = "u32";
-        else if (ns_type_is(t, NS_TYPE_U64)) tag = "u64";
-        else if (ns_type_is(t, NS_TYPE_F32)) tag = "f32";
-        else if (ns_type_is(t, NS_TYPE_F64)) tag = "f64";
-        else if (ns_type_is(t, NS_TYPE_BOOL)) tag = "bool";
-        else if (ns_type_is(t, NS_TYPE_STRING)) tag = "str";
-        n = snprintf(buf, sizeof(buf), "%.*s$%s", prefix.len, prefix.data, tag);
-    }
-    if (n < 0) n = 0;
-    ns_str owned = ns_str_range(ns_malloc((szt)n + 1), n);
-    memcpy(owned.data, buf, (szt)n + 1);
+static const char *ns_ssa_cstr(ns_ssa_builder *b, ns_str s) {
+    if (s.len == 0) return "";
+    if (s.data && s.data[s.len] == 0) return s.data;
+    ns_str owned = ns_str_range(ns_malloc((szt)s.len + 1), s.len);
+    if (s.len > 0) memcpy(owned.data, s.data, (szt)s.len);
+    owned.data[s.len] = 0;
     ns_array_push(b->m->owned_strings, owned);
-    return owned;
+    return owned.data;
+}
+
+static ns_str ns_ssa_fn_symbol_name(ns_ssa_builder *b, i32 ast, ns_str fallback) {
+    for (i32 i = 0, l = (i32)ns_array_length(b->vm->symbols); i < l; ++i) {
+        ns_symbol *s = &b->vm->symbols[i];
+        if (s->type != NS_SYMBOL_FN || s->fn.ast != ast) continue;
+        if (s->fn.ctx && b->ctx && s->fn.ctx != b->ctx) continue;
+        return s->name;
+    }
+    return fallback;
 }
 
 static ns_str ns_ssa_to_str_symbol_name(ns_ssa_builder *b, ns_type t) {
-    return ns_ssa_typed_fn_name(b, ns_str_cstr("to_str"), t);
+    ns_symbol *s = ns_vm_find_fn_overload(b->vm, ns_str_cstr("to_str"), 1, t, true);
+    if (s && s->type == NS_SYMBOL_FN && ns_type_is(s->fn.ret, NS_TYPE_STRING) &&
+        !s->fn.fn.t.ref && s->fn.fn_type != NS_FN_ASYNC) {
+        return s->name;
+    }
+    return ns_str_null;
 }
 
 static ns_str ns_ssa_ops_fn_name(ns_ssa_builder *b, ns_ast_t *n) {
@@ -1133,7 +1129,9 @@ static ns_bool ns_ssa_shader_name(ns_str name) {
 }
 
 static ns_bool ns_ssa_shader_stage_intrinsic(ns_str name) {
-    return ns_str_equals_STR(name, "shader_buffer_i32") ||
+    return ns_str_equals_STR(name, "ddx") ||
+           ns_str_equals_STR(name, "ddy") ||
+           ns_str_equals_STR(name, "shader_buffer_i32") ||
            ns_str_equals_STR(name, "shader_buffer_store_i32") ||
            ns_str_equals_STR(name, "shader_sample_mask") ||
            ns_str_equals_STR(name, "shader_sample_texture") ||
@@ -1910,7 +1908,6 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             }
         }
         i32 next = n->next;
-        i32 first_arg = -1;
         i32 *avals = ns_null;
         if (value_call) ns_array_push(avals, callee);
         ns_bool is_dispatch = ns_str_equals_STR(callee_name, "dispatch") &&
@@ -1939,13 +1936,8 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                     av = ns_ssa_make_ref(b, av, ns_ssa_value_type(b, av), next);
                 }
             }
-            if (ai == 0) first_arg = av;
             ns_array_push(avals, av);
             next = b->ctx->nodes[next].next;
-        }
-        if (first_arg >= 0 && (ns_str_equals_STR(callee_name, "next") ||
-                               ns_str_equals_STR(callee_name, "to_str"))) {
-            callee_name = ns_ssa_typed_fn_name(b, callee_name, ns_ssa_value_type(b, first_arg));
         }
         i32 nargs = (i32)ns_array_length(avals);
         if (async_call && !value_call) {
@@ -2176,18 +2168,7 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             ns_type vt = ns_ssa_value_type(b, val);
             i32 piece = val;
             if (!ns_type_is(vt, NS_TYPE_STRING)) {
-                ns_str callee = ns_str_null;
-                for (i32 si = 0, sl = (i32)ns_array_length(b->vm->symbols); si < sl; ++si) {
-                    ns_symbol *s = &b->vm->symbols[si];
-                    if (s->type != NS_SYMBOL_FN || !ns_str_equals_STR(s->name, "to_str")) continue;
-                    if ((i32)ns_array_length(s->fn.args) != 1) continue;
-                    ns_type at = s->fn.args[0].val.t;
-                    if (at.type != vt.type || ns_type_index(at) != ns_type_index(vt)) continue;
-                    if (!ns_type_is(s->fn.ret, NS_TYPE_STRING)) continue;
-                    if (s->fn.fn.t.ref || s->fn.fn_type == NS_FN_ASYNC) continue;
-                    callee = ns_ssa_to_str_symbol_name(b, vt);
-                    break;
-                }
+                ns_str callee = ns_ssa_to_str_symbol_name(b, vt);
                 if (callee.len == 0) {
                     const char *helper = ns_type_is_float(vt) ? "ns_rt_ftos" :
                                          ns_type_is(vt, NS_TYPE_BOOL) ? "ns_rt_btos" :
@@ -2501,9 +2482,11 @@ static void ns_ssa_lower_foreach(ns_ssa_builder *b, i32 i) {
         ns_symbol *st = &b->vm->symbols[ns_type_index(subject_type)];
         i32 field = g->gen_expr.rt.value_field;
         if (field < 0) field = ns_struct_field_index(st, ns_str_cstr("value"));
-        ns_str next_name = ns_ssa_typed_fn_name(b, ns_str_cstr("next"), subject_type);
+        ns_str next_name = ns_str_cstr("next");
+        ns_symbol *next_fn = ns_vm_find_fn_overload(b->vm, next_name, 1, subject_type, true);
+        if (next_fn && next_fn->type == NS_SYMBOL_FN) next_name = next_fn->name;
         i32 args[1] = {subject};
-        i32 ok = ns_ssa_emit_named_call(b, next_name.data, args, 1, ns_type_bool, i);
+        i32 ok = ns_ssa_emit_named_call(b, ns_ssa_cstr(b, next_name), args, 1, ns_type_bool, i);
         ns_ssa_emit_branch(b, ok, body_block, exit_block, i);
         if (field >= 0) loop.foreach_field_off = ns_ssa_wasm32_field_offset(b, st, field);
     } else if (is_map) {
@@ -2925,19 +2908,6 @@ static i32 ns_ssa_named_fn_value(ns_ssa_builder *b, ns_symbol *sym, i32 ast) {
 
 static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i32 arg_head, i32 arg_count) {
     ns_ssa_fn fn = {0};
-    if ((ns_str_equals_STR(name, "to_str") || ns_str_equals_STR(name, "next")) &&
-        arg_count == 1 && arg_head > 0) {
-        ns_ast_t *an = &b->ctx->nodes[arg_head];
-        ns_type at = ns_ssa_type_from_label(b, an->arg.type);
-        if (ns_type_is(at, NS_TYPE_UNKNOWN) && an->arg.type > 0) {
-            ns_ast_t *tl = &b->ctx->nodes[an->arg.type];
-            if (tl->type == NS_AST_TYPE_LABEL) {
-                ns_symbol *st = ns_vm_find_symbol(b->vm, tl->type_label.name.val, false);
-                if (st && st->type == NS_SYMBOL_STRUCT) at = st->st.st.t;
-            }
-        }
-        if (!ns_type_is(at, NS_TYPE_UNKNOWN)) name = ns_ssa_typed_fn_name(b, name, at);
-    }
     fn.name = name;
     fn.ast = ast;
     fn.entry = 0;
@@ -3100,7 +3070,8 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
         switch (n->type) {
         case NS_AST_FN_DEF:
             if (ns_ssa_name_listed(b.shader_only, n->fn_def.name.val)) break;
-            ns_ssa_lower_fn(&b, s, n->fn_def.name.val, n->fn_def.body, n->next, n->fn_def.arg_count);
+            ns_ssa_lower_fn(&b, s, ns_ssa_fn_symbol_name(&b, s, n->fn_def.name.val),
+                            n->fn_def.body, n->next, n->fn_def.arg_count);
             break;
         case NS_AST_OP_FN_DEF:
             ns_ssa_lower_fn(&b, s, ns_ssa_ops_fn_name(&b, n), n->ops_fn_def.body, n->ops_fn_def.left, 2);

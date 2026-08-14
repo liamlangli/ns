@@ -89,6 +89,11 @@ ref fn shader_sample_texture_nearest(coord: float2) float4
 // on every backend.
 ref fn shader_sample_mask(coord: float2) float4
 
+// Fragment-only screen-space derivatives. The VM returns 0; the transpiler
+// lowers them to dfdx/dFdx/ddx/dpdx and dfdy/dFdy/ddy/dpdy.
+ref fn ddx(value: f32) f32
+ref fn ddy(value: f32) f32
+
 // ---- host execution of compute fns -----------------------------------------
 //
 // A compute fn is an ordinary ns fn, so the interpreter can run it directly

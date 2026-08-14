@@ -45,8 +45,10 @@ structs (`next(it): bool` plus a `value` field) lowers to a counted or
 protocol-driven loop. Array element writes through `v` store back; `next`
 receives the subject without cloning so field updates persist.
 
-`fn ops(+)` is emitted as `L_add_R` (see `ns_ops_override_name`). Several
-`fn next` / `fn to_str` overloads are emitted as `next$Type` / `to_str$Type`.
+`fn ops(+)` is emitted as `L_add_R` (see `ns_ops_override_name`). A later
+`fn` with the same name is registered as `name_FirstArgType` (for example
+`length_float2`); call lookup tries the bare name, then the mangled label.
+`fn next` / `fn to_str` use the same rule.
 `point(0, 0)` is a positional constructor (ALLOC + field STORE), not a call.
 
 ## AArch64 ABI

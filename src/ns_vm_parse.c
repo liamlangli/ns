@@ -375,6 +375,43 @@ ns_str ns_ops_override_name(ns_str l, ns_str r, ns_token_t op) {
     return (ns_str){.data = data, .len = len - 1, .dynamic = 1};
 }
 
+ns_str ns_fn_overload_name(ns_str name, ns_str type_name) {
+    if (ns_str_is_empty(name) || ns_str_is_empty(type_name)) return ns_str_null;
+    szt len = (szt)name.len + 1 + (szt)type_name.len + 1;
+    i8 *data = (i8 *)ns_malloc(len);
+    snprintf(data, len, "%.*s_%.*s", name.len, name.data, type_name.len, type_name.data);
+    data[len - 1] = '\0';
+    return (ns_str){.data = data, .len = (i32)len - 1, .dynamic = 1};
+}
+
+static ns_bool ns_vm_fn_overload_matches(ns_symbol *fn, i32 arg_count, ns_type first_arg, ns_bool have_first) {
+    if (!fn || fn->type != NS_SYMBOL_FN) return false;
+    i32 n = (i32)ns_array_length(fn->fn.args);
+    if (n != arg_count) return false;
+    if (arg_count == 0 || !have_first) return true;
+    ns_type at = fn->fn.args[0].val.t;
+    return at.type == first_arg.type && ns_type_index(at) == ns_type_index(first_arg) &&
+           ns_type_is_array(at) == ns_type_is_array(first_arg) &&
+           ns_type_is_ref(at) == ns_type_is_ref(first_arg);
+}
+
+ns_symbol *ns_vm_find_fn_overload(ns_vm *vm, ns_str name, i32 arg_count, ns_type first_arg, ns_bool have_first) {
+    ns_symbol *fn = ns_vm_find_symbol(vm, name, false);
+    if (ns_vm_fn_overload_matches(fn, arg_count, first_arg, have_first)) return fn;
+    if (have_first && !ns_type_is(first_arg, NS_TYPE_UNKNOWN)) {
+        ns_str type_name = ns_vm_get_type_name(vm, first_arg);
+        ns_str mangled = ns_fn_overload_name(name, type_name);
+        if (!ns_str_is_empty(mangled)) {
+            ns_symbol *over = ns_vm_find_symbol(vm, mangled, false);
+            ns_str_free(mangled);
+            if (ns_vm_fn_overload_matches(over, arg_count, first_arg, have_first)) return over;
+        } else {
+            ns_str_free(mangled);
+        }
+    }
+    return ns_null;
+}
+
 ns_str ns_vm_get_type_name(ns_vm *vm, ns_type t) {
     ns_bool is_ref = ns_type_is_ref(t);
     switch (t.type)
@@ -898,6 +935,33 @@ ns_return_void ns_vm_parse_fn_def_type(ns_vm *vm, ns_ast_ctx *ctx) {
         } else {
             return ns_return_error(void, ns_ast_state_loc(ctx, n->state), NS_ERR_SYNTAX, "unknown fn def type");
         }
+    }
+
+    // A later `fn` with the same name is stored as `name_FirstArgType` so
+    // `length(float2)` can coexist with `length(float3)`. The first definition
+    // keeps the bare name. `ref fn` FFI symbols keep their exported name.
+    i32 n_syms = (i32)ns_array_length(vm->symbols);
+    for (i32 i = vm->symbol_top; i < n_syms; ++i) {
+        ns_symbol *fn = &vm->symbols[i];
+        if (fn->type != NS_SYMBOL_FN) continue;
+        ns_ast_t *n = &ctx->nodes[fn->fn.ast];
+        if (n->type != NS_AST_FN_DEF || n->fn_def.is_ref) continue;
+        if (ns_str_equals_STR(fn->name, "main")) continue;
+        if ((i32)ns_array_length(fn->fn.args) < 1) continue;
+        if (ns_type_is(fn->fn.args[0].val.t, NS_TYPE_UNKNOWN)) continue;
+        ns_bool earlier = false;
+        for (i32 j = 0; j < i; ++j) {
+            ns_symbol *prev = &vm->symbols[j];
+            if (prev->type == NS_SYMBOL_FN && ns_str_equals(prev->name, fn->name)) {
+                earlier = true;
+                break;
+            }
+        }
+        if (!earlier) continue;
+        ns_str type_name = ns_vm_get_type_name(vm, fn->fn.args[0].val.t);
+        ns_str mangled = ns_fn_overload_name(fn->name, type_name);
+        if (!ns_str_is_empty(mangled)) fn->name = mangled;
+        else ns_str_free(mangled);
     }
     return ns_return_ok_void;
 }
@@ -1474,11 +1538,44 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     }
 
     ns_symbol *fn_record = &vm->symbols[ns_type_index(fn)];
+    ns_bool first_arg_parsed = false;
+    ns_type first_arg_t = ns_type_unknown;
     if (callee_n->type == NS_AST_PRIMARY_EXPR &&
         callee_n->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
-        ns_symbol *direct = ns_vm_find_symbol(vm, callee_n->primary_expr.token.val, false);
-        if (direct && (direct->type == NS_SYMBOL_FN || direct->type == NS_SYMBOL_STRUCT)) {
+        ns_str cname = callee_n->primary_expr.token.val;
+        ns_symbol *direct = ns_vm_find_symbol(vm, cname, false);
+        if (direct && direct->type == NS_SYMBOL_STRUCT) {
             n->call_expr.rt = (i32)(direct - vm->symbols);
+        } else if (direct && direct->type == NS_SYMBOL_FN) {
+            i32 chosen_i = (i32)(direct - vm->symbols);
+            if (n->call_expr.arg_count > 0 && n->next > 0) {
+                ns_ast_t *first_n = &ctx->nodes[n->next];
+                i32 first_body = first_n->type == NS_AST_EXPR ? first_n->expr.body : n->next;
+                ns_bool first_is_block = ctx->nodes[first_body].type == NS_AST_BLOCK_EXPR;
+                ns_type hint = ns_type_infer;
+                if (first_is_block && (i32)ns_array_length(direct->fn.args) > 0) {
+                    hint = direct->fn.args[0].val.t;
+                }
+                ns_return_type ret_first = ns_vm_parse_expr(vm, ctx, n->next, hint);
+                if (ns_return_is_error(ret_first)) return ret_first;
+                first_arg_t = ret_first.r;
+                ns_symbol *over = ns_vm_find_fn_overload(vm, cname, n->call_expr.arg_count, first_arg_t, true);
+                if (over && over->type == NS_SYMBOL_FN) chosen_i = (i32)(over - vm->symbols);
+                // Re-parse against the chosen parameter so literals adopt it
+                // (`sqrt(9.0)` is f64) and stack-resident values keep their
+                // expected type. The infer pass above is only for selection.
+                ns_type chosen_arg = ns_type_infer;
+                if ((i32)ns_array_length(vm->symbols[chosen_i].fn.args) > 0) {
+                    chosen_arg = vm->symbols[chosen_i].fn.args[0].val.t;
+                }
+                ret_first = ns_vm_parse_expr(vm, ctx, n->next, chosen_arg);
+                if (ns_return_is_error(ret_first)) return ret_first;
+                first_arg_parsed = true;
+                first_arg_t = ret_first.r;
+            }
+            n->call_expr.rt = chosen_i;
+            fn_record = &vm->symbols[chosen_i];
+            fn = fn_record->fn.fn.t;
         }
     }
     if (!fn_record || fn_record->type != NS_SYMBOL_FN) {
@@ -1531,6 +1628,10 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         }
     }
 
+    if (n->call_expr.arg_count > (i32)ns_array_length(fn_record->fn.args)) {
+        return ns_return_error(type, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "call expr argument count mismatch.");
+    }
+
     i32 next = n->next;
     ns_type arg1_t = ns_type_unknown;
     for (i32 a_i = 0, l = n->call_expr.arg_count; a_i < l; ++a_i) {
@@ -1540,10 +1641,14 @@ ns_return_type ns_vm_parse_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         fn_record = &vm->symbols[ns_type_index(fn)];
         ns_type arg_t = fn_record->fn.args[a_i].val.t;
 
-        ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, next, arg_t);
-        if (ns_return_is_error(ret_t)) return ret_t;
-
-        ns_type t = ret_t.r;
+        ns_type t;
+        if (a_i == 0 && first_arg_parsed) {
+            t = first_arg_t;
+        } else {
+            ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, next, arg_t);
+            if (ns_return_is_error(ret_t)) return ret_t;
+            t = ret_t.r;
+        }
         if (a_i == 1) arg1_t = t;
         next = arg.next;
         // a numeric param accepts any numeric arg (converted when the call
@@ -1676,21 +1781,16 @@ ns_return_type ns_vm_parse_member_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
 // Iterator protocol: a struct subject of `for v in subject` advances by a
 // script fn `next` whose single parameter is the subject's struct type and
-// whose result is bool. Resolution is by parameter type so several iterator
-// structs may each declare their own `next` (plain name lookup would only
-// ever find the first).
+// whose result is bool. Later `next` defs are stored as `next_Type`.
 i32 ns_vm_find_gen_next_fn(ns_vm *vm, ns_type t) {
-    for (i32 i = 0, l = ns_array_length(vm->symbols); i < l; ++i) {
-        ns_symbol *s = &vm->symbols[i];
-        if (s->type != NS_SYMBOL_FN || !ns_str_equals_STR(s->name, "next")) continue;
-        if (ns_array_length(s->fn.args) != 1) continue;
-        ns_type at = s->fn.args[0].val.t;
-        if (!ns_type_is(at, NS_TYPE_STRUCT) || ns_type_index(at) != ns_type_index(t)) continue;
-        if (!ns_type_is(s->fn.ret, NS_TYPE_BOOL)) continue;
-        if (s->fn.fn.t.ref || s->fn.fn_type == NS_FN_ASYNC) continue; // script fns only
-        return i;
-    }
-    return -1;
+    ns_symbol *s = ns_vm_find_fn_overload(vm, ns_str_cstr("next"), 1, t, true);
+    if (!s || s->type != NS_SYMBOL_FN) return -1;
+    if ((i32)ns_array_length(s->fn.args) != 1) return -1;
+    ns_type at = s->fn.args[0].val.t;
+    if (!ns_type_is(at, NS_TYPE_STRUCT) || ns_type_index(at) != ns_type_index(t)) return -1;
+    if (!ns_type_is(s->fn.ret, NS_TYPE_BOOL)) return -1;
+    if (s->fn.fn.t.ref || s->fn.fn_type == NS_FN_ASYNC) return -1;
+    return (i32)(s - vm->symbols);
 }
 
 ns_return_type ns_vm_parse_gen_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
