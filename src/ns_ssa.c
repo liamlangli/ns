@@ -1394,6 +1394,15 @@ static ns_return_bool ns_ssa_collect_shaders(ns_ssa_builder *b) {
     return ns_return_ok(bool, true);
 }
 
+// Modules whose regular (non `ref`) fn bodies are lowered into this object by
+// ns_ssa_lower_imported_fns. Every other module keeps its wrappers as host
+// imports, because nothing else compiles their bodies in.
+static ns_bool ns_ssa_embed_module(ns_str lib) {
+    return ns_str_equals(lib, ns_str_cstr("simd")) ||
+           ns_str_equals(lib, ns_str_cstr("std")) ||
+           ns_str_equals(lib, ns_str_cstr("task"));
+}
+
 static void ns_ssa_record_import(ns_ssa_builder *b, ns_symbol *symbol) {
     if (!symbol || symbol->type != NS_SYMBOL_FN || ns_str_is_empty(symbol->lib)) return;
     for (i32 i = 0, l = (i32)ns_array_length(b->m->imports); i < l; ++i) {
@@ -1885,9 +1894,11 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             i32 folded = ns_ssa_fold_shader_call(b, n, i, callee_name, callee_module);
             if (folded >= 0) return folded;
             if (ns_return_is_error(b->fold_error)) return -1;
-            // Only `ref fn` crosses the FFI boundary. Regular bodies from
-            // simd.ns / gpu.ns wrappers are compiled into this object.
-            if (callee_sym->fn.fn.t.ref) {
+            // `ref fn` always crosses the FFI boundary, and so do the regular
+            // wrappers of host modules like gpu.ns: only simd/std/task bodies
+            // are compiled into this object, so anything else stays an import.
+            if (callee_sym->fn.fn.t.ref ||
+                (!ns_str_is_empty(callee_sym->lib) && !ns_ssa_embed_module(callee_sym->lib))) {
                 ns_ssa_record_import(b, callee_sym);
             } else {
                 callee_module = ns_str_null;
@@ -2965,12 +2976,6 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     b->loops = NULL;
 }
 
-static ns_bool ns_ssa_embed_module(ns_str lib) {
-    return ns_str_equals(lib, ns_str_cstr("simd")) ||
-           ns_str_equals(lib, ns_str_cstr("std")) ||
-           ns_str_equals(lib, ns_str_cstr("task"));
-}
-
 static ns_bool ns_ssa_skip_imported_fn(ns_str name) {
     // These wrappers call shader_transpile with `any` fn values, which the
     // native backend cannot fold. Call sites should use shader_transpile_stage
@@ -2979,30 +2984,53 @@ static ns_bool ns_ssa_skip_imported_fn(ns_str name) {
            ns_str_equals_STR(name, "gpu_shader_compute");
 }
 
+// A module body names the fn it calls, takes the address of, or passes as a
+// value, so an unreferenced name is dead for this object.
+static ns_bool ns_ssa_fn_referenced(ns_ssa_builder *b, ns_str name) {
+    for (i32 fi = 0, fl = (i32)ns_array_length(b->m->fns); fi < fl; ++fi) {
+        ns_ssa_fn *fn = &b->m->fns[fi];
+        for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
+            ns_ssa_inst *inst = &fn->insts[ii];
+            if (!ns_str_is_empty(inst->module)) continue;
+            if (ns_str_equals(inst->name, name)) return true;
+        }
+    }
+    return false;
+}
+
+// Lower the module fns this object actually reaches. Bodies pull in further
+// bodies, so repeat until no new fn is added; lowering every simd/std/task fn
+// would bloat the artifact and import host symbols the module never calls.
 static void ns_ssa_lower_imported_fns(ns_ssa_builder *b) {
     ns_ast_ctx *saved = b->ctx;
     i32 nsymbols = (i32)ns_array_length(b->vm->symbols);
-    for (i32 i = 0; i < nsymbols; ++i) {
-        ns_symbol *sym = &b->vm->symbols[i];
-        if (sym->type != NS_SYMBOL_FN) continue;
-        if (sym->fn.fn.t.ref) continue;
-        if (sym->fn.body <= 0 || sym->fn.ast <= 0) continue;
-        if (!ns_ssa_embed_module(sym->lib)) continue;
-        if (ns_ssa_shader_name(sym->name)) continue;
-        if (ns_ssa_skip_imported_fn(sym->name)) continue;
-        if (ns_ssa_fn_exists(b, sym->name)) continue;
+    for (ns_bool lowered = true; lowered && !ns_return_is_error(b->fold_error);) {
+        lowered = false;
+        for (i32 i = 0; i < nsymbols; ++i) {
+            ns_symbol *sym = &b->vm->symbols[i];
+            if (sym->type != NS_SYMBOL_FN) continue;
+            if (sym->fn.fn.t.ref) continue;
+            if (sym->fn.body <= 0 || sym->fn.ast <= 0) continue;
+            if (!ns_ssa_embed_module(sym->lib)) continue;
+            if (ns_ssa_shader_name(sym->name)) continue;
+            if (ns_ssa_skip_imported_fn(sym->name)) continue;
+            if (ns_ssa_fn_exists(b, sym->name)) continue;
+            if (!ns_ssa_fn_referenced(b, sym->name)) continue;
 
-        ns_ast_ctx *fn_ctx = sym->fn.ctx ? sym->fn.ctx : saved;
-        if (!fn_ctx || sym->fn.ast >= (i32)ns_array_length(fn_ctx->nodes)) continue;
-        ns_ast_t *n = &fn_ctx->nodes[sym->fn.ast];
-        b->ctx = fn_ctx;
-        ns_ssa_collect_ref_in(b, sym->fn.body);
-        if (n->type == NS_AST_FN_DEF) {
-            ns_ssa_lower_fn(b, sym->fn.ast, sym->name, n->fn_def.body, n->next, n->fn_def.arg_count);
-        } else if (n->type == NS_AST_OP_FN_DEF) {
-            ns_ssa_lower_fn(b, sym->fn.ast, sym->name, n->ops_fn_def.body, n->ops_fn_def.left, 2);
+            ns_ast_ctx *fn_ctx = sym->fn.ctx ? sym->fn.ctx : saved;
+            if (!fn_ctx || sym->fn.ast >= (i32)ns_array_length(fn_ctx->nodes)) continue;
+            ns_ast_t *n = &fn_ctx->nodes[sym->fn.ast];
+            b->ctx = fn_ctx;
+            ns_ssa_collect_ref_in(b, sym->fn.body);
+            if (n->type == NS_AST_FN_DEF) {
+                ns_ssa_lower_fn(b, sym->fn.ast, sym->name, n->fn_def.body, n->next, n->fn_def.arg_count);
+                lowered = true;
+            } else if (n->type == NS_AST_OP_FN_DEF) {
+                ns_ssa_lower_fn(b, sym->fn.ast, sym->name, n->ops_fn_def.body, n->ops_fn_def.left, 2);
+                lowered = true;
+            }
+            if (ns_return_is_error(b->fold_error)) break;
         }
-        if (ns_return_is_error(b->fold_error)) break;
     }
     b->ctx = saved;
 }
@@ -3264,6 +3292,12 @@ static void ns_ssa_print_inst_detail(ns_ssa_inst *inst) {
     case NS_SSA_OP_CALL:
         printf(ns_color_ign "callee=" ns_color_nil);
         ns_ssa_print_value(inst->a);
+        if (inst->module.len > 0) {
+            printf(" " ns_color_ign "module=" ns_color_nil "%.*s", inst->module.len, inst->module.data);
+        }
+        if (inst->name.len > 0) {
+            printf(" " ns_color_ign "name=" ns_color_nil "%.*s", inst->name.len, inst->name.data);
+        }
         printf(" " ns_color_ign "arg_count=" ns_color_nil "%d", inst->c);
         break;
     case NS_SSA_OP_ARG:
