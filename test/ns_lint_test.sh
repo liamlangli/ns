@@ -89,7 +89,8 @@ printf '%s\n' \
     '' \
     '[lint]' \
     'nested_name_max = 4' \
-    'binary_op_space = "off"' > "$tmp/config-ns.mod"
+    'binary_op_space = "off"' \
+    'snake_case = "off"' > "$tmp/config-ns.mod"
 
 mkdir -p "$tmp/config"
 cp "$tmp/config-ns.mod" "$tmp/config/ns.mod"
@@ -116,6 +117,48 @@ fi
 # A disabled rule must not be rewritten either.
 (cd "$tmp/config" && "$ns" lint_fix > /dev/null 2>&1)
 grep -q 'return value+1' "$tmp/config/main.ns"
+
+# snake_case is on by default and lint_fix rewrites camelCase identifiers.
+printf '%s\n' \
+    'fn main() {' \
+    '    let fooBar = 1' \
+    '}' > "$tmp/snake.ns"
+if "$ns" lint "$tmp/snake.ns" > "$tmp/snake.out" 2>&1; then
+    printf '%s\n' 'FAIL: ns lint exited 0 for a camelCase identifier.' >&2
+    cat "$tmp/snake.out" >&2
+    exit 1
+fi
+if ! grep -q 'snake_case' "$tmp/snake.out"; then
+    printf '%s\n' 'FAIL: ns lint did not report a camelCase identifier.' >&2
+    cat "$tmp/snake.out" >&2
+    exit 1
+fi
+"$ns" lint_fix "$tmp/snake.ns" > /dev/null 2>&1
+grep -q 'let foo_bar = 1' "$tmp/snake.ns"
+"$ns" lint "$tmp/snake.ns"
+
+# A project can disable the mandatory snake_case rule.
+mkdir -p "$tmp/camel"
+printf '%s\n' \
+    'schema = "ns.mod/v1"' \
+    'name = "camel"' \
+    'version = "0.1.0"' \
+    'type = "app"' \
+    'source = "."' \
+    'entry = "main.ns"' \
+    '' \
+    '[lint]' \
+    'snake_case = "off"' > "$tmp/camel/ns.mod"
+printf '%s\n' \
+    'fn main() {' \
+    '    let fooBar = 1' \
+    '}' > "$tmp/camel/main.ns"
+(cd "$tmp/camel" && "$ns" lint > "$tmp/camel.out" 2>&1) || true
+if grep -q 'snake_case' "$tmp/camel.out"; then
+    printf '%s\n' 'FAIL: [lint] snake_case = "off" still reported.' >&2
+    cat "$tmp/camel.out" >&2
+    exit 1
+fi
 
 # A single file argument needs no project at all.
 printf '%s\n' 'fn main() {' '    let a = 1+2' '}' > "$tmp/loose.ns"

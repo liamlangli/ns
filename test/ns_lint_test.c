@@ -179,19 +179,76 @@ int main() {
         ns_expect(ns_lint_test_count(&cfg, src, NS_LINT_NESTED_NAME) == 0, "a top-level fn and its loops may spell names out.");
     }
 
+    // ---- snake_case -------------------------------------------------------
+    {
+        const char *src = "fn main() {\n    let fooBar = 1\n    return fooBar\n}\n";
+        ns_expect(ns_lint_test_count(&cfg, src, NS_LINT_SNAKE_CASE) == 2, "each camelCase identifier reports.");
+        ns_expect(ns_lint_test_fix_is(&cfg, src, "fn main() {\n    let foo_bar = 1\n    return foo_bar\n}\n"),
+                  "the fixer rewrites every occurrence of a camelCase name.");
+    }
+
+    {
+        const char *src = "struct Point {\n    posX: f32,\n    posY: f32\n}\nfn makePoint(posX: f32) Point {\n    return Point { posX: posX, posY: 0 }\n}\n";
+        const char *expect = "struct point {\n    pos_x: f32,\n    pos_y: f32\n}\nfn make_point(pos_x: f32) point {\n    return point { pos_x, 0 }\n}\n";
+        ns_expect(ns_lint_test_count(&cfg, src, NS_LINT_SNAKE_CASE) > 0, "PascalCase types and camelCase fields report.");
+        ns_expect(ns_lint_test_fix_is(&cfg, src, expect), "the fixer converts types, fields and fn names together.");
+    }
+
+    {
+        ns_expect(ns_lint_test_fix_is(&cfg, "fn main() {\n    let x = XMLParser\n    let y = getHTTPResponse\n}\n",
+                                     "fn main() {\n    let x = xml_parser\n    let y = get_http_response\n}\n"),
+                  "acronyms split before the last capital of a run.");
+    }
+
+    {
+        const char *src = "fn main() {\n    let foo_bar = 1\n    let FOO_BAR = 2\n    let x = 3\n}\n";
+        ns_expect(ns_lint_test_count(&cfg, src, NS_LINT_SNAKE_CASE) == 0, "snake_case and SCREAMING_SNAKE_CASE are already valid.");
+    }
+
+    {
+        const char *src = "fn main() {\n    let fooBar = 1\n    let foo_bar = 2\n}\n";
+        ns_expect(ns_lint_test_count(&cfg, src, NS_LINT_SNAKE_CASE) == 1, "a colliding rename still reports.");
+        ns_expect(ns_lint_test_fix_is(&cfg, src, src), "a colliding rename is not rewritten.");
+    }
+
+    {
+        const char *src = "fn main() {\n    let Let = 1\n}\n";
+        ns_expect(ns_lint_test_count(&cfg, src, NS_LINT_SNAKE_CASE) == 1, "a name that would become a keyword reports.");
+        ns_expect(ns_lint_test_fix_is(&cfg, src, src), "a name that would become a keyword is not rewritten.");
+    }
+
+    {
+        const char *src = "use myLib\nref fn createWindow()\nfn main() {\n    createWindow()\n    let fooBar = 1\n}\n";
+        const char *expect = "use myLib\nref fn createWindow()\nfn main() {\n    createWindow()\n    let foo_bar = 1\n}\n";
+        ns_expect(ns_lint_test_fix_is(&cfg, src, expect), "use and ref fn names, including their call sites, stay put.");
+        ns_expect(ns_lint_test_count(&cfg, src, NS_LINT_SNAKE_CASE) == 1, "only the local binding is reported.");
+    }
+
+    {
+        const char *src = "fn main() {\n    print(\"fooBar\") // fooBar\n}\n";
+        ns_expect(ns_lint_test_count(&cfg, src, NS_LINT_SNAKE_CASE) == 0, "camelCase inside strings and comments is payload.");
+        ns_expect(ns_lint_test_stable(&cfg, "fn main() {\n    let fooBar = 1\n    return fooBar + XMLParser\n}\n"),
+                  "a snake_case rewrite is a fixed point.");
+    }
+
     // ---- configuration ----------------------------------------------------
     {
         ns_lint_config off;
         ns_lint_config_default(&off);
         ns_str manifest = ns_str_cstr("name = \"demo\"\nindent = 8\n\n[lint]\nindent = 2\nnested_name_max = 3\n"
-                                      "binary_op_space = \"off\"\nstruct_label = \"error\"\n\n[other]\nindent = 16\n");
+                                      "binary_op_space = \"off\"\nstruct_label = \"error\"\nsnake_case = \"off\"\n\n[other]\nindent = 16\n");
         ns_lint_config_from_manifest(&off, manifest);
         ns_expect(off.indent == 2 && off.nested_name_max == 3, "[lint] keys outside the table are ignored.");
         ns_expect(off.severity[NS_LINT_BINARY_OP_SPACE] == NS_LINT_OFF, "a rule set to off is disabled.");
         ns_expect(off.severity[NS_LINT_STRUCT_LABEL] == NS_LINT_ERROR, "a rule severity can be raised.");
+        ns_expect(off.severity[NS_LINT_SNAKE_CASE] == NS_LINT_OFF, "snake_case can be disabled.");
         ns_expect(ns_lint_test_count(&off, "fn main() {\n    let a = 1+2\n}\n", NS_LINT_BINARY_OP_SPACE) == 0, "a disabled rule reports nothing.");
         ns_expect(ns_lint_test_fix_is(&off, "fn main() {\n    let a = 1+2\n}\n", "fn main() {\n    let a = 1+2\n}\n"),
                   "a disabled rule rewrites nothing.");
+        ns_expect(ns_lint_test_count(&off, "fn main() {\n    let fooBar = 1\n}\n", NS_LINT_SNAKE_CASE) == 0,
+                  "a disabled snake_case rule reports nothing.");
+        ns_expect(ns_lint_test_fix_is(&off, "fn main() {\n    let fooBar = 1\n}\n", "fn main() {\n    let fooBar = 1\n}\n"),
+                  "a disabled snake_case rule rewrites nothing.");
     }
 
     {
@@ -200,15 +257,17 @@ int main() {
         ns_expect(!ns_lint_severity_from_str(ns_str_cstr("loud"), &severity), "an unknown severity is rejected.");
         ns_lint_rule rule = NS_LINT_RULE_COUNT;
         ns_expect(ns_lint_rule_from_str(ns_str_cstr("tab_indent"), &rule) && rule == NS_LINT_TAB_INDENT, "a rule name resolves.");
+        ns_expect(ns_lint_rule_from_str(ns_str_cstr("snake_case"), &rule) && rule == NS_LINT_SNAKE_CASE, "snake_case resolves.");
         ns_expect(!ns_lint_rule_from_str(ns_str_cstr("no_such_rule"), &rule), "an unknown rule name is rejected.");
         ns_expect(ns_lint_rule_fixable(NS_LINT_BINARY_OP_SPACE) && !ns_lint_rule_fixable(NS_LINT_NESTED_NAME),
-                  "renaming is reported, spacing is fixed.");
+                  "nested renaming is reported, spacing is fixed.");
+        ns_expect(ns_lint_rule_fixable(NS_LINT_SNAKE_CASE), "snake_case is rewritten.");
     }
 
     // ---- the fixer is idempotent -----------------------------------------
     {
         const char *messy = "use std\n\nstruct point {\n    x :f32,\n    y: f32\n}\n\ntype op = (i32,i32)->i32\n\n"
-                            "fn main() {\n\tlet p = point { x: 1, y: 2 }   \n    let n = -p.x*2\n    let f: op = { a,b in return a+b }\n"
+                            "fn main() {\n\tlet p = point { x: 1, y: 2 }   \n    let nVal = -p.x*2\n    let f: op = { a,b in return a+b }\n"
                             "    print(`{n} {f(1, 2)}\\n`)\n}";
         ns_expect(ns_lint_test_stable(&cfg, messy), "fixing a messy file twice changes nothing the second time.");
         ns_expect(ns_lint_test_fix_is(&cfg, "fn main() {\n    let a = 1\n}\n", "fn main() {\n    let a = 1\n}\n"),

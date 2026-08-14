@@ -36,6 +36,7 @@ a backtick interpolation.
 | `tab_indent` | error | yes | Indentation is spaces, never tabs. A tab is expanded to the next `indent` stop. |
 | `struct_label` | warning | yes | A struct literal that labels every field in declaration order carries no information in its labels: `point { x: 0, y: 0 }` becomes `point { 0, 0 }`. A literal that reorders or omits fields keeps its labels. |
 | `nested_name` | warning | no | A nested fn - a `{ arg, ... in ... }` block, and anything nested inside one - keeps its own names shorter than `nested_name_max`. Its arguments and its `let`/`lit`/`for` bindings are checked. Renaming is a semantic edit, so this one is reported and never rewritten. |
+| `snake_case` | error | yes | Identifiers use `snake_case` (`foo_bar`) or `SCREAMING_SNAKE_CASE` (`FOO_BAR`). camelCase and PascalCase are rewritten: `fooBar` becomes `foo_bar`, `XMLParser` becomes `xml_parser`. A `use`/`mod` module name and a `ref fn` FFI symbol, including later mentions of the same spelling, are left alone. A rename that would collide with an existing name or become a keyword is reported and not rewritten. |
 
 ## Configuration
 
@@ -62,6 +63,7 @@ trailing_space = "error"
 tab_indent = "error"
 struct_label = "warn"
 nested_name = "warn"
+snake_case = "error"
 ```
 
 Omitted keys keep the defaults in the table above, so a manifest only needs the
@@ -71,3 +73,4 @@ ignored, which keeps a newer manifest usable with an older `ns`.
 A rule set to `"off"` is neither reported nor rewritten. That is the way to opt
 out of a fix: `struct_label = "off"` keeps every label in place, and raising
 `struct_label = "error"` instead makes ordered labels fail `ns lint`.
+`snake_case = "off"` turns off the mandatory snake_case naming rule.

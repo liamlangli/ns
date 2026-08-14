@@ -9,14 +9,16 @@
 
 static const char *ns_lint_rule_names[NS_LINT_RULE_COUNT] = {
     "binary_op_space", "comma_space", "colon_space", "trailing_space", "tab_indent", "struct_label", "nested_name",
+    "snake_case",
 };
 
-// Findings the fixer can rewrite. `nested_name` asks for a rename, which is a
-// semantic edit, so it stays a report.
-static const ns_bool ns_lint_rule_fixables[NS_LINT_RULE_COUNT] = {true, true, true, true, true, true, false};
+// Findings the fixer can rewrite. `nested_name` asks for a short name, which is
+// a semantic edit, so it stays a report. `snake_case` is a mechanical spelling
+// change, so every occurrence of a name rewrites to the same snake_case form.
+static const ns_bool ns_lint_rule_fixables[NS_LINT_RULE_COUNT] = {true, true, true, true, true, true, false, true};
 
 static const ns_lint_severity ns_lint_rule_defaults[NS_LINT_RULE_COUNT] = {
-    NS_LINT_ERROR, NS_LINT_ERROR, NS_LINT_ERROR, NS_LINT_ERROR, NS_LINT_ERROR, NS_LINT_WARN, NS_LINT_WARN,
+    NS_LINT_ERROR, NS_LINT_ERROR, NS_LINT_ERROR, NS_LINT_ERROR, NS_LINT_ERROR, NS_LINT_WARN, NS_LINT_WARN, NS_LINT_ERROR,
 };
 
 // Indentation is rewritten from this buffer, so it caps how wide one fixed
@@ -170,8 +172,8 @@ typedef struct ns_lint_token {
     i32 line;       // 1-based line of `start`
 } ns_lint_token;
 
-// One source rewrite: replace [start, end) with `text`. `text` always points at
-// static storage, so edits never own memory.
+// One source rewrite: replace [start, end) with `text`. Spacing edits point at
+// static storage; `snake_case` rewrites point at strings owned by `ctx->owned`.
 typedef struct ns_lint_edit {
     i32 start, end;
     ns_str text;
@@ -192,6 +194,7 @@ typedef struct ns_lint_ctx {
     i32 line_count;
     ns_lint_struct *structs;
     ns_lint_edit *edits;
+    ns_str *owned; // generated rewrite text (snake_case names)
     ns_lint_result *out;
     i32 tail_start; // start of the trailing whitespace run at end of file
     ns_bool fix;
@@ -789,6 +792,175 @@ static void ns_lint_pass_nested_name(ns_lint_ctx *c) {
 }
 
 // ---------------------------------------------------------------------------
+// snake_case names
+// ---------------------------------------------------------------------------
+
+// Keywords and builtin type names the converter must not produce: rewriting
+// `Let` to `let` would turn a binding into a keyword.
+static const char *ns_lint_reserved[] = {
+    "as",   "async", "await", "any",  "assert", "break", "bool",     "continue", "do",   "else", "enum", "fn",
+    "for",  "f32",   "f64",   "false", "if",    "in",    "i8",       "i16",      "i32",  "i64",  "let",  "lit",
+    "loop", "match", "mod",   "nil",   "ops",   "return", "ref",     "struct",   "str",  "type", "true", "to",
+    "u8",   "u16",   "u32",   "u64",   "use",   "void",
+};
+
+static ns_bool ns_lint_ascii_upper(i8 c) { return c >= 'A' && c <= 'Z'; }
+static ns_bool ns_lint_ascii_lower(i8 c) { return c >= 'a' && c <= 'z'; }
+static ns_bool ns_lint_ascii_digit(i8 c) { return c >= '0' && c <= '9'; }
+
+static ns_bool ns_lint_is_reserved(ns_str name) {
+    for (i32 i = 0; i < (i32)(sizeof(ns_lint_reserved) / sizeof(ns_lint_reserved[0])); i++) {
+        if (ns_str_equals_STR(name, ns_lint_reserved[i])) return true;
+    }
+    return false;
+}
+
+// snake_case and SCREAMING_SNAKE_CASE are both allowed. Mixed ASCII case is not.
+static ns_bool ns_lint_is_snake(ns_str name) {
+    ns_bool lower = false, upper = false;
+    for (i32 i = 0; i < name.len; i++) {
+        i8 c = name.data[i];
+        if (ns_lint_ascii_lower(c)) lower = true;
+        else if (ns_lint_ascii_upper(c)) upper = true;
+        if (lower && upper) return false;
+    }
+    return true;
+}
+
+// fooBar / FooBar -> foo_bar, XMLParser -> xml_parser, getHTTPResponse ->
+// get_http_response. Non-ASCII bytes are copied through unchanged.
+static ns_str ns_lint_to_snake(ns_str name) {
+    ns_str out = ns_str_null;
+    for (i32 i = 0; i < name.len; i++) {
+        i8 c = name.data[i];
+        if (ns_lint_ascii_upper(c)) {
+            if (i > 0) {
+                i8 prev = name.data[i - 1];
+                ns_bool next_lower = i + 1 < name.len && ns_lint_ascii_lower(name.data[i + 1]);
+                ns_bool split = ns_lint_ascii_lower(prev) || ns_lint_ascii_digit(prev) || (ns_lint_ascii_upper(prev) && next_lower);
+                if (split) {
+                    i8 us = '_';
+                    ns_str_append_len(&out, &us, 1);
+                }
+            }
+            c = (i8)(c + ('a' - 'A'));
+        }
+        ns_str_append_len(&out, &c, 1);
+    }
+    return out;
+}
+
+static i32 ns_lint_prev_code(ns_lint_ctx *c, i32 index) {
+    for (i32 i = index - 1; i >= 0; i--) {
+        ns_token_type type = c->tokens[i].type;
+        if (type == NS_TOKEN_COMMENT || type == NS_TOKEN_EOL) continue;
+        return i;
+    }
+    return -1;
+}
+
+// `use`/`mod` names are module paths, and a `ref fn` name is an FFI symbol.
+// Neither should be rewritten, including later mentions of the same spelling.
+static void ns_lint_collect_snake_skip(ns_lint_ctx *c, ns_str **skip) {
+    for (i32 k = 0; k < c->count; k++) {
+        if (c->tokens[k].type != NS_TOKEN_IDENTIFIER) continue;
+        i32 prev = ns_lint_prev_code(c, k);
+        if (prev < 0) continue;
+        ns_token_type pt = c->tokens[prev].type;
+        if (pt == NS_TOKEN_USE || pt == NS_TOKEN_MODULE) {
+            ns_array_push(*skip, c->tokens[k].val);
+            continue;
+        }
+        if (pt != NS_TOKEN_FN) continue;
+        i32 p = ns_lint_prev_code(c, prev);
+        if (p >= 0 && c->tokens[p].type == NS_TOKEN_ASYNC) p = ns_lint_prev_code(c, p);
+        if (p >= 0 && c->tokens[p].type == NS_TOKEN_REF) ns_array_push(*skip, c->tokens[k].val);
+    }
+}
+
+static ns_bool ns_lint_name_in(ns_str *names, ns_str name) {
+    for (i32 i = 0, l = (i32)ns_array_length(names); i < l; i++) {
+        if (ns_str_equals(names[i], name)) return true;
+    }
+    return false;
+}
+
+typedef struct ns_lint_snake_map {
+    ns_str from;
+    ns_str to;
+    ns_bool fixable;
+} ns_lint_snake_map;
+
+static ns_lint_snake_map *ns_lint_snake_find(ns_lint_snake_map *maps, ns_str from) {
+    for (i32 i = 0, l = (i32)ns_array_length(maps); i < l; i++) {
+        if (ns_str_equals(maps[i].from, from)) return &maps[i];
+    }
+    return ns_null;
+}
+
+static void ns_lint_pass_snake(ns_lint_ctx *c) {
+    if (!ns_lint_enabled(c, NS_LINT_SNAKE_CASE)) return;
+
+    ns_str *skip = ns_null;
+    ns_lint_collect_snake_skip(c, &skip);
+
+    ns_lint_snake_map *maps = ns_null;
+    for (i32 k = 0; k < c->count; k++) {
+        if (c->tokens[k].type != NS_TOKEN_IDENTIFIER) continue;
+        ns_str name = c->tokens[k].val;
+        if (ns_lint_is_snake(name) || ns_lint_name_in(skip, name)) continue;
+        if (ns_lint_snake_find(maps, name) != ns_null) continue;
+
+        ns_str to = ns_lint_to_snake(name);
+        if (to.len == 0 || ns_str_equals(to, name)) {
+            ns_array_free(to.data);
+            continue;
+        }
+        ns_array_push(c->owned, to);
+        ns_array_push(maps, ((ns_lint_snake_map){.from = name, .to = to, .fixable = true}));
+    }
+
+    for (i32 i = 0, l = (i32)ns_array_length(maps); i < l; i++) {
+        ns_lint_snake_map *m = &maps[i];
+        if (ns_lint_is_reserved(m->to)) {
+            m->fixable = false;
+            continue;
+        }
+        ns_bool taken = false;
+        for (i32 k = 0; k < c->count && !taken; k++) {
+            if (c->tokens[k].type != NS_TOKEN_IDENTIFIER) continue;
+            if (ns_str_equals(c->tokens[k].val, m->from)) continue;
+            if (ns_str_equals(c->tokens[k].val, m->to)) taken = true;
+        }
+        if (!taken) {
+            for (i32 j = 0; j < l; j++) {
+                if (j == i) continue;
+                if (ns_str_equals(maps[j].to, m->to)) {
+                    taken = true;
+                    break;
+                }
+            }
+        }
+        if (taken) m->fixable = false;
+    }
+
+    for (i32 k = 0; k < c->count; k++) {
+        if (c->tokens[k].type != NS_TOKEN_IDENTIFIER) continue;
+        ns_lint_snake_map *m = ns_lint_snake_find(maps, c->tokens[k].val);
+        if (m == ns_null) continue;
+        ns_str message = ns_lint_message("`%.*s` should be snake_case `%.*s`", m->from.len, m->from.data, m->to.len, m->to.data);
+        if (m->fixable) {
+            ns_lint_report_fix(c, NS_LINT_SNAKE_CASE, c->tokens[k].start, c->tokens[k].start, c->tokens[k].end, m->to, message);
+        } else {
+            ns_lint_report(c, NS_LINT_SNAKE_CASE, c->tokens[k].start, false, message);
+        }
+    }
+
+    ns_array_free(maps);
+    ns_array_free(skip);
+}
+
+// ---------------------------------------------------------------------------
 // Driver
 // ---------------------------------------------------------------------------
 
@@ -839,6 +1011,7 @@ static void ns_lint_run(ns_lint_ctx *c) {
 
     ns_lint_pass_indent(c);
     ns_lint_pass_nested_name(c);
+    ns_lint_pass_snake(c);
 }
 
 static void ns_lint_ctx_free(ns_lint_ctx *c) {
@@ -847,6 +1020,8 @@ static void ns_lint_ctx_free(ns_lint_ctx *c) {
     ns_array_free(c->tokens);
     ns_array_free(c->line_start);
     ns_array_free(c->edits);
+    for (i32 i = 0, l = (i32)ns_array_length(c->owned); i < l; i++) ns_array_free(c->owned[i].data);
+    ns_array_free(c->owned);
 }
 
 static void ns_lint_sort_from(ns_lint_result *out, i32 first) {

@@ -17,6 +17,7 @@
 //     binary_op_space = "error"
 //     struct_label = "warn"
 //     nested_name = "off"
+//     snake_case = "off"
 
 typedef enum ns_lint_severity {
     NS_LINT_OFF = 0,
@@ -32,6 +33,7 @@ typedef enum ns_lint_rule {
     NS_LINT_TAB_INDENT,          // indent with spaces, never with tabs
     NS_LINT_STRUCT_LABEL,        // a struct literal listing every field in order needs no labels
     NS_LINT_NESTED_NAME,         // a nested fn/block keeps its own names short
+    NS_LINT_SNAKE_CASE,          // identifiers use snake_case; camelCase/PascalCase are rewritten
     NS_LINT_RULE_COUNT,
 } ns_lint_rule;
 

@@ -260,14 +260,15 @@ is language semantics or code generation.
 
 ## 12) Naming convention baseline
 
-For the `nscode/native/` codebase, use **snake_case** consistently for:
-- filenames,
-- variable names, and
-- function names.
+Nano Script identifiers use **snake_case** by default: filenames, bindings,
+fields, types, and function names. `SCREAMING_SNAKE_CASE` is allowed for `lit`
+constants. `ns lint` reports other spellings and `ns lint_fix` rewrites them;
+a project sets `snake_case = "off"` in the `[lint]` table of `ns.mod` to keep
+camelCase or PascalCase.
 
-When refactoring or adding new Nano Script code in `nscode/native/`, prefer
-snake_case names and avoid introducing new camelCase/PascalCase identifiers
-unless required by external APIs.
+When refactoring or adding new Nano Script code, prefer snake_case names and
+avoid introducing new camelCase/PascalCase identifiers unless required by
+external APIs (`use`/`mod` names and `ref fn` FFI symbols are left alone).
 
 ## 13) NSCode browser parity note
 

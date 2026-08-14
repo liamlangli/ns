@@ -99,12 +99,17 @@ takes `"error"`, `"warn"` or `"off"`, and the two scalar options set the
 indentation width and the nested-name budget. Omitted keys keep the defaults,
 so only the changed lines are needed. See `doc/lint.md` for every rule.
 
+Identifiers default to `snake_case` (`fn compute_answer`, `let origin_x`).
+`ns lint_fix` rewrites camelCase and PascalCase names. A project that needs
+another style disables the rule:
+
 ```toml
 [lint]
 indent = 4
 nested_name_max = 8
 struct_label = "warn"
 nested_name = "off"
+snake_case = "off"
 ```
 
 Build output, generated IDE projects, profiles, and other generated artifacts
@@ -139,6 +144,17 @@ fn main() {
     print("hello from ns\n")
 }
 ```
+
+### Naming
+
+Identifiers use `snake_case`: functions, bindings, fields, types, enum
+members, and filenames (`compute_answer`, `os_platform`, `origin_x`).
+`SCREAMING_SNAKE_CASE` is allowed for `lit` constants (`OS_PLATFORM_IOS`).
+`ns lint` reports other spellings as errors and `ns lint_fix` rewrites them
+(`fooBar` becomes `foo_bar`, `XMLParser` becomes `xml_parser`). A `use`/`mod`
+module name and a `ref fn` FFI symbol are left alone. Set
+`snake_case = "off"` in the `[lint]` table of `ns.mod` to allow camelCase or
+PascalCase.
 
 ### Values and types
 
@@ -346,8 +362,10 @@ check the implementation/declaration for the target platform.
   merely to admit values that require evaluation at runtime.
 - Follow nearby `.ns` syntax and naming; do not import syntax from Swift,
   JavaScript, Rust, or another language unless the parser already supports it.
-  Run `ns lint` on changed sources, and `ns lint_fix` to settle the mechanical
-  findings, rather than hand-formatting them.
+  Use `snake_case` for identifiers. Run `ns lint` on changed sources, and
+  `ns lint_fix` to settle the mechanical findings (including camelCase
+  rewrites), rather than hand-formatting them. Set `snake_case = "off"` in
+  `[lint]` when a project must keep another naming style.
 - Put reusable pure-language code in `.ns` modules. Put platform services behind
   `lib/*.ns` declarations and FFI-loaded dynamic libraries.
 - Keep the `ns` interpreter language-only. Do not link UI, terminal, view, GPU,
