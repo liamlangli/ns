@@ -1,0 +1,22 @@
+// Subset that the AArch64 compile path already matches. ns_parity_test.sh
+// runs this with both `ns run` and `ns build --exe`.
+use std
+
+struct point { x: i32, y: i32 }
+
+fn add(a: i32, b: i32) i32 {
+    return a + b
+}
+
+fn main() i32 {
+    let s = "hi" + "!"
+    let a = [i32](2)
+    a[0] = 10
+    a[1] = 20
+    let p = point { 3, 4 }
+    let x: f64 = 1.5
+    if s.len == 3 && a[0] + a[1] == 30 && p.x + p.y == 7 && x + 2.5 == 4.0 && add(40, 2) == 42 {
+        return 0
+    }
+    return 1
+}

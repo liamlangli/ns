@@ -1,0 +1,16 @@
+fn bump(p: ref i32) {
+    p = p + 1
+}
+
+fn main() {
+    let a = 1
+    let b = ref a
+    let c = a
+    let d = ref b
+    b = 2
+    assert a == 2 && b == 2 && c == 1 && d == 2
+    d = 3
+    assert a == 3 && b == 3 && c == 1 && d == 3
+    bump(ref a)
+    assert a == 4 && b == 4
+}

@@ -1,0 +1,24 @@
+use task
+
+async fn work(n: i32) i32 {
+    sleep(5)
+    return n * 2
+}
+
+fn main() {
+    let t = work(21)
+    assert (await t) == 42
+    let d = dispatch(queue_worker) { in return 40 + 2 }
+    assert (await d) == 42
+    let inline = dispatch(queue_main) { in return 7 }
+    assert done(inline)
+    assert (await inline) == 7
+    let s = dispatch(queue_idle) { in
+        sleep(200)
+        return 1
+    }
+    cancel(s)
+    wait(s)
+    assert done(s)
+    assert cancelled(s)
+}

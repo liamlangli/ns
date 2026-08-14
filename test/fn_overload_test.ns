@@ -1,0 +1,53 @@
+// Same-name fns: the first definition keeps the bare name, later ones are
+// stored as `name_FirstArgType`. A call tries the bare name, then the
+// mangled label when the argument type does not match.
+use std
+use simd
+
+struct float2x { x: f32, y: f32 }
+struct float3x { x: f32, y: f32, z: f32 }
+
+fn length_sum(v: float3x) f32 {
+    return v.x + v.y + v.z
+}
+
+fn length_sum(v: float2x) f32 {
+    return v.x + v.y
+}
+
+fn tag(n: i32) i32 {
+    return n + 1
+}
+
+fn tag(n: f32) f32 {
+    return n + 2.0
+}
+
+fn pair(a: i32) i32 {
+    return a
+}
+
+fn pair(a: i32, b: i32) i32 {
+    return a + b
+}
+
+assert length_sum(float3x { 1.0, 2.0, 3.0 }) == 6.0
+assert length_sum(float2x { 4.0, 5.0 }) == 9.0
+
+assert tag(10) == 11
+assert tag(1.5) == 3.5
+
+assert pair(7) == 7
+assert pair(7, 3) == 10
+
+let a = float2 { 3.0, 4.0 }
+let b = float3 { 0.0, 3.0, 4.0 }
+assert length(a) == 5.0
+assert length(b) == 5.0
+assert dot(a, a) == 25.0
+assert dot(b, b) == 25.0
+
+let n2 = normalize(float2 { 0.0, 4.0 })
+assert n2.x == 0.0 && n2.y == 1.0
+
+print("fn overload test passed\n")

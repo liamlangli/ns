@@ -1,0 +1,99 @@
+#include "ns_test.h"
+#include "ns_profile.h"
+
+static ns_str S(const char *s) { return ns_str_cstr((char *)s); }
+
+int main() {
+    ns_profile_reset();
+    ns_profile_enable(0.0);
+
+    ns_profile_scope_enter(S("main"), ns_str_null);
+    ns_profile_scope_enter(S("mid"), ns_str_null);
+    ns_profile_scope_enter(S("leaf"), ns_str_null);
+    ns_profile_record_ffi(S("os_time_ms"), S("os"), 100.0, 10.0);
+    ns_profile_record_scope(S("leaf"), ns_str_null, 2, 90.0, 20.0);
+    ns_profile_record_scope(S("mid"), ns_str_null, 1, 80.0, 30.0);
+    ns_profile_record_scope(S("main"), ns_str_null, 0, 0.0, 50.0);
+
+    ns_expect(ns_profile.scope_calls == 3, "three vm scopes recorded");
+    ns_expect(ns_profile.ffi_calls == 1, "one ffi call recorded");
+    ns_expect(ns_profile.flame_count == 4, "main/mid/leaf/ffi flame nodes");
+    ns_expect(ns_profile.event_count == 4, "four timeline events");
+    ns_expect(ns_profile.open_len == 0, "open stack drained");
+
+    i32 main_i = -1;
+    i32 mid_i = -1;
+    i32 leaf_i = -1;
+    i32 ffi_i = -1;
+    for (i32 i = 0; i < ns_profile.fn_count; i++) {
+        ns_profile_fn_stat *s = &ns_profile.fns[i];
+        if (ns_str_equals_STR(s->name, "main")) main_i = i;
+        if (ns_str_equals_STR(s->name, "mid")) mid_i = i;
+        if (ns_str_equals_STR(s->name, "leaf")) leaf_i = i;
+        if (ns_str_equals_STR(s->name, "os_time_ms")) ffi_i = i;
+    }
+    ns_expect(main_i >= 0 && mid_i >= 0 && leaf_i >= 0 && ffi_i >= 0, "all symbols present");
+    ns_expect(ns_profile.fns[main_i].total_ms > 49.0 && ns_profile.fns[main_i].total_ms < 51.0, "main inclusive 50ms");
+    ns_expect(ns_profile.fns[main_i].self_ms > 19.0 && ns_profile.fns[main_i].self_ms < 21.0, "main exclusive 20ms");
+    ns_expect(ns_profile.fns[mid_i].self_ms > 9.0 && ns_profile.fns[mid_i].self_ms < 11.0, "mid exclusive 10ms");
+    ns_expect(ns_profile.fns[leaf_i].self_ms > 9.0 && ns_profile.fns[leaf_i].self_ms < 11.0, "leaf exclusive 10ms");
+    ns_expect(ns_profile.fns[ffi_i].self_ms > 9.0 && ns_profile.fns[ffi_i].self_ms < 11.0, "ffi exclusive 10ms");
+    ns_expect(ns_profile.fns[ffi_i].kind == NS_PROFILE_EVENT_FFI, "ffi kind");
+    ns_expect(ns_profile.fns[main_i].kind == NS_PROFILE_EVENT_SCOPE, "scope kind");
+
+    i32 leaf_flame = -1;
+    for (i32 i = 0; i < ns_profile.flame_count; i++) {
+        if (ns_profile.flames[i].fn_index == leaf_i) leaf_flame = i;
+    }
+    ns_expect(leaf_flame >= 0, "leaf flame node");
+    i32 mid_flame = ns_profile.flames[leaf_flame].parent;
+    ns_expect(mid_flame >= 0, "leaf has parent");
+    ns_expect(ns_profile.flames[mid_flame].fn_index == mid_i, "leaf parent is mid");
+
+    char text_path[] = "bin/ns_profile_test.profile";
+    char json_path[] = "bin/ns_profile_test.profile.json";
+    FILE *tf = fopen(text_path, "w");
+    ns_expect(tf != ns_null, "open text profile");
+    if (tf) {
+        ns_profile_write_text(tf, 50.0, 0, ns_null);
+        fclose(tf);
+    }
+    ns_expect(ns_profile_write_chrome_path(json_path, 50.0), "write chrome json");
+
+    FILE *in = fopen(text_path, "r");
+    ns_expect(in != ns_null, "reread text profile");
+    char line[512];
+    ns_bool saw_v4 = false;
+    ns_bool saw_fn = false;
+    ns_bool saw_flame = false;
+    ns_bool saw_stack = false;
+    if (in) {
+        while (fgets(line, sizeof(line), in)) {
+            if (strncmp(line, "format: ns-profile-v4", 21) == 0) saw_v4 = true;
+            if (strncmp(line, "fn: scope", 9) == 0) saw_fn = true;
+            if (strncmp(line, "flame:", 6) == 0) saw_flame = true;
+            if (strstr(line, "main;mid;leaf")) saw_stack = true;
+        }
+        fclose(in);
+    }
+    ns_expect(saw_v4, "text format ns-profile-v4");
+    ns_expect(saw_fn, "fn table rows");
+    ns_expect(saw_flame, "folded flame rows");
+    ns_expect(saw_stack, "folded stack main;mid;leaf");
+
+    FILE *jf = fopen(json_path, "r");
+    ns_expect(jf != ns_null, "reread chrome json");
+    ns_bool saw_trace = false;
+    ns_bool saw_complete = false;
+    if (jf) {
+        while (fgets(line, sizeof(line), jf)) {
+            if (strstr(line, "traceEvents")) saw_trace = true;
+            if (strstr(line, "\"ph\": \"X\"")) saw_complete = true;
+        }
+        fclose(jf);
+    }
+    ns_expect(saw_trace, "chrome json has traceEvents");
+    ns_expect(saw_complete, "chrome json has complete events");
+
+    return 0;
+}

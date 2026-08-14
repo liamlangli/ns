@@ -1,0 +1,10 @@
+use os
+
+fn main() {
+    let p = os_platform()
+    assert p == OS_PLATFORM_MACOS
+    let t = os_time()
+    assert t > 1000000000.0
+    let s = os_time_string()
+    assert s.len > 0
+}

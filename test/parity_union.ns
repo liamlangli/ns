@@ -1,0 +1,20 @@
+type num = i32 | f64
+
+fn identity(x: num) num {
+    return x
+}
+
+fn main() {
+    let a: num = 7
+    let b: num = 3.5
+    let n = a as i32
+    let f = b as f64
+    let w = 1 as num
+    let c = a as f64
+    let d = identity(9)
+    assert n == 7
+    assert f == 3.5
+    assert (w as i32) == 1
+    assert c == 7.0
+    assert (d as i32) == 9
+}

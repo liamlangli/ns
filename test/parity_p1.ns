@@ -1,0 +1,28 @@
+// P1 compile/interpret parity: short-circuit, do/loop, fmod, to_str.
+use std
+
+struct point { x: i32, y: i32 }
+
+fn to_str(p: point) str {
+    return `({p.x},{p.y})`
+}
+
+fn main() i32 {
+    let a = [10, 20, 30]
+    let i = 5
+    if i < 3 && a[i] == 10 { return 2 }
+
+    let x = 0
+    do {
+        x = 1
+    } loop false
+    if x != 1 { return 3 }
+
+    let f: f64 = 7.5
+    if (f % 2.0) != 1.5 { return 4 }
+
+    let p = point { 1, 2 }
+    if `{p}` != "(1,2)" { return 5 }
+
+    return 0
+}

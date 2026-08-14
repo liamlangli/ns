@@ -1,0 +1,42 @@
+// Function values and closures: compile/interpret parity.
+use std
+
+type unary_op = (i32) -> i32
+type bin_op = (i32, i32) -> i32
+
+fn apply(v: i32, op: unary_op) i32 { return op(v) }
+
+fn do_op(op: bin_op, a: i32, b: i32) i32 { return op(a, b) }
+
+let double: unary_op = { x in
+    return x * 2
+}
+assert double(21) == 42
+
+assert do_op({ a, b in
+    return a - b
+}, 5, 3) == 2
+
+let bias = 100
+assert apply(5, { a in
+    return a + bias
+}) == 105
+
+let sum = 7
+let extra = 1
+let capture: unary_op = { a in
+    return a + sum + extra
+}
+assert capture(5) == 13
+
+// mutations inside a closure persist on the capture, not the original
+let n = 0
+let bump: unary_op = { a in
+    n = n + 1
+    return a + n
+}
+assert bump(10) == 11
+assert bump(10) == 12
+assert n == 0
+
+print("fn value test passed\n")
