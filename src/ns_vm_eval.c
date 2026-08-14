@@ -1080,7 +1080,7 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
                     // non-stack value a dereferenced location, not an immediate.
                     i8 *slot = (i8 *)o + field->o;
                     v = ns_type_is_ref(field->t)
-                        ? (ns_value){.t = ns_type_set_stack(field->t, false), .o = *(u64 *)slot}
+                        ? (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = *(u64 *)slot}
                         : (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = (u64)slot};
                 }
                 ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = field->name, .val = v, .parsed = true};
@@ -1122,9 +1122,11 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
 
     // The single closure parameter receives the native pointer as an absolute
     // (non-stack) ref value, the same representation native ref returns use.
+    // mut=1: a non-stack mut=0 value would read as an immediate, and FFI
+    // would try to memcpy the referent from vm->stack[.o].
     if (ns_array_length(fn->args) > 0) {
         ns_type at = fn->args[0].val.t;
-        ns_value av = (ns_value){.t = ns_type_set_stack(at, false), .o = (u64)arg_ptr};
+        ns_value av = (ns_value){.t = ns_type_set_mut(ns_type_set_stack(at, false), true), .o = (u64)arg_ptr};
         ns_symbol arg = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = fn->args[0].name, .val = av, .parsed = true};
         ns_array_push(vm->symbol_stack, arg);
     }
@@ -1140,7 +1142,7 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
             // the value carries the pointer (matching native ref representation).
             // mut=1: a non-stack mut=0 value would read as an immediate.
             ns_value v = ns_type_is_ref(field->t)
-                ? (ns_value){.t = ns_type_set_stack(field->t, false), .o = *(u64 *)slot}
+                ? (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = *(u64 *)slot}
                 : (ns_value){.t = ns_type_set_mut(ns_type_set_stack(field->t, false), true), .o = (u64)slot};
             ns_symbol cap = (ns_symbol){.type = NS_SYMBOL_VALUE, .name = field->name, .val = v, .parsed = true};
             ns_array_push(vm->symbol_stack, cap);

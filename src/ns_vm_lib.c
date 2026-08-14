@@ -299,15 +299,10 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
     for (i32 i = 0; i < call->arg_count; i++) {
         ns_value v = vm->symbol_stack[call->arg_offset + i].val;
 
-        if (ns_type_is_const(v.t)) {
-            i32 size = ns_type_size(vm, v.t);
-            u64 offset = ns_eval_alloc(vm, size);
-            ns_value dst = (ns_value){.t = ns_type_set_stack(v.t, true), .o = offset};
-            ns_return_value ret_v = ns_eval_copy(vm, dst, v, size);
-            if (ns_return_is_error(ret_v)) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to copy arg.");
-            v = ret_v.r;
-        }
-
+        // A `ref` is the native pointer itself. Materializing a const struct
+        // first would treat .o as a stack offset and memcpy from a wild
+        // address — the usual case for a view/ui handle handed in from a
+        // native callback (stack=0, mut=0, .o = heap pointer).
         if (ns_type_is_ref(v.t)) {
             // ffi expects values[i] to point at the pointer being passed. The
             // referent address is either stack-relative (vm->stack + offset) or
@@ -318,6 +313,15 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
             _ffi_ctx.type_refs[i] = ns_ffi_map_type(vm, v.t);
             _ffi_ctx.types[i] = &_ffi_ctx.type_refs[i];
             continue;
+        }
+
+        if (ns_type_is_const(v.t)) {
+            i32 size = ns_type_size(vm, v.t);
+            u64 offset = ns_eval_alloc(vm, size);
+            ns_value dst = (ns_value){.t = ns_type_set_stack(v.t, true), .o = offset};
+            ns_return_value ret_v = ns_eval_copy(vm, dst, v, size);
+            if (ns_return_is_error(ret_v)) return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, "failed to copy arg.");
+            v = ret_v.r;
         }
 
         if (ns_type_is_array(v.t)) {
