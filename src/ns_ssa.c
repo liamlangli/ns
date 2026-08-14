@@ -908,6 +908,57 @@ static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type) {
     return 4;
 }
 
+// Native code reads a struct through the layout of the C header it declares,
+// where an array field is a pointer to the elements themselves. A struct built
+// in ns is laid out compactly instead, and an array field there is the handle
+// of the array rather than its payload, so a value struct handed to a foreign
+// function by ref is first copied into a box that carries the native layout.
+// Structs without an array field already agree on both sides and are passed as
+// they are, so a foreign function that writes back through the pointer keeps
+// working; only the shape that cannot survive the crossing is copied.
+static i32 ns_ssa_ffi_struct_box(ns_ssa_builder *b, i32 value, ns_type pt, i32 ast) {
+    if (!ns_type_is(pt, NS_TYPE_STRUCT) || !ns_type_is_ref(pt)) return value;
+    ns_type vt = ns_ssa_value_type(b, value);
+    if (!ns_type_is(vt, NS_TYPE_STRUCT) || ns_type_is_ref(vt)) return value;
+    i32 index = ns_type_index(pt);
+    if (index < 0 || index >= (i32)ns_array_length(b->vm->symbols)) return value;
+    ns_symbol *st = &b->vm->symbols[index];
+    i32 nfields = (i32)ns_array_length(st->st.fields);
+    i32 size = (i32)st->st.stride;
+    if (nfields < 1 || size < 1) return value;
+    ns_bool has_array = false;
+    for (i32 i = 0; i < nfields; ++i) {
+        ns_type ft = st->st.fields[i].t;
+        // A nested struct field is inlined bytes rather than one loadable word,
+        // so a field-by-field copy would not describe it. Leave it untouched.
+        if (ns_type_is(ft, NS_TYPE_STRUCT) && !ns_type_is_ref(ft)) return value;
+        if (ns_type_is_array(ft)) has_array = true;
+    }
+    if (!has_array) return value;
+    i32 box = ns_ssa_emit_value(b, NS_SSA_OP_ALLOC, -1, size, pt, ns_str_null,
+                                (ns_token_t){0}, ast);
+    for (i32 i = 0; i < nfields; ++i) {
+        ns_struct_field *f = &st->st.fields[i];
+        i32 v = ns_ssa_emit_value(b, NS_SSA_OP_LOAD, value,
+                                  ns_ssa_wasm32_field_offset(b, st, i), f->t,
+                                  ns_str_null, (ns_token_t){0}, ast);
+        b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].target0 =
+            ns_ssa_wasm32_size(b, f->t);
+        if (ns_type_is_array(f->t)) {
+            i32 args[1] = {v};
+            v = ns_ssa_emit_named_call(b, "ns_rt_array_ptr", args, 1, ns_type_i64, ast);
+        }
+        ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, ast);
+        store.a = box;
+        store.b = v;
+        store.c = (i32)f->o;
+        store.target0 = (i32)f->s;
+        store.type = f->t;
+        ns_ssa_emit_raw(b, store);
+    }
+    return box;
+}
+
 // Plain structs are values in Nano Script. The Wasm ABI represents them by a
 // linear-memory address, so copy their bytes whenever they cross an ordinary
 // value boundary. Reference-backed fields remain shared, as they do natively.
@@ -1946,6 +1997,7 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                 if (ns_type_is_ref(pt) && !ns_type_is_ref(ns_ssa_value_type(b, av))) {
                     av = ns_ssa_make_ref(b, av, ns_ssa_value_type(b, av), next);
                 }
+                if (!ns_str_is_empty(callee_module)) av = ns_ssa_ffi_struct_box(b, av, pt, next);
             }
             ns_array_push(avals, av);
             next = b->ctx->nodes[next].next;

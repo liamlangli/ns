@@ -23,6 +23,8 @@
 #define NS_AARCH_FP  29
 #define NS_AARCH_SP  31
 #define NS_AARCH_EXTRA_MAX 64
+/* One spill slot per register-passed argument, for the ffi pointer dance. */
+#define NS_AARCH_FFI_SCRATCH 8
 
 /* ── intra-function fixup ─────────────────────────────────────────────────── */
 typedef struct ns_aarch_fixup {
@@ -44,6 +46,8 @@ typedef struct ns_aarch_ctx {
     i32 arg_seq;
     i32 extra_args[NS_AARCH_EXTRA_MAX];
     i32 nextra;
+    /* first slot past the SSA values, used to park converted ffi pointers */
+    i32 scratch_base;
 } ns_aarch_ctx;
 
 /* ── encoding helpers ─────────────────────────────────────────────────────── */
@@ -209,6 +213,16 @@ static ns_bool ns_aarch_is_float(ns_type t) {
 
 static ns_bool ns_aarch_is_string(ns_type t) {
     return ns_type_is(t, NS_TYPE_STRING);
+}
+
+/* Native code sees a str as a char*, a ref as a host pointer, and an array as
+ * the bare buffer its elements live in. Each of those is a runtime call away
+ * from the ns value; every other argument type crosses the boundary as it is. */
+static const char *ns_aarch_ffi_convert(ns_type t) {
+    if (ns_type_is_array(t)) return "ns_rt_array_ptr";
+    if (ns_aarch_is_string(t)) return "ns_rt_to_cstr";
+    if (ns_type_is_ref(t)) return "ns_rt_native_ptr";
+    return NULL;
 }
 
 static const char *ns_aarch_map_std(ns_str module, ns_str name) {
@@ -805,11 +819,10 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                 }
                 for (i32 ei = 0; ei < stack_n; ++ei) {
                     ns_type st = ns_aarch_value_type(c->fn, stack_args[ei]);
-                    ns_bool is_str = ns_aarch_is_string(st) && !ns_type_is_array(st);
-                    ns_bool is_ref = ns_type_is_ref(st);
-                    if (is_str || is_ref) {
+                    const char *conv = ns_aarch_ffi_convert(st);
+                    if (conv) {
                         ns_aarch_load_value(c, NS_AARCH_X0, stack_args[ei]);
-                        ns_aarch_emit_rt_call(c, is_str ? "ns_rt_to_cstr" : "ns_rt_native_ptr");
+                        ns_aarch_emit_rt_call(c, conv);
                         ns_aarch_emit_u32(c, 0xAA0003E9u); /* MOV X9, X0 */
                     } else {
                         ns_aarch_load_value(c, NS_AARCH_X9, stack_args[ei]);
@@ -818,35 +831,36 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                         ((u32)NS_AARCH_SP << 5) | (u32)NS_AARCH_X9);
                 }
             }
-            // str/ref helpers return in x0. Fill dest!=x0 first, dest==x0 last,
-            // so a later conversion cannot wipe gpu_malloc's size in x0.
-            for (i32 pass = 0; pass < 2; ++pass) {
-                for (i32 ai = 0; ai < nargs; ++ai) {
-                    ns_type at = ns_type_unknown;
-                    if (im && ai < (i32)ns_array_length(im->params)) at = im->params[ai];
-                    else at = ns_aarch_value_type(c->fn, args[ai]);
-                    ns_bool is_str = ns_aarch_is_string(at) && !ns_type_is_array(at);
-                    ns_bool is_ref = ns_type_is_ref(at);
-                    if (!is_str && !is_ref) continue;
-                    i32 dest = dest_reg[ai];
-                    if (dest < 0) continue;
-                    ns_bool dest_x0 = dest == 0;
-                    if (pass == 0 && dest_x0) continue;
-                    if (pass == 1 && !dest_x0) continue;
-                    ns_aarch_load_value(c, NS_AARCH_X0, args[ai]);
-                    ns_aarch_emit_rt_call(c, is_str ? "ns_rt_to_cstr" : "ns_rt_native_ptr");
-                    if (dest > 0 && dest < 8) {
-                        ns_aarch_emit_u32(c, 0xAA0003E0u | ((u32)dest)); /* MOV Xd, X0 */
-                    }
-                }
+            // The conversion helpers return in x0, and reaching one costs a call
+            // that clobbers x0-x7. A pointer left in an argument register would
+            // not survive the conversion of the next argument, so every
+            // conversion parks its result in a scratch slot and the registers
+            // are filled once the last call has been made.
+            i32 spill_slot[NS_AARCH_EXTRA_MAX + 8];
+            for (i32 ai = 0; ai < nargs; ++ai) spill_slot[ai] = -1;
+            i32 nspill = 0;
+            for (i32 ai = 0; ai < nargs; ++ai) {
+                ns_type at = ns_type_unknown;
+                if (im && ai < (i32)ns_array_length(im->params)) at = im->params[ai];
+                else at = ns_aarch_value_type(c->fn, args[ai]);
+                const char *conv = ns_aarch_ffi_convert(at);
+                if (!conv) continue;
+                i32 dest = dest_reg[ai];
+                if (dest < 0 || dest >= 8) continue;
+                ns_aarch_load_value(c, NS_AARCH_X0, args[ai]);
+                ns_aarch_emit_rt_call(c, conv);
+                spill_slot[ai] = c->scratch_base + nspill++;
+                ns_aarch_store_value(c, spill_slot[ai], NS_AARCH_X0);
+            }
+            for (i32 ai = 0; ai < nargs; ++ai) {
+                if (spill_slot[ai] < 0) continue;
+                ns_aarch_load_value(c, dest_reg[ai], spill_slot[ai]);
             }
             for (i32 ai = 0; ai < nargs; ++ai) {
                 ns_type at = ns_type_unknown;
                 if (im && ai < (i32)ns_array_length(im->params)) at = im->params[ai];
                 else at = ns_aarch_value_type(c->fn, args[ai]);
-                ns_bool is_str = ns_aarch_is_string(at) && !ns_type_is_array(at);
-                ns_bool is_ref = ns_type_is_ref(at);
-                if (is_str || is_ref) continue;
+                if (ns_aarch_ffi_convert(at)) continue;
                 i32 dest = dest_reg[ai];
                 if (dest >= 8) {
                     ns_aarch_load_value(c, NS_AARCH_X9, args[ai]);
@@ -1125,6 +1139,8 @@ static ns_aarch_fn_bin ns_aarch_lower_fn(ns_ssa_module *ssa, ns_ssa_fn *fn, ns_b
     c.fn = fn;
 
     i32 nslots = ns_aarch_slot_count(fn);
+    c.scratch_base = nslots;
+    nslots += NS_AARCH_FFI_SCRATCH;
     /* Reserve one 8-byte slot per value, rounded up so SP stays 16-aligned. */
     i32 frame = ((nslots * 8) + 15) & ~15;
 

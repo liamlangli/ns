@@ -791,6 +791,15 @@ int64_t ns_rt_native_ptr(int64_t addr) {
     return (int64_t)(uintptr_t)ns_rt_ptr(addr);
 }
 
+/* Native code reads an ns array as a bare buffer, so an array argument crosses
+ * the ffi boundary as the address of its payload, not of its header. */
+int64_t ns_rt_array_ptr(int64_t arr) {
+    if (arr <= 0) return 0;
+    int64_t data = ns_rt_load(arr, 0, 4);
+    if (data <= 0) return 0;
+    return (int64_t)(uintptr_t)ns_rt_ptr(data);
+}
+
 #define NS_RT_CB_FN(i) \
 static void ns_rt_cb_fn##i(void *arg) { \
     int64_t (*fn)(int64_t, int64_t) = (int64_t (*)(int64_t, int64_t))(uintptr_t)ns_rt_cb_slot[i].code; \
