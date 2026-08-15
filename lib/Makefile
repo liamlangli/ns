@@ -5,6 +5,32 @@ NS_BOX3D_HEADERS = $(wildcard third_party/box3d/include/box3d/*.h third_party/bo
 NS_BOX3D_SCRIPT = scripts/download_box3d.sh
 NS_BOX3D_PRESENT = $(wildcard third_party/box3d/include/box3d/box3d.h)
 
+NS_ZLIB_DIR = third_party/zlib
+NS_ZSTD_DIR = third_party/zstd
+NS_ZLIB_INC = -I$(NS_ZLIB_DIR)
+NS_ZSTD_INC = -I$(NS_ZSTD_DIR)/lib
+# Z_PREFIX renames every zlib entry point to z_*, so the copy statically linked
+# into compress$(NS_DYLIB_SUFFIX) cannot collide with a system libz that is
+# already in the process -- the module is dlopen'd with RTLD_GLOBAL.
+NS_ZLIB_DEF = -DZ_PREFIX=1
+ifneq ($(NS_OS), $(NS_WIN))
+	# zlib's gz* file layer calls read/write/close/lseek directly; without this
+	# its own zconf.h never pulls in <unistd.h> to declare them.
+	NS_ZLIB_DEF += -DZ_HAVE_UNISTD_H
+endif
+# XXH_NAMESPACE does the same for the xxHash symbols Zstandard embeds.
+# ZSTD_DISABLE_ASM keeps the build on the portable C decoder: the x86-64
+# huf_decompress_amd64.S is not covered by the *.c wildcard below.
+NS_ZSTD_DEF = -DZSTD_DISABLE_ASM=1 -DZSTD_LEGACY_SUPPORT=0 -DXXH_NAMESPACE=ZSTD_
+NS_ZLIB_OBJDIR = $(NS_BINDIR)/zlib
+NS_ZSTD_OBJDIR = $(NS_BINDIR)/zstd
+NS_ZLIB_HEADERS = $(wildcard $(NS_ZLIB_DIR)/*.h)
+NS_ZSTD_HEADERS = $(wildcard $(NS_ZSTD_DIR)/lib/*.h $(NS_ZSTD_DIR)/lib/common/*.h \
+	$(NS_ZSTD_DIR)/lib/compress/*.h $(NS_ZSTD_DIR)/lib/decompress/*.h)
+NS_ZLIB_SCRIPT = scripts/download_zlib.sh
+NS_ZSTD_SCRIPT = scripts/download_zstd.sh
+NS_COMPRESS_PRESENT = $(and $(wildcard $(NS_ZLIB_DIR)/zlib.h),$(wildcard $(NS_ZSTD_DIR)/lib/zstd.h))
+
 ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_DYLIB_CREATE = -dynamiclib
 	NS_DYLIB_COMMON = -fPIC -g -Wl,-install_name,@rpath/$(@F) -Wl,-rpath,@loader_path -undefined dynamic_lookup
@@ -49,6 +75,7 @@ NS_GPU_DYLIB = $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX)
 NS_UI_DYLIB = $(NS_BINDIR)/ui$(NS_DYLIB_SUFFIX)
 NS_AUDIO_DYLIB = $(NS_BINDIR)/audio$(NS_DYLIB_SUFFIX)
 NS_DYNAMIC_DYLIB = $(NS_BINDIR)/dynamic$(NS_DYLIB_SUFFIX)
+NS_COMPRESS_DYLIB = $(NS_BINDIR)/compress$(NS_DYLIB_SUFFIX)
 
 NS_IO_OBJS = $(NS_BINDIR)/lib/io.o
 NS_OS_OBJS = $(NS_BINDIR)/lib/os.o
@@ -62,6 +89,12 @@ NS_AUDIO_OBJS =
 NS_BOX3D_SRCS = $(wildcard third_party/box3d/src/*.c)
 NS_BOX3D_OBJS = $(NS_BOX3D_SRCS:third_party/box3d/src/%.c=$(NS_BOX3D_OBJDIR)/%.o)
 NS_DYNAMIC_OBJS = $(NS_BINDIR)/lib/dynamic.o $(NS_BOX3D_OBJS)
+NS_ZLIB_SRCS = $(wildcard $(NS_ZLIB_DIR)/*.c)
+NS_ZLIB_OBJS = $(NS_ZLIB_SRCS:$(NS_ZLIB_DIR)/%.c=$(NS_ZLIB_OBJDIR)/%.o)
+NS_ZSTD_SRCS = $(wildcard $(NS_ZSTD_DIR)/lib/common/*.c $(NS_ZSTD_DIR)/lib/compress/*.c \
+	$(NS_ZSTD_DIR)/lib/decompress/*.c)
+NS_ZSTD_OBJS = $(NS_ZSTD_SRCS:$(NS_ZSTD_DIR)/lib/%.c=$(NS_ZSTD_OBJDIR)/%.o)
+NS_COMPRESS_OBJS = $(NS_BINDIR)/lib/compress.o $(NS_ZLIB_OBJS) $(NS_ZSTD_OBJS)
 
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.linux.o
@@ -82,6 +115,11 @@ endif
 
 $(NS_BINDIR)/lib/dynamic.o: lib/include/dynamic.h $(NS_BOX3D_HEADERS)
 
+# The adapter itself sees zlib and Zstandard headers, and must be built with the
+# same Z_PREFIX renaming as the zlib objects it links against.
+$(NS_BINDIR)/lib/compress.o: lib/src/compress.c lib/include/compress.h $(NS_ZLIB_HEADERS) $(NS_ZSTD_HEADERS) | $(NS_DIRS)
+	$(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_ZLIB_INC) $(NS_ZSTD_INC) $(NS_ZLIB_DEF) $(NS_CFLAGS)
+
 NS_STD_SHARED = \
 	$(NS_IO_DYLIB) \
 	$(NS_OS_DYLIB) \
@@ -92,7 +130,8 @@ NS_STD_SHARED = \
 	$(NS_GPU_DYLIB) \
 	$(NS_VIEW_DYLIB) \
 	$(NS_UI_DYLIB) \
-	$(NS_DYNAMIC_DYLIB)
+	$(NS_DYNAMIC_DYLIB) \
+	$(NS_COMPRESS_DYLIB)
 
 ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_STD_SHARED += $(NS_AUDIO_DYLIB)
@@ -111,6 +150,31 @@ $(NS_BOX3D_OBJDIR):
 
 $(NS_BOX3D_OBJDIR)/%.o: third_party/box3d/src/%.c $(NS_BOX3D_HEADERS) | $(NS_BOX3D_OBJDIR)
 	$(NS_CC) -c -fPIC -g -O2 -std=gnu17 $< -o $@ $(NS_BOX3D_INC) $(NS_PLATFORM_DEF) -Wno-error
+
+.PHONY: zlib zstd compress_deps
+zlib:
+	$(NS_ZLIB_SCRIPT)
+
+zstd:
+	$(NS_ZSTD_SCRIPT)
+
+compress_deps: zlib zstd
+
+$(NS_ZLIB_OBJDIR):
+	$(NS_MKDIR) $@
+
+$(NS_ZLIB_OBJDIR)/%.o: $(NS_ZLIB_DIR)/%.c $(NS_ZLIB_HEADERS) | $(NS_ZLIB_OBJDIR)
+	$(NS_CC) -c -fPIC -g -O2 -fvisibility=hidden $< -o $@ $(NS_ZLIB_INC) $(NS_ZLIB_DEF) $(NS_PLATFORM_DEF) -Wno-error
+
+# Zstandard keeps its sources in common/, compress/ and decompress/, so the
+# object tree mirrors those three directories.
+NS_ZSTD_OBJDIRS = $(NS_ZSTD_OBJDIR)/common $(NS_ZSTD_OBJDIR)/compress $(NS_ZSTD_OBJDIR)/decompress
+
+$(NS_ZSTD_OBJDIRS):
+	$(NS_MKDIR) $@
+
+$(NS_ZSTD_OBJDIR)/%.o: $(NS_ZSTD_DIR)/lib/%.c $(NS_ZSTD_HEADERS) | $(NS_ZSTD_OBJDIRS)
+	$(NS_CC) -c -fPIC -g -O2 -fvisibility=hidden $< -o $@ $(NS_ZSTD_INC) $(NS_ZSTD_DEF) $(NS_PLATFORM_DEF) -Wno-error
 
 $(NS_IO_DYLIB): $(NS_IO_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
@@ -148,4 +212,14 @@ $(NS_DYNAMIC_DYLIB): box3d | $(NS_BINDIR)
 else
 $(NS_DYNAMIC_DYLIB): $(NS_DYNAMIC_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_DYNAMIC_OBJS) -o $@ $(NS_DYLIB_DEPS)
+endif
+
+# The source wildcards above are expanded before the download runs, so the first
+# build downloads the sources and then re-enters make to pick them up.
+ifeq ($(NS_COMPRESS_PRESENT),)
+$(NS_COMPRESS_DYLIB): compress_deps | $(NS_BINDIR)
+	$(MAKE) $@
+else
+$(NS_COMPRESS_DYLIB): $(NS_COMPRESS_OBJS) | $(NS_BINDIR)
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_COMPRESS_OBJS) -o $@ $(NS_DYLIB_DEPS)
 endif

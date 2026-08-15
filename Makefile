@@ -269,7 +269,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
-test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/net$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/wasm_dev$(NS_DYLIB_SUFFIX)
+test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/net$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/wasm_dev$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/compress$(NS_DYLIB_SUFFIX)
 	$(NS_BINDIR)/ns_json_test
 	$(NS_BINDIR)/ns_expr_test
 	$(NS_BINDIR)/ns_compile_test
@@ -300,6 +300,8 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets \
 		$(NS_INSTALL_ROOT)/share/licenses/box3d \
+		$(NS_INSTALL_ROOT)/share/licenses/zlib \
+		$(NS_INSTALL_ROOT)/share/licenses/zstd \
 		$(NS_INSTALL_ROOT)/share/nscode/profile
 	cp $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new
 	mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
@@ -310,7 +312,7 @@ install: all
 	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
 	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
-		lib/net.ns lib/dynamic.ns \
+		lib/net.ns lib/dynamic.ns lib/compress.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	cp lib/src/io.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/gpu.c lib/src/gpu.metal.m \
@@ -323,6 +325,8 @@ install: all
 		lib/assets/bitmap_zh_cn.json lib/assets/bitmap_zh_cn.png \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/
 	cp third_party/box3d/LICENSE $(NS_INSTALL_ROOT)/share/licenses/box3d/LICENSE
+	cp third_party/zlib/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zlib/LICENSE
+	cp third_party/zstd/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zstd/LICENSE
 	cp nscode/profile/ns.mod nscode/profile/main.ns $(NS_INSTALL_ROOT)/share/nscode/profile/
 	if [ -d nscode/profile/bin/nscode-profile.app ]; then \
 		$(NS_RMDIR) $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \

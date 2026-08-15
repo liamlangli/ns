@@ -2315,7 +2315,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
 
 static ns_bool ns_wasm_portable_use(ns_str module) {
     // simd is pure Nano Script and carries no native imports of its own.
-    // dynamic is native-only because its simulation backend is Box3D.
+    // dynamic and compress are native-only: their backends are the Box3D,
+    // zlib and Zstandard C sources.
     return ns_wasm_supported_module(module) || ns_str_equals(module, ns_str_cstr("simd"));
 }
 

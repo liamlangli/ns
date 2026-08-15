@@ -1,0 +1,75 @@
+mod compress
+
+// Byte-oriented compression backed by pinned zlib and Zstandard downloads.
+// zlib provides raw deflate (RFC 1951), zlib-framed deflate (RFC 1950), and
+// gzip (RFC 1952); Zstandard provides the zstd frame format (RFC 8878).
+//
+// The surface is deliberately allocation-free: the caller owns both buffers,
+// sizes the destination with the matching `*_bound` fn, and every call returns
+// either the number of bytes produced or one of the negative status codes.
+
+// Compression levels shared by the three zlib framings.
+lit COMPRESS_LEVEL_DEFAULT = -1
+lit COMPRESS_LEVEL_STORE = 0
+lit COMPRESS_LEVEL_FASTEST = 1
+lit COMPRESS_LEVEL_BEST = 9
+
+// Zstandard reads level 0 as its own default of 3. Use compress_zstd_level_min
+// and compress_zstd_level_max for the range the pinned build accepts.
+lit COMPRESS_ZSTD_LEVEL_DEFAULT = 0
+lit COMPRESS_ZSTD_LEVEL_FASTEST = 1
+lit COMPRESS_ZSTD_LEVEL_BEST = 19
+
+// Negative results. Anything >= 0 is a byte count.
+lit COMPRESS_ERROR_ARGUMENT = -1
+lit COMPRESS_ERROR_BUFFER = -2
+lit COMPRESS_ERROR_DATA = -3
+lit COMPRESS_ERROR_MEMORY = -4
+lit COMPRESS_ERROR_UNSUPPORTED = -5
+lit COMPRESS_ERROR_INTERNAL = -6
+
+// Checksum seeds. zlib starts crc32 at 0 and adler32 at 1.
+lit COMPRESS_CRC32_INIT: u32 = 0
+lit COMPRESS_ADLER32_INIT: u32 = 1
+
+// Worst-case encoded size for size input bytes, or a negative status.
+ref fn compress_deflate_bound(size: i32) i32
+ref fn compress_zlib_bound(size: i32) i32
+ref fn compress_gzip_bound(size: i32) i32
+ref fn compress_zstd_bound(size: i32) i32
+
+// Encode size bytes of src into dst. Returns the bytes written to dst.
+ref fn compress_deflate(src: [u8], size: i32, dst: [u8], capacity: i32, level: i32) i32
+ref fn compress_zlib_deflate(src: [u8], size: i32, dst: [u8], capacity: i32, level: i32) i32
+ref fn compress_gzip_deflate(src: [u8], size: i32, dst: [u8], capacity: i32, level: i32) i32
+ref fn compress_zstd_encode(src: [u8], size: i32, dst: [u8], capacity: i32, level: i32) i32
+
+// Decode one complete stream. A dst that is too small reports
+// COMPRESS_ERROR_BUFFER instead of writing a partial result.
+ref fn compress_inflate(src: [u8], size: i32, dst: [u8], capacity: i32) i32
+ref fn compress_zlib_inflate(src: [u8], size: i32, dst: [u8], capacity: i32) i32
+ref fn compress_gzip_inflate(src: [u8], size: i32, dst: [u8], capacity: i32) i32
+ref fn compress_zstd_decode(src: [u8], size: i32, dst: [u8], capacity: i32) i32
+
+// Decoded size read from the gzip ISIZE trailer. It is stored modulo 2^32, so
+// the value is exact only for members that decode to less than 4 GiB. Raw
+// deflate and zlib streams do not record their decoded size at all.
+ref fn compress_gzip_decoded_size(src: [u8], size: i32) i32
+
+// Decoded size from the zstd frame header. Frames written without a content
+// size report COMPRESS_ERROR_UNSUPPORTED.
+ref fn compress_zstd_decoded_size(src: [u8], size: i32) i32
+ref fn compress_zstd_level_min() i32
+ref fn compress_zstd_level_max() i32
+
+// Rolling checksums: seed with COMPRESS_CRC32_INIT / COMPRESS_ADLER32_INIT and
+// feed the previous result back in to continue over the next chunk.
+ref fn compress_crc32(crc: u32, data: [u8], size: i32) u32
+ref fn compress_adler32(adler: u32, data: [u8], size: i32) u32
+
+// Human-readable name for a negative status; "ok" for zero and above.
+ref fn compress_status_str(status: i32) str
+
+// Pinned upstream versions, e.g. "1.3.1" and "1.5.7".
+ref fn compress_zlib_version() str
+ref fn compress_zstd_version() str

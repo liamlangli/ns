@@ -2624,6 +2624,7 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         ns_value literal = ns_eval_lit_value(vm, v, store_t);
         val->val = literal;
         val->is_lit = true;
+        val->inited = true;
         return ns_return_ok(value, literal);
     }
 
@@ -2640,6 +2641,7 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_eval_copy(vm, ret, v, copy_size);
     ns_array_set_length(vm->stack, ret.o + size);
     val->val = ret;
+    val->inited = true;
     return ns_return_ok(value, ret);
 }
 
@@ -2649,8 +2651,12 @@ ns_return_value ns_eval_module_globals(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_ast_t *n = &ctx->nodes[s_i];
         if (n->type != NS_AST_VAR_DEF) continue;
 
+        // Skip a global this vm already initialized (the same module can be
+        // re-imported). The declared type is not the test: ns_vm_parse_type
+        // marks every primitive as stack-resident, so a `let x: i32 = 1` or
+        // `lit x: u32 = 1` would look pre-evaluated and silently stay zero.
         ns_symbol *val = ns_vm_find_symbol(vm, n->var_def.name.val, false);
-        if (val && val->type == NS_SYMBOL_VALUE && ns_type_in_stack(val->val.t)) {
+        if (val && val->type == NS_SYMBOL_VALUE && val->inited) {
             continue;
         }
 

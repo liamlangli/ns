@@ -1,0 +1,147 @@
+// zlib and Zstandard coverage. Run from the repository root so the debug
+// ref/lib paths resolve lib/compress.ns and bin/compress.dylib.
+use std
+use compress
+
+lit PAYLOAD_SIZE = 4096
+lit SCRATCH_SIZE = 8192
+lit DIGIT_COUNT = 9
+
+fn make_payload() [u8] {
+    let payload = [u8](PAYLOAD_SIZE)
+    for index in 0 to PAYLOAD_SIZE {
+        // Repetitive but not constant, so every codec has something to find.
+        payload[index] = ((index * 7) % 61 + 32) as u8
+    }
+    return payload
+}
+
+fn same_bytes(expected: [u8], actual: [u8], size: i32) bool {
+    for index in 0 to size {
+        if expected[index] != actual[index] {
+            return false
+        }
+    }
+    return true
+}
+
+let payload = make_payload()
+let packed = [u8](SCRATCH_SIZE)
+let restored = [u8](SCRATCH_SIZE)
+
+// The pinned downloads, not whatever the host happens to ship.
+assert compress_zlib_version() == "1.3.1"
+assert compress_zstd_version() == "1.5.7"
+
+// Every bound covers its own framing, and the wrapped framings cost more than
+// the raw one.
+let raw_bound = compress_deflate_bound(PAYLOAD_SIZE)
+assert raw_bound > PAYLOAD_SIZE
+assert compress_zlib_bound(PAYLOAD_SIZE) > raw_bound
+assert compress_gzip_bound(PAYLOAD_SIZE) > compress_zlib_bound(PAYLOAD_SIZE)
+assert compress_zstd_bound(PAYLOAD_SIZE) > PAYLOAD_SIZE
+assert compress_deflate_bound(0) > 0
+assert compress_deflate_bound(0 - 1) == COMPRESS_ERROR_ARGUMENT
+
+// Raw deflate: no wrapper, so nothing records the decoded size.
+let raw_size = compress_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_LEVEL_DEFAULT)
+assert raw_size > 0
+assert raw_size < PAYLOAD_SIZE
+assert compress_inflate(packed, raw_size, restored, SCRATCH_SIZE) == PAYLOAD_SIZE
+assert same_bytes(payload, restored, PAYLOAD_SIZE)
+
+// A raw stream is not a zlib stream: the framings do not silently interoperate.
+assert compress_zlib_inflate(packed, raw_size, restored, SCRATCH_SIZE) == COMPRESS_ERROR_DATA
+
+// zlib framing.
+let zlib_size = compress_zlib_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_LEVEL_BEST)
+assert zlib_size > 0
+assert compress_zlib_inflate(packed, zlib_size, restored, SCRATCH_SIZE) == PAYLOAD_SIZE
+assert same_bytes(payload, restored, PAYLOAD_SIZE)
+
+// gzip framing, including the decoded size held in the ISIZE trailer.
+let gzip_size = compress_gzip_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_LEVEL_BEST)
+assert gzip_size > 0
+assert gzip_size < PAYLOAD_SIZE
+assert packed[0] == 31ub
+assert packed[1] == 139ub
+assert compress_gzip_decoded_size(packed, gzip_size) == PAYLOAD_SIZE
+assert compress_gzip_inflate(packed, gzip_size, restored, SCRATCH_SIZE) == PAYLOAD_SIZE
+assert same_bytes(payload, restored, PAYLOAD_SIZE)
+
+// A truncated member is rejected rather than decoded to a partial result.
+assert compress_gzip_inflate(packed, gzip_size - 8, restored, SCRATCH_SIZE) == COMPRESS_ERROR_DATA
+
+// A corrupt deflate payload is caught by the gzip CRC32 even when the framing
+// still looks intact.
+packed[gzip_size - 12] = (packed[gzip_size - 12] ^ 255ub) as u8
+assert compress_gzip_inflate(packed, gzip_size, restored, SCRATCH_SIZE) == COMPRESS_ERROR_DATA
+
+// Levels: the strongest setting is never larger than the weakest, and storing
+// is bounded by the deflate stored-block overhead.
+let fast_size = compress_zlib_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_LEVEL_FASTEST)
+assert fast_size >= zlib_size
+let store_size = compress_zlib_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_LEVEL_STORE)
+assert store_size > PAYLOAD_SIZE
+assert store_size <= compress_zlib_bound(PAYLOAD_SIZE)
+assert compress_zlib_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, 10) == COMPRESS_ERROR_ARGUMENT
+
+// A destination that cannot hold the result reports the buffer status instead
+// of writing a partial stream.
+let tiny = [u8](8)
+assert compress_gzip_deflate(payload, PAYLOAD_SIZE, tiny, 8, COMPRESS_LEVEL_DEFAULT) == COMPRESS_ERROR_BUFFER
+let gzip_again = compress_gzip_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_LEVEL_BEST)
+assert compress_gzip_inflate(packed, gzip_again, tiny, 8) == COMPRESS_ERROR_BUFFER
+
+// Zstandard, including the decoded size held in the frame header.
+let zstd_levels_ok = compress_zstd_level_min() < 0 && compress_zstd_level_max() >= 19
+assert zstd_levels_ok
+let zstd_size = compress_zstd_encode(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_ZSTD_LEVEL_DEFAULT)
+assert zstd_size > 0
+assert zstd_size < PAYLOAD_SIZE
+assert compress_zstd_decoded_size(packed, zstd_size) == PAYLOAD_SIZE
+assert compress_zstd_decode(packed, zstd_size, restored, SCRATCH_SIZE) == PAYLOAD_SIZE
+assert same_bytes(payload, restored, PAYLOAD_SIZE)
+assert compress_zstd_decode(packed, zstd_size, tiny, 8) == COMPRESS_ERROR_BUFFER
+assert compress_zstd_decode(packed, zstd_size - 4, restored, SCRATCH_SIZE) == COMPRESS_ERROR_DATA
+
+let zstd_best = compress_zstd_encode(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_ZSTD_LEVEL_BEST)
+assert zstd_best > 0
+assert zstd_best <= zstd_size
+assert compress_zstd_encode(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, 99) == COMPRESS_ERROR_ARGUMENT
+
+// An empty input still produces a complete, decodable stream.
+let empty = [u8](1)
+let empty_size = compress_gzip_deflate(empty, 0, packed, SCRATCH_SIZE, COMPRESS_LEVEL_DEFAULT)
+assert empty_size > 0
+assert compress_gzip_decoded_size(packed, empty_size) == 0
+assert compress_gzip_inflate(packed, empty_size, restored, SCRATCH_SIZE) == 0
+
+// The reference check values from the zlib and Adler-32 specifications for the
+// nine ASCII digits.
+let digits = [u8](DIGIT_COUNT)
+for index in 0 to DIGIT_COUNT {
+    digits[index] = (49 + index) as u8
+}
+assert compress_crc32(COMPRESS_CRC32_INIT, digits, DIGIT_COUNT) == 3421780262u
+assert compress_adler32(COMPRESS_ADLER32_INIT, digits, DIGIT_COUNT) == 152961502u
+
+// Feeding the previous result back in continues the same checksum, so two
+// chunks agree with one pass over the whole input.
+let head = [u8](4)
+let tail = [u8](5)
+for index in 0 to 4 {
+    head[index] = digits[index]
+}
+for index in 0 to 5 {
+    tail[index] = digits[index + 4]
+}
+let crc_head = compress_crc32(COMPRESS_CRC32_INIT, head, 4)
+assert compress_crc32(crc_head, tail, 5) == 3421780262u
+let adler_head = compress_adler32(COMPRESS_ADLER32_INIT, head, 4)
+assert compress_adler32(adler_head, tail, 5) == 152961502u
+
+assert compress_status_str(COMPRESS_ERROR_BUFFER) == "destination buffer too small"
+assert compress_status_str(0) == "ok"
+
+print("compress zlib/zstd tests passed\n")

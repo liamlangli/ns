@@ -104,6 +104,9 @@ typedef struct ns_symbol {
     ns_str lib;
     ns_bool parsed;
     ns_bool is_lit;
+    // Set once ns_eval_var_def has run the initializer for this global. A
+    // module's globals are only evaluated when this is still false.
+    ns_bool inited;
     union {
         ns_value val;
         ns_fn_symbol fn;
