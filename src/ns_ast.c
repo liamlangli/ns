@@ -821,6 +821,93 @@ ns_return_bool ns_parse_var_define(ns_ast_ctx *ctx) {
     return ns_return_ok(bool, false);
 }
 
+// Does `i` read any of the still-unordered lit names in `pending`? Only the
+// expression shapes a lit initializer may take are walked; anything else is
+// rejected later by the semantic lit check, so it needs no ordering.
+static ns_bool ns_ast_expr_uses_lit(ns_ast_ctx *ctx, i32 i, ns_str *pending) {
+    if (i <= 0) return false;
+    ns_ast_t *n = &ctx->nodes[i];
+    switch (n->type) {
+    case NS_AST_EXPR:
+        return ns_ast_expr_uses_lit(ctx, n->expr.body, pending);
+    case NS_AST_PRIMARY_EXPR: {
+        if (n->primary_expr.token.type != NS_TOKEN_IDENTIFIER) return false;
+        ns_str name = n->primary_expr.token.val;
+        for (i32 j = 0, l = ns_array_length(pending); j < l; ++j) {
+            if (pending[j].len != 0 && ns_str_equals(pending[j], name)) return true;
+        }
+        return false;
+    }
+    case NS_AST_UNARY_EXPR:
+        return ns_ast_expr_uses_lit(ctx, n->unary_expr.expr, pending);
+    case NS_AST_BINARY_EXPR:
+        return ns_ast_expr_uses_lit(ctx, n->binary_expr.left, pending) ||
+               ns_ast_expr_uses_lit(ctx, n->binary_expr.right, pending);
+    case NS_AST_CAST_EXPR:
+        return ns_ast_expr_uses_lit(ctx, n->cast_expr.expr, pending);
+    case NS_AST_MEMBER_EXPR:
+        return ns_ast_expr_uses_lit(ctx, n->member_expr.left, pending) ||
+               ns_ast_expr_uses_lit(ctx, n->member_expr.right, pending);
+    case NS_AST_INDEX_EXPR:
+        return ns_ast_expr_uses_lit(ctx, n->index_expr.table, pending) ||
+               ns_ast_expr_uses_lit(ctx, n->index_expr.expr, pending);
+    default:
+        return false;
+    }
+}
+
+// A `lit` is a compile-time binding, so neither its position in the file nor
+// the order a project links its source files should decide whether the lits
+// it reads are already known. Move every lit definition to the front of the
+// section list, ordered so a lit follows the lits it references. Constant
+// initializers have no side effects, so hoisting them past the rest of the
+// module changes nothing else. A lit that stays unresolved (a cycle, or an
+// unknown name) keeps its source position and is reported by the semantic
+// pass as before.
+static void ns_ast_order_lit_sections(ns_ast_ctx *ctx) {
+    i32 begin = ctx->section_begin, count = ctx->section_end - begin;
+    if (count <= 1) return;
+
+    ns_str *pending = ns_null; // one slot per section, named for unordered lits
+    i32 lit_count = 0;
+    for (i32 i = 0; i < count; ++i) {
+        ns_ast_t *n = &ctx->nodes[ctx->sections[begin + i]];
+        ns_bool is_lit = n->type == NS_AST_VAR_DEF && n->var_def.is_lit;
+        ns_array_push(pending, is_lit ? n->var_def.name.val : ns_str_null);
+        lit_count += is_lit ? 1 : 0;
+    }
+    if (lit_count == 0) {
+        ns_array_free(pending);
+        return;
+    }
+
+    ns_bool *ordered = ns_null;
+    i32 *sections = ns_null;
+    for (i32 i = 0; i < count; ++i) ns_array_push(ordered, (ns_bool)false);
+
+    ns_bool progress = true;
+    while (progress) {
+        progress = false;
+        for (i32 i = 0; i < count; ++i) {
+            if (ordered[i] || pending[i].len == 0) continue;
+            i32 s = ctx->sections[begin + i];
+            if (ns_ast_expr_uses_lit(ctx, ctx->nodes[s].var_def.expr, pending)) continue;
+            ns_array_push(sections, s);
+            pending[i] = ns_str_null;
+            ordered[i] = true;
+            progress = true;
+        }
+    }
+    for (i32 i = 0; i < count; ++i) {
+        if (!ordered[i]) ns_array_push(sections, ctx->sections[begin + i]);
+    }
+    for (i32 i = 0; i < count; ++i) ctx->sections[begin + i] = sections[i];
+
+    ns_array_free(sections);
+    ns_array_free(ordered);
+    ns_array_free(pending);
+}
+
 ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     // Check for empty input
     if (source.data == ns_null || source.len == 0) {
@@ -853,5 +940,6 @@ ns_return_bool ns_ast_parse(ns_ast_ctx *ctx, ns_str source, ns_str filename) {
     if (ctx->f < ctx->source.len) {
         return ns_return_error(bool, ns_ast_code_loc(ctx), NS_ERR_SYNTAX, "unexpected parse error");
     }
+    ns_ast_order_lit_sections(ctx);
     return ns_return_ok(bool, true);
 }

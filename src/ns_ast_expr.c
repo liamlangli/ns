@@ -709,10 +709,21 @@ ns_return_bool ns_parse_unary_operand(ns_ast_ctx *ctx) {
         ns_restore_state(ctx, operand_state);
     }
 
-    // postfix operand (call/index/member chains on a primary)
+    // postfix operand (call/index/member chains on a primary). One call folds a
+    // single postfix step onto its operand, so keep folding while steps remain:
+    // the whole chain is the operand of the prefix operator (`!a[i].alive`).
+    // The ordinary expression parser reaches the same shape by looping over its
+    // operand stack instead.
     ns_return_bool ret = ns_parse_postfix_expr(ctx, 0);
     if (ns_return_is_error(ret)) return ret;
-    if (ret.r) return ns_return_ok(bool, true);
+    if (ret.r) {
+        do {
+            ns_return_bool more = ns_parse_postfix_expr(ctx, ctx->current);
+            if (ns_return_is_error(more)) return more;
+            if (!more.r) break;
+        } while (1);
+        return ns_return_ok(bool, true);
+    }
 
     // bare primary operand
     ns_restore_state(ctx, operand_state);

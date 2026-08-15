@@ -56,6 +56,27 @@ int main() {
                   "global and local lit definitions evaluate constant expressions.");
     }
 
+    // A lit is a compile-time binding, so a global one may read a lit declared
+    // further down. Regression: definition order used to decide this, which in
+    // a project made the fate of a lit depend on which source file the linker
+    // happened to place first.
+    {
+        const char *src =
+            "lit grid_count = grid_size / grid_step\n"
+            "lit grid_step = 16\n"
+            "lit grid_size = 1536\n"
+            "fn main() bool {\n"
+            "    let cells = [i32](grid_count)\n"
+            "    return grid_count == 96 && cells.len == 96\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "a global lit may reference a lit defined after it.");
+    }
+
+    ns_expect(ns_expr_error_contains(
+                  "lit a = b + 1\nlit b = a + 1\nfn main() bool { return a == 0 }\n",
+                  "unknown type"),
+              "lits that depend on each other are still rejected.");
+
     ns_expect(ns_expr_error_contains(
                   "fn main() bool {\n    lit answer = 42\n    answer = 0\n    return true\n}\n",
                   "can't assign to lit value"),
@@ -791,6 +812,39 @@ int main() {
             "    return p.x == 1.0\n"
             "}\n";
         ns_expect(ns_expr_eval_bool(src), "single-line function body with an assignment statement.");
+    }
+
+    // --- prefix operator over a postfix chain (regression): the unary operand
+    // parser folded a single postfix step, so `!slots[i].alive` took `slots[i]`
+    // as the operand of `!` and failed with "logical not requires a bool
+    // operand". Chains that start with a member (`!a.b.c`) already worked. ---
+    {
+        const char *src =
+            "struct slot { alive: bool, size: i32 }\n"
+            "fn main() bool {\n"
+            "    let slots = [slot](2)\n"
+            "    slots[1].alive = true\n"
+            "    slots[1].size = 3\n"
+            "    return !slots[0].alive && !!slots[1].alive && -slots[1].size == -3\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "a prefix operator applies to a whole index/member chain.");
+    }
+
+    // --- single-line `continue` body (regression): `if cond { continue }` used
+    // to fail with "unexpected expr", because the jump-statement parser required
+    // a newline right after `continue` and so rejected the closing brace of a
+    // one-line body, unlike `break` and `return`. ---
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let sum = 0\n"
+            "    for i in 0 to 10 {\n"
+            "        if (i & 1) == 0 { continue }\n"
+            "        sum = sum + i\n"
+            "    }\n"
+            "    return sum == 25\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src), "single-line body with a bare continue.");
     }
 
     // --- utf8 source text: str is utf8-encoded by default, so multibyte

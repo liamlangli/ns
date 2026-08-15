@@ -127,9 +127,22 @@ ns_return_bool ns_parse_jump_stmt(ns_ast_ctx *ctx) {
     ns_ast_state state = ns_save_state(ctx);
     // continue
     ns_ast_t n = {.type = NS_AST_JUMP_STMT, .state = state, .jump_stmt.label = ctx->token, .jump_stmt.expr = 0};
-    if (ns_token_require(ctx, NS_TOKEN_CONTINUE) && ns_token_require(ctx, NS_TOKEN_EOL)) {
-        ns_ast_push(ctx, n);
-        return ns_return_ok(bool, true);
+    if (ns_token_require(ctx, NS_TOKEN_CONTINUE)) {
+        ns_ast_state end_state = ns_save_state(ctx);
+        if (ns_token_require(ctx, NS_TOKEN_EOL)) {
+            ns_ast_push(ctx, n);
+            return ns_return_ok(bool, true);
+        }
+
+        // A `continue` may also end immediately before the closing brace of a
+        // single-line body (`if done { continue }`). Leave the brace for the
+        // enclosing compound-statement parser.
+        ns_parse_next_token(ctx);
+        if (ctx->token.type == NS_TOKEN_CLOSE_BRACE) {
+            ns_restore_state(ctx, end_state);
+            ns_ast_push(ctx, n);
+            return ns_return_ok(bool, true);
+        }
     }
     ns_restore_state(ctx, state);
 

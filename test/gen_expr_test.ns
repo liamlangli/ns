@@ -26,6 +26,14 @@ for v in arr {
 }
 assert arr_partial == 10
 
+// a bare `continue` also ends a single-line body, like `break` and `return`
+let arr_odd = 0
+for v in arr {
+    if ((v / 10) & 1) == 0 { continue }
+    arr_odd = arr_odd + v
+}
+assert arr_odd == 40
+
 // element writes through the loop var land in the array
 let mut_arr = [1, 2, 3]
 for v in mut_arr {
