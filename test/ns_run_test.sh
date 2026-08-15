@@ -140,6 +140,94 @@ printf '%s\n' 'this default-excluded test file must not be compiled' > "$run_tmp
 
 printf '%s\n' 'PASS: ns projects recursively link sources and honor manifest/default test excludes.'
 
+mkdir -p "$run_tmp/targets/src" "$run_tmp/target-exclude/src/broken"
+printf '%s\n' \
+    'schema = "ns.mod/v1"' \
+    'name = "multi-target"' \
+    'version = "0.1.0"' \
+    'type = "app"' \
+    'source = "src"' \
+    '' \
+    '[[targets]]' \
+    'name = "cli"' \
+    'entry = "main.ns"' \
+    'default = true' \
+    '' \
+    '[[targets]]' \
+    'name = "tool"' \
+    'entry = "tool_main.ns"' \
+    'output = "tool-artifact"' \
+    '' \
+    '[[dependencies.runtime]]' \
+    'name = "std"' \
+    'version = ">=0.1.0"' > "$run_tmp/targets/ns.mod"
+# Both entries declare main: linking one target must drop the other's entry.
+printf '%s\n' \
+    'use std' \
+    'fn main() {' \
+    '    assert target_shared_answer() == 42' \
+    '    print("ran cli\n")' \
+    '}' > "$run_tmp/targets/src/main.ns"
+printf '%s\n' \
+    'use std' \
+    'fn main() {' \
+    '    assert target_shared_answer() == 42' \
+    '    print("ran tool\n")' \
+    '}' > "$run_tmp/targets/src/tool_main.ns"
+printf '%s\n' \
+    'fn target_shared_answer() i32 {' \
+    '    return 42' \
+    '}' > "$run_tmp/targets/src/shared.ns"
+
+run_target_out() {
+    (cd "$run_tmp/targets" && "$ns" run ${1:+"$1"} > "$run_tmp/targets.out" 2>&1) \
+        || { cat "$run_tmp/targets.out" >&2; exit 1; }
+    if ! grep -q "$2" "$run_tmp/targets.out"; then
+        printf '%s\n' "FAIL: ns run ${1:-<default>} did not run the $2 target." >&2
+        cat "$run_tmp/targets.out" >&2
+        exit 1
+    fi
+}
+
+# No argument selects `default = true`, a bare name selects by target name, and
+# the declared entry path of a target selects the same target.
+run_target_out '' 'ran cli'
+run_target_out cli 'ran cli'
+run_target_out tool 'ran tool'
+run_target_out src/tool_main.ns 'ran tool'
+
+if (cd "$run_tmp/targets" && "$ns" run missing > "$run_tmp/targets.out" 2>&1); then
+    printf '%s\n' 'FAIL: ns run accepted a target that ns.mod does not declare.' >&2
+    exit 1
+fi
+if ! grep -q 'unknown target `missing`' "$run_tmp/targets.out" || ! grep -q 'cli, tool' "$run_tmp/targets.out"; then
+    printf '%s\n' 'FAIL: ns run did not report the declared targets for an unknown name.' >&2
+    cat "$run_tmp/targets.out" >&2
+    exit 1
+fi
+
+# A per-target exclude is added to the project exclude list for that target.
+printf '%s\n' \
+    'schema = "ns.mod/v1"' \
+    'name = "target-exclude"' \
+    'version = "0.1.0"' \
+    'type = "app"' \
+    'source = "src"' \
+    '' \
+    '[[targets]]' \
+    'name = "narrow"' \
+    'entry = "main.ns"' \
+    'exclude = ["broken/"]' > "$run_tmp/target-exclude/ns.mod"
+printf '%s\n' \
+    'use std' \
+    'fn main() {' \
+    '}' > "$run_tmp/target-exclude/src/main.ns"
+printf '%s\n' 'this target-excluded source must not be compiled' > "$run_tmp/target-exclude/src/broken/broken.ns"
+
+(cd "$run_tmp/target-exclude" && "$ns" run narrow)
+
+printf '%s\n' 'PASS: ns run selects ns.mod targets, drops the other target entries, and honors per-target excludes.'
+
 mkdir -p "$test_tmp/project/test"
 printf '%s\n' \
     'schema = "ns.mod/v1"' \
@@ -269,5 +357,24 @@ if [ "$(uname -s)" = "Darwin" ]; then
         exit 1
     fi
 
+    (cd "$run_tmp/targets" && "$ns" build tool)
+    (cd "$run_tmp/targets" && "$ns" build cli)
+    for artifact in "tool-artifact.app/Contents/MacOS/tool-artifact" "cli.app/Contents/MacOS/cli"; do
+        if [ ! -x "$run_tmp/targets/bin/$artifact" ]; then
+            printf '%s\n' "FAIL: ns build did not write bin/$artifact for its target." >&2
+            exit 1
+        fi
+    done
+    set +e
+    "$run_tmp/targets/bin/tool-artifact.app/Contents/MacOS/tool-artifact" > "$run_tmp/targets.out" 2>&1
+    tool_status=$?
+    set -e
+    if [ "$tool_status" -ne 0 ] || ! grep -q 'ran tool' "$run_tmp/targets.out"; then
+        printf '%s\n' "FAIL: the compiled tool target exited $tool_status without running its own main." >&2
+        cat "$run_tmp/targets.out" >&2
+        exit 1
+    fi
+
     printf '%s\n' 'PASS: ns build compiles native machine code for --exe and type=app.'
+    printf '%s\n' 'PASS: ns build writes one artifact per ns.mod target.'
 fi

@@ -35,9 +35,11 @@ The common commands are:
 - `ns create <name>`: create a new directory and scaffold a project in it.
 - `ns update [path]`: find the nearest project and migrate its manifest and
   support files to the format bundled with the current `ns` executable.
-- `ns run [file.ns]`: interpret an explicit native file; without an argument,
-  use the current project's manifest entry and otherwise fall back to
-  `main.ns`. A Wasm project builds and starts its loopback live-reload server.
+- `ns run [file.ns | target]`: interpret an explicit native file; without an
+  argument, use the current project's manifest entry and otherwise fall back to
+  `main.ns`. A bare word naming a `[[targets]]` table of the nearest `ns.mod`
+  runs that target. A Wasm project builds and starts its loopback live-reload
+  server.
 - `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
   write `ns.profile`, then print a colored CLI hot-path summary of VM scopes
   and FFI calls. `--profile` on any other command is the same collection.
@@ -47,7 +49,8 @@ The common commands are:
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported.
-- `ns build [path]`: compile a script or module to native machine code.
+- `ns build [path | target]`: compile a script or module to native machine
+  code. A bare word names a `[[targets]]` table, as with `ns run`.
   Manifest type `app` produces a host app bundle (Darwin) or executable,
   type `library` produces a static library, and an app with `target = "wasm"`
   produces its browser bundle and `.wasm.map` source map. `--exe` forces a
@@ -97,6 +100,28 @@ name = "std"
 version = ">=0.1.0"
 ```
 
+A project that ships more than one program declares a `[[targets]]` table per
+entry instead of a single top-level `entry`. `ns run <name>` and
+`ns build <name>` select one; with no name, the target marked `default = true`
+is used, otherwise the first declared one. A target may override `type`,
+`platform` (`wasm`), `icon`, `shell`, `output` and add its own `exclude` list;
+anything it omits is inherited from the top-level key. Each target compiles the
+whole project source set minus the entries owned by the other targets, so every
+target defines its own `main` and shares every other module, and each artifact
+is written to `bin/<name>`.
+
+```toml
+[[targets]]
+name = "example"
+entry = "main.ns"
+default = true
+
+[[targets]]
+name = "example-web"
+entry = "web_main.ns"
+platform = "wasm"
+```
+
 An optional `[lint]` table customizes the linter for the project. Each rule
 takes `"error"`, `"warn"` or `"off"`, and the two scalar options set the
 indentation width and the nested-name budget. Omitted keys keep the defaults,
@@ -135,6 +160,8 @@ being downgraded. Re-running without intervening edits makes no further changes.
   recursively. A `use` for a project-local module is accepted but unnecessary.
 - Test sources under `test/` and files named `*_test.ns` are excluded from
   normal project builds automatically; `ns test` adds the selected test entry.
+- The entries of the `[[targets]]` a run or build did not select are excluded
+  the same way, so sibling targets may each declare `fn main`.
 - Applications normally define `fn main() { ... }`.
 - `//` starts a line comment.
 - Statements are newline-terminated; semicolons are not required. A line

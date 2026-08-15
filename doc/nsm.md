@@ -42,8 +42,63 @@ directory and executes the `entry` (or first of `entries`) it declares, resolved
 against the `source` dir. If the current directory has no `ns.mod`, it runs
 `main.ns` there instead. It reports an error only when neither file exists.
 
-Running `ns build` with no file argument compiles the current module into an
-artifact under `<module>/bin`: `type = "app"` produces an executable, while
+### Targets
+
+A manifest may declare several runnable targets, each with its own entry:
+
+```toml
+schema = "ns.mod/v1"
+name = "example"
+version = "0.1.0"
+type = "app"
+source = "src"
+
+[[targets]]
+name = "example"
+entry = "main.ns"
+default = true
+
+[[targets]]
+name = "example-web"
+entry = "web_main.ns"
+platform = "wasm"
+shell = "web/index.html"
+exclude = ["desktop/"]
+```
+
+`ns run <name>` and `ns build <name>` select one target by name. Without a
+name, the target marked `default = true` is used, otherwise the first one
+declared. A manifest that declares no `[[targets]]` keeps using its top-level
+`entry`/`entries`, so existing projects are unaffected.
+
+| Key           | Meaning                                                        |
+|---------------|----------------------------------------------------------------|
+| `name`        | Selector for `ns run` / `ns build`, and the artifact name      |
+| `entry`       | Entry source, relative to the manifest `source` dir            |
+| `type`        | `app` or `library`; defaults to the top-level `type`           |
+| `platform`    | `wasm` for a browser target; defaults to the top-level `target` |
+| `icon`        | Defaults to the top-level `icon`                               |
+| `shell`       | Custom Wasm HTML page; defaults to the top-level `shell`       |
+| `output`      | Artifact and display name; defaults to `name`                  |
+| `default`     | `true` marks the target `ns run` picks with no name            |
+| `exclude`     | Sources removed for this target only, added to the project `exclude` |
+
+Every target compiles the whole project source set minus the entries owned by
+the other targets, so each target declares its own `main` and shares every
+other module. A top-level `entry` declared beside `[[targets]]` is treated the
+same way: it is removed from the source set of any target that does not own it.
+The build artifact of a target is written to `bin/<name>` (or `bin/<output>`),
+so targets never overwrite each other.
+
+A bare word selects a target: `ns run web`. An argument that looks like a path
+stays a path, so `ns run ./web`, `ns run src/web_main.ns` and any argument
+ending in `.ns` still name files. Passing the declared entry path of a target
+selects that target's settings too. A bare word that matches neither a target
+nor a file is reported with the list of targets the manifest declares. Target
+lookup uses the nearest `ns.mod` at or above the current directory.
+
+Running `ns build` with no file argument compiles the current module (or its
+default target) into an artifact under `<module>/bin`: `type = "app"` produces an executable, while
 `type = "library"` produces a static library. Any build input inside a manifest
 project uses that project's recursive source set. A file outside a project is
 built as a standalone script and may link local sibling modules it imports. Use
@@ -64,7 +119,8 @@ executable itself, along with the artifact kind, host target, and output path.
 `bin/` directory, including generated IDE projects and the build cache, and
 `ns.profile` beside the manifest.
 
-For a browser project, keep `type = "app"` and set `target = "wasm"`.
+For a browser project, keep `type = "app"` and set `target = "wasm"` (or
+`platform = "wasm"` on one `[[targets]]` table).
 `ns build` then emits a browser bundle (`.wasm`, `.wasm.map`, `ns-wasm.js`, and
 `index.html`) under `bin`, while `ns run --port 9001` builds and starts the
 loopback-only live-reload server. Port 0 selects an available port. See

@@ -200,13 +200,15 @@ void ns_help() {
     printf("                    writes ns.mod, src/main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
-    printf("  run  [file.ns]    run native source; wasm projects build and serve bin/\n");
+    printf("  run  [file|target] run native source; wasm projects build and serve bin/\n");
+    printf("                    a bare name selects a [[targets]] entry of ns.mod\n");
     printf("       --port <n>    wasm server port (default 9001; 0 chooses an available port)\n");
     printf("  profile [path]    run like `ns run` with profiling; print a CLI hot-path summary\n");
     printf("  profiler [file]   open the GUI viewer for ns.profile (or file)\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
-    printf("  build [path]      compile and link a script/module to an executable or static lib\n");
+    printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
+    printf("                    a bare name builds that [[targets]] entry of ns.mod\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
     printf("                    keeps the artifact when no input changed; --force rebuilds\n");
@@ -684,11 +686,28 @@ static ns_str ns_path_resolve(ns_str root, ns_str path) {
     return ns_path_join(root, path);
 }
 
+// The top-level keys of a manifest: everything before its first `[table]` or
+// `[[table]]` header. Restricting lookups to that slice keeps a key such as
+// `name` or `target` inside a `[[dependencies.runtime]]` or `[[targets]]`
+// table from being read as the project-wide value.
+static ns_str ns_manifest_head(ns_str src) {
+    for (i32 i = 0; i < src.len;) {
+        i32 ls = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        i32 t = ls;
+        while (t < i && (src.data[t] == ' ' || src.data[t] == '\t')) t++;
+        if (t < i && src.data[t] == '[') return (ns_str){.data = src.data, .len = ls};
+        if (i < src.len) i++;
+    }
+    return src;
+}
+
 // Extract the first quoted string that follows `key =` in a TOML manifest.
 // Handles both `key = "value"` and `key = ["value", ...]`; the key must be the
 // first token on its line so `entry` never matches `entries`. Returns a
 // heap-owned ns_str, or ns_str_null when the key is absent.
 static ns_str ns_manifest_value(ns_str src, const char *key) {
+    src = ns_manifest_head(src);
     i32 klen = (i32)strlen(key);
     i32 i = 0;
     while (i < src.len) {
@@ -719,6 +738,7 @@ static ns_str ns_manifest_value(ns_str src, const char *key) {
 // Return every quoted value assigned to a top-level TOML key. This is used for
 // string arrays such as `exclude = ["generated.ns", "vendor/**"]`.
 static ns_str *ns_manifest_values(ns_str src, const char *key) {
+    src = ns_manifest_head(src);
     ns_str *values = ns_null;
     i32 klen = (i32)strlen(key);
     for (i32 i = 0; i < src.len;) {
@@ -750,6 +770,206 @@ static ns_str *ns_manifest_values(ns_str src, const char *key) {
         break;
     }
     return values;
+}
+
+// ---------------------------------------------------------------------------
+// `[[targets]]` manifest tables
+// ---------------------------------------------------------------------------
+// A manifest may declare several runnable targets, each with its own entry:
+//
+//   [[targets]]
+//   name = "editor"
+//   entry = "main.ns"
+//   default = true
+//
+//   [[targets]]
+//   name = "editor-web"
+//   entry = "web_main.ns"
+//   platform = "wasm"
+//
+// `ns run <name>` and `ns build <name>` select one by name; without a name the
+// target marked `default = true`, otherwise the first declared one, is used.
+// Every target keeps the project source set, minus the entries owned by the
+// targets that were not selected, so each target declares its own `main`.
+typedef struct ns_manifest_target {
+    ns_str name;        // selector, and the default artifact name
+    ns_str entry;       // entry source, relative to the manifest `source` dir
+    ns_str type;        // app | library; inherits the top-level `type`
+    ns_str platform;    // wasm; inherits the top-level `target`
+    ns_str icon;        // inherits the top-level `icon`
+    ns_str shell;       // inherits the top-level `shell`
+    ns_str output;      // artifact and display name; defaults to `name`
+    ns_str *exclude;    // sources removed for this target only
+    ns_bool is_default; // `default = true`
+} ns_manifest_target;
+
+// Offset just past `key =` on `line`, or -1 when the line assigns another key.
+// The key must be the first token so `entry` never matches `entries`.
+static i32 ns_manifest_line_assign(ns_str line, const char *key) {
+    i32 klen = (i32)strlen(key);
+    i32 p = 0;
+    while (p < line.len && (line.data[p] == ' ' || line.data[p] == '\t')) p++;
+    if (line.len - p < klen || strncmp(line.data + p, key, klen) != 0) return -1;
+    p += klen;
+    while (p < line.len && (line.data[p] == ' ' || line.data[p] == '\t')) p++;
+    if (p >= line.len || line.data[p] != '=') return -1;
+    return p + 1;
+}
+
+// First quoted value assigned to `key` on `line`, heap-owned, or ns_str_null.
+static ns_str ns_manifest_line_str(ns_str line, const char *key) {
+    i32 p = ns_manifest_line_assign(line, key);
+    if (p < 0) return ns_str_null;
+    while (p < line.len && line.data[p] != '"') p++;
+    if (p >= line.len) return ns_str_null;
+    i32 start = ++p;
+    while (p < line.len && line.data[p] != '"') p++;
+    if (p >= line.len) return ns_str_null;
+    return ns_str_slice(line, start, p);
+}
+
+// Every quoted value of a single-line array such as `exclude = ["a", "b"]`.
+static ns_bool ns_manifest_line_strs(ns_str line, const char *key, ns_str **out) {
+    i32 p = ns_manifest_line_assign(line, key);
+    if (p < 0) return false;
+    while (p < line.len) {
+        if (line.data[p] == ']') break;
+        if (line.data[p] != '"') { p++; continue; }
+        i32 start = ++p;
+        while (p < line.len && line.data[p] != '"') p++;
+        if (p >= line.len) break;
+        ns_array_push(*out, ns_str_slice(line, start, p));
+        p++;
+    }
+    return true;
+}
+
+static ns_bool ns_manifest_line_bool(ns_str line, const char *key, ns_bool *out) {
+    i32 p = ns_manifest_line_assign(line, key);
+    if (p < 0) return false;
+    while (p < line.len && (line.data[p] == ' ' || line.data[p] == '\t')) p++;
+    *out = line.len - p >= 4 && strncmp(line.data + p, "true", 4) == 0;
+    return true;
+}
+
+// Match a `[name]` or `[[name]]` table header.
+static ns_bool ns_manifest_table_is(ns_str line, const char *name) {
+    i32 p = 0;
+    while (p < line.len && (line.data[p] == ' ' || line.data[p] == '\t')) p++;
+    i32 depth = 0;
+    while (p < line.len && line.data[p] == '[') { depth++; p++; }
+    if (depth == 0) return false;
+    i32 nlen = (i32)strlen(name);
+    if (line.len - p < nlen || strncmp(line.data + p, name, nlen) != 0) return false;
+    p += nlen;
+    while (p < line.len && (line.data[p] == ' ' || line.data[p] == '\t')) p++;
+    return p < line.len && line.data[p] == ']';
+}
+
+// Parse every `[[targets]]` table of a manifest, in declaration order.
+static ns_manifest_target *ns_manifest_targets(ns_str src) {
+    ns_manifest_target *targets = ns_null;
+    ns_bool inside = false;
+    for (i32 i = 0; i < src.len;) {
+        i32 ls = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        ns_str line = (ns_str){.data = src.data + ls, .len = i - ls};
+        if (i < src.len) i++;
+        while (line.len > 0 && (line.data[line.len - 1] == '\r' || line.data[line.len - 1] == ' ')) line.len--;
+
+        i32 t = 0;
+        while (t < line.len && (line.data[t] == ' ' || line.data[t] == '\t')) t++;
+        if (t >= line.len || line.data[t] == '#') continue;
+        if (line.data[t] == '[') {
+            inside = ns_manifest_table_is(line, "targets") || ns_manifest_table_is(line, "target");
+            if (inside) ns_array_push(targets, ((ns_manifest_target){0}));
+            continue;
+        }
+        if (!inside) continue;
+
+        ns_manifest_target *target = &targets[ns_array_length(targets) - 1];
+        ns_str value;
+        if ((value = ns_manifest_line_str(line, "name")).data != ns_null) { target->name = value; continue; }
+        if ((value = ns_manifest_line_str(line, "entry")).data != ns_null) { target->entry = value; continue; }
+        if ((value = ns_manifest_line_str(line, "type")).data != ns_null) { target->type = value; continue; }
+        // `platform` is the canonical key; `target` inside the table is the
+        // same value spelled like the top-level key it inherits from.
+        if ((value = ns_manifest_line_str(line, "platform")).data != ns_null) { target->platform = value; continue; }
+        if ((value = ns_manifest_line_str(line, "target")).data != ns_null) { target->platform = value; continue; }
+        if ((value = ns_manifest_line_str(line, "icon")).data != ns_null) { target->icon = value; continue; }
+        if ((value = ns_manifest_line_str(line, "shell")).data != ns_null) { target->shell = value; continue; }
+        if ((value = ns_manifest_line_str(line, "output")).data != ns_null) { target->output = value; continue; }
+        if (ns_manifest_line_bool(line, "default", &target->is_default)) continue;
+        if (ns_manifest_line_strs(line, "exclude", &target->exclude)) continue;
+    }
+    return targets;
+}
+
+static void ns_manifest_targets_free(ns_manifest_target *targets) {
+    for (i32 i = 0, count = ns_array_length(targets); i < count; i++) {
+        ns_str_free(targets[i].name);
+        ns_str_free(targets[i].entry);
+        ns_str_free(targets[i].type);
+        ns_str_free(targets[i].platform);
+        ns_str_free(targets[i].icon);
+        ns_str_free(targets[i].shell);
+        ns_str_free(targets[i].output);
+        for (i32 e = 0, l = ns_array_length(targets[i].exclude); e < l; e++) ns_str_free(targets[i].exclude[e]);
+        ns_array_free(targets[i].exclude);
+    }
+    ns_array_free(targets);
+}
+
+// Index of the target named `name`, or -1. An empty name selects the default:
+// the target marked `default = true`, otherwise the first declared one.
+static i32 ns_manifest_target_index(ns_manifest_target *targets, ns_str name) {
+    i32 count = ns_array_length(targets);
+    if (count == 0) return -1;
+    if (name.len == 0) {
+        for (i32 i = 0; i < count; i++) {
+            if (targets[i].is_default) return i;
+        }
+        return 0;
+    }
+    for (i32 i = 0; i < count; i++) {
+        if (ns_str_equals(targets[i].name, name)) return i;
+    }
+    return -1;
+}
+
+static void ns_str_append_cstr(ns_str *s, const char *cstr);
+
+// `a, b, c` over the declared target names, for diagnostics.
+static ns_str ns_manifest_target_names(ns_manifest_target *targets) {
+    ns_str list = ns_str_null;
+    for (i32 i = 0, count = ns_array_length(targets); i < count; i++) {
+        if (i > 0) ns_str_append_cstr(&list, ", ");
+        ns_str_append(&list, targets[i].name);
+    }
+    ns_array_push(list.data, '\0');
+    return list;
+}
+
+// Heap-owned copy of a manifest value, keeping an absent value absent.
+static ns_str ns_str_dup(ns_str s) {
+    return s.data == ns_null ? ns_str_null : ns_str_concat(s, ns_str_cstr(""));
+}
+
+// The directory manifest entries are relative to: `<root>/<source>`.
+static ns_str ns_manifest_source_base(ns_str root, ns_str mod) {
+    ns_str source = ns_manifest_value(mod, "source");
+    ns_str base = (source.data != ns_null && !ns_str_equals(source, ns_str_cstr(".")))
+                      ? ns_path_join(root, source)
+                      : ns_str_concat(root, ns_str_cstr(""));
+    ns_str_free(source);
+    return base;
+}
+
+// The top-level `entry = "..."` or first of `entries = ["...", ...]`.
+static ns_str ns_manifest_top_entry(ns_str mod) {
+    ns_str entry = ns_manifest_value(mod, "entry");
+    if (entry.data == ns_null) entry = ns_manifest_value(mod, "entries");
+    return entry;
 }
 
 static ns_str ns_project_source_dir(ns_str root) {
@@ -908,13 +1128,17 @@ static ns_bool ns_project_source_is_test(ns_project_source source) {
            strstr(source.relative.data, "/test/") != ns_null;
 }
 
+static void ns_project_target_excludes(ns_str root, ns_str manifest, ns_str entry_file, ns_str **excludes);
+
 // Collect the manifest source set of `root` without linking it. The scan is
 // deterministic and reads no source file, so a build can compare the set
-// against its recorded inputs before deciding to compile.
-static ns_project_source *ns_project_sources(ns_str root) {
+// against its recorded inputs before deciding to compile. `entry_file` is the
+// entry being built, so the set matches what linking that target compiles.
+static ns_project_source *ns_project_sources(ns_str root, ns_str entry_file) {
     ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
     ns_str manifest = ns_os_read_file(manifest_path);
     ns_str *excludes = ns_manifest_values(manifest, "exclude");
+    ns_project_target_excludes(root, manifest, entry_file, &excludes);
     ns_str source_dir = ns_project_source_dir(root);
     ns_str source_value = ns_manifest_value(manifest, "source");
     ns_str project_relative = (source_value.data == ns_null || ns_str_equals(source_value, ns_str_cstr(".")))
@@ -940,6 +1164,65 @@ static void ns_project_sources_free(ns_project_source *sources) {
     ns_array_free(sources);
 }
 
+// True when a manifest entry declaration names the file being linked. Both
+// paths are built the same way for a manifest-driven run, but an explicit
+// `ns run path/to/entry.ns` can spell the same file differently.
+static ns_bool ns_manifest_entry_matches(ns_str entry_path, ns_str entry_file, ns_str entry_relative) {
+    if (ns_str_equals(entry_path, entry_file)) return true;
+    ns_str declared = ns_path_normalized(entry_path);
+    ns_str selected = ns_path_normalized(entry_file);
+    ns_str relative = ns_path_normalized(entry_relative);
+    ns_bool same = ns_str_equals(declared, selected);
+    if (!same && selected.len > relative.len) {
+        i32 at = selected.len - relative.len;
+        same = selected.data[at - 1] == '/' &&
+               strncmp(selected.data + at, relative.data, relative.len) == 0;
+    }
+    ns_str_free(declared);
+    ns_str_free(selected);
+    ns_str_free(relative);
+    return same;
+}
+
+// The entries a manifest declares that the selected target does not own. Each
+// target keeps its own `main`, so linking one removes the others' entries from
+// the source set; the selected target adds its own `exclude` list.
+static void ns_project_target_excludes(ns_str root, ns_str manifest, ns_str entry_file, ns_str **excludes) {
+    ns_manifest_target *targets = ns_manifest_targets(manifest);
+    if (ns_array_length(targets) == 0) {
+        ns_manifest_targets_free(targets);
+        return;
+    }
+
+    ns_str base = ns_manifest_source_base(root, manifest);
+    ns_bool matched = false;
+    for (i32 i = 0, count = ns_array_length(targets); i < count; i++) {
+        ns_str entry = targets[i].entry;
+        if (entry.data == ns_null) continue;
+        ns_str path = ns_path_join(base, entry);
+        if (!matched && ns_manifest_entry_matches(path, entry_file, entry)) {
+            matched = true;
+            for (i32 e = 0, l = ns_array_length(targets[i].exclude); e < l; e++) {
+                ns_array_push(*excludes, ns_str_dup(targets[i].exclude[e]));
+            }
+        } else {
+            ns_array_push(*excludes, ns_str_dup(entry));
+        }
+        ns_str_free(path);
+    }
+
+    // A top-level `entry` beside `[[targets]]` is one more competing main.
+    ns_str top = ns_manifest_top_entry(manifest);
+    if (top.data != ns_null) {
+        ns_str path = ns_path_join(base, top);
+        if (!ns_manifest_entry_matches(path, entry_file, top)) ns_array_push(*excludes, ns_str_dup(top));
+        ns_str_free(path);
+        ns_str_free(top);
+    }
+    ns_str_free(base);
+    ns_manifest_targets_free(targets);
+}
+
 // Link all project sources. Files under test/ and other *_test.ns entries are
 // excluded by default. Test execution adds only the selected test entry.
 static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_file, ns_bool test_entry,
@@ -947,6 +1230,7 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
     ns_str manifest = ns_os_read_file(manifest_path);
     ns_str *excludes = ns_manifest_values(manifest, "exclude");
+    ns_project_target_excludes(root, manifest, entry_file, &excludes);
     ns_str source_dir = ns_project_source_dir(root);
     ns_str source_value = ns_manifest_value(manifest, "source");
     ns_str project_relative = (source_value.data == ns_null || ns_str_equals(source_value, ns_str_cstr(".")))
@@ -1010,24 +1294,134 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     return ns_link_finish(&lk, out_map, out_external_modules);
 }
 
-// Resolve the entry source file declared by `root/ns.mod`, relative to its
-// `source` dir. Supports both `entry = "..."` and `entries = ["...", ...]`.
-static ns_str ns_manifest_entry_file_for_root(ns_str root) {
+// What a manifest declares for one selected target: its entry plus the fields
+// a build or a run reads, each already resolved against the top-level value it
+// inherits when the target leaves it out.
+typedef struct ns_manifest_selection {
+    ns_bool has_target; // a [[targets]] table was selected
+    ns_str target_name; // selected target name, empty without targets
+    ns_str entry_file;  // entry source path, joined onto the `source` dir
+    ns_str name;        // artifact and display name
+    ns_str type;        // app | library
+    ns_str platform;    // wasm, or empty for a native target
+    ns_str icon;        // resolved against the project root
+    ns_str shell;       // resolved against the project root
+} ns_manifest_selection;
+
+static ns_str ns_manifest_read(ns_str root) {
     ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
     ns_str mod = ns_os_read_file(manifest);
     if (mod.data == ns_null)
         ns_exit(1, "ns", "cannot read manifest %.*s.\n", manifest.len, manifest.data);
+    ns_str_free(manifest);
+    return mod;
+}
 
-    ns_str entry = ns_manifest_value(mod, "entry");
-    if (entry.data == ns_null) entry = ns_manifest_value(mod, "entries");
+// Resolve what `root/ns.mod` declares for `target_name`. An empty name selects
+// the default target, or the top-level `entry` when no `[[targets]]` table is
+// declared. An unknown name is a usage error that lists what is declared.
+static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name) {
+    ns_str mod = ns_manifest_read(root);
+    ns_manifest_target *targets = ns_manifest_targets(mod);
+    ns_manifest_selection sel = {0};
+
+    i32 index = ns_manifest_target_index(targets, target_name);
+    if (index < 0 && target_name.len > 0) {
+        ns_str names = ns_manifest_target_names(targets);
+        if (names.len == 0) {
+            ns_exit(1, "ns", "ns.mod at %.*s declares no targets; `%.*s` is not a file either.\n",
+                    root.len, root.data, target_name.len, target_name.data);
+        }
+        ns_exit(1, "ns", "unknown target `%.*s`; ns.mod at %.*s declares %.*s.\n",
+                target_name.len, target_name.data, root.len, root.data, names.len, names.data);
+    }
+
+    ns_str entry = ns_str_null;
+    if (index >= 0) {
+        ns_manifest_target *target = &targets[index];
+        sel.has_target = true;
+        sel.target_name = ns_str_dup(target->name);
+        entry = ns_str_dup(target->entry);
+        sel.name = ns_str_dup(target->output.data != ns_null ? target->output : target->name);
+        sel.type = ns_str_dup(target->type);
+        sel.platform = ns_str_dup(target->platform);
+        sel.icon = ns_path_resolve(root, target->icon);
+        sel.shell = ns_path_resolve(root, target->shell);
+        if (entry.data == ns_null || entry.len == 0) {
+            ns_exit(1, "ns", "target `%.*s` of ns.mod at %.*s declares no `entry`.\n",
+                    target->name.len, target->name.data, root.len, root.data);
+        }
+    } else {
+        // No targets: the top-level entry. It stays optional here, so reading a
+        // manifest for its other fields never depends on a declared entry.
+        entry = ns_manifest_top_entry(mod);
+    }
+
+    // Anything the selected target leaves out comes from the top-level key.
+    if (sel.name.len == 0) { ns_str_free(sel.name); sel.name = ns_manifest_value(mod, "name"); }
+    if (sel.type.len == 0) { ns_str_free(sel.type); sel.type = ns_manifest_value(mod, "type"); }
+    if (sel.platform.len == 0) { ns_str_free(sel.platform); sel.platform = ns_manifest_value(mod, "target"); }
+    if (sel.icon.data == ns_null) sel.icon = ns_path_resolve(root, ns_manifest_value(mod, "icon"));
+    if (sel.shell.data == ns_null) sel.shell = ns_path_resolve(root, ns_manifest_value(mod, "shell"));
+
+    if (entry.data != ns_null) {
+        ns_str base = ns_manifest_source_base(root, mod);
+        sel.entry_file = ns_path_join(base, entry);
+        ns_str_free(base);
+    }
+    ns_str_free(entry);
+    ns_manifest_targets_free(targets);
+    ns_str_free(mod);
+    return sel;
+}
+
+// True when `root/ns.mod` declares a `[[targets]]` table named `name`.
+static ns_bool ns_manifest_has_target(ns_str root, ns_str name) {
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str mod = ns_os_read_file(manifest);
+    ns_str_free(manifest);
+    if (mod.data == ns_null) return false;
+    ns_manifest_target *targets = ns_manifest_targets(mod);
+    ns_bool found = false;
+    for (i32 i = 0, count = ns_array_length(targets); i < count && !found; i++) {
+        found = ns_str_equals(targets[i].name, name);
+    }
+    ns_manifest_targets_free(targets);
+    ns_str_free(mod);
+    return found;
+}
+
+// The target that owns `entry_file`, so an explicit entry path selects the same
+// target the manifest declares for it. Empty when no declared target matches.
+static ns_str ns_manifest_target_for_entry(ns_str root, ns_str entry_file) {
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str mod = ns_os_read_file(manifest);
+    ns_str_free(manifest);
+    if (mod.data == ns_null) return ns_str_null;
+
+    ns_manifest_target *targets = ns_manifest_targets(mod);
+    ns_str base = ns_manifest_source_base(root, mod);
+    ns_str name = ns_str_null;
+    for (i32 i = 0, count = ns_array_length(targets); i < count && name.data == ns_null; i++) {
+        if (targets[i].entry.data == ns_null) continue;
+        ns_str path = ns_path_join(base, targets[i].entry);
+        if (ns_manifest_entry_matches(path, entry_file, targets[i].entry)) name = ns_str_dup(targets[i].name);
+        ns_str_free(path);
+    }
+    ns_str_free(base);
+    ns_manifest_targets_free(targets);
+    ns_str_free(mod);
+    return name;
+}
+
+// Resolve the entry source file declared by `root/ns.mod`, relative to its
+// `source` dir. Supports `entry = "..."`, `entries = ["...", ...]`, and the
+// default `[[targets]]` table.
+static ns_str ns_manifest_entry_file_for_root(ns_str root) {
+    ns_str entry = ns_manifest_select(root, ns_str_null).entry_file;
     if (entry.data == ns_null)
         ns_exit(1, "ns", "ns.mod at %.*s declares no `entry` to run.\n", root.len, root.data);
-
-    ns_str src_dir = ns_manifest_value(mod, "source");
-    ns_str base = (src_dir.data != ns_null && !ns_str_equals(src_dir, ns_str_cstr(".")))
-                      ? ns_path_join(root, src_dir)
-                      : root;
-    return ns_path_join(base, entry);
+    return entry;
 }
 
 // Resolve the entry source file `ns run` should execute when no file is given.
@@ -1066,6 +1460,7 @@ typedef struct ns_build_input {
     ns_str target;
     ns_str icon;
     ns_str shell;
+    ns_str target_name; // selected [[targets]] name, empty when none
     ns_bool has_manifest;
 } ns_build_input;
 
@@ -1092,6 +1487,25 @@ static ns_str ns_build_manifest_value(ns_str root, const char *key) {
     ns_str mod = ns_os_read_file(manifest);
     if (mod.data == ns_null) return ns_str_null;
     return ns_manifest_value(mod, key);
+}
+
+// A bare word (no path separator, no `.ns` suffix) that names a `[[targets]]`
+// table of the nearest project selects that target for `ns run` and
+// `ns build`. Anything shaped like a path stays a path, so `./web` and
+// `web.ns` still name files even when a target `web` is declared.
+static ns_bool ns_target_arg_select(ns_str arg, ns_str *out_root, ns_str *out_target) {
+    if (arg.len == 0) return false;
+    for (i32 i = 0; i < arg.len; i++) {
+        if (arg.data[i] == '/' || arg.data[i] == '\\') return false;
+    }
+    if (ns_str_has_suffix(arg, ".ns")) return false;
+
+    ns_str root = ns_str_null;
+    if (!ns_find_project_root(ns_getcwd(), &root)) return false;
+    if (!ns_manifest_has_target(root, arg)) return false;
+    *out_root = root;
+    *out_target = arg;
+    return true;
 }
 
 static ns_str ns_build_default_name(ns_build_input *in) {
@@ -1426,35 +1840,52 @@ static ns_ssa_module *ns_compile_build_input(ns_build_input *in, ns_build_cache 
     return ns_compile_source_to_ssa(merged, in->filename, map);
 }
 
-static ns_build_input ns_build_input_resolve(ns_str path) {
+// Resolve what a build compiles. `target_name` selects one `[[targets]]` table
+// of the manifest; an empty name uses the default target, or the top-level
+// `entry` of a manifest that declares no targets. An explicit file path keeps
+// its own entry, but still inherits the manifest fields of its project.
+static ns_build_input ns_build_input_resolve(ns_str path, ns_str target_name) {
     ns_build_input in = {0};
+    ns_bool manifest_entry = false;
 
     if (path.len == 0) {
         ns_str cwd = ns_getcwd();
         in.scope = ns_project_root(cwd);
-        in.filename = ns_manifest_entry_file_for_root(in.scope);
         in.has_manifest = true;
+        manifest_entry = true;
     } else if (ns_is_dir(path)) {
         in.scope = ns_project_root(path);
-        in.filename = ns_manifest_entry_file_for_root(in.scope);
         in.has_manifest = true;
+        manifest_entry = true;
     } else {
         in.filename = path;
         if (!ns_find_project_root(path, &in.scope)) in.scope = ns_path_dirname_safe(path);
         in.has_manifest = ns_file_exists(ns_path_join(in.scope, ns_str_cstr("ns.mod")));
+        // An explicit path to a declared entry builds that target.
+        if (in.has_manifest && target_name.len == 0) {
+            target_name = ns_manifest_target_for_entry(in.scope, path);
+        }
+    }
+
+    if (in.has_manifest) {
+        ns_manifest_selection sel = ns_manifest_select(in.scope, target_name);
+        if (manifest_entry) {
+            if (sel.entry_file.data == ns_null)
+                ns_exit(1, "build", "ns.mod at %.*s declares no `entry` to build.\n",
+                        in.scope.len, in.scope.data);
+            in.filename = sel.entry_file;
+        }
+        in.name = sel.name;
+        in.module_type = sel.type;
+        in.target = sel.platform;
+        in.icon = sel.icon;
+        in.shell = sel.shell;
+        in.target_name = sel.target_name;
     }
 
     in.source = ns_os_read_file(in.filename);
     if (in.source.data == ns_null || in.source.len == 0) {
         ns_exit(1, "build", "empty file or folder %.*s.\n", in.filename.len, in.filename.data);
-    }
-
-    if (in.has_manifest) {
-        in.name = ns_build_manifest_value(in.scope, "name");
-        in.module_type = ns_build_manifest_value(in.scope, "type");
-        in.target = ns_build_manifest_value(in.scope, "target");
-        in.icon = ns_path_resolve(in.scope, ns_build_manifest_value(in.scope, "icon"));
-        in.shell = ns_path_resolve(in.scope, ns_build_manifest_value(in.scope, "shell"));
     }
     if (in.name.data == ns_null) in.name = ns_path_filename(in.filename);
     return in;
@@ -1520,7 +1951,7 @@ static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
     ns_build_cache_add(cache, in->icon);
     ns_build_cache_add(cache, in->shell);
 
-    ns_project_source *sources = ns_project_sources(in->scope);
+    ns_project_source *sources = ns_project_sources(in->scope, in->filename);
     for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
         if (!ns_project_source_is_test(sources[i])) ns_build_cache_add(cache, sources[i].path);
     }
@@ -2434,8 +2865,10 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
     ns_info("build", "executable %.*s\n", output.len, output.data);
 }
 
-void ns_exec_build(ns_str path, ns_str output, u8 requested_kind, ns_bool force) {
-    ns_build_input in = ns_build_input_resolve(path);
+// `ns build [path|target]`. `target_name` is the manifest target to compile;
+// pass ns_str_null to let the positional argument decide.
+void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool force, ns_str target_name) {
+    ns_build_input in = ns_build_input_resolve(path, target_name);
     if (in.target.len > 0 && !ns_build_target_is_wasm(in.target)) {
         ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
                 in.target.len, in.target.data);
@@ -2472,6 +2905,13 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind, ns_bool force)
     ns_build_cache_write(&cache);
     ns_build_cache_free(&cache);
     ns_str_free(artifact);
+}
+
+void ns_exec_build(ns_str path, ns_str output, u8 requested_kind, ns_bool force) {
+    ns_str target_name = ns_str_null;
+    ns_str root = ns_str_null;
+    if (ns_target_arg_select(path, &root, &target_name)) path = root;
+    ns_exec_build_target(path, output, requested_kind, force, target_name);
 }
 
 static ns_str ns_project_absolute_path(ns_str path) {
@@ -2660,7 +3100,7 @@ void ns_exec_project(ns_str path) {
     ns_str *external_modules = ns_null;
     ns_str linked = ns_str_null;
     if (kind == NS_PROJECT_APP) {
-        ns_build_input in = ns_build_input_resolve(root);
+        ns_build_input in = ns_build_input_resolve(root, ns_str_null);
         linked = ns_project_link_all(root, in.source, in.filename, false, ns_null, &external_modules);
     }
 
@@ -3257,19 +3697,39 @@ static void ns_exec_profile_view(ns_str filename) {
     ns_str_free(app);
 }
 
-void ns_exec_run(ns_str filename, i32 port, ns_bool port_set) {
+// `ns run [file.ns | target]`. A bare word naming a `[[targets]]` table of the
+// nearest project runs that target; otherwise the argument is a path, and no
+// argument at all runs the default target of the current directory.
+void ns_exec_run(ns_str argument, i32 port, ns_bool port_set) {
+    ns_str filename = argument;
+    ns_str scope = ns_str_null;
+    ns_str target_name = ns_str_null;
+    ns_bool project = false;
+
+    if (ns_target_arg_select(argument, &scope, &target_name)) {
+        filename = ns_manifest_select(scope, target_name).entry_file;
+        project = true;
+    } else if (argument.len > 0 && !ns_file_exists(argument) && !ns_is_dir(argument)) {
+        // A bare word that is neither a path nor a declared target is most
+        // likely a typo, so report the targets the project does declare.
+        ns_str root = ns_str_null;
+        if (!ns_str_has_suffix(argument, ".ns") && ns_find_project_root(ns_getcwd(), &root)) {
+            ns_manifest_select(root, argument); // exits with the declared targets
+        }
+    }
+
     // No file argument: prefer cwd/ns.mod, then fall back to cwd/main.ns.
-    ns_bool implicit = filename.len == 0;
+    ns_bool implicit = !project && filename.len == 0;
     if (implicit) filename = ns_default_run_entry();
-    if (ns_is_dir(filename)) filename = ns_manifest_entry_file_for_root(ns_project_root(filename));
+    if (!project && ns_is_dir(filename)) filename = ns_manifest_entry_file_for_root(ns_project_root(filename));
 
     ns_str source = ns_os_read_file(filename);
     if (source.data == ns_null || source.len == 0)
         ns_exit(1, "ns", "empty file or folder %.*s.\n", filename.len, filename.data);
 
-    ns_str scope = ns_str_null;
-    ns_bool project = false;
-    if (implicit) {
+    if (project) {
+        // The selected target already fixed the project scope.
+    } else if (implicit) {
         ns_str cwd = ns_getcwd();
         ns_str local_manifest = ns_path_join(cwd, ns_str_cstr("ns.mod"));
         project = ns_file_exists(local_manifest);
@@ -3285,14 +3745,17 @@ void ns_exec_run(ns_str filename, i32 port, ns_bool port_set) {
         return;
     }
 
-    ns_str target = ns_build_manifest_value(scope, "target");
+    // An explicit path to a declared entry runs under that target's settings.
+    if (target_name.len == 0) target_name = ns_manifest_target_for_entry(scope, filename);
+    ns_manifest_selection selection = ns_manifest_select(scope, target_name);
+    ns_str target = selection.platform;
     if (target.len > 0 && !ns_str_equals(target, ns_str_cstr("wasm"))) {
         ns_exit(1, "run", "unsupported project target `%.*s`; expected `wasm` or omit target for a native run.\n",
                 target.len, target.data);
     }
     if (ns_str_equals(target, ns_str_cstr("wasm"))) {
         setvbuf(stdout, ns_null, _IOLBF, 0);
-        ns_exec_build(scope, ns_str_null, NS_BUILD_AUTO, false);
+        ns_exec_build_target(scope, ns_str_null, NS_BUILD_AUTO, false, target_name);
         ns_str output_root = ns_path_join(scope, ns_str_cstr("bin"));
         ns_str executable = ns_project_current_executable();
         char port_text[16];
@@ -3315,7 +3778,7 @@ void ns_exec_run(ns_str filename, i32 port, ns_bool port_set) {
         return;
     }
 
-    ns_str icon = ns_path_resolve(scope, ns_build_manifest_value(scope, "icon"));
+    ns_str icon = selection.icon;
     if (icon.data != ns_null) {
 #if defined(_WIN32)
         _putenv_s("NS_APP_ICON", icon.data);

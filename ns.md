@@ -95,6 +95,10 @@ Common commands:
 - `build [path]` compile and link a script/module to an executable or static
   library; infers module artifact type from `ns.mod` and accepts `--exe` /
   `--app` / `--lib`
+- `ns.mod` may declare several `[[targets]]` tables, each with its own `name`
+  and `entry`. `ns run <name>` and `ns build <name>` select one, a bare
+  `ns run` takes the `default = true` target, and the entries of the targets
+  that were not selected leave the linked source set. See `doc/nsm.md`.
 - `project [path]` find the nearest `ns.mod` and generate host-native IDE files
   under `<module>/bin`: an Xcode project with macOS, iOS, and visionOS app
   targets on Darwin, or a Visual Studio 2022 x64 NMake solution on Windows.
