@@ -197,7 +197,7 @@ void ns_help() {
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
-    printf("                    writes ns.mod, main.ns, README.md, AGENTS.md and .gitignore\n");
+    printf("                    writes ns.mod, src/main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
     printf("  run  [file.ns]    run native source; wasm projects build and serve bin/\n");
@@ -2717,10 +2717,15 @@ void ns_exec_project(ns_str path) {
 // ---------------------------------------------------------------------------
 // `ns init [path]` / `ns create <name>` project scaffolding
 // ---------------------------------------------------------------------------
-// Both commands write the same skeleton (ns.mod, main.ns, README.md,
+// Both commands write the same skeleton (ns.mod, src/main.ns, README.md,
 // AGENTS.md, .gitignore). `init` targets an existing directory (default: cwd)
 // and keeps any file already present; `create` requires a fresh directory so
 // it never collides with user content.
+
+// Script files live in their own directory, so the project root keeps only the
+// manifest and support files. The manifest `source` field points at it and
+// `entry` stays relative to it.
+#define NS_SCAFFOLD_SOURCE_DIR "src"
 
 // Last path component, trailing separators ignored. Unlike ns_path_filename
 // this keeps dots, so a directory like `my.app` yields its full name.
@@ -2752,7 +2757,7 @@ static ns_str ns_scaffold_manifest_text(ns_str name) {
     ns_str_append_cstr(&s, "version = \"0.1.0\"\n");
     ns_str_append_cstr(&s, "type = \"app\"\n");
     ns_str_append_cstr(&s, "description = \"A Nano Script project.\"\n");
-    ns_str_append_cstr(&s, "source = \".\"\n");
+    ns_str_append_cstr(&s, "source = \"" NS_SCAFFOLD_SOURCE_DIR "\"\n");
     ns_str_append_cstr(&s, "entry = \"main.ns\"\n");
     ns_str_append_cstr(&s, "\n");
     ns_str_append_cstr(&s, "[[dependencies.runtime]]\n");
@@ -2813,9 +2818,17 @@ static ns_str ns_scaffold_agents_text(void) {
 }
 
 // Write one scaffold file unless it already exists; existing files are kept
-// so `ns init` can fill in the gaps of a partially set up directory.
-static void ns_scaffold_write(ns_str root, const char *filename, ns_str text, const char *tag) {
-    ns_str path = ns_path_join(root, ns_str_cstr((char*)filename));
+// so `ns init` can fill in the gaps of a partially set up directory. `dir` is
+// a project-relative directory, or ns_null for the project root; it is created
+// on demand so a scaffold may nest files.
+static void ns_scaffold_write(ns_str root, const char *dir, const char *filename, ns_str text, const char *tag) {
+    ns_str parent = dir == ns_null ? ns_str_concat(root, ns_str_cstr("")) : ns_path_join(root, ns_str_cstr((char*)dir));
+    if (!ns_is_dir(parent)) {
+        ns_mkdir_p(parent);
+        if (!ns_is_dir(parent)) ns_exit(1, tag, "failed to create directory %.*s.\n", parent.len, parent.data);
+    }
+
+    ns_str path = ns_path_join(parent, ns_str_cstr((char*)filename));
     if (ns_file_exists(path)) {
         ns_warn(tag, "skip existing %.*s.\n", path.len, path.data);
     } else {
@@ -2823,6 +2836,7 @@ static void ns_scaffold_write(ns_str root, const char *filename, ns_str text, co
         ns_info(tag, "wrote %.*s\n", path.len, path.data);
     }
     ns_str_free(path);
+    ns_str_free(parent);
     ns_str_free(text);
 }
 
@@ -2830,11 +2844,11 @@ static void ns_scaffold_project(ns_str root, ns_str name, const char *tag) {
     if (!ns_scaffold_name_valid(name)) {
         ns_exit(1, tag, "invalid project name `%.*s`; use letters, digits, `_`, `-` or `.`.\n", name.len, name.data);
     }
-    ns_scaffold_write(root, "ns.mod", ns_scaffold_manifest_text(name), tag);
-    ns_scaffold_write(root, "main.ns", ns_scaffold_main_text(name), tag);
-    ns_scaffold_write(root, "README.md", ns_scaffold_readme_text(name), tag);
-    ns_scaffold_write(root, "AGENTS.md", ns_scaffold_agents_text(), tag);
-    ns_scaffold_write(root, ".gitignore", ns_scaffold_gitignore_text(), tag);
+    ns_scaffold_write(root, ns_null, "ns.mod", ns_scaffold_manifest_text(name), tag);
+    ns_scaffold_write(root, NS_SCAFFOLD_SOURCE_DIR, "main.ns", ns_scaffold_main_text(name), tag);
+    ns_scaffold_write(root, ns_null, "README.md", ns_scaffold_readme_text(name), tag);
+    ns_scaffold_write(root, ns_null, "AGENTS.md", ns_scaffold_agents_text(), tag);
+    ns_scaffold_write(root, ns_null, ".gitignore", ns_scaffold_gitignore_text(), tag);
 }
 
 void ns_exec_init(ns_str path) {

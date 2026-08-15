@@ -22,9 +22,24 @@ trap 'rm -rf "$scaffold_tmp" "$run_tmp" "$test_tmp"' EXIT HUP INT TERM
 
 cd "$scaffold_tmp"
 "$ns" create created
-for file in ns.mod main.ns README.md AGENTS.md .gitignore; do
+for file in ns.mod src/main.ns README.md AGENTS.md .gitignore; do
     test -f "created/$file"
 done
+if [ -f created/main.ns ]; then
+    printf '%s\n' 'FAIL: scaffold wrote main.ns at the project root instead of src/.' >&2
+    exit 1
+fi
+if ! grep -q '^source = "src"$' created/ns.mod; then
+    printf '%s\n' 'FAIL: scaffold manifest does not point source at src/.' >&2
+    exit 1
+fi
+(cd created && "$ns" run > run.out 2>&1) || { cat created/run.out >&2; exit 1; }
+if ! grep -q 'hello, created' created/run.out; then
+    printf '%s\n' 'FAIL: scaffolded project does not run from src/main.ns.' >&2
+    cat created/run.out >&2
+    exit 1
+fi
+rm -f created/run.out
 if grep -q 'test/' created/ns.mod; then
     printf '%s\n' 'FAIL: scaffold redundantly excludes default test sources.' >&2
     exit 1

@@ -19,10 +19,14 @@ A conventional application has this shape:
 project/
 |-- AGENTS.md
 |-- ns.mod
-|-- main.ns
 |-- README.md
-`-- .gitignore
+|-- .gitignore
+`-- src/
+    `-- main.ns
 ```
+
+Script files live under `src/`; the manifest `source` field names that
+directory and `entry` is relative to it.
 
 The common commands are:
 
@@ -85,7 +89,7 @@ schema = "ns.mod/v1"
 name = "example"
 version = "0.1.0"
 type = "app"
-source = "."
+source = "src"
 entry = "main.ns"
 
 [[dependencies.runtime]]
