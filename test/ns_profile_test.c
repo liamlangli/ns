@@ -51,14 +51,12 @@ int main() {
     ns_expect(ns_profile.flames[mid_flame].fn_index == mid_i, "leaf parent is mid");
 
     char text_path[] = "bin/ns_profile_test.profile";
-    char json_path[] = "bin/ns_profile_test.profile.json";
     FILE *tf = fopen(text_path, "w");
     ns_expect(tf != ns_null, "open text profile");
     if (tf) {
         ns_profile_write_text(tf, 50.0, 0, ns_null);
         fclose(tf);
     }
-    ns_expect(ns_profile_write_chrome_path(json_path, 50.0), "write chrome json");
 
     FILE *in = fopen(text_path, "r");
     ns_expect(in != ns_null, "reread text profile");
@@ -80,20 +78,6 @@ int main() {
     ns_expect(saw_fn, "fn table rows");
     ns_expect(saw_flame, "folded flame rows");
     ns_expect(saw_stack, "folded stack main;mid;leaf");
-
-    FILE *jf = fopen(json_path, "r");
-    ns_expect(jf != ns_null, "reread chrome json");
-    ns_bool saw_trace = false;
-    ns_bool saw_complete = false;
-    if (jf) {
-        while (fgets(line, sizeof(line), jf)) {
-            if (strstr(line, "traceEvents")) saw_trace = true;
-            if (strstr(line, "\"ph\": \"X\"")) saw_complete = true;
-        }
-        fclose(jf);
-    }
-    ns_expect(saw_trace, "chrome json has traceEvents");
-    ns_expect(saw_complete, "chrome json has complete events");
 
     return 0;
 }

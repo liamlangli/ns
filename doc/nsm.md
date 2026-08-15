@@ -62,7 +62,7 @@ executable itself, along with the artifact kind, host target, and output path.
 
 `ns clean [path]` removes what builds generate for the nearest project: the
 `bin/` directory, including generated IDE projects and the build cache, and
-`ns.profile` with `ns.profile.json` beside the manifest.
+`ns.profile` beside the manifest.
 
 For a browser project, keep `type = "app"` and set `target = "wasm"`.
 `ns build` then emits a browser bundle (`.wasm`, `.wasm.map`, `ns-wasm.js`, and

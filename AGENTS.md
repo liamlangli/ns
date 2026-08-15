@@ -35,9 +35,8 @@ The common commands are:
   use the current project's manifest entry and otherwise fall back to
   `main.ns`. A Wasm project builds and starts its loopback live-reload server.
 - `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
-  write `ns.profile` plus Chrome-trace `ns.profile.json`, then print a
-  colored CLI hot-path summary of VM scopes and FFI calls. `--profile` on any
-  other command is the same collection.
+  write `ns.profile`, then print a colored CLI hot-path summary of VM scopes
+  and FFI calls. `--profile` on any other command is the same collection.
 - `ns profiler [file]`: open the compiled native GUI viewer for `ns.profile`,
   or for an explicit profile file. `make` / `make install` build that viewer
   with `ns build nscode/profile`.
@@ -58,7 +57,7 @@ The common commands are:
   or output path, and a rebuilt `ns` all do. `--force` compiles unconditionally.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the
   `bin/` output directory, which also holds generated IDE projects and the
-  build cache, and `ns.profile`/`ns.profile.json` beside the manifest. Source
+  build cache, and `ns.profile` beside the manifest. Source
   and other user files are never removed.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`.

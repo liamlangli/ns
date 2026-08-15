@@ -193,7 +193,7 @@ void ns_help() {
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
-    printf("  --profile         write ns.profile + ns.profile.json and print a hot-path summary\n");
+    printf("  --profile         write ns.profile and print a hot-path summary\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
@@ -242,17 +242,10 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
     ns_profile_write_text(f, elapsed_ms, argc, argv);
     fclose(f);
 
-    ns_bool json_ok = ns_profile_write_chrome_path("ns.profile.json", elapsed_ms);
     f64 ffi_ms = ns_profile.ffi_total_ms;
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
-    if (json_ok) {
-        ns_info("profile", "wrote ns.profile and ns.profile.json (%.3f ms total, %llu vm scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
-                elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
-    } else {
-        ns_warn("profile", "wrote ns.profile but failed to write ns.profile.json.\n");
-        ns_info("profile", "wrote ns.profile (%.3f ms total, %llu vm scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
-                elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
-    }
+    ns_info("profile", "wrote ns.profile (%.3f ms total, %llu vm scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
+            elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
     ns_profile_print_summary(stdout, elapsed_ms);
 }
 
@@ -2491,9 +2484,10 @@ static ns_str ns_project_absolute_path(ns_str path) {
 }
 
 // Everything `ns` generates for a project: the bin/ output directory, which
-// also holds generated IDE projects and the build cache, and the profiles
+// also holds generated IDE projects and the build cache, and the profile
 // written beside the manifest. This is the `bin`/`ns.profile` part of the
 // scaffolded .gitignore; source and user files are never touched.
+// `ns.profile.json` is leftover Chrome-trace output from older ns versions.
 static const char *ns_clean_generated[] = {"bin", "ns.profile", "ns.profile.json"};
 
 // `ns clean [path]` - remove the generated files of the nearest project.
@@ -2801,7 +2795,7 @@ static ns_str ns_scaffold_readme_text(ns_str name) {
     return s;
 }
 
-static const char *ns_scaffold_gitignore_rules[] = {"bin", ".DS_Store", "*.log", "ns.profile", "ns.profile.json"};
+static const char *ns_scaffold_gitignore_rules[] = {"bin", ".DS_Store", "*.log", "ns.profile"};
 
 static ns_str ns_scaffold_gitignore_text(void) {
     ns_str s = ns_str_null;
@@ -3241,7 +3235,7 @@ static void ns_exec_profile_view(ns_str filename) {
 
     ns_str app = ns_profile_find_viewer();
     if (app.data == ns_null) {
-        ns_warn("profile", "native viewer not found; open ns.profile.json in https://ui.perfetto.dev\n");
+        ns_warn("profile", "native viewer not found; build it with `ns build nscode/profile`\n");
         return;
     }
     ns_info("profile", "opening interpreted viewer for %s\n", path);

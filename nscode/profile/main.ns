@@ -1187,7 +1187,6 @@ fn main() {
         })
     } else {
         print("no GPU backend on this platform; profile viewer is unavailable\n")
-        print("open ns.profile.json in https://ui.perfetto.dev\n")
     }
     view_run(v)
 }

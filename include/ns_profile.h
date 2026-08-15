@@ -11,7 +11,6 @@
 //     for both interpreted functions and native calls
 //   - a call-tree of unique stacks used to emit a folded flamechart
 //   - a ring buffer of recent complete events for a time-axis flamechart
-//     and for Chrome/Perfetto JSON
 //
 // The flame tree is complete for the whole run. Timeline events past the
 // ring capacity drop the oldest samples so a long interactive session still
@@ -121,10 +120,6 @@ void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f
 
 // Write the ns-profile-v4 text report, including the folded flame stacks.
 void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv);
-
-// Write a Chrome Trace Event JSON file (Perfetto / speedscope / chrome://tracing).
-// Returns false if the file could not be created.
-ns_bool ns_profile_write_chrome_path(const char *path, f64 elapsed_ms);
 
 // Print a terminal hot-path summary. Rows are colored by self-time share.
 void ns_profile_print_summary(FILE *out, f64 elapsed_ms);

@@ -422,65 +422,6 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     }
 }
 
-static void ns_profile_write_json_name(FILE *f, ns_str lib, ns_str name) {
-    fputc('"', f);
-    if (lib.len > 0) {
-        for (i32 i = 0; i < lib.len; i++) {
-            unsigned char c = (unsigned char)lib.data[i];
-            if (c == '"' || c == '\\') {
-                fputc('\\', f);
-                fputc((int)c, f);
-            } else if (c < 32) {
-                fprintf(f, "\\u%04x", c);
-            } else {
-                fputc((int)c, f);
-            }
-        }
-        fputs("::", f);
-    }
-    for (i32 i = 0; i < name.len; i++) {
-        unsigned char c = (unsigned char)name.data[i];
-        if (c == '"' || c == '\\') {
-            fputc('\\', f);
-            fputc((int)c, f);
-        } else if (c == '\n') {
-            fputs("\\n", f);
-        } else if (c < 32) {
-            fprintf(f, "\\u%04x", c);
-        } else {
-            fputc((int)c, f);
-        }
-    }
-    fputc('"', f);
-}
-
-ns_bool ns_profile_write_chrome_path(const char *path, f64 elapsed_ms) {
-    FILE *f = fopen(path, "w");
-    if (!f) return false;
-
-    fprintf(f, "{\n");
-    fprintf(f, "  \"displayTimeUnit\": \"ms\",\n");
-    fprintf(f, "  \"otherData\": {\n");
-    fprintf(f, "    \"format\": \"ns-profile-v4\",\n");
-    fprintf(f, "    \"elapsed_ms\": %.3f\n", elapsed_ms);
-    fprintf(f, "  },\n");
-    fprintf(f, "  \"traceEvents\": [\n");
-    fprintf(f, "    {\"name\": \"process_name\", \"ph\": \"M\", \"pid\": 1, \"args\": {\"name\": \"ns\"}},\n");
-    fprintf(f, "    {\"name\": \"thread_name\", \"ph\": \"M\", \"pid\": 1, \"tid\": 1, \"args\": {\"name\": \"interpreter\"}}");
-
-    for (i32 i = 0; i < ns_profile.event_count; i++) {
-        ns_profile_event *e = &ns_profile.events[i];
-        fputs(",\n    {\"name\": ", f);
-        ns_profile_write_json_name(f, e->lib, e->name);
-        fprintf(f, ", \"cat\": \"%s\", \"ph\": \"X\", \"ts\": %.3f, \"dur\": %.3f, \"pid\": 1, \"tid\": 1, \"args\": {\"self_ms\": %.3f, \"depth\": %d}}",
-                e->kind == NS_PROFILE_EVENT_SCOPE ? "scope" : "ffi",
-                e->start_ms * 1000.0, e->elapsed_ms * 1000.0, e->self_ms, e->depth);
-    }
-    fprintf(f, "\n  ]\n}\n");
-    fclose(f);
-    return true;
-}
-
 static const char *ns_profile_pct_color(f64 pct) {
     if (pct >= 25.0) return ns_color_err;
     if (pct >= 10.0) return ns_color_wrn;
@@ -535,6 +476,5 @@ void ns_profile_print_summary(FILE *out, f64 elapsed_ms) {
         fprintf(out, "%s\n", ns_color_nil);
     }
 
-    fprintf(out, "\nopen ns.profile.json in https://ui.perfetto.dev\n");
-    fprintf(out, "or run: ns profiler\n");
+    fprintf(out, "\nrun: ns profiler\n");
 }
