@@ -35,11 +35,13 @@ The common commands are:
 - `ns create <name>`: create a new directory and scaffold a project in it.
 - `ns update [path]`: find the nearest project and migrate its manifest and
   support files to the format bundled with the current `ns` executable.
-- `ns run [file.ns | target]`: interpret an explicit native file; without an
-  argument, use the current project's manifest entry and otherwise fall back to
-  `main.ns`. A bare word naming a `[[targets]]` table of the nearest `ns.mod`
-  runs that target. A Wasm project builds and starts its loopback live-reload
-  server.
+- `ns run [file.ns | target] [args...]`: interpret an explicit native file;
+  without an argument, use the current project's manifest entry and otherwise
+  fall back to `main.ns`. A bare word naming a `[[targets]]` table of the
+  nearest `ns.mod` runs that target. Arguments after the file or target are
+  published as `NS_ARGC` and `NS_ARG0`, `NS_ARG1`, ... for the program to read
+  through `os_env`. `ns` options such as `--port` belong before the file or
+  target. A Wasm project builds and starts its loopback live-reload server.
 - `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
   write `ns.profile`, then print a colored CLI hot-path summary of VM scopes
   and FFI calls. `--profile` on any other command is the same collection.

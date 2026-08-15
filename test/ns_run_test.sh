@@ -228,6 +228,70 @@ printf '%s\n' 'this target-excluded source must not be compiled' > "$run_tmp/tar
 
 printf '%s\n' 'PASS: ns run selects ns.mod targets, drops the other target entries, and honors per-target excludes.'
 
+# Extra arguments after the target are program args, not extra input paths.
+mkdir -p "$run_tmp/args/src"
+printf '%s\n' \
+    'schema = "ns.mod/v1"' \
+    'name = "run-args"' \
+    'version = "0.1.0"' \
+    'type = "app"' \
+    'source = "src"' \
+    '' \
+    '[[targets]]' \
+    'name = "echo"' \
+    'entry = "main.ns"' \
+    'type = "cli"' \
+    '' \
+    '[[dependencies.runtime]]' \
+    'name = "std"' \
+    'version = ">=0.1.0"' \
+    '' \
+    '[[dependencies.runtime]]' \
+    'name = "os"' \
+    'version = ">=0.1.0"' > "$run_tmp/args/ns.mod"
+printf '%s\n' \
+    'use std' \
+    'use os' \
+    '' \
+    'fn main() {' \
+    '    print(os_env("NS_ARGC"))' \
+    '    print("\n")' \
+    '    print(os_env("NS_ARG0"))' \
+    '    print("\n")' \
+    '    print(os_env("NS_ARG1"))' \
+    '    print("\n")' \
+    '    print(os_env("NS_ARG2"))' \
+    '    print("\n")' \
+    '}' > "$run_tmp/args/src/main.ns"
+
+if ! (cd "$run_tmp/args" && "$ns" run echo --size 256 model.glb out.vox > "$run_tmp/args.out" 2>&1); then
+    printf '%s\n' 'FAIL: ns run rejected extra arguments after the target.' >&2
+    cat "$run_tmp/args.out" >&2
+    exit 1
+fi
+if ! grep -q 'too many input paths' "$run_tmp/args.out"; then
+    :
+else
+    printf '%s\n' 'FAIL: ns run still treats program arguments as input paths.' >&2
+    cat "$run_tmp/args.out" >&2
+    exit 1
+fi
+if ! awk 'BEGIN{n=0} {n++} END{if(n<4) exit 1}' "$run_tmp/args.out"; then
+    printf '%s\n' 'FAIL: ns run did not print the published program arguments.' >&2
+    cat "$run_tmp/args.out" >&2
+    exit 1
+fi
+arg_count=$(sed -n '1p' "$run_tmp/args.out")
+arg0=$(sed -n '2p' "$run_tmp/args.out")
+arg1=$(sed -n '3p' "$run_tmp/args.out")
+arg2=$(sed -n '4p' "$run_tmp/args.out")
+if [ "$arg_count" != 4 ] || [ "$arg0" != --size ] || [ "$arg1" != 256 ] || [ "$arg2" != model.glb ]; then
+    printf '%s\n' 'FAIL: ns run did not publish NS_ARG* from the command line.' >&2
+    cat "$run_tmp/args.out" >&2
+    exit 1
+fi
+printf '%s\n' 'PASS: ns run publishes remaining arguments as NS_ARG*.'
+
 mkdir -p "$test_tmp/project/test"
 printf '%s\n' \
     'schema = "ns.mod/v1"' \

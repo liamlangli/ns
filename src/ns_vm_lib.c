@@ -48,6 +48,7 @@ ns_return_bool ns_vm_call_std(ns_vm *vm) {
         // result of string concatenation) are handled correctly.
         ns_str s = ns_fmt_eval(vm, ns_eval_str(vm, arg));
         ns_str_printf(s);
+        fflush(stdout);
         ns_str_free(s);
         call->ret = ns_nil;
     } else if (ns_str_equals_STR(call->callee->name, "open")) {

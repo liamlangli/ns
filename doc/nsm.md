@@ -112,6 +112,13 @@ selects that target's settings too. A bare word that matches neither a target
 nor a file is reported with the list of targets the manifest declares. Target
 lookup uses the nearest `ns.mod` at or above the current directory.
 
+`ns run` and `ns profile` take one file or target. Everything after that is
+for the program, including flags that `ns` itself also understands. Those
+arguments are published as `NS_ARGC` plus `NS_ARG0`, `NS_ARG1`, ... and a
+script reads them with `os_env`. A leading `--` after the file is stripped, and
+`ns run -- arg...` runs the default target with only those program arguments.
+`ns` options such as `--port` belong before the file or target.
+
 Running `ns build` with no file argument compiles the current module into
 artifacts under `<module>/bin`: one per declared target, or a single artifact
 from the top-level `type` when the manifest declares no targets. `type = "app"`

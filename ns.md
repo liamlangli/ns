@@ -100,7 +100,8 @@ Common commands:
   `ns build <name>` select one, a bare `ns run` takes the `default = true`
   target, a bare `ns build` builds every target into its own artifact kind, and
   the entries of the targets that were not selected leave the linked source
-  set. See `doc/nsm.md`.
+  set. Arguments after `ns run <file|target>` are published as `NS_ARGC` /
+  `NS_ARG0`... See `doc/nsm.md`.
 - `project [path]` find the nearest `ns.mod` and generate host-native IDE files
   under `<module>/bin`: an Xcode project with macOS, iOS, and visionOS app
   targets on Darwin, or a Visual Studio 2022 x64 NMake solution on Windows.

@@ -71,6 +71,8 @@ typedef struct ns_compile_option_t {
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
     u8 build_kind;      // 0 auto, 1 executable, 2 library
     i32 positional_count;
+    i32 program_argc;
+    i8 **program_argv;
     ns_str shader_target;
     ns_str entry;
     ns_str output;
@@ -160,11 +162,29 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             if (!end || *end || port < 0 || port > 65535) ns_exit(1, "usage", "invalid port %s.\n", argv[i]);
             option.port = (i32)port;
             option.port_set = true;
+        } else if (strcmp(argv[i], "--") == 0 && (option.run || option.profile_cmd)) {
+            // Everything after `--` is for the program, including a missing file.
+            option.program_argv = &argv[i + 1];
+            option.program_argc = argc - i - 1;
+            break;
         } else {
             if (option.filename.len == 0) {
                 option.filename = ns_str_cstr(argv[i]); // unmatched argument is treated as filename
+                option.positional_count++;
+                // `ns run` / `ns profile` take one file or target; the rest is
+                // published as NS_ARGC / NS_ARG0... for the program to read.
+                if (option.run || option.profile_cmd) {
+                    option.program_argv = &argv[i + 1];
+                    option.program_argc = argc - i - 1;
+                    if (option.program_argc > 0 && strcmp(option.program_argv[0], "--") == 0) {
+                        option.program_argv++;
+                        option.program_argc--;
+                    }
+                    break;
+                }
+            } else {
+                option.positional_count++;
             }
-            option.positional_count++;
         }
     }
     return option;
@@ -200,8 +220,9 @@ void ns_help() {
     printf("                    writes ns.mod, src/main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
-    printf("  run  [file|target] run native source; wasm projects build and serve bin/\n");
+    printf("  run  [file|target] [args...] run native source; wasm projects build and serve bin/\n");
     printf("                    a bare name selects a [[targets]] entry of ns.mod\n");
+    printf("                    arguments after the file or target become NS_ARG0...\n");
     printf("       --port <n>    wasm server port (default 9001; 0 chooses an available port)\n");
     printf("  profile [path]    run like `ns run` with profiling; print a CLI hot-path summary\n");
     printf("  profiler [file]   open the GUI viewer for ns.profile (or file)\n");
@@ -4241,6 +4262,27 @@ void ns_exec_repl() {
     ns_repl(&vm);
 }
 
+static void ns_setenv(const char *name, const char *value) {
+#if defined(_WIN32)
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+// `os` has no argv, so `ns run` / `ns profile` publish program arguments as
+// NS_ARGC plus NS_ARG0, NS_ARG1, ... which a script reads through `os_env`.
+static void ns_publish_program_args(i32 argc, i8 **argv) {
+    char count_buf[16];
+    snprintf(count_buf, sizeof(count_buf), "%d", argc);
+    ns_setenv("NS_ARGC", count_buf);
+    for (i32 i = 0; i < argc; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "NS_ARG%d", i);
+        ns_setenv(name, argv && argv[i] ? argv[i] : "");
+    }
+}
+
 i32 main(i32 argc, i8** argv) {
     ns_compile_option_t option = parse_options(argc, argv);
 
@@ -4254,6 +4296,10 @@ i32 main(i32 argc, i8** argv) {
 
     if (option.positional_count > 1) {
         ns_exit(1, "usage", "too many input paths; expected at most one. See `ns --help`.\n");
+    }
+
+    if (option.run || option.profile_cmd) {
+        ns_publish_program_args(option.program_argc, option.program_argv);
     }
 
     if (option.profile) ns_profile_begin(argc, argv);
