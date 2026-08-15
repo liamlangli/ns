@@ -117,6 +117,7 @@ int main(void) {
 
     char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX], bridge_header[PATH_MAX];
     char view_osx[PATH_MAX], view_ios[PATH_MAX], os_ios[PATH_MAX], gpu_metal[PATH_MAX], ui_native[PATH_MAX], net_native[PATH_MAX];
+    char storage_db[PATH_MAX], storage_apple[PATH_MAX], storage_module[PATH_MAX];
     char task_module[PATH_MAX], net_module[PATH_MAX], ui_asset[PATH_MAX], bitmap_asset[PATH_MAX], ios_plist[PATH_MAX];
     char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX];
     char vision_middle_image[PATH_MAX], vision_back_image[PATH_MAX];
@@ -132,6 +133,9 @@ int main(void) {
     path(gpu_metal, app_root, "bin/demo-app.nsproject/Native/src/gpu.metal.m");
     path(ui_native, app_root, "bin/demo-app.nsproject/Native/src/ui.c");
     path(net_native, app_root, "bin/demo-app.nsproject/Native/src/net.c");
+    path(storage_db, app_root, "bin/demo-app.nsproject/Native/src/storage.db.c");
+    path(storage_apple, app_root, "bin/demo-app.nsproject/Native/src/storage.apple.m");
+    path(storage_module, app_root, "bin/demo-app.nsproject/Resources/storage.ns");
     path(task_module, app_root, "bin/demo-app.nsproject/Resources/task.ns");
     path(net_module, app_root, "bin/demo-app.nsproject/Resources/net.ns");
     path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
@@ -169,6 +173,9 @@ int main(void) {
     ns_expect(access(view_ios, R_OK) == 0 && access(os_ios, R_OK) == 0 && access(gpu_metal, R_OK) == 0 &&
                   access(ui_native, R_OK) == 0 && access(net_native, R_OK) == 0,
               "Xcode project copies Apple feature sources into the managed project.");
+    ns_expect(access(storage_db, R_OK) == 0 && access(storage_apple, R_OK) == 0 && access(storage_module, R_OK) == 0 &&
+                  text_has(pbx, "storage.ns in Resources") && text_has(pbx, "-lsqlite3"),
+              "Xcode app targets embed UserDefaults KV storage and platform SQLite.");
     ns_expect(access(task_module, R_OK) == 0 && access(net_module, R_OK) == 0 &&
                   text_has(pbx, "task.ns in Resources") && text_has(pbx, "net.ns in Resources"),
               "Xcode app targets bundle the task and network module declarations.");

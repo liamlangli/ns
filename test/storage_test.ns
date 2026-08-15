@@ -1,0 +1,60 @@
+// Persistent KV and SQLite coverage. Run from the repository root so the
+// debug ref/lib paths resolve lib/storage.ns and bin/storage.dylib.
+use storage
+
+fn main() {
+    assert storage_init("ns-storage-test")
+    assert storage_kv_clear()
+    assert !storage_kv_has("name")
+    assert storage_kv_set_str("name", "Nano \"Script\"")
+    assert storage_kv_set_i64("score", 9007199254740991)
+    assert storage_kv_set_f64("scale", 1.25)
+    assert storage_kv_set_bool("enabled", true)
+    assert storage_kv_has("name")
+    assert storage_kv_get_str("name", "missing") == "Nano \"Script\""
+    assert storage_kv_get_i64("score", 0) == 9007199254740991
+    assert storage_kv_get_f64("scale", 0.0) == 1.25
+    assert storage_kv_get_bool("enabled", false)
+    assert storage_kv_get_str("absent", "fallback") == "fallback"
+    assert storage_kv_remove("name")
+    assert !storage_kv_has("name")
+    assert storage_kv_sync()
+
+    let db = storage_db_open(":memory:")
+    assert storage_db_exec(db, "create table item (id integer primary key, name text, weight real, data blob)")
+
+    let insert = storage_db_prepare(db, "insert into item(name, weight, data) values (?, ?, ?)")
+    let bytes = [u8](4)
+    bytes[0] = 10ub
+    bytes[1] = 20ub
+    bytes[2] = 30ub
+    bytes[3] = 40ub
+    assert storage_stmt_bind_str(insert, 1, "block")
+    assert storage_stmt_bind_f64(insert, 2, 2.5)
+    assert storage_stmt_bind_blob(insert, 3, bytes, 4)
+    assert storage_stmt_step(insert) == STORAGE_STEP_DONE
+    storage_stmt_finalize(insert)
+    assert storage_db_changes(db) == 1
+    assert storage_db_last_insert_id(db) == 1
+
+    let query = storage_db_prepare(db, "select id, name, weight, data from item")
+    assert storage_stmt_column_count(query) == 4
+    assert storage_stmt_step(query) == STORAGE_STEP_ROW
+    assert storage_stmt_column_name(query, 1) == "name"
+    assert storage_stmt_column_type(query, 0) == STORAGE_VALUE_I64
+    assert storage_stmt_column_type(query, 1) == STORAGE_VALUE_TEXT
+    assert storage_stmt_column_type(query, 2) == STORAGE_VALUE_F64
+    assert storage_stmt_column_type(query, 3) == STORAGE_VALUE_BLOB
+    assert storage_stmt_column_i64(query, 0) == 1
+    assert storage_stmt_column_str(query, 1) == "block"
+    assert storage_stmt_column_f64(query, 2) == 2.5
+    assert storage_stmt_column_blob_size(query, 3) == 4
+    let copy = [u8](4)
+    assert storage_stmt_column_blob(query, 3, copy, 4) == 4
+    assert copy[0] == 10ub && copy[3] == 40ub
+    assert storage_stmt_step(query) == STORAGE_STEP_DONE
+    storage_stmt_finalize(query)
+    storage_db_close(db)
+
+    assert storage_kv_clear()
+}

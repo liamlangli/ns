@@ -186,15 +186,15 @@ NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 # Native feature modules (lib/*) are compiled position-independent and built as
 # dylibs/so files. Keep them out of bin/ns so the interpreter remains
 # language-only; ref fn calls resolve them through dlopen()/dlsym().
-NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/wasm_dev.c lib/src/ui.c
+NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/wasm_dev.c lib/src/ui.c lib/src/storage.db.c
 ifeq ($(NS_OS), $(NS_LINUX))
-	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c
+	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c lib/src/storage.json.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
 	# Apple: force the Metal backend.
-	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/os.haptic.apple.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m
+	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/os.haptic.apple.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m lib/src/storage.apple.m
 else ifeq ($(NS_OS), $(NS_WIN))
 	# Windows: force the DirectX 12 backend.
-	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c lib/src/gpu.dx12.c
+	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c lib/src/gpu.dx12.c lib/src/storage.json.c
 endif
 NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
@@ -269,7 +269,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
-test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/net$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/wasm_dev$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/compress$(NS_DYLIB_SUFFIX)
+test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/net$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/wasm_dev$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/compress$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/storage$(NS_DYLIB_SUFFIX)
 	$(NS_BINDIR)/ns_json_test
 	$(NS_BINDIR)/ns_expr_test
 	$(NS_BINDIR)/ns_compile_test
@@ -289,6 +289,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR
 	sh test/ns_parity_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/storage_apple_compile.sh
 	node test/ns_wasm_runtime_test.mjs
 
 include lib/Makefile
@@ -312,12 +313,14 @@ install: all
 	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
 	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
-		lib/net.ns lib/dynamic.ns lib/compress.ns \
+		lib/net.ns lib/dynamic.ns lib/compress.ns lib/storage.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	cp lib/src/io.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/gpu.c lib/src/gpu.metal.m \
-		lib/src/ui.c $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/
+		lib/src/ui.c lib/src/storage.db.c lib/src/storage.apple.m \
+		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/
 	cp lib/include/net.h lib/include/os.h lib/include/view.h lib/include/gpu.h lib/include/gpu_const.h \
+		lib/include/storage.h lib/include/storage.internal.h \
 		lib/include/stb_image.h lib/include/stb_image_resize2.h lib/include/stb_image_write.h \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/
 	cp lib/assets/latin_mono.json lib/assets/latin_mono.webp lib/assets/latin_mono.png \

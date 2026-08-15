@@ -1,0 +1,72 @@
+mod storage
+
+// Persistent application-local storage. Call storage_init once before using
+// either API. On Apple platforms KV values use NSUserDefaults. Windows and
+// Linux persist the same values in storage.json below the app data directory.
+lit STORAGE_VALUE_NULL = 0
+lit STORAGE_VALUE_I64 = 1
+lit STORAGE_VALUE_F64 = 2
+lit STORAGE_VALUE_TEXT = 3
+lit STORAGE_VALUE_BLOB = 4
+
+lit STORAGE_STEP_ERROR = -1
+lit STORAGE_STEP_DONE = 0
+lit STORAGE_STEP_ROW = 1
+
+struct storage_db {
+    handle: any
+}
+
+struct storage_stmt {
+    handle: any
+}
+
+// app_name selects the Windows/Linux data directory and namespaces Apple
+// defaults. Reinitializing closes no open databases; do it before opening one.
+ref fn storage_init(app_name: str) bool
+ref fn storage_last_error() str
+
+ref fn storage_kv_has(key: str) bool
+ref fn storage_kv_set_str(key: str, value: str) bool
+ref fn storage_kv_set_i64(key: str, value: i64) bool
+ref fn storage_kv_set_f64(key: str, value: f64) bool
+ref fn storage_kv_set_bool(key: str, value: bool) bool
+ref fn storage_kv_get_str(key: str, fallback: str) str
+ref fn storage_kv_get_i64(key: str, fallback: i64) i64
+ref fn storage_kv_get_f64(key: str, fallback: f64) f64
+ref fn storage_kv_get_bool(key: str, fallback: bool) bool
+ref fn storage_kv_remove(key: str) bool
+ref fn storage_kv_clear() bool
+ref fn storage_kv_sync() bool
+
+// Structured storage uses the platform SQLite library. A relative name is
+// opened below the app data directory and receives a .sqlite suffix when it
+// has none. ":memory:" opens an in-memory database. Paths and parent traversal
+// are rejected so database files stay inside the application-local directory.
+ref fn storage_db_open(name: str) ref storage_db
+ref fn storage_db_close(db: ref storage_db)
+ref fn storage_db_exec(db: ref storage_db, sql: str) bool
+ref fn storage_db_prepare(db: ref storage_db, sql: str) ref storage_stmt
+ref fn storage_db_changes(db: ref storage_db) i32
+ref fn storage_db_last_insert_id(db: ref storage_db) i64
+
+// Bind indices and column indices follow SQLite: binds are 1-based and columns
+// are 0-based. A statement returns ROW repeatedly, then DONE, or ERROR.
+ref fn storage_stmt_bind_null(stmt: ref storage_stmt, index: i32) bool
+ref fn storage_stmt_bind_i64(stmt: ref storage_stmt, index: i32, value: i64) bool
+ref fn storage_stmt_bind_f64(stmt: ref storage_stmt, index: i32, value: f64) bool
+ref fn storage_stmt_bind_str(stmt: ref storage_stmt, index: i32, value: str) bool
+ref fn storage_stmt_bind_blob(stmt: ref storage_stmt, index: i32, data: [u8], size: i32) bool
+ref fn storage_stmt_step(stmt: ref storage_stmt) i32
+ref fn storage_stmt_reset(stmt: ref storage_stmt) bool
+ref fn storage_stmt_clear_bindings(stmt: ref storage_stmt) bool
+ref fn storage_stmt_finalize(stmt: ref storage_stmt)
+
+ref fn storage_stmt_column_count(stmt: ref storage_stmt) i32
+ref fn storage_stmt_column_name(stmt: ref storage_stmt, column: i32) str
+ref fn storage_stmt_column_type(stmt: ref storage_stmt, column: i32) i32
+ref fn storage_stmt_column_i64(stmt: ref storage_stmt, column: i32) i64
+ref fn storage_stmt_column_f64(stmt: ref storage_stmt, column: i32) f64
+ref fn storage_stmt_column_str(stmt: ref storage_stmt, column: i32) str
+ref fn storage_stmt_column_blob_size(stmt: ref storage_stmt, column: i32) i32
+ref fn storage_stmt_column_blob(stmt: ref storage_stmt, column: i32, data: [u8], capacity: i32) i32

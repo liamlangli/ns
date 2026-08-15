@@ -602,6 +602,8 @@ static const char *const ns_xcode_feature_sources[] = {
     "gpu.c",
     "gpu.metal.m",
     "ui.c",
+    "storage.db.c",
+    "storage.apple.m",
 };
 
 static const char *const ns_xcode_feature_headers[] = {
@@ -613,10 +615,13 @@ static const char *const ns_xcode_feature_headers[] = {
     "stb_image.h",
     "stb_image_resize2.h",
     "stb_image_write.h",
+    "storage.h",
+    "storage.internal.h",
 };
 
 static const char *const ns_xcode_resource_modules[] = {
     "std.ns", "shader.ns", "simd.ns", "task.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns", "net.ns",
+    "storage.ns",
 };
 
 static const char *const ns_xcode_ui_assets[] = {
@@ -761,13 +766,13 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
             (len == 4 && strncmp(start, "simd", len) == 0) || (len == 4 && strncmp(start, "view", len) == 0) ||
             (len == 2 && strncmp(start, "ui", len) == 0) || (len == 2 && strncmp(start, "os", len) == 0) ||
             (len == 3 && strncmp(start, "gpu", len) == 0) || (len == 2 && strncmp(start, "io", len) == 0) ||
-            (len == 3 && strncmp(start, "net", len) == 0)) {
+            (len == 3 && strncmp(start, "net", len) == 0) || (len == 7 && strncmp(start, "storage", len) == 0)) {
             line = *end ? end + 1 : end;
             continue;
         }
         fprintf(stderr,
                 "project: module '%.*s' requires external FFI, which generated Apple apps do not support; "
-                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, and net\n",
+                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, and storage\n",
                 (int)len, start);
         return false;
     }
@@ -1081,8 +1086,8 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
     char *escaped_safe = ns_xcode_escape(safe_name);
     char *escaped_team = ns_xcode_escape(development_team ? development_team : "");
     const char *frameworks = strcmp(platform, "macOS") == 0
-        ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore)"
-        : "(\"$(inherited)\", \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit)";
+        ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-lsqlite3\")"
+        : "(\"$(inherited)\", \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit, \"-lsqlite3\")";
     ns_xcode_buffer plist_path = {0};
     ns_xcode_buffer bridge_path = {0};
     ns_bool ok = escaped_target && escaped_safe && escaped_team &&

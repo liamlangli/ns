@@ -939,6 +939,7 @@ fn main() {
     parse_module("lib/gpu.ns")
     parse_module("lib/io.ns")
     parse_module("lib/net.ns")
+    parse_module("lib/storage.ns")
 
     build_sorted_index()
     scan_native("lib/src/view.c")
@@ -953,6 +954,8 @@ fn main() {
     scan_native("lib/src/gpu.metal.m")
     scan_native("lib/src/io.c")
     scan_native("lib/src/net.c")
+    scan_native("lib/src/storage.db.c")
+    scan_native("lib/src/storage.apple.m")
 
     build_emit_list()
     build_signatures()

@@ -39,6 +39,7 @@ ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_VIEW_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_COCOA_LDFLAGS) $(NS_METAL_LDFLAGS)
 	NS_GPU_DYLIB_DEPS = $(NS_LDFLAGS) $(NS_METAL_LDFLAGS)
 	NS_AUDIO_DYLIB_DEPS = $(NS_LDFLAGS) -framework AVFAudio -framework Foundation
+	NS_STORAGE_DYLIB_DEPS = $(NS_LDFLAGS) -framework Foundation -lsqlite3
 else ifeq ($(NS_OS), $(NS_LINUX))
 	NS_DYLIB_CREATE = -shared
 	NS_DYLIB_COMMON = -fPIC -g -Wl,-soname,$(@F) -Wl,-rpath,'$$ORIGIN'
@@ -56,6 +57,7 @@ NS_VIEW_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
 NS_GPU_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
 NS_UI_DYLIB_DEPS ?= $(NS_GPU_DYLIB_DEPS)
 NS_AUDIO_DYLIB_DEPS ?= $(NS_DYLIB_DEPS)
+NS_STORAGE_DYLIB_DEPS ?= $(NS_DYLIB_DEPS) -lsqlite3
 
 # Position-independent compile rules for the C and Objective-C feature sources.
 $(NS_BINDIR)/lib/%.o: lib/src/%.c
@@ -76,6 +78,7 @@ NS_UI_DYLIB = $(NS_BINDIR)/ui$(NS_DYLIB_SUFFIX)
 NS_AUDIO_DYLIB = $(NS_BINDIR)/audio$(NS_DYLIB_SUFFIX)
 NS_DYNAMIC_DYLIB = $(NS_BINDIR)/dynamic$(NS_DYLIB_SUFFIX)
 NS_COMPRESS_DYLIB = $(NS_BINDIR)/compress$(NS_DYLIB_SUFFIX)
+NS_STORAGE_DYLIB = $(NS_BINDIR)/storage$(NS_DYLIB_SUFFIX)
 
 NS_IO_OBJS = $(NS_BINDIR)/lib/io.o
 NS_OS_OBJS = $(NS_BINDIR)/lib/os.o
@@ -95,22 +98,26 @@ NS_ZSTD_SRCS = $(wildcard $(NS_ZSTD_DIR)/lib/common/*.c $(NS_ZSTD_DIR)/lib/compr
 	$(NS_ZSTD_DIR)/lib/decompress/*.c)
 NS_ZSTD_OBJS = $(NS_ZSTD_SRCS:$(NS_ZSTD_DIR)/lib/%.c=$(NS_ZSTD_OBJDIR)/%.o)
 NS_COMPRESS_OBJS = $(NS_BINDIR)/lib/compress.o $(NS_ZLIB_OBJS) $(NS_ZSTD_OBJS)
+NS_STORAGE_OBJS = $(NS_BINDIR)/lib/storage.db.o
 
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.linux.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.posix.o
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.linux.o
+	NS_STORAGE_OBJS += $(NS_BINDIR)/lib/storage.json.o
 else ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.osx.o $(NS_BINDIR)/lib/os.haptic.apple.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.posix.o
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.osx.o
 	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.metal.o
 	NS_AUDIO_OBJS = $(NS_BINDIR)/lib/audio.apple.o
+	NS_STORAGE_OBJS += $(NS_BINDIR)/lib/storage.apple.o
 else ifeq ($(NS_OS), $(NS_WIN))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.win.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.win.o
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.win.o
 	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.dx12.o
+	NS_STORAGE_OBJS += $(NS_BINDIR)/lib/storage.json.o
 endif
 
 $(NS_BINDIR)/lib/dynamic.o: lib/include/dynamic.h $(NS_BOX3D_HEADERS)
@@ -131,7 +138,8 @@ NS_STD_SHARED = \
 	$(NS_VIEW_DYLIB) \
 	$(NS_UI_DYLIB) \
 	$(NS_DYNAMIC_DYLIB) \
-	$(NS_COMPRESS_DYLIB)
+	$(NS_COMPRESS_DYLIB) \
+	$(NS_STORAGE_DYLIB)
 
 ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_STD_SHARED += $(NS_AUDIO_DYLIB)
@@ -205,6 +213,9 @@ $(NS_UI_DYLIB): $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) | 
 
 $(NS_AUDIO_DYLIB): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_AUDIO_DYLIB_DEPS)
+
+$(NS_STORAGE_DYLIB): $(NS_STORAGE_OBJS) | $(NS_BINDIR)
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_STORAGE_DYLIB_DEPS)
 
 ifeq ($(NS_BOX3D_PRESENT),)
 $(NS_DYNAMIC_DYLIB): box3d | $(NS_BINDIR)
