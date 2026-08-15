@@ -375,6 +375,93 @@ if [ "$(uname -s)" = "Darwin" ]; then
         exit 1
     fi
 
+    # One manifest, three target types: a bare `ns build` builds them all, and a
+    # named target builds alone.
+    mkdir -p "$build_tmp/kinds/src"
+    printf '%s\n' \
+        'schema = "ns.mod/v1"' \
+        'name = "kinds"' \
+        'version = "0.1.0"' \
+        'type = "app"' \
+        'source = "src"' \
+        '' \
+        '[[targets]]' \
+        'name = "kinds-app"' \
+        'entry = "app_main.ns"' \
+        'type = "app"' \
+        'default = true' \
+        '' \
+        '[[targets]]' \
+        'name = "kinds-cli"' \
+        'entry = "cli_main.ns"' \
+        'type = "cli"' \
+        '' \
+        '[[targets]]' \
+        'name = "kinds-lib"' \
+        'entry = "lib_root.ns"' \
+        'type = "lib"' > "$build_tmp/kinds/ns.mod"
+    printf '%s\n' 'fn main() i32 {' '    return kinds_shared() - 42' '}' > "$build_tmp/kinds/src/app_main.ns"
+    printf '%s\n' \
+        'use std' \
+        'fn main() i32 {' \
+        '    print("kinds cli\n")' \
+        '    return 0' \
+        '}' > "$build_tmp/kinds/src/cli_main.ns"
+    printf '%s\n' 'fn kinds_api() i32 {' '    return kinds_shared()' '}' > "$build_tmp/kinds/src/lib_root.ns"
+    printf '%s\n' 'fn kinds_shared() i32 {' '    return 42' '}' > "$build_tmp/kinds/src/shared.ns"
+
+    (cd "$build_tmp/kinds" && "$ns" build)
+    for artifact in "kinds-app.app/Contents/MacOS/kinds-app" "kinds-cli" "libkinds-lib.a"; do
+        if [ ! -e "$build_tmp/kinds/bin/$artifact" ]; then
+            printf '%s\n' "FAIL: ns build did not write bin/$artifact for its target type." >&2
+            ls "$build_tmp/kinds/bin" >&2
+            exit 1
+        fi
+    done
+    if file "$build_tmp/kinds/bin/kinds-cli" | grep -q 'Mach-O 64-bit executable arm64'; then
+        :
+    else
+        printf '%s\n' 'FAIL: type = "cli" did not emit a plain Mach-O executable.' >&2
+        exit 1
+    fi
+    if ! file "$build_tmp/kinds/bin/libkinds-lib.a" | grep -q 'archive'; then
+        printf '%s\n' 'FAIL: type = "lib" did not emit a static library archive.' >&2
+        exit 1
+    fi
+    set +e
+    "$build_tmp/kinds/bin/kinds-cli" > "$build_tmp/kinds.out" 2>&1
+    kinds_status=$?
+    set -e
+    if [ "$kinds_status" -ne 0 ] || ! grep -q 'kinds cli' "$build_tmp/kinds.out"; then
+        printf '%s\n' "FAIL: the compiled cli target exited $kinds_status without running its own main." >&2
+        cat "$build_tmp/kinds.out" >&2
+        exit 1
+    fi
+
+    # A named target rebuilds only itself.
+    rm -rf "$build_tmp/kinds/bin"
+    (cd "$build_tmp/kinds" && "$ns" build kinds-cli)
+    if [ ! -x "$build_tmp/kinds/bin/kinds-cli" ]; then
+        printf '%s\n' 'FAIL: ns build kinds-cli did not build the named target.' >&2
+        exit 1
+    fi
+    if [ -e "$build_tmp/kinds/bin/kinds-app.app" ] || [ -e "$build_tmp/kinds/bin/libkinds-lib.a" ]; then
+        printf '%s\n' 'FAIL: ns build kinds-cli also built the other targets.' >&2
+        ls "$build_tmp/kinds/bin" >&2
+        exit 1
+    fi
+
+    if (cd "$build_tmp/kinds" && "$ns" build -o bin/single > "$build_tmp/kinds.out" 2>&1); then
+        printf '%s\n' 'FAIL: ns build -o accepted a manifest with several targets.' >&2
+        exit 1
+    fi
+    if ! grep -q '\-o takes a single target' "$build_tmp/kinds.out"; then
+        printf '%s\n' 'FAIL: ns build -o did not explain the multi-target conflict.' >&2
+        cat "$build_tmp/kinds.out" >&2
+        exit 1
+    fi
+
     printf '%s\n' 'PASS: ns build compiles native machine code for --exe and type=app.'
     printf '%s\n' 'PASS: ns build writes one artifact per ns.mod target.'
+    printf '%s\n' 'PASS: ns build emits app/cli/library artifacts per target type and builds one by name.'
 fi

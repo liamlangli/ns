@@ -208,7 +208,8 @@ void ns_help() {
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
-    printf("                    a bare name builds that [[targets]] entry of ns.mod\n");
+    printf("                    type app | cli | library picks bundle | executable | .a\n");
+    printf("                    builds every [[targets]] table; a bare name builds one\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
     printf("                    keeps the artifact when no input changed; --force rebuilds\n");
@@ -1391,6 +1392,23 @@ static ns_bool ns_manifest_has_target(ns_str root, ns_str name) {
     return found;
 }
 
+// Every `[[targets]]` name declared by `root/ns.mod`, in declaration order.
+static ns_str *ns_manifest_target_list(ns_str root) {
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str mod = ns_os_read_file(manifest);
+    ns_str_free(manifest);
+    if (mod.data == ns_null) return ns_null;
+
+    ns_manifest_target *targets = ns_manifest_targets(mod);
+    ns_str *names = ns_null;
+    for (i32 i = 0, count = ns_array_length(targets); i < count; i++) {
+        if (targets[i].name.data != ns_null) ns_array_push(names, ns_str_dup(targets[i].name));
+    }
+    ns_manifest_targets_free(targets);
+    ns_str_free(mod);
+    return names;
+}
+
 // The target that owns `entry_file`, so an explicit entry path selects the same
 // target the manifest declares for it. Empty when no declared target matches.
 static ns_str ns_manifest_target_for_entry(ns_str root, ns_str entry_file) {
@@ -2183,6 +2201,12 @@ static ns_bool ns_build_type_is_app(ns_str t) {
     return ns_str_equals(t, ns_str_cstr("app")) || ns_str_equals(t, ns_str_cstr("application"));
 }
 
+// A command-line program: a plain executable, never a host app bundle.
+static ns_bool ns_build_type_is_cli(ns_str t) {
+    return ns_str_equals(t, ns_str_cstr("cli")) || ns_str_equals(t, ns_str_cstr("exe")) ||
+           ns_str_equals(t, ns_str_cstr("executable"));
+}
+
 static ns_bool ns_build_target_is_wasm(ns_str target) {
     return ns_str_equals(target, ns_str_cstr("wasm"));
 }
@@ -2193,6 +2217,7 @@ static ns_build_kind ns_build_resolve_kind(ns_build_input *in, u8 requested) {
     if (requested == NS_BUILD_APP) return NS_BUILD_APP;
     if (ns_build_type_is_library(in->module_type)) return NS_BUILD_LIB;
     if (ns_build_type_is_app(in->module_type)) return NS_BUILD_APP;
+    if (ns_build_type_is_cli(in->module_type)) return NS_BUILD_EXE;
     return NS_BUILD_EXE;
 }
 
@@ -2907,11 +2932,35 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_str_free(artifact);
 }
 
+// `ns build [path|target]`. A target name builds that target alone; a project
+// (an explicit directory, or none at all) builds every target it declares, so
+// each one emits its own artifact kind under `bin/`.
 void ns_exec_build(ns_str path, ns_str output, u8 requested_kind, ns_bool force) {
     ns_str target_name = ns_str_null;
     ns_str root = ns_str_null;
-    if (ns_target_arg_select(path, &root, &target_name)) path = root;
-    ns_exec_build_target(path, output, requested_kind, force, target_name);
+    if (ns_target_arg_select(path, &root, &target_name)) {
+        ns_exec_build_target(root, output, requested_kind, force, target_name);
+        return;
+    }
+
+    ns_str project = ns_str_null;
+    if (path.len == 0) project = ns_project_root(ns_getcwd());
+    else if (ns_is_dir(path)) project = ns_project_root(path);
+
+    ns_str *names = project.data != ns_null ? ns_manifest_target_list(project) : ns_null;
+    i32 count = ns_array_length(names);
+    if (count > 1 && output.len > 0) {
+        ns_exit(1, "build", "-o takes a single target; %.*s declares %d. Name one, or drop -o.\n",
+                project.len, project.data, count);
+    }
+    for (i32 i = 0; i < count; i++) {
+        ns_exec_build_target(project, output, requested_kind, force, names[i]);
+        ns_str_free(names[i]);
+    }
+    ns_array_free(names);
+    if (count > 0) return;
+
+    ns_exec_build_target(path, output, requested_kind, force, ns_str_null);
 }
 
 static ns_str ns_project_absolute_path(ns_str path) {
@@ -3063,12 +3112,14 @@ void ns_exec_project(ns_str path) {
     root = ns_project_absolute_path(root);
 
     ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    // A multi-target manifest generates the IDE project of its default target.
+    ns_manifest_selection selection = ns_manifest_select(root, ns_str_null);
     ns_str schema = ns_build_manifest_value(root, "schema");
     ns_str name = ns_build_manifest_value(root, "name");
-    ns_str module_type = ns_build_manifest_value(root, "type");
-    ns_str project_target = ns_build_manifest_value(root, "target");
+    ns_str module_type = selection.type;
+    ns_str project_target = selection.platform;
     ns_str version = ns_build_manifest_value(root, "version");
-    ns_str icon = ns_path_resolve(root, ns_build_manifest_value(root, "icon"));
+    ns_str icon = selection.icon;
     if (!ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_CURRENT))) {
         ns_exit(1, "project", "%.*s must declare schema = \"" NS_MANIFEST_SCHEMA_CURRENT "\".\n",
                 manifest.len, manifest.data);
@@ -3080,15 +3131,19 @@ void ns_exec_project(ns_str path) {
     if (ns_build_target_is_wasm(project_target)) {
         if (!ns_build_type_is_app(module_type))
             ns_exit(1, "project", "target = \"wasm\" currently supports type = \"app\" only.\n");
-        ns_exec_build(root, ns_str_null, NS_BUILD_AUTO, false);
+        ns_exec_build_target(root, ns_str_null, NS_BUILD_AUTO, false, selection.target_name);
         return;
     }
 
+    // A `cli` target has an entry and an executable artifact like an app, but
+    // no host app bundle, so it generates the host build/test targets instead
+    // of the platform application targets.
+    ns_bool cli_project = ns_build_type_is_cli(module_type);
     ns_project_kind kind;
-    if (ns_build_type_is_app(module_type)) kind = NS_PROJECT_APP;
+    if (ns_build_type_is_app(module_type) || cli_project) kind = NS_PROJECT_APP;
     else if (ns_build_type_is_library(module_type)) kind = NS_PROJECT_LIBRARY;
     else {
-        ns_exit(1, "project", "%.*s has unsupported type `%.*s`; expected app or library.\n",
+        ns_exit(1, "project", "%.*s has unsupported type `%.*s`; expected app, cli or library.\n",
                 manifest.len, manifest.data, module_type.len, module_type.data);
     }
     if (version.data == ns_null || version.len == 0) version = ns_str_cstr("0.1.0");
@@ -3100,11 +3155,11 @@ void ns_exec_project(ns_str path) {
     ns_str *external_modules = ns_null;
     ns_str linked = ns_str_null;
     if (kind == NS_PROJECT_APP) {
-        ns_build_input in = ns_build_input_resolve(root, ns_str_null);
+        ns_build_input in = ns_build_input_resolve(root, selection.target_name);
         linked = ns_project_link_all(root, in.source, in.filename, false, ns_null, &external_modules);
     }
 
-    ns_bool host_build = false;
+    ns_bool host_build = cli_project;
     if (kind == NS_PROJECT_APP) {
         for (i32 i = 0, l = ns_array_length(external_modules); i < l; i++) {
             if (!ns_project_module_embeddable(external_modules[i])) host_build = true;

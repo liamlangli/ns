@@ -75,7 +75,7 @@ declared. A manifest that declares no `[[targets]]` keeps using its top-level
 |---------------|----------------------------------------------------------------|
 | `name`        | Selector for `ns run` / `ns build`, and the artifact name      |
 | `entry`       | Entry source, relative to the manifest `source` dir            |
-| `type`        | `app` or `library`; defaults to the top-level `type`           |
+| `type`        | `app`, `cli` or `library`; defaults to the top-level `type`     |
 | `platform`    | `wasm` for a browser target; defaults to the top-level `target` |
 | `icon`        | Defaults to the top-level `icon`                               |
 | `shell`       | Custom Wasm HTML page; defaults to the top-level `shell`       |
@@ -90,6 +90,21 @@ same way: it is removed from the source set of any target that does not own it.
 The build artifact of a target is written to `bin/<name>` (or `bin/<output>`),
 so targets never overwrite each other.
 
+`ns build` with no target name builds *every* declared target, each with its
+own `type`, so one manifest can ship a windowed app, a command-line tool and a
+static library side by side:
+
+| `type`                  | Artifact                                          |
+|-------------------------|---------------------------------------------------|
+| `app` / `application`   | Host app bundle (`bin/<name>.app` on Darwin)      |
+| `cli` / `exe`           | Plain executable `bin/<name>`                     |
+| `library` / `lib`       | Static library `bin/lib<name>.a`                  |
+
+`ns build <name>` builds that one target independently. `-o` applies to a
+single target only, so name the target when overriding the output path.
+`ns project` generates the IDE project of the default target; a `cli` target
+gets host build/test targets rather than platform application targets.
+
 A bare word selects a target: `ns run web`. An argument that looks like a path
 stays a path, so `ns run ./web`, `ns run src/web_main.ns` and any argument
 ending in `.ns` still name files. Passing the declared entry path of a target
@@ -97,9 +112,11 @@ selects that target's settings too. A bare word that matches neither a target
 nor a file is reported with the list of targets the manifest declares. Target
 lookup uses the nearest `ns.mod` at or above the current directory.
 
-Running `ns build` with no file argument compiles the current module (or its
-default target) into an artifact under `<module>/bin`: `type = "app"` produces an executable, while
-`type = "library"` produces a static library. Any build input inside a manifest
+Running `ns build` with no file argument compiles the current module into
+artifacts under `<module>/bin`: one per declared target, or a single artifact
+from the top-level `type` when the manifest declares no targets. `type = "app"`
+produces a host app bundle, `type = "cli"` a plain executable, and
+`type = "library"` a static library. Any build input inside a manifest
 project uses that project's recursive source set. A file outside a project is
 built as a standalone script and may link local sibling modules it imports. Use
 `-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact

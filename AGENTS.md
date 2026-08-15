@@ -50,10 +50,12 @@ The common commands are:
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported.
 - `ns build [path | target]`: compile a script or module to native machine
-  code. A bare word names a `[[targets]]` table, as with `ns run`.
+  code. With no target name it builds every `[[targets]]` table the manifest
+  declares; a bare word builds that one target independently, as with `ns run`.
   Manifest type `app` produces a host app bundle (Darwin) or executable,
-  type `library` produces a static library, and an app with `target = "wasm"`
-  produces its browser bundle and `.wasm.map` source map. `--exe` forces a
+  type `cli` a plain executable, type `library` a static library, and an app
+  with `target = "wasm"` produces its browser bundle and `.wasm.map` source
+  map. `-o` applies to a single target only. `--exe` forces a
   linked native executable. `ns build` does not fall back to `ns run`.
   Builds are incremental: every input a build reads is recorded with its last
   modify time, size, and content hash in `bin/.ns-build/`, and a later build
@@ -102,8 +104,10 @@ version = ">=0.1.0"
 
 A project that ships more than one program declares a `[[targets]]` table per
 entry instead of a single top-level `entry`. `ns run <name>` and
-`ns build <name>` select one; with no name, the target marked `default = true`
-is used, otherwise the first declared one. A target may override `type`,
+`ns build <name>` select one; with no name `ns run` uses the target marked
+`default = true`, otherwise the first declared one, and `ns build` builds every
+declared target. A target may override `type` (`app` for a host app bundle,
+`cli` for a plain executable, `library` for a static library),
 `platform` (`wasm`), `icon`, `shell`, `output` and add its own `exclude` list;
 anything it omits is inherited from the top-level key. Each target compiles the
 whole project source set minus the entries owned by the other targets, so every
@@ -115,6 +119,11 @@ is written to `bin/<name>`.
 name = "example"
 entry = "main.ns"
 default = true
+
+[[targets]]
+name = "example-cli"
+entry = "cli_main.ns"
+type = "cli"
 
 [[targets]]
 name = "example-web"
