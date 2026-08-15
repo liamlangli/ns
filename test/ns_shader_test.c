@@ -94,6 +94,10 @@ static const char *ns_shader_test_src =
     "    let pixel = ddx(signed_d) * ddx(signed_d) + ddy(signed_d) * ddy(signed_d)\n"
     "    return float4 { pixel, pixel, pixel, 1.0 }\n"
     "}\n"
+    "fn fs_discard(data: FragmentInput) float4 {\n"
+    "    if data.uv.x < 0.0 { shader_discard() }\n"
+    "    return data.color\n"
+    "}\n"
     "lit ROW_STRIDE = 3 * 4\n"
     "lit GRAVITY: f32 = -10.0\n"
     "lit ENABLED = true\n"
@@ -253,11 +257,12 @@ int main() {
     i32 fs_texture = ns_shader_test_fn(&vm, "fs_texture");
     i32 fs_mrt = ns_shader_test_fn(&vm, "fs_mrt");
     i32 fs_grad = ns_shader_test_fn(&vm, "fs_grad");
+    i32 fs_discard = ns_shader_test_fn(&vm, "fs_discard");
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
     i32 cs_texture = ns_shader_test_fn(&vm, "cs_texture");
     i32 cs_buffer = ns_shader_test_fn(&vm, "cs_buffer");
     i32 cs_simd = ns_shader_test_fn(&vm, "cs_simd");
-    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && fs_grad >= 0 && cs >= 0 &&
+    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && fs_grad >= 0 && fs_discard >= 0 && cs >= 0 &&
                   cs_texture >= 0 && cs_buffer >= 0 && cs_simd >= 0,
               "shader entry symbols exist.");
 
@@ -373,6 +378,25 @@ int main() {
         r = ns_shader_transpile(&vm, &ctx, fs_grad, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "dpdx(") && ns_shader_test_has(r.r, "dpdy("),
                   "wgsl ddx/ddy lower to dpdx/dpdy.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- fragment discard lowers to a statement, not a transparent return ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, fs_discard, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "discard_fragment();"), "msl fragment discard lowers correctly.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_discard, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "discard;"), "glsl fragment discard lowers correctly.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_discard, NS_SHADER_HLSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "discard;"), "hlsl fragment discard lowers correctly.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_discard, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "discard;"), "wgsl fragment discard lowers correctly.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

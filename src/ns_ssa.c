@@ -1182,6 +1182,7 @@ static ns_bool ns_ssa_shader_name(ns_str name) {
 static ns_bool ns_ssa_shader_stage_intrinsic(ns_str name) {
     return ns_str_equals_STR(name, "ddx") ||
            ns_str_equals_STR(name, "ddy") ||
+           ns_str_equals_STR(name, "shader_discard") ||
            ns_str_equals_STR(name, "shader_buffer_i32") ||
            ns_str_equals_STR(name, "shader_buffer_store_i32") ||
            ns_str_equals_STR(name, "shader_sample_mask") ||

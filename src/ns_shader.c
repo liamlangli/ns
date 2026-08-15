@@ -361,6 +361,7 @@ static const ns_shader_builtin ns_shader_builtins[] = {
     {"fract", "fract", "fract", "frac", false},
     // Fragment derivatives. WGSL names are remapped in ns_shader_builtin_name.
     {"ddx", "dfdx", "dFdx", "ddx", false},         {"ddy", "dfdy", "dFdy", "ddy", false},
+    {"shader_discard", "discard_fragment", "discard", "discard", false},
     {"shader_sample_shadow", "ns_shadow_compare", "ns_shadow_compare", "ns_shadow_compare", true},
     {"shader_sample_texture", "ns_texture_sample", "ns_texture_sample", "ns_texture_sample", false},
     {"shader_sample_texture_nearest", "ns_texture_sample_nearest", "ns_texture_sample_nearest", "ns_texture_sample_nearest", false},
@@ -1231,6 +1232,7 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             ns_bool sample_texture = ns_str_equals(name, ns_str_cstr("shader_sample_texture"));
             ns_bool sample_texture_nearest = ns_str_equals(name, ns_str_cstr("shader_sample_texture_nearest"));
             ns_bool sample_mask = ns_str_equals(name, ns_str_cstr("shader_sample_mask"));
+            ns_bool discard = ns_str_equals(name, ns_str_cstr("shader_discard"));
             ns_bool global_x = ns_str_equals(name, ns_str_cstr("shader_global_id_x"));
             ns_bool global_y = ns_str_equals(name, ns_str_cstr("shader_global_id_y"));
             ns_bool global_z = ns_str_equals(name, ns_str_cstr("shader_global_id_z"));
@@ -1241,6 +1243,11 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
             ns_bool read_texture = ns_str_equals(name, ns_str_cstr("shader_read_texture"));
             ns_bool write_texture = ns_str_equals(name, ns_str_cstr("shader_write_texture"));
             ns_bool write_texture_secondary = ns_str_equals(name, ns_str_cstr("shader_write_texture_secondary"));
+            if (discard) {
+                if (n->call_expr.arg_count != 0) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: shader_discard takes no arguments.");
+                ns_shader_cstr(dst, e->target == NS_SHADER_MSL ? "discard_fragment()" : "discard");
+                return ns_return_ok_void;
+            }
             if (global_x || global_y || global_z) {
                 if (n->call_expr.arg_count != 0) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: global id intrinsic takes no arguments.");
                 const char component = global_x ? 'x' : global_y ? 'y' : 'z';
@@ -2926,6 +2933,10 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     if (ns_str_equals(name, ns_str_cstr("ddx")) || ns_str_equals(name, ns_str_cstr("ddy"))) {
         // Fragment derivatives have no host meaning; a CPU call is a zero.
         call->ret = (ns_value){.t = ns_type_f32, .f32 = 0.0f};
+        return ns_return_ok(bool, true);
+    }
+    if (ns_str_equals(name, ns_str_cstr("shader_discard"))) {
+        call->ret = (ns_value){.t = ns_type_void};
         return ns_return_ok(bool, true);
     }
 

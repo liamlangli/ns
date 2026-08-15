@@ -93,6 +93,10 @@ ref fn shader_sample_mask(coord: float2) float4
 // lowers them to dfdx/dFdx/ddx/dpdx and dfdy/dFdy/ddy/dpdy.
 ref fn ddx(value: f32) f32
 ref fn ddy(value: f32) f32
+// Fragment-only early termination. Pixels discarded this way update neither
+// color nor depth. The VM treats it as a no-op; shader backends lower it to
+// discard_fragment() / discard.
+ref fn shader_discard()
 
 // ---- host execution of compute fns -----------------------------------------
 //
