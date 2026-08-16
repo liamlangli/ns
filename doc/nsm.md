@@ -128,7 +128,10 @@ script reads them with `os_env`. A leading `--` after the file is stripped, and
 `ns` options such as `--port` belong before the file or target.
 `ns profile` always evaluates through the interpreter so it can collect VM and
 FFI scopes, even when the selected target sets `link = true`. Wasm targets keep
-their existing build-and-serve behavior regardless of `link`.
+their existing build-and-serve behavior regardless of `link`. The report is
+written to `bin/ns.profile`: the project's own `bin/` when the run resolves a
+project, otherwise `bin/` beside the working directory. Nothing is ever written
+to the root of the project folder.
 
 Running `ns build` with no file argument compiles the current module into
 artifacts under `<module>/bin`: one per declared target, or a single artifact
@@ -143,13 +146,13 @@ logical CPU count. Browser targets and targets that resolve to the same
 artifact stay serial because they share generated output. Profiled builds also
 stay serial so their nested compiler timeline remains complete.
 
-Add `--profile` to a build to write `bin/ns.profile` and print a hot-path summary
-for input resolution, cache validation, source linking, parsing, SSA lowering,
-artifact emission, system linking, and packaging. The phases use the
-`compiler::` prefix in the existing profile tables, timeline, and flamegraph,
-so `ns profiler` opens build profiles as well as runtime profiles. With no
-file argument, the viewer prefers `bin/ns.profile` and falls back to
-`ns.profile`. Use
+Add `--profile` to a build to write the same `bin/ns.profile` and print a
+hot-path summary for input resolution, cache validation, source linking,
+parsing, SSA lowering, artifact emission, system linking, and packaging. The
+phases use the `compiler::` prefix in the existing profile tables, timeline,
+and flamegraph, so `ns profiler` opens build profiles as well as runtime
+profiles. With no file argument, the viewer prefers `bin/ns.profile` and falls
+back to a legacy `ns.profile`. Use
 `ns build --profile --force` to measure a full compilation; without `--force`,
 an up-to-date build intentionally profiles only target resolution and cache
 validation. SSA lowering expands into `compiler.ssa::` semantic, literal,

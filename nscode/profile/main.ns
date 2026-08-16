@@ -738,6 +738,16 @@ fn clear_profile() {
     g_drag = false
 }
 
+// Reports are written to bin/ns.profile; the plain name stays as a fallback
+// for profiles left by older ns versions.
+fn default_profile_path() str {
+    let binned = read_file("bin/ns.profile")
+    if binned.len > 0 {
+        return "bin/ns.profile"
+    }
+    return "ns.profile"
+}
+
 fn load_profile(path: str) {
     let data = read_file(path)
     if data.len == 0 {
@@ -1141,7 +1151,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
             if g_raw.len == 0 {
                 let cy = body_y + min_f(90.0, body_h * 0.3)
                 ui_draw_text(r, body_x, cy, "No profile loaded", PX(), col_text(), FONT())
-                ui_draw_text(r, body_x, cy + 16.0, "Run `ns profile` then `ns profiler`, or open ns.profile.", PX(), col_muted(), FONT())
+                ui_draw_text(r, body_x, cy + 16.0, "Run `ns profile` then `ns profiler`, or open bin/ns.profile.", PX(), col_muted(), FONT())
                 if g_status == "Loaded file is not an ns-profile." {
                     ui_draw_text(r, body_x, cy + 32.0, g_status, PX(), col_warn(), FONT())
                 }
@@ -1163,9 +1173,9 @@ fn main() {
         if startup.len > 0 {
             load_profile(startup)
         } else {
-            let local = read_file("ns.profile")
-            if local.len > 0 {
-                load_profile("ns.profile")
+            let local = default_profile_path()
+            if read_file(local).len > 0 {
+                load_profile(local)
             }
         }
         v.on_frame({ fv in
@@ -1175,7 +1185,7 @@ fn main() {
             reset_view_input(fv)
             if g_load_profile_pending {
                 g_load_profile_pending = false
-                load_profile("ns.profile")
+                load_profile(default_profile_path())
             }
             if g_open_profile_pending {
                 g_open_profile_pending = false

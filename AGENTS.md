@@ -45,8 +45,11 @@ The common commands are:
   through `os_env`. `ns` options such as `--port` belong before the file or
   target. A Wasm project builds and starts its loopback live-reload server.
 - `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
-  write `ns.profile`, then print a colored CLI hot-path summary of VM scopes
-  and FFI calls. `ns build --profile` instead writes `bin/ns.profile` and
+  write `bin/ns.profile`, then print a colored CLI hot-path summary of VM scopes
+  and FFI calls. The report always lands in a `bin/` directory - the project's
+  own `bin/` when the run resolves a project, otherwise `bin/` beside the
+  working directory - never at the project root. `ns build --profile` writes the
+  same `bin/ns.profile` and
   records nested compiler phases, including cache validation, source linking,
   parsing, SSA lowering, emission,
   system linking, and packaging; add `--force` to measure a full compilation.

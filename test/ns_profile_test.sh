@@ -73,13 +73,18 @@ EOF
 cd "$tmp"
 "$ns" profile hot.ns > "$tmp/out.txt"
 
-test -f "$tmp/ns.profile"
+# The report belongs in bin/, never beside the sources.
+test -f "$tmp/bin/ns.profile"
+if [ -e "$tmp/ns.profile" ]; then
+    printf '%s\n' 'FAIL: ns profile wrote ns.profile outside bin/.' >&2
+    exit 1
+fi
 test ! -e "$tmp/ns.profile.json"
 
-grep -q '^format: ns-profile-v4$' "$tmp/ns.profile"
-grep -q '^fn: scope ' "$tmp/ns.profile"
-grep -q '^flame: ' "$tmp/ns.profile"
-grep -q 'main;mid;leaf' "$tmp/ns.profile"
+grep -q '^format: ns-profile-v4$' "$tmp/bin/ns.profile"
+grep -q '^fn: scope ' "$tmp/bin/ns.profile"
+grep -q '^flame: ' "$tmp/bin/ns.profile"
+grep -q 'main;mid;leaf' "$tmp/bin/ns.profile"
 grep -q 'hot functions by self time' "$tmp/out.txt"
 grep -q 'hot stacks by self time' "$tmp/out.txt"
 if grep -q '^flamechart:' "$tmp/out.txt"; then
@@ -88,12 +93,44 @@ if grep -q '^flamechart:' "$tmp/out.txt"; then
 fi
 
 # --profile on a bare file is the same collection path.
-rm -f "$tmp/ns.profile"
+rm -rf "$tmp/bin"
 "$ns" --profile hot.ns > "$tmp/flag.txt"
-test -f "$tmp/ns.profile"
+test -f "$tmp/bin/ns.profile"
+if [ -e "$tmp/ns.profile" ]; then
+    printf '%s\n' 'FAIL: ns --profile wrote ns.profile outside bin/.' >&2
+    exit 1
+fi
 test ! -e "$tmp/ns.profile.json"
-grep -q '^format: ns-profile-v4$' "$tmp/ns.profile"
-grep -q 'main;mid;leaf' "$tmp/ns.profile"
+grep -q '^format: ns-profile-v4$' "$tmp/bin/ns.profile"
+grep -q 'main;mid;leaf' "$tmp/bin/ns.profile"
+
+# A profiled run of a project entry reports into that project's bin/, even when
+# the command runs from outside the project directory.
+mkdir -p "$tmp/run-profile/src"
+cat > "$tmp/run-profile/ns.mod" <<'EOF'
+schema = "ns.mod/v1"
+name = "profile-run"
+version = "0.1.0"
+type = "app"
+source = "src"
+entry = "main.ns"
+EOF
+cat > "$tmp/run-profile/src/main.ns" <<'EOF'
+fn main() {
+    let answer = 40 + 2
+    assert answer == 42
+}
+EOF
+
+cd "$tmp"
+"$ns" profile "$tmp/run-profile/src/main.ns" > "$tmp/run-profile.txt"
+test -f "$tmp/run-profile/bin/ns.profile"
+if [ -e "$tmp/run-profile/ns.profile" ]; then
+    printf '%s\n' 'FAIL: ns profile wrote ns.profile at the project root.' >&2
+    exit 1
+fi
+grep -q '^format: ns-profile-v4$' "$tmp/run-profile/bin/ns.profile"
+cd "$tmp"
 
 # A profiled build records compiler phases in the same report and viewer. Use
 # Wasm here so the coverage does not depend on a host linker or bundle format.

@@ -218,7 +218,7 @@ void ns_help() {
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
-    printf("  --profile         profile execution or build phases; builds write bin/ns.profile\n");
+    printf("  --profile         profile execution or build phases; writes bin/ns.profile\n");
     printf("                    and print a hot-path summary\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
@@ -232,7 +232,8 @@ void ns_help() {
     printf("                    arguments after the file or target become NS_ARG0...\n");
     printf("       --port <n>    wasm server port (default 9001; 0 chooses an available port)\n");
     printf("  profile [path]    run like `ns run` with profiling; print a CLI hot-path summary\n");
-    printf("  profiler [file]   open the GUI viewer for ns.profile (or file)\n");
+    printf("                    the report is written to bin/ns.profile\n");
+    printf("  profiler [file]   open the GUI viewer for bin/ns.profile (or file)\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
@@ -261,12 +262,26 @@ static ns_bool ns_profile_registered = false;
 static ns_bool ns_profile_written = false;
 static ns_str ns_profile_output_path = {0};
 
+static void ns_mkdir_p(ns_str dir);
+static ns_str ns_path_dirname_safe(ns_str path);
+
+// A profile always lands in a `bin/` directory, never beside the sources, so
+// create the directory the report is about to be written into.
+static void ns_profile_ensure_output_dir(const char *path) {
+    ns_str dir = ns_path_dirname_safe(ns_str_cstr(path));
+    ns_mkdir_p(dir);
+    ns_str_free(dir);
+}
+
 static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
     if (ns_profile_written) return;
     ns_profile_written = true;
 
     f64 elapsed_ms = ns_profile_now_ms() - start_ms;
-    const char *path = ns_profile_output_path.data ? ns_profile_output_path.data : "ns.profile";
+    // Without a resolved project scope the report still goes to `bin/`, taken
+    // relative to the working directory the command ran in.
+    const char *path = ns_profile_output_path.data ? ns_profile_output_path.data : "bin/ns.profile";
+    ns_profile_ensure_output_dir(path);
     FILE *f = fopen(path, "w");
     if (!f) {
         ns_warn("profile", "failed to write %s.\n", path);
@@ -1683,13 +1698,25 @@ static void ns_build_ensure_output_dir(ns_str output) {
     ns_str_free(dir);
 }
 
-static void ns_profile_set_build_output(ns_str scope) {
+// Point the profile report at `<scope>/bin/ns.profile`. Every profiled command
+// resolves its scope this way, so builds and runs alike keep the report inside
+// `bin/` instead of dropping `ns.profile` at the root of the project.
+static void ns_profile_set_output_scope(ns_str scope) {
     if (!ns_profile.enabled) return;
-    ns_str bin = ns_path_join(scope, ns_str_cstr("bin"));
+    ns_str base = scope;
+    ns_bool owned = false;
+    if (base.len == 0) {
+        base = ns_getcwd();
+        owned = true;
+    }
+    ns_str bin = ns_path_join(base, ns_str_cstr("bin"));
     ns_mkdir_p(bin);
     ns_str_free(ns_profile_output_path);
     ns_profile_output_path = ns_path_join(bin, ns_str_cstr("ns.profile"));
     ns_str_free(bin);
+    if (owned) {
+        ns_str_free(base);
+    }
 }
 
 static void ns_write_text_file(ns_str path, ns_str text) {
@@ -3045,7 +3072,7 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     f64 resolve_start = ns_build_profile_begin("resolve_input");
     ns_build_input in = ns_build_input_resolve(path, target_name);
     ns_build_profile_end("resolve_input", resolve_start);
-    ns_profile_set_build_output(in.scope);
+    ns_profile_set_output_scope(in.scope);
     if (in.target.len > 0 && !ns_build_target_is_wasm(in.target)) {
         ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
                 in.target.len, in.target.data);
@@ -4133,6 +4160,11 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
     } else {
         project = ns_find_project_root(filename, &scope);
     }
+
+    // `ns profile` and `ns run --profile` report into the bin/ of the project
+    // they ran; a loose file keeps the default bin/ beside the working directory.
+    if (project) ns_profile_set_output_scope(scope);
+
     if (!project) {
         ns_return_value ret_v = ns_eval(&vm, source, filename);
         if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
