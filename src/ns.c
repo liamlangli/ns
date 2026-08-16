@@ -29,7 +29,6 @@
 #include <mach-o/dyld.h>
 #endif
 
-#define STB_DS_IMPLEMENTATION
 #define NS_MANIFEST_SCHEMA_CURRENT "ns.mod/v1"
 #define NS_MANIFEST_SCHEMA_LEGACY "ns.mod/v0"
 #define NS_WASM_DEFAULT_PORT 9001
@@ -220,7 +219,8 @@ void ns_help() {
     printf("                    writes ns.mod, src/main.ns, README.md, AGENTS.md and .gitignore\n");
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
-    printf("  run  [file|target] [args...] run native source; wasm projects build and serve bin/\n");
+    printf("  run  [file|target] [args...] run native source; link = true builds and launches\n");
+    printf("                    wasm projects build and serve bin/\n");
     printf("                    a bare name selects a [[targets]] entry of ns.mod\n");
     printf("                    arguments after the file or target become NS_ARG0...\n");
     printf("       --port <n>    wasm server port (default 9001; 0 chooses an available port)\n");
@@ -295,7 +295,7 @@ static void ns_profile_begin(i32 argc, i8 **argv) {
 }
 
 static void ns_exec_profile_view(ns_str filename);
-void ns_exec_run(ns_str filename, i32 port, ns_bool port_set);
+void ns_exec_run(ns_str filename, i32 port, ns_bool port_set, ns_bool honor_link);
 
 void ns_exec_tokenize(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
@@ -823,6 +823,8 @@ typedef struct ns_manifest_target {
     ns_str output;      // artifact and display name; defaults to `name`
     ns_str *exclude;    // sources removed for this target only
     ns_bool is_default; // `default = true`
+    ns_bool link;       // `ns run` builds and launches the native artifact
+    ns_bool has_link;   // distinguishes an inherited value from `link = false`
 } ns_manifest_target;
 
 // Offset just past `key =` on `line`, or -1 when the line assigns another key.
@@ -874,6 +876,20 @@ static ns_bool ns_manifest_line_bool(ns_str line, const char *key, ns_bool *out)
     return true;
 }
 
+// Read a boolean from the top-level manifest table. The return value says
+// whether the key was present; `out` holds its value when it was.
+static ns_bool ns_manifest_bool(ns_str src, const char *key, ns_bool *out) {
+    src = ns_manifest_head(src);
+    for (i32 i = 0; i < src.len;) {
+        i32 start = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        ns_str line = ns_str_slice(src, start, i);
+        if (i < src.len) i++;
+        if (ns_manifest_line_bool(line, key, out)) return true;
+    }
+    return false;
+}
+
 // Match a `[name]` or `[[name]]` table header.
 static ns_bool ns_manifest_table_is(ns_str line, const char *name) {
     i32 p = 0;
@@ -922,6 +938,7 @@ static ns_manifest_target *ns_manifest_targets(ns_str src) {
         if ((value = ns_manifest_line_str(line, "shell")).data != ns_null) { target->shell = value; continue; }
         if ((value = ns_manifest_line_str(line, "output")).data != ns_null) { target->output = value; continue; }
         if (ns_manifest_line_bool(line, "default", &target->is_default)) continue;
+        if (ns_manifest_line_bool(line, "link", &target->link)) { target->has_link = true; continue; }
         if (ns_manifest_line_strs(line, "exclude", &target->exclude)) continue;
     }
     return targets;
@@ -1328,6 +1345,7 @@ typedef struct ns_manifest_selection {
     ns_str platform;    // wasm, or empty for a native target
     ns_str icon;        // resolved against the project root
     ns_str shell;       // resolved against the project root
+    ns_bool link;       // `ns run` builds and launches instead of evaluating
 } ns_manifest_selection;
 
 static ns_str ns_manifest_read(ns_str root) {
@@ -1346,6 +1364,8 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
     ns_str mod = ns_manifest_read(root);
     ns_manifest_target *targets = ns_manifest_targets(mod);
     ns_manifest_selection sel = {0};
+    ns_bool top_link = false;
+    ns_manifest_bool(mod, "link", &top_link);
 
     i32 index = ns_manifest_target_index(targets, target_name);
     if (index < 0 && target_name.len > 0) {
@@ -1369,6 +1389,7 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
         sel.platform = ns_str_dup(target->platform);
         sel.icon = ns_path_resolve(root, target->icon);
         sel.shell = ns_path_resolve(root, target->shell);
+        sel.link = target->has_link ? target->link : top_link;
         if (entry.data == ns_null || entry.len == 0) {
             ns_exit(1, "ns", "target `%.*s` of ns.mod at %.*s declares no `entry`.\n",
                     target->name.len, target->name.data, root.len, root.data);
@@ -1377,6 +1398,7 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
         // No targets: the top-level entry. It stays optional here, so reading a
         // manifest for its other fields never depends on a declared entry.
         entry = ns_manifest_top_entry(mod);
+        sel.link = top_link;
     }
 
     // Anything the selected target leaves out comes from the top-level key.
@@ -3769,14 +3791,86 @@ static void ns_exec_profile_view(ns_str filename) {
         return;
     }
     ns_info("profile", "opening interpreted viewer for %s\n", path);
-    ns_exec_run(app, 0, false);
+    ns_exec_run(app, 0, false, false);
     ns_str_free(app);
+}
+
+// Build the same native artifact as `ns build`, then return the executable
+// within it. The caller owns the returned path.
+static ns_str ns_linked_run_executable(ns_str filename, ns_str target_name) {
+    ns_build_input in = ns_build_input_resolve(filename, target_name);
+    ns_build_kind kind = ns_build_resolve_kind(&in, NS_BUILD_AUTO);
+    if (kind == NS_BUILD_LIB) {
+        ns_exit(1, "run", "cannot run linked library target `%.*s`.\n",
+                in.name.len, in.name.data);
+    }
+
+    ns_asm_target target;
+    ns_asm_get_current_target(&target);
+    if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) kind = NS_BUILD_EXE;
+
+    ns_str output = ns_build_default_output(&in, kind);
+    ns_exec_build_target(filename, ns_str_null, NS_BUILD_AUTO, false, target_name);
+
+#if defined(NS_DARWIN)
+    if (kind == NS_BUILD_APP) {
+        ns_str macos = ns_path_join(output, ns_str_cstr("Contents/MacOS"));
+        ns_str executable = ns_path_join(macos, in.name);
+        ns_str_free(macos);
+        ns_str_free(output);
+        return executable;
+    }
+#endif
+    return output;
+}
+
+// Launch a linked run synchronously so `ns run` keeps the program's console,
+// environment, working directory and exit status.
+static void ns_exec_linked(ns_str executable) {
+    if (!ns_file_exists(executable)) {
+        ns_exit(1, "run", "linked executable was not produced at %.*s.\n",
+                executable.len, executable.data);
+    }
+    fflush(NULL);
+#if defined(_WIN32)
+    STARTUPINFOA startup = {0};
+    PROCESS_INFORMATION process = {0};
+    startup.cb = sizeof(startup);
+    if (!CreateProcessA(executable.data, NULL, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process)) {
+        ns_exit(1, "run", "failed to launch linked executable %.*s.\n",
+                executable.len, executable.data);
+    }
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD status = 1;
+    GetExitCodeProcess(process.hProcess, &status);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    exit((i32)status);
+#else
+    pid_t pid = fork();
+    if (pid < 0) {
+        ns_exit(1, "run", "failed to launch linked executable %.*s.\n",
+                executable.len, executable.data);
+    }
+    if (pid == 0) {
+        execl(executable.data, executable.data, (char *)0);
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        ns_exit(1, "run", "failed while waiting for linked executable %.*s.\n",
+                executable.len, executable.data);
+    }
+    if (WIFEXITED(status)) exit(WEXITSTATUS(status));
+    if (WIFSIGNALED(status)) exit(128 + WTERMSIG(status));
+    exit(1);
+#endif
 }
 
 // `ns run [file.ns | target]`. A bare word naming a `[[targets]]` table of the
 // nearest project runs that target; otherwise the argument is a path, and no
 // argument at all runs the default target of the current directory.
-void ns_exec_run(ns_str argument, i32 port, ns_bool port_set) {
+void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link) {
     ns_str filename = argument;
     ns_str scope = ns_str_null;
     ns_str target_name = ns_str_null;
@@ -3861,6 +3955,11 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set) {
 #else
         setenv("NS_APP_ICON", icon.data, 1);
 #endif
+    }
+    if (honor_link && selection.link) {
+        ns_str executable = ns_linked_run_executable(filename, target_name);
+        ns_exec_linked(executable);
+        return;
     }
     ns_line_loc *map = ns_null;
     ns_str merged = ns_project_link_all(scope, source, filename, false, &map, ns_null);
@@ -4309,9 +4408,9 @@ i32 main(i32 argc, i8** argv) {
     if (option.profile_view) {
         ns_exec_profile_view(option.filename);
     } else if (option.profile_cmd) {
-        ns_exec_run(option.filename, option.port, option.port_set);
+        ns_exec_run(option.filename, option.port, option.port_set, false);
     } else if (option.run) {
-        ns_exec_run(option.filename, option.port, option.port_set);
+        ns_exec_run(option.filename, option.port, option.port_set, true);
     } else if (option.test) {
         ns_exec_test(option.filename);
     } else if (option.build) {

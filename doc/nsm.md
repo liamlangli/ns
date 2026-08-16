@@ -12,6 +12,8 @@ name = "example"
 version = "0.1.0"
 author = "Example Author <author@example.com>"
 type = "app"
+# Set true to make `ns run` build, link, and launch the native artifact.
+link = false
 # Optional browser target; omit for a native project.
 # target = "wasm"
 # Optional custom Wasm page with {{wasm}}, {{title}}, and {{favicon}} markers.
@@ -41,6 +43,9 @@ Running `ns run` with no file argument first checks for `ns.mod` in the current
 directory and executes the `entry` (or first of `entries`) it declares, resolved
 against the `source` dir. If the current directory has no `ns.mod`, it runs
 `main.ns` there instead. It reports an error only when neither file exists.
+By default the native entry is evaluated by the interpreter. Set `link = true`
+to make `ns run` use the incremental native build and launch its artifact
+instead. `link = false` and an omitted `link` keep the interpreted behavior.
 
 ### Targets
 
@@ -81,6 +86,7 @@ declared. A manifest that declares no `[[targets]]` keeps using its top-level
 | `shell`       | Custom Wasm HTML page; defaults to the top-level `shell`       |
 | `output`      | Artifact and display name; defaults to `name`                  |
 | `default`     | `true` marks the target `ns run` picks with no name            |
+| `link`        | Build and launch this native target from `ns run`              |
 | `exclude`     | Sources removed for this target only, added to the project `exclude` |
 
 Every target compiles the whole project source set minus the entries owned by
@@ -89,6 +95,8 @@ other module. A top-level `entry` declared beside `[[targets]]` is treated the
 same way: it is removed from the source set of any target that does not own it.
 The build artifact of a target is written to `bin/<name>` (or `bin/<output>`),
 so targets never overwrite each other.
+Like the other target settings, `link` inherits its top-level value; an
+explicit `link = false` on a target disables linking inherited from the project.
 
 `ns build` with no target name builds *every* declared target, each with its
 own `type`, so one manifest can ship a windowed app, a command-line tool and a
@@ -118,6 +126,9 @@ arguments are published as `NS_ARGC` plus `NS_ARG0`, `NS_ARG1`, ... and a
 script reads them with `os_env`. A leading `--` after the file is stripped, and
 `ns run -- arg...` runs the default target with only those program arguments.
 `ns` options such as `--port` belong before the file or target.
+`ns profile` always evaluates through the interpreter so it can collect VM and
+FFI scopes, even when the selected target sets `link = true`. Wasm targets keep
+their existing build-and-serve behavior regardless of `link`.
 
 Running `ns build` with no file argument compiles the current module into
 artifacts under `<module>/bin`: one per declared target, or a single artifact

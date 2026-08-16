@@ -38,7 +38,9 @@ The common commands are:
 - `ns run [file.ns | target] [args...]`: interpret an explicit native file;
   without an argument, use the current project's manifest entry and otherwise
   fall back to `main.ns`. A bare word naming a `[[targets]]` table of the
-  nearest `ns.mod` runs that target. Arguments after the file or target are
+  nearest `ns.mod` runs that target. A native project or target with
+  `link = true` instead uses the incremental build and launches its linked
+  artifact; omitted or false keeps interpretation. Arguments after the file or target are
   published as `NS_ARGC` and `NS_ARG0`, `NS_ARG1`, ... for the program to read
   through `os_env`. `ns` options such as `--port` belong before the file or
   target. A Wasm project builds and starts its loopback live-reload server.
@@ -80,7 +82,9 @@ The common commands are:
 - `ns --help`: show compiler targets and all current flags.
 
 The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
-`type`, optional `target`, `source`, `entry` (or `entries`), and `exclude`.
+`type`, optional `target`, `source`, `entry` (or `entries`), `exclude`, and
+`link`. `link = true` makes `ns run` build and launch a native artifact;
+omitting it or setting it false keeps the interpreter.
 `target = "wasm"` keeps `type = "app"` and makes `ns build` emit a browser
 bundle; its HTML title uses `name`, and its favicon uses `icon` or the installed
 default `ns.svg`. A browser project may set `shell` to a custom HTML file using
@@ -111,7 +115,8 @@ entry instead of a single top-level `entry`. `ns run <name>` and
 declared target. A target may override `type` (`app` for a host app bundle,
 `cli` for a plain executable, `library` for a static library),
 `platform` (`wasm`), `icon`, `shell`, `output` and add its own `exclude` list;
-anything it omits is inherited from the top-level key. Each target compiles the
+it may also override `link`; anything it omits is inherited from the top-level
+key. Each target compiles the
 whole project source set minus the entries owned by the other targets, so every
 target defines its own `main` and shares every other module, and each artifact
 is written to `bin/<name>`.
