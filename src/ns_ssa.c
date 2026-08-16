@@ -2,6 +2,7 @@
 #include "ns_os.h"
 #include "ns_vm.h"
 #include "ns_shader.h"
+#include "ns_profile.h"
 
 #ifdef NS_DEBUG
     #define NS_SSA_REF_PATH "lib"
@@ -20,6 +21,13 @@ typedef struct ns_ssa_global_const {
     ns_token_t token;
     ns_type type;
 } ns_ssa_global_const;
+
+typedef struct ns_ssa_shader_cache {
+    i32 fn_index;
+    ns_shader_target target;
+    ns_shader_stage stage;
+    ns_str source;
+} ns_ssa_shader_cache;
 
 typedef struct ns_ssa_loop_ctx {
     i32 break_block;
@@ -60,6 +68,7 @@ typedef struct ns_ssa_builder {
     i32 next_value;
     ns_ssa_binding *env;
     ns_ssa_global_const *globals;
+    ns_ssa_shader_cache *shader_cache;
     ns_str *import_seen;
     ns_ssa_loop_ctx *loops;
     i32 capture_env;
@@ -68,6 +77,26 @@ typedef struct ns_ssa_builder {
     ns_str *shader_only;
     ns_return_str fold_error;
 } ns_ssa_builder;
+
+static f64 ns_ssa_profile_begin(ns_str name, ns_str lib) {
+    if (!ns_profile.enabled) return 0.0;
+    f64 start_ms = ns_profile_now_ms();
+    ns_profile_scope_enter(name, lib);
+    return start_ms;
+}
+
+static void ns_ssa_profile_end(ns_str name, ns_str lib, f64 start_ms) {
+    if (!ns_profile.enabled || start_ms == 0.0) return;
+    ns_profile_record_scope(name, lib, 0, start_ms, ns_profile_now_ms() - start_ms);
+}
+
+static f64 ns_ssa_profile_phase_begin(const char *name) {
+    return ns_ssa_profile_begin(ns_str_cstr((i8 *)name), ns_str_cstr("compiler.ssa"));
+}
+
+static void ns_ssa_profile_phase_end(const char *name, f64 start_ms) {
+    ns_ssa_profile_end(ns_str_cstr((i8 *)name), ns_str_cstr("compiler.ssa"), start_ms);
+}
 
 #define NS_SSA_INST_INIT(kind, ast_i) ((ns_ssa_inst){ \
     .op = (kind), \
@@ -1044,12 +1073,11 @@ static ns_bool ns_ssa_const_from_value(ns_ssa_builder *b, ns_value value, ns_tok
     return true;
 }
 
-static void ns_ssa_seed_global_consts(ns_ssa_builder *b) {
+static ns_ssa_global_const *ns_ssa_find_global_const(ns_ssa_builder *b, ns_str name) {
     for (i32 i = 0, l = (i32)ns_array_length(b->globals); i < l; ++i) {
-        ns_ssa_global_const *g = &b->globals[i];
-        i32 value = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, g->type, g->token.val, g->token, -1);
-        ns_ssa_env_bind(b, g->name, value, g->type);
+        if (ns_str_equals(b->globals[i].name, name)) return &b->globals[i];
     }
+    return ns_null;
 }
 
 static void ns_ssa_collect_module_consts(ns_ssa_builder *b, ns_ast_ctx *ctx);
@@ -1175,6 +1203,11 @@ static i32 ns_ssa_lower_primary(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
                 return ns_ssa_load_ref(b, v, b->env[idx].type, i);
             }
             return v;
+        }
+        ns_ssa_global_const *constant = ns_ssa_find_global_const(b, token.val);
+        if (constant) {
+            return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, constant->type,
+                                     constant->token.val, constant->token, i);
         }
         i32 global = ns_ssa_global_index(b, token.val);
         if (global >= 0) {
@@ -1464,7 +1497,10 @@ static ns_return_bool ns_ssa_collect_shaders(ns_ssa_builder *b) {
             (!ns_str_is_empty(symbol->lib) && !ns_str_equals(symbol->lib, ns_str_cstr("main")))) continue;
         ns_shader_stage stage = ns_shader_stage_infer(b->vm, b->ctx, i);
         if (stage == NS_SHADER_STAGE_AUTO) continue;
+        ns_str profile_lib = ns_str_cstr("compiler.ssa.wgsl_shader");
+        f64 profile_start = ns_ssa_profile_begin(symbol->name, profile_lib);
         ns_return_str source = ns_shader_transpile(b->vm, b->ctx, i, NS_SHADER_WGSL, stage);
+        ns_ssa_profile_end(symbol->name, profile_lib, profile_start);
         if (ns_return_is_error(source)) return ns_return_change_type(bool, source);
         ns_ssa_shader shader = {.id = (u32)ns_array_length(b->m->shaders) + 1,
                                 .stage = stage, .name = symbol->name, .wgsl = source.r};
@@ -1534,13 +1570,17 @@ static ns_str ns_ssa_call_arg_token(ns_ssa_builder *b, ns_ast_t *n, i32 arg_inde
     return ns_ssa_unquote(arg->primary_expr.token.val);
 }
 
+static i32 ns_ssa_emit_str_const_value(ns_ssa_builder *b, ns_str text, i32 ast) {
+    return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, text,
+                             (ns_token_t){.type = NS_TOKEN_STR_LITERAL, .val = text}, ast);
+}
+
 static i32 ns_ssa_emit_str_const(ns_ssa_builder *b, ns_str text, i32 ast) {
     ns_str owned = ns_str_range(ns_malloc((szt)text.len + 1), text.len);
     if (text.len > 0 && text.data) memcpy(owned.data, text.data, (szt)text.len);
     owned.data[text.len] = 0;
     ns_array_push(b->m->owned_strings, owned);
-    return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, owned,
-                             (ns_token_t){.type = NS_TOKEN_STR_LITERAL, .val = owned}, ast);
+    return ns_ssa_emit_str_const_value(b, owned, ast);
 }
 
 // Fold shader_transpile / shader_transpile_stage / shader_entry when the first
@@ -1575,14 +1615,37 @@ static i32 ns_ssa_fold_shader_call(ns_ssa_builder *b, ns_ast_t *n, i32 ast,
     }
 
     ns_ast_ctx *fn_ctx = fn_sym->fn.ctx ? fn_sym->fn.ctx : b->ctx;
+    if (stage == NS_SHADER_STAGE_AUTO) {
+        ns_shader_stage inferred = ns_shader_stage_infer(b->vm, fn_ctx, fn_index);
+        if (inferred != NS_SHADER_STAGE_AUTO) stage = inferred;
+    }
+    for (i32 i = 0, l = (i32)ns_array_length(b->shader_cache); i < l; ++i) {
+        ns_ssa_shader_cache *cached = &b->shader_cache[i];
+        if (cached->fn_index == fn_index && cached->target == target && cached->stage == stage) {
+            return ns_ssa_emit_str_const_value(b, cached->source, ast);
+        }
+    }
+
+    ns_str profile_lib = ns_str_cstr("compiler.ssa.shader");
+    f64 profile_start = ns_ssa_profile_begin(fn_sym->name, profile_lib);
     ns_return_str src = ns_shader_transpile(b->vm, fn_ctx, fn_index, target, stage);
+    ns_ssa_profile_end(fn_sym->name, profile_lib, profile_start);
     if (ns_return_is_error(src)) {
         b->fold_error = src;
         return -1;
     }
-    i32 value = ns_ssa_emit_str_const(b, src.r, ast);
+    ns_str owned = ns_str_range(ns_malloc((szt)src.r.len + 1), src.r.len);
+    if (src.r.len > 0) memcpy(owned.data, src.r.data, (szt)src.r.len);
+    owned.data[src.r.len] = 0;
     ns_array_free(src.r.data);
-    return value;
+    ns_array_push(b->m->owned_strings, owned);
+    ns_array_push(b->shader_cache, ((ns_ssa_shader_cache){
+        .fn_index = fn_index,
+        .target = target,
+        .stage = stage,
+        .source = owned,
+    }));
+    return ns_ssa_emit_str_const_value(b, owned, ast);
 }
 
 static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
@@ -2890,6 +2953,8 @@ static ns_str ns_ssa_ensure_block_fn(ns_ssa_builder *b, i32 symbol_index) {
     ns_symbol *sym = &b->vm->symbols[symbol_index];
     ns_fn_symbol *fn = ns_symbol_get_fn(sym);
     if (!fn) return name;
+    ns_str profile_lib = ns_str_cstr("compiler.ssa.fn");
+    f64 profile_start = ns_ssa_profile_begin(name, profile_lib);
 
     i32 saved_fn = (i32)(b->fn ? (b->fn - b->m->fns) : -1);
     i32 saved_block = b->block;
@@ -2945,7 +3010,6 @@ static ns_str ns_ssa_ensure_block_fn(ns_ssa_builder *b, i32 symbol_index) {
         }
     }
 
-    ns_ssa_seed_global_consts(b);
     ns_ssa_lower_compound(b, fn->body);
     if (!b->fn->blocks[b->block].terminated) ns_ssa_emit_ret(b, -1, fn->body);
 
@@ -2960,6 +3024,7 @@ static ns_str ns_ssa_ensure_block_fn(ns_ssa_builder *b, i32 symbol_index) {
     b->next_value = saved_next;
     b->block = saved_block;
     b->fn = saved_fn >= 0 ? &b->m->fns[saved_fn] : ns_null;
+    ns_ssa_profile_end(name, profile_lib, profile_start);
     return name;
 }
 
@@ -3024,6 +3089,8 @@ static i32 ns_ssa_named_fn_value(ns_ssa_builder *b, ns_symbol *sym, i32 ast) {
 }
 
 static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i32 arg_head, i32 arg_count) {
+    ns_str profile_lib = ns_str_cstr("compiler.ssa.fn");
+    f64 profile_start = ns_ssa_profile_begin(name, profile_lib);
     ns_ssa_fn fn = {0};
     fn.name = name;
     fn.ast = ast;
@@ -3067,10 +3134,6 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
         if (definition->type == NS_AST_OP_FN_DEF && ai == 0) arg = definition->ops_fn_def.right;
         else arg = an->next;
     }
-    // Parameters must occupy Wasm locals 0..n-1. Seed module literals only
-    // after parameter values have been allocated.
-    ns_ssa_seed_global_consts(b);
-
     ns_ssa_lower_compound(b, body);
     if (!b->fn->blocks[b->block].terminated) {
         ns_ssa_emit_ret(b, -1, ast);
@@ -3080,6 +3143,7 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     ns_array_free(b->loops);
     b->env = NULL;
     b->loops = NULL;
+    ns_ssa_profile_end(name, profile_lib, profile_start);
 }
 
 static ns_bool ns_ssa_skip_imported_fn(ns_str name) {
@@ -3141,8 +3205,9 @@ static void ns_ssa_lower_imported_fns(ns_ssa_builder *b) {
     b->ctx = saved;
 }
 
-ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
-                                              ns_str lib_path, ns_str lib_fallback_path) {
+ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str ref_path,
+                                                      ns_str lib_path, ns_str lib_fallback_path,
+                                                      ns_bool embed_wasm_shaders) {
     if (ctx == NULL || ns_array_length(ctx->nodes) == 0) {
         return ns_return_error(ptr, ns_code_loc_nil, NS_ERR_SYNTAX, "ast ctx is empty");
     }
@@ -3163,7 +3228,9 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
     ns_vm_set_ref_path(&semantic_vm, ref_path);
     ns_vm_set_lib_path(&semantic_vm, lib_path);
     ns_vm_set_lib_fallback_path(&semantic_vm, lib_fallback_path);
+    f64 semantic_start = ns_ssa_profile_phase_begin("semantic_analysis");
     ns_return_bool semantic = ns_vm_parse(&semantic_vm, ctx);
+    ns_ssa_profile_phase_end("semantic_analysis", semantic_start);
     if (ns_return_is_error(semantic)) {
         ns_ssa_module_free(m);
         return ns_return_change_type(ptr, semantic);
@@ -3173,31 +3240,45 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
     // Evaluate only declared literals. Their semantic checker excludes calls
     // and mutable data, so this has no runtime side effects and turns constant
     // expressions into one canonical value for all native backends.
+    f64 literals_start = ns_ssa_profile_phase_begin("evaluate_literals");
     for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
         i32 s = ctx->sections[i];
         ns_ast_t *n = &ctx->nodes[s];
         if (n->type != NS_AST_VAR_DEF || !n->var_def.is_lit) continue;
         ns_return_value evaluated = ns_eval_var_def(&semantic_vm, ctx, s);
         if (ns_return_is_error(evaluated)) {
+            ns_ssa_profile_phase_end("evaluate_literals", literals_start);
             ns_ssa_module_free(m);
             return ns_return_change_type(ptr, evaluated);
         }
     }
+    ns_ssa_profile_phase_end("evaluate_literals", literals_start);
 
+    f64 metadata_start = ns_ssa_profile_phase_begin("collect_metadata");
     ns_ssa_collect_module_consts(&b, ctx);
     ns_ssa_collect_module_globals(&b);
     ns_ssa_collect_shader_only_fns(&b);
+    ns_ssa_profile_phase_end("collect_metadata", metadata_start);
+
+    f64 references_start = ns_ssa_profile_phase_begin("collect_references");
     for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
         ns_ssa_collect_ref_in(&b, ctx->sections[i]);
     }
-    ns_return_bool shaders = ns_ssa_collect_shaders(&b);
-    if (ns_return_is_error(shaders)) {
-        ns_ssa_module_free(m);
-        return ns_return_change_type(ptr, shaders);
+    ns_ssa_profile_phase_end("collect_references", references_start);
+
+    if (embed_wasm_shaders) {
+        f64 shaders_start = ns_ssa_profile_phase_begin("collect_shaders");
+        ns_return_bool shaders = ns_ssa_collect_shaders(&b);
+        ns_ssa_profile_phase_end("collect_shaders", shaders_start);
+        if (ns_return_is_error(shaders)) {
+            ns_ssa_module_free(m);
+            return ns_return_change_type(ptr, shaders);
+        }
     }
 
     ns_bool has_init = false;
     i32 init_ast = 0;
+    f64 functions_start = ns_ssa_profile_phase_begin("lower_functions");
     for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
         i32 s = ctx->sections[i];
         ns_ast_t *n = &ctx->nodes[s];
@@ -3218,8 +3299,10 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
             break;
         }
     }
+    ns_ssa_profile_phase_end("lower_functions", functions_start);
 
     if (has_init) {
+        f64 init_start = ns_ssa_profile_phase_begin("lower_module_init");
         ns_ssa_fn fn = {0};
         fn.name = ns_str_cstr("__module_init");
         fn.ast = init_ast;
@@ -3233,8 +3316,6 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
         b.loops = NULL;
         b.captures = NULL;
         b.capture_env = -1;
-        ns_ssa_seed_global_consts(&b);
-
         for (i32 i = ctx->section_begin; i < ctx->section_end; ++i) {
             i32 s = ctx->sections[i];
             ns_ast_t *n = &ctx->nodes[s];
@@ -3249,6 +3330,7 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
         }
         ns_array_free(b.env);
         ns_array_free(b.loops);
+        ns_ssa_profile_phase_end("lower_module_init", init_start);
     }
 
     if (ns_return_is_error(b.fold_error)) {
@@ -3256,18 +3338,26 @@ ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
         return ns_return_change_type(ptr, b.fold_error);
     }
 
+    f64 imports_start = ns_ssa_profile_phase_begin("lower_imported_functions");
     ns_ssa_lower_imported_fns(&b);
+    ns_ssa_profile_phase_end("lower_imported_functions", imports_start);
     if (ns_return_is_error(b.fold_error)) {
         ns_ssa_module_free(m);
         return ns_return_change_type(ptr, b.fold_error);
     }
 
     ns_array_free(b.globals);
+    ns_array_free(b.shader_cache);
     ns_array_free(b.import_seen);
     ns_array_free(b.ref_names);
     ns_array_free(b.shader_only);
 
     return ns_return_ok(ptr, m);
+}
+
+ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
+                                              ns_str lib_path, ns_str lib_fallback_path) {
+    return ns_ssa_build_with_runtime_paths_options(ctx, ref_path, lib_path, lib_fallback_path, true);
 }
 
 ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx) {

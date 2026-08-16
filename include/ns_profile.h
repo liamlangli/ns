@@ -17,8 +17,8 @@
 // ring capacity drop the oldest samples so a long interactive session still
 // has a recent window to inspect.
 
-#define NS_PROFILE_MAX_FNS 1024
-#define NS_PROFILE_FN_HASH 2048
+#define NS_PROFILE_MAX_FNS 4096
+#define NS_PROFILE_FN_HASH 8192
 #define NS_PROFILE_MAX_EVENTS 65536
 #define NS_PROFILE_MAX_STACK 128
 #define NS_PROFILE_MAX_FLAME 4096

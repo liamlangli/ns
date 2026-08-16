@@ -133,5 +133,8 @@ void ns_ssa_phi_set_incoming(ns_ssa_inst *phi, i32 pred, i32 value);
 ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx);
 ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
                                               ns_str lib_path, ns_str lib_fallback_path);
+ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str ref_path,
+                                                      ns_str lib_path, ns_str lib_fallback_path,
+                                                      ns_bool embed_wasm_shaders);
 void ns_ssa_print(ns_ssa_module *m);
 void ns_ssa_module_free(ns_ssa_module *m);

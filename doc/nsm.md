@@ -138,16 +138,24 @@ produces a host app bundle, `type = "cli"` a plain executable, and
 project uses that project's recursive source set. A file outside a project is
 built as a standalone script and may link local sibling modules it imports. Use
 `-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact
-kind.
+kind. Independent native targets build concurrently, bounded by the host's
+logical CPU count. Browser targets and targets that resolve to the same
+artifact stay serial because they share generated output. Profiled builds also
+stay serial so their nested compiler timeline remains complete.
 
-Add `--profile` to a build to write `ns.profile` and print a hot-path summary
+Add `--profile` to a build to write `bin/ns.profile` and print a hot-path summary
 for input resolution, cache validation, source linking, parsing, SSA lowering,
 artifact emission, system linking, and packaging. The phases use the
 `compiler::` prefix in the existing profile tables, timeline, and flamegraph,
-so `ns profiler` opens build profiles as well as runtime profiles. Use
+so `ns profiler` opens build profiles as well as runtime profiles. With no
+file argument, the viewer prefers `bin/ns.profile` and falls back to
+`ns.profile`. Use
 `ns build --profile --force` to measure a full compilation; without `--force`,
 an up-to-date build intentionally profiles only target resolution and cache
-validation.
+validation. SSA lowering expands into `compiler.ssa::` semantic, literal,
+metadata, reference, shader, function, module-init, and imported-function
+phases. Each lowered function and transpiled shader is also recorded under
+`compiler.ssa.fn::` and `compiler.ssa.shader::` respectively.
 
 A build records every input it reads under `bin/.ns-build/<artifact>.cache`
 with that input's last modify time, size, and content hash. The next build
@@ -160,8 +168,8 @@ executable itself, along with the artifact kind, host target, and output path.
 `--force` skips the check and compiles unconditionally.
 
 `ns clean [path]` removes what builds generate for the nearest project: the
-`bin/` directory, including generated IDE projects and the build cache, and
-`ns.profile` beside the manifest.
+`bin/` directory, including generated IDE projects, the build cache, and the
+build profile, plus legacy `ns.profile` beside the manifest.
 
 For a browser project, keep `type = "app"` and set `target = "wasm"` (or
 `platform = "wasm"` on one `[[targets]]` table).

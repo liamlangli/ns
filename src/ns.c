@@ -19,6 +19,7 @@
 #include <direct.h>
 #else
 #include <dirent.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -40,6 +41,11 @@ static ns_return_ptr ns_ssa_build_for_cli(ns_ast_ctx *ast) {
     return ns_ssa_build_with_runtime_paths(ast, vm.ref_path, vm.lib_path, vm.lib_fallback_path);
 }
 
+static ns_return_ptr ns_ssa_build_native_for_cli(ns_ast_ctx *ast) {
+    return ns_ssa_build_with_runtime_paths_options(ast, vm.ref_path, vm.lib_path,
+                                                   vm.lib_fallback_path, false);
+}
+
 typedef struct ns_compile_option_t {
     ns_bool tokenize_only: 2;
     ns_bool ast_only: 2;
@@ -52,7 +58,7 @@ typedef struct ns_compile_option_t {
     ns_bool symbol_only: 2;
     ns_bool show_version: 2;
     ns_bool show_help: 2;
-    ns_bool profile: 2; // write ns.profile and print a colored hot-path summary
+    ns_bool profile: 2; // write a profile and print a colored hot-path summary
     ns_bool profile_cmd: 2; // `ns profile [path]` - CLI run with profiling
     ns_bool profile_view: 2; // `ns profiler [file]` - open the GUI viewer
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
@@ -212,7 +218,8 @@ void ns_help() {
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
-    printf("  --profile         profile execution or build phases; write ns.profile and print a hot-path summary\n");
+    printf("  --profile         profile execution or build phases; builds write bin/ns.profile\n");
+    printf("                    and print a hot-path summary\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
@@ -252,15 +259,17 @@ static i32 ns_profile_argc = 0;
 static i8 **ns_profile_argv = ns_null;
 static ns_bool ns_profile_registered = false;
 static ns_bool ns_profile_written = false;
+static ns_str ns_profile_output_path = {0};
 
 static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
     if (ns_profile_written) return;
     ns_profile_written = true;
 
     f64 elapsed_ms = ns_profile_now_ms() - start_ms;
-    FILE *f = fopen("ns.profile", "w");
+    const char *path = ns_profile_output_path.data ? ns_profile_output_path.data : "ns.profile";
+    FILE *f = fopen(path, "w");
     if (!f) {
-        ns_warn("profile", "failed to write ns.profile.\n");
+        ns_warn("profile", "failed to write %s.\n", path);
         return;
     }
     ns_profile_write_text(f, elapsed_ms, argc, argv);
@@ -268,8 +277,9 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
 
     f64 ffi_ms = ns_profile.ffi_total_ms;
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
-    ns_info("profile", "wrote ns.profile (%.3f ms total, %llu scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
-            elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
+    ns_info("profile", "wrote %s (%.3f ms total, %llu scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
+            path, elapsed_ms, (unsigned long long)ns_profile.scope_calls,
+            (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
     ns_profile_print_summary(stdout, elapsed_ms);
 }
 
@@ -379,7 +389,7 @@ void ns_exec_aarch(ns_str filename) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_native_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -410,7 +420,7 @@ void ns_exec_macho(ns_str filename, ns_str output) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_native_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -436,7 +446,7 @@ void ns_exec_macho_object(ns_str filename, ns_str output) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_native_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -488,7 +498,7 @@ void ns_exec_pe(ns_str filename, ns_str output) {
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
 
-    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_native_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
@@ -1673,6 +1683,15 @@ static void ns_build_ensure_output_dir(ns_str output) {
     ns_str_free(dir);
 }
 
+static void ns_profile_set_build_output(ns_str scope) {
+    if (!ns_profile.enabled) return;
+    ns_str bin = ns_path_join(scope, ns_str_cstr("bin"));
+    ns_mkdir_p(bin);
+    ns_str_free(ns_profile_output_path);
+    ns_profile_output_path = ns_path_join(bin, ns_str_cstr("ns.profile"));
+    ns_str_free(bin);
+}
+
 static void ns_write_text_file(ns_str path, ns_str text) {
     FILE *file = fopen(path.data, "wb");
     if (!file) ns_exit(1, "build", "failed to write %.*s.\n", path.len, path.data);
@@ -1868,7 +1887,8 @@ static void ns_archive_object(ns_str output, ns_str object) {
     remove(object.data);
 }
 
-static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, ns_line_loc *line_map) {
+static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, ns_line_loc *line_map,
+                                               ns_bool embed_wasm_shaders) {
     ctx.line_map = line_map;
     f64 parse_start = ns_build_profile_begin("parse");
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
@@ -1876,7 +1896,8 @@ static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, n
     ns_build_profile_end("parse", parse_start);
 
     f64 ssa_start = ns_build_profile_begin("lower_ssa");
-    ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
+    ns_return_ptr ssa_ret = ns_ssa_build_with_runtime_paths_options(
+        &ctx, vm.ref_path, vm.lib_path, vm.lib_fallback_path, embed_wasm_shaders);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_build_profile_end("lower_ssa", ssa_start);
     return ssa_ret.r;
@@ -1925,7 +1946,7 @@ static ns_ssa_module *ns_compile_build_input(ns_build_input *in, ns_build_cache 
     for (i32 i = 0, l = (i32)ns_array_length(external); i < l; i++) ns_str_free(external[i]);
     ns_array_free(external);
     ns_build_profile_end("track_dependencies", dependency_start);
-    return ns_compile_source_to_ssa(merged, in->filename, map);
+    return ns_compile_source_to_ssa(merged, in->filename, map, ns_build_target_is_wasm(in->target));
 }
 
 // Resolve what a build compiles. `target_name` selects one `[[targets]]` table
@@ -2451,6 +2472,24 @@ static ns_str ns_native_rt_c_path(void) {
     return ns_path_join(root, ns_str_cstr("share/ns-runtime/src/ns_native_rt.c"));
 }
 
+static ns_str ns_native_rt_object_path(void) {
+    ns_str exe = ns_project_current_executable();
+    if (exe.data == ns_null) return ns_str_null;
+    ns_str bin = ns_path_dirname_safe(exe);
+    ns_str root = ns_path_parent(bin);
+    ns_str object = ns_path_join(bin, ns_str_cstr("ns_native_rt.o"));
+    if (!ns_file_exists(object)) {
+        ns_str_free(object);
+        ns_str lib = ns_path_join(root, ns_str_cstr("lib"));
+        object = ns_path_join(lib, ns_str_cstr("ns_native_rt.o"));
+        ns_str_free(lib);
+    }
+    ns_str_free(exe);
+    ns_str_free(bin);
+    ns_str_free(root);
+    return object;
+}
+
 static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
     FILE *f = fopen(path.data, "w");
     if (!f) ns_exit(1, "build", "failed to write runtime string table %.*s.\n", path.len, path.data);
@@ -2508,6 +2547,7 @@ static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executabl
     if (rt_path.data == ns_null || !ns_file_exists(rt_path)) {
         ns_exit(1, "build", "cannot find ns_native_rt.c next to the ns toolchain.\n");
     }
+    ns_str rt_object = ns_native_rt_object_path();
     ns_str strtab_path = ns_str_concat(executable_path, ns_str_cstr(".strtab.c"));
     ns_build_write_strtab_c(ssa, strtab_path);
 
@@ -2516,6 +2556,7 @@ static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executabl
     ns_str q_object = ns_shell_quote(object_path);
     ns_str q_executable = ns_shell_quote(executable_path);
     ns_str q_rt = ns_shell_quote(rt_path);
+    ns_str q_rt_object = ns_shell_quote(rt_object);
     ns_str q_strtab = ns_shell_quote(strtab_path);
     ns_str q_inc = ns_shell_quote(inc_dir);
     ns_str cmd = ns_str_null;
@@ -2524,7 +2565,7 @@ static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executabl
     ns_str_append_cstr(&cmd, " ");
     ns_str_append(&cmd, q_object);
     ns_str_append_cstr(&cmd, " ");
-    ns_str_append(&cmd, q_rt);
+    ns_str_append(&cmd, ns_file_exists(rt_object) ? q_rt_object : q_rt);
     ns_str_append_cstr(&cmd, " ");
     ns_str_append(&cmd, q_strtab);
 
@@ -2604,11 +2645,13 @@ static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executabl
     remove(strtab_path.data);
     ns_str_free(object_path);
     ns_str_free(rt_path);
+    ns_str_free(rt_object);
     ns_str_free(strtab_path);
     ns_str_free(inc_dir);
     ns_str_free(q_object);
     ns_str_free(q_executable);
     ns_str_free(q_rt);
+    ns_str_free(q_rt_object);
     ns_str_free(q_strtab);
     ns_str_free(q_inc);
     ns_str_free(cmd);
@@ -3002,6 +3045,7 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     f64 resolve_start = ns_build_profile_begin("resolve_input");
     ns_build_input in = ns_build_input_resolve(path, target_name);
     ns_build_profile_end("resolve_input", resolve_start);
+    ns_profile_set_build_output(in.scope);
     if (in.target.len > 0 && !ns_build_target_is_wasm(in.target)) {
         ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
                 in.target.len, in.target.data);
@@ -3053,6 +3097,97 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_build_profile_end("build_target", target_start);
 }
 
+#if !defined(_WIN32)
+static ns_bool ns_build_targets_can_parallel(ns_str project, ns_str *names, i32 count,
+                                             u8 requested_kind) {
+    ns_str *artifacts = ns_null;
+    ns_bool safe = true;
+    for (i32 i = 0; i < count && safe; ++i) {
+        ns_manifest_selection sel = ns_manifest_select(project, names[i]);
+        ns_build_input in = {
+            .scope = project,
+            .name = sel.name,
+            .module_type = sel.type,
+            .target = sel.platform,
+            .has_manifest = true,
+        };
+        if (ns_build_target_is_wasm(in.target)) {
+            // Browser targets package shared index/runtime files in the same
+            // bin directory even though their .wasm names differ.
+            safe = false;
+        } else {
+            ns_build_kind kind = ns_build_resolve_kind(&in, requested_kind);
+            ns_asm_target target;
+            ns_asm_get_current_target(&target);
+            if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) kind = NS_BUILD_EXE;
+            ns_str output = ns_build_default_output(&in, kind);
+            ns_str artifact = ns_build_artifact_path(kind, output);
+            for (i32 previous = 0, n = (i32)ns_array_length(artifacts); previous < n; ++previous) {
+                if (ns_str_equals(artifacts[previous], artifact)) safe = false;
+            }
+            ns_array_push(artifacts, artifact);
+            ns_str_free(output);
+        }
+        ns_str_free(sel.target_name);
+        ns_str_free(sel.entry_file);
+        ns_str_free(sel.name);
+        ns_str_free(sel.type);
+        ns_str_free(sel.platform);
+        ns_str_free(sel.icon);
+        ns_str_free(sel.shell);
+    }
+    for (i32 i = 0, n = (i32)ns_array_length(artifacts); i < n; ++i) ns_str_free(artifacts[i]);
+    ns_array_free(artifacts);
+    return safe;
+}
+
+// Build manifest targets in isolated processes. Compilation still owns a few
+// CLI-lifetime contexts, while targets share no artifacts or cache files, so
+// processes let independent targets saturate the host without putting locks
+// through the parser and SSA builder. Profiling stays serial because its open
+// scope stack is process-local and must describe one complete nested timeline.
+static void ns_exec_build_targets_parallel(ns_str project, ns_str *names, i32 count,
+                                           u8 requested_kind, ns_bool force) {
+    long online = sysconf(_SC_NPROCESSORS_ONLN);
+    i32 workers = online > 0 && online < count ? (i32)online : count;
+    i32 next = 0;
+    i32 active = 0;
+    ns_bool failed = false;
+    fflush(ns_null);
+
+    while (next < count || active > 0) {
+        while (next < count && active < workers) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                ns_exec_build_target(project, ns_str_null, requested_kind, force, names[next]);
+                fflush(ns_null);
+                _exit(0);
+            }
+            if (pid < 0) {
+                // Resource pressure should cost parallelism, not make a valid
+                // build fail. Finish this target in the parent and keep going.
+                ns_exec_build_target(project, ns_str_null, requested_kind, force, names[next]);
+            } else {
+                active++;
+            }
+            next++;
+        }
+
+        if (active > 0) {
+            i32 status = 0;
+            pid_t done;
+            do {
+                done = wait(&status);
+            } while (done < 0 && errno == EINTR);
+            if (done < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) failed = true;
+            active--;
+        }
+    }
+
+    if (failed) ns_exit(1, "build", "one or more targets failed.\n");
+}
+#endif
+
 // `ns build [path|target]`. A target name builds that target alone; a project
 // (an explicit directory, or none at all) builds every target it declares, so
 // each one emits its own artifact kind under `bin/`.
@@ -3074,6 +3209,15 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind, ns_bool force)
         ns_exit(1, "build", "-o takes a single target; %.*s declares %d. Name one, or drop -o.\n",
                 project.len, project.data, count);
     }
+#if !defined(_WIN32)
+    if (count > 1 && !ns_profile.enabled &&
+        ns_build_targets_can_parallel(project, names, count, requested_kind)) {
+        ns_exec_build_targets_parallel(project, names, count, requested_kind, force);
+        for (i32 i = 0; i < count; i++) ns_str_free(names[i]);
+        ns_array_free(names);
+        return;
+    }
+#endif
     for (i32 i = 0; i < count; i++) {
         ns_exec_build_target(project, output, requested_kind, force, names[i]);
         ns_str_free(names[i]);
@@ -3094,9 +3238,9 @@ static ns_str ns_project_absolute_path(ns_str path) {
 }
 
 // Everything `ns` generates for a project: the bin/ output directory, which
-// also holds generated IDE projects and the build cache, and the profile
-// written beside the manifest. This is the `bin`/`ns.profile` part of the
-// scaffolded .gitignore; source and user files are never touched.
+// also holds generated IDE projects, the build cache, and build profiles, plus
+// the old profile location beside the manifest. Source and user files are
+// never touched.
 // `ns.profile.json` is leftover Chrome-trace output from older ns versions.
 static const char *ns_clean_generated[] = {"bin", "ns.profile", "ns.profile.json"};
 
@@ -3839,7 +3983,7 @@ static ns_bool ns_profile_launch_compiled(ns_str bundle) {
 }
 
 static void ns_exec_profile_view(ns_str filename) {
-    const char *path = "ns.profile";
+    const char *path = ns_file_exists(ns_str_cstr("bin/ns.profile")) ? "bin/ns.profile" : "ns.profile";
     char path_buf[1024];
     if (filename.len > 0) {
         i32 n = filename.len < (i32)sizeof(path_buf) - 1 ? filename.len : (i32)sizeof(path_buf) - 1;

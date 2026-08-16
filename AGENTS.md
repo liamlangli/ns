@@ -46,11 +46,13 @@ The common commands are:
   target. A Wasm project builds and starts its loopback live-reload server.
 - `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
   write `ns.profile`, then print a colored CLI hot-path summary of VM scopes
-  and FFI calls. `ns build --profile` instead records nested compiler phases,
-  including cache validation, source linking, parsing, SSA lowering, emission,
+  and FFI calls. `ns build --profile` instead writes `bin/ns.profile` and
+  records nested compiler phases, including cache validation, source linking,
+  parsing, SSA lowering, emission,
   system linking, and packaging; add `--force` to measure a full compilation.
-- `ns profiler [file]`: open the compiled native GUI viewer for `ns.profile`,
-  or for an explicit profile file. `make` / `make install` build that viewer
+- `ns profiler [file]`: open the compiled native GUI viewer for
+  `bin/ns.profile`, falling back to `ns.profile`, or open an explicit file.
+  `make` / `make install` build that viewer
   with `ns build nscode/profile`.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
@@ -70,9 +72,11 @@ The common commands are:
   not trigger a rebuild; an added, edited, or removed source, a changed
   manifest, asset, or installed module declaration, a different artifact kind
   or output path, and a rebuilt `ns` all do. `--force` compiles unconditionally.
+  Independent native manifest targets build concurrently up to the logical CPU
+  count. Browser targets, colliding outputs, and profiled builds stay serial.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the
   `bin/` output directory, which also holds generated IDE projects and the
-  build cache, and `ns.profile` beside the manifest. Source
+  build cache and build profile, plus legacy `ns.profile` beside the manifest. Source
   and other user files are never removed.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`.

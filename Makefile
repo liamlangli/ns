@@ -79,7 +79,7 @@ else
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -rdynamic -pthread
 endif
 
-NS_DEBUG_CFLAGS = -g -O0 $(NS_WARN_CFLAGS) -DNS_DEBUG
+NS_DEBUG_CFLAGS = -g -Og $(NS_WARN_CFLAGS) -DNS_DEBUG
 NS_RELEASE_CFLAGS = -Os $(NS_WARN_CFLAGS)
 
 ifeq ($(NS_DEBUG), 1)
@@ -94,6 +94,7 @@ NS_CFLAGS += $(NS_GPU_INC)
 
 NS_BINDIR = bin
 NS_AGENTS_HEADER = $(NS_BINDIR)/ns_agents_md.h
+NS_NATIVE_RT_OBJ = $(NS_BINDIR)/ns_native_rt.o
 NS_INC += -I$(NS_BINDIR)
 
 NS_LIB_SRCS = src/ns_fmt.c \
@@ -236,8 +237,11 @@ $(NS_AGENTS_HEADER): AGENTS.md | $(NS_DIRS)
 $(NS_ENTRY_OBJ): $(NS_ENTRY) $(NS_HEADERS) $(NS_AGENTS_HEADER) | $(NS_DIRS)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
-$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) | $(NS_BINDIR)
+$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(NS_NATIVE_RT_OBJ) | $(NS_BINDIR)
 	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
+
+$(NS_NATIVE_RT_OBJ): src/ns_native_rt.c include/ns_native_rt.h | $(NS_BINDIR)
+	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_RELEASE_CFLAGS)
 
 $(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c $(NS_HEADERS) | $(NS_DIRS)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
@@ -311,6 +315,7 @@ install: all
 	cp sample/ns.svg $(NS_INSTALL_ROOT)/ref/ns.svg
 	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
+	cp $(NS_NATIVE_RT_OBJ) $(NS_INSTALL_ROOT)/lib/ns_native_rt.o
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
 	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
 		lib/net.ns lib/dynamic.ns lib/compress.ns lib/storage.ns \

@@ -116,21 +116,22 @@ EOF
 
 cd "$tmp/build-profile"
 "$ns" build --profile --force > "$tmp/build-profile.txt"
-test -f "$tmp/build-profile/ns.profile"
+test -f "$tmp/build-profile/bin/ns.profile"
+test ! -e "$tmp/build-profile/ns.profile"
 test -f "$tmp/build-profile/bin/profile-build.wasm"
-grep -q 'compiler::build$' "$tmp/build-profile/ns.profile"
-grep -q 'compiler::check_cache$' "$tmp/build-profile/ns.profile"
-grep -q 'compiler::link_sources$' "$tmp/build-profile/ns.profile"
-grep -q 'compiler::parse$' "$tmp/build-profile/ns.profile"
-grep -q 'compiler::lower_ssa$' "$tmp/build-profile/ns.profile"
-grep -q 'compiler::emit_wasm$' "$tmp/build-profile/ns.profile"
-grep -q 'compiler::package_wasm$' "$tmp/build-profile/ns.profile"
-grep -q 'compiler::build;compiler::build_target;compiler::compile;compiler::parse' "$tmp/build-profile/ns.profile"
+grep -q 'compiler::build$' "$tmp/build-profile/bin/ns.profile"
+grep -q 'compiler::check_cache$' "$tmp/build-profile/bin/ns.profile"
+grep -q 'compiler::link_sources$' "$tmp/build-profile/bin/ns.profile"
+grep -q 'compiler::parse$' "$tmp/build-profile/bin/ns.profile"
+grep -q 'compiler::lower_ssa$' "$tmp/build-profile/bin/ns.profile"
+grep -q 'compiler::emit_wasm$' "$tmp/build-profile/bin/ns.profile"
+grep -q 'compiler::package_wasm$' "$tmp/build-profile/bin/ns.profile"
+grep -q 'compiler::build;compiler::build_target;compiler::compile;compiler::parse' "$tmp/build-profile/bin/ns.profile"
 
 # An up-to-date build still profiles cache validation and skips compilation.
 "$ns" build --profile > "$tmp/build-profile-cache.txt"
-grep -q 'compiler::check_cache$' "$tmp/build-profile/ns.profile"
-if grep -q 'compiler::parse$' "$tmp/build-profile/ns.profile"; then
+grep -q 'compiler::check_cache$' "$tmp/build-profile/bin/ns.profile"
+if grep -q 'compiler::parse$' "$tmp/build-profile/bin/ns.profile"; then
     printf '%s\n' 'FAIL: cached ns build --profile unexpectedly compiled sources.' >&2
     exit 1
 fi

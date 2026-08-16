@@ -7,6 +7,7 @@ int main(void) {
     const char *source =
         "use std\n"
         "lit folded = 6 * 7\n"
+        "lit unused = 99\n"
         "enum byte_code: u8 { zero = 0, one, }\n"
         "enum wide_mask: u64 { none = 0, all = 18446744073709551615, }\n"
         "fn byte_value() u8 { return byte_code.one }\n"
@@ -19,6 +20,7 @@ int main(void) {
         "fn half(x: f64) f64 { return x / 2.0d }\n"
         "fn float_value() f64 { return half(5.0d) + 0.25d }\n"
         "fn portable_sin() f64 { return sin(0.0d) }\n"
+        "fn folded_value() i32 { return folded }\n"
         "fn main() i32 {\n"
         "    let byte_restored = byte_value() as byte_code\n"
         "    let wide_restored = wide_value() as wide_mask\n"
@@ -40,6 +42,7 @@ int main(void) {
     ns_bool byte_cast = false;
     ns_bool wide_cast = false;
     ns_bool folded_lit = false;
+    ns_bool unused_lit = false;
     for (i32 fi = 0, fl = (i32)ns_array_length(module->fns); fi < fl; ++fi) {
         ns_ssa_fn *fn = &module->fns[fi];
         for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
@@ -52,11 +55,14 @@ int main(void) {
             if (inst->op == NS_SSA_OP_CAST && ns_type_is(inst->type, NS_TYPE_U64)) wide_cast = true;
             if (inst->op == NS_SSA_OP_CONST && ns_type_is(inst->type, NS_TYPE_I32) &&
                 ns_str_equals(inst->name, ns_str_cstr("42"))) folded_lit = true;
+            if (inst->op == NS_SSA_OP_CONST && ns_type_is(inst->type, NS_TYPE_I32) &&
+                ns_str_equals(inst->name, ns_str_cstr("99"))) unused_lit = true;
         }
     }
     ns_expect(byte_constant && wide_constant, "enum members lower to exact u8 and u64 SSA constants.");
     ns_expect(byte_cast && wide_cast, "integer-to-enum casts lower to their underlying SSA types.");
     ns_expect(folded_lit, "a global lit constant expression is folded into an SSA constant.");
+    ns_expect(!unused_lit, "an unused global lit does not add an SSA constant to every function.");
 
     ns_str output = ns_str_cstr("/tmp/ns_ssa_enum_test.wasm");
     ns_return_bool emitted = ns_wasm_emit(module, output);
@@ -74,5 +80,30 @@ int main(void) {
     ns_str_free(wasm);
     remove(output.data);
     ns_ssa_module_free(module);
+
+    const char *shader_source =
+        "use shader\n"
+        "fn cs_fill() void { let x = shader_global_id_x() }\n"
+        "fn main() {}\n";
+    ns_ast_ctx shader_ctx = {0};
+    parsed = ns_ast_parse(&shader_ctx, ns_str_cstr((i8 *)shader_source), ns_str_cstr("<ns_ssa_shader_test>"));
+    ns_expect(!ns_return_is_error(parsed) && parsed.r, "shader metadata source parses.");
+    built = ns_ssa_build(&shader_ctx);
+    ns_expect(!ns_return_is_error(built), "default SSA lowering embeds Wasm shader metadata.");
+    if (!ns_return_is_error(built)) {
+        module = built.r;
+        ns_expect(ns_array_length(module->shaders) == 1, "default SSA contains the compute shader WGSL.");
+        ns_ssa_module_free(module);
+    }
+
+    ns_ast_ctx native_ctx = {0};
+    parsed = ns_ast_parse(&native_ctx, ns_str_cstr((i8 *)shader_source), ns_str_cstr("<ns_ssa_native_shader_test>"));
+    built = ns_ssa_build_with_runtime_paths_options(&native_ctx, ns_str_null, ns_str_null, ns_str_null, false);
+    ns_expect(!ns_return_is_error(built), "native SSA lowering skips Wasm shader metadata.");
+    if (!ns_return_is_error(built)) {
+        module = built.r;
+        ns_expect(ns_array_length(module->shaders) == 0, "native SSA contains no unused WGSL shader payload.");
+        ns_ssa_module_free(module);
+    }
     return 0;
 }
