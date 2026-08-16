@@ -101,6 +101,11 @@ feature library by `lib/Makefile`. Run `make zlib`, `make zstd`, or
 produce and install `compress.dylib` on macOS or `compress.so` on Linux/Windows,
 and need only the C runtime.
 
+Generated Apple IDE apps compile the adapter and pinned Zstandard sources
+directly into their macOS, iOS, and visionOS targets. Those targets use the
+platform `libz` for raw deflate, zlib, gzip, and checksums, while preserving the
+same Nano Script API and status codes.
+
 Two build settings are worth knowing about. zlib is compiled with `Z_PREFIX`, so
 its entry points are renamed to `z_*` and the statically linked copy cannot
 collide with a system libz that is already in the process — the module is opened

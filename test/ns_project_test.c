@@ -104,8 +104,9 @@ int main(void) {
     path(app_asset_file, app_root, "assets/project-asset.txt");
     ns_expect(mkdir(app_assets, 0755) == 0 && append_text(app_asset_file, "bundled\n"),
               "project test creates a project asset fixture.");
-    ns_project_spec app = app_spec(app_root, runtime,
-                                   "use std\nuse task\nuse net\nfn main() { print(`generated`) }\n");
+    ns_project_spec app = app_spec(
+        app_root, runtime,
+        "use std\nuse task\nuse net\nuse storage\nuse compress\nfn main() { print(`generated`) }\n");
 #if defined(__APPLE__)
     char app_icon_source[PATH_MAX];
     path(app_icon_source, runtime, "lib/assets/latin_mono.png");
@@ -118,6 +119,8 @@ int main(void) {
     char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX], bridge_header[PATH_MAX];
     char view_osx[PATH_MAX], view_ios[PATH_MAX], os_ios[PATH_MAX], gpu_metal[PATH_MAX], ui_native[PATH_MAX], net_native[PATH_MAX];
     char storage_db[PATH_MAX], storage_apple[PATH_MAX], storage_module[PATH_MAX];
+    char compress_native[PATH_MAX], compress_header[PATH_MAX], compress_module[PATH_MAX];
+    char zstd_compress[PATH_MAX], zstd_header[PATH_MAX];
     char task_module[PATH_MAX], net_module[PATH_MAX], ui_asset[PATH_MAX], bitmap_asset[PATH_MAX], ios_plist[PATH_MAX];
     char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX];
     char vision_middle_image[PATH_MAX], vision_back_image[PATH_MAX];
@@ -136,6 +139,11 @@ int main(void) {
     path(storage_db, app_root, "bin/demo-app.nsproject/Native/src/storage.db.c");
     path(storage_apple, app_root, "bin/demo-app.nsproject/Native/src/storage.apple.m");
     path(storage_module, app_root, "bin/demo-app.nsproject/Resources/storage.ns");
+    path(compress_native, app_root, "bin/demo-app.nsproject/Native/src/compress.c");
+    path(compress_header, app_root, "bin/demo-app.nsproject/Native/include/compress.h");
+    path(compress_module, app_root, "bin/demo-app.nsproject/Resources/compress.ns");
+    path(zstd_compress, app_root, "bin/demo-app.nsproject/Native/src/zstd/compress/zstd_compress.c");
+    path(zstd_header, app_root, "bin/demo-app.nsproject/Native/include/zstd/zstd.h");
     path(task_module, app_root, "bin/demo-app.nsproject/Resources/task.ns");
     path(net_module, app_root, "bin/demo-app.nsproject/Resources/net.ns");
     path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
@@ -167,7 +175,7 @@ int main(void) {
                   text_has(pbx, "Native/src/ui.c") && text_has(pbx, "Native/src/net.c"),
               "Xcode native targets compile the embedded view, UI, OS, and network forwarders.");
     ns_expect(text_has(pbx, "4E5350520000002800000007 /* simd.ns */") &&
-                  text_has(pbx, "4E5350520000002800000038 /* net.ns */") &&
+                  text_has(pbx, "4E535052000000280000004C /* net.ns */") &&
                   !text_has(pbx, "4E5350520000002800000007 /* net.ns */"),
               "Xcode runtime modules use distinct file-reference IDs.");
     ns_expect(access(view_ios, R_OK) == 0 && access(os_ios, R_OK) == 0 && access(gpu_metal, R_OK) == 0 &&
@@ -176,6 +184,11 @@ int main(void) {
     ns_expect(access(storage_db, R_OK) == 0 && access(storage_apple, R_OK) == 0 && access(storage_module, R_OK) == 0 &&
                   text_has(pbx, "storage.ns in Resources") && text_has(pbx, "-lsqlite3"),
               "Xcode app targets embed UserDefaults KV storage and platform SQLite.");
+    ns_expect(access(compress_native, R_OK) == 0 && access(compress_header, R_OK) == 0 &&
+                  access(compress_module, R_OK) == 0 && access(zstd_compress, R_OK) == 0 &&
+                  access(zstd_header, R_OK) == 0 && text_has(pbx, "compress.ns in Resources") &&
+                  text_has(pbx, "zstd/compress/zstd_compress.c in Sources") && text_has(pbx, "-lz"),
+              "Xcode app targets embed compression and the pinned portable Zstandard sources.");
     ns_expect(access(task_module, R_OK) == 0 && access(net_module, R_OK) == 0 &&
                   text_has(pbx, "task.ns in Resources") && text_has(pbx, "net.ns in Resources"),
               "Xcode app targets bundle the task and network module declarations.");
@@ -242,9 +255,10 @@ int main(void) {
     ns_expect(text_has(xgenerated, "NS_EXECUTABLE = /tmp/ns\\ tools/bin/ns") &&
                   !text_has(xgenerated, "NS_EXECUTABLE = \""),
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
-    ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") &&
+    ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && text_has(xgenerated, "ZSTD_DISABLE_ASM=1") &&
+                  text_has(xgenerated, "Native/include/zstd") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 9"),
+                  text_has(pbx, "NSProjectGeneratorVersion = 10"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
@@ -281,8 +295,8 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 9;", "NSProjectGeneratorVersion = 9;",
-                                     "NSProjectGeneratorVersion = 8;"),
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 10;", "NSProjectGeneratorVersion = 10;",
+                                     "NSProjectGeneratorVersion = 9;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
     ns_expect(text_has(pbx, "DEVELOPMENT_TEAM = \"IOSDEBUG1\";") &&

@@ -135,11 +135,11 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_boo
                                strstr(text, "name = \"NS Build\";") && strstr(text, "name = \"NS Test\";") &&
                                !strstr(text, "isa = PBXNativeTarget;");
     ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
-                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 9;");
-    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 9;") &&
+                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 10;");
+    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 10;") &&
                                                ((expects_project_assets && !strstr(text, "Project Assets in Resources")) ||
                                                 (!expects_project_assets && strstr(text, "Project Assets in Resources")));
-    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 9;") &&
+    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 10;") &&
                                              ((expects_app_icon && !strstr(text, "App Icon Assets in Resources")) ||
                                               (!expects_app_icon && strstr(text, "App Icon Assets in Resources")));
     free(text);
@@ -604,6 +604,33 @@ static const char *const ns_xcode_feature_sources[] = {
     "ui.c",
     "storage.db.c",
     "storage.apple.m",
+    "compress.c",
+    "zstd/common/debug.c",
+    "zstd/common/entropy_common.c",
+    "zstd/common/error_private.c",
+    "zstd/common/fse_decompress.c",
+    "zstd/common/pool.c",
+    "zstd/common/threading.c",
+    "zstd/common/xxhash.c",
+    "zstd/common/zstd_common.c",
+    "zstd/compress/fse_compress.c",
+    "zstd/compress/hist.c",
+    "zstd/compress/huf_compress.c",
+    "zstd/compress/zstd_compress.c",
+    "zstd/compress/zstd_compress_literals.c",
+    "zstd/compress/zstd_compress_sequences.c",
+    "zstd/compress/zstd_compress_superblock.c",
+    "zstd/compress/zstd_double_fast.c",
+    "zstd/compress/zstd_fast.c",
+    "zstd/compress/zstd_lazy.c",
+    "zstd/compress/zstd_ldm.c",
+    "zstd/compress/zstd_opt.c",
+    "zstd/compress/zstd_preSplit.c",
+    "zstd/compress/zstdmt_compress.c",
+    "zstd/decompress/huf_decompress.c",
+    "zstd/decompress/zstd_ddict.c",
+    "zstd/decompress/zstd_decompress.c",
+    "zstd/decompress/zstd_decompress_block.c",
 };
 
 static const char *const ns_xcode_feature_headers[] = {
@@ -617,11 +644,49 @@ static const char *const ns_xcode_feature_headers[] = {
     "stb_image_write.h",
     "storage.h",
     "storage.internal.h",
+    "compress.h",
+    "zstd/zstd.h",
+    "zstd/zstd_errors.h",
+    "zstd/common/allocations.h",
+    "zstd/common/bits.h",
+    "zstd/common/bitstream.h",
+    "zstd/common/compiler.h",
+    "zstd/common/cpu.h",
+    "zstd/common/debug.h",
+    "zstd/common/error_private.h",
+    "zstd/common/fse.h",
+    "zstd/common/huf.h",
+    "zstd/common/mem.h",
+    "zstd/common/pool.h",
+    "zstd/common/portability_macros.h",
+    "zstd/common/threading.h",
+    "zstd/common/xxhash.h",
+    "zstd/common/zstd_deps.h",
+    "zstd/common/zstd_internal.h",
+    "zstd/common/zstd_trace.h",
+    "zstd/compress/clevels.h",
+    "zstd/compress/hist.h",
+    "zstd/compress/zstd_compress_internal.h",
+    "zstd/compress/zstd_compress_literals.h",
+    "zstd/compress/zstd_compress_sequences.h",
+    "zstd/compress/zstd_compress_superblock.h",
+    "zstd/compress/zstd_cwksp.h",
+    "zstd/compress/zstd_double_fast.h",
+    "zstd/compress/zstd_fast.h",
+    "zstd/compress/zstd_lazy.h",
+    "zstd/compress/zstd_ldm.h",
+    "zstd/compress/zstd_ldm_geartab.h",
+    "zstd/compress/zstd_opt.h",
+    "zstd/compress/zstd_preSplit.h",
+    "zstd/compress/zstdmt_compress.h",
+    "zstd/decompress/zstd_ddict.h",
+    "zstd/decompress/zstd_decompress_block.h",
+    "zstd/decompress/zstd_decompress_internal.h",
 };
 
 static const char *const ns_xcode_resource_modules[] = {
     "std.ns", "shader.ns", "simd.ns", "task.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns", "net.ns",
-    "storage.ns",
+    "storage.ns", "compress.ns",
 };
 
 static const char *const ns_xcode_ui_assets[] = {
@@ -655,11 +720,11 @@ static const size_t ns_xcode_ui_asset_count = sizeof(ns_xcode_ui_assets) / sizeo
 #define NS_XCODE_APP_ICON_FILE_ID 92u
 
 static unsigned ns_xcode_resource_file_id(size_t index) {
-    return index < 3 ? 5u + (unsigned)index : 50u + (unsigned)index - 3u;
+    return index < 3 ? 5u + (unsigned)index : 70u + (unsigned)index - 3u;
 }
 
 static unsigned ns_xcode_asset_file_id(size_t index) {
-    return 50u + (unsigned)ns_xcode_resource_module_count - 3u + (unsigned)index;
+    return 70u + (unsigned)ns_xcode_resource_module_count - 3u + (unsigned)index;
 }
 
 static ns_bool ns_xcode_copy_relative(const char *runtime_root, const char *managed_root, const char *from_dir,
@@ -708,6 +773,12 @@ static ns_bool ns_xcode_copy_feature(const char *runtime_root, const char *manag
         free(source_root);
         source_root = nested;
         source = source_root ? ns_xcode_path_join(source_root, name) : NULL;
+    }
+    if ((!source || !ns_xcode_file_exists(source)) && strncmp(name, "zstd/", 5) == 0) {
+        free(source_root);
+        free(source);
+        source_root = ns_xcode_path_join(runtime_root, "third_party/zstd/lib");
+        source = source_root ? ns_xcode_path_join(source_root, name + 5) : NULL;
     }
     char *destination_root = ns_xcode_path_join(managed_root, to_dir);
     char *destination = destination_root ? ns_xcode_path_join(destination_root, name) : NULL;
@@ -766,13 +837,14 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
             (len == 4 && strncmp(start, "simd", len) == 0) || (len == 4 && strncmp(start, "view", len) == 0) ||
             (len == 2 && strncmp(start, "ui", len) == 0) || (len == 2 && strncmp(start, "os", len) == 0) ||
             (len == 3 && strncmp(start, "gpu", len) == 0) || (len == 2 && strncmp(start, "io", len) == 0) ||
-            (len == 3 && strncmp(start, "net", len) == 0) || (len == 7 && strncmp(start, "storage", len) == 0)) {
+            (len == 3 && strncmp(start, "net", len) == 0) || (len == 7 && strncmp(start, "storage", len) == 0) ||
+            (len == 8 && strncmp(start, "compress", len) == 0)) {
             line = *end ? end + 1 : end;
             continue;
         }
         fprintf(stderr,
                 "project: module '%.*s' requires external FFI, which generated Apple apps do not support; "
-                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, and storage\n",
+                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, storage, and compress\n",
                 (int)len, start);
         return false;
     }
@@ -964,12 +1036,18 @@ static ns_bool ns_xcode_write_config(const ns_project_spec *spec, const char *ma
                                          "SWIFT_VERSION = 5.0\n"
                                          "CLANG_C_LANGUAGE_STANDARD = gnu17\n"
                                          "WARNING_CFLAGS = $(inherited) -Wno-shorten-64-to-32\n"
-                                         "GCC_PREPROCESSOR_DEFINITIONS = $(inherited) NS_XCLIB=1 NS_DARWIN=1\n"
+                                         "GCC_PREPROCESSOR_DEFINITIONS = $(inherited) NS_XCLIB=1 NS_DARWIN=1 "
+                                         "ZSTD_DISABLE_ASM=1 ZSTD_LEGACY_SUPPORT=0 XXH_NAMESPACE=ZSTD_\n"
                                          "HEADER_SEARCH_PATHS = $(inherited) \"$(SRCROOT)/%s.nsproject/Runtime/include\" "
                                          "\"$(SRCROOT)/%s.nsproject/Runtime/include/os\" "
-                                         "\"$(SRCROOT)/%s.nsproject/Native/include\"\n"
+                                         "\"$(SRCROOT)/%s.nsproject/Native/include\" "
+                                         "\"$(SRCROOT)/%s.nsproject/Native/include/zstd\" "
+                                         "\"$(SRCROOT)/%s.nsproject/Native/include/zstd/common\" "
+                                         "\"$(SRCROOT)/%s.nsproject/Native/include/zstd/compress\" "
+                                         "\"$(SRCROOT)/%s.nsproject/Native/include/zstd/decompress\"\n"
                                          "#include? \"NS.Local.xcconfig\"\n",
-                                         quoted_root, quoted_executable, safe_name, safe_name, safe_name, safe_name) &&
+                                         quoted_root, quoted_executable, safe_name, safe_name, safe_name, safe_name, safe_name,
+                                         safe_name, safe_name, safe_name) &&
                  ns_xcode_write(generated, contents.data, contents.len, true);
     static const char local_contents[] =
         "// User overrides for the generated NS Xcode project.\n"
@@ -1086,8 +1164,8 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
     char *escaped_safe = ns_xcode_escape(safe_name);
     char *escaped_team = ns_xcode_escape(development_team ? development_team : "");
     const char *frameworks = strcmp(platform, "macOS") == 0
-        ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-lsqlite3\")"
-        : "(\"$(inherited)\", \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit, \"-lsqlite3\")";
+        ? "(\"$(inherited)\", \"-framework\", AppKit, \"-framework\", CoreHaptics, \"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-lsqlite3\", \"-lz\")"
+        : "(\"$(inherited)\", \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, \"-framework\", UIKit, \"-lsqlite3\", \"-lz\")";
     ns_xcode_buffer plist_path = {0};
     ns_xcode_buffer bridge_path = {0};
     ns_bool ok = escaped_target && escaped_safe && escaped_team &&
@@ -1553,7 +1631,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
             "\t\t\t\tBuildIndependentTargetsInParallel = YES;\n"
             "\t\t\t\tLastSwiftUpdateCheck = 1600;\n"
             "\t\t\t\tLastUpgradeCheck = 1600;\n"
-            "\t\t\t\tNSProjectGeneratorVersion = 9;\n"
+            "\t\t\t\tNSProjectGeneratorVersion = 10;\n"
             "\t\t\t\tTargetAttributes = {\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"
