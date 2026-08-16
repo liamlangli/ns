@@ -94,3 +94,43 @@ test -f "$tmp/ns.profile"
 test ! -e "$tmp/ns.profile.json"
 grep -q '^format: ns-profile-v4$' "$tmp/ns.profile"
 grep -q 'main;mid;leaf' "$tmp/ns.profile"
+
+# A profiled build records compiler phases in the same report and viewer. Use
+# Wasm here so the coverage does not depend on a host linker or bundle format.
+mkdir -p "$tmp/build-profile/src"
+cat > "$tmp/build-profile/ns.mod" <<'EOF'
+schema = "ns.mod/v1"
+name = "profile-build"
+version = "0.1.0"
+type = "app"
+target = "wasm"
+source = "src"
+entry = "main.ns"
+EOF
+cat > "$tmp/build-profile/src/main.ns" <<'EOF'
+fn main() {
+    let answer = 40 + 2
+    assert answer == 42
+}
+EOF
+
+cd "$tmp/build-profile"
+"$ns" build --profile --force > "$tmp/build-profile.txt"
+test -f "$tmp/build-profile/ns.profile"
+test -f "$tmp/build-profile/bin/profile-build.wasm"
+grep -q 'compiler::build$' "$tmp/build-profile/ns.profile"
+grep -q 'compiler::check_cache$' "$tmp/build-profile/ns.profile"
+grep -q 'compiler::link_sources$' "$tmp/build-profile/ns.profile"
+grep -q 'compiler::parse$' "$tmp/build-profile/ns.profile"
+grep -q 'compiler::lower_ssa$' "$tmp/build-profile/ns.profile"
+grep -q 'compiler::emit_wasm$' "$tmp/build-profile/ns.profile"
+grep -q 'compiler::package_wasm$' "$tmp/build-profile/ns.profile"
+grep -q 'compiler::build;compiler::build_target;compiler::compile;compiler::parse' "$tmp/build-profile/ns.profile"
+
+# An up-to-date build still profiles cache validation and skips compilation.
+"$ns" build --profile > "$tmp/build-profile-cache.txt"
+grep -q 'compiler::check_cache$' "$tmp/build-profile/ns.profile"
+if grep -q 'compiler::parse$' "$tmp/build-profile/ns.profile"; then
+    printf '%s\n' 'FAIL: cached ns build --profile unexpectedly compiled sources.' >&2
+    exit 1
+fi

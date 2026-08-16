@@ -434,7 +434,7 @@ void ns_profile_print_summary(FILE *out, f64 elapsed_ms) {
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
     fprintf(out, "\n");
     fprintf(out, "profile  %.3f ms total\n", elapsed_ms);
-    fprintf(out, "  vm scopes   %llu   self %.3f ms\n", (unsigned long long)ns_profile.scope_calls, ns_profile.scope_self_ms);
+    fprintf(out, "  scopes      %llu   self %.3f ms\n", (unsigned long long)ns_profile.scope_calls, ns_profile.scope_self_ms);
     fprintf(out, "  ffi calls   %llu   %s%.3f ms / %.1f%%%s\n", (unsigned long long)ns_profile.ffi_calls,
             ns_profile_pct_color(ffi_pct), ffi_ms, ffi_pct, ns_color_nil);
     fprintf(out, "  timeline    %d events", ns_profile.event_count);

@@ -212,7 +212,7 @@ void ns_help() {
     printf("  -s --symbol       print symbol table\n");
     printf("  -v --version      show version\n");
     printf("  -h --help         show this help\n");
-    printf("  --profile         write ns.profile and print a hot-path summary\n");
+    printf("  --profile         profile execution or build phases; write ns.profile and print a hot-path summary\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
@@ -268,7 +268,7 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
 
     f64 ffi_ms = ns_profile.ffi_total_ms;
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
-    ns_info("profile", "wrote ns.profile (%.3f ms total, %llu vm scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
+    ns_info("profile", "wrote ns.profile (%.3f ms total, %llu scopes, %llu ffi calls, %.3f ms / %.1f%% in ffi)\n",
             elapsed_ms, (unsigned long long)ns_profile.scope_calls, (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
     ns_profile_print_summary(stdout, elapsed_ms);
 }
@@ -292,6 +292,22 @@ static void ns_profile_begin(i32 argc, i8 **argv) {
             ns_profile_registered = true;
         }
     }
+}
+
+// Build profiling uses the same nested scope model as interpreted functions,
+// with a module label that keeps compiler phases distinct in the tables and
+// viewer. Literal phase names remain valid until the report is written.
+static f64 ns_build_profile_begin(const char *name) {
+    if (!ns_profile.enabled) return 0.0;
+    f64 start_ms = ns_profile_now_ms();
+    ns_profile_scope_enter(ns_str_cstr((char *)name), ns_str_cstr("compiler"));
+    return start_ms;
+}
+
+static void ns_build_profile_end(const char *name, f64 start_ms) {
+    if (!ns_profile.enabled || start_ms == 0.0) return;
+    f64 elapsed_ms = ns_profile_now_ms() - start_ms;
+    ns_profile_record_scope(ns_str_cstr((char *)name), ns_str_cstr("compiler"), 0, start_ms, elapsed_ms);
 }
 
 static void ns_exec_profile_view(ns_str filename);
@@ -1842,7 +1858,9 @@ static void ns_archive_object(ns_str output, ns_str object) {
     ns_str_append_len(&cmd, q_object.data, q_object.len);
     ns_array_push(cmd.data, '\0');
 
+    f64 archive_start = ns_build_profile_begin("archive_library");
     i32 ret = system(cmd.data);
+    ns_build_profile_end("archive_library", archive_start);
     if (ret != 0) {
         ns_exit(1, "build", "failed to archive %.*s.\n", output.len, output.data);
     }
@@ -1852,11 +1870,15 @@ static void ns_archive_object(ns_str output, ns_str object) {
 
 static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, ns_line_loc *line_map) {
     ctx.line_map = line_map;
+    f64 parse_start = ns_build_profile_begin("parse");
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
     ns_return_assert(ret);
+    ns_build_profile_end("parse", parse_start);
 
+    f64 ssa_start = ns_build_profile_begin("lower_ssa");
     ns_return_ptr ssa_ret = ns_ssa_build_for_cli(&ctx);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
+    ns_build_profile_end("lower_ssa", ssa_start);
     return ssa_ret.r;
 }
 
@@ -1892,12 +1914,17 @@ static void ns_build_cache_add_linked(ns_build_cache *cache, ns_line_loc *map, n
 static ns_ssa_module *ns_compile_build_input(ns_build_input *in, ns_build_cache *cache) {
     ns_line_loc *map = ns_null;
     ns_str *external = ns_null;
+    f64 link_start = ns_build_profile_begin("link_sources");
     ns_str merged = in->has_manifest
                         ? ns_project_link_all(in->scope, in->source, in->filename, false, &map, &external)
                         : ns_project_link(in->scope, in->source, in->filename, &map, &external);
+    ns_build_profile_end("link_sources", link_start);
+
+    f64 dependency_start = ns_build_profile_begin("track_dependencies");
     if (cache != ns_null) ns_build_cache_add_linked(cache, map, external);
     for (i32 i = 0, l = (i32)ns_array_length(external); i < l; i++) ns_str_free(external[i]);
     ns_array_free(external);
+    ns_build_profile_end("track_dependencies", dependency_start);
     return ns_compile_source_to_ssa(merged, in->filename, map);
 }
 
@@ -2142,12 +2169,15 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
 
     // The module guards the whole bundle: everything else in bin/ is copied or
     // generated from the same inputs.
+    f64 cache_start = ns_build_profile_begin("check_cache");
     ns_build_cache cache;
     ns_str config = ns_build_config(in, NS_BUILD_APP, output);
     ns_build_cache_open(&cache, output, config);
     ns_array_free(config.data);
     ns_build_cache_collect(&cache, in);
-    if (!force && ns_build_cache_fresh(&cache)) {
+    ns_bool fresh = !force && ns_build_cache_fresh(&cache);
+    ns_build_profile_end("check_cache", cache_start);
+    if (fresh) {
         ns_str current = ns_path_dirname_safe(output);
         ns_info("build", "up to date %.*s\n", current.len, current.data);
         ns_build_cache_free(&cache);
@@ -2155,22 +2185,27 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
         return;
     }
 
+    f64 compile_start = ns_build_profile_begin("compile");
     ns_ssa_module *ssa = ns_compile_build_input(in, &cache);
     ns_wasm_validate_browser_entry(ssa);
+    ns_build_profile_end("compile", compile_start);
 
     ns_str artifact = ns_path_basename_with_extension(output);
     ns_str map_url = ns_str_concat(artifact, ns_str_cstr(".map"));
     ns_str map_output = ns_str_concat(output, ns_str_cstr(".map"));
     ns_str temporary = ns_str_concat(output, ns_str_cstr(".tmp"));
     ns_str map_temporary = ns_str_concat(map_output, ns_str_cstr(".tmp"));
+    f64 emit_start = ns_build_profile_begin("emit_wasm");
     ns_return_bool emitted = ns_wasm_emit_source_mapped(ssa, temporary, map_temporary,
                                                         map_url, in->scope);
     ns_ssa_module_free(ssa);
+    ns_build_profile_end("emit_wasm", emit_start);
     if (ns_return_is_error(emitted)) {
         remove(temporary.data);
         remove(map_temporary.data);
         ns_return_assert(emitted);
     }
+    f64 package_start = ns_build_profile_begin("package_wasm");
 #if defined(_WIN32)
     remove(output.data);
     remove(map_output.data);
@@ -2231,8 +2266,11 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
         ns_remove_tree(output_assets);
         ns_copy_tree(assets, output_assets);
     }
+    ns_build_profile_end("package_wasm", package_start);
     ns_info("build", "wasm bundle %.*s\n", out_dir.len, out_dir.data);
+    f64 write_cache_start = ns_build_profile_begin("write_cache");
     ns_build_cache_write(&cache);
+    ns_build_profile_end("write_cache", write_cache_start);
     ns_build_cache_free(&cache);
 }
 
@@ -2460,9 +2498,12 @@ static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
 
 static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executable_path) {
     ns_str object_path = ns_str_concat(executable_path, ns_str_cstr(".o"));
+    f64 object_start = ns_build_profile_begin("emit_object");
     ns_return_bool emit_ret = ns_macho_emit_object(ssa, object_path);
     if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+    ns_build_profile_end("emit_object", object_start);
 
+    f64 runtime_start = ns_build_profile_begin("prepare_native_runtime");
     ns_str rt_path = ns_native_rt_c_path();
     if (rt_path.data == ns_null || !ns_file_exists(rt_path)) {
         ns_exit(1, "build", "cannot find ns_native_rt.c next to the ns toolchain.\n");
@@ -2550,8 +2591,11 @@ static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executabl
     ns_str_append_cstr(&cmd, " -o ");
     ns_str_append(&cmd, q_executable);
     ns_array_push(cmd.data, '\0');
+    ns_build_profile_end("prepare_native_runtime", runtime_start);
 
+    f64 link_start = ns_build_profile_begin("system_link");
     i32 ret = system(cmd.data);
+    ns_build_profile_end("system_link", link_start);
     if (ret != 0) {
         ns_exit(1, "build", "failed to link executable %.*s.\n", executable_path.len, executable_path.data);
     }
@@ -2600,6 +2644,7 @@ static ns_str ns_build_darwin_current_executable(void) {
 }
 
 static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
+    f64 bundle_start = ns_build_profile_begin("prepare_app_bundle");
     ns_str app_dir = ns_build_app_output(output);
     ns_str contents_dir = ns_path_join(app_dir, ns_str_cstr("Contents"));
     ns_str macos_dir = ns_path_join(contents_dir, ns_str_cstr("MacOS"));
@@ -2609,12 +2654,19 @@ static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module
 
     ns_str executable_name = ns_str_concat(in->name, ns_str_cstr(""));
     ns_str executable_path = ns_path_join(macos_dir, executable_name);
+    ns_build_profile_end("prepare_app_bundle", bundle_start);
     ns_build_darwin_link_executable(ssa, executable_path);
 
+    f64 icon_start = ns_build_profile_begin("package_icon");
     ns_str icon_file = ns_str_null;
     ns_build_darwin_make_icns(in->icon, resources_dir, &icon_file);
+    ns_build_profile_end("package_icon", icon_start);
+    f64 metadata_start = ns_build_profile_begin("write_app_metadata");
     ns_build_darwin_write_plist(in, app_dir, executable_name, icon_file);
+    ns_build_profile_end("write_app_metadata", metadata_start);
+    f64 sign_start = ns_build_profile_begin("codesign_app");
     ns_build_darwin_codesign_app(app_dir);
+    ns_build_profile_end("codesign_app", sign_start);
 
     ns_info("build", "app %.*s\n", app_dir.len, app_dir.data);
     ns_str_free(app_dir);
@@ -2831,10 +2883,13 @@ static void ns_build_wasm_app(ns_build_input *in, ns_str output, ns_ssa_module *
     ns_wasm_copy_tree(web, bundle_dir, ns_str_cstr(""), wasm_name, true, true, ns_null);
 
     ns_str temporary = ns_str_concat(output, ns_str_cstr(".tmp"));
+    f64 emit_start = ns_build_profile_begin("emit_wasm");
     ns_return_bool emitted = ns_wasm_emit(ssa, temporary);
     ns_ssa_module_free(ssa);
+    ns_build_profile_end("emit_wasm", emit_start);
     if (ns_return_is_error(emitted)) ns_return_assert(emitted);
 
+    f64 package_start = ns_build_profile_begin("package_wasm");
     ns_wasm_remove_old_owned(bundle_dir);
     if (rename(temporary.data, output.data) != 0) {
         remove(temporary.data);
@@ -2866,6 +2921,7 @@ static void ns_build_wasm_app(ns_build_input *in, ns_str output, ns_ssa_module *
     ns_str_free(runtime_path);
     ns_str_free(index_path);
     ns_str_free(temporary);
+    ns_build_profile_end("package_wasm", package_start);
     ns_info("build", "wasm app %.*s\n", bundle_dir.len, bundle_dir.data);
     ns_str_free(bundle_dir);
 }
@@ -2887,9 +2943,11 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
         }
 
         ns_str object = ns_str_concat(output, ns_str_cstr(".o"));
+        f64 object_start = ns_build_profile_begin("emit_object");
         ns_return_bool emit_ret = ns_macho_emit_object(ssa, object);
         ns_ssa_module_free(ssa);
         if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+        ns_build_profile_end("emit_object", object_start);
 
         ns_archive_object(output, object);
         ns_info("build", "library %.*s\n", output.len, output.data);
@@ -2918,10 +2976,14 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
         ns_info("build", "executable %.*s\n", output.len, output.data);
         return;
 #else
+        f64 executable_start = ns_build_profile_begin("emit_executable");
         emit_ret = ns_macho_emit(ssa, output);
+        ns_build_profile_end("emit_executable", executable_start);
 #endif
     } else if (target.os == NS_OS_WINDOWS) {
+        f64 executable_start = ns_build_profile_begin("emit_executable");
         emit_ret = ns_pe_emit(ssa, output);
+        ns_build_profile_end("emit_executable", executable_start);
     } else {
         ns_ssa_module_free(ssa);
         ns_exit(1, "build", "executable output is not yet supported for this target OS.\n");
@@ -2936,13 +2998,17 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
 // `ns build [path|target]`. `target_name` is the manifest target to compile;
 // pass ns_str_null to let the positional argument decide.
 void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool force, ns_str target_name) {
+    f64 target_start = ns_build_profile_begin("build_target");
+    f64 resolve_start = ns_build_profile_begin("resolve_input");
     ns_build_input in = ns_build_input_resolve(path, target_name);
+    ns_build_profile_end("resolve_input", resolve_start);
     if (in.target.len > 0 && !ns_build_target_is_wasm(in.target)) {
         ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
                 in.target.len, in.target.data);
     }
     if (ns_build_target_is_wasm(in.target)) {
         ns_exec_build_wasm(&in, output, requested_kind, force);
+        ns_build_profile_end("build_target", target_start);
         return;
     }
 
@@ -2957,22 +3023,34 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_build_ensure_output_dir(output);
 
     ns_str artifact = ns_build_artifact_path(kind, output);
+    f64 cache_start = ns_build_profile_begin("check_cache");
     ns_build_cache cache;
     ns_str config = ns_build_config(&in, kind, output);
     ns_build_cache_open(&cache, artifact, config);
     ns_array_free(config.data);
     ns_build_cache_collect(&cache, &in);
-    if (!force && ns_build_cache_fresh(&cache)) {
+    ns_bool fresh = !force && ns_build_cache_fresh(&cache);
+    ns_build_profile_end("check_cache", cache_start);
+    if (fresh) {
         ns_info("build", "up to date %.*s\n", artifact.len, artifact.data);
         ns_build_cache_free(&cache);
         ns_str_free(artifact);
+        ns_build_profile_end("build_target", target_start);
         return;
     }
 
-    ns_build_emit(&in, kind, output, ns_compile_build_input(&in, &cache));
+    f64 compile_start = ns_build_profile_begin("compile");
+    ns_ssa_module *ssa = ns_compile_build_input(&in, &cache);
+    ns_build_profile_end("compile", compile_start);
+    f64 emit_start = ns_build_profile_begin("emit_artifact");
+    ns_build_emit(&in, kind, output, ssa);
+    ns_build_profile_end("emit_artifact", emit_start);
+    f64 write_cache_start = ns_build_profile_begin("write_cache");
     ns_build_cache_write(&cache);
+    ns_build_profile_end("write_cache", write_cache_start);
     ns_build_cache_free(&cache);
     ns_str_free(artifact);
+    ns_build_profile_end("build_target", target_start);
 }
 
 // `ns build [path|target]`. A target name builds that target alone; a project
@@ -4414,7 +4492,9 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.test) {
         ns_exec_test(option.filename);
     } else if (option.build) {
+        f64 build_start = ns_build_profile_begin("build");
         ns_exec_build(option.filename, option.output, option.build_kind, option.force);
+        ns_build_profile_end("build", build_start);
     } else if (option.clean) {
         ns_exec_clean(option.filename);
     } else if (option.project) {

@@ -2,10 +2,11 @@
 
 #include "ns_type.h"
 
-// Runtime profiler, toggled by `--profile` or the `ns profile` command.
+// Runtime and compiler profiler, toggled by `--profile` or the `ns profile`
+// command.
 //
-// Interpreter time is often the real cost of an ns program: nested VM
-// function scopes and the FFI calls they make. This module keeps:
+// Collection covers nested VM functions, build phases, and FFI calls. This
+// module keeps:
 //
 //   - a per-symbol table with inclusive (total) and exclusive (self) time
 //     for both interpreted functions and native calls
@@ -105,8 +106,8 @@ void ns_profile_reset(void);
 // Enable collection. Recorders below are no-ops until this is called.
 void ns_profile_enable(f64 start_ms);
 
-// Push an interpreted function onto the open stack so nested exclusive time
-// and the flame tree can be attributed to the live call path.
+// Push a VM function or compiler phase onto the open stack so nested exclusive
+// time and the flame tree can be attributed to the live call path.
 void ns_profile_scope_enter(ns_str name, ns_str lib);
 
 // Record one completed FFI call. `start_ms` is the monotonic clock value taken
@@ -114,8 +115,8 @@ void ns_profile_scope_enter(ns_str name, ns_str lib);
 // spent inside it. No-op unless profiling is enabled.
 void ns_profile_record_ffi(ns_str name, ns_str lib, f64 start_ms, f64 elapsed_ms);
 
-// Record one completed interpreted VM function scope and pop the matching
-// enter. If no enter is on the stack, the call is still counted as a root.
+// Record one completed VM function or compiler phase and pop the matching
+// enter. If no enter is on the stack, the scope is still counted as a root.
 void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms);
 
 // Write the ns-profile-v4 text report, including the folded flame stacks.

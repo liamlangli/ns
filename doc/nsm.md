@@ -140,6 +140,15 @@ built as a standalone script and may link local sibling modules it imports. Use
 `-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact
 kind.
 
+Add `--profile` to a build to write `ns.profile` and print a hot-path summary
+for input resolution, cache validation, source linking, parsing, SSA lowering,
+artifact emission, system linking, and packaging. The phases use the
+`compiler::` prefix in the existing profile tables, timeline, and flamegraph,
+so `ns profiler` opens build profiles as well as runtime profiles. Use
+`ns build --profile --force` to measure a full compilation; without `--force`,
+an up-to-date build intentionally profiles only target resolution and cache
+validation.
+
 A build records every input it reads under `bin/.ns-build/<artifact>.cache`
 with that input's last modify time, size, and content hash. The next build
 re-stats the same inputs, hashes only the ones whose time or size changed, and

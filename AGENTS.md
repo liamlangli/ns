@@ -46,7 +46,9 @@ The common commands are:
   target. A Wasm project builds and starts its loopback live-reload server.
 - `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
   write `ns.profile`, then print a colored CLI hot-path summary of VM scopes
-  and FFI calls. `--profile` on any other command is the same collection.
+  and FFI calls. `ns build --profile` instead records nested compiler phases,
+  including cache validation, source linking, parsing, SSA lowering, emission,
+  system linking, and packaging; add `--force` to measure a full compilation.
 - `ns profiler [file]`: open the compiled native GUI viewer for `ns.profile`,
   or for an explicit profile file. `make` / `make install` build that viewer
   with `ns build nscode/profile`.
