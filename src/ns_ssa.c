@@ -969,8 +969,44 @@ static i32 ns_ssa_clone_struct(ns_ssa_builder *b, i32 value, i32 ast) {
                              type, ns_str_null, (ns_token_t){0}, ast);
 }
 
+// The semantic VM stores the decoded bytes of a string literal, while the
+// native and Wasm backends decode the spelling carried by a CONST instruction.
+// Re-escape a VM string before putting it back into that shared SSA form so a
+// global `lit` behaves exactly like a string literal written at its use site.
+static ns_str ns_ssa_escape_string_literal(ns_str value) {
+    i32 len = value.len;
+    for (i32 i = 0; i < value.len; ++i) {
+        i8 ch = value.data[i];
+        if (ch == '\\' || ch == '\n' || ch == '\t' || ch == '\r' || ch == '\0') len++;
+    }
+    ns_str escaped = ns_str_range(ns_malloc((szt)len + 1), len);
+    i32 at = 0;
+    for (i32 i = 0; i < value.len; ++i) {
+        i8 ch = value.data[i];
+        if (ch == '\\' || ch == '\n' || ch == '\t' || ch == '\r' || ch == '\0') {
+            escaped.data[at++] = '\\';
+            if (ch == '\\') escaped.data[at++] = '\\';
+            else if (ch == '\n') escaped.data[at++] = 'n';
+            else if (ch == '\t') escaped.data[at++] = 't';
+            else if (ch == '\r') escaped.data[at++] = 'r';
+            else escaped.data[at++] = '0';
+        } else {
+            escaped.data[at++] = ch;
+        }
+    }
+    escaped.data[len] = '\0';
+    return escaped;
+}
+
 static ns_bool ns_ssa_const_from_value(ns_ssa_builder *b, ns_value value, ns_token_t *token, ns_type *type) {
     if (ns_type_is(value.t, NS_TYPE_ENUM)) value = ns_eval_enum_underlying_value(b->vm, value);
+    if (ns_type_is(value.t, NS_TYPE_STRING)) {
+        token->type = NS_TOKEN_STR_LITERAL;
+        token->val = ns_ssa_escape_string_literal(ns_eval_str(b->vm, value));
+        ns_array_push(b->m->owned_strings, token->val);
+        *type = ns_type_str;
+        return true;
+    }
     char text[96];
     i32 len = 0;
     token->type = NS_TOKEN_INT_LITERAL;
@@ -998,7 +1034,7 @@ static ns_bool ns_ssa_const_from_value(ns_ssa_builder *b, ns_value value, ns_tok
         break;
     case NS_TYPE_BOOL: len = snprintf(text, sizeof(text), "%d", ns_eval_bool(b->vm, value) ? 1 : 0); break;
     default:
-        return false; // strings are interpreter literals; native string constants are not implemented yet
+        return false;
     }
     i8 *copy = ns_malloc((szt)len + 1);
     memcpy(copy, text, (szt)len + 1);
@@ -1994,6 +2030,14 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             if (callee_sym && callee_sym->type == NS_SYMBOL_FN &&
                 ai < (i32)ns_array_length(callee_sym->fn.args)) {
                 ns_type pt = callee_sym->fn.args[ai].val.t;
+                ns_type at = ns_ssa_value_type(b, av);
+                if (!ns_type_is_ref(pt) && !ns_type_is(pt, NS_TYPE_ENUM) &&
+                    ns_type_is_number(ns_enum_underlying_type(b->vm, pt)) &&
+                    ns_type_is_number(ns_enum_underlying_type(b->vm, at)) &&
+                    !ns_type_equals(pt, at)) {
+                    av = ns_ssa_emit_value(b, NS_SSA_OP_CAST, av, -1, pt,
+                                           ns_str_null, (ns_token_t){0}, next);
+                }
                 if (ns_type_is(pt, NS_TYPE_UNION)) av = ns_ssa_union_wrap(b, av, pt, next);
                 if (ns_type_is_ref(pt) && !ns_type_is_ref(ns_ssa_value_type(b, av))) {
                     av = ns_ssa_make_ref(b, av, ns_ssa_value_type(b, av), next);
@@ -2749,6 +2793,15 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
         case NS_TOKEN_RETURN: {
             i32 ret = n->jump_stmt.expr > 0 ? ns_ssa_lower_expr(b, n->jump_stmt.expr) : -1;
             ret = ns_ssa_clone_struct(b, ret, n->jump_stmt.expr);
+            ns_type ret_type = ns_ssa_value_type(b, ret);
+            if (ret >= 0 && !ns_type_is_ref(b->fn->ret) &&
+                !ns_type_is(b->fn->ret, NS_TYPE_ENUM) &&
+                ns_type_is_number(ns_enum_underlying_type(b->vm, b->fn->ret)) &&
+                ns_type_is_number(ns_enum_underlying_type(b->vm, ret_type)) &&
+                !ns_type_equals(b->fn->ret, ret_type)) {
+                ret = ns_ssa_emit_value(b, NS_SSA_OP_CAST, ret, -1, b->fn->ret,
+                                        ns_str_null, (ns_token_t){0}, i);
+            }
             if (ret >= 0 && ns_type_is(b->fn->ret, NS_TYPE_UNION)) {
                 ret = ns_ssa_union_wrap(b, ret, b->fn->ret, i);
             }

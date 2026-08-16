@@ -495,16 +495,20 @@ static ns_bool ns_aarch_parse_u64(ns_str s, u64 *out) {
     return true;
 }
 
-/* Narrow X9 to the width/signedness of an integer cast's destination type so
+/* Narrow a register to the width/signedness of an integer value so
  * that e.g. `300 as u8` yields 44. Wider or non-integer targets are no-ops. */
+static void ns_aarch_narrow_reg(ns_aarch_ctx *c, i32 reg, ns_type t) {
+    u32 rn_rd = ((u32)reg << 5) | (u32)reg;
+    if (ns_type_is(t, NS_TYPE_I8))       ns_aarch_emit_u32(c, 0x93401C00u | rn_rd); /* SXTB Xd, Wn */
+    else if (ns_type_is(t, NS_TYPE_U8))  ns_aarch_emit_u32(c, 0x12001C00u | rn_rd); /* AND Wd, Wn, #0xFF */
+    else if (ns_type_is(t, NS_TYPE_I16)) ns_aarch_emit_u32(c, 0x93403C00u | rn_rd); /* SXTH Xd, Wn */
+    else if (ns_type_is(t, NS_TYPE_U16)) ns_aarch_emit_u32(c, 0x12003C00u | rn_rd); /* AND Wd, Wn, #0xFFFF */
+    else if (ns_type_is(t, NS_TYPE_I32)) ns_aarch_emit_u32(c, 0x93407C00u | rn_rd); /* SXTW Xd, Wn */
+    else if (ns_type_is(t, NS_TYPE_U32)) ns_aarch_emit_u32(c, 0x2A0003E0u | ((u32)reg << 16) | (u32)reg); /* MOV Wd, Wn */
+}
+
 static void ns_aarch_narrow_x9(ns_aarch_ctx *c, ns_type t) {
-    u32 rn_rd = ((u32)NS_AARCH_X9 << 5) | (u32)NS_AARCH_X9;
-    if (ns_type_is(t, NS_TYPE_I8))       ns_aarch_emit_u32(c, 0x93401C00u | rn_rd); /* SXTB X9, W9 */
-    else if (ns_type_is(t, NS_TYPE_U8))  ns_aarch_emit_u32(c, 0x12001C00u | rn_rd); /* AND W9, W9, #0xFF */
-    else if (ns_type_is(t, NS_TYPE_I16)) ns_aarch_emit_u32(c, 0x93403C00u | rn_rd); /* SXTH X9, W9 */
-    else if (ns_type_is(t, NS_TYPE_U16)) ns_aarch_emit_u32(c, 0x12003C00u | rn_rd); /* AND W9, W9, #0xFFFF */
-    else if (ns_type_is(t, NS_TYPE_I32)) ns_aarch_emit_u32(c, 0x93407C00u | rn_rd); /* SXTW X9, W9 */
-    else if (ns_type_is(t, NS_TYPE_U32)) ns_aarch_emit_u32(c, 0x2A0003E0u | ((u32)NS_AARCH_X9 << 16) | (u32)NS_AARCH_X9); /* MOV W9, W9 */
+    ns_aarch_narrow_reg(c, NS_AARCH_X9, t);
 }
 
 /* ── phi edge copies ──────────────────────────────────────────────────────── */
@@ -879,6 +883,11 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                 ns_aarch_emit_u32(c, ns_aarch_fmov_xd(0, 0, ns_type_is(ret, NS_TYPE_F64)));
             } else if (ns_aarch_is_string(ret) && !ns_type_is_array(ret)) {
                 ns_aarch_emit_rt_call(c, "ns_rt_from_cstr");
+            } else {
+                // C callees may leave the upper half of x0 unspecified for a
+                // result narrower than 64 bits. Normalize it before Nano
+                // Script performs signed comparisons or stores the value.
+                ns_aarch_narrow_reg(c, NS_AARCH_X0, ret);
             }
             if (inst->dst >= 0) ns_aarch_store_value(c, inst->dst, 0);
             if (space > 0) {

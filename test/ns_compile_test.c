@@ -35,6 +35,13 @@ static void ns_native_free(ns_native_module *m) { ns_aarch_free(m); }
 
 typedef i64 (*ns_compiled_main)(void);
 
+#if defined(__aarch64__)
+static i32 ns_compile_test_negative_i32(const char *unused) {
+    (void)unused;
+    return -1;
+}
+#endif
+
 // Patch a same-module relative call at `site` (byte offset of the call/branch)
 // so it targets the function at byte offset `target`.
 static void ns_compile_patch_adrp_add(u8 *buf, u64 site, u64 target) {
@@ -151,7 +158,9 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
                 i32 nlen = callee.len < 250 ? callee.len : 250;
                 memcpy(name, callee.data, (szt)nlen);
                 name[nlen] = 0;
-                void *sym = dlsym(RTLD_DEFAULT, name);
+                void *sym = ns_str_equals(callee, ns_str_cstr("os_dir_scan"))
+                                ? (void *)(uintptr_t)ns_compile_test_negative_i32
+                                : dlsym(RTLD_DEFAULT, name);
                 if (sym) {
                     if (fn->call_fixups[ci].kind == 1) {
                         ns_compile_patch_adrp_add(buf, off[fi] + fn->call_fixups[ci].off,
@@ -469,6 +478,28 @@ int main() {
         "    lit answer = base\n"
         "    return answer == 42 && OS_PLATFORM_MACOS == 1\n"
         "}\n"), "global, local, and imported lit constants compile and run.");
+
+#if defined(__aarch64__)
+    ns_expect(ns_compile_true(
+        "lit message = \"folder\\\\\\\\name\\\\n\"\n"
+        "lit alias = message\n"
+        "fn main() bool {\n"
+        "    return message == \"folder\\\\\\\\name\\\\n\" && alias == message\n"
+        "}\n"), "global string lit constants compile with their decoded bytes intact.");
+
+    ns_expect(ns_compile_true(
+        "fn accepts_f64(value: f64) bool { return value == 20.0 as f64 }\n"
+        "fn returns_f64() f64 { return 20.0 }\n"
+        "fn main() bool {\n"
+        "    let inferred_f32 = 20.0\n"
+        "    return accepts_f64(inferred_f32) && returns_f64() == 20.0 as f64\n"
+        "}\n"), "numeric arguments and returns convert to their declared types in compiled code.");
+
+    ns_expect(ns_compile_true(
+        "use os\n"
+        "fn main() bool { return os_dir_scan(\"\") < 0 }\n"),
+        "signed i32 FFI results are sign-extended before compiled comparisons.");
+#endif
 
     ns_expect(ns_compile_true(
         "use simd\n"
