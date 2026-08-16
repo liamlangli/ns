@@ -207,6 +207,10 @@ int main(void) {
                   text_has(gpu_metal, "mtl_v2_bind_root") &&
                   text_has(gpu_metal, "mtl_v2_ensure_pipeline"),
               "embedded Metal uses the v2 address, root, and cached-state renderer.");
+    ns_expect(text_has(gpu_metal, "MTLResourceStorageModeMemoryless") &&
+                  text_has(gpu_metal, "texture->transient_render_target") &&
+                  text_has(gpu_metal, "MTLStoreActionDontCare"),
+              "embedded Metal keeps render-target-only attachments memoryless and discards their stores.");
     ns_expect(text_has(view_ios, "CGSize drawable = metal_view.drawableSize") &&
                   text_has(view_ios, "framebuffer_width = (i32)(drawable.width + 0.5)"),
               "embedded iOS view metrics use the exact Metal drawable extent.");

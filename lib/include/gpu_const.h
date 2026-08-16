@@ -282,6 +282,8 @@ typedef enum gpu_texture_usage {
     TEXTURE_USAGE_DEFAULT = 0,
     TEXTURE_USAGE_READ = 1,
     TEXTURE_USAGE_WRITE = 1 << 1,
+    // Render-target-only textures are transient. Backends discard them at the
+    // end of the pass and use memoryless storage when supported.
     TEXTURE_USAGE_RENDER_TARGET = 1 << 2
 } gpu_texture_usage;
 

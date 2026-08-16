@@ -239,6 +239,7 @@ typedef struct gpu_texture_mtl {
     gpu_pixel_format format;
     gpu_texture_type type;
     MTLResourceOptions resource_options;
+    bool transient_render_target;
 } gpu_texture_mtl;
 
 typedef struct gpu_sampler_mtl {
@@ -653,7 +654,24 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
     if (kind == TEXTURE_3D) desc.depth = (NSUInteger)depth_or_layers;
     else if (kind == TEXTURE_ARRAY) desc.arrayLength = (NSUInteger)depth_or_layers;
     else desc.arrayLength = 1;
-    desc.resourceOptions = MTLResourceStorageModeShared;
+    // A render-target-only texture has no contents to preserve after its pass.
+    // Tile GPUs can therefore keep it entirely on-chip, avoiding the resolve
+    // to system memory that a Store action would otherwise force.
+    bool transient_render_target = (usage & TEXTURE_USAGE_RENDER_TARGET) &&
+                                   !(usage & (TEXTURE_USAGE_READ | TEXTURE_USAGE_WRITE));
+    MTLResourceOptions resource_options = MTLResourceStorageModeShared;
+    if (transient_render_target) {
+#if TARGET_OS_IOS || TARGET_OS_TV || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+        resource_options = MTLResourceStorageModeMemoryless;
+#elif TARGET_OS_OSX
+        if (@available(macOS 11.0, *)) {
+            if ([_state.device.device supportsFamily:MTLGPUFamilyApple1]) {
+                resource_options = MTLResourceStorageModeMemoryless;
+            }
+        }
+#endif
+    }
+    desc.resourceOptions = resource_options;
     desc.usage = 0;
     if (usage == TEXTURE_USAGE_DEFAULT || (usage & TEXTURE_USAGE_READ)) desc.usage |= MTLTextureUsageShaderRead;
     if (usage & TEXTURE_USAGE_WRITE) desc.usage |= MTLTextureUsageShaderWrite;
@@ -671,7 +689,8 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
         .depth = (NSUInteger)depth_or_layers,
         .format = (gpu_pixel_format)format,
         .type = (gpu_texture_type)kind,
-        .resource_options = MTLResourceStorageModeShared,
+        .resource_options = resource_options,
+        .transient_render_target = transient_render_target,
     };
     return id;
 }
@@ -854,7 +873,9 @@ static void mtl_v2_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
         if (!colors[i] || colors[i] >= _state.texture_count) continue;
         gpu_texture_mtl *texture = &_state.textures[colors[i]];
         desc.colorAttachments[i].texture = texture->texture;
-        desc.colorAttachments[i].storeAction = MTLStoreActionStore;
+        desc.colorAttachments[i].storeAction = texture->transient_render_target
+                                                   ? MTLStoreActionDontCare
+                                                   : MTLStoreActionStore;
         desc.colorAttachments[i].loadAction = _mtl_load_action((gpu_load_action)((load_flags >> (i * 2)) & 3));
         desc.colorAttachments[i].clearColor = MTLClearColorMake(clear.r, clear.g, clear.b, clear.a);
         _state.v2_pass_colors[i] = _mtl_pixel_format(texture->format);
@@ -862,7 +883,9 @@ static void mtl_v2_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
     if (depth && depth < _state.texture_count) {
         gpu_texture_mtl *texture = &_state.textures[depth];
         desc.depthAttachment.texture = texture->texture;
-        desc.depthAttachment.storeAction = MTLStoreActionStore;
+        desc.depthAttachment.storeAction = texture->transient_render_target
+                                               ? MTLStoreActionDontCare
+                                               : MTLStoreActionStore;
         desc.depthAttachment.loadAction = _mtl_load_action((gpu_load_action)((load_flags >> 8) & 3));
         desc.depthAttachment.clearDepth = depth_clear;
         _state.v2_pass_depth = _mtl_pixel_format(texture->format);

@@ -22,6 +22,9 @@ lit GPU_PIXELFORMAT_RGBA32F = 42
 lit GPU_PIXELFORMAT_DEPTH = 43
 lit GPU_TEXTURE_USAGE_READ = 1
 lit GPU_TEXTURE_USAGE_WRITE = 2
+// Render-target-only textures are transient: a pass does not store their
+// contents, and tile GPUs keep them memoryless when supported. Add READ or
+// WRITE when the rendered contents must survive the pass.
 lit GPU_TEXTURE_USAGE_RENDER_TARGET = 4
 lit GPU_PRIMITIVE_TRIANGLES = 4
 lit GPU_PRIMITIVE_LINES = 1

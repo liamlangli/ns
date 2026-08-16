@@ -173,8 +173,12 @@ void gpu_sampler_destroy(u32 smp);
 ```
 
 `usage` uses read/write/render-target bits; storage (UAV) access uses
-the same index. Samplers come from a small global heap — the article's
-observation that real programs need a handful.
+the same index. A texture declared with only the render-target bit is transient:
+its contents cannot be loaded or read after the pass, and the backend defaults
+its store action to `dontcare`. Tile-based backends use memoryless storage for
+such attachments when the device supports it. Add the read or write bit when
+the rendered contents must survive the pass. Samplers come from a small global
+heap — the article's observation that real programs need a handful.
 
 ### Shaders and render state
 
