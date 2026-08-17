@@ -117,8 +117,12 @@ ref fn gpu_shader_destroy(shader: u32)
 ref fn gpu_state_create(primitive_type: i32, cull_mode: i32, face_winding: i32, depth_compare: i32, depth_write: bool, blend_preset: i32, color_mask: u32) u32
 
 // Attachments are texture indices, 0 = unused.
-ref fn gpu_pass_begin(color0: u32, color1: u32, color2: u32, color3: u32, depth: u32, load_flags: u32, r: f64, g: f64, b: f64, a: f64, depth_clear: f64)
-ref fn gpu_screen_pass_begin(r: f64, g: f64, b: f64, a: f64)
+//
+// label states what the pass does ("shadow depth", "bloom downsample") and
+// names the command encoder, so a Metal or RenderDoc frame capture reads as
+// the render graph. Required and non-empty, like the gpu_malloc name.
+ref fn gpu_pass_begin(label: str, color0: u32, color1: u32, color2: u32, color3: u32, depth: u32, load_flags: u32, r: f64, g: f64, b: f64, a: f64, depth_clear: f64)
+ref fn gpu_screen_pass_begin(label: str, r: f64, g: f64, b: f64, a: f64)
 ref fn gpu_pass_end()
 
 ref fn gpu_set_shader(shader: u32)
@@ -137,8 +141,10 @@ ref fn gpu_set_root_data(data: [any], size: u64)
 ref fn gpu_draw_vertices(vertex_base: i32, vertex_count: i32, instance_count: i32)
 ref fn gpu_draw_indexed(indices: u64, index_type: i32, index_count: i32, instance_count: i32, base_vertex: i32)
 ref fn gpu_draw_indirect(args: u64, draw_count: i32, stride: i32)
-ref fn gpu_dispatch(x: i32, y: i32, z: i32)
-ref fn gpu_dispatch_indirect(args: u64)
+// Each dispatch is its own compute pass; label names it in a frame capture the
+// same way a render pass label does.
+ref fn gpu_dispatch(label: str, x: i32, y: i32, z: i32)
+ref fn gpu_dispatch_indirect(label: str, args: u64)
 
 // Futex-style split barriers; degrade to the implicit inter-pass barrier on
 // tiers without GPU_CAP_ASYNC_COMPUTE.
@@ -386,8 +392,8 @@ fn gpu_shader_release(shader: gpu_shader) {
 
 // Begin a pass targeting rich texture handles (gpu_texture_none() marks an
 // unused attachment) and set the viewport to the color target size.
-fn gpu_pass_begin_target(color: gpu_texture, depth: gpu_texture, load_flags: u32, r: f64, g: f64, b: f64, a: f64, depth_clear: f64) {
-    gpu_pass_begin(color.resource_id, 0u, 0u, 0u, depth.resource_id, load_flags, r, g, b, a, depth_clear)
+fn gpu_pass_begin_target(label: str, color: gpu_texture, depth: gpu_texture, load_flags: u32, r: f64, g: f64, b: f64, a: f64, depth_clear: f64) {
+    gpu_pass_begin(label, color.resource_id, 0u, 0u, 0u, depth.resource_id, load_flags, r, g, b, a, depth_clear)
     if color.width > 0 && color.height > 0 {
         gpu_set_viewport(0, 0, color.width, color.height)
     }

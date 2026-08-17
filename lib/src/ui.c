@@ -1611,7 +1611,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     // adapter retains the historical opaque pointer ABI. The old renderer did
     // not dereference it either; keep that ABI and use the established default.
     ns_unused(clear);
-    gpu_screen_pass_begin(0.0, 0.0, 0.0, 1.0);
+    gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
     gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
     gpu_set_state(r->render_state);
     gpu_set_storage(r->storage);

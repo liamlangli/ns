@@ -376,18 +376,26 @@ u32 gpu_state_create(i32 primitive_type, i32 cull_mode, i32 face_winding,
     return ++_v2.state_count;
 }
 
-void gpu_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
+// Pass labels reach a frame capture verbatim; a missing one would leave an
+// anonymous encoder there, so substitute a placeholder rather than drop it.
+static const char *gpu_v2_label(const char *label, const char *fallback) {
+    return label && label[0] ? label : fallback;
+}
+
+void gpu_pass_begin(const char *label,
+                    u32 color0, u32 color1, u32 color2, u32 color3,
                     u32 depth, u32 load_flags,
                     f64 r, f64 g, f64 b, f64 a, f64 depth_clear) {
     if (!_v2.ops || !_v2.ops->pass_begin) return;
     gpu_color clear = {(f32)r, (f32)g, (f32)b, (f32)a};
-    _v2.ops->pass_begin(color0, color1, color2, color3, depth, load_flags, clear, (f32)depth_clear);
+    _v2.ops->pass_begin(gpu_v2_label(label, "unnamed pass"),
+                        color0, color1, color2, color3, depth, load_flags, clear, (f32)depth_clear);
 }
 
-void gpu_screen_pass_begin(f64 r, f64 g, f64 b, f64 a) {
+void gpu_screen_pass_begin(const char *label, f64 r, f64 g, f64 b, f64 a) {
     if (!_v2.ops || !_v2.ops->screen_pass_begin) return;
     gpu_color clear = {(f32)r, (f32)g, (f32)b, (f32)a};
-    _v2.ops->screen_pass_begin(clear);
+    _v2.ops->screen_pass_begin(gpu_v2_label(label, "unnamed screen pass"), clear);
 }
 
 void gpu_pass_end(void) {
@@ -454,16 +462,18 @@ void gpu_draw_indirect(gpu_addr args, i32 draw_count, i32 stride) {
     if (_v2.ops && _v2.ops->draw_indirect) _v2.ops->draw_indirect(slot, offset, draw_count, stride);
 }
 
-void gpu_dispatch(i32 x, i32 y, i32 z) {
+void gpu_dispatch(const char *label, i32 x, i32 y, i32 z) {
     if (x <= 0 || y <= 0 || z <= 0) return;
-    if (_v2.ops && _v2.ops->dispatch) _v2.ops->dispatch(x, y, z);
+    if (_v2.ops && _v2.ops->dispatch) _v2.ops->dispatch(gpu_v2_label(label, "unnamed dispatch"), x, y, z);
 }
 
-void gpu_dispatch_indirect(gpu_addr args) {
+void gpu_dispatch_indirect(const char *label, gpu_addr args) {
     u32 slot;
     u64 offset;
     if (!gpu_v2_decode(args, &slot, &offset)) return;
-    if (_v2.ops && _v2.ops->dispatch_indirect) _v2.ops->dispatch_indirect(slot, offset);
+    if (_v2.ops && _v2.ops->dispatch_indirect) {
+        _v2.ops->dispatch_indirect(gpu_v2_label(label, "unnamed dispatch"), slot, offset);
+    }
 }
 
 void gpu_signal_after(gpu_addr addr, u64 value) {

@@ -32,6 +32,7 @@ const canvas = {
 
 const writes = [];
 let computeDispatch = null;
+let computePassLabel = null;
 const device = {
   lost: new Promise(() => {}),
   limits: { maxStorageBuffersPerShaderStage: 8, maxBindingsPerBindGroup: 1000 },
@@ -44,7 +45,7 @@ const device = {
   createComputePipeline(desc) { return { desc, getBindGroupLayout() { return {}; } }; },
   createCommandEncoder() { return {
     beginRenderPass() { return { end() {}, draw() {}, setPipeline() {}, setVertexBuffer() {}, setIndexBuffer() {} }; },
-    beginComputePass() { return { end() {}, setPipeline() {}, setBindGroup() {}, dispatchWorkgroups(...args) { computeDispatch = args; } }; },
+    beginComputePass(desc) { computePassLabel = desc?.label ?? null; return { end() {}, setPipeline() {}, setBindGroup() {}, dispatchWorkgroups(...args) { computeDispatch = args; } }; },
     finish() { return {}; },
   }; },
 };
@@ -155,8 +156,10 @@ const computeSource = runtime.writeString('@compute @workgroup_size(1) fn cs() {
 const computeEntry = runtime.writeString('cs');
 const computeShader = runtime.gpu('gpu_shader_compute_create', [computeSource, computeEntry]);
 runtime.gpu('gpu_set_shader', [computeShader]);
-runtime.gpu('gpu_dispatch', [2, 3, 4]);
+runtime.gpu('gpu_dispatch', [runtime.writeString('unit test dispatch'), 2, 3, 4]);
 assert.deepEqual(computeDispatch, [2, 3, 4]);
+// The pass label names the compute pass for frame capture tools.
+assert.equal(computePassLabel, 'unit test dispatch');
 const oversizedStorageSource = runtime.writeString('@group(0) @binding(15) var<storage, read_write> ns_storage_buffer_8: array<i32>;');
 const oldConsoleError = console.error;
 let storageLimitError = '';

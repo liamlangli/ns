@@ -91,10 +91,16 @@ u32 gpu_state_create(i32 primitive_type, i32 cull_mode, i32 face_winding,
 // ---- passes ------------------------------------------------------------------
 // Attachments are texture indices, 0 = unused; load_flags packs a
 // gpu_load_action per attachment (GPU_PASS_*_SHIFT).
-void gpu_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
+//
+// label states what the pass does ("shadow depth", "bloom downsample"). It
+// names the command encoder, so a Metal or RenderDoc frame capture lists the
+// render graph by purpose instead of by anonymous pass index. A required,
+// concrete name; an empty one degrades to a generic placeholder.
+void gpu_pass_begin(const char *label,
+                    u32 color0, u32 color1, u32 color2, u32 color3,
                     u32 depth, u32 load_flags,
                     f64 r, f64 g, f64 b, f64 a, f64 depth_clear);
-void gpu_screen_pass_begin(f64 r, f64 g, f64 b, f64 a);
+void gpu_screen_pass_begin(const char *label, f64 r, f64 g, f64 b, f64 a);
 void gpu_pass_end(void);
 
 // ---- binding and drawing -----------------------------------------------------
@@ -108,8 +114,10 @@ void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count);
 void gpu_draw_indexed(gpu_addr indices, i32 index_type,
                       i32 index_count, i32 instance_count, i32 base_vertex);
 void gpu_draw_indirect(gpu_addr args, i32 draw_count, i32 stride);
-void gpu_dispatch(i32 x, i32 y, i32 z);
-void gpu_dispatch_indirect(gpu_addr args);
+// A dispatch is its own compute pass; label names it in a frame capture the
+// same way a render pass label does.
+void gpu_dispatch(const char *label, i32 x, i32 y, i32 z);
+void gpu_dispatch_indirect(const char *label, gpu_addr args);
 
 // ---- synchronization ---------------------------------------------------------
 // Implicit default: submission order with a full barrier between passes.
@@ -158,9 +166,11 @@ typedef struct gpu_v2_ops {
     u32  (*shader_compute_create)(const char *src, const char *entry);
     void (*shader_destroy)(u32 shader);
 
-    void (*pass_begin)(u32 color0, u32 color1, u32 color2, u32 color3,
+    // label is never NULL and never empty; the core substitutes a placeholder.
+    void (*pass_begin)(const char *label,
+                       u32 color0, u32 color1, u32 color2, u32 color3,
                        u32 depth, u32 load_flags, gpu_color clear, f32 depth_clear);
-    void (*screen_pass_begin)(gpu_color clear);
+    void (*screen_pass_begin)(const char *label, gpu_color clear);
     void (*pass_end)(void);
     void (*set_shader)(u32 shader);
     void (*set_state)(const gpu_v2_state_desc *desc);
@@ -170,8 +180,8 @@ typedef struct gpu_v2_ops {
     void (*draw_indexed)(u32 index_slot, u64 index_offset, i32 index_type,
                          i32 index_count, i32 instance_count, i32 base_vertex);
     void (*draw_indirect)(u32 args_slot, u64 args_offset, i32 draw_count, i32 stride);
-    void (*dispatch)(i32 x, i32 y, i32 z);
-    void (*dispatch_indirect)(u32 args_slot, u64 args_offset);
+    void (*dispatch)(const char *label, i32 x, i32 y, i32 z);
+    void (*dispatch_indirect)(const char *label, u32 args_slot, u64 args_offset);
     void (*signal_after)(u32 slot, u64 offset, u64 value);
     void (*wait_before)(u32 slot, u64 offset, u64 value);
 } gpu_v2_ops;

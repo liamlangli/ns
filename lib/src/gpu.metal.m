@@ -861,7 +861,15 @@ static void mtl_v2_ensure_frame(void) {
     if (_state.cmd_buffer == nil && _state.view != nil) gpu_mtl_begin_frame(_state.view);
 }
 
-static void mtl_v2_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
+// A pass label reaches the capture through the encoder name: Metal's frame
+// debugger lists encoders by label, so naming them turns the capture navigator
+// into the render graph.
+static void mtl_v2_label_encoder(id<MTLCommandEncoder> encoder, const char *label) {
+    if (encoder && label && label[0]) encoder.label = [NSString stringWithUTF8String:label];
+}
+
+static void mtl_v2_pass_begin(const char *label,
+                              u32 color0, u32 color1, u32 color2, u32 color3,
                               u32 depth, u32 load_flags, gpu_color clear, f32 depth_clear) {
     mtl_v2_ensure_frame();
     if (_state.cmd_buffer == nil || _state.cmd_encoder != nil) return;
@@ -891,9 +899,10 @@ static void mtl_v2_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
         _state.v2_pass_depth = _mtl_pixel_format(texture->format);
     }
     _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor:desc];
+    mtl_v2_label_encoder(_state.cmd_encoder, label);
 }
 
-static void mtl_v2_screen_pass_begin(gpu_color clear) {
+static void mtl_v2_screen_pass_begin(const char *label, gpu_color clear) {
     mtl_v2_ensure_frame();
     if (_state.cmd_buffer == nil || _state.cmd_encoder != nil || _state.cur_drawable == nil) return;
     MTLRenderPassDescriptor *desc = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -905,6 +914,7 @@ static void mtl_v2_screen_pass_begin(gpu_color clear) {
     _state.v2_pass_colors[0] = _state.cur_drawable.texture.pixelFormat;
     _state.v2_pass_depth = MTLPixelFormatInvalid;
     _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor:desc];
+    mtl_v2_label_encoder(_state.cmd_encoder, label);
 }
 
 static void mtl_v2_pass_end(void) {
@@ -1090,13 +1100,14 @@ static void mtl_v2_draw_indirect(u32 slot, u64 offset, i32 draw_count, i32 strid
     }
 }
 
-static void mtl_v2_dispatch(i32 x, i32 y, i32 z) {
+static void mtl_v2_dispatch(const char *label, i32 x, i32 y, i32 z) {
     if (!_state.v2_shader || _state.v2_shader >= _state.shader_count) return;
     gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
     if (!shader->compute_pso) return;
     mtl_v2_ensure_frame();
     if (_state.cmd_buffer == nil) return;
     id<MTLComputeCommandEncoder> encoder = [_state.cmd_buffer computeCommandEncoder];
+    mtl_v2_label_encoder(encoder, label);
     [encoder setComputePipelineState:shader->compute_pso];
     mtl_v2_bind_root(shader, encoder, true);
     NSUInteger width = MIN((NSUInteger)8, shader->compute_pso.maxTotalThreadsPerThreadgroup);
@@ -1105,13 +1116,14 @@ static void mtl_v2_dispatch(i32 x, i32 y, i32 z) {
     [encoder endEncoding];
 }
 
-static void mtl_v2_dispatch_indirect(u32 slot, u64 offset) {
+static void mtl_v2_dispatch_indirect(const char *label, u32 slot, u64 offset) {
     if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot] ||
         !_state.v2_shader || _state.v2_shader >= _state.shader_count) return;
     gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
     if (!shader->compute_pso) return;
     mtl_v2_ensure_frame();
     id<MTLComputeCommandEncoder> encoder = [_state.cmd_buffer computeCommandEncoder];
+    mtl_v2_label_encoder(encoder, label);
     [encoder setComputePipelineState:shader->compute_pso];
     mtl_v2_bind_root(shader, encoder, true);
     [encoder dispatchThreadgroupsWithIndirectBuffer:_state.v2_memory[slot]

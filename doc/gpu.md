@@ -208,10 +208,13 @@ No `gpu_pipeline`, no `gpu_binding`, no `gpu_mesh`, no vertex layout tables.
 // Attachments are texture indices; 0 = unused. No pass objects. load_flags
 // packs a gpu_load_action (clear/load/dontcare) per attachment
 // (GPU_PASS_COLOR0_SHIFT .. GPU_PASS_DEPTH_SHIFT).
-void gpu_pass_begin(u32 color0, u32 color1, u32 color2, u32 color3,
+//
+// label states what the pass does and is required, like the gpu_malloc name.
+void gpu_pass_begin(const char *label,
+                    u32 color0, u32 color1, u32 color2, u32 color3,
                     u32 depth, u32 load_flags,
                     f64 r, f64 g, f64 b, f64 a, f64 depth_clear);
-void gpu_screen_pass_begin(f64 r, f64 g, f64 b, f64 a);
+void gpu_screen_pass_begin(const char *label, f64 r, f64 g, f64 b, f64 a);
 void gpu_pass_end(void);
 
 void gpu_set_viewport(i32 x, i32 y, i32 w, i32 h);
@@ -241,12 +244,23 @@ void gpu_draw_indexed(gpu_addr indices, i32 index_type,
 
 // GPU-driven: argument structs read from GPU memory (GPU_CAP_INDIRECT_DRAW).
 void gpu_draw_indirect(gpu_addr args, i32 draw_count, i32 stride);
-void gpu_dispatch(i32 x, i32 y, i32 z);
-void gpu_dispatch_indirect(gpu_addr args);
+void gpu_dispatch(const char *label, i32 x, i32 y, i32 z);
+void gpu_dispatch_indirect(const char *label, gpu_addr args);
 ```
 
 Compute uses the same flow: `gpu_set_shader(compute)`, `gpu_set_root*`,
-`gpu_dispatch`.
+`gpu_dispatch`. Each dispatch is its own compute pass, so it carries its own
+label.
+
+### Pass labels
+
+Every pass names what it does: `"shadow depth"`, `"bloom downsample"`,
+`"terrain raycast"`. The label becomes the command encoder name, so a Metal or
+RenderDoc frame capture lists the frame as the render graph the program
+actually submits instead of a column of anonymous passes. Name the work, not
+the API call (`"g-buffer"`, not `"pass 3"`), and keep the name stable across
+frames so captures stay comparable. An empty label degrades to a generic
+placeholder rather than dropping the pass.
 
 Compute texture intrinsics bind the read texture from root word 0, the primary
 writable texture from word 1, and the optional RGBA8 secondary writable texture
@@ -344,7 +358,7 @@ What the metadata buys on the CPU side:
   caller-side size bookkeeping.
 - `gpu_memory_write/read/at` bounds-check offsets against the allocation's
   extent before an address ever reaches the backend.
-- `gpu_pass_begin_target(color, depth, ...)` targets rich handles and sets
+- `gpu_pass_begin_target(label, color, depth, ...)` targets rich handles and sets
   the viewport from the color attachment's size.
 - `gpu_render_state_new` round-trips the same value-cached id as the raw
   call while keeping every field readable.
@@ -370,7 +384,7 @@ A migrated frame:
 ```ns
 // Data is data; the draw names everything it needs.
 let args = sprite_args(g_vertices, view_size(), g_atlas, g_linear)
-gpu_screen_pass_begin(0.1, 0.1, 0.1, 1.0)
+gpu_screen_pass_begin("sprites", 0.1, 0.1, 0.1, 1.0)
 gpu_set_shader(g_shader)
 gpu_set_state(g_alpha_blend)
 gpu_set_root_data(ref args, 24)
@@ -384,9 +398,9 @@ And a compute-fed indirect draw:
 ```ns
 gpu_set_shader(g_cull_compute)
 gpu_set_root_data(ref cull_args, 32)
-gpu_dispatch(instance_count / 64 + 1, 1, 1)     // writes draw args + count
+gpu_dispatch("instance cull", instance_count / 64 + 1, 1, 1)  // writes draw args + count
 
-gpu_screen_pass_begin(0.0, 0.0, 0.0, 1.0)
+gpu_screen_pass_begin("scene", 0.0, 0.0, 0.0, 1.0)
 gpu_set_shader(g_scene_shader)
 gpu_set_state(g_opaque)
 gpu_set_root(g_scene_args)                       // resides in GPU memory

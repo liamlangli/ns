@@ -27,7 +27,7 @@ fn main() {
         let shader_id = gpu_shader_graphics(vs_main, fs_main).resource_id
         let state_id = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, 0, 0, false, GPU_BLEND_OFF, GPU_COLOR_MASK_ALL)
         v.on_frame({ frame_view in
-            gpu_screen_pass_begin(0.0, 0.0, 0.0, 1.0)
+            gpu_screen_pass_begin("triangle", 0.0, 0.0, 0.0, 1.0)
             gpu_set_viewport(0, 0, frame_view.framebuffer_width, frame_view.framebuffer_height)
             gpu_set_scissor(0, 0, frame_view.framebuffer_width, frame_view.framebuffer_height)
             gpu_set_shader(shader_id)

@@ -139,7 +139,7 @@ fn create_pipeline() {
 }
 
 fn draw_pattern(v: ref view) {
-    gpu_screen_pass_begin(0.02, 0.02, 0.02, 1.0)
+    gpu_screen_pass_begin("pattern triangle", 0.02, 0.02, 0.02, 1.0)
     gpu_set_viewport(0, 0, v.framebuffer_width, v.framebuffer_height)
     gpu_set_scissor(0, 0, v.framebuffer_width, v.framebuffer_height)
     gpu_set_shader(g_resources[0])

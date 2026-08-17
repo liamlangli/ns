@@ -97,7 +97,7 @@ assert gpu_shader_graphics_create("vs", "fs", "vs_main", "fs_main") == 0u
 assert gpu_shader_compute_create("cs", "cs_main") == 0u
 
 // The whole frame path is a safe no-op headless: nothing below may crash.
-gpu_screen_pass_begin(0.1, 0.1, 0.1, 1.0)
+gpu_screen_pass_begin("headless screen", 0.1, 0.1, 0.1, 1.0)
 gpu_set_shader(1u)
 gpu_set_state(s1)
 gpu_set_root(a)
@@ -107,8 +107,8 @@ gpu_set_root_data(src, 16)
 gpu_draw_vertices(0, 3, 1)
 gpu_draw_indexed(d, GPU_INDEX_UINT32, 3, 1, 0)
 gpu_draw_indirect(d, 1, 16)
-gpu_dispatch(1, 1, 1)
-gpu_dispatch_indirect(d)
+gpu_dispatch("headless dispatch", 1, 1, 1)
+gpu_dispatch_indirect("headless indirect dispatch", d)
 gpu_signal_after(a, 1)
 gpu_wait_before(a, 1)
 gpu_pass_end()
@@ -171,6 +171,6 @@ gpu_shader_bind(sh)
 gpu_shader_release(sh)
 
 // The pass helper takes rich handles and is a safe no-op headless.
-gpu_pass_begin_target(gpu_texture_none(), gpu_texture_none(), 0u, 0.0, 0.0, 0.0, 1.0, 1.0)
+gpu_pass_begin_target("headless target", gpu_texture_none(), gpu_texture_none(), 0u, 0.0, 0.0, 0.0, 1.0, 1.0)
 gpu_pass_end()
 gpu_commit()

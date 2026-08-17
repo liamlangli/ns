@@ -422,7 +422,10 @@ check the implementation/declaration for the target platform.
   abstraction.
 - Give every GPU buffer allocation a stable, concrete, purpose-specific debug
   name; a slot, index, or generic placeholder such as `buffer` is not a
-  sufficient name.
+  sufficient name. The same rule covers the label every render pass and
+  dispatch takes: it names the command encoder in a Metal or RenderDoc frame
+  capture, so name the work (`"shadow depth"`, `"bloom downsample"`) rather
+  than the call.
 - Use `lit` rather than `let` for module constants and local compile-time
   values that satisfy the literal-expression restrictions. Keep runtime or
   intentionally mutable bindings as `let`, and do not weaken `lit` validation

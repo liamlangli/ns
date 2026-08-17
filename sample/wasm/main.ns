@@ -365,13 +365,13 @@ fn frame(time_ms: f64, width: i32, height: i32) {
     ]
     gpu_set_shader(path_shader)
     gpu_set_root_data(root, 64)
-    gpu_dispatch((trace_width + 7) / 8, (trace_height + 7) / 8, 1)
+    gpu_dispatch("path trace", (trace_width + 7) / 8, (trace_height + 7) / 8, 1)
 
     let display_root = [
         output_texture as f32, 0.0, 0.0, 0.0,
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
     ]
-    gpu_screen_pass_begin(0.0, 0.0, 0.0, 1.0)
+    gpu_screen_pass_begin("tonemap", 0.0, 0.0, 0.0, 1.0)
     gpu_set_shader(tonemap_shader)
     gpu_set_state(tonemap_state)
     gpu_set_root_data(display_root, 64)

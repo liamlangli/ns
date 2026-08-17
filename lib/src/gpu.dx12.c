@@ -211,11 +211,23 @@ static void *dx12_mem_host_ptr(u32 slot) {
     return slot < GPU_RESOURCE_POOL_SIZE ? _state.memory[slot].mapped : NULL;
 }
 
-static void dx12_screen_pass_begin(gpu_color clear) {
+// Debug-marker metadata understood by PIX and RenderDoc: 1 marks the payload
+// as an ANSI string, so the pass label names the region in a frame capture.
+#define GPU_DX12_EVENT_ANSI 1
+
+// Always emitted so every dx12_pass_end has one event to close.
+static void dx12_begin_event(const char *label) {
+    const char *name = label && label[0] ? label : "screen pass";
+    ID3D12GraphicsCommandList_BeginEvent(_state.command_list, GPU_DX12_EVENT_ANSI,
+                                         name, (UINT)(strlen(name) + 1));
+}
+
+static void dx12_screen_pass_begin(const char *label, gpu_color clear) {
     if (!_state.valid || _state.pass_open) return;
     _state.frame_index = IDXGISwapChain3_GetCurrentBackBufferIndex(_state.swapchain);
     ID3D12CommandAllocator_Reset(_state.command_allocator);
     ID3D12GraphicsCommandList_Reset(_state.command_list, _state.command_allocator, NULL);
+    dx12_begin_event(label);
     D3D12_RESOURCE_BARRIER barrier = {0};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = _state.render_targets[_state.frame_index];
@@ -241,6 +253,7 @@ static void dx12_pass_end(void) {
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     ID3D12GraphicsCommandList_ResourceBarrier(_state.command_list, 1, &barrier);
+    ID3D12GraphicsCommandList_EndEvent(_state.command_list);
     ID3D12GraphicsCommandList_Close(_state.command_list);
     _state.pass_open = false;
 }

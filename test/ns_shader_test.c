@@ -744,7 +744,7 @@ int main() {
             "fn main() bool {\n"
             "    let compute = gpu_shader_compute(cs_noop)\n"
             "    gpu_shader_bind(compute)\n"
-            "    gpu_dispatch(1, 1, 1)\n"
+            "    gpu_dispatch(\"test\", 1, 1, 1)\n"
             "    return !gpu_shader_valid(compute)\n"
             "}\n";
         ns_expect(ns_shader_eval_bool(src), "gpu v2 compute path transpiles once and safely reaches the headless backend.");
