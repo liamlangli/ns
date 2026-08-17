@@ -274,6 +274,10 @@ typedef struct gpu_state_mtl {
     id<MTLCommandBuffer> cmd_buffer;
     id<MTLRenderCommandEncoder> cmd_encoder;
     id<CAMetalDrawable> cur_drawable;
+    // A CAMetalLayer drawable may be read and presented once. The host frame
+    // owns that single acquire/present pair, so a mid-frame gpu_commit() cannot
+    // hand the drawable back a second time.
+    bool drawable_presented;
     id<MTLCaptureScope> capture_scope;
     
     gpu_shader_mtl shaders[GPU_RESOURCE_POOL_SIZE];
@@ -440,6 +444,7 @@ ns_bool gpu_request_device(view* v) {
     _state.cmd_buffer = nil;
     _state.cmd_encoder = nil;
     _state.cur_drawable = nil;
+    _state.drawable_presented = false;
     _state.capture_scope = nil;
     _state.frame_index = 0;
     
@@ -503,6 +508,29 @@ void gpu_destroy_device() {
     memset(&_state, 0, sizeof(_state));
 }
 
+// Open a command buffer when the frame does not have one. A frame that flushes
+// mid-way - the icon atlas bake commits before it drops its scratch targets -
+// keeps drawing into a fresh buffer, so this is separate from the per-frame
+// swapchain state that gpu_mtl_begin_frame() resets.
+static void gpu_mtl_begin_cmd_buffer(void) {
+    if (!_state.valid || _state.device.device == nil || _state.semaphore == nil) return;
+    if (nil != _state.cmd_buffer) return;
+    dispatch_semaphore_wait(_state.semaphore, DISPATCH_TIME_FOREVER);
+    gpu_mtl_capture_begin_if_requested();
+    _state.cmd_buffer = [_state.cmd_queue commandBuffer];
+    [_state.cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> _) { dispatch_semaphore_signal(_state.semaphore); }];
+}
+
+// The drawable is acquired by the first screen pass rather than by the frame
+// start: frames that only render offscreen never take one, and a frame that
+// already presented never asks the layer for its drawable again.
+static id<CAMetalDrawable> gpu_mtl_current_drawable(void) {
+    if (nil != _state.cur_drawable || _state.drawable_presented) return _state.cur_drawable;
+    if (nil == _state.view) return nil;
+    _state.cur_drawable = [_state.view currentDrawable];
+    return _state.cur_drawable;
+}
+
 void gpu_mtl_begin_frame(MTKView *view) {
     if (!_state.valid || _state.device.device == nil || _state.semaphore == nil) {
         return;
@@ -517,13 +545,50 @@ void gpu_mtl_begin_frame(MTKView *view) {
         .color_texture = [view multisampleColorTexture],
         .depth_stencil_texture = [view depthStencilTexture],
     };
-    
-    dispatch_semaphore_wait(_state.semaphore, DISPATCH_TIME_FOREVER);
-    gpu_mtl_capture_begin_if_requested();
-    _state.cmd_buffer = [_state.cmd_queue commandBuffer];
-    [_state.cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> _) { dispatch_semaphore_signal(_state.semaphore); }];
-    _state.cur_drawable = [view currentDrawable];
+
+    _state.cur_drawable = nil;
+    _state.drawable_presented = false;
     _state.screen_pass_count = 0;
+    gpu_mtl_begin_cmd_buffer();
+}
+
+// Present and end the host frame started by gpu_mtl_begin_frame(). The present
+// belongs here rather than in gpu_commit() so a mid-frame flush submits its work
+// without publishing a half-drawn drawable, and so the drawable is presented
+// exactly once however many command buffers the frame took.
+void gpu_mtl_end_frame(MTKView *view) {
+    ns_unused(view);
+    if (!_state.valid || _state.cmd_queue == nil) return;
+    assert(nil == _state.cmd_encoder);
+
+    // The frame's own buffer, when it has not committed yet: the drawable rides
+    // along on it and the in-flight semaphore stays with the drawing work.
+    id<MTLCommandBuffer> buffer = _state.cmd_buffer;
+    ns_bool owns_frame_buffer = nil != buffer;
+    if (nil == buffer && nil != _state.cur_drawable) {
+        // The frame flushed its drawing already, so present from a bare buffer.
+        // Command buffers execute in commit order, so this still follows the
+        // drawing, and it must not take the semaphore the committed work holds -
+        // waiting on it here would stall the CPU on the GPU every frame.
+        buffer = [_state.cmd_queue commandBuffer];
+    }
+
+    if (nil != buffer && nil != _state.cur_drawable) {
+        [buffer presentDrawable: _state.cur_drawable];
+        _state.drawable_presented = true;
+    }
+    _state.cur_drawable = nil;
+
+    if (nil != buffer) {
+        [buffer commit];
+        gpu_mtl_capture_end_if_started();
+    }
+    if (owns_frame_buffer) {
+        _state.cmd_buffer = nil;
+        // A frame that returned before gpu_commit() still recycles its ring.
+        gpu_v2_frame_end();
+    }
+    _state.frame_index += 1;
 }
 
 void gpu_commit() {
@@ -533,15 +598,9 @@ void gpu_commit() {
     }
     assert(nil == _state.cmd_encoder);
 
-    if (nil != _state.cur_drawable) {
-        [_state.cmd_buffer presentDrawable: _state.cur_drawable];
-        _state.cur_drawable = nil;
-    }
-
     [_state.cmd_buffer commit];
     gpu_mtl_capture_end_if_started();
     _state.cmd_buffer = nil;
-    _state.frame_index += 1;
     gpu_v2_frame_end();
 }
 
@@ -858,7 +917,7 @@ static void mtl_v2_shader_destroy(u32 shader) {
 }
 
 static void mtl_v2_ensure_frame(void) {
-    if (_state.cmd_buffer == nil && _state.view != nil) gpu_mtl_begin_frame(_state.view);
+    if (_state.cmd_buffer == nil) gpu_mtl_begin_cmd_buffer();
 }
 
 // A pass label reaches the capture through the encoder name: Metal's frame
@@ -904,14 +963,18 @@ static void mtl_v2_pass_begin(const char *label,
 
 static void mtl_v2_screen_pass_begin(const char *label, gpu_color clear) {
     mtl_v2_ensure_frame();
-    if (_state.cmd_buffer == nil || _state.cmd_encoder != nil || _state.cur_drawable == nil) return;
+    if (_state.cmd_buffer == nil || _state.cmd_encoder != nil) return;
+    id<CAMetalDrawable> drawable = gpu_mtl_current_drawable();
+    if (drawable == nil) return;
+    id<MTLTexture> screen = drawable.texture;
+    if (screen == nil) return;
     MTLRenderPassDescriptor *desc = [MTLRenderPassDescriptor renderPassDescriptor];
-    desc.colorAttachments[0].texture = _state.cur_drawable.texture;
+    desc.colorAttachments[0].texture = screen;
     desc.colorAttachments[0].storeAction = MTLStoreActionStore;
     desc.colorAttachments[0].loadAction = _state.screen_pass_count++ == 0 ? MTLLoadActionClear : MTLLoadActionLoad;
     desc.colorAttachments[0].clearColor = MTLClearColorMake(clear.r, clear.g, clear.b, clear.a);
     memset(_state.v2_pass_colors, 0, sizeof(_state.v2_pass_colors));
-    _state.v2_pass_colors[0] = _state.cur_drawable.texture.pixelFormat;
+    _state.v2_pass_colors[0] = screen.pixelFormat;
     _state.v2_pass_depth = MTLPixelFormatInvalid;
     _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor:desc];
     mtl_v2_label_encoder(_state.cmd_encoder, label);

@@ -9,6 +9,7 @@
 #include "view.h"
 
 void gpu_mtl_begin_frame(MTKView *view);
+void gpu_mtl_end_frame(MTKView *view);
 
 @interface ViewApp : NSApplication
 @end
@@ -385,6 +386,9 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
     if (frame) {
         gpu_mtl_begin_frame(view);
         frame(&_view);
+        // The frame owns the drawable between these two calls: whatever the
+        // frame committed in between, the present happens here and once.
+        gpu_mtl_end_frame(view);
     }
     view_complete_frame(&_view);
 }

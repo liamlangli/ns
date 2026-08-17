@@ -10,6 +10,7 @@
 #include "view.h"
 
 void gpu_mtl_begin_frame(MTKView *view);
+void gpu_mtl_end_frame(MTKView *view);
 
 typedef void (*view_callback)(view *);
 
@@ -132,6 +133,9 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
     if (frame) {
         gpu_mtl_begin_frame(metal_view);
         frame(&view_ios_state);
+        // The frame owns the drawable between these two calls: whatever the
+        // frame committed in between, the present happens here and once.
+        gpu_mtl_end_frame(metal_view);
     }
     view_complete_frame(&view_ios_state);
 }
