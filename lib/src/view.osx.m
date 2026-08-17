@@ -328,6 +328,48 @@ static void view_osx_update_mouse(NSEvent *event) {
     view_on_mouse_move(&_view, x, y);
 }
 
+// AppKit reports a trackpad rotation in degrees; the gesture state carries
+// radians, as the iOS backend's recognizer already does.
+#define VIEW_OSX_DEGREES_TO_RADIANS 0.017453292519943295
+
+// The orbit gesture is exactly three fingers on an indirect device. One and two
+// finger travel already belongs to scroll, magnify and rotate, so a set of any
+// other size ends the tracking instead of publishing an orbit.
+#define VIEW_OSX_ORBIT_TOUCHES 3
+
+static ns_bool view_osx_orbit_tracking;
+static f64 view_osx_orbit_last_x;
+static f64 view_osx_orbit_last_y;
+
+// The travel is measured from the centroid of the touching set. A centroid does
+// not depend on the order the set is enumerated in, so no per-finger identity
+// has to be carried between events. Normalized positions are fractions of the
+// trackpad surface with the origin at its lower left, so the device size turns
+// them into points and the vertical axis is flipped to the view's downward one.
+static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
+    if ([touches count] != VIEW_OSX_ORBIT_TOUCHES) {
+        view_osx_orbit_tracking = false;
+        return;
+    }
+    f64 x = 0.0;
+    f64 y = 0.0;
+    CGSize device = CGSizeMake(0.0, 0.0);
+    for (NSTouch *touch in touches) {
+        const NSPoint position = [touch normalizedPosition];
+        x += position.x;
+        y += position.y;
+        device = [touch deviceSize];
+    }
+    x = x / (f64)VIEW_OSX_ORBIT_TOUCHES * device.width;
+    y = y / (f64)VIEW_OSX_ORBIT_TOUCHES * device.height;
+    if (view_osx_orbit_tracking && publish) {
+        view_on_orbit_gesture(&_view, x - view_osx_orbit_last_x, view_osx_orbit_last_y - y);
+    }
+    view_osx_orbit_last_x = x;
+    view_osx_orbit_last_y = y;
+    view_osx_orbit_tracking = true;
+}
+
 //------------------------------------------------------------------------------
 @implementation ViewDelegate
 - (void)mtkView:(nonnull MTKView*)view drawableSizeWillChange:(CGSize)size {
@@ -435,6 +477,39 @@ static void view_osx_update_mouse(NSEvent *event) {
     view_on_scroll(&_view, dx, dy);
 }
 
+// A pinch reports the magnification added since the last event, so the factor
+// the gesture state multiplies is that step around 1.
+- (void)magnifyWithEvent:(NSEvent*)event {
+    const f64 factor = 1.0 + [event magnification];
+    view_osx_update_mouse(event);
+    if (factor > 0.0) view_on_gesture(&_view, 0.0, 0.0, factor, 0.0);
+}
+
+// Counterclockwise finger travel is positive in both AppKit's degrees and the
+// radians the gesture state accumulates.
+- (void)rotateWithEvent:(NSEvent*)event {
+    view_osx_update_mouse(event);
+    view_on_gesture(&_view, 0.0, 0.0, 1.0, [event rotation] * VIEW_OSX_DEGREES_TO_RADIANS);
+}
+
+- (void)touchesBeganWithEvent:(NSEvent*)event {
+    view_osx_touch_orbit([event touchesMatchingPhase:NSTouchPhaseTouching inView:self], false);
+}
+
+- (void)touchesMovedWithEvent:(NSEvent*)event {
+    view_osx_touch_orbit([event touchesMatchingPhase:NSTouchPhaseTouching inView:self], true);
+}
+
+- (void)touchesEndedWithEvent:(NSEvent*)event {
+    (void)event;
+    view_osx_orbit_tracking = false;
+}
+
+- (void)touchesCancelledWithEvent:(NSEvent*)event {
+    (void)event;
+    view_osx_orbit_tracking = false;
+}
+
 - (BOOL)acceptsFirstResponder {
     return YES;
 }
@@ -489,6 +564,9 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatDepth32Float];
     [view_mtk_view setPaused:YES];
     [view_mtk_view setEnableSetNeedsDisplay:YES];
+    // Trackpad fingers are only delivered as touches once the view opts in.
+    // Magnify and rotate arrive without it; the three-finger orbit does not.
+    [view_mtk_view setAllowedTouchTypes:NSTouchTypeMaskIndirect];
     view_mtk_view_delegate = [[ViewDelegate alloc] init];
     [view_mtk_view setDelegate: view_mtk_view_delegate];
     [view_window setContentView: view_mtk_view];

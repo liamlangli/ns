@@ -12,6 +12,43 @@
 #include <time.h>
 #endif
 
+#if defined(__APPLE__)
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <unistd.h>
+
+// A double-clicked app bundle starts with no useful working directory, so every
+// relative path in the program would read nothing. The build packages the
+// project's declared assets into Contents/Resources under the names they have
+// in the project, so entering that directory before the program runs makes the
+// same relative path read the same file it does from an interpreted run.
+//
+// Only an executable inside a bundle moves: a plain command-line program keeps
+// the directory it was started from, which is the one its arguments name.
+static void ns_rt_enter_bundle_resources(void) {
+    static const char macos_suffix[] = "/Contents/MacOS";
+    static const char resources[] = "/Contents/Resources";
+    char executable[PATH_MAX];
+    uint32_t size = (uint32_t)sizeof(executable);
+    if (_NSGetExecutablePath(executable, &size) != 0) return;
+
+    char bundle[PATH_MAX];
+    if (!realpath(executable, bundle)) return;
+    char *name = strrchr(bundle, '/');
+    if (!name) return;
+    *name = '\0';
+
+    size_t length = strlen(bundle);
+    size_t suffix_length = sizeof(macos_suffix) - 1;
+    if (length < suffix_length || strcmp(bundle + length - suffix_length, macos_suffix) != 0) return;
+    if (length - suffix_length + sizeof(resources) > sizeof(bundle)) return;
+    memcpy(bundle + length - suffix_length, resources, sizeof(resources));
+    if (chdir(bundle) != 0) {
+        fprintf(stderr, "ns_rt: could not enter %s\n", bundle);
+    }
+}
+#endif
+
 #define NS_RT_GLOBAL_MAX 1024
 
 static uint8_t *ns_rt_mem = NULL;
@@ -55,6 +92,14 @@ static void ns_rt_grow(uint32_t need) {
 void ns_rt_init(void) {
     if (!ns_rt_mem) ns_rt_grow(4096);
     if (ns_rt_used < 16) ns_rt_used = 16;
+#if defined(__APPLE__)
+    // The allocator calls this on every miss, so the bundle is resolved once.
+    static int entered_bundle = 0;
+    if (!entered_bundle) {
+        entered_bundle = 1;
+        ns_rt_enter_bundle_resources();
+    }
+#endif
 }
 
 void ns_rt_reset(void) {

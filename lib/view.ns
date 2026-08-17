@@ -78,6 +78,13 @@ struct view_input_event {
     tool_action: i32
 }
 
+// What the fingers did since the last view_input_reset: pan and orbit travel in
+// points, a zoom factor around 1, and a rotation in radians with counterclockwise
+// positive. iOS fills pan and zoom from a two-finger drag and pinch, rotation
+// from a two-finger turn, and orbit from a one-finger drag. macOS trackpads fill
+// zoom from a pinch, rotation from a two-finger turn, and orbit from a
+// three-finger drag; their one and two finger travel stays with the mouse
+// position and the scroll fields.
 struct view_gesture_state {
     pan_x: f64,
     pan_y: f64,

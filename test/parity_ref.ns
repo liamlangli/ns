@@ -2,6 +2,31 @@ fn bump(p: ref i32) {
     p = p + 1
 }
 
+// A struct with an array field is where the two struct layouts the compiler
+// knows differ, so it is the shape that catches a `ref` reading its own fields
+// from the wrong offsets.
+struct grid {
+    data: [u8],
+    size_x: i32,
+    size_y: i32,
+    size_z: i32
+}
+
+let shared = grid { [u8](4), 0, 0, 0 }
+
+// A parameter declared `ref` is handed the caller's own storage rather than a
+// copy of it, so what it writes is what the caller reads back.
+fn fill(g: ref grid) {
+    g.size_x = 11
+    g.size_y = 22
+    g.size_z = 33
+    g.data[0] = 7
+}
+
+fn last(g: ref grid) i32 {
+    return g.size_z
+}
+
 fn main() {
     let a = 1
     let b = ref a
@@ -13,4 +38,14 @@ fn main() {
     assert a == 3 && b == 3 && c == 1 && d == 3
     bump(ref a)
     assert a == 4 && b == 4
+
+    fill(ref shared)
+    assert shared.size_x == 11 && shared.size_y == 22 && shared.size_z == 33
+    assert shared.data[0] == 7
+    // Through a reference and as a value, the same field is the same field.
+    assert last(ref shared) == shared.size_z
+
+    let local = grid { [u8](2), 0, 0, 0 }
+    fill(ref local)
+    assert local.size_x == 11 && local.size_z == 33 && local.data[0] == 7
 }

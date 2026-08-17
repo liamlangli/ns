@@ -2068,6 +2068,50 @@ static ns_str ns_build_config(ns_build_input *in, ns_build_kind kind, ns_str out
     return config;
 }
 
+// What `assets = ["res", "data/levels"]` names: the files and directories a
+// bundle packages, as paths relative to the project root. A manifest that
+// declares none returns nothing; ns_project_asset_paths adds the conventional
+// directories in that case.
+static ns_str *ns_project_asset_declared(ns_str root) {
+    ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str manifest = ns_os_read_file(manifest_path);
+    ns_str *declared = ns_manifest_values(manifest, "assets");
+    ns_str *paths = ns_null;
+    for (i32 i = 0, count = ns_array_length(declared); i < count; i++) {
+        if (declared[i].len > 0) ns_array_push(paths, ns_str_dup(declared[i]));
+    }
+    ns_array_free(declared);
+    ns_str_free(manifest);
+    ns_str_free(manifest_path);
+    return paths;
+}
+
+// Every packaged path, declared or conventional. A path keeps the name it has
+// in the project, because an app bundle enters its resource directory before
+// the program runs: one relative path then reads the same file whether the
+// project was interpreted from its root or launched as a bundle.
+static ns_str *ns_project_asset_paths(ns_str root) {
+    ns_str *paths = ns_project_asset_declared(root);
+    if (ns_array_length(paths) > 0) return paths;
+
+    ns_array_push(paths, ns_str_dup(ns_str_cstr("assets")));
+    ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str manifest = ns_os_read_file(manifest_path);
+    ns_str source = ns_manifest_value(manifest, "source");
+    if (source.data != ns_null && source.len > 0 && !ns_str_equals(source, ns_str_cstr("."))) {
+        ns_array_push(paths, ns_path_join(source, ns_str_cstr("assets")));
+    }
+    ns_str_free(source);
+    ns_str_free(manifest);
+    ns_str_free(manifest_path);
+    return paths;
+}
+
+static void ns_project_asset_paths_free(ns_str *paths) {
+    for (i32 i = 0, count = ns_array_length(paths); i < count; i++) ns_str_free(paths[i]);
+    ns_array_free(paths);
+}
+
 // Stamp the inputs a build reads before it links: the running toolchain, the
 // entry, the manifest and its source set, and the resources a bundle packages.
 // Files the linker discovers are added afterwards by ns_compile_build_input,
@@ -2094,14 +2138,16 @@ static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
     ns_project_sources_free(sources);
 
     // Assets are copied into app and browser bundles, so they are inputs too.
-    ns_str source_dir = ns_project_source_dir(in->scope);
-    ns_str source_assets = ns_path_join(source_dir, ns_str_cstr("assets"));
-    ns_str scope_assets = ns_path_join(in->scope, ns_str_cstr("assets"));
-    ns_build_cache_add_tree(cache, source_assets);
-    ns_build_cache_add_tree(cache, scope_assets);
-    ns_str_free(source_assets);
-    ns_str_free(scope_assets);
-    ns_str_free(source_dir);
+    ns_str *assets = ns_project_asset_paths(in->scope);
+    for (i32 i = 0, count = ns_array_length(assets); i < count; i++) {
+        ns_str path = ns_path_join(in->scope, assets[i]);
+        // A packaged path is a directory or a single file; only one of these
+        // records anything for either kind.
+        ns_build_cache_add_tree(cache, path);
+        if (!ns_is_dir(path)) ns_build_cache_add(cache, path);
+        ns_str_free(path);
+    }
+    ns_project_asset_paths_free(assets);
 }
 
 static ns_str ns_wasm_runtime_source(void) {
@@ -2314,6 +2360,26 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
         ns_remove_tree(output_assets);
         ns_copy_tree(assets, output_assets);
     }
+    // A manifest that names its own packaged paths puts each of them beside the
+    // page under the same relative name, which is the path the fetching program
+    // already uses.
+    ns_str *declared = ns_project_asset_declared(in->scope);
+    for (i32 i = 0, count = ns_array_length(declared); i < count; i++) {
+        ns_str source = ns_path_join(in->scope, declared[i]);
+        ns_str destination = ns_path_join(out_dir, declared[i]);
+        if (ns_str_equals(source, destination)) {
+            // Nothing to do: the project already keeps them where the bundle
+            // wants them.
+        } else if (ns_is_dir(source)) {
+            ns_remove_tree(destination);
+            ns_copy_tree(source, destination);
+        } else if (ns_file_exists(source)) {
+            ns_copy_file_contents(source, destination);
+        }
+        ns_str_free(source);
+        ns_str_free(destination);
+    }
+    ns_project_asset_paths_free(declared);
     ns_build_profile_end("package_wasm", package_start);
     ns_info("build", "wasm bundle %.*s\n", out_dir.len, out_dir.data);
     f64 write_cache_start = ns_build_profile_begin("write_cache");
@@ -2713,6 +2779,29 @@ static ns_str ns_build_darwin_current_executable(void) {
     return absolute;
 }
 
+// Copy the packaged paths into the bundle's resource directory under the names
+// they have in the project. The launched executable enters that directory, so
+// a program keeps reading `res/house.vox` whether it was interpreted from the
+// project root or double-clicked as a bundle.
+static void ns_build_darwin_copy_assets(ns_build_input *in, ns_str resources_dir) {
+    if (!in->has_manifest) return;
+    ns_str *assets = ns_project_asset_paths(in->scope);
+    for (i32 i = 0, count = ns_array_length(assets); i < count; i++) {
+        ns_str source = ns_path_join(in->scope, assets[i]);
+        ns_str destination = ns_path_join(resources_dir, assets[i]);
+        if (ns_is_dir(source)) {
+            // A file dropped from the project must not survive in the bundle.
+            ns_remove_tree(destination);
+            ns_copy_tree(source, destination);
+        } else if (ns_file_exists(source)) {
+            ns_copy_file_contents(source, destination);
+        }
+        ns_str_free(source);
+        ns_str_free(destination);
+    }
+    ns_project_asset_paths_free(assets);
+}
+
 static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
     f64 bundle_start = ns_build_profile_begin("prepare_app_bundle");
     ns_str app_dir = ns_build_app_output(output);
@@ -2731,6 +2820,9 @@ static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module
     ns_str icon_file = ns_str_null;
     ns_build_darwin_make_icns(in->icon, resources_dir, &icon_file);
     ns_build_profile_end("package_icon", icon_start);
+    f64 assets_start = ns_build_profile_begin("package_assets");
+    ns_build_darwin_copy_assets(in, resources_dir);
+    ns_build_profile_end("package_assets", assets_start);
     f64 metadata_start = ns_build_profile_begin("write_app_metadata");
     ns_build_darwin_write_plist(in, app_dir, executable_name, icon_file);
     ns_build_profile_end("write_app_metadata", metadata_start);

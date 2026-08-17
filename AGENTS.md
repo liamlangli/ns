@@ -91,9 +91,15 @@ The common commands are:
 - `ns --help`: show compiler targets and all current flags.
 
 The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
-`type`, optional `target`, `source`, `entry` (or `entries`), `exclude`, and
-`link`. `link = true` makes `ns run` build and launch a native artifact;
-omitting it or setting it false keeps the interpreter.
+`type`, optional `target`, `source`, `entry` (or `entries`), `exclude`,
+`assets`, and `link`. `link = true` makes `ns run` build and launch a native
+artifact; omitting it or setting it false keeps the interpreter.
+`assets = ["res"]` names the files and directories a bundle packages, as
+project-relative paths; a manifest that declares none packages the conventional
+`assets` directory beside it and below `source`. Each path keeps the name it has
+in the project, and a launched app bundle enters its resource directory before
+the program runs, so one relative path such as `res/house.vox` reads the same
+file interpreted and bundled.
 `target = "wasm"` keeps `type = "app"` and makes `ns build` emit a browser
 bundle; its HTML title uses `name`, and its favicon uses `icon` or the installed
 default `ns.svg`. A browser project may set `shell` to a custom HTML file using

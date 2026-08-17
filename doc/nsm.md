@@ -22,6 +22,8 @@ description = "Example module."
 source = "src"
 entry = "main.ns"
 exclude = ["generated/**"]
+# Files and directories a bundle packages; omit to package `assets`.
+assets = ["res"]
 
 [[dependencies.runtime]]
 name = "std"
@@ -34,6 +36,25 @@ source-relative files, directories (a trailing `/`), and glob patterns from
 that source set. Generated `bin/` output is always ignored. A local `use` is
 accepted for compatibility but is redundant; `use` is needed for built-in and
 external modules. Only external `dependencies.runtime` need listing.
+
+### Packaged assets
+
+A program reads its own files through relative paths, and those paths have to
+mean the same thing when the project is interpreted from its root and when it
+is launched as a built bundle. `assets` names the files and directories that
+travel with the artifact, as project-relative paths. A manifest that declares
+none keeps the conventional `assets` directory beside the manifest and below
+`source`.
+
+`ns build` copies each path into a macOS app bundle's `Contents/Resources`
+under the name it has in the project, and the runtime enters that directory
+before the program's `main` runs. A project with `assets = ["res"]` therefore
+reads `res/house.vox` from the project directory under `ns run` and from the
+bundle's resources once built, with no path handling in the program. A plain
+`cli` executable is not a bundle and keeps the working directory it was started
+from. A browser bundle copies declared paths beside its page, and continues to
+sync `<source>/assets` into `bin/assets`. Every packaged file is a build input,
+so editing one triggers the next incremental build.
 
 Test sources do not need manifest exclusions. Normal project compilation skips
 directories named `test` and files named `*_test.ns` automatically. `ns test`

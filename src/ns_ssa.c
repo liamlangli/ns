@@ -895,8 +895,17 @@ static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 fiel
     return -1;
 }
 
-static ns_bool ns_ssa_native_struct(ns_type t) {
-    return ns_type_is_ref(t) && ns_type_is(t, NS_TYPE_STRUCT);
+// Whether a reference to this struct reads the C layout its declaring module
+// published. A struct a native module owns is one the library itself may have
+// allocated, so its fields sit where the C header puts them and a pointer to it
+// has to be read that way. A struct the project declares is allocated by ns in
+// the compact layout every other access to it uses, and a reference to one that
+// switched layouts would read its own fields from the wrong offsets.
+static ns_bool ns_ssa_native_struct(ns_ssa_builder *b, ns_type t) {
+    if (!ns_type_is_ref(t) || !ns_type_is(t, NS_TYPE_STRUCT)) return false;
+    i32 index = ns_type_index(t);
+    if (index < 0 || index >= (i32)ns_array_length(b->vm->symbols)) return false;
+    return b->vm->symbols[index].lib.len > 0;
 }
 
 static i32 ns_ssa_field_off(ns_ssa_builder *b, ns_symbol *st, i32 field, ns_bool native) {
@@ -1784,7 +1793,7 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             ns_symbol *st = &b->vm->symbols[ns_type_index(object_type)];
             i32 field = ns_struct_field_index(st, member->primary_expr.token.val);
             if (field >= 0) {
-                ns_bool native = ns_ssa_native_struct(object_type);
+                ns_bool native = ns_ssa_native_struct(b, object_type);
                 ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, i);
                 store.a = object;
                 store.b = rhs;
@@ -1972,7 +1981,7 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                 ns_symbol *st = &b->vm->symbols[ns_type_index(ot)];
                 i32 field = ns_struct_field_index(st, member->primary_expr.token.val);
                 if (field >= 0) {
-                    ns_bool native = ns_ssa_native_struct(ot);
+                    ns_bool native = ns_ssa_native_struct(b, ot);
                     ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, i);
                     store.a = obj;
                     store.b = tramp;
@@ -2089,7 +2098,14 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                 }
             }
             if (av < 0) av = ns_ssa_lower_expr(b, next);
-            if (!skip_clone) av = ns_ssa_clone_struct(b, av, next);
+            ns_bool by_ref = callee_sym && callee_sym->type == NS_SYMBOL_FN &&
+                             ai < (i32)ns_array_length(callee_sym->fn.args) &&
+                             ns_type_is_ref(callee_sym->fn.args[ai].val.t);
+            // A plain struct is copied where it crosses a value boundary, but a
+            // parameter declared `ref` is not such a boundary: the callee is
+            // being handed the caller's own storage to write through, and a
+            // copy here would leave every write it makes in the copy.
+            if (!skip_clone && !by_ref) av = ns_ssa_clone_struct(b, av, next);
             if (callee_sym && callee_sym->type == NS_SYMBOL_FN &&
                 ai < (i32)ns_array_length(callee_sym->fn.args)) {
                 ns_type pt = callee_sym->fn.args[ai].val.t;
@@ -2183,7 +2199,7 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             ns_symbol *st = &b->vm->symbols[ns_type_index(object_type)];
             i32 field = ns_struct_field_index(st, member->primary_expr.token.val);
             if (field >= 0) {
-                ns_bool native = ns_ssa_native_struct(object_type);
+                ns_bool native = ns_ssa_native_struct(b, object_type);
                 i32 result = ns_ssa_emit_value(b, NS_SSA_OP_LOAD, obj,
                                                ns_ssa_field_off(b, st, field, native),
                                                st->st.fields[field].t, member->primary_expr.token.val,
