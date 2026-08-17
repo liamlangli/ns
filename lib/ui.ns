@@ -68,6 +68,14 @@ struct ui_text_size {
     h: f64
 }
 
+// Safe-area margins in logical points; see the safe area section below.
+struct ui_insets {
+    top: f64,
+    right: f64,
+    bottom: f64,
+    left: f64
+}
+
 // Hover/pressed result returned by ui_hit_region.
 struct ui_hit {
     hovered: bool,
@@ -252,9 +260,53 @@ ref fn ui_flush(r: ref ui_renderer, clear: ui_color_rgba)
 // one renderer batch and are committed together.
 ref fn ui_flush_overlay(r: ref ui_renderer, clear: ui_color_rgba)
 
-// Logical drawable size in physical pixels.
+// Size of the safe drawing area, in logical points. This is the drawable minus
+// the device safe-area insets, so a UI laid out from (0, 0) to
+// (ui_canvas_width, ui_canvas_height) never lands under native chrome.
 ref fn ui_canvas_width(r: ref ui_renderer) i32
 ref fn ui_canvas_height(r: ref ui_renderer) i32
+
+// ===========================================================================
+// Device safe areas
+// ===========================================================================
+//
+// Every renderer honours the safe-area insets its view reports (the notch or
+// dynamic island, the status bar, the home indicator, rounded display corners;
+// zero on platforms without such chrome). The renderer's coordinate origin is
+// the top-left of the safe area and ui_canvas_width/ui_canvas_height report its
+// size, so existing layout code stays clear of native UI with no changes.
+//
+// Drawing may still leave the safe area with negative or oversized coordinates
+// - use ui_fill_surface for a full-bleed background - and input coming straight
+// from the view (view.mouse_x, view_input_at) is in drawable space: convert it
+// with ui_content_x / ui_content_y. The widget layer converts automatically.
+
+// Full drawable size in logical points, insets included.
+ref fn ui_surface_width(r: ref ui_renderer) i32
+ref fn ui_surface_height(r: ref ui_renderer) i32
+
+// Insets currently applied: the device values, an application override, or
+// zeroes while the safe area is disabled.
+ref fn ui_safe_area(r: ref ui_renderer) ref ui_insets
+ref fn ui_safe_area_enabled(r: ref ui_renderer) bool
+
+// Opt out of the safe area; the canvas becomes the full drawable and the
+// application takes responsibility for avoiding native chrome.
+ref fn ui_set_safe_area_enabled(r: ref ui_renderer, enabled: bool)
+
+// Override the device insets (application chrome, testing a device layout on
+// the desktop), or drop the override and follow the view again.
+ref fn ui_set_safe_area_insets(r: ref ui_renderer, top: f64, right: f64, bottom: f64, left: f64)
+ref fn ui_reset_safe_area_insets(r: ref ui_renderer)
+
+// Convert between drawable space (view input) and content space (drawing).
+ref fn ui_content_x(r: ref ui_renderer, x: f64) f64
+ref fn ui_content_y(r: ref ui_renderer, y: f64) f64
+ref fn ui_surface_x(r: ref ui_renderer, x: f64) f64
+ref fn ui_surface_y(r: ref ui_renderer, y: f64) f64
+
+// Fill the whole drawable, insets included, ignoring the current clip.
+ref fn ui_fill_surface(r: ref ui_renderer, rgba: u32)
 
 // Load an image file into a renderer-owned atlas texture. PNG/JPEG channel
 // layouts are normalized to RGBA by the native UI library.

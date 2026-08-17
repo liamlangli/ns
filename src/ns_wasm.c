@@ -2281,7 +2281,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "view_take_key_press|view_clear_key_presses|view_on_pointer_event|view_on_tool_action|"
             "view_on_gesture|view_input_count|view_input_at|view_gesture|view_input_pending|"
             "view_input_reset|view_get_clipboard|view_set_clipboard|view_request_frame|"
-            "view_request_frame_after");
+            "view_request_frame_after|view_set_safe_area");
     }
     if (ns_str_equals(module, ns_str_cstr("gpu"))) {
         return ns_wasm_name_in(name,
@@ -2308,7 +2308,10 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "ui_stroke_rect|ui_stroke_round_rect|ui_draw_text|ui_text_v_center_y|"
             "ui_text_width|ui_mono_char_width|ui_pack_color|ui_pack_rgba_floats|"
             "ui_rect_batch_create|ui_rect_batch_begin|ui_rect_batch_add|ui_rect_batch_end|"
-            "ui_rect_batch_draw_at");
+            "ui_rect_batch_draw_at|ui_surface_width|ui_surface_height|ui_safe_area|"
+            "ui_safe_area_enabled|ui_set_safe_area_enabled|ui_set_safe_area_insets|"
+            "ui_reset_safe_area_insets|ui_content_x|ui_content_y|ui_surface_x|ui_surface_y|"
+            "ui_fill_surface");
     }
     return false;
 }

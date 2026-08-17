@@ -1,0 +1,115 @@
+// nscode/native/test/ui_safe_area_test.ns
+// ---------------------------------------------------------------------------
+// Regression tests for the device safe area applied by the ui renderer.
+//
+// Run with:
+//
+//   bin/ns test nscode/native/test/ui_safe_area_test.ns
+//
+// The renderer reports the safe area as its canvas and translates drawing into
+// it, so application UI stays clear of native chrome (notch, status bar, home
+// indicator) without any layout changes. A headless view reports no insets, so
+// the tests drive them through view_set_safe_area and the renderer override.
+use std
+use view
+use ui
+
+let t_pass = 0
+let t_fail = 0
+
+fn check(got: i32, want: i32, name: str) {
+    if got == want {
+        t_pass = t_pass + 1
+    } else {
+        t_fail = t_fail + 1
+        print(`FAIL {name}: got {got} want {want}\n`)
+    }
+}
+
+fn check_bool(got: bool, want: bool, name: str) {
+    check(got as i32, want as i32, name)
+}
+
+fn test_defaults(r: ref ui_renderer) {
+    check_bool(ui_safe_area_enabled(r), true, "safe area on by default")
+    check(ui_canvas_width(r), ui_surface_width(r), "no insets: canvas width is the surface")
+    check(ui_canvas_height(r), ui_surface_height(r), "no insets: canvas height is the surface")
+}
+
+fn test_insets_shrink_canvas(r: ref ui_renderer) {
+    ui_set_safe_area_insets(r, 47.0, 10.0, 34.0, 5.0)
+    let insets = ui_safe_area(r)
+    check(insets.top as i32, 47, "reported top inset")
+    check(insets.right as i32, 10, "reported right inset")
+    check(insets.bottom as i32, 34, "reported bottom inset")
+    check(insets.left as i32, 5, "reported left inset")
+    check(ui_canvas_width(r), 320 - 5 - 10, "canvas width drops the horizontal insets")
+    check(ui_canvas_height(r), 200 - 47 - 34, "canvas height drops the vertical insets")
+    check(ui_surface_width(r), 320, "surface width keeps the whole drawable")
+    check(ui_surface_height(r), 200, "surface height keeps the whole drawable")
+}
+
+fn test_coordinate_conversion(r: ref ui_renderer) {
+    check(ui_content_x(r, 5.0) as i32, 0, "drawable left edge of the safe area is content 0")
+    check(ui_content_y(r, 47.0) as i32, 0, "drawable top edge of the safe area is content 0")
+    check(ui_surface_x(r, 0.0) as i32, 5, "content origin sits at the left inset")
+    check(ui_surface_y(r, 0.0) as i32, 47, "content origin sits below the top inset")
+}
+
+fn test_content_is_clipped(r: ref ui_renderer) {
+    ui_begin_frame(r)
+    check_bool(ui_rect_clipped(r, 0.0, 0.0, 10.0, 10.0), false, "content top-left draws")
+    check_bool(ui_rect_clipped(r, 295.0, 109.0, 10.0, 10.0), false, "content bottom-right draws")
+    check_bool(ui_rect_clipped(r, 306.0, 0.0, 10.0, 10.0), true, "past the right inset is clipped")
+    check_bool(ui_rect_clipped(r, 0.0, -20.0, 10.0, 10.0), true, "inside the top inset is clipped")
+}
+
+fn test_widget_input_is_converted(r: ref ui_renderer) {
+    let w = ui_widgets_create(r)
+    let theme = ui_theme_empty()
+    let input = ui_input_empty()
+    input.mouse_x = 10.0
+    input.mouse_y = 57.0
+    ui_widgets_begin_frame(w, theme, input)
+    check(ui_widgets_mouse_x(w) as i32, 5, "widget mouse x is content space")
+    check(ui_widgets_mouse_y(w) as i32, 10, "widget mouse y is content space")
+    ui_widgets_destroy(w)
+}
+
+fn test_opt_out(r: ref ui_renderer) {
+    ui_set_safe_area_enabled(r, false)
+    check_bool(ui_safe_area_enabled(r), false, "safe area switched off")
+    check(ui_canvas_width(r), 320, "disabled: canvas is the whole drawable")
+    check(ui_canvas_height(r), 200, "disabled: canvas is the whole drawable")
+    check(ui_content_x(r, 5.0) as i32, 5, "disabled: no coordinate translation")
+    ui_set_safe_area_enabled(r, true)
+    check(ui_canvas_height(r), 200 - 47 - 34, "re-enabled: insets apply again")
+}
+
+fn test_view_insets(r: ref ui_renderer, v: ref view) {
+    view_set_safe_area(v, 20.0, 0.0, 8.0, 0.0)
+    ui_reset_safe_area_insets(r)
+    check(ui_canvas_height(r), 200 - 20 - 8, "renderer follows the view insets")
+    // A platform report larger than the drawable must not collapse the canvas.
+    view_set_safe_area(v, 500.0, 0.0, 500.0, 0.0)
+    ui_resize(r)
+    check(ui_canvas_height(r), 200, "oversized insets are dropped")
+    view_set_safe_area(v, 0.0, 0.0, 0.0, 0.0)
+    ui_resize(r)
+}
+
+fn main() i32 {
+    let v = view_create("ui safe area test", 320, 200)
+    let r = ui_renderer_create(v)
+    test_defaults(r)
+    test_insets_shrink_canvas(r)
+    test_coordinate_conversion(r)
+    test_content_is_clipped(r)
+    test_widget_input_is_converted(r)
+    test_opt_out(r)
+    test_view_insets(r, v)
+    ui_renderer_destroy(r)
+    view_close(v)
+    print(`ui_safe_area_test: {t_pass} passed, {t_fail} failed\n`)
+    return t_fail
+}

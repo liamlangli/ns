@@ -110,6 +110,18 @@ static f64 view_osx_current_display_ratio(void) {
     return ratio > 0.0 ? (f64)ratio : 1.0;
 }
 
+// AppKit reports insets for the notch of a built-in display and for a
+// full-size content view that runs under the title bar; ordinary windows
+// report zero.
+static void view_osx_sync_safe_area(void) {
+    NSEdgeInsets insets = NSEdgeInsetsMake(0.0, 0.0, 0.0, 0.0);
+    if (@available(macOS 11.0, *)) {
+        NSView *content = view_mtk_view ? (NSView *)view_mtk_view : [view_window contentView];
+        if (content) insets = [content safeAreaInsets];
+    }
+    view_set_safe_area(&_view, insets.top, insets.right, insets.bottom, insets.left);
+}
+
 static void view_osx_sync_metrics(f64 width, f64 height) {
     const f64 ratio = view_osx_current_display_ratio();
     _view.display_ratio = ratio;
@@ -118,6 +130,7 @@ static void view_osx_sync_metrics(f64 width, f64 height) {
     _view.height = (i32)height;
     _view.framebuffer_width = (i32)(width * ratio + 0.5);
     _view.framebuffer_height = (i32)(height * ratio + 0.5);
+    view_osx_sync_safe_area();
 }
 
 static void view_osx_sync_mtk_view_metrics(MTKView *mtk_view) {

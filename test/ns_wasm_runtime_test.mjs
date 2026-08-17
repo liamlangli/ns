@@ -55,7 +55,13 @@ Object.defineProperty(globalThis, 'window', { configurable: true, value: {
   devicePixelRatio: 2,
   addEventListener(name, handler) { windowEvents.set(name, handler); },
 } });
-Object.defineProperty(globalThis, 'document', { configurable: true, value: { title: 'Manifest project' } });
+const safeAreaPadding = { paddingTop: '0px', paddingRight: '0px', paddingBottom: '0px', paddingLeft: '0px' };
+Object.defineProperty(globalThis, 'document', { configurable: true, value: {
+  title: 'Manifest project',
+  body: { appendChild() {} },
+  createElement() { return { style: { cssText: '' } }; },
+} });
+Object.defineProperty(globalThis, 'getComputedStyle', { configurable: true, value: () => safeAreaPadding });
 
 const runtime = new NSBrowserRuntime(canvas);
 let contextMenuPrevented = false;
@@ -79,7 +85,7 @@ assert.equal(runtime.view().getInt32(canvasView + 12, true), 640);
 assert.equal(runtime.view().getFloat64(canvasView + 88, true), 2);
 assert.equal(runtime.gpu('gpu_request_device', [canvasView]), 1);
 assert.equal(runtime.gpu('gpu_request_device', [canvasView + 4]), 0);
-assert.equal(runtime.view().getUint32(canvasView + 108, true), 1);
+assert.equal(runtime.view().getUint32(canvasView + 140, true), 1);
 canvasEvents.get('pointerdown')({ clientX: 10, clientY: 16, pointerType: 'mouse', pointerId: 7, button: 0 });
 assert.equal(capturedPointer, 7);
 assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);
@@ -164,6 +170,7 @@ const uiContext = {
   save() { uiCalls.push('save'); },
   restore() { uiCalls.push('restore'); },
   setTransform() {},
+  translate(x, y) { uiCalls.push(`translate:${x},${y}`); },
   fillRect() { uiCalls.push('fillRect'); },
   beginPath() {},
   rect() {},
@@ -208,6 +215,36 @@ for (const [offset, value] of [[0, 0.1], [8, 0.2], [16, 0.3], [24, 1]]) uiRuntim
 uiRuntime.ui('ui_flush', [renderer, clear]);
 assert(uiCalls.includes('fillRect'));
 assert(uiCalls.includes('text:native UI'));
+
+// Device safe areas: CSS env() insets shrink the canvas the application draws
+// into, and the view publishes them for code that reads the metrics directly.
+safeAreaPadding.paddingTop = '47px';
+safeAreaPadding.paddingBottom = '34px';
+uiRuntime.syncView(uiView);
+assert.equal(uiRuntime.view().getFloat64(uiView + 104, true), 47);
+assert.equal(uiRuntime.view().getFloat64(uiView + 120, true), 34);
+assert.equal(uiRuntime.ui('ui_canvas_width', [renderer]), 480);
+assert.equal(uiRuntime.ui('ui_canvas_height', [renderer]), 270 - 47 - 34);
+assert.equal(uiRuntime.ui('ui_surface_height', [renderer]), 270);
+assert.equal(uiRuntime.ui('ui_content_y', [renderer, 50]), 3);
+assert.equal(uiRuntime.ui('ui_surface_y', [renderer, 0]), 47);
+const insets = uiRuntime.ui('ui_safe_area', [renderer]);
+assert.deepEqual([0, 8, 16, 24].map(offset => uiRuntime.view().getFloat64(insets + offset, true)), [47, 0, 34, 0]);
+// An application override replaces the device values; opting out restores the
+// full drawable.
+uiRuntime.ui('ui_set_safe_area_insets', [renderer, 10, 0, 0, 20]);
+assert.equal(uiRuntime.ui('ui_canvas_width', [renderer]), 460);
+assert.equal(uiRuntime.ui('ui_canvas_height', [renderer]), 260);
+uiRuntime.ui('ui_reset_safe_area_insets', [renderer]);
+assert.equal(uiRuntime.ui('ui_canvas_height', [renderer]), 189);
+assert.equal(uiRuntime.ui('ui_safe_area_enabled', [renderer]), 1);
+uiRuntime.ui('ui_set_safe_area_enabled', [renderer, 0]);
+assert.equal(uiRuntime.ui('ui_safe_area_enabled', [renderer]), 0);
+assert.equal(uiRuntime.ui('ui_canvas_height', [renderer]), 270);
+assert.equal(uiRuntime.ui('ui_content_y', [renderer, 50]), 50);
+uiRuntime.ui('ui_set_safe_area_enabled', [renderer, 1]);
+safeAreaPadding.paddingTop = '0px';
+safeAreaPadding.paddingBottom = '0px';
 const filePath = uiRuntime.writeString('/home/web/settings.db');
 const writeMode = uiRuntime.writeString('wb');
 const file = uiRuntime.std('open', [filePath, writeMode]);

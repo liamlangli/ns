@@ -40,6 +40,12 @@ let g_file_icon_atlas: i32 = 0
 // while an overlay owns focus; the owner uses focus_hit() instead.
 let g_ui_focus: i32 = 0
 
+// Pointer position for the frame, converted from the view's drawable space into
+// the renderer's safe-area content space (see ui_content_x). Layout and drawing
+// both live in that space, so hit tests must use these instead of view.mouse_*.
+let g_mouse_x: f64 = 0.0 as f64
+let g_mouse_y: f64 = 0.0 as f64
+
 // Shared application menu. It is rendered above both Code and Agent content;
 // -1 means no dropdown is open, otherwise the value is the top-level item.
 let g_main_menu_open: i32 = -1
@@ -690,16 +696,16 @@ fn scroll_max(content_h: f64, body_h: f64) f64 {
 }
 
 fn raw_hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
-    if v.mouse_x < x {
+    if g_mouse_x < x {
         return false
     }
-    if v.mouse_x >= (x + w) {
+    if g_mouse_x >= (x + w) {
         return false
     }
-    if v.mouse_y < y {
+    if g_mouse_y < y {
         return false
     }
-    if v.mouse_y >= (y + h) {
+    if g_mouse_y >= (y + h) {
         return false
     }
     return true
@@ -1151,7 +1157,7 @@ fn handle_main_menu_input(r: ref ui_renderer, v: ref view, w: f64) {
                 // the active dropdown above.
                 g_main_menu_open = top
             } else if in_dropdown {
-                let item = main_menu_item_at(menu, v.mouse_y)
+                let item = main_menu_item_at(menu, g_mouse_y)
                 if item >= 0 {
                     if main_menu_item_enabled(menu, item) {
                         main_menu_run_action(v, menu, item)
@@ -1805,7 +1811,7 @@ fn handle_chat_menu_input(v: ref view) {
         if v.mouse_pressed {
             let mh: f64 = 3.0 * pop_item_h()
             if focus_hit(v, UI_FOCUS_CHAT_MENU(), g_chat_menu_x, g_chat_menu_y, g_chat_menu_w, mh) {
-                let idx = ((v.mouse_y - g_chat_menu_y) / pop_item_h()) as i32
+                let idx = ((g_mouse_y - g_chat_menu_y) / pop_item_h()) as i32
                 idx = clamp_i(idx, 0, chat_menu_items() - 1)
                 chat_menu_action(g_chat_menu_chat, idx)
                 g_click_used = true
@@ -2167,7 +2173,7 @@ fn handle_popup_input(v: ref view) {
             let count = pop_count() & 15
             let ph = pop_count_f() * pop_item_h()
             if focus_hit(v, UI_FOCUS_POPUP(), g_pop_x, g_pop_y, g_pop_w, ph) {
-                let idx = ((v.mouse_y - g_pop_y) / pop_item_h()) as i32
+                let idx = ((g_mouse_y - g_pop_y) / pop_item_h()) as i32
                 idx = clamp_i(idx, 0, count - 1)
                 if g_pop_kind == 1 {
                     g_perm = idx
@@ -2876,7 +2882,7 @@ fn process_code_keys(v: ref view) {
 }
 
 fn mouse_line(v: ref view, body_y: f64, line_h: f64) i32 {
-    let fy = (v.mouse_y - body_y - 18.0 + g_code_scroll) / line_h
+    let fy = (g_mouse_y - body_y - 18.0 + g_code_scroll) / line_h
     if fy < 0.0 {
         return 0
     }
@@ -2884,7 +2890,7 @@ fn mouse_line(v: ref view, body_y: f64, line_h: f64) i32 {
 }
 
 fn mouse_col(v: ref view, text_x: f64, char_w: f64) i32 {
-    let fx = (v.mouse_x - text_x) / char_w + 0.5
+    let fx = (g_mouse_x - text_x) / char_w + 0.5
     if fx < 0.0 {
         return 0
     }
@@ -2991,7 +2997,7 @@ fn minimap_line_step(total: i32, body_h: f64) f64 {
 fn minimap_scroll_to_mouse(v: ref view, total: i32, body_h: f64, line_h: f64, max_scroll: f64) {
     let step = minimap_line_step(total, body_h)
     let visible_lines = body_h / line_h
-    let target_line = (v.mouse_y - g_minimap_y + g_minimap_scroll) / step
+    let target_line = (g_mouse_y - g_minimap_y + g_minimap_scroll) / step
     let target = (target_line - visible_lines * 0.5) * line_h
     g_code_scroll = clamp(target, 0.0, max_scroll)
     g_caret_follow = false
@@ -3549,6 +3555,10 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     update_fps()
     workspace_poll_changes()
     ui_resize(r)
+    // View input is reported in drawable space; everything below lays out in the
+    // renderer's safe-area content space.
+    g_mouse_x = ui_content_x(r, v.mouse_x)
+    g_mouse_y = ui_content_y(r, v.mouse_y)
     // ref-fn i32 returns can carry garbage upper bits (same class of quirk as
     // the masked byte reads in editor.ns), which poisons f64 arithmetic on the
     // cast value; mask to a sane canvas range first.

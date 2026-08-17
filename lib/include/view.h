@@ -207,6 +207,12 @@ typedef struct view {
 
     f64 display_ratio;
     f64 ui_scale;
+
+    // Device safe-area insets in logical points: the margins of the drawable
+    // that platform chrome (notch / status bar / home indicator / rounded
+    // display corners) may cover. Backends without such chrome leave them 0.
+    f64 safe_area_top, safe_area_right, safe_area_bottom, safe_area_left;
+
     void *native_window;
     void *gpu_device;
 
@@ -230,6 +236,10 @@ view* view_create(const char *title, i32 width, i32 height);
 view* view_create_no_title(const char *title, i32 width, i32 height);
 void view_run(view *v);
 void view_close(view *v);
+// Publish the platform safe-area insets (logical points). Negative values are
+// clamped to 0. Backends call this whenever their metrics change; the UI
+// module reads the fields to keep application content clear of native chrome.
+void view_set_safe_area(view *v, f64 top, f64 right, f64 bottom, f64 left);
 void view_capture_require(view *v);
 
 // Schedule a bounded burst of frames. Native backends keep the last presented

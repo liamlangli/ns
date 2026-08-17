@@ -19,6 +19,8 @@ static id<MTLDevice> view_ios_device;
 static id view_ios_delegate;
 static dispatch_semaphore_t view_ios_done;
 
+static UIWindow *view_ios_key_window(void);
+
 static void view_ios_sync_metrics(MTKView *metal_view) {
     if (!metal_view) return;
     CGFloat scale = metal_view.contentScaleFactor;
@@ -33,6 +35,15 @@ static void view_ios_sync_metrics(MTKView *metal_view) {
     // nominal content scale can differ by one pixel on scaled iPad displays.
     view_ios_state.framebuffer_width = (i32)(drawable.width + 0.5);
     view_ios_state.framebuffer_height = (i32)(drawable.height + 0.5);
+    // The Metal view fills the window, so its own insets already describe the
+    // status bar / dynamic island, the home indicator and the rounded display
+    // corners. Fall back to the window when the view is not in a hierarchy yet.
+    UIEdgeInsets insets = metal_view.safeAreaInsets;
+    if (!metal_view.window) {
+        UIWindow *window = view_ios_key_window();
+        if (window) insets = window.safeAreaInsets;
+    }
+    view_set_safe_area(&view_ios_state, insets.top, insets.right, insets.bottom, insets.left);
 }
 
 static UIWindow *view_ios_key_window(void) {
@@ -98,6 +109,13 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
 - (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     (void)event;
     for (UITouch *touch in touches) view_ios_touch(touch, VIEW_INPUT_PHASE_CANCELLED);
+}
+- (void)safeAreaInsetsDidChange {
+    [super safeAreaInsetsDidChange];
+    // Insets also move without a drawable resize: the status bar grows during a
+    // call, the keyboard docks, an iPad window is split.
+    view_ios_sync_metrics(self);
+    view_request_frame(&view_ios_state, 1);
 }
 @end
 

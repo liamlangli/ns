@@ -194,12 +194,31 @@ typedef struct ui_font {
     f64 cap_top;
 } ui_font;
 
+// Margins of the drawable that platform chrome may cover, in logical points.
+typedef struct ui_insets {
+    f64 top;
+    f64 right;
+    f64 bottom;
+    f64 left;
+} ui_insets;
+
 typedef struct ui_renderer {
     void *handle;
     view *v;
+    // Full drawable extent in logical points. Vertices reach the GPU in this
+    // space; the public API works in the safe content space below.
     i32 width;
     i32 height;
     f64 content_scale;
+
+    // Device safe area. `insets` mirrors the view unless an application
+    // overrides it; `origin`/`content_*` are the resolved content space and are
+    // recomputed by ui_resolve_safe_area whenever any input changes.
+    ui_insets insets;
+    ns_bool insets_overridden;
+    ns_bool safe_area_enabled;
+    f64 origin_x, origin_y;
+    f64 content_width, content_height;
 
     ui_vertex *vertices;
     i32 vertex_count;
@@ -645,21 +664,25 @@ static ns_bool ui_load_fonts(ui_renderer *r) {
 }
 
 static ui_clip ui_current_clip(ui_renderer *r) {
-    if (r->clip_count <= 0) return (ui_clip){0, 0, r->width, r->height};
+    if (r->clip_count <= 0) return (ui_clip){0, 0, r->content_width, r->content_height};
     return r->clips[r->clip_count - 1];
 }
 
 static f64 ui_clip_param(ui_renderer *r, ui_clip c) {
     if (!r || c.w <= 0.0 || c.h <= 0.0) return 0.0;
-    if (c.x <= 0.0 && c.y <= 0.0 && c.x + c.w >= (f64)r->width && c.y + c.h >= (f64)r->height) {
+    // Clips are authored in content space; the shader tests them against the
+    // drawable-space pixel it shades.
+    const f64 x0 = c.x + r->origin_x;
+    const f64 y0 = c.y + r->origin_y;
+    if (x0 <= 0.0 && y0 <= 0.0 && x0 + c.w >= (f64)r->width && y0 + c.h >= (f64)r->height) {
         return 0.0;
     }
 
     ui_gpu_clip gpu_clip = {
-        .x0 = (f32)c.x,
-        .y0 = (f32)c.y,
-        .x1 = (f32)(c.x + c.w),
-        .y1 = (f32)(c.y + c.h),
+        .x0 = (f32)x0,
+        .y0 = (f32)y0,
+        .x1 = (f32)(x0 + c.w),
+        .y1 = (f32)(y0 + c.h),
     };
     for (i32 i = 0; i < r->gpu_clip_count; i++) {
         ui_gpu_clip *existing = &r->gpu_clips[i];
@@ -678,6 +701,9 @@ static void ui_emit_command(ui_renderer *r, i32 base, i32 count, i32 kind) {
     if (r->command_count >= UI_MAX_COMMANDS) return;
     ui_clip c = ui_current_clip(r);
     if (c.w <= 0 || c.h <= 0) return;
+    // The scissor is a drawable-space rectangle.
+    c.x += r->origin_x;
+    c.y += r->origin_y;
     ui_command *cmd = NULL;
     if (r->command_count > 0) {
         cmd = &r->commands[r->command_count - 1];
@@ -710,6 +736,10 @@ static void ui_emit_command(ui_renderer *r, i32 base, i32 count, i32 kind) {
 
 static ns_bool ui_push_vertex(ui_renderer *r, f64 x, f64 y, f64 u, f64 v, u32 color, f64 range, f64 weight, f64 softness, f64 clip) {
     if (r->vertex_count >= r->vertex_capacity) return false;
+    // Geometry is authored in the safe content space; the safe-area origin is
+    // the single translation into drawable space.
+    x += r->origin_x;
+    y += r->origin_y;
     r->vertices[r->vertex_count++] = (ui_vertex){
         .x = (f32)x, .y = (f32)y, .u = (f32)u, .v = (f32)v, .color = color,
         .range = (f32)range, .weight = (f32)weight, .softness = (f32)softness, .clip = (f32)clip,
@@ -1068,6 +1098,24 @@ static f64 ui_view_content_scale(view *v) {
     return 1.0;
 }
 
+// Resolve the safe content space from the drawable extent and the active
+// insets. Insets are dropped when they would leave nothing to draw in, so a
+// bogus platform report can never collapse an application's canvas.
+static void ui_resolve_safe_area(ui_renderer *r) {
+    if (!r) return;
+    ui_insets in = r->safe_area_enabled ? r->insets : (ui_insets){0.0, 0.0, 0.0, 0.0};
+    if (in.top < 0.0) in.top = 0.0;
+    if (in.right < 0.0) in.right = 0.0;
+    if (in.bottom < 0.0) in.bottom = 0.0;
+    if (in.left < 0.0) in.left = 0.0;
+    if (in.left + in.right >= (f64)r->width) in.left = in.right = 0.0;
+    if (in.top + in.bottom >= (f64)r->height) in.top = in.bottom = 0.0;
+    r->origin_x = in.left;
+    r->origin_y = in.top;
+    r->content_width = (f64)r->width - in.left - in.right;
+    r->content_height = (f64)r->height - in.top - in.bottom;
+}
+
 // The renderer works in logical points; the display scale converts to physical
 // framebuffer pixels only at the GPU viewport/scissor (see ui_flush).
 static void ui_sync_view_metrics(ui_renderer *r) {
@@ -1080,9 +1128,14 @@ static void ui_sync_view_metrics(ui_renderer *r) {
         lh = v->height;
         if (lw <= 0 && v->framebuffer_width > 0) lw = (i32)(v->framebuffer_width / r->content_scale + 0.5);
         if (lh <= 0 && v->framebuffer_height > 0) lh = (i32)(v->framebuffer_height / r->content_scale + 0.5);
+        if (!r->insets_overridden) {
+            r->insets = (ui_insets){v->safe_area_top, v->safe_area_right,
+                                    v->safe_area_bottom, v->safe_area_left};
+        }
     }
     r->width = lw > 0 ? lw : 1;
     r->height = lh > 0 ? lh : 1;
+    ui_resolve_safe_area(r);
 }
 
 ui_renderer *ui_renderer_create(view *v) {
@@ -1090,6 +1143,9 @@ ui_renderer *ui_renderer_create(view *v) {
     if (!r) return NULL;
     r->handle = r;
     r->v = v;
+    // Device safe areas are honoured unless an application opts out, so UI laid
+    // out inside the reported canvas never lands under native chrome.
+    r->safe_area_enabled = true;
     // ui owns its GPU dependency; view + ui applications need no direct gpu
     // import. Backends keep repeated requests for the same view idempotent.
     gpu_request_device(v);
@@ -1355,10 +1411,12 @@ void ui_rect_batch_draw_at(ui_renderer *r, i32 batch_id, f64 dx, f64 dy) {
         .texture_id = UI_WHITE_TEXTURE,
         .kind = UI_KIND_IMAGE,
         .rect_batch_id = batch_id,
-        .offset_x = dx,
-        .offset_y = dy,
-        .clip_x = (i32)floor(c.x),
-        .clip_y = (i32)floor(c.y),
+        // Batch vertices are recorded once in content space and translated at
+        // draw time, so the safe-area origin rides along with the draw offset.
+        .offset_x = dx + r->origin_x,
+        .offset_y = dy + r->origin_y,
+        .clip_x = (i32)floor(c.x + r->origin_x),
+        .clip_y = (i32)floor(c.y + r->origin_y),
         .clip_w = (i32)ceil(c.w),
         .clip_h = (i32)ceil(c.h),
     };
@@ -1448,6 +1506,7 @@ void ui_resize_to(ui_renderer *r, i32 width, i32 height) {
     if (!r) return;
     r->width = width > 0 ? width : 1;
     r->height = height > 0 ? height : 1;
+    ui_resolve_safe_area(r);
 }
 
 void ui_request_render(ui_renderer *r, i32 frames) {
@@ -1466,7 +1525,7 @@ void ui_begin_frame(ui_renderer *r) {
     r->command_count = 0;
     r->clip_count = 1;
     r->gpu_clip_count = 0;
-    r->clips[0] = (ui_clip){0, 0, r->width, r->height};
+    r->clips[0] = (ui_clip){0, 0, r->content_width, r->content_height};
     r->current_texture_id = UI_WHITE_TEXTURE;
 }
 
@@ -1602,12 +1661,91 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     r->command_count = 0;
 }
 
+// The canvas is the safe content area: laying out inside it keeps an
+// application clear of the notch, the status bar and the home indicator.
 i32 ui_canvas_width(ui_renderer *r) {
-    return r ? r->width : 0;
+    return r ? (i32)(r->content_width + 0.5) : 0;
 }
 
 i32 ui_canvas_height(ui_renderer *r) {
+    return r ? (i32)(r->content_height + 0.5) : 0;
+}
+
+// The full drawable, insets included. Use it for full-bleed backgrounds.
+i32 ui_surface_width(ui_renderer *r) {
+    return r ? r->width : 0;
+}
+
+i32 ui_surface_height(ui_renderer *r) {
     return r ? r->height : 0;
+}
+
+// Insets currently applied: the device values, an application override, or
+// zeroes while the safe area is switched off.
+ui_insets *ui_safe_area(ui_renderer *r) {
+    ui_insets *out = (ui_insets *)ns_malloc(sizeof(ui_insets));
+    if (!out) return NULL;
+    if (!r) {
+        *out = (ui_insets){0.0, 0.0, 0.0, 0.0};
+        return out;
+    }
+    *out = (ui_insets){
+        .top = r->origin_y,
+        .right = (f64)r->width - r->content_width - r->origin_x,
+        .bottom = (f64)r->height - r->content_height - r->origin_y,
+        .left = r->origin_x,
+    };
+    return out;
+}
+
+ns_bool ui_safe_area_enabled(ui_renderer *r) {
+    return r ? r->safe_area_enabled : false;
+}
+
+// Opt out when the application draws its own full-screen chrome and takes
+// responsibility for keeping controls clear of the device's.
+void ui_set_safe_area_enabled(ui_renderer *r, ns_bool enabled) {
+    if (!r) return;
+    r->safe_area_enabled = enabled;
+    ui_resolve_safe_area(r);
+}
+
+// Replace the device insets, e.g. to reserve room for an application title bar
+// or to test a device layout on the desktop.
+void ui_set_safe_area_insets(ui_renderer *r, f64 top, f64 right, f64 bottom, f64 left) {
+    if (!r) return;
+    r->insets = (ui_insets){top, right, bottom, left};
+    r->insets_overridden = true;
+    ui_resolve_safe_area(r);
+}
+
+// Drop an override and follow the view again.
+void ui_reset_safe_area_insets(ui_renderer *r) {
+    if (!r) return;
+    r->insets_overridden = false;
+    ui_sync_view_metrics(r);
+}
+
+// Drawable point -> content point. View input (view.mouse_x, pointer events)
+// arrives in drawable space; widgets hit-test in content space.
+f64 ui_content_x(ui_renderer *r, f64 x) { return r ? x - r->origin_x : x; }
+f64 ui_content_y(ui_renderer *r, f64 y) { return r ? y - r->origin_y : y; }
+
+// Content point -> drawable point.
+f64 ui_surface_x(ui_renderer *r, f64 x) { return r ? x + r->origin_x : x; }
+f64 ui_surface_y(ui_renderer *r, f64 y) { return r ? y + r->origin_y : y; }
+
+// Fill the whole drawable, insets included, ignoring the current clip. The
+// background of a full-screen application reaches under the native chrome
+// while its controls stay inside the safe area.
+void ui_fill_surface(ui_renderer *r, u32 rgba) {
+    if (!r) return;
+    const i32 clip_count = r->clip_count;
+    r->clip_count = 1;
+    r->clips[0] = (ui_clip){-r->origin_x, -r->origin_y, (f64)r->width, (f64)r->height};
+    ui_fill_rect(r, -r->origin_x, -r->origin_y, (f64)r->width, (f64)r->height, rgba, 0.0);
+    r->clips[0] = (ui_clip){0, 0, r->content_width, r->content_height};
+    r->clip_count = clip_count;
 }
 
 ui_rect *ui_layout(f64 x, f64 y, f64 w, f64 h, f64 child_w, f64 child_h, i32 align) {
@@ -1689,14 +1827,18 @@ void ui_widgets_begin_frame(ui_widgets *w, ui_theme *theme, ui_input *input) {
     ns_unused(theme);
     if (!w || !input) return;
     w->input = *input;
+    // Pointer positions are collected from the view in drawable space; widgets
+    // are laid out in the safe content space.
+    w->input.mouse_x = ui_content_x(w->renderer, w->input.mouse_x);
+    w->input.mouse_y = ui_content_y(w->renderer, w->input.mouse_y);
 }
 
 void ui_widgets_begin_view(ui_widgets *w, ui_theme *theme, view *v, ns_bool gizmo_manipulating) {
     ns_unused(theme);
     if (!w || !v) return;
     memset(&w->input, 0, sizeof(w->input));
-    w->input.mouse_x = v->mouse_x;
-    w->input.mouse_y = v->mouse_y;
+    w->input.mouse_x = ui_content_x(w->renderer, v->mouse_x);
+    w->input.mouse_y = ui_content_y(w->renderer, v->mouse_y);
     w->input.mouse_down = v->mouse_down;
     w->input.mouse_pressed = v->mouse_pressed;
     w->input.mouse_released = v->mouse_released;

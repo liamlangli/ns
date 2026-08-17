@@ -63,6 +63,10 @@ let g_time_end: f64 = 0.0
 let g_t0: f64 = 0.0
 let g_t1: f64 = 1.0
 let g_drag = false
+// Pointer position for the frame in the renderer's safe-area content space,
+// converted from the view's drawable space (see ui_content_x).
+let g_mouse_x: f64 = 0.0
+let g_mouse_y: f64 = 0.0
 let g_drag_x: f64 = 0.0
 let g_drag_t0: f64 = 0.0
 
@@ -94,16 +98,16 @@ fn max_f(a: f64, b: f64) f64 {
 }
 
 fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
-    if v.mouse_x < x {
+    if g_mouse_x < x {
         return false
     }
-    if v.mouse_x >= (x + w) {
+    if g_mouse_x >= (x + w) {
         return false
     }
-    if v.mouse_y < y {
+    if g_mouse_y < y {
         return false
     }
-    if v.mouse_y >= (y + h) {
+    if g_mouse_y >= (y + h) {
         return false
     }
     return true
@@ -964,7 +968,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
 
     if hit(v, x, plot_y, w, plot_h) {
         if v.scroll_y != 0.0 {
-            let mx = (v.mouse_x - x) / w
+            let mx = (g_mouse_x - x) / w
             let focus = g_t0 + span * mx
             let factor = 1.25
             if v.scroll_y > 0.0 {
@@ -989,7 +993,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
         }
         if v.mouse_pressed {
             g_drag = true
-            g_drag_x = v.mouse_x
+            g_drag_x = g_mouse_x
             g_drag_t0 = g_t0
         }
         if v.mouse_right_pressed {
@@ -1002,7 +1006,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
     if g_drag {
         if v.mouse_down {
-            let dt = (g_drag_x - v.mouse_x) / scale
+            let dt = (g_drag_x - g_mouse_x) / scale
             g_t0 = g_drag_t0 + dt
             g_t1 = g_t0 + span
             if g_t0 < 0.0 {
@@ -1090,9 +1094,12 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
 
 fn render_frame(r: ref ui_renderer, v: ref view) {
     ui_resize(r)
+    g_mouse_x = ui_content_x(r, v.mouse_x)
+    g_mouse_y = ui_content_y(r, v.mouse_y)
 
-    let w = v.width as f64
-    let h = v.height as f64
+    // The canvas is the safe area, so the viewer keeps clear of native chrome.
+    let w = ui_canvas_width(r) as f64
+    let h = ui_canvas_height(r) as f64
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
 

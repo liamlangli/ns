@@ -237,6 +237,14 @@ void view_close(view *v) {
     // View cleanup implementation
 }
 
+void view_set_safe_area(view *v, f64 top, f64 right, f64 bottom, f64 left) {
+    if (!v) return;
+    v->safe_area_top = top > 0.0 ? top : 0.0;
+    v->safe_area_right = right > 0.0 ? right : 0.0;
+    v->safe_area_bottom = bottom > 0.0 ? bottom : 0.0;
+    v->safe_area_left = left > 0.0 ? left : 0.0;
+}
+
 void view_capture_require(view *v) {
     if (!v) return;
     v->capture_required = true;
