@@ -130,7 +130,10 @@ ref fn shader_vertex_id() i32
 ref fn shader_root_f32(index: i32) f32
 // Random-access signed 32-bit storage buffers. `buffer_index` is a compile-time
 // index into the stage's storage-buffer parameters; indices address i32
-// elements rather than bytes so writes never race adjacent packed values.
+// elements rather than bytes so writes never race adjacent packed values. A
+// buffer no fn in the transpiled program stores to is declared read-only, which
+// a vertex stage needs: Metal warns about a writable resource in a non-void
+// vertex fn and WebGPU rejects a read_write storage buffer there outright.
 ref fn shader_buffer_i32(buffer_index: i32, index: i32) i32
 ref fn shader_buffer_store_i32(buffer_index: i32, index: i32, value: i32)
 ref fn shader_read_texture(x: i32, y: i32) float4

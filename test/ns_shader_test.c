@@ -142,6 +142,20 @@ static const char *ns_shader_test_src =
     "    shader_buffer_store_i32(1, index, shader_buffer_i32(1, index) + 11)\n"
     "    shader_buffer_store_i32(7, index, shader_buffer_i32(7, index) + 13)\n"
     "}\n"
+    "fn cs_buffer2() void {\n"
+    "    shader_buffer_store_i32(2, shader_global_id_x(), 1)\n"
+    "}\n"
+    "fn buffer_tint(index: i32) f32 {\n"
+    "    return shader_buffer_i32(2, index) as f32\n"
+    "}\n"
+    "fn vs_buffer(data: VertexData) FragmentInput {\n"
+    "    let tint = buffer_tint(shader_vertex_id())\n"
+    "    return FragmentInput {\n"
+    "        position: float4 { x: data.position.x, y: data.position.y, z: data.position.z, w: 1.0 },\n"
+    "        uv: data.uv,\n"
+    "        color: float4 { x: tint, y: tint, z: tint, w: 1.0 },\n"
+    "    }\n"
+    "}\n"
     "fn cs_simd() void {\n"
     "    let a = float3 { 1.0, 2.0, 3.0 }\n"
     "    let b = float3 { 4.0, 5.0, 6.0 }\n"
@@ -261,9 +275,11 @@ int main() {
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
     i32 cs_texture = ns_shader_test_fn(&vm, "cs_texture");
     i32 cs_buffer = ns_shader_test_fn(&vm, "cs_buffer");
+    i32 vs_buffer = ns_shader_test_fn(&vm, "vs_buffer");
+    i32 cs_buffer2 = ns_shader_test_fn(&vm, "cs_buffer2");
     i32 cs_simd = ns_shader_test_fn(&vm, "cs_simd");
     ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && fs_grad >= 0 && fs_discard >= 0 && cs >= 0 &&
-                  cs_texture >= 0 && cs_buffer >= 0 && cs_simd >= 0,
+                  cs_texture >= 0 && cs_buffer >= 0 && vs_buffer >= 0 && cs_buffer2 >= 0 && cs_simd >= 0,
               "shader entry symbols exist.");
 
     // --- target/stage helpers ---
@@ -333,6 +349,35 @@ int main() {
                       ns_shader_test_has(r.r, "ns_storage_buffer_1[index] =") &&
                       ns_shader_test_has(r.r, "@group(0) @binding(14) var<storage, read_write> ns_storage_buffer_7"),
                   "wgsl storage-buffer intrinsics transpile.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- a buffer nothing stores to is declared read-only ---
+    // MSL warns about a writable resource in a non-void vertex fn, and WGSL
+    // rejects a read_write storage buffer in a vertex stage outright.
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, vs_buffer, NS_SHADER_MSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "device const int* ns_storage_buffer_2 [[buffer(5)]]") &&
+                      ns_shader_test_has(r.r, "buffer_tint(int index, device const int* ns_storage_buffer_2)"),
+                  "msl read-only storage buffers are const in the entry and in the helpers it threads them through.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, vs_buffer, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@group(0) @binding(9) var<storage, read> ns_storage_buffer_2"),
+                  "wgsl read-only storage buffers use the read access mode.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, vs_buffer, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "std430) readonly buffer ns_storage_block_2"),
+                  "glsl read-only storage buffers are readonly.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        // A program that also writes the buffer keeps it writable everywhere.
+        ns_shader_entry_desc mixed[2] = {{.fn_index = vs_buffer, .stage = NS_SHADER_STAGE_AUTO}, {.fn_index = cs_buffer2, .stage = NS_SHADER_STAGE_AUTO}};
+        r = ns_shader_transpile_program(&vm, &ctx, mixed, 2, NS_SHADER_MSL);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "device int* ns_storage_buffer_2 [[buffer(5)]]") &&
+                      !ns_shader_test_has(r.r, "device const int* ns_storage_buffer_2"),
+                  "a buffer any entry in the program stores to stays writable.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

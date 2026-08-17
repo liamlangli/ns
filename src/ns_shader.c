@@ -110,6 +110,13 @@ typedef struct ns_shader_emit {
     ns_bool uses_write_texture;
     ns_bool uses_write_texture_secondary;
     i32 *storage_buffers;
+    // Storage buffer indices some fn in the program stores to. A buffer absent
+    // from this list is declared read-only, which every backend wants: MSL warns
+    // about a writable resource in a non-void vertex fn, and WGSL forbids a
+    // read_write storage buffer in a vertex stage outright. The set is
+    // program-wide, not per fn, so the type of `ns_storage_buffer_<n>` stays the
+    // same in an entry, in a helper's parameter list and at its call sites.
+    i32 *storage_writes;
 } ns_shader_emit;
 
 #define ns_shader_try(x)                                                                                                                             \
@@ -535,6 +542,11 @@ static void ns_shader_merge_storage_buffers(i32 **dst, i32 *src) {
     for (i32 i = 0, l = (i32)ns_array_length(src); i < l; ++i) ns_shader_add_storage_buffer(dst, src[i]);
 }
 
+// A buffer nothing in the program stores to is declared read-only.
+static ns_bool ns_shader_storage_is_const(ns_shader_emit *e, i32 index) {
+    return !ns_shader_index_in(e->storage_writes, index);
+}
+
 static ns_type ns_shader_infer(ns_shader_emit *e, i32 i) {
     ns_ast_t *n = &e->ctx->nodes[i];
     switch (n->type) {
@@ -722,7 +734,7 @@ static void ns_shader_emit_storage_buffer_list(ns_shader_emit *e, ns_str *dst, i
     for (i32 i = 0, l = (i32)ns_array_length(storage_buffers); i < l; ++i) {
         i32 index = storage_buffers[i];
         if (!*first) ns_shader_cstr(dst, ", ");
-        if (declare) ns_shader_cstr(dst, "device int* ");
+        if (declare) ns_shader_cstr(dst, ns_shader_storage_is_const(e, index) ? "device const int* " : "device int* ");
         ns_shader_cstr(dst, "ns_storage_buffer_");
         ns_shader_i32(dst, index);
         *first = false;
@@ -788,6 +800,11 @@ static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth
             i32 buffer_index = 0;
             ns_shader_try(ns_shader_storage_buffer_index(e, n->next, &buffer_index, ns_shader_loc(e, n)));
             ns_shader_add_storage_buffer(&e->storage_buffers, buffer_index);
+            // Writability is a property of the buffer across the whole program,
+            // so it is recorded outside the per-fn set the caller inherits.
+            if (ns_str_equals(callee->primary_expr.token.val, ns_str_cstr("shader_buffer_store_i32"))) {
+                ns_shader_add_storage_buffer(&e->storage_writes, buffer_index);
+            }
         }
         if (callee->type == NS_AST_PRIMARY_EXPR &&
             (ns_str_starts_with(callee->primary_expr.token.val, ns_str_cstr("shader_transform_")) ||
@@ -2042,7 +2059,7 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         for (i32 i = 0, l = (i32)ns_array_length(e->storage_buffers); i < l; ++i) {
             i32 index = e->storage_buffers[i];
             if (ns_array_length(s->fn.args) > 0 || has_hidden_arg) ns_shader_cstr(&e->out, ", ");
-            ns_shader_cstr(&e->out, "device int* ns_storage_buffer_");
+            ns_shader_cstr(&e->out, ns_shader_storage_is_const(e, index) ? "device const int* ns_storage_buffer_" : "device int* ns_storage_buffer_");
             ns_shader_i32(&e->out, index);
             ns_shader_cstr(&e->out, " [[buffer(");
             ns_shader_i32(&e->out, NS_SHADER_STORAGE_BINDING_BASE + index);
@@ -2347,6 +2364,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
         ns_array_free(e.stage_ios);                                                                                                                  \
         ns_array_free(e.locals);                                                                                                                     \
         ns_array_free(e.storage_buffers);                                                                                                            \
+        ns_array_free(e.storage_writes);                                                                                                             \
         return ns_return_change_type(str, r);                                                                                                        \
     } while (0)
 
@@ -2431,10 +2449,13 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     }
     for (i32 i = 0, l = (i32)ns_array_length(e.storage_buffers); i < l; ++i) {
         i32 index = e.storage_buffers[i];
+        ns_bool read_only = ns_shader_storage_is_const(&e, index);
         if (target == NS_SHADER_GLSL_VULKAN) {
             ns_shader_cstr(&e.out, "layout(set = 0, binding = ");
             ns_shader_i32(&e.out, NS_SHADER_STORAGE_BINDING_BASE + index);
-            ns_shader_cstr(&e.out, ", std430) buffer ns_storage_block_");
+            ns_shader_cstr(&e.out, ", std430) ");
+            if (read_only) ns_shader_cstr(&e.out, "readonly ");
+            ns_shader_cstr(&e.out, "buffer ns_storage_block_");
             ns_shader_i32(&e.out, index);
             ns_shader_cstr(&e.out, " { int values[]; } ns_storage_");
             ns_shader_i32(&e.out, index);
@@ -2445,6 +2466,8 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             ns_shader_cstr(&e.out, ".values\n\n");
         }
         if (target == NS_SHADER_HLSL) {
+            // A read-only buffer stays a UAV: dropping the RW would move it to
+            // the SRV register space and change the binding the host sets up.
             ns_shader_cstr(&e.out, "RWByteAddressBuffer ns_storage_buffer_");
             ns_shader_i32(&e.out, index);
             ns_shader_cstr(&e.out, " : register(u");
@@ -2454,7 +2477,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
         if (target == NS_SHADER_WGSL) {
             ns_shader_cstr(&e.out, "@group(0) @binding(");
             ns_shader_i32(&e.out, NS_SHADER_WGSL_STORAGE_BINDING_BASE + index);
-            ns_shader_cstr(&e.out, ") var<storage, read_write> ns_storage_buffer_");
+            ns_shader_cstr(&e.out, read_only ? ") var<storage, read> ns_storage_buffer_" : ") var<storage, read_write> ns_storage_buffer_");
             ns_shader_i32(&e.out, index);
             ns_shader_cstr(&e.out, ": array<i32>;\n\n");
         }
@@ -2664,6 +2687,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     ns_array_free(e.stage_ios);
     ns_array_free(e.locals);
     ns_array_free(e.storage_buffers);
+    ns_array_free(e.storage_writes);
     return ns_return_ok(str, out);
 }
 
