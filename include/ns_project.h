@@ -24,6 +24,12 @@ typedef struct ns_project_spec {
     // Absolute path to the manifest icon, or null when the app has no icon.
     ns_str icon;
     ns_str linked_source;
+    // What the manifest `assets` key packages, as paths relative to `root`. The
+    // generated app carries each one into its resource directory under the same
+    // name, and the app enters that directory before the program runs, so a
+    // relative path in the program reads the same file from the IDE's build as
+    // it does from the project. An ns_array; may be empty.
+    ns_str *assets;
     ns_str ns_executable;
     // Directory containing src/, include/, and ref/ for the embeddable,
     // language-only runtime SDK installed with ns.

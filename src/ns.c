@@ -751,8 +751,8 @@ static ns_str ns_path_resolve(ns_str root, ns_str path) {
 
 // The top-level keys of a manifest: everything before its first `[table]` or
 // `[[table]]` header. Restricting lookups to that slice keeps a key such as
-// `name` or `target` inside a `[[dependencies.runtime]]` or `[[targets]]`
-// table from being read as the project-wide value.
+// `name` or `target` inside a `[[targets]]` table from being read as the
+// project-wide value.
 static ns_str ns_manifest_head(ns_str src) {
     for (i32 i = 0; i < src.len;) {
         i32 ls = i;
@@ -3574,6 +3574,10 @@ void ns_exec_project(ns_str path) {
         .linked_source = linked,
         .ns_executable = executable,
         .runtime_root = runtime_root,
+        // The IDE's app carries the same packaged paths `ns build` puts in a
+        // bundle, so a program run from Xcode reads its own files the way it
+        // does from the project directory.
+        .assets = ns_project_asset_paths(root),
     };
 
     ns_bool generated = false;
@@ -3584,6 +3588,7 @@ void ns_exec_project(ns_str path) {
 #else
     ns_exit(1, "project", "IDE project generation is supported on Darwin and Windows hosts only.\n");
 #endif
+    ns_project_asset_paths_free(spec.assets);
     if (!generated) ns_exit(1, "project", "failed to generate IDE project.\n");
 
 #if defined(NS_DARWIN)
@@ -3640,10 +3645,6 @@ static ns_str ns_scaffold_manifest_text(ns_str name) {
     ns_str_append_cstr(&s, "description = \"A Nano Script project.\"\n");
     ns_str_append_cstr(&s, "source = \"" NS_SCAFFOLD_SOURCE_DIR "\"\n");
     ns_str_append_cstr(&s, "entry = \"main.ns\"\n");
-    ns_str_append_cstr(&s, "\n");
-    ns_str_append_cstr(&s, "[[dependencies.runtime]]\n");
-    ns_str_append_cstr(&s, "name = \"std\"\n");
-    ns_str_append_cstr(&s, "version = \">=0.1.0\"\n");
     return s;
 }
 

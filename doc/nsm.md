@@ -24,10 +24,6 @@ entry = "main.ns"
 exclude = ["generated/**"]
 # Files and directories a bundle packages; omit to package `assets`.
 assets = ["res"]
-
-[[dependencies.runtime]]
-name = "std"
-version = ">=0.1.0"
 ```
 
 Project source is recursive: every `.ns` file below `source` is compiled and
@@ -35,7 +31,13 @@ linked without a local `use` declaration. `exclude` removes project-relative or
 source-relative files, directories (a trailing `/`), and glob patterns from
 that source set. Generated `bin/` output is always ignored. A local `use` is
 accepted for compatibility but is redundant; `use` is needed for built-in and
-external modules. Only external `dependencies.runtime` need listing.
+external modules.
+
+The built-in runtime modules — `std`, `view`, `gpu`, `ui`, `os`, `io`,
+`storage`, `compress`, `audio`, `net`, `http`, `task`, `term`, `simd`,
+`shader`, `dynamic` — ship with the toolchain and resolve from the installed
+SDK. A source file reaches them with `use <name>` alone; the manifest does not
+declare them, and a `[[dependencies.runtime]]` table listing one is ignored.
 
 ### Packaged assets
 

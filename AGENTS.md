@@ -107,8 +107,11 @@ the `{{wasm}}`, `{{title}}`, and `{{favicon}}` placeholders. `ns run --port <n>`
 serves the bundle on loopback with WebSocket live reload.
 Project compilation
 recursively includes every `.ns` file under `source`; local files do not need a
-`use` declaration. Paths removed by `exclude` are not compiled. Only external
-runtime dependencies need entries under `[[dependencies.runtime]]`.
+`use` declaration. Paths removed by `exclude` are not compiled. The built-in
+runtime modules (`std`, `view`, `gpu`, `ui`, `os`, `io`, `storage`, `compress`,
+and the rest shipped with the toolchain) resolve from the installed SDK, so a
+`use` declaration in the source is all they need; the manifest never declares
+them.
 
 ```toml
 schema = "ns.mod/v1"
@@ -117,10 +120,6 @@ version = "0.1.0"
 type = "app"
 source = "src"
 entry = "main.ns"
-
-[[dependencies.runtime]]
-name = "std"
-version = ">=0.1.0"
 ```
 
 A project that ships more than one program declares a `[[targets]]` table per

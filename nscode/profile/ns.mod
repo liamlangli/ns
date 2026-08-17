@@ -7,23 +7,3 @@ description = "Native ns.profile viewer."
 source = "."
 entry = "main.ns"
 exclude = ["README.md"]
-
-[[dependencies.runtime]]
-name = "std"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
-name = "view"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
-name = "gpu"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
-name = "ui"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
-name = "os"
-version = ">=0.1.0"

@@ -9,23 +9,3 @@ source = "."
 entry = "web_main.ns"
 icon = "icon.png"
 exclude = ["README.md", "main.ns"]
-
-[[dependencies.runtime]]
-name = "std"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
-name = "view"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
-name = "gpu"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
-name = "ui"
-version = ">=0.1.0"
-
-[[dependencies.runtime]]
-name = "os"
-version = ">=0.1.0"

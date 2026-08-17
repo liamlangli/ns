@@ -109,7 +109,10 @@ static ns_bool ns_xcode_file_exists(const char *path) {
     return stat(path, &info) == 0 && S_ISREG(info.st_mode);
 }
 
-static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_bool expects_project_assets,
+// `expects_assets` is the project-attribute line the packaged paths of this
+// manifest produce, so a project generated for a different set of them, or for
+// none, is regenerated rather than left carrying the wrong resources.
+static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const char *expects_assets,
                                                         ns_bool expects_app_icon) {
     FILE *file = fopen(path, "rb");
     if (!file) return false;
@@ -135,11 +138,10 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, ns_boo
                                strstr(text, "name = \"NS Build\";") && strstr(text, "name = \"NS Test\";") &&
                                !strstr(text, "isa = PBXNativeTarget;");
     ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
-                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 10;");
-    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 10;") &&
-                                               ((expects_project_assets && !strstr(text, "Project Assets in Resources")) ||
-                                                (!expects_project_assets && strstr(text, "Project Assets in Resources")));
-    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 10;") &&
+                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 11;");
+    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 11;") &&
+                                               expects_assets && !strstr(text, expects_assets);
+    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 11;") &&
                                              ((expects_app_icon && !strstr(text, "App Icon Assets in Resources")) ||
                                               (!expects_app_icon && strstr(text, "App Icon Assets in Resources")));
     free(text);
@@ -716,8 +718,24 @@ static const size_t ns_xcode_ui_asset_count = sizeof(ns_xcode_ui_assets) / sizeo
 #define NS_XCODE_RUNTIME_SOURCE_BASE 10u
 #define NS_XCODE_FEATURE_SOURCE_BASE (NS_XCODE_RUNTIME_SOURCE_BASE + (unsigned)ns_xcode_runtime_source_count)
 #define NS_XCODE_PROJECT_SOURCE_FILE_ID 90u
-#define NS_XCODE_PROJECT_ASSET_FILE_ID 91u
 #define NS_XCODE_APP_ICON_FILE_ID 92u
+// Packaged project paths take the last free file ids. A build file id is
+// `target * 100 + file`, so a file id has to stay below 100 for the three
+// application targets to keep distinct ids.
+#define NS_XCODE_PROJECT_ASSET_FILE_BASE 93u
+#define NS_XCODE_PROJECT_ASSET_MAX 7u
+
+static unsigned ns_xcode_project_asset_file_id(unsigned index) {
+    return NS_XCODE_PROJECT_ASSET_FILE_BASE + index;
+}
+
+// The packaged paths of one project, resolved to what exists on disk.
+typedef struct ns_xcode_assets {
+    char *path[NS_XCODE_PROJECT_ASSET_MAX];  // absolute
+    const char *name[NS_XCODE_PROJECT_ASSET_MAX];  // the last component of path
+    ns_bool is_dir[NS_XCODE_PROJECT_ASSET_MAX];
+    unsigned count;
+} ns_xcode_assets;
 
 static unsigned ns_xcode_resource_file_id(size_t index) {
     return index < 3 ? 5u + (unsigned)index : 70u + (unsigned)index - 3u;
@@ -1127,17 +1145,24 @@ static ns_bool ns_xcode_append_source_folder_reference(ns_xcode_buffer *pbx, con
     return ok;
 }
 
-static ns_bool ns_xcode_append_asset_folder_reference(ns_xcode_buffer *pbx, const char *path) {
+// One packaged path of the project. Xcode copies a folder reference into the
+// app's resource directory whole, keeping the name, which is what makes the
+// program's own relative paths read the same files there as in the project.
+static ns_bool ns_xcode_append_asset_folder_reference(ns_xcode_buffer *pbx, unsigned index,
+                                                     const char *name, const char *path,
+                                                     ns_bool is_dir) {
     char id[25];
-    ns_xcode_id(id, 40, NS_XCODE_PROJECT_ASSET_FILE_ID);
+    ns_xcode_id(id, 40, ns_xcode_project_asset_file_id(index));
     char *escaped_path = ns_xcode_escape(path);
-    ns_bool ok = escaped_path &&
+    char *escaped_name = ns_xcode_escape(name);
+    ns_bool ok = escaped_path && escaped_name &&
                  ns_xcode_buffer_appendf(pbx,
-                                         "\t\t%s /* Project Assets */ = {isa = PBXFileReference; "
-                                         "lastKnownFileType = folder; name = \"Project Assets\"; path = \"%s\"; "
+                                         "\t\t%s /* Project Assets: %s */ = {isa = PBXFileReference; "
+                                         "lastKnownFileType = %s; name = \"%s\"; path = \"%s\"; "
                                          "sourceTree = \"<absolute>\"; };\n",
-                                         id, escaped_path);
+                                         id, escaped_name, is_dir ? "folder" : "file", escaped_name, escaped_path);
     free(escaped_path);
+    free(escaped_name);
     return ok;
 }
 

@@ -7,7 +7,3 @@ description = "Self-hosted Nano Script front-end and test harness."
 source = "."
 entries = ["demo_main.ns"]
 exclude = ["README.md", ".gitignore"]
-
-[[dependencies.runtime]]
-name = "std"
-version = ">=0.1.0"

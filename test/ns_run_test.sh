@@ -158,11 +158,7 @@ printf '%s\n' \
     '[[targets]]' \
     'name = "tool"' \
     'entry = "tool_main.ns"' \
-    'output = "tool-artifact"' \
-    '' \
-    '[[dependencies.runtime]]' \
-    'name = "std"' \
-    'version = ">=0.1.0"' > "$run_tmp/targets/ns.mod"
+    'output = "tool-artifact"' > "$run_tmp/targets/ns.mod"
 # Both entries declare main: linking one target must drop the other's entry.
 printf '%s\n' \
     'use std' \
@@ -242,15 +238,7 @@ printf '%s\n' \
     '[[targets]]' \
     'name = "echo"' \
     'entry = "main.ns"' \
-    'type = "cli"' \
-    '' \
-    '[[dependencies.runtime]]' \
-    'name = "std"' \
-    'version = ">=0.1.0"' \
-    '' \
-    '[[dependencies.runtime]]' \
-    'name = "os"' \
-    'version = ">=0.1.0"' > "$run_tmp/args/ns.mod"
+    'type = "cli"' > "$run_tmp/args/ns.mod"
 printf '%s\n' \
     'use std' \
     'use os' \
