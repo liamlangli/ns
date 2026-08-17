@@ -74,8 +74,17 @@ static void path(char out[PATH_MAX], const char *root, const char *suffix) {
     snprintf(out, PATH_MAX, "%s/%s", root, suffix);
 }
 
-static ns_project_spec app_spec(const char *root, const char *runtime, const char *linked) {
+// The packaged paths a manifest declares. `ns project` resolves them from the
+// manifest; a spec built by hand states them the same way, relative to root.
+static ns_str *asset_paths(const char *relative) {
+    ns_str *paths = ns_null;
+    if (relative) ns_array_push(paths, ns_str_cstr((i8*)relative));
+    return paths;
+}
+
+static ns_project_spec app_spec(const char *root, const char *runtime, const char *linked, ns_str *assets) {
     return (ns_project_spec){
+        .assets = assets,
         .kind = NS_PROJECT_APP,
         .root = ns_str_cstr((i8*)root),
         .manifest = ns_str_cstr((i8*)"ns.mod"),
@@ -106,7 +115,8 @@ int main(void) {
               "project test creates a project asset fixture.");
     ns_project_spec app = app_spec(
         app_root, runtime,
-        "use std\nuse task\nuse net\nuse storage\nuse compress\nfn main() { print(`generated`) }\n");
+        "use std\nuse task\nuse net\nuse storage\nuse compress\nfn main() { print(`generated`) }\n",
+        asset_paths("assets"));
 #if defined(__APPLE__)
     char app_icon_source[PATH_MAX];
     path(app_icon_source, runtime, "lib/assets/latin_mono.png");
@@ -168,9 +178,9 @@ int main(void) {
               "Xcode project resolves its managed sibling directory from SRCROOT.");
     ns_expect(text_has(pbx, "name = \"Project Sources\"") && text_has(pbx, app_root),
               "Xcode project navigator exposes the real Nano Script source directory.");
-    ns_expect(text_has(pbx, "name = \"Project Assets\"") && text_has(pbx, "Project Assets in Resources") &&
-                  text_has(pbx, app_assets),
-              "Xcode app targets bundle a project's assets directory as a folder resource.");
+    ns_expect(text_has(pbx, "name = \"assets\"") && text_has(pbx, "assets in Resources") &&
+                  text_has(pbx, app_assets) && text_has(pbx, "NSProjectAssets = \"assets\";"),
+              "Xcode app targets bundle each packaged project path as a folder resource under its own name.");
     ns_expect(text_has(pbx, "Native/src/view.ios.m") && text_has(pbx, "Native/src/os.ios.m") &&
                   text_has(pbx, "Native/src/ui.c") && text_has(pbx, "Native/src/net.c"),
               "Xcode native targets compile the embedded view, UI, OS, and network forwarders.");
@@ -262,7 +272,7 @@ int main(void) {
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && text_has(xgenerated, "ZSTD_DISABLE_ASM=1") &&
                   text_has(xgenerated, "Native/include/zstd") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 10"),
+                  text_has(pbx, "NSProjectGeneratorVersion = 11"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
@@ -299,7 +309,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 10;", "NSProjectGeneratorVersion = 10;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 11;", "NSProjectGeneratorVersion = 11;",
                                      "NSProjectGeneratorVersion = 9;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
@@ -309,13 +319,13 @@ int main(void) {
 
     char native_only_root[] = "/tmp/ns-project-native-only-app-XXXXXX";
     ns_expect(mkdtemp(native_only_root) != ns_null, "project test creates native-only app fixture directory.");
-    ns_project_spec native_only = app_spec(native_only_root, runtime, "use dynamic\nfn main() {}\n");
+    ns_project_spec native_only = app_spec(native_only_root, runtime, "use dynamic\nfn main() {}\n", ns_null);
     ns_expect(!ns_project_generate_xcode(&native_only),
               "generated portable Apple apps reject the external Box3D dynamic module.");
 
     char hosted_root[] = "/tmp/ns-project-hosted-app-XXXXXX";
     ns_expect(mkdtemp(hosted_root) != ns_null, "project test creates hosted app fixture directory.");
-    ns_project_spec hosted = app_spec(hosted_root, runtime, "use view\nfn main() {}\n");
+    ns_project_spec hosted = app_spec(hosted_root, runtime, "use view\nfn main() {}\n", ns_null);
     hosted.host_build = true;
     ns_expect(ns_project_generate_xcode(&hosted), "Xcode hosted app project generation succeeds.");
     char hosted_pbx[PATH_MAX];
@@ -332,7 +342,7 @@ int main(void) {
 
     char library_root[] = "/tmp/ns-project-library-XXXXXX";
     ns_expect(mkdtemp(library_root) != ns_null, "project test creates library fixture directory.");
-    ns_project_spec library = app_spec(library_root, runtime, "");
+    ns_project_spec library = app_spec(library_root, runtime, "", ns_null);
     library.kind = NS_PROJECT_LIBRARY;
     ns_expect(ns_project_generate_xcode(&library), "Xcode library utility project generation succeeds.");
     ns_expect(ns_project_generate_visual_studio(&library), "Visual Studio library utility project generation succeeds.");
