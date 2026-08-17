@@ -120,6 +120,11 @@ extern f64 ui_text_v_center_y(void *, f64, f64, f64, i32);
 extern ui_text_size * ui_measure_text(void *, const char *, f64, i32);
 extern f64 ui_text_width(void *, const char *, f64, i32);
 extern f64 ui_mono_char_width(void *, f64, i32);
+extern i32 ui_text_vertical_column_count(const char *);
+extern i32 ui_text_vertical_max_run(const char *);
+extern f64 ui_text_vertical_column_width(void *, f64, i32);
+extern ui_text_size * ui_text_vertical_size(void *, const char *, f64, i32);
+extern void ui_draw_text_vertical(void *, f64, f64, const char *, f64, u32, i32);
 extern void * ui_widgets_create(void *);
 extern void ui_widgets_destroy(void *);
 extern void ui_widgets_set_light(void *, ns_bool);
@@ -1389,6 +1394,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "ui_content_y", (void *)ui_content_y, ns_embedded_sig87 },
     { "ui_draw_text", (void *)ui_draw_text, ns_embedded_sig88 },
     { "ui_draw_text_arc", (void *)ui_draw_text_arc, ns_embedded_sig89 },
+    { "ui_draw_text_vertical", (void *)ui_draw_text_vertical, ns_embedded_sig88 },
     { "ui_draw_text_wrapped", (void *)ui_draw_text_wrapped, ns_embedded_sig90 },
     { "ui_fill_arc", (void *)ui_fill_arc, ns_embedded_sig91 },
     { "ui_fill_circle", (void *)ui_fill_circle, ns_embedded_sig92 },
@@ -1454,6 +1460,10 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "ui_surface_y", (void *)ui_surface_y, ns_embedded_sig87 },
     { "ui_text_line_height", (void *)ui_text_line_height, ns_embedded_sig103 },
     { "ui_text_v_center_y", (void *)ui_text_v_center_y, ns_embedded_sig119 },
+    { "ui_text_vertical_column_count", (void *)ui_text_vertical_column_count, ns_embedded_sig39 },
+    { "ui_text_vertical_column_width", (void *)ui_text_vertical_column_width, ns_embedded_sig103 },
+    { "ui_text_vertical_max_run", (void *)ui_text_vertical_max_run, ns_embedded_sig39 },
+    { "ui_text_vertical_size", (void *)ui_text_vertical_size, ns_embedded_sig102 },
     { "ui_text_width", (void *)ui_text_width, ns_embedded_sig120 },
     { "ui_theme_empty", (void *)ui_theme_empty, ns_embedded_sig47 },
     { "ui_widgets_begin_frame", (void *)ui_widgets_begin_frame, ns_embedded_sig121 },

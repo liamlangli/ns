@@ -304,6 +304,10 @@ void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness, f64 
 void ui_stroke_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, f64 thickness, u32 rgba, f64 feather);
 void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type);
 void ui_draw_text_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 center_angle, const char *text, f64 font_px, u32 rgba, i32 font_type);
+void ui_draw_text_vertical(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type);
+f64 ui_text_vertical_column_width(ui_renderer *r, f64 font_px, i32 font_type);
+i32 ui_text_vertical_column_count(const char *text);
+i32 ui_text_vertical_max_run(const char *text);
 static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 h, f64 radius);
 static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inner, i32 n, u32 outer_color, u32 inner_color);
 
@@ -2287,6 +2291,117 @@ f64 ui_text_width(ui_renderer *r, const char *text, f64 font_px, i32 font_type) 
         width += ui_text_char_advance(r, font_type, code, font_px);
     }
     return width;
+}
+
+static ns_bool ui_text_is_vertical_space(i32 code) {
+    return code == 32 || code == 9;
+}
+
+static ns_bool ui_text_is_vertical_break(i32 code) {
+    return code == 10 || code == 13;
+}
+
+static void ui_utf8_encode(i32 code, char *buf) {
+    if (code < 0x80) {
+        buf[0] = (char)code;
+        buf[1] = 0;
+        return;
+    }
+    if (code < 0x800) {
+        buf[0] = (char)(0xc0 | (code >> 6));
+        buf[1] = (char)(0x80 | (code & 0x3f));
+        buf[2] = 0;
+        return;
+    }
+    if (code < 0x10000) {
+        buf[0] = (char)(0xe0 | (code >> 12));
+        buf[1] = (char)(0x80 | ((code >> 6) & 0x3f));
+        buf[2] = (char)(0x80 | (code & 0x3f));
+        buf[3] = 0;
+        return;
+    }
+    buf[0] = (char)(0xf0 | (code >> 18));
+    buf[1] = (char)(0x80 | ((code >> 12) & 0x3f));
+    buf[2] = (char)(0x80 | ((code >> 6) & 0x3f));
+    buf[3] = (char)(0x80 | (code & 0x3f));
+    buf[4] = 0;
+}
+
+i32 ui_text_vertical_column_count(const char *text) {
+    if (!text || !text[0]) return 0;
+    i32 columns = 1;
+    ns_bool saw_glyph = false;
+    const unsigned char *p = (const unsigned char *)text;
+    while (*p) {
+        i32 code = ui_utf8_next(&p);
+        if (ui_text_is_vertical_break(code)) {
+            if (saw_glyph) columns = columns + 1;
+            saw_glyph = false;
+        } else if (!ui_text_is_vertical_space(code)) {
+            saw_glyph = true;
+        }
+    }
+    if (!saw_glyph && columns > 1) columns = columns - 1;
+    return columns;
+}
+
+i32 ui_text_vertical_max_run(const char *text) {
+    if (!text) return 0;
+    i32 longest = 0;
+    i32 run = 0;
+    const unsigned char *p = (const unsigned char *)text;
+    while (*p) {
+        i32 code = ui_utf8_next(&p);
+        if (ui_text_is_vertical_break(code)) {
+            if (run > longest) longest = run;
+            run = 0;
+        } else if (!ui_text_is_vertical_space(code)) {
+            run = run + 1;
+        }
+    }
+    if (run > longest) longest = run;
+    return longest;
+}
+
+f64 ui_text_vertical_column_width(ui_renderer *r, f64 font_px, i32 font_type) {
+    f64 wide = ui_text_width(r, "国", font_px, font_type);
+    if (wide > 0.0) return wide;
+    f64 em = ui_text_width(r, "M", font_px, font_type);
+    if (em > 0.0) return em;
+    return font_px;
+}
+
+ui_text_size *ui_text_vertical_size(ui_renderer *r, const char *text, f64 font_px, i32 font_type) {
+    ui_text_size *size = (ui_text_size *)malloc(sizeof(ui_text_size));
+    if (!size) return NULL;
+    f64 col_w = ui_text_vertical_column_width(r, font_px, font_type);
+    f64 step_y = ui_text_line_height(r, font_px, font_type);
+    size->w = col_w * (f64)ui_text_vertical_column_count(text);
+    size->h = step_y * (f64)ui_text_vertical_max_run(text);
+    return size;
+}
+
+void ui_draw_text_vertical(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
+    if (!r || !text || font_px <= 0.0) return;
+    f64 col_w = ui_text_vertical_column_width(r, font_px, font_type);
+    f64 step_y = ui_text_line_height(r, font_px, font_type);
+    f64 col_x = x - col_w;
+    f64 cy = y;
+    const unsigned char *p = (const unsigned char *)text;
+    while (*p) {
+        i32 code = ui_utf8_next(&p);
+        if (ui_text_is_vertical_break(code)) {
+            col_x = col_x - col_w;
+            cy = y;
+            continue;
+        }
+        if (ui_text_is_vertical_space(code)) continue;
+        char buf[8];
+        ui_utf8_encode(code, buf);
+        f64 gw = ui_text_width(r, buf, font_px, font_type);
+        ui_draw_text(r, col_x + (col_w - gw) * 0.5, cy, buf, font_px, rgba, font_type);
+        cy = cy + step_y;
+    }
 }
 
 ui_text_size *ui_measure_text(ui_renderer *r, const char *text, f64 font_px, i32 font_type) {

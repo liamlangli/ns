@@ -405,6 +405,14 @@ ref fn ui_measure_text(r: ref ui_renderer, text: str, font_px: f64, font_type: i
 ref fn ui_text_width(r: ref ui_renderer, text: str, font_px: f64, font_type: i32) f64
 ref fn ui_mono_char_width(r: ref ui_renderer, font_px: f64, font_type: i32) f64
 ref fn ui_columns_for_width(r: ref ui_renderer, width: f64, font_px: f64, font_type: i32) i32
+// Traditional Chinese vertical set. Glyphs stack top-to-bottom; a newline
+// starts a new column to the left. (x, y) is the top-right of the first
+// column. Spaces are omitted so a name such as "乾 · 天行" reads as one run.
+ref fn ui_text_vertical_column_count(text: str) i32
+ref fn ui_text_vertical_max_run(text: str) i32
+ref fn ui_text_vertical_column_width(r: ref ui_renderer, font_px: f64, font_type: i32) f64
+ref fn ui_text_vertical_size(r: ref ui_renderer, text: str, font_px: f64, font_type: i32) ui_text_size
+ref fn ui_draw_text_vertical(r: ref ui_renderer, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
 
 // ===========================================================================
 // Widget layer

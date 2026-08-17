@@ -1,0 +1,16 @@
+use ui
+
+fn test_vertical_columns_run_right_to_left() {
+    assert ui_text_vertical_column_count("") == 0
+    assert ui_text_vertical_column_count("缘起") == 1
+    assert ui_text_vertical_max_run("缘起") == 2
+    assert ui_text_vertical_column_count("第1幕\n乾 · 天行") == 2
+    assert ui_text_vertical_max_run("第1幕\n乾 · 天行") == 4
+    assert ui_text_vertical_max_run("a b") == 2
+    assert ui_text_vertical_column_count("甲\n\n乙") == 2
+}
+
+fn main() i32 {
+    test_vertical_columns_run_right_to_left()
+    return 0
+}
