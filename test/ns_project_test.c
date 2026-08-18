@@ -265,6 +265,16 @@ int main(void) {
     ns_expect(text_has(ios_plist, "UIInterfaceOrientationPortraitUpsideDown") &&
                   text_has(ios_plist, "UISupportedInterfaceOrientations~ipad"),
               "Xcode iOS app declares every supported phone and tablet orientation.");
+    ns_expect(ns_project_orientation_from_name(ns_str_cstr("portrait")) == NS_PROJECT_ORIENTATION_PORTRAIT &&
+                  ns_project_orientation_from_name(ns_str_cstr("portrait_upside_down")) ==
+                      NS_PROJECT_ORIENTATION_PORTRAIT_UPSIDE_DOWN &&
+                  ns_project_orientation_from_name(ns_str_cstr("landscape_left")) ==
+                      NS_PROJECT_ORIENTATION_LANDSCAPE_LEFT &&
+                  ns_project_orientation_from_name(ns_str_cstr("landscape_right")) ==
+                      NS_PROJECT_ORIENTATION_LANDSCAPE_RIGHT &&
+                  ns_project_orientation_from_name(ns_str_cstr("diagonal")) == NS_PROJECT_ORIENTATION_NONE &&
+                  ns_project_orientation_from_name(ns_str_cstr("")) == NS_PROJECT_ORIENTATION_NONE,
+              "manifest orientation names map to the mobile orientations a project can enable.");
     ns_expect(text_has(xgenerated, "NS_BUNDLE_IDENTIFIER = ns.demo-app"), "Xcode project uses the sanitized bundle identifier.");
     ns_expect(text_has(xgenerated, "NS_EXECUTABLE = /tmp/ns\\ tools/bin/ns") &&
                   !text_has(xgenerated, "NS_EXECUTABLE = \""),
@@ -316,6 +326,18 @@ int main(void) {
     ns_expect(text_has(pbx, "DEVELOPMENT_TEAM = \"IOSDEBUG1\";") &&
                   text_has(pbx, "DEVELOPMENT_TEAM = \"IOSRELSE2\";"),
               "Xcode structural refresh preserves iOS development teams by configuration.");
+
+    char landscape_root[] = "/tmp/ns-project-landscape-app-XXXXXX";
+    ns_expect(mkdtemp(landscape_root) != ns_null, "project test creates landscape app fixture directory.");
+    ns_project_spec landscape = app_spec(landscape_root, runtime, "use std\nfn main() {}\n", ns_null);
+    landscape.orientations = NS_PROJECT_ORIENTATION_LANDSCAPE_LEFT | NS_PROJECT_ORIENTATION_LANDSCAPE_RIGHT;
+    ns_expect(ns_project_generate_xcode(&landscape), "Xcode landscape app project generation succeeds.");
+    char landscape_plist[PATH_MAX];
+    path(landscape_plist, landscape_root, "bin/demo-app.nsproject/Info/iOS-Info.plist");
+    ns_expect(text_has(landscape_plist, "UIInterfaceOrientationLandscapeLeft") &&
+                  text_has(landscape_plist, "UIInterfaceOrientationLandscapeRight") &&
+                  !text_has(landscape_plist, "UIInterfaceOrientationPortrait"),
+              "a declared orientation set disables every orientation the manifest leaves out.");
 
     char native_only_root[] = "/tmp/ns-project-native-only-app-XXXXXX";
     ns_expect(mkdtemp(native_only_root) != ns_null, "project test creates native-only app fixture directory.");

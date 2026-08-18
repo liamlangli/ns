@@ -863,6 +863,8 @@ typedef struct ns_manifest_target {
     ns_str shell;       // inherits the top-level `shell`
     ns_str output;      // artifact and display name; defaults to `name`
     ns_str *exclude;    // sources removed for this target only
+    ns_str *orientation;      // mobile orientations this target enables
+    ns_bool has_orientation;  // distinguishes an inherited list from an empty one
     ns_bool is_default; // `default = true`
     ns_bool link;       // `ns run` builds and launches the native artifact
     ns_bool has_link;   // distinguishes an inherited value from `link = false`
@@ -981,6 +983,7 @@ static ns_manifest_target *ns_manifest_targets(ns_str src) {
         if (ns_manifest_line_bool(line, "default", &target->is_default)) continue;
         if (ns_manifest_line_bool(line, "link", &target->link)) { target->has_link = true; continue; }
         if (ns_manifest_line_strs(line, "exclude", &target->exclude)) continue;
+        if (ns_manifest_line_strs(line, "orientation", &target->orientation)) { target->has_orientation = true; continue; }
     }
     return targets;
 }
@@ -996,6 +999,8 @@ static void ns_manifest_targets_free(ns_manifest_target *targets) {
         ns_str_free(targets[i].output);
         for (i32 e = 0, l = ns_array_length(targets[i].exclude); e < l; e++) ns_str_free(targets[i].exclude[e]);
         ns_array_free(targets[i].exclude);
+        for (i32 o = 0, l = ns_array_length(targets[i].orientation); o < l; o++) ns_str_free(targets[i].orientation[o]);
+        ns_array_free(targets[i].orientation);
     }
     ns_array_free(targets);
 }
@@ -1374,6 +1379,31 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     return ns_link_finish(&lk, out_map, out_external_modules);
 }
 
+// Fold `orientation = ["portrait", "landscape_left"]` into the flag set a
+// generated mobile application enables. Every name a manifest omits stays
+// disabled, and a name that is not one of the four supported orientations is a
+// manifest error rather than a silently ignored key.
+static u32 ns_manifest_orientation_mask(ns_str *names, ns_str root) {
+    u32 mask = NS_PROJECT_ORIENTATION_NONE;
+    for (i32 i = 0, count = ns_array_length(names); i < count; i++) {
+        ns_project_orientation flag = ns_project_orientation_from_name(names[i]);
+        if (flag == NS_PROJECT_ORIENTATION_NONE) {
+            ns_exit(1, "ns", "ns.mod at %.*s declares unknown orientation `%.*s`; expected portrait, "
+                             "portrait_upside_down, landscape_left or landscape_right.\n",
+                    root.len, root.data, names[i].len, names[i].data);
+        }
+        mask |= (u32)flag;
+    }
+    return mask;
+}
+
+static u32 ns_manifest_orientations(ns_str mod, ns_str root) {
+    ns_str *names = ns_manifest_values(mod, "orientation");
+    u32 mask = ns_manifest_orientation_mask(names, root);
+    ns_array_free(names);
+    return mask;
+}
+
 // What a manifest declares for one selected target: its entry plus the fields
 // a build or a run reads, each already resolved against the top-level value it
 // inherits when the target leaves it out.
@@ -1386,6 +1416,7 @@ typedef struct ns_manifest_selection {
     ns_str platform;    // wasm, or empty for a native target
     ns_str icon;        // resolved against the project root
     ns_str shell;       // resolved against the project root
+    u32 orientations;   // mobile orientations enabled; none declared keeps all
     ns_bool link;       // `ns run` builds and launches instead of evaluating
 } ns_manifest_selection;
 
@@ -1431,6 +1462,7 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
         sel.icon = ns_path_resolve(root, target->icon);
         sel.shell = ns_path_resolve(root, target->shell);
         sel.link = target->has_link ? target->link : top_link;
+        if (target->has_orientation) sel.orientations = ns_manifest_orientation_mask(target->orientation, root);
         if (entry.data == ns_null || entry.len == 0) {
             ns_exit(1, "ns", "target `%.*s` of ns.mod at %.*s declares no `entry`.\n",
                     target->name.len, target->name.data, root.len, root.data);
@@ -1448,6 +1480,7 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
     if (sel.platform.len == 0) { ns_str_free(sel.platform); sel.platform = ns_manifest_value(mod, "target"); }
     if (sel.icon.data == ns_null) sel.icon = ns_path_resolve(root, ns_manifest_value(mod, "icon"));
     if (sel.shell.data == ns_null) sel.shell = ns_path_resolve(root, ns_manifest_value(mod, "shell"));
+    if (sel.orientations == NS_PROJECT_ORIENTATION_NONE) sel.orientations = ns_manifest_orientations(mod, root);
 
     if (entry.data != ns_null) {
         ns_str base = ns_manifest_source_base(root, mod);
@@ -3578,6 +3611,9 @@ void ns_exec_project(ns_str path) {
         // bundle, so a program run from Xcode reads its own files the way it
         // does from the project directory.
         .assets = ns_project_asset_paths(root),
+        // A manifest that declares no `orientation` keeps every mobile
+        // orientation; any declared set disables the ones it leaves out.
+        .orientations = selection.orientations,
     };
 
     ns_bool generated = false;

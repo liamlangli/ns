@@ -92,7 +92,7 @@ The common commands are:
 
 The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
 `type`, optional `target`, `source`, `entry` (or `entries`), `exclude`,
-`assets`, and `link`. `link = true` makes `ns run` build and launch a native
+`assets`, `orientation`, and `link`. `link = true` makes `ns run` build and launch a native
 artifact; omitting it or setting it false keeps the interpreter.
 `assets = ["res"]` names the files and directories a bundle packages, as
 project-relative paths; a manifest that declares none packages the conventional
@@ -100,6 +100,11 @@ project-relative paths; a manifest that declares none packages the conventional
 in the project, and a launched app bundle enters its resource directory before
 the program runs, so one relative path such as `res/house.vox` reads the same
 file interpreted and bundled.
+`orientation = ["portrait", "landscape_left", "landscape_right"]` names the
+mobile orientations a generated project enables, out of `portrait`,
+`portrait_upside_down`, `landscape_left`, and `landscape_right`. `ns project`
+disables every orientation the manifest leaves out; a manifest that declares
+none keeps all four, and an unknown name is a manifest error.
 `target = "wasm"` keeps `type = "app"` and makes `ns build` emit a browser
 bundle; its HTML title uses `name`, and its favicon uses `icon` or the installed
 default `ns.svg`. A browser project may set `shell` to a custom HTML file using
@@ -128,7 +133,8 @@ entry instead of a single top-level `entry`. `ns run <name>` and
 `default = true`, otherwise the first declared one, and `ns build` builds every
 declared target. A target may override `type` (`app` for a host app bundle,
 `cli` for a plain executable, `library` for a static library),
-`platform` (`wasm`), `icon`, `shell`, `output` and add its own `exclude` list;
+`platform` (`wasm`), `icon`, `shell`, `output`, `orientation` and add its own
+`exclude` list;
 it may also override `link`; anything it omits is inherited from the top-level
 key. Each target compiles the
 whole project source set minus the entries owned by the other targets, so every

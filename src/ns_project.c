@@ -32,3 +32,14 @@ ns_str ns_project_safe_name(ns_str name) {
     safe.dynamic = false; // ns_array-owned process-lifetime storage
     return safe;
 }
+
+// Manifest orientation names are the snake_case spelling of what a mobile
+// platform declares, so `orientation = ["portrait", "landscape_left"]` reads
+// the same way in every generated project.
+ns_project_orientation ns_project_orientation_from_name(ns_str name) {
+    if (ns_str_equals(name, ns_str_cstr("portrait"))) return NS_PROJECT_ORIENTATION_PORTRAIT;
+    if (ns_str_equals(name, ns_str_cstr("portrait_upside_down"))) return NS_PROJECT_ORIENTATION_PORTRAIT_UPSIDE_DOWN;
+    if (ns_str_equals(name, ns_str_cstr("landscape_left"))) return NS_PROJECT_ORIENTATION_LANDSCAPE_LEFT;
+    if (ns_str_equals(name, ns_str_cstr("landscape_right"))) return NS_PROJECT_ORIENTATION_LANDSCAPE_RIGHT;
+    return NS_PROJECT_ORIENTATION_NONE;
+}

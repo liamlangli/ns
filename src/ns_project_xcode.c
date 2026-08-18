@@ -964,7 +964,31 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root) {
     return ok;
 }
 
-static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platform, const char *safe_name, const char *version) {
+// The `UISupportedInterfaceOrientations` array for one iOS idiom. Only the
+// orientations the manifest declares are listed, so an undeclared one is
+// disabled in the generated application; a project that declares none keeps
+// every orientation.
+static ns_bool ns_xcode_append_orientations(ns_xcode_buffer *plist, const char *key, u32 orientations) {
+    static const struct {
+        u32 flag;
+        const char *value;
+    } names[] = {
+        {NS_PROJECT_ORIENTATION_PORTRAIT, "UIInterfaceOrientationPortrait"},
+        {NS_PROJECT_ORIENTATION_PORTRAIT_UPSIDE_DOWN, "UIInterfaceOrientationPortraitUpsideDown"},
+        {NS_PROJECT_ORIENTATION_LANDSCAPE_LEFT, "UIInterfaceOrientationLandscapeLeft"},
+        {NS_PROJECT_ORIENTATION_LANDSCAPE_RIGHT, "UIInterfaceOrientationLandscapeRight"},
+    };
+    if (orientations == NS_PROJECT_ORIENTATION_NONE) orientations = NS_PROJECT_ORIENTATION_ALL;
+    if (!ns_xcode_buffer_appendf(plist, "  <key>%s</key>\n  <array>\n", key)) return false;
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        if (!(orientations & names[i].flag)) continue;
+        if (!ns_xcode_buffer_appendf(plist, "    <string>%s</string>\n", names[i].value)) return false;
+    }
+    return ns_xcode_buffer_append(plist, "  </array>\n");
+}
+
+static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platform, const char *safe_name, const char *version,
+                                    u32 orientations) {
     ns_xcode_buffer plist = {0};
     ns_bool mobile = strcmp(platform, "macOS") != 0;
     char *escaped_name = ns_xcode_xml_escape(safe_name);
@@ -998,21 +1022,8 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
         return false;
     }
     if (strcmp(platform, "iOS") == 0 &&
-        !ns_xcode_buffer_append(&plist,
-                                "  <key>UISupportedInterfaceOrientations</key>\n"
-                                "  <array>\n"
-                                "    <string>UIInterfaceOrientationPortrait</string>\n"
-                                "    <string>UIInterfaceOrientationPortraitUpsideDown</string>\n"
-                                "    <string>UIInterfaceOrientationLandscapeLeft</string>\n"
-                                "    <string>UIInterfaceOrientationLandscapeRight</string>\n"
-                                "  </array>\n"
-                                "  <key>UISupportedInterfaceOrientations~ipad</key>\n"
-                                "  <array>\n"
-                                "    <string>UIInterfaceOrientationPortrait</string>\n"
-                                "    <string>UIInterfaceOrientationPortraitUpsideDown</string>\n"
-                                "    <string>UIInterfaceOrientationLandscapeLeft</string>\n"
-                                "    <string>UIInterfaceOrientationLandscapeRight</string>\n"
-                                "  </array>\n")) {
+        !(ns_xcode_append_orientations(&plist, "UISupportedInterfaceOrientations", orientations) &&
+          ns_xcode_append_orientations(&plist, "UISupportedInterfaceOrientations~ipad", orientations))) {
         free(escaped_name);
         free(escaped_version);
         ns_xcode_buffer_free(&plist);
@@ -1107,9 +1118,9 @@ static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *man
     char *generated = ns_xcode_path_join(managed_root, "Generated");
     char *linked = generated ? ns_xcode_path_join(generated, "LinkedProject.ns") : NULL;
     ns_bool ok = linked && ns_xcode_write(linked, linked_source, strlen(linked_source), true) &&
-                 ns_xcode_write_plist(managed_root, "macOS", safe_name, version) &&
-                 ns_xcode_write_plist(managed_root, "iOS", safe_name, version) &&
-                 ns_xcode_write_plist(managed_root, "visionOS", safe_name, version);
+                 ns_xcode_write_plist(managed_root, "macOS", safe_name, version, spec->orientations) &&
+                 ns_xcode_write_plist(managed_root, "iOS", safe_name, version, spec->orientations) &&
+                 ns_xcode_write_plist(managed_root, "visionOS", safe_name, version, spec->orientations);
     free(generated);
     free(linked);
     ns_unused(spec);

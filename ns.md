@@ -110,6 +110,12 @@ Common commands:
   local configuration overrides are preserved while managed support files are
   refreshed. Other hosts report an unsupported-platform error. See
   `doc/nsm.md` for generated paths and runtime limitations.
+- `ns.mod` app manifests may set
+  `orientation = ["portrait", "landscape_left", "landscape_right"]`, out of
+  `portrait`, `portrait_upside_down`, `landscape_left` and `landscape_right`.
+  `ns project` enables exactly the declared orientations in the generated
+  mobile app and disables the rest; a manifest that declares none keeps all
+  four. A `[[targets]]` table may override the list.
 - `ns.mod` app manifests may set `icon = "path/to/image.png"`; the path is
   relative to the manifest root. `ns run` passes it to the native view runtime,
   Darwin app builds package it as the bundle icon, and `ns project` generates

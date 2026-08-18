@@ -24,6 +24,8 @@ entry = "main.ns"
 exclude = ["generated/**"]
 # Files and directories a bundle packages; omit to package `assets`.
 assets = ["res"]
+# Mobile orientations a generated project enables; omit to enable them all.
+orientation = ["portrait", "landscape_left", "landscape_right"]
 ```
 
 Project source is recursive: every `.ns` file below `source` is compiled and
@@ -70,6 +72,24 @@ By default the native entry is evaluated by the interpreter. Set `link = true`
 to make `ns run` use the incremental native build and launch its artifact
 instead. `link = false` and an omitted `link` keep the interpreted behavior.
 
+### Mobile orientation
+
+A mobile application usually supports one way of holding the device. The
+`orientation` key names the ones it does support:
+
+```toml
+orientation = ["landscape_left", "landscape_right"]
+```
+
+The four names are `portrait`, `portrait_upside_down`, `landscape_left`, and
+`landscape_right`. `ns project` enables exactly the declared ones in the
+generated mobile application and disables every orientation the manifest leaves
+out, so the manifest above produces a landscape-only iPhone and iPad app. A
+manifest that declares no `orientation` keeps all four enabled, and a name that
+is not one of the four is reported as a manifest error rather than ignored.
+Desktop targets have no orientation, so the key only changes what a mobile
+project generates.
+
 ### Targets
 
 A manifest may declare several runnable targets, each with its own entry:
@@ -111,6 +131,7 @@ declared. A manifest that declares no `[[targets]]` keeps using its top-level
 | `default`     | `true` marks the target `ns run` picks with no name            |
 | `link`        | Build and launch this native target from `ns run`              |
 | `exclude`     | Sources removed for this target only, added to the project `exclude` |
+| `orientation` | Mobile orientations this target enables; defaults to the top-level `orientation` |
 
 Every target compiles the whole project source set minus the entries owned by
 the other targets, so each target declares its own `main` and shares every
@@ -235,6 +256,11 @@ the official `std`, `task`, `shader`, `simd`, `view`, `ui`, `os`, `gpu`, `io`,
 `net`, `storage`, and `compress` modules. Other external or dynamically loaded FFI modules
 are not available; generation falls back to host build/test targets instead of
 silently producing a broken app.
+
+The generated iOS target declares the orientations the manifest `orientation`
+key names, for both the phone and the tablet idiom. An app that declares
+`orientation = ["landscape_left", "landscape_right"]` therefore never rotates
+into portrait, and one that declares no `orientation` supports all four.
 
 When an app manifest declares `icon = "path/to/image.png"`, `ns project`
 generates `Assets.xcassets` below the managed `.nsproject` directory. It resizes
