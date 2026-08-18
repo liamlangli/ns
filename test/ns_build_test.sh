@@ -130,3 +130,75 @@ mkdir -p "$project/nested"
 test ! -e "$project/bin"
 
 printf '%s\n' 'PASS: ns build stays incremental and ns clean removes generated files.'
+
+# A manifest that declares targets gives each one `bin/<target name>`, so two
+# browser bundles that both package an index page and a runtime never overwrite
+# each other the way they would in a shared bin/.
+multi="$tmp/multi"
+mkdir -p "$multi/src"
+cat > "$multi/ns.mod" <<'EOF'
+schema = "ns.mod/v1"
+name = "multi"
+version = "0.1.0"
+type = "app"
+target = "wasm"
+source = "src"
+
+[[targets]]
+name = "page"
+entry = "page_main.ns"
+default = true
+
+[[targets]]
+name = "docs"
+entry = "docs_main.ns"
+EOF
+cat > "$multi/src/page_main.ns" <<'EOF'
+use std
+
+fn main() {
+    if multi_shared() == 42 { print("page\n") }
+}
+EOF
+cat > "$multi/src/docs_main.ns" <<'EOF'
+use std
+
+fn main() {
+    if multi_shared() == 42 { print("docs\n") }
+}
+EOF
+cat > "$multi/src/shared.ns" <<'EOF'
+fn multi_shared() i32 {
+    return 42
+}
+EOF
+
+"$ns" build "$multi" > "$tmp/multi.log" 2>&1 || {
+    cat "$tmp/multi.log" >&2
+    printf '%s\n' 'FAIL: ns build failed for a multi-target project.' >&2
+    exit 1
+}
+for artifact in page/page.wasm page/index.html page/.ns-build/page.wasm.cache \
+                docs/docs.wasm docs/index.html docs/.ns-build/docs.wasm.cache; do
+    if [ ! -f "$multi/bin/$artifact" ]; then
+        cat "$tmp/multi.log" >&2
+        printf 'FAIL: ns build did not write bin/%s for its target.\n' "$artifact" >&2
+        exit 1
+    fi
+done
+if [ -e "$multi/bin/index.html" ] || [ -e "$multi/bin/page.wasm" ]; then
+    printf '%s\n' 'FAIL: a declared target left files directly in bin/.' >&2
+    ls "$multi/bin" >&2
+    exit 1
+fi
+
+# A named target rebuilds inside its own directory and leaves the sibling alone.
+stamp=$(ls -l "$multi/bin/docs/docs.wasm")
+(cd "$multi" && "$ns" build page --force) > "$tmp/multi.log" 2>&1 || {
+    cat "$tmp/multi.log" >&2
+    printf '%s\n' 'FAIL: ns build <target> failed for a multi-target project.' >&2
+    exit 1
+}
+test "$stamp" = "$(ls -l "$multi/bin/docs/docs.wasm")"
+
+printf '%s\n' 'PASS: every ns.mod target owns bin/<target name>.'

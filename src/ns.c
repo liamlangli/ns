@@ -1585,6 +1585,7 @@ typedef enum {
 
 static ns_bool ns_build_target_is_wasm(ns_str target);
 static ns_str ns_path_last_component(ns_str path);
+static ns_str ns_wasm_safe_name(ns_str name);
 
 typedef struct ns_build_input {
     ns_str filename;
@@ -1651,12 +1652,46 @@ static ns_str ns_build_default_name(ns_build_input *in) {
     return ns_path_filename(in->filename);
 }
 
+// A target name as a single path component. Any separator becomes a dash so a
+// manifest can never name a directory outside `bin/`, and a name made only of
+// dots keeps a fixed fallback instead of resolving to `bin/` itself.
+static ns_str ns_build_target_dir_name(ns_str target_name) {
+    ns_str dir = ns_str_concat(target_name, ns_str_cstr(""));
+    ns_bool dots = dir.len > 0;
+    for (i32 i = 0; i < dir.len; ++i) {
+        i8 c = dir.data[i];
+        if (c == '/' || c == '\\' || c == ':') dir.data[i] = '-';
+        if (c != '.') dots = false;
+    }
+    if (dir.len == 0 || dots) {
+        ns_str_free(dir);
+        dir = ns_str_concat(ns_str_cstr("target"), ns_str_cstr(""));
+    }
+    return dir;
+}
+
+// The directory a build writes into. Every `[[targets]]` table owns
+// `bin/<target>`, so an app bundle, a cli executable, a browser page, and the
+// build caches of each stay apart even when sibling targets package files under
+// the same names. A manifest that declares no target has nothing to separate
+// and keeps `bin/` itself.
+static ns_str ns_build_output_root(ns_str scope, ns_str target_name) {
+    ns_str bin = ns_path_join(scope, ns_str_cstr("bin"));
+    if (target_name.data == ns_null || target_name.len == 0) return bin;
+    ns_str dir = ns_build_target_dir_name(target_name);
+    ns_str root = ns_path_join(bin, dir);
+    ns_str_free(bin);
+    ns_str_free(dir);
+    return root;
+}
+
 static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
     ns_str name = in->name.data != ns_null ? in->name : ns_build_default_name(in);
     ns_str artifact;
     if (ns_build_target_is_wasm(in->target)) {
-        ns_str safe = ns_project_safe_name(name);
+        ns_str safe = ns_wasm_safe_name(name);
         artifact = ns_str_concat(safe, ns_str_cstr(".wasm"));
+        ns_str_free(safe);
     } else if (kind == NS_BUILD_LIB) {
         artifact = ns_str_concat(ns_str_cstr("lib"), name);
         artifact = ns_str_concat(artifact, ns_str_cstr(".a"));
@@ -1676,8 +1711,11 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
 #endif
     }
 
-    ns_str bin = ns_path_join(in->scope, ns_str_cstr("bin"));
-    return ns_path_join(bin, artifact);
+    ns_str root = ns_build_output_root(in->scope, in->target_name);
+    ns_str path = ns_path_join(root, artifact);
+    ns_str_free(root);
+    ns_str_free(artifact);
+    return path;
 }
 
 static ns_str ns_wasm_safe_name(ns_str name) {
@@ -2287,11 +2325,7 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
     if (!ns_build_type_is_app(in->module_type) || requested_kind == NS_BUILD_LIB) {
         ns_exit(1, "build", "wasm v1 supports type = \"app\" only.\n");
     }
-    ns_str safe = ns_wasm_safe_name(in->name);
-    if (output.len == 0) {
-        ns_str filename = ns_str_concat(safe, ns_str_cstr(".wasm"));
-        output = ns_path_join(ns_path_join(in->scope, ns_str_cstr("bin")), filename);
-    }
+    if (output.len == 0) output = ns_build_default_output(in, NS_BUILD_APP);
     ns_build_ensure_output_dir(output);
 
     // The module guards the whole bundle: everything else in bin/ is copied or
@@ -3261,25 +3295,25 @@ static ns_bool ns_build_targets_can_parallel(ns_str project, ns_str *names, i32 
             .name = sel.name,
             .module_type = sel.type,
             .target = sel.platform,
+            .target_name = sel.target_name,
             .has_manifest = true,
         };
-        if (ns_build_target_is_wasm(in.target)) {
-            // Browser targets package shared index/runtime files in the same
-            // bin directory even though their .wasm names differ.
-            safe = false;
-        } else {
-            ns_build_kind kind = ns_build_resolve_kind(&in, requested_kind);
-            ns_asm_target target;
-            ns_asm_get_current_target(&target);
-            if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) kind = NS_BUILD_EXE;
-            ns_str output = ns_build_default_output(&in, kind);
-            ns_str artifact = ns_build_artifact_path(kind, output);
-            for (i32 previous = 0, n = (i32)ns_array_length(artifacts); previous < n; ++previous) {
-                if (ns_str_equals(artifacts[previous], artifact)) safe = false;
-            }
-            ns_array_push(artifacts, artifact);
-            ns_str_free(output);
+        // A browser target writes one bundle directory around its module, so
+        // the module path identifies it the way an artifact path identifies a
+        // native target.
+        ns_bool browser = ns_build_target_is_wasm(in.target);
+        ns_build_kind kind = browser ? NS_BUILD_APP : ns_build_resolve_kind(&in, requested_kind);
+        ns_asm_target target;
+        ns_asm_get_current_target(&target);
+        if (!browser && kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) kind = NS_BUILD_EXE;
+        ns_str output = ns_build_default_output(&in, kind);
+        ns_str artifact = browser ? ns_str_concat(output, ns_str_cstr(""))
+                                  : ns_build_artifact_path(kind, output);
+        for (i32 previous = 0, n = (i32)ns_array_length(artifacts); previous < n; ++previous) {
+            if (ns_str_equals(artifacts[previous], artifact)) safe = false;
         }
+        ns_array_push(artifacts, artifact);
+        ns_str_free(output);
         ns_str_free(sel.target_name);
         ns_str_free(sel.entry_file);
         ns_str_free(sel.name);
@@ -3294,10 +3328,11 @@ static ns_bool ns_build_targets_can_parallel(ns_str project, ns_str *names, i32 
 }
 
 // Build manifest targets in isolated processes. Compilation still owns a few
-// CLI-lifetime contexts, while targets share no artifacts or cache files, so
-// processes let independent targets saturate the host without putting locks
-// through the parser and SSA builder. Profiling stays serial because its open
-// scope stack is process-local and must describe one complete nested timeline.
+// CLI-lifetime contexts, while targets share no artifacts or cache files - each
+// one owns `bin/<target>` - so processes let independent targets saturate the
+// host without putting locks through the parser and SSA builder. Profiling
+// stays serial because its open scope stack is process-local and must describe
+// one complete nested timeline.
 static void ns_exec_build_targets_parallel(ns_str project, ns_str *names, i32 count,
                                            u8 requested_kind, ns_bool force) {
     long online = sysconf(_SC_NPROCESSORS_ONLN);
@@ -4311,7 +4346,9 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
     if (ns_str_equals(target, ns_str_cstr("wasm"))) {
         setvbuf(stdout, ns_null, _IOLBF, 0);
         ns_exec_build_target(scope, ns_str_null, NS_BUILD_AUTO, false, target_name);
-        ns_str output_root = ns_path_join(scope, ns_str_cstr("bin"));
+        // Serve the bundle of the target that was just built, which is its own
+        // directory below bin/ whenever the manifest declares targets.
+        ns_str output_root = ns_build_output_root(scope, selection.target_name);
         ns_str executable = ns_project_current_executable();
         char port_text[16];
         snprintf(port_text, sizeof(port_text), "%d", port_set ? port : NS_WASM_DEFAULT_PORT);

@@ -2375,8 +2375,12 @@ static ns_bool ns_wasm_has_target(ns_ssa_module *ssa, ns_ssa_inst *call) {
 static ns_return_bool ns_wasm_validate(ns_ssa_module *ssa) {
     static char message[512];
     if (ssa->ctx) {
-        for (i32 i = 0, l = (i32)ns_array_length(ssa->ctx->nodes); i < l; ++i) {
-            ns_ast_t *node = &ssa->ctx->nodes[i];
+        // Only the sections of this translation unit, the way the rest of the
+        // compiler walks an AST context. One process compiles several manifest
+        // targets into the same context, so scanning every node would reject a
+        // browser target for a `use` that belongs to a native sibling.
+        for (i32 i = ssa->ctx->section_begin; i < ssa->ctx->section_end; ++i) {
+            ns_ast_t *node = &ssa->ctx->nodes[ssa->ctx->sections[i]];
             if (node->type != NS_AST_USE_STMT || ns_wasm_portable_use(node->use_stmt.lib.val)) continue;
             snprintf(message, sizeof(message), "wasm target does not support module `%.*s`.",
                      node->use_stmt.lib.val.len, node->use_stmt.lib.val.data);

@@ -69,14 +69,14 @@ The common commands are:
   map. `-o` applies to a single target only. `--exe` forces a
   linked native executable. `ns build` does not fall back to `ns run`.
   Builds are incremental: every input a build reads is recorded with its last
-  modify time, size, and content hash in `bin/.ns-build/`, and a later build
+  modify time, size, and content hash in `.ns-build/` beside the artifact, and a later build
   that finds the artifact in place and every recorded input unchanged keeps the
   artifact instead of recompiling. A touched file with unchanged contents does
   not trigger a rebuild; an added, edited, or removed source, a changed
   manifest, asset, or installed module declaration, a different artifact kind
   or output path, and a rebuilt `ns` all do. `--force` compiles unconditionally.
-  Independent native manifest targets build concurrently up to the logical CPU
-  count. Browser targets, colliding outputs, and profiled builds stay serial.
+  Independent manifest targets build concurrently up to the logical CPU count.
+  Colliding outputs and profiled builds stay serial.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the
   `bin/` output directory, which also holds generated IDE projects and the
   build cache and build profile, plus legacy `ns.profile` beside the manifest. Source
@@ -138,8 +138,12 @@ declared target. A target may override `type` (`app` for a host app bundle,
 it may also override `link`; anything it omits is inherited from the top-level
 key. Each target compiles the
 whole project source set minus the entries owned by the other targets, so every
-target defines its own `main` and shares every other module, and each artifact
-is written to `bin/<name>`.
+target defines its own `main` and shares every other module. Each target owns
+the directory `bin/<target name>` and writes everything it produces there - the
+artifact, the files a bundle packages, and its build cache - so sibling targets
+never overwrite each other; the artifact inside is named after the target, or
+after `output` when the table sets it. A manifest without `[[targets]]` keeps
+`bin/` itself.
 
 ```toml
 [[targets]]

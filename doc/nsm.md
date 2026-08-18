@@ -57,7 +57,7 @@ reads `res/house.vox` from the project directory under `ns run` and from the
 bundle's resources once built, with no path handling in the program. A plain
 `cli` executable is not a bundle and keeps the working directory it was started
 from. A browser bundle copies declared paths beside its page, and continues to
-sync `<source>/assets` into `bin/assets`. Every packaged file is a build input,
+sync `<source>/assets` into the `assets` directory of that bundle. Every packaged file is a build input,
 so editing one triggers the next incremental build.
 
 Test sources do not need manifest exclusions. Normal project compilation skips
@@ -137,8 +137,13 @@ Every target compiles the whole project source set minus the entries owned by
 the other targets, so each target declares its own `main` and shares every
 other module. A top-level `entry` declared beside `[[targets]]` is treated the
 same way: it is removed from the source set of any target that does not own it.
-The build artifact of a target is written to `bin/<name>` (or `bin/<output>`),
-so targets never overwrite each other.
+Every declared target owns the directory `bin/<target name>` and writes all of
+its output there - the artifact, the bundle it packages, and its build cache -
+so targets never overwrite each other, not even when they package files under
+the same names. The artifact inside that directory is named after the target, or
+after `output` when the table sets it: target `web` with `output = "viewer"`
+writes `bin/web/viewer`. A manifest that declares no `[[targets]]` has one
+implicit target and keeps `bin/` itself.
 Like the other target settings, `link` inherits its top-level value; an
 explicit `link = false` on a target disables linking inherited from the project.
 
@@ -146,11 +151,11 @@ explicit `link = false` on a target disables linking inherited from the project.
 own `type`, so one manifest can ship a windowed app, a command-line tool and a
 static library side by side:
 
-| `type`                  | Artifact                                          |
-|-------------------------|---------------------------------------------------|
-| `app` / `application`   | Host app bundle (`bin/<name>.app` on Darwin)      |
-| `cli` / `exe`           | Plain executable `bin/<name>`                     |
-| `library` / `lib`       | Static library `bin/lib<name>.a`                  |
+| `type`                  | Artifact                                                     |
+|-------------------------|--------------------------------------------------------------|
+| `app` / `application`   | Host app bundle (`bin/<target>/<name>.app` on Darwin)        |
+| `cli` / `exe`           | Plain executable `bin/<target>/<name>`                       |
+| `library` / `lib`       | Static library `bin/<target>/lib<name>.a`                    |
 
 `ns build <name>` builds that one target independently. `-o` applies to a
 single target only, so name the target when overriding the output path.
@@ -204,7 +209,7 @@ metadata, reference, shader, function, module-init, and imported-function
 phases. Each lowered function and transpiled shader is also recorded under
 `compiler.ssa.fn::` and `compiler.ssa.shader::` respectively.
 
-A build records every input it reads under `bin/.ns-build/<artifact>.cache`
+A build records every input it reads under `<output dir>/.ns-build/<artifact>.cache`
 with that input's last modify time, size, and content hash. The next build
 re-stats the same inputs, hashes only the ones whose time or size changed, and
 keeps the existing artifact when the artifact is still in place and every
@@ -221,13 +226,16 @@ build profile, plus legacy `ns.profile` beside the manifest.
 For a browser project, keep `type = "app"` and set `target = "wasm"` (or
 `platform = "wasm"` on one `[[targets]]` table).
 `ns build` then emits a browser bundle (`.wasm`, `.wasm.map`, `ns-wasm.js`, and
-`index.html`) under `bin`, while `ns run --port 9001` builds and starts the
+`index.html`) under the target's output directory - `bin/<target name>` for a
+declared target, `bin/` for a manifest without targets - while
+`ns run --port 9001` builds, serves that directory, and starts the
 loopback-only live-reload server. Port 0 selects an available port. See
 `doc/wasm.md` for the lifecycle, browser ABI, WebGPU middleware, and supported
 language subset. The HTML title uses the manifest `name`; `icon` becomes the
 favicon, falling back to Nano Script's installed `ns.svg` when omitted. Set
 `shell` to use a custom project HTML page; the build expands its `{{wasm}}`,
-`{{title}}`, and `{{favicon}}` placeholders and copies it as `bin/index.html`.
+`{{title}}`, and `{{favicon}}` placeholders and copies it as the bundle's
+`index.html`.
 
 Running `ns update [path]` finds the nearest `ns.mod` and migrates project
 metadata to the format bundled with the current executable. It preserves

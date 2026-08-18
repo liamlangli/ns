@@ -15,22 +15,24 @@ entry = "main.ns"
 # shell = "index.html"
 ```
 
-`ns build` writes `bin/<safe-name>.wasm`, `bin/<safe-name>.wasm.map`,
-`bin/ns-wasm.js`, and `bin/index.html`. The generated page title is the manifest
+`ns build` writes `<bundle>/<safe-name>.wasm`, `<bundle>/<safe-name>.wasm.map`,
+`<bundle>/ns-wasm.js`, and `<bundle>/index.html`, where `<bundle>` is `bin/` for
+the manifest above and `bin/<target name>` for a browser `[[targets]]` table,
+which keeps two browser targets of one project apart. The generated page title is the manifest
 `name`. Its favicon is copied from the manifest `icon`; without one, the
 official `ns.svg` installed with Nano Script is copied into the bundle and
 used instead. A canvas `view_create` title is retained as its accessibility
 label and does not replace the page title. If `<source>/assets` exists, its tree is synchronized into
-`bin/assets` without removing unrelated output. `-o path/app.wasm` puts all
+`<bundle>/assets` without removing unrelated output. `-o path/app.wasm` puts all
 browser artifacts and the selected favicon beside that path. Wasm replacement is atomic: a failed
 compile leaves the previous runnable artifact intact. The bundle is also
 incremental: `ns build` keeps it when the module is in place and every recorded
 input — sources, manifest, assets, shell, icon, the installed `ns-wasm.js`, and
 the `ns` executable — is unchanged since the recorded build. `--force` rebuilds
-it anyway, and `ns clean` removes the whole `bin/` bundle.
+it anyway, and `ns clean` removes the whole `bin/` directory.
 
 For a custom browser UI, set `shell` to an HTML file relative to the manifest.
-The builder copies it to `bin/index.html` after expanding three stable markers:
+The builder copies it to `<bundle>/index.html` after expanding three stable markers:
 `{{wasm}}` is the generated module filename, `{{title}}` is the HTML-escaped
 manifest name, and `{{favicon}}` is the copied favicon filename. The standard
 `ns-wasm.js` module remains available beside the page, and a project `assets/`
