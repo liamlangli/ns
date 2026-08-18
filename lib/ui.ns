@@ -270,20 +270,32 @@ ref fn ui_canvas_height(r: ref ui_renderer) i32
 // Device safe areas
 // ===========================================================================
 //
-// Every renderer honours the safe-area insets its view reports (the notch or
-// dynamic island, the status bar, the home indicator, rounded display corners;
-// zero on platforms without such chrome). The renderer's coordinate origin is
-// the top-left of the safe area and ui_canvas_width/ui_canvas_height report its
-// size, so existing layout code stays clear of native UI with no changes.
+// A renderer keeps two rectangles. The surface rect is the whole drawable,
+// device chrome included; the safe rect is what the notch or dynamic island,
+// the status bar, the home indicator and rounded display corners leave alone
+// (they are the same rectangle on a platform without such chrome). Every
+// renderer honours the safe-area insets its view reports, and the coordinate
+// origin is the top-left of the safe rect, so layout written against
+// ui_canvas_width/ui_canvas_height stays clear of native UI with no changes.
 //
-// Drawing may still leave the safe area with negative or oversized coordinates
-// - use ui_fill_surface for a full-bleed background - and input coming straight
-// from the view (view.mouse_x, view_input_at) is in drawable space: convert it
-// with ui_content_x / ui_content_y. The widget layer converts automatically.
+// Only layout defaults to the safe rect - nothing is clipped to it. Drawing
+// leaves it with negative or oversized coordinates, which is how a background
+// laid out against ui_surface_rect (or filled with ui_fill_surface) reaches
+// under the chrome while the controls above it stay inside the safe rect.
+//
+// Input coming straight from the view (view.mouse_x, view_input_at) is in
+// drawable space: convert it with ui_content_x / ui_content_y. The widget
+// layer converts automatically.
 
 // Full drawable size in logical points, insets included.
 ref fn ui_surface_width(r: ref ui_renderer) i32
 ref fn ui_surface_height(r: ref ui_renderer) i32
+
+// The same two rectangles for layout that takes a rect, in drawing
+// coordinates. ui_safe_rect starts at the origin; ui_surface_rect starts at
+// negative coordinates by exactly the insets, so filling it covers the screen.
+ref fn ui_safe_rect(r: ref ui_renderer) ref ui_rect
+ref fn ui_surface_rect(r: ref ui_renderer) ref ui_rect
 
 // Insets currently applied: the device values, an application override, or
 // zeroes while the safe area is disabled.

@@ -71,6 +71,8 @@ extern i32 ui_canvas_width(void *);
 extern i32 ui_canvas_height(void *);
 extern i32 ui_surface_width(void *);
 extern i32 ui_surface_height(void *);
+extern void * ui_safe_rect(void *);
+extern void * ui_surface_rect(void *);
 extern void * ui_safe_area(void *);
 extern ns_bool ui_safe_area_enabled(void *);
 extern void ui_set_safe_area_enabled(void *, ns_bool);
@@ -1443,6 +1445,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "ui_resize_to", (void *)ui_resize_to, ns_embedded_sig112 },
     { "ui_safe_area", (void *)ui_safe_area, ns_embedded_sig111 },
     { "ui_safe_area_enabled", (void *)ui_safe_area_enabled, ns_embedded_sig22 },
+    { "ui_safe_rect", (void *)ui_safe_rect, ns_embedded_sig111 },
     { "ui_set_safe_area_enabled", (void *)ui_set_safe_area_enabled, ns_embedded_sig113 },
     { "ui_set_safe_area_insets", (void *)ui_set_safe_area_insets, ns_embedded_sig106 },
     { "ui_slider", (void *)ui_slider, ns_embedded_sig114 },
@@ -1455,6 +1458,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "ui_stroke_round_rect", (void *)ui_stroke_round_rect, ns_embedded_sig91 },
     { "ui_stroke_round_rect_per_corner", (void *)ui_stroke_round_rect_per_corner, ns_embedded_sig118 },
     { "ui_surface_height", (void *)ui_surface_height, ns_embedded_sig59 },
+    { "ui_surface_rect", (void *)ui_surface_rect, ns_embedded_sig111 },
     { "ui_surface_width", (void *)ui_surface_width, ns_embedded_sig59 },
     { "ui_surface_x", (void *)ui_surface_x, ns_embedded_sig87 },
     { "ui_surface_y", (void *)ui_surface_y, ns_embedded_sig87 },

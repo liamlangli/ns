@@ -205,20 +205,23 @@ typedef struct ui_insets {
 typedef struct ui_renderer {
     void *handle;
     view *v;
-    // Full drawable extent in logical points. Vertices reach the GPU in this
-    // space; the public API works in the safe content space below.
-    i32 width;
-    i32 height;
+    // The two rectangles the renderer lays out against, both in logical points
+    // and both in drawable space. `rect` is the whole screen, device chrome
+    // included; `safe_rect` is the part of it the notch, the status bar and the
+    // home indicator leave alone. Vertices reach the GPU in drawable space,
+    // while the public API draws relative to the safe rect's origin: layout
+    // lands inside the safe area by default, and a pass that wants the whole
+    // screen asks for ui_surface_rect instead.
+    ui_rect rect;
+    ui_rect safe_rect;
     f64 content_scale;
 
     // Device safe area. `insets` mirrors the view unless an application
-    // overrides it; `origin`/`content_*` are the resolved content space and are
-    // recomputed by ui_resolve_safe_area whenever any input changes.
+    // overrides it; `safe_rect` is resolved from them by ui_resolve_safe_area
+    // whenever any input changes.
     ui_insets insets;
     ns_bool insets_overridden;
     ns_bool safe_area_enabled;
-    f64 origin_x, origin_y;
-    f64 content_width, content_height;
 
     ui_vertex *vertices;
     i32 vertex_count;
@@ -667,8 +670,18 @@ static ns_bool ui_load_fonts(ui_renderer *r) {
     return ok;
 }
 
+// The drawable in drawing coordinates. The insets sit at negative coordinates
+// because the origin is the safe rect's top-left, so this is what a background
+// fills to reach under the device's chrome.
+static ui_clip ui_surface_clip(ui_renderer *r) {
+    return (ui_clip){r->rect.x - r->safe_rect.x, r->rect.y - r->safe_rect.y,
+                     r->rect.w, r->rect.h};
+}
+
+// Nothing is clipped to the safe area on its own: the base clip is the whole
+// screen and an application narrows it with ui_push_clip where it wants to.
 static ui_clip ui_current_clip(ui_renderer *r) {
-    if (r->clip_count <= 0) return (ui_clip){0, 0, r->content_width, r->content_height};
+    if (r->clip_count <= 0) return ui_surface_clip(r);
     return r->clips[r->clip_count - 1];
 }
 
@@ -676,9 +689,9 @@ static f64 ui_clip_param(ui_renderer *r, ui_clip c) {
     if (!r || c.w <= 0.0 || c.h <= 0.0) return 0.0;
     // Clips are authored in content space; the shader tests them against the
     // drawable-space pixel it shades.
-    const f64 x0 = c.x + r->origin_x;
-    const f64 y0 = c.y + r->origin_y;
-    if (x0 <= 0.0 && y0 <= 0.0 && x0 + c.w >= (f64)r->width && y0 + c.h >= (f64)r->height) {
+    const f64 x0 = c.x + r->safe_rect.x;
+    const f64 y0 = c.y + r->safe_rect.y;
+    if (x0 <= 0.0 && y0 <= 0.0 && x0 + c.w >= r->rect.w && y0 + c.h >= r->rect.h) {
         return 0.0;
     }
 
@@ -706,8 +719,8 @@ static void ui_emit_command(ui_renderer *r, i32 base, i32 count, i32 kind) {
     ui_clip c = ui_current_clip(r);
     if (c.w <= 0 || c.h <= 0) return;
     // The scissor is a drawable-space rectangle.
-    c.x += r->origin_x;
-    c.y += r->origin_y;
+    c.x += r->safe_rect.x;
+    c.y += r->safe_rect.y;
     ui_command *cmd = NULL;
     if (r->command_count > 0) {
         cmd = &r->commands[r->command_count - 1];
@@ -742,8 +755,8 @@ static ns_bool ui_push_vertex(ui_renderer *r, f64 x, f64 y, f64 u, f64 v, u32 co
     if (r->vertex_count >= r->vertex_capacity) return false;
     // Geometry is authored in the safe content space; the safe-area origin is
     // the single translation into drawable space.
-    x += r->origin_x;
-    y += r->origin_y;
+    x += r->safe_rect.x;
+    y += r->safe_rect.y;
     r->vertices[r->vertex_count++] = (ui_vertex){
         .x = (f32)x, .y = (f32)y, .u = (f32)u, .v = (f32)v, .color = color,
         .range = (f32)range, .weight = (f32)weight, .softness = (f32)softness, .clip = (f32)clip,
@@ -1112,12 +1125,14 @@ static void ui_resolve_safe_area(ui_renderer *r) {
     if (in.right < 0.0) in.right = 0.0;
     if (in.bottom < 0.0) in.bottom = 0.0;
     if (in.left < 0.0) in.left = 0.0;
-    if (in.left + in.right >= (f64)r->width) in.left = in.right = 0.0;
-    if (in.top + in.bottom >= (f64)r->height) in.top = in.bottom = 0.0;
-    r->origin_x = in.left;
-    r->origin_y = in.top;
-    r->content_width = (f64)r->width - in.left - in.right;
-    r->content_height = (f64)r->height - in.top - in.bottom;
+    if (in.left + in.right >= r->rect.w) in.left = in.right = 0.0;
+    if (in.top + in.bottom >= r->rect.h) in.top = in.bottom = 0.0;
+    r->safe_rect = (ui_rect){
+        r->rect.x + in.left,
+        r->rect.y + in.top,
+        r->rect.w - in.left - in.right,
+        r->rect.h - in.top - in.bottom,
+    };
 }
 
 // The renderer works in logical points; the display scale converts to physical
@@ -1137,8 +1152,7 @@ static void ui_sync_view_metrics(ui_renderer *r) {
                                     v->safe_area_bottom, v->safe_area_left};
         }
     }
-    r->width = lw > 0 ? lw : 1;
-    r->height = lh > 0 ? lh : 1;
+    r->rect = (ui_rect){0.0, 0.0, (f64)(lw > 0 ? lw : 1), (f64)(lh > 0 ? lh : 1)};
     ui_resolve_safe_area(r);
 }
 
@@ -1417,10 +1431,10 @@ void ui_rect_batch_draw_at(ui_renderer *r, i32 batch_id, f64 dx, f64 dy) {
         .rect_batch_id = batch_id,
         // Batch vertices are recorded once in content space and translated at
         // draw time, so the safe-area origin rides along with the draw offset.
-        .offset_x = dx + r->origin_x,
-        .offset_y = dy + r->origin_y,
-        .clip_x = (i32)floor(c.x + r->origin_x),
-        .clip_y = (i32)floor(c.y + r->origin_y),
+        .offset_x = dx + r->safe_rect.x,
+        .offset_y = dy + r->safe_rect.y,
+        .clip_x = (i32)floor(c.x + r->safe_rect.x),
+        .clip_y = (i32)floor(c.y + r->safe_rect.y),
         .clip_w = (i32)ceil(c.w),
         .clip_h = (i32)ceil(c.h),
     };
@@ -1508,8 +1522,7 @@ void ui_resize(ui_renderer *r) {
 
 void ui_resize_to(ui_renderer *r, i32 width, i32 height) {
     if (!r) return;
-    r->width = width > 0 ? width : 1;
-    r->height = height > 0 ? height : 1;
+    r->rect = (ui_rect){0.0, 0.0, (f64)(width > 0 ? width : 1), (f64)(height > 0 ? height : 1)};
     ui_resolve_safe_area(r);
 }
 
@@ -1529,7 +1542,7 @@ void ui_begin_frame(ui_renderer *r) {
     r->command_count = 0;
     r->clip_count = 1;
     r->gpu_clip_count = 0;
-    r->clips[0] = (ui_clip){0, 0, r->content_width, r->content_height};
+    r->clips[0] = ui_surface_clip(r);
     r->current_texture_id = UI_WHITE_TEXTURE;
 }
 
@@ -1605,12 +1618,12 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     const f64 fallback_scale = r->content_scale > 0.0 ? r->content_scale : 1.0;
     const i32 framebuffer_width = r->v && r->v->framebuffer_width > 0
                                       ? r->v->framebuffer_width
-                                      : (i32)(r->width * fallback_scale + 0.5);
+                                      : (i32)(r->rect.w * fallback_scale + 0.5);
     const i32 framebuffer_height = r->v && r->v->framebuffer_height > 0
                                        ? r->v->framebuffer_height
-                                       : (i32)(r->height * fallback_scale + 0.5);
-    const f64 sx = (f64)framebuffer_width / (f64)r->width;
-    const f64 sy = (f64)framebuffer_height / (f64)r->height;
+                                       : (i32)(r->rect.h * fallback_scale + 0.5);
+    const f64 sx = (f64)framebuffer_width / r->rect.w;
+    const f64 sy = (f64)framebuffer_height / r->rect.h;
     // ui_color_rgba is passed by value at the ns surface and the native FFI
     // adapter retains the historical opaque pointer ABI. The old renderer did
     // not dereference it either; keep that ABI and use the established default.
@@ -1648,8 +1661,8 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         if (!texture) continue;
         ui_gpu_root root = {
             .texture_id = (f32)texture,
-            .screen_width = (f32)r->width,
-            .screen_height = (f32)r->height,
+            .screen_width = (f32)r->rect.w,
+            .screen_height = (f32)r->rect.h,
             .offset_x = (f32)cmd->offset_x,
             .offset_y = (f32)cmd->offset_y,
             .vertex_offset = batch ? (u32)batch->gpu_offset : 0,
@@ -1668,20 +1681,44 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
 // The canvas is the safe content area: laying out inside it keeps an
 // application clear of the notch, the status bar and the home indicator.
 i32 ui_canvas_width(ui_renderer *r) {
-    return r ? (i32)(r->content_width + 0.5) : 0;
+    return r ? (i32)(r->safe_rect.w + 0.5) : 0;
 }
 
 i32 ui_canvas_height(ui_renderer *r) {
-    return r ? (i32)(r->content_height + 0.5) : 0;
+    return r ? (i32)(r->safe_rect.h + 0.5) : 0;
 }
 
 // The full drawable, insets included. Use it for full-bleed backgrounds.
 i32 ui_surface_width(ui_renderer *r) {
-    return r ? r->width : 0;
+    return r ? (i32)(r->rect.w + 0.5) : 0;
 }
 
 i32 ui_surface_height(ui_renderer *r) {
-    return r ? r->height : 0;
+    return r ? (i32)(r->rect.h + 0.5) : 0;
+}
+
+// The same two rectangles as whole rects, in drawing coordinates, for layout
+// that takes a rect rather than a width and a height. The safe rect starts at
+// the origin; the drawable rect starts at negative coordinates by exactly the
+// insets, so a panel laid out in it covers the chrome as well.
+ui_rect *ui_safe_rect(ui_renderer *r) {
+    ui_rect *out = (ui_rect *)ns_malloc(sizeof(ui_rect));
+    if (!out) return NULL;
+    *out = r ? (ui_rect){0.0, 0.0, r->safe_rect.w, r->safe_rect.h}
+             : (ui_rect){0.0, 0.0, 0.0, 0.0};
+    return out;
+}
+
+ui_rect *ui_surface_rect(ui_renderer *r) {
+    ui_rect *out = (ui_rect *)ns_malloc(sizeof(ui_rect));
+    if (!out) return NULL;
+    if (!r) {
+        *out = (ui_rect){0.0, 0.0, 0.0, 0.0};
+        return out;
+    }
+    const ui_clip c = ui_surface_clip(r);
+    *out = (ui_rect){c.x, c.y, c.w, c.h};
+    return out;
 }
 
 // Insets currently applied: the device values, an application override, or
@@ -1694,10 +1731,10 @@ ui_insets *ui_safe_area(ui_renderer *r) {
         return out;
     }
     *out = (ui_insets){
-        .top = r->origin_y,
-        .right = (f64)r->width - r->content_width - r->origin_x,
-        .bottom = (f64)r->height - r->content_height - r->origin_y,
-        .left = r->origin_x,
+        .top = r->safe_rect.y - r->rect.y,
+        .right = (r->rect.x + r->rect.w) - (r->safe_rect.x + r->safe_rect.w),
+        .bottom = (r->rect.y + r->rect.h) - (r->safe_rect.y + r->safe_rect.h),
+        .left = r->safe_rect.x - r->rect.x,
     };
     return out;
 }
@@ -1732,23 +1769,23 @@ void ui_reset_safe_area_insets(ui_renderer *r) {
 
 // Drawable point -> content point. View input (view.mouse_x, pointer events)
 // arrives in drawable space; widgets hit-test in content space.
-f64 ui_content_x(ui_renderer *r, f64 x) { return r ? x - r->origin_x : x; }
-f64 ui_content_y(ui_renderer *r, f64 y) { return r ? y - r->origin_y : y; }
+f64 ui_content_x(ui_renderer *r, f64 x) { return r ? x - r->safe_rect.x : x; }
+f64 ui_content_y(ui_renderer *r, f64 y) { return r ? y - r->safe_rect.y : y; }
 
 // Content point -> drawable point.
-f64 ui_surface_x(ui_renderer *r, f64 x) { return r ? x + r->origin_x : x; }
-f64 ui_surface_y(ui_renderer *r, f64 y) { return r ? y + r->origin_y : y; }
+f64 ui_surface_x(ui_renderer *r, f64 x) { return r ? x + r->safe_rect.x : x; }
+f64 ui_surface_y(ui_renderer *r, f64 y) { return r ? y + r->safe_rect.y : y; }
 
 // Fill the whole drawable, insets included, ignoring the current clip. The
 // background of a full-screen application reaches under the native chrome
 // while its controls stay inside the safe area.
 void ui_fill_surface(ui_renderer *r, u32 rgba) {
     if (!r) return;
+    const ui_clip surface = ui_surface_clip(r);
     const i32 clip_count = r->clip_count;
     r->clip_count = 1;
-    r->clips[0] = (ui_clip){-r->origin_x, -r->origin_y, (f64)r->width, (f64)r->height};
-    ui_fill_rect(r, -r->origin_x, -r->origin_y, (f64)r->width, (f64)r->height, rgba, 0.0);
-    r->clips[0] = (ui_clip){0, 0, r->content_width, r->content_height};
+    r->clips[0] = surface;
+    ui_fill_rect(r, surface.x, surface.y, surface.w, surface.h, rgba, 0.0);
     r->clip_count = clip_count;
 }
 
