@@ -200,6 +200,16 @@ ns_str ns_shader_entry_name(ns_shader_target t, ns_str fn_name) {
     return fn_name;
 }
 
+u64 ns_shader_source_hash(ns_str source) {
+    // FNV-1a 64, matching the content hash `ns build` stamps its inputs with.
+    u64 hash = 14695981039346656037ull;
+    for (i32 i = 0; i < source.len; ++i) {
+        hash ^= (u64)(u8)source.data[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
 // ---------------------------------------------------------------------------
 // symbol helpers
 // ---------------------------------------------------------------------------
@@ -2975,6 +2985,12 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
         return ns_return_ok(bool, true);
     }
 
+    if (ns_str_equals(name, ns_str_cstr("shader_source_hash"))) {
+        ns_str source = ns_eval_str(vm, vm->symbol_stack[call->arg_offset].val);
+        call->ret = (ns_value){.t = ns_type_u64, .u64 = ns_shader_source_hash(source)};
+        return ns_return_ok(bool, true);
+    }
+
     ns_bool is_group_count = ns_str_equals(name, ns_str_cstr("shader_group_binding_count"));
     ns_bool is_group_object = ns_str_equals(name, ns_str_cstr("shader_group_binding_object"));
     ns_bool is_group_slot = ns_str_equals(name, ns_str_cstr("shader_group_binding_slot"));
@@ -3008,6 +3024,7 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
         return ns_return_ok(bool, true);
     }
 
+    ns_bool is_name = ns_str_equals(name, ns_str_cstr("shader_name"));
     ns_bool is_transpile = ns_str_equals(name, ns_str_cstr("shader_transpile"));
     ns_bool is_transpile_stage = ns_str_equals(name, ns_str_cstr("shader_transpile_stage"));
     ns_bool is_entry = ns_str_equals(name, ns_str_cstr("shader_entry"));
@@ -3015,7 +3032,7 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_bool is_attr_count = ns_str_equals(name, ns_str_cstr("shader_vertex_attr_count"));
     ns_bool is_attr_offset = ns_str_equals(name, ns_str_cstr("shader_vertex_attr_offset"));
     ns_bool is_attr_size = ns_str_equals(name, ns_str_cstr("shader_vertex_attr_size"));
-    if (!is_transpile && !is_transpile_stage && !is_entry && !is_vertex_stride && !is_attr_count && !is_attr_offset && !is_attr_size) {
+    if (!is_name && !is_transpile && !is_transpile_stage && !is_entry && !is_vertex_stride && !is_attr_count && !is_attr_offset && !is_attr_size) {
         return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "unknown shader fn.");
     }
 
@@ -3031,6 +3048,11 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     {
         ns_symbol *fsym = &vm->symbols[fn_index];
         if (fsym->type == NS_SYMBOL_FN && fsym->fn.ctx) ctx = fsym->fn.ctx;
+    }
+
+    if (is_name) {
+        call->ret = (ns_value){.t = ns_type_str, .o = ns_vm_push_string(vm, vm->symbols[fn_index].name)};
+        return ns_return_ok(bool, true);
     }
 
     if (is_vertex_stride || is_attr_count || is_attr_offset || is_attr_size) {

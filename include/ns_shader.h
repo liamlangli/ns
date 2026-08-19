@@ -58,6 +58,11 @@ ns_str ns_shader_target_name(ns_shader_target t);
 // field; fragment: name starts with "fs"/"ps", or returns float4. AUTO on failure.
 ns_shader_stage ns_shader_stage_infer(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_index);
 
+// FNV-1a 64 over the emitted shader text. Callers pair it with the entry name
+// to key a compiled-shader cache: the same source always produces the same
+// hash, and any edit to a shader fn or the transpiler changes it.
+u64 ns_shader_source_hash(ns_str source);
+
 // Entry-point name to feed gpu_shader_stage_desc.entry: the fn name for MSL/HLSL,
 // "main" for GLSL (the generated wrapper). Borrowed/static storage.
 ns_str ns_shader_entry_name(ns_shader_target t, ns_str fn_name);

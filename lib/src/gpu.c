@@ -333,20 +333,51 @@ void gpu_sampler_destroy(u32 smp) {
     if (smp && _v2.ops && _v2.ops->sampler_destroy) _v2.ops->sampler_destroy(smp);
 }
 
+// A backend that caches compiled shaders keys them on the entry points plus a
+// content hash of the source text. Both are derived here rather than asked of
+// the caller: every gpu_shader_*_create call already carries everything the key
+// needs, and deriving it in one place keeps the two identical for a given
+// shader across launches.
+static u64 gpu_shader_hash(u64 hash, const char *text) {
+    // FNV-1a 64, the hash `ns build` and the storage blob cache both use.
+    if (!text) return hash;
+    for (const unsigned char *c = (const unsigned char *)text; *c; ++c) {
+        hash ^= (u64)*c;
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+#define GPU_SHADER_NAME_CAPACITY 128
+
+static void gpu_shader_name(char *out, const char *first, const char *second) {
+    if (second) snprintf(out, GPU_SHADER_NAME_CAPACITY, "%s-%s", first, second);
+    else snprintf(out, GPU_SHADER_NAME_CAPACITY, "%s", first);
+}
+
 u32 gpu_shader_graphics_create(const char *vs_src, const char *fs_src,
                                const char *vs_entry, const char *fs_entry) {
     if (!vs_src || !fs_src || !vs_entry || !fs_entry) return 0;
     if (!_v2.ops || !_v2.ops->shader_graphics_create) return 0;
     if (!gpu_shader_storage_slots_valid(vs_src, "gpu_shader_graphics_create") ||
         !gpu_shader_storage_slots_valid(fs_src, "gpu_shader_graphics_create")) return 0;
-    return _v2.ops->shader_graphics_create(vs_src, fs_src, vs_entry, fs_entry);
+    char name[GPU_SHADER_NAME_CAPACITY];
+    gpu_shader_name(name, vs_entry, fs_entry);
+    // The entry names join the hash because GLSL calls every entry "main": two
+    // programs would otherwise differ only by source, and the name is what
+    // makes a cache entry recognizable.
+    u64 hash = gpu_shader_hash(gpu_shader_hash(gpu_shader_hash(14695981039346656037ull, vs_src), fs_src), name);
+    return _v2.ops->shader_graphics_create(vs_src, fs_src, vs_entry, fs_entry, name, hash);
 }
 
 u32 gpu_shader_compute_create(const char *src, const char *entry) {
     if (!src || !entry) return 0;
     if (!_v2.ops || !_v2.ops->shader_compute_create) return 0;
     if (!gpu_shader_storage_slots_valid(src, "gpu_shader_compute_create")) return 0;
-    return _v2.ops->shader_compute_create(src, entry);
+    char name[GPU_SHADER_NAME_CAPACITY];
+    gpu_shader_name(name, entry, NULL);
+    u64 hash = gpu_shader_hash(gpu_shader_hash(14695981039346656037ull, src), name);
+    return _v2.ops->shader_compute_create(src, entry, name, hash);
 }
 
 void gpu_shader_destroy(u32 shader) {

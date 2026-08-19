@@ -11,7 +11,7 @@ compile_for_sdk() {
     xcrun --sdk "$sdk" clang -fsyntax-only -fobjc-arc -Wall -Wextra \
         -Wunused-result -Werror -target "$target" -isysroot "$sdk_path" \
         -DNS_DARWIN -Iinclude -Iinclude/asm -Iinclude/os -Ilib/include \
-        lib/src/storage.apple.m lib/src/storage.db.c
+        lib/src/storage.apple.m lib/src/storage.db.c lib/src/storage.cache.c
 }
 
 compile_for_sdk macosx arm64-apple-macos12.0

@@ -98,7 +98,7 @@ NS_ZSTD_SRCS = $(wildcard $(NS_ZSTD_DIR)/lib/common/*.c $(NS_ZSTD_DIR)/lib/compr
 	$(NS_ZSTD_DIR)/lib/decompress/*.c)
 NS_ZSTD_OBJS = $(NS_ZSTD_SRCS:$(NS_ZSTD_DIR)/lib/%.c=$(NS_ZSTD_OBJDIR)/%.o)
 NS_COMPRESS_OBJS = $(NS_BINDIR)/lib/compress.o $(NS_ZLIB_OBJS) $(NS_ZSTD_OBJS)
-NS_STORAGE_OBJS = $(NS_BINDIR)/lib/storage.db.o
+NS_STORAGE_OBJS = $(NS_BINDIR)/lib/storage.db.o $(NS_BINDIR)/lib/storage.cache.o
 
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.linux.o

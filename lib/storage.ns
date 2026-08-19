@@ -39,6 +39,29 @@ ref fn storage_kv_remove(key: str) bool
 ref fn storage_kv_clear() bool
 ref fn storage_kv_sync() bool
 
+// Content-addressed blob cache below the app data directory. Entries are files
+// rather than KV values so platform APIs that only read and write a path can
+// use them directly. `name` says what is cached and `hash` identifies the bytes
+// it was derived from: a changed input misses instead of returning a stale
+// entry, and writing one generation of `name` retires the others.
+//
+// storage_cache_read returns the byte count, or -1 when the entry is missing or
+// longer than `capacity`; size it with storage_cache_size first.
+ref fn storage_cache_hash(data: [u8], size: i32) u64
+ref fn storage_cache_hash_str(text: str) u64
+ref fn storage_cache_path(name: str, hash: u64) str
+ref fn storage_cache_has(name: str, hash: u64) bool
+ref fn storage_cache_size(name: str, hash: u64) i32
+ref fn storage_cache_read(name: str, hash: u64, data: [u8], capacity: i32) i32
+ref fn storage_cache_write(name: str, hash: u64, data: [u8], size: i32) bool
+// Adopt a file the caller wrote itself, for platform APIs that only emit to a
+// path. The file is moved onto the entry, so it may be a scratch file beside it.
+ref fn storage_cache_adopt(name: str, hash: u64, path: str) bool
+// Drop the generations of `name` that `hash` supersedes.
+ref fn storage_cache_retire(name: str, hash: u64) bool
+ref fn storage_cache_remove(name: str) bool
+ref fn storage_cache_clear() bool
+
 // Structured storage uses the platform SQLite library. A relative name is
 // opened below the app data directory and receives a .sqlite suffix when it
 // has none. ":memory:" opens an in-memory database. Paths and parent traversal

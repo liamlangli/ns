@@ -182,6 +182,32 @@ heap — the article's observation that real programs need a handful.
 
 ### Shaders and render state
 
+Shader creation is the most expensive thing a launch does, so it is cached at
+two levels. Within a run, identical source compiles once: the transpiler emits
+one self-contained source per entry, so passes sharing a stage fn (four bloom
+passes over one vertex fn) hand the backend the same text repeatedly. Across
+runs, the Metal backend keeps a per-shader `MTLBinaryArchive` of the pipeline
+states the shader has been drawn with, stored through `storage`'s blob cache
+under the entry-point names and a content hash of the source.
+
+Both keys are derived inside `gpu_shader_*_create` rather than asked of the
+caller, so every call site is cached without changing. The name comes from the
+entry points and the hash from the source text, which means an edited shader fn
+misses and recompiles instead of loading a stale binary.
+
+Caching the archive rather than a compiled library is forced by the platform:
+Metal cannot serialize a library it compiled from source, and the offline metal
+compiler does not exist on iOS or visionOS. So the source is still compiled
+every launch and what a warm launch skips is turning those functions into
+pipeline states. The archive is consulted only the first time a shader meets a
+given render state - Metal serves later repeats from its own in-process cache
+faster than an archive lookup does, and a shader whose state changes between
+draws asks thousands of times per second.
+
+A cache miss is never an error. Storage that is unavailable, an archive written
+by a different OS or GPU, and a device that cannot serialize archives all fall
+back to compiling, which is what the program did before any of this existed.
+
 ```c
 // shader = compiled program (vertex+fragment, or compute); state = immutable
 // render-state key (NOT a PSO). Both plain u32 ids, 0 invalid.

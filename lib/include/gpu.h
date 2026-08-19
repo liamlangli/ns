@@ -161,9 +161,14 @@ typedef struct gpu_v2_ops {
                            i32 wrap_u, i32 wrap_v, i32 wrap_w,
                            i32 compare_func, i32 max_anisotropy);
     void (*sampler_destroy)(u32 smp);
+    // `name` and `hash` key a backend compiled-shader cache: `name` is derived
+    // from the entry points and `hash` from the source text, so the same
+    // shader keeps its cache entry across launches and an edited one misses.
     u32  (*shader_graphics_create)(const char *vs_src, const char *fs_src,
-                                   const char *vs_entry, const char *fs_entry);
-    u32  (*shader_compute_create)(const char *src, const char *entry);
+                                   const char *vs_entry, const char *fs_entry,
+                                   const char *name, u64 hash);
+    u32  (*shader_compute_create)(const char *src, const char *entry,
+                                  const char *name, u64 hash);
     void (*shader_destroy)(u32 shader);
 
     // label is never NULL and never empty; the core substitutes a placeholder.

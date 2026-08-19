@@ -56,5 +56,50 @@ fn main() {
     storage_stmt_finalize(query)
     storage_db_close(db)
 
+    storage_cache_test()
+
     assert storage_kv_clear()
+}
+
+// The blob cache keys on name plus content hash, so rebuilding an entry from
+// changed input must miss rather than hand back the previous bytes.
+fn storage_cache_test() {
+    assert storage_cache_clear()
+
+    let payload = [u8](3)
+    payload[0] = 1ub
+    payload[1] = 2ub
+    payload[2] = 3ub
+    let hash = storage_cache_hash(payload, 3)
+    assert hash == storage_cache_hash(payload, 3)
+
+    assert !storage_cache_has("shader.vs_main", hash)
+    assert storage_cache_size("shader.vs_main", hash) == -1
+    assert storage_cache_write("shader.vs_main", hash, payload, 3)
+    assert storage_cache_has("shader.vs_main", hash)
+    assert storage_cache_size("shader.vs_main", hash) == 3
+
+    let copy = [u8](3)
+    assert storage_cache_read("shader.vs_main", hash, copy, 3) == 3
+    assert copy[0] == 1ub && copy[1] == 2ub && copy[2] == 3ub
+
+    // A destination shorter than the entry is a failure, not a silent truncation.
+    let short = [u8](2)
+    assert storage_cache_read("shader.vs_main", hash, short, 2) == -1
+
+    // The same name at a new hash replaces the old generation.
+    payload[2] = 4ub
+    let next = storage_cache_hash(payload, 3)
+    assert next != hash
+    assert storage_cache_write("shader.vs_main", next, payload, 3)
+    assert storage_cache_has("shader.vs_main", next)
+    assert !storage_cache_has("shader.vs_main", hash)
+
+    // Names differing only in characters the entry filename cannot carry still
+    // separate, because the hash is part of the key.
+    assert storage_cache_hash_str("void main() {}") != storage_cache_hash_str("void main() { }")
+
+    assert storage_cache_remove("shader.vs_main")
+    assert !storage_cache_has("shader.vs_main", next)
+    assert storage_cache_clear()
 }

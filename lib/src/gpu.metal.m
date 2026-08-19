@@ -5,6 +5,8 @@
 #import <MetalKit/MetalKit.h>
 #include <objc/objc.h>
 #include <assert.h>
+#include <dlfcn.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #import <dispatch/semaphore.h>
@@ -210,6 +212,56 @@ static MTLIndexType _mtl_index_type(gpu_index_type type) {
     return MTLIndexTypeUInt16;
 }
 
+// ---- compiled-pipeline cache ------------------------------------------------
+//
+// Metal cannot serialize a library it compiled from source, so the source is
+// still compiled every launch; what a launch can skip is turning those
+// functions into pipeline states, which is the expensive half. A per-shader
+// MTLBinaryArchive holds the pipelines the shader was drawn with, and storage
+// keeps the archive on disk under the shader name and a hash of its source.
+// Every tier Metal runs on supports this - macOS, iOS and visionOS alike - and
+// none of them can run the offline metal compiler, which is why the archive is
+// what gets cached rather than a metallib.
+//
+// storage is reached through dlsym rather than a link dependency: gpu must keep
+// building where there is no storage module, and a program that never called
+// storage_init simply compiles its pipelines every launch.
+
+#define GPU_MTL_CACHE_NAME_CAPACITY 128
+
+// A shader keeps one pipeline and rebuilds it whenever the render state moves,
+// so a shader drawn under several states rebuilds thousands of times per
+// second. Metal serves those repeats from its own in-process cache faster than
+// a binary archive lookup does, so the archive is consulted once per render
+// state and the repeats take the plain path. These are the states already
+// looked up this run; a shader with more of them than fit leaves the rest
+// uncached rather than growing the record.
+#define GPU_MTL_ARCHIVE_KEY_SLOTS 16
+
+typedef struct gpu_mtl_pipeline_key {
+    gpu_v2_state_desc state;
+    MTLPixelFormat colors[4];
+    MTLPixelFormat depth;
+} gpu_mtl_pipeline_key;
+
+typedef const char *(*gpu_mtl_cache_path_fn)(const char *name, u64 hash);
+typedef int (*gpu_mtl_cache_adopt_fn)(const char *name, u64 hash, const char *path);
+
+static struct {
+    gpu_mtl_cache_path_fn path;
+    gpu_mtl_cache_adopt_fn adopt;
+    bool resolved;
+} _mtl_cache;
+
+static bool mtl_cache_available(void) {
+    if (!_mtl_cache.resolved) {
+        _mtl_cache.resolved = true;
+        _mtl_cache.path = (gpu_mtl_cache_path_fn)dlsym(RTLD_DEFAULT, "storage_cache_path");
+        _mtl_cache.adopt = (gpu_mtl_cache_adopt_fn)dlsym(RTLD_DEFAULT, "storage_cache_adopt");
+    }
+    return _mtl_cache.path && _mtl_cache.adopt;
+}
+
 typedef struct gpu_shader_mtl {
     id<MTLLibrary> vertex_lib;
     id<MTLLibrary> fragment_lib;
@@ -224,6 +276,13 @@ typedef struct gpu_shader_mtl {
     MTLPixelFormat v2_colors[4];
     MTLPixelFormat v2_depth;
     bool v2_pipeline_valid;
+    // Compiled-pipeline cache: `archive` holds every pipeline this shader has
+    // been drawn with, `cache_name`/`cache_hash` address its storage entry.
+    id<MTLBinaryArchive> archive;
+    char cache_name[GPU_MTL_CACHE_NAME_CAPACITY];
+    u64 cache_hash;
+    gpu_mtl_pipeline_key archive_keys[GPU_MTL_ARCHIVE_KEY_SLOTS];
+    u32 archive_key_count;
     bool uses_root;
     bool uses_read_texture;
     bool uses_write_texture;
@@ -618,7 +677,72 @@ id<MTLLibrary> _mtl_library_from_bytecode(ns_data src) {
     return lib;
 }
 
+// Compiling Metal source is by far the most expensive thing a launch does, and
+// a program repeats it: the transpiler emits one self-contained source per
+// entry, so every shader that shares a stage fn - four bloom passes over one
+// vertex fn, the ui renderer's four fragment entries over one source - asks for
+// the same text again. Identical source compiles once and the library is
+// handed out with a reference of its own, since callers release what they get.
+typedef struct gpu_mtl_library_entry {
+    u64 hash;
+    i32 len;
+    char *source;
+    id<MTLLibrary> library;
+} gpu_mtl_library_entry;
+
+static gpu_mtl_library_entry *_mtl_libraries;
+static u32 _mtl_library_count;
+static u32 _mtl_library_capacity;
+
+static u64 _mtl_source_hash(ns_str src) {
+    u64 hash = 14695981039346656037ull;
+    for (i32 i = 0; i < src.len; ++i) {
+        hash ^= (u64)(u8)src.data[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+// The hash narrows the search; the bytes decide, so a collision cannot hand
+// back the wrong library.
+static id<MTLLibrary> _mtl_library_lookup(ns_str src, u64 hash) {
+    for (u32 i = 0; i < _mtl_library_count; ++i) {
+        gpu_mtl_library_entry *entry = &_mtl_libraries[i];
+        if (entry->hash != hash || entry->len != src.len) continue;
+        if (memcmp(entry->source, src.data, (size_t)src.len) == 0) return entry->library;
+    }
+    return nil;
+}
+
+static void _mtl_library_remember(ns_str src, u64 hash, id<MTLLibrary> library) {
+    if (_mtl_library_count == _mtl_library_capacity) {
+        u32 capacity = _mtl_library_capacity ? _mtl_library_capacity * 2 : 32;
+        gpu_mtl_library_entry *grown = (gpu_mtl_library_entry *)realloc(_mtl_libraries, capacity * sizeof(*grown));
+        if (!grown) return;
+        _mtl_libraries = grown;
+        _mtl_library_capacity = capacity;
+    }
+    char *copy = (char *)malloc((size_t)src.len);
+    if (!copy) return;
+    memcpy(copy, src.data, (size_t)src.len);
+#ifndef ENABLE_ARC
+    [library retain];
+#endif
+    _mtl_libraries[_mtl_library_count++] = (gpu_mtl_library_entry){
+        .hash = hash, .len = src.len, .source = copy, .library = library,
+    };
+}
+
 id<MTLLibrary> _mtl_library_from_code(ns_str src) {
+    u64 hash = _mtl_source_hash(src);
+    id<MTLLibrary> cached = _mtl_library_lookup(src, hash);
+    if (cached) {
+#ifndef ENABLE_ARC
+        [cached retain];
+#endif
+        return cached;
+    }
+
     NSError *err = nil;
     NSString *source = [[NSString alloc] initWithBytes: src.data length: src.len encoding: NSUTF8StringEncoding];
     id<MTLLibrary> lib = source
@@ -631,6 +755,7 @@ id<MTLLibrary> _mtl_library_from_code(ns_str src) {
 #ifndef ENABLE_ARC
     [source release];
 #endif
+    if (lib) _mtl_library_remember(src, hash, lib);
     return lib;
 }
 
@@ -830,8 +955,81 @@ static bool mtl_source_uses(const char *source, const char *symbol) {
     return source && strstr(source, symbol) != NULL;
 }
 
+// Open the shader's archive, loading the entry storage already holds. A cache
+// that cannot be read is not an error: the archive starts empty and the
+// pipelines it gains are serialized over the unusable entry.
+static void mtl_shader_cache_open(gpu_shader_mtl *record, const char *name, u64 hash) {
+    record->cache_name[0] = '\0';
+    record->cache_hash = hash;
+    record->archive = nil;
+    if (!name || !name[0] || !mtl_cache_available()) return;
+    snprintf(record->cache_name, sizeof(record->cache_name), "%s", name);
+
+    const char *path = _mtl_cache.path(record->cache_name, hash);
+    if (!path || !path[0]) {
+        // No app data directory: storage_init was never called.
+        record->cache_name[0] = '\0';
+        return;
+    }
+    NSString *entry = [NSString stringWithUTF8String:path];
+    MTLBinaryArchiveDescriptor *desc = [MTLBinaryArchiveDescriptor new];
+    if (entry && [[NSFileManager defaultManager] fileExistsAtPath:entry]) {
+        desc.url = [NSURL fileURLWithPath:entry];
+    }
+    NSError *error = nil;
+    record->archive = [_state.device.device newBinaryArchiveWithDescriptor:desc error:&error];
+    if (!record->archive && desc.url) {
+        // An archive written by another OS or GPU is rejected on load; start over.
+        desc.url = nil;
+        error = nil;
+        record->archive = [_state.device.device newBinaryArchiveWithDescriptor:desc error:&error];
+    }
+#ifndef ENABLE_ARC
+    [desc release];
+#endif
+    if (!record->archive) record->cache_name[0] = '\0';
+}
+
+// True the first time this run asks for the current render state, which is the
+// only time the archive is worth consulting.
+static bool mtl_archive_first_use(gpu_shader_mtl *shader) {
+    gpu_mtl_pipeline_key key = {0};
+    key.state = _state.v2_render_state;
+    memcpy(key.colors, _state.v2_pass_colors, sizeof(key.colors));
+    key.depth = _state.v2_pass_depth;
+    for (u32 i = 0; i < shader->archive_key_count; ++i) {
+        if (memcmp(&shader->archive_keys[i], &key, sizeof(key)) == 0) return false;
+    }
+    if (shader->archive_key_count >= GPU_MTL_ARCHIVE_KEY_SLOTS) return false;
+    shader->archive_keys[shader->archive_key_count++] = key;
+    return true;
+}
+
+// Serialize the archive over its storage entry. MTLBinaryArchive refuses to
+// write onto an existing file, so it writes beside the entry and storage moves
+// the result into place.
+static void mtl_shader_cache_store(gpu_shader_mtl *record) {
+    if (!record->archive || !record->cache_name[0] || !mtl_cache_available()) return;
+    const char *path = _mtl_cache.path(record->cache_name, record->cache_hash);
+    if (!path || !path[0]) return;
+    NSString *scratch = [[NSString stringWithUTF8String:path] stringByAppendingString:@".part"];
+    if (!scratch) return;
+    [[NSFileManager defaultManager] removeItemAtPath:scratch error:nil];
+    NSError *error = nil;
+    if (![record->archive serializeToURL:[NSURL fileURLWithPath:scratch] error:&error]) {
+        [[NSFileManager defaultManager] removeItemAtPath:scratch error:nil];
+        // A device that cannot serialize archives keeps working uncached.
+        record->cache_name[0] = '\0';
+        return;
+    }
+    if (!_mtl_cache.adopt(record->cache_name, record->cache_hash, [scratch UTF8String])) {
+        record->cache_name[0] = '\0';
+    }
+}
+
 static u32 mtl_v2_shader_graphics_create(const char *vs_src, const char *fs_src,
-                                         const char *vs_entry, const char *fs_entry) {
+                                         const char *vs_entry, const char *fs_entry,
+                                         const char *name, u64 hash) {
     if (!vs_src || !fs_src || !vs_entry || !fs_entry ||
         _state.shader_count >= GPU_RESOURCE_POOL_SIZE) return 0;
     id<MTLLibrary> vertex_lib = _mtl_library_from_code(ns_str_cstr(vs_src));
@@ -859,6 +1057,7 @@ static u32 mtl_v2_shader_graphics_create(const char *vs_src, const char *fs_src,
         .vertex_func = vertex_func,
         .fragment_func = fragment_func,
     };
+    mtl_shader_cache_open(record, name, hash);
     record->uses_root = mtl_source_uses(vs_src, "ns_root") || mtl_source_uses(fs_src, "ns_root");
     record->uses_read_texture = mtl_source_uses(vs_src, "ns_read_texture") || mtl_source_uses(fs_src, "ns_read_texture");
     record->uses_write_texture = mtl_source_uses(vs_src, "ns_write_texture") || mtl_source_uses(fs_src, "ns_write_texture");
@@ -869,33 +1068,63 @@ static u32 mtl_v2_shader_graphics_create(const char *vs_src, const char *fs_src,
     return id;
 }
 
-static u32 mtl_v2_shader_compute_create(const char *src, const char *entry) {
+static u32 mtl_v2_shader_compute_create(const char *src, const char *entry,
+                                        const char *name, u64 hash) {
     if (_state.shader_count >= GPU_RESOURCE_POOL_SIZE) return 0;
     id<MTLLibrary> library = _mtl_library_from_code(ns_str_cstr(src));
     if (!library) return 0;
     id<MTLFunction> function = [library newFunctionWithName:[NSString stringWithUTF8String:entry]];
+    gpu_shader_mtl record = {0};
+    mtl_shader_cache_open(&record, name, hash);
+
+    id<MTLComputePipelineState> pipeline = nil;
     NSError *error = nil;
-    id<MTLComputePipelineState> pipeline = function
-        ? [_state.device.device newComputePipelineStateWithFunction:function error:&error]
-        : nil;
+    if (function) {
+        MTLComputePipelineDescriptor *desc = [MTLComputePipelineDescriptor new];
+        desc.computeFunction = function;
+        if (record.archive) {
+            // Ask the archive alone first: a hit is the whole point of the
+            // cache, and a miss has to be told apart from it so the compiled
+            // pipeline can be recorded.
+            desc.binaryArchives = @[record.archive];
+            pipeline = [_state.device.device newComputePipelineStateWithDescriptor:desc
+                                                                           options:MTLPipelineOptionFailOnBinaryArchiveMiss
+                                                                        reflection:NULL
+                                                                             error:&error];
+        }
+        if (!pipeline) {
+            error = nil;
+            pipeline = [_state.device.device newComputePipelineStateWithDescriptor:desc
+                                                                           options:MTLPipelineOptionNone
+                                                                        reflection:NULL
+                                                                             error:&error];
+            if (pipeline && record.archive &&
+                [record.archive addComputePipelineFunctionsWithDescriptor:desc error:nil]) {
+                mtl_shader_cache_store(&record);
+            }
+        }
+#ifndef ENABLE_ARC
+        [desc release];
+#endif
+    }
     if (!pipeline) {
         NSLog(@"Failed to create v2 compute shader: %@", error);
 #ifndef ENABLE_ARC
+        [record.archive release];
         [function release];
         [library release];
 #endif
         return 0;
     }
     u32 id = _state.shader_count++;
-    _state.shaders[id] = (gpu_shader_mtl){
-        .compute_lib = library,
-        .compute_func = function,
-        .compute_pso = pipeline,
-        .uses_root = mtl_source_uses(src, "ns_root"),
-        .uses_read_texture = mtl_source_uses(src, "ns_read_texture"),
-        .uses_write_texture = mtl_source_uses(src, "ns_write_texture"),
-        .uses_write_texture_secondary = mtl_source_uses(src, "ns_secondary_write_texture"),
-    };
+    record.compute_lib = library;
+    record.compute_func = function;
+    record.compute_pso = pipeline;
+    record.uses_root = mtl_source_uses(src, "ns_root");
+    record.uses_read_texture = mtl_source_uses(src, "ns_read_texture");
+    record.uses_write_texture = mtl_source_uses(src, "ns_write_texture");
+    record.uses_write_texture_secondary = mtl_source_uses(src, "ns_secondary_write_texture");
+    _state.shaders[id] = record;
     return id;
 }
 
@@ -912,6 +1141,7 @@ static void mtl_v2_shader_destroy(u32 shader) {
     [record->compute_lib release];
     [record->v2_pso release];
     [record->v2_dso release];
+    [record->archive release];
 #endif
     memset(record, 0, sizeof(*record));
 }
@@ -1096,7 +1326,30 @@ static ns_bool mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
     }
     desc.depthAttachmentPixelFormat = _state.v2_pass_depth;
     NSError *error = nil;
-    shader->v2_pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc error:&error];
+    if (shader->archive && mtl_archive_first_use(shader)) {
+        // Ask the archive alone first: a hit skips the compile, and a miss has
+        // to be told apart from it so the compiled pipeline can be recorded.
+        desc.binaryArchives = @[shader->archive];
+        shader->v2_pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc
+                                                                            options:MTLPipelineOptionFailOnBinaryArchiveMiss
+                                                                         reflection:NULL
+                                                                              error:&error];
+        if (!shader->v2_pso) {
+            error = nil;
+            shader->v2_pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc error:&error];
+            // Each distinct render state is its own archive entry, so a shader
+            // drawn under several states grows its entry until every
+            // combination the program uses is on disk.
+            if (shader->v2_pso && [shader->archive addRenderPipelineFunctionsWithDescriptor:desc error:nil]) {
+                mtl_shader_cache_store(shader);
+            }
+        }
+    }
+    if (!shader->v2_pso) {
+        error = nil;
+        desc.binaryArchives = nil;
+        shader->v2_pso = [_state.device.device newRenderPipelineStateWithDescriptor:desc error:&error];
+    }
 #ifndef ENABLE_ARC
     [desc release];
 #endif

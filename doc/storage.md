@@ -32,6 +32,44 @@ Apple. Getters return their fallback when a key is missing or stores another
 type. `storage_kv_clear()` removes only the namespace selected by
 `storage_init`, not unrelated application defaults.
 
+## Blob cache
+
+`storage_cache_*` keeps binary artifacts that are expensive to produce and cheap
+to verify. Entries are files below `cache/` in the app data directory rather
+than KV values, because their consumers are platform APIs that read and write a
+path: a Metal binary archive serializes to a URL, and an image atlas is loaded
+by filename.
+
+A key is a `name` plus a `hash` of whatever the entry was derived from. The name
+says what is cached and makes the file recognizable; the hash decides whether
+the entry is still valid, so changed input misses instead of returning something
+stale. Writing or adopting one generation of a name retires the others, so a
+rebuilt entry replaces the old one rather than accumulating beside it.
+
+```ns
+let hash = storage_cache_hash_str(shader_source)
+if storage_cache_has("vs_main-fs_main", hash) {
+    let size = storage_cache_size("vs_main-fs_main", hash)
+    let blob = [u8](size)
+    assert storage_cache_read("vs_main-fs_main", hash, blob, size) == size
+}
+```
+
+`storage_cache_read` returns -1 when the entry is missing or longer than the
+destination, so size it with `storage_cache_size` first rather than reading into
+a guess. Writes are atomic: the bytes land in a scratch file that replaces the
+entry only once it is complete, so an interrupted write cannot leave a truncated
+entry that a later read would trust.
+
+For a producer that only emits to a path, write to `storage_cache_path` and hand
+the result to `storage_cache_adopt`; it moves the file onto the entry and retires
+the superseded generations. `storage_cache_remove` drops every generation of one
+name and `storage_cache_clear` empties the directory.
+
+The cache is a cache: nothing in it is required to exist, and a caller that
+misses must be able to produce the entry again. `gpu` relies on that when it
+caches compiled Metal pipelines, and it is why a cache miss is never an error.
+
 ## SQLite statements
 
 `storage_db_exec` is suitable for schema changes and transactions. Parameterized

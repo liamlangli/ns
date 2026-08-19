@@ -55,6 +55,18 @@ ref fn shader_transpile_stage(f: any, target: str, stage: str) str
 // "main" for glsl (the generated wrapper).
 ref fn shader_entry(f: any, target: str) str
 
+// The ns fn name behind a shader entry, whatever the target. gpu names its
+// compiled-shader cache entries with it, so the cache file for a shader is
+// recognizable rather than a bare hash.
+ref fn shader_name(f: any) str
+
+// FNV-1a 64 over transpiled shader text. Transpiling a fn emits the source and
+// this hash together identifies it: the same source always hashes the same, and
+// editing a shader fn, one of its callees, or the transpiler changes it. gpu
+// keys its compiled-shader cache on shader_name plus this hash so a stale
+// binary is never reused.
+ref fn shader_source_hash(source: str) u64
+
 // Vertex-layout reflection over a vertex fn's input struct, for pipeline
 // creation without hand-written layout tables. Offsets and the stride assume
 // tightly packed 32-bit float data (the layout gpu vertex buffers upload), so

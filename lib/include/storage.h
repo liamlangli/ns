@@ -36,6 +36,22 @@ i32 storage_kv_remove(const char *key);
 i32 storage_kv_clear(void);
 i32 storage_kv_sync(void);
 
+// Content-addressed blob cache below the app data directory. `name` says what
+// is cached and `hash` identifies the bytes it was derived from, so a changed
+// input misses rather than returning a stale entry. Writing or committing one
+// generation of `name` retires the others.
+u64 storage_cache_hash(const u8 *data, i32 size);
+u64 storage_cache_hash_str(const char *text);
+const char *storage_cache_path(const char *name, u64 hash);
+i32 storage_cache_has(const char *name, u64 hash);
+i32 storage_cache_size(const char *name, u64 hash);
+i32 storage_cache_read(const char *name, u64 hash, u8 *data, i32 capacity);
+i32 storage_cache_write(const char *name, u64 hash, const u8 *data, i32 size);
+i32 storage_cache_adopt(const char *name, u64 hash, const char *path);
+i32 storage_cache_retire(const char *name, u64 hash);
+i32 storage_cache_remove(const char *name);
+i32 storage_cache_clear(void);
+
 storage_db *storage_db_open(const char *name);
 void storage_db_close(storage_db *db);
 i32 storage_db_exec(storage_db *db, const char *sql);
