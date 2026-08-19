@@ -495,6 +495,33 @@ int main() {
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 
+    // --- the point fetch scales by the texture size, never by size - 1 ---
+    //
+    // A normalized coordinate spans the texture, so the texel it names is
+    // floor(coord * size) and the last texel is reached by clamping the result.
+    // Scaling by size - 1 also stays in range, which is why it survived, but it
+    // spreads one texel of slack over the whole axis: the accumulated half texel
+    // tips the floor over at the midpoint, so every fetch past the middle comes
+    // back one texel early and a one-to-one copy grows a seam down the centre of
+    // the image. Each backend is checked for the scale it multiplies by, because
+    // the mistake reads as correct in all four. Clamping the *result* to size - 1
+    // is correct and expected, so each pattern below is the multiply itself
+    // rather than the constant.
+    {
+        ns_shader_target targets[4] = {NS_SHADER_MSL, NS_SHADER_GLSL_VULKAN, NS_SHADER_HLSL, NS_SHADER_WGSL};
+        const char *wrong_scale[4] = {"* float2(map.get_width() - 1, map.get_height() - 1)", "* vec2(size - ivec2(1))",
+                                      "saturate(coord) * float2(w - 1, h - 1)", "* vec2<f32>(size - vec2<u32>(1u))"};
+        const char *right_scale[4] = {"float2(1.0)) * size", "* vec2(size);", "saturate(coord) * float2(w, h)",
+                                      "bounded * vec2<f32>(size)"};
+        for (int i = 0; i < 4; i++) {
+            ns_return_str t = ns_shader_transpile(&vm, &ctx, fs_texture, targets[i], NS_SHADER_STAGE_FRAGMENT);
+            ns_expect(!ns_return_is_error(t) && !ns_shader_test_has(t.r, wrong_scale[i]) &&
+                          ns_shader_test_has(t.r, right_scale[i]),
+                      "the point fetch scales a normalized coordinate by the texture size.");
+            if (!ns_return_is_error(t)) ns_array_free(t.r.data);
+        }
+    }
+
     // --- fragment MRT output structs and the regular R8 mask sampler ---
     {
         ns_return_str r = ns_shader_transpile(&vm, &ctx, fs_mrt, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);

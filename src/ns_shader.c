@@ -2585,9 +2585,18 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear);\n"
             "    return map.sample(s, coord);\n"
             "}\n"
+            // A normalized coordinate spans the texture, so the texel it names is
+            // floor(coord * size); the last texel is reached only by clamping the
+            // result. Scaling by size - 1 instead spreads that one texel of slack
+            // across the whole axis, and the accumulated half texel tips the floor
+            // over exactly halfway along it: every fetch past the middle comes back
+            // one texel early, so the two rows and the two columns either side of
+            // the centre read the same texel and a one-to-one copy grows a seam
+            // down the middle of the image.
             "inline float4 ns_texture_sample_nearest(texture2d<float> map, float2 coord) {\n"
-            "    float2 bounded = clamp(coord, float2(0.0), float2(1.0));\n"
-            "    uint2 pixel = uint2(bounded * float2(map.get_width() - 1, map.get_height() - 1));\n"
+            "    float2 size = float2(map.get_width(), map.get_height());\n"
+            "    float2 texel = clamp(coord, float2(0.0), float2(1.0)) * size;\n"
+            "    uint2 pixel = uint2(min(texel, size - 1.0));\n"
             "    return map.read(pixel);\n"
             "}\n\n");
     }
@@ -2597,7 +2606,8 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "vec4 ns_texture_sample(vec2 coord) { return texture(ns_texture_map, coord); }\n"
             "vec4 ns_texture_sample_nearest(vec2 coord) {\n"
             "    ivec2 size = textureSize(ns_texture_map, 0);\n"
-            "    ivec2 pixel = ivec2(clamp(coord, vec2(0.0), vec2(1.0)) * vec2(size - ivec2(1)));\n"
+            "    vec2 texel = clamp(coord, vec2(0.0), vec2(1.0)) * vec2(size);\n"
+            "    ivec2 pixel = min(ivec2(texel), size - ivec2(1));\n"
             "    return texelFetch(ns_texture_map, pixel, 0);\n"
             "}\n\n");
     }
@@ -2606,7 +2616,8 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "Texture2D<float4> ns_texture_map : register(t1);\n"
             "float4 ns_texture_sample(float2 coord) {\n"
             "    uint w, h; ns_texture_map.GetDimensions(w, h);\n"
-            "    return ns_texture_map.Load(int3(int2(saturate(coord) * float2(w - 1, h - 1)), 0));\n"
+            "    float2 texel = saturate(coord) * float2(w, h);\n"
+            "    return ns_texture_map.Load(int3(min(int2(texel), int2(w - 1, h - 1)), 0));\n"
             "}\n"
             "float4 ns_texture_sample_nearest(float2 coord) {\n"
             "    return ns_texture_sample(coord);\n"
@@ -2620,9 +2631,9 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "    return textureSample(ns_texture_map, ns_texture_sampler, coord);\n"
             "}\n"
             "fn ns_texture_sample_nearest(coord: vec2<f32>) -> vec4<f32> {\n"
-            "    let size = textureDimensions(ns_texture_map);\n"
+            "    let size = vec2<i32>(textureDimensions(ns_texture_map));\n"
             "    let bounded = clamp(coord, vec2<f32>(0.0), vec2<f32>(1.0));\n"
-            "    let pixel = vec2<i32>(bounded * vec2<f32>(size - vec2<u32>(1u)));\n"
+            "    let pixel = min(vec2<i32>(bounded * vec2<f32>(size)), size - vec2<i32>(1));\n"
             "    return textureLoad(ns_texture_map, pixel, 0);\n"
             "}\n\n");
     }
