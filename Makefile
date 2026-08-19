@@ -187,7 +187,7 @@ NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 # Native feature modules (lib/*) are compiled position-independent and built as
 # dylibs/so files. Keep them out of bin/ns so the interpreter remains
 # language-only; ref fn calls resolve them through dlopen()/dlsym().
-NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/wasm_dev.c lib/src/ui.c lib/src/storage.db.c
+NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/wasm_dev.c lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c lib/src/storage.json.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
@@ -328,7 +328,7 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	cp lib/src/io.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/gpu.c lib/src/gpu.metal.m \
-		lib/src/ui.c lib/src/storage.db.c lib/src/storage.apple.m lib/src/compress.c \
+		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/
 	cp lib/include/net.h lib/include/os.h lib/include/view.h lib/include/gpu.h lib/include/gpu_const.h \
 		lib/include/storage.h lib/include/storage.internal.h lib/include/compress.h \

@@ -138,10 +138,10 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const 
                                strstr(text, "name = \"NS Build\";") && strstr(text, "name = \"NS Test\";") &&
                                !strstr(text, "isa = PBXNativeTarget;");
     ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
-                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 11;");
-    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 11;") &&
+                                   strstr(text, ".nsproject") && !strstr(text, "NSProjectGeneratorVersion = 12;");
+    ns_bool generated_native_assets_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 12;") &&
                                                expects_assets && !strstr(text, expects_assets);
-    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 11;") &&
+    ns_bool generated_native_icon_mismatch = ok && strstr(text, "NSProjectGeneratorVersion = 12;") &&
                                              ((expects_app_icon && !strstr(text, "App Icon Assets in Resources")) ||
                                               (!expects_app_icon && strstr(text, "App Icon Assets in Resources")));
     free(text);
@@ -605,6 +605,7 @@ static const char *const ns_xcode_feature_sources[] = {
     "gpu.metal.m",
     "ui.c",
     "storage.db.c",
+    "storage.cache.c",
     "storage.apple.m",
     "compress.c",
     "zstd/common/debug.c",
@@ -1725,7 +1726,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
             "\t\t\t\tBuildIndependentTargetsInParallel = YES;\n"
             "\t\t\t\tLastSwiftUpdateCheck = 1600;\n"
             "\t\t\t\tLastUpgradeCheck = 1600;\n"
-            "\t\t\t\tNSProjectGeneratorVersion = 11;\n"
+            "\t\t\t\tNSProjectGeneratorVersion = 12;\n"
             "\t\t\t\t%s\n"
             "\t\t\t\tTargetAttributes = {\n"
             "\t\t\t\t\t%s = {CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;};\n"

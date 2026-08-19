@@ -282,7 +282,7 @@ int main(void) {
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && text_has(xgenerated, "ZSTD_DISABLE_ASM=1") &&
                   text_has(xgenerated, "Native/include/zstd") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 11"),
+                  text_has(pbx, "NSProjectGeneratorVersion = 12"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
@@ -319,7 +319,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 11;", "NSProjectGeneratorVersion = 11;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 12;", "NSProjectGeneratorVersion = 12;",
                                      "NSProjectGeneratorVersion = 9;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");

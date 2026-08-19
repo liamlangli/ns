@@ -957,6 +957,7 @@ fn main() {
     scan_native("lib/src/net.c")
     scan_native("lib/src/storage.db.c")
     scan_native("lib/src/storage.apple.m")
+    scan_native("lib/src/storage.cache.c")
     scan_native("lib/src/compress.c")
 
     build_emit_list()
