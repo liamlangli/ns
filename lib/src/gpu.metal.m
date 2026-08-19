@@ -1416,6 +1416,45 @@ static void mtl_v2_draw_indirect(u32 slot, u64 offset, i32 draw_count, i32 strid
     }
 }
 
+// Threads a dispatch aims to put in one threadgroup, matching the size the
+// WGSL and HLSL backends declare for the same kernels.
+#define GPU_MTL_THREADGROUP_THREADS 64
+
+// The threadgroup shape for a grid of this size. A transpiled kernel reads
+// `thread_position_in_grid` and nothing else - it has no threadgroup memory
+// and no barriers - so the shape is free to be chosen for occupancy alone.
+// The GPU issues `threadExecutionWidth` lanes in lockstep, so a group narrower
+// than that width leaves the rest of every SIMD group it schedules idle: the
+// fixed 8-wide group asked for here before filled a quarter of each one on the
+// 32-lane Apple parts and cost the other three quarters on every dispatch.
+// Whole SIMD groups are filled instead, grown a power of two at a time across
+// whichever axes the grid actually spans so a 2D or 3D sweep keeps neighbouring
+// invocations together, and never grown past the grid itself so a sixteen-actor
+// pass does not pad itself out to a full group.
+static MTLSize mtl_v2_threadgroup_size(id<MTLComputePipelineState> pso, i32 x, i32 y, i32 z) {
+    NSUInteger lanes = MAX((NSUInteger)1, pso.threadExecutionWidth);
+    NSUInteger budget = MAX((NSUInteger)1, pso.maxTotalThreadsPerThreadgroup);
+    NSUInteger total = ((GPU_MTL_THREADGROUP_THREADS + lanes - 1) / lanes) * lanes;
+    if (total > budget) total = budget;
+    NSUInteger grid[3] = {
+        (NSUInteger)MAX(x, 1), (NSUInteger)MAX(y, 1), (NSUInteger)MAX(z, 1)
+    };
+    NSUInteger group[3] = {1, 1, 1};
+    NSUInteger threads = 1;
+    ns_bool grew = true;
+    while (grew && threads < total) {
+        grew = false;
+        for (i32 axis = 0; axis < 3; ++axis) {
+            if (threads * 2 > total) break;
+            if (group[axis] * 2 > grid[axis]) continue;
+            group[axis] *= 2;
+            threads *= 2;
+            grew = true;
+        }
+    }
+    return MTLSizeMake(group[0], group[1], group[2]);
+}
+
 static void mtl_v2_dispatch(const char *label, i32 x, i32 y, i32 z) {
     if (!_state.v2_shader || _state.v2_shader >= _state.shader_count) return;
     gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
@@ -1426,9 +1465,8 @@ static void mtl_v2_dispatch(const char *label, i32 x, i32 y, i32 z) {
     mtl_v2_label_encoder(encoder, label);
     [encoder setComputePipelineState:shader->compute_pso];
     mtl_v2_bind_root(shader, encoder, true);
-    NSUInteger width = MIN((NSUInteger)8, shader->compute_pso.maxTotalThreadsPerThreadgroup);
     [encoder dispatchThreads:MTLSizeMake((NSUInteger)x, (NSUInteger)y, (NSUInteger)z)
-       threadsPerThreadgroup:MTLSizeMake(width, 1, 1)];
+       threadsPerThreadgroup:mtl_v2_threadgroup_size(shader->compute_pso, x, y, z)];
     [encoder endEncoding];
 }
 
