@@ -566,8 +566,12 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     [view_mtk_view setDevice: view_mtl_device];
     [view_mtk_view setColorPixelFormat: MTLPixelFormatBGRA8Unorm];
     [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatDepth32Float];
-    [view_mtk_view setPaused:YES];
-    [view_mtk_view setEnableSetNeedsDisplay:YES];
+    // On demand by default: the view sleeps until view_request_frame()
+    // invalidates it. NS_VIEW_CONTINUOUS switches to vsync-paced drawing so a
+    // GPU frame capture has a boundary to arm on.
+    const BOOL view_continuous = view_continuous_render() ? YES : NO;
+    [view_mtk_view setPaused: view_continuous ? NO : YES];
+    [view_mtk_view setEnableSetNeedsDisplay: view_continuous ? NO : YES];
     // Trackpad fingers are only delivered as touches once the view opts in.
     // Magnify and rotate arrive without it; the three-finger orbit does not.
     [view_mtk_view setAllowedTouchTypes:NSTouchTypeMaskIndirect];

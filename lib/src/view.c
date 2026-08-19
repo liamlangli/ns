@@ -1,5 +1,7 @@
 #include "view.h"
 
+#include <stdlib.h>
+
 static ns_bool view_keys[VIEW_KEY_MENU + 1];
 // Stored as modifiers + 1 so zero remains the no-event sentinel.
 static i32 view_key_presses[VIEW_KEY_MENU + 1];
@@ -30,10 +32,29 @@ void view_request_frame_after(view *v, i32 milliseconds) {
     view_platform_request_frame_after(v, milliseconds);
 }
 
+// GPU frame capture arms on a frame boundary and waits for the next present.
+// An on-demand backend that is idle never reaches one, so the capture hangs
+// with nothing to delimit. Setting NS_VIEW_CONTINUOUS=1 makes the backends
+// free-run for the length of a debugging session; read once so the per-frame
+// path stays a load.
+ns_bool view_continuous_render(void) {
+    static i32 enabled = -1;
+    if (enabled < 0) {
+        const char *env = getenv("NS_VIEW_CONTINUOUS");
+        enabled = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return enabled != 0;
+}
+
 ns_bool view_take_frame_request(view *v) {
-    if (!v || view_requested_frames <= 0) return false;
-    view_requested_frames--;
-    return true;
+    if (!v) return false;
+    if (view_requested_frames > 0) {
+        view_requested_frames--;
+        return true;
+    }
+    // Free-running backends draw whether or not anything asked them to, but
+    // pending requests above still drain so the app's own pacing is unchanged.
+    return view_continuous_render();
 }
 
 void view_complete_frame(view *v) {

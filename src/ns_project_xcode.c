@@ -1009,7 +1009,12 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
             "  <key>CFBundlePackageType</key><string>APPL</string>\n"
             "  <key>CFBundleShortVersionString</key><string>%s</string>\n"
             "  <key>CFBundleVersion</key><string>1</string>\n"
-            "  <key>NSHumanReadableCopyright</key><string></string>\n",
+            "  <key>NSHumanReadableCopyright</key><string></string>\n"
+            // Programmatic MTLCaptureManager captures are refused unless the
+            // bundle opts in, and a build installed on a device is not launched
+            // by the Xcode debugger that would otherwise grant it. Generated
+            // projects are development projects; strip this before shipping.
+            "  <key>MetalCaptureEnabled</key><true/>\n",
             escaped_name, escaped_version)) {
         free(escaped_name);
         free(escaped_version);

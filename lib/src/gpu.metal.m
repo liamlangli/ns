@@ -640,13 +640,17 @@ void gpu_mtl_end_frame(MTKView *view) {
 
     if (nil != buffer) {
         [buffer commit];
-        gpu_mtl_capture_end_if_started();
     }
     if (owns_frame_buffer) {
         _state.cmd_buffer = nil;
         // A frame that returned before gpu_commit() still recycles its ring.
         gpu_v2_frame_end();
     }
+    // The capture closes here rather than at commit: a frame that flushed
+    // mid-way commits more than once, and only this last one carries the
+    // present. Outside the buffer check so a frame that drew nothing to the
+    // screen still closes the scope it opened.
+    gpu_mtl_capture_end_if_started();
     _state.frame_index += 1;
 }
 
@@ -658,7 +662,6 @@ void gpu_commit() {
     assert(nil == _state.cmd_encoder);
 
     [_state.cmd_buffer commit];
-    gpu_mtl_capture_end_if_started();
     _state.cmd_buffer = nil;
     gpu_v2_frame_end();
 }

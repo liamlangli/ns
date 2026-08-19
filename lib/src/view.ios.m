@@ -168,6 +168,7 @@ static void view_ios_rotate(UIRotationGestureRecognizer *gesture) {
 - (void)orbit:(UIPanGestureRecognizer *)gesture;
 - (void)pinch:(UIPinchGestureRecognizer *)gesture;
 - (void)rotate:(UIRotationGestureRecognizer *)gesture;
+- (void)captureFrame:(UITapGestureRecognizer *)gesture;
 @end
 
 @implementation NSIOSGestureTarget
@@ -175,6 +176,14 @@ static void view_ios_rotate(UIRotationGestureRecognizer *gesture) {
 - (void)orbit:(UIPanGestureRecognizer *)gesture { view_ios_orbit(gesture); }
 - (void)pinch:(UIPinchGestureRecognizer *)gesture { view_ios_pinch(gesture); }
 - (void)rotate:(UIRotationGestureRecognizer *)gesture { view_ios_rotate(gesture); }
+// Four fingers at once: the device has no F12, so this is how a GPU capture is
+// asked for on a phone. The frame request is what actually gives the capture
+// something to record - an idle on-demand view would otherwise arm and wait.
+- (void)captureFrame:(UITapGestureRecognizer *)gesture {
+    (void)gesture;
+    view_capture_require(&view_ios_state);
+    view_request_frame(&view_ios_state, 1);
+}
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gesture
         shouldRecognizeSimultaneouslyWithGestureRecognizer:(UIGestureRecognizer *)other {
     (void)gesture;
@@ -203,8 +212,12 @@ view *view_create(const char *title, i32 width, i32 height) {
         view_ios_metal_view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         view_ios_metal_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
         view_ios_metal_view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
-        view_ios_metal_view.paused = YES;
-        view_ios_metal_view.enableSetNeedsDisplay = YES;
+        // On demand by default: the view sleeps until view_request_frame()
+        // invalidates it. NS_VIEW_CONTINUOUS switches to vsync-paced drawing so
+        // a GPU frame capture has a boundary to arm on.
+        BOOL continuous = view_continuous_render() ? YES : NO;
+        view_ios_metal_view.paused = continuous ? NO : YES;
+        view_ios_metal_view.enableSetNeedsDisplay = continuous ? NO : YES;
         view_ios_delegate = [[NSIOSViewDelegate alloc] init];
         view_ios_metal_view.delegate = view_ios_delegate;
         view_ios_gesture_target = [[NSIOSGestureTarget alloc] init];
@@ -228,6 +241,12 @@ view *view_create(const char *title, i32 width, i32 height) {
         rotate.cancelsTouchesInView = NO;
         rotate.delegate = view_ios_gesture_target;
         [view_ios_metal_view addGestureRecognizer:rotate];
+        UITapGestureRecognizer *capture = [[UITapGestureRecognizer alloc] initWithTarget:view_ios_gesture_target action:@selector(captureFrame:)];
+        capture.numberOfTouchesRequired = 4;
+        capture.numberOfTapsRequired = 1;
+        capture.cancelsTouchesInView = NO;
+        capture.delegate = view_ios_gesture_target;
+        [view_ios_metal_view addGestureRecognizer:capture];
         [container addSubview:view_ios_metal_view];
         view_ios_sync_metrics(view_ios_metal_view);
         view_ios_state.native_window = (__bridge void *)view_ios_metal_view;

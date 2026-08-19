@@ -247,6 +247,10 @@ void view_capture_require(view *v);
 void view_request_frame(view *v, i32 frames);
 void view_request_frame_after(view *v, i32 milliseconds);
 ns_bool view_take_frame_request(view *v);
+// True when NS_VIEW_CONTINUOUS asks the backend to render every vsync
+// instead of only on request, so a GPU frame capture always finds a
+// frame boundary to arm on.
+ns_bool view_continuous_render(void);
 void view_complete_frame(view *v);
 void view_platform_request_frame(view *v);
 void view_platform_request_frame_after(view *v, i32 milliseconds);
