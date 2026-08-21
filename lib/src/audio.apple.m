@@ -105,22 +105,87 @@ static void audio_collect_voices(void) {
     }
 }
 
+#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+static void audio_session_wait(dispatch_semaphore_t done) {
+    if ([NSThread isMainThread]) {
+        while (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_MSEC)) != 0) {
+            [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
+                                     beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+        }
+        return;
+    }
+    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+}
+
+static ns_bool audio_session_set_active(BOOL active) {
+    __block ns_bool ok = false;
+    char message_storage[512];
+    message_storage[0] = '\0';
+    char *message = message_storage;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        @autoreleasepool {
+            AVAudioSession *session = [AVAudioSession sharedInstance];
+            __block NSError *local = nil;
+            if (@available(iOS 27.0, visionOS 27.0, *)) {
+                dispatch_semaphore_t activated = dispatch_semaphore_create(0);
+                void (^handler)(BOOL, NSError *) = ^(BOOL success, NSError *_Nullable err) {
+                    ok = success;
+                    local = err;
+                    dispatch_semaphore_signal(activated);
+                };
+                if (active) {
+                    [session activateWithOptions:AVAudioSessionActivationOptionNone completionHandler:handler];
+                } else {
+                    [session deactivateWithOptions:AVAudioSessionDeactivationOptionNotifyOthersOnDeactivation
+                                 completionHandler:handler];
+                }
+                dispatch_semaphore_wait(activated, DISPATCH_TIME_FOREVER);
+            } else if (active) {
+                ok = [session setActive:YES error:&local];
+            } else {
+                ok = [session setActive:NO
+                            withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
+                                  error:&local];
+            }
+            if (!ok) {
+                const char *utf8 = [[local localizedDescription] UTF8String];
+                snprintf(message, 512, "%s", utf8 ? utf8 : "unknown audio error");
+            }
+        }
+        dispatch_semaphore_signal(done);
+    });
+    audio_session_wait(done);
+
+    if (!ok) {
+        @synchronized(audio_lock()) {
+            audio_set_error([NSString stringWithUTF8String:message[0] ? message : "unknown audio error"]);
+        }
+        return false;
+    }
+    return true;
+}
+#endif
+
 ns_bool audio_init(void) {
     @autoreleasepool {
+#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+        AVAudioSession *session = [AVAudioSession sharedInstance];
+        NSError *error = nil;
+        if (![session setCategory:AVAudioSessionCategoryAmbient
+                              mode:AVAudioSessionModeDefault
+                           options:AVAudioSessionCategoryOptionMixWithOthers
+                             error:&error]) {
+            @synchronized(audio_lock()) {
+                audio_set_error([error localizedDescription]);
+            }
+            return false;
+        }
+        if (!audio_session_set_active(YES)) return false;
+#endif
         @synchronized(audio_lock()) {
             audio_clear_error();
-#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
-            AVAudioSession *session = [AVAudioSession sharedInstance];
-            NSError *error = nil;
-            if (![session setCategory:AVAudioSessionCategoryAmbient
-                                  mode:AVAudioSessionModeDefault
-                               options:AVAudioSessionCategoryOptionMixWithOthers
-                                 error:&error] ||
-                ![session setActive:YES error:&error]) {
-                audio_set_error([error localizedDescription]);
-                return false;
-            }
-#endif
             return true;
         }
     }
@@ -142,16 +207,10 @@ void audio_shutdown(void) {
                 audio_assets[i].volume = 0.0;
             }
             audio_clear_error();
-#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
-            NSError *error = nil;
-            if (![[AVAudioSession sharedInstance]
-                    setActive:NO
-                  withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
-                        error:&error]) {
-                audio_set_error([error localizedDescription]);
-            }
-#endif
         }
+#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+        audio_session_set_active(NO);
+#endif
     }
 }
 

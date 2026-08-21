@@ -46,6 +46,7 @@ same effect to overlap. The backend currently supports up to 255 loaded assets
 and 64 simultaneous SFX voices.
 
 On iOS and visionOS, `audio_init` activates an ambient, mix-with-others audio
-session. On macOS it is a lightweight no-op. All other calls initialize their
-native storage lazily, but explicit initialization is recommended so session
-errors can be handled at startup.
+session (async activate/deactivate on OS 27+, otherwise `setActive` off the
+main thread). On macOS it is a lightweight no-op. All other calls initialize
+their native storage lazily, but explicit initialization is recommended so
+session errors can be handled at startup.
