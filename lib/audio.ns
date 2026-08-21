@@ -1,7 +1,8 @@
 mod audio
 
-// Apple audio playback, implemented by lib/src/audio.apple.m and loaded from
-// audio.dylib. Handles are opaque positive integers; 0 means load failure.
+// Apple audio playback, implemented by lib/src/audio.apple.m. Desktop loads it
+// from audio.dylib; generated Apple apps embed the same sources. Handles are
+// opaque positive integers; 0 means load failure.
 //
 // Music handles own one resumable player. SFX handles keep decoded source data
 // and may create multiple simultaneous voices when audio_play() is called.

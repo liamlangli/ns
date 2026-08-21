@@ -324,14 +324,15 @@ install: all
 	cp $(NS_NATIVE_RT_OBJ) $(NS_INSTALL_ROOT)/lib/ns_native_rt.o
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
 	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
-		lib/net.ns lib/dynamic.ns lib/compress.ns lib/storage.ns \
+		lib/net.ns lib/dynamic.ns lib/compress.ns lib/storage.ns lib/audio.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	cp lib/src/io.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/gpu.c lib/src/gpu.metal.m \
 		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \
+		lib/src/audio.apple.m \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/
 	cp lib/include/net.h lib/include/os.h lib/include/view.h lib/include/gpu.h lib/include/gpu_const.h \
-		lib/include/storage.h lib/include/storage.internal.h lib/include/compress.h \
+		lib/include/storage.h lib/include/storage.internal.h lib/include/compress.h lib/include/audio.h \
 		lib/include/stb_image.h lib/include/stb_image_resize2.h lib/include/stb_image_write.h \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/
 	cp third_party/zstd/lib/zstd.h third_party/zstd/lib/zstd_errors.h \

@@ -406,7 +406,7 @@ rules.
 | `net` | Blocking native TCP/UDP sockets, shared receive-buffer access, file sending, and socket lifecycle. File descriptors are integer handles. |
 | `http` | Minimal blocking HTTP/1.1 request parsing, responses/files/status helpers, client GET, and a complete static-file server built on `net`. |
 | `term` | Native raw-terminal input, dimensions, buffered byte output, file byte I/O, and startup filename access for terminal apps. |
-| `audio` | Apple native music/SFX loading, playback, pause/resume/seek, volume, duration/position, and error reporting. Handles are opaque integers. |
+| `audio` | Apple native music/SFX loading, playback, pause/resume/seek, volume, duration/position, and error reporting. Handles are opaque integers. Native desktop and generated Apple apps are supported. |
 | `storage` | Application-local typed KV storage plus SQLite structured storage (doc/storage.md). Apple KV values use namespaced `NSUserDefaults`; Windows/Linux use an atomically replaced JSON file. Database files use the current platform SQLite library and stay in the app-data directory. |
 | `view` | Application window/view lifecycle plus keyboard, pointer, gesture, clipboard, frame callback, size, scale, and GPU-device state. Wasm projects use the generated HTML canvas as the view backend. |
 | `gpu` | Platform GPU access. The v2-only Nano Script surface (doc/gpu.md) treats the GPU as a processor with memory: 64-bit addresses from `gpu_malloc`, bindless u32 texture/sampler indices, one root pointer per draw/dispatch, and a frame ring for transient data; it runs host-side headless. Apple uses Metal, Windows uses DirectX 12, and unsupported backends may return failure. |

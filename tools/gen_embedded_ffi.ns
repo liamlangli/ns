@@ -941,6 +941,7 @@ fn main() {
     parse_module("lib/net.ns")
     parse_module("lib/storage.ns")
     parse_module("lib/compress.ns")
+    parse_module("lib/audio.ns")
 
     build_sorted_index()
     scan_native("lib/src/view.c")
@@ -959,6 +960,7 @@ fn main() {
     scan_native("lib/src/storage.apple.m")
     scan_native("lib/src/storage.cache.c")
     scan_native("lib/src/compress.c")
+    scan_native("lib/src/audio.apple.m")
 
     build_emit_list()
     build_signatures()

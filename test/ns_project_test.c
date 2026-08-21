@@ -115,7 +115,7 @@ int main(void) {
               "project test creates a project asset fixture.");
     ns_project_spec app = app_spec(
         app_root, runtime,
-        "use std\nuse task\nuse net\nuse storage\nuse compress\nfn main() { print(`generated`) }\n",
+        "use std\nuse task\nuse net\nuse storage\nuse compress\nuse audio\nfn main() { print(`generated`) }\n",
         asset_paths("assets"));
 #if defined(__APPLE__)
     char app_icon_source[PATH_MAX];
@@ -130,6 +130,7 @@ int main(void) {
     char view_osx[PATH_MAX], view_ios[PATH_MAX], os_ios[PATH_MAX], gpu_metal[PATH_MAX], ui_native[PATH_MAX], net_native[PATH_MAX];
     char storage_db[PATH_MAX], storage_apple[PATH_MAX], storage_module[PATH_MAX];
     char compress_native[PATH_MAX], compress_header[PATH_MAX], compress_module[PATH_MAX];
+    char audio_native[PATH_MAX], audio_header[PATH_MAX], audio_module[PATH_MAX];
     char zstd_compress[PATH_MAX], zstd_header[PATH_MAX];
     char task_module[PATH_MAX], net_module[PATH_MAX], ui_asset[PATH_MAX], bitmap_asset[PATH_MAX], ios_plist[PATH_MAX];
     char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX];
@@ -152,6 +153,9 @@ int main(void) {
     path(compress_native, app_root, "bin/demo-app.nsproject/Native/src/compress.c");
     path(compress_header, app_root, "bin/demo-app.nsproject/Native/include/compress.h");
     path(compress_module, app_root, "bin/demo-app.nsproject/Resources/compress.ns");
+    path(audio_native, app_root, "bin/demo-app.nsproject/Native/src/audio.apple.m");
+    path(audio_header, app_root, "bin/demo-app.nsproject/Native/include/audio.h");
+    path(audio_module, app_root, "bin/demo-app.nsproject/Resources/audio.ns");
     path(zstd_compress, app_root, "bin/demo-app.nsproject/Native/src/zstd/compress/zstd_compress.c");
     path(zstd_header, app_root, "bin/demo-app.nsproject/Native/include/zstd/zstd.h");
     path(task_module, app_root, "bin/demo-app.nsproject/Resources/task.ns");
@@ -199,6 +203,10 @@ int main(void) {
                   access(zstd_header, R_OK) == 0 && text_has(pbx, "compress.ns in Resources") &&
                   text_has(pbx, "zstd/compress/zstd_compress.c in Sources") && text_has(pbx, "-lz"),
               "Xcode app targets embed compression and the pinned portable Zstandard sources.");
+    ns_expect(access(audio_native, R_OK) == 0 && access(audio_header, R_OK) == 0 && access(audio_module, R_OK) == 0 &&
+                  text_has(pbx, "audio.ns in Resources") && text_has(pbx, "audio.apple.m in Sources") &&
+                  text_has(pbx, "-framework\", AVFAudio"),
+              "Xcode app targets embed AVFAudio playback.");
     ns_expect(access(task_module, R_OK) == 0 && access(net_module, R_OK) == 0 &&
                   text_has(pbx, "task.ns in Resources") && text_has(pbx, "net.ns in Resources"),
               "Xcode app targets bundle the task and network module declarations.");

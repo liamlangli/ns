@@ -260,8 +260,8 @@ application targets named `<safe-name> macOS`, `<safe-name> iOS`, and
 `ns.<safe-name>`; no development team is preset. The embedded interpreter runs
 the linked entry on a background task; status appears in the app, while `print`
 output and diagnostics appear in the Xcode console. Generated Apple apps embed
-the official `std`, `task`, `shader`, `simd`, `view`, `ui`, `os`, `gpu`, `io`,
-`net`, `storage`, and `compress` modules. Other external or dynamically loaded FFI modules
+	the official `std`, `task`, `shader`, `simd`, `view`, `ui`, `os`, `gpu`, `io`,
+`net`, `storage`, `compress`, and `audio` modules. Other external or dynamically loaded FFI modules
 are not available; generation falls back to host build/test targets instead of
 silently producing a broken app.
 
