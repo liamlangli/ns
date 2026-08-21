@@ -3614,7 +3614,10 @@ void ns_exec_project(ns_str path) {
         linked = ns_project_link_all(root, in.source, in.filename, false, ns_null, &external_modules);
     }
 
-    ns_bool host_build = cli_project;
+    // A linked target must keep the same execution model in its generated IDE
+    // project as it has under `ns run`: delegate to `ns build` instead of
+    // embedding the tree-walking evaluator in an Apple application target.
+    ns_bool host_build = cli_project || selection.link;
     if (kind == NS_PROJECT_APP) {
         for (i32 i = 0, l = ns_array_length(external_modules); i < l; i++) {
             if (!ns_project_module_embeddable(external_modules[i])) host_build = true;
@@ -3623,9 +3626,9 @@ void ns_exec_project(ns_str path) {
 
     ns_str executable = ns_project_current_executable();
     if (executable.data == ns_null) ns_exit(1, "project", "failed to locate the ns executable.\n");
-    ns_str runtime_root = kind == NS_PROJECT_APP ? ns_project_runtime_root(executable) : ns_str_null;
+    ns_str runtime_root = kind == NS_PROJECT_APP && !host_build ? ns_project_runtime_root(executable) : ns_str_null;
 #if defined(NS_DARWIN)
-    if (kind == NS_PROJECT_APP && runtime_root.data == ns_null) {
+    if (kind == NS_PROJECT_APP && !host_build && runtime_root.data == ns_null) {
         ns_exit(1, "project", "language runtime SDK not found; reinstall ns or set NS_RUNTIME_ROOT.\n");
     }
 #endif

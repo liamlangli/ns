@@ -356,12 +356,16 @@ int main(void) {
     char hosted_root[] = "/tmp/ns-project-hosted-app-XXXXXX";
     ns_expect(mkdtemp(hosted_root) != ns_null, "project test creates hosted app fixture directory.");
     ns_project_spec hosted = app_spec(hosted_root, runtime, "use view\nfn main() {}\n", ns_null);
-    hosted.host_build = true;
-    ns_expect(ns_project_generate_xcode(&hosted), "Xcode hosted app project generation succeeds.");
+    ns_expect(ns_project_generate_xcode(&hosted), "Xcode eval app project generation succeeds before switching modes.");
     char hosted_pbx[PATH_MAX];
     path(hosted_pbx, hosted_root, "bin/demo-app.xcodeproj/project.pbxproj");
-    ns_expect(text_has(hosted_pbx, "NS Build") && text_has(hosted_pbx, "NS Test"),
-              "Xcode hosted app delegates build and test to the host ns toolchain.");
+    ns_expect(text_has(hosted_pbx, "SDKROOT = iphoneos") && text_has(hosted_pbx, "isa = PBXNativeTarget;"),
+              "Xcode eval app starts with portable native targets.");
+    hosted.host_build = true;
+    ns_expect(ns_project_generate_xcode(&hosted), "Xcode hosted app project generation succeeds.");
+    ns_expect(text_has(hosted_pbx, "NS Build") && text_has(hosted_pbx, "NS Test") &&
+                  text_has(hosted_pbx, "isa = PBXLegacyTarget;") && !text_has(hosted_pbx, "isa = PBXNativeTarget;"),
+              "Xcode hosted app replaces eval targets and delegates build and test to the host ns toolchain.");
     ns_expect(!text_has(hosted_pbx, "SDKROOT = iphoneos"),
               "Xcode hosted app does not claim unsupported portable Apple targets.");
     hosted.host_build = false;

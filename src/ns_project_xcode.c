@@ -148,6 +148,37 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const 
     return generated_legacy || generated_native_old || generated_native_assets_mismatch || generated_native_icon_mismatch;
 }
 
+// A manifest can switch an existing generated app from eval mode to the host
+// linker by setting `link = true`. That changes the project structure from
+// portable PBXNativeTargets to utility PBXLegacyTargets, so the generated file
+// must be refreshed even though ordinary regenerations preserve that file.
+static ns_bool ns_xcode_generated_native_project(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return false;
+    }
+    long size = ftell(file);
+    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return false;
+    }
+    char *text = (char *)malloc((size_t)size + 1);
+    if (!text) {
+        fclose(file);
+        return false;
+    }
+    size_t read = fread(text, 1, (size_t)size, file);
+    ns_bool ok = read == (size_t)size && !ferror(file);
+    fclose(file);
+    text[read] = '\0';
+    ns_bool generated = ok && strstr(text, "4E535052") && strstr(text, "NSProjectGeneratorVersion = 12;") &&
+                        strstr(text, "isa = PBXNativeTarget;") && strstr(text, ".nsproject");
+    free(text);
+    return generated;
+}
+
 static ns_bool ns_xcode_dir_exists(const char *path) {
     struct stat info;
     return stat(path, &info) == 0 && S_ISDIR(info.st_mode);
@@ -1934,7 +1965,8 @@ static ns_bool ns_xcode_append_legacy_target(ns_xcode_buffer *pbx, unsigned targ
 }
 
 static ns_bool ns_xcode_generate_library_pbx(const char *project_file, const char *safe_name) {
-    if (ns_xcode_file_exists(project_file)) return true;
+    ns_bool overwrite_project = ns_xcode_generated_native_project(project_file);
+    if (ns_xcode_file_exists(project_file) && !overwrite_project) return true;
     ns_xcode_buffer pbx = {0};
     char *escaped_safe = ns_xcode_escape(safe_name);
     if (!escaped_safe ||
@@ -2021,7 +2053,7 @@ static ns_bool ns_xcode_generate_library_pbx(const char *project_file, const cha
                                  "\trootObject = %s /* Project object */;\n"
                                  "}\n",
                                  project_id) ||
-        !ns_xcode_write(project_file, pbx.data, pbx.len, false)) {
+        !ns_xcode_write(project_file, pbx.data, pbx.len, overwrite_project)) {
         goto fail;
     }
     free(escaped_safe);

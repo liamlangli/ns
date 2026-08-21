@@ -160,7 +160,9 @@ static library side by side:
 `ns build <name>` builds that one target independently. `-o` applies to a
 single target only, so name the target when overriding the output path.
 `ns project` generates the IDE project of the default target; a `cli` target
-gets host build/test targets rather than platform application targets.
+gets host build/test targets rather than platform application targets. An app
+target with `link = true` does the same, so its Xcode build uses the native
+compiler just like `ns run` instead of embedding the evaluator.
 
 A bare word selects a target: `ns run web`. An argument that looks like a path
 stays a path, so `ns run ./web`, `ns run src/web_main.ns` and any argument
@@ -264,6 +266,11 @@ output and diagnostics appear in the Xcode console. Generated Apple apps embed
 `net`, `storage`, `compress`, and `audio` modules. Other external or dynamically loaded FFI modules
 are not available; generation falls back to host build/test targets instead of
 silently producing a broken app.
+
+When the selected app target sets `link = true`, Xcode also gets host
+build/test targets. Its Build action delegates to `ns build`, preserving the
+manifest's native-link execution model rather than generating the embedded
+evaluator targets.
 
 The generated iOS target declares the orientations the manifest `orientation`
 key names, for both the phone and the tablet idiom. An app that declares
