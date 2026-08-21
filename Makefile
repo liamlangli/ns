@@ -18,6 +18,7 @@ NS_WIN = windows
 
 NS_CC = clang
 NS_LD = clang -fuse-ld=lld
+NS_AR = ar
 NS_MKDIR = mkdir -p
 NS_RMDIR = rm -rf
 NS_CP = cp -r
@@ -160,9 +161,12 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 regen-embedded-ffi: $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/term$(NS_DYLIB_SUFFIX)
 	$(TARGET)$(NS_SUFFIX) run tools/gen_embedded_ffi.ns
 
-# iOS subset: exclude repl and vm_lib (depend on readline/libffi not available on iOS)
+# iOS subset: exclude the REPL (readline is unavailable). NS_XCLIB keeps the
+# VM's libffi/dlopen path out and selects its generated, statically bound FFI
+# table instead; the native runtime is included for AOT archives.
 NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
+	src/ns_profile.c \
 	src/ns_os.c \
 	src/ns_token.c \
 	src/ns_ast.c \
@@ -175,10 +179,13 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \
 	src/ns_task.c \
+	src/ns_vm_lib.c \
+	src/ns_embedded_ffi.c \
 	src/ns_vm_print.c \
 	src/ns_net.c \
 	src/ns_json.c \
 	src/ns_shader.c \
+	src/ns_native_rt.c \
 	src/ns_def.c \
 	src/ns_asm.c
 
@@ -286,6 +293,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR
 	$(NS_BINDIR)/ns_build_cache_test
 	$(NS_BINDIR)/ns_lint_test
 	$(NS_BINDIR)/ns_profile_test
+	sh test/ns_project_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_lint_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -399,7 +407,40 @@ IOS_CFLAGS   = -target arm64-apple-ios$(IOS_MIN_VER)   -isysroot $(IOS_SDK)   -f
 MACOS_OBJS := $(NS_LIB_SRCS:%.c=$(MACOS_OBJDIR)/%.o)
 IOS_OBJS   := $(NS_IOS_LIB_SRCS:%.c=$(IOS_OBJDIR)/%.o)
 
-.PHONY: ns_xcframework ns_apple_dirs ns_apple_clean macos_arm64 ios_arm64 xcframework apple-xcframework
+# Native feature modules are separate from the language runtime. Build one
+# archive per module for device linking; consumers select only the modules
+# their Nano Script source imports and add the corresponding Apple frameworks.
+IOS_FEATURE_OBJDIR := $(APPLE_OUTDIR)/ios-arm64/feature-obj
+IOS_FEATURE_LIBDIR := $(APPLE_OUTDIR)/ios-arm64
+IOS_FEATURE_INC := $(NS_INC) -Ilib/include -Ithird_party/box3d/include -Ithird_party/box3d/src \
+	-Ithird_party/zlib -Ithird_party/zstd/lib
+IOS_FEATURE_HEADERS := $(wildcard lib/include/*.h include/*.h include/asm/*.h include/os/*.h)
+IOS_FEATURE_CFLAGS := -target arm64-apple-ios$(IOS_MIN_VER) -isysroot $(IOS_SDK) -fembed-bitcode -fPIC -g -O0 \
+	-DNS_DEBUG -DNS_XCLIB -DNS_DARWIN
+
+IOS_IO_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/io.o
+IOS_OS_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/os.o $(IOS_FEATURE_OBJDIR)/lib/src/os.ios.o \
+	$(IOS_FEATURE_OBJDIR)/lib/src/os.haptic.apple.o
+IOS_NET_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/net.o
+IOS_HTTP_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/http.o
+IOS_WASM_DEV_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/wasm_dev.o
+IOS_TERM_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/term.posix.o
+IOS_VIEW_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/view.o $(IOS_FEATURE_OBJDIR)/lib/src/view.ios.o
+IOS_GPU_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/gpu.o $(IOS_FEATURE_OBJDIR)/lib/src/gpu.metal.o
+IOS_UI_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/ui.o
+IOS_AUDIO_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/audio.apple.o
+IOS_STORAGE_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/storage.db.o $(IOS_FEATURE_OBJDIR)/lib/src/storage.cache.o \
+	$(IOS_FEATURE_OBJDIR)/lib/src/storage.apple.o
+IOS_DYNAMIC_OBJS := $(patsubst third_party/box3d/src/%.c,$(IOS_FEATURE_OBJDIR)/third_party/box3d/src/%.o,$(NS_BOX3D_SRCS)) \
+	$(IOS_FEATURE_OBJDIR)/lib/src/dynamic.o
+IOS_ZLIB_OBJS := $(patsubst third_party/zlib/%.c,$(IOS_FEATURE_OBJDIR)/third_party/zlib/%.o,$(NS_ZLIB_SRCS))
+IOS_ZSTD_OBJS := $(patsubst third_party/zstd/lib/%.c,$(IOS_FEATURE_OBJDIR)/third_party/zstd/lib/%.o,$(NS_ZSTD_SRCS))
+IOS_COMPRESS_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/compress.o $(IOS_ZLIB_OBJS) $(IOS_ZSTD_OBJS)
+
+IOS_FEATURE_LIBS := $(addprefix $(IOS_FEATURE_LIBDIR)/lib,io.a os.a net.a http.a wasm_dev.a term.a view.a gpu.a ui.a \
+	audio.a storage.a dynamic.a compress.a)
+
+.PHONY: ns_xcframework ns_apple_dirs ns_apple_clean macos_arm64 ios_arm64 ios_static xcframework apple-xcframework
 
 # Public entrypoint
 xc: ns_xcframework
@@ -435,6 +476,8 @@ $(MACOS_OBJDIR)/%.o: %.c | ns_apple_dirs
 # iOS arm64 static lib
 ios_arm64: $(IOS_LIB)
 
+ios_static: ios_arm64 $(IOS_FEATURE_LIBS)
+
 $(IOS_LIB): ns_apple_dirs $(IOS_OBJS)
 	$(APPLE_LIBTOOL) -static -o $@ $(IOS_OBJS)
 	codesign --force --sign - --timestamp=none $@
@@ -443,6 +486,67 @@ $(IOS_LIB): ns_apple_dirs $(IOS_OBJS)
 $(IOS_OBJDIR)/%.o: %.c | ns_apple_dirs
 	mkdir -p $(dir $@)
 	$(APPLE_CC) -c $< -o $@ $(NS_INC) $(IOS_CFLAGS)
+
+$(IOS_FEATURE_OBJDIR)/lib/src/%.o: lib/src/%.c $(IOS_FEATURE_HEADERS)
+	mkdir -p $(dir $@)
+	$(APPLE_CC) -c $< -o $@ $(IOS_FEATURE_INC) $(IOS_FEATURE_CFLAGS)
+
+$(IOS_FEATURE_OBJDIR)/lib/src/%.o: lib/src/%.m $(IOS_FEATURE_HEADERS)
+	mkdir -p $(dir $@)
+	$(APPLE_CC) -c $< -o $@ $(IOS_FEATURE_INC) $(IOS_FEATURE_CFLAGS)
+
+$(IOS_FEATURE_OBJDIR)/lib/src/compress.o: lib/src/compress.c $(IOS_FEATURE_HEADERS) $(NS_ZLIB_HEADERS) $(NS_ZSTD_HEADERS)
+	mkdir -p $(dir $@)
+	$(APPLE_CC) -c $< -o $@ $(IOS_FEATURE_INC) $(IOS_FEATURE_CFLAGS) $(NS_ZLIB_DEF) $(NS_ZSTD_DEF)
+
+$(IOS_FEATURE_OBJDIR)/third_party/box3d/src/%.o: third_party/box3d/src/%.c $(NS_BOX3D_HEADERS)
+	mkdir -p $(dir $@)
+	$(APPLE_CC) -c $< -o $@ $(IOS_FEATURE_INC) $(IOS_FEATURE_CFLAGS) -std=gnu17
+
+$(IOS_FEATURE_OBJDIR)/third_party/zlib/%.o: third_party/zlib/%.c $(NS_ZLIB_HEADERS)
+	mkdir -p $(dir $@)
+	$(APPLE_CC) -c $< -o $@ $(IOS_FEATURE_INC) $(IOS_FEATURE_CFLAGS) $(NS_ZLIB_DEF) -fvisibility=hidden
+
+$(IOS_FEATURE_OBJDIR)/third_party/zstd/lib/%.o: third_party/zstd/lib/%.c $(NS_ZSTD_HEADERS)
+	mkdir -p $(dir $@)
+	$(APPLE_CC) -c $< -o $@ $(IOS_FEATURE_INC) $(IOS_FEATURE_CFLAGS) $(NS_ZSTD_DEF) -fvisibility=hidden
+
+$(IOS_FEATURE_LIBDIR)/libio.a: $(IOS_IO_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libos.a: $(IOS_OS_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libnet.a: $(IOS_NET_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libhttp.a: $(IOS_HTTP_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libwasm_dev.a: $(IOS_WASM_DEV_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libterm.a: $(IOS_TERM_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libview.a: $(IOS_VIEW_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libgpu.a: $(IOS_GPU_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libui.a: $(IOS_UI_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libaudio.a: $(IOS_AUDIO_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+$(IOS_FEATURE_LIBDIR)/libstorage.a: $(IOS_STORAGE_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+ifeq ($(NS_BOX3D_PRESENT),)
+$(IOS_FEATURE_LIBDIR)/libdynamic.a: box3d
+	$(MAKE) $@
+else
+$(IOS_FEATURE_LIBDIR)/libdynamic.a: $(IOS_DYNAMIC_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+endif
+ifeq ($(NS_COMPRESS_PRESENT),)
+$(IOS_FEATURE_LIBDIR)/libcompress.a: compress_deps
+	$(MAKE) $@
+else
+$(IOS_FEATURE_LIBDIR)/libcompress.a: $(IOS_COMPRESS_OBJS)
+	$(APPLE_LIBTOOL) -static -o $@ $^
+endif
 
 # Clean only Apple artifacts
 ns_apple_clean:

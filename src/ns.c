@@ -3614,10 +3614,10 @@ void ns_exec_project(ns_str path) {
         linked = ns_project_link_all(root, in.source, in.filename, false, ns_null, &external_modules);
     }
 
-    // A linked target must keep the same execution model in its generated IDE
-    // project as it has under `ns run`: delegate to `ns build` instead of
-    // embedding the tree-walking evaluator in an Apple application target.
-    ns_bool host_build = cli_project || selection.link;
+    // `link` controls how `ns run` launches a native target. An IDE app still
+    // embeds the linked source so Xcode can produce its portable Apple targets;
+    // only a CLI or an unavailable embedded module needs the host toolchain.
+    ns_bool host_build = cli_project;
     if (kind == NS_PROJECT_APP) {
         for (i32 i = 0, l = ns_array_length(external_modules); i < l; i++) {
             if (!ns_project_module_embeddable(external_modules[i])) host_build = true;

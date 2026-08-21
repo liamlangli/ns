@@ -80,6 +80,20 @@ NS_DYNAMIC_DYLIB = $(NS_BINDIR)/dynamic$(NS_DYLIB_SUFFIX)
 NS_COMPRESS_DYLIB = $(NS_BINDIR)/compress$(NS_DYLIB_SUFFIX)
 NS_STORAGE_DYLIB = $(NS_BINDIR)/storage$(NS_DYLIB_SUFFIX)
 
+NS_IO_STATIC = $(NS_BINDIR)/libio.a
+NS_OS_STATIC = $(NS_BINDIR)/libos.a
+NS_NET_STATIC = $(NS_BINDIR)/libnet.a
+NS_HTTP_STATIC = $(NS_BINDIR)/libhttp.a
+NS_WASM_DEV_STATIC = $(NS_BINDIR)/libwasm_dev.a
+NS_TERM_STATIC = $(NS_BINDIR)/libterm.a
+NS_VIEW_STATIC = $(NS_BINDIR)/libview.a
+NS_GPU_STATIC = $(NS_BINDIR)/libgpu.a
+NS_UI_STATIC = $(NS_BINDIR)/libui.a
+NS_AUDIO_STATIC = $(NS_BINDIR)/libaudio.a
+NS_DYNAMIC_STATIC = $(NS_BINDIR)/libdynamic.a
+NS_COMPRESS_STATIC = $(NS_BINDIR)/libcompress.a
+NS_STORAGE_STATIC = $(NS_BINDIR)/libstorage.a
+
 NS_IO_OBJS = $(NS_BINDIR)/lib/io.o
 NS_OS_OBJS = $(NS_BINDIR)/lib/os.o
 NS_NET_OBJS = $(NS_BINDIR)/lib/net.o
@@ -141,13 +155,31 @@ NS_STD_SHARED = \
 	$(NS_COMPRESS_DYLIB) \
 	$(NS_STORAGE_DYLIB)
 
+NS_STD_STATIC = \
+	$(NS_IO_STATIC) \
+	$(NS_OS_STATIC) \
+	$(NS_NET_STATIC) \
+	$(NS_HTTP_STATIC) \
+	$(NS_WASM_DEV_STATIC) \
+	$(NS_TERM_STATIC) \
+	$(NS_GPU_STATIC) \
+	$(NS_VIEW_STATIC) \
+	$(NS_UI_STATIC) \
+	$(NS_DYNAMIC_STATIC) \
+	$(NS_COMPRESS_STATIC) \
+	$(NS_STORAGE_STATIC)
+
 ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_STD_SHARED += $(NS_AUDIO_DYLIB)
+	NS_STD_STATIC += $(NS_AUDIO_STATIC)
 endif
 
-std: $(NS_STD_SHARED)
+std: $(NS_STD_SHARED) $(NS_STD_STATIC)
 
-shared: std
+shared: $(NS_STD_SHARED)
+
+.PHONY: static
+static: $(NS_STD_STATIC)
 
 .PHONY: box3d
 box3d:
@@ -217,12 +249,43 @@ $(NS_AUDIO_DYLIB): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
 $(NS_STORAGE_DYLIB): $(NS_STORAGE_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_STORAGE_DYLIB_DEPS)
 
+$(NS_IO_STATIC): $(NS_IO_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_OS_STATIC): $(NS_OS_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_NET_STATIC): $(NS_NET_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_HTTP_STATIC): $(NS_HTTP_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_WASM_DEV_STATIC): $(NS_WASM_DEV_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_TERM_STATIC): $(NS_TERM_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_GPU_STATIC): $(NS_GPU_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_VIEW_STATIC): $(NS_VIEW_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_UI_STATIC): $(NS_UI_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_AUDIO_STATIC): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+$(NS_STORAGE_STATIC): $(NS_STORAGE_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
+
 ifeq ($(NS_BOX3D_PRESENT),)
 $(NS_DYNAMIC_DYLIB): box3d | $(NS_BINDIR)
 	$(MAKE) $@
 else
 $(NS_DYNAMIC_DYLIB): $(NS_DYNAMIC_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_DYNAMIC_OBJS) -o $@ $(NS_DYLIB_DEPS)
+endif
+
+ifeq ($(NS_BOX3D_PRESENT),)
+$(NS_DYNAMIC_STATIC): box3d | $(NS_BINDIR)
+	$(MAKE) $@
+else
+$(NS_DYNAMIC_STATIC): $(NS_DYNAMIC_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
 endif
 
 # The source wildcards above are expanded before the download runs, so the first
@@ -233,4 +296,12 @@ $(NS_COMPRESS_DYLIB): compress_deps | $(NS_BINDIR)
 else
 $(NS_COMPRESS_DYLIB): $(NS_COMPRESS_OBJS) | $(NS_BINDIR)
 	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_COMPRESS_OBJS) -o $@ $(NS_DYLIB_DEPS)
+endif
+
+ifeq ($(NS_COMPRESS_PRESENT),)
+$(NS_COMPRESS_STATIC): compress_deps | $(NS_BINDIR)
+	$(MAKE) $@
+else
+$(NS_COMPRESS_STATIC): $(NS_COMPRESS_OBJS) | $(NS_BINDIR)
+	$(NS_AR) rcs $@ $^
 endif

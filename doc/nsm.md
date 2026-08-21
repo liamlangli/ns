@@ -161,8 +161,9 @@ static library side by side:
 single target only, so name the target when overriding the output path.
 `ns project` generates the IDE project of the default target; a `cli` target
 gets host build/test targets rather than platform application targets. An app
-target with `link = true` does the same, so its Xcode build uses the native
-compiler just like `ns run` instead of embedding the evaluator.
+target still gets the platform application targets when it sets `link = true`;
+that setting controls `ns run`, while the generated Apple apps embed the linked
+source.
 
 A bare word selects a target: `ns run web`. An argument that looks like a path
 stays a path, so `ns run ./web`, `ns run src/web_main.ns` and any argument
@@ -267,11 +268,6 @@ output and diagnostics appear in the Xcode console. Generated Apple apps embed
 are not available; generation falls back to host build/test targets instead of
 silently producing a broken app.
 
-When the selected app target sets `link = true`, Xcode also gets host
-build/test targets. Its Build action delegates to `ns build`, preserving the
-manifest's native-link execution model rather than generating the embedded
-evaluator targets.
-
 The generated iOS target declares the orientations the manifest `orientation`
 key names, for both the phone and the tablet idiom. An app that declares
 `orientation = ["landscape_left", "landscape_right"]` therefore never rotates
@@ -296,6 +292,14 @@ Library manifests similarly produce `NS Build` and `NS Test` utility targets on
 Darwin. They do not create iOS or visionOS library artifacts; portable native
 library output remains dependent on a stable NS ABI and the required object and
 archive backends.
+
+The toolchain's native feature modules are also available as static archives.
+`make static` writes one host archive per module to `bin/lib<module>.a`, beside
+the dynamic modules used by the interpreter. On Darwin, `make ios_static`
+writes the core runtime and the feature archives for an arm64 iOS device below
+`bin/apple/ios-arm64/`. These archives contain module implementations only;
+the final application still links the Apple frameworks required by the modules
+it selects, and each module's documented platform restrictions still apply.
 
 Generated IDE skeletons remain editable. Later `ns project` runs preserve the
 Xcode `project.pbxproj`, Visual Studio solution, and project files unless a
