@@ -8,8 +8,8 @@ compile_for_sdk() {
     if ! sdk_path=$(xcrun --sdk "$sdk" --show-sdk-path 2>/dev/null); then
         return
     fi
-    xcrun --sdk "$sdk" clang -fsyntax-only -fobjc-arc -Wall -Wextra \
-        -Wunused-result -Werror -target "$target" -isysroot "$sdk_path" \
+    xcrun --sdk "$sdk" clang -fsyntax-only -fobjc-arc -fmodules -Wall -Wextra \
+        -Wambiguous-macro -Wunused-result -Werror -target "$target" -isysroot "$sdk_path" \
         -DNS_DARWIN -Iinclude -Iinclude/asm -Iinclude/os -Ilib/include \
         lib/src/audio.apple.m
 }

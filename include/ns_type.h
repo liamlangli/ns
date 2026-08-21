@@ -25,7 +25,7 @@
     #define false 0
 #endif
 
-#ifndef nil
+#if !defined(__OBJC__) && !defined(nil)
     #define nil ns_null
 #endif
 
