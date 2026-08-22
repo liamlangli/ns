@@ -6,10 +6,18 @@ use view
 use gpu
 use ui
 use os
+use compress
 
 fn FONT() i32 { return 1 }
 fn TITLE_PX() f64 { return 14.0 }
 fn PX() f64 { return 11.0 }
+fn MAX_TEXT_PROFILE_BYTES() i64 { return 67108864 }
+fn LOAD_EVENTS_PER_FRAME() i32 { return 262144 }
+fn LOAD_STAGE_READ() i32 { return 1 }
+fn LOAD_STAGE_INFLATE() i32 { return 2 }
+fn LOAD_STAGE_TABLES() i32 { return 3 }
+fn LOAD_STAGE_EVENTS() i32 { return 4 }
+fn LOAD_STAGE_DONE() i32 { return 5 }
 
 let g_side_w: f64 = 260.0
 let g_side_drag_w: f64 = 260.0
@@ -29,13 +37,37 @@ let g_ffi_pct = ""
 let g_scope_calls = ""
 let g_scope_self = ""
 let g_timeline_events = ""
+let g_timeline_skipped = ""
 let g_flame_frames = ""
+let g_timeline_blob = ""
+let g_timeline_blob_codec = ""
 let g_status = "No profile loaded."
 let g_mode = 0
+let g_profile_loaded = false
 let g_events_loaded = false
 let g_frame_count: i32 = 0
 let g_load_profile_pending = false
 let g_open_profile_pending = false
+// Progressive timeline blob load (v6). All Time prep finishes here so
+// Flame → Time is only a mode flip.
+let g_loading = false
+let g_load_stage = 0
+let g_load_frac: f64 = 0.0
+let g_load_msg = ""
+let g_blob_path = ""
+let g_blob_raw = [u8](16)
+let g_blob_raw_len = 0
+let g_blob_data = [u8](16)
+let g_blob_data_len = 0
+let g_blob_pos = 0
+let g_blob_event_total = 0
+let g_blob_event_done = 0
+let g_blob_sym_count = 0
+let g_blob_thread_name = [str](64)
+let g_blob_thread_count = 0
+let g_blob_events_off = 0
+let g_ov_rebuild_pending = false
+let g_text_events_pending = false
 let g_hovered = -1
 let g_selected = -1
 let g_selected_ev = -1
@@ -80,7 +112,13 @@ let g_ev_self = [f64](4096)
 let g_ev_depth = [i32](4096)
 let g_ev_calls = [i32](4096)
 let g_ev_lane = [i32](4096)
-let g_ev_name = [i32: str](4096)
+let g_ev_sym = [i32](4096)
+let g_ev_color = [u32](4096)
+// Shared string pool for event labels. Samples keep only a pool index.
+// Plain [str] array (not a dict) so dense indices stay cheap and never rehash.
+let g_str_pool = [str](256)
+let g_str_pool_count = 0
+let g_sym_color = [u32](256)
 let g_ev_count = 0
 let g_ev_raw = 0
 let g_ev_max_dur: f64 = 0.0
@@ -95,7 +133,7 @@ let g_t1: f64 = 1.0
 let g_drag_mode = 0
 let g_ev_max_depth = 0
 // Time-view lanes keyed by thread name (v5 profiles).
-let g_lane_name = [i32: str](64)
+let g_lane_name = [str](64)
 let g_lane_max_depth = [i32](64)
 let g_lane_y0 = [f64](64)
 let g_lane_h = [f64](64)
@@ -251,7 +289,7 @@ fn timeline_try_draw_event(r: ref ui_renderer, v: ref view, ev: i32, x: f64, w: 
     let draw_x = max_f(bx0, x)
     let draw_r = min_f(bx1, x + w)
     let draw_w = max_f(1.0, draw_r - draw_x)
-    let color = name_color(g_ev_name[ev])
+    let color = g_ev_color[ev]
     let selected = ev == g_selected_ev
     if hit(v, draw_x, by, draw_w, bh) {
         g_tl_hovered = ev
@@ -269,8 +307,11 @@ fn timeline_try_draw_event(r: ref ui_renderer, v: ref view, ev: i32, x: f64, w: 
             ui_fill_rect(r, draw_x, by, draw_w, bh, color, 0.0)
         }
     }
-    let label = `{g_ev_name[ev]} {g_ev_calls[ev]}x`
-    draw_bar_label(r, bx0, by, max_f(1.0, bx1 - bx0), bh, x, w, label)
+    // Skip label formatting for skinny bars - backtick strings allocate and the
+    // native heap never frees, so per-bar labels across 158k events are fatal.
+    if draw_w >= 28.0 {
+        draw_bar_label(r, bx0, by, max_f(1.0, bx1 - bx0), bh, x, w, ev_name(ev))
+    }
     g_tl_drawn = g_tl_drawn + 1
     return true
 }
@@ -311,6 +352,14 @@ fn ensure_event_capacity(need: i32) {
     }
     loop next < need {
         next = next * 2
+        // Guard against runaway growth on a corrupt blob header.
+        if next >= 4194304 {
+            next = 4194304
+            break
+        }
+    }
+    if need > next {
+        return
     }
     let ns = [f64](next)
     let nd = [f64](next)
@@ -318,8 +367,8 @@ fn ensure_event_capacity(need: i32) {
     let ndepth = [i32](next)
     let ncalls = [i32](next)
     let nlane = [i32](next)
-    // Open-addressed dict needs spare slots; allocate 2x live entries.
-    let nname = [i32: str](next * 2)
+    let nsym = [i32](next)
+    let ncolor = [u32](next)
     let i = 0
     loop i < g_ev_count {
         ns[i] = g_ev_start[i]
@@ -328,7 +377,8 @@ fn ensure_event_capacity(need: i32) {
         ndepth[i] = g_ev_depth[i]
         ncalls[i] = g_ev_calls[i]
         nlane[i] = g_ev_lane[i]
-        nname[i] = g_ev_name[i]
+        nsym[i] = g_ev_sym[i]
+        ncolor[i] = g_ev_color[i]
         i = i + 1
     }
     g_ev_start = ns
@@ -337,7 +387,61 @@ fn ensure_event_capacity(need: i32) {
     g_ev_depth = ndepth
     g_ev_calls = ncalls
     g_ev_lane = nlane
-    g_ev_name = nname
+    g_ev_sym = nsym
+    g_ev_color = ncolor
+}
+
+fn ensure_str_pool_capacity(need: i32) {
+    if need <= g_str_pool.len {
+        return
+    }
+    let next = g_str_pool.len
+    if next < 256 {
+        next = 256
+    }
+    loop next < need {
+        next = next * 2
+        if next >= 65536 {
+            next = 65536
+            break
+        }
+    }
+    if need > next {
+        return
+    }
+    let nname = [str](next)
+    let i = 0
+    loop i < g_str_pool_count {
+        nname[i] = g_str_pool[i]
+        i = i + 1
+    }
+    g_str_pool = nname
+}
+
+fn str_pool_intern(name: str) i32 {
+    let i = 0
+    loop i < g_str_pool_count {
+        if g_str_pool[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    ensure_str_pool_capacity(g_str_pool_count + 1)
+    let id = g_str_pool_count
+    g_str_pool[id] = name
+    g_str_pool_count = g_str_pool_count + 1
+    return id
+}
+
+fn ev_name(ev: i32) str {
+    let sid = g_ev_sym[ev]
+    if sid < 0 {
+        return "?"
+    }
+    if sid >= g_str_pool_count {
+        return "?"
+    }
+    return g_str_pool[sid]
 }
 
 fn ensure_lane_capacity(need: i32) {
@@ -351,7 +455,7 @@ fn ensure_lane_capacity(need: i32) {
     loop next < need {
         next = next * 2
     }
-    let nname = [i32: str](next * 2)
+    let nname = [str](next)
     let ndepth = [i32](next)
     let ny0 = [f64](next)
     let nh = [f64](next)
@@ -585,18 +689,12 @@ fn is_digit_word(s: str) bool {
     return true
 }
 
-fn name_color(name: str) u32 {
-    let h = 2166136261
-    let i = 0
-    loop i < name.len {
-        h = h ^ ((name[i] as i32) & 255)
-        h = h * 16777619
-        i = i + 1
+fn palette_color(h: i32) u32 {
+    let x = h
+    if x < 0 {
+        x = 0 - x
     }
-    if h < 0 {
-        h = 0 - h
-    }
-    let palette = h % 5
+    let palette = x % 5
     if palette == 0 {
         return ui_pack_color("#5fb3f0")
     }
@@ -612,6 +710,26 @@ fn name_color(name: str) u32 {
     return ui_pack_color("#f0bd5f")
 }
 
+fn name_color(name: str) u32 {
+    let h = 2166136261
+    let i = 0
+    loop i < name.len {
+        h = h ^ ((name[i] as i32) & 255)
+        h = h * 16777619
+        i = i + 1
+    }
+    return palette_color(h)
+}
+
+fn sym_color(sym: i32) u32 {
+    if sym >= 0 {
+        if sym < g_str_pool_count {
+            return g_sym_color[sym]
+        }
+    }
+    return palette_color(sym)
+}
+
 fn format_known(s: str) bool {
     if s == "ns-profile-v1" {
         return true
@@ -625,18 +743,31 @@ fn format_known(s: str) bool {
     if s == "ns-profile-v4" {
         return true
     }
-    return s == "ns-profile-v5"
+    if s == "ns-profile-v5" {
+        return true
+    }
+    return s == "ns-profile-v6"
 }
 
 fn format_has_self(s: str) bool {
     if s == "ns-profile-v4" {
         return true
     }
-    return s == "ns-profile-v5"
+    if s == "ns-profile-v5" {
+        return true
+    }
+    return s == "ns-profile-v6"
 }
 
 fn format_has_thread(s: str) bool {
-    return s == "ns-profile-v5"
+    if s == "ns-profile-v5" {
+        return true
+    }
+    return s == "ns-profile-v6"
+}
+
+fn format_has_blob(s: str) bool {
+    return s == "ns-profile-v6"
 }
 
 fn find_child(parent: i32, name: str) i32 {
@@ -729,11 +860,12 @@ fn record_flame_line(line: str) {
 fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str, thread: str) {
     g_ev_raw = g_ev_raw + 1
     let lane = lane_find_or_add(thread)
+    let sym = str_pool_intern(name)
     if g_ev_count > 0 {
         let last = g_ev_count - 1
         if g_ev_lane[last] == lane {
             if g_ev_depth[last] == depth {
-                if g_ev_name[last] == name {
+                if g_ev_sym[last] == sym {
                     let end = g_ev_start[last] + g_ev_duration[last]
                     if start <= end + 0.05 {
                         let new_end = start + dur
@@ -774,7 +906,8 @@ fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str, thread:
     g_ev_depth[i] = depth
     g_ev_calls[i] = 1
     g_ev_lane[i] = lane
-    g_ev_name[i] = name
+    g_ev_sym[i] = sym
+    g_ev_color[i] = name_color(name)
     g_ev_count = g_ev_count + 1
     if dur > g_ev_max_dur {
         g_ev_max_dur = dur
@@ -1141,6 +1274,10 @@ fn parse_header(src: str) {
         if v.len > 0 {
             g_timeline_events = v
         }
+        v = header_value(line, "timeline_skipped")
+        if v.len > 0 {
+            g_timeline_skipped = v
+        }
         v = header_value(line, "flame_frames")
         if v.len > 0 {
             g_flame_frames = v
@@ -1148,6 +1285,14 @@ fn parse_header(src: str) {
         v = header_value(line, "threads")
         if v.len > 0 {
             g_threads_header = v
+        }
+        v = header_value(line, "timeline_blob")
+        if v.len > 0 {
+            g_timeline_blob = v
+        }
+        v = header_value(line, "timeline_blob_codec")
+        if v.len > 0 {
+            g_timeline_blob_codec = v
         }
         if i < src.len {
             i = i + 1
@@ -1165,6 +1310,111 @@ fn read_file(path: str) str {
     return data
 }
 
+fn profile_dirname(path: str) str {
+    let i = path.len - 1
+    loop i >= 0 {
+        let c = (path[i] as i32) & 255
+        if c == 47 {
+            return substr(path, 0, i)
+        }
+        if c == 92 {
+            return substr(path, 0, i)
+        }
+        i = i - 1
+    }
+    return ""
+}
+
+fn blob_path_for(profile_path: str) str {
+    if g_timeline_blob.len == 0 {
+        return ""
+    }
+    let dir = profile_dirname(profile_path)
+    if dir.len == 0 {
+        return g_timeline_blob
+    }
+    return `{dir}/{g_timeline_blob}`
+}
+
+fn read_u16_le(buf: [u8], off: i32) i32 {
+    let lo = (buf[off] as i32) & 255
+    let hi = (buf[off + 1] as i32) & 255
+    return lo + hi * 256
+}
+
+fn read_u32_le(buf: [u8], off: i32) i32 {
+    let b0 = (buf[off] as i32) & 255
+    let b1 = (buf[off + 1] as i32) & 255
+    let b2 = (buf[off + 2] as i32) & 255
+    let b3 = (buf[off + 3] as i32) & 255
+    return b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
+}
+
+fn read_i32_le(buf: [u8], off: i32) i32 {
+    return read_u32_le(buf, off)
+}
+
+fn us_to_ms(us: i32) f64 {
+    return us as f64 * 0.001
+}
+
+fn bytes_to_str(buf: [u8], off: i32, len: i32) str {
+    if len <= 0 {
+        return ""
+    }
+    // Cap to keep a corrupt length from O(n^2)-strcating into gigabytes.
+    // Native heap never frees, so quadratic strcat is fatal.
+    if len > 512 {
+        len = 512
+    }
+    if off < 0 {
+        return ""
+    }
+    if off + len > buf.len {
+        return ""
+    }
+    // Build in 16-byte chunks so strcat count is O(len/16), not O(len).
+    let alphabet = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+    let out = ""
+    let chunk = ""
+    let i = 0
+    loop i < len {
+        let c = (buf[off + i] as i32) & 255
+        if c >= 32 {
+            if c <= 126 {
+                chunk = chunk + substr(alphabet, c - 32, 1)
+            }
+        }
+        i = i + 1
+        if chunk.len >= 16 {
+            out = out + chunk
+            chunk = ""
+        }
+    }
+    if chunk.len > 0 {
+        out = out + chunk
+    }
+    return out
+}
+
+fn clear_blob_load() {
+    g_loading = false
+    g_load_stage = 0
+    g_load_frac = 0.0
+    g_load_msg = ""
+    g_blob_path = ""
+    g_blob_raw_len = 0
+    g_blob_data_len = 0
+    g_blob_pos = 0
+    g_blob_event_total = 0
+    g_blob_event_done = 0
+    g_blob_sym_count = 0
+    g_blob_thread_count = 0
+    g_blob_events_off = 0
+    g_ov_rebuild_pending = false
+    g_text_events_pending = false
+}
+
 fn clear_profile() {
     g_raw = ""
     g_format = ""
@@ -1176,7 +1426,10 @@ fn clear_profile() {
     g_scope_calls = ""
     g_scope_self = ""
     g_timeline_events = ""
+    g_timeline_skipped = ""
     g_flame_frames = ""
+    g_timeline_blob = ""
+    g_timeline_blob_codec = ""
     g_threads_header = ""
     g_node_count = 0
     g_hot_count = 0
@@ -1186,6 +1439,7 @@ fn clear_profile() {
     g_long_count = 0
     g_lane_count = 0
     g_lane_content_h = 0.0
+    g_str_pool_count = 0
     g_time_origin = 0.0
     g_time_end = 0.0
     g_t0 = 0.0
@@ -1197,6 +1451,9 @@ fn clear_profile() {
     g_fx0 = 0.0
     g_fx1 = 1.0
     g_scroll = 0.0
+    g_profile_loaded = false
+    g_events_loaded = false
+    clear_blob_load()
     cam_snap_time()
     cam_snap_flame()
     cam_snap_scroll()
@@ -1274,9 +1531,13 @@ fn fit_flame_view() {
     g_cam_coasting = false
 }
 
-fn cam_follow_alpha() f64 { return 0.55 }
-fn cam_vel_damp() f64 { return 0.78 }
+fn cam_follow_alpha() f64 { return 0.78 }
+fn cam_scroll_follow_alpha() f64 { return 1.0 }
+fn cam_vel_damp() f64 { return 0.88 }
 fn cam_vel_stop() f64 { return 0.00008 }
+fn scroll_drag_gain() f64 { return 3.0 }
+fn wheel_zoom_out() f64 { return 1.35 }
+fn wheel_zoom_in() f64 { return 0.72 }
 
 fn cam_snap_time() {
     g_cam_t0 = g_t0
@@ -1502,7 +1763,9 @@ fn tick_camera(r: ref ui_renderer) {
     g_t1 = g_t1 + (g_cam_t1 - g_t1) * a
     g_fx0 = g_fx0 + (g_cam_fx0 - g_fx0) * a
     g_fx1 = g_fx1 + (g_cam_fx1 - g_fx1) * a
-    g_scroll = g_scroll + (g_cam_scroll - g_scroll) * a
+    // Vertical lane scroll snaps 1:1 so deep stacks don't feel laggy.
+    let sa = cam_scroll_follow_alpha()
+    g_scroll = g_scroll + (g_cam_scroll - g_scroll) * sa
     clamp_view()
     clamp_flame_view()
     if g_scroll < 0.0 {
@@ -1572,49 +1835,495 @@ fn mark_drag_moved(dx: f64, dy: f64) {
 fn default_profile_path() str {
     let cwd = os_cwd()
     let binned = `{cwd}/bin/ns.profile`
-    if read_file(binned).len > 0 {
+    if os_file_size(binned) >= 0 {
         return binned
     }
     let legacy = `{cwd}/ns.profile`
-    if read_file(legacy).len > 0 {
+    if os_file_size(legacy) >= 0 {
         return legacy
     }
-    if read_file("bin/ns.profile").len > 0 {
+    if os_file_size("bin/ns.profile") >= 0 {
         return "bin/ns.profile"
     }
     return "ns.profile"
 }
 
+fn ensure_blob_thread_capacity(need: i32) {
+    if need <= g_blob_thread_name.len {
+        return
+    }
+    let next = g_blob_thread_name.len
+    if next < 64 {
+        next = 64
+    }
+    loop next < need {
+        next = next * 2
+    }
+    let nname = [str](next)
+    let i = 0
+    loop i < g_blob_thread_count {
+        nname[i] = g_blob_thread_name[i]
+        i = i + 1
+    }
+    g_blob_thread_name = nname
+}
+
+fn ensure_sym_color_capacity(need: i32) {
+    if need <= g_sym_color.len {
+        return
+    }
+    let next = g_sym_color.len
+    if next < 256 {
+        next = 256
+    }
+    loop next < need {
+        next = next * 2
+        if next >= 65536 {
+            next = 65536
+            break
+        }
+    }
+    if need > next {
+        return
+    }
+    let nc = [u32](next)
+    let i = 0
+    loop i < g_str_pool_count {
+        nc[i] = g_sym_color[i]
+        i = i + 1
+    }
+    g_sym_color = nc
+}
+
+fn push_blob_event_fast(start: f64, dur: f64, self_ms: f64, depth: i32, sym: i32, lane: i32) {
+    // Blob events are already coalesced by the writer; skip viewer-side merge.
+    // `sym` is already a string-pool index (blob symbol table maps 1:1).
+    if g_ev_count >= g_ev_start.len {
+        ensure_event_capacity(g_ev_count + 1)
+        if g_ev_count >= g_ev_start.len {
+            return
+        }
+    }
+    let i = g_ev_count
+    g_ev_start[i] = start
+    g_ev_duration[i] = dur
+    g_ev_self[i] = self_ms
+    g_ev_depth[i] = depth
+    g_ev_calls[i] = 1
+    g_ev_lane[i] = lane
+    g_ev_sym[i] = sym
+    g_ev_color[i] = sym_color(sym)
+    g_ev_count = g_ev_count + 1
+    g_ev_raw = g_ev_raw + 1
+    if dur > g_ev_max_dur {
+        g_ev_max_dur = dur
+    }
+    if dur >= long_span_min_ms() {
+        push_long_span(i)
+    }
+    if lane >= 0 {
+        if lane < g_lane_count {
+            if depth > g_lane_max_depth[lane] {
+                g_lane_max_depth[lane] = depth
+            }
+        }
+    }
+    if g_ev_count == 1 {
+        g_time_origin = start
+        g_ev_max_depth = depth
+    } else {
+        if start < g_time_origin {
+            g_time_origin = start
+        }
+        if depth > g_ev_max_depth {
+            g_ev_max_depth = depth
+        }
+    }
+    let end = start + dur
+    if end > g_time_end {
+        g_time_end = end
+    }
+}
+
+fn finish_blob_load() {
+    g_loading = false
+    g_load_stage = LOAD_STAGE_DONE()
+    g_load_frac = 1.0
+    g_events_loaded = true
+    g_blob_raw_len = 0
+    g_blob_data_len = 0
+    g_blob_raw = [u8](16)
+    g_blob_data = [u8](16)
+    // Flame tables already live in g_node_*; drop the text report now that
+    // timeline samples are in SoA arrays. Native heap never frees, but this
+    // keeps later format strings from retaining a giant live root.
+    if format_has_blob(g_format) {
+        g_raw = ""
+    }
+    rebuild_lane_layout(18.0)
+    fit_time_view()
+    invalidate_overview_batch()
+    g_ov_rebuild_pending = true
+    g_status = "Timeline ready."
+    g_load_msg = ""
+}
+
+fn parse_blob_tables() bool {
+    if g_blob_data_len < 24 {
+        return false
+    }
+    let magic = read_u32_le(g_blob_data, 0)
+    // 'NSTL' little-endian = 0x4C54534E = 1280594766
+    if magic != 1280594766 {
+        return false
+    }
+    let version = read_u32_le(g_blob_data, 4)
+    if version != 1 {
+        return false
+    }
+    let thread_count = read_u32_le(g_blob_data, 12)
+    let sym_count = read_u32_le(g_blob_data, 16)
+    let event_count = read_u32_le(g_blob_data, 20)
+    if thread_count < 0 {
+        return false
+    }
+    if sym_count < 0 {
+        return false
+    }
+    if event_count < 0 {
+        return false
+    }
+    if event_count > 2000000 {
+        return false
+    }
+    if thread_count > 256 {
+        return false
+    }
+    let pos = 24
+    ensure_blob_thread_capacity(thread_count)
+    g_blob_thread_count = 0
+    g_lane_count = 0
+    let ti = 0
+    loop ti < thread_count {
+        if pos + 2 > g_blob_data_len {
+            return false
+        }
+        let nlen = read_u16_le(g_blob_data, pos)
+        pos = pos + 2
+        if pos + nlen > g_blob_data_len {
+            return false
+        }
+        let name = bytes_to_str(g_blob_data, pos, nlen)
+        pos = pos + nlen
+        if name.len == 0 {
+            name = "main"
+        }
+        g_blob_thread_name[ti] = name
+        g_blob_thread_count = g_blob_thread_count + 1
+        lane_find_or_add(name)
+        ti = ti + 1
+    }
+    // Blob symbol table becomes the viewer string pool 1:1, so each sample
+    // stores only a u16 pool index instead of a duplicated label.
+    if sym_count > 65536 {
+        return false
+    }
+    ensure_str_pool_capacity(sym_count)
+    ensure_sym_color_capacity(sym_count)
+    g_str_pool_count = 0
+    g_blob_sym_count = 0
+    let si = 0
+    loop si < sym_count {
+        if pos + 5 > g_blob_data_len {
+            return false
+        }
+        let kind = (g_blob_data[pos] as i32) & 255
+        pos = pos + 1
+        let lib_len = read_u16_le(g_blob_data, pos)
+        pos = pos + 2
+        let name_len = read_u16_le(g_blob_data, pos)
+        pos = pos + 2
+        if lib_len > 512 {
+            return false
+        }
+        if name_len > 512 {
+            return false
+        }
+        if pos + lib_len + name_len > g_blob_data_len {
+            return false
+        }
+        let lib = bytes_to_str(g_blob_data, pos, lib_len)
+        pos = pos + lib_len
+        let name = bytes_to_str(g_blob_data, pos, name_len)
+        pos = pos + name_len
+        let label = name
+        if lib.len > 0 {
+            label = `{lib}::{name}`
+        }
+        if kind == 1 {
+            // ffi marker kept in name only; label already includes lib
+        }
+        g_str_pool[si] = label
+        g_sym_color[si] = name_color(label)
+        g_str_pool_count = g_str_pool_count + 1
+        g_blob_sym_count = g_blob_sym_count + 1
+        si = si + 1
+    }
+    g_blob_events_off = pos
+    g_blob_event_total = event_count
+    g_blob_event_done = 0
+    g_blob_pos = pos
+    if event_count > 0 {
+        ensure_event_capacity(event_count)
+    }
+    g_ev_count = 0
+    g_ev_raw = 0
+    g_ev_max_dur = 0.0
+    g_long_count = 0
+    g_time_origin = 0.0
+    g_time_end = 0.0
+    return true
+}
+
+fn begin_blob_load(profile_path: str) bool {
+    clear_blob_load()
+    let path = blob_path_for(profile_path)
+    if path.len == 0 {
+        return false
+    }
+    let size = os_file_size(path)
+    if size <= 0 {
+        g_status = "Timeline blob missing."
+        return false
+    }
+    if size > 2147483647 {
+        g_status = "Timeline blob too large."
+        return false
+    }
+    g_blob_path = path
+    g_loading = true
+    g_load_stage = LOAD_STAGE_READ()
+    g_load_frac = 0.01
+    g_load_msg = "Reading timeline..."
+    g_status = g_load_msg
+    return true
+}
+
+fn begin_text_events_load() {
+    g_text_events_pending = true
+    g_loading = true
+    g_load_stage = LOAD_STAGE_EVENTS()
+    g_load_frac = 0.1
+    g_load_msg = "Parsing timeline..."
+    g_status = g_load_msg
+}
+
+fn tick_blob_load() {
+    if g_loading == false {
+        return
+    }
+
+    if g_text_events_pending {
+        g_text_events_pending = false
+        g_load_msg = "Parsing timeline..."
+        g_status = g_load_msg
+        g_load_frac = 0.4
+        let want = parse_i32(g_timeline_events)
+        if want > 0 {
+            ensure_event_capacity(want)
+        }
+        parse_profile_body(g_raw, true)
+        g_events_loaded = true
+        rebuild_lane_layout(18.0)
+        fit_time_view()
+        invalidate_overview_batch()
+        g_ov_rebuild_pending = true
+        g_loading = false
+        g_load_stage = LOAD_STAGE_DONE()
+        g_load_frac = 1.0
+        g_status = `Loaded {g_ev_count} timeline spans.`
+        g_load_msg = ""
+        return
+    }
+
+    if g_load_stage == LOAD_STAGE_READ() {
+        g_load_msg = "Reading timeline..."
+        g_status = g_load_msg
+        let size = os_file_size(g_blob_path)
+        let cap = size as i32
+        g_blob_raw = [u8](cap)
+        let got = os_read_file_bytes(g_blob_path, g_blob_raw, cap)
+        if got <= 0 {
+            g_status = "Failed to read timeline blob."
+            clear_blob_load()
+            return
+        }
+        g_blob_raw_len = got as i32
+        g_load_stage = LOAD_STAGE_INFLATE()
+        g_load_frac = 0.08
+        g_load_msg = "Decompressing timeline..."
+        g_status = g_load_msg
+        return
+    }
+
+    if g_load_stage == LOAD_STAGE_INFLATE() {
+        g_load_msg = "Decompressing timeline..."
+        g_status = g_load_msg
+        let codec = g_timeline_blob_codec
+        if codec == "zstd" {
+            let out_len = compress_zstd_decoded_size(g_blob_raw, g_blob_raw_len)
+            if out_len <= 0 {
+                g_status = "Bad zstd timeline blob."
+                clear_blob_load()
+                return
+            }
+            g_blob_data = [u8](out_len)
+            let decoded = compress_zstd_decode(g_blob_raw, g_blob_raw_len, g_blob_data, out_len)
+            if decoded <= 0 {
+                g_status = "Failed to decompress timeline."
+                clear_blob_load()
+                return
+            }
+            g_blob_data_len = decoded
+            g_blob_raw_len = 0
+            g_blob_raw = [u8](16)
+        } else {
+            g_blob_data = g_blob_raw
+            g_blob_data_len = g_blob_raw_len
+            g_blob_raw_len = 0
+        }
+        g_load_stage = LOAD_STAGE_TABLES()
+        g_load_frac = 0.15
+        g_load_msg = "Indexing symbols..."
+        g_status = g_load_msg
+        return
+    }
+
+    if g_load_stage == LOAD_STAGE_TABLES() {
+        if parse_blob_tables() == false {
+            g_status = "Invalid timeline blob."
+            clear_blob_load()
+            return
+        }
+        g_load_stage = LOAD_STAGE_EVENTS()
+        g_load_frac = 0.2
+        g_load_msg = `Loading timeline 0/{g_blob_event_total}`
+        g_status = g_load_msg
+        return
+    }
+
+    if g_load_stage == LOAD_STAGE_EVENTS() {
+        if g_blob_event_total <= 0 {
+            finish_blob_load()
+            return
+        }
+        let budget = LOAD_EVENTS_PER_FRAME()
+        let n = 0
+        loop n < budget {
+            if g_blob_event_done >= g_blob_event_total {
+                break
+            }
+            let off = g_blob_events_off + g_blob_event_done * 20
+            if off + 20 > g_blob_data_len {
+                break
+            }
+            let depth = (g_blob_data[off + 1] as i32) & 255
+            let thread = read_u16_le(g_blob_data, off + 2)
+            let sym = read_u16_le(g_blob_data, off + 4)
+            let start_us = read_i32_le(g_blob_data, off + 8)
+            let dur_us = read_i32_le(g_blob_data, off + 12)
+            let self_us = read_i32_le(g_blob_data, off + 16)
+            let lane = 0
+            if thread >= 0 {
+                if thread < g_lane_count {
+                    lane = thread
+                }
+            }
+            let sid = 0
+            if sym >= 0 {
+                if sym < g_str_pool_count {
+                    sid = sym
+                }
+            }
+            push_blob_event_fast(us_to_ms(start_us), us_to_ms(dur_us), us_to_ms(self_us), depth, sid, lane)
+            g_blob_event_done = g_blob_event_done + 1
+            n = n + 1
+        }
+        if g_blob_event_total > 0 {
+            g_load_frac = 0.2 + 0.75 * (g_blob_event_done as f64 / g_blob_event_total as f64)
+        }
+        // Update the status string sparsely - backtick format allocates and
+        // the native heap never frees.
+        if g_blob_event_done % 65536 == 0 {
+            g_load_msg = `Loading timeline {g_blob_event_done}/{g_blob_event_total}`
+            g_status = g_load_msg
+        }
+        if g_blob_event_done >= g_blob_event_total {
+            finish_blob_load()
+        }
+        return
+    }
+}
+
 fn load_profile(path: str) {
+    clear_profile()
+    g_path = path
+    let size = os_file_size(path)
+    if size < 0 {
+        g_status = "Failed to read profile."
+        return
+    }
+    if size > MAX_TEXT_PROFILE_BYTES() {
+        g_status = "Profile text too large (use ns-profile-v6 blob)."
+        return
+    }
     let data = read_file(path)
     if data.len == 0 {
-        clear_profile()
-        g_path = path
         g_status = "Failed to read profile."
-    } else {
-        g_path = path
-        g_raw = data
-        parse_header(data)
-        parse_profile_body(data, false)
-        g_events_loaded = false
-        layout_flame()
-        g_t0 = 0.0
-        g_t1 = parse_f64(g_elapsed)
-        if g_t1 <= 0.0 {
-            g_t1 = 1.0
-        }
-        cam_snap_time()
-        if format_known(g_format) {
-            g_status = "Profile loaded."
-        } else {
-            g_status = "Loaded file is not an ns-profile."
-        }
+        return
+    }
+    g_raw = data
+    parse_header(data)
+    parse_profile_body(data, false)
+    g_events_loaded = false
+    layout_flame()
+    g_t0 = 0.0
+    g_t1 = parse_f64(g_elapsed)
+    if g_t1 <= 0.0 {
+        g_t1 = 1.0
+    }
+    cam_snap_time()
+    if format_known(g_format) == false {
+        g_status = "Loaded file is not an ns-profile."
         fit_flame_view()
-        g_drag_mode = 0
-        g_drag_moved = false
         g_mode = 0
         cam_stop()
-        select_default_detail()
+        return
+    }
+    fit_flame_view()
+    g_drag_mode = 0
+    g_drag_moved = false
+    g_mode = 0
+    g_profile_loaded = true
+    cam_stop()
+    select_default_detail()
+    if format_has_blob(g_format) {
+        if g_timeline_blob.len > 0 {
+            if begin_blob_load(path) {
+                g_status = "Loading timeline..."
+            } else {
+                g_status = "Profile loaded (timeline unavailable)."
+            }
+        } else {
+            g_status = "Profile loaded."
+        }
+    } else {
+        // Legacy text timelines: parse during the load progress phase too.
+        if parse_i32(g_timeline_events) > 0 {
+            begin_text_events_load()
+        } else {
+            g_status = "Profile loaded."
+        }
     }
 }
 
@@ -1891,7 +2600,7 @@ fn emit_overview_bars(r: ref ui_renderer, batch: i32, ox: f64, oy: f64, w: f64, 
         }
         let by = lane_y + lane_h * depth_frac
         let bh = max_f(2.0, lane_h * (1.0 - depth_frac))
-        let color = name_color(g_ev_name[i])
+        let color = g_ev_color[i]
         if batch > 0 {
             ui_rect_batch_add(r, batch, bx, by, bw, bh, color)
         } else {
@@ -1963,9 +2672,21 @@ fn zoom_time_at(mx: f64, x: f64, w: f64, scroll: f64) {
         ratio = 1.0
     }
     let focus = g_cam_t0 + use_span * ratio
-    let factor = 1.2
+    let factor = wheel_zoom_out()
     if scroll > 0.0 {
-        factor = 0.85
+        factor = wheel_zoom_in()
+    }
+    // Larger wheel ticks zoom further in one notch.
+    let mag = scroll
+    if mag < 0.0 {
+        mag = 0.0 - mag
+    }
+    if mag > 1.0 {
+        if scroll > 0.0 {
+            factor = factor * factor
+        } else {
+            factor = factor * factor
+        }
     }
     let next = use_span * factor
     let min_span = time_min_span()
@@ -1998,9 +2719,16 @@ fn zoom_flame_at(mx: f64, x: f64, w: f64, scroll: f64) {
         ratio = 1.0
     }
     let focus = g_cam_fx0 + use_span * ratio
-    let factor = 1.2
+    let factor = wheel_zoom_out()
     if scroll > 0.0 {
-        factor = 0.85
+        factor = wheel_zoom_in()
+    }
+    let mag = scroll
+    if mag < 0.0 {
+        mag = 0.0 - mag
+    }
+    if mag > 1.0 {
+        factor = factor * factor
     }
     let next = use_span * factor
     let min_span = flame_min_span()
@@ -2143,7 +2871,7 @@ fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     if g_mode == 1 {
         if g_selected_ev >= 0 {
             if g_selected_ev < g_ev_count {
-                draw_selected_header(r, v, x, y, w, "selected span", g_ev_name[g_selected_ev])
+                draw_selected_header(r, v, x, y, w, "selected span", ev_name(g_selected_ev))
                 let elapsed = parse_f64(g_elapsed)
                 if elapsed <= 0.0 {
                     elapsed = 1.0
@@ -2277,7 +3005,7 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
             let prev_scroll = g_cam_scroll
             // Absolute pan from press anchor; write camera targets with damping follow.
             cam_set_flame(g_drag_fx0 - dx * span / w, g_drag_fx0 - dx * span / w + span)
-            cam_set_scroll(g_drag_scroll - dy)
+            cam_set_scroll(g_drag_scroll - dy * scroll_drag_gain())
             cam_sample_vel_flame(prev_fx0, 0.016)
             cam_sample_vel_scroll(prev_scroll, 0.016)
             ui_request_render(r, 2)
@@ -2486,7 +3214,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
             let prev_t0 = g_cam_t0
             let prev_scroll = g_cam_scroll
             cam_set_time(g_drag_t0 - dx * press_span / w, g_drag_t0 - dx * press_span / w + press_span)
-            cam_set_scroll(g_drag_scroll - dy)
+            cam_set_scroll(g_drag_scroll - dy * scroll_drag_gain())
             cam_sample_vel_time(prev_t0, 0.016)
             cam_sample_vel_scroll(prev_scroll, 0.016)
             ui_request_render(r, 2)
@@ -2593,21 +3321,12 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     ui_fill_rect(r, x, footer_y, w, 1.0, col_line(), 0.0)
     let footer_ty = ui_text_v_center_y(r, footer_y, footer_h, PX(), FONT())
     if g_tl_hovered >= 0 {
-        let lane = g_ev_lane[g_tl_hovered]
-        let thread = "main"
-        if lane >= 0 {
-            if lane < g_lane_count {
-                thread = g_lane_name[lane]
-            }
-        }
-        let detail = `{thread}  {g_ev_name[g_tl_hovered]}  {g_ev_calls[g_tl_hovered]}x  +{fmt_time_ms(g_ev_start[g_tl_hovered] - g_time_origin)}  dur {fmt_time_ms(g_ev_duration[g_tl_hovered])}`
+        // Draw name only - avoid backtick format (native heap never frees).
         ui_push_clip(r, x + 8.0, footer_y, w - 16.0, footer_h)
-        ui_draw_text(r, x + 8.0, footer_ty, detail, PX(), col_text(), FONT())
+        ui_draw_text(r, x + 8.0, footer_ty, ev_name(g_tl_hovered), PX(), col_text(), FONT())
         ui_pop_clip(r)
     } else {
-        let range = `{fmt_time_ms(g_t0 - g_time_origin)} - {fmt_time_ms(g_t1 - g_time_origin)}`
-        let shown = `{g_tl_drawn}/{g_ev_count} spans  lanes {g_lane_count}  long {g_long_count}  {range}`
-        ui_draw_text(r, x + 8.0, footer_ty, shown, PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 8.0, footer_ty, "wheel zoom, drag pan, click select", PX(), col_muted(), FONT())
     }
 
     if v.mouse_released {
@@ -2761,31 +3480,23 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     let time_x = load_x - mode_w - 10.0
     let flame_x = time_x - mode_w - 10.0
     if draw_button(r, v, flame_x, by, mode_w, 24.0, "Flame", g_mode == 0) {
-        g_mode = 0
-        end_drag()
-        g_drag_moved = false
+        if g_loading == false {
+            g_mode = 0
+            end_drag()
+            g_drag_moved = false
+        }
     }
     if draw_button(r, v, time_x, by, mode_w, 24.0, "Time", g_mode == 1) {
-        g_mode = 1
-        end_drag()
-        g_drag_moved = false
-        if g_events_loaded == false {
-            if g_raw.len > 0 {
-                let want = parse_i32(g_timeline_events)
-                if want > 0 {
-                    ensure_event_capacity(want)
-                }
-                parse_profile_body(g_raw, true)
-                g_events_loaded = true
-                fit_time_view()
-                invalidate_overview_batch()
-                if g_ev_count == 0 {
-                    g_t0 = 0.0
-                    g_t1 = parse_f64(g_elapsed)
-                    if g_t1 <= 0.0 {
-                        g_t1 = 1.0
-                    }
-                }
+        // Time data is prepared during load; switching modes must stay instant.
+        if g_loading {
+            g_status = "Still loading timeline..."
+        } else {
+            if g_events_loaded {
+                g_mode = 1
+                end_drag()
+                g_drag_moved = false
+            } else {
+                g_status = "No timeline in this profile."
             }
         }
     }
@@ -2805,10 +3516,10 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
 
     if body_w > 100.0 {
         if body_h > 80.0 {
-            if g_raw.len == 0 {
+            if g_profile_loaded == false {
                 let cy = body_y + min_f(90.0, body_h * 0.3)
                 ui_draw_text(r, body_x, cy, "No profile loaded", TITLE_PX(), col_text(), FONT())
-                ui_draw_text(r, body_x, cy + 20.0, "Run `ns profile` then `ns profiler`, or open bin/ns.profile.", PX(), col_muted(), FONT())
+                ui_draw_text(r, body_x, cy + 20.0, "Run `ns profile` to write and open bin/ns.profile.", PX(), col_muted(), FONT())
                 if g_status == "Loaded file is not an ns-profile." {
                     ui_draw_text(r, body_x, cy + 38.0, g_status, PX(), col_warn(), FONT())
                 }
@@ -2816,6 +3527,29 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
                 draw_profile(r, v, body_x, body_y, body_w, body_h)
             }
         }
+    }
+    if g_ov_rebuild_pending {
+        if g_loading == false {
+            if g_events_loaded {
+                rebuild_overview_batch(r, max_f(200.0, w - 40.0), 28.0)
+                g_ov_rebuild_pending = false
+            }
+        }
+    }
+    if g_loading {
+        let bw = min_f(420.0, w * 0.5)
+        let bh = 54.0
+        let bx = (w - bw) * 0.5
+        let by = (h - bh) * 0.5
+        ui_fill_rect(r, bx - 8.0, by - 8.0, bw + 16.0, bh + 16.0, col_panel(), 0.0)
+        ui_stroke_rect(r, bx - 8.0, by - 8.0, bw + 16.0, bh + 16.0, 1.0, col_line(), 0.0)
+        ui_draw_text(r, bx, by, g_load_msg, PX(), col_text(), FONT())
+        let track_y = by + 24.0
+        ui_fill_rect(r, bx, track_y, bw, 12.0, col_panel_hi(), 0.0)
+        let fill = max_f(2.0, bw * g_load_frac)
+        ui_fill_rect(r, bx, track_y, fill, 12.0, col_accent(), 0.0)
+        // Keep pumping load stages while Flame (or empty) is on screen.
+        ui_request_render(r, 2)
     }
     draw_toast(r, w, h)
     g_frame_count = g_frame_count + 1
@@ -2832,11 +3566,13 @@ fn main() {
             load_profile(startup)
         } else {
             let local = default_profile_path()
-            if read_file(local).len > 0 {
+            if os_file_size(local) >= 0 {
                 load_profile(local)
             }
         }
         v.on_frame({ fv in
+            // Drain load stages before drawing so the progress bar matches work.
+            tick_blob_load()
             ui_begin_frame(r)
             render_frame(r, fv)
             ui_flush(r, clear_color())
@@ -2848,6 +3584,9 @@ fn main() {
             if g_open_profile_pending {
                 g_open_profile_pending = false
                 open_profile()
+            }
+            if g_loading {
+                ui_request_render(r, 2)
             }
         })
         v.on_terminate({ dv in

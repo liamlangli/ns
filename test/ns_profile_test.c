@@ -56,36 +56,40 @@ int main() {
     FILE *tf = fopen(text_path, "w");
     ns_expect(tf != ns_null, "open text profile");
     if (tf) {
-        ns_profile_write_text(tf, 50.0, 0, ns_null);
+        ns_profile_write_report(tf, text_path, 50.0, 0, ns_null);
         fclose(tf);
     }
 
     FILE *in = fopen(text_path, "r");
     ns_expect(in != ns_null, "reread text profile");
     char line[512];
-    ns_bool saw_v5 = false;
+    ns_bool saw_v6 = false;
     ns_bool saw_fn = false;
     ns_bool saw_flame = false;
     ns_bool saw_stack = false;
     ns_bool saw_thread = false;
-    ns_bool saw_thread_event = false;
+    ns_bool saw_blob = false;
     if (in) {
         while (fgets(line, sizeof(line), in)) {
-            if (strncmp(line, "format: ns-profile-v5", 21) == 0) saw_v5 = true;
+            if (strncmp(line, "format: ns-profile-v6", 21) == 0) saw_v6 = true;
             if (strncmp(line, "fn: scope", 9) == 0) saw_fn = true;
             if (strncmp(line, "flame:", 6) == 0) saw_flame = true;
             if (strstr(line, "main;mid;leaf")) saw_stack = true;
             if (strncmp(line, "thread: 0 main", 14) == 0) saw_thread = true;
-            if (strncmp(line, "scope_event: main ", 18) == 0) saw_thread_event = true;
+            if (strncmp(line, "timeline_blob:", 14) == 0) saw_blob = true;
         }
         fclose(in);
     }
-    ns_expect(saw_v5, "text format ns-profile-v5");
+    ns_expect(saw_v6, "text format ns-profile-v6");
     ns_expect(saw_fn, "fn table rows");
     ns_expect(saw_flame, "folded flame rows");
     ns_expect(saw_stack, "folded stack main;mid;leaf");
     ns_expect(saw_thread, "thread table lists main");
-    ns_expect(saw_thread_event, "scope events carry thread name");
+    ns_expect(saw_blob, "timeline blob referenced");
+    FILE *blob = fopen("bin/ns_profile_test.profile.tl", "rb");
+    if (!blob) blob = fopen("bin/ns_profile_test.profile.tl.zst", "rb");
+    ns_expect(blob != ns_null, "compact timeline blob written");
+    if (blob) fclose(blob);
 
     // Per-thread open stacks: park main mid-scope, record on a worker lane,
     // then restore main so exclusive time stays correct across handoffs.
@@ -111,14 +115,23 @@ int main() {
     ns_expect(ns_array_length(ns_profile.events) == 2, "main event after restore");
     ns_expect(ns_profile.events[1].thread == 0, "restored event stays on main");
 
-    // Timeline is a linearly growing array: keep every sample past the old
-    // fixed ring capacity instead of overwriting oldest entries.
+    // Micro-scopes stay out of the timeline; FFI samples are always kept up to
+    // the hard cap so dense dumps cannot grow without bound.
+    ns_profile_reset();
+    ns_profile_enable(0.0);
+    for (i32 i = 0; i < 1000; i++) {
+        ns_profile_record_scope(S("tiny"), ns_str_null, 0, (f64)i, 0.001);
+    }
+    ns_expect(ns_array_length(ns_profile.events) == 0, "micro scopes skipped from timeline");
+    ns_expect(ns_profile.timeline_skipped == 1000, "micro scopes counted as skipped");
+    ns_expect(ns_profile.scope_calls == 1000, "micro scopes still aggregate");
+
     ns_profile_reset();
     ns_profile_enable(0.0);
     for (i32 i = 0; i < 300000; i++) {
         ns_profile_record_ffi(S("grow"), S("test"), (f64)i, 0.001);
     }
-    ns_expect(ns_array_length(ns_profile.events) == 300000, "timeline keeps all samples");
+    ns_expect(ns_array_length(ns_profile.events) == 300000, "timeline keeps ffi samples");
     ns_expect(ns_profile.events[0].start_ms >= -0.001 && ns_profile.events[0].start_ms <= 0.001, "oldest sample retained");
     ns_expect(ns_profile.events[299999].start_ms > 299998.0, "newest sample retained");
     ns_profile_reset();

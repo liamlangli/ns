@@ -12,7 +12,8 @@
 //     for both interpreted functions and native calls
 //   - a call-tree of unique stacks used to emit a folded flamechart
 //   - a linearly growing array of every complete event for a time-axis
-//     flamechart (memory grows with sample count)
+//     flamechart (memory grows with sample count). Each sample stores only a
+//     fns[] pool index for its label; the name/lib strings live once in fns[].
 //
 // Scope open stacks are per thread/task. The task runtime parks and restores
 // the live open stack across VM-lock handoffs so nested exclusive time stays
@@ -25,9 +26,19 @@
 #define NS_PROFILE_MAX_FLAME 4096
 #define NS_PROFILE_FLAME_HASH 8192
 #define NS_PROFILE_MAX_THREADS 256
+// Timeline samples shorter than this stay in fn/flame aggregates only.
+#define NS_PROFILE_TIMELINE_MIN_MS 0.05
+// Hard cap so a pathological run cannot grow the report without bound.
+#define NS_PROFILE_MAX_TIMELINE_EVENTS 2000000
 
 #define NS_PROFILE_EVENT_FFI 1
 #define NS_PROFILE_EVENT_SCOPE 2
+
+// Compact timeline blob magic / version (little-endian file beside ns.profile).
+#define NS_PROFILE_TL_MAGIC 0x4C54534Eu /* 'NSTL' */
+#define NS_PROFILE_TL_VERSION 1
+#define NS_PROFILE_TL_FLAG_ZSTD 1u
+#define NS_PROFILE_TL_EVENT_SIZE 20
 
 typedef struct ns_profile_fn_stat {
     ns_str name;   // function or foreign symbol name
@@ -44,11 +55,10 @@ typedef struct ns_profile_event {
     u8 kind;        // NS_PROFILE_EVENT_*
     i32 depth;      // stack depth of this frame (0 = root)
     i32 thread;     // index into threads[] at record time
+    i32 fn_index;   // string-pool index into fns[] (name/lib live there)
     f64 start_ms;   // milliseconds since profile start
     f64 elapsed_ms; // inclusive wall-clock time
     f64 self_ms;    // exclusive wall-clock time
-    ns_str name;    // symbol name
-    ns_str lib;     // owning module / native library (may be empty)
 } ns_profile_event;
 
 typedef struct ns_profile_flame {
@@ -83,12 +93,15 @@ typedef struct ns_profile_state {
     u64 scope_calls;
     f64 scope_self_ms;
 
+    u64 timeline_skipped; // samples omitted from the timeline (too short / capped)
+
     ns_profile_fn_stat fns[NS_PROFILE_MAX_FNS];
     i32 fn_count;
     u64 fns_dropped;
     i32 fn_hash[NS_PROFILE_FN_HASH];
 
-    // Growable timeline of every completed event (ns_array).
+    // Growable timeline of retained events (ns_array). Micro-scopes and
+    // overflow past NS_PROFILE_MAX_TIMELINE_EVENTS are not stored here.
     ns_profile_event *events;
 
     ns_profile_open open[NS_PROFILE_MAX_STACK];
@@ -140,8 +153,15 @@ void ns_profile_record_ffi(ns_str name, ns_str lib, f64 start_ms, f64 elapsed_ms
 // enter. If no enter is on the stack, the scope is still counted as a root.
 void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms);
 
-// Write the ns-profile-v5 text report, including the folded flame stacks and
-// per-event thread names.
+// Write the ns-profile-v6 text report (aggregates + flame) to `f`, and a
+// compact binary timeline beside `path` as `<path>.tl` or `<path>.tl.zst`
+// when compress.dylib is available. `path` may be null to skip the blob
+// (text then embeds no timeline_blob line; used by unit tests that only
+// inspect aggregates).
+void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc, i8 **argv);
+
+// Compatibility wrapper: write aggregates + an uncompressed `.tl` beside a
+// temp-less text-only path when `path` is unknown. Prefer write_report.
 void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv);
 
 // Print a terminal hot-path summary. Rows are colored by self-time share.

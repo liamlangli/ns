@@ -260,7 +260,10 @@ static i32 ns_profile_argc = 0;
 static i8 **ns_profile_argv = ns_null;
 static ns_bool ns_profile_registered = false;
 static ns_bool ns_profile_written = false;
+static ns_bool ns_profile_auto_view = false;
 static ns_str ns_profile_output_path = {0};
+
+static void ns_exec_profile_view(ns_str filename);
 
 static void ns_mkdir_p(ns_str dir);
 static ns_str ns_path_dirname_safe(ns_str path);
@@ -287,7 +290,7 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
         ns_warn("profile", "failed to write %s.\n", path);
         return;
     }
-    ns_profile_write_text(f, elapsed_ms, argc, argv);
+    ns_profile_write_report(f, path, elapsed_ms, argc, argv);
     fclose(f);
 
     f64 ffi_ms = ns_profile.ffi_total_ms;
@@ -296,6 +299,13 @@ static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
             path, elapsed_ms, (unsigned long long)ns_profile.scope_calls,
             (unsigned long long)ns_profile.ffi_calls, ffi_ms, ffi_pct);
     ns_profile_print_summary(stdout, elapsed_ms);
+
+    // `ns profile` always opens the GUI after the report lands. `--profile` on
+    // other commands still writes the file but leaves the viewer to `ns profiler`.
+    // Tests set NS_PROFILE_NO_VIEW=1 to keep the CLI path headless.
+    if (ns_profile_auto_view && getenv("NS_PROFILE_NO_VIEW") == ns_null) {
+        ns_exec_profile_view(ns_str_cstr((char *)path));
+    }
 }
 
 static void ns_profile_emit_at_exit(void) {
@@ -335,7 +345,6 @@ static void ns_build_profile_end(const char *name, f64 start_ms) {
     ns_profile_record_scope(ns_str_cstr((char *)name), ns_str_cstr("compiler"), 0, start_ms, elapsed_ms);
 }
 
-static void ns_exec_profile_view(ns_str filename);
 void ns_exec_run(ns_str filename, i32 port, ns_bool port_set, ns_bool honor_link);
 
 void ns_exec_tokenize(ns_str filename) {
@@ -4168,6 +4177,9 @@ static ns_bool ns_profile_launch_compiled(ns_str bundle) {
 #else
     pid_t pid = fork();
     if (pid == 0) {
+        // Detach from the parent so `ns profile` can exit immediately.
+        if (fork() > 0) _exit(0);
+        setsid();
         execl(exe.data, exe.data, (char *)0);
         _exit(127);
     }
@@ -4175,7 +4187,7 @@ static ns_bool ns_profile_launch_compiled(ns_str bundle) {
     if (pid < 0) return false;
     int status = 0;
     waitpid(pid, &status, 0);
-    return true;
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 #endif
 }
 
@@ -4842,7 +4854,10 @@ i32 main(i32 argc, i8** argv) {
         ns_publish_program_args(option.program_argc, option.program_argv);
     }
 
-    if (option.profile) ns_profile_begin(argc, argv);
+    if (option.profile) {
+        ns_profile_auto_view = option.profile_cmd;
+        ns_profile_begin(argc, argv);
+    }
 
     ns_configure_vm_runtime_paths(&vm);
 

@@ -3,10 +3,82 @@
 #if defined(_WIN32)
 #include <windows.h>
 #else
+#include <dlfcn.h>
 #include <time.h>
+#include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #endif
 
 ns_profile_state ns_profile = {0};
+
+#pragma pack(push, 1)
+typedef struct ns_profile_tl_event {
+    u8 kind;
+    u8 depth;
+    u16 thread;
+    u16 sym;
+    u16 pad;
+    // Microseconds since profile start / duration / self (ms * 1000).
+    i32 start_us;
+    i32 elapsed_us;
+    i32 self_us;
+} ns_profile_tl_event;
+#pragma pack(pop)
+
+typedef i32 (*ns_profile_zstd_bound_fn)(i32);
+typedef i32 (*ns_profile_zstd_encode_fn)(const u8 *, i32, u8 *, i32, i32);
+
+static void *ns_profile_compress_lib = ns_null;
+static ns_profile_zstd_bound_fn ns_profile_zstd_bound = ns_null;
+static ns_profile_zstd_encode_fn ns_profile_zstd_encode = ns_null;
+
+static void ns_profile_load_compress(void) {
+    if (ns_profile_compress_lib) return;
+#if defined(_WIN32)
+    (void)0;
+#else
+    const char *cands[] = {
+        "bin/compress.dylib",
+        "compress.dylib",
+        "../lib/compress.dylib",
+        "lib/compress.dylib",
+        ns_null,
+    };
+    // Prefer the dylib next to the running ns executable.
+    i8 exe_buf[1024];
+    i8 beside[1100];
+    ssize_t n = -1;
+#if defined(__APPLE__)
+    u32 sz = (u32)sizeof(exe_buf);
+    if (_NSGetExecutablePath(exe_buf, &sz) == 0) n = (ssize_t)strlen(exe_buf);
+#elif defined(__linux__)
+    n = readlink("/proc/self/exe", exe_buf, sizeof(exe_buf) - 1);
+    if (n > 0) exe_buf[n] = 0;
+#endif
+    if (n > 0) {
+        i8 *slash = strrchr(exe_buf, '/');
+        if (slash) {
+            *slash = 0;
+            snprintf(beside, sizeof(beside), "%s/compress.dylib", exe_buf);
+            ns_profile_compress_lib = dlopen(beside, RTLD_LAZY | RTLD_LOCAL);
+        }
+    }
+    for (i32 i = 0; !ns_profile_compress_lib && cands[i]; i++) {
+        ns_profile_compress_lib = dlopen(cands[i], RTLD_LAZY | RTLD_LOCAL);
+    }
+    if (!ns_profile_compress_lib) return;
+    ns_profile_zstd_bound = (ns_profile_zstd_bound_fn)dlsym(ns_profile_compress_lib, "compress_zstd_bound");
+    ns_profile_zstd_encode = (ns_profile_zstd_encode_fn)dlsym(ns_profile_compress_lib, "compress_zstd_encode");
+    if (!ns_profile_zstd_bound || !ns_profile_zstd_encode) {
+        dlclose(ns_profile_compress_lib);
+        ns_profile_compress_lib = ns_null;
+        ns_profile_zstd_bound = ns_null;
+        ns_profile_zstd_encode = ns_null;
+    }
+#endif
+}
 
 f64 ns_profile_now_ms(void) {
 #if defined(_WIN32)
@@ -188,17 +260,29 @@ static void ns_profile_fn_add(i32 fn_index, f64 elapsed_ms, f64 self_ms) {
     s->self_ms += self_ms;
 }
 
-static void ns_profile_record_event(u8 kind, ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms, f64 self_ms) {
+static void ns_profile_record_event(u8 kind, i32 depth, i32 fn_index, f64 start_ms, f64 elapsed_ms, f64 self_ms) {
+    // Keep aggregates for every call, but omit micro-scopes from the timeline
+    // so a hot leaf helper cannot balloon the on-disk report into gigabytes.
+    if (kind == NS_PROFILE_EVENT_SCOPE && elapsed_ms < NS_PROFILE_TIMELINE_MIN_MS) {
+        ns_profile.timeline_skipped++;
+        return;
+    }
+    i32 n = (i32)ns_array_length(ns_profile.events);
+    if (n >= NS_PROFILE_MAX_TIMELINE_EVENTS) {
+        ns_profile.timeline_skipped++;
+        return;
+    }
     ns_profile_ensure_main_thread();
+    // name/lib live in fns[fn_index] - the shared string pool. Samples only
+    // keep the pool index so millions of events stay compact in RAM.
     ns_profile_event ev = {
         .kind = kind,
         .depth = depth,
         .thread = ns_profile.current_thread,
+        .fn_index = fn_index,
         .start_ms = start_ms - ns_profile.start_ms,
         .elapsed_ms = elapsed_ms,
         .self_ms = self_ms,
-        .name = name,
-        .lib = lib,
     };
     ns_array_push(ns_profile.events, ev);
 }
@@ -238,9 +322,7 @@ void ns_profile_record_ffi(ns_str name, ns_str lib, f64 start_ms, f64 elapsed_ms
         ns_profile.flames[flame_index].total_ms += elapsed_ms;
         ns_profile.flames[flame_index].self_ms += elapsed_ms;
     }
-    ns_str ev_name = fn_index >= 0 ? ns_profile.fns[fn_index].name : name;
-    ns_str ev_lib = fn_index >= 0 ? ns_profile.fns[fn_index].lib : lib;
-    ns_profile_record_event(NS_PROFILE_EVENT_FFI, ev_name, ev_lib, depth, start_ms, elapsed_ms, elapsed_ms);
+    ns_profile_record_event(NS_PROFILE_EVENT_FFI, depth, fn_index, start_ms, elapsed_ms, elapsed_ms);
 }
 
 void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms) {
@@ -275,9 +357,7 @@ void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f
         ns_profile.flames[flame_index].self_ms += self_ms;
     }
 
-    ns_str ev_name = fn_index >= 0 ? ns_profile.fns[fn_index].name : name;
-    ns_str ev_lib = fn_index >= 0 ? ns_profile.fns[fn_index].lib : lib;
-    ns_profile_record_event(NS_PROFILE_EVENT_SCOPE, ev_name, ev_lib, depth, start_ms, elapsed_ms, self_ms);
+    ns_profile_record_event(NS_PROFILE_EVENT_SCOPE, depth, fn_index, start_ms, elapsed_ms, self_ms);
 }
 
 static int ns_profile_fn_cmp(const void *a, const void *b) {
@@ -346,7 +426,7 @@ static ns_bool ns_profile_same_span(const ns_profile_event *a, const ns_profile_
     if (a->kind != b->kind) return false;
     if (a->thread != b->thread) return false;
     if (a->depth != b->depth) return false;
-    if (!ns_profile_str_eq(a->name, b->name) || !ns_profile_str_eq(a->lib, b->lib)) return false;
+    if (a->fn_index != b->fn_index) return false;
     return b->start_ms <= a->start_ms + a->elapsed_ms + 0.05;
 }
 
@@ -371,7 +451,177 @@ static void ns_profile_coalesce_events(void) {
     ns_array_set_length(ns_profile.events, w + 1);
 }
 
-void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
+static void ns_profile_write_u16(u8 **p, u16 v) {
+    (*p)[0] = (u8)(v & 0xff);
+    (*p)[1] = (u8)((v >> 8) & 0xff);
+    *p += 2;
+}
+
+static void ns_profile_write_u32(u8 **p, u32 v) {
+    (*p)[0] = (u8)(v & 0xff);
+    (*p)[1] = (u8)((v >> 8) & 0xff);
+    (*p)[2] = (u8)((v >> 16) & 0xff);
+    (*p)[3] = (u8)((v >> 24) & 0xff);
+    *p += 4;
+}
+
+static void ns_profile_write_i32(u8 **p, i32 v) {
+    ns_profile_write_u32(p, (u32)v);
+}
+
+static i32 ns_profile_ms_to_us(f64 ms) {
+    if (ms <= 0.0) return 0;
+    f64 us = ms * 1000.0;
+    if (us > 2147483647.0) return 2147483647;
+    return (i32)(us + 0.5);
+}
+
+static ns_bool ns_profile_write_timeline_blob(const char *path, i32 event_count, i32 *out_bytes, ns_bool *out_zstd) {
+    if (out_bytes) *out_bytes = 0;
+    if (out_zstd) *out_zstd = false;
+    if (!path || event_count < 0) return false;
+
+    // map[fn_index] -> dense timeline symbol id (first-use order).
+    i32 map[NS_PROFILE_MAX_FNS];
+    for (i32 i = 0; i < NS_PROFILE_MAX_FNS; i++) map[i] = -1;
+    i32 sym_count = 0;
+    for (i32 i = 0; i < event_count; i++) {
+        i32 fi = ns_profile.events[i].fn_index;
+        if (fi < 0 || fi >= ns_profile.fn_count) continue;
+        if (map[fi] < 0) map[fi] = sym_count++;
+    }
+
+    i32 order[NS_PROFILE_MAX_FNS];
+    for (i32 i = 0; i < sym_count; i++) order[i] = -1;
+    for (i32 i = 0; i < ns_profile.fn_count; i++) {
+        if (map[i] >= 0 && map[i] < sym_count) order[map[i]] = i;
+    }
+
+    szt header = 4 + 4 + 4 + 4 + 4 + 4; // magic ver flags threads syms events
+    szt strings = 0;
+    for (i32 i = 0; i < ns_profile.thread_count; i++) {
+        strings += 2 + (szt)ns_profile.threads[i].len;
+    }
+    for (i32 i = 0; i < sym_count; i++) {
+        i32 fi = order[i];
+        if (fi < 0) continue;
+        strings += 1 + 2 + 2 + (szt)ns_profile.fns[fi].lib.len + (szt)ns_profile.fns[fi].name.len;
+    }
+    szt payload = header + strings + (szt)event_count * sizeof(ns_profile_tl_event);
+    if (payload > (szt)0x7fffffff) return false;
+
+    u8 *raw = (u8 *)ns_malloc(payload);
+    if (!raw) return false;
+    u8 *p = raw;
+    ns_profile_write_u32(&p, NS_PROFILE_TL_MAGIC);
+    ns_profile_write_u32(&p, NS_PROFILE_TL_VERSION);
+    ns_profile_write_u32(&p, 0); // flags filled after compression decision
+    ns_profile_write_u32(&p, (u32)ns_profile.thread_count);
+    ns_profile_write_u32(&p, (u32)sym_count);
+    ns_profile_write_u32(&p, (u32)event_count);
+
+    for (i32 i = 0; i < ns_profile.thread_count; i++) {
+        ns_str t = ns_profile.threads[i];
+        u16 len = t.len > 0xffff ? 0xffff : (u16)t.len;
+        ns_profile_write_u16(&p, len);
+        if (len > 0) {
+            memcpy(p, t.data, len);
+            p += len;
+        }
+    }
+    for (i32 i = 0; i < sym_count; i++) {
+        i32 fi = order[i];
+        ns_profile_fn_stat *s = &ns_profile.fns[fi];
+        u8 kind = s->kind;
+        u16 lib_len = s->lib.len > 0xffff ? 0xffff : (u16)s->lib.len;
+        u16 name_len = s->name.len > 0xffff ? 0xffff : (u16)s->name.len;
+        *p++ = kind;
+        ns_profile_write_u16(&p, lib_len);
+        ns_profile_write_u16(&p, name_len);
+        if (lib_len > 0) {
+            memcpy(p, s->lib.data, lib_len);
+            p += lib_len;
+        }
+        if (name_len > 0) {
+            memcpy(p, s->name.data, name_len);
+            p += name_len;
+        }
+    }
+    for (i32 i = 0; i < event_count; i++) {
+        ns_profile_event *e = &ns_profile.events[i];
+        i32 ti = e->thread;
+        if (ti < 0 || ti >= ns_profile.thread_count) ti = 0;
+        i32 si = 0;
+        if (e->fn_index >= 0 && e->fn_index < ns_profile.fn_count && map[e->fn_index] >= 0) {
+            si = map[e->fn_index];
+        }
+        if (si > 0xffff) si = 0xffff;
+        i32 depth = e->depth;
+        if (depth < 0) depth = 0;
+        if (depth > 255) depth = 255;
+        *p++ = e->kind;
+        *p++ = (u8)depth;
+        ns_profile_write_u16(&p, (u16)ti);
+        ns_profile_write_u16(&p, (u16)si);
+        ns_profile_write_u16(&p, 0);
+        ns_profile_write_i32(&p, ns_profile_ms_to_us(e->start_ms));
+        ns_profile_write_i32(&p, ns_profile_ms_to_us(e->elapsed_ms));
+        ns_profile_write_i32(&p, ns_profile_ms_to_us(e->self_ms));
+    }
+    szt raw_len = (szt)(p - raw);
+
+    ns_profile_load_compress();
+    ns_bool used_zstd = false;
+    const u8 *out = raw;
+    szt out_len = raw_len;
+    u8 *zbuf = ns_null;
+    if (ns_profile_zstd_bound && ns_profile_zstd_encode && raw_len <= (szt)0x7fffffff) {
+        i32 bound = ns_profile_zstd_bound((i32)raw_len);
+        if (bound > 0) {
+            zbuf = (u8 *)ns_malloc((szt)bound);
+            if (zbuf) {
+                i32 zlen = ns_profile_zstd_encode(raw, (i32)raw_len, zbuf, bound, 1);
+                if (zlen > 0 && (szt)zlen < raw_len) {
+                    // Mark the uncompressed payload's flags before wrapping so
+                    // the decoder knows the frame carries zstd content size.
+                    // The on-disk file is the zstd frame alone; the viewer
+                    // decompresses to the NSTL payload.
+                    used_zstd = true;
+                    out = zbuf;
+                    out_len = (szt)zlen;
+                }
+            }
+        }
+    }
+
+    i8 blob_path[4096];
+    snprintf(blob_path, sizeof(blob_path), "%s.tl%s", path, used_zstd ? ".zst" : "");
+    FILE *bf = fopen(blob_path, "wb");
+    ns_bool ok = false;
+    if (bf) {
+        ok = fwrite(out, 1, out_len, bf) == out_len;
+        fclose(bf);
+    }
+    if (ok) {
+        if (out_bytes) *out_bytes = (i32)out_len;
+        if (out_zstd) *out_zstd = used_zstd;
+    }
+    ns_free(zbuf);
+    ns_free(raw);
+    return ok;
+}
+
+static const char *ns_profile_basename(const char *path) {
+    if (!path) return "ns.profile";
+    const char *slash = strrchr(path, '/');
+#if defined(_WIN32)
+    const char *bslash = strrchr(path, '\\');
+    if (!slash || (bslash && bslash > slash)) slash = bslash;
+#endif
+    return slash ? slash + 1 : path;
+}
+
+void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc, i8 **argv) {
     f64 ffi_ms = ns_profile.ffi_total_ms;
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
     i32 raw_events = (i32)ns_array_length(ns_profile.events);
@@ -393,7 +643,14 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
         else ffi_symbols++;
     }
 
-    fprintf(f, "format: ns-profile-v5\n");
+    i32 blob_bytes = 0;
+    ns_bool blob_zstd = false;
+    ns_bool blob_ok = false;
+    if (path && event_count > 0) {
+        blob_ok = ns_profile_write_timeline_blob(path, event_count, &blob_bytes, &blob_zstd);
+    }
+
+    fprintf(f, "format: ns-profile-v6\n");
     fprintf(f, "elapsed_ms: %.3f\n", elapsed_ms);
     fprintf(f, "ffi_calls: %llu\n", (unsigned long long)ns_profile.ffi_calls);
     fprintf(f, "ffi_ms: %.3f\n", ffi_ms);
@@ -406,8 +663,15 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     fprintf(f, "scope_events: %d\n", scope_event_count);
     fprintf(f, "timeline_events: %d\n", event_count);
     fprintf(f, "timeline_raw: %d\n", raw_events);
+    fprintf(f, "timeline_skipped: %llu\n", (unsigned long long)ns_profile.timeline_skipped);
+    fprintf(f, "timeline_min_ms: %.3f\n", NS_PROFILE_TIMELINE_MIN_MS);
     fprintf(f, "flame_frames: %d\n", ns_profile.flame_count);
     fprintf(f, "threads: %d\n", ns_profile.thread_count);
+    if (blob_ok) {
+        fprintf(f, "timeline_blob: %s.tl%s\n", ns_profile_basename(path), blob_zstd ? ".zst" : "");
+        fprintf(f, "timeline_blob_bytes: %d\n", blob_bytes);
+        fprintf(f, "timeline_blob_codec: %s\n", blob_zstd ? "zstd" : "raw");
+    }
     fprintf(f, "argv:");
     for (i32 i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
     fprintf(f, "\n");
@@ -433,7 +697,6 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     if (ns_profile.fns_dropped > 0) {
         fprintf(f, "fn_dropped: %llu\n", (unsigned long long)ns_profile.fns_dropped);
     }
-    // Keep a v3-compatible alias so older viewers still see an FFI table.
     fprintf(f, "ffi_table: calls total_ms avg_ms min_ms max_ms symbol\n");
     for (i32 i = 0; i < ns_profile.fn_count; i++) {
         ns_profile_fn_stat *s = &ordered[i];
@@ -457,25 +720,13 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     if (ns_profile.flames_dropped > 0) {
         fprintf(f, "flame_dropped: %llu\n", (unsigned long long)ns_profile.flames_dropped);
     }
-
-    // Timeline last so viewers can stop after the aggregated tables.
-    fprintf(f, "timeline: thread depth start_ms duration_ms self_ms symbol\n");
-    for (i32 i = 0; i < event_count; i++) {
-        ns_profile_event *e = &ns_profile.events[i];
-        i32 ti = e->thread;
-        if (ti < 0 || ti >= ns_profile.thread_count) ti = 0;
-        ns_str tname = ns_profile.threads[ti];
-        if (e->kind == NS_PROFILE_EVENT_SCOPE) {
-            fprintf(f, "scope_event: %.*s %d %.3f %.3f %.3f ", tname.len, tname.data, e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
-        } else {
-            fprintf(f, "ffi_event: %.*s %d %.3f %.3f %.3f ", tname.len, tname.data, e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
-        }
-        ns_profile_write_symbol(f, e->lib, e->name);
-        fputc('\n', f);
-    }
     if (ns_profile.stack_overflows > 0) {
         fprintf(f, "stack_overflows: %llu\n", (unsigned long long)ns_profile.stack_overflows);
     }
+}
+
+void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
+    ns_profile_write_report(f, ns_null, elapsed_ms, argc, argv);
 }
 
 static const char *ns_profile_pct_color(f64 pct) {

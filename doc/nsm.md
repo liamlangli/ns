@@ -183,11 +183,16 @@ FFI scopes, even when the selected target sets `link = true`. Wasm targets keep
 their existing build-and-serve behavior regardless of `link`. The report is
 written to `bin/ns.profile`: the project's own `bin/` when the run resolves a
 project, otherwise `bin/` beside the working directory. Nothing is ever written
-to the root of the project folder. The text format is `ns-profile-v5`: every
-timeline event carries a thread name (`main`, or `callee#id` for async/dispatch
-tasks), the open stack is parked per task across VM-lock handoffs, and
-`ns profiler` draws Time-view lanes by that name. Older `ns-profile-v1`…`v4`
-files still open; missing thread fields default to `main`.
+to the root of the project folder. The text format is `ns-profile-v6`: aggregates and flame stacks stay in the
+small text report, while the timeline is a compact binary blob beside it
+(`ns.profile.tl` or zstd-compressed `ns.profile.tl.zst`). Scopes shorter than
+`0.05 ms` stay in the fn/flame tables but are omitted from the timeline so a
+hot leaf helper cannot inflate the report into gigabytes. Every retained sample
+carries a thread name (`main`, or `callee#id` for async/dispatch tasks); the
+open stack is parked per task across VM-lock handoffs; and `ns profiler` shows
+a progress bar while it decompresses the blob and builds the Time-view lanes /
+overview `ui_rect_batch`. `ns profile` opens the viewer automatically when the
+report is written. Older `ns-profile-v1`…`v5` files still open.
 
 Running `ns build` with no file argument compiles the current module into
 artifacts under `<module>/bin`: one per declared target, or a single artifact
