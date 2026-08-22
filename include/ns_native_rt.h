@@ -4,7 +4,10 @@
 
 // Linear-memory runtime used by AArch64-compiled ns programs. Addresses are
 // 32-bit offsets into a growable heap so SSA's Wasm32 field/array layout
-// (pointer at +0, len at +4, cap at +8) is valid on a 64-bit host.
+// (pointer at +0, len at +4, cap at +8) is valid on a 64-bit host. The heap
+// base is reserved once and committed in place under a lock so concurrent
+// `ns_rt_alloc` calls from worker tasks cannot race or invalidate host
+// pointers held by other threads.
 
 void ns_rt_init(void);
 void ns_rt_reset(void);

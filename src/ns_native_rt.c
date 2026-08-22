@@ -9,13 +9,17 @@
 #include <windows.h>
 #else
 #include <pthread.h>
+#include <sys/mman.h>
 #include <time.h>
+#include <unistd.h>
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS MAP_ANON
+#endif
 #endif
 
 #if defined(__APPLE__)
 #include <limits.h>
 #include <mach-o/dyld.h>
-#include <unistd.h>
 
 // A double-clicked app bundle starts with no useful working directory, so every
 // relative path in the program would read nothing. The build packages the
@@ -50,10 +54,36 @@ static void ns_rt_enter_bundle_resources(void) {
 #endif
 
 #define NS_RT_GLOBAL_MAX 1024
+// Addresses are 32-bit offsets, so the heap cannot exceed 4 GiB. Reserve that
+// VA once and commit pages in place: realloc would move the base and invalidate
+// host pointers other threads already hold from ns_rt_ptr / array slots.
+#define NS_RT_HEAP_RESERVE ((size_t)4 * 1024 * 1024 * 1024)
 
 static uint8_t *ns_rt_mem = NULL;
 static uint32_t ns_rt_used = 16;
 static uint32_t ns_rt_cap = 0;
+static size_t ns_rt_page = 0;
+
+#ifdef _WIN32
+static CRITICAL_SECTION ns_rt_heap_mu;
+static INIT_ONCE ns_rt_heap_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK ns_rt_heap_once_init(PINIT_ONCE once, PVOID param, PVOID *ctx) {
+    (void)once;
+    (void)param;
+    (void)ctx;
+    InitializeCriticalSection(&ns_rt_heap_mu);
+    return TRUE;
+}
+static void ns_rt_heap_lock(void) {
+    InitOnceExecuteOnce(&ns_rt_heap_once, ns_rt_heap_once_init, NULL, NULL);
+    EnterCriticalSection(&ns_rt_heap_mu);
+}
+static void ns_rt_heap_unlock(void) { LeaveCriticalSection(&ns_rt_heap_mu); }
+#else
+static pthread_mutex_t ns_rt_heap_mu = PTHREAD_MUTEX_INITIALIZER;
+static void ns_rt_heap_lock(void) { pthread_mutex_lock(&ns_rt_heap_mu); }
+static void ns_rt_heap_unlock(void) { pthread_mutex_unlock(&ns_rt_heap_mu); }
+#endif
 
 static int64_t ns_rt_globals[NS_RT_GLOBAL_MAX];
 
@@ -69,28 +99,86 @@ static struct {
 } ns_rt_cb_slot[NS_RT_CB_MAX];
 static int ns_rt_cb_n = 0;
 
-static void ns_rt_grow(uint32_t need) {
-    uint32_t cap = ns_rt_cap ? ns_rt_cap : 4096;
-    while (cap < need) {
-        uint32_t next = cap * 2;
-        if (next < cap) {
-            fprintf(stderr, "ns_rt: heap overflow\n");
-            abort();
-        }
-        cap = next;
-    }
-    uint8_t *mem = (uint8_t *)realloc(ns_rt_mem, cap);
-    if (!mem) {
+static size_t ns_rt_page_size(void) {
+    if (ns_rt_page) return ns_rt_page;
+#ifdef _WIN32
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    ns_rt_page = info.dwPageSize ? (size_t)info.dwPageSize : 4096;
+#else
+    long page = sysconf(_SC_PAGESIZE);
+    ns_rt_page = page > 0 ? (size_t)page : 4096;
+#endif
+    return ns_rt_page;
+}
+
+static uint32_t ns_rt_align_page(uint32_t n) {
+    size_t page = ns_rt_page_size();
+    size_t aligned = ((size_t)n + page - 1) & ~(page - 1);
+    if (aligned > (size_t)0xffffffffu) return 0xffffffffu;
+    return (uint32_t)aligned;
+}
+
+static void ns_rt_commit(uint32_t from, uint32_t to) {
+    if (to <= from) return;
+#ifdef _WIN32
+    if (!VirtualAlloc(ns_rt_mem + from, (SIZE_T)(to - from), MEM_COMMIT, PAGE_READWRITE)) {
         fprintf(stderr, "ns_rt: out of memory\n");
         abort();
     }
-    if (cap > ns_rt_cap) memset(mem + ns_rt_cap, 0, cap - ns_rt_cap);
-    ns_rt_mem = mem;
+#else
+    if (mprotect(ns_rt_mem + from, (size_t)(to - from), PROT_READ | PROT_WRITE) != 0) {
+        fprintf(stderr, "ns_rt: out of memory\n");
+        abort();
+    }
+#endif
+    memset(ns_rt_mem + from, 0, (size_t)(to - from));
+}
+
+static void ns_rt_grow(uint32_t need) {
+    if (need <= ns_rt_cap) return;
+    if ((size_t)need > NS_RT_HEAP_RESERVE) {
+        fprintf(stderr, "ns_rt: heap overflow\n");
+        abort();
+    }
+    uint32_t cap = ns_rt_cap ? ns_rt_cap : ns_rt_align_page(4096);
+    while (cap < need) {
+        uint32_t next = cap * 2;
+        if (next < cap || (size_t)next > NS_RT_HEAP_RESERVE) {
+            cap = (uint32_t)NS_RT_HEAP_RESERVE;
+            break;
+        }
+        cap = next;
+    }
+    cap = ns_rt_align_page(cap);
+    if ((size_t)cap > NS_RT_HEAP_RESERVE) cap = (uint32_t)NS_RT_HEAP_RESERVE;
+    if (cap < need) {
+        fprintf(stderr, "ns_rt: heap overflow\n");
+        abort();
+    }
+    ns_rt_commit(ns_rt_cap, cap);
     ns_rt_cap = cap;
 }
 
-void ns_rt_init(void) {
-    if (!ns_rt_mem) ns_rt_grow(4096);
+static void ns_rt_init_locked(void) {
+    if (!ns_rt_mem) {
+#ifdef _WIN32
+        ns_rt_mem = (uint8_t *)VirtualAlloc(NULL, NS_RT_HEAP_RESERVE, MEM_RESERVE, PAGE_NOACCESS);
+        if (!ns_rt_mem) {
+            fprintf(stderr, "ns_rt: out of memory\n");
+            abort();
+        }
+#else
+        void *mem = mmap(NULL, NS_RT_HEAP_RESERVE, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (mem == MAP_FAILED) {
+            fprintf(stderr, "ns_rt: out of memory\n");
+            abort();
+        }
+        ns_rt_mem = (uint8_t *)mem;
+#endif
+        ns_rt_cap = 0;
+        ns_rt_grow(4096);
+    }
     if (ns_rt_used < 16) ns_rt_used = 16;
 #if defined(__APPLE__)
     // The allocator calls this on every miss, so the bundle is resolved once.
@@ -102,7 +190,15 @@ void ns_rt_init(void) {
 #endif
 }
 
+void ns_rt_init(void) {
+    if (ns_rt_mem) return;
+    ns_rt_heap_lock();
+    ns_rt_init_locked();
+    ns_rt_heap_unlock();
+}
+
 void ns_rt_reset(void) {
+    ns_rt_heap_lock();
     ns_rt_used = 16;
     if (ns_rt_mem && ns_rt_cap) memset(ns_rt_mem, 0, ns_rt_cap);
     memset(ns_rt_globals, 0, sizeof(ns_rt_globals));
@@ -112,6 +208,7 @@ void ns_rt_reset(void) {
         free(ns_rt_strcache);
         ns_rt_strcache = NULL;
     }
+    ns_rt_heap_unlock();
 }
 
 void ns_rt_set_strtab(const char **tab, const int32_t *lens, int n) {
@@ -125,17 +222,19 @@ void ns_rt_set_strtab(const char **tab, const int32_t *lens, int n) {
 }
 
 int64_t ns_rt_alloc(int64_t size) {
-    ns_rt_init();
     if (size < 0) size = 0;
     uint32_t n = (uint32_t)size;
+    ns_rt_heap_lock();
+    ns_rt_init_locked();
     uint32_t addr = (ns_rt_used + 7u) & ~7u;
     ns_rt_grow(addr + n + 16);
     ns_rt_used = addr + n;
+    ns_rt_heap_unlock();
     return (int64_t)addr;
 }
 
 static uint8_t *ns_rt_ptr(int64_t addr) {
-    ns_rt_init();
+    if (!ns_rt_mem) ns_rt_init();
     if (addr >= 0 && (uint64_t)addr < (uint64_t)ns_rt_cap) {
         return ns_rt_mem + (uint32_t)addr;
     }

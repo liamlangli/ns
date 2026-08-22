@@ -183,7 +183,11 @@ FFI scopes, even when the selected target sets `link = true`. Wasm targets keep
 their existing build-and-serve behavior regardless of `link`. The report is
 written to `bin/ns.profile`: the project's own `bin/` when the run resolves a
 project, otherwise `bin/` beside the working directory. Nothing is ever written
-to the root of the project folder.
+to the root of the project folder. The text format is `ns-profile-v5`: every
+timeline event carries a thread name (`main`, or `callee#id` for async/dispatch
+tasks), the open stack is parked per task across VM-lock handoffs, and
+`ns profiler` draws Time-view lanes by that name. Older `ns-profile-v1`…`v4`
+files still open; missing thread fields default to `main`.
 
 Running `ns build` with no file argument compiles the current module into
 artifacts under `<module>/bin`: one per declared target, or a single artifact

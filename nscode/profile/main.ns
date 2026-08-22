@@ -79,6 +79,7 @@ let g_ev_duration = [f64](4096)
 let g_ev_self = [f64](4096)
 let g_ev_depth = [i32](4096)
 let g_ev_calls = [i32](4096)
+let g_ev_lane = [i32](4096)
 let g_ev_name = [i32: str](4096)
 let g_ev_count = 0
 let g_ev_raw = 0
@@ -93,6 +94,14 @@ let g_t1: f64 = 1.0
 // 0 idle, 1 time plot, 2 time overview, 3 flame
 let g_drag_mode = 0
 let g_ev_max_depth = 0
+// Time-view lanes keyed by thread name (v5 profiles).
+let g_lane_name = [i32: str](64)
+let g_lane_max_depth = [i32](64)
+let g_lane_y0 = [f64](64)
+let g_lane_h = [f64](64)
+let g_lane_count = 0
+let g_lane_content_h: f64 = 0.0
+let g_threads_header = ""
 // Pointer position for the frame in the renderer's safe-area content space,
 // converted from the view's drawable space (see ui_content_x).
 let g_mouse_x: f64 = 0.0
@@ -209,7 +218,14 @@ fn timeline_try_draw_event(r: ref ui_renderer, v: ref view, ev: i32, x: f64, w: 
         g_tl_skipped = g_tl_skipped + 1
         return false
     }
-    let by = plot_y + g_ev_depth[ev] as f64 * row_h - g_scroll
+    let lane = g_ev_lane[ev]
+    let lane_y0: f64 = 0.0
+    if lane >= 0 {
+        if lane < g_lane_count {
+            lane_y0 = g_lane_y0[lane] + 16.0
+        }
+    }
+    let by = plot_y + lane_y0 + g_ev_depth[ev] as f64 * row_h - g_scroll
     let bh = row_h - 1.0
     // Completely outside the vertical plot.
     if by + bh <= plot_y {
@@ -301,6 +317,7 @@ fn ensure_event_capacity(need: i32) {
     let nself = [f64](next)
     let ndepth = [i32](next)
     let ncalls = [i32](next)
+    let nlane = [i32](next)
     // Open-addressed dict needs spare slots; allocate 2x live entries.
     let nname = [i32: str](next * 2)
     let i = 0
@@ -310,6 +327,7 @@ fn ensure_event_capacity(need: i32) {
         nself[i] = g_ev_self[i]
         ndepth[i] = g_ev_depth[i]
         ncalls[i] = g_ev_calls[i]
+        nlane[i] = g_ev_lane[i]
         nname[i] = g_ev_name[i]
         i = i + 1
     }
@@ -318,7 +336,74 @@ fn ensure_event_capacity(need: i32) {
     g_ev_self = nself
     g_ev_depth = ndepth
     g_ev_calls = ncalls
+    g_ev_lane = nlane
     g_ev_name = nname
+}
+
+fn ensure_lane_capacity(need: i32) {
+    if need <= g_lane_max_depth.len {
+        return
+    }
+    let next = g_lane_max_depth.len
+    if next < 64 {
+        next = 64
+    }
+    loop next < need {
+        next = next * 2
+    }
+    let nname = [i32: str](next * 2)
+    let ndepth = [i32](next)
+    let ny0 = [f64](next)
+    let nh = [f64](next)
+    let i = 0
+    loop i < g_lane_count {
+        nname[i] = g_lane_name[i]
+        ndepth[i] = g_lane_max_depth[i]
+        ny0[i] = g_lane_y0[i]
+        nh[i] = g_lane_h[i]
+        i = i + 1
+    }
+    g_lane_name = nname
+    g_lane_max_depth = ndepth
+    g_lane_y0 = ny0
+    g_lane_h = nh
+}
+
+fn lane_find_or_add(name: str) i32 {
+    let i = 0
+    loop i < g_lane_count {
+        if g_lane_name[i] == name {
+            return i
+        }
+        i = i + 1
+    }
+    ensure_lane_capacity(g_lane_count + 1)
+    let lane = g_lane_count
+    g_lane_name[lane] = name
+    g_lane_max_depth[lane] = 0
+    g_lane_y0[lane] = 0.0
+    g_lane_h[lane] = 0.0
+    g_lane_count = g_lane_count + 1
+    return lane
+}
+
+fn rebuild_lane_layout(row_h: f64) {
+    let label_h = 16.0
+    let gap = 6.0
+    let y: f64 = 0.0
+    let i = 0
+    loop i < g_lane_count {
+        let rows = g_lane_max_depth[i] + 1
+        let h = label_h + rows as f64 * row_h
+        g_lane_y0[i] = y
+        g_lane_h[i] = h
+        y = y + h + gap
+        i = i + 1
+    }
+    g_lane_content_h = y
+    if g_lane_content_h < row_h {
+        g_lane_content_h = row_h
+    }
 }
 
 fn col_bg() u32 { return ui_pack_color("#101418") }
@@ -537,7 +622,21 @@ fn format_known(s: str) bool {
     if s == "ns-profile-v3" {
         return true
     }
-    return s == "ns-profile-v4"
+    if s == "ns-profile-v4" {
+        return true
+    }
+    return s == "ns-profile-v5"
+}
+
+fn format_has_self(s: str) bool {
+    if s == "ns-profile-v4" {
+        return true
+    }
+    return s == "ns-profile-v5"
+}
+
+fn format_has_thread(s: str) bool {
+    return s == "ns-profile-v5"
 }
 
 fn find_child(parent: i32, name: str) i32 {
@@ -627,39 +726,42 @@ fn record_flame_line(line: str) {
     }
 }
 
-fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str) {
+fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str, thread: str) {
     g_ev_raw = g_ev_raw + 1
+    let lane = lane_find_or_add(thread)
     if g_ev_count > 0 {
         let last = g_ev_count - 1
-        if g_ev_depth[last] == depth {
-            if g_ev_name[last] == name {
-                let end = g_ev_start[last] + g_ev_duration[last]
-                if start <= end + 0.05 {
-                    let new_end = start + dur
-                    if new_end > end {
-                        g_ev_duration[last] = new_end - g_ev_start[last]
-                        if g_ev_duration[last] > g_ev_max_dur {
-                            g_ev_max_dur = g_ev_duration[last]
-                        }
-                        if g_ev_duration[last] >= long_span_min_ms() {
-                            // Coalesced growth may newly qualify as a long span.
-                            let already = false
-                            if g_long_count > 0 {
-                                if g_long_idx[g_long_count - 1] == last {
-                                    already = true
+        if g_ev_lane[last] == lane {
+            if g_ev_depth[last] == depth {
+                if g_ev_name[last] == name {
+                    let end = g_ev_start[last] + g_ev_duration[last]
+                    if start <= end + 0.05 {
+                        let new_end = start + dur
+                        if new_end > end {
+                            g_ev_duration[last] = new_end - g_ev_start[last]
+                            if g_ev_duration[last] > g_ev_max_dur {
+                                g_ev_max_dur = g_ev_duration[last]
+                            }
+                            if g_ev_duration[last] >= long_span_min_ms() {
+                                // Coalesced growth may newly qualify as a long span.
+                                let already = false
+                                if g_long_count > 0 {
+                                    if g_long_idx[g_long_count - 1] == last {
+                                        already = true
+                                    }
+                                }
+                                if already == false {
+                                    push_long_span(last)
                                 }
                             }
-                            if already == false {
-                                push_long_span(last)
-                            }
                         }
+                        g_ev_self[last] = g_ev_self[last] + self_ms
+                        g_ev_calls[last] = g_ev_calls[last] + 1
+                        if new_end > g_time_end {
+                            g_time_end = new_end
+                        }
+                        return
                     }
-                    g_ev_self[last] = g_ev_self[last] + self_ms
-                    g_ev_calls[last] = g_ev_calls[last] + 1
-                    if new_end > g_time_end {
-                        g_time_end = new_end
-                    }
-                    return
                 }
             }
         }
@@ -671,6 +773,7 @@ fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str) {
     g_ev_self[i] = self_ms
     g_ev_depth[i] = depth
     g_ev_calls[i] = 1
+    g_ev_lane[i] = lane
     g_ev_name[i] = name
     g_ev_count = g_ev_count + 1
     if dur > g_ev_max_dur {
@@ -678,6 +781,9 @@ fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str) {
     }
     if dur >= long_span_min_ms() {
         push_long_span(i)
+    }
+    if depth > g_lane_max_depth[lane] {
+        g_lane_max_depth[lane] = depth
     }
     if g_ev_count == 1 {
         g_time_origin = start
@@ -777,8 +883,13 @@ fn record_fn_line(line: str) {
     g_hot_count = g_hot_count + 1
 }
 
-fn record_scope_event(line: str, has_self: bool) {
+fn record_scope_event(line: str, has_self: bool, has_thread: bool) {
     let p = skip_spaces(line, 12)
+    let thread = "main"
+    if has_thread {
+        thread = word_at(line, p)
+        p = skip_spaces(line, p + thread.len)
+    }
     let depth_s = word_at(line, p)
     p = skip_spaces(line, p + depth_s.len)
     let start_s = word_at(line, p)
@@ -794,11 +905,16 @@ fn record_scope_event(line: str, has_self: bool) {
     if name.len == 0 {
         return
     }
-    push_event(parse_f64(start_s), parse_f64(dur_s), parse_f64(self_s), parse_i32(depth_s), name)
+    push_event(parse_f64(start_s), parse_f64(dur_s), parse_f64(self_s), parse_i32(depth_s), name, thread)
 }
 
-fn record_ffi_event(line: str, has_depth: bool) {
+fn record_ffi_event(line: str, has_depth: bool, has_thread: bool) {
     let p = skip_spaces(line, 10)
+    let thread = "main"
+    if has_thread {
+        thread = word_at(line, p)
+        p = skip_spaces(line, p + thread.len)
+    }
     let depth = 0
     if has_depth {
         let depth_s = word_at(line, p)
@@ -818,7 +934,7 @@ fn record_ffi_event(line: str, has_depth: bool) {
     if name.len == 0 {
         return
     }
-    push_event(parse_f64(start_s), parse_f64(dur_s), parse_f64(self_s), depth, name)
+    push_event(parse_f64(start_s), parse_f64(dur_s), parse_f64(self_s), depth, name, thread)
 }
 
 fn parse_profile_body(src: str, want_events: bool) {
@@ -836,13 +952,16 @@ fn parse_profile_body(src: str, want_events: bool) {
     g_ev_max_depth = 0
     g_ev_max_dur = 0.0
     g_long_count = 0
+    g_lane_count = 0
+    g_lane_content_h = 0.0
     g_time_origin = 0.0
     g_time_end = 0.0
     g_t0 = 0.0
     g_t1 = 1.0
     g_drag_mode = 0
     g_drag_moved = false
-    let v4 = g_format == "ns-profile-v4"
+    let has_self = format_has_self(g_format)
+    let has_thread = format_has_thread(g_format)
 
     let i = 0
     loop i < src.len {
@@ -857,10 +976,10 @@ fn parse_profile_body(src: str, want_events: bool) {
         let line = substr(src, start, i - start)
         if want_events {
             if starts_with(line, "scope_event:") {
-                record_scope_event(line, v4)
+                record_scope_event(line, has_self, has_thread)
             } else {
                 if starts_with(line, "ffi_event:") {
-                    record_ffi_event(line, v4)
+                    record_ffi_event(line, has_self, has_thread)
                 }
             }
         } else {
@@ -1026,6 +1145,10 @@ fn parse_header(src: str) {
         if v.len > 0 {
             g_flame_frames = v
         }
+        v = header_value(line, "threads")
+        if v.len > 0 {
+            g_threads_header = v
+        }
         if i < src.len {
             i = i + 1
         }
@@ -1054,12 +1177,15 @@ fn clear_profile() {
     g_scope_self = ""
     g_timeline_events = ""
     g_flame_frames = ""
+    g_threads_header = ""
     g_node_count = 0
     g_hot_count = 0
     g_ev_count = 0
     g_ev_raw = 0
     g_ev_max_dur = 0.0
     g_long_count = 0
+    g_lane_count = 0
+    g_lane_content_h = 0.0
     g_time_origin = 0.0
     g_time_end = 0.0
     g_t0 = 0.0
@@ -2026,13 +2152,21 @@ fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
                 let self_ms = g_ev_self[g_selected_ev]
                 let dur_pct = dur / elapsed * 100.0
                 let self_pct = self_ms / elapsed * 100.0
+                let lane = g_ev_lane[g_selected_ev]
+                let thread = "main"
+                if lane >= 0 {
+                    if lane < g_lane_count {
+                        thread = g_lane_name[lane]
+                    }
+                }
                 draw_detail_row(r, x + 8.0, y + 48.0, w - 16.0, "DURATION", `{fmt_time_ms(dur)}  {fmt_1dec(dur_pct)}%`)
                 draw_detail_row(r, x + 8.0, y + 82.0, w - 16.0, "SELF", `{fmt_time_ms(self_ms)}  {fmt_1dec(self_pct)}%`)
                 draw_detail_row(r, x + 8.0, y + 116.0, w - 16.0, "START", `+{fmt_time_ms(g_ev_start[g_selected_ev] - g_time_origin)}`)
                 draw_detail_row(r, x + 8.0, y + 150.0, w - 16.0, "CALLS", `{g_ev_calls[g_selected_ev]}`)
                 draw_detail_row(r, x + 8.0, y + 184.0, w - 16.0, "DEPTH", `{g_ev_depth[g_selected_ev]}`)
-                ui_fill_rect(r, x + 8.0, y + 220.0, w - 16.0, 1.0, col_line(), 0.0)
-                list_y = y + 228.0
+                draw_detail_row(r, x + 8.0, y + 218.0, w - 16.0, "THREAD", thread)
+                ui_fill_rect(r, x + 8.0, y + 254.0, w - 16.0, 1.0, col_line(), 0.0)
+                list_y = y + 262.0
             }
         }
     } else {
@@ -2086,7 +2220,7 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
     ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
     if g_node_count == 0 {
         ui_draw_text(r, x + 8.0, y + 12.0, "No flame stacks in this profile.", PX(), col_muted(), FONT())
-        ui_draw_text(r, x + 8.0, y + 26.0, "Run `ns profile` to generate ns-profile-v4.", PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 8.0, y + 26.0, "Run `ns profile` to generate ns-profile-v5.", PX(), col_muted(), FONT())
         return
     }
 
@@ -2255,7 +2389,11 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     let ov_x = x + 4.0
     let ov_w = w - 8.0
     let row_h: f64 = 18.0
-    let content_h = (g_ev_max_depth + 1) as f64 * row_h
+    if g_lane_count == 0 {
+        lane_find_or_add("main")
+    }
+    rebuild_lane_layout(row_h)
+    let content_h = g_lane_content_h
     let max_scroll = max_f(0.0, content_h - plot_h)
     g_cam_scroll_max = max_scroll
 
@@ -2388,12 +2526,30 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     g_tl_skipped = 0
     g_tl_scanned = 0
     g_tl_min_ms = min_ms
-    g_tl_budget = (w as i32) * (g_ev_max_depth + 2) * 2
+    let lane_factor = g_lane_count
+    if lane_factor < 1 {
+        lane_factor = 1
+    }
+    g_tl_budget = (w as i32) * (g_ev_max_depth + 2) * 2 * lane_factor
     if g_tl_budget < 2048 {
         g_tl_budget = 2048
     }
     ui_push_clip(r, x, plot_y, w, plot_h)
     draw_time_rulers(r, x, plot_y, w, plot_h, g_t0, g_t1, -1.0)
+
+    let li_lane = 0
+    loop li_lane < g_lane_count {
+        let ly = plot_y + g_lane_y0[li_lane] - g_scroll
+        let lh = g_lane_h[li_lane]
+        if ly + lh > plot_y {
+            if ly < plot_y + plot_h {
+                ui_fill_rect(r, x, ly, w, 15.0, col_panel_hi(), 0.0)
+                ui_draw_text(r, x + 6.0, ly + 1.0, g_lane_name[li_lane], PX(), col_muted(), FONT())
+                ui_fill_rect(r, x, ly + lh, w, 1.0, col_line(), 0.0)
+            }
+        }
+        li_lane = li_lane + 1
+    }
 
     // Long spans may start well before t0 and still overlap the window.
     let li = 0
@@ -2437,13 +2593,20 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     ui_fill_rect(r, x, footer_y, w, 1.0, col_line(), 0.0)
     let footer_ty = ui_text_v_center_y(r, footer_y, footer_h, PX(), FONT())
     if g_tl_hovered >= 0 {
-        let detail = `{g_ev_name[g_tl_hovered]}  {g_ev_calls[g_tl_hovered]}x  +{fmt_time_ms(g_ev_start[g_tl_hovered] - g_time_origin)}  dur {fmt_time_ms(g_ev_duration[g_tl_hovered])}`
+        let lane = g_ev_lane[g_tl_hovered]
+        let thread = "main"
+        if lane >= 0 {
+            if lane < g_lane_count {
+                thread = g_lane_name[lane]
+            }
+        }
+        let detail = `{thread}  {g_ev_name[g_tl_hovered]}  {g_ev_calls[g_tl_hovered]}x  +{fmt_time_ms(g_ev_start[g_tl_hovered] - g_time_origin)}  dur {fmt_time_ms(g_ev_duration[g_tl_hovered])}`
         ui_push_clip(r, x + 8.0, footer_y, w - 16.0, footer_h)
         ui_draw_text(r, x + 8.0, footer_ty, detail, PX(), col_text(), FONT())
         ui_pop_clip(r)
     } else {
         let range = `{fmt_time_ms(g_t0 - g_time_origin)} - {fmt_time_ms(g_t1 - g_time_origin)}`
-        let shown = `{g_tl_drawn}/{g_ev_count} spans  scan {g_tl_scanned}  long {g_long_count}  {range}`
+        let shown = `{g_tl_drawn}/{g_ev_count} spans  lanes {g_lane_count}  long {g_long_count}  {range}`
         ui_draw_text(r, x + 8.0, footer_ty, shown, PX(), col_muted(), FONT())
     }
 

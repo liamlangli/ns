@@ -1,4 +1,5 @@
 #include "ns_vm.h"
+#include "ns_profile.h"
 
 // task runtime: async/await + dispatch (doc/async_and_task.md)
 //
@@ -78,6 +79,7 @@ typedef struct ns_task_ectx {
     ns_code_loc loc;
     ns_str lib;
     i32 stack_depth;
+    ns_profile_thread_ctx profile; // parked open stack across VM-lock handoffs
 } ns_task_ectx;
 
 typedef struct ns_task {
@@ -94,6 +96,7 @@ typedef struct ns_task {
     void *cap_base;          // heap snapshot of a dispatched block's captures
     ns_value *args;          // snapshot args of an async fn call (ns_array)
     ns_task_ectx ectx;       // saved eval context while not holding the vm lock
+    ns_str profile_name;     // stable profiler lane label (`main`, callee, or task#N)
     ns_task_thread thread;
     struct ns_task *next;
 } ns_task;
@@ -111,6 +114,40 @@ typedef struct ns_task_rt {
     ns_type handle_t;    // cached task handle type
 } ns_task_rt;
 
+static void ns_task_set_profile_name(ns_vm *vm, ns_task *t) {
+    if (!t) return;
+    if (t->id == 0) {
+        t->profile_name = ns_str_cstr("main");
+        return;
+    }
+    // Prefer callee#id so concurrent tasks of the same fn keep separate lanes.
+    ns_str callee = ns_str_null;
+    if (t->callee >= 0 && vm && vm->symbols) {
+        i32 n = (i32)ns_array_length(vm->symbols);
+        if (t->callee < n) callee = vm->symbols[t->callee].name;
+    }
+    i8 scratch[96];
+    i32 len = 0;
+    if (callee.len > 0 && callee.data != ns_null) {
+        len = snprintf(scratch, sizeof(scratch), "%.*s#%d", callee.len, callee.data, t->id);
+    } else {
+        len = snprintf(scratch, sizeof(scratch), "task#%d", t->id);
+    }
+    if (len < 0) len = 0;
+    if (len >= (i32)sizeof(scratch)) len = (i32)sizeof(scratch) - 1;
+    i8 *buf = (i8 *)ns_malloc((szt)len + 1);
+    memcpy(buf, scratch, (szt)len);
+    buf[len] = 0;
+    t->profile_name = (ns_str){.data = buf, .len = len, .dynamic = 1};
+}
+
+static ns_str ns_task_profile_name(ns_task *t) {
+    if (!t) return ns_str_cstr("main");
+    if (t->profile_name.len > 0 && t->profile_name.data != ns_null) return t->profile_name;
+    if (t->id == 0) return ns_str_cstr("main");
+    return ns_str_cstr("task");
+}
+
 static void ns_task_ectx_save(ns_vm *vm, ns_task_ectx *c) {
     c->call_stack = vm->call_stack;
     c->scope_stack = vm->scope_stack;
@@ -119,9 +156,11 @@ static void ns_task_ectx_save(ns_vm *vm, ns_task_ectx *c) {
     c->loc = vm->loc;
     c->lib = vm->lib;
     c->stack_depth = vm->stack_depth;
+    ns_profile_park_thread(&c->profile);
 }
 
-static void ns_task_ectx_load(ns_vm *vm, ns_task_ectx *c) {
+static void ns_task_ectx_load(ns_vm *vm, ns_task *t) {
+    ns_task_ectx *c = &t->ectx;
     vm->call_stack = c->call_stack;
     vm->scope_stack = c->scope_stack;
     vm->symbol_stack = c->symbol_stack;
@@ -129,13 +168,14 @@ static void ns_task_ectx_load(ns_vm *vm, ns_task_ectx *c) {
     vm->loc = c->loc;
     vm->lib = c->lib;
     vm->stack_depth = c->stack_depth;
+    ns_profile_bind_thread(ns_task_profile_name(t), &c->profile);
 }
 
 // take the vm lock and install t's eval context
 static void ns_task_lock(ns_vm *vm, ns_task *t) {
     ns_task_rt *rt = vm->task_rt;
     ns_task_mutex_lock(&rt->gil);
-    ns_task_ectx_load(vm, &t->ectx);
+    ns_task_ectx_load(vm, t);
     rt->current = t;
 }
 
@@ -168,7 +208,7 @@ static void ns_task_wait_done(ns_vm *vm) {
     ns_task_ectx_save(vm, &self->ectx);
     rt->current = ns_null;
     ns_task_cond_wait(&rt->done_cv, &rt->gil);
-    ns_task_ectx_load(vm, &self->ectx);
+    ns_task_ectx_load(vm, self);
     rt->current = self;
 }
 
@@ -184,6 +224,7 @@ static ns_task_rt *ns_task_rt_get(ns_vm *vm) {
     rt->main_task.state = NS_TASK_RUNNING;
     rt->main_task.level = NS_QUEUE_MAIN;
     rt->main_task.vm = vm;
+    rt->main_task.profile_name = ns_str_cstr("main");
     rt->next_id = 1;
     rt->slice = NS_TASK_SLICE;
     ns_task_mutex_lock(&rt->gil);
@@ -378,7 +419,18 @@ static ns_return_value ns_task_invoke(ns_vm *vm, ns_ast_ctx *ctx, ns_task *t) {
         }
     }
 
+    // Task bodies bypass ns_eval_call_expr, so enter/exit the profiler here.
+    f64 profile_start_ms = 0.0;
+    i32 profile_depth = 0;
+    if (ns_profile.enabled) {
+        ns_profile_scope_enter(sym->name, sym->lib);
+        profile_start_ms = ns_profile_now_ms();
+        profile_depth = ns_profile.open_len > 0 ? ns_profile.open_len - 1 : 0;
+    }
     ns_return_void ret = ns_eval_compound_stmt(vm, fn->ctx ? fn->ctx : ctx, fn->body);
+    if (ns_profile.enabled) {
+        ns_profile_record_scope(sym->name, sym->lib, profile_depth, profile_start_ms, ns_profile_now_ms() - profile_start_ms);
+    }
     if (ns_return_is_error(ret)) {
         (void)ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);
@@ -480,7 +532,7 @@ static void ns_task_run_inline(ns_vm *vm, ns_task *t) {
     ns_task_rt *rt = (ns_task_rt *)vm->task_rt;
     ns_task *parent = rt->current;
     ns_task_ectx_save(vm, &parent->ectx);
-    ns_task_ectx_load(vm, &t->ectx);
+    ns_task_ectx_load(vm, t);
     rt->current = t;
     t->state = NS_TASK_RUNNING;
 
@@ -509,7 +561,7 @@ static void ns_task_run_inline(ns_vm *vm, ns_task *t) {
     ns_array_free(vm->symbol_stack);
     ns_array_free(vm->stack);
     vm->stack_depth = 0;
-    ns_task_ectx_load(vm, &parent->ectx);
+    ns_task_ectx_load(vm, parent);
     rt->current = parent;
     t->joined = true;
     ns_task_cond_broadcast(&rt->done_cv);
@@ -644,6 +696,7 @@ ns_return_value ns_task_spawn_async_call(ns_vm *vm, ns_ast_ctx *ctx, ns_symbol *
     ns_task *t = ns_task_create(vm, ctx, NS_QUEUE_WORKER);
     t->callee = callee_index;
     t->args = args;
+    ns_task_set_profile_name(vm, t);
     return ns_task_start(vm, t, handle_t, loc, false);
 }
 
@@ -680,6 +733,7 @@ ns_return_bool ns_task_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
         ns_type handle_t = ns_task_find_type(vm, fn->ret);
         ns_task *t = ns_task_create(vm, ctx, (ns_queue_level)level_i);
         t->callee = (i32)ns_type_index(closure.t);
+        ns_task_set_profile_name(vm, t);
         if (sym->type == NS_SYMBOL_BLOCK && sym->bc.st.stride > 0) {
             // snapshot the captures so the task outlives the dispatching scope
             u64 stride = sym->bc.st.stride;

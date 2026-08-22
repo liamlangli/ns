@@ -22,7 +22,17 @@ f64 ns_profile_now_ms(void) {
 #endif
 }
 
+static void ns_profile_ensure_main_thread(void) {
+    if (ns_profile.thread_count > 0) return;
+    ns_profile.threads[0] = ns_str_cstr("main");
+    ns_profile.thread_count = 1;
+    ns_profile.current_thread = 0;
+}
+
 void ns_profile_reset(void) {
+    for (i32 i = 0; i < ns_profile.thread_count; i++) {
+        if (ns_profile.threads[i].dynamic) ns_str_free(ns_profile.threads[i]);
+    }
     ns_array_free(ns_profile.events);
     memset(&ns_profile, 0, sizeof(ns_profile));
 }
@@ -30,6 +40,7 @@ void ns_profile_reset(void) {
 void ns_profile_enable(f64 start_ms) {
     ns_profile.start_ms = start_ms;
     ns_profile.enabled = true;
+    ns_profile_ensure_main_thread();
 }
 
 static u32 ns_profile_hash_str(ns_str s) {
@@ -48,6 +59,59 @@ static ns_bool ns_profile_str_eq(ns_str a, ns_str b) {
         if (a.data[i] != b.data[i]) return false;
     }
     return true;
+}
+
+static i32 ns_profile_thread_intern(ns_str name) {
+    ns_profile_ensure_main_thread();
+    if (name.len <= 0 || name.data == ns_null) return 0;
+    for (i32 i = 0; i < ns_profile.thread_count; i++) {
+        if (ns_profile_str_eq(ns_profile.threads[i], name)) return i;
+    }
+    if (ns_profile.thread_count >= NS_PROFILE_MAX_THREADS) return 0;
+    i32 ti = ns_profile.thread_count++;
+    // Own a copy so callers can pass ephemeral buffers (e.g. "task#12").
+    i8 *buf = (i8 *)ns_malloc((szt)name.len + 1);
+    memcpy(buf, name.data, (szt)name.len);
+    buf[name.len] = 0;
+    ns_profile.threads[ti] = (ns_str){.data = buf, .len = name.len, .dynamic = 1};
+    return ti;
+}
+
+void ns_profile_bind_thread(ns_str name, ns_profile_thread_ctx *ctx) {
+    if (!ns_profile.enabled) {
+        if (ctx) {
+            ctx->open_len = 0;
+            ctx->thread = -1;
+        }
+        return;
+    }
+    ns_profile_ensure_main_thread();
+    if (name.len > 0 && name.data != ns_null) {
+        ns_profile.current_thread = ns_profile_thread_intern(name);
+    }
+    ns_profile.open_len = 0;
+    if (ctx && ctx->open_len > 0) {
+        i32 n = ctx->open_len;
+        if (n > NS_PROFILE_MAX_STACK) n = NS_PROFILE_MAX_STACK;
+        memcpy(ns_profile.open, ctx->open, sizeof(ns_profile_open) * (szt)n);
+        ns_profile.open_len = n;
+    }
+    if (ctx) ctx->thread = ns_profile.current_thread;
+}
+
+void ns_profile_park_thread(ns_profile_thread_ctx *ctx) {
+    if (!ctx) return;
+    if (!ns_profile.enabled) {
+        ctx->open_len = 0;
+        ctx->thread = -1;
+        return;
+    }
+    i32 n = ns_profile.open_len;
+    if (n > NS_PROFILE_MAX_STACK) n = NS_PROFILE_MAX_STACK;
+    if (n > 0) memcpy(ctx->open, ns_profile.open, sizeof(ns_profile_open) * (szt)n);
+    ctx->open_len = n;
+    ctx->thread = ns_profile.current_thread;
+    ns_profile.open_len = 0;
 }
 
 static i32 ns_profile_fn_get(ns_str name, ns_str lib, u8 kind) {
@@ -125,9 +189,11 @@ static void ns_profile_fn_add(i32 fn_index, f64 elapsed_ms, f64 self_ms) {
 }
 
 static void ns_profile_record_event(u8 kind, ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms, f64 self_ms) {
+    ns_profile_ensure_main_thread();
     ns_profile_event ev = {
         .kind = kind,
         .depth = depth,
+        .thread = ns_profile.current_thread,
         .start_ms = start_ms - ns_profile.start_ms,
         .elapsed_ms = elapsed_ms,
         .self_ms = self_ms,
@@ -231,6 +297,8 @@ static int ns_profile_event_cmp(const void *a, const void *b) {
     const ns_profile_event *y = b;
     if (x->start_ms < y->start_ms) return -1;
     if (x->start_ms > y->start_ms) return 1;
+    if (x->thread < y->thread) return -1;
+    if (x->thread > y->thread) return 1;
     if (x->kind == NS_PROFILE_EVENT_SCOPE && y->kind != NS_PROFILE_EVENT_SCOPE) return -1;
     if (x->kind != NS_PROFILE_EVENT_SCOPE && y->kind == NS_PROFILE_EVENT_SCOPE) return 1;
     if (x->depth < y->depth) return -1;
@@ -276,6 +344,7 @@ static void ns_profile_sort_events(void) {
 
 static ns_bool ns_profile_same_span(const ns_profile_event *a, const ns_profile_event *b) {
     if (a->kind != b->kind) return false;
+    if (a->thread != b->thread) return false;
     if (a->depth != b->depth) return false;
     if (!ns_profile_str_eq(a->name, b->name) || !ns_profile_str_eq(a->lib, b->lib)) return false;
     return b->start_ms <= a->start_ms + a->elapsed_ms + 0.05;
@@ -308,6 +377,7 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     i32 raw_events = (i32)ns_array_length(ns_profile.events);
     ns_profile_coalesce_events();
     i32 event_count = (i32)ns_array_length(ns_profile.events);
+    ns_profile_ensure_main_thread();
 
     i32 ffi_event_count = 0;
     i32 scope_event_count = 0;
@@ -323,7 +393,7 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
         else ffi_symbols++;
     }
 
-    fprintf(f, "format: ns-profile-v4\n");
+    fprintf(f, "format: ns-profile-v5\n");
     fprintf(f, "elapsed_ms: %.3f\n", elapsed_ms);
     fprintf(f, "ffi_calls: %llu\n", (unsigned long long)ns_profile.ffi_calls);
     fprintf(f, "ffi_ms: %.3f\n", ffi_ms);
@@ -337,9 +407,15 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     fprintf(f, "timeline_events: %d\n", event_count);
     fprintf(f, "timeline_raw: %d\n", raw_events);
     fprintf(f, "flame_frames: %d\n", ns_profile.flame_count);
+    fprintf(f, "threads: %d\n", ns_profile.thread_count);
     fprintf(f, "argv:");
     for (i32 i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);
     fprintf(f, "\n");
+
+    fprintf(f, "thread_table: id name\n");
+    for (i32 i = 0; i < ns_profile.thread_count; i++) {
+        fprintf(f, "thread: %d %.*s\n", i, ns_profile.threads[i].len, ns_profile.threads[i].data);
+    }
 
     ns_profile_fn_stat ordered[NS_PROFILE_MAX_FNS];
     memcpy(ordered, ns_profile.fns, sizeof(ns_profile_fn_stat) * (size_t)ns_profile.fn_count);
@@ -383,13 +459,16 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     }
 
     // Timeline last so viewers can stop after the aggregated tables.
-    fprintf(f, "timeline: kind depth start_ms duration_ms self_ms symbol\n");
+    fprintf(f, "timeline: thread depth start_ms duration_ms self_ms symbol\n");
     for (i32 i = 0; i < event_count; i++) {
         ns_profile_event *e = &ns_profile.events[i];
+        i32 ti = e->thread;
+        if (ti < 0 || ti >= ns_profile.thread_count) ti = 0;
+        ns_str tname = ns_profile.threads[ti];
         if (e->kind == NS_PROFILE_EVENT_SCOPE) {
-            fprintf(f, "scope_event: %d %.3f %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
+            fprintf(f, "scope_event: %.*s %d %.3f %.3f %.3f ", tname.len, tname.data, e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
         } else {
-            fprintf(f, "ffi_event: %d %.3f %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
+            fprintf(f, "ffi_event: %.*s %d %.3f %.3f %.3f ", tname.len, tname.data, e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
         }
         ns_profile_write_symbol(f, e->lib, e->name);
         fputc('\n', f);
@@ -416,6 +495,7 @@ void ns_profile_print_summary(FILE *out, f64 elapsed_ms) {
             ns_profile_pct_color(ffi_pct), ffi_ms, ffi_pct, ns_color_nil);
     fprintf(out, "  timeline    %d events\n", (i32)ns_array_length(ns_profile.events));
     fprintf(out, "  stacks      %d unique\n", ns_profile.flame_count);
+    fprintf(out, "  threads     %d\n", ns_profile.thread_count > 0 ? ns_profile.thread_count : 1);
     fprintf(out, "  share       %s>=25%%%s  %s>=10%%%s  %s>=3%%%s  %s<3%%%s\n",
             ns_color_err, ns_color_nil, ns_color_wrn, ns_color_nil,
             ns_color_log, ns_color_nil, ns_color_ign, ns_color_nil);

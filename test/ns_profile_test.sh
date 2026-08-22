@@ -81,7 +81,10 @@ if [ -e "$tmp/ns.profile" ]; then
 fi
 test ! -e "$tmp/ns.profile.json"
 
-grep -q '^format: ns-profile-v4$' "$tmp/bin/ns.profile"
+grep -q '^format: ns-profile-v5$' "$tmp/bin/ns.profile"
+grep -q '^threads: ' "$tmp/bin/ns.profile"
+grep -q '^thread: 0 main$' "$tmp/bin/ns.profile"
+grep -q '^scope_event: main ' "$tmp/bin/ns.profile"
 grep -q '^fn: scope ' "$tmp/bin/ns.profile"
 grep -q '^flame: ' "$tmp/bin/ns.profile"
 grep -q 'main;mid;leaf' "$tmp/bin/ns.profile"
@@ -101,7 +104,7 @@ if [ -e "$tmp/ns.profile" ]; then
     exit 1
 fi
 test ! -e "$tmp/ns.profile.json"
-grep -q '^format: ns-profile-v4$' "$tmp/bin/ns.profile"
+grep -q '^format: ns-profile-v5$' "$tmp/bin/ns.profile"
 grep -q 'main;mid;leaf' "$tmp/bin/ns.profile"
 
 # A profiled run of a project entry reports into that project's bin/, even when
@@ -129,7 +132,7 @@ if [ -e "$tmp/run-profile/ns.profile" ]; then
     printf '%s\n' 'FAIL: ns profile wrote ns.profile at the project root.' >&2
     exit 1
 fi
-grep -q '^format: ns-profile-v4$' "$tmp/run-profile/bin/ns.profile"
+grep -q '^format: ns-profile-v5$' "$tmp/run-profile/bin/ns.profile"
 cd "$tmp"
 
 # A profiled build records compiler phases in the same report and viewer. Use

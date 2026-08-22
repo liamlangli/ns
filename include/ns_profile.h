@@ -13,12 +13,18 @@
 //   - a call-tree of unique stacks used to emit a folded flamechart
 //   - a linearly growing array of every complete event for a time-axis
 //     flamechart (memory grows with sample count)
+//
+// Scope open stacks are per thread/task. The task runtime parks and restores
+// the live open stack across VM-lock handoffs so nested exclusive time stays
+// correct when tasks interleave. Every timeline event records the thread name
+// active at record time (`main`, `task#N`, or a callee symbol).
 
 #define NS_PROFILE_MAX_FNS 4096
 #define NS_PROFILE_FN_HASH 8192
 #define NS_PROFILE_MAX_STACK 128
 #define NS_PROFILE_MAX_FLAME 4096
 #define NS_PROFILE_FLAME_HASH 8192
+#define NS_PROFILE_MAX_THREADS 256
 
 #define NS_PROFILE_EVENT_FFI 1
 #define NS_PROFILE_EVENT_SCOPE 2
@@ -37,6 +43,7 @@ typedef struct ns_profile_fn_stat {
 typedef struct ns_profile_event {
     u8 kind;        // NS_PROFILE_EVENT_*
     i32 depth;      // stack depth of this frame (0 = root)
+    i32 thread;     // index into threads[] at record time
     f64 start_ms;   // milliseconds since profile start
     f64 elapsed_ms; // inclusive wall-clock time
     f64 self_ms;    // exclusive wall-clock time
@@ -57,6 +64,14 @@ typedef struct ns_profile_open {
     i32 flame_index;
     f64 child_ms;
 } ns_profile_open;
+
+// Snapshot of the live open stack for one task/thread. The task runtime parks
+// this across VM-lock handoffs; ns_profile_bind_thread restores it.
+typedef struct ns_profile_thread_ctx {
+    ns_profile_open open[NS_PROFILE_MAX_STACK];
+    i32 open_len;
+    i32 thread; // index into threads[], or -1 when unbound
+} ns_profile_thread_ctx;
 
 typedef struct ns_profile_state {
     ns_bool enabled;
@@ -80,6 +95,11 @@ typedef struct ns_profile_state {
     i32 open_len;
     u64 stack_overflows;
 
+    // Interned display names for timeline lanes (`main`, `task#N`, ...).
+    ns_str threads[NS_PROFILE_MAX_THREADS];
+    i32 thread_count;
+    i32 current_thread; // index into threads[], default 0 = main
+
     ns_profile_flame flames[NS_PROFILE_MAX_FLAME];
     i32 flame_count;
     u64 flames_dropped;
@@ -97,6 +117,16 @@ void ns_profile_reset(void);
 // Enable collection. Recorders below are no-ops until this is called.
 void ns_profile_enable(f64 start_ms);
 
+// Intern `name` as the active thread for subsequent enter/record calls and
+// install `ctx`'s parked open stack (or an empty stack when `ctx` is null).
+// When profiling is disabled this is still safe: it only touches thread state
+// when enabled. Pass a null name to keep the previous thread label.
+void ns_profile_bind_thread(ns_str name, ns_profile_thread_ctx *ctx);
+
+// Copy the live open stack into `ctx` and clear the live stack. Call before
+// releasing the VM lock so another task can bind without inheriting frames.
+void ns_profile_park_thread(ns_profile_thread_ctx *ctx);
+
 // Push a VM function or compiler phase onto the open stack so nested exclusive
 // time and the flame tree can be attributed to the live call path.
 void ns_profile_scope_enter(ns_str name, ns_str lib);
@@ -110,7 +140,8 @@ void ns_profile_record_ffi(ns_str name, ns_str lib, f64 start_ms, f64 elapsed_ms
 // enter. If no enter is on the stack, the scope is still counted as a root.
 void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms);
 
-// Write the ns-profile-v4 text report, including the folded flame stacks.
+// Write the ns-profile-v5 text report, including the folded flame stacks and
+// per-event thread names.
 void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv);
 
 // Print a terminal hot-path summary. Rows are colored by self-time share.
