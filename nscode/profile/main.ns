@@ -34,6 +34,18 @@ let g_selected_ev = -1
 let g_scroll: f64 = 0.0
 let g_fx0: f64 = 0.0
 let g_fx1: f64 = 1.0
+// Camera targets + inertia. Input writes targets; display lerps toward them.
+let g_cam_t0: f64 = 0.0
+let g_cam_t1: f64 = 1.0
+let g_cam_fx0: f64 = 0.0
+let g_cam_fx1: f64 = 1.0
+let g_cam_scroll: f64 = 0.0
+let g_cam_scroll_max: f64 = 0.0
+let g_vel_t: f64 = 0.0
+let g_vel_fx: f64 = 0.0
+let g_vel_scroll: f64 = 0.0
+let g_cam_last_ms: u64 = 0
+let g_cam_coasting = false
 
 let g_node_name = [i32: str](4096)
 let g_node_parent = [i32](4096)
@@ -683,6 +695,7 @@ fn reset_time_view() {
     if g_t1 <= g_t0 {
         g_t1 = g_t0 + 1.0
     }
+    cam_snap_time()
 }
 
 fn fit_time_view() {
@@ -715,6 +728,11 @@ fn fit_time_view() {
         reset_time_view()
     }
     clamp_view()
+    cam_snap_time()
+    g_cam_scroll = g_scroll
+    g_vel_t = 0.0
+    g_vel_scroll = 0.0
+    g_cam_coasting = false
 }
 
 fn record_fn_line(line: str) {
@@ -1046,6 +1064,10 @@ fn clear_profile() {
     g_fx0 = 0.0
     g_fx1 = 1.0
     g_scroll = 0.0
+    cam_snap_time()
+    cam_snap_flame()
+    cam_snap_scroll()
+    cam_stop()
     invalidate_overview_batch()
 }
 
@@ -1112,6 +1134,261 @@ fn fit_flame_view() {
     g_fx1 = 1.0
     g_scroll = 0.0
     clamp_flame_view()
+    cam_snap_flame()
+    g_cam_scroll = g_scroll
+    g_vel_fx = 0.0
+    g_vel_scroll = 0.0
+    g_cam_coasting = false
+}
+
+fn cam_follow_alpha() f64 { return 0.55 }
+fn cam_vel_damp() f64 { return 0.78 }
+fn cam_vel_stop() f64 { return 0.00008 }
+
+fn cam_snap_time() {
+    g_cam_t0 = g_t0
+    g_cam_t1 = g_t1
+}
+
+fn cam_snap_flame() {
+    g_cam_fx0 = g_fx0
+    g_cam_fx1 = g_fx1
+}
+
+fn cam_snap_scroll() {
+    g_cam_scroll = g_scroll
+}
+
+fn cam_stop() {
+    g_vel_t = 0.0
+    g_vel_fx = 0.0
+    g_vel_scroll = 0.0
+    g_cam_coasting = false
+}
+
+fn clamp_cam_time() {
+    let span = g_cam_t1 - g_cam_t0
+    let min_span = time_min_span()
+    if span < min_span {
+        g_cam_t1 = g_cam_t0 + min_span
+        span = min_span
+    }
+    let full = time_full_span()
+    if span > full {
+        g_cam_t0 = g_time_origin
+        g_cam_t1 = g_time_end
+        return
+    }
+    if g_cam_t0 < g_time_origin {
+        g_cam_t0 = g_time_origin
+        g_cam_t1 = g_cam_t0 + span
+    }
+    if g_cam_t1 > g_time_end {
+        g_cam_t1 = g_time_end
+        g_cam_t0 = g_cam_t1 - span
+        if g_cam_t0 < g_time_origin {
+            g_cam_t0 = g_time_origin
+        }
+    }
+}
+
+fn clamp_cam_flame() {
+    let span = g_cam_fx1 - g_cam_fx0
+    let min_span = flame_min_span()
+    if span < min_span {
+        let mid = (g_cam_fx0 + g_cam_fx1) * 0.5
+        let half = min_span * 0.5
+        g_cam_fx0 = mid - half
+        g_cam_fx1 = mid + half
+        span = min_span
+    }
+    if span > 1.0 {
+        g_cam_fx0 = 0.0
+        g_cam_fx1 = 1.0
+        return
+    }
+    if g_cam_fx0 < 0.0 {
+        g_cam_fx0 = 0.0
+        g_cam_fx1 = span
+    }
+    if g_cam_fx1 > 1.0 {
+        g_cam_fx1 = 1.0
+        g_cam_fx0 = 1.0 - span
+        if g_cam_fx0 < 0.0 {
+            g_cam_fx0 = 0.0
+        }
+    }
+}
+
+fn clamp_cam_scroll() {
+    if g_cam_scroll < 0.0 {
+        g_cam_scroll = 0.0
+    }
+    if g_cam_scroll > g_cam_scroll_max {
+        g_cam_scroll = g_cam_scroll_max
+    }
+}
+
+fn cam_set_time(t0: f64, t1: f64) {
+    g_cam_t0 = t0
+    g_cam_t1 = t1
+    clamp_cam_time()
+}
+
+fn cam_set_flame(fx0: f64, fx1: f64) {
+    g_cam_fx0 = fx0
+    g_cam_fx1 = fx1
+    clamp_cam_flame()
+}
+
+fn cam_set_scroll(scroll: f64) {
+    g_cam_scroll = scroll
+    clamp_cam_scroll()
+}
+
+fn cam_sample_vel_time(prev_t0: f64, dt: f64) {
+    if dt <= 0.0 {
+        return
+    }
+    let v = (g_cam_t0 - prev_t0) / dt
+    g_vel_t = g_vel_t * 0.55 + v * 0.45
+}
+
+fn cam_sample_vel_flame(prev_fx0: f64, dt: f64) {
+    if dt <= 0.0 {
+        return
+    }
+    let v = (g_cam_fx0 - prev_fx0) / dt
+    g_vel_fx = g_vel_fx * 0.55 + v * 0.45
+}
+
+fn cam_sample_vel_scroll(prev_scroll: f64, dt: f64) {
+    if dt <= 0.0 {
+        return
+    }
+    let v = (g_cam_scroll - prev_scroll) / dt
+    g_vel_scroll = g_vel_scroll * 0.55 + v * 0.45
+}
+
+fn cam_frame_dt() f64 {
+    let now = os_time_ms()
+    let dt: f64 = 0.016
+    if g_cam_last_ms > 0 {
+        let delta = (now - g_cam_last_ms) as f64 * 0.001
+        if delta > 0.001 {
+            if delta < 0.05 {
+                dt = delta
+            } else {
+                dt = 0.05
+            }
+        }
+    }
+    g_cam_last_ms = now
+    return dt
+}
+
+fn cam_abs(v: f64) f64 {
+    if v < 0.0 {
+        return 0.0 - v
+    }
+    return v
+}
+
+fn cam_settled() bool {
+    if cam_abs(g_t0 - g_cam_t0) > 0.00005 {
+        return false
+    }
+    if cam_abs(g_t1 - g_cam_t1) > 0.00005 {
+        return false
+    }
+    if cam_abs(g_fx0 - g_cam_fx0) > 0.00005 {
+        return false
+    }
+    if cam_abs(g_fx1 - g_cam_fx1) > 0.00005 {
+        return false
+    }
+    if cam_abs(g_scroll - g_cam_scroll) > 0.05 {
+        return false
+    }
+    if g_cam_coasting {
+        if cam_abs(g_vel_t) > cam_vel_stop() {
+            return false
+        }
+        if cam_abs(g_vel_fx) > cam_vel_stop() {
+            return false
+        }
+        if cam_abs(g_vel_scroll) > 0.2 {
+            return false
+        }
+    }
+    return true
+}
+
+fn tick_camera(r: ref ui_renderer) {
+    let dt = cam_frame_dt()
+    let a = cam_follow_alpha()
+    if g_cam_coasting {
+        if g_drag_mode == 0 {
+            let damp = cam_vel_damp()
+            if cam_abs(g_vel_t) > cam_vel_stop() {
+                let span = g_cam_t1 - g_cam_t0
+                g_cam_t0 = g_cam_t0 + g_vel_t * dt
+                g_cam_t1 = g_cam_t0 + span
+                clamp_cam_time()
+                g_vel_t = g_vel_t * damp
+            } else {
+                g_vel_t = 0.0
+            }
+            if cam_abs(g_vel_fx) > cam_vel_stop() {
+                let span = g_cam_fx1 - g_cam_fx0
+                g_cam_fx0 = g_cam_fx0 + g_vel_fx * dt
+                g_cam_fx1 = g_cam_fx0 + span
+                clamp_cam_flame()
+                g_vel_fx = g_vel_fx * damp
+            } else {
+                g_vel_fx = 0.0
+            }
+            if cam_abs(g_vel_scroll) > 0.2 {
+                g_cam_scroll = g_cam_scroll + g_vel_scroll * dt
+                clamp_cam_scroll()
+                g_vel_scroll = g_vel_scroll * damp
+            } else {
+                g_vel_scroll = 0.0
+            }
+            if cam_abs(g_vel_t) <= cam_vel_stop() {
+                if cam_abs(g_vel_fx) <= cam_vel_stop() {
+                    if cam_abs(g_vel_scroll) <= 0.2 {
+                        g_cam_coasting = false
+                    }
+                }
+            }
+        }
+    }
+
+    g_t0 = g_t0 + (g_cam_t0 - g_t0) * a
+    g_t1 = g_t1 + (g_cam_t1 - g_t1) * a
+    g_fx0 = g_fx0 + (g_cam_fx0 - g_fx0) * a
+    g_fx1 = g_fx1 + (g_cam_fx1 - g_fx1) * a
+    g_scroll = g_scroll + (g_cam_scroll - g_scroll) * a
+    clamp_view()
+    clamp_flame_view()
+    if g_scroll < 0.0 {
+        g_scroll = 0.0
+    }
+    if g_scroll > g_cam_scroll_max {
+        g_scroll = g_cam_scroll_max
+    }
+
+    if cam_settled() == false {
+        ui_request_render(r, 2)
+    } else {
+        // Snap leftovers so we stop requesting frames.
+        g_t0 = g_cam_t0
+        g_t1 = g_cam_t1
+        g_fx0 = g_cam_fx0
+        g_fx1 = g_cam_fx1
+        g_scroll = g_cam_scroll
+    }
 }
 
 fn begin_drag(mode: i32) {
@@ -1119,14 +1396,23 @@ fn begin_drag(mode: i32) {
     g_drag_moved = false
     g_drag_x = g_mouse_x
     g_drag_y = g_mouse_y
-    g_drag_t0 = g_t0
-    g_drag_t1 = g_t1
-    g_drag_scroll = g_scroll
-    g_drag_fx0 = g_fx0
-    g_drag_fx1 = g_fx1
+    g_drag_t0 = g_cam_t0
+    g_drag_t1 = g_cam_t1
+    g_drag_scroll = g_cam_scroll
+    g_drag_fx0 = g_cam_fx0
+    g_drag_fx1 = g_cam_fx1
+    g_cam_coasting = false
+    g_vel_t = 0.0
+    g_vel_fx = 0.0
+    g_vel_scroll = 0.0
 }
 
 fn end_drag() {
+    if g_drag_mode != 0 {
+        if g_drag_moved {
+            g_cam_coasting = true
+        }
+    }
     g_drag_mode = 0
 }
 
@@ -1184,6 +1470,7 @@ fn load_profile(path: str) {
         if g_t1 <= 0.0 {
             g_t1 = 1.0
         }
+        cam_snap_time()
         if format_known(g_format) {
             g_status = "Profile loaded."
         } else {
@@ -1193,6 +1480,7 @@ fn load_profile(path: str) {
         g_drag_mode = 0
         g_drag_moved = false
         g_mode = 0
+        cam_stop()
     }
 }
 
@@ -1535,7 +1823,11 @@ fn zoom_time_at(mx: f64, x: f64, w: f64, scroll: f64) {
     if w <= 0.0 {
         return
     }
-    let span = time_view_span()
+    let span = g_cam_t1 - g_cam_t0
+    let use_span = span
+    if use_span < time_min_span() {
+        use_span = time_min_span()
+    }
     let ratio = (mx - x) / w
     if ratio < 0.0 {
         ratio = 0.0
@@ -1543,12 +1835,12 @@ fn zoom_time_at(mx: f64, x: f64, w: f64, scroll: f64) {
     if ratio > 1.0 {
         ratio = 1.0
     }
-    let focus = g_t0 + span * ratio
+    let focus = g_cam_t0 + use_span * ratio
     let factor = 1.2
     if scroll > 0.0 {
         factor = 0.85
     }
-    let next = span * factor
+    let next = use_span * factor
     let min_span = time_min_span()
     if next < min_span {
         next = min_span
@@ -1557,16 +1849,20 @@ fn zoom_time_at(mx: f64, x: f64, w: f64, scroll: f64) {
     if next > full {
         next = full
     }
-    g_t0 = focus - next * ratio
-    g_t1 = g_t0 + next
-    clamp_view()
+    cam_set_time(focus - next * ratio, focus - next * ratio + next)
+    g_vel_t = 0.0
+    g_cam_coasting = false
 }
 
 fn zoom_flame_at(mx: f64, x: f64, w: f64, scroll: f64) {
     if w <= 0.0 {
         return
     }
-    let span = flame_view_span()
+    let span = g_cam_fx1 - g_cam_fx0
+    let use_span = span
+    if use_span < flame_min_span() {
+        use_span = flame_min_span()
+    }
     let ratio = (mx - x) / w
     if ratio < 0.0 {
         ratio = 0.0
@@ -1574,12 +1870,12 @@ fn zoom_flame_at(mx: f64, x: f64, w: f64, scroll: f64) {
     if ratio > 1.0 {
         ratio = 1.0
     }
-    let focus = g_fx0 + span * ratio
+    let focus = g_cam_fx0 + use_span * ratio
     let factor = 1.2
     if scroll > 0.0 {
         factor = 0.85
     }
-    let next = span * factor
+    let next = use_span * factor
     let min_span = flame_min_span()
     if next < min_span {
         next = min_span
@@ -1587,9 +1883,9 @@ fn zoom_flame_at(mx: f64, x: f64, w: f64, scroll: f64) {
     if next > 1.0 {
         next = 1.0
     }
-    g_fx0 = focus - next * ratio
-    g_fx1 = g_fx0 + next
-    clamp_flame_view()
+    cam_set_flame(focus - next * ratio, focus - next * ratio + next)
+    g_vel_fx = 0.0
+    g_cam_coasting = false
 }
 
 fn select_node_by_name(name: str) {
@@ -1730,16 +2026,10 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
     let plot_h = h - 28.0
     let content_h = (g_max_depth + 1) as f64 * row_h
     let max_scroll = max_f(0.0, content_h - plot_h)
-    if g_scroll > max_scroll {
-        g_scroll = max_scroll
-    }
-    if g_scroll < 0.0 {
-        g_scroll = 0.0
-    }
+    g_cam_scroll_max = max_scroll
     if g_fx1 <= g_fx0 {
         fit_flame_view()
     }
-    clamp_flame_view()
 
     let on_plot = hit(v, x, plot_y, w, plot_h)
     if g_drag_mode != 0 {
@@ -1779,17 +2069,13 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
             if span < min_span {
                 span = min_span
             }
-            // Absolute pan from press anchor so motion stays smooth while zoomed.
-            g_fx0 = g_drag_fx0 - dx * span / w
-            g_fx1 = g_fx0 + span
-            clamp_flame_view()
-            g_scroll = g_drag_scroll - dy
-            if g_scroll < 0.0 {
-                g_scroll = 0.0
-            }
-            if g_scroll > max_scroll {
-                g_scroll = max_scroll
-            }
+            let prev_fx0 = g_cam_fx0
+            let prev_scroll = g_cam_scroll
+            // Absolute pan from press anchor; write camera targets with damping follow.
+            cam_set_flame(g_drag_fx0 - dx * span / w, g_drag_fx0 - dx * span / w + span)
+            cam_set_scroll(g_drag_scroll - dy)
+            cam_sample_vel_flame(prev_fx0, 0.016)
+            cam_sample_vel_scroll(prev_scroll, 0.016)
             ui_request_render(r, 2)
         }
     }
@@ -1844,8 +2130,8 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
                 g_selected_ev = -1
             }
         }
-        g_drag_moved = false
         end_drag()
+        g_drag_moved = false
     }
 
     ui_fill_rect(r, x, y + h - 22.0, w, 1.0, col_line(), 0.0)
@@ -1898,6 +2184,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     let row_h: f64 = 18.0
     let content_h = (g_ev_max_depth + 1) as f64 * row_h
     let max_scroll = max_f(0.0, content_h - plot_h)
+    g_cam_scroll_max = max_scroll
 
     let on_overview = hit(v, ov_x, overview_y, ov_w, overview_h)
     let on_plot = hit(v, x, plot_y, w, plot_h)
@@ -1918,11 +2205,11 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
         if v.scroll_y != 0.0 {
             if on_plot {
                 zoom_time_at(g_mouse_x, x, w, v.scroll_y)
-                ui_request_render(r, 1)
+                ui_request_render(r, 2)
             } else {
                 if on_overview {
                     zoom_time_at(g_mouse_x, ov_x, ov_w, v.scroll_y)
-                    ui_request_render(r, 1)
+                    ui_request_render(r, 2)
                 }
             }
         }
@@ -1931,25 +2218,24 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
                 begin_drag(2)
                 let full = time_full_span()
                 let mouse_t = g_time_origin + ((g_mouse_x - ov_x) / ov_w) * full
-                let view_span = time_view_span()
-                if mouse_t < g_t0 {
-                    g_t0 = mouse_t - view_span * 0.5
-                    g_t1 = g_t0 + view_span
-                    clamp_view()
-                    g_drag_t0 = g_t0
-                    g_drag_t1 = g_t1
+                let view_span = g_cam_t1 - g_cam_t0
+                if view_span < time_min_span() {
+                    view_span = time_min_span()
+                }
+                if mouse_t < g_cam_t0 {
+                    cam_set_time(mouse_t - view_span * 0.5, mouse_t - view_span * 0.5 + view_span)
+                    g_drag_t0 = g_cam_t0
+                    g_drag_t1 = g_cam_t1
                 } else {
-                    if mouse_t > g_t1 {
-                        g_t0 = mouse_t - view_span * 0.5
-                        g_t1 = g_t0 + view_span
-                        clamp_view()
-                        g_drag_t0 = g_t0
-                        g_drag_t1 = g_t1
+                    if mouse_t > g_cam_t1 {
+                        cam_set_time(mouse_t - view_span * 0.5, mouse_t - view_span * 0.5 + view_span)
+                        g_drag_t0 = g_cam_t0
+                        g_drag_t1 = g_cam_t1
                     }
                 }
-                let cur = time_view_span()
+                let cur = g_cam_t1 - g_cam_t0
                 if cur > 0.0 {
-                    g_drag_grab = (mouse_t - g_t0) / cur
+                    g_drag_grab = (mouse_t - g_cam_t0) / cur
                 } else {
                     g_drag_grab = 0.0
                 }
@@ -1968,7 +2254,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
         if on_plot {
             if v.mouse_right_pressed {
                 fit_time_view()
-                g_scroll = 0.0
+                cam_set_scroll(0.0)
                 g_selected_ev = -1
             }
         }
@@ -1984,16 +2270,12 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
             if press_span < min_span {
                 press_span = min_span
             }
-            g_t0 = g_drag_t0 - dx * press_span / w
-            g_t1 = g_t0 + press_span
-            clamp_view()
-            g_scroll = g_drag_scroll - dy
-            if g_scroll < 0.0 {
-                g_scroll = 0.0
-            }
-            if g_scroll > max_scroll {
-                g_scroll = max_scroll
-            }
+            let prev_t0 = g_cam_t0
+            let prev_scroll = g_cam_scroll
+            cam_set_time(g_drag_t0 - dx * press_span / w, g_drag_t0 - dx * press_span / w + press_span)
+            cam_set_scroll(g_drag_scroll - dy)
+            cam_sample_vel_time(prev_t0, 0.016)
+            cam_sample_vel_scroll(prev_scroll, 0.016)
             ui_request_render(r, 2)
         }
     } else {
@@ -2008,9 +2290,9 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
                 if press_span < min_span {
                     press_span = min_span
                 }
-                g_t0 = mouse_t - press_span * g_drag_grab
-                g_t1 = g_t0 + press_span
-                clamp_view()
+                let prev_t0 = g_cam_t0
+                cam_set_time(mouse_t - press_span * g_drag_grab, mouse_t - press_span * g_drag_grab + press_span)
+                cam_sample_vel_time(prev_t0, 0.016)
                 ui_request_render(r, 2)
             }
         }
@@ -2020,12 +2302,6 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     let span = time_view_span()
     let scale = w / span
     let min_ms = lod_min_ms(span, w)
-    if g_scroll > max_scroll {
-        g_scroll = max_scroll
-    }
-    if g_scroll < 0.0 {
-        g_scroll = 0.0
-    }
 
     draw_overview(r, v, ov_x, overview_y, ov_w, overview_h)
     ui_fill_rect(r, x, ruler_y, w, ruler_h, col_panel(), 0.0)
@@ -2095,7 +2371,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
 
     if v.mouse_released {
-        g_drag_mode = 0
+        end_drag()
         g_drag_moved = false
     }
 }
@@ -2132,6 +2408,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     ui_resize(r)
     g_mouse_x = ui_content_x(r, v.mouse_x)
     g_mouse_y = ui_content_y(r, v.mouse_y)
+    tick_camera(r)
 
     // The canvas is the safe area, so the viewer keeps clear of native chrome.
     let w = ui_canvas_width(r) as f64
