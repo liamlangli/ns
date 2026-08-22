@@ -29,8 +29,10 @@ let g_frame_count: i32 = 0
 let g_load_profile_pending = false
 let g_open_profile_pending = false
 let g_hovered = -1
-let g_zoom = -1
+let g_selected = -1
 let g_scroll: f64 = 0.0
+let g_fx0: f64 = 0.0
+let g_fx1: f64 = 1.0
 
 let g_node_name = [i32: str](4096)
 let g_node_parent = [i32](4096)
@@ -59,16 +61,39 @@ let g_ev_calls = [i32](8192)
 let g_ev_name = [i32: str](8192)
 let g_ev_count = 0
 let g_ev_raw = 0
+let g_time_origin: f64 = 0.0
 let g_time_end: f64 = 0.0
 let g_t0: f64 = 0.0
 let g_t1: f64 = 1.0
-let g_drag = false
+// 0 idle, 1 time plot, 2 time overview, 3 flame
+let g_drag_mode = 0
+let g_ev_max_depth = 0
 // Pointer position for the frame in the renderer's safe-area content space,
 // converted from the view's drawable space (see ui_content_x).
 let g_mouse_x: f64 = 0.0
 let g_mouse_y: f64 = 0.0
 let g_drag_x: f64 = 0.0
+let g_drag_y: f64 = 0.0
 let g_drag_t0: f64 = 0.0
+let g_drag_t1: f64 = 1.0
+let g_drag_scroll: f64 = 0.0
+let g_drag_fx0: f64 = 0.0
+let g_drag_fx1: f64 = 1.0
+let g_drag_grab: f64 = 0.0
+let g_drag_moved = false
+
+fn min_span_ms(view_span: f64) f64 {
+    if view_span <= 0.0 {
+        return 0.0
+    }
+    // Drop spans shorter than ~1/2000 of the current view, but never hide
+    // everything in a short profile.
+    let cut = view_span * 0.0005
+    if cut < 0.0001 {
+        return 0.0
+    }
+    return cut
+}
 
 fn col_bg() u32 { return ui_pack_color("#101418") }
 fn col_panel() u32 { return ui_pack_color("#182026") }
@@ -410,9 +435,41 @@ fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str) {
     g_ev_calls[i] = 1
     g_ev_name[i] = name
     g_ev_count = g_ev_count + 1
+    if g_ev_count == 1 {
+        g_time_origin = start
+        g_ev_max_depth = depth
+    } else {
+        if start < g_time_origin {
+            g_time_origin = start
+        }
+        if depth > g_ev_max_depth {
+            g_ev_max_depth = depth
+        }
+    }
     let end = start + dur
     if end > g_time_end {
         g_time_end = end
+    }
+}
+
+fn reset_time_view() {
+    g_t0 = g_time_origin
+    g_t1 = g_time_end
+    if g_t1 <= g_t0 {
+        g_t1 = g_t0 + 1.0
+    }
+}
+
+fn fit_time_view() {
+    reset_time_view()
+    let full = time_full_span()
+    // Start slightly zoomed so the first drag can pan immediately.
+    if full > 0.2 {
+        let next = full * 0.55
+        let center = g_time_origin + full * 0.5
+        g_t0 = center - next * 0.5
+        g_t1 = g_t0 + next
+        clamp_view()
     }
 }
 
@@ -501,15 +558,18 @@ fn parse_profile_body(src: str, want_events: bool) {
         g_hot_count = 0
         g_max_depth = 0
         g_root_total = 0.0
-        g_zoom = -1
+        g_selected = -1
         g_hovered = -1
     }
     g_ev_count = 0
     g_ev_raw = 0
+    g_ev_max_depth = 0
+    g_time_origin = 0.0
     g_time_end = 0.0
     g_t0 = 0.0
     g_t1 = 1.0
-    g_drag = false
+    g_drag_mode = 0
+    g_drag_moved = false
     let v4 = g_format == "ns-profile-v4"
 
     let i = 0
@@ -572,18 +632,12 @@ fn layout_node(node: i32, x: f64, w: f64, depth: i32) {
         g_max_depth = depth
     }
     let cx = x
-    let scale: f64 = 0.0
-    if g_node_total[node] > 0.0 {
-        scale = w / g_node_total[node]
-    }
     let i = 0
     loop i < g_node_count {
         if g_node_parent[i] == node {
-            let cw: f64 = g_node_total[i] * scale
-            if cw < 1.0 {
-                if g_node_total[i] > 0.0 {
-                    cw = 1.0
-                }
+            let cw: f64 = 0.0
+            if g_root_total > 0.0 {
+                cw = g_node_total[i] / g_root_total
             }
             layout_node(i, cx, cw, depth + 1)
             cx = cx + cw
@@ -594,28 +648,25 @@ fn layout_node(node: i32, x: f64, w: f64, depth: i32) {
 
 fn layout_flame() {
     g_max_depth = 0
-    g_root_total = 0.0
+    g_root_total = parse_f64(g_elapsed)
+    if g_root_total <= 0.0 {
+        g_root_total = 0.0
+        let i = 0
+        loop i < g_node_count {
+            if g_node_parent[i] < 0 {
+                g_root_total = g_root_total + g_node_total[i]
+            }
+            i = i + 1
+        }
+    }
+    if g_root_total <= 0.0 {
+        g_root_total = 1.0
+    }
+    let x: f64 = 0.0
     let i = 0
     loop i < g_node_count {
         if g_node_parent[i] < 0 {
-            g_root_total = g_root_total + g_node_total[i]
-        }
-        i = i + 1
-    }
-    if g_zoom >= 0 {
-        if g_zoom < g_node_count {
-            layout_node(g_zoom, 0.0, 1.0, 0)
-            return
-        }
-    }
-    let x: f64 = 0.0
-    i = 0
-    loop i < g_node_count {
-        if g_node_parent[i] < 0 {
-            let w: f64 = 0.0
-            if g_root_total > 0.0 {
-                w = g_node_total[i] / g_root_total
-            }
+            let w: f64 = g_node_total[i] / g_root_total
             layout_node(i, x, w, 0)
             x = x + w
         }
@@ -735,11 +786,107 @@ fn clear_profile() {
     g_hot_count = 0
     g_ev_count = 0
     g_ev_raw = 0
+    g_time_origin = 0.0
     g_time_end = 0.0
     g_t0 = 0.0
     g_t1 = 1.0
-    g_zoom = -1
-    g_drag = false
+    g_selected = -1
+    g_drag_mode = 0
+    g_drag_moved = false
+    g_fx0 = 1.0 / 10.0
+    g_fx1 = 1.0 - 1.0 / 10.0
+    g_scroll = 0.0
+}
+
+fn time_full_span() f64 {
+    let full = g_time_end - g_time_origin
+    if full < 0.05 {
+        return 0.05
+    }
+    return full
+}
+
+fn time_view_span() f64 {
+    let span = g_t1 - g_t0
+    if span < 0.05 {
+        return 0.05
+    }
+    return span
+}
+
+fn flame_view_span() f64 {
+    let span = g_fx1 - g_fx0
+    if span < 0.02 {
+        return 0.02
+    }
+    return span
+}
+
+fn clamp_flame_view() {
+    let span = g_fx1 - g_fx0
+    if span < 0.02 {
+        let mid = (g_fx0 + g_fx1) * 0.5
+        g_fx0 = mid - 0.01
+        g_fx1 = mid + 0.01
+        span = 0.02
+    }
+    if span > 1.0 {
+        g_fx0 = 0.0
+        g_fx1 = 1.0
+        return
+    }
+    if g_fx0 < 0.0 {
+        g_fx0 = 0.0
+        g_fx1 = span
+    }
+    if g_fx1 > 1.0 {
+        g_fx1 = 1.0
+        g_fx0 = 1.0 - span
+        if g_fx0 < 0.0 {
+            g_fx0 = 0.0
+        }
+    }
+}
+
+fn fit_flame_view() {
+    // Keep 10% empty margin on both sides so the graph is centered and panable.
+    g_fx0 = 1.0 / 10.0
+    g_fx1 = 1.0 - 1.0 / 10.0
+    g_scroll = 0.0
+    clamp_flame_view()
+}
+
+fn begin_drag(mode: i32) {
+    g_drag_mode = mode
+    g_drag_moved = false
+    g_drag_x = g_mouse_x
+    g_drag_y = g_mouse_y
+    g_drag_t0 = g_t0
+    g_drag_t1 = g_t1
+    g_drag_scroll = g_scroll
+    g_drag_fx0 = g_fx0
+    g_drag_fx1 = g_fx1
+}
+
+fn end_drag() {
+    g_drag_mode = 0
+}
+
+fn mark_drag_moved(dx: f64, dy: f64) {
+    let adx = dx
+    if adx < 0.0 {
+        adx = 0.0 - adx
+    }
+    let ady = dy
+    if ady < 0.0 {
+        ady = 0.0 - ady
+    }
+    if adx > 2.0 {
+        g_drag_moved = true
+    }
+    if ady > 2.0 {
+        g_drag_moved = true
+    }
 }
 
 // Reports are written to bin/ns.profile; the plain name stays as a fallback
@@ -775,7 +922,9 @@ fn load_profile(path: str) {
         } else {
             g_status = "Loaded file is not an ns-profile."
         }
-        g_scroll = 0.0
+        fit_flame_view()
+        g_drag_mode = 0
+        g_drag_moved = false
         g_mode = 0
     }
 }
@@ -831,11 +980,320 @@ fn fmt_or_dash(s: str) str {
     return s
 }
 
+fn floor_f(x: f64) f64 {
+    if x >= 2147483647.0 {
+        return x
+    }
+    if x <= -2147483648.0 {
+        return x
+    }
+    if x >= 0.0 {
+        return (x as i32) as f64
+    }
+    let t = (x as i32) as f64
+    if t == x {
+        return t
+    }
+    return t - 1.0
+}
+
+fn fmt_1dec(x: f64) str {
+    let n = floor_f(x * 10.0 + 0.5)
+    let whole = floor_f(n / 10.0)
+    let frac = n - whole * 10.0
+    return `{whole as i32}.{frac as i32}`
+}
+
+fn fmt_time_ms(ms: f64) str {
+    if ms < 0.0 {
+        return "0"
+    }
+    if ms < 1.0 {
+        let us = ms * 1000.0
+        if us < 10.0 {
+            return `{fmt_1dec(us)} us`
+        }
+        return `{(floor_f(us + 0.5) as i32)} us`
+    }
+    if ms < 10.0 {
+        return `{fmt_1dec(ms)} ms`
+    }
+    if ms < 1000.0 {
+        return `{(floor_f(ms + 0.5) as i32)} ms`
+    }
+    let sec = ms / 1000.0
+    if sec < 10.0 {
+        return `{fmt_1dec(sec)} s`
+    }
+    return `{(floor_f(sec + 0.5) as i32)} s`
+}
+
+fn pick_tick_ms(span: f64, target_count: f64) f64 {
+    if span <= 0.0 {
+        return 1.0
+    }
+    if target_count < 1.0 {
+        return span
+    }
+    let raw = span / target_count
+    if raw <= 0.0 {
+        return span
+    }
+    let pow10 = 1.0
+    let guard = 0
+    loop raw >= 10.0 * pow10 {
+        if guard > 64 {
+            break
+        }
+        guard = guard + 1
+        pow10 = pow10 * 10.0
+    }
+    guard = 0
+    loop raw < pow10 {
+        if guard > 64 {
+            break
+        }
+        guard = guard + 1
+        if pow10 <= 0.0001 {
+            break
+        }
+        pow10 = pow10 * 0.1
+    }
+    if pow10 <= 0.0 {
+        return span
+    }
+    let n = raw / pow10
+    if n <= 1.0 {
+        return pow10
+    }
+    if n <= 2.0 {
+        return 2.0 * pow10
+    }
+    if n <= 5.0 {
+        return 5.0 * pow10
+    }
+    return 10.0 * pow10
+}
+
+fn clamp_view() {
+    let span = g_t1 - g_t0
+    if span < 0.05 {
+        g_t1 = g_t0 + 0.05
+        span = 0.05
+    }
+    let full = time_full_span()
+    if span > full {
+        span = full
+        g_t0 = g_time_origin
+        g_t1 = g_time_end
+        return
+    }
+    if g_t0 < g_time_origin {
+        g_t0 = g_time_origin
+        g_t1 = g_t0 + span
+    }
+    if g_t1 > g_time_end {
+        g_t1 = g_time_end
+        g_t0 = g_t1 - span
+        if g_t0 < g_time_origin {
+            g_t0 = g_time_origin
+        }
+    }
+}
+
+fn draw_time_rulers(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, t0: f64, t1: f64, label_y: f64) {
+    let span = t1 - t0
+    if span <= 0.0 {
+        return
+    }
+    let major = pick_tick_ms(span, max_f(4.0, w / 90.0))
+    let minor = major / 5.0
+    if minor <= 0.0 {
+        minor = major
+    }
+    let scale = w / span
+    let guard = 0
+    let t = floor_f(t0 / minor) * minor
+    loop t <= t1 + minor * 0.01 {
+        if guard > 512 {
+            break
+        }
+        guard = guard + 1
+        if t + minor * 0.001 >= t0 {
+            let px = x + (t - t0) * scale
+            ui_fill_rect(r, px, y + h * 0.45, 1.0, h * 0.55, ui_pack_color("#2a3640"), 0.0)
+        }
+        t = t + minor
+    }
+
+    guard = 0
+    t = floor_f(t0 / major) * major
+    let last_label_r = x - 1000.0
+    loop t <= t1 + major * 0.01 {
+        if guard > 256 {
+            break
+        }
+        guard = guard + 1
+        if t + major * 0.001 >= t0 {
+            let px = x + (t - t0) * scale
+            ui_fill_rect(r, px, y, 1.0, h, col_line(), 0.0)
+            if label_y >= 0.0 {
+                let label = fmt_time_ms(t - g_time_origin)
+                let tw = ui_text_width(r, label, PX(), FONT())
+                let lx = px - tw * 0.5
+                if lx < x {
+                    lx = x
+                }
+                if lx + tw <= x + w {
+                    if lx > last_label_r + 4.0 {
+                        ui_draw_text(r, lx, label_y, label, PX(), col_muted(), FONT())
+                        last_label_r = lx + tw
+                    }
+                }
+            }
+        }
+        t = t + major
+    }
+}
+
+fn draw_overview(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_panel_hi(), 0.0)
+    let total = g_time_end - g_time_origin
+    if total <= 0.0 {
+        return
+    }
+    let scale = w / total
+    let lane_h = max_f(2.0, h - 10.0)
+    let lane_y = y + 4.0
+    let i = 0
+    loop i < g_ev_count {
+        let bw = max_f(1.0, g_ev_duration[i] * scale)
+        let bx = x + (g_ev_start[i] - g_time_origin) * scale
+        let depth_frac: f64 = 0.0
+        if g_ev_depth[i] > 0 {
+            depth_frac = min_f(0.7, g_ev_depth[i] as f64 * 0.12)
+        }
+        let by = lane_y + lane_h * depth_frac
+        let bh = max_f(2.0, lane_h * (1.0 - depth_frac))
+        ui_fill_rect(r, bx, by, bw, bh, name_color(g_ev_name[i]), 0.0)
+        i = i + 1
+    }
+
+    draw_time_rulers(r, x, y + h - 8.0, w, 8.0, g_time_origin, g_time_end, -1.0)
+
+    let vx0 = x + (g_t0 - g_time_origin) * scale
+    let vx1 = x + (g_t1 - g_time_origin) * scale
+    let vw = max_f(3.0, vx1 - vx0)
+    ui_fill_rect(r, vx0, y, vw, h, ui_pack_rgba_floats(0.4, 0.83, 0.6, 0.22), 0.0)
+    ui_stroke_rect(r, vx0, y + 1.0, vw, h - 2.0, 1.0, col_accent(), 0.0)
+
+}
+
+fn zoom_time_at(mx: f64, x: f64, w: f64, scroll: f64) {
+    if w <= 0.0 {
+        return
+    }
+    let span = time_view_span()
+    let ratio = (mx - x) / w
+    if ratio < 0.0 {
+        ratio = 0.0
+    }
+    if ratio > 1.0 {
+        ratio = 1.0
+    }
+    let focus = g_t0 + span * ratio
+    let factor = 1.2
+    if scroll > 0.0 {
+        factor = 0.85
+    }
+    let next = span * factor
+    if next < 0.05 {
+        next = 0.05
+    }
+    let full = time_full_span()
+    if next > full {
+        next = full
+    }
+    g_t0 = focus - next * ratio
+    g_t1 = g_t0 + next
+    clamp_view()
+}
+
+fn zoom_flame_at(mx: f64, x: f64, w: f64, scroll: f64) {
+    if w <= 0.0 {
+        return
+    }
+    let span = flame_view_span()
+    let ratio = (mx - x) / w
+    if ratio < 0.0 {
+        ratio = 0.0
+    }
+    if ratio > 1.0 {
+        ratio = 1.0
+    }
+    let focus = g_fx0 + span * ratio
+    let factor = 1.2
+    if scroll > 0.0 {
+        factor = 0.85
+    }
+    let next = span * factor
+    if next < 0.02 {
+        next = 0.02
+    }
+    // Keep at least 10% margin room so panning stays possible after zoom-out.
+    if next > 0.8 {
+        next = 0.8
+    }
+    g_fx0 = focus - next * ratio
+    g_fx1 = g_fx0 + next
+    clamp_flame_view()
+}
+
+fn select_node_by_name(name: str) {
+    let i = 0
+    loop i < g_node_count {
+        if g_node_name[i] == name {
+            g_selected = i
+            return
+        }
+        i = i + 1
+    }
+}
+
+fn draw_detail_row(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str) {
+    ui_draw_text(r, x, y, label, PX(), col_muted(), FONT())
+    ui_push_clip(r, x, y + 14.0, w, 14.0)
+    ui_draw_text(r, x, y + 14.0, value, PX(), col_text(), FONT())
+    ui_pop_clip(r)
+}
+
 fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
-    ui_draw_text(r, x + 8.0, y + 6.0, "hot self time", PX(), col_muted(), FONT())
+    let list_y = y
+    if g_selected >= 0 {
+        if g_selected < g_node_count {
+            ui_draw_text(r, x + 8.0, y + 6.0, "selected", PX(), col_muted(), FONT())
+            ui_push_clip(r, x + 8.0, y + 22.0, w - 16.0, 16.0)
+            ui_draw_text(r, x + 8.0, y + 22.0, g_node_name[g_selected], PX(), col_accent(), FONT())
+            ui_pop_clip(r)
+            let elapsed = parse_f64(g_elapsed)
+            if elapsed <= 0.0 {
+                elapsed = 1.0
+            }
+            let total_pct = g_node_total[g_selected] / elapsed * 100.0
+            let self_pct = g_node_self[g_selected] / elapsed * 100.0
+            draw_detail_row(r, x + 8.0, y + 44.0, w - 16.0, "TOTAL", `{fmt_time_ms(g_node_total[g_selected])}  {fmt_1dec(total_pct)}%`)
+            draw_detail_row(r, x + 8.0, y + 76.0, w - 16.0, "SELF", `{fmt_time_ms(g_node_self[g_selected])}  {fmt_1dec(self_pct)}%`)
+            draw_detail_row(r, x + 8.0, y + 108.0, w - 16.0, "CALLS", `{g_node_calls[g_selected]}`)
+            draw_detail_row(r, x + 8.0, y + 140.0, w - 16.0, "DEPTH", `{g_node_depth[g_selected]}`)
+            ui_fill_rect(r, x + 8.0, y + 176.0, w - 16.0, 1.0, col_line(), 0.0)
+            list_y = y + 184.0
+        }
+    }
+
+    ui_draw_text(r, x + 8.0, list_y + 6.0, "hot self time", PX(), col_muted(), FONT())
     if g_hot_count == 0 {
-        ui_draw_text(r, x + 8.0, y + 24.0, "No fn table.", PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 8.0, list_y + 24.0, "No fn table.", PX(), col_muted(), FONT())
         return
     }
     let elapsed = parse_f64(g_elapsed)
@@ -845,7 +1303,7 @@ fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     let row_h = 28.0
     let i = 0
     loop i < g_hot_count {
-        let ry = y + 22.0 + i as f64 * row_h
+        let ry = list_y + 22.0 + i as f64 * row_h
         if ry + row_h > y + h {
             break
         }
@@ -860,20 +1318,6 @@ fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
 }
 
-fn node_visible(node: i32) bool {
-    if g_zoom < 0 {
-        return true
-    }
-    let i = node
-    loop i >= 0 {
-        if i == g_zoom {
-            return true
-        }
-        i = g_node_parent[i]
-    }
-    return false
-}
-
 fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
     if g_node_count == 0 {
@@ -885,35 +1329,105 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
     let row_h = 18.0
     let plot_y = y + 8.0
     let plot_h = h - 28.0
+    let content_h = (g_max_depth + 1) as f64 * row_h
+    let max_scroll = max_f(0.0, content_h - plot_h)
+    if g_scroll > max_scroll {
+        g_scroll = max_scroll
+    }
+    if g_scroll < 0.0 {
+        g_scroll = 0.0
+    }
+    if g_fx1 <= g_fx0 {
+        fit_flame_view()
+    }
+    clamp_flame_view()
+
+    let on_plot = hit(v, x, plot_y, w, plot_h)
+    if g_drag_mode != 0 {
+        if g_drag_mode != 3 {
+            end_drag()
+        } else {
+            if v.mouse_down == false {
+                end_drag()
+            }
+        }
+    }
+
+    if g_drag_mode == 0 {
+        if on_plot {
+            if v.scroll_y != 0.0 {
+                zoom_flame_at(g_mouse_x, x, w, v.scroll_y)
+                ui_request_render(r, 2)
+            }
+            if v.mouse_pressed {
+                begin_drag(3)
+            }
+            if v.mouse_right_pressed {
+                fit_flame_view()
+                g_selected = -1
+            }
+        }
+    }
+
+    if g_drag_mode == 3 {
+        if v.mouse_down {
+            let dx = g_mouse_x - g_drag_x
+            let dy = g_mouse_y - g_drag_y
+            mark_drag_moved(dx, dy)
+            let span = g_drag_fx1 - g_drag_fx0
+            if span < 0.02 {
+                span = 0.02
+            }
+            // Absolute pan from press anchor so motion stays smooth while zoomed.
+            g_fx0 = g_drag_fx0 - dx * span / w
+            g_fx1 = g_fx0 + span
+            clamp_flame_view()
+            g_scroll = g_drag_scroll - dy
+            if g_scroll < 0.0 {
+                g_scroll = 0.0
+            }
+            if g_scroll > max_scroll {
+                g_scroll = max_scroll
+            }
+            ui_request_render(r, 2)
+        }
+    }
+
+    let view_span = flame_view_span()
+    let scale = 1.0 / view_span
     g_hovered = -1
 
     ui_push_clip(r, x, plot_y, w, plot_h)
     let i = 0
     loop i < g_node_count {
-        if node_visible(i) {
-            if g_node_w[i] > 0.0 {
-                let bx = x + g_node_x[i] * w
-                let bw = max_f(2.0, g_node_w[i] * w)
-                let by = plot_y + g_node_depth[i] as f64 * row_h
-                let bh = row_h - 1.0
-                if by + bh >= plot_y {
-                    if by <= plot_y + plot_h {
-                        let color = name_color(g_node_name[i])
-                        if hit(v, bx, by, bw, bh) {
-                            g_hovered = i
-                            ui_fill_rect(r, bx, by, bw, bh, col_warn(), 0.0)
-                            if v.mouse_pressed {
-                                g_zoom = i
-                                layout_flame()
+        if g_node_w[i] > 0.0 {
+            let nx0 = g_node_x[i]
+            let nx1 = g_node_x[i] + g_node_w[i]
+            if nx1 > g_fx0 {
+                if nx0 < g_fx1 {
+                    let bx = x + (nx0 - g_fx0) * scale * w
+                    let bw = max_f(1.0, g_node_w[i] * scale * w)
+                    let by = plot_y + g_node_depth[i] as f64 * row_h - g_scroll
+                    let bh = row_h - 1.0
+                    if by + bh >= plot_y {
+                        if by <= plot_y + plot_h {
+                            let color = name_color(g_node_name[i])
+                            if hit(v, bx, by, bw, bh) {
+                                g_hovered = i
+                                ui_fill_rect(r, bx, by, bw, bh, col_warn(), 0.0)
+                            } else {
+                                if i == g_selected {
+                                    ui_fill_rect(r, bx, by, bw, bh, col_accent(), 0.0)
+                                } else {
+                                    ui_fill_rect(r, bx, by, bw, bh, color, 0.0)
+                                }
                             }
-                        } else {
-                            ui_fill_rect(r, bx, by, bw, bh, color, 0.0)
-                        }
-                        if bw > 24.0 {
-                            ui_push_clip(r, bx + 3.0, by, bw - 6.0, bh)
-                            let label = `{g_node_name[i]} {g_node_calls[i]}x`
-                            ui_draw_text(r, bx + 3.0, by + 2.0, label, PX(), col_bg(), FONT())
-                            ui_pop_clip(r)
+                            if bw > 24.0 {
+                                ui_push_clip(r, bx + 3.0, by, bw - 6.0, bh)
+                                let label = `{g_node_name[i]} {g_node_calls[i]}x`
+                                ui_draw_text(r, bx + 3.0, by + 2.0, label, PX(), col_bg(), FONT())
+                                ui_pop_clip(r)
+                            }
                         }
                     }
                 }
@@ -923,11 +1437,14 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
     }
     ui_pop_clip(r)
 
-    if v.mouse_right_pressed {
-        if hit(v, x, y, w, h) {
-            g_zoom = -1
-            layout_flame()
+    if v.mouse_released {
+        if g_hovered >= 0 {
+            if g_drag_moved == false {
+                g_selected = g_hovered
+            }
         }
+        g_drag_moved = false
+        end_drag()
     }
 
     ui_fill_rect(r, x, y + h - 22.0, w, 1.0, col_line(), 0.0)
@@ -937,7 +1454,7 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
         ui_draw_text(r, x + 8.0, y + h - 16.0, detail, PX(), col_text(), FONT())
         ui_pop_clip(r)
     } else {
-        ui_draw_text(r, x + 8.0, y + h - 16.0, "click zoom, right-click reset", PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 8.0, y + h - 16.0, "wheel zoom, drag pan, click select, right-click reset", PX(), col_muted(), FONT())
     }
 }
 
@@ -949,100 +1466,206 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
 
     if g_t1 <= g_t0 {
-        g_t1 = g_t0 + 1.0
+        reset_time_view()
+    }
+    if g_t1 < g_time_origin {
+        reset_time_view()
+    }
+    if g_t0 > g_time_end {
+        reset_time_view()
     }
 
-    let row_h = 18.0
-    let plot_y = y + 8.0
-    let plot_h = h - 28.0
-    let span = g_t1 - g_t0
+    let footer_h: f64 = 22.0
+    let overview_h: f64 = 28.0
+    let ruler_h: f64 = 16.0
+    let gap: f64 = 3.0
+    if h < overview_h + ruler_h + footer_h + gap * 2.0 + 40.0 {
+        overview_h = 20.0
+        ruler_h = 14.0
+    }
+    let overview_y: f64 = y + 2.0
+    let ruler_y: f64 = overview_y + overview_h + gap
+    let plot_y: f64 = ruler_y + ruler_h + gap
+    let plot_h: f64 = h - (plot_y - y) - footer_h
+    if plot_h < 8.0 {
+        plot_h = 8.0
+        plot_y = y + h - footer_h - plot_h
+    }
+
+    let ov_x = x + 4.0
+    let ov_w = w - 8.0
+    draw_overview(r, v, ov_x, overview_y, ov_w, overview_h)
+
+    let span = time_view_span()
     let scale = w / span
-    let max_depth = 0
-    let i = 0
-    loop i < g_ev_count {
-        if g_ev_depth[i] > max_depth {
-            max_depth = g_ev_depth[i]
-        }
-        i = i + 1
+    let min_ms = min_span_ms(span)
+    let row_h: f64 = 18.0
+    let content_h = (g_ev_max_depth + 1) as f64 * row_h
+    let max_scroll = max_f(0.0, content_h - plot_h)
+    if g_scroll > max_scroll {
+        g_scroll = max_scroll
+    }
+    if g_scroll < 0.0 {
+        g_scroll = 0.0
     }
 
-    if hit(v, x, plot_y, w, plot_h) {
+    let on_overview = hit(v, ov_x, overview_y, ov_w, overview_h)
+    let on_plot = hit(v, x, plot_y, w, plot_h)
+
+    if g_drag_mode == 1 {
+        if v.mouse_down == false {
+            end_drag()
+        }
+    } else {
+        if g_drag_mode == 2 {
+            if v.mouse_down == false {
+                end_drag()
+            }
+        }
+    }
+
+    if g_drag_mode == 0 {
         if v.scroll_y != 0.0 {
-            let mx = (g_mouse_x - x) / w
-            let focus = g_t0 + span * mx
-            let factor = 1.25
-            if v.scroll_y > 0.0 {
-                factor = 0.8
-            }
-            let next = span * factor
-            if next < 0.05 {
-                next = 0.05
-            }
-            if next > g_time_end {
-                next = g_time_end
-            }
-            if next < 0.05 {
-                next = 0.05
-            }
-            g_t0 = focus - next * mx
-            g_t1 = g_t0 + next
-            if g_t0 < 0.0 {
-                g_t1 = g_t1 - g_t0
-                g_t0 = 0.0
+            if on_plot {
+                zoom_time_at(g_mouse_x, x, w, v.scroll_y)
+                ui_request_render(r, 1)
+            } else {
+                if on_overview {
+                    zoom_time_at(g_mouse_x, ov_x, ov_w, v.scroll_y)
+                    ui_request_render(r, 1)
+                }
             }
         }
         if v.mouse_pressed {
-            g_drag = true
-            g_drag_x = g_mouse_x
-            g_drag_t0 = g_t0
-        }
-        if v.mouse_right_pressed {
-            g_t0 = 0.0
-            g_t1 = g_time_end
-            if g_t1 <= 0.0 {
-                g_t1 = 1.0
+            if on_overview {
+                begin_drag(2)
+                let full = time_full_span()
+                let mouse_t = g_time_origin + ((g_mouse_x - ov_x) / ov_w) * full
+                let view_span = time_view_span()
+                if mouse_t < g_t0 {
+                    g_t0 = mouse_t - view_span * 0.5
+                    g_t1 = g_t0 + view_span
+                    clamp_view()
+                    g_drag_t0 = g_t0
+                    g_drag_t1 = g_t1
+                } else {
+                    if mouse_t > g_t1 {
+                        g_t0 = mouse_t - view_span * 0.5
+                        g_t1 = g_t0 + view_span
+                        clamp_view()
+                        g_drag_t0 = g_t0
+                        g_drag_t1 = g_t1
+                    }
+                }
+                let cur = time_view_span()
+                if cur > 0.0 {
+                    g_drag_grab = (mouse_t - g_t0) / cur
+                } else {
+                    g_drag_grab = 0.0
+                }
+                if g_drag_grab < 0.0 {
+                    g_drag_grab = 0.0
+                }
+                if g_drag_grab > 1.0 {
+                    g_drag_grab = 1.0
+                }
+            } else {
+                if on_plot {
+                    begin_drag(1)
+                }
             }
         }
-    }
-    if g_drag {
-        if v.mouse_down {
-            let dt = (g_drag_x - g_mouse_x) / scale
-            g_t0 = g_drag_t0 + dt
-            g_t1 = g_t0 + span
-            if g_t0 < 0.0 {
-                g_t1 = g_t1 - g_t0
-                g_t0 = 0.0
+        if on_plot {
+            if v.mouse_right_pressed {
+                fit_time_view()
+                g_scroll = 0.0
             }
-        } else {
-            g_drag = false
         }
     }
 
+    if g_drag_mode == 1 {
+        if v.mouse_down {
+            let dx = g_mouse_x - g_drag_x
+            let dy = g_mouse_y - g_drag_y
+            mark_drag_moved(dx, dy)
+            let press_span = g_drag_t1 - g_drag_t0
+            if press_span < 0.05 {
+                press_span = 0.05
+            }
+            g_t0 = g_drag_t0 - dx * press_span / w
+            g_t1 = g_t0 + press_span
+            clamp_view()
+            g_scroll = g_drag_scroll - dy
+            if g_scroll < 0.0 {
+                g_scroll = 0.0
+            }
+            if g_scroll > max_scroll {
+                g_scroll = max_scroll
+            }
+            ui_request_render(r, 2)
+        }
+    } else {
+        if g_drag_mode == 2 {
+            if v.mouse_down {
+                let dx = g_mouse_x - g_drag_x
+                mark_drag_moved(dx, 0.0)
+                let full = time_full_span()
+                let mouse_t = g_time_origin + ((g_mouse_x - ov_x) / ov_w) * full
+                let press_span = g_drag_t1 - g_drag_t0
+                if press_span < 0.05 {
+                    press_span = 0.05
+                }
+                g_t0 = mouse_t - press_span * g_drag_grab
+                g_t1 = g_t0 + press_span
+                clamp_view()
+                ui_request_render(r, 2)
+            }
+        }
+    }
+
+    ui_fill_rect(r, x, ruler_y, w, ruler_h, col_panel(), 0.0)
+    draw_time_rulers(r, x, ruler_y + 2.0, w, ruler_h - 2.0, g_t0, g_t1, ruler_y)
+    ui_fill_rect(r, x, plot_y - 1.0, w, 1.0, col_line(), 0.0)
+
     let hovered = -1
+    let drawn = 0
+    let skipped = 0
     ui_push_clip(r, x, plot_y, w, plot_h)
-    i = 0
+    draw_time_rulers(r, x, plot_y, w, plot_h, g_t0, g_t1, -1.0)
+
+    let i = 0
     loop i < g_ev_count {
         let ev_end = g_ev_start[i] + g_ev_duration[i]
         if ev_end >= g_t0 {
             if g_ev_start[i] <= g_t1 {
-                let by = plot_y + g_ev_depth[i] as f64 * row_h - g_scroll
-                if by + row_h >= plot_y {
-                    if by <= plot_y + plot_h {
-                        let bx = x + (g_ev_start[i] - g_t0) * scale
-                        let bw = max_f(2.0, g_ev_duration[i] * scale)
-                        let bh = row_h - 1.0
-                        let color = name_color(g_ev_name[i])
-                        if hit(v, bx, by, bw, bh) {
-                            hovered = i
-                            ui_fill_rect(r, bx, by, bw, bh, col_warn(), 0.0)
-                        } else {
-                            ui_fill_rect(r, bx, by, bw, bh, color, 0.0)
-                        }
-                        if bw > 24.0 {
-                            ui_push_clip(r, bx + 3.0, by, bw - 6.0, bh)
-                            let label = `{g_ev_name[i]} {g_ev_calls[i]}x`
-                            ui_draw_text(r, bx + 3.0, by + 2.0, label, PX(), col_bg(), FONT())
-                            ui_pop_clip(r)
+                if g_ev_duration[i] < min_ms {
+                    skipped = skipped + 1
+                } else {
+                    let by = plot_y + g_ev_depth[i] as f64 * row_h - g_scroll
+                    if by + row_h >= plot_y {
+                        if by <= plot_y + plot_h {
+                            let bx = x + (g_ev_start[i] - g_t0) * scale
+                            let draw_w = max_f(1.0, g_ev_duration[i] * scale)
+                            let bh = row_h - 1.0
+                            let color = name_color(g_ev_name[i])
+                            if hit(v, bx, by, draw_w, bh) {
+                                hovered = i
+                                ui_fill_rect(r, bx, by, draw_w, bh, col_warn(), 0.0)
+                                if v.mouse_released {
+                                    if g_drag_moved == false {
+                                        select_node_by_name(g_ev_name[i])
+                                    }
+                                }
+                            } else {
+                                ui_fill_rect(r, bx, by, draw_w, bh, color, 0.0)
+                            }
+                            if draw_w > 24.0 {
+                                ui_push_clip(r, bx + 3.0, by, draw_w - 6.0, bh)
+                                let label = `{g_ev_name[i]} {g_ev_calls[i]}x`
+                                ui_draw_text(r, bx + 3.0, by + 2.0, label, PX(), col_bg(), FONT())
+                                ui_pop_clip(r)
+                            }
+                            drawn = drawn + 1
                         }
                     }
                 }
@@ -1052,15 +1675,21 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
     ui_pop_clip(r)
 
-    ui_fill_rect(r, x, y + h - 22.0, w, 1.0, col_line(), 0.0)
+    ui_fill_rect(r, x, y + h - footer_h, w, 1.0, col_line(), 0.0)
     if hovered >= 0 {
-        let detail = `{g_ev_name[hovered]}  {g_ev_calls[hovered]}x  start {g_ev_start[hovered]} ms  dur {g_ev_duration[hovered]} ms`
+        let detail = `{g_ev_name[hovered]}  {g_ev_calls[hovered]}x  +{fmt_time_ms(g_ev_start[hovered] - g_time_origin)}  dur {fmt_time_ms(g_ev_duration[hovered])}`
         ui_push_clip(r, x + 8.0, y + h - 18.0, w - 16.0, 14.0)
         ui_draw_text(r, x + 8.0, y + h - 16.0, detail, PX(), col_text(), FONT())
         ui_pop_clip(r)
     } else {
-        let shown = `{g_ev_count} spans / {g_ev_raw} calls   wheel zoom, drag pan`
+        let range = `{fmt_time_ms(g_t0 - g_time_origin)} - {fmt_time_ms(g_t1 - g_time_origin)}`
+        let shown = `{drawn}/{g_ev_count} spans  skip {skipped}  {range}`
         ui_draw_text(r, x + 8.0, y + h - 16.0, shown, PX(), col_muted(), FONT())
+    }
+
+    if v.mouse_released {
+        g_drag_mode = 0
+        g_drag_moved = false
     }
 }
 
@@ -1121,20 +1750,24 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     let flame_x = time_x - mode_w - 10.0
     if draw_button(r, v, flame_x, by, mode_w, 24.0, "Flame", g_mode == 0) {
         g_mode = 0
+        end_drag()
+        g_drag_moved = false
     }
     if draw_button(r, v, time_x, by, mode_w, 24.0, "Time", g_mode == 1) {
         g_mode = 1
+        end_drag()
+        g_drag_moved = false
         if g_events_loaded == false {
             if g_raw.len > 0 {
                 parse_profile_body(g_raw, true)
                 g_events_loaded = true
-                g_t0 = 0.0
-                g_t1 = g_time_end
-                if g_t1 <= 0.0 {
+                fit_time_view()
+                if g_ev_count == 0 {
+                    g_t0 = 0.0
                     g_t1 = parse_f64(g_elapsed)
-                }
-                if g_t1 <= 0.0 {
-                    g_t1 = 1.0
+                    if g_t1 <= 0.0 {
+                        g_t1 = 1.0
+                    }
                 }
             }
         }
