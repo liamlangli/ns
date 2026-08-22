@@ -8,7 +8,15 @@ use ui
 use os
 
 fn FONT() i32 { return 1 }
-fn PX() f64 { return 12.0 }
+fn TITLE_PX() f64 { return 14.0 }
+fn PX() f64 { return 11.0 }
+
+let g_side_w: f64 = 260.0
+let g_side_drag_w: f64 = 260.0
+let g_side_resizing = false
+let g_chart_input = true
+let g_toast = ""
+let g_toast_until: u64 = 0
 
 let g_path = ""
 let g_raw = ""
@@ -321,7 +329,6 @@ fn col_text() u32 { return ui_pack_color("#d8e0e7") }
 fn col_muted() u32 { return ui_pack_color("#8b98a5") }
 fn col_accent() u32 { return ui_pack_color("#66d39a") }
 fn col_warn() u32 { return ui_pack_color("#f0bd5f") }
-
 fn clear_color() ui_color_rgba {
     return ui_color_rgba { r: 0.063, g: 0.078, b: 0.094, a: 1.0 }
 }
@@ -1481,6 +1488,7 @@ fn load_profile(path: str) {
         g_drag_moved = false
         g_mode = 0
         cam_stop()
+        select_default_detail()
     }
 }
 
@@ -1522,9 +1530,9 @@ fn draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, 
 
 fn draw_metric(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str, color: u32) {
     ui_fill_rect(r, x, y, w, 36.0, col_panel(), 0.0)
-    ui_draw_text(r, x + 8.0, y + 4.0, label, PX(), col_muted(), FONT())
-    ui_push_clip(r, x + 8.0, y + 18.0, w - 16.0, 14.0)
-    ui_draw_text(r, x + 8.0, y + 18.0, value, PX(), color, FONT())
+    ui_draw_text(r, x + 8.0, y + 3.0, label, TITLE_PX(), col_muted(), FONT())
+    ui_push_clip(r, x + 8.0, y + 19.0, w - 16.0, 14.0)
+    ui_draw_text(r, x + 8.0, y + 19.0, value, PX(), color, FONT())
     ui_pop_clip(r)
 }
 
@@ -1573,14 +1581,7 @@ fn fmt_time_ms(ms: f64) str {
     if ms < 10.0 {
         return `{fmt_1dec(ms)} ms`
     }
-    if ms < 1000.0 {
-        return `{(floor_f(ms + 0.5) as i32)} ms`
-    }
-    let sec = ms / 1000.0
-    if sec < 10.0 {
-        return `{fmt_1dec(sec)} s`
-    }
-    return `{(floor_f(sec + 0.5) as i32)} s`
+    return `{(floor_f(ms + 0.5) as i32)} ms`
 }
 
 fn pick_tick_ms(span: f64, target_count: f64) f64 {
@@ -1899,6 +1900,29 @@ fn select_node_by_name(name: str) {
     }
 }
 
+fn select_default_detail() {
+    g_selected_ev = -1
+    if g_hot_count > 0 {
+        select_node_by_name(g_hot_name[0])
+        if g_selected >= 0 {
+            return
+        }
+    }
+    if g_node_count <= 0 {
+        g_selected = -1
+        return
+    }
+    let best = 0
+    let i = 1
+    loop i < g_node_count {
+        if g_node_self[i] > g_node_self[best] {
+            best = i
+        }
+        i = i + 1
+    }
+    g_selected = best
+}
+
 // Draw bar label vertically centered; when the bar is wider than the view,
 // clamp the text into the visible window so it stays readable while zoomed.
 fn draw_bar_label(r: ref ui_renderer, bx: f64, by: f64, bw: f64, bh: f64, view_x: f64, view_w: f64, label: str) {
@@ -1929,10 +1953,61 @@ fn draw_bar_label(r: ref ui_renderer, bx: f64, by: f64, bw: f64, bh: f64, view_x
     ui_pop_clip(r)
 }
 
+fn show_toast(msg: str, ms: u64) {
+    g_toast = msg
+    g_toast_until = os_time_ms() + ms
+}
+
+fn draw_toast(r: ref ui_renderer, canvas_w: f64, canvas_h: f64) {
+    if g_toast == "" {
+        return
+    }
+    let now = os_time_ms()
+    if now >= g_toast_until {
+        g_toast = ""
+        return
+    }
+    let tw = ui_text_width(r, g_toast, PX(), FONT())
+    let pad_x = 14.0
+    let box_w = tw + pad_x * 2.0
+    let box_h = 28.0
+    let bx = (canvas_w - box_w) * 0.5
+    let by = canvas_h - box_h - 24.0
+    ui_fill_rect(r, bx, by, box_w, box_h, col_panel_hi(), 0.0)
+    ui_fill_rect(r, bx, by, box_w, 1.0, col_line(), 0.0)
+    ui_fill_rect(r, bx, by + box_h - 1.0, box_w, 1.0, col_line(), 0.0)
+    ui_fill_rect(r, bx, by, 1.0, box_h, col_line(), 0.0)
+    ui_fill_rect(r, bx + box_w - 1.0, by, 1.0, box_h, col_line(), 0.0)
+    let ty = ui_text_v_center_y(r, by, box_h, PX(), FONT())
+    ui_draw_text(r, bx + pad_x, ty, g_toast, PX(), col_text(), FONT())
+    ui_request_render(r, 2)
+}
+
+fn copy_detail(v: ref view, text: str) {
+    if text == "" {
+        return
+    }
+    view_set_clipboard(v, text)
+    show_toast("Copied", 1400)
+}
+
 fn draw_detail_row(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str) {
-    ui_draw_text(r, x, y, label, PX(), col_muted(), FONT())
-    ui_push_clip(r, x, y + 14.0, w, 14.0)
-    ui_draw_text(r, x, y + 14.0, value, PX(), col_text(), FONT())
+    ui_draw_text(r, x, y, label, TITLE_PX(), col_muted(), FONT())
+    ui_push_clip(r, x, y + 16.0, w, 14.0)
+    ui_draw_text(r, x, y + 16.0, value, PX(), col_text(), FONT())
+    ui_pop_clip(r)
+}
+
+fn draw_selected_header(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, title: str, name: str) {
+    ui_draw_text(r, x + 8.0, y + 6.0, title, TITLE_PX(), col_muted(), FONT())
+    let copy_w = 52.0
+    let copy_h = 18.0
+    let copy_x = x + w - copy_w - 8.0
+    if draw_button(r, v, copy_x, y + 4.0, copy_w, copy_h, "Copy", false) {
+        copy_detail(v, name)
+    }
+    ui_push_clip(r, x + 8.0, y + 24.0, w - 16.0, 16.0)
+    ui_draw_text(r, x + 8.0, y + 24.0, name, TITLE_PX(), col_accent(), FONT())
     ui_pop_clip(r)
 }
 
@@ -1942,10 +2017,7 @@ fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     if g_mode == 1 {
         if g_selected_ev >= 0 {
             if g_selected_ev < g_ev_count {
-                ui_draw_text(r, x + 8.0, y + 6.0, "selected span", PX(), col_muted(), FONT())
-                ui_push_clip(r, x + 8.0, y + 22.0, w - 16.0, 16.0)
-                ui_draw_text(r, x + 8.0, y + 22.0, g_ev_name[g_selected_ev], PX(), col_accent(), FONT())
-                ui_pop_clip(r)
+                draw_selected_header(r, v, x, y, w, "selected span", g_ev_name[g_selected_ev])
                 let elapsed = parse_f64(g_elapsed)
                 if elapsed <= 0.0 {
                     elapsed = 1.0
@@ -1954,62 +2026,59 @@ fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
                 let self_ms = g_ev_self[g_selected_ev]
                 let dur_pct = dur / elapsed * 100.0
                 let self_pct = self_ms / elapsed * 100.0
-                draw_detail_row(r, x + 8.0, y + 44.0, w - 16.0, "DURATION", `{fmt_time_ms(dur)}  {fmt_1dec(dur_pct)}%`)
-                draw_detail_row(r, x + 8.0, y + 76.0, w - 16.0, "SELF", `{fmt_time_ms(self_ms)}  {fmt_1dec(self_pct)}%`)
-                draw_detail_row(r, x + 8.0, y + 108.0, w - 16.0, "START", `+{fmt_time_ms(g_ev_start[g_selected_ev] - g_time_origin)}`)
-                draw_detail_row(r, x + 8.0, y + 140.0, w - 16.0, "CALLS", `{g_ev_calls[g_selected_ev]}`)
-                draw_detail_row(r, x + 8.0, y + 172.0, w - 16.0, "DEPTH", `{g_ev_depth[g_selected_ev]}`)
-                ui_fill_rect(r, x + 8.0, y + 208.0, w - 16.0, 1.0, col_line(), 0.0)
-                list_y = y + 216.0
+                draw_detail_row(r, x + 8.0, y + 48.0, w - 16.0, "DURATION", `{fmt_time_ms(dur)}  {fmt_1dec(dur_pct)}%`)
+                draw_detail_row(r, x + 8.0, y + 82.0, w - 16.0, "SELF", `{fmt_time_ms(self_ms)}  {fmt_1dec(self_pct)}%`)
+                draw_detail_row(r, x + 8.0, y + 116.0, w - 16.0, "START", `+{fmt_time_ms(g_ev_start[g_selected_ev] - g_time_origin)}`)
+                draw_detail_row(r, x + 8.0, y + 150.0, w - 16.0, "CALLS", `{g_ev_calls[g_selected_ev]}`)
+                draw_detail_row(r, x + 8.0, y + 184.0, w - 16.0, "DEPTH", `{g_ev_depth[g_selected_ev]}`)
+                ui_fill_rect(r, x + 8.0, y + 220.0, w - 16.0, 1.0, col_line(), 0.0)
+                list_y = y + 228.0
             }
         }
     } else {
         if g_selected >= 0 {
             if g_selected < g_node_count {
-                ui_draw_text(r, x + 8.0, y + 6.0, "selected", PX(), col_muted(), FONT())
-                ui_push_clip(r, x + 8.0, y + 22.0, w - 16.0, 16.0)
-                ui_draw_text(r, x + 8.0, y + 22.0, g_node_name[g_selected], PX(), col_accent(), FONT())
-                ui_pop_clip(r)
+                draw_selected_header(r, v, x, y, w, "selected", g_node_name[g_selected])
                 let elapsed = parse_f64(g_elapsed)
                 if elapsed <= 0.0 {
                     elapsed = 1.0
                 }
                 let total_pct = g_node_total[g_selected] / elapsed * 100.0
                 let self_pct = g_node_self[g_selected] / elapsed * 100.0
-                draw_detail_row(r, x + 8.0, y + 44.0, w - 16.0, "TOTAL", `{fmt_time_ms(g_node_total[g_selected])}  {fmt_1dec(total_pct)}%`)
-                draw_detail_row(r, x + 8.0, y + 76.0, w - 16.0, "SELF", `{fmt_time_ms(g_node_self[g_selected])}  {fmt_1dec(self_pct)}%`)
-                draw_detail_row(r, x + 8.0, y + 108.0, w - 16.0, "CALLS", `{g_node_calls[g_selected]}`)
-                draw_detail_row(r, x + 8.0, y + 140.0, w - 16.0, "DEPTH", `{g_node_depth[g_selected]}`)
-                ui_fill_rect(r, x + 8.0, y + 176.0, w - 16.0, 1.0, col_line(), 0.0)
-                list_y = y + 184.0
+                draw_detail_row(r, x + 8.0, y + 48.0, w - 16.0, "TOTAL", `{fmt_time_ms(g_node_total[g_selected])}  {fmt_1dec(total_pct)}%`)
+                draw_detail_row(r, x + 8.0, y + 82.0, w - 16.0, "SELF", `{fmt_time_ms(g_node_self[g_selected])}  {fmt_1dec(self_pct)}%`)
+                draw_detail_row(r, x + 8.0, y + 116.0, w - 16.0, "CALLS", `{g_node_calls[g_selected]}`)
+                draw_detail_row(r, x + 8.0, y + 150.0, w - 16.0, "DEPTH", `{g_node_depth[g_selected]}`)
+                ui_fill_rect(r, x + 8.0, y + 186.0, w - 16.0, 1.0, col_line(), 0.0)
+                list_y = y + 194.0
             }
         }
     }
 
-    ui_draw_text(r, x + 8.0, list_y + 6.0, "hot self time", PX(), col_muted(), FONT())
+    ui_draw_text(r, x + 8.0, list_y + 6.0, "hot self time", TITLE_PX(), col_muted(), FONT())
     if g_hot_count == 0 {
         ui_draw_text(r, x + 8.0, list_y + 24.0, "No fn table.", PX(), col_muted(), FONT())
-        return
-    }
-    let elapsed = parse_f64(g_elapsed)
-    if elapsed <= 0.0 {
-        elapsed = 1.0
-    }
-    let row_h = 28.0
-    let i = 0
-    loop i < g_hot_count {
-        let ry = list_y + 22.0 + i as f64 * row_h
-        if ry + row_h > y + h {
-            break
+    } else {
+        let elapsed = parse_f64(g_elapsed)
+        if elapsed <= 0.0 {
+            elapsed = 1.0
         }
-        let pct = g_hot_self[i] / elapsed * 100.0
-        let bar_w = max_f(2.0, (w - 16.0) * (g_hot_self[i] / elapsed))
-        ui_fill_rect(r, x + 8.0, ry + 16.0, bar_w, 4.0, name_color(g_hot_name[i]), 0.0)
-        ui_push_clip(r, x + 8.0, ry, w - 16.0, 14.0)
-        let line = `{g_hot_name[i]}  {g_hot_self[i]}ms  {pct}%  {g_hot_calls[i]}x`
-        ui_draw_text(r, x + 8.0, ry, line, PX(), col_text(), FONT())
-        ui_pop_clip(r)
-        i = i + 1
+        let row_h = 28.0
+        let i = 0
+        loop i < g_hot_count {
+            let ry = list_y + 22.0 + i as f64 * row_h
+            if ry + row_h > y + h {
+                break
+            }
+            let pct = g_hot_self[i] / elapsed * 100.0
+            let bar_w = max_f(2.0, (w - 16.0) * (g_hot_self[i] / elapsed))
+            ui_fill_rect(r, x + 8.0, ry + 16.0, bar_w, 4.0, name_color(g_hot_name[i]), 0.0)
+            let line = `{g_hot_name[i]}  {g_hot_self[i]}ms  {pct}%  {g_hot_calls[i]}x`
+            ui_push_clip(r, x + 8.0, ry, w - 16.0, 14.0)
+            ui_draw_text(r, x + 8.0, ry, line, PX(), col_text(), FONT())
+            ui_pop_clip(r)
+            i = i + 1
+        }
     }
 }
 
@@ -2032,29 +2101,30 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
     }
 
     let on_plot = hit(v, x, plot_y, w, plot_h)
-    if g_drag_mode != 0 {
-        if g_drag_mode != 3 {
-            end_drag()
-        } else {
-            if v.mouse_down == false {
+    if g_chart_input {
+        if g_drag_mode != 0 {
+            if g_drag_mode != 3 {
                 end_drag()
+            } else {
+                if v.mouse_down == false {
+                    end_drag()
+                }
             }
         }
-    }
-
-    if g_drag_mode == 0 {
-        if on_plot {
-            if v.scroll_y != 0.0 {
-                zoom_flame_at(g_mouse_x, x, w, v.scroll_y)
-                ui_request_render(r, 2)
-            }
-            if v.mouse_pressed {
-                begin_drag(3)
-            }
-            if v.mouse_right_pressed {
-                fit_flame_view()
-                g_selected = -1
-                g_selected_ev = -1
+        if g_drag_mode == 0 {
+            if on_plot {
+                if v.scroll_y != 0.0 {
+                    zoom_flame_at(g_mouse_x, x, w, v.scroll_y)
+                    ui_request_render(r, 2)
+                }
+                if v.mouse_pressed {
+                    begin_drag(3)
+                }
+                if v.mouse_right_pressed {
+                    fit_flame_view()
+                    g_selected = -1
+                    g_selected_ev = -1
+                }
             }
         }
     }
@@ -2134,14 +2204,17 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
         g_drag_moved = false
     }
 
-    ui_fill_rect(r, x, y + h - 22.0, w, 1.0, col_line(), 0.0)
+    let footer_h: f64 = 22.0
+    let footer_y = y + h - footer_h
+    ui_fill_rect(r, x, footer_y, w, 1.0, col_line(), 0.0)
+    let footer_ty = ui_text_v_center_y(r, footer_y, footer_h, PX(), FONT())
     if g_hovered >= 0 {
         let detail = `{g_node_name[g_hovered]}  total {g_node_total[g_hovered]} ms  self {g_node_self[g_hovered]} ms  {g_node_calls[g_hovered]}x`
-        ui_push_clip(r, x + 8.0, y + h - 18.0, w - 16.0, 14.0)
-        ui_draw_text(r, x + 8.0, y + h - 16.0, detail, PX(), col_text(), FONT())
+        ui_push_clip(r, x + 8.0, footer_y, w - 16.0, footer_h)
+        ui_draw_text(r, x + 8.0, footer_ty, detail, PX(), col_text(), FONT())
         ui_pop_clip(r)
     } else {
-        ui_draw_text(r, x + 8.0, y + h - 16.0, "wheel zoom, drag pan, click select, right-click reset", PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 8.0, footer_ty, "wheel zoom, drag pan, click select, right-click reset", PX(), col_muted(), FONT())
     }
 }
 
@@ -2201,61 +2274,63 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
         }
     }
 
-    if g_drag_mode == 0 {
-        if v.scroll_y != 0.0 {
-            if on_plot {
-                zoom_time_at(g_mouse_x, x, w, v.scroll_y)
-                ui_request_render(r, 2)
-            } else {
-                if on_overview {
-                    zoom_time_at(g_mouse_x, ov_x, ov_w, v.scroll_y)
+    if g_chart_input {
+        if g_drag_mode == 0 {
+            if v.scroll_y != 0.0 {
+                if on_plot {
+                    zoom_time_at(g_mouse_x, x, w, v.scroll_y)
                     ui_request_render(r, 2)
+                } else {
+                    if on_overview {
+                        zoom_time_at(g_mouse_x, ov_x, ov_w, v.scroll_y)
+                        ui_request_render(r, 2)
+                    }
                 }
             }
-        }
-        if v.mouse_pressed {
-            if on_overview {
-                begin_drag(2)
-                let full = time_full_span()
-                let mouse_t = g_time_origin + ((g_mouse_x - ov_x) / ov_w) * full
-                let view_span = g_cam_t1 - g_cam_t0
-                if view_span < time_min_span() {
-                    view_span = time_min_span()
-                }
-                if mouse_t < g_cam_t0 {
-                    cam_set_time(mouse_t - view_span * 0.5, mouse_t - view_span * 0.5 + view_span)
-                    g_drag_t0 = g_cam_t0
-                    g_drag_t1 = g_cam_t1
-                } else {
-                    if mouse_t > g_cam_t1 {
+            if v.mouse_pressed {
+                if on_overview {
+                    begin_drag(2)
+                    let full = time_full_span()
+                    let mouse_t = g_time_origin + ((g_mouse_x - ov_x) / ov_w) * full
+                    let view_span = g_cam_t1 - g_cam_t0
+                    if view_span < time_min_span() {
+                        view_span = time_min_span()
+                    }
+                    if mouse_t < g_cam_t0 {
                         cam_set_time(mouse_t - view_span * 0.5, mouse_t - view_span * 0.5 + view_span)
                         g_drag_t0 = g_cam_t0
                         g_drag_t1 = g_cam_t1
+                    } else {
+                        if mouse_t > g_cam_t1 {
+                            cam_set_time(mouse_t - view_span * 0.5, mouse_t - view_span * 0.5 + view_span)
+                            g_drag_t0 = g_cam_t0
+                            g_drag_t1 = g_cam_t1
+                        }
+                    }
+                    let cur = g_cam_t1 - g_cam_t0
+                    if cur > 0.0 {
+                        g_drag_grab = (mouse_t - g_cam_t0) / cur
+                    } else {
+                        g_drag_grab = 0.0
+                    }
+                    if g_drag_grab < 0.0 {
+                        g_drag_grab = 0.0
+                    }
+                    if g_drag_grab > 1.0 {
+                        g_drag_grab = 1.0
+                    }
+                } else {
+                    if on_plot {
+                        begin_drag(1)
                     }
                 }
-                let cur = g_cam_t1 - g_cam_t0
-                if cur > 0.0 {
-                    g_drag_grab = (mouse_t - g_cam_t0) / cur
-                } else {
-                    g_drag_grab = 0.0
-                }
-                if g_drag_grab < 0.0 {
-                    g_drag_grab = 0.0
-                }
-                if g_drag_grab > 1.0 {
-                    g_drag_grab = 1.0
-                }
-            } else {
-                if on_plot {
-                    begin_drag(1)
-                }
             }
-        }
-        if on_plot {
-            if v.mouse_right_pressed {
-                fit_time_view()
-                cam_set_scroll(0.0)
-                g_selected_ev = -1
+            if on_plot {
+                if v.mouse_right_pressed {
+                    fit_time_view()
+                    cam_set_scroll(0.0)
+                    g_selected_ev = -1
+                }
             }
         }
     }
@@ -2358,16 +2433,18 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     }
     ui_pop_clip(r)
 
-    ui_fill_rect(r, x, y + h - footer_h, w, 1.0, col_line(), 0.0)
+    let footer_y = y + h - footer_h
+    ui_fill_rect(r, x, footer_y, w, 1.0, col_line(), 0.0)
+    let footer_ty = ui_text_v_center_y(r, footer_y, footer_h, PX(), FONT())
     if g_tl_hovered >= 0 {
         let detail = `{g_ev_name[g_tl_hovered]}  {g_ev_calls[g_tl_hovered]}x  +{fmt_time_ms(g_ev_start[g_tl_hovered] - g_time_origin)}  dur {fmt_time_ms(g_ev_duration[g_tl_hovered])}`
-        ui_push_clip(r, x + 8.0, y + h - 18.0, w - 16.0, 14.0)
-        ui_draw_text(r, x + 8.0, y + h - 16.0, detail, PX(), col_text(), FONT())
+        ui_push_clip(r, x + 8.0, footer_y, w - 16.0, footer_h)
+        ui_draw_text(r, x + 8.0, footer_ty, detail, PX(), col_text(), FONT())
         ui_pop_clip(r)
     } else {
         let range = `{fmt_time_ms(g_t0 - g_time_origin)} - {fmt_time_ms(g_t1 - g_time_origin)}`
         let shown = `{g_tl_drawn}/{g_ev_count} spans  scan {g_tl_scanned}  long {g_long_count}  {range}`
-        ui_draw_text(r, x + 8.0, y + h - 16.0, shown, PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 8.0, footer_ty, shown, PX(), col_muted(), FONT())
     }
 
     if v.mouse_released {
@@ -2392,15 +2469,103 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
 
     let body_y = y + 46.0
     let body_h = h - 46.0
-    let side_w = min_f(260.0, w * 0.28)
-    let chart_w = w - side_w - 10.0
-    if body_h > 80.0 {
-        if g_mode == 0 {
-            draw_flamegraph(r, v, x, body_y, chart_w, body_h)
-        } else {
-            draw_timeline(r, v, x, body_y, chart_w, body_h)
+    let gap = 10.0
+    let split = 6.0
+    let min_side = 160.0
+    let max_side = max_f(min_side, w * 0.55)
+    let min_chart = 180.0
+    if max_side > w - gap - split - min_chart {
+        max_side = w - gap - split - min_chart
+    }
+    if max_side < min_side {
+        max_side = min_side
+    }
+    // Clamp only the layout copy. Writing max_side back into g_side_w on an
+    // early tiny canvas frame permanently collapsed the panel after resize.
+    let side_w = g_side_w
+    if side_w < min_side {
+        side_w = min_side
+    }
+    if side_w > max_side {
+        side_w = max_side
+    }
+    let chart_w = w - side_w - gap - split
+    let split_x = x + chart_w
+    let side_x = split_x + split
+    let hit_pad = 4.0
+    let on_split = hit(v, split_x - hit_pad, body_y, split + hit_pad * 2.0, body_h)
+
+    if g_side_resizing {
+        if v.mouse_down {
+            let next = g_side_drag_w - (g_mouse_x - g_drag_x)
+            if next < min_side {
+                next = min_side
+            }
+            if next > max_side {
+                next = max_side
+            }
+            g_side_w = next
+            side_w = next
+            chart_w = w - side_w - gap - split
+            split_x = x + chart_w
+            side_x = split_x + split
+            on_split = true
+            ui_request_render(r, 2)
         }
-        draw_hot_list(r, v, x + chart_w + 10.0, body_y, side_w, body_h)
+        if v.mouse_released {
+            g_side_resizing = false
+        }
+        if v.mouse_down == false {
+            if v.mouse_released == false {
+                g_side_resizing = false
+            }
+        }
+    } else {
+        if g_drag_mode == 0 {
+            if on_split {
+                if v.mouse_pressed {
+                    g_side_resizing = true
+                    g_side_drag_w = g_side_w
+                    g_drag_x = g_mouse_x
+                    g_drag_y = g_mouse_y
+                }
+            }
+        }
+    }
+
+    if body_h > 80.0 {
+        let on_side = hit(v, side_x, body_y, side_w, body_h)
+        g_chart_input = true
+        if g_side_resizing {
+            g_chart_input = false
+        } else {
+            if on_split {
+                g_chart_input = false
+            } else {
+                if on_side {
+                    g_chart_input = false
+                }
+            }
+        }
+        if chart_w > 40.0 {
+            if g_mode == 0 {
+                draw_flamegraph(r, v, x, body_y, chart_w, body_h)
+            } else {
+                draw_timeline(r, v, x, body_y, chart_w, body_h)
+            }
+        }
+        let split_color = col_line()
+        if on_split {
+            split_color = col_accent()
+        } else {
+            if g_side_resizing {
+                split_color = col_accent()
+            }
+        }
+        ui_fill_rect(r, split_x + 2.0, body_y + 8.0, 2.0, body_h - 16.0, split_color, 0.0)
+        if side_w > 40.0 {
+            draw_hot_list(r, v, side_x, body_y, side_w, body_h)
+        }
     }
 }
 
@@ -2419,7 +2584,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     let pad = 10.0
     let header_h = 40.0
     ui_fill_rect(r, 0.0, 0.0, w, header_h, col_panel(), 0.0)
-    ui_draw_text(r, pad, 6.0, "NS Profile", PX(), col_text(), FONT())
+    ui_draw_text(r, pad, 4.0, "NS Profile", TITLE_PX(), col_text(), FONT())
     ui_push_clip(r, pad, 22.0, 280.0, 14.0)
     ui_draw_text(r, pad, 22.0, g_status, PX(), col_muted(), FONT())
     ui_pop_clip(r)
@@ -2479,16 +2644,17 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
         if body_h > 80.0 {
             if g_raw.len == 0 {
                 let cy = body_y + min_f(90.0, body_h * 0.3)
-                ui_draw_text(r, body_x, cy, "No profile loaded", PX(), col_text(), FONT())
-                ui_draw_text(r, body_x, cy + 16.0, "Run `ns profile` then `ns profiler`, or open bin/ns.profile.", PX(), col_muted(), FONT())
+                ui_draw_text(r, body_x, cy, "No profile loaded", TITLE_PX(), col_text(), FONT())
+                ui_draw_text(r, body_x, cy + 20.0, "Run `ns profile` then `ns profiler`, or open bin/ns.profile.", PX(), col_muted(), FONT())
                 if g_status == "Loaded file is not an ns-profile." {
-                    ui_draw_text(r, body_x, cy + 32.0, g_status, PX(), col_warn(), FONT())
+                    ui_draw_text(r, body_x, cy + 38.0, g_status, PX(), col_warn(), FONT())
                 }
             } else {
                 draw_profile(r, v, body_x, body_y, body_w, body_h)
             }
         }
     }
+    draw_toast(r, w, h)
     g_frame_count = g_frame_count + 1
 }
 

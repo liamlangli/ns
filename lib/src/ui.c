@@ -267,6 +267,12 @@ typedef struct ui_gpu_root {
 
 typedef struct ui_theme { void *handle; } ui_theme;
 typedef struct ui_hit { ns_bool hovered; ns_bool pressed; } ui_hit;
+typedef struct ui_text_sel {
+    i32 active;
+    i32 anchor;
+    i32 head;
+    ns_bool dragging;
+} ui_text_sel;
 typedef struct ui_input {
     f64 mouse_x, mouse_y;
     ns_bool mouse_down, mouse_pressed, mouse_released;
@@ -2328,6 +2334,156 @@ f64 ui_text_width(ui_renderer *r, const char *text, f64 font_px, i32 font_type) 
         width += ui_text_char_advance(r, font_type, code, font_px);
     }
     return width;
+}
+
+// Byte offset of the caret nearest to local x inside a single-line string.
+// Offsets are UTF-8 bytes so they compose with substr; x past the end clamps
+// to strlen, and x before the first glyph returns 0.
+i32 ui_text_index_at_x(ui_renderer *r, const char *text, f64 font_px, i32 font_type, f64 x) {
+    if (!r || !text || font_px <= 0.0) return 0;
+    if (x <= 0.0) return 0;
+    const unsigned char *start = (const unsigned char *)text;
+    const unsigned char *p = start;
+    f64 cursor = 0.0;
+    while (*p) {
+        const unsigned char *glyph = p;
+        i32 code = ui_utf8_next(&p);
+        if (code == '\n') break;
+        f64 advance = ui_text_char_advance(r, font_type, code, font_px);
+        if (x < cursor + advance * 0.5) {
+            return (i32)(glyph - start);
+        }
+        cursor += advance;
+    }
+    return (i32)(p - start);
+}
+
+ui_text_sel *ui_text_sel_create(void) {
+    ui_text_sel *s = (ui_text_sel *)calloc(1, sizeof(ui_text_sel));
+    if (s) s->active = -1;
+    return s;
+}
+
+void ui_text_sel_clear(ui_text_sel *s) {
+    if (!s) return;
+    s->active = -1;
+    s->anchor = 0;
+    s->head = 0;
+    s->dragging = false;
+}
+
+ns_bool ui_text_sel_has(ui_text_sel *s) {
+    return s && s->active >= 0 && s->anchor != s->head;
+}
+
+i32 ui_text_sel_lo(ui_text_sel *s) {
+    if (!s) return 0;
+    return s->anchor <= s->head ? s->anchor : s->head;
+}
+
+i32 ui_text_sel_hi(ui_text_sel *s) {
+    if (!s) return 0;
+    return s->anchor <= s->head ? s->head : s->anchor;
+}
+
+static i32 ui_text_sel_clamp(i32 idx, i32 len) {
+    if (idx < 0) return 0;
+    if (idx > len) return len;
+    return idx;
+}
+
+const char *ui_text_sel_slice(const char *text, ui_text_sel *s) {
+    static char *buf = NULL;
+    static size_t cap = 0;
+    if (!text || !ui_text_sel_has(s)) return "";
+    i32 len = (i32)strlen(text);
+    i32 lo = ui_text_sel_clamp(ui_text_sel_lo(s), len);
+    i32 hi = ui_text_sel_clamp(ui_text_sel_hi(s), len);
+    if (hi <= lo) return "";
+    size_t n = (size_t)(hi - lo);
+    if (n + 1 > cap) {
+        size_t next = n + 1;
+        if (next < 64) next = 64;
+        char *grown = (char *)realloc(buf, next);
+        if (!grown) return "";
+        buf = grown;
+        cap = next;
+    }
+    memcpy(buf, text + lo, n);
+    buf[n] = 0;
+    return buf;
+}
+
+f64 ui_text_prefix_width(ui_renderer *r, const char *text, i32 end, f64 font_px, i32 font_type) {
+    if (!r || !text || end <= 0 || font_px <= 0.0) return 0.0;
+    i32 len = (i32)strlen(text);
+    if (end >= len) return ui_text_width(r, text, font_px, font_type);
+    const unsigned char *start = (const unsigned char *)text;
+    const unsigned char *p = start;
+    f64 width = 0.0;
+    while (*p) {
+        const unsigned char *glyph = p;
+        i32 code = ui_utf8_next(&p);
+        if (code == '\n') break;
+        if ((i32)(glyph - start) >= end) break;
+        width += ui_text_char_advance(r, font_type, code, font_px);
+    }
+    return width;
+}
+
+ns_bool ui_text_sel_interact(ui_renderer *r, ui_text_sel *s, i32 field, const char *text,
+                             f64 x, f64 y, f64 w, f64 h, f64 font_px, i32 font_type,
+                             f64 mx, f64 my, ns_bool pressed, ns_bool down, ns_bool released) {
+    if (!s) return false;
+    ns_bool inside = mx >= x && mx < x + w && my >= y && my < y + h;
+    if (pressed) {
+        if (inside && text) {
+            i32 idx = ui_text_index_at_x(r, text, font_px, font_type, mx - x);
+            s->active = field;
+            s->anchor = idx;
+            s->head = idx;
+            s->dragging = true;
+        } else if (s->active == field && !s->dragging) {
+            ui_text_sel_clear(s);
+        }
+    }
+    if (s->dragging && s->active == field) {
+        if (down && text) {
+            f64 local = mx - x;
+            if (local < 0.0) local = 0.0;
+            if (local > w) local = w;
+            s->head = ui_text_index_at_x(r, text, font_px, font_type, local);
+        }
+        if (released) s->dragging = false;
+    }
+    if (released && s->active == field) s->dragging = false;
+    return s->active == field;
+}
+
+void ui_draw_text_sel(ui_renderer *r, f64 x, f64 y, f64 h, const char *text, f64 font_px, u32 rgba,
+                      i32 font_type, ui_text_sel *s, i32 field, u32 sel_rgba) {
+    if (!r || !text) return;
+    if (s && s->active == field && s->anchor != s->head) {
+        i32 lo = ui_text_sel_lo(s);
+        i32 hi = ui_text_sel_hi(s);
+        f64 x0 = x + ui_text_prefix_width(r, text, lo, font_px, font_type);
+        f64 x1 = x + ui_text_prefix_width(r, text, hi, font_px, font_type);
+        f64 sw = x1 - x0;
+        if (sw > 0.0) ui_fill_rect(r, x0, y, sw, h, sel_rgba, 0.0);
+    }
+    f64 ty = ui_text_v_center_y(r, y, h, font_px, font_type);
+    ui_draw_text(r, x, ty, text, font_px, rgba, font_type);
+}
+
+ns_bool ui_text_sel_copy(view *v, ui_text_sel *s, const char *text) {
+    if (!v || !s || !text || !ui_text_sel_has(s)) return false;
+    i32 mods = view_take_key_press(v, VIEW_KEY_C);
+    if (mods < 0) return false;
+    if ((mods & VIEW_KEY_MOD_CONTROL) == 0 && (mods & VIEW_KEY_MOD_SUPER) == 0) return false;
+    const char *slice = ui_text_sel_slice(text, s);
+    if (!slice || !slice[0]) return false;
+    view_set_clipboard(v, slice);
+    return true;
 }
 
 static ns_bool ui_text_is_vertical_space(i32 code) {

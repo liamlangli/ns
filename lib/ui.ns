@@ -155,6 +155,16 @@ struct ui_input_text_state {
     sel_head: i32
 }
 
+// Shared selection for one or more read-only labels drawn with ui_draw_text_sel.
+// `active` is the caller's field id (-1 = none); `anchor`/`head` are UTF-8 byte
+// offsets into that field's string. Dragging tracks an in-progress mouse drag.
+struct ui_text_sel {
+    active: i32,
+    anchor: i32,
+    head: i32,
+    dragging: bool
+}
+
 // Caret + selection + in-progress edit text for a numeric input.
 struct ui_number_input_state {
     cursor: i32,
@@ -405,6 +415,9 @@ ref fn ui_replay_layer(r: ref ui_renderer, layer: ref ui_layer, dx: f64, dy: f64
 // ===========================================================================
 
 ref fn ui_draw_text(r: ref ui_renderer, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
+// Byte caret nearest to local x inside a single-line string. Offsets are UTF-8
+// bytes so they compose with substr; values clamp to [0, text.len].
+ref fn ui_text_index_at_x(r: ref ui_renderer, text: str, font_px: f64, font_type: i32, x: f64) i32
 // Center UTF-8 text on a circular baseline. Glyph positions follow the arc and
 // each glyph rotates to the local tangent; increasing angles flow clockwise in
 // the renderer's screen coordinate system.
@@ -497,6 +510,27 @@ ref fn ui_color_picker_id(w: ref ui_widgets, id: i32, rect: ui_rect, value: ui_c
 ref fn ui_create_text_view_state() ui_text_view_state
 ref fn ui_text_view(w: ref ui_widgets, id: str, x: f64, y: f64, width: f64, height: f64, lines: [ui_text_view_line], state: ref ui_text_view_state, options: ui_text_view_options)
 ref fn ui_text_view_selected_text(lines: [ui_text_view_line], state: ref ui_text_view_state) str
+
+// ---- read-only selectable label -------------------------------------------
+// Shared across several labels: pick a stable `field` id per label, call
+// ui_text_sel_interact then ui_draw_text_sel each frame, and ui_text_sel_copy
+// once per frame with the active field's text (Cmd/Ctrl+C).
+
+ref fn ui_text_sel_create() ref ui_text_sel
+ref fn ui_text_sel_clear(s: ref ui_text_sel)
+ref fn ui_text_sel_has(s: ref ui_text_sel) bool
+ref fn ui_text_sel_lo(s: ref ui_text_sel) i32
+ref fn ui_text_sel_hi(s: ref ui_text_sel) i32
+ref fn ui_text_sel_slice(text: str, s: ref ui_text_sel) str
+ref fn ui_text_prefix_width(r: ref ui_renderer, text: str, end: i32, font_px: f64, font_type: i32) f64
+// Hit-test + drag-select. Mouse is content-space. Returns true when `field`
+// owns the selection afterwards.
+ref fn ui_text_sel_interact(r: ref ui_renderer, s: ref ui_text_sel, field: i32, text: str, x: f64, y: f64, w: f64, h: f64, font_px: f64, font_type: i32, mx: f64, my: f64, pressed: bool, down: bool, released: bool) bool
+// Draw highlight (if any) then the label, vertically centered in `h`.
+ref fn ui_draw_text_sel(r: ref ui_renderer, x: f64, y: f64, h: f64, text: str, font_px: f64, rgba: u32, font_type: i32, s: ref ui_text_sel, field: i32, sel_rgba: u32)
+// Cmd/Ctrl+C copy of `text` when `s` has a selection. Call once per frame with
+// the active field's current string. Returns true when text was copied.
+ref fn ui_text_sel_copy(v: ref view, s: ref ui_text_sel, text: str) bool
 
 // ===========================================================================
 // Theme helpers
