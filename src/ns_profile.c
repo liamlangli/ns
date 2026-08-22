@@ -263,7 +263,9 @@ static void ns_profile_fn_add(i32 fn_index, f64 elapsed_ms, f64 self_ms) {
 static void ns_profile_record_event(u8 kind, i32 depth, i32 fn_index, f64 start_ms, f64 elapsed_ms, f64 self_ms) {
     // Keep aggregates for every call, but omit micro-scopes from the timeline
     // so a hot leaf helper cannot balloon the on-disk report into gigabytes.
-    if (kind == NS_PROFILE_EVENT_SCOPE && elapsed_ms < NS_PROFILE_TIMELINE_MIN_MS) {
+    // Always keep depth-0 roots (including empty async workers) so every
+    // interned thread still shows a lane span.
+    if (kind == NS_PROFILE_EVENT_SCOPE && depth > 0 && elapsed_ms < NS_PROFILE_TIMELINE_MIN_MS) {
         ns_profile.timeline_skipped++;
         return;
     }

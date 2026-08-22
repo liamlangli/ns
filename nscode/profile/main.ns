@@ -260,7 +260,7 @@ fn timeline_try_draw_event(r: ref ui_renderer, v: ref view, ev: i32, x: f64, w: 
     let lane_y0: f64 = 0.0
     if lane >= 0 {
         if lane < g_lane_count {
-            lane_y0 = g_lane_y0[lane] + 16.0
+            lane_y0 = g_lane_y0[lane] + lane_label_h()
         }
     }
     let by = plot_y + lane_y0 + g_ev_depth[ev] as f64 * row_h - g_scroll
@@ -491,13 +491,18 @@ fn lane_find_or_add(name: str) i32 {
     return lane
 }
 
+fn lane_label_h() f64 { return 18.0 }
+
 fn rebuild_lane_layout(row_h: f64) {
-    let label_h = 16.0
-    let gap = 6.0
+    let label_h = lane_label_h()
+    let gap = 8.0
     let y: f64 = 0.0
     let i = 0
     loop i < g_lane_count {
         let rows = g_lane_max_depth[i] + 1
+        if rows < 1 {
+            rows = 1
+        }
         let h = label_h + rows as f64 * row_h
         g_lane_y0[i] = y
         g_lane_h[i] = h
@@ -505,8 +510,8 @@ fn rebuild_lane_layout(row_h: f64) {
         i = i + 1
     }
     g_lane_content_h = y
-    if g_lane_content_h < row_h {
-        g_lane_content_h = row_h
+    if g_lane_content_h < row_h + label_h {
+        g_lane_content_h = row_h + label_h
     }
 }
 
@@ -2020,7 +2025,11 @@ fn parse_blob_tables() bool {
         }
         g_blob_thread_name[ti] = name
         g_blob_thread_count = g_blob_thread_count + 1
-        lane_find_or_add(name)
+        let lane = lane_find_or_add(name)
+        // Empty workers still get one row under the title.
+        if g_lane_max_depth[lane] < 0 {
+            g_lane_max_depth[lane] = 0
+        }
         ti = ti + 1
     }
     // Blob symbol table becomes the viewer string pool 1:1, so each sample
@@ -3080,10 +3089,44 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
     }
 }
 
+fn draw_lane_headers(r: ref ui_renderer, x: f64, w: f64, plot_y: f64, plot_h: f64) {
+    let label_h = lane_label_h()
+    let li_lane = 0
+    loop li_lane < g_lane_count {
+        let ly = plot_y + g_lane_y0[li_lane] - g_scroll
+        let lh = g_lane_h[li_lane]
+        if ly + lh > plot_y {
+            if ly < plot_y + plot_h {
+                let title = g_lane_name[li_lane]
+                if title.len == 0 {
+                    title = "main"
+                }
+                ui_fill_rect(r, x, ly, w, label_h, col_panel_hi(), 0.0)
+                let ty = ui_text_v_center_y(r, ly, label_h, PX(), FONT())
+                ui_draw_text(r, x + 8.0, ty, title, PX(), col_text(), FONT())
+                ui_fill_rect(r, x, ly + label_h - 1.0, w, 1.0, col_line(), 0.0)
+                ui_fill_rect(r, x, ly + lh, w, 1.0, col_line(), 0.0)
+            }
+        }
+        li_lane = li_lane + 1
+    }
+}
+
 fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
+    if g_lane_count == 0 {
+        lane_find_or_add("main")
+        rebuild_lane_layout(18.0)
+    }
     if g_ev_count == 0 {
         ui_draw_text(r, x + 8.0, y + 12.0, "No timeline events in this profile.", PX(), col_muted(), FONT())
+        let plot_y = y + 40.0
+        let plot_h = h - 62.0
+        if plot_h > 8.0 {
+            ui_push_clip(r, x, plot_y, w, plot_h)
+            draw_lane_headers(r, x, w, plot_y, plot_h)
+            ui_pop_clip(r)
+        }
         return
     }
 
@@ -3265,19 +3308,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     ui_push_clip(r, x, plot_y, w, plot_h)
     draw_time_rulers(r, x, plot_y, w, plot_h, g_t0, g_t1, -1.0)
 
-    let li_lane = 0
-    loop li_lane < g_lane_count {
-        let ly = plot_y + g_lane_y0[li_lane] - g_scroll
-        let lh = g_lane_h[li_lane]
-        if ly + lh > plot_y {
-            if ly < plot_y + plot_h {
-                ui_fill_rect(r, x, ly, w, 15.0, col_panel_hi(), 0.0)
-                ui_draw_text(r, x + 6.0, ly + 1.0, g_lane_name[li_lane], PX(), col_muted(), FONT())
-                ui_fill_rect(r, x, ly + lh, w, 1.0, col_line(), 0.0)
-            }
-        }
-        li_lane = li_lane + 1
-    }
+    draw_lane_headers(r, x, w, plot_y, plot_h)
 
     // Long spans may start well before t0 and still overlap the window.
     let li = 0

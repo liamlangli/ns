@@ -115,16 +115,26 @@ int main() {
     ns_expect(ns_array_length(ns_profile.events) == 2, "main event after restore");
     ns_expect(ns_profile.events[1].thread == 0, "restored event stays on main");
 
-    // Micro-scopes stay out of the timeline; FFI samples are always kept up to
-    // the hard cap so dense dumps cannot grow without bound.
+    // Nested micro-scopes stay out of the timeline; depth-0 roots are kept so
+    // empty async workers still show a lane. FFI samples stay up to the hard cap.
     ns_profile_reset();
     ns_profile_enable(0.0);
+    ns_profile_scope_enter(S("holder"), ns_str_null);
     for (i32 i = 0; i < 1000; i++) {
-        ns_profile_record_scope(S("tiny"), ns_str_null, 0, (f64)i, 0.001);
+        ns_profile_scope_enter(S("tiny"), ns_str_null);
+        // Nested under holder: after pop, depth is 1 and the short span is dropped.
+        ns_profile_record_scope(S("tiny"), ns_str_null, 1, (f64)i, 0.001);
     }
-    ns_expect(ns_array_length(ns_profile.events) == 0, "micro scopes skipped from timeline");
+    ns_expect(ns_array_length(ns_profile.events) == 0, "nested micro scopes skipped from timeline");
     ns_expect(ns_profile.timeline_skipped == 1000, "micro scopes counted as skipped");
     ns_expect(ns_profile.scope_calls == 1000, "micro scopes still aggregate");
+    ns_profile_record_scope(S("holder"), ns_str_null, 0, 0.0, 50.0);
+    ns_expect(ns_array_length(ns_profile.events) == 1, "holder root retained");
+    ns_profile_reset();
+    ns_profile_enable(0.0);
+    ns_profile_scope_enter(S("root"), ns_str_null);
+    ns_profile_record_scope(S("root"), ns_str_null, 0, 0.0, 0.001);
+    ns_expect(ns_array_length(ns_profile.events) == 1, "depth-0 root kept even when short");
 
     ns_profile_reset();
     ns_profile_enable(0.0);
