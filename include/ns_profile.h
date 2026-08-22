@@ -11,15 +11,11 @@
 //   - a per-symbol table with inclusive (total) and exclusive (self) time
 //     for both interpreted functions and native calls
 //   - a call-tree of unique stacks used to emit a folded flamechart
-//   - a ring buffer of recent complete events for a time-axis flamechart
-//
-// The flame tree is complete for the whole run. Timeline events past the
-// ring capacity drop the oldest samples so a long interactive session still
-// has a recent window to inspect.
+//   - a linearly growing array of every complete event for a time-axis
+//     flamechart (memory grows with sample count)
 
 #define NS_PROFILE_MAX_FNS 4096
 #define NS_PROFILE_FN_HASH 8192
-#define NS_PROFILE_MAX_EVENTS 262144
 #define NS_PROFILE_MAX_STACK 128
 #define NS_PROFILE_MAX_FLAME 4096
 #define NS_PROFILE_FLAME_HASH 8192
@@ -77,13 +73,8 @@ typedef struct ns_profile_state {
     u64 fns_dropped;
     i32 fn_hash[NS_PROFILE_FN_HASH];
 
-    // Ring buffer of completed events. `event_head` is the next write slot.
-    // When the ring is full, new events overwrite the oldest and
-    // `events_dropped` counts the overwritten samples.
-    ns_profile_event events[NS_PROFILE_MAX_EVENTS];
-    i32 event_count;
-    i32 event_head;
-    u64 events_dropped;
+    // Growable timeline of every completed event (ns_array).
+    ns_profile_event *events;
 
     ns_profile_open open[NS_PROFILE_MAX_STACK];
     i32 open_len;

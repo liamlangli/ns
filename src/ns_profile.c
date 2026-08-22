@@ -23,6 +23,7 @@ f64 ns_profile_now_ms(void) {
 }
 
 void ns_profile_reset(void) {
+    ns_array_free(ns_profile.events);
     memset(&ns_profile, 0, sizeof(ns_profile));
 }
 
@@ -133,13 +134,7 @@ static void ns_profile_record_event(u8 kind, ns_str name, ns_str lib, i32 depth,
         .name = name,
         .lib = lib,
     };
-    ns_profile.events[ns_profile.event_head] = ev;
-    ns_profile.event_head = (ns_profile.event_head + 1) % NS_PROFILE_MAX_EVENTS;
-    if (ns_profile.event_count < NS_PROFILE_MAX_EVENTS) {
-        ns_profile.event_count++;
-    } else {
-        ns_profile.events_dropped++;
-    }
+    ns_array_push(ns_profile.events, ev);
 }
 
 void ns_profile_scope_enter(ns_str name, ns_str lib) {
@@ -274,26 +269,9 @@ static void ns_profile_write_stack(FILE *f, i32 flame_index) {
 }
 
 static void ns_profile_sort_events(void) {
-    if (ns_profile.event_count <= 1) return;
-    if (ns_profile.events_dropped == 0) {
-        qsort(ns_profile.events, (size_t)ns_profile.event_count, sizeof(ns_profile_event), ns_profile_event_cmp);
-        ns_profile.event_head = ns_profile.event_count % NS_PROFILE_MAX_EVENTS;
-        return;
-    }
-    // The ring is full and wrapped. Rotate so index 0 is the oldest sample,
-    // then sort by start time for a stable dump.
-    if (ns_profile.event_head != 0) {
-        ns_profile_event *tmp = (ns_profile_event *)malloc(sizeof(ns_profile_event) * (size_t)NS_PROFILE_MAX_EVENTS);
-        if (tmp) {
-            i32 n = NS_PROFILE_MAX_EVENTS - ns_profile.event_head;
-            memcpy(tmp, ns_profile.events + ns_profile.event_head, sizeof(ns_profile_event) * (size_t)n);
-            memcpy(tmp + n, ns_profile.events, sizeof(ns_profile_event) * (size_t)ns_profile.event_head);
-            memcpy(ns_profile.events, tmp, sizeof(ns_profile_event) * (size_t)NS_PROFILE_MAX_EVENTS);
-            free(tmp);
-            ns_profile.event_head = 0;
-        }
-    }
-    qsort(ns_profile.events, (size_t)ns_profile.event_count, sizeof(ns_profile_event), ns_profile_event_cmp);
+    i32 n = (i32)ns_array_length(ns_profile.events);
+    if (n <= 1) return;
+    qsort(ns_profile.events, (size_t)n, sizeof(ns_profile_event), ns_profile_event_cmp);
 }
 
 static ns_bool ns_profile_same_span(const ns_profile_event *a, const ns_profile_event *b) {
@@ -303,11 +281,12 @@ static ns_bool ns_profile_same_span(const ns_profile_event *a, const ns_profile_
     return b->start_ms <= a->start_ms + a->elapsed_ms + 0.05;
 }
 
-static i32 ns_profile_coalesce_events(void) {
+static void ns_profile_coalesce_events(void) {
     ns_profile_sort_events();
-    if (ns_profile.event_count <= 1) return ns_profile.event_count;
+    i32 n = (i32)ns_array_length(ns_profile.events);
+    if (n <= 1) return;
     i32 w = 0;
-    for (i32 r = 1; r < ns_profile.event_count; r++) {
+    for (i32 r = 1; r < n; r++) {
         ns_profile_event *a = &ns_profile.events[w];
         ns_profile_event *b = &ns_profile.events[r];
         if (ns_profile_same_span(a, b)) {
@@ -320,18 +299,19 @@ static i32 ns_profile_coalesce_events(void) {
             if (w != r) ns_profile.events[w] = ns_profile.events[r];
         }
     }
-    return w + 1;
+    ns_array_set_length(ns_profile.events, w + 1);
 }
 
 void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     f64 ffi_ms = ns_profile.ffi_total_ms;
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
-    i32 raw_events = ns_profile.event_count;
-    ns_profile.event_count = ns_profile_coalesce_events();
+    i32 raw_events = (i32)ns_array_length(ns_profile.events);
+    ns_profile_coalesce_events();
+    i32 event_count = (i32)ns_array_length(ns_profile.events);
 
     i32 ffi_event_count = 0;
     i32 scope_event_count = 0;
-    for (i32 i = 0; i < ns_profile.event_count; i++) {
+    for (i32 i = 0; i < event_count; i++) {
         if (ns_profile.events[i].kind == NS_PROFILE_EVENT_SCOPE) scope_event_count++;
         else ffi_event_count++;
     }
@@ -354,7 +334,7 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
     fprintf(f, "scope_self_ms: %.3f\n", ns_profile.scope_self_ms);
     fprintf(f, "scope_symbols: %d\n", scope_symbols);
     fprintf(f, "scope_events: %d\n", scope_event_count);
-    fprintf(f, "timeline_events: %d\n", ns_profile.event_count);
+    fprintf(f, "timeline_events: %d\n", event_count);
     fprintf(f, "timeline_raw: %d\n", raw_events);
     fprintf(f, "flame_frames: %d\n", ns_profile.flame_count);
     fprintf(f, "argv:");
@@ -404,7 +384,7 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
 
     // Timeline last so viewers can stop after the aggregated tables.
     fprintf(f, "timeline: kind depth start_ms duration_ms self_ms symbol\n");
-    for (i32 i = 0; i < ns_profile.event_count; i++) {
+    for (i32 i = 0; i < event_count; i++) {
         ns_profile_event *e = &ns_profile.events[i];
         if (e->kind == NS_PROFILE_EVENT_SCOPE) {
             fprintf(f, "scope_event: %d %.3f %.3f %.3f ", e->depth, e->start_ms, e->elapsed_ms, e->self_ms);
@@ -413,9 +393,6 @@ void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv) {
         }
         ns_profile_write_symbol(f, e->lib, e->name);
         fputc('\n', f);
-    }
-    if (ns_profile.events_dropped > 0) {
-        fprintf(f, "timeline_events_dropped: %llu\n", (unsigned long long)ns_profile.events_dropped);
     }
     if (ns_profile.stack_overflows > 0) {
         fprintf(f, "stack_overflows: %llu\n", (unsigned long long)ns_profile.stack_overflows);
@@ -437,11 +414,7 @@ void ns_profile_print_summary(FILE *out, f64 elapsed_ms) {
     fprintf(out, "  scopes      %llu   self %.3f ms\n", (unsigned long long)ns_profile.scope_calls, ns_profile.scope_self_ms);
     fprintf(out, "  ffi calls   %llu   %s%.3f ms / %.1f%%%s\n", (unsigned long long)ns_profile.ffi_calls,
             ns_profile_pct_color(ffi_pct), ffi_ms, ffi_pct, ns_color_nil);
-    fprintf(out, "  timeline    %d events", ns_profile.event_count);
-    if (ns_profile.events_dropped > 0) {
-        fprintf(out, " (%llu older dropped, keeping latest window)", (unsigned long long)ns_profile.events_dropped);
-    }
-    fprintf(out, "\n");
+    fprintf(out, "  timeline    %d events\n", (i32)ns_array_length(ns_profile.events));
     fprintf(out, "  stacks      %d unique\n", ns_profile.flame_count);
     fprintf(out, "  share       %s>=25%%%s  %s>=10%%%s  %s>=3%%%s  %s<3%%%s\n",
             ns_color_err, ns_color_nil, ns_color_wrn, ns_color_nil,

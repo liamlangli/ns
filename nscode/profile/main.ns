@@ -54,14 +54,18 @@ let g_hot_total = [f64](256)
 let g_hot_calls = [i32](256)
 let g_hot_count = 0
 
-let g_ev_start = [f64](262144)
-let g_ev_duration = [f64](262144)
-let g_ev_self = [f64](262144)
-let g_ev_depth = [i32](262144)
-let g_ev_calls = [i32](262144)
-let g_ev_name = [i32: str](262144)
+let g_ev_start = [f64](4096)
+let g_ev_duration = [f64](4096)
+let g_ev_self = [f64](4096)
+let g_ev_depth = [i32](4096)
+let g_ev_calls = [i32](4096)
+let g_ev_name = [i32: str](4096)
 let g_ev_count = 0
 let g_ev_raw = 0
+let g_ev_max_dur: f64 = 0.0
+// Long spans that can begin before the view window and still overlap it.
+let g_long_idx = [i32](4096)
+let g_long_count = 0
 let g_time_origin: f64 = 0.0
 let g_time_end: f64 = 0.0
 let g_t0: f64 = 0.0
@@ -82,18 +86,219 @@ let g_drag_fx0: f64 = 0.0
 let g_drag_fx1: f64 = 1.0
 let g_drag_grab: f64 = 0.0
 let g_drag_moved = false
+// Retained overview bars: rebuilt when events or overview size/range change.
+let g_ov_batch = 0
+let g_ov_batch_ready = false
+let g_ov_batch_w: f64 = 0.0
+let g_ov_batch_h: f64 = 0.0
+let g_ov_batch_origin: f64 = 0.0
+let g_ov_batch_end: f64 = 0.0
+let g_ov_batch_events = 0
+// Per-frame timeline draw counters (shared with timeline_try_draw_event).
+let g_tl_hovered = -1
+let g_tl_drawn = 0
+let g_tl_skipped = 0
+let g_tl_scanned = 0
+let g_tl_budget = 0
+let g_tl_min_ms: f64 = 0.0
+
+fn invalidate_overview_batch() {
+    g_ov_batch_ready = false
+    g_ov_batch_events = -1
+}
 
 fn min_span_ms(view_span: f64) f64 {
     if view_span <= 0.0 {
         return 0.0
     }
-    // Drop spans shorter than ~1 pixel of the current view. Dense ring dumps
+    // Drop spans shorter than ~1 pixel of the current view. Dense dumps
     // otherwise try to fill hundreds of thousands of rects per frame.
     let cut = view_span * 0.001
     if cut < 0.0001 {
         return 0.0
     }
     return cut
+}
+
+// Duration-pixel LOD: farther zoom keeps only bars wide enough on screen.
+fn lod_min_ms(view_span: f64, plot_w: f64) f64 {
+    if view_span <= 0.0 {
+        return 0.0
+    }
+    if plot_w <= 0.0 {
+        return view_span
+    }
+    let full = time_full_span()
+    let zoom: f64 = 1.0
+    if view_span > 0.0 {
+        zoom = full / view_span
+    }
+    let lod_px: f64 = 4.0
+    if zoom >= 8.0 {
+        lod_px = 2.0
+    }
+    if zoom >= 32.0 {
+        lod_px = 1.0
+    }
+    let cut = lod_px * view_span / plot_w
+    let floor_cut = min_span_ms(view_span)
+    if cut < floor_cut {
+        return floor_cut
+    }
+    return cut
+}
+
+// First index with start >= t. Events are sorted by start_ms.
+fn event_lower_bound(t: f64) i32 {
+    let lo = 0
+    let hi = g_ev_count
+    loop lo < hi {
+        let mid = lo + (hi - lo) / 2
+        if g_ev_start[mid] < t {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo
+}
+
+fn long_span_min_ms() f64 { return 1.0 }
+
+// Draw one event if it overlaps [t0,t1] and passes duration-pixel LOD.
+// Only skip when the bar is completely outside the view; partial overlap is kept
+// and the drawn rect is clamped into the plot.
+// Returns false when the draw budget is exhausted.
+fn timeline_try_draw_event(r: ref ui_renderer, v: ref view, ev: i32, x: f64, w: f64, plot_y: f64, plot_h: f64, row_h: f64, scale: f64) bool {
+    g_tl_scanned = g_tl_scanned + 1
+    let ev_end = g_ev_start[ev] + g_ev_duration[ev]
+    // Completely outside the time window.
+    if ev_end <= g_t0 {
+        g_tl_skipped = g_tl_skipped + 1
+        return true
+    }
+    if g_ev_start[ev] >= g_t1 {
+        g_tl_skipped = g_tl_skipped + 1
+        return true
+    }
+    if g_ev_duration[ev] < g_tl_min_ms {
+        g_tl_skipped = g_tl_skipped + 1
+        return true
+    }
+    if g_tl_drawn >= g_tl_budget {
+        g_tl_skipped = g_tl_skipped + 1
+        return false
+    }
+    let by = plot_y + g_ev_depth[ev] as f64 * row_h - g_scroll
+    let bh = row_h - 1.0
+    // Completely outside the vertical plot.
+    if by + bh <= plot_y {
+        g_tl_skipped = g_tl_skipped + 1
+        return true
+    }
+    if by >= plot_y + plot_h {
+        g_tl_skipped = g_tl_skipped + 1
+        return true
+    }
+    let bx0 = x + (g_ev_start[ev] - g_t0) * scale
+    let bx1 = x + (ev_end - g_t0) * scale
+    // Completely outside the horizontal plot.
+    if bx1 <= x {
+        g_tl_skipped = g_tl_skipped + 1
+        return true
+    }
+    if bx0 >= x + w {
+        g_tl_skipped = g_tl_skipped + 1
+        return true
+    }
+    // Clamp the visible portion into the plot; keep original left for hit/label.
+    let draw_x = max_f(bx0, x)
+    let draw_r = min_f(bx1, x + w)
+    let draw_w = max_f(1.0, draw_r - draw_x)
+    let color = name_color(g_ev_name[ev])
+    let selected = ev == g_selected_ev
+    if hit(v, draw_x, by, draw_w, bh) {
+        g_tl_hovered = ev
+        ui_fill_rect(r, draw_x, by, draw_w, bh, col_warn(), 0.0)
+        if v.mouse_released {
+            if g_drag_moved == false {
+                g_selected_ev = ev
+                g_selected = -1
+            }
+        }
+    } else {
+        if selected {
+            ui_fill_rect(r, draw_x, by, draw_w, bh, col_accent(), 0.0)
+        } else {
+            ui_fill_rect(r, draw_x, by, draw_w, bh, color, 0.0)
+        }
+    }
+    let label = `{g_ev_name[ev]} {g_ev_calls[ev]}x`
+    draw_bar_label(r, bx0, by, max_f(1.0, bx1 - bx0), bh, x, w, label)
+    g_tl_drawn = g_tl_drawn + 1
+    return true
+}
+
+fn ensure_long_capacity(need: i32) {
+    if need <= g_long_idx.len {
+        return
+    }
+    let next = g_long_idx.len
+    if next < 4096 {
+        next = 4096
+    }
+    loop next < need {
+        next = next * 2
+    }
+    let ni = [i32](next)
+    let i = 0
+    loop i < g_long_count {
+        ni[i] = g_long_idx[i]
+        i = i + 1
+    }
+    g_long_idx = ni
+}
+
+fn push_long_span(ev: i32) {
+    ensure_long_capacity(g_long_count + 1)
+    g_long_idx[g_long_count] = ev
+    g_long_count = g_long_count + 1
+}
+
+fn ensure_event_capacity(need: i32) {
+    if need <= g_ev_start.len {
+        return
+    }
+    let next = g_ev_start.len
+    if next < 4096 {
+        next = 4096
+    }
+    loop next < need {
+        next = next * 2
+    }
+    let ns = [f64](next)
+    let nd = [f64](next)
+    let nself = [f64](next)
+    let ndepth = [i32](next)
+    let ncalls = [i32](next)
+    // Open-addressed dict needs spare slots; allocate 2x live entries.
+    let nname = [i32: str](next * 2)
+    let i = 0
+    loop i < g_ev_count {
+        ns[i] = g_ev_start[i]
+        nd[i] = g_ev_duration[i]
+        nself[i] = g_ev_self[i]
+        ndepth[i] = g_ev_depth[i]
+        ncalls[i] = g_ev_calls[i]
+        nname[i] = g_ev_name[i]
+        i = i + 1
+    }
+    g_ev_start = ns
+    g_ev_duration = nd
+    g_ev_self = nself
+    g_ev_depth = ndepth
+    g_ev_calls = ncalls
+    g_ev_name = nname
 }
 
 fn col_bg() u32 { return ui_pack_color("#101418") }
@@ -414,6 +619,21 @@ fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str) {
                     let new_end = start + dur
                     if new_end > end {
                         g_ev_duration[last] = new_end - g_ev_start[last]
+                        if g_ev_duration[last] > g_ev_max_dur {
+                            g_ev_max_dur = g_ev_duration[last]
+                        }
+                        if g_ev_duration[last] >= long_span_min_ms() {
+                            // Coalesced growth may newly qualify as a long span.
+                            let already = false
+                            if g_long_count > 0 {
+                                if g_long_idx[g_long_count - 1] == last {
+                                    already = true
+                                }
+                            }
+                            if already == false {
+                                push_long_span(last)
+                            }
+                        }
                     }
                     g_ev_self[last] = g_ev_self[last] + self_ms
                     g_ev_calls[last] = g_ev_calls[last] + 1
@@ -425,9 +645,7 @@ fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str) {
             }
         }
     }
-    if g_ev_count >= g_ev_start.len {
-        return
-    }
+    ensure_event_capacity(g_ev_count + 1)
     let i = g_ev_count
     g_ev_start[i] = start
     g_ev_duration[i] = dur
@@ -436,6 +654,12 @@ fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str) {
     g_ev_calls[i] = 1
     g_ev_name[i] = name
     g_ev_count = g_ev_count + 1
+    if dur > g_ev_max_dur {
+        g_ev_max_dur = dur
+    }
+    if dur >= long_span_min_ms() {
+        push_long_span(i)
+    }
     if g_ev_count == 1 {
         g_time_origin = start
         g_ev_max_depth = depth
@@ -462,9 +686,7 @@ fn reset_time_view() {
 }
 
 fn fit_time_view() {
-    // Overview axis = whole run. Default view = retained sample window so the
-    // green handle is visible and panning/zooming still works when the ring
-    // only kept a late slice of a long session.
+    // Overview and default view cover the whole run; timeline keeps every sample.
     let sample_t0 = g_time_origin
     let sample_t1 = g_time_end
     let elapsed = parse_f64(g_elapsed)
@@ -587,6 +809,8 @@ fn parse_profile_body(src: str, want_events: bool) {
     g_ev_count = 0
     g_ev_raw = 0
     g_ev_max_depth = 0
+    g_ev_max_dur = 0.0
+    g_long_count = 0
     g_time_origin = 0.0
     g_time_end = 0.0
     g_t0 = 0.0
@@ -809,6 +1033,8 @@ fn clear_profile() {
     g_hot_count = 0
     g_ev_count = 0
     g_ev_raw = 0
+    g_ev_max_dur = 0.0
+    g_long_count = 0
     g_time_origin = 0.0
     g_time_end = 0.0
     g_t0 = 0.0
@@ -820,39 +1046,48 @@ fn clear_profile() {
     g_fx0 = 0.0
     g_fx1 = 1.0
     g_scroll = 0.0
+    invalidate_overview_batch()
 }
+
+fn time_min_span() f64 { return 0.025 }
+fn flame_min_span() f64 { return 0.01 }
 
 fn time_full_span() f64 {
     let full = g_time_end - g_time_origin
-    if full < 0.05 {
-        return 0.05
+    let min_span = time_min_span()
+    if full < min_span {
+        return min_span
     }
     return full
 }
 
 fn time_view_span() f64 {
     let span = g_t1 - g_t0
-    if span < 0.05 {
-        return 0.05
+    let min_span = time_min_span()
+    if span < min_span {
+        return min_span
     }
     return span
 }
 
 fn flame_view_span() f64 {
     let span = g_fx1 - g_fx0
-    if span < 0.02 {
-        return 0.02
+    let min_span = flame_min_span()
+    if span < min_span {
+        return min_span
     }
     return span
 }
 
 fn clamp_flame_view() {
     let span = g_fx1 - g_fx0
-    if span < 0.02 {
+    let min_span = flame_min_span()
+    if span < min_span {
         let mid = (g_fx0 + g_fx1) * 0.5
-        g_fx0 = mid - 0.01
-        g_fx1 = mid + 0.01
-        span = 0.02
+        let half = min_span * 0.5
+        g_fx0 = mid - half
+        g_fx1 = mid + half
+        span = min_span
     }
     if span > 1.0 {
         g_fx0 = 0.0
@@ -1109,9 +1344,10 @@ fn pick_tick_ms(span: f64, target_count: f64) f64 {
 
 fn clamp_view() {
     let span = g_t1 - g_t0
-    if span < 0.05 {
-        g_t1 = g_t0 + 0.05
-        span = 0.05
+    let min_span = time_min_span()
+    if span < min_span {
+        g_t1 = g_t0 + min_span
+        span = min_span
     }
     let full = time_full_span()
     if span > full {
@@ -1188,16 +1424,37 @@ fn draw_time_rulers(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, t0: f64,
     }
 }
 
-fn draw_overview(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_panel_hi(), 0.0)
+fn overview_batch_stale(w: f64, h: f64) bool {
+    if g_ov_batch_ready == false {
+        return true
+    }
+    if g_ov_batch_events != g_ev_count {
+        return true
+    }
+    if g_ov_batch_origin != g_time_origin {
+        return true
+    }
+    if g_ov_batch_end != g_time_end {
+        return true
+    }
+    if g_ov_batch_w != w {
+        return true
+    }
+    if g_ov_batch_h != h {
+        return true
+    }
+    return false
+}
+
+fn emit_overview_bars(r: ref ui_renderer, batch: i32, ox: f64, oy: f64, w: f64, h: f64) {
     let total = g_time_end - g_time_origin
     if total <= 0.0 {
         return
     }
     let scale = w / total
     let lane_h = max_f(2.0, h - 10.0)
-    let lane_y = y + 4.0
-    // Cap overview fill calls; a dense ring dump can be hundreds of thousands.
+    let lane_y = oy + 4.0
+    // Cap bars so a dense dump stays within a retained GPU batch.
     let budget = (w as i32) * 4
     if budget < 256 {
         budget = 256
@@ -1212,15 +1469,56 @@ fn draw_overview(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     let i = 0
     loop i < g_ev_count {
         let bw = max_f(1.0, g_ev_duration[i] * scale)
-        let bx = x + (g_ev_start[i] - g_time_origin) * scale
+        let bx = ox + (g_ev_start[i] - g_time_origin) * scale
         let depth_frac: f64 = 0.0
         if g_ev_depth[i] > 0 {
             depth_frac = min_f(0.7, g_ev_depth[i] as f64 * 0.12)
         }
         let by = lane_y + lane_h * depth_frac
         let bh = max_f(2.0, lane_h * (1.0 - depth_frac))
-        ui_fill_rect(r, bx, by, bw, bh, name_color(g_ev_name[i]), 0.0)
+        let color = name_color(g_ev_name[i])
+        if batch > 0 {
+            ui_rect_batch_add(r, batch, bx, by, bw, bh, color)
+        } else {
+            ui_fill_rect(r, bx, by, bw, bh, color, 0.0)
+        }
         i = i + step
+    }
+}
+
+fn rebuild_overview_batch(r: ref ui_renderer, w: f64, h: f64) bool {
+    if g_ov_batch == 0 {
+        g_ov_batch = ui_rect_batch_create(r)
+    }
+    if g_ov_batch == 0 {
+        g_ov_batch_ready = false
+        return false
+    }
+    ui_rect_batch_begin(r, g_ov_batch)
+    emit_overview_bars(r, g_ov_batch, 0.0, 0.0, w, h)
+    g_ov_batch_ready = ui_rect_batch_end(r, g_ov_batch)
+    g_ov_batch_w = w
+    g_ov_batch_h = h
+    g_ov_batch_origin = g_time_origin
+    g_ov_batch_end = g_time_end
+    g_ov_batch_events = g_ev_count
+    return g_ov_batch_ready
+}
+
+fn draw_overview(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_panel_hi(), 0.0)
+    let total = g_time_end - g_time_origin
+    if total <= 0.0 {
+        return
+    }
+    let scale = w / total
+    if overview_batch_stale(w, h) {
+        rebuild_overview_batch(r, w, h)
+    }
+    if g_ov_batch_ready {
+        ui_rect_batch_draw_at(r, g_ov_batch, x, y)
+    } else {
+        emit_overview_bars(r, 0, x, y, w, h)
     }
 
     draw_time_rulers(r, x, y + h - 8.0, w, 8.0, g_time_origin, g_time_end, -1.0)
@@ -1251,8 +1549,9 @@ fn zoom_time_at(mx: f64, x: f64, w: f64, scroll: f64) {
         factor = 0.85
     }
     let next = span * factor
-    if next < 0.05 {
-        next = 0.05
+    let min_span = time_min_span()
+    if next < min_span {
+        next = min_span
     }
     let full = time_full_span()
     if next > full {
@@ -1281,8 +1580,9 @@ fn zoom_flame_at(mx: f64, x: f64, w: f64, scroll: f64) {
         factor = 0.85
     }
     let next = span * factor
-    if next < 0.02 {
-        next = 0.02
+    let min_span = flame_min_span()
+    if next < min_span {
+        next = min_span
     }
     if next > 1.0 {
         next = 1.0
@@ -1301,6 +1601,36 @@ fn select_node_by_name(name: str) {
         }
         i = i + 1
     }
+}
+
+// Draw bar label vertically centered; when the bar is wider than the view,
+// clamp the text into the visible window so it stays readable while zoomed.
+fn draw_bar_label(r: ref ui_renderer, bx: f64, by: f64, bw: f64, bh: f64, view_x: f64, view_w: f64, label: str) {
+    if bw <= 24.0 {
+        return
+    }
+    let pad = 3.0
+    let clip_l = max_f(bx + pad, view_x)
+    let clip_r = min_f(bx + bw - pad, view_x + view_w)
+    if clip_r <= clip_l {
+        return
+    }
+    let ty = ui_text_v_center_y(r, by, bh, PX(), FONT())
+    let tw = ui_text_width(r, label, PX(), FONT())
+    let tx = bx + pad
+    if tw > clip_r - clip_l {
+        tx = clip_l
+    } else {
+        if tx < clip_l {
+            tx = clip_l
+        }
+        if tx + tw > clip_r {
+            tx = clip_r - tw
+        }
+    }
+    ui_push_clip(r, clip_l, by, clip_r - clip_l, bh)
+    ui_draw_text(r, tx, ty, label, PX(), col_bg(), FONT())
+    ui_pop_clip(r)
 }
 
 fn draw_detail_row(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str) {
@@ -1445,8 +1775,9 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
             let dy = g_mouse_y - g_drag_y
             mark_drag_moved(dx, dy)
             let span = g_drag_fx1 - g_drag_fx0
-            if span < 0.02 {
-                span = 0.02
+            let min_span = flame_min_span()
+            if span < min_span {
+                span = min_span
             }
             // Absolute pan from press anchor so motion stays smooth while zoomed.
             g_fx0 = g_drag_fx0 - dx * span / w
@@ -1475,29 +1806,28 @@ fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f
             let nx1 = g_node_x[i] + g_node_w[i]
             if nx1 > g_fx0 {
                 if nx0 < g_fx1 {
-                    let bx = x + (nx0 - g_fx0) * scale * w
-                    let bw = max_f(1.0, g_node_w[i] * scale * w)
+                    let bx0 = x + (nx0 - g_fx0) * scale * w
+                    let bx1 = x + (nx1 - g_fx0) * scale * w
+                    let draw_x = max_f(bx0, x)
+                    let draw_r = min_f(bx1, x + w)
+                    let bw = max_f(1.0, draw_r - draw_x)
                     let by = plot_y + g_node_depth[i] as f64 * row_h - g_scroll
                     let bh = row_h - 1.0
-                    if by + bh >= plot_y {
-                        if by <= plot_y + plot_h {
+                    if by + bh > plot_y {
+                        if by < plot_y + plot_h {
                             let color = name_color(g_node_name[i])
-                            if hit(v, bx, by, bw, bh) {
+                            if hit(v, draw_x, by, bw, bh) {
                                 g_hovered = i
-                                ui_fill_rect(r, bx, by, bw, bh, col_warn(), 0.0)
+                                ui_fill_rect(r, draw_x, by, bw, bh, col_warn(), 0.0)
                             } else {
                                 if i == g_selected {
-                                    ui_fill_rect(r, bx, by, bw, bh, col_accent(), 0.0)
+                                    ui_fill_rect(r, draw_x, by, bw, bh, col_accent(), 0.0)
                                 } else {
-                                    ui_fill_rect(r, bx, by, bw, bh, color, 0.0)
+                                    ui_fill_rect(r, draw_x, by, bw, bh, color, 0.0)
                                 }
                             }
-                            if bw > 24.0 {
-                                ui_push_clip(r, bx + 3.0, by, bw - 6.0, bh)
-                                let label = `{g_node_name[i]} {g_node_calls[i]}x`
-                                ui_draw_text(r, bx + 3.0, by + 2.0, label, PX(), col_bg(), FONT())
-                                ui_pop_clip(r)
-                            }
+                            let label = `{g_node_name[i]} {g_node_calls[i]}x`
+                            draw_bar_label(r, bx0, by, max_f(1.0, bx1 - bx0), bh, x, w, label)
                         }
                     }
                 }
@@ -1650,8 +1980,9 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
             let dy = g_mouse_y - g_drag_y
             mark_drag_moved(dx, dy)
             let press_span = g_drag_t1 - g_drag_t0
-            if press_span < 0.05 {
-                press_span = 0.05
+            let min_span = time_min_span()
+            if press_span < min_span {
+                press_span = min_span
             }
             g_t0 = g_drag_t0 - dx * press_span / w
             g_t1 = g_t0 + press_span
@@ -1673,8 +2004,9 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
                 let full = time_full_span()
                 let mouse_t = g_time_origin + ((g_mouse_x - ov_x) / ov_w) * full
                 let press_span = g_drag_t1 - g_drag_t0
-                if press_span < 0.05 {
-                    press_span = 0.05
+                let min_span = time_min_span()
+                if press_span < min_span {
+                    press_span = min_span
                 }
                 g_t0 = mouse_t - press_span * g_drag_grab
                 g_t1 = g_t0 + press_span
@@ -1687,7 +2019,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     // Recompute after zoom/pan so bars use the updated view window.
     let span = time_view_span()
     let scale = w / span
-    let min_ms = min_span_ms(span)
+    let min_ms = lod_min_ms(span, w)
     if g_scroll > max_scroll {
         g_scroll = max_scroll
     }
@@ -1700,77 +2032,65 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
     draw_time_rulers(r, x, ruler_y + 2.0, w, ruler_h - 2.0, g_t0, g_t1, ruler_y)
     ui_fill_rect(r, x, plot_y - 1.0, w, 1.0, col_line(), 0.0)
 
-    let hovered = -1
-    let drawn = 0
-    let skipped = 0
-    let draw_budget = (w as i32) * (g_ev_max_depth + 2) * 2
-    if draw_budget < 2048 {
-        draw_budget = 2048
+    g_tl_hovered = -1
+    g_tl_drawn = 0
+    g_tl_skipped = 0
+    g_tl_scanned = 0
+    g_tl_min_ms = min_ms
+    g_tl_budget = (w as i32) * (g_ev_max_depth + 2) * 2
+    if g_tl_budget < 2048 {
+        g_tl_budget = 2048
     }
     ui_push_clip(r, x, plot_y, w, plot_h)
     draw_time_rulers(r, x, plot_y, w, plot_h, g_t0, g_t1, -1.0)
 
-    let i = 0
-    loop i < g_ev_count {
-        let ev_end = g_ev_start[i] + g_ev_duration[i]
-        if ev_end >= g_t0 {
-            if g_ev_start[i] <= g_t1 {
-                if g_ev_duration[i] < min_ms {
-                    skipped = skipped + 1
-                } else {
-                    if drawn >= draw_budget {
-                        skipped = skipped + 1
-                    } else {
-                        let by = plot_y + g_ev_depth[i] as f64 * row_h - g_scroll
-                        if by + row_h >= plot_y {
-                            if by <= plot_y + plot_h {
-                                let bx = x + (g_ev_start[i] - g_t0) * scale
-                                let draw_w = max_f(1.0, g_ev_duration[i] * scale)
-                                let bh = row_h - 1.0
-                                let color = name_color(g_ev_name[i])
-                                let selected = i == g_selected_ev
-                                if hit(v, bx, by, draw_w, bh) {
-                                    hovered = i
-                                    ui_fill_rect(r, bx, by, draw_w, bh, col_warn(), 0.0)
-                                    if v.mouse_released {
-                                        if g_drag_moved == false {
-                                            g_selected_ev = i
-                                            g_selected = -1
-                                        }
-                                    }
-                                } else {
-                                    if selected {
-                                        ui_fill_rect(r, bx, by, draw_w, bh, col_accent(), 0.0)
-                                    } else {
-                                        ui_fill_rect(r, bx, by, draw_w, bh, color, 0.0)
-                                    }
-                                }
-                                if draw_w > 24.0 {
-                                    ui_push_clip(r, bx + 3.0, by, draw_w - 6.0, bh)
-                                    let label = `{g_ev_name[i]} {g_ev_calls[i]}x`
-                                    ui_draw_text(r, bx + 3.0, by + 2.0, label, PX(), col_bg(), FONT())
-                                    ui_pop_clip(r)
-                                }
-                                drawn = drawn + 1
-                            }
-                        }
-                    }
-                }
+    // Long spans may start well before t0 and still overlap the window.
+    let li = 0
+    loop li < g_long_count {
+        let ev = g_long_idx[li]
+        if g_ev_start[ev] < g_t0 {
+            if timeline_try_draw_event(r, v, ev, x, w, plot_y, plot_h, row_h, scale) == false {
+                break
             }
+        }
+        li = li + 1
+    }
+
+    // Sliding window over starts. Look back by long_span_min_ms so shorter
+    // bars that begin just before t0 but still overlap are not dropped;
+    // anything longer is covered by g_long_idx above.
+    let win_lo = g_t0 - long_span_min_ms()
+    let i = event_lower_bound(win_lo)
+    g_tl_skipped = g_tl_skipped + i
+    loop i < g_ev_count {
+        if g_ev_start[i] >= g_t1 {
+            g_tl_skipped = g_tl_skipped + (g_ev_count - i)
+            break
+        }
+        // Already drawn via the long-span pass.
+        if g_ev_start[i] < g_t0 {
+            if g_ev_duration[i] >= long_span_min_ms() {
+                i = i + 1
+                continue
+            }
+        }
+        if timeline_try_draw_event(r, v, i, x, w, plot_y, plot_h, row_h, scale) == false {
+            g_tl_skipped = g_tl_skipped + (g_ev_count - i - 1)
+            break
         }
         i = i + 1
     }
     ui_pop_clip(r)
 
     ui_fill_rect(r, x, y + h - footer_h, w, 1.0, col_line(), 0.0)
-    if hovered >= 0 {
-        let detail = `{g_ev_name[hovered]}  {g_ev_calls[hovered]}x  +{fmt_time_ms(g_ev_start[hovered] - g_time_origin)}  dur {fmt_time_ms(g_ev_duration[hovered])}`
+    if g_tl_hovered >= 0 {
+        let detail = `{g_ev_name[g_tl_hovered]}  {g_ev_calls[g_tl_hovered]}x  +{fmt_time_ms(g_ev_start[g_tl_hovered] - g_time_origin)}  dur {fmt_time_ms(g_ev_duration[g_tl_hovered])}`
         ui_push_clip(r, x + 8.0, y + h - 18.0, w - 16.0, 14.0)
         ui_draw_text(r, x + 8.0, y + h - 16.0, detail, PX(), col_text(), FONT())
         ui_pop_clip(r)
     } else {
         let range = `{fmt_time_ms(g_t0 - g_time_origin)} - {fmt_time_ms(g_t1 - g_time_origin)}`
-        let shown = `{drawn}/{g_ev_count} spans  skip {skipped}  {range}`
+        let shown = `{g_tl_drawn}/{g_ev_count} spans  scan {g_tl_scanned}  long {g_long_count}  {range}`
         ui_draw_text(r, x + 8.0, y + h - 16.0, shown, PX(), col_muted(), FONT())
     }
 
@@ -1846,9 +2166,14 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
         g_drag_moved = false
         if g_events_loaded == false {
             if g_raw.len > 0 {
+                let want = parse_i32(g_timeline_events)
+                if want > 0 {
+                    ensure_event_capacity(want)
+                }
                 parse_profile_body(g_raw, true)
                 g_events_loaded = true
                 fit_time_view()
+                invalidate_overview_batch()
                 if g_ev_count == 0 {
                     g_t0 = 0.0
                     g_t1 = parse_f64(g_elapsed)
@@ -1920,6 +2245,11 @@ fn main() {
             }
         })
         v.on_terminate({ dv in
+            if g_ov_batch > 0 {
+                ui_rect_batch_destroy(r, g_ov_batch)
+                g_ov_batch = 0
+                g_ov_batch_ready = false
+            }
             ui_renderer_destroy(r)
         })
     } else {

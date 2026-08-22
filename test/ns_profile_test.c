@@ -18,7 +18,7 @@ int main() {
     ns_expect(ns_profile.scope_calls == 3, "three vm scopes recorded");
     ns_expect(ns_profile.ffi_calls == 1, "one ffi call recorded");
     ns_expect(ns_profile.flame_count == 4, "main/mid/leaf/ffi flame nodes");
-    ns_expect(ns_profile.event_count == 4, "four timeline events");
+    ns_expect(ns_array_length(ns_profile.events) == 4, "four timeline events");
     ns_expect(ns_profile.open_len == 0, "open stack drained");
 
     i32 main_i = -1;
@@ -78,6 +78,18 @@ int main() {
     ns_expect(saw_fn, "fn table rows");
     ns_expect(saw_flame, "folded flame rows");
     ns_expect(saw_stack, "folded stack main;mid;leaf");
+
+    // Timeline is a linearly growing array: keep every sample past the old
+    // fixed ring capacity instead of overwriting oldest entries.
+    ns_profile_reset();
+    ns_profile_enable(0.0);
+    for (i32 i = 0; i < 300000; i++) {
+        ns_profile_record_ffi(S("grow"), S("test"), (f64)i, 0.001);
+    }
+    ns_expect(ns_array_length(ns_profile.events) == 300000, "timeline keeps all samples");
+    ns_expect(ns_profile.events[0].start_ms >= -0.001 && ns_profile.events[0].start_ms <= 0.001, "oldest sample retained");
+    ns_expect(ns_profile.events[299999].start_ms > 299998.0, "newest sample retained");
+    ns_profile_reset();
 
     return 0;
 }
