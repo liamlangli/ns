@@ -4180,14 +4180,23 @@ static ns_bool ns_profile_launch_compiled(ns_str bundle) {
 }
 
 static void ns_exec_profile_view(ns_str filename) {
-    const char *path = ns_file_exists(ns_str_cstr("bin/ns.profile")) ? "bin/ns.profile" : "ns.profile";
-    char path_buf[1024];
+    // Resolve against the caller's cwd before launch. The compiled .app may
+    // start with a different working directory, so a relative bin/ns.profile
+    // would miss the report that `ns profile` just wrote.
+    ns_str cwd = ns_getcwd();
+    ns_str resolved = ns_str_null;
     if (filename.len > 0) {
-        i32 n = filename.len < (i32)sizeof(path_buf) - 1 ? filename.len : (i32)sizeof(path_buf) - 1;
-        memcpy(path_buf, filename.data, (size_t)n);
-        path_buf[n] = 0;
-        path = path_buf;
+        resolved = ns_path_resolve(cwd, filename);
+    } else {
+        ns_str binned = ns_path_join(cwd, ns_str_cstr("bin/ns.profile"));
+        if (ns_file_exists(binned)) {
+            resolved = binned;
+        } else {
+            ns_str_free(binned);
+            resolved = ns_path_join(cwd, ns_str_cstr("ns.profile"));
+        }
     }
+    const char *path = resolved.data != ns_null ? resolved.data : "bin/ns.profile";
 #if defined(_WIN32)
     _putenv_s("NS_PROFILE_FILE", path);
 #else
@@ -4201,17 +4210,23 @@ static void ns_exec_profile_view(ns_str filename) {
             ns_warn("profile", "failed to launch compiled viewer %.*s\n", compiled.len, compiled.data);
         }
         ns_str_free(compiled);
+        ns_str_free(resolved);
+        ns_str_free(cwd);
         return;
     }
 
     ns_str app = ns_profile_find_viewer();
     if (app.data == ns_null) {
         ns_warn("profile", "native viewer not found; build it with `ns build nscode/profile`\n");
+        ns_str_free(resolved);
+        ns_str_free(cwd);
         return;
     }
     ns_info("profile", "opening interpreted viewer for %s\n", path);
     ns_exec_run(app, 0, false, false);
     ns_str_free(app);
+    ns_str_free(resolved);
+    ns_str_free(cwd);
 }
 
 // Build the same native artifact as `ns build`, then return the executable
