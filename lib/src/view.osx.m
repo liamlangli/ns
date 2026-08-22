@@ -42,6 +42,8 @@ static MTKView* view_mtk_view;
 static dispatch_semaphore_t view_osx_done;
 static ns_bool view_osx_hosted;
 static ns_bool view_osx_finished;
+static i32 view_osx_last_fb_w;
+static i32 view_osx_last_fb_h;
 
 static view _view;
 
@@ -150,6 +152,15 @@ static void view_osx_sync_mtk_view_metrics(MTKView *mtk_view) {
         _view.framebuffer_width = (i32)(drawable.width + 0.5);
         _view.framebuffer_height = (i32)(drawable.height + 0.5);
     }
+}
+
+static void view_osx_note_window_size(void) {
+    if (!view_window) return;
+    const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
+    view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
+    // On-demand MTKView sleeps until invalidated. A size change with no
+    // request leaves the new drawable uncleared (black borders).
+    view_request_frame(&_view, 2);
 }
 
 static void view_osx_apply_manifest_icon(void) {
@@ -304,20 +315,22 @@ i32 view_osx_key_map(i32 k) {
 
 - (void)windowDidResize:(NSNotification*)notification {
     (void)notification;
-    const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
-    view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
+    view_osx_note_window_size();
+}
+
+- (void)windowDidEndLiveResize:(NSNotification*)notification {
+    (void)notification;
+    view_osx_note_window_size();
 }
 
 - (void)windowDidChangeScreen:(NSNotification*)notification {
     (void)notification;
-    const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
-    view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
+    view_osx_note_window_size();
 }
 
 - (void)windowDidChangeBackingProperties:(NSNotification*)notification {
     (void)notification;
-    const NSRect content_rect = [view_window contentRectForFrameRect:[view_window frame]];
-    view_osx_sync_metrics(content_rect.size.width, content_rect.size.height);
+    view_osx_note_window_size();
 }
 @end
 
@@ -376,12 +389,16 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
 - (void)mtkView:(nonnull MTKView*)view drawableSizeWillChange:(CGSize)size {
     (void)size;
     view_osx_sync_mtk_view_metrics(view);
-    view_request_frame(&_view, 1);
+    view_request_frame(&_view, 2);
 }
 
 - (void)drawInMTKView:(nonnull MTKView*)view {
-    if (!view_take_frame_request(&_view)) return;
     view_osx_sync_mtk_view_metrics(view);
+    const ns_bool size_changed = _view.framebuffer_width != view_osx_last_fb_w ||
+                                 _view.framebuffer_height != view_osx_last_fb_h;
+    if (!view_take_frame_request(&_view)) {
+        if (!size_changed) return;
+    }
     view_on_frame frame = (view_on_frame)_view.on_frame;
     if (frame) {
         gpu_mtl_begin_frame(view);
@@ -390,6 +407,8 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
         // frame committed in between, the present happens here and once.
         gpu_mtl_end_frame(view);
     }
+    view_osx_last_fb_w = _view.framebuffer_width;
+    view_osx_last_fb_h = _view.framebuffer_height;
     view_complete_frame(&_view);
 }
 @end
