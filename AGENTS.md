@@ -402,7 +402,7 @@ rules.
 | `simd` | Pure-ns data types `float2`, `float3`, `float4`, `quatf`, and `mat4`, also used at shader boundaries. |
 | `shader` | VM-internal transpilation of ordinary ns functions to MSL, GLSL 450, HLSL, or WGSL shader source and entry names. Shader code accepts only the supported numeric/struct subset, plus fixed-capacity local arrays (`let faces = [i32](72)`, constant length, no array parameters or returns). A `lit` folds into the generated source, and a fn a shader calls may live in a `use`d module. `shader_host_bind`/`_root`/`_invocation`/`_swap`/`_release` bind an image pair, the root words and an invocation coordinate so the interpreter can run a compute fn one invocation at a time, without a device. |
 | `os` | Native time/date, file and directory operations, environment/app-data paths, recursive scans/watches, dialogs, child project launch, device vibration, locks, and semaphores. |
-| `io` | Native image loading and saving through `io_image` (`width`, `height`, `channels`, byte data). |
+| `io` | Native image loading/saving plus GLB container read/write and decoded glTF triangle primitives (positions, normals, UVs, joints, weights, indices, and embedded base-colour images). |
 | `net` | Blocking native TCP/UDP sockets, shared receive-buffer access, file sending, and socket lifecycle. File descriptors are integer handles. |
 | `http` | Minimal blocking HTTP/1.1 request parsing, responses/files/status helpers, client GET, and a complete static-file server built on `net`. |
 | `term` | Native raw-terminal input, dimensions, buffered byte output, file byte I/O, and startup filename access for terminal apps. |

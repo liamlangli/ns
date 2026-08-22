@@ -10,3 +10,33 @@ struct io_image {
 ref fn io_load_image(path: str) ref io_image
 ref fn io_image_destroy(img: ref io_image)
 ref fn io_save_image(path: str, img: ref io_image) bool
+
+// GLB documents and decoded primitives are opaque handles. The document keeps
+// its original JSON and BIN chunks intact, so read/write preserves fields the
+// mesh convenience reader does not interpret. Bulk copies publish tightly
+// packed attributes into caller-owned Nano Script arrays.
+ref fn io_glb_read(path: str) u64
+ref fn io_glb_create(json: [u8], json_size: i32, data: [u8], data_size: i32) u64
+ref fn io_glb_valid(glb: u64) bool
+ref fn io_glb_json_size(glb: u64) i32
+ref fn io_glb_data_size(glb: u64) i32
+ref fn io_glb_copy_json(glb: u64, values: [any], capacity: i32) i32
+ref fn io_glb_copy_data(glb: u64, values: [any], capacity: i32) i32
+ref fn io_glb_write(path: str, glb: u64) bool
+ref fn io_glb_destroy(glb: u64)
+ref fn io_glb_mesh_read(glb: u64, mesh_index: i32, primitive_index: i32) u64
+ref fn io_glb_mesh_valid(mesh: u64) bool
+ref fn io_glb_mesh_vertex_count(mesh: u64) i32
+ref fn io_glb_mesh_index_count(mesh: u64) i32
+ref fn io_glb_mesh_image_width(mesh: u64) i32
+ref fn io_glb_mesh_image_height(mesh: u64) i32
+ref fn io_glb_mesh_image_channels(mesh: u64) i32
+ref fn io_glb_mesh_copy_positions(mesh: u64, values: [any], capacity: i32) i32
+ref fn io_glb_mesh_copy_normals(mesh: u64, values: [any], capacity: i32) i32
+ref fn io_glb_mesh_copy_texcoords(mesh: u64, values: [any], capacity: i32) i32
+ref fn io_glb_mesh_copy_joints(mesh: u64, values: [any], capacity: i32) i32
+ref fn io_glb_mesh_copy_weights(mesh: u64, values: [any], capacity: i32) i32
+ref fn io_glb_mesh_copy_indices(mesh: u64, values: [any], capacity: i32) i32
+ref fn io_glb_mesh_copy_colors(mesh: u64, values: [any], capacity: i32) i32
+ref fn io_glb_mesh_copy_image(mesh: u64, values: [any], capacity: i32) i32
+ref fn io_glb_mesh_destroy(mesh: u64)

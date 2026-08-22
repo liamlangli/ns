@@ -2989,8 +2989,15 @@ static ns_return_value ns_eval_ast_impl(ns_vm *vm, ns_ast_ctx *ctx) {
         if (ns_return_is_error(ret)) return ns_return_change_type(value, ret);
 
         call = ns_array_pop(vm->call_stack);
+        // A test entry commonly returns i32. Materialize that scalar before
+        // leaving the main scope: an FFI call may have grown and then released
+        // the eval stack, so returning its stack-relative slot to the test
+        // harness would leave the harness dereferencing reclaimed storage.
+        i32 main_status = 0;
+        ns_bool immediate_main_status = ns_type_is(ret_type, NS_TYPE_I32);
+        if (immediate_main_status) main_status = ns_eval_number_i32(vm, call.ret);
         ns_scope_exit(vm);
-        main_ret = call.ret;
+        main_ret = immediate_main_status ? (ns_value){.t = ns_type_i32, .i32 = main_status} : call.ret;
     }
 
     return ns_return_ok(value, main_ret);

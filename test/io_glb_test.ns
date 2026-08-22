@@ -1,0 +1,34 @@
+use std
+use io
+use os
+
+fn main() i32 {
+    let json_text = "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[{\"byteLength\":4}]}"
+    let json_size = utf8_len(json_text)
+    let json = [u8](json_size)
+    let at = 0
+    for byte in json_text {
+        json[at] = byte as u8
+        at = at + 1
+    }
+    let data = [u8](4)
+    data[0] = 1
+    data[1] = 2
+    data[2] = 3
+    data[3] = 4
+    let made = io_glb_create(json, json.len, data, data.len)
+    assert io_glb_valid(made)
+    os_make_dirs("bin")
+    assert io_glb_write("bin/io_glb_test.glb", made)
+    io_glb_destroy(made)
+
+    let loaded = io_glb_read("bin/io_glb_test.glb")
+    assert io_glb_valid(loaded)
+    assert io_glb_json_size(loaded) >= json.len
+    assert io_glb_data_size(loaded) == data.len
+    let copied_data = [u8](io_glb_data_size(loaded))
+    assert io_glb_copy_data(loaded, copied_data, copied_data.len) == copied_data.len
+    for index in 0 to data.len { assert copied_data[index] == data[index] }
+    io_glb_destroy(loaded)
+    return 0
+}
