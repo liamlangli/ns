@@ -77,9 +77,11 @@ ref fn shader_vertex_attr_offset(f: any, index: i32) i32
 ref fn shader_vertex_attr_size(f: any, index: i32) i32
 
 // Fragment-only shadow-map lookup. `coord.xy` is normalized texture space and
-// `coord.z` is the receiver depth in the light projection. The transpiler
-// lowers this to a small 3x3 PCF comparison against the depth texture bound as
-// `ns_shadow_map`; it is not evaluated by the Nano Script VM.
+// `coord.z` is the already-biased receiver depth in the light projection. The
+// transpiler lowers this to one linearly filtered hardware depth comparison:
+// the comparison sampler's bilinear footprint is a 2x2 PCF kernel against the
+// depth texture bound as `ns_shadow_map`. It is not evaluated by the Nano
+// Script VM.
 ref fn shader_sample_shadow(coord: float3) f32
 
 // Scene transform intrinsics backed by the `ns_uniforms` buffer supplied by a

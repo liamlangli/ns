@@ -552,25 +552,25 @@ int main() {
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 
-    // --- shadow-map intrinsic: resource declaration + 3x3 PCF lowering ---
+    // --- shadow-map intrinsic: one hardware-filtered 2x2 PCF comparison ---
     {
         ns_return_str r = ns_shader_transpile(&vm, &ctx, fs_shadow, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "depth2d<float> ns_shadow_map [[texture(0)]]") &&
                       ns_shader_test_has(r.r, "sample_compare") && ns_shader_test_has(r.r, "compare_func::less_equal") &&
-                      ns_shader_test_has(r.r, "lit / 9.0"),
-                  "msl shadow sampling binds a comparison depth texture and emits PCF.");
+                      !ns_shader_test_has(r.r, "for (int y") && !ns_shader_test_has(r.r, "lit / 9.0"),
+                  "msl shadow sampling binds a depth texture and emits one hardware 2x2 PCF comparison.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, fs_shadow, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_FRAGMENT);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "uniform sampler2DShadow ns_shadow_map") &&
-                      ns_shader_test_has(r.r, "texture(ns_shadow_map, vec3") && ns_shader_test_has(r.r, "lit / 9.0"),
-                  "glsl shadow sampling uses comparison sampling with PCF.");
+                      ns_shader_test_has(r.r, "return texture(ns_shadow_map, coord)") && !ns_shader_test_has(r.r, "lit / 9.0"),
+                  "glsl shadow sampling uses one hardware-filtered comparison.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, fs_shadow, NS_SHADER_HLSL, NS_SHADER_STAGE_FRAGMENT);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "SamplerComparisonState ns_shadow_sampler") &&
-                      ns_shader_test_has(r.r, "SampleCmpLevelZero") && ns_shader_test_has(r.r, "lit / 9.0"),
-                  "hlsl shadow sampling uses comparison sampling with PCF.");
+                      ns_shader_test_has(r.r, "SampleCmpLevelZero") && !ns_shader_test_has(r.r, "lit / 9.0"),
+                  "hlsl shadow sampling uses one hardware-filtered comparison.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

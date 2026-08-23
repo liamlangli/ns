@@ -2550,11 +2550,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "inline float ns_shadow_compare(depth2d<float> map, float3 coord) {\n"
             "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) return 1.0;\n"
             "    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear, compare_func::less_equal);\n"
-            "    float2 texel = 1.0 / float2(map.get_width(), map.get_height());\n"
-            "    float lit = 0.0;\n"
-            "    for (int y = -1; y <= 1; ++y) for (int x = -1; x <= 1; ++x)\n"
-            "        lit += map.sample_compare(s, coord.xy + float2(x, y) * texel, coord.z - 0.005);\n"
-            "    return lit / 9.0;\n"
+            "    return map.sample_compare(s, coord.xy, coord.z);\n"
             "}\n\n");
     }
     if (e.uses_shadow_map && target == NS_SHADER_GLSL_VULKAN) {
@@ -2562,10 +2558,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "layout(set = 0, binding = 0) uniform sampler2DShadow ns_shadow_map;\n"
             "float ns_shadow_compare(vec3 coord) {\n"
             "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) return 1.0;\n"
-            "    vec2 texel = 1.0 / vec2(textureSize(ns_shadow_map, 0)); float lit = 0.0;\n"
-            "    for (int y = -1; y <= 1; ++y) for (int x = -1; x <= 1; ++x)\n"
-            "        lit += texture(ns_shadow_map, vec3(coord.xy + vec2(x, y) * texel, coord.z - 0.005));\n"
-            "    return lit / 9.0;\n"
+            "    return texture(ns_shadow_map, coord);\n"
             "}\n\n");
     }
     if (e.uses_shadow_map && target == NS_SHADER_HLSL) {
@@ -2574,11 +2567,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "SamplerComparisonState ns_shadow_sampler : register(s0);\n"
             "float ns_shadow_compare(float3 coord) {\n"
             "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) return 1.0;\n"
-            "    uint w, h; ns_shadow_map.GetDimensions(w, h); float lit = 0.0;\n"
-            "    float2 texel = 1.0 / float2(w, h);\n"
-            "    for (int y = -1; y <= 1; ++y) for (int x = -1; x <= 1; ++x)\n"
-            "        lit += ns_shadow_map.SampleCmpLevelZero(ns_shadow_sampler, coord.xy + float2(x, y) * texel, coord.z - 0.005);\n"
-            "    return lit / 9.0;\n"
+            "    return ns_shadow_map.SampleCmpLevelZero(ns_shadow_sampler, coord.xy, coord.z);\n"
             "}\n\n");
     }
     if (e.uses_shadow_map && target == NS_SHADER_WGSL) {
@@ -2586,7 +2575,8 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "@group(0) @binding(0) var ns_shadow_map: texture_depth_2d;\n"
             "@group(0) @binding(1) var ns_shadow_sampler: sampler_comparison;\n"
             "fn ns_shadow_compare(coord: vec3<f32>) -> f32 {\n"
-            "    return textureSampleCompare(ns_shadow_map, ns_shadow_sampler, coord.xy, coord.z - 0.005);\n"
+            "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) { return 1.0; }\n"
+            "    return textureSampleCompare(ns_shadow_map, ns_shadow_sampler, coord.xy, coord.z);\n"
             "}\n\n");
     }
     if (e.uses_texture_map && target == NS_SHADER_MSL) {
