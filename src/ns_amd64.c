@@ -463,10 +463,15 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_CALL: {
         c->arg_seq = 0;
-        ns_str callee_name = ns_str_null;
+        ns_str callee_name = inst->name;
         i32 callee_val = inst->a;
-        for (i32 ii = 0; ii < (i32)ns_array_length(c->fn->insts); ++ii) {
-            if (c->fn->insts[ii].dst == callee_val) { callee_name = c->fn->insts[ii].name; break; }
+        if (callee_name.len == 0 && callee_val >= 0) {
+            for (i32 ii = 0; ii < (i32)ns_array_length(c->fn->insts); ++ii) {
+                if (c->fn->insts[ii].dst == callee_val) {
+                    callee_name = c->fn->insts[ii].name;
+                    break;
+                }
+            }
         }
         u32 rel_off = ns_amd64_emit_call_rel32(c);
         if (callee_name.len > 0) {

@@ -59,7 +59,9 @@ The common commands are:
   with `ns build nscode/profile`.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
-  same. An explicit test file or non-project directory is also supported.
+  same. An explicit test file or non-project directory is also supported. In a
+  multi-target project, tests use the default target's source exclusions;
+  `<target>_test.ns` uses the exclusions of the matching named target.
 - `ns build [path | target]`: compile a script or module to native machine
   code. With no target name it builds every `[[targets]]` table the manifest
   declares; a bare word builds that one target independently, as with `ns run`.
@@ -199,7 +201,9 @@ being downgraded. Re-running without intervening edits makes no further changes.
 - In a manifest project, all non-excluded `.ns` files under `source` are linked
   recursively. A `use` for a project-local module is accepted but unnecessary.
 - Test sources under `test/` and files named `*_test.ns` are excluded from
-  normal project builds automatically; `ns test` adds the selected test entry.
+  normal project builds automatically; `ns test` adds the selected test entry
+  to the default target's source set, or the matching target's source set when
+  the file is named `<target>_test.ns`.
 - The entries of the `[[targets]]` a run or build did not select are excluded
   the same way, so sibling targets may each declare `fn main`.
 - Applications normally define `fn main() { ... }`.

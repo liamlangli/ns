@@ -62,7 +62,9 @@ so editing one triggers the next incremental build.
 
 Test sources do not need manifest exclusions. Normal project compilation skips
 directories named `test` and files named `*_test.ns` automatically. `ns test`
-adds only the selected test entry to the project's non-test source set.
+adds only the selected test entry to the default target's non-test source set.
+A file named `<target>_test.ns` instead uses the source exclusions declared by
+the matching `[[targets]]` table, so a target-specific source set can be tested.
 
 Running `ns run` with no file argument first checks for `ns.mod` in the current
 directory and executes the `entry` (or first of `entries`) it declares, resolved

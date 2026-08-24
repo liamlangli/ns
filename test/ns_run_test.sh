@@ -283,14 +283,24 @@ if [ "$arg_count" != 4 ] || [ "$arg0" != --size ] || [ "$arg1" != 256 ] || [ "$a
 fi
 printf '%s\n' 'PASS: ns run publishes remaining arguments as NS_ARG*.'
 
-mkdir -p "$test_tmp/project/test"
+mkdir -p "$test_tmp/project/test" "$test_tmp/project/browser"
 printf '%s\n' \
     'schema = "ns.mod/v1"' \
     'name = "test-discovery"' \
     'version = "0.1.0"' \
     'type = "app"' \
     'source = "."' \
-    'entry = "main.ns"' > "$test_tmp/project/ns.mod"
+    '' \
+    '[[targets]]' \
+    'name = "app"' \
+    'entry = "main.ns"' \
+    'default = true' \
+    'exclude = ["browser/"]' \
+    '' \
+    '[[targets]]' \
+    'name = "browser"' \
+    'entry = "browser_main.ns"' \
+    'exclude = ["answer.ns"]' > "$test_tmp/project/ns.mod"
 printf '%s\n' \
     'fn project_answer() i32 {' \
     '    return 42' \
@@ -300,6 +310,17 @@ printf '%s\n' \
     'fn main() i32 {' \
     '    return 1' \
     '}' > "$test_tmp/project/main.ns"
+# An ordinary test uses the default target's source set, while a test named
+# after another target uses that target's source set. The duplicate helper
+# makes either test fail if the wrong exclusion list is selected.
+printf '%s\n' \
+    'fn project_answer() i32 {' \
+    '    return 24' \
+    '}' > "$test_tmp/project/browser/answer.ns"
+printf '%s\n' \
+    'fn main() i32 {' \
+    '    return 1' \
+    '}' > "$test_tmp/project/browser_main.ns"
 printf '%s\n' \
     'use answer' \
     'fn main() i32 {' \
@@ -308,6 +329,13 @@ printf '%s\n' \
     '    }' \
     '    return 1' \
     '}' > "$test_tmp/project/test/answer_test.ns"
+printf '%s\n' \
+    'fn main() i32 {' \
+    '    if project_answer() == 24 {' \
+    '        return 0' \
+    '    }' \
+    '    return 1' \
+    '}' > "$test_tmp/project/test/browser_test.ns"
 # Root-level *_test.ns files are not project tests under the convention.
 printf '%s\n' 'this file must not be selected' > "$test_tmp/project/root_test.ns"
 # Non-test modules in test/ are ignored too.

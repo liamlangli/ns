@@ -8,6 +8,7 @@ globalThis.GPUBufferUsage = { COPY_SRC: 1, COPY_DST: 2, STORAGE: 4, VERTEX: 8, I
 globalThis.GPUTextureUsage = { COPY_DST: 1, COPY_SRC: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 };
 
 let configured = null;
+let configureCount = 0;
 const canvasEvents = new Map();
 const windowEvents = new Map();
 let capturedPointer = 0;
@@ -26,7 +27,7 @@ const canvas = {
   focus() {},
   getContext(kind) {
     assert.equal(kind, 'webgpu');
-    return { configure(value) { configured = value; }, getCurrentTexture() { return { createView() { return {}; } }; } };
+    return { configure(value) { configured = value; configureCount += 1; }, getCurrentTexture() { return { createView() { return {}; } }; } };
   },
 };
 
@@ -73,7 +74,16 @@ let heap = 1024;
 runtime.instance = { exports: { __ns_alloc(size) { const p = heap; heap += Number(size); return p; } } };
 assert.equal(await runtime.initializeGPU(), true);
 assert.deepEqual([canvas.width, canvas.height], [640, 360]);
-assert.equal(configured.format, 'rgba8unorm');
+assert.equal(configured.format, 'bgra8unorm');
+assert.equal(configureCount, 1);
+runtime.resizeCanvas();
+assert.equal(configureCount, 1);
+canvas.clientWidth = 321;
+runtime.resizeCanvas();
+assert.equal(configureCount, 2);
+canvas.clientWidth = 320;
+runtime.resizeCanvas();
+assert.equal(configureCount, 3);
 
 const stringPointer = runtime.writeString('hello wasm');
 assert.equal(runtime.readString(stringPointer), 'hello wasm');

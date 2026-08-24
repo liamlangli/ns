@@ -1222,7 +1222,8 @@ static ns_bool ns_project_source_is_test(ns_project_source source) {
            strstr(source.relative.data, "/test/") != ns_null;
 }
 
-static void ns_project_target_excludes(ns_str root, ns_str manifest, ns_str entry_file, ns_str **excludes);
+static void ns_project_target_excludes(ns_str root, ns_str manifest, ns_str entry_file,
+                                       ns_bool test_entry, ns_str **excludes);
 
 // Collect the manifest source set of `root` without linking it. The scan is
 // deterministic and reads no source file, so a build can compare the set
@@ -1232,7 +1233,7 @@ static ns_project_source *ns_project_sources(ns_str root, ns_str entry_file) {
     ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
     ns_str manifest = ns_os_read_file(manifest_path);
     ns_str *excludes = ns_manifest_values(manifest, "exclude");
-    ns_project_target_excludes(root, manifest, entry_file, &excludes);
+    ns_project_target_excludes(root, manifest, entry_file, false, &excludes);
     ns_str source_dir = ns_project_source_dir(root);
     ns_str source_value = ns_manifest_value(manifest, "source");
     ns_str project_relative = (source_value.data == ns_null || ns_str_equals(source_value, ns_str_cstr(".")))
@@ -1280,8 +1281,12 @@ static ns_bool ns_manifest_entry_matches(ns_str entry_path, ns_str entry_file, n
 
 // The entries a manifest declares that the selected target does not own. Each
 // target keeps its own `main`, so linking one removes the others' entries from
-// the source set; the selected target adds its own `exclude` list.
-static void ns_project_target_excludes(ns_str root, ns_str manifest, ns_str entry_file, ns_str **excludes) {
+// the source set; the selected target adds its own `exclude` list. A test entry
+// is not itself a manifest target, so it inherits the default target's source
+// set while replacing that target's app entry. A `<target>_test.ns` entry uses
+// the matching target instead, so target-specific source sets stay testable.
+static void ns_project_target_excludes(ns_str root, ns_str manifest, ns_str entry_file,
+                                       ns_bool test_entry, ns_str **excludes) {
     ns_manifest_target *targets = ns_manifest_targets(manifest);
     if (ns_array_length(targets) == 0) {
         ns_manifest_targets_free(targets);
@@ -1305,6 +1310,22 @@ static void ns_project_target_excludes(ns_str root, ns_str manifest, ns_str entr
         ns_str_free(path);
     }
 
+    if (test_entry && !matched) {
+        i32 selected = ns_manifest_target_index(targets, ns_str_null);
+        ns_str test_name = ns_project_module_name(entry_file);
+        if (ns_str_has_suffix(test_name, "_test")) test_name.len -= 5;
+        for (i32 i = 0, count = ns_array_length(targets); i < count; i++) {
+            if (ns_str_equals(targets[i].name, test_name)) {
+                selected = i;
+                break;
+            }
+        }
+        for (i32 e = 0, count = ns_array_length(targets[selected].exclude); e < count; e++) {
+            ns_array_push(*excludes, ns_str_dup(targets[selected].exclude[e]));
+        }
+        ns_str_free(test_name);
+    }
+
     // A top-level `entry` beside `[[targets]]` is one more competing main.
     ns_str top = ns_manifest_top_entry(manifest);
     if (top.data != ns_null) {
@@ -1324,7 +1345,7 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
     ns_str manifest = ns_os_read_file(manifest_path);
     ns_str *excludes = ns_manifest_values(manifest, "exclude");
-    ns_project_target_excludes(root, manifest, entry_file, &excludes);
+    ns_project_target_excludes(root, manifest, entry_file, test_entry, &excludes);
     ns_str source_dir = ns_project_source_dir(root);
     ns_str source_value = ns_manifest_value(manifest, "source");
     ns_str project_relative = (source_value.data == ns_null || ns_str_equals(source_value, ns_str_cstr(".")))
