@@ -27,6 +27,15 @@ fn last(g: ref grid) i32 {
     return g.size_z
 }
 
+// `nil` is the empty reference: a ref binding may be declared holding one and
+// given something real later, which is what a handle a host module hands back
+// looks like before that module has been created.
+let cursor: ref i32 = nil
+
+fn point_at(v: ref i32) {
+    cursor = v
+}
+
 fn main() {
     let a = 1
     let b = ref a
@@ -48,4 +57,10 @@ fn main() {
     let local = grid { [u8](2), 0, 0, 0 }
     fill(ref local)
     assert local.size_x == 11 && local.size_z == 33 && local.data[0] == 7
+
+    // A ref that started out empty reads what it was later given.
+    point_at(ref a)
+    assert cursor == 4
+    bump(cursor)
+    assert cursor == 5
 }

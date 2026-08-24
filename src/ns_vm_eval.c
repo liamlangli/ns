@@ -1791,6 +1791,10 @@ ns_return_value ns_eval_primary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     } break;
     case NS_TOKEN_TRUE: ret = ns_true; break;
     case NS_TOKEN_FALSE: ret = ns_false; break;
+    // The empty reference. A `ref` binding declared with one holds nothing
+    // until something is assigned to it, the same as it does in a compiled
+    // build, rather than failing to evaluate at all.
+    case NS_TOKEN_NIL: ret = ns_nil; break;
     case NS_TOKEN_TYPE:
     case NS_TOKEN_TYPE_I8:
     case NS_TOKEN_TYPE_I16:
@@ -2610,6 +2614,12 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "var def type mismatch.", dst_t, v.t));
         }
         store_t = v.t;
+    } else if (ns_is_nil(v) && ns_type_is_ref(dst_t)) {
+        // `nil` is the empty reference. A ref binding declared with one holds
+        // nothing until something is assigned to it, which is what a handle a
+        // host module hands back looks like before that module is created.
+        v = (ns_value){.t = dst_t, .o = 0};
+        store_t = dst_t;
     } else if (!ns_type_equals(dst_t, v.t)) {
         if (!ns_eval_number_assign_compatible(vm, dst_t, v.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "var def type mismatch.", dst_t, v.t));

@@ -175,6 +175,7 @@ const uiContext = {
   setTransform() {},
   translate(x, y) { uiCalls.push(`translate:${x},${y}`); },
   fillRect() { uiCalls.push('fillRect'); },
+  clearRect() { uiCalls.push('clearRect'); },
   beginPath() {},
   rect() {},
   roundRect() {},

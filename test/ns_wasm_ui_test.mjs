@@ -31,6 +31,7 @@ let w = ui_widgets_create(r)
 let selection = ui_text_sel_create()
 let slider_value: f64 = 0.25
 let clicks = 0
+let more_clicks = 0
 
 fn canvas_width() i32 { return ui_canvas_width(r) }
 fn surface_height() i32 { return ui_surface_height(r) }
@@ -112,10 +113,26 @@ fn ui_clear_color() ui_color_rgba {
     return ui_color_rgba { r: 0.1, g: 0.2, b: 0.3, a: 1.0 }
 }
 
+// What a ui overlay above a gpu scene flushes: nothing of its own behind the
+// chrome, so the scene below stays visible.
+fn overlay_frame() {
+    ui_begin_frame(r)
+    ui_flush(r, ui_overlay_clear_color())
+}
+
+fn ui_overlay_clear_color() ui_color_rgba {
+    return ui_color_rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }
+}
+
 fn widget_frame() {
     ui_widgets_begin_view(w, ui_theme_empty(), v, false)
     if ui_button(w, "ok", 10.0, 10.0, 80.0, 24.0, "OK", false) {
         clicks = clicks + 1
+    }
+    // A second button, drawn after the first, which is the one a panel of
+    // several would have lost every click to.
+    if ui_button(w, "more", 100.0, 10.0, 80.0, 24.0, "More", false) {
+        more_clicks = more_clicks + 1
     }
     slider_value = ui_slider(w, "amount", 10.0, 60.0, 100.0, 20.0, slider_value, 0.0, 1.0, true)
     let hit = ui_hit_region(w, 0.0, 0.0, 200.0, 200.0)
@@ -127,6 +144,7 @@ fn widget_frame() {
 
 fn widget_mouse_x() f64 { return ui_widgets_mouse_x(w) }
 fn click_count() i32 { return clicks }
+fn more_click_count() i32 { return more_clicks }
 fn slider_now() f64 { return slider_value }
 
 fn select_range(begin_x: f64, end_x: f64) i32 {
@@ -165,6 +183,7 @@ const context = {
   rect() {}, roundRect() {}, arc() {}, moveTo() {}, lineTo() {}, closePath() {},
   fill() { painted.push('fill'); }, stroke() { painted.push('stroke'); },
   fillRect() { painted.push('fillRect'); }, strokeRect() { painted.push('strokeRect'); },
+  clearRect() { painted.push('clearRect'); },
   drawImage() {}, rotate() {},
   fillText(text) { painted.push(`text:${text}`); },
   // A fixed 8 px cell keeps the expected metrics arithmetic exact.
@@ -179,8 +198,14 @@ const canvas = {
 Object.defineProperty(globalThis, 'window', { configurable: true, value: {
   devicePixelRatio: 1, addEventListener() {},
 } });
+const created = [];
 Object.defineProperty(globalThis, 'document', { configurable: true, value: {
-  title: 'ui', body: { appendChild() {} }, createElement() { return { style: { cssText: '' } }; },
+  title: 'ui',
+  body: { appendChild(node) { created.push(node); } },
+  createElement(tag) {
+    return { tag, style: { cssText: '' }, width: 0, height: 0,
+      getContext(kind) { return kind === '2d' ? context : null; } };
+  },
 } });
 const padding = { paddingTop: '0px', paddingRight: '0px', paddingBottom: '0px', paddingLeft: '0px' };
 Object.defineProperty(globalThis, 'getComputedStyle', { configurable: true, value: () => padding });
@@ -244,6 +269,19 @@ instance.exports.widget_frame();
 assert.equal(instance.exports.click_count(), 1, 'press then release inside the button clicks it');
 runtime.viewImport('view_input_reset', [view]);
 
+// A button that is not the first one drawn is still clickable: the press is
+// held by the widget it landed on, not released by whichever came first.
+runtime.viewImport('view_on_mouse_move', [view, 130, 20]);
+runtime.viewImport('view_on_mouse_btn', [view, 0, 0]);
+instance.exports.widget_frame();
+runtime.viewImport('view_input_reset', [view]);
+runtime.viewImport('view_on_mouse_move', [view, 130, 20]);
+runtime.viewImport('view_on_mouse_btn', [view, 0, 1]);
+instance.exports.widget_frame();
+assert.equal(instance.exports.more_click_count(), 1, 'a later button in the same frame clicks too');
+assert.equal(instance.exports.click_count(), 1, 'and the first one is not clicked with it');
+runtime.viewImport('view_input_reset', [view]);
+
 // Dragging the slider writes its value back through the same widget state.
 runtime.viewImport('view_on_mouse_move', [view, 10, 70]);
 runtime.viewImport('view_on_mouse_btn', [view, 0, 0]);
@@ -255,6 +293,36 @@ assert.equal(Math.round(instance.exports.slider_now() * 100), 50, 'the slider tr
 // A drag across a read-only label selects the bytes under it.
 assert.equal(instance.exports.select_range(0, 24), 3);
 assert.equal(runtime.readString(instance.exports.selected_text()), 'sel');
+
+// A transparent clear empties the target instead of painting a colour over the
+// last frame, which is what leaves a gpu scene visible under a ui overlay.
+painted.length = 0;
+instance.exports.overlay_frame();
+assert.deepEqual(painted, ['clearRect'], 'a zero-alpha clear paints nothing of its own');
+
+// And an application that draws with gpu as well keeps WebGPU on its own
+// canvas: the ui module is handed a transparent overlay above it.
+const sceneCanvas = {
+  clientWidth: 320, clientHeight: 200, width: 0, height: 0, style: {},
+  setAttribute() {}, addEventListener() {}, focus() {},
+  getBoundingClientRect() { return { left: 12, top: 8, width: 320, height: 200 }; },
+  getContext(kind) {
+    assert.notEqual(kind, '2d', 'the ui module must not claim the WebGPU canvas');
+    return {};
+  },
+};
+const overlayRuntime = new NSBrowserRuntime(sceneCanvas);
+overlayRuntime.context = sceneCanvas.getContext('webgpu');
+assert.equal(overlayRuntime.initializeCanvasUI(), true);
+const overlay = overlayRuntime.uiCanvas;
+assert.notEqual(overlay, sceneCanvas, 'the overlay is a canvas of its own');
+assert.equal(overlay.tag, 'canvas');
+assert(created.includes(overlay), 'the overlay is added to the page');
+assert.equal(overlay.style.pointerEvents, 'none', 'pointer events still reach the canvas underneath');
+assert.equal(overlay.style.left, '12px', 'the overlay tracks the application canvas box');
+assert.equal(overlay.style.width, '320px');
+assert.equal(overlay.width, 320, 'one overlay point is one application-canvas point');
+assert.equal(overlay.height, 200);
 
 fs.rmSync(root, { recursive: true, force: true });
 console.log('PASS: the ui module compiles to wasm and runs on the browser middleware (renderer, widgets, text metrics, selection).');

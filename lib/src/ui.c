@@ -1913,7 +1913,11 @@ ns_bool ui_button(ui_widgets *w, const char *id, f64 x, f64 y, f64 width, f64 he
     u32 hash = ui_widget_hash(id);
     if (hover && w->input.mouse_pressed) w->active_id = hash;
     ns_bool clicked = hover && w->input.mouse_released && w->active_id == hash;
-    if (w->input.mouse_released) w->active_id = 0;
+    // Only the button the press belongs to lets go of it, the way the slider
+    // and the colour picker below do. Releasing it for whichever button was
+    // drawn first would take it away from every later one in the same frame,
+    // so only the first button of a panel could ever be clicked.
+    if (w->input.mouse_released && w->active_id == hash) w->active_id = 0;
     return clicked;
 }
 

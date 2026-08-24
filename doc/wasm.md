@@ -122,8 +122,16 @@ target, backed by a Canvas 2D renderer in `ns-wasm.js`: the batched renderer
 rectangle batches), text (single line, wrapped, arced, vertical, measurement,
 caret hit-testing), the safe-area and layout helpers, the immediate-mode widget
 layer (buttons, sliders, colour pickers, hit regions), and the selectable
-read-only label helpers. A `ui` project drives the canvas in 2D mode, so it
-does not also hold a WebGPU context on the same canvas.
+read-only label helpers.
+
+A canvas has one context, so a `ui` project drives the application canvas in 2D
+mode. An application that imports `gpu` as well keeps WebGPU on that canvas and
+the middleware gives the ui module a transparent overlay canvas of its own,
+tracking the application canvas's box and backing-store size. The overlay takes
+no pointer events, so input still reaches the view through the canvas
+underneath, and `ui_flush` clears the overlay rather than painting over it: pass
+a clear colour with zero alpha and the scene below shows through wherever the
+chrome does not cover it.
 
 Two differences from a native build are inherent to the browser and are worth
 designing around. Glyphs come from the page's font stack rather than the
