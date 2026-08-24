@@ -253,11 +253,14 @@ ns_bool ns_tcp_write(ns_conn *conn, ns_data data) {
 }
 
 void ns_conn_send(ns_conn *conn, ns_data data) {
+    ssize_t sent;
     if (conn->type == NS_CONN_UDP) {
-        sendto(conn->socket_fd, data.data, data.len, 0, (const struct sockaddr *)&conn->client_addr, conn->addr_len);
+        sent = sendto(conn->socket_fd, data.data, data.len, 0,
+                      (const struct sockaddr *)&conn->client_addr, conn->addr_len);
     } else {
-        write(conn->socket_fd, data.data, data.len);
+        sent = write(conn->socket_fd, data.data, data.len);
     }
+    (void)sent;
 }
 
 void ns_conn_close(ns_conn *conn) {

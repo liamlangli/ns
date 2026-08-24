@@ -28,6 +28,7 @@ ref fn io_glb_mesh_read(glb: u64, mesh_index: i32, primitive_index: i32) u64
 ref fn io_glb_mesh_valid(mesh: u64) bool
 ref fn io_glb_mesh_vertex_count(mesh: u64) i32
 ref fn io_glb_mesh_index_count(mesh: u64) i32
+ref fn io_glb_mesh_joint_count(mesh: u64) i32
 ref fn io_glb_mesh_image_width(mesh: u64) i32
 ref fn io_glb_mesh_image_height(mesh: u64) i32
 ref fn io_glb_mesh_image_channels(mesh: u64) i32
@@ -36,6 +37,9 @@ ref fn io_glb_mesh_copy_normals(mesh: u64, values: [any], capacity: i32) i32
 ref fn io_glb_mesh_copy_texcoords(mesh: u64, values: [any], capacity: i32) i32
 ref fn io_glb_mesh_copy_joints(mesh: u64, values: [any], capacity: i32) i32
 ref fn io_glb_mesh_copy_weights(mesh: u64, values: [any], capacity: i32) i32
+// Bind-pose joint origins in the primitive's mesh space, derived from the
+// skin's inverse-bind matrices. Empty for an unskinned primitive.
+ref fn io_glb_mesh_copy_joint_positions(mesh: u64, values: [any], capacity: i32) i32
 ref fn io_glb_mesh_copy_indices(mesh: u64, values: [any], capacity: i32) i32
 ref fn io_glb_mesh_copy_colors(mesh: u64, values: [any], capacity: i32) i32
 ref fn io_glb_mesh_copy_image(mesh: u64, values: [any], capacity: i32) i32

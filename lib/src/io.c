@@ -25,6 +25,7 @@ typedef struct io_glb {
 typedef struct io_glb_mesh {
     i32 vertex_count;
     i32 index_count;
+    i32 joint_count;
     i32 image_width;
     i32 image_height;
     i32 image_channels;
@@ -33,6 +34,7 @@ typedef struct io_glb_mesh {
     f32 *texcoords;
     i32 *joints;
     f32 *weights;
+    f32 *joint_positions;
     u32 *indices;
     u8 *image;
 } io_glb_mesh;
@@ -453,6 +455,68 @@ static i32 *io_gltf_joints(io_gltf_accessor accessor, i32 count) {
     return values;
 }
 
+// A glTF inverse-bind matrix maps a mesh-space point into joint space. The
+// bind-pose joint origin is therefore the point p for which A*p + t = 0.
+static ns_bool io_gltf_inverse_bind_origin(const u8 *data, i32 component_type,
+                                           ns_bool normalized, f32 out[3]) {
+    const i32 size = io_gltf_component_size(component_type);
+    f32 m[16];
+    for (i32 i = 0; i < 16; i++) m[i] = io_gltf_float(data + i * size, component_type, normalized);
+    const f32 a00 = m[0], a01 = m[4], a02 = m[8];
+    const f32 a10 = m[1], a11 = m[5], a12 = m[9];
+    const f32 a20 = m[2], a21 = m[6], a22 = m[10];
+    const f32 det = a00 * (a11 * a22 - a12 * a21) -
+                    a01 * (a10 * a22 - a12 * a20) +
+                    a02 * (a10 * a21 - a11 * a20);
+    if (fabsf(det) < 1e-12f) return false;
+    const f32 inv_det = 1.0f / det;
+    const f32 i00 = (a11 * a22 - a12 * a21) * inv_det;
+    const f32 i01 = (a02 * a21 - a01 * a22) * inv_det;
+    const f32 i02 = (a01 * a12 - a02 * a11) * inv_det;
+    const f32 i10 = (a12 * a20 - a10 * a22) * inv_det;
+    const f32 i11 = (a00 * a22 - a02 * a20) * inv_det;
+    const f32 i12 = (a02 * a10 - a00 * a12) * inv_det;
+    const f32 i20 = (a10 * a21 - a11 * a20) * inv_det;
+    const f32 i21 = (a01 * a20 - a00 * a21) * inv_det;
+    const f32 i22 = (a00 * a11 - a01 * a10) * inv_det;
+    out[0] = 0.0f - (i00 * m[12] + i01 * m[13] + i02 * m[14]);
+    out[1] = 0.0f - (i10 * m[12] + i11 * m[13] + i12 * m[14]);
+    out[2] = 0.0f - (i20 * m[12] + i21 * m[13] + i22 * m[14]);
+    return true;
+}
+
+static void io_gltf_skin_joints(io_glb_mesh *mesh, const io_glb *glb,
+                                io_json_span root, i32 mesh_index) {
+    io_json_span nodes = io_json_prop(root, "nodes");
+    i32 skin_index = -1;
+    for (i32 index = 0;; index++) {
+        io_json_span node = io_json_item(nodes, index);
+        if (!node.begin) break;
+        if (io_json_int(io_json_prop(node, "mesh"), -1) == mesh_index) {
+            skin_index = io_json_int(io_json_prop(node, "skin"), -1);
+            if (skin_index >= 0) break;
+        }
+    }
+    if (skin_index < 0) return;
+    io_json_span skin = io_json_item(io_json_prop(root, "skins"), skin_index);
+    const i32 inverse_bind_index = io_json_int(io_json_prop(skin, "inverseBindMatrices"), -1);
+    io_gltf_accessor inverse_bind = {0};
+    if (!io_gltf_accessor_read(glb, root, inverse_bind_index, &inverse_bind) ||
+        inverse_bind.components != 16 || inverse_bind.count <= 0) return;
+    f32 *positions = (f32 *)malloc(sizeof(f32) * (size_t)inverse_bind.count * 3);
+    if (!positions) return;
+    for (i32 joint = 0; joint < inverse_bind.count; joint++) {
+        if (!io_gltf_inverse_bind_origin(inverse_bind.data + (i64)joint * inverse_bind.stride,
+                                         inverse_bind.component_type, inverse_bind.normalized,
+                                         positions + joint * 3)) {
+            free(positions);
+            return;
+        }
+    }
+    mesh->joint_count = inverse_bind.count;
+    mesh->joint_positions = positions;
+}
+
 static ns_bool io_gltf_image(io_glb_mesh *mesh, const io_glb *glb, io_json_span root, io_json_span primitive) {
     const i32 material_index = io_json_int(io_json_prop(primitive, "material"), -1);
     io_json_span material = io_json_item(io_json_prop(root, "materials"), material_index);
@@ -511,6 +575,7 @@ io_glb_mesh *io_glb_mesh_read(const io_glb *glb, i32 mesh_index, i32 primitive_i
     const i32 weights_index = io_json_int(io_json_prop(attributes, "WEIGHTS_0"), -1);
     if (weights_index >= 0 && io_gltf_accessor_read(glb, root, weights_index, &attribute) && attribute.count == position.count)
         mesh->weights = io_gltf_floats(attribute, 4, position.count);
+    io_gltf_skin_joints(mesh, glb, root, mesh_index);
 
     const i32 indices_index = io_json_int(io_json_prop(primitive, "indices"), -1);
     io_gltf_accessor indices = {0};
@@ -539,6 +604,7 @@ i32 io_glb_mesh_valid(const io_glb_mesh *mesh) {
 
 i32 io_glb_mesh_vertex_count(const io_glb_mesh *mesh) { return mesh ? mesh->vertex_count : 0; }
 i32 io_glb_mesh_index_count(const io_glb_mesh *mesh) { return mesh ? mesh->index_count : 0; }
+i32 io_glb_mesh_joint_count(const io_glb_mesh *mesh) { return mesh ? mesh->joint_count : 0; }
 i32 io_glb_mesh_image_width(const io_glb_mesh *mesh) { return mesh ? mesh->image_width : 0; }
 i32 io_glb_mesh_image_height(const io_glb_mesh *mesh) { return mesh ? mesh->image_height : 0; }
 i32 io_glb_mesh_image_channels(const io_glb_mesh *mesh) { return mesh ? mesh->image_channels : 0; }
@@ -567,6 +633,10 @@ i32 io_glb_mesh_copy_joints(const io_glb_mesh *mesh, i32 *values, i32 capacity) 
 
 i32 io_glb_mesh_copy_weights(const io_glb_mesh *mesh, f32 *values, i32 capacity) {
     return mesh ? io_glb_mesh_copy(values, capacity, mesh->weights, mesh->vertex_count * 4, sizeof(f32)) : 0;
+}
+
+i32 io_glb_mesh_copy_joint_positions(const io_glb_mesh *mesh, f32 *values, i32 capacity) {
+    return mesh ? io_glb_mesh_copy(values, capacity, mesh->joint_positions, mesh->joint_count * 3, sizeof(f32)) : 0;
 }
 
 i32 io_glb_mesh_copy_indices(const io_glb_mesh *mesh, u32 *values, i32 capacity) {
@@ -604,6 +674,7 @@ void io_glb_mesh_destroy(io_glb_mesh *mesh) {
     free(mesh->texcoords);
     free(mesh->joints);
     free(mesh->weights);
+    free(mesh->joint_positions);
     free(mesh->indices);
     stbi_image_free(mesh->image);
     free(mesh);

@@ -135,29 +135,24 @@ static void ns_rt_commit(uint32_t from, uint32_t to) {
     memset(ns_rt_mem + from, 0, (size_t)(to - from));
 }
 
-static void ns_rt_grow(uint32_t need) {
-    if (need <= ns_rt_cap) return;
-    if ((size_t)need > NS_RT_HEAP_RESERVE) {
+static void ns_rt_grow(uint64_t need) {
+    if (need <= (uint64_t)ns_rt_cap) return;
+    if (need > (uint64_t)UINT32_MAX) {
         fprintf(stderr, "ns_rt: heap overflow\n");
         abort();
     }
-    uint32_t cap = ns_rt_cap ? ns_rt_cap : ns_rt_align_page(4096);
+    uint64_t cap = ns_rt_cap ? ns_rt_cap : ns_rt_align_page(4096);
     while (cap < need) {
-        uint32_t next = cap * 2;
-        if (next < cap || (size_t)next > NS_RT_HEAP_RESERVE) {
-            cap = (uint32_t)NS_RT_HEAP_RESERVE;
-            break;
-        }
-        cap = next;
+        cap *= 2;
+        if (cap > (uint64_t)UINT32_MAX) cap = UINT32_MAX;
     }
-    cap = ns_rt_align_page(cap);
-    if ((size_t)cap > NS_RT_HEAP_RESERVE) cap = (uint32_t)NS_RT_HEAP_RESERVE;
+    cap = ns_rt_align_page((uint32_t)cap);
     if (cap < need) {
         fprintf(stderr, "ns_rt: heap overflow\n");
         abort();
     }
-    ns_rt_commit(ns_rt_cap, cap);
-    ns_rt_cap = cap;
+    ns_rt_commit(ns_rt_cap, (uint32_t)cap);
+    ns_rt_cap = (uint32_t)cap;
 }
 
 static void ns_rt_init_locked(void) {
@@ -223,11 +218,15 @@ void ns_rt_set_strtab(const char **tab, const int32_t *lens, int n) {
 
 int64_t ns_rt_alloc(int64_t size) {
     if (size < 0) size = 0;
+    if ((uint64_t)size > (uint64_t)UINT32_MAX) {
+        fprintf(stderr, "ns_rt: heap overflow\n");
+        abort();
+    }
     uint32_t n = (uint32_t)size;
     ns_rt_heap_lock();
     ns_rt_init_locked();
     uint32_t addr = (ns_rt_used + 7u) & ~7u;
-    ns_rt_grow(addr + n + 16);
+    ns_rt_grow((uint64_t)addr + n + 16);
     ns_rt_used = addr + n;
     ns_rt_heap_unlock();
     return (int64_t)addr;
