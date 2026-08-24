@@ -44,8 +44,8 @@ static i32 ns_compile_test_negative_i32(const char *unused) {
 
 // Patch a same-module relative call at `site` (byte offset of the call/branch)
 // so it targets the function at byte offset `target`.
-static void ns_compile_patch_adrp_add(u8 *buf, u64 site, u64 target) {
 #if defined(__aarch64__)
+static void ns_compile_patch_adrp_add(u8 *buf, u64 site, u64 target) {
     u64 pc = (u64)(uintptr_t)(buf + site);
     i64 page = (i64)((target & ~0xfffull) - (pc & ~0xfffull));
     u32 rd = (u32)(buf[site] & 0x1f);
@@ -61,10 +61,8 @@ static void ns_compile_patch_adrp_add(u8 *buf, u64 site, u64 target) {
     buf[site + 5] = (u8)(add >> 8);
     buf[site + 6] = (u8)(add >> 16);
     buf[site + 7] = (u8)(add >> 24);
-#else
-    (void)buf; (void)site; (void)target;
-#endif
 }
+#endif
 
 static void ns_compile_patch_call(u8 *buf, u64 site, u64 target) {
 #if defined(__x86_64__)
@@ -117,6 +115,7 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
         total += ns_array_length(m->fns[i].text);
         total = (total + 15) & ~15ull; // keep each function 16-byte aligned
     }
+#if defined(__aarch64__)
     i32 nextern = 0;
     for (i32 fi = 0; fi < nfns; ++fi) {
         for (i32 ci = 0, cl = (i32)ns_array_length(m->fns[fi].call_fixups); ci < cl; ++ci) {
@@ -129,6 +128,7 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
     }
     u64 veneer_off = total;
     total += (u64)nextern * 16ull;
+#endif
     if (total == 0) total = 16;
 
     // Map writable first, fill and patch, then flip to read+execute so the test
@@ -182,12 +182,16 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
 #endif
                 continue;
             }
+#if defined(__aarch64__)
             if (fn->call_fixups[ci].kind == 1) {
                 ns_compile_patch_adrp_add(buf, off[fi] + fn->call_fixups[ci].off,
                                           (u64)(uintptr_t)(buf + off[cidx]));
             } else {
                 ns_compile_patch_call(buf, off[fi] + fn->call_fixups[ci].off, off[cidx]);
             }
+#else
+            ns_compile_patch_call(buf, off[fi] + fn->call_fixups[ci].off, off[cidx]);
+#endif
         }
     }
 
