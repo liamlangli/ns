@@ -503,7 +503,6 @@ int main() {
         "use os\n"
         "fn main() bool { return os_dir_scan(\"\") < 0 }\n"),
         "signed i32 FFI results are sign-extended before compiled comparisons.");
-#endif
 
     ns_expect(ns_compile_true(
         "use simd\n"
@@ -513,6 +512,7 @@ int main() {
         "    let d = dot(n, n)\n"
         "    return d > 0.99 && d < 1.01 && n.y > 0.5\n"
         "}\n"), "imported simd helpers compile into the native object.");
+#endif
 
     // ── a small end-to-end program returning a non-boolean status ─────────
     ns_expect(ns_compile_returns(
