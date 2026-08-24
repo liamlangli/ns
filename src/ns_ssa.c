@@ -127,6 +127,9 @@ static i32 ns_ssa_wasm32_align(i32 offset, i32 size);
 static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field);
 static i32 ns_ssa_clone_struct(ns_ssa_builder *b, i32 value, i32 ast);
 static i32 ns_ssa_global_index(ns_ssa_builder *b, ns_str name);
+static i32 ns_ssa_env_find(ns_ssa_binding *env, ns_str name);
+static i32 ns_ssa_emit_value(ns_ssa_builder *b, ns_ssa_op op, i32 a, i32 c,
+                             ns_type t, ns_str name, ns_token_t token, i32 ast);
 static void ns_ssa_env_bind(ns_ssa_builder *b, ns_str name, i32 value, ns_type t);
 static void ns_ssa_flush_captures(ns_ssa_builder *b, i32 ast);
 static ns_str ns_ssa_ensure_block_fn(ns_ssa_builder *b, i32 symbol_index);
@@ -176,6 +179,24 @@ static ns_ast_t *ns_ssa_unwrap_expr(ns_ssa_builder *b, i32 i) {
     ns_ast_t *n = &b->ctx->nodes[i];
     while (n->type == NS_AST_EXPR) n = &b->ctx->nodes[n->expr.body];
     return n;
+}
+
+static i32 ns_ssa_ref_identifier(ns_ssa_builder *b, i32 i) {
+    ns_ast_t *n = ns_ssa_unwrap_expr(b, i);
+    if (!n || n->type != NS_AST_PRIMARY_EXPR ||
+        n->primary_expr.token.type != NS_TOKEN_IDENTIFIER) return -1;
+    ns_str name = n->primary_expr.token.val;
+    i32 local = ns_ssa_env_find(b->env, name);
+    if (local >= 0 && ns_type_is_ref(b->env[local].type)) {
+        return b->env[local].value;
+    }
+    i32 global = ns_ssa_global_index(b, name);
+    if (local < 0 && global >= 0 && ns_type_is_ref(b->m->globals[global].type)) {
+        return ns_ssa_emit_value(b, NS_SSA_OP_GLOBAL_GET, -1, global,
+                                 b->m->globals[global].type, name,
+                                 n->primary_expr.token, i);
+    }
+    return -1;
 }
 
 static ns_symbol *ns_ssa_enum_from_expr(ns_ssa_builder *b, i32 i) {
@@ -1668,6 +1689,15 @@ static i32 ns_ssa_fold_shader_call(ns_ssa_builder *b, ns_ast_t *n, i32 ast,
 
 static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
     i32 rhs = ns_ssa_lower_expr(b, n->binary_expr.right);
+    // A plain identifier read normally dereferences a ref. On the right side
+    // of a simple assignment to another ref, however, the interpreter copies
+    // the reference itself (for example `cursor = value_ref`). Preserve that
+    // address here so the native path rebinds instead of copying through the
+    // destination's current pointee.
+    if (n->binary_expr.op.type == NS_TOKEN_ASSIGN) {
+        i32 ref_rhs = ns_ssa_ref_identifier(b, n->binary_expr.right);
+        if (ref_rhs >= 0) rhs = ref_rhs;
+    }
     i32 left = n->binary_expr.left;
     ns_ast_t *ln = &b->ctx->nodes[left];
     if (ln->type == NS_AST_EXPR) {
@@ -1723,6 +1753,11 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             rhs = ns_ssa_union_wrap(b, rhs, b->m->globals[global].type, i);
         }
         if (local >= 0 && ns_type_is_ref(b->env[local].type)) {
+            if (ns_type_is_ref(ns_ssa_value_type(b, rhs))) {
+                ns_ssa_env_bind(b, ln->primary_expr.token.val, rhs,
+                                b->env[local].type);
+                return rhs;
+            }
             ns_type inner = ns_type_set_ref(b->env[local].type, false);
             if (ns_ssa_heap_payload(inner) && ns_type_is(inner, NS_TYPE_STRUCT)) {
                 ns_ssa_inst copy = NS_SSA_INST_INIT(NS_SSA_OP_STORE, i);
@@ -1748,7 +1783,8 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             ns_bool ref_global = ns_type_is_ref(b->m->globals[global].type);
             ns_bool handle_global = ref_global &&
                 ns_ssa_heap_payload(ns_type_set_ref(b->m->globals[global].type, false));
-            if (!handle_global &&
+            ns_bool ref_rhs = ns_type_is_ref(ns_ssa_value_type(b, rhs));
+            if (!ref_rhs && !handle_global &&
                 (ns_ssa_needs_box(b, ln->primary_expr.token.val) || ref_global)) {
                 i32 box = ns_ssa_emit_value(b, NS_SSA_OP_GLOBAL_GET, -1, global,
                                             b->m->globals[global].type,
@@ -2104,6 +2140,9 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                               ns_str_equals(callee_module, ns_str_cstr("task"));
         for (i32 ai = 0; ai < n->call_expr.arg_count && next > 0; ++ai) {
             i32 av = -1;
+            ns_bool by_ref = callee_sym && callee_sym->type == NS_SYMBOL_FN &&
+                             ai < (i32)ns_array_length(callee_sym->fn.args) &&
+                             ns_type_is_ref(callee_sym->fn.args[ai].val.t);
             if (is_dispatch && ai == 0) {
                 ns_ast_t *qn = ns_ssa_unwrap_expr(b, next);
                 if (qn && qn->type == NS_AST_PRIMARY_EXPR &&
@@ -2116,10 +2155,8 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                     if (qv >= 0) av = ns_ssa_emit_i32_const(b, qv, next);
                 }
             }
+            if (av < 0 && by_ref) av = ns_ssa_ref_identifier(b, next);
             if (av < 0) av = ns_ssa_lower_expr(b, next);
-            ns_bool by_ref = callee_sym && callee_sym->type == NS_SYMBOL_FN &&
-                             ai < (i32)ns_array_length(callee_sym->fn.args) &&
-                             ns_type_is_ref(callee_sym->fn.args[ai].val.t);
             // A plain struct is copied where it crosses a value boundary, but a
             // parameter declared `ref` is not such a boundary: the callee is
             // being handed the caller's own storage to write through, and a
