@@ -19,6 +19,14 @@ use gpu
 //
 // Geometry (x/y/w/h, radii, thickness, font sizes) is given in physical
 // pixels as `f64`. Colours are packed `0xAABBGGRR` values held in a `u32`.
+//
+// The declarations below fall into two groups. Everything lib/src/ui.c backs
+// runs on native desktop, generated Apple apps, and the Wasm target, which
+// draws through a Canvas 2D backend in lib/ns-wasm.js (doc/wasm.md). The rest
+// -- themes, text views, dropdowns, toggles, lists, scrollbars, sections,
+// managed textures, recorded layers, and the wrap/columns helpers -- is a
+// declared surface with no backend on any platform yet, so a call to one of
+// them fails to resolve.
 
 // ---- font primitives ------------------------------------------------------
 

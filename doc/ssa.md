@@ -7,7 +7,7 @@ instructions. Native AArch64 (and Wasm) consume this IR.
 
 - `ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx)`
 - `ns_return_ptr ns_ssa_build_with_runtime_paths(...)`
-- `ns_return_ptr ns_ssa_build_with_runtime_paths_options(..., embed_wasm_shaders)`
+- `ns_return_ptr ns_ssa_build_with_runtime_paths_options(..., wasm_target)`
 - `void ns_ssa_print(ns_ssa_module *m)`
 - `void ns_ssa_module_free(ns_ssa_module *m)`
 - `i32 ns_ssa_phi_incoming(ns_ssa_inst *phi, i32 pred)`
@@ -24,10 +24,14 @@ AST → SSA → AArch64 bytes → Mach-O object → clang + ns_native_rt.c + str
 `ns build` / `ns build --exe` is this path. `ns run` is the interpreter and is
 the semantic spec; compiled programs must match it.
 
-Native lowering leaves `embed_wasm_shaders` false: direct shader transpilation
+Native lowering leaves `wasm_target` false: direct shader transpilation
 calls still fold to the host shader language, but the SSA module does not also
 transpile every shader to WGSL and attach Wasm-only metadata. Wasm lowering
-sets it true.
+sets it true, which additionally lays out the structs a lib module declares in
+the compact wasm32 layout instead of the C layout of the host running the
+compiler: nothing allocates those structs natively in the browser, so the
+browser middleware and the emitted module have to agree on one host-independent
+layout.
 
 ## IR Shape
 

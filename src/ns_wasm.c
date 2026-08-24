@@ -340,6 +340,8 @@ typedef struct {
     i32            n_fns;
     ns_ssa_import *imports;
     i32            n_imports;
+    ns_ssa_global *globals;     // module globals, for the declared type of an access
+    i32            n_globals;
     ns_wasm_source_mapping *mappings; // offsets relative to this function's instruction stream
 } ns_wasm_fn_ctx;
 
@@ -362,7 +364,12 @@ static ns_bool ns_wasm_type_unsigned(ns_type t) {
            ns_type_is(t, NS_TYPE_U32) || ns_type_is(t, NS_TYPE_U64);
 }
 
-static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out, u8 **unsigneds_out) {
+static u8 ns_wasm_global_valtype(ns_ssa_global *globals, i32 n_globals, i32 index) {
+    return index >= 0 && index < n_globals ? ns_wasm_type_valtype(globals[index].type) : NS_WASM_I32;
+}
+
+static i32 ns_wasm_infer_types(ns_ssa_fn *fn, ns_ssa_global *globals, i32 n_globals,
+                               u8 **vtypes_out, u8 **unsigneds_out) {
     // First pass: find max value index
     i32 max_val = 0;
     for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; bi++) {
@@ -416,6 +423,14 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out, u8 **unsigneds_ou
                     vt[inst->dst] = ns_wasm_type_valtype(inst->type);
                 us[inst->dst] = ns_wasm_type_unsigned(inst->type);
                 break;
+            case NS_SSA_OP_GLOBAL_GET:
+                // A global read has the global's declared type, whatever the
+                // literal its initializer happened to be written as.
+                if (inst->c >= 0 && inst->c < n_globals) {
+                    vt[inst->dst] = ns_wasm_type_valtype(globals[inst->c].type);
+                    us[inst->dst] = ns_wasm_type_unsigned(globals[inst->c].type);
+                }
+                break;
             default:
                 break;
             }
@@ -429,7 +444,8 @@ static i32 ns_wasm_infer_types(ns_ssa_fn *fn, u8 **vtypes_out, u8 **unsigneds_ou
             for (i32 ii = 0, il = (i32)ns_array_length(bb->insts); ii < il; ii++) {
                 ns_ssa_inst *inst = &fn->insts[bb->insts[ii]];
                 if (inst->dst < 0 || inst->dst >= n) continue;
-                if (inst->op == NS_SSA_OP_PARAM || inst->op == NS_SSA_OP_CONST) continue;
+                if (inst->op == NS_SSA_OP_PARAM || inst->op == NS_SSA_OP_CONST ||
+                    inst->op == NS_SSA_OP_GLOBAL_GET) continue;
 
                 if (inst->type.type != NS_TYPE_UNKNOWN) {
                     vt[inst->dst] = ns_wasm_type_valtype(inst->type);
@@ -704,6 +720,41 @@ static void ns_wasm_bounds_check(ns_wasm_fn_ctx *ctx, i32 descriptor, i32 index)
     ns_wasm_u8(&ctx->code, NS_WASM_END);
 }
 
+// Convert the value on top of the stack between WebAssembly numeric types. An
+// explicit `as` cast and an implicit widening -- an f32 literal stored into an
+// f64 global, say -- both go through this.
+static void ns_wasm_convert(ns_wasm_fn_ctx *ctx, u8 src_vt, u8 dst_vt,
+                            ns_bool src_unsigned, ns_bool dst_unsigned) {
+    if (src_vt == dst_vt) {
+        // No conversion needed
+    } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_I64) {
+        ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_I64_EXTEND_I32_U : NS_WASM_I64_EXTEND_I32_S);
+    } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_I32) {
+        ns_wasm_u8(&ctx->code, NS_WASM_I32_WRAP_I64);
+    } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_F32) {
+        ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F32_CONVERT_I32_U : NS_WASM_F32_CONVERT_I32_S);
+    } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_F64) {
+        ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F64_CONVERT_I32_U : NS_WASM_F64_CONVERT_I32_S);
+    } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_F32) {
+        ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F32_CONVERT_I64_U : NS_WASM_F32_CONVERT_I64_S);
+    } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_F64) {
+        ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F64_CONVERT_I64_U : NS_WASM_F64_CONVERT_I64_S);
+    } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_F64) {
+        ns_wasm_u8(&ctx->code, NS_WASM_F64_PROMOTE_F32);
+    } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_F32) {
+        ns_wasm_u8(&ctx->code, NS_WASM_F32_DEMOTE_F64);
+    } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_I32) {
+        ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I32_TRUNC_F32_U : NS_WASM_I32_TRUNC_F32_S);
+    } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_I32) {
+        ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I32_TRUNC_F64_U : NS_WASM_I32_TRUNC_F64_S);
+    } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_I64) {
+        ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I64_TRUNC_F32_U : NS_WASM_I64_TRUNC_F32_S);
+    } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_I64) {
+        ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I64_TRUNC_F64_U : NS_WASM_I64_TRUNC_F64_S);
+    }
+    // else: an unsupported pair, left as it is
+}
+
 // Emit one non-terminator instruction
 static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
     u32 instruction_offset = (u32)ns_array_length(ctx->code);
@@ -795,6 +846,14 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
     case NS_SSA_OP_GLOBAL_SET:
         if (inst->a >= 0 && inst->c >= 0) {
             ns_wasm_local_get(ctx, inst->a);
+            // The value can be narrower than the global it lands in: an
+            // unsuffixed float literal is f32 while the global its
+            // initializer declares is f64.
+            ns_type global_type = inst->c < ctx->n_globals ? ctx->globals[inst->c].type : ns_type_unknown;
+            u8 value_vt = inst->a < ctx->n_values ? ctx->vtypes[inst->a] : NS_WASM_I32;
+            ns_wasm_convert(ctx, value_vt, ns_wasm_global_valtype(ctx->globals, ctx->n_globals, inst->c),
+                            inst->a < ctx->n_values && ctx->unsigneds[inst->a],
+                            ns_wasm_type_unsigned(global_type));
             ns_wasm_u8(&ctx->code, NS_WASM_GLOBAL_SET);
             ns_wasm_u32leb(&ctx->code, (u32)inst->c + 1u);
         }
@@ -996,34 +1055,7 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
         ns_bool src_unsigned = inst->a < ctx->n_values && ctx->unsigneds[inst->a];
         ns_bool dst_unsigned = inst->dst < ctx->n_values && ctx->unsigneds[inst->dst];
         ns_wasm_local_get(ctx, inst->a);
-        if (src_vt == dst_vt) {
-            // No conversion needed
-        } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_I64) {
-            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_I64_EXTEND_I32_U : NS_WASM_I64_EXTEND_I32_S);
-        } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_I32) {
-            ns_wasm_u8(&ctx->code, NS_WASM_I32_WRAP_I64);
-        } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_F32) {
-            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F32_CONVERT_I32_U : NS_WASM_F32_CONVERT_I32_S);
-        } else if (src_vt == NS_WASM_I32 && dst_vt == NS_WASM_F64) {
-            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F64_CONVERT_I32_U : NS_WASM_F64_CONVERT_I32_S);
-        } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_F32) {
-            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F32_CONVERT_I64_U : NS_WASM_F32_CONVERT_I64_S);
-        } else if (src_vt == NS_WASM_I64 && dst_vt == NS_WASM_F64) {
-            ns_wasm_u8(&ctx->code, src_unsigned ? NS_WASM_F64_CONVERT_I64_U : NS_WASM_F64_CONVERT_I64_S);
-        } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_F64) {
-            ns_wasm_u8(&ctx->code, NS_WASM_F64_PROMOTE_F32);
-        } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_F32) {
-            ns_wasm_u8(&ctx->code, NS_WASM_F32_DEMOTE_F64);
-        } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_I32) {
-            ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I32_TRUNC_F32_U : NS_WASM_I32_TRUNC_F32_S);
-        } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_I32) {
-            ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I32_TRUNC_F64_U : NS_WASM_I32_TRUNC_F64_S);
-        } else if (src_vt == NS_WASM_F32 && dst_vt == NS_WASM_I64) {
-            ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I64_TRUNC_F32_U : NS_WASM_I64_TRUNC_F32_S);
-        } else if (src_vt == NS_WASM_F64 && dst_vt == NS_WASM_I64) {
-            ns_wasm_u8(&ctx->code, dst_unsigned ? NS_WASM_I64_TRUNC_F64_U : NS_WASM_I64_TRUNC_F64_S);
-        }
-        // else: unsupported cast, no conversion
+        ns_wasm_convert(ctx, src_vt, dst_vt, src_unsigned, dst_unsigned);
         ns_wasm_local_set(ctx, inst->dst);
     } break;
 
@@ -1524,7 +1556,7 @@ static void ns_wasm_build_type_section(u8 **out, ns_ssa_module *ssa,
 
         u8 *vt = ns_null;
         u8 *us = ns_null;
-        i32 nv = ns_wasm_infer_types(fn, &vt, &us);
+        i32 nv = ns_wasm_infer_types(fn, ssa->globals, (i32)ns_array_length(ssa->globals), &vt, &us);
         all_vtypes[fi] = vt;
         all_unsigneds[fi] = us;
         all_nvals[fi] = nv;
@@ -1789,6 +1821,8 @@ static void ns_wasm_build_code_section(u8 **out, ns_ssa_module *ssa,
         ctx.n_fns    = n_fns;
         ctx.imports  = ssa->imports;
         ctx.n_imports = (i32)ns_array_length(ssa->imports);
+        ctx.globals  = ssa->globals;
+        ctx.n_globals = (i32)ns_array_length(ssa->globals);
 
         // Local declarations:
         // WASM params are locals 0..np-1 (already bound, not declared).
@@ -2301,17 +2335,54 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "gpu_pixel_format_row_pitch|gpu_pixel_format_surface_pitch");
     }
     if (ns_str_equals(module, ns_str_cstr("ui"))) {
+        // Every ui entry point lib/src/ui.c implements. The declarations the
+        // native library does not back either (themes, text views, dropdowns,
+        // managed textures, layers) have no browser backend for the same
+        // reason they have no desktop one.
         return ns_wasm_name_in(name,
-            "ui_renderer_create|ui_renderer_destroy|ui_resize|ui_begin_frame|ui_flush|"
-            "ui_canvas_width|ui_canvas_height|ui_atlas_load|ui_atlas_draw|ui_push_clip|"
-            "ui_pop_clip|ui_fill_rect|ui_fill_round_rect|ui_fill_circle|ui_stroke_line|"
-            "ui_stroke_rect|ui_stroke_round_rect|ui_draw_text|ui_text_v_center_y|"
-            "ui_text_width|ui_mono_char_width|ui_pack_color|ui_pack_rgba_floats|"
-            "ui_rect_batch_create|ui_rect_batch_begin|ui_rect_batch_add|ui_rect_batch_end|"
-            "ui_rect_batch_draw_at|ui_surface_width|ui_surface_height|ui_safe_area|"
-            "ui_safe_area_enabled|ui_set_safe_area_enabled|ui_set_safe_area_insets|"
-            "ui_reset_safe_area_insets|ui_content_x|ui_content_y|ui_surface_x|ui_surface_y|"
-            "ui_fill_surface");
+            // renderer lifecycle and frames
+            "ui_renderer_create|ui_renderer_destroy|ui_resize|ui_resize_to|"
+            "ui_request_render|ui_request_render_after|ui_begin_frame|ui_flush|ui_flush_overlay|"
+            // font faces
+            "ui_load_font|ui_load_chinese_font|ui_load_bitmap_font|"
+            "ui_load_bitmap_chinese_font|ui_load_builtin_bitmap_font|"
+            // canvas, safe area and layout
+            "ui_canvas_width|ui_canvas_height|ui_surface_width|ui_surface_height|"
+            "ui_safe_rect|ui_surface_rect|ui_safe_area|ui_safe_area_enabled|"
+            "ui_set_safe_area_enabled|ui_set_safe_area_insets|ui_reset_safe_area_insets|"
+            "ui_content_x|ui_content_y|ui_surface_x|ui_surface_y|ui_layout|"
+            // image atlases
+            "ui_atlas_load|ui_atlas_destroy|ui_atlas_width|ui_atlas_height|"
+            "ui_atlas_draw|ui_atlas_draw_region|"
+            // shapes
+            "ui_fill_rect|ui_fill_round_rect|ui_fill_round_rect_per_corner|ui_fill_surface|"
+            "ui_fill_triangle|ui_fill_triangle_colors|ui_fill_arc|ui_fill_circle|"
+            "ui_stroke_rect|ui_stroke_round_rect|ui_stroke_round_rect_per_corner|"
+            "ui_stroke_circle|ui_stroke_line|ui_stroke_polyline|"
+            // clipping and retained rectangle batches
+            "ui_push_clip|ui_push_clip_round|ui_pop_clip|ui_rect_clipped|"
+            "ui_rect_batch_create|ui_rect_batch_destroy|ui_rect_batch_begin|"
+            "ui_rect_batch_add|ui_rect_batch_end|ui_rect_batch_draw|ui_rect_batch_draw_at|"
+            // text
+            "ui_draw_text|ui_draw_text_arc|ui_draw_text_wrapped|ui_draw_text_vertical|"
+            "ui_text_line_height|ui_text_v_center_y|ui_text_width|ui_text_index_at_x|"
+            "ui_text_prefix_width|ui_measure_text|ui_mono_char_width|"
+            "ui_text_vertical_column_count|ui_text_vertical_max_run|"
+            "ui_text_vertical_column_width|ui_text_vertical_size|"
+            // colours
+            "ui_pack_color|ui_pack_rgba_floats|"
+            // immediate-mode widgets
+            "ui_input_empty|ui_theme_empty|ui_widgets_create|ui_widgets_destroy|"
+            "ui_widgets_set_light|ui_widgets_begin_frame|ui_widgets_begin_view|"
+            "ui_widgets_end_frame|ui_widgets_mouse_x|ui_widgets_mouse_y|"
+            "ui_button|ui_slider|ui_slider_rect|ui_slider_id|"
+            "ui_color_picker|ui_color_picker_rect|ui_color_picker_id|ui_hit_region|"
+            "ui_is_mouse_down|ui_is_mouse_pressed|ui_is_escape_pressed|"
+            "ui_is_enter_pressed|ui_has_keyboard_focus|"
+            // selectable read-only labels
+            "ui_text_sel_create|ui_text_sel_clear|ui_text_sel_has|ui_text_sel_lo|"
+            "ui_text_sel_hi|ui_text_sel_slice|ui_text_sel_interact|ui_draw_text_sel|"
+            "ui_text_sel_copy");
     }
     return false;
 }
@@ -2414,7 +2485,8 @@ static ns_return_bool ns_wasm_validate(ns_ssa_module *ssa) {
             return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);
         }
         u8 *types = ns_null, *unsigneds = ns_null;
-        i32 value_count = ns_wasm_infer_types(fn, &types, &unsigneds);
+        i32 value_count = ns_wasm_infer_types(fn, ssa->globals, (i32)ns_array_length(ssa->globals),
+                                              &types, &unsigneds);
         for (i32 ii = 0, il = (i32)ns_array_length(fn->insts); ii < il; ++ii) {
             ns_ssa_inst *inst = &fn->insts[ii];
             ns_code_loc loc = inst->ast > 0 && ssa->ctx && inst->ast < (i32)ns_array_length(ssa->ctx->nodes)

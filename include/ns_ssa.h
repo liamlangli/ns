@@ -133,8 +133,14 @@ void ns_ssa_phi_set_incoming(ns_ssa_inst *phi, i32 pred, i32 value);
 ns_return_ptr ns_ssa_build(ns_ast_ctx *ctx);
 ns_return_ptr ns_ssa_build_with_runtime_paths(ns_ast_ctx *ctx, ns_str ref_path,
                                               ns_str lib_path, ns_str lib_fallback_path);
+// `wasm_target` selects the browser lowering: every shader is also transpiled
+// to WGSL and attached as Wasm metadata, and structs a lib module declares are
+// laid out the same compact wasm32 way project structs are, rather than in the
+// C layout of the host that runs the compiler. No native library is loaded in
+// the browser, so nothing there allocates a struct in a C layout, and the
+// browser middleware reads the fields at the wasm32 offsets.
 ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str ref_path,
                                                       ns_str lib_path, ns_str lib_fallback_path,
-                                                      ns_bool embed_wasm_shaders);
+                                                      ns_bool wasm_target);
 void ns_ssa_print(ns_ssa_module *m);
 void ns_ssa_module_free(ns_ssa_module *m);

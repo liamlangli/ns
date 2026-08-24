@@ -1995,7 +1995,7 @@ static void ns_archive_object(ns_str output, ns_str object) {
 }
 
 static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, ns_line_loc *line_map,
-                                               ns_bool embed_wasm_shaders) {
+                                               ns_bool wasm_target) {
     ctx.line_map = line_map;
     f64 parse_start = ns_build_profile_begin("parse");
     ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
@@ -2004,7 +2004,7 @@ static ns_ssa_module *ns_compile_source_to_ssa(ns_str source, ns_str filename, n
 
     f64 ssa_start = ns_build_profile_begin("lower_ssa");
     ns_return_ptr ssa_ret = ns_ssa_build_with_runtime_paths_options(
-        &ctx, vm.ref_path, vm.lib_path, vm.lib_fallback_path, embed_wasm_shaders);
+        &ctx, vm.ref_path, vm.lib_path, vm.lib_fallback_path, wasm_target);
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_build_profile_end("lower_ssa", ssa_start);
     return ssa_ret.r;

@@ -93,15 +93,48 @@ deployed static bundles do not reconnect to a nonexistent endpoint.
 The browser ABI supports typed scalar and enum computation, mutable globals,
 functions/control flow, UTF-8 strings including runtime concatenation and
 lexicographic comparison, checked arrays, plain structs,
-portable `std` imports, `simd`, WGSL shader metadata, and browser `gpu`
-and canvas-backed `view` imports. Arrays use a wasm32 descriptor containing
-data, length, and capacity; plain structs use compiler-resolved field offsets
-in linear memory. Unsupported dynamic or host-only operations produce
-source-located build diagnostics; in particular arbitrary `any`, unions,
-task/async, closures, dicts/sets, and the `ui`, `os`, `io`, `net`, `http`, and
-`audio` modules are not browser features. The browser event loop remains owned
-by the generated shell, so `view_run` is nonblocking and the exported `frame`
-function is the frame callback.
+portable `std` imports, `simd`, WGSL shader metadata, browser `gpu`,
+canvas-backed `view`, and the `ui` module. Arrays use a wasm32 descriptor
+containing data, length, and capacity; plain structs use compiler-resolved
+field offsets in linear memory. Unsupported dynamic or host-only operations
+produce source-located build diagnostics; in particular arbitrary `any`,
+unions, task/async, closures, dicts/sets, and the `io`, `net`, `http`,
+`audio`, `compress`, `storage`, and `dynamic` modules are not browser
+features, and `os` is limited to the documented portable subset. The browser
+event loop remains owned by the generated shell, so `view_run` is nonblocking
+and the exported `frame` function is the frame callback.
+
+Every struct is laid out the same compact wasm32 way, including the structs a
+lib module such as `view` or `ui` declares: fields sit in declaration order,
+each aligned to its own size capped at four bytes, so a `str`, array or fn
+handle takes four bytes, an `any` handle eight, a bool a four-byte slot, and an
+f64 keeps its eight-byte payload at four-byte alignment. A native build gives a
+lib struct the C layout the module published, because the library itself may
+have allocated it; nothing does in the browser, where the middleware allocates
+every struct out of the module's own linear memory, so the browser target uses
+the layout above and `ns-wasm.js` reads the fields at those offsets.
+
+## The `ui` module in the browser
+
+Every `ui` entry point `lib/src/ui.c` implements is available on the Wasm
+target, backed by a Canvas 2D renderer in `ns-wasm.js`: the batched renderer
+(shapes, arcs, triangles, polylines, textured atlases, clipping, retained
+rectangle batches), text (single line, wrapped, arced, vertical, measurement,
+caret hit-testing), the safe-area and layout helpers, the immediate-mode widget
+layer (buttons, sliders, colour pickers, hit regions), and the selectable
+read-only label helpers. A `ui` project drives the canvas in 2D mode, so it
+does not also hold a WebGPU context on the same canvas.
+
+Two differences from a native build are inherent to the browser and are worth
+designing around. Glyphs come from the page's font stack rather than the
+signed-distance-field atlas, so `ui_text_width` measures with that stack while
+the line box and cap-band metrics follow the shipped atlas ratios, keeping
+vertical placement in step; and a face load (`ui_load_font`,
+`ui_load_bitmap_font`, and the rest) reports the same failure a native renderer
+reports for a missing atlas file, leaving text on the fallback face
+`ui_primary_font` selects. The declarations `lib/ui.ns` carries that no native
+library implements — themes, text views, dropdowns, toggles, lists, managed
+textures, recorded layers — have no browser backend either.
 
 Standalone `ns --wasm file.ns -o file.wasm` uses the same validated emitter but
 does not generate a browser shell.

@@ -86,7 +86,7 @@ assert.equal(runtime.view().getInt32(canvasView + 12, true), 640);
 assert.equal(runtime.view().getFloat64(canvasView + 88, true), 2);
 assert.equal(runtime.gpu('gpu_request_device', [canvasView]), 1);
 assert.equal(runtime.gpu('gpu_request_device', [canvasView + 4]), 0);
-assert.equal(runtime.view().getUint32(canvasView + 140, true), 1);
+assert.equal(runtime.view().getUint32(canvasView + 144, true), 1);
 canvasEvents.get('pointerdown')({ clientX: 10, clientY: 16, pointerType: 'mouse', pointerId: 7, button: 0 });
 assert.equal(capturedPointer, 7);
 assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);

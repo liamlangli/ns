@@ -76,6 +76,9 @@ typedef struct ns_ssa_builder {
     ns_str *ref_names;
     ns_str *shader_only;
     ns_return_str fold_error;
+    // Lowering for the browser: WGSL shader metadata and the wasm32 struct
+    // layout instead of the host C layout for lib-declared structs.
+    ns_bool wasm_target;
 } ns_ssa_builder;
 
 static f64 ns_ssa_profile_begin(ns_str name, ns_str lib) {
@@ -901,7 +904,13 @@ static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 fiel
 // has to be read that way. A struct the project declares is allocated by ns in
 // the compact layout every other access to it uses, and a reference to one that
 // switched layouts would read its own fields from the wrong offsets.
+//
+// The browser has no native library: the middleware allocates every lib struct
+// out of the module's own linear memory, so the C layout of whichever host
+// compiled the bundle is the wrong answer there. A wasm target keeps lib
+// structs in the same compact wasm32 layout as project structs.
 static ns_bool ns_ssa_native_struct(ns_ssa_builder *b, ns_type t) {
+    if (b->wasm_target) return false;
     if (!ns_type_is_ref(t) || !ns_type_is(t, NS_TYPE_STRUCT)) return false;
     i32 index = ns_type_index(t);
     if (index < 0 || index >= (i32)ns_array_length(b->vm->symbols)) return false;
@@ -1729,8 +1738,18 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             return rhs;
         }
         if (local < 0 && global >= 0) {
-            if (ns_ssa_needs_box(b, ln->primary_expr.token.val) ||
-                ns_type_is_ref(b->m->globals[global].type)) {
+            // A ref to a heap payload -- a struct, an array, a string -- is the
+            // pointer itself: ns_ssa_load_ref hands a read the global's value
+            // unchanged. Writing through such a global would disagree with
+            // every read of it, and a handle a native module returned (an
+            // opaque `ref ui_renderer`, say) has no contents to write through
+            // in the first place, so the assignment rebinds. A ref to a scalar
+            // is a box, which reads and writes go through as doc/ref.md says.
+            ns_bool ref_global = ns_type_is_ref(b->m->globals[global].type);
+            ns_bool handle_global = ref_global &&
+                ns_ssa_heap_payload(ns_type_set_ref(b->m->globals[global].type, false));
+            if (!handle_global &&
+                (ns_ssa_needs_box(b, ln->primary_expr.token.val) || ref_global)) {
                 i32 box = ns_ssa_emit_value(b, NS_SSA_OP_GLOBAL_GET, -1, global,
                                             b->m->globals[global].type,
                                             ln->primary_expr.token.val, ln->primary_expr.token, i);
@@ -3223,7 +3242,7 @@ static void ns_ssa_lower_imported_fns(ns_ssa_builder *b) {
 
 ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str ref_path,
                                                       ns_str lib_path, ns_str lib_fallback_path,
-                                                      ns_bool embed_wasm_shaders) {
+                                                      ns_bool wasm_target) {
     if (ctx == NULL || ns_array_length(ctx->nodes) == 0) {
         return ns_return_error(ptr, ns_code_loc_nil, NS_ERR_SYNTAX, "ast ctx is empty");
     }
@@ -3236,6 +3255,7 @@ ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str re
     b.ctx = ctx;
     b.m = m;
     b.capture_env = -1;
+    b.wasm_target = wasm_target;
 
     // The VM semantic pass is shared by interpretation and compilation. It
     // resolves enum values once, enforces nominal typing, and gives SSA the
@@ -3282,7 +3302,7 @@ ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str re
     }
     ns_ssa_profile_phase_end("collect_references", references_start);
 
-    if (embed_wasm_shaders) {
+    if (wasm_target) {
         f64 shaders_start = ns_ssa_profile_phase_begin("collect_shaders");
         ns_return_bool shaders = ns_ssa_collect_shaders(&b);
         ns_ssa_profile_phase_end("collect_shaders", shaders_start);
