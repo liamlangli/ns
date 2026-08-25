@@ -62,10 +62,18 @@ int net_recv(int fd);
 int net_udp_recv(int fd);
 
 // Number of bytes currently held in the calling thread's receive buffer.
+// Receive without blocking. Returns bytes read (>0), 0 when nothing is ready,
+// -1 when the peer closed the connection, and -2 on error. Use on a socket put
+// into nonblocking mode with net_set_nonblocking().
+int net_recv_try(int fd);
+
 int net_buf_len(void);
 
 // Byte `i` of the calling thread's receive buffer as 0..255, or -1.
 int net_buf_byte(int i);
+
+// Copy up to `max` staged bytes into `dst` at `dst_offset`. Returns the count.
+int net_buf_read(unsigned char *dst, int dst_offset, int max);
 
 // ---- send -----------------------------------------------------------------
 
@@ -77,6 +85,10 @@ int net_send(int fd, const char *data, int len);
 // Send the NUL-terminated text `s` over `fd` (convenience for header/text
 // lines). Returns the number of bytes sent, or -1.
 int net_send_str(int fd, const char *s);
+
+// Send `len` raw bytes of `data`. Use for binary payloads: a `str` stops at the
+// first NUL byte. Returns bytes sent, or -1.
+int net_send_bytes(int fd, const unsigned char *data, int len);
 
 // Send the first `len` bytes of the calling thread's receive buffer over `fd`.
 // This lets a server forward exactly what net_recv() read without copying the

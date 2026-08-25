@@ -20,10 +20,15 @@ subset that marshals reliably from inside an ns function body:
 - `str` arguments (passed to C as a `const char*`).
 
 It never returns a `str` or a `ref struct`. Received bytes are staged in a
-shared file-scope buffer and read back one byte at a time with `net_buf_byte()`;
-payloads are sent with an explicit length (pass `s.len`) so binary data is
-handled correctly. The model is blocking and single-threaded: a server calls
-`net_tcp_listen()` once and then loops over `net_tcp_accept()`.
+shared file-scope buffer and read back one byte at a time with `net_buf_byte()`,
+or copied out in bulk into a `[u8]` with `net_buf_read()` when a payload is
+large; payloads are sent with an explicit length (pass `s.len`) so binary data
+is handled correctly, and `net_send_bytes()` sends a `[u8]` for protocol frames
+that contain NUL bytes. The model is blocking and single-threaded: a server
+calls `net_tcp_listen()` once and then loops over `net_tcp_accept()`. A program
+with its own frame loop instead sets `net_set_nonblocking()` and polls with
+`net_recv_try()`, which separates "nothing ready" from a closed peer; the live
+profiler viewer (`nscode/profile/live.ns`) is built that way.
 
 ## Static file server
 
@@ -151,11 +156,14 @@ let d = net_close(fd)
 | `net_udp_bind(port) i32` | UDP socket bound for receiving; fd or -1. |
 | `net_udp_socket() i32` | Unbound UDP socket for sending; fd or -1. |
 | `net_recv(fd) i32` | TCP read into shared buffer; byte count (0=closed) or -1. |
+| `net_recv_try(fd) i32` | Nonblocking read; bytes, 0 = nothing ready, -1 = closed, -2 = error. |
 | `net_udp_recv(fd) i32` | Receive one datagram (remembers sender); count or -1. |
 | `net_buf_len() i32` | Bytes in the shared receive buffer. |
 | `net_buf_byte(i) i32` | Byte `i` (0..255), or -1 out of range. |
+| `net_buf_read(data, offset, max) i32` | Bulk copy of the buffer into a `[u8]`; bytes copied. |
 | `net_send(fd, data, len) i32` | Send `len` bytes; pass `s.len`. Bytes sent or -1. |
 | `net_send_str(fd, s) i32` | Send NUL-terminated text; bytes sent or -1. |
+| `net_send_bytes(fd, data, len) i32` | Send raw `[u8]` bytes; use for payloads with NULs. |
 | `net_send_buf(fd, len) i32` | Forward the first `len` bytes of the shared buffer. |
 | `net_udp_reply(fd, data, len) i32` | Reply to the last datagram's sender. |
 | `net_udp_send(fd, host, port, data, len) i32` | Send a datagram to host:port. |

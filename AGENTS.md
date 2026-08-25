@@ -53,10 +53,24 @@ The common commands are:
   records nested compiler phases, including cache validation, source linking,
   parsing, SSA lowering, emission,
   system linking, and packaging; add `--force` to measure a full compilation.
+  `--live-port <n>` (with optional `--live-host <address>`, default
+  `127.0.0.1`) streams the run to a listening viewer instead of only writing a
+  report at exit; the run still writes `bin/ns.profile` on the way out, and a
+  port nobody is listening on degrades to an ordinary local profile.
 - `ns profiler [file]`: open the compiled native GUI viewer for
   `bin/ns.profile`, falling back to `ns.profile`, or open an explicit file.
   `make` / `make install` build that viewer
   with `ns build nscode/profile`.
+- `ns profiler --live [path | target]`: open the same viewer in live mode and
+  run the project under it. The viewer owns a loopback TCP listener, starts
+  `ns profile --live-port <n>` itself, and receives one message per frame, so
+  Run, Restart, Stop, Pause and Replay stay in the viewer window. Live capture
+  keeps a ring of the last 128 frames on both ends rather than a whole-run
+  timeline, so a program can be measured for as long as it runs: the frame
+  strip scrubs that window, `Frame` inspects one frame, and `Window` merges
+  every retained frame into one view. A frame ends when the outermost native
+  callback returns (`view` `on_frame`, ui events); a run without callbacks
+  publishes one frame when it exits. See `doc/profile.md`.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported. In a
@@ -405,9 +419,9 @@ rules.
 | `task` | VM-internal async task, dispatch, waiting, cancellation, status, queue, and sleep primitives. |
 | `simd` | Pure-ns data types `float2`, `float3`, `float4`, `quatf`, and `mat4`, also used at shader boundaries. |
 | `shader` | VM-internal transpilation of ordinary ns functions to MSL, GLSL 450, HLSL, or WGSL shader source and entry names. Shader code accepts only the supported numeric/struct subset, plus fixed-capacity local arrays (`let faces = [i32](72)`, constant length, no array parameters or returns). A `lit` folds into the generated source, and a fn a shader calls may live in a `use`d module. `shader_host_bind`/`_root`/`_invocation`/`_swap`/`_release` bind an image pair, the root words and an invocation coordinate so the interpreter can run a compute fn one invocation at a time, without a device. |
-| `os` | Native time/date, file and directory operations, environment/app-data paths, recursive scans/watches, dialogs, child project launch, device vibration, locks, and semaphores. |
+| `os` | Native time/date, file and directory operations, environment/app-data paths, recursive scans/watches, dialogs, child project launch (including a live-profiled child, with liveness and stop), device vibration, locks, and semaphores. |
 | `io` | Native image loading/saving plus GLB container read/write and decoded glTF triangle primitives (positions, normals, UVs, joints, weights, indices, and embedded base-colour images). |
-| `net` | Blocking native TCP/UDP sockets, shared receive-buffer access, file sending, and socket lifecycle. File descriptors are integer handles. |
+| `net` | Blocking native TCP/UDP sockets, shared receive-buffer access, bulk buffer reads and raw byte sends for binary protocols, nonblocking `net_recv_try`, file sending, and socket lifecycle. File descriptors are integer handles. |
 | `http` | Minimal blocking HTTP/1.1 request parsing, responses/files/status helpers, client GET, and a complete static-file server built on `net`. |
 | `term` | Native raw-terminal input, dimensions, buffered byte output, file byte I/O, and startup filename access for terminal apps. |
 | `audio` | Apple native music/SFX loading, playback, pause/resume/seek, volume, duration/position, and error reporting. Handles are opaque integers. Native desktop and generated Apple apps are supported. |

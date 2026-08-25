@@ -75,3 +75,11 @@ const char *os_cwd(void);
 const char *os_env(const char *name);
 i32 os_make_dirs(const char *path);
 i32 os_launch_ns_project(const char *folder, const char *entry);
+
+// Start `<exe> profile --live-port <port> [entry]` in `folder`. Returns the
+// child process id, or 0 when the process could not be started.
+i32 os_launch_ns_profile(const char *exe, const char *folder, const char *entry, i32 port);
+// 1 while the child started above is still running; 0 once it has exited.
+i32 os_process_alive(i32 pid);
+// Ask that child to terminate. Returns 1 when the request was delivered.
+i32 os_process_stop(i32 pid);

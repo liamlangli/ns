@@ -120,6 +120,7 @@ NS_INC += -I$(NS_BINDIR)
 NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
 	src/ns_profile.c \
+	src/ns_profile_live.c \
 	src/ns_os.c \
 	src/ns_token.c \
 	src/ns_ast.c \
@@ -389,7 +390,7 @@ install: all
 	cp third_party/box3d/LICENSE $(NS_INSTALL_ROOT)/share/licenses/box3d/LICENSE
 	cp third_party/zlib/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zlib/LICENSE
 	cp third_party/zstd/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zstd/LICENSE
-	cp nscode/profile/ns.mod nscode/profile/main.ns $(NS_INSTALL_ROOT)/share/nscode/profile/
+	cp nscode/profile/ns.mod nscode/profile/main.ns nscode/profile/live.ns $(NS_INSTALL_ROOT)/share/nscode/profile/
 	if [ -d nscode/profile/bin/nscode-profile.app ]; then \
 		$(NS_RMDIR) $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \
 		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \

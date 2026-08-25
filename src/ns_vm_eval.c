@@ -1109,6 +1109,10 @@ ns_return_value ns_eval_call_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(value, call.ret);
 }
 
+// Re-entrancy depth of native -> VM callbacks. Only the outermost one closes a
+// live profile frame.
+static i32 ns_eval_callback_depth = 0;
+
 ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value closure, void *cap_base, void *arg_ptr) {
     ns_symbol *sym = &vm->symbols[ns_type_index(closure.t)];
     ns_fn_symbol *fn = ns_symbol_get_fn(sym);
@@ -1152,8 +1156,13 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
     ns_eval_profile_scope_begin(sym);
     f64 profile_start_ms = ns_profile.enabled ? ns_profile_now_ms() : 0.0;
     i32 profile_depth = ns_profile.enabled ? (i32)ns_array_length(vm->call_stack) - 1 : 0;
+    ns_eval_callback_depth++;
     ns_return_void ret = ns_eval_compound_stmt(vm, fn->ctx ? fn->ctx : ctx, fn->body);
     ns_eval_profile_scope_end(sym, profile_depth, profile_start_ms);
+    // The outermost native callback returning is the frame boundary live
+    // capture publishes on: view on_frame, ui events, and the rest all arrive
+    // through this bridge, and a nested callback belongs to the same frame.
+    if (--ns_eval_callback_depth == 0) ns_profile_frame_boundary();
     if (ns_return_is_error(ret)) {
         (void)ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);

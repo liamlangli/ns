@@ -159,6 +159,14 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 - **Runtime/platform utilities**
   - `ns_os.c`, `ns_net.c`, `ns_json.c`, `ns_fmt.c`, `ns_def.c`, `ns_jit.c`
 
+- **Profiling**
+  - `ns_profile.c` — the recorder behind `ns profile` / `--profile`: per-symbol
+    aggregates, the flame tree, the retained timeline, and the 128-frame live
+    ring
+  - `ns_profile_live.c` — the loopback TCP transport that publishes one message
+    per frame to the `ns profiler --live` viewer (`nscode/profile`).
+    See `doc/profile.md`.
+
 ---
 
 ## 7) Language/tooling ecosystem in this repo
@@ -170,6 +178,15 @@ With filename and no analysis/emit flag, it evaluates and prints result.
   same source without changing the normal native manifest.
 - Browser rendering and persisted browser files are provided by
   `lib/ns-wasm.js`.
+
+### Profile viewer (`nscode/profile/`)
+- The GUI flamegraph/timeline viewer, written in ns and compiled by
+  `make profiler` (`ns build nscode/profile`).
+- `live.ns` owns a live session: the loopback listener, the profiled child
+  process, the wire protocol, and the 128-frame ring. It is
+  rendering-agnostic, so `nscode/profile/test/live_test.ns` covers it headless.
+- `main.ns` loads `ns.profile` reports and draws everything, live frames
+  included.
 
 ### Terminal editor (`nscode/cli/`)
 - A "kilo"-style text editor written in ns, run with `bin/ns run nscode/cli/main.ns`.
@@ -201,8 +218,9 @@ For fast onboarding, recommended order:
 3. `Makefile` (+ included makefiles) — build outputs and platform branching
 4. `doc/ssa.md` — SSA & backend design intent
 5. `doc/block.md`, `doc/ref.md`, `doc/operators.md`, `doc/token.md` — language semantics cheatsheets
-6. `sample/ns/*.ns` — practical examples to test parsing/execution and language features
-7. `nscode/native/README.md` — native/browser NSCode setup
+6. `doc/profile.md` — profiling, the live viewer, and the live wire format
+7. `sample/ns/*.ns` — practical examples to test parsing/execution and language features
+8. `nscode/native/README.md` — native/browser NSCode setup
 
 ---
 

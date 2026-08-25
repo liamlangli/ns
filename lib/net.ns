@@ -43,6 +43,10 @@ ref fn net_udp_socket() i32
 // (0 = peer closed), or -1.
 ref fn net_recv(fd: i32) i32
 
+// Receive from a nonblocking TCP `fd` without waiting. Returns byte count
+// (> 0), 0 when nothing is ready, -1 when the peer closed, -2 on error.
+ref fn net_recv_try(fd: i32) i32
+
 // Receive one UDP datagram on `fd`, remembering the sender for net_udp_reply.
 // Returns byte count, or -1.
 ref fn net_udp_recv(fd: i32) i32
@@ -53,6 +57,10 @@ ref fn net_buf_len() i32
 // Byte `i` of the calling thread's receive buffer (0..255), or -1.
 ref fn net_buf_byte(i: i32) i32
 
+// Bulk copy of the receive buffer into `data` at `offset`, up to `max` bytes.
+// One call instead of one net_buf_byte() per byte. Returns the bytes copied.
+ref fn net_buf_read(data: [u8], offset: i32, max: i32) i32
+
 // ---- send -----------------------------------------------------------------
 
 // Send `len` bytes of `data` over `fd`. Pass `s.len` as the length. Returns the
@@ -61,6 +69,10 @@ ref fn net_send(fd: i32, data: str, len: i32) i32
 
 // Send NUL-terminated text `s` over `fd`. Returns bytes sent, or -1.
 ref fn net_send_str(fd: i32, s: str) i32
+
+// Send `len` raw bytes of `data`. Binary payloads need this: a `str` stops at
+// the first NUL byte. Returns bytes sent, or -1.
+ref fn net_send_bytes(fd: i32, data: [u8], len: i32) i32
 
 // Send the first `len` bytes of the calling thread's receive buffer over `fd`,
 // forwarding exactly what net_recv() read (e.g. for an echo server). Returns

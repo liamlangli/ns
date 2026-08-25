@@ -31,6 +31,16 @@
 // Hard cap so a pathological run cannot grow the report without bound.
 #define NS_PROFILE_MAX_TIMELINE_EVENTS 2000000
 
+// Live mode keeps the timeline in a ring of whole frames instead of one
+// growing array, so a program that runs for hours streams a bounded window.
+#define NS_PROFILE_LIVE_FRAMES 128
+// Force a frame boundary when a single frame records this many events, so a
+// run without native callbacks cannot grow one slot without bound.
+#define NS_PROFILE_LIVE_FRAME_EVENTS 262144
+// Total retained events across the ring. Heavy frames retire older frames
+// before the 128-frame window fills.
+#define NS_PROFILE_LIVE_RING_EVENTS 1000000
+
 #define NS_PROFILE_EVENT_FFI 1
 #define NS_PROFILE_EVENT_SCOPE 2
 
@@ -60,6 +70,15 @@ typedef struct ns_profile_event {
     f64 elapsed_ms; // inclusive wall-clock time
     f64 self_ms;    // exclusive wall-clock time
 } ns_profile_event;
+
+// One retained frame of the live ring. `events` is an ns_array reused when the
+// slot wraps, so steady-state live capture stops allocating.
+typedef struct ns_profile_frame {
+    u32 index;      // monotonic frame number since capture started
+    f64 start_ms;   // frame open time, ms since profile start
+    f64 end_ms;     // frame close time, ms since profile start
+    ns_profile_event *events;
+} ns_profile_frame;
 
 typedef struct ns_profile_flame {
     i32 parent;    // parent flame index, or -1 for a root
@@ -117,6 +136,18 @@ typedef struct ns_profile_state {
     i32 flame_count;
     u64 flames_dropped;
     i32 flame_hash[NS_PROFILE_FLAME_HASH];
+
+    // Live ring. Disabled by default: `events` above then holds the whole run.
+    ns_bool ring;
+    ns_profile_frame frames[NS_PROFILE_LIVE_FRAMES];
+    i32 frame_head;      // slot currently recording
+    i32 frame_fill;      // closed frames retained behind `frame_head`
+    u32 frame_seq;       // index the open frame will be published under
+    i32 ring_events;     // events retained across every ring slot
+    u64 frames_retired;  // frames dropped early to stay inside the event budget
+    // Live streamer, installed by ns_profile_live_connect. Called once per
+    // closed frame, before the slot is recycled.
+    void (*frame_sink)(const ns_profile_frame *frame);
 } ns_profile_state;
 
 extern ns_profile_state ns_profile;
@@ -163,6 +194,20 @@ void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc
 // Compatibility wrapper: write aggregates + an uncompressed `.tl` beside a
 // temp-less text-only path when `path` is unknown. Prefer write_report.
 void ns_profile_write_text(FILE *f, f64 elapsed_ms, i32 argc, i8 **argv);
+
+// Switch timeline storage to the 128-frame ring. Aggregates (fns/flames) stay
+// cumulative for the whole run; only retained samples become a moving window.
+void ns_profile_ring_enable(void);
+
+// Close the frame that is open and hand it to `frame_sink`, then recycle the
+// next slot. A no-op unless the ring is on and the frame recorded samples. The
+// VM calls this when the outermost native callback returns (view on_frame, ui
+// events); a run without callbacks reaches it through the per-frame event cap.
+void ns_profile_frame_boundary(void);
+
+// Copy every retained ring frame into `ns_profile.events` so the exit report
+// covers the window the ring still holds. Returns the event count.
+i32 ns_profile_ring_flatten(void);
 
 // Print a terminal hot-path summary. Rows are colored by self-time share.
 void ns_profile_print_summary(FILE *out, f64 elapsed_ms);

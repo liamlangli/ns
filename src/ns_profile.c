@@ -105,6 +105,9 @@ void ns_profile_reset(void) {
     for (i32 i = 0; i < ns_profile.thread_count; i++) {
         if (ns_profile.threads[i].dynamic) ns_str_free(ns_profile.threads[i]);
     }
+    for (i32 i = 0; i < NS_PROFILE_LIVE_FRAMES; i++) {
+        ns_array_free(ns_profile.frames[i].events);
+    }
     ns_array_free(ns_profile.events);
     memset(&ns_profile, 0, sizeof(ns_profile));
 }
@@ -260,6 +263,15 @@ static void ns_profile_fn_add(i32 fn_index, f64 elapsed_ms, f64 self_ms) {
     s->self_ms += self_ms;
 }
 
+void ns_profile_ring_enable(void) {
+    ns_profile.ring = true;
+    ns_profile.frame_head = 0;
+    ns_profile.frame_fill = 0;
+    ns_profile.frame_seq = 0;
+    ns_profile.ring_events = 0;
+    ns_profile.frames[0].start_ms = ns_profile.enabled ? ns_profile_now_ms() - ns_profile.start_ms : 0.0;
+}
+
 static void ns_profile_record_event(u8 kind, i32 depth, i32 fn_index, f64 start_ms, f64 elapsed_ms, f64 self_ms) {
     // Keep aggregates for every call, but omit micro-scopes from the timeline
     // so a hot leaf helper cannot balloon the on-disk report into gigabytes.
@@ -269,10 +281,12 @@ static void ns_profile_record_event(u8 kind, i32 depth, i32 fn_index, f64 start_
         ns_profile.timeline_skipped++;
         return;
     }
-    i32 n = (i32)ns_array_length(ns_profile.events);
-    if (n >= NS_PROFILE_MAX_TIMELINE_EVENTS) {
-        ns_profile.timeline_skipped++;
-        return;
+    if (!ns_profile.ring) {
+        i32 n = (i32)ns_array_length(ns_profile.events);
+        if (n >= NS_PROFILE_MAX_TIMELINE_EVENTS) {
+            ns_profile.timeline_skipped++;
+            return;
+        }
     }
     ns_profile_ensure_main_thread();
     // name/lib live in fns[fn_index] - the shared string pool. Samples only
@@ -286,7 +300,18 @@ static void ns_profile_record_event(u8 kind, i32 depth, i32 fn_index, f64 start_
         .elapsed_ms = elapsed_ms,
         .self_ms = self_ms,
     };
-    ns_array_push(ns_profile.events, ev);
+    if (!ns_profile.ring) {
+        ns_array_push(ns_profile.events, ev);
+        return;
+    }
+    ns_profile_frame *frame = &ns_profile.frames[ns_profile.frame_head];
+    ns_array_push(frame->events, ev);
+    ns_profile.ring_events++;
+    // A run without native callbacks never reaches a frame boundary on its
+    // own; cap the open frame so one slot cannot grow without bound.
+    if ((i32)ns_array_length(frame->events) >= NS_PROFILE_LIVE_FRAME_EVENTS) {
+        ns_profile_frame_boundary();
+    }
 }
 
 void ns_profile_scope_enter(ns_str name, ns_str lib) {
@@ -418,10 +443,10 @@ static void ns_profile_write_stack(FILE *f, i32 flame_index) {
     }
 }
 
-static void ns_profile_sort_events(void) {
-    i32 n = (i32)ns_array_length(ns_profile.events);
+static void ns_profile_sort_array(ns_profile_event *events) {
+    i32 n = (i32)ns_array_length(events);
     if (n <= 1) return;
-    qsort(ns_profile.events, (size_t)n, sizeof(ns_profile_event), ns_profile_event_cmp);
+    qsort(events, (size_t)n, sizeof(ns_profile_event), ns_profile_event_cmp);
 }
 
 static ns_bool ns_profile_same_span(const ns_profile_event *a, const ns_profile_event *b) {
@@ -432,14 +457,16 @@ static ns_bool ns_profile_same_span(const ns_profile_event *a, const ns_profile_
     return b->start_ms <= a->start_ms + a->elapsed_ms + 0.05;
 }
 
-static void ns_profile_coalesce_events(void) {
-    ns_profile_sort_events();
-    i32 n = (i32)ns_array_length(ns_profile.events);
+// Sort by (start, thread, kind, depth) and merge adjacent repeats of the same
+// span, so both the on-disk timeline and one live frame arrive draw-ready.
+static void ns_profile_coalesce_array(ns_profile_event *events) {
+    ns_profile_sort_array(events);
+    i32 n = (i32)ns_array_length(events);
     if (n <= 1) return;
     i32 w = 0;
     for (i32 r = 1; r < n; r++) {
-        ns_profile_event *a = &ns_profile.events[w];
-        ns_profile_event *b = &ns_profile.events[r];
+        ns_profile_event *a = &events[w];
+        ns_profile_event *b = &events[r];
         if (ns_profile_same_span(a, b)) {
             f64 a_end = a->start_ms + a->elapsed_ms;
             f64 b_end = b->start_ms + b->elapsed_ms;
@@ -447,10 +474,89 @@ static void ns_profile_coalesce_events(void) {
             a->self_ms += b->self_ms;
         } else {
             w++;
-            if (w != r) ns_profile.events[w] = ns_profile.events[r];
+            if (w != r) events[w] = events[r];
         }
     }
-    ns_array_set_length(ns_profile.events, w + 1);
+    ns_array_set_length(events, w + 1);
+}
+
+static void ns_profile_coalesce_events(void) {
+    ns_profile_coalesce_array(ns_profile.events);
+}
+
+// Oldest retained closed frame, or -1 when the ring holds none.
+static i32 ns_profile_ring_oldest(void) {
+    if (ns_profile.frame_fill <= 0) return -1;
+    i32 slot = ns_profile.frame_head - ns_profile.frame_fill;
+    while (slot < 0) slot += NS_PROFILE_LIVE_FRAMES;
+    return slot;
+}
+
+static void ns_profile_ring_retire_oldest(void) {
+    i32 slot = ns_profile_ring_oldest();
+    if (slot < 0) return;
+    ns_profile.ring_events -= (i32)ns_array_length(ns_profile.frames[slot].events);
+    if (ns_profile.ring_events < 0) ns_profile.ring_events = 0;
+    ns_array_set_length(ns_profile.frames[slot].events, 0);
+    ns_profile.frame_fill--;
+    ns_profile.frames_retired++;
+}
+
+void ns_profile_frame_boundary(void) {
+    if (!ns_profile.enabled || !ns_profile.ring) return;
+    ns_profile_frame *frame = &ns_profile.frames[ns_profile.frame_head];
+    i32 before = (i32)ns_array_length(frame->events);
+    if (before == 0) return;
+
+    ns_profile_coalesce_array(frame->events);
+    ns_profile.ring_events += (i32)ns_array_length(frame->events) - before;
+    frame->index = ns_profile.frame_seq;
+    frame->end_ms = ns_profile_now_ms() - ns_profile.start_ms;
+    if (frame->end_ms < frame->start_ms) frame->end_ms = frame->start_ms;
+    if (ns_profile.frame_sink) ns_profile.frame_sink(frame);
+
+    f64 next_start = frame->end_ms;
+    ns_profile.frame_seq++;
+    ns_profile.frame_head = (ns_profile.frame_head + 1) % NS_PROFILE_LIVE_FRAMES;
+    ns_profile.frame_fill++;
+
+    // The slot that becomes the open frame holds the oldest retained frame once
+    // the window is full; recycling it is what bounds live capture. Reusing its
+    // ns_array keeps steady-state capture allocation-free.
+    ns_profile_frame *next = &ns_profile.frames[ns_profile.frame_head];
+    i32 recycled = (i32)ns_array_length(next->events);
+    if (recycled > 0) {
+        ns_profile.ring_events -= recycled;
+        if (ns_profile.ring_events < 0) ns_profile.ring_events = 0;
+        ns_array_set_length(next->events, 0);
+    }
+    // The window holds the open frame plus NS_PROFILE_LIVE_FRAMES - 1 closed
+    // ones; rotating past that is the ring working, not a drop.
+    if (ns_profile.frame_fill > NS_PROFILE_LIVE_FRAMES - 1) {
+        ns_profile.frame_fill = NS_PROFILE_LIVE_FRAMES - 1;
+    }
+    next->start_ms = next_start;
+    next->end_ms = next_start;
+
+    while (ns_profile.ring_events > NS_PROFILE_LIVE_RING_EVENTS && ns_profile.frame_fill > 0) {
+        ns_profile_ring_retire_oldest();
+    }
+}
+
+i32 ns_profile_ring_flatten(void) {
+    if (!ns_profile.ring) return (i32)ns_array_length(ns_profile.events);
+    ns_array_set_length(ns_profile.events, 0);
+    i32 slot = ns_profile_ring_oldest();
+    for (i32 i = 0; i < ns_profile.frame_fill; i++) {
+        ns_profile_frame *frame = &ns_profile.frames[slot];
+        i32 n = (i32)ns_array_length(frame->events);
+        for (i32 e = 0; e < n; e++) ns_array_push(ns_profile.events, frame->events[e]);
+        slot = (slot + 1) % NS_PROFILE_LIVE_FRAMES;
+    }
+    ns_profile_frame *open = &ns_profile.frames[ns_profile.frame_head];
+    i32 open_n = (i32)ns_array_length(open->events);
+    for (i32 e = 0; e < open_n; e++) ns_array_push(ns_profile.events, open->events[e]);
+    return (i32)ns_array_length(ns_profile.events);
 }
 
 static void ns_profile_write_u16(u8 **p, u16 v) {
@@ -626,6 +732,9 @@ static const char *ns_profile_basename(const char *path) {
 void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc, i8 **argv) {
     f64 ffi_ms = ns_profile.ffi_total_ms;
     f64 ffi_pct = elapsed_ms > 0.0 ? (ffi_ms / elapsed_ms) * 100.0 : 0.0;
+    // Live runs keep the timeline in the frame ring; the report covers the
+    // window it still holds.
+    if (ns_profile.ring) ns_profile_ring_flatten();
     i32 raw_events = (i32)ns_array_length(ns_profile.events);
     ns_profile_coalesce_events();
     i32 event_count = (i32)ns_array_length(ns_profile.events);

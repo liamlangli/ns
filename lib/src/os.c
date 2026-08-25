@@ -735,3 +735,114 @@ i32 os_entry_is_dir(i32 index) {
     os_file_entry *entry = os_entry_at(index);
     return entry ? entry->is_dir : 0;
 }
+
+// ---------------------------------------------------------------------------
+// Profiled child processes.
+//
+// The live profiler viewer owns its TCP listener and starts the program it
+// measures itself, so Run / Restart / Stop stay inside the viewer window. The
+// child is `<exe> profile --live-port <port> [entry]` running in `folder`.
+
+#ifdef NS_WIN
+#define OS_CHILD_CAP 8
+typedef struct os_child {
+    i32 pid;
+    HANDLE handle;
+} os_child;
+static os_child os_children[OS_CHILD_CAP];
+
+static void os_child_remember(i32 pid, HANDLE handle) {
+    for (i32 i = 0; i < OS_CHILD_CAP; i++) {
+        if (os_children[i].pid == 0) {
+            os_children[i].pid = pid;
+            os_children[i].handle = handle;
+            return;
+        }
+    }
+    CloseHandle(handle);
+}
+
+static os_child *os_child_find(i32 pid) {
+    for (i32 i = 0; i < OS_CHILD_CAP; i++) {
+        if (os_children[i].pid == pid) return &os_children[i];
+    }
+    return NULL;
+}
+#else
+#include <signal.h>
+#include <sys/wait.h>
+#endif
+
+i32 os_launch_ns_profile(const char *exe, const char *folder, const char *entry, i32 port) {
+    if (!exe || !exe[0] || port <= 0 || port > 65535) return 0;
+    char port_text[16];
+    snprintf(port_text, sizeof(port_text), "%d", port);
+    const char *dir = (folder && folder[0]) ? folder : ".";
+#ifdef NS_WIN
+    char command[8192];
+    if (entry && entry[0]) {
+        snprintf(command, sizeof(command), "\"%s\" profile --live-port %s \"%s\"", exe, port_text, entry);
+    } else {
+        snprintf(command, sizeof(command), "\"%s\" profile --live-port %s", exe, port_text);
+    }
+    STARTUPINFOA startup;
+    PROCESS_INFORMATION process;
+    ZeroMemory(&startup, sizeof(startup));
+    ZeroMemory(&process, sizeof(process));
+    startup.cb = sizeof(startup);
+    if (!CreateProcessA(exe, command, NULL, NULL, FALSE, 0, NULL, dir, &startup, &process)) return 0;
+    CloseHandle(process.hThread);
+    os_child_remember((i32)process.dwProcessId, process.hProcess);
+    return (i32)process.dwProcessId;
+#else
+    pid_t pid = fork();
+    if (pid < 0) return 0;
+    if (pid == 0) {
+        // The viewer's listening socket must not survive into the target: an
+        // inherited listener keeps the port bound after the viewer is gone.
+        for (int fd = 3; fd < 256; fd++) close(fd);
+        if (chdir(dir) != 0) _exit(127);
+        if (entry && entry[0]) {
+            execl(exe, exe, "profile", "--live-port", port_text, entry, (char *)NULL);
+        } else {
+            execl(exe, exe, "profile", "--live-port", port_text, (char *)NULL);
+        }
+        _exit(127);
+    }
+    return (i32)pid;
+#endif
+}
+
+i32 os_process_alive(i32 pid) {
+    if (pid <= 0) return 0;
+#ifdef NS_WIN
+    os_child *child = os_child_find(pid);
+    if (!child) return 0;
+    if (WaitForSingleObject(child->handle, 0) == WAIT_TIMEOUT) return 1;
+    CloseHandle(child->handle);
+    child->pid = 0;
+    child->handle = NULL;
+    return 0;
+#else
+    // Reap here as well: a child that exited stays a zombie until it is waited
+    // for, and a zombie still answers kill(pid, 0).
+    int status = 0;
+    pid_t done = waitpid((pid_t)pid, &status, WNOHANG);
+    if (done == (pid_t)pid) return 0;
+    if (done < 0) return kill((pid_t)pid, 0) == 0 ? 1 : 0;
+    return 1;
+#endif
+}
+
+i32 os_process_stop(i32 pid) {
+    if (pid <= 0) return 0;
+#ifdef NS_WIN
+    os_child *child = os_child_find(pid);
+    if (!child) return 0;
+    if (!TerminateProcess(child->handle, 0)) return 0;
+    return 1;
+#else
+    if (kill((pid_t)pid, SIGTERM) != 0) return 0;
+    return 1;
+#endif
+}

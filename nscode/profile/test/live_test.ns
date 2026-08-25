@@ -1,0 +1,233 @@
+// Live capture decoding: the wire format, the 128-frame ring, and everything
+// the viewer rebuilds from one frame. No sockets are involved - the test feeds
+// the same bytes the target would send straight into the stream buffer.
+
+use std
+use live
+
+let g_fail = 0
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + unescape("\n"))
+    } else {
+        g_fail = g_fail + 1
+        print("FAIL " + name + unescape("\n"))
+    }
+}
+
+fn check_i(name: str, got: i32, want: i32) {
+    check(name, got == want)
+    if got != want {
+        print(`     got {got}, want {want}` + unescape("\n"))
+    }
+}
+
+fn lt_u8(off: i32, v: i32) i32 {
+    g_live_in[off] = (v & 255) as u8
+    return off + 1
+}
+
+fn lt_u16(off: i32, v: i32) i32 {
+    let at = lt_u8(off, v)
+    return lt_u8(at, v >> 8)
+}
+
+fn lt_u32(off: i32, v: i32) i32 {
+    let at = lt_u8(off, v)
+    at = lt_u8(at, v >> 8)
+    at = lt_u8(at, v >> 16)
+    return lt_u8(at, v >> 24)
+}
+
+fn lt_bytes(off: i32, s: str) i32 {
+    let at = off
+    let i = 0
+    loop i < s.len {
+        at = lt_u8(at, s[i] as i32)
+        i = i + 1
+    }
+    return at
+}
+
+// Message header with a placeholder length; lt_end patches it once the payload
+// is written, exactly like the runtime's back-patched writer.
+fn lt_begin(off: i32, kind: i32) i32 {
+    let at = lt_u32(off, kind)
+    return lt_u32(at, 0)
+}
+
+fn lt_end(payload_start: i32, off: i32) {
+    lt_u32(payload_start - 4, off - payload_start)
+}
+
+fn lt_event(off: i32, kind: i32, depth: i32, thread: i32, sym: i32, start_us: i32, elapsed_us: i32, self_us: i32) i32 {
+    let at = lt_u8(off, kind)
+    at = lt_u8(at, depth)
+    at = lt_u16(at, thread)
+    at = lt_u16(at, sym)
+    at = lt_u16(at, 0)
+    at = lt_u32(at, start_us)
+    at = lt_u32(at, elapsed_us)
+    return lt_u32(at, self_us)
+}
+
+fn lt_reset() {
+    ensure_live_in_capacity(262144)
+    live_reset_stream()
+    ensure_live_ring()
+    g_live_enabled = true
+}
+
+// magic + HELLO + THREADS + SYMBOLS, the preamble every session opens with.
+fn lt_preamble() i32 {
+    let at = lt_u32(0, LIVE_MAGIC())
+
+    let hello = lt_begin(at, LIVE_MSG_HELLO())
+    at = lt_u32(hello, LIVE_VERSION())
+    at = lt_u32(at, 4242)
+    at = lt_u32(at, LIVE_FRAMES())
+    at = lt_u16(at, 6)
+    at = lt_bytes(at, "target")
+    lt_end(hello, at)
+
+    let threads = lt_begin(at, LIVE_MSG_THREADS())
+    at = lt_u32(threads, 0)
+    at = lt_u32(at, 2)
+    at = lt_u16(at, 4)
+    at = lt_bytes(at, "main")
+    at = lt_u16(at, 6)
+    at = lt_bytes(at, "task#1")
+    lt_end(threads, at)
+
+    let syms = lt_begin(at, LIVE_MSG_SYMBOLS())
+    at = lt_u32(syms, 0)
+    at = lt_u32(at, 3)
+    at = lt_u8(at, 2)
+    at = lt_u16(at, 0)
+    at = lt_u16(at, 5)
+    at = lt_bytes(at, "outer")
+    at = lt_u8(at, 2)
+    at = lt_u16(at, 0)
+    at = lt_u16(at, 6)
+    at = lt_bytes(at, "middle")
+    at = lt_u8(at, 1)
+    at = lt_u16(at, 3)
+    at = lt_u16(at, 4)
+    at = lt_bytes(at, "gpu")
+    at = lt_bytes(at, "draw")
+    lt_end(syms, at)
+    return at
+}
+
+// One frame: outer -> middle -> a native draw call, plus a task lane root.
+fn lt_frame(off: i32, index: i32, base_us: i32) i32 {
+    let frame = lt_begin(off, LIVE_MSG_FRAME())
+    let at = lt_u32(frame, index)
+    at = lt_u32(at, base_us)
+    at = lt_u32(at, base_us + 10000)
+    at = lt_u32(at, 4)
+    at = lt_event(at, 2, 0, 0, 0, base_us, 10000, 2000)
+    at = lt_event(at, 2, 1, 0, 1, base_us + 1000, 6000, 2000)
+    at = lt_event(at, 1, 2, 0, 2, base_us + 2000, 4000, 4000)
+    at = lt_event(at, 2, 0, 1, 1, base_us + 3000, 5000, 5000)
+    lt_end(frame, at)
+    return at
+}
+
+fn test_stream_decodes_one_frame() {
+    lt_reset()
+    let at = lt_preamble()
+    at = lt_frame(at, 0, 1000)
+    g_live_in_len = at
+    live_parse_stream()
+
+    check("g_live_hello", g_live_hello)
+    check("g_live_in_len == 0", g_live_in_len == 0)
+    check("live_frames_retained() == 1", live_frames_retained() == 1)
+    check("g_live_last_index == 0", g_live_last_index == 0)
+    check("g_live_thread_count == 2", g_live_thread_count == 2)
+    check("live_thread(1) == 'task#1'", live_thread(1) == "task#1")
+    check("g_live_sym_count == 3", g_live_sym_count == 3)
+    check("live_symbol(0) == 'outer'", live_symbol(0) == "outer")
+    check("live_symbol(2) == 'gpu::draw'", live_symbol(2) == "gpu::draw")
+
+    let slot = live_selected_slot()
+    check("slot >= 0", slot >= 0)
+    check("g_lf_events[slot] == 4", g_lf_events[slot] == 4)
+    check("g_lf_len[slot] == 4 * LIVE_EVENT_SIZE()", g_lf_len[slot] == 4 * LIVE_EVENT_SIZE())
+}
+
+fn test_ring_keeps_the_last_128_frames() {
+    lt_reset()
+    let at = lt_preamble()
+    g_live_in_len = at
+    live_parse_stream()
+
+    let index = 0
+    loop index < 200 {
+        let end = lt_frame(0, index, 1000 + index * 20000)
+        g_live_in_len = end
+        live_parse_stream()
+        index = index + 1
+    }
+
+    check("live_frames_retained() == LIVE_FRAMES()", live_frames_retained() == LIVE_FRAMES())
+    check("g_live_last_index == 199", g_live_last_index == 199)
+    let oldest = live_slot_at(0)
+    check("g_lf_index[oldest] == 72", g_lf_index[oldest] == 72)
+    let newest = live_slot_at(LIVE_FRAMES() - 1)
+    check("g_lf_index[newest] == 199", g_lf_index[newest] == 199)
+    // Following shows the newest frame; pinning one holds it steady.
+    check("live_selected_slot() == newest", live_selected_slot() == newest)
+    g_live_sel_index = 100
+    check("g_lf_index[live_selected_slot()] == 100", g_lf_index[live_selected_slot()] == 100)
+    g_live_sel_index = -1
+}
+
+fn test_batched_frames_all_land() {
+    lt_reset()
+    let at = lt_preamble()
+    at = lt_frame(at, 0, 1000)
+    at = lt_frame(at, 1, 21000)
+    at = lt_frame(at, 2, 41000)
+    // Three frames delivered in one read, as a busy target coalesces them.
+    g_live_in_len = at
+    live_parse_stream()
+    check("live_frames_retained() == 3", live_frames_retained() == 3)
+    check("g_lf_index[live_slot_at(0)] == 0", g_lf_index[live_slot_at(0)] == 0)
+    check("g_lf_index[live_slot_at(2)] == 2", g_lf_index[live_slot_at(2)] == 2)
+    // Payloads stay packed back to back in the byte ring.
+    check("g_lf_off[live_slot_at(1)] == g_lf_off[live_slot_at(0)] + g_lf_len[live_slot_at(0)]", g_lf_off[live_slot_at(1)] == g_lf_off[live_slot_at(0)] + g_lf_len[live_slot_at(0)])
+}
+
+fn test_partial_message_waits_for_the_rest() {
+    lt_reset()
+    let at = lt_preamble()
+    let end = lt_frame(at, 7, 1000)
+    // Deliver everything but the last 12 bytes of the frame payload.
+    g_live_in_len = end - 12
+    live_parse_stream()
+    check("live_frames_retained() == 0", live_frames_retained() == 0)
+    // The header stays buffered until the payload lands.
+    check("g_live_in_len > 0", g_live_in_len > 0)
+
+    let held = g_live_in_len
+    let tail = 0
+    loop tail < 12 {
+        g_live_in[held + tail] = g_live_in[end - 12 + tail]
+        tail = tail + 1
+    }
+    g_live_in_len = held + 12
+    live_parse_stream()
+    check("live_frames_retained() == 1", live_frames_retained() == 1)
+    check("g_live_last_index == 7", g_live_last_index == 7)
+}
+
+fn main() i32 {
+    test_stream_decodes_one_frame()
+    test_ring_keeps_the_last_128_frames()
+    test_batched_frames_all_land()
+    test_partial_message_waits_for_the_rest()
+    return g_fail
+}

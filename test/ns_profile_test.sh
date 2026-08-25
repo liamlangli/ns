@@ -47,6 +47,18 @@ if ! "$ns" --help | grep -q 'profiler \[file\]'; then
     printf '%s\n' 'FAIL: ns help does not mention `ns profiler`.' >&2
     exit 1
 fi
+if ! "$ns" --help | grep -q '\-\-live-port'; then
+    printf '%s\n' 'FAIL: ns help does not mention live profiling.' >&2
+    exit 1
+fi
+if [ ! -f "$root/nscode/profile/live.ns" ]; then
+    printf '%s\n' 'FAIL: nscode/profile/live.ns is missing.' >&2
+    exit 1
+fi
+if ! grep -q 'nscode/profile/live.ns' "$root/Makefile"; then
+    printf '%s\n' 'FAIL: make install does not install nscode/profile/live.ns.' >&2
+    exit 1
+fi
 if "$ns" --help | grep -q 'profile view'; then
     printf '%s\n' 'FAIL: ns help still mentions removed `ns profile view`.' >&2
     exit 1
@@ -178,3 +190,143 @@ if grep -q 'compiler::parse$' "$tmp/build-profile/bin/ns.profile"; then
     printf '%s\n' 'FAIL: cached ns build --profile unexpectedly compiled sources.' >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Live capture: `ns profile --live-port` streams the run to a listening viewer.
+# The stand-in viewer here checks the wire format end to end.
+live_port=9711
+cat > "$tmp/live_listen.ns" <<EOF
+use std
+use net
+
+fn u32_at(buf: [u8], off: i32) i32 {
+    let b0 = (buf[off] as i32) & 255
+    let b1 = (buf[off + 1] as i32) & 255
+    let b2 = (buf[off + 2] as i32) & 255
+    let b3 = (buf[off + 3] as i32) & 255
+    return b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
+}
+
+fn main() i32 {
+    let server = net_tcp_listen_local($live_port)
+    if server < 0 {
+        print("FAIL: listen" + unescape("\\n"))
+        return 1
+    }
+    let fd = net_tcp_accept(server)
+    if fd < 0 {
+        print("FAIL: accept" + unescape("\\n"))
+        return 1
+    }
+    let buf = [u8](1048576)
+    let len = 0
+    loop true {
+        let n = net_recv(fd)
+        if n <= 0 {
+            break
+        }
+        if len + n > buf.len {
+            break
+        }
+        len = len + net_buf_read(buf, len, n)
+    }
+    net_close(fd)
+    net_close(server)
+    if len < 4 {
+        print("FAIL: short stream" + unescape("\\n"))
+        return 1
+    }
+    if u32_at(buf, 0) != 1347179342 {
+        print("FAIL: magic" + unescape("\\n"))
+        return 1
+    }
+    let pos = 4
+    let hello = 0
+    let syms = 0
+    let threads = 0
+    let frames = 0
+    let events = 0
+    let bye = 0
+    loop len - pos >= 8 {
+        let kind = u32_at(buf, pos)
+        let size = u32_at(buf, pos + 4)
+        if size < 0 {
+            break
+        }
+        if len - pos - 8 < size {
+            break
+        }
+        if kind == 1 {
+            hello = hello + 1
+        }
+        if kind == 2 {
+            syms = syms + 1
+        }
+        if kind == 3 {
+            threads = threads + 1
+        }
+        if kind == 4 {
+            frames = frames + 1
+            events = events + u32_at(buf, pos + 20)
+        }
+        if kind == 5 {
+            bye = bye + 1
+        }
+        pos = pos + 8 + size
+    }
+    print(\`live: hello={hello} threads={threads} symbols={syms} frames={frames} events={events} bye={bye}\` + unescape("\\n"))
+    if pos != len {
+        print("FAIL: framing" + unescape("\\n"))
+        return 1
+    }
+    if hello != 1 {
+        print("FAIL: hello" + unescape("\\n"))
+        return 1
+    }
+    if threads < 1 {
+        print("FAIL: threads" + unescape("\\n"))
+        return 1
+    }
+    if syms < 1 {
+        print("FAIL: symbols" + unescape("\\n"))
+        return 1
+    }
+    if frames < 1 {
+        print("FAIL: frames" + unescape("\\n"))
+        return 1
+    }
+    if events < 1 {
+        print("FAIL: events" + unescape("\\n"))
+        return 1
+    }
+    if bye != 1 {
+        print("FAIL: bye" + unescape("\\n"))
+        return 1
+    }
+    print("PASS: live stream" + unescape("\\n"))
+    return 0
+}
+EOF
+
+cd "$tmp"
+rm -rf "$tmp/bin"
+"$ns" run "$tmp/live_listen.ns" > "$tmp/live.txt" 2>&1 &
+listener=$!
+sleep 1
+"$ns" profile --live-port "$live_port" hot.ns > "$tmp/live-run.txt" 2>&1
+wait "$listener"
+if ! grep -q 'PASS: live stream' "$tmp/live.txt"; then
+    printf '%s\n' 'FAIL: live capture did not reach the listening viewer.' >&2
+    cat "$tmp/live.txt" >&2
+    exit 1
+fi
+grep -q 'live capture streaming to 127.0.0.1' "$tmp/live-run.txt"
+# A live run still leaves the report behind, and never opens a second viewer.
+test -f "$tmp/bin/ns.profile"
+
+# Without a viewer the run degrades to an ordinary local profile.
+rm -rf "$tmp/bin"
+"$ns" profile --live-port 9712 hot.ns > "$tmp/live-none.txt" 2>&1
+grep -q 'live viewer not listening' "$tmp/live-none.txt"
+test -f "$tmp/bin/ns.profile"
+grep -q '^format: ns-profile-v6$' "$tmp/bin/ns.profile"

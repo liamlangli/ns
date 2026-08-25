@@ -6,6 +6,7 @@ use view
 use gpu
 use ui
 use os
+use live
 use compress
 
 fn FONT() i32 { return 1 }
@@ -1341,67 +1342,6 @@ fn blob_path_for(profile_path: str) str {
         return g_timeline_blob
     }
     return `{dir}/{g_timeline_blob}`
-}
-
-fn read_u16_le(buf: [u8], off: i32) i32 {
-    let lo = (buf[off] as i32) & 255
-    let hi = (buf[off + 1] as i32) & 255
-    return lo + hi * 256
-}
-
-fn read_u32_le(buf: [u8], off: i32) i32 {
-    let b0 = (buf[off] as i32) & 255
-    let b1 = (buf[off + 1] as i32) & 255
-    let b2 = (buf[off + 2] as i32) & 255
-    let b3 = (buf[off + 3] as i32) & 255
-    return b0 + b1 * 256 + b2 * 65536 + b3 * 16777216
-}
-
-fn read_i32_le(buf: [u8], off: i32) i32 {
-    return read_u32_le(buf, off)
-}
-
-fn us_to_ms(us: i32) f64 {
-    return us as f64 * 0.001
-}
-
-fn bytes_to_str(buf: [u8], off: i32, len: i32) str {
-    if len <= 0 {
-        return ""
-    }
-    // Cap to keep a corrupt length from O(n^2)-strcating into gigabytes.
-    // Native heap never frees, so quadratic strcat is fatal.
-    if len > 512 {
-        len = 512
-    }
-    if off < 0 {
-        return ""
-    }
-    if off + len > buf.len {
-        return ""
-    }
-    // Build in 16-byte chunks so strcat count is O(len/16), not O(len).
-    let alphabet = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
-    let out = ""
-    let chunk = ""
-    let i = 0
-    loop i < len {
-        let c = (buf[off + i] as i32) & 255
-        if c >= 32 {
-            if c <= 126 {
-                chunk = chunk + substr(alphabet, c - 32, 1)
-            }
-        }
-        i = i + 1
-        if chunk.len >= 16 {
-            out = out + chunk
-            chunk = ""
-        }
-    }
-    if chunk.len > 0 {
-        out = out + chunk
-    }
-    return out
 }
 
 fn clear_blob_load() {
@@ -3501,6 +3441,621 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Live capture, viewer side
+//
+// live.ns owns the session, the wire protocol and the frame ring. Everything
+// here turns one retained frame (or the whole retained window) into the same
+// event, flame and hot-list arrays a loaded ns.profile fills, so the timeline
+// and flamegraph draw a live frame exactly as they draw a file.
+
+// Target thread id -> viewer lane, and how much of each table is published.
+let g_live_lane = [i32](256)
+let g_live_lanes_published = 0
+// Next wall-clock millisecond at which Window mode may redecode the window.
+let g_live_window_next: u64 = 0
+// Cached header and status lines, rebuilt on a timer instead of every frame.
+let g_live_header = "NS Profile - live"
+let g_live_header_src = ""
+let g_live_status = "Live capture idle."
+let g_live_status_next: u64 = 0
+let g_live_syms_published = 0
+// Flame rebuild scratch: sibling lists keyed by symbol keep the per-frame
+// rebuild linear instead of scanning every node for each event.
+let g_node_sym = [i32](4096)
+let g_node_child = [i32](4096)
+let g_node_sib = [i32](4096)
+let g_live_root = -1
+let g_live_stack = [i32](4096)
+let g_live_stack_end = [f64](4096)
+let g_live_hot_self = [f64](256)
+
+// Copy new symbols into the string pool and new target threads into lanes.
+// Ids are dense and stable, so only the tail of each table is ever new.
+fn live_publish_tables() {
+    if g_live_sym_count > g_live_syms_published {
+        ensure_str_pool_capacity(g_live_sym_count)
+        ensure_sym_color_capacity(g_live_sym_count)
+        let id = g_live_syms_published
+        loop id < g_live_sym_count {
+            if id < g_str_pool.len {
+                let label = live_symbol(id)
+                g_str_pool[id] = label
+                if id < g_sym_color.len {
+                    g_sym_color[id] = name_color(label)
+                }
+                if id + 1 > g_str_pool_count {
+                    g_str_pool_count = id + 1
+                }
+            }
+            id = id + 1
+        }
+        g_live_syms_published = g_live_sym_count
+    }
+    if g_live_thread_count > g_live_lanes_published {
+        let id = g_live_lanes_published
+        loop id < g_live_thread_count {
+            if id < g_live_lane.len {
+                g_live_lane[id] = lane_find_or_add(live_thread(id))
+            }
+            id = id + 1
+        }
+        g_live_lanes_published = g_live_thread_count
+    }
+}
+
+fn live_sym_name(sym: i32) str {
+    if sym < 0 {
+        return "?"
+    }
+    if sym >= g_str_pool_count {
+        return "?"
+    }
+    return g_str_pool[sym]
+}
+
+fn live_flame_child(parent: i32, sym: i32) i32 {
+    let child = g_live_root
+    if parent >= 0 {
+        child = g_node_child[parent]
+    }
+    loop child >= 0 {
+        if g_node_sym[child] == sym {
+            return child
+        }
+        child = g_node_sib[child]
+    }
+    return -1
+}
+
+fn live_flame_add(parent: i32, sym: i32) i32 {
+    if g_node_count >= g_node_sym.len {
+        return -1
+    }
+    let node = add_node(parent, live_sym_name(sym))
+    if node < 0 {
+        return -1
+    }
+    g_node_sym[node] = sym
+    g_node_child[node] = -1
+    if parent >= 0 {
+        g_node_sib[node] = g_node_child[parent]
+        g_node_child[parent] = node
+    } else {
+        g_node_sib[node] = g_live_root
+        g_live_root = node
+    }
+    return node
+}
+
+fn live_stack_slot(lane: i32, depth: i32) i32 {
+    let l = lane
+    if l < 0 {
+        l = 0
+    }
+    if l >= LIVE_STACK_LANES() {
+        l = LIVE_STACK_LANES() - 1
+    }
+    let d = depth
+    if d < 0 {
+        d = 0
+    }
+    if d >= LIVE_STACK_DEPTH() {
+        d = LIVE_STACK_DEPTH() - 1
+    }
+    return l * LIVE_STACK_DEPTH() + d
+}
+
+// Rebuild the aggregated flame tree from the events on screen. Samples arrive
+// sorted by start time, so the most recent event one level up is the parent as
+// long as it still covers this one.
+fn live_rebuild_flame() {
+    g_node_count = 0
+    g_live_root = -1
+    let i = 0
+    loop i < g_live_stack.len {
+        g_live_stack[i] = -1
+        g_live_stack_end[i] = 0.0
+        i = i + 1
+    }
+    i = 0
+    loop i < g_ev_count {
+        let depth = g_ev_depth[i]
+        if depth < 0 {
+            depth = 0
+        }
+        let lane = g_ev_lane[i]
+        let start = g_ev_start[i]
+        let parent = -1
+        if depth > 0 {
+            let up = live_stack_slot(lane, depth - 1)
+            let candidate = g_live_stack[up]
+            if candidate >= 0 {
+                if start <= g_live_stack_end[up] + 0.05 {
+                    parent = candidate
+                }
+            }
+        }
+        let sym = g_ev_sym[i]
+        let node = live_flame_child(parent, sym)
+        if node < 0 {
+            node = live_flame_add(parent, sym)
+        }
+        if node >= 0 {
+            g_node_calls[node] = g_node_calls[node] + g_ev_calls[i]
+            g_node_total[node] = g_node_total[node] + g_ev_duration[i]
+            g_node_self[node] = g_node_self[node] + g_ev_self[i]
+            let here = live_stack_slot(lane, depth)
+            g_live_stack[here] = node
+            g_live_stack_end[here] = start + g_ev_duration[i]
+        }
+        i = i + 1
+    }
+    layout_flame()
+}
+
+fn ensure_live_hot_capacity(need: i32) {
+    if need <= g_live_hot_self.len {
+        return
+    }
+    let next = g_live_hot_self.len
+    if next < 256 {
+        next = 256
+    }
+    loop next < need {
+        next = next * 2
+        if next >= 65536 {
+            next = 65536
+            break
+        }
+    }
+    if need > next {
+        return
+    }
+    g_live_hot_self = [f64](next)
+}
+
+// Self time per symbol over the events on screen, kept as a sorted top list so
+// the side panel matches what the flamegraph is showing.
+fn live_rebuild_hot() {
+    ensure_live_hot_capacity(g_str_pool_count)
+    let i = 0
+    loop i < g_live_hot_self.len {
+        g_live_hot_self[i] = 0.0
+        i = i + 1
+    }
+    i = 0
+    loop i < g_ev_count {
+        let sym = g_ev_sym[i]
+        if sym >= 0 {
+            if sym < g_live_hot_self.len {
+                g_live_hot_self[sym] = g_live_hot_self[sym] + g_ev_self[i]
+            }
+        }
+        i = i + 1
+    }
+    g_hot_count = 0
+    let limit = g_hot_self.len
+    let sym = 0
+    loop sym < g_str_pool_count {
+        if sym < g_live_hot_self.len {
+            let self_ms = g_live_hot_self[sym]
+            if self_ms > 0.0 {
+                let at = g_hot_count
+                if g_hot_count >= limit {
+                    at = limit
+                    if self_ms <= g_hot_self[limit - 1] {
+                        at = -1
+                    } else {
+                        at = limit - 1
+                    }
+                }
+                if at >= 0 {
+                    loop at > 0 {
+                        if g_hot_self[at - 1] >= self_ms {
+                            break
+                        }
+                        g_hot_name[at] = g_hot_name[at - 1]
+                        g_hot_kind[at] = g_hot_kind[at - 1]
+                        g_hot_self[at] = g_hot_self[at - 1]
+                        g_hot_total[at] = g_hot_total[at - 1]
+                        g_hot_calls[at] = g_hot_calls[at - 1]
+                        at = at - 1
+                    }
+                    g_hot_name[at] = live_sym_name(sym)
+                    g_hot_kind[at] = "scope"
+                    g_hot_self[at] = self_ms
+                    g_hot_total[at] = self_ms
+                    g_hot_calls[at] = 0
+                    if g_hot_count < limit {
+                        g_hot_count = g_hot_count + 1
+                    }
+                }
+            }
+        }
+        sym = sym + 1
+    }
+    // Calls and inclusive time come from the same events, tallied per node.
+    let node = 0
+    loop node < g_node_count {
+        let name = g_node_name[node]
+        let h = 0
+        loop h < g_hot_count {
+            if g_hot_name[h] == name {
+                g_hot_calls[h] = g_hot_calls[h] + g_node_calls[node]
+                g_hot_total[h] = g_hot_total[h] + g_node_total[node]
+                break
+            }
+            h = h + 1
+        }
+        node = node + 1
+    }
+}
+
+fn live_decode_slot(slot: i32) {
+    if slot < 0 {
+        return
+    }
+    let count = g_lf_events[slot]
+    let base = g_lf_off[slot]
+    ensure_event_capacity(g_ev_count + count)
+    let i = 0
+    loop i < count {
+        let at = base + i * LIVE_EVENT_SIZE()
+        let depth = (g_lf_buf[at + 1] as i32) & 255
+        let thread = read_u16_le(g_lf_buf, at + 2)
+        let sym = read_u16_le(g_lf_buf, at + 4)
+        let start = us_to_ms(read_i32_le(g_lf_buf, at + 8))
+        let dur = us_to_ms(read_i32_le(g_lf_buf, at + 12))
+        let self_ms = us_to_ms(read_i32_le(g_lf_buf, at + 16))
+        let lane = 0
+        if thread >= 0 {
+            if thread < g_live_lane.len {
+                lane = g_live_lane[thread]
+            }
+        }
+        push_blob_event_fast(start, dur, self_ms, depth, sym, lane)
+        i = i + 1
+    }
+}
+
+fn live_reset_events() {
+    g_ev_count = 0
+    g_ev_raw = 0
+    g_ev_max_dur = 0.0
+    g_long_count = 0
+    g_time_origin = 0.0
+    g_time_end = 0.0
+    g_selected_ev = -1
+    g_hot_count = 0
+    g_node_count = 0
+    g_live_root = -1
+}
+
+fn live_fit_view(t0: f64, t1: f64) {
+    g_time_origin = t0
+    g_time_end = t1
+    if g_time_end <= g_time_origin {
+        g_time_end = g_time_origin + 1.0
+    }
+    g_t0 = g_time_origin
+    g_t1 = g_time_end
+    clamp_view()
+    cam_snap_time()
+    g_cam_scroll = g_scroll
+    g_vel_t = 0.0
+    g_vel_scroll = 0.0
+    g_cam_coasting = false
+}
+
+// Decode the selected frame (or the whole retained window) into the shared
+// event arrays and rebuild everything drawn from them.
+fn live_show_selection() {
+    g_live_dirty = false
+    if g_lf_count <= 0 {
+        return
+    }
+    live_reset_events()
+    let t0: f64 = 0.0
+    let t1: f64 = 0.0
+    let events = 0
+    if g_live_window {
+        let i = 0
+        loop i < g_lf_count {
+            let slot = live_slot_at(i)
+            if i == 0 {
+                t0 = g_lf_start[slot]
+            }
+            t1 = g_lf_end[slot]
+            events = events + g_lf_events[slot]
+            live_decode_slot(slot)
+            i = i + 1
+        }
+    } else {
+        let slot = live_selected_slot()
+        if slot < 0 {
+            return
+        }
+        t0 = g_lf_start[slot]
+        t1 = g_lf_end[slot]
+        events = g_lf_events[slot]
+        live_decode_slot(slot)
+    }
+    if g_time_origin < t0 {
+        t0 = g_time_origin
+    }
+    if g_time_end > t1 {
+        t1 = g_time_end
+    }
+    let span = t1 - t0
+    if span <= 0.0 {
+        span = 1.0
+    }
+    // The metric row and the flame width read these; in live mode they describe
+    // the frame on screen rather than a whole run.
+    g_elapsed = fmt_1dec(span)
+    g_scope_calls = `{g_ev_count}`
+    g_ffi_calls = `{events}`
+    g_timeline_events = `{g_ev_count}`
+    g_format = "ns-profile-live"
+    rebuild_lane_layout(18.0)
+    live_rebuild_flame()
+    g_flame_frames = `{g_node_count}`
+    live_rebuild_hot()
+    live_fit_view(t0, t1)
+    invalidate_overview_batch()
+    g_ov_rebuild_pending = true
+    g_events_loaded = true
+    g_profile_loaded = true
+    if g_selected >= g_node_count {
+        g_selected = -1
+    }
+}
+
+fn live_tick() {
+    if g_live_enabled == false {
+        return
+    }
+    live_listen()
+    let had_client = g_live_client >= 0
+    live_accept()
+    if had_client == false {
+        if g_live_client >= 0 {
+            // A fresh connection republishes its tables from id 0.
+            g_live_syms_published = 0
+            g_live_lanes_published = 0
+            clear_profile()
+        }
+    }
+    live_receive()
+    live_publish_tables()
+    if g_status != g_live_note {
+        g_status = g_live_note
+    }
+    if g_live_dirty {
+        if g_live_follow {
+            if g_live_window {
+                // Window mode decodes every retained frame, which is far too
+                // much work to redo 60 times a second. Refresh it a few times
+                // a second instead; one frame stays live at full rate.
+                let now = os_time_ms()
+                if now >= g_live_window_next {
+                    g_live_window_next = now + 250
+                    live_show_selection()
+                }
+            } else {
+                live_show_selection()
+            }
+        } else {
+            g_live_dirty = false
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// live controls
+
+// The target names itself in its HELLO; show what is being measured. Composed
+// once per name change: the native heap never frees, so a string rebuilt every
+// frame would grow for as long as the session runs.
+fn live_header_text() str {
+    if g_live_title != g_live_header_src {
+        g_live_header_src = g_live_title
+        if g_live_title.len > 0 {
+            g_live_header = `NS Profile - live: {g_live_title}`
+        } else {
+            g_live_header = "NS Profile - live"
+        }
+    }
+    return g_live_header
+}
+
+// Recomposed a few times a second rather than every frame, for the same reason.
+fn live_status_text() str {
+    let now = os_time_ms()
+    if now < g_live_status_next {
+        return g_live_status
+    }
+    g_live_status_next = now + 250
+    if g_live_client >= 0 {
+        let retained = live_frames_retained()
+        if g_live_gaps > 0 {
+            g_live_status = `frame {g_live_last_index} - {retained} retained, {g_live_gaps} dropped`
+        } else {
+            if g_live_paused {
+                g_live_status = `paused - {retained} frames retained`
+            } else {
+                g_live_status = `frame {g_live_last_index} - {retained} retained`
+            }
+        }
+        return g_live_status
+    }
+    if live_target_running() {
+        g_live_status = `waiting on port {g_live_port}`
+        return g_live_status
+    }
+    g_live_status = g_live_note
+    return g_live_status
+}
+
+fn draw_frame_strip(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
+    let count = live_frames_retained()
+    if count <= 0 {
+        ui_draw_text(r, x + 8.0, y + h * 0.5 - 6.0, "No frames captured yet.", PX(), col_muted(), FONT())
+        return
+    }
+    let slots = LIVE_FRAMES() as f64
+    let bw = (w - 4.0) / slots
+    if bw < 1.0 {
+        bw = 1.0
+    }
+    // The budget line is the reference a frame is judged against; bars are
+    // scaled so a frame at twice the budget still fits the row.
+    let peak = LIVE_BUDGET_MS() * 2.0
+    let i = 0
+    loop i < count {
+        let slot = live_slot_at(i)
+        let span = g_lf_end[slot] - g_lf_start[slot]
+        if span > peak {
+            peak = span
+        }
+        i = i + 1
+    }
+    let selected = live_selected_slot()
+    let inner_h = h - 6.0
+    let hovered = -1
+    i = 0
+    loop i < count {
+        let slot = live_slot_at(i)
+        let span = g_lf_end[slot] - g_lf_start[slot]
+        let bx = x + 2.0 + i as f64 * bw
+        let bh = inner_h * (span / peak)
+        if bh < 1.0 {
+            bh = 1.0
+        }
+        if bh > inner_h {
+            bh = inner_h
+        }
+        let color = col_accent()
+        if span >= LIVE_BUDGET_MS() {
+            color = col_warn()
+        }
+        if slot == selected {
+            color = col_text()
+        }
+        ui_fill_rect(r, bx, y + 3.0 + inner_h - bh, bw - 1.0, bh, color, 0.0)
+        if hit(v, bx, y, bw, h) {
+            hovered = i
+        }
+        i = i + 1
+    }
+    let budget_y = y + 3.0 + inner_h - inner_h * (LIVE_BUDGET_MS() / peak)
+    ui_fill_rect(r, x + 2.0, budget_y, w - 4.0, 1.0, col_line(), 0.0)
+    if hovered >= 0 {
+        let slot = live_slot_at(hovered)
+        let span = g_lf_end[slot] - g_lf_start[slot]
+        let label = `#{g_lf_index[slot]}  {fmt_time_ms(span)}  {g_lf_events[slot]} ev`
+        ui_draw_text(r, x + 8.0, y + 2.0, label, PX(), col_text(), FONT())
+        if v.mouse_pressed {
+            // Pinning a frame stops the view from following the newest one.
+            g_live_sel_index = g_lf_index[slot]
+            g_live_follow = false
+            live_show_selection()
+            ui_request_render(r, 2)
+        }
+    }
+}
+
+fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
+    let bh = 22.0
+    let bx = x
+    let run_label = "Run"
+    if live_target_running() {
+        run_label = "Restart"
+    }
+    if draw_button(r, v, bx, y, 70.0, bh, run_label, false) {
+        live_run_target()
+    }
+    bx = bx + 78.0
+    if draw_button(r, v, bx, y, 60.0, bh, "Stop", false) {
+        live_stop_target()
+    }
+    bx = bx + 68.0
+    let pause_label = "Pause"
+    if g_live_paused {
+        pause_label = "Resume"
+    }
+    if draw_button(r, v, bx, y, 70.0, bh, pause_label, g_live_paused) {
+        if g_live_paused {
+            live_send_command(LIVE_CMD_RESUME())
+            g_live_paused = false
+        } else {
+            live_send_command(LIVE_CMD_PAUSE())
+            g_live_paused = true
+        }
+    }
+    bx = bx + 78.0
+    if draw_button(r, v, bx, y, 60.0, bh, "Live", g_live_follow) {
+        if g_live_follow {
+            g_live_follow = false
+        } else {
+            g_live_follow = true
+        }
+        if g_live_follow {
+            g_live_sel_index = -1
+            live_show_selection()
+        }
+    }
+    bx = bx + 68.0
+    let window_label = "Frame"
+    if g_live_window {
+        window_label = "Window"
+    }
+    if draw_button(r, v, bx, y, 76.0, bh, window_label, g_live_window) {
+        // Frame: just the selected frame. Window: every retained frame at once.
+        if g_live_window {
+            g_live_window = false
+        } else {
+            g_live_window = true
+        }
+        live_show_selection()
+    }
+    bx = bx + 84.0
+    if draw_button(r, v, bx, y, 70.0, bh, "Replay", false) {
+        // Refill the window from the target's own ring.
+        live_clear_frames()
+        live_send_command(LIVE_CMD_REPLAY())
+    }
+    bx = bx + 78.0
+    let text_x = bx + 6.0
+    if text_x < x + w - 40.0 {
+        ui_push_clip(r, text_x, y + 4.0, x + w - text_x, 14.0)
+        ui_draw_text(r, text_x, y + 4.0, live_status_text(), PX(), col_muted(), FONT())
+        ui_pop_clip(r)
+    }
+}
+
 fn render_frame(r: ref ui_renderer, v: ref view) {
     ui_resize(r)
     g_mouse_x = ui_content_x(r, v.mouse_x)
@@ -3526,7 +4081,11 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     let pad = 10.0
     let header_h = 40.0
     ui_fill_rect(r, 0.0, 0.0, w, header_h, col_panel(), 0.0)
-    ui_draw_text(r, pad, 4.0, "NS Profile", TITLE_PX(), col_text(), FONT())
+    let title = "NS Profile"
+    if g_live_enabled {
+        title = live_header_text()
+    }
+    ui_draw_text(r, pad, 4.0, title, TITLE_PX(), col_text(), FONT())
     ui_push_clip(r, pad, 22.0, 280.0, 14.0)
     ui_draw_text(r, pad, 22.0, g_status, PX(), col_muted(), FONT())
     ui_pop_clip(r)
@@ -3574,14 +4133,31 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     let body_w = w - pad * 2.0
     let body_h = h - body_y - pad
 
+    if g_live_enabled {
+        // The live toolbar and the 128-frame strip sit above the profile body,
+        // so run controls and the frame history stay visible in every mode.
+        if body_w > 100.0 {
+            draw_live_bar(r, v, body_x, body_y, body_w)
+            draw_frame_strip(r, v, body_x, body_y + 28.0, body_w, 44.0)
+        }
+        body_y = body_y + 80.0
+        body_h = h - body_y - pad
+    }
+
     if body_w > 100.0 {
         if body_h > 80.0 {
             if g_profile_loaded == false {
                 let cy = body_y + min_f(90.0, body_h * 0.3)
-                ui_draw_text(r, body_x, cy, "No profile loaded", TITLE_PX(), col_text(), FONT())
-                ui_draw_text(r, body_x, cy + 20.0, "Run `ns profile` to write and open bin/ns.profile.", PX(), col_muted(), FONT())
-                if g_status == "Loaded file is not an ns-profile." {
-                    ui_draw_text(r, body_x, cy + 38.0, g_status, PX(), col_warn(), FONT())
+                if g_live_enabled {
+                    ui_draw_text(r, body_x, cy, "Waiting for live frames", TITLE_PX(), col_text(), FONT())
+                    ui_draw_text(r, body_x, cy + 20.0, "Run starts the project and streams its frames over loopback tcp.", PX(), col_muted(), FONT())
+                    ui_draw_text(r, body_x, cy + 38.0, live_status_text(), PX(), col_muted(), FONT())
+                } else {
+                    ui_draw_text(r, body_x, cy, "No profile loaded", TITLE_PX(), col_text(), FONT())
+                    ui_draw_text(r, body_x, cy + 20.0, "Run `ns profile` to write and open bin/ns.profile.", PX(), col_muted(), FONT())
+                    if g_status == "Loaded file is not an ns-profile." {
+                        ui_draw_text(r, body_x, cy + 38.0, g_status, PX(), col_warn(), FONT())
+                    }
                 }
             } else {
                 draw_profile(r, v, body_x, body_y, body_w, body_h)
@@ -3611,6 +4187,10 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
         // Keep pumping load stages while Flame (or empty) is on screen.
         ui_request_render(r, 2)
     }
+    if g_live_enabled {
+        // A live session is a continuous view: keep asking for the next frame.
+        ui_request_render(r, 2)
+    }
     draw_toast(r, w, h)
     g_frame_count = g_frame_count + 1
 }
@@ -3622,16 +4202,23 @@ fn main() {
     let ok = gpu_request_device(v)
     if ok {
         let r = ui_renderer_create(v)
-        if startup.len > 0 {
-            load_profile(startup)
+        if os_env("NS_PROFILE_LIVE") == "1" {
+            // `ns profiler --live`: listen, then run the project and stream.
+            live_start()
         } else {
-            let local = default_profile_path()
-            if os_file_size(local) >= 0 {
-                load_profile(local)
+            if startup.len > 0 {
+                load_profile(startup)
+            } else {
+                let local = default_profile_path()
+                if os_file_size(local) >= 0 {
+                    load_profile(local)
+                }
             }
         }
         v.on_frame({ fv in
-            // Drain load stages before drawing so the progress bar matches work.
+            // Drain the live socket and load stages before drawing, so the
+            // frame strip and the progress bar match the work already done.
+            live_tick()
             tick_blob_load()
             ui_begin_frame(r)
             render_frame(r, fv)
@@ -3650,6 +4237,7 @@ fn main() {
             }
         })
         v.on_terminate({ dv in
+            live_shutdown()
             if g_ov_batch > 0 {
                 ui_rect_batch_destroy(r, g_ov_batch)
                 g_ov_batch = 0

@@ -121,3 +121,13 @@ ref fn os_cwd() str
 ref fn os_env(name: str) str
 ref fn os_make_dirs(path: str) i32
 ref fn os_launch_ns_project(folder: str, entry: str) i32
+
+// Live profiling: start `<exe> profile --live-port <port> [entry]` with
+// `folder` as the child working directory, so a viewer that owns the TCP
+// listener can run, restart, and stop the program it measures. `exe` is the
+// `ns` executable (NS_PROFILE_NS names it for a viewer the CLI launched), and
+// an empty `entry` lets the child resolve its own project entry. Returns the
+// child process id, or 0 when the process could not be started.
+ref fn os_launch_ns_profile(exe: str, folder: str, entry: str, port: i32) i32
+ref fn os_process_alive(pid: i32) i32
+ref fn os_process_stop(pid: i32) i32

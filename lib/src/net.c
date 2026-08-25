@@ -10,6 +10,7 @@
 // socket calls are bridged with a few macros so the bodies below stay shared.
 #include "net.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -200,7 +201,38 @@ int net_udp_recv(int fd) {
     return n;
 }
 
+// Receive without blocking, distinguishing "nothing ready" from a closed peer.
+// net_recv() collapses both into -1, which a poll loop cannot act on.
+int net_recv_try(int fd) {
+    int n = (int)recv(fd, g_buf, NS_NET_BUF_CAP, 0);
+    if (n > 0) {
+        g_buf_len = n;
+        return n;
+    }
+    g_buf_len = 0;
+    if (n == 0) return -1; // peer closed
+#ifdef NS_WIN
+    int err = WSAGetLastError();
+    if (err == WSAEWOULDBLOCK) return 0;
+#else
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) return 0;
+#endif
+    return -2;
+}
+
 int net_buf_len(void) { return g_buf_len; }
+
+// Bulk copy from the receive buffer into a caller-owned byte array. Reading a
+// 64 KB payload one net_buf_byte() call at a time costs 65536 FFI calls; this
+// is one. Returns the number of bytes copied.
+int net_buf_read(unsigned char *dst, int dst_offset, int max) {
+    if (!dst || dst_offset < 0 || max <= 0) return 0;
+    int n = g_buf_len;
+    if (n > max) n = max;
+    if (n <= 0) return 0;
+    memcpy(dst + dst_offset, g_buf, (size_t)n);
+    return n;
+}
 
 int net_buf_byte(int i) {
     if (i < 0 || i >= g_buf_len) return -1;
@@ -227,6 +259,13 @@ static int net_send_all(int fd, const char *data, int len) {
 int net_send(int fd, const char *data, int len) {
     if (len < 0) return -1;
     return net_send_all(fd, data, len);
+}
+
+// Send raw bytes from a caller-owned array. `net_send` takes a `str`, which
+// cannot carry an embedded NUL, so binary protocol frames use this instead.
+int net_send_bytes(int fd, const unsigned char *data, int len) {
+    if (!data || len <= 0) return 0;
+    return net_send_all(fd, (const char *)data, len);
 }
 
 int net_send_str(int fd, const char *s) {

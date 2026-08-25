@@ -8,6 +8,7 @@
 #include "ns_pe.h"
 #include "ns_shader.h"
 #include "ns_profile.h"
+#include "ns_profile_live.h"
 #include "ns_project.h"
 #include "ns_build_cache.h"
 #include "ns_lint.h"
@@ -84,6 +85,11 @@ typedef struct ns_compile_option_t {
     ns_str filename;
     i32 port;
     ns_bool port_set;
+    // Live profiling: `--live-port` streams frames to a listening viewer,
+    // `ns profiler --live` starts that viewer with the project to run.
+    i32 live_port;
+    ns_str live_host;
+    ns_bool live_view;
 } ns_compile_option_t;
 
 ns_compile_option_t parse_options(i32 argc, i8** argv) {
@@ -160,6 +166,20 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             if (i + 1 >= argc) ns_exit(1, "usage", "%s needs a path.\n", argv[i]);
             option.output = ns_str_cstr(argv[i + 1]);
             i++;
+        } else if (strcmp(argv[i], "--live") == 0) {
+            option.live_view = true;
+        } else if (strcmp(argv[i], "--live-port") == 0) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--live-port needs a number.\n");
+            char *live_end = ns_null;
+            long live_port = strtol(argv[++i], &live_end, 10);
+            if (!live_end || *live_end || live_port <= 0 || live_port > 65535) {
+                ns_exit(1, "usage", "invalid live port %s.\n", argv[i]);
+            }
+            option.live_port = (i32)live_port;
+        } else if (strcmp(argv[i], "--live-host") == 0) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--live-host needs an address.\n");
+            option.live_host = ns_str_cstr(argv[i + 1]);
+            i++;
         } else if (strcmp(argv[i], "--port") == 0) {
             if (i + 1 >= argc) ns_exit(1, "usage", "--port needs a number.\n");
             char *end = ns_null;
@@ -220,6 +240,8 @@ void ns_help() {
     printf("  -h --help         show this help\n");
     printf("  --profile         profile execution or build phases; writes bin/ns.profile\n");
     printf("                    and print a hot-path summary\n");
+    printf("  --live-port <n>   with `ns profile`: stream live frames to a viewer on that port\n");
+    printf("  --live-host <a>   live streaming address (default 127.0.0.1)\n");
     printf("  -o --output       output path\n");
     printf("\ncommands:\n");
     printf("  init [path]       scaffold an ns project in place (default: cwd)\n");
@@ -234,6 +256,8 @@ void ns_help() {
     printf("  profile [path]    run like `ns run` with profiling; print a CLI hot-path summary\n");
     printf("                    the report is written to bin/ns.profile\n");
     printf("  profiler [file]   open the GUI viewer for bin/ns.profile (or file)\n");
+    printf("                    --live [path|target] instead runs the project and streams\n");
+    printf("                    live frames to the viewer over loopback tcp\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
@@ -264,6 +288,7 @@ static ns_bool ns_profile_auto_view = false;
 static ns_str ns_profile_output_path = {0};
 
 static void ns_exec_profile_view(ns_str filename);
+static void ns_exec_profile_live(ns_str filename);
 
 static void ns_mkdir_p(ns_str dir);
 static ns_str ns_path_dirname_safe(ns_str path);
@@ -279,6 +304,10 @@ static void ns_profile_ensure_output_dir(const char *path) {
 static void ns_profile_emit(f64 start_ms, i32 argc, i8 **argv) {
     if (ns_profile_written) return;
     ns_profile_written = true;
+
+    // Publish the last open frame and say goodbye before the report work runs,
+    // so the viewer's timeline ends where the program did.
+    ns_profile_live_close(NS_PROFILE_LIVE_BYE_EXIT);
 
     f64 elapsed_ms = ns_profile_now_ms() - start_ms;
     // Without a resolved project scope the report still goes to `bin/`, taken
@@ -4212,6 +4241,71 @@ static ns_bool ns_profile_launch_compiled(ns_str bundle) {
 #endif
 }
 
+// Start the GUI viewer, preferring the compiled bundle over interpreting
+// nscode/profile. Environment set by the caller (NS_PROFILE_FILE for a report,
+// NS_PROFILE_LIVE* for a live session) is what the viewer reads on startup.
+static ns_bool ns_profile_launch_viewer(const char *what) {
+    ns_str compiled = ns_profile_find_compiled();
+    if (compiled.data != ns_null) {
+        ns_info("profile", "opening compiled viewer for %s\n", what);
+        ns_bool ok = ns_profile_launch_compiled(compiled);
+        if (!ok) ns_warn("profile", "failed to launch compiled viewer %.*s\n", compiled.len, compiled.data);
+        ns_str_free(compiled);
+        return ok;
+    }
+    ns_str app = ns_profile_find_viewer();
+    if (app.data == ns_null) {
+        ns_warn("profile", "native viewer not found; build it with `ns build nscode/profile`\n");
+        return false;
+    }
+    ns_info("profile", "opening interpreted viewer for %s\n", what);
+    ns_exec_run(app, 0, false, false);
+    ns_str_free(app);
+    return true;
+}
+
+// `ns profiler --live [path|target]`: open the viewer in live mode and hand it
+// the project to run. The viewer owns the TCP listener and spawns the profiled
+// process itself, so Run / Restart stay inside the viewer window.
+static void ns_exec_profile_live(ns_str filename) {
+    ns_str cwd = ns_getcwd();
+    ns_str project = ns_str_null;
+    ns_str entry = ns_str_null;
+    if (filename.len > 0) {
+        ns_str resolved = ns_path_resolve(cwd, filename);
+        if (ns_is_dir(resolved)) {
+            project = resolved;
+        } else if (ns_file_exists(resolved)) {
+            entry = resolved;
+        } else {
+            // Not a path: `ns profile <target>` names a [[targets]] table.
+            ns_str_free(resolved);
+            entry = ns_str_concat(filename, ns_str_cstr(""));
+        }
+    }
+    const char *project_dir = project.data != ns_null ? project.data : (cwd.data != ns_null ? cwd.data : ".");
+    const char *entry_name = entry.data != ns_null ? entry.data : "";
+    ns_str executable = ns_project_current_executable();
+    const char *exe = executable.data != ns_null ? executable.data : "ns";
+
+#if defined(_WIN32)
+    _putenv_s("NS_PROFILE_LIVE", "1");
+    _putenv_s("NS_PROFILE_PROJECT", project_dir);
+    _putenv_s("NS_PROFILE_ENTRY", entry_name);
+    _putenv_s("NS_PROFILE_NS", exe);
+#else
+    setenv("NS_PROFILE_LIVE", "1", 1);
+    setenv("NS_PROFILE_PROJECT", project_dir, 1);
+    setenv("NS_PROFILE_ENTRY", entry_name, 1);
+    setenv("NS_PROFILE_NS", exe, 1);
+#endif
+    ns_profile_launch_viewer(entry_name[0] ? entry_name : project_dir);
+    ns_str_free(executable);
+    ns_str_free(entry);
+    ns_str_free(project);
+    ns_str_free(cwd);
+}
+
 static void ns_exec_profile_view(ns_str filename) {
     // Resolve against the caller's cwd before launch. The compiled .app may
     // start with a different working directory, so a relative bin/ns.profile
@@ -4236,28 +4330,13 @@ static void ns_exec_profile_view(ns_str filename) {
     setenv("NS_PROFILE_FILE", path, 1);
 #endif
 
-    ns_str compiled = ns_profile_find_compiled();
-    if (compiled.data != ns_null) {
-        ns_info("profile", "opening compiled viewer for %s\n", path);
-        if (!ns_profile_launch_compiled(compiled)) {
-            ns_warn("profile", "failed to launch compiled viewer %.*s\n", compiled.len, compiled.data);
-        }
-        ns_str_free(compiled);
-        ns_str_free(resolved);
-        ns_str_free(cwd);
-        return;
-    }
-
-    ns_str app = ns_profile_find_viewer();
-    if (app.data == ns_null) {
-        ns_warn("profile", "native viewer not found; build it with `ns build nscode/profile`\n");
-        ns_str_free(resolved);
-        ns_str_free(cwd);
-        return;
-    }
-    ns_info("profile", "opening interpreted viewer for %s\n", path);
-    ns_exec_run(app, 0, false, false);
-    ns_str_free(app);
+    // A file session must not inherit a live session's environment.
+#if defined(_WIN32)
+    _putenv_s("NS_PROFILE_LIVE", "");
+#else
+    unsetenv("NS_PROFILE_LIVE");
+#endif
+    ns_profile_launch_viewer(path);
     ns_str_free(resolved);
     ns_str_free(cwd);
 }
@@ -4876,14 +4955,28 @@ i32 main(i32 argc, i8** argv) {
     }
 
     if (option.profile) {
-        ns_profile_auto_view = option.profile_cmd;
+        // A live run streams to a viewer that is already open; opening a second
+        // one over the finished report would fight it for the screen.
+        ns_profile_auto_view = option.profile_cmd && option.live_port == 0;
         ns_profile_begin(argc, argv);
+        if (option.live_port > 0) {
+            const char *host = option.live_host.data;
+            const char *title = option.filename.len > 0 ? option.filename.data : "ns";
+            if (ns_profile_live_connect(host, option.live_port, title)) {
+                ns_info("profile", "live capture streaming to %s:%d (%d frame ring)\n",
+                        host && host[0] ? host : "127.0.0.1", option.live_port, NS_PROFILE_LIVE_FRAMES);
+            }
+        }
     }
 
     ns_configure_vm_runtime_paths(&vm);
 
     if (option.profile_view) {
-        ns_exec_profile_view(option.filename);
+        if (option.live_view) {
+            ns_exec_profile_live(option.filename);
+        } else {
+            ns_exec_profile_view(option.filename);
+        }
     } else if (option.profile_cmd) {
         ns_exec_run(option.filename, option.port, option.port_set, false);
     } else if (option.run) {

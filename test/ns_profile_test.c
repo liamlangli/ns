@@ -146,5 +146,40 @@ int main() {
     ns_expect(ns_profile.events[299999].start_ms > 299998.0, "newest sample retained");
     ns_profile_reset();
 
+    // Live mode: the timeline becomes a ring of whole frames. Capture keeps
+    // running for as long as the program does, so only the last
+    // NS_PROFILE_LIVE_FRAMES frames are retained.
+    ns_profile_enable(0.0);
+    ns_profile_ring_enable();
+    ns_expect(ns_profile.ring, "ring enabled");
+    for (i32 frame = 0; frame < 400; frame++) {
+        for (i32 e = 0; e < 3; e++) {
+            ns_profile_record_ffi(S("draw"), S("gpu"), (f64)(frame * 10 + e), 1.0);
+        }
+        ns_profile_frame_boundary();
+    }
+    ns_expect(ns_array_length(ns_profile.events) == 0, "ring mode keeps the linear timeline empty");
+    ns_expect(ns_profile.frame_seq == 400, "every frame published");
+    ns_expect(ns_profile.frame_fill == NS_PROFILE_LIVE_FRAMES - 1, "ring holds its full window");
+    ns_expect(ns_profile.ffi_calls == 1200, "aggregates still cover the whole run");
+    i32 oldest_slot = ns_profile.frame_head - ns_profile.frame_fill;
+    while (oldest_slot < 0) oldest_slot += NS_PROFILE_LIVE_FRAMES;
+    // 127 closed frames behind the open one: 128 frames of data in all.
+    ns_expect(ns_profile.frames[oldest_slot].index == 400 - (NS_PROFILE_LIVE_FRAMES - 1), "oldest retained frame is the window start");
+    ns_expect(ns_profile.frames_retired == 0, "no frame dropped early under the event budget");
+
+    // The exit report covers exactly the window the ring still holds. Frames
+    // coalesce their three identical back-to-back spans into one.
+    i32 flat = ns_profile_ring_flatten();
+    ns_expect(flat == NS_PROFILE_LIVE_FRAMES - 1, "flatten yields one span per retained frame");
+    ns_expect(ns_profile.events[0].start_ms >= (f64)((400 - (NS_PROFILE_LIVE_FRAMES - 1)) * 10), "flattened window starts at the oldest frame");
+
+    // An empty frame is not published: the boundary fires on every callback,
+    // including ones that record nothing.
+    u32 before = ns_profile.frame_seq;
+    ns_profile_frame_boundary();
+    ns_expect(ns_profile.frame_seq == before, "empty frames are not published");
+    ns_profile_reset();
+
     return 0;
 }
