@@ -15,6 +15,28 @@ void ns_rt_set_strtab(const char **tab, const int32_t *lens, int n);
 
 int64_t ns_rt_alloc(int64_t size);
 int64_t ns_rt_clone(int64_t src, int64_t size);
+
+// Call scope reclamation. The heap is a bump allocator with no free, so a
+// program that allocates every frame would keep growing until the 4 GiB of
+// address space ran out. A function whose allocations provably cannot outlive
+// the call records the heap top on entry and hands it back on return, which
+// turns those temporaries into stack-like storage. The compiler emits the pair
+// only where its escape analysis proves nothing is kept (see ns_ssa.c).
+//
+// `ns_rt_scope_leave` returns the value the function returns: a struct result
+// that lives in the region being dropped is moved down to the mark first, so a
+// caller keeps a valid address. `size` is the byte size of that result, or 0
+// when the function returns nothing that lives in the heap.
+int64_t ns_rt_scope_enter(void);
+int64_t ns_rt_scope_leave(int64_t mark, int64_t value, int64_t size);
+
+// Keep a value that has just become reachable from outside the call that made
+// it. Each form pins the whole extent the value owns, so no later scope release
+// can recycle it; pinning something the caller already owned is free.
+void ns_rt_pin(int64_t addr, int64_t size);
+void ns_rt_pin_str(int64_t str);
+void ns_rt_pin_array(int64_t arr, int64_t stride);
+void ns_rt_pin_all(void);
 int64_t ns_rt_load(int64_t addr, int64_t off, int64_t size);
 void ns_rt_store(int64_t addr, int64_t off, int64_t val, int64_t size);
 void ns_rt_copy(int64_t dst, int64_t doff, int64_t src, int64_t size);

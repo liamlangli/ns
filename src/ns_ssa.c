@@ -59,6 +59,15 @@ typedef struct ns_ssa_capture {
     ns_type type;
 } ns_ssa_capture;
 
+// One parameter waiting to be bound, so that binding - which may allocate a
+// box - happens after every PARAM has taken its argument out of its register.
+typedef struct ns_ssa_param_box {
+    ns_str name;
+    i32 value;
+    ns_type type;
+    i32 ast;
+} ns_ssa_param_box;
+
 typedef struct ns_ssa_builder {
     ns_ast_ctx *ctx;
     ns_vm *vm;
@@ -237,6 +246,9 @@ ns_str ns_ssa_op_to_string(ns_ssa_op op) {
         ns_str_case(NS_SSA_OP_GLOBAL_SET)
         ns_str_case(NS_SSA_OP_ALLOC)
         ns_str_case(NS_SSA_OP_CLONE)
+        ns_str_case(NS_SSA_OP_SCOPE_ENTER)
+        ns_str_case(NS_SSA_OP_SCOPE_LEAVE)
+        ns_str_case(NS_SSA_OP_PIN)
         ns_str_case(NS_SSA_OP_LOAD)
         ns_str_case(NS_SSA_OP_STORE)
         ns_str_case(NS_SSA_OP_ARRAY_NEW)
@@ -3187,6 +3199,7 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
     b->captures = NULL;
     b->capture_env = -1;
     i32 arg = arg_head;
+    ns_ssa_param_box *boxes = NULL;
     for (i32 ai = 0; ai < arg_count && arg > 0; ++ai) {
         ns_ast_t *an = &b->ctx->nodes[arg];
         ns_type arg_type = fn_symbol && fn_symbol->type == NS_SYMBOL_FN &&
@@ -3202,10 +3215,19 @@ static void ns_ssa_lower_fn(ns_ssa_builder *b, i32 ast, ns_str name, i32 body, i
         }
         ns_array_push(b->fn->params, arg_type);
         i32 v = ns_ssa_emit_value(b, NS_SSA_OP_PARAM, -1, ai, arg_type, an->arg.name.val, an->arg.name, arg);
-        ns_ssa_maybe_box_name(b, an->arg.name.val, v, arg_type, arg);
+        ns_ssa_param_box box = {.name = an->arg.name.val, .value = v, .type = arg_type, .ast = arg};
+        ns_array_push(boxes, box);
         if (definition->type == NS_AST_OP_FN_DEF && ai == 0) arg = definition->ops_fn_def.right;
         else arg = an->next;
     }
+    // Every argument is still in the register the caller left it in until its
+    // PARAM has stored it, and boxing one allocates. Binding the names only
+    // once the last PARAM has run keeps that allocation from overwriting the
+    // arguments that have not been taken yet.
+    for (i32 bi = 0, bl = (i32)ns_array_length(boxes); bi < bl; ++bi) {
+        ns_ssa_maybe_box_name(b, boxes[bi].name, boxes[bi].value, boxes[bi].type, boxes[bi].ast);
+    }
+    ns_array_free(boxes);
     ns_ssa_lower_compound(b, body);
     if (!b->fn->blocks[b->block].terminated) {
         ns_ssa_emit_ret(b, -1, ast);
@@ -3275,6 +3297,349 @@ static void ns_ssa_lower_imported_fns(ns_ssa_builder *b) {
         }
     }
     b->ctx = saved;
+}
+
+/* ── heap reclamation ─────────────────────────────────────────────────────────
+ *
+ * The native heap is a bump allocator with no free (see ns_native_rt.c): every
+ * struct, string and closure a compiled program builds stays where it was put
+ * for the life of the process. A program that computes per frame therefore
+ * grows without bound and eventually exhausts the heap's 4 GiB of addresses,
+ * which is a crash rather than a slowdown.
+ *
+ * This pass makes a call give back what it did not publish. Each function that
+ * allocates records the heap top on entry and releases back to it on return,
+ * which turns its temporaries into stack-like storage; a struct result is moved
+ * down to the release point on the way out so the caller still reads live
+ * bytes. Because a released address must not be reachable from anywhere else,
+ * every instruction that hands an address to something outliving the call -
+ * a global, a container, a foreign library - pins it first, and a release stops
+ * at the highest pinned address. Pinning a value the caller already owned is
+ * free: its address is already below the mark being released to.
+ *
+ * Soundness is therefore local to one function: nothing has to be known about
+ * what a callee does, because a callee pins whatever it publishes.
+ */
+
+/* A value of this type is a heap address rather than an immediate. */
+static ns_bool ns_ssa_scope_heap_type(ns_type t) {
+    if (ns_type_is_ref(t) || ns_type_is_array(t)) return true;
+    switch (t.type) {
+    case NS_TYPE_STRING:
+    case NS_TYPE_STRUCT:
+    case NS_TYPE_DICT:
+    case NS_TYPE_SET:
+    case NS_TYPE_FN:
+    case NS_TYPE_BLOCK:
+    case NS_TYPE_UNION:
+    case NS_TYPE_ANY:
+    case NS_TYPE_TASK:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* A struct value: bytes rather than a handle, so storing one copies it. */
+static ns_bool ns_ssa_scope_struct_value(ns_type t) {
+    return ns_type_is(t, NS_TYPE_STRUCT) && !ns_type_is_ref(t) && !ns_type_is_array(t);
+}
+
+/* Whether the bytes of this value hold no further address, so that keeping the
+ * block they occupy keeps the whole value. */
+static ns_bool ns_ssa_scope_flat(ns_ssa_builder *b, ns_type t, i32 depth) {
+    if (!ns_ssa_scope_heap_type(t)) return true;
+    if (!ns_ssa_scope_struct_value(t) || depth > 8) return false;
+    i32 index = ns_type_index(t);
+    if (index < 0 || index >= (i32)ns_array_length(b->vm->symbols)) return false;
+    ns_symbol *st = &b->vm->symbols[index];
+    if (st->type != NS_SYMBOL_STRUCT) return false;
+    for (i32 i = 0, l = (i32)ns_array_length(st->st.fields); i < l; ++i) {
+        if (!ns_ssa_scope_flat(b, st->st.fields[i].t, depth + 1)) return false;
+    }
+    return true;
+}
+
+/* Bytes a struct occupies, taking whichever of the two layouts is larger: a pin
+ * only has to cover the value, never to describe it. */
+static i32 ns_ssa_scope_struct_bytes(ns_ssa_builder *b, ns_type t) {
+    ns_type value = ns_type_set_ref(t, false);
+    i32 size = ns_ssa_wasm32_size(b, value);
+    i32 index = ns_type_index(t);
+    if (index >= 0 && index < (i32)ns_array_length(b->vm->symbols)) {
+        ns_symbol *st = &b->vm->symbols[index];
+        if (st->type == NS_SYMBOL_STRUCT && (i32)st->st.stride > size) size = (i32)st->st.stride;
+    }
+    return size;
+}
+
+typedef enum {
+    NS_SSA_PIN_BLOCK = 0, /* a flat block of `size` bytes */
+    NS_SSA_PIN_STR = 1,
+    NS_SSA_PIN_ARRAY = 2, /* elements of `size` bytes each */
+    NS_SSA_PIN_ALL = 3,   /* extent unknown: keep everything allocated so far */
+} ns_ssa_pin_kind;
+
+/* How to pin a published value of this type, or false when publishing it puts
+ * no address anywhere. */
+static ns_bool ns_ssa_scope_pin_kind(ns_ssa_builder *b, ns_type t, i32 *kind, i32 *size) {
+    *kind = NS_SSA_PIN_ALL;
+    *size = 0;
+    if (!ns_ssa_scope_heap_type(t)) return false;
+    if (ns_type_is_array(t)) {
+        ns_type element = t;
+        element.array = false;
+        if (ns_type_is_ref(t) || !ns_ssa_scope_flat(b, element, 0)) return true;
+        *kind = NS_SSA_PIN_ARRAY;
+        *size = ns_ssa_wasm32_size(b, element);
+        return true;
+    }
+    if (ns_type_is_ref(t)) {
+        ns_type pointee = ns_type_set_ref(t, false);
+        if (!ns_ssa_scope_flat(b, pointee, 0)) return true;
+        *kind = NS_SSA_PIN_BLOCK;
+        *size = ns_type_is(t, NS_TYPE_STRUCT) ? ns_ssa_scope_struct_bytes(b, t)
+                                              : ns_ssa_wasm32_size(b, pointee);
+        if (*size < 8) *size = 8;
+        return true;
+    }
+    if (ns_type_is(t, NS_TYPE_STRING)) {
+        *kind = NS_SSA_PIN_STR;
+        return true;
+    }
+    if (ns_ssa_scope_struct_value(t) && ns_ssa_scope_flat(b, t, 0)) {
+        *kind = NS_SSA_PIN_BLOCK;
+        *size = ns_ssa_scope_struct_bytes(b, t);
+        return true;
+    }
+    return true;
+}
+
+/* Writing one of these into memory writes an address. A plain struct field or
+ * array element is a byte copy instead, and one whose bytes hold no address
+ * publishes nothing. */
+static ns_bool ns_ssa_scope_copies_bytes(ns_ssa_builder *b, ns_type t) {
+    return ns_ssa_scope_struct_value(t) && ns_ssa_scope_flat(b, t, 0);
+}
+
+/* Whether a call runs ns code that pins for itself. `std` is a fixed set of
+ * leaf helpers that keep no address. Everything a native library owns may hold
+ * on to what it is given, `task` hands values to another thread, and the
+ * runtime's own container helpers store what they are passed, so an argument
+ * that crosses one of those is pinned first. */
+static ns_bool ns_ssa_scope_call_pins_itself(ns_ssa_module *m, ns_ssa_inst *inst) {
+    if (ns_str_equals(inst->module, ns_str_cstr("std"))) return true;
+    if (ns_str_equals(inst->module, ns_str_cstr("task"))) return false;
+    if (inst->module.len > 0 && !ns_str_equals(inst->module, ns_str_cstr("simd")) &&
+        !ns_str_equals(inst->module, ns_str_cstr("shader"))) {
+        return false;
+    }
+    if (inst->name.len == 0) return false;
+    if (inst->name.len > 6 && memcmp(inst->name.data, "ns_rt_", 6) == 0) return false;
+    for (i32 i = 0, l = (i32)ns_array_length(m->fns); i < l; ++i) {
+        if (ns_str_equals(m->fns[i].name, inst->name)) return true;
+    }
+    return false;
+}
+
+static ns_ssa_inst ns_ssa_scope_pin_inst(i32 value, i32 kind, i32 size, i32 ast) {
+    ns_ssa_inst pin = NS_SSA_INST_INIT(NS_SSA_OP_PIN, ast);
+    pin.a = value;
+    pin.c = size;
+    pin.target0 = kind;
+    pin.type = ns_type_void;
+    return pin;
+}
+
+/* Type of every value the function defines, so a call argument can be pinned
+ * according to what it holds. */
+static ns_type *ns_ssa_scope_value_types(ns_ssa_fn *fn, i32 nvalues) {
+    ns_type *types = ns_malloc((szt)nvalues * sizeof(ns_type));
+    for (i32 i = 0; i < nvalues; ++i) types[i] = ns_type_unknown;
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        i32 dst = fn->insts[i].dst;
+        if (dst >= 0 && dst < nvalues) types[dst] = fn->insts[i].type;
+    }
+    return types;
+}
+
+/* Rewrite one function: a mark on entry, a release before every return, and a
+ * pin in front of every instruction that publishes an address. */
+static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn *fn) {
+    i32 nvalues = 0;
+    ns_bool allocates = false;
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        ns_ssa_inst *inst = &fn->insts[i];
+        if (inst->dst + 1 > nvalues) nvalues = inst->dst + 1;
+        switch (inst->op) {
+        case NS_SSA_OP_ALLOC:
+        case NS_SSA_OP_CLONE:
+        case NS_SSA_OP_ARRAY_NEW:
+        case NS_SSA_OP_CALL:
+            allocates = true;
+            break;
+        case NS_SSA_OP_ADD:
+            if (ns_type_is(inst->type, NS_TYPE_STRING)) allocates = true;
+            break;
+        default:
+            break;
+        }
+    }
+    if (nvalues < 1) return;
+
+    /* A result the release cannot move keeps the whole call's memory instead;
+     * leaving such a function unscoped lets its caller reclaim the same bytes
+     * once it is done with the value. */
+    ns_bool scoped = allocates &&
+        (!ns_ssa_scope_heap_type(fn->ret) || ns_ssa_scope_copies_bytes(b, fn->ret));
+    i32 next_value = nvalues;
+    i32 mark = -1;
+    i32 enter_index = -1;
+    if (scoped) {
+        ns_ssa_inst enter = NS_SSA_INST_INIT(NS_SSA_OP_SCOPE_ENTER, fn->ast);
+        enter.dst = next_value++;
+        enter.type = ns_type_i64;
+        mark = enter.dst;
+        enter_index = (i32)ns_array_length(fn->insts);
+        ns_array_push(fn->insts, enter);
+    }
+    i32 result_size = scoped && ns_ssa_scope_struct_value(fn->ret)
+        ? ns_ssa_wasm32_size(b, fn->ret) : 0;
+    ns_type *types = ns_ssa_scope_value_types(fn, nvalues);
+
+    for (i32 bi = 0, bl = (i32)ns_array_length(fn->blocks); bi < bl; ++bi) {
+        i32 *old = fn->blocks[bi].insts;
+        i32 count = (i32)ns_array_length(old);
+        i32 *out = NULL;
+        i32 *deferred = NULL;
+        i32 pinned_call = -1;
+        /* An argument sits in the register the caller left it in until its
+         * PARAM has stored it, so nothing of ours may be emitted before the
+         * last one. Only the prologue counts: an unresolved name lowers to a
+         * PARAM with no argument index of its own, anywhere in the body. */
+        i32 last_param = -1;
+        if (bi == fn->entry) {
+            for (i32 i = 0; i < count; ++i) {
+                ns_ssa_inst *inst = &fn->insts[old[i]];
+                if (inst->op == NS_SSA_OP_PARAM) {
+                    if (inst->c >= 0) last_param = i;
+                    continue;
+                }
+                if (inst->op == NS_SSA_OP_CALL || inst->op == NS_SSA_OP_RET ||
+                    inst->op == NS_SSA_OP_BR || inst->op == NS_SSA_OP_JMP ||
+                    inst->op == NS_SSA_OP_TRAP) {
+                    break;
+                }
+            }
+        }
+        for (i32 i = 0; i < count; ++i) {
+            i32 index = old[i];
+            i32 **into = i <= last_param ? &deferred : &out;
+
+            /* The mark is taken once every argument has left its register, and
+             * anything held back until then follows it. */
+            if (bi == fn->entry && i == last_param + 1) {
+                if (enter_index >= 0) {
+                    ns_array_push(out, enter_index);
+                    enter_index = -1;
+                }
+                for (i32 d = 0, dl = (i32)ns_array_length(deferred); d < dl; ++d) {
+                    ns_array_push(out, deferred[d]);
+                }
+                ns_array_free(deferred);
+                deferred = NULL;
+            }
+
+            /* Arguments sit in a run directly before their call and the backend
+             * reads that run backwards, so pins go in front of the whole run. */
+            if (fn->insts[index].op == NS_SSA_OP_ARG) {
+                i32 call = i;
+                while (call < count && fn->insts[old[call]].op == NS_SSA_OP_ARG) ++call;
+                if (call < count && call != pinned_call &&
+                    fn->insts[old[call]].op == NS_SSA_OP_CALL &&
+                    !ns_ssa_scope_call_pins_itself(m, &fn->insts[old[call]])) {
+                    pinned_call = call;
+                    for (i32 a = i; a < call; ++a) {
+                        i32 value = fn->insts[old[a]].a;
+                        if (value < 0 || value >= nvalues) continue;
+                        i32 kind = 0, size = 0;
+                        /* A value whose type the IR does not carry may still be
+                         * an address the callee keeps, so it is pinned whole. */
+                        if (ns_type_is(types[value], NS_TYPE_UNKNOWN)) kind = NS_SSA_PIN_ALL;
+                        else if (!ns_ssa_scope_pin_kind(b, types[value], &kind, &size)) continue;
+                        i32 pin_index = (i32)ns_array_length(fn->insts);
+                        ns_array_push(fn->insts,
+                                      ns_ssa_scope_pin_inst(value, kind, size, fn->insts[index].ast));
+                        ns_array_push(*into, pin_index);
+                    }
+                }
+            }
+
+            if (scoped && fn->insts[index].op == NS_SSA_OP_RET) {
+                ns_ssa_inst leave = NS_SSA_INST_INIT(NS_SSA_OP_SCOPE_LEAVE, fn->insts[index].ast);
+                leave.a = mark;
+                leave.c = 0;
+                leave.type = fn->ret;
+                if (result_size > 0 && fn->insts[index].a >= 0) {
+                    leave.b = fn->insts[index].a;
+                    leave.c = result_size;
+                    leave.dst = next_value++;
+                    fn->insts[index].a = leave.dst;
+                }
+                i32 leave_index = (i32)ns_array_length(fn->insts);
+                ns_array_push(fn->insts, leave);
+                ns_array_push(*into, leave_index);
+            }
+
+            ns_array_push(out, index);
+
+            i32 published = -1;
+            ns_type type = fn->insts[index].type;
+            switch (fn->insts[index].op) {
+            case NS_SSA_OP_GLOBAL_SET:
+                published = fn->insts[index].a;
+                break;
+            case NS_SSA_OP_STORE:
+            case NS_SSA_OP_ARRAY_STORE:
+                if (!ns_ssa_scope_copies_bytes(b, type)) published = fn->insts[index].b;
+                break;
+            default:
+                break;
+            }
+            if (published >= 0 && published < nvalues) {
+                i32 kind = 0, size = 0;
+                if (ns_ssa_scope_pin_kind(b, type, &kind, &size)) {
+                    i32 pin_index = (i32)ns_array_length(fn->insts);
+                    ns_array_push(fn->insts,
+                                  ns_ssa_scope_pin_inst(published, kind, size, fn->insts[index].ast));
+                    ns_array_push(*into, pin_index);
+                }
+            }
+        }
+        if (bi == fn->entry) {
+            if (enter_index >= 0) {
+                ns_array_push(out, enter_index);
+                enter_index = -1;
+            }
+            for (i32 d = 0, dl = (i32)ns_array_length(deferred); d < dl; ++d) {
+                ns_array_push(out, deferred[d]);
+            }
+        }
+        ns_array_free(deferred);
+        ns_array_free(fn->blocks[bi].insts);
+        fn->blocks[bi].insts = out;
+    }
+    ns_free(types);
+}
+
+// NS_NO_SCOPE=1 compiles without any of this, which keeps the old behaviour of
+// a heap that only ever grows: an escape hatch for telling a miscompile apart
+// from a bug of the program's own.
+static void ns_ssa_scope_pass(ns_ssa_builder *b, ns_ssa_module *m) {
+    if (getenv("NS_NO_SCOPE")) return;
+    for (i32 i = 0, l = (i32)ns_array_length(m->fns); i < l; ++i) {
+        ns_ssa_scope_rewrite(b, m, &m->fns[i]);
+    }
 }
 
 ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str ref_path,
@@ -3417,6 +3782,15 @@ ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str re
     if (ns_return_is_error(b.fold_error)) {
         ns_ssa_module_free(m);
         return ns_return_change_type(ptr, b.fold_error);
+    }
+
+    // Wasm keeps the bump heap it has: its allocator lives in the generated
+    // module rather than in this runtime, and a browser page is reloaded rather
+    // than run for hours.
+    if (!wasm_target) {
+        f64 scope_start = ns_ssa_profile_phase_begin("scope_reclaim");
+        ns_ssa_scope_pass(&b, m);
+        ns_ssa_profile_phase_end("scope_reclaim", scope_start);
     }
 
     ns_array_free(b.globals);

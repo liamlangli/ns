@@ -1,0 +1,95 @@
+use std
+use simd
+
+// Every temporary a call makes is released when it returns, so this file is
+// about what must survive that release: a value published to a global or a
+// container, a struct handed back to a caller, and an argument still sitting in
+// its register while the callee's prologue runs.
+
+struct pose {
+    id: i32,
+    v: float3
+}
+
+struct named {
+    label: str,
+    weight: i32
+}
+
+fn bump(n: ref i32) {
+    n = n + 1
+}
+
+// A `ref` on this name anywhere in the module makes every binding of it a boxed
+// one, parameters included. Building that box allocates, and the arguments that
+// have not been taken out of their registers yet must survive it.
+fn counted() i32 {
+    let first = 10
+    bump(ref first)
+    return first
+}
+
+fn mix(first: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32) i32 {
+    return first * 1000000 + b * 100000 + c * 10000 + d * 1000 + e * 100 + f * 10 + g + h * 0
+}
+
+// A struct result outlives the call that built it.
+fn shift(p: pose, dx: f32, dy: f32, dz: f32) pose {
+    return pose { p.id + 1, float3 { p.v.x + dx, p.v.y + dy, p.v.z + dz } }
+}
+
+// A struct with a string in it is not a block of bytes the caller can be handed
+// back, so this one stays in its caller's memory rather than its own.
+fn describe(weight: i32) named {
+    return named { `w{weight}`, weight }
+}
+
+let history = [pose](8)
+let words = [str](8)
+let total = 0
+
+fn record(slot: i32, p: pose) {
+    history[slot] = p
+    words[slot] = describe(p.id).label
+    total = total + p.id
+}
+
+// Memory a scope released is handed out again, and a container is blank when a
+// program first reads it whether or not that memory has been used before.
+fn blank_sum(round: i32) i32 {
+    let scratch = [i32](64)
+    let sum = 0
+    for i in 0 to 64 {
+        sum = sum + scratch[i]
+    }
+    scratch[round % 64] = 5
+    let fresh = pose { 0, float3 { 0.0, 0.0, 0.0 } }
+    return sum + (fresh.v.y as i32) + fresh.id
+}
+
+fn main() {
+    print(`mix {mix(1, 2, 3, 4, 5, 6, 7, 8)} counted {counted()}\n`)
+
+    let blanks = 0
+    for round in 0 to 256 {
+        blanks = blanks + blank_sum(round)
+    }
+    print(`blanks {blanks}\n`)
+
+    let p = pose { 0, float3 { 0.0, 0.0, 0.0 } }
+    for i in 0 to 64 {
+        p = shift(p, 1.0, 2.0, 3.0)
+        if i % 8 == 0 { record(i / 8, p) }
+    }
+    let x = p.v.x as i32
+    let y = p.v.y as i32
+    let z = p.v.z as i32
+    print(`pose {p.id} {x} {y} {z} total {total}\n`)
+
+    // What was published before the calls above returned still reads back.
+    for slot in 0 to 8 {
+        let kept = history[slot]
+        let kx = kept.v.x as i32
+        print(`slot {slot} {kept.id} {kx} {words[slot]}\n`)
+    }
+}

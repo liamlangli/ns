@@ -85,6 +85,36 @@ static void ns_rt_heap_lock(void) { pthread_mutex_lock(&ns_rt_heap_mu); }
 static void ns_rt_heap_unlock(void) { pthread_mutex_unlock(&ns_rt_heap_mu); }
 #endif
 
+#ifdef _WIN32
+typedef DWORD ns_rt_thread;
+static ns_rt_thread ns_rt_self(void) { return GetCurrentThreadId(); }
+static int ns_rt_thread_eq(ns_rt_thread a, ns_rt_thread b) { return a == b; }
+#else
+typedef pthread_t ns_rt_thread;
+static ns_rt_thread ns_rt_self(void) { return pthread_self(); }
+static int ns_rt_thread_eq(ns_rt_thread a, ns_rt_thread b) { return pthread_equal(a, b) != 0; }
+#endif
+
+// The bump pointer is shared by every thread, so a scope may only drop what its
+// own thread put on top of the heap. `ns_rt_run` is the current unbroken run of
+// allocations by one thread: another thread allocating starts a new run, and a
+// scope whose mark sits below the run it is leaving keeps its memory instead of
+// dropping a region that now interleaves someone else's live data.
+static ns_rt_thread ns_rt_run_owner;
+static uint32_t ns_rt_run_base = 0;
+static int ns_rt_run_valid = 0;
+
+// Allocations that must outlive every scope: a string literal is materialized
+// once and cached forever, so releasing past it would leave the cache holding a
+// recycled address.
+static uint32_t ns_rt_floor = 0;
+
+// How far the heap has ever been used. Committing a page zeroes it, so an
+// allocation that has never been handed out is already blank; one that comes
+// back from a released scope is not, and a program that reads a fresh array or
+// struct before writing it has always seen zeroes.
+static uint32_t ns_rt_high = 16;
+
 static int64_t ns_rt_globals[NS_RT_GLOBAL_MAX];
 
 static const char **ns_rt_strtab = NULL;
@@ -195,6 +225,10 @@ void ns_rt_init(void) {
 void ns_rt_reset(void) {
     ns_rt_heap_lock();
     ns_rt_used = 16;
+    ns_rt_high = 16;
+    ns_rt_floor = 0;
+    ns_rt_run_valid = 0;
+    ns_rt_run_base = 0;
     if (ns_rt_mem && ns_rt_cap) memset(ns_rt_mem, 0, ns_rt_cap);
     memset(ns_rt_globals, 0, sizeof(ns_rt_globals));
     ns_rt_cb_n = 0;
@@ -214,6 +248,10 @@ void ns_rt_set_strtab(const char **tab, const int32_t *lens, int n) {
         free(ns_rt_strcache);
         ns_rt_strcache = NULL;
     }
+    // Materialize every literal now, before any call scope exists. Interning
+    // one lazily instead would pin the heap wherever the first use happened to
+    // land and stop every scope below that point from reclaiming anything.
+    for (int i = 0; i < n; ++i) ns_rt_intern(i);
 }
 
 int64_t ns_rt_alloc(int64_t size) {
@@ -228,6 +266,17 @@ int64_t ns_rt_alloc(int64_t size) {
     uint32_t addr = (ns_rt_used + 7u) & ~7u;
     ns_rt_grow((uint64_t)addr + n + 16);
     ns_rt_used = addr + n;
+    if (addr < ns_rt_high) {
+        uint32_t stop = ns_rt_used < ns_rt_high ? ns_rt_used : ns_rt_high;
+        memset(ns_rt_mem + addr, 0, (size_t)(stop - addr));
+    }
+    if (ns_rt_used > ns_rt_high) ns_rt_high = ns_rt_used;
+    ns_rt_thread self = ns_rt_self();
+    if (!ns_rt_run_valid || !ns_rt_thread_eq(ns_rt_run_owner, self)) {
+        ns_rt_run_owner = self;
+        ns_rt_run_base = addr;
+        ns_rt_run_valid = 1;
+    }
     ns_rt_heap_unlock();
     return (int64_t)addr;
 }
@@ -248,6 +297,100 @@ int64_t ns_rt_clone(int64_t src, int64_t size) {
     int64_t dst = ns_rt_alloc(size);
     if (size > 0) memcpy(ns_rt_ptr(dst), ns_rt_ptr(src), (size_t)size);
     return dst;
+}
+
+int64_t ns_rt_scope_enter(void) {
+    ns_rt_heap_lock();
+    ns_rt_init_locked();
+    uint32_t mark = (ns_rt_used + 7u) & ~7u;
+    ns_rt_heap_unlock();
+    return (int64_t)mark;
+}
+
+static void ns_rt_str_parts(int64_t str, int32_t *bytes, int32_t *len);
+
+// An address that is reachable after the call that made it - stored into a
+// global, into a container, or handed to a native library that may keep it -
+// has to survive every scope release, and a bump heap can only give back a
+// contiguous top. `ns_rt_floor` is the highest address any such value reaches,
+// and no scope drops below it. Pinning something the caller already owned costs
+// nothing, because that address is below the marks that matter.
+static void ns_rt_raise_floor(uint32_t to) {
+    if (to > ns_rt_used) to = ns_rt_used;
+    if (to > ns_rt_floor) ns_rt_floor = to;
+}
+
+// A self-contained block: a flat struct, whose bytes hold no further address.
+void ns_rt_pin(int64_t addr, int64_t size) {
+    if (addr <= 0 || size < 0) return;
+    ns_rt_heap_lock();
+    if ((uint64_t)addr < (uint64_t)ns_rt_used) ns_rt_raise_floor((uint32_t)(addr + size));
+    ns_rt_heap_unlock();
+}
+
+// A string keeps its bytes in a second block, which a substring may share with
+// the string it was cut from, so both extents are pinned.
+void ns_rt_pin_str(int64_t str) {
+    if (str <= 0) return;
+    ns_rt_heap_lock();
+    // Reading the descriptor goes through ns_rt_ptr, which takes this lock to
+    // initialize the heap; only an initialized heap can hold this address.
+    if (ns_rt_mem && (uint64_t)str < (uint64_t)ns_rt_used) {
+        int32_t bytes = 0, len = 0;
+        ns_rt_str_parts(str, &bytes, &len);
+        ns_rt_raise_floor((uint32_t)(str + 8));
+        if (bytes > 0 && len > 0) ns_rt_raise_floor((uint32_t)(bytes + len));
+    }
+    ns_rt_heap_unlock();
+}
+
+// An array of values: its header plus the payload the header points at.
+void ns_rt_pin_array(int64_t arr, int64_t stride) {
+    if (arr <= 0) return;
+    ns_rt_heap_lock();
+    if (ns_rt_mem && (uint64_t)arr < (uint64_t)ns_rt_used) {
+        int32_t data = (int32_t)ns_rt_load(arr, 0, 4);
+        int32_t count = (int32_t)ns_rt_load(arr, 4, 4);
+        if (stride < 0) stride = 0;
+        ns_rt_raise_floor((uint32_t)(arr + 16));
+        if (data > 0 && count > 0) ns_rt_raise_floor((uint32_t)(data + count * (int32_t)stride));
+    }
+    ns_rt_heap_unlock();
+}
+
+// A value whose reachable set the compiler cannot describe - a dictionary, a
+// closure, an array of handles, a struct with a string in it. Everything
+// allocated so far stays.
+void ns_rt_pin_all(void) {
+    ns_rt_heap_lock();
+    ns_rt_raise_floor(ns_rt_used);
+    ns_rt_heap_unlock();
+}
+
+int64_t ns_rt_scope_leave(int64_t mark, int64_t value, int64_t size) {
+    if (mark <= 0 || (uint64_t)mark > (uint64_t)UINT32_MAX) return value;
+    uint32_t target = (uint32_t)mark;
+    int64_t result = value;
+    ns_rt_heap_lock();
+    // Whatever was pinned inside the call stays, and the release starts above
+    // it: the rest of the region is this call's own dead temporaries.
+    if (target < ns_rt_floor) target = ns_rt_floor;
+    if (target <= ns_rt_used && ns_rt_run_valid &&
+        ns_rt_thread_eq(ns_rt_run_owner, ns_rt_self()) && ns_rt_run_base <= target) {
+        if (value < (int64_t)target || value >= (int64_t)ns_rt_used) {
+            ns_rt_used = target;
+        } else if (size > 0 && value + size <= (int64_t)ns_rt_used) {
+            // A struct result built inside the scope moves down to the release
+            // point, so the caller reads the same bytes from live memory.
+            memmove(ns_rt_mem + target, ns_rt_mem + (uint32_t)value, (size_t)size);
+            ns_rt_used = target + (uint32_t)size;
+            result = (int64_t)target;
+        }
+        // Any other heap result is one the scope cannot move: keeping the
+        // region costs memory but never hands back a recycled address.
+    }
+    ns_rt_heap_unlock();
+    return result;
 }
 
 int64_t ns_rt_load(int64_t addr, int64_t off, int64_t size) {
@@ -427,6 +570,11 @@ int64_t ns_rt_intern(int64_t id) {
     const char *s = ns_rt_strtab[id] ? ns_rt_strtab[id] : "";
     int64_t desc = ns_rt_from_bytes(s, len);
     ns_rt_strcache[id] = desc;
+    // The cache keeps this address for the life of the program, so no call
+    // scope may reclaim it, whichever frame first asked for the literal.
+    ns_rt_heap_lock();
+    if (ns_rt_used > ns_rt_floor) ns_rt_floor = ns_rt_used;
+    ns_rt_heap_unlock();
     return desc;
 }
 

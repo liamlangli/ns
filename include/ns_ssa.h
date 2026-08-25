@@ -17,6 +17,13 @@ typedef enum {
     NS_SSA_OP_GLOBAL_SET,
     NS_SSA_OP_ALLOC,
     NS_SSA_OP_CLONE,
+    // Heap top on entry, and the release of everything above it on return.
+    // Emitted only for functions proved to keep none of what they allocate.
+    NS_SSA_OP_SCOPE_ENTER,
+    NS_SSA_OP_SCOPE_LEAVE,
+    // Keep a value the instruction after it publishes, so no later release can
+    // recycle the memory it occupies.
+    NS_SSA_OP_PIN,
     NS_SSA_OP_LOAD,
     NS_SSA_OP_STORE,
     NS_SSA_OP_ARRAY_NEW,

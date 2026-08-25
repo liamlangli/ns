@@ -299,6 +299,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_build_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_parity_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/ns_scope_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/storage_apple_compile.sh

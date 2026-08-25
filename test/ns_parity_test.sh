@@ -57,6 +57,7 @@ run_one "$root/test/parity_union.ns"
 run_one "$root/test/parity_ref.ns"
 run_one "$root/test/parity_task.ns"
 run_one "$root/test/parity_ffi.ns"
+run_one "$root/test/parity_scope.ns"
 
 if [ "$fail" -ne 0 ]; then
     exit 1

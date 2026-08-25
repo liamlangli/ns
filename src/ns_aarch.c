@@ -1022,6 +1022,35 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         ns_aarch_emit_rt_call(c, "ns_rt_clone");
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
     } break;
+    case NS_SSA_OP_SCOPE_ENTER: {
+        if (inst->dst < 0) break;
+        ns_aarch_emit_rt_call(c, "ns_rt_scope_enter");
+        ns_aarch_store_value(c, inst->dst, 0);
+    } break;
+    case NS_SSA_OP_SCOPE_LEAVE: {
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        if (inst->b >= 0) ns_aarch_load_value(c, 1, inst->b);
+        else ns_aarch_emit_u32(c, ns_aarch_movz(1, 0, 0));
+        ns_aarch_emit_const_u64(c, 2, (u64)(u32)(inst->c > 0 ? inst->c : 0));
+        ns_aarch_emit_rt_call(c, "ns_rt_scope_leave");
+        if (inst->dst >= 0) ns_aarch_store_value(c, inst->dst, 0);
+    } break;
+    case NS_SSA_OP_PIN: {
+        /* target0 selects how much of the value the runtime has to keep: a flat
+         * block of inst->c bytes, a string and its bytes, an array and its
+         * payload of inst->c-byte elements, or everything allocated so far. */
+        if (inst->target0 == 3 || inst->a < 0) {
+            ns_aarch_emit_rt_call(c, "ns_rt_pin_all");
+            break;
+        }
+        ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        if (inst->target0 == 1) {
+            ns_aarch_emit_rt_call(c, "ns_rt_pin_str");
+            break;
+        }
+        ns_aarch_emit_const_u64(c, 1, (u64)(u32)(inst->c > 0 ? inst->c : 0));
+        ns_aarch_emit_rt_call(c, inst->target0 == 2 ? "ns_rt_pin_array" : "ns_rt_pin");
+    } break;
     case NS_SSA_OP_LOAD: {
         if (inst->dst < 0) break;
         if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type)) {
