@@ -62,6 +62,10 @@ The root `Makefile` is the orchestrator:
 Common commands:
 
 - `make` — build everything (core + libs + std libs)
+- `make deps` — on Linux/WSL, install `libreadline-dev`, `libffi-dev`, and
+  `libsqlite3-dev`. Uses `sudo apt-get` when available, otherwise extracts
+  the `-dev` packages into `~/.local/ns-deps` without root. The Makefile
+  searches that prefix (and `CONDA_PREFIX` as a fallback) automatically.
 - `make test` — build and run tests (currently `bin/ns_json_test`)
 - `make run` — run `ns`
 - `make clean`

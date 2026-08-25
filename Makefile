@@ -78,6 +78,25 @@ else
 # executable automatically, Linux only with an exported dynamic symbol table).
 # -pthread: the task runtime (src/ns_task.c) runs tasks on worker threads.
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl -rdynamic -pthread
+# Headers and linker stubs from `make deps` (no sudo) or a conda env. System
+# /usr packages still win when libreadline-dev, libffi-dev, and libsqlite3-dev
+# are installed.
+NS_LINUX_DEPS ?= $(HOME)/.local/ns-deps
+NS_LINUX_MULTIARCH := $(shell gcc -print-multiarch 2>/dev/null)
+ifeq ($(wildcard /usr/include/readline/readline.h),)
+ifneq ($(wildcard $(NS_LINUX_DEPS)/usr/include/readline/readline.h),)
+	NS_INC += -I$(NS_LINUX_DEPS)/usr/include
+ifneq ($(NS_LINUX_MULTIARCH),)
+	NS_INC += -I$(NS_LINUX_DEPS)/usr/include/$(NS_LINUX_MULTIARCH)
+	NS_LDFLAGS := -L$(NS_LINUX_DEPS)/usr/lib/$(NS_LINUX_MULTIARCH) $(NS_LDFLAGS)
+endif
+else ifneq ($(CONDA_PREFIX),)
+ifneq ($(wildcard $(CONDA_PREFIX)/include/readline/readline.h),)
+	NS_INC += -I$(CONDA_PREFIX)/include
+	NS_LDFLAGS := -L$(CONDA_PREFIX)/lib -Wl,-rpath,$(CONDA_PREFIX)/lib $(NS_LDFLAGS)
+endif
+endif
+endif
 endif
 
 NS_DEBUG_CFLAGS = -g -Og $(NS_WARN_CFLAGS) -DNS_DEBUG
@@ -280,7 +299,9 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
-test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/gpu$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/net$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/wasm_dev$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/compress$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/storage$(NS_DYLIB_SUFFIX)
+# CI runs `make test` without `make all`. Depend on `std` so every native
+# module the .ns suites load (io, dynamic, os, gpu, ...) is built first.
+test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_json_test
 	$(NS_BINDIR)/ns_expr_test
 	$(NS_BINDIR)/ns_compile_test
@@ -308,6 +329,14 @@ test: $(NS_TEST_TARGETS) $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR
 
 include lib/Makefile
 include sample/c/Makefile
+
+.PHONY: deps
+deps:
+ifeq ($(NS_OS), $(NS_LINUX))
+	sh scripts/install_linux_deps.sh
+else
+	@echo "make deps is only needed on Linux/WSL."
+endif
 
 install: all
 	$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref \

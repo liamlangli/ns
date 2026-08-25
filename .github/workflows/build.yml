@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libreadline-dev libffi-dev
+          sudo apt-get install -y libreadline-dev libffi-dev libsqlite3-dev
 
       # GCC 13 on ubuntu-latest raises warnings (implicit-fallthrough,
       # type-limits, unused-function, maybe-uninitialized) that the default
