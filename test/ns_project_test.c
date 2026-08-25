@@ -229,6 +229,8 @@ int main(void) {
                   text_has(gpu_metal, "texture->transient_render_target") &&
                   text_has(gpu_metal, "MTLStoreActionDontCare"),
               "embedded Metal keeps render-target-only attachments memoryless and discards their stores.");
+    ns_expect(text_has(gpu_metal, "if (nil == _state.cmd_encoder) return;"),
+              "embedded Metal state calls tolerate an unavailable screen drawable.");
     ns_expect(text_has(view_ios, "CGSize drawable = metal_view.drawableSize") &&
                   text_has(view_ios, "framebuffer_width = (i32)(drawable.width + 0.5)"),
               "embedded iOS view metrics use the exact Metal drawable extent.");

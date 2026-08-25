@@ -763,7 +763,12 @@ id<MTLLibrary> _mtl_library_from_code(ns_str src) {
 }
 
 void gpu_set_viewport(int x, int y, int width, int height) {
-    assert(nil != _state.cmd_encoder);
+    // A screen pass may legitimately fail to open while the MTKView has no
+    // drawable (for example while occluded, resizing, or after a long loading
+    // frame). The submission surface is void, so callers cannot branch on
+    // pass creation; match the other backends and make subsequent state calls
+    // harmless until a later frame acquires a drawable.
+    if (nil == _state.cmd_encoder) return;
     MTLViewport viewport = {
         .originX = (double)x,
         .originY = (double)y,
@@ -776,7 +781,7 @@ void gpu_set_viewport(int x, int y, int width, int height) {
 }
 
 void gpu_set_scissor(int x, int y, int width, int height) {
-    assert(nil != _state.cmd_encoder);
+    if (nil == _state.cmd_encoder) return;
     MTLScissorRect scissor = {
         .x = x,
         .y = y,
