@@ -49,6 +49,9 @@ ref fn shader_transpile(f: any, target: str) str
 // Transpile with an explicit stage: "vertex" | "fragment" | "compute".
 // Compute entries take no parameters and return void. GPU resources and the
 // root argument are accessed through the stage intrinsics below.
+// A fragment may return `float4`, a `color0`..`color3` float4 MRT struct, or
+// that same struct with a trailing `depth: f32` field. The depth field writes
+// the hardware fragment depth on every graphics backend.
 ref fn shader_transpile_stage(f: any, target: str, stage: str) str
 
 // Entry-point name for gpu_shader_stage_desc.entry: the fn name for msl/hlsl,

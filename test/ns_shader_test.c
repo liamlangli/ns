@@ -40,6 +40,11 @@ static const char *ns_shader_test_src =
     "    color0: float4,\n"
     "    color1: float4\n"
     "}\n"
+    "struct FragmentDepthOutput {\n"
+    "    color0: float4,\n"
+    "    color1: float4,\n"
+    "    depth: f32\n"
+    "}\n"
     "fn brighten(c: float4, gain: f32) float4 {\n"
     "    return float4 { x: c.x * gain, y: c.y * gain, z: c.z * gain, w: c.w }\n"
     "}\n"
@@ -88,6 +93,9 @@ static const char *ns_shader_test_src =
     "fn fs_mrt(data: FragmentInput) FragmentOutput {\n"
     "    let mask = shader_sample_mask(data.uv)\n"
     "    return FragmentOutput { color0: data.color, color1: mask }\n"
+    "}\n"
+    "fn fs_depth(data: FragmentInput) FragmentDepthOutput {\n"
+    "    return FragmentDepthOutput { color0: data.color, color1: data.color, depth: 0.25 }\n"
     "}\n"
     "fn fs_grad(data: FragmentInput) float4 {\n"
     "    let signed_d = data.uv.x - 0.5\n"
@@ -270,6 +278,7 @@ int main() {
     i32 vs_scene = ns_shader_test_fn(&vm, "vs_scene");
     i32 fs_texture = ns_shader_test_fn(&vm, "fs_texture");
     i32 fs_mrt = ns_shader_test_fn(&vm, "fs_mrt");
+    i32 fs_depth = ns_shader_test_fn(&vm, "fs_depth");
     i32 fs_grad = ns_shader_test_fn(&vm, "fs_grad");
     i32 fs_discard = ns_shader_test_fn(&vm, "fs_discard");
     i32 cs = ns_shader_test_fn(&vm, "cs_main");
@@ -278,7 +287,7 @@ int main() {
     i32 vs_buffer = ns_shader_test_fn(&vm, "vs_buffer");
     i32 cs_buffer2 = ns_shader_test_fn(&vm, "cs_buffer2");
     i32 cs_simd = ns_shader_test_fn(&vm, "cs_simd");
-    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && fs_grad >= 0 && fs_discard >= 0 && cs >= 0 &&
+    ns_expect(vs >= 0 && fs >= 0 && fs_shadow >= 0 && vs_scene >= 0 && fs_texture >= 0 && fs_mrt >= 0 && fs_depth >= 0 && fs_grad >= 0 && fs_discard >= 0 && cs >= 0 &&
                   cs_texture >= 0 && cs_buffer >= 0 && vs_buffer >= 0 && cs_buffer2 >= 0 && cs_simd >= 0,
               "shader entry symbols exist.");
 
@@ -549,6 +558,33 @@ int main() {
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@location(0) color0") &&
                       ns_shader_test_has(r.r, "@location(1) color1"),
                   "wgsl fragment output struct maps to both color locations.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+    }
+
+    // --- fragment MRT output with an explicit hardware depth ---
+    {
+        ns_return_str r = ns_shader_transpile(&vm, &ctx, fs_depth, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "depth [[depth(any)]]") &&
+                      ns_shader_test_has(r.r, "color1 [[color(1)]]"),
+                  "msl fragment output maps the trailing depth field to hardware depth.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_depth, NS_SHADER_HLSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "depth : SV_Depth") &&
+                      ns_shader_test_has(r.r, "color1 : SV_Target1"),
+                  "hlsl fragment output maps the trailing depth field to SV_Depth.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_depth, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "gl_FragDepth = ns_ret.depth") &&
+                      !ns_shader_test_has(r.r, "layout(location = 2) out"),
+                  "glsl fragment wrapper writes depth without consuming an MRT location.");
+        if (!ns_return_is_error(r)) ns_array_free(r.r.data);
+
+        r = ns_shader_transpile(&vm, &ctx, fs_depth, NS_SHADER_WGSL, NS_SHADER_STAGE_FRAGMENT);
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@builtin(frag_depth) depth") &&
+                      ns_shader_test_has(r.r, "@location(1) color1"),
+                  "wgsl fragment output maps the trailing depth field to frag_depth.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
     }
 

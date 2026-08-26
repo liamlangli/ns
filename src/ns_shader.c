@@ -1874,19 +1874,30 @@ static i32 ns_shader_fragment_target(ns_str name) {
     return name.data[5] - '0';
 }
 
+// A fragment output may carry one explicit hardware depth beside its colour
+// targets. Keeping the spelling structural, like `position` and `color0`,
+// makes depth available without adding another shader-only intrinsic.
+static ns_bool ns_shader_is_fragment_depth(ns_struct_field *field) {
+    return ns_str_equals(field->name, ns_str_cstr("depth")) && ns_type_is(field->t, NS_TYPE_F32);
+}
+
 static ns_bool ns_shader_is_fragment_output(ns_vm *vm, i32 st_index) {
     if (st_index < 0 || st_index >= (i32)ns_array_length(vm->symbols)) return false;
     ns_symbol *s = &vm->symbols[st_index];
     if (s->type != NS_SYMBOL_STRUCT) return false;
     if (ns_shader_is_simd(s)) return false;
     i32 field_count = (i32)ns_array_length(s->st.fields);
-    if (field_count < 1 || field_count > 4) return false;
-    for (i32 f = 0; f < field_count; ++f) {
+    if (field_count < 1 || field_count > 5) return false;
+    i32 color_count = field_count;
+    if (ns_shader_is_fragment_depth(&s->st.fields[field_count - 1])) color_count--;
+    if (color_count < 1 || color_count > 4) return false;
+    for (i32 f = 0; f < color_count; ++f) {
         ns_struct_field *field = &s->st.fields[f];
         if (ns_shader_fragment_target(field->name) != f || !ns_type_is(field->t, NS_TYPE_STRUCT)) return false;
         ns_symbol *field_type = &vm->symbols[ns_type_index(field->t)];
         if (!ns_shader_is_simd(field_type) || ns_shader_simd_dim(field_type->name) != 4) return false;
     }
+    if (color_count < field_count && !ns_shader_is_fragment_depth(&s->st.fields[color_count])) return false;
     return true;
 }
 
@@ -1907,10 +1918,13 @@ static ns_return_void ns_shader_emit_struct(ns_shader_emit *e, i32 st_index) {
     for (i32 f = 0, l = (i32)ns_array_length(s->st.fields); f < l; ++f) {
         ns_struct_field *field = &s->st.fields[f];
         i32 fragment_target = is_fragment_output ? ns_shader_fragment_target(field->name) : -1;
+        ns_bool fragment_depth = is_fragment_output && ns_shader_is_fragment_depth(field);
         ns_shader_cstr(&e->out, "    ");
         if (e->target == NS_SHADER_WGSL) {
             if (fragment_target >= 0) {
                 ns_shader_cstr(&e->out, "@location("); ns_shader_i32(&e->out, fragment_target); ns_shader_cstr(&e->out, ") ");
+            } else if (fragment_depth) {
+                ns_shader_cstr(&e->out, "@builtin(frag_depth) ");
             } else if (is_vs_in) {
                 ns_shader_cstr(&e->out, "@location("); ns_shader_i32(&e->out, f); ns_shader_cstr(&e->out, ") ");
             } else if (is_io && ns_shader_is_position_field(e->vm, field)) {
@@ -1931,6 +1945,8 @@ static ns_return_void ns_shader_emit_struct(ns_shader_emit *e, i32 st_index) {
                 ns_shader_cstr(&e->out, " [[color(");
                 ns_shader_i32(&e->out, fragment_target);
                 ns_shader_cstr(&e->out, ")]]");
+            } else if (fragment_depth) {
+                ns_shader_cstr(&e->out, " [[depth(any)]]");
             } else if (is_vs_in) {
                 ns_shader_cstr(&e->out, " [[attribute(");
                 ns_shader_i32(&e->out, f);
@@ -1942,6 +1958,8 @@ static ns_return_void ns_shader_emit_struct(ns_shader_emit *e, i32 st_index) {
             if (fragment_target >= 0) {
                 ns_shader_cstr(&e->out, " : SV_Target");
                 ns_shader_i32(&e->out, fragment_target);
+            } else if (fragment_depth) {
+                ns_shader_cstr(&e->out, " : SV_Depth");
             } else if (is_vs_in) {
                 const char *sem = ns_shader_hlsl_input_semantic(field->name, &texcoord);
                 ns_shader_cstr(&e->out, " : ");
@@ -2194,10 +2212,12 @@ static ns_return_void ns_shader_emit_glsl_wrapper(ns_shader_emit *e, ns_shader_e
         }
         if (mrt) {
             for (i32 f = 0, l = (i32)ns_array_length(out_st->st.fields); f < l; ++f) {
+                i32 target = ns_shader_fragment_target(out_st->st.fields[f].name);
+                if (target < 0) continue;
                 ns_shader_cstr(&e->out, "layout(location = ");
-                ns_shader_i32(&e->out, f);
+                ns_shader_i32(&e->out, target);
                 ns_shader_cstr(&e->out, ") out vec4 ns_frag_color");
-                ns_shader_i32(&e->out, f);
+                ns_shader_i32(&e->out, target);
                 ns_shader_cstr(&e->out, ";\n");
             }
         } else {
@@ -2224,8 +2244,15 @@ static ns_return_void ns_shader_emit_glsl_wrapper(ns_shader_emit *e, ns_shader_e
             ns_shader_str(&e->out, s->name);
             ns_shader_cstr(&e->out, "(ns_in);\n");
             for (i32 f = 0, l = (i32)ns_array_length(out_st->st.fields); f < l; ++f) {
+                i32 target = ns_shader_fragment_target(out_st->st.fields[f].name);
+                if (target < 0) {
+                    if (ns_shader_is_fragment_depth(&out_st->st.fields[f])) {
+                        ns_shader_cstr(&e->out, "    gl_FragDepth = ns_ret.depth;\n");
+                    }
+                    continue;
+                }
                 ns_shader_cstr(&e->out, "    ns_frag_color");
-                ns_shader_i32(&e->out, f);
+                ns_shader_i32(&e->out, target);
                 ns_shader_cstr(&e->out, " = ns_ret.");
                 ns_shader_str(&e->out, out_st->st.fields[f].name);
                 ns_shader_cstr(&e->out, ";\n");
@@ -2324,7 +2351,7 @@ static ns_return_void ns_shader_classify_entry(ns_shader_emit *e, ns_shader_entr
         if (!ret_ok && ns_type_is(s->fn.ret, NS_TYPE_STRUCT)) {
             ret_ok = ns_shader_is_fragment_output(e->vm, (i32)ns_type_index(s->fn.ret));
         }
-        if (!ret_ok) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a fragment entry must return float4 or a color0..color3 float4 output struct.");
+        if (!ret_ok) return ns_return_error(void, loc, NS_ERR_EVAL, "shader: a fragment entry must return float4 or a color0..color3 float4 output struct with optional trailing `depth: f32`.");
         if (!ns_shader_index_in(e->stage_ios, in_index)) ns_array_push(e->stage_ios, in_index);
     }
     return ns_return_ok_void;
