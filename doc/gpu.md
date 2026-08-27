@@ -138,10 +138,24 @@ gpu_addr gpu_malloc(u64 size, u32 flags, const char *name);
 void     gpu_free(gpu_addr addr);
 
 // Write/read through the frame's transfer stream (device memory) or memcpy
-// (shared memory). Valid on every tier.
+// (shared memory). Valid on every tier. gpu_read needs GPU_CAP_READBACK and
+// does not order against work in flight - see below.
 void     gpu_write(gpu_addr dst, const void *src, u64 size);
-ns_bool  gpu_read(gpu_addr src, void *dst, u64 size);   // blocking, tools/tests
+ns_bool  gpu_read(gpu_addr src, void *dst, u64 size);
+```
 
+`gpu_read` costs what the backend's allocations cost. Where `gpu_malloc` hands
+back host-visible memory - Metal, whose allocations are persistently mapped
+whichever flag they were made with - it is a plain memcpy out of the same bytes
+the shaders read, not a pipeline drain, so reading a handful of words back to
+patch them is cheap enough to do while a frame is being built.
+
+What it does not do is wait. A read is not ordered against GPU work already
+submitted, so reading a buffer a dispatch has just written can return the bytes
+that were there before it. Read something a dispatch produced only once that
+work has completed - a later frame, not the one that queued it.
+
+```c
 // Host pointer of a SHARED allocation. NULL unless GPU_CAP_RAW_POINTERS.
 void    *gpu_addr_host(gpu_addr addr);
 

@@ -70,6 +70,46 @@ The cache is a cache: nothing in it is required to exist, and a caller that
 misses must be able to produce the entry again. `gpu` relies on that when it
 caches compiled Metal pipelines, and it is why a cache miss is never an error.
 
+## Connections and their lifetime
+
+`storage_db_open` may be called for one piece of work and closed at the end of
+it, and it may equally be opened once and held for as long as the application
+runs. A connection kept in a global is the shape a game save wants: the world
+opens it while it loads and closes it while it unloads, and every commit in
+between costs a transaction rather than a transaction plus re-opening the file.
+
+```ns
+let world_db: ref storage_db = nil
+let world_open = false
+
+fn world_load() bool {
+    world_db = storage_db_open("world")
+    // An empty reference refuses the first statement, so the schema is what
+    // proves the connection is real.
+    if !storage_db_exec(world_db, "create table if not exists chunk (id integer primary key, payload blob)") {
+        storage_db_close(world_db)
+        return false
+    }
+    world_open = true
+    return true
+}
+
+fn world_unload() {
+    if world_open { storage_db_close(world_db) }
+    world_open = false
+}
+```
+
+Assigning the handle to a `ref` binding rebinds it, so the binding aliases the
+connection itself rather than a copy of it; see doc/ref.md.
+
+`storage_db_open` and `storage_db_prepare` report failure with the empty
+reference, which ns has no way to compare against, so the flag beside the
+handle is what a caller tests. Nothing crashes in the meantime: every database
+and statement entry point rejects an empty reference rather than dereferencing
+it, returning false, the empty reference again, or `STORAGE_STEP_ERROR`.
+Finalize each statement before closing the connection that prepared it.
+
 ## SQLite statements
 
 `storage_db_exec` is suitable for schema changes and transactions. Parameterized
