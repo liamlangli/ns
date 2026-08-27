@@ -610,10 +610,28 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     // local or global); this is the interpreter agreeing with it. A ref to a
     // scalar is a box, and a plain value assigned to one keeps the
     // write-through store further down.
-    if (ns_type_is_ref(l.t) && ns_type_is_ref(r.t) && n->binary_expr.op.val.len == 1 &&
-        ctx->nodes[n->binary_expr.left].type == NS_AST_PRIMARY_EXPR &&
-        ctx->nodes[n->binary_expr.left].primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
-        ns_ast_t *ln = &ctx->nodes[n->binary_expr.left];
+    //
+    // Parenthesized identifiers land in an NS_AST_EXPR wrapper; unwrap so
+    // `db = storage_db_open(...)` still rebinds the binding itself.
+    i32 left_i = n->binary_expr.left;
+    while (left_i > 0 && ctx->nodes[left_i].type == NS_AST_EXPR)
+        left_i = ctx->nodes[left_i].expr.body;
+    ns_bool left_ident = left_i > 0 &&
+        ctx->nodes[left_i].type == NS_AST_PRIMARY_EXPR &&
+        ctx->nodes[left_i].primary_expr.token.type == NS_TOKEN_IDENTIFIER;
+    ns_type inner = ns_type_set_ref(l.t, false);
+    ns_bool handle_ref = ns_type_is_ref(l.t) &&
+        (ns_type_is(inner, NS_TYPE_STRUCT) || ns_type_is_array(inner) ||
+         ns_type_is(inner, NS_TYPE_STRING) || ns_type_is(inner, NS_TYPE_FN) ||
+         ns_type_is(inner, NS_TYPE_BLOCK) || ns_type_is(inner, NS_TYPE_TASK) ||
+         ns_type_is(inner, NS_TYPE_DICT) || ns_type_is(inner, NS_TYPE_SET) ||
+         ns_type_is(inner, NS_TYPE_UNION) || ns_type_is(inner, NS_TYPE_ANY));
+    // Rebind when the right side is a ref, or a heap-payload handle that is
+    // already an absolute pointer (a native module return). A plain struct
+    // value on the stack still writes through to the current referent.
+    if (n->binary_expr.op.val.len == 1 && left_ident && ns_type_is_ref(l.t) &&
+        (ns_type_is_ref(r.t) || (handle_ref && !ns_type_in_stack(r.t)))) {
+        ns_ast_t *ln = &ctx->nodes[left_i];
         ns_symbol *sym = ns_vm_find_symbol_cached(vm, ln->primary_expr.token.val, &ln->primary_expr.rt.cache);
         if (sym && sym->type == NS_SYMBOL_VALUE && !sym->is_lit) {
             // Keep the right side's storage flags - they say whether `.o` is a
@@ -621,7 +639,10 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             // mutability, so a handle declared const-returning stays
             // assignable through the binding that accepted it.
             ns_value bound = r;
-            bound.t = ns_type_set_mut(r.t, true);
+            if (!ns_type_is_ref(bound.t)) bound.t = ns_type_set_ref(bound.t, true);
+            bound.t = ns_type_set_mut(bound.t, true);
+            if (handle_ref && !ns_type_in_stack(r.t))
+                bound.t = ns_type_set_stack(bound.t, false);
             sym->val = bound;
             sym->inited = true;
             return ns_return_ok(value, bound);
@@ -2657,8 +2678,8 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         // `nil` is the empty reference. A ref binding declared with one holds
         // nothing until something is assigned to it, which is what a handle a
         // host module hands back looks like before that module is created.
-        v = (ns_value){.t = dst_t, .o = 0};
-        store_t = dst_t;
+        v = (ns_value){.t = ns_type_set_stack(dst_t, false), .o = 0};
+        store_t = v.t;
     } else if (!ns_type_equals(dst_t, v.t)) {
         if (!ns_eval_number_assign_compatible(vm, dst_t, v.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "var def type mismatch.", dst_t, v.t));
@@ -2675,6 +2696,16 @@ ns_return_value ns_eval_var_def(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         val->is_lit = true;
         val->inited = true;
         return ns_return_ok(value, literal);
+    }
+
+    // A ref-typed binding aliases its referent. Copying struct bytes into a
+    // fresh slot would drop a native handle (the pointer itself) and leave
+    // close() freeing VM stack memory.
+    if (ns_type_is_ref(store_t)) {
+        v.t = ns_type_set_mut(v.t, true);
+        val->val = v;
+        val->inited = true;
+        return ns_return_ok(value, v);
     }
 
     // Reference values (arrays, dicts, sets, strings, fns) are stored as an 8-byte handle;

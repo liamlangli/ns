@@ -1240,5 +1240,22 @@ int main() {
                   "a plain value assigned to a scalar ref still writes through to its referent.");
     }
 
+    // The heap-payload half of write-through: a plain struct assigned to a ref
+    // still copies into the referent rather than rebinding the reference to the
+    // temporary.
+    {
+        const char *src =
+            "struct box { value: i32, tail: i32 }\n"
+            "fn main() bool {\n"
+            "    let target = box { 7, 11 }\n"
+            "    let bound = ref target\n"
+            "    bound = box { 42, 13 }\n"
+            "    return bound.value == 42 && target.value == 42 &&\n"
+            "           bound.tail == 13 && target.tail == 13\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "a plain struct assigned to a ref still writes through to its referent.");
+    }
+
     return 0;
 }

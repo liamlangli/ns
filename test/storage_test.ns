@@ -56,10 +56,22 @@ fn main() {
     storage_stmt_finalize(query)
     storage_db_close(db)
 
+    storage_db_global_close_test()
     storage_cache_test()
     storage_kv_reload_test()
 
     assert storage_kv_clear()
+}
+
+// A connection kept in a global is the shape a game save wants. Assigning the
+// native handle to a `ref` binding must rebind rather than copy the sqlite3*
+// into the binding, or storage_db_close frees VM stack memory.
+let storage_test_db: ref storage_db = nil
+
+fn storage_db_global_close_test() {
+    storage_test_db = storage_db_open(":memory:")
+    assert storage_db_exec(storage_test_db, "create table item (id integer primary key)")
+    storage_db_close(storage_test_db)
 }
 
 // Values have to survive the process that wrote them. Re-initializing is what
