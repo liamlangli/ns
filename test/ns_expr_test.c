@@ -1202,5 +1202,43 @@ int main() {
                   "later fn defs with the same name resolve by first-arg type.");
     }
 
+    // A ref binding given another ref rebinds to what that ref aliases. It used
+    // to copy the referent's leading bytes into the binding instead, which
+    // turned an opaque handle a native module returned into the contents it
+    // pointed at: reads still looked plausible and the eventual free took an
+    // address that was never allocated.
+    {
+        const char *src =
+            "struct box { value: i32, tail: i32 }\n"
+            "let bound: ref box = nil\n"
+            "fn stash(b: ref box) { bound = b }\n"
+            "fn main() bool {\n"
+            "    let target = box { 7, 11 }\n"
+            "    stash(ref target)\n"
+            "    bound.value = 42\n"
+            "    target.tail = 13\n"
+            "    return bound.value == 42 && target.value == 42 &&\n"
+            "           bound.tail == 13 && target.tail == 13\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "a ref global assigned a ref aliases its referent instead of copying it.");
+    }
+
+    // The other half of the same rule: a ref to a scalar is a box, so a plain
+    // value assigned to it is written through to the referent rather than
+    // rebinding the reference.
+    {
+        const char *src =
+            "fn main() bool {\n"
+            "    let a = 1\n"
+            "    let b = ref a\n"
+            "    let c = a\n"
+            "    b = 2\n"
+            "    return a == 2 && b == 2 && c == 1\n"
+            "}\n";
+        ns_expect(ns_expr_eval_bool(src),
+                  "a plain value assigned to a scalar ref still writes through to its referent.");
+    }
+
     return 0;
 }

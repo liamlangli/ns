@@ -23,3 +23,30 @@ fn upper(s: ref str): ref str {
     return s
 }
 ```
+
+## Assigning to a ref binding
+
+A `ref` binding can be declared empty and given something real later, which is
+what a handle a native module hands back looks like before that module has been
+created:
+
+```ns
+let db: ref storage_db = nil
+
+fn open_world() {
+    db = storage_db_open("world")   // rebinds: db now aliases that handle
+}
+```
+
+What an assignment to a `ref` means depends on what is on the right:
+
+- **Another ref rebinds it.** The binding stops aliasing whatever it aliased
+  and aliases the new referent instead. Nothing is written through.
+- **A plain value is written through** to the current referent, which is the
+  scalar case at the top of this file: `b = 2.0` sets `a`, it does not point
+  `b` somewhere else.
+
+The distinction matters most for an opaque handle. A `ref storage_db` returned
+by a native module is the pointer itself; there is nothing meaningful to write
+through into, and copying its contents over the binding would leave reads
+looking plausible while the pointer was gone.

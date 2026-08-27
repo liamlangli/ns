@@ -598,6 +598,36 @@ ns_return_value ns_eval_assign_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     if (ns_type_is_const(l.t))
         return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "can't assign to const value.");
 
+    // A ref binding given another ref rebinds: it now aliases whatever the
+    // right side aliases. The store below would instead copy the referent's
+    // leading bytes into the binding, which for an opaque handle a native
+    // module returned - a database, a renderer - replaces the pointer with the
+    // contents it points at. Reads then still look right, because the first
+    // field is usually the only one they touch, and the eventual close frees
+    // an address that was never allocated.
+    //
+    // The compiled path already rebinds here (ns_ssa.c, assignment to a ref
+    // local or global); this is the interpreter agreeing with it. A ref to a
+    // scalar is a box, and a plain value assigned to one keeps the
+    // write-through store further down.
+    if (ns_type_is_ref(l.t) && ns_type_is_ref(r.t) && n->binary_expr.op.val.len == 1 &&
+        ctx->nodes[n->binary_expr.left].type == NS_AST_PRIMARY_EXPR &&
+        ctx->nodes[n->binary_expr.left].primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
+        ns_ast_t *ln = &ctx->nodes[n->binary_expr.left];
+        ns_symbol *sym = ns_vm_find_symbol_cached(vm, ln->primary_expr.token.val, &ln->primary_expr.rt.cache);
+        if (sym && sym->type == NS_SYMBOL_VALUE && !sym->is_lit) {
+            // Keep the right side's storage flags - they say whether `.o` is a
+            // stack offset or an absolute address - and the binding's own
+            // mutability, so a handle declared const-returning stays
+            // assignable through the binding that accepted it.
+            ns_value bound = r;
+            bound.t = ns_type_set_mut(r.t, true);
+            sym->val = bound;
+            sym->inited = true;
+            return ns_return_ok(value, bound);
+        }
+    }
+
     if (!ns_type_equals(l.t, r.t)) {
         if (!ns_eval_number_assign_compatible(vm, l.t, r.t)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, ns_eval_type_mismatch_msg(vm, "assign expr type mismatch.", l.t, r.t));
