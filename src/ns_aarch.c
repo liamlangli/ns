@@ -426,6 +426,10 @@ static ns_bool ns_aarch_parse_u64(ns_str s, u64 *out) {
         *out = 0;
         return true;
     }
+    if (ns_str_equals(s, ns_str_cstr("nil"))) {
+        *out = 0;
+        return true;
+    }
 
     i32 start = 0;
     ns_bool neg = false;

@@ -280,6 +280,7 @@ static ns_bool ns_amd64_parse_u64(ns_str s, u64 *out) {
     if (s.len <= 0 || !s.data) return false;
     if (ns_str_equals(s, ns_str_cstr("true"))) { *out = 1; return true; }
     if (ns_str_equals(s, ns_str_cstr("false"))) { *out = 0; return true; }
+    if (ns_str_equals(s, ns_str_cstr("nil"))) { *out = 0; return true; }
 
     /* A leading sign appears in signed enum members lowered to constants. */
     i32 start = 0;

@@ -939,6 +939,16 @@ int main() {
         "}\n"), "ref aliases a local and assignment writes through.");
 
     ns_expect(ns_compile_true(
+        "let cursor: ref i32 = nil\n"
+        "fn point_at(value: ref i32) { cursor = value }\n"
+        "fn main() bool {\n"
+        "    let value = 41\n"
+        "    point_at(ref value)\n"
+        "    cursor = cursor + 1\n"
+        "    return cursor == 42 && value == 42\n"
+        "}\n"), "nil constants initialize compiled ref globals as empty references.");
+
+    ns_expect(ns_compile_true(
         "use task\n"
         "async fn work(n: i32) i32 { return n * 2 }\n"
         "fn main() bool {\n"
