@@ -57,8 +57,30 @@ fn main() {
     storage_db_close(db)
 
     storage_cache_test()
+    storage_kv_reload_test()
 
     assert storage_kv_clear()
+}
+
+// Values have to survive the process that wrote them. Re-initializing is what
+// a next launch does, and it reads the JSON file back: a value the writer emits
+// that the reader will not take is a setting silently lost between sessions.
+fn storage_kv_reload_test() {
+    assert storage_kv_clear()
+    assert storage_kv_set_str("reload.name", "Nano Script")
+    assert storage_kv_set_i64("reload.count", -17)
+    assert storage_kv_set_f64("reload.scale", 2.5)
+    assert storage_kv_set_bool("reload.on", true)
+    assert storage_kv_set_bool("reload.off", false)
+    assert storage_kv_sync()
+
+    assert storage_init("ns-storage-test")
+    assert storage_kv_get_str("reload.name", "missing") == "Nano Script"
+    assert storage_kv_get_i64("reload.count", 0) == -17
+    assert storage_kv_get_f64("reload.scale", 0.0) == 2.5
+    assert storage_kv_get_bool("reload.on", false)
+    assert storage_kv_has("reload.off")
+    assert !storage_kv_get_bool("reload.off", true)
 }
 
 // The blob cache keys on name plus content hash, so rebuilding an entry from

@@ -311,10 +311,15 @@ static i32 storage_load_json(void) {
             entry.f64_value = strtod(p, &end);
             if (end == p) ok = 0; else p = end;
             entry.type = STORAGE_KV_F64;
-        } else if (ok && strncmp(p, "true", 4) == 0) {
-            p += 4; entry.type = STORAGE_KV_BOOL; entry.bool_value = 1;
-        } else if (ok && strncmp(p, "false", 5) == 0) {
-            p += 5; entry.type = STORAGE_KV_BOOL;
+        } else if (ok) {
+            // Unlike the string and number readers above, strncmp does not skip
+            // the space the writer puts after the colon, so this one has to.
+            const char *literal = storage_skip_space(p);
+            if (strncmp(literal, "true", 4) == 0) {
+                p = literal + 4; entry.type = STORAGE_KV_BOOL; entry.bool_value = 1;
+            } else if (strncmp(literal, "false", 5) == 0) {
+                p = literal + 5; entry.type = STORAGE_KV_BOOL;
+            } else ok = 0;
         } else ok = 0;
         p = ok ? storage_expect(p, '}') : NULL;
         if (!p) ok = 0;
