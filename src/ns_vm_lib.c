@@ -408,7 +408,9 @@ ns_return_bool ns_vm_call_ffi(ns_vm *vm) {
          ns_str_equals_STR(fn->name, "net_send_str") ||
          ns_str_equals_STR(fn->name, "net_send_buf") ||
          ns_str_equals_STR(fn->name, "net_udp_reply") ||
+         ns_str_equals_STR(fn->name, "net_udp_reply_bytes") ||
          ns_str_equals_STR(fn->name, "net_udp_send") ||
+         ns_str_equals_STR(fn->name, "net_udp_send_bytes") ||
          ns_str_equals_STR(fn->name, "net_send_file"));
     void *ffi_owner = (blocking_os_sync || blocking_net) ? ns_task_ffi_leave(vm) : ns_null;
     ffi_call(&cif, FFI_FN(fn_ptr), result, _ffi_ctx.values);

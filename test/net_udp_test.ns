@@ -1,0 +1,49 @@
+use net
+use task
+
+fn main() {
+    let reusable_a = net_udp_bind_reuse(18480)
+    let reusable_b = net_udp_bind_reuse(18480)
+    assert reusable_a >= 0
+    assert reusable_b >= 0
+    net_close(reusable_b)
+    net_close(reusable_a)
+
+    let server = net_udp_bind(18481)
+    assert server >= 0
+    let client = net_udp_socket()
+    assert client >= 0
+    assert net_udp_set_broadcast(client, true) == 0
+    assert net_set_nonblocking(client, true) == 0
+
+    let request = [u8](4)
+    request[0] = 0 as u8
+    request[1] = 1 as u8
+    request[2] = 127 as u8
+    request[3] = 255 as u8
+    let worker = dispatch(queue_worker) { in
+        if net_udp_recv(server) != 4 { return false }
+        if net_buf_byte(0) != 0 || net_buf_byte(3) != 255 { return false }
+        if net_udp_sender_address_byte(0) != 127 { return false }
+        if net_udp_sender_port() <= 0 { return false }
+        let response = [u8](3)
+        response[0] = 9 as u8
+        response[1] = 0 as u8
+        response[2] = 8 as u8
+        return net_udp_reply_bytes(server, response, response.len) == response.len
+    }
+    assert net_udp_send_bytes(client, "127.0.0.1", 18481, request, request.len) == request.len
+    let received = -1
+    for attempt in 0 to 100 {
+        received = net_udp_recv(client)
+        if received > 0 { break }
+        sleep(1)
+    }
+    assert received == 3
+    assert net_buf_byte(0) == 9
+    assert net_buf_byte(1) == 0
+    assert net_buf_byte(2) == 8
+    assert await worker
+    net_close(client)
+    net_close(server)
+}

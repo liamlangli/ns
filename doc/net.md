@@ -17,7 +17,7 @@ Like the terminal primitives in `term`, the interface is restricted to the FFI
 subset that marshals reliably from inside an ns function body:
 
 - scalar `i32` arguments and return values, and
-- `str` arguments (passed to C as a `const char*`).
+- `str` and `[u8]` arguments for text and binary payloads.
 
 It never returns a `str` or a `ref struct`. Received bytes are staged in a
 shared file-scope buffer and read back one byte at a time with `net_buf_byte()`,
@@ -144,6 +144,14 @@ let r = net_udp_reply(fd, "pong", 4) // answer that sender
 let d = net_close(fd)
 ```
 
+LAN discovery can bind a shared well-known port with
+`net_udp_bind_reuse()`. A sending socket enables IPv4 broadcast with
+`net_udp_set_broadcast()`, then sends a binary request with
+`net_udp_send_bytes()`. After `net_udp_recv()`, the four
+`net_udp_sender_address_byte()` values and `net_udp_sender_port()` identify the
+advertising peer; `net_udp_reply_bytes()` returns a binary response without
+encoding embedded NUL bytes as text.
+
 ## Reference
 
 ### `net`
@@ -154,19 +162,25 @@ let d = net_close(fd)
 | `net_tcp_accept(server_fd) i32` | Block for a client; client fd or -1. |
 | `net_tcp_connect(host, port) i32` | Connect; socket fd or -1. |
 | `net_udp_bind(port) i32` | UDP socket bound for receiving; fd or -1. |
+| `net_udp_bind_reuse(port) i32` | UDP bind with `SO_REUSEADDR`, for shared discovery ports. |
 | `net_udp_socket() i32` | Unbound UDP socket for sending; fd or -1. |
+| `net_udp_set_broadcast(fd, enabled) i32` | Toggle IPv4 broadcast sends; 0 or -1. |
 | `net_recv(fd) i32` | TCP read into shared buffer; byte count (0=closed) or -1. |
 | `net_recv_try(fd) i32` | Nonblocking read; bytes, 0 = nothing ready, -1 = closed, -2 = error. |
 | `net_udp_recv(fd) i32` | Receive one datagram (remembers sender); count or -1. |
 | `net_buf_len() i32` | Bytes in the shared receive buffer. |
 | `net_buf_byte(i) i32` | Byte `i` (0..255), or -1 out of range. |
 | `net_buf_read(data, offset, max) i32` | Bulk copy of the buffer into a `[u8]`; bytes copied. |
+| `net_udp_sender_address_byte(index) i32` | Octet 0..3 of the last UDP sender's IPv4 address. |
+| `net_udp_sender_port() i32` | Port of the last UDP sender. |
 | `net_send(fd, data, len) i32` | Send `len` bytes; pass `s.len`. Bytes sent or -1. |
 | `net_send_str(fd, s) i32` | Send NUL-terminated text; bytes sent or -1. |
 | `net_send_bytes(fd, data, len) i32` | Send raw `[u8]` bytes; use for payloads with NULs. |
 | `net_send_buf(fd, len) i32` | Forward the first `len` bytes of the shared buffer. |
 | `net_udp_reply(fd, data, len) i32` | Reply to the last datagram's sender. |
+| `net_udp_reply_bytes(fd, data, len) i32` | Binary `[u8]` reply to the last datagram's sender. |
 | `net_udp_send(fd, host, port, data, len) i32` | Send a datagram to host:port. |
+| `net_udp_send_bytes(fd, host, port, data, len) i32` | Send a binary `[u8]` datagram. |
 | `net_file_size(path) i32` | File size, or -1 if missing / not a regular file. |
 | `net_send_file(fd, path) i32` | Stream a file over `fd`; bytes sent or -1. |
 | `net_close(fd) i32` | Close the socket; 0 or -1. |

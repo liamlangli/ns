@@ -3,11 +3,11 @@ mod net
 // Native TCP / UDP socket primitives, implemented in lib/src/net.c, compiled
 // to net.dylib/net.so, and resolved through FFI.
 //
-// The interface is SCALAR (i32 in / i32 out) plus `str` arguments, the subset
+// The interface uses scalar values, `str`, and `[u8]` arguments, the subset
 // that marshals reliably through the interpreter's FFI. Sockets are identified
 // by their integer file descriptor. Received bytes are staged in a thread-local
-// buffer and read back one at a time with net_buf_byte(); payloads are sent
-// with an explicit length so binary data is handled correctly.
+// buffer and copied out with net_buf_byte/net_buf_read; payloads carry an
+// explicit length so binary data is handled correctly.
 //
 // Blocking calls yield the interpreter lock, so servers and clients can run in
 // worker tasks without freezing the main task.
@@ -34,8 +34,14 @@ ref fn net_tcp_connect(host: str, port: i32) i32
 // Bind a UDP socket to `port` for receiving. Returns fd, or -1.
 ref fn net_udp_bind(port: i32) i32
 
+// Bind with address reuse for fixed LAN discovery ports.
+ref fn net_udp_bind_reuse(port: i32) i32
+
 // Create an unbound UDP socket for sending. Returns fd, or -1.
 ref fn net_udp_socket() i32
+
+// Enable/disable IPv4 broadcast sends. Returns 0 on success.
+ref fn net_udp_set_broadcast(fd: i32, enabled: bool) i32
 
 // ---- receive (into the calling thread's buffer) ---------------------------
 
@@ -61,6 +67,10 @@ ref fn net_buf_byte(i: i32) i32
 // One call instead of one net_buf_byte() per byte. Returns the bytes copied.
 ref fn net_buf_read(data: [u8], offset: i32, max: i32) i32
 
+// Sender remembered by the most recent net_udp_recv().
+ref fn net_udp_sender_address_byte(index: i32) i32
+ref fn net_udp_sender_port() i32
+
 // ---- send -----------------------------------------------------------------
 
 // Send `len` bytes of `data` over `fd`. Pass `s.len` as the length. Returns the
@@ -82,8 +92,14 @@ ref fn net_send_buf(fd: i32, len: i32) i32
 // Reply to the sender of the most recent net_udp_recv() on `fd`. Returns -1/n.
 ref fn net_udp_reply(fd: i32, data: str, len: i32) i32
 
+// Reply with a binary datagram.
+ref fn net_udp_reply_bytes(fd: i32, data: [u8], len: i32) i32
+
 // Send a UDP datagram from `fd` to `host`:`port`. Returns bytes sent, or -1.
 ref fn net_udp_send(fd: i32, host: str, port: i32, data: str, len: i32) i32
+
+// Send a binary datagram to `host`:`port`.
+ref fn net_udp_send_bytes(fd: i32, host: str, port: i32, data: [u8], len: i32) i32
 
 // ---- file helpers ---------------------------------------------------------
 

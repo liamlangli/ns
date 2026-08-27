@@ -151,11 +151,19 @@ int net_tcp_connect(const char *host, int port) {
 
 // ---- UDP ------------------------------------------------------------------
 
-int net_udp_bind(int port) {
+static int net_udp_bind_options(int port, int reuse) {
     if (net_startup() != 0) return -1;
 
     int fd = (int)socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) return -1;
+
+    if (reuse) {
+        int yes = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
+#ifdef SO_REUSEPORT
+        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, (const char *)&yes, sizeof(yes));
+#endif
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -170,11 +178,21 @@ int net_udp_bind(int port) {
     return fd;
 }
 
+int net_udp_bind(int port) { return net_udp_bind_options(port, 0); }
+
+int net_udp_bind_reuse(int port) { return net_udp_bind_options(port, 1); }
+
 int net_udp_socket(void) {
     if (net_startup() != 0) return -1;
     int fd = (int)socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) return -1;
     return fd;
+}
+
+int net_udp_set_broadcast(int fd, int enabled) {
+    int value = enabled ? 1 : 0;
+    return setsockopt(fd, SOL_SOCKET, SO_BROADCAST,
+                      (const char *)&value, sizeof(value)) == 0 ? 0 : -1;
 }
 
 // ---- receive --------------------------------------------------------------
@@ -234,6 +252,17 @@ int net_buf_read(unsigned char *dst, int dst_offset, int max) {
     return n;
 }
 
+int net_udp_sender_address_byte(int index) {
+    if (g_udp_from_len == 0 || index < 0 || index > 3) return -1;
+    const unsigned char *address = (const unsigned char *)&g_udp_from.sin_addr.s_addr;
+    return (int)address[index];
+}
+
+int net_udp_sender_port(void) {
+    if (g_udp_from_len == 0) return -1;
+    return (int)ntohs(g_udp_from.sin_port);
+}
+
 int net_buf_byte(int i) {
     if (i < 0 || i >= g_buf_len) return -1;
     return (int)(unsigned char)g_buf[i];
@@ -284,7 +313,32 @@ int net_udp_reply(int fd, const char *data, int len) {
                        (struct sockaddr *)&g_udp_from, (socklen_t)g_udp_from_len);
 }
 
+int net_udp_reply_bytes(int fd, const unsigned char *data, int len) {
+    if (g_udp_from_len == 0 || !data || len < 0) return -1;
+    return (int)sendto(fd, data, (size_t)len, 0,
+                       (struct sockaddr *)&g_udp_from, (socklen_t)g_udp_from_len);
+}
+
 int net_udp_send(int fd, const char *host, int port, const char *data, int len) {
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+
+    struct addrinfo hints;
+    struct addrinfo *res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    if (getaddrinfo(host, port_str, &hints, &res) != 0 || !res) return -1;
+    int n = (int)sendto(fd, data, (size_t)len, 0, res->ai_addr, (socklen_t)res->ai_addrlen);
+    freeaddrinfo(res);
+    return n;
+}
+
+int net_udp_send_bytes(int fd, const char *host, int port,
+                       const unsigned char *data, int len) {
+    if (!data || len < 0) return -1;
+
     char port_str[16];
     snprintf(port_str, sizeof(port_str), "%d", port);
 

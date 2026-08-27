@@ -5,12 +5,11 @@
 //
 // Like the terminal primitives in term.h, the interface is deliberately kept to
 // the FFI subset that marshals reliably from inside an ns function body:
-//   * scalar `i32` arguments and return values, and
-//   * `str` arguments (passed to C as a `const char*`).
-// It never returns a `str` or a `ref struct` (those do not round-trip through
-// the interpreter's FFI). Received bytes are therefore staged in a
-// thread-local buffer and read back one byte at a time with net_buf_byte(),
-// the same approach term.posix.c uses for files.
+//   * scalar `i32` arguments and return values,
+//   * `str` arguments (passed to C as a `const char*`), and
+//   * `[u8]` arguments (passed as a pointer to their payload).
+// It never returns a `str` or a `ref struct`. Received bytes are staged in a
+// thread-local buffer and read back with net_buf_byte()/net_buf_read().
 //
 // Sockets are identified by their integer file descriptor. Blocking calls
 // release the Nano Script interpreter lock, so they are suitable for worker
@@ -45,9 +44,16 @@ int net_tcp_connect(const char *host, int port);
 // Returns the socket fd, or -1 on error.
 int net_udp_bind(int port);
 
+// Bind with SO_REUSEADDR enabled. This is intended for fixed LAN discovery
+// ports, where several local processes may listen for the same broadcast.
+int net_udp_bind_reuse(int port);
+
 // Create an unbound UDP socket (for sending with net_udp_send). Returns the
 // socket fd, or -1 on error.
 int net_udp_socket(void);
+
+// Allow or refuse datagrams to IPv4 broadcast addresses on `fd`.
+int net_udp_set_broadcast(int fd, int enabled);
 
 // ---- receive (into the calling thread's buffer) ---------------------------
 
@@ -75,6 +81,11 @@ int net_buf_byte(int i);
 // Copy up to `max` staged bytes into `dst` at `dst_offset`. Returns the count.
 int net_buf_read(unsigned char *dst, int dst_offset, int max);
 
+// IPv4 address and UDP port of the sender remembered by net_udp_recv(). The
+// address is exposed one octet at a time so the FFI surface remains scalar.
+int net_udp_sender_address_byte(int index);
+int net_udp_sender_port(void);
+
 // ---- send -----------------------------------------------------------------
 
 // Send `len` bytes of `data` over the connected socket `fd`. The length is
@@ -100,8 +111,12 @@ int net_send_buf(int fd, int len);
 // number of bytes sent, or -1.
 int net_udp_reply(int fd, const char *data, int len);
 
+// Binary forms of UDP reply/send for protocol frames containing NUL bytes.
+int net_udp_reply_bytes(int fd, const unsigned char *data, int len);
+
 // Send a UDP datagram from `fd` to `host`:`port`. Returns bytes sent, or -1.
 int net_udp_send(int fd, const char *host, int port, const char *data, int len);
+int net_udp_send_bytes(int fd, const char *host, int port, const unsigned char *data, int len);
 
 // ---- file helpers ---------------------------------------------------------
 
