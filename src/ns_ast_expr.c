@@ -246,7 +246,7 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
     ns_ast_state state = (ns_ast_state){.f = ctx->last_f, .l = ctx->token.line, .o = ctx->last_f - ctx->token.line_start};
 
     ns_str fmt = ctx->token.val;
-    ns_ast_t n = {.type = NS_AST_STR_FMT_EXPR, .state = state, .str_fmt = {.expr_count = 0, .fmt = fmt}};
+    ns_ast_t n = {.type = NS_AST_STR_FMT_EXPR, .state = state, .str_fmt = {.expr_count = 0, .fmt = fmt, .expr = 0}};
     ns_ast_state end_state = (ns_ast_state){.f = state.f + fmt.len + 2, .l = state.l, .o = state.o + fmt.len + 2};
     i32 source_len = ctx->source.len;
 
@@ -278,7 +278,7 @@ ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx) {
                 n.str_fmt.expr_count++;
                 ns_ast_push_expr(ctx, expr_state, ctx->current);
                 i32 cur = ctx->current;
-                if (prev < 0) n.next = cur;
+                if (prev < 0) n.str_fmt.expr = cur;
                 else ctx->nodes[prev].next = cur;
                 prev = cur;
             } else {

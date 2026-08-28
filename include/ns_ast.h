@@ -131,6 +131,11 @@ typedef struct ns_ast_typedef_stmt {
 typedef struct ns_ast_str_fmt {
     ns_str fmt;
     i32 expr_count;
+    // First embedded expression, chained through each one's `next`. It cannot
+    // live in the format node's own `next` the way an argument list does:
+    // a format string is itself an operand, so an enclosing call would link
+    // its following argument over the head of this chain.
+    i32 expr;
 } ns_ast_str_fmt;
 
 typedef struct ns_ast_arg {

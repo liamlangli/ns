@@ -1911,7 +1911,7 @@ ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
 
     i32 j = 0;
     i32 lit_start = 0;
-    ns_ast_t *expr = n;
+    i32 expr = n->str_fmt.expr;
     while (j < fmt.len) {
         if (fmt.data[j] == '{' && (j == 0 || (j > 0 && fmt.data[j - 1] != '\\'))) {
             ns_eval_append_unescaped(&ret, ns_str_slice(fmt, lit_start, j));
@@ -1926,10 +1926,13 @@ ns_return_value ns_eval_str_fmt_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
             }
             lit_start = j;
 
-            ns_return_value ret_v = ns_eval_expr(vm, ctx, expr->next);
+            if (expr == 0) {
+                return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "unmatched fmt expr.");
+            }
+            ns_return_value ret_v = ns_eval_expr(vm, ctx, expr);
             if (ns_return_is_error(ret_v)) return ret_v;
 
-            expr = &ctx->nodes[expr->next];
+            expr = ctx->nodes[expr].next;
             count--;
 
             if (count < 0) {

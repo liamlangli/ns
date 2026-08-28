@@ -1266,12 +1266,13 @@ ns_return_void ns_vm_parse_var_def(ns_vm *vm, ns_ast_ctx *ctx) {
 ns_return_type ns_vm_parse_str_fmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     ns_return_type ret;
     ns_ast_t *n = &ctx->nodes[i];
-    i32 next = i;
-    for (i32 j = 0, l = n->str_fmt.expr_count; j < l; ++j) {
-        n = &ctx->nodes[next = n->next];
+    i32 next = n->str_fmt.expr;
+    for (i32 j = 0, l = n->str_fmt.expr_count; j < l && next != 0; ++j) {
+        n = &ctx->nodes[next];
         ret = ns_vm_parse_expr(vm, ctx, next, ns_type_infer);
         n->expr.type = ret.r;
         if (ns_return_is_error(ret)) return ret;
+        next = n->next;
     }
     return ns_return_ok(type, ns_type_str);
 }

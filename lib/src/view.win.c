@@ -212,7 +212,15 @@ void view_run(view *v) {
     }
 }
 
-// view_close / view_capture_require are provided generically by view.c.
+// Post the close the title bar's button posts, so the window delegate path and
+// this one leave the message loop through the same code.
+void view_platform_close(view *v) {
+    ns_unused(v);
+    if (_hwnd) PostMessage(_hwnd, WM_CLOSE, 0, 0);
+    else _quit = true;
+}
+
+// view_capture_require is provided generically by view.c.
 
 // ---- surface accessors for the DX12 backend --------------------------------
 

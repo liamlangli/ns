@@ -235,6 +235,10 @@ view* view_create(const char *title, i32 width, i32 height);
 // window controls rather than app-drawn chrome.
 view* view_create_no_title(const char *title, i32 width, i32 height);
 void view_run(view *v);
+// Ask the window to close, which is the same path the title bar's close button
+// takes: on_terminate runs and view_run() returns, so a program can end itself
+// rather than only being ended from outside. Backends without an event loop
+// have nothing to leave and ignore it.
 void view_close(view *v);
 // Publish the platform safe-area insets (logical points). Negative values are
 // clamped to 0. Backends call this whenever their metrics change; the UI
@@ -254,6 +258,7 @@ ns_bool view_continuous_render(void);
 void view_complete_frame(view *v);
 void view_platform_request_frame(view *v);
 void view_platform_request_frame_after(view *v, i32 milliseconds);
+void view_platform_close(view *v);
 
 // View event handling functions
 void view_on_scroll(view *v, f64 x, f64 y);

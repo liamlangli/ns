@@ -33,6 +33,12 @@ void view_platform_request_frame(view *v) {
     ns_unused(v);
 }
 
+// view_run returns immediately without a native backend, so there is no loop
+// for a close to leave.
+void view_platform_close(view *v) {
+    ns_unused(v);
+}
+
 void view_platform_request_frame_after(view *v, i32 milliseconds) {
     ns_unused(v);
     ns_unused(milliseconds);

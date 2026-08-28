@@ -676,6 +676,22 @@ void view_platform_request_frame(view *v) {
     else dispatch_async(dispatch_get_main_queue(), request);
 }
 
+// The close button's own path: publish the terminate callback, then let AppKit
+// unwind [NSApp run] so view_run() returns.
+//
+// It is always deferred to the next main-loop turn, never run inline. A program
+// closes itself from inside its frame callback, and that callback is exactly
+// where the resources on_terminate releases are still in use - tearing down the
+// GPU device from within a draw would take the renderer out from under the
+// frame that asked. Waiting one turn lets that frame finish first.
+void view_platform_close(view *v) {
+    ns_unused(v);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        view_osx_finish();
+        view_osx_request_terminate();
+    });
+}
+
 void view_platform_request_frame_after(view *v, i32 milliseconds) {
     (void)v;
     if (!view_mtk_view) return;

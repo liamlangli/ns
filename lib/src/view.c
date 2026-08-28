@@ -253,9 +253,15 @@ void view_on_resize(view *v, i32 width, i32 height) {
     view_request_frame(v, 1);
 }
 
+// A close is idempotent: a program that asks twice, or that asks from inside
+// the frame callback the close tears down, must not re-enter the backend.
+static ns_bool view_closing;
+
 void view_close(view *v) {
-    ns_unused(v);
-    // View cleanup implementation
+    if (!v) return;
+    if (view_closing) return;
+    view_closing = true;
+    view_platform_close(v);
 }
 
 void view_set_safe_area(view *v, f64 top, f64 right, f64 bottom, f64 left) {

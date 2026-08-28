@@ -689,7 +689,7 @@ static void ns_ssa_collect_ref_in(ns_ssa_builder *b, i32 i) {
         ns_ssa_collect_ref_in(b, n->block_expr.body);
         break;
     case NS_AST_STR_FMT_EXPR:
-        ns_ssa_collect_ref_chain(b, n->next, n->str_fmt.expr_count);
+        ns_ssa_collect_ref_chain(b, n->str_fmt.expr, n->str_fmt.expr_count);
         break;
     case NS_AST_VAR_DEF:
         ns_ssa_collect_ref_in(b, n->var_def.expr);
@@ -1372,7 +1372,7 @@ static ns_bool ns_ssa_calls_shader_stage(ns_ssa_builder *b, i32 i) {
     case NS_AST_BLOCK_EXPR:
         return ns_ssa_calls_shader_stage(b, n->block_expr.body);
     case NS_AST_STR_FMT_EXPR:
-        return ns_ssa_calls_shader_stage_chain(b, n->next, n->str_fmt.expr_count);
+        return ns_ssa_calls_shader_stage_chain(b, n->str_fmt.expr, n->str_fmt.expr_count);
     case NS_AST_VAR_DEF:
         return ns_ssa_calls_shader_stage(b, n->var_def.expr);
     case NS_AST_FN_DEF:
@@ -1462,7 +1462,7 @@ static void ns_ssa_collect_callees(ns_ssa_builder *b, i32 i, ns_str **names) {
         ns_ssa_collect_callees(b, n->block_expr.body, names);
         break;
     case NS_AST_STR_FMT_EXPR:
-        ns_ssa_collect_callees_chain(b, n->next, n->str_fmt.expr_count, names);
+        ns_ssa_collect_callees_chain(b, n->str_fmt.expr, n->str_fmt.expr_count, names);
         break;
     case NS_AST_VAR_DEF:
         ns_ssa_collect_callees(b, n->var_def.expr, names);
@@ -2380,7 +2380,7 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
     case NS_AST_STR_FMT_EXPR: {
         ns_str fmt = n->str_fmt.fmt;
         i32 acc = -1;
-        i32 expr = i;
+        i32 expr = n->str_fmt.expr;
         i32 remaining = n->str_fmt.expr_count;
         i32 lit_start = 0;
         i32 j = 0;
@@ -2417,9 +2417,10 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             if (j < fmt.len) j++;
             lit_start = j;
             if (remaining <= 0) continue;
+            if (expr == 0) continue;
             remaining--;
-            expr = b->ctx->nodes[expr].next;
             i32 val = ns_ssa_lower_expr(b, expr);
+            expr = b->ctx->nodes[expr].next;
             ns_type vt = ns_ssa_value_type(b, val);
             i32 piece = val;
             if (!ns_type_is(vt, NS_TYPE_STRING)) {

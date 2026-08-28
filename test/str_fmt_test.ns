@@ -56,3 +56,41 @@ let after = 42
 assert after == 42
 
 print("str fmt boundary test passed\n")
+
+// ---- a format string used as a call argument -------------------------------
+// A format string chains its embedded expressions, and so does an argument
+// list. When both used the node's `next` field, an enclosing call linked its
+// following argument over the head of the format's own chain: the format read
+// the call's later arguments as its holes, printing the wrong value when the
+// types happened to line up and dereferencing a bool as a string when they did
+// not. Every argument position is covered because only a format in the last
+// one was ever safe.
+fn fmt_two(head: str, flag: bool) str {
+    return `{head}/{flag}`
+}
+
+fn fmt_four(head: str, flag: bool, tail: str, count: i32) str {
+    return `{head}/{flag}/{tail}/{count}`
+}
+
+fn fmt_three(a: str, b: str, c: str) str {
+    return `{a}|{b}|{c}`
+}
+
+let n = 7
+let word = "host"
+assert fmt_two(`a{n}b`, true) == "a7b/true"
+assert fmt_two("plain", true) == "plain/true"
+assert fmt_four(`{word}:{n}`, true, word, n) == "host:7/true/host/7"
+assert fmt_three("first", `x{n}y`, "last") == "first|x7y|last"
+assert fmt_three(`p{n}q`, `r{n}s`, `t{n}u`) == "p7q|r7s|t7u"
+
+// The same collision through other chained parents: an array literal and a
+// nested call argument both link their elements with `next`.
+let pieces = [`one{n}`, `two{n}`, `three{n}`]
+assert pieces[0] == "one7"
+assert pieces[1] == "two7"
+assert pieces[2] == "three7"
+assert fmt_three(fmt_two(`i{n}`, false), `m{n}`, "last") == "i7/false|m7|last"
+
+print("str fmt argument test passed\n")

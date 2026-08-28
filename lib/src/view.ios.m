@@ -270,6 +270,13 @@ void view_run(view *value) {
     if (terminate) terminate(value);
 }
 
+// iOS applications do not exit themselves, so this only releases view_run(),
+// which publishes on_terminate and lets the program finish its own teardown.
+void view_platform_close(view *value) {
+    ns_unused(value);
+    if (view_ios_done) dispatch_semaphore_signal(view_ios_done);
+}
+
 void view_platform_request_frame(view *value) {
     ns_unused(value);
     if (!view_ios_metal_view) return;

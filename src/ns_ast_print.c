@@ -259,7 +259,7 @@ void ns_ast_print(ns_ast_ctx *ctx, i32 i) {
         ns_str_printf(n->str_fmt.fmt);
         printf("\"");
         i32 count = n->str_fmt.expr_count;
-        i32 next = n->next;
+        i32 next = n->str_fmt.expr;
         for (i32 a_i = 0; a_i < count; ++a_i) {
             printf(", [%d]", next);
             next = ctx->nodes[next].next;
@@ -684,16 +684,10 @@ void ns_ast_print_node(ns_ast_ctx *ctx, i32 i, i32 depth) {
         case NS_AST_STR_FMT_EXPR: {
             printf("\"");
             ns_str_printf(n->str_fmt.fmt);
-            for (i32 a_i = 0; a_i < n->str_fmt.expr_count; ++a_i) {
-                printf(" ");
-                ns_ast_print_node(ctx, n->next, depth);
-                n = &ctx->nodes[n->next];
-            }
-
             printf("\"");
             i32 count = n->str_fmt.expr_count;
-            i32 next = n->next;
-            for (i32 a_i = 0; a_i < count; ++a_i) {
+            i32 next = n->str_fmt.expr;
+            for (i32 a_i = 0; a_i < count && next != 0; ++a_i) {
                 printf(", ");
                 ns_ast_print_node(ctx, next, depth);
                 next = ctx->nodes[next].next;
