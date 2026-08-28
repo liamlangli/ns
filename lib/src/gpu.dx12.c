@@ -32,11 +32,12 @@ typedef struct gpu_state_dx12 {
     ID3D12DescriptorHeap *rtv_heap;
     UINT rtv_descriptor_size;
     ID3D12Resource *render_targets[GPU_SWAP_BUFFER_COUNT];
-    ID3D12CommandAllocator *command_allocator;
+    ID3D12CommandAllocator *command_allocators[GPU_SWAP_BUFFER_COUNT];
     ID3D12GraphicsCommandList *command_list;
     ID3D12Fence *fence;
     HANDLE fence_event;
     UINT64 fence_value;
+    UINT64 frame_fence_values[GPU_SWAP_BUFFER_COUNT];
     UINT frame_index;
     ns_bool pass_open;
     gpu_dx12_memory memory[GPU_RESOURCE_POOL_SIZE];
@@ -52,6 +53,13 @@ static void gpu_dx12_wait_for_gpu(void) {
         ID3D12Fence_SetEventOnCompletion(_state.fence, target, _state.fence_event);
         WaitForSingleObject(_state.fence_event, INFINITE);
     }
+}
+
+static void gpu_dx12_wait_for_frame(UINT frame_index) {
+    const UINT64 target = _state.frame_fence_values[frame_index];
+    if (target == 0 || ID3D12Fence_GetCompletedValue(_state.fence) >= target) return;
+    ID3D12Fence_SetEventOnCompletion(_state.fence, target, _state.fence_event);
+    WaitForSingleObject(_state.fence_event, INFINITE);
 }
 
 ns_bool gpu_request_device(view *v) {
@@ -106,10 +114,13 @@ ns_bool gpu_request_device(view *v) {
         ID3D12Device_CreateRenderTargetView(_state.device, _state.render_targets[i], NULL, rtv);
         rtv.ptr += _state.rtv_descriptor_size;
     }
-    ID3D12Device_CreateCommandAllocator(_state.device, D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                        &IID_ID3D12CommandAllocator, (void **)&_state.command_allocator);
+    for (UINT i = 0; i < GPU_SWAP_BUFFER_COUNT; ++i) {
+        ID3D12Device_CreateCommandAllocator(_state.device, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                                            &IID_ID3D12CommandAllocator,
+                                            (void **)&_state.command_allocators[i]);
+    }
     ID3D12Device_CreateCommandList(_state.device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-                                   _state.command_allocator, NULL,
+                                   _state.command_allocators[0], NULL,
                                    &IID_ID3D12GraphicsCommandList, (void **)&_state.command_list);
     ID3D12GraphicsCommandList_Close(_state.command_list);
     ID3D12Device_CreateFence(_state.device, 0, D3D12_FENCE_FLAG_NONE,
@@ -135,7 +146,8 @@ void gpu_destroy_device(void) {
     for (UINT i = 0; i < GPU_SWAP_BUFFER_COUNT; ++i)
         if (_state.render_targets[i]) ID3D12Resource_Release(_state.render_targets[i]);
     if (_state.command_list) ID3D12GraphicsCommandList_Release(_state.command_list);
-    if (_state.command_allocator) ID3D12CommandAllocator_Release(_state.command_allocator);
+    for (UINT i = 0; i < GPU_SWAP_BUFFER_COUNT; ++i)
+        if (_state.command_allocators[i]) ID3D12CommandAllocator_Release(_state.command_allocators[i]);
     if (_state.fence) ID3D12Fence_Release(_state.fence);
     if (_state.rtv_heap) ID3D12DescriptorHeap_Release(_state.rtv_heap);
     if (_state.swapchain) IDXGISwapChain3_Release(_state.swapchain);
@@ -225,8 +237,10 @@ static void dx12_begin_event(const char *label) {
 static void dx12_screen_pass_begin(const char *label, gpu_color clear) {
     if (!_state.valid || _state.pass_open) return;
     _state.frame_index = IDXGISwapChain3_GetCurrentBackBufferIndex(_state.swapchain);
-    ID3D12CommandAllocator_Reset(_state.command_allocator);
-    ID3D12GraphicsCommandList_Reset(_state.command_list, _state.command_allocator, NULL);
+    gpu_dx12_wait_for_frame(_state.frame_index);
+    ID3D12CommandAllocator_Reset(_state.command_allocators[_state.frame_index]);
+    ID3D12GraphicsCommandList_Reset(_state.command_list,
+                                    _state.command_allocators[_state.frame_index], NULL);
     dx12_begin_event(label);
     D3D12_RESOURCE_BARRIER barrier = {0};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -278,8 +292,10 @@ void gpu_commit(void) {
     if (_state.pass_open) dx12_pass_end();
     ID3D12CommandList *lists[] = {(ID3D12CommandList *)_state.command_list};
     ID3D12CommandQueue_ExecuteCommandLists(_state.queue, 1, lists);
-    IDXGISwapChain3_Present(_state.swapchain, 1, 0);
-    gpu_dx12_wait_for_gpu();
+    IDXGISwapChain3_Present(_state.swapchain, GPU_PRESENT_SYNC_INTERVAL, 0);
+    const UINT64 submitted = ++_state.fence_value;
+    ID3D12CommandQueue_Signal(_state.queue, _state.fence, submitted);
+    _state.frame_fence_values[_state.frame_index] = submitted;
     gpu_v2_frame_end();
 }
 

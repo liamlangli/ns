@@ -1,7 +1,10 @@
 #pragma once
 
 enum {
+    // Windowed backends present once per display refresh and keep three frames
+    // available so CPU encoding can overlap GPU execution.
     GPU_SWAP_BUFFER_COUNT = 3,
+    GPU_PRESENT_SYNC_INTERVAL = 1,
     GPU_ATTRIBUTE_COUNT = 8,
     GPU_VERTEX_BUFFER_COUNT = 8,
     GPU_ATTACHMENT_COUNT = 4,

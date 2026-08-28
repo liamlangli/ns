@@ -36,8 +36,9 @@ lit GPU_CULL_NONE = 0
 lit GPU_CULL_BACK = 2
 lit GPU_FACE_WINDING_CCW = 0
 lit GPU_FACE_WINDING_CW = 1
-// Acquire the platform GPU device for `v`. Returns true on success. On platforms
-// without a backend this returns false.
+// Acquire the platform GPU device for `v`. Native windowed devices use
+// display-synced triple-buffered presentation by default. Returns true on
+// success. On platforms without a backend this returns false.
 // `nil` selects a headless/default device. Browser Wasm projects pass the
 // `ref view` returned by view_create, whose native window is the HTML canvas.
 ref fn gpu_request_device(v: ref view) bool

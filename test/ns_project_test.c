@@ -219,8 +219,11 @@ int main(void) {
                   text_has(view_osx, "[NSApp finishLaunching]"),
               "embedded macOS view creation and lifecycle stay on the AppKit main thread.");
     ns_expect(text_has(gpu_metal, "if ([NSThread isMainThread]) attach_view()") &&
-                  text_has(gpu_metal, "dispatch_sync(dispatch_get_main_queue(), attach_view)"),
-              "embedded Metal setup keeps NSWindow and MTKView access on the AppKit main thread.");
+                  text_has(gpu_metal, "dispatch_sync(dispatch_get_main_queue(), attach_view)") &&
+                  text_has(gpu_metal, "setMaximumDrawableCount:GPU_SWAP_BUFFER_COUNT") &&
+                  text_has(gpu_metal, "setDisplaySyncEnabled:GPU_PRESENT_SYNC_INTERVAL != 0") &&
+                  text_has(gpu_metal, "dispatch_semaphore_create(GPU_SWAP_BUFFER_COUNT)"),
+              "embedded Metal setup stays on the main thread and defaults to vsync triple buffering.");
     ns_expect(text_has(gpu_metal, "mtl_v2_mem_create") &&
                   text_has(gpu_metal, "mtl_v2_bind_root") &&
                   text_has(gpu_metal, "mtl_v2_ensure_pipeline"),

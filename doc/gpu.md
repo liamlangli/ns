@@ -455,14 +455,17 @@ gpu_pass_end()
   addresses bind the corresponding buffer plus offset; texture ids in the root
   select resources for the current shader. Render pipelines are compiled from
   (shader, state, pass formats), and Metal's tracked resources provide the
-  default ordering model.
+  default ordering model. Windowed devices present with display sync and three
+  swap drawables by default, with up to three command buffers in flight.
 - **DX12.** Pool allocations in large committed buffers;
   `GetGPUVirtualAddress` exists, but HLSL lacks raw pointers, so addresses
   stay pooled (`pool << 40 | offset`) and derefs compile to
   `ResourceDescriptorHeap[pool].Load(offset)` under SM 6.6. Root signature:
   one 64-bit root constant (the root address) + the shared descriptor heap.
   Barriers: enhanced barriers with a global scope between passes; split
-  barriers via fence signals on the compute queue.
+  barriers via fence signals on the compute queue. The flip-discard swap chain
+  presents at the display interval with three back buffers; per-buffer fences
+  only stall when the CPU catches the buffer still owned by the GPU.
 - **WebGPU (`target = "wasm"`).** Portable browser tier:
   pooled buffers in bind group 0, root struct in a uniform slot, textures
   patched into bind group 1 per draw using the transpiler's root reflection.

@@ -364,6 +364,17 @@ typedef struct gpu_state_mtl {
 static gpu_state_mtl _state = {0};
 static const gpu_v2_ops _mtl_v2_ops;
 
+static void gpu_mtl_configure_view(MTKView *view, id<MTLDevice> device) {
+    if (view == nil) return;
+    [view setDevice:device];
+
+    CAMetalLayer *layer = (CAMetalLayer *)[view layer];
+    [layer setMaximumDrawableCount:GPU_SWAP_BUFFER_COUNT];
+#if TARGET_OS_OSX
+    [layer setDisplaySyncEnabled:GPU_PRESENT_SYNC_INTERVAL != 0];
+#endif
+}
+
 static NSURL *gpu_mtl_capture_output_url(void) {
     NSString *cwd = [[NSFileManager defaultManager] currentDirectoryPath];
     NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
@@ -465,7 +476,7 @@ static void gpu_mtl_capture_end_if_started(void) {
 ns_bool gpu_request_device(view* v) {
     if (_state.valid && _state.device.device != nil && _state.owner_view == v) return true;
     _state.owner_view = v;
-    _state.semaphore = dispatch_semaphore_create(1);
+    _state.semaphore = dispatch_semaphore_create(GPU_SWAP_BUFFER_COUNT);
     if (v != NULL && v->gpu_device != NULL) {
         _state.device.device = (__bridge id<MTLDevice>)v->gpu_device;
     } else {
@@ -487,14 +498,18 @@ ns_bool gpu_request_device(view* v) {
             NSView *content_view = [window contentView];
             if ([content_view isKindOfClass: [MTKView class]]) {
                 _state.view = (MTKView *)content_view;
-                [_state.view setDevice: _state.device.device];
+                gpu_mtl_configure_view(_state.view, _state.device.device);
             }
         };
         if ([NSThread isMainThread]) attach_view();
         else dispatch_sync(dispatch_get_main_queue(), attach_view);
 #else
-        _state.view = (__bridge MTKView *)v->native_window;
-        [_state.view setDevice:_state.device.device];
+        void (^attach_view)(void) = ^{
+            _state.view = (__bridge MTKView *)v->native_window;
+            gpu_mtl_configure_view(_state.view, _state.device.device);
+        };
+        if ([NSThread isMainThread]) attach_view();
+        else dispatch_sync(dispatch_get_main_queue(), attach_view);
 #endif
     }
 
@@ -540,8 +555,12 @@ void gpu_destroy_device() {
     // makes libdispatch trap during application shutdown.
     _state.valid = false;
     if (_state.semaphore != nil) {
-        dispatch_semaphore_wait(_state.semaphore, DISPATCH_TIME_FOREVER);
-        dispatch_semaphore_signal(_state.semaphore);
+        for (i32 i = 0; i < GPU_SWAP_BUFFER_COUNT; ++i) {
+            dispatch_semaphore_wait(_state.semaphore, DISPATCH_TIME_FOREVER);
+        }
+        for (i32 i = 0; i < GPU_SWAP_BUFFER_COUNT; ++i) {
+            dispatch_semaphore_signal(_state.semaphore);
+        }
     }
     gpu_v2_set_backend(NULL, 0, 0);
     for (i32 i = 0; i < GPU_RESOURCE_POOL_SIZE; ++i) {
