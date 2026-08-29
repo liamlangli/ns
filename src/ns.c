@@ -82,6 +82,9 @@ typedef struct ns_compile_option_t {
     ns_str shader_target;
     ns_str entry;
     ns_str output;
+    ns_str strtab;
+    ns_str macho_platform;
+    ns_bool embed_main;
     ns_str filename;
     i32 port;
     ns_bool port_set;
@@ -135,6 +138,16 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.macho_only = true;
         } else if (strcmp(argv[i], "--macho-o") == 0 || strcmp(argv[i], "--macho-obj") == 0) {
             option.macho_obj_only = true;
+        } else if (strcmp(argv[i], "--embed-main") == 0) {
+            option.embed_main = true;
+        } else if (strcmp(argv[i], "--strtab") == 0) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--strtab needs a path.\n");
+            option.strtab = ns_str_cstr(argv[i + 1]);
+            i++;
+        } else if (strcmp(argv[i], "--macho-platform") == 0) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--macho-platform needs a name.\n");
+            option.macho_platform = ns_str_cstr(argv[i + 1]);
+            i++;
         } else if (strcmp(argv[i], "--wasm") == 0) {
             option.wasm_only = true;
         } else if (strcmp(argv[i], "--pe") == 0) {
@@ -229,6 +242,9 @@ void ns_help() {
     printf("  --aarch           lower ssa to aarch64 machine words\n");
     printf("  --macho           emit mach-o executable (arm64)\n");
     printf("  --macho-o         emit mach-o object file (.o, arm64)\n");
+    printf("  --embed-main      with --macho-o, export fn main as ns_program_main\n");
+    printf("  --strtab <path>   with --macho-o, write the string-table constructor\n");
+    printf("  --macho-platform  with --macho-o, Xcode PLATFORM_NAME for LC_BUILD_VERSION\n");
     printf("  --wasm            emit webassembly module (.wasm)\n");
     printf("  --pe              emit windows pe executable (.exe, amd64)\n");
     printf("  --shader <target> transpile shader fns to msl | glsl | hlsl | wgsl source\n");
@@ -375,6 +391,7 @@ static void ns_build_profile_end(const char *name, f64 start_ms) {
 }
 
 void ns_exec_run(ns_str filename, i32 port, ns_bool port_set, ns_bool honor_link);
+static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path);
 
 void ns_exec_tokenize(ns_str filename) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
@@ -484,7 +501,7 @@ void ns_exec_macho(ns_str filename, ns_str output) {
     ns_info("macho", "output %.*s\n", output.len, output.data);
 }
 
-void ns_exec_macho_object(ns_str filename, ns_str output) {
+void ns_exec_macho_object(ns_str filename, ns_str output, ns_bool embed_main, ns_str strtab, ns_str platform) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_os_read_file(filename);
     if (source.len == 0) {
@@ -503,7 +520,9 @@ void ns_exec_macho_object(ns_str filename, ns_str output) {
     if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
     ns_ssa_module *ssa = ssa_ret.r;
 
-    ns_return_bool emit_ret = ns_macho_emit_object(ssa, output);
+    if (strtab.len > 0) ns_build_write_strtab_c(ssa, strtab);
+
+    ns_return_bool emit_ret = ns_macho_emit_object_ex(ssa, output, embed_main, platform);
     ns_ssa_module_free(ssa);
     if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
 
@@ -3673,15 +3692,16 @@ void ns_exec_project(ns_str path) {
         linked = ns_project_link_all(root, in.source, in.filename, false, ns_null, &external_modules);
     }
 
-    // `link` controls how `ns run` launches a native target. An IDE app still
-    // embeds the linked source so Xcode can produce its portable Apple targets;
-    // only a CLI or an unavailable embedded module needs the host toolchain.
+    // `link` compiles the program into the generated Apple app. A CLI, or an
+    // app that imports a module the portable runtime cannot embed, still
+    // delegates to the host `ns build` / `ns test` utility targets.
     ns_bool host_build = cli_project;
     if (kind == NS_PROJECT_APP) {
         for (i32 i = 0, l = ns_array_length(external_modules); i < l; i++) {
             if (!ns_project_module_embeddable(external_modules[i])) host_build = true;
         }
     }
+    ns_bool link_native = kind == NS_PROJECT_APP && !cli_project && !host_build && selection.link;
 
     ns_str executable = ns_project_current_executable();
     if (executable.data == ns_null) ns_exit(1, "project", "failed to locate the ns executable.\n");
@@ -3695,6 +3715,7 @@ void ns_exec_project(ns_str path) {
     ns_project_spec spec = {
         .kind = kind,
         .host_build = host_build,
+        .link_native = link_native,
         .root = root,
         .manifest = manifest,
         .source_dir = source_dir,
@@ -5013,7 +5034,7 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.macho_only) {
         ns_exec_macho(option.filename, option.output);
     } else if (option.macho_obj_only) {
-        ns_exec_macho_object(option.filename, option.output);
+        ns_exec_macho_object(option.filename, option.output, option.embed_main, option.strtab, option.macho_platform);
     } else if (option.wasm_only) {
         ns_exec_wasm(option.filename, option.output);
     } else if (option.pe_only) {

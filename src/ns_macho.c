@@ -32,6 +32,10 @@
 #define NS_MACHO_SECTION_ATTR_PURE_INSTRUCTIONS 0x80000000U
 
 #define NS_MACHO_PLATFORM_MACOS 1U
+#define NS_MACHO_PLATFORM_IOS 2U
+#define NS_MACHO_PLATFORM_IOSSIMULATOR 7U
+#define NS_MACHO_PLATFORM_VISIONOS 11U
+#define NS_MACHO_PLATFORM_VISIONOSSIMULATOR 12U
 #define NS_MACHO_N_UNDF 0x00
 #define NS_MACHO_N_SECT 0x0e
 #define NS_MACHO_N_EXT 0x01
@@ -185,8 +189,39 @@ static ns_return_bool ns_macho_write_file(ns_str path, u8 *buf) {
     return ns_return_ok(bool, true);
 }
 
-static ns_str ns_macho_symbol_name(ns_str fn_name) {
+static ns_str ns_macho_symbol_name(ns_str fn_name, ns_bool embed_main) {
+    if (embed_main && ns_str_equals_STR(fn_name, "main")) return ns_str_cstr("_ns_program_main");
     return ns_str_concat(ns_str_cstr("_"), fn_name);
+}
+
+static ns_bool ns_macho_parse_platform(ns_str name, u32 *platform, u32 *minos) {
+    if (name.len <= 0 || !name.data) return false;
+    if (ns_str_equals_STR(name, "macosx") || ns_str_equals_STR(name, "macos")) {
+        *platform = NS_MACHO_PLATFORM_MACOS;
+        *minos = 12u << 16;
+        return true;
+    }
+    if (ns_str_equals_STR(name, "iphoneos") || ns_str_equals_STR(name, "ios")) {
+        *platform = NS_MACHO_PLATFORM_IOS;
+        *minos = 16u << 16;
+        return true;
+    }
+    if (ns_str_equals_STR(name, "iphonesimulator")) {
+        *platform = NS_MACHO_PLATFORM_IOSSIMULATOR;
+        *minos = 16u << 16;
+        return true;
+    }
+    if (ns_str_equals_STR(name, "xros")) {
+        *platform = NS_MACHO_PLATFORM_VISIONOS;
+        *minos = 1u << 16;
+        return true;
+    }
+    if (ns_str_equals_STR(name, "xrsimulator")) {
+        *platform = NS_MACHO_PLATFORM_VISIONOSSIMULATOR;
+        *minos = 1u << 16;
+        return true;
+    }
+    return false;
 }
 
 ns_return_bool ns_macho_emit(ns_ssa_module *ssa, ns_str output_path) {
@@ -330,6 +365,10 @@ ns_return_bool ns_macho_emit(ns_ssa_module *ssa, ns_str output_path) {
 }
 
 ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
+    return ns_macho_emit_object_ex(ssa, output_path, false, (ns_str){0});
+}
+
+ns_return_bool ns_macho_emit_object_ex(ns_ssa_module *ssa, ns_str output_path, ns_bool embed_main, ns_str platform) {
     if (!ssa) {
         return ns_return_error(bool, ns_code_loc_nil, NS_ERR_SYNTAX, "null ssa module");
     }
@@ -350,8 +389,14 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     }
 
     /* ── layout: one __text section containing all functions ─────────────── */
+    u32 plat = NS_MACHO_PLATFORM_MACOS;
+    u32 minos = 16u << 16;
+    ns_bool emit_platform = true;
+    if (embed_main) {
+        emit_platform = ns_macho_parse_platform(platform, &plat, &minos);
+    }
     u64 seg_cmd_size      = sizeof(ns_macho_segment_command_64) + sizeof(ns_macho_section_64);
-    u64 build_cmd_size    = sizeof(ns_macho_build_version_command);
+    u64 build_cmd_size    = emit_platform ? sizeof(ns_macho_build_version_command) : 0;
     u64 symtab_cmd_size   = sizeof(ns_macho_symtab_command);
     u64 dysymtab_cmd_size = sizeof(ns_macho_dysymtab_command);
     u64 sizeofcmds = seg_cmd_size + build_cmd_size + symtab_cmd_size + dysymtab_cmd_size;
@@ -420,13 +465,13 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     ns_array_set_length(global_syms, nfns);
     u64 strsize = 1 + (u64)local_sym.len + 1;
     for (i32 i = 0; i < nfns; ++i) {
-        global_syms[i] = ns_macho_symbol_name(aarch->fns[i].name);
+        global_syms[i] = ns_macho_symbol_name(aarch->fns[i].name, embed_main);
         strsize += (u64)global_syms[i].len + 1;
     }
     ns_str *undef_syms = ns_null;
     ns_array_set_length(undef_syms, nundef);
     for (i32 i = 0; i < nundef; ++i) {
-        undef_syms[i] = ns_macho_symbol_name(undef_names[i]);
+        undef_syms[i] = ns_macho_symbol_name(undef_names[i], false);
         strsize += (u64)undef_syms[i].len + 1;
     }
     u64 file_size = stroff + strsize;
@@ -437,7 +482,7 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     header.cputype    = NS_MACHO_CPU_TYPE_ARM64;
     header.cpusubtype = NS_MACHO_CPU_SUBTYPE_ARM64_ALL;
     header.filetype   = NS_MACHO_FILETYPE_OBJECT;
-    header.ncmds      = 4;
+    header.ncmds      = emit_platform ? 4 : 3;
     header.sizeofcmds = (u32)sizeofcmds;
     header.flags      = 0;
 
@@ -465,9 +510,9 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
 
     ns_macho_build_version_command build = {0};
     build.cmd      = NS_MACHO_LC_BUILD_VERSION;
-    build.cmdsize  = (u32)build_cmd_size;
-    build.platform = NS_MACHO_PLATFORM_MACOS;
-    build.minos    = (16u << 16);
+    build.cmdsize  = (u32)sizeof(ns_macho_build_version_command);
+    build.platform = plat;
+    build.minos    = minos;
     build.sdk      = 0;
     build.ntools   = 0;
 
@@ -498,7 +543,10 @@ ns_return_bool ns_macho_emit_object(ns_ssa_module *ssa, ns_str output_path) {
     memcpy(&out[off], &header,  sizeof(header));  off += sizeof(header);
     memcpy(&out[off], &seg,     sizeof(seg));     off += sizeof(seg);
     memcpy(&out[off], &sec,     sizeof(sec));     off += sizeof(sec);
-    memcpy(&out[off], &build,   sizeof(build));   off += sizeof(build);
+    if (emit_platform) {
+        memcpy(&out[off], &build, sizeof(build));
+        off += sizeof(build);
+    }
     memcpy(&out[off], &symtab,  sizeof(symtab));  off += sizeof(symtab);
     memcpy(&out[off], &dysym,   sizeof(dysym));
 

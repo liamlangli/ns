@@ -98,7 +98,9 @@ The common commands are:
   build cache and build profile, plus legacy `ns.profile` beside the manifest. Source
   and other user files are never removed.
 - `ns project [path]`: generate the supported host-native IDE project below
-  `bin/` from `ns.mod`.
+  `bin/` from `ns.mod`. A native app with `link = true` compiles the program
+  into the generated Apple targets (arm64 Mach-O) instead of interpreting
+  `LinkedProject.ns`.
 - `ns lint [path]`: report style findings for a file, a directory, or the
   project below the current directory. Exits non-zero when an `error` severity
   finding remains.
@@ -109,7 +111,8 @@ The common commands are:
 The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
 `type`, optional `target`, `source`, `entry` (or `entries`), `exclude`,
 `assets`, `orientation`, and `link`. `link = true` makes `ns run` build and launch a native
-artifact; omitting it or setting it false keeps the interpreter.
+artifact, and makes `ns project` compile that program into the generated Apple app
+instead of interpreting `LinkedProject.ns`. Omitting it or setting it false keeps the interpreter.
 `assets = ["res"]` names the files and directories a bundle packages, as
 project-relative paths; a manifest that declares none packages the conventional
 `assets` directory beside it and below `source`. Each path keeps the name it has

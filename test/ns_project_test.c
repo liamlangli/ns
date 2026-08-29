@@ -295,7 +295,7 @@ int main(void) {
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && text_has(xgenerated, "ZSTD_DISABLE_ASM=1") &&
                   text_has(xgenerated, "Native/include/zstd") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 12"),
+                  text_has(pbx, "NSProjectGeneratorVersion = 14"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
@@ -332,7 +332,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 12;", "NSProjectGeneratorVersion = 12;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 14;", "NSProjectGeneratorVersion = 14;",
                                      "NSProjectGeneratorVersion = 9;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
@@ -378,6 +378,24 @@ int main(void) {
     ns_expect(text_has(hosted_pbx, "SDKROOT = iphoneos") && text_has(hosted_pbx, "isa = PBXNativeTarget;") &&
                   !text_has(hosted_pbx, "isa = PBXLegacyTarget;") && text_has(hosted_pbx, "Project Sources"),
               "Xcode upgrades an ns-generated legacy app to native multi-platform targets.");
+
+    char link_root[] = "/tmp/ns-project-link-native-XXXXXX";
+    ns_expect(mkdtemp(link_root) != ns_null, "project test creates link-native app fixture directory.");
+    ns_project_spec linked_app = app_spec(link_root, runtime, "use view\nfn main() {}\n", ns_null);
+    linked_app.link_native = true;
+    ns_expect(ns_project_generate_xcode(&linked_app), "Xcode link-native app project generation succeeds.");
+    char linked_pbx[PATH_MAX], linked_bridge[PATH_MAX], linked_xc[PATH_MAX];
+    path(linked_pbx, link_root, "bin/demo-app.xcodeproj/project.pbxproj");
+    path(linked_bridge, link_root, "bin/demo-app.nsproject/Sources/NSBridge.c");
+    path(linked_xc, link_root, "bin/demo-app.nsproject/Config/NS.Generated.xcconfig");
+    ns_expect(text_has(linked_bridge, "ns_program_main") && !text_has(linked_bridge, "ns_eval"),
+              "Xcode link-native app calls the compiled program instead of evaluating source.");
+    ns_expect(text_has(linked_pbx, "Compile NS Program") && text_has(linked_pbx, "--embed-main") &&
+                  text_has(linked_pbx, "--macho-platform"),
+              "Xcode link-native app compiles LinkedProject.ns to a Mach-O object during the build.");
+    ns_expect(text_has(linked_pbx, "ns_program.o") && text_has(linked_pbx, "ns_strtab.o") &&
+                  !text_has(linked_xc, "ns_program.o"),
+              "Xcode link-native app links the compiled program object once, on the target, not via xcconfig inheritance.");
 
     char library_root[] = "/tmp/ns-project-library-XXXXXX";
     ns_expect(mkdtemp(library_root) != ns_null, "project test creates library fixture directory.");

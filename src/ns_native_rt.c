@@ -1343,8 +1343,9 @@ void ns_rt_task_sleep(int64_t ms) {
 // these debug allocators plus the compiler's file helpers. A native `ns build`
 // executable has to export the same symbols or the first call jumps to NULL.
 // Omitted when this file is compiled into bin/ns (NS_DEBUG), which already
-// defines _ns_malloc from ns_type.c.
-#ifndef NS_DEBUG
+// defines _ns_malloc from ns_type.c, and when compiled into a generated Apple
+// app (NS_XCLIB), which already links Runtime/src/ns_os.c.
+#if !defined(NS_DEBUG) && !defined(NS_XCLIB)
 void *_ns_malloc(size_t size, const char *file, int line) {
     (void)file;
     (void)line;

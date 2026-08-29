@@ -28,6 +28,10 @@ typedef struct ns_project_spec {
     // required when an app imports native FFI modules that cannot be embedded
     // in the portable Apple runtime target.
     ns_bool host_build;
+    // Compile the linked program to a Mach-O object and call it from the
+    // generated Apple app instead of interpreting LinkedProject.ns. Set when
+    // the manifest has `link = true` and every imported module is embeddable.
+    ns_bool link_native;
     ns_str root;
     ns_str manifest;
     ns_str source_dir;
