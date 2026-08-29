@@ -88,6 +88,7 @@ fn draw_frame() {
     ui_begin_frame(r)
     ui_fill_surface(r, ui_pack_color("#101418"))
     ui_fill_rect(r, 4.0, 5.0, 30.0, 20.0, ui_pack_color("#112233"), 0.0)
+    ui_fill_gradient_rect(r, 40.0, 5.0, 30.0, 20.0, 0xff0000ff, 0xff00ff00, 0xffff0000, 0xffffffff)
     ui_fill_round_rect_per_corner(r, 8.0, 8.0, 40.0, 20.0, 4.0, 4.0, 0.0, 0.0, 0xff334455, 0.0)
     ui_fill_triangle(r, 0.0, 0.0, 10.0, 0.0, 0.0, 10.0, 0xff00ff00, 0.0)
     ui_fill_arc(r, 40.0, 40.0, 12.0, 3.0, 0.0, 1.5, 0xffff0000, 0.0)

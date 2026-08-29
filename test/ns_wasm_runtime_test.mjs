@@ -196,6 +196,7 @@ const uiContext = {
   arc() {},
   moveTo() {},
   lineTo() {},
+  closePath() {},
   fillText(text) { uiCalls.push(`text:${text}`); },
   drawImage() {},
   measureText(text) { return { width: text.length * 8 }; },
@@ -223,6 +224,13 @@ assert.equal(uiRuntime.gpu('gpu_request_device', [uiView]), 1);
 const renderer = uiRuntime.ui('ui_renderer_create', [uiView]);
 uiRuntime.ui('ui_begin_frame', [renderer]);
 uiRuntime.ui('ui_fill_rect', [renderer, 4, 5, 30, 20, uiRuntime.ui('ui_pack_color', [uiRuntime.writeString('#112233')]), 0]);
+uiRuntime.ui('ui_fill_gradient_rect', [renderer, 40, 5, 30, 20, 0xff0000ff, 0xff00ff00, 0xffff0000, 0xffffffff]);
+assert.deepEqual(uiRuntime.uiRenderer(renderer).commands.slice(-2), [
+  { kind: 'triangle', clip: { x: 0, y: 0, w: 480, h: 270 }, x0: 40, y0: 5, x1: 70, y1: 5,
+    x2: 70, y2: 25, colors: [0xff0000ff, 0xff00ff00, 0xffff0000] },
+  { kind: 'triangle', clip: { x: 0, y: 0, w: 480, h: 270 }, x0: 40, y0: 5, x1: 70, y1: 25,
+    x2: 40, y2: 25, colors: [0xff0000ff, 0xffff0000, 0xffffffff] },
+]);
 uiRuntime.ui('ui_draw_text', [renderer, 8, 9, uiRuntime.writeString('native UI'), 14, 0xffffffff, 1]);
 const clear = uiRuntime.allocStruct(32);
 for (const [offset, value] of [[0, 0.1], [8, 0.2], [16, 0.3], [24, 1]]) uiRuntime.view().setFloat64(clear + offset, value, true);

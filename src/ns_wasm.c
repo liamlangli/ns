@@ -2355,7 +2355,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "ui_atlas_load|ui_atlas_destroy|ui_atlas_width|ui_atlas_height|"
             "ui_atlas_draw|ui_atlas_draw_region|"
             // shapes
-            "ui_fill_rect|ui_fill_round_rect|ui_fill_round_rect_per_corner|ui_fill_surface|"
+            "ui_fill_rect|ui_fill_gradient_rect|ui_fill_round_rect|ui_fill_round_rect_per_corner|ui_fill_surface|"
             "ui_fill_triangle|ui_fill_triangle_colors|ui_fill_arc|ui_fill_circle|"
             "ui_stroke_rect|ui_stroke_round_rect|ui_stroke_round_rect_per_corner|"
             "ui_stroke_circle|ui_stroke_line|ui_stroke_polyline|"

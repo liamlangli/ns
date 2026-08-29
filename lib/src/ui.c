@@ -308,6 +308,9 @@ ui_theme *ui_theme_empty(void) {
 
 void ui_renderer_destroy(ui_renderer *r);
 void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feather);
+void ui_fill_gradient_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
+                           u32 rgba_top_left, u32 rgba_top_right,
+                           u32 rgba_bottom_right, u32 rgba_bottom_left);
 void ui_fill_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, u32 rgba, f64 feather);
 void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness, f64 angle_start, f64 angle_end, u32 rgba, f64 feather);
 void ui_stroke_round_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, f64 radius, f64 thickness, u32 rgba, f64 feather);
@@ -2013,6 +2016,21 @@ void ui_fill_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h, u32 rgba, f64 feat
     if (!r || w <= 0 || h <= 0) return;
     r->current_texture_id = UI_WHITE_TEXTURE;
     ui_push_quad_ex(r, x, y, x + w, y + h, 0, 0, 0, 0, rgba, UI_KIND_IMAGE, 0, 0, 0);
+}
+
+void ui_fill_gradient_rect(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
+                           u32 rgba_top_left, u32 rgba_top_right,
+                           u32 rgba_bottom_right, u32 rgba_bottom_left) {
+    if (!r || w <= 0 || h <= 0) return;
+    r->current_texture_id = UI_WHITE_TEXTURE;
+    ui_push_tri_colors(r,
+        x, y, rgba_top_left,
+        x + w, y, rgba_top_right,
+        x + w, y + h, rgba_bottom_right);
+    ui_push_tri_colors(r,
+        x, y, rgba_top_left,
+        x + w, y + h, rgba_bottom_right,
+        x, y + h, rgba_bottom_left);
 }
 
 static void ui_round_rect_points(f64 *pts, i32 *out_n, f64 x, f64 y, f64 w, f64 h, f64 radius) {

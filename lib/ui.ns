@@ -355,6 +355,10 @@ ref fn ui_layout(x: f64, y: f64, w: f64, h: f64, child_w: f64, child_h: f64, ali
 // ===========================================================================
 
 ref fn ui_fill_rect(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, rgba: u32, feather: f64)
+// Fill a rectangle with independent colours at its top-left, top-right,
+// bottom-right, and bottom-left corners. The rectangle is emitted as two
+// colour-interpolated triangles.
+ref fn ui_fill_gradient_rect(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, rgba_top_left: u32, rgba_top_right: u32, rgba_bottom_right: u32, rgba_bottom_left: u32)
 ref fn ui_fill_round_rect(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, radius: f64, rgba: u32, feather: f64)
 ref fn ui_fill_round_rect_per_corner(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, rtl: f64, rtr: f64, rbl: f64, rbr: f64, rgba: u32, feather: f64)
 ref fn ui_stroke_round_rect(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, radius: f64, thickness: f64, rgba: u32, feather: f64)
