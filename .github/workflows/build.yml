@@ -19,7 +19,7 @@ jobs:
       matrix:
         include:
           - name: macOS aarch64
-            runner: macos-14
+            runner: macos-26
             artifact: ns-macos-aarch64
             executable: ns
           - name: Linux amd64

@@ -11,17 +11,11 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libreadline-dev libffi-dev libsqlite3-dev
-
       # `make test` builds the interpreter, required native modules and C test
       # binaries, then runs the core suites.
-      # -Werror is disabled for the same GCC 13 warnings noted in build.yml.
       - name: Test
-        run: make test NS_WERROR=0
+        run: make test
