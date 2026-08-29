@@ -2315,7 +2315,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "view_take_key_press|view_clear_key_presses|view_on_pointer_event|view_on_tool_action|"
             "view_on_gesture|view_input_count|view_input_at|view_gesture|view_input_pending|"
             "view_input_reset|view_get_clipboard|view_set_clipboard|view_request_frame|"
-            "view_request_frame_after|view_set_safe_area");
+            "view_request_frame_after|view_set_frame_per_second|view_set_safe_area");
     }
     if (ns_str_equals(module, ns_str_cstr("gpu"))) {
         return ns_wasm_name_in(name,

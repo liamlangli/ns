@@ -114,6 +114,10 @@ ref fn view_capture_require(v: ref view)
 // current one to keep running.
 ref fn view_request_frame(v: ref view, frames: i32)
 ref fn view_request_frame_after(v: ref view, milliseconds: i32)
+// Cap presentation at this many frames per second. A positive value switches
+// the backend to vsync-paced drawing at that rate. Zero restores on-demand
+// drawing, unless NS_VIEW_CONTINUOUS is set.
+ref fn view_set_frame_per_second(v: ref view, frames: i32)
 
 ref fn view_on_scroll(v: ref view, x: f64, y: f64)
 ref fn view_on_resize(v: ref view, width: i32, height: i32)

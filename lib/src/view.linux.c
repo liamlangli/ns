@@ -44,6 +44,11 @@ void view_platform_request_frame_after(view *v, i32 milliseconds) {
     ns_unused(milliseconds);
 }
 
+void view_platform_set_frame_per_second(view *v, i32 frames) {
+    ns_unused(v);
+    ns_unused(frames);
+}
+
 const char *view_get_clipboard(view *v) {
     ns_unused(v);
     return ns_null;

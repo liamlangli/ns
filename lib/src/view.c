@@ -15,6 +15,7 @@ static f64 view_pointer_x[VIEW_POINTER_SLOTS];
 static f64 view_pointer_y[VIEW_POINTER_SLOTS];
 static ns_bool view_pointer_known[VIEW_POINTER_SLOTS];
 static i32 view_requested_frames;
+static i32 view_fps;
 
 void view_request_frame(view *v, i32 frames) {
     if (!v || frames <= 0) return;
@@ -32,12 +33,24 @@ void view_request_frame_after(view *v, i32 milliseconds) {
     view_platform_request_frame_after(v, milliseconds);
 }
 
+i32 view_frame_per_second(void) {
+    return view_fps;
+}
+
+void view_set_frame_per_second(view *v, i32 frames) {
+    if (frames < 0) frames = 0;
+    view_fps = frames;
+    view_platform_set_frame_per_second(v, frames);
+}
+
 // GPU frame capture arms on a frame boundary and waits for the next present.
 // An on-demand backend that is idle never reaches one, so the capture hangs
 // with nothing to delimit. Setting NS_VIEW_CONTINUOUS=1 makes the backends
 // free-run for the length of a debugging session; read once so the per-frame
-// path stays a load.
+// path stays a load. A positive view_set_frame_per_second rate is the same
+// kind of vsync-paced loop, at the requested cap.
 ns_bool view_continuous_render(void) {
+    if (view_fps > 0) return true;
     static i32 enabled = -1;
     if (enabled < 0) {
         const char *env = getenv("NS_VIEW_CONTINUOUS");

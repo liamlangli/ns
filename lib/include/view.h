@@ -250,14 +250,22 @@ void view_capture_require(view *v);
 // drawable on screen and sleep when no requests remain.
 void view_request_frame(view *v, i32 frames);
 void view_request_frame_after(view *v, i32 milliseconds);
+// Cap presentation at this many frames per second. A positive value switches
+// the backend to vsync-paced drawing at that rate. Zero restores on-demand
+// drawing, unless NS_VIEW_CONTINUOUS is set.
+void view_set_frame_per_second(view *v, i32 frames);
+// Last value passed to view_set_frame_per_second; 0 means no cap.
+i32 view_frame_per_second(void);
 ns_bool view_take_frame_request(view *v);
 // True when NS_VIEW_CONTINUOUS asks the backend to render every vsync
 // instead of only on request, so a GPU frame capture always finds a
-// frame boundary to arm on.
+// frame boundary to arm on. Also true after view_set_frame_per_second
+// with a positive rate.
 ns_bool view_continuous_render(void);
 void view_complete_frame(view *v);
 void view_platform_request_frame(view *v);
 void view_platform_request_frame_after(view *v, i32 milliseconds);
+void view_platform_set_frame_per_second(view *v, i32 frames);
 void view_platform_close(view *v);
 
 // View event handling functions

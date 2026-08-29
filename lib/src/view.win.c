@@ -31,6 +31,11 @@ void view_platform_request_frame_after(view *v, i32 milliseconds) {
     if (_hwnd) SetTimer(_hwnd, VIEW_FRAME_TIMER_ID, (UINT)milliseconds, NULL);
 }
 
+void view_platform_set_frame_per_second(view *v, i32 frames) {
+    ns_unused(v);
+    ns_unused(frames);
+}
+
 // Win32 virtual-key -> VIEW_KEY_* mapping (parallels view_osx_key_map).
 static i32 view_win_key_map(i32 vk) {
     if (vk >= 'A' && vk <= 'Z') return VIEW_KEY_A + (vk - 'A');

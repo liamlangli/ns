@@ -33,6 +33,7 @@ extern void view_set_safe_area(void *, f64, f64, f64, f64);
 extern void view_capture_require(void *);
 extern void view_request_frame(void *, i32);
 extern void view_request_frame_after(void *, i32);
+extern void view_set_frame_per_second(void *, i32);
 extern void view_on_scroll(void *, f64, f64);
 extern void view_on_resize(void *, i32, i32);
 extern void view_on_mouse_move(void *, f64, f64);
@@ -1848,6 +1849,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "view_request_frame_after", (void *)view_request_frame_after, ns_embedded_sig103 },
     { "view_run", (void *)view_run, ns_embedded_sig53 },
     { "view_set_clipboard", (void *)view_set_clipboard, ns_embedded_sig160 },
+    { "view_set_frame_per_second", (void *)view_set_frame_per_second, ns_embedded_sig103 },
     { "view_set_safe_area", (void *)view_set_safe_area, ns_embedded_sig131 },
     { "view_take_key_press", (void *)view_take_key_press, ns_embedded_sig15 },
 };

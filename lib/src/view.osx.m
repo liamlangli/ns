@@ -50,6 +50,15 @@ static view _view;
 static void view_osx_update_mouse(NSEvent *event);
 static void view_osx_request_terminate(void);
 
+static void view_osx_apply_frame_rate(void) {
+    if (!view_mtk_view) return;
+    const BOOL continuous = view_continuous_render() ? YES : NO;
+    [view_mtk_view setPaused: continuous ? NO : YES];
+    [view_mtk_view setEnableSetNeedsDisplay: continuous ? NO : YES];
+    const i32 fps = view_frame_per_second();
+    [view_mtk_view setPreferredFramesPerSecond: fps > 0 ? fps : 0];
+}
+
 static void view_osx_activate_window(void) {
     if (!view_window) return;
     [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
@@ -586,11 +595,9 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     [view_mtk_view setColorPixelFormat: MTLPixelFormatBGRA8Unorm];
     [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatDepth32Float];
     // On demand by default: the view sleeps until view_request_frame()
-    // invalidates it. NS_VIEW_CONTINUOUS switches to vsync-paced drawing so a
-    // GPU frame capture has a boundary to arm on.
-    const BOOL view_continuous = view_continuous_render() ? YES : NO;
-    [view_mtk_view setPaused: view_continuous ? NO : YES];
-    [view_mtk_view setEnableSetNeedsDisplay: view_continuous ? NO : YES];
+    // invalidates it. NS_VIEW_CONTINUOUS or view_set_frame_per_second switches
+    // to vsync-paced drawing so a GPU frame capture has a boundary to arm on.
+    view_osx_apply_frame_rate();
     // Trackpad fingers are only delivered as touches once the view opts in.
     // Magnify and rotate arrive without it; the three-finger orbit does not.
     [view_mtk_view setAllowedTouchTypes:NSTouchTypeMaskIndirect];
@@ -697,6 +704,14 @@ void view_platform_request_frame_after(view *v, i32 milliseconds) {
     if (!view_mtk_view) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)milliseconds * NSEC_PER_MSEC),
                    dispatch_get_main_queue(), ^{ view_request_frame(&_view, 1); });
+}
+
+void view_platform_set_frame_per_second(view *v, i32 frames) {
+    (void)v;
+    (void)frames;
+    void (^apply)(void) = ^{ view_osx_apply_frame_rate(); };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
 }
 
 static char *view_clipboard_result;

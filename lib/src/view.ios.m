@@ -22,6 +22,15 @@ static dispatch_semaphore_t view_ios_done;
 
 static UIWindow *view_ios_key_window(void);
 
+static void view_ios_apply_frame_rate(void) {
+    if (!view_ios_metal_view) return;
+    BOOL continuous = view_continuous_render() ? YES : NO;
+    view_ios_metal_view.paused = continuous ? NO : YES;
+    view_ios_metal_view.enableSetNeedsDisplay = continuous ? NO : YES;
+    i32 fps = view_frame_per_second();
+    view_ios_metal_view.preferredFramesPerSecond = fps > 0 ? fps : 0;
+}
+
 static void view_ios_sync_metrics(MTKView *metal_view) {
     if (!metal_view) return;
     CGFloat scale = metal_view.contentScaleFactor;
@@ -213,11 +222,10 @@ view *view_create(const char *title, i32 width, i32 height) {
         view_ios_metal_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
         view_ios_metal_view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
         // On demand by default: the view sleeps until view_request_frame()
-        // invalidates it. NS_VIEW_CONTINUOUS switches to vsync-paced drawing so
-        // a GPU frame capture has a boundary to arm on.
-        BOOL continuous = view_continuous_render() ? YES : NO;
-        view_ios_metal_view.paused = continuous ? NO : YES;
-        view_ios_metal_view.enableSetNeedsDisplay = continuous ? NO : YES;
+        // invalidates it. NS_VIEW_CONTINUOUS or view_set_frame_per_second
+        // switches to vsync-paced drawing so a GPU frame capture has a
+        // boundary to arm on.
+        view_ios_apply_frame_rate();
         view_ios_delegate = [[NSIOSViewDelegate alloc] init];
         view_ios_metal_view.delegate = view_ios_delegate;
         view_ios_gesture_target = [[NSIOSGestureTarget alloc] init];
@@ -288,6 +296,13 @@ void view_platform_request_frame_after(view *value, i32 milliseconds) {
     if (!view_ios_metal_view) return;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)milliseconds * NSEC_PER_MSEC),
                    dispatch_get_main_queue(), ^{ view_request_frame(&view_ios_state, 1); });
+}
+
+void view_platform_set_frame_per_second(view *value, i32 frames) {
+    ns_unused(value);
+    ns_unused(frames);
+    void (^apply)(void) = ^{ view_ios_apply_frame_rate(); };
+    if (NSThread.isMainThread) apply(); else dispatch_async(dispatch_get_main_queue(), apply);
 }
 
 const char *view_get_clipboard(view *value) {
