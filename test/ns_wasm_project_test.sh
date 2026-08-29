@@ -177,7 +177,10 @@ for (let i = 0; i < relocatedMappings.length; ++i) {
 const shaderWasm = path.join(root, 'shader-metadata.wasm');
 const shaderBuild = spawnSync(ns, ['--wasm', path.resolve('test/gpu_pipeline_test.ns'), '-o', shaderWasm], { encoding: 'utf8' });
 assert.strictEqual(shaderBuild.status, 0, shaderBuild.stdout + shaderBuild.stderr);
-const shaderModule = new WebAssembly.Module(fs.readFileSync(shaderWasm));
+const shaderWasmBytes = fs.readFileSync(shaderWasm);
+assert.match(shaderWasmBytes.toString(), /@vertex/);
+assert.doesNotMatch(shaderWasmBytes.toString(), /metal_stdlib/);
+const shaderModule = new WebAssembly.Module(shaderWasmBytes);
 assert.strictEqual(WebAssembly.Module.customSections(shaderModule, 'sourceMappingURL').length, 0);
 const shaderSections = WebAssembly.Module.customSections(shaderModule, 'ns.shaders');
 assert.strictEqual(shaderSections.length, 1);
@@ -205,10 +208,10 @@ fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use dynamic\nfn main() 
 const unsupportedDynamic = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedDynamic.status, 0);
 assert.match(unsupportedDynamic.stdout + unsupportedDynamic.stderr, /does not support module `dynamic`/);
-fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use os\nfn main() { let p = os_platform() }\n');
+fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use os\nfn main() { let t = os_time_us() }\n');
 const unsupportedImport = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedImport.status, 0);
-assert.match(unsupportedImport.stdout + unsupportedImport.stderr, /does not support import `os\.os_platform`/);
+assert.match(unsupportedImport.stdout + unsupportedImport.stderr, /does not support import `os\.os_time_us`/);
 fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use gpu\nfn main() { gpu_request_device(1) }\n');
 const untypedDeviceRequest = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(untypedDeviceRequest.status, 0);

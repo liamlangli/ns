@@ -1592,6 +1592,19 @@ static void ns_ssa_record_import(ns_ssa_builder *b, ns_symbol *symbol) {
     ns_array_push(b->m->imports, import);
 }
 
+static void ns_ssa_record_wasm_import(ns_ssa_builder *b, ns_str name, ns_type a, ns_type c, ns_type ret) {
+    if (!b->wasm_target) return;
+    ns_str module = ns_str_cstr("wasm");
+    for (i32 i = 0, l = (i32)ns_array_length(b->m->imports); i < l; ++i) {
+        ns_ssa_import *import = &b->m->imports[i];
+        if (ns_str_equals(import->module, module) && ns_str_equals(import->name, name)) return;
+    }
+    ns_ssa_import import = {.module = module, .name = name, .ret = ret};
+    if (!ns_type_is(a, NS_TYPE_VOID)) ns_array_push(import.params, a);
+    if (!ns_type_is(c, NS_TYPE_VOID)) ns_array_push(import.params, c);
+    ns_array_push(b->m->imports, import);
+}
+
 static ns_shader_target ns_ssa_native_shader_target(void) {
 #if defined(__APPLE__)
     return NS_SHADER_MSL;
@@ -1635,8 +1648,9 @@ static i32 ns_ssa_emit_str_const(ns_ssa_builder *b, ns_str text, i32 ast) {
 }
 
 // Fold shader_transpile / shader_transpile_stage / shader_entry when the first
-// argument is a known fn. Native builds have no VM, so these must become
-// string constants. The host's shader language is used (MSL on Apple).
+// argument is a known fn. Compiled builds have no VM, so these must become
+// string constants. Browser builds always use WGSL; native builds use the
+// host shader language.
 static i32 ns_ssa_fold_shader_call(ns_ssa_builder *b, ns_ast_t *n, i32 ast,
                                    ns_str callee_name, ns_str callee_module) {
     if (!ns_str_equals(callee_module, ns_str_cstr("shader"))) return -1;
@@ -1650,7 +1664,7 @@ static i32 ns_ssa_fold_shader_call(ns_ssa_builder *b, ns_ast_t *n, i32 ast,
     ns_symbol *fn_sym = ns_vm_find_symbol(b->vm, fn_name, false);
     if (!fn_sym || fn_sym->type != NS_SYMBOL_FN) return -1;
     i32 fn_index = (i32)(fn_sym - b->vm->symbols);
-    ns_shader_target target = ns_ssa_native_shader_target();
+    ns_shader_target target = b->wasm_target ? NS_SHADER_WGSL : ns_ssa_native_shader_target();
 
     if (is_entry) {
         return ns_ssa_emit_str_const(b, ns_shader_entry_name(target, fn_sym->name), ast);
@@ -2189,7 +2203,9 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                 if (ns_type_is_ref(pt) && !ns_type_is_ref(ns_ssa_value_type(b, av))) {
                     av = ns_ssa_make_ref(b, av, ns_ssa_value_type(b, av), next);
                 }
-                if (!ns_str_is_empty(callee_module)) av = ns_ssa_ffi_struct_box(b, av, pt, next);
+                if (!b->wasm_target && !ns_str_is_empty(callee_module)) {
+                    av = ns_ssa_ffi_struct_box(b, av, pt, next);
+                }
             }
             ns_array_push(avals, av);
             next = b->ctx->nodes[next].next;
@@ -2407,8 +2423,13 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                     ns_ssa_inst a1 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
                     a1.a = lit;
                     ns_ssa_emit_raw(b, a1);
+                    ns_str concat = b->wasm_target ? ns_str_cstr("strcat") : ns_str_cstr("ns_rt_strcat");
                     acc = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 2, ns_type_str,
-                                            ns_str_cstr("ns_rt_strcat"), (ns_token_t){0}, i);
+                                            concat, (ns_token_t){0}, i);
+                    if (b->wasm_target) {
+                        b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].module = ns_str_cstr("wasm");
+                        ns_ssa_record_wasm_import(b, concat, ns_type_str, ns_type_str, ns_type_str);
+                    }
                 }
             }
             if (j >= fmt.len) break;
@@ -2426,20 +2447,36 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             if (!ns_type_is(vt, NS_TYPE_STRING)) {
                 ns_str callee = ns_ssa_to_str_symbol_name(b, vt);
                 if (callee.len == 0) {
-                    const char *helper = ns_type_is_float(vt) ? "ns_rt_ftos" :
-                                         ns_type_is(vt, NS_TYPE_BOOL) ? "ns_rt_btos" :
+                    const char *helper = ns_type_is_float(vt) ? (b->wasm_target ? "ftos" : "ns_rt_ftos") :
+                                         ns_type_is(vt, NS_TYPE_BOOL) ? (b->wasm_target ? "btos" : "ns_rt_btos") :
                                          ns_type_is(vt, NS_TYPE_STRUCT) ? NULL :
-                                         ns_type_unsigned(vt) ? "ns_rt_utos" : "ns_rt_itos";
+                                         ns_type_unsigned(vt) ? (b->wasm_target ? "utos" : "ns_rt_utos") :
+                                         (b->wasm_target ? "itos" : "ns_rt_itos");
                     if (!helper) {
                         ns_str nils = ns_str_cstr("nil");
                         piece = ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_str, nils,
                                                   (ns_token_t){.type = NS_TOKEN_STR_LITERAL, .val = nils}, i);
                     } else {
+                        ns_type helper_type = vt;
+                        if (b->wasm_target) {
+                            helper_type = ns_type_is_float(vt) ? ns_type_f64 :
+                                          ns_type_is(vt, NS_TYPE_BOOL) ? ns_type_bool :
+                                          ns_type_unsigned(vt) ? ns_type_u64 : ns_type_i64;
+                            if (!ns_type_equals(helper_type, vt)) {
+                                val = ns_ssa_emit_value(b, NS_SSA_OP_CAST, val, -1, helper_type,
+                                                        ns_str_null, (ns_token_t){0}, i);
+                            }
+                        }
                         ns_ssa_inst a0 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
                         a0.a = val;
                         ns_ssa_emit_raw(b, a0);
                         piece = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 1, ns_type_str,
                                                   ns_str_cstr((i8 *)helper), (ns_token_t){0}, i);
+                        if (b->wasm_target) {
+                            b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].module = ns_str_cstr("wasm");
+                            ns_ssa_record_wasm_import(b, ns_str_cstr((i8 *)helper), helper_type,
+                                                      ns_type_void, ns_type_str);
+                        }
                     }
                 } else {
                     ns_ssa_inst a0 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
@@ -2458,8 +2495,13 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                 ns_ssa_inst a1 = NS_SSA_INST_INIT(NS_SSA_OP_ARG, i);
                 a1.a = piece;
                 ns_ssa_emit_raw(b, a1);
+                ns_str concat = b->wasm_target ? ns_str_cstr("strcat") : ns_str_cstr("ns_rt_strcat");
                 acc = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, 2, ns_type_str,
-                                        ns_str_cstr("ns_rt_strcat"), (ns_token_t){0}, i);
+                                        concat, (ns_token_t){0}, i);
+                if (b->wasm_target) {
+                    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].module = ns_str_cstr("wasm");
+                    ns_ssa_record_wasm_import(b, concat, ns_type_str, ns_type_str, ns_type_str);
+                }
             }
         }
         if (acc < 0) {

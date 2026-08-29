@@ -156,8 +156,12 @@ static const char *ns_shader_test_src =
     "fn buffer_tint(index: i32) f32 {\n"
     "    return shader_buffer_i32(2, index) as f32\n"
     "}\n"
+    "fn vertex_index() i32 {\n"
+    "    let patch = shader_vertex_id() >> 1\n"
+    "    return patch\n"
+    "}\n"
     "fn vs_buffer(data: VertexData) FragmentInput {\n"
-    "    let tint = buffer_tint(shader_vertex_id())\n"
+    "    let tint = buffer_tint(vertex_index())\n"
     "    return FragmentInput {\n"
     "        position: float4 { x: data.position.x, y: data.position.y, z: data.position.z, w: 1.0 },\n"
     "        uv: data.uv,\n"
@@ -374,6 +378,12 @@ int main() {
         r = ns_shader_transpile(&vm, &ctx, vs_buffer, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "@group(0) @binding(9) var<storage, read> ns_storage_buffer_2"),
                   "wgsl read-only storage buffers use the read access mode.");
+        if (!ns_return_is_error(r)) {
+            ns_expect(ns_shader_test_has(r.r, "fn vertex_index(ns_vertex_id: u32)") &&
+                          ns_shader_test_has(r.r, "vertex_index(ns_vertex_id)") &&
+                          ns_shader_test_has(r.r, "var ns_patch: i32 = (i32(ns_vertex_id) >> u32(1))"),
+                      "wgsl threads vertex indices, casts shift counts, and escapes reserved identifiers.");
+        }
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, vs_buffer, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
@@ -671,7 +681,7 @@ int main() {
 
         r = ns_shader_transpile(&vm, &ctx, cs_helper, NS_SHADER_WGSL, NS_SHADER_STAGE_AUTO);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "var scratch: array<vec4<f32>, 4>") &&
-                      ns_shader_test_has(r.r, "fn shade_probe(x: i32, y: i32) -> vec4<f32>") &&
+                      ns_shader_test_has(r.r, "fn shade_probe(ns_arg_x: i32, ns_arg_y: i32) -> vec4<f32>") &&
                       ns_shader_test_has(r.r, "shade_probe(i32(ns_global_id.x), i32(ns_global_id.y))"),
                   "wgsl declares local arrays and reaches module-scope resources without threading.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);

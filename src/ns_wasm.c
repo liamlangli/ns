@@ -918,6 +918,10 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
                 ns_wasm_u32leb(&ctx->code, 0);
             } else {
                 ns_wasm_local_get(ctx, inst->b);
+                u8 value_vt = inst->b < ctx->n_values ? ctx->vtypes[inst->b] : NS_WASM_I32;
+                ns_wasm_convert(ctx, value_vt, ns_wasm_type_valtype(inst->type),
+                                inst->b < ctx->n_values && ctx->unsigneds[inst->b],
+                                ns_wasm_type_unsigned(inst->type));
                 ns_wasm_u8(&ctx->code, ns_wasm_store_op(inst->type));
                 ns_wasm_memarg(ctx, (u32)inst->c);
             }
@@ -1138,9 +1142,12 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
             break;
         }
         u8 op_vt = (inst->a < ctx->n_values) ? ctx->vtypes[inst->a] : NS_WASM_I32;
+        ns_bool is_unsigned = inst->a < ctx->n_values && ctx->unsigneds[inst->a];
         ns_wasm_local_get(ctx, inst->a);
         ns_wasm_local_get(ctx, inst->b);
-        ns_bool is_unsigned = inst->a < ctx->n_values && ctx->unsigneds[inst->a];
+        u8 rhs_vt = inst->b < ctx->n_values ? ctx->vtypes[inst->b] : NS_WASM_I32;
+        ns_wasm_convert(ctx, rhs_vt, op_vt,
+                        inst->b < ctx->n_values && ctx->unsigneds[inst->b], is_unsigned);
         u8 opcode = ns_wasm_arith_op(inst->op, op_vt, is_unsigned);
         ns_wasm_u8(&ctx->code, opcode);
         ns_wasm_local_set(ctx, inst->dst);
@@ -1231,8 +1238,18 @@ static void ns_wasm_emit_dispatch(ns_wasm_fn_ctx *ctx) {
         if (!term || body_count == count) {
             ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
         } else if (term->op == NS_SSA_OP_RET) {
-            if (term->a >= 0) ns_wasm_local_get(ctx, term->a);
-            ns_wasm_u8(&ctx->code, NS_WASM_RETURN);
+            if (term->a >= 0) {
+                ns_wasm_local_get(ctx, term->a);
+                ns_wasm_u8(&ctx->code, NS_WASM_RETURN);
+            } else if (ns_type_is(ctx->fn->ret, NS_TYPE_VOID)) {
+                ns_wasm_u8(&ctx->code, NS_WASM_RETURN);
+            } else {
+                // Semantic lowering retains an unreachable implicit return
+                // after loops whose body returns on every exit. A typed Wasm
+                // return cannot be emitted without a value, while unreachable
+                // has the polymorphic stack type the dead edge requires.
+                ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
+            }
         } else if (term->op == NS_SSA_OP_TRAP) {
             ns_wasm_u8(&ctx->code, NS_WASM_UNREACHABLE);
         } else if (term->op == NS_SSA_OP_JMP) {
@@ -2271,10 +2288,15 @@ static ns_return_bool ns_wasm_write_source_map(ns_ssa_module *ssa, ns_str map_pa
 
 static ns_bool ns_wasm_supported_module(ns_str module) {
     return ns_str_equals(module, ns_str_cstr("std")) ||
+           ns_str_equals(module, ns_str_cstr("compress")) ||
            ns_str_equals(module, ns_str_cstr("gpu")) ||
+           ns_str_equals(module, ns_str_cstr("io")) ||
+           ns_str_equals(module, ns_str_cstr("net")) ||
            ns_str_equals(module, ns_str_cstr("os")) ||
            ns_str_equals(module, ns_str_cstr("shader")) ||
+           ns_str_equals(module, ns_str_cstr("storage")) ||
            ns_str_equals(module, ns_str_cstr("ui")) ||
+           ns_str_equals(module, ns_str_cstr("wasm")) ||
            ns_str_equals(module, ns_str_cstr("view"));
 }
 
@@ -2295,12 +2317,49 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "print|sqrt|sin|cos|tan|atan2|ftos|stof|itos|stoi|substr|unescape|utf8_len|"
             "open|close|read|write");
     }
+    if (ns_str_equals(module, ns_str_cstr("wasm"))) {
+        return ns_wasm_name_in(name, "strcat|ftos|itos|utos|btos");
+    }
     if (ns_str_equals(module, ns_str_cstr("os"))) {
         return ns_wasm_name_in(name,
-            "os_time|os_file_size|os_read_file|os_write_file_atomic|os_dir_scan|"
+            "os_platform|os_time|os_time_ms|os_date_now|os_file_size|os_read_file|os_read_file_bytes|"
+            "os_write_file_atomic|os_write_file_bytes_atomic|os_dir_scan|"
             "os_entry_name|os_entry_path|os_entry_depth|os_entry_parent|os_entry_is_dir|"
             "os_watch_start|os_watch_poll|os_watch_stop|os_open_folder_dialog|os_cwd|"
             "os_env|os_make_dirs|os_launch_ns_project");
+    }
+    if (ns_str_equals(module, ns_str_cstr("net"))) {
+        return ns_wasm_name_in(name,
+            "net_tcp_listen_local|net_tcp_accept|net_set_nonblocking|net_udp_bind|net_udp_bind_reuse|"
+            "net_udp_socket|net_udp_set_broadcast|net_recv_try|net_udp_recv|net_buf_read|"
+            "net_udp_sender_address_byte|net_udp_sender_port|net_send_str|net_udp_reply_bytes|"
+            "net_udp_send_bytes|net_close");
+    }
+    if (ns_str_equals(module, ns_str_cstr("storage"))) {
+        return ns_wasm_name_in(name,
+            "storage_init|storage_last_error|storage_kv_set_str|storage_kv_set_i64|storage_kv_set_f64|"
+            "storage_kv_set_bool|storage_kv_get_str|storage_kv_get_i64|storage_kv_get_f64|"
+            "storage_kv_get_bool|storage_kv_remove|storage_kv_sync|storage_cache_hash_str|"
+            "storage_cache_path|storage_cache_has|storage_cache_size|storage_cache_read|"
+            "storage_cache_write|storage_cache_adopt|storage_cache_remove|storage_db_open|"
+            "storage_db_close|storage_db_exec|storage_db_prepare|storage_stmt_bind_i64|"
+            "storage_stmt_bind_blob|storage_stmt_step|storage_stmt_reset|storage_stmt_clear_bindings|"
+            "storage_stmt_finalize|storage_stmt_column_i64|storage_stmt_column_blob_size|"
+            "storage_stmt_column_blob");
+    }
+    if (ns_str_equals(module, ns_str_cstr("compress"))) {
+        return ns_wasm_name_in(name,
+            "compress_gzip_bound|compress_gzip_decoded_size|compress_gzip_deflate|compress_gzip_inflate|"
+            "compress_zstd_bound|compress_zstd_decode|compress_zstd_decoded_size|compress_zstd_encode");
+    }
+    if (ns_str_equals(module, ns_str_cstr("io"))) {
+        return ns_wasm_name_in(name,
+            "io_save_image|io_glb_read|io_glb_valid|io_glb_json_size|io_glb_data_size|"
+            "io_glb_copy_json|io_glb_copy_data|io_glb_destroy|io_glb_mesh_read|io_glb_mesh_valid|"
+            "io_glb_mesh_vertex_count|io_glb_mesh_index_count|io_glb_mesh_image_width|"
+            "io_glb_mesh_image_height|io_glb_mesh_copy_positions|io_glb_mesh_copy_normals|"
+            "io_glb_mesh_copy_texcoords|io_glb_mesh_copy_joints|io_glb_mesh_copy_weights|"
+            "io_glb_mesh_copy_indices|io_glb_mesh_copy_image|io_glb_mesh_destroy");
     }
     if (ns_str_equals(module, ns_str_cstr("shader"))) {
         return ns_wasm_name_in(name,
@@ -2330,7 +2389,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "gpu_texture_upload|gpu_texture_destroy|gpu_sampler_create|gpu_sampler_destroy|"
             "gpu_shader_graphics_create|gpu_shader_compute_create|gpu_shader_destroy|gpu_state_create|"
             "gpu_pass_begin|gpu_screen_pass_begin|gpu_pass_end|gpu_set_shader|gpu_set_state|gpu_set_root|"
-            "gpu_set_root_data|gpu_draw_vertices|gpu_draw_indexed|gpu_draw_indirect|gpu_dispatch|"
+            "gpu_set_root_data|gpu_set_storage_at|gpu_draw_vertices|gpu_draw_indexed|gpu_draw_indirect|gpu_dispatch|"
             "gpu_dispatch_indirect|gpu_signal_after|gpu_wait_before|gpu_pixel_format_size|"
             "gpu_pixel_format_row_pitch|gpu_pixel_format_surface_pitch");
     }
@@ -2389,8 +2448,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
 
 static ns_bool ns_wasm_portable_use(ns_str module) {
     // simd is pure Nano Script and carries no native imports of its own.
-    // dynamic and compress are native-only: their backends are the Box3D,
-    // zlib and Zstandard C sources.
+    // dynamic remains native-only; browser-safe services are implemented by
+    // the generated JavaScript middleware.
     return ns_wasm_supported_module(module) || ns_str_equals(module, ns_str_cstr("simd"));
 }
 
@@ -2512,7 +2571,8 @@ static ns_return_bool ns_wasm_validate(ns_ssa_module *ssa) {
                 return ns_return_error(bool, loc, NS_ERR_EVAL, message);
             }
             if (inst->op == NS_SSA_OP_CALL && (!ns_wasm_has_target(ssa, inst) || ns_str_is_empty(inst->name))) {
-                snprintf(message, sizeof(message), "wasm target cannot resolve direct call in fn `%.*s`.", fn->name.len, fn->name.data);
+                snprintf(message, sizeof(message), "wasm target cannot resolve direct call `%.*s` in fn `%.*s`.",
+                         inst->name.len, inst->name.data, fn->name.len, fn->name.data);
                 ns_array_free(types); ns_array_free(unsigneds);
                 return ns_return_error(bool, loc, NS_ERR_EVAL, message);
             }

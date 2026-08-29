@@ -142,6 +142,56 @@ static void ns_shader_pad(ns_str *dst, i32 indent) {
     for (i32 i = 0; i < indent; ++i) ns_shader_cstr(dst, "    ");
 }
 
+static ns_bool ns_shader_ident_char(i8 c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_';
+}
+
+static ns_bool ns_shader_wgsl_reserved(ns_str token) {
+    static const char *words[] = {
+        "NULL", "Self", "abstract", "active", "alignas", "alignof", "asm", "asm_fragment", "async", "attribute", "auto", "await",
+        "become", "bf16", "binding_array", "cast", "catch", "class", "co_await", "co_return", "co_yield", "coherent", "column_major",
+        "common", "compile", "compile_fragment", "concept", "const_cast", "consteval", "constexpr", "constinit", "crate", "debug", "decltype",
+        "delete", "demote", "demote_to_helper", "do", "dynamic_cast", "enum", "explicit", "export", "extends", "extern", "external", "f16",
+        "f64", "fallthrough", "filter", "final", "finally", "friend", "from", "fxgroup", "get", "goto", "groupshared", "handle", "highp",
+        "i8", "i16", "i64", "impl", "implements", "import", "inline", "instanceof", "interface", "layout", "lowp", "macro", "macro_rules",
+        "mat", "match", "mediump", "meta", "mod", "module", "move", "mut", "mutable", "namespace", "new", "nil", "noexport", "noexcept",
+        "noinline", "nointerpolation", "noperspective", "null", "nullptr", "of", "operator", "package", "packoffset", "partition", "pass", "patch",
+        "pixelfragment", "precise", "precision", "premerge", "priv", "protected", "pub", "public", "readonly", "ref", "regardless", "register",
+        "reinterpret_cast", "require", "resource", "restrict", "self", "set", "shared", "sizeof", "smooth", "snorm", "static", "static_assert",
+        "static_cast", "std", "subroutine", "super", "target", "template", "this", "thread_local", "throw", "trait", "try", "type", "typedef",
+        "typeid", "typename", "typeof", "u8", "u16", "u64", "union", "unless", "unorm", "unsafe", "unsized", "use", "using", "varying",
+        "vec", "virtual", "void", "volatile", "wgsl", "where", "with", "writeonly", "yield",
+    };
+    for (szt i = 0; i < sizeof(words) / sizeof(words[0]); ++i) {
+        if (ns_str_equals(token, ns_str_cstr(words[i]))) return true;
+    }
+    return false;
+}
+
+// Nano Script deliberately permits several names which WGSL reserves for
+// future language features. Prefix only whole reserved identifiers after
+// emission so declarations and all their references stay in sync.
+static ns_str ns_shader_escape_wgsl_identifiers(ns_str source) {
+    ns_str out = {.data = ns_null, .len = 0, .dynamic = true};
+    for (i32 i = 0; i < source.len;) {
+        i8 c = source.data[i];
+        if (!ns_shader_ident_char(c) || (c >= '0' && c <= '9')) {
+            ns_str_append_len(&out, source.data + i, 1);
+            i++;
+            continue;
+        }
+        i32 end = i + 1;
+        while (end < source.len && ns_shader_ident_char(source.data[end])) end++;
+        ns_str token = ns_str_range(source.data + i, end - i);
+        if (ns_shader_wgsl_reserved(token)) ns_shader_cstr(&out, "ns_");
+        ns_shader_str(&out, token);
+        i = end;
+    }
+    ns_array_free(source.data);
+    return out;
+}
+
 static ns_str ns_shader_literal_body(ns_token_t t) {
     i32 suffix_len = 0;
     switch (t.suffix) {
@@ -723,6 +773,8 @@ static void ns_shader_free_fn_uses(ns_shader_fn_use *uses) {
 static const char *ns_shader_resource_param(ns_shader_target target, const ns_shader_resource_binding *r) {
     if (target == NS_SHADER_MSL) return r->msl_param;
     if (target == NS_SHADER_HLSL) return r->hlsl_param;
+    if (target == NS_SHADER_WGSL && r->bit == NS_SHADER_USE_GLOBAL_ID) return "ns_global_id: vec3<u32>";
+    if (target == NS_SHADER_WGSL && r->bit == NS_SHADER_USE_VERTEX_ID) return "ns_vertex_id: u32";
     return ns_null;
 }
 
@@ -1178,7 +1230,12 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
         else if (ns_str_equals(op, ns_str_cstr("!=="))) op = ns_str_cstr("!=");
         ns_shader_str(dst, op);
         ns_shader_cstr(dst, " ");
+        ns_bool wgsl_shift = e->target == NS_SHADER_WGSL &&
+            (ns_str_equals(op, ns_str_cstr("<<")) || ns_str_equals(op, ns_str_cstr(">>")) ||
+             ns_str_equals(op, ns_str_cstr("<<=")) || ns_str_equals(op, ns_str_cstr(">>=")));
+        if (wgsl_shift) ns_shader_cstr(dst, "u32(");
         ns_shader_try(ns_shader_emit_expr(e, n->binary_expr.right, dst));
+        if (wgsl_shift) ns_shader_cstr(dst, ")");
         if (!assignment) ns_shader_cstr(dst, ")");
         return ns_return_ok_void;
     }
@@ -2006,9 +2063,14 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         ns_shader_cstr(&e->out, "(");
         for (i32 a = 0, l = (i32)ns_array_length(s->fn.args); a < l; ++a) {
             if (a > 0) ns_shader_cstr(&e->out, ", ");
+            ns_shader_cstr(&e->out, "ns_arg_");
             ns_shader_str(&e->out, s->fn.args[a].name);
             ns_shader_cstr(&e->out, ": ");
             ns_shader_try(ns_shader_type_name(e, s->fn.args[a].val.t, &e->out, loc));
+        }
+        if (stage == NS_SHADER_STAGE_AUTO) {
+            ns_bool first_resource = ns_array_length(s->fn.args) == 0;
+            ns_shader_emit_resource_list(e, &e->out, ns_shader_fn_mask(e, fn_index), true, &first_resource);
         }
         if (stage == NS_SHADER_STAGE_COMPUTE && e->uses_global_id) {
             if (ns_array_length(s->fn.args) > 0) ns_shader_cstr(&e->out, ", ");
@@ -2029,7 +2091,29 @@ static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shad
         }
         ns_shader_cstr(&e->out, " ");
         e->indent = 0;
-        ns_shader_try(ns_shader_emit_block(e, s->fn.body));
+        ns_ast_t *body = &e->ctx->nodes[s->fn.body];
+        ns_shader_cstr(&e->out, "{\n");
+        e->indent++;
+        for (i32 a = 0, l = (i32)ns_array_length(s->fn.args); a < l; ++a) {
+            ns_shader_pad(&e->out, e->indent);
+            ns_shader_cstr(&e->out, "var ");
+            ns_shader_str(&e->out, s->fn.args[a].name);
+            ns_shader_cstr(&e->out, " = ns_arg_");
+            ns_shader_str(&e->out, s->fn.args[a].name);
+            ns_shader_cstr(&e->out, ";\n");
+        }
+        if (body->type == NS_AST_COMPOUND_STMT) {
+            ns_ast_t *stmt = body;
+            for (i32 bi = 0; bi < body->compound_stmt.count; ++bi) {
+                ns_shader_try(ns_shader_emit_stmt(e, stmt->next));
+                stmt = &e->ctx->nodes[stmt->next];
+            }
+        } else {
+            ns_shader_try(ns_shader_emit_stmt(e, s->fn.body));
+        }
+        e->indent--;
+        ns_shader_pad(&e->out, e->indent);
+        ns_shader_cstr(&e->out, "}");
         ns_shader_cstr(&e->out, "\n\n");
         return ns_return_ok_void;
     }
@@ -2655,7 +2739,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "@group(0) @binding(3) var ns_texture_map: texture_2d<f32>;\n"
             "@group(0) @binding(4) var ns_texture_sampler: sampler;\n"
             "fn ns_texture_sample(coord: vec2<f32>) -> vec4<f32> {\n"
-            "    return textureSample(ns_texture_map, ns_texture_sampler, coord);\n"
+            "    return textureSampleLevel(ns_texture_map, ns_texture_sampler, coord, 0.0);\n"
             "}\n"
             "fn ns_texture_sample_nearest(coord: vec2<f32>) -> vec4<f32> {\n"
             "    let size = vec2<i32>(textureDimensions(ns_texture_map));\n"
@@ -2689,7 +2773,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
             "@group(0) @binding(5) var ns_mask_map: texture_2d<f32>;\n"
             "@group(0) @binding(6) var ns_mask_sampler: sampler;\n"
             "fn ns_mask_sample(coord: vec2<f32>) -> vec4<f32> {\n"
-            "    return textureSample(ns_mask_map, ns_mask_sampler, coord);\n"
+            "    return textureSampleLevel(ns_mask_map, ns_mask_sampler, coord, 0.0);\n"
             "}\n\n");
     }
 
@@ -2714,7 +2798,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     }
 #undef ns_shader_fail
 
-    ns_str out = e.out;
+    ns_str out = target == NS_SHADER_WGSL ? ns_shader_escape_wgsl_identifiers(e.out) : e.out;
     ns_array_free(e.pre.data);
     ns_array_free(e.structs);
     ns_array_free(e.fns);
