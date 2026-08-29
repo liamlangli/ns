@@ -40,7 +40,7 @@ else ifeq ($(OS), Darwin)
 	NS_OS = $(NS_DARWIN)
 	NS_LD = clang
 else
-	NS_DYLIB_SUFFIX = .so
+	NS_DYLIB_SUFFIX = .dll
 	NS_LIB_SUFFIX = .a
 	NS_SUFFIX = .exe
 	NS_PLATFORM_DEF = -DNS_WIN
@@ -66,7 +66,10 @@ endif
 NS_WARN_CFLAGS = -Wall -Wextra -Wunused-result $(NS_WERROR_CFLAGS)
 
 ifeq ($(NS_OS), $(NS_WIN))
-NS_LDFLAGS = -LD:/msys64/ucrt64/lib -lmsvcrt -lm -lreadline -lffi -ldl -lws2_32
+# MSYS2 translates /ucrt64 for the native linker. Keeping this path relative
+# to the active MSYS2 installation also works on GitHub-hosted runners, where
+# the installation is not guaranteed to live on a particular drive.
+NS_LDFLAGS = -L/ucrt64/lib -lm -lreadline -lffi -ldl -lws2_32
 NS_GPU_LDFLAGS = -ld3d12 -ldxgi -ldxguid -ld3dcompiler
 else ifeq ($(NS_OS), $(NS_DARWIN))
 NS_LDFLAGS = -L/usr/lib -lm -lreadline -lffi -ldl
@@ -211,8 +214,13 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
+# The copy linked into the ns host tool uses src/ns_os.c for file helpers.
+# Keep the standalone runtime fallbacks enabled only in bin/ns_native_rt.o,
+# which is shipped for executables produced by `ns build`.
+$(NS_BINDIR)/src/ns_native_rt.o: NS_CFLAGS += -DNS_HOST_TOOL
+
 # Native feature modules (lib/*) are compiled position-independent and built as
-# dylibs/so files. Keep them out of bin/ns so the interpreter remains
+# dynamic libraries. Keep them out of bin/ns so the interpreter remains
 # language-only; ref fn calls resolve them through dlopen()/dlsym().
 NS_LIBFN_SRCS = lib/src/io.c lib/src/gpu.c lib/src/view.c lib/src/os.c lib/src/net.c lib/src/http.c lib/src/wasm_dev.c lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c
 ifeq ($(NS_OS), $(NS_LINUX))

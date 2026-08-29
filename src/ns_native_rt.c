@@ -1342,10 +1342,11 @@ void ns_rt_task_sleep(int64_t ms) {
 // Feature dylibs (io/ui/os/view) are built against the interpreter and import
 // these debug allocators plus the compiler's file helpers. A native `ns build`
 // executable has to export the same symbols or the first call jumps to NULL.
-// Omitted when this file is compiled into bin/ns (NS_DEBUG), which already
-// defines _ns_malloc from ns_type.c, and when compiled into a generated Apple
-// app (NS_XCLIB), which already links Runtime/src/ns_os.c.
-#if !defined(NS_DEBUG) && !defined(NS_XCLIB)
+// Omitted when this file is compiled into bin/ns (NS_HOST_TOOL), which already
+// defines _ns_malloc in ns_type.c and links src/ns_os.c, and when compiled into
+// a generated Apple app (NS_XCLIB), which links Runtime/src/ns_os.c. The
+// separate bin/ns_native_rt.o keeps these fallbacks for `ns build` artifacts.
+#if !defined(NS_HOST_TOOL) && !defined(NS_XCLIB)
 void *_ns_malloc(size_t size, const char *file, int line) {
     (void)file;
     (void)line;

@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [main, master, 'claude/**']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -11,18 +12,129 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.name }} release
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS aarch64
+            runner: macos-14
+            artifact: ns-macos-aarch64
+            executable: ns
+          - name: Linux amd64
+            runner: ubuntu-24.04
+            artifact: ns-linux-amd64
+            executable: ns
+          - name: Windows amd64
+            runner: windows-2022
+            artifact: ns-windows-amd64
+            executable: ns.exe
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libreadline-dev libffi-dev libsqlite3-dev
 
-      # GCC 13 on ubuntu-latest raises warnings (implicit-fallthrough,
-      # type-limits, unused-function, maybe-uninitialized) that the default
-      # -Werror promotes to errors; build without -Werror until the sources
-      # are warning-clean under GCC.
-      - name: Build
-        run: make NS_WERROR=0
+      - name: Set up Windows dependencies
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make
+            mingw-w64-ucrt-x86_64-clang
+            mingw-w64-ucrt-x86_64-lld
+            mingw-w64-ucrt-x86_64-dlfcn
+            mingw-w64-ucrt-x86_64-libffi
+            mingw-w64-ucrt-x86_64-readline
+            mingw-w64-ucrt-x86_64-sqlite3
+
+      # GCC on ubuntu-24.04 raises warnings that the default -Werror promotes
+      # to errors; keep the existing exception until the sources are clean
+      # under GCC. NS_DEBUG=0 selects the optimized release configuration.
+      - name: Build and stage release (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          make install NS_DEBUG=0 NS_WERROR=0 \
+            NS_INSTALL_ROOT="$PWD/release/ns" NS_INSTALL_DISPLAY="$PWD/release/ns"
+          release/ns/bin/${{ matrix.executable }} --version
+
+      - name: Build and stage release (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          make install NS_DEBUG=0 \
+            NS_INSTALL_ROOT="$PWD/release/ns" NS_INSTALL_DISPLAY="$PWD/release/ns"
+          release/ns/bin/${{ matrix.executable }} --version
+
+      - name: Build and stage release (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          make install NS_DEBUG=0 NS_WERROR=0 \
+            NS_INSTALL_ROOT="$PWD/release/ns" NS_INSTALL_DISPLAY="$PWD/release/ns"
+          release/ns/bin/${{ matrix.executable }} --version
+          for binary in release/ns/bin/ns.exe release/ns/lib/*.dll; do
+            ldd "$binary"
+          done | awk '{
+            for (i = 1; i <= NF; i++) {
+              if ($i ~ /^\/ucrt64\/bin\//) print $i
+            }
+          }' | sort -u > release/windows-runtime-dlls.txt
+          while IFS= read -r dependency; do
+            cp "$dependency" release/ns/bin/
+          done < release/windows-runtime-dlls.txt
+
+      - name: Package release (macOS and Linux)
+        if: runner.os != 'Windows'
+        run: tar -C release -czf ${{ matrix.artifact }}.tar.gz ns
+
+      - name: Package release (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path release/ns -DestinationPath ${{ matrix.artifact }}.zip
+
+      - name: Upload release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create checksums
+        working-directory: release-assets
+        run: sha256sum ns-* > SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" release-assets/* \
+              --repo "${{ github.repository }}" --clobber
+          else
+            gh release create "${{ github.ref_name }}" release-assets/* \
+              --repo "${{ github.repository }}" \
+              --verify-tag \
+              --generate-notes \
+              --title "${{ github.ref_name }}"
+          fi

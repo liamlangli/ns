@@ -7,6 +7,13 @@ Nano Script
 
 [nscode playground](https://liamlangli.github.io/ns/)
 
+## Releases
+
+The Build workflow validates optimized release builds for macOS aarch64, Linux
+amd64, and Windows amd64. Pushing a tag whose name starts with `v` publishes
+those three SDK archives and their `SHA256SUMS` file to a GitHub Release
+automatically.
+
 ## Syntax
 ```swift
 // this is a comment
