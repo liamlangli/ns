@@ -8,6 +8,7 @@
 #ifdef NS_GPU_DX12
 
 #define COBJMACROS
+#define WIDL_C_INLINE_WRAPPERS
 #include <windows.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -106,8 +107,8 @@ ns_bool gpu_request_device(view *v) {
                                                   &IID_ID3D12DescriptorHeap, (void **)&_state.rtv_heap))) return false;
     _state.rtv_descriptor_size = ID3D12Device_GetDescriptorHandleIncrementSize(
         _state.device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv;
-    ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(_state.rtv_heap, &rtv);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv =
+        ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(_state.rtv_heap);
     for (UINT i = 0; i < GPU_SWAP_BUFFER_COUNT; ++i) {
         IDXGISwapChain3_GetBuffer(_state.swapchain, i, &IID_ID3D12Resource,
                                   (void **)&_state.render_targets[i]);
@@ -249,8 +250,8 @@ static void dx12_screen_pass_begin(const char *label, gpu_color clear) {
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     ID3D12GraphicsCommandList_ResourceBarrier(_state.command_list, 1, &barrier);
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv;
-    ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(_state.rtv_heap, &rtv);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv =
+        ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(_state.rtv_heap);
     rtv.ptr += (SIZE_T)_state.frame_index * _state.rtv_descriptor_size;
     ID3D12GraphicsCommandList_OMSetRenderTargets(_state.command_list, 1, &rtv, FALSE, NULL);
     const float color[4] = {clear.r, clear.g, clear.b, clear.a};

@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <assert.h>
 #include <math.h>
 
@@ -77,13 +78,13 @@
 typedef char i8;
 typedef short i16;
 typedef int i32;
-typedef long i64;
+typedef int64_t i64;
 typedef size_t szt;
 
 typedef unsigned char u8;
 typedef unsigned short u16;
 typedef unsigned int u32;
-typedef unsigned long u64;
+typedef uint64_t u64;
 
 typedef float f32;
 typedef double f64;

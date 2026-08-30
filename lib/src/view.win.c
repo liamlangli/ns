@@ -9,6 +9,7 @@
 
 #ifdef NS_WIN
 #include <windows.h>
+#include <windowsx.h>
 #include <string.h>
 
 typedef void (*view_on_launch)(view *);

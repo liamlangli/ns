@@ -2728,6 +2728,8 @@ static ns_str ns_native_rt_object_path(void) {
     return object;
 }
 
+#endif // NS_DARWIN
+
 static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
     FILE *f = fopen(path.data, "w");
     if (!f) ns_exit(1, "build", "failed to write runtime string table %.*s.\n", path.len, path.data);
@@ -2772,6 +2774,8 @@ static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
     for (i32 i = 0; i < n; ++i) ns_str_free(tab[i]);
     ns_array_free(tab);
 }
+
+#if defined(NS_DARWIN)
 
 static void ns_build_darwin_link_executable(ns_ssa_module *ssa, ns_str executable_path) {
     ns_str object_path = ns_str_concat(executable_path, ns_str_cstr(".o"));

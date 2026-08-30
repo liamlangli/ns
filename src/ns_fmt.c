@@ -95,11 +95,11 @@ ns_str ns_fmt_type_str(ns_type t) {
     case NS_TYPE_BOOL:
     case NS_TYPE_TYPE: return ns_str_cstr("%d");
     case NS_TYPE_I32: return ns_str_cstr("%d");
-    case NS_TYPE_I64: return ns_str_cstr("%ld");
+    case NS_TYPE_I64: return ns_str_cstr("%" PRId64);
     case NS_TYPE_U8:
     case NS_TYPE_U16:
     case NS_TYPE_U32: return ns_str_cstr("%u");
-    case NS_TYPE_U64: return ns_str_cstr("%lu");
+    case NS_TYPE_U64: return ns_str_cstr("%" PRIu64);
     case NS_TYPE_F32: return ns_str_cstr("%.2f");
     case NS_TYPE_F64: return ns_str_cstr("%.2lf");
     default:

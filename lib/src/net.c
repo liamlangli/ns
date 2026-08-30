@@ -315,7 +315,7 @@ int net_udp_reply(int fd, const char *data, int len) {
 
 int net_udp_reply_bytes(int fd, const unsigned char *data, int len) {
     if (g_udp_from_len == 0 || !data || len < 0) return -1;
-    return (int)sendto(fd, data, (size_t)len, 0,
+    return (int)sendto(fd, (const char *)data, (size_t)len, 0,
                        (struct sockaddr *)&g_udp_from, (socklen_t)g_udp_from_len);
 }
 
@@ -349,7 +349,7 @@ int net_udp_send_bytes(int fd, const char *host, int port,
     hints.ai_socktype = SOCK_DGRAM;
 
     if (getaddrinfo(host, port_str, &hints, &res) != 0 || !res) return -1;
-    int n = (int)sendto(fd, data, (size_t)len, 0, res->ai_addr, (socklen_t)res->ai_addrlen);
+    int n = (int)sendto(fd, (const char *)data, (size_t)len, 0, res->ai_addr, (socklen_t)res->ai_addrlen);
     freeaddrinfo(res);
     return n;
 }

@@ -11,9 +11,9 @@
 #include <sys/stat.h>
 
 #ifdef NS_WIN
-#include <windows.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 typedef int socklen_t;
 #define close_socket closesocket
 #define strcasecmp _stricmp

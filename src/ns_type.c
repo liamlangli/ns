@@ -62,7 +62,7 @@ ns_str ns_mem_str(u64 i) {
 void ns_mem_status(void) {
     ns_str alloc = ns_mem_str(_ns_heap.alloc);
     ns_str realloc = ns_mem_str(_ns_heap.realloc);
-    ns_info("ns_mem_status", "alloc[%lu|%.*s], realloc[%lu|%.*s], free[%lu]\n", _ns_heap.alloc_op, alloc.len, alloc.data, _ns_heap.realloc_op, realloc.len, realloc.data, _ns_heap.free_op);
+    ns_info("ns_mem_status", "alloc[%" PRIu64 "|%.*s], realloc[%" PRIu64 "|%.*s], free[%" PRIu64 "]\n", _ns_heap.alloc_op, alloc.len, alloc.data, _ns_heap.realloc_op, realloc.len, realloc.data, _ns_heap.free_op);
 }
 #endif
 
