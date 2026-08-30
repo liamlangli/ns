@@ -138,14 +138,16 @@ assert.deepEqual([
 canvasEvents.get('pointerup')({ clientX: 207, clientY: 139, pointerType: 'touch', pointerId: 22, timeStamp: 24 });
 assert.equal(capturedPointers.has(22), false);
 assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);
+assert.equal(runtime.view().getInt32(canvasView + 60, true), 1);
+assert.equal(runtime.view().getInt32(runtime.viewImport('view_input_at', [canvasView, 4]) + 4, true), 3);
+runtime.viewImport('view_input_reset', [canvasView]);
+assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);
+assert.equal(runtime.view().getInt32(canvasView + 60, true), 0);
 canvasEvents.get('pointercancel')({ clientX: 25, clientY: 34, pointerType: 'touch', pointerId: 11, timeStamp: 25 });
 assert.equal(capturedPointers.size, 0);
 assert.equal(runtime.view().getInt32(canvasView + 52, true), 0);
 assert.equal(runtime.view().getInt32(canvasView + 60, true), 1);
-assert.deepEqual([
-  runtime.view().getInt32(runtime.viewImport('view_input_at', [canvasView, 4]) + 4, true),
-  runtime.view().getInt32(runtime.viewImport('view_input_at', [canvasView, 5]) + 4, true),
-], [3, 4]);
+assert.equal(runtime.view().getInt32(runtime.viewImport('view_input_at', [canvasView, 0]) + 4, true), 4);
 runtime.viewImport('view_input_reset', [canvasView]);
 assert.equal(runtime.gpu('gpu_caps', []), 6);
 assert.equal(runtime.gpu('gpu_storage_slot_count', []), 8);

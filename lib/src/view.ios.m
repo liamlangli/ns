@@ -19,7 +19,7 @@ static MTKView *view_ios_metal_view;
 static id<MTLDevice> view_ios_device;
 static id view_ios_delegate;
 static dispatch_semaphore_t view_ios_done;
-static i32 view_ios_primary_pointer_id = -1;
+static i32 view_ios_active_touch_count;
 
 static UIWindow *view_ios_key_window(void);
 
@@ -88,22 +88,19 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
     view_on_pointer_event(&view_ios_state, view_ios_input_device(touch), phase, pointer_id,
                           point.x, point.y, pressure, touch.altitudeAngle,
                           [touch azimuthAngleInView:view_ios_metal_view], touch.timestamp, 0);
-    // Keep the legacy mouse fields tied to one primary contact. The complete
-    // pointer queue above still receives every finger independently.
-    if (phase == VIEW_INPUT_PHASE_BEGAN && view_ios_primary_pointer_id < 0) {
-        view_ios_primary_pointer_id = pointer_id;
-    }
-    if (pointer_id != view_ios_primary_pointer_id) return;
+    // The complete pointer queue above identifies every finger. The legacy
+    // mouse fields expose an edge for every contact too, while mouse_down stays
+    // true until the last held finger leaves the view.
     view_ios_state.mouse_x = point.x;
     view_ios_state.mouse_y = point.y;
     if (phase == VIEW_INPUT_PHASE_BEGAN) {
-        view_ios_state.mouse_down = true;
+        view_ios_active_touch_count++;
         view_ios_state.mouse_pressed = true;
     } else if (phase == VIEW_INPUT_PHASE_ENDED || phase == VIEW_INPUT_PHASE_CANCELLED) {
-        view_ios_state.mouse_down = false;
+        if (view_ios_active_touch_count > 0) view_ios_active_touch_count--;
         view_ios_state.mouse_released = true;
-        view_ios_primary_pointer_id = -1;
     }
+    view_ios_state.mouse_down = view_ios_active_touch_count > 0;
 }
 
 @interface NSIOSMetalView : MTKView
@@ -214,7 +211,7 @@ static NSIOSGestureTarget *view_ios_gesture_target;
 
 view *view_create(const char *title, i32 width, i32 height) {
     memset(&view_ios_state, 0, sizeof(view_ios_state));
-    view_ios_primary_pointer_id = -1;
+    view_ios_active_touch_count = 0;
     view_ios_state.title = ns_str_cstr((char *)(title ? title : ""));
     view_ios_state.width = width;
     view_ios_state.height = height;
