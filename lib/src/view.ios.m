@@ -209,6 +209,17 @@ static void view_ios_rotate(UIRotationGestureRecognizer *gesture) {
 
 static NSIOSGestureTarget *view_ios_gesture_target;
 
+static void view_ios_add_gesture(UIGestureRecognizer *gesture) {
+    // The raw pointer stream drives controls such as a held stick plus a jump
+    // button. UIKit otherwise delays touchesEnded by default while any gesture
+    // recognizer is still analyzing the multi-touch sequence, which leaves the
+    // second control held until the first finger also lifts.
+    gesture.cancelsTouchesInView = NO;
+    gesture.delaysTouchesEnded = NO;
+    gesture.delegate = view_ios_gesture_target;
+    [view_ios_metal_view addGestureRecognizer:gesture];
+}
+
 view *view_create(const char *title, i32 width, i32 height) {
     memset(&view_ios_state, 0, sizeof(view_ios_state));
     view_ios_active_touch_count = 0;
@@ -244,29 +255,19 @@ view *view_create(const char *title, i32 width, i32 height) {
         UIPanGestureRecognizer *orbit = [[UIPanGestureRecognizer alloc] initWithTarget:view_ios_gesture_target action:@selector(orbit:)];
         orbit.minimumNumberOfTouches = 1;
         orbit.maximumNumberOfTouches = 1;
-        orbit.cancelsTouchesInView = NO;
-        orbit.delegate = view_ios_gesture_target;
-        [view_ios_metal_view addGestureRecognizer:orbit];
+        view_ios_add_gesture(orbit);
         UIPanGestureRecognizer *camera_pan = [[UIPanGestureRecognizer alloc] initWithTarget:view_ios_gesture_target action:@selector(cameraPan:)];
         camera_pan.minimumNumberOfTouches = 2;
         camera_pan.maximumNumberOfTouches = 2;
-        camera_pan.cancelsTouchesInView = NO;
-        camera_pan.delegate = view_ios_gesture_target;
-        [view_ios_metal_view addGestureRecognizer:camera_pan];
+        view_ios_add_gesture(camera_pan);
         UIPinchGestureRecognizer *pinch = [[UIPinchGestureRecognizer alloc] initWithTarget:view_ios_gesture_target action:@selector(pinch:)];
-        pinch.cancelsTouchesInView = NO;
-        pinch.delegate = view_ios_gesture_target;
-        [view_ios_metal_view addGestureRecognizer:pinch];
+        view_ios_add_gesture(pinch);
         UIRotationGestureRecognizer *rotate = [[UIRotationGestureRecognizer alloc] initWithTarget:view_ios_gesture_target action:@selector(rotate:)];
-        rotate.cancelsTouchesInView = NO;
-        rotate.delegate = view_ios_gesture_target;
-        [view_ios_metal_view addGestureRecognizer:rotate];
+        view_ios_add_gesture(rotate);
         UITapGestureRecognizer *capture = [[UITapGestureRecognizer alloc] initWithTarget:view_ios_gesture_target action:@selector(captureFrame:)];
         capture.numberOfTouchesRequired = 4;
         capture.numberOfTapsRequired = 1;
-        capture.cancelsTouchesInView = NO;
-        capture.delegate = view_ios_gesture_target;
-        [view_ios_metal_view addGestureRecognizer:capture];
+        view_ios_add_gesture(capture);
         [container addSubview:view_ios_metal_view];
         view_ios_sync_metrics(view_ios_metal_view);
         view_ios_state.native_window = (__bridge void *)view_ios_metal_view;

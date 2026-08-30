@@ -197,6 +197,8 @@ int main(void) {
               "Xcode project copies Apple feature sources into the managed project.");
     ns_expect(text_has(view_ios, "multipleTouchEnabled = YES"),
               "iOS application views accept simultaneous touch contacts.");
+    ns_expect(text_has(view_ios, "delaysTouchesEnded = NO"),
+              "iOS gesture recognizers deliver each touch end without waiting for the whole gesture.");
     ns_expect(access(storage_db, R_OK) == 0 && access(storage_apple, R_OK) == 0 && access(storage_module, R_OK) == 0 &&
                   text_has(pbx, "storage.ns in Resources") && text_has(pbx, "-lsqlite3"),
               "Xcode app targets embed UserDefaults KV storage and platform SQLite.");
