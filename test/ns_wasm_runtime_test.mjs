@@ -11,7 +11,7 @@ let configured = null;
 let configureCount = 0;
 const canvasEvents = new Map();
 const windowEvents = new Map();
-let capturedPointer = 0;
+const capturedPointers = new Set();
 const canvas = {
   clientWidth: 320,
   clientHeight: 180,
@@ -20,9 +20,9 @@ const canvas = {
   style: {},
   setAttribute() {},
   addEventListener(name, handler) { canvasEvents.set(name, handler); },
-  setPointerCapture(pointer) { capturedPointer = pointer; },
-  hasPointerCapture(pointer) { return capturedPointer === pointer; },
-  releasePointerCapture(pointer) { if (capturedPointer === pointer) capturedPointer = 0; },
+  setPointerCapture(pointer) { capturedPointers.add(pointer); },
+  hasPointerCapture(pointer) { return capturedPointers.has(pointer); },
+  releasePointerCapture(pointer) { capturedPointers.delete(pointer); },
   getBoundingClientRect() { return { left: 0, top: 0 }; },
   focus() {},
   getContext(kind) {
@@ -90,6 +90,7 @@ assert.equal(runtime.readString(stringPointer), 'hello wasm');
 assert.equal(runtime.readString(runtime.std('substr', [stringPointer, 6, 4])), 'wasm');
 const titlePointer = runtime.writeString('Canvas view');
 const canvasView = runtime.invoke('view', 'view_create', [titlePointer, 960, 540]);
+assert.equal(canvas.style.touchAction, 'none');
 assert.equal(document.title, 'Manifest project');
 assert.equal(runtime.view().getInt32(canvasView + 4, true), 320);
 assert.equal(runtime.view().getInt32(canvasView + 12, true), 640);
@@ -98,19 +99,54 @@ assert.equal(runtime.gpu('gpu_request_device', [canvasView]), 1);
 assert.equal(runtime.gpu('gpu_request_device', [canvasView + 4]), 0);
 assert.equal(runtime.view().getUint32(canvasView + 144, true), 1);
 canvasEvents.get('pointerdown')({ clientX: 10, clientY: 16, pointerType: 'mouse', pointerId: 7, button: 0 });
-assert.equal(capturedPointer, 7);
+assert.equal(capturedPointers.has(7), true);
 assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);
 canvasEvents.get('pointermove')({ clientX: 12, clientY: 18, pointerType: 'mouse', pointerId: 1, timeStamp: 10 });
 assert.equal(runtime.view().getFloat64(canvasView + 20, true), 12);
 assert.equal(runtime.viewImport('view_input_count', [canvasView]), 3);
 canvasEvents.get('pointerup')({ clientX: 12, clientY: 18, pointerType: 'mouse', pointerId: 7, button: 0 });
-assert.equal(capturedPointer, 0);
+assert.equal(capturedPointers.has(7), false);
 assert.equal(runtime.view().getInt32(canvasView + 52, true), 0);
 windowEvents.get('keydown')({ key: 'A' });
 assert.equal(runtime.viewImport('view_is_key_pressed', [canvasView, 65]), 1);
 assert.equal(runtime.viewImport('view_take_key_press', [canvasView, 65]), 0);
 runtime.viewImport('view_input_reset', [canvasView]);
 assert.equal(runtime.viewImport('view_input_count', [canvasView]), 0);
+canvasEvents.get('pointerdown')({ clientX: 20, clientY: 30, pointerType: 'touch', pointerId: 11, pressure: 0.5, timeStamp: 20 });
+canvasEvents.get('pointerdown')({ clientX: 200, clientY: 130, pointerType: 'touch', pointerId: 22, pressure: 0.6, timeStamp: 21 });
+assert.deepEqual([...capturedPointers], [11, 22]);
+assert.equal(runtime.viewImport('view_input_count', [canvasView]), 2);
+const firstTouch = runtime.viewImport('view_input_at', [canvasView, 0]);
+const secondTouch = runtime.viewImport('view_input_at', [canvasView, 1]);
+assert.deepEqual([
+  runtime.view().getInt32(firstTouch, true), runtime.view().getInt32(firstTouch + 4, true), runtime.view().getInt32(firstTouch + 8, true),
+], [1, 1, 11]);
+assert.deepEqual([
+  runtime.view().getInt32(secondTouch, true), runtime.view().getInt32(secondTouch + 4, true), runtime.view().getInt32(secondTouch + 8, true),
+], [1, 1, 22]);
+assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);
+canvasEvents.get('pointermove')({ clientX: 25, clientY: 34, pointerType: 'touch', pointerId: 11, pressure: 0.5, timeStamp: 22 });
+canvasEvents.get('pointermove')({ clientX: 207, clientY: 139, pointerType: 'touch', pointerId: 22, pressure: 0.6, timeStamp: 23 });
+const firstMove = runtime.viewImport('view_input_at', [canvasView, 2]);
+const secondMove = runtime.viewImport('view_input_at', [canvasView, 3]);
+assert.deepEqual([
+  runtime.view().getFloat64(firstMove + 32, true), runtime.view().getFloat64(firstMove + 40, true),
+], [5, 4]);
+assert.deepEqual([
+  runtime.view().getFloat64(secondMove + 32, true), runtime.view().getFloat64(secondMove + 40, true),
+], [7, 9]);
+canvasEvents.get('pointerup')({ clientX: 207, clientY: 139, pointerType: 'touch', pointerId: 22, timeStamp: 24 });
+assert.equal(capturedPointers.has(22), false);
+assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);
+canvasEvents.get('pointercancel')({ clientX: 25, clientY: 34, pointerType: 'touch', pointerId: 11, timeStamp: 25 });
+assert.equal(capturedPointers.size, 0);
+assert.equal(runtime.view().getInt32(canvasView + 52, true), 0);
+assert.equal(runtime.view().getInt32(canvasView + 60, true), 1);
+assert.deepEqual([
+  runtime.view().getInt32(runtime.viewImport('view_input_at', [canvasView, 4]) + 4, true),
+  runtime.view().getInt32(runtime.viewImport('view_input_at', [canvasView, 5]) + 4, true),
+], [3, 4]);
+runtime.viewImport('view_input_reset', [canvasView]);
 assert.equal(runtime.gpu('gpu_caps', []), 6);
 assert.equal(runtime.gpu('gpu_storage_slot_count', []), 8);
 assert.equal(runtime.gpu('gpu_malloc', [32n, 0, runtime.writeString('')]), 0n);
