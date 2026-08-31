@@ -410,6 +410,7 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
     }
     view_on_frame frame = (view_on_frame)_view.on_frame;
     if (frame) {
+        view_apple_gamepad_poll(&_view);
         gpu_mtl_begin_frame(view);
         frame(&_view);
         // The frame owns the drawable between these two calls: whatever the
@@ -616,6 +617,7 @@ void view_osx_create(i32 w, i32 h, const char* title) {
 
     _view.native_window = (__bridge void*)view_window;
     _view.gpu_device = (__bridge void*)view_mtl_device;
+    view_apple_gamepad_start(&_view);
 }
 
 /* return current MTKView drawable width */

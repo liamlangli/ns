@@ -62,6 +62,33 @@ lit VIEW_TOOL_ACTION_NONE = 0
 lit VIEW_TOOL_ACTION_PENCIL_DOUBLE_TAP = 1
 lit VIEW_TOOL_ACTION_PENCIL_SQUEEZE = 2
 
+// Standard gamepad layout, matching the browser Gamepad API. Axes use -1..1:
+// X grows to the right and Y grows down. Button values use 0..1 so analog
+// triggers remain available, while the pressed helpers expose digital state.
+lit VIEW_GAMEPAD_CAPACITY = 4
+lit VIEW_GAMEPAD_AXIS_LEFT_X = 0
+lit VIEW_GAMEPAD_AXIS_LEFT_Y = 1
+lit VIEW_GAMEPAD_AXIS_RIGHT_X = 2
+lit VIEW_GAMEPAD_AXIS_RIGHT_Y = 3
+
+lit VIEW_GAMEPAD_BUTTON_SOUTH = 0
+lit VIEW_GAMEPAD_BUTTON_EAST = 1
+lit VIEW_GAMEPAD_BUTTON_WEST = 2
+lit VIEW_GAMEPAD_BUTTON_NORTH = 3
+lit VIEW_GAMEPAD_BUTTON_LEFT_SHOULDER = 4
+lit VIEW_GAMEPAD_BUTTON_RIGHT_SHOULDER = 5
+lit VIEW_GAMEPAD_BUTTON_LEFT_TRIGGER = 6
+lit VIEW_GAMEPAD_BUTTON_RIGHT_TRIGGER = 7
+lit VIEW_GAMEPAD_BUTTON_SELECT = 8
+lit VIEW_GAMEPAD_BUTTON_START = 9
+lit VIEW_GAMEPAD_BUTTON_LEFT_STICK = 10
+lit VIEW_GAMEPAD_BUTTON_RIGHT_STICK = 11
+lit VIEW_GAMEPAD_BUTTON_DPAD_UP = 12
+lit VIEW_GAMEPAD_BUTTON_DPAD_DOWN = 13
+lit VIEW_GAMEPAD_BUTTON_DPAD_LEFT = 14
+lit VIEW_GAMEPAD_BUTTON_DPAD_RIGHT = 15
+lit VIEW_GAMEPAD_BUTTON_HOME = 16
+
 struct view_input_event {
     device: i32,
     phase: i32,
@@ -127,6 +154,16 @@ ref fn view_on_key_action(v: ref view, key: i32, action: i32)
 ref fn view_is_key_pressed(v: ref view, key: i32) bool
 ref fn view_take_key_press(v: ref view, key: i32) i32
 ref fn view_clear_key_presses(v: ref view)
+
+// Up to four standard-layout gamepads are exposed as stable slots. A button
+// press stays latched until it is taken or view_input_reset clears the frame's
+// edges; held state and analog values survive input reset.
+ref fn view_gamepad_count(v: ref view) i32
+ref fn view_gamepad_connected(v: ref view, gamepad: i32) bool
+ref fn view_gamepad_axis(v: ref view, gamepad: i32, axis: i32) f32
+ref fn view_gamepad_button(v: ref view, gamepad: i32, button: i32) f32
+ref fn view_gamepad_button_pressed(v: ref view, gamepad: i32, button: i32) bool
+ref fn view_take_gamepad_button_press(v: ref view, gamepad: i32, button: i32) bool
 
 ref fn view_on_pointer_event(v: ref view, device: i32, phase: i32, pointer_id: i32, x: f64, y: f64, pressure: f64, altitude: f64, azimuth: f64, timestamp: f64, modifiers: i32)
 ref fn view_on_tool_action(v: ref view, action: i32, timestamp: f64)

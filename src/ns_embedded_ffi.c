@@ -42,6 +42,12 @@ extern void view_on_key_action(void *, i32, i32);
 extern ns_bool view_is_key_pressed(void *, i32);
 extern i32 view_take_key_press(void *, i32);
 extern void view_clear_key_presses(void *);
+extern i32 view_gamepad_count(void *);
+extern ns_bool view_gamepad_connected(void *, i32);
+extern f32 view_gamepad_axis(void *, i32, i32);
+extern f32 view_gamepad_button(void *, i32, i32);
+extern ns_bool view_gamepad_button_pressed(void *, i32, i32);
+extern ns_bool view_take_gamepad_button_press(void *, i32, i32);
 extern void view_on_pointer_event(void *, i32, i32, i32, f64, f64, f64, f64, f64, f64, i32);
 extern void view_on_tool_action(void *, i32, f64);
 extern void view_on_gesture(void *, f64, f64, f64, f64);
@@ -1438,6 +1444,18 @@ static ns_return_bool ns_embedded_sig155(ns_vm *vm, void *target) {
 }
 
 static ns_return_bool ns_embedded_sig156(ns_vm *vm, void *target) {
+    f32 result = ((f32 (*)(void *, i32, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
+    ns_embedded_return_scalar(vm, &result, sizeof(result));
+    return ns_return_ok(bool, true);
+}
+
+static ns_return_bool ns_embedded_sig157(ns_vm *vm, void *target) {
+    ns_bool result = ((ns_bool (*)(void *, i32, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)));
+    ns_embedded_return_scalar(vm, &result, sizeof(result));
+    return ns_return_ok(bool, true);
+}
+
+static ns_return_bool ns_embedded_sig158(ns_vm *vm, void *target) {
     const char *result = ((const char * (*)(void *))target)(ns_embedded_arg_pointer(vm, 0));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret.t = ns_type_str;
@@ -1445,34 +1463,34 @@ static ns_return_bool ns_embedded_sig156(ns_vm *vm, void *target) {
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig157(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig159(ns_vm *vm, void *target) {
     void *result = ((void * (*)(void *, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)));
     ns_embedded_return_pointer(vm, result);
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig158(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig160(ns_vm *vm, void *target) {
     ((void (*)(void *, f64, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_f64(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig159(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig161(ns_vm *vm, void *target) {
     ((void (*)(void *, i32, i32, i32, f64, f64, f64, f64, f64, f64, i32))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 2)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 3)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 4)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 5)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 6)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 7)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 8)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 9)), ns_eval_number_i32(vm, ns_embedded_arg(vm, 10)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig160(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig162(ns_vm *vm, void *target) {
     ((void (*)(void *, i32, f64))target)(ns_embedded_arg_pointer(vm, 0), ns_eval_number_i32(vm, ns_embedded_arg(vm, 1)), ns_eval_number_f64(vm, ns_embedded_arg(vm, 2)));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
     return ns_return_ok(bool, true);
 }
 
-static ns_return_bool ns_embedded_sig161(ns_vm *vm, void *target) {
+static ns_return_bool ns_embedded_sig163(ns_vm *vm, void *target) {
     ((void (*)(void *, const char *))target)(ns_embedded_arg_pointer(vm, 0), ns_embedded_arg_str(vm, 1));
     ns_call *call = ns_array_last(vm->call_stack);
     call->ret = ns_nil;
@@ -1839,9 +1857,14 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "view_close", (void *)view_close, ns_embedded_sig53 },
     { "view_create", (void *)view_create, ns_embedded_sig155 },
     { "view_create_no_title", (void *)view_create_no_title, ns_embedded_sig155 },
+    { "view_gamepad_axis", (void *)view_gamepad_axis, ns_embedded_sig156 },
+    { "view_gamepad_button", (void *)view_gamepad_button, ns_embedded_sig156 },
+    { "view_gamepad_button_pressed", (void *)view_gamepad_button_pressed, ns_embedded_sig157 },
+    { "view_gamepad_connected", (void *)view_gamepad_connected, ns_embedded_sig98 },
+    { "view_gamepad_count", (void *)view_gamepad_count, ns_embedded_sig85 },
     { "view_gesture", (void *)view_gesture, ns_embedded_sig137 },
-    { "view_get_clipboard", (void *)view_get_clipboard, ns_embedded_sig156 },
-    { "view_input_at", (void *)view_input_at, ns_embedded_sig157 },
+    { "view_get_clipboard", (void *)view_get_clipboard, ns_embedded_sig158 },
+    { "view_input_at", (void *)view_input_at, ns_embedded_sig159 },
     { "view_input_count", (void *)view_input_count, ns_embedded_sig85 },
     { "view_input_pending", (void *)view_input_pending, ns_embedded_sig32 },
     { "view_input_reset", (void *)view_input_reset, ns_embedded_sig53 },
@@ -1849,17 +1872,18 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "view_on_gesture", (void *)view_on_gesture, ns_embedded_sig132 },
     { "view_on_key_action", (void *)view_on_key_action, ns_embedded_sig138 },
     { "view_on_mouse_btn", (void *)view_on_mouse_btn, ns_embedded_sig138 },
-    { "view_on_mouse_move", (void *)view_on_mouse_move, ns_embedded_sig158 },
-    { "view_on_pointer_event", (void *)view_on_pointer_event, ns_embedded_sig159 },
+    { "view_on_mouse_move", (void *)view_on_mouse_move, ns_embedded_sig160 },
+    { "view_on_pointer_event", (void *)view_on_pointer_event, ns_embedded_sig161 },
     { "view_on_resize", (void *)view_on_resize, ns_embedded_sig138 },
-    { "view_on_scroll", (void *)view_on_scroll, ns_embedded_sig158 },
-    { "view_on_tool_action", (void *)view_on_tool_action, ns_embedded_sig160 },
+    { "view_on_scroll", (void *)view_on_scroll, ns_embedded_sig160 },
+    { "view_on_tool_action", (void *)view_on_tool_action, ns_embedded_sig162 },
     { "view_request_frame", (void *)view_request_frame, ns_embedded_sig103 },
     { "view_request_frame_after", (void *)view_request_frame_after, ns_embedded_sig103 },
     { "view_run", (void *)view_run, ns_embedded_sig53 },
-    { "view_set_clipboard", (void *)view_set_clipboard, ns_embedded_sig161 },
+    { "view_set_clipboard", (void *)view_set_clipboard, ns_embedded_sig163 },
     { "view_set_frame_per_second", (void *)view_set_frame_per_second, ns_embedded_sig103 },
     { "view_set_safe_area", (void *)view_set_safe_area, ns_embedded_sig132 },
+    { "view_take_gamepad_button_press", (void *)view_take_gamepad_button_press, ns_embedded_sig157 },
     { "view_take_key_press", (void *)view_take_key_press, ns_embedded_sig15 },
 };
 

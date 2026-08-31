@@ -227,7 +227,7 @@ ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c lib/src/storage.json.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
 	# Apple: force the Metal backend.
-	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/os.osx.m lib/src/os.haptic.apple.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m lib/src/storage.apple.m
+	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/view.gamepad.apple.m lib/src/os.osx.m lib/src/os.haptic.apple.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m lib/src/storage.apple.m
 else ifeq ($(NS_OS), $(NS_WIN))
 	# Windows: force the DirectX 12 backend.
 	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c lib/src/gpu.dx12.c lib/src/storage.json.c
@@ -375,7 +375,8 @@ install: all
 		lib/net.ns lib/dynamic.ns lib/compress.ns lib/storage.ns lib/audio.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	cp lib/src/io.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
-		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/gpu.c lib/src/gpu.metal.m \
+		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/view.gamepad.apple.m \
+		lib/src/gpu.c lib/src/gpu.metal.m \
 		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \
 		lib/src/audio.apple.m \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/
@@ -465,7 +466,8 @@ IOS_NET_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/net.o
 IOS_HTTP_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/http.o
 IOS_WASM_DEV_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/wasm_dev.o
 IOS_TERM_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/term.posix.o
-IOS_VIEW_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/view.o $(IOS_FEATURE_OBJDIR)/lib/src/view.ios.o
+IOS_VIEW_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/view.o $(IOS_FEATURE_OBJDIR)/lib/src/view.ios.o \
+	$(IOS_FEATURE_OBJDIR)/lib/src/view.gamepad.apple.o
 IOS_GPU_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/gpu.o $(IOS_FEATURE_OBJDIR)/lib/src/gpu.metal.o
 IOS_UI_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/ui.o
 IOS_AUDIO_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/audio.apple.o

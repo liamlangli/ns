@@ -643,6 +643,7 @@ static const char *const ns_xcode_feature_sources[] = {
     "view.c",
     "view.osx.m",
     "view.ios.m",
+    "view.gamepad.apple.m",
     "gpu.c",
     "gpu.metal.m",
     "ui.c",
@@ -1283,10 +1284,10 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
     if (ok_ld) {
         ok_ld = macos ? ns_xcode_buffer_append(&ldflags,
                                                ", \"-framework\", AVFAudio, \"-framework\", AppKit, \"-framework\", CoreHaptics, "
-                                               "\"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", Metal, "
+                                               "\"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", GameController, \"-framework\", Metal, "
                                                "\"-framework\", MetalKit, \"-framework\", QuartzCore, \"-lsqlite3\", \"-lz\")")
                       : ns_xcode_buffer_append(&ldflags,
-                                               ", \"-framework\", AVFAudio, \"-framework\", CoreHaptics, \"-framework\", Foundation, "
+                                               ", \"-framework\", AVFAudio, \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", GameController, "
                                                "\"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, "
                                                "\"-framework\", UIKit, \"-lsqlite3\", \"-lz\")");
     }

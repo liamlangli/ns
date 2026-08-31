@@ -10,6 +10,7 @@
 #ifdef NS_WIN
 #include <windows.h>
 #include <windowsx.h>
+#include <xinput.h>
 #include <string.h>
 
 typedef void (*view_on_launch)(view *);
@@ -21,6 +22,53 @@ static HWND _hwnd;
 static HINSTANCE _hinstance;
 static ns_bool _quit;
 #define VIEW_FRAME_TIMER_ID 1
+
+static f32 view_win_gamepad_axis(SHORT value, ns_bool invert) {
+    f32 normalized = value < 0 ? (f32)value / 32768.0f : (f32)value / 32767.0f;
+    return invert ? -normalized : normalized;
+}
+
+static void view_win_gamepad_button(i32 slot, i32 button, WORD buttons, WORD mask) {
+    ns_bool pressed = (buttons & mask) != 0;
+    view_on_gamepad_button(&_view, slot, button, pressed ? 1.0f : 0.0f, pressed);
+}
+
+static void view_win_gamepad_poll(void) {
+    for (i32 slot = 0; slot < VIEW_GAMEPAD_CAPACITY; slot++) {
+        XINPUT_STATE state = {0};
+        if (XInputGetState((DWORD)slot, &state) != ERROR_SUCCESS) {
+            view_on_gamepad_connected(&_view, slot, false);
+            continue;
+        }
+        XINPUT_GAMEPAD *pad = &state.Gamepad;
+        view_on_gamepad_connected(&_view, slot, true);
+        view_on_gamepad_axis(&_view, slot, VIEW_GAMEPAD_AXIS_LEFT_X, view_win_gamepad_axis(pad->sThumbLX, false));
+        view_on_gamepad_axis(&_view, slot, VIEW_GAMEPAD_AXIS_LEFT_Y, view_win_gamepad_axis(pad->sThumbLY, true));
+        view_on_gamepad_axis(&_view, slot, VIEW_GAMEPAD_AXIS_RIGHT_X, view_win_gamepad_axis(pad->sThumbRX, false));
+        view_on_gamepad_axis(&_view, slot, VIEW_GAMEPAD_AXIS_RIGHT_Y, view_win_gamepad_axis(pad->sThumbRY, true));
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_SOUTH, pad->wButtons, XINPUT_GAMEPAD_A);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_EAST, pad->wButtons, XINPUT_GAMEPAD_B);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_WEST, pad->wButtons, XINPUT_GAMEPAD_X);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_NORTH, pad->wButtons, XINPUT_GAMEPAD_Y);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_LEFT_SHOULDER, pad->wButtons, XINPUT_GAMEPAD_LEFT_SHOULDER);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_RIGHT_SHOULDER, pad->wButtons, XINPUT_GAMEPAD_RIGHT_SHOULDER);
+        view_on_gamepad_button(&_view, slot, VIEW_GAMEPAD_BUTTON_LEFT_TRIGGER,
+                               (f32)pad->bLeftTrigger / 255.0f,
+                               pad->bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
+        view_on_gamepad_button(&_view, slot, VIEW_GAMEPAD_BUTTON_RIGHT_TRIGGER,
+                               (f32)pad->bRightTrigger / 255.0f,
+                               pad->bRightTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_SELECT, pad->wButtons, XINPUT_GAMEPAD_BACK);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_START, pad->wButtons, XINPUT_GAMEPAD_START);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_LEFT_STICK, pad->wButtons, XINPUT_GAMEPAD_LEFT_THUMB);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_RIGHT_STICK, pad->wButtons, XINPUT_GAMEPAD_RIGHT_THUMB);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_DPAD_UP, pad->wButtons, XINPUT_GAMEPAD_DPAD_UP);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_DPAD_DOWN, pad->wButtons, XINPUT_GAMEPAD_DPAD_DOWN);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_DPAD_LEFT, pad->wButtons, XINPUT_GAMEPAD_DPAD_LEFT);
+        view_win_gamepad_button(slot, VIEW_GAMEPAD_BUTTON_DPAD_RIGHT, pad->wButtons, XINPUT_GAMEPAD_DPAD_RIGHT);
+        view_on_gamepad_button(&_view, slot, VIEW_GAMEPAD_BUTTON_HOME, 0.0f, false);
+    }
+}
 
 void view_platform_request_frame(view *v) {
     ns_unused(v);
@@ -129,6 +177,7 @@ static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
             PAINTSTRUCT paint;
             BeginPaint(hwnd, &paint);
             if (view_take_frame_request(&_view)) {
+                view_win_gamepad_poll();
                 view_on_frame frame = (view_on_frame)_view.on_frame;
                 if (frame) frame(&_view);
             }

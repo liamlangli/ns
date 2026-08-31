@@ -127,7 +127,8 @@ int main(void) {
     ns_expect(ns_project_generate_visual_studio(&app), "Visual Studio app project generation succeeds.");
 
     char pbx[PATH_MAX], linked[PATH_MAX], xlocal[PATH_MAX], xgenerated[PATH_MAX], bridge_header[PATH_MAX];
-    char view_osx[PATH_MAX], view_ios[PATH_MAX], os_ios[PATH_MAX], gpu_metal[PATH_MAX], ui_native[PATH_MAX], net_native[PATH_MAX];
+    char view_osx[PATH_MAX], view_ios[PATH_MAX], view_gamepad[PATH_MAX], os_ios[PATH_MAX];
+    char gpu_metal[PATH_MAX], ui_native[PATH_MAX], net_native[PATH_MAX];
     char storage_db[PATH_MAX], storage_apple[PATH_MAX], storage_module[PATH_MAX];
     char compress_native[PATH_MAX], compress_header[PATH_MAX], compress_module[PATH_MAX];
     char audio_native[PATH_MAX], audio_header[PATH_MAX], audio_module[PATH_MAX];
@@ -143,6 +144,7 @@ int main(void) {
     path(bridge_header, app_root, "bin/demo-app.nsproject/Sources/NSBridge.h");
     path(view_osx, app_root, "bin/demo-app.nsproject/Native/src/view.osx.m");
     path(view_ios, app_root, "bin/demo-app.nsproject/Native/src/view.ios.m");
+    path(view_gamepad, app_root, "bin/demo-app.nsproject/Native/src/view.gamepad.apple.m");
     path(os_ios, app_root, "bin/demo-app.nsproject/Native/src/os.ios.m");
     path(gpu_metal, app_root, "bin/demo-app.nsproject/Native/src/gpu.metal.m");
     path(ui_native, app_root, "bin/demo-app.nsproject/Native/src/ui.c");
@@ -192,7 +194,8 @@ int main(void) {
                   text_has(pbx, "4E535052000000280000004C /* net.ns */") &&
                   !text_has(pbx, "4E5350520000002800000007 /* net.ns */"),
               "Xcode runtime modules use distinct file-reference IDs.");
-    ns_expect(access(view_ios, R_OK) == 0 && access(os_ios, R_OK) == 0 && access(gpu_metal, R_OK) == 0 &&
+    ns_expect(access(view_ios, R_OK) == 0 && access(view_gamepad, R_OK) == 0 &&
+                  access(os_ios, R_OK) == 0 && access(gpu_metal, R_OK) == 0 &&
                   access(ui_native, R_OK) == 0 && access(net_native, R_OK) == 0,
               "Xcode project copies Apple feature sources into the managed project.");
     ns_expect(text_has(view_ios, "multipleTouchEnabled = YES"),
@@ -211,6 +214,9 @@ int main(void) {
                   text_has(pbx, "audio.ns in Resources") && text_has(pbx, "audio.apple.m in Sources") &&
                   text_has(pbx, "-framework\", AVFAudio"),
               "Xcode app targets embed AVFAudio playback.");
+    ns_expect(text_has(pbx, "view.gamepad.apple.m in Sources") &&
+                  text_has(pbx, "-framework\", GameController"),
+              "Xcode app targets embed standard gamepad input.");
     ns_expect(access(task_module, R_OK) == 0 && access(net_module, R_OK) == 0 &&
                   text_has(pbx, "task.ns in Resources") && text_has(pbx, "net.ns in Resources"),
               "Xcode app targets bundle the task and network module declarations.");

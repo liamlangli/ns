@@ -171,6 +171,37 @@ typedef enum view_tool_action {
     VIEW_TOOL_ACTION_PENCIL_SQUEEZE = 2,
 } view_tool_action;
 
+#define VIEW_GAMEPAD_CAPACITY 4
+#define VIEW_GAMEPAD_AXIS_CAPACITY 4
+#define VIEW_GAMEPAD_BUTTON_CAPACITY 17
+
+typedef enum view_gamepad_axis_id {
+    VIEW_GAMEPAD_AXIS_LEFT_X = 0,
+    VIEW_GAMEPAD_AXIS_LEFT_Y = 1,
+    VIEW_GAMEPAD_AXIS_RIGHT_X = 2,
+    VIEW_GAMEPAD_AXIS_RIGHT_Y = 3,
+} view_gamepad_axis_id;
+
+typedef enum view_gamepad_button_id {
+    VIEW_GAMEPAD_BUTTON_SOUTH = 0,
+    VIEW_GAMEPAD_BUTTON_EAST = 1,
+    VIEW_GAMEPAD_BUTTON_WEST = 2,
+    VIEW_GAMEPAD_BUTTON_NORTH = 3,
+    VIEW_GAMEPAD_BUTTON_LEFT_SHOULDER = 4,
+    VIEW_GAMEPAD_BUTTON_RIGHT_SHOULDER = 5,
+    VIEW_GAMEPAD_BUTTON_LEFT_TRIGGER = 6,
+    VIEW_GAMEPAD_BUTTON_RIGHT_TRIGGER = 7,
+    VIEW_GAMEPAD_BUTTON_SELECT = 8,
+    VIEW_GAMEPAD_BUTTON_START = 9,
+    VIEW_GAMEPAD_BUTTON_LEFT_STICK = 10,
+    VIEW_GAMEPAD_BUTTON_RIGHT_STICK = 11,
+    VIEW_GAMEPAD_BUTTON_DPAD_UP = 12,
+    VIEW_GAMEPAD_BUTTON_DPAD_DOWN = 13,
+    VIEW_GAMEPAD_BUTTON_DPAD_LEFT = 14,
+    VIEW_GAMEPAD_BUTTON_DPAD_RIGHT = 15,
+    VIEW_GAMEPAD_BUTTON_HOME = 16,
+} view_gamepad_button_id;
+
 typedef struct view_input_event {
     i32 device;
     i32 phase;
@@ -280,6 +311,23 @@ ns_bool view_is_key_pressed(view *v, view_keycode key);
 // short press/release pairs from being lost between rendered frames.
 i32 view_take_key_press(view *v, view_keycode key);
 void view_clear_key_presses(view *v);
+
+// Standard-layout gamepad state. Platform backends publish snapshots through
+// view_on_gamepad_* before the application frame runs.
+i32 view_gamepad_count(view *v);
+ns_bool view_gamepad_connected(view *v, i32 gamepad);
+f32 view_gamepad_axis(view *v, i32 gamepad, i32 axis);
+f32 view_gamepad_button(view *v, i32 gamepad, i32 button);
+ns_bool view_gamepad_button_pressed(view *v, i32 gamepad, i32 button);
+ns_bool view_take_gamepad_button_press(view *v, i32 gamepad, i32 button);
+void view_on_gamepad_connected(view *v, i32 gamepad, ns_bool connected);
+void view_on_gamepad_axis(view *v, i32 gamepad, i32 axis, f32 value);
+void view_on_gamepad_button(view *v, i32 gamepad, i32 button, f32 value, ns_bool pressed);
+
+// Shared Apple adapter. Start installs lightweight wake handlers; poll publishes
+// one coherent snapshot immediately before each application frame.
+void view_apple_gamepad_start(view *v);
+void view_apple_gamepad_poll(view *v);
 
 // Platform backends feed the unified stream through these helpers. Events are
 // valid until view_input_reset(), normally called after the ns frame callback.

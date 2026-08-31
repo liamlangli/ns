@@ -5,6 +5,11 @@
 static ns_bool view_keys[VIEW_KEY_MENU + 1];
 // Stored as modifiers + 1 so zero remains the no-event sentinel.
 static i32 view_key_presses[VIEW_KEY_MENU + 1];
+static ns_bool view_gamepads[VIEW_GAMEPAD_CAPACITY];
+static f32 view_gamepad_axes[VIEW_GAMEPAD_CAPACITY][VIEW_GAMEPAD_AXIS_CAPACITY];
+static f32 view_gamepad_buttons[VIEW_GAMEPAD_CAPACITY][VIEW_GAMEPAD_BUTTON_CAPACITY];
+static ns_bool view_gamepad_buttons_down[VIEW_GAMEPAD_CAPACITY][VIEW_GAMEPAD_BUTTON_CAPACITY];
+static ns_bool view_gamepad_button_presses[VIEW_GAMEPAD_CAPACITY][VIEW_GAMEPAD_BUTTON_CAPACITY];
 
 #define VIEW_INPUT_CAPACITY 512
 #define VIEW_POINTER_SLOTS 32
@@ -209,6 +214,11 @@ ns_bool view_input_pending(view *v) {
     for (i32 key = 0; key <= VIEW_KEY_MENU; key++) {
         if (view_key_presses[key] != 0) return true;
     }
+    for (i32 gamepad = 0; gamepad < VIEW_GAMEPAD_CAPACITY; gamepad++) {
+        for (i32 button = 0; button < VIEW_GAMEPAD_BUTTON_CAPACITY; button++) {
+            if (view_gamepad_button_presses[gamepad][button]) return true;
+        }
+    }
     return false;
 }
 
@@ -225,6 +235,7 @@ void view_input_reset(view *v) {
     view_event_count = 0;
     view_gestures = (view_gesture_state){.zoom_factor = 1.0};
     view_clear_key_presses(v);
+    memset(view_gamepad_button_presses, 0, sizeof(view_gamepad_button_presses));
 }
 
 void view_on_key_action(view* v, view_keycode key, view_button_action action) {
@@ -255,6 +266,87 @@ i32 view_take_key_press(view *v, view_keycode key) {
 void view_clear_key_presses(view *v) {
     if (!v) return;
     memset(view_key_presses, 0, sizeof(view_key_presses));
+}
+
+static ns_bool view_gamepad_index_valid(i32 gamepad) {
+    return gamepad >= 0 && gamepad < VIEW_GAMEPAD_CAPACITY;
+}
+
+static ns_bool view_gamepad_axis_valid(i32 axis) {
+    return axis >= 0 && axis < VIEW_GAMEPAD_AXIS_CAPACITY;
+}
+
+static ns_bool view_gamepad_button_valid(i32 button) {
+    return button >= 0 && button < VIEW_GAMEPAD_BUTTON_CAPACITY;
+}
+
+i32 view_gamepad_count(view *v) {
+    if (!v) return 0;
+    i32 count = 0;
+    for (i32 gamepad = 0; gamepad < VIEW_GAMEPAD_CAPACITY; gamepad++) {
+        if (view_gamepads[gamepad]) count++;
+    }
+    return count;
+}
+
+ns_bool view_gamepad_connected(view *v, i32 gamepad) {
+    return v && view_gamepad_index_valid(gamepad) && view_gamepads[gamepad];
+}
+
+f32 view_gamepad_axis(view *v, i32 gamepad, i32 axis) {
+    if (!view_gamepad_connected(v, gamepad) || !view_gamepad_axis_valid(axis)) return 0.0f;
+    return view_gamepad_axes[gamepad][axis];
+}
+
+f32 view_gamepad_button(view *v, i32 gamepad, i32 button) {
+    if (!view_gamepad_connected(v, gamepad) || !view_gamepad_button_valid(button)) return 0.0f;
+    return view_gamepad_buttons[gamepad][button];
+}
+
+ns_bool view_gamepad_button_pressed(view *v, i32 gamepad, i32 button) {
+    if (!view_gamepad_connected(v, gamepad) || !view_gamepad_button_valid(button)) return false;
+    return view_gamepad_buttons_down[gamepad][button];
+}
+
+ns_bool view_take_gamepad_button_press(view *v, i32 gamepad, i32 button) {
+    if (!view_gamepad_connected(v, gamepad) || !view_gamepad_button_valid(button)) return false;
+    ns_bool pressed = view_gamepad_button_presses[gamepad][button];
+    view_gamepad_button_presses[gamepad][button] = false;
+    return pressed;
+}
+
+void view_on_gamepad_connected(view *v, i32 gamepad, ns_bool connected) {
+    if (!v || !view_gamepad_index_valid(gamepad)) return;
+    if (view_gamepads[gamepad] == connected) return;
+    view_gamepads[gamepad] = connected;
+    memset(view_gamepad_axes[gamepad], 0, sizeof(view_gamepad_axes[gamepad]));
+    memset(view_gamepad_buttons[gamepad], 0, sizeof(view_gamepad_buttons[gamepad]));
+    memset(view_gamepad_buttons_down[gamepad], 0, sizeof(view_gamepad_buttons_down[gamepad]));
+    memset(view_gamepad_button_presses[gamepad], 0, sizeof(view_gamepad_button_presses[gamepad]));
+    view_request_frame(v, 1);
+}
+
+void view_on_gamepad_axis(view *v, i32 gamepad, i32 axis, f32 value) {
+    if (!view_gamepad_connected(v, gamepad) || !view_gamepad_axis_valid(axis)) return;
+    if (value < -1.0f) value = -1.0f;
+    if (value > 1.0f) value = 1.0f;
+    if (view_gamepad_axes[gamepad][axis] == value) return;
+    view_gamepad_axes[gamepad][axis] = value;
+    view_request_frame(v, 1);
+}
+
+void view_on_gamepad_button(view *v, i32 gamepad, i32 button, f32 value, ns_bool pressed) {
+    if (!view_gamepad_connected(v, gamepad) || !view_gamepad_button_valid(button)) return;
+    if (value < 0.0f) value = 0.0f;
+    if (value > 1.0f) value = 1.0f;
+    ns_bool changed = view_gamepad_buttons[gamepad][button] != value ||
+                      view_gamepad_buttons_down[gamepad][button] != pressed;
+    if (pressed && !view_gamepad_buttons_down[gamepad][button]) {
+        view_gamepad_button_presses[gamepad][button] = true;
+    }
+    view_gamepad_buttons[gamepad][button] = value;
+    view_gamepad_buttons_down[gamepad][button] = pressed;
+    if (changed) view_request_frame(v, 1);
 }
 
 void view_on_resize(view *v, i32 width, i32 height) {

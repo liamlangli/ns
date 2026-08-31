@@ -146,6 +146,7 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
     view_ios_sync_metrics(metal_view);
     view_callback frame = (view_callback)view_ios_state.on_frame;
     if (frame) {
+        view_apple_gamepad_poll(&view_ios_state);
         gpu_mtl_begin_frame(metal_view);
         frame(&view_ios_state);
         // The frame owns the drawable between these two calls: whatever the
@@ -272,6 +273,7 @@ view *view_create(const char *title, i32 width, i32 height) {
         view_ios_sync_metrics(view_ios_metal_view);
         view_ios_state.native_window = (__bridge void *)view_ios_metal_view;
         view_ios_state.gpu_device = (__bridge void *)view_ios_device;
+        view_apple_gamepad_start(&view_ios_state);
     };
     if (NSThread.isMainThread) create_view(); else dispatch_sync(dispatch_get_main_queue(), create_view);
     return &view_ios_state;

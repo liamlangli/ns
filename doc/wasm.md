@@ -60,8 +60,9 @@ fn frame(time_ms: f64, width: i32, height: i32) {
 The middleware invokes `frame` from `requestAnimationFrame`. WebGPU is the only
 GPU backend; there is no WebGL fallback. `view_create` returns a `ref view`
 backed by the generated HTML canvas. Its logical/framebuffer dimensions,
-display ratio, pointer/buttons/scroll, keyboard edges, gesture state, and
-clipboard cache are maintained by the browser middleware. The shell suppresses
+display ratio, pointer/buttons/scroll, keyboard edges, standard gamepads,
+gesture state, and clipboard cache are maintained by the browser middleware.
+The shell suppresses
 the canvas focus outline and context menu; pointer drags retain capture until
 release, including when the pointer moves outside the canvas. Pass that view to
 the normal typed `gpu_request_device(v: ref view)` API; it reports whether the

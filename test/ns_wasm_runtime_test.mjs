@@ -50,8 +50,10 @@ const device = {
     finish() { return {}; },
   }; },
 };
+let browserGamepads = [];
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
   gpu: { async requestAdapter() { return { async requestDevice() { return device; } }; }, getPreferredCanvasFormat() { return 'bgra8unorm'; } },
+  getGamepads() { return browserGamepads; },
 } });
 Object.defineProperty(globalThis, 'window', { configurable: true, value: {
   devicePixelRatio: 2,
@@ -110,7 +112,21 @@ assert.equal(runtime.view().getInt32(canvasView + 52, true), 0);
 windowEvents.get('keydown')({ key: 'A' });
 assert.equal(runtime.viewImport('view_is_key_pressed', [canvasView, 65]), 1);
 assert.equal(runtime.viewImport('view_take_key_press', [canvasView, 65]), 0);
+browserGamepads = [{ mapping: 'standard', axes: [-0.25, -0.75, 0.5, 0.125],
+  buttons: Array.from({ length: 17 }, (_, button) => ({ value: button === 0 ? 1 : 0, pressed: button === 0 })) }];
+assert.equal(runtime.viewImport('view_gamepad_count', [canvasView]), 1);
+assert.equal(runtime.viewImport('view_gamepad_connected', [canvasView, 0]), 1);
+assert.equal(runtime.viewImport('view_gamepad_axis', [canvasView, 0, 1]), -0.75);
+assert.equal(runtime.viewImport('view_gamepad_button', [canvasView, 0, 0]), 1);
+assert.equal(runtime.viewImport('view_gamepad_button_pressed', [canvasView, 0, 0]), 1);
+assert.equal(runtime.viewImport('view_take_gamepad_button_press', [canvasView, 0, 0]), 1);
+assert.equal(runtime.viewImport('view_take_gamepad_button_press', [canvasView, 0, 0]), 0);
 runtime.viewImport('view_input_reset', [canvasView]);
+assert.equal(runtime.viewImport('view_take_gamepad_button_press', [canvasView, 0, 0]), 0);
+browserGamepads[0].buttons[0] = { value: 0, pressed: false };
+assert.equal(runtime.viewImport('view_gamepad_button_pressed', [canvasView, 0, 0]), 0);
+browserGamepads[0].buttons[0] = { value: 1, pressed: true };
+assert.equal(runtime.viewImport('view_take_gamepad_button_press', [canvasView, 0, 0]), 1);
 assert.equal(runtime.viewImport('view_input_count', [canvasView]), 0);
 canvasEvents.get('pointerdown')({ clientX: 20, clientY: 30, pointerType: 'touch', pointerId: 11, pressure: 0.5, timeStamp: 20 });
 canvasEvents.get('pointerdown')({ clientX: 200, clientY: 130, pointerType: 'touch', pointerId: 22, pressure: 0.6, timeStamp: 21 });
