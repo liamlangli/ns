@@ -19,8 +19,18 @@
 #define NS_SHADER_MAX_ARRAY_LEN 256
 #define NS_SHADER_STORAGE_BINDING_BASE 3
 #define NS_SHADER_WGSL_STORAGE_BINDING_BASE 7
-// The root argument is four float4s on every backend.
+// The root words the CPU shader host holds for `shader_host_root`.
 #define NS_SHADER_ROOT_WORDS 16
+// The root block a generated shader declares, in float4s. Metal takes the root
+// as a pointer and reads whatever the program uploaded, so a Metal shader has
+// never been bounded by a declared length. Every other backend declares the
+// block as a fixed-size uniform array, and an index past its end is clamped to
+// the last element rather than reported - a program whose root outgrew the
+// declaration then reads a neighbouring word and draws with it. The declared
+// block therefore covers the largest root any pass uploads: 256 float4s is 4 KB,
+// well inside the 64 KB uniform binding every device guarantees, and the runtime
+// pads a root allocation out to the same size so the binding stays valid.
+#define NS_SHADER_ROOT_BLOCK_VEC4S 256
 
 static char ns_shader_err[512];
 
@@ -2607,18 +2617,24 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
         ns_shader_cstr(&e.out, "inline float ns_root_f32(constant float4* root, int index) { return root[index / 4][index % 4]; }\n\n");
     }
     if (e.uses_root && target == NS_SHADER_GLSL_VULKAN) {
+        ns_shader_cstr(&e.out, "layout(set = 0, binding = 2, std140) uniform ns_root_block { vec4 values[");
+        ns_shader_i32(&e.out, NS_SHADER_ROOT_BLOCK_VEC4S);
         ns_shader_cstr(&e.out,
-            "layout(set = 0, binding = 2, std140) uniform ns_root_block { vec4 values[4]; } ns_root;\n"
+            "]; } ns_root;\n"
             "float ns_root_f32(int index) { return ns_root.values[index / 4][index % 4]; }\n\n");
     }
     if (e.uses_root && target == NS_SHADER_HLSL) {
+        ns_shader_cstr(&e.out, "cbuffer ns_root : register(b2) { float4 ns_root_values[");
+        ns_shader_i32(&e.out, NS_SHADER_ROOT_BLOCK_VEC4S);
         ns_shader_cstr(&e.out,
-            "cbuffer ns_root : register(b2) { float4 ns_root_values[4]; };\n"
+            "]; };\n"
             "float ns_root_f32(int index) { return ns_root_values[index / 4][index % 4]; }\n\n");
     }
     if (e.uses_root && target == NS_SHADER_WGSL) {
+        ns_shader_cstr(&e.out, "struct ns_root_block { values: array<vec4<f32>, ");
+        ns_shader_i32(&e.out, NS_SHADER_ROOT_BLOCK_VEC4S);
         ns_shader_cstr(&e.out,
-            "struct ns_root_block { values: array<vec4<f32>, 4>, };\n"
+            ">, };\n"
             "@group(0) @binding(2) var<uniform> ns_root: ns_root_block;\n"
             "fn ns_root_f32(index: i32) -> f32 { return ns_root.values[u32(index) / 4u][u32(index) % 4u]; }\n\n");
     }
