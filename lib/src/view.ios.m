@@ -22,9 +22,29 @@ static dispatch_semaphore_t view_ios_done;
 static i32 view_ios_active_touch_count;
 
 static UIWindow *view_ios_key_window(void);
+static void view_ios_sync_metrics(MTKView *metal_view);
+static UIView *view_ios_host_view;
+
+void view_ios_set_host_view(void *view) {
+    view_ios_host_view = (__bridge UIView *)view;
+    if (!view_ios_metal_view || !view_ios_host_view) return;
+    if (view_ios_metal_view.superview != view_ios_host_view) {
+        view_ios_metal_view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [view_ios_host_view addSubview:view_ios_metal_view];
+    }
+    view_ios_metal_view.frame = view_ios_host_view.bounds;
+    view_ios_sync_metrics(view_ios_metal_view);
+    view_request_frame(&view_ios_state, 1);
+}
 
 static void view_ios_apply_frame_rate(void) {
     if (!view_ios_metal_view) return;
+    if (view_immersive_status() == 2) {
+        view_ios_metal_view.paused = YES;
+        view_ios_metal_view.hidden = YES;
+        return;
+    }
+    view_ios_metal_view.hidden = NO;
     BOOL continuous = view_continuous_render() ? YES : NO;
     view_ios_metal_view.paused = continuous ? NO : YES;
     view_ios_metal_view.enableSetNeedsDisplay = continuous ? NO : YES;
@@ -142,6 +162,7 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
     view_request_frame(&view_ios_state, 1);
 }
 - (void)drawInMTKView:(MTKView *)metal_view {
+    if (view_immersive_status() == 2) return;
     if (!view_take_frame_request(&view_ios_state)) return;
     view_ios_sync_metrics(metal_view);
     view_callback frame = (view_callback)view_ios_state.on_frame;
@@ -232,9 +253,12 @@ view *view_create(const char *title, i32 width, i32 height) {
     view_ios_done = dispatch_semaphore_create(0);
 
     void (^create_view)(void) = ^{
-        UIWindow *window = view_ios_key_window();
-        if (!window) return;
-        UIView *container = window;
+        UIView *container = view_ios_host_view;
+        if (!container) {
+            UIWindow *window = view_ios_key_window();
+            if (window) container = window.rootViewController.view ?: window;
+        }
+        if (!container) return;
         view_ios_device = MTLCreateSystemDefaultDevice();
         view_ios_metal_view = [[NSIOSMetalView alloc] initWithFrame:container.bounds device:view_ios_device];
         // UIView defaults this to NO, which makes UIKit deliver only the first
@@ -334,4 +358,47 @@ void view_set_clipboard(view *value, const char *text) {
     dispatch_async(dispatch_get_main_queue(), ^{ UIPasteboard.generalPasteboard.string = string; });
 }
 
+#endif
+
+#if defined(TARGET_OS_VISION) && TARGET_OS_VISION
+void gpu_mtl_immersive_begin(id<MTLCommandBuffer>, id<MTLTexture>, id<MTLTexture>, u32);
+void gpu_mtl_immersive_end(void);
+void gpu_mtl_immersive_complete(void);
+
+// Called by the Swift compositor exclusively on the main thread. The Metal
+// window and immersive callbacks therefore never execute application code at
+// the same time, including while opening or dismissing the immersive space.
+void ns_immersive_render_eye(void * _Nonnull buffer, void * _Nonnull color, void * _Nonnull depth, int eye, const float * _Nonnull pose, int slice) {
+    view_immersive_host_pose(eye, pose);
+    id<MTLTexture> target = (__bridge id<MTLTexture>)color;
+    view_ios_state.framebuffer_width = (i32)target.width;
+    view_ios_state.framebuffer_height = (i32)target.height;
+    view_ios_state.width = (i32)target.width;
+    view_ios_state.height = (i32)target.height;
+    view_ios_state.display_ratio = 1;
+    view_ios_state.ui_scale = 1;
+    view_set_safe_area(&view_ios_state, 0, 0, 0, 0);
+    if (eye == 0) view_apple_gamepad_poll(&view_ios_state);
+    gpu_mtl_immersive_begin((__bridge id<MTLCommandBuffer>)buffer, target, (__bridge id<MTLTexture>)depth, slice >= 0 ? (u32)slice : 0);
+    view_callback frame = (view_callback)view_ios_state.on_frame;
+    if (frame) frame(&view_ios_state);
+    gpu_mtl_immersive_end();
+}
+void ns_immersive_complete(void) { gpu_mtl_immersive_complete(); }
+void ns_immersive_state(int status) {
+    view_immersive_host_status(status);
+    if (status != 2) {
+        view_ios_sync_metrics(view_ios_metal_view);
+        view_input_reset(&view_ios_state);
+    }
+    view_ios_apply_frame_rate();
+    view_request_frame(&view_ios_state, 2);
+}
+void ns_immersive_pointer(double x, double y, int phase) {
+    view_ios_state.mouse_x = x * view_ios_state.width;
+    view_ios_state.mouse_y = y * view_ios_state.height;
+    view_ios_state.mouse_pressed = phase == 0;
+    view_ios_state.mouse_released = phase == 2;
+    view_ios_state.mouse_down = phase != 2;
+}
 #endif

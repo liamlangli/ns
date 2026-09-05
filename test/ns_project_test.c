@@ -134,6 +134,7 @@ int main(void) {
     char audio_native[PATH_MAX], audio_header[PATH_MAX], audio_module[PATH_MAX];
     char zstd_compress[PATH_MAX], zstd_header[PATH_MAX];
     char task_module[PATH_MAX], net_module[PATH_MAX], ui_asset[PATH_MAX], bitmap_asset[PATH_MAX], ios_plist[PATH_MAX];
+    char vision_plist[PATH_MAX], swift_app[PATH_MAX];
     char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX];
     char vision_middle_image[PATH_MAX], vision_back_image[PATH_MAX];
     char sln[PATH_MAX], vcx[PATH_MAX], vlocal[PATH_MAX], vgenerated[PATH_MAX];
@@ -165,6 +166,8 @@ int main(void) {
     path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
     path(bitmap_asset, app_root, "bin/demo-app.nsproject/Resources/bitmap_zh_cn.png");
     path(ios_plist, app_root, "bin/demo-app.nsproject/Info/iOS-Info.plist");
+    path(vision_plist, app_root, "bin/demo-app.nsproject/Info/visionOS-Info.plist");
+    path(swift_app, app_root, "bin/demo-app.nsproject/Sources/NSApp.swift");
     path(app_icon_json, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json");
     path(app_icon_png, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-mac-16.png");
     path(vision_icon_json, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json");
@@ -288,6 +291,24 @@ int main(void) {
     ns_expect(text_has(ios_plist, "UIInterfaceOrientationPortraitUpsideDown") &&
                   text_has(ios_plist, "UISupportedInterfaceOrientations~ipad"),
               "Xcode iOS app declares every supported phone and tablet orientation.");
+    ns_expect(text_has(vision_plist, "UIApplicationSupportsMultipleScenes") &&
+                  text_has(vision_plist, "NSWorldSensingUsageDescription") &&
+                  text_has(bridge_header, "view_ios_set_host_view") &&
+                  text_has(view_ios, "view_ios_set_host_view"),
+              "visionOS app can open an immersive space and host the Metal view in SwiftUI.");
+    ns_expect(text_has(swift_app, "addRenderContext(commandBuffer") &&
+                  text_has(swift_app, "drawMaskOnStencilAttachment") &&
+                  text_has(swift_app, "endEncoding(commandEncoder") &&
+                  text_has(swift_app, "drawableRenderContextStencilFormat") &&
+                  text_has(swift_app, "queryDrawables()") &&
+                  text_has(swift_app, "guard !drawables.isEmpty") &&
+                  !text_has(swift_app, "defer { frame.endSubmission() }") &&
+                  text_has(swift_app, "immersionStyle(selection: .constant(.full), in: .full)"),
+              "visionOS full immersion presents through the drawable render context.");
+    ns_expect(text_has(ui_native, "hud_center_enable") &&
+                  text_has(ui_native, "UI_HUD_DISTANCE_METRES") &&
+                  text_has(view_ios, "view_ios_metal_view.hidden = YES"),
+              "visionOS HUD is a stereo plane in front of the head and the window is hidden.");
     ns_expect(ns_project_orientation_from_name(ns_str_cstr("portrait")) == NS_PROJECT_ORIENTATION_PORTRAIT &&
                   ns_project_orientation_from_name(ns_str_cstr("portrait_upside_down")) ==
                       NS_PROJECT_ORIENTATION_PORTRAIT_UPSIDE_DOWN &&
@@ -305,7 +326,8 @@ int main(void) {
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && text_has(xgenerated, "ZSTD_DISABLE_ASM=1") &&
                   text_has(xgenerated, "Native/include/zstd") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 14"),
+                  text_has(pbx, "NSProjectGeneratorVersion = 16") &&
+                  text_has(pbx, "XROS_DEPLOYMENT_TARGET = 26.0"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
@@ -342,7 +364,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 14;", "NSProjectGeneratorVersion = 14;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 16;", "NSProjectGeneratorVersion = 16;",
                                      "NSProjectGeneratorVersion = 9;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");

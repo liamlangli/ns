@@ -377,7 +377,7 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	cp lib/src/io.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/view.gamepad.apple.m \
-		lib/src/gpu.c lib/src/gpu.metal.m \
+		lib/src/gpu.c lib/src/gpu.metal.m lib/src/NSApp.swift \
 		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \
 		lib/src/audio.apple.m \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/

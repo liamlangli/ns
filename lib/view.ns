@@ -178,3 +178,14 @@ ref fn view_input_reset(v: ref view)
 
 ref fn view_get_clipboard(v: ref view) str
 ref fn view_set_clipboard(v: ref view, text: str)
+
+// Native immersive host availability; false on window-only and web hosts.
+ref fn view_immersive_supported() bool
+ref fn view_immersive_request(enabled: bool) bool
+// 0 closed, 1 opening, 2 active, 3 closing, -1 failed/cancelled.
+ref fn view_immersive_status() i32
+// -1 for window frames, otherwise the eye index; update simulation on eye 0.
+ref fn view_immersive_eye() i32
+// Eye transform [0,16), projection [16,32), head transform [32,48).
+// Matrices are column-major; tracking positions are in metres.
+ref fn view_immersive_value(index: i32) f64

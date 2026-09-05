@@ -362,6 +362,10 @@ typedef struct gpu_state_mtl {
 } gpu_state_mtl;
 
 static gpu_state_mtl _state = {0};
+static id<MTLTexture> immersive_color;
+static id<MTLTexture> immersive_depth;
+static bool immersive_frame;
+static u32 immersive_slice;
 static const gpu_v2_ops _mtl_v2_ops;
 
 static void gpu_mtl_configure_view(MTKView *view, id<MTLDevice> device) {
@@ -602,6 +606,25 @@ static void gpu_mtl_begin_cmd_buffer(void) {
 // The drawable is acquired by the first screen pass rather than by the frame
 // start: frames that only render offscreen never take one, and a frame that
 // already presented never asks the layer for its drawable again.
+// The compositor owns this command buffer and commits both eyes together.
+void gpu_mtl_immersive_begin(id<MTLCommandBuffer> buffer, id<MTLTexture> color, id<MTLTexture> depth, u32 slice) {
+    assert(_state.cmd_buffer == nil && _state.cmd_encoder == nil);
+    immersive_frame = true;
+    immersive_color = color;
+    immersive_depth = depth;
+    immersive_slice = slice;
+    _state.cmd_buffer = buffer;
+    _state.screen_pass_count = 0;
+}
+void gpu_mtl_immersive_end(void) {
+    assert(_state.cmd_encoder == nil);
+    _state.cmd_buffer = nil;
+    immersive_color = nil;
+    immersive_depth = nil;
+    immersive_frame = false;
+}
+void gpu_mtl_immersive_complete(void) { gpu_v2_frame_end(); }
+
 static id<CAMetalDrawable> gpu_mtl_current_drawable(void) {
     if (nil != _state.cur_drawable || _state.drawable_presented) return _state.cur_drawable;
     if (nil == _state.view) return nil;
@@ -674,6 +697,7 @@ void gpu_mtl_end_frame(MTKView *view) {
 }
 
 void gpu_commit() {
+    if (immersive_frame) return; // Compositor Services owns submission.
     if (!_state.valid || nil == _state.cmd_buffer) {
         gpu_v2_frame_end();
         return;
@@ -1229,18 +1253,26 @@ static void mtl_v2_pass_begin(const char *label,
 static void mtl_v2_screen_pass_begin(const char *label, gpu_color clear) {
     mtl_v2_ensure_frame();
     if (_state.cmd_buffer == nil || _state.cmd_encoder != nil) return;
-    id<CAMetalDrawable> drawable = gpu_mtl_current_drawable();
-    if (drawable == nil) return;
-    id<MTLTexture> screen = drawable.texture;
+    id<CAMetalDrawable> drawable = immersive_frame ? nil : gpu_mtl_current_drawable();
+    id<MTLTexture> screen = immersive_frame ? immersive_color : drawable.texture;
     if (screen == nil) return;
     MTLRenderPassDescriptor *desc = [MTLRenderPassDescriptor renderPassDescriptor];
     desc.colorAttachments[0].texture = screen;
+    desc.colorAttachments[0].slice = immersive_frame ? immersive_slice : 0;
     desc.colorAttachments[0].storeAction = MTLStoreActionStore;
     desc.colorAttachments[0].loadAction = _state.screen_pass_count++ == 0 ? MTLLoadActionClear : MTLLoadActionLoad;
     desc.colorAttachments[0].clearColor = MTLClearColorMake(clear.r, clear.g, clear.b, clear.a);
     memset(_state.v2_pass_colors, 0, sizeof(_state.v2_pass_colors));
     _state.v2_pass_colors[0] = screen.pixelFormat;
     _state.v2_pass_depth = MTLPixelFormatInvalid;
+    if (immersive_depth) {
+        desc.depthAttachment.texture = immersive_depth;
+        desc.depthAttachment.slice = immersive_slice;
+        desc.depthAttachment.loadAction = _state.screen_pass_count == 1 ? MTLLoadActionClear : MTLLoadActionLoad;
+        desc.depthAttachment.storeAction = MTLStoreActionStore;
+        desc.depthAttachment.clearDepth = 0.0;
+        _state.v2_pass_depth = immersive_depth.pixelFormat;
+    }
     _state.cmd_encoder = [_state.cmd_buffer renderCommandEncoderWithDescriptor:desc];
     mtl_v2_label_encoder(_state.cmd_encoder, label);
 }

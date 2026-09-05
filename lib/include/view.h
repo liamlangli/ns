@@ -348,3 +348,16 @@ void view_input_reset(view *v);
 // needs to remain valid until the FFI bridge copies it into the VM.
 const char *view_get_clipboard(view *v);
 void view_set_clipboard(view *v, const char *text);
+
+// Immersive hosts publish all state on the view/main thread. Other hosts keep
+// support disabled. Pose words: eye transform (column-major 4x4), projection
+// (4x4), then head transform (4x4); metres in the tracking coordinate space.
+ns_bool view_immersive_supported(void);
+ns_bool view_immersive_request(ns_bool enabled);
+i32 view_immersive_status(void);
+i32 view_immersive_eye(void);
+f64 view_immersive_value(i32 index);
+void view_immersive_host_support(ns_bool supported);
+ns_bool view_immersive_host_requested(void);
+void view_immersive_host_status(i32 status);
+void view_immersive_host_pose(i32 eye, const float *pose);

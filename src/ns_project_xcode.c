@@ -112,7 +112,7 @@ static ns_bool ns_xcode_file_exists(const char *path) {
 // `expects_assets` is the project-attribute line the packaged paths of this
 // manifest produce, so a project generated for a different set of them, or for
 // none, is regenerated rather than left carrying the wrong resources.
-#define NS_XCODE_GENERATOR_VERSION "14"
+#define NS_XCODE_GENERATOR_VERSION "16"
 
 static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const char *expects_assets,
                                                         ns_bool expects_app_icon, ns_bool expects_link_native) {
@@ -916,37 +916,28 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
     return true;
 }
 
-static ns_bool ns_xcode_write_app_sources(const char *managed_root, ns_bool link_native) {
-    static const char swift_source[] =
-        "import SwiftUI\n"
-        "\n"
-        "@main\n"
-        "struct NSGeneratedApp: App {\n"
-        "    @State private var status = \"Ready\"\n"
-        "\n"
-        "    var body: some Scene {\n"
-        "        WindowGroup {\n"
-        "            VStack(spacing: 12) {\n"
-        "                Text(\"NS\").font(.largeTitle).bold()\n"
-        "                Text(status).multilineTextAlignment(.center)\n"
-        "            }\n"
-        "            .padding(24)\n"
-        "            .task {\n"
-        "                status = \"Running…\"\n"
-        "                let resourceRoot = Bundle.main.resourceURL?.path ?? Bundle.main.bundlePath\n"
-        "                status = await Task.detached(priority: .userInitiated) {\n"
-        "                    resourceRoot.withCString { root in\n"
-        "                        String(cString: ns_run_linked_project(root))\n"
-        "                    }\n"
-        "                }.value\n"
-        "            }\n"
-        "        }\n"
-        "    }\n"
-        "}\n";
+static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *runtime_root, ns_bool link_native) {
     static const char bridge_header[] =
         "#ifndef NS_BRIDGE_H\n"
         "#define NS_BRIDGE_H\n"
         "\n"
+        "#include <stdbool.h>\n"
+        "#if defined(__APPLE__)\n"
+        "#include <TargetConditionals.h>\n"
+        "#if TARGET_OS_IOS || TARGET_OS_TV || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)\n"
+        "void view_ios_set_host_view(void * _Nonnull view);\n"
+        "#endif\n"
+        "#if TARGET_OS_VISION\n"
+        "int view_immersive_host_requested(void);\n"
+        "void view_immersive_host_support(int supported);\n"
+        "int view_immersive_status(void);\n"
+        "int view_immersive_request(int enabled);\n"
+        "void ns_immersive_state(int status);\n"
+        "void ns_immersive_render_eye(void * _Nonnull buffer, void * _Nonnull color, void * _Nonnull depth, int eye, const float * _Nonnull pose, int slice);\n"
+        "void ns_immersive_complete(void);\n"
+        "void ns_immersive_pointer(double x, double y, int phase);\n"
+        "#endif\n"
+        "#endif\n"
         "#ifdef __cplusplus\n"
         "extern \"C\" {\n"
         "#endif\n"
@@ -1023,7 +1014,7 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root, ns_bool link
     char *swift = sources ? ns_xcode_path_join(sources, "NSApp.swift") : NULL;
     char *header = sources ? ns_xcode_path_join(sources, "NSBridge.h") : NULL;
     char *bridge = sources ? ns_xcode_path_join(sources, "NSBridge.c") : NULL;
-    ns_bool ok = swift && header && bridge && ns_xcode_write(swift, swift_source, sizeof(swift_source) - 1, true) &&
+    ns_bool ok = swift && header && bridge && ns_xcode_copy_feature(runtime_root, managed_root, "src", "Sources", "NSApp.swift") &&
                  ns_xcode_write(header, bridge_header, sizeof(bridge_header) - 1, true) &&
                  ns_xcode_write(bridge, bridge_source, strlen(bridge_source), true);
     free(sources);
@@ -1090,6 +1081,31 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
         return false;
     }
     if (mobile && !ns_xcode_buffer_append(&plist, "  <key>UILaunchScreen</key><dict/>\n")) {
+        free(escaped_name);
+        free(escaped_version);
+        ns_xcode_buffer_free(&plist);
+        return false;
+    }
+    if (strcmp(platform, "visionOS") == 0 &&
+        !ns_xcode_buffer_append(&plist,
+                                "  <key>UIApplicationSceneManifest</key>\n"
+                                "  <dict>\n"
+                                "    <key>UIApplicationSupportsMultipleScenes</key><true/>\n"
+                                "    <key>UIApplicationPreferredDefaultSceneSessionRole</key>\n"
+                                "    <string>UIWindowSceneSessionRoleApplication</string>\n"
+                                "    <key>UISceneConfigurations</key>\n"
+                                "    <dict>\n"
+                                "      <key>UISceneSessionRoleImmersiveSpaceApplication</key>\n"
+                                "      <array>\n"
+                                "        <dict>\n"
+                                "          <key>UISceneInitialImmersionStyle</key>\n"
+                                "          <string>UIImmersionStyleFull</string>\n"
+                                "        </dict>\n"
+                                "      </array>\n"
+                                "    </dict>\n"
+                                "  </dict>\n"
+                                "  <key>NSWorldSensingUsageDescription</key>\n"
+                                "  <string>Head tracking places you on the lunar surface.</string>\n")) {
         free(escaped_name);
         free(escaped_version);
         ns_xcode_buffer_free(&plist);
@@ -1169,7 +1185,7 @@ static ns_bool ns_xcode_write_config(const ns_project_spec *spec, const char *ma
 static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *managed_root, const char *runtime_root,
                                     const char *linked_source, const char *safe_name, const char *version) {
     if (!ns_xcode_validate_modules(linked_source)) return false;
-    if (!ns_xcode_write_app_sources(managed_root, spec->link_native)) return false;
+    if (!ns_xcode_write_app_sources(managed_root, runtime_root, spec->link_native)) return false;
     if (!ns_xcode_write_app_icon(spec, managed_root)) return false;
     for (size_t i = 0; i < ns_xcode_runtime_source_count; ++i) {
         if (!ns_xcode_copy_relative(runtime_root, managed_root, "src", "Runtime/src", ns_xcode_runtime_sources[i])) return false;
@@ -1928,10 +1944,10 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
                                            "iphoneos iphonesimulator", "IPHONEOS_DEPLOYMENT_TARGET", "16.0", "1,2", has_app_icon,
                                            spec->link_native, signing_teams.values[1][1]) ||
         !ns_xcode_append_app_target_config(&pbx, 3, 1, target_names[2].data, safe_name, "visionOS", "xros", "xros xrsimulator",
-                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7", has_app_icon, spec->link_native,
+                                           "XROS_DEPLOYMENT_TARGET", "26.0", "7", has_app_icon, spec->link_native,
                                            signing_teams.values[2][0]) ||
         !ns_xcode_append_app_target_config(&pbx, 3, 2, target_names[2].data, safe_name, "visionOS", "xros", "xros xrsimulator",
-                                           "XROS_DEPLOYMENT_TARGET", "1.0", "7", has_app_icon, spec->link_native,
+                                           "XROS_DEPLOYMENT_TARGET", "26.0", "7", has_app_icon, spec->link_native,
                                            signing_teams.values[2][1])) {
         for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
         goto fail;

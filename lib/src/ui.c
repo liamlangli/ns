@@ -41,6 +41,10 @@
 #define UI_KIND_BITMAP 3
 #define UI_DEFAULT_FEATHER 0.5
 #define UI_BITMAP_FONT_SIZE 10.0
+// Head-locked HUD distance in tracking metres. Same NDC overlay at z=0 is
+// optical infinity and ghosts against the stereo world; this plane sits in
+// front of the 3D camera so each eye gets matching disparity and depth.
+#define UI_HUD_DISTANCE_METRES 1.5f
 
 typedef struct io_image {
     i32 width;
@@ -245,6 +249,7 @@ typedef struct ui_renderer {
     u32 shader_bitmap;
     u32 shader_arc_sdf;
     u32 render_state;
+    u32 render_state_hud;
     u32 textures[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
     i32 texture_heights[UI_MAX_TEXTURES];
@@ -263,6 +268,11 @@ typedef struct ui_gpu_root {
     f32 offset_y;
     u32 vertex_offset;
     u32 clip_offset;
+    f32 hud_center_enable[4];
+    f32 hud_right_hw[4];
+    f32 hud_up_hh[4];
+    f32 hud_proj[4];
+    f32 hud_depth[4];
 } ui_gpu_root;
 
 typedef struct ui_theme { void *handle; } ui_theme;
@@ -326,7 +336,7 @@ static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inne
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
-"struct UiRoot { float texture_id; float unused_texture_id; float screen_width; float screen_height; float offset_x; float offset_y; uint vertex_offset; uint clip_offset; };\n"
+"struct UiRoot { float texture_id; float unused_texture_id; float screen_width; float screen_height; float offset_x; float offset_y; uint vertex_offset; uint clip_offset; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; };\n"
 "struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; };\n"
 "vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
 "  uint base = ns_root.vertex_offset / 4u + vertex_id * 9u;\n"
@@ -336,7 +346,16 @@ static const char *ui_shader_src =
 "  float4 params = float4(as_type<float>(ns_storage_buffer[base + 5u]), as_type<float>(ns_storage_buffer[base + 6u]), as_type<float>(ns_storage_buffer[base + 7u]), as_type<float>(ns_storage_buffer[base + 8u]));\n"
 "  float2 screen = float2(ns_root.screen_width, ns_root.screen_height);\n"
 "  float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
-"  VOut o; o.pos = float4(ndc, 0.0, 1.0); o.pixel = pixel; o.uv = uv;\n"
+"  float4 pos = float4(ndc, 0.0, 1.0);\n"
+"  if (ns_root.hud_center_enable.w > 0.5) {\n"
+"    float3 view = ns_root.hud_center_enable.xyz + ns_root.hud_right_hw.xyz * (ndc.x * ns_root.hud_right_hw.w) + ns_root.hud_up_hh.xyz * (ndc.y * ns_root.hud_up_hh.w);\n"
+"    float z = max(view.z, 0.001);\n"
+"    float clip_x = view.x * ns_root.hud_proj.x - z * ns_root.hud_proj.z;\n"
+"    float clip_y = view.y * ns_root.hud_proj.y - z * ns_root.hud_proj.w;\n"
+"    float ndc_z = clamp(0.0 - ns_root.hud_depth.x + ns_root.hud_depth.y / z, 0.0, 1.0);\n"
+"    pos = float4(clip_x, clip_y, ndc_z * z, z);\n"
+"  }\n"
+"  VOut o; o.pos = pos; o.pixel = pixel; o.uv = uv;\n"
 "  o.col = float4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
 "  o.params = params; return o;\n"
 "}\n"
@@ -1113,8 +1132,13 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     r->shader_arc_sdf = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_arc_sdf");
     r->render_state = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
                                        COMPARE_ALWAYS, false, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
+    // Reverse-Z compositor: write HUD depth so timewarp does not smear overlay
+    // pixels as if they belonged to the world behind them.
+    r->render_state_hud = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
+                                           COMPARE_ALWAYS, true, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
     r->gpu_ready = r->white_texture && r->font_texture && r->shader_image &&
-                   r->shader_msdf && r->shader_bitmap && r->shader_arc_sdf && r->render_state;
+                   r->shader_msdf && r->shader_bitmap && r->shader_arc_sdf && r->render_state &&
+                   r->render_state_hud;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -1620,6 +1644,58 @@ static u32 ui_command_texture(ui_renderer *r, const ui_command *cmd) {
     return r->white_texture;
 }
 
+static f32 ui_dot3(const f32 a[3], const f32 b[3]) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static ns_bool ui_fill_hud_root(ui_gpu_root *root) {
+    if (!root || view_immersive_status() != 2 || view_immersive_eye() < 0) return false;
+    f32 eye_right[3] = { (f32)view_immersive_value(0), (f32)view_immersive_value(1), (f32)view_immersive_value(2) };
+    f32 eye_up[3] = { (f32)view_immersive_value(4), (f32)view_immersive_value(5), (f32)view_immersive_value(6) };
+    f32 eye_forward[3] = { (f32)-view_immersive_value(8), (f32)-view_immersive_value(9), (f32)-view_immersive_value(10) };
+    f32 eye_pos[3] = { (f32)view_immersive_value(12), (f32)view_immersive_value(13), (f32)view_immersive_value(14) };
+    f32 head_right[3] = { (f32)view_immersive_value(32), (f32)view_immersive_value(33), (f32)view_immersive_value(34) };
+    f32 head_up[3] = { (f32)view_immersive_value(36), (f32)view_immersive_value(37), (f32)view_immersive_value(38) };
+    f32 head_forward[3] = { (f32)-view_immersive_value(40), (f32)-view_immersive_value(41), (f32)-view_immersive_value(42) };
+    f32 head_pos[3] = { (f32)view_immersive_value(44), (f32)view_immersive_value(45), (f32)view_immersive_value(46) };
+    f32 proj_x = (f32)view_immersive_value(16);
+    f32 proj_y = (f32)view_immersive_value(21);
+    f32 proj_zx = (f32)view_immersive_value(24);
+    f32 proj_zy = (f32)view_immersive_value(25);
+    if (fabsf(proj_x) < 1e-5f || fabsf(proj_y) < 1e-5f) return false;
+    if (ui_dot3(eye_forward, eye_forward) < 1e-6f || ui_dot3(head_forward, head_forward) < 1e-6f) return false;
+    f32 distance = UI_HUD_DISTANCE_METRES;
+    f32 center_world[3] = {
+        head_pos[0] + head_forward[0] * distance,
+        head_pos[1] + head_forward[1] * distance,
+        head_pos[2] + head_forward[2] * distance
+    };
+    f32 rel[3] = { center_world[0] - eye_pos[0], center_world[1] - eye_pos[1], center_world[2] - eye_pos[2] };
+    root->hud_center_enable[0] = ui_dot3(rel, eye_right);
+    root->hud_center_enable[1] = ui_dot3(rel, eye_up);
+    root->hud_center_enable[2] = ui_dot3(rel, eye_forward);
+    root->hud_center_enable[3] = 1.0f;
+    root->hud_right_hw[0] = ui_dot3(head_right, eye_right);
+    root->hud_right_hw[1] = ui_dot3(head_right, eye_up);
+    root->hud_right_hw[2] = ui_dot3(head_right, eye_forward);
+    root->hud_right_hw[3] = fabsf(distance / proj_x);
+    root->hud_up_hh[0] = ui_dot3(head_up, eye_right);
+    root->hud_up_hh[1] = ui_dot3(head_up, eye_up);
+    root->hud_up_hh[2] = ui_dot3(head_up, eye_forward);
+    root->hud_up_hh[3] = fabsf(distance / proj_y);
+    if (root->hud_right_hw[3] < 1e-4f || root->hud_up_hh[3] < 1e-4f) {
+        root->hud_center_enable[3] = 0.0f;
+        return false;
+    }
+    root->hud_proj[0] = proj_x;
+    root->hud_proj[1] = proj_y;
+    root->hud_proj[2] = proj_zx;
+    root->hud_proj[3] = proj_zy;
+    root->hud_depth[0] = (f32)view_immersive_value(26);
+    root->hud_depth[1] = (f32)view_immersive_value(30);
+    return true;
+}
+
 void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     if (!r || !r->gpu_ready) return;
     u32 clip_offset = 0;
@@ -1639,7 +1715,9 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     ns_unused(clear);
     gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
     gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
-    gpu_set_state(r->render_state);
+    ui_gpu_root hud_probe = {0};
+    ns_bool hud = ui_fill_hud_root(&hud_probe);
+    gpu_set_state(hud ? r->render_state_hud : r->render_state);
     gpu_set_storage(r->storage);
     for (i32 i = 0; i < r->command_count; i++) {
         ui_command *cmd = &r->commands[i];
@@ -1653,7 +1731,10 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         if (x1 > framebuffer_width) x1 = framebuffer_width;
         if (y1 > framebuffer_height) y1 = framebuffer_height;
         if (x1 <= x0 || y1 <= y0) continue;
-        gpu_set_scissor(x0, y0, x1 - x0, y1 - y0);
+        // 3D HUD projection moves triangles off the 2D clip rect; pixel clips
+        // still run in the fragment shader from canvas coordinates.
+        if (hud) gpu_set_scissor(0, 0, framebuffer_width, framebuffer_height);
+        else gpu_set_scissor(x0, y0, x1 - x0, y1 - y0);
         ui_rect_batch *batch = NULL;
         u32 shader = r->shader_image;
         if (cmd->rect_batch_id > 0) {
@@ -1677,6 +1758,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             .vertex_offset = batch ? (u32)batch->gpu_offset : 0,
             .clip_offset = clip_offset,
         };
+        ui_fill_hud_root(&root);
         gpu_set_shader(shader);
         gpu_set_root_data(&root, sizeof(root));
         gpu_draw_vertices(batch ? 0 : cmd->vertex_offset, cmd->vertex_count, 1);

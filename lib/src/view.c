@@ -382,3 +382,31 @@ void view_capture_require(view *v) {
     v->capture_required = true;
     view_request_frame(v, 1);
 }
+
+static ns_bool immersive_supported;
+static ns_bool immersive_requested;
+static i32 immersive_status;
+static i32 immersive_eye = -1;
+static float immersive_pose[48];
+
+ns_bool view_immersive_supported(void) { return immersive_supported; }
+ns_bool view_immersive_request(ns_bool enabled) {
+    if (!immersive_supported) return false;
+    immersive_requested = enabled;
+    return true;
+}
+i32 view_immersive_status(void) { return immersive_status; }
+i32 view_immersive_eye(void) { return immersive_eye; }
+f64 view_immersive_value(i32 index) {
+    return index >= 0 && index < 48 && immersive_eye >= 0 ? immersive_pose[index] : 0.0;
+}
+void view_immersive_host_support(ns_bool supported) { immersive_supported = supported; }
+ns_bool view_immersive_host_requested(void) { return immersive_requested; }
+void view_immersive_host_status(i32 status) {
+    immersive_status = status;
+    if (status <= 0) { immersive_requested = false; immersive_eye = -1; }
+}
+void view_immersive_host_pose(i32 eye, const float *pose) {
+    immersive_eye = eye;
+    if (pose) for (i32 i = 0; i < 48; ++i) immersive_pose[i] = pose[i];
+}
