@@ -333,6 +333,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/storage_apple_compile.sh
+	sh test/gpu_metal_dispatch_test.sh
 	node test/ns_wasm_runtime_test.mjs
 	node test/ns_wasm_ui_test.mjs "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 

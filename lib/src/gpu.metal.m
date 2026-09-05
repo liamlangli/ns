@@ -870,9 +870,17 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
     // to system memory that a Store action would otherwise force.
     bool transient_render_target = (usage & TEXTURE_USAGE_RENDER_TARGET) &&
                                    !(usage & (TEXTURE_USAGE_READ | TEXTURE_USAGE_WRITE));
-    MTLResourceOptions resource_options = MTLResourceStorageModeShared;
+    // Simulator requires private storage for depth/stencil textures, including
+    // attachments sampled by a later pass. Color uploads still need shared
+    // storage; transient attachments can fall back to private storage.
+    bool depth_stencil = format == PIXELFORMAT_DEPTH || format == PIXELFORMAT_DEPTH_STENCIL;
+    MTLResourceOptions resource_options = (depth_stencil || transient_render_target)
+                                             ? MTLResourceStorageModePrivate
+                                             : MTLResourceStorageModeShared;
     if (transient_render_target) {
-#if TARGET_OS_IOS || TARGET_OS_TV || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+#if TARGET_OS_SIMULATOR
+        // Simulator does not provide tile memory, even on an Apple GPU host.
+#elif TARGET_OS_IOS || TARGET_OS_TV || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
         resource_options = MTLResourceStorageModeMemoryless;
 #elif TARGET_OS_OSX
         if (@available(macOS 11.0, *)) {
@@ -1447,17 +1455,10 @@ static void mtl_v2_draw_indirect(u32 slot, u64 offset, i32 draw_count, i32 strid
 // WGSL and HLSL backends declare for the same kernels.
 #define GPU_MTL_THREADGROUP_THREADS 64
 
-// The threadgroup shape for a grid of this size. A transpiled kernel reads
-// `thread_position_in_grid` and nothing else - it has no threadgroup memory
-// and no barriers - so the shape is free to be chosen for occupancy alone.
-// The GPU issues `threadExecutionWidth` lanes in lockstep, so a group narrower
-// than that width leaves the rest of every SIMD group it schedules idle: the
-// fixed 8-wide group asked for here before filled a quarter of each one on the
-// 32-lane Apple parts and cost the other three quarters on every dispatch.
-// Whole SIMD groups are filled instead, grown a power of two at a time across
-// whichever axes the grid actually spans so a 2D or 3D sweep keeps neighbouring
-// invocations together, and never grown past the grid itself so a sixteen-actor
-// pass does not pad itself out to a full group.
+// Grow groups across the grid's axes toward whole SIMD groups. Every axis
+// must divide the grid exactly: dispatchThreadgroups works on simulators and
+// devices without nonuniform dispatch support, but cannot trim edge groups.
+// Kernels may omit bounds checks, so padding would execute unwanted threads.
 static MTLSize mtl_v2_threadgroup_size(id<MTLComputePipelineState> pso, i32 x, i32 y, i32 z) {
     NSUInteger lanes = MAX((NSUInteger)1, pso.threadExecutionWidth);
     NSUInteger budget = MAX((NSUInteger)1, pso.maxTotalThreadsPerThreadgroup);
@@ -1473,7 +1474,7 @@ static MTLSize mtl_v2_threadgroup_size(id<MTLComputePipelineState> pso, i32 x, i
         grew = false;
         for (i32 axis = 0; axis < 3; ++axis) {
             if (threads * 2 > total) break;
-            if (group[axis] * 2 > grid[axis]) continue;
+            if (grid[axis] % (group[axis] * 2) != 0) continue;
             group[axis] *= 2;
             threads *= 2;
             grew = true;
@@ -1483,6 +1484,7 @@ static MTLSize mtl_v2_threadgroup_size(id<MTLComputePipelineState> pso, i32 x, i
 }
 
 static void mtl_v2_dispatch(const char *label, i32 x, i32 y, i32 z) {
+    if (x <= 0 || y <= 0 || z <= 0) return;
     if (!_state.v2_shader || _state.v2_shader >= _state.shader_count) return;
     gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
     if (!shader->compute_pso) return;
@@ -1492,8 +1494,11 @@ static void mtl_v2_dispatch(const char *label, i32 x, i32 y, i32 z) {
     mtl_v2_label_encoder(encoder, label);
     [encoder setComputePipelineState:shader->compute_pso];
     mtl_v2_bind_root(shader, encoder, true);
-    [encoder dispatchThreads:MTLSizeMake((NSUInteger)x, (NSUInteger)y, (NSUInteger)z)
-       threadsPerThreadgroup:mtl_v2_threadgroup_size(shader->compute_pso, x, y, z)];
+    MTLSize group = mtl_v2_threadgroup_size(shader->compute_pso, x, y, z);
+    MTLSize count = MTLSizeMake((NSUInteger)x / group.width,
+                              (NSUInteger)y / group.height,
+                              (NSUInteger)z / group.depth);
+    [encoder dispatchThreadgroups:count threadsPerThreadgroup:group];
     [encoder endEncoding];
 }
 
