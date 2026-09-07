@@ -119,14 +119,20 @@ ref fn shader_discard()
 //
 // A compute fn is an ordinary ns fn, so the interpreter can run it directly
 // once the resources its stage intrinsics read are bound host-side: a float4
-// image pair (four f32 per texel, row-major, `width` texels per row), the 16
-// root words, and the invocation coordinate. Calling the fn then executes one
+// image pair (four f32 per texel, row-major, `width` texels per row), the root
+// words, and the invocation coordinate. Calling the fn then executes one
 // invocation, which is how compute kernels are tested without a device and
 // how a gpu-less backend runs the same kernels the device would.
 //
 // `shader_host_bind` fails when either image is shorter than width * height
 // texels. Bind an optional secondary output after the primary image pair. The
 // bindings are process-wide, so release them when done.
+//
+// `shader_host_root` takes a root of any length up to the declared block a
+// generated shader reads - 1024 words - and clears the rest, so a fn that reads
+// past what was bound reads zero. Only an empty root is refused. A fragment fn
+// that reads nothing but the root and its own arguments can be called this way
+// too: there is no image to bind and no invocation to set.
 ref fn shader_host_bind(read: [f32], write: [f32], width: i32, height: i32) bool
 ref fn shader_host_bind_secondary(write: [f32]) bool
 ref fn shader_host_root(words: [f32]) bool

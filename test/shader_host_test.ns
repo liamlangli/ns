@@ -105,6 +105,22 @@ assert texel(write_image, 0, 0, 2) == (SLOTS as f32)
 assert texel(write_image, 0, 0, 0) == 30.0
 assert texel(write_image, 1, 0, 0) == 32.0
 
+// A root as long as the block a generated shader declares binds whole, so a
+// pass that carries a table can be run here and not only dispatched. Anything
+// shorter binds too, and the words past its end read as zero rather than as
+// whatever the last binding left there.
+lit ROOT_BLOCK_WORDS = 1024
+let long_root = [f32](ROOT_BLOCK_WORDS)
+long_root[ROOT_BLOCK_WORDS - 1] = 9.0
+assert shader_host_root(long_root)
+assert shader_root_f32(ROOT_BLOCK_WORDS - 1) == 9.0
+assert shader_host_root(root)
+assert shader_root_f32(1) == 0.5
+assert shader_root_f32(ROOT_BLOCK_WORDS - 1) == 0.0
+// An empty root is the one a host cannot read from.
+let no_root = [f32](0)
+assert shader_host_root(no_root) == false
+
 shader_host_release()
 
 // Every stage intrinsic still transpiles for the four backend languages.

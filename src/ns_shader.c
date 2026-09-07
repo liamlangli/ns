@@ -19,8 +19,6 @@
 #define NS_SHADER_MAX_ARRAY_LEN 256
 #define NS_SHADER_STORAGE_BINDING_BASE 3
 #define NS_SHADER_WGSL_STORAGE_BINDING_BASE 7
-// The root words the CPU shader host holds for `shader_host_root`.
-#define NS_SHADER_ROOT_WORDS 16
 // The root block a generated shader declares, in float4s. Metal takes the root
 // as a pointer and reads whatever the program uploaded, so a Metal shader has
 // never been bounded by a declared length. Every other backend declares the
@@ -31,6 +29,13 @@
 // well inside the 64 KB uniform binding every device guarantees, and the runtime
 // pads a root allocation out to the same size so the binding stays valid.
 #define NS_SHADER_ROOT_BLOCK_VEC4S 256
+// The root words the CPU shader host holds for `shader_host_root`, which is the
+// whole of that block rather than a smaller number of its own: a pass whose root
+// outgrew sixteen words - which is every pass carrying a table - could be
+// dispatched by a device but not run by the interpreter, so the half of it that
+// reads a later word had no way to be tested without one. A shorter binding is
+// still accepted and the words past its end read as zero.
+#define NS_SHADER_ROOT_WORDS (NS_SHADER_ROOT_BLOCK_VEC4S * 4)
 
 static char ns_shader_err[512];
 
@@ -2998,8 +3003,18 @@ static ns_return_bool ns_shader_host_vm_call(ns_vm *vm, ns_str name, ns_call *ca
     }
     if (ns_str_equals(name, ns_str_cstr("shader_host_root"))) {
         f32 *words = (f32 *)ns_eval_array_raw(vm, vm->symbol_stack[call->arg_offset].val);
-        ns_bool ok = words && ns_array_length(words) >= NS_SHADER_ROOT_WORDS;
-        if (ok) memcpy(_host.root, words, sizeof(_host.root));
+        szt length = words ? (szt)ns_array_length(words) : 0;
+        ns_bool ok = length > 0;
+        if (ok) {
+            // A program binds the root it actually uploads, which is shorter
+            // than the block for every pass but the largest. The rest is
+            // cleared rather than left holding the last binding's words, so a
+            // fn that reads past what was bound reads the zero a cleared root
+            // would give it instead of another test's value.
+            szt taken = length < NS_SHADER_ROOT_WORDS ? length : (szt)NS_SHADER_ROOT_WORDS;
+            memset(_host.root, 0, sizeof(_host.root));
+            memcpy(_host.root, words, taken * sizeof(f32));
+        }
         call->ret = (ns_value){.t = ns_type_bool, .b = ok};
         return ns_return_ok(bool, true);
     }
