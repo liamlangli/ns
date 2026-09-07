@@ -6,7 +6,7 @@ if [ "$(uname -s)" != Darwin ]; then
 fi
 
 mkdir -p bin
-for test_name in gpu_metal_dispatch_test gpu_metal_texture_test; do
+for test_name in gpu_metal_dispatch_test gpu_metal_texture_test gpu_metal_buffer_test; do
     xcrun clang -DNS_DARWIN \
         -Iinclude -Iinclude/asm -Iinclude/os -Ilib/include \
         "test/$test_name.m" bin/lib/gpu.o bin/libns.a \
