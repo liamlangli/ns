@@ -151,6 +151,12 @@ assert.deepEqual([
 assert.deepEqual([
   runtime.view().getFloat64(secondMove + 32, true), runtime.view().getFloat64(secondMove + 40, true),
 ], [7, 9]);
+// Those two fingers also spread apart, which every other backend reports as a
+// pinch: the span between them grew from hypot(180, 100) to hypot(182, 105),
+// and the gesture zoom factor is that ratio however many moves it took.
+const pinchGesture = runtime.viewImport('view_gesture', [canvasView]);
+assert(Math.abs(runtime.view().getFloat64(pinchGesture + 16, true) -
+  Math.hypot(182, 105) / Math.hypot(180, 100)) < 1e-9);
 canvasEvents.get('pointerup')({ clientX: 207, clientY: 139, pointerType: 'touch', pointerId: 22, timeStamp: 24 });
 assert.equal(capturedPointers.has(22), false);
 assert.equal(runtime.view().getInt32(canvasView + 52, true), 1);
@@ -165,6 +171,26 @@ assert.equal(runtime.view().getInt32(canvasView + 52, true), 0);
 assert.equal(runtime.view().getInt32(canvasView + 60, true), 1);
 assert.equal(runtime.view().getInt32(runtime.viewImport('view_input_at', [canvasView, 0]) + 4, true), 4);
 runtime.viewImport('view_input_reset', [canvasView]);
+// A browser reports how far the content should move and a native backend how
+// far the wheel turned, so the sign is flipped on the way in. The line and page
+// delta modes become pixels, the unit the pixel mode already uses.
+canvasEvents.get('wheel')({ deltaX: 4, deltaY: 100, deltaMode: 0, preventDefault() {} });
+assert.deepEqual([
+  runtime.view().getFloat64(canvasView + 36, true), runtime.view().getFloat64(canvasView + 44, true),
+], [-4, -100]);
+canvasEvents.get('wheel')({ deltaX: 0, deltaY: -2, deltaMode: 1, preventDefault() {} });
+assert.equal(runtime.view().getFloat64(canvasView + 44, true), -100 + 32);
+canvasEvents.get('wheel')({ deltaX: 0, deltaY: -1, deltaMode: 2, preventDefault() {} });
+assert.equal(runtime.view().getFloat64(canvasView + 44, true), -100 + 32 + 180);
+runtime.viewImport('view_input_reset', [canvasView]);
+// A trackpad pinch reaches a page as a ctrl-held wheel and as nothing else, so
+// it becomes a gesture zoom rather than a scroll the application reads as a
+// wheel. A hundred pixels of it doubles the factor.
+canvasEvents.get('wheel')({ deltaX: 0, deltaY: -100, deltaMode: 0, ctrlKey: true, preventDefault() {} });
+assert.equal(runtime.view().getFloat64(canvasView + 44, true), 0);
+assert.equal(runtime.view().getFloat64(runtime.viewImport('view_gesture', [canvasView]) + 16, true), 2);
+runtime.viewImport('view_input_reset', [canvasView]);
+assert.equal(runtime.view().getFloat64(runtime.viewImport('view_gesture', [canvasView]) + 16, true), 1);
 assert.equal(runtime.gpu('gpu_caps', []), 6);
 assert.equal(runtime.gpu('gpu_storage_slot_count', []), 8);
 assert.equal(runtime.gpu('gpu_malloc', [32n, 0, runtime.writeString('')]), 0n);

@@ -10,6 +10,12 @@ struct view {
     framebuffer_height: i32,
     mouse_x: f64,
     mouse_y: f64,
+    // Wheel travel accumulated since the last view_input_reset. Positive y is
+    // the wheel turning away from the hand and positive x is it turning right,
+    // on every backend; the browser's opposite convention is normalized in the
+    // shell. The unit is the platform's own - notches on Windows, points on
+    // macOS, pixels in a browser - so read the direction and treat the size as
+    // a share of a turn rather than as a count.
     scroll_x: f64,
     scroll_y: f64,
     mouse_down: bool,
@@ -111,7 +117,8 @@ struct view_input_event {
 // from a two-finger turn, and orbit from a one-finger drag. macOS trackpads fill
 // zoom from a pinch, rotation from a two-finger turn, and orbit from a
 // three-finger drag; their one and two finger travel stays with the mouse
-// position and the scroll fields.
+// position and the scroll fields. A browser fills zoom from a two-finger touch
+// pinch and from the ctrl-held wheel a trackpad pinch arrives as.
 struct view_gesture_state {
     pan_x: f64,
     pan_y: f64,

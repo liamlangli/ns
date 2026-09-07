@@ -62,7 +62,9 @@ GPU backend; there is no WebGL fallback. `view_create` returns a `ref view`
 backed by the generated HTML canvas. Its logical/framebuffer dimensions,
 display ratio, pointer/buttons/scroll, keyboard edges, standard gamepads,
 gesture state, and clipboard cache are maintained by the browser middleware.
-The shell suppresses
+Wheel travel is normalized to the sign and the pixel unit the native backends
+publish, and both kinds of browser pinch - a two-finger touch and the ctrl-held
+wheel a trackpad sends - fill the gesture zoom factor. The shell suppresses
 the canvas focus outline and context menu; pointer drags retain capture until
 release, including when the pointer moves outside the canvas. Pass that view to
 the normal typed `gpu_request_device(v: ref view)` API; it reports whether the
