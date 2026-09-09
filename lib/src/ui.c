@@ -45,6 +45,16 @@
 // optical infinity and ghosts against the stereo world; this plane sits in
 // front of the 3D camera so each eye gets matching disparity and depth.
 #define UI_HUD_DISTANCE_METRES 1.5f
+// How far out on the panel the gaze may travel before the panel follows, as a
+// share of the panel's half extent. A panel rigidly locked to the head carries
+// every control along with the gaze, so the reticle would sit on whatever is in
+// the middle of the overlay and could never address anything else. Keeping the
+// panel still until the gaze leaves this band is what turns the head into a
+// pointer; past the band the panel comes along and the band is what stops it
+// ever being left behind.
+#define UI_HUD_GAZE_LIMIT 0.82f
+// Straight up and straight down are where a yaw/pitch panel degenerates.
+#define UI_HUD_PITCH_LIMIT 1.45f
 
 typedef struct io_image {
     i32 width;
@@ -1648,52 +1658,199 @@ static f32 ui_dot3(const f32 a[3], const f32 b[3]) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-static ns_bool ui_fill_hud_root(ui_gpu_root *root) {
-    if (!root || view_immersive_status() != 2 || view_immersive_eye() < 0) return false;
-    f32 eye_right[3] = { (f32)view_immersive_value(0), (f32)view_immersive_value(1), (f32)view_immersive_value(2) };
-    f32 eye_up[3] = { (f32)view_immersive_value(4), (f32)view_immersive_value(5), (f32)view_immersive_value(6) };
-    f32 eye_forward[3] = { (f32)-view_immersive_value(8), (f32)-view_immersive_value(9), (f32)-view_immersive_value(10) };
-    f32 eye_pos[3] = { (f32)view_immersive_value(12), (f32)view_immersive_value(13), (f32)view_immersive_value(14) };
-    f32 head_right[3] = { (f32)view_immersive_value(32), (f32)view_immersive_value(33), (f32)view_immersive_value(34) };
-    f32 head_up[3] = { (f32)view_immersive_value(36), (f32)view_immersive_value(37), (f32)view_immersive_value(38) };
-    f32 head_forward[3] = { (f32)-view_immersive_value(40), (f32)-view_immersive_value(41), (f32)-view_immersive_value(42) };
-    f32 head_pos[3] = { (f32)view_immersive_value(44), (f32)view_immersive_value(45), (f32)view_immersive_value(46) };
-    f32 proj_x = (f32)view_immersive_value(16);
-    f32 proj_y = (f32)view_immersive_value(21);
-    f32 proj_zx = (f32)view_immersive_value(24);
-    f32 proj_zy = (f32)view_immersive_value(25);
-    if (fabsf(proj_x) < 1e-5f || fabsf(proj_y) < 1e-5f) return false;
-    if (ui_dot3(eye_forward, eye_forward) < 1e-6f || ui_dot3(head_forward, head_forward) < 1e-6f) return false;
-    f32 distance = UI_HUD_DISTANCE_METRES;
-    f32 center_world[3] = {
-        head_pos[0] + head_forward[0] * distance,
-        head_pos[1] + head_forward[1] * distance,
-        head_pos[2] + head_forward[2] * distance
-    };
-    f32 rel[3] = { center_world[0] - eye_pos[0], center_world[1] - eye_pos[1], center_world[2] - eye_pos[2] };
-    root->hud_center_enable[0] = ui_dot3(rel, eye_right);
-    root->hud_center_enable[1] = ui_dot3(rel, eye_up);
-    root->hud_center_enable[2] = ui_dot3(rel, eye_forward);
-    root->hud_center_enable[3] = 1.0f;
-    root->hud_right_hw[0] = ui_dot3(head_right, eye_right);
-    root->hud_right_hw[1] = ui_dot3(head_right, eye_up);
-    root->hud_right_hw[2] = ui_dot3(head_right, eye_forward);
-    root->hud_right_hw[3] = fabsf(distance / proj_x);
-    root->hud_up_hh[0] = ui_dot3(head_up, eye_right);
-    root->hud_up_hh[1] = ui_dot3(head_up, eye_up);
-    root->hud_up_hh[2] = ui_dot3(head_up, eye_forward);
-    root->hud_up_hh[3] = fabsf(distance / proj_y);
-    if (root->hud_right_hw[3] < 1e-4f || root->hud_up_hh[3] < 1e-4f) {
-        root->hud_center_enable[3] = 0.0f;
+// Where the immersive overlay hangs this frame, and where the player is
+// looking on it.
+//
+// visionOS never hands a fully immersive application a live eye vector, so the
+// only continuous answer to "where is the player looking" is the head's own
+// forward ray. That ray is also what an application draws its reticle on, which
+// is why the panel below is not rigidly locked to the head: it keeps its own
+// bearing and yields only once the ray leaves the middle of it, so the reticle
+// sweeps the overlay and every control on it is reachable by turning the head.
+// The panel's distance and extent still come from the compositor's own
+// projection, so it covers the drawable exactly as before while it is centred.
+typedef struct {
+    f32 eye_right[3];
+    f32 eye_up[3];
+    f32 eye_forward[3];
+    f32 eye_pos[3];
+    f32 forward[3];
+    f32 right[3];
+    f32 up[3];
+    f32 center[3];
+    f32 half_width;
+    f32 half_height;
+    f32 proj_x, proj_y, proj_zx, proj_zy;
+    // Compositor reverse-Z terms, in tracking metres.
+    f32 depth_c, depth_q;
+    // The gaze on the panel, in the same -1..1 the overlay's own NDC uses.
+    f32 gaze_u, gaze_v;
+} ui_hud_frame;
+
+// The panel's bearing survives between frames and between the two eyes: both
+// eyes must be handed the same panel or the overlay would not fuse. Following
+// is a clamp rather than a step, so re-solving inside one frame - once for each
+// eye's flush, again for each read of the gaze - leaves the panel exactly where
+// the first solve of that frame put it.
+static ns_bool ui_hud_anchored;
+static f32 ui_hud_yaw;
+static f32 ui_hud_pitch;
+
+static f32 ui_wrap_angle(f32 angle) {
+    while (angle > 3.14159265f) angle -= 6.28318531f;
+    while (angle < -3.14159265f) angle += 6.28318531f;
+    return angle;
+}
+
+static void ui_hud_follow(f32 head_yaw, f32 head_pitch, f32 yaw_limit, f32 pitch_limit) {
+    if (!ui_hud_anchored) {
+        ui_hud_yaw = head_yaw;
+        ui_hud_pitch = head_pitch;
+        ui_hud_anchored = true;
+        return;
+    }
+    f32 yaw_delta = ui_wrap_angle(head_yaw - ui_hud_yaw);
+    if (yaw_delta > yaw_limit) ui_hud_yaw = ui_wrap_angle(ui_hud_yaw + yaw_delta - yaw_limit);
+    else if (yaw_delta < -yaw_limit) ui_hud_yaw = ui_wrap_angle(ui_hud_yaw + yaw_delta + yaw_limit);
+    f32 pitch_delta = head_pitch - ui_hud_pitch;
+    if (pitch_delta > pitch_limit) ui_hud_pitch += pitch_delta - pitch_limit;
+    else if (pitch_delta < -pitch_limit) ui_hud_pitch += pitch_delta + pitch_limit;
+    if (ui_hud_pitch > UI_HUD_PITCH_LIMIT) ui_hud_pitch = UI_HUD_PITCH_LIMIT;
+    if (ui_hud_pitch < -UI_HUD_PITCH_LIMIT) ui_hud_pitch = -UI_HUD_PITCH_LIMIT;
+}
+
+static ns_bool ui_hud_solve(ui_hud_frame *hud) {
+    if (!hud) return false;
+    memset(hud, 0, sizeof(*hud));
+    if (view_immersive_status() != 2 || view_immersive_eye() < 0) {
+        // Nothing to keep a bearing for; the next space opens facing forward.
+        ui_hud_anchored = false;
         return false;
     }
-    root->hud_proj[0] = proj_x;
-    root->hud_proj[1] = proj_y;
-    root->hud_proj[2] = proj_zx;
-    root->hud_proj[3] = proj_zy;
-    root->hud_depth[0] = (f32)view_immersive_value(26);
-    root->hud_depth[1] = (f32)view_immersive_value(30);
+    hud->eye_right[0] = (f32)view_immersive_value(0);
+    hud->eye_right[1] = (f32)view_immersive_value(1);
+    hud->eye_right[2] = (f32)view_immersive_value(2);
+    hud->eye_up[0] = (f32)view_immersive_value(4);
+    hud->eye_up[1] = (f32)view_immersive_value(5);
+    hud->eye_up[2] = (f32)view_immersive_value(6);
+    hud->eye_forward[0] = (f32)-view_immersive_value(8);
+    hud->eye_forward[1] = (f32)-view_immersive_value(9);
+    hud->eye_forward[2] = (f32)-view_immersive_value(10);
+    hud->eye_pos[0] = (f32)view_immersive_value(12);
+    hud->eye_pos[1] = (f32)view_immersive_value(13);
+    hud->eye_pos[2] = (f32)view_immersive_value(14);
+    f32 head_forward[3] = { (f32)-view_immersive_value(40), (f32)-view_immersive_value(41), (f32)-view_immersive_value(42) };
+    f32 head_pos[3] = { (f32)view_immersive_value(44), (f32)view_immersive_value(45), (f32)view_immersive_value(46) };
+    hud->proj_x = (f32)view_immersive_value(16);
+    hud->proj_y = (f32)view_immersive_value(21);
+    hud->proj_zx = (f32)view_immersive_value(24);
+    hud->proj_zy = (f32)view_immersive_value(25);
+    hud->depth_c = (f32)view_immersive_value(26);
+    hud->depth_q = (f32)view_immersive_value(30);
+    if (fabsf(hud->proj_x) < 1e-5f || fabsf(hud->proj_y) < 1e-5f) return false;
+    f32 head_length = ui_dot3(head_forward, head_forward);
+    if (head_length < 1e-6f || ui_dot3(hud->eye_forward, hud->eye_forward) < 1e-6f) return false;
+    head_length = sqrtf(head_length);
+    head_forward[0] /= head_length;
+    head_forward[1] /= head_length;
+    head_forward[2] /= head_length;
+    const f32 distance = UI_HUD_DISTANCE_METRES;
+    hud->half_width = fabsf(distance / hud->proj_x);
+    hud->half_height = fabsf(distance / hud->proj_y);
+    if (hud->half_width < 1e-4f || hud->half_height < 1e-4f) return false;
+
+    // Tracking space has Y up, so the panel is carried as a yaw and a pitch and
+    // never rolls: a HUD that tilted with the head would be read at an angle.
+    f32 head_yaw = atan2f(head_forward[0], -head_forward[2]);
+    f32 head_pitch = asinf(head_forward[1] < -1.0f ? -1.0f : (head_forward[1] > 1.0f ? 1.0f : head_forward[1]));
+    ui_hud_follow(head_yaw, head_pitch,
+                  atanf(UI_HUD_GAZE_LIMIT * hud->half_width / distance),
+                  atanf(UI_HUD_GAZE_LIMIT * hud->half_height / distance));
+    f32 cos_yaw = cosf(ui_hud_yaw), sin_yaw = sinf(ui_hud_yaw);
+    f32 cos_pitch = cosf(ui_hud_pitch), sin_pitch = sinf(ui_hud_pitch);
+    hud->forward[0] = sin_yaw * cos_pitch;
+    hud->forward[1] = sin_pitch;
+    hud->forward[2] = -cos_yaw * cos_pitch;
+    hud->right[0] = cos_yaw;
+    hud->right[1] = 0.0f;
+    hud->right[2] = sin_yaw;
+    hud->up[0] = -sin_yaw * sin_pitch;
+    hud->up[1] = cos_pitch;
+    hud->up[2] = cos_yaw * sin_pitch;
+    hud->center[0] = head_pos[0] + hud->forward[0] * distance;
+    hud->center[1] = head_pos[1] + hud->forward[1] * distance;
+    hud->center[2] = head_pos[2] + hud->forward[2] * distance;
+
+    // The gaze ray leaves the head, not an eye, so both eyes agree on it.
+    f32 facing = ui_dot3(head_forward, hud->forward);
+    if (facing > 0.05f) {
+        f32 reach = distance / facing;
+        f32 offset[3] = {
+            head_forward[0] * reach - hud->forward[0] * distance,
+            head_forward[1] * reach - hud->forward[1] * distance,
+            head_forward[2] * reach - hud->forward[2] * distance
+        };
+        hud->gaze_u = ui_dot3(offset, hud->right) / hud->half_width;
+        hud->gaze_v = ui_dot3(offset, hud->up) / hud->half_height;
+        if (hud->gaze_u < -1.0f) hud->gaze_u = -1.0f;
+        if (hud->gaze_u > 1.0f) hud->gaze_u = 1.0f;
+        if (hud->gaze_v < -1.0f) hud->gaze_v = -1.0f;
+        if (hud->gaze_v > 1.0f) hud->gaze_v = 1.0f;
+    }
     return true;
+}
+
+// The panel is solved once for a flush and copied into each draw command's
+// root: it is the same panel for every triangle in the frame, and solving it
+// per command would put trigonometry under a loop that runs thousands of times.
+static void ui_fill_hud_root(ui_gpu_root *root, const ui_hud_frame *hud) {
+    if (!root || !hud) return;
+    f32 rel[3] = {
+        hud->center[0] - hud->eye_pos[0],
+        hud->center[1] - hud->eye_pos[1],
+        hud->center[2] - hud->eye_pos[2]
+    };
+    root->hud_center_enable[0] = ui_dot3(rel, hud->eye_right);
+    root->hud_center_enable[1] = ui_dot3(rel, hud->eye_up);
+    root->hud_center_enable[2] = ui_dot3(rel, hud->eye_forward);
+    root->hud_center_enable[3] = 1.0f;
+    root->hud_right_hw[0] = ui_dot3(hud->right, hud->eye_right);
+    root->hud_right_hw[1] = ui_dot3(hud->right, hud->eye_up);
+    root->hud_right_hw[2] = ui_dot3(hud->right, hud->eye_forward);
+    root->hud_right_hw[3] = hud->half_width;
+    root->hud_up_hh[0] = ui_dot3(hud->up, hud->eye_right);
+    root->hud_up_hh[1] = ui_dot3(hud->up, hud->eye_up);
+    root->hud_up_hh[2] = ui_dot3(hud->up, hud->eye_forward);
+    root->hud_up_hh[3] = hud->half_height;
+    root->hud_proj[0] = hud->proj_x;
+    root->hud_proj[1] = hud->proj_y;
+    root->hud_proj[2] = hud->proj_zx;
+    root->hud_proj[3] = hud->proj_zy;
+    root->hud_depth[0] = hud->depth_c;
+    root->hud_depth[1] = hud->depth_q;
+}
+
+// The gaze in the overlay's own drawable coordinates: the point an application
+// draws its reticle at, and the point its pointer belongs at so a pinch lands
+// on whatever the reticle is over. Both are false and the surface centre while
+// no immersive HUD is up, so a caller may read them unconditionally.
+ns_bool ui_hud_gaze_active(ui_renderer *r) {
+    ui_hud_frame hud;
+    return r != NULL && ui_hud_solve(&hud);
+}
+
+f64 ui_hud_gaze_x(ui_renderer *r) {
+    if (!r) return 0.0;
+    ui_hud_frame hud;
+    if (!ui_hud_solve(&hud)) return r->rect.w * 0.5;
+    return ((f64)hud.gaze_u + 1.0) * 0.5 * r->rect.w;
+}
+
+f64 ui_hud_gaze_y(ui_renderer *r) {
+    if (!r) return 0.0;
+    ui_hud_frame hud;
+    if (!ui_hud_solve(&hud)) return r->rect.h * 0.5;
+    return (1.0 - (f64)hud.gaze_v) * 0.5 * r->rect.h;
 }
 
 void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
@@ -1715,8 +1872,8 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     ns_unused(clear);
     gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
     gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
-    ui_gpu_root hud_probe = {0};
-    ns_bool hud = ui_fill_hud_root(&hud_probe);
+    ui_hud_frame hud_frame;
+    ns_bool hud = ui_hud_solve(&hud_frame);
     gpu_set_state(hud ? r->render_state_hud : r->render_state);
     gpu_set_storage(r->storage);
     for (i32 i = 0; i < r->command_count; i++) {
@@ -1758,7 +1915,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             .vertex_offset = batch ? (u32)batch->gpu_offset : 0,
             .clip_offset = clip_offset,
         };
-        ui_fill_hud_root(&root);
+        if (hud) ui_fill_hud_root(&root, &hud_frame);
         gpu_set_shader(shader);
         gpu_set_root_data(&root, sizeof(root));
         gpu_draw_vertices(batch ? 0 : cmd->vertex_offset, cmd->vertex_count, 1);

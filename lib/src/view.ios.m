@@ -394,11 +394,15 @@ void ns_immersive_state(int status) {
     view_ios_apply_frame_rate();
     view_request_frame(&view_ios_state, 2);
 }
+// A pinch is reported in normalized drawable coordinates. Press and release
+// accumulate the way view_on_mouse_btn accumulates them, because a pinch that
+// begins and ends between two compositor frames still has to be one click: the
+// frame that follows sees both edges instead of only the last one.
 void ns_immersive_pointer(double x, double y, int phase) {
     view_ios_state.mouse_x = x * view_ios_state.width;
     view_ios_state.mouse_y = y * view_ios_state.height;
-    view_ios_state.mouse_pressed = phase == 0;
-    view_ios_state.mouse_released = phase == 2;
+    view_ios_state.mouse_pressed = view_ios_state.mouse_pressed || phase == 0;
+    view_ios_state.mouse_released = view_ios_state.mouse_released || phase == 2;
     view_ios_state.mouse_down = phase != 2;
 }
 #endif

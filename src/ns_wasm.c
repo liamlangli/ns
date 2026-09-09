@@ -2412,6 +2412,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "ui_safe_rect|ui_surface_rect|ui_safe_area|ui_safe_area_enabled|"
             "ui_set_safe_area_enabled|ui_set_safe_area_insets|ui_reset_safe_area_insets|"
             "ui_content_x|ui_content_y|ui_surface_x|ui_surface_y|ui_layout|"
+            // immersive gaze; a canvas has no head pose, so it reports inactive
+            "ui_hud_gaze_active|ui_hud_gaze_x|ui_hud_gaze_y|"
             // image atlases
             "ui_atlas_load|ui_atlas_destroy|ui_atlas_width|ui_atlas_height|"
             "ui_atlas_draw|ui_atlas_draw_region|"

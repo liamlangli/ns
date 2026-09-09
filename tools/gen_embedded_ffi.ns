@@ -218,7 +218,10 @@ fn parse_struct(src: str, at: i32) i32 {
 
     g_struct_name[g_struct_count] = name
     g_struct_field_start[g_struct_count] = g_field_total
-    split_args(substr(src, body_start, close - body_start))
+    // Comments come off before the split: a field comment may contain commas,
+    // and splitting first would break one line into fragments that are not
+    // fields at all.
+    split_args(strip_comments(substr(src, body_start, close - body_start)))
     let parts = g_part_count
     let fields = 0
     for p in 0 to parts {

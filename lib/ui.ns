@@ -335,6 +335,28 @@ ref fn ui_content_y(r: ref ui_renderer, y: f64) f64
 ref fn ui_surface_x(r: ref ui_renderer, x: f64) f64
 ref fn ui_surface_y(r: ref ui_renderer, y: f64) f64
 
+// ===========================================================================
+// Immersive gaze
+// ===========================================================================
+//
+// In an immersive space the overlay is not drawn flat on a drawable: it is
+// projected onto a panel a fixed distance in front of the player, per eye, so
+// it carries the same disparity the stereo world does. visionOS never hands a
+// fully immersive application a live eye vector, so the point the player is
+// looking at is the head's own forward ray, and the panel keeps its own bearing
+// and follows the head only once that ray leaves the middle of it. The ray then
+// travels across the overlay instead of dragging it along, which is what makes
+// a gaze reticle able to address every control on it.
+//
+// These report where that ray lands, in drawable coordinates - the space
+// view.mouse_x is in, and the space ui_content_x converts from. An application
+// draws its reticle there and puts its pointer there, so a pinch or a click
+// selects whatever the reticle is over. Outside an immersive space the gaze is
+// inactive and the coordinates are the middle of the drawable.
+ref fn ui_hud_gaze_active(r: ref ui_renderer) bool
+ref fn ui_hud_gaze_x(r: ref ui_renderer) f64
+ref fn ui_hud_gaze_y(r: ref ui_renderer) f64
+
 // Fill the whole drawable, insets included, ignoring the current clip.
 ref fn ui_fill_surface(r: ref ui_renderer, rgba: u32)
 

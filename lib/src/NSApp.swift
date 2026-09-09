@@ -146,6 +146,8 @@ final class NSImmersiveRenderer: @unchecked Sendable {
     var inputView = matrix_identity_float4x4
     var inputProjection = matrix_identity_float4x4
     var pointerDown = false
+    var pointerX = 0.5
+    var pointerY = 0.5
     let trackingSupported = WorldTrackingProvider.isSupported
     var portalStencil: (any MTLTexture)?
     init(_ layer: LayerRenderer) { self.layer = layer }
@@ -159,7 +161,11 @@ final class NSImmersiveRenderer: @unchecked Sendable {
                 guard let self else { return }
                 for event in events {
                     if event.phase == .ended || event.phase == .cancelled {
-                        ns_immersive_pointer(0.5, 0.5, 2)
+                        // Release where the pinch was, not at the middle of the
+                        // drawable: a control reads the release position, and a
+                        // pointer that jumps on the way up ends the click on
+                        // whatever happens to sit in the centre.
+                        ns_immersive_pointer(pointerX, pointerY, 2)
                         pointerDown = false
                     } else if let ray = event.selectionRay {
                         let direction = SIMD4<Float>(Float(ray.direction.x), Float(ray.direction.y), Float(ray.direction.z), 0)
@@ -168,6 +174,8 @@ final class NSImmersiveRenderer: @unchecked Sendable {
                         let projected = inputProjection * local
                         let x = Double(projected.x / projected.w + 1) * 0.5
                         let y = Double(1 - projected.y / projected.w) * 0.5
+                        pointerX = x
+                        pointerY = y
                         ns_immersive_pointer(x, y, pointerDown ? 1 : 0)
                         pointerDown = true
                     }
