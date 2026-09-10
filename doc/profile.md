@@ -129,5 +129,3 @@ the target warns about dropped batches when it exits.
   frame ring (window size, retirement, flatten-for-report).
 - `test/ns_profile_test.sh` - CLI behaviour, report contents, and an end-to-end
   live session against a stand-in viewer written in ns.
-- `nscode/profile/test/live_test.ns` - the viewer's stream decoding, symbol and
-  lane tables, ring retention, batched frames, and partial messages.

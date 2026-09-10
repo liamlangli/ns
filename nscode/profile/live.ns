@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 // Live capture session: the loopback listener, the profiled child process, the
 // wire protocol, and the 128-frame ring. Everything here is rendering-agnostic
-// and headless-testable (nscode/profile/test/live_test.ns); main.ns owns the
+// and headless-testable; main.ns owns the
 // decoding into the shared event arrays and every pixel drawn from them.
 //
 // `ns profiler --live [path]` starts the viewer with NS_PROFILE_LIVE=1 plus the

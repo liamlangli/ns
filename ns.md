@@ -184,7 +184,7 @@ With filename and no analysis/emit flag, it evaluates and prints result.
   `make profiler` (`ns build nscode/profile`).
 - `live.ns` owns a live session: the loopback listener, the profiled child
   process, the wire protocol, and the 128-frame ring. It is
-  rendering-agnostic, so `nscode/profile/test/live_test.ns` covers it headless.
+  rendering-agnostic.
 - `main.ns` loads `ns.profile` reports and draws everything, live frames
   included.
 

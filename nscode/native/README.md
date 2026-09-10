@@ -108,11 +108,7 @@ asterisk on the editor tab.
   selection, syntax tokenizer, and typed-key character mapping.
 - `test/editor_test.ns` - headless tests for the document model (runs anywhere).
 - `test/workspace_test.ns` - headless tests for directory discovery, file switching,
-  and preservation of unsaved buffers.
-- `chat_test.ns` - headless persistence round-trip for project conversations.
-- `settings_test.ns` - headless persistence round-trip for global preferences.
-- `test/frame_test.ns` - headless interaction tests that drive render.ns frame
-  by frame through the no-op Linux view backend. Run the project suites with
+  and preservation of unsaved buffers. Run the project suites with
   `bin/ns test nscode/native`.
 - `lib/src/ui.c` - low-level UI kernel only: renderer lifecycle, clipping,
   shapes, text measurement, and text drawing primitives.
