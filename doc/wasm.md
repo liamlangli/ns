@@ -28,8 +28,12 @@ browser artifacts and the selected favicon beside that path. Wasm replacement is
 compile leaves the previous runnable artifact intact. The bundle is also
 incremental: `ns build` keeps it when the module is in place and every recorded
 input — sources, manifest, assets, shell, icon, the installed `ns-wasm.js`, and
-the `ns` executable — is unchanged since the recorded build. `--force` rebuilds
-it anyway, and `ns clean` removes the whole `bin/` directory.
+the `ns` executable — is unchanged since the recorded build. A change confined
+to the files the bundle copies rather than compiles — an asset, the page shell,
+the icon, or the installed `ns-wasm.js` — re-packages the bundle and leaves the
+module in place, so editing a browser script or a model does not recompile the
+program. `--force` rebuilds it anyway, and `ns clean` removes the whole `bin/`
+directory.
 
 For a custom browser UI, set `shell` to an HTML file relative to the manifest.
 The builder copies it to `<bundle>/index.html` after expanding three stable markers:

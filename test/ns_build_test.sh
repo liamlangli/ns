@@ -202,3 +202,86 @@ stamp=$(ls -l "$multi/bin/docs/docs.wasm")
 test "$stamp" = "$(ls -l "$multi/bin/docs/docs.wasm")"
 
 printf '%s\n' 'PASS: every ns.mod target owns bin/<target name>.'
+
+# A packaged file - a browser script, a model, an image - is copied beside the
+# module, not compiled into it, so editing one re-packages the bundle without
+# recompiling a module that did not change. Sources still recompile.
+repack="$tmp/repack"
+mkdir -p "$repack/web"
+cat > "$repack/ns.mod" <<'EOF'
+schema = "ns.mod/v1"
+name = "repack"
+version = "0.1.0"
+type = "app"
+target = "wasm"
+source = "."
+entry = "main.ns"
+assets = ["web/viewer.js"]
+EOF
+cat > "$repack/main.ns" <<'EOF'
+use std
+
+fn main() {
+    print("repack")
+}
+EOF
+printf '%s\n' 'const viewer = 1' > "$repack/web/viewer.js"
+
+build_bundle() {
+    "$ns" build "$repack" > "$tmp/build.log" 2>&1 || {
+        cat "$tmp/build.log" >&2
+        printf '%s\n' 'FAIL: ns build failed for a project with a packaged file.' >&2
+        exit 1
+    }
+}
+
+build_bundle
+module=$(ls -l "$repack/bin/repack.wasm")
+
+touch "$repack/web/viewer.js"
+build_bundle
+expect_up_to_date 'a touched packaged file with unchanged contents must not re-package a bundle.'
+
+printf '%s\n' 'const viewer = 2' > "$repack/web/viewer.js"
+build_bundle
+if grep -q 'up to date' "$tmp/build.log"; then
+    cat "$tmp/build.log" >&2
+    printf '%s\n' 'FAIL: an edited packaged file must refresh the bundle around it.' >&2
+    exit 1
+fi
+if grep -q 'wasm bundle' "$tmp/build.log"; then
+    cat "$tmp/build.log" >&2
+    printf '%s\n' 'FAIL: an edited packaged file must not recompile the module.' >&2
+    exit 1
+fi
+test "$module" = "$(ls -l "$repack/bin/repack.wasm")" || {
+    printf '%s\n' 'FAIL: re-packaging a bundle must leave the module in place.' >&2
+    exit 1
+}
+if ! grep -q 'const viewer = 2' "$repack/bin/web/viewer.js"; then
+    printf '%s\n' 'FAIL: the re-packaged bundle must carry the edited file.' >&2
+    exit 1
+fi
+
+cat > "$repack/main.ns" <<'EOF'
+use std
+
+fn main() {
+    print("repack!")
+}
+EOF
+build_bundle
+if ! grep -q 'wasm bundle' "$tmp/build.log"; then
+    cat "$tmp/build.log" >&2
+    printf '%s\n' 'FAIL: an edited source must recompile the module.' >&2
+    exit 1
+fi
+test "$module" != "$(ls -l "$repack/bin/repack.wasm")" || {
+    printf '%s\n' 'FAIL: an edited source must rewrite the module.' >&2
+    exit 1
+}
+
+build_bundle
+expect_up_to_date 'a rebuilt bundle must record the recompiled source.'
+
+printf '%s\n' 'PASS: a packaged edit re-packages a browser bundle without recompiling it.'

@@ -2262,9 +2262,11 @@ static void ns_project_asset_paths_free(ns_str *paths) {
 }
 
 // Stamp the inputs a build reads before it links: the running toolchain, the
-// entry, the manifest and its source set, and the resources a bundle packages.
-// Files the linker discovers are added afterwards by ns_compile_build_input,
-// and remain guarded by the recorded stamps of the previous build.
+// entry, and the manifest and its source set compile into the artifact, while
+// the page shell, the icon, and the resources a bundle packages only travel
+// beside it. Files the linker discovers are added afterwards by
+// ns_compile_build_input, and remain guarded by the recorded stamps of the
+// previous build.
 static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
     // A rebuilt ns emits different code from the same sources.
     ns_str executable = ns_project_current_executable();
@@ -2277,8 +2279,8 @@ static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
     ns_str manifest = ns_path_join(in->scope, ns_str_cstr("ns.mod"));
     ns_build_cache_add(cache, manifest);
     ns_str_free(manifest);
-    ns_build_cache_add(cache, in->icon);
-    ns_build_cache_add(cache, in->shell);
+    ns_build_cache_add_package(cache, in->icon);
+    ns_build_cache_add_package(cache, in->shell);
 
     ns_project_source *sources = ns_project_sources(in->scope, in->filename);
     for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
@@ -2286,14 +2288,15 @@ static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
     }
     ns_project_sources_free(sources);
 
-    // Assets are copied into app and browser bundles, so they are inputs too.
+    // Assets are copied into app and browser bundles rather than compiled, so
+    // a browser build refreshes them without rebuilding the module.
     ns_str *assets = ns_project_asset_paths(in->scope);
     for (i32 i = 0, count = ns_array_length(assets); i < count; i++) {
         ns_str path = ns_path_join(in->scope, assets[i]);
         // A packaged path is a directory or a single file; only one of these
         // records anything for either kind.
-        ns_build_cache_add_tree(cache, path);
-        if (!ns_is_dir(path)) ns_build_cache_add(cache, path);
+        ns_build_cache_add_package_tree(cache, path);
+        if (!ns_is_dir(path)) ns_build_cache_add_package(cache, path);
         ns_str_free(path);
     }
     ns_project_asset_paths_free(assets);
@@ -2407,16 +2410,19 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
     ns_build_ensure_output_dir(output);
 
     // The module guards the whole bundle: everything else in bin/ is copied or
-    // generated from the same inputs.
+    // generated from the same inputs. A packaged file is not one of them, so
+    // editing a script, model or page only re-packages the bundle around the
+    // module that is already there.
     f64 cache_start = ns_build_profile_begin("check_cache");
     ns_build_cache cache;
     ns_str config = ns_build_config(in, NS_BUILD_APP, output);
     ns_build_cache_open(&cache, output, config);
     ns_array_free(config.data);
     ns_build_cache_collect(&cache, in);
-    ns_bool fresh = !force && ns_build_cache_fresh(&cache);
+    ns_build_cache_state state = force ? (ns_build_cache_state){.compile = true, .package = true}
+                                       : ns_build_cache_state_of(&cache);
     ns_build_profile_end("check_cache", cache_start);
-    if (fresh) {
+    if (!state.compile && !state.package) {
         ns_str current = ns_path_dirname_safe(output);
         ns_info("build", "up to date %.*s\n", current.len, current.data);
         ns_build_cache_free(&cache);
@@ -2424,52 +2430,57 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
         return;
     }
 
-    f64 compile_start = ns_build_profile_begin("compile");
-    ns_ssa_module *ssa = ns_compile_build_input(in, &cache);
-    ns_wasm_validate_browser_entry(ssa);
-    ns_build_profile_end("compile", compile_start);
-
     ns_str artifact = ns_path_basename_with_extension(output);
-    ns_str map_url = ns_str_concat(artifact, ns_str_cstr(".map"));
-    ns_str map_output = ns_str_concat(output, ns_str_cstr(".map"));
-    ns_str temporary = ns_str_concat(output, ns_str_cstr(".tmp"));
-    ns_str map_temporary = ns_str_concat(map_output, ns_str_cstr(".tmp"));
-    f64 emit_start = ns_build_profile_begin("emit_wasm");
-    ns_return_bool emitted = ns_wasm_emit_source_mapped(ssa, temporary, map_temporary,
-                                                        map_url, in->scope);
-    ns_ssa_module_free(ssa);
-    ns_build_profile_end("emit_wasm", emit_start);
-    if (ns_return_is_error(emitted)) {
-        remove(temporary.data);
-        remove(map_temporary.data);
-        ns_return_assert(emitted);
-    }
-    f64 package_start = ns_build_profile_begin("package_wasm");
+    if (state.compile) {
+        f64 compile_start = ns_build_profile_begin("compile");
+        ns_ssa_module *ssa = ns_compile_build_input(in, &cache);
+        ns_wasm_validate_browser_entry(ssa);
+        ns_build_profile_end("compile", compile_start);
+
+        ns_str map_url = ns_str_concat(artifact, ns_str_cstr(".map"));
+        ns_str map_output = ns_str_concat(output, ns_str_cstr(".map"));
+        ns_str temporary = ns_str_concat(output, ns_str_cstr(".tmp"));
+        ns_str map_temporary = ns_str_concat(map_output, ns_str_cstr(".tmp"));
+        f64 emit_start = ns_build_profile_begin("emit_wasm");
+        ns_return_bool emitted = ns_wasm_emit_source_mapped(ssa, temporary, map_temporary,
+                                                            map_url, in->scope);
+        ns_ssa_module_free(ssa);
+        ns_build_profile_end("emit_wasm", emit_start);
+        if (ns_return_is_error(emitted)) {
+            remove(temporary.data);
+            remove(map_temporary.data);
+            ns_return_assert(emitted);
+        }
 #if defined(_WIN32)
-    remove(output.data);
-    remove(map_output.data);
+        remove(output.data);
+        remove(map_output.data);
 #endif
-    if (rename(temporary.data, output.data) != 0) {
-        remove(temporary.data);
-        remove(map_temporary.data);
-        ns_exit(1, "build", "failed to replace %.*s.\n", output.len, output.data);
-    }
-    if (rename(map_temporary.data, map_output.data) != 0) {
-        remove(map_temporary.data);
-        ns_exit(1, "build", "failed to replace %.*s.\n", map_output.len, map_output.data);
+        if (rename(temporary.data, output.data) != 0) {
+            remove(temporary.data);
+            remove(map_temporary.data);
+            ns_exit(1, "build", "failed to replace %.*s.\n", output.len, output.data);
+        }
+        if (rename(map_temporary.data, map_output.data) != 0) {
+            remove(map_temporary.data);
+            ns_exit(1, "build", "failed to replace %.*s.\n", map_output.len, map_output.data);
+        }
     }
 
+    f64 package_start = ns_build_profile_begin("package_wasm");
     ns_str out_dir = ns_path_dirname_safe(output);
     ns_str runtime_dst = ns_path_join(out_dir, ns_str_cstr("ns-wasm.js"));
     ns_str runtime_src = ns_wasm_runtime_source();
     ns_copy_file_contents(runtime_src, runtime_dst);
-    ns_build_cache_add(&cache, runtime_src); // installed middleware, copied into the bundle
+    // The installed middleware, the icon, the page and the assets travel
+    // beside the module, so they are packaged inputs: editing one of them
+    // refreshes the bundle without recompiling it.
+    ns_build_cache_add_package(&cache, runtime_src);
 
     ns_bool uses_default_icon = in->icon.data == ns_null || in->icon.len == 0;
     ns_str icon_src = uses_default_icon ? ns_wasm_default_icon_source() : in->icon;
     ns_str favicon = uses_default_icon ? ns_str_cstr("ns.svg") : ns_wasm_favicon_filename(icon_src);
     ns_copy_file_contents(icon_src, ns_path_join(out_dir, favicon));
-    ns_build_cache_add(&cache, icon_src);
+    ns_build_cache_add_package(&cache, icon_src);
 
     ns_str title = ns_html_escape(in->name);
     ns_str html = ns_str_null;
@@ -2526,7 +2537,11 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
     }
     ns_project_asset_paths_free(declared);
     ns_build_profile_end("package_wasm", package_start);
-    ns_info("build", "wasm bundle %.*s\n", out_dir.len, out_dir.data);
+    if (state.compile) {
+        ns_info("build", "wasm bundle %.*s\n", out_dir.len, out_dir.data);
+    } else {
+        ns_info("build", "packaged %.*s\n", out_dir.len, out_dir.data);
+    }
     f64 write_cache_start = ns_build_profile_begin("write_cache");
     ns_build_cache_write(&cache);
     ns_build_profile_end("write_cache", write_cache_start);

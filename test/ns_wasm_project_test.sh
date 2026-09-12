@@ -298,9 +298,21 @@ const rawRequest = (port, request) => new Promise((resolve, reject) => {
 
     fs.writeFileSync(path.join(root, 'main.ns'), source());
     await deadline(() => messages.includes('reload'));
+    messages.length = 0;
+
+    // A packaged file travels beside the module: editing one refreshes the
+    // bundle and reloads the page without recompiling the module.
+    const bundledHash = hash(wasmPath);
+    const bundledMapHash = hash(mapPath);
+    fs.writeFileSync(path.join(root, 'assets', 'fixture.txt'), 'edited payload');
+    await deadline(() => messages.includes('reload'));
+    assert.strictEqual(hash(wasmPath), bundledHash,
+      'editing a packaged file must leave the compiled module in place');
+    assert.strictEqual(hash(mapPath), bundledMapHash);
+    assert.strictEqual(await (await fetch(base + '/assets/fixture.txt')).text(), 'edited payload');
     socket.close();
     socket2.close();
-    console.log('PASS: relocated/browser bundles, shader metadata, assets, loopback HTTP, RFC WebSocket handshake, multi-client reload, last-good preservation, and recovery.');
+    console.log('PASS: relocated/browser bundles, shader metadata, assets, loopback HTTP, RFC WebSocket handshake, multi-client reload, packaged-asset refresh without a recompile, last-good preservation, and recovery.');
   } finally {
     child.kill('SIGTERM');
     fs.rmSync(root, { recursive: true, force: true });

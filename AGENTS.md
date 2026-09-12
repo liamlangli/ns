@@ -90,7 +90,10 @@ The common commands are:
   artifact instead of recompiling. A touched file with unchanged contents does
   not trigger a rebuild; an added, edited, or removed source, a changed
   manifest, asset, or installed module declaration, a different artifact kind
-  or output path, and a rebuilt `ns` all do. `--force` compiles unconditionally.
+  or output path, and a rebuilt `ns` all do. A browser bundle records the files
+  it packages - assets, the page shell, the icon, the installed middleware -
+  apart from the ones it compiles, so a change confined to those re-packages
+  the bundle without recompiling the module. `--force` compiles unconditionally.
   Independent manifest targets build concurrently up to the logical CPU count.
   Colliding outputs and profiled builds stay serial.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the

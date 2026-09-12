@@ -38,6 +38,31 @@ static ns_bool fresh(const char *artifact, const char *config, const char **inpu
     return result;
 }
 
+// A bundle build records the files it compiles and the files it copies beside
+// the artifact in separate groups.
+static void record_bundle(const char *artifact, const char *config, const char **compiled,
+                          i32 compiled_count, const char **packaged, i32 packaged_count) {
+    ns_build_cache cache;
+    ns_build_cache_open(&cache, ns_str_cstr((char *)artifact), ns_str_cstr((char *)config));
+    for (i32 i = 0; i < compiled_count; i++) ns_build_cache_add(&cache, ns_str_cstr((char *)compiled[i]));
+    for (i32 i = 0; i < packaged_count; i++) ns_build_cache_add_package(&cache, ns_str_cstr((char *)packaged[i]));
+    ns_expect(ns_build_cache_write(&cache), "a bundle build writes its input stamps.");
+    ns_build_cache_free(&cache);
+}
+
+// What the two groups of a build that collects `compiled` and `packaged` make
+// of the recorded artifact.
+static ns_build_cache_state state(const char *artifact, const char *config, const char **compiled,
+                                  i32 compiled_count, const char **packaged, i32 packaged_count) {
+    ns_build_cache cache;
+    ns_build_cache_open(&cache, ns_str_cstr((char *)artifact), ns_str_cstr((char *)config));
+    for (i32 i = 0; i < compiled_count; i++) ns_build_cache_add(&cache, ns_str_cstr((char *)compiled[i]));
+    for (i32 i = 0; i < packaged_count; i++) ns_build_cache_add_package(&cache, ns_str_cstr((char *)packaged[i]));
+    ns_build_cache_state result = ns_build_cache_state_of(&cache);
+    ns_build_cache_free(&cache);
+    return result;
+}
+
 int main(void) {
     char root[] = "/tmp/ns-build-cache-XXXXXX";
     ns_expect(mkdtemp(root) != ns_null, "build cache test creates a fixture directory.");
@@ -138,6 +163,35 @@ int main(void) {
               "build cache test corrupts the cache file.");
     ns_expect(!fresh(artifact, config, inputs, 2),
               "a cache file from another version is ignored instead of trusted.");
+
+    // A packaged input - a script, a model, an image - is recorded apart from
+    // the compiled ones, so editing one re-packages a bundle without
+    // recompiling a module that did not change.
+    const char *packaged[] = {asset_file};
+    record_bundle(artifact, config, inputs, 2, packaged, 1);
+    ns_build_cache_state settled = state(artifact, config, inputs, 2, packaged, 1);
+    ns_expect(!settled.compile && !settled.package, "an unchanged bundle stays up to date.");
+
+    ns_expect(write_text(asset_file, "three\n"), "build cache test edits a packaged file.");
+    ns_build_cache_state edited = state(artifact, config, inputs, 2, packaged, 1);
+    ns_expect(!edited.compile && edited.package,
+              "an edited packaged file re-packages the bundle without recompiling it.");
+
+    // A build that only re-packages writes the cache without compiling, so it
+    // keeps the stamp of an input the linker discovered but did not collect.
+    ns_build_cache_open(&cache, ns_str_cstr(artifact), ns_str_cstr((char *)config));
+    ns_build_cache_add(&cache, ns_str_cstr(main_ns));
+    ns_build_cache_add_package(&cache, ns_str_cstr(asset_file));
+    ns_build_cache_state carried = ns_build_cache_state_of(&cache);
+    ns_expect(!carried.compile && carried.package, "a re-package leaves the compiled module alone.");
+    ns_expect(ns_build_cache_write(&cache), "the re-package records the carried input.");
+    ns_build_cache_free(&cache);
+    ns_expect(fresh(artifact, config, inputs, 2),
+              "a re-package keeps the discovered input guarding the artifact.");
+
+    ns_expect(write_text(other_ns, "fn other() {  }\n"), "build cache test edits the discovered input.");
+    ns_expect(state(artifact, config, inputs, 1, packaged, 1).compile,
+              "the discovered input still forces a recompile after a re-package.");
 
     return 0;
 }

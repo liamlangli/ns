@@ -8,6 +8,13 @@
 // time and size reuses the stored hash without reading the file, a touched
 // file is hashed again, and only a different hash, a different input set, a
 // different build configuration, or a missing artifact forces a recompile.
+//
+// A build that emits a bundle has two kinds of input. The artifact itself
+// depends on the files the build compiles; the bundle around it also depends
+// on the files it copies beside the artifact, such as a browser bundle's
+// assets, page shell, icon, and installed middleware. The two are recorded
+// separately so that editing a packaged file - a script, a model, an image -
+// re-packages the bundle without recompiling a module that did not change.
 
 typedef struct ns_build_stamp {
     ns_str path;     // input file, owned by the stamp
@@ -24,8 +31,17 @@ typedef struct ns_build_cache {
     ns_str recorded_config;   // build configuration of the recorded build
     ns_build_stamp *inputs;   // stamps collected for the current build
     ns_build_stamp *recorded; // stamps read back from `path`
+    ns_build_stamp *package_inputs;          // packaged stamps collected now
+    ns_build_stamp *recorded_package_inputs; // packaged stamps read back
     ns_bool loaded;           // a previous cache file was read
 } ns_build_cache;
+
+// What a recorded build is missing, reported separately for the two input
+// groups so a caller that emits a bundle can pay only for what changed.
+typedef struct ns_build_cache_state {
+    ns_bool compile; // the compiled artifact must be produced again
+    ns_bool package; // the files the bundle copies beside it must be refreshed
+} ns_build_cache_state;
 
 // Cache file that belongs to `artifact`: `<dir>/.ns-build/<name>.cache`. The
 // result is heap-owned. Keeping it below the output directory lets `ns clean`
@@ -45,11 +61,26 @@ void ns_build_cache_add(ns_build_cache *cache, ns_str path);
 // Stamp every regular file below `dir`. A missing directory adds nothing.
 void ns_build_cache_add_tree(ns_build_cache *cache, ns_str dir);
 
-// True when the artifact exists, the configuration matches, every collected
-// input is recorded with the same content hash, and every recorded input still
-// hashes to its recorded value. Recorded inputs that were not collected are
+// Stamp one packaged input: a file the emitted bundle copies beside the
+// artifact instead of compiling. A change to one of these re-packages the
+// bundle without recompiling the artifact.
+void ns_build_cache_add_package(ns_build_cache *cache, ns_str path);
+
+// Stamp every regular file below a packaged directory. A missing directory
+// adds nothing.
+void ns_build_cache_add_package_tree(ns_build_cache *cache, ns_str dir);
+
+// What the recorded build still has to redo. `compile` is set when the
+// artifact is missing, the configuration differs, or a compiled input is new,
+// edited, or removed; `package` is set when `compile` is or when a packaged
+// input changed. Every recorded input that was not collected again is
 // re-stamped here, so files discovered while linking a previous build (sibling
-// modules, installed module declarations) still guard the artifact.
+// modules, installed module declarations) still guard the artifact, and the
+// carried stamp keeps guarding it after a re-package writes the cache.
+ns_build_cache_state ns_build_cache_state_of(ns_build_cache *cache);
+
+// True when the state above has nothing left to do: the artifact exists, the
+// configuration matches, and every compiled and packaged input is unchanged.
 ns_bool ns_build_cache_fresh(ns_build_cache *cache);
 
 // Write the collected stamps. Returns false when the file cannot be written.

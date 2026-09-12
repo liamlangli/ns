@@ -8,7 +8,7 @@
 #include <sys/stat.h>
 #endif
 
-#define NS_BUILD_CACHE_HEADER "ns-build-cache/v1"
+#define NS_BUILD_CACHE_HEADER "ns-build-cache/v2"
 #define NS_BUILD_CACHE_DIR ".ns-build"
 #define NS_BUILD_CACHE_SUFFIX ".cache"
 
@@ -178,11 +178,30 @@ static ns_bool ns_build_line_starts_with(ns_str line, const char *prefix, i32 *c
 
 // Read the stamps of the previous build. A cache file that is missing, written
 // by another version, or truncated simply leaves the build without a record.
+//
+// One `stamp` line records a compiled input and one `package` line records a
+// packaged one; both carry the same four numeric fields and path.
+static ns_bool ns_build_parse_stamp(ns_str line, i32 cursor, ns_build_stamp **stamps) {
+    ns_build_stamp stamp = {0};
+    i64 nanoseconds = 0;
+    ns_bool valid = ns_build_parse_i64(line, &cursor, &stamp.mtime) &&
+                    ns_build_parse_i64(line, &cursor, &nanoseconds) &&
+                    ns_build_parse_i64(line, &cursor, &stamp.size) &&
+                    ns_build_parse_u64(line, &cursor, &stamp.hash) &&
+                    cursor + 1 < line.len && line.data[cursor] == ' ';
+    if (!valid) return false;
+    stamp.mtime_nsec = (i32)nanoseconds;
+    stamp.path = ns_str_slice(line, cursor + 1, line.len);
+    ns_array_push(*stamps, stamp);
+    return true;
+}
+
 static void ns_build_cache_read(ns_build_cache *cache) {
     ns_str text = ns_os_read_file(cache->path);
     if (text.data == ns_null) return;
 
     ns_build_stamp *recorded = ns_null;
+    ns_build_stamp *recorded_package = ns_null;
     ns_str config = ns_str_null;
     ns_bool header = false;
     ns_bool valid = true;
@@ -206,18 +225,9 @@ static void ns_build_cache_read(ns_build_cache *cache) {
         } else if (ns_build_line_starts_with(line, "artifact ", &cursor)) {
             // recorded for readability; the live artifact path is authoritative
         } else if (ns_build_line_starts_with(line, "stamp ", &cursor)) {
-            ns_build_stamp stamp = {0};
-            i64 nanoseconds = 0;
-            valid = ns_build_parse_i64(line, &cursor, &stamp.mtime) &&
-                    ns_build_parse_i64(line, &cursor, &nanoseconds) &&
-                    ns_build_parse_i64(line, &cursor, &stamp.size) &&
-                    ns_build_parse_u64(line, &cursor, &stamp.hash) &&
-                    cursor + 1 < line.len && line.data[cursor] == ' ';
-            if (valid) {
-                stamp.mtime_nsec = (i32)nanoseconds;
-                stamp.path = ns_str_slice(line, cursor + 1, line.len);
-                ns_array_push(recorded, stamp);
-            }
+            valid = ns_build_parse_stamp(line, cursor, &recorded);
+        } else if (ns_build_line_starts_with(line, "package ", &cursor)) {
+            valid = ns_build_parse_stamp(line, cursor, &recorded_package);
         } else {
             valid = false;
         }
@@ -227,10 +237,12 @@ static void ns_build_cache_read(ns_build_cache *cache) {
 
     if (!valid || !header) {
         ns_build_stamps_free(recorded);
+        ns_build_stamps_free(recorded_package);
         ns_str_free(config);
         return;
     }
     cache->recorded = recorded;
+    cache->recorded_package_inputs = recorded_package;
     cache->recorded_config = config;
     cache->loaded = true;
 }
@@ -256,14 +268,25 @@ void ns_build_cache_open(ns_build_cache *cache, ns_str artifact, ns_str config) 
     ns_build_cache_read(cache);
 }
 
-void ns_build_cache_add(ns_build_cache *cache, ns_str path) {
+// Stamp `path` into one input group unless it is already there. A recorded
+// stamp with the same modify time and size supplies the content hash, so an
+// input this build did not collect again is not read a second time.
+static void ns_build_cache_add_to(ns_build_stamp **group, ns_build_stamp *recorded, ns_str path) {
     if (path.data == ns_null || path.len == 0) return;
-    if (ns_build_stamp_find(cache->inputs, path) != ns_null) return;
-    ns_build_stamp stamp = ns_build_stamp_file(path, ns_build_stamp_find(cache->recorded, path));
-    ns_array_push(cache->inputs, stamp);
+    if (ns_build_stamp_find(*group, path) != ns_null) return;
+    ns_build_stamp stamp = ns_build_stamp_file(path, ns_build_stamp_find(recorded, path));
+    ns_array_push(*group, stamp);
 }
 
-void ns_build_cache_add_tree(ns_build_cache *cache, ns_str dir) {
+void ns_build_cache_add(ns_build_cache *cache, ns_str path) {
+    ns_build_cache_add_to(&cache->inputs, cache->recorded, path);
+}
+
+void ns_build_cache_add_package(ns_build_cache *cache, ns_str path) {
+    ns_build_cache_add_to(&cache->package_inputs, cache->recorded_package_inputs, path);
+}
+
+static void ns_build_cache_add_tree_into(ns_build_cache *cache, ns_str dir, ns_bool package) {
     if (dir.data == ns_null || dir.len == 0) return;
 #if defined(_WIN32)
     ns_str pattern = ns_path_join(dir, ns_str_cstr("*"));
@@ -275,8 +298,13 @@ void ns_build_cache_add_tree(ns_build_cache *cache, ns_str dir) {
         const char *name = fd.cFileName;
         if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
         ns_str child = ns_path_join(dir, ns_str_cstr((char *)name));
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ns_build_cache_add_tree(cache, child);
-        else ns_build_cache_add(cache, child);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            ns_build_cache_add_tree_into(cache, child, package);
+        } else if (package) {
+            ns_build_cache_add_package(cache, child);
+        } else {
+            ns_build_cache_add(cache, child);
+        }
         ns_str_free(child);
     } while (FindNextFileA(handle, &fd));
     FindClose(handle);
@@ -288,39 +316,73 @@ void ns_build_cache_add_tree(ns_build_cache *cache, ns_str dir) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
         ns_str child = ns_path_join(dir, ns_str_cstr(entry->d_name));
         struct stat st;
-        if (lstat(child.data, &st) == 0 && S_ISDIR(st.st_mode)) ns_build_cache_add_tree(cache, child);
-        else if (lstat(child.data, &st) == 0 && S_ISREG(st.st_mode)) ns_build_cache_add(cache, child);
+        if (lstat(child.data, &st) == 0 && S_ISDIR(st.st_mode)) {
+            ns_build_cache_add_tree_into(cache, child, package);
+        } else if (lstat(child.data, &st) == 0 && S_ISREG(st.st_mode)) {
+            if (package) ns_build_cache_add_package(cache, child);
+            else ns_build_cache_add(cache, child);
+        }
         ns_str_free(child);
     }
     closedir(handle);
 #endif
 }
 
-ns_bool ns_build_cache_fresh(ns_build_cache *cache) {
-    if (!cache->loaded) return false;
-    if (!ns_str_equals(cache->recorded_config, cache->config)) return false;
-    if (!ns_build_path_exists(cache->artifact)) return false;
+void ns_build_cache_add_tree(ns_build_cache *cache, ns_str dir) {
+    ns_build_cache_add_tree_into(cache, dir, false);
+}
 
+void ns_build_cache_add_package_tree(ns_build_cache *cache, ns_str dir) {
+    ns_build_cache_add_tree_into(cache, dir, true);
+}
+
+// True when one input group differs from what the recorded build stamped.
+// Recorded inputs the current build did not collect are stamped here: a file
+// the linker discovered while linking, an installed module, or the middleware
+// a bundle copies in. An unchanged one joins `collected` so the cache this
+// build writes keeps guarding it; an edited or deleted one forces the caller
+// to redo the work that produced the group.
+static ns_bool ns_build_cache_group_changed(ns_build_stamp **collected, ns_build_stamp *recorded) {
     // Every input of this build must be recorded with the same content: a
     // source added to the project is not in the record and forces a rebuild.
-    for (i32 i = 0, l = (i32)ns_array_length(cache->inputs); i < l; i++) {
-        ns_build_stamp *input = &cache->inputs[i];
-        ns_build_stamp *recorded = ns_build_stamp_find(cache->recorded, input->path);
-        if (recorded == ns_null) return false;
-        if (recorded->hash != input->hash || recorded->size != input->size) return false;
+    for (i32 i = 0, l = (i32)ns_array_length(*collected); i < l; i++) {
+        ns_build_stamp *input = &(*collected)[i];
+        ns_build_stamp *was = ns_build_stamp_find(recorded, input->path);
+        if (was == ns_null || was->hash != input->hash || was->size != input->size) return true;
     }
 
-    // Inputs the previous build discovered while linking are not collected up
-    // front, so stamp them here. An edited or deleted one forces a rebuild.
-    for (i32 i = 0, l = (i32)ns_array_length(cache->recorded); i < l; i++) {
-        ns_build_stamp *recorded = &cache->recorded[i];
-        if (ns_build_stamp_find(cache->inputs, recorded->path) != ns_null) continue;
-        ns_build_stamp current = ns_build_stamp_file(recorded->path, recorded);
-        ns_bool same = current.hash == recorded->hash && current.size == recorded->size;
-        ns_str_free(current.path);
-        if (!same) return false;
+    ns_bool changed = false;
+    for (i32 i = 0, l = (i32)ns_array_length(recorded); i < l; i++) {
+        ns_build_stamp *was = &recorded[i];
+        if (ns_build_stamp_find(*collected, was->path) != ns_null) continue;
+        ns_build_stamp current = ns_build_stamp_file(was->path, was);
+        if (current.hash == was->hash && current.size == was->size) {
+            ns_array_push(*collected, current);
+        } else {
+            ns_str_free(current.path);
+            changed = true;
+        }
     }
-    return true;
+    return changed;
+}
+
+ns_build_cache_state ns_build_cache_state_of(ns_build_cache *cache) {
+    ns_build_cache_state state = {.compile = true, .package = true};
+    if (!cache->loaded) return state;
+    if (!ns_str_equals(cache->recorded_config, cache->config)) return state;
+    if (!ns_build_path_exists(cache->artifact)) return state;
+
+    state.compile = ns_build_cache_group_changed(&cache->inputs, cache->recorded);
+    state.package = state.compile
+                        ? true
+                        : ns_build_cache_group_changed(&cache->package_inputs,
+                                                       cache->recorded_package_inputs);
+    return state;
+}
+
+ns_bool ns_build_cache_fresh(ns_build_cache *cache) {
+    ns_build_cache_state state = ns_build_cache_state_of(cache);
+    return !state.compile && !state.package;
 }
 
 static void ns_build_cache_ensure_dir(ns_str path) {
@@ -347,12 +409,20 @@ ns_bool ns_build_cache_write(ns_build_cache *cache) {
                 (long long)stamp->mtime_nsec, (long long)stamp->size, (unsigned long long)stamp->hash,
                 stamp->path.len, stamp->path.data);
     }
+    for (i32 i = 0, l = (i32)ns_array_length(cache->package_inputs); i < l; i++) {
+        ns_build_stamp *stamp = &cache->package_inputs[i];
+        fprintf(file, "package %lld %lld %lld %llu %.*s\n", (long long)stamp->mtime,
+                (long long)stamp->mtime_nsec, (long long)stamp->size, (unsigned long long)stamp->hash,
+                stamp->path.len, stamp->path.data);
+    }
     return fclose(file) == 0;
 }
 
 void ns_build_cache_free(ns_build_cache *cache) {
     ns_build_stamps_free(cache->inputs);
     ns_build_stamps_free(cache->recorded);
+    ns_build_stamps_free(cache->package_inputs);
+    ns_build_stamps_free(cache->recorded_package_inputs);
     ns_str_free(cache->path);
     ns_str_free(cache->artifact);
     ns_str_free(cache->config);

@@ -231,6 +231,10 @@ recorded input hashes to its recorded value; otherwise it recompiles. The
 record covers the manifest, the project source set, sibling modules and
 installed module declarations the linker read, packaged assets, and the `ns`
 executable itself, along with the artifact kind, host target, and output path.
+A build that emits a bundle records the files it packages - assets, the page
+shell, the icon, the installed middleware - apart from the ones it compiles, so
+a change confined to those re-packages the bundle and leaves the module in
+place.
 `--force` skips the check and compiles unconditionally.
 
 `ns clean [path]` removes what builds generate for the nearest project: the
