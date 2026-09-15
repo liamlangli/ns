@@ -187,4 +187,16 @@ i32 os_launch_ns_project(const char *folder, const char *entry) {
     }
     return 1;
 }
+
+i32 os_share_file(const char *path) {
+    if (!path || !path[0]) return 0;
+    NSString *name = [NSString stringWithUTF8String:path];
+    if (!name || ![[NSFileManager defaultManager] fileExistsAtPath:name]) return 0;
+    NSURL *url = [NSURL fileURLWithPath:name];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[url]];
+    });
+    return 1;
+}
+
 #endif

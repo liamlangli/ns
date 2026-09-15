@@ -35,4 +35,38 @@ i32 os_launch_ns_project(const char *folder, const char *entry) {
     return 0;
 }
 
+
+#if TARGET_OS_IOS && !TARGET_OS_TV && !TARGET_OS_VISION
+#import <UIKit/UIKit.h>
+i32 os_share_file(const char *path) {
+    if (!path || !path[0]) return 0;
+    NSString *name = [NSString stringWithUTF8String:path];
+    if (!name || ![[NSFileManager defaultManager] fileExistsAtPath:name]) return 0;
+    NSURL *url = [NSURL fileURLWithPath:name];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = nil;
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (scene.activationState != UISceneActivationStateForegroundActive || ![scene isKindOfClass:UIWindowScene.class]) continue;
+            for (UIWindow *candidate in ((UIWindowScene *)scene).windows) {
+                if (candidate.isKeyWindow) { window = candidate; break; }
+            }
+        }
+        UIViewController *host = window.rootViewController;
+        while (host.presentedViewController) host = host.presentedViewController;
+        if (!host) return;
+        UIActivityViewController *sheet = [[UIActivityViewController alloc] initWithActivityItems:@[url] applicationActivities:nil];
+        // iPad requires an explicit popover anchor.
+        sheet.popoverPresentationController.sourceView = host.view;
+        sheet.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(host.view.bounds), CGRectGetMidY(host.view.bounds), 1, 1);
+        [host presentViewController:sheet animated:YES completion:nil];
+#if !__has_feature(objc_arc)
+        [sheet release];
+#endif
+    });
+    return 1;
+}
+#else
+i32 os_share_file(const char *path) { ns_unused(path); return 0; }
+#endif
+
 #endif

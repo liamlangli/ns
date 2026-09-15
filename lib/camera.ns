@@ -1,0 +1,44 @@
+mod camera
+
+// Apple camera capture. One session, controlled from the main/application thread.
+// Permission: 0 undecided, 1 granted, 2 denied/restricted. Request is asynchronous.
+// Opening never requests permission implicitly. No microphone is captured.
+lit CAMERA_BACK = 0
+lit CAMERA_FRONT = 1
+lit CAMERA_STOPPED = 0
+lit CAMERA_STARTING = 1
+lit CAMERA_RUNNING = 2
+lit CAMERA_INTERRUPTED = 3
+lit CAMERA_FAILED = -1
+lit CAMERA_RECORD_IDLE = 0
+lit CAMERA_RECORDING = 1
+lit CAMERA_RECORD_FINISHING = 2
+lit CAMERA_RECORD_SAVED = 3
+lit CAMERA_RECORD_FAILED = -1
+
+struct camera_frame {
+    width: i32,
+    height: i32,
+    sequence: i64,
+    timestamp: f64
+}
+
+ref fn camera_permission() i32
+ref fn camera_request_permission()
+// 720p, portrait on iOS, unmirrored RGBA. fps is 15 or 30.
+// Returns acceptance; poll camera_status for asynchronous startup failure.
+ref fn camera_open(position: i32, fps: i32) bool
+ref fn camera_close()
+ref fn camera_status() i32
+// Copies the newest frame only when newer than info.sequence. Bounded storage,
+// no capture backlog. capacity must not exceed the allocated byte array length.
+// A small buffer fails without modifying either output. timestamp is seconds on
+// the capture clock; subtract the first frame timestamp for clip-relative time.
+ref fn camera_read_rgba(data: [u8], capacity: i32, info: ref camera_frame) bool
+// H.264 MP4 with original capture timestamps. Existing paths are never replaced.
+// Start/stop are asynchronous; SAVED means the MP4 has finished writing.
+ref fn camera_record_start(path: str) bool
+ref fn camera_record_stop()
+ref fn camera_record_status() i32
+ref fn camera_record_duration() f64
+ref fn camera_last_error() str

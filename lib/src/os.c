@@ -846,3 +846,7 @@ i32 os_process_stop(i32 pid) {
     return 1;
 #endif
 }
+
+#if !defined(__APPLE__)
+i32 os_share_file(const char *path) { ns_unused(path); return 0; }
+#endif

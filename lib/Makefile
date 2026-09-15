@@ -306,3 +306,18 @@ else
 $(NS_COMPRESS_STATIC): $(NS_COMPRESS_OBJS) | $(NS_BINDIR)
 	$(NS_AR) rcs $@ $^
 endif
+
+# Camera remains a feature library; never link AVFoundation into the interpreter.
+ifeq ($(NS_OS), $(NS_DARWIN))
+NS_STD_SHARED += $(NS_BINDIR)/camera$(NS_DYLIB_SUFFIX)
+NS_STD_STATIC += $(NS_BINDIR)/libcamera.a
+std: $(NS_BINDIR)/camera$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/libcamera.a
+shared: $(NS_BINDIR)/camera$(NS_DYLIB_SUFFIX)
+static: $(NS_BINDIR)/libcamera.a
+$(NS_BINDIR)/lib/camera.apple.o: lib/src/camera.apple.m lib/include/camera.h | $(NS_DIRS)
+	$(NS_CC) -c -fPIC -fobjc-arc -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
+$(NS_BINDIR)/camera$(NS_DYLIB_SUFFIX): $(NS_BINDIR)/lib/camera.apple.o
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework Foundation
+$(NS_BINDIR)/libcamera.a: $(NS_BINDIR)/lib/camera.apple.o
+	$(NS_AR) rcs $@ $^
+endif

@@ -333,6 +333,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/storage_apple_compile.sh
+	sh test/camera_apple_compile.sh
 	sh test/gpu_metal_dispatch_test.sh
 	node test/ns_wasm_runtime_test.mjs
 	node test/ns_wasm_ui_test.mjs "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -373,16 +374,16 @@ install: all
 	cp $(NS_NATIVE_RT_OBJ) $(NS_INSTALL_ROOT)/lib/ns_native_rt.o
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
 	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
-		lib/net.ns lib/dynamic.ns lib/compress.ns lib/storage.ns lib/audio.ns \
+		lib/net.ns lib/dynamic.ns lib/compress.ns lib/storage.ns lib/audio.ns lib/camera.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	cp lib/src/io.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/view.gamepad.apple.m \
 		lib/src/gpu.c lib/src/gpu.metal.m lib/src/NSApp.swift \
 		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \
-		lib/src/audio.apple.m \
+		lib/src/audio.apple.m lib/src/camera.apple.m \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/
 	cp lib/include/net.h lib/include/os.h lib/include/view.h lib/include/gpu.h lib/include/gpu_const.h \
-		lib/include/storage.h lib/include/storage.internal.h lib/include/compress.h lib/include/audio.h \
+		lib/include/storage.h lib/include/storage.internal.h lib/include/compress.h lib/include/audio.h lib/include/camera.h \
 		lib/include/stb_image.h lib/include/stb_image_resize2.h lib/include/stb_image_write.h \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/
 	cp third_party/zstd/lib/zstd.h third_party/zstd/lib/zstd_errors.h \
@@ -481,7 +482,7 @@ IOS_ZSTD_OBJS := $(patsubst third_party/zstd/lib/%.c,$(IOS_FEATURE_OBJDIR)/third
 IOS_COMPRESS_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/compress.o $(IOS_ZLIB_OBJS) $(IOS_ZSTD_OBJS)
 
 IOS_FEATURE_LIBS := $(addprefix $(IOS_FEATURE_LIBDIR)/lib,io.a os.a net.a http.a wasm_dev.a term.a view.a gpu.a ui.a \
-	audio.a storage.a dynamic.a compress.a)
+	audio.a camera.a storage.a dynamic.a compress.a)
 
 .PHONY: ns_xcframework ns_apple_dirs ns_apple_clean macos_arm64 ios_arm64 ios_static xcframework apple-xcframework
 
@@ -597,3 +598,10 @@ ns_apple_clean:
 
 endif
 # ===== end Apple (Darwin) XCFramework block =====
+
+$(IOS_FEATURE_OBJDIR)/lib/src/camera.apple.o: lib/src/camera.apple.m lib/include/camera.h
+	@mkdir -p $(dir $@)
+	$(NS_CC) -c -fobjc-arc $< -o $@ $(NS_LIB_INC) $(IOS_FEATURE_CFLAGS)
+$(IOS_FEATURE_LIBDIR)/libcamera.a: $(IOS_FEATURE_OBJDIR)/lib/src/camera.apple.o
+	@mkdir -p $(dir $@)
+	$(NS_AR) rcs $@ $^

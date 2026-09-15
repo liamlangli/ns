@@ -83,3 +83,5 @@ i32 os_launch_ns_profile(const char *exe, const char *folder, const char *entry,
 i32 os_process_alive(i32 pid);
 // Ask that child to terminate. Returns 1 when the request was delivered.
 i32 os_process_stop(i32 pid);
+
+i32 os_share_file(const char *path);

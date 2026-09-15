@@ -652,6 +652,7 @@ static const char *const ns_xcode_feature_sources[] = {
     "storage.apple.m",
     "compress.c",
     "audio.apple.m",
+    "camera.apple.m",
     "zstd/common/debug.c",
     "zstd/common/entropy_common.c",
     "zstd/common/error_private.c",
@@ -693,6 +694,7 @@ static const char *const ns_xcode_feature_headers[] = {
     "storage.internal.h",
     "compress.h",
     "audio.h",
+    "camera.h",
     "zstd/zstd.h",
     "zstd/zstd_errors.h",
     "zstd/common/allocations.h",
@@ -734,7 +736,7 @@ static const char *const ns_xcode_feature_headers[] = {
 
 static const char *const ns_xcode_resource_modules[] = {
     "std.ns", "shader.ns", "simd.ns", "task.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns", "net.ns",
-    "storage.ns", "compress.ns", "audio.ns",
+    "storage.ns", "compress.ns", "audio.ns", "camera.ns",
 };
 
 static const char *const ns_xcode_ui_assets[] = {
@@ -881,6 +883,23 @@ static ns_bool ns_xcode_copy_ui_asset(const char *runtime_root, const char *mana
     return ok;
 }
 
+static ns_bool ns_xcode_uses_camera(const char *source) {
+    for (const char *line = source; *line;) {
+        const char *end = strchr(line, '\n');
+        if (!end) end = line + strlen(line);
+        const char *p = line;
+        while (p < end && (*p == ' ' || *p == '\t')) ++p;
+        if (end - p >= 4 && strncmp(p, "use", 3) == 0 && (p[3] == ' ' || p[3] == '\t')) {
+            p += 4;
+            while (p < end && (*p == ' ' || *p == '\t')) ++p;
+            if (end - p >= 6 && strncmp(p, "camera", 6) == 0 &&
+                (p + 6 == end || p[6] == ' ' || p[6] == '\t' || p[6] == '\r' || p[6] == '/')) return true;
+        }
+        line = *end ? end + 1 : end;
+    }
+    return false;
+}
+
 static ns_bool ns_xcode_validate_modules(const char *linked_source) {
     const char *line = linked_source;
     while (*line) {
@@ -903,13 +922,13 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
             (len == 2 && strncmp(start, "ui", len) == 0) || (len == 2 && strncmp(start, "os", len) == 0) ||
             (len == 3 && strncmp(start, "gpu", len) == 0) || (len == 2 && strncmp(start, "io", len) == 0) ||
             (len == 3 && strncmp(start, "net", len) == 0) || (len == 7 && strncmp(start, "storage", len) == 0) ||
-            (len == 8 && strncmp(start, "compress", len) == 0) || (len == 5 && strncmp(start, "audio", len) == 0)) {
+            (len == 8 && strncmp(start, "compress", len) == 0) || (len == 5 && strncmp(start, "audio", len) == 0) || (len == 6 && strncmp(start, "camera", len) == 0)) {
             line = *end ? end + 1 : end;
             continue;
         }
         fprintf(stderr,
                 "project: module '%.*s' requires external FFI, which generated Apple apps do not support; "
-                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, storage, compress, and audio\n",
+                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, storage, compress, audio, and camera\n",
                 (int)len, start);
         return false;
     }
@@ -1048,7 +1067,7 @@ static ns_bool ns_xcode_append_orientations(ns_xcode_buffer *plist, const char *
 }
 
 static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platform, const char *safe_name, const char *version,
-                                    u32 orientations) {
+                                    u32 orientations, ns_bool uses_camera) {
     ns_xcode_buffer plist = {0};
     ns_bool mobile = strcmp(platform, "macOS") != 0;
     char *escaped_name = ns_xcode_xml_escape(safe_name);
@@ -1079,6 +1098,10 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
         free(escaped_version);
         ns_xcode_buffer_free(&plist);
         return false;
+    }
+    if (uses_camera && !ns_xcode_buffer_append(&plist,
+            "  <key>NSCameraUsageDescription</key><string>Capture video for on-device processing.</string>\n")) {
+        free(escaped_name); free(escaped_version); ns_xcode_buffer_free(&plist); return false;
     }
     if (mobile && !ns_xcode_buffer_append(&plist, "  <key>UILaunchScreen</key><dict/>\n")) {
         free(escaped_name);
@@ -1208,9 +1231,9 @@ static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *man
     char *generated = ns_xcode_path_join(managed_root, "Generated");
     char *linked = generated ? ns_xcode_path_join(generated, "LinkedProject.ns") : NULL;
     ns_bool ok = linked && ns_xcode_write(linked, linked_source, strlen(linked_source), true) &&
-                 ns_xcode_write_plist(managed_root, "macOS", safe_name, version, spec->orientations) &&
-                 ns_xcode_write_plist(managed_root, "iOS", safe_name, version, spec->orientations) &&
-                 ns_xcode_write_plist(managed_root, "visionOS", safe_name, version, spec->orientations);
+                 ns_xcode_write_plist(managed_root, "macOS", safe_name, version, spec->orientations, ns_xcode_uses_camera(linked_source)) &&
+                 ns_xcode_write_plist(managed_root, "iOS", safe_name, version, spec->orientations, ns_xcode_uses_camera(linked_source)) &&
+                 ns_xcode_write_plist(managed_root, "visionOS", safe_name, version, spec->orientations, ns_xcode_uses_camera(linked_source));
     free(generated);
     free(linked);
     ns_unused(spec);
@@ -1299,11 +1322,11 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
     }
     if (ok_ld) {
         ok_ld = macos ? ns_xcode_buffer_append(&ldflags,
-                                               ", \"-framework\", AVFAudio, \"-framework\", AppKit, \"-framework\", CoreHaptics, "
+                                               ", \"-framework\", AVFAudio, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", AppKit, \"-framework\", CoreHaptics, "
                                                "\"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", GameController, \"-framework\", Metal, "
                                                "\"-framework\", MetalKit, \"-framework\", QuartzCore, \"-lsqlite3\", \"-lz\")")
                       : ns_xcode_buffer_append(&ldflags,
-                                               ", \"-framework\", AVFAudio, \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", GameController, "
+                                               ", \"-framework\", AVFAudio, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", GameController, "
                                                "\"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, "
                                                "\"-framework\", UIKit, \"-lsqlite3\", \"-lz\")");
     }

@@ -113,6 +113,10 @@ ref fn os_open_file_dialog(title: str) str
 // Native save-file panel. Returns an empty string when cancelled/unavailable.
 ref fn os_save_file_dialog(title: str, suggested_name: str) str
 
+// Show the platform share sheet for an existing local file (iOS/macOS).
+// Returns 1 when scheduled, 0 when unsupported/invalid. Completion is user-owned.
+ref fn os_share_file(path: str) i32
+
 // Project/window helpers. Folder selection is native where the platform UI
 // backend supports it. os_launch_ns_project starts this interpreter again with
 // `run entry`, using `folder` as the child process working directory.

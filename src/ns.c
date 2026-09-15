@@ -3654,7 +3654,8 @@ static ns_bool ns_project_module_embeddable(ns_str module) {
            ns_str_equals(module, ns_str_cstr("io")) ||
             ns_str_equals(module, ns_str_cstr("storage")) ||
            ns_str_equals(module, ns_str_cstr("compress")) ||
-           ns_str_equals(module, ns_str_cstr("audio"));
+           ns_str_equals(module, ns_str_cstr("audio")) ||
+           ns_str_equals(module, ns_str_cstr("camera"));
 }
 
 void ns_exec_project(ns_str path) {
