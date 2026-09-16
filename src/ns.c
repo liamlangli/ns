@@ -4629,9 +4629,15 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
 #endif
     }
     if (honor_link && selection.link) {
-        ns_str executable = ns_linked_run_executable(filename, target_name);
-        ns_exec_linked(executable);
-        return;
+        // A host without a native executable backend cannot build the linked
+        // artifact. Interpret the target instead, the same way `ns build`
+        // packages a launcher for an interpreted one.
+        if (ns_build_host_emits_executable()) {
+            ns_str executable = ns_linked_run_executable(filename, target_name);
+            ns_exec_linked(executable);
+            return;
+        }
+        ns_warn("run", "no native executable backend on this host; running the target interpreted.\n");
     }
     ns_line_loc *map = ns_null;
     ns_str merged = ns_project_link_all(scope, source, filename, false, &map, ns_null);

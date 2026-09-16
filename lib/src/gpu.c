@@ -1,11 +1,12 @@
 // GPU device management — platform fallback and the portable v2 core.
 //
 // A real GPU backend is selected per platform in gpu.h: Metal on Apple
-// (gpu.metal.m), DirectX 12 on Windows (gpu.dx12.c). On platforms without a
-// backend (currently Linux) this file provides no-op definitions for the whole
-// gpu.h API so the statically linked standard library keeps resolving every
-// gpu_* symbol registered in src/ns_vm_lib.c. ns programs that drive the GPU
-// still load and run here; they simply render nothing.
+// (gpu.metal.m), DirectX 12 on Windows (gpu.dx12.c), Vulkan on Linux
+// (gpu.vulkan.c). On a platform without a backend this file provides no-op
+// definitions for the whole gpu.h API so the statically linked standard
+// library keeps resolving every gpu_* symbol registered in src/ns_vm_lib.c.
+// ns programs that drive the GPU still load and run here; they simply render
+// nothing.
 //
 // The v2 core at the bottom of this file (doc/gpu.md) is compiled on every
 // platform: it owns virtual addressing, host-side shadows, the frame ring,
@@ -16,7 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if !defined(NS_GPU_METAL) && !defined(NS_GPU_DX12)
+#if !defined(NS_GPU_METAL) && !defined(NS_GPU_DX12) && !defined(NS_GPU_VULKAN)
 
 ns_bool gpu_request_device(view *v) {
     ns_unused(v);

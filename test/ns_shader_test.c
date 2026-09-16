@@ -351,7 +351,7 @@ int main() {
                       ns_shader_test_has(r.r, "ns_storage_buffer_0[index] =") &&
                       ns_shader_test_has(r.r, "buffer ns_storage_block_1") &&
                       ns_shader_test_has(r.r, "ns_storage_buffer_1[index] =") &&
-                      ns_shader_test_has(r.r, "binding = 10") && ns_shader_test_has(r.r, "buffer ns_storage_block_7"),
+                      ns_shader_test_has(r.r, "binding = 15") && ns_shader_test_has(r.r, "buffer ns_storage_block_7"),
                   "glsl storage-buffer intrinsics transpile.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
@@ -387,8 +387,14 @@ int main() {
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, vs_buffer, NS_SHADER_GLSL_VULKAN, NS_SHADER_STAGE_AUTO);
-        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "std430) readonly buffer ns_storage_block_2"),
-                  "glsl read-only storage buffers are readonly.");
+        ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "binding = 10, std430) readonly buffer ns_storage_block_2"),
+                  "glsl read-only storage buffers are readonly and clear of the root block.");
+        if (!ns_return_is_error(r)) {
+            ns_expect(ns_shader_test_has(r.r, "uint ns_vertex_id;") &&
+                          ns_shader_test_has(r.r, "ns_vertex_id = uint(gl_VertexIndex);") &&
+                          ns_shader_test_has(r.r, "ns_patch"),
+                      "glsl publishes the vertex id and escapes reserved identifiers.");
+        }
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         // A program that also writes the buffer keeps it writable everywhere.
@@ -562,6 +568,12 @@ int main() {
                       ns_shader_test_has(r.r, "layout(location = 1) out vec4 ns_frag_color1") &&
                       ns_shader_test_has(r.r, "ns_frag_color1 = ns_ret.color1"),
                   "glsl fragment wrapper writes both MRT locations.");
+        // The mask map shares binding 2 with the root block on MSL/HLSL/WGSL,
+        // which have separate namespaces; GLSL does not, so it moves aside.
+        if (!ns_return_is_error(r)) {
+            ns_expect(ns_shader_test_has(r.r, "layout(set = 0, binding = 4) uniform sampler2D ns_mask_map"),
+                      "glsl binds the mask map clear of the root block.");
+        }
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);
 
         r = ns_shader_transpile(&vm, &ctx, fs_mrt, NS_SHADER_WGSL, NS_SHADER_STAGE_FRAGMENT);

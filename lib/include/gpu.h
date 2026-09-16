@@ -9,13 +9,14 @@
 // Platform-forced GPU backend selection.
 //
 // The backend is chosen at compile time from the platform define rather than an
-// opt-in flag: Metal on Apple, DirectX 12 on Windows. Other platforms (Linux)
-// fall back to the no-op stub in gpu.c until a Vulkan backend is wired up.
-// Only amd64 and aarch64 targets are supported.
+// opt-in flag: Metal on Apple, DirectX 12 on Windows, Vulkan on Linux. Only
+// amd64 and aarch64 targets are supported.
 #if defined(NS_DARWIN)
 #  define NS_GPU_METAL 1
 #elif defined(NS_WIN)
 #  define NS_GPU_DX12 1
+#elif defined(NS_LINUX)
+#  define NS_GPU_VULKAN 1
 #endif
 
 typedef struct { f32 r, g, b, a; } gpu_color;
@@ -193,3 +194,10 @@ typedef struct gpu_v2_ops {
 
 void gpu_v2_set_backend(const gpu_v2_ops *ops, u32 caps, u32 storage_slot_count);
 void gpu_v2_frame_end(void); // backends call this from gpu_commit to recycle the ring
+
+// ---- Vulkan/Wayland frame seam (Linux) --------------------------------------
+// view.linux.c resolves these with dlsym around each application frame: the
+// swapchain image is acquired before the callback and presented after it. A
+// program without a view never calls them.
+void gpu_vk_begin_frame(view *v);
+void gpu_vk_end_frame(view *v);

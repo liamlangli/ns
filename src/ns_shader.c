@@ -19,6 +19,11 @@
 #define NS_SHADER_MAX_ARRAY_LEN 256
 #define NS_SHADER_STORAGE_BINDING_BASE 3
 #define NS_SHADER_WGSL_STORAGE_BINDING_BASE 7
+// GLSL has one binding namespace for every resource kind, so the mask map and
+// the storage buffers move out of the way of the root block at binding 2. The
+// Vulkan backend builds its descriptor set layout from these numbers.
+#define NS_SHADER_GLSL_MASK_BINDING 4
+#define NS_SHADER_GLSL_STORAGE_BINDING_BASE 8
 // The root block a generated shader declares, in float4s. Metal takes the root
 // as a pointer and reads whatever the program uploaded, so a Metal shader has
 // never been bounded by a declared length. Every other backend declares the
@@ -184,10 +189,33 @@ static ns_bool ns_shader_wgsl_reserved(ns_str token) {
     return false;
 }
 
-// Nano Script deliberately permits several names which WGSL reserves for
-// future language features. Prefix only whole reserved identifiers after
+// GLSL reserves words the WGSL list does not, and ns code uses some of them
+// (`patch`, `sample`). Only words the emitter itself never writes belong here:
+// `readonly`, `writeonly`, `layout`, `buffer` and the built-in type names are
+// emitted as GLSL syntax and must survive the pass untouched.
+static ns_bool ns_shader_glsl_reserved(ns_str token) {
+    static const char *words[] = {
+        "active", "attribute", "atomic_uint", "cast", "centroid", "class", "coherent",
+        "column_major", "common", "dvec2", "dvec3", "dvec4", "double", "early_fragment_tests",
+        "enum", "extern", "external", "f16vec2", "f16vec3", "f16vec4", "filter", "fixed",
+        "fvec2", "fvec3", "fvec4", "goto", "half", "highp", "hvec2", "hvec3", "hvec4",
+        "i16vec2", "i16vec3", "i16vec4", "inline", "input", "interface", "invariant", "long",
+        "lowp", "lvec2", "lvec3", "lvec4", "mediump", "namespace", "noinline",
+        "noperspective", "output", "packed", "partition", "patch", "precise", "precision",
+        "public", "resource", "restrict", "row_major", "sample", "sampler3DRect", "short",
+        "sizeof", "static", "subroutine", "superp", "template", "this", "typedef", "u16vec2",
+        "u16vec3", "u16vec4", "union", "unsigned", "using", "varying", "volatile",
+    };
+    for (szt i = 0; i < sizeof(words) / sizeof(words[0]); ++i) {
+        if (ns_str_equals(token, ns_str_cstr(words[i]))) return true;
+    }
+    return false;
+}
+
+// Nano Script deliberately permits several names which WGSL and GLSL reserve
+// for future language features. Prefix only whole reserved identifiers after
 // emission so declarations and all their references stay in sync.
-static ns_str ns_shader_escape_wgsl_identifiers(ns_str source) {
+static ns_str ns_shader_escape_identifiers(ns_str source, ns_bool (*reserved)(ns_str)) {
     ns_str out = {.data = ns_null, .len = 0, .dynamic = true};
     for (i32 i = 0; i < source.len;) {
         i8 c = source.data[i];
@@ -199,12 +227,20 @@ static ns_str ns_shader_escape_wgsl_identifiers(ns_str source) {
         i32 end = i + 1;
         while (end < source.len && ns_shader_ident_char(source.data[end])) end++;
         ns_str token = ns_str_range(source.data + i, end - i);
-        if (ns_shader_wgsl_reserved(token)) ns_shader_cstr(&out, "ns_");
+        if (reserved(token)) ns_shader_cstr(&out, "ns_");
         ns_shader_str(&out, token);
         i = end;
     }
     ns_array_free(source.data);
     return out;
+}
+
+static ns_str ns_shader_escape_wgsl_identifiers(ns_str source) {
+    return ns_shader_escape_identifiers(source, ns_shader_wgsl_reserved);
+}
+
+static ns_str ns_shader_escape_glsl_identifiers(ns_str source) {
+    return ns_shader_escape_identifiers(source, ns_shader_glsl_reserved);
 }
 
 static ns_str ns_shader_literal_body(ns_token_t t) {
@@ -2245,11 +2281,15 @@ static ns_return_void ns_shader_emit_glsl_wrapper(ns_shader_emit *e, ns_shader_e
         ns_shader_cstr(&e->out, "();\n}\n");
         return ns_return_ok_void;
     }
-    ns_symbol *in_st = &e->vm->symbols[ns_type_index(s->fn.args[0].val.t)];
+    // A vertex entry may take no input struct: it builds its own vertices from
+    // the vertex id, so the wrapper declares no attributes and calls it bare.
+    ns_symbol *in_st = ns_array_length(s->fn.args) > 0
+                           ? &e->vm->symbols[ns_type_index(s->fn.args[0].val.t)]
+                           : ns_null;
 
     if (entry->stage == NS_SHADER_STAGE_VERTEX) {
         ns_symbol *io_st = &e->vm->symbols[ns_type_index(s->fn.ret)];
-        for (i32 f = 0, l = (i32)ns_array_length(in_st->st.fields); f < l; ++f) {
+        for (i32 f = 0; in_st && f < (i32)ns_array_length(in_st->st.fields); ++f) {
             ns_shader_cstr(&e->out, "layout(location = ");
             ns_shader_i32(&e->out, f);
             ns_shader_cstr(&e->out, ") in ");
@@ -2269,21 +2309,26 @@ static ns_return_void ns_shader_emit_glsl_wrapper(ns_shader_emit *e, ns_shader_e
             ns_shader_str(&e->out, io_st->st.fields[f].name);
             ns_shader_cstr(&e->out, ";\n");
         }
-        ns_shader_cstr(&e->out, "\nvoid main() {\n    ");
-        ns_shader_str(&e->out, in_st->name);
-        ns_shader_cstr(&e->out, " ns_in = ");
-        ns_shader_str(&e->out, in_st->name);
-        ns_shader_cstr(&e->out, "(");
-        for (i32 f = 0, l = (i32)ns_array_length(in_st->st.fields); f < l; ++f) {
-            if (f > 0) ns_shader_cstr(&e->out, ", ");
-            ns_shader_cstr(&e->out, "ns_in_");
-            ns_shader_str(&e->out, in_st->st.fields[f].name);
+        ns_shader_cstr(&e->out, "\nvoid main() {\n");
+        if (e->uses_vertex_id) ns_shader_cstr(&e->out, "    ns_vertex_id = uint(gl_VertexIndex);\n");
+        ns_shader_cstr(&e->out, "    ");
+        if (in_st) {
+            ns_shader_str(&e->out, in_st->name);
+            ns_shader_cstr(&e->out, " ns_in = ");
+            ns_shader_str(&e->out, in_st->name);
+            ns_shader_cstr(&e->out, "(");
+            for (i32 f = 0, l = (i32)ns_array_length(in_st->st.fields); f < l; ++f) {
+                if (f > 0) ns_shader_cstr(&e->out, ", ");
+                ns_shader_cstr(&e->out, "ns_in_");
+                ns_shader_str(&e->out, in_st->st.fields[f].name);
+            }
+            ns_shader_cstr(&e->out, ");\n    ");
         }
-        ns_shader_cstr(&e->out, ");\n    ");
         ns_shader_str(&e->out, io_st->name);
         ns_shader_cstr(&e->out, " ns_ret = ");
         ns_shader_str(&e->out, s->name);
-        ns_shader_cstr(&e->out, "(ns_in);\n    gl_Position = ns_ret.position;\n");
+        ns_shader_cstr(&e->out, in_st ? "(ns_in);\n    gl_Position = ns_ret.position;\n"
+                                      : "();\n    gl_Position = ns_ret.position;\n");
         for (i32 f = 0, l = (i32)ns_array_length(io_st->st.fields); f < l; ++f) {
             if (ns_shader_is_position_field(e->vm, &io_st->st.fields[f])) continue;
             ns_shader_cstr(&e->out, "    ns_out_");
@@ -2551,6 +2596,12 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     ns_shader_cstr(&e.out, ")\n");
     if (target == NS_SHADER_MSL) ns_shader_cstr(&e.out, "#include <metal_stdlib>\nusing namespace metal;\n\n");
     if (target == NS_SHADER_GLSL_VULKAN) ns_shader_cstr(&e.out, "#version 450\n\n");
+    // A GLSL vertex fn reads the vertex id through the same name MSL declares
+    // as a hidden entry parameter; here it is a file-scope value the wrapper's
+    // main fills in before the call.
+    if (target == NS_SHADER_GLSL_VULKAN && e.uses_vertex_id) {
+        ns_shader_cstr(&e.out, "uint ns_vertex_id;\n\n");
+    }
     if (target == NS_SHADER_HLSL) ns_shader_cstr(&e.out, "\n");
     if (target == NS_SHADER_WGSL) {
         ns_shader_cstr(&e.out, "\n");
@@ -2588,7 +2639,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
         ns_bool read_only = ns_shader_storage_is_const(&e, index);
         if (target == NS_SHADER_GLSL_VULKAN) {
             ns_shader_cstr(&e.out, "layout(set = 0, binding = ");
-            ns_shader_i32(&e.out, NS_SHADER_STORAGE_BINDING_BASE + index);
+            ns_shader_i32(&e.out, NS_SHADER_GLSL_STORAGE_BINDING_BASE + index);
             ns_shader_cstr(&e.out, ", std430) ");
             if (read_only) ns_shader_cstr(&e.out, "readonly ");
             ns_shader_cstr(&e.out, "buffer ns_storage_block_");
@@ -2778,7 +2829,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     }
     if (e.uses_mask_map && target == NS_SHADER_GLSL_VULKAN) {
         ns_shader_cstr(&e.out,
-            "layout(set = 0, binding = 2) uniform sampler2D ns_mask_map;\n"
+            "layout(set = 0, binding = 4) uniform sampler2D ns_mask_map;\n"
             "vec4 ns_mask_sample(vec2 coord) { return texture(ns_mask_map, coord); }\n\n");
     }
     if (e.uses_mask_map && target == NS_SHADER_HLSL) {
@@ -2819,7 +2870,9 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
     }
 #undef ns_shader_fail
 
-    ns_str out = target == NS_SHADER_WGSL ? ns_shader_escape_wgsl_identifiers(e.out) : e.out;
+    ns_str out = target == NS_SHADER_WGSL ? ns_shader_escape_wgsl_identifiers(e.out)
+               : target == NS_SHADER_GLSL_VULKAN ? ns_shader_escape_glsl_identifiers(e.out)
+                                                 : e.out;
     ns_array_free(e.pre.data);
     ns_array_free(e.structs);
     ns_array_free(e.fns);

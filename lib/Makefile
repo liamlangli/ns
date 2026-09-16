@@ -44,6 +44,13 @@ else ifeq ($(NS_OS), $(NS_LINUX))
 	NS_DYLIB_CREATE = -shared
 	NS_DYLIB_COMMON = -fPIC -g -Wl,-soname,$(@F) -Wl,-rpath,'$$ORIGIN'
 	NS_DYLIB_DEPS = $(NS_LDFLAGS)
+	# Wayland and Vulkan are the Linux view and GPU backends. shaderc compiles
+	# the GLSL the shader module emits into SPIR-V at runtime, exactly as the
+	# Metal backend compiles MSL.
+	NS_WAYLAND_LDFLAGS = -lwayland-client -lwayland-cursor
+	NS_VULKAN_LDFLAGS = -lvulkan -lshaderc_shared
+	NS_VIEW_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_WAYLAND_LDFLAGS)
+	NS_GPU_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_VULKAN_LDFLAGS)
 else
 	NS_DYLIB_CREATE = -shared
 	NS_DYLIB_COMMON = -fPIC -g
@@ -118,7 +125,8 @@ NS_STORAGE_OBJS = $(NS_BINDIR)/lib/storage.db.o $(NS_BINDIR)/lib/storage.cache.o
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.linux.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.posix.o
-	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.linux.o
+	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.linux.o $(NS_BINDIR)/lib/xdg-shell-protocol.o
+	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.vulkan.o
 	NS_STORAGE_OBJS += $(NS_BINDIR)/lib/storage.json.o
 else ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.osx.o $(NS_BINDIR)/lib/os.haptic.apple.o
@@ -171,6 +179,12 @@ NS_STD_STATIC = \
 	$(NS_STORAGE_STATIC)
 
 ifeq ($(NS_OS), $(NS_DARWIN))
+	NS_STD_SHARED += $(NS_AUDIO_DYLIB)
+	NS_STD_STATIC += $(NS_AUDIO_STATIC)
+else
+	# Other hosts keep the module resolvable with a silent stub, so a program
+	# written for Apple audio still links and runs.
+	NS_AUDIO_OBJS = $(NS_BINDIR)/lib/audio.stub.o
 	NS_STD_SHARED += $(NS_AUDIO_DYLIB)
 	NS_STD_STATIC += $(NS_AUDIO_STATIC)
 endif

@@ -411,6 +411,150 @@ static const char *ui_shader_src =
 "  return float4(in.col.rgb, in.col.a * opacity);\n"
 "}\n";
 
+// Vulkan/GLSL 450 form of the same renderer. The backend compiles each stage
+// with entry `main`, so the vertex source carries the one vertex `main` and
+// every fragment variant its own; the prelude declares the root block, the
+// storage buffer and the stage IO the Metal structs declare.
+#define UI_SHADER_GLSL_CAPACITY 8192
+
+static const char *ui_shader_glsl_vertex_prelude =
+    "#version 450\n"
+    "layout(set = 0, binding = 2, std140) uniform UiRoot {\n"
+    "    float texture_id;\n"
+    "    float unused_texture_id;\n"
+    "    float screen_width;\n"
+    "    float screen_height;\n"
+    "    float offset_x;\n"
+    "    float offset_y;\n"
+    "    uint vertex_offset;\n"
+    "    uint clip_offset;\n"
+    "    vec4 hud_center_enable;\n"
+    "    vec4 hud_right_hw;\n"
+    "    vec4 hud_up_hh;\n"
+    "    vec4 hud_proj;\n"
+    "    vec4 hud_depth;\n"
+    "} ns_root;\n"
+    "layout(set = 0, binding = 8, std430) readonly buffer UiStorage { uint values[]; } ns_storage_buffer_0_block;\n"
+    "#define ns_storage_buffer_0 ns_storage_buffer_0_block.values\n"
+    "layout(location = 0) out vec2 ns_pixel;\n"
+    "layout(location = 1) out vec2 ns_uv;\n"
+    "layout(location = 2) out vec4 ns_col;\n"
+    "layout(location = 3) out vec4 ns_params;\n";
+
+static const char *ui_shader_glsl_fragment_prelude =
+    "#version 450\n"
+    "layout(set = 0, binding = 2, std140) uniform UiRoot {\n"
+    "    float texture_id;\n"
+    "    float unused_texture_id;\n"
+    "    float screen_width;\n"
+    "    float screen_height;\n"
+    "    float offset_x;\n"
+    "    float offset_y;\n"
+    "    uint vertex_offset;\n"
+    "    uint clip_offset;\n"
+    "    vec4 hud_center_enable;\n"
+    "    vec4 hud_right_hw;\n"
+    "    vec4 hud_up_hh;\n"
+    "    vec4 hud_proj;\n"
+    "    vec4 hud_depth;\n"
+    "} ns_root;\n"
+    "layout(set = 0, binding = 8, std430) readonly buffer UiStorage { uint values[]; } ns_storage_buffer_0_block;\n"
+    "#define ns_storage_buffer_0 ns_storage_buffer_0_block.values\n"
+    "layout(location = 0) in vec2 ns_pixel;\n"
+    "layout(location = 1) in vec2 ns_uv;\n"
+    "layout(location = 2) in vec4 ns_col;\n"
+    "layout(location = 3) in vec4 ns_params;\n"
+    "layout(location = 0) out vec4 ns_frag_color;\n"
+    "bool ui_clip_discard() {\n"
+    "    uint clip_idx = uint(round(max(ns_params.w, 0.0)));\n"
+    "    if (clip_idx == 0u) { return false; }\n"
+    "    uint base = ns_root.clip_offset / 4u + (clip_idx - 1u) * 4u;\n"
+    "    vec4 c = vec4(uintBitsToFloat(ns_storage_buffer_0[base]), uintBitsToFloat(ns_storage_buffer_0[base + 1u]),\n"
+    "                  uintBitsToFloat(ns_storage_buffer_0[base + 2u]), uintBitsToFloat(ns_storage_buffer_0[base + 3u]));\n"
+    "    return ns_pixel.x < c.x || ns_pixel.y < c.y || ns_pixel.x >= c.z || ns_pixel.y >= c.w;\n"
+    "}\n";
+
+static const char *ui_shader_glsl_vs_body =
+    "void main() {\n"
+    "    uint base = ns_root.vertex_offset / 4u + uint(gl_VertexIndex) * 9u;\n"
+    "    vec2 pixel = vec2(uintBitsToFloat(ns_storage_buffer_0[base]), uintBitsToFloat(ns_storage_buffer_0[base + 1u])) + vec2(ns_root.offset_x, ns_root.offset_y);\n"
+    "    vec2 uv = vec2(uintBitsToFloat(ns_storage_buffer_0[base + 2u]), uintBitsToFloat(ns_storage_buffer_0[base + 3u]));\n"
+    "    uint color = ns_storage_buffer_0[base + 4u];\n"
+    "    vec4 params = vec4(uintBitsToFloat(ns_storage_buffer_0[base + 5u]), uintBitsToFloat(ns_storage_buffer_0[base + 6u]),\n"
+    "                       uintBitsToFloat(ns_storage_buffer_0[base + 7u]), uintBitsToFloat(ns_storage_buffer_0[base + 8u]));\n"
+    "    vec2 screen = vec2(ns_root.screen_width, ns_root.screen_height);\n"
+    "    vec2 ndc = vec2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
+    "    vec4 pos = vec4(ndc, 0.0, 1.0);\n"
+    "    if (ns_root.hud_center_enable.w > 0.5) {\n"
+    "        vec3 view = ns_root.hud_center_enable.xyz + ns_root.hud_right_hw.xyz * (ndc.x * ns_root.hud_right_hw.w) + ns_root.hud_up_hh.xyz * (ndc.y * ns_root.hud_up_hh.w);\n"
+    "        float z = max(view.z, 0.001);\n"
+    "        float clip_x = view.x * ns_root.hud_proj.x - z * ns_root.hud_proj.z;\n"
+    "        float clip_y = view.y * ns_root.hud_proj.y - z * ns_root.hud_proj.w;\n"
+    "        float ndc_z = clamp(0.0 - ns_root.hud_depth.x + ns_root.hud_depth.y / z, 0.0, 1.0);\n"
+    "        pos = vec4(clip_x, clip_y, ndc_z * z, z);\n"
+    "    }\n"
+    "    ns_pixel = pixel;\n"
+    "    ns_uv = uv;\n"
+    "    ns_col = vec4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
+    "    ns_params = params;\n"
+    "    gl_Position = pos;\n"
+    "}\n";
+
+static const char *ui_shader_glsl_fs_image_body =
+    "layout(set = 0, binding = 1) uniform sampler2D ns_texture_map;\n"
+    "void main() {\n"
+    "    if (ui_clip_discard()) { discard; }\n"
+    "    ns_frag_color = texture(ns_texture_map, ns_uv) * ns_col;\n"
+    "}\n";
+
+static const char *ui_shader_glsl_fs_msdf_body =
+    "layout(set = 0, binding = 1) uniform sampler2D ns_texture_map;\n"
+    "void main() {\n"
+    "    if (ui_clip_discard()) { discard; }\n"
+    "    vec4 s = texture(ns_texture_map, ns_uv);\n"
+    "    float sd = max(min(s.r, s.g), min(max(s.r, s.g), s.b));\n"
+    "    vec2 tex_size = vec2(textureSize(ns_texture_map, 0));\n"
+    "    float range = max(ns_params.x, 0.5);\n"
+    "    vec2 unit_range = vec2(range) / tex_size;\n"
+    "    vec2 screen_texel = max(fwidth(ns_uv), vec2(1e-6));\n"
+    "    float px_range = max(0.5 * dot(unit_range, 1.0 / screen_texel), 1.0);\n"
+    "    float opacity = clamp(((sd - 0.5) * px_range + ns_params.y) / max(ns_params.z, 1.0) + 0.5, 0.0, 1.0);\n"
+    "    ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
+    "}\n";
+
+static const char *ui_shader_glsl_fs_bitmap_body =
+    "layout(set = 0, binding = 1) uniform sampler2D ns_texture_map;\n"
+    "void main() {\n"
+    "    if (ui_clip_discard()) { discard; }\n"
+    "    vec2 size = vec2(textureSize(ns_texture_map, 0));\n"
+    "    ivec2 pixel = clamp(ivec2(ns_uv * size), ivec2(0), ivec2(size) - ivec2(1));\n"
+    "    vec4 texel = texelFetch(ns_texture_map, pixel, 0);\n"
+    "    float coverage = min(texel.r, texel.a);\n"
+    "    ns_frag_color = vec4(ns_col.rgb, ns_col.a * coverage);\n"
+    "}\n";
+
+static const char *ui_shader_glsl_fs_arc_sdf_body =
+    "void main() {\n"
+    "    if (ui_clip_discard()) { discard; }\n"
+    "    float radius = max(ns_params.x, 0.0001);\n"
+    "    float half_width = max(ns_params.y, 0.0);\n"
+    "    float half_angle = clamp(ns_params.z, 0.0, 3.14159265);\n"
+    "    float radial = length(ns_uv);\n"
+    "    float angle = atan(ns_uv.y, ns_uv.x);\n"
+    "    float half_arc = radius * half_angle;\n"
+    "    float corner = min(half_width * 0.44, half_arc * 0.48);\n"
+    "    vec2 extent = max(vec2(half_arc, half_width) - vec2(corner), vec2(0.0));\n"
+    "    vec2 q = abs(vec2(angle * radius, radial - radius)) - extent;\n"
+    "    float arc_distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - corner;\n"
+    "    float aa = max(fwidth(arc_distance), 0.35);\n"
+    "    float opacity = 1.0 - smoothstep(-aa, aa, arc_distance);\n"
+    "    ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
+    "}\n";
+
+static void ui_shader_glsl_build(char *out, size_t capacity, const char *prelude, const char *body) {
+    snprintf(out, capacity, "%s%s", prelude, body);
+}
+
 static f64 ui_clamp_f64(f64 v, f64 lo, f64 hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -1136,10 +1280,26 @@ static void ui_create_gpu_resources(ui_renderer *r) {
         free(img);
     }
 
-    r->shader_image = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_image");
-    r->shader_msdf = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_msdf");
-    r->shader_bitmap = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_bitmap");
-    r->shader_arc_sdf = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_arc_sdf");
+    if (strcmp(gpu_shader_target(), "glsl") == 0) {
+        // GLSL 450 names every entry `main`, so each stage gets its own source
+        // assembled from the shared prelude.
+        static char vs_src[UI_SHADER_GLSL_CAPACITY];
+        static char fs_src[UI_SHADER_GLSL_CAPACITY];
+        ui_shader_glsl_build(vs_src, sizeof(vs_src), ui_shader_glsl_vertex_prelude, ui_shader_glsl_vs_body);
+        ui_shader_glsl_build(fs_src, sizeof(fs_src), ui_shader_glsl_fragment_prelude, ui_shader_glsl_fs_image_body);
+        r->shader_image = gpu_shader_graphics_create(vs_src, fs_src, "ui_vs", "ui_fs_image");
+        ui_shader_glsl_build(fs_src, sizeof(fs_src), ui_shader_glsl_fragment_prelude, ui_shader_glsl_fs_msdf_body);
+        r->shader_msdf = gpu_shader_graphics_create(vs_src, fs_src, "ui_vs", "ui_fs_msdf");
+        ui_shader_glsl_build(fs_src, sizeof(fs_src), ui_shader_glsl_fragment_prelude, ui_shader_glsl_fs_bitmap_body);
+        r->shader_bitmap = gpu_shader_graphics_create(vs_src, fs_src, "ui_vs", "ui_fs_bitmap");
+        ui_shader_glsl_build(fs_src, sizeof(fs_src), ui_shader_glsl_fragment_prelude, ui_shader_glsl_fs_arc_sdf_body);
+        r->shader_arc_sdf = gpu_shader_graphics_create(vs_src, fs_src, "ui_vs", "ui_fs_arc_sdf");
+    } else {
+        r->shader_image = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_image");
+        r->shader_msdf = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_msdf");
+        r->shader_bitmap = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_bitmap");
+        r->shader_arc_sdf = gpu_shader_graphics_create(ui_shader_src, ui_shader_src, "ui_vs", "ui_fs_arc_sdf");
+    }
     r->render_state = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
                                        COMPARE_ALWAYS, false, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
     // Reverse-Z compositor: write HUD depth so timewarp does not smear overlay
