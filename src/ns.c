@@ -3312,7 +3312,10 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
         ns_build_profile_end("emit_executable", executable_start);
     } else {
         ns_ssa_module_free(ssa);
-        ns_exit(1, "build", "executable output is not yet supported for this target OS.\n");
+        ns_str arch_name = ns_arch_str(target.arch);
+        ns_str os_name = ns_os_str(target.os);
+        ns_exit(1, "build", "executable output is not yet supported for target `%.*s-%.*s`.\n",
+                arch_name.len, arch_name.data, os_name.len, os_name.data);
         return;
     }
 
