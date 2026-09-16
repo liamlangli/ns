@@ -204,7 +204,11 @@ produces a host app bundle, `type = "cli"` a plain executable, and
 project uses that project's recursive source set. A file outside a project is
 built as a standalone script and may link local sibling modules it imports. Use
 `-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact
-kind. Independent native targets build concurrently, bounded by the host's
+kind. A target with `link = false` runs interpreted, so on a host whose native
+code generator cannot emit an executable `ns build` still builds it: it writes
+a launcher that enters the project and runs the program through `ns run`, and
+records that launcher in the build cache like any other artifact. Independent
+native targets build concurrently, bounded by the host's
 logical CPU count. Browser targets and targets that resolve to the same
 artifact stay serial because they share generated output. Profiled builds also
 stay serial so their nested compiler timeline remains complete.

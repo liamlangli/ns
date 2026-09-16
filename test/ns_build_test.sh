@@ -285,3 +285,59 @@ build_bundle
 expect_up_to_date 'a rebuilt bundle must record the recompiled source.'
 
 printf '%s\n' 'PASS: a packaged edit re-packages a browser bundle without recompiling it.'
+
+# A `link = false` target runs interpreted, so a host without a native
+# executable backend still has to build it: `ns build` packages a launcher that
+# enters the project and hands the program to `ns run`. Darwin and Windows have
+# native executable backends, so there the same target builds natively instead.
+case "$(uname -s)" in
+Darwin|MINGW*|MSYS*|CYGWIN*)
+    printf '%s\n' 'SKIP: the interpreted-target launcher test needs a host without a native executable backend.'
+    ;;
+*)
+    interpreted="$tmp/interpreted"
+    mkdir -p "$interpreted/src"
+    cat > "$interpreted/ns.mod" <<'EOF'
+schema = "ns.mod/v1"
+name = "interpreted"
+version = "0.1.0"
+type = "cli"
+source = "src"
+entry = "main.ns"
+link = false
+EOF
+    cat > "$interpreted/src/main.ns" <<'EOF'
+use std
+
+fn main() {
+    print("interpreted ran\n")
+}
+EOF
+
+    "$ns" build "$interpreted" > "$tmp/interpreted.log" 2>&1 || {
+        cat "$tmp/interpreted.log" >&2
+        printf '%s\n' 'FAIL: ns build failed for an interpreted target.' >&2
+        exit 1
+    }
+    launcher="$interpreted/bin/interpreted"
+    test -x "$launcher" || {
+        cat "$tmp/interpreted.log" >&2
+        printf '%s\n' 'FAIL: an interpreted target must build a runnable launcher.' >&2
+        exit 1
+    }
+    output=$("$launcher")
+    test "$output" = "interpreted ran" || {
+        printf 'FAIL: the launcher ran the wrong program: %s\n' "$output" >&2
+        exit 1
+    }
+
+    "$ns" build "$interpreted" > "$tmp/interpreted.log" 2>&1 || {
+        cat "$tmp/interpreted.log" >&2
+        printf '%s\n' 'FAIL: a rebuilt interpreted target failed.' >&2
+        exit 1
+    }
+    expect_up_to_date 'an unchanged interpreted target must not be rebuilt.'
+
+    printf '%s\n' 'PASS: ns build packages a runnable launcher for a link = false target.'
+    ;;
+esac

@@ -83,7 +83,11 @@ The common commands are:
   type `cli` a plain executable, type `library` a static library, and an app
   with `target = "wasm"` produces its browser bundle and `.wasm.map` source
   map. `-o` applies to a single target only. `--exe` forces a
-  linked native executable. `ns build` does not fall back to `ns run`.
+  linked native executable. `ns build` does not fall back to `ns run`. A target
+  the manifest declares `link = false` runs interpreted, so on a host without a
+  native executable backend `ns build` packages a launcher that enters the
+  project and runs the program through `ns run` instead of failing to emit
+  machine code.
   Builds are incremental: every input a build reads is recorded with its last
   modify time, size, and content hash in `.ns-build/` beside the artifact, and a later build
   that finds the artifact in place and every recorded input unchanged keeps the

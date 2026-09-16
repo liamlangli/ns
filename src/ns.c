@@ -1676,6 +1676,10 @@ typedef struct ns_build_input {
     ns_str shell;
     ns_str target_name; // selected [[targets]] name, empty when none
     ns_bool has_manifest;
+    // `link = false` marks a target the manifest declares interpreted. A build
+    // then packages a launcher that runs it through `ns run` instead of asking
+    // a native code generator for machine code it may not have.
+    ns_bool link;
 } ns_build_input;
 
 static ns_bool ns_find_project_root(ns_str path, ns_str *out) {
@@ -2131,6 +2135,9 @@ static ns_ssa_module *ns_compile_build_input(ns_build_input *in, ns_build_cache 
 // its own entry, but still inherits the manifest fields of its project.
 static ns_build_input ns_build_input_resolve(ns_str path, ns_str target_name) {
     ns_build_input in = {0};
+    // A loose script has no manifest to declare otherwise, so it asks for a
+    // native artifact the way it always has.
+    in.link = true;
     ns_bool manifest_entry = false;
 
     if (path.len == 0) {
@@ -2166,6 +2173,7 @@ static ns_build_input ns_build_input_resolve(ns_str path, ns_str target_name) {
         in.icon = sel.icon;
         in.shell = sel.shell;
         in.target_name = sel.target_name;
+        in.link = sel.link;
     }
 
     in.source = ns_os_read_file(in.filename);
@@ -3252,6 +3260,58 @@ static void ns_build_wasm_app(ns_build_input *in, ns_str output, ns_ssa_module *
     ns_str_free(bundle_dir);
 }
 
+// The current host has a native executable backend. Linux and every other host
+// emit through a portable launcher for interpreted targets instead.
+static ns_bool ns_build_host_emits_executable(void) {
+    ns_asm_target target;
+    ns_asm_get_current_target(&target);
+    return target.os == NS_OS_DARWIN || target.os == NS_OS_WINDOWS;
+}
+
+// A target the manifest declares `link = false` runs interpreted, so a build
+// packages a launcher instead of asking for machine code. The launcher enters
+// the project root beside itself and hands the program to `ns run`, which links
+// and evaluates it exactly as `ns run <target>` does. This keeps `ns build`
+// working on a host whose native code generator cannot emit an executable, and
+// it never recurses because the target is interpreted rather than linked.
+static void ns_build_write_launcher(ns_build_input *in, ns_str output) {
+    ns_str name = in->name.data != ns_null ? in->name : ns_build_default_name(in);
+
+    ns_str script = ns_str_null;
+    ns_str_append_cstr(&script, "#!/bin/sh\n");
+    ns_str_append_cstr(&script, "# `");
+    ns_str_append(&script, name);
+    ns_str_append_cstr(&script, "` is declared `link = false`, so it runs interpreted.\n");
+    ns_str_append_cstr(&script, "# This launcher enters the project and hands the program to `ns run`\n");
+    ns_str_append_cstr(&script, "# instead of being a native executable, which lets `ns build` work on\n");
+    ns_str_append_cstr(&script, "# hosts whose native code generator cannot emit an executable.\n");
+    ns_str_append_cstr(&script, "here=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd) || exit 1\n");
+    ns_str_append_cstr(&script, "root=$here\n");
+    ns_str_append_cstr(&script, "while [ \"$root\" != \"/\" ] && [ ! -f \"$root/ns.mod\" ]; do\n");
+    ns_str_append_cstr(&script, "    root=$(dirname -- \"$root\")\n");
+    ns_str_append_cstr(&script, "done\n");
+    ns_str_append_cstr(&script, "if [ -f \"$root/ns.mod\" ]; then cd \"$root\" || exit 1; fi\n");
+    // The entry path is absolute, so `ns run` finds the project and the target
+    // that owns it from any working directory, including one the build placed
+    // the launcher in with `-o`.
+    ns_str_append_cstr(&script, "exec ns run \"");
+    for (i32 i = 0; i < in->filename.len; ++i) {
+        i8 ch = in->filename.data[i];
+        if (ch == '"' || ch == '\\' || ch == '$' || ch == '`') ns_str_append_len(&script, "\\", 1);
+        ns_str_append_len(&script, &ch, 1);
+    }
+    ns_str_append_cstr(&script, "\" \"$@\"\n");
+
+    ns_str path = ns_str_concat(output, ns_str_cstr(""));
+    ns_write_text_file(path, script);
+#if !defined(_WIN32)
+    chmod(path.data, 0755);
+#endif
+    ns_info("build", "interpreted launcher %.*s\n", output.len, output.data);
+    ns_str_free(path);
+    ns_str_free(script);
+}
+
 // Compile `in` and write its artifact. Every branch either emits the artifact
 // or exits, so the caller records the build inputs only after a real build.
 static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output, ns_ssa_module *ssa) {
@@ -3363,6 +3423,21 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_build_profile_end("check_cache", cache_start);
     if (fresh) {
         ns_info("build", "up to date %.*s\n", artifact.len, artifact.data);
+        ns_build_cache_free(&cache);
+        ns_str_free(artifact);
+        ns_build_profile_end("build_target", target_start);
+        return;
+    }
+
+    // A `link = false` target is interpreted, so on a host without a native
+    // executable backend its build is a launcher rather than a failed compile.
+    if (kind == NS_BUILD_EXE && in.has_manifest && !in.link && !ns_build_host_emits_executable()) {
+        f64 emit_start = ns_build_profile_begin("emit_artifact");
+        ns_build_write_launcher(&in, output);
+        ns_build_profile_end("emit_artifact", emit_start);
+        f64 write_cache_start = ns_build_profile_begin("write_cache");
+        ns_build_cache_write(&cache);
+        ns_build_profile_end("write_cache", write_cache_start);
         ns_build_cache_free(&cache);
         ns_str_free(artifact);
         ns_build_profile_end("build_target", target_start);
