@@ -1,0 +1,27 @@
+mod secure
+
+// Nonblocking TLS with bounded, big-endian u32 length-prefixed UTF-8 messages.
+// Handles are process-local; calls on a handle must stay on one thread.
+// Apple uses Security/SecureTransport (TLS 1.2); other hosts use OpenSSL.
+// listen: Apple certificate is a PKCS#12 file and key is its password;
+// other hosts certificate/key are PEM paths. Host verification is mandatory.
+ref fn secure_listen(port: i32, certificate: str, key: str) i32
+ref fn secure_accept(listener: i32) i32
+ref fn secure_connect(host: str, port: i32, ca_file: str) i32
+// 1 connected, 0 handshaking, -1 closed/error. Pumps pending output.
+ref fn secure_poll(handle: i32) i32
+// Enqueue one complete frame. False means error/backpressure; never drop silently.
+ref fn secure_send(handle: i32, message: str) bool
+// 1 complete message, 0 pending, -1 invalid/closed. Maximum frame 65536 bytes.
+ref fn secure_receive(handle: i32) i32
+ref fn secure_message(handle: i32) str
+ref fn secure_close(handle: i32)
+ref fn secure_random_hex(bytes: i32) str
+// Salted PBKDF2-HMAC-SHA256, 600000 iterations; empty string on failure.
+ref fn secure_password_hash(password: str) str
+ref fn secure_password_verify(password: str, encoded: str) bool
+// Apple Keychain / Windows Credential Manager / Linux Secret Service.
+// Unavailable stores fail closed; callers must not write plaintext substitutes.
+ref fn secure_credential_set(key: str, value: str) bool
+ref fn secure_credential_get(key: str) str
+ref fn secure_credential_delete(key: str) bool

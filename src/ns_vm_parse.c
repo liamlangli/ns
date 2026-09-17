@@ -1097,7 +1097,10 @@ ns_return_void ns_vm_parse_struct_def(ns_vm *vm, ns_ast_ctx *ctx) {
                 if (ns_return_is_error(ret_item_type)) return ns_return_change_type(void, ret_item_type);
 
                 ns_type item_type = ret_item_type.r;
-                t = (ns_type){.type = item_type.type, .ref = type->type_label.is_ref, .array = true, .mut = item_type.mut, .stack = true};
+                t = item_type;
+                t.ref = type->type_label.is_ref;
+                t.array = true;
+                t.stack = true;
             } else {
                 ns_return_type ret_t = ns_vm_parse_type(vm, ctx, type);
                 if (ns_return_is_error(ret_t)) return ns_return_change_type(void, ret_t);

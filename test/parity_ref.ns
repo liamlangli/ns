@@ -12,6 +12,21 @@ struct grid {
     size_z: i32
 }
 
+struct grid_cell {
+    value: i32,
+    weight: f32
+}
+
+struct cell_grid {
+    cells: [grid_cell]
+}
+
+fn update_cell(g: ref cell_grid) {
+    let cell = g.cells[0]
+    cell.value = cell.value + 7
+    g.cells[0] = cell
+}
+
 let shared = grid { [u8](4), 0, 0, 0 }
 
 // A parameter declared `ref` is handed the caller's own storage rather than a
@@ -37,6 +52,11 @@ fn point_at(v: ref i32) {
 }
 
 fn main() {
+    let cells = cell_grid { cells: [grid_cell](2) }
+    cells.cells[0] = grid_cell { value: 4, weight: 2.5 }
+    update_cell(ref cells)
+    assert cells.cells[0].value == 11
+    assert cells.cells[0].weight == 2.5
     let a = 1
     let b = ref a
     let c = a

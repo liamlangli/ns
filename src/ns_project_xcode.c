@@ -636,6 +636,7 @@ static const char *const ns_xcode_runtime_sources[] = {
 static const char *const ns_xcode_feature_sources[] = {
     "io.c",
     "net.c",
+    "secure.c",
     "os.c",
     "os.osx.m",
     "os.ios.m",
@@ -683,6 +684,7 @@ static const char *const ns_xcode_feature_sources[] = {
 
 static const char *const ns_xcode_feature_headers[] = {
     "net.h",
+    "secure.h",
     "os.h",
     "view.h",
     "gpu.h",
@@ -736,7 +738,7 @@ static const char *const ns_xcode_feature_headers[] = {
 
 static const char *const ns_xcode_resource_modules[] = {
     "std.ns", "shader.ns", "simd.ns", "task.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns", "net.ns",
-    "storage.ns", "compress.ns", "audio.ns", "camera.ns",
+    "secure.ns", "storage.ns", "compress.ns", "audio.ns", "camera.ns",
 };
 
 static const char *const ns_xcode_ui_assets[] = {
@@ -921,14 +923,14 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
             (len == 4 && strncmp(start, "simd", len) == 0) || (len == 4 && strncmp(start, "view", len) == 0) ||
             (len == 2 && strncmp(start, "ui", len) == 0) || (len == 2 && strncmp(start, "os", len) == 0) ||
             (len == 3 && strncmp(start, "gpu", len) == 0) || (len == 2 && strncmp(start, "io", len) == 0) ||
-            (len == 3 && strncmp(start, "net", len) == 0) || (len == 7 && strncmp(start, "storage", len) == 0) ||
+            (len == 6 && strncmp(start, "secure", len) == 0) || (len == 3 && strncmp(start, "net", len) == 0) || (len == 7 && strncmp(start, "storage", len) == 0) ||
             (len == 8 && strncmp(start, "compress", len) == 0) || (len == 5 && strncmp(start, "audio", len) == 0) || (len == 6 && strncmp(start, "camera", len) == 0)) {
             line = *end ? end + 1 : end;
             continue;
         }
         fprintf(stderr,
                 "project: module '%.*s' requires external FFI, which generated Apple apps do not support; "
-                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, storage, compress, audio, and camera\n",
+                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, secure, storage, compress, audio, and camera\n",
                 (int)len, start);
         return false;
     }
@@ -1322,11 +1324,11 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
     }
     if (ok_ld) {
         ok_ld = macos ? ns_xcode_buffer_append(&ldflags,
-                                               ", \"-framework\", AVFAudio, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", AppKit, \"-framework\", CoreHaptics, "
+                                               ", \"-framework\", AVFAudio, \"-framework\", Security, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", AppKit, \"-framework\", CoreHaptics, "
                                                "\"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", GameController, \"-framework\", Metal, "
                                                "\"-framework\", MetalKit, \"-framework\", QuartzCore, \"-lsqlite3\", \"-lz\")")
                       : ns_xcode_buffer_append(&ldflags,
-                                               ", \"-framework\", AVFAudio, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", GameController, "
+                                               ", \"-framework\", AVFAudio, \"-framework\", Security, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", GameController, "
                                                "\"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, "
                                                "\"-framework\", UIKit, \"-lsqlite3\", \"-lz\")");
     }

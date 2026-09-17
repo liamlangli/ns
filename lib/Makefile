@@ -335,3 +335,23 @@ $(NS_BINDIR)/camera$(NS_DYLIB_SUFFIX): $(NS_BINDIR)/lib/camera.apple.o
 $(NS_BINDIR)/libcamera.a: $(NS_BINDIR)/lib/camera.apple.o
 	$(NS_AR) rcs $@ $^
 endif
+
+# TLS and credentials remain an FFI feature, never part of the interpreter.
+NS_SECURE_DYLIB = $(NS_BINDIR)/secure$(NS_DYLIB_SUFFIX)
+NS_SECURE_STATIC = $(NS_BINDIR)/libsecure.a
+NS_STD_SHARED += $(NS_SECURE_DYLIB)
+NS_STD_STATIC += $(NS_SECURE_STATIC)
+ifeq ($(NS_OS), $(NS_DARWIN))
+NS_SECURE_DEPS = -framework Security -framework CoreFoundation
+else ifeq ($(NS_OS), $(NS_WIN))
+NS_SECURE_DEPS = -lssl -lcrypto -lws2_32 -ladvapi32
+else
+NS_SECURE_DEPS = -lssl -lcrypto -ldl
+endif
+$(NS_SECURE_DYLIB): $(NS_BINDIR)/lib/secure.o | $(NS_BINDIR)
+	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_SECURE_DEPS)
+$(NS_SECURE_STATIC): $(NS_BINDIR)/lib/secure.o | $(NS_BINDIR)
+	ar rcs $@ $^
+
+std: $(NS_SECURE_DYLIB) $(NS_SECURE_STATIC)
+shared: $(NS_SECURE_DYLIB)

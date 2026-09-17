@@ -18,6 +18,7 @@
 
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create);
+static ns_return_value ns_eval_member_expr_target(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool write_target);
 ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i);
 static ns_return_value ns_eval_struct_ctor(ns_vm *vm, ns_ast_ctx *ctx, i32 i, i32 st_index);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
