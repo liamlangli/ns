@@ -24,9 +24,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libreadline-dev libffi-dev
+        run: make deps
 
       - name: Build NSCode app
         run: |

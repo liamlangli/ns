@@ -3,7 +3,9 @@
 set -eu
 
 # Install the Linux/WSL packages `make` needs to compile ns:
-#   build-essential libreadline-dev libffi-dev libsqlite3-dev
+#   build-essential libreadline-dev libffi-dev libsqlite3-dev libssl-dev
+# and the ones its feature modules need: Wayland for `view`, Vulkan plus
+# shaderc for `gpu`.
 # curl is used by the third_party download scripts; pkg-config is optional.
 # nodejs is used by `make test` wasm checks and is installed when apt can.
 #
@@ -11,7 +13,8 @@ set -eu
 # downloaded and extracted into $HOME/.local/ns-deps (override with
 # NS_LINUX_DEPS). The Makefile searches that prefix automatically.
 
-pkgs="build-essential libreadline-dev libffi-dev libsqlite3-dev pkg-config curl"
+pkgs="build-essential libreadline-dev libffi-dev libsqlite3-dev libssl-dev pkg-config curl"
+feature_pkgs="libwayland-dev wayland-protocols libxkbcommon-dev libvulkan-dev libshaderc-dev"
 optional_pkgs="nodejs"
 dev_pkgs="libreadline-dev libffi-dev libsqlite3-dev"
 prefix="${NS_LINUX_DEPS:-${HOME}/.local/ns-deps}"
@@ -32,6 +35,25 @@ have_system_headers() {
             test -f /usr/include/ffi.h ||
                 test -f /usr/include/${multiarch}/ffi.h
         }
+}
+
+# The view, gpu and secure modules link against these. bin/ns itself does not,
+# so a host without them still builds the interpreter and every test that does
+# not load a native module.
+have_feature_headers() {
+    test -f /usr/include/wayland-client.h &&
+        test -f /usr/include/vulkan/vulkan.h &&
+        test -f /usr/include/shaderc/shaderc.h &&
+        test -f /usr/include/openssl/ssl.h
+}
+
+warn_missing_feature_headers() {
+    if have_feature_headers; then
+        return 0
+    fi
+    printf 'warning: Wayland, Vulkan, shaderc or OpenSSL headers are missing;\n' >&2
+    printf '         the view, gpu and secure modules will not build.\n' >&2
+    printf '         install: sudo apt-get install -y %s libssl-dev\n' "$feature_pkgs" >&2
 }
 
 have_prefix_headers() {
@@ -67,16 +89,19 @@ fix_prefix_linker_stubs() {
     link_system_shared libsqlite3.so libsqlite3.so.0
 }
 
-if have_system_headers; then
+if have_system_headers && have_feature_headers; then
     printf 'Linux build headers are already installed under /usr.\n'
     exit 0
 fi
 
 if command -v apt-get >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
     sudo apt-get update
-    sudo apt-get install -y $pkgs
+    # shellcheck disable=SC2086
+    sudo apt-get install -y $pkgs $feature_pkgs
+    # shellcheck disable=SC2086
     sudo apt-get install -y $optional_pkgs || true
     if have_system_headers; then
+        warn_missing_feature_headers
         printf 'Installed Linux build packages with apt-get.\n'
         exit 0
     fi
@@ -84,8 +109,15 @@ if command -v apt-get >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
     exit 1
 fi
 
+if have_system_headers; then
+    warn_missing_feature_headers
+    printf 'Linux build headers are already installed under /usr.\n'
+    exit 0
+fi
+
 if have_prefix_headers; then
     fix_prefix_linker_stubs
+    warn_missing_feature_headers
     printf 'Linux -dev packages are already extracted in %s\n' "$prefix"
     printf 'The Makefile searches this prefix automatically.\n'
     exit 0
@@ -124,7 +156,8 @@ if ! have_prefix_headers; then
     exit 1
 fi
 fix_prefix_linker_stubs
+warn_missing_feature_headers
 
 printf 'Extracted Linux -dev packages to %s\n' "$prefix"
 printf 'The Makefile searches this prefix automatically.\n'
-printf 'To install system-wide later: sudo apt-get install -y %s\n' "$pkgs"
+printf 'To install system-wide later: sudo apt-get install -y %s %s\n' "$pkgs" "$feature_pkgs"

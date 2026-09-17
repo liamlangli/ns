@@ -11,11 +11,27 @@ permissions:
 
 jobs:
   test:
-    runs-on: macos-26
+    name: Test (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            runner: macos-26
+          - name: Linux amd64
+            runner: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
+      # The Linux feature modules need Wayland, Vulkan, shaderc and OpenSSL
+      # headers on top of readline/ffi/sqlite; `make deps` installs the set.
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: make deps
+
       # `make test` builds the interpreter, required native modules and C test
-      # binaries, then runs the core suites.
+      # binaries, then runs the core suites. The compile/interpret parity suite
+      # runs on both hosts: mach-o AArch64 there, ELF AMD64 here.
       - name: Test
         run: make test

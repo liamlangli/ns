@@ -36,9 +36,7 @@ jobs:
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libreadline-dev libffi-dev libsqlite3-dev
+        run: make deps
 
       - name: Set up Windows dependencies
         if: runner.os == 'Windows'
@@ -55,13 +53,11 @@ jobs:
             mingw-w64-ucrt-x86_64-readline
             mingw-w64-ucrt-x86_64-sqlite3
 
-      # GCC on ubuntu-24.04 raises warnings that the default -Werror promotes
-      # to errors; keep the existing exception until the sources are clean
-      # under GCC. NS_DEBUG=0 selects the optimized release configuration.
+      # NS_DEBUG=0 selects the optimized release configuration.
       - name: Build and stage release (Linux)
         if: runner.os == 'Linux'
         run: |
-          make install NS_DEBUG=0 NS_WERROR=0 \
+          make install NS_DEBUG=0 \
             NS_INSTALL_ROOT="$PWD/release/ns" NS_INSTALL_DISPLAY="$PWD/release/ns"
           release/ns/bin/${{ matrix.executable }} --version
 
