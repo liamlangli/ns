@@ -1057,7 +1057,11 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_LOAD: {
         if (inst->dst < 0) break;
-        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type)) {
+        /* A struct field is addressed, not loaded. An array of structs is not
+         * an inline struct but a handle, so reading such a field goes through
+         * the runtime like any other scalar. */
+        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_array(inst->type) &&
+            !ns_type_is_ref(inst->type)) {
             ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
             ns_aarch_emit_const_u64(c, NS_AARCH_X10, (u64)(u32)inst->c);
             ns_aarch_emit_u32(c, ns_aarch_add_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
@@ -1075,7 +1079,10 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_STORE: {
         i32 size = inst->target0 > 0 ? inst->target0 : ns_aarch_load_size(inst->type);
-        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type) && size > 0) {
+        /* Struct bytes are copied; an array field holds a handle and is stored
+         * like any other scalar. */
+        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_array(inst->type) &&
+            !ns_type_is_ref(inst->type) && size > 0) {
             ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
             ns_aarch_emit_const_u64(c, 1, (u64)(u32)inst->c);
             ns_aarch_load_value(c, 2, inst->b);
@@ -1098,7 +1105,8 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     } break;
     case NS_SSA_OP_ARRAY_STORE: {
         i32 stride = inst->c > 0 ? inst->c : 4;
-        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_ref(inst->type)) {
+        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_array(inst->type) &&
+            !ns_type_is_ref(inst->type)) {
             ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
             ns_aarch_load_value(c, 1, inst->target0);
             ns_aarch_emit_const_u64(c, 2, (u64)(u32)stride);
@@ -1118,7 +1126,7 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
     case NS_SSA_OP_INDEX: {
         if (inst->dst < 0) break;
         i64 stride = inst->c > 0 ? inst->c : 1;
-        if (ns_type_is(inst->type, NS_TYPE_STRUCT)) {
+        if (ns_type_is(inst->type, NS_TYPE_STRUCT) && !ns_type_is_array(inst->type)) {
             ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
             ns_aarch_load_value(c, 1, inst->b);
             ns_aarch_emit_const_u64(c, 2, (u64)stride);
