@@ -53,7 +53,6 @@ static void ns_rt_enter_bundle_resources(void) {
 }
 #endif
 
-#define NS_RT_GLOBAL_MAX 1024
 // Addresses are 32-bit offsets, so the heap cannot exceed 4 GiB. Reserve that
 // VA once and commit pages in place: realloc would move the base and invalidate
 // host pointers other threads already hold from ns_rt_ptr / array slots.
@@ -115,7 +114,8 @@ static uint32_t ns_rt_floor = 0;
 // struct before writing it has always seen zeroes.
 static uint32_t ns_rt_high = 16;
 
-static int64_t ns_rt_globals[NS_RT_GLOBAL_MAX];
+static int64_t *ns_rt_globals = NULL;
+static size_t ns_rt_global_capacity = 0;
 
 static const char **ns_rt_strtab = NULL;
 static const int32_t *ns_rt_strlens = NULL;
@@ -230,7 +230,7 @@ void ns_rt_reset(void) {
     ns_rt_run_valid = 0;
     ns_rt_run_base = 0;
     if (ns_rt_mem && ns_rt_cap) memset(ns_rt_mem, 0, ns_rt_cap);
-    memset(ns_rt_globals, 0, sizeof(ns_rt_globals));
+    if (ns_rt_globals) memset(ns_rt_globals, 0, ns_rt_global_capacity * sizeof(*ns_rt_globals));
     ns_rt_cb_n = 0;
     memset(ns_rt_cb_slot, 0, sizeof(ns_rt_cb_slot));
     if (ns_rt_strcache) {
@@ -550,13 +550,36 @@ int64_t ns_rt_array_index(int64_t arr, int64_t idx, int64_t stride) {
 }
 
 int64_t ns_rt_gget(int64_t idx) {
-    if (idx < 0 || idx >= NS_RT_GLOBAL_MAX) return 0;
-    return ns_rt_globals[idx];
+    if (idx < 0) return 0;
+    ns_rt_heap_lock();
+    int64_t value = (uint64_t)idx < ns_rt_global_capacity ? ns_rt_globals[idx] : 0;
+    ns_rt_heap_unlock();
+    return value;
 }
 
 void ns_rt_gset(int64_t idx, int64_t val) {
-    if (idx < 0 || idx >= NS_RT_GLOBAL_MAX) return;
+    if (idx < 0) return;
+    ns_rt_heap_lock();
+    if ((uint64_t)idx >= ns_rt_global_capacity) {
+        if ((uint64_t)idx >= SIZE_MAX / sizeof(*ns_rt_globals)) abort();
+        size_t needed = (size_t)idx + 1;
+        size_t capacity = ns_rt_global_capacity ? ns_rt_global_capacity : 1024;
+        while (capacity < needed) {
+            if (capacity > SIZE_MAX / sizeof(*ns_rt_globals) / 2) {
+                capacity = needed;
+                break;
+            }
+            capacity *= 2;
+        }
+        int64_t *globals = realloc(ns_rt_globals, capacity * sizeof(*globals));
+        if (!globals) abort();
+        memset(globals + ns_rt_global_capacity, 0,
+               (capacity - ns_rt_global_capacity) * sizeof(*globals));
+        ns_rt_globals = globals;
+        ns_rt_global_capacity = capacity;
+    }
     ns_rt_globals[idx] = val;
+    ns_rt_heap_unlock();
 }
 
 int64_t ns_rt_intern(int64_t id) {

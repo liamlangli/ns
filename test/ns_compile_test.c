@@ -247,6 +247,36 @@ static ns_bool ns_compile_returns(const char *src, i64 expected) {
 }
 
 int main() {
+#if defined(__aarch64__)
+    ns_rt_reset();
+    ns_rt_gset(0, 17);
+    ns_rt_gset(1023, 23);
+    ns_rt_gset(1024, 42);
+    ns_rt_gset(8192, 91);
+    ns_expect(ns_rt_gget(0) == 17 && ns_rt_gget(1023) == 23 &&
+              ns_rt_gget(1024) == 42 && ns_rt_gget(8192) == 91,
+              "native globals grow beyond 1024 without losing earlier slots.");
+    ns_expect(ns_rt_gget(4096) == 0 && ns_rt_gget(16384) == 0,
+              "unwritten native globals read as zero across growth.");
+    ns_rt_reset();
+    ns_expect(ns_rt_gget(0) == 0 && ns_rt_gget(8192) == 0,
+              "reset clears every allocated native global slot.");
+    char globals_source[65536];
+    size_t globals_length = 0;
+    for (int i = 0; i < 1100; ++i) {
+        globals_length += (size_t)snprintf(globals_source + globals_length,
+            sizeof(globals_source) - globals_length, "let global_%d = %d\n", i, i);
+    }
+    snprintf(globals_source + globals_length, sizeof(globals_source) - globals_length,
+        "let values = [i32](4)\n"
+        "fn main() bool {\n"
+        "    values[3] = global_1099\n"
+        "    global_1024 = global_1024 + 1\n"
+        "    return values.len == 4 && values[3] == 1099 && global_1024 == 1025 && global_1 == 1\n"
+        "}\n");
+    ns_expect(ns_compile_true(globals_source),
+              "compiled scalar and array globals survive more than 1024 declarations.");
+#endif
     ns_expect(ns_compile_true(
         "fn same_type(value: type) type { return value }\n"
         "fn main() bool {\n"
