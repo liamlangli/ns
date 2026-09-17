@@ -18,7 +18,6 @@
 
 ns_return_value ns_eval_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
 ns_return_value ns_eval_index_expr_with_create(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool create);
-static ns_return_value ns_eval_member_expr_target(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_bool write_target);
 ns_return_value ns_eval_binary_ops(ns_vm *vm, ns_ast_ctx *ctx, ns_value l, ns_value r, i32 i);
 static ns_return_value ns_eval_struct_ctor(ns_vm *vm, ns_ast_ctx *ctx, i32 i, i32 st_index);
 ns_return_void ns_eval_compound_stmt(ns_vm *vm, ns_ast_ctx *ctx, i32 i);
@@ -755,9 +754,14 @@ void *ns_eval_array_raw(ns_vm *vm, ns_value n) {
     return ns_eval_array_data(vm, n);
 }
 
+// The result of an arithmetic operator is a fresh immediate, so it keeps the
+// operand's type but never its `ref`: a value read through a reference is not
+// itself one. Carrying the flag made `n = n + 1` on a `ref i32` parameter look
+// like an alias assigned to a ref binding, so ns_eval_assign_expr rebound the
+// box instead of writing through it and the caller never saw the new value.
 #define ns_eval_number_op(fn, op) \
 ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) {\
-    ns_value ret = (ns_value){.t = ns_type_set_mut(l.t, false) };\
+    ns_value ret = (ns_value){.t = ns_type_set_ref(ns_type_set_mut(l.t, false), false) };\
     switch (l.t.type) {\
         case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) op ns_eval_number_i8(vm, r); break;\
         case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) op ns_eval_number_i16(vm, r); break;\
@@ -797,7 +801,7 @@ ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
 
 #define ns_eval_number_shift_op(fn, op) \
 ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
-    ns_value ret = (ns_value){.t = ns_type_set_mut(l.t, false) };\
+    ns_value ret = (ns_value){.t = ns_type_set_ref(ns_type_set_mut(l.t, false), false) };\
     switch (l.t.type) {\
         case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) op ns_eval_number_i8(vm, r); break;\
         case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) op ns_eval_number_i16(vm, r); break;\
@@ -831,7 +835,7 @@ ns_eval_number_shift_op(_shr, >>)
 // same representation arithmetic ops use, so it reads back correctly.
 #define ns_eval_number_bit_op(fn, op) \
 ns_value ns_eval_binary##fn(ns_vm *vm, ns_value l, ns_value r) { \
-    ns_value ret = (ns_value){.t = ns_type_set_mut(l.t, false) };\
+    ns_value ret = (ns_value){.t = ns_type_set_ref(ns_type_set_mut(l.t, false), false) };\
     switch (l.t.type) {\
         case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) op ns_eval_number_i8(vm, r); break;\
         case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) op ns_eval_number_i16(vm, r); break;\
@@ -850,7 +854,7 @@ ns_eval_number_bit_op(_bor, |)
 ns_eval_number_bit_op(_bxor, ^)
 
 ns_value ns_eval_number_mod(ns_vm *vm, ns_value l, ns_value r) {
-    ns_value ret = (ns_value){.t = ns_type_set_mut(l.t, false)};
+    ns_value ret = (ns_value){.t = ns_type_set_ref(ns_type_set_mut(l.t, false), false)};
     switch (l.t.type) {
         case NS_TYPE_I8:  ret.i8 = ns_eval_number_i8(vm, l) % ns_eval_number_i8(vm, r); break;
         case NS_TYPE_I16: ret.i16 = ns_eval_number_i16(vm, l) % ns_eval_number_i16(vm, r); break;
@@ -2395,7 +2399,7 @@ ns_return_value ns_eval_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
         if (!ns_type_is_number(v.t) || ns_type_is_float(v.t) || ns_type_is(v.t, NS_TYPE_BOOL)) {
             return ns_return_error(value, ns_ast_state_loc(ctx, n->state), NS_ERR_EVAL, "bitwise not requires an integer operand.");
         }
-        ns_value ret = (ns_value){.t = ns_type_set_mut(v.t, false)};
+        ns_value ret = (ns_value){.t = ns_type_set_ref(ns_type_set_mut(v.t, false), false)};
         switch (v.t.type) {
         case NS_TYPE_I8:  ret.i8  = ~ns_eval_number_i8(vm, v); break;
         case NS_TYPE_U8:  ret.u8  = ~ns_eval_number_u8(vm, v); break;
