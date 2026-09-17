@@ -47,8 +47,11 @@ else ifeq ($(NS_OS), $(NS_LINUX))
 	# Wayland and Vulkan are the Linux view and GPU backends. shaderc compiles
 	# the GLSL the shader module emits into SPIR-V at runtime, exactly as the
 	# Metal backend compiles MSL.
+	# The LunarG SDK ships the shaderc runtime as libshaderc_shared.so; distro
+	# packages (libshaderc-dev) name it libshaderc.so. Link whichever is here.
+	NS_SHADERC_LIB := $(if $(filter-out libshaderc_shared.so,$(shell $(NS_CC) -print-file-name=libshaderc_shared.so)),-lshaderc_shared,-lshaderc)
 	NS_WAYLAND_LDFLAGS = -lwayland-client -lwayland-cursor
-	NS_VULKAN_LDFLAGS = -lvulkan -lshaderc_shared
+	NS_VULKAN_LDFLAGS = -lvulkan $(NS_SHADERC_LIB)
 	NS_VIEW_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_WAYLAND_LDFLAGS)
 	NS_GPU_DYLIB_DEPS = $(NS_DYLIB_DEPS) $(NS_VULKAN_LDFLAGS)
 else

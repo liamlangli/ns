@@ -3,7 +3,8 @@
 # A compiled program hands back what a call did not publish, so one that
 # allocates many times the size of the heap still runs. Before that, the heap
 # only ever grew and a program like this aborted with "ns_rt: heap overflow"
-# once it had used up the 4 GiB of addresses the heap has.
+# once it had used up the 4 GiB of addresses the heap has. The reclamation is
+# the runtime's, so every host with a native compile path runs this.
 
 set -eu
 
@@ -14,10 +15,13 @@ fi
 
 ns=$1
 
-if [ "$(uname -s)" != "Darwin" ]; then
-    printf '%s\n' 'SKIP: heap reclamation requires the AArch64 compile path.'
+case "$(uname -s)-$(uname -m)" in
+Darwin-arm64|Linux-x86_64) ;;
+*)
+    printf '%s\n' 'SKIP: heap reclamation requires a native compile path.'
     exit 0
-fi
+    ;;
+esac
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-scope.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM

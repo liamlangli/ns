@@ -6,6 +6,7 @@
 #include "ns_os.h"
 #include "ns_asm.h"
 #include "ns_pe.h"
+#include "ns_elf.h"
 #include "ns_shader.h"
 #include "ns_profile.h"
 #include "ns_profile_live.h"
@@ -52,8 +53,10 @@ typedef struct ns_compile_option_t {
     ns_bool ast_only: 2;
     ns_bool ssa_only: 2;
     ns_bool aarch_only: 2;
+    ns_bool amd64_only: 2;
     ns_bool macho_only: 2;
     ns_bool macho_obj_only: 2;
+    ns_bool elf_obj_only: 2;
     ns_bool wasm_only: 2;
     ns_bool pe_only: 2;
     ns_bool symbol_only: 2;
@@ -134,6 +137,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.ssa_only = true;
         } else if (strcmp(argv[i], "--aarch") == 0) {
             option.aarch_only = true;
+        } else if (strcmp(argv[i], "--amd64") == 0) {
+            option.amd64_only = true;
+        } else if (strcmp(argv[i], "--elf-o") == 0 || strcmp(argv[i], "--elf-obj") == 0) {
+            option.elf_obj_only = true;
         } else if (strcmp(argv[i], "--macho") == 0) {
             option.macho_only = true;
         } else if (strcmp(argv[i], "--macho-o") == 0 || strcmp(argv[i], "--macho-obj") == 0) {
@@ -240,10 +247,12 @@ void ns_help() {
     printf("  -a --ast          parse ast only\n");
     printf("  --ssa             lower ast to ssa blocks\n");
     printf("  --aarch           lower ssa to aarch64 machine words\n");
+    printf("  --amd64           lower ssa to amd64 machine bytes\n");
     printf("  --macho           emit mach-o executable (arm64)\n");
     printf("  --macho-o         emit mach-o object file (.o, arm64)\n");
+    printf("  --elf-o           emit elf object file (.o, amd64)\n");
     printf("  --embed-main      with --macho-o, export fn main as ns_program_main\n");
-    printf("  --strtab <path>   with --macho-o, write the string-table constructor\n");
+    printf("  --strtab <path>   with --macho-o or --elf-o, write the string-table constructor\n");
     printf("  --macho-platform  with --macho-o, Xcode PLATFORM_NAME for LC_BUILD_VERSION\n");
     printf("  --wasm            emit webassembly module (.wasm)\n");
     printf("  --pe              emit windows pe executable (.exe, amd64)\n");
@@ -475,6 +484,33 @@ void ns_exec_aarch(ns_str filename) {
     ns_ssa_module_free(ssa);
 }
 
+void ns_exec_amd64(ns_str filename) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    ns_str source = ns_os_read_file(filename);
+    if (source.len == 0) {
+        ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
+        return;
+    }
+
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    ns_return_assert(ret);
+
+    ns_return_ptr ssa_ret = ns_ssa_build_native_for_cli(&ctx);
+    if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
+    ns_ssa_module *ssa = ssa_ret.r;
+
+    ns_return_ptr bin_ret = ns_amd64_from_ssa(ssa);
+    if (ns_return_is_error(bin_ret)) {
+        ns_ssa_module_free(ssa);
+        ns_return_assert(bin_ret);
+    }
+
+    ns_amd64_module_bin *bin = bin_ret.r;
+    ns_amd64_print(bin);
+    ns_amd64_free(bin);
+    ns_ssa_module_free(ssa);
+}
+
 void ns_exec_macho(ns_str filename, ns_str output) {
     if (filename.len == 0) ns_error("ns", "no input file.\n");
     ns_str source = ns_os_read_file(filename);
@@ -527,6 +563,34 @@ void ns_exec_macho_object(ns_str filename, ns_str output, ns_bool embed_main, ns
     if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
 
     ns_info("macho", "object %.*s\n", output.len, output.data);
+}
+
+void ns_exec_elf_object(ns_str filename, ns_str output, ns_str strtab) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    ns_str source = ns_os_read_file(filename);
+    if (source.len == 0) {
+        ns_warn("ns", "empty file %.*s.\n", filename.len, filename.data);
+        return;
+    }
+
+    if (output.len == 0) {
+        output = ns_str_cstr("bin/a.out.o");
+    }
+
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    ns_return_assert(ret);
+
+    ns_return_ptr ssa_ret = ns_ssa_build_native_for_cli(&ctx);
+    if (ns_return_is_error(ssa_ret)) ns_return_assert(ssa_ret);
+    ns_ssa_module *ssa = ssa_ret.r;
+
+    if (strtab.len > 0) ns_build_write_strtab_c(ssa, strtab);
+
+    ns_return_bool emit_ret = ns_elf_emit_object(ssa, output);
+    ns_ssa_module_free(ssa);
+    if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+
+    ns_info("elf", "object %.*s\n", output.len, output.data);
 }
 
 void ns_exec_wasm(ns_str filename, ns_str output) {
@@ -2722,6 +2786,10 @@ static void ns_build_darwin_codesign_app(ns_str app_dir) {
     ns_str_free(cmd);
 }
 
+#endif // NS_DARWIN
+
+#if defined(NS_DARWIN) || defined(NS_LINUX)
+
 static ns_str ns_native_rt_c_path(void) {
     ns_str exe = ns_project_current_executable();
     if (exe.data == ns_null) return ns_str_null;
@@ -2751,7 +2819,7 @@ static ns_str ns_native_rt_object_path(void) {
     return object;
 }
 
-#endif // NS_DARWIN
+#endif // NS_DARWIN || NS_LINUX
 
 static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
     FILE *f = fopen(path.data, "w");
@@ -2797,6 +2865,138 @@ static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
     for (i32 i = 0; i < n; ++i) ns_str_free(tab[i]);
     ns_array_free(tab);
 }
+
+
+#if defined(NS_LINUX)
+
+// Link a compiled module into an executable with the host C toolchain. The
+// pieces are the emitted ELF object, the native runtime the generated code
+// calls, the string table that runtime interns from, and one shared library
+// per feature module the program imports. `$ORIGIN` on the rpath keeps an
+// executable that ships beside its modules runnable after it is moved.
+static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable_path) {
+    ns_str object_path = ns_str_concat(executable_path, ns_str_cstr(".o"));
+    f64 object_start = ns_build_profile_begin("emit_object");
+    ns_return_bool emit_ret = ns_elf_emit_object(ssa, object_path);
+    if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
+    ns_build_profile_end("emit_object", object_start);
+
+    f64 runtime_start = ns_build_profile_begin("prepare_native_runtime");
+    ns_str rt_path = ns_native_rt_c_path();
+    if (rt_path.data == ns_null || !ns_file_exists(rt_path)) {
+        ns_exit(1, "build", "cannot find ns_native_rt.c next to the ns toolchain.\n");
+    }
+    ns_str rt_object = ns_native_rt_object_path();
+    ns_str strtab_path = ns_str_concat(executable_path, ns_str_cstr(".strtab.c"));
+    ns_build_write_strtab_c(ssa, strtab_path);
+
+    ns_str rt_dir = ns_path_dirname_safe(rt_path);
+    ns_str inc_dir = ns_path_join(ns_path_parent(rt_dir), ns_str_cstr("include"));
+    ns_str q_object = ns_shell_quote(object_path);
+    ns_str q_executable = ns_shell_quote(executable_path);
+    ns_str q_rt = ns_shell_quote(rt_path);
+    ns_str q_rt_object = ns_shell_quote(rt_object);
+    ns_str q_strtab = ns_shell_quote(strtab_path);
+    ns_str q_inc = ns_shell_quote(inc_dir);
+    ns_str cmd = ns_str_null;
+    ns_str_append_cstr(&cmd, "cc -I");
+    ns_str_append(&cmd, q_inc);
+    ns_str_append_cstr(&cmd, " ");
+    ns_str_append(&cmd, q_object);
+    ns_str_append_cstr(&cmd, " ");
+    ns_str_append(&cmd, ns_file_exists(rt_object) ? q_rt_object : q_rt);
+    ns_str_append_cstr(&cmd, " ");
+    ns_str_append(&cmd, q_strtab);
+
+    ns_str exe = ns_project_current_executable();
+    ns_str bin = ns_path_dirname_safe(exe);
+    ns_str root = ns_path_parent(bin);
+    ns_str lib_dirs[3];
+    i32 nlib_dirs = 0;
+    ns_str installed_lib = ns_path_join(root, ns_str_cstr("lib"));
+    ns_str home = ns_path_home();
+    ns_str home_lib = ns_path_join(home, ns_str_cstr("ns/lib"));
+    lib_dirs[nlib_dirs++] = bin;
+    lib_dirs[nlib_dirs++] = installed_lib;
+    lib_dirs[nlib_dirs++] = home_lib;
+    ns_str *linked = ns_null;
+    ns_str rpath_dir = ns_str_null;
+    for (i32 i = 0, l = (i32)ns_array_length(ssa->imports); i < l; ++i) {
+        ns_str module = ssa->imports[i].module;
+        if (module.len == 0) continue;
+        if (ns_str_equals(module, ns_str_cstr("std")) ||
+            ns_str_equals(module, ns_str_cstr("task")) ||
+            ns_str_equals(module, ns_str_cstr("simd")) ||
+            ns_str_equals(module, ns_str_cstr("shader"))) continue;
+        ns_bool already = false;
+        for (i32 k = 0, kl = (i32)ns_array_length(linked); k < kl; ++k) {
+            if (ns_str_equals(linked[k], module)) { already = true; break; }
+        }
+        if (already) continue;
+        ns_str shared = ns_str_null;
+        for (i32 d = 0; d < nlib_dirs; ++d) {
+            ns_str cand = ns_path_join(lib_dirs[d], ns_str_concat(module, ns_str_cstr(".so")));
+            if (ns_file_exists(cand)) {
+                shared = cand;
+                if (rpath_dir.data == ns_null) rpath_dir = ns_str_concat(lib_dirs[d], ns_str_cstr(""));
+                break;
+            }
+            ns_str_free(cand);
+        }
+        if (shared.data == ns_null) continue;
+        ns_str q_shared = ns_shell_quote(shared);
+        ns_str_append_cstr(&cmd, " ");
+        ns_str_append(&cmd, q_shared);
+        ns_str_free(q_shared);
+        ns_str_free(shared);
+        ns_array_push(linked, module);
+    }
+    if (rpath_dir.data) {
+        ns_str_append_cstr(&cmd, " -Wl,-rpath,");
+        ns_str_append(&cmd, rpath_dir);
+    }
+    ns_str_append_cstr(&cmd, " -Wl,-rpath,'$ORIGIN'");
+    // A feature module resolves the runtime helpers it is handed out of the
+    // program image, the way it does out of bin/ns when ns runs the program.
+    ns_str_append_cstr(&cmd, " -Wl,--export-dynamic -lm -lpthread -ldl");
+    ns_array_free(linked);
+    ns_str_free(exe);
+    ns_str_free(bin);
+    ns_str_free(root);
+    ns_str_free(installed_lib);
+    ns_str_free(home);
+    ns_str_free(home_lib);
+    ns_str_free(rpath_dir);
+
+    ns_str_append_cstr(&cmd, " -o ");
+    ns_str_append(&cmd, q_executable);
+    ns_array_push(cmd.data, '\0');
+    ns_build_profile_end("prepare_native_runtime", runtime_start);
+
+    f64 link_start = ns_build_profile_begin("system_link");
+    i32 ret = system(cmd.data);
+    ns_build_profile_end("system_link", link_start);
+    if (ret != 0) {
+        ns_exit(1, "build", "failed to link executable %.*s.\n", executable_path.len, executable_path.data);
+    }
+
+    remove(object_path.data);
+    remove(strtab_path.data);
+    ns_str_free(object_path);
+    ns_str_free(rt_path);
+    ns_str_free(rt_object);
+    ns_str_free(strtab_path);
+    ns_str_free(inc_dir);
+    ns_str_free(q_object);
+    ns_str_free(q_executable);
+    ns_str_free(q_rt);
+    ns_str_free(q_rt_object);
+    ns_str_free(q_strtab);
+    ns_str_free(q_inc);
+    ns_str_free(cmd);
+}
+
+#endif // NS_LINUX
 
 #if defined(NS_DARWIN)
 
@@ -3260,12 +3460,13 @@ static void ns_build_wasm_app(ns_build_input *in, ns_str output, ns_ssa_module *
     ns_str_free(bundle_dir);
 }
 
-// The current host has a native executable backend. Linux and every other host
-// emit through a portable launcher for interpreted targets instead.
+// The current host has a native executable backend. A host without one emits a
+// portable launcher for interpreted targets instead.
 static ns_bool ns_build_host_emits_executable(void) {
     ns_asm_target target;
     ns_asm_get_current_target(&target);
-    return target.os == NS_OS_DARWIN || target.os == NS_OS_WINDOWS;
+    return target.os == NS_OS_DARWIN || target.os == NS_OS_WINDOWS ||
+           target.os == NS_OS_LINUX;
 }
 
 // A target the manifest declares `link = false` runs interpreted, so a build
@@ -3323,14 +3524,16 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
     if (kind == NS_BUILD_LIB) {
         ns_asm_target target;
         ns_asm_get_current_target(&target);
-        if (target.os != NS_OS_DARWIN) {
+        if (target.os != NS_OS_DARWIN && target.os != NS_OS_LINUX) {
             ns_ssa_module_free(ssa);
-            ns_exit(1, "build", "static library output is currently supported for mach-o targets only.\n");
+            ns_exit(1, "build", "static library output is currently supported for mach-o and elf targets only.\n");
         }
 
         ns_str object = ns_str_concat(output, ns_str_cstr(".o"));
         f64 object_start = ns_build_profile_begin("emit_object");
-        ns_return_bool emit_ret = ns_macho_emit_object(ssa, object);
+        ns_return_bool emit_ret = target.os == NS_OS_LINUX
+            ? ns_elf_emit_object(ssa, object)
+            : ns_macho_emit_object(ssa, object);
         ns_ssa_module_free(ssa);
         if (ns_return_is_error(emit_ret)) ns_return_assert(emit_ret);
         ns_build_profile_end("emit_object", object_start);
@@ -3370,6 +3573,13 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
         f64 executable_start = ns_build_profile_begin("emit_executable");
         emit_ret = ns_pe_emit(ssa, output);
         ns_build_profile_end("emit_executable", executable_start);
+#if defined(NS_LINUX)
+    } else if (target.os == NS_OS_LINUX) {
+        ns_build_linux_link_executable(ssa, output);
+        ns_ssa_module_free(ssa);
+        ns_info("build", "executable %.*s\n", output.len, output.data);
+        return;
+#endif
     } else {
         ns_ssa_module_free(ssa);
         ns_str arch_name = ns_arch_str(target.arch);
@@ -5137,8 +5347,12 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_aarch(option.filename);
     } else if (option.macho_only) {
         ns_exec_macho(option.filename, option.output);
+    } else if (option.amd64_only) {
+        ns_exec_amd64(option.filename);
     } else if (option.macho_obj_only) {
         ns_exec_macho_object(option.filename, option.output, option.embed_main, option.strtab, option.macho_platform);
+    } else if (option.elf_obj_only) {
+        ns_exec_elf_object(option.filename, option.output, option.strtab);
     } else if (option.wasm_only) {
         ns_exec_wasm(option.filename, option.output);
     } else if (option.pe_only) {

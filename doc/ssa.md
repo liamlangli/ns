@@ -1,7 +1,7 @@
 # SSA Module Design
 
 Lower Nano Script AST (`ns_ast_ctx`) into a CFG of SSA-style blocks and
-instructions. Native AArch64 (and Wasm) consume this IR.
+instructions. Native AArch64, native AMD64, and Wasm consume this IR.
 
 ## Public API
 
@@ -15,11 +15,17 @@ instructions. Native AArch64 (and Wasm) consume this IR.
 
 Defined in `include/ns_ssa.h` and `src/ns_ssa.c`.
 
-## Pipeline (Darwin AArch64)
+## Pipeline (native)
 
 ```
-AST → SSA → AArch64 bytes → Mach-O object → clang + ns_native_rt.c + strtab → executable
+Darwin: AST → SSA → AArch64 bytes → Mach-O object → clang + ns_native_rt.c + strtab → executable
+Linux:  AST → SSA → AMD64 bytes   → ELF object    → cc    + ns_native_rt.c + strtab → executable
 ```
+
+Both hosts end in the system toolchain, which links the emitted object against
+the native runtime, the generated string table, and one shared library per
+imported feature module. Only the object format and the instruction encoder
+differ; every lowering decision above them is shared.
 
 `ns build` / `ns build --exe` is this path. `ns run` is the interpreter and is
 the semantic spec; compiled programs must match it.
@@ -93,7 +99,39 @@ a pthread. `cancel` is cooperative at `sleep`/`await`.
 Heap addresses are 32-bit offsets into `ns_rt` linear memory (Wasm32 layout):
 array `{ptr,u32; len,u32; cap,u32}`, string `{bytes,u32; len,u32}`.
 
-## Opcode coverage (AArch64)
+## AMD64 ABI (System V)
+
+Internal ns→ns calls mirror the AArch64 rules with the registers this ABI has:
+
+- Values live in 8-byte stack slots addressed from `rbp`; slot `v` is at
+  `[rbp - 8*(v+1)]`, so outgoing stack arguments may move `rsp` freely.
+- Arguments 0–5 in `rdi, rsi, rdx, rcx, r8, r9` (floats as bit patterns).
+  Argument 6+ at `[rsp + 8*k]`, `rsp` 16-byte aligned at every call.
+- Return in `rax`. `rax` and `r11` are the operand scratch pair, `rcx` holds a
+  shift count, `rdx` the division remainder, `xmm0`/`xmm1` the float operands.
+- Floats are kept as bit patterns in the integer slots and move into SSE with
+  `movq` for arithmetic, so an f32 occupies the low half of its slot.
+- `std.*` maps to `ns_rt_*` wrappers, as on AArch64.
+
+External `ref fn` uses the real System V convention: integer and pointer
+arguments in the six registers above, floats in `xmm0–xmm7`, the rest on the
+stack, and `al` set to the number of vector registers used so a variadic callee
+reads it. `str` arguments become C `char*` via `ns_rt_to_cstr` and string
+returns are wrapped with `ns_rt_from_cstr`. Linux `ns build` links each imported
+native module's `.so` from the runtime `lib`/`bin` directory and records an
+`$ORIGIN` rpath beside it.
+
+A Windows PE build reuses the same encoder with the Microsoft x64 registers
+(`rcx, rdx, r8, r9`, aliased positionally with `xmm0–xmm3`) and the 32 bytes of
+shadow space that ABI reserves below the outgoing arguments.
+
+The ELF object (`src/ns_elf.c`) holds one `.text` section with every function,
+a `.rela.text` naming the runtime helpers and FFI symbols, and a symbol table
+that exports each function. Calls inside the module are resolved at emit time,
+so only what the linker must supply carries a relocation: `R_X86_64_PLT32` for
+a call, `R_X86_64_PC32` for the `lea` that materializes a function address.
+
+## Opcode coverage (AArch64 and AMD64)
 
 Integer/bool/enum arithmetic and compares, shifts (signed `ASRV` / unsigned
 `LSRV`), casts (int↔float, f32↔f64), control flow, globals, alloc/clone,
@@ -105,6 +143,10 @@ block becomes `$bN(env, args...)`; a named `fn` used as a value gets a
 `$vName` trampoline that ignores `env`. Indirect calls pass the object as
 the first argument and `BLR` the code pointer. `ADRP`+`ADD` materializes
 addresses (no absolute text relocations).
+
+Both encoders cover the same opcodes; where AArch64 uses `ADRP`+`ADD` for an
+address, AMD64 uses a RIP-relative `lea`, and where it uses `BLR`, AMD64 calls
+through the slot the callee address was parked in.
 
 `v.on_frame({ ... })` stores an `ns_rt_callback` trampoline into the native
 function-pointer slot. Field access on a `ref` struct uses the VM's C layout

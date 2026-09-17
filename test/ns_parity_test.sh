@@ -1,7 +1,8 @@
 #!/bin/sh
 
-# Run the same .ns sources through the interpreter and the AArch64 compile
-# path. Exit status (and stdout, when the compiled program prints) must match.
+# Run the same .ns sources through the interpreter and the native compile path
+# (AArch64 mach-o on Darwin, AMD64 ELF on Linux). Exit status (and stdout, when
+# the compiled program prints) must match.
 
 set -eu
 
@@ -13,10 +14,13 @@ fi
 ns=$1
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-if [ "$(uname -s)" != "Darwin" ]; then
-    printf '%s\n' 'SKIP: compile/interpret parity requires Darwin arm64.'
+case "$(uname -s)-$(uname -m)" in
+Darwin-arm64|Linux-x86_64) ;;
+*)
+    printf '%s\n' 'SKIP: compile/interpret parity requires Darwin arm64 or Linux x86_64.'
     exit 0
-fi
+    ;;
+esac
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/ns-parity.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM

@@ -1,8 +1,10 @@
 use os
 
 fn main() {
+    // The host the suite runs on answers for itself: what matters here is that
+    // the compiled call reaches the same module the interpreter calls.
     let p = os_platform()
-    assert p == OS_PLATFORM_MACOS
+    assert p == OS_PLATFORM_MACOS || p == OS_PLATFORM_LINUX || p == OS_PLATFORM_WINDOWS
     let t = os_time()
     assert t > 1000000000.0
     let s = os_time_string()

@@ -136,6 +136,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_macho.c \
 	src/ns_wasm.c \
 	src/ns_amd64.c \
+	src/ns_elf.c \
 	src/ns_pe.c \
 	src/ns_vm_parse.c \
 	src/ns_vm_eval.c \

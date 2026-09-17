@@ -286,13 +286,13 @@ expect_up_to_date 'a rebuilt bundle must record the recompiled source.'
 
 printf '%s\n' 'PASS: a packaged edit re-packages a browser bundle without recompiling it.'
 
-# A `link = false` target runs interpreted, so a host without a native
-# executable backend still has to build it: `ns build` packages a launcher that
-# enters the project and hands the program to `ns run`. Darwin and Windows have
-# native executable backends, so there the same target builds natively instead.
+# A `link = false` target must build into something runnable on every host: a
+# native executable where the host has a code generator for one, and otherwise a
+# launcher that enters the project and hands the program to `ns run`. Darwin and
+# Windows are covered by the native-artifact tests above.
 case "$(uname -s)" in
 Darwin|MINGW*|MSYS*|CYGWIN*)
-    printf '%s\n' 'SKIP: the interpreted-target launcher test needs a host without a native executable backend.'
+    printf '%s\n' 'SKIP: the interpreted-target artifact test covers the other hosts.'
     ;;
 *)
     interpreted="$tmp/interpreted"
@@ -322,7 +322,7 @@ EOF
     launcher="$interpreted/bin/interpreted"
     test -x "$launcher" || {
         cat "$tmp/interpreted.log" >&2
-        printf '%s\n' 'FAIL: an interpreted target must build a runnable launcher.' >&2
+        printf '%s\n' 'FAIL: an interpreted target must build a runnable artifact.' >&2
         exit 1
     }
     output=$("$launcher")
@@ -338,6 +338,6 @@ EOF
     }
     expect_up_to_date 'an unchanged interpreted target must not be rebuilt.'
 
-    printf '%s\n' 'PASS: ns build packages a runnable launcher for a link = false target.'
+    printf '%s\n' 'PASS: ns build produces a runnable artifact for a link = false target.'
     ;;
 esac
