@@ -60,7 +60,9 @@ if test "$actual_sha256" != "$zstd_sha256"; then
 fi
 
 mkdir -p "$unpacked_dir"
-tar -xzf "$archive" --strip-components=1 -C "$unpacked_dir"
+# Zstandard's CLI test fixtures contain symlinks, which tar cannot create on a
+# Windows checkout. Nothing outside lib/ is compiled, so leave them packed.
+tar -xzf "$archive" --strip-components=1 --exclude '*/tests/*' -C "$unpacked_dir"
 
 if ! test -f "${unpacked_dir}/lib/zstd.h" ||
     ! test -f "${unpacked_dir}/lib/compress/zstd_compress.c" ||
