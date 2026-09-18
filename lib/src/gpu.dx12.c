@@ -286,6 +286,7 @@ void gpu_set_scissor(int x, int y, int width, int height) {
 }
 
 void gpu_commit(void) {
+    gpu_v2_flush_uploads();
     if (!_state.valid) {
         gpu_v2_frame_end();
         return;

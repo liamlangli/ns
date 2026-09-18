@@ -304,6 +304,11 @@ typedef enum gpu_caps_flags {
 typedef enum gpu_mem_flags {
     GPU_MEM_DEVICE = 0, // GPU-only memory
     GPU_MEM_SHARED = 1, // CPU-visible, persistently mapped
+    // Triple-buffered CPU writes: backing is size * GPU_SWAP_BUFFER_COUNT.
+    // gpu_write and bind use the current in-flight section so the CPU can
+    // fill next frame while the GPU still reads the previous two. Combine
+    // with GPU_MEM_SHARED. Do not use for GPU-written readback.
+    GPU_MEM_FRAMES = 2,
 } gpu_mem_flags;
 
 // Fixed blend presets cover the states real programs use; the full blend

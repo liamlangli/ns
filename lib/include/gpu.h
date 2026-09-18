@@ -66,7 +66,7 @@ void     gpu_free(gpu_addr addr);               // addr must be an allocation ba
 void     gpu_write(gpu_addr dst, const void *src, u64 size);
 ns_bool  gpu_read(gpu_addr src, void *dst, u64 size);
 void    *gpu_addr_host(gpu_addr addr);          // NULL unless GPU_CAP_RAW_POINTERS on shared memory
-gpu_addr gpu_frame_alloc(u64 size, u32 align);  // transient, recycled by gpu_commit
+gpu_addr gpu_frame_alloc(u64 size, u32 align);  // transient, recycled by gpu_commit; one of GPU_SWAP_BUFFER_COUNT ring sections
 
 // ---- textures and samplers (bindless heap indices, 0 = invalid) ------------
 u32  gpu_texture_create(i32 width, i32 height, i32 depth_or_layers,
@@ -153,6 +153,11 @@ typedef struct gpu_v2_ops {
     void    (*mem_write)(u32 slot, u64 offset, const void *src, u64 size);
     ns_bool (*mem_read)(u32 slot, u64 offset, void *dst, u64 size);
     void   *(*mem_host_ptr)(u32 slot);
+    // GPU copy used by persistent gpu_write. Returns false when a render
+    // encoder is open and the copy cannot be encoded. mem_copy_end closes a
+    // batched blit encoder; both may be NULL.
+    ns_bool (*mem_copy)(u32 dst_slot, u64 dst_offset, u32 src_slot, u64 src_offset, u64 size);
+    void    (*mem_copy_end)(void);
 
     u32  (*texture_create)(i32 width, i32 height, i32 depth_or_layers,
                            i32 format, u32 usage, i32 mip_count, i32 kind);
@@ -193,6 +198,7 @@ typedef struct gpu_v2_ops {
 } gpu_v2_ops;
 
 void gpu_v2_set_backend(const gpu_v2_ops *ops, u32 caps, u32 storage_slot_count);
+void gpu_v2_flush_uploads(void); // encode pending persistent gpu_write copies
 void gpu_v2_frame_end(void); // backends call this from gpu_commit to recycle the ring
 
 // ---- Vulkan/Wayland frame seam (Linux) --------------------------------------

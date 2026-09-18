@@ -82,6 +82,50 @@ gpu_commit()
 let f4 = gpu_frame_alloc(64, 0u)
 assert f4 == f1
 
+let ring_copy = gpu_frame_write(src, 16)
+assert ring_copy != 0
+assert gpu_read(ring_copy, dst, 16)
+assert dst[0] == 11 && dst[3] == 44
+
+// GPU_MEM_FRAMES keeps three CPU-write copies behind one logical address.
+let framed = gpu_malloc(4, GPU_MEM_SHARED | GPU_MEM_FRAMES, "framed cpu write test buffer")
+assert framed != 0
+let first = [1]
+gpu_write(framed, first, 4)
+let framed_out = [i32](1)
+assert gpu_read(framed, framed_out, 4)
+assert framed_out[0] == 1
+gpu_commit()
+let second = [2]
+gpu_write(framed, second, 4)
+assert gpu_read(framed, framed_out, 4)
+assert framed_out[0] == 2
+gpu_commit()
+// A frame that does not write keeps reading the last filled copy, not the
+// unused current section.
+assert gpu_read(framed, framed_out, 4)
+assert framed_out[0] == 2
+gpu_commit()
+let third = [3]
+gpu_write(framed, third, 4)
+assert gpu_read(framed, framed_out, 4)
+assert framed_out[0] == 3
+gpu_free(framed)
+
+// Persistent single-copy writes stay one allocation; overlapping CPU writes
+// are visible to gpu_read without waiting for a GPU copy.
+let persist = gpu_malloc(32, GPU_MEM_DEVICE, "persistent gpu write test buffer")
+assert persist != 0
+let patch_a = [7, 8]
+gpu_write(persist + 8, patch_a, 8)
+assert gpu_read(persist + 8, dst, 8)
+assert dst[0] == 7 && dst[1] == 8
+let patch_b = [9]
+gpu_write(persist + 8, patch_b, 4)
+assert gpu_read(persist + 8, dst, 8)
+assert dst[0] == 9 && dst[1] == 8
+gpu_free(persist)
+
 // -- render state: value-cached ids ------------------------------------------
 let s1 = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, 0, GPU_COMPARE_LESS_EQUAL, true, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)
 let s2 = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, 0, GPU_COMPARE_LESS_EQUAL, true, GPU_BLEND_ALPHA, GPU_COLOR_MASK_ALL)

@@ -132,17 +132,43 @@ typedef u64 gpu_addr;                    // 0 = null
 enum gpu_mem_flags {
     GPU_MEM_DEVICE = 0,                  // GPU-only (render targets aside, the default)
     GPU_MEM_SHARED = 1,                  // CPU-visible, persistently mapped
+    GPU_MEM_FRAMES = 2,                  // triple-buffered CPU writes; combine with SHARED
 };
 
 gpu_addr gpu_malloc(u64 size, u32 flags, const char *name);
 void     gpu_free(gpu_addr addr);
 
-// Write/read through the frame's transfer stream (device memory) or memcpy
-// (shared memory). Valid on every tier. gpu_read needs GPU_CAP_READBACK and
-// does not order against work in flight - see below.
+// Write/read. gpu_write picks the cheap path from the destination:
+// the frame ring and GPU_MEM_FRAMES memcpy the current in-flight copy;
+// a persistent single-copy buffer stages the dirty range in the ring and
+// GPU-copies it, so in-flight readers keep the previous contents.
+// gpu_read needs GPU_CAP_READBACK and does not wait for GPU work - see below.
 void     gpu_write(gpu_addr dst, const void *src, u64 size);
 ns_bool  gpu_read(gpu_addr src, void *dst, u64 size);
 ```
+
+Windowed backends keep **three frames in flight**: three swap drawables, three
+command buffers, and a three-section frame ring. CPU encoding of frame N+2
+overlaps GPU execution of frame N. A single persistently mapped buffer that
+the CPU `gpu_write`s every frame races with those in-flight reads — and on
+some backends that race becomes a CPU stall. Per-frame data therefore has to
+land in a copy the GPU is not still using:
+
+- **Small uniforms / root structs:** `gpu_set_root_data`. It copies into the
+  current ring section and binds that address.
+- **Variable-size transients (one frame only):** `gpu_frame_alloc` /
+  `gpu_frame_write`. The address dies at `gpu_commit`.
+- **Fixed-size CPU buffers rewritten while frames are in flight** (UI
+  vertices, actor joints, anything `gpu_write`n from the CPU and read by the
+  GPU): `gpu_malloc(..., GPU_MEM_SHARED | GPU_MEM_FRAMES, ...)`. Backing is
+  `size * 3`; writes and binds use the current section, and a frame that
+  does not write keeps binding the last filled copy. The UI renderer is the
+  reference user of this flag.
+- **Static or GPU-owned data** (voxel volumes, baked shadows): one
+  `gpu_malloc`. `gpu_write` of a patch stages those bytes in the ring and
+  GPU-copies them — no 3× allocation. Do **not** set `GPU_MEM_FRAMES` on a
+  buffer a compute shader writes and the CPU reads back; those copies are
+  independent and the CPU would read the wrong one.
 
 `gpu_read` costs what the backend's allocations cost. Where `gpu_malloc` hands
 back host-visible memory - Metal, whose allocations are persistently mapped
@@ -157,10 +183,14 @@ work has completed - a later frame, not the one that queued it.
 
 ```c
 // Host pointer of a SHARED allocation. NULL unless GPU_CAP_RAW_POINTERS.
+// GPU_MEM_FRAMES returns the current frame's copy and marks it written.
 void    *gpu_addr_host(gpu_addr addr);
 
-// Per-frame transient allocation from an internal ring; freed automatically
-// when the frame's GPU work completes. The dynamic-data workhorse (ui.c).
+// Per-frame transient allocation from an internal triple-buffered ring;
+// recycled when the frame's GPU work completes. Do not keep the address
+// across gpu_commit. gpu_set_root_data is the usual caller; ui.c uses
+// GPU_MEM_FRAMES for its growing vertex store instead, because a busy HUD
+// can exceed one ring section.
 gpu_addr gpu_frame_alloc(u64 size, u32 align);
 ```
 
@@ -422,8 +452,9 @@ fn gpu_shader_compute(f: any) gpu_shader
 A migrated frame:
 
 ```ns
-// Data is data; the draw names everything it needs.
-let args = sprite_args(g_vertices, view_size(), g_atlas, g_linear)
+// Per-frame uniforms go through the ring; CPU-written vertex data is framed.
+let vertices = gpu_frame_write(sprite_bytes, sprite_bytes.len as u64)
+let args = sprite_args(vertices, view_size(), g_atlas, g_linear)
 gpu_screen_pass_begin("sprites", 0.1, 0.1, 0.1, 1.0)
 gpu_set_shader(g_shader)
 gpu_set_state(g_alpha_blend)

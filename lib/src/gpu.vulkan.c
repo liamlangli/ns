@@ -1455,6 +1455,7 @@ void gpu_set_scissor(int x, int y, int width, int height) {
 }
 
 void gpu_commit(void) {
+    gpu_v2_flush_uploads();
     if (!_vk.valid || !_vk.frame_active) {
         gpu_v2_frame_end();
         return;
@@ -1559,6 +1560,31 @@ static ns_bool gpu_vk_mem_read(u32 slot, u64 offset, void *dst, u64 size) {
 static void *gpu_vk_mem_host_ptr(u32 slot) {
     if (slot >= GPU_RESOURCE_POOL_SIZE) return NULL;
     return _vk.buffers[slot].mapped;
+}
+
+static ns_bool gpu_vk_mem_copy(u32 dst_slot, u64 dst_offset, u32 src_slot, u64 src_offset, u64 size) {
+    if (dst_slot >= GPU_RESOURCE_POOL_SIZE || src_slot >= GPU_RESOURCE_POOL_SIZE || size == 0) return false;
+    if (_vk.pass_open || !_vk.commands_active) return false;
+    gpu_vk_buffer *dst = &_vk.buffers[dst_slot];
+    gpu_vk_buffer *src = &_vk.buffers[src_slot];
+    if (!dst->buffer || !src->buffer) return false;
+    if (dst_offset > dst->logical || size > dst->logical - dst_offset) return false;
+    if (src_offset > src->logical || size > src->logical - src_offset) return false;
+    VkBufferCopy region = {.srcOffset = src_offset, .dstOffset = dst_offset, .size = size};
+    vkCmdCopyBuffer(_vk.commands, src->buffer, dst->buffer, 1, &region);
+    return true;
+}
+
+static void gpu_vk_mem_copy_end(void) {
+    if (!_vk.commands_active) return;
+    VkMemoryBarrier barrier = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                         VK_ACCESS_INDEX_READ_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+    };
+    vkCmdPipelineBarrier(_vk.commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         0, 1, &barrier, 0, NULL, 0, NULL);
 }
 
 // ---- textures and samplers --------------------------------------------------
@@ -2293,6 +2319,8 @@ static const gpu_v2_ops _vulkan_v2_ops = {
     .mem_write = gpu_vk_mem_write,
     .mem_read = gpu_vk_mem_read,
     .mem_host_ptr = gpu_vk_mem_host_ptr,
+    .mem_copy = gpu_vk_mem_copy,
+    .mem_copy_end = gpu_vk_mem_copy_end,
     .texture_create = gpu_vk_texture_create,
     .texture_upload = gpu_vk_texture_upload,
     .texture_destroy = gpu_vk_texture_destroy,

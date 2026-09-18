@@ -29,7 +29,7 @@ void gpu_destroy_device(void) {}
 
 void gpu_set_viewport(int x, int y, int width, int height) { ns_unused(x); ns_unused(y); ns_unused(width); ns_unused(height); }
 void gpu_set_scissor(int x, int y, int width, int height) { ns_unused(x); ns_unused(y); ns_unused(width); ns_unused(height); }
-void gpu_commit(void) { gpu_v2_frame_end(); }
+void gpu_commit(void) { gpu_v2_flush_uploads(); gpu_v2_frame_end(); }
 
 #endif
 
@@ -84,7 +84,20 @@ typedef struct gpu_v2_slot {
     ns_bool backend;  // backing lives in the backend, not in `shadow`
     u64 base_va;      // nonzero when the backend exposed a real device address
     u8 *shadow;       // host backing for slots created without a backend
+    ns_bool wrote_this_frame; // GPU_MEM_FRAMES: CPU wrote the current section
+    u32 last_section;         // GPU_MEM_FRAMES: last section the CPU filled
 } gpu_v2_slot;
+
+typedef struct gpu_v2_upload {
+    u32 src_slot;
+    u32 dst_slot;
+    u64 src_offset;
+    u64 dst_offset;
+    u64 size;
+    ns_bool copied;
+} gpu_v2_upload;
+
+enum { GPU_V2_UPLOAD_CAP = 128, GPU_V2_STAGING_ALIGN = 16 };
 
 typedef struct gpu_v2_core {
     const gpu_v2_ops *ops;
@@ -97,6 +110,10 @@ typedef struct gpu_v2_core {
     gpu_addr ring_base;
     u64 ring_head;
     u32 ring_section;
+    u32 ring_slot;
+
+    gpu_v2_upload uploads[GPU_V2_UPLOAD_CAP];
+    u32 upload_count;
 
     gpu_v2_state_desc states[GPU_V2_STATE_POOL_SIZE];
     u32 state_count;
@@ -181,8 +198,33 @@ static ns_bool gpu_v2_decode(gpu_addr addr, u32 *out_slot, u64 *out_offset) {
     return true;
 }
 
+static ns_bool gpu_v2_framed(const gpu_v2_slot *s) {
+    return s && (s->flags & GPU_MEM_FRAMES) != 0;
+}
+
+static u64 gpu_v2_backing_size(u64 size, u32 flags) {
+    if (!(flags & GPU_MEM_FRAMES)) return size;
+    return size * (u64)GPU_SWAP_BUFFER_COUNT;
+}
+
+// Map a logical offset inside one allocation onto the in-flight copy the CPU
+// should touch. Writes always land in the current ring section; reads and
+// binds keep using that section through the rest of the frame, then the last
+// filled copy if this frame never wrote.
+static u64 gpu_v2_frame_offset(gpu_v2_slot *s, u64 offset, ns_bool writing) {
+    if (!gpu_v2_framed(s)) return offset;
+    if (writing) {
+        s->wrote_this_frame = true;
+        s->last_section = _v2.ring_section;
+        return (u64)_v2.ring_section * s->size + offset;
+    }
+    u32 section = s->wrote_this_frame ? _v2.ring_section : s->last_section;
+    return (u64)section * s->size + offset;
+}
+
 gpu_addr gpu_malloc(u64 size, u32 flags, const char *name) {
     if (size == 0 || size > GPU_V2_OFFSET_MASK || !name || !name[0]) return 0;
+    if ((flags & GPU_MEM_FRAMES) && size > GPU_V2_OFFSET_MASK / (u64)GPU_SWAP_BUFFER_COUNT) return 0;
 
     u32 slot = _v2.slot_count;
     for (u32 i = 0; i < _v2.slot_count; i++) {
@@ -200,16 +242,17 @@ gpu_addr gpu_malloc(u64 size, u32 flags, const char *name) {
     memset(s, 0, sizeof(*s));
     s->size = size;
     s->flags = flags;
+    u64 backing = gpu_v2_backing_size(size, flags);
 
     if (_v2.ops && _v2.ops->mem_create) {
         u64 base_va = 0;
-        if (!_v2.ops->mem_create(slot, size, flags, name, &base_va)) return 0;
+        if (!_v2.ops->mem_create(slot, backing, flags, name, &base_va)) return 0;
         s->backend = true;
         s->base_va = base_va;
     } else {
         // No backend: keep the allocation host-side so headless programs run
         // with deterministic (zeroed) memory semantics.
-        s->shadow = (u8 *)calloc(1, size);
+        s->shadow = (u8 *)calloc(1, backing);
         if (!s->shadow) return 0;
     }
 
@@ -231,6 +274,101 @@ void gpu_free(gpu_addr addr) {
     memset(s, 0, sizeof(*s));
 }
 
+static ns_bool gpu_v2_is_ring(u32 slot) {
+    return _v2.ring_base && slot == _v2.ring_slot;
+}
+
+static ns_bool gpu_v2_direct_write(gpu_v2_slot *s, u32 slot, u64 offset, const void *src, u64 size) {
+    if (s->backend) {
+        if (_v2.ops && _v2.ops->mem_write) _v2.ops->mem_write(slot, offset, src, size);
+        return true;
+    }
+    if (!s->shadow) return false;
+    memcpy(s->shadow + offset, src, size);
+    return true;
+}
+
+static ns_bool gpu_v2_direct_read(gpu_v2_slot *s, u32 slot, u64 offset, void *dst, u64 size) {
+    if (s->backend) {
+        if (_v2.ops && _v2.ops->mem_read) return _v2.ops->mem_read(slot, offset, dst, size);
+        return false;
+    }
+    if (!s->shadow) return false;
+    memcpy(dst, s->shadow + offset, size);
+    return true;
+}
+
+static const u8 *gpu_v2_host_bytes(u32 slot, u64 offset) {
+    gpu_v2_slot *s = &_v2.slots[slot];
+    if (s->shadow) return s->shadow + offset;
+    if (!s->backend || !_v2.ops || !_v2.ops->mem_host_ptr) return NULL;
+    u8 *base = (u8 *)_v2.ops->mem_host_ptr(slot);
+    return base ? base + offset : NULL;
+}
+
+static void gpu_v2_overlay_uploads(u32 slot, u64 offset, void *dst, u64 size) {
+    u8 *out = (u8 *)dst;
+    for (u32 i = 0; i < _v2.upload_count; i++) {
+        gpu_v2_upload *u = &_v2.uploads[i];
+        if (u->dst_slot != slot) continue;
+        u64 a0 = offset, a1 = offset + size;
+        u64 b0 = u->dst_offset, b1 = u->dst_offset + u->size;
+        if (a1 <= b0 || a0 >= b1) continue;
+        u64 o0 = a0 > b0 ? a0 : b0;
+        u64 o1 = a1 < b1 ? a1 : b1;
+        const u8 *from = gpu_v2_host_bytes(u->src_slot, u->src_offset + (o0 - b0));
+        if (!from) continue;
+        memcpy(out + (o0 - a0), from, (size_t)(o1 - o0));
+    }
+}
+
+static ns_bool gpu_v2_copy_host(gpu_v2_upload *u) {
+    const u8 *from = gpu_v2_host_bytes(u->src_slot, u->src_offset);
+    if (!from) return false;
+    return gpu_v2_direct_write(&_v2.slots[u->dst_slot], u->dst_slot, u->dst_offset, from, u->size);
+}
+
+void gpu_v2_flush_uploads(void) {
+    if (_v2.upload_count == 0) return;
+    ns_bool used_copy = false;
+    for (u32 i = 0; i < _v2.upload_count; i++) {
+        gpu_v2_upload *u = &_v2.uploads[i];
+        if (u->copied) continue;
+        if (_v2.ops && _v2.ops->mem_copy &&
+            _v2.ops->mem_copy(u->dst_slot, u->dst_offset, u->src_slot, u->src_offset, u->size)) {
+            u->copied = true;
+            used_copy = true;
+            continue;
+        }
+        gpu_v2_copy_host(u);
+        u->copied = true;
+    }
+    if (used_copy && _v2.ops && _v2.ops->mem_copy_end) _v2.ops->mem_copy_end();
+}
+
+static void gpu_v2_queue_upload(u32 dst_slot, u64 dst_offset, const void *src, u64 size) {
+    if (_v2.upload_count == GPU_V2_UPLOAD_CAP) gpu_v2_flush_uploads();
+    gpu_addr staging = gpu_frame_alloc(size, GPU_V2_STAGING_ALIGN);
+    u32 src_slot;
+    u64 src_offset;
+    if (!staging || !gpu_v2_decode(staging, &src_slot, &src_offset)) {
+        gpu_v2_direct_write(&_v2.slots[dst_slot], dst_slot, dst_offset, src, size);
+        return;
+    }
+    gpu_v2_direct_write(&_v2.slots[src_slot], src_slot, src_offset, src, size);
+    if (_v2.upload_count == GPU_V2_UPLOAD_CAP) {
+        gpu_v2_direct_write(&_v2.slots[dst_slot], dst_slot, dst_offset, src, size);
+        return;
+    }
+    gpu_v2_upload *u = &_v2.uploads[_v2.upload_count++];
+    u->src_slot = src_slot;
+    u->dst_slot = dst_slot;
+    u->src_offset = src_offset;
+    u->dst_offset = dst_offset;
+    u->size = size;
+    u->copied = false;
+}
+
 void gpu_write(gpu_addr dst, const void *src, u64 size) {
     if (!src || size == 0) return;
     u32 slot;
@@ -241,11 +379,16 @@ void gpu_write(gpu_addr dst, const void *src, u64 size) {
         ns_warn("gpu", "gpu_write: range exceeds allocation.\n");
         return;
     }
-    if (s->backend) {
-        if (_v2.ops && _v2.ops->mem_write) _v2.ops->mem_write(slot, offset, src, size);
+    // Temporary ring and GPU_MEM_FRAMES copies are private to this in-flight
+    // frame: one CPU memcpy, no GPU blit.
+    if (gpu_v2_framed(s) || gpu_v2_is_ring(slot) || !s->backend) {
+        offset = gpu_v2_frame_offset(s, offset, true);
+        gpu_v2_direct_write(s, slot, offset, src, size);
         return;
     }
-    memcpy(s->shadow + offset, src, size);
+    // Persistent single-copy: stage in the ring and GPU-copy so in-flight
+    // readers keep the previous contents. Only the dirty bytes move.
+    gpu_v2_queue_upload(slot, offset, src, size);
 }
 
 ns_bool gpu_read(gpu_addr src, void *dst, u64 size) {
@@ -255,11 +398,12 @@ ns_bool gpu_read(gpu_addr src, void *dst, u64 size) {
     if (!gpu_v2_decode(src, &slot, &offset)) return false;
     gpu_v2_slot *s = &_v2.slots[slot];
     if (size > s->size - offset) return false;
-    if (s->backend) {
-        if (_v2.ops && _v2.ops->mem_read) return _v2.ops->mem_read(slot, offset, dst, size);
-        return false;
+    u64 host_offset = gpu_v2_frame_offset(s, offset, false);
+    if (!gpu_v2_direct_read(s, slot, host_offset, dst, size)) {
+        memset(dst, 0, (size_t)size);
+        if (_v2.upload_count == 0) return false;
     }
-    memcpy(dst, s->shadow + offset, size);
+    gpu_v2_overlay_uploads(slot, offset, dst, size);
     return true;
 }
 
@@ -270,6 +414,8 @@ void *gpu_addr_host(gpu_addr addr) {
     if (!gpu_v2_decode(addr, &slot, &offset)) return NULL;
     gpu_v2_slot *s = &_v2.slots[slot];
     if (!s->backend || !_v2.ops || !_v2.ops->mem_host_ptr) return NULL;
+    // A host pointer into a framed allocation is the current frame's copy.
+    offset = gpu_v2_frame_offset(s, offset, true);
     u8 *base = (u8 *)_v2.ops->mem_host_ptr(slot);
     return base ? base + offset : NULL;
 }
@@ -283,6 +429,13 @@ gpu_addr gpu_frame_alloc(u64 size, u32 align) {
         if (!_v2.ring_base) return 0;
         _v2.ring_head = 0;
         _v2.ring_section = 0;
+        u64 ring_off = 0;
+        if (!gpu_v2_decode(_v2.ring_base, &_v2.ring_slot, &ring_off)) {
+            gpu_free(_v2.ring_base);
+            _v2.ring_base = 0;
+            _v2.ring_slot = 0;
+            return 0;
+        }
     }
 
     // Keep every swap section's base aligned: integer division of the 4 MiB
@@ -298,6 +451,10 @@ gpu_addr gpu_frame_alloc(u64 size, u32 align) {
 }
 
 void gpu_v2_frame_end(void) {
+    _v2.upload_count = 0;
+    for (u32 i = 0; i < _v2.slot_count; i++) {
+        if (_v2.slots[i].used) _v2.slots[i].wrote_this_frame = false;
+    }
     _v2.ring_section = (_v2.ring_section + 1) % GPU_SWAP_BUFFER_COUNT;
     _v2.ring_head = 0;
 }
@@ -418,6 +575,7 @@ void gpu_pass_begin(const char *label,
                     u32 color0, u32 color1, u32 color2, u32 color3,
                     u32 depth, u32 load_flags,
                     f64 r, f64 g, f64 b, f64 a, f64 depth_clear) {
+    gpu_v2_flush_uploads();
     if (!_v2.ops || !_v2.ops->pass_begin) return;
     gpu_color clear = {(f32)r, (f32)g, (f32)b, (f32)a};
     _v2.ops->pass_begin(gpu_v2_label(label, "unnamed pass"),
@@ -425,6 +583,7 @@ void gpu_pass_begin(const char *label,
 }
 
 void gpu_screen_pass_begin(const char *label, f64 r, f64 g, f64 b, f64 a) {
+    gpu_v2_flush_uploads();
     if (!_v2.ops || !_v2.ops->screen_pass_begin) return;
     gpu_color clear = {(f32)r, (f32)g, (f32)b, (f32)a};
     _v2.ops->screen_pass_begin(gpu_v2_label(label, "unnamed screen pass"), clear);
@@ -447,6 +606,7 @@ void gpu_set_root(gpu_addr args) {
     u32 slot;
     u64 offset;
     if (!gpu_v2_decode(args, &slot, &offset)) return;
+    offset = gpu_v2_frame_offset(&_v2.slots[slot], offset, false);
     if (_v2.ops && _v2.ops->set_root) _v2.ops->set_root(slot, offset, args);
 }
 
@@ -459,6 +619,7 @@ void gpu_set_storage_at(i32 index, gpu_addr addr) {
     u32 slot;
     u64 offset;
     if (!gpu_v2_decode(addr, &slot, &offset)) return;
+    offset = gpu_v2_frame_offset(&_v2.slots[slot], offset, false);
     if (_v2.ops && _v2.ops->set_storage) _v2.ops->set_storage((u32)(3 + index), slot, offset, addr);
 }
 
@@ -472,6 +633,7 @@ void gpu_set_root_data(const void *data, u64 size) {
 
 void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count) {
     if (vertex_count <= 0 || instance_count <= 0) return;
+    gpu_v2_flush_uploads();
     if (_v2.ops && _v2.ops->draw) _v2.ops->draw(vertex_base, vertex_count, instance_count);
 }
 
@@ -496,6 +658,7 @@ void gpu_draw_indirect(gpu_addr args, i32 draw_count, i32 stride) {
 
 void gpu_dispatch(const char *label, i32 x, i32 y, i32 z) {
     if (x <= 0 || y <= 0 || z <= 0) return;
+    gpu_v2_flush_uploads();
     if (_v2.ops && _v2.ops->dispatch) _v2.ops->dispatch(gpu_v2_label(label, "unnamed dispatch"), x, y, z);
 }
 
@@ -503,6 +666,7 @@ void gpu_dispatch_indirect(const char *label, gpu_addr args) {
     u32 slot;
     u64 offset;
     if (!gpu_v2_decode(args, &slot, &offset)) return;
+    gpu_v2_flush_uploads();
     if (_v2.ops && _v2.ops->dispatch_indirect) {
         _v2.ops->dispatch_indirect(gpu_v2_label(label, "unnamed dispatch"), slot, offset);
     }

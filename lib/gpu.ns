@@ -68,6 +68,11 @@ lit GPU_CAP_READBACK = 16u
 
 lit GPU_MEM_DEVICE = 0u
 lit GPU_MEM_SHARED = 1u
+// Triple-buffered CPU writes. Combine with GPU_MEM_SHARED for any buffer the
+// CPU fills while the GPU may still be reading last frame. gpu_write and
+// gpu_set_storage land on the current in-flight copy; the previous two stay
+// untouched until those frames complete. Do not use for GPU-written readback.
+lit GPU_MEM_FRAMES = 2u
 
 lit GPU_BLEND_OFF = 0
 lit GPU_BLEND_ALPHA = 1
@@ -94,12 +99,18 @@ ref fn gpu_caps() u32
 ref fn gpu_storage_slot_count() u32
 
 // name is required and identifies the allocation in GPU debugging tools.
+// Per-frame CPU data: GPU_MEM_SHARED | GPU_MEM_FRAMES, or gpu_frame_write.
+// Static / GPU-owned data: GPU_MEM_DEVICE and write once.
 ref fn gpu_malloc(size: u64, flags: u32, name: str) u64
 ref fn gpu_free(addr: u64)
+// Temporary (frame ring) and GPU_MEM_FRAMES: one memcpy into the current
+// in-flight copy. Persistent single-copy: stage the dirty bytes in the ring
+// and GPU-copy so in-flight readers keep the previous contents.
 ref fn gpu_write(dst: u64, data: [any], size: u64)
 ref fn gpu_read(src: u64, dst: [any], size: u64) bool
-// Transient per-frame allocation, recycled by gpu_commit; align 0 selects the
-// 256-byte default that is safe on every backend.
+// Transient per-frame allocation from the triple-buffered ring, recycled by
+// gpu_commit; align 0 selects the 256-byte default that is safe on every
+// backend. Do not keep the address across frames.
 ref fn gpu_frame_alloc(size: u64, align: u32) u64
 
 ref fn gpu_texture_create(width: i32, height: i32, depth_or_layers: i32, format: i32, usage: u32, mip_count: i32, kind: i32) u32
@@ -333,6 +344,15 @@ fn gpu_memory_write(mem: gpu_memory, offset: u64, data: [any], size: u64) {
         return
     }
     gpu_write(mem.addr + offset, data, size)
+}
+
+// Copy `size` bytes into the current frame ring and return that address.
+// Bind it this frame; the ring recycles it after GPU_SWAP_BUFFER_COUNT commits.
+fn gpu_frame_write(data: [any], size: u64) u64 {
+    let addr = gpu_frame_alloc(size, 0u)
+    if addr == 0 { return 0 }
+    gpu_write(addr, data, size)
+    return addr
 }
 
 fn gpu_memory_read(mem: gpu_memory, offset: u64, dst: [any], size: u64) bool {

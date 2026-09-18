@@ -332,6 +332,7 @@ typedef struct gpu_state_mtl {
     id<MTLCommandQueue> cmd_queue;
     id<MTLCommandBuffer> cmd_buffer;
     id<MTLRenderCommandEncoder> cmd_encoder;
+    id<MTLBlitCommandEncoder> blit_encoder;
     id<CAMetalDrawable> cur_drawable;
     // A CAMetalLayer drawable may be read and presented once. The host frame
     // owns that single acquire/present pair, so a mid-frame gpu_commit() cannot
@@ -367,6 +368,8 @@ static id<MTLTexture> immersive_depth;
 static bool immersive_frame;
 static u32 immersive_slice;
 static const gpu_v2_ops _mtl_v2_ops;
+static void mtl_v2_ensure_frame(void);
+static void mtl_v2_label_encoder(id<MTLCommandEncoder> encoder, const char *label);
 
 static void gpu_mtl_configure_view(MTKView *view, id<MTLDevice> device) {
     if (view == nil) return;
@@ -521,6 +524,7 @@ ns_bool gpu_request_device(view* v) {
     _state.cmd_queue = [_state.device.device newCommandQueue];
     _state.cmd_buffer = nil;
     _state.cmd_encoder = nil;
+    _state.blit_encoder = nil;
     _state.cur_drawable = nil;
     _state.drawable_presented = false;
     _state.capture_scope = nil;
@@ -581,6 +585,7 @@ void gpu_destroy_device() {
     _state.v2_storage_slot_count = 0;
 #ifndef ENABLE_ARC
     [_state.cmd_encoder release];
+    [_state.blit_encoder release];
     [_state.cmd_buffer release];
     [_state.capture_scope release];
     [_state.cmd_queue release];
@@ -623,7 +628,10 @@ void gpu_mtl_immersive_end(void) {
     immersive_depth = nil;
     immersive_frame = false;
 }
-void gpu_mtl_immersive_complete(void) { gpu_v2_frame_end(); }
+void gpu_mtl_immersive_complete(void) {
+    gpu_v2_flush_uploads();
+    gpu_v2_frame_end();
+}
 
 static id<CAMetalDrawable> gpu_mtl_current_drawable(void) {
     if (nil != _state.cur_drawable || _state.drawable_presented) return _state.cur_drawable;
@@ -660,7 +668,9 @@ void gpu_mtl_begin_frame(MTKView *view) {
 void gpu_mtl_end_frame(MTKView *view) {
     ns_unused(view);
     if (!_state.valid || _state.cmd_queue == nil) return;
+    gpu_v2_flush_uploads();
     assert(nil == _state.cmd_encoder);
+    assert(nil == _state.blit_encoder);
 
     // The frame's own buffer, when it has not committed yet: the drawable rides
     // along on it and the in-flight semaphore stays with the drawing work.
@@ -698,11 +708,13 @@ void gpu_mtl_end_frame(MTKView *view) {
 
 void gpu_commit() {
     if (immersive_frame) return; // Compositor Services owns submission.
+    gpu_v2_flush_uploads();
     if (!_state.valid || nil == _state.cmd_buffer) {
         gpu_v2_frame_end();
         return;
     }
     assert(nil == _state.cmd_encoder);
+    assert(nil == _state.blit_encoder);
 
     [_state.cmd_buffer commit];
     _state.cmd_buffer = nil;
@@ -874,6 +886,32 @@ static ns_bool mtl_v2_mem_read(u32 slot, u64 offset, void *dst, u64 size) {
 static void *mtl_v2_mem_host_ptr(u32 slot) {
     if (slot >= GPU_RESOURCE_POOL_SIZE || !_state.v2_memory[slot]) return NULL;
     return [_state.v2_memory[slot] contents];
+}
+
+static ns_bool mtl_v2_mem_copy(u32 dst_slot, u64 dst_offset, u32 src_slot, u64 src_offset, u64 size) {
+    if (dst_slot >= GPU_RESOURCE_POOL_SIZE || src_slot >= GPU_RESOURCE_POOL_SIZE) return false;
+    if (!_state.v2_memory[dst_slot] || !_state.v2_memory[src_slot] || size == 0) return false;
+    if (dst_offset > _state.v2_memory_size[dst_slot] || size > _state.v2_memory_size[dst_slot] - dst_offset) return false;
+    if (src_offset > _state.v2_memory_size[src_slot] || size > _state.v2_memory_size[src_slot] - src_offset) return false;
+    if (_state.cmd_encoder) return false;
+    mtl_v2_ensure_frame();
+    if (_state.cmd_buffer == nil) return false;
+    if (_state.blit_encoder == nil) {
+        _state.blit_encoder = [_state.cmd_buffer blitCommandEncoder];
+        mtl_v2_label_encoder(_state.blit_encoder, "gpu write");
+    }
+    [_state.blit_encoder copyFromBuffer:_state.v2_memory[src_slot]
+                           sourceOffset:(NSUInteger)src_offset
+                               toBuffer:_state.v2_memory[dst_slot]
+                      destinationOffset:(NSUInteger)dst_offset
+                                   size:(NSUInteger)size];
+    return true;
+}
+
+static void mtl_v2_mem_copy_end(void) {
+    if (_state.blit_encoder == nil) return;
+    [_state.blit_encoder endEncoding];
+    _state.blit_encoder = nil;
 }
 
 static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
@@ -1220,6 +1258,7 @@ static void mtl_v2_pass_begin(const char *label,
                               u32 color0, u32 color1, u32 color2, u32 color3,
                               u32 depth, u32 load_flags, gpu_color clear, f32 depth_clear) {
     mtl_v2_ensure_frame();
+    if (_state.blit_encoder) mtl_v2_mem_copy_end();
     if (_state.cmd_buffer == nil || _state.cmd_encoder != nil) return;
     u32 colors[4] = {color0, color1, color2, color3};
     MTLRenderPassDescriptor *desc = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -1252,6 +1291,7 @@ static void mtl_v2_pass_begin(const char *label,
 
 static void mtl_v2_screen_pass_begin(const char *label, gpu_color clear) {
     mtl_v2_ensure_frame();
+    if (_state.blit_encoder) mtl_v2_mem_copy_end();
     if (_state.cmd_buffer == nil || _state.cmd_encoder != nil) return;
     id<CAMetalDrawable> drawable = immersive_frame ? nil : gpu_mtl_current_drawable();
     id<MTLTexture> screen = immersive_frame ? immersive_color : drawable.texture;
@@ -1521,6 +1561,7 @@ static void mtl_v2_dispatch(const char *label, i32 x, i32 y, i32 z) {
     gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
     if (!shader->compute_pso) return;
     mtl_v2_ensure_frame();
+    if (_state.blit_encoder) mtl_v2_mem_copy_end();
     if (_state.cmd_buffer == nil) return;
     id<MTLComputeCommandEncoder> encoder = [_state.cmd_buffer computeCommandEncoder];
     mtl_v2_label_encoder(encoder, label);
@@ -1540,6 +1581,7 @@ static void mtl_v2_dispatch_indirect(const char *label, u32 slot, u64 offset) {
     gpu_shader_mtl *shader = &_state.shaders[_state.v2_shader];
     if (!shader->compute_pso) return;
     mtl_v2_ensure_frame();
+    if (_state.blit_encoder) mtl_v2_mem_copy_end();
     id<MTLComputeCommandEncoder> encoder = [_state.cmd_buffer computeCommandEncoder];
     mtl_v2_label_encoder(encoder, label);
     [encoder setComputePipelineState:shader->compute_pso];
@@ -1556,6 +1598,8 @@ static const gpu_v2_ops _mtl_v2_ops = {
     .mem_write = mtl_v2_mem_write,
     .mem_read = mtl_v2_mem_read,
     .mem_host_ptr = mtl_v2_mem_host_ptr,
+    .mem_copy = mtl_v2_mem_copy,
+    .mem_copy_end = mtl_v2_mem_copy_end,
     .texture_create = mtl_v2_texture_create,
     .texture_upload = mtl_v2_texture_upload,
     .texture_destroy = mtl_v2_texture_destroy,
