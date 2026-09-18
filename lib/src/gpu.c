@@ -346,8 +346,20 @@ void gpu_v2_flush_uploads(void) {
     if (used_copy && _v2.ops && _v2.ops->mem_copy_end) _v2.ops->mem_copy_end();
 }
 
+static u64 gpu_v2_ring_section_size(void) {
+    return (GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT) & ~((u64)GPU_V2_ALLOC_ALIGN - 1);
+}
+
 static void gpu_v2_queue_upload(u32 dst_slot, u64 dst_offset, const void *src, u64 size) {
     if (_v2.upload_count == GPU_V2_UPLOAD_CAP) gpu_v2_flush_uploads();
+    u64 section = gpu_v2_ring_section_size();
+    u64 head = (_v2.ring_head + GPU_V2_STAGING_ALIGN - 1) & ~((u64)GPU_V2_STAGING_ALIGN - 1);
+    // A volume bigger than the ring section (voxel pool, lander cells) stays
+    // a direct write. Staging is for dirty ranges that fit this frame.
+    if (head + size > section || _v2.upload_count == GPU_V2_UPLOAD_CAP) {
+        gpu_v2_direct_write(&_v2.slots[dst_slot], dst_slot, dst_offset, src, size);
+        return;
+    }
     gpu_addr staging = gpu_frame_alloc(size, GPU_V2_STAGING_ALIGN);
     u32 src_slot;
     u64 src_offset;
@@ -356,10 +368,6 @@ static void gpu_v2_queue_upload(u32 dst_slot, u64 dst_offset, const void *src, u
         return;
     }
     gpu_v2_direct_write(&_v2.slots[src_slot], src_slot, src_offset, src, size);
-    if (_v2.upload_count == GPU_V2_UPLOAD_CAP) {
-        gpu_v2_direct_write(&_v2.slots[dst_slot], dst_slot, dst_offset, src, size);
-        return;
-    }
     gpu_v2_upload *u = &_v2.uploads[_v2.upload_count++];
     u->src_slot = src_slot;
     u->dst_slot = dst_slot;
