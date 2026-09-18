@@ -2354,7 +2354,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
     }
     if (ns_str_equals(module, ns_str_cstr("io"))) {
         return ns_wasm_name_in(name,
-            "io_save_image|io_glb_read|io_glb_valid|io_glb_json_size|io_glb_data_size|"
+            "io_load_image|io_image_destroy|io_image_copy_data|io_save_image|io_glb_read|io_glb_valid|io_glb_json_size|io_glb_data_size|"
             "io_glb_copy_json|io_glb_copy_data|io_glb_destroy|io_glb_mesh_read|io_glb_mesh_valid|"
             "io_glb_mesh_vertex_count|io_glb_mesh_index_count|io_glb_mesh_image_width|"
             "io_glb_mesh_image_height|io_glb_mesh_copy_positions|io_glb_mesh_copy_normals|"

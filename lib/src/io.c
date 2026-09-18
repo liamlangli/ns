@@ -703,6 +703,14 @@ io_image* io_load_image(const char *path) {
     return img;
 }
 
+i32 io_image_copy_data(const io_image *img, u8 *values, i32 capacity) {
+    if (!img || !img->data || !values || img->width <= 0 || img->height <= 0 || img->channels <= 0) return 0;
+    const i64 count = (i64)img->width * img->height * img->channels;
+    if (count <= 0 || count > INT32_MAX || capacity < (i32)count) return 0;
+    memcpy(values, img->data, (size_t)count);
+    return (i32)count;
+}
+
 void io_image_destroy(io_image *img) {
     if (img == NULL) return;
     stbi_image_free(img->data);

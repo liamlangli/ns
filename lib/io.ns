@@ -10,6 +10,10 @@ struct io_image {
 ref fn io_load_image(path: str) ref io_image
 ref fn io_image_destroy(img: ref io_image)
 ref fn io_save_image(path: str, img: ref io_image) bool
+// Copy tightly packed pixels into a caller-owned array. `io_image.data` is a C
+// pointer, not an ns array, so this is how a loaded JPEG/PNG reaches GPU
+// upload. Returns the byte count copied, or 0.
+ref fn io_image_copy_data(img: ref io_image, values: [any], capacity: i32) i32
 
 // GLB documents and decoded primitives are opaque handles. The document keeps
 // its original JSON and BIN chunks intact, so read/write preserves fields the
