@@ -7,4 +7,4 @@ description = "Native code editor for Nano Script, rendered through the ui modul
 source = "."
 entry = "main.ns"
 icon = "icon.png"
-exclude = ["README.md", "web_main.ns"]
+exclude = ["README.md"]

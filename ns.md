@@ -7,7 +7,7 @@ This file is an onboarding map for the whole repository. It is meant to help an 
 **Nano Script** is a minimal, data-oriented functional programming language with:
 - an interpreter/runtime,
 - a compiler pipeline with multiple backend emitters,
-- and NSCode editor front-ends for native, browser, and terminal use.
+- and the native NSCode editor front-end.
 
 At repo level, the project is mostly **C** for core tooling, **Nano Script**
 for NSCode, and dependency-free **JavaScript** for the Wasm browser runtime.
@@ -39,9 +39,7 @@ Entrypoint and CLI routing are in `src/ns.c`.
 - `src/` — Core compiler/interpreter/runtime implementation in C.
 - `include/` — Public headers for lexer/parser/VM/SSA/backends/platform utils.
 - `lib/` — Standard/runtime dynamic libraries and Nano Script standard modules (`*.ns`) plus OS/GPU/view C implementations.
-- `nscode/` — NSCode editors. `nscode/native/` is the shared GUI editor used
-  by desktop builds and GitHub Pages; `nscode/cli/` is the terminal editor
-  written in ns (uses the `term` module).
+- `nscode/` — NSCode tools. `nscode/native/` is the native GUI editor.
 - `sample/ns/` — Language feature examples (expressions, parse, fib, GUI, etc.).
 - `sample/c/` — C embedding sample.
 - `test/` — C tests (currently JSON-focused test target in root Makefile).
@@ -171,13 +169,9 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 
 ## 7) Language/tooling ecosystem in this repo
 
-### Native and browser NSCode (`nscode/native/`)
+### Native NSCode (`nscode/native/`)
 - The editor, workspace, and app renderer are written in Nano Script.
-- `main.ns` is the desktop entry; `web_main.ns` is the Wasm frame entry.
-- `ns.web.mod` is overlaid by the Pages workflow so both targets share the
-  same source without changing the normal native manifest.
-- Browser rendering and persisted browser files are provided by
-  `lib/ns-wasm.js`.
+- `main.ns` is the desktop entry.
 
 ### Profile viewer (`nscode/profile/`)
 - The GUI flamegraph/timeline viewer, written in ns and compiled by
@@ -220,7 +214,7 @@ For fast onboarding, recommended order:
 5. `doc/block.md`, `doc/ref.md`, `doc/operators.md`, `doc/token.md` — language semantics cheatsheets
 6. `doc/profile.md` — profiling, the live viewer, and the live wire format
 7. `sample/ns/*.ns` — practical examples to test parsing/execution and language features
-8. `nscode/native/README.md` — native/browser NSCode setup
+8. `nscode/native/README.md` — native NSCode setup
 
 ---
 
@@ -245,7 +239,6 @@ Touch likely areas in this order:
 ### C) “Work on NSCode UX/rendering”
 - `nscode/native/editor.ns`, `workspace.ns`, and `render.ns`
 - native run via `bin/ns run nscode/native`
-- browser ABI/runtime changes in `src/ns_wasm.c` and `lib/ns-wasm.js`
 
 ---
 
@@ -286,8 +279,8 @@ make test
 
 This repo is a full Nano Script toolchain: a C-based language core
 (lexer/parser/type/VM), SSA-based lowering pipeline with multiple emitters
-(AArch64/Mach-O/PE/WASM), runtime/std modules, and a shared Nano Script NSCode
-app for desktop and browser. For most engineering tasks, start at `src/ns.c` +
+(AArch64/Mach-O/PE/WASM), runtime/std modules, and a native Nano Script NSCode
+app. For most engineering tasks, start at `src/ns.c` +
 `Makefile`, then jump to front-end (`ns_token`/`ns_ast*`) and execution
 (`ns_vm_*`) or backend (`ns_ssa` + emitter files) depending on whether the task
 is language semantics or code generation.
@@ -305,10 +298,7 @@ When refactoring or adding new Nano Script code, prefer snake_case names and
 avoid introducing new camelCase/PascalCase identifiers unless required by
 external APIs (`use`/`mod` names and `ref fn` FFI symbols are left alone).
 
-## 13) NSCode browser parity note
+## 13) NSCode native editor note
 
-Keep `main.ns` and `web_main.ns` thin. Shared editor behavior belongs in
-`editor.ns`, `workspace.ns`, `render.ns`, or another reusable `.ns` module.
-When the browser build needs another native service, update the Wasm import
-allowlist and `lib/ns-wasm.js` together, then validate both
-`test/ns_wasm_project_test.sh` and `test/ns_wasm_runtime_test.mjs`.
+Keep `main.ns` thin. Shared editor behavior belongs in `editor.ns`,
+`workspace.ns`, `render.ns`, or another reusable `.ns` module.

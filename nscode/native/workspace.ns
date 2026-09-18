@@ -23,7 +23,6 @@ let g_workspace_coloffs = [i32](4096)
 let g_workspace_visible = [i32](4096)
 let g_workspace_visible_count: i32 = 0
 let g_workspace_visibility_dirty = true
-let g_workspace_writes_enabled = true
 let g_refresh_tab_path = [str](4096)
 let g_refresh_tab_text = [str](4096)
 let g_refresh_tab_original = [str](4096)
@@ -296,9 +295,6 @@ fn workspace_set_native_entry(path: str) {
 }
 
 fn workspace_save_active() bool {
-    if g_workspace_writes_enabled == false {
-        return false
-    }
     if g_workspace_active < 0 {
         return false
     }

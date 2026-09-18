@@ -2,8 +2,7 @@ use std
 use editor
 
 fn seed_document() {
-    // Keep the initial buffer available on platforms where the workspace
-    // cannot expose a local filesystem, including the GitHub Pages build.
+    // Seed an initial buffer before the workspace scan replaces it.
     let src = "// ns native editor\n"
     src = src + "// rendered through the ui module\n\n"
     src = src + "use std\n\n"

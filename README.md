@@ -5,8 +5,6 @@ Nano Script
 
 > A minimal, data-oriented functional programming language.
 
-[nscode playground](https://liamlangli.github.io/ns/)
-
 ## Releases
 
 The Build workflow validates optimized release builds for macOS aarch64, Linux
