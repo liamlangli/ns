@@ -217,8 +217,8 @@ stay serial so their nested compiler timeline remains complete.
 Add `--profile` to a build to write the same `bin/ns.profile` and print a
 hot-path summary for input resolution, cache validation, source linking,
 parsing, SSA lowering, artifact emission, system linking, and packaging. The
-phases use the `compiler::` prefix in the existing profile tables, timeline,
-and flamegraph, so `ns profiler` opens build profiles as well as runtime
+phases use the `compiler::` prefix in the existing profile tables and timeline,
+so `ns profiler` opens build profiles as well as runtime
 profiles. With no file argument, the viewer prefers `bin/ns.profile` and falls
 back to a legacy `ns.profile`. Use
 `ns build --profile --force` to measure a full compilation; without `--force`,

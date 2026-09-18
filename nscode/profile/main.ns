@@ -1,5 +1,5 @@
 // nscode/profile/main.ns
-// Native flamegraph viewer for ns.profile files.
+// Native timeline viewer for ns.profile files.
 
 use std
 use view
@@ -10,8 +10,8 @@ use live
 use compress
 
 fn FONT() i32 { return 1 }
-fn TITLE_PX() f64 { return 14.0 }
-fn PX() f64 { return 11.0 }
+fn TITLE_PX() f64 { return 11.0 }
+fn PX() f64 { return 10.0 }
 fn MAX_TEXT_PROFILE_BYTES() i64 { return 67108864 }
 fn LOAD_EVENTS_PER_FRAME() i32 { return 262144 }
 fn LOAD_STAGE_READ() i32 { return 1 }
@@ -20,8 +20,9 @@ fn LOAD_STAGE_TABLES() i32 { return 3 }
 fn LOAD_STAGE_EVENTS() i32 { return 4 }
 fn LOAD_STAGE_DONE() i32 { return 5 }
 
-let g_side_w: f64 = 260.0
-let g_side_drag_w: f64 = 260.0
+let g_side_w: f64 = 200.0
+let g_side_drag_w: f64 = 200.0
+let g_side_user_set = false
 let g_side_resizing = false
 let g_chart_input = true
 let g_canvas_w: f64 = 0.0
@@ -45,14 +46,12 @@ let g_flame_frames = ""
 let g_timeline_blob = ""
 let g_timeline_blob_codec = ""
 let g_status = "No profile loaded."
-let g_mode = 0
 let g_profile_loaded = false
 let g_events_loaded = false
 let g_frame_count: i32 = 0
 let g_load_profile_pending = false
 let g_open_profile_pending = false
-// Progressive timeline blob load (v6). All Time prep finishes here so
-// Flame → Time is only a mode flip.
+// Progressive timeline blob load (v6).
 let g_loading = false
 let g_load_stage = 0
 let g_load_frac: f64 = 0.0
@@ -71,36 +70,17 @@ let g_blob_thread_count = 0
 let g_blob_events_off = 0
 let g_ov_rebuild_pending = false
 let g_text_events_pending = false
-let g_hovered = -1
-let g_selected = -1
 let g_selected_ev = -1
 let g_scroll: f64 = 0.0
-let g_fx0: f64 = 0.0
-let g_fx1: f64 = 1.0
 // Camera targets + inertia. Input writes targets; display lerps toward them.
 let g_cam_t0: f64 = 0.0
 let g_cam_t1: f64 = 1.0
-let g_cam_fx0: f64 = 0.0
-let g_cam_fx1: f64 = 1.0
 let g_cam_scroll: f64 = 0.0
 let g_cam_scroll_max: f64 = 0.0
 let g_vel_t: f64 = 0.0
-let g_vel_fx: f64 = 0.0
 let g_vel_scroll: f64 = 0.0
 let g_cam_last_ms: u64 = 0
 let g_cam_coasting = false
-
-let g_node_name = [i32: str](4096)
-let g_node_parent = [i32](4096)
-let g_node_calls = [i32](4096)
-let g_node_total = [f64](4096)
-let g_node_self = [f64](4096)
-let g_node_x = [f64](4096)
-let g_node_w = [f64](4096)
-let g_node_depth = [i32](4096)
-let g_node_count = 0
-let g_max_depth = 0
-let g_root_total: f64 = 0.0
 
 let g_hot_name = [i32: str](256)
 let g_hot_kind = [i32: str](256)
@@ -132,7 +112,7 @@ let g_time_origin: f64 = 0.0
 let g_time_end: f64 = 0.0
 let g_t0: f64 = 0.0
 let g_t1: f64 = 1.0
-// 0 idle, 1 time plot, 2 time overview, 3 flame
+// 0 idle, 1 time plot, 2 time overview
 let g_drag_mode = 0
 let g_ev_max_depth = 0
 // Time-view lanes keyed by thread name (v5 profiles).
@@ -152,8 +132,6 @@ let g_drag_y: f64 = 0.0
 let g_drag_t0: f64 = 0.0
 let g_drag_t1: f64 = 1.0
 let g_drag_scroll: f64 = 0.0
-let g_drag_fx0: f64 = 0.0
-let g_drag_fx1: f64 = 1.0
 let g_drag_grab: f64 = 0.0
 let g_drag_moved = false
 // Retained overview bars: rebuilt when events or overview size/range change.
@@ -300,7 +278,6 @@ fn timeline_try_draw_event(r: ref ui_renderer, v: ref view, ev: i32, x: f64, w: 
         if v.mouse_released {
             if g_drag_moved == false {
                 g_selected_ev = ev
-                g_selected = -1
             }
         }
     } else {
@@ -494,11 +471,11 @@ fn lane_find_or_add(name: str) i32 {
     return lane
 }
 
-fn lane_label_h() f64 { return 18.0 }
+fn lane_label_h() f64 { return 14.0 }
 
 fn rebuild_lane_layout(row_h: f64) {
     let label_h = lane_label_h()
-    let gap = 8.0
+    let gap = 4.0
     let y: f64 = 0.0
     let i = 0
     loop i < g_lane_count {
@@ -778,93 +755,6 @@ fn format_has_blob(s: str) bool {
     return s == "ns-profile-v6"
 }
 
-fn find_child(parent: i32, name: str) i32 {
-    let i = 0
-    loop i < g_node_count {
-        if g_node_parent[i] == parent {
-            if g_node_name[i] == name {
-                return i
-            }
-        }
-        i = i + 1
-    }
-    return -1
-}
-
-fn add_node(parent: i32, name: str) i32 {
-    if g_node_count >= g_node_parent.len {
-        return -1
-    }
-    let i = g_node_count
-    g_node_name[i] = name
-    g_node_parent[i] = parent
-    g_node_calls[i] = 0
-    g_node_total[i] = 0.0
-    g_node_self[i] = 0.0
-    g_node_x[i] = 0.0
-    g_node_w[i] = 0.0
-    g_node_depth[i] = 0
-    g_node_count = g_node_count + 1
-    return i
-}
-
-fn stack_frame(stack: str, start: i32) str {
-    let p = start
-    loop p < stack.len {
-        if ((stack[p] as i32) & 255) == 59 {
-            return substr(stack, start, p - start)
-        }
-        p = p + 1
-    }
-    return substr(stack, start, p - start)
-}
-
-fn record_flame_line(line: str) {
-    let p = skip_spaces(line, 6)
-    let calls_s = word_at(line, p)
-    if is_digit_word(calls_s) == false {
-        return
-    }
-    p = skip_spaces(line, p + calls_s.len)
-    let total_s = word_at(line, p)
-    p = skip_spaces(line, p + total_s.len)
-    let self_s = word_at(line, p)
-    p = skip_spaces(line, p + self_s.len)
-    let stack = trim_left(substr(line, p, line.len - p))
-    if stack.len == 0 {
-        return
-    }
-
-    let parent = -1
-    let i = 0
-    loop i < stack.len {
-        let frame = stack_frame(stack, i)
-        if frame.len == 0 {
-            break
-        }
-        let node = find_child(parent, frame)
-        if node < 0 {
-            node = add_node(parent, frame)
-        }
-        if node < 0 {
-            return
-        }
-        parent = node
-        i = i + frame.len
-        if i < stack.len {
-            if ((stack[i] as i32) & 255) == 59 {
-                i = i + 1
-            }
-        }
-    }
-
-    if parent >= 0 {
-        g_node_calls[parent] = parse_i32(calls_s)
-        g_node_total[parent] = parse_f64(total_s)
-        g_node_self[parent] = parse_f64(self_s)
-    }
-}
-
 fn push_event(start: f64, dur: f64, self_ms: f64, depth: i32, name: str, thread: str) {
     g_ev_raw = g_ev_raw + 1
     let lane = lane_find_or_add(thread)
@@ -1080,13 +970,8 @@ fn record_ffi_event(line: str, has_depth: bool, has_thread: bool) {
 
 fn parse_profile_body(src: str, want_events: bool) {
     if want_events == false {
-        g_node_count = 0
         g_hot_count = 0
-        g_max_depth = 0
-        g_root_total = 0.0
-        g_selected = -1
         g_selected_ev = -1
-        g_hovered = -1
     }
     g_ev_count = 0
     g_ev_raw = 0
@@ -1135,74 +1020,16 @@ fn parse_profile_body(src: str, want_events: bool) {
                 ev_line = true
             }
             if ev_line {
-                if g_node_count > 0 {
-                    break
-                }
+                break
             } else {
-                if starts_with(line, "flame:") {
-                    if starts_with(line, "flame_frames:") == false {
-                        record_flame_line(line)
-                    }
-                } else {
-                    if starts_with(line, "fn:") {
-                        record_fn_line(line)
-                    }
+                if starts_with(line, "fn:") {
+                    record_fn_line(line)
                 }
             }
         }
         if i < src.len {
             i = i + 1
         }
-    }
-}
-
-fn layout_node(node: i32, x: f64, w: f64, depth: i32) {
-    g_node_x[node] = x
-    g_node_w[node] = w
-    g_node_depth[node] = depth
-    if depth > g_max_depth {
-        g_max_depth = depth
-    }
-    let cx = x
-    let i = 0
-    loop i < g_node_count {
-        if g_node_parent[i] == node {
-            let cw: f64 = 0.0
-            if g_root_total > 0.0 {
-                cw = g_node_total[i] / g_root_total
-            }
-            layout_node(i, cx, cw, depth + 1)
-            cx = cx + cw
-        }
-        i = i + 1
-    }
-}
-
-fn layout_flame() {
-    g_max_depth = 0
-    g_root_total = parse_f64(g_elapsed)
-    if g_root_total <= 0.0 {
-        g_root_total = 0.0
-        let i = 0
-        loop i < g_node_count {
-            if g_node_parent[i] < 0 {
-                g_root_total = g_root_total + g_node_total[i]
-            }
-            i = i + 1
-        }
-    }
-    if g_root_total <= 0.0 {
-        g_root_total = 1.0
-    }
-    let x: f64 = 0.0
-    let i = 0
-    loop i < g_node_count {
-        if g_node_parent[i] < 0 {
-            let w: f64 = g_node_total[i] / g_root_total
-            layout_node(i, x, w, 0)
-            x = x + w
-        }
-        i = i + 1
     }
 }
 
@@ -1378,7 +1205,6 @@ fn clear_profile() {
     g_timeline_blob = ""
     g_timeline_blob_codec = ""
     g_threads_header = ""
-    g_node_count = 0
     g_hot_count = 0
     g_ev_count = 0
     g_ev_raw = 0
@@ -1391,25 +1217,20 @@ fn clear_profile() {
     g_time_end = 0.0
     g_t0 = 0.0
     g_t1 = 1.0
-    g_selected = -1
     g_selected_ev = -1
     g_drag_mode = 0
     g_drag_moved = false
-    g_fx0 = 0.0
-    g_fx1 = 1.0
     g_scroll = 0.0
     g_profile_loaded = false
     g_events_loaded = false
     clear_blob_load()
     cam_snap_time()
-    cam_snap_flame()
     cam_snap_scroll()
     cam_stop()
     invalidate_overview_batch()
 }
 
 fn time_min_span() f64 { return 0.025 }
-fn flame_min_span() f64 { return 0.01 }
 
 fn time_full_span() f64 {
     let full = g_time_end - g_time_origin
@@ -1429,55 +1250,6 @@ fn time_view_span() f64 {
     return span
 }
 
-fn flame_view_span() f64 {
-    let span = g_fx1 - g_fx0
-    let min_span = flame_min_span()
-    if span < min_span {
-        return min_span
-    }
-    return span
-}
-
-fn clamp_flame_view() {
-    let span = g_fx1 - g_fx0
-    let min_span = flame_min_span()
-    if span < min_span {
-        let mid = (g_fx0 + g_fx1) * 0.5
-        let half = min_span * 0.5
-        g_fx0 = mid - half
-        g_fx1 = mid + half
-        span = min_span
-    }
-    if span > 1.0 {
-        g_fx0 = 0.0
-        g_fx1 = 1.0
-        return
-    }
-    if g_fx0 < 0.0 {
-        g_fx0 = 0.0
-        g_fx1 = span
-    }
-    if g_fx1 > 1.0 {
-        g_fx1 = 1.0
-        g_fx0 = 1.0 - span
-        if g_fx0 < 0.0 {
-            g_fx0 = 0.0
-        }
-    }
-}
-
-fn fit_flame_view() {
-    g_fx0 = 0.0
-    g_fx1 = 1.0
-    g_scroll = 0.0
-    clamp_flame_view()
-    cam_snap_flame()
-    g_cam_scroll = g_scroll
-    g_vel_fx = 0.0
-    g_vel_scroll = 0.0
-    g_cam_coasting = false
-}
-
 fn cam_follow_alpha() f64 { return 0.78 }
 fn cam_scroll_follow_alpha() f64 { return 1.0 }
 fn cam_vel_damp() f64 { return 0.88 }
@@ -1491,18 +1263,12 @@ fn cam_snap_time() {
     g_cam_t1 = g_t1
 }
 
-fn cam_snap_flame() {
-    g_cam_fx0 = g_fx0
-    g_cam_fx1 = g_fx1
-}
-
 fn cam_snap_scroll() {
     g_cam_scroll = g_scroll
 }
 
 fn cam_stop() {
     g_vel_t = 0.0
-    g_vel_fx = 0.0
     g_vel_scroll = 0.0
     g_cam_coasting = false
 }
@@ -1533,34 +1299,6 @@ fn clamp_cam_time() {
     }
 }
 
-fn clamp_cam_flame() {
-    let span = g_cam_fx1 - g_cam_fx0
-    let min_span = flame_min_span()
-    if span < min_span {
-        let mid = (g_cam_fx0 + g_cam_fx1) * 0.5
-        let half = min_span * 0.5
-        g_cam_fx0 = mid - half
-        g_cam_fx1 = mid + half
-        span = min_span
-    }
-    if span > 1.0 {
-        g_cam_fx0 = 0.0
-        g_cam_fx1 = 1.0
-        return
-    }
-    if g_cam_fx0 < 0.0 {
-        g_cam_fx0 = 0.0
-        g_cam_fx1 = span
-    }
-    if g_cam_fx1 > 1.0 {
-        g_cam_fx1 = 1.0
-        g_cam_fx0 = 1.0 - span
-        if g_cam_fx0 < 0.0 {
-            g_cam_fx0 = 0.0
-        }
-    }
-}
-
 fn clamp_cam_scroll() {
     if g_cam_scroll < 0.0 {
         g_cam_scroll = 0.0
@@ -1576,12 +1314,6 @@ fn cam_set_time(t0: f64, t1: f64) {
     clamp_cam_time()
 }
 
-fn cam_set_flame(fx0: f64, fx1: f64) {
-    g_cam_fx0 = fx0
-    g_cam_fx1 = fx1
-    clamp_cam_flame()
-}
-
 fn cam_set_scroll(scroll: f64) {
     g_cam_scroll = scroll
     clamp_cam_scroll()
@@ -1593,14 +1325,6 @@ fn cam_sample_vel_time(prev_t0: f64, dt: f64) {
     }
     let v = (g_cam_t0 - prev_t0) / dt
     g_vel_t = g_vel_t * 0.55 + v * 0.45
-}
-
-fn cam_sample_vel_flame(prev_fx0: f64, dt: f64) {
-    if dt <= 0.0 {
-        return
-    }
-    let v = (g_cam_fx0 - prev_fx0) / dt
-    g_vel_fx = g_vel_fx * 0.55 + v * 0.45
 }
 
 fn cam_sample_vel_scroll(prev_scroll: f64, dt: f64) {
@@ -1642,20 +1366,11 @@ fn cam_settled() bool {
     if cam_abs(g_t1 - g_cam_t1) > 0.00005 {
         return false
     }
-    if cam_abs(g_fx0 - g_cam_fx0) > 0.00005 {
-        return false
-    }
-    if cam_abs(g_fx1 - g_cam_fx1) > 0.00005 {
-        return false
-    }
     if cam_abs(g_scroll - g_cam_scroll) > 0.05 {
         return false
     }
     if g_cam_coasting {
         if cam_abs(g_vel_t) > cam_vel_stop() {
-            return false
-        }
-        if cam_abs(g_vel_fx) > cam_vel_stop() {
             return false
         }
         if cam_abs(g_vel_scroll) > 0.2 {
@@ -1680,15 +1395,6 @@ fn tick_camera(r: ref ui_renderer) {
             } else {
                 g_vel_t = 0.0
             }
-            if cam_abs(g_vel_fx) > cam_vel_stop() {
-                let span = g_cam_fx1 - g_cam_fx0
-                g_cam_fx0 = g_cam_fx0 + g_vel_fx * dt
-                g_cam_fx1 = g_cam_fx0 + span
-                clamp_cam_flame()
-                g_vel_fx = g_vel_fx * damp
-            } else {
-                g_vel_fx = 0.0
-            }
             if cam_abs(g_vel_scroll) > 0.2 {
                 g_cam_scroll = g_cam_scroll + g_vel_scroll * dt
                 clamp_cam_scroll()
@@ -1697,10 +1403,8 @@ fn tick_camera(r: ref ui_renderer) {
                 g_vel_scroll = 0.0
             }
             if cam_abs(g_vel_t) <= cam_vel_stop() {
-                if cam_abs(g_vel_fx) <= cam_vel_stop() {
-                    if cam_abs(g_vel_scroll) <= 0.2 {
-                        g_cam_coasting = false
-                    }
+                if cam_abs(g_vel_scroll) <= 0.2 {
+                    g_cam_coasting = false
                 }
             }
         }
@@ -1708,13 +1412,10 @@ fn tick_camera(r: ref ui_renderer) {
 
     g_t0 = g_t0 + (g_cam_t0 - g_t0) * a
     g_t1 = g_t1 + (g_cam_t1 - g_t1) * a
-    g_fx0 = g_fx0 + (g_cam_fx0 - g_fx0) * a
-    g_fx1 = g_fx1 + (g_cam_fx1 - g_fx1) * a
     // Vertical lane scroll snaps 1:1 so deep stacks don't feel laggy.
     let sa = cam_scroll_follow_alpha()
     g_scroll = g_scroll + (g_cam_scroll - g_scroll) * sa
     clamp_view()
-    clamp_flame_view()
     if g_scroll < 0.0 {
         g_scroll = 0.0
     }
@@ -1728,8 +1429,6 @@ fn tick_camera(r: ref ui_renderer) {
         // Snap leftovers so we stop requesting frames.
         g_t0 = g_cam_t0
         g_t1 = g_cam_t1
-        g_fx0 = g_cam_fx0
-        g_fx1 = g_cam_fx1
         g_scroll = g_cam_scroll
     }
 }
@@ -1742,11 +1441,8 @@ fn begin_drag(mode: i32) {
     g_drag_t0 = g_cam_t0
     g_drag_t1 = g_cam_t1
     g_drag_scroll = g_cam_scroll
-    g_drag_fx0 = g_cam_fx0
-    g_drag_fx1 = g_cam_fx1
     g_cam_coasting = false
     g_vel_t = 0.0
-    g_vel_fx = 0.0
     g_vel_scroll = 0.0
 }
 
@@ -1901,14 +1597,15 @@ fn finish_blob_load() {
     g_blob_data_len = 0
     g_blob_raw = [u8](16)
     g_blob_data = [u8](16)
-    // Flame tables already live in g_node_*; drop the text report now that
-    // timeline samples are in SoA arrays. Native heap never frees, but this
-    // keeps later format strings from retaining a giant live root.
+    // Drop the text report now that timeline samples are in SoA arrays.
+    // Native heap never frees, but this keeps later format strings from
+    // retaining a giant live root.
     if format_has_blob(g_format) {
         g_raw = ""
     }
-    rebuild_lane_layout(18.0)
+    rebuild_lane_layout(16.0)
     fit_time_view()
+    select_default_event()
     invalidate_overview_batch()
     g_ov_rebuild_pending = true
     g_status = "Timeline ready."
@@ -2085,8 +1782,9 @@ fn tick_blob_load() {
         }
         parse_profile_body(g_raw, true)
         g_events_loaded = true
-        rebuild_lane_layout(18.0)
+        rebuild_lane_layout(16.0)
         fit_time_view()
+        select_default_event()
         invalidate_overview_batch()
         g_ov_rebuild_pending = true
         g_loading = false
@@ -2237,7 +1935,6 @@ fn load_profile(path: str) {
     parse_header(data)
     parse_profile_body(data, false)
     g_events_loaded = false
-    layout_flame()
     g_t0 = 0.0
     g_t1 = parse_f64(g_elapsed)
     if g_t1 <= 0.0 {
@@ -2246,18 +1943,14 @@ fn load_profile(path: str) {
     cam_snap_time()
     if format_known(g_format) == false {
         g_status = "Loaded file is not an ns-profile."
-        fit_flame_view()
-        g_mode = 0
         cam_stop()
         return
     }
-    fit_flame_view()
     g_drag_mode = 0
     g_drag_moved = false
-    g_mode = 0
     g_profile_loaded = true
     cam_stop()
-    select_default_detail()
+    g_selected_ev = -1
     if format_has_blob(g_format) {
         if g_timeline_blob.len > 0 {
             if begin_blob_load(path) {
@@ -2314,11 +2007,18 @@ fn draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, 
     return false
 }
 
-fn draw_metric(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str, color: u32) {
-    ui_fill_rect(r, x, y, w, 36.0, col_panel(), 0.0)
-    ui_draw_text(r, x + 8.0, y + 3.0, label, TITLE_PX(), col_muted(), FONT())
-    ui_push_clip(r, x + 8.0, y + 19.0, w - 16.0, 14.0)
-    ui_draw_text(r, x + 8.0, y + 19.0, value, PX(), color, FONT())
+fn draw_metric_line(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) {
+    ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
+    let elapsed_text = g_elapsed
+    if elapsed_text == "" {
+        elapsed_text = "-"
+    } else {
+        elapsed_text = elapsed_text + " ms"
+    }
+    let line = `{elapsed_text}   scopes {fmt_or_dash(g_scope_calls)}   ffi {fmt_or_dash(g_ffi_calls)}   events {fmt_or_dash(g_timeline_events)}`
+    let ty = ui_text_v_center_y(r, y, h, PX(), FONT())
+    ui_push_clip(r, x + 8.0, y, w - 16.0, h)
+    ui_draw_text(r, x + 8.0, ty, line, PX(), col_text(), FONT())
     ui_pop_clip(r)
 }
 
@@ -2653,81 +2353,6 @@ fn zoom_time_at(mx: f64, x: f64, w: f64, scroll: f64) {
     g_cam_coasting = false
 }
 
-fn zoom_flame_at(mx: f64, x: f64, w: f64, scroll: f64) {
-    if w <= 0.0 {
-        return
-    }
-    let span = g_cam_fx1 - g_cam_fx0
-    let use_span = span
-    if use_span < flame_min_span() {
-        use_span = flame_min_span()
-    }
-    let ratio = (mx - x) / w
-    if ratio < 0.0 {
-        ratio = 0.0
-    }
-    if ratio > 1.0 {
-        ratio = 1.0
-    }
-    let focus = g_cam_fx0 + use_span * ratio
-    let factor = wheel_zoom_out()
-    if scroll > 0.0 {
-        factor = wheel_zoom_in()
-    }
-    let mag = scroll
-    if mag < 0.0 {
-        mag = 0.0 - mag
-    }
-    if mag > 1.0 {
-        factor = factor * factor
-    }
-    let next = use_span * factor
-    let min_span = flame_min_span()
-    if next < min_span {
-        next = min_span
-    }
-    if next > 1.0 {
-        next = 1.0
-    }
-    cam_set_flame(focus - next * ratio, focus - next * ratio + next)
-    g_vel_fx = 0.0
-    g_cam_coasting = false
-}
-
-fn select_node_by_name(name: str) {
-    let i = 0
-    loop i < g_node_count {
-        if g_node_name[i] == name {
-            g_selected = i
-            return
-        }
-        i = i + 1
-    }
-}
-
-fn select_default_detail() {
-    g_selected_ev = -1
-    if g_hot_count > 0 {
-        select_node_by_name(g_hot_name[0])
-        if g_selected >= 0 {
-            return
-        }
-    }
-    if g_node_count <= 0 {
-        g_selected = -1
-        return
-    }
-    let best = 0
-    let i = 1
-    loop i < g_node_count {
-        if g_node_self[i] > g_node_self[best] {
-            best = i
-        }
-        i = i + 1
-    }
-    g_selected = best
-}
-
 // Draw bar label vertically centered; when the bar is wider than the view,
 // clamp the text into the visible window so it stays readable while zoomed.
 fn draw_bar_label(r: ref ui_renderer, bx: f64, by: f64, bw: f64, bh: f64, view_x: f64, view_w: f64, label: str) {
@@ -2773,11 +2398,11 @@ fn draw_toast(r: ref ui_renderer, canvas_w: f64, canvas_h: f64) {
         return
     }
     let tw = ui_text_width(r, g_toast, PX(), FONT())
-    let pad_x = 14.0
+    let pad_x = 10.0
     let box_w = tw + pad_x * 2.0
-    let box_h = 28.0
+    let box_h = 22.0
     let bx = (canvas_w - box_w) * 0.5
-    let by = canvas_h - box_h - 24.0
+    let by = canvas_h - box_h - 12.0
     ui_fill_rect(r, bx, by, box_w, box_h, col_panel_hi(), 0.0)
     ui_fill_rect(r, bx, by, box_w, 1.0, col_line(), 0.0)
     ui_fill_rect(r, bx, by + box_h - 1.0, box_w, 1.0, col_line(), 0.0)
@@ -2797,237 +2422,112 @@ fn copy_detail(v: ref view, text: str) {
 }
 
 fn draw_detail_row(r: ref ui_renderer, x: f64, y: f64, w: f64, label: str, value: str) {
-    ui_draw_text(r, x, y, label, TITLE_PX(), col_muted(), FONT())
-    ui_push_clip(r, x, y + 16.0, w, 14.0)
-    ui_draw_text(r, x, y + 16.0, value, PX(), col_text(), FONT())
+    ui_draw_text(r, x, y, label, PX(), col_muted(), FONT())
+    ui_push_clip(r, x + 52.0, y, w - 52.0, 14.0)
+    ui_draw_text(r, x + 52.0, y, value, PX(), col_text(), FONT())
     ui_pop_clip(r)
 }
 
 fn draw_selected_header(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, title: str, name: str) {
-    ui_draw_text(r, x + 8.0, y + 6.0, title, TITLE_PX(), col_muted(), FONT())
-    let copy_w = 52.0
-    let copy_h = 18.0
-    let copy_x = x + w - copy_w - 8.0
-    if draw_button(r, v, copy_x, y + 4.0, copy_w, copy_h, "Copy", false) {
+    ui_draw_text(r, x + 6.0, y + 4.0, title, PX(), col_muted(), FONT())
+    let copy_w = 40.0
+    let copy_h = 16.0
+    let copy_x = x + w - copy_w - 6.0
+    if draw_button(r, v, copy_x, y + 3.0, copy_w, copy_h, "Copy", false) {
         copy_detail(v, name)
     }
-    ui_push_clip(r, x + 8.0, y + 24.0, w - 16.0, 16.0)
-    ui_draw_text(r, x + 8.0, y + 24.0, name, TITLE_PX(), col_accent(), FONT())
+    ui_push_clip(r, x + 6.0, y + 18.0, w - 16.0, 14.0)
+    ui_draw_text(r, x + 6.0, y + 18.0, name, PX(), col_accent(), FONT())
     ui_pop_clip(r)
+}
+
+fn select_default_event() {
+    if g_ev_count <= 0 {
+        g_selected_ev = -1
+        return
+    }
+    if g_selected_ev >= 0 {
+        if g_selected_ev < g_ev_count {
+            return
+        }
+    }
+    let best = 0
+    let i = 1
+    loop i < g_ev_count {
+        if g_ev_self[i] > g_ev_self[best] {
+            best = i
+        }
+        i = i + 1
+    }
+    g_selected_ev = best
 }
 
 fn draw_hot_list(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
     ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
-    let list_y = y
-    if g_mode == 1 {
-        if g_selected_ev >= 0 {
-            if g_selected_ev < g_ev_count {
-                draw_selected_header(r, v, x, y, w, "selected span", ev_name(g_selected_ev))
-                let elapsed = parse_f64(g_elapsed)
-                if elapsed <= 0.0 {
-                    elapsed = 1.0
-                }
-                let dur = g_ev_duration[g_selected_ev]
-                let self_ms = g_ev_self[g_selected_ev]
-                let dur_pct = dur / elapsed * 100.0
-                let self_pct = self_ms / elapsed * 100.0
-                let lane = g_ev_lane[g_selected_ev]
-                let thread = "main"
-                if lane >= 0 {
-                    if lane < g_lane_count {
-                        thread = g_lane_name[lane]
-                    }
-                }
-                draw_detail_row(r, x + 8.0, y + 48.0, w - 16.0, "DURATION", `{fmt_time_ms(dur)}  {fmt_1dec(dur_pct)}%`)
-                draw_detail_row(r, x + 8.0, y + 82.0, w - 16.0, "SELF", `{fmt_time_ms(self_ms)}  {fmt_1dec(self_pct)}%`)
-                draw_detail_row(r, x + 8.0, y + 116.0, w - 16.0, "START", `+{fmt_time_ms(g_ev_start[g_selected_ev] - g_time_origin)}`)
-                draw_detail_row(r, x + 8.0, y + 150.0, w - 16.0, "CALLS", `{g_ev_calls[g_selected_ev]}`)
-                draw_detail_row(r, x + 8.0, y + 184.0, w - 16.0, "DEPTH", `{g_ev_depth[g_selected_ev]}`)
-                draw_detail_row(r, x + 8.0, y + 218.0, w - 16.0, "THREAD", thread)
-                ui_fill_rect(r, x + 8.0, y + 254.0, w - 16.0, 1.0, col_line(), 0.0)
-                list_y = y + 262.0
+    let name = "-"
+    let dur_s = "-"
+    let self_s = "-"
+    let start_s = "-"
+    let calls_s = "-"
+    let depth_s = "-"
+    let thread = "-"
+    if g_selected_ev >= 0 {
+        if g_selected_ev < g_ev_count {
+            let elapsed = parse_f64(g_elapsed)
+            if elapsed <= 0.0 {
+                elapsed = 1.0
             }
-        }
-    } else {
-        if g_selected >= 0 {
-            if g_selected < g_node_count {
-                draw_selected_header(r, v, x, y, w, "selected", g_node_name[g_selected])
-                let elapsed = parse_f64(g_elapsed)
-                if elapsed <= 0.0 {
-                    elapsed = 1.0
+            let dur = g_ev_duration[g_selected_ev]
+            let self_ms = g_ev_self[g_selected_ev]
+            let lane = g_ev_lane[g_selected_ev]
+            name = ev_name(g_selected_ev)
+            dur_s = `{fmt_time_ms(dur)}  {fmt_1dec(dur / elapsed * 100.0)}%`
+            self_s = `{fmt_time_ms(self_ms)}  {fmt_1dec(self_ms / elapsed * 100.0)}%`
+            start_s = `+{fmt_time_ms(g_ev_start[g_selected_ev] - g_time_origin)}`
+            calls_s = `{g_ev_calls[g_selected_ev]}`
+            depth_s = `{g_ev_depth[g_selected_ev]}`
+            thread = "main"
+            if lane >= 0 {
+                if lane < g_lane_count {
+                    thread = g_lane_name[lane]
                 }
-                let total_pct = g_node_total[g_selected] / elapsed * 100.0
-                let self_pct = g_node_self[g_selected] / elapsed * 100.0
-                draw_detail_row(r, x + 8.0, y + 48.0, w - 16.0, "TOTAL", `{fmt_time_ms(g_node_total[g_selected])}  {fmt_1dec(total_pct)}%`)
-                draw_detail_row(r, x + 8.0, y + 82.0, w - 16.0, "SELF", `{fmt_time_ms(g_node_self[g_selected])}  {fmt_1dec(self_pct)}%`)
-                draw_detail_row(r, x + 8.0, y + 116.0, w - 16.0, "CALLS", `{g_node_calls[g_selected]}`)
-                draw_detail_row(r, x + 8.0, y + 150.0, w - 16.0, "DEPTH", `{g_node_depth[g_selected]}`)
-                ui_fill_rect(r, x + 8.0, y + 186.0, w - 16.0, 1.0, col_line(), 0.0)
-                list_y = y + 194.0
             }
         }
     }
+    draw_selected_header(r, v, x, y, w, "span", name)
+    draw_detail_row(r, x + 6.0, y + 36.0, w - 12.0, "dur", dur_s)
+    draw_detail_row(r, x + 6.0, y + 50.0, w - 12.0, "self", self_s)
+    draw_detail_row(r, x + 6.0, y + 64.0, w - 12.0, "start", start_s)
+    draw_detail_row(r, x + 6.0, y + 78.0, w - 12.0, "calls", calls_s)
+    draw_detail_row(r, x + 6.0, y + 92.0, w - 12.0, "depth", depth_s)
+    draw_detail_row(r, x + 6.0, y + 106.0, w - 12.0, "thread", thread)
+    ui_fill_rect(r, x + 6.0, y + 122.0, w - 12.0, 1.0, col_line(), 0.0)
+    let list_y = y + 126.0
 
-    ui_draw_text(r, x + 8.0, list_y + 6.0, "hot self time", TITLE_PX(), col_muted(), FONT())
+    ui_draw_text(r, x + 6.0, list_y + 4.0, "hot self", PX(), col_muted(), FONT())
     if g_hot_count == 0 {
-        ui_draw_text(r, x + 8.0, list_y + 24.0, "No fn table.", PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 6.0, list_y + 18.0, "No fn table.", PX(), col_muted(), FONT())
     } else {
         let elapsed = parse_f64(g_elapsed)
         if elapsed <= 0.0 {
             elapsed = 1.0
         }
-        let row_h = 28.0
+        let row_h = 20.0
         let i = 0
         loop i < g_hot_count {
-            let ry = list_y + 22.0 + i as f64 * row_h
+            let ry = list_y + 18.0 + i as f64 * row_h
             if ry + row_h > y + h {
                 break
             }
             let pct = g_hot_self[i] / elapsed * 100.0
-            let bar_w = max_f(2.0, (w - 16.0) * (g_hot_self[i] / elapsed))
-            ui_fill_rect(r, x + 8.0, ry + 16.0, bar_w, 4.0, name_color(g_hot_name[i]), 0.0)
-            let line = `{g_hot_name[i]}  {g_hot_self[i]}ms  {pct}%  {g_hot_calls[i]}x`
-            ui_push_clip(r, x + 8.0, ry, w - 16.0, 14.0)
-            ui_draw_text(r, x + 8.0, ry, line, PX(), col_text(), FONT())
+            let bar_w = max_f(2.0, (w - 12.0) * (g_hot_self[i] / elapsed))
+            ui_fill_rect(r, x + 6.0, ry + 13.0, bar_w, 3.0, name_color(g_hot_name[i]), 0.0)
+            let line = `{g_hot_name[i]}  {fmt_time_ms(g_hot_self[i])}  {fmt_1dec(pct)}%`
+            ui_push_clip(r, x + 6.0, ry, w - 12.0, 12.0)
+            ui_draw_text(r, x + 6.0, ry, line, PX(), col_text(), FONT())
             ui_pop_clip(r)
             i = i + 1
         }
-    }
-}
-
-fn draw_flamegraph(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    ui_fill_rect(r, x, y, w, h, col_panel(), 0.0)
-    if g_node_count == 0 {
-        ui_draw_text(r, x + 8.0, y + 12.0, "No flame stacks in this profile.", PX(), col_muted(), FONT())
-        ui_draw_text(r, x + 8.0, y + 26.0, "Run `ns profile` to generate ns-profile-v5.", PX(), col_muted(), FONT())
-        return
-    }
-
-    let row_h = 18.0
-    let plot_y = y + 8.0
-    let plot_h = h - 28.0
-    let content_h = (g_max_depth + 1) as f64 * row_h
-    let max_scroll = max_f(0.0, content_h - plot_h)
-    g_cam_scroll_max = max_scroll
-    if g_fx1 <= g_fx0 {
-        fit_flame_view()
-    }
-
-    let on_plot = hit(v, x, plot_y, w, plot_h)
-    if g_chart_input {
-        if g_drag_mode != 0 {
-            if g_drag_mode != 3 {
-                end_drag()
-            } else {
-                if v.mouse_down == false {
-                    end_drag()
-                }
-            }
-        }
-        if g_drag_mode == 0 {
-            if on_plot {
-                if v.scroll_y != 0.0 {
-                    zoom_flame_at(g_mouse_x, x, w, v.scroll_y)
-                    ui_request_render(r, 2)
-                }
-                if v.mouse_pressed {
-                    begin_drag(3)
-                }
-                if v.mouse_right_pressed {
-                    fit_flame_view()
-                    g_selected = -1
-                    g_selected_ev = -1
-                }
-            }
-        }
-    }
-
-    if g_drag_mode == 3 {
-        if v.mouse_down {
-            let dx = g_mouse_x - g_drag_x
-            let dy = g_mouse_y - g_drag_y
-            mark_drag_moved(dx, dy)
-            let span = g_drag_fx1 - g_drag_fx0
-            let min_span = flame_min_span()
-            if span < min_span {
-                span = min_span
-            }
-            let prev_fx0 = g_cam_fx0
-            let prev_scroll = g_cam_scroll
-            // Absolute pan from press anchor; write camera targets with damping follow.
-            cam_set_flame(g_drag_fx0 - dx * span / w, g_drag_fx0 - dx * span / w + span)
-            cam_set_scroll(g_drag_scroll - dy * scroll_drag_gain())
-            cam_sample_vel_flame(prev_fx0, 0.016)
-            cam_sample_vel_scroll(prev_scroll, 0.016)
-            ui_request_render(r, 2)
-        }
-    }
-
-    let view_span = flame_view_span()
-    let scale = 1.0 / view_span
-    g_hovered = -1
-
-    ui_push_clip(r, x, plot_y, w, plot_h)
-    let i = 0
-    loop i < g_node_count {
-        if g_node_w[i] > 0.0 {
-            let nx0 = g_node_x[i]
-            let nx1 = g_node_x[i] + g_node_w[i]
-            if nx1 > g_fx0 {
-                if nx0 < g_fx1 {
-                    let bx0 = x + (nx0 - g_fx0) * scale * w
-                    let bx1 = x + (nx1 - g_fx0) * scale * w
-                    let draw_x = max_f(bx0, x)
-                    let draw_r = min_f(bx1, x + w)
-                    let bw = max_f(1.0, draw_r - draw_x)
-                    let by = plot_y + g_node_depth[i] as f64 * row_h - g_scroll
-                    let bh = row_h - 1.0
-                    if by + bh > plot_y {
-                        if by < plot_y + plot_h {
-                            let color = name_color(g_node_name[i])
-                            if hit(v, draw_x, by, bw, bh) {
-                                g_hovered = i
-                                ui_fill_rect(r, draw_x, by, bw, bh, col_warn(), 0.0)
-                            } else {
-                                if i == g_selected {
-                                    ui_fill_rect(r, draw_x, by, bw, bh, col_accent(), 0.0)
-                                } else {
-                                    ui_fill_rect(r, draw_x, by, bw, bh, color, 0.0)
-                                }
-                            }
-                            let label = `{g_node_name[i]} {g_node_calls[i]}x`
-                            draw_bar_label(r, bx0, by, max_f(1.0, bx1 - bx0), bh, x, w, label)
-                        }
-                    }
-                }
-            }
-        }
-        i = i + 1
-    }
-    ui_pop_clip(r)
-
-    if v.mouse_released {
-        if g_hovered >= 0 {
-            if g_drag_moved == false {
-                g_selected = g_hovered
-                g_selected_ev = -1
-            }
-        }
-        end_drag()
-        g_drag_moved = false
-    }
-
-    let footer_h: f64 = 22.0
-    let footer_y = y + h - footer_h
-    ui_fill_rect(r, x, footer_y, w, 1.0, col_line(), 0.0)
-    let footer_ty = ui_text_v_center_y(r, footer_y, footer_h, PX(), FONT())
-    if g_hovered >= 0 {
-        let detail = `{g_node_name[g_hovered]}  total {g_node_total[g_hovered]} ms  self {g_node_self[g_hovered]} ms  {g_node_calls[g_hovered]}x`
-        ui_push_clip(r, x + 8.0, footer_y, w - 16.0, footer_h)
-        ui_draw_text(r, x + 8.0, footer_ty, detail, PX(), col_text(), FONT())
-        ui_pop_clip(r)
-    } else {
-        ui_draw_text(r, x + 8.0, footer_ty, "wheel zoom, drag pan, click select, right-click reset", PX(), col_muted(), FONT())
     }
 }
 
@@ -3082,13 +2582,13 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
         reset_time_view()
     }
 
-    let footer_h: f64 = 22.0
-    let overview_h: f64 = 28.0
-    let ruler_h: f64 = 16.0
-    let gap: f64 = 3.0
+    let footer_h: f64 = 16.0
+    let overview_h: f64 = 18.0
+    let ruler_h: f64 = 14.0
+    let gap: f64 = 2.0
     if h < overview_h + ruler_h + footer_h + gap * 2.0 + 40.0 {
-        overview_h = 20.0
-        ruler_h = 14.0
+        overview_h = 14.0
+        ruler_h = 12.0
     }
     let overview_y: f64 = y + 2.0
     let ruler_y: f64 = overview_y + overview_h + gap
@@ -3101,7 +2601,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
 
     let ov_x = x + 4.0
     let ov_w = w - 8.0
-    let row_h: f64 = 18.0
+    let row_h: f64 = 16.0
     if g_lane_count == 0 {
         lane_find_or_add("main")
     }
@@ -3299,7 +2799,7 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
         ui_draw_text(r, x + 8.0, footer_ty, ev_name(g_tl_hovered), PX(), col_text(), FONT())
         ui_pop_clip(r)
     } else {
-        ui_draw_text(r, x + 8.0, footer_ty, "wheel zoom, drag pan, click select", PX(), col_muted(), FONT())
+        ui_draw_text(r, x + 6.0, footer_ty, "wheel zoom  drag pan  click select", PX(), col_muted(), FONT())
     }
 
     if v.mouse_released {
@@ -3309,48 +2809,47 @@ fn draw_timeline(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64
 }
 
 fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64) {
-    let elapsed_text = g_elapsed
-    if elapsed_text == "" {
-        elapsed_text = "-"
-    } else {
-        elapsed_text = elapsed_text + " ms"
-    }
+    let metric_h = 20.0
+    draw_metric_line(r, x, y, w, metric_h)
 
-    let metric_w = (w - 30.0) / 4.0
-    draw_metric(r, x, y, metric_w, "ELAPSED", elapsed_text, col_accent())
-    draw_metric(r, x + metric_w + 10.0, y, metric_w, "VM SCOPES", fmt_or_dash(g_scope_calls), col_text())
-    draw_metric(r, x + (metric_w + 10.0) * 2.0, y, metric_w, "FLAME STACKS", fmt_or_dash(g_flame_frames), col_warn())
-    draw_metric(r, x + (metric_w + 10.0) * 3.0, y, metric_w, "FFI CALLS", fmt_or_dash(g_ffi_calls), col_text())
-
-    let body_y = y + 46.0
-    let body_h = h - 46.0
-    let split = 6.0
-    let min_side = 160.0
-    let min_chart = 180.0
-    let min_show = 48.0
-    let max_side = w - split - min_chart
+    let body_y = y + metric_h + 4.0
+    let body_h = h - metric_h - 4.0
+    let split = 4.0
+    let min_side = 100.0
+    let max_side = w - split
     if max_side > w * 0.55 {
         max_side = w * 0.55
     }
-    if max_side < min_show {
-        max_side = min_show
+    if max_side < min_side {
+        max_side = min_side
+    }
+    if g_side_user_set == false {
+        let want = w * 0.20
+        if want < min_side {
+            want = min_side
+        }
+        if want > max_side {
+            want = max_side
+        }
+        g_side_w = want
     }
     // Clamp only the on-screen copy. Writing a tight max_side back into
     // g_side_w on a small canvas permanently hid the panel after resize.
     let side_w = g_side_w
     if side_w < min_side {
         side_w = min_side
-    }
-    if side_w > max_side {
-        side_w = max_side
-    }
-    if side_w > w - split - min_show {
-        side_w = w - split - min_show
-    }
-    if side_w < min_show {
-        side_w = min_show
+    } else {
+        if side_w > max_side {
+            side_w = max_side
+            if side_w < min_side {
+                side_w = min_side
+            }
+        }
     }
     let chart_w = w - side_w - split
+    if chart_w < 0.0 {
+        chart_w = 0.0
+    }
     let split_x = x + chart_w
     let side_x = split_x + split
     let hit_pad = 4.0
@@ -3361,21 +2860,21 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
             let next = g_side_drag_w - (g_mouse_x - g_drag_x)
             if next < min_side {
                 next = min_side
-            }
-            if max_side >= min_side {
+            } else {
                 if next > max_side {
                     next = max_side
+                    if next < min_side {
+                        next = min_side
+                    }
                 }
-                g_side_w = next
-                side_w = next
             }
-            if side_w > w - split - min_show {
-                side_w = w - split - min_show
-            }
-            if side_w < min_show {
-                side_w = min_show
-            }
+            g_side_w = next
+            g_side_user_set = true
+            side_w = next
             chart_w = w - side_w - split
+            if chart_w < 0.0 {
+                chart_w = 0.0
+            }
             split_x = x + chart_w
             side_x = split_x + split
             on_split = true
@@ -3417,11 +2916,9 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
                 }
             }
         }
-        // Details first: a busy flamegraph can fill the UI command buffer
+        // Details first: a busy timeline can fill the UI command buffer
         // and would otherwise drop the split and the side panel.
-        if side_w > 40.0 {
-            draw_hot_list(r, v, side_x, body_y, side_w, body_h)
-        }
+        draw_hot_list(r, v, side_x, body_y, side_w, body_h)
         let split_color = col_line()
         if on_split {
             split_color = col_accent()
@@ -3430,13 +2927,9 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
                 split_color = col_accent()
             }
         }
-        ui_fill_rect(r, split_x + 2.0, body_y + 8.0, 2.0, body_h - 16.0, split_color, 0.0)
-        if chart_w > 40.0 {
-            if g_mode == 0 {
-                draw_flamegraph(r, v, x, body_y, chart_w, body_h)
-            } else {
-                draw_timeline(r, v, x, body_y, chart_w, body_h)
-            }
+        ui_fill_rect(r, split_x + 1.0, body_y + 6.0, 2.0, body_h - 12.0, split_color, 0.0)
+        if chart_w > 0.0 {
+            draw_timeline(r, v, x, body_y, chart_w, body_h)
         }
     }
 }
@@ -3446,8 +2939,8 @@ fn draw_profile(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64)
 //
 // live.ns owns the session, the wire protocol and the frame ring. Everything
 // here turns one retained frame (or the whole retained window) into the same
-// event, flame and hot-list arrays a loaded ns.profile fills, so the timeline
-// and flamegraph draw a live frame exactly as they draw a file.
+// event and hot-list arrays a loaded ns.profile fills, so the timeline draws
+// a live frame exactly as it draws a file.
 
 // Target thread id -> viewer lane, and how much of each table is published.
 let g_live_lane = [i32](256)
@@ -3460,15 +2953,9 @@ let g_live_header_src = ""
 let g_live_status = "Live capture idle."
 let g_live_status_next: u64 = 0
 let g_live_syms_published = 0
-// Flame rebuild scratch: sibling lists keyed by symbol keep the per-frame
-// rebuild linear instead of scanning every node for each event.
-let g_node_sym = [i32](4096)
-let g_node_child = [i32](4096)
-let g_node_sib = [i32](4096)
-let g_live_root = -1
-let g_live_stack = [i32](4096)
-let g_live_stack_end = [f64](4096)
 let g_live_hot_self = [f64](256)
+let g_live_hot_total = [f64](256)
+let g_live_hot_calls = [i32](256)
 
 // Copy new symbols into the string pool and new target threads into lanes.
 // Ids are dense and stable, so only the tail of each table is ever new.
@@ -3514,106 +3001,6 @@ fn live_sym_name(sym: i32) str {
     return g_str_pool[sym]
 }
 
-fn live_flame_child(parent: i32, sym: i32) i32 {
-    let child = g_live_root
-    if parent >= 0 {
-        child = g_node_child[parent]
-    }
-    loop child >= 0 {
-        if g_node_sym[child] == sym {
-            return child
-        }
-        child = g_node_sib[child]
-    }
-    return -1
-}
-
-fn live_flame_add(parent: i32, sym: i32) i32 {
-    if g_node_count >= g_node_sym.len {
-        return -1
-    }
-    let node = add_node(parent, live_sym_name(sym))
-    if node < 0 {
-        return -1
-    }
-    g_node_sym[node] = sym
-    g_node_child[node] = -1
-    if parent >= 0 {
-        g_node_sib[node] = g_node_child[parent]
-        g_node_child[parent] = node
-    } else {
-        g_node_sib[node] = g_live_root
-        g_live_root = node
-    }
-    return node
-}
-
-fn live_stack_slot(lane: i32, depth: i32) i32 {
-    let l = lane
-    if l < 0 {
-        l = 0
-    }
-    if l >= LIVE_STACK_LANES() {
-        l = LIVE_STACK_LANES() - 1
-    }
-    let d = depth
-    if d < 0 {
-        d = 0
-    }
-    if d >= LIVE_STACK_DEPTH() {
-        d = LIVE_STACK_DEPTH() - 1
-    }
-    return l * LIVE_STACK_DEPTH() + d
-}
-
-// Rebuild the aggregated flame tree from the events on screen. Samples arrive
-// sorted by start time, so the most recent event one level up is the parent as
-// long as it still covers this one.
-fn live_rebuild_flame() {
-    g_node_count = 0
-    g_live_root = -1
-    let i = 0
-    loop i < g_live_stack.len {
-        g_live_stack[i] = -1
-        g_live_stack_end[i] = 0.0
-        i = i + 1
-    }
-    i = 0
-    loop i < g_ev_count {
-        let depth = g_ev_depth[i]
-        if depth < 0 {
-            depth = 0
-        }
-        let lane = g_ev_lane[i]
-        let start = g_ev_start[i]
-        let parent = -1
-        if depth > 0 {
-            let up = live_stack_slot(lane, depth - 1)
-            let candidate = g_live_stack[up]
-            if candidate >= 0 {
-                if start <= g_live_stack_end[up] + 0.05 {
-                    parent = candidate
-                }
-            }
-        }
-        let sym = g_ev_sym[i]
-        let node = live_flame_child(parent, sym)
-        if node < 0 {
-            node = live_flame_add(parent, sym)
-        }
-        if node >= 0 {
-            g_node_calls[node] = g_node_calls[node] + g_ev_calls[i]
-            g_node_total[node] = g_node_total[node] + g_ev_duration[i]
-            g_node_self[node] = g_node_self[node] + g_ev_self[i]
-            let here = live_stack_slot(lane, depth)
-            g_live_stack[here] = node
-            g_live_stack_end[here] = start + g_ev_duration[i]
-        }
-        i = i + 1
-    }
-    layout_flame()
-}
-
 fn ensure_live_hot_capacity(need: i32) {
     if need <= g_live_hot_self.len {
         return
@@ -3633,15 +3020,18 @@ fn ensure_live_hot_capacity(need: i32) {
         return
     }
     g_live_hot_self = [f64](next)
+    g_live_hot_total = [f64](next)
+    g_live_hot_calls = [i32](next)
 }
 
-// Self time per symbol over the events on screen, kept as a sorted top list so
-// the side panel matches what the flamegraph is showing.
+// Self time per symbol over the events on screen, kept as a sorted top list.
 fn live_rebuild_hot() {
     ensure_live_hot_capacity(g_str_pool_count)
     let i = 0
     loop i < g_live_hot_self.len {
         g_live_hot_self[i] = 0.0
+        g_live_hot_total[i] = 0.0
+        g_live_hot_calls[i] = 0
         i = i + 1
     }
     i = 0
@@ -3650,6 +3040,8 @@ fn live_rebuild_hot() {
         if sym >= 0 {
             if sym < g_live_hot_self.len {
                 g_live_hot_self[sym] = g_live_hot_self[sym] + g_ev_self[i]
+                g_live_hot_total[sym] = g_live_hot_total[sym] + g_ev_duration[i]
+                g_live_hot_calls[sym] = g_live_hot_calls[sym] + g_ev_calls[i]
             }
         }
         i = i + 1
@@ -3685,8 +3077,8 @@ fn live_rebuild_hot() {
                     g_hot_name[at] = live_sym_name(sym)
                     g_hot_kind[at] = "scope"
                     g_hot_self[at] = self_ms
-                    g_hot_total[at] = self_ms
-                    g_hot_calls[at] = 0
+                    g_hot_total[at] = g_live_hot_total[sym]
+                    g_hot_calls[at] = g_live_hot_calls[sym]
                     if g_hot_count < limit {
                         g_hot_count = g_hot_count + 1
                     }
@@ -3694,21 +3086,6 @@ fn live_rebuild_hot() {
             }
         }
         sym = sym + 1
-    }
-    // Calls and inclusive time come from the same events, tallied per node.
-    let node = 0
-    loop node < g_node_count {
-        let name = g_node_name[node]
-        let h = 0
-        loop h < g_hot_count {
-            if g_hot_name[h] == name {
-                g_hot_calls[h] = g_hot_calls[h] + g_node_calls[node]
-                g_hot_total[h] = g_hot_total[h] + g_node_total[node]
-                break
-            }
-            h = h + 1
-        }
-        node = node + 1
     }
 }
 
@@ -3748,8 +3125,6 @@ fn live_reset_events() {
     g_time_end = 0.0
     g_selected_ev = -1
     g_hot_count = 0
-    g_node_count = 0
-    g_live_root = -1
 }
 
 fn live_fit_view(t0: f64, t1: f64) {
@@ -3811,25 +3186,21 @@ fn live_show_selection() {
     if span <= 0.0 {
         span = 1.0
     }
-    // The metric row and the flame width read these; in live mode they describe
-    // the frame on screen rather than a whole run.
+    // The metric row reads these; in live mode they describe the frame on
+    // screen rather than a whole run.
     g_elapsed = fmt_1dec(span)
     g_scope_calls = `{g_ev_count}`
     g_ffi_calls = `{events}`
     g_timeline_events = `{g_ev_count}`
     g_format = "ns-profile-live"
-    rebuild_lane_layout(18.0)
-    live_rebuild_flame()
-    g_flame_frames = `{g_node_count}`
+    rebuild_lane_layout(16.0)
     live_rebuild_hot()
     live_fit_view(t0, t1)
+    select_default_event()
     invalidate_overview_batch()
     g_ov_rebuild_pending = true
     g_events_loaded = true
     g_profile_loaded = true
-    if g_selected >= g_node_count {
-        g_selected = -1
-    }
 }
 
 fn live_tick() {
@@ -3964,19 +3335,19 @@ fn draw_frame_strip(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
         if slot == selected {
             color = col_text()
         }
-        ui_fill_rect(r, bx, y + 3.0 + inner_h - bh, bw - 1.0, bh, color, 0.0)
+        ui_fill_rect(r, bx, y + 2.0 + inner_h - bh, bw - 1.0, bh, color, 0.0)
         if hit(v, bx, y, bw, h) {
             hovered = i
         }
         i = i + 1
     }
-    let budget_y = y + 3.0 + inner_h - inner_h * (LIVE_BUDGET_MS() / peak)
+    let budget_y = y + 2.0 + inner_h - inner_h * (LIVE_BUDGET_MS() / peak)
     ui_fill_rect(r, x + 2.0, budget_y, w - 4.0, 1.0, col_line(), 0.0)
     if hovered >= 0 {
         let slot = live_slot_at(hovered)
         let span = g_lf_end[slot] - g_lf_start[slot]
         let label = `#{g_lf_index[slot]}  {fmt_time_ms(span)}  {g_lf_events[slot]} ev`
-        ui_draw_text(r, x + 8.0, y + 2.0, label, PX(), col_text(), FONT())
+        ui_draw_text(r, x + 6.0, y + 1.0, label, PX(), col_text(), FONT())
         if v.mouse_pressed {
             // Pinning a frame stops the view from following the newest one.
             g_live_sel_index = g_lf_index[slot]
@@ -3988,25 +3359,25 @@ fn draw_frame_strip(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
 }
 
 fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
-    let bh = 22.0
+    let bh = 18.0
     let bx = x
     let run_label = "Run"
     if live_target_running() {
         run_label = "Restart"
     }
-    if draw_button(r, v, bx, y, 70.0, bh, run_label, false) {
+    if draw_button(r, v, bx, y, 56.0, bh, run_label, false) {
         live_run_target()
     }
-    bx = bx + 78.0
-    if draw_button(r, v, bx, y, 60.0, bh, "Stop", false) {
+    bx = bx + 60.0
+    if draw_button(r, v, bx, y, 44.0, bh, "Stop", false) {
         live_stop_target()
     }
-    bx = bx + 68.0
+    bx = bx + 48.0
     let pause_label = "Pause"
     if g_live_paused {
         pause_label = "Resume"
     }
-    if draw_button(r, v, bx, y, 70.0, bh, pause_label, g_live_paused) {
+    if draw_button(r, v, bx, y, 56.0, bh, pause_label, g_live_paused) {
         if g_live_paused {
             live_send_command(LIVE_CMD_RESUME())
             g_live_paused = false
@@ -4015,8 +3386,8 @@ fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
             g_live_paused = true
         }
     }
-    bx = bx + 78.0
-    if draw_button(r, v, bx, y, 60.0, bh, "Live", g_live_follow) {
+    bx = bx + 60.0
+    if draw_button(r, v, bx, y, 44.0, bh, "Live", g_live_follow) {
         if g_live_follow {
             g_live_follow = false
         } else {
@@ -4027,12 +3398,12 @@ fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
             live_show_selection()
         }
     }
-    bx = bx + 68.0
+    bx = bx + 48.0
     let window_label = "Frame"
     if g_live_window {
         window_label = "Window"
     }
-    if draw_button(r, v, bx, y, 76.0, bh, window_label, g_live_window) {
+    if draw_button(r, v, bx, y, 56.0, bh, window_label, g_live_window) {
         // Frame: just the selected frame. Window: every retained frame at once.
         if g_live_window {
             g_live_window = false
@@ -4041,17 +3412,17 @@ fn draw_live_bar(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64) {
         }
         live_show_selection()
     }
-    bx = bx + 84.0
-    if draw_button(r, v, bx, y, 70.0, bh, "Replay", false) {
+    bx = bx + 60.0
+    if draw_button(r, v, bx, y, 52.0, bh, "Replay", false) {
         // Refill the window from the target's own ring.
         live_clear_frames()
         live_send_command(LIVE_CMD_REPLAY())
     }
-    bx = bx + 78.0
+    bx = bx + 56.0
     let text_x = bx + 6.0
     if text_x < x + w - 40.0 {
-        ui_push_clip(r, text_x, y + 4.0, x + w - text_x, 14.0)
-        ui_draw_text(r, text_x, y + 4.0, live_status_text(), PX(), col_muted(), FONT())
+        ui_push_clip(r, text_x, y + 2.0, x + w - text_x, 14.0)
+        ui_draw_text(r, text_x, y + 2.0, live_status_text(), PX(), col_muted(), FONT())
         ui_pop_clip(r)
     }
 }
@@ -4078,85 +3449,63 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
 
     ui_fill_rect(r, 0.0, 0.0, w, h, col_bg(), 0.0)
 
-    let pad = 10.0
-    let header_h = 40.0
+    let pad = 6.0
+    let header_h = 26.0
     ui_fill_rect(r, 0.0, 0.0, w, header_h, col_panel(), 0.0)
     let title = "NS Profile"
     if g_live_enabled {
         title = live_header_text()
     }
-    ui_draw_text(r, pad, 4.0, title, TITLE_PX(), col_text(), FONT())
-    ui_push_clip(r, pad, 22.0, 280.0, 14.0)
-    ui_draw_text(r, pad, 22.0, g_status, PX(), col_muted(), FONT())
+    let title_ty = ui_text_v_center_y(r, 0.0, header_h, TITLE_PX(), FONT())
+    ui_draw_text(r, pad, title_ty, title, TITLE_PX(), col_text(), FONT())
+    let title_w = ui_text_width(r, title, TITLE_PX(), FONT())
+    ui_push_clip(r, pad + title_w + 10.0, 0.0, 280.0, header_h)
+    ui_draw_text(r, pad + title_w + 10.0, title_ty, g_status, PX(), col_muted(), FONT())
     ui_pop_clip(r)
 
-    let open_w = 90.0
-    let load_w = 110.0
-    let mode_w = 60.0
-    let by = 8.0
+    let open_w = 52.0
+    let load_w = 56.0
+    let by = 4.0
+    let bh = 18.0
     let open_x = w - pad - open_w
-    let load_x = open_x - load_w - 10.0
-    let time_x = load_x - mode_w - 10.0
-    let flame_x = time_x - mode_w - 10.0
-    if draw_button(r, v, flame_x, by, mode_w, 24.0, "Flame", g_mode == 0) {
-        if g_loading == false {
-            g_mode = 0
-            end_drag()
-            g_drag_moved = false
-        }
-    }
-    if draw_button(r, v, time_x, by, mode_w, 24.0, "Time", g_mode == 1) {
-        // Time data is prepared during load; switching modes must stay instant.
-        if g_loading {
-            g_status = "Still loading timeline..."
-        } else {
-            if g_events_loaded {
-                g_mode = 1
-                end_drag()
-                g_drag_moved = false
-            } else {
-                g_status = "No timeline in this profile."
-            }
-        }
-    }
-    if draw_button(r, v, load_x, by, load_w, 24.0, "Load file", false) {
+    let load_x = open_x - load_w - 6.0
+    if draw_button(r, v, load_x, by, load_w, bh, "Reload", false) {
         g_load_profile_pending = true
     }
-    if draw_button(r, v, open_x, by, open_w, 24.0, "Open", true) {
+    if draw_button(r, v, open_x, by, open_w, bh, "Open", true) {
         g_open_profile_pending = true
     }
 
     ui_fill_rect(r, 0.0, header_h, w, 1.0, col_line(), 0.0)
 
     let body_x = pad
-    let body_y = header_h + 10.0
+    let body_y = header_h + 6.0
     let body_w = w - pad * 2.0
     let body_h = h - body_y - pad
 
     if g_live_enabled {
-        // The live toolbar and the 128-frame strip sit above the profile body,
-        // so run controls and the frame history stay visible in every mode.
+        // The live toolbar and the 128-frame strip sit above the profile body.
         if body_w > 100.0 {
             draw_live_bar(r, v, body_x, body_y, body_w)
-            draw_frame_strip(r, v, body_x, body_y + 28.0, body_w, 44.0)
+            draw_frame_strip(r, v, body_x, body_y + 22.0, body_w, 28.0)
         }
-        body_y = body_y + 80.0
+        body_y = body_y + 54.0
         body_h = h - body_y - pad
     }
 
     if body_w > 100.0 {
         if body_h > 80.0 {
             if g_profile_loaded == false {
-                let cy = body_y + min_f(90.0, body_h * 0.3)
+                let cy = body_y + min_f(48.0, body_h * 0.25)
                 if g_live_enabled {
                     ui_draw_text(r, body_x, cy, "Waiting for live frames", TITLE_PX(), col_text(), FONT())
-                    ui_draw_text(r, body_x, cy + 20.0, "Run starts the project and streams its frames over loopback tcp.", PX(), col_muted(), FONT())
-                    ui_draw_text(r, body_x, cy + 38.0, live_status_text(), PX(), col_muted(), FONT())
+                    ui_draw_text(r, body_x, cy + 16.0, "Run starts the project and streams frames over loopback.", PX(), col_muted(), FONT())
+                    ui_draw_text(r, body_x, cy + 30.0, live_status_text(), PX(), col_muted(), FONT())
                 } else {
                     ui_draw_text(r, body_x, cy, "No profile loaded", TITLE_PX(), col_text(), FONT())
-                    ui_draw_text(r, body_x, cy + 20.0, "Run `ns profile` to write and open bin/ns.profile.", PX(), col_muted(), FONT())
+                    ui_draw_text(r, body_x, cy + 16.0, "Run `ns profile` to write and open bin/ns.profile.", PX(), col_muted(), FONT())
                     if g_status == "Loaded file is not an ns-profile." {
-                        ui_draw_text(r, body_x, cy + 38.0, g_status, PX(), col_warn(), FONT())
+                        ui_draw_text(r, body_x, cy + 30.0, g_status, PX(), col_warn(), FONT())
                     }
                 }
             } else {
@@ -4167,24 +3516,23 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     if g_ov_rebuild_pending {
         if g_loading == false {
             if g_events_loaded {
-                rebuild_overview_batch(r, max_f(200.0, w - 40.0), 28.0)
+                rebuild_overview_batch(r, max_f(200.0, w - 40.0), 18.0)
                 g_ov_rebuild_pending = false
             }
         }
     }
     if g_loading {
-        let bw = min_f(420.0, w * 0.5)
-        let bh = 54.0
+        let bw = min_f(360.0, w * 0.5)
+        let bh = 40.0
         let bx = (w - bw) * 0.5
         let by = (h - bh) * 0.5
-        ui_fill_rect(r, bx - 8.0, by - 8.0, bw + 16.0, bh + 16.0, col_panel(), 0.0)
-        ui_stroke_rect(r, bx - 8.0, by - 8.0, bw + 16.0, bh + 16.0, 1.0, col_line(), 0.0)
+        ui_fill_rect(r, bx - 6.0, by - 6.0, bw + 12.0, bh + 12.0, col_panel(), 0.0)
+        ui_stroke_rect(r, bx - 6.0, by - 6.0, bw + 12.0, bh + 12.0, 1.0, col_line(), 0.0)
         ui_draw_text(r, bx, by, g_load_msg, PX(), col_text(), FONT())
-        let track_y = by + 24.0
-        ui_fill_rect(r, bx, track_y, bw, 12.0, col_panel_hi(), 0.0)
+        let track_y = by + 20.0
+        ui_fill_rect(r, bx, track_y, bw, 8.0, col_panel_hi(), 0.0)
         let fill = max_f(2.0, bw * g_load_frac)
-        ui_fill_rect(r, bx, track_y, fill, 12.0, col_accent(), 0.0)
-        // Keep pumping load stages while Flame (or empty) is on screen.
+        ui_fill_rect(r, bx, track_y, fill, 8.0, col_accent(), 0.0)
         ui_request_render(r, 2)
     }
     if g_live_enabled {
@@ -4196,7 +3544,7 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
 }
 
 fn main() {
-    let v = view_create("NS Profile", 1100, 700)
+    let v = view_create("NS Profile", 960, 640)
     reset_view_input(v)
     let startup = os_env("NS_PROFILE_FILE")
     let ok = gpu_request_device(v)

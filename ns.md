@@ -174,7 +174,7 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 - `main.ns` is the desktop entry.
 
 ### Profile viewer (`nscode/profile/`)
-- The GUI flamegraph/timeline viewer, written in ns and compiled by
+- The GUI timeline viewer, written in ns and compiled by
   `make profiler` (`ns build nscode/profile`).
 - `live.ns` owns a live session: the loopback listener, the profiled child
   process, the wire protocol, and the 128-frame ring. It is

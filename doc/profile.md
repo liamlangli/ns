@@ -75,7 +75,7 @@ The viewer keeps its own 128-slot ring of the encoded frame payloads in one
 byte ring, and decodes only what is on screen. The frame strip draws every
 retained frame as a bar against a 16.7 ms line: click one to pin it, `Live` to
 follow the newest again, and `Window` to merge every retained frame into a
-single timeline and flamegraph.
+single timeline.
 
 ## Wire format
 

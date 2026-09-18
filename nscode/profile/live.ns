@@ -34,8 +34,6 @@ fn LIVE_CMD_RESUME() i32 { return 21 }
 fn LIVE_CMD_QUIT() i32 { return 22 }
 fn LIVE_CMD_REPLAY() i32 { return 23 }
 fn LIVE_EVENT_SIZE() i32 { return 20 }
-fn LIVE_STACK_LANES() i32 { return 64 }
-fn LIVE_STACK_DEPTH() i32 { return 64 }
 // A frame at or above this many milliseconds is drawn as a spike in the strip.
 fn LIVE_BUDGET_MS() f64 { return 16.7 }
 
