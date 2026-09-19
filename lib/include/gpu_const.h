@@ -16,7 +16,12 @@ enum {
 
     GPU_RESOURCE_POOL_SIZE = 256,
     GPU_ATTACHMENTS_POOL_SIZE = 16,
-    GPU_UB_SIZE = 4 * 1024 * 1024,
+    // The frame ring is this size, split across GPU_SWAP_BUFFER_COUNT frames, so
+    // one section is also the per-frame upload budget: every gpu_set_root_data
+    // and every staged gpu_write into a persistent buffer comes out of it. A
+    // frame that publishes a lot of dynamic data needs a section to match, and
+    // running out of it drops the write rather than growing anything.
+    GPU_UB_SIZE = 16 * 1024 * 1024,
 };
 
 typedef enum gpu_pixel_format {

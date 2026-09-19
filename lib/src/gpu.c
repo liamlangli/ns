@@ -111,6 +111,11 @@ typedef struct gpu_v2_core {
     u64 ring_head;
     u32 ring_section;
     u32 ring_slot;
+    // Telemetry for the per-frame budget: the high-water mark of one frame's
+    // ring, and everything that frame allocated, reset at every frame end.
+    u64 ring_peak;
+    u64 ring_bytes;
+    u64 ring_reports;
 
     gpu_v2_upload uploads[GPU_V2_UPLOAD_CAP];
     u32 upload_count;
@@ -451,10 +456,14 @@ gpu_addr gpu_frame_alloc(u64 size, u32 align) {
     u64 section_size = (GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT) & ~((u64)GPU_V2_ALLOC_ALIGN - 1);
     u64 head = (_v2.ring_head + align - 1) & ~((u64)align - 1);
     if (head + size > section_size) {
-        ns_warn("gpu", "gpu_frame_alloc: frame ring exhausted.\n");
+        ns_warn("gpu", "gpu_frame_alloc: frame ring exhausted (%llu of %llu bytes used, %llu requested, %llu peak).\n",
+                (unsigned long long)_v2.ring_head, (unsigned long long)section_size,
+                (unsigned long long)size, (unsigned long long)_v2.ring_peak);
         return 0;
     }
     _v2.ring_head = head + size;
+    if (_v2.ring_head > _v2.ring_peak) _v2.ring_peak = _v2.ring_head;
+    _v2.ring_bytes = _v2.ring_bytes + size;
     return _v2.ring_base + (u64)_v2.ring_section * section_size + head;
 }
 
@@ -465,6 +474,22 @@ void gpu_v2_frame_end(void) {
     }
     _v2.ring_section = (_v2.ring_section + 1) % GPU_SWAP_BUFFER_COUNT;
     _v2.ring_head = 0;
+    // The ring is a per-frame budget, so what a frame spent is worth knowing
+    // before it runs out: a frame that publishes far more than the rest of the
+    // game does is a frame with a write that repeats every frame. Reported
+    // occasionally rather than every frame, or the report is the flood.
+    if (_v2.ring_peak > (GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT) / 16) {
+        _v2.ring_reports = _v2.ring_reports + 1;
+        if (_v2.ring_reports <= 64 || (_v2.ring_reports & 63) == 0) {
+            ns_warn("gpu", "frame %llu: ring peak %llu of %llu bytes, %llu allocated.\n",
+                    (unsigned long long)_v2.ring_reports,
+                    (unsigned long long)_v2.ring_peak,
+                    (unsigned long long)(GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT),
+                    (unsigned long long)_v2.ring_bytes);
+        }
+    }
+    _v2.ring_peak = 0;
+    _v2.ring_bytes = 0;
 }
 
 u32 gpu_texture_create(i32 width, i32 height, i32 depth_or_layers,
