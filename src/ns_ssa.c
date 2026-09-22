@@ -1605,11 +1605,18 @@ static void ns_ssa_record_wasm_import(ns_ssa_builder *b, ns_str name, ns_type a,
     ns_array_push(b->m->imports, import);
 }
 
+// Match `gpu_shader_target()` in lib/src/gpu.c: the folded source must be the
+// language the host backend compiles. The host GPU backend is Metal on Apple,
+// DirectX 12 on Windows, and Vulkan GLSL (the backend `lib/src/gpu.c` falls
+// back to) everywhere else. Folding HLSL on Linux baked a source the Vulkan
+// GLSL compiler could not parse, which made glslang dump its builtins.
 static ns_shader_target ns_ssa_native_shader_target(void) {
 #if defined(__APPLE__)
     return NS_SHADER_MSL;
-#else
+#elif defined(_WIN32)
     return NS_SHADER_HLSL;
+#else
+    return NS_SHADER_GLSL_VULKAN;
 #endif
 }
 
