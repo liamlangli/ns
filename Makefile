@@ -23,8 +23,8 @@ NS_MKDIR = mkdir -p
 NS_RMDIR = rm -rf
 NS_CP = cp -r
 NS_HOME = $(HOME)
-NS_INSTALL_ROOT = $(NS_HOME)/ns
-NS_INSTALL_DISPLAY = ~/ns
+NS_INSTALL_ROOT = $(NS_HOME)/.ns
+NS_INSTALL_DISPLAY = ~/.ns
 
 ifeq ($(OS), Linux)
 	NS_DYLIB_SUFFIX = .so
@@ -441,7 +441,7 @@ install: all
 		bash) ns_shell_rc="~/.bashrc" ;; \
 		*) ns_shell_rc="~/.profile" ;; \
 	esac; \
-	printf 'Run this to append it: `echo '\''export PATH="$$HOME/ns/bin:$$PATH"'\'' >> %s`\n' "$$ns_shell_rc"
+	printf 'Run this to append it: `echo '\''export PATH="$(NS_INSTALL_ROOT)/bin:$$PATH"'\'' >> %s`\n' "$$ns_shell_rc"
 
 # ===== Apple (Darwin) XCFramework packing (macOS arm64 + iOS arm64) =====
 # Unique target names to avoid clashes with other included makefiles.
