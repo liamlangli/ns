@@ -35,7 +35,19 @@
     #endif
 #endif
 
-void ns_asm_get_current_target(ns_asm_target *target) {
+static ns_bool ns_asm_override_set = false;
+static ns_asm_target ns_asm_override;
+
+void ns_asm_set_target_override(ns_asm_target target) {
+    ns_asm_override = target;
+    ns_asm_override_set = true;
+}
+
+void ns_asm_clear_target_override(void) {
+    ns_asm_override_set = false;
+}
+
+void ns_asm_get_host_target(ns_asm_target *target) {
     if (!target) return;
 
     target->arch = NS_ARCH_UNKNOWN;
@@ -76,6 +88,15 @@ void ns_asm_get_current_target(ns_asm_target *target) {
     #endif
     }
 #endif
+}
+
+void ns_asm_get_current_target(ns_asm_target *target) {
+    if (!target) return;
+    if (ns_asm_override_set) {
+        *target = ns_asm_override;
+        return;
+    }
+    ns_asm_get_host_target(target);
 }
 
 ns_str ns_os_str(ns_os os) {

@@ -53,6 +53,28 @@ static void ns_rt_enter_bundle_resources(void) {
 }
 #endif
 
+#if defined(__linux__)
+// A cross-built app writes `.ns-resources` beside the executable after copying
+// the project's assets there. Entering that directory makes `res/house.vox`
+// resolve the same way it does from an interpreted run at the project root.
+static void ns_rt_enter_packaged_directory(void) {
+    char executable[4096];
+    ssize_t n = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+    if (n <= 0) return;
+    executable[n] = '\0';
+    char *slash = strrchr(executable, '/');
+    if (!slash || slash == executable) return;
+    *slash = '\0';
+    char marker[4096];
+    int wrote = snprintf(marker, sizeof(marker), "%s/.ns-resources", executable);
+    if (wrote < 0 || wrote >= (int)sizeof(marker)) return;
+    if (access(marker, F_OK) != 0) return;
+    if (chdir(executable) != 0) {
+        fprintf(stderr, "ns_rt: could not enter %s\n", executable);
+    }
+}
+#endif
+
 // Addresses are 32-bit offsets, so the heap cannot exceed 4 GiB. Reserve that
 // VA once and commit pages in place: realloc would move the base and invalidate
 // host pointers other threads already hold from ns_rt_ptr / array slots.
@@ -205,12 +227,16 @@ static void ns_rt_init_locked(void) {
         ns_rt_grow(4096);
     }
     if (ns_rt_used < 16) ns_rt_used = 16;
-#if defined(__APPLE__)
-    // The allocator calls this on every miss, so the bundle is resolved once.
+#if defined(__APPLE__) || defined(__linux__)
+    // The allocator calls this on every miss, so the directory is resolved once.
     static int entered_bundle = 0;
     if (!entered_bundle) {
         entered_bundle = 1;
+#if defined(__APPLE__)
         ns_rt_enter_bundle_resources();
+#elif defined(__linux__)
+        ns_rt_enter_packaged_directory();
+#endif
     }
 #endif
 }

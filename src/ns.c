@@ -39,6 +39,11 @@
 static ns_vm vm = {0};
 static ns_ast_ctx ctx = {0};
 
+// `--target` for this process. A named [[targets]] platform wins over it;
+// `ns build` with no name skips a foreign platform unless this is set.
+static ns_str ns_cli_build_target = {0};
+static ns_bool ns_cli_build_target_set = false;
+
 static ns_return_ptr ns_ssa_build_for_cli(ns_ast_ctx *ast) {
     return ns_ssa_build_with_runtime_paths(ast, vm.ref_path, vm.lib_path, vm.lib_fallback_path);
 }
@@ -88,6 +93,7 @@ typedef struct ns_compile_option_t {
     ns_str strtab;
     ns_str macho_platform;
     ns_bool embed_main;
+    ns_str build_target; // `--target` triple, empty for the host
     ns_str filename;
     i32 port;
     ns_bool port_set;
@@ -175,6 +181,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.build_kind = 3;
         } else if (strcmp(argv[i], "--lib") == 0 || strcmp(argv[i], "--library") == 0) {
             option.build_kind = 2;
+        } else if (strcmp(argv[i], "--target") == 0) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--target needs a triple.\n");
+            option.build_target = ns_str_cstr(argv[i + 1]);
+            i++;
         } else if (strcmp(argv[i], "--shader") == 0) {
             option.shader_only = true;
             if (i + 1 < argc) { i++; option.shader_target = ns_str_cstr(argv[i]); } // ns_str_cstr is a macro: no argv[++i]
@@ -289,6 +299,7 @@ void ns_help() {
     printf("                    type app | cli | library picks bundle | executable | .a\n");
     printf("                    builds every [[targets]] table; a bare name builds one\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
+    printf("                    --target x86_64-linux-gnu cross-compiles a native build\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
     printf("                    keeps the artifact when no input changed; --force rebuilds\n");
     printf("  clean [path]      remove bin/ and the profiles a build generates\n");
@@ -1842,14 +1853,16 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
         artifact = ns_str_concat(ns_str_cstr("lib"), name);
         artifact = ns_str_concat(artifact, ns_str_cstr(".a"));
     } else if (kind == NS_BUILD_APP) {
-#if defined(NS_DARWIN)
-        artifact = ns_str_concat(name, ns_str_cstr(".app"));
-#else
-        artifact = ns_str_concat(name, ns_str_cstr(""));
+        ns_asm_target app_target;
+        ns_asm_get_current_target(&app_target);
+        if (app_target.os == NS_OS_DARWIN) {
+            artifact = ns_str_concat(name, ns_str_cstr(".app"));
+        } else {
+            artifact = ns_str_concat(name, ns_str_cstr(""));
 #if defined(_WIN32)
-        artifact = ns_str_concat(artifact, ns_str_cstr(".exe"));
+            artifact = ns_str_concat(artifact, ns_str_cstr(".exe"));
 #endif
-#endif
+        }
     } else {
         artifact = ns_str_concat(name, ns_str_cstr(""));
 #if defined(_WIN32)
@@ -2867,14 +2880,45 @@ static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
 }
 
 
-#if defined(NS_LINUX)
+#if !defined(_WIN32)
+// True when `name` is on PATH. Used to find a GNU Linux cross gcc.
+static ns_bool ns_command_exists(const char *name) {
+    ns_str cmd = ns_str_null;
+    ns_str_append_cstr(&cmd, "command -v ");
+    ns_str_append_cstr(&cmd, name);
+    ns_str_append_cstr(&cmd, " >/dev/null 2>&1");
+    ns_array_push(cmd.data, '\0');
+    i32 ret = system(cmd.data);
+    ns_str_free(cmd);
+    return ret == 0;
+}
 
-// Link a compiled module into an executable with the host C toolchain. The
-// pieces are the emitted ELF object, the native runtime the generated code
-// calls, the string table that runtime interns from, and one shared library
-// per feature module the program imports. `$ORIGIN` on the rpath keeps an
-// executable that ships beside its modules runnable after it is moved.
-static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable_path) {
+// A GNU compiler for the Linux target. A named cross gcc on PATH is used as
+// itself. Otherwise NS_LINUX_HOST is the Linux machine whose own gcc (and
+// its GNU ld) performs the link; the returned text is just "gcc" because the
+// command runs over ssh, not on this host. NS_CROSS_CC replaces either.
+static ns_str ns_linux_cross_cc(void) {
+    const char *env = getenv("NS_CROSS_CC");
+    if (env != ns_null && env[0] != '\0') return ns_str_concat(ns_str_cstr(env), ns_str_cstr(""));
+    if (ns_command_exists("x86_64-linux-gnu-gcc")) {
+        return ns_str_concat(ns_str_cstr("x86_64-linux-gnu-gcc"), ns_str_cstr(""));
+    }
+    const char *host = getenv("NS_LINUX_HOST");
+    if (host != ns_null && host[0] != '\0') return ns_str_concat(ns_str_cstr("gcc"), ns_str_cstr(""));
+    ns_exit(1, "build",
+            "cross compile to x86_64-linux-gnu links with that machine's gcc.\n"
+            "Set NS_LINUX_HOST to the Linux host (its gcc drives GNU ld),\n"
+            "or put x86_64-linux-gnu-gcc on PATH, or set NS_CROSS_CC.\n");
+    return ns_str_null;
+}
+
+// Link a compiled module into an ELF executable. On a Linux host the pieces
+// are compiled with the system `cc` and the host feature modules. A cross
+// build (Darwin to Linux, or a different Linux arch) uses ns_linux_cross_cc
+// and the modules from `make cross-linux`, then copies those modules beside
+// the executable so `$ORIGIN` finds them on the target machine.
+// `cross` is true when the build triple is not the host triple.
+static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable_path, ns_bool cross) {
     ns_str object_path = ns_str_concat(executable_path, ns_str_cstr(".o"));
     f64 object_start = ns_build_profile_begin("emit_object");
     ns_return_bool emit_ret = ns_elf_emit_object(ssa, object_path);
@@ -2898,28 +2942,63 @@ static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable
     ns_str q_rt_object = ns_shell_quote(rt_object);
     ns_str q_strtab = ns_shell_quote(strtab_path);
     ns_str q_inc = ns_shell_quote(inc_dir);
+    const char *linux_host = cross ? getenv("NS_LINUX_HOST") : ns_null;
+    ns_bool remote = linux_host != ns_null && linux_host[0] != '\0' && !ns_command_exists("x86_64-linux-gnu-gcc") &&
+                     (getenv("NS_CROSS_CC") == ns_null || getenv("NS_CROSS_CC")[0] == '\0');
+    ns_str cc = cross ? ns_linux_cross_cc() : ns_str_concat(ns_str_cstr("cc"), ns_str_cstr(""));
     ns_str cmd = ns_str_null;
-    ns_str_append_cstr(&cmd, "cc -I");
-    ns_str_append(&cmd, q_inc);
-    ns_str_append_cstr(&cmd, " ");
-    ns_str_append(&cmd, q_object);
-    ns_str_append_cstr(&cmd, " ");
-    ns_str_append(&cmd, ns_file_exists(rt_object) ? q_rt_object : q_rt);
-    ns_str_append_cstr(&cmd, " ");
-    ns_str_append(&cmd, q_strtab);
+    ns_bool use_rt_object = !cross && ns_file_exists(rt_object);
+    if (remote) {
+        // Names are relative to the directory copied to the Linux host.
+        // That host's gcc drives its own GNU ld.
+        ns_str_append_cstr(&cmd, "-Iinclude program.o ns_native_rt.c strtab.c");
+    } else {
+        ns_str_append(&cmd, cc);
+        ns_str_append_cstr(&cmd, " -I");
+        ns_str_append(&cmd, q_inc);
+        ns_str_append_cstr(&cmd, " ");
+        ns_str_append(&cmd, q_object);
+        ns_str_append_cstr(&cmd, " ");
+        // The host object is the host architecture. A cross link always compiles
+        // the runtime source with the cross compiler.
+        ns_str_append(&cmd, use_rt_object ? q_rt_object : q_rt);
+        ns_str_append_cstr(&cmd, " ");
+        ns_str_append(&cmd, q_strtab);
+    }
 
     ns_str exe = ns_project_current_executable();
     ns_str bin = ns_path_dirname_safe(exe);
     ns_str root = ns_path_parent(bin);
-    ns_str lib_dirs[3];
+    ns_str lib_dirs[6];
     i32 nlib_dirs = 0;
     ns_str installed_lib = ns_path_join(root, ns_str_cstr("lib"));
     ns_str home = ns_path_home();
     ns_str home_lib = ns_path_join(home, ns_str_cstr("ns/lib"));
-    lib_dirs[nlib_dirs++] = bin;
-    lib_dirs[nlib_dirs++] = installed_lib;
-    lib_dirs[nlib_dirs++] = home_lib;
+    ns_str cross_lib_env = ns_str_null;
+    ns_str cross_lib_bin = ns_str_null;
+    ns_str cross_lib_install = ns_str_null;
+    ns_str cross_lib_home = ns_str_null;
+    if (cross) {
+        // Host bin/*.so is the host architecture. A cross link only accepts
+        // modules built by `make cross-linux`.
+        const char *env_lib = getenv("NS_LINUX_LIB");
+        if (env_lib != ns_null && env_lib[0] != '\0') {
+            cross_lib_env = ns_str_concat(ns_str_cstr(env_lib), ns_str_cstr(""));
+            lib_dirs[nlib_dirs++] = cross_lib_env;
+        }
+        cross_lib_bin = ns_path_join(bin, ns_str_cstr("linux-x86_64"));
+        cross_lib_install = ns_path_join(installed_lib, ns_str_cstr("linux-x86_64"));
+        cross_lib_home = ns_path_join(home_lib, ns_str_cstr("linux-x86_64"));
+        lib_dirs[nlib_dirs++] = cross_lib_bin;
+        lib_dirs[nlib_dirs++] = cross_lib_install;
+        lib_dirs[nlib_dirs++] = cross_lib_home;
+    } else {
+        lib_dirs[nlib_dirs++] = bin;
+        lib_dirs[nlib_dirs++] = installed_lib;
+        lib_dirs[nlib_dirs++] = home_lib;
+    }
     ns_str *linked = ns_null;
+    ns_str *shipped = ns_null;
     ns_str rpath_dir = ns_str_null;
     for (i32 i = 0, l = (i32)ns_array_length(ssa->imports); i < l; ++i) {
         ns_str module = ssa->imports[i].module;
@@ -2934,8 +3013,9 @@ static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable
         }
         if (already) continue;
         ns_str shared = ns_str_null;
+        ns_str so_name = ns_str_concat(module, ns_str_cstr(".so"));
         for (i32 d = 0; d < nlib_dirs; ++d) {
-            ns_str cand = ns_path_join(lib_dirs[d], ns_str_concat(module, ns_str_cstr(".so")));
+            ns_str cand = ns_path_join(lib_dirs[d], so_name);
             if (ns_file_exists(cand)) {
                 shared = cand;
                 if (rpath_dir.data == ns_null) rpath_dir = ns_str_concat(lib_dirs[d], ns_str_cstr(""));
@@ -2943,15 +3023,30 @@ static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable
             }
             ns_str_free(cand);
         }
-        if (shared.data == ns_null) continue;
-        ns_str q_shared = ns_shell_quote(shared);
-        ns_str_append_cstr(&cmd, " ");
-        ns_str_append(&cmd, q_shared);
-        ns_str_free(q_shared);
-        ns_str_free(shared);
+        ns_str_free(so_name);
+        if (shared.data == ns_null) {
+            if (cross) {
+                ns_exit(1, "build",
+                        "linux module %.*s.so was not found. Run `make cross-linux` in the ns toolchain.\n",
+                        module.len, module.data);
+            }
+            continue;
+        }
+        if (remote) {
+            ns_str base = ns_path_last_component(shared);
+            ns_str_append_cstr(&cmd, " ");
+            ns_str_append(&cmd, base);
+            ns_str_free(base);
+        } else {
+            ns_str q_shared = ns_shell_quote(shared);
+            ns_str_append_cstr(&cmd, " ");
+            ns_str_append(&cmd, q_shared);
+            ns_str_free(q_shared);
+        }
+        ns_array_push(shipped, shared);
         ns_array_push(linked, module);
     }
-    if (rpath_dir.data) {
+    if (!cross && rpath_dir.data) {
         ns_str_append_cstr(&cmd, " -Wl,-rpath,");
         ns_str_append(&cmd, rpath_dir);
     }
@@ -2966,19 +3061,105 @@ static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable
     ns_str_free(installed_lib);
     ns_str_free(home);
     ns_str_free(home_lib);
+    ns_str_free(cross_lib_env);
+    ns_str_free(cross_lib_bin);
+    ns_str_free(cross_lib_install);
+    ns_str_free(cross_lib_home);
     ns_str_free(rpath_dir);
 
-    ns_str_append_cstr(&cmd, " -o ");
-    ns_str_append(&cmd, q_executable);
-    ns_array_push(cmd.data, '\0');
+    if (remote) ns_str_append_cstr(&cmd, " -o program");
+    else {
+        ns_str_append_cstr(&cmd, " -o ");
+        ns_str_append(&cmd, q_executable);
+    }
     ns_build_profile_end("prepare_native_runtime", runtime_start);
+
+    ns_str stage = ns_str_null;
+    if (remote) {
+        char stage_buf[64];
+        snprintf(stage_buf, sizeof(stage_buf), "/tmp/ns-link-%d", (int)getpid());
+        stage = ns_str_concat(ns_str_cstr(stage_buf), ns_str_cstr(""));
+        ns_mkdir_p(stage);
+        ns_str stage_inc = ns_path_join(stage, ns_str_cstr("include"));
+        ns_remove_tree(stage_inc);
+        ns_copy_tree(inc_dir, stage_inc);
+        ns_str_free(stage_inc);
+        ns_str staged_object = ns_path_join(stage, ns_str_cstr("program.o"));
+        ns_str staged_rt = ns_path_join(stage, ns_str_cstr("ns_native_rt.c"));
+        ns_str staged_strtab = ns_path_join(stage, ns_str_cstr("strtab.c"));
+        ns_copy_file_contents(object_path, staged_object);
+        ns_copy_file_contents(rt_path, staged_rt);
+        ns_copy_file_contents(strtab_path, staged_strtab);
+        ns_str_free(staged_object);
+        ns_str_free(staged_rt);
+        ns_str_free(staged_strtab);
+        for (i32 i = 0, n = (i32)ns_array_length(shipped); i < n; ++i) {
+            ns_str base = ns_path_last_component(shipped[i]);
+            ns_str dest = ns_path_join(stage, base);
+            ns_copy_file_contents(shipped[i], dest);
+            ns_str_free(base);
+            ns_str_free(dest);
+        }
+        ns_str link_sh = ns_path_join(stage, ns_str_cstr("link.sh"));
+        ns_str script = ns_str_null;
+        ns_str_append_cstr(&script, "#!/bin/sh\nset -eu\ncd \"$(dirname \"$0\")\"\n");
+        ns_str_append_cstr(&script, "gcc=\"${NS_LINUX_GCC:-$HOME/ns-linux-toolchain/bin/gcc}\"\n");
+        ns_str_append_cstr(&script, "exec \"$gcc\" ");
+        ns_str_append(&script, cmd);
+        ns_str_append_cstr(&script, "\n");
+        ns_array_push(script.data, '\0');
+        ns_write_text_file(link_sh, script);
+        ns_str_free(script);
+        chmod(link_sh.data, 0755);
+        ns_str_free(link_sh);
+
+        ns_str wrapped = ns_str_null;
+        ns_str q_host = ns_shell_quote(ns_str_cstr((char *)linux_host));
+        ns_str q_stage = ns_shell_quote(stage);
+        ns_str_append_cstr(&wrapped, "ssh ");
+        ns_str_append(&wrapped, q_host);
+        ns_str_append_cstr(&wrapped, " mkdir -p ns-link/job && rsync -a --delete ");
+        ns_str_append(&wrapped, q_stage);
+        ns_str_append_cstr(&wrapped, "/ ");
+        ns_str_append(&wrapped, q_host);
+        ns_str_append_cstr(&wrapped, ":ns-link/job/ && ssh ");
+        ns_str_append(&wrapped, q_host);
+        ns_str_append_cstr(&wrapped, " sh ns-link/job/link.sh && rsync -a ");
+        ns_str_append(&wrapped, q_host);
+        ns_str_append_cstr(&wrapped, ":ns-link/job/program ");
+        ns_str_append(&wrapped, q_executable);
+        ns_str_free(cmd);
+        cmd = wrapped;
+        ns_str_free(q_host);
+        ns_str_free(q_stage);
+    }
+    ns_array_push(cmd.data, '\0');
 
     f64 link_start = ns_build_profile_begin("system_link");
     i32 ret = system(cmd.data);
     ns_build_profile_end("system_link", link_start);
+    if (stage.data != ns_null) {
+        ns_remove_tree(stage);
+        ns_str_free(stage);
+    }
     if (ret != 0) {
         ns_exit(1, "build", "failed to link executable %.*s.\n", executable_path.len, executable_path.data);
     }
+
+    if (cross) {
+        ns_str exe_dir = ns_path_dirname_safe(executable_path);
+        for (i32 i = 0, n = (i32)ns_array_length(shipped); i < n; ++i) {
+            ns_str base = ns_path_last_component(shipped[i]);
+            ns_str dest = ns_path_join(exe_dir, base);
+            if (!ns_str_equals(shipped[i], dest)) ns_copy_file_contents(shipped[i], dest);
+            chmod(dest.data, 0755);
+            ns_str_free(base);
+            ns_str_free(dest);
+        }
+        ns_str_free(exe_dir);
+    }
+    for (i32 i = 0, n = (i32)ns_array_length(shipped); i < n; ++i) ns_str_free(shipped[i]);
+    ns_array_free(shipped);
 
     remove(object_path.data);
     remove(strtab_path.data);
@@ -2993,10 +3174,10 @@ static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable
     ns_str_free(q_rt_object);
     ns_str_free(q_strtab);
     ns_str_free(q_inc);
+    ns_str_free(cc);
     ns_str_free(cmd);
 }
-
-#endif // NS_LINUX
+#endif // !_WIN32
 
 #if defined(NS_DARWIN)
 
@@ -3515,6 +3696,71 @@ static void ns_build_write_launcher(ns_build_input *in, ns_str output) {
 
 // Compile `in` and write its artifact. Every branch either emits the artifact
 // or exits, so the caller records the build inputs only after a real build.
+// UI fonts travel with the feature module. A Darwin bundle copies them into
+// Contents/Resources; a cross-built app copies them beside ui.so, which is
+// where ui_resolve_asset looks (`<module>/assets/<file>`).
+static void ns_build_linux_copy_ui_assets(ns_str package_dir) {
+    ns_str exe = ns_project_current_executable();
+    ns_str bin = ns_path_dirname_safe(exe);
+    ns_str root = ns_path_parent(bin);
+    ns_str home = ns_path_home();
+    ns_str candidates[4];
+    candidates[0] = ns_path_join(root, ns_str_cstr("lib/assets"));
+    candidates[1] = ns_path_join(root, ns_str_cstr("ref/assets"));
+    candidates[2] = ns_path_join(home, ns_str_cstr("ns/ref/assets"));
+    candidates[3] = ns_path_join(home, ns_str_cstr("ns/lib/assets"));
+    ns_str source = ns_str_null;
+    for (i32 i = 0; i < 4; ++i) {
+        if (source.data == ns_null && ns_is_dir(candidates[i])) source = ns_str_concat(candidates[i], ns_str_cstr(""));
+        ns_str_free(candidates[i]);
+    }
+    ns_str_free(exe);
+    ns_str_free(bin);
+    ns_str_free(root);
+    ns_str_free(home);
+    if (source.data == ns_null) return;
+    ns_str destination = ns_path_join(package_dir, ns_str_cstr("assets"));
+    if (!ns_str_equals(source, destination)) {
+        ns_remove_tree(destination);
+        ns_copy_tree(source, destination);
+    }
+    ns_str_free(source);
+    ns_str_free(destination);
+}
+
+// An app packaged for another machine keeps its assets beside the executable
+// and a marker the runtime uses to enter that directory, the way a Darwin
+// bundle enters Contents/Resources. A command-line program has no marker, so
+// it keeps the working directory it was started from.
+static void ns_build_linux_package_app(ns_build_input *in, ns_str executable_path) {
+    if (!in->has_manifest) return;
+    ns_str dir = ns_path_dirname_safe(executable_path);
+    ns_str *assets = ns_project_asset_paths(in->scope);
+    for (i32 i = 0, count = ns_array_length(assets); i < count; i++) {
+        ns_str source = ns_path_join(in->scope, assets[i]);
+        ns_str destination = ns_path_join(dir, assets[i]);
+        if (ns_str_equals(source, destination)) {
+            ns_str_free(source);
+            ns_str_free(destination);
+            continue;
+        }
+        if (ns_is_dir(source)) {
+            ns_remove_tree(destination);
+            ns_copy_tree(source, destination);
+        } else if (ns_file_exists(source)) {
+            ns_copy_file_contents(source, destination);
+        }
+        ns_str_free(source);
+        ns_str_free(destination);
+    }
+    ns_project_asset_paths_free(assets);
+    ns_build_linux_copy_ui_assets(dir);
+    ns_str marker = ns_path_join(dir, ns_str_cstr(".ns-resources"));
+    ns_write_text_file(marker, ns_str_cstr(""));
+    ns_str_free(marker);
+    ns_str_free(dir);
+}
+
 static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output, ns_ssa_module *ssa) {
     if (ns_build_target_is_wasm(in->target)) {
         ns_build_wasm_app(in, output, ssa);
@@ -3573,12 +3819,19 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
         f64 executable_start = ns_build_profile_begin("emit_executable");
         emit_ret = ns_pe_emit(ssa, output);
         ns_build_profile_end("emit_executable", executable_start);
-#if defined(NS_LINUX)
     } else if (target.os == NS_OS_LINUX) {
-        ns_build_linux_link_executable(ssa, output);
+#if !defined(_WIN32)
+        ns_asm_target host_target;
+        ns_asm_get_host_target(&host_target);
+        ns_bool cross = host_target.os != target.os || host_target.arch != target.arch;
+        ns_build_linux_link_executable(ssa, output, cross);
         ns_ssa_module_free(ssa);
+        if (cross && ns_build_type_is_app(in->module_type)) ns_build_linux_package_app(in, output);
         ns_info("build", "executable %.*s\n", output.len, output.data);
         return;
+#else
+        ns_ssa_module_free(ssa);
+        ns_exit(1, "build", "linux executables are built on Darwin or Linux hosts.\n");
 #endif
     } else {
         ns_ssa_module_free(ssa);
@@ -3594,6 +3847,57 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
     ns_info("build", "executable %.*s\n", output.len, output.data);
 }
 
+// `linux`, `x86_64-linux`, `x86_64-linux-gnu` and `linux-x86_64` are the
+// Linux x86_64 triple. Anything else, including `wasm` and an empty string,
+// is not a native cross target.
+static ns_bool ns_build_parse_triple(ns_str spec, ns_asm_target *out) {
+    if (ns_str_equals(spec, ns_str_cstr("linux")) ||
+        ns_str_equals(spec, ns_str_cstr("x86_64-linux")) ||
+        ns_str_equals(spec, ns_str_cstr("x86_64-linux-gnu")) ||
+        ns_str_equals(spec, ns_str_cstr("linux-x86_64"))) {
+        out->arch = NS_ARCH_X64;
+        out->os = NS_OS_LINUX;
+        return true;
+    }
+    return false;
+}
+
+// A [[targets]] platform names the machine. `--target` fills in a target
+// that left the platform empty. Wasm stays wasm either way.
+static void ns_build_select_target(ns_build_input *in) {
+    ns_asm_clear_target_override();
+    if (ns_build_target_is_wasm(in->target)) return;
+
+    ns_asm_target selected;
+    ns_bool have = false;
+    if (in->target.len > 0) {
+        if (!ns_build_parse_triple(in->target, &selected)) {
+            ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm`, `x86_64-linux-gnu`, or omit target for a native build.\n",
+                    in->target.len, in->target.data);
+        }
+        have = true;
+    } else if (ns_cli_build_target_set) {
+        if (!ns_build_parse_triple(ns_cli_build_target, &selected)) {
+            ns_exit(1, "build", "unsupported --target `%.*s`; expected `x86_64-linux-gnu`.\n",
+                    ns_cli_build_target.len, ns_cli_build_target.data);
+        }
+        have = true;
+    }
+    if (!have) return;
+
+    ns_asm_target host;
+    ns_asm_get_host_target(&host);
+    if (selected.os != host.os || selected.arch != host.arch) ns_asm_set_target_override(selected);
+}
+
+static ns_bool ns_build_platform_is_foreign(ns_str platform) {
+    ns_asm_target parsed;
+    ns_asm_target host;
+    if (!ns_build_parse_triple(platform, &parsed)) return false;
+    ns_asm_get_host_target(&host);
+    return parsed.os != host.os || parsed.arch != host.arch;
+}
+
 // `ns build [path|target]`. `target_name` is the manifest target to compile;
 // pass ns_str_null to let the positional argument decide.
 void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool force, ns_str target_name) {
@@ -3602,11 +3906,9 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_build_input in = ns_build_input_resolve(path, target_name);
     ns_build_profile_end("resolve_input", resolve_start);
     ns_profile_set_output_scope(in.scope);
-    if (in.target.len > 0 && !ns_build_target_is_wasm(in.target)) {
-        ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm` or omit target for a native build.\n",
-                in.target.len, in.target.data);
-    }
+    ns_build_select_target(&in);
     if (ns_build_target_is_wasm(in.target)) {
+        ns_asm_clear_target_override();
         ns_exec_build_wasm(&in, output, requested_kind, force);
         ns_build_profile_end("build_target", target_start);
         return;
@@ -3616,7 +3918,11 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_asm_target target;
     ns_asm_get_current_target(&target);
     if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) {
-        ns_warn("build", "app bundle icon packaging is currently supported for mach-o targets only; emitting executable.\n");
+        ns_asm_target host_target;
+        ns_asm_get_host_target(&host_target);
+        if (host_target.os == target.os) {
+            ns_warn("build", "app bundle icon packaging is currently supported for mach-o targets only; emitting executable.\n");
+        }
         kind = NS_BUILD_EXE;
     }
     if (output.len == 0) output = ns_build_default_output(&in, kind);
@@ -3635,6 +3941,7 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
         ns_info("build", "up to date %.*s\n", artifact.len, artifact.data);
         ns_build_cache_free(&cache);
         ns_str_free(artifact);
+        ns_asm_clear_target_override();
         ns_build_profile_end("build_target", target_start);
         return;
     }
@@ -3650,6 +3957,7 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
         ns_build_profile_end("write_cache", write_cache_start);
         ns_build_cache_free(&cache);
         ns_str_free(artifact);
+        ns_asm_clear_target_override();
         ns_build_profile_end("build_target", target_start);
         return;
     }
@@ -3665,6 +3973,7 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_build_profile_end("write_cache", write_cache_start);
     ns_build_cache_free(&cache);
     ns_str_free(artifact);
+    ns_asm_clear_target_override();
     ns_build_profile_end("build_target", target_start);
 }
 
@@ -3687,11 +3996,13 @@ static ns_bool ns_build_targets_can_parallel(ns_str project, ns_str *names, i32 
         // the module path identifies it the way an artifact path identifies a
         // native target.
         ns_bool browser = ns_build_target_is_wasm(in.target);
+        ns_build_select_target(&in);
         ns_build_kind kind = browser ? NS_BUILD_APP : ns_build_resolve_kind(&in, requested_kind);
         ns_asm_target target;
         ns_asm_get_current_target(&target);
         if (!browser && kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) kind = NS_BUILD_EXE;
         ns_str output = ns_build_default_output(&in, kind);
+        ns_asm_clear_target_override();
         ns_str artifact = browser ? ns_str_concat(output, ns_str_cstr(""))
                                   : ns_build_artifact_path(kind, output);
         for (i32 previous = 0, n = (i32)ns_array_length(artifacts); previous < n; ++previous) {
@@ -3760,6 +4071,37 @@ static void ns_exec_build_targets_parallel(ns_str project, ns_str *names, i32 co
 }
 #endif
 
+static void ns_manifest_selection_free_build(ns_manifest_selection sel) {
+    ns_str_free(sel.target_name);
+    ns_str_free(sel.entry_file);
+    ns_str_free(sel.name);
+    ns_str_free(sel.type);
+    ns_str_free(sel.platform);
+    ns_str_free(sel.icon);
+    ns_str_free(sel.shell);
+}
+
+// `ns build` with no name skips a target whose platform is a machine other
+// than this host, so a Linux cross target does not fail a host build that
+// has no cross compiler. Naming the target, or passing `--target`, builds it.
+static ns_str *ns_build_targets_for_invocation(ns_str project, ns_str *names) {
+    if (ns_cli_build_target_set) return names;
+    ns_str *kept = ns_null;
+    for (i32 i = 0, n = (i32)ns_array_length(names); i < n; ++i) {
+        ns_manifest_selection sel = ns_manifest_select(project, names[i]);
+        if (ns_build_platform_is_foreign(sel.platform)) {
+            ns_info("build", "skip %.*s (cross target %.*s; build it by name)\n",
+                    names[i].len, names[i].data, sel.platform.len, sel.platform.data);
+            ns_str_free(names[i]);
+        } else {
+            ns_array_push(kept, names[i]);
+        }
+        ns_manifest_selection_free_build(sel);
+    }
+    ns_array_free(names);
+    return kept;
+}
+
 // `ns build [path|target]`. A target name builds that target alone; a project
 // (an explicit directory, or none at all) builds every target it declares, so
 // each one emits its own artifact kind under `bin/`.
@@ -3776,6 +4118,8 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind, ns_bool force)
     else if (ns_is_dir(path)) project = ns_project_root(path);
 
     ns_str *names = project.data != ns_null ? ns_manifest_target_list(project) : ns_null;
+    i32 declared = ns_array_length(names);
+    names = ns_build_targets_for_invocation(project, names);
     i32 count = ns_array_length(names);
     if (count > 1 && output.len > 0) {
         ns_exit(1, "build", "-o takes a single target; %.*s declares %d. Name one, or drop -o.\n",
@@ -3795,7 +4139,7 @@ void ns_exec_build(ns_str path, ns_str output, u8 requested_kind, ns_bool force)
         ns_str_free(names[i]);
     }
     ns_array_free(names);
-    if (count > 0) return;
+    if (declared > 0) return;
 
     ns_exec_build_target(path, output, requested_kind, force, ns_str_null);
 }
@@ -4799,8 +5143,10 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
     if (target_name.len == 0) target_name = ns_manifest_target_for_entry(scope, filename);
     ns_manifest_selection selection = ns_manifest_select(scope, target_name);
     ns_str target = selection.platform;
-    if (target.len > 0 && !ns_str_equals(target, ns_str_cstr("wasm"))) {
-        ns_exit(1, "run", "unsupported project target `%.*s`; expected `wasm` or omit target for a native run.\n",
+    ns_asm_target parsed_triple;
+    if (target.len > 0 && !ns_str_equals(target, ns_str_cstr("wasm")) &&
+        !ns_build_parse_triple(target, &parsed_triple)) {
+        ns_exit(1, "run", "unsupported project target `%.*s`; expected `wasm`, `x86_64-linux-gnu`, or omit target for a native run.\n",
                 target.len, target.data);
     }
     if (ns_str_equals(target, ns_str_cstr("wasm"))) {
@@ -5319,6 +5665,10 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.test) {
         ns_exec_test(option.filename);
     } else if (option.build) {
+        if (option.build_target.len > 0) {
+            ns_cli_build_target = option.build_target;
+            ns_cli_build_target_set = true;
+        }
         f64 build_start = ns_build_profile_begin("build");
         ns_exec_build(option.filename, option.output, option.build_kind, option.force);
         ns_build_profile_end("build", build_start);

@@ -334,6 +334,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/native
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/ns_cross_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/storage_apple_compile.sh
 	sh test/camera_apple_compile.sh
 	sh test/gpu_metal_dispatch_test.sh
@@ -343,12 +344,22 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 include lib/Makefile
 include sample/c/Makefile
 
-.PHONY: deps
+.PHONY: deps cross-linux
 deps:
 ifeq ($(NS_OS), $(NS_LINUX))
 	sh scripts/install_linux_deps.sh
 else
 	@echo "make deps is only needed on Linux/WSL."
+endif
+
+# Linux x86_64 feature modules for `ns build --target x86_64-linux-gnu`.
+# On Linux this is a native build of the same modules `make std` produces.
+# Elsewhere NS_LINUX_HOST names the machine whose gcc (and GNU ld) builds them.
+cross-linux:
+ifeq ($(NS_OS), $(NS_LINUX))
+	$(MAKE) std
+else
+	sh scripts/build_linux_modules.sh
 endif
 
 install: all
@@ -415,6 +426,14 @@ install: all
 			cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new"; \
 			mv -f "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name"; \
 		done' sh {} +
+	if [ -d $(NS_BINDIR)/linux-x86_64 ]; then \
+		$(NS_MKDIR) $(NS_INSTALL_ROOT)/lib/linux-x86_64; \
+		find $(NS_BINDIR)/linux-x86_64 -maxdepth 1 -name '*.so' -exec sh -c '\
+			for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
+				cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/linux-x86_64/$$ns_lib_name.new"; \
+				mv -f "$(NS_INSTALL_ROOT)/lib/linux-x86_64/$$ns_lib_name.new" "$(NS_INSTALL_ROOT)/lib/linux-x86_64/$$ns_lib_name"; \
+			done' sh {} +; \
+	fi
 	@echo "Installed ns to $(NS_INSTALL_DISPLAY)"
 	@echo "Please add $(NS_INSTALL_DISPLAY)/bin to your system PATH."
 	@case "$${SHELL##*/}" in \

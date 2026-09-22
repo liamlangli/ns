@@ -85,7 +85,16 @@ The common commands are:
   map. `-o` applies to a single target only. `--exe` forces a
   linked native executable. `ns build` does not fall back to `ns run`. Native
   code generation covers Darwin arm64 (AArch64 mach-o) and Linux x86_64 (AMD64
-  ELF); both link the emitted object with the host C toolchain. On a host
+  ELF); both link the emitted object with the host C toolchain.
+  `ns build --target x86_64-linux-gnu` (also `linux`, `x86_64-linux`, or
+  `linux-x86_64`) cross-compiles that ELF from another host. A `[[targets]]`
+  entry may set `platform = "x86_64-linux-gnu"`; `ns build` with no name skips
+  a platform that is not this host, and `ns build <name>` builds it. The link
+  uses that machine's gcc, which drives its GNU ld. Set `NS_LINUX_HOST` to
+  the Linux machine (run `scripts/bootstrap_linux_gcc.sh` there once; SteamOS
+  ships ld and libc but not the gcc driver). `x86_64-linux-gnu-gcc` on PATH
+  or `NS_CROSS_CC` also works. `make cross-linux` builds the feature modules
+  with that same gcc. On a host
   without a native executable backend, a target the manifest declares
   `link = false` runs interpreted, and `ns build` packages a launcher that
   enters the project and runs the program through `ns run` instead of failing
@@ -161,7 +170,7 @@ entry instead of a single top-level `entry`. `ns run <name>` and
 `default = true`, otherwise the first declared one, and `ns build` builds every
 declared target. A target may override `type` (`app` for a host app bundle,
 `cli` for a plain executable, `library` for a static library),
-`platform` (`wasm`), `icon`, `shell`, `output`, `orientation` and add its own
+`platform` (`wasm` or `x86_64-linux-gnu`), `icon`, `shell`, `output`, `orientation` and add its own
 `exclude` list;
 it may also override `link`; anything it omits is inherited from the top-level
 key. Each target compiles the

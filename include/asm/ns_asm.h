@@ -122,6 +122,11 @@ typedef struct {
     ns_inst *insts;
 } ns_assembler;
 
+void ns_asm_get_host_target(ns_asm_target *target);
 void ns_asm_get_current_target(ns_asm_target *target);
+// A build can emit for a machine other than the one `ns` is running on.
+// The override replaces ns_asm_get_current_target until it is cleared.
+void ns_asm_set_target_override(ns_asm_target target);
+void ns_asm_clear_target_override(void);
 ns_str ns_os_str(ns_os os);
 ns_str ns_arch_str(ns_arch arch);
