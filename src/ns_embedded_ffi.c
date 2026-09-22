@@ -29,6 +29,7 @@ extern void * view_create(const char *, i32, i32);
 extern void * view_create_no_title(const char *, i32, i32);
 extern void view_run(void *);
 extern void view_close(void *);
+extern void view_set_fullscreen(void *, ns_bool);
 extern void view_set_safe_area(void *, f64, f64, f64, f64);
 extern void view_capture_require(void *);
 extern void view_request_frame(void *, i32);
@@ -1994,6 +1995,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "view_run", (void *)view_run, ns_embedded_sig58 },
     { "view_set_clipboard", (void *)view_set_clipboard, ns_embedded_sig170 },
     { "view_set_frame_per_second", (void *)view_set_frame_per_second, ns_embedded_sig109 },
+    { "view_set_fullscreen", (void *)view_set_fullscreen, ns_embedded_sig146 },
     { "view_set_safe_area", (void *)view_set_safe_area, ns_embedded_sig139 },
     { "view_take_gamepad_button_press", (void *)view_take_gamepad_button_press, ns_embedded_sig163 },
     { "view_take_key_press", (void *)view_take_key_press, ns_embedded_sig20 },

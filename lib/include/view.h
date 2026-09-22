@@ -271,6 +271,12 @@ void view_run(view *v);
 // rather than only being ended from outside. Backends without an event loop
 // have nothing to leave and ignore it.
 void view_close(view *v);
+// Ask the platform window to enter or leave fullscreen. Wayland requests
+// xdg_toplevel.set_fullscreen, macOS toggles the window's fullscreen state, and
+// Windows switches to borderless monitor coverage. A host that is already
+// fullscreen (iOS, a browser canvas) ignores it. The compositor answers with a
+// configure, so the new drawable size arrives through the normal resize path.
+void view_set_fullscreen(view *v, ns_bool fullscreen);
 // Publish the platform safe-area insets (logical points). Negative values are
 // clamped to 0. Backends call this whenever their metrics change; the UI
 // module reads the fields to keep application content clear of native chrome.
@@ -298,6 +304,7 @@ void view_platform_request_frame(view *v);
 void view_platform_request_frame_after(view *v, i32 milliseconds);
 void view_platform_set_frame_per_second(view *v, i32 frames);
 void view_platform_close(view *v);
+void view_platform_set_fullscreen(view *v, ns_bool fullscreen);
 
 // View event handling functions
 void view_on_scroll(view *v, f64 x, f64 y);

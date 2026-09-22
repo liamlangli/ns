@@ -701,6 +701,17 @@ void view_platform_close(view *v) {
     });
 }
 
+void view_platform_set_fullscreen(view *v, ns_bool fullscreen) {
+    ns_unused(v);
+    if (!view_window) return;
+    void (^apply)(void) = ^{
+        ns_bool is_fullscreen = ([view_window styleMask] & NSWindowStyleMaskFullScreen) != 0;
+        if ((fullscreen != 0) != is_fullscreen) [view_window toggleFullScreen:nil];
+    };
+    if ([NSThread isMainThread]) apply();
+    else dispatch_async(dispatch_get_main_queue(), apply);
+}
+
 void view_platform_request_frame_after(view *v, i32 milliseconds) {
     (void)v;
     if (!view_mtk_view) return;

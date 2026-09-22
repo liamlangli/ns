@@ -275,6 +275,38 @@ void view_platform_close(view *v) {
     else _quit = true;
 }
 
+// Borderless monitor coverage, the Windows form of fullscreen. The previous
+// style and placement are restored on the way out so the window returns to the
+// size and position the title bar had.
+static ns_bool _fullscreen;
+static LONG_PTR _fullscreen_style;
+static WINDOWPLACEMENT _fullscreen_placement;
+
+void view_platform_set_fullscreen(view *v, ns_bool fullscreen) {
+    ns_unused(v);
+    if (!_hwnd) return;
+    ns_bool want = fullscreen ? true : false;
+    if (want == _fullscreen) return;
+    if (want) {
+        _fullscreen_style = GetWindowLongPtr(_hwnd, GWL_STYLE);
+        _fullscreen_placement.length = sizeof(_fullscreen_placement);
+        if (!GetWindowPlacement(_hwnd, &_fullscreen_placement)) return;
+        MONITORINFO monitor = {.cbSize = sizeof(monitor)};
+        if (!GetMonitorInfo(MonitorFromWindow(_hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) return;
+        SetWindowLongPtr(_hwnd, GWL_STYLE, _fullscreen_style & ~(WS_CAPTION | WS_THICKFRAME));
+        SetWindowPos(_hwnd, HWND_TOP, monitor.rcMonitor.left, monitor.rcMonitor.top,
+                     monitor.rcMonitor.right - monitor.rcMonitor.left,
+                     monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+                     SWP_NOZORDER | SWP_FRAMECHANGED);
+        _fullscreen = true;
+    } else {
+        SetWindowLongPtr(_hwnd, GWL_STYLE, _fullscreen_style);
+        SetWindowPlacement(_hwnd, &_fullscreen_placement);
+        SetWindowPos(_hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        _fullscreen = false;
+    }
+}
+
 // view_capture_require is provided generically by view.c.
 
 // ---- surface accessors for the DX12 backend --------------------------------

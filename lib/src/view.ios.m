@@ -324,6 +324,13 @@ void view_platform_close(view *value) {
     if (view_ios_done) dispatch_semaphore_signal(view_ios_done);
 }
 
+// An iOS scene is already the whole display, so there is no windowed state to
+// leave; the request is accepted and ignored.
+void view_platform_set_fullscreen(view *value, ns_bool fullscreen) {
+    ns_unused(value);
+    ns_unused(fullscreen);
+}
+
 void view_platform_request_frame(view *value) {
     ns_unused(value);
     if (!view_ios_metal_view) return;

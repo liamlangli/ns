@@ -369,6 +369,11 @@ void view_close(view *v) {
     view_platform_close(v);
 }
 
+void view_set_fullscreen(view *v, ns_bool fullscreen) {
+    if (!v) return;
+    view_platform_set_fullscreen(v, fullscreen);
+}
+
 void view_set_safe_area(view *v, f64 top, f64 right, f64 bottom, f64 left) {
     if (!v) return;
     v->safe_area_top = top > 0.0 ? top : 0.0;

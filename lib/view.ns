@@ -137,6 +137,11 @@ ref fn view_create_no_title(title: str, width: i32, height: i32) ref view
 // is nonblocking because the generated shell drives the exported frame fn.
 ref fn view_run(v: ref view)
 ref fn view_close(v: ref view)
+// Ask the platform window to enter or leave fullscreen. Wayland requests
+// xdg_toplevel.set_fullscreen, macOS toggles the window's fullscreen state and
+// Windows covers the monitor without decorations. A browser canvas asks the
+// page for fullscreen, and a host that is already fullscreen ignores it.
+ref fn view_set_fullscreen(v: ref view, fullscreen: bool)
 // Publish safe-area insets in logical points. Native backends call this from
 // their metric sync; applications only need it when they host the view inside
 // their own chrome. Negative values are clamped to 0.

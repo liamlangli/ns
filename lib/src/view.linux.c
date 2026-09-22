@@ -1022,6 +1022,20 @@ void view_platform_close(view *v) {
     view_linux_wake();
 }
 
+void view_platform_set_fullscreen(view *v, ns_bool fullscreen) {
+    ns_unused(v);
+    if (!_state.toplevel) return;
+    if (fullscreen) {
+        xdg_toplevel_set_fullscreen(_state.toplevel, ns_null);
+    } else {
+        xdg_toplevel_unset_fullscreen(_state.toplevel);
+    }
+    // The request is buffered, so send it before the event loop starts; the
+    // configure that carries the new size then arrives through the normal
+    // surface resize path.
+    if (_state.display) wl_display_flush(_state.display);
+}
+
 const char *view_get_clipboard(view *v) {
     ns_unused(v);
     if (!_state.selection_offer) return ns_null;
