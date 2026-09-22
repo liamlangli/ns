@@ -9,7 +9,7 @@ fi
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 host=$NS_LINUX_HOST
-remote=ns-linux-src
+remote="${NS_LINUX_REMOTE:-.ns/src}"
 
 ssh "$host" "mkdir -p ${remote}/include ${remote}/lib/include ${remote}/lib/src ${remote}/third_party/zlib ${remote}/third_party/zstd/lib ${remote}/third_party/box3d ${remote}/scripts"
 rsync -a --delete "${root}/include/" "${host}:${remote}/include/"
