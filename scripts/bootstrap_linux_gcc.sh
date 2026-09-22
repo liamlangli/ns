@@ -21,7 +21,7 @@ if ! command -v pacman >/dev/null 2>&1; then
 fi
 
 # shellcheck disable=SC2086
-urls=$(pacman -Sp gcc libmpc libisl glibc linux-api-headers wayland shaderc vulkan-headers sqlite)
+urls=$(pacman -Sp gcc libmpc libisl glibc linux-api-headers wayland shaderc vulkan-headers sqlite make libffi readline openssl)
 for url in $urls; do
     name=$(basename "$url")
     echo "fetch ${name}"
