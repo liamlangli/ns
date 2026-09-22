@@ -656,10 +656,32 @@ static VkDescriptorSetLayout gpu_vk_descriptor_layout(u32 usage, u32 storage_cou
     return layout;
 }
 
+// A source with no `#version` reads as version 110 with no profile to glslang,
+// whose built-in table for that combination fails to parse; the library then
+// prints the whole built-in declaration source to stdout. This backend only
+// ever targets Vulkan GLSL at `#version 450`, so label a versionless source
+// instead of letting a stray non-GLSL string trigger that dump; it still fails
+// as an ordinary parse error through the info log.
+static const char *gpu_vk_shader_source(const char *source, char **owned) {
+    if (strstr(source, "#version")) return source;
+    static const char version[] = "#version 450\n";
+    size_t len = strlen(source);
+    char *text = malloc(sizeof(version) - 1 + len + 1);
+    if (!text) return source;
+    memcpy(text, version, sizeof(version) - 1);
+    memcpy(text + sizeof(version) - 1, source, len);
+    text[sizeof(version) - 1 + len] = 0;
+    *owned = text;
+    return text;
+}
+
 static VkShaderModule gpu_vk_compile(const char *source, const char *name, shaderc_shader_kind kind) {
     if (!source || !source[0]) return VK_NULL_HANDLE;
+    char *owned = NULL;
+    const char *text = gpu_vk_shader_source(source, &owned);
     shaderc_compilation_result_t result = shaderc_compile_into_spv(
-        _vk.compiler, source, strlen(source), kind, name, "main", _vk.compile_options);
+        _vk.compiler, text, strlen(text), kind, name, "main", _vk.compile_options);
+    free(owned);
     if (!result) return VK_NULL_HANDLE;
     if (shaderc_result_get_compilation_status(result) != shaderc_compilation_status_success) {
         const char *message = shaderc_result_get_error_message(result);
