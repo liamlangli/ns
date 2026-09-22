@@ -9,7 +9,7 @@
 #   ssh deck 'sh -s' < scripts/bootstrap_linux_gcc.sh
 set -eu
 
-prefix="${NS_LINUX_GCC_PREFIX:-${HOME}/ns-linux-toolchain}"
+prefix="${NS_LINUX_GCC_PREFIX:-${HOME}/.ns/toolchain}"
 mkdir -p "${prefix}"
 work=$(mktemp -d "${TMPDIR:-/tmp}/ns-gcc.XXXXXX")
 cleanup() { rm -rf "$work"; }

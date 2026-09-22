@@ -3103,7 +3103,7 @@ static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable
         ns_str link_sh = ns_path_join(stage, ns_str_cstr("link.sh"));
         ns_str script = ns_str_null;
         ns_str_append_cstr(&script, "#!/bin/sh\nset -eu\ncd \"$(dirname \"$0\")\"\n");
-        ns_str_append_cstr(&script, "gcc=\"${NS_LINUX_GCC:-$HOME/ns-linux-toolchain/bin/gcc}\"\n");
+        ns_str_append_cstr(&script, "gcc=\"${NS_LINUX_GCC:-$HOME/.ns/toolchain/bin/gcc}\"\n");
         ns_str_append_cstr(&script, "exec \"$gcc\" ");
         ns_str_append(&script, cmd);
         ns_str_append_cstr(&script, "\n");

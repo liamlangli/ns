@@ -7,7 +7,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 
-gcc="${NS_LINUX_GCC:-${HOME}/ns-linux-toolchain/bin/gcc}"
+gcc="${NS_LINUX_GCC:-${HOME}/.ns/toolchain/bin/gcc}"
 out="${root}/bin/linux-x86_64"
 obj="${out}/obj"
 mkdir -p "$obj" "$obj/box3d" "$obj/zlib" "$obj/zstd/common" "$obj/zstd/compress" "$obj/zstd/decompress"
