@@ -1460,11 +1460,15 @@ void gpu_vk_end_frame(view *v) {
     _vk.frame_slot = (_vk.frame_slot + 1) % GPU_SWAP_BUFFER_COUNT;
 }
 
+// The shader module emits Metal/OpenGL clip space, where NDC +Y is up; Vulkan
+// maps +Y to the bottom of the framebuffer. A viewport with a negative height
+// reproduces the Metal transform, so the UI and the world land the same way up
+// as they do on the Apple and WGSL targets instead of mirrored top to bottom.
 void gpu_set_viewport(int x, int y, int width, int height) {
     if (!_vk.valid || !_vk.pass_open) return;
     VkViewport viewport = {
-        .x = (f32)x, .y = (f32)y,
-        .width = (f32)width, .height = (f32)height,
+        .x = (f32)x, .y = (f32)(y + height),
+        .width = (f32)width, .height = -(f32)height,
         .minDepth = 0.0f, .maxDepth = 1.0f,
     };
     vkCmdSetViewport(_vk.commands, 0, 1, &viewport);
@@ -1930,9 +1934,11 @@ static void gpu_vk_begin_rendering(const char *label,
     vkCmdBeginRendering(_vk.commands, &info);
     _vk.pass_open = true;
     _vk.pass_extent = extent;
+    // Same Metal-compatible clip space as gpu_set_viewport: the negative height
+    // is what makes NDC +Y point up in the framebuffer.
     VkViewport viewport = {
-        .x = 0.0f, .y = 0.0f,
-        .width = (f32)extent.width, .height = (f32)extent.height,
+        .x = 0.0f, .y = (f32)extent.height,
+        .width = (f32)extent.width, .height = -(f32)extent.height,
         .minDepth = 0.0f, .maxDepth = 1.0f,
     };
     vkCmdSetViewport(_vk.commands, 0, 1, &viewport);
