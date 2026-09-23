@@ -72,10 +72,10 @@ NS_STORAGE_DYLIB_DEPS ?= $(NS_DYLIB_DEPS) -lsqlite3
 
 # Position-independent compile rules for the C and Objective-C feature sources.
 $(NS_BINDIR)/lib/%.o: lib/src/%.c
-	$(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
 
 $(NS_BINDIR)/lib/%.o: lib/src/%.m
-	$(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
 
 NS_IO_DYLIB = $(NS_BINDIR)/io$(NS_DYLIB_SUFFIX)
 NS_OS_DYLIB = $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX)
@@ -151,7 +151,7 @@ $(NS_BINDIR)/lib/dynamic.o: lib/include/dynamic.h $(NS_BOX3D_HEADERS)
 # The adapter itself sees zlib and Zstandard headers, and must be built with the
 # same Z_PREFIX renaming as the zlib objects it links against.
 $(NS_BINDIR)/lib/compress.o: lib/src/compress.c lib/include/compress.h $(NS_ZLIB_HEADERS) $(NS_ZSTD_HEADERS) | $(NS_DIRS)
-	$(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_ZLIB_INC) $(NS_ZSTD_INC) $(NS_ZLIB_DEF) $(NS_CFLAGS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_ZLIB_INC) $(NS_ZSTD_INC) $(NS_ZLIB_DEF) $(NS_CFLAGS)
 
 NS_STD_SHARED = \
 	$(NS_IO_DYLIB) \
@@ -204,10 +204,10 @@ box3d:
 	$(NS_BOX3D_SCRIPT)
 
 $(NS_BOX3D_OBJDIR):
-	$(NS_MKDIR) $@
+	$(Q)$(NS_MKDIR) $@
 
 $(NS_BOX3D_OBJDIR)/%.o: third_party/box3d/src/%.c $(NS_BOX3D_HEADERS) | $(NS_BOX3D_OBJDIR)
-	$(NS_CC) -c -fPIC -g -O2 -std=gnu17 $< -o $@ $(NS_BOX3D_INC) $(NS_PLATFORM_DEF) -Wno-error
+	$(Q)$(call ns_step,CC,$<,hide) $(NS_CC) -c -fPIC -g -O2 -std=gnu17 $< -o $@ $(NS_BOX3D_INC) $(NS_PLATFORM_DEF) -Wno-error
 
 .PHONY: zlib zstd compress_deps
 zlib:
@@ -219,83 +219,83 @@ zstd:
 compress_deps: zlib zstd
 
 $(NS_ZLIB_OBJDIR):
-	$(NS_MKDIR) $@
+	$(Q)$(NS_MKDIR) $@
 
 $(NS_ZLIB_OBJDIR)/%.o: $(NS_ZLIB_DIR)/%.c $(NS_ZLIB_HEADERS) | $(NS_ZLIB_OBJDIR)
-	$(NS_CC) -c -fPIC -g -O2 -fvisibility=hidden $< -o $@ $(NS_ZLIB_INC) $(NS_ZLIB_DEF) $(NS_PLATFORM_DEF) -Wno-error
+	$(Q)$(call ns_step,CC,$<,hide) $(NS_CC) -c -fPIC -g -O2 -fvisibility=hidden $< -o $@ $(NS_ZLIB_INC) $(NS_ZLIB_DEF) $(NS_PLATFORM_DEF) -Wno-error
 
 # Zstandard keeps its sources in common/, compress/ and decompress/, so the
 # object tree mirrors those three directories.
 NS_ZSTD_OBJDIRS = $(NS_ZSTD_OBJDIR)/common $(NS_ZSTD_OBJDIR)/compress $(NS_ZSTD_OBJDIR)/decompress
 
 $(NS_ZSTD_OBJDIRS):
-	$(NS_MKDIR) $@
+	$(Q)$(NS_MKDIR) $@
 
 $(NS_ZSTD_OBJDIR)/%.o: $(NS_ZSTD_DIR)/lib/%.c $(NS_ZSTD_HEADERS) | $(NS_ZSTD_OBJDIRS)
-	$(NS_CC) -c -fPIC -g -O2 -fvisibility=hidden $< -o $@ $(NS_ZSTD_INC) $(NS_ZSTD_DEF) $(NS_PLATFORM_DEF) -Wno-error
+	$(Q)$(call ns_step,CC,$<,hide) $(NS_CC) -c -fPIC -g -O2 -fvisibility=hidden $< -o $@ $(NS_ZSTD_INC) $(NS_ZSTD_DEF) $(NS_PLATFORM_DEF) -Wno-error
 
 $(NS_IO_DYLIB): $(NS_IO_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
 
 $(NS_OS_DYLIB): $(NS_OS_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_OS_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_OS_DYLIB_DEPS)
 
 $(NS_NET_DYLIB): $(NS_NET_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
 
 $(NS_HTTP_DYLIB): $(NS_HTTP_OBJS) $(NS_NET_DYLIB) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_HTTP_OBJS) $(NS_NET_DYLIB) -o $@ $(NS_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_HTTP_OBJS) $(NS_NET_DYLIB) -o $@ $(NS_DYLIB_DEPS)
 
 $(NS_WASM_DEV_DYLIB): $(NS_WASM_DEV_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
 
 $(NS_TERM_DYLIB): $(NS_TERM_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_DYLIB_DEPS)
 
 $(NS_GPU_DYLIB): $(NS_GPU_OBJS) $(if $(filter $(NS_WIN),$(NS_OS)),$(NS_VIEW_DYLIB),) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_GPU_OBJS) $(if $(filter $(NS_WIN),$(NS_OS)),$(NS_VIEW_DYLIB),) -o $@ $(NS_GPU_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_GPU_OBJS) $(if $(filter $(NS_WIN),$(NS_OS)),$(NS_VIEW_DYLIB),) -o $@ $(NS_GPU_DYLIB_DEPS)
 
 $(NS_VIEW_DYLIB): $(NS_VIEW_OBJS) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB),) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_VIEW_OBJS) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB),) -o $@ $(NS_VIEW_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_VIEW_OBJS) $(if $(filter $(NS_DARWIN),$(NS_OS)),$(NS_GPU_DYLIB),) -o $@ $(NS_VIEW_DYLIB_DEPS)
 
 $(NS_UI_DYLIB): $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) -o $@ $(NS_UI_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_UI_OBJS) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) -o $@ $(NS_UI_DYLIB_DEPS)
 
 $(NS_AUDIO_DYLIB): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_AUDIO_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_AUDIO_DYLIB_DEPS)
 
 $(NS_STORAGE_DYLIB): $(NS_STORAGE_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_STORAGE_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_STORAGE_DYLIB_DEPS)
 
 $(NS_IO_STATIC): $(NS_IO_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_OS_STATIC): $(NS_OS_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_NET_STATIC): $(NS_NET_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_HTTP_STATIC): $(NS_HTTP_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_WASM_DEV_STATIC): $(NS_WASM_DEV_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_TERM_STATIC): $(NS_TERM_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_GPU_STATIC): $(NS_GPU_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_VIEW_STATIC): $(NS_VIEW_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_UI_STATIC): $(NS_UI_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_AUDIO_STATIC): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_STORAGE_STATIC): $(NS_STORAGE_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 
 ifeq ($(NS_BOX3D_PRESENT),)
 $(NS_DYNAMIC_DYLIB): box3d | $(NS_BINDIR)
 	$(MAKE) $@
 else
 $(NS_DYNAMIC_DYLIB): $(NS_DYNAMIC_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_DYNAMIC_OBJS) -o $@ $(NS_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_DYNAMIC_OBJS) -o $@ $(NS_DYLIB_DEPS)
 endif
 
 ifeq ($(NS_BOX3D_PRESENT),)
@@ -303,7 +303,7 @@ $(NS_DYNAMIC_STATIC): box3d | $(NS_BINDIR)
 	$(MAKE) $@
 else
 $(NS_DYNAMIC_STATIC): $(NS_DYNAMIC_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 endif
 
 # The source wildcards above are expanded before the download runs, so the first
@@ -313,7 +313,7 @@ $(NS_COMPRESS_DYLIB): compress_deps | $(NS_BINDIR)
 	$(MAKE) $@
 else
 $(NS_COMPRESS_DYLIB): $(NS_COMPRESS_OBJS) | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_COMPRESS_OBJS) -o $@ $(NS_DYLIB_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_COMPRESS_OBJS) -o $@ $(NS_DYLIB_DEPS)
 endif
 
 ifeq ($(NS_COMPRESS_PRESENT),)
@@ -321,7 +321,7 @@ $(NS_COMPRESS_STATIC): compress_deps | $(NS_BINDIR)
 	$(MAKE) $@
 else
 $(NS_COMPRESS_STATIC): $(NS_COMPRESS_OBJS) | $(NS_BINDIR)
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 endif
 
 # Camera remains a feature library; never link AVFoundation into the interpreter.
@@ -332,11 +332,11 @@ std: $(NS_BINDIR)/camera$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/libcamera.a
 shared: $(NS_BINDIR)/camera$(NS_DYLIB_SUFFIX)
 static: $(NS_BINDIR)/libcamera.a
 $(NS_BINDIR)/lib/camera.apple.o: lib/src/camera.apple.m lib/include/camera.h | $(NS_DIRS)
-	$(NS_CC) -c -fPIC -fobjc-arc -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c -fPIC -fobjc-arc -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS)
 $(NS_BINDIR)/camera$(NS_DYLIB_SUFFIX): $(NS_BINDIR)/lib/camera.apple.o
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework Foundation
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework Foundation
 $(NS_BINDIR)/libcamera.a: $(NS_BINDIR)/lib/camera.apple.o
-	$(NS_AR) rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 endif
 
 # TLS and credentials remain an FFI feature, never part of the interpreter.
@@ -352,9 +352,9 @@ else
 NS_SECURE_DEPS = -lssl -lcrypto -ldl
 endif
 $(NS_SECURE_DYLIB): $(NS_BINDIR)/lib/secure.o | $(NS_BINDIR)
-	$(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_SECURE_DEPS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $^ -o $@ $(NS_SECURE_DEPS)
 $(NS_SECURE_STATIC): $(NS_BINDIR)/lib/secure.o | $(NS_BINDIR)
-	ar rcs $@ $^
+	$(Q)$(call ns_step,AR,$@,hide) ar rcs $@ $^
 
 std: $(NS_SECURE_DYLIB) $(NS_SECURE_STATIC)
 shared: $(NS_SECURE_DYLIB)

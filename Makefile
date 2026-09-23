@@ -54,6 +54,20 @@ NS_HEADERS = $(wildcard include/*.h include/asm/*.h include/os/*.h)
 NS_DEBUG ?= 1
 NS_WERROR ?= 1
 
+# OUTPUT
+# A normal build prints one tagged line per linked artifact and shows a
+# command with its full output only when that command fails (or warns).
+# `make V=1` (or VERBOSE=1) echoes every raw command instead.
+V ?= 0
+ifneq ($(filter 1,$(V) $(VERBOSE)),)
+Q =
+ns_step =
+else
+Q = @
+ns_step = sh $(CURDIR)/scripts/make_step.sh $(1) '$(2)' $(3)
+endif
+ns_say = @sh $(CURDIR)/scripts/make_step.sh $(1) '$(2)' say
+
 # Extra include path for the Metal backend's external mapper headers
 # (foundation/*, gpu/*, metal.h). Override on Apple if they live elsewhere.
 NS_GPU_INC ?=
@@ -274,42 +288,46 @@ else
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std
 endif
 
+all:
+	$(call ns_say,DONE,$(TARGET)$(NS_SUFFIX) and feature modules ready)
+
 .PHONY: profiler
 profiler: $(TARGET) std
-	$(CURDIR)/$(TARGET)$(NS_SUFFIX) build $(CURDIR)/nscode/profile
-	$(NS_RMDIR) $(NS_BINDIR)/nscode-profile.app
-	$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_BINDIR)/nscode-profile.app
+	$(Q)$(call ns_step,BUILD,nscode/profile,quiet) $(CURDIR)/$(TARGET)$(NS_SUFFIX) build $(CURDIR)/nscode/profile
+	$(Q)$(NS_RMDIR) $(NS_BINDIR)/nscode-profile.app
+	$(Q)$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_BINDIR)/nscode-profile.app
 
 $(NS_DIRS):
-	$(NS_MKDIR) $(NS_DIRS)
+	$(Q)$(NS_MKDIR) $(NS_DIRS)
 
 $(NS_AGENTS_HEADER): AGENTS.md | $(NS_DIRS)
-	{ \
+	$(Q){ \
 		printf '%s\n' 'static const char ns_scaffold_agents_markdown[] ='; \
 		sed 's/\\/\\\\/g; s/"/\\"/g; s/^/"/; s/$$/\\n"/' $<; \
 		printf '%s\n' ';'; \
 	} > $@
 
 $(NS_ENTRY_OBJ): $(NS_ENTRY) $(NS_HEADERS) $(NS_AGENTS_HEADER) | $(NS_DIRS)
-	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
 $(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(NS_NATIVE_RT_OBJ) $(NS_HOST_ZLIB_OBJS) | $(NS_BINDIR)
-	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(NS_HOST_ZLIB_OBJS) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(NS_HOST_ZLIB_OBJS) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
 
 $(NS_APPIMAGE_RUNTIME): src/ns_appimage_runtime.c $(NS_HOST_ZLIB_OBJS) | $(NS_BINDIR)
-	$(NS_CC) -O2 $(NS_WARN_CFLAGS) $(NS_HOST_ZLIB_CFLAGS) $< $(NS_HOST_ZLIB_OBJS) -o $@
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) -O2 $(NS_WARN_CFLAGS) $(NS_HOST_ZLIB_CFLAGS) $< $(NS_HOST_ZLIB_OBJS) -o $@
 
 $(NS_NATIVE_RT_OBJ): src/ns_native_rt.c include/ns_native_rt.h | $(NS_BINDIR)
-	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_RELEASE_CFLAGS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c $< -o $@ $(NS_INC) $(NS_RELEASE_CFLAGS)
 
 $(NS_LIB_OBJS): $(NS_BINDIR)/%.o : %.c $(NS_HEADERS) | $(NS_DIRS)
-	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
 run: all
 	$(TARGET)
 
 clean:
-	$(NS_RMDIR) $(NS_BINDIR)
+	$(Q)$(NS_RMDIR) $(NS_BINDIR)
+	$(call ns_say,CLEAN,$(NS_BINDIR))
 
 # utility
 count:
@@ -320,7 +338,7 @@ pack:
 	git ls-files -z | tar --null -T - -czvf bin/ns.tar.gz
 
 $(NS_LIB): $(NS_LIB_OBJS)
-	ar rcs $(NS_BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS)
+	$(Q)$(call ns_step,AR,$@,hide) ar rcs $(NS_BINDIR)/libns$(NS_LIB_SUFFIX) $(NS_LIB_OBJS)
 
 so: $(NS_LIB_OBJS)
 	$(NS_CC) -shared $(NS_LIB_OBJS) -o $(NS_BINDIR)/ns$(NS_DYLIB_SUFFIX) $(NS_LDFLAGS)
@@ -329,7 +347,7 @@ $(NS_TEST_TARGETS): $(NS_BINDIR)/%: test/%.c $(NS_HEADERS) $(NS_LIB)
 # libns.a must precede $(NS_LDFLAGS): with ld's default --as-needed, shared
 # libs listed before the archive that references them (ffi, readline) are
 # dropped and the link fails with undefined references.
-	$(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_INC) $(NS_CFLAGS) -Itest -L$(NS_BINDIR) -lns $(NS_LDFLAGS)
 
 .PHONY: test
 # CI runs `make test` without `make all`. Depend on `std` so every native
@@ -386,7 +404,7 @@ else
 endif
 
 install: all
-	$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref \
+	$(Q)$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/lib $(NS_INSTALL_ROOT)/ref \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/src $(NS_INSTALL_ROOT)/share/ns-runtime/include \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets \
@@ -400,60 +418,60 @@ install: all
 		$(NS_INSTALL_ROOT)/share/licenses/zlib \
 		$(NS_INSTALL_ROOT)/share/licenses/zstd \
 		$(NS_INSTALL_ROOT)/share/nscode/profile
-	cp $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new
-	mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
-	$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
-	cp lib/ns-wasm.js $(NS_INSTALL_ROOT)/ref/ns-wasm.js
-	cp sample/ns.svg $(NS_INSTALL_ROOT)/ref/ns.svg
-	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
-	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
-	cp $(NS_NATIVE_RT_OBJ) $(NS_INSTALL_ROOT)/lib/ns_native_rt.o
-	if [ -f $(NS_APPIMAGE_RUNTIME) ]; then \
+	$(Q)cp $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new
+	$(Q)mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
+	$(Q)$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
+	$(Q)cp lib/ns-wasm.js $(NS_INSTALL_ROOT)/ref/ns-wasm.js
+	$(Q)cp sample/ns.svg $(NS_INSTALL_ROOT)/ref/ns.svg
+	$(Q)$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
+	$(Q)cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
+	$(Q)cp $(NS_NATIVE_RT_OBJ) $(NS_INSTALL_ROOT)/lib/ns_native_rt.o
+	$(Q)if [ -f $(NS_APPIMAGE_RUNTIME) ]; then \
 		cp $(NS_APPIMAGE_RUNTIME) $(NS_INSTALL_ROOT)/lib/ns-appimage-runtime.new; \
 		mv -f $(NS_INSTALL_ROOT)/lib/ns-appimage-runtime.new $(NS_INSTALL_ROOT)/lib/ns-appimage-runtime; \
 	fi
-	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
-	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
+	$(Q)$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
+	$(Q)cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
 		lib/net.ns lib/secure.ns lib/dynamic.ns lib/compress.ns lib/storage.ns lib/audio.ns lib/camera.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
-	cp lib/src/io.c lib/src/secure.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
+	$(Q)cp lib/src/io.c lib/src/secure.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/view.gamepad.apple.m \
 		lib/src/gpu.c lib/src/gpu.metal.m lib/src/NSApp.swift \
 		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \
 		lib/src/audio.apple.m lib/src/camera.apple.m \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/
-	cp lib/include/secure.h lib/include/net.h lib/include/os.h lib/include/view.h lib/include/gpu.h lib/include/gpu_const.h \
+	$(Q)cp lib/include/secure.h lib/include/net.h lib/include/os.h lib/include/view.h lib/include/gpu.h lib/include/gpu_const.h \
 		lib/include/storage.h lib/include/storage.internal.h lib/include/compress.h lib/include/audio.h lib/include/camera.h \
 		lib/include/stb_image.h lib/include/stb_image_resize2.h lib/include/stb_image_write.h \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/
-	cp third_party/zstd/lib/zstd.h third_party/zstd/lib/zstd_errors.h \
+	$(Q)cp third_party/zstd/lib/zstd.h third_party/zstd/lib/zstd_errors.h \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/zstd/
-	cp third_party/zstd/lib/common/*.h $(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/zstd/common/
-	cp third_party/zstd/lib/compress/*.h $(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/zstd/compress/
-	cp third_party/zstd/lib/decompress/*.h $(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/zstd/decompress/
-	cp third_party/zstd/lib/common/*.c $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/zstd/common/
-	cp third_party/zstd/lib/compress/*.c $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/zstd/compress/
-	cp third_party/zstd/lib/decompress/*.c $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/zstd/decompress/
-	cp lib/assets/latin_mono.json lib/assets/latin_mono.webp lib/assets/latin_mono.png \
+	$(Q)cp third_party/zstd/lib/common/*.h $(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/zstd/common/
+	$(Q)cp third_party/zstd/lib/compress/*.h $(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/zstd/compress/
+	$(Q)cp third_party/zstd/lib/decompress/*.h $(NS_INSTALL_ROOT)/share/ns-runtime/feature/include/zstd/decompress/
+	$(Q)cp third_party/zstd/lib/common/*.c $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/zstd/common/
+	$(Q)cp third_party/zstd/lib/compress/*.c $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/zstd/compress/
+	$(Q)cp third_party/zstd/lib/decompress/*.c $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/zstd/decompress/
+	$(Q)cp lib/assets/latin_mono.json lib/assets/latin_mono.webp lib/assets/latin_mono.png \
 		lib/assets/bitmap_font.json lib/assets/bitmap_font.png \
 		lib/assets/bitmap_zh_cn.json lib/assets/bitmap_zh_cn.png \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets/
-	cp third_party/box3d/LICENSE $(NS_INSTALL_ROOT)/share/licenses/box3d/LICENSE
-	cp third_party/zlib/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zlib/LICENSE
-	cp third_party/zstd/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zstd/LICENSE
-	cp nscode/profile/ns.mod nscode/profile/main.ns nscode/profile/live.ns $(NS_INSTALL_ROOT)/share/nscode/profile/
-	if [ -d nscode/profile/bin/nscode-profile.app ]; then \
+	$(Q)cp third_party/box3d/LICENSE $(NS_INSTALL_ROOT)/share/licenses/box3d/LICENSE
+	$(Q)cp third_party/zlib/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zlib/LICENSE
+	$(Q)cp third_party/zstd/LICENSE $(NS_INSTALL_ROOT)/share/licenses/zstd/LICENSE
+	$(Q)cp nscode/profile/ns.mod nscode/profile/main.ns nscode/profile/live.ns $(NS_INSTALL_ROOT)/share/nscode/profile/
+	$(Q)if [ -d nscode/profile/bin/nscode-profile.app ]; then \
 		$(NS_RMDIR) $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \
 		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \
 		$(NS_RMDIR) $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
 		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
 	fi
-	find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\
+	$(Q)find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\
 		for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
 			cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new"; \
 			mv -f "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name.new" "$(NS_INSTALL_ROOT)/lib/$$ns_lib_name"; \
 		done' sh {} +
-	if [ -d $(NS_BINDIR)/linux-x86_64 ]; then \
+	$(Q)if [ -d $(NS_BINDIR)/linux-x86_64 ]; then \
 		$(NS_MKDIR) $(NS_INSTALL_ROOT)/lib/linux-x86_64; \
 		find $(NS_BINDIR)/linux-x86_64 -maxdepth 1 -type f \( -name '*.so' -o -name ns-appimage-runtime \) -exec sh -c '\
 			for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
@@ -461,14 +479,15 @@ install: all
 				mv -f "$(NS_INSTALL_ROOT)/lib/linux-x86_64/$$ns_lib_name.new" "$(NS_INSTALL_ROOT)/lib/linux-x86_64/$$ns_lib_name"; \
 			done' sh {} +; \
 	fi
-	@echo "Installed ns to $(NS_INSTALL_DISPLAY)"
-	@echo "Please add $(NS_INSTALL_DISPLAY)/bin to your system PATH."
-	@case "$${SHELL##*/}" in \
+	$(call ns_say,INSTALL,$(NS_INSTALL_DISPLAY))
+	@case ":$$PATH:" in *":$(NS_INSTALL_ROOT)/bin:"*) exit 0 ;; esac; \
+	case "$${SHELL##*/}" in \
 		zsh) ns_shell_rc="~/.zshrc" ;; \
 		bash) ns_shell_rc="~/.bashrc" ;; \
 		*) ns_shell_rc="~/.profile" ;; \
 	esac; \
-	printf 'Run this to append it: `echo '\''export PATH="$(NS_INSTALL_ROOT)/bin:$$PATH"'\'' >> %s`\n' "$$ns_shell_rc"
+	sh $(CURDIR)/scripts/make_step.sh NOTE "$(NS_INSTALL_DISPLAY)/bin is not on PATH; add it with:" say; \
+	printf '        echo '\''export PATH="$(NS_INSTALL_ROOT)/bin:$$PATH"'\'' >> %s\n' "$$ns_shell_rc"
 
 # ===== Apple (Darwin) XCFramework packing (macOS arm64 + iOS arm64) =====
 # Unique target names to avoid clashes with other included makefiles.
