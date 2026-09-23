@@ -3918,11 +3918,6 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_asm_target target;
     ns_asm_get_current_target(&target);
     if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) {
-        ns_asm_target host_target;
-        ns_asm_get_host_target(&host_target);
-        if (host_target.os == target.os) {
-            ns_warn("build", "app bundle icon packaging is currently supported for mach-o targets only; emitting executable.\n");
-        }
         kind = NS_BUILD_EXE;
     }
     if (output.len == 0) output = ns_build_default_output(&in, kind);

@@ -295,6 +295,33 @@ Darwin|MINGW*|MSYS*|CYGWIN*)
     printf '%s\n' 'SKIP: the interpreted-target artifact test covers the other hosts.'
     ;;
 *)
+    if [ "$(uname -s)" = Linux ]; then
+        native_app="$tmp/native-app"
+        mkdir -p "$native_app"
+        cat > "$native_app/ns.mod" <<'EOF'
+schema = "ns.mod/v1"
+name = "native-app"
+version = "0.1.0"
+type = "app"
+source = "."
+entry = "main.ns"
+EOF
+        cat > "$native_app/main.ns" <<'EOF'
+fn main() {}
+EOF
+        "$ns" build "$native_app" > "$tmp/native-app.log" 2>&1 || {
+            cat "$tmp/native-app.log" >&2
+            printf '%s\n' 'FAIL: ns build failed for a Linux app.' >&2
+            exit 1
+        }
+        if [ ! -x "$native_app/bin/native-app" ] ||
+           grep -q 'app bundle icon packaging is currently supported' "$tmp/native-app.log"; then
+            cat "$tmp/native-app.log" >&2
+            printf '%s\n' 'FAIL: a Linux app must build an executable without a bundle warning.' >&2
+            exit 1
+        fi
+    fi
+
     interpreted="$tmp/interpreted"
     mkdir -p "$interpreted/src"
     cat > "$interpreted/ns.mod" <<'EOF'
