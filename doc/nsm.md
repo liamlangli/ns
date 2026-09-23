@@ -205,13 +205,20 @@ plain executable, and
 project uses that project's recursive source set. A file outside a project is
 built as a standalone script and may link local sibling modules it imports. Use
 `-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact
-kind. Native code generation covers Darwin arm64 and Linux x86_64. Linux app
-builds need `appimagetool` on `PATH` (or `NS_APPIMAGETOOL` set to its executable
-path). For offline builds, set `NS_APPIMAGE_RUNTIME` to a downloaded type 2
-runtime file. The manifest `icon` must name a PNG or SVG image; without one, the
-bundled Nano Script icon is used. This packaging runs on a Linux host; a
-Linux cross-build from another host retains its executable output. The AppImage
-contains the program, imported Nano Script shared modules, and project assets.
+kind. Native code generation covers Darwin arm64 and Linux x86_64. A Linux app
+build packs its AppDir into a type 2 AppImage without external tools: `ns`
+writes the squashfs image itself (zlib-compressed when the toolchain was built
+with `third_party/zlib`) behind `ns-appimage-runtime`, the launcher `make`
+builds beside `bin/ns` and `make install` puts in `lib/`. Instead of mounting
+the image through FUSE, that launcher extracts it once into
+`$XDG_CACHE_HOME/ns-appimage/<name>-<hash>` (or `~/.cache/ns-appimage/`) and
+runs its `AppRun`; a rebuilt app extracts afresh and replaces the older copy.
+`--appimage-extract` unpacks it into `./squashfs-root`, and
+`--appimage-offset` prints where the image starts for `unsquashfs -o`. The
+manifest `icon` must name a PNG or SVG image; without one, the bundled Nano
+Script icon is used. A cross-build from another host uses the Linux launcher
+`make cross-linux` fetches. The AppImage contains the program, imported Nano
+Script shared modules, and project assets.
 `ns run` with `link = true` builds a direct executable for interactive runs. A
 target with `link = false` runs interpreted, so on a host whose native code generator
 cannot emit an executable `ns build` still builds it: it writes a launcher that

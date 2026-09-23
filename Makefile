@@ -153,7 +153,8 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_project_vs.c \
 	src/ns_repl.c \
 	src/ns_def.c \
-	src/ns_asm.c
+	src/ns_asm.c \
+	src/ns_appimage.c
 
 # Language-only runtime copied into generated Apple IDE projects. Keep native
 # UI, terminal, view, GPU, network/HTTP modules, the REPL, and object emitters
@@ -215,6 +216,22 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
+# Linux AppImage packaging (src/ns_appimage.c) compresses its squashfs image
+# with the downloaded zlib when present (`make zlib`) and stores raw blocks
+# otherwise. ns-appimage-runtime is the standalone launcher at the front of
+# every AppImage; it is built with the same zlib so it reads what ns writes.
+NS_APPIMAGE_RUNTIME = $(NS_BINDIR)/ns-appimage-runtime
+NS_HOST_ZLIB_OBJS =
+NS_HOST_ZLIB_CFLAGS =
+ifneq ($(wildcard third_party/zlib/zlib.h),)
+NS_HOST_ZLIB_OBJS = $(patsubst third_party/zlib/%.c,$(NS_BINDIR)/zlib/%.o,$(wildcard third_party/zlib/*.c))
+NS_HOST_ZLIB_CFLAGS = -Ithird_party/zlib -DZ_PREFIX=1 -DNS_ZLIB
+ifneq ($(NS_OS), $(NS_WIN))
+NS_HOST_ZLIB_CFLAGS += -DZ_HAVE_UNISTD_H
+endif
+endif
+$(NS_BINDIR)/src/ns_appimage.o: NS_CFLAGS += $(NS_HOST_ZLIB_CFLAGS)
+
 # The copy linked into the ns host tool uses src/ns_os.c for file helpers.
 # Keep the standalone runtime fallbacks enabled only in bin/ns_native_rt.o,
 # which is shipped for executables produced by `ns build`.
@@ -250,6 +267,9 @@ NS_DIRS = bin bin/src bin/lib
 
 ifeq ($(NS_OS), $(NS_DARWIN))
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std profiler
+else ifeq ($(NS_OS), $(NS_LINUX))
+all: $(NS_DIRS) $(TARGET) $(NS_LIB) std $(NS_APPIMAGE_RUNTIME)
+test: $(NS_APPIMAGE_RUNTIME)
 else
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std
 endif
@@ -273,8 +293,11 @@ $(NS_AGENTS_HEADER): AGENTS.md | $(NS_DIRS)
 $(NS_ENTRY_OBJ): $(NS_ENTRY) $(NS_HEADERS) $(NS_AGENTS_HEADER) | $(NS_DIRS)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_CFLAGS)
 
-$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(NS_NATIVE_RT_OBJ) | $(NS_BINDIR)
-	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
+$(TARGET): $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(NS_NATIVE_RT_OBJ) $(NS_HOST_ZLIB_OBJS) | $(NS_BINDIR)
+	$(NS_LD) $(NS_LIB_OBJS) $(NS_ENTRY_OBJ) $(NS_HOST_ZLIB_OBJS) -o $(TARGET)$(NS_SUFFIX) $(NS_LDFLAGS)
+
+$(NS_APPIMAGE_RUNTIME): src/ns_appimage_runtime.c $(NS_HOST_ZLIB_OBJS) | $(NS_BINDIR)
+	$(NS_CC) -O2 $(NS_WARN_CFLAGS) $(NS_HOST_ZLIB_CFLAGS) $< $(NS_HOST_ZLIB_OBJS) -o $@
 
 $(NS_NATIVE_RT_OBJ): src/ns_native_rt.c include/ns_native_rt.h | $(NS_BINDIR)
 	$(NS_CC) -c $< -o $@ $(NS_INC) $(NS_RELEASE_CFLAGS)
@@ -385,6 +408,10 @@ install: all
 	$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	cp $(NS_NATIVE_RT_OBJ) $(NS_INSTALL_ROOT)/lib/ns_native_rt.o
+	if [ -f $(NS_APPIMAGE_RUNTIME) ]; then \
+		cp $(NS_APPIMAGE_RUNTIME) $(NS_INSTALL_ROOT)/lib/ns-appimage-runtime.new; \
+		mv -f $(NS_INSTALL_ROOT)/lib/ns-appimage-runtime.new $(NS_INSTALL_ROOT)/lib/ns-appimage-runtime; \
+	fi
 	$(NS_CP) include/. $(NS_INSTALL_ROOT)/share/ns-runtime/include/
 	cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
 		lib/net.ns lib/secure.ns lib/dynamic.ns lib/compress.ns lib/storage.ns lib/audio.ns lib/camera.ns \
@@ -428,7 +455,7 @@ install: all
 		done' sh {} +
 	if [ -d $(NS_BINDIR)/linux-x86_64 ]; then \
 		$(NS_MKDIR) $(NS_INSTALL_ROOT)/lib/linux-x86_64; \
-		find $(NS_BINDIR)/linux-x86_64 -maxdepth 1 -name '*.so' -exec sh -c '\
+		find $(NS_BINDIR)/linux-x86_64 -maxdepth 1 -type f \( -name '*.so' -o -name ns-appimage-runtime \) -exec sh -c '\
 			for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \
 				cp "$$ns_lib_file" "$(NS_INSTALL_ROOT)/lib/linux-x86_64/$$ns_lib_name.new"; \
 				mv -f "$(NS_INSTALL_ROOT)/lib/linux-x86_64/$$ns_lib_name.new" "$(NS_INSTALL_ROOT)/lib/linux-x86_64/$$ns_lib_name"; \

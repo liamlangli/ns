@@ -86,9 +86,11 @@ The common commands are:
   linked native executable. `ns build` does not fall back to `ns run`. Native
   code generation covers Darwin arm64 (AArch64 mach-o) and Linux x86_64 (AMD64
   ELF); both link the emitted object with the host C toolchain.
-  Linux app packaging requires `appimagetool` on PATH or `NS_APPIMAGETOOL` set
-  to its path. A PNG or SVG `icon` is embedded in the AppImage; omitting it uses
-  the installed Nano Script icon. `ns run` with `link = true` uses a direct
+  Linux app packaging needs no external tool: `ns` writes the AppImage's
+  squashfs image itself behind its own `ns-appimage-runtime`, which extracts
+  the app once into `~/.cache/ns-appimage/` and runs it from there. A PNG or
+  SVG `icon` is embedded in the AppImage; omitting it uses the installed Nano
+  Script icon. `ns run` with `link = true` uses a direct
   executable for interactive launches.
   `ns build --target x86_64-linux-gnu` (also `linux`, `x86_64-linux`, or
   `linux-x86_64`) cross-compiles that ELF from another host. A `[[targets]]`

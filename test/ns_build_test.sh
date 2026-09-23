@@ -316,37 +316,46 @@ fn main() {
     assert os_platform() == OS_PLATFORM_LINUX
 }
 EOF
-        cat > "$tmp/appimagetool" <<'EOF'
-#!/bin/sh
-set -eu
-test "$#" -eq 3
-test "$1" = -n
-app_dir=$2
-test -x "$app_dir/AppRun"
-test -x "$app_dir/usr/bin/app"
-test -f "$app_dir/usr/bin/os.so"
-test -f "$app_dir/usr/bin/assets/message.txt"
-test -f "$app_dir/usr/bin/.ns-resources"
-test -f "$app_dir/app.png"
-test -L "$app_dir/.DirIcon"
-grep -q '^Name=native-app$' "$app_dir/app.desktop"
-grep -q '^Icon=app$' "$app_dir/app.desktop"
-printf 'mock AppImage\n' > "$3"
-chmod +x "$3"
-EOF
-        chmod +x "$tmp/appimagetool"
-        NS_APPIMAGETOOL="$tmp/appimagetool" "$ns" build "$native_app" > "$tmp/native-app.log" 2>&1 || {
+        "$ns" build "$native_app" > "$tmp/native-app.log" 2>&1 || {
             cat "$tmp/native-app.log" >&2
             printf '%s\n' 'FAIL: ns build failed for a Linux app.' >&2
             exit 1
         }
-        if [ ! -x "$native_app/bin/native-app.AppImage" ] ||
-           ! grep -q 'appimage ' "$tmp/native-app.log"; then
+        appimage="$native_app/bin/native-app.AppImage"
+        if [ ! -x "$appimage" ] ||
+           ! grep -q 'appimage ' "$tmp/native-app.log" ||
+           [ "$(od -An -c -j 8 -N 3 "$appimage" | tr -d ' ')" != 'AI002' ]; then
             cat "$tmp/native-app.log" >&2
-            printf '%s\n' 'FAIL: a Linux app must package an AppImage with its icon.' >&2
+            printf '%s\n' 'FAIL: a Linux app must package a type 2 AppImage.' >&2
             exit 1
         fi
-        NS_APPIMAGETOOL="$tmp/appimagetool" "$ns" build "$native_app" > "$tmp/native-app.log" 2>&1
+        XDG_CACHE_HOME="$tmp/appimage-cache" "$appimage" || {
+            printf '%s\n' 'FAIL: the packaged AppImage must extract and run.' >&2
+            exit 1
+        }
+        extract_dir="$tmp/appimage-extract"
+        mkdir -p "$extract_dir"
+        (cd "$extract_dir" && "$appimage" --appimage-extract > /dev/null)
+        root="$extract_dir/squashfs-root"
+        if [ ! -x "$root/AppRun" ] || [ ! -x "$root/usr/bin/app" ] ||
+           [ ! -f "$root/usr/bin/os.so" ] || [ ! -f "$root/usr/bin/.ns-resources" ] ||
+           ! cmp -s "$root/usr/bin/assets/message.txt" "$native_app/assets/message.txt" ||
+           ! cmp -s "$root/app.png" "$native_app/icon.png" ||
+           [ "$(readlink "$root/.DirIcon")" != app.png ] ||
+           ! grep -q '^Name=native-app$' "$root/app.desktop" ||
+           ! grep -q '^Icon=app$' "$root/app.desktop"; then
+            printf '%s\n' 'FAIL: the AppImage must hold the program, modules, assets and icon.' >&2
+            exit 1
+        fi
+        if command -v unsquashfs > /dev/null 2>&1; then
+            offset=$("$appimage" --appimage-offset)
+            unsquashfs -q -o "$offset" -d "$tmp/appimage-unsquashfs" "$appimage" > /dev/null &&
+                diff -r "$root" "$tmp/appimage-unsquashfs" > /dev/null || {
+                printf '%s\n' 'FAIL: unsquashfs must read the AppImage image identically.' >&2
+                exit 1
+            }
+        fi
+        "$ns" build "$native_app" > "$tmp/native-app.log" 2>&1
         expect_up_to_date 'an unchanged Linux AppImage must not be rebuilt.'
     fi
 

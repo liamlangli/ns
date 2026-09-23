@@ -1,6 +1,6 @@
 #!/bin/sh
 # Build the Linux feature modules with this machine's gcc. Run on the Linux
-# host, from a tree laid out like the ns repo (include/, lib/, third_party/).
+# host, from a tree laid out like the ns repo (include/, lib/, src/, third_party/).
 # The gcc wrapper from bootstrap_linux_gcc.sh drives the system GNU ld.
 set -eu
 
@@ -71,5 +71,10 @@ link audio "$obj/audio.stub.o"
 link storage "$obj/storage.db.o" "$obj/storage.cache.o" "$obj/storage.json.o" -lsqlite3
 link compress "$obj/compress.o" "$obj/zlib"/*.o "$obj/zstd/common"/*.o "$obj/zstd/compress"/*.o "$obj/zstd/decompress"/*.o
 link dynamic "$obj/dynamic.o" "$obj/box3d"/*.o
+
+# The launcher `ns build` puts in front of every Linux AppImage.
+echo "cc ns-appimage-runtime"
+"$gcc" -O2 -Wall -Wextra -Werror -I"${root}/third_party/zlib" -DZ_PREFIX=1 -DZ_HAVE_UNISTD_H -DNS_ZLIB \
+    -o "$out/ns-appimage-runtime" "${root}/src/ns_appimage_runtime.c" "$obj/zlib"/*.o
 
 echo "modules ${out}"

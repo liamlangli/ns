@@ -14,6 +14,7 @@
 #include "ns_build_cache.h"
 #include "ns_lint.h"
 #include "ns_ssa.h"
+#include "ns_appimage.h"
 #include "ns_agents_md.h"
 
 #if defined(_WIN32)
@@ -297,7 +298,7 @@ void ns_help() {
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
     printf("                    type app | cli | library picks app | executable | .a\n");
-    printf("                    Linux app builds produce .AppImage (requires appimagetool)\n");
+    printf("                    Linux app builds produce a self-extracting .AppImage\n");
     printf("                    builds every [[targets]] table; a bare name builds one\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    --target x86_64-linux-gnu cross-compiles a native build\n");
@@ -3770,13 +3771,47 @@ static void ns_build_linux_package_app(ns_build_input *in, ns_str executable_pat
     ns_str_free(dir);
 }
 
+// The launcher ns_appimage_write puts in front of the image. A Linux toolchain
+// builds it beside bin/ns and installs it into lib/; a cross build uses the
+// x86_64 Linux copy `make cross-linux` fetches into linux-x86_64/.
+static ns_str ns_build_appimage_runtime_source(ns_bool cross) {
+    ns_str exe = ns_project_current_executable();
+    ns_str bin = ns_path_dirname_safe(exe);
+    ns_str root = ns_path_parent(bin);
+    ns_str lib = ns_path_join(root, ns_str_cstr("lib"));
+    ns_str dirs[2];
+    dirs[0] = cross ? ns_path_join(bin, ns_str_cstr("linux-x86_64")) : ns_str_concat(bin, ns_str_cstr(""));
+    dirs[1] = cross ? ns_path_join(lib, ns_str_cstr("linux-x86_64")) : ns_str_concat(lib, ns_str_cstr(""));
+    ns_str source = ns_str_null;
+    for (i32 i = 0; i < 2; ++i) {
+        ns_str candidate = ns_path_join(dirs[i], ns_str_cstr("ns-appimage-runtime"));
+        if (source.data == ns_null && ns_file_exists(candidate)) source = candidate;
+        else ns_str_free(candidate);
+        ns_str_free(dirs[i]);
+    }
+    ns_str_free(exe);
+    ns_str_free(bin);
+    ns_str_free(root);
+    ns_str_free(lib);
+    if (source.data == ns_null && cross) {
+        ns_exit(1, "build", "the Linux AppImage runtime ns-appimage-runtime was not found. "
+                "Run `make cross-linux` in the ns toolchain.\n");
+    }
+    if (source.data == ns_null) {
+        ns_exit(1, "build", "the AppImage runtime ns-appimage-runtime was not found. "
+                "Rebuild and install the ns toolchain.\n");
+    }
+    return source;
+}
+
 #if !defined(_WIN32)
 static void ns_build_linux_appimage(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
-    const char *tool = getenv("NS_APPIMAGETOOL");
-    if (tool == ns_null || tool[0] == '\0') tool = "appimagetool";
-    if (!ns_command_exists(tool)) {
-        ns_exit(1, "build", "Linux app builds need appimagetool on PATH or NS_APPIMAGETOOL set to its path.\n");
-    }
+    ns_asm_target host;
+    ns_asm_get_host_target(&host);
+    ns_asm_target target;
+    ns_asm_get_current_target(&target);
+    ns_bool cross = host.os != target.os || host.arch != target.arch;
+    ns_str runtime = ns_build_appimage_runtime_source(cross);
 
     ns_str artifact = ns_build_artifact_path(NS_BUILD_APP, output);
     ns_str app_dir = ns_str_concat(artifact, ns_str_cstr(".AppDir"));
@@ -3784,12 +3819,7 @@ static void ns_build_linux_appimage(ns_build_input *in, ns_str output, ns_ssa_mo
     ns_str bin_dir = ns_path_join(app_dir, ns_str_cstr("usr/bin"));
     ns_mkdir_p(bin_dir);
     ns_str executable = ns_path_join(bin_dir, ns_str_cstr("app"));
-    ns_asm_target host;
-    ns_asm_get_host_target(&host);
-    ns_asm_target target;
-    ns_asm_get_current_target(&target);
-    ns_build_linux_link_executable(ssa, executable,
-                                   host.os != target.os || host.arch != target.arch, true);
+    ns_build_linux_link_executable(ssa, executable, cross, true);
     ns_build_linux_package_app(in, executable, true);
 
     ns_str icon = in->icon;
@@ -3825,36 +3855,19 @@ static void ns_build_linux_appimage(ns_build_input *in, ns_str output, ns_ssa_mo
 
     ns_str temporary = ns_str_concat(artifact, ns_str_cstr(".tmp.AppImage"));
     remove(temporary.data);
-    ns_str q_tool = ns_shell_quote(ns_str_cstr((char *)tool));
-    ns_str q_dir = ns_shell_quote(app_dir);
-    ns_str q_temp = ns_shell_quote(temporary);
-    ns_str command = ns_str_null;
-    ns_str_append_cstr(&command, "ARCH=x86_64 ");
-    ns_str_append(&command, q_tool);
-    ns_str_append_cstr(&command, " -n");
-    const char *runtime = getenv("NS_APPIMAGE_RUNTIME");
-    if (runtime != ns_null && runtime[0] != '\0') {
-        if (!ns_file_exists(ns_str_cstr((char *)runtime))) {
-            ns_exit(1, "build", "NS_APPIMAGE_RUNTIME file was not found: %s.\n", runtime);
-        }
-        ns_str q_runtime = ns_shell_quote(ns_str_cstr((char *)runtime));
-        ns_str_append_cstr(&command, " --runtime-file ");
-        ns_str_append(&command, q_runtime);
-        ns_str_free(q_runtime);
-    }
-    ns_str_append_cstr(&command, " ");
-    ns_str_append(&command, q_dir);
-    ns_str_append_cstr(&command, " ");
-    ns_str_append(&command, q_temp);
-    ns_array_push(command.data, '\0');
-    if (system(command.data) != 0 || !ns_file_exists(temporary)) {
-        ns_exit(1, "build", "appimagetool failed to create %.*s.\n", artifact.len, artifact.data);
+    ns_str name = ns_str_concat(in->name.len > 0 ? in->name : ns_str_cstr("app"), ns_str_cstr(""));
+    char error[512];
+    if (!ns_appimage_write(runtime.data, app_dir.data, name.data, temporary.data, error, sizeof(error))) {
+        remove(temporary.data);
+        ns_exit(1, "build", "failed to create %.*s: %s.\n", artifact.len, artifact.data, error);
     }
     if (rename(temporary.data, artifact.data) != 0) {
         ns_exit(1, "build", "failed to install AppImage %.*s.\n", artifact.len, artifact.data);
     }
     ns_remove_tree(app_dir);
     ns_info("build", "appimage %.*s\n", artifact.len, artifact.data);
+    ns_str_free(runtime);
+    ns_str_free(name);
     ns_str_free(artifact);
     ns_str_free(app_dir);
     ns_str_free(bin_dir);
@@ -3866,10 +3879,6 @@ static void ns_build_linux_appimage(ns_build_input *in, ns_str output, ns_ssa_mo
     ns_str_free(desktop);
     ns_str_free(desktop_path);
     ns_str_free(temporary);
-    ns_str_free(q_tool);
-    ns_str_free(q_dir);
-    ns_str_free(q_temp);
-    ns_str_free(command);
     if (default_icon) ns_str_free(icon);
 }
 #endif
@@ -4061,14 +4070,11 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
             ns_build_cache_add_package(&cache, icon);
             ns_str_free(icon);
         }
-        const char *tool = getenv("NS_APPIMAGETOOL");
-        if (tool != ns_null && tool[0] != '\0') {
-            ns_build_cache_add_package(&cache, ns_str_cstr((char *)tool));
-        }
-        const char *runtime = getenv("NS_APPIMAGE_RUNTIME");
-        if (runtime != ns_null && runtime[0] != '\0') {
-            ns_build_cache_add_package(&cache, ns_str_cstr((char *)runtime));
-        }
+        ns_asm_target host;
+        ns_asm_get_host_target(&host);
+        ns_str runtime = ns_build_appimage_runtime_source(host.os != target.os || host.arch != target.arch);
+        ns_build_cache_add_package(&cache, runtime);
+        ns_str_free(runtime);
     }
     ns_bool fresh = !force && ns_build_cache_fresh(&cache);
     ns_build_profile_end("check_cache", cache_start);
