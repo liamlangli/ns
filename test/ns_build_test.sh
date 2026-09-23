@@ -297,7 +297,9 @@ Darwin|MINGW*|MSYS*|CYGWIN*)
 *)
     if [ "$(uname -s)" = Linux ]; then
         native_app="$tmp/native-app"
-        mkdir -p "$native_app"
+        mkdir -p "$native_app/assets"
+        cp "$(dirname "$0")/../sample/ns.png" "$native_app/icon.png"
+        printf 'bundled asset\n' > "$native_app/assets/message.txt"
         cat > "$native_app/ns.mod" <<'EOF'
 schema = "ns.mod/v1"
 name = "native-app"
@@ -305,21 +307,47 @@ version = "0.1.0"
 type = "app"
 source = "."
 entry = "main.ns"
+icon = "icon.png"
 EOF
         cat > "$native_app/main.ns" <<'EOF'
-fn main() {}
+use os
+
+fn main() {
+    assert os_platform() == OS_PLATFORM_LINUX
+}
 EOF
-        "$ns" build "$native_app" > "$tmp/native-app.log" 2>&1 || {
+        cat > "$tmp/appimagetool" <<'EOF'
+#!/bin/sh
+set -eu
+test "$#" -eq 3
+test "$1" = -n
+app_dir=$2
+test -x "$app_dir/AppRun"
+test -x "$app_dir/usr/bin/app"
+test -f "$app_dir/usr/bin/os.so"
+test -f "$app_dir/usr/bin/assets/message.txt"
+test -f "$app_dir/usr/bin/.ns-resources"
+test -f "$app_dir/app.png"
+test -L "$app_dir/.DirIcon"
+grep -q '^Name=native-app$' "$app_dir/app.desktop"
+grep -q '^Icon=app$' "$app_dir/app.desktop"
+printf 'mock AppImage\n' > "$3"
+chmod +x "$3"
+EOF
+        chmod +x "$tmp/appimagetool"
+        NS_APPIMAGETOOL="$tmp/appimagetool" "$ns" build "$native_app" > "$tmp/native-app.log" 2>&1 || {
             cat "$tmp/native-app.log" >&2
             printf '%s\n' 'FAIL: ns build failed for a Linux app.' >&2
             exit 1
         }
-        if [ ! -x "$native_app/bin/native-app" ] ||
-           grep -q 'app bundle icon packaging is currently supported' "$tmp/native-app.log"; then
+        if [ ! -x "$native_app/bin/native-app.AppImage" ] ||
+           ! grep -q 'appimage ' "$tmp/native-app.log"; then
             cat "$tmp/native-app.log" >&2
-            printf '%s\n' 'FAIL: a Linux app must build an executable without a bundle warning.' >&2
+            printf '%s\n' 'FAIL: a Linux app must package an AppImage with its icon.' >&2
             exit 1
         fi
+        NS_APPIMAGETOOL="$tmp/appimagetool" "$ns" build "$native_app" > "$tmp/native-app.log" 2>&1
+        expect_up_to_date 'an unchanged Linux AppImage must not be rebuilt.'
     fi
 
     interpreted="$tmp/interpreted"

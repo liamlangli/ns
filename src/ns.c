@@ -296,7 +296,8 @@ void ns_help() {
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
-    printf("                    type app | cli | library picks bundle | executable | .a\n");
+    printf("                    type app | cli | library picks app | executable | .a\n");
+    printf("                    Linux app builds produce .AppImage (requires appimagetool)\n");
     printf("                    builds every [[targets]] table; a bare name builds one\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    --target x86_64-linux-gnu cross-compiles a native build\n");
@@ -1857,6 +1858,8 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
         ns_asm_get_current_target(&app_target);
         if (app_target.os == NS_OS_DARWIN) {
             artifact = ns_str_concat(name, ns_str_cstr(".app"));
+        } else if (app_target.os == NS_OS_LINUX) {
+            artifact = ns_str_concat(name, ns_str_cstr(".AppImage"));
         } else {
             artifact = ns_str_concat(name, ns_str_cstr(""));
 #if defined(_WIN32)
@@ -2268,8 +2271,11 @@ static ns_bool ns_build_type_is_app(ns_str t);
 // every recorded input is unchanged, so the artifact must be checked by the
 // same path the emitters write.
 static ns_str ns_build_artifact_path(ns_build_kind kind, ns_str output) {
-    if (kind == NS_BUILD_APP && !ns_str_has_suffix(output, ".app")) {
-        return ns_str_concat(output, ns_str_cstr(".app"));
+    if (kind == NS_BUILD_APP) {
+        ns_asm_target target;
+        ns_asm_get_current_target(&target);
+        const char *suffix = target.os == NS_OS_LINUX ? ".AppImage" : ".app";
+        if (!ns_str_has_suffix(output, suffix)) return ns_str_concat(output, ns_str_cstr(suffix));
     }
     return ns_str_concat(output, ns_str_cstr(""));
 }
@@ -2400,7 +2406,7 @@ static ns_str ns_wasm_runtime_source(void) {
     return ns_str_null;
 }
 
-static ns_str ns_wasm_default_icon_source(void) {
+static ns_str ns_build_default_icon_source(void) {
     ns_str executable = ns_project_current_executable();
     ns_str bin = ns_path_dirname_safe(executable);
     ns_str root = ns_path_parent(bin);
@@ -2410,7 +2416,7 @@ static ns_str ns_wasm_default_icon_source(void) {
     ns_str_free(source);
     source = ns_path_join(root, ns_str_cstr("ref/ns.svg"));
     if (ns_file_exists(source)) return source;
-    ns_exit(1, "build", "installed default wasm icon ns.svg was not found.\n");
+    ns_exit(1, "build", "installed default icon ns.svg was not found.\n");
     return ns_str_null;
 }
 
@@ -2562,7 +2568,7 @@ static void ns_exec_build_wasm(ns_build_input *in, ns_str output, u8 requested_k
     ns_build_cache_add_package(&cache, runtime_src);
 
     ns_bool uses_default_icon = in->icon.data == ns_null || in->icon.len == 0;
-    ns_str icon_src = uses_default_icon ? ns_wasm_default_icon_source() : in->icon;
+    ns_str icon_src = uses_default_icon ? ns_build_default_icon_source() : in->icon;
     ns_str favicon = uses_default_icon ? ns_str_cstr("ns.svg") : ns_wasm_favicon_filename(icon_src);
     ns_copy_file_contents(icon_src, ns_path_join(out_dir, favicon));
     ns_build_cache_add_package(&cache, icon_src);
@@ -2881,15 +2887,17 @@ static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
 
 
 #if !defined(_WIN32)
-// True when `name` is on PATH. Used to find a GNU Linux cross gcc.
+// True when `name` is executable on PATH or names an executable file.
 static ns_bool ns_command_exists(const char *name) {
     ns_str cmd = ns_str_null;
+    ns_str quoted = ns_shell_quote(ns_str_cstr((char *)name));
     ns_str_append_cstr(&cmd, "command -v ");
-    ns_str_append_cstr(&cmd, name);
+    ns_str_append(&cmd, quoted);
     ns_str_append_cstr(&cmd, " >/dev/null 2>&1");
     ns_array_push(cmd.data, '\0');
     i32 ret = system(cmd.data);
     ns_str_free(cmd);
+    ns_str_free(quoted);
     return ret == 0;
 }
 
@@ -2918,7 +2926,8 @@ static ns_str ns_linux_cross_cc(void) {
 // and the modules from `make cross-linux`, then copies those modules beside
 // the executable so `$ORIGIN` finds them on the target machine.
 // `cross` is true when the build triple is not the host triple.
-static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable_path, ns_bool cross) {
+static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable_path,
+                                           ns_bool cross, ns_bool package) {
     ns_str object_path = ns_str_concat(executable_path, ns_str_cstr(".o"));
     f64 object_start = ns_build_profile_begin("emit_object");
     ns_return_bool emit_ret = ns_elf_emit_object(ssa, object_path);
@@ -3046,7 +3055,7 @@ static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable
         ns_array_push(shipped, shared);
         ns_array_push(linked, module);
     }
-    if (!cross && rpath_dir.data) {
+    if (!package && !cross && rpath_dir.data) {
         ns_str_append_cstr(&cmd, " -Wl,-rpath,");
         ns_str_append(&cmd, rpath_dir);
     }
@@ -3146,7 +3155,7 @@ static void ns_build_linux_link_executable(ns_ssa_module *ssa, ns_str executable
         ns_exit(1, "build", "failed to link executable %.*s.\n", executable_path.len, executable_path.data);
     }
 
-    if (cross) {
+    if (package) {
         ns_str exe_dir = ns_path_dirname_safe(executable_path);
         for (i32 i = 0, n = (i32)ns_array_length(shipped); i < n; ++i) {
             ns_str base = ns_path_last_component(shipped[i]);
@@ -3721,7 +3730,6 @@ static void ns_build_linux_copy_ui_assets(ns_str package_dir) {
     if (source.data == ns_null) return;
     ns_str destination = ns_path_join(package_dir, ns_str_cstr("assets"));
     if (!ns_str_equals(source, destination)) {
-        ns_remove_tree(destination);
         ns_copy_tree(source, destination);
     }
     ns_str_free(source);
@@ -3732,9 +3740,10 @@ static void ns_build_linux_copy_ui_assets(ns_str package_dir) {
 // and a marker the runtime uses to enter that directory, the way a Darwin
 // bundle enters Contents/Resources. A command-line program has no marker, so
 // it keeps the working directory it was started from.
-static void ns_build_linux_package_app(ns_build_input *in, ns_str executable_path) {
+static void ns_build_linux_package_app(ns_build_input *in, ns_str executable_path, ns_bool appimage) {
     if (!in->has_manifest) return;
     ns_str dir = ns_path_dirname_safe(executable_path);
+    if (appimage) ns_build_linux_copy_ui_assets(dir);
     ns_str *assets = ns_project_asset_paths(in->scope);
     for (i32 i = 0, count = ns_array_length(assets); i < count; i++) {
         ns_str source = ns_path_join(in->scope, assets[i]);
@@ -3745,7 +3754,7 @@ static void ns_build_linux_package_app(ns_build_input *in, ns_str executable_pat
             continue;
         }
         if (ns_is_dir(source)) {
-            ns_remove_tree(destination);
+            if (!appimage) ns_remove_tree(destination);
             ns_copy_tree(source, destination);
         } else if (ns_file_exists(source)) {
             ns_copy_file_contents(source, destination);
@@ -3754,12 +3763,116 @@ static void ns_build_linux_package_app(ns_build_input *in, ns_str executable_pat
         ns_str_free(destination);
     }
     ns_project_asset_paths_free(assets);
-    ns_build_linux_copy_ui_assets(dir);
+    if (!appimage) ns_build_linux_copy_ui_assets(dir);
     ns_str marker = ns_path_join(dir, ns_str_cstr(".ns-resources"));
     ns_write_text_file(marker, ns_str_cstr(""));
     ns_str_free(marker);
     ns_str_free(dir);
 }
+
+#if !defined(_WIN32)
+static void ns_build_linux_appimage(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
+    const char *tool = getenv("NS_APPIMAGETOOL");
+    if (tool == ns_null || tool[0] == '\0') tool = "appimagetool";
+    if (!ns_command_exists(tool)) {
+        ns_exit(1, "build", "Linux app builds need appimagetool on PATH or NS_APPIMAGETOOL set to its path.\n");
+    }
+
+    ns_str artifact = ns_build_artifact_path(NS_BUILD_APP, output);
+    ns_str app_dir = ns_str_concat(artifact, ns_str_cstr(".AppDir"));
+    ns_remove_tree(app_dir);
+    ns_str bin_dir = ns_path_join(app_dir, ns_str_cstr("usr/bin"));
+    ns_mkdir_p(bin_dir);
+    ns_str executable = ns_path_join(bin_dir, ns_str_cstr("app"));
+    ns_asm_target host;
+    ns_asm_get_host_target(&host);
+    ns_asm_target target;
+    ns_asm_get_current_target(&target);
+    ns_build_linux_link_executable(ssa, executable,
+                                   host.os != target.os || host.arch != target.arch, true);
+    ns_build_linux_package_app(in, executable, true);
+
+    ns_str icon = in->icon;
+    ns_bool default_icon = icon.data == ns_null || icon.len == 0;
+    if (default_icon) icon = ns_build_default_icon_source();
+    const char *extension = ns_str_has_suffix(icon, ".png") ? ".png" :
+                            ns_str_has_suffix(icon, ".svg") ? ".svg" : ns_null;
+    if (extension == ns_null || !ns_file_exists(icon)) {
+        ns_exit(1, "build", "Linux app icon must be an existing PNG or SVG file: %.*s.\n",
+                icon.len, icon.data);
+    }
+    ns_str icon_name = ns_str_concat(ns_str_cstr("app"), ns_str_cstr(extension));
+    ns_str icon_dest = ns_path_join(app_dir, icon_name);
+    ns_copy_file_contents(icon, icon_dest);
+    ns_str dir_icon = ns_path_join(app_dir, ns_str_cstr(".DirIcon"));
+    if (symlink(icon_name.data, dir_icon.data) != 0) {
+        ns_exit(1, "build", "failed to link AppImage icon %.*s.\n", dir_icon.len, dir_icon.data);
+    }
+
+    ns_str app_run = ns_path_join(app_dir, ns_str_cstr("AppRun"));
+    ns_write_text_file(app_run, ns_str_cstr(
+        "#!/bin/sh\n"
+        "here=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
+        "cd \"$here/usr/bin\" || exit 1\n"
+        "exec ./app \"$@\"\n"));
+    if (chmod(app_run.data, 0755) != 0) ns_exit(1, "build", "failed to make AppRun executable.\n");
+    ns_str desktop = ns_str_null;
+    ns_str_append_cstr(&desktop, "[Desktop Entry]\nType=Application\nName=");
+    ns_str_append(&desktop, in->name);
+    ns_str_append_cstr(&desktop, "\nExec=app\nIcon=app\nCategories=Utility;\nTerminal=false\n");
+    ns_str desktop_path = ns_path_join(app_dir, ns_str_cstr("app.desktop"));
+    ns_write_text_file(desktop_path, desktop);
+
+    ns_str temporary = ns_str_concat(artifact, ns_str_cstr(".tmp.AppImage"));
+    remove(temporary.data);
+    ns_str q_tool = ns_shell_quote(ns_str_cstr((char *)tool));
+    ns_str q_dir = ns_shell_quote(app_dir);
+    ns_str q_temp = ns_shell_quote(temporary);
+    ns_str command = ns_str_null;
+    ns_str_append_cstr(&command, "ARCH=x86_64 ");
+    ns_str_append(&command, q_tool);
+    ns_str_append_cstr(&command, " -n");
+    const char *runtime = getenv("NS_APPIMAGE_RUNTIME");
+    if (runtime != ns_null && runtime[0] != '\0') {
+        if (!ns_file_exists(ns_str_cstr((char *)runtime))) {
+            ns_exit(1, "build", "NS_APPIMAGE_RUNTIME file was not found: %s.\n", runtime);
+        }
+        ns_str q_runtime = ns_shell_quote(ns_str_cstr((char *)runtime));
+        ns_str_append_cstr(&command, " --runtime-file ");
+        ns_str_append(&command, q_runtime);
+        ns_str_free(q_runtime);
+    }
+    ns_str_append_cstr(&command, " ");
+    ns_str_append(&command, q_dir);
+    ns_str_append_cstr(&command, " ");
+    ns_str_append(&command, q_temp);
+    ns_array_push(command.data, '\0');
+    if (system(command.data) != 0 || !ns_file_exists(temporary)) {
+        ns_exit(1, "build", "appimagetool failed to create %.*s.\n", artifact.len, artifact.data);
+    }
+    if (rename(temporary.data, artifact.data) != 0) {
+        ns_exit(1, "build", "failed to install AppImage %.*s.\n", artifact.len, artifact.data);
+    }
+    ns_remove_tree(app_dir);
+    ns_info("build", "appimage %.*s\n", artifact.len, artifact.data);
+    ns_str_free(artifact);
+    ns_str_free(app_dir);
+    ns_str_free(bin_dir);
+    ns_str_free(executable);
+    ns_str_free(icon_name);
+    ns_str_free(icon_dest);
+    ns_str_free(dir_icon);
+    ns_str_free(app_run);
+    ns_str_free(desktop);
+    ns_str_free(desktop_path);
+    ns_str_free(temporary);
+    ns_str_free(q_tool);
+    ns_str_free(q_dir);
+    ns_str_free(q_temp);
+    ns_str_free(command);
+    if (default_icon) ns_str_free(icon);
+}
+#endif
 
 static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output, ns_ssa_module *ssa) {
     if (ns_build_target_is_wasm(in->target)) {
@@ -3790,6 +3903,15 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
     }
 
     if (kind == NS_BUILD_APP) {
+        ns_asm_target target;
+        ns_asm_get_current_target(&target);
+        if (target.os == NS_OS_LINUX) {
+#if !defined(_WIN32)
+            ns_build_linux_appimage(in, output, ssa);
+            ns_ssa_module_free(ssa);
+            return;
+#endif
+        }
 #if defined(NS_DARWIN)
         ns_str app_output = ns_build_app_output(output);
         ns_build_darwin_app(in, app_output, ssa);
@@ -3824,9 +3946,9 @@ static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output,
         ns_asm_target host_target;
         ns_asm_get_host_target(&host_target);
         ns_bool cross = host_target.os != target.os || host_target.arch != target.arch;
-        ns_build_linux_link_executable(ssa, output, cross);
+        ns_build_linux_link_executable(ssa, output, cross, cross);
         ns_ssa_module_free(ssa);
-        if (cross && ns_build_type_is_app(in->module_type)) ns_build_linux_package_app(in, output);
+        if (cross && ns_build_type_is_app(in->module_type)) ns_build_linux_package_app(in, output, false);
         ns_info("build", "executable %.*s\n", output.len, output.data);
         return;
 #else
@@ -3917,7 +4039,10 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_build_kind kind = ns_build_resolve_kind(&in, requested_kind);
     ns_asm_target target;
     ns_asm_get_current_target(&target);
-    if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) {
+    ns_asm_target host_target;
+    ns_asm_get_host_target(&host_target);
+    if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN &&
+        (target.os != NS_OS_LINUX || host_target.os != NS_OS_LINUX)) {
         kind = NS_BUILD_EXE;
     }
     if (output.len == 0) output = ns_build_default_output(&in, kind);
@@ -3930,6 +4055,21 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_build_cache_open(&cache, artifact, config);
     ns_array_free(config.data);
     ns_build_cache_collect(&cache, &in);
+    if (kind == NS_BUILD_APP && target.os == NS_OS_LINUX) {
+        if (in.icon.data == ns_null || in.icon.len == 0) {
+            ns_str icon = ns_build_default_icon_source();
+            ns_build_cache_add_package(&cache, icon);
+            ns_str_free(icon);
+        }
+        const char *tool = getenv("NS_APPIMAGETOOL");
+        if (tool != ns_null && tool[0] != '\0') {
+            ns_build_cache_add_package(&cache, ns_str_cstr((char *)tool));
+        }
+        const char *runtime = getenv("NS_APPIMAGE_RUNTIME");
+        if (runtime != ns_null && runtime[0] != '\0') {
+            ns_build_cache_add_package(&cache, ns_str_cstr((char *)runtime));
+        }
+    }
     ns_bool fresh = !force && ns_build_cache_fresh(&cache);
     ns_build_profile_end("check_cache", cache_start);
     if (fresh) {
@@ -3995,7 +4135,10 @@ static ns_bool ns_build_targets_can_parallel(ns_str project, ns_str *names, i32 
         ns_build_kind kind = browser ? NS_BUILD_APP : ns_build_resolve_kind(&in, requested_kind);
         ns_asm_target target;
         ns_asm_get_current_target(&target);
-        if (!browser && kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) kind = NS_BUILD_EXE;
+        ns_asm_target host_target;
+        ns_asm_get_host_target(&host_target);
+        if (!browser && kind == NS_BUILD_APP && target.os != NS_OS_DARWIN &&
+            (target.os != NS_OS_LINUX || host_target.os != NS_OS_LINUX)) kind = NS_BUILD_EXE;
         ns_str output = ns_build_default_output(&in, kind);
         ns_asm_clear_target_override();
         ns_str artifact = browser ? ns_str_concat(output, ns_str_cstr(""))
@@ -5009,8 +5152,9 @@ static void ns_exec_profile_view(ns_str filename) {
     ns_str_free(cwd);
 }
 
-// Build the same native artifact as `ns build`, then return the executable
-// within it. The caller owns the returned path.
+// Build a directly runnable native artifact, then return its executable path.
+// Linux app builds normally produce an AppImage, but `ns run` uses the native
+// executable so it does not require the AppImage runtime at launch.
 static ns_str ns_linked_run_executable(ns_str filename, ns_str target_name) {
     ns_build_input in = ns_build_input_resolve(filename, target_name);
     ns_build_kind kind = ns_build_resolve_kind(&in, NS_BUILD_AUTO);
@@ -5024,7 +5168,7 @@ static ns_str ns_linked_run_executable(ns_str filename, ns_str target_name) {
     if (kind == NS_BUILD_APP && target.os != NS_OS_DARWIN) kind = NS_BUILD_EXE;
 
     ns_str output = ns_build_default_output(&in, kind);
-    ns_exec_build_target(filename, ns_str_null, NS_BUILD_AUTO, false, target_name);
+    ns_exec_build_target(filename, ns_str_null, (u8)kind, false, target_name);
 
 #if defined(NS_DARWIN)
     if (kind == NS_BUILD_APP) {

@@ -199,13 +199,21 @@ report is written. Older `ns-profile-v1`…`v5` files still open.
 Running `ns build` with no file argument compiles the current module into
 artifacts under `<module>/bin`: one per declared target, or a single artifact
 from the top-level `type` when the manifest declares no targets. `type = "app"`
-produces a host app bundle, `type = "cli"` a plain executable, and
+produces a `.app` bundle on Darwin or a `.AppImage` on Linux, `type = "cli"` a
+plain executable, and
 `type = "library"` a static library. Any build input inside a manifest
 project uses that project's recursive source set. A file outside a project is
 built as a standalone script and may link local sibling modules it imports. Use
 `-o <path>` to set the output path, or `--exe` / `--lib` to force the artifact
-kind. Native code generation covers Darwin arm64 and Linux x86_64. A target with
-`link = false` runs interpreted, so on a host whose native code generator
+kind. Native code generation covers Darwin arm64 and Linux x86_64. Linux app
+builds need `appimagetool` on `PATH` (or `NS_APPIMAGETOOL` set to its executable
+path). For offline builds, set `NS_APPIMAGE_RUNTIME` to a downloaded type 2
+runtime file. The manifest `icon` must name a PNG or SVG image; without one, the
+bundled Nano Script icon is used. This packaging runs on a Linux host; a
+Linux cross-build from another host retains its executable output. The AppImage
+contains the program, imported Nano Script shared modules, and project assets.
+`ns run` with `link = true` builds a direct executable for interactive runs. A
+target with `link = false` runs interpreted, so on a host whose native code generator
 cannot emit an executable `ns build` still builds it: it writes a launcher that
 enters the project and runs the program through `ns run`, and records that
 launcher in the build cache like any other artifact. Independent

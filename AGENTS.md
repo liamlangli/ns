@@ -79,13 +79,17 @@ The common commands are:
 - `ns build [path | target]`: compile a script or module to native machine
   code. With no target name it builds every `[[targets]]` table the manifest
   declares; a bare word builds that one target independently, as with `ns run`.
-  Manifest type `app` produces a host app bundle (Darwin) or executable,
+  Manifest type `app` produces a host app bundle (Darwin) or AppImage (Linux),
   type `cli` a plain executable, type `library` a static library, and an app
   with `target = "wasm"` produces its browser bundle and `.wasm.map` source
   map. `-o` applies to a single target only. `--exe` forces a
   linked native executable. `ns build` does not fall back to `ns run`. Native
   code generation covers Darwin arm64 (AArch64 mach-o) and Linux x86_64 (AMD64
   ELF); both link the emitted object with the host C toolchain.
+  Linux app packaging requires `appimagetool` on PATH or `NS_APPIMAGETOOL` set
+  to its path. A PNG or SVG `icon` is embedded in the AppImage; omitting it uses
+  the installed Nano Script icon. `ns run` with `link = true` uses a direct
+  executable for interactive launches.
   `ns build --target x86_64-linux-gnu` (also `linux`, `x86_64-linux`, or
   `linux-x86_64`) cross-compiles that ELF from another host. A `[[targets]]`
   entry may set `platform = "x86_64-linux-gnu"`; `ns build` with no name skips
