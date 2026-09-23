@@ -6,20 +6,30 @@
 // callback so the swapchain image is acquired before it and presented after
 // it, exactly as the Metal backend's begin/end frame pair does. A program that
 // never requests a GPU device still gets a working window and input loop.
+//
+// Touch arrives through the seat's wl_touch, so a handheld such as the Steam
+// Deck gets taps and drags. Gamepads are read straight from evdev under
+// /dev/input: Wayland has no gamepad protocol, and both the Deck's own
+// controller (hid-steam) and the virtual pad Steam Input creates are ordinary
+// evdev devices there.
 #include "view.h"
 
 #ifdef NS_LINUX
 
+#include <dirent.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <linux/input-event-codes.h>
+#include <linux/input.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/eventfd.h>
+#include <sys/inotify.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-client.h>
@@ -31,6 +41,47 @@ typedef void (*view_on_launch)(view*);
 typedef void (*view_on_frame)(view*);
 typedef void (*view_on_terminate)(view*);
 
+#define VIEW_LINUX_TOUCH_CAPACITY 16
+
+typedef struct view_linux_touch {
+    i32 id;
+    f64 x, y;
+} view_linux_touch;
+
+// What one evdev absolute axis drives on the standard layout.
+typedef enum view_linux_abs_role {
+    VIEW_LINUX_ABS_NONE = -1,
+    // 0..3 are VIEW_GAMEPAD_AXIS_* directly.
+    VIEW_LINUX_ABS_LEFT_TRIGGER = 4,
+    VIEW_LINUX_ABS_RIGHT_TRIGGER = 5,
+    VIEW_LINUX_ABS_HAT_X = 6,
+    VIEW_LINUX_ABS_HAT_Y = 7,
+} view_linux_abs_role;
+
+typedef struct view_linux_gamepad {
+    // -1 while the slot is free.
+    int fd;
+    // The device node, so a rescan never opens the same pad twice.
+    dev_t device;
+    // hid-steam (the Deck's built-in controller without Steam running): the
+    // triggers are HAT2Y/HAT2X and HAT0/HAT1 are the trackpads, not a d-pad.
+    ns_bool hid_steam;
+    // hid-playstation names BTN_NORTH/BTN_WEST by position. Xbox-style
+    // drivers, including Steam's virtual pad, send BTN_X/BTN_Y by label, and
+    // those share the same codes the other way round.
+    ns_bool positional_face;
+    // A joystick without BTN_GAMEPAD: its BTN_TRIGGER.. buttons map in order.
+    ns_bool joystick_buttons;
+    ns_bool analog_trigger[2];
+    // Events after SYN_DROPPED are discarded until the next SYN_REPORT, then
+    // the whole state is read back from the device.
+    ns_bool dropped;
+    i32 abs_role[ABS_CNT];
+    i32 abs_min[ABS_CNT];
+    i32 abs_max[ABS_CNT];
+    ns_bool hat_left, hat_right, hat_up, hat_down;
+} view_linux_gamepad;
+
 typedef struct view_linux_state {
     struct wl_display *display;
     struct wl_registry *registry;
@@ -40,6 +91,7 @@ typedef struct view_linux_state {
     struct wl_seat *seat;
     struct wl_keyboard *keyboard;
     struct wl_pointer *pointer;
+    struct wl_touch *touch;
     struct wl_data_device_manager *data_device_manager;
     struct wl_data_device *data_device;
     struct wl_data_source *data_source;
@@ -90,6 +142,16 @@ typedef struct view_linux_state {
     // The keymap must stay mapped for as long as the keyboard exists.
     void *keymap;
     size_t keymap_size;
+
+    // Fingers currently down, with the last position each one reported:
+    // wl_touch.up carries no coordinates.
+    view_linux_touch touches[VIEW_LINUX_TOUCH_CAPACITY];
+    i32 touch_count;
+
+    // inotify watch on /dev/input, so pads plugged in (or granted access by
+    // udev) after launch are picked up.
+    int input_notify_fd;
+    view_linux_gamepad gamepads[VIEW_GAMEPAD_CAPACITY];
 } view_linux_state;
 
 static view _view;
@@ -587,6 +649,115 @@ static const struct wl_pointer_listener view_linux_pointer_listener = {
     .axis_value120 = view_linux_pointer_axis_value120,
 };
 
+// ---- touch ------------------------------------------------------------------
+
+static view_linux_touch *view_linux_touch_find(i32 id) {
+    for (i32 i = 0; i < _state.touch_count; i++) {
+        if (_state.touches[i].id == id) return &_state.touches[i];
+    }
+    return ns_null;
+}
+
+// Publish one contact on the unified pointer stream, the way the iOS backend
+// does. Touch ids are offset by one so the first finger never shares the
+// mouse's pointer slot. The legacy mouse fields report an edge for every
+// contact, while mouse_down stays true until the last finger lifts.
+static void view_linux_touch_event(i32 id, i32 phase, f64 x, f64 y, uint32_t time) {
+    view_on_pointer_event(&_view, VIEW_INPUT_DEVICE_TOUCH, phase, id + 1, x, y,
+                          phase == VIEW_INPUT_PHASE_ENDED || phase == VIEW_INPUT_PHASE_CANCELLED ? 0.0 : 1.0,
+                          0.0, 0.0, (f64)time / 1000.0, 0);
+    _view.mouse_x = x;
+    _view.mouse_y = y;
+    if (phase == VIEW_INPUT_PHASE_BEGAN) {
+        _view.mouse_pressed = true;
+    } else if (phase == VIEW_INPUT_PHASE_ENDED || phase == VIEW_INPUT_PHASE_CANCELLED) {
+        _view.mouse_released = true;
+    }
+    _view.mouse_down = _state.touch_count > 0;
+}
+
+static void view_linux_touch_down(void *data, struct wl_touch *touch, uint32_t serial, uint32_t time,
+                                  struct wl_surface *surface, int32_t id, wl_fixed_t x, wl_fixed_t y) {
+    ns_unused(data);
+    ns_unused(touch);
+    _state.last_serial = serial;
+    if (surface != _state.surface) return;
+    view_linux_touch *contact = view_linux_touch_find(id);
+    if (!contact) {
+        if (_state.touch_count >= VIEW_LINUX_TOUCH_CAPACITY) return;
+        contact = &_state.touches[_state.touch_count++];
+        contact->id = id;
+    }
+    contact->x = wl_fixed_to_double(x);
+    contact->y = wl_fixed_to_double(y);
+    view_linux_touch_event(id, VIEW_INPUT_PHASE_BEGAN, contact->x, contact->y, time);
+}
+
+static void view_linux_touch_up(void *data, struct wl_touch *touch, uint32_t serial, uint32_t time, int32_t id) {
+    ns_unused(data);
+    ns_unused(touch);
+    _state.last_serial = serial;
+    view_linux_touch *contact = view_linux_touch_find(id);
+    if (!contact) return;
+    f64 x = contact->x;
+    f64 y = contact->y;
+    *contact = _state.touches[--_state.touch_count];
+    view_linux_touch_event(id, VIEW_INPUT_PHASE_ENDED, x, y, time);
+}
+
+static void view_linux_touch_motion(void *data, struct wl_touch *touch, uint32_t time,
+                                    int32_t id, wl_fixed_t x, wl_fixed_t y) {
+    ns_unused(data);
+    ns_unused(touch);
+    view_linux_touch *contact = view_linux_touch_find(id);
+    if (!contact) return;
+    contact->x = wl_fixed_to_double(x);
+    contact->y = wl_fixed_to_double(y);
+    view_linux_touch_event(id, VIEW_INPUT_PHASE_MOVED, contact->x, contact->y, time);
+}
+
+static void view_linux_touch_frame(void *data, struct wl_touch *touch) {
+    ns_unused(data);
+    ns_unused(touch);
+}
+
+// The compositor took the whole sequence over (a system gesture, say): every
+// finger still down ends as cancelled.
+static void view_linux_touch_cancel(void *data, struct wl_touch *touch) {
+    ns_unused(data);
+    ns_unused(touch);
+    while (_state.touch_count > 0) {
+        view_linux_touch contact = _state.touches[--_state.touch_count];
+        view_linux_touch_event(contact.id, VIEW_INPUT_PHASE_CANCELLED, contact.x, contact.y, 0);
+    }
+}
+
+static void view_linux_touch_shape(void *data, struct wl_touch *touch, int32_t id,
+                                   wl_fixed_t major, wl_fixed_t minor) {
+    ns_unused(data);
+    ns_unused(touch);
+    ns_unused(id);
+    ns_unused(major);
+    ns_unused(minor);
+}
+
+static void view_linux_touch_orientation(void *data, struct wl_touch *touch, int32_t id, wl_fixed_t orientation) {
+    ns_unused(data);
+    ns_unused(touch);
+    ns_unused(id);
+    ns_unused(orientation);
+}
+
+static const struct wl_touch_listener view_linux_touch_listener = {
+    .down = view_linux_touch_down,
+    .up = view_linux_touch_up,
+    .motion = view_linux_touch_motion,
+    .frame = view_linux_touch_frame,
+    .cancel = view_linux_touch_cancel,
+    .shape = view_linux_touch_shape,
+    .orientation = view_linux_touch_orientation,
+};
+
 // ---- seat -------------------------------------------------------------------
 
 static void view_linux_seat_capabilities(void *data, struct wl_seat *seat, uint32_t capabilities) {
@@ -604,6 +775,14 @@ static void view_linux_seat_capabilities(void *data, struct wl_seat *seat, uint3
     } else if (!(capabilities & WL_SEAT_CAPABILITY_POINTER) && _state.pointer) {
         wl_pointer_destroy(_state.pointer);
         _state.pointer = ns_null;
+    }
+    if ((capabilities & WL_SEAT_CAPABILITY_TOUCH) && !_state.touch) {
+        _state.touch = wl_seat_get_touch(seat);
+        wl_touch_add_listener(_state.touch, &view_linux_touch_listener, &_state);
+    } else if (!(capabilities & WL_SEAT_CAPABILITY_TOUCH) && _state.touch) {
+        view_linux_touch_cancel(ns_null, _state.touch);
+        wl_touch_destroy(_state.touch);
+        _state.touch = ns_null;
     }
 }
 
@@ -775,6 +954,322 @@ static void view_linux_set_cursor(void) {
     wl_surface_commit(_state.cursor_surface);
 }
 
+// ---- gamepads ---------------------------------------------------------------
+
+#define VIEW_LINUX_LONG_BITS (8 * sizeof(unsigned long))
+#define VIEW_LINUX_BIT_WORDS(n) (((n) + VIEW_LINUX_LONG_BITS - 1) / VIEW_LINUX_LONG_BITS)
+// The same press threshold XInput uses for its triggers (30 / 255).
+#define VIEW_LINUX_TRIGGER_THRESHOLD 0.12f
+#define VIEW_LINUX_VENDOR_VALVE 0x28de
+#define VIEW_LINUX_PRODUCT_STEAM_VIRTUAL_PAD 0x11ff
+#define VIEW_LINUX_VENDOR_SONY 0x054c
+
+static ns_bool view_linux_bit(const unsigned long *bits, i32 bit) {
+    return (bits[bit / VIEW_LINUX_LONG_BITS] >> (bit % VIEW_LINUX_LONG_BITS)) & 1UL;
+}
+
+static i32 view_linux_gamepad_button_map(const view_linux_gamepad *pad, i32 code) {
+    if (pad->joystick_buttons) {
+        i32 index = code - BTN_JOYSTICK;
+        return index >= 0 && index < 16 ? index : -1;
+    }
+    switch (code) {
+        case BTN_SOUTH: return VIEW_GAMEPAD_BUTTON_SOUTH;
+        case BTN_EAST: return VIEW_GAMEPAD_BUTTON_EAST;
+        case BTN_X: return pad->positional_face ? VIEW_GAMEPAD_BUTTON_NORTH : VIEW_GAMEPAD_BUTTON_WEST;
+        case BTN_Y: return pad->positional_face ? VIEW_GAMEPAD_BUTTON_WEST : VIEW_GAMEPAD_BUTTON_NORTH;
+        case BTN_TL: return VIEW_GAMEPAD_BUTTON_LEFT_SHOULDER;
+        case BTN_TR: return VIEW_GAMEPAD_BUTTON_RIGHT_SHOULDER;
+        case BTN_TL2: return VIEW_GAMEPAD_BUTTON_LEFT_TRIGGER;
+        case BTN_TR2: return VIEW_GAMEPAD_BUTTON_RIGHT_TRIGGER;
+        case BTN_SELECT: return VIEW_GAMEPAD_BUTTON_SELECT;
+        case BTN_START: return VIEW_GAMEPAD_BUTTON_START;
+        case BTN_MODE: return VIEW_GAMEPAD_BUTTON_HOME;
+        case BTN_THUMBL: return VIEW_GAMEPAD_BUTTON_LEFT_STICK;
+        case BTN_THUMBR: return VIEW_GAMEPAD_BUTTON_RIGHT_STICK;
+        case BTN_DPAD_UP: return VIEW_GAMEPAD_BUTTON_DPAD_UP;
+        case BTN_DPAD_DOWN: return VIEW_GAMEPAD_BUTTON_DPAD_DOWN;
+        case BTN_DPAD_LEFT: return VIEW_GAMEPAD_BUTTON_DPAD_LEFT;
+        case BTN_DPAD_RIGHT: return VIEW_GAMEPAD_BUTTON_DPAD_RIGHT;
+        default: return -1;
+    }
+}
+
+static void view_linux_gamepad_key(i32 slot, i32 code, i32 value) {
+    view_linux_gamepad *pad = &_state.gamepads[slot];
+    i32 button = view_linux_gamepad_button_map(pad, code);
+    if (button < 0) return;
+    // An analog trigger axis already publishes both the value and the press;
+    // the digital click some drivers add would only fight it.
+    if (!pad->joystick_buttons) {
+        if (button == VIEW_GAMEPAD_BUTTON_LEFT_TRIGGER && pad->analog_trigger[0]) return;
+        if (button == VIEW_GAMEPAD_BUTTON_RIGHT_TRIGGER && pad->analog_trigger[1]) return;
+    }
+    // value 2 is autorepeat, still held.
+    ns_bool pressed = value != 0;
+    view_on_gamepad_button(&_view, slot, button, pressed ? 1.0f : 0.0f, pressed);
+}
+
+static void view_linux_gamepad_abs(i32 slot, i32 code, i32 value) {
+    if (code < 0 || code >= ABS_CNT) return;
+    view_linux_gamepad *pad = &_state.gamepads[slot];
+    i32 role = pad->abs_role[code];
+    if (role == VIEW_LINUX_ABS_NONE) return;
+    i32 min = pad->abs_min[code];
+    i32 max = pad->abs_max[code];
+    if (max <= min) return;
+    f32 t = (f32)((f64)(value - min) / (f64)(max - min));
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    if (role >= VIEW_GAMEPAD_AXIS_LEFT_X && role <= VIEW_GAMEPAD_AXIS_RIGHT_Y) {
+        // evdev sticks already grow right and down, as the standard layout does.
+        view_on_gamepad_axis(&_view, slot, role, t * 2.0f - 1.0f);
+    } else if (role == VIEW_LINUX_ABS_LEFT_TRIGGER || role == VIEW_LINUX_ABS_RIGHT_TRIGGER) {
+        i32 button = role == VIEW_LINUX_ABS_LEFT_TRIGGER ? VIEW_GAMEPAD_BUTTON_LEFT_TRIGGER
+                                                         : VIEW_GAMEPAD_BUTTON_RIGHT_TRIGGER;
+        view_on_gamepad_button(&_view, slot, button, t, t > VIEW_LINUX_TRIGGER_THRESHOLD);
+    } else {
+        // A hat reports -1 / 0 / 1 around the middle of its range.
+        f64 center = ((f64)min + (f64)max) * 0.5;
+        ns_bool negative = (f64)value < center - 0.25;
+        ns_bool positive = (f64)value > center + 0.25;
+        i32 low = role == VIEW_LINUX_ABS_HAT_X ? VIEW_GAMEPAD_BUTTON_DPAD_LEFT : VIEW_GAMEPAD_BUTTON_DPAD_UP;
+        i32 high = role == VIEW_LINUX_ABS_HAT_X ? VIEW_GAMEPAD_BUTTON_DPAD_RIGHT : VIEW_GAMEPAD_BUTTON_DPAD_DOWN;
+        view_on_gamepad_button(&_view, slot, low, negative ? 1.0f : 0.0f, negative);
+        view_on_gamepad_button(&_view, slot, high, positive ? 1.0f : 0.0f, positive);
+    }
+}
+
+// Read the complete key and axis state back from the device: on connect, and
+// after the kernel dropped events because the queue overflowed.
+static void view_linux_gamepad_sync(i32 slot) {
+    view_linux_gamepad *pad = &_state.gamepads[slot];
+    unsigned long keys[VIEW_LINUX_BIT_WORDS(KEY_CNT)];
+    memset(keys, 0, sizeof(keys));
+    if (ioctl(pad->fd, EVIOCGKEY(sizeof(keys)), keys) >= 0) {
+        for (i32 code = BTN_JOYSTICK; code <= BTN_THUMBR; code++) {
+            view_linux_gamepad_key(slot, code, view_linux_bit(keys, code) ? 1 : 0);
+        }
+        for (i32 code = BTN_DPAD_UP; code <= BTN_DPAD_RIGHT; code++) {
+            view_linux_gamepad_key(slot, code, view_linux_bit(keys, code) ? 1 : 0);
+        }
+    }
+    for (i32 code = 0; code < ABS_CNT; code++) {
+        if (pad->abs_role[code] == VIEW_LINUX_ABS_NONE) continue;
+        struct input_absinfo info;
+        if (ioctl(pad->fd, EVIOCGABS(code), &info) < 0) continue;
+        view_linux_gamepad_abs(slot, code, info.value);
+    }
+}
+
+static void view_linux_gamepad_close(i32 slot) {
+    view_linux_gamepad *pad = &_state.gamepads[slot];
+    if (pad->fd < 0) return;
+    close(pad->fd);
+    pad->fd = -1;
+    pad->device = 0;
+    view_on_gamepad_connected(&_view, slot, false);
+}
+
+static void view_linux_gamepad_assign(view_linux_gamepad *pad, const unsigned long *abs_bits, i32 code, i32 role) {
+    if (!view_linux_bit(abs_bits, code) || pad->abs_role[code] != VIEW_LINUX_ABS_NONE) return;
+    struct input_absinfo info;
+    if (ioctl(pad->fd, EVIOCGABS(code), &info) < 0 || info.maximum <= info.minimum) return;
+    pad->abs_role[code] = role;
+    pad->abs_min[code] = info.minimum;
+    pad->abs_max[code] = info.maximum;
+    if (role == VIEW_LINUX_ABS_LEFT_TRIGGER) pad->analog_trigger[0] = true;
+    if (role == VIEW_LINUX_ABS_RIGHT_TRIGGER) pad->analog_trigger[1] = true;
+}
+
+// Open one event node into a free slot if it is a gamepad or joystick; any
+// other device (keyboard, touchpad, motion sensors) is closed again.
+static ns_bool view_linux_gamepad_open(i32 slot, const char *path, dev_t device) {
+    int fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return false;
+    unsigned long ev_bits[VIEW_LINUX_BIT_WORDS(EV_CNT)];
+    unsigned long key_bits[VIEW_LINUX_BIT_WORDS(KEY_CNT)];
+    unsigned long abs_bits[VIEW_LINUX_BIT_WORDS(ABS_CNT)];
+    memset(ev_bits, 0, sizeof(ev_bits));
+    memset(key_bits, 0, sizeof(key_bits));
+    memset(abs_bits, 0, sizeof(abs_bits));
+    if (ioctl(fd, EVIOCGBIT(0, sizeof(ev_bits)), ev_bits) < 0 ||
+        ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits) < 0 ||
+        ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs_bits)), abs_bits) < 0) {
+        close(fd);
+        return false;
+    }
+    ns_bool gamepad = view_linux_bit(key_bits, BTN_GAMEPAD);
+    ns_bool joystick = view_linux_bit(key_bits, BTN_JOYSTICK);
+    if (!view_linux_bit(ev_bits, EV_KEY) || !view_linux_bit(ev_bits, EV_ABS) ||
+        !view_linux_bit(abs_bits, ABS_X) || (!gamepad && !joystick)) {
+        close(fd);
+        return false;
+    }
+    struct input_id id;
+    memset(&id, 0, sizeof(id));
+    ioctl(fd, EVIOCGID, &id);
+
+    view_linux_gamepad *pad = &_state.gamepads[slot];
+    memset(pad, 0, sizeof(*pad));
+    pad->fd = fd;
+    pad->device = device;
+    pad->hid_steam = id.vendor == VIEW_LINUX_VENDOR_VALVE && id.product != VIEW_LINUX_PRODUCT_STEAM_VIRTUAL_PAD;
+    pad->positional_face = id.vendor == VIEW_LINUX_VENDOR_SONY;
+    pad->joystick_buttons = !gamepad;
+    for (i32 code = 0; code < ABS_CNT; code++) pad->abs_role[code] = VIEW_LINUX_ABS_NONE;
+
+    view_linux_gamepad_assign(pad, abs_bits, ABS_X, VIEW_GAMEPAD_AXIS_LEFT_X);
+    view_linux_gamepad_assign(pad, abs_bits, ABS_Y, VIEW_GAMEPAD_AXIS_LEFT_Y);
+    if (view_linux_bit(abs_bits, ABS_RX)) {
+        view_linux_gamepad_assign(pad, abs_bits, ABS_RX, VIEW_GAMEPAD_AXIS_RIGHT_X);
+        view_linux_gamepad_assign(pad, abs_bits, ABS_RY, VIEW_GAMEPAD_AXIS_RIGHT_Y);
+        if (pad->hid_steam) {
+            view_linux_gamepad_assign(pad, abs_bits, ABS_HAT2Y, VIEW_LINUX_ABS_LEFT_TRIGGER);
+            view_linux_gamepad_assign(pad, abs_bits, ABS_HAT2X, VIEW_LINUX_ABS_RIGHT_TRIGGER);
+        } else {
+            view_linux_gamepad_assign(pad, abs_bits, ABS_Z, VIEW_LINUX_ABS_LEFT_TRIGGER);
+            view_linux_gamepad_assign(pad, abs_bits, ABS_RZ, VIEW_LINUX_ABS_RIGHT_TRIGGER);
+        }
+    } else {
+        // DirectInput-style pads put the right stick on Z / RZ.
+        view_linux_gamepad_assign(pad, abs_bits, ABS_Z, VIEW_GAMEPAD_AXIS_RIGHT_X);
+        view_linux_gamepad_assign(pad, abs_bits, ABS_RZ, VIEW_GAMEPAD_AXIS_RIGHT_Y);
+    }
+    view_linux_gamepad_assign(pad, abs_bits, ABS_BRAKE, VIEW_LINUX_ABS_LEFT_TRIGGER);
+    view_linux_gamepad_assign(pad, abs_bits, ABS_GAS, VIEW_LINUX_ABS_RIGHT_TRIGGER);
+    if (!pad->hid_steam) {
+        view_linux_gamepad_assign(pad, abs_bits, ABS_HAT0X, VIEW_LINUX_ABS_HAT_X);
+        view_linux_gamepad_assign(pad, abs_bits, ABS_HAT0Y, VIEW_LINUX_ABS_HAT_Y);
+    }
+
+    view_on_gamepad_connected(&_view, slot, true);
+    view_linux_gamepad_sync(slot);
+    return true;
+}
+
+static int view_linux_compare_i32(const void *a, const void *b) {
+    i32 x = *(const i32 *)a;
+    i32 y = *(const i32 *)b;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
+// Fill free slots from /dev/input/event*, lowest node first, so the first pad
+// the system found stays gamepad 0.
+static void view_linux_gamepad_scan(void) {
+    DIR *dir = opendir("/dev/input");
+    if (!dir) return;
+    i32 nodes[256];
+    i32 node_count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) && node_count < (i32)(sizeof(nodes) / sizeof(nodes[0]))) {
+        if (strncmp(entry->d_name, "event", 5) != 0) continue;
+        char *end = ns_null;
+        long index = strtol(entry->d_name + 5, &end, 10);
+        if (end == entry->d_name + 5 || *end != '\0' || index < 0) continue;
+        nodes[node_count++] = (i32)index;
+    }
+    closedir(dir);
+    qsort(nodes, (size_t)node_count, sizeof(nodes[0]), view_linux_compare_i32);
+
+    for (i32 n = 0; n < node_count; n++) {
+        i32 slot = -1;
+        for (i32 i = 0; i < VIEW_GAMEPAD_CAPACITY; i++) {
+            if (_state.gamepads[i].fd < 0) {
+                slot = i;
+                break;
+            }
+        }
+        if (slot < 0) return;
+        char path[64];
+        snprintf(path, sizeof(path), "/dev/input/event%d", nodes[n]);
+        struct stat info;
+        if (stat(path, &info) != 0 || !S_ISCHR(info.st_mode)) continue;
+        ns_bool open_already = false;
+        for (i32 i = 0; i < VIEW_GAMEPAD_CAPACITY; i++) {
+            if (_state.gamepads[i].fd >= 0 && _state.gamepads[i].device == info.st_rdev) open_already = true;
+        }
+        if (open_already) continue;
+        view_linux_gamepad_open(slot, path, info.st_rdev);
+    }
+}
+
+static void view_linux_gamepad_read(i32 slot) {
+    view_linux_gamepad *pad = &_state.gamepads[slot];
+    struct input_event events[64];
+    while (pad->fd >= 0) {
+        ssize_t n = read(pad->fd, events, sizeof(events));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            // ENODEV: unplugged. Anything else leaves nothing to read either.
+            if (errno != EAGAIN) view_linux_gamepad_close(slot);
+            return;
+        }
+        if (n == 0) return;
+        i32 count = (i32)((size_t)n / sizeof(events[0]));
+        for (i32 i = 0; i < count; i++) {
+            struct input_event *event = &events[i];
+            if (event->type == EV_SYN) {
+                if (event->code == SYN_DROPPED) {
+                    pad->dropped = true;
+                } else if (event->code == SYN_REPORT && pad->dropped) {
+                    pad->dropped = false;
+                    view_linux_gamepad_sync(slot);
+                }
+                continue;
+            }
+            if (pad->dropped) continue;
+            if (event->type == EV_KEY) {
+                view_linux_gamepad_key(slot, event->code, event->value);
+            } else if (event->type == EV_ABS) {
+                view_linux_gamepad_abs(slot, event->code, event->value);
+            }
+        }
+    }
+}
+
+static void view_linux_gamepad_start(void) {
+    for (i32 i = 0; i < VIEW_GAMEPAD_CAPACITY; i++) _state.gamepads[i].fd = -1;
+    // IN_ATTRIB matters: udev creates the node first and grants the seat's user
+    // access to it a moment later.
+    _state.input_notify_fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (_state.input_notify_fd >= 0 &&
+        inotify_add_watch(_state.input_notify_fd, "/dev/input", IN_CREATE | IN_ATTRIB | IN_MOVED_TO) < 0) {
+        close(_state.input_notify_fd);
+        _state.input_notify_fd = -1;
+    }
+    view_linux_gamepad_scan();
+}
+
+static void view_linux_gamepad_stop(void) {
+    for (i32 i = 0; i < VIEW_GAMEPAD_CAPACITY; i++) view_linux_gamepad_close(i);
+    if (_state.input_notify_fd >= 0) close(_state.input_notify_fd);
+    _state.input_notify_fd = -1;
+}
+
+// Drain every input fd without blocking: hotplug notices first, then each
+// pad's queued events. Called on every loop turn, since a free-running loop
+// never reaches the poll below.
+static void view_linux_gamepad_pump(void) {
+    if (_state.input_notify_fd >= 0) {
+        char buffer[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+        ns_bool rescan = false;
+        for (;;) {
+            ssize_t n = read(_state.input_notify_fd, buffer, sizeof(buffer));
+            if (n <= 0) break;
+            for (char *cursor = buffer; cursor < buffer + n;) {
+                struct inotify_event *event = (struct inotify_event *)cursor;
+                if (event->len > 0 && strncmp(event->name, "event", 5) == 0) rescan = true;
+                cursor += sizeof(struct inotify_event) + event->len;
+            }
+        }
+        if (rescan) view_linux_gamepad_scan();
+    }
+    for (i32 i = 0; i < VIEW_GAMEPAD_CAPACITY; i++) {
+        if (_state.gamepads[i].fd >= 0) view_linux_gamepad_read(i);
+    }
+}
+
 // ---- frame loop -------------------------------------------------------------
 
 typedef void (*view_linux_gpu_frame_fn)(view *v);
@@ -803,6 +1298,7 @@ static void view_linux_draw_frame(view *v) {
 
 // Dispatch everything the compositor has queued without blocking.
 static void view_linux_pump_events(void) {
+    view_linux_gamepad_pump();
     if (wl_display_dispatch_pending(_state.display) < 0) {
         _state.running = false;
         return;
@@ -826,17 +1322,22 @@ static void view_linux_wait(void) {
         _state.running = false;
         return;
     }
-    struct pollfd fds[2] = {
+    struct pollfd fds[3 + VIEW_GAMEPAD_CAPACITY] = {
         {.fd = wl_display_get_fd(_state.display), .events = POLLIN},
         {.fd = _state.event_fd, .events = POLLIN},
     };
+    nfds_t fd_count = 2;
+    if (_state.input_notify_fd >= 0) fds[fd_count++] = (struct pollfd){.fd = _state.input_notify_fd, .events = POLLIN};
+    for (i32 i = 0; i < VIEW_GAMEPAD_CAPACITY; i++) {
+        if (_state.gamepads[i].fd >= 0) fds[fd_count++] = (struct pollfd){.fd = _state.gamepads[i].fd, .events = POLLIN};
+    }
     i32 timeout = -1;
     if (_state.timer_deadline > 0) {
         i64 remaining = _state.timer_deadline - view_linux_now_ms();
         timeout = remaining > 0 ? (i32)remaining : 0;
     }
     if (_state.frame_requests > 0) timeout = 0;
-    i32 ready = poll(fds, 2, timeout);
+    i32 ready = poll(fds, fd_count, timeout);
     if (ready < 0 && errno != EINTR) {
         wl_display_cancel_read(_state.display);
         _state.running = false;
@@ -854,6 +1355,7 @@ static void view_linux_wait(void) {
         u64 drain;
         while (read(_state.event_fd, &drain, sizeof(drain)) > 0) {}
     }
+    view_linux_gamepad_pump();
     if (wl_display_dispatch_pending(_state.display) < 0) {
         _state.running = false;
     }
@@ -868,6 +1370,7 @@ static void view_linux_finish(view *v) {
     _state.finished = true;
     view_on_terminate terminate = (view_on_terminate)v->on_terminate;
     if (terminate) terminate(v);
+    view_linux_gamepad_stop();
 }
 
 // ---- public backend surface -------------------------------------------------
@@ -875,6 +1378,8 @@ static void view_linux_finish(view *v) {
 view *view_create(const char *title, i32 width, i32 height) {
     memset(&_state, 0, sizeof(_state));
     _state.event_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    _state.input_notify_fd = -1;
+    for (i32 i = 0; i < VIEW_GAMEPAD_CAPACITY; i++) _state.gamepads[i].fd = -1;
 
     _state.display = wl_display_connect(ns_null);
     if (!_state.display) {
@@ -958,6 +1463,8 @@ view *view_create(const char *title, i32 width, i32 height) {
     _view.safe_area_right = 0.0;
     _view.safe_area_bottom = 0.0;
     _view.safe_area_left = 0.0;
+    // Pads already plugged in are connected before on_launch runs.
+    view_linux_gamepad_start();
     return &_view;
 }
 
