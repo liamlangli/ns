@@ -4,7 +4,7 @@ Nano Script browser applications use the normal `app` module type plus the
 orthogonal Wasm target:
 
 ```toml
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "example"
 version = "0.1.0"
 type = "app"

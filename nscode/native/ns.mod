@@ -1,4 +1,4 @@
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "nscode-native"
 version = "0.1.0"
 author = "liamlangli <lilang8936@gmail.com>"

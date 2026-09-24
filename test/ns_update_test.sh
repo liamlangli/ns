@@ -26,7 +26,7 @@ printf '%s\n' 'dist/' > "$update_tmp/legacy/.gitignore"
 printf '%s\n' 'source stays untouched' > "$update_tmp/legacy/main.ns"
 (cd "$update_tmp/legacy/subdir" && "$ns" update)
 
-grep -q '^schema = "ns.mod/v1" # legacy schema$' "$update_tmp/legacy/ns.mod"
+grep -q '^schema = "ns.mod/v2" # legacy schema$' "$update_tmp/legacy/ns.mod"
 grep -q '^custom = "preserved"$' "$update_tmp/legacy/ns.mod"
 test "$(grep -c '^schema =' "$update_tmp/legacy/ns.mod")" -eq 1
 cmp "$root/AGENTS.md" "$update_tmp/legacy/AGENTS.md"
@@ -51,12 +51,78 @@ mkdir "$update_tmp/unversioned"
 printf '%s\n' 'name = "unversioned"' 'type = "app"' > "$update_tmp/unversioned/ns.mod"
 printf '%s\n' 'bin/' > "$update_tmp/unversioned/.gitignore"
 "$ns" update "$update_tmp/unversioned/ns.mod"
-test "$(sed -n '1p' "$update_tmp/unversioned/ns.mod")" = 'schema = "ns.mod/v1"'
+test "$(sed -n '1p' "$update_tmp/unversioned/ns.mod")" = 'schema = "ns.mod/v2"'
 grep -q '^name = "unversioned"$' "$update_tmp/unversioned/ns.mod"
 test "$(grep -Ec '^bin/?$' "$update_tmp/unversioned/.gitignore")" -eq 1
 
+# v1 run modes: `link` and machine triples become `target` / target_os /
+# target_arch, per table, and every other line stays as written.
+mkdir -p "$update_tmp/modes"
+printf '%s\n' \
+    'schema = "ns.mod/v1"' \
+    'name = "modes"' \
+    'link = true' \
+    '' \
+    '[[targets]]' \
+    'name = "desktop"' \
+    'entry = "main.ns"' \
+    '' \
+    '[[targets]]' \
+    'name = "server"' \
+    'entry = "main.ns"' \
+    'platform = "x86_64-linux-gnu"' \
+    '' \
+    '[[targets]]' \
+    'name = "tool"' \
+    'entry = "main.ns"' \
+    'platform = "x86_64-linux-gnu"' \
+    'link = false' \
+    '' \
+    '[[targets]]' \
+    'name = "web"' \
+    'entry = "main.ns"' \
+    'target = "wasm"' > "$update_tmp/modes/ns.mod"
+"$ns" update "$update_tmp/modes" > /dev/null
+cat > "$update_tmp/modes.expected" <<'EXPECTED'
+schema = "ns.mod/v2"
+name = "modes"
+target = "exec"
+
+[[targets]]
+name = "desktop"
+entry = "main.ns"
+
+[[targets]]
+name = "server"
+entry = "main.ns"
+target = "exec"
+target_os = "linux"
+target_arch = "x86_64"
+
+[[targets]]
+name = "tool"
+entry = "main.ns"
+target = "eval"
+target_os = "linux"
+target_arch = "x86_64"
+
+[[targets]]
+name = "web"
+entry = "main.ns"
+target = "wasm"
+EXPECTED
+if ! cmp -s "$update_tmp/modes.expected" "$update_tmp/modes/ns.mod"; then
+    printf '%s\n' 'FAIL: ns update did not rewrite v1 run modes into target / target_os / target_arch.' >&2
+    diff "$update_tmp/modes.expected" "$update_tmp/modes/ns.mod" >&2 || true
+    exit 1
+fi
+if grep -q '^link\|^platform' "$update_tmp/modes/ns.mod"; then
+    printf '%s\n' 'FAIL: ns update left a v1 link or platform key.' >&2
+    exit 1
+fi
+
 mkdir "$update_tmp/future"
-printf '%s\n' 'schema = "ns.mod/v2"' 'name = "future"' > "$update_tmp/future/ns.mod"
+printf '%s\n' 'schema = "ns.mod/v3"' 'name = "future"' > "$update_tmp/future/ns.mod"
 if "$ns" update "$update_tmp/future" > "$update_tmp/future.out" 2>&1; then
     printf '%s\n' 'FAIL: ns update accepted an unknown future manifest schema.' >&2
     exit 1

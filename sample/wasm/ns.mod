@@ -1,4 +1,4 @@
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "wasm-webgpu"
 version = "0.1.0"
 type = "app"

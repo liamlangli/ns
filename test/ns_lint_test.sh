@@ -19,7 +19,7 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
 mkdir -p "$tmp/project/src/vendor" "$tmp/project/test"
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'name = "lint-project"' \
     'version = "0.1.0"' \
     'type = "app"' \
@@ -80,7 +80,7 @@ printf '%s\n' 'PASS: ns lint reports project findings and ns lint_fix rewrites t
 
 # The [lint] table customizes the rules; a disabled rule stops reporting.
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'name = "lint-config"' \
     'version = "0.1.0"' \
     'type = "app"' \
@@ -140,7 +140,7 @@ grep -q 'let foo_bar = 1' "$tmp/snake.ns"
 # A project can disable the mandatory snake_case rule.
 mkdir -p "$tmp/camel"
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'name = "camel"' \
     'version = "0.1.0"' \
     'type = "app"' \

@@ -38,16 +38,18 @@ The common commands are:
 - `ns run [file.ns | target] [args...]`: interpret an explicit native file;
   without an argument, use the current project's manifest entry and otherwise
   fall back to `main.ns`. A bare word naming a `[[targets]]` table of the
-  nearest `ns.mod` runs that target. A native project or target with
-  `link = true` instead uses the incremental build and launches its linked
-  artifact; omitted or false keeps interpretation. Arguments after the file or target are
+  nearest `ns.mod` runs that target. How it runs is the target's `target`
+  mode: `eval` (the default) interprets, `exec` uses the incremental native
+  build and launches the linked artifact, `emu` runs on the ns_cpu interpreter
+  and `wasm` serves the browser bundle. An `exec` target built for another
+  machine (`target_os` / `target_arch`) is interpreted here. Arguments after the file or target are
   published as `NS_ARGC` and `NS_ARG0`, `NS_ARG1`, ... for the program to read
   through `os_env`. `ns` options such as `--port` belong before the file or
   target. A Wasm project builds and starts its loopback live-reload server.
-  `ns run --cpu [file | target]` instead lowers the program to ns_cpu register
-  bytecode and runs that: the semantics of a native build, many times faster
-  than the AST interpreter, without generating machine code. `ns run file.nsc`
-  runs a prebuilt ns_cpu image. See `doc/cpu.md`.
+  `ns run --cpu [file | target]` runs any target the way `emu` does: the
+  program lowers to ns_cpu register bytecode with the semantics of a native
+  build, many times faster than the AST interpreter, without generating
+  machine code. `ns run file.nsc` runs a prebuilt ns_cpu image. See `doc/cpu.md`.
 - `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
   write `bin/ns.profile`, then print a colored CLI hot-path summary of VM scopes
   and FFI calls. The report always lands in a `bin/` directory - the project's
@@ -80,7 +82,8 @@ The common commands are:
   same. An explicit test file or non-project directory is also supported. In a
   multi-target project, tests use the default target's source exclusions;
   `<target>_test.ns` uses the exclusions of the matching named target.
-  `ns test --cpu` runs the same entries on the ns_cpu interpreter.
+  `ns test --cpu` runs the same entries on the ns_cpu interpreter, as a project
+  whose default target is `emu` always does.
 - `ns build [path | target]`: compile a script or module to native machine
   code. With no target name it builds every `[[targets]]` table the manifest
   declares; a bare word builds that one target independently, as with `ns run`.
@@ -88,27 +91,30 @@ The common commands are:
   type `cli` a plain executable, type `library` a static library, and an app
   with `target = "wasm"` produces its browser bundle and `.wasm.map` source
   map. `-o` applies to a single target only. `--exe` forces a
-  linked native executable. `--cpu` writes a verified, portable ns_cpu image
-  `bin/<name>.nsc` instead, for hot update or hosts without JIT (`doc/cpu.md`). `ns build` does not fall back to `ns run`. Native
+  linked native executable. An `emu` target, or `--cpu`, writes a verified,
+  portable ns_cpu image `bin/<name>.nsc` instead, for hot update or hosts
+  without JIT (`doc/cpu.md`). `ns build` does not fall back to `ns run`. Native
   code generation covers Darwin arm64 (AArch64 mach-o) and Linux x86_64 (AMD64
   ELF); both link the emitted object with the host C toolchain.
   Linux app packaging needs no external tool: `ns` writes the AppImage's
   squashfs image itself behind its own `ns-appimage-runtime`, which extracts
   the app once into `~/.cache/ns-appimage/` and runs it from there. A PNG or
   SVG `icon` is embedded in the AppImage; omitting it uses the installed Nano
-  Script icon. `ns run` with `link = true` uses a direct
+  Script icon. `ns run` of an `exec` target uses a direct
   executable for interactive launches.
   `ns build --target x86_64-linux-gnu` (also `linux`, `x86_64-linux`, or
-  `linux-x86_64`) cross-compiles that ELF from another host. A `[[targets]]`
-  entry may set `platform = "x86_64-linux-gnu"`; `ns build` with no name skips
-  a platform that is not this host, and `ns build <name>` builds it. The link
+  `linux-x86_64`) cross-compiles that ELF from another host. A target may set
+  `target_os = "linux"` and `target_arch = "x86_64"` (os: `linux`, `darwin`,
+  `windows`; arch: `x86_64`, `arm64`; either alone keeps the host's value for
+  the other); `ns build` with no name skips a machine that is not this host,
+  and `ns build <name>` builds it. The link
   uses that machine's gcc, which drives its GNU ld. Set `NS_LINUX_HOST` to
   the Linux machine (run `scripts/bootstrap_linux_gcc.sh` there once; SteamOS
   ships ld and libc but not the gcc driver). `x86_64-linux-gnu-gcc` on PATH
   or `NS_CROSS_CC` also works. `make cross-linux` builds the feature modules
   with that same gcc. On a host
-  without a native executable backend, a target the manifest declares
-  `link = false` runs interpreted, and `ns build` packages a launcher that
+  without a native executable backend, an `eval` target runs interpreted, and
+  `ns build` packages a launcher that
   enters the project and runs the program through `ns run` instead of failing
   to emit machine code.
   Builds are incremental: every input a build reads is recorded with its last
@@ -128,8 +134,9 @@ The common commands are:
   build cache and build profile, plus legacy `ns.profile` beside the manifest. Source
   and other user files are never removed.
 - `ns project [path]`: generate the supported host-native IDE project below
-  `bin/` from `ns.mod`. A native app with `link = true` compiles the program
-  into the generated Apple targets (arm64 Mach-O) instead of interpreting
+  `bin/` from `ns.mod`. An `exec` app compiles the program into the generated
+  Apple targets (arm64 Mach-O), an `emu` app ships its ns_cpu image and runs it
+  on the embedded ns_cpu interpreter, and an `eval` app interprets
   `LinkedProject.ns`.
 - `ns lint [path]`: report style findings for a file, a directory, or the
   project below the current directory. Exits non-zero when an `error` severity
@@ -138,11 +145,20 @@ The common commands are:
   is the same command.
 - `ns --help`: show compiler targets and all current flags.
 
-The manifest schema is `ns.mod/v1`. Important fields are `name`, `version`,
-`type`, optional `target`, `source`, `entry` (or `entries`), `exclude`,
-`assets`, `orientation`, and `link`. `link = true` makes `ns run` build and launch a native
-artifact, and makes `ns project` compile that program into the generated Apple app
-instead of interpreting `LinkedProject.ns`. Omitting it or setting it false keeps the interpreter.
+The manifest schema is `ns.mod/v2`. Important fields are `name`, `version`,
+`type`, optional `target`, `target_os`, `target_arch`, `source`, `entry` (or
+`entries`), `exclude`, `assets`, and `orientation`. `target` is how the program
+runs:
+
+| `target` | `ns run` | `ns build` / `ns project` |
+| --- | --- | --- |
+| `eval` (default) | interprets the source | native code; the Apple app interprets `LinkedProject.ns` |
+| `exec` | builds native code and launches it | native code for the host or `target_os` / `target_arch` |
+| `emu` | runs on the ns_cpu interpreter | `bin/<name>.nsc`; the Apple app runs that image on ns_cpu |
+| `wasm` | builds and serves the browser bundle | the browser bundle |
+
+`ns.mod/v1` spelled these as `link = true|false`, `platform = "<triple>"` and
+`target = "<triple>"`; they still read, and `ns update` rewrites them.
 `assets = ["res"]` names the files and directories a bundle packages, as
 project-relative paths; a manifest that declares none packages the conventional
 `assets` directory beside it and below `source`. Each path keeps the name it has
@@ -168,7 +184,7 @@ and the rest shipped with the toolchain) resolve from the installed SDK, so a
 them.
 
 ```toml
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "example"
 version = "0.1.0"
 type = "app"
@@ -182,10 +198,9 @@ entry instead of a single top-level `entry`. `ns run <name>` and
 `default = true`, otherwise the first declared one, and `ns build` builds every
 declared target. A target may override `type` (`app` for a host app bundle,
 `cli` for a plain executable, `library` for a static library),
-`platform` (`wasm` or `x86_64-linux-gnu`), `icon`, `shell`, `output`, `orientation` and add its own
-`exclude` list;
-it may also override `link`; anything it omits is inherited from the top-level
-key. Each target compiles the
+`target`, `target_os`, `target_arch`, `icon`, `shell`, `output`, `orientation`
+and add its own `exclude` list; anything it omits is inherited from the
+top-level key. Each target compiles the
 whole project source set minus the entries owned by the other targets, so every
 target defines its own `main` and shares every other module. Each target owns
 the directory `bin/<target name>` and writes everything it produces there - the
@@ -208,7 +223,14 @@ type = "cli"
 [[targets]]
 name = "example-web"
 entry = "web_main.ns"
-platform = "wasm"
+target = "wasm"
+
+[[targets]]
+name = "example-linux"
+entry = "main.ns"
+target = "exec"
+target_os = "linux"
+target_arch = "x86_64"
 ```
 
 An optional `[lint]` table customizes the linter for the project. Each rule
@@ -233,7 +255,9 @@ Build output, generated IDE projects, profiles, and other generated artifacts
 belong in `bin/` and should not be treated as source.
 
 `ns update` preserves application source and custom manifest fields. It
-upgrades a missing or `ns.mod/v0` schema marker to `ns.mod/v1`, refreshes the
+upgrades a missing, `ns.mod/v0` or `ns.mod/v1` schema marker to `ns.mod/v2`,
+rewrites v1 `link` / `platform` keys into `target` / `target_os` /
+`target_arch`, refreshes the
 canonical `AGENTS.md`, and additively merges current `.gitignore` rules.
 Changed originals are retained in `bin/ns-update-backup/`, with numbered names
 for distinct later revisions. Unknown newer schemas are rejected instead of

@@ -82,7 +82,7 @@ mkdir -p "$run_tmp/main-only" "$run_tmp/manifest-priority" "$run_tmp/missing"
 
 # A parent manifest must not be inherited by bare `ns run` from a child dir.
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'entry = "parent-entry.ns"' > "$run_tmp/ns.mod"
 printf '%s\n' 'this parent entry must not be selected' > "$run_tmp/parent-entry.ns"
 
@@ -94,7 +94,7 @@ printf '%s\n' \
     '}' > "$run_tmp/main-only/main.ns"
 
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'entry = "entry.ns"' > "$run_tmp/manifest-priority/ns.mod"
 printf '%s\n' 'use std' 'fn main() {' '}' > "$run_tmp/manifest-priority/entry.ns"
 # This remains project source, but must not replace the manifest entry.
@@ -117,7 +117,7 @@ printf '%s\n' 'PASS: ns run selects cwd/ns.mod, then cwd/main.ns, without walkin
 
 mkdir -p "$run_tmp/recursive/src/nested" "$run_tmp/recursive/src/ignored" "$run_tmp/recursive/src/wild" "$run_tmp/recursive/src/test"
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'name = "recursive-project"' \
     'version = "0.1.0"' \
     'type = "app"' \
@@ -146,7 +146,7 @@ printf '%s\n' 'PASS: ns projects recursively link sources and honor manifest/def
 
 mkdir -p "$run_tmp/targets/src" "$run_tmp/target-exclude/src/broken"
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'name = "multi-target"' \
     'version = "0.1.0"' \
     'type = "app"' \
@@ -208,7 +208,7 @@ fi
 
 # A per-target exclude is added to the project exclude list for that target.
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'name = "target-exclude"' \
     'version = "0.1.0"' \
     'type = "app"' \
@@ -231,7 +231,7 @@ printf '%s\n' 'PASS: ns run selects ns.mod targets, drops the other target entri
 # Extra arguments after the target are program args, not extra input paths.
 mkdir -p "$run_tmp/args/src"
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'name = "run-args"' \
     'version = "0.1.0"' \
     'type = "app"' \
@@ -286,7 +286,7 @@ printf '%s\n' 'PASS: ns run publishes remaining arguments as NS_ARG*.'
 
 mkdir -p "$test_tmp/project/test" "$test_tmp/project/browser"
 printf '%s\n' \
-    'schema = "ns.mod/v1"' \
+    'schema = "ns.mod/v2"' \
     'name = "test-discovery"' \
     'version = "0.1.0"' \
     'type = "app"' \
@@ -381,7 +381,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
 
     mkdir -p "$build_tmp/app"
     printf '%s\n' \
-        'schema = "ns.mod/v1"' \
+        'schema = "ns.mod/v2"' \
         'name = "tiny-app"' \
         'version = "0.1.0"' \
         'type = "app"' \
@@ -464,7 +464,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # named target builds alone.
     mkdir -p "$build_tmp/kinds/src"
     printf '%s\n' \
-        'schema = "ns.mod/v1"' \
+        'schema = "ns.mod/v2"' \
         'name = "kinds"' \
         'version = "0.1.0"' \
         'type = "app"' \
@@ -542,7 +542,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
     # context.
     mkdir -p "$build_tmp/mixed/src/web"
     printf '%s\n' \
-        'schema = "ns.mod/v1"' \
+        'schema = "ns.mod/v2"' \
         'name = "mixed"' \
         'version = "0.1.0"' \
         'type = "app"' \
@@ -557,7 +557,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
         '[[targets]]' \
         'name = "mixed-web"' \
         'entry = "web/web_main.ns"' \
-        'platform = "wasm"' \
+        'target = "wasm"' \
         'exclude = ["src/*.ns"]' > "$build_tmp/mixed/ns.mod"
     printf '%s\n' \
         'use std' \

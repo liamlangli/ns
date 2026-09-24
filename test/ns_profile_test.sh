@@ -126,7 +126,7 @@ grep -q 'main;mid;leaf' "$tmp/bin/ns.profile"
 # the command runs from outside the project directory.
 mkdir -p "$tmp/run-profile/src"
 cat > "$tmp/run-profile/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "profile-run"
 version = "0.1.0"
 type = "app"
@@ -154,7 +154,7 @@ cd "$tmp"
 # Wasm here so the coverage does not depend on a host linker or bundle format.
 mkdir -p "$tmp/build-profile/src"
 cat > "$tmp/build-profile/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "profile-build"
 version = "0.1.0"
 type = "app"

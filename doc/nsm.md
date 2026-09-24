@@ -7,15 +7,16 @@ Scope-based projects require an `ns.mod` file at the project root. The file is
 TOML so tools can read project metadata before compiling any Nano Script source.
 
 ```toml
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "example"
 version = "0.1.0"
 author = "Example Author <author@example.com>"
 type = "app"
-# Set true to make `ns run` build, link, and launch the native artifact.
-link = false
-# Optional browser target; omit for a native project.
-# target = "wasm"
+# How the project runs: eval (default), exec, emu or wasm.
+target = "eval"
+# exec only: cross-compile for another platform; omit for the host.
+# target_os = "linux"
+# target_arch = "x86_64"
 # Optional custom Wasm page with {{wasm}}, {{title}}, and {{favicon}} markers.
 # shell = "index.html"
 description = "Example module."
@@ -70,9 +71,21 @@ Running `ns run` with no file argument first checks for `ns.mod` in the current
 directory and executes the `entry` (or first of `entries`) it declares, resolved
 against the `source` dir. If the current directory has no `ns.mod`, it runs
 `main.ns` there instead. It reports an error only when neither file exists.
-By default the native entry is evaluated by the interpreter. Set `link = true`
-to make `ns run` use the incremental native build and launch its artifact
-instead. `link = false` and an omitted `link` keep the interpreted behavior.
+How the entry runs is its `target`:
+
+| `target` | Run mode                                                          |
+|----------|-------------------------------------------------------------------|
+| `eval`   | Interpreted from the AST (the default)                            |
+| `exec`   | Compiled, linked and launched as a native executable              |
+| `emu`    | Compiled to an ns_cpu image (`.nsc`) and run on the ns_cpu emulator (doc/cpu.md) |
+| `wasm`   | Built as a browser bundle and served                              |
+
+`exec` builds for the host unless `target_os` (`linux`, `darwin`, `windows`)
+and `target_arch` (`x86_64`, `arm64`) name another platform; either key may be
+omitted to keep the host's value. `ns build` of a foreign `exec` target
+cross-compiles, and `ns run` of one falls back to the interpreter because the
+host cannot launch the result. `ns build` of an `emu` target writes
+`bin/<name>.nsc`, and `ns test` runs an `emu` project's tests on ns_cpu.
 
 ### Mobile orientation
 
@@ -97,7 +110,7 @@ project generates.
 A manifest may declare several runnable targets, each with its own entry:
 
 ```toml
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "example"
 version = "0.1.0"
 type = "app"
@@ -111,7 +124,7 @@ default = true
 [[targets]]
 name = "example-web"
 entry = "web_main.ns"
-platform = "wasm"
+target = "wasm"
 shell = "web/index.html"
 exclude = ["desktop/"]
 ```
@@ -126,12 +139,13 @@ declared. A manifest that declares no `[[targets]]` keeps using its top-level
 | `name`        | Selector for `ns run` / `ns build`, and the artifact name      |
 | `entry`       | Entry source, relative to the manifest `source` dir            |
 | `type`        | `app`, `cli` or `library`; defaults to the top-level `type`     |
-| `platform`    | `wasm` for a browser target; defaults to the top-level `target` |
+| `target`      | `eval`, `exec`, `emu` or `wasm`; defaults to the top-level `target` |
+| `target_os`   | `exec` platform OS; defaults to the top-level `target_os`      |
+| `target_arch` | `exec` platform CPU; defaults to the top-level `target_arch`   |
 | `icon`        | Defaults to the top-level `icon`                               |
 | `shell`       | Custom Wasm HTML page; defaults to the top-level `shell`       |
 | `output`      | Artifact and display name; defaults to `name`                  |
 | `default`     | `true` marks the target `ns run` picks with no name            |
-| `link`        | Build and launch this native target from `ns run`              |
 | `exclude`     | Sources removed for this target only, added to the project `exclude` |
 | `orientation` | Mobile orientations this target enables; defaults to the top-level `orientation` |
 
@@ -146,8 +160,9 @@ the same names. The artifact inside that directory is named after the target, or
 after `output` when the table sets it: target `web` with `output = "viewer"`
 writes `bin/web/viewer`. A manifest that declares no `[[targets]]` has one
 implicit target and keeps `bin/` itself.
-Like the other target settings, `link` inherits its top-level value; an
-explicit `link = false` on a target disables linking inherited from the project.
+Like the other target settings, `target`, `target_os` and `target_arch` inherit
+their top-level values; an explicit `target = "eval"` on a target runs it
+interpreted even when the project defaults to `exec`.
 
 `ns build` with no target name builds *every* declared target, each with its
 own `type`, so one manifest can ship a windowed app, a command-line tool and a
@@ -163,9 +178,9 @@ static library side by side:
 single target only, so name the target when overriding the output path.
 `ns project` generates the IDE project of the default target; a `cli` target
 gets host build/test targets rather than platform application targets. An app
-target still gets the platform application targets when it sets `link = true`;
-that setting controls `ns run`, while the generated Apple apps embed the linked
-source.
+target gets the platform application targets whatever its `target`: `exec`
+apps compile the entry into the app, `emu` apps embed its ns_cpu image, and
+`eval` apps embed the linked source for the interpreter.
 
 A bare word selects a target: `ns run web`. An argument that looks like a path
 stays a path, so `ns run ./web`, `ns run src/web_main.ns` and any argument
@@ -181,8 +196,8 @@ script reads them with `os_env`. A leading `--` after the file is stripped, and
 `ns run -- arg...` runs the default target with only those program arguments.
 `ns` options such as `--port` belong before the file or target.
 `ns profile` always evaluates through the interpreter so it can collect VM and
-FFI scopes, even when the selected target sets `link = true`. Wasm targets keep
-their existing build-and-serve behavior regardless of `link`. The report is
+FFI scopes, even when the selected target sets `target = "exec"` or `"emu"`. Wasm
+targets keep their build-and-serve behavior. The report is
 written to `bin/ns.profile`: the project's own `bin/` when the run resolves a
 project, otherwise `bin/` beside the working directory. Nothing is ever written
 to the root of the project folder. The text format is `ns-profile-v6`: aggregates and flame stacks stay in the
@@ -219,8 +234,8 @@ manifest `icon` must name a PNG or SVG image; without one, the bundled Nano
 Script icon is used. A cross-build from another host uses the Linux launcher
 `make cross-linux` fetches. The AppImage contains the program, imported Nano
 Script shared modules, and project assets.
-`ns run` with `link = true` builds a direct executable for interactive runs. A
-target with `link = false` runs interpreted, so on a host whose native code generator
+`ns run` of an `exec` target builds a direct executable for interactive runs. An
+`eval` target runs interpreted, so on a host whose native code generator
 cannot emit an executable `ns build` still builds it: it writes a launcher that
 enters the project and runs the program through `ns run`, and records that
 launcher in the build cache like any other artifact. Independent
@@ -261,8 +276,8 @@ place.
 `bin/` directory, including generated IDE projects, the build cache, and the
 build profile, plus legacy `ns.profile` beside the manifest.
 
-For a browser project, keep `type = "app"` and set `target = "wasm"` (or
-`platform = "wasm"` on one `[[targets]]` table).
+For a browser project, keep `type = "app"` and set `target = "wasm"` (at the top level
+or on one `[[targets]]` table).
 `ns build` then emits a browser bundle (`.wasm`, `.wasm.map`, `ns-wasm.js`, and
 `index.html`) under the target's output directory - `bin/<target name>` for a
 declared target, `bin/` for a manifest without targets - while
@@ -277,8 +292,11 @@ favicon, falling back to Nano Script's installed `ns.svg` when omitted. Set
 
 Running `ns update [path]` finds the nearest `ns.mod` and migrates project
 metadata to the format bundled with the current executable. It preserves
-custom manifest fields and source files, upgrades a missing or `ns.mod/v0`
-schema marker to `ns.mod/v1`, refreshes `AGENTS.md`, and additively merges the
+custom manifest fields and source files, upgrades a missing, `ns.mod/v0` or
+`ns.mod/v1` schema marker to `ns.mod/v2`, rewrites the v1 run keys (`link = true`
+becomes `target = "exec"`, `link = false` or none becomes the interpreted
+default, `platform = "wasm"` becomes `target = "wasm"`, and a `triple` becomes
+`target_os`/`target_arch`), refreshes `AGENTS.md`, and additively merges the
 standard generated-file rules into `.gitignore`. Before replacing an existing
 file, it keeps the original under `bin/ns-update-backup/`. Distinct later
 revisions use numbered backup names. Unknown newer schemas are rejected, and
@@ -289,7 +307,7 @@ an already-current project is left unchanged.
 `ns project [path]` finds the nearest `ns.mod`, starting at `path` or the current
 directory, validates it, and generates host-native IDE files under the module's
 `bin` directory. Names that are not valid IDE identifiers are normalized to a
-safe name. Generation requires schema `ns.mod/v1`, a nonempty name, a recognized
+safe name. Generation requires schema `ns.mod/v2` (or `ns.mod/v1`; run `ns update`), a nonempty name, a recognized
 app/application or lib/library type, and a valid entry for an app.
 
 On Darwin, it creates `bin/<safe-name>.xcodeproj`. An app manifest gets SwiftUI

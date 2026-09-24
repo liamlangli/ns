@@ -18,7 +18,7 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 project="$tmp/app"
 mkdir -p "$project"
 cat > "$project/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "demo"
 version = "0.1.0"
 type = "app"
@@ -137,7 +137,7 @@ printf '%s\n' 'PASS: ns build stays incremental and ns clean removes generated f
 multi="$tmp/multi"
 mkdir -p "$multi/src"
 cat > "$multi/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "multi"
 version = "0.1.0"
 type = "app"
@@ -209,7 +209,7 @@ printf '%s\n' 'PASS: every ns.mod target owns bin/<target name>.'
 repack="$tmp/repack"
 mkdir -p "$repack/web"
 cat > "$repack/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "repack"
 version = "0.1.0"
 type = "app"
@@ -286,7 +286,7 @@ expect_up_to_date 'a rebuilt bundle must record the recompiled source.'
 
 printf '%s\n' 'PASS: a packaged edit re-packages a browser bundle without recompiling it.'
 
-# A `link = false` target must build into something runnable on every host: a
+# A `target = "eval"` target must build into something runnable on every host: a
 # native executable where the host has a code generator for one, and otherwise a
 # launcher that enters the project and hands the program to `ns run`. Darwin and
 # Windows are covered by the native-artifact tests above.
@@ -301,7 +301,7 @@ Darwin|MINGW*|MSYS*|CYGWIN*)
         cp "$(dirname "$0")/../sample/ns.png" "$native_app/icon.png"
         printf 'bundled asset\n' > "$native_app/assets/message.txt"
         cat > "$native_app/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "native-app"
 version = "0.1.0"
 type = "app"
@@ -362,13 +362,13 @@ EOF
     interpreted="$tmp/interpreted"
     mkdir -p "$interpreted/src"
     cat > "$interpreted/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "interpreted"
 version = "0.1.0"
 type = "cli"
 source = "src"
 entry = "main.ns"
-link = false
+target = "eval"
 EOF
     cat > "$interpreted/src/main.ns" <<'EOF'
 use std
@@ -402,6 +402,6 @@ EOF
     }
     expect_up_to_date 'an unchanged interpreted target must not be rebuilt.'
 
-    printf '%s\n' 'PASS: ns build produces a runnable artifact for a link = false target.'
+    printf '%s\n' 'PASS: ns build produces a runnable artifact for a target = "eval" target.'
     ;;
 esac

@@ -46,7 +46,7 @@ tune the rules that need a number. The nearest manifest above the linted path
 supplies the settings, so a project owns its own style.
 
 ```toml
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "example"
 version = "0.1.0"
 type = "app"

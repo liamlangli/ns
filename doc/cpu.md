@@ -33,6 +33,11 @@ ns run out.nsc                   # run an image; `ns run` detects the format
 ns --cpu-dis file.ns|file.nsc    # print the code of every function
 ```
 
+A project whose `ns.mod` sets `target = "emu"` (at the top level or on one
+`[[targets]]` table) runs this way without the flag: `ns run` and `ns test`
+use ns_cpu, `ns build` writes the image, and `ns project` embeds the image in
+the generated Apple apps, whose runtime runs it on ns_cpu (see doc/nsm.md).
+
 `ns run --cpu` behaves like `ns run`: it links the project, runs the module
 globals and then `main`, and exits 0. A fault (failed `assert`, array index out
 of bounds, division by zero, a bad address, a missing native symbol) prints
@@ -174,5 +179,3 @@ Limits of this version:
 - A fault inside ns code that native code called back (a task body, a view
   callback) aborts the process, as it would in a native build: unwinding
   through the native frames in between is not safe.
-- Generated Xcode projects do not copy `ns_cpu.c` into their embedded runtime
-  yet; the iOS static library (`make ios_static`) includes it.

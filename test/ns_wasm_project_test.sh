@@ -74,7 +74,7 @@ fn main() i32 {
 }
 fn frame(time_ms: f64, width: i32, height: i32) { }
 `;
-const manifest = (name = 'wasm-e2e', icon = '', shell = '') => `schema = "ns.mod/v1"
+const manifest = (name = 'wasm-e2e', icon = '', shell = '') => `schema = "ns.mod/v2"
 name = "${name}"
 type = "app"
 target = "wasm"
@@ -199,7 +199,7 @@ assert.match(new TextDecoder().decode(shaderSections[0]), /@vertex/);
 }
 
 const unsupportedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ns-wasm-unsupported-'));
-fs.writeFileSync(path.join(unsupportedRoot, 'ns.mod'), 'schema = "ns.mod/v1"\nname = "unsupported"\ntype = "app"\ntarget = "wasm"\nsource = "."\nentry = "main.ns"\n');
+fs.writeFileSync(path.join(unsupportedRoot, 'ns.mod'), 'schema = "ns.mod/v2"\nname = "unsupported"\ntype = "app"\ntarget = "wasm"\nsource = "."\nentry = "main.ns"\n');
 fs.writeFileSync(path.join(unsupportedRoot, 'main.ns'), 'use http\nfn main() {}\n');
 const unsupportedBuild = spawnSync(ns, ['build', unsupportedRoot], { encoding: 'utf8' });
 assert.notStrictEqual(unsupportedBuild.status, 0);

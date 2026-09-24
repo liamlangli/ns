@@ -21,7 +21,7 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 
 mkdir -p "$tmp/app"
 cat > "$tmp/app/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "hi"
 version = "0.1.0"
 type = "cli"
@@ -53,7 +53,7 @@ echo "cross build emitted an x86_64 Linux ELF"
 # A foreign platform target is skipped by a nameless `ns build` and built when named.
 mkdir -p "$tmp/multi"
 cat > "$tmp/multi/ns.mod" <<'EOF'
-schema = "ns.mod/v1"
+schema = "ns.mod/v2"
 name = "multi"
 version = "0.1.0"
 type = "cli"
@@ -67,7 +67,8 @@ default = true
 [[targets]]
 name = "linux"
 entry = "main.ns"
-platform = "x86_64-linux-gnu"
+target_os = "linux"
+target_arch = "x86_64"
 EOF
 cp "$tmp/app/main.ns" "$tmp/multi/main.ns"
 

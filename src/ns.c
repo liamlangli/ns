@@ -34,7 +34,8 @@
 #include <mach-o/dyld.h>
 #endif
 
-#define NS_MANIFEST_SCHEMA_CURRENT "ns.mod/v1"
+#define NS_MANIFEST_SCHEMA_CURRENT "ns.mod/v2"
+#define NS_MANIFEST_SCHEMA_V1 "ns.mod/v1"
 #define NS_MANIFEST_SCHEMA_LEGACY "ns.mod/v0"
 #define NS_WASM_DEFAULT_PORT 9001
 
@@ -1104,11 +1105,31 @@ static ns_str *ns_manifest_values(ns_str src, const char *key) {
 // target marked `default = true`, otherwise the first declared one, is used.
 // Every target keeps the project source set, minus the entries owned by the
 // targets that were not selected, so each target declares its own `main`.
+// How a target runs, the `target` key of ns.mod/v2:
+//   eval  `ns run` interprets the source (the default)
+//   exec  `ns run` builds native machine code and launches it; `target_os`
+//         and `target_arch` pick a machine other than the host for `ns build`
+//   emu   the program compiles to an ns_cpu image and runs on the ns_cpu
+//         interpreter (doc/cpu.md), on the desktop and in a generated app
+//   wasm  a browser bundle
+// ns.mod/v1 spelled these as `link = true|false`, `platform = "<triple>"` and
+// `target = "wasm"|"<triple>"`; both spellings are read, and `ns update`
+// rewrites the old one.
+typedef enum ns_run_mode {
+    NS_RUN_EVAL = 0,
+    NS_RUN_EXEC,
+    NS_RUN_EMU,
+    NS_RUN_WASM,
+} ns_run_mode;
+
 typedef struct ns_manifest_target {
     ns_str name;        // selector, and the default artifact name
     ns_str entry;       // entry source, relative to the manifest `source` dir
     ns_str type;        // app | library; inherits the top-level `type`
-    ns_str platform;    // wasm; inherits the top-level `target`
+    ns_str platform;    // `target` as written (a mode, or a v1 triple / wasm)
+    ns_str legacy_platform; // v1 `platform = "<triple>"`
+    ns_str target_os;   // exec: the machine a build targets; inherits
+    ns_str target_arch;
     ns_str icon;        // inherits the top-level `icon`
     ns_str shell;       // inherits the top-level `shell`
     ns_str output;      // artifact and display name; defaults to `name`
@@ -1225,8 +1246,10 @@ static ns_manifest_target *ns_manifest_targets(ns_str src) {
         if ((value = ns_manifest_line_str(line, "type")).data != ns_null) { target->type = value; continue; }
         // `platform` is the canonical key; `target` inside the table is the
         // same value spelled like the top-level key it inherits from.
-        if ((value = ns_manifest_line_str(line, "platform")).data != ns_null) { target->platform = value; continue; }
+        if ((value = ns_manifest_line_str(line, "platform")).data != ns_null) { target->legacy_platform = value; continue; }
         if ((value = ns_manifest_line_str(line, "target")).data != ns_null) { target->platform = value; continue; }
+        if ((value = ns_manifest_line_str(line, "target_os")).data != ns_null) { target->target_os = value; continue; }
+        if ((value = ns_manifest_line_str(line, "target_arch")).data != ns_null) { target->target_arch = value; continue; }
         if ((value = ns_manifest_line_str(line, "icon")).data != ns_null) { target->icon = value; continue; }
         if ((value = ns_manifest_line_str(line, "shell")).data != ns_null) { target->shell = value; continue; }
         if ((value = ns_manifest_line_str(line, "output")).data != ns_null) { target->output = value; continue; }
@@ -1244,6 +1267,9 @@ static void ns_manifest_targets_free(ns_manifest_target *targets) {
         ns_str_free(targets[i].entry);
         ns_str_free(targets[i].type);
         ns_str_free(targets[i].platform);
+        ns_str_free(targets[i].legacy_platform);
+        ns_str_free(targets[i].target_os);
+        ns_str_free(targets[i].target_arch);
         ns_str_free(targets[i].icon);
         ns_str_free(targets[i].shell);
         ns_str_free(targets[i].output);
@@ -1581,6 +1607,8 @@ static void ns_project_target_excludes(ns_str root, ns_str manifest, ns_str entr
 
 // Link all project sources. Files under test/ and other *_test.ns entries are
 // excluded by default. Test execution adds only the selected test entry.
+static ns_bool ns_build_type_is_library(ns_str t);
+
 static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_file, ns_bool test_entry,
                                   ns_line_loc **out_map, ns_str **out_external_modules) {
     ns_str manifest_path = ns_path_join(root, ns_str_cstr("ns.mod"));
@@ -1592,10 +1620,10 @@ static ns_str ns_project_link_all(ns_str root, ns_str entry_src, ns_str entry_fi
     ns_str project_relative = (source_value.data == ns_null || ns_str_equals(source_value, ns_str_cstr(".")))
                                   ? ns_str_cstr("") : source_value;
     ns_str project_type = ns_manifest_value(manifest, "type");
-    ns_bool app_project = ns_str_equals(project_type, ns_str_cstr("app")) ||
-                          ns_str_equals(project_type, ns_str_cstr("application"));
-    // An app's manifest entry owns its own main and must not shadow the main
-    // in a selected test. Library entries remain part of their testable API.
+    ns_bool app_project = !ns_build_type_is_library(project_type);
+    // An app's or a cli's manifest entry owns its own main and must not shadow
+    // the main in a selected test. Library entries remain part of their
+    // testable API.
     ns_str project_entry = test_entry && app_project ? ns_manifest_entry_file_for_root(root) : ns_str_null;
     ns_project_source *sources = ns_null;
     ns_project_sources_scan(source_dir, project_relative, ns_str_cstr(""), excludes, &sources);
@@ -1688,8 +1716,110 @@ typedef struct ns_manifest_selection {
     ns_str icon;        // resolved against the project root
     ns_str shell;       // resolved against the project root
     u32 orientations;   // mobile orientations enabled; none declared keeps all
-    ns_bool link;       // `ns run` builds and launches instead of evaluating
+    ns_run_mode mode;   // eval | exec | emu | wasm
+    ns_bool link;       // exec: `ns run` builds and launches instead of evaluating
 } ns_manifest_selection;
+
+static ns_bool ns_run_mode_parse(ns_str s, ns_run_mode *out) {
+    if (ns_str_equals_STR(s, "eval")) { *out = NS_RUN_EVAL; return true; }
+    if (ns_str_equals_STR(s, "exec")) { *out = NS_RUN_EXEC; return true; }
+    if (ns_str_equals_STR(s, "emu")) { *out = NS_RUN_EMU; return true; }
+    if (ns_str_equals_STR(s, "wasm")) { *out = NS_RUN_WASM; return true; }
+    return false;
+}
+
+static const char *ns_run_mode_name(ns_run_mode m) {
+    switch (m) {
+    case NS_RUN_EXEC: return "exec";
+    case NS_RUN_EMU: return "emu";
+    case NS_RUN_WASM: return "wasm";
+    default: return "eval";
+    }
+}
+
+static ns_bool ns_target_os_parse(ns_str s, ns_os *out) {
+    if (ns_str_equals_STR(s, "linux")) { *out = NS_OS_LINUX; return true; }
+    if (ns_str_equals_STR(s, "darwin") || ns_str_equals_STR(s, "macos")) { *out = NS_OS_DARWIN; return true; }
+    if (ns_str_equals_STR(s, "windows")) { *out = NS_OS_WINDOWS; return true; }
+    return false;
+}
+
+static ns_bool ns_target_arch_parse(ns_str s, ns_arch *out) {
+    if (ns_str_equals_STR(s, "x86_64") || ns_str_equals_STR(s, "amd64") || ns_str_equals_STR(s, "x64")) {
+        *out = NS_ARCH_X64;
+        return true;
+    }
+    if (ns_str_equals_STR(s, "arm64") || ns_str_equals_STR(s, "aarch64")) { *out = NS_ARCH_AARCH64; return true; }
+    return false;
+}
+
+static ns_bool ns_build_parse_triple(ns_str spec, ns_asm_target *out);
+
+// The raw `target` / `target_os` / `target_arch` of one manifest table, with
+// the v1 `link` and `platform` keys it may still carry.
+typedef struct ns_manifest_mode_keys {
+    ns_str target, legacy_platform, os, arch;
+    ns_bool has_link, link;
+} ns_manifest_mode_keys;
+
+// Resolve a table's run mode and the platform string a build targets: "" for
+// the host, "wasm", or a `<arch>-<os>` machine. Keys the table leaves out come
+// from `inherit` (the top level); `where` names the table in errors.
+static void ns_manifest_mode_resolve(ns_manifest_mode_keys keys, const ns_manifest_selection *inherit,
+                                     ns_str inherit_os, ns_str inherit_arch, ns_str where,
+                                     ns_run_mode *mode_out, ns_str *platform_out) {
+    ns_run_mode mode = inherit ? inherit->mode : NS_RUN_EVAL;
+    ns_str platform = inherit && inherit->platform.data ? ns_str_dup(inherit->platform) : ns_str_null;
+    ns_bool explicit_mode = false;
+    ns_str raw = keys.target.len > 0 ? keys.target : keys.legacy_platform;
+    if (raw.len > 0) {
+        explicit_mode = true;
+        ns_asm_target triple;
+        if (ns_run_mode_parse(raw, &mode)) {
+            ns_str_free(platform);
+            platform = mode == NS_RUN_WASM ? ns_str_cstr("wasm") : ns_str_null;
+        } else if (ns_build_parse_triple(raw, &triple)) {
+            // v1: a machine triple is a native build for that machine.
+            mode = keys.has_link && !keys.link ? NS_RUN_EVAL : NS_RUN_EXEC;
+            ns_str_free(platform);
+            platform = ns_str_dup(raw);
+        } else {
+            ns_exit(1, "ns", "%.*s: unknown target `%.*s`; expected eval, exec, emu or wasm.\n",
+                    where.len, where.data, raw.len, raw.data);
+        }
+    }
+    if (!explicit_mode && keys.has_link) {
+        mode = keys.link ? NS_RUN_EXEC : NS_RUN_EVAL;
+        if (platform.len > 0 && ns_str_equals_STR(platform, "wasm")) { ns_str_free(platform); platform = ns_str_null; }
+    }
+
+    // exec: `target_os` / `target_arch` name the machine; either one alone
+    // keeps the host's value for the other.
+    ns_str os = keys.os.len > 0 ? keys.os : inherit_os;
+    ns_str arch = keys.arch.len > 0 ? keys.arch : inherit_arch;
+    if ((os.len > 0 || arch.len > 0) && mode != NS_RUN_WASM) {
+        ns_asm_target host;
+        ns_asm_get_host_target(&host);
+        ns_asm_target want = host;
+        if (os.len > 0 && !ns_target_os_parse(os, &want.os)) {
+            ns_exit(1, "ns", "%.*s: unknown target_os `%.*s`; expected linux, darwin or windows.\n",
+                    where.len, where.data, os.len, os.data);
+        }
+        if (arch.len > 0 && !ns_target_arch_parse(arch, &want.arch)) {
+            ns_exit(1, "ns", "%.*s: unknown target_arch `%.*s`; expected x86_64 or arm64.\n",
+                    where.len, where.data, arch.len, arch.data);
+        }
+        ns_str_free(platform);
+        if (want.os == host.os && want.arch == host.arch) {
+            platform = ns_str_null;
+        } else {
+            ns_str a = ns_arch_str(want.arch), o = ns_os_str(want.os);
+            platform = ns_str_concat(ns_str_concat(a, ns_str_cstr("-")), o);
+        }
+    }
+    *mode_out = mode;
+    *platform_out = platform;
+}
 
 static ns_str ns_manifest_read(ns_str root) {
     ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
@@ -1707,8 +1837,16 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
     ns_str mod = ns_manifest_read(root);
     ns_manifest_target *targets = ns_manifest_targets(mod);
     ns_manifest_selection sel = {0};
-    ns_bool top_link = false;
-    ns_manifest_bool(mod, "link", &top_link);
+    // The top level first: every target inherits the mode it declares.
+    ns_manifest_mode_keys top_keys = {0};
+    top_keys.target = ns_manifest_value(mod, "target");
+    top_keys.legacy_platform = ns_manifest_value(mod, "platform");
+    top_keys.has_link = ns_manifest_bool(mod, "link", &top_keys.link);
+    ns_str top_os = ns_manifest_value(mod, "target_os");
+    ns_str top_arch = ns_manifest_value(mod, "target_arch");
+    ns_manifest_selection top = {0};
+    ns_manifest_mode_resolve(top_keys, ns_null, ns_str_null, ns_str_null, ns_str_cstr("ns.mod"),
+                             &top.mode, &top.platform);
 
     i32 index = ns_manifest_target_index(targets, target_name);
     if (index < 0 && target_name.len > 0) {
@@ -1729,10 +1867,12 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
         entry = ns_str_dup(target->entry);
         sel.name = ns_str_dup(target->output.data != ns_null ? target->output : target->name);
         sel.type = ns_str_dup(target->type);
-        sel.platform = ns_str_dup(target->platform);
+        ns_manifest_mode_keys keys = {.target = target->platform, .legacy_platform = target->legacy_platform,
+                                      .os = target->target_os, .arch = target->target_arch,
+                                      .has_link = target->has_link, .link = target->link};
+        ns_manifest_mode_resolve(keys, &top, top_os, top_arch, target->name, &sel.mode, &sel.platform);
         sel.icon = ns_path_resolve(root, target->icon);
         sel.shell = ns_path_resolve(root, target->shell);
-        sel.link = target->has_link ? target->link : top_link;
         if (target->has_orientation) sel.orientations = ns_manifest_orientation_mask(target->orientation, root);
         if (entry.data == ns_null || entry.len == 0) {
             ns_exit(1, "ns", "target `%.*s` of ns.mod at %.*s declares no `entry`.\n",
@@ -1742,13 +1882,22 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
         // No targets: the top-level entry. It stays optional here, so reading a
         // manifest for its other fields never depends on a declared entry.
         entry = ns_manifest_top_entry(mod);
-        sel.link = top_link;
+        ns_manifest_mode_keys keys = top_keys;
+        keys.os = top_os;
+        keys.arch = top_arch;
+        ns_manifest_mode_resolve(keys, ns_null, ns_str_null, ns_str_null, ns_str_cstr("ns.mod"),
+                                 &sel.mode, &sel.platform);
     }
+    sel.link = sel.mode == NS_RUN_EXEC;
+    ns_str_free(top.platform);
+    ns_str_free(top_keys.target);
+    ns_str_free(top_keys.legacy_platform);
+    ns_str_free(top_os);
+    ns_str_free(top_arch);
 
     // Anything the selected target leaves out comes from the top-level key.
     if (sel.name.len == 0) { ns_str_free(sel.name); sel.name = ns_manifest_value(mod, "name"); }
     if (sel.type.len == 0) { ns_str_free(sel.type); sel.type = ns_manifest_value(mod, "type"); }
-    if (sel.platform.len == 0) { ns_str_free(sel.platform); sel.platform = ns_manifest_value(mod, "target"); }
     if (sel.icon.data == ns_null) sel.icon = ns_path_resolve(root, ns_manifest_value(mod, "icon"));
     if (sel.shell.data == ns_null) sel.shell = ns_path_resolve(root, ns_manifest_value(mod, "shell"));
     if (sel.orientations == NS_PROJECT_ORIENTATION_NONE) sel.orientations = ns_manifest_orientations(mod, root);
@@ -1870,6 +2019,7 @@ typedef struct ns_build_input {
     ns_str shell;
     ns_str target_name; // selected [[targets]] name, empty when none
     ns_bool has_manifest;
+    ns_run_mode mode;   // the target's `target` mode
     // `link = false` marks a target the manifest declares interpreted. A build
     // then packages a launcher that runs it through `ns run` instead of asking
     // a native code generator for machine code it may not have.
@@ -2338,6 +2488,7 @@ static ns_build_input ns_build_input_resolve(ns_str path, ns_str target_name) {
     // A loose script has no manifest to declare otherwise, so it asks for a
     // native artifact the way it always has.
     in.link = true;
+    in.mode = NS_RUN_EXEC;
     ns_bool manifest_entry = false;
 
     if (path.len == 0) {
@@ -2374,6 +2525,7 @@ static ns_build_input ns_build_input_resolve(ns_str path, ns_str target_name) {
         in.shell = sel.shell;
         in.target_name = sel.target_name;
         in.link = sel.link;
+        in.mode = sel.mode;
     }
 
     in.source = ns_os_read_file(in.filename);
@@ -2778,6 +2930,8 @@ static ns_bool ns_build_target_is_wasm(ns_str target) {
 }
 
 static ns_build_kind ns_build_resolve_kind(ns_build_input *in, u8 requested) {
+    // An emu target builds its ns_cpu image unless a kind is asked for.
+    if (requested == NS_BUILD_AUTO && in->mode == NS_RUN_EMU) return NS_BUILD_CPU;
     if (requested == NS_BUILD_CPU) return NS_BUILD_CPU;
     if (requested == NS_BUILD_EXE) return NS_BUILD_EXE;
     if (requested == NS_BUILD_LIB) return NS_BUILD_LIB;
@@ -4121,6 +4275,17 @@ static ns_bool ns_build_parse_triple(ns_str spec, ns_asm_target *out) {
         out->os = NS_OS_LINUX;
         return true;
     }
+    // `<arch>-<os>`, as ns.mod's target_os / target_arch resolve.
+    for (i32 i = 0; i < spec.len; ++i) {
+        if (spec.data[i] != '-') continue;
+        ns_asm_target t = {0};
+        if (ns_target_arch_parse(ns_str_range(spec.data, i), &t.arch) &&
+            ns_target_os_parse(ns_str_range(spec.data + i + 1, spec.len - i - 1), &t.os)) {
+            *out = t;
+            return true;
+        }
+        break;
+    }
     return false;
 }
 
@@ -4133,8 +4298,16 @@ static void ns_build_select_target(ns_build_input *in) {
     ns_asm_target selected;
     ns_bool have = false;
     if (in->target.len > 0) {
+        ns_asm_target host;
+        ns_asm_get_host_target(&host);
         if (!ns_build_parse_triple(in->target, &selected)) {
             ns_exit(1, "build", "unsupported project target `%.*s`; expected `wasm`, `x86_64-linux-gnu`, or omit target for a native build.\n",
+                    in->target.len, in->target.data);
+        }
+        // Cross builds exist for Linux x86_64; any other machine is the host.
+        if ((selected.os != host.os || selected.arch != host.arch) &&
+            !(selected.os == NS_OS_LINUX && selected.arch == NS_ARCH_X64)) {
+            ns_exit(1, "build", "no cross build to %.*s from this host; set target_os/target_arch to the host or to linux/x86_64.\n",
                     in->target.len, in->target.data);
         }
         have = true;
@@ -4170,7 +4343,9 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_profile_set_output_scope(in.scope);
     // An ns_cpu image is lowered for the host layout whatever platform the
     // target names; the image itself runs anywhere the interpreter does.
-    if (requested_kind == NS_BUILD_CPU) in.target = ns_str_null;
+    if (requested_kind == NS_BUILD_CPU || (requested_kind == NS_BUILD_AUTO && in.mode == NS_RUN_EMU)) {
+        in.target = ns_str_null;
+    }
     ns_build_select_target(&in);
     if (ns_build_target_is_wasm(in.target)) {
         ns_asm_clear_target_override();
@@ -4266,6 +4441,7 @@ static ns_bool ns_build_targets_can_parallel(ns_str project, ns_str *names, i32 
             .target = sel.platform,
             .target_name = sel.target_name,
             .has_manifest = true,
+            .mode = sel.mode,
         };
         // A browser target writes one bundle directory around its module, so
         // the module path identifies it the way an artifact path identifies a
@@ -4583,8 +4759,11 @@ void ns_exec_project(ns_str path) {
     ns_str project_target = selection.platform;
     ns_str version = ns_build_manifest_value(root, "version");
     ns_str icon = selection.icon;
-    if (!ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_CURRENT))) {
-        ns_exit(1, "project", "%.*s must declare schema = \"" NS_MANIFEST_SCHEMA_CURRENT "\".\n",
+    // v1 still reads (its link/platform keys resolve to the same modes);
+    // `ns update` rewrites it.
+    if (!ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_CURRENT)) &&
+        !ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_V1))) {
+        ns_exit(1, "project", "%.*s must declare schema = \"" NS_MANIFEST_SCHEMA_CURRENT "\"; run `ns update`.\n",
                 manifest.len, manifest.data);
     }
     if (name.data == ns_null || name.len == 0) {
@@ -4959,7 +5138,152 @@ static ns_bool ns_update_manifest_has_assignment(ns_str src, const char *key) {
     return false;
 }
 
+// Whether a line assigns `key`, and where its value starts.
+static ns_bool ns_update_line_key(ns_str line, const char *key) {
+    return ns_manifest_line_assign(line, key) >= 0;
+}
+
+// ns.mod/v2 names a table's run mode with `target` (eval | exec | emu | wasm)
+// and a native build's machine with `target_os` / `target_arch`. Rewrite the
+// v1 spellings - `link = true|false`, `platform = "<triple>"`, a triple or
+// "wasm" in `target` - of the top level and of every [[targets]] table in
+// place, leaving every other line as it is.
+static ns_str ns_update_manifest_modes(ns_str src, ns_bool *changed) {
+    typedef struct { i32 start, end; } ns_span;
+    ns_span *lines = ns_null;
+    for (i32 i = 0; i < src.len;) {
+        i32 start = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        ns_array_push(lines, ((ns_span){start, i}));
+        if (i < src.len) i++;
+    }
+    i32 nlines = (i32)ns_array_length(lines);
+    ns_bool *drop = calloc((szt)nlines + 1, sizeof(ns_bool));
+    ns_str *replace = calloc((szt)nlines + 1, sizeof(ns_str));
+
+    i32 section_start = 0;
+    ns_bool section_modes = true; // the top level and [[targets]] tables carry modes
+    for (i32 li = 0; li <= nlines; ++li) {
+        ns_bool header = false;
+        if (li < nlines) {
+            ns_str line = ns_str_range(src.data + lines[li].start, lines[li].end - lines[li].start);
+            i32 t = 0;
+            while (t < line.len && (line.data[t] == ' ' || line.data[t] == '\t')) t++;
+            header = t < line.len && line.data[t] == '[';
+        }
+        if (li < nlines && !header) continue;
+
+        // Close the section [section_start, li).
+        if (section_modes) {
+            i32 first = -1, os_line = -1, arch_line = -1;
+            ns_str raw_target = ns_str_null, raw_platform = ns_str_null;
+            ns_bool has_link = false, link = false;
+            for (i32 k = section_start; k < li; ++k) {
+                ns_str line = ns_str_range(src.data + lines[k].start, lines[k].end - lines[k].start);
+                ns_str v;
+                if ((v = ns_manifest_line_str(line, "target")).data != ns_null) {
+                    raw_target = v;
+                    if (first < 0) first = k;
+                    drop[k] = true;
+                } else if ((v = ns_manifest_line_str(line, "platform")).data != ns_null) {
+                    raw_platform = v;
+                    if (first < 0) first = k;
+                    drop[k] = true;
+                } else if (ns_manifest_line_bool(line, "link", &link)) {
+                    has_link = true;
+                    if (first < 0) first = k;
+                    drop[k] = true;
+                } else if (ns_update_line_key(line, "target_os")) {
+                    os_line = k;
+                } else if (ns_update_line_key(line, "target_arch")) {
+                    arch_line = k;
+                }
+            }
+            ns_run_mode mode = NS_RUN_EVAL;
+            ns_asm_target triple = {0};
+            ns_bool have_triple = false, rewrite = false;
+            ns_str raw = raw_target.len > 0 ? raw_target : raw_platform;
+            if (raw.len > 0 && ns_run_mode_parse(raw, &mode)) {
+                rewrite = raw_platform.len > 0 || has_link; // already v2 unless mixed with v1 keys
+            } else if (raw.len > 0 && ns_build_parse_triple(raw, &triple)) {
+                // A machine with `link = false` was run interpreted and built
+                // for that machine: eval plus target_os / target_arch.
+                mode = has_link && !link ? NS_RUN_EVAL : NS_RUN_EXEC;
+                have_triple = true;
+                rewrite = true;
+            } else if (raw.len == 0 && has_link) {
+                mode = link ? NS_RUN_EXEC : NS_RUN_EVAL;
+                rewrite = true;
+            }
+            if (!rewrite) {
+                for (i32 k = section_start; k < li; ++k) drop[k] = false;
+            } else {
+                ns_str line = ns_str_range(src.data + lines[first].start, lines[first].end - lines[first].start);
+                i32 indent = 0;
+                while (indent < line.len && (line.data[indent] == ' ' || line.data[indent] == '\t')) indent++;
+                ns_str out = ns_str_null;
+                ns_str_append_len(&out, line.data, indent);
+                ns_str_append_cstr(&out, "target = \"");
+                ns_str_append_cstr(&out, ns_run_mode_name(mode));
+                ns_str_append_cstr(&out, "\"");
+                if (have_triple && os_line < 0) {
+                    ns_str_append_cstr(&out, "\n");
+                    ns_str_append_len(&out, line.data, indent);
+                    ns_str_append_cstr(&out, "target_os = \"");
+                    ns_str_append(&out, ns_os_str(triple.os));
+                    ns_str_append_cstr(&out, "\"");
+                }
+                if (have_triple && arch_line < 0) {
+                    ns_str_append_cstr(&out, "\n");
+                    ns_str_append_len(&out, line.data, indent);
+                    ns_str_append_cstr(&out, "target_arch = \"");
+                    ns_str_append(&out, ns_arch_str(triple.arch));
+                    ns_str_append_cstr(&out, "\"");
+                }
+                replace[first] = out;
+                drop[first] = false;
+                *changed = true;
+            }
+            ns_str_free(raw_target);
+            ns_str_free(raw_platform);
+        }
+        if (li < nlines) {
+            ns_str line = ns_str_range(src.data + lines[li].start, lines[li].end - lines[li].start);
+            section_modes = ns_manifest_table_is(line, "targets") || ns_manifest_table_is(line, "target");
+            section_start = li + 1;
+        }
+    }
+
+    ns_str out = ns_str_null;
+    for (i32 li = 0; li < nlines; ++li) {
+        ns_bool last = li == nlines - 1 && lines[li].end == src.len;
+        if (drop[li]) continue;
+        if (replace[li].data != ns_null) ns_str_append(&out, replace[li]);
+        else ns_str_append_len(&out, src.data + lines[li].start, lines[li].end - lines[li].start);
+        if (!last) ns_str_append_cstr(&out, "\n");
+    }
+    for (i32 li = 0; li < nlines; ++li) ns_str_free(replace[li]);
+    free(replace);
+    free(drop);
+    ns_array_free(lines);
+    return out;
+}
+
+static ns_str ns_update_manifest_schema(ns_str src, ns_bool *changed);
+
 static ns_str ns_update_manifest_text(ns_str src, ns_bool *changed) {
+    ns_bool modes_changed = false;
+    ns_str modes = ns_update_manifest_modes(src, &modes_changed);
+    if (modes_changed) src = modes;
+    ns_str migrated = ns_update_manifest_schema(src, changed);
+    if (modes_changed) {
+        *changed = true;
+        if (migrated.data == ns_null) return modes;
+    }
+    return migrated;
+}
+
+static ns_str ns_update_manifest_schema(ns_str src, ns_bool *changed) {
     ns_str schema = ns_manifest_value(src, "schema");
     *changed = false;
     if (schema.data == ns_null) {
@@ -4976,7 +5300,8 @@ static ns_str ns_update_manifest_text(ns_str src, ns_bool *changed) {
         ns_str_free(schema);
         return ns_str_null;
     }
-    if (!ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_LEGACY))) {
+    if (!ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_LEGACY)) &&
+        !ns_str_equals(schema, ns_str_cstr(NS_MANIFEST_SCHEMA_V1))) {
         ns_exit(1, "update", "unsupported manifest schema `%.*s`; this ns supports " NS_MANIFEST_SCHEMA_CURRENT ".\n",
                 schema.len, schema.data);
     }
@@ -5475,7 +5800,13 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
         setenv("NS_APP_ICON", icon.data, 1);
 #endif
     }
-    if (honor_link && selection.link && !ns_cli_cpu) {
+    // `target = "emu"` runs the program on the ns_cpu interpreter.
+    if (selection.mode == NS_RUN_EMU) ns_cli_cpu = true;
+    // An exec target built for another machine cannot launch here, so `ns run`
+    // interprets it on the host; `ns build` still produces that machine's code.
+    ns_bool foreign = target.len > 0 && !ns_str_equals(target, ns_str_cstr("wasm")) &&
+                      ns_build_platform_is_foreign(target);
+    if (honor_link && selection.link && !ns_cli_cpu && !foreign) {
         // A host without a native executable backend cannot build the linked
         // artifact. Interpret the target instead, the same way `ns build`
         // packages a launcher for an interpreted one.
@@ -5512,12 +5843,22 @@ static i32 ns_run_test_file(ns_str filename) {
     ns_line_loc *map = ns_null;
     ns_str merged = ns_project_link_all(scope, source, filename, true, &map, ns_null);
 
-    if (ns_cli_cpu) return ns_cpu_test_source(merged, filename, map);
+    // Tests run the way the project's default target does: an emu project
+    // tests on the ns_cpu interpreter.
+    ns_bool cpu = ns_cli_cpu;
+    if (!cpu) {
+        ns_str manifest = ns_path_join(scope, ns_str_cstr("ns.mod"));
+        if (ns_file_exists(manifest)) cpu = ns_manifest_select(scope, ns_str_null).mode == NS_RUN_EMU;
+        ns_str_free(manifest);
+    }
+    if (cpu) return ns_cpu_test_source(merged, filename, map);
     ns_return_value ret_v = ns_eval_with_map(&tvm, merged, filename, map);
     if (ns_return_is_error(ret_v)) {
         ns_warn("test", "%.*s errored.\n", filename.len, filename.data);
         return 1;
     }
+    // A main without a number result (`fn main()`) passes by finishing.
+    if (!ns_type_is_number(ret_v.r.t)) return 0;
     return ns_eval_number_i32(&tvm, ret_v.r);
 }
 
