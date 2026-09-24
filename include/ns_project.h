@@ -30,8 +30,13 @@ typedef struct ns_project_spec {
     ns_bool host_build;
     // Compile the linked program to a Mach-O object and call it from the
     // generated Apple app instead of interpreting LinkedProject.ns. Set when
-    // the manifest has `link = true` and every imported module is embeddable.
+    // the manifest has `target = "exec"` and every imported module is
+    // embeddable.
     ns_bool link_native;
+    // Build the linked program's ns_cpu image (LinkedProject.nsc) into the
+    // generated Apple app and run it on the embedded ns_cpu interpreter. Set
+    // when the manifest has `target = "emu"`.
+    ns_bool link_emu;
     ns_str root;
     ns_str manifest;
     ns_str source_dir;

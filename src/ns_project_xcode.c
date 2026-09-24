@@ -112,10 +112,11 @@ static ns_bool ns_xcode_file_exists(const char *path) {
 // `expects_assets` is the project-attribute line the packaged paths of this
 // manifest produce, so a project generated for a different set of them, or for
 // none, is regenerated rather than left carrying the wrong resources.
-#define NS_XCODE_GENERATOR_VERSION "16"
+#define NS_XCODE_GENERATOR_VERSION "17"
 
 static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const char *expects_assets,
-                                                        ns_bool expects_app_icon, ns_bool expects_link_native) {
+                                                        ns_bool expects_app_icon, ns_bool expects_link_native,
+                                                        ns_bool expects_link_emu) {
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     if (fseek(file, 0, SEEK_END) != 0) {
@@ -152,15 +153,18 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const 
     ns_bool generated_native_link_mismatch =
         ok && strstr(text, "NSProjectGeneratorVersion = " NS_XCODE_GENERATOR_VERSION ";") &&
         ((expects_link_native && !strstr(text, "Compile NS Program")) ||
-         (!expects_link_native && strstr(text, "Compile NS Program")));
+         (!expects_link_native && strstr(text, "Compile NS Program")) ||
+         (expects_link_emu && !strstr(text, "Build NS Image")) ||
+         (!expects_link_emu && strstr(text, "Build NS Image")));
     free(text);
     return generated_legacy || generated_native_old || generated_native_assets_mismatch ||
            generated_native_icon_mismatch || generated_native_link_mismatch;
 }
 
-// `link = true` compiles the program into the portable Apple targets rather
-// than interpreting LinkedProject.ns. Switching that flag rewrites the
-// generated project even though ordinary regenerations preserve user edits.
+// `target = "exec"` compiles the program into the portable Apple targets and
+// `target = "emu"` builds its ns_cpu image, rather than interpreting
+// LinkedProject.ns. Switching the mode rewrites the generated project even
+// though ordinary regenerations preserve user edits.
 static ns_bool ns_xcode_generated_native_project(const char *path) {
     FILE *file = fopen(path, "rb");
     if (!file) return false;
@@ -631,6 +635,7 @@ static const char *const ns_xcode_runtime_sources[] = {
     "ns_json.c",
     "ns_shader.c",
     "ns_native_rt.c",
+    "ns_cpu.c",
 };
 
 static const char *const ns_xcode_feature_sources[] = {
@@ -756,6 +761,8 @@ static const char *const ns_xcode_runtime_headers[] = {
     "ns_shader.h",
     "ns_profile.h",
     "ns_native_rt.h",
+    "ns_cpu.h",
+    "ns_cpu_isa.h",
     "os/ns_os.h",
 };
 
@@ -766,15 +773,33 @@ static const size_t ns_xcode_feature_header_count = sizeof(ns_xcode_feature_head
 static const size_t ns_xcode_resource_module_count = sizeof(ns_xcode_resource_modules) / sizeof(ns_xcode_resource_modules[0]);
 static const size_t ns_xcode_ui_asset_count = sizeof(ns_xcode_ui_assets) / sizeof(ns_xcode_ui_assets[0]);
 
+// File ids. Each group of files starts at its own base so a list growing
+// never runs into the next one; a build file id is `target * 1000 + file`,
+// so every file id stays below 1000.
 #define NS_XCODE_RUNTIME_SOURCE_BASE 10u
-#define NS_XCODE_FEATURE_SOURCE_BASE (NS_XCODE_RUNTIME_SOURCE_BASE + (unsigned)ns_xcode_runtime_source_count)
-#define NS_XCODE_PROJECT_SOURCE_FILE_ID 90u
-#define NS_XCODE_APP_ICON_FILE_ID 92u
-// Packaged project paths take the last free file ids. A build file id is
-// `target * 100 + file`, so a file id has to stay below 100 for the three
-// application targets to keep distinct ids.
-#define NS_XCODE_PROJECT_ASSET_FILE_BASE 93u
-#define NS_XCODE_PROJECT_ASSET_MAX 7u
+#define NS_XCODE_FEATURE_SOURCE_BASE 100u
+#define NS_XCODE_RESOURCE_FILE_BASE 300u
+#define NS_XCODE_UI_ASSET_FILE_BASE 400u
+#define NS_XCODE_PROJECT_SOURCE_FILE_ID 500u
+#define NS_XCODE_APP_ICON_FILE_ID 502u
+#define NS_XCODE_PROJECT_ASSET_FILE_BASE 600u
+#define NS_XCODE_PROJECT_ASSET_MAX 64u
+#define NS_XCODE_BUILD_FILE_STRIDE 1000u
+
+_Static_assert(sizeof(ns_xcode_runtime_sources) / sizeof(ns_xcode_runtime_sources[0]) <=
+                   NS_XCODE_FEATURE_SOURCE_BASE - NS_XCODE_RUNTIME_SOURCE_BASE,
+               "runtime source ids overlap the feature sources");
+_Static_assert(sizeof(ns_xcode_feature_sources) / sizeof(ns_xcode_feature_sources[0]) <=
+                   NS_XCODE_RESOURCE_FILE_BASE - NS_XCODE_FEATURE_SOURCE_BASE,
+               "feature source ids overlap the resource modules");
+_Static_assert(sizeof(ns_xcode_resource_modules) / sizeof(ns_xcode_resource_modules[0]) <=
+                   NS_XCODE_UI_ASSET_FILE_BASE - NS_XCODE_RESOURCE_FILE_BASE + 3,
+               "resource module ids overlap the UI assets");
+_Static_assert(sizeof(ns_xcode_ui_assets) / sizeof(ns_xcode_ui_assets[0]) <=
+                   NS_XCODE_PROJECT_SOURCE_FILE_ID - NS_XCODE_UI_ASSET_FILE_BASE,
+               "UI asset ids overlap the project source folder");
+_Static_assert(NS_XCODE_PROJECT_ASSET_FILE_BASE + NS_XCODE_PROJECT_ASSET_MAX <= NS_XCODE_BUILD_FILE_STRIDE,
+               "file ids must stay below the build file stride");
 
 static unsigned ns_xcode_project_asset_file_id(unsigned index) {
     return NS_XCODE_PROJECT_ASSET_FILE_BASE + index;
@@ -788,12 +813,13 @@ typedef struct ns_xcode_assets {
     unsigned count;
 } ns_xcode_assets;
 
+// std.ns, shader.ns and simd.ns keep the fixed ids 5-7 of the managed group.
 static unsigned ns_xcode_resource_file_id(size_t index) {
-    return index < 3 ? 5u + (unsigned)index : 70u + (unsigned)index - 3u;
+    return index < 3 ? 5u + (unsigned)index : NS_XCODE_RESOURCE_FILE_BASE + (unsigned)index - 3u;
 }
 
 static unsigned ns_xcode_asset_file_id(size_t index) {
-    return 70u + (unsigned)ns_xcode_resource_module_count - 3u + (unsigned)index;
+    return NS_XCODE_UI_ASSET_FILE_BASE + (unsigned)index;
 }
 
 static ns_bool ns_xcode_copy_relative(const char *runtime_root, const char *managed_root, const char *from_dir,
@@ -937,7 +963,8 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
     return true;
 }
 
-static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *runtime_root, ns_bool link_native) {
+static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *runtime_root, ns_bool link_native,
+                                          ns_bool link_emu) {
     static const char bridge_header[] =
         "#ifndef NS_BRIDGE_H\n"
         "#define NS_BRIDGE_H\n"
@@ -1029,7 +1056,62 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *
         "    fprintf(stdout, \"ns: finished\\n\");\n"
         "    return ns_app_status;\n"
         "}\n";
-    const char *bridge_source = link_native ? bridge_source_native : bridge_source_eval;
+    // `target = "emu"`: the build phase wrote the program's ns_cpu image into
+    // the bundle. Native modules are called through the shims generated into
+    // ns_embedded_ffi.c, so no libffi and no generated code are needed.
+    static const char bridge_source_emu[] =
+        "#include \"NSBridge.h\"\n"
+        "#include \"ns_vm.h\"\n"
+        "#include \"ns_os.h\"\n"
+        "#include \"ns_cpu.h\"\n"
+        "\n"
+        "#include <stdio.h>\n"
+        "#include <unistd.h>\n"
+        "\n"
+        "extern ns_cpu_native_call ns_embedded_cpu_resolve(void *user, const char *module, const char *name, void **target);\n"
+        "\n"
+        "static char ns_app_status[1024];\n"
+        "// Kept loaded after main returns: native callbacks may still call into it.\n"
+        "static ns_cpu_module *ns_app_module;\n"
+        "\n"
+        "static const char *ns_app_error(ns_return_state s, ns_return e) {\n"
+        "    ns_str state = ns_return_state_str(s);\n"
+        "    snprintf(ns_app_status, sizeof(ns_app_status), \"%.*s: %.*s\", state.len, state.data, e.msg.len, e.msg.data);\n"
+        "    ns_return_print_error(s, e);\n"
+        "    return ns_app_status;\n"
+        "}\n"
+        "\n"
+        "const char *ns_run_linked_project(const char *resource_root) {\n"
+        "    if (chdir(resource_root) != 0) {\n"
+        "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not enter resource directory: %s\", resource_root);\n"
+        "        fprintf(stderr, \"ns: %s\\n\", ns_app_status);\n"
+        "        return ns_app_status;\n"
+        "    }\n"
+        "    ns_str root = ns_str_cstr((char *)resource_root);\n"
+        "    ns_str filename = ns_path_join(root, ns_str_cstr(\"LinkedProject.nsc\"));\n"
+        "    ns_str image = ns_os_read_file(filename);\n"
+        "    if (!image.data) {\n"
+        "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not read %s\", filename.data);\n"
+        "        fprintf(stderr, \"ns: %s\\n\", ns_app_status);\n"
+        "        ns_str_free(filename);\n"
+        "        return ns_app_status;\n"
+        "    }\n"
+        "    ns_str_free(filename);\n"
+        "    ns_cpu_host host = {0};\n"
+        "    host.resolve_call = ns_embedded_cpu_resolve;\n"
+        "    host.lib_path = root;\n"
+        "    ns_return_ptr loaded = ns_cpu_load((const u8 *)image.data, (szt)image.len, &host, ns_null);\n"
+        "    ns_str_free(image);\n"
+        "    if (ns_return_is_error(loaded)) return ns_app_error(loaded.s, loaded.e);\n"
+        "    ns_app_module = loaded.r;\n"
+        "    i64 status = 0;\n"
+        "    ns_return_bool ran = ns_cpu_run_main(ns_app_module, &status);\n"
+        "    if (ns_return_is_error(ran)) return ns_app_error(ran.s, ran.e);\n"
+        "    snprintf(ns_app_status, sizeof(ns_app_status), \"Finished\");\n"
+        "    fprintf(stdout, \"ns: finished\\n\");\n"
+        "    return ns_app_status;\n"
+        "}\n";
+    const char *bridge_source = link_native ? bridge_source_native : link_emu ? bridge_source_emu : bridge_source_eval;
 
     char *sources = ns_xcode_path_join(managed_root, "Sources");
     char *swift = sources ? ns_xcode_path_join(sources, "NSApp.swift") : NULL;
@@ -1210,7 +1292,7 @@ static ns_bool ns_xcode_write_config(const ns_project_spec *spec, const char *ma
 static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *managed_root, const char *runtime_root,
                                     const char *linked_source, const char *safe_name, const char *version) {
     if (!ns_xcode_validate_modules(linked_source)) return false;
-    if (!ns_xcode_write_app_sources(managed_root, runtime_root, spec->link_native)) return false;
+    if (!ns_xcode_write_app_sources(managed_root, runtime_root, spec->link_native, spec->link_emu)) return false;
     if (!ns_xcode_write_app_icon(spec, managed_root)) return false;
     for (size_t i = 0; i < ns_xcode_runtime_source_count; ++i) {
         if (!ns_xcode_copy_relative(runtime_root, managed_root, "src", "Runtime/src", ns_xcode_runtime_sources[i])) return false;
@@ -1296,7 +1378,7 @@ static ns_bool ns_xcode_append_build_file(ns_xcode_buffer *pbx, unsigned target,
                                           const char *phase) {
     char build_id[25];
     char file_id[25];
-    ns_xcode_id(build_id, 50, target * 100 + file);
+    ns_xcode_id(build_id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + file);
     ns_xcode_id(file_id, 40, file);
     return ns_xcode_buffer_appendf(pbx,
                                    "\t\t%s /* %s in %s */ = {isa = PBXBuildFile; fileRef = %s /* %s */; };\n",
@@ -1417,19 +1499,19 @@ static ns_bool ns_xcode_append_sources_phase(ns_xcode_buffer *pbx, unsigned targ
     const char *const fixed_names[] = {"NSApp.swift", "NSBridge.c"};
     for (size_t i = 0; i < sizeof(fixed_sources) / sizeof(fixed_sources[0]); ++i) {
         char id[25];
-        ns_xcode_id(id, 50, target * 100 + fixed_sources[i]);
+        ns_xcode_id(id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + fixed_sources[i]);
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* %s in Sources */,\n", id, fixed_names[i])) return false;
     }
     for (size_t i = 0; i < ns_xcode_runtime_source_count; ++i) {
         unsigned file = NS_XCODE_RUNTIME_SOURCE_BASE + (unsigned)i;
         char id[25];
-        ns_xcode_id(id, 50, target * 100 + file);
+        ns_xcode_id(id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + file);
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* %s in Sources */,\n", id, ns_xcode_runtime_sources[i])) return false;
     }
     for (size_t i = 0; i < ns_xcode_feature_source_count; ++i) {
         unsigned file = NS_XCODE_FEATURE_SOURCE_BASE + (unsigned)i;
         char id[25];
-        ns_xcode_id(id, 50, target * 100 + file);
+        ns_xcode_id(id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + file);
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* %s in Sources */,\n", id, ns_xcode_feature_sources[i])) return false;
     }
     return ns_xcode_buffer_append(pbx,
@@ -1451,26 +1533,26 @@ static ns_bool ns_xcode_append_resources_phase(ns_xcode_buffer *pbx, unsigned ta
         return false;
     }
     char linked_id[25];
-    ns_xcode_id(linked_id, 50, target * 100 + 4u);
+    ns_xcode_id(linked_id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + 4u);
     if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* LinkedProject.ns in Resources */,\n", linked_id)) return false;
     for (size_t i = 0; i < ns_xcode_resource_module_count; ++i) {
         char id[25];
-        ns_xcode_id(id, 50, target * 100 + ns_xcode_resource_file_id(i));
+        ns_xcode_id(id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + ns_xcode_resource_file_id(i));
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* %s in Resources */,\n", id, ns_xcode_resource_modules[i])) return false;
     }
     for (size_t i = 0; i < ns_xcode_ui_asset_count; ++i) {
         char id[25];
-        ns_xcode_id(id, 50, target * 100 + ns_xcode_asset_file_id(i));
+        ns_xcode_id(id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + ns_xcode_asset_file_id(i));
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* %s in Resources */,\n", id, ns_xcode_ui_assets[i])) return false;
     }
     if (has_app_icon) {
         char app_icon_id[25];
-        ns_xcode_id(app_icon_id, 50, target * 100 + NS_XCODE_APP_ICON_FILE_ID);
+        ns_xcode_id(app_icon_id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + NS_XCODE_APP_ICON_FILE_ID);
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* App Icon Assets in Resources */,\n", app_icon_id)) return false;
     }
     for (unsigned i = 0; i < assets->count; ++i) {
         char project_asset_id[25];
-        ns_xcode_id(project_asset_id, 50, target * 100 + ns_xcode_project_asset_file_id(i));
+        ns_xcode_id(project_asset_id, 50, target * NS_XCODE_BUILD_FILE_STRIDE + ns_xcode_project_asset_file_id(i));
         if (!ns_xcode_buffer_appendf(pbx, "\t\t\t\t%s /* %s in Resources */,\n", project_asset_id, assets->name[i])) return false;
     }
     return ns_xcode_buffer_append(pbx,
@@ -1507,7 +1589,7 @@ static ns_bool ns_xcode_append_shell_phase(ns_xcode_buffer *pbx, unsigned kind, 
 }
 
 static ns_bool ns_xcode_append_native_target(ns_xcode_buffer *pbx, unsigned target, const char *target_name,
-                                             const char *safe_name, ns_bool link_native) {
+                                             const char *safe_name, ns_bool link_native, ns_bool link_emu) {
     char target_id[25];
     char config_list_id[25];
     char shell_id[25];
@@ -1526,8 +1608,9 @@ static ns_bool ns_xcode_append_native_target(ns_xcode_buffer *pbx, unsigned targ
     char *escaped_safe = ns_xcode_escape(safe_name);
     char compile_line[96];
     compile_line[0] = '\0';
-    if (link_native) {
-        snprintf(compile_line, sizeof(compile_line), "\t\t\t\t%s /* Compile NS Program */,\n", compile_id);
+    if (link_native || link_emu) {
+        snprintf(compile_line, sizeof(compile_line), "\t\t\t\t%s /* %s */,\n", compile_id,
+                 link_native ? "Compile NS Program" : "Build NS Image");
     }
     ns_bool ok = escaped_target && escaped_safe &&
                  ns_xcode_buffer_appendf(
@@ -1637,8 +1720,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         return false;
     }
     ns_bool has_app_icon = spec->icon.data && spec->icon.len > 0;
-    ns_bool overwrite_project =
-        ns_xcode_generated_project_needs_upgrade(project_file, assets_marker.data, has_app_icon, spec->link_native);
+    ns_bool overwrite_project = ns_xcode_generated_project_needs_upgrade(project_file, assets_marker.data, has_app_icon,
+                                                                         spec->link_native, spec->link_emu);
     if (ns_xcode_file_exists(project_file) && !overwrite_project) {
         ns_xcode_buffer_free(&assets_marker);
         ns_xcode_assets_free(&assets);
@@ -1675,6 +1758,21 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
                 "xcrun clang -c -isysroot \"$SDKROOT\" $ARCH_FLAGS "
                 "-I\"$SRCROOT/%s.nsproject/Runtime/include\" -o \"$STRTAB_O\" \"$STRTAB\"\n",
                 safe_name, safe_name)) {
+            goto fail;
+        }
+        escaped_compile = ns_xcode_escape(compile_script.data);
+        if (!escaped_compile) goto fail;
+    } else if (spec->link_emu) {
+        // The image goes straight into the bundle's resources; NSBridge.c
+        // loads it from there.
+        if (!ns_xcode_buffer_appendf(
+                &compile_script,
+                "set -e\n"
+                "LINKED=\"$SRCROOT/%s.nsproject/Generated/LinkedProject.ns\"\n"
+                "OUT_DIR=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\n"
+                "mkdir -p \"$OUT_DIR\"\n"
+                "\"$NS_EXECUTABLE\" --cpu -o \"$OUT_DIR/LinkedProject.nsc\" \"$LINKED\"\n",
+                safe_name)) {
             goto fail;
         }
         escaped_compile = ns_xcode_escape(compile_script.data);
@@ -1869,7 +1967,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         goto fail;
     }
     for (unsigned target = 1; target <= 3; ++target) {
-        if (!ns_xcode_append_native_target(&pbx, target, target_names[target - 1].data, safe_name, spec->link_native)) {
+        if (!ns_xcode_append_native_target(&pbx, target, target_names[target - 1].data, safe_name, spec->link_native,
+                                           spec->link_emu)) {
             for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
             goto fail;
         }
@@ -1934,8 +2033,9 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
             for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
             goto fail;
         }
-        if (spec->link_native &&
-            !ns_xcode_append_shell_phase(&pbx, 14, target, "Compile NS Program", escaped_compile)) {
+        if ((spec->link_native || spec->link_emu) &&
+            !ns_xcode_append_shell_phase(&pbx, 14, target, spec->link_native ? "Compile NS Program" : "Build NS Image",
+                                         escaped_compile)) {
             for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
             goto fail;
         }

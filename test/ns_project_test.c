@@ -82,6 +82,36 @@ static ns_str *asset_paths(const char *relative) {
     return paths;
 }
 
+// Every `<id> /* name */ = {isa = ...` definition in a project names a
+// distinct object; two files sharing an id make Xcode drop one of them.
+static ns_bool file_reference_ids_unique(const char *file) {
+    FILE *f = fopen(file, "rb");
+    if (!f) return false;
+    static char text[1 << 22];
+    size_t n = fread(text, 1, sizeof(text) - 1, f);
+    fclose(f);
+    text[n] = '\0';
+    static char ids[8192][25];
+    i32 count = 0;
+    for (const char *p = strstr(text, "\n\t\t4E535052"); p; p = strstr(p + 1, "\n\t\t4E535052")) {
+        const char *id = p + 3;
+        const char *eol = strchr(id, '\n');
+        const char *def = strstr(id, " = {");
+        if (!def || (eol && def > eol)) continue;
+        if (count >= 8192) return false;
+        memcpy(ids[count], id, 24);
+        ids[count][24] = '\0';
+        for (i32 i = 0; i < count; ++i) {
+            if (strcmp(ids[i], ids[count]) == 0) {
+                fprintf(stderr, "duplicate Xcode object id %s\n", ids[count]);
+                return false;
+            }
+        }
+        count++;
+    }
+    return count > 0;
+}
+
 static ns_project_spec app_spec(const char *root, const char *runtime, const char *linked, ns_str *assets) {
     return (ns_project_spec){
         .assets = assets,
@@ -194,9 +224,13 @@ int main(void) {
                   text_has(pbx, "Native/src/ui.c") && text_has(pbx, "Native/src/net.c"),
               "Xcode native targets compile the embedded view, UI, OS, and network forwarders.");
     ns_expect(text_has(pbx, "4E5350520000002800000007 /* simd.ns */") &&
-                  text_has(pbx, "4E535052000000280000004C /* net.ns */") &&
+                  text_has(pbx, "4E5350520000002800000132 /* net.ns */") &&
                   !text_has(pbx, "4E5350520000002800000007 /* net.ns */"),
               "Xcode runtime modules use distinct file-reference IDs.");
+    ns_expect(file_reference_ids_unique(pbx),
+              "every Xcode file reference and build file has its own ID.");
+    ns_expect(text_has(pbx, "Runtime/src/ns_cpu.c") && text_has(pbx, "ns_cpu.c in Sources"),
+              "Xcode app targets compile the ns_cpu interpreter into the embedded runtime.");
     ns_expect(access(view_ios, R_OK) == 0 && access(view_gamepad, R_OK) == 0 &&
                   access(os_ios, R_OK) == 0 && access(gpu_metal, R_OK) == 0 &&
                   access(ui_native, R_OK) == 0 && access(net_native, R_OK) == 0,
@@ -326,7 +360,7 @@ int main(void) {
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && text_has(xgenerated, "ZSTD_DISABLE_ASM=1") &&
                   text_has(xgenerated, "Native/include/zstd") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 16") &&
+                  text_has(pbx, "NSProjectGeneratorVersion = 17") &&
                   text_has(pbx, "XROS_DEPLOYMENT_TARGET = 26.0"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
@@ -364,7 +398,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 16;", "NSProjectGeneratorVersion = 16;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 17;", "NSProjectGeneratorVersion = 17;",
                                      "NSProjectGeneratorVersion = 9;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
@@ -428,6 +462,30 @@ int main(void) {
     ns_expect(text_has(linked_pbx, "ns_program.o") && text_has(linked_pbx, "ns_strtab.o") &&
                   !text_has(linked_xc, "ns_program.o"),
               "Xcode link-native app links the compiled program object once, on the target, not via xcconfig inheritance.");
+
+    char emu_root[] = "/tmp/ns-project-link-emu-XXXXXX";
+    ns_expect(mkdtemp(emu_root) != ns_null, "project test creates emu app fixture directory.");
+    ns_project_spec emu_app = app_spec(emu_root, runtime, "use view\nfn main() {}\n", ns_null);
+    ns_expect(ns_project_generate_xcode(&emu_app), "Xcode eval app project generation succeeds before switching to emu.");
+    emu_app.link_emu = true;
+    ns_expect(ns_project_generate_xcode(&emu_app), "Xcode emu app project generation succeeds.");
+    char emu_pbx[PATH_MAX], emu_bridge[PATH_MAX], emu_cpu[PATH_MAX];
+    path(emu_pbx, emu_root, "bin/demo-app.xcodeproj/project.pbxproj");
+    path(emu_bridge, emu_root, "bin/demo-app.nsproject/Sources/NSBridge.c");
+    path(emu_cpu, emu_root, "bin/demo-app.nsproject/Runtime/src/ns_cpu.c");
+    ns_expect(text_has(emu_pbx, "Build NS Image") && text_has(emu_pbx, "--cpu -o") &&
+                  text_has(emu_pbx, "LinkedProject.nsc") && !text_has(emu_pbx, "Compile NS Program") &&
+                  !text_has(emu_pbx, "ns_program.o"),
+              "Xcode emu app switches to a build phase that writes the ns_cpu image into the bundle.");
+    ns_expect(text_has(emu_bridge, "ns_cpu_load") && text_has(emu_bridge, "ns_embedded_cpu_resolve") &&
+                  text_has(emu_bridge, "ns_cpu_run_main") && !text_has(emu_bridge, "ns_eval(") &&
+                  !text_has(emu_bridge, "ns_program_main"),
+              "Xcode emu app runs the image on ns_cpu with the embedded native call shims.");
+    ns_expect(access(emu_cpu, R_OK) == 0, "Xcode emu app copies ns_cpu.c into its embedded runtime.");
+    emu_app.link_emu = false;
+    ns_expect(ns_project_generate_xcode(&emu_app) && !text_has(emu_pbx, "Build NS Image") &&
+                  text_has(emu_bridge, "ns_eval("),
+              "Xcode app switches from emu back to the interpreter.");
 
     char library_root[] = "/tmp/ns-project-library-XXXXXX";
     ns_expect(mkdtemp(library_root) != ns_null, "project test creates library fixture directory.");

@@ -10,7 +10,9 @@
 #include <setjmp.h>
 #include <stdarg.h>
 
-#ifndef NS_XCLIB
+// NS_CPU_NO_FFI builds the call path NS_XCLIB hosts use without libffi, so
+// it can be tested on a host that has libffi.
+#if !defined(NS_XCLIB) && !defined(NS_CPU_NO_FFI)
 #include <dlfcn.h>
 #ifndef NS_DARWIN
 #include <ffi.h>
@@ -80,6 +82,8 @@ typedef struct ns_cpu_rt {
 
 typedef struct ns_cpu_ffi_site {
     void *fn;
+    ns_cpu_native_call call; // host shim; libffi and the direct path are skipped
+    ns_bool direct_unsupported; // no libffi and no shim: faults when reached
     ns_str module, name;
     u8 ret;
     u8 nparams;
@@ -449,6 +453,10 @@ static u64 ns_cpu_ffi_invoke(ns_cpu_fn *fn, ns_cpu_ffi_site *site, const u64 *r,
         ns_cpu_fault(fn, "unresolved native symbol %.*s.%.*s", site->module.len, site->module.data,
                      site->name.len, site->name.data);
     }
+    if (NS_CPU_UNLIKELY(site->direct_unsupported)) {
+        ns_cpu_fault(fn, "native call %.*s.%.*s needs libffi or a host call shim (more than 8 integer or float "
+                     "arguments)", site->module.len, site->module.data, site->name.len, site->name.data);
+    }
     u64 slots[NS_CPU_FFI_MAX_ARGS];
     for (i32 i = 0; i < nargs; ++i) {
         u64 v = r[regs[i]];
@@ -461,18 +469,44 @@ static u64 ns_cpu_ffi_invoke(ns_cpu_fn *fn, ns_cpu_ffi_site *site, const u64 *r,
         slots[i] = v;
     }
     u64 ret[2] = {0, 0};
+    if (site->call) {
+        ret[0] = site->call(site->fn, slots);
+    } else {
 #ifdef NS_CPU_HAS_FFI
-    void *values[NS_CPU_FFI_MAX_ARGS];
-    for (i32 i = 0; i < nargs; ++i) values[i] = &slots[i];
-    ffi_call(&site->cif, FFI_FN(site->fn), ret, values);
+        void *values[NS_CPU_FFI_MAX_ARGS];
+        for (i32 i = 0; i < nargs; ++i) values[i] = &slots[i];
+        ffi_call(&site->cif, FFI_FN(site->fn), ret, values);
 #else
-    // Without libffi only integer and pointer arguments are callable; the
-    // loader refused every other signature.
-    typedef i64 (*ns_cpu_ffi8)(i64, i64, i64, i64, i64, i64, i64, i64);
-    i64 a[8] = {0};
-    for (i32 i = 0; i < nargs && i < 8; ++i) a[i] = (i64)slots[i];
-    ret[0] = (u64)((ns_cpu_ffi8)site->fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+        // Without libffi the call goes through a fixed signature of eight integer
+        // and eight float arguments. On AArch64 and the x86-64 System V ABI the two
+        // classes are assigned registers independently, so a callee taking any
+        // mix of up to eight of each reads its arguments where it expects them. An
+        // f32 travels in the low half of its float register. A signature that
+        // does not fit is marked when the image loads and faults above.
+        typedef u64 (*ns_cpu_ffi_int)(u64, u64, u64, u64, u64, u64, u64, u64, f64, f64, f64, f64, f64, f64, f64, f64);
+        typedef f64 (*ns_cpu_ffi_float)(u64, u64, u64, u64, u64, u64, u64, u64, f64, f64, f64, f64, f64, f64, f64, f64);
+        u64 a[8] = {0};
+        f64 d[8] = {0};
+        i32 na = 0, nd = 0;
+        for (i32 i = 0; i < nargs; ++i) {
+            u8 kind = site->params[i];
+            if (kind == NS_CPU_FFI_F32 || kind == NS_CPU_FFI_F64) {
+                u64 bits = kind == NS_CPU_FFI_F32 ? (u64)(u32)slots[i] : slots[i];
+                if (nd < 8) memcpy(&d[nd++], &bits, 8);
+            } else if (na < 8) {
+                a[na++] = slots[i];
+            }
+        }
+        if (site->ret == NS_CPU_FFI_F32 || site->ret == NS_CPU_FFI_F64) {
+            f64 out = ((ns_cpu_ffi_float)site->fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7],
+                                                   d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+            memcpy(&ret[0], &out, 8);
+        } else {
+            ret[0] = ((ns_cpu_ffi_int)site->fn)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7],
+                                                d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+        }
 #endif
+    }
     u64 v = ret[0];
     switch (site->ret) {
     case NS_CPU_FFI_VOID: return 0;
@@ -966,7 +1000,7 @@ out:
 static void *ns_cpu_default_resolve(ns_cpu_module *m, ns_str module, ns_str name) {
     char sym[256];
     snprintf(sym, sizeof(sym), "%.*s", name.len, name.data);
-#if defined(NS_CPU_HAS_FFI) || (defined(NS_XCLIB) && !defined(_WIN32))
+#if defined(NS_CPU_HAS_FFI) || !defined(_WIN32)
     void *handle = ns_null;
     ns_bool found = false;
     for (i32 i = 0, l = (i32)ns_array_length(m->libs); i < l; ++i) {
@@ -1038,6 +1072,15 @@ static ns_bool ns_cpu_link_ffi(ns_cpu_module *m, ns_cpu_ffi_site *site, char *er
     char mod[128], sym[256];
     snprintf(mod, sizeof(mod), "%.*s", site->module.len, site->module.data);
     snprintf(sym, sizeof(sym), "%.*s", site->name.len, site->name.data);
+    if (m->host.resolve_call) {
+        void *target = ns_null;
+        ns_cpu_native_call call = m->host.resolve_call(m->host.user, mod, sym, &target);
+        if (call && target) {
+            site->call = call;
+            site->fn = target;
+            return true;
+        }
+    }
     site->fn = ns_cpu_resolve_site(m, site);
 #ifdef NS_CPU_HAS_FFI
     site->types = malloc(sizeof(ffi_type *) * (site->nparams + 1));
@@ -1047,14 +1090,21 @@ static ns_bool ns_cpu_link_ffi(ns_cpu_module *m, ns_cpu_ffi_site *site, char *er
         return false;
     }
 #else
-    ns_bool floats = site->ret == NS_CPU_FFI_F32 || site->ret == NS_CPU_FFI_F64;
+    i32 ints = 0, floats = 0;
     for (i32 i = 0; i < site->nparams; ++i) {
-        if (site->params[i] == NS_CPU_FFI_F32 || site->params[i] == NS_CPU_FFI_F64) floats = true;
+        if (site->params[i] == NS_CPU_FFI_F32 || site->params[i] == NS_CPU_FFI_F64) floats++;
+        else ints++;
     }
-    if (floats || site->nparams > 8) {
-        snprintf(err, errlen, "native call %.100s.%.100s needs libffi (float or >8 arguments)", mod, sym);
-        return false;
-    }
+#if defined(_WIN32) || !(defined(__aarch64__) || defined(__x86_64__))
+    // The Windows x64 ABI assigns registers by position, so only an all
+    // integer signature is safe there.
+    if (floats > 0 || site->ret == NS_CPU_FFI_F32 || site->ret == NS_CPU_FFI_F64) ints = 9;
+#endif
+    // Like a missing symbol, a signature this path cannot call only faults
+    // when a call reaches it.
+    site->direct_unsupported = ints > 8 || floats > 8;
+    ns_unused(err);
+    ns_unused(errlen);
 #endif
     return true;
 }

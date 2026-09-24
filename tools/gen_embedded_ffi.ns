@@ -5,7 +5,9 @@
 // implemented by the bundled native sources (recording pointer-ness of
 // native argument/result types), and emits src/ns_embedded_ffi.c: signature
 // invokers deduplicated by body, a name-sorted dispatch table, and the
-// memoized binary-search dispatcher.
+// memoized binary-search dispatcher. Each entry also gets an ns_cpu call
+// shim (doc/cpu.md): the same call with its arguments read from 64-bit
+// registers, so an ns_cpu image calls these functions without libffi.
 //
 // Run from the repository root: bin/ns run tools/gen_embedded_ffi.ns
 // (wired as `make regen-embedded-ffi`).
@@ -657,6 +659,82 @@ fn invoke_body(fi: i32) str {
     return body + "    return ns_return_ok(bool, true);"
 }
 
+// Argument `index` of an ns_cpu shim: ns_cpu already turned a str, ref or
+// array into its host pointer, and a float travels as its bit pattern.
+fn cpu_arg_expr(index: i32, t: str, ptr: i32) str {
+    let k = kind_of(t)
+    let slot = "a[" + itos(index) + "]"
+    if k == "str" {
+        return "(const char *)(uintptr_t)" + slot
+    }
+    if k == "struct" {
+        if ptr != 0 {
+            return "(" + c_type(t) + " *)(uintptr_t)" + slot
+        }
+        return "*(" + c_type(t) + " *)(uintptr_t)" + slot
+    }
+    if k == "ref" || k == "array" {
+        return "(void *)(uintptr_t)" + slot
+    }
+    if k == "f32" {
+        return "ns_cpu_shim_f32(" + slot + ")"
+    }
+    if k == "f64" {
+        return "ns_cpu_shim_f64(" + slot + ")"
+    }
+    return "(" + c_type(t) + ")" + slot
+}
+
+// Body of an ns_cpu shim: calls `target` and returns the result as the
+// register ns_cpu stores (a float as its bits, a pointer as its address).
+fn cpu_body(fi: i32) str {
+    let rk = kind_of(g_fn_result[fi])
+    let ret_c = native_c_type(g_fn_result[fi], g_fn_result_ptr[fi])
+    let astart = g_fn_arg_start[fi]
+    let acount = g_fn_arg_count[fi]
+    let arg_cs = ""
+    let args = ""
+    for a in 0 to acount {
+        if a > 0 {
+            arg_cs = arg_cs + ", "
+            args = args + ", "
+        }
+        arg_cs = arg_cs + native_c_type(g_arg_type[astart + a], g_arg_ptr[astart + a])
+        args = args + cpu_arg_expr(a, g_arg_type[astart + a], g_arg_ptr[astart + a])
+    }
+    if acount == 0 {
+        arg_cs = "void"
+    }
+    let invocation = "((" + ret_c + " (*)(" + arg_cs + "))target)(" + args + ")"
+    let unused = ""
+    if acount == 0 {
+        unused = "    (void)a;" + NL
+    }
+    if rk == "void" {
+        return unused + "    " + invocation + ";" + NL + "    return 0;"
+    }
+    if rk == "f32" {
+        return unused + "    return ns_cpu_shim_f32_bits(" + invocation + ");"
+    }
+    if rk == "f64" {
+        return unused + "    return ns_cpu_shim_f64_bits(" + invocation + ");"
+    }
+    if rk == "str" || rk == "ref" || rk == "array" {
+        return unused + "    return (u64)(uintptr_t)" + invocation + ";"
+    }
+    if rk == "struct" {
+        if g_fn_result_ptr[fi] != 0 {
+            return unused + "    return (u64)(uintptr_t)" + invocation + ";"
+        }
+        // A struct returned by value is kept per thread and handed over by
+        // address, as a by-reference result would be.
+        let ct = c_type(g_fn_result[fi])
+        return unused + "    static _Thread_local " + ct + " result;" + NL + "    result = " + invocation + ";" + NL +
+               "    return (u64)(uintptr_t)&result;"
+    }
+    return unused + "    return (u64)(i64)" + invocation + ";"
+}
+
 // ---- emission ----------------------------------------------------------------
 
 let g_used_struct = [str](64)
@@ -669,6 +747,9 @@ let g_emit_count = 0
 let g_sig_body = [str](256)
 let g_sig_count = 0
 let g_entry_sig = [i32](512)
+let g_cpu_body = [str](256)
+let g_cpu_count = 0
+let g_entry_cpu = [i32](512)
 
 fn out(line: str) {
     g_out[g_out_count] = line
@@ -749,6 +830,21 @@ fn build_signatures() {
             g_sig_count = g_sig_count + 1
         }
         g_entry_sig[i] = sig
+
+        let cbody = cpu_body(g_emit[i])
+        let csig = -1
+        for s in 0 to g_cpu_count {
+            if g_cpu_body[s] == cbody {
+                csig = s
+                break
+            }
+        }
+        if csig < 0 {
+            csig = g_cpu_count
+            g_cpu_body[g_cpu_count] = cbody
+            g_cpu_count = g_cpu_count + 1
+        }
+        g_entry_cpu[i] = csig
     }
 }
 
@@ -786,7 +882,7 @@ fn emit_helpers() {
     out("    if (value) memcpy(&vm->stack[call->ret.o], value, (size_t)ns_type_size(vm, call->callee->fn.ret));")
     out("}")
     out("")
-    out("static void ns_embedded_return_array(ns_vm *vm, void *value) {")
+    out("static __attribute__((unused)) void ns_embedded_return_array(ns_vm *vm, void *value) {")
     out("    ns_call *call = ns_array_last(vm->call_stack);")
     out("    *(u64 *)&vm->stack[call->ret.o] = (u64)value;")
     out("}")
@@ -798,13 +894,14 @@ fn emit_dispatcher() {
     out("    const char *name;")
     out("    void *target;")
     out("    ns_embedded_invoke invoke;")
+    out("    ns_embedded_cpu_call cpu;")
     out("} ns_embedded_entry;")
     out("")
     out("// Sorted by strcmp(name) for the binary search in ns_vm_call_embedded.")
     out("static const ns_embedded_entry ns_embedded_entries[] = {")
     for i in 0 to g_emit_count {
         let name = g_fn_name[g_emit[i]]
-        out("    { " + Q + name + Q + ", (void *)" + name + ", ns_embedded_sig" + itos(g_entry_sig[i]) + " },")
+        out("    { " + Q + name + Q + ", (void *)" + name + ", ns_embedded_sig" + itos(g_entry_sig[i]) + ", ns_embedded_cpu" + itos(g_entry_cpu[i]) + " },")
     }
     out("};")
     out("")
@@ -848,6 +945,25 @@ fn emit_dispatcher() {
     out("             fn->lib.len, fn->lib.data, fn->name.len, fn->name.data);")
     out("    return ns_return_error(bool, ns_code_loc_nil, NS_ERR_EVAL, message);")
     out("}")
+    out("")
+    out("// The ns_cpu host's call resolver (ns_cpu_host.resolve_call): the shim")
+    out("// that calls the embedded function `name`, which it stores in *target.")
+    out("ns_embedded_cpu_call ns_embedded_cpu_resolve(void *user, const char *module, const char *name, void **target) {")
+    out("    (void)user;")
+    out("    (void)module;")
+    out("    i32 lo = 0;")
+    out("    i32 hi = (i32)(sizeof(ns_embedded_entries) / sizeof(ns_embedded_entries[0])) - 1;")
+    out("    while (lo <= hi) {")
+    out("        i32 mid = lo + (hi - lo) / 2;")
+    out("        i32 cmp = strcmp(name, ns_embedded_entries[mid].name);")
+    out("        if (cmp == 0) {")
+    out("            *target = ns_embedded_entries[mid].target;")
+    out("            return ns_embedded_entries[mid].cpu;")
+    out("        }")
+    out("        if (cmp < 0) hi = mid - 1; else lo = mid + 1;")
+    out("    }")
+    out("    return NULL;")
+    out("}")
     out("#endif")
     out("")
 }
@@ -855,6 +971,7 @@ fn emit_dispatcher() {
 fn emit_all() {
     out("/* Generated by tools/gen_embedded_ffi.ns. Do not edit by hand. */")
     out("#include " + Q + "ns_vm.h" + Q)
+    out("#include <stdint.h>")
     out("#include <string.h>")
     out("")
     out("#if defined(NS_XCLIB)")
@@ -906,6 +1023,40 @@ fn emit_all() {
     for s in 0 to g_sig_count {
         out("static ns_return_bool ns_embedded_sig" + itos(s) + "(ns_vm *vm, void *target) {")
         out(g_sig_body[s])
+        out("}")
+        out("")
+    }
+    out("typedef u64 (*ns_embedded_cpu_call)(void *target, const u64 *a);")
+    out("ns_embedded_cpu_call ns_embedded_cpu_resolve(void *user, const char *module, const char *name, void **target);")
+    out("")
+    out("static inline __attribute__((unused)) f32 ns_cpu_shim_f32(u64 v) {")
+    out("    u32 bits = (u32)v;")
+    out("    f32 f;")
+    out("    memcpy(&f, &bits, 4);")
+    out("    return f;")
+    out("}")
+    out("")
+    out("static inline __attribute__((unused)) f64 ns_cpu_shim_f64(u64 v) {")
+    out("    f64 f;")
+    out("    memcpy(&f, &v, 8);")
+    out("    return f;")
+    out("}")
+    out("")
+    out("static inline __attribute__((unused)) u64 ns_cpu_shim_f32_bits(f32 f) {")
+    out("    u32 bits;")
+    out("    memcpy(&bits, &f, 4);")
+    out("    return bits;")
+    out("}")
+    out("")
+    out("static inline __attribute__((unused)) u64 ns_cpu_shim_f64_bits(f64 f) {")
+    out("    u64 bits;")
+    out("    memcpy(&bits, &f, 8);")
+    out("    return bits;")
+    out("}")
+    out("")
+    for s in 0 to g_cpu_count {
+        out("static u64 ns_embedded_cpu" + itos(s) + "(void *target, const u64 *a) {")
+        out(g_cpu_body[s])
         out("}")
         out("")
     }

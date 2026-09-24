@@ -193,6 +193,7 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 	src/ns_json.c \
 	src/ns_shader.c \
 	src/ns_native_rt.c \
+	src/ns_cpu.c \
 	src/ns_def.c
 
 # The generator is Nano Script (tools/gen_embedded_ffi.ns); the embedded
@@ -229,6 +230,7 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_json.c \
 	src/ns_shader.c \
 	src/ns_native_rt.c \
+	src/ns_cpu.c \
 	src/ns_def.c \
 	src/ns_asm.c
 

@@ -315,10 +315,16 @@ app/application or lib/library type, and a valid entry for an app.
 On Darwin, it creates `bin/<safe-name>.xcodeproj`. An app manifest gets SwiftUI
 application targets named `<safe-name> macOS`, `<safe-name> iOS`, and
 `<safe-name> visionOS`, with automatic signing and the default bundle identifier
-`ns.<safe-name>`; no development team is preset. The embedded interpreter runs
-the linked entry on a background task; status appears in the app, while `print`
+`ns.<safe-name>`; no development team is preset. The app runs the linked entry
+on a background task the way the target's `target` says: an `eval` app
+interprets the bundled `LinkedProject.ns`, an `exec` app gets a "Compile NS
+Program" build phase that compiles it to an arm64 Mach-O object linked into the
+app, and an `emu` app gets a "Build NS Image" phase that writes its ns_cpu
+image, `LinkedProject.nsc`, into the bundle, where the embedded ns_cpu
+interpreter loads and runs it (doc/cpu.md). No code is generated at run time in
+any mode, so all three run on iOS. Status appears in the app, while `print`
 output and diagnostics appear in the Xcode console. Generated Apple apps embed
-	the official `std`, `task`, `shader`, `simd`, `view`, `ui`, `os`, `gpu`, `io`,
+the official `std`, `task`, `shader`, `simd`, `view`, `ui`, `os`, `gpu`, `io`,
 `net`, `storage`, `compress`, and `audio` modules. Other external or dynamically loaded FFI modules
 are not available; generation falls back to host build/test targets instead of
 silently producing a broken app.

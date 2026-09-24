@@ -15,6 +15,7 @@
 #include "ns_lint.h"
 #include "ns_ssa.h"
 #include "ns_cpu.h"
+#include "ns_native_rt.h"
 #include "ns_appimage.h"
 #include "ns_agents_md.h"
 
@@ -590,6 +591,10 @@ static i32 ns_cpu_test_source(ns_str source, ns_str filename, ns_line_loc *line_
     i64 status = 0;
     ns_return_bool ran = ns_cpu_run_main(m, &status);
     ns_cpu_unload(m);
+    // Every entry of a test run shares this process's ns_rt heap, which never
+    // shrinks: without a reset a long run exhausts its 4 GB of addresses. No
+    // value of the unloaded program outlives it.
+    ns_rt_reset();
     if (ns_return_is_error(ran)) return 1;
     return (i32)status;
 }
@@ -4801,7 +4806,8 @@ void ns_exec_project(ns_str path) {
         linked = ns_project_link_all(root, in.source, in.filename, false, ns_null, &external_modules);
     }
 
-    // `link` compiles the program into the generated Apple app. A CLI, or an
+    // `exec` compiles the program into the generated Apple app and `emu`
+    // builds its ns_cpu image into it. A CLI, or an
     // app that imports a module the portable runtime cannot embed, still
     // delegates to the host `ns build` / `ns test` utility targets.
     ns_bool host_build = cli_project;
@@ -4810,7 +4816,8 @@ void ns_exec_project(ns_str path) {
             if (!ns_project_module_embeddable(external_modules[i])) host_build = true;
         }
     }
-    ns_bool link_native = kind == NS_PROJECT_APP && !cli_project && !host_build && selection.link;
+    ns_bool link_native = kind == NS_PROJECT_APP && !cli_project && !host_build && selection.mode == NS_RUN_EXEC;
+    ns_bool link_emu = kind == NS_PROJECT_APP && !cli_project && !host_build && selection.mode == NS_RUN_EMU;
 
     ns_str executable = ns_project_current_executable();
     if (executable.data == ns_null) ns_exit(1, "project", "failed to locate the ns executable.\n");
@@ -4825,6 +4832,7 @@ void ns_exec_project(ns_str path) {
         .kind = kind,
         .host_build = host_build,
         .link_native = link_native,
+        .link_emu = link_emu,
         .root = root,
         .manifest = manifest,
         .source_dir = source_dir,

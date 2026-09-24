@@ -2,19 +2,129 @@
 #include "ns_cpu.h"
 #include "ns_ssa.h"
 
+#include <unistd.h>
+
 // ns_cpu: lower source to an image, run it, reject damaged images, and carry
 // program state across a hot update.
 
-static u8 *ns_cpu_test_image(const char *source, const char *name) {
+static u8 *ns_cpu_test_image_at(const char *source, const char *name, ns_str ref_path) {
     ns_ast_ctx *ctx = calloc(1, sizeof(ns_ast_ctx));
     ns_return_bool parsed = ns_ast_parse(ctx, ns_str_cstr((i8 *)source), ns_str_cstr((i8 *)name));
     if (ns_return_is_error(parsed)) return ns_null;
     // The native lowering, as `ns run --cpu` uses; ns_ssa_build is the Wasm one.
-    ns_return_ptr built = ns_ssa_build_with_runtime_paths_options(ctx, ns_str_null, ns_str_null, ns_str_null, false);
+    ns_return_ptr built = ns_ssa_build_with_runtime_paths_options(ctx, ref_path, ns_str_null, ns_str_null, false);
     if (ns_return_is_error(built)) return ns_null;
     ns_return_ptr image = ns_cpu_image_from_ssa(built.r);
     ns_ssa_module_free(built.r);
     return ns_return_is_error(image) ? ns_null : image.r;
+}
+
+static f64 ns_cpu_test_f64(i64 bits);
+
+static u8 *ns_cpu_test_image(const char *source, const char *name) {
+    return ns_cpu_test_image_at(source, name, ns_str_null);
+}
+
+// Native functions of the `mixt` test module: integer and float arguments
+// interleaved, more of them than either register class holds.
+static f64 mixt_a(i32 a, f64 b, i64 c, f32 d, i32 e, f64 f) {
+    return a + b * 10 + (f64)c * 100 + d * 1000 + e * 10000 + f * 100000;
+}
+
+static f32 mixt_b(f32 a, i32 b, f32 c) { return a * (f32)b + c; }
+
+static i32 mixt_c(f64 a, i32 b, i32 c, i32 d, i32 e, i32 f, i32 g, i32 h, i32 i, i32 j, f32 k, f32 l, f32 m, f32 n,
+                  f32 o, f32 p, f32 q, f32 r, f32 s) {
+    return (i32)a + b + c + d + e + f + g + h + i + j * 2 + (i32)(k + l + m + n + o + p + q + r + s);
+}
+
+static void *ns_cpu_test_resolve(void *user, const char *module, const char *name) {
+    ns_unused(user);
+    if (strcmp(module, "mixt") != 0) return ns_null;
+    if (strcmp(name, "mixt_a") == 0) return (void *)mixt_a;
+    if (strcmp(name, "mixt_b") == 0) return (void *)mixt_b;
+    if (strcmp(name, "mixt_c") == 0) return (void *)mixt_c;
+    return ns_null;
+}
+
+// A call shim as src/ns_embedded_ffi.c generates them for hosts without libffi.
+static f32 ns_cpu_test_f32(u64 v) {
+    u32 bits = (u32)v;
+    f32 f;
+    memcpy(&f, &bits, 4);
+    return f;
+}
+
+static u64 ns_cpu_test_shim_c(void *target, const u64 *a) {
+    typedef i32 (*fn_t)(f64, i32, i32, i32, i32, i32, i32, i32, i32, i32, f32, f32, f32, f32, f32, f32, f32, f32, f32);
+    f64 a0;
+    memcpy(&a0, &a[0], 8);
+    return (u64)(i64)((fn_t)target)(a0, (i32)a[1], (i32)a[2], (i32)a[3], (i32)a[4], (i32)a[5], (i32)a[6], (i32)a[7],
+                                    (i32)a[8], (i32)a[9], ns_cpu_test_f32(a[10]), ns_cpu_test_f32(a[11]),
+                                    ns_cpu_test_f32(a[12]), ns_cpu_test_f32(a[13]), ns_cpu_test_f32(a[14]),
+                                    ns_cpu_test_f32(a[15]), ns_cpu_test_f32(a[16]), ns_cpu_test_f32(a[17]),
+                                    ns_cpu_test_f32(a[18]));
+}
+
+static i32 ns_cpu_test_shim_calls;
+
+static ns_cpu_native_call ns_cpu_test_resolve_call(void *user, const char *module, const char *name, void **target) {
+    ns_unused(user);
+    if (strcmp(module, "mixt") != 0 || strcmp(name, "mixt_c") != 0) return ns_null;
+    *target = (void *)mixt_c;
+    ns_cpu_test_shim_calls++;
+    return ns_cpu_test_shim_c;
+}
+
+static void ns_cpu_test_native_calls(void) {
+    char dir[] = "/tmp/ns_cpu_test.XXXXXX";
+    if (!mkdtemp(dir)) {
+        ns_expect(false, "a temporary module directory is created.");
+        return;
+    }
+    char path[256];
+    snprintf(path, sizeof(path), "%s/mixt.ns", dir);
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fputs("mod mixt\n"
+          "ref fn mixt_a(a: i32, b: f64, c: i64, d: f32, e: i32, f: f64) f64\n"
+          "ref fn mixt_b(a: f32, b: i32, c: f32) f32\n"
+          "ref fn mixt_c(a: f64, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32, "
+          "k: f32, l: f32, m: f32, n: f32, o: f32, p: f32, q: f32, r: f32, s: f32) i32\n", f);
+    fclose(f);
+    const char *source =
+        "use mixt\n"
+        "fn call_a() f64 {\n"
+        "    let d: f32 = 3.5\n"
+        "    return mixt_a(1, 2.0, 3, d, 5, 6.0)\n"
+        "}\n"
+        "fn call_b() f64 { return mixt_b(1.5, 4, 0.25) }\n"
+        "fn call_c() i32 { return mixt_c(1.0, 1, 1, 1, 1, 1, 1, 1, 1, 7, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0) }\n"
+        "fn main() i32 { return 0 }\n";
+    u8 *image = ns_cpu_test_image_at(source, "<ns_cpu_test_ffi>", ns_str_cstr(dir));
+    remove(path);
+    rmdir(dir);
+    ns_expect(image != ns_null, "a program calling native functions lowers to an image.");
+    if (!image) return;
+
+    ns_cpu_host host = {.resolve = ns_cpu_test_resolve, .resolve_call = ns_cpu_test_resolve_call};
+    ns_return_ptr loaded = ns_cpu_load(image, ns_array_length(image), &host, ns_null);
+    ns_expect(!ns_return_is_error(loaded), "the image links against the host's native functions.");
+    if (ns_return_is_error(loaded)) {
+        ns_array_free(image);
+        return;
+    }
+    ns_cpu_module *m = loaded.r;
+    ns_expect(ns_cpu_test_shim_calls > 0, "the host call shim resolver is asked first.");
+    i64 out = 0;
+    ns_expect(ns_cpu_call(m, "call_a", ns_null, 0, &out).s == NS_OK && ns_cpu_test_f64(out) == 653821.0,
+              "interleaved integer and float arguments reach the native function.");
+    ns_expect(ns_cpu_call(m, "call_b", ns_null, 0, &out).s == NS_OK && ns_cpu_test_f64(out) == 6.25,
+              "an f32 result widens as the program expects.");
+    ns_expect(ns_cpu_call(m, "call_c", ns_null, 0, &out).s == NS_OK && out == 28,
+              "a host call shim passes nineteen arguments.");
+    ns_cpu_unload(m);
+    ns_array_free(image);
 }
 
 static ns_bool ns_cpu_test_call(ns_cpu_module *m, const char *fn, i64 a, i64 b, i64 *out) {
@@ -148,5 +258,7 @@ int main(void) {
 
     ns_array_free(image);
     ns_array_free(image2);
+
+    ns_cpu_test_native_calls();
     return 0;
 }
