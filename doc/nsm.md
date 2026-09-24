@@ -84,7 +84,9 @@ How the entry runs is its `target`:
 and `target_arch` (`x86_64`, `arm64`) name another platform; either key may be
 omitted to keep the host's value. `ns build` of a foreign `exec` target
 cross-compiles, and `ns run` of one falls back to the interpreter because the
-host cannot launch the result. `ns build` of an `emu` target writes
+host cannot launch the result. An `eval` target may set them too: `ns run`
+interprets it on any host, and `ns build` builds for the named platform.
+`ns build` of an `emu` target writes
 `bin/<name>.nsc`, and `ns test` runs an `emu` project's tests on ns_cpu.
 
 ### Mobile orientation
