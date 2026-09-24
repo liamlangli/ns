@@ -118,6 +118,8 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
 
 ## Design Goal
 - Minimal syntax and keywords for ease of learning and use.
-- Supports both interpretation and compilation.
+- Supports both interpretation and compilation, plus a register bytecode
+  interpreter (`ns run --cpu`, `.nsc` images) for platforms without JIT and for
+  hot updates; see [doc/cpu.md](doc/cpu.md).
 - Utilizes an explicit type system, avoiding generic types.
 - Follows a data-oriented programming approach.

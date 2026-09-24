@@ -913,6 +913,47 @@ static ns_type ns_ssa_value_type(ns_ssa_builder *b, i32 value) {
     return ns_type_unknown;
 }
 
+// The VM parse types a module-level `let` initializer only when the variable
+// has no declared type, so `let scale: f64 = 1.0` reaches the lowering with an
+// untyped literal that would be stored as the integer 1. Give such a literal
+// the type the VM would have given it with the declared type as the expected
+// one (ns_vm_parse_primary_expr), through a leading negation as well.
+static ns_type ns_ssa_type_literal(ns_ssa_builder *b, i32 value, ns_type expect) {
+    if (value < 0) return ns_type_unknown;
+    ns_ssa_inst *def = ns_null;
+    for (i32 i = (i32)ns_array_length(b->fn->insts) - 1; i >= 0; --i) {
+        if (b->fn->insts[i].dst == value) {
+            def = &b->fn->insts[i];
+            break;
+        }
+    }
+    if (!def || !ns_type_is_unknown(def->type)) return def ? def->type : ns_type_unknown;
+    ns_type lt = ns_type_unknown;
+    if (def->op == NS_SSA_OP_NEG) {
+        lt = ns_ssa_type_literal(b, def->a, expect);
+    } else if (def->op == NS_SSA_OP_CONST && def->token.type == NS_TOKEN_INT_LITERAL) {
+        switch (def->token.suffix) {
+        case NS_NUM_SUFFIX_I8: lt = ns_type_i8; break;
+        case NS_NUM_SUFFIX_U8: lt = ns_type_u8; break;
+        case NS_NUM_SUFFIX_I16: lt = ns_type_i16; break;
+        case NS_NUM_SUFFIX_U16: lt = ns_type_u16; break;
+        case NS_NUM_SUFFIX_U32: lt = ns_type_u32; break;
+        case NS_NUM_SUFFIX_I64: lt = ns_type_i64; break;
+        case NS_NUM_SUFFIX_U64: lt = ns_type_u64; break;
+        default:
+            lt = ns_type_is_number(expect) && !ns_type_is(expect, NS_TYPE_BOOL) ? (ns_type){.type = expect.type}
+                                                                               : ns_type_i32;
+            break;
+        }
+    } else if (def->op == NS_SSA_OP_CONST && def->token.type == NS_TOKEN_FLT_LITERAL) {
+        if (def->token.suffix == NS_NUM_SUFFIX_F64) lt = ns_type_f64;
+        else if (ns_type_is_float(expect)) lt = (ns_type){.type = expect.type};
+        else lt = ns_type_f32;
+    }
+    if (!ns_type_is_unknown(lt)) def->type = lt;
+    return lt;
+}
+
 static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type);
 
 static i32 ns_ssa_wasm32_align(i32 offset, i32 size) {
@@ -2957,6 +2998,9 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
             value = ns_ssa_emit_value(b, NS_SSA_OP_UNDEF, -1, -1, ns_type_unknown, n->var_def.name.val, n->var_def.name, i);
         }
         i32 global = ns_ssa_global_index(b, n->var_def.name.val);
+        if (global >= 0 && ns_str_equals(b->fn->name, ns_str_cstr("__module_init"))) {
+            ns_ssa_type_literal(b, value, b->m->globals[global].type);
+        }
         ns_type value_type = ns_ssa_value_type(b, value);
         ns_type dest_t = n->var_def.rt;
         if (ns_type_is(dest_t, NS_TYPE_UNION)) {

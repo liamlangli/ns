@@ -80,9 +80,12 @@ static void ns_rt_enter_packaged_directory(void) {
 // host pointers other threads already hold from ns_rt_ptr / array slots.
 #define NS_RT_HEAP_RESERVE ((size_t)4 * 1024 * 1024 * 1024)
 
-static uint8_t *ns_rt_mem = NULL;
+// The base and committed size are visible to the ns_cpu interpreter, which
+// reads and writes the heap in place instead of calling ns_rt_load/ns_rt_store
+// (see ns_native_rt.h). The base never moves once reserved.
+uint8_t *ns_rt_mem = NULL;
 static uint32_t ns_rt_used = 16;
-static uint32_t ns_rt_cap = 0;
+uint32_t ns_rt_cap = 0;
 static size_t ns_rt_page = 0;
 
 #ifdef _WIN32

@@ -1,0 +1,26 @@
+// Module-level lets with a declared type: the initializer literal takes the
+// declared type in every backend (interpreter, native build, ns_cpu).
+use std
+
+let scale: f64 = 1.5
+let ratio: f32 = 0.25
+let count: i64 = 3
+let negative: f64 = -2.5
+let whole: f64 = 2
+let acc: f64 = 0.0
+
+fn accumulate(x: f64) {
+    acc = acc + x * scale
+}
+
+fn main() i32 {
+    assert scale * 2.0 == 3.0
+    assert ratio * 4.0 == 1.0
+    assert count * 2 == 6
+    assert negative + 2.5 == 0.0
+    assert whole / 2.0 == 1.0
+    accumulate(2.0)
+    accumulate(4.0)
+    assert acc == 9.0
+    return 0
+}

@@ -14,6 +14,7 @@
 #include "ns_build_cache.h"
 #include "ns_lint.h"
 #include "ns_ssa.h"
+#include "ns_cpu.h"
 #include "ns_appimage.h"
 #include "ns_agents_md.h"
 
@@ -65,6 +66,8 @@ typedef struct ns_compile_option_t {
     ns_bool elf_obj_only: 2;
     ns_bool wasm_only: 2;
     ns_bool pe_only: 2;
+    ns_bool cpu: 2;      // `--cpu`: lower to ns_cpu code; with run, interpret that instead of the AST
+    ns_bool cpu_dis: 2;  // `--cpu-dis`: print the ns_cpu code of a source file or image
     ns_bool symbol_only: 2;
     ns_bool show_version: 2;
     ns_bool show_help: 2;
@@ -84,7 +87,7 @@ typedef struct ns_compile_option_t {
     ns_bool lint_fix: 2; // `ns lint_fix [path]` - rewrite the fixable findings
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
-    u8 build_kind;      // 0 auto, 1 executable, 2 library
+    u8 build_kind;      // 0 auto, 1 executable, 2 library, 3 app, 4 ns_cpu image
     i32 positional_count;
     i32 program_argc;
     i8 **program_argv;
@@ -166,6 +169,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.wasm_only = true;
         } else if (strcmp(argv[i], "--pe") == 0) {
             option.pe_only = true;
+        } else if (strcmp(argv[i], "--cpu") == 0) {
+            option.cpu = true;
+        } else if (strcmp(argv[i], "--cpu-dis") == 0) {
+            option.cpu_dis = true;
         } else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--symbol") == 0) {
             option.symbol_only = true;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--version") == 0) {
@@ -267,6 +274,9 @@ void ns_help() {
     printf("  --macho-platform  with --macho-o, Xcode PLATFORM_NAME for LC_BUILD_VERSION\n");
     printf("  --wasm            emit webassembly module (.wasm)\n");
     printf("  --pe              emit windows pe executable (.exe, amd64)\n");
+    printf("  --cpu             emit an ns_cpu bytecode image (.nsc, default bin/a.nsc);\n");
+    printf("                    with run, execute on the ns_cpu interpreter instead\n");
+    printf("  --cpu-dis         print the ns_cpu code of a .ns file or .nsc image\n");
     printf("  --shader <target> transpile shader fns to msl | glsl | hlsl | wgsl source\n");
     printf("  --entry <name>    shader entry fn (default: every vs_*/fs_*/ps_*/cs_* fn)\n");
     printf("  --shader-bin      also compile the shader source when the platform\n");
@@ -285,6 +295,8 @@ void ns_help() {
     printf("  create <name>     scaffold an ns project in a new <name> folder\n");
     printf("  update [path]     migrate ns.mod and refresh project support files\n");
     printf("  run  [file|target] [args...] run native source; link = true builds and launches\n");
+    printf("                    a .nsc image runs on the ns_cpu interpreter; so does\n");
+    printf("                    source with --cpu (ns run --cpu [file|target])\n");
     printf("                    wasm projects build and serve bin/\n");
     printf("                    a bare name selects a [[targets]] entry of ns.mod\n");
     printf("                    arguments after the file or target become NS_ARG0...\n");
@@ -295,12 +307,14 @@ void ns_help() {
     printf("                    --live [path|target] instead runs the project and streams\n");
     printf("                    live frames to the viewer over loopback tcp\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
+    printf("                    --cpu runs each entry on the ns_cpu interpreter\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
     printf("                    uses ns.mod type when path is omitted or a module dir\n");
     printf("                    type app | cli | library picks app | executable | .a\n");
     printf("                    Linux app builds produce a self-extracting .AppImage\n");
     printf("                    builds every [[targets]] table; a bare name builds one\n");
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
+    printf("                    --cpu writes an ns_cpu image bin/<name>.nsc instead\n");
     printf("                    --target x86_64-linux-gnu cross-compiles a native build\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
     printf("                    keeps the artifact when no input changed; --force rebuilds\n");
@@ -522,6 +536,108 @@ void ns_exec_amd64(ns_str filename) {
     ns_amd64_print(bin);
     ns_amd64_free(bin);
     ns_ssa_module_free(ssa);
+}
+
+// `ns_cpu`: lower merged source through SSA into a bytecode image. Returns
+// NULL, having reported why, when the source does not compile.
+static u8 *ns_cpu_try_image_from_source(ns_str source, ns_str filename, ns_line_loc *line_map) {
+    ctx.line_map = line_map;
+    ns_return_bool ret = ns_ast_parse(&ctx, source, filename);
+    if (ns_return_is_error(ret)) {
+        ns_return_assert(ret);
+        return ns_null;
+    }
+    ns_return_ptr ssa_ret = ns_ssa_build_native_for_cli(&ctx);
+    if (ns_return_is_error(ssa_ret)) {
+        ns_return_assert(ssa_ret);
+        return ns_null;
+    }
+    ns_ssa_module *ssa = ssa_ret.r;
+    ns_return_ptr image_ret = ns_cpu_image_from_ssa(ssa);
+    ns_ssa_module_free(ssa);
+    return ns_return_is_error(image_ret) ? ns_null : image_ret.r;
+}
+
+static u8 *ns_cpu_image_from_source(ns_str source, ns_str filename, ns_line_loc *line_map) {
+    u8 *image = ns_cpu_try_image_from_source(source, filename, line_map);
+    if (!image) ns_exit(1, "cpu", "failed to lower %.*s to ns_cpu code.\n", filename.len, filename.data);
+    return image;
+}
+
+static ns_cpu_module *ns_cpu_try_load_for_cli(const u8 *image, szt size) {
+    ns_cpu_host host = {0};
+    host.lib_path = vm.lib_path;
+    host.lib_fallback_path = vm.lib_fallback_path;
+    ns_return_ptr loaded = ns_cpu_load(image, size, &host, ns_null);
+    return ns_return_is_error(loaded) ? ns_null : loaded.r;
+}
+
+static ns_cpu_module *ns_cpu_load_for_cli(const u8 *image, szt size) {
+    ns_cpu_module *m = ns_cpu_try_load_for_cli(image, size);
+    if (!m) ns_exit(1, "cpu", "cannot load the ns_cpu image.\n");
+    return m;
+}
+
+// `ns test --cpu`: the status main returns, or 1 when the entry does not
+// compile, load or run to completion.
+static i32 ns_cpu_test_source(ns_str source, ns_str filename, ns_line_loc *line_map) {
+    u8 *image = ns_cpu_try_image_from_source(source, filename, line_map);
+    if (!image) return 1;
+    ns_cpu_module *m = ns_cpu_try_load_for_cli(image, ns_array_length(image));
+    ns_array_free(image);
+    if (!m) return 1;
+    i64 status = 0;
+    ns_return_bool ran = ns_cpu_run_main(m, &status);
+    ns_cpu_unload(m);
+    if (ns_return_is_error(ran)) return 1;
+    return (i32)status;
+}
+
+// Load and run an image as `ns run` runs a program: module globals, then main.
+// The process exits 0 unless the program faults, which exits with status 1.
+static void ns_cpu_run_image(const u8 *image, szt size) {
+    ns_cpu_module *m = ns_cpu_load_for_cli(image, size);
+    i64 status = 0;
+    ns_return_bool ran = ns_cpu_run_main(m, &status);
+    ns_cpu_unload(m);
+    if (ns_return_is_error(ran)) exit(1);
+}
+
+static void ns_exec_cpu_source(ns_str source, ns_str filename, ns_line_loc *line_map) {
+    u8 *image = ns_cpu_image_from_source(source, filename, line_map);
+    ns_cpu_run_image(image, ns_array_length(image));
+    ns_array_free(image);
+}
+
+static u8 *ns_cpu_image_for_file(ns_str filename) {
+    ns_str source = ns_os_read_file(filename);
+    if (source.len == 0) ns_exit(1, "cpu", "empty file %.*s.\n", filename.len, filename.data);
+    if (ns_cpu_image_is((const u8 *)source.data, (szt)source.len)) {
+        u8 *image = ns_null;
+        ns_array_set_length(image, source.len);
+        memcpy(image, source.data, (szt)source.len);
+        return image;
+    }
+    return ns_cpu_image_from_source(source, filename, ns_null);
+}
+
+void ns_exec_cpu(ns_str filename, ns_str output) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    if (output.len == 0) output = ns_str_cstr("bin/a.nsc");
+    u8 *image = ns_cpu_image_for_file(filename);
+    ns_return_bool wrote = ns_cpu_image_write(output, image, ns_array_length(image));
+    if (ns_return_is_error(wrote)) ns_exit(1, "cpu", "cannot write %.*s.\n", output.len, output.data);
+    ns_info("cpu", "image %.*s (%zu bytes)\n", output.len, output.data, (szt)ns_array_length(image));
+    ns_array_free(image);
+}
+
+void ns_exec_cpu_dis(ns_str filename) {
+    if (filename.len == 0) ns_error("ns", "no input file.\n");
+    u8 *image = ns_cpu_image_for_file(filename);
+    ns_cpu_module *m = ns_cpu_load_for_cli(image, ns_array_length(image));
+    ns_cpu_disasm(m);
+    ns_cpu_unload(m);
+    ns_array_free(image);
 }
 
 void ns_exec_macho(ns_str filename, ns_str output) {
@@ -1736,6 +1852,7 @@ typedef enum {
     NS_BUILD_EXE = 1,
     NS_BUILD_LIB = 2,
     NS_BUILD_APP = 3,
+    NS_BUILD_CPU = 4, // `ns build --cpu`: an ns_cpu image (.nsc)
 } ns_build_kind;
 
 static ns_bool ns_build_target_is_wasm(ns_str target);
@@ -1851,6 +1968,8 @@ static ns_str ns_build_default_output(ns_build_input *in, ns_build_kind kind) {
         ns_str safe = ns_wasm_safe_name(name);
         artifact = ns_str_concat(safe, ns_str_cstr(".wasm"));
         ns_str_free(safe);
+    } else if (kind == NS_BUILD_CPU) {
+        artifact = ns_str_concat(name, ns_str_cstr(".nsc"));
     } else if (kind == NS_BUILD_LIB) {
         artifact = ns_str_concat(ns_str_cstr("lib"), name);
         artifact = ns_str_concat(artifact, ns_str_cstr(".a"));
@@ -2659,6 +2778,7 @@ static ns_bool ns_build_target_is_wasm(ns_str target) {
 }
 
 static ns_build_kind ns_build_resolve_kind(ns_build_input *in, u8 requested) {
+    if (requested == NS_BUILD_CPU) return NS_BUILD_CPU;
     if (requested == NS_BUILD_EXE) return NS_BUILD_EXE;
     if (requested == NS_BUILD_LIB) return NS_BUILD_LIB;
     if (requested == NS_BUILD_APP) return NS_BUILD_APP;
@@ -3884,6 +4004,17 @@ static void ns_build_linux_appimage(ns_build_input *in, ns_str output, ns_ssa_mo
 #endif
 
 static void ns_build_emit(ns_build_input *in, ns_build_kind kind, ns_str output, ns_ssa_module *ssa) {
+    if (kind == NS_BUILD_CPU) {
+        ns_return_ptr image_ret = ns_cpu_image_from_ssa(ssa);
+        ns_ssa_module_free(ssa);
+        if (ns_return_is_error(image_ret)) ns_exit(1, "build", "failed to lower to ns_cpu code.\n");
+        u8 *image = image_ret.r;
+        ns_return_bool wrote = ns_cpu_image_write(output, image, ns_array_length(image));
+        ns_array_free(image);
+        if (ns_return_is_error(wrote)) ns_exit(1, "build", "cannot write %.*s.\n", output.len, output.data);
+        ns_info("build", "ns_cpu image %.*s\n", output.len, output.data);
+        return;
+    }
     if (ns_build_target_is_wasm(in->target)) {
         ns_build_wasm_app(in, output, ssa);
         return;
@@ -4037,6 +4168,9 @@ void ns_exec_build_target(ns_str path, ns_str output, u8 requested_kind, ns_bool
     ns_build_input in = ns_build_input_resolve(path, target_name);
     ns_build_profile_end("resolve_input", resolve_start);
     ns_profile_set_output_scope(in.scope);
+    // An ns_cpu image is lowered for the host layout whatever platform the
+    // target names; the image itself runs anywhere the interpreter does.
+    if (requested_kind == NS_BUILD_CPU) in.target = ns_str_null;
     ns_build_select_target(&in);
     if (ns_build_target_is_wasm(in.target)) {
         ns_asm_clear_target_override();
@@ -5234,6 +5368,8 @@ static void ns_exec_linked(ns_str executable) {
 // `ns run [file.ns | target]`. A bare word naming a `[[targets]]` table of the
 // nearest project runs that target; otherwise the argument is a path, and no
 // argument at all runs the default target of the current directory.
+static ns_bool ns_cli_cpu = false; // `ns run --cpu`
+
 void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link) {
     ns_str filename = argument;
     ns_str scope = ns_str_null;
@@ -5261,6 +5397,12 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
     if (source.data == ns_null || source.len == 0)
         ns_exit(1, "ns", "empty file or folder %.*s.\n", filename.len, filename.data);
 
+    // A compiled ns_cpu image runs on its interpreter as it is.
+    if (ns_cpu_image_is((const u8 *)source.data, (szt)source.len)) {
+        ns_cpu_run_image((const u8 *)source.data, (szt)source.len);
+        return;
+    }
+
     if (project) {
         // The selected target already fixed the project scope.
     } else if (implicit) {
@@ -5279,6 +5421,10 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
     if (project) ns_profile_set_output_scope(scope);
 
     if (!project) {
+        if (ns_cli_cpu) {
+            ns_exec_cpu_source(source, filename, ns_null);
+            return;
+        }
         ns_return_value ret_v = ns_eval(&vm, source, filename);
         if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
         return;
@@ -5329,7 +5475,7 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
         setenv("NS_APP_ICON", icon.data, 1);
 #endif
     }
-    if (honor_link && selection.link) {
+    if (honor_link && selection.link && !ns_cli_cpu) {
         // A host without a native executable backend cannot build the linked
         // artifact. Interpret the target instead, the same way `ns build`
         // packages a launcher for an interpreted one.
@@ -5343,6 +5489,10 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
     ns_line_loc *map = ns_null;
     ns_str merged = ns_project_link_all(scope, source, filename, false, &map, ns_null);
 
+    if (ns_cli_cpu) {
+        ns_exec_cpu_source(merged, filename, map);
+        return;
+    }
     ns_return_value ret_v = ns_eval_with_map(&vm, merged, filename, map);
     if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
 }
@@ -5362,6 +5512,7 @@ static i32 ns_run_test_file(ns_str filename) {
     ns_line_loc *map = ns_null;
     ns_str merged = ns_project_link_all(scope, source, filename, true, &map, ns_null);
 
+    if (ns_cli_cpu) return ns_cpu_test_source(merged, filename, map);
     ns_return_value ret_v = ns_eval_with_map(&tvm, merged, filename, map);
     if (ns_return_is_error(ret_v)) {
         ns_warn("test", "%.*s errored.\n", filename.len, filename.data);
@@ -5806,8 +5957,10 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.profile_cmd) {
         ns_exec_run(option.filename, option.port, option.port_set, false);
     } else if (option.run) {
+        ns_cli_cpu = option.cpu;
         ns_exec_run(option.filename, option.port, option.port_set, true);
     } else if (option.test) {
+        ns_cli_cpu = option.cpu;
         ns_exec_test(option.filename);
     } else if (option.build) {
         if (option.build_target.len > 0) {
@@ -5815,6 +5968,7 @@ i32 main(i32 argc, i8** argv) {
             ns_cli_build_target_set = true;
         }
         f64 build_start = ns_build_profile_begin("build");
+        if (option.cpu) option.build_kind = NS_BUILD_CPU;
         ns_exec_build(option.filename, option.output, option.build_kind, option.force);
         ns_build_profile_end("build", build_start);
     } else if (option.clean) {
@@ -5852,6 +6006,10 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_wasm(option.filename, option.output);
     } else if (option.pe_only) {
         ns_exec_pe(option.filename, option.output);
+    } else if (option.cpu_dis) {
+        ns_exec_cpu_dis(option.filename);
+    } else if (option.cpu) {
+        ns_exec_cpu(option.filename, option.output);
     } else if (option.symbol_only) {
         ns_exec_symbol(option.filename);
     } else {

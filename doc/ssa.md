@@ -1,7 +1,8 @@
 # SSA Module Design
 
 Lower Nano Script AST (`ns_ast_ctx`) into a CFG of SSA-style blocks and
-instructions. Native AArch64, native AMD64, and Wasm consume this IR.
+instructions. Native AArch64, native AMD64, Wasm, and the ns_cpu bytecode
+interpreter (doc/cpu.md) consume this IR.
 
 ## Public API
 

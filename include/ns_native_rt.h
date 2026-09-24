@@ -10,6 +10,12 @@
 // pointers held by other threads.
 
 void ns_rt_init(void);
+
+// Heap base and committed size. The base is fixed once ns_rt_init has run and
+// the size only grows, so an address below ns_rt_cap is ns_rt_mem + addr. Every
+// other address above 0x10000 is a host pointer (see ns_rt_native_ptr).
+extern uint8_t *ns_rt_mem;
+extern uint32_t ns_rt_cap;
 void ns_rt_reset(void);
 void ns_rt_set_strtab(const char **tab, const int32_t *lens, int n);
 

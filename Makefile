@@ -146,6 +146,8 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_print.c \
 	src/ns_ssa.c \
 	src/ns_native_rt.c \
+	src/ns_cpu.c \
+	src/ns_cpu_gen.c \
 	src/ns_aarch.c \
 	src/ns_macho.c \
 	src/ns_wasm.c \
@@ -213,6 +215,8 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_ast_expr.c \
 	src/ns_ast_print.c \
 	src/ns_ssa.c \
+	src/ns_cpu.c \
+	src/ns_cpu_gen.c \
 	src/ns_aarch.c \
 	src/ns_macho.c \
 	src/ns_vm_parse.c \
@@ -268,7 +272,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_cpu_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -358,6 +362,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_compile_test
 	$(NS_BINDIR)/ns_shader_test
 	$(NS_BINDIR)/ns_ssa_test
+	$(NS_BINDIR)/ns_cpu_test
 	$(NS_BINDIR)/ns_token_test
 	$(NS_BINDIR)/ns_buffer_test
 	$(NS_BINDIR)/ns_os_test

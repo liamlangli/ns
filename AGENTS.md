@@ -44,6 +44,10 @@ The common commands are:
   published as `NS_ARGC` and `NS_ARG0`, `NS_ARG1`, ... for the program to read
   through `os_env`. `ns` options such as `--port` belong before the file or
   target. A Wasm project builds and starts its loopback live-reload server.
+  `ns run --cpu [file | target]` instead lowers the program to ns_cpu register
+  bytecode and runs that: the semantics of a native build, many times faster
+  than the AST interpreter, without generating machine code. `ns run file.nsc`
+  runs a prebuilt ns_cpu image. See `doc/cpu.md`.
 - `ns profile [path]`: same as `ns run`, but collect a whole-run profile and
   write `bin/ns.profile`, then print a colored CLI hot-path summary of VM scopes
   and FFI calls. The report always lands in a `bin/` directory - the project's
@@ -76,6 +80,7 @@ The common commands are:
   same. An explicit test file or non-project directory is also supported. In a
   multi-target project, tests use the default target's source exclusions;
   `<target>_test.ns` uses the exclusions of the matching named target.
+  `ns test --cpu` runs the same entries on the ns_cpu interpreter.
 - `ns build [path | target]`: compile a script or module to native machine
   code. With no target name it builds every `[[targets]]` table the manifest
   declares; a bare word builds that one target independently, as with `ns run`.
@@ -83,7 +88,8 @@ The common commands are:
   type `cli` a plain executable, type `library` a static library, and an app
   with `target = "wasm"` produces its browser bundle and `.wasm.map` source
   map. `-o` applies to a single target only. `--exe` forces a
-  linked native executable. `ns build` does not fall back to `ns run`. Native
+  linked native executable. `--cpu` writes a verified, portable ns_cpu image
+  `bin/<name>.nsc` instead, for hot update or hosts without JIT (`doc/cpu.md`). `ns build` does not fall back to `ns run`. Native
   code generation covers Darwin arm64 (AArch64 mach-o) and Linux x86_64 (AMD64
   ELF); both link the emitted object with the host C toolchain.
   Linux app packaging needs no external tool: `ns` writes the AppImage's

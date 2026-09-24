@@ -2,7 +2,9 @@
 
 # Run the same .ns sources through the interpreter and the native compile path
 # (AArch64 mach-o on Darwin, AMD64 ELF on Linux). Exit status (and stdout, when
-# the compiled program prints) must match.
+# the compiled program prints) must match. The ns_cpu interpreter (`ns run
+# --cpu`) lowers the same SSA and calls the same runtime as the native build,
+# so it must match the native executable too.
 
 set -eu
 
@@ -48,7 +50,22 @@ run_one() {
         fail=1
         return
     fi
-    printf '%s\n' "PASS: $name interpret/compile exit $int_status."
+    set +e
+    "$ns" run --cpu "$src" >"$tmp/$name.cpu.out" 2>"$tmp/$name.cpu.err"
+    cpu_status=$?
+    set -e
+    if [ "$cpu_status" -ne "$cmp_status" ]; then
+        printf '%s\n' "FAIL: $name ns_cpu exit $cpu_status, compile exit $cmp_status." >&2
+        cat "$tmp/$name.cpu.err" >&2
+        fail=1
+        return
+    fi
+    if ! cmp -s "$tmp/$name.cmp.out" "$tmp/$name.cpu.out"; then
+        printf '%s\n' "FAIL: $name stdout differs between ns_cpu and compile." >&2
+        fail=1
+        return
+    fi
+    printf '%s\n' "PASS: $name interpret/compile/ns_cpu exit $int_status."
 }
 
 run_one "$root/test/parity_core.ns"
@@ -62,6 +79,7 @@ run_one "$root/test/parity_ref.ns"
 run_one "$root/test/parity_task.ns"
 run_one "$root/test/parity_ffi.ns"
 run_one "$root/test/parity_scope.ns"
+run_one "$root/test/parity_global.ns"
 
 if [ "$fail" -ne 0 ]; then
     exit 1
