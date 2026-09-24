@@ -153,6 +153,7 @@ static const ns_cpu_rt ns_cpu_rt_table[] = {
     NS_CPU_RT(ns_rt_utos, 1, 0),
     NS_CPU_RT(ns_rt_btos, 1, 0),
     NS_CPU_RT(ns_rt_ftos, 1, 0),
+    NS_CPU_RT(ns_rt_fmtf, 1, 0),
     NS_CPU_RT(ns_rt_stof, 1, 0),
     NS_CPU_RT(ns_rt_fmod, 2, 0),
     NS_CPU_RT(ns_rt_fmodf, 2, 0),
@@ -180,6 +181,18 @@ static const ns_cpu_rt ns_cpu_rt_table[] = {
     NS_CPU_RT(ns_rt_native_ptr, 1, 0),
     NS_CPU_RT(ns_rt_array_ptr, 1, 0),
     NS_CPU_RT(ns_rt_callback, 1, 0),
+    NS_CPU_RT(ns_rt_shader_host_bind, 4, 0),
+    NS_CPU_RT(ns_rt_shader_host_bind_secondary, 1, 0),
+    NS_CPU_RT(ns_rt_shader_host_root, 1, 0),
+    NS_CPU_RT(ns_rt_shader_host_invocation, 3, 1),
+    NS_CPU_RT(ns_rt_shader_host_swap, 0, 1),
+    NS_CPU_RT(ns_rt_shader_host_release, 0, 1),
+    NS_CPU_RT(ns_rt_shader_global_id, 1, 0),
+    NS_CPU_RT(ns_rt_shader_root_f32, 1, 0),
+    NS_CPU_RT(ns_rt_shader_read_texture, 2, 0),
+    NS_CPU_RT(ns_rt_shader_write_texture, 4, 1),
+    NS_CPU_RT(ns_rt_shader_source_hash, 1, 0),
+    NS_CPU_RT(ns_rt_shader_unsupported, 1, 1),
     NS_CPU_RT(ns_rt_queue_main, 0, 0),
     NS_CPU_RT(ns_rt_queue_worker, 0, 0),
     NS_CPU_RT(ns_rt_queue_idle, 0, 0),
@@ -577,6 +590,12 @@ dispatch:
     NS_CPU_BIN(SHRS, (u64)((i64)a >> (b & 63)))
     NS_CPU_BIN(SHRU, a >> (b & 63))
     NS_CPU_UN(NEG, 0 - a)
+    // i32 arithmetic: the 64-bit result wrapped to 32 bits and sign-extended.
+    NS_CPU_BIN(ADDW, (u64)(i64)(i32)(u32)(a + b))
+    NS_CPU_BIN(SUBW, (u64)(i64)(i32)(u32)(a - b))
+    NS_CPU_BIN(MULW, (u64)(i64)(i32)(u32)(a * b))
+    NS_CPU_BIN(SHLW, (u64)(i64)(i32)(u32)(a << (b & 63)))
+    NS_CPU_UN(NEGW, (u64)(i64)(i32)(u32)(0 - a))
     NS_CPU_UN(NOT, (u64)(a == 0))
     NS_CPU_CASE(ADDI) { D = A + (u64)(i64)(i32)NS_CPU_U32(pc + 3); pc += 5; NS_CPU_NEXT(); }
 

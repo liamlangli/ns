@@ -1,0 +1,28 @@
+// Number literals with every suffix the lexer accepts, hex and binary, keep
+// their value in every backend.
+use std
+
+fn main() i32 {
+    let a = 200ub
+    let b = -5b
+    let c = 40000us
+    let d = -300s
+    let e = 4000000000u
+    let f = 5000000000l
+    let g = 18446744073709551615ul
+    let h = 0xff
+    let k = 0b1011
+    let m = 2.5d
+    assert a == 200ub
+    assert a as i32 == 200
+    assert b as i32 == -5
+    assert c as i32 == 40000
+    assert d as i32 == -300
+    assert e as u64 == 4000000000ul
+    assert f / 1000l == 5000000l
+    assert g == 18446744073709551615ul
+    assert h == 255
+    assert k == 11
+    assert m * 2.0d == 5.0d
+    return 0
+}

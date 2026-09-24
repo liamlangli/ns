@@ -29,6 +29,7 @@
     X(AND, "drr") X(OR, "drr") X(XOR, "drr") \
     X(SHL, "drr") X(SHRS, "drr") X(SHRU, "drr") \
     X(NEG, "dr") X(NOT, "dr") \
+    X(ADDW, "drr") X(SUBW, "drr") X(MULW, "drr") X(SHLW, "drr") X(NEGW, "dr") \
     X(ADDI, "drw") \
     X(FADD64, "drr") X(FSUB64, "drr") X(FMUL64, "drr") X(FDIV64, "drr") \
     X(FADD32, "drr") X(FSUB32, "drr") X(FMUL32, "drr") X(FDIV32, "drr") \

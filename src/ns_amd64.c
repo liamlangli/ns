@@ -539,82 +539,6 @@ static void ns_amd64_close_arg_space(ns_amd64_ctx *c, i32 space) {
     if (space > 0) ns_amd64_emit_alu_ri32(c, 0, NS_AMD64_RSP, space); /* ADD RSP, space */
 }
 
-/* ── constant parsing ─────────────────────────────────────────────────────── */
-static ns_bool ns_amd64_parse_u64(ns_str s, u64 *out) {
-    if (s.len <= 0 || !s.data) return false;
-    if (ns_str_equals(s, ns_str_cstr("true"))) { *out = 1; return true; }
-    if (ns_str_equals(s, ns_str_cstr("false"))) { *out = 0; return true; }
-    if (ns_str_equals(s, ns_str_cstr("nil"))) { *out = 0; return true; }
-
-    /* A leading sign appears in signed enum members lowered to constants. */
-    i32 start = 0;
-    ns_bool neg = false;
-    if (s.data[0] == '-' || s.data[0] == '+') {
-        neg = s.data[0] == '-';
-        start = 1;
-        if (start >= s.len) return false;
-    }
-
-    i32 end = s.len;
-    while (end > start) {
-        i8 suf = s.data[end - 1];
-        if (suf == 'u' || suf == 'U' || suf == 'i' || suf == 'I' ||
-            suf == 'l' || suf == 'L') {
-            end--;
-            continue;
-        }
-        break;
-    }
-    if (end <= start) return false;
-
-    if (start + 1 < end && s.data[start] == '0' && (s.data[start + 1] == 'x' || s.data[start + 1] == 'X')) {
-        u64 v = 0;
-        for (i32 i = start + 2; i < end; ++i) {
-            i8 ch = s.data[i];
-            u64 d;
-            if (ch >= '0' && ch <= '9') d = (u64)(ch - '0');
-            else if (ch >= 'a' && ch <= 'f') d = (u64)(ch - 'a' + 10);
-            else if (ch >= 'A' && ch <= 'F') d = (u64)(ch - 'A' + 10);
-            else return false;
-            u64 next = (v << 4) | d;
-            if (next < v) return false;
-            v = next;
-        }
-        *out = neg ? (u64)(-(i64)v) : v;
-        return true;
-    }
-
-    ns_bool has_dot = false;
-    for (i32 i = start; i < end; ++i) {
-        if (s.data[i] == '.') { has_dot = true; break; }
-        if (s.data[i] < '0' || s.data[i] > '9') return false;
-    }
-    if (!has_dot) {
-        u64 v = 0;
-        for (i32 i = start; i < end; ++i) {
-            if (s.data[i] < '0' || s.data[i] > '9') return false;
-            u64 d = v * 10u + (u64)(s.data[i] - '0');
-            if (d < v) return false; /* overflow */
-            v = d;
-        }
-        *out = neg ? (u64)(-(i64)v) : v;
-        return true;
-    }
-    /* Float: only accept exact integers */
-    f64 fv = ns_str_to_f64(s);
-    if (fv < 0.0) {
-        f64 pos = -fv;
-        u64 iv = (u64)pos;
-        if ((f64)iv != pos) return false;
-        *out = (u64)(-(i64)iv);
-        return true;
-    }
-    u64 iv = (u64)fv;
-    if ((f64)iv != fv) return false;
-    *out = iv;
-    return true;
-}
-
 /* Narrow a register to the width/signedness of an integer value so that e.g.
  * `300 as u8` yields 44. Wider or non-integer targets are no-ops. */
 static void ns_amd64_narrow_reg(ns_amd64_ctx *c, i32 reg, ns_type t) {
@@ -722,7 +646,7 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             break;
         }
         u64 val = 0;
-        if (!ns_amd64_parse_u64(inst->name, &val)) {
+        if (!ns_number_literal_bits(inst->name, inst->token.suffix, &val)) {
             ns_warn("amd64", "unsupported const '%.*s' in fn %.*s, using 0\n",
                 inst->name.len, inst->name.data, c->fn->name.len, c->fn->name.data);
             val = 0;
@@ -750,6 +674,10 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
                 ns_amd64_emit_sse_rr(c, src64 ? 0xF2 : 0xF3, false, 0x5A,
                                      NS_AMD64_XMM0, NS_AMD64_XMM0);
                 ns_amd64_emit_movq_rx(c, NS_AMD64_RAX, NS_AMD64_XMM0);
+                /* CVTSD2SS keeps the upper lanes of its destination, which
+                 * still hold the high half of the double: an f32 slot must
+                 * carry zeros above its 32 bits. */
+                if (src64) ns_amd64_narrow_reg(c, NS_AMD64_RAX, ns_type_u32);
             }
         } else if (dst_f && !src_f) {
             /* CVTSI2SD/SS from the 64-bit value. An unsigned source wider than
@@ -759,6 +687,7 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             ns_amd64_emit_sse_rr(c, dst64 ? 0xF2 : 0xF3, true, 0x2A,
                                  NS_AMD64_XMM0, NS_AMD64_RAX);
             ns_amd64_emit_movq_rx(c, NS_AMD64_RAX, NS_AMD64_XMM0);
+            if (!dst64) ns_amd64_narrow_reg(c, NS_AMD64_RAX, ns_type_u32);
         } else if (!dst_f && src_f) {
             ns_bool src64 = ns_type_is(src_t, NS_TYPE_F64);
             ns_amd64_emit_movq_xr(c, NS_AMD64_XMM0, NS_AMD64_RAX);
@@ -800,6 +729,7 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             ns_amd64_load_value(c, NS_AMD64_RCX, inst->b);
             i32 digit = inst->op == NS_SSA_OP_SHL ? 4 : (ns_type_unsigned(at) ? 5 : 7);
             ns_amd64_emit_shift_rcl(c, NS_AMD64_RAX, digit);
+            if (inst->op == NS_SSA_OP_SHL) ns_amd64_narrow_reg(c, NS_AMD64_RAX, inst->type);
             ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
             break;
         }
@@ -812,6 +742,11 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
         case NS_SSA_OP_BAND: case NS_SSA_OP_AND: ns_amd64_emit_and_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
         case NS_SSA_OP_BOR:  case NS_SSA_OP_OR:  ns_amd64_emit_or_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
         default:            ns_amd64_emit_xor_rr(c, NS_AMD64_RAX, NS_AMD64_R11); break;
+        }
+        /* Integer arithmetic runs on 64-bit registers; a result of a narrower
+         * type wraps to that width, as `ns run` computes it. */
+        if (inst->op == NS_SSA_OP_ADD || inst->op == NS_SSA_OP_SUB || inst->op == NS_SSA_OP_MUL) {
+            ns_amd64_narrow_reg(c, NS_AMD64_RAX, inst->type);
         }
         ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
     } break;
@@ -839,6 +774,7 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             ns_amd64_emit_cqo(c);                      /* sign-extend into RDX:RAX */
             ns_amd64_emit_idiv_r(c, NS_AMD64_R11);
         }
+        if (inst->op == NS_SSA_OP_DIV) ns_amd64_narrow_reg(c, NS_AMD64_RAX, inst->type);
         ns_amd64_store_value(c, inst->dst, inst->op == NS_SSA_OP_DIV ? NS_AMD64_RAX : NS_AMD64_RDX);
     } break;
     case NS_SSA_OP_NEG: {
@@ -849,6 +785,7 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             ns_amd64_emit_fneg(c, NS_AMD64_RAX, ns_type_is(nt, NS_TYPE_F64));
         } else {
             ns_amd64_emit_neg_r(c, NS_AMD64_RAX);
+            ns_amd64_narrow_reg(c, NS_AMD64_RAX, nt);
         }
         ns_amd64_store_value(c, inst->dst, NS_AMD64_RAX);
     } break;

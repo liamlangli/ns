@@ -80,6 +80,14 @@ run_one "$root/test/parity_task.ns"
 run_one "$root/test/parity_ffi.ns"
 run_one "$root/test/parity_scope.ns"
 run_one "$root/test/parity_global.ns"
+run_one "$root/test/parity_compound.ns"
+run_one "$root/test/parity_format.ns"
+run_one "$root/test/to_str_test.ns"
+run_one "$root/test/parity_literal.ns"
+run_one "$root/test/parity_coerce.ns"
+run_one "$root/test/parity_ref_alias.ns"
+run_one "$root/test/parity_wrap.ns"
+run_one "$root/test/lang_test.ns"
 
 if [ "$fail" -ne 0 ]; then
     exit 1

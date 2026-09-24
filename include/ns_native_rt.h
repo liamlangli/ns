@@ -68,6 +68,7 @@ int64_t ns_rt_itos(int64_t v);
 int64_t ns_rt_utos(int64_t v);
 int64_t ns_rt_btos(int64_t v);
 int64_t ns_rt_ftos(int64_t bits);
+int64_t ns_rt_fmtf(int64_t bits);
 int64_t ns_rt_stof(int64_t str);
 
 int64_t ns_rt_fmod(int64_t a_bits, int64_t b_bits);
@@ -100,6 +101,20 @@ int64_t ns_rt_from_cstr(int64_t ptr);
 int64_t ns_rt_native_ptr(int64_t addr);
 int64_t ns_rt_array_ptr(int64_t arr);
 int64_t ns_rt_callback(int64_t fnval);
+
+// Shader stage intrinsics for a shader fn a program calls on the CPU.
+int64_t ns_rt_shader_host_bind(int64_t read, int64_t write, int64_t width, int64_t height);
+int64_t ns_rt_shader_host_bind_secondary(int64_t write);
+int64_t ns_rt_shader_host_root(int64_t words);
+void ns_rt_shader_host_invocation(int64_t x, int64_t y, int64_t z);
+void ns_rt_shader_host_swap(void);
+void ns_rt_shader_host_release(void);
+int64_t ns_rt_shader_global_id(int64_t axis);
+int64_t ns_rt_shader_root_f32(int64_t index);
+int64_t ns_rt_shader_read_texture(int64_t x, int64_t y);
+void ns_rt_shader_write_texture(int64_t x, int64_t y, int64_t color, int64_t secondary);
+int64_t ns_rt_shader_source_hash(int64_t str);
+void ns_rt_shader_unsupported(int64_t name);
 
 int64_t ns_rt_queue_main(void);
 int64_t ns_rt_queue_worker(void);

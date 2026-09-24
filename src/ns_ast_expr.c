@@ -14,6 +14,13 @@ ns_bool ns_parse_stack_push_operand(ns_ast_ctx *ctx, i32 i) {
     return true;
 }
 
+// Binding strength of a binary operator: the order of the operator tokens,
+// except that compound assignment (`+=`, ...) binds as loosely as `=`, so
+// `t += k + k` adds the whole right-hand side.
+static i32 ns_parse_op_precedence(ns_token_type t) {
+    return t == NS_TOKEN_ASSIGN_OP ? (i32)NS_TOKEN_ASSIGN : (i32)t;
+}
+
 ns_bool ns_parse_stack_push_operator(ns_ast_ctx *ctx, i32 i) {
     ns_ast_t n = ctx->nodes[i];
     ns_ast_expr_scope *scope = ns_array_last(ctx->scopes);
@@ -24,7 +31,8 @@ ns_bool ns_parse_stack_push_operator(ns_ast_ctx *ctx, i32 i) {
         ns_array_push(ctx->op_stack, i);
     } else {
         i32 top = op_len - 1;
-        while (top >= scope->op_top && n.binary_expr.op.type <= ctx->nodes[ctx->op_stack[top]].binary_expr.op.type) {
+        while (top >= scope->op_top && ns_parse_op_precedence(n.binary_expr.op.type) <=
+                                            ns_parse_op_precedence(ctx->nodes[ctx->op_stack[top]].binary_expr.op.type)) {
             ns_array_push(ctx->stack, ns_array_pop(ctx->op_stack));
             top--;
         }
@@ -178,16 +186,65 @@ done:
     return result;
 }
 
+// `print` interpolates `{expr}` in its argument, so a literal argument that
+// holds such a placeholder is the backtick format string it spells: every
+// backend then sees an ordinary format expression, where otherwise only the
+// interpreter could evaluate the text at run time (ns_fmt_eval). A `{` that is
+// escaped, never closed, or closed on a later line stays literal, as there.
+ns_return_bool ns_parse_str_format(ns_ast_ctx *ctx);
+
+static ns_bool ns_parse_literal_has_interp(ns_str s) {
+    for (i32 i = 0; i < s.len; ++i) {
+        if (s.data[i] != '{' || (i > 0 && s.data[i - 1] == '\\')) continue;
+        i32 j = i + 1;
+        while (j < s.len && s.data[j] != '}' && s.data[j] != '\n' &&
+               !(s.data[j] == '\\' && j + 1 < s.len && s.data[j + 1] == 'n')) j++;
+        if (j < s.len && s.data[j] == '}' && j > i + 1) return true;
+    }
+    return false;
+}
+
+static ns_bool ns_parse_callee_is_print(ns_ast_ctx *ctx, i32 callee) {
+    if (callee <= 0) return false;
+    ns_ast_t *c = &ctx->nodes[callee];
+    if (c->type == NS_AST_EXPR) c = &ctx->nodes[c->expr.body];
+    return c->type == NS_AST_PRIMARY_EXPR && c->primary_expr.token.type == NS_TOKEN_IDENTIFIER &&
+           ns_str_equals_STR(c->primary_expr.token.val, "print");
+}
+
+// Parse the argument at the cursor as a format string when it is a lone
+// interpolating string literal. Returns false, cursor untouched, otherwise.
+static ns_bool ns_parse_print_literal(ns_ast_ctx *ctx, ns_return_bool *ret) {
+    ns_ast_state start = ns_save_state(ctx);
+    if (!ns_parse_next_token(ctx) || ctx->token.type != NS_TOKEN_STR_LITERAL ||
+        !ns_parse_literal_has_interp(ctx->token.val)) {
+        ns_restore_state(ctx, start);
+        return false;
+    }
+    ns_bool alone = ns_parse_next_token(ctx) &&
+                    (ctx->token.type == NS_TOKEN_CLOSE_PAREN || ctx->token.type == NS_TOKEN_COMMA);
+    if (!alone) {
+        ns_restore_state(ctx, start);
+        return false;
+    }
+    ns_restore_state(ctx, start);
+    ns_parse_next_token(ctx);
+    ctx->token.type = NS_TOKEN_STR_FORMAT;
+    *ret = ns_parse_str_format(ctx);
+    return true;
+}
+
 ns_return_bool ns_parse_call_expr(ns_ast_ctx *ctx, int callee) {
     ns_return_bool ret;
     ns_ast_state state = ns_save_state(ctx);
     ns_ast_t n = {.type = NS_AST_CALL_EXPR, .state = state, .call_expr = { .callee = callee, .arg_count = 0, .rt = -1}};
+    ns_bool print_call = ns_parse_callee_is_print(ctx, callee);
     // an empty arg list still falls through to the trailing-block check below,
     // so `f() { in ... }` attaches the block as the only argument
     if (!ns_token_require(ctx, NS_TOKEN_CLOSE_PAREN)) {
         i32 next = 0;
         do {
-            ret = ns_parse_expr(ctx);
+            if (!print_call || !ns_parse_print_literal(ctx, &ret)) ret = ns_parse_expr(ctx);
             if (ns_return_is_error(ret)) return ret;
             if (!ret.r) break;
 

@@ -134,6 +134,7 @@ static ns_type ns_ssa_value_type(ns_ssa_builder *b, i32 value);
 static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type);
 static i32 ns_ssa_wasm32_align(i32 offset, i32 size);
 static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field);
+static i32 ns_ssa_struct_field_size(ns_ssa_builder *b, ns_symbol *st, i32 field);
 static i32 ns_ssa_clone_struct(ns_ssa_builder *b, i32 value, i32 ast);
 static i32 ns_ssa_global_index(ns_ssa_builder *b, ns_str name);
 static i32 ns_ssa_env_find(ns_ssa_binding *env, ns_str name);
@@ -515,7 +516,7 @@ static i32 ns_ssa_lower_struct_ctor(ns_ssa_builder *b, ns_ast_t *n, ns_symbol *s
         store.a = object;
         store.b = val;
         store.c = ns_ssa_wasm32_field_offset(b, st, fi);
-        store.target0 = ns_ssa_wasm32_size(b, st->st.fields[fi].t);
+        store.target0 = ns_ssa_struct_field_size(b, st, fi);
         store.type = st->st.fields[fi].t;
         ns_ssa_emit_raw(b, store);
         next = b->ctx->nodes[next].next;
@@ -736,7 +737,14 @@ static void ns_ssa_collect_ref_in(ns_ssa_builder *b, i32 i) {
 }
 
 static i32 ns_ssa_make_ref(ns_ssa_builder *b, i32 value, ns_type type, i32 ast) {
-    if (value < 0 || ns_type_is_ref(type) || ns_ssa_heap_payload(type)) return value;
+    if (value < 0 || ns_type_is_ref(type)) return value;
+    if (ns_ssa_heap_payload(type)) {
+        // A heap value already lives behind its address, so the reference is
+        // that address. Typing it as a ref keeps `let r = ref s` from copying
+        // the struct the way binding a plain struct value does.
+        return ns_ssa_emit_value(b, NS_SSA_OP_COPY, value, -1, ns_type_set_ref(type, true),
+                                 ns_str_null, (ns_token_t){0}, ast);
+    }
     i32 size = ns_ssa_wasm32_size(b, type);
     if (size < 1) size = 8;
     ns_type box_t = ns_type_set_ref(type, true);
@@ -961,7 +969,17 @@ static i32 ns_ssa_wasm32_align(i32 offset, i32 size) {
     return alignment > 1 ? (offset + alignment - 1) & ~(alignment - 1) : offset;
 }
 
-static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field) {
+// Whether a struct a native module declares keeps the C layout of its header.
+// On a native target it always does: the library may allocate it and read it,
+// and a value built in ns is handed to it by ref, so every access has to agree
+// with the C header, not only accesses through a ref. The browser has no
+// native library and keeps lib structs in the compact layout (see below).
+static ns_bool ns_ssa_c_layout(ns_ssa_builder *b, ns_symbol *st) {
+    return !b->wasm_target && st && st->type == NS_SYMBOL_STRUCT && st->lib.len > 0 && st->st.stride > 0;
+}
+
+// The compact layout: every field aligned to at most 4 bytes.
+static i32 ns_ssa_compact_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field) {
     i32 offset = 0;
     for (i32 i = 0; i <= field; ++i) {
         i32 size = ns_ssa_wasm32_size(b, st->st.fields[i].t);
@@ -970,6 +988,21 @@ static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 fiel
         offset += size;
     }
     return -1;
+}
+
+static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field) {
+    if (ns_ssa_c_layout(b, st) && field >= 0 && field < (i32)ns_array_length(st->st.fields)) {
+        return (i32)st->st.fields[field].o;
+    }
+    return ns_ssa_compact_field_offset(b, st, field);
+}
+
+// The bytes a field occupies in its struct's layout.
+static i32 ns_ssa_struct_field_size(ns_ssa_builder *b, ns_symbol *st, i32 field) {
+    if (ns_ssa_c_layout(b, st) && field >= 0 && field < (i32)ns_array_length(st->st.fields)) {
+        return (i32)st->st.fields[field].s;
+    }
+    return ns_ssa_wasm32_size(b, st->st.fields[field].t);
 }
 
 // Whether a reference to this struct reads the C layout its declaring module
@@ -985,10 +1018,10 @@ static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 fiel
 // structs in the same compact wasm32 layout as project structs.
 static ns_bool ns_ssa_native_struct(ns_ssa_builder *b, ns_type t) {
     if (b->wasm_target) return false;
-    if (!ns_type_is_ref(t) || !ns_type_is(t, NS_TYPE_STRUCT)) return false;
+    if (!ns_type_is(t, NS_TYPE_STRUCT) || ns_type_is_array(t)) return false;
     i32 index = ns_type_index(t);
     if (index < 0 || index >= (i32)ns_array_length(b->vm->symbols)) return false;
-    return b->vm->symbols[index].lib.len > 0;
+    return ns_ssa_c_layout(b, &b->vm->symbols[index]);
 }
 
 static i32 ns_ssa_field_off(ns_ssa_builder *b, ns_symbol *st, i32 field, ns_bool native) {
@@ -1019,6 +1052,7 @@ static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type) {
         ns_type_is(type, NS_TYPE_F64)) return 8;
     if (ns_type_is(type, NS_TYPE_STRUCT)) {
         ns_symbol *st = &b->vm->symbols[ns_type_index(type)];
+        if (ns_ssa_c_layout(b, st)) return (i32)st->st.stride;
         i32 size = 0;
         for (i32 i = 0, l = (i32)ns_array_length(st->st.fields); i < l; ++i) {
             i32 field_size = ns_ssa_wasm32_size(b, st->st.fields[i].t);
@@ -1064,7 +1098,7 @@ static i32 ns_ssa_ffi_struct_box(ns_ssa_builder *b, i32 value, ns_type pt, i32 a
                                   ns_ssa_wasm32_field_offset(b, st, i), f->t,
                                   ns_str_null, (ns_token_t){0}, ast);
         b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].target0 =
-            ns_ssa_wasm32_size(b, f->t);
+            ns_ssa_struct_field_size(b, st, i);
         if (ns_type_is_array(f->t)) {
             i32 args[1] = {v};
             v = ns_ssa_emit_named_call(b, "ns_rt_array_ptr", args, 1, ns_type_i64, ast);
@@ -1579,6 +1613,40 @@ static void ns_ssa_collect_shader_only_fns(ns_ssa_builder *b) {
             ns_array_free(callees);
         }
     }
+
+    // A native program runs shader code it calls on the CPU through the host
+    // intrinsics (ns_ssa_lower_shader_intrinsic), as the interpreter does. So
+    // every fn that is not itself a shader entry (vs_/fs_/ps_/cs_) compiles,
+    // including one that merely calls shader code (a test's main), and a
+    // shader entry compiles when ordinary code reaches it. Unreached entries
+    // stay out: they only exist as transpiled source.
+    if (!b->wasm_target && ns_array_length(b->shader_only) > 0) {
+        ns_str *reached = ns_null;
+        for (i32 fi = 0, fl = (i32)ns_array_length(fns); fi < fl; ++fi) {
+            if (ns_ssa_shader_name(fns[fi].name)) continue;
+            if (!ns_ssa_name_listed(reached, fns[fi].name)) ns_array_push(reached, fns[fi].name);
+            ns_ssa_collect_callees(b, fns[fi].body, &reached);
+        }
+        for (i32 i = b->ctx->section_begin; i < b->ctx->section_end; ++i) {
+            ns_ast_t *n = &b->ctx->nodes[b->ctx->sections[i]];
+            if (n->type != NS_AST_FN_DEF && n->type != NS_AST_OP_FN_DEF && n->type != NS_AST_STRUCT_DEF) {
+                ns_ssa_collect_callees(b, b->ctx->sections[i], &reached);
+            }
+        }
+        for (i32 r = 0; r < (i32)ns_array_length(reached); ++r) {
+            for (i32 fi = 0, fl = (i32)ns_array_length(fns); fi < fl; ++fi) {
+                if (!ns_str_equals(fns[fi].name, reached[r])) continue;
+                ns_ssa_collect_callees(b, fns[fi].body, &reached);
+            }
+        }
+        ns_str *kept = ns_null;
+        for (i32 i = 0, l = (i32)ns_array_length(b->shader_only); i < l; ++i) {
+            if (!ns_ssa_name_listed(reached, b->shader_only[i])) ns_array_push(kept, b->shader_only[i]);
+        }
+        ns_array_free(b->shader_only);
+        b->shader_only = kept;
+        ns_array_free(reached);
+    }
     ns_array_free(fns);
 }
 
@@ -1601,7 +1669,7 @@ static ns_return_bool ns_ssa_collect_shaders(ns_ssa_builder *b) {
             ns_symbol *input = &b->vm->symbols[ns_type_index(symbol->fn.args[0].val.t)];
             shader.vertex_stride = ns_ssa_wasm32_size(b, symbol->fn.args[0].val.t);
             for (i32 f = 0, fl = (i32)ns_array_length(input->st.fields); f < fl; ++f) {
-                ns_array_push(shader.vertex_offsets, ns_ssa_wasm32_field_offset(b, input, f));
+                ns_array_push(shader.vertex_offsets, ns_ssa_compact_field_offset(b, input, f));
                 ns_array_push(shader.vertex_sizes, ns_ssa_wasm32_size(b, input->st.fields[f].t));
             }
         }
@@ -1617,6 +1685,15 @@ static ns_bool ns_ssa_embed_module(ns_str lib) {
     return ns_str_equals(lib, ns_str_cstr("simd")) ||
            ns_str_equals(lib, ns_str_cstr("std")) ||
            ns_str_equals(lib, ns_str_cstr("task"));
+}
+
+// Whether a module's ordinary (non-`ref`) fn bodies compile into the program.
+// A native library exports only its `ref fn`s, so a native build compiles the
+// ns wrappers a module declares (gpu_frame_write, ...) from their source. The
+// browser middleware implements a module's wrappers in JavaScript, so a Wasm
+// build keeps calling those as imports.
+static ns_bool ns_ssa_embed_fn_body(ns_ssa_builder *b, ns_str lib) {
+    return ns_ssa_embed_module(lib) || (!b->wasm_target && lib.len > 0);
 }
 
 static void ns_ssa_record_import(ns_ssa_builder *b, ns_symbol *symbol) {
@@ -1695,6 +1772,9 @@ static i32 ns_ssa_emit_str_const(ns_ssa_builder *b, ns_str text, i32 ast) {
     return ns_ssa_emit_str_const_value(b, owned, ast);
 }
 
+static i32 ns_ssa_shader_source_const(ns_ssa_builder *b, ns_symbol *fn_sym, ns_shader_target target,
+                                      ns_shader_stage stage, i32 ast);
+
 // Fold shader_transpile / shader_transpile_stage / shader_entry when the first
 // argument is a known fn. Compiled builds have no VM, so these must become
 // string constants. Browser builds always use WGSL; native builds use the
@@ -1705,14 +1785,58 @@ static i32 ns_ssa_fold_shader_call(ns_ssa_builder *b, ns_ast_t *n, i32 ast,
     ns_bool is_transpile = ns_str_equals_STR(callee_name, "shader_transpile");
     ns_bool is_transpile_stage = ns_str_equals_STR(callee_name, "shader_transpile_stage");
     ns_bool is_entry = ns_str_equals_STR(callee_name, "shader_entry");
-    if (!is_transpile && !is_transpile_stage && !is_entry) return -1;
+    ns_bool is_name = ns_str_equals_STR(callee_name, "shader_name");
+    ns_bool is_stride = ns_str_equals_STR(callee_name, "shader_vertex_stride");
+    ns_bool is_attr_count = ns_str_equals_STR(callee_name, "shader_vertex_attr_count");
+    ns_bool is_attr_offset = ns_str_equals_STR(callee_name, "shader_vertex_attr_offset");
+    ns_bool is_attr_size = ns_str_equals_STR(callee_name, "shader_vertex_attr_size");
+    ns_bool is_layout = is_stride || is_attr_count || is_attr_offset || is_attr_size;
+    if (!is_transpile && !is_transpile_stage && !is_entry && !is_name && !is_layout) return -1;
 
     ns_str fn_name = ns_ssa_call_arg_token(b, n, 0);
     if (fn_name.len == 0) return -1;
     ns_symbol *fn_sym = ns_vm_find_symbol(b->vm, fn_name, false);
     if (!fn_sym || fn_sym->type != NS_SYMBOL_FN) return -1;
     i32 fn_index = (i32)(fn_sym - b->vm->symbols);
+
+    if (is_name) return ns_ssa_emit_str_const(b, fn_sym->name, ast);
+    if (is_layout) {
+        i32 offsets[64], sizes[64], stride = 0, count = 0;
+        ns_return_bool layout = ns_shader_vertex_layout(b->vm, fn_index, &stride, &count, offsets, sizes, 64);
+        if (ns_return_is_error(layout)) return -1;
+        i32 value = is_stride ? stride : count;
+        if (is_attr_offset || is_attr_size) {
+            // Every attribute's value, indexed by the argument at run time.
+            i32 n_attr = count < 64 ? count : 64;
+            i32 table = ns_ssa_emit_value(b, NS_SSA_OP_ARRAY_NEW, ns_ssa_emit_i32_const(b, n_attr, ast), 4,
+                                          (ns_type){.type = NS_TYPE_I32, .array = true}, ns_str_null,
+                                          (ns_token_t){0}, ast);
+            for (i32 a = 0; a < n_attr; ++a) {
+                ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_ARRAY_STORE, ast);
+                store.a = table;
+                store.target0 = ns_ssa_emit_i32_const(b, a, ast);
+                store.b = ns_ssa_emit_i32_const(b, is_attr_offset ? offsets[a] : sizes[a], ast);
+                store.c = 4;
+                store.type = ns_type_i32;
+                ns_ssa_emit_raw(b, store);
+            }
+            ns_ast_t *index_arg = ns_ssa_call_arg(b, n, 1);
+            i32 index = index_arg ? ns_ssa_lower_expr(b, (i32)(index_arg - b->ctx->nodes)) : -1;
+            if (index < 0) return -1;
+            i32 dst = ns_ssa_emit_value(b, NS_SSA_OP_INDEX, table, 4, ns_type_i32, ns_str_null, (ns_token_t){0}, ast);
+            b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = index;
+            return dst;
+        }
+        return ns_ssa_emit_i32_const(b, value, ast);
+    }
+
+    // An explicit target literal wins; otherwise the target the build runs on.
     ns_shader_target target = b->wasm_target ? NS_SHADER_WGSL : ns_ssa_native_shader_target();
+    ns_str target_arg = ns_ssa_call_arg_token(b, n, 1);
+    if (target_arg.len > 0) {
+        ns_shader_target named = ns_shader_target_from_str(target_arg);
+        if (named != NS_SHADER_TARGET_UNKNOWN) target = named;
+    }
 
     if (is_entry) {
         return ns_ssa_emit_str_const(b, ns_shader_entry_name(target, fn_sym->name), ast);
@@ -1727,6 +1851,14 @@ static i32 ns_ssa_fold_shader_call(ns_ssa_builder *b, ns_ast_t *n, i32 ast,
         else return -1;
     }
 
+    return ns_ssa_shader_source_const(b, fn_sym, target, stage, ast);
+}
+
+// The transpiled source of a shader fn, as a string constant, transpiled once
+// per (fn, target, stage).
+static i32 ns_ssa_shader_source_const(ns_ssa_builder *b, ns_symbol *fn_sym, ns_shader_target target,
+                                      ns_shader_stage stage, i32 ast) {
+    i32 fn_index = (i32)(fn_sym - b->vm->symbols);
     ns_ast_ctx *fn_ctx = fn_sym->fn.ctx ? fn_sym->fn.ctx : b->ctx;
     if (stage == NS_SHADER_STAGE_AUTO) {
         ns_shader_stage inferred = ns_shader_stage_infer(b->vm, fn_ctx, fn_index);
@@ -1761,6 +1893,165 @@ static i32 ns_ssa_fold_shader_call(ns_ssa_builder *b, ns_ast_t *n, i32 ast,
     return ns_ssa_emit_str_const_value(b, owned, ast);
 }
 
+// A shader stage intrinsic a native program calls outside a transpiled
+// shader: the same host execution the interpreter gives it (ns_shader.c),
+// through the ns_rt_shader_* helpers. An intrinsic with no CPU meaning traps
+// when reached, as it errors in the interpreter.
+static i32 ns_ssa_lower_shader_intrinsic(ns_ssa_builder *b, ns_str name, i32 *args, i32 nargs,
+                                         ns_type ret, i32 ast) {
+    static const char *const host[][2] = {
+        {"shader_host_bind", "ns_rt_shader_host_bind"},
+        {"shader_host_bind_secondary", "ns_rt_shader_host_bind_secondary"},
+        {"shader_host_root", "ns_rt_shader_host_root"},
+        {"shader_host_invocation", "ns_rt_shader_host_invocation"},
+        {"shader_host_swap", "ns_rt_shader_host_swap"},
+        {"shader_host_release", "ns_rt_shader_host_release"},
+        {"shader_root_f32", "ns_rt_shader_root_f32"},
+        {"shader_read_texture", "ns_rt_shader_read_texture"},
+        {"shader_source_hash", "ns_rt_shader_source_hash"},
+    };
+    for (szt h = 0; h < sizeof(host) / sizeof(host[0]); ++h) {
+        if (ns_str_equals_STR(name, host[h][0])) {
+            return ns_ssa_emit_named_call(b, host[h][1], args, nargs, ret, ast);
+        }
+    }
+    if (ns_str_starts_with(name, ns_str_cstr("shader_global_id_")) && name.len == 18) {
+        i32 axis[1] = {ns_ssa_emit_i32_const(b, name.data[17] - 'x', ast)};
+        return ns_ssa_emit_named_call(b, "ns_rt_shader_global_id", axis, 1, ns_type_i32, ast);
+    }
+    ns_bool write = ns_str_equals_STR(name, "shader_write_texture");
+    ns_bool write_secondary = ns_str_equals_STR(name, "shader_write_texture_secondary");
+    if ((write || write_secondary) && nargs == 3) {
+        i32 call_args[4] = {args[0], args[1], args[2], ns_ssa_emit_i32_const(b, write_secondary ? 1 : 0, ast)};
+        return ns_ssa_emit_named_call(b, "ns_rt_shader_write_texture", call_args, 4, ns_type_void, ast);
+    }
+    if (ns_str_equals_STR(name, "shader_buffer_i32")) return ns_ssa_emit_i32_const(b, 0, ast);
+    if (ns_str_equals_STR(name, "shader_buffer_store_i32") || ns_str_equals_STR(name, "shader_discard")) return -1;
+    if (ns_str_equals_STR(name, "ddx") || ns_str_equals_STR(name, "ddy")) {
+        // Fragment derivatives have no host meaning; a CPU call is a zero.
+        ns_str zero = ns_str_cstr("0.0");
+        return ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_f32, zero,
+                                 (ns_token_t){.type = NS_TOKEN_FLT_LITERAL, .val = zero}, ast);
+    }
+    i32 label[1] = {ns_ssa_emit_str_const(b, name, ast)};
+    ns_ssa_emit_named_call(b, "ns_rt_shader_unsupported", label, 1, ns_type_void, ast);
+    return ns_ssa_emit_value(b, NS_SSA_OP_UNDEF, -1, -1, ret, ns_str_null, (ns_token_t){0}, ast);
+}
+
+// `gpu_shader_graphics(vs, fs)` / `gpu_shader_compute(f)` transpile the fns
+// they are given when they run, which a compiled program cannot do: it has no
+// VM. Every caller names its shader fns, so the call is specialized where it
+// is made, with the sources transpiled now for the host the build targets.
+// Returns -1 when an argument does not name a fn.
+static i32 ns_ssa_lower_gpu_shader_ctor(ns_ssa_builder *b, ns_ast_t *n, i32 ast, ns_bool compute) {
+    ns_symbol *fns[2] = {ns_null, ns_null};
+    i32 count = compute ? 1 : 2;
+    for (i32 a = 0; a < count; ++a) {
+        ns_str name = ns_ssa_call_arg_token(b, n, a);
+        if (name.len == 0) return -1;
+        fns[a] = ns_vm_find_symbol(b->vm, name, false);
+        if (!fns[a] || fns[a]->type != NS_SYMBOL_FN) return -1;
+    }
+    ns_symbol *create = ns_vm_find_symbol(b->vm, ns_str_cstr(compute ? "gpu_shader_compute_create"
+                                                                      : "gpu_shader_graphics_create"), false);
+    ns_symbol *st = ns_vm_find_symbol(b->vm, ns_str_cstr("gpu_shader"), false);
+    if (!create || create->type != NS_SYMBOL_FN || !st || st->type != NS_SYMBOL_STRUCT) return -1;
+
+    ns_shader_target target = ns_ssa_native_shader_target();
+    i32 args[4];
+    i32 entries[2] = {-1, -1};
+    if (compute) {
+        args[0] = ns_ssa_shader_source_const(b, fns[0], target, NS_SHADER_STAGE_COMPUTE, ast);
+        entries[0] = ns_ssa_emit_str_const(b, ns_shader_entry_name(target, fns[0]->name), ast);
+        args[1] = entries[0];
+    } else {
+        args[0] = ns_ssa_shader_source_const(b, fns[0], target, NS_SHADER_STAGE_VERTEX, ast);
+        args[1] = ns_ssa_shader_source_const(b, fns[1], target, NS_SHADER_STAGE_FRAGMENT, ast);
+        entries[0] = ns_ssa_emit_str_const(b, ns_shader_entry_name(target, fns[0]->name), ast);
+        entries[1] = ns_ssa_emit_str_const(b, ns_shader_entry_name(target, fns[1]->name), ast);
+        args[2] = entries[0];
+        args[3] = entries[1];
+    }
+    if (ns_return_is_error(b->fold_error)) return -1;
+    for (i32 a = 0; a < (compute ? 2 : 4); ++a) {
+        ns_ssa_inst arg = NS_SSA_INST_INIT(NS_SSA_OP_ARG, ast);
+        arg.a = args[a];
+        ns_ssa_emit_raw(b, arg);
+    }
+    ns_ssa_record_import(b, create);
+    i32 id = ns_ssa_emit_value(b, NS_SSA_OP_CALL, -1, compute ? 2 : 4, ns_type_u32, create->name,
+                               (ns_token_t){0}, ast);
+    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].module = create->lib;
+
+    i32 values[5] = {
+        id,
+        ns_ssa_emit_value(b, NS_SSA_OP_CONST, -1, -1, ns_type_bool, ns_str_cstr(compute ? "true" : "false"),
+                          (ns_token_t){.type = compute ? NS_TOKEN_TRUE : NS_TOKEN_FALSE}, ast),
+        ns_ssa_emit_str_const(b, ns_shader_target_name(target), ast),
+        entries[0],
+        compute ? ns_ssa_emit_str_const(b, ns_str_cstr(""), ast) : entries[1],
+    };
+    i32 object = ns_ssa_emit_value(b, NS_SSA_OP_ALLOC, -1, ns_ssa_wasm32_size(b, st->st.st.t), st->st.st.t,
+                                   st->name, (ns_token_t){0}, ast);
+    for (i32 f = 0; f < 5 && f < (i32)ns_array_length(st->st.fields); ++f) {
+        ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, ast);
+        store.a = object;
+        store.b = values[f];
+        store.c = ns_ssa_wasm32_field_offset(b, st, f);
+        store.target0 = ns_ssa_struct_field_size(b, st, f);
+        store.type = st->st.fields[f].t;
+        ns_ssa_emit_raw(b, store);
+    }
+    return object;
+}
+
+// The arithmetic a compound assignment (`+=`, `<<=`, ...) performs, or
+// NS_SSA_OP_UNKNOWN for a plain `=`.
+static ns_ssa_op ns_ssa_compound_op(ns_token_t op, ns_token_t *arith_out) {
+    if (op.type != NS_TOKEN_ASSIGN_OP || op.val.len < 2) return NS_SSA_OP_UNKNOWN;
+    ns_token_t arith = op;
+    arith.val.len -= 1;
+    if (arith_out) *arith_out = arith;
+    if (ns_str_equals_STR(arith.val, "+")) return NS_SSA_OP_ADD;
+    if (ns_str_equals_STR(arith.val, "-")) return NS_SSA_OP_SUB;
+    if (ns_str_equals_STR(arith.val, "*")) return NS_SSA_OP_MUL;
+    if (ns_str_equals_STR(arith.val, "/")) return NS_SSA_OP_DIV;
+    if (ns_str_equals_STR(arith.val, "%")) return NS_SSA_OP_MOD;
+    if (ns_str_equals_STR(arith.val, "&")) return NS_SSA_OP_BAND;
+    if (ns_str_equals_STR(arith.val, "|")) return NS_SSA_OP_BOR;
+    if (ns_str_equals_STR(arith.val, "^")) return NS_SSA_OP_BXOR;
+    if (ns_str_equals_STR(arith.val, "<<")) return NS_SSA_OP_SHL;
+    if (ns_str_equals_STR(arith.val, ">>")) return NS_SSA_OP_SHR;
+    return NS_SSA_OP_UNKNOWN;
+}
+
+// `cur op rhs` for a compound assignment, typed as the target it updates.
+static i32 ns_ssa_compound_value(ns_ssa_builder *b, ns_ast_t *n, i32 cur, i32 rhs, i32 i) {
+    ns_token_t arith = {0};
+    ns_ssa_op op = ns_ssa_compound_op(n->binary_expr.op, &arith);
+    if (op == NS_SSA_OP_UNKNOWN || cur < 0) return rhs;
+    ns_type ct = ns_ssa_value_type(b, cur);
+    i32 next = ns_ssa_emit_value(b, op, cur, -1, ct, ns_str_null, arith, i);
+    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = rhs;
+    return next;
+}
+
+// A number stored into a place of another number type takes that type, as the
+// interpreter converts on assignment: an f32 result written to an f64 global
+// has to be widened, not stored as its bit pattern. `return` does the same.
+static i32 ns_ssa_coerce_number(ns_ssa_builder *b, i32 value, ns_type target, i32 ast) {
+    if (value < 0 || ns_type_is_ref(target) || ns_type_is_array(target) || ns_type_is(target, NS_TYPE_ENUM)) {
+        return value;
+    }
+    ns_type vt = ns_ssa_value_type(b, value);
+    if (ns_type_is_ref(vt) || ns_type_is_array(vt)) return value;
+    if (!ns_type_is_number(ns_enum_underlying_type(b->vm, target)) ||
+        !ns_type_is_number(ns_enum_underlying_type(b->vm, vt)) || ns_type_equals(target, vt)) {
+        return value;
+    }
+    return ns_ssa_emit_value(b, NS_SSA_OP_CAST, value, -1, target, ns_str_null, (ns_token_t){0}, ast);
+}
+
 static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
     i32 rhs = ns_ssa_lower_expr(b, n->binary_expr.right);
     // A plain identifier read normally dereferences a ref. On the right side
@@ -1778,21 +2069,8 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
         ln = &b->ctx->nodes[ln->expr.body];
     }
 
-    if (n->binary_expr.op.type == NS_TOKEN_ASSIGN_OP && n->binary_expr.op.val.len > 1 &&
+    if (ns_ssa_compound_op(n->binary_expr.op, ns_null) != NS_SSA_OP_UNKNOWN &&
         ln->type == NS_AST_PRIMARY_EXPR && ln->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
-        ns_token_t arith = n->binary_expr.op;
-        arith.val.len -= 1;
-        ns_ssa_op op = NS_SSA_OP_UNKNOWN;
-        if (ns_str_equals_STR(arith.val, "+")) op = NS_SSA_OP_ADD;
-        else if (ns_str_equals_STR(arith.val, "-")) op = NS_SSA_OP_SUB;
-        else if (ns_str_equals_STR(arith.val, "*")) op = NS_SSA_OP_MUL;
-        else if (ns_str_equals_STR(arith.val, "/")) op = NS_SSA_OP_DIV;
-        else if (ns_str_equals_STR(arith.val, "%")) op = NS_SSA_OP_MOD;
-        else if (ns_str_equals_STR(arith.val, "&")) op = NS_SSA_OP_BAND;
-        else if (ns_str_equals_STR(arith.val, "|")) op = NS_SSA_OP_BOR;
-        else if (ns_str_equals_STR(arith.val, "^")) op = NS_SSA_OP_BXOR;
-        else if (ns_str_equals_STR(arith.val, "<<")) op = NS_SSA_OP_SHL;
-        else if (ns_str_equals_STR(arith.val, ">>")) op = NS_SSA_OP_SHR;
         i32 cur = -1;
         i32 local = ns_ssa_env_find(b->env, ln->primary_expr.token.val);
         i32 global = ns_ssa_global_index(b, ln->primary_expr.token.val);
@@ -1809,12 +2087,7 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
                 cur = ns_ssa_load_ref(b, cur, b->m->globals[global].type, i);
             }
         }
-        if (cur >= 0 && op != NS_SSA_OP_UNKNOWN) {
-            ns_type ct = ns_ssa_value_type(b, cur);
-            i32 next = ns_ssa_emit_value(b, op, cur, -1, ct, ns_str_null, arith, i);
-            b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = rhs;
-            rhs = next;
-        }
+        rhs = ns_ssa_compound_value(b, n, cur, rhs, i);
     }
 
     if (ln->type == NS_AST_PRIMARY_EXPR && ln->primary_expr.token.type == NS_TOKEN_IDENTIFIER) {
@@ -1825,6 +2098,10 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             rhs = ns_ssa_union_wrap(b, rhs, b->env[local].type, i);
         } else if (local < 0 && global >= 0 && ns_type_is(b->m->globals[global].type, NS_TYPE_UNION)) {
             rhs = ns_ssa_union_wrap(b, rhs, b->m->globals[global].type, i);
+        } else if (local >= 0) {
+            rhs = ns_ssa_coerce_number(b, rhs, ns_type_set_ref(b->env[local].type, false), i);
+        } else if (global >= 0) {
+            rhs = ns_ssa_coerce_number(b, rhs, ns_type_set_ref(b->m->globals[global].type, false), i);
         }
         if (local >= 0 && ns_type_is_ref(b->env[local].type)) {
             if (ns_type_is_ref(ns_ssa_value_type(b, rhs))) {
@@ -1898,6 +2175,13 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
         if (ns_type_is_array(table_type)) {
             ns_type element = table_type;
             element.array = false;
+            if (ns_ssa_compound_op(n->binary_expr.op, ns_null) != NS_SSA_OP_UNKNOWN) {
+                i32 cur = ns_ssa_emit_value(b, NS_SSA_OP_INDEX, table, ns_ssa_wasm32_size(b, element), element,
+                                            ns_str_null, (ns_token_t){0}, i);
+                b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].b = index;
+                rhs = ns_ssa_compound_value(b, n, cur, rhs, i);
+            }
+            rhs = ns_ssa_coerce_number(b, rhs, element, i);
             ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_ARRAY_STORE, i);
             store.a = table;
             store.b = rhs;
@@ -1908,6 +2192,20 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             return rhs;
         }
         if (ns_type_is(table_type, NS_TYPE_DICT)) {
+            if (ns_ssa_compound_op(n->binary_expr.op, ns_null) != NS_SSA_OP_UNKNOWN) {
+                i32 get_args[2] = {table, index};
+                ns_type val = ns_type_unknown;
+                i32 tidx = ns_type_index(table_type);
+                if (tidx >= 0 && tidx < (i32)ns_array_length(b->vm->symbols)) val = b->vm->symbols[tidx].ct.val;
+                i32 cur = ns_ssa_emit_named_call(b, "ns_rt_map_get", get_args, 2, val, i);
+                rhs = ns_ssa_compound_value(b, n, cur, rhs, i);
+            }
+            {
+                i32 tidx = ns_type_index(table_type);
+                if (tidx >= 0 && tidx < (i32)ns_array_length(b->vm->symbols)) {
+                    rhs = ns_ssa_coerce_number(b, rhs, b->vm->symbols[tidx].ct.val, i);
+                }
+            }
             i32 args[3] = {table, index, rhs};
             ns_ssa_emit_named_call(b, "ns_rt_map_set", args, 3, ns_type_void, i);
             return rhs;
@@ -1923,6 +2221,15 @@ static i32 ns_ssa_lower_assign(ns_ssa_builder *b, ns_ast_t *n, i32 i) {
             i32 field = ns_struct_field_index(st, member->primary_expr.token.val);
             if (field >= 0) {
                 ns_bool native = ns_ssa_native_struct(b, object_type);
+                if (ns_ssa_compound_op(n->binary_expr.op, ns_null) != NS_SSA_OP_UNKNOWN) {
+                    i32 cur = ns_ssa_emit_value(b, NS_SSA_OP_LOAD, object, ns_ssa_field_off(b, st, field, native),
+                                                st->st.fields[field].t, member->primary_expr.token.val,
+                                                member->primary_expr.token, i);
+                    b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].target0 =
+                        ns_ssa_field_sz(b, st, field, native);
+                    rhs = ns_ssa_compound_value(b, n, cur, rhs, i);
+                }
+                rhs = ns_ssa_coerce_number(b, rhs, st->st.fields[field].t, i);
                 ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, i);
                 store.a = object;
                 store.b = rhs;
@@ -2183,11 +2490,18 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             i32 folded = ns_ssa_fold_shader_call(b, n, i, callee_name, callee_module);
             if (folded >= 0) return folded;
             if (ns_return_is_error(b->fold_error)) return -1;
+            ns_bool gpu_graphics = ns_str_equals_STR(callee_name, "gpu_shader_graphics");
+            ns_bool gpu_compute = ns_str_equals_STR(callee_name, "gpu_shader_compute");
+            if (!b->wasm_target && ns_str_equals_STR(callee_module, "gpu") && (gpu_graphics || gpu_compute)) {
+                i32 specialized = ns_ssa_lower_gpu_shader_ctor(b, n, i, gpu_compute);
+                if (specialized >= 0) return specialized;
+                if (ns_return_is_error(b->fold_error)) return -1;
+            }
             // `ref fn` always crosses the FFI boundary, and so do the regular
             // wrappers of host modules like gpu.ns: only simd/std/task bodies
             // are compiled into this object, so anything else stays an import.
             if (callee_sym->fn.fn.t.ref ||
-                (!ns_str_is_empty(callee_sym->lib) && !ns_ssa_embed_module(callee_sym->lib))) {
+                (!ns_str_is_empty(callee_sym->lib) && !ns_ssa_embed_fn_body(b, callee_sym->lib))) {
                 ns_ssa_record_import(b, callee_sym);
             } else {
                 callee_module = ns_str_null;
@@ -2259,6 +2573,11 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             next = b->ctx->nodes[next].next;
         }
         i32 nargs = (i32)ns_array_length(avals);
+        if (!b->wasm_target && ns_str_equals_STR(callee_module, "shader")) {
+            i32 lowered = ns_ssa_lower_shader_intrinsic(b, callee_name, avals, nargs, result_type, i);
+            ns_array_free(avals);
+            return lowered;
+        }
         if (async_call && !value_call) {
             i32 fnaddr = ns_ssa_emit_value(b, NS_SSA_OP_FNADDR, -1, -1, ns_type_i64, callee_name,
                                            (ns_token_t){0}, i);
@@ -2385,7 +2704,7 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             store.a = object;
             store.b = value;
             store.c = ns_ssa_wasm32_field_offset(b, st, resolved);
-            store.target0 = ns_ssa_wasm32_size(b, st->st.fields[resolved].t);
+            store.target0 = ns_ssa_struct_field_size(b, st, resolved);
             store.type = st->st.fields[resolved].t;
             ns_ssa_emit_raw(b, store);
         }
@@ -2495,7 +2814,7 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             if (!ns_type_is(vt, NS_TYPE_STRING)) {
                 ns_str callee = ns_ssa_to_str_symbol_name(b, vt);
                 if (callee.len == 0) {
-                    const char *helper = ns_type_is_float(vt) ? (b->wasm_target ? "ftos" : "ns_rt_ftos") :
+                    const char *helper = ns_type_is_float(vt) ? (b->wasm_target ? "ftos" : "ns_rt_fmtf") :
                                          ns_type_is(vt, NS_TYPE_BOOL) ? (b->wasm_target ? "btos" : "ns_rt_btos") :
                                          ns_type_is(vt, NS_TYPE_STRUCT) ? NULL :
                                          ns_type_unsigned(vt) ? (b->wasm_target ? "utos" : "ns_rt_utos") :
@@ -2506,6 +2825,12 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
                                                   (ns_token_t){.type = NS_TOKEN_STR_LITERAL, .val = nils}, i);
                     } else {
                         ns_type helper_type = vt;
+                        if (!b->wasm_target && ns_type_is(vt, NS_TYPE_F32)) {
+                            // The helper reads an f64 bit pattern.
+                            helper_type = ns_type_f64;
+                            val = ns_ssa_emit_value(b, NS_SSA_OP_CAST, val, -1, helper_type,
+                                                    ns_str_null, (ns_token_t){0}, i);
+                        }
                         if (b->wasm_target) {
                             helper_type = ns_type_is_float(vt) ? ns_type_f64 :
                                           ns_type_is(vt, NS_TYPE_BOOL) ? ns_type_bool :
@@ -2889,7 +3214,7 @@ static void ns_ssa_lower_foreach(ns_ssa_builder *b, i32 i) {
                                      ns_ssa_wasm32_field_offset(b, st, field),
                                      elem_t, g->gen_expr.name.val, g->gen_expr.name, i);
             b->fn->insts[ns_array_last(b->fn->blocks[b->block].insts)[0]].target0 =
-                ns_ssa_wasm32_size(b, elem_t);
+                ns_ssa_struct_field_size(b, st, field);
         }
     } else if (is_map) {
         i32 tidx = ns_type_index(subject_type);
@@ -3006,6 +3331,11 @@ static void ns_ssa_lower_stmt(ns_ssa_builder *b, i32 i) {
         if (ns_type_is(dest_t, NS_TYPE_UNION)) {
             value = ns_ssa_union_wrap(b, value, dest_t, i);
             value_type = dest_t;
+        } else {
+            ns_bool module_level = global >= 0 && ns_str_equals(b->fn->name, ns_str_cstr("__module_init"));
+            ns_type want = module_level ? b->m->globals[global].type : dest_t;
+            value = ns_ssa_coerce_number(b, value, ns_type_set_ref(want, false), i);
+            value_type = ns_ssa_value_type(b, value);
         }
         if (ns_str_equals(b->fn->name, ns_str_cstr("__module_init")) && global >= 0) {
             if (ns_ssa_needs_box(b, n->var_def.name.val) && !ns_type_is_ref(value_type)) {
@@ -3369,7 +3699,7 @@ static void ns_ssa_lower_imported_fns(ns_ssa_builder *b) {
             if (sym->type != NS_SYMBOL_FN) continue;
             if (sym->fn.fn.t.ref) continue;
             if (sym->fn.body <= 0 || sym->fn.ast <= 0) continue;
-            if (!ns_ssa_embed_module(sym->lib)) continue;
+            if (!ns_ssa_embed_fn_body(b, sym->lib)) continue;
             if (ns_ssa_shader_name(sym->name)) continue;
             if (ns_ssa_skip_imported_fn(sym->name)) continue;
             if (ns_ssa_fn_exists(b, sym->name)) continue;

@@ -1,0 +1,16 @@
+// `ref` of a struct local aliases it: writes through the ref, and through a
+// ref parameter, land in the local itself.
+use std
+struct p2 { x: i32, y: i32 }
+fn bump(p: ref p2) { p.x = p.x + 1 }
+fn main() i32 {
+    let s = p2 { 1, 2 }
+    let r = ref s
+    r.y = 20
+    bump(r)
+    bump(ref s)
+    print(`{s.x} {s.y} {r.x}\n`)
+    assert s.y == 20
+    assert s.x == 3
+    return 0
+}

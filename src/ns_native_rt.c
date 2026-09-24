@@ -779,6 +779,18 @@ int64_t ns_rt_ftos(int64_t bits) {
     return ns_rt_from_bytes(buf, n);
 }
 
+// A float inside a format string, as the interpreter prints it (ns_fmt.c):
+// two decimals. `ftos` keeps its own round-trip precision.
+int64_t ns_rt_fmtf(int64_t bits) {
+    double x;
+    memcpy(&x, &bits, 8);
+    char buf[512];
+    int n = snprintf(buf, sizeof(buf), "%.2f", x);
+    if (n < 0) n = 0;
+    if (n >= (int)sizeof(buf)) n = (int)sizeof(buf) - 1;
+    return ns_rt_from_bytes(buf, n);
+}
+
 int64_t ns_rt_stof(int64_t str) {
     char *s = ns_rt_cstr(str);
     double x = strtod(s, NULL);
@@ -1118,6 +1130,142 @@ int64_t ns_rt_union_as(int64_t u, int64_t want_tag) {
         return (int64_t)d;
     }
     return payload;
+}
+
+/* ── shader host execution ─────────────────────────────────────────────────
+ * A compute fn a program calls directly runs one invocation at a time on the
+ * CPU, reading the image, root words and invocation coordinate bound here,
+ * exactly as the interpreter's shader_host_* intrinsics do (ns_shader.c).
+ * Textures are f32 arrays of four components per texel. */
+#define NS_RT_SHADER_ROOT_WORDS 1024
+
+static struct {
+    float *read, *write, *write_secondary;
+    int32_t width, height;
+    float root[NS_RT_SHADER_ROOT_WORDS];
+    int32_t global_id[3];
+    int bound;
+} ns_rt_shader;
+
+static float *ns_rt_f32_array(int64_t arr, int64_t *length) {
+    *length = 0;
+    if (arr <= 0) return NULL;
+    *length = ns_rt_load(arr, 4, 4);
+    int64_t data = ns_rt_load(arr, 0, 4);
+    return data > 0 ? (float *)(void *)ns_rt_ptr(data) : NULL;
+}
+
+int64_t ns_rt_shader_host_bind(int64_t read, int64_t write, int64_t width, int64_t height) {
+    int64_t read_len = 0, write_len = 0;
+    float *r = ns_rt_f32_array(read, &read_len);
+    float *w = ns_rt_f32_array(write, &write_len);
+    int64_t texels = (width > 0 ? width : 0) * (height > 0 ? height : 0);
+    int ok = r && w && width > 0 && height > 0 && read_len >= texels * 4 && write_len >= texels * 4;
+    if (ok) {
+        ns_rt_shader.read = r;
+        ns_rt_shader.write = w;
+        ns_rt_shader.write_secondary = NULL;
+        ns_rt_shader.width = (int32_t)width;
+        ns_rt_shader.height = (int32_t)height;
+        ns_rt_shader.bound = 1;
+    }
+    return ok;
+}
+
+int64_t ns_rt_shader_host_bind_secondary(int64_t write) {
+    int64_t len = 0;
+    float *w = ns_rt_f32_array(write, &len);
+    int64_t texels = (int64_t)ns_rt_shader.width * ns_rt_shader.height;
+    int ok = ns_rt_shader.bound && w && len >= texels * 4;
+    if (ok) ns_rt_shader.write_secondary = w;
+    return ok;
+}
+
+int64_t ns_rt_shader_host_root(int64_t words) {
+    int64_t len = 0;
+    float *w = ns_rt_f32_array(words, &len);
+    if (!w || len <= 0) return 0;
+    int64_t taken = len < NS_RT_SHADER_ROOT_WORDS ? len : NS_RT_SHADER_ROOT_WORDS;
+    memset(ns_rt_shader.root, 0, sizeof(ns_rt_shader.root));
+    memcpy(ns_rt_shader.root, w, (size_t)taken * sizeof(float));
+    return 1;
+}
+
+void ns_rt_shader_host_invocation(int64_t x, int64_t y, int64_t z) {
+    ns_rt_shader.global_id[0] = (int32_t)x;
+    ns_rt_shader.global_id[1] = (int32_t)y;
+    ns_rt_shader.global_id[2] = (int32_t)z;
+}
+
+void ns_rt_shader_host_swap(void) {
+    float *read = ns_rt_shader.read;
+    ns_rt_shader.read = ns_rt_shader.write;
+    ns_rt_shader.write = read;
+}
+
+void ns_rt_shader_host_release(void) {
+    memset(&ns_rt_shader, 0, sizeof(ns_rt_shader));
+}
+
+int64_t ns_rt_shader_global_id(int64_t axis) {
+    return axis >= 0 && axis < 3 ? ns_rt_shader.global_id[axis] : 0;
+}
+
+int64_t ns_rt_shader_root_f32(int64_t index) {
+    float word = index >= 0 && index < NS_RT_SHADER_ROOT_WORDS ? ns_rt_shader.root[index] : 0.0f;
+    uint32_t bits;
+    memcpy(&bits, &word, 4);
+    return (int64_t)bits;
+}
+
+static int32_t ns_rt_shader_texel(int64_t x, int64_t y) {
+    if (!ns_rt_shader.bound) {
+        fprintf(stderr, "shader: texture intrinsics need shader_host_bind outside a transpiled shader.\n");
+        abort();
+    }
+    if (x < 0 || y < 0 || x >= ns_rt_shader.width || y >= ns_rt_shader.height) return -1;
+    return (int32_t)((y * ns_rt_shader.width + x) * 4);
+}
+
+// A float4 is four f32 fields in declaration order.
+int64_t ns_rt_shader_read_texture(int64_t x, int64_t y) {
+    int32_t texel = ns_rt_shader_texel(x, y);
+    int64_t out = ns_rt_alloc(16);
+    float *dst = (float *)(void *)ns_rt_ptr(out);
+    for (int i = 0; i < 4; ++i) dst[i] = texel >= 0 ? ns_rt_shader.read[texel + i] : 0.0f;
+    return out;
+}
+
+void ns_rt_shader_write_texture(int64_t x, int64_t y, int64_t color, int64_t secondary) {
+    int32_t texel = ns_rt_shader_texel(x, y);
+    float *destination = secondary ? ns_rt_shader.write_secondary : ns_rt_shader.write;
+    if (!destination) {
+        fprintf(stderr, "shader: secondary write texture is not bound.\n");
+        abort();
+    }
+    if (texel < 0) return;
+    const float *src = (const float *)(const void *)ns_rt_ptr(color);
+    for (int i = 0; i < 4; ++i) destination[texel + i] = src[i];
+}
+
+// FNV-1a 64 over the string's bytes, as ns_shader_source_hash.
+int64_t ns_rt_shader_source_hash(int64_t str) {
+    int32_t bytes = 0, len = 0;
+    ns_rt_str_parts(str, &bytes, &len);
+    uint64_t hash = 14695981039346656037ull;
+    const uint8_t *p = len > 0 ? ns_rt_ptr(bytes) : NULL;
+    for (int32_t i = 0; i < len; ++i) {
+        hash ^= (uint64_t)p[i];
+        hash *= 1099511628211ull;
+    }
+    return (int64_t)hash;
+}
+
+void ns_rt_shader_unsupported(int64_t name) {
+    char *text = ns_rt_cstr(name);
+    fprintf(stderr, "shader: %s has no CPU implementation; it only runs inside a transpiled shader.\n", text);
+    free(text);
+    abort();
 }
 
 int64_t ns_rt_to_cstr(int64_t str) {

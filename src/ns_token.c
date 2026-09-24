@@ -768,8 +768,11 @@ case 'l': {
         t->type = NS_TOKEN_EOL;
         t->val = ns_str_range(s + f, 1);
         to = i + 1;
-        t->line++;
-        t->line_start = i;
+        // `;` ends a statement like a newline but stays on its source line.
+        if (s[i] != ';') {
+            t->line++;
+            t->line_start = i;
+        }
     } break;
 
     case '\0': {

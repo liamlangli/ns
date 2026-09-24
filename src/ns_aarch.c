@@ -416,88 +416,6 @@ static void ns_aarch_emit_float_binop(ns_aarch_ctx *c, ns_ssa_inst *inst) {
 }
 
 /* ── parse constant string ────────────────────────────────────────────────── */
-static ns_bool ns_aarch_parse_u64(ns_str s, u64 *out) {
-    if (s.len <= 0 || !s.data) return false;
-    if (ns_str_equals(s, ns_str_cstr("true"))) {
-        *out = 1;
-        return true;
-    }
-    if (ns_str_equals(s, ns_str_cstr("false"))) {
-        *out = 0;
-        return true;
-    }
-    if (ns_str_equals(s, ns_str_cstr("nil"))) {
-        *out = 0;
-        return true;
-    }
-
-    i32 start = 0;
-    ns_bool neg = false;
-    if (s.data[0] == '-' || s.data[0] == '+') {
-        neg = s.data[0] == '-';
-        start = 1;
-        if (start >= s.len) return false;
-    }
-
-    i32 end = s.len;
-    while (end > start) {
-        i8 suf = s.data[end - 1];
-        if (suf == 'u' || suf == 'U' || suf == 'i' || suf == 'I' ||
-            suf == 'l' || suf == 'L') {
-            end--;
-            continue;
-        }
-        break;
-    }
-    if (end <= start) return false;
-
-    if (start + 1 < end && s.data[start] == '0' && (s.data[start + 1] == 'x' || s.data[start + 1] == 'X')) {
-        u64 v = 0;
-        for (i32 i = start + 2; i < end; ++i) {
-            i8 ch = s.data[i];
-            u64 d;
-            if (ch >= '0' && ch <= '9') d = (u64)(ch - '0');
-            else if (ch >= 'a' && ch <= 'f') d = (u64)(ch - 'a' + 10);
-            else if (ch >= 'A' && ch <= 'F') d = (u64)(ch - 'A' + 10);
-            else return false;
-            u64 next = (v << 4) | d;
-            if (next < v) return false;
-            v = next;
-        }
-        *out = neg ? (u64)(-(i64)v) : v;
-        return true;
-    }
-
-    ns_bool has_dot = false;
-    for (i32 i = start; i < end; ++i) {
-        if (s.data[i] == '.') { has_dot = true; break; }
-        if (s.data[i] < '0' || s.data[i] > '9') return false;
-    }
-    if (!has_dot) {
-        u64 v = 0;
-        for (i32 i = start; i < end; ++i) {
-            if (s.data[i] < '0' || s.data[i] > '9') return false;
-            u64 d = v * 10u + (u64)(s.data[i] - '0');
-            if (d < v) return false; /* overflow */
-            v = d;
-        }
-        *out = neg ? (u64)(-(i64)v) : v;
-        return true;
-    }
-    /* Float: only accept exact integers */
-    f64 fv = ns_str_to_f64(s);
-    if (fv < 0.0) {
-        f64 pos = -fv;
-        u64 iv = (u64)pos;
-        if ((f64)iv != pos) return false;
-        *out = (u64)(-(i64)iv);
-        return true;
-    }
-    u64 iv = (u64)fv;
-    if ((f64)iv != fv) return false;
-    *out = iv;
-    return true;
-}
 
 /* Narrow a register to the width/signedness of an integer value so
  * that e.g. `300 as u8` yields 44. Wider or non-integer targets are no-ops. */
@@ -578,7 +496,7 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             break;
         }
         u64 val = 0;
-        if (!ns_aarch_parse_u64(inst->name, &val)) {
+        if (!ns_number_literal_bits(inst->name, inst->token.suffix, &val)) {
             ns_warn("aarch", "unsupported const '%.*s' in fn %.*s, using 0\n",
                 inst->name.len, inst->name.data, c->fn->name.len, c->fn->name.data);
             val = 0;
@@ -666,6 +584,12 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             }
             break;
         }
+        /* Integer arithmetic runs on 64-bit registers; a result of a narrower
+         * type wraps to that width, as `ns run` computes it. */
+        if (inst->op == NS_SSA_OP_ADD || inst->op == NS_SSA_OP_SUB ||
+            inst->op == NS_SSA_OP_MUL || inst->op == NS_SSA_OP_SHL) {
+            ns_aarch_narrow_x9(c, inst->type);
+        }
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_DIV: {
@@ -682,6 +606,7 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
         } else {
             ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X9, NS_AARCH_X9, NS_AARCH_X10));
         }
+        ns_aarch_narrow_x9(c, inst->type);
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
     case NS_SSA_OP_MOD: {
@@ -693,10 +618,12 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             ns_aarch_store_value(c, inst->dst, NS_AARCH_X0);
             break;
         }
-        /* Xd = Xn - (Xn / Xm) * Xm  (SDIV + MSUB) */
+        /* Xd = Xn - (Xn / Xm) * Xm  (SDIV or UDIV, then MSUB) */
+        ns_type mt = ns_aarch_value_type(c->fn, inst->a);
         ns_aarch_load_value(c, NS_AARCH_X9, inst->a);
         ns_aarch_load_value(c, NS_AARCH_X10, inst->b);
-        ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X11, NS_AARCH_X9, NS_AARCH_X10));
+        if (ns_type_unsigned(mt)) ns_aarch_emit_u32(c, ns_aarch_udiv_rrr(NS_AARCH_X11, NS_AARCH_X9, NS_AARCH_X10));
+        else ns_aarch_emit_u32(c, ns_aarch_sdiv_rrr(NS_AARCH_X11, NS_AARCH_X9, NS_AARCH_X10));
         ns_aarch_emit_u32(c, ns_aarch_msub_rrrr(NS_AARCH_X9, NS_AARCH_X11, NS_AARCH_X10, NS_AARCH_X9));
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;
@@ -711,6 +638,7 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             ns_aarch_emit_u32(c, ns_aarch_fmov_xd(NS_AARCH_X9, 0, f64));
         } else {
             ns_aarch_emit_u32(c, ns_aarch_neg_rr(NS_AARCH_X9, NS_AARCH_X9));
+            ns_aarch_narrow_x9(c, nt);
         }
         ns_aarch_store_value(c, inst->dst, NS_AARCH_X9);
     } break;

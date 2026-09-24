@@ -1,0 +1,19 @@
+// Integer arithmetic wraps to the width of its type in every backend.
+use std
+fn u32_of(b0: i32, b1: i32, b2: i32, b3: i32) i32 { return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) }
+fn main() i32 {
+    let v = u32_of(0x24, 0xfa, 0xff, 0xff)
+    assert v == -1500
+    let big: i32 = 2147483647
+    assert big + 1 == -2147483648
+    let m: i32 = 65536
+    assert m * m == 0
+    let b: u8 = 250 as u8
+    let c: u8 = b + (10 as u8)
+    assert c as i32 == 4
+    let n: i32 = -2147483648
+    assert -n == -2147483648
+    let w: i64 = 2147483647l
+    assert w + 1l == 2147483648l
+    return 0
+}

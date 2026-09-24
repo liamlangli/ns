@@ -1,0 +1,29 @@
+// A number stored into a place of another number type converts to that type:
+// globals, locals, struct fields, array elements and typed lets.
+use std
+
+struct box { v: f64, n: i64 }
+
+let global_f64: f64 = 0.0
+
+fn half32() f32 { return 0.5 as f32 }
+fn seven() i32 { return 7 }
+
+fn main() i32 {
+    global_f64 = half32()
+    assert global_f64 == 0.5
+    let local: f64 = 0.0
+    local = half32()
+    assert local * 4.0 == 2.0
+    let typed: f64 = half32()
+    assert typed == 0.5
+    let b = box { 0.0, 0 }
+    b.v = half32()
+    b.n = seven()
+    assert b.v == 0.5
+    assert b.n == 7l
+    let values = [f64](2)
+    values[1] = half32()
+    assert values[1] == 0.5
+    return 0
+}

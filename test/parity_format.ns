@@ -1,0 +1,17 @@
+// Values inside format strings print the same in every backend: floats with
+// two decimals, f32 widened first, integers, booleans and strings as is.
+use std
+
+fn half() f64 { return 0.5 }
+
+fn main() i32 {
+    let rot = (half() * 60.0) as f32
+    let d = half() * 3.0
+    let neg = 0.0 - 2.25
+    let i = -42
+    let big: u64 = 18446744073709551615
+    let flag = true
+    let name = "ns"
+    print(`{rot} {d} {neg} {i} {big} {flag} {name}\n`)
+    return 0
+}

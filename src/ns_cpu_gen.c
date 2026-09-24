@@ -113,68 +113,6 @@ static u16 ns_cpu_gen_rt(ns_cpu_gen *g, const char *name) {
 }
 
 /* ── constants ────────────────────────────────────────────────────────────── */
-// Same literal grammar as ns_amd64_parse_u64: booleans, nil, signed decimal,
-// hex, integer suffixes, and floats that hold an exact integer.
-static ns_bool ns_cpu_parse_u64(ns_str s, u64 *out) {
-    if (s.len <= 0 || !s.data) return false;
-    if (ns_str_equals_STR(s, "true")) { *out = 1; return true; }
-    if (ns_str_equals_STR(s, "false")) { *out = 0; return true; }
-    if (ns_str_equals_STR(s, "nil")) { *out = 0; return true; }
-    i32 start = 0;
-    ns_bool neg = false;
-    if (s.data[0] == '-' || s.data[0] == '+') {
-        neg = s.data[0] == '-';
-        start = 1;
-        if (start >= s.len) return false;
-    }
-    i32 end = s.len;
-    while (end > start) {
-        i8 suf = s.data[end - 1];
-        if (suf == 'u' || suf == 'U' || suf == 'i' || suf == 'I' || suf == 'l' || suf == 'L') {
-            end--;
-            continue;
-        }
-        break;
-    }
-    if (end <= start) return false;
-    if (start + 1 < end && s.data[start] == '0' && (s.data[start + 1] == 'x' || s.data[start + 1] == 'X')) {
-        u64 v = 0;
-        for (i32 i = start + 2; i < end; ++i) {
-            i8 ch = s.data[i];
-            u64 d;
-            if (ch >= '0' && ch <= '9') d = (u64)(ch - '0');
-            else if (ch >= 'a' && ch <= 'f') d = (u64)(ch - 'a' + 10);
-            else if (ch >= 'A' && ch <= 'F') d = (u64)(ch - 'A' + 10);
-            else return false;
-            u64 next = (v << 4) | d;
-            if (next < v) return false;
-            v = next;
-        }
-        *out = neg ? (u64)(-(i64)v) : v;
-        return true;
-    }
-    ns_bool has_dot = false;
-    for (i32 i = start; i < end; ++i) {
-        if (s.data[i] == '.') { has_dot = true; break; }
-        if (s.data[i] < '0' || s.data[i] > '9') return false;
-    }
-    if (!has_dot) {
-        u64 v = 0;
-        for (i32 i = start; i < end; ++i) {
-            u64 d = v * 10u + (u64)(s.data[i] - '0');
-            if (d < v) return false;
-            v = d;
-        }
-        *out = neg ? (u64)(-(i64)v) : v;
-        return true;
-    }
-    f64 fv = ns_str_to_f64(s);
-    f64 pos = fv < 0.0 ? -fv : fv;
-    u64 iv = (u64)pos;
-    if ((f64)iv != pos) return false;
-    *out = fv < 0.0 ? (u64)(-(i64)iv) : iv;
-    return true;
-}
 
 static i32 ns_cpu_gen_const_reg(ns_cpu_gen *g, u8 kind, u64 value) {
     i32 n = (i32)ns_array_length(g->consts);
@@ -212,7 +150,7 @@ static void ns_cpu_gen_const_value(ns_cpu_gen *g, ns_ssa_inst *inst, u8 *kind, u
         *value = bits;
         return;
     }
-    if (!ns_cpu_parse_u64(inst->name, value)) {
+    if (!ns_number_literal_bits(inst->name, inst->token.suffix, value)) {
         ns_warn("cpu", "unsupported const '%.*s' in fn %.*s, using 0\n",
                 inst->name.len, inst->name.data, g->fn->name.len, g->fn->name.data);
         *value = 0;
@@ -715,6 +653,7 @@ static void ns_cpu_gen_inst(ns_cpu_gen *g, i32 pos, i32 index) {
             break;
         }
         ns_bool uns = ns_type_unsigned(at);
+        ns_bool i32_result = ns_type_is(inst->type, NS_TYPE_I32);
         ns_cpu_op op = NS_CPU_ADD;
         switch (inst->op) {
         case NS_SSA_OP_ADD: op = NS_CPU_ADD; break;
@@ -728,14 +667,25 @@ static void ns_cpu_gen_inst(ns_cpu_gen *g, i32 pos, i32 index) {
         case NS_SSA_OP_SHL: op = NS_CPU_SHL; break;
         default: op = uns ? NS_CPU_SHRU : NS_CPU_SHRS; break;
         }
+        // Integer arithmetic wraps to the width of its type, as `ns run` does.
+        ns_bool wraps = op == NS_CPU_ADD || op == NS_CPU_SUB || op == NS_CPU_MUL || op == NS_CPU_SHL ||
+                        op == NS_CPU_DIVS || op == NS_CPU_DIVU;
+        if (wraps && i32_result && op != NS_CPU_DIVS && op != NS_CPU_DIVU) {
+            op = op == NS_CPU_ADD ? NS_CPU_ADDW : op == NS_CPU_SUB ? NS_CPU_SUBW :
+                 op == NS_CPU_MUL ? NS_CPU_MULW : NS_CPU_SHLW;
+            wraps = false;
+        }
         ns_cpu_gen_rrr(g, op, d, a, b);
+        if (wraps) ns_cpu_gen_narrow(g, d, d, inst->type);
     } break;
     case NS_SSA_OP_NEG: {
         if (inst->dst < 0) break;
         ns_type nt = ns_cpu_is_float(inst->type) ? inst->type : ns_cpu_gen_type(g, inst->a);
-        ns_cpu_op op = !ns_cpu_is_float(nt) ? NS_CPU_NEG :
+        ns_cpu_op op = !ns_cpu_is_float(nt) ? (ns_type_is(nt, NS_TYPE_I32) ? NS_CPU_NEGW : NS_CPU_NEG) :
                        ns_type_is(nt, NS_TYPE_F64) ? NS_CPU_FNEG64 : NS_CPU_FNEG32;
-        ns_cpu_gen_rr(g, op, ns_cpu_gen_dst(g, inst->dst), ns_cpu_gen_reg(g, inst->a));
+        i32 d = ns_cpu_gen_dst(g, inst->dst);
+        ns_cpu_gen_rr(g, op, d, ns_cpu_gen_reg(g, inst->a));
+        if (op == NS_CPU_NEG) ns_cpu_gen_narrow(g, d, d, nt);
     } break;
     case NS_SSA_OP_NOT:
         if (inst->dst < 0) break;

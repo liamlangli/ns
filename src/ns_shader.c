@@ -3149,6 +3149,31 @@ static ns_return_bool ns_shader_host_vm_call(ns_vm *vm, ns_str name, ns_call *ca
     return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "unknown shader fn.");
 }
 
+ns_return_bool ns_shader_vertex_layout(ns_vm *vm, i32 fn_index, i32 *stride, i32 *count,
+                                       i32 *offsets, i32 *sizes, i32 max) {
+    ns_symbol *s = &vm->symbols[fn_index];
+    if (s->type != NS_SYMBOL_FN || (i32)ns_array_length(s->fn.args) != 1 || !ns_type_is(s->fn.args[0].val.t, NS_TYPE_STRUCT) ||
+        ns_shader_is_simd(&vm->symbols[ns_type_index(s->fn.args[0].val.t)])) {
+        return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: vertex layout reflection needs a vertex fn taking one user struct parameter.");
+    }
+    ns_symbol *in = &vm->symbols[ns_type_index(s->fn.args[0].val.t)];
+    i32 n = (i32)ns_array_length(in->st.fields);
+    i32 offset = 0;
+    for (i32 f = 0; f < n; ++f) {
+        i32 dim = 0;
+        ns_return_bool rd = ns_shader_vertex_field_components(vm, &in->st.fields[f], &dim);
+        if (ns_return_is_error(rd)) return rd;
+        if (f < max) {
+            offsets[f] = offset;
+            sizes[f] = dim;
+        }
+        offset += dim * 4;
+    }
+    *stride = offset;
+    *count = n;
+    return ns_return_ok(bool, true);
+}
+
 ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     ns_call *call = ns_array_last(vm->call_stack);
     ns_str name = call->callee->name;
@@ -3241,29 +3266,17 @@ ns_return_bool ns_shader_vm_call(ns_vm *vm, ns_ast_ctx *ctx) {
     }
 
     if (is_vertex_stride || is_attr_count || is_attr_offset || is_attr_size) {
-        ns_symbol *s = &vm->symbols[fn_index];
-        if (s->type != NS_SYMBOL_FN || (i32)ns_array_length(s->fn.args) != 1 || !ns_type_is(s->fn.args[0].val.t, NS_TYPE_STRUCT) ||
-            ns_shader_is_simd(&vm->symbols[ns_type_index(s->fn.args[0].val.t)])) {
-            return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: vertex layout reflection needs a vertex fn taking one user struct parameter.");
-        }
-        ns_symbol *in = &vm->symbols[ns_type_index(s->fn.args[0].val.t)];
-        i32 count = (i32)ns_array_length(in->st.fields);
-        i32 attr = -1;
+        i32 offsets[64], sizes[64], stride = 0, count = 0;
+        ns_return_bool layout = ns_shader_vertex_layout(vm, fn_index, &stride, &count, offsets, sizes, 64);
+        if (ns_return_is_error(layout)) return layout;
+        i32 result = is_vertex_stride ? stride : count;
         if (is_attr_offset || is_attr_size) {
-            attr = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
-            if (attr < 0 || attr >= count) {
+            i32 attr = ns_eval_number_i32(vm, vm->symbol_stack[call->arg_offset + 1].val);
+            if (attr < 0 || attr >= count || attr >= 64) {
                 return ns_return_error(bool, vm->loc, NS_ERR_EVAL, "shader: vertex attribute index out of range.");
             }
+            result = is_attr_offset ? offsets[attr] : sizes[attr];
         }
-        i32 offset = 0, result = count;
-        for (i32 f = 0; f < count; ++f) {
-            i32 dim = 0;
-            ns_return_bool rd = ns_shader_vertex_field_components(vm, &in->st.fields[f], &dim);
-            if (ns_return_is_error(rd)) return rd;
-            if (f == attr) result = is_attr_offset ? offset : dim;
-            offset += dim * 4;
-        }
-        if (is_vertex_stride) result = offset;
         call->ret = (ns_value){.t = ns_type_i32, .i32 = result};
         return ns_return_ok(bool, true);
     }

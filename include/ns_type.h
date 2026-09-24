@@ -274,6 +274,12 @@ typedef enum {
     NS_NUM_SUFFIX_BF16,
 } ns_num_suffix;
 
+// The 64-bit value of a number literal as the compiled backends store it:
+// true/false/nil, signed decimal, 0x hex and 0b binary integers with any
+// suffix the lexer accepts (`suffix` names the one it recognized), and float
+// spellings that hold an exact integer. False when the text is none of these.
+ns_bool ns_number_literal_bits(ns_str s, ns_num_suffix suffix, u64 *out);
+
 typedef struct ns_token_t {
     ns_token_type type;
     ns_str val;

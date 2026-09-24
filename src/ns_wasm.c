@@ -813,7 +813,11 @@ static void ns_wasm_emit_inst(ns_wasm_fn_ctx *ctx, ns_ssa_inst *inst) {
             ns_wasm_u8(&ctx->code, NS_WASM_I32_CONST);
             if (inst->token.type == NS_TOKEN_TRUE) ns_wasm_i64leb(&ctx->code, 1);
             else if (inst->token.type == NS_TOKEN_FALSE || inst->token.type == NS_TOKEN_NIL) ns_wasm_i64leb(&ctx->code, 0);
-            else ns_wasm_i64leb(&ctx->code, (i64)ns_str_to_i32(inst->name));
+            else {
+                u64 bits = 0;
+                if (!ns_number_literal_bits(inst->name, inst->token.suffix, &bits)) bits = (u64)ns_str_to_i64(inst->name);
+                ns_wasm_i64leb(&ctx->code, (i64)(i32)bits);
+            }
             break;
         }
         ns_wasm_local_set(ctx, inst->dst);

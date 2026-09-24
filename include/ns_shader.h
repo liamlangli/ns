@@ -63,6 +63,12 @@ ns_shader_stage ns_shader_stage_infer(ns_vm *vm, ns_ast_ctx *ctx, i32 fn_index);
 // hash, and any edit to a shader fn or the transpiler changes it.
 u64 ns_shader_source_hash(ns_str source);
 
+// Vertex layout reflection of a vertex fn taking one user struct: the byte
+// stride of a vertex, and per attribute its offset in bytes and its size in
+// f32 components. `offsets`/`sizes` receive at most `max` attributes.
+ns_return_bool ns_shader_vertex_layout(ns_vm *vm, i32 fn_index, i32 *stride, i32 *count,
+                                       i32 *offsets, i32 *sizes, i32 max);
+
 // Entry-point name to feed gpu_shader_stage_desc.entry: the fn name for MSL/HLSL,
 // "main" for GLSL (the generated wrapper). Borrowed/static storage.
 ns_str ns_shader_entry_name(ns_shader_target t, ns_str fn_name);

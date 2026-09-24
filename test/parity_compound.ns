@@ -1,0 +1,24 @@
+// Compound assignment: the whole right-hand side, into locals, array
+// elements, struct fields, dict entries and strings, in every backend.
+use std
+struct acc { n: i32, f: f64 }
+fn main() i32 {
+    let cells = [1, 2, 3]
+    cells[1] += 10
+    cells[2] *= 3 + 1
+    assert cells[1] == 12
+    assert cells[2] == 12
+    let a = acc { 1, 0.5 }
+    a.n += 4
+    a.f *= 4.0
+    assert a.n == 5
+    assert a.f == 2.0
+    let d = [str: i32](4)
+    d["x"] = 1
+    d["x"] += 41
+    assert d["x"] == 42
+    let s = "a"
+    s += "b" + "c"
+    assert s == "abc"
+    return 0
+}

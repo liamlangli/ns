@@ -274,6 +274,14 @@ i64 ns_str_to_i64(ns_str s) {
             r = r * 16 + d;
             i++;
         }
+    } else if (i + 2 < size && s.data[i] == '0' && (s.data[i + 1] == 'b' || s.data[i + 1] == 'B') &&
+               (s.data[i + 2] == '0' || s.data[i + 2] == '1')) {
+        // binary literal: 0b.. (a bare `0b` is 0 with the i8 suffix)
+        i += 2;
+        while (i < size && (s.data[i] == '0' || s.data[i] == '1')) {
+            r = r * 2 + (s.data[i] - '0');
+            i++;
+        }
     } else {
         while (i < size) {
             i8 c = s.data[i];
@@ -284,6 +292,90 @@ i64 ns_str_to_i64(ns_str s) {
     }
 
     return sign * r;
+}
+
+static const char *ns_num_suffix_text(ns_num_suffix suffix) {
+    switch (suffix) {
+    case NS_NUM_SUFFIX_I8: return "b";
+    case NS_NUM_SUFFIX_U8: return "ub";
+    case NS_NUM_SUFFIX_I16: return "s";
+    case NS_NUM_SUFFIX_U16: return "us";
+    case NS_NUM_SUFFIX_U32: return "u";
+    case NS_NUM_SUFFIX_I64: return "l";
+    case NS_NUM_SUFFIX_U64: return "ul";
+    case NS_NUM_SUFFIX_F64: return "d";
+    case NS_NUM_SUFFIX_F16: return "h";
+    case NS_NUM_SUFFIX_BF16: return "hb";
+    default: return "";
+    }
+}
+
+ns_bool ns_number_literal_bits(ns_str s, ns_num_suffix suffix, u64 *out) {
+    if (s.len <= 0 || !s.data) return false;
+    if (ns_str_equals_STR(s, "true")) { *out = 1; return true; }
+    if (ns_str_equals_STR(s, "false") || ns_str_equals_STR(s, "nil")) { *out = 0; return true; }
+
+    i32 start = 0;
+    ns_bool neg = false;
+    if (s.data[0] == '-' || s.data[0] == '+') {
+        neg = s.data[0] == '-';
+        start = 1;
+        if (start >= s.len) return false;
+    }
+    i32 end = s.len;
+    const char *text = ns_num_suffix_text(suffix);
+    i32 tl = (i32)strlen(text);
+    if (tl > 0 && end - start > tl && strncmp(s.data + end - tl, text, (szt)tl) == 0) {
+        end -= tl;
+    } else {
+        // Literals built by the compiler itself may carry C-style suffixes.
+        while (end > start && strchr("uUiIlL", s.data[end - 1])) end--;
+    }
+    if (end <= start) return false;
+
+    ns_bool hex = start + 1 < end && s.data[start] == '0' && (s.data[start + 1] == 'x' || s.data[start + 1] == 'X');
+    ns_bool bin = start + 2 < end && s.data[start] == '0' && (s.data[start + 1] == 'b' || s.data[start + 1] == 'B');
+    if (hex || bin) {
+        u64 base = hex ? 16 : 2, v = 0;
+        for (i32 i = start + 2; i < end; ++i) {
+            i8 ch = s.data[i];
+            u64 d;
+            if (ch == '_') continue;
+            if (ch >= '0' && ch <= '9') d = (u64)(ch - '0');
+            else if (ch >= 'a' && ch <= 'f') d = (u64)(ch - 'a' + 10);
+            else if (ch >= 'A' && ch <= 'F') d = (u64)(ch - 'A' + 10);
+            else return false;
+            if (d >= base) return false;
+            u64 next = v * base + d;
+            if (next / base != v) return false;
+            v = next;
+        }
+        *out = neg ? (u64)(-(i64)v) : v;
+        return true;
+    }
+
+    ns_bool has_dot = false;
+    for (i32 i = start; i < end; ++i) {
+        i8 ch = s.data[i];
+        if (ch == '.' || ch == 'e' || ch == 'E') { has_dot = true; break; }
+        if ((ch < '0' || ch > '9') && ch != '_') return false;
+    }
+    if (!has_dot) {
+        u64 v = 0;
+        for (i32 i = start; i < end; ++i) {
+            if (s.data[i] == '_') continue;
+            u64 d = v * 10u + (u64)(s.data[i] - '0');
+            if (d / 10u != v) return false;
+            v = d;
+        }
+        *out = neg ? (u64)(-(i64)v) : v;
+        return true;
+    }
+    f64 fv = ns_str_to_f64(ns_str_range(s.data + start, end - start));
+    u64 iv = (u64)fv;
+    if (fv < 0.0 || (f64)iv != fv) return false;
+    *out = neg ? (u64)(-(i64)iv) : iv;
+    return true;
 }
 
 i32 ns_str_to_i32(ns_str s) {
