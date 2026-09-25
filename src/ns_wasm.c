@@ -2353,7 +2353,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
     }
     if (ns_str_equals(module, ns_str_cstr("compress"))) {
         return ns_wasm_name_in(name,
-            "compress_gzip_bound|compress_gzip_decoded_size|compress_gzip_deflate|compress_gzip_inflate");
+            "compress_gzip_bound|compress_gzip_decoded_size|compress_gzip_deflate|compress_gzip_inflate|"
+            "compress_zlib_bound|compress_zlib_deflate|compress_zlib_inflate");
     }
     if (ns_str_equals(module, ns_str_cstr("io"))) {
         return ns_wasm_name_in(name,
