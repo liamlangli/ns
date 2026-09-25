@@ -1,16 +1,14 @@
 # Compress Module
 
-`compress` is Nano Script's native byte-compression module. It is backed by two
-pinned third-party downloads:
+`compress` is Nano Script's native byte-compression module. It is backed by one
+pinned third-party download:
 
 | Library | Version | Commit | License |
 | --- | --- | --- | --- |
 | [zlib](https://github.com/madler/zlib) | 1.3.1 | `51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf` | zlib |
-| [Zstandard](https://github.com/facebook/zstd) | 1.5.7 | `f8745da6ff1ad1e7bab384bd1f9d742439278e99` | BSD-3-Clause / GPLv2 |
 
-Neither source tree lives in this repository. The build downloads and checksums
-each archive into the ignored `third_party/zlib/` and `third_party/zstd/`
-directories, exactly as `dynamic` does for Box3D (doc/dynamic.md).
+The source tree does not live in this repository. The build downloads and
+checksums the archive into the ignored `third_party/zlib/` directory.
 
 ## Surface
 
@@ -37,7 +35,7 @@ let restored_size = compress_gzip_inflate(packed, packed_size, restored, 8192)
 
 ## Formats
 
-Four framings are exposed, each with its own bound, encoder, and decoder. They
+Three framings are exposed, each with its own bound, encoder, and decoder. They
 are not interchangeable: decoding a stream with the wrong framing reports
 `COMPRESS_ERROR_DATA` rather than producing bytes.
 
@@ -46,26 +44,20 @@ are not interchangeable: decoding a stream with the wrong framing reports
 | raw deflate | RFC 1951 | `compress_deflate` | `compress_inflate` |
 | zlib | RFC 1950 | `compress_zlib_deflate` | `compress_zlib_inflate` |
 | gzip | RFC 1952 | `compress_gzip_deflate` | `compress_gzip_inflate` |
-| zstd | RFC 8878 | `compress_zstd_encode` | `compress_zstd_decode` |
 
-Only two of the four record their decoded size. `compress_gzip_decoded_size`
-reads the gzip ISIZE trailer, which is stored modulo 2^32 and is therefore exact
-only below 4 GiB. `compress_zstd_decoded_size` reads the zstd frame header and
-reports `COMPRESS_ERROR_UNSUPPORTED` for a frame written without a content size.
-Raw deflate and zlib streams record nothing, so the caller must already know how
-large the decoded data is.
+Only gzip records its decoded size. `compress_gzip_decoded_size` reads the gzip
+ISIZE trailer, which is stored modulo 2^32 and is therefore exact only below
+4 GiB. Raw deflate and zlib streams record nothing, so the caller must already
+know how large the decoded data is - or grow the destination and decode again
+while the decoder reports `COMPRESS_ERROR_BUFFER`.
 
 ## Levels
 
-The three zlib framings share one scale: `COMPRESS_LEVEL_DEFAULT` (-1),
+The three framings share one scale: `COMPRESS_LEVEL_DEFAULT` (-1),
 `COMPRESS_LEVEL_STORE` (0), and 1 through 9 from `COMPRESS_LEVEL_FASTEST` to
 `COMPRESS_LEVEL_BEST`. Any other value is rejected with
 `COMPRESS_ERROR_ARGUMENT`. Level 0 stores the input, so the result is slightly
 larger than the input and still within `compress_zlib_bound`.
-
-Zstandard reads level 0 as its own default of 3. The accepted range is reported
-at runtime by `compress_zstd_level_min` and `compress_zstd_level_max`; the
-pinned build accepts -131072 through 22.
 
 ## Status codes
 
@@ -94,28 +86,24 @@ given, so chunked use means refilling a buffer, not offsetting into one.
 
 ## Build and platform support
 
-Both libraries are portable C and are compiled straight into the compress
-feature library by `lib/Makefile`. Run `make zlib`, `make zstd`, or
-`make compress_deps` to download the pinned sources explicitly; the normal
+zlib is portable C and is compiled straight into the compress feature library
+by `lib/Makefile`. Run `make zlib` or `make compress_deps` to download the
+pinned sources explicitly; the normal
 `make`, `make std`, and install flows also download them when absent. They
 produce and install `compress.dylib` on macOS or `compress.so` on Linux/Windows,
 and need only the C runtime.
 
-Generated Apple IDE apps compile the adapter and pinned Zstandard sources
-directly into their macOS, iOS, and visionOS targets. Those targets use the
-platform `libz` for raw deflate, zlib, gzip, and checksums, while preserving the
-same Nano Script API and status codes.
+Generated Apple IDE apps compile the adapter directly into their macOS, iOS,
+and visionOS targets. Those targets use the platform `libz` for raw deflate,
+zlib, gzip, and checksums, while preserving the same Nano Script API and status
+codes.
 
-Two build settings are worth knowing about. zlib is compiled with `Z_PREFIX`, so
-its entry points are renamed to `z_*` and the statically linked copy cannot
-collide with a system libz that is already in the process — the module is opened
-with `RTLD_GLOBAL`. Zstandard is compiled with `XXH_NAMESPACE=ZSTD_` for the same
-reason, and with `ZSTD_DISABLE_ASM` so the build stays on the portable C decoder
-instead of the x86-64 assembly Huffman loop.
+zlib is compiled with `Z_PREFIX`, so its entry points are renamed to `z_*` and
+the statically linked copy cannot collide with a system libz that is already in
+the process — the module is opened with `RTLD_GLOBAL`.
 
-`compress_zlib_version` and `compress_zstd_version` report the linked versions,
-which is the cheapest way to confirm the pinned downloads are what a build
-actually used.
+`compress_zlib_version` reports the linked version, which is the cheapest way to
+confirm the pinned download is what a build actually used.
 
 Run the focused regression coverage with:
 

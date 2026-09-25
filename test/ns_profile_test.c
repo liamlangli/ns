@@ -87,7 +87,7 @@ int main() {
     ns_expect(saw_thread, "thread table lists main");
     ns_expect(saw_blob, "timeline blob referenced");
     FILE *blob = fopen("bin/ns_profile_test.profile.tl", "rb");
-    if (!blob) blob = fopen("bin/ns_profile_test.profile.tl.zst", "rb");
+    if (!blob) blob = fopen("bin/ns_profile_test.profile.tl.z", "rb");
     ns_expect(blob != ns_null, "compact timeline blob written");
     if (blob) fclose(blob);
 

@@ -106,7 +106,7 @@ containing data, length, and capacity; plain structs use compiler-resolved
 field offsets in linear memory. Unsupported dynamic or host-only operations
 produce source-located build diagnostics; in particular arbitrary `any`,
 unions, task/async, closures, dicts/sets, and the `io`, `net`, `http`,
-`audio`, `compress`, `storage`, and `dynamic` modules are not browser
+`audio`, `compress`, and `storage` modules are not browser
 features, and `os` is limited to the documented portable subset. The browser
 event loop remains owned by the generated shell, so `view_run` is nonblocking
 and the exported `frame` function is the frame callback.

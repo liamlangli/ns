@@ -42,7 +42,7 @@ external modules.
 
 The built-in runtime modules — `std`, `view`, `gpu`, `ui`, `os`, `io`,
 `storage`, `compress`, `audio`, `net`, `http`, `task`, `term`, `simd`,
-`shader`, `dynamic` — ship with the toolchain and resolve from the installed
+`shader` — ship with the toolchain and resolve from the installed
 SDK. A source file reaches them with `use <name>` alone; the manifest does not
 declare them, and a `[[dependencies.runtime]]` table listing one is ignored.
 
@@ -210,7 +210,7 @@ written to `bin/ns.profile`: the project's own `bin/` when the run resolves a
 project, otherwise `bin/` beside the working directory. Nothing is ever written
 to the root of the project folder. The text format is `ns-profile-v6`: aggregates and flame stacks stay in the
 small text report, while the timeline is a compact binary blob beside it
-(`ns.profile.tl` or zstd-compressed `ns.profile.tl.zst`). Scopes shorter than
+(`ns.profile.tl` or zlib-compressed `ns.profile.tl.z`). Scopes shorter than
 `0.05 ms` stay in the fn/flame tables but are omitted from the timeline so a
 hot leaf helper cannot inflate the report into gigabytes. Every retained sample
 carries a thread name (`main`, or `callee#id` for async/dispatch tasks); the

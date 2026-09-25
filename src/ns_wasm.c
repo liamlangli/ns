@@ -2353,8 +2353,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
     }
     if (ns_str_equals(module, ns_str_cstr("compress"))) {
         return ns_wasm_name_in(name,
-            "compress_gzip_bound|compress_gzip_decoded_size|compress_gzip_deflate|compress_gzip_inflate|"
-            "compress_zstd_bound|compress_zstd_decode|compress_zstd_decoded_size|compress_zstd_encode");
+            "compress_gzip_bound|compress_gzip_decoded_size|compress_gzip_deflate|compress_gzip_inflate");
     }
     if (ns_str_equals(module, ns_str_cstr("io"))) {
         return ns_wasm_name_in(name,
@@ -2455,9 +2454,9 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
 }
 
 static ns_bool ns_wasm_portable_use(ns_str module) {
-    // simd is pure Nano Script and carries no native imports of its own.
-    // dynamic remains native-only; browser-safe services are implemented by
-    // the generated JavaScript middleware.
+    // simd is pure Nano Script and carries no native imports of its own;
+    // browser-safe services are implemented by the generated JavaScript
+    // middleware.
     return ns_wasm_supported_module(module) || ns_str_equals(module, ns_str_cstr("simd"));
 }
 

@@ -47,7 +47,6 @@
 // Compact timeline blob magic / version (little-endian file beside ns.profile).
 #define NS_PROFILE_TL_MAGIC 0x4C54534Eu /* 'NSTL' */
 #define NS_PROFILE_TL_VERSION 1
-#define NS_PROFILE_TL_FLAG_ZSTD 1u
 #define NS_PROFILE_TL_EVENT_SIZE 20
 
 typedef struct ns_profile_fn_stat {
@@ -185,8 +184,8 @@ void ns_profile_record_ffi(ns_str name, ns_str lib, f64 start_ms, f64 elapsed_ms
 void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms);
 
 // Write the ns-profile-v6 text report (aggregates + flame) to `f`, and a
-// compact binary timeline beside `path` as `<path>.tl` or `<path>.tl.zst`
-// when compress.dylib is available. `path` may be null to skip the blob
+// compact binary timeline beside `path` as `<path>.tl`, or zlib-compressed as
+// `<path>.tl.z` when compress.dylib is available. `path` may be null to skip the blob
 // (text then embeds no timeline_blob line; used by unit tests that only
 // inspect aggregates).
 void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc, i8 **argv);

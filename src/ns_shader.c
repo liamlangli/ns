@@ -319,7 +319,7 @@ static ns_bool ns_shader_is_main_tu(ns_symbol *s) { return s->lib.len == 0 || ns
 // Node indices are relative to the translation unit that parsed them, so a
 // transpiled fn and every fn it calls must live in the unit being walked.
 // That unit is the caller's file for an application shader and the module's
-// own file for a shader shipped by a `use`d module (lib/dynamic.ns).
+// own file for a shader shipped by a `use`d module.
 static ns_bool ns_shader_in_unit(ns_ast_ctx *ctx, ns_symbol *s) {
     return s->fn.ctx == ns_null || s->fn.ctx == ctx;
 }

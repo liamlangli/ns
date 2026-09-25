@@ -45,6 +45,7 @@ let g_timeline_skipped = ""
 let g_flame_frames = ""
 let g_timeline_blob = ""
 let g_timeline_blob_codec = ""
+let g_timeline_blob_raw_bytes = 0
 let g_status = "No profile loaded."
 let g_profile_loaded = false
 let g_events_loaded = false
@@ -1129,6 +1130,10 @@ fn parse_header(src: str) {
         if v.len > 0 {
             g_timeline_blob_codec = v
         }
+        v = header_value(line, "timeline_blob_raw_bytes")
+        if v.len > 0 {
+            g_timeline_blob_raw_bytes = parse_i32(v)
+        }
         if i < src.len {
             i = i + 1
         }
@@ -1204,6 +1209,7 @@ fn clear_profile() {
     g_flame_frames = ""
     g_timeline_blob = ""
     g_timeline_blob_codec = ""
+    g_timeline_blob_raw_bytes = 0
     g_threads_header = ""
     g_hot_count = 0
     g_ev_count = 0
@@ -1819,15 +1825,16 @@ fn tick_blob_load() {
         g_load_msg = "Decompressing timeline..."
         g_status = g_load_msg
         let codec = g_timeline_blob_codec
-        if codec == "zstd" {
-            let out_len = compress_zstd_decoded_size(g_blob_raw, g_blob_raw_len)
+        if codec == "zlib" {
+            // A zlib stream does not record its decoded size; the report does.
+            let out_len = g_timeline_blob_raw_bytes
             if out_len <= 0 {
-                g_status = "Bad zstd timeline blob."
+                g_status = "Bad zlib timeline blob."
                 clear_blob_load()
                 return
             }
             g_blob_data = [u8](out_len)
-            let decoded = compress_zstd_decode(g_blob_raw, g_blob_raw_len, g_blob_data, out_len)
+            let decoded = compress_zlib_inflate(g_blob_raw, g_blob_raw_len, g_blob_data, out_len)
             if decoded <= 0 {
                 g_status = "Failed to decompress timeline."
                 clear_blob_load()

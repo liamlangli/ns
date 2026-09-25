@@ -396,24 +396,17 @@ extern i32 storage_stmt_column_blob(void *, i32, void *, i32);
 extern i32 compress_deflate_bound(i32);
 extern i32 compress_zlib_bound(i32);
 extern i32 compress_gzip_bound(i32);
-extern i32 compress_zstd_bound(i32);
 extern i32 compress_deflate(void *, i32, void *, i32, i32);
 extern i32 compress_zlib_deflate(void *, i32, void *, i32, i32);
 extern i32 compress_gzip_deflate(void *, i32, void *, i32, i32);
-extern i32 compress_zstd_encode(void *, i32, void *, i32, i32);
 extern i32 compress_inflate(void *, i32, void *, i32);
 extern i32 compress_zlib_inflate(void *, i32, void *, i32);
 extern i32 compress_gzip_inflate(void *, i32, void *, i32);
-extern i32 compress_zstd_decode(void *, i32, void *, i32);
 extern i32 compress_gzip_decoded_size(void *, i32);
-extern i32 compress_zstd_decoded_size(void *, i32);
-extern i32 compress_zstd_level_min(void);
-extern i32 compress_zstd_level_max(void);
 extern u32 compress_crc32(u32, void *, i32);
 extern u32 compress_adler32(u32, void *, i32);
 extern const char * compress_status_str(i32);
 extern const char * compress_zlib_version(void);
-extern const char * compress_zstd_version(void);
 extern ns_bool audio_init(void);
 extern void audio_shutdown(void);
 extern i32 audio_load(const char *, i32);
@@ -2399,13 +2392,6 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "compress_zlib_deflate", (void *)compress_zlib_deflate, ns_embedded_sig18, ns_embedded_cpu18 },
     { "compress_zlib_inflate", (void *)compress_zlib_inflate, ns_embedded_sig21, ns_embedded_cpu21 },
     { "compress_zlib_version", (void *)compress_zlib_version, ns_embedded_sig3, ns_embedded_cpu3 },
-    { "compress_zstd_bound", (void *)compress_zstd_bound, ns_embedded_sig19, ns_embedded_cpu19 },
-    { "compress_zstd_decode", (void *)compress_zstd_decode, ns_embedded_sig21, ns_embedded_cpu21 },
-    { "compress_zstd_decoded_size", (void *)compress_zstd_decoded_size, ns_embedded_sig20, ns_embedded_cpu20 },
-    { "compress_zstd_encode", (void *)compress_zstd_encode, ns_embedded_sig18, ns_embedded_cpu18 },
-    { "compress_zstd_level_max", (void *)compress_zstd_level_max, ns_embedded_sig13, ns_embedded_cpu13 },
-    { "compress_zstd_level_min", (void *)compress_zstd_level_min, ns_embedded_sig13, ns_embedded_cpu13 },
-    { "compress_zstd_version", (void *)compress_zstd_version, ns_embedded_sig3, ns_embedded_cpu3 },
     { "gpu_caps", (void *)gpu_caps, ns_embedded_sig23, ns_embedded_cpu23 },
     { "gpu_commit", (void *)gpu_commit, ns_embedded_sig11, ns_embedded_cpu11 },
     { "gpu_destroy_device", (void *)gpu_destroy_device, ns_embedded_sig11, ns_embedded_cpu11 },

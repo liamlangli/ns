@@ -27,12 +27,12 @@ typedef struct ns_profile_tl_event {
 } ns_profile_tl_event;
 #pragma pack(pop)
 
-typedef i32 (*ns_profile_zstd_bound_fn)(i32);
-typedef i32 (*ns_profile_zstd_encode_fn)(const u8 *, i32, u8 *, i32, i32);
+typedef i32 (*ns_profile_zlib_bound_fn)(i32);
+typedef i32 (*ns_profile_zlib_deflate_fn)(const u8 *, i32, u8 *, i32, i32);
 
 static void *ns_profile_compress_lib = ns_null;
-static ns_profile_zstd_bound_fn ns_profile_zstd_bound = ns_null;
-static ns_profile_zstd_encode_fn ns_profile_zstd_encode = ns_null;
+static ns_profile_zlib_bound_fn ns_profile_zlib_bound = ns_null;
+static ns_profile_zlib_deflate_fn ns_profile_zlib_deflate = ns_null;
 
 static void ns_profile_load_compress(void) {
     if (ns_profile_compress_lib) return;
@@ -69,13 +69,13 @@ static void ns_profile_load_compress(void) {
         ns_profile_compress_lib = dlopen(cands[i], RTLD_LAZY | RTLD_LOCAL);
     }
     if (!ns_profile_compress_lib) return;
-    ns_profile_zstd_bound = (ns_profile_zstd_bound_fn)dlsym(ns_profile_compress_lib, "compress_zstd_bound");
-    ns_profile_zstd_encode = (ns_profile_zstd_encode_fn)dlsym(ns_profile_compress_lib, "compress_zstd_encode");
-    if (!ns_profile_zstd_bound || !ns_profile_zstd_encode) {
+    ns_profile_zlib_bound = (ns_profile_zlib_bound_fn)dlsym(ns_profile_compress_lib, "compress_zlib_bound");
+    ns_profile_zlib_deflate = (ns_profile_zlib_deflate_fn)dlsym(ns_profile_compress_lib, "compress_zlib_deflate");
+    if (!ns_profile_zlib_bound || !ns_profile_zlib_deflate) {
         dlclose(ns_profile_compress_lib);
         ns_profile_compress_lib = ns_null;
-        ns_profile_zstd_bound = ns_null;
-        ns_profile_zstd_encode = ns_null;
+        ns_profile_zlib_bound = ns_null;
+        ns_profile_zlib_deflate = ns_null;
     }
 #endif
 }
@@ -584,9 +584,11 @@ static i32 ns_profile_ms_to_us(f64 ms) {
     return (i32)(us + 0.5);
 }
 
-static ns_bool ns_profile_write_timeline_blob(const char *path, i32 event_count, i32 *out_bytes, ns_bool *out_zstd) {
+static ns_bool ns_profile_write_timeline_blob(const char *path, i32 event_count, i32 *out_bytes, i32 *out_raw_bytes,
+                                              ns_bool *out_zlib) {
     if (out_bytes) *out_bytes = 0;
-    if (out_zstd) *out_zstd = false;
+    if (out_raw_bytes) *out_raw_bytes = 0;
+    if (out_zlib) *out_zlib = false;
     if (!path || event_count < 0) return false;
 
     // map[fn_index] -> dense timeline symbol id (first-use order).
@@ -679,22 +681,22 @@ static ns_bool ns_profile_write_timeline_blob(const char *path, i32 event_count,
     szt raw_len = (szt)(p - raw);
 
     ns_profile_load_compress();
-    ns_bool used_zstd = false;
+    ns_bool used_zlib = false;
     const u8 *out = raw;
     szt out_len = raw_len;
     u8 *zbuf = ns_null;
-    if (ns_profile_zstd_bound && ns_profile_zstd_encode && raw_len <= (szt)0x7fffffff) {
-        i32 bound = ns_profile_zstd_bound((i32)raw_len);
+    if (ns_profile_zlib_bound && ns_profile_zlib_deflate && raw_len <= (szt)0x7fffffff) {
+        i32 bound = ns_profile_zlib_bound((i32)raw_len);
         if (bound > 0) {
             zbuf = (u8 *)ns_malloc((szt)bound);
             if (zbuf) {
-                i32 zlen = ns_profile_zstd_encode(raw, (i32)raw_len, zbuf, bound, 1);
+                i32 zlen = ns_profile_zlib_deflate(raw, (i32)raw_len, zbuf, bound, 1);
                 if (zlen > 0 && (szt)zlen < raw_len) {
-                    // Mark the uncompressed payload's flags before wrapping so
-                    // the decoder knows the frame carries zstd content size.
-                    // The on-disk file is the zstd frame alone; the viewer
-                    // decompresses to the NSTL payload.
-                    used_zstd = true;
+                    // The on-disk file is the zlib stream alone. A zlib stream
+                    // does not record its decoded size, so the report carries
+                    // it as timeline_blob_raw_bytes for the viewer to inflate
+                    // the NSTL payload into.
+                    used_zlib = true;
                     out = zbuf;
                     out_len = (szt)zlen;
                 }
@@ -703,7 +705,7 @@ static ns_bool ns_profile_write_timeline_blob(const char *path, i32 event_count,
     }
 
     i8 blob_path[4096];
-    snprintf(blob_path, sizeof(blob_path), "%s.tl%s", path, used_zstd ? ".zst" : "");
+    snprintf(blob_path, sizeof(blob_path), "%s.tl%s", path, used_zlib ? ".z" : "");
     FILE *bf = fopen(blob_path, "wb");
     ns_bool ok = false;
     if (bf) {
@@ -712,7 +714,8 @@ static ns_bool ns_profile_write_timeline_blob(const char *path, i32 event_count,
     }
     if (ok) {
         if (out_bytes) *out_bytes = (i32)out_len;
-        if (out_zstd) *out_zstd = used_zstd;
+        if (out_raw_bytes) *out_raw_bytes = (i32)raw_len;
+        if (out_zlib) *out_zlib = used_zlib;
     }
     ns_free(zbuf);
     ns_free(raw);
@@ -755,10 +758,11 @@ void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc
     }
 
     i32 blob_bytes = 0;
-    ns_bool blob_zstd = false;
+    i32 blob_raw_bytes = 0;
+    ns_bool blob_zlib = false;
     ns_bool blob_ok = false;
     if (path && event_count > 0) {
-        blob_ok = ns_profile_write_timeline_blob(path, event_count, &blob_bytes, &blob_zstd);
+        blob_ok = ns_profile_write_timeline_blob(path, event_count, &blob_bytes, &blob_raw_bytes, &blob_zlib);
     }
 
     fprintf(f, "format: ns-profile-v6\n");
@@ -779,9 +783,10 @@ void ns_profile_write_report(FILE *f, const char *path, f64 elapsed_ms, i32 argc
     fprintf(f, "flame_frames: %d\n", ns_profile.flame_count);
     fprintf(f, "threads: %d\n", ns_profile.thread_count);
     if (blob_ok) {
-        fprintf(f, "timeline_blob: %s.tl%s\n", ns_profile_basename(path), blob_zstd ? ".zst" : "");
+        fprintf(f, "timeline_blob: %s.tl%s\n", ns_profile_basename(path), blob_zlib ? ".z" : "");
         fprintf(f, "timeline_blob_bytes: %d\n", blob_bytes);
-        fprintf(f, "timeline_blob_codec: %s\n", blob_zstd ? "zstd" : "raw");
+        fprintf(f, "timeline_blob_raw_bytes: %d\n", blob_raw_bytes);
+        fprintf(f, "timeline_blob_codec: %s\n", blob_zlib ? "zlib" : "raw");
     }
     fprintf(f, "argv:");
     for (i32 i = 0; i < argc; i++) fprintf(f, " %s", argv[i]);

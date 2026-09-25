@@ -162,7 +162,6 @@ int main(void) {
     char storage_db[PATH_MAX], storage_apple[PATH_MAX], storage_module[PATH_MAX];
     char compress_native[PATH_MAX], compress_header[PATH_MAX], compress_module[PATH_MAX];
     char audio_native[PATH_MAX], audio_header[PATH_MAX], audio_module[PATH_MAX];
-    char zstd_compress[PATH_MAX], zstd_header[PATH_MAX];
     char task_module[PATH_MAX], net_module[PATH_MAX], ui_asset[PATH_MAX], bitmap_asset[PATH_MAX], ios_plist[PATH_MAX];
     char vision_plist[PATH_MAX], swift_app[PATH_MAX];
     char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX];
@@ -189,8 +188,6 @@ int main(void) {
     path(audio_native, app_root, "bin/demo-app.nsproject/Native/src/audio.apple.m");
     path(audio_header, app_root, "bin/demo-app.nsproject/Native/include/audio.h");
     path(audio_module, app_root, "bin/demo-app.nsproject/Resources/audio.ns");
-    path(zstd_compress, app_root, "bin/demo-app.nsproject/Native/src/zstd/compress/zstd_compress.c");
-    path(zstd_header, app_root, "bin/demo-app.nsproject/Native/include/zstd/zstd.h");
     path(task_module, app_root, "bin/demo-app.nsproject/Resources/task.ns");
     path(net_module, app_root, "bin/demo-app.nsproject/Resources/net.ns");
     path(ui_asset, app_root, "bin/demo-app.nsproject/Resources/latin_mono.json");
@@ -243,10 +240,9 @@ int main(void) {
                   text_has(pbx, "storage.ns in Resources") && text_has(pbx, "-lsqlite3"),
               "Xcode app targets embed UserDefaults KV storage and platform SQLite.");
     ns_expect(access(compress_native, R_OK) == 0 && access(compress_header, R_OK) == 0 &&
-                  access(compress_module, R_OK) == 0 && access(zstd_compress, R_OK) == 0 &&
-                  access(zstd_header, R_OK) == 0 && text_has(pbx, "compress.ns in Resources") &&
-                  text_has(pbx, "zstd/compress/zstd_compress.c in Sources") && text_has(pbx, "-lz"),
-              "Xcode app targets embed compression and the pinned portable Zstandard sources.");
+                  access(compress_module, R_OK) == 0 && text_has(pbx, "compress.ns in Resources") &&
+                  !text_has(pbx, "zstd") && text_has(pbx, "-lz"),
+              "Xcode app targets embed zlib compression and nothing else.");
     ns_expect(access(audio_native, R_OK) == 0 && access(audio_header, R_OK) == 0 && access(audio_module, R_OK) == 0 &&
                   text_has(pbx, "audio.ns in Resources") && text_has(pbx, "audio.apple.m in Sources") &&
                   text_has(pbx, "-framework\", AVFAudio"),
@@ -357,10 +353,9 @@ int main(void) {
     ns_expect(text_has(xgenerated, "NS_EXECUTABLE = /tmp/ns\\ tools/bin/ns") &&
                   !text_has(xgenerated, "NS_EXECUTABLE = \""),
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
-    ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && text_has(xgenerated, "ZSTD_DISABLE_ASM=1") &&
-                  text_has(xgenerated, "Native/include/zstd") &&
+    ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && !text_has(xgenerated, "ZSTD") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 17") &&
+                  text_has(pbx, "NSProjectGeneratorVersion = 18") &&
                   text_has(pbx, "XROS_DEPLOYMENT_TARGET = 26.0"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
@@ -398,7 +393,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 17;", "NSProjectGeneratorVersion = 17;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 18;", "NSProjectGeneratorVersion = 18;",
                                      "NSProjectGeneratorVersion = 9;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
@@ -420,9 +415,9 @@ int main(void) {
 
     char native_only_root[] = "/tmp/ns-project-native-only-app-XXXXXX";
     ns_expect(mkdtemp(native_only_root) != ns_null, "project test creates native-only app fixture directory.");
-    ns_project_spec native_only = app_spec(native_only_root, runtime, "use dynamic\nfn main() {}\n", ns_null);
+    ns_project_spec native_only = app_spec(native_only_root, runtime, "use http\nfn main() {}\n", ns_null);
     ns_expect(!ns_project_generate_xcode(&native_only),
-              "generated portable Apple apps reject the external Box3D dynamic module.");
+              "generated portable Apple apps reject an external FFI module.");
 
     char hosted_root[] = "/tmp/ns-project-hosted-app-XXXXXX";
     ns_expect(mkdtemp(hosted_root) != ns_null, "project test creates hosted app fixture directory.");

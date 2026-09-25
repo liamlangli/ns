@@ -112,7 +112,7 @@ static ns_bool ns_xcode_file_exists(const char *path) {
 // `expects_assets` is the project-attribute line the packaged paths of this
 // manifest produce, so a project generated for a different set of them, or for
 // none, is regenerated rather than left carrying the wrong resources.
-#define NS_XCODE_GENERATOR_VERSION "17"
+#define NS_XCODE_GENERATOR_VERSION "18"
 
 static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const char *expects_assets,
                                                         ns_bool expects_app_icon, ns_bool expects_link_native,
@@ -660,32 +660,6 @@ static const char *const ns_xcode_feature_sources[] = {
     "compress.c",
     "audio.apple.m",
     "camera.apple.m",
-    "zstd/common/debug.c",
-    "zstd/common/entropy_common.c",
-    "zstd/common/error_private.c",
-    "zstd/common/fse_decompress.c",
-    "zstd/common/pool.c",
-    "zstd/common/threading.c",
-    "zstd/common/xxhash.c",
-    "zstd/common/zstd_common.c",
-    "zstd/compress/fse_compress.c",
-    "zstd/compress/hist.c",
-    "zstd/compress/huf_compress.c",
-    "zstd/compress/zstd_compress.c",
-    "zstd/compress/zstd_compress_literals.c",
-    "zstd/compress/zstd_compress_sequences.c",
-    "zstd/compress/zstd_compress_superblock.c",
-    "zstd/compress/zstd_double_fast.c",
-    "zstd/compress/zstd_fast.c",
-    "zstd/compress/zstd_lazy.c",
-    "zstd/compress/zstd_ldm.c",
-    "zstd/compress/zstd_opt.c",
-    "zstd/compress/zstd_preSplit.c",
-    "zstd/compress/zstdmt_compress.c",
-    "zstd/decompress/huf_decompress.c",
-    "zstd/decompress/zstd_ddict.c",
-    "zstd/decompress/zstd_decompress.c",
-    "zstd/decompress/zstd_decompress_block.c",
 };
 
 static const char *const ns_xcode_feature_headers[] = {
@@ -703,43 +677,6 @@ static const char *const ns_xcode_feature_headers[] = {
     "compress.h",
     "audio.h",
     "camera.h",
-    "zstd/zstd.h",
-    "zstd/zstd_errors.h",
-    "zstd/common/allocations.h",
-    "zstd/common/bits.h",
-    "zstd/common/bitstream.h",
-    "zstd/common/compiler.h",
-    "zstd/common/cpu.h",
-    "zstd/common/debug.h",
-    "zstd/common/error_private.h",
-    "zstd/common/fse.h",
-    "zstd/common/huf.h",
-    "zstd/common/mem.h",
-    "zstd/common/pool.h",
-    "zstd/common/portability_macros.h",
-    "zstd/common/threading.h",
-    "zstd/common/xxhash.h",
-    "zstd/common/zstd_deps.h",
-    "zstd/common/zstd_internal.h",
-    "zstd/common/zstd_trace.h",
-    "zstd/compress/clevels.h",
-    "zstd/compress/hist.h",
-    "zstd/compress/zstd_compress_internal.h",
-    "zstd/compress/zstd_compress_literals.h",
-    "zstd/compress/zstd_compress_sequences.h",
-    "zstd/compress/zstd_compress_superblock.h",
-    "zstd/compress/zstd_cwksp.h",
-    "zstd/compress/zstd_double_fast.h",
-    "zstd/compress/zstd_fast.h",
-    "zstd/compress/zstd_lazy.h",
-    "zstd/compress/zstd_ldm.h",
-    "zstd/compress/zstd_ldm_geartab.h",
-    "zstd/compress/zstd_opt.h",
-    "zstd/compress/zstd_preSplit.h",
-    "zstd/compress/zstdmt_compress.h",
-    "zstd/decompress/zstd_ddict.h",
-    "zstd/decompress/zstd_decompress_block.h",
-    "zstd/decompress/zstd_decompress_internal.h",
 };
 
 static const char *const ns_xcode_resource_modules[] = {
@@ -870,12 +807,6 @@ static ns_bool ns_xcode_copy_feature(const char *runtime_root, const char *manag
         free(source_root);
         source_root = nested;
         source = source_root ? ns_xcode_path_join(source_root, name) : NULL;
-    }
-    if ((!source || !ns_xcode_file_exists(source)) && strncmp(name, "zstd/", 5) == 0) {
-        free(source_root);
-        free(source);
-        source_root = ns_xcode_path_join(runtime_root, "third_party/zstd/lib");
-        source = source_root ? ns_xcode_path_join(source_root, name + 5) : NULL;
     }
     char *destination_root = ns_xcode_path_join(managed_root, to_dir);
     char *destination = destination_root ? ns_xcode_path_join(destination_root, name) : NULL;
@@ -1351,18 +1282,12 @@ static ns_bool ns_xcode_write_config(const ns_project_spec *spec, const char *ma
                                          "SWIFT_VERSION = 5.0\n"
                                          "CLANG_C_LANGUAGE_STANDARD = gnu17\n"
                                          "WARNING_CFLAGS = $(inherited) -Wno-shorten-64-to-32\n"
-                                         "GCC_PREPROCESSOR_DEFINITIONS = $(inherited) NS_XCLIB=1 NS_DARWIN=1 "
-                                         "ZSTD_DISABLE_ASM=1 ZSTD_LEGACY_SUPPORT=0 XXH_NAMESPACE=ZSTD_\n"
+                                         "GCC_PREPROCESSOR_DEFINITIONS = $(inherited) NS_XCLIB=1 NS_DARWIN=1\n"
                                          "HEADER_SEARCH_PATHS = $(inherited) \"$(SRCROOT)/%s.nsproject/Runtime/include\" "
                                          "\"$(SRCROOT)/%s.nsproject/Runtime/include/os\" "
-                                         "\"$(SRCROOT)/%s.nsproject/Native/include\" "
-                                         "\"$(SRCROOT)/%s.nsproject/Native/include/zstd\" "
-                                         "\"$(SRCROOT)/%s.nsproject/Native/include/zstd/common\" "
-                                         "\"$(SRCROOT)/%s.nsproject/Native/include/zstd/compress\" "
-                                         "\"$(SRCROOT)/%s.nsproject/Native/include/zstd/decompress\"\n"
+                                         "\"$(SRCROOT)/%s.nsproject/Native/include\"\n"
                                          "#include? \"NS.Local.xcconfig\"\n",
-                                         quoted_root, quoted_executable, safe_name, safe_name, safe_name, safe_name, safe_name,
-                                         safe_name, safe_name, safe_name) &&
+                                         quoted_root, quoted_executable, safe_name, safe_name, safe_name, safe_name) &&
                  ns_xcode_write(generated, contents.data, contents.len, true);
     static const char local_contents[] =
         "// User overrides for the generated NS Xcode project.\n"

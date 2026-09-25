@@ -15,8 +15,8 @@ The recorder is `src/ns_profile.c`; the live transport is
 
 `ns profile hot.ns` runs the program with collection enabled and, at exit,
 writes `bin/ns.profile` (text aggregates plus a folded flamechart) and a compact
-timeline blob beside it (`ns.profile.tl`, or `.tl.zst` when `compress` is
-available). It then prints a colored hot-path summary and opens the viewer.
+timeline blob beside it (`ns.profile.tl`, or zlib-compressed `.tl.z` when
+`compress` is available). It then prints a colored hot-path summary and opens the viewer.
 
 `ns profiler [file]` opens the viewer on an existing report without running
 anything.

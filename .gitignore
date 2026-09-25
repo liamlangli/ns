@@ -16,9 +16,7 @@ build
 .build
 
 # downloaded third-party sources
-third_party/box3d/
 third_party/zlib/
-third_party/zstd/
 
 # Claude Code session data
 .claude/

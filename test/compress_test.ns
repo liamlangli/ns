@@ -1,4 +1,4 @@
-// zlib and Zstandard coverage. Run from the repository root so the debug
+// zlib coverage. Run from the repository root so the debug
 // ref/lib paths resolve lib/compress.ns and bin/compress.dylib.
 use std
 use compress
@@ -31,7 +31,6 @@ let restored = [u8](SCRATCH_SIZE)
 
 // The pinned downloads, not whatever the host happens to ship.
 assert compress_zlib_version() == "1.3.1"
-assert compress_zstd_version() == "1.5.7"
 
 // Every bound covers its own framing, and the wrapped framings cost more than
 // the raw one.
@@ -39,7 +38,6 @@ let raw_bound = compress_deflate_bound(PAYLOAD_SIZE)
 assert raw_bound > PAYLOAD_SIZE
 assert compress_zlib_bound(PAYLOAD_SIZE) > raw_bound
 assert compress_gzip_bound(PAYLOAD_SIZE) > compress_zlib_bound(PAYLOAD_SIZE)
-assert compress_zstd_bound(PAYLOAD_SIZE) > PAYLOAD_SIZE
 assert compress_deflate_bound(0) > 0
 assert compress_deflate_bound(0 - 1) == COMPRESS_ERROR_ARGUMENT
 
@@ -93,22 +91,12 @@ assert compress_gzip_deflate(payload, PAYLOAD_SIZE, tiny, 8, COMPRESS_LEVEL_DEFA
 let gzip_again = compress_gzip_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_LEVEL_BEST)
 assert compress_gzip_inflate(packed, gzip_again, tiny, 8) == COMPRESS_ERROR_BUFFER
 
-// Zstandard, including the decoded size held in the frame header.
-let zstd_levels_ok = compress_zstd_level_min() < 0 && compress_zstd_level_max() >= 19
-assert zstd_levels_ok
-let zstd_size = compress_zstd_encode(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_ZSTD_LEVEL_DEFAULT)
-assert zstd_size > 0
-assert zstd_size < PAYLOAD_SIZE
-assert compress_zstd_decoded_size(packed, zstd_size) == PAYLOAD_SIZE
-assert compress_zstd_decode(packed, zstd_size, restored, SCRATCH_SIZE) == PAYLOAD_SIZE
-assert same_bytes(payload, restored, PAYLOAD_SIZE)
-assert compress_zstd_decode(packed, zstd_size, tiny, 8) == COMPRESS_ERROR_BUFFER
-assert compress_zstd_decode(packed, zstd_size - 4, restored, SCRATCH_SIZE) == COMPRESS_ERROR_DATA
-
-let zstd_best = compress_zstd_encode(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_ZSTD_LEVEL_BEST)
-assert zstd_best > 0
-assert zstd_best <= zstd_size
-assert compress_zstd_encode(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, 99) == COMPRESS_ERROR_ARGUMENT
+// A zlib stream records no decoded size, so a reader that guesses too small
+// has to be told so rather than handed a partial result, and a truncated
+// stream is still a data error.
+let zlib_again = compress_zlib_deflate(payload, PAYLOAD_SIZE, packed, SCRATCH_SIZE, COMPRESS_LEVEL_DEFAULT)
+assert compress_zlib_inflate(packed, zlib_again, tiny, 8) == COMPRESS_ERROR_BUFFER
+assert compress_zlib_inflate(packed, zlib_again - 4, restored, SCRATCH_SIZE) == COMPRESS_ERROR_DATA
 
 // An empty input still produces a complete, decodable stream.
 let empty = [u8](1)
@@ -144,4 +132,4 @@ assert compress_adler32(adler_head, tail, 5) == 152961502u
 assert compress_status_str(COMPRESS_ERROR_BUFFER) == "destination buffer too small"
 assert compress_status_str(0) == "ok"
 
-print("compress zlib/zstd tests passed\n")
+print("compress zlib tests passed\n")

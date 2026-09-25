@@ -1,8 +1,6 @@
 #include "compress.h"
 
 #include <zlib.h>
-#include <zstd.h>
-#include <zstd_errors.h>
 
 #include <stddef.h>
 #include <string.h>
@@ -25,23 +23,6 @@ static int32_t compress_zlib_status(int status) {
         case Z_DATA_ERROR: return NS_COMPRESS_ERROR_DATA;
         case Z_STREAM_ERROR: return NS_COMPRESS_ERROR_ARGUMENT;
         case Z_VERSION_ERROR: return NS_COMPRESS_ERROR_UNSUPPORTED;
-        default: return NS_COMPRESS_ERROR_INTERNAL;
-    }
-}
-
-static int32_t compress_zstd_status(size_t code) {
-    switch (ZSTD_getErrorCode(code)) {
-        case ZSTD_error_dstSize_tooSmall: return NS_COMPRESS_ERROR_BUFFER;
-        case ZSTD_error_memory_allocation: return NS_COMPRESS_ERROR_MEMORY;
-        case ZSTD_error_parameter_unsupported:
-        case ZSTD_error_frameParameter_unsupported:
-        case ZSTD_error_frameParameter_windowTooLarge:
-        case ZSTD_error_dictionary_wrong:
-        case ZSTD_error_dictionaryCreation_failed: return NS_COMPRESS_ERROR_UNSUPPORTED;
-        case ZSTD_error_srcSize_wrong:
-        case ZSTD_error_corruption_detected:
-        case ZSTD_error_checksum_wrong:
-        case ZSTD_error_prefix_unknown: return NS_COMPRESS_ERROR_DATA;
         default: return NS_COMPRESS_ERROR_INTERNAL;
     }
 }
@@ -176,50 +157,6 @@ int32_t compress_gzip_decoded_size(const uint8_t *src, int32_t size) {
     return (int32_t)decoded;
 }
 
-int32_t compress_zstd_bound(int32_t size) {
-    if (size < 0) return NS_COMPRESS_ERROR_ARGUMENT;
-    size_t bound = ZSTD_compressBound((size_t)size);
-    if (ZSTD_isError(bound)) return compress_zstd_status(bound);
-    if (bound > (size_t)INT32_MAX) return NS_COMPRESS_ERROR_BUFFER;
-    return (int32_t)bound;
-}
-
-int32_t compress_zstd_encode(const uint8_t *src, int32_t size, uint8_t *dst, int32_t capacity, int32_t level) {
-    if (src == NULL || dst == NULL || size < 0 || capacity < 0) return NS_COMPRESS_ERROR_ARGUMENT;
-    // Zstandard reads level 0 as "use the default", so it is passed through.
-    if (level != 0 && (level < ZSTD_minCLevel() || level > ZSTD_maxCLevel())) return NS_COMPRESS_ERROR_ARGUMENT;
-
-    size_t written = ZSTD_compress(dst, (size_t)capacity, src, (size_t)size, level);
-    if (ZSTD_isError(written)) return compress_zstd_status(written);
-    return (int32_t)written;
-}
-
-int32_t compress_zstd_decode(const uint8_t *src, int32_t size, uint8_t *dst, int32_t capacity) {
-    if (src == NULL || dst == NULL || size < 0 || capacity < 0) return NS_COMPRESS_ERROR_ARGUMENT;
-
-    size_t written = ZSTD_decompress(dst, (size_t)capacity, src, (size_t)size);
-    if (ZSTD_isError(written)) return compress_zstd_status(written);
-    return (int32_t)written;
-}
-
-int32_t compress_zstd_decoded_size(const uint8_t *src, int32_t size) {
-    if (src == NULL || size < 0) return NS_COMPRESS_ERROR_ARGUMENT;
-
-    unsigned long long decoded = ZSTD_getFrameContentSize(src, (size_t)size);
-    if (decoded == ZSTD_CONTENTSIZE_ERROR) return NS_COMPRESS_ERROR_DATA;
-    if (decoded == ZSTD_CONTENTSIZE_UNKNOWN) return NS_COMPRESS_ERROR_UNSUPPORTED;
-    if (decoded > (unsigned long long)INT32_MAX) return NS_COMPRESS_ERROR_BUFFER;
-    return (int32_t)decoded;
-}
-
-int32_t compress_zstd_level_min(void) {
-    return ZSTD_minCLevel();
-}
-
-int32_t compress_zstd_level_max(void) {
-    return ZSTD_maxCLevel();
-}
-
 uint32_t compress_crc32(uint32_t crc, const uint8_t *data, int32_t size) {
     if (data == NULL || size <= 0) return crc;
     return (uint32_t)crc32((uLong)crc, (const Bytef *)data, (uInt)size);
@@ -244,8 +181,4 @@ const char *compress_status_str(int32_t status) {
 
 const char *compress_zlib_version(void) {
     return zlibVersion();
-}
-
-const char *compress_zstd_version(void) {
-    return ZSTD_versionString();
 }

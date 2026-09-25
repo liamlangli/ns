@@ -68,7 +68,6 @@ cd "$root"
 "$ns" run test/gpu_pipeline_test.ns
 "$ns" run test/gpu_v2_test.ns
 "$ns" run test/shader_host_test.ns
-"$ns" run test/dynamic_test.ns
 "$ns" run test/compress_test.ns
 "$ns" run test/storage_test.ns
 "$ns" run test/task_net_test.ns
