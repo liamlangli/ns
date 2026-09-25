@@ -129,6 +129,20 @@ The common commands are:
   the bundle without recompiling the module. `--force` compiles unconditionally.
   Independent manifest targets build concurrently up to the logical CPU count.
   Colliding outputs and profiled builds stay serial.
+- `ns patch [path | target]`: write an `eval` or `emu` target's over-the-air
+  patch to `bin/<name>_patch/`: a `<name>.nsapp` index whose fixed 64-byte
+  header carries the patch version, and the content-addressed `.nsbundle`
+  files it lists with their SHA-256 digests (the program alone in the first,
+  the `assets` cut into 4 MiB bundles). Publish the directory at the target's
+  `patch` URL. The version counts on from the last index in that directory,
+  stays put for an identical patch, or is pinned by `patch_version`. Hosts
+  check the URL before the program starts: `ns run --patch`, the launcher
+  `ns build` writes for an interpreted target, and eval/emu apps from
+  `ns project`. They read the header, download only the bundles holding files
+  they do not already have, in parallel, verify every digest, install a
+  snapshot and run from it; any failure keeps what they ran before. The
+  program reads the running patch with `os_patch_version()` (`use os`), 0 when
+  unpatched. See `doc/patch.md`.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the
   `bin/` output directory, which also holds generated IDE projects and the
   build cache and build profile, plus legacy `ns.profile` beside the manifest. Source
@@ -147,7 +161,8 @@ The common commands are:
 
 The manifest schema is `ns.mod/v2`. Important fields are `name`, `version`,
 `type`, optional `target`, `target_os`, `target_arch`, `source`, `entry` (or
-`entries`), `exclude`, `assets`, and `orientation`. `target` is how the program
+`entries`), `exclude`, `assets`, `orientation`, and `patch` / `patch_version`
+(where an eval or emu target's over-the-air patches are published). `target` is how the program
 runs:
 
 | `target` | `ns run` | `ns build` / `ns project` |
@@ -198,8 +213,8 @@ entry instead of a single top-level `entry`. `ns run <name>` and
 `default = true`, otherwise the first declared one, and `ns build` builds every
 declared target. A target may override `type` (`app` for a host app bundle,
 `cli` for a plain executable, `library` for a static library),
-`target`, `target_os`, `target_arch`, `icon`, `shell`, `output`, `orientation`
-and add its own `exclude` list; anything it omits is inherited from the
+`target`, `target_os`, `target_arch`, `icon`, `shell`, `output`, `orientation`,
+`patch`, `patch_version` and add its own `exclude` list; anything it omits is inherited from the
 top-level key. Each target compiles the
 whole project source set minus the entries owned by the other targets, so every
 target defines its own `main` and shares every other module. Each target owns

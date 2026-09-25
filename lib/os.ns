@@ -123,6 +123,11 @@ ref fn os_share_file(path: str) i32
 ref fn os_open_folder_dialog(title: str) str
 ref fn os_cwd() str
 ref fn os_env(name: str) str
+
+// The over-the-air patch the host installed before this program started
+// (doc/patch.md), which the host publishes as NS_PATCH_VERSION. 0 when the
+// program runs the files it shipped with, or its host takes no patches.
+ref fn os_patch_version() i32
 ref fn os_make_dirs(path: str) i32
 ref fn os_launch_ns_project(folder: str, entry: str) i32
 

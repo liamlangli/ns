@@ -2330,7 +2330,7 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "os_write_file_atomic|os_write_file_bytes_atomic|os_dir_scan|"
             "os_entry_name|os_entry_path|os_entry_depth|os_entry_parent|os_entry_is_dir|"
             "os_watch_start|os_watch_poll|os_watch_stop|os_open_folder_dialog|os_cwd|"
-            "os_env|os_make_dirs|os_launch_ns_project");
+            "os_env|os_patch_version|os_make_dirs|os_launch_ns_project");
     }
     if (ns_str_equals(module, ns_str_cstr("net"))) {
         return ns_wasm_name_in(name,

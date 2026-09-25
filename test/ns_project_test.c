@@ -482,7 +482,24 @@ int main(void) {
                   !text_has(emu_bridge, "ns_program_main"),
               "Xcode emu app runs the image on ns_cpu with the embedded native call shims.");
     ns_expect(access(emu_cpu, R_OK) == 0, "Xcode emu app copies ns_cpu.c into its embedded runtime.");
+    ns_expect(!text_has(emu_bridge, "ns_patch_update"), "Xcode app without a patch URL never checks for patches.");
+    char emu_patch[PATH_MAX];
+    path(emu_patch, emu_root, "bin/demo-app.nsproject/Runtime/src/ns_patch.c");
+    emu_app.patch_url = ns_str_cstr("http://10.0.0.2:8080/games/demo \"app\".nsapp");
+    emu_app.patch_name = ns_str_cstr("demo-app");
+    emu_app.patch_base_version = 7;
+    ns_expect(ns_project_generate_xcode(&emu_app), "Xcode emu app with a patch URL generates.");
+    ns_expect(text_has(emu_bridge, "ns_patch_update(&config, &state)") &&
+                  text_has(emu_bridge, "http://10.0.0.2:8080/games/demo \\\"app\\\".nsapp") &&
+                  text_has(emu_bridge, "ns_app_patch_base = 7u") && text_has(emu_bridge, "NS_PATCH_MODE_EMU") &&
+                  text_has(emu_bridge, "ns_app_fallback(resource_root, \"LinkedProject.nsc\"") &&
+                  access(emu_patch, R_OK) == 0,
+              "Xcode emu app installs the newest patch before it loads its image, and falls back when it does not load.");
     emu_app.link_emu = false;
+    ns_expect(ns_project_generate_xcode(&emu_app) && text_has(emu_bridge, "NS_PATCH_MODE_EVAL") &&
+                  text_has(emu_bridge, "ns_app_enter(resource_root, \"LinkedProject.ns\""),
+              "Xcode eval app checks the same patch URL for its linked source.");
+    emu_app.patch_url = ns_str_null;
     ns_expect(ns_project_generate_xcode(&emu_app) && !text_has(emu_pbx, "Build NS Image") &&
                   text_has(emu_bridge, "ns_eval("),
               "Xcode app switches from emu back to the interpreter.");

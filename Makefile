@@ -170,7 +170,8 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_repl.c \
 	src/ns_def.c \
 	src/ns_asm.c \
-	src/ns_appimage.c
+	src/ns_appimage.c \
+	src/ns_patch.c
 
 # Language-only runtime copied into generated Apple IDE projects. Keep native
 # UI, terminal, view, GPU, network/HTTP modules, the REPL, and object emitters
@@ -194,7 +195,8 @@ NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 	src/ns_shader.c \
 	src/ns_native_rt.c \
 	src/ns_cpu.c \
-	src/ns_def.c
+	src/ns_def.c \
+	src/ns_patch.c
 
 # The generator is Nano Script (tools/gen_embedded_ffi.ns); the embedded
 # module and native-source lists live in its main(). It needs the interpreter
@@ -232,7 +234,8 @@ NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_native_rt.c \
 	src/ns_cpu.c \
 	src/ns_def.c \
-	src/ns_asm.c
+	src/ns_asm.c \
+	src/ns_patch.c
 
 NS_LIB_OBJS = $(NS_LIB_SRCS:%.c=$(NS_BINDIR)/%.o)
 
@@ -274,7 +277,7 @@ NS_LIBFN_OBJS = $(NS_LIBFN_SRCS:lib/src/%=$(NS_BINDIR)/lib/%)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.c=.o)
 NS_LIBFN_OBJS := $(NS_LIBFN_OBJS:.m=.o)
 
-NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_cpu_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c
+NS_TEST_SRCS = test/ns_json_test.c test/ns_expr_test.c test/ns_compile_test.c test/ns_shader_test.c test/ns_ssa_test.c test/ns_cpu_test.c test/ns_token_test.c test/ns_buffer_test.c test/ns_os_test.c test/ns_project_test.c test/ns_build_cache_test.c test/ns_lint_test.c test/ns_profile_test.c test/ns_patch_test.c
 NS_TEST_TARGETS = $(NS_TEST_SRCS:test/%.c=$(NS_BINDIR)/%)
 
 NS_ENTRY = src/ns.c 
@@ -372,10 +375,12 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_build_cache_test
 	$(NS_BINDIR)/ns_lint_test
 	$(NS_BINDIR)/ns_profile_test
+	$(NS_BINDIR)/ns_patch_test
 	sh test/ns_project_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_lint_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_run_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
+	sh test/ns_patch_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_build_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_parity_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_scope_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"

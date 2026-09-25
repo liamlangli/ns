@@ -60,6 +60,14 @@ typedef struct ns_project_spec {
     // Directory containing src/, include/, and ref/ for the embeddable,
     // language-only runtime SDK installed with ns.
     ns_str runtime_root;
+    // The manifest `patch` URL (doc/patch.md). When set, an interpreted
+    // (`eval` or `emu`) app installs the newest patch published there before
+    // its program starts; empty keeps the app on the files it ships with.
+    ns_str patch_url;
+    // The target name the patches are published under.
+    ns_str patch_name;
+    // The patch the shipped files already are: the last one `ns patch` wrote.
+    u32 patch_base_version;
 } ns_project_spec;
 
 // Normalize a manifest display name for filenames, IDE identifiers, and the

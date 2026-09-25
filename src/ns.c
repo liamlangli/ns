@@ -18,6 +18,7 @@
 #include "ns_native_rt.h"
 #include "ns_appimage.h"
 #include "ns_agents_md.h"
+#include "ns_patch.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -89,6 +90,8 @@ typedef struct ns_compile_option_t {
     ns_bool lint_fix: 2; // `ns lint_fix [path]` - rewrite the fixable findings
     ns_bool shader_only: 2; // `ns --shader <target> <file>` - transpile shader fns
     ns_bool shader_bin: 2;  // also compile the emitted source with the platform toolchain
+    ns_bool patch_cmd: 2;   // `ns patch [path]` - write the target's over-the-air patch
+    ns_bool patch: 2;       // `ns run --patch` - apply the published patch first
     u8 build_kind;      // 0 auto, 1 executable, 2 library, 3 app, 4 ns_cpu image
     i32 positional_count;
     i32 program_argc;
@@ -129,6 +132,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.create = true;
         } else if (i == 1 && strcmp(argv[i], "update") == 0) {
             option.update = true;
+        } else if (i == 1 && strcmp(argv[i], "patch") == 0) {
+            option.patch_cmd = true;
+        } else if (strcmp(argv[i], "--patch") == 0) {
+            option.patch = true;
         } else if (i == 1 && strcmp(argv[i], "profile") == 0) {
             option.profile_cmd = true;
             option.profile = true;
@@ -303,6 +310,7 @@ void ns_help() {
     printf("                    a bare name selects a [[targets]] entry of ns.mod\n");
     printf("                    arguments after the file or target become NS_ARG0...\n");
     printf("       --port <n>    wasm server port (default 9001; 0 chooses an available port)\n");
+    printf("       --patch       eval/emu: install the patch ns.mod `patch` publishes, run it\n");
     printf("  profile [path]    run like `ns run` with profiling; print a CLI hot-path summary\n");
     printf("                    the report is written to bin/ns.profile\n");
     printf("  profiler [file]   open the GUI viewer for bin/ns.profile (or file)\n");
@@ -320,6 +328,8 @@ void ns_help() {
     printf("                    --target x86_64-linux-gnu cross-compiles a native build\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
     printf("                    keeps the artifact when no input changed; --force rebuilds\n");
+    printf("  patch [path|target] write the eval/emu target's over-the-air patch to\n");
+    printf("                    bin/<name>_patch: <name>.nsapp and its .nsbundle files\n");
     printf("  clean [path]      remove bin/ and the profiles a build generates\n");
     printf("  project [path]    generate a native IDE project from ns.mod\n");
     printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
@@ -1144,6 +1154,8 @@ typedef struct ns_manifest_target {
     ns_bool is_default; // `default = true`
     ns_bool link;       // `ns run` builds and launches the native artifact
     ns_bool has_link;   // distinguishes an inherited value from `link = false`
+    ns_str patch;       // URL of the published `.nsapp` index; inherits `patch`
+    i32 patch_version;  // pinned `ns patch` version, 0 counts on from the last
 } ns_manifest_target;
 
 // Offset just past `key =` on `line`, or -1 when the line assigns another key.
@@ -1185,6 +1197,35 @@ static ns_bool ns_manifest_line_strs(ns_str line, const char *key, ns_str **out)
         p++;
     }
     return true;
+}
+
+// A non-negative integer assigned to `key` on `line`.
+static ns_bool ns_manifest_line_int(ns_str line, const char *key, i32 *out) {
+    i32 p = ns_manifest_line_assign(line, key);
+    if (p < 0) return false;
+    while (p < line.len && (line.data[p] == ' ' || line.data[p] == '\t')) p++;
+    i64 value = 0;
+    i32 digits = 0;
+    while (p < line.len && line.data[p] >= '0' && line.data[p] <= '9' && value < 0x7fffffff) {
+        value = value * 10 + (line.data[p++] - '0');
+        digits++;
+    }
+    *out = digits > 0 && value <= 0x7fffffff ? (i32)value : 0;
+    return true;
+}
+
+// The same for the top-level table.
+static i32 ns_manifest_int(ns_str src, const char *key) {
+    src = ns_manifest_head(src);
+    i32 value = 0;
+    for (i32 i = 0; i < src.len;) {
+        i32 ls = i;
+        while (i < src.len && src.data[i] != '\n') i++;
+        ns_str line = (ns_str){.data = src.data + ls, .len = i - ls};
+        if (i < src.len) i++;
+        if (ns_manifest_line_int(line, key, &value)) return value;
+    }
+    return 0;
 }
 
 static ns_bool ns_manifest_line_bool(ns_str line, const char *key, ns_bool *out) {
@@ -1258,6 +1299,8 @@ static ns_manifest_target *ns_manifest_targets(ns_str src) {
         if ((value = ns_manifest_line_str(line, "icon")).data != ns_null) { target->icon = value; continue; }
         if ((value = ns_manifest_line_str(line, "shell")).data != ns_null) { target->shell = value; continue; }
         if ((value = ns_manifest_line_str(line, "output")).data != ns_null) { target->output = value; continue; }
+        if ((value = ns_manifest_line_str(line, "patch")).data != ns_null) { target->patch = value; continue; }
+        if (ns_manifest_line_int(line, "patch_version", &target->patch_version)) continue;
         if (ns_manifest_line_bool(line, "default", &target->is_default)) continue;
         if (ns_manifest_line_bool(line, "link", &target->link)) { target->has_link = true; continue; }
         if (ns_manifest_line_strs(line, "exclude", &target->exclude)) continue;
@@ -1278,6 +1321,7 @@ static void ns_manifest_targets_free(ns_manifest_target *targets) {
         ns_str_free(targets[i].icon);
         ns_str_free(targets[i].shell);
         ns_str_free(targets[i].output);
+        ns_str_free(targets[i].patch);
         for (i32 e = 0, l = ns_array_length(targets[i].exclude); e < l; e++) ns_str_free(targets[i].exclude[e]);
         ns_array_free(targets[i].exclude);
         for (i32 o = 0, l = ns_array_length(targets[i].orientation); o < l; o++) ns_str_free(targets[i].orientation[o]);
@@ -1723,6 +1767,8 @@ typedef struct ns_manifest_selection {
     u32 orientations;   // mobile orientations enabled; none declared keeps all
     ns_run_mode mode;   // eval | exec | emu | wasm
     ns_bool link;       // exec: `ns run` builds and launches instead of evaluating
+    ns_str patch_url;   // `patch`: where the published `.nsapp` index lives
+    u32 patch_version;  // `patch_version`, 0 when `ns patch` counts on by itself
 } ns_manifest_selection;
 
 static ns_bool ns_run_mode_parse(ns_str s, ns_run_mode *out) {
@@ -1878,6 +1924,8 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
         ns_manifest_mode_resolve(keys, &top, top_os, top_arch, target->name, &sel.mode, &sel.platform);
         sel.icon = ns_path_resolve(root, target->icon);
         sel.shell = ns_path_resolve(root, target->shell);
+        if (target->patch.len > 0) sel.patch_url = ns_str_dup(target->patch);
+        sel.patch_version = (u32)target->patch_version;
         if (target->has_orientation) sel.orientations = ns_manifest_orientation_mask(target->orientation, root);
         if (entry.data == ns_null || entry.len == 0) {
             ns_exit(1, "ns", "target `%.*s` of ns.mod at %.*s declares no `entry`.\n",
@@ -1906,6 +1954,8 @@ static ns_manifest_selection ns_manifest_select(ns_str root, ns_str target_name)
     if (sel.icon.data == ns_null) sel.icon = ns_path_resolve(root, ns_manifest_value(mod, "icon"));
     if (sel.shell.data == ns_null) sel.shell = ns_path_resolve(root, ns_manifest_value(mod, "shell"));
     if (sel.orientations == NS_PROJECT_ORIENTATION_NONE) sel.orientations = ns_manifest_orientations(mod, root);
+    if (sel.patch_url.len == 0) sel.patch_url = ns_manifest_value(mod, "patch");
+    if (sel.patch_version == 0) sel.patch_version = (u32)ns_manifest_int(mod, "patch_version");
 
     if (entry.data != ns_null) {
         ns_str base = ns_manifest_source_base(root, mod);
@@ -2029,6 +2079,7 @@ typedef struct ns_build_input {
     // then packages a launcher that runs it through `ns run` instead of asking
     // a native code generator for machine code it may not have.
     ns_bool link;
+    ns_str patch_url;   // the target's `patch` URL, empty without one
 } ns_build_input;
 
 static ns_bool ns_find_project_root(ns_str path, ns_str *out) {
@@ -2531,6 +2582,7 @@ static ns_build_input ns_build_input_resolve(ns_str path, ns_str target_name) {
         in.target_name = sel.target_name;
         in.link = sel.link;
         in.mode = sel.mode;
+        in.patch_url = sel.patch_url;
     }
 
     in.source = ns_os_read_file(in.filename);
@@ -3965,7 +4017,8 @@ static void ns_build_write_launcher(ns_build_input *in, ns_str output) {
     // The entry path is absolute, so `ns run` finds the project and the target
     // that owns it from any working directory, including one the build placed
     // the launcher in with `-o`.
-    ns_str_append_cstr(&script, "exec ns run \"");
+    // A target that publishes patches installs the newest one before it runs.
+    ns_str_append_cstr(&script, in->patch_url.len > 0 ? "exec ns run --patch \"" : "exec ns run \"");
     for (i32 i = 0; i < in->filename.len; ++i) {
         i8 ch = in->filename.data[i];
         if (ch == '"' || ch == '\\' || ch == '$' || ch == '`') ns_str_append_len(&script, "\\", 1);
@@ -4538,6 +4591,7 @@ static void ns_manifest_selection_free_build(ns_manifest_selection sel) {
     ns_str_free(sel.platform);
     ns_str_free(sel.icon);
     ns_str_free(sel.shell);
+    ns_str_free(sel.patch_url);
 }
 
 // `ns build` with no name skips a target whose platform is a machine other
@@ -4749,6 +4803,8 @@ static ns_bool ns_project_module_embeddable(ns_str module) {
            ns_str_equals(module, ns_str_cstr("camera"));
 }
 
+static u32 ns_patch_written_version(ns_str scope, ns_str name);
+
 void ns_exec_project(ns_str path) {
     ns_str start = path;
     if (start.len == 0) start = ns_getcwd();
@@ -4850,6 +4906,11 @@ void ns_exec_project(ns_str path) {
         // A manifest that declares no `orientation` keeps every mobile
         // orientation; any declared set disables the ones it leaves out.
         .orientations = selection.orientations,
+        // An interpreted app checks the target's `patch` URL at launch. It
+        // ships as the patch `ns patch` wrote last, so it fetches only newer ones.
+        .patch_url = selection.patch_url,
+        .patch_name = selection.name,
+        .patch_base_version = ns_patch_written_version(root, selection.name),
     };
 
     ns_bool generated = false;
@@ -4870,6 +4931,109 @@ void ns_exec_project(ns_str path) {
     ns_info("project", "Visual Studio solution %.*s/bin/%.*s.sln\n",
             root.len, root.data, spec.safe_name.len, spec.safe_name.data);
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// `ns patch [path | target]`
+// ---------------------------------------------------------------------------
+// Writes everything a server hosts for the target's over-the-air patches into
+// `bin/<name>_patch/`: the `<name>.nsapp` index and the `<hash>.nsbundle`
+// files it names (doc/patch.md). Only interpreted targets take patches: an
+// `eval` patch carries the linked source, an `emu` patch the ns_cpu image.
+
+// The directory `ns patch` writes for `name`.
+static ns_str ns_patch_output_dir(ns_str scope, ns_str name) {
+    ns_str bin = ns_path_join(scope, ns_str_cstr("bin"));
+    ns_str dir_name = ns_str_concat(name, ns_str_cstr("_patch"));
+    ns_str dir = ns_path_join(bin, dir_name);
+    ns_str_free(bin);
+    ns_str_free(dir_name);
+    return dir;
+}
+
+// The version of the patch last written for `name`, 0 when there is none. A
+// generated app starts out as this patch, so it does not fetch it again.
+static u32 ns_patch_written_version(ns_str scope, ns_str name) {
+    ns_str dir = ns_patch_output_dir(scope, name);
+    ns_str file_name = ns_str_concat(name, ns_str_cstr(".nsapp"));
+    ns_str path = ns_path_join(dir, file_name);
+    ns_str data = ns_os_read_file_part(path, 0, NS_PATCH_HEADER_SIZE);
+    ns_patch_header header;
+    u32 version = ns_patch_header_decode((const u8 *)data.data, (szt)data.len, &header) ? header.version : 0;
+    ns_str_free(data);
+    ns_str_free(path);
+    ns_str_free(file_name);
+    ns_str_free(dir);
+    return version;
+}
+
+void ns_exec_patch(ns_str argument) {
+    ns_str scope = ns_str_null, target_name = ns_str_null;
+    ns_str path = argument;
+    if (ns_target_arg_select(argument, &scope, &target_name)) path = scope;
+    ns_build_input in = ns_build_input_resolve(path, target_name);
+    if (!in.has_manifest) ns_exit(1, "patch", "`ns patch` needs a project with an ns.mod.\n");
+    ns_manifest_selection sel = ns_manifest_select(in.scope, in.target_name);
+    if (sel.mode != NS_RUN_EVAL && sel.mode != NS_RUN_EMU) {
+        ns_exit(1, "patch", "target `%.*s` runs as `%s`; patches carry interpreted code, so set "
+                "target = \"eval\" or \"emu\" for it.\n", sel.name.len, sel.name.data, ns_run_mode_name(sel.mode));
+    }
+    ns_bool emu = sel.mode == NS_RUN_EMU;
+
+    // The program exactly as the host runs it: the linked source the
+    // interpreter evaluates, or the ns_cpu image lowered from it.
+    ns_line_loc *map = ns_null;
+    ns_str linked = ns_project_link_all(in.scope, in.source, in.filename, false, &map, ns_null);
+    u8 *image = emu ? ns_cpu_image_from_source(linked, in.filename, map) : ns_null;
+    const u8 *code = emu ? image : (const u8 *)linked.data;
+    szt code_size = emu ? (szt)ns_array_length(image) : (szt)linked.len;
+
+    ns_str *assets = ns_project_asset_paths(in.scope);
+    const char **asset_names = ns_null;
+    for (i32 i = 0, count = ns_array_length(assets); i < count; i++) ns_array_push(asset_names, (const char *)assets[i].data);
+    ns_str out_dir = ns_patch_output_dir(in.scope, sel.name);
+    ns_str version = ns_build_manifest_value(in.scope, "version");
+    ns_patch_input input = {
+        .name = sel.name.data,
+        .app_version = version.data ? version.data : "",
+        .mode = emu ? NS_PATCH_MODE_EMU : NS_PATCH_MODE_EVAL,
+        .code = code,
+        .code_size = code_size,
+        .root = in.scope.data,
+        .assets = asset_names,
+        .asset_count = ns_array_length(asset_names),
+        .out_dir = out_dir.data,
+        .version = sel.patch_version,
+    };
+    ns_patch_summary summary;
+    if (!ns_patch_write(&input, &summary)) ns_exit(1, "patch", "%s.\n", summary.error);
+
+    if (summary.unchanged) {
+        ns_info("patch", "%.*s is unchanged; still patch %u at %s\n", sel.name.len, sel.name.data,
+                summary.version, summary.index_path);
+    } else {
+        ns_info("patch", "%.*s patch %u (%s) %s\n", sel.name.len, sel.name.data, summary.version,
+                emu ? "emu" : "eval", summary.index_path);
+        printf("  %u bundle(s), %u file(s), %.1f MB\n", summary.bundle_count, summary.file_count,
+               (double)summary.bytes / (1024.0 * 1024.0));
+        if (sel.patch_version > 0 && summary.previous > 0 && summary.version <= summary.previous) {
+            ns_warn("patch", "patch_version %u is not above the previous patch %u; clients that installed "
+                    "that one keep it.\n", summary.version, summary.previous);
+        }
+    }
+    if (sel.patch_url.len > 0) {
+        printf("  publish every file in %.*s next to %.*s\n", out_dir.len, out_dir.data,
+               sel.patch_url.len, sel.patch_url.data);
+    } else {
+        ns_warn("patch", "ns.mod sets no `patch` URL for `%.*s`, so no client looks for this patch.\n",
+                sel.name.len, sel.name.data);
+    }
+
+    ns_array_free(asset_names);
+    ns_project_asset_paths_free(assets);
+    if (image) ns_array_free(image);
+    ns_str_free(out_dir);
+    ns_str_free(version);
 }
 
 // ---------------------------------------------------------------------------
@@ -5702,6 +5866,74 @@ static void ns_exec_linked(ns_str executable) {
 // nearest project runs that target; otherwise the argument is a path, and no
 // argument at all runs the default target of the current directory.
 static ns_bool ns_cli_cpu = false; // `ns run --cpu`
+static ns_bool ns_cli_patch = false; // `ns run --patch`
+
+// `ns run --patch`: bring the target up to the patch its `patch` URL publishes
+// (doc/patch.md), then run that patch's code from its snapshot directory.
+// Returns false when no patch applies, and the project's own source runs. The
+// project root is the base: files an update has not changed are copied from
+// it instead of downloaded.
+static ns_bool ns_run_patched(ns_str scope, ns_manifest_selection *selection) {
+    const char *env_url = getenv("NS_PATCH_URL");
+    ns_str url = env_url && env_url[0] ? ns_str_cstr((char *)env_url) : selection->patch_url;
+    if (selection->mode != NS_RUN_EVAL && selection->mode != NS_RUN_EMU) {
+        ns_warn("patch", "target `%.*s` runs as `%s`; only eval and emu targets take patches.\n",
+                selection->name.len, selection->name.data, ns_run_mode_name(selection->mode));
+        return false;
+    }
+    if (url.len == 0) {
+        ns_warn("patch", "ns.mod sets no `patch` URL for `%.*s`; running the project source.\n",
+                selection->name.len, selection->name.data);
+        ns_patch_publish_version(0);
+        return false;
+    }
+    ns_patch_config cfg = {
+        .url = url.data,
+        .name = selection->name.data,
+        .mode = selection->mode == NS_RUN_EMU ? NS_PATCH_MODE_EMU : NS_PATCH_MODE_EVAL,
+        .base_dir = scope.data,
+    };
+    ns_patch_state state;
+    ns_patch_update(&cfg, &state);
+    ns_patch_publish_version(state.version);
+    if (!state.patched) {
+        ns_info("patch", "%s; running the project source.\n", state.message);
+        return false;
+    }
+    if (!state.updated) ns_info("patch", "%s; running patch %u.\n", state.message, state.version);
+    ns_str code = ns_os_read_file(ns_str_cstr(state.code));
+    if (code.data == ns_null || code.len == 0) {
+        ns_warn("patch", "cannot read %s; running the project source.\n", state.code);
+        ns_patch_discard(ns_null, cfg.name, state.version);
+        ns_patch_publish_version(0);
+        return false;
+    }
+    if (chdir(state.root) != 0) {
+        ns_warn("patch", "cannot enter %s; running the project source.\n", state.root);
+        ns_patch_publish_version(0);
+        return false;
+    }
+    if (cfg.mode == NS_PATCH_MODE_EMU) {
+        // An image this host cannot load is dropped, so the next start does not
+        // try it again; the project source runs instead.
+        ns_cpu_module *m = ns_cpu_try_load_for_cli((const u8 *)code.data, (szt)code.len);
+        if (!m) {
+            ns_warn("patch", "patch %u does not load here; discarding it.\n", state.version);
+            ns_patch_discard(ns_null, cfg.name, state.version);
+            ns_patch_publish_version(0);
+            if (chdir(scope.data) != 0) ns_exit(1, "patch", "cannot return to %.*s.\n", scope.len, scope.data);
+            return false;
+        }
+        i64 status = 0;
+        ns_return_bool ran = ns_cpu_run_main(m, &status);
+        ns_cpu_unload(m);
+        if (ns_return_is_error(ran)) exit(1);
+        return true;
+    }
+    ns_return_value ret_v = ns_eval(&vm, code, ns_str_cstr(state.code));
+    if (ns_return_is_error(ret_v)) ns_return_assert(ret_v);
+    return true;
+}
 
 void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link) {
     ns_str filename = argument;
@@ -5814,6 +6046,10 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
     // interprets it on the host; `ns build` still produces that machine's code.
     ns_bool foreign = target.len > 0 && !ns_str_equals(target, ns_str_cstr("wasm")) &&
                       ns_build_platform_is_foreign(target);
+    if (ns_cli_patch && selection.mode == NS_RUN_EXEC) {
+        ns_warn("patch", "target `%.*s` runs as `exec`; only eval and emu targets take patches.\n",
+                selection.name.len, selection.name.data);
+    }
     if (honor_link && selection.link && !ns_cli_cpu && !foreign) {
         // A host without a native executable backend cannot build the linked
         // artifact. Interpret the target instead, the same way `ns build`
@@ -5825,6 +6061,7 @@ void ns_exec_run(ns_str argument, i32 port, ns_bool port_set, ns_bool honor_link
         }
         ns_warn("run", "no native executable backend on this host; running the target interpreted.\n");
     }
+    if (ns_cli_patch && ns_run_patched(scope, &selection)) return;
     ns_line_loc *map = ns_null;
     ns_str merged = ns_project_link_all(scope, source, filename, false, &map, ns_null);
 
@@ -6307,6 +6544,7 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_run(option.filename, option.port, option.port_set, false);
     } else if (option.run) {
         ns_cli_cpu = option.cpu;
+        ns_cli_patch = option.patch;
         ns_exec_run(option.filename, option.port, option.port_set, true);
     } else if (option.test) {
         ns_cli_cpu = option.cpu;
@@ -6330,6 +6568,8 @@ i32 main(i32 argc, i8** argv) {
         ns_exec_create(option.filename);
     } else if (option.update) {
         ns_exec_update(option.filename);
+    } else if (option.patch_cmd) {
+        ns_exec_patch(option.filename);
     } else if (option.lint) {
         ns_exec_lint(option.filename, option.lint_fix);
     } else if (option.tokenize_only) {

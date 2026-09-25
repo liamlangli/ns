@@ -27,6 +27,10 @@ exclude = ["generated/**"]
 assets = ["res"]
 # Mobile orientations a generated project enables; omit to enable them all.
 orientation = ["portrait", "landscape_left", "landscape_right"]
+# eval / emu only: where `ns patch` output is published (doc/patch.md).
+patch = "http://192.168.1.20:8080/example/example.nsapp"
+# Optional: pin the next patch version instead of counting on from bin/.
+# patch_version = 12
 ```
 
 Project source is recursive: every `.ns` file below `source` is compiled and
@@ -150,6 +154,8 @@ declared. A manifest that declares no `[[targets]]` keeps using its top-level
 | `default`     | `true` marks the target `ns run` picks with no name            |
 | `exclude`     | Sources removed for this target only, added to the project `exclude` |
 | `orientation` | Mobile orientations this target enables; defaults to the top-level `orientation` |
+| `patch`       | URL of the target's published `.nsapp` patch index (eval / emu, doc/patch.md); defaults to the top-level `patch` |
+| `patch_version` | Pins the version `ns patch` writes; defaults to the top-level `patch_version`, else one past the last |
 
 Every target compiles the whole project source set minus the entries owned by
 the other targets, so each target declares its own `main` and shares every

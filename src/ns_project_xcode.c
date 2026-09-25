@@ -636,6 +636,7 @@ static const char *const ns_xcode_runtime_sources[] = {
     "ns_shader.c",
     "ns_native_rt.c",
     "ns_cpu.c",
+    "ns_patch.c",
 };
 
 static const char *const ns_xcode_feature_sources[] = {
@@ -764,6 +765,7 @@ static const char *const ns_xcode_runtime_headers[] = {
     "ns_cpu.h",
     "ns_cpu_isa.h",
     "os/ns_os.h",
+    "ns_patch.h",
 };
 
 static const size_t ns_xcode_runtime_source_count = sizeof(ns_xcode_runtime_sources) / sizeof(ns_xcode_runtime_sources[0]);
@@ -963,8 +965,95 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
     return true;
 }
 
-static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *runtime_root, ns_bool link_native,
-                                          ns_bool link_emu) {
+// `s` as the body of a C string literal.
+static ns_bool ns_xcode_append_c_string(ns_xcode_buffer *buffer, ns_str s) {
+    for (i32 i = 0; i < s.len; i++) {
+        unsigned char c = (unsigned char)s.data[i];
+        ns_bool ok = c == '"' || c == '\\' ? ns_xcode_buffer_appendf(buffer, "\\%c", c)
+                     : c < 0x20 || c >= 0x7f ? ns_xcode_buffer_appendf(buffer, "\\%03o", c)
+                                             : ns_xcode_buffer_appendf(buffer, "%c", c);
+        if (!ok) return false;
+    }
+    return true;
+}
+
+// How an interpreted app enters its resource directory and finds the program
+// file. With a manifest `patch` URL it first brings itself up to the newest
+// published patch (doc/patch.md) and runs from that snapshot; NS_PATCH_URL in
+// the environment overrides the URL for testing. `ns_app_fallback` sends a
+// patched app back to the files it shipped with when the patch cannot load.
+static ns_bool ns_xcode_append_app_enter(ns_xcode_buffer *out, const ns_project_spec *spec) {
+    if (spec->patch_url.len == 0) {
+        return ns_xcode_buffer_appendf(out,
+            "static char ns_app_status[1024];\n"
+            "\n"
+            "static int ns_app_enter(const char *resource_root, const char *code, char *program, size_t size) {\n"
+            "    if (chdir(resource_root) != 0) {\n"
+            "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not enter resource directory: %%s\", resource_root);\n"
+            "        fprintf(stderr, \"ns: %%s\\n\", ns_app_status);\n"
+            "        return 0;\n"
+            "    }\n"
+            "    snprintf(program, size, \"%%s/%%s\", resource_root, code);\n"
+            "    return 1;\n"
+            "}\n"
+            "\n"
+            "__attribute__((unused)) static int ns_app_fallback(const char *resource_root, const char *code, char *program, size_t size) {\n"
+            "    (void)resource_root; (void)code; (void)program; (void)size;\n"
+            "    return 0;\n"
+            "}\n"
+            "\n");
+    }
+    ns_bool ok = ns_xcode_buffer_appendf(out, "#include \"ns_patch.h\"\n\nstatic const char ns_app_patch_url[] = \"") &&
+                 ns_xcode_append_c_string(out, spec->patch_url) &&
+                 ns_xcode_buffer_appendf(out, "\";\nstatic const char ns_app_patch_name[] = \"") &&
+                 ns_xcode_append_c_string(out, spec->patch_name) &&
+                 ns_xcode_buffer_appendf(out, "\";\nstatic const unsigned ns_app_patch_base = %uu;\n", spec->patch_base_version);
+    return ok && ns_xcode_buffer_appendf(out,
+        "static const int ns_app_patch_mode = %s;\n"
+        "static unsigned ns_app_patch_version;\n"
+        "static char ns_app_status[1024];\n"
+        "\n"
+        "static int ns_app_enter(const char *resource_root, const char *code, char *program, size_t size) {\n"
+        "    const char *url = getenv(\"NS_PATCH_URL\");\n"
+        "    ns_patch_config config = {0};\n"
+        "    config.url = url && url[0] ? url : ns_app_patch_url;\n"
+        "    config.name = ns_app_patch_name;\n"
+        "    config.mode = (ns_patch_mode)ns_app_patch_mode;\n"
+        "    config.base_dir = resource_root;\n"
+        "    config.base_version = ns_app_patch_base;\n"
+        "    ns_patch_state state;\n"
+        "    ns_patch_update(&config, &state);\n"
+        "    fprintf(stdout, \"ns: %%s\\n\", state.message);\n"
+        "    ns_app_patch_version = state.patched ? state.version : 0;\n"
+        "    ns_patch_publish_version(state.version);\n"
+        "    const char *root = state.patched ? state.root : resource_root;\n"
+        "    if (chdir(root) != 0) {\n"
+        "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not enter resource directory: %%s\", root);\n"
+        "        fprintf(stderr, \"ns: %%s\\n\", ns_app_status);\n"
+        "        return 0;\n"
+        "    }\n"
+        "    if (state.patched) snprintf(program, size, \"%%s\", state.code);\n"
+        "    else snprintf(program, size, \"%%s/%%s\", resource_root, code);\n"
+        "    return 1;\n"
+        "}\n"
+        "\n"
+        "// The installed patch does not load: forget it and run the shipped files.\n"
+        "__attribute__((unused)) static int ns_app_fallback(const char *resource_root, const char *code, char *program, size_t size) {\n"
+        "    if (ns_app_patch_version == 0) return 0;\n"
+        "    fprintf(stderr, \"ns: patch %%u does not load; running the shipped program\\n\", ns_app_patch_version);\n"
+        "    ns_patch_discard(NULL, ns_app_patch_name, ns_app_patch_version);\n"
+        "    ns_app_patch_version = 0;\n"
+        "    ns_patch_publish_version(ns_app_patch_base);\n"
+        "    if (chdir(resource_root) != 0) return 0;\n"
+        "    snprintf(program, size, \"%%s/%%s\", resource_root, code);\n"
+        "    return 1;\n"
+        "}\n"
+        "\n", spec->link_emu ? "NS_PATCH_MODE_EMU" : "NS_PATCH_MODE_EVAL");
+}
+
+static ns_bool ns_xcode_write_app_sources(const ns_project_spec *spec, const char *managed_root, const char *runtime_root) {
+    ns_bool link_native = spec->link_native;
+    ns_bool link_emu = spec->link_emu;
     static const char bridge_header[] =
         "#ifndef NS_BRIDGE_H\n"
         "#define NS_BRIDGE_H\n"
@@ -995,27 +1084,30 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *
         "#endif\n"
         "\n"
         "#endif\n";
-    static const char bridge_source_eval[] =
+    // The eval and emu bridges start with the includes below, then the
+    // ns_app_enter / ns_app_fallback pair ns_xcode_append_app_enter writes.
+    static const char bridge_prelude[] =
         "#include \"NSBridge.h\"\n"
         "#include \"ns_vm.h\"\n"
         "#include \"ns_os.h\"\n"
+        "#include \"ns_cpu.h\"\n"
         "\n"
         "#include <stdio.h>\n"
+        "#include <stdlib.h>\n"
         "#include <unistd.h>\n"
-        "\n"
-        "static char ns_app_status[1024];\n"
-        "\n"
+        "\n";
+    static const char bridge_source_eval[] =
         "const char *ns_run_linked_project(const char *resource_root) {\n"
-        "    if (chdir(resource_root) != 0) {\n"
-        "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not enter resource directory: %s\", resource_root);\n"
-        "        fprintf(stderr, \"ns: %s\\n\", ns_app_status);\n"
-        "        return ns_app_status;\n"
-        "    }\n"
+        "    char program[1024];\n"
+        "    if (!ns_app_enter(resource_root, \"LinkedProject.ns\", program, sizeof(program))) return ns_app_status;\n"
         "    ns_vm vm = {0};\n"
         "    ns_vm_set_ref_path(&vm, ns_str_cstr((char *)resource_root));\n"
-        "    ns_str root = ns_str_cstr((char *)resource_root);\n"
-        "    ns_str filename = ns_path_join(root, ns_str_cstr(\"LinkedProject.ns\"));\n"
+        "    ns_str filename = ns_str_cstr(program);\n"
         "    ns_str source = ns_os_read_file(filename);\n"
+        "    if (!source.data && ns_app_fallback(resource_root, \"LinkedProject.ns\", program, sizeof(program))) {\n"
+        "        filename = ns_str_cstr(program);\n"
+        "        source = ns_os_read_file(filename);\n"
+        "    }\n"
         "    if (!source.data) {\n"
         "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not read %s\", filename.data);\n"
         "        fprintf(stderr, \"ns: %s\\n\", ns_app_status);\n"
@@ -1060,17 +1152,8 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *
     // the bundle. Native modules are called through the shims generated into
     // ns_embedded_ffi.c, so no libffi and no generated code are needed.
     static const char bridge_source_emu[] =
-        "#include \"NSBridge.h\"\n"
-        "#include \"ns_vm.h\"\n"
-        "#include \"ns_os.h\"\n"
-        "#include \"ns_cpu.h\"\n"
-        "\n"
-        "#include <stdio.h>\n"
-        "#include <unistd.h>\n"
-        "\n"
         "extern ns_cpu_native_call ns_embedded_cpu_resolve(void *user, const char *module, const char *name, void **target);\n"
         "\n"
-        "static char ns_app_status[1024];\n"
         "// Kept loaded after main returns: native callbacks may still call into it.\n"
         "static ns_cpu_module *ns_app_module;\n"
         "\n"
@@ -1081,27 +1164,24 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *
         "    return ns_app_status;\n"
         "}\n"
         "\n"
-        "const char *ns_run_linked_project(const char *resource_root) {\n"
-        "    if (chdir(resource_root) != 0) {\n"
-        "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not enter resource directory: %s\", resource_root);\n"
-        "        fprintf(stderr, \"ns: %s\\n\", ns_app_status);\n"
-        "        return ns_app_status;\n"
-        "    }\n"
-        "    ns_str root = ns_str_cstr((char *)resource_root);\n"
-        "    ns_str filename = ns_path_join(root, ns_str_cstr(\"LinkedProject.nsc\"));\n"
-        "    ns_str image = ns_os_read_file(filename);\n"
-        "    if (!image.data) {\n"
-        "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not read %s\", filename.data);\n"
-        "        fprintf(stderr, \"ns: %s\\n\", ns_app_status);\n"
-        "        ns_str_free(filename);\n"
-        "        return ns_app_status;\n"
-        "    }\n"
-        "    ns_str_free(filename);\n"
+        "static ns_return_ptr ns_app_load(const char *resource_root, const char *program) {\n"
+        "    ns_str image = ns_os_read_file(ns_str_cstr((char *)program));\n"
+        "    if (!image.data) return ns_return_error(ptr, ns_code_loc_nil, NS_ERR_RUNTIME, \"could not read the ns_cpu image\");\n"
         "    ns_cpu_host host = {0};\n"
         "    host.resolve_call = ns_embedded_cpu_resolve;\n"
-        "    host.lib_path = root;\n"
+        "    host.lib_path = ns_str_cstr((char *)resource_root);\n"
         "    ns_return_ptr loaded = ns_cpu_load((const u8 *)image.data, (szt)image.len, &host, ns_null);\n"
         "    ns_str_free(image);\n"
+        "    return loaded;\n"
+        "}\n"
+        "\n"
+        "const char *ns_run_linked_project(const char *resource_root) {\n"
+        "    char program[1024];\n"
+        "    if (!ns_app_enter(resource_root, \"LinkedProject.nsc\", program, sizeof(program))) return ns_app_status;\n"
+        "    ns_return_ptr loaded = ns_app_load(resource_root, program);\n"
+        "    if (ns_return_is_error(loaded) && ns_app_fallback(resource_root, \"LinkedProject.nsc\", program, sizeof(program))) {\n"
+        "        loaded = ns_app_load(resource_root, program);\n"
+        "    }\n"
         "    if (ns_return_is_error(loaded)) return ns_app_error(loaded.s, loaded.e);\n"
         "    ns_app_module = loaded.r;\n"
         "    i64 status = 0;\n"
@@ -1111,7 +1191,15 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *
         "    fprintf(stdout, \"ns: finished\\n\");\n"
         "    return ns_app_status;\n"
         "}\n";
-    const char *bridge_source = link_native ? bridge_source_native : link_emu ? bridge_source_emu : bridge_source_eval;
+    ns_xcode_buffer bridge_text = {0};
+    if (link_native) {
+        if (!ns_xcode_buffer_appendf(&bridge_text, "%s", bridge_source_native)) return false;
+    } else if (!ns_xcode_buffer_appendf(&bridge_text, "%s", bridge_prelude) ||
+               !ns_xcode_append_app_enter(&bridge_text, spec) ||
+               !ns_xcode_buffer_appendf(&bridge_text, "%s", link_emu ? bridge_source_emu : bridge_source_eval)) {
+        free(bridge_text.data);
+        return false;
+    }
 
     char *sources = ns_xcode_path_join(managed_root, "Sources");
     char *swift = sources ? ns_xcode_path_join(sources, "NSApp.swift") : NULL;
@@ -1119,7 +1207,8 @@ static ns_bool ns_xcode_write_app_sources(const char *managed_root, const char *
     char *bridge = sources ? ns_xcode_path_join(sources, "NSBridge.c") : NULL;
     ns_bool ok = swift && header && bridge && ns_xcode_copy_feature(runtime_root, managed_root, "src", "Sources", "NSApp.swift") &&
                  ns_xcode_write(header, bridge_header, sizeof(bridge_header) - 1, true) &&
-                 ns_xcode_write(bridge, bridge_source, strlen(bridge_source), true);
+                 ns_xcode_write(bridge, bridge_text.data, bridge_text.len, true);
+    free(bridge_text.data);
     free(sources);
     free(swift);
     free(header);
@@ -1292,7 +1381,7 @@ static ns_bool ns_xcode_write_config(const ns_project_spec *spec, const char *ma
 static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *managed_root, const char *runtime_root,
                                     const char *linked_source, const char *safe_name, const char *version) {
     if (!ns_xcode_validate_modules(linked_source)) return false;
-    if (!ns_xcode_write_app_sources(managed_root, runtime_root, spec->link_native, spec->link_emu)) return false;
+    if (!ns_xcode_write_app_sources(spec, managed_root, runtime_root)) return false;
     if (!ns_xcode_write_app_icon(spec, managed_root)) return false;
     for (size_t i = 0; i < ns_xcode_runtime_source_count; ++i) {
         if (!ns_xcode_copy_relative(runtime_root, managed_root, "src", "Runtime/src", ns_xcode_runtime_sources[i])) return false;

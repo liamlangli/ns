@@ -465,6 +465,17 @@ const char *os_env(const char *name) {
     return value ? value : "";
 }
 
+i32 os_patch_version(void) {
+    const char *text = getenv("NS_PATCH_VERSION");
+    if (!text || !text[0]) return 0;
+    i64 value = 0;
+    for (const char *p = text; *p; p++) {
+        if (*p < '0' || *p > '9' || value > 0x7fffffff / 10) return 0;
+        value = value * 10 + (*p - '0');
+    }
+    return value <= 0x7fffffff ? (i32)value : 0;
+}
+
 i32 os_make_dirs(const char *path) {
     if (!path || !path[0]) return 0;
     char buf[OS_MAX_PATH];
