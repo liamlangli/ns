@@ -1074,7 +1074,24 @@ static i32 ns_ssa_wasm32_size(ns_ssa_builder *b, ns_type type) {
 static i32 ns_ssa_ffi_struct_box(ns_ssa_builder *b, i32 value, ns_type pt, i32 ast) {
     if (!ns_type_is(pt, NS_TYPE_STRUCT) || !ns_type_is_ref(pt)) return value;
     ns_type vt = ns_ssa_value_type(b, value);
-    if (!ns_type_is(vt, NS_TYPE_STRUCT) || ns_type_is_ref(vt)) return value;
+    if (!ns_type_is(vt, NS_TYPE_STRUCT)) return value;
+    // `ref image` and implicit ref arguments wrap a script-created struct in
+    // COPY instructions. Follow those wrappers to its value before boxing.
+    // A library-returned pointer (or an opaque ref parameter) already carries
+    // the C layout and must not have its raw array pointers unwrapped again.
+    while (ns_type_is_ref(vt)) {
+        i32 source = -1;
+        for (i32 i = (i32)ns_array_length(b->fn->insts) - 1; i >= 0; --i) {
+            ns_ssa_inst *def = &b->fn->insts[i];
+            if (def->dst != value) continue;
+            if (def->op == NS_SSA_OP_COPY) source = def->a;
+            break;
+        }
+        if (source < 0 || source == value) return value;
+        value = source;
+        vt = ns_ssa_value_type(b, value);
+        if (!ns_type_is(vt, NS_TYPE_STRUCT)) return value;
+    }
     i32 index = ns_type_index(pt);
     if (index < 0 || index >= (i32)ns_array_length(b->vm->symbols)) return value;
     ns_symbol *st = &b->vm->symbols[index];

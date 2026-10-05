@@ -89,6 +89,12 @@ run_one "$root/test/parity_ref_alias.ns"
 run_one "$root/test/parity_wrap.ns"
 run_one "$root/test/lang_test.ns"
 
+# Image structs contain array handles in SSA; both compiled backends must
+# translate them to C pixel pointers at the FFI boundary, preserving bytes.
+"$ns" build --exe "$root/test/native_image_test.ns" -o "$tmp/native-image.bin" >/dev/null
+"$tmp/native-image.bin"
+"$ns" run --cpu "$root/test/native_image_test.ns"
+
 if [ "$fail" -ne 0 ]; then
     exit 1
 fi

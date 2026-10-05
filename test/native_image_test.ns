@@ -1,0 +1,27 @@
+use io
+
+fn verify_image(path: str, pixels: [u8]) {
+    let loaded = io_load_image(path)
+    assert loaded.width == 2
+    assert loaded.height == 2
+    assert loaded.channels == 4
+    let decoded = [u8](16)
+    assert io_image_copy_data(loaded, decoded, 16) == 16
+    for i in 0 to 16 { assert decoded[i] == pixels[i] }
+    // A reference returned by the library already contains a raw C pointer.
+    assert io_save_image("bin/parity-image-loaded.png", loaded)
+    io_image_destroy(loaded)
+}
+
+fn main() {
+    let pixels = [u8](16)
+    for i in 0 to 16 { pixels[i] = (i * 17) as u8 }
+    let image = io_image { 2, 2, 4, pixels }
+    assert io_save_image("bin/parity-image.png", ref image)
+    verify_image("bin/parity-image.png", pixels)
+    assert io_save_image("bin/parity-image.png", image)
+    verify_image("bin/parity-image.png", pixels)
+    let alias = ref image
+    assert io_save_image("bin/parity-image.png", alias)
+    verify_image("bin/parity-image.png", pixels)
+}
