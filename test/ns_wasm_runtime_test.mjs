@@ -68,6 +68,14 @@ Object.defineProperty(globalThis, 'document', { configurable: true, value: {
 Object.defineProperty(globalThis, 'getComputedStyle', { configurable: true, value: () => safeAreaPadding });
 
 const runtime = new NSBrowserRuntime(canvas);
+assert.equal(runtime.viewImport('view_hands_start', []), -2);
+assert.equal(runtime.viewImport('view_hands_snapshot', []), -2);
+runtime.viewImport('view_hands_stop', []);
+for (const hand of [-1, 0, 1, 2]) {
+  assert.equal(runtime.viewImport('view_hand_tracked', [hand]), 0);
+  assert.equal(runtime.viewImport('view_hand_joint_tracked', [hand, 0]), 0);
+  assert.equal(runtime.viewImport('view_hand_joint_position', [hand, 0, 0]), 0);
+}
 let contextMenuPrevented = false;
 canvasEvents.get('contextmenu')({ preventDefault() { contextMenuPrevented = true; } });
 assert.equal(contextMenuPrevented, true);

@@ -415,3 +415,19 @@ void view_immersive_host_pose(i32 eye, const float *pose) {
     immersive_eye = eye;
     if (pose) for (i32 i = 0; i < 48; ++i) immersive_pose[i] = pose[i];
 }
+
+// Generated visionOS apps supply these symbols from view.hands.vision.swift.
+// Feature modules on every other host explicitly report no hand provider.
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+#if !defined(__APPLE__) || !TARGET_OS_VISION
+i32 view_hands_start(void) { return -2; }
+void view_hands_stop(void) { }
+i32 view_hands_snapshot(void) { return -2; }
+ns_bool view_hand_tracked(i32 hand) { (void)hand; return false; }
+ns_bool view_hand_joint_tracked(i32 hand, i32 joint) { (void)hand; (void)joint; return false; }
+f64 view_hand_joint_position(i32 hand, i32 joint, i32 axis) {
+    (void)hand; (void)joint; (void)axis; return 0.0;
+}
+#endif

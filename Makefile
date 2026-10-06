@@ -391,6 +391,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_cross_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/storage_apple_compile.sh
 	sh test/camera_apple_compile.sh
+	sh test/view_hands_apple_compile.sh
 	sh test/gpu_metal_dispatch_test.sh
 	node test/ns_wasm_runtime_test.mjs
 	node test/ns_wasm_ui_test.mjs "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -450,7 +451,7 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
 	$(Q)cp lib/src/io.c lib/src/secure.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/view.gamepad.apple.m \
-		lib/src/gpu.c lib/src/gpu.metal.m lib/src/NSApp.swift \
+		lib/src/gpu.c lib/src/gpu.metal.m lib/src/NSApp.swift lib/src/view.hands.vision.swift \
 		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \
 		lib/src/audio.apple.m lib/src/camera.apple.m \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/src/

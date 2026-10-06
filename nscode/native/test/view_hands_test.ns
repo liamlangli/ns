@@ -1,0 +1,20 @@
+use std
+use view
+
+fn main() {
+    // Desktop feature modules must provide a usable, explicit unsupported ABI.
+    assert view_hands_start() == VIEW_HANDS_UNSUPPORTED
+    assert view_hands_snapshot() == VIEW_HANDS_UNSUPPORTED
+    view_hands_stop()
+    assert view_hands_snapshot() == VIEW_HANDS_UNSUPPORTED
+    for hand in -1 to 3 {
+        assert !view_hand_tracked(hand)
+        for joint in -1 to VIEW_HAND_JOINT_COUNT + 1 {
+            assert !view_hand_joint_tracked(hand, joint)
+            for axis in -1 to 4 {
+                assert view_hand_joint_position(hand, joint, axis) == 0.0
+            }
+        }
+    }
+    print("hand tracking: unsupported host ABI passed\n")
+}

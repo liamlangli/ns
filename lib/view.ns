@@ -201,3 +201,57 @@ ref fn view_immersive_eye() i32
 // Eye transform [0,16), projection [16,32), head transform [32,48).
 // Matrices are column-major; tracking positions are in metres.
 ref fn view_immersive_value(index: i32) f64
+
+// Hand skeleton snapshots. Supported by generated visionOS apps; other native
+// hosts and browsers report VIEW_HANDS_UNSUPPORTED, with no tracked joints.
+// Start schedules authorization on the main thread; snapshot reports progress.
+// Call snapshot once before reading either hand. Readings stay fixed until the
+// next snapshot. Stop invalidates live data immediately. No data is persisted.
+lit VIEW_HAND_LEFT = 0
+lit VIEW_HAND_RIGHT = 1
+lit VIEW_HANDS_STOPPED = 0
+lit VIEW_HANDS_STARTING = 1
+lit VIEW_HANDS_RUNNING = 2
+lit VIEW_HANDS_FAILED = -1
+lit VIEW_HANDS_UNSUPPORTED = -2
+lit VIEW_HAND_AXIS_X = 0
+lit VIEW_HAND_AXIS_Y = 1
+lit VIEW_HAND_AXIS_Z = 2
+lit VIEW_HAND_JOINT_WRIST = 0
+lit VIEW_HAND_JOINT_THUMB_KNUCKLE = 1
+lit VIEW_HAND_JOINT_THUMB_INTERMEDIATE_BASE = 2
+lit VIEW_HAND_JOINT_THUMB_INTERMEDIATE_TIP = 3
+lit VIEW_HAND_JOINT_THUMB_TIP = 4
+lit VIEW_HAND_JOINT_INDEX_FINGER_METACARPAL = 5
+lit VIEW_HAND_JOINT_INDEX_FINGER_KNUCKLE = 6
+lit VIEW_HAND_JOINT_INDEX_FINGER_INTERMEDIATE_BASE = 7
+lit VIEW_HAND_JOINT_INDEX_FINGER_INTERMEDIATE_TIP = 8
+lit VIEW_HAND_JOINT_INDEX_FINGER_TIP = 9
+lit VIEW_HAND_JOINT_MIDDLE_FINGER_METACARPAL = 10
+lit VIEW_HAND_JOINT_MIDDLE_FINGER_KNUCKLE = 11
+lit VIEW_HAND_JOINT_MIDDLE_FINGER_INTERMEDIATE_BASE = 12
+lit VIEW_HAND_JOINT_MIDDLE_FINGER_INTERMEDIATE_TIP = 13
+lit VIEW_HAND_JOINT_MIDDLE_FINGER_TIP = 14
+lit VIEW_HAND_JOINT_RING_FINGER_METACARPAL = 15
+lit VIEW_HAND_JOINT_RING_FINGER_KNUCKLE = 16
+lit VIEW_HAND_JOINT_RING_FINGER_INTERMEDIATE_BASE = 17
+lit VIEW_HAND_JOINT_RING_FINGER_INTERMEDIATE_TIP = 18
+lit VIEW_HAND_JOINT_RING_FINGER_TIP = 19
+lit VIEW_HAND_JOINT_LITTLE_FINGER_METACARPAL = 20
+lit VIEW_HAND_JOINT_LITTLE_FINGER_KNUCKLE = 21
+lit VIEW_HAND_JOINT_LITTLE_FINGER_INTERMEDIATE_BASE = 22
+lit VIEW_HAND_JOINT_LITTLE_FINGER_INTERMEDIATE_TIP = 23
+lit VIEW_HAND_JOINT_LITTLE_FINGER_TIP = 24
+lit VIEW_HAND_JOINT_FOREARM_WRIST = 25
+lit VIEW_HAND_JOINT_FOREARM_ARM = 26
+lit VIEW_HAND_JOINT_COUNT = 27
+
+ref fn view_hands_start() i32
+ref fn view_hands_stop()
+ref fn view_hands_snapshot() i32
+ref fn view_hand_tracked(hand: i32) bool
+ref fn view_hand_joint_tracked(hand: i32, joint: i32) bool
+// Position in metres in the immersive world's right-handed origin: +X right,
+// +Y up, +Z back. Invalid/untracked hands, joints or axes return zero.
+// Samples older than 0.20 seconds are untracked; zero alone is not validity.
+ref fn view_hand_joint_position(hand: i32, joint: i32, axis: i32) f64

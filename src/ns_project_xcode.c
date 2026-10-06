@@ -112,7 +112,7 @@ static ns_bool ns_xcode_file_exists(const char *path) {
 // `expects_assets` is the project-attribute line the packaged paths of this
 // manifest produce, so a project generated for a different set of them, or for
 // none, is regenerated rather than left carrying the wrong resources.
-#define NS_XCODE_GENERATOR_VERSION "18"
+#define NS_XCODE_GENERATOR_VERSION "19"
 
 static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const char *expects_assets,
                                                         ns_bool expects_app_icon, ns_bool expects_link_native,
@@ -651,6 +651,7 @@ static const char *const ns_xcode_feature_sources[] = {
     "view.osx.m",
     "view.ios.m",
     "view.gamepad.apple.m",
+    "view.hands.vision.swift",
     "gpu.c",
     "gpu.metal.m",
     "ui.c",
@@ -1231,8 +1232,10 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
                                 "      </array>\n"
                                 "    </dict>\n"
                                 "  </dict>\n"
+                                "  <key>NSHandsTrackingUsageDescription</key>\n"
+                                "  <string>读取手部关节位置，用于虚拟环境中的手部交互。</string>\n"
                                 "  <key>NSWorldSensingUsageDescription</key>\n"
-                                "  <string>Head tracking places you on the lunar surface.</string>\n")) {
+                                "  <string>为了让人物融入虚拟环境。</string>\n")) {
         free(escaped_name);
         free(escaped_version);
         ns_xcode_buffer_free(&plist);
@@ -1766,6 +1769,7 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
                 "OUT=\"$DERIVED_FILE_DIR/ns_program.o\"\n"
                 "STRTAB=\"$DERIVED_FILE_DIR/ns_strtab.c\"\n"
                 "STRTAB_O=\"$DERIVED_FILE_DIR/ns_strtab.o\"\n"
+                "mkdir -p \"$DERIVED_FILE_DIR\"\n"
                 "\"$NS_EXECUTABLE\" --macho-o --embed-main --macho-platform \"$PLATFORM_NAME\" --strtab \"$STRTAB\" -o \"$OUT\" \"$LINKED\"\n"
                 "ARCH_FLAGS=\"\"\n"
                 "for arch in $ARCHS; do ARCH_FLAGS=\"$ARCH_FLAGS -arch $arch\"; done\n"
@@ -1875,7 +1879,8 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
     }
     for (size_t i = 0; i < ns_xcode_feature_source_count; ++i) {
         ns_xcode_buffer path = {0};
-        const char *type = strstr(ns_xcode_feature_sources[i], ".m") ? "sourcecode.c.objc" : "sourcecode.c.c";
+        const char *type = strstr(ns_xcode_feature_sources[i], ".swift") ? "sourcecode.swift" :
+                           strstr(ns_xcode_feature_sources[i], ".m") ? "sourcecode.c.objc" : "sourcecode.c.c";
         if (!ns_xcode_buffer_appendf(&path, "Native/src/%s", ns_xcode_feature_sources[i]) ||
             !ns_xcode_append_file_reference(&pbx, NS_XCODE_FEATURE_SOURCE_BASE + (unsigned)i, type, ns_xcode_feature_sources[i], path.data)) {
             ns_xcode_buffer_free(&path);

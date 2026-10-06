@@ -368,3 +368,11 @@ void view_immersive_host_support(ns_bool supported);
 ns_bool view_immersive_host_requested(void);
 void view_immersive_host_status(i32 status);
 void view_immersive_host_pose(i32 eye, const float *pose);
+
+// See lib/view.ns for stable hand/joint identifiers and coordinate convention.
+i32 view_hands_start(void);
+void view_hands_stop(void);
+i32 view_hands_snapshot(void);
+ns_bool view_hand_tracked(i32 hand);
+ns_bool view_hand_joint_tracked(i32 hand, i32 joint);
+f64 view_hand_joint_position(i32 hand, i32 joint, i32 axis);

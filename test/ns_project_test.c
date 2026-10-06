@@ -163,7 +163,7 @@ int main(void) {
     char compress_native[PATH_MAX], compress_header[PATH_MAX], compress_module[PATH_MAX];
     char audio_native[PATH_MAX], audio_header[PATH_MAX], audio_module[PATH_MAX];
     char task_module[PATH_MAX], net_module[PATH_MAX], ui_asset[PATH_MAX], bitmap_asset[PATH_MAX], ios_plist[PATH_MAX];
-    char vision_plist[PATH_MAX], swift_app[PATH_MAX];
+    char vision_plist[PATH_MAX], swift_app[PATH_MAX], hands_swift[PATH_MAX];
     char app_icon_json[PATH_MAX], app_icon_png[PATH_MAX], vision_icon_json[PATH_MAX];
     char vision_middle_image[PATH_MAX], vision_back_image[PATH_MAX];
     char sln[PATH_MAX], vcx[PATH_MAX], vlocal[PATH_MAX], vgenerated[PATH_MAX];
@@ -195,6 +195,7 @@ int main(void) {
     path(ios_plist, app_root, "bin/demo-app.nsproject/Info/iOS-Info.plist");
     path(vision_plist, app_root, "bin/demo-app.nsproject/Info/visionOS-Info.plist");
     path(swift_app, app_root, "bin/demo-app.nsproject/Sources/NSApp.swift");
+    path(hands_swift, app_root, "bin/demo-app.nsproject/Native/src/view.hands.vision.swift");
     path(app_icon_json, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json");
     path(app_icon_png, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-mac-16.png");
     path(vision_icon_json, app_root, "bin/demo-app.nsproject/Resources/Assets.xcassets/AppIcon.solidimagestack/Contents.json");
@@ -326,6 +327,12 @@ int main(void) {
                   text_has(bridge_header, "view_ios_set_host_view") &&
                   text_has(view_ios, "view_ios_set_host_view"),
               "visionOS app can open an immersive space and host the Metal view in SwiftUI.");
+    ns_expect(access(hands_swift, R_OK) == 0 &&
+                  text_has(pbx, "view.hands.vision.swift in Sources") &&
+                  text_has(pbx, "sourcecode.swift; name = \"view.hands.vision.swift\"; path = \"Native/src/view.hands.vision.swift\"") &&
+                  text_has(hands_swift, "view_hand_joint_position") &&
+                  text_has(vision_plist, "NSHandsTrackingUsageDescription"),
+              "generated Apple apps embed the generic hand skeleton backend and visionOS permission.");
     ns_expect(text_has(swift_app, "addRenderContext(commandBuffer") &&
                   text_has(swift_app, "drawMaskOnStencilAttachment") &&
                   text_has(swift_app, "endEncoding(commandEncoder") &&
@@ -355,7 +362,7 @@ int main(void) {
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && !text_has(xgenerated, "ZSTD") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 18") &&
+                  text_has(pbx, "NSProjectGeneratorVersion = 19") &&
                   text_has(pbx, "XROS_DEPLOYMENT_TARGET = 26.0"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
@@ -393,8 +400,8 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 18;", "NSProjectGeneratorVersion = 18;",
-                                     "NSProjectGeneratorVersion = 9;"),
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 19;", "NSProjectGeneratorVersion = 19;",
+                                     "NSProjectGeneratorVersion = 18;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
     ns_expect(text_has(pbx, "DEVELOPMENT_TEAM = \"IOSDEBUG1\";") &&
@@ -452,7 +459,7 @@ int main(void) {
     ns_expect(text_has(linked_bridge, "ns_program_main") && !text_has(linked_bridge, "ns_eval"),
               "Xcode link-native app calls the compiled program instead of evaluating source.");
     ns_expect(text_has(linked_pbx, "Compile NS Program") && text_has(linked_pbx, "--embed-main") &&
-                  text_has(linked_pbx, "--macho-platform"),
+                  text_has(linked_pbx, "--macho-platform") && text_has(linked_pbx, "mkdir -p \\\"$DERIVED_FILE_DIR\\\""),
               "Xcode link-native app compiles LinkedProject.ns to a Mach-O object during the build.");
     ns_expect(text_has(linked_pbx, "ns_program.o") && text_has(linked_pbx, "ns_strtab.o") &&
                   !text_has(linked_xc, "ns_program.o"),
