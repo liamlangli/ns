@@ -400,7 +400,7 @@ static const char *ui_shader_src =
 "}\n"
 "fragment float4 ui_fs_arc_sdf(VOut in [[stage_in]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
 "  if (ui_clip_discard(in, ns_root, ns_storage_buffer)) { discard_fragment(); }\n"
-"  float radius = max(in.params.x, 0.0001); float half_width = max(in.params.y, 0.0);\n"
+"  float radius = max(abs(in.params.x), 0.0001); float half_width = max(in.params.y, 0.0);\n"
 "  float half_angle = clamp(in.params.z, 0.0, 3.14159265); float radial = length(in.uv);\n"
 "  float angle = atan2(in.uv.y, in.uv.x); float half_arc = radius * half_angle;\n"
 "  float corner = min(half_width * 0.44, half_arc * 0.48);\n"
@@ -408,6 +408,7 @@ static const char *ui_shader_src =
 "  float2 q = abs(float2(angle * radius, radial - radius)) - extent;\n"
 "  float distance = length(max(q, float2(0.0))) + min(max(q.x, q.y), 0.0) - corner;\n"
 "  float aa = max(fwidth(distance), 0.35); float opacity = 1.0 - smoothstep(-aa, aa, distance);\n"
+"  if (in.params.x < 0.0) { opacity = distance <= 0.0 ? 1.0 : 0.0; }\n"
 "  return float4(in.col.rgb, in.col.a * opacity);\n"
 "}\n";
 
@@ -536,7 +537,7 @@ static const char *ui_shader_glsl_fs_bitmap_body =
 static const char *ui_shader_glsl_fs_arc_sdf_body =
     "void main() {\n"
     "    if (ui_clip_discard()) { discard; }\n"
-    "    float radius = max(ns_params.x, 0.0001);\n"
+    "    float radius = max(abs(ns_params.x), 0.0001);\n"
     "    float half_width = max(ns_params.y, 0.0);\n"
     "    float half_angle = clamp(ns_params.z, 0.0, 3.14159265);\n"
     "    float radial = length(ns_uv);\n"
@@ -548,6 +549,7 @@ static const char *ui_shader_glsl_fs_arc_sdf_body =
     "    float arc_distance = length(max(q, vec2(0.0))) + min(max(q.x, q.y), 0.0) - corner;\n"
     "    float aa = max(fwidth(arc_distance), 0.35);\n"
     "    float opacity = 1.0 - smoothstep(-aa, aa, arc_distance);\n"
+    "    if (ns_params.x < 0.0) { opacity = arc_distance <= 0.0 ? 1.0 : 0.0; }\n"
     "    ns_frag_color = vec4(ns_col.rgb, ns_col.a * opacity);\n"
     "}\n";
 
@@ -1092,7 +1094,9 @@ void ui_fill_circle(ui_renderer *r, f64 cx, f64 cy, f64 radius, u32 rgba, f64 fe
 void ui_fill_triangle(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 x2, f64 y2, u32 rgba, f64 feather) {
     if (!r) return;
     r->current_texture_id = UI_WHITE_TEXTURE;
-    f64 f = ui_resolve_feather(feather);
+    // Shared edges in a triangle mesh must stay fully covered. In particular,
+    // zero feather must not turn into the default fade on every internal edge.
+    f64 f = fmax(0.0, feather);
     if (f <= 0.0) {
         ui_push_tri(r, x0, y0, x1, y1, x2, y2, 0, 0, rgba);
         return;
@@ -1151,10 +1155,12 @@ void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness,
     const i32 order[6] = {0, 1, 2, 0, 2, 3};
     const f64 clip_param = ui_clip_param(r, clip);
     const i32 base = r->vertex_count;
+    // The radius sign selects hard coverage without changing the vertex ABI.
+    const f64 shader_radius = feather > 0.0 ? radius : -radius;
     for (i32 i = 0; i < 6; i++) {
         const i32 vertex = order[i];
         if (!ui_push_vertex(r, px[vertex], py[vertex], local_x[vertex], local_y[vertex], rgba,
-                            radius, half_width, half_angle, clip_param)) {
+                            shader_radius, half_width, half_angle, clip_param)) {
             r->vertex_count = base;
             return;
         }
@@ -1163,17 +1169,36 @@ void ui_fill_arc(ui_renderer *r, f64 cx, f64 cy, f64 radius, f64 thickness,
 }
 
 void ui_stroke_line(ui_renderer *r, f64 x0, f64 y0, f64 x1, f64 y1, f64 thickness, u32 rgba, f64 feather) {
-    ns_unused(feather);
     if (!r || thickness <= 0.0) return;
     f64 dx = x1 - x0;
     f64 dy = y1 - y0;
     f64 len = sqrt(dx * dx + dy * dy);
     if (len <= 0.000001) return;
-    f64 nx = -dy / len * thickness * 0.5;
-    f64 ny = dx / len * thickness * 0.5;
+    const f64 half = thickness * 0.5;
+    const f64 fade = fmin(fmax(feather, 0.0) * 0.5, half);
+    const f64 nx = -dy / len;
+    const f64 ny = dx / len;
+    const f64 inner = half - fade;
+    const f64 outer = half + fade;
     r->current_texture_id = UI_WHITE_TEXTURE;
-    ui_push_tri(r, x0 + nx, y0 + ny, x1 + nx, y1 + ny, x1 - nx, y1 - ny, 0, 0, rgba);
-    ui_push_tri(r, x0 + nx, y0 + ny, x1 - nx, y1 - ny, x0 - nx, y0 - ny, 0, 0, rgba);
+    if (inner > 0.0) {
+        ui_push_tri(r, x0 + nx * inner, y0 + ny * inner, x1 + nx * inner, y1 + ny * inner,
+                    x1 - nx * inner, y1 - ny * inner, 0, 0, rgba);
+        ui_push_tri(r, x0 + nx * inner, y0 + ny * inner, x1 - nx * inner, y1 - ny * inner,
+                    x0 - nx * inner, y0 - ny * inner, 0, 0, rgba);
+    }
+    if (fade <= 0.0) return;
+    // Fade only the two long edges. Keep butt endpoints fully covered so a
+    // straight segment can meet a rounded corner without a transparent seam.
+    const u32 transparent = ui_color_alpha_mul(rgba, 0.0);
+    for (i32 side = -1; side <= 1; side += 2) {
+        const f64 ix = nx * inner * side, iy = ny * inner * side;
+        const f64 ox = nx * outer * side, oy = ny * outer * side;
+        ui_push_tri_colors(r, x0 + ix, y0 + iy, rgba, x0 + ox, y0 + oy, transparent,
+                           x1 + ox, y1 + oy, transparent);
+        ui_push_tri_colors(r, x0 + ix, y0 + iy, rgba, x1 + ox, y1 + oy, transparent,
+                           x1 + ix, y1 + iy, rgba);
+    }
 }
 
 void ui_stroke_polyline(ui_renderer *r, f64 *points, i32 point_count, f64 thickness, u32 rgba, f64 feather) {

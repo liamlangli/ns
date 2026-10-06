@@ -376,6 +376,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_lint_test
 	$(NS_BINDIR)/ns_profile_test
 	$(NS_BINDIR)/ns_patch_test
+	$(NS_BINDIR)/ui_triangle_test
 	sh test/ns_project_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_lint_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -395,6 +396,15 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	node test/ns_wasm_ui_test.mjs "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 
 include lib/Makefile
+
+# Inspect CPU-side UI geometry without creating a window or GPU device.
+ifneq ($(NS_OS), $(NS_WIN))
+NS_UI_TEST_LDFLAGS = -Wl,-rpath,$(CURDIR)/$(NS_BINDIR)
+endif
+test: $(NS_BINDIR)/ui_triangle_test
+$(NS_BINDIR)/ui_triangle_test: test/ui_triangle_test.c lib/src/ui.c $(NS_HEADERS) $(NS_LIB) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) $(NS_LDFLAGS) $(NS_UI_TEST_LDFLAGS)
+
 include sample/c/Makefile
 
 .PHONY: deps cross-linux

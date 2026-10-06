@@ -116,6 +116,11 @@ typedef struct gpu_v2_core {
     u64 ring_peak;
     u64 ring_bytes;
     u64 ring_reports;
+    // Dynamic capacity: one section's size, doubled whenever a frame outgrows
+    // it. A replaced ring stays alive (its addresses are already handed out and
+    // the GPU may still read them) until every in-flight frame has retired.
+    u64 ring_section_size;
+    struct { u32 slot; gpu_addr base; u32 ttl; } ring_retired[8];
 
     gpu_v2_upload uploads[GPU_V2_UPLOAD_CAP];
     u32 upload_count;
@@ -280,7 +285,11 @@ void gpu_free(gpu_addr addr) {
 }
 
 static ns_bool gpu_v2_is_ring(u32 slot) {
-    return _v2.ring_base && slot == _v2.ring_slot;
+    if (_v2.ring_base && slot == _v2.ring_slot) return true;
+    for (u32 i = 0; i < 8; i++) {
+        if (_v2.ring_retired[i].base && _v2.ring_retired[i].slot == slot) return true;
+    }
+    return false;
 }
 
 static ns_bool gpu_v2_direct_write(gpu_v2_slot *s, u32 slot, u64 offset, const void *src, u64 size) {
@@ -352,6 +361,7 @@ void gpu_v2_flush_uploads(void) {
 }
 
 static u64 gpu_v2_ring_section_size(void) {
+    if (_v2.ring_section_size) return _v2.ring_section_size;
     return (GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT) & ~((u64)GPU_V2_ALLOC_ALIGN - 1);
 }
 
@@ -433,33 +443,53 @@ void *gpu_addr_host(gpu_addr addr) {
     return base ? base + offset : NULL;
 }
 
+static ns_bool gpu_v2_ring_create(u64 section_size) {
+    u64 total = section_size * (u64)GPU_SWAP_BUFFER_COUNT;
+    if (total > GPU_V2_OFFSET_MASK) return false;
+    gpu_addr base = gpu_malloc(total, GPU_MEM_SHARED, "ns frame ring");
+    if (!base) return false;
+    u32 slot = 0;
+    u64 off = 0;
+    if (!gpu_v2_decode(base, &slot, &off)) {
+        gpu_free(base);
+        return false;
+    }
+    _v2.ring_base = base;
+    _v2.ring_slot = slot;
+    _v2.ring_section_size = section_size;
+    _v2.ring_head = 0;
+    return true;
+}
+
 gpu_addr gpu_frame_alloc(u64 size, u32 align) {
     if (size == 0) return 0;
     if (align == 0 || (align & (align - 1)) != 0) align = GPU_V2_ALLOC_ALIGN;
 
-    if (!_v2.ring_base) {
-        _v2.ring_base = gpu_malloc(GPU_V2_FRAME_RING_SIZE, GPU_MEM_SHARED, "ns frame ring");
-        if (!_v2.ring_base) return 0;
-        _v2.ring_head = 0;
-        _v2.ring_section = 0;
-        u64 ring_off = 0;
-        if (!gpu_v2_decode(_v2.ring_base, &_v2.ring_slot, &ring_off)) {
-            gpu_free(_v2.ring_base);
-            _v2.ring_base = 0;
-            _v2.ring_slot = 0;
-            return 0;
-        }
-    }
+    if (!_v2.ring_base && !gpu_v2_ring_create(gpu_v2_ring_section_size())) return 0;
 
-    // Keep every swap section's base aligned: integer division of the 4 MiB
-    // ring by three otherwise produces the invalid Metal offset 0x155555.
-    u64 section_size = (GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT) & ~((u64)GPU_V2_ALLOC_ALIGN - 1);
+    u64 section_size = gpu_v2_ring_section_size();
     u64 head = (_v2.ring_head + align - 1) & ~((u64)align - 1);
     if (head + size > section_size) {
-        ns_warn("gpu", "gpu_frame_alloc: frame ring exhausted (%llu of %llu bytes used, %llu requested, %llu peak).\n",
-                (unsigned long long)_v2.ring_head, (unsigned long long)section_size,
-                (unsigned long long)size, (unsigned long long)_v2.ring_peak);
-        return 0;
+        // Grow instead of failing: a new, larger ring serves the rest of this
+        // frame while the old one keeps the addresses already handed out.
+        u64 want = section_size * 2;
+        while (want < size + align) want *= 2;
+        want &= ~((u64)GPU_V2_ALLOC_ALIGN - 1);
+        gpu_addr old_base = _v2.ring_base;
+        u32 old_slot = _v2.ring_slot;
+        u32 free_i = 8;
+        for (u32 i = 0; i < 8; i++) if (!_v2.ring_retired[i].base) { free_i = i; break; }
+        if (free_i == 8 || !gpu_v2_ring_create(want)) {
+            ns_warn("gpu", "gpu_frame_alloc: frame ring exhausted (%llu of %llu bytes used, %llu requested).\n",
+                    (unsigned long long)_v2.ring_head, (unsigned long long)section_size,
+                    (unsigned long long)size);
+            return 0;
+        }
+        _v2.ring_retired[free_i].slot = old_slot;
+        _v2.ring_retired[free_i].base = old_base;
+        _v2.ring_retired[free_i].ttl = GPU_SWAP_BUFFER_COUNT + 1;
+        section_size = gpu_v2_ring_section_size();
+        head = (0 + align - 1) & ~((u64)align - 1);
     }
     _v2.ring_head = head + size;
     if (_v2.ring_head > _v2.ring_peak) _v2.ring_peak = _v2.ring_head;
@@ -474,18 +504,10 @@ void gpu_v2_frame_end(void) {
     }
     _v2.ring_section = (_v2.ring_section + 1) % GPU_SWAP_BUFFER_COUNT;
     _v2.ring_head = 0;
-    // The ring is a per-frame budget, so what a frame spent is worth knowing
-    // before it runs out: a frame that publishes far more than the rest of the
-    // game does is a frame with a write that repeats every frame. Reported
-    // occasionally rather than every frame, or the report is the flood.
-    if (_v2.ring_peak > (GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT) / 16) {
-        _v2.ring_reports = _v2.ring_reports + 1;
-        if (_v2.ring_reports <= 64 || (_v2.ring_reports & 63) == 0) {
-            ns_warn("gpu", "frame %llu: ring peak %llu of %llu bytes, %llu allocated.\n",
-                    (unsigned long long)_v2.ring_reports,
-                    (unsigned long long)_v2.ring_peak,
-                    (unsigned long long)(GPU_V2_FRAME_RING_SIZE / GPU_SWAP_BUFFER_COUNT),
-                    (unsigned long long)_v2.ring_bytes);
+    for (u32 i = 0; i < 8; i++) {
+        if (_v2.ring_retired[i].base && --_v2.ring_retired[i].ttl == 0) {
+            gpu_free(_v2.ring_retired[i].base);
+            _v2.ring_retired[i].base = 0;
         }
     }
     _v2.ring_peak = 0;
