@@ -26,6 +26,11 @@ struct NSGeneratedApp: App {
             #endif
         }
         #if os(visionOS)
+        // No glass backing: the game fills the window, and an immersive session
+        // can fade the window out completely (NSImmersiveControl).
+        .windowStyle(.plain)
+        #endif
+        #if os(visionOS)
         ImmersiveSpace(id: "ns.immersive") {
             CompositorLayer(configuration: NSImmersiveConfiguration()) { renderer in
                 NSImmersiveRenderer(renderer).start()
@@ -50,7 +55,13 @@ private func ns_start_linked_project(status: Binding<String>, started: Binding<B
 struct NSGameView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView(frame: .zero)
+        #if os(visionOS)
+        // The Metal view is hidden while immersed; a black host would leave an
+        // opaque panel floating in the immersive space.
+        view.backgroundColor = .clear
+        #else
         view.backgroundColor = .black
+        #endif
         view.isMultipleTouchEnabled = true
         view_ios_set_host_view(Unmanaged.passUnretained(view).toOpaque())
         return view
@@ -67,8 +78,12 @@ import CompositorServices
 import Metal
 import simd
 
+// The window stays open while immersed, because this loop lives in it and must
+// keep serving view_immersive_request. It is made invisible instead: content
+// faded out, window bar hidden, no hit testing. It returns when the space closes.
 struct NSImmersiveControl: ViewModifier {
     @State private var isOpen = false
+    @State private var windowHidden = false
     @Environment(\.openImmersiveSpace) private var openSpace
     @Environment(\.dismissImmersiveSpace) private var dismissSpace
     func body(content: Content) -> some View {
@@ -76,6 +91,8 @@ struct NSImmersiveControl: ViewModifier {
             view_immersive_host_support(1)
             while !Task.isCancelled {
                 let state = view_immersive_status()
+                let immersed = state == 1 || state == 2
+                if immersed != windowHidden { windowHidden = immersed }
                 if view_immersive_host_requested() != 0 && state <= 0 {
                     ns_immersive_state(1)
                     switch await openSpace(id: "ns.immersive") {
@@ -92,6 +109,9 @@ struct NSImmersiveControl: ViewModifier {
                 try? await Task.sleep(for: .milliseconds(50))
             }
         }
+        .opacity(windowHidden ? 0 : 1)
+        .allowsHitTesting(!windowHidden)
+        .persistentSystemOverlays(windowHidden ? .hidden : .automatic)
     }
 }
 

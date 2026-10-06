@@ -291,6 +291,46 @@ void gpu_set_viewport(i32 x, i32 y, i32 w, i32 h);
 void gpu_set_scissor(i32 x, i32 y, i32 w, i32 h);
 ```
 
+### Immersive frames
+
+On visionOS, while `view_immersive_eye() >= 0`, `gpu_screen_pass_begin`
+targets the current eye of the Compositor Services drawable. It has a color
+texture and a depth texture, and the first screen pass of each eye clears the
+depth to `0.0`. The compositor uses reverse Z (1 is near, 0 is infinitely
+far), and it reads that depth as well as the color. **Any pixel whose depth
+is still 0 when the frame is submitted counts as empty: the compositor drops
+it and the player sees black, whatever color was written there.** Depth also
+drives reprojection when the head moves, so it should be the real depth of
+the surface wherever the application knows it.
+
+Geometry drawn with a depth-writing state already does this. The trap is a
+full-screen triangle that computes color in the fragment shader (raymarched
+scenes, tonemap or composite passes, skies, backgrounds). Without depth
+output its whole area stays at 0 and only the overlay remains visible. For
+those passes:
+
+- Return a struct with a trailing `depth: f32` field from the fragment
+  (`struct out { color0: float4, depth: f32 }`). The transpiler lowers it
+  to the hardware fragment depth.
+- Draw with a state that writes depth, for example
+  `gpu_state_create(..., GPU_COMPARE_ALWAYS, true, ...)`. The window screen
+  pass has no depth attachment, where depth write is ignored, but keep a
+  float4-only fragment for the window pass rather than writing depth into
+  a pass without a depth target.
+- Derive depth from the eye projection `view_immersive_value(16 .. 31)`
+  (column-major): for a surface at view-space distance `z` along the eye's
+  forward axis, `depth = P[3][2] / z - P[2][2]`, that is
+  `view_immersive_value(30) / z - view_immersive_value(26)`. Clamp it to
+  `(0, 1]`.
+- Give sky, space and any pixel with no surface a small positive far depth
+  (for example `0.000001`, or the depth of the far fog distance). Never
+  leave them at 0.
+- A pass that only clears and draws nothing also leaves depth at 0, so it
+  shows black in immersion.
+
+The `ui` overlay already writes depth for what it draws. Transparent overlay
+regions write nothing and show the scene behind them.
+
 ### Binding and drawing
 
 ```c

@@ -530,6 +530,13 @@ check the implementation/declaration for the target platform.
   or `gpu_malloc(..., GPU_MEM_SHARED | GPU_MEM_FRAMES, ...)`. Do not
   `gpu_write` a single persistent buffer the GPU may still be reading. Static
   and GPU-owned storage stays one copy.
+- In a visionOS immersive frame (`view_immersive_eye() >= 0`), write depth
+  for every pixel that should be visible. The screen pass clears reverse-Z
+  depth to 0, and the compositor treats a pixel still at 0 as empty and shows
+  it black. A full-screen pass (raymarched scene, tonemap, sky) needs a
+  fragment that returns a `depth: f32` field and a state with depth write on;
+  sky and backgrounds write a small positive far depth, never 0. See
+  `doc/gpu.md`, "Immersive frames".
 - Use `lit` rather than `let` for module constants and local compile-time
   values that satisfy the literal-expression restrictions. Keep runtime or
   intentionally mutable bindings as `let`, and do not weaken `lit` validation
