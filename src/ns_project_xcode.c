@@ -845,23 +845,6 @@ static ns_bool ns_xcode_copy_ui_asset(const char *runtime_root, const char *mana
     return ok;
 }
 
-static ns_bool ns_xcode_uses_camera(const char *source) {
-    for (const char *line = source; *line;) {
-        const char *end = strchr(line, '\n');
-        if (!end) end = line + strlen(line);
-        const char *p = line;
-        while (p < end && (*p == ' ' || *p == '\t')) ++p;
-        if (end - p >= 4 && strncmp(p, "use", 3) == 0 && (p[3] == ' ' || p[3] == '\t')) {
-            p += 4;
-            while (p < end && (*p == ' ' || *p == '\t')) ++p;
-            if (end - p >= 6 && strncmp(p, "camera", 6) == 0 &&
-                (p + 6 == end || p[6] == ' ' || p[6] == '\t' || p[6] == '\r' || p[6] == '/')) return true;
-        }
-        line = *end ? end + 1 : end;
-    }
-    return false;
-}
-
 static ns_bool ns_xcode_validate_modules(const char *linked_source) {
     const char *line = linked_source;
     while (*line) {
@@ -1172,7 +1155,7 @@ static ns_bool ns_xcode_append_orientations(ns_xcode_buffer *plist, const char *
 }
 
 static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platform, const char *safe_name, const char *version,
-                                    u32 orientations, ns_bool uses_camera) {
+                                    u32 orientations) {
     ns_xcode_buffer plist = {0};
     ns_bool mobile = strcmp(platform, "macOS") != 0;
     char *escaped_name = ns_xcode_xml_escape(safe_name);
@@ -1204,8 +1187,12 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
         ns_xcode_buffer_free(&plist);
         return false;
     }
-    if (uses_camera && !ns_xcode_buffer_append(&plist,
-            "  <key>NSCameraUsageDescription</key><string>Capture video for on-device processing.</string>\n")) {
+    // Camera and network access are requested by default: the prompt only
+    // appears when the program opens the camera or a LAN socket, and a missing
+    // usage string would terminate the app at that call instead.
+    if (!ns_xcode_buffer_append(&plist,
+            "  <key>NSCameraUsageDescription</key><string>Capture video for on-device processing.</string>\n"
+            "  <key>NSLocalNetworkUsageDescription</key><string>Connect to devices and services on the local network.</string>\n")) {
         free(escaped_name); free(escaped_version); ns_xcode_buffer_free(&plist); return false;
     }
     if (mobile && !ns_xcode_buffer_append(&plist, "  <key>UILaunchScreen</key><dict/>\n")) {
@@ -1233,7 +1220,7 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
                                 "    </dict>\n"
                                 "  </dict>\n"
                                 "  <key>NSHandsTrackingUsageDescription</key>\n"
-                                "  <string>读取手部关节位置，用于虚拟环境中的手部交互。</string>\n"
+                                "  <string>Hand joint positions are used for hand interactions in the virtual environment.</string>\n"
                                 "  <key>NSWorldSensingUsageDescription</key>\n"
                                 "  <string>为了让人物融入虚拟环境。</string>\n")) {
         free(escaped_name);
@@ -1332,9 +1319,9 @@ static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *man
     char *generated = ns_xcode_path_join(managed_root, "Generated");
     char *linked = generated ? ns_xcode_path_join(generated, "LinkedProject.ns") : NULL;
     ns_bool ok = linked && ns_xcode_write(linked, linked_source, strlen(linked_source), true) &&
-                 ns_xcode_write_plist(managed_root, "macOS", safe_name, version, spec->orientations, ns_xcode_uses_camera(linked_source)) &&
-                 ns_xcode_write_plist(managed_root, "iOS", safe_name, version, spec->orientations, ns_xcode_uses_camera(linked_source)) &&
-                 ns_xcode_write_plist(managed_root, "visionOS", safe_name, version, spec->orientations, ns_xcode_uses_camera(linked_source));
+                 ns_xcode_write_plist(managed_root, "macOS", safe_name, version, spec->orientations) &&
+                 ns_xcode_write_plist(managed_root, "iOS", safe_name, version, spec->orientations) &&
+                 ns_xcode_write_plist(managed_root, "visionOS", safe_name, version, spec->orientations);
     free(generated);
     free(linked);
     ns_unused(spec);
