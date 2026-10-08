@@ -1058,7 +1058,12 @@ ns_return_bool ns_parse_expr(ns_ast_ctx *ctx) {
                 ns_return_bool ret = ns_parse_postfix_expr(ctx, operand);
                 if (ns_return_is_error(ret)) return ret;
                 if (ret.r) {
-                    ns_parse_stack_push_operand(ctx, ctx->current);
+                    // A designated expr lists its fields through `next`, the
+                    // same link call arguments and array elements use, so it
+                    // is wrapped like a call result before it can be chained.
+                    i32 result = ctx->current;
+                    if (ctx->nodes[result].type == NS_AST_DESIG_EXPR) result = ns_ast_push_expr(ctx, state, result);
+                    ns_parse_stack_push_operand(ctx, result);
                     break;
                 } else {
                     ns_parse_stack_push_operand(ctx, operand);

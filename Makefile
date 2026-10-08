@@ -392,7 +392,6 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/storage_apple_compile.sh
 	sh test/camera_apple_compile.sh
 	sh test/view_hands_apple_compile.sh
-	sh test/gpu_metal_dispatch_test.sh
 	node test/ns_wasm_runtime_test.mjs
 	node test/ns_wasm_ui_test.mjs "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 

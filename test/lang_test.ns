@@ -98,6 +98,15 @@ let nested_d = outer { pre: 7, mid: inner { a: 1.5, b: 2.5 }, post: 9 }
 assert nested_d.pre == 7 && nested_d.post == 9
 assert nested_d.mid.a == 1.5 && nested_d.mid.b == 2.5
 
+// a struct literal keeps its fields when another argument or element follows
+fn point_sum(p: point, q: point, k: f32) f32 {
+    return p.x + p.y * 2.0 + q.x * 4.0 + q.y * 8.0 + k * 16.0
+}
+assert point_sum(point { 1.0, 0.0 }, point { 0.0, 1.0 }, 1.0) == 25.0
+assert point_sum(point { x: 0.0, y: 1.0 }, pos, 0.0) == 50.0
+let literal_points = [point { 1.0, 2.0 }, point { 3.0, 4.0 }]
+assert literal_points[0].y == 2.0 && literal_points[1].x == 3.0
+
 // ---- reference-typed array elements ---------------------------------------------
 let names = [str](3)
 names[0] = "cc"

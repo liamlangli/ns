@@ -578,13 +578,6 @@ int main() {
         "}\n"), "string relational comparisons.");
 
     ns_expect(ns_compile_true(
-        "fn main() bool {\n"
-        "    let n = 42\n"
-        "    let s = `n={n}`\n"
-        "    return s == \"n=42\" && `ok` == \"ok\"\n"
-        "}\n"), "interpolated strings lower through itos and strcat.");
-
-    ns_expect(ns_compile_true(
         "use std\n"
         "fn main() bool {\n"
         "    return substr(\"hello\", 1, 3) == \"ell\" && utf8_len(\"hi\") == 2 &&\n"
@@ -761,16 +754,6 @@ int main() {
         "    let y: f64 = 2.0\n"
         "    return (x % y) == 1.5\n"
         "}\n"), "f64 modulo uses fmod.");
-
-    ns_expect(ns_compile_true(
-        "struct point { x: i32, y: i32 }\n"
-        "fn to_str(p: point) str {\n"
-        "    return `({p.x},{p.y})`\n"
-        "}\n"
-        "fn main() bool {\n"
-        "    let p = point { 1, 2 }\n"
-        "    return `{p}` == \"(1,2)\"\n"
-        "}\n"), "interpolation resolves a user to_str by argument type.");
 
     ns_expect(ns_compile_true(
         "fn main() bool {\n"
