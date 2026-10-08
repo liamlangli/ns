@@ -50,4 +50,17 @@ assert dot(b, b) == 25.0
 let n2 = normalize(float2 { 0.0, 4.0 })
 assert n2.x == 0.0 && n2.y == 1.0
 
+// min/max/clamp/abs keep integer arguments in their own type, so a
+// clamped index still drives an i32 range.
+let lo = max(-3, 0)
+let hi = min(5, 4)
+let steps = 0
+for i in lo to hi { steps = steps + 1 }
+assert steps == 4
+assert clamp(12, 0, 9) == 9
+assert abs(-7) == 7
+let wide: i64 = 5000000000
+assert max(wide, 1 as i64) == wide
+assert max(1.5, 2.5) == 2.5
+
 print("fn overload test passed\n")

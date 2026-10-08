@@ -174,6 +174,46 @@ fn abs(value: f32) f32 {
     return value
 }
 
+// Integer overloads (stored as min_i32, max_i64, ...). Without them a call
+// such as `max(n, 0)` falls back to the f32 version and yields f32.
+fn min(a: i32, b: i32) i32 {
+    if a < b { return a }
+    return b
+}
+
+fn max(a: i32, b: i32) i32 {
+    if a > b { return a }
+    return b
+}
+
+fn clamp(value: i32, lo: i32, hi: i32) i32 {
+    return min(hi, max(lo, value))
+}
+
+fn abs(value: i32) i32 {
+    if value < 0 { return 0 - value }
+    return value
+}
+
+fn min(a: i64, b: i64) i64 {
+    if a < b { return a }
+    return b
+}
+
+fn max(a: i64, b: i64) i64 {
+    if a > b { return a }
+    return b
+}
+
+fn clamp(value: i64, lo: i64, hi: i64) i64 {
+    return min(hi, max(lo, value))
+}
+
+fn abs(value: i64) i64 {
+    if value < 0 { return 0 - value }
+    return value
+}
+
 fn lerp(a: f32, b: f32, t: f32) f32 {
     return a + (b - a) * t
 }
