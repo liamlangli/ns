@@ -143,9 +143,23 @@ static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const 
     ns_bool generated_native_old = ok && strstr(text, "4E535052") && strstr(text, "isa = PBXNativeTarget;") &&
                                    strstr(text, ".nsproject") &&
                                    !strstr(text, "NSProjectGeneratorVersion = " NS_XCODE_GENERATOR_VERSION ";");
+    // Tools that reserialize the project (CocoaPods' xcodeproj) drop the quotes
+    // around a single-word value, so accept the unquoted spelling as well.
+    ns_bool assets_present = !expects_assets || strstr(text, expects_assets);
+    if (!assets_present) {
+        char *bare = (char *)malloc(strlen(expects_assets) + 1);
+        if (bare) {
+            char *out = bare;
+            for (const char *in = expects_assets; *in; ++in) {
+                if (*in != '"') *out++ = *in;
+            }
+            *out = '\0';
+            assets_present = strstr(text, bare) != NULL;
+            free(bare);
+        }
+    }
     ns_bool generated_native_assets_mismatch =
-        ok && strstr(text, "NSProjectGeneratorVersion = " NS_XCODE_GENERATOR_VERSION ";") && expects_assets &&
-        !strstr(text, expects_assets);
+        ok && strstr(text, "NSProjectGeneratorVersion = " NS_XCODE_GENERATOR_VERSION ";") && !assets_present;
     ns_bool generated_native_icon_mismatch =
         ok && strstr(text, "NSProjectGeneratorVersion = " NS_XCODE_GENERATOR_VERSION ";") &&
         ((expects_app_icon && !strstr(text, "App Icon Assets in Resources")) ||
