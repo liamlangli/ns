@@ -235,7 +235,10 @@ static void dx12_begin_event(const char *label) {
                                          name, (UINT)(strlen(name) + 1));
 }
 
-static void dx12_screen_pass_begin(const char *label, gpu_color clear) {
+// No draw path yet, so the screen depth buffer has nothing to test.
+static void dx12_screen_pass_begin(const char *label, gpu_color clear, ns_bool depth, f32 depth_clear) {
+    ns_unused(depth);
+    ns_unused(depth_clear);
     if (!_state.valid || _state.pass_open) return;
     _state.frame_index = IDXGISwapChain3_GetCurrentBackBufferIndex(_state.swapchain);
     gpu_dx12_wait_for_frame(_state.frame_index);

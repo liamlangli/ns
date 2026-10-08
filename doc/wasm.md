@@ -131,6 +131,11 @@ caret hit-testing), the safe-area and layout helpers, the immediate-mode widget
 layer (buttons, sliders, colour pickers, hit regions), and the selectable
 read-only label helpers.
 
+A 3D panel (`ui_set_panel`) is drawn with the affine map through its three
+projected corners, since Canvas 2D has no perspective, and without depth, so
+scene geometry in front of it does not hide it. `ui_panel_touch_update` tracks
+fingertips exactly as a native build does.
+
 A canvas has one context, so a `ui` project drives the application canvas in 2D
 mode. An application that imports `gpu` as well keeps WebGPU on that canvas and
 the middleware gives the ui module a transparent overlay canvas of its own,

@@ -2393,8 +2393,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "gpu_shader_target|gpu_set_viewport|gpu_set_scissor|gpu_commit|"
             "gpu_caps|gpu_storage_slot_count|gpu_malloc|gpu_free|gpu_write|gpu_read|gpu_frame_alloc|gpu_texture_create|"
             "gpu_texture_upload|gpu_texture_destroy|gpu_sampler_create|gpu_sampler_destroy|"
-            "gpu_shader_graphics_create|gpu_shader_compute_create|gpu_shader_destroy|gpu_state_create|"
-            "gpu_pass_begin|gpu_screen_pass_begin|gpu_pass_end|gpu_set_shader|gpu_set_state|gpu_set_root|"
+            "gpu_shader_graphics_create|gpu_shader_compute_create|gpu_shader_destroy|gpu_state_create|gpu_state_stencil|"
+            "gpu_pass_begin|gpu_screen_pass_begin|gpu_screen_pass_begin_depth|gpu_pass_end|gpu_set_shader|gpu_set_state|gpu_set_stencil_ref|gpu_set_root|"
             "gpu_set_root_data|gpu_set_storage_at|gpu_draw_vertices|gpu_draw_indexed|gpu_draw_indirect|gpu_dispatch|"
             "gpu_dispatch_indirect|gpu_signal_after|gpu_wait_before|gpu_pixel_format_size|"
             "gpu_pixel_format_row_pitch|gpu_pixel_format_surface_pitch");
@@ -2418,6 +2418,8 @@ static ns_bool ns_wasm_supported_import(ns_str module, ns_str name) {
             "ui_content_x|ui_content_y|ui_surface_x|ui_surface_y|ui_layout|"
             // immersive gaze; a canvas has no head pose, so it reports inactive
             "ui_hud_gaze_active|ui_hud_gaze_x|ui_hud_gaze_y|"
+            // 3D panel: a canvas has no perspective, so it maps affinely
+            "ui_set_panel|ui_clear_panel|ui_panel_touch_update|"
             // image atlases
             "ui_atlas_load|ui_atlas_destroy|ui_atlas_width|ui_atlas_height|"
             "ui_atlas_draw|ui_atlas_draw_region|"

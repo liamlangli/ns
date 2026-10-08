@@ -134,6 +134,17 @@ assert s1 != 0u
 assert s1 == s2
 assert s3 != 0u && s3 != s1
 
+// Stencil variants are value-cached states of their own; clearing the stencil
+// fields leads back to the base state.
+let write = gpu_state_stencil(s1, GPU_COMPARE_ALWAYS, GPU_STENCIL_OP_REPLACE)
+assert write != 0u && write != s1
+assert gpu_state_stencil(s1, GPU_COMPARE_ALWAYS, GPU_STENCIL_OP_REPLACE) == write
+let outside = gpu_state_stencil(s1, GPU_COMPARE_NOT_EQUAL, GPU_STENCIL_OP_KEEP)
+assert outside != 0u && outside != write
+assert gpu_state_stencil(write, 0, GPU_STENCIL_OP_KEEP) == s1
+assert gpu_state_stencil(0u, GPU_COMPARE_EQUAL, GPU_STENCIL_OP_KEEP) == 0u
+gpu_set_stencil_ref(1u)
+
 // -- resources and submission without a device --------------------------------
 assert gpu_texture_create(16, 16, 1, GPU_PIXELFORMAT_RGBA8, 1u, 1, GPU_TEXTURE_2D) == 0u
 assert gpu_sampler_create(2, 2, 0, 1, 1, 1, 0, 1) == 0u

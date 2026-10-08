@@ -216,6 +216,33 @@ typedef struct ui_insets {
     f64 left;
 } ui_insets;
 
+// A fingertip against the 3D panel (ui_panel_touch_update), in canvas units.
+typedef struct ui_panel_touch {
+    f64 x;
+    f64 y;
+    f64 depth;
+    ns_bool inside;
+    ns_bool hover;
+    ns_bool down;
+    ns_bool pressed;
+    ns_bool released;
+} ui_panel_touch;
+
+#define UI_PANEL_TOUCHES 4
+// Touch distances as fractions of the panel's smaller half extent: how far in
+// front a fingertip hovers, and how far back out a pressed one must come
+// before it releases, so tracking jitter at the plane cannot double-click.
+#define UI_PANEL_HOVER_RANGE 0.5
+#define UI_PANEL_RELEASE_MARGIN 0.04
+// How far past an edge, in panel half extents, a pressed touch may slide.
+#define UI_PANEL_DRAG_SLACK 1.25
+
+typedef struct ui_panel_touch_state {
+    ns_bool tracked;
+    ns_bool down;
+    f64 depth;
+} ui_panel_touch_state;
+
 typedef struct ui_renderer {
     void *handle;
     view *v;
@@ -260,10 +287,22 @@ typedef struct ui_renderer {
     u32 shader_arc_sdf;
     u32 render_state;
     u32 render_state_hud;
+    u32 render_state_panel;
     u32 textures[UI_MAX_TEXTURES];
     i32 texture_widths[UI_MAX_TEXTURES];
     i32 texture_heights[UI_MAX_TEXTURES];
     ui_rect_batch rect_batches[UI_MAX_RECT_BATCHES];
+    // 3D panel (ui_set_panel). panel_clip maps the canvas's (u, v, 0, 1), with
+    // u and v in -1..1, to clip space; the world frame serves touch tests.
+    ns_bool panel;
+    f32 panel_clip[16];
+    f64 panel_center[3];
+    f64 panel_right[3];
+    f64 panel_up[3];
+    f64 panel_normal[3];
+    f64 panel_half_w;
+    f64 panel_half_h;
+    ui_panel_touch_state touches[UI_PANEL_TOUCHES];
     gpu_addr storage;
     u64 storage_capacity;
     ns_bool gpu_ready;
@@ -283,6 +322,9 @@ typedef struct ui_gpu_root {
     f32 hud_up_hh[4];
     f32 hud_proj[4];
     f32 hud_depth[4];
+    // ui_set_panel: clip space from the canvas's (u, v, 0, 1), column-major.
+    f32 panel[16];
+    f32 panel_enable[4];
 } ui_gpu_root;
 
 typedef struct ui_theme { void *handle; } ui_theme;
@@ -346,7 +388,7 @@ static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inne
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
-"struct UiRoot { float texture_id; float unused_texture_id; float screen_width; float screen_height; float offset_x; float offset_y; uint vertex_offset; uint clip_offset; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; };\n"
+"struct UiRoot { float texture_id; float unused_texture_id; float screen_width; float screen_height; float offset_x; float offset_y; uint vertex_offset; uint clip_offset; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4x4 panel; float4 panel_enable; };\n"
 "struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; };\n"
 "vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
 "  uint base = ns_root.vertex_offset / 4u + vertex_id * 9u;\n"
@@ -365,6 +407,7 @@ static const char *ui_shader_src =
 "    float ndc_z = clamp(0.0 - ns_root.hud_depth.x + ns_root.hud_depth.y / z, 0.0, 1.0);\n"
 "    pos = float4(clip_x, clip_y, ndc_z * z, z);\n"
 "  }\n"
+"  if (ns_root.panel_enable.x > 0.5) { pos = ns_root.panel * float4(ndc, 0.0, 1.0); }\n"
 "  VOut o; o.pos = pos; o.pixel = pixel; o.uv = uv;\n"
 "  o.col = float4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
 "  o.params = params; return o;\n"
@@ -434,6 +477,8 @@ static const char *ui_shader_glsl_vertex_prelude =
     "    vec4 hud_up_hh;\n"
     "    vec4 hud_proj;\n"
     "    vec4 hud_depth;\n"
+    "    mat4 panel;\n"
+    "    vec4 panel_enable;\n"
     "} ns_root;\n"
     "layout(set = 0, binding = 8, std430) readonly buffer UiStorage { uint values[]; } ns_storage_buffer_0_block;\n"
     "#define ns_storage_buffer_0 ns_storage_buffer_0_block.values\n"
@@ -458,6 +503,8 @@ static const char *ui_shader_glsl_fragment_prelude =
     "    vec4 hud_up_hh;\n"
     "    vec4 hud_proj;\n"
     "    vec4 hud_depth;\n"
+    "    mat4 panel;\n"
+    "    vec4 panel_enable;\n"
     "} ns_root;\n"
     "layout(set = 0, binding = 8, std430) readonly buffer UiStorage { uint values[]; } ns_storage_buffer_0_block;\n"
     "#define ns_storage_buffer_0 ns_storage_buffer_0_block.values\n"
@@ -494,6 +541,7 @@ static const char *ui_shader_glsl_vs_body =
     "        float ndc_z = clamp(0.0 - ns_root.hud_depth.x + ns_root.hud_depth.y / z, 0.0, 1.0);\n"
     "        pos = vec4(clip_x, clip_y, ndc_z * z, z);\n"
     "    }\n"
+    "    if (ns_root.panel_enable.x > 0.5) { pos = ns_root.panel * vec4(ndc, 0.0, 1.0); }\n"
     "    ns_pixel = pixel;\n"
     "    ns_uv = uv;\n"
     "    ns_col = vec4(float((color >> 0u) & 255u), float((color >> 8u) & 255u), float((color >> 16u) & 255u), float((color >> 24u) & 255u)) / 255.0;\n"
@@ -1331,9 +1379,14 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     // pixels as if they belonged to the world behind them.
     r->render_state_hud = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
                                            COMPARE_ALWAYS, true, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
+    // A 3D panel is tested against the scene's depth so geometry in front of
+    // it (a hand) hides it, but never writes depth: its layers share a plane
+    // and keep painter's order.
+    r->render_state_panel = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
+                                             COMPARE_LESS_EQUAL, false, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
     r->gpu_ready = r->white_texture && r->font_texture && r->shader_image &&
                    r->shader_msdf && r->shader_bitmap && r->shader_arc_sdf && r->render_state &&
-                   r->render_state_hud;
+                   r->render_state_hud && r->render_state_panel;
 }
 
 static f64 ui_view_content_scale(view *v) {
@@ -2038,6 +2091,100 @@ f64 ui_hud_gaze_y(ui_renderer *r) {
     return (1.0 - (f64)hud.gaze_v) * 0.5 * r->rect.h;
 }
 
+static f64 ui_dot3d(const f64 a[3], const f64 b[3]) {
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static ns_bool ui_unit3d(f64 v[3]) {
+    f64 length = sqrt(ui_dot3d(v, v));
+    if (length < 1e-9) return false;
+    v[0] /= length;
+    v[1] /= length;
+    v[2] /= length;
+    return true;
+}
+
+// Lay the canvas out on a flat panel in 3D: its centre, its right and up
+// directions and its half extents in world units, seen through view_proj (16
+// floats, column-major, clip space with z in 0..1). The canvas fills the panel
+// edge to edge, left to right along `right` and top to bottom against `up`.
+void ui_set_panel(ui_renderer *r, f32 *view_proj,
+                  f64 center_x, f64 center_y, f64 center_z,
+                  f64 right_x, f64 right_y, f64 right_z,
+                  f64 up_x, f64 up_y, f64 up_z,
+                  f64 half_width, f64 half_height) {
+    if (!r || !view_proj || half_width <= 0.0 || half_height <= 0.0) return;
+    f64 right[3] = {right_x, right_y, right_z};
+    f64 up[3] = {up_x, up_y, up_z};
+    if (!ui_unit3d(right) || !ui_unit3d(up)) return;
+    f64 normal[3] = {right[1] * up[2] - right[2] * up[1], right[2] * up[0] - right[0] * up[2], right[0] * up[1] - right[1] * up[0]};
+    if (!ui_unit3d(normal)) return;
+    // panel_clip = view_proj * (right * half_width, up * half_height, normal, centre).
+    const f64 basis[4][4] = {
+        {right[0] * half_width, right[1] * half_width, right[2] * half_width, 0.0},
+        {up[0] * half_height, up[1] * half_height, up[2] * half_height, 0.0},
+        {normal[0], normal[1], normal[2], 0.0},
+        {center_x, center_y, center_z, 1.0},
+    };
+    for (i32 column = 0; column < 4; column++) {
+        for (i32 row = 0; row < 4; row++) {
+            f64 sum = 0.0;
+            for (i32 k = 0; k < 4; k++) sum += (f64)view_proj[k * 4 + row] * basis[column][k];
+            r->panel_clip[column * 4 + row] = (f32)sum;
+        }
+    }
+    r->panel_center[0] = center_x;
+    r->panel_center[1] = center_y;
+    r->panel_center[2] = center_z;
+    memcpy(r->panel_right, right, sizeof(right));
+    memcpy(r->panel_up, up, sizeof(up));
+    memcpy(r->panel_normal, normal, sizeof(normal));
+    r->panel_half_w = half_width;
+    r->panel_half_h = half_height;
+    r->panel = true;
+}
+
+void ui_clear_panel(ui_renderer *r) {
+    if (r) r->panel = false;
+}
+
+// Follow one fingertip (touch 0..3) against the panel. Its world position
+// lands on the canvas at (x, y); depth is its distance in front of the panel,
+// toward the viewer. It hovers within reach in front of the panel, presses
+// when it crosses the plane inside the canvas, stays down while it is behind
+// the plane, and releases once it comes back out past a small margin or is
+// lost. pressed and released hold for the one update that changed them.
+ui_panel_touch *ui_panel_touch_update(ui_renderer *r, i32 touch, ns_bool tracked, f64 x, f64 y, f64 z) {
+    static ui_panel_touch result;
+    memset(&result, 0, sizeof(result));
+    if (!r || !r->panel || touch < 0 || touch >= UI_PANEL_TOUCHES) return &result;
+    ui_panel_touch_state *state = &r->touches[touch];
+    f64 offset[3] = {x - r->panel_center[0], y - r->panel_center[1], z - r->panel_center[2]};
+    f64 u = ui_dot3d(offset, r->panel_right) / r->panel_half_w;
+    f64 v = ui_dot3d(offset, r->panel_up) / r->panel_half_h;
+    f64 depth = ui_dot3d(offset, r->panel_normal);
+    f64 extent = r->panel_half_w < r->panel_half_h ? r->panel_half_w : r->panel_half_h;
+    result.x = (u + 1.0) * 0.5 * r->rect.w - r->safe_rect.x;
+    result.y = (1.0 - v) * 0.5 * r->rect.h - r->safe_rect.y;
+    result.depth = depth;
+    result.inside = tracked && fabs(u) <= 1.0 && fabs(v) <= 1.0;
+    ns_bool near = tracked && fabs(u) <= UI_PANEL_DRAG_SLACK && fabs(v) <= UI_PANEL_DRAG_SLACK;
+    if (state->down) {
+        if (!near || depth > extent * UI_PANEL_RELEASE_MARGIN) {
+            state->down = false;
+            result.released = true;
+        }
+    } else if (result.inside && state->tracked && state->depth > 0.0 && depth <= 0.0) {
+        state->down = true;
+        result.pressed = true;
+    }
+    result.down = state->down;
+    result.hover = result.inside && !state->down && depth > 0.0 && depth <= extent * UI_PANEL_HOVER_RANGE;
+    state->tracked = tracked;
+    state->depth = depth;
+    return &result;
+}
+
 void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     if (!r || !r->gpu_ready) return;
     u32 clip_offset = 0;
@@ -2055,11 +2202,14 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     // adapter retains the historical opaque pointer ABI. The old renderer did
     // not dereference it either; keep that ABI and use the established default.
     ns_unused(clear);
-    gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
-    gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
     ui_hud_frame hud_frame;
     ns_bool hud = ui_hud_solve(&hud_frame);
-    gpu_set_state(hud ? r->render_state_hud : r->render_state);
+    // The immersive HUD places itself; a 3D panel otherwise.
+    ns_bool panel = !hud && r->panel;
+    if (panel) gpu_screen_pass_begin_depth("ui panel", 0.0, 0.0, 0.0, 1.0, 1.0);
+    else gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
+    gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
+    gpu_set_state(hud ? r->render_state_hud : (panel ? r->render_state_panel : r->render_state));
     gpu_set_storage(r->storage);
     for (i32 i = 0; i < r->command_count; i++) {
         ui_command *cmd = &r->commands[i];
@@ -2072,10 +2222,11 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         if (y0 < 0) y0 = 0;
         if (x1 > framebuffer_width) x1 = framebuffer_width;
         if (y1 > framebuffer_height) y1 = framebuffer_height;
-        if (x1 <= x0 || y1 <= y0) continue;
-        // 3D HUD projection moves triangles off the 2D clip rect; pixel clips
-        // still run in the fragment shader from canvas coordinates.
-        if (hud) gpu_set_scissor(0, 0, framebuffer_width, framebuffer_height);
+        // A 3D HUD or panel projection moves triangles off the 2D clip rect;
+        // pixel clips still run in the fragment shader from canvas coordinates.
+        ns_bool projected = hud || panel;
+        if (!projected && (x1 <= x0 || y1 <= y0)) continue;
+        if (projected) gpu_set_scissor(0, 0, framebuffer_width, framebuffer_height);
         else gpu_set_scissor(x0, y0, x1 - x0, y1 - y0);
         ui_rect_batch *batch = NULL;
         u32 shader = r->shader_image;
@@ -2101,6 +2252,10 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             .clip_offset = clip_offset,
         };
         if (hud) ui_fill_hud_root(&root, &hud_frame);
+        if (panel) {
+            memcpy(root.panel, r->panel_clip, sizeof(root.panel));
+            root.panel_enable[0] = 1.0f;
+        }
         gpu_set_shader(shader);
         gpu_set_root_data(&root, sizeof(root));
         gpu_draw_vertices(batch ? 0 : cmd->vertex_offset, cmd->vertex_count, 1);

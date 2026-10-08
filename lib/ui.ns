@@ -357,6 +357,43 @@ ref fn ui_hud_gaze_active(r: ref ui_renderer) bool
 ref fn ui_hud_gaze_x(r: ref ui_renderer) f64
 ref fn ui_hud_gaze_y(r: ref ui_renderer) f64
 
+// 3D panel. The canvas is laid out as usual and drawn onto a flat panel in the
+// application's own 3D scene: centre, right and up directions and half extents
+// in world units, seen through view_proj (16 floats, column-major, clip z in
+// 0..1, depth growing away from the camera). The canvas fills the panel edge
+// to edge; ui_resize_to sets its layout size independently of the screen.
+// The flush draws it in a depth screen pass (gpu_screen_pass_begin_depth) and
+// tests it against the depth already there without writing any, so geometry
+// drawn earlier in front of the panel - a hand - hides the part behind it.
+// It stays in place until ui_clear_panel returns the canvas to the screen.
+// The visionOS immersive HUD takes precedence while it is up.
+ref fn ui_set_panel(r: ref ui_renderer, view_proj: [f32], center_x: f64, center_y: f64, center_z: f64, right_x: f64, right_y: f64, right_z: f64, up_x: f64, up_y: f64, up_z: f64, half_width: f64, half_height: f64)
+ref fn ui_clear_panel(r: ref ui_renderer)
+
+// A fingertip against the panel, in canvas units like view.mouse_x after
+// ui_content_x. depth is its distance in front of the panel, toward the
+// viewer. inside: it lies over the canvas. hover: inside and within reach in
+// front (half the panel's smaller half extent). down: it crossed the plane
+// inside the canvas and has not come back out. pressed and released are true
+// for the one update that changed down.
+struct ui_panel_touch {
+    x: f64,
+    y: f64,
+    depth: f64,
+    inside: bool,
+    hover: bool,
+    down: bool,
+    pressed: bool,
+    released: bool
+}
+
+// Update fingertip `touch` (0..3, one per finger an application follows) with
+// its world position, once per frame after ui_set_panel. A touch that is not
+// tracked releases. A press needs the fingertip seen in front of the panel
+// first, so a hand that appears already behind it does not click. The result
+// is one shared record, valid until the next update: copy what you keep.
+ref fn ui_panel_touch_update(r: ref ui_renderer, touch: i32, tracked: bool, x: f64, y: f64, z: f64) ref ui_panel_touch
+
 // Fill the whole drawable, insets included, ignoring the current clip.
 ref fn ui_fill_surface(r: ref ui_renderer, rgba: u32)
 

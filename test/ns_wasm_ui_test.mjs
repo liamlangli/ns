@@ -110,6 +110,30 @@ fn draw_frame() {
     ui_flush(r, ui_clear_color())
 }
 
+// A panel one unit in front of an identity camera, covering the middle half of
+// the screen.
+let panel_view_proj = [f32](16)
+
+fn panel_frame() {
+    for i in 0 to 16 { panel_view_proj[i] = 0.0 }
+    panel_view_proj[0] = 1.0
+    panel_view_proj[5] = 1.0
+    panel_view_proj[10] = 1.0
+    panel_view_proj[15] = 1.0
+    ui_set_panel(r, panel_view_proj, 0.0, 0.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.5, 0.5)
+    ui_begin_frame(r)
+    ui_fill_rect(r, 4.0, 5.0, 30.0, 20.0, 0xff112233, 0.0)
+    ui_flush(r, ui_clear_color())
+}
+
+fn panel_touch(z: f64) ui_panel_touch {
+    return ui_panel_touch_update(r, 0, true, 0.25, 0.0, z)
+}
+
+fn panel_touch_x(z: f64) f64 { return panel_touch(z).x }
+fn panel_touch_pressed(z: f64) bool { return panel_touch(z).pressed }
+fn panel_clear() { ui_clear_panel(r) }
+
 fn ui_clear_color() ui_color_rgba {
     return ui_color_rgba { r: 0.1, g: 0.2, b: 0.3, a: 1.0 }
 }
@@ -186,6 +210,7 @@ const context = {
   fillRect() { painted.push('fillRect'); }, strokeRect() { painted.push('strokeRect'); },
   clearRect() { painted.push('clearRect'); },
   drawImage() {}, rotate() {},
+  transform(a, b, c, d, e, f) { painted.push(`transform:${[a, b, c, d, e, f].map(x => Math.round(x * 100) / 100).join(',')}`); },
   fillText(text) { painted.push(`text:${text}`); },
   // A fixed 8 px cell keeps the expected metrics arithmetic exact.
   measureText(text) { return { width: [...text].length * 8 }; },
@@ -242,6 +267,19 @@ assert(painted.includes('text:native UI'), 'text is painted');
 assert(painted.filter(entry => entry.startsWith('text:天') || entry.startsWith('text:行')).length >= 2,
   'vertical text paints one glyph per cell');
 assert(painted.includes('stroke'), 'strokes are painted');
+
+// A 3D panel maps the canvas affinely onto its projected corners: with an
+// identity camera the panel spans the middle half of the 480 x 270 screen.
+painted.length = 0;
+instance.exports.panel_frame();
+assert(painted.includes('transform:0.5,0,0,0.5,120,67.5'), `panel transform: ${painted.filter(e => e.startsWith('transform'))}`);
+assert(painted.includes('fillRect'), 'the panel content is painted');
+// A fingertip a quarter unit right of centre lands three quarters across the
+// canvas; it presses once it crosses the panel plane from in front.
+assert.equal(instance.exports.panel_touch_x(-0.9), 360);
+assert.equal(instance.exports.panel_touch_pressed(-1.1), 1);
+assert.equal(instance.exports.panel_touch_pressed(-1.2), 0, 'a held touch presses once');
+instance.exports.panel_clear();
 
 // A device safe area moves the content origin and shrinks the canvas.
 padding.paddingTop = '47px';

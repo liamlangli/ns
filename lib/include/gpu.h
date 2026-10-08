@@ -88,6 +88,15 @@ void gpu_shader_destroy(u32 shader);
 u32 gpu_state_create(i32 primitive_type, i32 cull_mode, i32 face_winding,
                      i32 depth_compare, ns_bool depth_write,
                      i32 blend_preset, u32 color_mask);
+// The same state with a stencil test: a fragment passes where
+// `reference compare stored` holds (gpu_compare_func; reference from
+// gpu_set_stencil_ref) and then applies pass_op (gpu_stencil_op) to the stored
+// value; a failing fragment keeps it. COMPARE_ALWAYS with STENCIL_OP_KEEP is
+// the stencil-off state every gpu_state_create returns. Only the screen pass
+// carries a stencil buffer, cleared to 0 by the frame's first screen pass; in
+// any other pass, and on a backend without one, the test is skipped.
+// The screen stencil and depth buffers are one depth-stencil target.
+u32 gpu_state_stencil(u32 state, i32 compare, i32 pass_op);
 
 // ---- passes ------------------------------------------------------------------
 // Attachments are texture indices, 0 = unused; load_flags packs a
@@ -102,11 +111,18 @@ void gpu_pass_begin(const char *label,
                     u32 depth, u32 load_flags,
                     f64 r, f64 g, f64 b, f64 a, f64 depth_clear);
 void gpu_screen_pass_begin(const char *label, f64 r, f64 g, f64 b, f64 a);
+// The screen pass with the screen depth buffer under test: states' depth
+// compare and depth write apply. The frame's first depth screen pass clears
+// that buffer to depth_clear and later ones keep it, so a 3D layer drawn in
+// one pass occludes what a later pass draws behind it. gpu_screen_pass_begin
+// leaves depth untested and unwritten.
+void gpu_screen_pass_begin_depth(const char *label, f64 r, f64 g, f64 b, f64 a, f64 depth_clear);
 void gpu_pass_end(void);
 
 // ---- binding and drawing -----------------------------------------------------
 void gpu_set_shader(u32 shader);
 void gpu_set_state(u32 state);
+void gpu_set_stencil_ref(u32 ref); // 8-bit reference for gpu_state_stencil tests
 void gpu_set_root(gpu_addr args);
 void gpu_set_storage(gpu_addr addr);
 void gpu_set_storage_at(i32 index, gpu_addr addr);
@@ -143,7 +159,16 @@ typedef struct gpu_v2_state_desc {
     ns_bool depth_write;
     i32 blend_preset;
     u32 color_mask;
+    // Zero (COMPARE_AUTO, STENCIL_OP_KEEP) is stencil off, like COMPARE_ALWAYS
+    // with STENCIL_OP_KEEP; see gpu_v2_stencil_enabled.
+    i32 stencil_compare;
+    i32 stencil_pass_op;
 } gpu_v2_state_desc;
+
+static inline ns_bool gpu_v2_stencil_enabled(const gpu_v2_state_desc *desc) {
+    return desc && ((desc->stencil_compare != COMPARE_AUTO && desc->stencil_compare != COMPARE_ALWAYS) ||
+                    desc->stencil_pass_op != STENCIL_OP_KEEP);
+}
 
 typedef struct gpu_v2_ops {
     // memory: create backing for slot; may return a real device base address
@@ -181,10 +206,12 @@ typedef struct gpu_v2_ops {
     void (*pass_begin)(const char *label,
                        u32 color0, u32 color1, u32 color2, u32 color3,
                        u32 depth, u32 load_flags, gpu_color clear, f32 depth_clear);
-    void (*screen_pass_begin)(const char *label, gpu_color clear);
+    // depth: test and write the screen depth buffer (gpu_screen_pass_begin_depth).
+    void (*screen_pass_begin)(const char *label, gpu_color clear, ns_bool depth, f32 depth_clear);
     void (*pass_end)(void);
     void (*set_shader)(u32 shader);
     void (*set_state)(const gpu_v2_state_desc *desc);
+    void (*set_stencil_ref)(u32 ref);
     void (*set_root)(u32 slot, u64 offset, gpu_addr addr);
     void (*set_storage)(u32 binding, u32 slot, u64 offset, gpu_addr addr);
     void (*draw)(i32 vertex_base, i32 vertex_count, i32 instance_count);

@@ -272,6 +272,47 @@ u32 gpu_state_create(i32 primitive_type, i32 cull_mode, i32 face_winding,
 
 No `gpu_pipeline`, no `gpu_binding`, no `gpu_mesh`, no vertex layout tables.
 
+### Stencil
+
+```c
+// The same state with a stencil test: a fragment passes where
+// `reference compare stored` holds and then applies pass_op to the stored
+// value; a failing fragment keeps it. Value-cached like gpu_state_create.
+u32  gpu_state_stencil(u32 state, i32 compare, i32 pass_op); // gpu_compare_func, gpu_stencil_op
+void gpu_set_stencil_ref(u32 ref);                           // 8-bit reference
+```
+
+Every state `gpu_state_create` returns has the stencil off; it is the same
+state as `gpu_state_stencil(state, COMPARE_ALWAYS, STENCIL_OP_KEEP)`. Masks
+are full (`0xff`) for reading and writing, and front and back faces share
+one test.
+
+The stencil buffer belongs to the screen pass. Metal, Vulkan and WebGPU each
+keep a depth-stencil target the size of the drawable (8-bit stencil), whose
+stencil is cleared to 0 by the frame's first screen pass and loaded by every
+later screen pass of the frame. `gpu_pass_begin` targets have no stencil
+plane yet, nor do the visionOS immersive eye targets, and the DirectX 12
+backend does not draw yet; there a stencil state draws exactly like its
+stencil-off base. On Metal the test lives in the depth-stencil state rather
+than the pipeline, so switching between stencil variants of one state never
+compiles a pipeline.
+
+### Screen depth
+
+```c
+void gpu_screen_pass_begin_depth(const char *label, f64 r, f64 g, f64 b, f64 a, f64 depth_clear);
+```
+
+A plain `gpu_screen_pass_begin` never tests or writes depth, whatever the
+state asks for. `gpu_screen_pass_begin_depth` is the same screen pass with
+the screen depth buffer under test: each state's depth compare and depth
+write apply. The frame's first depth screen pass clears that depth to
+`depth_clear`; later screen passes keep it. That is how 3D layers in
+separate passes occlude one another: a hand drawn with a depth-writing state
+in one depth screen pass hides the part of a `ui` panel (`ui_set_panel`)
+behind it in the next. In a visionOS immersive frame both entry points
+attach the compositor's eye depth, as before.
+
 ### Passes
 
 ```c

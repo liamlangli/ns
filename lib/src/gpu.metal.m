@@ -171,6 +171,20 @@ static MTLCompareFunction _mtl_compare_function(gpu_compare_func func) {
     return MTLCompareFunctionAlways;
 }
 
+static MTLStencilOperation _mtl_stencil_op(gpu_stencil_op op) {
+    switch (op) {
+        case STENCIL_OP_ZERO: return MTLStencilOperationZero;
+        case STENCIL_OP_REPLACE: return MTLStencilOperationReplace;
+        case STENCIL_OP_INCR_CLAMP: return MTLStencilOperationIncrementClamp;
+        case STENCIL_OP_DECR_CLAMP: return MTLStencilOperationDecrementClamp;
+        case STENCIL_OP_INVERT: return MTLStencilOperationInvert;
+        case STENCIL_OP_INCR_WRAP: return MTLStencilOperationIncrementWrap;
+        case STENCIL_OP_DECR_WRAP: return MTLStencilOperationDecrementWrap;
+        case STENCIL_OP_KEEP: return MTLStencilOperationKeep;
+    }
+    return MTLStencilOperationKeep;
+}
+
 static MTLCullMode _mtl_cull_mode(gpu_cull_mode mode) {
     switch (mode) {
         case CULL_NONE: return MTLCullModeNone;
@@ -271,10 +285,10 @@ typedef struct gpu_shader_mtl {
     id<MTLFunction> compute_func;
     id<MTLComputePipelineState> compute_pso;
     id<MTLRenderPipelineState> v2_pso;
-    id<MTLDepthStencilState> v2_dso;
     gpu_v2_state_desc v2_state;
     MTLPixelFormat v2_colors[4];
     MTLPixelFormat v2_depth;
+    MTLPixelFormat v2_stencil;
     bool v2_pipeline_valid;
     // Compiled-pipeline cache: `archive` holds every pipeline this shader has
     // been drawn with, `cache_name`/`cache_hash` address its storage entry.
@@ -314,6 +328,16 @@ typedef struct gpu_swapchain_mtl {
     id<MTLTexture> color_texture;
     id<MTLTexture> depth_stencil_texture;
 } gpu_swapchain_mtl;
+
+#define GPU_MTL_DSO_CACHE_SIZE 64
+
+typedef struct gpu_mtl_dso_entry {
+    i32 depth_compare;
+    i32 depth_write;
+    i32 stencil_compare;
+    i32 stencil_pass_op;
+    id<MTLDepthStencilState> dso;
+} gpu_mtl_dso_entry;
 
 typedef struct gpu_device_mtl {
     id<MTLDevice> device;
@@ -359,6 +383,19 @@ typedef struct gpu_state_mtl {
     u32 v2_storage_slot_count;
     MTLPixelFormat v2_pass_colors[4];
     MTLPixelFormat v2_pass_depth;
+    MTLPixelFormat v2_pass_stencil;
+    // A screen pass always carries the screen depth plane (one pipeline
+    // format for every screen pass); only a depth screen pass tests it.
+    bool v2_pass_depth_test;
+    u32 v2_stencil_ref;
+    // The screen pass's depth-stencil buffer, sized to the drawable on demand,
+    // and whether this frame's depth has been cleared yet.
+    id<MTLTexture> screen_depth_stencil;
+    bool screen_depth_cleared;
+    // Depth-stencil states are independent of the pipeline, so they are
+    // shared across shaders and switching stencil modes never rebuilds a PSO.
+    gpu_mtl_dso_entry dso_cache[GPU_MTL_DSO_CACHE_SIZE];
+    u32 dso_count;
 
 } gpu_state_mtl;
 
@@ -534,6 +571,7 @@ ns_bool gpu_request_device(view* v) {
     _state.texture_count = 1;
     _state.sampler_count = 1;
     _state.screen_pass_count = 0;
+    _state.screen_depth_cleared = false;
     free(_state.v2_storage_buffers);
     free(_state.v2_storage_offsets);
     _state.v2_storage_slot_count = GPU_MTL_STORAGE_SLOT_COUNT;
@@ -578,6 +616,10 @@ void gpu_destroy_device() {
         _state.v2_memory[i] = nil;
         _state.v2_memory_size[i] = 0;
     }
+#ifndef ENABLE_ARC
+    for (u32 i = 0; i < _state.dso_count; ++i) [_state.dso_cache[i].dso release];
+    [_state.screen_depth_stencil release];
+#endif
     free(_state.v2_storage_buffers);
     free(_state.v2_storage_offsets);
     _state.v2_storage_buffers = nil;
@@ -620,6 +662,7 @@ void gpu_mtl_immersive_begin(id<MTLCommandBuffer> buffer, id<MTLTexture> color, 
     immersive_slice = slice;
     _state.cmd_buffer = buffer;
     _state.screen_pass_count = 0;
+    _state.screen_depth_cleared = false;
 }
 void gpu_mtl_immersive_end(void) {
     assert(_state.cmd_encoder == nil);
@@ -658,6 +701,7 @@ void gpu_mtl_begin_frame(MTKView *view) {
     _state.cur_drawable = nil;
     _state.drawable_presented = false;
     _state.screen_pass_count = 0;
+    _state.screen_depth_cleared = false;
     gpu_mtl_begin_cmd_buffer();
 }
 
@@ -1237,7 +1281,6 @@ static void mtl_v2_shader_destroy(u32 shader) {
     [record->compute_func release];
     [record->compute_lib release];
     [record->v2_pso release];
-    [record->v2_dso release];
     [record->archive release];
 #endif
     memset(record, 0, sizeof(*record));
@@ -1264,6 +1307,8 @@ static void mtl_v2_pass_begin(const char *label,
     MTLRenderPassDescriptor *desc = [MTLRenderPassDescriptor renderPassDescriptor];
     memset(_state.v2_pass_colors, 0, sizeof(_state.v2_pass_colors));
     _state.v2_pass_depth = MTLPixelFormatInvalid;
+    _state.v2_pass_stencil = MTLPixelFormatInvalid;
+    _state.v2_pass_depth_test = true;
     for (u32 i = 0; i < 4; ++i) {
         if (!colors[i] || colors[i] >= _state.texture_count) continue;
         gpu_texture_mtl *texture = &_state.textures[colors[i]];
@@ -1289,7 +1334,26 @@ static void mtl_v2_pass_begin(const char *label,
     mtl_v2_label_encoder(_state.cmd_encoder, label);
 }
 
-static void mtl_v2_screen_pass_begin(const char *label, gpu_color clear) {
+static id<MTLTexture> mtl_v2_screen_depth_stencil(NSUInteger width, NSUInteger height) {
+    id<MTLTexture> target = _state.screen_depth_stencil;
+    if (target && target.width == width && target.height == height) return target;
+#ifndef ENABLE_ARC
+    [_state.screen_depth_stencil release];
+#endif
+    _state.screen_depth_stencil = nil;
+    if (width == 0 || height == 0) return nil;
+    MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float_Stencil8
+                                                                                     width:width
+                                                                                    height:height
+                                                                                 mipmapped:NO];
+    desc.usage = MTLTextureUsageRenderTarget;
+    desc.storageMode = MTLStorageModePrivate;
+    _state.screen_depth_stencil = [_state.device.device newTextureWithDescriptor:desc];
+    _state.screen_depth_stencil.label = @"screen depth stencil";
+    return _state.screen_depth_stencil;
+}
+
+static void mtl_v2_screen_pass_begin(const char *label, gpu_color clear, ns_bool depth, f32 depth_clear) {
     mtl_v2_ensure_frame();
     if (_state.blit_encoder) mtl_v2_mem_copy_end();
     if (_state.cmd_buffer == nil || _state.cmd_encoder != nil) return;
@@ -1305,7 +1369,31 @@ static void mtl_v2_screen_pass_begin(const char *label, gpu_color clear) {
     memset(_state.v2_pass_colors, 0, sizeof(_state.v2_pass_colors));
     _state.v2_pass_colors[0] = screen.pixelFormat;
     _state.v2_pass_depth = MTLPixelFormatInvalid;
+    _state.v2_pass_stencil = MTLPixelFormatInvalid;
+    _state.v2_pass_depth_test = depth;
+    // The immersive eye targets come from the compositor with their own depth
+    // and no stencil plane, so stencil states draw unmasked there.
+    id<MTLTexture> target = immersive_frame ? nil : mtl_v2_screen_depth_stencil(screen.width, screen.height);
+    if (target) {
+        bool first = _state.screen_pass_count == 1;
+        desc.stencilAttachment.texture = target;
+        desc.stencilAttachment.loadAction = first ? MTLLoadActionClear : MTLLoadActionLoad;
+        desc.stencilAttachment.storeAction = MTLStoreActionStore;
+        desc.stencilAttachment.clearStencil = 0;
+        desc.depthAttachment.texture = target;
+        desc.depthAttachment.storeAction = MTLStoreActionStore;
+        desc.depthAttachment.clearDepth = depth_clear;
+        if (depth && !_state.screen_depth_cleared) {
+            desc.depthAttachment.loadAction = MTLLoadActionClear;
+            _state.screen_depth_cleared = true;
+        } else {
+            desc.depthAttachment.loadAction = first ? MTLLoadActionDontCare : MTLLoadActionLoad;
+        }
+        _state.v2_pass_stencil = target.pixelFormat;
+        _state.v2_pass_depth = target.pixelFormat;
+    }
     if (immersive_depth) {
+        _state.v2_pass_depth_test = true;
         desc.depthAttachment.texture = immersive_depth;
         desc.depthAttachment.slice = immersive_slice;
         desc.depthAttachment.loadAction = _state.screen_pass_count == 1 ? MTLLoadActionClear : MTLLoadActionLoad;
@@ -1330,6 +1418,10 @@ static void mtl_v2_set_shader(u32 shader) {
 
 static void mtl_v2_set_state(const gpu_v2_state_desc *desc) {
     if (desc) _state.v2_render_state = *desc;
+}
+
+static void mtl_v2_set_stencil_ref(u32 ref) {
+    _state.v2_stencil_ref = ref;
 }
 
 static void mtl_v2_set_root(u32 slot, u64 offset, gpu_addr addr) {
@@ -1396,17 +1488,20 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
 
 static ns_bool mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
     if (!shader || !shader->vertex_func || !shader->fragment_func) return false;
+    // Stencil test and op live in the depth-stencil state, not the pipeline.
+    gpu_v2_state_desc pipeline_state = _state.v2_render_state;
+    pipeline_state.stencil_compare = 0;
+    pipeline_state.stencil_pass_op = 0;
     bool same = shader->v2_pipeline_valid &&
-        memcmp(&shader->v2_state, &_state.v2_render_state, sizeof(gpu_v2_state_desc)) == 0 &&
+        memcmp(&shader->v2_state, &pipeline_state, sizeof(gpu_v2_state_desc)) == 0 &&
         memcmp(shader->v2_colors, _state.v2_pass_colors, sizeof(shader->v2_colors)) == 0 &&
-        shader->v2_depth == _state.v2_pass_depth;
+        shader->v2_depth == _state.v2_pass_depth &&
+        shader->v2_stencil == _state.v2_pass_stencil;
     if (same) return true;
 #ifndef ENABLE_ARC
     [shader->v2_pso release];
-    [shader->v2_dso release];
 #endif
     shader->v2_pso = nil;
-    shader->v2_dso = nil;
     MTLRenderPipelineDescriptor *desc = [MTLRenderPipelineDescriptor new];
     desc.vertexFunction = shader->vertex_func;
     desc.fragmentFunction = shader->fragment_func;
@@ -1432,6 +1527,7 @@ static ns_bool mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
         }
     }
     desc.depthAttachmentPixelFormat = _state.v2_pass_depth;
+    desc.stencilAttachmentPixelFormat = _state.v2_pass_stencil;
     NSError *error = nil;
     if (shader->archive && mtl_archive_first_use(shader)) {
         // Ask the archive alone first: a hit skips the compile, and a miss has
@@ -1464,20 +1560,63 @@ static ns_bool mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
         NSLog(@"Failed to create v2 render pipeline: %@", error);
         return false;
     }
-    if (_state.v2_pass_depth != MTLPixelFormatInvalid) {
-        MTLDepthStencilDescriptor *depth = [MTLDepthStencilDescriptor new];
-        depth.depthCompareFunction = _mtl_compare_function((gpu_compare_func)_state.v2_render_state.depth_compare);
-        depth.depthWriteEnabled = _state.v2_render_state.depth_write;
-        shader->v2_dso = [_state.device.device newDepthStencilStateWithDescriptor:depth];
-#ifndef ENABLE_ARC
-        [depth release];
-#endif
-    }
-    shader->v2_state = _state.v2_render_state;
+    shader->v2_state = pipeline_state;
     memcpy(shader->v2_colors, _state.v2_pass_colors, sizeof(shader->v2_colors));
     shader->v2_depth = _state.v2_pass_depth;
+    shader->v2_stencil = _state.v2_pass_stencil;
     shader->v2_pipeline_valid = true;
     return true;
+}
+
+// The depth-stencil state for the current render state and pass. Without a
+// depth or stencil attachment there is nothing to configure; with one, every
+// draw sets a state, so a stencil-writing draw never leaks into the next.
+static id<MTLDepthStencilState> mtl_v2_depth_stencil_state(void) {
+    bool depth = _state.v2_pass_depth != MTLPixelFormatInvalid && _state.v2_pass_depth_test;
+    bool stencil = _state.v2_pass_stencil != MTLPixelFormatInvalid &&
+                   gpu_v2_stencil_enabled(&_state.v2_render_state);
+    if (_state.v2_pass_depth == MTLPixelFormatInvalid && _state.v2_pass_stencil == MTLPixelFormatInvalid) return nil;
+    gpu_mtl_dso_entry key = {
+        .depth_compare = depth ? _state.v2_render_state.depth_compare : COMPARE_ALWAYS,
+        .depth_write = depth && _state.v2_render_state.depth_write,
+        .stencil_compare = stencil ? _state.v2_render_state.stencil_compare : COMPARE_ALWAYS,
+        .stencil_pass_op = stencil ? _state.v2_render_state.stencil_pass_op : STENCIL_OP_KEEP,
+    };
+    for (u32 i = 0; i < _state.dso_count; ++i) {
+        gpu_mtl_dso_entry *entry = &_state.dso_cache[i];
+        if (entry->depth_compare == key.depth_compare && entry->depth_write == key.depth_write &&
+            entry->stencil_compare == key.stencil_compare && entry->stencil_pass_op == key.stencil_pass_op) {
+            return entry->dso;
+        }
+    }
+    if (_state.dso_count >= GPU_MTL_DSO_CACHE_SIZE) {
+        NSLog(@"gpu: depth-stencil state cache exhausted");
+        return nil;
+    }
+    MTLDepthStencilDescriptor *desc = [MTLDepthStencilDescriptor new];
+    desc.depthCompareFunction = _mtl_compare_function((gpu_compare_func)key.depth_compare);
+    desc.depthWriteEnabled = key.depth_write ? YES : NO;
+    if (stencil) {
+        MTLStencilDescriptor *face = [MTLStencilDescriptor new];
+        face.stencilCompareFunction = _mtl_compare_function((gpu_compare_func)key.stencil_compare);
+        face.stencilFailureOperation = MTLStencilOperationKeep;
+        face.depthFailureOperation = MTLStencilOperationKeep;
+        face.depthStencilPassOperation = _mtl_stencil_op((gpu_stencil_op)key.stencil_pass_op);
+        face.readMask = 0xff;
+        face.writeMask = 0xff;
+        desc.frontFaceStencil = face;
+        desc.backFaceStencil = face;
+#ifndef ENABLE_ARC
+        [face release];
+#endif
+    }
+    key.dso = [_state.device.device newDepthStencilStateWithDescriptor:desc];
+#ifndef ENABLE_ARC
+    [desc release];
+#endif
+    if (!key.dso) return nil;
+    _state.dso_cache[_state.dso_count++] = key;
+    return key.dso;
 }
 
 static gpu_shader_mtl *mtl_v2_prepare_draw(void) {
@@ -1487,7 +1626,9 @@ static gpu_shader_mtl *mtl_v2_prepare_draw(void) {
     [_state.cmd_encoder setRenderPipelineState:shader->v2_pso];
     [_state.cmd_encoder setCullMode:_mtl_cull_mode((gpu_cull_mode)_state.v2_render_state.cull_mode)];
     [_state.cmd_encoder setFrontFacingWinding:_mtl_winding((gpu_face_winding)_state.v2_render_state.face_winding)];
-    if (shader->v2_dso) [_state.cmd_encoder setDepthStencilState:shader->v2_dso];
+    id<MTLDepthStencilState> depth_stencil = mtl_v2_depth_stencil_state();
+    if (depth_stencil) [_state.cmd_encoder setDepthStencilState:depth_stencil];
+    if (_state.v2_pass_stencil != MTLPixelFormatInvalid) [_state.cmd_encoder setStencilReferenceValue:_state.v2_stencil_ref];
     mtl_v2_bind_root(shader, _state.cmd_encoder, false);
     return shader;
 }
@@ -1613,6 +1754,7 @@ static const gpu_v2_ops _mtl_v2_ops = {
     .pass_end = mtl_v2_pass_end,
     .set_shader = mtl_v2_set_shader,
     .set_state = mtl_v2_set_state,
+    .set_stencil_ref = mtl_v2_set_stencil_ref,
     .set_root = mtl_v2_set_root,
     .set_storage = mtl_v2_set_storage,
     .draw = mtl_v2_draw,

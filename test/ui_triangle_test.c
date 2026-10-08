@@ -89,7 +89,51 @@ static void test_arc_coverage_mode(f64 feather) {
     free(r);
 }
 
+// A panel 0.4 x 0.6 units one unit in front of an identity camera: the
+// canvas corners land on the panel corners, and a fingertip hovers, presses
+// when it crosses the plane, holds through jitter and releases on the way out.
+static void test_panel(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    r->rect = (ui_rect){0, 0, 400, 600};
+    r->safe_rect = r->rect;
+    f32 identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    ui_set_panel(r, identity, 0, 0, -1, 2, 0, 0, 0, 3, 0, 0.2, 0.3);
+    assert(r->panel);
+    // Column 0 is right * half_width, column 3 the centre: (u, v) = (1, 1) is
+    // the top-right corner at (0.2, 0.3, -1).
+    assert(fabs(r->panel_clip[0] - 0.2f) < 1e-6 && fabs(r->panel_clip[5] - 0.3f) < 1e-6);
+    assert(fabs(r->panel_clip[14] + 1.0f) < 1e-6 && r->panel_clip[15] == 1.0f);
+
+    ui_panel_touch t = *ui_panel_touch_update(r, 0, true, 0.1, -0.15, -0.9);
+    assert(fabs(t.x - 300.0) < 1e-9 && fabs(t.y - 450.0) < 1e-9);
+    assert(t.inside && t.hover && !t.down && !t.pressed && fabs(t.depth - 0.1) < 1e-9);
+    t = *ui_panel_touch_update(r, 0, true, 0.1, -0.15, -1.01);
+    assert(t.pressed && t.down && !t.hover);
+    // Back to just in front of the plane, inside the release margin: held.
+    t = *ui_panel_touch_update(r, 0, true, 0.1, -0.15, -0.998);
+    assert(t.down && !t.pressed && !t.released);
+    t = *ui_panel_touch_update(r, 0, true, 0.1, -0.15, -0.98);
+    assert(t.released && !t.down);
+    // A press needs the fingertip seen in front first; a lost one releases.
+    t = *ui_panel_touch_update(r, 1, true, 0.0, 0.0, -1.2);
+    assert(!t.pressed && !t.down);
+    ui_panel_touch_update(r, 1, true, 0.0, 0.0, -0.95);
+    t = *ui_panel_touch_update(r, 1, true, 0.0, 0.0, -1.05);
+    assert(t.pressed && t.down);
+    t = *ui_panel_touch_update(r, 1, false, 0.0, 0.0, -1.05);
+    assert(t.released && !t.down);
+    // Outside the canvas nothing hovers or presses.
+    ui_panel_touch_update(r, 2, true, 0.5, 0.0, -0.95);
+    t = *ui_panel_touch_update(r, 2, true, 0.5, 0.0, -1.05);
+    assert(!t.inside && !t.pressed);
+    ui_clear_panel(r);
+    assert(!r->panel);
+    free(r);
+}
+
 int main(void) {
+    test_panel();
     test_joined_triangles(0.0);
     test_joined_triangles(-1.0);
     test_standalone_feather();

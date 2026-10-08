@@ -597,27 +597,41 @@ void gpu_shader_destroy(u32 shader) {
     if (shader && _v2.ops && _v2.ops->shader_destroy) _v2.ops->shader_destroy(shader);
 }
 
-u32 gpu_state_create(i32 primitive_type, i32 cull_mode, i32 face_winding,
-                     i32 depth_compare, ns_bool depth_write,
-                     i32 blend_preset, u32 color_mask) {
-    gpu_v2_state_desc desc = {
-        .primitive_type = primitive_type,
-        .cull_mode = cull_mode,
-        .face_winding = face_winding,
-        .depth_compare = depth_compare,
-        .depth_write = depth_write,
-        .blend_preset = blend_preset,
-        .color_mask = color_mask,
-    };
+// States are deduplicated by value; every desc is zeroed first so padding
+// never splits two equal states.
+static u32 gpu_v2_state_intern(const gpu_v2_state_desc *desc) {
     for (u32 i = 0; i < _v2.state_count; i++) {
-        if (memcmp(&_v2.states[i], &desc, sizeof(desc)) == 0) return i + 1;
+        if (memcmp(&_v2.states[i], desc, sizeof(*desc)) == 0) return i + 1;
     }
     if (_v2.state_count >= GPU_V2_STATE_POOL_SIZE) {
         ns_warn("gpu", "gpu_state_create: state pool exhausted.\n");
         return 0;
     }
-    _v2.states[_v2.state_count] = desc;
+    _v2.states[_v2.state_count] = *desc;
     return ++_v2.state_count;
+}
+
+u32 gpu_state_create(i32 primitive_type, i32 cull_mode, i32 face_winding,
+                     i32 depth_compare, ns_bool depth_write,
+                     i32 blend_preset, u32 color_mask) {
+    gpu_v2_state_desc desc;
+    memset(&desc, 0, sizeof(desc));
+    desc.primitive_type = primitive_type;
+    desc.cull_mode = cull_mode;
+    desc.face_winding = face_winding;
+    desc.depth_compare = depth_compare;
+    desc.depth_write = depth_write;
+    desc.blend_preset = blend_preset;
+    desc.color_mask = color_mask;
+    return gpu_v2_state_intern(&desc);
+}
+
+u32 gpu_state_stencil(u32 state, i32 compare, i32 pass_op) {
+    if (!state || state > _v2.state_count) return 0;
+    gpu_v2_state_desc desc = _v2.states[state - 1];
+    desc.stencil_compare = compare;
+    desc.stencil_pass_op = pass_op;
+    return gpu_v2_state_intern(&desc);
 }
 
 // Pass labels reach a frame capture verbatim; a missing one would leave an
@@ -641,7 +655,14 @@ void gpu_screen_pass_begin(const char *label, f64 r, f64 g, f64 b, f64 a) {
     gpu_v2_flush_uploads();
     if (!_v2.ops || !_v2.ops->screen_pass_begin) return;
     gpu_color clear = {(f32)r, (f32)g, (f32)b, (f32)a};
-    _v2.ops->screen_pass_begin(gpu_v2_label(label, "unnamed screen pass"), clear);
+    _v2.ops->screen_pass_begin(gpu_v2_label(label, "unnamed screen pass"), clear, false, 1.0f);
+}
+
+void gpu_screen_pass_begin_depth(const char *label, f64 r, f64 g, f64 b, f64 a, f64 depth_clear) {
+    gpu_v2_flush_uploads();
+    if (!_v2.ops || !_v2.ops->screen_pass_begin) return;
+    gpu_color clear = {(f32)r, (f32)g, (f32)b, (f32)a};
+    _v2.ops->screen_pass_begin(gpu_v2_label(label, "unnamed screen pass"), clear, true, (f32)depth_clear);
 }
 
 void gpu_pass_end(void) {
@@ -655,6 +676,10 @@ void gpu_set_shader(u32 shader) {
 void gpu_set_state(u32 state) {
     if (!state || state > _v2.state_count) return;
     if (_v2.ops && _v2.ops->set_state) _v2.ops->set_state(&_v2.states[state - 1]);
+}
+
+void gpu_set_stencil_ref(u32 ref) {
+    if (_v2.ops && _v2.ops->set_stencil_ref) _v2.ops->set_stencil_ref(ref & 0xffu);
 }
 
 void gpu_set_root(gpu_addr args) {

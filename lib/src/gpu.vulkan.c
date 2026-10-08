@@ -75,6 +75,8 @@ typedef struct gpu_vk_pipeline_entry {
     gpu_v2_state_desc state;
     VkFormat colors[4];
     VkFormat depth;
+    VkFormat stencil;
+    ns_bool depth_test;
     VkPipeline pipeline;
 } gpu_vk_pipeline_entry;
 
@@ -154,6 +156,19 @@ typedef struct gpu_vk_state {
     VkExtent2D pass_extent;
     VkFormat pass_colors[4];
     VkFormat pass_depth;
+    VkFormat pass_stencil;
+    // A screen pass always carries the screen depth plane (one pipeline
+    // format for every screen pass); only a depth screen pass tests it.
+    ns_bool pass_depth_test;
+    ns_bool screen_depth_cleared;
+    u32 stencil_ref;
+    // The screen pass's depth-stencil buffer, recreated with the swapchain.
+    // Its format is the first depth-stencil format the device can render to.
+    VkImage screen_stencil;
+    VkImageView screen_stencil_view;
+    VkDeviceMemory screen_stencil_memory;
+    VkImageLayout screen_stencil_layout;
+    VkFormat screen_stencil_format;
 
     u32 current_shader;
     gpu_v2_state_desc current_state;
@@ -325,6 +340,19 @@ static VkCompareOp gpu_vk_compare(gpu_compare_func func) {
     }
 }
 
+static VkStencilOp gpu_vk_stencil_op(gpu_stencil_op op) {
+    switch (op) {
+        case STENCIL_OP_ZERO: return VK_STENCIL_OP_ZERO;
+        case STENCIL_OP_REPLACE: return VK_STENCIL_OP_REPLACE;
+        case STENCIL_OP_INCR_CLAMP: return VK_STENCIL_OP_INCREMENT_AND_CLAMP;
+        case STENCIL_OP_DECR_CLAMP: return VK_STENCIL_OP_DECREMENT_AND_CLAMP;
+        case STENCIL_OP_INVERT: return VK_STENCIL_OP_INVERT;
+        case STENCIL_OP_INCR_WRAP: return VK_STENCIL_OP_INCREMENT_AND_WRAP;
+        case STENCIL_OP_DECR_WRAP: return VK_STENCIL_OP_DECREMENT_AND_WRAP;
+        default: return VK_STENCIL_OP_KEEP;
+    }
+}
+
 static VkImageAspectFlags gpu_vk_aspect(const gpu_vk_texture *texture) {
     return texture->depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 }
@@ -408,6 +436,84 @@ static void gpu_vk_oneshot_end(VkCommandBuffer commands) {
     vkFreeCommandBuffers(_vk.device, _vk.transfer_pool, 1, &commands);
 }
 
+// ---- screen stencil ---------------------------------------------------------
+
+static VkFormat gpu_vk_stencil_format(void) {
+    const VkFormat candidates[] = {VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT};
+    for (u32 i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        VkFormatProperties properties;
+        vkGetPhysicalDeviceFormatProperties(_vk.physical, candidates[i], &properties);
+        if (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) return candidates[i];
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+
+// The screen depth-stencil target is viewed and transitioned as both aspects.
+static VkImageAspectFlags gpu_vk_stencil_aspect(VkFormat format) {
+    ns_unused(format);
+    return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+}
+
+static void gpu_vk_destroy_screen_stencil(void) {
+    if (_vk.screen_stencil_view) vkDestroyImageView(_vk.device, _vk.screen_stencil_view, NULL);
+    if (_vk.screen_stencil) vkDestroyImage(_vk.device, _vk.screen_stencil, NULL);
+    if (_vk.screen_stencil_memory) vkFreeMemory(_vk.device, _vk.screen_stencil_memory, NULL);
+    _vk.screen_stencil_view = VK_NULL_HANDLE;
+    _vk.screen_stencil = VK_NULL_HANDLE;
+    _vk.screen_stencil_memory = VK_NULL_HANDLE;
+    _vk.screen_stencil_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    _vk.screen_stencil_format = VK_FORMAT_UNDEFINED;
+}
+
+// Without a renderable depth-stencil format the screen pass simply has none:
+// stencil states draw unmasked and depth screen passes draw untested.
+static void gpu_vk_create_screen_stencil(VkExtent2D extent) {
+    VkFormat format = gpu_vk_stencil_format();
+    if (format == VK_FORMAT_UNDEFINED || extent.width == 0 || extent.height == 0) return;
+    VkImageCreateInfo image = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = format,
+        .extent = {extent.width, extent.height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    if (vkCreateImage(_vk.device, &image, NULL, &_vk.screen_stencil) != VK_SUCCESS) {
+        _vk.screen_stencil = VK_NULL_HANDLE;
+        return;
+    }
+    VkMemoryRequirements requirements;
+    vkGetImageMemoryRequirements(_vk.device, _vk.screen_stencil, &requirements);
+    VkMemoryAllocateInfo allocate = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = gpu_vk_memory_type(requirements.memoryTypeBits, 0),
+    };
+    if (vkAllocateMemory(_vk.device, &allocate, NULL, &_vk.screen_stencil_memory) != VK_SUCCESS ||
+        vkBindImageMemory(_vk.device, _vk.screen_stencil, _vk.screen_stencil_memory, 0) != VK_SUCCESS) {
+        gpu_vk_destroy_screen_stencil();
+        return;
+    }
+    VkImageViewCreateInfo view = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = _vk.screen_stencil,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .subresourceRange = {gpu_vk_stencil_aspect(format), 0, 1, 0, 1},
+    };
+    if (vkCreateImageView(_vk.device, &view, NULL, &_vk.screen_stencil_view) != VK_SUCCESS) {
+        gpu_vk_destroy_screen_stencil();
+        return;
+    }
+    _vk.screen_stencil_format = format;
+    _vk.screen_stencil_layout = VK_IMAGE_LAYOUT_UNDEFINED;
+}
+
 // ---- swapchain --------------------------------------------------------------
 
 static void gpu_vk_destroy_swapchain(void) {
@@ -420,6 +526,7 @@ static void gpu_vk_destroy_swapchain(void) {
         _vk.swapchain_layout[i] = VK_IMAGE_LAYOUT_UNDEFINED;
     }
     _vk.swapchain_image_count = 0;
+    gpu_vk_destroy_screen_stencil();
     if (_vk.swapchain) {
         vkDestroySwapchainKHR(_vk.device, _vk.swapchain, NULL);
         _vk.swapchain = VK_NULL_HANDLE;
@@ -526,6 +633,7 @@ static ns_bool gpu_vk_create_swapchain(i32 width, i32 height) {
             return false;
         }
     }
+    gpu_vk_create_screen_stencil(extent);
     return true;
 }
 
@@ -711,7 +819,8 @@ static VkPipeline gpu_vk_graphics_pipeline(gpu_vk_shader *shader) {
         gpu_vk_pipeline_entry *entry = &shader->pipelines[i];
         if (memcmp(&entry->state, &_vk.current_state, sizeof(gpu_v2_state_desc)) == 0 &&
             memcmp(entry->colors, _vk.pass_colors, sizeof(entry->colors)) == 0 &&
-            entry->depth == _vk.pass_depth) {
+            entry->depth == _vk.pass_depth && entry->stencil == _vk.pass_stencil &&
+            entry->depth_test == _vk.pass_depth_test) {
             return entry->pipeline;
         }
     }
@@ -746,14 +855,27 @@ static VkPipeline gpu_vk_graphics_pipeline(gpu_vk_shader *shader) {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
     };
-    ns_bool depth_enabled = _vk.pass_depth != VK_FORMAT_UNDEFINED;
+    ns_bool depth_enabled = _vk.pass_depth != VK_FORMAT_UNDEFINED && _vk.pass_depth_test;
+    ns_bool stencil_enabled = _vk.pass_stencil != VK_FORMAT_UNDEFINED &&
+                              gpu_v2_stencil_enabled(&_vk.current_state);
+    VkStencilOpState stencil = {
+        .failOp = VK_STENCIL_OP_KEEP,
+        .passOp = gpu_vk_stencil_op((gpu_stencil_op)_vk.current_state.stencil_pass_op),
+        .depthFailOp = VK_STENCIL_OP_KEEP,
+        .compareOp = gpu_vk_compare((gpu_compare_func)_vk.current_state.stencil_compare),
+        .compareMask = 0xff,
+        .writeMask = 0xff,
+        .reference = 0,
+    };
     VkPipelineDepthStencilStateCreateInfo depth = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .depthTestEnable = depth_enabled ? VK_TRUE : VK_FALSE,
         .depthWriteEnable = depth_enabled && _vk.current_state.depth_write ? VK_TRUE : VK_FALSE,
         .depthCompareOp = gpu_vk_compare((gpu_compare_func)_vk.current_state.depth_compare),
         .depthBoundsTestEnable = VK_FALSE,
-        .stencilTestEnable = VK_FALSE,
+        .stencilTestEnable = stencil_enabled ? VK_TRUE : VK_FALSE,
+        .front = stencil,
+        .back = stencil,
     };
     VkPipelineColorBlendAttachmentState blend[4];
     for (u32 i = 0; i < 4; i++) {
@@ -783,10 +905,11 @@ static VkPipeline gpu_vk_graphics_pipeline(gpu_vk_shader *shader) {
         .attachmentCount = 4,
         .pAttachments = blend,
     };
-    VkDynamicState dynamic_states[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkDynamicState dynamic_states[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                                        VK_DYNAMIC_STATE_STENCIL_REFERENCE};
     VkPipelineDynamicStateCreateInfo dynamic = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .dynamicStateCount = 2,
+        .dynamicStateCount = 3,
         .pDynamicStates = dynamic_states,
     };
     VkPipelineRenderingCreateInfo rendering = {
@@ -794,7 +917,7 @@ static VkPipeline gpu_vk_graphics_pipeline(gpu_vk_shader *shader) {
         .colorAttachmentCount = 4,
         .pColorAttachmentFormats = _vk.pass_colors,
         .depthAttachmentFormat = _vk.pass_depth,
-        .stencilAttachmentFormat = VK_FORMAT_UNDEFINED,
+        .stencilAttachmentFormat = _vk.pass_stencil,
     };
     VkGraphicsPipelineCreateInfo info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
@@ -833,6 +956,8 @@ static VkPipeline gpu_vk_graphics_pipeline(gpu_vk_shader *shader) {
     entry->state = _vk.current_state;
     memcpy(entry->colors, _vk.pass_colors, sizeof(entry->colors));
     entry->depth = _vk.pass_depth;
+    entry->stencil = _vk.pass_stencil;
+    entry->depth_test = _vk.pass_depth_test;
     entry->pipeline = pipeline;
     return pipeline;
 }
@@ -1921,6 +2046,7 @@ static void gpu_vk_shader_destroy(u32 shader_id) {
 static void gpu_vk_begin_rendering(const char *label,
                                    VkRenderingAttachmentInfo *colors, u32 color_count,
                                    VkRenderingAttachmentInfo *depth,
+                                   VkRenderingAttachmentInfo *stencil,
                                    VkExtent2D extent) {
     ns_unused(label);
     VkRenderingInfo info = {
@@ -1930,6 +2056,7 @@ static void gpu_vk_begin_rendering(const char *label,
         .colorAttachmentCount = color_count,
         .pColorAttachments = colors,
         .pDepthAttachment = depth,
+        .pStencilAttachment = stencil,
     };
     vkCmdBeginRendering(_vk.commands, &info);
     _vk.pass_open = true;
@@ -1985,6 +2112,8 @@ static void gpu_vk_pass_begin(const char *label,
     VkRenderingAttachmentInfo depth_attachment;
     memset(&depth_attachment, 0, sizeof(depth_attachment));
     _vk.pass_depth = VK_FORMAT_UNDEFINED;
+    _vk.pass_stencil = VK_FORMAT_UNDEFINED;
+    _vk.pass_depth_test = true;
     if (gpu_vk_texture_valid(depth)) {
         gpu_vk_texture *texture = &_vk.textures[depth];
         gpu_vk_texture_transition(_vk.commands, texture, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
@@ -2004,10 +2133,10 @@ static void gpu_vk_pass_begin(const char *label,
     if (extent.width == 0 || extent.height == 0) return;
     gpu_vk_begin_rendering(label, attachments, 4,
                            _vk.pass_depth != VK_FORMAT_UNDEFINED ? &depth_attachment : NULL,
-                           extent);
+                           NULL, extent);
 }
 
-static void gpu_vk_screen_pass_begin(const char *label, gpu_color clear) {
+static void gpu_vk_screen_pass_begin(const char *label, gpu_color clear, ns_bool depth, f32 depth_clear) {
     if (!_vk.valid || !_vk.frame_active || !_vk.commands_active || _vk.pass_open) return;
     if (!_vk.image_acquired) return;
     if (gpu_vk_trace()) gpu_vk_trace_line("nsvk screen pass %s\n", label);
@@ -2038,8 +2167,62 @@ static void gpu_vk_screen_pass_begin(const char *label, gpu_color clear) {
     attachments[0].clearValue.color.float32[3] = clear.a;
     _vk.pass_colors[0] = _vk.swapchain_format;
     _vk.pass_depth = VK_FORMAT_UNDEFINED;
+    _vk.pass_stencil = VK_FORMAT_UNDEFINED;
+    _vk.pass_depth_test = depth;
+    if (_vk.screen_pass_count == 0) _vk.screen_depth_cleared = false;
+    VkRenderingAttachmentInfo stencil_attachment;
+    memset(&stencil_attachment, 0, sizeof(stencil_attachment));
+    VkRenderingAttachmentInfo depth_attachment;
+    memset(&depth_attachment, 0, sizeof(depth_attachment));
+    if (_vk.screen_stencil_view) {
+        // A later screen pass loads what an earlier one wrote, so order the two
+        // even when the layout stays put.
+        VkImageMemoryBarrier2 barrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .oldLayout = _vk.screen_pass_count == 0 ? VK_IMAGE_LAYOUT_UNDEFINED : _vk.screen_stencil_layout,
+            .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = _vk.screen_stencil,
+            .subresourceRange = {gpu_vk_stencil_aspect(_vk.screen_stencil_format), 0, 1, 0, 1},
+        };
+        VkDependencyInfo dependency = {
+            .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers = &barrier,
+        };
+        vkCmdPipelineBarrier2(_vk.commands, &dependency);
+        _vk.screen_stencil_layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        stencil_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        stencil_attachment.imageView = _vk.screen_stencil_view;
+        stencil_attachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        stencil_attachment.loadOp = _vk.screen_pass_count == 0 ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                                                : VK_ATTACHMENT_LOAD_OP_LOAD;
+        stencil_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        stencil_attachment.clearValue.depthStencil.stencil = 0;
+        _vk.pass_stencil = _vk.screen_stencil_format;
+        // Same view for both aspects, as dynamic rendering requires.
+        depth_attachment = stencil_attachment;
+        depth_attachment.clearValue.depthStencil.depth = depth_clear;
+        if (depth && !_vk.screen_depth_cleared) {
+            depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            _vk.screen_depth_cleared = true;
+        } else {
+            depth_attachment.loadOp = _vk.screen_pass_count == 0 ? VK_ATTACHMENT_LOAD_OP_DONT_CARE
+                                                                 : VK_ATTACHMENT_LOAD_OP_LOAD;
+        }
+        _vk.pass_depth = _vk.screen_stencil_format;
+    }
     _vk.screen_pass_count++;
-    gpu_vk_begin_rendering(label, attachments, 4, NULL, _vk.swapchain_extent);
+    ns_bool attached = _vk.pass_stencil != VK_FORMAT_UNDEFINED;
+    gpu_vk_begin_rendering(label, attachments, 4,
+                           attached ? &depth_attachment : NULL,
+                           attached ? &stencil_attachment : NULL,
+                           _vk.swapchain_extent);
 }
 
 // Trace mode submits and drains after every pass and dispatch, so the last
@@ -2075,6 +2258,10 @@ static void gpu_vk_set_shader(u32 shader) {
 
 static void gpu_vk_set_state(const gpu_v2_state_desc *desc) {
     if (desc) _vk.current_state = *desc;
+}
+
+static void gpu_vk_set_stencil_ref(u32 ref) {
+    _vk.stencil_ref = ref;
 }
 
 static void gpu_vk_set_root(u32 slot, u64 offset, gpu_addr addr) {
@@ -2259,6 +2446,8 @@ static ns_bool gpu_vk_prepare_graphics(void) {
     VkDescriptorSet set = gpu_vk_build_set(shader, texture0, texture1, texture2);
     if (set == VK_NULL_HANDLE) return false;
     vkCmdBindPipeline(_vk.commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    // Every graphics pipeline takes its stencil reference dynamically.
+    vkCmdSetStencilReference(_vk.commands, VK_STENCIL_FACE_FRONT_AND_BACK, _vk.stencil_ref);
     vkCmdBindDescriptorSets(_vk.commands, VK_PIPELINE_BIND_POINT_GRAPHICS, shader->layout,
                             0, 1, &set, 0, NULL);
     return true;
@@ -2362,6 +2551,7 @@ static const gpu_v2_ops _vulkan_v2_ops = {
     .pass_end = gpu_vk_pass_end,
     .set_shader = gpu_vk_set_shader,
     .set_state = gpu_vk_set_state,
+    .set_stencil_ref = gpu_vk_set_stencil_ref,
     .set_root = gpu_vk_set_root,
     .set_storage = gpu_vk_set_storage,
     .draw = gpu_vk_draw,

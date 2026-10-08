@@ -30,8 +30,22 @@ lit GPU_PRIMITIVE_TRIANGLES = 4
 lit GPU_PRIMITIVE_LINES = 1
 lit GPU_INDEX_NONE = 0
 lit GPU_INDEX_UINT32 = 2
+lit GPU_COMPARE_NEVER = 1
+lit GPU_COMPARE_LESS = 2
+lit GPU_COMPARE_EQUAL = 3
 lit GPU_COMPARE_LESS_EQUAL = 4
+lit GPU_COMPARE_GREATER = 5
+lit GPU_COMPARE_NOT_EQUAL = 6
+lit GPU_COMPARE_GREATER_EQUAL = 7
 lit GPU_COMPARE_ALWAYS = 8
+lit GPU_STENCIL_OP_KEEP = 0
+lit GPU_STENCIL_OP_ZERO = 1
+lit GPU_STENCIL_OP_REPLACE = 2
+lit GPU_STENCIL_OP_INCR_CLAMP = 3
+lit GPU_STENCIL_OP_DECR_CLAMP = 4
+lit GPU_STENCIL_OP_INVERT = 5
+lit GPU_STENCIL_OP_INCR_WRAP = 6
+lit GPU_STENCIL_OP_DECR_WRAP = 7
 lit GPU_CULL_NONE = 0
 lit GPU_CULL_BACK = 2
 lit GPU_FACE_WINDING_CCW = 0
@@ -127,6 +141,12 @@ ref fn gpu_shader_destroy(shader: u32)
 // id. Not a pipeline; the backend hashes (shader, state, pass formats) into
 // its internal pipeline cache on first use.
 ref fn gpu_state_create(primitive_type: i32, cull_mode: i32, face_winding: i32, depth_compare: i32, depth_write: bool, blend_preset: i32, color_mask: u32) u32
+// The same state with a stencil test: a fragment passes where
+// `reference compare stored` holds (GPU_COMPARE_*, reference from
+// gpu_set_stencil_ref) and then applies pass_op (GPU_STENCIL_OP_*) to the
+// stored value. Only the screen pass has a stencil buffer, cleared to 0 by the
+// frame's first screen pass; elsewhere the test is skipped (doc/gpu.md).
+ref fn gpu_state_stencil(state: u32, compare: i32, pass_op: i32) u32
 
 // Attachments are texture indices, 0 = unused.
 //
@@ -138,10 +158,18 @@ ref fn gpu_pass_begin(label: str, color0: u32, color1: u32, color2: u32, color3:
 // depth to 0, and the compositor shows a pixel still at depth 0 as black.
 // Full-screen passes there must write depth (doc/gpu.md, "Immersive frames").
 ref fn gpu_screen_pass_begin(label: str, r: f64, g: f64, b: f64, a: f64)
+// The screen pass with the screen depth buffer tested and written by each
+// state's depth compare and depth write. The frame's first depth screen pass
+// clears it to depth_clear and later ones keep it, so a 3D layer drawn in one
+// pass occludes what a later pass draws behind it. gpu_screen_pass_begin
+// leaves depth untested.
+ref fn gpu_screen_pass_begin_depth(label: str, r: f64, g: f64, b: f64, a: f64, depth_clear: f64)
 ref fn gpu_pass_end()
 
 ref fn gpu_set_shader(shader: u32)
 ref fn gpu_set_state(state: u32)
+// 8-bit reference value the gpu_state_stencil tests compare against.
+ref fn gpu_set_stencil_ref(reference: u32)
 ref fn gpu_set_root(args: u64)
 // Bind GPU-addressed storage for the current shader's fixed storage slot.
 // This is the portable lowering used until typed gpu_addr dereference lands
