@@ -436,6 +436,11 @@ static const char *ns_amd64_ffi_convert(ns_type t) {
     return NULL;
 }
 
+// Arrays and refs retain their element type, but cross the C ABI as pointers.
+static ns_bool ns_amd64_ffi_is_float(ns_type t) {
+    return !ns_amd64_ffi_convert(t) && ns_amd64_is_float(t);
+}
+
 static const char *ns_amd64_map_std(ns_str module, ns_str name) {
     if (!ns_str_equals(module, ns_str_cstr("std"))) return NULL;
     if (ns_str_equals(name, ns_str_cstr("print"))) return "ns_rt_print";
@@ -918,16 +923,16 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
                     /* The Microsoft ABI aliases the integer and vector
                      * registers by position, so one counter covers both. */
                     if (igpr < c->nint_regs) {
-                        dest_reg[ai] = ns_amd64_is_float(at) ? 16 + igpr : c->int_regs[igpr];
+                        dest_reg[ai] = ns_amd64_ffi_is_float(at) ? 16 + igpr : c->int_regs[igpr];
                         igpr++;
                     } else {
                         stack_args[stack_n++] = args[ai];
                     }
                     continue;
                 }
-                if (ns_amd64_is_float(at) && fpr < 8) {
-                    dest_reg[ai] = 16 + fpr;
-                    fpr++;
+                if (ns_amd64_ffi_is_float(at)) {
+                    if (fpr < 8) dest_reg[ai] = 16 + fpr++;
+                    else stack_args[stack_n++] = args[ai];
                     continue;
                 }
                 if (igpr < c->nint_regs) dest_reg[ai] = c->int_regs[igpr++];
@@ -994,7 +999,7 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             ns_amd64_call_fixup cf = {.off = rel_off, .callee = callee_name, .kind = 0};
             ns_array_push(c->call_fixups, cf);
             ns_type ret = im ? im->ret : inst->type;
-            if (ns_amd64_is_float(ret)) {
+            if (ns_amd64_ffi_is_float(ret)) {
                 ns_amd64_emit_movq_rx(c, NS_AMD64_RAX, NS_AMD64_XMM0);
                 if (ns_type_is(ret, NS_TYPE_F32)) {
                     /* Only the low half carries an f32; clear what follows it. */

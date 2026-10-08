@@ -36,6 +36,22 @@ static void ns_native_free(ns_native_module *m) { ns_aarch_free(m); }
 typedef i64 (*ns_compiled_main)(void);
 
 #if defined(__aarch64__)
+// Same C signature as ui_set_panel: two pointers and eleven doubles. A real
+// UI renderer is unnecessary; write back through the matrix after checking
+// both the register arguments and the floating arguments spilled to the stack.
+static void ns_compile_test_set_panel(void *renderer, f32 *matrix,
+                                     f64 cx, f64 cy, f64 cz,
+                                     f64 rx, f64 ry, f64 rz,
+                                     f64 ux, f64 uy, f64 uz,
+                                     f64 hw, f64 hh) {
+    if (!renderer || *(u64 *)renderer != 123 || !matrix) return;
+    if (matrix[0] == 1.0f && matrix[15] == 16.0f &&
+        cx == 1.0 && cy == 2.0 && cz == 3.0 &&
+        rx == 4.0 && ry == 5.0 && rz == 6.0 &&
+        ux == 7.0 && uy == 8.0 && uz == 9.0 && hw == 10.0 && hh == 11.0)
+        matrix[0] = 42.0f;
+}
+
 static i32 ns_compile_test_negative_i32(const char *unused) {
     (void)unused;
     return -1;
@@ -160,7 +176,9 @@ static i64 ns_compile_run(const char *src, ns_bool *ok) {
                 name[nlen] = 0;
                 void *sym = ns_str_equals(callee, ns_str_cstr("os_dir_scan"))
                                 ? (void *)(uintptr_t)ns_compile_test_negative_i32
-                                : dlsym(RTLD_DEFAULT, name);
+                                : ns_str_equals(callee, ns_str_cstr("ui_set_panel"))
+                                    ? (void *)(uintptr_t)ns_compile_test_set_panel
+                                    : dlsym(RTLD_DEFAULT, name);
                 if (sym) {
                     if (fn->call_fixups[ci].kind == 1) {
                         ns_compile_patch_adrp_add(buf, off[fi] + fn->call_fixups[ci].off,
@@ -533,6 +551,17 @@ int main() {
         "use os\n"
         "fn main() bool { return os_dir_scan(\"\") < 0 }\n"),
         "signed i32 FFI results are sign-extended before compiled comparisons.");
+
+    ns_expect(ns_compile_true(
+        "use ui\n"
+        "fn main() bool {\n"
+        "    let matrix = [f32](16)\n"
+        "    matrix[0] = 1.0\n"
+        "    matrix[15] = 16.0\n"
+        "    let renderer = ui_renderer { 123 }\n"
+        "    ui_set_panel(ref renderer, matrix, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0)\n"
+        "    return matrix[0] == 42.0\n"
+        "}\n"), "ui_set_panel passes a float array pointer and spills doubles after d7.");
 
     ns_expect(ns_compile_true(
         "use simd\n"

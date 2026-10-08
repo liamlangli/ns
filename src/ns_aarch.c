@@ -225,6 +225,11 @@ static const char *ns_aarch_ffi_convert(ns_type t) {
     return NULL;
 }
 
+// Arrays and refs retain their element type, but cross the C ABI as pointers.
+static ns_bool ns_aarch_ffi_is_float(ns_type t) {
+    return !ns_aarch_ffi_convert(t) && ns_aarch_is_float(t);
+}
+
 static const char *ns_aarch_map_std(ns_str module, ns_str name) {
     if (!ns_str_equals(module, ns_str_cstr("std"))) return NULL;
     if (ns_str_equals(name, ns_str_cstr("print"))) return "ns_rt_print";
@@ -738,9 +743,9 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
                 ns_type at = ns_type_unknown;
                 if (im && ai < (i32)ns_array_length(im->params)) at = im->params[ai];
                 else at = ns_aarch_value_type(c->fn, args[ai]);
-                if (ns_aarch_is_float(at) && fpr < 8) {
-                    dest_reg[ai] = 8 + fpr;
-                    fpr++;
+                if (ns_aarch_ffi_is_float(at)) {
+                    if (fpr < 8) dest_reg[ai] = 8 + fpr++;
+                    else stack_args[stack_n++] = args[ai];
                     continue;
                 }
                 if (igpr < 8) dest_reg[ai] = igpr++;
@@ -811,7 +816,7 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             ns_aarch_call_fixup cf = {.off = bl_off, .callee = callee_name, .kind = 0};
             ns_array_push(c->call_fixups, cf);
             ns_type ret = im ? im->ret : inst->type;
-            if (ns_aarch_is_float(ret)) {
+            if (ns_aarch_ffi_is_float(ret)) {
                 ns_aarch_emit_u32(c, ns_aarch_fmov_xd(0, 0, ns_type_is(ret, NS_TYPE_F64)));
             } else if (ns_aarch_is_string(ret) && !ns_type_is_array(ret)) {
                 ns_aarch_emit_rt_call(c, "ns_rt_from_cstr");
