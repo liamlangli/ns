@@ -268,7 +268,7 @@ ifeq ($(NS_OS), $(NS_LINUX))
 	NS_LIBFN_SRCS += lib/src/view.linux.c lib/src/os.linux.c lib/src/term.posix.c lib/src/storage.json.c
 else ifeq ($(NS_OS), $(NS_DARWIN))
 	# Apple: force the Metal backend.
-	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/view.gamepad.apple.m lib/src/os.osx.m lib/src/os.haptic.apple.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m lib/src/storage.apple.m
+	NS_LIBFN_SRCS += lib/src/view.osx.m lib/src/view.gamepad.apple.m lib/src/os.osx.m lib/src/os.haptic.apple.m lib/src/os.motion.apple.m lib/src/term.posix.c lib/src/gpu.metal.m lib/src/audio.apple.m lib/src/storage.apple.m
 else ifeq ($(NS_OS), $(NS_WIN))
 	# Windows: force the DirectX 12 backend.
 	NS_LIBFN_SRCS += lib/src/view.win.c lib/src/os.win.c lib/src/term.win.c lib/src/gpu.dx12.c lib/src/storage.json.c
@@ -448,7 +448,7 @@ install: all
 	$(Q)cp lib/std.ns lib/shader.ns lib/simd.ns lib/task.ns lib/view.ns lib/ui.ns lib/os.ns lib/gpu.ns lib/io.ns \
 		lib/net.ns lib/secure.ns lib/compress.ns lib/storage.ns lib/audio.ns lib/camera.ns \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref/
-	$(Q)cp lib/src/io.c lib/src/secure.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m \
+	$(Q)cp lib/src/io.c lib/src/secure.c lib/src/net.c lib/src/os.c lib/src/os.osx.m lib/src/os.ios.m lib/src/os.haptic.apple.m lib/src/os.motion.apple.m \
 		lib/src/view.c lib/src/view.osx.m lib/src/view.ios.m lib/src/view.gamepad.apple.m \
 		lib/src/gpu.c lib/src/gpu.metal.m lib/src/NSApp.swift lib/src/view.hands.vision.swift \
 		lib/src/ui.c lib/src/storage.db.c lib/src/storage.cache.c lib/src/storage.apple.m lib/src/compress.c \
@@ -533,7 +533,7 @@ IOS_FEATURE_CFLAGS := -target arm64-apple-ios$(IOS_MIN_VER) -isysroot $(IOS_SDK)
 
 IOS_IO_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/io.o
 IOS_OS_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/os.o $(IOS_FEATURE_OBJDIR)/lib/src/os.ios.o \
-	$(IOS_FEATURE_OBJDIR)/lib/src/os.haptic.apple.o
+	$(IOS_FEATURE_OBJDIR)/lib/src/os.haptic.apple.o $(IOS_FEATURE_OBJDIR)/lib/src/os.motion.apple.o
 IOS_NET_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/net.o
 IOS_HTTP_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/http.o
 IOS_WASM_DEV_OBJS := $(IOS_FEATURE_OBJDIR)/lib/src/wasm_dev.o

@@ -1108,6 +1108,7 @@ fn main() {
     scan_native("lib/src/os.osx.m")
     scan_native("lib/src/os.ios.m")
     scan_native("lib/src/os.haptic.apple.m")
+    scan_native("lib/src/os.motion.apple.m")
     scan_native("lib/src/gpu.c")
     scan_native("lib/src/gpu.metal.m")
     scan_native("lib/src/io.c")

@@ -109,7 +109,7 @@ ifeq ($(NS_OS), $(NS_LINUX))
 	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.vulkan.o
 	NS_STORAGE_OBJS += $(NS_BINDIR)/lib/storage.json.o
 else ifeq ($(NS_OS), $(NS_DARWIN))
-	NS_OS_OBJS += $(NS_BINDIR)/lib/os.osx.o $(NS_BINDIR)/lib/os.haptic.apple.o
+	NS_OS_OBJS += $(NS_BINDIR)/lib/os.osx.o $(NS_BINDIR)/lib/os.haptic.apple.o $(NS_BINDIR)/lib/os.motion.apple.o
 	NS_TERM_OBJS = $(NS_BINDIR)/lib/term.posix.o
 	NS_VIEW_OBJS += $(NS_BINDIR)/lib/view.osx.o $(NS_BINDIR)/lib/view.gamepad.apple.o
 	NS_GPU_OBJS += $(NS_BINDIR)/lib/gpu.metal.o

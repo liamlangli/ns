@@ -77,6 +77,18 @@ ref fn os_vibrate(intensity: f64, duration: f64)
 ref fn os_impact_prepare()
 ref fn os_impact()
 
+// Device motion: the gyroscope fused with the accelerometer. os_motion_start
+// begins updates at hz samples a second (clamped to 10...120) and returns
+// false where the device has no motion sensors, as on desktops. Calling it
+// again while running only changes the rate.
+ref fn os_motion_start(hz: f64) bool
+ref fn os_motion_stop()
+// Writes the latest attitude quaternion x, y, z, w into values[0...3]: the
+// rotation from the device frame (x right, y toward the top of the screen in
+// portrait, z out of the screen) into a fixed frame with z vertical and an
+// arbitrary, slowly drifting heading. Returns false until a sample arrives.
+ref fn os_motion_attitude(values: [f64]) bool
+
 // File access. os_file_size returns -1 on failure. Ranged reads truncate at
 // EOF and return an empty string when the file or requested range is invalid.
 ref fn os_file_size(path: str) i64

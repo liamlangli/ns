@@ -32,3 +32,11 @@ os_vibrate(0.0, 1.0)
 os_vibrate(1.0, 0.0)
 os_impact_prepare()
 os_impact()
+
+// Desktops have no motion sensors: starting reports false and no attitude is
+// published. Stopping is always safe. These calls also verify the symbols.
+let attitude = [f64](4)
+if !os_motion_start(60.0) {
+    assert(!os_motion_attitude(attitude))
+}
+os_motion_stop()

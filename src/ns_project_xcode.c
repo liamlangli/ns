@@ -661,6 +661,7 @@ static const char *const ns_xcode_feature_sources[] = {
     "os.osx.m",
     "os.ios.m",
     "os.haptic.apple.m",
+    "os.motion.apple.m",
     "view.c",
     "view.osx.m",
     "view.ios.m",
@@ -1428,7 +1429,7 @@ static ns_bool ns_xcode_append_app_target_config(ns_xcode_buffer *pbx, unsigned 
                                                "\"-framework\", CoreServices, \"-framework\", Foundation, \"-framework\", GameController, \"-framework\", Metal, "
                                                "\"-framework\", MetalKit, \"-framework\", QuartzCore, \"-lsqlite3\", \"-lz\")")
                       : ns_xcode_buffer_append(&ldflags,
-                                               ", \"-framework\", AVFAudio, \"-framework\", Security, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", CoreHaptics, \"-framework\", Foundation, \"-framework\", GameController, "
+                                               ", \"-framework\", AVFAudio, \"-framework\", Security, \"-framework\", AVFoundation, \"-framework\", CoreMedia, \"-framework\", CoreVideo, \"-framework\", CoreHaptics, \"-framework\", CoreMotion, \"-framework\", Foundation, \"-framework\", GameController, "
                                                "\"-framework\", Metal, \"-framework\", MetalKit, \"-framework\", QuartzCore, "
                                                "\"-framework\", UIKit, \"-lsqlite3\", \"-lz\")");
     }

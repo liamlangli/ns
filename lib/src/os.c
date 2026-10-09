@@ -358,6 +358,18 @@ void os_vibrate(f64 intensity, f64 duration) {
 
 void os_impact_prepare(void) {}
 void os_impact(void) {}
+
+ns_bool os_motion_start(f64 hz) {
+    ns_unused(hz);
+    return false;
+}
+
+void os_motion_stop(void) {}
+
+ns_bool os_motion_attitude(f64 *values) {
+    ns_unused(values);
+    return false;
+}
 #endif
 
 static char *os_read_buffer = NULL;
