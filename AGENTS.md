@@ -142,19 +142,21 @@ The common commands are:
   they do not already have, in parallel, verify every digest, install a
   snapshot and run from it; any failure keeps what they ran before. The
   program reads the running patch with `os_patch_version()` (`use os`), 0 when
-  unpatched. Each patch also carries a label, `<version>.<YYYYMMDD>.debug` by
-  default (`--release` ends it in `release`, `--label <text>` replaces it),
-  which the program reads with `os_patch_label()`. See
-  `doc/patch.md`.
+  unpatched. Each patch also carries a label, `<version>.<YYYYMMDDHHMMSS>.debug`
+  by default (`--release` ends it in `release`, `--label <text>` replaces it).
+  The same files published again with only that clock moved, at the same
+  precision and channel, keep the label and the version. The program reads the
+  label with `os_patch_label()`. See `doc/patch.md`.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the
   `bin/` output directory, which also holds generated IDE projects and the
   build cache and build profile, plus legacy `ns.profile` beside the manifest. Source
   and other user files are never removed.
 - `ns project [path]`: generate the supported host-native IDE project below
   `bin/` from `ns.mod`. An `exec` app compiles the program into the generated
-  Apple targets (arm64 Mach-O), an `emu` app ships its ns_cpu image and runs it
-  on the embedded ns_cpu interpreter, and an `eval` app interprets
-  `LinkedProject.ns`.
+  Apple targets (arm64 Mach-O). An `eval` or `emu` app whose manifest sets
+  `patch` ships the program from the last patch `ns patch` wrote and checks
+  at launch for a higher one. With no patch written, an `emu` app ships the
+  ns_cpu image built from source and an `eval` app interprets `LinkedProject.ns`.
 - `ns lint [path]`: report style findings for a file, a directory, or the
   project below the current directory. Exits non-zero when an `error` severity
   finding remains.

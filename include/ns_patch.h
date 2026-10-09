@@ -118,6 +118,10 @@ typedef struct ns_patch_input {
     const char *out_dir;  // created; stale bundles in it are removed
     u32 version;          // 0: one past the index already in `out_dir`
     u64 chunk_size;       // 0: NS_PATCH_CHUNK_SIZE
+    // The label is the automatic `<app version>.<YYYYMMDD[HHMMSS]>.debug|release`
+    // stamp. Identical files keep the previous stamp of the same width and
+    // channel, so a later second does not publish a new patch by itself.
+    ns_bool auto_label;
 } ns_patch_input;
 
 typedef struct ns_patch_summary {
@@ -132,6 +136,11 @@ typedef struct ns_patch_summary {
 } ns_patch_summary;
 
 ns_bool ns_patch_write(const ns_patch_input *in, ns_patch_summary *out);
+
+// Unpack the patch's program (the index's code file) to `dest`. A generated
+// app ships this file, so the packaged build runs the patch `ns patch` wrote
+// last instead of a fresh compile of the project source.
+ns_bool ns_patch_export_program(const char *patch_dir, const char *name, const char *dest);
 
 // ---- applying a patch (hosts) ----------------------------------------------
 

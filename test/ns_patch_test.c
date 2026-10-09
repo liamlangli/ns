@@ -231,6 +231,11 @@ int main(void) {
               "the first patch is version 1 and packs the program and every asset but Finder metadata.");
     // program | a.txt + b.bin (under 64 KiB) | c.bin
     ns_expect(sum.bundle_count == 3, "files are cut into bundles at the chunk size, the program alone.");
+    char exported[PATH_MAX];
+    path(exported, root, "exported.ns");
+    ns_expect(ns_patch_export_program(out, "demo", exported) &&
+                  file_is(exported, "fn main() { print(`one`) }\n"),
+              "exporting a patch writes the program file it carries.");
 
     char index_path[PATH_MAX];
     path(index_path, out, "demo.nsapp");
@@ -312,6 +317,58 @@ int main(void) {
                       strcmp(li.label, "2026-10-09 18:05 abc1234") == 0,
                   "the index carries the label it was written with.");
         ns_patch_index_free(&li);
+        free(data);
+    }
+
+    {
+        // An automatic clock label keeps its version when only the second moved
+        // and the width matches. A day stamp and a second stamp do not match,
+        // and an explicit label followed by the automatic stamp is a new patch.
+        char clock_dir[PATH_MAX], clock_index[PATH_MAX], day_dir[PATH_MAX], day_index[PATH_MAX], named_dir[PATH_MAX];
+        path(clock_dir, root, "clock");
+        path(clock_index, clock_dir, "demo.nsapp");
+        path(day_dir, root, "clock-day");
+        path(day_index, day_dir, "demo.nsapp");
+        path(named_dir, root, "clock-named");
+        const char *assets[] = {"res"};
+        const char *code = "fn main() {}\n";
+        ns_patch_input in = {
+            .name = "demo", .app_version = "1.0", .label = "1.0.20261009120000.debug", .auto_label = true,
+            .mode = NS_PATCH_MODE_EVAL, .code = (const u8 *)code, .code_size = strlen(code), .root = project,
+            .assets = assets, .asset_count = 1, .out_dir = clock_dir, .chunk_size = 64 * 1024,
+        };
+        ns_patch_summary a, b, c, d, e, f;
+        ns_bool wrote = ns_patch_write(&in, &a);
+        in.label = "1.0.20261009120005.debug";
+        wrote = wrote && ns_patch_write(&in, &b);
+        in.out_dir = day_dir;
+        in.label = "1.0.20261009.debug";
+        wrote = wrote && ns_patch_write(&in, &c);
+        in.label = "1.0.20261009120005.debug";
+        wrote = wrote && ns_patch_write(&in, &d);
+        in.out_dir = named_dir;
+        in.auto_label = false;
+        in.label = "nightly 7";
+        wrote = wrote && ns_patch_write(&in, &e);
+        in.auto_label = true;
+        in.label = "1.0.20261009120000.debug";
+        wrote = wrote && ns_patch_write(&in, &f);
+        ns_expect(wrote && a.version == 1 && b.unchanged && b.version == 1 && c.version == 1 && !d.unchanged &&
+                      d.version == 2 && e.version == 1 && !f.unchanged && f.version == 2,
+                  "a matching clock label stays put, a wider stamp and an explicit label each publish the next version.");
+        size_t size = 0;
+        char *data = read_text(clock_index, &size);
+        ns_patch_index ci;
+        ns_expect(data && ns_patch_index_decode((const u8 *)data, size, &ci, error, sizeof(error)) &&
+                      strcmp(ci.label, "1.0.20261009120000.debug") == 0,
+                  "the kept clock label is the one already published.");
+        ns_patch_index_free(&ci);
+        free(data);
+        data = read_text(day_index, &size);
+        ns_expect(data && ns_patch_index_decode((const u8 *)data, size, &ci, error, sizeof(error)) &&
+                      ci.header.version == 2 && strcmp(ci.label, "1.0.20261009120005.debug") == 0,
+                  "a day-precision label is replaced by the second-precision one.");
+        ns_patch_index_free(&ci);
         free(data);
     }
 

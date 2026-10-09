@@ -67,17 +67,22 @@ count with it, so a project that publishes patches for real should pin
 moves to a higher version.
 
 Every patch carries a label next to its version, so a running build can be
-told apart at a glance. It defaults to `<version>.<YYYYMMDD>.debug` from the
-manifest `version` and the local date (`0.1.0.20261009.debug`); `--release`
-ends it in `release` instead. `--label <text>` replaces it with free text - a
-build date, a commit, a note:
+told apart at a glance. It defaults to `<version>.<YYYYMMDDHHMMSS>.debug` from
+the manifest `version` and the local time (`0.1.0.20261009183305.debug`);
+`--release` ends it in `release` instead. `--label <text>` replaces it with
+free text - a build date, a commit, a note:
 
 ```sh
 ns patch --label "$(date '+%Y-%m-%d %H:%M') $(git rev-parse --short HEAD)"
 ```
 
 The label is part of the patch: the same files under a different label are
-the next version. It is cut to 255 bytes on a UTF-8 boundary.
+the next version. The automatic clock label is the exception. Identical files
+published again with only the time changed, at the same precision and the same
+`debug` or `release` channel, keep the previous label and version. A
+day-precision label from an older `ns` (`YYYYMMDD`) is replaced by the
+second-precision one the next time `ns patch` writes those files. `--label`
+still counts as a new patch. The label is cut to 255 bytes on a UTF-8 boundary.
 
 ## Apply a patch
 
@@ -106,7 +111,8 @@ published as `NS_PATCH_VERSION`, and `os_patch_version()` (`use os`) returns it:
 0 when the program runs the files it shipped with. Its label is published as
 `NS_PATCH_LABEL` and returned by `os_patch_label()`: "" when the patch has none
 or nothing is patched. A generated app that runs the files it shipped with
-reports the version and label of the patch `ns patch` wrote last.
+reports the version and label of the patch those files came from, or 0 when
+it shipped a fresh compile because no patch had been written.
 
 The cache is `NS_PATCH_DIR` when set, else `~/Library/Caches/ns-patch` on
 Apple platforms (the app's own Caches directory inside an iOS sandbox),
@@ -119,7 +125,7 @@ Where the check happens:
 | --- | --- |
 | `ns run --patch [target]` | installs the newest patch, then runs it; the project root is the base whose files are reused. Plain `ns run` always runs the project source. |
 | `ns build` launcher of an interpreted target | passes `--patch` when the target sets `patch` |
-| `ns project` Apple app (`eval` or `emu`) | checks at launch; the app ships as the patch `ns patch` wrote last, so it only fetches newer ones. An `emu` patch whose image does not load is discarded and the shipped image runs. |
+| `ns project` Apple app (`eval` or `emu`) | checks at launch. The app copies the program from the last patch `ns patch` wrote into `Generated/ShippedPatch.ns` (eval) or `Generated/ShippedPatch.nsc` (emu) and runs those bytes, so it only fetches a higher version. With no patch written it runs the compiled project and downloads. An `emu` patch whose image does not load is discarded and the shipped image runs. |
 
 ## Formats
 

@@ -112,7 +112,7 @@ static ns_bool ns_xcode_file_exists(const char *path) {
 // `expects_assets` is the project-attribute line the packaged paths of this
 // manifest produce, so a project generated for a different set of them, or for
 // none, is regenerated rather than left carrying the wrong resources.
-#define NS_XCODE_GENERATOR_VERSION "19"
+#define NS_XCODE_GENERATOR_VERSION "20"
 
 static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const char *expects_assets,
                                                         ns_bool expects_app_icon, ns_bool expects_link_native,
@@ -1342,6 +1342,13 @@ static ns_bool ns_xcode_refresh_app(const ns_project_spec *spec, const char *man
                  ns_xcode_write_plist(managed_root, "macOS", safe_name, version, spec->orientations) &&
                  ns_xcode_write_plist(managed_root, "iOS", safe_name, version, spec->orientations) &&
                  ns_xcode_write_plist(managed_root, "visionOS", safe_name, version, spec->orientations);
+    // An eval app with a shipped patch runs those bytes. The file is absent
+    // when no patch was written, and generation still succeeds.
+    if (ok && !spec->link_native && !spec->link_emu && spec->patch_base_version > 0 && generated) {
+        char *shipped = ns_xcode_path_join(generated, "ShippedPatch.ns");
+        if (shipped && ns_xcode_file_exists(shipped)) ok = ns_xcode_copy(shipped, linked);
+        free(shipped);
+    }
     free(generated);
     free(linked);
     ns_unused(spec);
@@ -1789,15 +1796,18 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
         if (!escaped_compile) goto fail;
     } else if (spec->link_emu) {
         // The image goes straight into the bundle's resources; NSBridge.c
-        // loads it from there.
+        // loads it from there. A patch already written is that image; otherwise
+        // the phase compiles the linked source.
         if (!ns_xcode_buffer_appendf(
                 &compile_script,
                 "set -e\n"
                 "LINKED=\"$SRCROOT/%s.nsproject/Generated/LinkedProject.ns\"\n"
+                "SHIPPED=\"$SRCROOT/%s.nsproject/Generated/ShippedPatch.nsc\"\n"
                 "OUT_DIR=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\n"
                 "mkdir -p \"$OUT_DIR\"\n"
-                "\"$NS_EXECUTABLE\" --cpu -o \"$OUT_DIR/LinkedProject.nsc\" \"$LINKED\"\n",
-                safe_name)) {
+                "if [ -f \"$SHIPPED\" ]; then cp \"$SHIPPED\" \"$OUT_DIR/LinkedProject.nsc\"; "
+                "else \"$NS_EXECUTABLE\" --cpu -o \"$OUT_DIR/LinkedProject.nsc\" \"$LINKED\"; fi\n",
+                safe_name, safe_name)) {
             goto fail;
         }
         escaped_compile = ns_xcode_escape(compile_script.data);

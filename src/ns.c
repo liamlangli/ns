@@ -338,7 +338,7 @@ void ns_help() {
     printf("  patch [path|target] write the eval/emu target's over-the-air patch to\n");
     printf("                    bin/<name>_patch: <name>.nsapp and its .nsbundle files;\n");
     printf("                    --label <text> publishes free text with the version, else\n");
-    printf("                    <version>.<YYYYMMDD>.debug (--release: .release)\n");
+    printf("                    <version>.<YYYYMMDDHHMMSS>.debug (--release: .release)\n");
     printf("  clean [path]      remove bin/ and the profiles a build generates\n");
     printf("  project [path]    generate a native IDE project from ns.mod\n");
     printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
@@ -4815,6 +4815,39 @@ static ns_bool ns_project_module_embeddable(ns_str module) {
 static u32 ns_patch_written_version(ns_str scope, ns_str name);
 static ns_str ns_patch_written_label(ns_str scope, ns_str name);
 
+// Drop both shipped program files. A later mode (eval source, emu image) writes
+// the one it runs, and a failed export must not leave the previous program behind.
+static void ns_project_clear_shipped(ns_str root, ns_str safe) {
+    static const char *files[] = {"ShippedPatch.nsc", "ShippedPatch.ns"};
+    for (i32 i = 0; i < 2; i++) {
+        char path[4096];
+        int n = snprintf(path, sizeof(path), "%.*s/bin/%.*s.nsproject/Generated/%s",
+                         root.len, root.data ? (char *)root.data : "", safe.len, safe.data ? (char *)safe.data : "",
+                         files[i]);
+        if (n > 0 && n < (int)sizeof(path)) remove(path);
+    }
+}
+
+// Copy the program out of `bin/<name>_patch` into the generated project. The
+// Xcode build runs this file, so the packaged app is that patch.
+static ns_bool ns_project_ship_patch(ns_str root, ns_str safe, ns_str patch_name, ns_bool emu) {
+    char patch_dir[4096], dest[4096], name[256];
+    if (!root.data || !safe.data || !patch_name.data) return false;
+    if (patch_name.len <= 0 || patch_name.len >= (i32)sizeof(name)) return false;
+    memcpy(name, patch_name.data, (size_t)patch_name.len);
+    name[patch_name.len] = 0;
+    int dir_n = snprintf(patch_dir, sizeof(patch_dir), "%.*s/bin/%.*s_patch",
+                         root.len, (char *)root.data, patch_name.len, (char *)patch_name.data);
+    int dest_n = snprintf(dest, sizeof(dest), "%.*s/bin/%.*s.nsproject/Generated/ShippedPatch.%s",
+                          root.len, (char *)root.data, safe.len, (char *)safe.data, emu ? "nsc" : "ns");
+    if (dir_n < 0 || dest_n < 0 || dir_n >= (int)sizeof(patch_dir) || dest_n >= (int)sizeof(dest)) return false;
+    if (!ns_patch_export_program(patch_dir, name, dest)) {
+        remove(dest);
+        return false;
+    }
+    return true;
+}
+
 void ns_exec_project(ns_str path) {
     ns_str start = path;
     if (start.len == 0) start = ns_getcwd();
@@ -4894,6 +4927,26 @@ void ns_exec_project(ns_str path) {
     }
 #endif
 
+    ns_str safe_name = ns_project_safe_name(name);
+    // Stamp the patch version only after its program is in the project. A
+    // missing or unreadable patch leaves the base at 0, so launch downloads
+    // one instead of reporting a patch the binary does not carry.
+    ns_bool ships_patch = kind == NS_PROJECT_APP && !host_build &&
+                          (link_emu || selection.mode == NS_RUN_EVAL);
+    u32 patch_base_version = 0;
+    ns_str patch_base_label = ns_str_cstr("");
+    if (ships_patch) {
+        ns_project_clear_shipped(root, safe_name);
+        if (selection.patch_url.len > 0) {
+            u32 written = ns_patch_written_version(root, selection.name);
+            if (written > 0 && ns_project_ship_patch(root, safe_name, selection.name, link_emu)) {
+                patch_base_version = written;
+                patch_base_label = ns_patch_written_label(root, selection.name);
+                if (!patch_base_label.data) patch_base_label = ns_str_cstr("");
+            }
+        }
+    }
+
     ns_project_spec spec = {
         .kind = kind,
         .host_build = host_build,
@@ -4903,7 +4956,7 @@ void ns_exec_project(ns_str path) {
         .manifest = manifest,
         .source_dir = source_dir,
         .name = name,
-        .safe_name = ns_project_safe_name(name),
+        .safe_name = safe_name,
         .version = version,
         .icon = icon,
         .linked_source = linked,
@@ -4916,12 +4969,12 @@ void ns_exec_project(ns_str path) {
         // A manifest that declares no `orientation` keeps every mobile
         // orientation; any declared set disables the ones it leaves out.
         .orientations = selection.orientations,
-        // An interpreted app checks the target's `patch` URL at launch. It
-        // ships as the patch `ns patch` wrote last, so it fetches only newer ones.
+        // An interpreted app checks the target's `patch` URL at launch and
+        // fetches only a version above the program it shipped.
         .patch_url = selection.patch_url,
         .patch_name = selection.name,
-        .patch_base_version = ns_patch_written_version(root, selection.name),
-        .patch_base_label = ns_patch_written_label(root, selection.name),
+        .patch_base_version = patch_base_version,
+        .patch_base_label = patch_base_label,
     };
 
     ns_bool generated = false;
@@ -5025,10 +5078,13 @@ void ns_exec_patch(ns_str argument, const char *label, ns_bool release) {
     for (i32 i = 0, count = ns_array_length(assets); i < count; i++) ns_array_push(asset_names, (const char *)assets[i].data);
     ns_str out_dir = ns_patch_output_dir(in.scope, sel.name);
     ns_str version = ns_build_manifest_value(in.scope, "version");
-    // Without --label the patch is labelled `<version>.<YYYYMMDD>.debug`, or
-    // `.release` with --release, from the manifest version and the local date.
+    // Without --label the patch is labelled `<version>.<YYYYMMDDHHMMSS>.debug`,
+    // or `.release` with --release, from the manifest version and the local time.
+    // The same files written again keep that stamp, so a later second alone
+    // does not publish a new patch.
     char default_label[NS_PATCH_LABEL_MAX + 1];
-    if (!label) {
+    ns_bool auto_label = label == ns_null;
+    if (auto_label) {
         time_t now = time(ns_null);
         struct tm local;
 #if defined(_WIN32)
@@ -5036,9 +5092,9 @@ void ns_exec_patch(ns_str argument, const char *label, ns_bool release) {
 #else
         localtime_r(&now, &local);
 #endif
-        char date[16];
-        strftime(date, sizeof(date), "%Y%m%d", &local);
-        snprintf(default_label, sizeof(default_label), "%s.%s.%s", version.data && version.len ? version.data : "0.0.0",
+        char date[32];
+        strftime(date, sizeof(date), "%Y%m%d%H%M%S", &local);
+        snprintf(default_label, sizeof(default_label), "%s.%s.%s", version.data && version.len ? (char *)version.data : "0.0.0",
                  date, release ? "release" : "debug");
         label = default_label;
     }
@@ -5046,6 +5102,7 @@ void ns_exec_patch(ns_str argument, const char *label, ns_bool release) {
         .name = sel.name.data,
         .app_version = version.data ? version.data : "",
         .label = label,
+        .auto_label = auto_label,
         .mode = emu ? NS_PATCH_MODE_EMU : NS_PATCH_MODE_EVAL,
         .code = code,
         .code_size = code_size,

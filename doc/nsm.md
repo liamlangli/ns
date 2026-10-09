@@ -327,7 +327,10 @@ interprets the bundled `LinkedProject.ns`, an `exec` app gets a "Compile NS
 Program" build phase that compiles it to an arm64 Mach-O object linked into the
 app, and an `emu` app gets a "Build NS Image" phase that writes its ns_cpu
 image, `LinkedProject.nsc`, into the bundle, where the embedded ns_cpu
-interpreter loads and runs it (doc/cpu.md). No code is generated at run time in
+interpreter loads and runs it (doc/cpu.md). When `ns patch` has written a
+patch, that phase copies `Generated/ShippedPatch.nsc`, and an `eval` app
+copies `Generated/ShippedPatch.ns` over `LinkedProject.ns`, so the packaged
+app runs that patch and only downloads a higher version (doc/patch.md). No code is generated at run time in
 any mode, so all three run on iOS. Status appears in the app, while `print`
 output and diagnostics appear in the Xcode console. Generated Apple apps embed
 the official `std`, `task`, `shader`, `simd`, `view`, `ui`, `os`, `gpu`, `io`,

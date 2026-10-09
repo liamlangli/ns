@@ -81,11 +81,12 @@ grep -q 'installing patch 1' "$patch_tmp/run.log"
 # Offline, the installed patch keeps running.
 (cd "$patch_tmp/client" && NS_PATCH_URL=http://127.0.0.1:1/demo.nsapp "$ns" run --patch) | grep -q '^new patch=1 label=nightly 7 patched$'
 
-# Without --label the label is <version>.<YYYYMMDD>.debug, or .release.
+# Without --label the label is <version>.<YYYYMMDDHHMMSS>.debug, or .release.
+# Match the width rather than the clock, so the check survives a second boundary.
 (cd "$patch_tmp/demo" && "$ns" patch) > /dev/null
-grep -aq "1.0.0.$(date +%Y%m%d).debug" "$patch_tmp/demo/bin/demo_patch/demo.nsapp"
+grep -aqE '1\.0\.0\.[0-9]{14}\.debug' "$patch_tmp/demo/bin/demo_patch/demo.nsapp"
 (cd "$patch_tmp/demo" && "$ns" patch --release) > /dev/null
-grep -aq "1.0.0.$(date +%Y%m%d).release" "$patch_tmp/demo/bin/demo_patch/demo.nsapp"
+grep -aqE '1\.0\.0\.[0-9]{14}\.release' "$patch_tmp/demo/bin/demo_patch/demo.nsapp"
 
 # Only interpreted targets take patches.
 sed 's/^target = "eval"$/target = "exec"/' "$patch_tmp/demo/ns.mod" > "$patch_tmp/demo/ns.mod.exec"

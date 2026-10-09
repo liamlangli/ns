@@ -762,6 +762,25 @@ static void ns_patch_sweep_bundle(void *user, const char *name, ns_bool is_dir) 
     if (ns_patch_join(path, s->dir, name)) remove(path);
 }
 
+// `<app version>.<digits>.debug` or `.release`. `digits` is 8 (a day, from an
+// older ns) or 14 (local time to the second).
+static ns_bool ns_patch_clock_channel(const char *label, const char *app_version, char *channel, szt channel_size,
+                                      szt *digits) {
+    if (!label || !app_version || !channel || channel_size < 8) return false;
+    szt version_len = strlen(app_version);
+    if (version_len == 0 || strncmp(label, app_version, version_len) != 0 || label[version_len] != '.') return false;
+    const char *stamp = label + version_len + 1;
+    const char *dot = strchr(stamp, '.');
+    if (!dot || dot == stamp) return false;
+    szt width = (szt)(dot - stamp);
+    if (width != 8 && width != 14) return false;
+    for (szt i = 0; i < width; i++) if (stamp[i] < '0' || stamp[i] > '9') return false;
+    if (strcmp(dot + 1, "debug") != 0 && strcmp(dot + 1, "release") != 0) return false;
+    snprintf(channel, channel_size, "%s", dot + 1);
+    if (digits) *digits = width;
+    return true;
+}
+
 ns_bool ns_patch_write(const ns_patch_input *in, ns_patch_summary *out) {
     memset(out, 0, sizeof(*out));
     u64 chunk = in->chunk_size ? in->chunk_size : NS_PATCH_CHUNK_SIZE;
@@ -862,12 +881,33 @@ ns_bool ns_patch_write(const ns_patch_input *in, ns_patch_summary *out) {
         has_previous = data && ns_patch_index_decode(data, size, &previous, ns_null, 0);
         free(data);
     }
-    ns_bool same = has_previous && previous.header.mode == index.header.mode &&
-                   previous.header.bundle_count == index.header.bundle_count &&
-                   strcmp(previous.code, index.code) == 0 && strcmp(previous.label, index.label) == 0;
-    for (u32 i = 0; same && i < bundles; i++) {
-        same = memcmp(previous.bundles[i].hash, index.bundles[i].hash, NS_PATCH_HASH_SIZE) == 0;
+    ns_bool content_same = has_previous && previous.header.mode == index.header.mode &&
+                           previous.header.bundle_count == index.header.bundle_count &&
+                           previous.code && index.code && strcmp(previous.code, index.code) == 0;
+    for (u32 i = 0; content_same && i < bundles; i++) {
+        content_same = previous.bundles && index.bundles &&
+                       memcmp(previous.bundles[i].hash, index.bundles[i].hash, NS_PATCH_HASH_SIZE) == 0;
     }
+    // The clock moved and nothing else did: keep the label already published.
+    // A day stamp and a second stamp are different widths, so the first write
+    // after that change of format still publishes the new label.
+    if (ok && in->auto_label && content_same && previous.label && index.label) {
+        char previous_channel[16], next_channel[16];
+        szt previous_width = 0, next_width = 0;
+        if (ns_patch_clock_channel(previous.label, in->app_version ? in->app_version : "", previous_channel,
+                                   sizeof(previous_channel), &previous_width) &&
+            ns_patch_clock_channel(index.label, in->app_version ? in->app_version : "", next_channel,
+                                   sizeof(next_channel), &next_width) &&
+            previous_width == next_width && strcmp(previous_channel, next_channel) == 0) {
+            char *kept = ns_patch_strdup(previous.label);
+            if (!kept) ok = false;
+            else {
+                free(index.label);
+                index.label = kept;
+            }
+        }
+    }
+    ns_bool same = content_same && previous.label && index.label && strcmp(previous.label, index.label) == 0;
     out->previous = has_previous ? previous.header.version : 0;
     if (in->version) index.header.version = in->version;
     else index.header.version = same ? out->previous : out->previous + 1;
@@ -1272,6 +1312,56 @@ static ns_bool ns_patch_extract(const ns_patch_job *job, const ns_patch_bundle *
     free(buf);
     fclose(f);
     if (!ok && error[0] == 0) ns_patch_msg(error, error_size, "malformed bundle %s%s", b->file, ns_null);
+    return ok;
+}
+
+ns_bool ns_patch_export_program(const char *patch_dir, const char *name, const char *dest) {
+    if (!patch_dir || !name || !name[0] || !dest) return false;
+    char index_name[256], index_path[NS_PATCH_PATH_MAX];
+    if (snprintf(index_name, sizeof(index_name), "%s.nsapp", name) >= (i32)sizeof(index_name)) return false;
+    if (!ns_patch_join(index_path, patch_dir, index_name)) return false;
+    szt size = 0;
+    u8 *data = ns_patch_read_all(index_path, &size);
+    ns_patch_index index = {0};
+    ns_bool ok = data && ns_patch_index_decode(data, size, &index, ns_null, 0);
+    free(data);
+    const ns_patch_file *program = ok ? ns_patch_index_find(&index, index.code) : ns_null;
+    const ns_patch_bundle *bundle = ns_null;
+    if (program) {
+        u32 file_index = (u32)(program - index.files);
+        for (u32 i = 0; i < index.header.bundle_count; i++) {
+            ns_patch_bundle *candidate = &index.bundles[i];
+            if (file_index >= candidate->first_file && file_index < candidate->first_file + candidate->file_count) {
+                bundle = candidate;
+                break;
+            }
+        }
+    }
+    char bundle_path[NS_PATCH_PATH_MAX];
+    char stage[NS_PATCH_PATH_MAX];
+    stage[0] = 0;
+    ns_bool staged = false;
+    ok = ok && bundle && ns_patch_join(bundle_path, patch_dir, bundle->file);
+    ok = ok && snprintf(stage, sizeof(stage), "%s.unpack", dest) < (i32)sizeof(stage);
+    if (ok) {
+        ns_patch_remove_tree(stage);
+        staged = ns_patch_mkdir_p(stage);
+        ok = staged;
+    }
+    char error[256] = "";
+    ns_patch_job job = {.index = &index, .stage = stage};
+    ok = ok && ns_patch_extract(&job, bundle, bundle_path, error, sizeof(error));
+    char extracted[NS_PATCH_PATH_MAX];
+    u8 *program_bytes = ns_null;
+    szt program_size = 0;
+    if (ok && ns_patch_join(extracted, stage, index.code)) {
+        program_bytes = ns_patch_read_all(extracted, &program_size);
+        ok = program_bytes && program_size == program->size;
+    }
+    if (ok) ok = ns_patch_write_atomic(dest, program_bytes, program_size);
+    free(program_bytes);
+    if (staged) ns_patch_remove_tree(stage);
+    ns_patch_index_free(&index);
     return ok;
 }
 

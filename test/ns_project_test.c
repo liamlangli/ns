@@ -362,7 +362,7 @@ int main(void) {
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && !text_has(xgenerated, "ZSTD") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 19") &&
+                  text_has(pbx, "NSProjectGeneratorVersion = 20") &&
                   text_has(pbx, "XROS_DEPLOYMENT_TARGET = 26.0"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
@@ -400,7 +400,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 19;", "NSProjectGeneratorVersion = 19;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 20;", "NSProjectGeneratorVersion = 20;",
                                      "NSProjectGeneratorVersion = 18;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");
@@ -476,8 +476,8 @@ int main(void) {
     path(emu_bridge, emu_root, "bin/demo-app.nsproject/Sources/NSBridge.c");
     path(emu_cpu, emu_root, "bin/demo-app.nsproject/Runtime/src/ns_cpu.c");
     ns_expect(text_has(emu_pbx, "Build NS Image") && text_has(emu_pbx, "--cpu -o") &&
-                  text_has(emu_pbx, "LinkedProject.nsc") && !text_has(emu_pbx, "Compile NS Program") &&
-                  !text_has(emu_pbx, "ns_program.o"),
+                  text_has(emu_pbx, "LinkedProject.nsc") && text_has(emu_pbx, "ShippedPatch.nsc") &&
+                  !text_has(emu_pbx, "Compile NS Program") && !text_has(emu_pbx, "ns_program.o"),
               "Xcode emu app switches to a build phase that writes the ns_cpu image into the bundle.");
     ns_expect(text_has(emu_bridge, "ns_cpu_load") && text_has(emu_bridge, "ns_embedded_cpu_resolve") &&
                   text_has(emu_bridge, "ns_cpu_run_main") && !text_has(emu_bridge, "ns_eval(") &&
@@ -501,6 +501,19 @@ int main(void) {
     ns_expect(ns_project_generate_xcode(&emu_app) && text_has(emu_bridge, "NS_PATCH_MODE_EVAL") &&
                   text_has(emu_bridge, "ns_app_enter(resource_root, \"LinkedProject.ns\""),
               "Xcode eval app checks the same patch URL for its linked source.");
+    char emu_linked[PATH_MAX], emu_shipped[PATH_MAX];
+    path(emu_linked, emu_root, "bin/demo-app.nsproject/Generated/LinkedProject.ns");
+    path(emu_shipped, emu_root, "bin/demo-app.nsproject/Generated/ShippedPatch.ns");
+    {
+        const char *shipped_program = "fn main() { print(`shipped-patch`) }\n";
+        FILE *shipped_file = fopen(emu_shipped, "wb");
+        ns_expect(shipped_file &&
+                      fwrite(shipped_program, 1, strlen(shipped_program), shipped_file) == strlen(shipped_program) &&
+                      fclose(shipped_file) == 0 && ns_project_generate_xcode(&emu_app) &&
+                      text_has(emu_linked, "shipped-patch") && !text_has(emu_linked, "use view"),
+                  "Xcode eval app runs the shipped patch program.");
+        remove(emu_shipped);
+    }
     emu_app.patch_url = ns_str_null;
     ns_expect(ns_project_generate_xcode(&emu_app) && !text_has(emu_pbx, "Build NS Image") &&
                   text_has(emu_bridge, "ns_eval("),
