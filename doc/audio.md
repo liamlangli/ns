@@ -47,6 +47,9 @@ and 64 simultaneous SFX voices.
 
 On iOS and visionOS, `audio_init` activates an ambient, mix-with-others audio
 session (async activate/deactivate on OS 27+, otherwise `setActive` off the
-main thread). On macOS it is a lightweight no-op. All other calls initialize
+main thread). The session is tracked across interruptions, media-services
+resets and backgrounding; a play or resume while it is inactive reactivates it
+and starts the player on a background queue, so `-[AVAudioPlayer play]` never
+activates the session on the main thread. On macOS it is a lightweight no-op. All other calls initialize
 their native storage lazily, but explicit initialization is recommended so
 session errors can be handled at startup.

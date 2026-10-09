@@ -3,6 +3,13 @@
 #include <TargetConditionals.h>
 #import <AVFAudio/AVFAudio.h>
 #import <Foundation/Foundation.h>
+#include <stdatomic.h>
+
+#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+#define AUDIO_SESSION 1
+#else
+#define AUDIO_SESSION 0
+#endif
 
 #define AUDIO_MAX_ASSETS 255
 #define AUDIO_MAX_VOICES 64
@@ -18,6 +25,7 @@ typedef struct audio_asset {
     AVAudioPlayer *player;
     i32 kind;
     i32 generation;
+    u32 serial;
     f64 volume;
 } audio_asset;
 
@@ -31,6 +39,9 @@ static audio_voice audio_voices[AUDIO_MAX_VOICES];
 static NSObject *audio_mutex;
 static f64 audio_master_volume = 1.0;
 static char audio_error[512];
+#if AUDIO_SESSION
+static atomic_bool audio_session_live;
+#endif
 
 static NSObject *audio_lock(void) {
     @synchronized([NSObject class]) {
@@ -105,7 +116,76 @@ static void audio_collect_voices(void) {
     }
 }
 
-#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+#if AUDIO_SESSION
+static dispatch_queue_t audio_session_queue(void) {
+    static dispatch_queue_t queue;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        queue = dispatch_queue_create("ns.audio.session", DISPATCH_QUEUE_SERIAL);
+    });
+    return queue;
+}
+
+// The system deactivates the session on an interruption, a media-services
+// reset, or when the app leaves the foreground. -[AVAudioPlayer play] then
+// reactivates it on the calling thread, which stalls the main thread, so the
+// session is tracked here and reactivated on audio_session_queue instead.
+static void audio_session_watch(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+        void (^lost)(NSNotification *) = ^(NSNotification *note) {
+            (void)note;
+            atomic_store(&audio_session_live, false);
+        };
+        [center addObserverForName:AVAudioSessionInterruptionNotification object:nil queue:nil usingBlock:lost];
+        [center addObserverForName:AVAudioSessionMediaServicesWereResetNotification object:nil queue:nil usingBlock:lost];
+        [center addObserverForName:@"UIApplicationDidEnterBackgroundNotification" object:nil queue:nil usingBlock:lost];
+    });
+}
+
+// Runs on audio_session_queue only.
+static ns_bool audio_session_apply(BOOL active, char *message, size_t capacity) {
+    AVAudioSession *session = [AVAudioSession sharedInstance];
+    __block NSError *local = nil;
+    __block BOOL ok = YES;
+    if (active) {
+        ok = [session setCategory:AVAudioSessionCategoryAmbient
+                             mode:AVAudioSessionModeDefault
+                          options:AVAudioSessionCategoryOptionMixWithOthers
+                            error:&local];
+    }
+    if (ok) {
+        if (@available(iOS 27.0, visionOS 27.0, *)) {
+            dispatch_semaphore_t activated = dispatch_semaphore_create(0);
+            void (^handler)(BOOL, NSError *) = ^(BOOL success, NSError *_Nullable err) {
+                ok = success;
+                local = err;
+                dispatch_semaphore_signal(activated);
+            };
+            if (active) {
+                [session activateWithOptions:AVAudioSessionActivationOptionNone completionHandler:handler];
+            } else {
+                [session deactivateWithOptions:AVAudioSessionDeactivationOptionNotifyOthersOnDeactivation
+                             completionHandler:handler];
+            }
+            dispatch_semaphore_wait(activated, DISPATCH_TIME_FOREVER);
+        } else if (active) {
+            ok = [session setActive:YES error:&local];
+        } else {
+            ok = [session setActive:NO
+                        withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
+                              error:&local];
+        }
+    }
+    atomic_store(&audio_session_live, ok && active);
+    if (!ok) {
+        const char *utf8 = [[local localizedDescription] UTF8String];
+        snprintf(message, capacity, "%s", utf8 ? utf8 : "unknown audio error");
+    }
+    return ok;
+}
+
 static void audio_session_wait(dispatch_semaphore_t done) {
     if ([NSThread isMainThread]) {
         while (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_MSEC)) != 0) {
@@ -124,35 +204,10 @@ static ns_bool audio_session_set_active(BOOL active) {
     char *message = message_storage;
     dispatch_semaphore_t done = dispatch_semaphore_create(0);
 
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    audio_session_watch();
+    dispatch_async(audio_session_queue(), ^{
         @autoreleasepool {
-            AVAudioSession *session = [AVAudioSession sharedInstance];
-            __block NSError *local = nil;
-            if (@available(iOS 27.0, visionOS 27.0, *)) {
-                dispatch_semaphore_t activated = dispatch_semaphore_create(0);
-                void (^handler)(BOOL, NSError *) = ^(BOOL success, NSError *_Nullable err) {
-                    ok = success;
-                    local = err;
-                    dispatch_semaphore_signal(activated);
-                };
-                if (active) {
-                    [session activateWithOptions:AVAudioSessionActivationOptionNone completionHandler:handler];
-                } else {
-                    [session deactivateWithOptions:AVAudioSessionDeactivationOptionNotifyOthersOnDeactivation
-                                 completionHandler:handler];
-                }
-                dispatch_semaphore_wait(activated, DISPATCH_TIME_FOREVER);
-            } else if (active) {
-                ok = [session setActive:YES error:&local];
-            } else {
-                ok = [session setActive:NO
-                            withOptions:AVAudioSessionSetActiveOptionNotifyOthersOnDeactivation
-                                  error:&local];
-            }
-            if (!ok) {
-                const char *utf8 = [[local localizedDescription] UTF8String];
-                snprintf(message, 512, "%s", utf8 ? utf8 : "unknown audio error");
-            }
+            ok = audio_session_apply(active, message, 512);
         }
         dispatch_semaphore_signal(done);
     });
@@ -168,20 +223,41 @@ static ns_bool audio_session_set_active(BOOL active) {
 }
 #endif
 
+// Called with audio_lock held. A player started while the session is inactive
+// is started on audio_session_queue after reactivation, unless its handle was
+// stopped, paused, or unloaded in the meantime.
+static ns_bool audio_player_start(AVAudioPlayer *player, i32 handle) {
+#if AUDIO_SESSION
+    audio_asset *asset = audio_asset_for_handle(handle);
+    if (asset && !atomic_load(&audio_session_live)) {
+        u32 serial = asset->serial;
+        dispatch_async(audio_session_queue(), ^{
+            @autoreleasepool {
+                char message[512];
+                message[0] = '\0';
+                ns_bool live = atomic_load(&audio_session_live) || audio_session_apply(YES, message, sizeof(message));
+                @synchronized(audio_lock()) {
+                    if (!live) {
+                        audio_set_error([NSString stringWithUTF8String:message[0] ? message : "unknown audio error"]);
+                        return;
+                    }
+                    audio_asset *current = audio_asset_for_handle(handle);
+                    if (current && current->serial == serial && ![player play]) {
+                        audio_set_error(@"audio playback could not start");
+                    }
+                }
+            }
+        });
+        return true;
+    }
+#endif
+    (void)handle;
+    return [player play];
+}
+
 ns_bool audio_init(void) {
     @autoreleasepool {
-#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
-        AVAudioSession *session = [AVAudioSession sharedInstance];
-        NSError *error = nil;
-        if (![session setCategory:AVAudioSessionCategoryAmbient
-                              mode:AVAudioSessionModeDefault
-                           options:AVAudioSessionCategoryOptionMixWithOthers
-                             error:&error]) {
-            @synchronized(audio_lock()) {
-                audio_set_error([error localizedDescription]);
-            }
-            return false;
-        }
+#if AUDIO_SESSION
         if (!audio_session_set_active(YES)) return false;
 #endif
         @synchronized(audio_lock()) {
@@ -208,7 +284,7 @@ void audio_shutdown(void) {
             }
             audio_clear_error();
         }
-#if TARGET_OS_IOS || (defined(TARGET_OS_VISION) && TARGET_OS_VISION)
+#if AUDIO_SESSION
         audio_session_set_active(NO);
 #endif
     }
@@ -310,10 +386,11 @@ ns_bool audio_play(i32 handle, ns_bool loop) {
                 return false;
             }
             if (asset->kind == AUDIO_MUSIC) {
+                asset->serial++;
                 [asset->player stop];
                 [asset->player setCurrentTime:0.0];
                 [asset->player setNumberOfLoops:loop ? -1 : 0];
-                if (![asset->player play]) {
+                if (!audio_player_start(asset->player, handle)) {
                     audio_set_error(@"audio playback could not start");
                     return false;
                 }
@@ -340,7 +417,7 @@ ns_bool audio_play(i32 handle, ns_bool loop) {
             [player setNumberOfLoops:loop ? -1 : 0];
             [player setVolume:(float)(asset->volume * audio_master_volume)];
             audio_voices[voice_index] = (audio_voice){.player = player, .handle = handle};
-            if (![player play]) {
+            if (!audio_player_start(player, handle)) {
                 audio_release_voice(voice_index);
                 audio_set_error(@"audio playback could not start");
                 return false;
@@ -355,6 +432,7 @@ void audio_pause(i32 handle) {
         @synchronized(audio_lock()) {
             audio_asset *asset = audio_asset_for_handle(handle);
             if (!asset) return;
+            asset->serial++;
             if (asset->kind == AUDIO_MUSIC) [asset->player pause];
             for (i32 i = 0; i < AUDIO_MAX_VOICES; ++i) {
                 if (audio_voices[i].handle == handle) [audio_voices[i].player pause];
@@ -375,7 +453,7 @@ ns_bool audio_resume(i32 handle) {
             }
             ns_bool resumed = false;
             if (asset->kind == AUDIO_MUSIC) {
-                if (![asset->player play]) {
+                if (!audio_player_start(asset->player, handle)) {
                     audio_set_error(@"audio playback could not resume");
                     return false;
                 }
@@ -383,7 +461,7 @@ ns_bool audio_resume(i32 handle) {
             }
             for (i32 i = 0; i < AUDIO_MAX_VOICES; ++i) {
                 if (audio_voices[i].player && audio_voices[i].handle == handle) {
-                    resumed = [audio_voices[i].player play] || resumed;
+                    resumed = audio_player_start(audio_voices[i].player, handle) || resumed;
                 }
             }
             return resumed;
@@ -396,6 +474,7 @@ void audio_stop(i32 handle) {
         @synchronized(audio_lock()) {
             audio_asset *asset = audio_asset_for_handle(handle);
             if (!asset) return;
+            asset->serial++;
             if (asset->kind == AUDIO_MUSIC) {
                 [asset->player stop];
                 [asset->player setCurrentTime:0.0];
@@ -412,6 +491,7 @@ void audio_stop_all(void) {
     @autoreleasepool {
         @synchronized(audio_lock()) {
             for (i32 i = 0; i < AUDIO_MAX_ASSETS; ++i) {
+                audio_assets[i].serial++;
                 if (audio_assets[i].player) {
                     [audio_assets[i].player stop];
                     [audio_assets[i].player setCurrentTime:0.0];
