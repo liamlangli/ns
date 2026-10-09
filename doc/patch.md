@@ -37,7 +37,7 @@ directory of the server.
 ## Make a patch
 
 ```sh
-ns patch [path | target]
+ns patch [path | target] [--release | --label <text>]
 ```
 
 `ns patch` links the target exactly as the host runs it - the linked source for
@@ -66,6 +66,19 @@ count with it, so a project that publishes patches for real should pin
 `patch_version` in `ns.mod` (or keep `bin/<name>_patch/`). A client only ever
 moves to a higher version.
 
+Every patch carries a label next to its version, so a running build can be
+told apart at a glance. It defaults to `<version>.<YYYYMMDD>.debug` from the
+manifest `version` and the local date (`0.1.0.20261009.debug`); `--release`
+ends it in `release` instead. `--label <text>` replaces it with free text - a
+build date, a commit, a note:
+
+```sh
+ns patch --label "$(date '+%Y-%m-%d %H:%M') $(git rev-parse --short HEAD)"
+```
+
+The label is part of the patch: the same files under a different label are
+the next version. It is cut to 255 bytes on a UTF-8 boundary.
+
 ## Apply a patch
 
 The host checks the `patch` URL before the program starts:
@@ -90,7 +103,10 @@ The host checks the `patch` URL before the program starts:
 The program then runs with the snapshot as its working directory, so a
 relative path such as `res/house.vox` reads the patched file. Its version is
 published as `NS_PATCH_VERSION`, and `os_patch_version()` (`use os`) returns it:
-0 when the program runs the files it shipped with.
+0 when the program runs the files it shipped with. Its label is published as
+`NS_PATCH_LABEL` and returned by `os_patch_label()`: "" when the patch has none
+or nothing is patched. A generated app that runs the files it shipped with
+reports the version and label of the patch `ns patch` wrote last.
 
 The cache is `NS_PATCH_DIR` when set, else `~/Library/Caches/ns-patch` on
 Apple platforms (the app's own Caches directory inside an iOS sandbox),
@@ -112,7 +128,7 @@ All integers are little-endian; a string is a u16 length and its bytes.
 ```text
 .nsapp header (64 bytes)
   0  "NSAPP\0\0\0"
-  8  u16 format (1)
+  8  u16 format (2; 1 has no label)
  10  u8  mode (1 eval, 2 emu)       11 u8 flags (0)
  12  u32 patch version
  16  u32 body size
@@ -120,7 +136,8 @@ All integers are little-endian; a string is a u16 length and its bytes.
  28  u32 reserved
  32  u8[32] SHA-256 of the body
 .nsapp body
-  str name, str app version, str program path, u64 created (unix seconds)
+  str name, str app version, str program path, u64 created (unix seconds),
+  str label (format 2 only)
   bundle x count: str file, u64 size, u8[32] SHA-256, u32 first file, u32 file count
   file x count:   str path, u64 size, u8[32] SHA-256
 

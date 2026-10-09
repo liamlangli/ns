@@ -18,7 +18,8 @@
 
 #include "ns_type.h"
 
-#define NS_PATCH_FORMAT 1
+// Format 2 adds the index `label`; format 1 indexes still decode, unlabelled.
+#define NS_PATCH_FORMAT 2
 // Size of the fixed `.nsapp` header a client requests first.
 #define NS_PATCH_HEADER_SIZE 64
 #define NS_PATCH_HASH_SIZE 32
@@ -30,6 +31,10 @@
 #define NS_PATCH_CODE_EMU "LinkedProject.nsc"
 // The environment variable a host publishes the running patch version in.
 #define NS_PATCH_VERSION_ENV "NS_PATCH_VERSION"
+// The environment variable a host publishes the running patch's label in.
+#define NS_PATCH_LABEL_ENV "NS_PATCH_LABEL"
+// Longest label `ns patch` writes and a host publishes, in bytes.
+#define NS_PATCH_LABEL_MAX 255
 
 typedef enum ns_patch_mode {
     NS_PATCH_MODE_NONE = 0,
@@ -86,6 +91,7 @@ typedef struct ns_patch_index {
     char *app_version;   // manifest `version` when the patch was made
     char *code;          // the file in the snapshot that holds the program
     u64 created;         // unix seconds
+    char *label;         // free text naming the patch (`ns patch --label`), "" when none
     ns_patch_bundle *bundles;
     ns_patch_file *files;
 } ns_patch_index;
@@ -102,6 +108,7 @@ void ns_patch_index_free(ns_patch_index *index);
 typedef struct ns_patch_input {
     const char *name;
     const char *app_version;
+    const char *label;    // free text published with the version, NULL for none
     ns_patch_mode mode;
     const u8 *code;       // the program: linked source (eval) or ns_cpu image (emu)
     szt code_size;
@@ -134,6 +141,7 @@ typedef struct ns_patch_config {
     ns_patch_mode mode;   // must match the index
     const char *base_dir; // files the host shipped with, reused when unchanged
     u32 base_version;     // patch the shipped files already are, 0 for none
+    const char *base_label; // label of that patch, NULL for none
     const char *cache_dir; // NULL: NS_PATCH_DIR, else the per-user cache
     i32 timeout_ms;       // per connection step; 0: 3000
     i32 jobs;             // parallel bundle downloads; 0: 4
@@ -142,6 +150,7 @@ typedef struct ns_patch_config {
 
 typedef struct ns_patch_state {
     u32 version;          // the patch to run: base_version when none applies
+    char label[NS_PATCH_LABEL_MAX + 1]; // its label: base_label when none applies
     ns_bool patched;      // `root` is an installed snapshot
     ns_bool updated;      // this call downloaded and installed it
     char root[1024];      // directory the program runs in (patched only)
@@ -160,3 +169,5 @@ void ns_patch_discard(const char *cache_dir, const char *name, u32 version);
 
 // Publish `version` to the program as NS_PATCH_VERSION.
 void ns_patch_publish_version(u32 version);
+// Publish `label` to the program as NS_PATCH_LABEL ("" for NULL).
+void ns_patch_publish_label(const char *label);

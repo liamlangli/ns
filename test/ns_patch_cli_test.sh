@@ -41,7 +41,7 @@ write_main() {
         'use os' \
         '' \
         'fn main() {' \
-        "    print(\`$1 patch={os_patch_version()} {os_read_file(\"res/note.txt\")}\\n\`)" \
+        "    print(\`$1 patch={os_patch_version()} label={os_patch_label()} {os_read_file(\"res/note.txt\")}\\n\`)" \
         '}' > "$patch_tmp/demo/src/main.ns"
 }
 write_main old
@@ -51,11 +51,11 @@ cp -R "$patch_tmp/demo" "$patch_tmp/client"
 
 write_main new
 printf 'patched' > "$patch_tmp/demo/res/note.txt"
-out=$(cd "$patch_tmp/demo" && "$ns" patch)
+out=$(cd "$patch_tmp/demo" && "$ns" patch --label 'nightly 7')
 printf '%s\n' "$out" | grep -q 'demo patch 1 (eval)'
 test -f "$patch_tmp/demo/bin/demo_patch/demo.nsapp"
 test "$(ls "$patch_tmp/demo/bin/demo_patch" | grep -c '\.nsbundle$')" -eq 2
-out=$(cd "$patch_tmp/demo" && "$ns" patch)
+out=$(cd "$patch_tmp/demo" && "$ns" patch --label 'nightly 7')
 printf '%s\n' "$out" | grep -q 'unchanged; still patch 1'
 
 # Publish it and let ns serve it.
@@ -65,7 +65,7 @@ printf 'use http\nfn main() {\n    let r = http_serve_static(%s, "%s")\n}\n' "$p
 "$ns" run "$patch_tmp/serve.ns" > "$patch_tmp/serve.log" 2>&1 &
 server_pid=$!
 tries=0
-until (cd "$patch_tmp/client" && "$ns" run --patch) > "$patch_tmp/run.log" 2>&1 && grep -q 'new patch=1 patched' "$patch_tmp/run.log"; do
+until (cd "$patch_tmp/client" && "$ns" run --patch) > "$patch_tmp/run.log" 2>&1 && grep -q 'new patch=1 label=nightly 7 patched' "$patch_tmp/run.log"; do
     tries=$((tries + 1))
     if [ "$tries" -ge 50 ]; then
         cat "$patch_tmp/run.log" "$patch_tmp/serve.log" >&2
@@ -76,10 +76,16 @@ done
 grep -q 'installing patch 1' "$patch_tmp/run.log"
 
 # Without --patch the project source runs as it is.
-(cd "$patch_tmp/client" && "$ns" run) | grep -q '^old patch=0 shipped$'
+(cd "$patch_tmp/client" && "$ns" run) | grep -q '^old patch=0 label= shipped$'
 
 # Offline, the installed patch keeps running.
-(cd "$patch_tmp/client" && NS_PATCH_URL=http://127.0.0.1:1/demo.nsapp "$ns" run --patch) | grep -q '^new patch=1 patched$'
+(cd "$patch_tmp/client" && NS_PATCH_URL=http://127.0.0.1:1/demo.nsapp "$ns" run --patch) | grep -q '^new patch=1 label=nightly 7 patched$'
+
+# Without --label the label is <version>.<YYYYMMDD>.debug, or .release.
+(cd "$patch_tmp/demo" && "$ns" patch) > /dev/null
+grep -aq "1.0.0.$(date +%Y%m%d).debug" "$patch_tmp/demo/bin/demo_patch/demo.nsapp"
+(cd "$patch_tmp/demo" && "$ns" patch --release) > /dev/null
+grep -aq "1.0.0.$(date +%Y%m%d).release" "$patch_tmp/demo/bin/demo_patch/demo.nsapp"
 
 # Only interpreted targets take patches.
 sed 's/^target = "eval"$/target = "exec"/' "$patch_tmp/demo/ns.mod" > "$patch_tmp/demo/ns.mod.exec"
@@ -92,4 +98,4 @@ grep -q 'patches carry interpreted code' "$patch_tmp/exec.log"
 
 # An emu patch carries the ns_cpu image.
 sed 's/^target = "exec"$/target = "emu"/' "$patch_tmp/demo/ns.mod.exec" > "$patch_tmp/demo/ns.mod"
-(cd "$patch_tmp/demo" && "$ns" patch) | grep -q 'demo patch 2 (emu)'
+(cd "$patch_tmp/demo" && "$ns" patch) | grep -q 'demo patch 4 (emu)'

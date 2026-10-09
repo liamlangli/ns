@@ -937,6 +937,8 @@ static ns_bool ns_xcode_append_app_enter(ns_xcode_buffer *out, const ns_project_
                  ns_xcode_append_c_string(out, spec->patch_url) &&
                  ns_xcode_buffer_appendf(out, "\";\nstatic const char ns_app_patch_name[] = \"") &&
                  ns_xcode_append_c_string(out, spec->patch_name) &&
+                 ns_xcode_buffer_appendf(out, "\";\nstatic const char ns_app_patch_base_label[] = \"") &&
+                 ns_xcode_append_c_string(out, spec->patch_base_label) &&
                  ns_xcode_buffer_appendf(out, "\";\nstatic const unsigned ns_app_patch_base = %uu;\n", spec->patch_base_version);
     return ok && ns_xcode_buffer_appendf(out,
         "static const int ns_app_patch_mode = %s;\n"
@@ -951,11 +953,13 @@ static ns_bool ns_xcode_append_app_enter(ns_xcode_buffer *out, const ns_project_
         "    config.mode = (ns_patch_mode)ns_app_patch_mode;\n"
         "    config.base_dir = resource_root;\n"
         "    config.base_version = ns_app_patch_base;\n"
+        "    config.base_label = ns_app_patch_base_label;\n"
         "    ns_patch_state state;\n"
         "    ns_patch_update(&config, &state);\n"
         "    fprintf(stdout, \"ns: %%s\\n\", state.message);\n"
         "    ns_app_patch_version = state.patched ? state.version : 0;\n"
         "    ns_patch_publish_version(state.version);\n"
+        "    ns_patch_publish_label(state.label);\n"
         "    const char *root = state.patched ? state.root : resource_root;\n"
         "    if (chdir(root) != 0) {\n"
         "        snprintf(ns_app_status, sizeof(ns_app_status), \"Could not enter resource directory: %%s\", root);\n"
@@ -974,6 +978,7 @@ static ns_bool ns_xcode_append_app_enter(ns_xcode_buffer *out, const ns_project_
         "    ns_patch_discard(NULL, ns_app_patch_name, ns_app_patch_version);\n"
         "    ns_app_patch_version = 0;\n"
         "    ns_patch_publish_version(ns_app_patch_base);\n"
+        "    ns_patch_publish_label(ns_app_patch_base_label);\n"
         "    if (chdir(resource_root) != 0) return 0;\n"
         "    snprintf(program, size, \"%%s/%%s\", resource_root, code);\n"
         "    return 1;\n"

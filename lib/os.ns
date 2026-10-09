@@ -140,6 +140,10 @@ ref fn os_env(name: str) str
 // (doc/patch.md), which the host publishes as NS_PATCH_VERSION. 0 when the
 // program runs the files it shipped with, or its host takes no patches.
 ref fn os_patch_version() i32
+// The running patch's label (`ns patch --label`), published as NS_PATCH_LABEL:
+// free text such as a build date for telling builds apart. "" when the patch
+// has none, or no patch runs.
+ref fn os_patch_label() str
 ref fn os_make_dirs(path: str) i32
 ref fn os_launch_ns_project(folder: str, entry: str) i32
 

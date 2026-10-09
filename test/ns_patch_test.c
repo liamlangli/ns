@@ -262,7 +262,58 @@ int main(void) {
     snprintf(first_program_bundle, sizeof(first_program_bundle), "%s", index.bundles[0].file);
     char first_asset_bundle[64];
     snprintf(first_asset_bundle, sizeof(first_asset_bundle), "%s", index.bundles[1].file);
+    ns_expect(index.header.format == NS_PATCH_FORMAT && strcmp(index.label, "") == 0,
+              "a patch written without a label carries an empty one.");
+    {
+        // A format 1 index, which has no label, still decodes: drop the empty
+        // label (two little-endian length bytes after `created`) and re-seal
+        // the body.
+        szt at = NS_PATCH_HEADER_SIZE;
+        for (i32 i = 0; i < 3; i++) at += 2 + ((u8)index_data[at] | ((u8)index_data[at + 1] << 8));
+        at += 8;
+        char *old = malloc(index_size - 2);
+        memcpy(old, index_data, at);
+        memcpy(old + at, index_data + at + 2, index_size - at - 2);
+        u32 body = (u32)(index_size - 2 - NS_PATCH_HEADER_SIZE);
+        old[8] = 1;
+        old[9] = 0;
+        for (i32 i = 0; i < 4; i++) old[16 + i] = (char)(body >> (i * 8));
+        ns_sha256(old + NS_PATCH_HEADER_SIZE, body, (u8 *)old + 32);
+        ns_patch_index v1;
+        ns_expect(ns_patch_index_decode((const u8 *)old, index_size - 2, &v1, error, sizeof(error)) &&
+                      v1.header.format == 1 && strcmp(v1.label, "") == 0 && v1.header.file_count == index.header.file_count,
+                  "a format 1 index decodes with an empty label.");
+        ns_patch_index_free(&v1);
+        free(old);
+    }
     ns_patch_index_free(&index);
+
+    {
+        // A label travels in the index; changing it alone is a new patch.
+        char labelled[PATH_MAX], labelled_index[PATH_MAX];
+        path(labelled, root, "labelled");
+        path(labelled_index, labelled, "demo.nsapp");
+        const char *assets[] = {"res"};
+        ns_patch_input in = {
+            .name = "demo", .app_version = "1.0", .label = "2026-10-09 18:00 abc1234", .mode = NS_PATCH_MODE_EVAL,
+            .code = (const u8 *)"fn main() {}\n", .code_size = 13, .root = project, .assets = assets,
+            .asset_count = 1, .out_dir = labelled, .chunk_size = 64 * 1024,
+        };
+        ns_patch_summary a, b, c;
+        ns_bool wrote = ns_patch_write(&in, &a) && ns_patch_write(&in, &b);
+        in.label = "2026-10-09 18:05 abc1234";
+        wrote = wrote && ns_patch_write(&in, &c);
+        ns_expect(wrote && a.version == 1 && b.unchanged && b.version == 1 && !c.unchanged && c.version == 2,
+                  "the same label keeps the version, a new label alone publishes the next one.");
+        size_t size = 0;
+        char *data = read_text(labelled_index, &size);
+        ns_patch_index li;
+        ns_expect(data && ns_patch_index_decode((const u8 *)data, size, &li, error, sizeof(error)) &&
+                      strcmp(li.label, "2026-10-09 18:05 abc1234") == 0,
+                  "the index carries the label it was written with.");
+        ns_patch_index_free(&li);
+        free(data);
+    }
 
     {
         // A flipped byte in the body, a truncated index, and a path that climbs
@@ -394,9 +445,18 @@ int main(void) {
     ns_patch_discard(cache, "demo", 10);
     st = update("http://127.0.0.1:1/demo.nsapp", empty_base, cache, 0);
     ns_expect(!st.patched && st.version == 0, "a discarded patch no longer runs.");
+    {
+        ns_patch_config shipped = {.url = "http://127.0.0.1:1/demo.nsapp", .name = "demo", .mode = NS_PATCH_MODE_EVAL,
+                                   .base_version = 3, .base_label = "shipped build", .cache_dir = cache, .quiet = true};
+        ns_patch_update(&shipped, &st);
+        ns_expect(!st.patched && st.version == 3 && strcmp(st.label, "shipped build") == 0,
+                  "with no patch installed the shipped version and label stand.");
+    }
 
     ns_patch_publish_version(42);
     ns_expect(strcmp(getenv(NS_PATCH_VERSION_ENV), "42") == 0, "the running patch is published as NS_PATCH_VERSION.");
+    ns_patch_publish_label("build 42");
+    ns_expect(strcmp(getenv(NS_PATCH_LABEL_ENV), "build 42") == 0, "the running patch's label is published as NS_PATCH_LABEL.");
 
     char command[PATH_MAX + 16];
     snprintf(command, sizeof(command), "rm -rf '%s'", root);

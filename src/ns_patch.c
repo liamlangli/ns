@@ -485,7 +485,7 @@ ns_bool ns_patch_header_decode(const u8 *data, szt size, ns_patch_header *out) {
     if (!data || size < NS_PATCH_HEADER_SIZE) return false;
     if (memcmp(data, NS_PATCH_INDEX_MAGIC, 8) != 0) return false;
     out->format = ns_patch_rd_u16(data + 8);
-    if (out->format != NS_PATCH_FORMAT) return false;
+    if (out->format < 1 || out->format > NS_PATCH_FORMAT) return false;
     out->mode = data[10];
     out->version = ns_patch_rd_u32(data + 12);
     out->body_size = ns_patch_rd_u32(data + 16);
@@ -499,6 +499,7 @@ void ns_patch_index_free(ns_patch_index *index) {
     if (!index) return;
     free(index->name);
     free(index->app_version);
+    free(index->label);
     free(index->code);
     for (u32 i = 0; index->bundles && i < index->header.bundle_count; i++) free(index->bundles[i].file);
     for (u32 i = 0; index->files && i < index->header.file_count; i++) free(index->files[i].path);
@@ -539,6 +540,7 @@ ns_bool ns_patch_index_decode(const u8 *data, szt size, ns_patch_index *out, cha
     out->app_version = ns_patch_read_str(&r);
     out->code = ns_patch_read_str(&r);
     out->created = ns_patch_read_u64(&r);
+    out->label = h.format >= 2 ? ns_patch_read_str(&r) : ns_patch_strdup("");
     for (u32 i = 0; !r.failed && i < h.bundle_count; i++) {
         ns_patch_bundle *b = &out->bundles[i];
         b->file = ns_patch_read_str(&r);
@@ -594,6 +596,7 @@ static void ns_patch_index_encode(ns_patch_buf *out, const ns_patch_index *index
     ns_patch_buf_str(&body, index->app_version);
     ns_patch_buf_str(&body, index->code);
     ns_patch_buf_u64(&body, index->created);
+    ns_patch_buf_str(&body, index->label ? index->label : "");
     for (u32 i = 0; i < index->header.bundle_count; i++) {
         const ns_patch_bundle *b = &index->bundles[i];
         ns_patch_buf_str(&body, b->file);
@@ -796,12 +799,19 @@ ns_bool ns_patch_write(const ns_patch_input *in, ns_patch_summary *out) {
     index.app_version = ns_patch_strdup(in->app_version ? in->app_version : "");
     index.code = ns_patch_strdup(code_name);
     index.created = (u64)time(ns_null);
+    index.label = ns_patch_strdup(in->label ? in->label : "");
+    if (index.label && strlen(index.label) > NS_PATCH_LABEL_MAX) {
+        // Cut on a UTF-8 boundary so the label stays valid text.
+        szt cut = NS_PATCH_LABEL_MAX;
+        while (cut > 0 && ((u8)index.label[cut] & 0xc0) == 0x80) cut--;
+        index.label[cut] = '\0';
+    }
     index.header.format = NS_PATCH_FORMAT;
     index.header.mode = (u8)in->mode;
     index.header.file_count = scan.count;
     index.files = (ns_patch_file *)calloc(scan.count, sizeof(ns_patch_file));
     index.bundles = (ns_patch_bundle *)calloc(scan.count, sizeof(ns_patch_bundle));
-    ns_bool ok = index.files && index.bundles;
+    ns_bool ok = index.files && index.bundles && index.label;
     for (u32 i = 0; ok && i < scan.count; i++) {
         ns_patch_file *f = &index.files[i];
         f->path = ns_patch_strdup(scan.items[i].path);
@@ -854,7 +864,7 @@ ns_bool ns_patch_write(const ns_patch_input *in, ns_patch_summary *out) {
     }
     ns_bool same = has_previous && previous.header.mode == index.header.mode &&
                    previous.header.bundle_count == index.header.bundle_count &&
-                   strcmp(previous.code, index.code) == 0;
+                   strcmp(previous.code, index.code) == 0 && strcmp(previous.label, index.label) == 0;
     for (u32 i = 0; same && i < bundles; i++) {
         same = memcmp(previous.bundles[i].hash, index.bundles[i].hash, NS_PATCH_HASH_SIZE) == 0;
     }
@@ -1418,6 +1428,7 @@ static ns_bool ns_patch_installed(const char *app_dir, const ns_patch_config *cf
 static void ns_patch_use(ns_patch_state *state, const char *snapshot, const ns_patch_index *index) {
     state->patched = true;
     state->version = index->header.version;
+    snprintf(state->label, sizeof(state->label), "%s", index->label);
     snprintf(state->root, sizeof(state->root), "%s", snapshot);
     ns_patch_join(state->code, snapshot, index->code);
 }
@@ -1469,6 +1480,7 @@ static void ns_patch_log(const ns_patch_config *cfg, const char *text) {
 void ns_patch_update(const ns_patch_config *cfg, ns_patch_state *state) {
     memset(state, 0, sizeof(*state));
     state->version = cfg->base_version;
+    snprintf(state->label, sizeof(state->label), "%s", cfg->base_label ? cfg->base_label : "");
     char app_dir[NS_PATCH_PATH_MAX];
     if (!cfg->name || !ns_patch_app_dir(cfg->cache_dir, cfg->name, app_dir)) {
         snprintf(state->message, sizeof(state->message), "no usable patch cache directory");
@@ -1634,5 +1646,14 @@ void ns_patch_publish_version(u32 version) {
     _putenv_s(NS_PATCH_VERSION_ENV, text);
 #else
     setenv(NS_PATCH_VERSION_ENV, text, 1);
+#endif
+}
+
+void ns_patch_publish_label(const char *label) {
+    const char *text = label ? label : "";
+#if defined(_WIN32)
+    _putenv_s(NS_PATCH_LABEL_ENV, text);
+#else
+    setenv(NS_PATCH_LABEL_ENV, text, 1);
 #endif
 }

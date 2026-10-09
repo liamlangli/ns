@@ -111,6 +111,8 @@ typedef struct ns_compile_option_t {
     i32 live_port;
     ns_str live_host;
     ns_bool live_view;
+    const char *patch_label; // `ns patch --label <text>`
+    ns_bool patch_release;   // `ns patch --release`: the default label ends in release
 } ns_compile_option_t;
 
 ns_compile_option_t parse_options(i32 argc, i8** argv) {
@@ -227,6 +229,11 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             if (i + 1 >= argc) ns_exit(1, "usage", "--live-host needs an address.\n");
             option.live_host = ns_str_cstr(argv[i + 1]);
             i++;
+        } else if (strcmp(argv[i], "--label") == 0 && option.patch_cmd) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--label needs the text to publish with the patch.\n");
+            option.patch_label = argv[++i];
+        } else if (strcmp(argv[i], "--release") == 0 && option.patch_cmd) {
+            option.patch_release = true;
         } else if (strcmp(argv[i], "--port") == 0) {
             if (i + 1 >= argc) ns_exit(1, "usage", "--port needs a number.\n");
             char *end = ns_null;
@@ -329,7 +336,9 @@ void ns_help() {
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
     printf("                    keeps the artifact when no input changed; --force rebuilds\n");
     printf("  patch [path|target] write the eval/emu target's over-the-air patch to\n");
-    printf("                    bin/<name>_patch: <name>.nsapp and its .nsbundle files\n");
+    printf("                    bin/<name>_patch: <name>.nsapp and its .nsbundle files;\n");
+    printf("                    --label <text> publishes free text with the version, else\n");
+    printf("                    <version>.<YYYYMMDD>.debug (--release: .release)\n");
     printf("  clean [path]      remove bin/ and the profiles a build generates\n");
     printf("  project [path]    generate a native IDE project from ns.mod\n");
     printf("                    Darwin: bin/<name>.xcodeproj; Windows: bin/<name>.sln\n");
@@ -4804,6 +4813,7 @@ static ns_bool ns_project_module_embeddable(ns_str module) {
 }
 
 static u32 ns_patch_written_version(ns_str scope, ns_str name);
+static ns_str ns_patch_written_label(ns_str scope, ns_str name);
 
 void ns_exec_project(ns_str path) {
     ns_str start = path;
@@ -4911,6 +4921,7 @@ void ns_exec_project(ns_str path) {
         .patch_url = selection.patch_url,
         .patch_name = selection.name,
         .patch_base_version = ns_patch_written_version(root, selection.name),
+        .patch_base_label = ns_patch_written_label(root, selection.name),
     };
 
     ns_bool generated = false;
@@ -4967,7 +4978,28 @@ static u32 ns_patch_written_version(ns_str scope, ns_str name) {
     return version;
 }
 
-void ns_exec_patch(ns_str argument) {
+// The label of the patch last written for `name`, empty when there is none or
+// it has no label. The generated app publishes it while it runs that patch.
+static ns_str ns_patch_written_label(ns_str scope, ns_str name) {
+    ns_str dir = ns_patch_output_dir(scope, name);
+    ns_str file_name = ns_str_concat(name, ns_str_cstr(".nsapp"));
+    ns_str path = ns_path_join(dir, file_name);
+    ns_str data = ns_os_read_file(path);
+    ns_patch_index index = {0};
+    ns_str label = ns_str_null;
+    if (data.data && ns_patch_index_decode((const u8 *)data.data, (szt)data.len, &index, ns_null, 0)) {
+        label = ns_str_cstr(index.label);
+        label = ns_str_slice(label, 0, label.len); // own a copy past the index
+        ns_patch_index_free(&index);
+    }
+    ns_str_free(data);
+    ns_str_free(path);
+    ns_str_free(file_name);
+    ns_str_free(dir);
+    return label;
+}
+
+void ns_exec_patch(ns_str argument, const char *label, ns_bool release) {
     ns_str scope = ns_str_null, target_name = ns_str_null;
     ns_str path = argument;
     if (ns_target_arg_select(argument, &scope, &target_name)) path = scope;
@@ -4993,9 +5025,27 @@ void ns_exec_patch(ns_str argument) {
     for (i32 i = 0, count = ns_array_length(assets); i < count; i++) ns_array_push(asset_names, (const char *)assets[i].data);
     ns_str out_dir = ns_patch_output_dir(in.scope, sel.name);
     ns_str version = ns_build_manifest_value(in.scope, "version");
+    // Without --label the patch is labelled `<version>.<YYYYMMDD>.debug`, or
+    // `.release` with --release, from the manifest version and the local date.
+    char default_label[NS_PATCH_LABEL_MAX + 1];
+    if (!label) {
+        time_t now = time(ns_null);
+        struct tm local;
+#if defined(_WIN32)
+        localtime_s(&local, &now);
+#else
+        localtime_r(&now, &local);
+#endif
+        char date[16];
+        strftime(date, sizeof(date), "%Y%m%d", &local);
+        snprintf(default_label, sizeof(default_label), "%s.%s.%s", version.data && version.len ? version.data : "0.0.0",
+                 date, release ? "release" : "debug");
+        label = default_label;
+    }
     ns_patch_input input = {
         .name = sel.name.data,
         .app_version = version.data ? version.data : "",
+        .label = label,
         .mode = emu ? NS_PATCH_MODE_EMU : NS_PATCH_MODE_EVAL,
         .code = code,
         .code_size = code_size,
@@ -5885,6 +5935,7 @@ static ns_bool ns_run_patched(ns_str scope, ns_manifest_selection *selection) {
         ns_warn("patch", "ns.mod sets no `patch` URL for `%.*s`; running the project source.\n",
                 selection->name.len, selection->name.data);
         ns_patch_publish_version(0);
+        ns_patch_publish_label("");
         return false;
     }
     ns_patch_config cfg = {
@@ -5896,6 +5947,7 @@ static ns_bool ns_run_patched(ns_str scope, ns_manifest_selection *selection) {
     ns_patch_state state;
     ns_patch_update(&cfg, &state);
     ns_patch_publish_version(state.version);
+    ns_patch_publish_label(state.label);
     if (!state.patched) {
         ns_info("patch", "%s; running the project source.\n", state.message);
         return false;
@@ -5906,11 +5958,13 @@ static ns_bool ns_run_patched(ns_str scope, ns_manifest_selection *selection) {
         ns_warn("patch", "cannot read %s; running the project source.\n", state.code);
         ns_patch_discard(ns_null, cfg.name, state.version);
         ns_patch_publish_version(0);
+        ns_patch_publish_label("");
         return false;
     }
     if (chdir(state.root) != 0) {
         ns_warn("patch", "cannot enter %s; running the project source.\n", state.root);
         ns_patch_publish_version(0);
+        ns_patch_publish_label("");
         return false;
     }
     if (cfg.mode == NS_PATCH_MODE_EMU) {
@@ -5921,6 +5975,7 @@ static ns_bool ns_run_patched(ns_str scope, ns_manifest_selection *selection) {
             ns_warn("patch", "patch %u does not load here; discarding it.\n", state.version);
             ns_patch_discard(ns_null, cfg.name, state.version);
             ns_patch_publish_version(0);
+            ns_patch_publish_label("");
             if (chdir(scope.data) != 0) ns_exit(1, "patch", "cannot return to %.*s.\n", scope.len, scope.data);
             return false;
         }
@@ -6569,7 +6624,7 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.update) {
         ns_exec_update(option.filename);
     } else if (option.patch_cmd) {
-        ns_exec_patch(option.filename);
+        ns_exec_patch(option.filename, option.patch_label, option.patch_release);
     } else if (option.lint) {
         ns_exec_lint(option.filename, option.lint_fix);
     } else if (option.tokenize_only) {

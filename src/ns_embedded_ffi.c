@@ -238,6 +238,7 @@ extern const char * os_open_folder_dialog(const char *);
 extern const char * os_cwd(void);
 extern const char * os_env(const char *);
 extern i32 os_patch_version(void);
+extern const char * os_patch_label(void);
 extern i32 os_make_dirs(const char *);
 extern i32 os_launch_ns_project(const char *, const char *);
 extern i32 os_launch_ns_profile(const char *, const char *, const char *, i32);
@@ -2603,6 +2604,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "os_motion_stop", (void *)os_motion_stop, ns_embedded_sig11, ns_embedded_cpu11 },
     { "os_open_file_dialog", (void *)os_open_file_dialog, ns_embedded_sig71, ns_embedded_cpu71 },
     { "os_open_folder_dialog", (void *)os_open_folder_dialog, ns_embedded_sig71, ns_embedded_cpu71 },
+    { "os_patch_label", (void *)os_patch_label, ns_embedded_sig3, ns_embedded_cpu3 },
     { "os_patch_version", (void *)os_patch_version, ns_embedded_sig13, ns_embedded_cpu13 },
     { "os_platform", (void *)os_platform, ns_embedded_sig13, ns_embedded_cpu13 },
     { "os_process_alive", (void *)os_process_alive, ns_embedded_sig19, ns_embedded_cpu19 },

@@ -142,7 +142,10 @@ The common commands are:
   they do not already have, in parallel, verify every digest, install a
   snapshot and run from it; any failure keeps what they ran before. The
   program reads the running patch with `os_patch_version()` (`use os`), 0 when
-  unpatched. See `doc/patch.md`.
+  unpatched. Each patch also carries a label, `<version>.<YYYYMMDD>.debug` by
+  default (`--release` ends it in `release`, `--label <text>` replaces it),
+  which the program reads with `os_patch_label()`. See
+  `doc/patch.md`.
 - `ns clean [path]`: remove what `ns` generates for the nearest project: the
   `bin/` output directory, which also holds generated IDE projects and the
   build cache and build profile, plus legacy `ns.profile` beside the manifest. Source

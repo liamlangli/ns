@@ -78,6 +78,8 @@ const char *os_cwd(void);
 const char *os_env(const char *name);
 // NS_PATCH_VERSION as published by the host (doc/patch.md), 0 when unset.
 i32 os_patch_version(void);
+// NS_PATCH_LABEL as published by the host, "" when unset.
+const char *os_patch_label(void);
 i32 os_make_dirs(const char *path);
 i32 os_launch_ns_project(const char *folder, const char *entry);
 

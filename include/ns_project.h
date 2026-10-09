@@ -68,6 +68,8 @@ typedef struct ns_project_spec {
     ns_str patch_name;
     // The patch the shipped files already are: the last one `ns patch` wrote.
     u32 patch_base_version;
+    // That patch's label (`ns patch --label`), empty when none.
+    ns_str patch_base_label;
 } ns_project_spec;
 
 // Normalize a manifest display name for filenames, IDE identifiers, and the

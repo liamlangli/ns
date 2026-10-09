@@ -488,6 +488,10 @@ i32 os_patch_version(void) {
     return value <= 0x7fffffff ? (i32)value : 0;
 }
 
+const char *os_patch_label(void) {
+    return os_env("NS_PATCH_LABEL");
+}
+
 i32 os_make_dirs(const char *path) {
     if (!path || !path[0]) return 0;
     char buf[OS_MAX_PATH];
