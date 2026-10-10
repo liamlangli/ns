@@ -97,7 +97,14 @@ static NSURL *audio_url_for_path(const char *path) {
 
 static AVAudioPlayer *audio_new_player(NSData *data, NSError **error) {
     AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithData:data error:error];
+#if AUDIO_SESSION
+    // -prepareToPlay activates an inactive session on the calling thread just
+    // as -play does. Without a live session the player is left unprepared and
+    // -play prepares it on audio_session_queue after reactivation.
+    if (player && atomic_load(&audio_session_live)) [player prepareToPlay];
+#else
     if (player) [player prepareToPlay];
+#endif
     return player;
 }
 
