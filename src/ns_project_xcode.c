@@ -676,6 +676,7 @@ static const char *const ns_xcode_feature_sources[] = {
     "compress.c",
     "audio.apple.m",
     "camera.apple.m",
+    "sono.c",
 };
 
 static const char *const ns_xcode_feature_headers[] = {
@@ -693,11 +694,13 @@ static const char *const ns_xcode_feature_headers[] = {
     "compress.h",
     "audio.h",
     "camera.h",
+    "sono.h",
 };
 
 static const char *const ns_xcode_resource_modules[] = {
     "std.ns", "shader.ns", "simd.ns", "task.ns", "view.ns", "ui.ns", "os.ns", "gpu.ns", "io.ns", "net.ns",
     "secure.ns", "storage.ns", "compress.ns", "audio.ns", "camera.ns",
+    "sono.ns",
 };
 
 static const char *const ns_xcode_ui_assets[] = {
@@ -882,13 +885,14 @@ static ns_bool ns_xcode_validate_modules(const char *linked_source) {
             (len == 2 && strncmp(start, "ui", len) == 0) || (len == 2 && strncmp(start, "os", len) == 0) ||
             (len == 3 && strncmp(start, "gpu", len) == 0) || (len == 2 && strncmp(start, "io", len) == 0) ||
             (len == 6 && strncmp(start, "secure", len) == 0) || (len == 3 && strncmp(start, "net", len) == 0) || (len == 7 && strncmp(start, "storage", len) == 0) ||
-            (len == 8 && strncmp(start, "compress", len) == 0) || (len == 5 && strncmp(start, "audio", len) == 0) || (len == 6 && strncmp(start, "camera", len) == 0)) {
+            (len == 8 && strncmp(start, "compress", len) == 0) || (len == 5 && strncmp(start, "audio", len) == 0) || (len == 6 && strncmp(start, "camera", len) == 0) ||
+            (len == 4 && strncmp(start, "sono", len) == 0)) {
             line = *end ? end + 1 : end;
             continue;
         }
         fprintf(stderr,
                 "project: module '%.*s' requires external FFI, which generated Apple apps do not support; "
-                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, secure, storage, compress, audio, and camera\n",
+                "use only embedded Apple modules std, task, shader, simd, view, ui, os, gpu, io, net, secure, storage, compress, audio, camera, and sono\n",
                 (int)len, start);
         return false;
     }

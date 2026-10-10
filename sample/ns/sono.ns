@@ -1,0 +1,61 @@
+// A short loop and two game sound effects written with the sono synthesizer.
+// Run from the repository root: bin/ns run sample/ns/sono.ns
+use std
+use sono
+
+fn theme(path: str) bool {
+    let song = sono_new(SONO_RATE, 112)
+    sono_set_swing(song, 0.2)
+    // Eight bars of 4/4, rendered as a seamless loop.
+    sono_set_loop(song, 32)
+
+    let lead = sono_track(song, SONO_LEAD)
+    sono_track_echo(song, lead, 0.75, 0.35, 0.25)
+    sono_track_reverb(song, lead, 0.3)
+    sono_play(song, lead, 0, "o5 (e:0.5 g a:1 g:0.5 e d:1 c:2 r:2 | d:0.5 e g:1 e:0.5 d c:1 a4:3 r:1)*2")
+
+    let keys = sono_track(song, SONO_KEYS)
+    sono_track_volume(song, keys, 0.45)
+    sono_track_reverb(song, keys, 0.4)
+    sono_play(song, keys, 0, "o3 ([c e g]:4 [a c4 e4] [f a c4] [g b d4])*2")
+
+    let bass = sono_track(song, SONO_BASS)
+    sono_play(song, bass, 0, "o2 ((c:0.5 c c3 c)*2 (a1 a1 a a1)*2 (f1 f1 f f1)*2 (g1 g1 g g1)*2)*2")
+
+    let kick = sono_track(song, SONO_KICK)
+    let snare = sono_track(song, SONO_SNARE)
+    let hat = sono_track(song, SONO_HIHAT)
+    sono_track_volume(song, hat, 0.35)
+    sono_track_pan(song, hat, 0.3)
+    let bar = 0.0 as f64
+    for i in 0 to 8 {
+        sono_steps(song, kick, bar, 0.25, "x... ..x. x... ....", 60)
+        sono_steps(song, snare, bar, 0.25, ".... x... .... x..o", 60)
+        bar = sono_steps(song, hat, bar, 0.25, "x.x. x.xX x.x. x.xx", 60)
+    }
+    let crash = sono_track(song, SONO_CRASH)
+    sono_track_volume(song, crash, 0.4)
+    sono_steps(song, crash, 0, 16, "x x", 60)
+
+    let ok = sono_save_wav(song, path)
+    print(`{path}: {sono_seconds(song)} s\n`)
+    sono_free(song)
+    return ok
+}
+
+fn effect(path: str, instrument: i32, pitch: f64) bool {
+    let song = sono_new(SONO_RATE, 120)
+    let t = sono_track(song, instrument)
+    sono_note(song, t, 0, 1, pitch, 1)
+    let ok = sono_save_wav(song, path)
+    sono_free(song)
+    return ok
+}
+
+fn main() {
+    if !theme("bin/sono_theme.wav") {
+        print(`theme failed: {sono_last_error()}\n`)
+    }
+    effect("bin/sono_coin.wav", SONO_COIN, 60)
+    effect("bin/sono_laser.wav", SONO_LASER, 64)
+}

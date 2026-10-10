@@ -69,6 +69,7 @@ cd "$root"
 "$ns" run test/gpu_v2_test.ns
 "$ns" run test/shader_host_test.ns
 "$ns" run test/compress_test.ns
+"$ns" run test/sono_test.ns
 "$ns" run test/storage_test.ns
 "$ns" run test/task_net_test.ns
 "$ns" run test/net_udp_test.ns

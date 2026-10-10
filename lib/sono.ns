@@ -1,0 +1,130 @@
+mod sono
+
+// Scriptable music synthesizer, implemented by lib/src/sono.c. See doc/sono.md.
+//
+// A song handle (positive i32, 0 on failure) owns a tempo, tracks and notes.
+// Every track plays one built-in instrument through its own envelope,
+// low-pass filter, drive, ping-pong echo and reverb send. Positions and
+// lengths are in beats, pitches are MIDI note numbers (60 = middle C,
+// fractions allowed) and gains are normalized 0..1.
+//
+// Rendering is offline and deterministic. sono_save_wav writes a 16-bit stereo
+// WAV that `audio_load_music` / `audio_load_sfx` can play; sono_render fills a
+// caller-owned [f32] with interleaved stereo frames.
+//
+//     let song = sono_new(SONO_RATE, 120)
+//     let lead = sono_track(song, SONO_LEAD)
+//     sono_play(song, lead, 0, "o5 c:0.5 d e f g:2 | e:1 c:3")
+//     let drums = sono_track(song, SONO_KICK)
+//     sono_steps(song, drums, 0, 0.5, "x... x... x... x.x.", 60)
+//     sono_save_wav(song, "theme.wav")
+//     sono_free(song)
+
+lit SONO_RATE = 44100
+
+// Tones. Pitch and note length shape them.
+lit SONO_SINE = 0
+lit SONO_SQUARE = 1
+lit SONO_SAW = 2
+lit SONO_TRIANGLE = 3
+lit SONO_NOISE = 4
+lit SONO_PLUCK = 5 // plucked string
+lit SONO_KEYS = 6 // electric piano
+lit SONO_BELL = 7
+lit SONO_ORGAN = 8
+lit SONO_PAD = 9 // slow detuned strings
+lit SONO_BASS = 10
+lit SONO_LEAD = 11 // pulse lead with vibrato
+
+// Drums. Each hit sounds for its natural length; pitch 60 is the stock
+// tuning and every semitone away retunes the drum.
+lit SONO_KICK = 12
+lit SONO_SNARE = 13
+lit SONO_HIHAT = 14
+lit SONO_OPEN_HAT = 15
+lit SONO_CLAP = 16
+lit SONO_TOM = 17
+lit SONO_CRASH = 18
+
+// Game sound effects, one-shot like the drums.
+lit SONO_COIN = 19
+lit SONO_JUMP = 20
+lit SONO_LASER = 21
+lit SONO_EXPLOSION = 22
+lit SONO_HIT = 23
+lit SONO_POWERUP = 24
+lit SONO_BLIP = 25
+
+// Songs. sample_rate is 8000..192000; bpm counts beats (quarter notes).
+ref fn sono_new(sample_rate: i32, bpm: f64) i32
+ref fn sono_free(song: i32)
+// Removes every note and keeps the tracks.
+ref fn sono_clear(song: i32)
+ref fn sono_set_bpm(song: i32, bpm: f64)
+// 0 is straight; 1 delays each off-beat eighth to the last sixteenth.
+// About 0.33 gives a triplet shuffle.
+ref fn sono_set_swing(song: i32, amount: f64)
+// Master gain before the soft limiter, default 0.8.
+ref fn sono_set_volume(song: i32, volume: f64)
+// Render exactly `beats` and wrap every tail onto the start, for a seamless
+// loop. 0 (the default) renders until the last tail dies away.
+ref fn sono_set_loop(song: i32, beats: f64)
+// Noise seed; the same seed always renders the same samples.
+ref fn sono_set_seed(song: i32, seed: i32)
+
+// Tracks. Returns the track index (0, 1, ...) or -1.
+ref fn sono_track(song: i32, instrument: i32) i32
+// Track gain, default 0.7.
+ref fn sono_track_volume(song: i32, track: i32, volume: f64)
+// -1 left .. 0 centre .. 1 right.
+ref fn sono_track_pan(song: i32, track: i32, pan: f64)
+// Seconds, seconds, level 0..1, seconds. Each instrument starts with its own.
+ref fn sono_track_envelope(song: i32, track: i32, attack: f64, decay: f64, sustain: f64, release: f64)
+ref fn sono_track_transpose(song: i32, track: i32, semitones: f64)
+// Low-pass cutoff in Hz (0 turns it off) and resonance 0..1.
+ref fn sono_track_filter(song: i32, track: i32, cutoff_hz: f64, resonance: f64)
+// Saturation 0..1.
+ref fn sono_track_drive(song: i32, track: i32, amount: f64)
+ref fn sono_track_vibrato(song: i32, track: i32, rate_hz: f64, semitones: f64)
+// Ping-pong echo: delay in beats, feedback 0..0.95 and wet mix 0..1.
+ref fn sono_track_echo(song: i32, track: i32, beats: f64, feedback: f64, mix: f64)
+// Send to the shared room reverb, 0..1.
+ref fn sono_track_reverb(song: i32, track: i32, amount: f64)
+
+// One note at `beat`, held for `beats`, velocity 0..1.
+ref fn sono_note(song: i32, track: i32, beat: f64, beats: f64, pitch: f64, velocity: f64) bool
+// A note whose pitch glides from_pitch -> to_pitch over its length.
+ref fn sono_slide(song: i32, track: i32, beat: f64, beats: f64, from_pitch: f64, to_pitch: f64, velocity: f64) bool
+
+// Schedules a score in the sono notation from `beat` and returns the beat
+// after it, so calls chain; -1 on a syntax error (see sono_last_error), in
+// which case nothing is added. Notation summary (doc/sono.md):
+//   c d e f g a b   notes; `#` sharp, `b` flat, digits pick this note's octave: c#4 bb3
+//   x  n64          a drum hit (pitch 60), a raw MIDI pitch
+//   :0.5 :1/3       length in beats, kept for the notes that follow (default 1)
+//   r  ~            rest, tie (holds the previous note or chord longer)
+//   [c e g]         chord
+//   o5 > <          set / raise / lower the octave (default 4)
+//   v0.6  ! ?       velocity (default 0.8), accent, ghost note
+//   *4  (c d)*2     repeat a note, chord, rest or group
+//   | ,             ignored, for bar lines
+ref fn sono_play(song: i32, track: i32, beat: f64, score: str) f64
+// Step sequencer: one character per `step` beats. `X` accent, `x` hit, `o`
+// ghost, `.` `-` `_` rest; spaces and `|` are ignored. Returns the end beat.
+ref fn sono_steps(song: i32, track: i32, beat: f64, step: f64, pattern: str, pitch: f64) f64
+// "c4" -> 60, "F#3" -> 54, "bb2" -> 46; -1 when the text is not a pitch.
+ref fn sono_pitch(name: str) f64
+
+// End of the last note, in beats.
+ref fn sono_beats(song: i32) f64
+// Rendered length in seconds / frames, including echo and reverb tails.
+ref fn sono_seconds(song: i32) f64
+ref fn sono_frames(song: i32) i32
+ref fn sono_sample_rate(song: i32) i32
+// Fills out with interleaved stereo (out needs frames * 2 elements) and returns
+// the frames written; the rest of out is zeroed. -1 on failure.
+ref fn sono_render(song: i32, out: [f32], frames: i32) i32
+ref fn sono_save_wav(song: i32, path: str) bool
+
+// Most recent failure; empty when none happened yet.
+ref fn sono_last_error() str

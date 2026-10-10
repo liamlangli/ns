@@ -24,7 +24,7 @@ cc() {
 "$gcc" -c $cflags -I"${root}/third_party/zlib" -DZ_PREFIX=1 -DZ_HAVE_UNISTD_H \
     -o "$obj/compress.o" "${root}/lib/src/compress.c"
 
-for src in io os os.linux net http wasm_dev term.posix view view.linux xdg-shell-protocol gpu gpu.vulkan ui audio.stub storage.db storage.cache storage.json; do
+for src in io os os.linux net http wasm_dev term.posix view view.linux xdg-shell-protocol gpu gpu.vulkan ui audio.stub storage.db storage.cache storage.json sono; do
     cc "$obj/${src}.o" "" "${root}/lib/src/${src}.c"
 done
 
@@ -54,6 +54,7 @@ link ui "$obj/ui.o" "$out/io.so" "$out/gpu.so" "$out/view.so"
 link audio "$obj/audio.stub.o"
 link storage "$obj/storage.db.o" "$obj/storage.cache.o" "$obj/storage.json.o" -lsqlite3
 link compress "$obj/compress.o" "$obj/zlib"/*.o
+link sono "$obj/sono.o"
 
 # The launcher `ns build` puts in front of every Linux AppImage.
 echo "cc ns-appimage-runtime"

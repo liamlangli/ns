@@ -4809,7 +4809,8 @@ static ns_bool ns_project_module_embeddable(ns_str module) {
             ns_str_equals(module, ns_str_cstr("storage")) ||
            ns_str_equals(module, ns_str_cstr("compress")) ||
            ns_str_equals(module, ns_str_cstr("audio")) ||
-           ns_str_equals(module, ns_str_cstr("camera"));
+           ns_str_equals(module, ns_str_cstr("camera")) ||
+           ns_str_equals(module, ns_str_cstr("sono"));
 }
 
 static u32 ns_patch_written_version(ns_str scope, ns_str name);

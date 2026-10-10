@@ -1,0 +1,144 @@
+// Synthesizer coverage. Run from the repository root so the debug
+// ref/lib paths resolve lib/sono.ns and bin/sono.dylib.
+use std
+use sono
+
+lit RATE = 8000
+lit EPS = 0.000001
+
+fn near(a: f64, b: f64) bool {
+    let d = a - b
+    return d < EPS && d > -EPS
+}
+
+fn peak(samples: [f32], count: i32) f64 {
+    let top = 0.0 as f64
+    for i in 0 to count {
+        let v = samples[i] as f64
+        if v < 0.0 {
+            v = -v
+        }
+        if v > top {
+            top = v
+        }
+    }
+    return top
+}
+
+// Pitch names.
+assert near(sono_pitch("c4"), 60.0)
+assert near(sono_pitch("A4"), 69.0)
+assert near(sono_pitch("f#3"), 54.0)
+assert near(sono_pitch("bb2"), 46.0)
+assert near(sono_pitch("x"), 60.0)
+assert near(sono_pitch("n72"), 72.0)
+assert sono_pitch("h2") < 0.0
+assert sono_pitch("c4 d") < 0.0
+
+// Invalid handles fail without crashing.
+assert sono_new(100, 120.0) == 0
+assert sono_track(9999, SONO_SINE) == -1
+assert sono_last_error() != ""
+
+let song = sono_new(RATE, 120.0)
+assert song > 0
+assert sono_sample_rate(song) == RATE
+let lead = sono_track(song, SONO_LEAD)
+let drums = sono_track(song, SONO_KICK)
+assert lead == 0
+assert drums == 1
+assert sono_track(song, 999) == -1
+
+// Lengths are sticky; chords, ties, rests, repeats and groups all advance
+// the cursor by the current length.
+assert near(sono_play(song, lead, 0.0, "c d e"), 3.0)
+assert near(sono_play(song, lead, 3.0, "c:0.5 d e f"), 5.0)
+assert near(sono_play(song, lead, 5.0, "[c e g]:2 ~:1 r"), 9.0)
+assert near(sono_play(song, lead, 9.0, "(c:1/2 d)*4 | x*2"), 14.0)
+assert near(sono_play(song, lead, 14.0, "o5 v0.5 c! >c <c? n60"), 18.0)
+assert near(sono_beats(song), 18.0)
+
+// A syntax error reports where it is and schedules nothing.
+assert sono_play(song, lead, 0.0, "c d (e f") < 0.0
+assert sono_last_error() != ""
+assert sono_play(song, lead, 0.0, "c q") < 0.0
+assert near(sono_beats(song), 18.0)
+
+// Step grids advance one step per character and ignore bar separators.
+assert near(sono_steps(song, drums, 0.0, 0.5, "x... X.o. | x-x_", 60.0), 6.0)
+assert sono_steps(song, drums, 0.0, 0.5, "x?x", 60.0) < 0.0
+
+assert sono_note(song, lead, 18.0, 1.0, 64.0, 0.9)
+assert sono_slide(song, lead, 19.0, 1.0, 60.0, 72.0, 0.9)
+assert sono_note(song, lead, -1.0, 1.0, 64.0, 0.9) == false
+
+// 20 beats at 120 bpm is 10 s plus the release tail.
+let seconds = sono_seconds(song)
+assert seconds > 10.0
+assert seconds < 11.0
+let frames = sono_frames(song)
+assert frames > 0
+let out = [f32](frames * 2)
+assert sono_render(song, out, frames) == frames
+let top = peak(out, frames * 2)
+assert top > 0.05
+assert top <= 1.0
+
+// Rendering is deterministic.
+let again = [f32](frames * 2)
+assert sono_render(song, again, frames) == frames
+let same = true
+for i in 0 to frames * 2 {
+    if out[i] != again[i] {
+        same = false
+    }
+}
+assert same
+
+// A loop renders exactly its length with the tails folded back in.
+sono_set_loop(song, 8.0)
+assert sono_frames(song) == RATE * 4
+sono_set_loop(song, 0.0)
+
+// Every instrument renders something audible, through every effect.
+let kit = sono_new(RATE, 100.0)
+for instrument in 0 to SONO_BLIP + 1 {
+    let t = sono_track(kit, instrument)
+    assert t == instrument
+    sono_note(kit, t, instrument as f64, 0.5, 60.0, 1.0)
+}
+sono_track_volume(kit, 0, 0.5)
+sono_track_pan(kit, 1, -0.5)
+sono_track_envelope(kit, 2, 0.01, 0.1, 0.6, 0.2)
+sono_track_transpose(kit, 3, 12.0)
+sono_track_filter(kit, 4, 1200.0, 0.4)
+sono_track_drive(kit, 5, 0.5)
+sono_track_vibrato(kit, 6, 6.0, 0.3)
+sono_track_echo(kit, 7, 0.5, 0.4, 0.3)
+sono_track_reverb(kit, 8, 0.4)
+sono_set_swing(kit, 0.33)
+sono_set_volume(kit, 0.9)
+let kit_frames = sono_frames(kit)
+let kit_out = [f32](kit_frames * 2)
+assert sono_render(kit, kit_out, kit_frames) == kit_frames
+lit FRAMES_PER_BEAT = 4800 // 0.6 s per beat at 100 bpm and 8 kHz
+for instrument in 0 to SONO_BLIP + 1 {
+    let begin = instrument * FRAMES_PER_BEAT
+    let slice = [f32](FRAMES_PER_BEAT)
+    for i in 0 to FRAMES_PER_BEAT {
+        slice[i] = kit_out[(begin + i) * 2]
+    }
+    assert peak(slice, FRAMES_PER_BEAT) > 0.001
+}
+
+// WAV output.
+assert sono_save_wav(kit, "bin/sono_test.wav")
+assert sono_save_wav(kit, "") == false
+
+sono_clear(song)
+assert near(sono_beats(song), 0.0)
+sono_free(song)
+sono_free(kit)
+assert sono_beats(song) == 0.0
+
+print("sono ok\n")

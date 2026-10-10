@@ -74,6 +74,7 @@ NS_UI_DYLIB = $(NS_BINDIR)/ui$(NS_DYLIB_SUFFIX)
 NS_AUDIO_DYLIB = $(NS_BINDIR)/audio$(NS_DYLIB_SUFFIX)
 NS_COMPRESS_DYLIB = $(NS_BINDIR)/compress$(NS_DYLIB_SUFFIX)
 NS_STORAGE_DYLIB = $(NS_BINDIR)/storage$(NS_DYLIB_SUFFIX)
+NS_SONO_DYLIB = $(NS_BINDIR)/sono$(NS_DYLIB_SUFFIX)
 
 NS_IO_STATIC = $(NS_BINDIR)/libio.a
 NS_OS_STATIC = $(NS_BINDIR)/libos.a
@@ -87,6 +88,7 @@ NS_UI_STATIC = $(NS_BINDIR)/libui.a
 NS_AUDIO_STATIC = $(NS_BINDIR)/libaudio.a
 NS_COMPRESS_STATIC = $(NS_BINDIR)/libcompress.a
 NS_STORAGE_STATIC = $(NS_BINDIR)/libstorage.a
+NS_SONO_STATIC = $(NS_BINDIR)/libsono.a
 
 NS_IO_OBJS = $(NS_BINDIR)/lib/io.o
 NS_OS_OBJS = $(NS_BINDIR)/lib/os.o
@@ -101,6 +103,7 @@ NS_ZLIB_SRCS = $(wildcard $(NS_ZLIB_DIR)/*.c)
 NS_ZLIB_OBJS = $(NS_ZLIB_SRCS:$(NS_ZLIB_DIR)/%.c=$(NS_ZLIB_OBJDIR)/%.o)
 NS_COMPRESS_OBJS = $(NS_BINDIR)/lib/compress.o $(NS_ZLIB_OBJS)
 NS_STORAGE_OBJS = $(NS_BINDIR)/lib/storage.db.o $(NS_BINDIR)/lib/storage.cache.o
+NS_SONO_OBJS = $(NS_BINDIR)/lib/sono.o
 
 ifeq ($(NS_OS), $(NS_LINUX))
 	NS_OS_OBJS += $(NS_BINDIR)/lib/os.linux.o
@@ -139,7 +142,8 @@ NS_STD_SHARED = \
 	$(NS_VIEW_DYLIB) \
 	$(NS_UI_DYLIB) \
 	$(NS_COMPRESS_DYLIB) \
-	$(NS_STORAGE_DYLIB)
+	$(NS_STORAGE_DYLIB) \
+	$(NS_SONO_DYLIB)
 
 NS_STD_STATIC = \
 	$(NS_IO_STATIC) \
@@ -152,7 +156,8 @@ NS_STD_STATIC = \
 	$(NS_VIEW_STATIC) \
 	$(NS_UI_STATIC) \
 	$(NS_COMPRESS_STATIC) \
-	$(NS_STORAGE_STATIC)
+	$(NS_STORAGE_STATIC) \
+	$(NS_SONO_STATIC)
 
 ifeq ($(NS_OS), $(NS_DARWIN))
 	NS_STD_SHARED += $(NS_AUDIO_DYLIB)
@@ -238,6 +243,17 @@ $(NS_UI_STATIC): $(NS_UI_OBJS) | $(NS_BINDIR)
 $(NS_AUDIO_STATIC): $(NS_AUDIO_OBJS) | $(NS_BINDIR)
 	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 $(NS_STORAGE_STATIC): $(NS_STORAGE_OBJS) | $(NS_BINDIR)
+	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
+
+# The synthesizer is portable C with no platform dependency beyond libm. It
+# renders every sample on the CPU, so it stays optimized in debug builds too.
+$(NS_BINDIR)/lib/sono.o: lib/src/sono.c lib/include/sono.h | $(NS_DIRS)
+	$(Q)$(call ns_step,CC,$<,quiet) $(NS_CC) -c -fPIC -g $< -o $@ $(NS_LIB_INC) $(NS_CFLAGS) -O2
+
+$(NS_SONO_DYLIB): $(NS_SONO_OBJS) | $(NS_BINDIR)
+	$(Q)$(call ns_step,LINK,$@,show) $(NS_CC) $(NS_DYLIB_CREATE) $(NS_DYLIB_COMMON) $(NS_SONO_OBJS) -o $@ $(NS_DYLIB_DEPS)
+
+$(NS_SONO_STATIC): $(NS_SONO_OBJS) | $(NS_BINDIR)
 	$(Q)$(call ns_step,AR,$@,hide) $(NS_AR) rcs $@ $^
 
 # The source wildcards above are expanded before the download runs, so the first
