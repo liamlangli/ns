@@ -20,6 +20,10 @@ static id<MTLDevice> view_ios_device;
 static id view_ios_delegate;
 static dispatch_semaphore_t view_ios_done;
 static i32 view_ios_active_touch_count;
+// Set from willResignActive until didBecomeActive. iOS rejects command buffers
+// committed in the background, and the vsync link and snapshot resizes keep
+// asking for frames through the transition, so no frame runs while inactive.
+static BOOL view_ios_inactive;
 
 static UIWindow *view_ios_key_window(void);
 static void view_ios_sync_metrics(MTKView *metal_view);
@@ -39,6 +43,10 @@ void view_ios_set_host_view(void *view) {
 
 static void view_ios_apply_frame_rate(void) {
     if (!view_ios_metal_view) return;
+    if (view_ios_inactive) {
+        view_ios_metal_view.paused = YES;
+        return;
+    }
     if (view_immersive_status() == 2) {
         view_ios_metal_view.paused = YES;
         view_ios_metal_view.hidden = YES;
@@ -162,6 +170,7 @@ static void view_ios_touch(UITouch *touch, i32 phase) {
     view_request_frame(&view_ios_state, 1);
 }
 - (void)drawInMTKView:(MTKView *)metal_view {
+    if (view_ios_inactive) return;
     if (view_immersive_status() == 2) return;
     if (!view_take_frame_request(&view_ios_state)) return;
     view_ios_sync_metrics(metal_view);
@@ -231,6 +240,26 @@ static void view_ios_rotate(UIRotationGestureRecognizer *gesture) {
 
 static NSIOSGestureTarget *view_ios_gesture_target;
 
+// Requests made while inactive stay pending in view.c, so becoming active
+// redraws directly: view_request_frame() only reaches the platform when idle.
+static void view_ios_observe_activity(void) {
+    NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+    [center addObserverForName:UIApplicationWillResignActiveNotification object:nil
+                         queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+        (void)note;
+        view_ios_inactive = YES;
+        view_ios_apply_frame_rate();
+    }];
+    [center addObserverForName:UIApplicationDidBecomeActiveNotification object:nil
+                         queue:[NSOperationQueue mainQueue] usingBlock:^(NSNotification *note) {
+        (void)note;
+        view_ios_inactive = NO;
+        view_ios_apply_frame_rate();
+        view_request_frame(&view_ios_state, 1);
+        [view_ios_metal_view setNeedsDisplay];
+    }];
+}
+
 static void view_ios_add_gesture(UIGestureRecognizer *gesture) {
     // The raw pointer stream drives controls such as a held stick plus a jump
     // button. UIKit otherwise delays touchesEnded by default while any gesture
@@ -298,6 +327,10 @@ view *view_create(const char *title, i32 width, i32 height) {
         view_ios_state.native_window = (__bridge void *)view_ios_metal_view;
         view_ios_state.gpu_device = (__bridge void *)view_ios_device;
         view_apple_gamepad_start(&view_ios_state);
+        static dispatch_once_t observe_once;
+        dispatch_once(&observe_once, ^{ view_ios_observe_activity(); });
+        view_ios_inactive = UIApplication.sharedApplication.applicationState != UIApplicationStateActive;
+        view_ios_apply_frame_rate();
     };
     if (NSThread.isMainThread) create_view(); else dispatch_sync(dispatch_get_main_queue(), create_view);
     return &view_ios_state;
