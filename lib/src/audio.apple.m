@@ -95,13 +95,16 @@ static NSURL *audio_url_for_path(const char *path) {
     return [NSURL fileURLWithPath:expanded];
 }
 
+#if AUDIO_SESSION
+static dispatch_queue_t audio_session_queue(void);
+#endif
+
 static AVAudioPlayer *audio_new_player(NSData *data, NSError **error) {
     AVAudioPlayer *player = [[AVAudioPlayer alloc] initWithData:data error:error];
 #if AUDIO_SESSION
-    // -prepareToPlay activates an inactive session on the calling thread just
-    // as -play does. Without a live session the player is left unprepared and
-    // -play prepares it on audio_session_queue after reactivation.
-    if (player && atomic_load(&audio_session_live)) [player prepareToPlay];
+    // -prepareToPlay calls AudioSessionSetActive on the calling thread every
+    // time, live session or not, so it never runs on the caller's thread.
+    if (player) dispatch_async(audio_session_queue(), ^{ [player prepareToPlay]; });
 #else
     if (player) [player prepareToPlay];
 #endif
@@ -134,9 +137,8 @@ static dispatch_queue_t audio_session_queue(void) {
 }
 
 // The system deactivates the session on an interruption, a media-services
-// reset, or when the app leaves the foreground. -[AVAudioPlayer play] then
-// reactivates it on the calling thread, which stalls the main thread, so the
-// session is tracked here and reactivated on audio_session_queue instead.
+// reset, or when the app leaves the foreground. The session is tracked here so
+// audio_player_start reactivates it on audio_session_queue before -play.
 static void audio_session_watch(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -230,13 +232,15 @@ static ns_bool audio_session_set_active(BOOL active) {
 }
 #endif
 
-// Called with audio_lock held. A player started while the session is inactive
-// is started on audio_session_queue after reactivation, unless its handle was
+// Called with audio_lock held. -play goes through the same session activation
+// as -prepareToPlay on the calling thread, so every player starts on
+// audio_session_queue,
+// reactivating the session first when it was lost, unless its handle was
 // stopped, paused, or unloaded in the meantime.
 static ns_bool audio_player_start(AVAudioPlayer *player, i32 handle) {
 #if AUDIO_SESSION
     audio_asset *asset = audio_asset_for_handle(handle);
-    if (asset && !atomic_load(&audio_session_live)) {
+    if (asset) {
         u32 serial = asset->serial;
         dispatch_async(audio_session_queue(), ^{
             @autoreleasepool {
