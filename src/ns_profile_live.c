@@ -15,6 +15,10 @@ typedef SOCKET ns_live_socket;
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <pthread.h>
+#if defined(__APPLE__)
+#include <dns_sd.h>
+#endif
 typedef int ns_live_socket;
 #define NS_LIVE_INVALID (-1)
 #define ns_live_closesocket close
@@ -30,6 +34,11 @@ typedef int ns_live_socket;
 typedef struct ns_profile_live_state {
     ns_bool connected;
     ns_bool paused;
+    // Device mode (ns_profile_live_serve): the viewer connected to us, so
+    // profiling runs only while it stays, and QUIT ends the session rather than
+    // the app.
+    ns_bool server;
+    char title[128];
     ns_live_socket fd;
 
     // Outgoing byte queue. The socket is nonblocking, so a slow viewer parks
@@ -121,6 +130,8 @@ static void ns_live_drop(void) {
     ns_live.out_len = 0;
     ns_live.out_head = 0;
     ns_profile.frame_sink = ns_null;
+    // A device stops measuring once nobody watches.
+    if (ns_live.server) ns_profile_disable();
 }
 
 // Push as much of the queue as the socket accepts. Never blocks.
@@ -263,6 +274,8 @@ static void ns_live_handle_command(u32 type) {
         ns_live_replay();
     } else if (type == NS_PROFILE_LIVE_CMD_QUIT) {
         ns_profile_live_close(NS_PROFILE_LIVE_BYE_STOPPED);
+        // A device app outlives the session; only a profiled ns process exits.
+        if (ns_live.server) return;
         // The atexit hook still writes bin/ns.profile for the run so far.
         exit(0);
     }
@@ -330,6 +343,57 @@ static void ns_profile_live_sink(const ns_profile_frame *frame) {
 // ---------------------------------------------------------------------------
 // lifecycle
 
+// Take over a connected socket: send the stream header and HELLO, switch the
+// timeline to the frame ring, and publish every frame from now on.
+static ns_bool ns_live_attach(ns_live_socket fd, const char *title) {
+    int yes = 1;
+#if defined(SO_NOSIGPIPE)
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&yes, sizeof(yes));
+#endif
+    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&yes, sizeof(yes));
+    ns_live_set_nonblocking(fd);
+
+    ns_live.fd = fd;
+    ns_live.connected = true;
+    ns_live.paused = false;
+    ns_live.sent_fns = 0;
+    ns_live.sent_threads = 0;
+    ns_live.in_len = 0;
+    ns_live.out_len = 0;
+    ns_live.out_head = 0;
+
+    ns_live_put_u32(NS_PROFILE_LIVE_MAGIC);
+    szt at = ns_live_begin_message(NS_PROFILE_LIVE_MSG_HELLO);
+    ns_live_put_u32(NS_PROFILE_LIVE_VERSION);
+#if defined(_WIN32)
+    ns_live_put_u32((u32)GetCurrentProcessId());
+#else
+    ns_live_put_u32((u32)getpid());
+#endif
+    ns_live_put_u32((u32)NS_PROFILE_LIVE_FRAMES);
+    const char *name = (title && title[0]) ? title : "ns";
+    szt name_len = strlen(name);
+    if (name_len > 0xffff) name_len = 0xffff;
+    ns_live_put_u16((u16)name_len);
+    ns_live_put(name, name_len);
+    ns_live_end_message(at);
+    ns_live_flush();
+    if (!ns_live.connected) return false;
+
+    if (!ns_profile.ring) {
+        ns_profile_ring_enable();
+    } else {
+        // A later session on a device: the open slot starts now, not when
+        // the last viewer left.
+        ns_profile_frame *open = &ns_profile.frames[ns_profile.frame_head];
+        ns_array_set_length(open->events, 0);
+        open->start_ms = ns_profile_now_ms() - ns_profile.start_ms;
+    }
+    ns_profile.frame_sink = ns_profile_live_sink;
+    return true;
+}
+
+
 ns_bool ns_profile_live_connect(const char *host, i32 port, const char *title) {
     if (port <= 0 || port > 65535) return false;
     if (ns_live.connected) return true;
@@ -369,43 +433,7 @@ ns_bool ns_profile_live_connect(const char *host, i32 port, const char *title) {
         return false;
     }
 
-    int yes = 1;
-#if defined(SO_NOSIGPIPE)
-    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&yes, sizeof(yes));
-#endif
-    setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&yes, sizeof(yes));
-    ns_live_set_nonblocking(fd);
-
-    ns_live.fd = fd;
-    ns_live.connected = true;
-    ns_live.paused = false;
-    ns_live.sent_fns = 0;
-    ns_live.sent_threads = 0;
-    ns_live.in_len = 0;
-    ns_live.out_len = 0;
-    ns_live.out_head = 0;
-
-    ns_live_put_u32(NS_PROFILE_LIVE_MAGIC);
-    szt at = ns_live_begin_message(NS_PROFILE_LIVE_MSG_HELLO);
-    ns_live_put_u32(NS_PROFILE_LIVE_VERSION);
-#if defined(_WIN32)
-    ns_live_put_u32((u32)GetCurrentProcessId());
-#else
-    ns_live_put_u32((u32)getpid());
-#endif
-    ns_live_put_u32((u32)NS_PROFILE_LIVE_FRAMES);
-    const char *name = (title && title[0]) ? title : "ns";
-    szt name_len = strlen(name);
-    if (name_len > 0xffff) name_len = 0xffff;
-    ns_live_put_u16((u16)name_len);
-    ns_live_put(name, name_len);
-    ns_live_end_message(at);
-    ns_live_flush();
-    if (!ns_live.connected) return false;
-
-    ns_profile_ring_enable();
-    ns_profile.frame_sink = ns_profile_live_sink;
-    return true;
+    return ns_live_attach(fd, title);
 }
 
 ns_bool ns_profile_live_active(void) { return ns_live.connected; }
@@ -442,3 +470,125 @@ void ns_profile_live_close(u32 reason) {
     }
     ns_live_drop();
 }
+
+// ---------------------------------------------------------------------------
+// device mode
+//
+// A device app cannot be started by the viewer, so the roles of the socket
+// flip: the app listens and the viewer (through `ns profiler --device`, which
+// reaches it over USB or the local network) connects. Accepting runs on a
+// thread that sleeps in accept(); the app's own threads only read one atomic
+// on each outermost callback return. Profiling is enabled when a viewer
+// arrives and disabled when it leaves, so an app nobody watches runs the
+// unprofiled interpreter.
+
+#if !defined(_WIN32)
+static ns_live_socket ns_live_listen_fd = NS_LIVE_INVALID;
+static i32 ns_live_listen_port = 0;
+static volatile int ns_live_pending = -1;
+#if defined(__APPLE__)
+static DNSServiceRef ns_live_bonjour = ns_null;
+#endif
+
+static void ns_live_service(void) {
+    int fd = __atomic_exchange_n(&ns_live_pending, -1, __ATOMIC_ACQ_REL);
+    if (fd < 0) return;
+    // A newer viewer takes over from one that went quiet without closing.
+    if (ns_live.connected) ns_live_drop();
+    if (!ns_profile.enabled) {
+        f64 now = ns_profile_now_ms();
+        // The first session starts the clock; later ones keep the tables and
+        // the timeline origin of the first.
+        if (ns_profile.start_ms == 0.0) ns_profile_enable(now);
+        else ns_profile.enabled = true;
+    }
+    if (!ns_live_attach(fd, ns_live.title)) {
+        if (ns_live.connected) ns_live_drop();
+        else ns_profile_disable();
+        return;
+    }
+    ns_info("profile", "live viewer connected on port %d\n", ns_live_listen_port);
+}
+
+static void *ns_live_accept_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        ns_live_socket fd = accept(ns_live_listen_fd, ns_null, ns_null);
+        if (fd == NS_LIVE_INVALID) {
+            if (errno == EINTR || errno == ECONNABORTED) continue;
+            usleep(200000);
+            continue;
+        }
+        int old = __atomic_exchange_n(&ns_live_pending, (int)fd, __ATOMIC_ACQ_REL);
+        if (old >= 0) ns_live_closesocket(old);
+    }
+    return ns_null;
+}
+
+ns_bool ns_profile_live_serve(i32 port, const char *title) {
+    if (ns_live_listen_fd != NS_LIVE_INVALID) return true;
+    snprintf(ns_live.title, sizeof(ns_live.title), "%s", (title && title[0]) ? title : "ns");
+    ns_live_socket fd = NS_LIVE_INVALID;
+    i32 bound = 0;
+    for (i32 attempt = 0; attempt < NS_PROFILE_LIVE_DEVICE_PORTS && fd == NS_LIVE_INVALID; attempt++) {
+        fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd == NS_LIVE_INVALID) return false;
+        int yes = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));
+        struct sockaddr_in sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sin_family = AF_INET;
+        sa.sin_port = htons((u16)(port + attempt));
+        sa.sin_addr.s_addr = htonl(INADDR_ANY);
+        if (bind(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0 && listen(fd, 2) == 0) {
+            bound = port + attempt;
+        } else {
+            ns_live_closesocket(fd);
+            fd = NS_LIVE_INVALID;
+        }
+    }
+    if (fd == NS_LIVE_INVALID) {
+        ns_warn("profile", "no free port for the live profiler from %d.\n", port);
+        return false;
+    }
+    ns_live_listen_fd = fd;
+    ns_live_listen_port = bound;
+    ns_live.server = true;
+    ns_live.fd = NS_LIVE_INVALID;
+    ns_profile.service = ns_live_service;
+
+    pthread_t thread;
+    if (pthread_create(&thread, ns_null, ns_live_accept_thread, ns_null) != 0) {
+        ns_profile.service = ns_null;
+        ns_live_closesocket(fd);
+        ns_live_listen_fd = NS_LIVE_INVALID;
+        return false;
+    }
+    pthread_detach(thread);
+
+#if defined(__APPLE__)
+    // Advertised under the device's own name, so `ns profiler --device` on the
+    // same network finds it without an address. USB needs no advertisement.
+    char txt[160];
+    szt app_len = strlen(ns_live.title);
+    if (app_len > 150) app_len = 150;
+    txt[0] = (char)(4 + app_len);
+    memcpy(txt + 1, "app=", 4);
+    memcpy(txt + 5, ns_live.title, app_len);
+    DNSServiceErrorType err = DNSServiceRegister(&ns_live_bonjour, 0, 0, ns_null, NS_PROFILE_LIVE_SERVICE, ns_null,
+                                                 ns_null, htons((u16)bound), (u16)(5 + app_len), txt, ns_null, ns_null);
+    if (err != kDNSServiceErr_NoError) {
+        ns_live_bonjour = ns_null;
+        ns_warn("profile", "bonjour advertisement failed (%d); USB still works.\n", (int)err);
+    }
+#endif
+    ns_info("profile", "live profiler waiting on port %d\n", bound);
+    return true;
+}
+#else
+ns_bool ns_profile_live_serve(i32 port, const char *title) {
+    (void)port;
+    (void)title;
+    return false;
+}
+#endif

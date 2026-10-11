@@ -1218,7 +1218,7 @@ ns_return_value ns_eval_invoke_callback(ns_vm *vm, ns_ast_ctx *ctx, ns_value clo
     // The outermost native callback returning is the frame boundary live
     // capture publishes on: view on_frame, ui events, and the rest all arrive
     // through this bridge, and a nested callback belongs to the same frame.
-    if (--ns_eval_callback_depth == 0) ns_profile_frame_boundary();
+    if (--ns_eval_callback_depth == 0) ns_profile_callback_return();
     if (ns_return_is_error(ret)) {
         (void)ns_array_pop(vm->call_stack);
         ns_scope_exit(vm);

@@ -77,6 +77,11 @@ The common commands are:
   every retained frame into one view. A frame ends when the outermost native
   callback returns (`view` `on_frame`, ui events); a run without callbacks
   publishes one frame when it exits. See `doc/profile.md`.
+- `ns profiler --device [usb | wifi | name | host:port]`: profile a Debug build
+  of an `ns project` app running on a phone. The app waits on port 9640 and
+  advertises `_nsprofile._tcp`; the viewer reaches it over USB (usbmuxd) or
+  the local network and relays it like a live session. Collection runs only
+  while a viewer is connected. `ns profiler --devices` lists reachable devices.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported. In a

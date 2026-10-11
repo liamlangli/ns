@@ -91,6 +91,7 @@ typedef struct ns_profile_open {
     i32 fn_index;
     i32 flame_index;
     f64 child_ms;
+    f64 start_ms; // set by ns_profile_enter; the name-based enter leaves it 0
 } ns_profile_open;
 
 // Snapshot of the live open stack for one task/thread. The task runtime parks
@@ -125,6 +126,8 @@ typedef struct ns_profile_state {
     ns_profile_open open[NS_PROFILE_MAX_STACK];
     i32 open_len;
     u64 stack_overflows;
+    // Enters past NS_PROFILE_MAX_STACK, so their leaves pop nothing.
+    i32 open_skipped;
 
     // Interned display names for timeline lanes (`main`, `task#N`, ...).
     ns_str threads[NS_PROFILE_MAX_THREADS];
@@ -147,6 +150,9 @@ typedef struct ns_profile_state {
     // Live streamer, installed by ns_profile_live_connect. Called once per
     // closed frame, before the slot is recycled.
     void (*frame_sink)(const ns_profile_frame *frame);
+    // Called by ns_profile_callback_return on every outermost callback return,
+    // profiling or not: a device waiting for a viewer polls for one here.
+    void (*service)(void);
 } ns_profile_state;
 
 extern ns_profile_state ns_profile;
@@ -182,6 +188,26 @@ void ns_profile_record_ffi(ns_str name, ns_str lib, f64 start_ms, f64 elapsed_ms
 // Record one completed VM function or compiler phase and pop the matching
 // enter. If no enter is on the stack, the scope is still counted as a root.
 void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f64 elapsed_ms);
+
+// Id-based recorders for interpreters that resolve a symbol once and record
+// it on every call (ns_cpu): no string hashing on the hot path.
+//
+// Intern a symbol and return its fns[] index, or -1 when the table is full.
+i32 ns_profile_symbol(ns_str name, ns_str lib, u8 kind);
+// Open a scope of `fn_index` started at `start_ms` (ns_profile_now_ms).
+void ns_profile_enter(i32 fn_index, f64 start_ms);
+// Close the innermost scope opened by ns_profile_enter at `end_ms`.
+void ns_profile_leave(f64 end_ms);
+// Record one completed FFI call of an interned symbol.
+void ns_profile_record_ffi_id(i32 fn_index, f64 start_ms, f64 elapsed_ms);
+
+// Stop collecting and drop the open stack. Aggregates and the ring are kept,
+// so a later enable resumes the same tables.
+void ns_profile_disable(void);
+
+// The outermost native callback returned (a view frame, a ui event): close the
+// frame when the ring is on and run the `service` hook.
+void ns_profile_callback_return(void);
 
 // Write the ns-profile-v6 text report (aggregates + flame) to `f`, and a
 // compact binary timeline beside `path` as `<path>.tl`, or zlib-compressed as

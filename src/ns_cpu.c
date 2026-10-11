@@ -6,9 +6,13 @@
 // it, and a program fault. ns_cpu reports the reason on stderr itself.
 #define NS_CPU_ERROR(t, l, err, m) ((ns_return_##t){.s = (err), .e = {.msg = ns_str_cstr(m), .loc = (l)}})
 #include "ns_native_rt.h"
+#include "ns_profile.h"
 
 #include <setjmp.h>
 #include <stdarg.h>
+#if !defined(_WIN32)
+#include <pthread.h>
+#endif
 
 // NS_CPU_NO_FFI builds the call path NS_XCLIB hosts use without libffi, so
 // it can be tested on a host that has libffi.
@@ -71,6 +75,8 @@ typedef struct ns_cpu_fn {
     ns_str name;
     ns_cpu_module *module;
     i32 thunk; // index into the thunk pool, or -1
+    i32 prof;  // profile symbol, interned on the first profiled call
+    ns_bool prof_ready;
 } ns_cpu_fn;
 
 typedef struct ns_cpu_rt {
@@ -88,6 +94,8 @@ typedef struct ns_cpu_ffi_site {
     u8 ret;
     u8 nparams;
     u8 *params;
+    i32 prof; // profile symbol, interned on the first profiled call
+    ns_bool prof_ready;
 #ifdef NS_CPU_HAS_FFI
     ffi_cif cif;
     ffi_type **types;
@@ -382,6 +390,45 @@ static inline i64 ns_cpu_ftoi(f64 v) {
     return (i64)v;
 }
 
+/* ── profiling ────────────────────────────────────────────────────────────── */
+// With a profile running, every call, return and native call of the profiled
+// thread is recorded (doc/profile.md). Profiling is decided once per entry
+// into the interpreter, so a run without it pays one predictable branch per
+// call and nothing per instruction. ns_profile is single-threaded: only the
+// thread that draws frames is recorded - the Apple main thread, where view
+// callbacks arrive, or elsewhere the thread that ran main.
+#if defined(_MSC_VER)
+static __declspec(thread) ns_bool ns_cpu_main_runner = false;
+static __declspec(thread) i32 ns_cpu_callback_depth = 0;
+#else
+static __thread ns_bool ns_cpu_main_runner = false;
+static __thread i32 ns_cpu_callback_depth = 0;
+#endif
+
+static ns_bool ns_cpu_profiled_thread(void) {
+#if defined(__APPLE__)
+    return pthread_main_np() != 0;
+#else
+    return ns_cpu_main_runner;
+#endif
+}
+
+static void ns_cpu_prof_enter(ns_cpu_fn *fn) {
+    if (!fn->prof_ready) {
+        fn->prof = ns_profile_symbol(fn->name, ns_str_cstr(""), NS_PROFILE_EVENT_SCOPE);
+        fn->prof_ready = true;
+    }
+    ns_profile_enter(fn->prof, ns_profile_now_ms());
+}
+
+static i32 ns_cpu_prof_site(ns_cpu_ffi_site *site) {
+    if (!site->prof_ready) {
+        site->prof = ns_profile_symbol(site->name, site->module, NS_PROFILE_EVENT_FFI);
+        site->prof_ready = true;
+    }
+    return site->prof;
+}
+
 /* ── thunks ───────────────────────────────────────────────────────────────── */
 #define NS_CPU_THUNKS 256
 static ns_cpu_fn *ns_cpu_thunk_fn[NS_CPU_THUNKS];
@@ -404,7 +451,10 @@ static i64 ns_cpu_thunk_enter(i32 index, const i64 *args) {
     }
     jmp_buf *saved = t->jmp;
     t->jmp = ns_null;
+    ns_cpu_callback_depth++;
     u64 r = ns_cpu_exec(t, fn, (const u64 *)args, 8);
+    // The outermost callback returning ends a frame (view on_frame, ui events).
+    if (--ns_cpu_callback_depth == 0 && ns_cpu_profiled_thread()) ns_profile_callback_return();
     t->jmp = saved;
     if (own) {
         ns_cpu_tls = ns_null;
@@ -547,6 +597,8 @@ static u64 ns_cpu_exec(ns_cpu_thread *t, ns_cpu_fn *entry, const u64 *args, i32 
     const u16 *code = fn->code;
     const u16 *pc = code;
     u64 result = 0;
+    const ns_bool prof = ns_profile.enabled && ns_cpu_profiled_thread();
+    if (NS_CPU_UNLIKELY(prof)) ns_cpu_prof_enter(entry);
 
 #ifdef NS_CPU_THREADED
     static void *const labels[NS_CPU_OP_COUNT] = {
@@ -755,6 +807,7 @@ dispatch:
         r = nr;
         fn = callee;
         code = pc = fn->code;
+        if (NS_CPU_UNLIKELY(prof)) ns_cpu_prof_enter(fn);
         NS_CPU_NEXT();
     }
     NS_CPU_CASE(CALLI) {
@@ -794,6 +847,7 @@ dispatch:
         fn = callee;
         m = fn->module;
         code = pc = fn->code;
+        if (NS_CPU_UNLIKELY(prof)) ns_cpu_prof_enter(fn);
         NS_CPU_NEXT();
     }
     NS_CPU_CASE(RT) {
@@ -809,7 +863,14 @@ dispatch:
     NS_CPU_CASE(FFI) {
         u32 n = pc[3];
         t->top = r + fn->frame;
-        D = ns_cpu_ffi_invoke(fn, &m->ffi[pc[2]], r, pc + 4, (i32)n);
+        ns_cpu_ffi_site *site = &m->ffi[pc[2]];
+        if (NS_CPU_UNLIKELY(prof)) {
+            f64 start = ns_profile_now_ms();
+            D = ns_cpu_ffi_invoke(fn, site, r, pc + 4, (i32)n);
+            ns_profile_record_ffi_id(ns_cpu_prof_site(site), start, ns_profile_now_ms() - start);
+        } else {
+            D = ns_cpu_ffi_invoke(fn, site, r, pc + 4, (i32)n);
+        }
         pc += 4 + n;
         NS_CPU_NEXT();
     }
@@ -821,6 +882,7 @@ dispatch:
     }
     NS_CPU_CASE(RET) {
         u64 v = r[pc[1]];
+        if (NS_CPU_UNLIKELY(prof)) ns_profile_leave(ns_profile_now_ms());
         if (t->depth == base_depth) {
             result = v;
             goto done;
@@ -1344,6 +1406,7 @@ ns_return_bool ns_cpu_run_init(ns_cpu_module *m) {
 
 ns_return_bool ns_cpu_run_main(ns_cpu_module *m, i64 *status) {
     if (status) *status = 0;
+    ns_cpu_main_runner = true;
     ns_return_bool ret = ns_cpu_run_init(m);
     if (ns_return_is_error(ret)) return ret;
     if (m->main_fn == NS_CPU_NO_FN) return ns_return_ok(bool, true);

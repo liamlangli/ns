@@ -54,6 +54,26 @@
 // Profiling must not stall the program it measures.
 #define NS_PROFILE_LIVE_OUT_MAX (8 * 1024 * 1024)
 
+// Device mode. An app that the viewer cannot launch (an iPhone build) listens
+// instead: the first free port of NS_PROFILE_LIVE_DEVICE_PORTS from `port`, on
+// every interface, advertised over Bonjour as NS_PROFILE_LIVE_SERVICE.
+// `ns profiler --device` connects to it over USB (usbmuxd) or the network and
+// relays the stream to the viewer. Capture is off until a viewer connects and
+// off again when it leaves; waiting costs one atomic read per frame.
+#define NS_PROFILE_LIVE_DEVICE_PORT 9640
+#define NS_PROFILE_LIVE_DEVICE_PORTS 8
+#define NS_PROFILE_LIVE_SERVICE "_nsprofile._tcp"
+ns_bool ns_profile_live_serve(i32 port, const char *title);
+
+// Host side of device mode (src/ns_profile_device.c, not in app runtimes).
+// Print the devices a viewer could reach: USB through usbmuxd, and apps
+// advertised on the local network.
+i32 ns_profile_device_list(void);
+// Connect to the device `selector` names ("" or "any", "usb", "wifi", part of
+// a name or UDID, or host:port) and copy bytes between it and the viewer
+// listening on `host`:`port` until either side closes.
+i32 ns_profile_device_relay(const char *selector, const char *host, i32 port);
+
 // Connect to `host`:`port` (`host` may be null for 127.0.0.1), send HELLO with
 // `title`, enable the frame ring, and install the per-frame streamer. Returns
 // false when the viewer cannot be reached; capture then stays local.

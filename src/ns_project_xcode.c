@@ -634,6 +634,7 @@ static const char *const ns_xcode_runtime_sources[] = {
     "ns_fmt.c",
     "ns_type.c",
     "ns_profile.c",
+    "ns_profile_live.c",
     "ns_os.c",
     "ns_token.c",
     "ns_ast.c",
@@ -717,6 +718,7 @@ static const char *const ns_xcode_runtime_headers[] = {
     "os/ns_json.h",
     "ns_shader.h",
     "ns_profile.h",
+    "ns_profile_live.h",
     "ns_native_rt.h",
     "ns_cpu.h",
     "ns_cpu_isa.h",
@@ -1030,13 +1032,25 @@ static ns_bool ns_xcode_write_app_sources(const ns_project_spec *spec, const cha
         "#include \"ns_vm.h\"\n"
         "#include \"ns_os.h\"\n"
         "#include \"ns_cpu.h\"\n"
+        "#include \"ns_profile_live.h\"\n"
         "\n"
         "#include <stdio.h>\n"
         "#include <stdlib.h>\n"
         "#include <unistd.h>\n"
         "\n";
+    // Debug builds wait for `ns profiler --device` (NS_PROFILE_LIVE_SERVER is
+    // set for the Debug configuration in NS.Generated.xcconfig). Until a viewer
+    // connects the program runs unprofiled.
+    static const char bridge_profile_serve[] =
+        "static void ns_app_profile_serve(void) {\n"
+        "#if defined(NS_PROFILE_LIVE_SERVER)\n"
+        "    ns_profile_live_serve(NS_PROFILE_LIVE_DEVICE_PORT, getprogname());\n"
+        "#endif\n"
+        "}\n"
+        "\n";
     static const char bridge_source_eval[] =
         "const char *ns_run_linked_project(const char *resource_root) {\n"
+        "    ns_app_profile_serve();\n"
         "    char program[1024];\n"
         "    if (!ns_app_enter(resource_root, \"LinkedProject.ns\", program, sizeof(program))) return ns_app_status;\n"
         "    ns_vm vm = {0};\n"
@@ -1115,6 +1129,7 @@ static ns_bool ns_xcode_write_app_sources(const ns_project_spec *spec, const cha
         "}\n"
         "\n"
         "const char *ns_run_linked_project(const char *resource_root) {\n"
+        "    ns_app_profile_serve();\n"
         "    char program[1024];\n"
         "    if (!ns_app_enter(resource_root, \"LinkedProject.nsc\", program, sizeof(program))) return ns_app_status;\n"
         "    ns_return_ptr loaded = ns_app_load(resource_root, program);\n"
@@ -1133,7 +1148,7 @@ static ns_bool ns_xcode_write_app_sources(const ns_project_spec *spec, const cha
     ns_xcode_buffer bridge_text = {0};
     if (link_native) {
         if (!ns_xcode_buffer_appendf(&bridge_text, "%s", bridge_source_native)) return false;
-    } else if (!ns_xcode_buffer_appendf(&bridge_text, "%s", bridge_prelude) ||
+    } else if (!ns_xcode_buffer_appendf(&bridge_text, "%s%s", bridge_prelude, bridge_profile_serve) ||
                !ns_xcode_append_app_enter(&bridge_text, spec) ||
                !ns_xcode_buffer_appendf(&bridge_text, "%s", link_emu ? bridge_source_emu : bridge_source_eval)) {
         free(bridge_text.data);
@@ -1216,7 +1231,9 @@ static ns_bool ns_xcode_write_plist(const char *managed_root, const char *platfo
     // usage string would terminate the app at that call instead.
     if (!ns_xcode_buffer_append(&plist,
             "  <key>NSCameraUsageDescription</key><string>Capture video for on-device processing.</string>\n"
-            "  <key>NSLocalNetworkUsageDescription</key><string>Connect to devices and services on the local network.</string>\n")) {
+            "  <key>NSLocalNetworkUsageDescription</key><string>Connect to devices and services on the local network.</string>\n"
+            // The service a Debug build advertises for `ns profiler --device`.
+            "  <key>NSBonjourServices</key><array><string>_nsprofile._tcp</string></array>\n")) {
         free(escaped_name); free(escaped_version); ns_xcode_buffer_free(&plist); return false;
     }
     if (mobile && !ns_xcode_buffer_append(&plist, "  <key>UILaunchScreen</key><dict/>\n")) {
@@ -1296,7 +1313,9 @@ static ns_bool ns_xcode_write_config(const ns_project_spec *spec, const char *ma
                                          "SWIFT_VERSION = 5.0\n"
                                          "CLANG_C_LANGUAGE_STANDARD = gnu17\n"
                                          "WARNING_CFLAGS = $(inherited) -Wno-shorten-64-to-32\n"
-                                         "GCC_PREPROCESSOR_DEFINITIONS = $(inherited) NS_XCLIB=1 NS_DARWIN=1\n"
+                                         // Debug builds wait for `ns profiler --device`.
+                                         "NS_PROFILE_DEFINES[config=Debug] = NS_PROFILE_LIVE_SERVER=1\n"
+                                         "GCC_PREPROCESSOR_DEFINITIONS = $(inherited) NS_XCLIB=1 NS_DARWIN=1 $(NS_PROFILE_DEFINES)\n"
                                          "HEADER_SEARCH_PATHS = $(inherited) \"$(SRCROOT)/%s.nsproject/Runtime/include\" "
                                          "\"$(SRCROOT)/%s.nsproject/Runtime/include/os\" "
                                          "\"$(SRCROOT)/%s.nsproject/Native/include\"\n"

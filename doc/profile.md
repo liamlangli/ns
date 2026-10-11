@@ -45,7 +45,49 @@ A run whose port has no listener warns once and stays an ordinary local
 profile. A live run still writes `bin/ns.profile` when it ends, so a session
 leaves the usual report behind.
 
-### Frames
+## Device capture
+
+```bash
+ns profiler --device          # the first device found, USB first
+ns profiler --device usb      # or: wifi, part of a device name / UDID, host:port
+ns profiler --devices         # list what can be reached
+```
+
+A phone cannot be started by the viewer, so the socket roles flip. A Debug
+build of an app made by `ns project` calls `ns_profile_live_serve` before the
+program starts (`NS_PROFILE_LIVE_SERVER` is defined for the Debug configuration
+only): a background thread listens on the first free port from
+`NS_PROFILE_LIVE_DEVICE_PORT` (9640, eight ports) and the app advertises the
+Bonjour service `_nsprofile._tcp` under the device's name.
+
+`ns profiler --device` opens the usual live viewer with `NS_PROFILE_DEVICE` in
+its environment. The `ns profile --live-port` process the viewer starts then
+runs no program: it finds the device, connects, and copies bytes between the
+device and the viewer, so Stop, Pause and Replay work unchanged. Routes, in
+order of preference:
+
+- **USB** through usbmuxd (the daemon Finder and Xcode use). A Connect request
+  tunnels to the app's port on the device loopback: no network, no pairing
+  prompt, no local-network permission, and nothing shared with the radio.
+- **Local network** through the Bonjour advertisement. The first connection
+  asks for the app's local-network permission on the device; the generated
+  `Info.plist` lists the service under `NSBonjourServices`.
+
+The app pays for this only while someone watches:
+
+- Waiting is one blocked `accept()` on its own thread plus one atomic read on
+  each outermost callback return. Collection stays disabled, and the
+  interpreters take their unprofiled path.
+- A viewer arriving enables collection at the next frame boundary; it leaving
+  (or Stop, which ends the session instead of the app) disables it again.
+- ns_cpu decides whether to profile once per interpreter entry, so the
+  per-instruction loop is unchanged and each call/return/native call costs one
+  predictable branch when off. When on, a call is two clock reads (the mach
+  tick counter on Apple) and an interned symbol id: no string hashing. Only
+  the thread that draws frames is recorded (the Apple main thread).
+- Scopes shorter than 0.05 ms stay in the aggregates and are left out of the
+  streamed timeline, which keeps the stream small enough for Wi-Fi.
+
 
 A frame ends when the **outermost native callback returns**: `view`'s
 `on_frame`, ui event callbacks, and anything else that re-enters the VM through
@@ -125,7 +167,10 @@ the target warns about dropped batches when it exits.
 
 ## Tests
 
-- `test/ns_profile_test.c` - recorder aggregates, timeline retention, and the
-  frame ring (window size, retirement, flatten-for-report).
+- `test/ns_profile_test.c` - recorder aggregates, timeline retention, the
+  frame ring (window size, retirement, flatten-for-report), id-based scopes,
+  and device mode: off until a viewer connects, streaming while it stays, off
+  again when it leaves.
+- `test/ns_cpu_test.c` - ns_cpu records balanced scopes only while profiling.
 - `test/ns_profile_test.sh` - CLI behaviour, report contents, and an end-to-end
   live session against a stand-in viewer written in ns.

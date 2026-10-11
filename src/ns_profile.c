@@ -8,6 +8,7 @@
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#include <mach/mach_time.h>
 #endif
 #endif
 
@@ -87,6 +88,16 @@ f64 ns_profile_now_ms(void) {
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&counter);
     return ((f64)counter.QuadPart * 1000.0) / (f64)freq.QuadPart;
+#elif defined(__APPLE__)
+    // Every profiled ns_cpu call reads the clock twice; the tick counter is a
+    // few nanoseconds where clock_gettime is a few tens.
+    static f64 ms_per_tick = 0.0;
+    if (ms_per_tick == 0.0) {
+        mach_timebase_info_data_t tb;
+        mach_timebase_info(&tb);
+        ms_per_tick = (f64)tb.numer / (f64)tb.denom / 1000000.0;
+    }
+    return (f64)mach_absolute_time() * ms_per_tick;
 #else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -385,6 +396,77 @@ void ns_profile_record_scope(ns_str name, ns_str lib, i32 depth, f64 start_ms, f
     }
 
     ns_profile_record_event(NS_PROFILE_EVENT_SCOPE, depth, fn_index, start_ms, elapsed_ms, self_ms);
+}
+
+i32 ns_profile_symbol(ns_str name, ns_str lib, u8 kind) {
+    return ns_profile_fn_get(name, lib, kind);
+}
+
+void ns_profile_enter(i32 fn_index, f64 start_ms) {
+    if (!ns_profile.enabled) return;
+    if (ns_profile.open_len >= NS_PROFILE_MAX_STACK) {
+        ns_profile.stack_overflows++;
+        ns_profile.open_skipped++;
+        return;
+    }
+    i32 parent = ns_profile.open_len > 0 ? ns_profile.open[ns_profile.open_len - 1].flame_index : -1;
+    ns_profile.open[ns_profile.open_len++] = (ns_profile_open){
+        .fn_index = fn_index,
+        .flame_index = ns_profile_flame_get(parent, fn_index),
+        .child_ms = 0.0,
+        .start_ms = start_ms,
+    };
+}
+
+void ns_profile_leave(f64 end_ms) {
+    if (!ns_profile.enabled) return;
+    if (ns_profile.open_skipped > 0) {
+        ns_profile.open_skipped--;
+        return;
+    }
+    if (ns_profile.open_len <= 0) return;
+    ns_profile_open o = ns_profile.open[--ns_profile.open_len];
+    f64 elapsed_ms = end_ms - o.start_ms;
+    if (elapsed_ms < 0.0) elapsed_ms = 0.0;
+    f64 self_ms = elapsed_ms - o.child_ms;
+    if (self_ms < 0.0) self_ms = 0.0;
+    if (ns_profile.open_len > 0) ns_profile.open[ns_profile.open_len - 1].child_ms += elapsed_ms;
+    ns_profile.scope_calls++;
+    ns_profile.scope_self_ms += self_ms;
+    ns_profile_fn_add(o.fn_index, elapsed_ms, self_ms);
+    if (o.flame_index >= 0) {
+        ns_profile.flames[o.flame_index].calls++;
+        ns_profile.flames[o.flame_index].total_ms += elapsed_ms;
+        ns_profile.flames[o.flame_index].self_ms += self_ms;
+    }
+    ns_profile_record_event(NS_PROFILE_EVENT_SCOPE, ns_profile.open_len, o.fn_index, o.start_ms, elapsed_ms, self_ms);
+}
+
+void ns_profile_record_ffi_id(i32 fn_index, f64 start_ms, f64 elapsed_ms) {
+    if (!ns_profile.enabled) return;
+    ns_profile.ffi_calls++;
+    ns_profile.ffi_total_ms += elapsed_ms;
+    i32 parent = ns_profile.open_len > 0 ? ns_profile.open[ns_profile.open_len - 1].flame_index : -1;
+    i32 flame_index = ns_profile_flame_get(parent, fn_index);
+    if (ns_profile.open_len > 0) ns_profile.open[ns_profile.open_len - 1].child_ms += elapsed_ms;
+    ns_profile_fn_add(fn_index, elapsed_ms, elapsed_ms);
+    if (flame_index >= 0) {
+        ns_profile.flames[flame_index].calls++;
+        ns_profile.flames[flame_index].total_ms += elapsed_ms;
+        ns_profile.flames[flame_index].self_ms += elapsed_ms;
+    }
+    ns_profile_record_event(NS_PROFILE_EVENT_FFI, ns_profile.open_len, fn_index, start_ms, elapsed_ms, elapsed_ms);
+}
+
+void ns_profile_disable(void) {
+    ns_profile.enabled = false;
+    ns_profile.open_len = 0;
+    ns_profile.open_skipped = 0;
+}
+
+void ns_profile_callback_return(void) {
+    if (ns_profile.enabled) ns_profile_frame_boundary();
+    if (ns_profile.service) ns_profile.service();
 }
 
 static int ns_profile_fn_cmp(const void *a, const void *b) {

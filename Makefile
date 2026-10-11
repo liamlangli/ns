@@ -138,6 +138,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
 	src/ns_profile.c \
 	src/ns_profile_live.c \
+	src/ns_profile_device.c \
 	src/ns_os.c \
 	src/ns_token.c \
 	src/ns_ast.c \
@@ -179,6 +180,7 @@ NS_LIB_SRCS = src/ns_fmt.c \
 NS_EMBED_RUNTIME_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
 	src/ns_profile.c \
+	src/ns_profile_live.c \
 	src/ns_os.c \
 	src/ns_token.c \
 	src/ns_ast.c \
@@ -211,6 +213,7 @@ regen-embedded-ffi: $(TARGET) $(NS_BINDIR)/os$(NS_DYLIB_SUFFIX) $(NS_BINDIR)/ter
 NS_IOS_LIB_SRCS = src/ns_fmt.c \
 	src/ns_type.c \
 	src/ns_profile.c \
+	src/ns_profile_live.c \
 	src/ns_os.c \
 	src/ns_token.c \
 	src/ns_ast.c \

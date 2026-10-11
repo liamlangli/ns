@@ -111,6 +111,9 @@ typedef struct ns_compile_option_t {
     i32 live_port;
     ns_str live_host;
     ns_bool live_view;
+    // `ns profiler --device [selector]` / `--devices`: profile a device app.
+    ns_bool device_view;
+    ns_bool device_list;
     const char *patch_label; // `ns patch --label <text>`
     ns_bool patch_release;   // `ns patch --release`: the default label ends in release
 } ns_compile_option_t;
@@ -217,6 +220,10 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             i++;
         } else if (strcmp(argv[i], "--live") == 0) {
             option.live_view = true;
+        } else if (strcmp(argv[i], "--device") == 0) {
+            option.device_view = true;
+        } else if (strcmp(argv[i], "--devices") == 0) {
+            option.device_list = true;
         } else if (strcmp(argv[i], "--live-port") == 0) {
             if (i + 1 >= argc) ns_exit(1, "usage", "--live-port needs a number.\n");
             char *live_end = ns_null;
@@ -323,6 +330,9 @@ void ns_help() {
     printf("  profiler [file]   open the GUI viewer for bin/ns.profile (or file)\n");
     printf("                    --live [path|target] instead runs the project and streams\n");
     printf("                    live frames to the viewer over loopback tcp\n");
+    printf("                    --device [name|usb|wifi|host:port] profiles a Debug app\n");
+    printf("                    running on a device, over USB or the local network\n");
+    printf("                    --devices lists the devices that can be reached\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("                    --cpu runs each entry on the ns_cpu interpreter\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
@@ -6630,6 +6640,13 @@ i32 main(i32 argc, i8** argv) {
         ns_publish_program_args(option.program_argc, option.program_argv);
     }
 
+    // The viewer starts `ns profile --live-port` for every session; in a device
+    // session that process relays the device's stream instead of running code.
+    const char *device = getenv("NS_PROFILE_DEVICE");
+    if (option.profile_cmd && option.live_port > 0 && device && device[0]) {
+        return ns_profile_device_relay(device, option.live_host.data, option.live_port);
+    }
+
     if (option.profile) {
         // A live run streams to a viewer that is already open; opening a second
         // one over the finished report would fight it for the screen.
@@ -6648,7 +6665,13 @@ i32 main(i32 argc, i8** argv) {
     ns_configure_vm_runtime_paths(&vm);
 
     if (option.profile_view) {
-        if (option.live_view) {
+        if (option.device_list) {
+            return ns_profile_device_list();
+        } else if (option.device_view) {
+            ns_setenv("NS_PROFILE_DEVICE", option.filename.len > 0 ? option.filename.data : "any");
+            ns_exec_profile_live(ns_str_null);
+        } else if (option.live_view) {
+            ns_setenv("NS_PROFILE_DEVICE", "");
             ns_exec_profile_live(option.filename);
         } else {
             ns_exec_profile_view(option.filename);

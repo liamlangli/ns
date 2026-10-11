@@ -1,9 +1,122 @@
 #include "ns_test.h"
 #include "ns_profile.h"
+#include "ns_profile_live.h"
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 static ns_str S(const char *s) { return ns_str_cstr((char *)s); }
 
+static ns_bool ns_test_near(f64 a, f64 b) { return a > b - 0.001 && a < b + 0.001; }
+
+// Interned ids, as ns_cpu records them: no name lookup per call.
+static void ns_profile_test_ids(void) {
+    ns_profile_reset();
+    ns_profile_enable(0.0);
+    i32 outer = ns_profile_symbol(S("outer"), ns_str_null, NS_PROFILE_EVENT_SCOPE);
+    i32 inner = ns_profile_symbol(S("inner"), ns_str_null, NS_PROFILE_EVENT_SCOPE);
+    i32 draw = ns_profile_symbol(S("gpu_draw"), S("gpu"), NS_PROFILE_EVENT_FFI);
+    ns_expect(outer >= 0 && inner >= 0 && draw >= 0 && outer != inner, "symbols intern to distinct ids");
+    ns_expect(ns_profile_symbol(S("outer"), ns_str_null, NS_PROFILE_EVENT_SCOPE) == outer, "interning is stable");
+    ns_profile_enter(outer, 0.0);
+    ns_profile_enter(inner, 10.0);
+    ns_profile_record_ffi_id(draw, 12.0, 3.0);
+    ns_profile_leave(20.0);
+    ns_profile_leave(40.0);
+    ns_expect(ns_profile.open_len == 0, "id scopes drain the open stack");
+    ns_expect(ns_test_near(ns_profile.fns[outer].total_ms, 40.0) && ns_test_near(ns_profile.fns[outer].self_ms, 30.0),
+              "outer: 40ms inclusive, 30ms exclusive");
+    ns_expect(ns_test_near(ns_profile.fns[inner].total_ms, 10.0) && ns_test_near(ns_profile.fns[inner].self_ms, 7.0),
+              "inner: 10ms inclusive, 7ms exclusive of the native call");
+    ns_expect(ns_profile.ffi_calls == 1 && ns_test_near(ns_profile.fns[draw].self_ms, 3.0), "native call recorded by id");
+
+    // Past the open-stack limit enters are skipped, and so are their leaves.
+    for (i32 i = 0; i < NS_PROFILE_MAX_STACK + 5; i++) ns_profile_enter(inner, (f64)i);
+    for (i32 i = 0; i < NS_PROFILE_MAX_STACK + 5; i++) ns_profile_leave(1000.0);
+    ns_expect(ns_profile.open_len == 0 && ns_profile.open_skipped == 0, "deep recursion stays balanced");
+
+    u64 calls = ns_profile.scope_calls;
+    ns_profile_enter(outer, 0.0);
+    ns_profile_disable();
+    ns_expect(!ns_profile.enabled && ns_profile.open_len == 0, "disable drops the open stack");
+    ns_profile_leave(5.0);
+    ns_expect(ns_profile.scope_calls == calls, "nothing records while disabled");
+    ns_profile_reset();
+}
+
+static u32 ns_test_u32(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); }
+
+// Read whole messages until one of `type` arrives; false on timeout.
+static ns_bool ns_test_read_until(int fd, u8 *buf, szt cap, szt *len, u32 type) {
+    for (i32 tries = 0; tries < 200; tries++) {
+        szt at = 4; // stream magic
+        while (*len >= at + 8) {
+            u32 kind = ns_test_u32(buf + at);
+            u32 size = ns_test_u32(buf + at + 4);
+            if (*len < at + 8 + size) break;
+            if (kind == type) return true;
+            at += 8 + size;
+        }
+        ssize_t n = recv(fd, buf + *len, cap - *len, MSG_DONTWAIT);
+        if (n > 0) *len += (szt)n;
+        else usleep(5000);
+    }
+    return false;
+}
+
+// Device mode: profiling stays off until a viewer connects, streams frames
+// while it is there and switches off when it leaves.
+static void ns_profile_test_serve(void) {
+    ns_profile_reset();
+    const i32 port = 47640;
+    ns_expect(ns_profile_live_serve(port, "profile-test"), "device mode listens");
+    ns_expect(!ns_profile.enabled, "no profiling before a viewer connects");
+    ns_profile_callback_return();
+    ns_expect(!ns_profile.enabled, "a callback without a viewer changes nothing");
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((u16)port);
+    sa.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ns_expect(connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0, "viewer connects to the device port");
+    for (i32 i = 0; i < 400 && !ns_profile.enabled; i++) {
+        usleep(5000);
+        ns_profile_callback_return();
+    }
+    ns_expect(ns_profile.enabled, "the next callback picks up the viewer and enables profiling");
+
+    static u8 buf[1 << 16];
+    szt len = 0;
+    ns_expect(ns_test_read_until(fd, buf, sizeof(buf), &len, NS_PROFILE_LIVE_MSG_HELLO), "viewer receives HELLO");
+    ns_expect(len >= 4 && ns_test_u32(buf) == NS_PROFILE_LIVE_MAGIC, "stream starts with the magic");
+
+    i32 work = ns_profile_symbol(S("frame_work"), ns_str_null, NS_PROFILE_EVENT_SCOPE);
+    f64 t = ns_profile_now_ms();
+    ns_profile_enter(work, t);
+    ns_profile_leave(t + 2.0);
+    ns_profile_callback_return();
+    ns_expect(ns_test_read_until(fd, buf, sizeof(buf), &len, NS_PROFILE_LIVE_MSG_FRAME), "a closed frame is streamed");
+
+    close(fd);
+    for (i32 i = 0; i < 400 && ns_profile.enabled; i++) {
+        usleep(5000);
+        t = ns_profile_now_ms();
+        ns_profile_enter(work, t);
+        ns_profile_leave(t + 1.0);
+        ns_profile_callback_return();
+    }
+    ns_expect(!ns_profile.enabled, "profiling stops when the viewer leaves");
+    ns_profile.service = ns_null;
+    ns_profile_reset();
+}
+
 int main() {
+    ns_profile_test_ids();
+    ns_profile_test_serve();
     ns_profile_reset();
     ns_profile_enable(0.0);
 

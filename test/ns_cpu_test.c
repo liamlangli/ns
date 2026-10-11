@@ -1,6 +1,7 @@
 #include "ns_test.h"
 #include "ns_cpu.h"
 #include "ns_ssa.h"
+#include "ns_profile.h"
 
 #include <unistd.h>
 
@@ -210,6 +211,23 @@ int main(void) {
     ns_expect(!ns_cpu_test_call(m, "div", 1, 0, &out), "division by zero faults instead of crashing.");
     ns_expect(ns_cpu_test_call(m, "div", 9, 3, &out) && out == 3, "the module runs again after a fault.");
     ns_expect(ns_return_is_error(ns_cpu_call(m, "missing", ns_null, 0, &out)), "an unknown fn is an error.");
+
+    // Profiling: every call of the profiled thread is a scope, balanced by its
+    // return, and nothing is recorded once the profile is off.
+    ns_profile_reset();
+    ns_profile_enable(ns_profile_now_ms());
+    ns_expect(ns_cpu_test_call(m, "fib", 10, 0, &out) && out == 55, "a profiled run computes the same result.");
+    i32 fib_fn = -1;
+    for (i32 i = 0; i < ns_profile.fn_count; i++) {
+        if (ns_str_equals_STR(ns_profile.fns[i].name, "fib")) fib_fn = i;
+    }
+    ns_expect(fib_fn >= 0 && ns_profile.fns[fib_fn].calls == 177, "every recursive call of fib(10) is recorded.");
+    ns_expect(ns_profile.open_len == 0, "calls and returns balance.");
+    u64 recorded = ns_profile.scope_calls;
+    ns_profile_disable();
+    ns_expect(ns_cpu_test_call(m, "fib", 10, 0, &out) && out == 55, "an unprofiled run still computes.");
+    ns_expect(ns_profile.scope_calls == recorded, "nothing is recorded with the profile off.");
+    ns_profile_reset();
 
     // A damaged image never loads into something that can escape its frame:
     // every truncation and a spread of single-byte flips is either rejected
