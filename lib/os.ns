@@ -92,6 +92,10 @@ ref fn os_motion_attitude(values: [f64]) bool
 // File access. os_file_size returns -1 on failure. Ranged reads truncate at
 // EOF and return an empty string when the file or requested range is invalid.
 ref fn os_file_size(path: str) i64
+// Streamed UTF-8 byte-column metrics, including the final empty line.
+// Writes line count and maximum byte-column count to values[0...1].
+// False means failure; the caller supplies at least two elements.
+ref fn os_file_text_metrics(path: str, values: [i64]) bool
 // SHA-256 in lowercase hex; file hashing streams through a 64 KiB buffer.
 // Empty string means failure, including a file that changed during hashing.
 ref fn os_file_hash(path: str) str

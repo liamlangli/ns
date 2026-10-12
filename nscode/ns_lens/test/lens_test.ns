@@ -7,6 +7,8 @@ fn check_gray(c: u32) {
 }
 
 fn main() {
+    assert lens_text_lines("") == 1
+    assert lens_text_lines("a\nb\n") == 3
     check_gray(col_editor_bg())
     check_gray(col_editor_panel_hi())
     check_gray(col_surface())
@@ -44,12 +46,18 @@ fn main() {
             }
         }
     }
-    // Every file's code shows whole: its estimated lines fit the leaf's columns.
+    // Full-file line counts determine area; flow uses all available content space.
     for f in 0 to g_workspace_count {
         if g_lens_files[f] != 0 {
-            lens_code_flow(f, (os_file_size(os_entry_path(f)) / 30) as i32 + 1)
+            assert g_lens_weight[f] == g_lens_source_lines[f] as f64
+            lens_code_flow(f, g_lens_source_lines[f])
             assert g_lens_flow_rows >= 1
-            assert g_lens_flow_fit > 0.5
+            assert g_lens_flow_fit > 0.0
+            assert g_lens_flow_rows * g_lens_flow_columns >= g_lens_source_lines[f]
+            let used_w = (g_lens_flow_columns as f64) * g_lens_flow_column_pitch * g_lens_flow_fit
+            let used_h = (code_base_top_pad() + (g_lens_flow_rows as f64) * g_lens_flow_line_pitch) * g_lens_flow_fit
+            assert abs(used_w - (g_lens_w[f] / g_lens_code_world - 2.0)) < 0.001
+            assert abs(used_h - (g_lens_h[f] / g_lens_code_world - LENS_LEAF_HEADER_REF - 4.0)) < 0.001
         }
     }
     // Folder frames take a share of the map; files fill the rest.
@@ -58,7 +66,8 @@ fn main() {
     assert lens_lod(1.0) == 0
     assert lens_lod(0.5) == 1
     assert lens_lod(0.1) == 2
-    assert lens_lod(0.01) == 3
+    assert lens_lod(0.01) == 2
+    assert lens_lod(0.000001) == 2
     // Pointer anchoring keeps the same leaf point under the mouse while zooming.
     g_lens_tilt = 0.0
     g_lens_center_x = 0.0
@@ -67,6 +76,47 @@ fn main() {
     g_lens_target_y = 0.0
     g_lens_distance = 1600.0
     g_lens_target_distance = 1600.0
+    // Left drags pan, including outside the map after capture; right does not.
+    let pointer = view_create("lens pointer test", 100, 100)
+    pointer.mouse_pressed = true
+    pointer.mouse_down = true
+    g_mouse_x = 10.0
+    g_mouse_y = 20.0
+    lens_pan_input(pointer, true)
+    assert g_lens_panning && g_lens_target_x == 0.0
+    pointer.mouse_pressed = false
+    g_mouse_x = 30.0
+    lens_pan_input(pointer, false)
+    assert g_lens_target_x == -40.0
+    pointer.mouse_down = false
+    pointer.mouse_released = true
+    lens_pan_input(pointer, false)
+    assert !g_lens_panning
+    pointer.mouse_released = false
+    pointer.mouse_right_down = true
+    g_mouse_x = 50.0
+    lens_pan_input(pointer, true)
+    assert g_lens_target_x == -40.0
+    pointer.mouse_pressed = true
+    pointer.mouse_down = true
+    lens_pan_input(pointer, false)
+    assert !g_lens_panning
+    g_lens_target_x = 0.0
+    // Code selection uses the right button, leaving left drags for the camera.
+    load_str("hello world")
+    g_mouse_x = 72.0
+    g_mouse_y = 5.0
+    process_code_mouse(pointer, 0.0, 0.0, 200.0, 100.0, 20.0, 8.0, 10, 200.0)
+    assert !g_code_drag
+    pointer.mouse_pressed = false
+    pointer.mouse_right_pressed = true
+    process_code_mouse(pointer, 0.0, 0.0, 200.0, 100.0, 20.0, 8.0, 10, 200.0)
+    assert g_code_drag
+    pointer.mouse_right_pressed = false
+    pointer.mouse_right_down = false
+    pointer.mouse_right_released = true
+    process_code_mouse(pointer, 0.0, 0.0, 200.0, 100.0, 20.0, 8.0, 10, 200.0)
+    assert !g_code_drag
     // Code size follows the camera: halving the distance doubles the zoom.
     let far_leaf = lens_project_leaf(workspace_find("lens.ns"), 1280.0, 42.0, 680.0)
     g_lens_distance = g_lens_distance * 0.5

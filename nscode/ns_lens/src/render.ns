@@ -17,6 +17,7 @@ let g_code_scroll: f64 = 0.0 as f64
 let g_code_zoom: f64 = 1.0
 // Vertical zoom: the map's tilt squashes rows but not glyph widths.
 let g_code_zoom_y: f64 = 1.0
+let g_code_line_pitch: f64 = 0.0
 let g_caret_follow = false
 let g_setting_language: i32 = 0
 let g_setting_theme: i32 = 0
@@ -603,7 +604,7 @@ fn key_edge(v: ref view, k: i32) bool {
 fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, line_h: f64, char_w: f64, rows: i32, col_w: f64) {
     let column = mouse_column(x, col_w)
     let text_x = x + (column as f64) * col_w + code_gutter_w() + code_text_inset()
-    if v.mouse_pressed {
+    if v.mouse_right_pressed {
         if hit(v, x, body_y, w, body_h) {
             let li = mouse_line(v, body_y, line_h, column, rows)
             let col = mouse_col(v, text_x, char_w)
@@ -630,11 +631,11 @@ fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, lin
         }
     }
     if g_code_drag {
-        if v.mouse_down {
+        if v.mouse_right_down {
             place_cursor(mouse_line(v, body_y, line_h, column, rows), mouse_col(v, text_x, char_w), true)
         }
     }
-    if v.mouse_released {
+    if v.mouse_right_released {
         g_code_drag = false
     }
 }
@@ -675,7 +676,12 @@ fn code_text_inset() f64 { return code_base_text_inset() * g_code_zoom }
 
 fn code_base_text_inset() f64 { return 12.0 }
 
-fn code_line_h() f64 { return code_base_line_h() * g_code_zoom_y }
+fn code_line_h() f64 {
+    if g_code_line_pitch > 0.0 {
+        return g_code_line_pitch * g_code_zoom_y
+    }
+    return code_base_line_h() * g_code_zoom_y
+}
 
 fn code_base_line_h() f64 {
     if g_setting_font_size == 0 {

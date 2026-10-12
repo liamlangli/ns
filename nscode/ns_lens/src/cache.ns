@@ -98,7 +98,7 @@ fn lens_read_source(path: str, offset: i64, bytes: i32) str {
 // The layout signature covers the ordered source set, sizes, and ancestry.
 // Text changes with an unchanged size still validate against SHA-256 on use.
 fn lens_layout_signature() str {
-    let signature = "layout3\n"
+    let signature = "layout4-lines\n" + ftos(g_lens_code_world)
     for i in 0 to g_workspace_count {
         g_lens_cache_keys[i] = os_text_hash(os_entry_path(i))
         signature = signature + os_text_hash(g_lens_cache_keys[i] + ":" + ftos(g_lens_weight[i]) + ":" + itos(os_entry_parent(i)))
@@ -156,4 +156,33 @@ fn lens_offset_key(value: i64) str {
         n = n / 10
     }
     return out
+}
+
+struct lens_text_metrics {
+    lines: i64,
+    columns: i64
+}
+
+// Metrics are small hash-validated records; full files never enter RAM here.
+fn lens_file_metrics(path: str) lens_text_metrics {
+    let hash = os_file_hash(path)
+    let file = lens_cache_path(path, "metrics1")
+    let payload = lens_cache_get(file, hash, 128)
+    if g_lens_cache_found {
+        g_lens_parse_offset = 0
+        let lines = lens_cache_number(payload) as i64
+        let columns = lens_cache_number(payload) as i64
+        if lines >= 1 && columns >= 0 {
+            return lens_text_metrics(lines, columns)
+        }
+    }
+    let native = [i64](2)
+    if !os_file_text_metrics(path, native) {
+        return lens_text_metrics(-1 as i64, 0 as i64)
+    }
+    let value = lens_text_metrics(native[0], native[1])
+    if value.lines >= 1 && os_file_hash(path) == hash {
+        lens_cache_put(file, hash, ftos(value.lines as f64) + "\n" + ftos(value.columns as f64) + "\n")
+    }
+    return value
 }

@@ -55,6 +55,7 @@ void os_impact(void);
 ns_bool os_motion_start(f64 hz);
 void os_motion_stop(void);
 ns_bool os_motion_attitude(f64 *values);
+ns_bool os_file_text_metrics(const char *path, i64 *values);
 i64 os_file_size(const char *path);
 const char *os_file_hash(const char *path);
 const char *os_text_hash(const char *text);

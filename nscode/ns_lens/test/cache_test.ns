@@ -34,6 +34,35 @@ fn main() {
     assert lens_read_source(path, 0 as i64, 8192) == ""
     assert lens_cache_get(file, os_file_hash(path), 8192) == ""
     assert g_lens_cache_found
+    let empty_metrics = lens_file_metrics(path)
+    assert empty_metrics.lines == 1 && empty_metrics.columns == 0
+    let missing_metrics = [i64](2)
+    assert !os_file_text_metrics(root + "/missing", missing_metrics)
+    assert missing_metrics[0] == -1
+    assert os_write_file_atomic(path, "ab\ncd") != 0
+    let initial_metrics = lens_file_metrics(path)
+    assert initial_metrics.lines == 2 && initial_metrics.columns == 2
+    let hits = g_lens_cache_hits
+    let reused_metrics = lens_file_metrics(path)
+    assert reused_metrics.lines == 2
+    assert g_lens_cache_hits == hits + 1
+    // Same bytes, different line count: stale metrics must be replaced.
+    assert os_write_file_atomic(path, "abcd\n") != 0
+    let changed_metrics = lens_file_metrics(path)
+    assert changed_metrics.lines == 2 && changed_metrics.columns == 4
+    assert os_write_file_atomic(path, "abcde") != 0
+    let one_line_metrics = lens_file_metrics(path)
+    assert one_line_metrics.lines == 1
+    // Count beyond the preview cap, including a newline across a read boundary.
+    let large = "a"
+    for n in 0 to 19 {
+        large = large + large
+    }
+    large = large + "\nend\n"
+    assert os_write_file_atomic(path, large) != 0
+    let large_metrics = [i64](2)
+    assert os_file_text_metrics(path, large_metrics)
+    assert large_metrics[0] == 3 && large_metrics[1] == 524288
     assert os_write_file_atomic(path, "worker source") != 0
     g_workspace_streaming = true
     workspace_init()

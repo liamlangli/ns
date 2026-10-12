@@ -16,8 +16,7 @@ directly with `bin/ns run nscode/ns_lens /absolute/path/to/project`.
 The scan follows the project's root `.gitignore`, excludes Git metadata, and
 recognizes Nano Script, common native/web/shader languages, scripts, manifests,
 and text documentation. Each directory is a titled frame holding its children
-in a weighted binary treemap; a file's area is sized for the code it likely
-holds (its bytes at about 30 per line, one 100-character column wide). The
+in a weighted binary treemap; a file's area is proportional to its actual full-file line count. The
 map is laid out flat, so leaves tile edge to edge. Flat, the camera is
 orthographic; middle drag tilts the map plane up to 60 degrees and the camera
 becomes a perspective one looking across it. A tilt released under 5 degrees
@@ -26,12 +25,13 @@ snaps back to orthographic.
 - The interface is monochrome. Syntax highlighting and Git change backgrounds
   use color; leaf outlines are rounded rectangles with a 3-point radius.
 - Wheel: zoom toward the pointer with camera smoothing.
-- Right drag: pan. Middle drag: tilt the map into perspective.
+- Left drag: pan. Right click: select a leaf; right drag selects text in its editor.
+  Middle drag: tilt the map into perspective.
 - Zoom close to a leaf: its code becomes a syntax-highlighted, editable surface
   inside that leaf. The map keeps the entire canvas; no separate editor opens.
 - Shift+wheel: scroll code inside the leaf; horizontal travel scrolls columns.
 - **Open project** selects a project folder.
-- Every file keeps a resident minimap batch (one bar per code segment),
+- Every file keeps a resident minimap (one bar per code segment),
   built once from its text and rebuilt only when the text or its column flow
   changes, so bars never blank while the camera moves; a leaf whose glyphs
   are not ready yet shows its bars instead.
@@ -39,23 +39,22 @@ snaps back to orthographic.
   `ui` batches (syntax-highlighted glyphs, and token-coloured minimap bars)
   and drawn scaled by the camera, so it zooms with its leaf. One
   code-pixel-to-world ratio is shared by every leaf. By that zoom the code
-  shows as glyphs, as minimap bars (one per token), or not at all. Lines flow
+  shows as glyphs, as minimap bars (one per code segment), or as the same resident minimap. Lines flow
   down newspaper columns across the leaf, preview and editor alike, so the
-  whole file (up to 256 KiB) shows; a file with more lines than its area
-  expected shrinks its own code until it fits; past a readable size the hovered file
+  whole file (up to 256 KiB) shows; column count and font scale maximize readability, while column and row spacing
+  fill the available leaf; past a readable size the hovered file
   becomes an editor at the same scale, with selection, undo/redo and
   Cmd/Ctrl+S. Filenames appear once a leaf is wide enough.
-- Clicking a leaf focuses it at a readable code size, framing its top. Zoom
+- Right-clicking a leaf focuses it at a readable code size, framing its top. Zoom
   stops once code reaches 2.5 times its editor size.
 - Without a path argument the map opens the shell's working directory.
 - Files over 256 KiB use a read-only paged surface on the leaf. **Prev / Next**
   moves through 8 KiB ranges; Shift+wheel reaches every line in the page.
 - Save edits before switching the Lens editor to another file.
 
-The application runs as a compiled native `exec` target. Only metadata is
-loaded during its initial scan. Layout and source caches live under the opened
+The application runs as a compiled native `exec` target. File metrics are streamed through a bounded 64 KiB buffer during the initial scan. Layout and source caches live under the opened
 project's `bin/ns_lens/`, including `index.cache` and `files/*.cache`.
-Layout reuse checks the ordered paths, byte sizes and ancestry. Every source
+Layout reuse checks ordered paths, line counts, code scale and ancestry. Line/column metrics are cached with source hashes. Every source
 cache read first hashes the entire local file with streamed SHA-256, then
 checks the source digest and cached payload digest; same-size changes and
 corruption rebuild the record. Writes are atomic and validate the source again
@@ -96,3 +95,11 @@ Validation:
 bin/ns test nscode/ns_lens
 bin/ns lint nscode/ns_lens
 ```
+
+Text and minimap still switch with code size. Below readable text size the
+same resident minimap keeps rendering at every distance: there is no hidden
+state or coarse/fine minimap switch. Minimap bars cover every source line and share the glyphs' line spacing,
+column breaks, gutter, origin and camera scale. There is no row sampling or
+bar-count truncation. The batch is retained independently of the glyph/page
+cache and only rebuilt when source or layout changes. Pending files show a loading marker; empty files
+have an empty-content mark. Folder appearance is unchanged.

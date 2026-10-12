@@ -905,6 +905,32 @@ const char *os_text_hash(const char *text) {
     return os_hash_hex;
 }
 
+ns_bool os_file_text_metrics(const char *path, i64 *values) {
+    if (!values) return 0;
+    values[0] = -1;
+    values[1] = 0;
+    FILE *file = path ? fopen(path, "rb") : NULL;
+    if (!file) return 0;
+    i64 lines = 1, columns = 0, longest = 0;
+    u8 data[65536];
+    size_t count;
+    while ((count = fread(data, 1, sizeof(data), file)) > 0) {
+        for (size_t i = 0; i < count; i++) {
+            if (data[i] == '\n') {
+                if (columns > longest) longest = columns;
+                columns = 0;
+                lines++;
+            } else if (data[i] != '\r') columns++;
+        }
+    }
+    int failed = ferror(file);
+    fclose(file);
+    if (failed) return 0;
+    values[0] = lines;
+    values[1] = columns > longest ? columns : longest;
+    return 1;
+}
+
 const char *os_file_hash(const char *path) {
     if (!path) return "";
     FILE *file = fopen(path, "rb");

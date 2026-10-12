@@ -11,6 +11,8 @@ let g_lens_mini_path = [str](4096)
 let g_lens_mini_hash = [str](4096)
 let g_lens_mini_lines = [i32](4096)
 let g_lens_mini_rows = [i32](4096)
+let g_lens_mini_column_pitch = [f64](4096)
+let g_lens_mini_line_pitch = [f64](4096)
 let g_lens_mini_fit = [f64](4096)
 // Batches whose files left the workspace, destroyed on the next frame.
 let g_lens_mini_drop = [i32](4096)
@@ -33,6 +35,8 @@ fn lens_mini_remap() {
     let lines = [i32](4096)
     let rows = [i32](4096)
     let fit = [f64](4096)
+    let column_pitch = [f64](4096)
+    let line_pitch = [f64](4096)
     let kept = [i32](4096)
     for i in 0 to g_workspace_count {
         let path = os_entry_path(i)
@@ -43,6 +47,8 @@ fn lens_mini_remap() {
             lines[i] = g_lens_mini_lines[j]
             rows[i] = g_lens_mini_rows[j]
             fit[i] = g_lens_mini_fit[j]
+            column_pitch[i] = g_lens_mini_column_pitch[j]
+            line_pitch[i] = g_lens_mini_line_pitch[j]
             kept[j] = 1
         }
     }
@@ -58,6 +64,8 @@ fn lens_mini_remap() {
         g_lens_mini_lines[i] = lines[i]
         g_lens_mini_rows[i] = rows[i]
         g_lens_mini_fit[i] = fit[i]
+        g_lens_mini_column_pitch[i] = column_pitch[i]
+        g_lens_mini_line_pitch[i] = line_pitch[i]
         g_lens_mini_path[i] = ""
         if i < g_workspace_count {
             g_lens_mini_path[i] = os_entry_path(i)
@@ -82,7 +90,7 @@ fn lens_mini_ready(index: i32) bool {
 // True when the file's leaf now flows its lines differently from its batch.
 fn lens_mini_stale(index: i32) bool {
     lens_code_flow(index, g_lens_mini_lines[index])
-    return g_lens_flow_rows != g_lens_mini_rows[index]
+    return g_lens_flow_rows != g_lens_mini_rows[index] || g_lens_flow_column_pitch != g_lens_mini_column_pitch[index] || g_lens_flow_line_pitch != g_lens_mini_line_pitch[index]
 }
 
 fn lens_mini_update(r: ref ui_renderer) {
@@ -98,11 +106,11 @@ fn lens_mini_update(r: ref ui_renderer) {
 }
 
 fn lens_text_lines(text: str) i32 {
-    let rows: i32 = 0
-    let offset: i32 = 0
-    loop offset < text.len {
-        offset = lens_line_end(text, offset) + 1
-        rows = rows + 1
+    let rows: i32 = 1
+    for byte in text {
+        if byte == 10 {
+            rows = rows + 1
+        }
     }
     return rows
 }
@@ -127,7 +135,8 @@ fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
     lens_code_flow(index, lines)
     let rows = g_lens_flow_rows
     let hash = os_text_hash(text)
-    if g_lens_mini_batch[index] != 0 && g_lens_mini_hash[index] == hash && g_lens_mini_rows[index] == rows {
+    if g_lens_mini_batch[index] != 0 && g_lens_mini_hash[index] == hash && g_lens_mini_rows[index] == rows && !lens_mini_stale(index) {
+        g_lens_mini_fit[index] = g_lens_flow_fit
         return
     }
     let batch = g_lens_mini_batch[index]
@@ -137,7 +146,7 @@ fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
             return
         }
     }
-    let line_h = code_base_line_h()
+    let line_h = g_lens_flow_line_pitch
     let char_w = ui_mono_char_width(r, code_base_font_px(), CODE_FONT())
     if char_w <= 0.0 {
         char_w = code_base_font_px() * 0.6
@@ -148,7 +157,7 @@ fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
     loop offset < text.len {
         let end = lens_line_end(text, offset)
         let column = clamp_i(row / rows, 0, LENS_MAX_COLUMNS - 1)
-        let text_x = (column as f64) * LENS_COLUMN_REF + code_base_gutter_w() + code_base_text_inset()
+        let text_x = (column as f64) * g_lens_flow_column_pitch + code_base_gutter_w() + code_base_text_inset()
         let row_top = code_base_top_pad() + ((row % rows) as f64) * line_h
         let m = clamp_i(end - offset, 0, LENS_PREVIEW_COLS)
         let p: i32 = 0
@@ -176,7 +185,7 @@ fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
                         }
                     }
                 }
-                ui_rect_batch_add(r, batch, text_x + (p as f64) * char_w, row_top + line_h * 0.25, ((q - p) as f64) * char_w, line_h * 0.5, lens_bar_color(kind))
+                ui_rect_batch_add(r, batch, text_x + (p as f64) * char_w, row_top + (line_h - code_base_line_h()) * 0.5 + code_base_line_h() * 0.25, ((q - p) as f64) * char_w, code_base_line_h() * 0.5, lens_bar_color(kind))
                 p = q
             }
         }
@@ -189,14 +198,33 @@ fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
     g_lens_mini_lines[index] = lines
     g_lens_mini_rows[index] = rows
     g_lens_mini_fit[index] = g_lens_flow_fit
+    g_lens_mini_column_pitch[index] = g_lens_flow_column_pitch
+    g_lens_mini_line_pitch[index] = g_lens_flow_line_pitch
 }
 
 // The file's bars at the leaf's code origin, scaled by the camera.
-fn lens_mini_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64) {
+fn lens_mini_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64) bool {
     let batch = g_lens_mini_batch[index]
     if batch == 0 {
-        return
+        return false
     }
     let scale = zoom * g_lens_mini_fit[index]
     ui_rect_batch_draw_range(r, batch, 0, ui_rect_batch_vertex_count(r, batch), x, y, scale, scale * squash)
+    return true
+}
+
+// A loading marker until the worker builds this file's sole minimap batch.
+// Once ready, the same batch scales continuously at every distance.
+fn lens_mini_loading(r: ref ui_renderer, leaf: lens_leaf_rect, content: lens_leaf_rect) {
+    if content.w <= 0.0 || content.h <= 0.0 {
+        ui_fill_rect(r, leaf.x + leaf.w * 0.15, leaf.y + leaf.h * 0.45, leaf.w * 0.7, clamp(leaf.h * 0.15, 0.2, 1.0), col_muted(), 0.0)
+        return
+    }
+    ui_push_clip(r, content.x, content.y, content.w, content.h)
+    let height = clamp(content.h * 0.02, 0.5, 2.0)
+    for row in 0 to 3 {
+        let width = content.w * (0.62 - (row as f64) * 0.13)
+        ui_fill_rect(r, content.x + content.w * 0.08, content.y + content.h * (0.12 + (row as f64) * 0.13), width, height, ui_pack_color("#555555"), 0.0)
+    }
+    ui_pop_clip(r)
 }
