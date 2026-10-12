@@ -1,0 +1,39 @@
+use std
+use os
+
+fn main() {
+    load_str("a\nnew\nz\n")
+    lens_diff_parse("@@ -2 +2 @@\n-old\n+new\n")
+    assert g_lens_diff_deleted_count == 1
+    assert g_lens_diff_added[1] == 1
+    assert g_lens_diff_deleted[0] == "old"
+    assert g_lens_diff_count == line_count() + 1
+    assert g_lens_diff_rows[1] == -1
+    assert g_lens_diff_source[1] == 2
+    assert lens_diff_source_row(1) == 1
+    assert lens_diff_source_row(2) == 1
+    lens_diff_parse("@@ -2,2 +1,0 @@\n-b\n-c\n")
+    assert g_lens_diff_deleted_count == 2
+    assert g_lens_diff_anchor[0] == 1
+    assert g_lens_diff_rows[1] == -1
+    assert g_lens_diff_rows[2] == -2
+    lens_diff_parse("@@ -0,0 +1,2 @@\n+a\n+new\n")
+    assert g_lens_diff_deleted_count == 0
+    assert g_lens_diff_added[0] == 1 && g_lens_diff_added[1] == 1
+    let patch = os_git_diff_text("a\nold\nz\n", "a\nnew\nz\n", 8192)
+    if os_git_status() >= 0 {
+        assert patch != ""
+        lens_diff_parse(patch)
+        assert g_lens_diff_deleted[0] == "old"
+        assert g_lens_diff_added[1] == 1
+        assert os_git_diff_text("same", "same", 8192) == ""
+        assert os_git_status() == 0
+        assert os_git_diff_text("a", "b", 1) == ""
+        assert os_git_status() < 0
+        let revision = os_git_revision("nscode/ns_lens/src/lens.ns")
+        assert revision != ""
+        let base = os_git_base("Makefile", 262144)
+        assert base.len > 0
+    }
+    print("git_test: passed\n")
+}

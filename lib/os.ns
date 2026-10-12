@@ -92,6 +92,21 @@ ref fn os_motion_attitude(values: [f64]) bool
 // File access. os_file_size returns -1 on failure. Ranged reads truncate at
 // EOF and return an empty string when the file or requested range is invalid.
 ref fn os_file_size(path: str) i64
+// SHA-256 in lowercase hex; file hashing streams through a 64 KiB buffer.
+// Empty string means failure, including a file that changed during hashing.
+ref fn os_file_hash(path: str) str
+ref fn os_text_hash(text: str) str
+// Desktop Git helpers (Git on PATH). Revision identifies HEAD; an unborn
+// repository returns "unborn". Empty revision means unavailable/non-repository.
+// Base returns HEAD's file contents (empty for an untracked/empty file).
+// Diff compares two supplied texts, returning a unified zero-context patch.
+// Output is bounded; empty means no differences or unavailable/oversized data.
+// Apple mobile and Windows currently return empty strings.
+// Last Git operation exit status on this thread, or -1 on failure/truncation.
+ref fn os_git_status() i32
+ref fn os_git_revision(path: str) str
+ref fn os_git_base(path: str, max_bytes: i32) str
+ref fn os_git_diff_text(before: str, after: str, max_bytes: i32) str
 ref fn os_read_file(path: str) str
 ref fn os_read_file_part(path: str, offset: i64, size: i64) str
 // Atomically replace a UTF-8 text file and return 1 on success.

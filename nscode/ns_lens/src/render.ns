@@ -1,0 +1,620 @@
+use std
+use os
+use view
+use ui
+use editor
+use workspace
+
+let g_setting_font_family: i32 = 1
+let g_setting_font_size: i32 = 1
+let g_ui_focus: i32 = 0
+let g_mouse_x: f64 = 0.0 as f64
+let g_mouse_y: f64 = 0.0 as f64
+let g_code_drag = false
+let g_code_scroll: f64 = 0.0 as f64
+let g_caret_follow = false
+let g_setting_language: i32 = 0
+let g_setting_theme: i32 = 0
+let g_key_event_mods: i32 = 0
+let g_last_click_time: f64 = 0.0 as f64
+let g_last_click_line: i32 = -1
+let g_click_streak: i32 = 0
+
+fn col_editor_bg() u32 { return ui_pack_color("#121212") }
+
+fn FONT_MONO() i32 { return g_setting_font_family }
+
+fn reset_view_input(v: ref view) {
+    v.mouse_pressed = false
+    v.mouse_released = false
+    v.mouse_right_pressed = false
+    v.mouse_right_released = false
+    v.mouse_middle_pressed = false
+    v.mouse_middle_released = false
+    v.scroll_x = 0.0
+    v.scroll_y = 0.0
+    view_clear_key_presses(v)
+}
+
+fn small_px() f64 {
+    if g_setting_font_size == 2 {
+        return 13.0
+    }
+    if g_setting_font_size == 0 {
+        return 11.0
+    }
+    return 12.0
+}
+
+fn draw_centered_text(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, px: f64, color: u32) {
+    if w > 0.0 {
+        if h > 0.0 {
+            let tw = ui_text_width(r, text, px, FONT_MONO())
+            if tw <= 0.0 {
+                tw = text.len as f64 * px * 0.6
+            }
+            let tx = x + (w - tw) * 0.5
+            let ty = ui_text_v_center_y(r, y, h, px, FONT_MONO())
+            ui_push_clip(r, x, y, w, h)
+            ui_draw_text(r, tx, ty, text, px, color, FONT_MONO())
+            ui_pop_clip(r)
+        }
+    }
+}
+
+fn col_muted() u32 { return ui_pack_color("#909090") }
+
+fn col_text() u32 { return ui_pack_color("#dddddd") }
+
+fn col_accent() u32 { return ui_pack_color("#eeeeee") }
+
+fn col_editor_panel_hi() u32 { return ui_pack_color("#202020") }
+
+fn hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
+    if g_ui_focus != UI_FOCUS_NONE() {
+        return false
+    }
+    return raw_hit(v, x, y, w, h)
+}
+
+fn raw_hit(v: ref view, x: f64, y: f64, w: f64, h: f64) bool {
+    if g_mouse_x < x {
+        return false
+    }
+    if g_mouse_x >= (x + w) {
+        return false
+    }
+    if g_mouse_y < y {
+        return false
+    }
+    if g_mouse_y >= (y + h) {
+        return false
+    }
+    return true
+}
+
+fn UI_FOCUS_NONE() i32 { return 0 }
+
+fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, px: f64, color: u32) {
+    if w > 0.0 {
+        if h > 0.0 {
+            ui_push_clip(r, x, y, w, h)
+            ui_draw_text(r, x, y, text, px, color, FONT_MONO())
+            ui_pop_clip(r)
+        }
+    }
+}
+
+fn col_blue() u32 { return ui_pack_color("#b0b0b0") }
+
+fn render_frame(r: ref ui_renderer, v: ref view) {
+    workspace_poll_changes()
+    ui_resize(r)
+    g_mouse_x = ui_content_x(r, v.mouse_x)
+    g_mouse_y = ui_content_y(r, v.mouse_y)
+    let w = (ui_canvas_width(r) & 1048575) as f64
+    let h = (ui_canvas_height(r) & 1048575) as f64
+    render_lens(r, v, w, h)
+}
+
+fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64) {
+    ui_fill_rect(r, x, y, w, 28.0, col_editor_panel(), 0.0)
+    draw_text_clipped(r, x + 12.0, y + 5.0, w - 24.0, 20.0, g_workspace_root, small_px(), col_muted())
+}
+
+fn col_editor_panel() u32 { return ui_pack_color("#191919") }
+
+fn clamp(v: f64, lo: f64, hi: f64) f64 {
+    if v < lo {
+        return lo
+    }
+    if v > hi {
+        return hi
+    }
+    return v
+}
+
+fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, editable: bool) {
+    let line_h = code_line_h()
+    let body_y = y
+    let body_h = h
+    let code_w = w
+    let gutter_w = code_gutter_w()
+    let clip_top = clamp(body_y, 42.0, g_lens_canvas_h - 78.0)
+    let clip_bottom = clamp(body_y + h, 42.0, g_lens_canvas_h - 78.0)
+    if clip_bottom <= clip_top {
+        return
+    }
+    let char_w = ui_mono_char_width(r, code_font_px(), CODE_FONT())
+    if char_w <= 0.0 {
+        char_w = code_font_px() * 0.6
+    }
+    let text_x = x + gutter_w + code_text_inset()
+    let text_w = w - gutter_w - code_text_inset() - 8.0
+    let visible_cols = (text_w / char_w) as i32 + 1
+    lens_git_tick(lens_camera_moving(v))
+    let total = g_lens_diff_count
+    let max_scroll = scroll_max((total as f64) * line_h + 40.0, clip_bottom - clip_top)
+    if editable {
+        if hit(v, x, clip_top, w, clip_bottom - clip_top) || g_code_drag {
+            process_code_mouse(v, x, body_y, code_w, body_h, text_x, line_h, char_w)
+        }
+        process_code_keys(v)
+        lens_git_tick(lens_camera_moving(v))
+        total = g_lens_diff_count
+    }
+    if shift_down(v) && hit(v, x, clip_top, w, clip_bottom - clip_top) {
+        g_code_scroll = clamp(g_code_scroll - v.scroll_y * code_wheel_scale(), 0.0, max_scroll)
+        g_coloff = clamp_i(g_coloff + (v.scroll_x / 5.0) as i32, 0, 1000000)
+    }
+    if g_caret_follow && editable {
+        g_caret_follow = false
+        follow_caret(clip_bottom - clip_top, line_h, max_scroll)
+    }
+    g_code_scroll = clamp(g_code_scroll, 0.0, max_scroll)
+    let first = ((g_code_scroll + clip_top - body_y - 18.0 - line_h) / line_h) as i32
+    if first < 0 {
+        first = 0
+    }
+    let last = ((g_code_scroll + clip_bottom - body_y - 18.0) / line_h) as i32 + 2
+    if last > total {
+        last = total
+    }
+
+    let cursor_line = cur_line()
+    let cursor_col = cur_col()
+    let selected = has_selection()
+    ui_push_clip(r, x, body_y, code_w, body_h)
+    for visual in first to last {
+        let i = g_lens_diff_rows[visual]
+        if i < 0 {
+            let deleted = -1 - i
+            let row_top = body_y + 18.0 + (visual as f64) * line_h - g_code_scroll
+            ui_fill_rect(r, x, row_top, code_w, line_h, ui_pack_color("#4b1e1e"), 0.0)
+            draw_text_clipped(r, x + 24.0, row_top + 2.0, 20.0, line_h, "-", small_px(), col_text())
+            let text = g_lens_diff_deleted[deleted]
+            if g_coloff < text.len {
+                let count = clamp_i(text.len - g_coloff, 0, visible_cols)
+                ui_push_clip(r, text_x, body_y, text_w, body_h)
+                ui_draw_text(r, text_x, text_center_y(r, row_top, line_h, code_font_px()), substr(text, g_coloff, count), code_font_px(), col_text(), CODE_FONT())
+                ui_pop_clip(r)
+            }
+        } else {
+            // Row rect (row_top, line_h) matches the mouse_line hit mapping; the
+            // text y inside it comes from text_center_y so the glyphs sit mid-row.
+            let row_top = body_y + 18.0 + (visual as f64) * line_h - g_code_scroll
+            if row_top + line_h >= body_y {
+                if row_top <= body_y + body_h {
+                    if g_lens_diff_added[i] != 0 {
+                        ui_fill_rect(r, x, row_top, code_w, line_h, ui_pack_color("#183e2b"), 0.0)
+                    } else if i == cursor_line && editable {
+                        ui_fill_rect(r, x, row_top, code_w, line_h, col_editor_panel(), 0.0)
+                    }
+                    if selected && editable {
+                        let sb = line_sel_begin(i)
+                        if sb >= 0 {
+                            let se = line_sel_end(i)
+                            let ss = sb
+                            if ss < g_coloff {
+                                ss = g_coloff
+                            }
+                            let ee = se
+                            let col_end = g_coloff + visible_cols
+                            if ee > col_end {
+                                ee = col_end
+                            }
+                            if ee > ss {
+                                let sel_x = text_x + ((ss - g_coloff) as f64) * char_w
+                                let sel_w = ((ee - ss) as f64) * char_w
+                                ui_fill_rect(r, sel_x, row_top, sel_w, line_h, col_editor_sel(), 0.0)
+                            }
+                        }
+                    }
+                    let num_color = col_muted()
+                    if i == cursor_line && editable {
+                        num_color = col_text()
+                    }
+                    let line_number = itos(i + 1)
+                    let line_number_x = code_line_number_x(r, x, line_number)
+                    draw_text_clipped(r, line_number_x, text_center_y(r, row_top, line_h, small_px()), gutter_w - (line_number_x - x) - 10.0, 18.0, line_number, small_px(), num_color)
+                    ui_push_clip(r, text_x, body_y, text_w, body_h)
+                    draw_code_line(r, i, text_x, text_center_y(r, row_top, line_h, code_font_px()), char_w, g_coloff, visible_cols)
+                    ui_pop_clip(r)
+                }
+            }
+        }
+    }
+    let cursor_x = text_x + ((cursor_col - g_coloff) as f64) * char_w
+    let cursor_top = body_y + 18.0 + (g_lens_diff_source[cursor_line] as f64) * line_h - g_code_scroll
+    if editable {
+        ui_fill_rect(r, cursor_x, cursor_top + 2.0, 2.0, line_h - 4.0, col_editor_cursor(), 0.0)
+    }
+    ui_pop_clip(r)
+}
+
+fn col_editor_cursor() u32 { return ui_pack_color("#eeeeee") }
+
+fn code_font_px() f64 {
+    if g_setting_font_size == 0 {
+        return 11.0
+    }
+    if g_setting_font_size == 2 {
+        return 14.0
+    }
+    return 12.0
+}
+
+fn text_center_y(r: ref ui_renderer, y: f64, h: f64, px: f64) f64 {
+    return ui_text_v_center_y(r, y, h, px, FONT_MONO())
+}
+
+fn draw_code_line(r: ref ui_renderer, li: i32, text_x: f64, row_y: f64, char_w: f64, first_col: i32, cols: i32) {
+    let n = tokenize_line(li)
+    let view_end = first_col + cols
+    for t in 0 to n {
+        let ts = token_start(t)
+        let te = ts + token_len(t)
+        if te > first_col {
+            if ts < view_end {
+                let ds = ts
+                if ds < first_col {
+                    ds = first_col
+                }
+                let de = te
+                if de > view_end {
+                    de = view_end
+                }
+                let tx = text_x + ((ds - first_col) as f64) * char_w
+                ui_draw_text(r, tx, row_y, token_text_part(t, ds - ts, de - ds), code_font_px(), token_color(token_kind(t)), CODE_FONT())
+            }
+        }
+    }
+}
+
+fn CODE_FONT() i32 { return 1 }
+
+fn token_color(kind: i32) u32 {
+    if g_setting_language == 1 {
+        if kind == TK_KEYWORD() {
+            return col_blue()
+        }
+        if kind == TK_TYPE() {
+            return ui_pack_color("#4ec9b0")
+        }
+        if kind == TK_STRING() {
+            return ui_pack_color("#ce9178")
+        }
+        if kind == TK_COMMENT() {
+            return ui_pack_color("#6a9955")
+        }
+        if kind == TK_NUMBER() {
+            return ui_pack_color("#b5cea8")
+        }
+        if kind == TK_CALL() {
+            return ui_pack_color("#dcdcaa")
+        }
+        return col_text()
+    }
+    if g_setting_language == 2 {
+        if kind == TK_KEYWORD() {
+            return col_yellow()
+        }
+        if kind == TK_TYPE() {
+            return col_blue()
+        }
+        if kind == TK_STRING() {
+            return ui_pack_color("#a8d08d")
+        }
+        if kind == TK_COMMENT() {
+            return col_muted()
+        }
+        if kind == TK_NUMBER() {
+            return ui_pack_color("#c6a0f6")
+        }
+        if kind == TK_CALL() {
+            return ui_pack_color("#8aadf4")
+        }
+        return col_text()
+    }
+    return nanoscript_token_color(kind)
+}
+
+fn nanoscript_token_color(kind: i32) u32 {
+    if kind == TK_KEYWORD() {
+        return col_nanoscript_green_bright()
+    }
+    if kind == TK_TYPE() {
+        return col_nanoscript_green()
+    }
+    if kind == TK_NUMBER() {
+        return col_nanoscript_white()
+    }
+    if kind == TK_CONSTANT() {
+        return col_nanoscript_white()
+    }
+    if kind == TK_STRING() {
+        return col_nanoscript_yellow_green()
+    }
+    if kind == TK_COMMENT() {
+        return col_nanoscript_white_deep()
+    }
+    if kind == TK_PUNCT() {
+        return col_nanoscript_white_dim()
+    }
+    if kind == TK_CALL() {
+        return col_nanoscript_white()
+    }
+    return col_nanoscript_white_dim()
+}
+
+fn col_nanoscript_white_dim() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#46515c")
+    }
+    return ui_pack_color("#a6a6a6")
+}
+
+fn col_nanoscript_white() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#202832")
+    }
+    return ui_pack_color("#e1e1e1")
+}
+
+fn col_nanoscript_white_deep() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#7a8490")
+    }
+    return ui_pack_color("#737373")
+}
+
+fn col_nanoscript_yellow_green() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#68751f")
+    }
+    return ui_pack_color("#b7dc6f")
+}
+
+fn col_nanoscript_green() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#087a4a")
+    }
+    return ui_pack_color("#61d394")
+}
+
+fn col_nanoscript_green_bright() u32 {
+    if g_setting_theme == 1 {
+        return ui_pack_color("#096b43")
+    }
+    return ui_pack_color("#6be8a3")
+}
+
+fn col_yellow() u32 { return ui_pack_color("#b0b0b0") }
+
+fn code_line_number_x(r: ref ui_renderer, editor_x: f64, text: str) f64 {
+    return editor_x + code_gutter_w() - 10.0 - ui_text_width(r, text, small_px(), FONT_MONO())
+}
+
+fn code_gutter_w() f64 { return 52.0 }
+
+fn col_editor_sel() u32 { return ui_pack_color("#444444") }
+
+fn follow_caret(body_h: f64, line_h: f64, max_scroll: f64) {
+    let top = (g_lens_diff_source[cur_line()] as f64) * line_h
+    let bot = top + line_h + 26.0
+    if top < g_code_scroll {
+        g_code_scroll = top
+    }
+    if bot > (g_code_scroll + body_h) {
+        g_code_scroll = bot - body_h
+    }
+    g_code_scroll = clamp(g_code_scroll, 0.0, max_scroll)
+}
+
+fn code_wheel_scale() f64 { return 6.0 }
+
+fn shift_down(v: ref view) bool {
+    if view_is_key_pressed(v, 340) {
+        return true
+    }
+    if view_is_key_pressed(v, 344) {
+        return true
+    }
+    return false
+}
+
+fn process_code_keys(v: ref view) {
+    set_shift(shift_down(v))
+
+    // Structural and navigation keys: enter(257), backspace(259), delete(261),
+    // arrows/home/end/page (262..269). Tab(258) and insert(260) are skipped.
+    for k in 257 to 270 {
+        if k != 258 {
+            if k != 260 {
+                if key_edge(v, k) {
+                    if key_event_cmd() == false {
+                        set_shift(key_event_shift())
+                        process_view_key(k)
+                        g_caret_follow = true
+                    }
+                }
+            }
+        }
+    }
+
+    if key_edge(v, 258) {
+        if key_event_cmd() == false {
+            insert_tab()
+            g_caret_follow = true
+        }
+    }
+
+    // Printable keys and shortcuts share the same latched event path. This is
+    // what makes a fast Cmd+Z reliable even when both key transitions occur
+    // between two rendered frames.
+    for k in 32 to 97 {
+        if key_edge(v, k) {
+            let shifted = key_event_shift()
+            if key_event_cmd() {
+                if k == 90 {
+                    if shifted {
+                        redo()
+                    } else {
+                        undo()
+                    }
+                    g_caret_follow = true
+                } else if k == 89 {
+                    redo()
+                    g_caret_follow = true
+                } else if k == 65 {
+                    select_all()
+                } else if k == 67 {
+                    if has_selection() {
+                        view_set_clipboard(v, selected_text())
+                    }
+                } else if k == 88 {
+                    if has_selection() {
+                        view_set_clipboard(v, selected_text())
+                        delete_selection()
+                        g_caret_follow = true
+                    }
+                } else if k == 86 {
+                    let clip = view_get_clipboard(v)
+                    if clip != "" {
+                        paste_str(clip)
+                        g_caret_follow = true
+                    }
+                } else if k == 83 {
+                    workspace_save_active()
+                } else if k == 87 {
+                    if g_workspace_active >= 0 {
+                        workspace_close_tab(g_workspace_active)
+                        g_caret_follow = true
+                    }
+                }
+            } else {
+                let c = key_char(k, shifted)
+                if c != "" {
+                    insert_str(c)
+                    g_caret_follow = true
+                }
+            }
+        }
+    }
+}
+
+fn key_event_cmd() bool {
+    if (g_key_event_mods & 2) != 0 {
+        return true
+    }
+    return (g_key_event_mods & 8) != 0
+}
+
+fn key_event_shift() bool {
+    return (g_key_event_mods & 1) != 0
+}
+
+fn key_edge(v: ref view, k: i32) bool {
+    let mods = view_take_key_press(v, k)
+    if mods >= 0 {
+        g_key_event_mods = mods
+        return true
+    }
+    return false
+}
+
+fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, text_x: f64, line_h: f64, char_w: f64) {
+    if v.mouse_pressed {
+        if hit(v, x, body_y, w, body_h) {
+            let li = mouse_line(v, body_y, line_h)
+            let col = mouse_col(v, text_x, char_w)
+            let now = os_time()
+            let streak: i32 = 1
+            if (now - g_last_click_time) < 0.45 {
+                if li == g_last_click_line {
+                    streak = g_click_streak + 1
+                }
+            }
+            g_click_streak = streak
+            g_last_click_time = now
+            g_last_click_line = li
+            if streak >= 3 {
+                select_line(li)
+                g_code_drag = false
+            } else if streak == 2 {
+                select_word_at(li, col)
+                g_code_drag = false
+            } else {
+                place_cursor(li, col, shift_down(v))
+                g_code_drag = true
+            }
+        }
+    }
+    if g_code_drag {
+        if v.mouse_down {
+            place_cursor(mouse_line(v, body_y, line_h), mouse_col(v, text_x, char_w), true)
+        }
+    }
+    if v.mouse_released {
+        g_code_drag = false
+    }
+}
+
+fn mouse_col(v: ref view, text_x: f64, char_w: f64) i32 {
+    let fx = (g_mouse_x - text_x) / char_w + 0.5
+    if fx < 0.0 {
+        return 0
+    }
+    return fx as i32
+}
+
+fn mouse_line(v: ref view, body_y: f64, line_h: f64) i32 {
+    let fy = (g_mouse_y - body_y - 18.0 + g_code_scroll) / line_h
+    if fy < 0.0 {
+        return 0
+    }
+    return lens_diff_source_row(fy as i32)
+}
+
+fn scroll_max(content_h: f64, body_h: f64) f64 {
+    if content_h > body_h {
+        return content_h - body_h
+    }
+    return 0.0
+}
+
+fn code_text_inset() f64 { return 12.0 }
+
+fn code_line_h() f64 {
+    if g_setting_font_size == 0 {
+        return 18.0
+    }
+    if g_setting_font_size == 2 {
+        return 24.0
+    }
+    return 20.0
+}
+
+fn col_surface() u32 { return ui_pack_color("#080808") }
+
+fn main_menu_h() f64 { return 0.0 }

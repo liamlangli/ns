@@ -25,6 +25,7 @@ static void os_watch_add_tree(const char *path) {
         if (strcmp(item->d_name, ".") == 0 || strcmp(item->d_name, "..") == 0 || strcmp(item->d_name, ".git") == 0) continue;
         char child[4096];
         snprintf(child, sizeof(child), "%s/%s", path, item->d_name);
+        if (strstr(child, "/bin/ns_lens")) continue;
         struct stat info;
         if (lstat(child, &info) == 0 && S_ISDIR(info.st_mode) && !S_ISLNK(info.st_mode)) os_watch_add_tree(child);
     }

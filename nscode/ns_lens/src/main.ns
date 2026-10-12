@@ -1,0 +1,31 @@
+use std
+use os
+use view
+use gpu
+use ui
+
+fn main() {
+    g_workspace_streaming = true
+    g_workspace_root = os_env("NS_ARG0")
+    if g_workspace_root == "" {
+        g_workspace_root = os_cwd()
+    }
+    workspace_init()
+    let v = view_create("ns_lens", 1280, 800)
+    if gpu_request_device(v) {
+        let r = ui_renderer_create(v)
+        v.on_frame({ frame in
+            ui_begin_frame(r)
+            render_frame(r, frame)
+            ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+            reset_view_input(frame)
+        })
+        v.on_terminate({ dead in
+            os_watch_stop()
+            ui_renderer_destroy(r)
+        })
+        view_run(v)
+    } else {
+        print("ns_lens: GPU backend unavailable\n")
+    }
+}

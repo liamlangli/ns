@@ -24,7 +24,7 @@ static void os_watch_callback(ConstFSEventStreamRef stream, void *info, size_t c
     for (size_t i = 0; i < count; i++) {
         const char *path = paths[i];
         if (!path) continue;
-        if (strstr(path, "/.git/") || strstr(path, "/.ns/chat/")) continue;
+        if (strstr(path, "/.git/") || strstr(path, "/.ns/chat/") || strstr(path, "/bin/ns_lens")) continue;
         atomic_store(&os_watch_changed, 1);
         break;
     }

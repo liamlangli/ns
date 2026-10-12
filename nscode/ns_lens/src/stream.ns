@@ -1,0 +1,134 @@
+// One worker owns source I/O. Main-thread drawing only consumes completed work.
+use task
+use os
+
+let g_lens_io_lock: ref os_lock = nil
+let g_lens_io_lock_ready = false
+let g_lens_io_done = [i32](1)
+let g_lens_io_running = false
+let g_lens_io_index: i32 = -1
+let g_lens_io_offset: i64 = 0
+let g_lens_io_generation: i32 = -1
+let g_lens_io_mode: i32 = 0
+let g_lens_io_result = [str](1)
+let g_lens_ready_index: i32 = -1
+let g_lens_ready_text = ""
+let g_lens_prefetch_index: i32 = -1
+let g_lens_prefetch_text = ""
+let g_lens_warm_cursor: i32 = 0
+
+fn lens_io_start(index: i32, offset: i64, bytes: i32, mode: i32) {
+    let path = os_entry_path(index)
+    let root = g_lens_cache_root
+    g_lens_io_index = index
+    g_lens_io_offset = offset
+    g_lens_io_generation = g_workspace_generation
+    g_lens_io_mode = mode
+    if g_lens_io_lock_ready == false {
+        g_lens_io_lock = os_lock_create()
+        g_lens_io_lock_ready = true
+    }
+    let lock = g_lens_io_lock
+    let output = g_lens_io_result
+    let signal = g_lens_io_done
+    g_lens_io_result[0] = ""
+    g_lens_io_done[0] = 0
+    g_lens_io_running = true
+    let pending = dispatch(queue_worker) { in
+        let text = lens_disk_source(root, path, offset, bytes)
+        os_lock_acquire(lock)
+        output[0] = text
+        signal[0] = 1
+        os_lock_release(lock)
+    }
+}
+
+fn lens_io_poll() {
+    if g_lens_io_running == false || os_lock_try_acquire(g_lens_io_lock) == false {
+        return
+    }
+    let ready = g_lens_io_done[0] != 0
+    os_lock_release(g_lens_io_lock)
+    if ready == false {
+        return
+    }
+    g_lens_io_running = false
+    if g_lens_io_generation == g_workspace_generation {
+        if g_lens_io_mode == 1 {
+            g_lens_ready_index = g_lens_io_index
+            g_lens_ready_text = g_lens_io_result[0]
+        } else if g_lens_io_mode == 0 {
+            let victim: i32 = 0
+            for slot in 0 to LENS_CACHE_SLOTS {
+                if g_lens_cache_age[slot] < g_lens_cache_age[victim] {
+                    victim = slot
+                }
+            }
+            g_lens_clock = g_lens_clock + 1
+            g_lens_cache_id[victim] = g_lens_io_index
+            g_lens_cache_offset[victim] = g_lens_io_offset
+            g_lens_cache_text[victim] = g_lens_io_result[0]
+            g_lens_cache_age[victim] = g_lens_clock
+            lens_build_preview(victim, g_lens_io_result[0])
+        }
+    }
+    g_lens_io_result[0] = ""
+}
+
+fn lens_preview_stream(index: i32, allow_read: bool) str {
+    let text = lens_preview(index, false)
+    if g_lens_preview_slot >= 0 || allow_read == false || g_lens_io_running {
+        return text
+    }
+    let offset: i64 = 0
+    if index == g_lens_selected {
+        offset = g_lens_page
+    }
+    lens_io_start(index, offset, LENS_PAGE_BYTES, 0)
+    g_lens_preview_read = true
+    return ""
+}
+
+fn lens_request_near(index: i32) {
+    if g_lens_editing && g_workspace_active == index || g_lens_reading && g_lens_selected == index {
+        return
+    }
+    if g_lens_editing && workspace_entry_dirty(g_workspace_active) {
+        return
+    }
+    if g_lens_ready_index == index {
+        g_lens_prefetch_index = index
+        g_lens_prefetch_text = g_lens_ready_text
+        g_lens_ready_text = ""
+        g_lens_ready_index = -1
+        lens_activate_near(index)
+        g_lens_prefetch_index = -1
+        g_lens_prefetch_text = ""
+        return
+    }
+    if g_lens_io_running == false {
+        let size = os_file_size(os_entry_path(index))
+        if size < 0 {
+            return
+        }
+        let bytes = LENS_EDIT_BYTES
+        if size > LENS_EDIT_BYTES {
+            bytes = LENS_PAGE_BYTES
+        }
+        lens_io_start(index, 0 as i64, bytes, 1)
+    }
+}
+
+fn lens_warm_cache(moving: bool) {
+    if moving || g_lens_io_running {
+        return
+    }
+    loop g_lens_warm_cursor < g_workspace_count {
+        let index = g_lens_warm_cursor
+        g_lens_warm_cursor = index + 1
+        if g_lens_files[index] != 0 {
+            lens_io_start(index, 0 as i64, LENS_PAGE_BYTES, 2)
+            break
+        }
+    }
+}

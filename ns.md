@@ -39,7 +39,7 @@ Entrypoint and CLI routing are in `src/ns.c`.
 - `src/` — Core compiler/interpreter/runtime implementation in C.
 - `include/` — Public headers for lexer/parser/VM/SSA/backends/platform utils.
 - `lib/` — Standard/runtime dynamic libraries and Nano Script standard modules (`*.ns`) plus OS/GPU/view C implementations.
-- `nscode/` — NSCode tools. `nscode/native/` is the native GUI editor.
+- `nscode/` — NSCode tools. `nscode/ns_lens/` is the standalone perspective code atlas.
 - `sample/ns/` — Language feature examples (expressions, parse, fib, GUI, etc.).
 - `sample/c/` — C embedding sample.
 - `test/` — C tests (currently JSON-focused test target in root Makefile).
@@ -169,9 +169,9 @@ With filename and no analysis/emit flag, it evaluates and prints result.
 
 ## 7) Language/tooling ecosystem in this repo
 
-### Native NSCode (`nscode/native/`)
-- The editor, workspace, and app renderer are written in Nano Script.
-- `main.ns` is the desktop entry.
+### ns_lens (`nscode/ns_lens/`)
+- A standalone perspective treemap with distance LOD and bounded code streaming.
+- `src/main.ns` is the desktop entry.
 
 ### Profile viewer (`nscode/profile/`)
 - The GUI timeline viewer, written in ns and compiled by
@@ -214,7 +214,7 @@ For fast onboarding, recommended order:
 5. `doc/block.md`, `doc/ref.md`, `doc/operators.md`, `doc/token.md` — language semantics cheatsheets
 6. `doc/profile.md` — profiling, the live viewer, and the live wire format
 7. `sample/ns/*.ns` — practical examples to test parsing/execution and language features
-8. `nscode/native/README.md` — native NSCode setup
+8. `nscode/ns_lens/README.md` — code atlas setup
 
 ---
 
@@ -237,8 +237,8 @@ Touch likely areas in this order:
 5. tests/samples for emitted artifact flow
 
 ### C) “Work on NSCode UX/rendering”
-- `nscode/native/editor.ns`, `workspace.ns`, and `render.ns`
-- native run via `bin/ns run nscode/native`
+- `nscode/ns_lens/src/editor.ns`, `workspace.ns`, `lens.ns`, and `render.ns`
+- native run via `bin/ns run nscode/ns_lens`
 
 ---
 
@@ -270,7 +270,7 @@ make
 make test
 
 # Test the shared NSCode source
-./bin/ns test nscode/native
+./bin/ns test nscode/ns_lens
 ```
 
 ---

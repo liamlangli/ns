@@ -363,7 +363,10 @@ uiRuntime.std('close', [file]);
 const readFile = uiRuntime.std('open', [filePath, uiRuntime.writeString('rb')]);
 assert.equal(uiRuntime.readString(uiRuntime.std('read', [readFile])), 'saved');
 uiRuntime.std('close', [readFile]);
-assert.equal(uiRuntime.os('os_dir_scan', [uiRuntime.writeString('nscode/native')]), 4);
+for (const name of ['main.ns', 'editor.ns', 'render.ns', 'workspace.ns']) {
+  uiRuntime.storeFile(`scan-fixture/${name}`, '// test source');
+}
+assert.equal(uiRuntime.os('os_dir_scan', [uiRuntime.writeString('scan-fixture')]), 4);
 
 Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { gpu: { async requestAdapter() { return null; } } } });
 const fallback = new NSBrowserRuntime(canvas);

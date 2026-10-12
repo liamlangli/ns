@@ -724,6 +724,7 @@ static const char *const ns_xcode_runtime_headers[] = {
     "ns_cpu_isa.h",
     "os/ns_os.h",
     "ns_patch.h",
+    "ns_sha256_core.h",
 };
 
 static const size_t ns_xcode_runtime_source_count = sizeof(ns_xcode_runtime_sources) / sizeof(ns_xcode_runtime_sources[0]);

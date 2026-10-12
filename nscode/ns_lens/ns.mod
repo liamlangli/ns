@@ -1,0 +1,7 @@
+schema = "ns.mod/v2"
+name = "ns_lens"
+version = "0.1.0"
+type = "app"
+target = "exec"
+source = "src"
+entry = "main.ns"

@@ -1,10 +1,12 @@
 #include "os.h"
 #include "ns_os.h"
+#include "ns_sha256_core.h"
 
 #include <locale.h>
 #include <time.h>
 #include <errno.h>
 #include <limits.h>
+#include <sys/stat.h>
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -372,13 +374,26 @@ ns_bool os_motion_attitude(f64 *values) {
 }
 #endif
 
-static char *os_read_buffer = NULL;
+static _Thread_local char *os_read_buffer = NULL;
+#ifndef NS_WIN
+static pthread_key_t os_read_buffer_key;
+static pthread_once_t os_read_buffer_once = PTHREAD_ONCE_INIT;
+static void os_read_buffer_cleanup(void *data) { free(data); }
+static void os_read_buffer_key_init(void) { pthread_key_create(&os_read_buffer_key, os_read_buffer_cleanup); }
+#endif
 
 static const char *os_take_read_buffer(ns_str data) {
     free(os_read_buffer);
     os_read_buffer = NULL;
+#ifndef NS_WIN
+    pthread_once(&os_read_buffer_once, os_read_buffer_key_init);
+    pthread_setspecific(os_read_buffer_key, NULL);
+#endif
     if (data.data == ns_null) return "";
     os_read_buffer = data.data;
+#ifndef NS_WIN
+    pthread_setspecific(os_read_buffer_key, os_read_buffer);
+#endif
     return os_read_buffer;
 }
 
@@ -675,6 +690,7 @@ static void os_dir_scan_recursive(const char *root, i32 depth, i32 parent) {
         snprintf(path, sizeof(path), "%s\\%s", root, children[i].name);
         char relative[OS_MAX_PATH];
         os_relative_path(path, relative, sizeof(relative));
+        if (strcmp(relative, "bin/ns_lens") == 0 || strncmp(relative, "bin/ns_lens/", 12) == 0) continue;
         if (os_path_ignored(relative, children[i].is_dir)) continue;
         i32 index = os_entry_push(children[i].name, path, depth, parent, children[i].is_dir);
         if (index >= 0 && children[i].is_dir) os_dir_scan_recursive(path, depth + 1, index);
@@ -710,6 +726,7 @@ static void os_dir_scan_recursive(const char *root, i32 depth, i32 parent) {
         snprintf(path, sizeof(path), "%s/%s", root, children[i].name);
         char relative[OS_MAX_PATH];
         os_relative_path(path, relative, sizeof(relative));
+        if (strcmp(relative, "bin/ns_lens") == 0 || strncmp(relative, "bin/ns_lens/", 12) == 0) continue;
         if (os_path_ignored(relative, children[i].is_dir)) continue;
         i32 index = os_entry_push(children[i].name, path, depth, parent, children[i].is_dir);
         if (index >= 0 && children[i].is_dir) os_dir_scan_recursive(path, depth + 1, index);
@@ -876,4 +893,175 @@ i32 os_process_stop(i32 pid) {
 
 #if !defined(__APPLE__)
 i32 os_share_file(const char *path) { ns_unused(path); return 0; }
+#endif
+
+// Bounded native services used by code atlases and other local tools.
+static _Thread_local char os_hash_hex[65];
+const char *os_text_hash(const char *text) {
+    if (!text) return "";
+    u8 digest[32];
+    ns_sha256_core_hash(text, strlen(text), digest);
+    ns_sha256_core_hex(digest, os_hash_hex);
+    return os_hash_hex;
+}
+
+const char *os_file_hash(const char *path) {
+    if (!path) return "";
+    FILE *file = fopen(path, "rb");
+    if (!file) return "";
+    struct stat before = {0}, after = {0};
+    if (fstat(fileno(file), &before) != 0) { fclose(file); return ""; }
+    ns_sha256_core_ctx ctx;
+    ns_sha256_core_init(&ctx);
+    u8 data[65536], digest[32];
+    size_t size;
+    while ((size = fread(data, 1, sizeof(data), file)) > 0) ns_sha256_core_update(&ctx, data, size);
+    int failed = ferror(file);
+    fclose(file);
+    if (failed || stat(path, &after) != 0 || before.st_size != after.st_size ||
+        before.st_ino != after.st_ino || before.st_dev != after.st_dev ||
+        before.st_mtime != after.st_mtime || before.st_ctime != after.st_ctime) return "";
+#if defined(__APPLE__)
+    if (before.st_mtimespec.tv_nsec != after.st_mtimespec.tv_nsec || before.st_ctimespec.tv_nsec != after.st_ctimespec.tv_nsec) return "";
+#elif !defined(NS_WIN)
+    if (before.st_mtim.tv_nsec != after.st_mtim.tv_nsec || before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) return "";
+#endif
+    ns_sha256_core_final(&ctx, digest);
+    ns_sha256_core_hex(digest, os_hash_hex);
+    return os_hash_hex;
+}
+
+#if !defined(NS_WIN) && !(defined(__APPLE__) && TARGET_OS_IPHONE)
+#include <spawn.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
+extern char **environ;
+static _Thread_local char *os_git_output;
+static _Thread_local i32 os_git_last_status = -1;
+i32 os_git_status(void) { return os_git_last_status; }
+
+// Git is launched with an argv vector, never through a shell. Reject truncated
+// output instead of letting an incomplete patch masquerade as the entire diff.
+static const char *os_git_capture(char *const argv[], i32 limit, int *exit_status) {
+    free(os_git_output);
+    os_git_output = NULL;
+    *exit_status = -1;
+    os_git_last_status = -1;
+    if (limit < 1 || limit > 1048576) return "";
+    int pipes[2];
+    if (pipe(pipes) != 0) return "";
+    fcntl(pipes[0], F_SETFD, FD_CLOEXEC);
+    fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, pipes[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&actions, pipes[0]);
+    posix_spawn_file_actions_addclose(&actions, pipes[1]);
+    posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    pid_t pid;
+    int error = posix_spawnp(&pid, "git", &actions, NULL, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipes[1]);
+    if (error) { close(pipes[0]); return ""; }
+    os_git_output = malloc((size_t)limit + 1);
+    size_t used = 0;
+    ns_bool failed = os_git_output == NULL;
+    char chunk[8192];
+    while (!failed) {
+        ssize_t n = read(pipes[0], chunk, sizeof(chunk));
+        if (n == 0) break;
+        if (n < 0) { if (errno == EINTR) continue; failed = true; break; }
+        if (used + (size_t)n > (size_t)limit) { failed = true; break; }
+        memcpy(os_git_output + used, chunk, (size_t)n);
+        used += (size_t)n;
+    }
+    if (failed) kill(pid, SIGTERM);
+    close(pipes[0]);
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) { if (errno != EINTR) { failed = true; break; } }
+    if (failed) { free(os_git_output); os_git_output = NULL; return ""; }
+    os_git_output[used] = 0;
+    if (WIFEXITED(status)) *exit_status = WEXITSTATUS(status);
+    os_git_last_status = *exit_status;
+    return os_git_output;
+}
+
+static ns_bool os_git_path(const char *path, char parent[OS_MAX_PATH], const char **name) {
+    if (!path || !path[0] || strlen(path) >= OS_MAX_PATH) return false;
+    const char *slash = strrchr(path, '/');
+    if (!slash) { strcpy(parent, "."); *name = path; return true; }
+    size_t n = (size_t)(slash - path);
+    if (n == 0) n = 1;
+    memcpy(parent, path, n); parent[n] = 0;
+    *name = slash + 1;
+    return (*name)[0] != 0;
+}
+
+const char *os_git_revision(const char *path) {
+    char parent[OS_MAX_PATH]; const char *name; int status;
+    if (!os_git_path(path, parent, &name)) return "";
+    char *repo[] = {"git", "-C", parent, "rev-parse", "--is-inside-work-tree", NULL};
+    os_git_capture(repo, 128, &status);
+    if (status != 0) return "";
+    char *head[] = {"git", "-C", parent, "rev-parse", "--verify", "HEAD", NULL};
+    const char *result = os_git_capture(head, 128, &status);
+    if (status != 0) return "unborn";
+    size_t len = strlen(result);
+    while (len && (os_git_output[len - 1] == '\n' || os_git_output[len - 1] == '\r')) os_git_output[--len] = 0;
+    return os_git_output;
+}
+
+const char *os_git_base(const char *path, i32 max_bytes) {
+    char parent[OS_MAX_PATH], object[OS_MAX_PATH]; const char *name; int status;
+    if (!os_git_path(path, parent, &name)) return "";
+    char *prefix[] = {"git", "-C", parent, "rev-parse", "--show-prefix", NULL};
+    const char *result = os_git_capture(prefix, OS_MAX_PATH - 1, &status);
+    if (status != 0) return "";
+    size_t len = strcspn(result, "\r\n");
+    if (len + strlen(name) + 6 >= sizeof(object)) return "";
+    memcpy(object, "HEAD:", 5); memcpy(object + 5, result, len);
+    strcpy(object + 5 + len, name);
+    char *show[] = {"git", "-C", parent, "--no-pager", "show", object, NULL};
+    result = os_git_capture(show, max_bytes, &status);
+    return status == 0 ? result : "";
+}
+
+static ns_bool os_git_temp(char path[OS_MAX_PATH], const char *text) {
+    const char *tmp = getenv("TMPDIR");
+    if (!tmp || !tmp[0]) tmp = "/tmp";
+    if (snprintf(path, OS_MAX_PATH, "%s/ns-lens-diff-XXXXXX", tmp) >= OS_MAX_PATH) return false;
+    int fd = mkstemp(path);
+    if (fd < 0) return false;
+    size_t len = strlen(text), used = 0;
+    while (used < len) {
+        ssize_t n = write(fd, text + used, len - used);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { close(fd); unlink(path); return false; }
+        used += (size_t)n;
+    }
+    if (close(fd) != 0) { unlink(path); return false; }
+    return true;
+}
+
+const char *os_git_diff_text(const char *before, const char *after, i32 max_bytes) {
+    if (!before || !after) return "";
+    if (strcmp(before, after) == 0) { os_git_last_status = 0; return ""; }
+    char a[OS_MAX_PATH], b[OS_MAX_PATH]; int status;
+    if (!os_git_temp(a, before)) return "";
+    if (!os_git_temp(b, after)) { unlink(a); return ""; }
+    char *args[] = {"git", "--no-pager", "diff", "--no-index", "--no-ext-diff", "--no-textconv",
+                    "--no-color", "--unified=0", "--", a, b, NULL};
+    const char *result = os_git_capture(args, max_bytes, &status);
+    unlink(a); unlink(b);
+    return status == 0 || status == 1 ? result : "";
+}
+#else
+i32 os_git_status(void) { return -1; }
+const char *os_git_revision(const char *path) { ns_unused(path); return ""; }
+const char *os_git_base(const char *path, i32 max_bytes) { ns_unused(path); ns_unused(max_bytes); return ""; }
+const char *os_git_diff_text(const char *before, const char *after, i32 max_bytes) {
+    ns_unused(before); ns_unused(after); ns_unused(max_bytes); return "";
+}
 #endif

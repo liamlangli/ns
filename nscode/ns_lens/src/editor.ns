@@ -1,7 +1,7 @@
-// nscode/native/editor.ns
+// nscode/ns_lens/editor.ns
 // ---------------------------------------------------------------------------
 // Document model for the native code editor. The view is rendered through the
-// `ui` module (lib/ui.ns) by nscode/native/render.ns; this file owns only the
+// `ui` module (lib/ui.ns) by nscode/ns_lens/render.ns; this file owns only the
 // text model and is rendering-agnostic.
 //
 // The document is held as a single `str` (g_doc). Lines are derived by scanning
@@ -27,6 +27,7 @@ use std
 
 // ---- document state -------------------------------------------------------
 
+let g_editor_byte_limit: i32 = 0 // 0 means unlimited; Lens sets a bounded editor budget.
 let g_doc = ""         // whole document as one string
 let g_cur: i32 = 0     // caret as a byte offset into g_doc
 let g_anchor: i32 = -1 // selection anchor offset, or -1 for no selection
@@ -556,6 +557,13 @@ fn line_sel_end(li: i32) i32 {
 // ---- editing --------------------------------------------------------------
 
 fn insert_with_history(s: str, group: i32, allow_coalesce: bool) {
+    let removed: i32 = 0
+    if has_selection() {
+        removed = sel_max() - sel_min()
+    }
+    if g_editor_byte_limit > 0 && doc_len() - removed + s.len > g_editor_byte_limit {
+        return
+    }
     if s != "" {
         let coalesce = false
         if allow_coalesce {

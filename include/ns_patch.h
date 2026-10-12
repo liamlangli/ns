@@ -17,6 +17,7 @@
 // apps compile it next to the embedded runtime.
 
 #include "ns_type.h"
+#include "ns_sha256_core.h"
 
 // Format 2 adds the index `label`; format 1 indexes still decode, unlabelled.
 #define NS_PATCH_FORMAT 2
@@ -44,12 +45,7 @@ typedef enum ns_patch_mode {
 
 // ---- SHA-256 --------------------------------------------------------------
 
-typedef struct ns_sha256_ctx {
-    u32 state[8];
-    u64 bytes;
-    u8 block[64];
-    u32 used;
-} ns_sha256_ctx;
+typedef ns_sha256_core_ctx ns_sha256_ctx;
 
 void ns_sha256_init(ns_sha256_ctx *ctx);
 void ns_sha256_update(ns_sha256_ctx *ctx, const void *data, szt size);

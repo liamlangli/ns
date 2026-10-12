@@ -1,0 +1,135 @@
+use std
+use os
+
+fn check_gray(c: u32) {
+    assert (c & 255) == ((c >> 8) & 255)
+    assert (c & 255) == ((c >> 16) & 255)
+}
+
+fn main() {
+    check_gray(col_editor_bg())
+    check_gray(col_editor_panel_hi())
+    check_gray(col_surface())
+    check_gray(col_muted())
+    check_gray(col_accent())
+    check_gray(col_text())
+    check_gray(col_editor_sel())
+    check_gray(col_editor_cursor())
+    g_workspace_streaming = true
+    g_workspace_root = "nscode/ns_lens/src"
+    workspace_init()
+    lens_rebuild()
+    let total: f64 = 0.0
+    let area: f64 = 0.0
+    for i in 0 to g_workspace_count {
+        if workspace_entry_editable(i) {
+            assert g_lens_w[i] > 0.0
+            assert g_lens_h[i] > 0.0
+            assert g_lens_x[i] >= -600.0
+            assert g_lens_y[i] >= -450.0
+            area = area + g_lens_w[i] * g_lens_h[i]
+            total = total + g_lens_weight[i]
+        }
+    }
+    assert total > 0.0
+    assert area > 1079999.0 && area < 1080001.0
+    assert lens_lod(500.0, 300.0) == 0
+    assert lens_lod(200.0, 900.0) == 1
+    assert lens_lod(70.0, 1600.0) == 2
+    assert lens_lod(20.0, 2000.0) == 3
+    // Pointer anchoring keeps the same leaf point under the mouse while zooming.
+    g_lens_tilt = 0.0
+    g_lens_center_x = 0.0
+    g_lens_center_y = 0.0
+    g_lens_target_x = 0.0
+    g_lens_target_y = 0.0
+    g_lens_distance = 1600.0
+    g_lens_target_distance = 1600.0
+    let pointer_x: f64 = 740.0
+    let pointer_y: f64 = 462.0
+    let world_x = (pointer_x - 640.0) * 2.0
+    let world_y = (pointer_y - 382.0) * 2.0
+    lens_zoom_at(pointer_x, pointer_y, 1280.0, 42.0, 680.0, 50.0)
+    let projected_x = 640.0 + (world_x - g_lens_target_x) * 800.0 / g_lens_target_distance
+    let projected_y = 382.0 + (world_y - g_lens_target_y) * 800.0 / g_lens_target_distance
+    assert projected_x > pointer_x - 0.01 && projected_x < pointer_x + 0.01
+    assert projected_y > pointer_y - 0.01 && projected_y < pointer_y + 0.01
+    let visible = lens_leaf_content(lens_leaf_rect(-800.0, -600.0, 2400.0, 1800.0, 400.0), 1280.0, 42.0, 680.0)
+    assert visible.x == 1.0 && visible.y == 66.0
+    assert visible.w > 0.0 && visible.h > 0.0
+    let index = workspace_find("editor.ns")
+    assert index >= 0
+    assert lens_preview(index, false) == ""
+    let builds = g_lens_preview_builds
+    let preview = lens_preview(index, true)
+    assert g_lens_preview_builds == builds + 1
+    let preview_slot = g_lens_preview_slot
+    assert lens_preview_line(preview_slot, 0) != ""
+    assert preview.len > 0 && preview.len <= LENS_PAGE_BYTES
+    assert lens_preview(index, false) == preview
+    assert g_lens_preview_read == false
+    assert g_lens_preview_builds == builds + 1
+    g_lens_selected = index
+    g_lens_page = LENS_PAGE_BYTES as i64
+    let second = lens_preview(index, true)
+    assert second != preview
+    assert second.len <= LENS_PAGE_BYTES
+    lens_clear_cache()
+    assert lens_preview(index, false) == ""
+    assert lens_preview_line(preview_slot, 0) == ""
+    let before = lens_project_leaf(index, 1280.0, 42.0, 680.0)
+    assert lens_activate_near(index)
+    let after = lens_project_leaf(index, 1280.0, 42.0, 680.0)
+    assert before.x == after.x && before.w == after.w
+    let version = g_doc_version
+    assert lens_activate_near(index)
+    assert g_doc_version == version
+    insert_str("changed")
+    let next = workspace_find("workspace.ns")
+    assert lens_open(next) == false
+    assert g_workspace_active == index
+    assert g_lens_selected == index
+    assert lens_activate_near(next) == false
+    assert g_lens_selected == index
+    g_editor_byte_limit = g_doc.len
+    let original = g_doc
+    insert_str("too much")
+    assert g_doc == original
+    select_all()
+    paste_str("small replacement")
+    assert g_doc == "small replacement"
+    g_editor_byte_limit = 0
+    os_watch_stop()
+    let fixture = "/tmp/ns_lens_stream_test"
+    os_make_dirs(fixture)
+    let big = "abcdefgh
+"
+    for i in 0 to 16 {
+        big = big + big
+    }
+    assert os_write_file_atomic(fixture + "/large.ns", big) != 0
+    g_lens_editing = false
+    assert workspace_open_root(fixture)
+    lens_rebuild()
+    let large = workspace_find("large.ns")
+    assert large >= 0
+    assert lens_open(large)
+    assert g_lens_reading
+    assert g_lens_editing == false
+    assert g_workspace_active == -1
+    assert g_doc.len == LENS_PAGE_BYTES
+    for slot in 0 to LENS_CACHE_SLOTS {
+        g_lens_cache_id[slot] = 100 + slot
+        g_lens_cache_age[slot] = slot + 1
+    }
+    lens_build_preview(0, "stale line")
+    let text = lens_preview(large, true)
+    assert text.len == LENS_PAGE_BYTES
+    assert g_lens_cache_id[0] == large
+    assert lens_preview_line(0, 0) != "stale line"
+    lens_build_preview(0, "one")
+    assert g_lens_preview_count[0] == 1
+    assert lens_preview_line(0, 1) == ""
+    os_watch_stop()
+    print("lens_test: passed\n")
+}

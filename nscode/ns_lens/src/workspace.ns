@@ -4,8 +4,10 @@ use std
 use os
 use editor
 
-let g_workspace_root = "nscode/native"
+let g_workspace_streaming = false
+let g_workspace_root = "nscode/ns_lens"
 let g_native_entry = ""
+let g_workspace_generation: i32 = 0
 let g_workspace_count: i32 = 0
 let g_workspace_active: i32 = -1
 let g_workspace_root_expanded = true
@@ -77,6 +79,19 @@ fn workspace_entry_editable(index: i32) bool {
         return false
     }
     let name = os_entry_name(index)
+    if name == "ns.mod" || name == "Makefile" || name == "CMakeLists.txt" {
+        return true
+    }
+    let extensions = ".cpp .cc .cxx .hpp .hh .mm .swift .py .rs .go .java .kt .tsx .jsx .css .html .sh .toml .yaml .yml .glsl .wgsl .metal"
+    let start: i32 = 0
+    for end in 0 to extensions.len + 1 {
+        if end == extensions.len || ((extensions[end] as i32) & 255) == 32 {
+            if workspace_has_suffix(name, substr(extensions, start, end - start)) {
+                return true
+            }
+            start = end + 1
+        }
+    }
     if workspace_has_suffix(name, ".ns") {
         return true
     }
@@ -234,6 +249,9 @@ fn workspace_open(index: i32) bool {
         return false
     }
 
+    if g_workspace_streaming && os_file_size(os_entry_path(index)) > 262144 {
+        return false
+    }
     workspace_store_active()
     workspace_add_tab(index)
     if g_workspace_opened[index] == 0 {
@@ -298,18 +316,16 @@ fn workspace_save_active() bool {
     if g_workspace_active < 0 {
         return false
     }
-    let fd = open(os_entry_path(g_workspace_active), "wb")
-    if fd == 0 {
+    if os_write_file_atomic(os_entry_path(g_workspace_active), g_doc) == 0 {
         return false
     }
-    write(fd, g_doc)
-    close(fd)
     g_workspace_buffers[g_workspace_active] = g_doc
     g_workspace_originals[g_workspace_active] = g_doc
     return true
 }
 
 fn workspace_init() {
+    g_workspace_generation = g_workspace_generation + 1
     g_workspace_count = os_dir_scan(g_workspace_root)
     g_workspace_root_expanded = true
     for i in 0 to g_workspace_count {
@@ -320,7 +336,7 @@ fn workspace_init() {
     workspace_mark_visibility_dirty()
 
     let main_index = workspace_find("main.ns")
-    if main_index >= 0 {
+    if main_index >= 0 && g_workspace_streaming == false {
         g_workspace_active = main_index
         let disk_source = os_read_file(os_entry_path(main_index))
         g_workspace_originals[main_index] = disk_source
@@ -367,6 +383,7 @@ fn workspace_refresh_from_disk() {
         }
     }
 
+    g_workspace_generation = g_workspace_generation + 1
     g_workspace_count = os_dir_scan(g_workspace_root)
     if g_workspace_count < 0 {
         g_workspace_count = 0
@@ -397,6 +414,9 @@ fn workspace_refresh_from_disk() {
             let text = g_refresh_tab_text[pos]
             let original = g_refresh_tab_original[pos]
             if g_refresh_tab_dirty[pos] == 0 {
+                if g_workspace_streaming && os_file_size(os_entry_path(index)) > 262144 {
+                    continue
+                }
                 text = os_read_file(os_entry_path(index))
                 original = text
             }
@@ -426,7 +446,7 @@ fn workspace_refresh_from_disk() {
                 }
             }
         }
-        if initial >= 0 {
+        if initial >= 0 && g_workspace_streaming == false {
             workspace_open(initial)
         } else {
             load_str("")

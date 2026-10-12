@@ -389,7 +389,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_parity_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_scope_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
-	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/native
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_lens
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_cross_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/storage_apple_compile.sh

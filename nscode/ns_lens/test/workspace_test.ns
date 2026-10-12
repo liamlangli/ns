@@ -15,7 +15,7 @@ fn check(name: str, ok: bool) {
 }
 
 fn main() i32 {
-    check("workspace root label uses folder name", workspace_root_name("nscode/native") == "native")
+    check("workspace root label uses folder name", workspace_root_name("nscode/ns_lens/src") == "src")
     check("workspace root label ignores trailing slash", workspace_root_name("/tmp/project/") == "project")
     load_str("edited main")
     workspace_init()
