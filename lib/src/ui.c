@@ -19,11 +19,12 @@
 
 #define UI_VERTEX_STRIDE 36
 #define UI_INITIAL_VERTEX_CAP 131072
-#define UI_MAX_COMMANDS 4096
+#define UI_MAX_COMMANDS 16384
 #define UI_MAX_CLIPS 32
 #define UI_MAX_GPU_CLIPS 4096
 #define UI_MAX_TEXTURES 32
-#define UI_MAX_RECT_BATCHES 16
+#define UI_MAX_RECT_BATCHES 8192
+#define UI_MAX_PLANES 8
 #define UI_FONT_MAIN 0
 #define UI_FONT_MONO 1
 #define UI_FONT_ZH 2
@@ -175,16 +176,36 @@ typedef struct ui_command {
     i32 kind;
     i32 rect_batch_id;
     f64 offset_x, offset_y;
+    f64 scale_x, scale_y;
+    // 1-based ui_begin_plane projection, 0 for the flat screen.
+    i32 plane;
+    // Content-space clip of a retained batch draw, applied per fragment.
+    ui_clip batch_clip;
     i32 clip_x, clip_y, clip_w, clip_h;
 } ui_command;
 
+// A retained batch holds either solid rectangles or glyphs of one font
+// texture; `kind` is fixed by the first add after ui_rect_batch_begin.
 typedef struct ui_rect_batch {
     ui_vertex *vertices;
     i32 vertex_count;
     i32 vertex_capacity;
-    u64 gpu_offset;
+    i32 kind;
+    i32 texture_id;
+    // The batch's own GPU copy, rewritten only when the vertices changed and
+    // the batch is drawn, so a large retained batch costs no per-frame upload.
+    gpu_addr buffer;
+    u64 buffer_size;
+    ns_bool dirty;
     ns_bool used;
 } ui_rect_batch;
+
+// A replaced batch buffer may still be read by a frame in flight.
+#define UI_RETIRED_BUFFERS 32
+typedef struct ui_retired_buffer {
+    gpu_addr addr;
+    i32 frames;
+} ui_retired_buffer;
 
 typedef struct ui_glyph {
     i32 code;
@@ -292,6 +313,13 @@ typedef struct ui_renderer {
     i32 texture_widths[UI_MAX_TEXTURES];
     i32 texture_heights[UI_MAX_TEXTURES];
     ui_rect_batch rect_batches[UI_MAX_RECT_BATCHES];
+    ui_retired_buffer retired[UI_RETIRED_BUFFERS];
+    // Tilted-plane projections for this frame (ui_begin_plane) and the
+    // screen rectangle each one is scissored to.
+    f32 planes[UI_MAX_PLANES][16];
+    ui_clip plane_scissors[UI_MAX_PLANES];
+    i32 plane_count;
+    i32 current_plane;
     // 3D panel (ui_set_panel). panel_clip maps the canvas's (u, v, 0, 1), with
     // u and v in -1..1, to clip space; the world frame serves touch tests.
     ns_bool panel;
@@ -325,6 +353,12 @@ typedef struct ui_gpu_root {
     // ui_set_panel: clip space from the canvas's (u, v, 0, 1), column-major.
     f32 panel[16];
     f32 panel_enable[4];
+    // Draw-time x/y scale of the recorded vertices before the offset; z set
+    // means vertices without a clip of their own use batch_clip.
+    f32 vertex_scale[4];
+    // Drawable-space clip (x0, y0, x1, y1) of a retained batch draw. A batch
+    // binds its own vertex buffer, so it cannot index the frame's clip list.
+    f32 batch_clip[4];
 } ui_gpu_root;
 
 typedef struct ui_theme { void *handle; } ui_theme;
@@ -388,14 +422,15 @@ static void ui_draw_round_ring(ui_renderer *r, const f64 *outer, const f64 *inne
 static const char *ui_shader_src =
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
-"struct UiRoot { float texture_id; float unused_texture_id; float screen_width; float screen_height; float offset_x; float offset_y; uint vertex_offset; uint clip_offset; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4x4 panel; float4 panel_enable; };\n"
+"struct UiRoot { float texture_id; float unused_texture_id; float screen_width; float screen_height; float offset_x; float offset_y; uint vertex_offset; uint clip_offset; float4 hud_center_enable; float4 hud_right_hw; float4 hud_up_hh; float4 hud_proj; float4 hud_depth; float4x4 panel; float4 panel_enable; float4 vertex_scale; float4 batch_clip; };\n"
 "struct VOut { float4 pos [[position]]; float2 pixel; float2 uv; float4 col; float4 params; };\n"
 "vertex VOut ui_vs(uint vertex_id [[vertex_id]], constant UiRoot &ns_root [[buffer(0)]], device const uint *ns_storage_buffer [[buffer(3)]]) {\n"
 "  uint base = ns_root.vertex_offset / 4u + vertex_id * 9u;\n"
-"  float2 pixel = float2(as_type<float>(ns_storage_buffer[base]), as_type<float>(ns_storage_buffer[base + 1u])) + float2(ns_root.offset_x, ns_root.offset_y);\n"
+"  float2 pixel = float2(as_type<float>(ns_storage_buffer[base]), as_type<float>(ns_storage_buffer[base + 1u])) * ns_root.vertex_scale.xy + float2(ns_root.offset_x, ns_root.offset_y);\n"
 "  float2 uv = float2(as_type<float>(ns_storage_buffer[base + 2u]), as_type<float>(ns_storage_buffer[base + 3u]));\n"
 "  uint color = ns_storage_buffer[base + 4u];\n"
 "  float4 params = float4(as_type<float>(ns_storage_buffer[base + 5u]), as_type<float>(ns_storage_buffer[base + 6u]), as_type<float>(ns_storage_buffer[base + 7u]), as_type<float>(ns_storage_buffer[base + 8u]));\n"
+"  if (params.w <= 0.0 && ns_root.vertex_scale.z > 0.5) { params.w = -1.0; }\n"
 "  float2 screen = float2(ns_root.screen_width, ns_root.screen_height);\n"
 "  float2 ndc = float2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
 "  float4 pos = float4(ndc, 0.0, 1.0);\n"
@@ -414,6 +449,7 @@ static const char *ui_shader_src =
 "}\n"
 "static inline half ui_median3(half r, half g, half b) { return max(min(r, g), min(max(r, g), b)); }\n"
 "static inline bool ui_clip_discard(VOut in, constant UiRoot &ns_root, device const uint *ns_storage_buffer) {\n"
+"  if (in.params.w < -0.5) { float4 b = ns_root.batch_clip; return in.pixel.x < b.x || in.pixel.y < b.y || in.pixel.x >= b.z || in.pixel.y >= b.w; }\n"
 "  uint clip_idx = uint(round(max(in.params.w, 0.0)));\n"
 "  if (clip_idx == 0u) { return false; }\n"
 "  uint base = ns_root.clip_offset / 4u + (clip_idx - 1u) * 4u;\n"
@@ -479,6 +515,8 @@ static const char *ui_shader_glsl_vertex_prelude =
     "    vec4 hud_depth;\n"
     "    mat4 panel;\n"
     "    vec4 panel_enable;\n"
+    "    vec4 vertex_scale;\n"
+    "    vec4 batch_clip;\n"
     "} ns_root;\n"
     "layout(set = 0, binding = 8, std430) readonly buffer UiStorage { uint values[]; } ns_storage_buffer_0_block;\n"
     "#define ns_storage_buffer_0 ns_storage_buffer_0_block.values\n"
@@ -505,6 +543,8 @@ static const char *ui_shader_glsl_fragment_prelude =
     "    vec4 hud_depth;\n"
     "    mat4 panel;\n"
     "    vec4 panel_enable;\n"
+    "    vec4 vertex_scale;\n"
+    "    vec4 batch_clip;\n"
     "} ns_root;\n"
     "layout(set = 0, binding = 8, std430) readonly buffer UiStorage { uint values[]; } ns_storage_buffer_0_block;\n"
     "#define ns_storage_buffer_0 ns_storage_buffer_0_block.values\n"
@@ -514,6 +554,7 @@ static const char *ui_shader_glsl_fragment_prelude =
     "layout(location = 3) in vec4 ns_params;\n"
     "layout(location = 0) out vec4 ns_frag_color;\n"
     "bool ui_clip_discard() {\n"
+    "    if (ns_params.w < -0.5) { vec4 b = ns_root.batch_clip; return ns_pixel.x < b.x || ns_pixel.y < b.y || ns_pixel.x >= b.z || ns_pixel.y >= b.w; }\n"
     "    uint clip_idx = uint(round(max(ns_params.w, 0.0)));\n"
     "    if (clip_idx == 0u) { return false; }\n"
     "    uint base = ns_root.clip_offset / 4u + (clip_idx - 1u) * 4u;\n"
@@ -525,11 +566,12 @@ static const char *ui_shader_glsl_fragment_prelude =
 static const char *ui_shader_glsl_vs_body =
     "void main() {\n"
     "    uint base = ns_root.vertex_offset / 4u + uint(gl_VertexIndex) * 9u;\n"
-    "    vec2 pixel = vec2(uintBitsToFloat(ns_storage_buffer_0[base]), uintBitsToFloat(ns_storage_buffer_0[base + 1u])) + vec2(ns_root.offset_x, ns_root.offset_y);\n"
+    "    vec2 pixel = vec2(uintBitsToFloat(ns_storage_buffer_0[base]), uintBitsToFloat(ns_storage_buffer_0[base + 1u])) * ns_root.vertex_scale.xy + vec2(ns_root.offset_x, ns_root.offset_y);\n"
     "    vec2 uv = vec2(uintBitsToFloat(ns_storage_buffer_0[base + 2u]), uintBitsToFloat(ns_storage_buffer_0[base + 3u]));\n"
     "    uint color = ns_storage_buffer_0[base + 4u];\n"
     "    vec4 params = vec4(uintBitsToFloat(ns_storage_buffer_0[base + 5u]), uintBitsToFloat(ns_storage_buffer_0[base + 6u]),\n"
     "                       uintBitsToFloat(ns_storage_buffer_0[base + 7u]), uintBitsToFloat(ns_storage_buffer_0[base + 8u]));\n"
+    "    if (params.w <= 0.0 && ns_root.vertex_scale.z > 0.5) { params.w = -1.0; }\n"
     "    vec2 screen = vec2(ns_root.screen_width, ns_root.screen_height);\n"
     "    vec2 ndc = vec2((pixel.x / screen.x) * 2.0 - 1.0, 1.0 - (pixel.y / screen.y) * 2.0);\n"
     "    vec4 pos = vec4(ndc, 0.0, 1.0);\n"
@@ -957,6 +999,7 @@ static void ui_emit_command(ui_renderer *r, i32 base, i32 count, i32 kind) {
     if (r->command_count > 0) {
         cmd = &r->commands[r->command_count - 1];
         if (cmd->rect_batch_id == 0 &&
+            cmd->plane == r->current_plane &&
             cmd->vertex_offset + cmd->vertex_count == base &&
             cmd->texture_id == r->current_texture_id &&
             cmd->kind == kind &&
@@ -976,6 +1019,7 @@ static void ui_emit_command(ui_renderer *r, i32 base, i32 count, i32 kind) {
         .texture_id = r->current_texture_id,
         .kind = kind,
         .rect_batch_id = 0,
+        .plane = r->current_plane,
         .clip_x = (i32)floor(c.x),
         .clip_y = (i32)floor(c.y),
         .clip_w = (i32)ceil(c.w),
@@ -984,7 +1028,16 @@ static void ui_emit_command(ui_renderer *r, i32 base, i32 count, i32 kind) {
 }
 
 static ns_bool ui_push_vertex(ui_renderer *r, f64 x, f64 y, f64 u, f64 v, u32 color, f64 range, f64 weight, f64 softness, f64 clip) {
-    if (r->vertex_count >= r->vertex_capacity) return false;
+    if (r->vertex_count >= r->vertex_capacity) {
+        // A dense frame grows the CPU vertex array instead of silently
+        // dropping every draw after the limit; the GPU storage follows it.
+        if (r->vertex_capacity > 268435455) return false;
+        i32 capacity = r->vertex_capacity > 0 ? r->vertex_capacity * 2 : UI_INITIAL_VERTEX_CAP;
+        ui_vertex *vertices = (ui_vertex*)realloc(r->vertices, (size_t)capacity * sizeof(ui_vertex));
+        if (!vertices) return false;
+        r->vertices = vertices;
+        r->vertex_capacity = capacity;
+    }
     // Geometry is authored in the safe content space; the safe-area origin is
     // the single translation into drawable space.
     x += r->safe_rect.x;
@@ -1611,6 +1664,10 @@ void ui_renderer_destroy(ui_renderer *r) {
     if (!r) return;
     for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
         free(r->rect_batches[i].vertices);
+        if (r->rect_batches[i].buffer) gpu_free(r->rect_batches[i].buffer);
+    }
+    for (i32 i = 0; i < UI_RETIRED_BUFFERS; i++) {
+        if (r->retired[i].addr) gpu_free(r->retired[i].addr);
     }
     for (i32 i = 0; i < UI_MAX_TEXTURES; i++) {
         if (r->textures[i]) gpu_texture_destroy(r->textures[i]);
@@ -1648,9 +1705,33 @@ i32 ui_rect_batch_create(ui_renderer *r) {
     return 0;
 }
 
+static void ui_retire_buffer(ui_renderer *r, gpu_addr addr) {
+    if (!addr) return;
+    for (i32 i = 0; i < UI_RETIRED_BUFFERS; i++) {
+        if (r->retired[i].addr) continue;
+        r->retired[i].addr = addr;
+        r->retired[i].frames = 4;
+        return;
+    }
+    // Every slot is waiting: the oldest frames have long retired by now.
+    gpu_free(r->retired[0].addr);
+    r->retired[0].addr = addr;
+    r->retired[0].frames = 4;
+}
+
+static void ui_age_retired_buffers(ui_renderer *r) {
+    for (i32 i = 0; i < UI_RETIRED_BUFFERS; i++) {
+        if (r->retired[i].addr && --r->retired[i].frames <= 0) {
+            gpu_free(r->retired[i].addr);
+            r->retired[i].addr = 0;
+        }
+    }
+}
+
 void ui_rect_batch_destroy(ui_renderer *r, i32 batch_id) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
     if (!batch) return;
+    ui_retire_buffer(r, batch->buffer);
     free(batch->vertices);
     memset(batch, 0, sizeof(*batch));
 }
@@ -1659,6 +1740,9 @@ void ui_rect_batch_begin(ui_renderer *r, i32 batch_id) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
     if (!batch) return;
     batch->vertex_count = 0;
+    batch->kind = -1;
+    batch->texture_id = UI_WHITE_TEXTURE;
+    batch->dirty = true;
 }
 
 static ns_bool ui_rect_batch_reserve(ui_rect_batch *batch, i32 additional) {
@@ -1679,7 +1763,12 @@ static ns_bool ui_rect_batch_reserve(ui_rect_batch *batch, i32 additional) {
 
 void ui_rect_batch_add(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h, u32 rgba) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
-    if (!batch || w <= 0.0 || h <= 0.0 || !ui_rect_batch_reserve(batch, 6)) return;
+    if (!batch || w <= 0.0 || h <= 0.0) return;
+    if (batch->kind >= 0 && batch->kind != UI_KIND_IMAGE) return;
+    if (!ui_rect_batch_reserve(batch, 6)) return;
+    batch->kind = UI_KIND_IMAGE;
+    batch->texture_id = UI_WHITE_TEXTURE;
+    batch->dirty = true;
     f32 x0 = (f32)x, y0 = (f32)y, x1 = (f32)(x + w), y1 = (f32)(y + h);
     ui_vertex quad[6] = {
         {.x = x0, .y = y0, .color = rgba},
@@ -1698,22 +1787,40 @@ ns_bool ui_rect_batch_end(ui_renderer *r, i32 batch_id) {
     return batch != NULL;
 }
 
-void ui_rect_batch_draw_at(ui_renderer *r, i32 batch_id, f64 dx, f64 dy) {
+i32 ui_rect_batch_vertex_count(ui_renderer *r, i32 batch_id) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
-    if (!batch || batch->vertex_count <= 0 || r->command_count >= UI_MAX_COMMANDS) return;
+    return batch ? batch->vertex_count : 0;
+}
+
+void ui_rect_batch_draw_range(ui_renderer *r, i32 batch_id, i32 first, i32 count,
+                              f64 dx, f64 dy, f64 scale_x, f64 scale_y) {
+    ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
+    if (!batch || batch->kind < 0 || scale_x <= 0.0 || scale_y <= 0.0 ||
+        r->command_count >= UI_MAX_COMMANDS) return;
+    if (first < 0) first = 0;
+    if (count > batch->vertex_count - first) count = batch->vertex_count - first;
+    // Whole quads only, so a range never splits a glyph.
+    first -= first % 6;
+    count -= count % 6;
+    if (count <= 0) return;
     ui_clip c = ui_current_clip(r);
     if (c.w <= 0.0 || c.h <= 0.0) return;
     ui_command *cmd = &r->commands[r->command_count++];
     *cmd = (ui_command){
-        .vertex_offset = 0,
-        .vertex_count = batch->vertex_count,
-        .texture_id = UI_WHITE_TEXTURE,
-        .kind = UI_KIND_IMAGE,
+        .vertex_offset = first,
+        .vertex_count = count,
+        .texture_id = batch->texture_id,
+        .kind = batch->kind,
         .rect_batch_id = batch_id,
-        // Batch vertices are recorded once in content space and translated at
-        // draw time, so the safe-area origin rides along with the draw offset.
+        // Batch vertices are recorded once in content space, then scaled and
+        // translated at draw time, so the safe-area origin rides along with
+        // the draw offset.
         .offset_x = dx + r->safe_rect.x,
         .offset_y = dy + r->safe_rect.y,
+        .scale_x = scale_x,
+        .scale_y = scale_y,
+        .plane = r->current_plane,
+        .batch_clip = c,
         .clip_x = (i32)floor(c.x + r->safe_rect.x),
         .clip_y = (i32)floor(c.y + r->safe_rect.y),
         .clip_w = (i32)ceil(c.w),
@@ -1721,8 +1828,16 @@ void ui_rect_batch_draw_at(ui_renderer *r, i32 batch_id, f64 dx, f64 dy) {
     };
 }
 
+void ui_rect_batch_draw_scaled(ui_renderer *r, i32 batch_id, f64 dx, f64 dy, f64 scale) {
+    ui_rect_batch_draw_range(r, batch_id, 0, ui_rect_batch_vertex_count(r, batch_id), dx, dy, scale, scale);
+}
+
+void ui_rect_batch_draw_at(ui_renderer *r, i32 batch_id, f64 dx, f64 dy) {
+    ui_rect_batch_draw_scaled(r, batch_id, dx, dy, 1.0);
+}
+
 void ui_rect_batch_draw(ui_renderer *r, i32 batch_id) {
-    ui_rect_batch_draw_at(r, batch_id, 0.0, 0.0);
+    ui_rect_batch_draw_scaled(r, batch_id, 0.0, 0.0, 1.0);
 }
 
 static i32 ui_register_rgba_texture(ui_renderer *r, const u8 *data, i32 width, i32 height) {
@@ -1825,6 +1940,8 @@ void ui_begin_frame(ui_renderer *r) {
     r->gpu_clip_count = 0;
     r->clips[0] = ui_surface_clip(r);
     r->current_texture_id = UI_WHITE_TEXTURE;
+    r->plane_count = 0;
+    r->current_plane = 0;
 }
 
 static u64 ui_align_u64(u64 value, u64 alignment) {
@@ -1840,13 +1957,6 @@ static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset) {
                               ? (u64)(u32)r->gpu_clip_count * sizeof(ui_gpu_clip)
                               : sizeof(ui_gpu_clip);
     cursor = ui_align_u64(cursor + clip_size, 16);
-    for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
-        ui_rect_batch *batch = &r->rect_batches[i];
-        batch->gpu_offset = cursor;
-        if (batch->used && batch->vertex_count > 0) {
-            cursor = ui_align_u64(cursor + (u64)(u32)batch->vertex_count * UI_VERTEX_STRIDE, 16);
-        }
-    }
     const u64 required = cursor > 0 ? cursor : 16;
     if (!r->storage || required > r->storage_capacity) {
         u64 capacity = r->storage_capacity > 0 ? r->storage_capacity : 4096;
@@ -1863,18 +1973,30 @@ static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset) {
     ui_gpu_clip empty_clip = {0};
     const void *clips = r->gpu_clip_count > 0 ? (const void *)r->gpu_clips : (const void *)&empty_clip;
     gpu_write(r->storage + *clip_offset, clips, clip_size);
-    for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
-        ui_rect_batch *batch = &r->rect_batches[i];
-        if (batch->used && batch->vertex_count > 0) {
-            gpu_write(r->storage + batch->gpu_offset, batch->vertices,
-                      (u64)(u32)batch->vertex_count * UI_VERTEX_STRIDE);
+    for (i32 i = 0; i < r->command_count; i++) {
+        ui_rect_batch *batch = ui_rect_batch_get(r, r->commands[i].rect_batch_id);
+        if (!batch || !batch->dirty || batch->vertex_count <= 0) continue;
+        const u64 size = (u64)(u32)batch->vertex_count * UI_VERTEX_STRIDE;
+        if (size > batch->buffer_size) {
+            u64 capacity = batch->buffer_size > 0 ? batch->buffer_size : 4096;
+            while (capacity < size) capacity *= 2;
+            gpu_addr buffer = gpu_malloc(capacity, GPU_MEM_SHARED, "ui retained batch vertices");
+            if (!buffer) continue;
+            ui_retire_buffer(r, batch->buffer);
+            batch->buffer = buffer;
+            batch->buffer_size = capacity;
         }
+        // A persistent single-copy write stages through the frame ring, so a
+        // frame still reading the previous contents is not disturbed.
+        gpu_write(batch->buffer, batch->vertices, size);
+        batch->dirty = false;
     }
     return true;
 }
 
 static u32 ui_command_texture(ui_renderer *r, const ui_command *cmd) {
-    if (cmd->rect_batch_id > 0 || cmd->kind == UI_KIND_ARC_SDF) return r->white_texture;
+    if (cmd->kind == UI_KIND_ARC_SDF) return r->white_texture;
+    if (cmd->rect_batch_id > 0 && cmd->kind == UI_KIND_IMAGE) return r->white_texture;
     if (cmd->kind == UI_KIND_MSDF) {
         return cmd->texture_id == UI_FONT_ZH_TEXTURE && r->font_zh_texture
                    ? r->font_zh_texture
@@ -2148,6 +2270,49 @@ void ui_clear_panel(ui_renderer *r) {
     if (r) r->panel = false;
 }
 
+// Tilt the canvas plane away from the viewer about the horizontal line
+// through (center_x, center_y): a pinhole camera `focal` canvas units in front
+// of the screen sees the plane turned by `tilt` radians, top edge receding.
+// Everything drawn until ui_end_plane is laid out flat as usual and projected
+// on the GPU; clips stay in plane space and the screen rectangle (x, y, w, h)
+// bounds the result. A tilt of 0 is the ordinary flat canvas.
+void ui_pop_clip(ui_renderer *r);
+
+void ui_begin_plane(ui_renderer *r, f64 center_x, f64 center_y, f64 tilt, f64 focal,
+                    f64 x, f64 y, f64 w, f64 h) {
+    if (!r || r->plane_count >= UI_MAX_PLANES || focal <= 0.0 || r->rect.w <= 0.0 || r->rect.h <= 0.0) return;
+    const f64 screen_w = r->rect.w;
+    const f64 screen_h = r->rect.h;
+    const f64 ncx = 2.0 * (center_x + r->safe_rect.x) / screen_w - 1.0;
+    const f64 ncy = 1.0 - 2.0 * (center_y + r->safe_rect.y) / screen_h;
+    // In NDC, w = depth / focal = 1 + k * (ndc_y - ncy); the plane keeps z = 0.
+    const f64 k = 0.5 * screen_h * sin(tilt) / focal;
+    const f64 c = cos(tilt);
+    f32 *m = r->planes[r->plane_count];
+    memset(m, 0, sizeof(f32) * 16);
+    m[0] = 1.0f;
+    m[4] = (f32)(ncx * k);
+    m[5] = (f32)(ncy * k + c);
+    m[7] = (f32)k;
+    m[12] = (f32)(-ncx * k * ncy);
+    m[13] = (f32)(ncy - ncy * ncy * k - c * ncy);
+    m[15] = (f32)(1.0 - k * ncy);
+    r->plane_scissors[r->plane_count] = (ui_clip){x + r->safe_rect.x, y + r->safe_rect.y, w, h};
+    r->plane_count++;
+    r->current_plane = r->plane_count;
+    // The plane reaches past the screen toward its horizon, so its clips
+    // start unbounded rather than at the screen's edges.
+    if (r->clip_count < UI_MAX_CLIPS) {
+        r->clips[r->clip_count++] = (ui_clip){-1.0e7, -1.0e7, 2.0e7, 2.0e7};
+    }
+}
+
+void ui_end_plane(ui_renderer *r) {
+    if (!r || r->current_plane == 0) return;
+    r->current_plane = 0;
+    ui_pop_clip(r);
+}
+
 // Follow one fingertip (touch 0..3) against the panel. Its world position
 // lands on the canvas at (x, y); depth is its distance in front of the panel,
 // toward the viewer. It hovers within reach in front of the panel, presses
@@ -2211,6 +2376,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
     gpu_set_state(hud ? r->render_state_hud : (panel ? r->render_state_panel : r->render_state));
     gpu_set_storage(r->storage);
+    gpu_addr bound_storage = r->storage;
     for (i32 i = 0; i < r->command_count; i++) {
         ui_command *cmd = &r->commands[i];
         if (cmd->clip_w <= 0 || cmd->clip_h <= 0) continue;
@@ -2225,6 +2391,20 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         // A 3D HUD or panel projection moves triangles off the 2D clip rect;
         // pixel clips still run in the fragment shader from canvas coordinates.
         ns_bool projected = hud || panel;
+        const ns_bool planar = !projected && cmd->plane > 0 && cmd->plane <= r->plane_count;
+        if (planar) {
+            // The command's clip lives on the plane; the fragment clip applies
+            // it there, and the scissor bounds the plane's screen rectangle.
+            const ui_clip c = r->plane_scissors[cmd->plane - 1];
+            x0 = (i32)floor(c.x * sx);
+            y0 = (i32)floor(c.y * sy);
+            x1 = (i32)ceil((c.x + c.w) * sx);
+            y1 = (i32)ceil((c.y + c.h) * sy);
+            if (x0 < 0) x0 = 0;
+            if (y0 < 0) y0 = 0;
+            if (x1 > framebuffer_width) x1 = framebuffer_width;
+            if (y1 > framebuffer_height) y1 = framebuffer_height;
+        }
         if (!projected && (x1 <= x0 || y1 <= y0)) continue;
         if (projected) gpu_set_scissor(0, 0, framebuffer_width, framebuffer_height);
         else gpu_set_scissor(x0, y0, x1 - x0, y1 - y0);
@@ -2232,8 +2412,9 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
         u32 shader = r->shader_image;
         if (cmd->rect_batch_id > 0) {
             batch = ui_rect_batch_get(r, cmd->rect_batch_id);
-            if (!batch || batch->vertex_count <= 0) continue;
-        } else if (cmd->kind == UI_KIND_ARC_SDF) {
+            if (!batch || !batch->buffer || batch->dirty) continue;
+        }
+        if (cmd->kind == UI_KIND_ARC_SDF) {
             shader = r->shader_arc_sdf;
         } else if (cmd->kind == UI_KIND_MSDF) {
             shader = r->shader_msdf;
@@ -2248,22 +2429,42 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             .screen_height = (f32)r->rect.h,
             .offset_x = (f32)cmd->offset_x,
             .offset_y = (f32)cmd->offset_y,
-            .vertex_offset = batch ? (u32)batch->gpu_offset : 0,
+            .vertex_offset = 0,
             .clip_offset = clip_offset,
+            .vertex_scale = {
+                cmd->scale_x > 0.0 ? (f32)cmd->scale_x : 1.0f,
+                cmd->scale_y > 0.0 ? (f32)cmd->scale_y : 1.0f,
+                batch ? 1.0f : 0.0f, 1.0f,
+            },
+            .batch_clip = {
+                (f32)(cmd->batch_clip.x + r->safe_rect.x),
+                (f32)(cmd->batch_clip.y + r->safe_rect.y),
+                (f32)(cmd->batch_clip.x + r->safe_rect.x + cmd->batch_clip.w),
+                (f32)(cmd->batch_clip.y + r->safe_rect.y + cmd->batch_clip.h),
+            },
         };
         if (hud) ui_fill_hud_root(&root, &hud_frame);
         if (panel) {
             memcpy(root.panel, r->panel_clip, sizeof(root.panel));
             root.panel_enable[0] = 1.0f;
+        } else if (planar) {
+            memcpy(root.panel, r->planes[cmd->plane - 1], sizeof(root.panel));
+            root.panel_enable[0] = 1.0f;
         }
         gpu_set_shader(shader);
         gpu_set_root_data(&root, sizeof(root));
-        gpu_draw_vertices(batch ? 0 : cmd->vertex_offset, cmd->vertex_count, 1);
+        gpu_addr storage = batch ? batch->buffer : r->storage;
+        if (storage != bound_storage) {
+            gpu_set_storage(storage);
+            bound_storage = storage;
+        }
+        gpu_draw_vertices(cmd->vertex_offset, cmd->vertex_count, 1);
     }
     gpu_pass_end();
     gpu_commit();
     r->vertex_count = 0;
     r->command_count = 0;
+    ui_age_retired_buffers(r);
 }
 
 // The canvas is the safe content area: laying out inside it keeps an
@@ -2784,6 +2985,65 @@ void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u
                             (g->atlas_x + g->width) / font->texture_width,
                             (g->atlas_y + g->height) / font->texture_height,
                             rgba, bitmap ? UI_KIND_BITMAP : UI_KIND_MSDF, 5.0, 0.0, 1.0);
+        }
+        cx += g->x_advance * scale;
+    }
+}
+
+// Lay a line of text into a retained batch, in the batch's local space. Glyphs
+// keep their unsnapped positions so the batch scales cleanly at draw time.
+// The first glyph fixes the batch's font texture; a glyph that falls back to
+// another atlas (or a batch already holding rectangles) is skipped.
+void ui_rect_batch_add_text(ui_renderer *r, i32 batch_id, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
+    ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
+    if (!batch || !text || font_px <= 0.0) return;
+    if (batch->kind == UI_KIND_IMAGE) return;
+    ui_font *primary = ui_primary_font(r, font_type);
+    f64 cx = x;
+    f64 cy = y;
+    const unsigned char *p = (const unsigned char*)text;
+    while (*p) {
+        i32 code = ui_utf8_next(&p);
+        if (code == '\n') {
+            cx = x;
+            cy += primary->line_height * (font_px / primary->font_size);
+            continue;
+        }
+        ui_glyph *g = NULL;
+        ui_font *font = ui_font_for_code(r, font_type, code, &g);
+        if (!g) {
+            cx += ui_missing_glyph_advance(font_type, font_px);
+            continue;
+        }
+        f64 scale = font_px / font->font_size;
+        if (g->width > 0 && g->height > 0) {
+            const i32 kind = ui_font_is_bitmap(r, font) ? UI_KIND_BITMAP : UI_KIND_MSDF;
+            const i32 texture_id = ui_font_texture_id(r, font);
+            if (batch->kind < 0) {
+                batch->kind = kind;
+                batch->texture_id = texture_id;
+            }
+            if (batch->kind == kind && batch->texture_id == texture_id && ui_rect_batch_reserve(batch, 6)) {
+                batch->dirty = true;
+                f32 x0 = (f32)(cx + g->x_offset * scale);
+                f32 y0 = (f32)(cy + g->y_offset * scale);
+                f32 x1 = x0 + (f32)(g->width * scale);
+                f32 y1 = y0 + (f32)(g->height * scale);
+                f32 u0 = (f32)(g->atlas_x / font->texture_width);
+                f32 v0 = (f32)(g->atlas_y / font->texture_height);
+                f32 u1 = (f32)((g->atlas_x + g->width) / font->texture_width);
+                f32 v1 = (f32)((g->atlas_y + g->height) / font->texture_height);
+                ui_vertex quad[6] = {
+                    {.x = x0, .y = y0, .u = u0, .v = v0, .color = rgba, .range = 5.0f, .softness = 1.0f},
+                    {.x = x1, .y = y0, .u = u1, .v = v0, .color = rgba, .range = 5.0f, .softness = 1.0f},
+                    {.x = x1, .y = y1, .u = u1, .v = v1, .color = rgba, .range = 5.0f, .softness = 1.0f},
+                    {.x = x0, .y = y0, .u = u0, .v = v0, .color = rgba, .range = 5.0f, .softness = 1.0f},
+                    {.x = x1, .y = y1, .u = u1, .v = v1, .color = rgba, .range = 5.0f, .softness = 1.0f},
+                    {.x = x0, .y = y1, .u = u0, .v = v1, .color = rgba, .range = 5.0f, .softness = 1.0f},
+                };
+                memcpy(batch->vertices + batch->vertex_count, quad, sizeof(quad));
+                batch->vertex_count += 6;
+            }
         }
         cx += g->x_advance * scale;
     }

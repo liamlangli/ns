@@ -370,6 +370,15 @@ ref fn ui_hud_gaze_y(r: ref ui_renderer) f64
 ref fn ui_set_panel(r: ref ui_renderer, view_proj: [f32], center_x: f64, center_y: f64, center_z: f64, right_x: f64, right_y: f64, right_z: f64, up_x: f64, up_y: f64, up_z: f64, half_width: f64, half_height: f64)
 ref fn ui_clear_panel(r: ref ui_renderer)
 
+// Tilted plane. Draws between ui_begin_plane and ui_end_plane are laid out on
+// the flat canvas as usual, then seen in perspective: the canvas plane turns
+// `tilt` radians about the horizontal line through (center_x, center_y), top
+// edge away from a pinhole `focal` canvas units in front of the screen. Clips
+// pushed meanwhile apply on the plane; the screen rectangle (x, y, w, h)
+// bounds what the plane covers. Up to 8 planes per frame.
+ref fn ui_begin_plane(r: ref ui_renderer, center_x: f64, center_y: f64, tilt: f64, focal: f64, x: f64, y: f64, w: f64, h: f64)
+ref fn ui_end_plane(r: ref ui_renderer)
+
 // A fingertip against the panel, in canvas units like view.mouse_x after
 // ui_content_x. depth is its distance in front of the panel, toward the
 // viewer. inside: it lies over the canvas. hover: inside and within reach in
@@ -467,16 +476,29 @@ ref fn ui_pop_clip(r: ref ui_renderer)
 // True when the rect is fully outside the active clip (skip drawing it).
 ref fn ui_rect_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) bool
 
-// Retained rectangle batches own a dedicated GPU vertex buffer. Rebuild one
-// only when its geometry changes, then submit the whole batch as one draw
-// command without consuming the renderer's per-frame vertex buffer.
+// Retained batches keep their vertices across frames in their own GPU buffer,
+// uploaded on the first draw after a change. Rebuild one only when its
+// geometry changes, then submit it (or a range of it) as one draw command
+// without consuming the renderer's per-frame vertex buffer. A batch holds either rectangles or glyphs of one
+// font atlas: the first add after ui_rect_batch_begin fixes which, and adds of
+// the other kind are ignored.
 ref fn ui_rect_batch_create(r: ref ui_renderer) i32
 ref fn ui_rect_batch_destroy(r: ref ui_renderer, batch_id: i32)
 ref fn ui_rect_batch_begin(r: ref ui_renderer, batch_id: i32)
 ref fn ui_rect_batch_add(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, w: f64, h: f64, rgba: u32)
+// Glyphs of one text run at batch-local (x, y), laid out as ui_draw_text does.
+ref fn ui_rect_batch_add_text(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
 ref fn ui_rect_batch_end(r: ref ui_renderer, batch_id: i32) bool
 ref fn ui_rect_batch_draw(r: ref ui_renderer, batch_id: i32)
 ref fn ui_rect_batch_draw_at(r: ref ui_renderer, batch_id: i32, dx: f64, dy: f64)
+// Draw every recorded vertex at (x * scale + dx, y * scale + dy): a whole
+// batch zooms as one unit without being rebuilt.
+ref fn ui_rect_batch_draw_scaled(r: ref ui_renderer, batch_id: i32, dx: f64, dy: f64, scale: f64)
+// Vertices recorded so far; read it between adds to mark ranges.
+ref fn ui_rect_batch_vertex_count(r: ref ui_renderer, batch_id: i32) i32
+// Draw `count` vertices from `first` (both rounded to whole quads) at
+// (x * scale_x + dx, y * scale_y + dy).
+ref fn ui_rect_batch_draw_range(r: ref ui_renderer, batch_id: i32, first: i32, count: i32, dx: f64, dy: f64, scale_x: f64, scale_y: f64)
 
 // Set the host cursor (an empty string clears it).
 ref fn ui_set_cursor(r: ref ui_renderer, cursor: str)

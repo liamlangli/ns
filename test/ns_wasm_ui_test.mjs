@@ -107,6 +107,13 @@ fn draw_frame() {
     ui_rect_batch_end(r, batch)
     ui_rect_batch_draw_at(r, batch, 12.0, 12.0)
     ui_rect_batch_destroy(r, batch)
+    let glyphs = ui_rect_batch_create(r)
+    ui_rect_batch_begin(r, glyphs)
+    ui_rect_batch_add_text(r, glyphs, 0.0, 0.0, "batched", 12.0, 0xffffffff, UI_FONT_MONO)
+    ui_rect_batch_end(r, glyphs)
+    ui_rect_batch_draw_scaled(r, glyphs, 20.0, 140.0, 0.5)
+    ui_rect_batch_draw_range(r, glyphs, 0, ui_rect_batch_vertex_count(r, glyphs), 20.0, 150.0, 0.5, 0.4)
+    ui_rect_batch_destroy(r, glyphs)
     ui_flush(r, ui_clear_color())
 }
 
