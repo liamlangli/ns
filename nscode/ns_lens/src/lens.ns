@@ -13,6 +13,10 @@ lit LENS_CACHE_SLOTS = 48
 // three forms: glyphs, minimap bars, or nothing; close enough, the resident
 // file becomes the editor at the same scale.
 lit LENS_MAX_ZOOM = 2.5
+// Wheel zoom per scroll unit: fast with the camera down at the code, slow
+// high above the map, easing between with the square root of the distance.
+lit LENS_WHEEL_NEAR = 0.05
+lit LENS_WHEEL_FAR = 0.012
 lit LENS_ORTHO_SNAP = 5.0
 lit LENS_MAX_TILT = 60.0
 lit LENS_EDIT_ZOOM = 0.7
@@ -702,12 +706,30 @@ fn lens_code_flow(i: i32, lines: i32) {
 }
 
 // Wheel zoom preserves the map point beneath the pointer, so a leaf stays put.
+fn lens_sign(v: f64) f64 {
+    if v < 0.0 {
+        return -1.0
+    }
+    return 1.0
+}
+
+// Each wheel unit scales the distance by 1 + this rate, in or out.
+fn lens_wheel_rate(nearest: f64) f64 {
+    let height: f64 = clamp(g_lens_target_distance, nearest, 6000.0)
+    return clamp(LENS_WHEEL_NEAR * sqrt(nearest / height), LENS_WHEEL_FAR, LENS_WHEEL_NEAR)
+}
+
 fn lens_zoom_at(mx: f64, my: f64, w: f64, top: f64, body_h: f64, wheel: f64) {
     // The world point under the pointer keeps its screen position.
     // Past LENS_MAX_ZOOM a line no longer fits the window; stop there rather
     // than diving into the blank space between glyphs.
     let nearest = clamp(800.0 * g_lens_code_world / LENS_MAX_ZOOM, 1.0, 6000.0)
-    let next = clamp(g_lens_target_distance * clamp(1.0 - wheel * 0.008, 0.5, 1.5), nearest, 6000.0)
+    let step: f64 = clamp(1.0 + clamp(wheel * lens_sign(wheel), 0.0, 1000.0) * lens_wheel_rate(nearest), 1.0, 4.0)
+    let factor: f64 = step
+    if wheel > 0.0 {
+        factor = 1.0 / step
+    }
+    let next = clamp(g_lens_target_distance * factor, nearest, 6000.0)
     let delta = (g_lens_target_distance - next) / 800.0
     g_lens_target_x = g_lens_target_x + (mx - w * 0.5) * delta
     g_lens_target_y = g_lens_target_y + (my - top - body_h * 0.5) * delta

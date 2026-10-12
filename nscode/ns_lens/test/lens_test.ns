@@ -77,6 +77,13 @@ fn main() {
     let pointer_y: f64 = 462.0
     let world_x = (pointer_x - 640.0) * 2.0
     let world_y = (pointer_y - 382.0) * 2.0
+    // The wheel zooms faster with the camera low over the code than high above.
+    let nearest = clamp(800.0 * g_lens_code_world / LENS_MAX_ZOOM, 1.0, 6000.0)
+    let high = lens_wheel_rate(nearest)
+    g_lens_target_distance = nearest * 2.0
+    let low = lens_wheel_rate(nearest)
+    g_lens_target_distance = 1600.0
+    assert low > high && low <= LENS_WHEEL_NEAR && high >= LENS_WHEEL_FAR
     lens_zoom_at(pointer_x, pointer_y, 1280.0, 42.0, 680.0, 50.0)
     let projected_x = 640.0 + (world_x - g_lens_target_x) * 800.0 / g_lens_target_distance
     let projected_y = 382.0 + (world_y - g_lens_target_y) * 800.0 / g_lens_target_distance
