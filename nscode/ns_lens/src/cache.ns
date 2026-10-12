@@ -98,7 +98,7 @@ fn lens_read_source(path: str, offset: i64, bytes: i32) str {
 // The layout signature covers the ordered source set, sizes, and ancestry.
 // Text changes with an unchanged size still validate against SHA-256 on use.
 fn lens_layout_signature() str {
-    let signature = "layout2\n"
+    let signature = "layout3\n"
     for i in 0 to g_workspace_count {
         g_lens_cache_keys[i] = os_text_hash(os_entry_path(i))
         signature = signature + os_text_hash(g_lens_cache_keys[i] + ":" + ftos(g_lens_weight[i]) + ":" + itos(os_entry_parent(i)))
@@ -128,6 +128,7 @@ fn lens_load_layout(signature: str) bool {
         g_lens_y[i] = lens_cache_number(data)
         g_lens_w[i] = lens_cache_number(data)
         g_lens_h[i] = lens_cache_number(data)
+        g_lens_folder_header[i] = lens_cache_number(data)
         if g_lens_w[i] < 0.0 || g_lens_w[i] > 1200.01 || g_lens_h[i] < 0.0 || g_lens_h[i] > 900.01 {
             return false
         }
@@ -138,7 +139,7 @@ fn lens_load_layout(signature: str) bool {
 fn lens_store_layout(signature: str) {
     let data = ""
     for i in 0 to g_workspace_count {
-        data = data + ftos(g_lens_x[i]) + "\n" + ftos(g_lens_y[i]) + "\n" + ftos(g_lens_w[i]) + "\n" + ftos(g_lens_h[i]) + "\n"
+        data = data + ftos(g_lens_x[i]) + "\n" + ftos(g_lens_y[i]) + "\n" + ftos(g_lens_w[i]) + "\n" + ftos(g_lens_h[i]) + "\n" + ftos(g_lens_folder_header[i]) + "\n"
     }
     lens_cache_put(g_lens_cache_root + "/index.cache", signature, data)
 }

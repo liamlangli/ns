@@ -57,7 +57,11 @@ fn lens_io_poll() {
         if g_lens_io_mode == 1 {
             g_lens_ready_index = g_lens_io_index
             g_lens_ready_text = g_lens_io_result[0]
+        } else if g_lens_io_mode == 2 {
+            // Background warm reads fill the resident minimap.
+            lens_mini_offer(g_lens_io_index, g_lens_io_result[0])
         } else if g_lens_io_mode == 0 {
+            lens_mini_offer(g_lens_io_index, g_lens_io_result[0])
             let victim: i32 = 0
             for slot in 0 to LENS_CACHE_SLOTS {
                 if g_lens_cache_age[slot] < g_lens_cache_age[victim] {
@@ -84,7 +88,7 @@ fn lens_preview_stream(index: i32, allow_read: bool) str {
     if index == g_lens_selected {
         offset = g_lens_page
     }
-    lens_io_start(index, offset, LENS_PAGE_BYTES, 0)
+    lens_io_start(index, offset, LENS_PREVIEW_BYTES, 0)
     g_lens_preview_read = true
     return ""
 }
@@ -127,7 +131,7 @@ fn lens_warm_cache(moving: bool) {
         let index = g_lens_warm_cursor
         g_lens_warm_cursor = index + 1
         if g_lens_files[index] != 0 {
-            lens_io_start(index, 0 as i64, LENS_PAGE_BYTES, 2)
+            lens_io_start(index, 0 as i64, LENS_PREVIEW_BYTES, 2)
             break
         }
     }

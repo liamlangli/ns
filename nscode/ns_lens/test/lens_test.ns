@@ -32,11 +32,33 @@ fn main() {
         }
     }
     assert total > 0.0
-    assert area > 1079999.0 && area < 1080001.0
-    assert lens_lod(500.0, 300.0) == 0
-    assert lens_lod(200.0, 900.0) == 1
-    assert lens_lod(70.0, 1600.0) == 2
-    assert lens_lod(20.0, 2000.0) == 3
+    // Siblings tile their folder without overlapping; folders keep a title.
+    for a in 0 to g_workspace_count {
+        if g_lens_weight[a] > 0.0 && os_entry_is_dir(a) != 0 {
+            assert g_lens_folder_header[a] > 0.0
+        }
+        for b in a + 1 to g_workspace_count {
+            if g_lens_weight[a] > 0.0 && g_lens_weight[b] > 0.0 && os_entry_parent(a) == os_entry_parent(b) {
+                let apart = g_lens_x[a] + g_lens_w[a] <= g_lens_x[b] + 0.001 || g_lens_x[b] + g_lens_w[b] <= g_lens_x[a] + 0.001 || g_lens_y[a] + g_lens_h[a] <= g_lens_y[b] + 0.001 || g_lens_y[b] + g_lens_h[b] <= g_lens_y[a] + 0.001
+                assert apart
+            }
+        }
+    }
+    // Every file's code shows whole: its estimated lines fit the leaf's columns.
+    for f in 0 to g_workspace_count {
+        if g_lens_files[f] != 0 {
+            lens_code_flow(f, (os_file_size(os_entry_path(f)) / 30) as i32 + 1)
+            assert g_lens_flow_rows >= 1
+            assert g_lens_flow_fit > 0.5
+        }
+    }
+    // Folder frames take a share of the map; files fill the rest.
+    assert area > 540000.0 && area < 1080001.0
+    assert g_lens_code_world > 0.0
+    assert lens_lod(1.0) == 0
+    assert lens_lod(0.5) == 1
+    assert lens_lod(0.1) == 2
+    assert lens_lod(0.01) == 3
     // Pointer anchoring keeps the same leaf point under the mouse while zooming.
     g_lens_tilt = 0.0
     g_lens_center_x = 0.0
@@ -45,6 +67,12 @@ fn main() {
     g_lens_target_y = 0.0
     g_lens_distance = 1600.0
     g_lens_target_distance = 1600.0
+    // Code size follows the camera: halving the distance doubles the zoom.
+    let far_leaf = lens_project_leaf(workspace_find("lens.ns"), 1280.0, 42.0, 680.0)
+    g_lens_distance = g_lens_distance * 0.5
+    let near_leaf = lens_project_leaf(workspace_find("lens.ns"), 1280.0, 42.0, 680.0)
+    g_lens_distance = g_lens_distance * 2.0
+    assert lens_code_zoom(near_leaf) > lens_code_zoom(far_leaf) * 1.9
     let pointer_x: f64 = 740.0
     let pointer_y: f64 = 462.0
     let world_x = (pointer_x - 640.0) * 2.0
@@ -54,18 +82,47 @@ fn main() {
     let projected_y = 382.0 + (world_y - g_lens_target_y) * 800.0 / g_lens_target_distance
     assert projected_x > pointer_x - 0.01 && projected_x < pointer_x + 0.01
     assert projected_y > pointer_y - 0.01 && projected_y < pointer_y + 0.01
-    let visible = lens_leaf_content(lens_leaf_rect(-800.0, -600.0, 2400.0, 1800.0, 400.0), 1280.0, 42.0, 680.0)
-    assert visible.x == 1.0 && visible.y == 66.0
+    let visible = lens_leaf_content(lens_leaf_rect(-800.0, -600.0, 2400.0, 1800.0, 400.0, 2.0, 2.0), 0.0, 42.0, 1280.0, 722.0)
+    assert visible.x == 1.0 && visible.y == 42.0
+    // Under the ortho snap the camera is flat; past it, the pointer unprojects
+    // onto a plane whose far half spreads wider and deeper than the screen.
+    g_lens_tilt = 4.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    assert g_lens_plane_tilt == 0.0
+    lens_unproject(100.0, 100.0)
+    assert g_lens_plane_x > 99.999 && g_lens_plane_x < 100.001
+    assert g_lens_plane_y > 99.999 && g_lens_plane_y < 100.001
+    g_lens_tilt = 45.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    assert g_lens_plane_tilt > 0.7
+    assert g_lens_view_y0 < 42.0 && g_lens_view_x0 < 0.0 && g_lens_view_x1 > 1280.0
+    lens_unproject(640.0, 382.0)
+    assert g_lens_plane_x > 639.999 && g_lens_plane_x < 640.001
+    assert g_lens_plane_y > 381.999 && g_lens_plane_y < 382.001
+    lens_unproject(100.0, 60.0)
+    assert g_lens_plane_y < 60.0 && g_lens_plane_x < 100.0
+    assert lens_depth_gain(60.0) < 1.0 && lens_depth_gain(700.0) > 1.0
+    g_lens_tilt = 0.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
     assert visible.w > 0.0 && visible.h > 0.0
     let index = workspace_find("editor.ns")
     assert index >= 0
+    // A rescan keeps each file's resident minimap, matched by path.
+    g_lens_mini_batch[index] = 77
+    g_lens_mini_hash[index] = "kept"
+    g_lens_mini_path[index] = os_entry_path(index)
+    lens_rebuild()
+    let again = workspace_find("editor.ns")
+    assert g_lens_mini_batch[again] == 77 && g_lens_mini_hash[again] == "kept"
+    g_lens_mini_batch[again] = 0
+    g_lens_mini_hash[again] = ""
     assert lens_preview(index, false) == ""
     let builds = g_lens_preview_builds
     let preview = lens_preview(index, true)
     assert g_lens_preview_builds == builds + 1
     let preview_slot = g_lens_preview_slot
     assert lens_preview_line(preview_slot, 0) != ""
-    assert preview.len > 0 && preview.len <= LENS_PAGE_BYTES
+    assert preview.len > 0 && preview.len <= LENS_PREVIEW_BYTES
     assert lens_preview(index, false) == preview
     assert g_lens_preview_read == false
     assert g_lens_preview_builds == builds + 1
@@ -73,7 +130,7 @@ fn main() {
     g_lens_page = LENS_PAGE_BYTES as i64
     let second = lens_preview(index, true)
     assert second != preview
-    assert second.len <= LENS_PAGE_BYTES
+    assert second.len <= LENS_PREVIEW_BYTES
     lens_clear_cache()
     assert lens_preview(index, false) == ""
     assert lens_preview_line(preview_slot, 0) == ""
@@ -124,11 +181,14 @@ fn main() {
     }
     lens_build_preview(0, "stale line")
     let text = lens_preview(large, true)
-    assert text.len == LENS_PAGE_BYTES
+    assert text.len == LENS_PREVIEW_BYTES
     assert g_lens_cache_id[0] == large
     assert lens_preview_line(0, 0) != "stale line"
+    g_lens_cache_text[0] = "one"
     lens_build_preview(0, "one")
     assert g_lens_preview_count[0] == 1
+    assert g_lens_glyph_dirty[0] == 1
+    assert lens_preview_line(0, 0) == "one"
     assert lens_preview_line(0, 1) == ""
     os_watch_stop()
     print("lens_test: passed\n")

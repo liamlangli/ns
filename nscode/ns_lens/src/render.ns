@@ -12,6 +12,11 @@ let g_mouse_x: f64 = 0.0 as f64
 let g_mouse_y: f64 = 0.0 as f64
 let g_code_drag = false
 let g_code_scroll: f64 = 0.0 as f64
+// Screen pixels per code-layout pixel. Lens sets it from the camera so the
+// editor grows and shrinks with its leaf instead of keeping a fixed size.
+let g_code_zoom: f64 = 1.0
+// Vertical zoom: the map's tilt squashes rows but not glyph widths.
+let g_code_zoom_y: f64 = 1.0
 let g_caret_follow = false
 let g_setting_language: i32 = 0
 let g_setting_theme: i32 = 0
@@ -134,14 +139,38 @@ fn clamp(v: f64, lo: f64, hi: f64) f64 {
     return v
 }
 
+// Lines flow down a column of g_code_rows rows, then into the next column
+// g_code_column_base layout pixels to the right, the same flow a Lens leaf's
+// code batches use. A single tall column is g_code_rows = 0.
+let g_code_rows: i32 = 0
+let g_code_column_base: f64 = 0.0
+// The visible part of the flat map, so off-screen rows and columns are skipped.
+let g_code_view_x0: f64 = 0.0
+let g_code_view_x1: f64 = 100000.0
+let g_code_view_y0: f64 = 42.0
+let g_code_view_y1: f64 = 100000.0
+
+fn code_rows_per_column(total: i32) i32 {
+    if g_code_rows > 0 {
+        return g_code_rows
+    }
+    return clamp_i(total, 1, 100000000)
+}
+
+fn code_column_w(w: f64) f64 {
+    if g_code_column_base > 0.0 {
+        return g_code_column_base * g_code_zoom
+    }
+    return w
+}
+
 fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, editable: bool) {
     let line_h = code_line_h()
     let body_y = y
     let body_h = h
-    let code_w = w
     let gutter_w = code_gutter_w()
-    let clip_top = clamp(body_y, 42.0, g_lens_canvas_h - 78.0)
-    let clip_bottom = clamp(body_y + h, 42.0, g_lens_canvas_h - 78.0)
+    let clip_top = clamp(body_y, g_code_view_y0, g_code_view_y1)
+    let clip_bottom = clamp(body_y + h, g_code_view_y0, g_code_view_y1)
     if clip_bottom <= clip_top {
         return
     }
@@ -149,19 +178,21 @@ fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     if char_w <= 0.0 {
         char_w = code_font_px() * 0.6
     }
-    let text_x = x + gutter_w + code_text_inset()
-    let text_w = w - gutter_w - code_text_inset() - 8.0
+    let col_w = code_column_w(w)
+    let text_w = col_w - gutter_w - code_text_inset() - 8.0 * g_code_zoom
     let visible_cols = (text_w / char_w) as i32 + 1
     lens_git_tick(lens_camera_moving(v))
     let total = g_lens_diff_count
-    let max_scroll = scroll_max((total as f64) * line_h + 40.0, clip_bottom - clip_top)
+    let rows = code_rows_per_column(total)
+    let max_scroll = scroll_max((clamp_i(total, 0, rows) as f64) * line_h + 40.0 * g_code_zoom_y, clip_bottom - clip_top)
     if editable {
         if hit(v, x, clip_top, w, clip_bottom - clip_top) || g_code_drag {
-            process_code_mouse(v, x, body_y, code_w, body_h, text_x, line_h, char_w)
+            process_code_mouse(v, x, body_y, w, body_h, line_h, char_w, rows, col_w)
         }
         process_code_keys(v)
         lens_git_tick(lens_camera_moving(v))
         total = g_lens_diff_count
+        rows = code_rows_per_column(total)
     }
     if shift_down(v) && hit(v, x, clip_top, w, clip_bottom - clip_top) {
         g_code_scroll = clamp(g_code_scroll - v.scroll_y * code_wheel_scale(), 0.0, max_scroll)
@@ -169,92 +200,100 @@ fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     }
     if g_caret_follow && editable {
         g_caret_follow = false
-        follow_caret(clip_bottom - clip_top, line_h, max_scroll)
+        follow_caret(clip_bottom - clip_top, line_h, max_scroll, rows)
     }
     g_code_scroll = clamp(g_code_scroll, 0.0, max_scroll)
-    let first = ((g_code_scroll + clip_top - body_y - 18.0 - line_h) / line_h) as i32
-    if first < 0 {
-        first = 0
-    }
-    let last = ((g_code_scroll + clip_bottom - body_y - 18.0) / line_h) as i32 + 2
-    if last > total {
-        last = total
-    }
+    let first = clamp_i(((g_code_scroll + clip_top - body_y - code_top_pad() - line_h) / line_h) as i32, 0, rows)
+    let last = clamp_i(((g_code_scroll + clip_bottom - body_y - code_top_pad()) / line_h) as i32 + 2, first, rows)
+    let columns = (total + rows - 1) / rows
+    let first_col = clamp_i(((g_code_view_x0 - x) / col_w) as i32, 0, columns)
+    let last_col = clamp_i(((g_code_view_x1 - x) / col_w) as i32 + 1, first_col, columns)
 
     let cursor_line = cur_line()
-    let cursor_col = cur_col()
     let selected = has_selection()
-    ui_push_clip(r, x, body_y, code_w, body_h)
-    for visual in first to last {
-        let i = g_lens_diff_rows[visual]
-        if i < 0 {
-            let deleted = -1 - i
-            let row_top = body_y + 18.0 + (visual as f64) * line_h - g_code_scroll
-            ui_fill_rect(r, x, row_top, code_w, line_h, ui_pack_color("#4b1e1e"), 0.0)
-            draw_text_clipped(r, x + 24.0, row_top + 2.0, 20.0, line_h, "-", small_px(), col_text())
-            let text = g_lens_diff_deleted[deleted]
-            if g_coloff < text.len {
-                let count = clamp_i(text.len - g_coloff, 0, visible_cols)
-                ui_push_clip(r, text_x, body_y, text_w, body_h)
-                ui_draw_text(r, text_x, text_center_y(r, row_top, line_h, code_font_px()), substr(text, g_coloff, count), code_font_px(), col_text(), CODE_FONT())
-                ui_pop_clip(r)
-            }
-        } else {
-            // Row rect (row_top, line_h) matches the mouse_line hit mapping; the
-            // text y inside it comes from text_center_y so the glyphs sit mid-row.
-            let row_top = body_y + 18.0 + (visual as f64) * line_h - g_code_scroll
-            if row_top + line_h >= body_y {
-                if row_top <= body_y + body_h {
-                    if g_lens_diff_added[i] != 0 {
-                        ui_fill_rect(r, x, row_top, code_w, line_h, ui_pack_color("#183e2b"), 0.0)
-                    } else if i == cursor_line && editable {
-                        ui_fill_rect(r, x, row_top, code_w, line_h, col_editor_panel(), 0.0)
-                    }
-                    if selected && editable {
-                        let sb = line_sel_begin(i)
-                        if sb >= 0 {
-                            let se = line_sel_end(i)
-                            let ss = sb
-                            if ss < g_coloff {
-                                ss = g_coloff
-                            }
-                            let ee = se
-                            let col_end = g_coloff + visible_cols
-                            if ee > col_end {
-                                ee = col_end
-                            }
-                            if ee > ss {
-                                let sel_x = text_x + ((ss - g_coloff) as f64) * char_w
-                                let sel_w = ((ee - ss) as f64) * char_w
-                                ui_fill_rect(r, sel_x, row_top, sel_w, line_h, col_editor_sel(), 0.0)
-                            }
-                        }
-                    }
-                    let num_color = col_muted()
-                    if i == cursor_line && editable {
-                        num_color = col_text()
-                    }
-                    let line_number = itos(i + 1)
-                    let line_number_x = code_line_number_x(r, x, line_number)
-                    draw_text_clipped(r, line_number_x, text_center_y(r, row_top, line_h, small_px()), gutter_w - (line_number_x - x) - 10.0, 18.0, line_number, small_px(), num_color)
-                    ui_push_clip(r, text_x, body_y, text_w, body_h)
-                    draw_code_line(r, i, text_x, text_center_y(r, row_top, line_h, code_font_px()), char_w, g_coloff, visible_cols)
-                    ui_pop_clip(r)
-                }
+    ui_push_clip(r, x, body_y, w, body_h)
+    for c in first_col to last_col {
+        let col_x = x + (c as f64) * col_w
+        let text_x = col_x + gutter_w + code_text_inset()
+        for row in first to last {
+            let visual = c * rows + row
+            if visual < total {
+                let row_top = body_y + code_top_pad() + (row as f64) * line_h - g_code_scroll
+                draw_code_row(r, visual, col_x, col_w, text_x, text_w, row_top, line_h, char_w, visible_cols, body_y, body_h, cursor_line, selected, editable)
             }
         }
     }
-    let cursor_x = text_x + ((cursor_col - g_coloff) as f64) * char_w
-    let cursor_top = body_y + 18.0 + (g_lens_diff_source[cursor_line] as f64) * line_h - g_code_scroll
     if editable {
-        ui_fill_rect(r, cursor_x, cursor_top + 2.0, 2.0, line_h - 4.0, col_editor_cursor(), 0.0)
+        let cursor_visual = g_lens_diff_source[cursor_line]
+        let cursor_col_x = x + ((cursor_visual / rows) as f64) * col_w
+        let cursor_x = cursor_col_x + gutter_w + code_text_inset() + ((cur_col() - g_coloff) as f64) * char_w
+        let cursor_top = body_y + code_top_pad() + ((cursor_visual % rows) as f64) * line_h - g_code_scroll
+        let inset = 2.0 * g_code_zoom_y
+        ui_fill_rect(r, cursor_x, cursor_top + inset, clamp(2.0 * g_code_zoom, 1.0, 4.0), line_h - inset * 2.0, col_editor_cursor(), 0.0)
     }
+    ui_pop_clip(r)
+}
+
+fn draw_code_row(r: ref ui_renderer, visual: i32, col_x: f64, col_w: f64, text_x: f64, text_w: f64, row_top: f64, line_h: f64, char_w: f64, visible_cols: i32, body_y: f64, body_h: f64, cursor_line: i32, selected: bool, editable: bool) {
+    if row_top + line_h < body_y || row_top > body_y + body_h {
+        return
+    }
+    let i = g_lens_diff_rows[visual]
+    if i < 0 {
+        let deleted = -1 - i
+        ui_fill_rect(r, col_x, row_top, col_w, line_h, ui_pack_color("#4b1e1e"), 0.0)
+        draw_text_clipped(r, col_x + 24.0 * g_code_zoom, row_top + 2.0 * g_code_zoom_y, 20.0 * g_code_zoom, line_h, "-", code_number_px(), col_text())
+        let text = g_lens_diff_deleted[deleted]
+        if g_coloff < text.len {
+            let count = clamp_i(text.len - g_coloff, 0, visible_cols)
+            ui_push_clip(r, text_x, body_y, text_w, body_h)
+            ui_draw_text(r, text_x, text_center_y(r, row_top, line_h, code_font_px()), substr(text, g_coloff, count), code_font_px(), col_text(), CODE_FONT())
+            ui_pop_clip(r)
+        }
+        return
+    }
+    // Row rect (row_top, line_h) matches the mouse_line hit mapping; the text
+    // y inside it comes from text_center_y so the glyphs sit mid-row.
+    if g_lens_diff_added[i] != 0 {
+        ui_fill_rect(r, col_x, row_top, col_w, line_h, ui_pack_color("#183e2b"), 0.0)
+    } else if i == cursor_line && editable {
+        ui_fill_rect(r, col_x, row_top, col_w, line_h, col_editor_panel(), 0.0)
+    }
+    if selected && editable {
+        let sb = line_sel_begin(i)
+        if sb >= 0 {
+            let ss = sb
+            if ss < g_coloff {
+                ss = g_coloff
+            }
+            let ee = line_sel_end(i)
+            let col_end = g_coloff + visible_cols
+            if ee > col_end {
+                ee = col_end
+            }
+            if ee > ss {
+                ui_fill_rect(r, text_x + ((ss - g_coloff) as f64) * char_w, row_top, ((ee - ss) as f64) * char_w, line_h, col_editor_sel(), 0.0)
+            }
+        }
+    }
+    let num_color = col_muted()
+    if i == cursor_line && editable {
+        num_color = col_text()
+    }
+    let line_number = itos(i + 1)
+    let line_number_x = code_line_number_x(r, col_x, line_number)
+    draw_text_clipped(r, line_number_x, text_center_y(r, row_top, line_h, code_number_px()), code_gutter_w() - (line_number_x - col_x) - 10.0 * g_code_zoom, line_h, line_number, code_number_px(), num_color)
+    ui_push_clip(r, text_x, body_y, text_w, body_h)
+    draw_code_line(r, i, text_x, text_center_y(r, row_top, line_h, code_font_px()), char_w, g_coloff, visible_cols)
     ui_pop_clip(r)
 }
 
 fn col_editor_cursor() u32 { return ui_pack_color("#eeeeee") }
 
-fn code_font_px() f64 {
+fn code_font_px() f64 { return code_base_font_px() * g_code_zoom }
+
+// Code layout metrics at zoom 1; the zoomed accessors above and below scale them.
+fn code_base_font_px() f64 {
     if g_setting_font_size == 0 {
         return 11.0
     }
@@ -262,6 +301,22 @@ fn code_font_px() f64 {
         return 14.0
     }
     return 12.0
+}
+
+fn code_number_px() f64 { return small_px() * g_code_zoom }
+
+fn code_top_pad() f64 { return code_base_top_pad() * g_code_zoom_y }
+
+fn code_base_top_pad() f64 { return 18.0 }
+
+// A zoom change keeps the same first line in view: the scroll offset is in
+// screen pixels, so it scales with the line height.
+fn set_code_zoom(zoom: f64, zoom_y: f64) {
+    if zoom > 0.0 && zoom_y > 0.0 {
+        g_code_scroll = g_code_scroll * zoom_y / g_code_zoom_y
+        g_code_zoom = zoom
+        g_code_zoom_y = zoom_y
+    }
 }
 
 fn text_center_y(r: ref ui_renderer, y: f64, h: f64, px: f64) f64 {
@@ -412,16 +467,18 @@ fn col_nanoscript_green_bright() u32 {
 fn col_yellow() u32 { return ui_pack_color("#b0b0b0") }
 
 fn code_line_number_x(r: ref ui_renderer, editor_x: f64, text: str) f64 {
-    return editor_x + code_gutter_w() - 10.0 - ui_text_width(r, text, small_px(), FONT_MONO())
+    return editor_x + code_gutter_w() - 10.0 * g_code_zoom - ui_text_width(r, text, code_number_px(), FONT_MONO())
 }
 
-fn code_gutter_w() f64 { return 52.0 }
+fn code_gutter_w() f64 { return code_base_gutter_w() * g_code_zoom }
+
+fn code_base_gutter_w() f64 { return 52.0 }
 
 fn col_editor_sel() u32 { return ui_pack_color("#444444") }
 
-fn follow_caret(body_h: f64, line_h: f64, max_scroll: f64) {
-    let top = (g_lens_diff_source[cur_line()] as f64) * line_h
-    let bot = top + line_h + 26.0
+fn follow_caret(body_h: f64, line_h: f64, max_scroll: f64, rows: i32) {
+    let top = ((g_lens_diff_source[cur_line()] % rows) as f64) * line_h
+    let bot = top + line_h + 26.0 * g_code_zoom_y
     if top < g_code_scroll {
         g_code_scroll = top
     }
@@ -431,7 +488,7 @@ fn follow_caret(body_h: f64, line_h: f64, max_scroll: f64) {
     g_code_scroll = clamp(g_code_scroll, 0.0, max_scroll)
 }
 
-fn code_wheel_scale() f64 { return 6.0 }
+fn code_wheel_scale() f64 { return 6.0 * g_code_zoom_y }
 
 fn shift_down(v: ref view) bool {
     if view_is_key_pressed(v, 340) {
@@ -543,10 +600,12 @@ fn key_edge(v: ref view, k: i32) bool {
     return false
 }
 
-fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, text_x: f64, line_h: f64, char_w: f64) {
+fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, line_h: f64, char_w: f64, rows: i32, col_w: f64) {
+    let column = mouse_column(x, col_w)
+    let text_x = x + (column as f64) * col_w + code_gutter_w() + code_text_inset()
     if v.mouse_pressed {
         if hit(v, x, body_y, w, body_h) {
-            let li = mouse_line(v, body_y, line_h)
+            let li = mouse_line(v, body_y, line_h, column, rows)
             let col = mouse_col(v, text_x, char_w)
             let now = os_time()
             let streak: i32 = 1
@@ -572,7 +631,7 @@ fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, tex
     }
     if g_code_drag {
         if v.mouse_down {
-            place_cursor(mouse_line(v, body_y, line_h), mouse_col(v, text_x, char_w), true)
+            place_cursor(mouse_line(v, body_y, line_h, column, rows), mouse_col(v, text_x, char_w), true)
         }
     }
     if v.mouse_released {
@@ -588,12 +647,21 @@ fn mouse_col(v: ref view, text_x: f64, char_w: f64) i32 {
     return fx as i32
 }
 
-fn mouse_line(v: ref view, body_y: f64, line_h: f64) i32 {
-    let fy = (g_mouse_y - body_y - 18.0 + g_code_scroll) / line_h
-    if fy < 0.0 {
+fn mouse_column(x: f64, col_w: f64) i32 {
+    let fx = (g_mouse_x - x) / col_w
+    if fx < 0.0 {
         return 0
     }
-    return lens_diff_source_row(fy as i32)
+    return fx as i32
+}
+
+fn mouse_line(v: ref view, body_y: f64, line_h: f64, column: i32, rows: i32) i32 {
+    let fy = (g_mouse_y - body_y - code_top_pad() + g_code_scroll) / line_h
+    let row: i32 = 0
+    if fy > 0.0 {
+        row = clamp_i(fy as i32, 0, rows - 1)
+    }
+    return lens_diff_source_row(column * rows + row)
 }
 
 fn scroll_max(content_h: f64, body_h: f64) f64 {
@@ -603,9 +671,13 @@ fn scroll_max(content_h: f64, body_h: f64) f64 {
     return 0.0
 }
 
-fn code_text_inset() f64 { return 12.0 }
+fn code_text_inset() f64 { return code_base_text_inset() * g_code_zoom }
 
-fn code_line_h() f64 {
+fn code_base_text_inset() f64 { return 12.0 }
+
+fn code_line_h() f64 { return code_base_line_h() * g_code_zoom_y }
+
+fn code_base_line_h() f64 {
     if g_setting_font_size == 0 {
         return 18.0
     }

@@ -11,21 +11,39 @@ bin/ns build nscode/ns_lens
 
 The scan follows the project's root `.gitignore`, excludes Git metadata, and
 recognizes Nano Script, common native/web/shader languages, scripts, manifests,
-and text documentation. Directory siblings stay together in a weighted binary
-treemap; file area follows byte size (empty files have a 128-byte floor).
-Directory depth adds elevation to the tilted plane. The UI renderer draws
-camera-facing cards using camera-space perspective projection.
+and text documentation. Each directory is a titled frame holding its children
+in a weighted binary treemap; a file's area is sized for the code it likely
+holds (its bytes at about 30 per line, one 100-character column wide). The
+map is laid out flat, so leaves tile edge to edge. Flat, the camera is
+orthographic; middle drag tilts the map plane up to 60 degrees and the camera
+becomes a perspective one looking across it. A tilt released under 5 degrees
+snaps back to orthographic.
 
 - The interface is monochrome. Syntax highlighting and Git change backgrounds
   use color; leaf outlines are rounded rectangles with a 3-point radius.
 - Wheel: zoom toward the pointer with camera smoothing.
-- Right drag: pan. Middle drag: tilt.
+- Right drag: pan. Middle drag: tilt the map into perspective.
 - Zoom close to a leaf: its code becomes a syntax-highlighted, editable surface
   inside that leaf. The map keeps the entire canvas; no separate editor opens.
 - Shift+wheel: scroll code inside the leaf; horizontal travel scrolls columns.
-- Click a distant leaf to focus it. **Open project** selects a project folder.
-- LOD 3: blocks; LOD 2: filenames; LOD 1: source previews;
-  LOD 0: an editor directly on the leaf, selection, undo/redo and Cmd/Ctrl+S.
+- **Open project** selects a project folder.
+- Every file keeps a resident minimap batch (one bar per code segment),
+  built once from its text and rebuilt only when the text or its column flow
+  changes, so bars never blank while the camera moves; a leaf whose glyphs
+  are not ready yet shows its bars instead.
+- Code has no fixed size. Each cached page is laid out once into retained
+  `ui` batches (syntax-highlighted glyphs, and token-coloured minimap bars)
+  and drawn scaled by the camera, so it zooms with its leaf. One
+  code-pixel-to-world ratio is shared by every leaf. By that zoom the code
+  shows as glyphs, as minimap bars (one per token), or not at all. Lines flow
+  down newspaper columns across the leaf, preview and editor alike, so the
+  whole file (up to 256 KiB) shows; a file with more lines than its area
+  expected shrinks its own code until it fits; past a readable size the hovered file
+  becomes an editor at the same scale, with selection, undo/redo and
+  Cmd/Ctrl+S. Filenames appear once a leaf is wide enough.
+- Clicking a leaf focuses it at a readable code size, framing its top. Zoom
+  stops once code reaches 2.5 times its editor size.
+- Without a path argument the map opens the shell's working directory.
 - Files over 256 KiB use a read-only paged surface on the leaf. **Prev / Next**
   moves through 8 KiB ranges; Shift+wheel reaches every line in the page.
 - Save edits before switching the Lens editor to another file.

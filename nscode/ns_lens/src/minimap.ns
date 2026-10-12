@@ -1,0 +1,202 @@
+// Persistent minimap: every file keeps its own retained bar batch, built once
+// from its text and kept across camera moves, preview-cache evictions and
+// workspace rescans, so a leaf showing bars never blanks while the camera
+// moves. A batch is rebuilt only when its file's text or column flow changes.
+use std
+use os
+use ui
+
+let g_lens_mini_batch = [i32](4096)
+let g_lens_mini_path = [str](4096)
+let g_lens_mini_hash = [str](4096)
+let g_lens_mini_lines = [i32](4096)
+let g_lens_mini_rows = [i32](4096)
+let g_lens_mini_fit = [f64](4096)
+// Batches whose files left the workspace, destroyed on the next frame.
+let g_lens_mini_drop = [i32](4096)
+let g_lens_mini_drop_count: i32 = 0
+// Texts read since the last frame, built when a renderer is at hand.
+let g_lens_mini_queue_index = [i32](8)
+let g_lens_mini_queue_text = [str](8)
+let g_lens_mini_queue_count: i32 = 0
+
+// A rescan renumbers entries: carry each batch over to its path's new index.
+fn lens_mini_remap() {
+    let old_index = [str: i32](8192)
+    for j in 0 to 4096 {
+        if g_lens_mini_batch[j] != 0 && g_lens_mini_path[j] != "" {
+            old_index[g_lens_mini_path[j]] = j
+        }
+    }
+    let batch = [i32](4096)
+    let hash = [str](4096)
+    let lines = [i32](4096)
+    let rows = [i32](4096)
+    let fit = [f64](4096)
+    let kept = [i32](4096)
+    for i in 0 to g_workspace_count {
+        let path = os_entry_path(i)
+        if has(old_index, path) {
+            let j = old_index[path]
+            batch[i] = g_lens_mini_batch[j]
+            hash[i] = g_lens_mini_hash[j]
+            lines[i] = g_lens_mini_lines[j]
+            rows[i] = g_lens_mini_rows[j]
+            fit[i] = g_lens_mini_fit[j]
+            kept[j] = 1
+        }
+    }
+    for j in 0 to 4096 {
+        if g_lens_mini_batch[j] != 0 && kept[j] == 0 && g_lens_mini_drop_count < 4096 {
+            g_lens_mini_drop[g_lens_mini_drop_count] = g_lens_mini_batch[j]
+            g_lens_mini_drop_count = g_lens_mini_drop_count + 1
+        }
+    }
+    for i in 0 to 4096 {
+        g_lens_mini_batch[i] = batch[i]
+        g_lens_mini_hash[i] = hash[i]
+        g_lens_mini_lines[i] = lines[i]
+        g_lens_mini_rows[i] = rows[i]
+        g_lens_mini_fit[i] = fit[i]
+        g_lens_mini_path[i] = ""
+        if i < g_workspace_count {
+            g_lens_mini_path[i] = os_entry_path(i)
+        }
+    }
+    g_lens_mini_queue_count = 0
+}
+
+fn lens_mini_offer(index: i32, text: str) {
+    if index < 0 || index >= g_workspace_count || g_lens_mini_queue_count >= 8 {
+        return
+    }
+    g_lens_mini_queue_index[g_lens_mini_queue_count] = index
+    g_lens_mini_queue_text[g_lens_mini_queue_count] = text
+    g_lens_mini_queue_count = g_lens_mini_queue_count + 1
+}
+
+fn lens_mini_ready(index: i32) bool {
+    return g_lens_mini_batch[index] != 0
+}
+
+// True when the file's leaf now flows its lines differently from its batch.
+fn lens_mini_stale(index: i32) bool {
+    lens_code_flow(index, g_lens_mini_lines[index])
+    return g_lens_flow_rows != g_lens_mini_rows[index]
+}
+
+fn lens_mini_update(r: ref ui_renderer) {
+    for d in 0 to g_lens_mini_drop_count {
+        ui_rect_batch_destroy(r, g_lens_mini_drop[d])
+    }
+    g_lens_mini_drop_count = 0
+    for q in 0 to g_lens_mini_queue_count {
+        lens_mini_build(r, g_lens_mini_queue_index[q], g_lens_mini_queue_text[q])
+        g_lens_mini_queue_text[q] = ""
+    }
+    g_lens_mini_queue_count = 0
+}
+
+fn lens_text_lines(text: str) i32 {
+    let rows: i32 = 0
+    let offset: i32 = 0
+    loop offset < text.len {
+        offset = lens_line_end(text, offset) + 1
+        rows = rows + 1
+    }
+    return rows
+}
+
+// 0 code, 1 string, 2 comment: a bar breaks where the class changes.
+fn lens_token_class(kind: i32) i32 {
+    if kind == TK_COMMENT() {
+        return 2
+    }
+    if kind == TK_STRING() {
+        return 1
+    }
+    return 0
+}
+
+// One bar per code segment rather than per token: a segment runs across
+// single spaces and stops at a wider gap or where code turns into a string or
+// comment. It keeps the shape and colour of the code at a fraction of the
+// vertices, so the whole project's minimap stays resident.
+fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
+    let lines = lens_text_lines(text)
+    lens_code_flow(index, lines)
+    let rows = g_lens_flow_rows
+    let hash = os_text_hash(text)
+    if g_lens_mini_batch[index] != 0 && g_lens_mini_hash[index] == hash && g_lens_mini_rows[index] == rows {
+        return
+    }
+    let batch = g_lens_mini_batch[index]
+    if batch == 0 {
+        batch = ui_rect_batch_create(r)
+        if batch == 0 {
+            return
+        }
+    }
+    let line_h = code_base_line_h()
+    let char_w = ui_mono_char_width(r, code_base_font_px(), CODE_FONT())
+    if char_w <= 0.0 {
+        char_w = code_base_font_px() * 0.6
+    }
+    ui_rect_batch_begin(r, batch)
+    let offset: i32 = 0
+    let row: i32 = 0
+    loop offset < text.len {
+        let end = lens_line_end(text, offset)
+        let column = clamp_i(row / rows, 0, LENS_MAX_COLUMNS - 1)
+        let text_x = (column as f64) * LENS_COLUMN_REF + code_base_gutter_w() + code_base_text_inset()
+        let row_top = code_base_top_pad() + ((row % rows) as f64) * line_h
+        let m = clamp_i(end - offset, 0, LENS_PREVIEW_COLS)
+        let p: i32 = 0
+        loop p < m {
+            if lens_is_blank(lens_byte(text, offset + p)) {
+                p = p + 1
+            } else {
+                let q = clamp_i(lens_token_end(text, offset, m, p), p + 1, m)
+                let kind = g_lens_token_kind
+                let class = lens_token_class(kind)
+                let more = true
+                loop more && q < m {
+                    let n = q
+                    loop n < m && lens_is_blank(lens_byte(text, offset + n)) {
+                        n = n + 1
+                    }
+                    if n >= m || n - q >= 2 {
+                        more = false
+                    } else {
+                        let next = clamp_i(lens_token_end(text, offset, m, n), n + 1, m)
+                        if lens_token_class(g_lens_token_kind) != class {
+                            more = false
+                        } else {
+                            q = next
+                        }
+                    }
+                }
+                ui_rect_batch_add(r, batch, text_x + (p as f64) * char_w, row_top + line_h * 0.25, ((q - p) as f64) * char_w, line_h * 0.5, lens_bar_color(kind))
+                p = q
+            }
+        }
+        offset = end + 1
+        row = row + 1
+    }
+    ui_rect_batch_end(r, batch)
+    g_lens_mini_batch[index] = batch
+    g_lens_mini_hash[index] = hash
+    g_lens_mini_lines[index] = lines
+    g_lens_mini_rows[index] = rows
+    g_lens_mini_fit[index] = g_lens_flow_fit
+}
+
+// The file's bars at the leaf's code origin, scaled by the camera.
+fn lens_mini_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64) {
+    let batch = g_lens_mini_batch[index]
+    if batch == 0 {
+        return
+    }
+    let scale = zoom * g_lens_mini_fit[index]
+    ui_rect_batch_draw_range(r, batch, 0, ui_rect_batch_vertex_count(r, batch), x, y, scale, scale * squash)
+}

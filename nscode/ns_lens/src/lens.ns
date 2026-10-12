@@ -7,10 +7,34 @@ use workspace
 use editor
 
 lit LENS_CORNER_RADIUS = 3.0
-lit LENS_PREVIEW_ROWS = 32
-lit LENS_CACHE_SLOTS = 24
+lit LENS_CACHE_SLOTS = 48
+// Code is laid out once per cached page in code-layout pixels (the editor's
+// metrics at zoom 1) and drawn scaled by the camera. The zoom picks one of
+// three forms: glyphs, minimap bars, or nothing; close enough, the resident
+// file becomes the editor at the same scale.
+lit LENS_MAX_ZOOM = 2.5
+lit LENS_ORTHO_SNAP = 5.0
+lit LENS_MAX_TILT = 60.0
+lit LENS_EDIT_ZOOM = 0.7
+lit LENS_GLYPH_ZOOM = 0.3
+lit LENS_BAR_ZOOM = 0.03
+// Code flows in newspaper columns this many characters wide (layout pixels
+// per column below), so a tall file fills a wide leaf instead of overflowing.
+lit LENS_PREVIEW_COLS = 100
+lit LENS_COLUMN_REF = 800.0
+lit LENS_MAX_COLUMNS = 128
+lit LENS_LEAF_HEADER_REF = 26.0
+lit LENS_FOLDER_HEADER_REF = 30.0
+lit LENS_FOLDER_PAD_REF = 6.0
+// Source bytes per line when sizing a leaf from metadata alone, and the share
+// of the map left for code once folder frames take theirs.
+lit LENS_BYTES_PER_LINE = 30.0
+lit LENS_LAYOUT_FILL = 0.72
 lit LENS_PAGE_BYTES = 8192
 lit LENS_EDIT_BYTES = 262144
+// A preview holds the whole file up to the editor budget, so the map can show
+// every line of it.
+lit LENS_PREVIEW_BYTES = 262144
 let g_lens_files = [i32](4096)
 let g_lens_depth = [f64](4096)
 let g_lens_names = [str](4096)
@@ -19,12 +43,23 @@ let g_lens_x = [f64](4096)
 let g_lens_y = [f64](4096)
 let g_lens_w = [f64](4096)
 let g_lens_h = [f64](4096)
-let g_lens_cache_id = [i32](24)
-let g_lens_cache_text = [str](24)
-let g_lens_cache_age = [i32](24)
-let g_lens_cache_offset = [i64](24)
-let g_lens_preview_lines = [str](768)
-let g_lens_preview_count = [i32](24)
+let g_lens_cache_id = [i32](48)
+let g_lens_cache_text = [str](48)
+let g_lens_cache_age = [i32](48)
+let g_lens_cache_offset = [i64](48)
+let g_lens_preview_count = [i32](48)
+let g_lens_glyph_batch = [i32](48)
+let g_lens_glyph_dirty = [i32](48)
+// World units per code-layout pixel, so every leaf's code shares one size.
+let g_lens_code_world: f64 = 1.0
+let g_lens_folder_header = [f64](4096)
+let g_lens_glyph_cols = [i32](6192)
+let g_lens_slot_index = [i32](48)
+let g_lens_slot_rows = [i32](48)
+let g_lens_glyph_time = [f64](48)
+let g_lens_flow_rows: i32 = 1
+let g_lens_flow_fit: f64 = 1.0
+let g_lens_file_count: i32 = 0
 let g_lens_preview_slot: i32 = -1
 let g_lens_preview_builds: i32 = 0
 let g_lens_page: i64 = 0
@@ -37,7 +72,22 @@ let g_lens_center_x: f64 = 0.0
 let g_lens_center_y: f64 = 0.0
 let g_lens_target_x: f64 = 0.0
 let g_lens_target_y: f64 = 0.0
-let g_lens_tilt: f64 = 0.35
+// Map tilt in degrees. Under LENS_ORTHO_SNAP the camera is orthographic and
+// a released drag settles back to 0; past it the map is a plane in perspective.
+let g_lens_tilt: f64 = 0.0
+let g_lens_screen_drag_y: f64 = 0.0
+// Plane camera for this frame: the pivot, the pinhole distance, the tilt in
+// radians, and the part of the flat map the screen can see.
+let g_lens_plane_cx: f64 = 0.0
+let g_lens_plane_cy: f64 = 0.0
+let g_lens_plane_focal: f64 = 1.0
+let g_lens_plane_tilt: f64 = 0.0
+let g_lens_view_x0: f64 = 0.0
+let g_lens_view_y0: f64 = 0.0
+let g_lens_view_x1: f64 = 0.0
+let g_lens_view_y1: f64 = 0.0
+let g_lens_plane_x: f64 = 0.0
+let g_lens_plane_y: f64 = 0.0
 let g_lens_drag_x: f64 = 0.0
 let g_lens_drag_y: f64 = 0.0
 let g_lens_selected: i32 = -1
@@ -89,7 +139,22 @@ fn lens_partition(ids: [i32], first: i32, end: i32, x: f64, y: f64, w: f64, h: f
     }
 }
 
-fn lens_layout_children(parent: i32, x: f64, y: f64, w: f64, h: f64) {
+fn lens_layout_children(parent: i32, x0: f64, y0: f64, w0: f64, h0: f64) {
+    // A folder keeps a titled frame around its children; the root has none.
+    let x = x0
+    let y = y0
+    let w = w0
+    let h = h0
+    if parent >= 0 {
+        let side = clamp(w0, 0.0, h0)
+        let pad = clamp(side * 0.006, LENS_FOLDER_PAD_REF * g_lens_code_world, side * 0.1)
+        let header = clamp(side * 0.035, LENS_FOLDER_HEADER_REF * g_lens_code_world, h0 * 0.25)
+        g_lens_folder_header[parent] = header
+        x = x0 + pad
+        y = y0 + header
+        w = clamp(w0 - pad * 2.0, 0.0, w0)
+        h = clamp(h0 - header - pad, 0.0, h0)
+    }
     let ids = [i32](4096)
     let count: i32 = 0
     for i in 0 to g_workspace_count {
@@ -108,6 +173,7 @@ fn lens_layout_children(parent: i32, x: f64, y: f64, w: f64, h: f64) {
 }
 
 fn lens_rebuild() {
+    lens_mini_remap()
     lens_clear_cache()
     g_lens_ready_index = -1
     g_lens_ready_text = ""
@@ -127,11 +193,14 @@ fn lens_rebuild() {
         g_lens_files[i] = 0
         g_lens_depth[i] = (os_entry_depth(i) & 255) as f64
         g_lens_names[i] = os_entry_name(i)
+        g_lens_folder_header[i] = 0.0
         if workspace_entry_editable(i) {
             g_lens_files[i] = 1
+            // Area for the code a file is likely to hold: its estimated lines
+            // times one column, plus the leaf's title strip.
             let size = os_file_size(os_entry_path(i))
-            // Exact bytes for area, with a small floor for empty source files.
-            g_lens_weight[i] = clamp(size as f64, 128.0, 1000000000000.0)
+            let lines = clamp(size as f64, 0.0, LENS_EDIT_BYTES as f64) / LENS_BYTES_PER_LINE + 2.0
+            g_lens_weight[i] = (lines * code_base_line_h() + LENS_LEAF_HEADER_REF + code_base_top_pad()) * LENS_COLUMN_REF
         }
     }
     let i = g_workspace_count - 1
@@ -142,6 +211,17 @@ fn lens_rebuild() {
         }
         i = i - 1
     }
+    // Weights are code-layout areas; one world/layout ratio maps them onto
+    // the map with room left for folder frames.
+    g_lens_file_count = 0
+    let code_area: f64 = 0.0
+    for f in 0 to g_workspace_count {
+        g_lens_file_count = g_lens_file_count + g_lens_files[f]
+        if g_lens_files[f] != 0 {
+            code_area = code_area + g_lens_weight[f]
+        }
+    }
+    g_lens_code_world = sqrt(1080000.0 * LENS_LAYOUT_FILL / clamp(code_area, 1.0, 1000000000000000.0))
     lens_cache_init()
     let signature = lens_layout_signature()
     if lens_load_layout(signature) == false {
@@ -175,7 +255,7 @@ fn lens_preview(index: i32, allow_read: bool) str {
         return ""
     }
     g_lens_preview_read = true
-    let text = lens_read_source(os_entry_path(index), offset, LENS_PAGE_BYTES)
+    let text = lens_read_source(os_entry_path(index), offset, LENS_PREVIEW_BYTES)
     g_lens_cache_offset[victim] = offset
     g_lens_cache_id[victim] = index
     g_lens_cache_text[victim] = text
@@ -185,17 +265,26 @@ fn lens_preview(index: i32, allow_read: bool) str {
     return text
 }
 
-fn lens_lod(projected_width: f64, distance: f64) i32 {
-    if projected_width >= 420.0 && distance < 700.0 {
+// 0: editor, 1: glyphs, 2: minimap bars, 3: no code.
+fn lens_lod(zoom: f64) i32 {
+    if zoom >= LENS_EDIT_ZOOM {
         return 0
     }
-    if projected_width >= 140.0 {
+    if zoom >= LENS_GLYPH_ZOOM {
         return 1
     }
-    if projected_width >= 45.0 {
+    if zoom >= LENS_BAR_ZOOM {
         return 2
     }
     return 3
+}
+
+fn lens_file_count() i32 {
+    return g_lens_file_count
+}
+
+fn lens_code_zoom(leaf: lens_leaf_rect) f64 {
+    return leaf.scale * g_lens_code_world
 }
 
 fn lens_open(index: i32) bool {
@@ -261,6 +350,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if g_lens_generation != g_workspace_generation {
         lens_rebuild()
     }
+    lens_mini_update(r)
     g_lens_canvas_h = h
     let top = main_menu_h() + 42.0
     let body_h = h - top - 78.0
@@ -286,16 +376,29 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     draw_centered_text(r, w - 132.0, 4.0, 120.0, 30.0, "Open project", small_px(), col_text())
     draw_text_clipped(r, 18.0, 10.0, w - 168.0, 24.0, "ns_lens  /  wheel zoom · Shift+wheel code · right drag pan · middle drag tilt", small_px(), col_text())
-    if hit(v, 0.0, top, map_w, body_h) {
+    // The map is laid out flat and seen through the plane camera: every map
+    // interaction runs on the flat plane, under the unprojected pointer.
+    let screen_x = g_mouse_x
+    let screen_y = g_mouse_y
+    let over_map = hit(v, 0.0, top, map_w, body_h)
+    if over_map && v.mouse_middle_down {
+        g_lens_tilt = clamp(g_lens_tilt + (screen_y - g_lens_screen_drag_y) * 0.25, 0.0, LENS_MAX_TILT)
+    }
+    if v.mouse_middle_down == false && g_lens_tilt < LENS_ORTHO_SNAP {
+        g_lens_tilt = 0.0
+    }
+    g_lens_screen_drag_y = screen_y
+    lens_plane_setup(w, top, body_h)
+    lens_unproject(screen_x, screen_y)
+    g_mouse_x = g_lens_plane_x
+    g_mouse_y = g_lens_plane_y
+    if over_map {
         if shift_down(v) == false && v.scroll_y != 0.0 {
             lens_zoom_at(g_mouse_x, g_mouse_y, w, top, body_h, v.scroll_y)
         }
         if v.mouse_right_down {
             g_lens_target_x = g_lens_target_x - (g_mouse_x - g_lens_drag_x) * g_lens_distance / 800.0
             g_lens_target_y = g_lens_target_y - (g_mouse_y - g_lens_drag_y) * g_lens_distance / 800.0
-        }
-        if v.mouse_middle_down {
-            g_lens_tilt = clamp(g_lens_tilt + (g_mouse_y - g_lens_drag_y) * 0.005, 0.0, 0.8)
         }
     }
     g_lens_drag_x = g_mouse_x
@@ -313,68 +416,141 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         read_budget = 0
     }
     let preview_budget: i32 = LENS_CACHE_SLOTS
-    ui_push_clip(r, 0.0, top, map_w, body_h)
+    let vx0 = g_lens_view_x0
+    let vy0 = g_lens_view_y0
+    let vx1 = g_lens_view_x1
+    let vy1 = g_lens_view_y1
+    g_code_view_x0 = vx0
+    g_code_view_x1 = vx1
+    g_code_view_y0 = vy0
+    g_code_view_y1 = vy1
+    if g_lens_plane_tilt > 0.0 {
+        ui_begin_plane(r, g_lens_plane_cx, g_lens_plane_cy, g_lens_plane_tilt, g_lens_plane_focal, 0.0, top, w, body_h)
+    }
+    ui_push_clip(r, vx0, vy0, vx1 - vx0, vy1 - vy0)
+    // Folders first, as titled frames behind their children.
+    for i in 0 to g_workspace_count {
+        if os_entry_is_dir(i) != 0 && g_lens_weight[i] > 0.0 {
+            let box = lens_project_leaf(i, w, top, body_h)
+            if box.w > 3.0 && box.h > 3.0 && box.x < vx1 && box.x + box.w > vx0 && box.y < vy1 && box.y + box.h > vy0 {
+                lens_draw_folder(r, i, box)
+            }
+        }
+    }
     for i in 0 to g_workspace_count {
         if g_lens_files[i] != 0 && g_lens_weight[i] > 0.0 {
             let leaf = lens_project_leaf(i, w, top, body_h)
-            let z = leaf.distance
             let pw = leaf.w
             let ph = leaf.h
             let px = leaf.x
             let py = leaf.y
-            if pw > 1.0 && ph > 1.0 && px < map_w && px + pw > 0.0 && py < top + body_h && py + ph > top {
-                ui_fill_round_rect(r, px + 3.0, py + 6.0, pw, ph, LENS_CORNER_RADIUS, col_surface(), 0.0)
-                ui_fill_round_rect(r, px, py, pw, ph, LENS_CORNER_RADIUS, col_editor_panel_hi(), 0.0)
+            if pw > 1.0 && ph > 1.0 && px < vx1 && px + pw > vx0 && py < vy1 && py + ph > vy0 {
                 let color = col_muted()
                 if i == g_lens_selected {
                     color = col_accent()
                 }
-                ui_stroke_round_rect(r, px, py, pw, ph, LENS_CORNER_RADIUS, 1.0, color, 0.0)
-                let lod = lens_lod(pw, z)
-                let label_x = clamp(px + 6.0, 6.0, w - 6.0)
-                let label_y = clamp(py + 4.0, top + 4.0, top + body_h - 20.0)
-                if lod <= 2 && ph > 22.0 {
-                    draw_text_clipped(r, label_x, label_y, clamp(px + pw - 6.0, 0.0, w - 6.0) - label_x, 18.0, g_lens_names[i], small_px(), color)
+                // Leaves tile edge to edge; a one-pixel inset keeps a seam.
+                if pw < 12.0 || ph < 12.0 {
+                    // A rounded card costs dozens of vertices; a far leaf is
+                    // a few pixels, and a whole project of them would fill
+                    // the frame's vertex budget.
+                    ui_fill_rect(r, px + 0.5, py + 0.5, pw - 1.0, ph - 1.0, col_editor_panel_hi(), 0.0)
+                } else {
+                    ui_fill_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, col_editor_panel_hi(), 0.0)
+                    ui_stroke_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, 1.0, color, 0.0)
                 }
-                let hovered = hit(v, px, py, pw, ph) && hit(v, 0.0, top, w, body_h)
-                if lod == 0 && ph > 100.0 && hovered && moving == false {
-                    lens_request_near(i)
-                }
+                let zoom = lens_code_zoom(leaf)
+                // Detail follows the size on screen: a leaf far up the tilted
+                // plane is smaller than its flat layout.
+                let gain = lens_depth_gain(clamp(py + ph * 0.5, vy0, vy1))
+                let hovered = over_map && hit(v, px, py, pw, ph)
                 let resident = g_lens_editing && g_workspace_active == i
                 let paged = g_lens_reading && g_lens_selected == i
-                if lod == 0 && ph > 100.0 && (resident || paged) {
+                // Code hangs from the leaf's own origin and scales with it; the
+                // visible part of the leaf only clips it.
+                let content = lens_leaf_content(leaf, vx0, vy0, vx1, vy1)
+                let code_x = px + 1.0
+                let code_y = py + LENS_LEAF_HEADER_REF * zoom * leaf.scale_y / leaf.scale
+                let lod = 3
+                if resident || paged {
+                    lens_code_flow(i, line_count())
+                    lod = lens_lod(zoom * g_lens_flow_fit * gain)
+                }
+                if lod == 0 && (resident || paged) {
                     g_editor_byte_limit = LENS_EDIT_BYTES
-                    let content = lens_leaf_content(leaf, w, top, body_h)
+                    g_code_rows = g_lens_flow_rows
+                    g_code_column_base = LENS_COLUMN_REF
+                    set_code_zoom(zoom * g_lens_flow_fit, zoom * g_lens_flow_fit * leaf.scale_y / leaf.scale)
                     ui_push_clip(r, content.x, content.y, content.w, content.h)
-                    draw_leaf_code(r, v, content.x, content.y, content.w, content.h, resident)
+                    draw_leaf_code(r, v, code_x, code_y, pw - 2.0, py + ph - code_y - 1.0, resident)
                     ui_pop_clip(r)
-                } else if lod <= 1 && ph > 48.0 && preview_budget > 0 {
-                    preview_budget = preview_budget - 1
-                    let text = lens_preview_stream(i, read_budget > 0)
-                    if g_lens_preview_read {
-                        read_budget = 0
+                } else if ph > 6.0 && lens_lod(zoom * gain) <= 2 {
+                    // The resident minimap decides the detail and is the floor:
+                    // a leaf whose glyphs are not ready keeps its bars.
+                    let mini = lens_mini_ready(i)
+                    if mini {
+                        lod = lens_lod(zoom * g_lens_mini_fit[i] * gain)
+                    } else {
+                        lod = lens_lod(zoom * gain)
                     }
-                    ui_push_clip(r, px + 6.0, py + 26.0, pw - 12.0, ph - 30.0)
-                    if g_lens_preview_slot >= 0 {
-                        let slot = g_lens_preview_slot
-                        let first = clamp_i(((top - py - 26.0) / 16.0) as i32, 0, LENS_PREVIEW_ROWS)
-                        let last = clamp_i(((top + body_h - py - 26.0) / 16.0) as i32 + 1, first, g_lens_preview_count[slot])
-                        for row in first to last {
-                            ui_draw_text(r, px + 6.0, py + 26.0 + (row as f64) * 16.0, lens_preview_line(slot, row), 11.0, col_muted(), FONT_MONO())
+                    let drew = false
+                    ui_push_clip(r, content.x, content.y, content.w, content.h)
+                    if lod <= 1 && preview_budget > 0 {
+                        // Only leaves big enough on screen for glyphs take a
+                        // preview slot; a tilted plane shows many far ones.
+                        preview_budget = preview_budget - 1
+                        let text = lens_preview(i, false)
+                        if g_lens_preview_slot >= 0 {
+                            let slot = g_lens_preview_slot
+                            lens_code_flow(i, g_lens_preview_count[slot])
+                            lod = lens_lod(zoom * g_lens_flow_fit * gain)
+                            if lod <= 1 {
+                                lens_draw_code_batch(r, slot, i, code_x, code_y, zoom * g_lens_flow_fit, leaf.scale_y / leaf.scale, content)
+                                drew = true
+                            }
+                            if mini == false || lens_mini_stale(i) {
+                                lens_mini_offer(i, g_lens_cache_text[slot])
+                            }
                         }
                     }
+                    if drew == false && mini && lod <= 2 {
+                        lens_mini_draw(r, i, code_x, code_y, zoom, leaf.scale_y / leaf.scale)
+                    }
                     ui_pop_clip(r)
+                    if drew == false && (mini == false || lod <= 1) {
+                        // Not cached yet: one bounded read per frame.
+                        let pending = lens_preview_stream(i, read_budget > 0)
+                        if g_lens_preview_read {
+                            read_budget = 0
+                        }
+                    }
+                }
+                if lod == 0 && hovered && moving == false {
+                    lens_request_near(i)
+                }
+                if pw >= 45.0 && ph > 14.0 {
+                    lens_draw_label(r, clamp(px + 6.0, vx0 + 6.0, vx1 - 6.0), clamp(py + 3.0, vy0 + 3.0, vy1 - 20.0), clamp(px + pw - 6.0, vx0, vx1 - 6.0), g_lens_names[i], color)
                 }
                 if v.mouse_pressed && hovered && lod != 0 {
-                    g_lens_target_x = g_lens_x[i] + g_lens_w[i] * 0.5
-                    g_lens_target_y = g_lens_y[i] + g_lens_h[i] * 0.5
-                    g_lens_target_distance = clamp(g_lens_w[i] * 1.2, 1.0, 650.0)
+                    // Focus at a readable code size, framing the top of the file.
+                    let distance = clamp(800.0 * g_lens_code_world, 1.0, 6000.0)
+                    let view = distance / 800.0
+                    g_lens_target_x = g_lens_x[i] + clamp(g_lens_w[i] * 0.5, 0.0, (w * 0.5 - 24.0) * view)
+                    g_lens_target_y = g_lens_y[i] + clamp(g_lens_h[i] * 0.5, 0.0, (body_h * 0.5 - 24.0) * view)
+                    g_lens_target_distance = distance
                     v.mouse_pressed = false
                 }
             }
         }
     }
+    lens_release_idle_glyphs(r)
     ui_pop_clip(r)
+    ui_end_plane(r)
+    g_mouse_x = screen_x
+    g_mouse_y = screen_y
+    if lens_file_count() == 0 {
+        draw_centered_text(r, 0.0, top, w, body_h, "No source files in " + g_workspace_root + "  ·  Open project", small_px(), col_muted())
+    }
     if g_workspace_count >= 4096 {
         g_lens_message = "Filesystem snapshot limit reached: 4096 entries"
     }
@@ -415,30 +591,126 @@ struct lens_leaf_rect {
     y: f64,
     w: f64,
     h: f64,
-    distance: f64
+    distance: f64,
+    // Screen pixels per world unit, across and down.
+    scale: f64,
+    scale_y: f64
 }
 
+// The plane camera for this frame. Below LENS_ORTHO_SNAP it is orthographic:
+// the flat map is the screen. Past it, the map plane turns about the
+// horizontal line through the map's centre, seen from a pinhole in front of
+// the screen, and the visible part of the flat map grows toward the horizon.
+fn lens_plane_setup(w: f64, top: f64, body_h: f64) {
+    g_lens_plane_cx = w * 0.5
+    g_lens_plane_cy = top + body_h * 0.5
+    g_lens_plane_focal = body_h * 1.3
+    g_lens_plane_tilt = 0.0
+    if g_lens_tilt >= LENS_ORTHO_SNAP {
+        g_lens_plane_tilt = clamp(g_lens_tilt, 0.0, LENS_MAX_TILT) * 0.017453292519943295
+    }
+    let far: f64 = lens_unproject_y(top - g_lens_plane_cy)
+    let near: f64 = lens_unproject_y(body_h * 0.5)
+    let far_half: f64 = w * 0.5 * lens_depth(far) / g_lens_plane_focal
+    let near_half: f64 = w * 0.5 * lens_depth(near) / g_lens_plane_focal
+    let half: f64 = clamp(far_half, near_half, 1000000.0)
+    g_lens_view_x0 = g_lens_plane_cx - half
+    g_lens_view_x1 = g_lens_plane_cx + half
+    g_lens_view_y0 = g_lens_plane_cy + far
+    g_lens_view_y1 = g_lens_plane_cy + near
+}
+
+// Distance from the pinhole to the plane point `y` below the pivot.
+fn lens_depth(y: f64) f64 {
+    return g_lens_plane_focal - y * sin(g_lens_plane_tilt)
+}
+
+// Plane offset below the pivot seen at screen offset `t` below it; clamped
+// short of the horizon.
+fn lens_unproject_y(t: f64) f64 {
+    let denom: f64 = g_lens_plane_focal * cos(g_lens_plane_tilt) + t * sin(g_lens_plane_tilt)
+    return t * g_lens_plane_focal / clamp(denom, g_lens_plane_focal * 0.05, 1000000000.0)
+}
+
+// Flat-map point under the screen point (sx, sy), into g_lens_plane_x/y.
+fn lens_unproject(sx: f64, sy: f64) {
+    let y: f64 = lens_unproject_y(sy - g_lens_plane_cy)
+    g_lens_plane_x = g_lens_plane_cx + (sx - g_lens_plane_cx) * lens_depth(y) / g_lens_plane_focal
+    g_lens_plane_y = g_lens_plane_cy + y
+}
+
+// Screen size over flat size at flat-map height `y`.
+fn lens_depth_gain(y: f64) f64 {
+    return g_lens_plane_focal / clamp(lens_depth(y - g_lens_plane_cy), 1.0, 1000000000.0)
+}
+
+// One affine camera for every entry, so neighbouring rectangles share their
+// edges exactly on screen: the map tiles without overlaps or gaps.
 fn lens_project_leaf(i: i32, w: f64, top: f64, body_h: f64) lens_leaf_rect {
-    let world_y = g_lens_y[i] + g_lens_h[i] * 0.5 - g_lens_center_y
-    let z = clamp(g_lens_distance * (1.0 + g_lens_depth[i] * 0.005) + world_y * g_lens_tilt, 1.0, 10000.0)
-    let scale = 800.0 / z
-    let pw = g_lens_w[i] * scale - 3.0
-    let ph = g_lens_h[i] * scale * (1.0 - g_lens_tilt * 0.5) - 3.0
-    let px = w * 0.5 + (g_lens_x[i] + g_lens_w[i] * 0.5 - g_lens_center_x) * scale - pw * 0.5
-    let py = top + body_h * 0.5 + world_y * scale * (1.0 - g_lens_tilt * 0.5) - ph * 0.5
-    return lens_leaf_rect(px, py, pw, ph, z)
+    let scale: f64 = 800.0 / clamp(g_lens_distance, 1.0, 10000.0)
+    let scale_y: f64 = scale
+    let px: f64 = w * 0.5 + (g_lens_x[i] - g_lens_center_x) * scale
+    let py: f64 = top + body_h * 0.5 + (g_lens_y[i] - g_lens_center_y) * scale_y
+    let pw: f64 = g_lens_w[i] * scale
+    let ph: f64 = g_lens_h[i] * scale_y
+    return lens_leaf_rect(px, py, pw, ph, g_lens_distance, scale, scale_y)
+}
+
+fn lens_draw_folder(r: ref ui_renderer, i: i32, box: lens_leaf_rect) {
+    let fill = ui_pack_color("#151515")
+    if (((g_lens_depth[i] as i32) & 1)) != 0 {
+        fill = ui_pack_color("#191919")
+    }
+    ui_fill_rect(r, box.x + 0.5, box.y + 0.5, box.w - 1.0, box.h - 1.0, fill, 0.0)
+    ui_stroke_rect(r, box.x + 0.5, box.y + 0.5, box.w - 1.0, box.h - 1.0, 1.0, ui_pack_color("#2c2c2c"), 0.0)
+    let header = g_lens_folder_header[i] * box.scale_y
+    let px = clamp(header * 0.55, 0.0, 22.0)
+    if px >= 8.0 && box.w > 30.0 {
+        let ty = ui_text_v_center_y(r, box.y, header, px, FONT_MONO())
+        draw_text_clipped(r, box.x + px * 0.6, ty, box.w - px * 1.2, header, g_lens_names[i] + "/", px, col_muted())
+    }
+}
+
+// The file name sits on a small plate so it stays legible over the code.
+fn lens_draw_label(r: ref ui_renderer, x: f64, y: f64, right: f64, name: str, color: u32) {
+    let tw = clamp(ui_text_width(r, name, small_px(), FONT_MONO()) + 8.0, 0.0, right - x + 4.0)
+    if tw > 4.0 {
+        ui_fill_rect(r, x - 4.0, y, tw, 18.0, col_editor_panel_hi(), 0.0)
+        draw_text_clipped(r, x, y, right - x, 18.0, name, small_px(), color)
+    }
+}
+
+// Rows per column and the fit factor for `lines` of code in leaf `i`. The fit
+// stays 1 (every file the same size) unless the file holds more lines than
+// its area was sized for; then that file's code shrinks until it all shows.
+fn lens_code_flow(i: i32, lines: i32) {
+    let world = clamp(g_lens_code_world, 0.000001, 1000000.0)
+    let width = g_lens_w[i] / world
+    let height = g_lens_h[i] / world - LENS_LEAF_HEADER_REF - 4.0
+    let fit: f64 = 1.0
+    let rows: i32 = 1
+    for attempt in 0 to 48 {
+        rows = clamp_i(((height / fit - code_base_top_pad()) / code_base_line_h()) as i32, 1, 1000000)
+        let columns = (clamp_i(lines, 1, 100000000) + rows - 1) / rows
+        if (columns as f64) * LENS_COLUMN_REF <= width / fit + LENS_COLUMN_REF * 0.2 && columns <= LENS_MAX_COLUMNS {
+            break
+        }
+        fit = fit * 0.9
+    }
+    g_lens_flow_rows = rows
+    g_lens_flow_fit = fit
 }
 
 // Wheel zoom preserves the map point beneath the pointer, so a leaf stays put.
 fn lens_zoom_at(mx: f64, my: f64, w: f64, top: f64, body_h: f64, wheel: f64) {
-    let next = clamp(g_lens_target_distance * clamp(1.0 - wheel * 0.008, 0.5, 1.5), 1.0, 6000.0)
-    let ratio = next / g_lens_target_distance
-    let sy = my - top - body_h * 0.5
-    let divisor = clamp(800.0 * (1.0 - g_lens_tilt * 0.5) - sy * g_lens_tilt, 1.0, 10000.0)
-    let dy = sy * g_lens_target_distance / divisor
-    let dx = (mx - w * 0.5) * (g_lens_target_distance + dy * g_lens_tilt) / 800.0
-    g_lens_target_x = g_lens_target_x + dx * (1.0 - ratio)
-    g_lens_target_y = g_lens_target_y + dy * (1.0 - ratio)
+    // The world point under the pointer keeps its screen position.
+    // Past LENS_MAX_ZOOM a line no longer fits the window; stop there rather
+    // than diving into the blank space between glyphs.
+    let nearest = clamp(800.0 * g_lens_code_world / LENS_MAX_ZOOM, 1.0, 6000.0)
+    let next = clamp(g_lens_target_distance * clamp(1.0 - wheel * 0.008, 0.5, 1.5), nearest, 6000.0)
+    let delta = (g_lens_target_distance - next) / 800.0
+    g_lens_target_x = g_lens_target_x + (mx - w * 0.5) * delta
+    g_lens_target_y = g_lens_target_y + (my - top - body_h * 0.5) * delta
     g_lens_target_distance = next
 }
 
@@ -456,34 +728,221 @@ fn lens_activate_near(index: i32) bool {
     return lens_open(index)
 }
 
-// Token-free preview strings are split once on cache insertion, not every frame.
+// A cache insertion only counts rows and marks the slot's batches stale; they
+// are rebuilt on the next draw that needs them, when a renderer is at hand.
 fn lens_build_preview(slot: i32, text: str) {
-    let base = slot * LENS_PREVIEW_ROWS
-    for row in 0 to LENS_PREVIEW_ROWS {
-        g_lens_preview_lines[base + row] = ""
-    }
-    let offset: i32 = 0
     let row: i32 = 0
-    loop offset < text.len && row < LENS_PREVIEW_ROWS {
-        let end = offset
-        loop end < text.len && ((text[end] as i32) & 255) != 10 {
-            end = end + 1
-        }
-        g_lens_preview_lines[base + row] = substr(text, offset, clamp_i(end - offset, 0, 160))
-        offset = end + 1
+    let offset: i32 = 0
+    loop offset < text.len {
+        offset = lens_line_end(text, offset) + 1
         row = row + 1
     }
     g_lens_preview_count[slot] = row
+    g_lens_glyph_dirty[slot] = 1
     if text != "" {
         g_lens_preview_builds = g_lens_preview_builds + 1
     }
+}
+
+fn lens_line_end(text: str, offset: i32) i32 {
+    let end = offset
+    loop end < text.len && ((text[end] as i32) & 255) != 10 {
+        end = end + 1
+    }
+    return end
 }
 
 fn lens_preview_line(slot: i32, row: i32) str {
     if slot < 0 || slot >= LENS_CACHE_SLOTS || row < 0 || row >= g_lens_preview_count[slot] {
         return ""
     }
-    return g_lens_preview_lines[slot * LENS_PREVIEW_ROWS + row]
+    let text = g_lens_cache_text[slot]
+    let offset: i32 = 0
+    for skip in 0 to row {
+        offset = lens_line_end(text, offset) + 1
+    }
+    let end = lens_line_end(text, offset)
+    return substr(text, offset, clamp_i(end - offset, 0, LENS_PREVIEW_COLS))
+}
+
+fn lens_is_blank(b: i32) bool {
+    return b == 32 || b == 9 || b == 13
+}
+
+fn lens_byte(text: str, i: i32) i32 {
+    if i < 0 || i >= text.len {
+        return 0
+    }
+    return (text[i] as i32) & 255
+}
+
+// End of the token starting at text[s + p] on a line of m bytes, with its
+// kind in g_lens_token_kind. A per-line cut of the editor's tokenizer: it needs
+// no document state, so a cached page highlights without loading it.
+let g_lens_token_kind: i32 = 0
+
+fn lens_token_end(text: str, s: i32, m: i32, p: i32) i32 {
+    let b = lens_byte(text, s + p)
+    if b == 47 && (p + 1) < m && lens_byte(text, s + p + 1) == 47 {
+        g_lens_token_kind = TK_COMMENT()
+        return m
+    }
+    if b == 35 && g_syntax_language == 2 {
+        g_lens_token_kind = TK_COMMENT()
+        return m
+    }
+    if b == 34 || b == 39 || b == 96 {
+        g_lens_token_kind = TK_STRING()
+        let q = p + 1
+        loop q < m && lens_byte(text, s + q) != b {
+            if lens_byte(text, s + q) == 92 {
+                q = q + 1
+            }
+            q = q + 1
+        }
+        return clamp_i(q + 1, p + 1, m)
+    }
+    if is_digit_byte(b) {
+        g_lens_token_kind = TK_NUMBER()
+        let q = p + 1
+        loop q < m && (is_word_byte(lens_byte(text, s + q)) || lens_byte(text, s + q) == 46) {
+            q = q + 1
+        }
+        return q
+    }
+    if is_word_byte(b) {
+        let q = p + 1
+        loop q < m && is_word_byte(lens_byte(text, s + q)) {
+            q = q + 1
+        }
+        let w = substr(text, s + p, q - p)
+        g_lens_token_kind = TK_TEXT()
+        if is_keyword(w) {
+            g_lens_token_kind = TK_KEYWORD()
+        } else if is_type_word(w) {
+            g_lens_token_kind = TK_TYPE()
+        } else if lens_byte(text, s + q) == 40 {
+            g_lens_token_kind = TK_CALL()
+        }
+        return q
+    }
+    g_lens_token_kind = TK_PUNCT()
+    let q = p + 1
+    loop q < m {
+        let nb = lens_byte(text, s + q)
+        if lens_is_blank(nb) || is_word_byte(nb) || nb == 34 || nb == 39 || nb == 96 || nb == 47 {
+            break
+        }
+        q = q + 1
+    }
+    return q
+}
+
+// The minimap keeps each token's hue at reduced opacity.
+fn lens_bar_color(kind: i32) u32 {
+    return (token_color(kind) & 16777215u) | 2768240640u
+}
+
+// Lays out a cached page with the editor's zoom-1 metrics, flowing lines
+// down `rows`-row columns: line numbers in each column's gutter, then the
+// highlighted glyphs. g_lens_glyph_cols receives the first vertex of every
+// column, so a draw can skip the ones out of view.
+fn lens_build_code_batch(r: ref ui_renderer, slot: i32, rows: i32) i32 {
+    let batch = g_lens_glyph_batch[slot]
+    if batch == 0 {
+        batch = ui_rect_batch_create(r)
+        if batch == 0 {
+            return 0
+        }
+    }
+    let text = g_lens_cache_text[slot]
+    let line_h = code_base_line_h()
+    let font_px = code_base_font_px()
+    let char_w = ui_mono_char_width(r, font_px, CODE_FONT())
+    if char_w <= 0.0 {
+        char_w = font_px * 0.6
+    }
+    let marks = slot * (LENS_MAX_COLUMNS + 1)
+    for c in 0 to LENS_MAX_COLUMNS + 1 {
+        g_lens_glyph_cols[marks + c] = 0
+    }
+    ui_rect_batch_begin(r, batch)
+    let offset: i32 = 0
+    let row: i32 = 0
+    loop offset < text.len {
+        let end = lens_line_end(text, offset)
+        let column = clamp_i(row / rows, 0, LENS_MAX_COLUMNS - 1)
+        if row % rows == 0 {
+            g_lens_glyph_cols[marks + column] = ui_rect_batch_vertex_count(r, batch)
+        }
+        let column_x = (column as f64) * LENS_COLUMN_REF
+        let text_x = column_x + code_base_gutter_w() + code_base_text_inset()
+        let number_right = column_x + code_base_gutter_w() - 10.0
+        let row_top = code_base_top_pad() + ((row % rows) as f64) * line_h
+        let text_y = text_center_y(r, row_top, line_h, font_px)
+        let m = clamp_i(end - offset, 0, LENS_PREVIEW_COLS)
+        let number = itos(row + 1)
+        let number_x = number_right - ui_text_width(r, number, small_px(), FONT_MONO())
+        ui_rect_batch_add_text(r, batch, number_x, text_center_y(r, row_top, line_h, small_px()), number, small_px(), col_muted(), CODE_FONT())
+        let p: i32 = 0
+        loop p < m {
+            if lens_is_blank(lens_byte(text, offset + p)) {
+                p = p + 1
+            } else {
+                let q = clamp_i(lens_token_end(text, offset, m, p), p + 1, m)
+                ui_rect_batch_add_text(r, batch, text_x + (p as f64) * char_w, text_y, substr(text, offset + p, q - p), font_px, token_color(g_lens_token_kind), CODE_FONT())
+                p = q
+            }
+        }
+        offset = end + 1
+        row = row + 1
+    }
+    let used = clamp_i((row + rows - 1) / rows, 0, LENS_MAX_COLUMNS)
+    for c in used to LENS_MAX_COLUMNS + 1 {
+        g_lens_glyph_cols[marks + c] = ui_rect_batch_vertex_count(r, batch)
+    }
+    ui_rect_batch_end(r, batch)
+    return batch
+}
+
+// Draws the columns of a slot's glyph batch that cross `view`, scaled by the
+// camera.
+fn lens_draw_code_batch(r: ref ui_renderer, slot: i32, index: i32, x: f64, y: f64, zoom: f64, squash: f64, view: lens_leaf_rect) {
+    let rows = g_lens_flow_rows
+    if g_lens_slot_index[slot] != index || g_lens_slot_rows[slot] != rows {
+        g_lens_slot_index[slot] = index
+        g_lens_slot_rows[slot] = rows
+        g_lens_glyph_dirty[slot] = 1
+    }
+    if g_lens_glyph_dirty[slot] != 0 {
+        g_lens_glyph_batch[slot] = lens_build_code_batch(r, slot, rows)
+        g_lens_glyph_dirty[slot] = 0
+    }
+    g_lens_glyph_time[slot] = os_time()
+    let batch = g_lens_glyph_batch[slot]
+    if batch == 0 {
+        return
+    }
+    let column_w = LENS_COLUMN_REF * zoom
+    let first = clamp_i(((view.x - x) / column_w) as i32, 0, LENS_MAX_COLUMNS)
+    let last = clamp_i(((view.x + view.w - x) / column_w) as i32 + 1, first, LENS_MAX_COLUMNS)
+    let marks = slot * (LENS_MAX_COLUMNS + 1)
+    let start = g_lens_glyph_cols[marks + first]
+    let end = g_lens_glyph_cols[marks + last]
+    ui_rect_batch_draw_range(r, batch, start, end - start, x, y, zoom, zoom * squash)
+}
+
+// Glyph batches of whole files are large; one left undrawn for a while goes
+// back to a rebuild on demand.
+fn lens_release_idle_glyphs(r: ref ui_renderer) {
+    let now = os_time()
+    for slot in 0 to LENS_CACHE_SLOTS {
+        if g_lens_glyph_batch[slot] != 0 && now - g_lens_glyph_time[slot] > 8.0 {
+            ui_rect_batch_destroy(r, g_lens_glyph_batch[slot])
+            g_lens_glyph_batch[slot] = 0
+            g_lens_glyph_dirty[slot] = 1
+        }
+    }
 }
 
 fn lens_camera_moving(v: ref view) bool {
@@ -498,10 +957,10 @@ fn lens_camera_moving(v: ref view) bool {
 
 // Code stays inside the visible portion of its leaf even when its edges leave
 // the viewport during a close zoom. This never creates a separate editor pane.
-fn lens_leaf_content(leaf: lens_leaf_rect, w: f64, top: f64, body_h: f64) lens_leaf_rect {
-    let x = clamp(leaf.x + 1.0, 1.0, w - 1.0)
-    let y = clamp(leaf.y + 24.0, top + 24.0, top + body_h)
-    let right = clamp(leaf.x + leaf.w - 1.0, x, w - 1.0)
-    let bottom = clamp(leaf.y + leaf.h - 1.0, y, top + body_h)
-    return lens_leaf_rect(x, y, right - x, bottom - y, leaf.distance)
+fn lens_leaf_content(leaf: lens_leaf_rect, x0: f64, y0: f64, x1: f64, y1: f64) lens_leaf_rect {
+    let x = clamp(leaf.x + 1.0, x0 + 1.0, x1 - 1.0)
+    let y = clamp(leaf.y + 1.0, y0, y1)
+    let right = clamp(leaf.x + leaf.w - 1.0, x, x1 - 1.0)
+    let bottom = clamp(leaf.y + leaf.h - 1.0, y, y1)
+    return lens_leaf_rect(x, y, right - x, bottom - y, leaf.distance, leaf.scale, leaf.scale_y)
 }

@@ -7,6 +7,11 @@ use ui
 fn main() {
     g_workspace_streaming = true
     g_workspace_root = os_env("NS_ARG0")
+    // A launched app bundle starts inside its own resource directory, so
+    // without an argument the shell's directory is the project to map.
+    if g_workspace_root == "" {
+        g_workspace_root = os_env("PWD")
+    }
     if g_workspace_root == "" {
         g_workspace_root = os_cwd()
     }
