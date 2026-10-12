@@ -2,12 +2,16 @@
 
 A standalone perspective code atlas.
 
-From the repository root:
+Open a project directory (default: the current directory):
 
 ```sh
-bin/ns run nscode/ns_lens /absolute/path/to/project
-bin/ns build nscode/ns_lens
+ns lens [path]
 ```
+
+`make` builds the app to `bin/ns_lens.app` beside `ns`, and `make install`
+installs it with the source in `share/nscode/ns_lens`; without a compiled app,
+`ns lens` builds and runs this project. From the repository root it also runs
+directly with `bin/ns run nscode/ns_lens /absolute/path/to/project`.
 
 The scan follows the project's root `.gitignore`, excludes Git metadata, and
 recognizes Nano Script, common native/web/shader languages, scripts, manifests,

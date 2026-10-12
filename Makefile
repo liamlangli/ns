@@ -292,7 +292,7 @@ NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 NS_DIRS = bin bin/src bin/lib
 
 ifeq ($(NS_OS), $(NS_DARWIN))
-all: $(NS_DIRS) $(TARGET) $(NS_LIB) std profiler
+all: $(NS_DIRS) $(TARGET) $(NS_LIB) std profiler lens
 else ifeq ($(NS_OS), $(NS_LINUX))
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std $(NS_APPIMAGE_RUNTIME)
 test: $(NS_APPIMAGE_RUNTIME)
@@ -308,6 +308,13 @@ profiler: $(TARGET) std
 	$(Q)$(call ns_step,BUILD,nscode/profile,quiet) $(CURDIR)/$(TARGET)$(NS_SUFFIX) build $(CURDIR)/nscode/profile
 	$(Q)$(NS_RMDIR) $(NS_BINDIR)/nscode-profile.app
 	$(Q)$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_BINDIR)/nscode-profile.app
+
+# `ns lens` opens this compiled code map (bin/ns_lens.app beside ns).
+.PHONY: lens
+lens: $(TARGET) std
+	$(Q)$(call ns_step,BUILD,nscode/ns_lens,quiet) $(CURDIR)/$(TARGET)$(NS_SUFFIX) build $(CURDIR)/nscode/ns_lens
+	$(Q)$(NS_RMDIR) $(NS_BINDIR)/ns_lens.app
+	$(Q)$(NS_CP) nscode/ns_lens/bin/ns_lens.app $(NS_BINDIR)/ns_lens.app
 
 $(NS_DIRS):
 	$(Q)$(NS_MKDIR) $(NS_DIRS)
@@ -434,7 +441,7 @@ install: all
 		$(NS_INSTALL_ROOT)/share/ns-runtime/ref $(NS_INSTALL_ROOT)/share/ns-runtime/feature/src \
 		$(NS_INSTALL_ROOT)/share/ns-runtime/feature/include $(NS_INSTALL_ROOT)/share/ns-runtime/feature/assets \
 		$(NS_INSTALL_ROOT)/share/licenses/zlib \
-		$(NS_INSTALL_ROOT)/share/nscode/profile
+		$(NS_INSTALL_ROOT)/share/nscode/profile $(NS_INSTALL_ROOT)/share/nscode/ns_lens/src
 	$(Q)cp $(TARGET)$(NS_SUFFIX) $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new
 	$(Q)mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
 	$(Q)$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
@@ -472,6 +479,14 @@ install: all
 		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/share/nscode/profile/nscode-profile.app; \
 		$(NS_RMDIR) $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
 		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
+	fi
+	$(Q)cp nscode/ns_lens/ns.mod $(NS_INSTALL_ROOT)/share/nscode/ns_lens/
+	$(Q)cp nscode/ns_lens/src/*.ns $(NS_INSTALL_ROOT)/share/nscode/ns_lens/src/
+	$(Q)if [ -d nscode/ns_lens/bin/ns_lens.app ]; then \
+		$(NS_RMDIR) $(NS_INSTALL_ROOT)/share/nscode/ns_lens/ns_lens.app; \
+		$(NS_CP) nscode/ns_lens/bin/ns_lens.app $(NS_INSTALL_ROOT)/share/nscode/ns_lens/ns_lens.app; \
+		$(NS_RMDIR) $(NS_INSTALL_ROOT)/bin/ns_lens.app; \
+		$(NS_CP) nscode/ns_lens/bin/ns_lens.app $(NS_INSTALL_ROOT)/bin/ns_lens.app; \
 	fi
 	$(Q)find $(NS_BINDIR) -maxdepth 1 -type f \( -name '*.a' -o -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec sh -c '\
 		for ns_lib_file do ns_lib_name=$$(basename "$$ns_lib_file"); \

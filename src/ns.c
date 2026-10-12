@@ -77,6 +77,7 @@ typedef struct ns_compile_option_t {
     ns_bool profile: 2; // write a profile and print a colored hot-path summary
     ns_bool profile_cmd: 2; // `ns profile [path]` - CLI run with profiling
     ns_bool profile_view: 2; // `ns profiler [file]` - open the GUI viewer
+    ns_bool lens_view: 2; // `ns lens [path]` - open the ns_lens code map
     ns_bool run: 2;     // `ns run <file>`  - compile project scope and execute
     ns_bool test: 2;    // `ns test <path>` - compile and run test entries
     ns_bool build: 2;   // `ns build <path>` - compile project scope to an artifact
@@ -146,6 +147,8 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             option.profile = true;
         } else if (i == 1 && strcmp(argv[i], "profiler") == 0) {
             option.profile_view = true;
+        } else if (i == 1 && strcmp(argv[i], "lens") == 0) {
+            option.lens_view = true;
         } else if (i == 1 && strcmp(argv[i], "lint") == 0) {
             option.lint = true;
         } else if (i == 1 && (strcmp(argv[i], "lint_fix") == 0 || strcmp(argv[i], "lint-fix") == 0)) {
@@ -333,6 +336,8 @@ void ns_help() {
     printf("                    --device [name|usb|wifi|host:port] profiles a Debug app\n");
     printf("                    running on a device, over USB or the local network\n");
     printf("                    --devices lists the devices that can be reached\n");
+    printf("  lens [path]       open the ns_lens code map of a project directory\n");
+    printf("                    (default: the current directory)\n");
     printf("  test [path]       run <project>/test/*_test.ns, a test file, or a test dir\n");
     printf("                    --cpu runs each entry on the ns_cpu interpreter\n");
     printf("  build [path|target] compile and link a script/module to an executable or static lib\n");
@@ -5692,21 +5697,30 @@ void ns_exec_update(ns_str path) {
     ns_str_free(root);
 }
 
-static ns_bool ns_profile_viewer_at(ns_str app) {
-    ns_str mod = ns_path_join(app, ns_str_cstr("ns.mod"));
-    ns_str entry = ns_path_join(app, ns_str_cstr("main.ns"));
-    ns_bool ok = ns_file_exists(mod) && ns_file_exists(entry);
-    ns_str_free(entry);
-    ns_str_free(mod);
-    return ok;
-}
+// A bundled nscode tool: its app name (`nscode-profile`), its source project
+// below the repository or install root (`nscode/profile`), and the entry its
+// ns.mod names there. The compiled app is preferred over the source.
+typedef struct ns_tool_app {
+    const char *name;
+    const char *source;
+    const char *entry;
+} ns_tool_app;
 
-static ns_str ns_profile_app_executable(ns_str bundle) {
+static const ns_tool_app ns_tool_profiler = {"nscode-profile", "nscode/profile", "main.ns"};
+static const ns_tool_app ns_tool_lens = {"ns_lens", "nscode/ns_lens", "src/main.ns"};
+
+// The executable inside a built app: the Darwin bundle's binary, or the
+// artifact itself (a Linux AppImage).
+static ns_str ns_tool_app_executable(const ns_tool_app *tool, ns_str bundle) {
     if (bundle.data == ns_null || bundle.len == 0) return ns_str_null;
 #if defined(NS_DARWIN)
-    ns_str macos = ns_path_join(bundle, ns_str_cstr("Contents/MacOS/nscode-profile"));
+    ns_str inner = ns_str_concat(ns_str_cstr("Contents/MacOS/"), ns_str_cstr((char *)tool->name));
+    ns_str macos = ns_path_join(bundle, inner);
+    ns_str_free(inner);
     if (ns_file_exists(macos)) return macos;
     ns_str_free(macos);
+#else
+    ns_unused(tool);
 #endif
     if (ns_file_exists(bundle) && !ns_is_dir(bundle)) {
         return ns_str_concat(bundle, ns_str_cstr(""));
@@ -5714,14 +5728,26 @@ static ns_str ns_profile_app_executable(ns_str bundle) {
     return ns_str_null;
 }
 
-static ns_bool ns_profile_compiled_at(ns_str bundle) {
-    ns_str exe = ns_profile_app_executable(bundle);
+static ns_bool ns_tool_compiled_at(const ns_tool_app *tool, ns_str bundle) {
+    ns_str exe = ns_tool_app_executable(tool, bundle);
     ns_bool ok = exe.data != ns_null;
     ns_str_free(exe);
     return ok;
 }
 
-static ns_str ns_profile_find_compiled(void) {
+// Where `make` and `make install` leave a tool's app, beside this `ns`
+// executable, in its source project, or under the install share directory.
+static ns_str ns_tool_find_compiled(const ns_tool_app *tool) {
+#if defined(NS_DARWIN)
+    const char *suffix = ".app";
+#else
+    const char *suffix = ".AppImage";
+#endif
+    ns_str artifact = ns_str_concat(ns_str_cstr((char *)tool->name), ns_str_cstr((char *)suffix));
+    ns_str source_bin = ns_path_join(ns_str_cstr((char *)tool->source), ns_str_cstr("bin"));
+    ns_str source_artifact = ns_path_join(source_bin, artifact);
+    ns_str share = ns_path_join(ns_str_cstr("share"), ns_str_cstr((char *)tool->source));
+    ns_str share_artifact = ns_path_join(share, artifact);
     ns_str executable = ns_project_current_executable();
     ns_str home = ns_path_home();
     ns_str candidates[6];
@@ -5729,19 +5755,23 @@ static ns_str ns_profile_find_compiled(void) {
     if (executable.data != ns_null) {
         ns_str bin = ns_path_dirname_safe(executable);
         ns_str root = ns_path_parent(bin);
-        candidates[n++] = ns_path_join(bin, ns_str_cstr("nscode-profile.app"));
-        candidates[n++] = ns_path_join(root, ns_str_cstr("nscode/profile/bin/nscode-profile.app"));
-        candidates[n++] = ns_path_join(root, ns_str_cstr("share/nscode/profile/nscode-profile.app"));
+        candidates[n++] = ns_path_join(bin, artifact);
+        candidates[n++] = ns_path_join(root, source_artifact);
+        candidates[n++] = ns_path_join(root, share_artifact);
         ns_str_free(bin);
         ns_str_free(root);
     }
     if (home.data != ns_null) {
-        candidates[n++] = ns_path_join(home, ns_str_cstr("ns/share/nscode/profile/nscode-profile.app"));
-        candidates[n++] = ns_path_join(home, ns_str_cstr("ns/bin/nscode-profile.app"));
+        ns_str ns_home = ns_path_join(home, ns_str_cstr("ns"));
+        candidates[n++] = ns_path_join(ns_home, share_artifact);
+        ns_str ns_bin = ns_path_join(ns_home, ns_str_cstr("bin"));
+        candidates[n++] = ns_path_join(ns_bin, artifact);
+        ns_str_free(ns_bin);
+        ns_str_free(ns_home);
     }
     ns_str found = ns_str_null;
     for (i32 i = 0; i < n; i++) {
-        if (found.data == ns_null && ns_profile_compiled_at(candidates[i])) {
+        if (found.data == ns_null && ns_tool_compiled_at(tool, candidates[i])) {
             found = candidates[i];
         } else {
             ns_str_free(candidates[i]);
@@ -5749,10 +5779,17 @@ static ns_str ns_profile_find_compiled(void) {
     }
     ns_str_free(executable);
     ns_str_free(home);
+    ns_str_free(share_artifact);
+    ns_str_free(share);
+    ns_str_free(source_artifact);
+    ns_str_free(source_bin);
+    ns_str_free(artifact);
     return found;
 }
 
-static ns_str ns_profile_find_viewer(void) {
+// The tool's source project, to run when no compiled app is installed.
+static ns_str ns_tool_find_source(const ns_tool_app *tool) {
+    ns_str share = ns_path_join(ns_str_cstr("share"), ns_str_cstr((char *)tool->source));
     ns_str executable = ns_project_current_executable();
     ns_str home = ns_path_home();
     ns_str candidates[4];
@@ -5760,20 +5797,26 @@ static ns_str ns_profile_find_viewer(void) {
     if (executable.data != ns_null) {
         ns_str bin = ns_path_dirname_safe(executable);
         ns_str root = ns_path_parent(bin);
-        // Source tree: <repo>/nscode/profile
-        candidates[n++] = ns_path_join(root, ns_str_cstr("nscode/profile"));
-        // `make install`: <prefix>/share/nscode/profile
-        candidates[n++] = ns_path_join(root, ns_str_cstr("share/nscode/profile"));
+        // Source tree: <repo>/<source>; `make install`: <prefix>/share/<source>
+        candidates[n++] = ns_path_join(root, ns_str_cstr((char *)tool->source));
+        candidates[n++] = ns_path_join(root, share);
         ns_str_free(bin);
         ns_str_free(root);
     }
     if (home.data != ns_null) {
-        candidates[n++] = ns_path_join(home, ns_str_cstr("ns/share/nscode/profile"));
-        candidates[n++] = ns_path_join(home, ns_str_cstr("ns/nscode/profile"));
+        ns_str ns_home = ns_path_join(home, ns_str_cstr("ns"));
+        candidates[n++] = ns_path_join(ns_home, share);
+        candidates[n++] = ns_path_join(ns_home, ns_str_cstr((char *)tool->source));
+        ns_str_free(ns_home);
     }
     ns_str found = ns_str_null;
     for (i32 i = 0; i < n; i++) {
-        if (found.data == ns_null && ns_profile_viewer_at(candidates[i])) {
+        ns_str mod = ns_path_join(candidates[i], ns_str_cstr("ns.mod"));
+        ns_str entry = ns_path_join(candidates[i], ns_str_cstr((char *)tool->entry));
+        ns_bool ok = ns_file_exists(mod) && ns_file_exists(entry);
+        ns_str_free(entry);
+        ns_str_free(mod);
+        if (found.data == ns_null && ok) {
             found = candidates[i];
         } else {
             ns_str_free(candidates[i]);
@@ -5781,11 +5824,20 @@ static ns_str ns_profile_find_viewer(void) {
     }
     ns_str_free(executable);
     ns_str_free(home);
+    ns_str_free(share);
     return found;
 }
 
-static ns_bool ns_profile_launch_compiled(ns_str bundle) {
-    ns_str exe = ns_profile_app_executable(bundle);
+static ns_str ns_profile_find_compiled(void) {
+    return ns_tool_find_compiled(&ns_tool_profiler);
+}
+
+static ns_str ns_profile_find_viewer(void) {
+    return ns_tool_find_source(&ns_tool_profiler);
+}
+
+static ns_bool ns_tool_launch_compiled(const ns_tool_app *tool, ns_str bundle) {
+    ns_str exe = ns_tool_app_executable(tool, bundle);
     if (exe.data == ns_null) return false;
 #if defined(_WIN32)
     ns_str_free(exe);
@@ -5793,7 +5845,7 @@ static ns_bool ns_profile_launch_compiled(ns_str bundle) {
 #else
     pid_t pid = fork();
     if (pid == 0) {
-        // Detach from the parent so `ns profile` can exit immediately.
+        // Detach from the parent so `ns` can exit immediately.
         if (fork() > 0) _exit(0);
         setsid();
         execl(exe.data, exe.data, (char *)0);
@@ -5814,7 +5866,7 @@ static ns_bool ns_profile_launch_viewer(const char *what) {
     ns_str compiled = ns_profile_find_compiled();
     if (compiled.data != ns_null) {
         ns_info("profile", "opening compiled viewer for %s\n", what);
-        ns_bool ok = ns_profile_launch_compiled(compiled);
+        ns_bool ok = ns_tool_launch_compiled(&ns_tool_profiler, compiled);
         if (!ok) ns_warn("profile", "failed to launch compiled viewer %.*s\n", compiled.len, compiled.data);
         ns_str_free(compiled);
         return ok;
@@ -5869,6 +5921,39 @@ static void ns_exec_profile_live(ns_str filename) {
     ns_str_free(executable);
     ns_str_free(entry);
     ns_str_free(project);
+    ns_str_free(cwd);
+}
+
+static void ns_setenv(const char *name, const char *value);
+
+// `ns lens [path]`: open the ns_lens code map of a project directory. The app
+// enters its own resource directory on launch, so the directory travels
+// resolved, as the program argument NS_ARG0 it reads.
+static void ns_exec_lens(ns_str filename) {
+    ns_str cwd = ns_getcwd();
+    ns_str root = filename.len > 0 ? ns_path_resolve(cwd, filename) : ns_str_concat(cwd, ns_str_cstr(""));
+    if (!ns_is_dir(root)) {
+        ns_exit(1, "lens", "not a directory: %.*s\n", root.len, root.data);
+    }
+    ns_setenv("NS_ARGC", "1");
+    ns_setenv("NS_ARG0", root.data);
+    ns_str compiled = ns_tool_find_compiled(&ns_tool_lens);
+    if (compiled.data != ns_null) {
+        ns_info("lens", "opening %.*s\n", root.len, root.data);
+        if (!ns_tool_launch_compiled(&ns_tool_lens, compiled)) {
+            ns_warn("lens", "failed to launch %.*s\n", compiled.len, compiled.data);
+        }
+        ns_str_free(compiled);
+    } else {
+        ns_str app = ns_tool_find_source(&ns_tool_lens);
+        if (app.data == ns_null) {
+            ns_exit(1, "lens", "ns_lens not found; build it with `make lens` or `ns build nscode/ns_lens`\n");
+        }
+        ns_info("lens", "building and opening ns_lens for %.*s\n", root.len, root.data);
+        ns_exec_run(app, 0, false, true);
+        ns_str_free(app);
+    }
+    ns_str_free(root);
     ns_str_free(cwd);
 }
 
@@ -6664,7 +6749,9 @@ i32 main(i32 argc, i8** argv) {
 
     ns_configure_vm_runtime_paths(&vm);
 
-    if (option.profile_view) {
+    if (option.lens_view) {
+        ns_exec_lens(option.filename);
+    } else if (option.profile_view) {
         if (option.device_list) {
             return ns_profile_device_list();
         } else if (option.device_view) {

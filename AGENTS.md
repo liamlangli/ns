@@ -82,6 +82,11 @@ The common commands are:
   advertises `_nsprofile._tcp`; the viewer reaches it over USB (usbmuxd) or
   the local network and relays it like a live session. Collection runs only
   while a viewer is connected. `ns profiler --devices` lists reachable devices.
+- `ns lens [path]`: open ns_lens, a zoomable code map of a project directory
+  (default: the current directory): folders as frames, files as leaves whose
+  syntax-highlighted code scales with the camera, editable up close.
+  `make` / `make install` build it with `ns build nscode/ns_lens`; without a
+  compiled app, `ns lens` builds and runs the source project.
 - `ns test [path]`: without a path, run every `*_test.ns` in the `test/`
   directory beside the nearest `ns.mod`; a project-directory path does the
   same. An explicit test file or non-project directory is also supported. In a
