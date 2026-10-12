@@ -29,9 +29,14 @@ typedef struct audio_asset {
     f64 volume;
 } audio_asset;
 
+// A voice is reclaimed once it has started and is no longer playing. A
+// finished AVAudioPlayer rewinds currentTime to 0, so the player itself cannot
+// tell a finished voice from one whose asynchronous start is still queued.
 typedef struct audio_voice {
     AVAudioPlayer *player;
     i32 handle;
+    bool started;
+    bool paused;
 } audio_voice;
 
 static audio_asset audio_assets[AUDIO_MAX_ASSETS];
@@ -119,10 +124,25 @@ static void audio_release_voice(i32 index) {
 
 static void audio_collect_voices(void) {
     for (i32 i = 0; i < AUDIO_MAX_VOICES; ++i) {
-        AVAudioPlayer *player = audio_voices[i].player;
-        if (player && ![player isPlaying] && [player currentTime] >= [player duration]) {
+        audio_voice *voice = &audio_voices[i];
+        if (voice->player && voice->started && !voice->paused && ![voice->player isPlaying]) {
             audio_release_voice(i);
         }
+    }
+}
+
+// Called with audio_lock held once a voice's start has run. A voice that did
+// not start and is not waiting on a resume would otherwise hold its slot.
+static void audio_voice_settle(AVAudioPlayer *player, ns_bool playing) {
+    for (i32 i = 0; i < AUDIO_MAX_VOICES; ++i) {
+        audio_voice *voice = &audio_voices[i];
+        if (voice->player != player) continue;
+        if (playing) {
+            voice->started = true;
+        } else if (!voice->paused) {
+            audio_release_voice(i);
+        }
+        return;
     }
 }
 
@@ -250,12 +270,16 @@ static ns_bool audio_player_start(AVAudioPlayer *player, i32 handle) {
                 @synchronized(audio_lock()) {
                     if (!live) {
                         audio_set_error([NSString stringWithUTF8String:message[0] ? message : "unknown audio error"]);
+                        audio_voice_settle(player, false);
                         return;
                     }
                     audio_asset *current = audio_asset_for_handle(handle);
-                    if (current && current->serial == serial && ![player play]) {
-                        audio_set_error(@"audio playback could not start");
+                    ns_bool playing = false;
+                    if (current && current->serial == serial) {
+                        playing = [player play];
+                        if (!playing) audio_set_error(@"audio playback could not start");
                     }
+                    audio_voice_settle(player, playing);
                 }
             }
         });
@@ -263,7 +287,9 @@ static ns_bool audio_player_start(AVAudioPlayer *player, i32 handle) {
     }
 #endif
     (void)handle;
-    return [player play];
+    ns_bool playing = [player play];
+    audio_voice_settle(player, playing);
+    return playing;
 }
 
 ns_bool audio_init(void) {
@@ -446,7 +472,10 @@ void audio_pause(i32 handle) {
             asset->serial++;
             if (asset->kind == AUDIO_MUSIC) [asset->player pause];
             for (i32 i = 0; i < AUDIO_MAX_VOICES; ++i) {
-                if (audio_voices[i].handle == handle) [audio_voices[i].player pause];
+                if (audio_voices[i].player && audio_voices[i].handle == handle) {
+                    [audio_voices[i].player pause];
+                    audio_voices[i].paused = true;
+                }
             }
             audio_clear_error();
         }
@@ -472,6 +501,8 @@ ns_bool audio_resume(i32 handle) {
             }
             for (i32 i = 0; i < AUDIO_MAX_VOICES; ++i) {
                 if (audio_voices[i].player && audio_voices[i].handle == handle) {
+                    audio_voices[i].started = false;
+                    audio_voices[i].paused = false;
                     resumed = audio_player_start(audio_voices[i].player, handle) || resumed;
                 }
             }
