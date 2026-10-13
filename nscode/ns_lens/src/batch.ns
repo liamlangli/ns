@@ -1,0 +1,212 @@
+// Native exec tasks build disjoint CPU batches. The caller joins every task
+// before publishing vertices or changing document, syntax, theme or flow state.
+use task
+
+struct lens_batch_input {
+    source: [str],
+    offset: [i32],
+    length: [i32],
+    number: [str],
+    vertex: [i32],
+    colors: [u32],
+    count: i32,
+    bytes: i32,
+    first_row: i32,
+    first_col: i32,
+    rows: i32,
+    column_pitch: f64,
+    line_pitch: f64,
+    char_w: f64,
+    text_y: f64,
+    number_y: f64,
+    mini: bool,
+    language: i32
+}
+
+fn lens_batch_prepare(r: ref ui_renderer, text: str, document: bool, first_row: i32, first_col: i32, total: i32, rows: i32, char_w: f64, mini: bool) lens_batch_input {
+    // Initialize the selected language's literal cache before native workers.
+    let keyword_ready = is_keyword_part("", 0, 0)
+    let type_ready = is_type_word_part("", 0, 0)
+    let capacity = total - first_row
+    if !document { capacity = clamp_i(capacity, 0, lens_text_lines(text)) }
+    let input = lens_batch_input {
+        [str](capacity), [i32](capacity), [i32](capacity),
+        [str](capacity), [i32](capacity), [u32](9),
+        0, 0, first_row, first_col,
+        rows, g_lens_flow_column_pitch,
+        g_lens_flow_line_pitch, char_w,
+        text_center_y(r, 0.0, g_lens_flow_line_pitch, code_base_font_px()),
+        text_center_y(r, 0.0, g_lens_flow_line_pitch, small_px()), mini, g_syntax_language
+    }
+    for kind in 0 to 9 {
+        input.colors[kind] = token_color(kind)
+        if mini { input.colors[kind] = lens_bar_color(kind) }
+    }
+    let offset: i32 = 0
+    let row = first_row
+    loop row < total && (document || offset < text.len) {
+        let source = text
+        let end = lens_line_end(source, offset)
+        let number = row + 1
+        if document {
+            source = lens_diff_visual_text(row)
+            offset = 0
+            end = source.len
+            number = g_lens_diff_rows[row] + 1
+        }
+        let i = input.count
+        input.source[i] = substr(source, offset, end - offset)
+        input.offset[i] = 0
+        input.length[i] = end - offset
+        if !mini {
+            input.number[i] = itos(number)
+            if number == 0 { input.number[i] = "-" }
+            if first_col != 0 && i == 0 { input.number[i] = "" }
+        }
+        input.bytes = input.bytes + end - offset + 1
+        input.count = i + 1
+        offset = end + 1
+        row = row + 1
+    }
+    return input
+}
+
+fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input, begin: i32, end: i32) {
+    let font_px = code_base_font_px()
+    let number_px = small_px()
+    let measure_font = FONT_MONO()
+    let muted = col_muted()
+    let gutter = code_base_gutter_w()
+    let inset = code_base_text_inset()
+    let top = code_base_top_pad()
+    let bar_h = code_base_line_h()
+    for i in begin to end {
+        input.vertex[i] = ui_rect_batch_vertex_count(r, batch)
+        let row = input.first_row + i
+        let first_col: i32 = 0
+        if i == 0 { first_col = input.first_col }
+        let column = clamp_i(row / input.rows, 0, LENS_MAX_COLUMNS - 1)
+        let column_x = (column as f64) * input.column_pitch
+        let text_x = column_x + gutter + inset + (first_col as f64) * input.char_w
+        let row_top = top + ((row % input.rows) as f64) * input.line_pitch
+        if !input.mini {
+            let number = input.number[i]
+            let number_x = column_x + gutter - 10.0 - ui_text_width(r, number, number_px, measure_font)
+            ui_rect_batch_add_text(r, batch, number_x, row_top + input.number_y, number, number_px, muted, CODE_FONT())
+        }
+        let source = input.source[i]
+        let offset = input.offset[i]
+        let m = input.length[i]
+        let p: i32 = 0
+        loop p < m {
+            if lens_is_blank(lens_byte(source, offset + p)) {
+                p = p + 1
+            } else {
+                let token = lens_token_scan(source, offset, m, p, input.language)
+                let q = clamp_i(lens_token_position(token), p + 1, m)
+                if input.mini {
+                    let class = lens_token_class(lens_token_kind(token))
+                    let more = true
+                    loop more && q < m {
+                        let n = q
+                        loop n < m && lens_is_blank(lens_byte(source, offset + n)) { n = n + 1 }
+                        if n >= m || n - q >= 2 {
+                            more = false
+                        } else {
+                            let next = lens_token_scan(source, offset, m, n, input.language)
+                            if lens_token_class(lens_token_kind(next)) != class { more = false } else { q = clamp_i(lens_token_position(next), n + 1, m) }
+                        }
+                    }
+                    ui_rect_batch_add(r, batch, text_x + (p as f64) * input.char_w, row_top + (input.line_pitch - bar_h) * 0.5 + bar_h * 0.25, ((q - p) as f64) * input.char_w, bar_h * 0.5, input.colors[lens_token_kind(token)])
+                } else {
+                    ui_rect_batch_add_text_range(r, batch, text_x + (p as f64) * input.char_w, row_top + input.text_y, source, offset + p, q - p, font_px, input.colors[lens_token_kind(token)], CODE_FONT())
+                }
+                p = q
+            }
+        }
+    }
+}
+
+// Keep inferred typed task handles on the stack; all tasks are launched before
+// joining, and each join reports completion into a disjoint result slot.
+fn lens_batch_dispatch(r: ref ui_renderer, input: ref lens_batch_input, batches: [i32], starts: [i32], completed: [bool], worker: i32, workers: i32) {
+    if worker >= workers { return }
+    let output = batches[worker]
+    if output == 0 {
+        lens_batch_dispatch(r, input, batches, starts, completed, worker + 1, workers)
+        return
+    }
+    let begin = starts[worker]
+    let end = starts[worker + 1]
+    let source = input.source
+    let offset = input.offset
+    let length = input.length
+    let number = input.number
+    let vertex = input.vertex
+    let colors = input.colors
+    let count = input.count
+    let bytes = input.bytes
+    let first_row = input.first_row
+    let first_col = input.first_col
+    let rows = input.rows
+    let column_pitch = input.column_pitch
+    let line_pitch = input.line_pitch
+    let char_w = input.char_w
+    let text_y = input.text_y
+    let number_y = input.number_y
+    let mini = input.mini
+    let language = input.language
+    let pending = dispatch(queue_worker) { in
+        let work = lens_batch_input(source, offset, length, number, vertex, colors, count, bytes, first_row, first_col, rows, column_pitch, line_pitch, char_w, text_y, number_y, mini, language)
+        lens_batch_range(r, output, ref work, begin, end)
+    }
+    lens_batch_dispatch(r, input, batches, starts, completed, worker + 1, workers)
+    wait(pending)
+    completed[worker] = !cancelled(pending)
+}
+
+// Small pages stay inline. Split large pages by source bytes at row boundaries,
+// so long lines do not leave most of the CPUs idle. Batch allocation/merge and
+// destruction stay on the caller; workers only mutate their assigned batches
+// and disjoint ranges of input.vertex. No worker issues GPU calls.
+fn lens_batch_build(r: ref ui_renderer, batch: i32, input: ref lens_batch_input) {
+    if input.count == 0 { return }
+    let workers = clamp_i(input.bytes / 8192, 1, os_cpu_count())
+    workers = clamp_i(workers, 1, input.count)
+    if workers <= 1 {
+        lens_batch_range(r, batch, input, 0, input.count)
+        return
+    }
+    let batches = [i32](workers)
+    let starts = [i32](workers + 1)
+    let completed = [bool](workers)
+    let bytes: i32 = 0
+    let cursor: i32 = 0
+    for w in 0 to workers {
+        starts[w] = cursor
+        let target = ((input.bytes as i64) * ((w + 1) as i64) / (workers as i64)) as i32
+        loop cursor < input.count && (w == workers - 1 || bytes < target) {
+            bytes = bytes + input.length[cursor] + 1
+            cursor = cursor + 1
+        }
+        starts[w + 1] = cursor
+        batches[w] = ui_rect_batch_create(r)
+        if batches[w] != 0 { ui_rect_batch_begin(r, batches[w]) }
+    }
+    lens_batch_dispatch(r, input, batches, starts, completed, 0, workers)
+    for w in 0 to workers {
+        let output = batches[w]
+        let base = ui_rect_batch_vertex_count(r, batch)
+        let merged = false
+        if output != 0 && completed[w] {
+            merged = ui_rect_batch_append(r, batch, output)
+        }
+        if merged {
+            for i in starts[w] to starts[w + 1] { input.vertex[i] = input.vertex[i] + base }
+        } else {
+            // Preserve serial atlas selection and handle allocation/task failure.
+            lens_batch_range(r, batch, input, starts[w], starts[w + 1])
+        }
+        if output != 0 { ui_rect_batch_destroy(r, output) }
+    }
+}

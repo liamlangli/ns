@@ -1782,6 +1782,22 @@ void ui_rect_batch_add(ui_renderer *r, i32 batch_id, f64 x, f64 y, f64 w, f64 h,
     batch->vertex_count += 6;
 }
 
+ns_bool ui_rect_batch_append(ui_renderer *r, i32 batch_id, i32 source_id) {
+    ui_rect_batch *dst = ui_rect_batch_get(r, batch_id);
+    ui_rect_batch *src = ui_rect_batch_get(r, source_id);
+    if (!dst || !src || dst == src) return false;
+    if (!src->vertex_count) return true;
+    if (dst->kind >= 0 && (dst->kind != src->kind || dst->texture_id != src->texture_id)) return false;
+    if (src->vertex_count > INT32_MAX - dst->vertex_count) return false;
+    if (!ui_rect_batch_reserve(dst, src->vertex_count)) return false;
+    memcpy(dst->vertices + dst->vertex_count, src->vertices, (size_t)src->vertex_count * sizeof(ui_vertex));
+    dst->vertex_count += src->vertex_count;
+    dst->kind = src->kind;
+    dst->texture_id = src->texture_id;
+    dst->dirty = true;
+    return true;
+}
+
 ns_bool ui_rect_batch_end(ui_renderer *r, i32 batch_id) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
     return batch != NULL;
@@ -2998,7 +3014,7 @@ void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u
 // keep their unsnapped positions so the batch scales cleanly at draw time.
 // The first glyph fixes the batch's font texture; a glyph that falls back to
 // another atlas (or a batch already holding rectangles) is skipped.
-void ui_rect_batch_add_text(ui_renderer *r, i32 batch_id, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
+static void ui_rect_batch_text_range(ui_renderer *r, i32 batch_id, f64 x, f64 y, const char *text, i32 length, f64 font_px, u32 rgba, i32 font_type) {
     ui_rect_batch *batch = ui_rect_batch_get(r, batch_id);
     if (!batch || !text || font_px <= 0.0) return;
     if (batch->kind == UI_KIND_IMAGE) return;
@@ -3006,8 +3022,21 @@ void ui_rect_batch_add_text(ui_renderer *r, i32 batch_id, f64 x, f64 y, const ch
     f64 cx = x;
     f64 cy = y;
     const unsigned char *p = (const unsigned char*)text;
-    while (*p) {
-        i32 code = ui_utf8_next(&p);
+    const unsigned char *end = p + length;
+    while (p < end && *p) {
+        // A byte range may end inside a UTF-8 sequence. Give the decoder the
+        // same zero-terminated tail that a substring would have supplied.
+        i32 code;
+        if (end - p < 4) {
+            unsigned char tail[5] = {0};
+            size_t remaining = (size_t)(end - p);
+            memcpy(tail, p, remaining);
+            const unsigned char *cursor = tail;
+            code = ui_utf8_next(&cursor);
+            p += cursor - tail;
+        } else {
+            code = ui_utf8_next(&p);
+        }
         if (code == '\n') {
             cx = x;
             cy += primary->line_height * (font_px / primary->font_size);
@@ -3051,6 +3080,19 @@ void ui_rect_batch_add_text(ui_renderer *r, i32 batch_id, f64 x, f64 y, const ch
         }
         cx += g->x_advance * scale;
     }
+}
+
+void ui_rect_batch_add_text(ui_renderer *r, i32 batch_id, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
+    if (!text) return;
+    ui_rect_batch_text_range(r, batch_id, x, y, text, (i32)strlen(text), font_px, rgba, font_type);
+}
+
+void ui_rect_batch_add_text_range(ui_renderer *r, i32 batch_id, f64 x, f64 y, const char *text, i32 offset, i32 length, f64 font_px, u32 rgba, i32 font_type) {
+    if (!text || offset < 0 || length <= 0) return;
+    size_t size = strlen(text);
+    if ((size_t)offset > size) return;
+    if ((size_t)length > size - (size_t)offset) length = (i32)(size - (size_t)offset);
+    ui_rect_batch_text_range(r, batch_id, x, y, text + offset, length, font_px, rgba, font_type);
 }
 
 static f64 ui_text_char_advance(ui_renderer *r, i32 font_type, i32 code, f64 font_px) {

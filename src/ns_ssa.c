@@ -3819,6 +3819,7 @@ typedef enum {
     NS_SSA_PIN_STR = 1,
     NS_SSA_PIN_ARRAY = 2, /* elements of `size` bytes each */
     NS_SSA_PIN_ALL = 3,   /* extent unknown: keep everything allocated so far */
+    NS_SSA_PIN_REF = 4,   /* complex ref: pin the heap only for an ns address */
 } ns_ssa_pin_kind;
 
 /* How to pin a published value of this type, or false when publishing it puts
@@ -3837,7 +3838,7 @@ static ns_bool ns_ssa_scope_pin_kind(ns_ssa_builder *b, ns_type t, i32 *kind, i3
     }
     if (ns_type_is_ref(t)) {
         ns_type pointee = ns_type_set_ref(t, false);
-        if (!ns_ssa_scope_flat(b, pointee, 0)) return true;
+        if (!ns_ssa_scope_flat(b, pointee, 0)) { *kind = NS_SSA_PIN_REF; return true; }
         *kind = NS_SSA_PIN_BLOCK;
         *size = ns_type_is(t, NS_TYPE_STRUCT) ? ns_ssa_scope_struct_bytes(b, t)
                                               : ns_ssa_wasm32_size(b, pointee);
@@ -3904,27 +3905,48 @@ static ns_type *ns_ssa_scope_value_types(ns_ssa_fn *fn, i32 nvalues) {
     return types;
 }
 
-/* Rewrite one function: a mark on entry, a release before every return, and a
- * pin in front of every instruction that publishes an address. */
-static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn *fn) {
-    i32 nvalues = 0;
-    ns_bool allocates = false;
+/* A call to a proved allocation-free ns function needs no heap scope. This
+ * matters for native parallel loops: marking/releasing every scalar helper
+ * would otherwise serialize those loops on the runtime heap mutex. Constants
+ * are interned and pinned by the runtime, so they need no temporary scope.
+ * Unknown/indirect/foreign calls remain conservative. */
+static ns_bool ns_ssa_scope_call_allocates(ns_ssa_module *m, ns_ssa_inst *inst,
+                                          const ns_bool *allocation_free) {
+    if (inst->name.len == 0 || !ns_ssa_scope_call_pins_itself(m, inst)) return true;
+    for (i32 i = 0, l = (i32)ns_array_length(m->fns); i < l; ++i) {
+        if (ns_str_equals(m->fns[i].name, inst->name)) return !allocation_free[i];
+    }
+    return true;
+}
+
+static ns_bool ns_ssa_scope_allocates(ns_ssa_module *m, ns_ssa_fn *fn,
+                                     const ns_bool *allocation_free) {
     for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
         ns_ssa_inst *inst = &fn->insts[i];
-        if (inst->dst + 1 > nvalues) nvalues = inst->dst + 1;
         switch (inst->op) {
         case NS_SSA_OP_ALLOC:
         case NS_SSA_OP_CLONE:
         case NS_SSA_OP_ARRAY_NEW:
+            return true;
         case NS_SSA_OP_CALL:
-            allocates = true;
+            if (ns_ssa_scope_call_allocates(m, inst, allocation_free)) return true;
             break;
         case NS_SSA_OP_ADD:
-            if (ns_type_is(inst->type, NS_TYPE_STRING)) allocates = true;
+            if (ns_type_is(inst->type, NS_TYPE_STRING)) return true;
             break;
         default:
             break;
         }
+    }
+    return false;
+}
+
+/* Rewrite one function: a mark on entry, a release before every return, and a
+ * pin in front of every instruction that publishes an address. */
+static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn *fn, ns_bool allocates) {
+    i32 nvalues = 0;
+    for (i32 i = 0, l = (i32)ns_array_length(fn->insts); i < l; ++i) {
+        if (fn->insts[i].dst + 1 > nvalues) nvalues = fn->insts[i].dst + 1;
     }
     if (nvalues < 1) return;
 
@@ -4078,9 +4100,23 @@ static void ns_ssa_scope_rewrite(ns_ssa_builder *b, ns_ssa_module *m, ns_ssa_fn 
 // from a bug of the program's own.
 static void ns_ssa_scope_pass(ns_ssa_builder *b, ns_ssa_module *m) {
     if (getenv("NS_NO_SCOPE")) return;
-    for (i32 i = 0, l = (i32)ns_array_length(m->fns); i < l; ++i) {
-        ns_ssa_scope_rewrite(b, m, &m->fns[i]);
+    i32 count = (i32)ns_array_length(m->fns);
+    ns_bool *allocation_free = ns_malloc((szt)count * sizeof(ns_bool));
+    memset(allocation_free, 0, (szt)count * sizeof(ns_bool));
+    ns_bool changed = true;
+    while (changed) {
+        changed = false;
+        for (i32 i = 0; i < count; ++i) {
+            if (!allocation_free[i] && !ns_ssa_scope_allocates(m, &m->fns[i], allocation_free)) {
+                allocation_free[i] = true;
+                changed = true;
+            }
+        }
     }
+    for (i32 i = 0; i < count; ++i) {
+        ns_ssa_scope_rewrite(b, m, &m->fns[i], !allocation_free[i]);
+    }
+    ns_free(allocation_free);
 }
 
 ns_return_ptr ns_ssa_build_with_runtime_paths_options(ns_ast_ctx *ctx, ns_str ref_path,

@@ -775,7 +775,8 @@ static void ns_cpu_gen_inst(ns_cpu_gen *g, i32 pos, i32 index) {
             break;
         }
         i32 args[2] = {ns_cpu_gen_reg(g, inst->a), ns_cpu_gen_imm(g, (u64)(u32)(inst->c > 0 ? inst->c : 0))};
-        if (inst->target0 == 1) ns_cpu_gen_rt_call(g, g->sink, "ns_rt_pin_str", args, 1);
+        if (inst->target0 == 4) ns_cpu_gen_rt_call(g, g->sink, "ns_rt_pin_ref", args, 1);
+        else if (inst->target0 == 1) ns_cpu_gen_rt_call(g, g->sink, "ns_rt_pin_str", args, 1);
         else ns_cpu_gen_rt_call(g, g->sink, inst->target0 == 2 ? "ns_rt_pin_array" : "ns_rt_pin", args, 2);
     } break;
     case NS_SSA_OP_LOAD: {

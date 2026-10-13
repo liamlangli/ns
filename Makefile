@@ -387,6 +387,7 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_profile_test
 	$(NS_BINDIR)/ns_patch_test
 	$(NS_BINDIR)/ui_triangle_test
+	sh nscode/ns_lens/test/batch_native_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_project_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_lint_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"

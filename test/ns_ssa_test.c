@@ -2,8 +2,66 @@
 #include "ns_os.h"
 #include "ns_ssa.h"
 #include "ns_wasm.h"
+#include "ns_native_rt.h"
+
+static void test_native_pins(void) {
+    ns_rt_reset();
+    int64_t mark = ns_rt_scope_enter();
+    int64_t scratch = ns_rt_alloc(32);
+    int native_handle = 0;
+    ns_rt_pin_ref((int64_t)(uintptr_t)&native_handle);
+    ns_rt_scope_leave(mark, 0, 0);
+    ns_expect(ns_rt_alloc(32) == scratch, "a native handle does not pin script heap temporaries.");
+    mark = ns_rt_scope_enter();
+    int64_t kept = ns_rt_alloc(32);
+    ns_rt_store(kept, 0, 42, 8);
+    ns_rt_pin_ref(kept);
+    ns_rt_scope_leave(mark, 0, 0);
+    ns_expect(ns_rt_alloc(32) > kept && ns_rt_load(kept, 0, 8) == 42,
+              "a complex script ref still pins its reachable heap.");
+    int64_t text = ns_rt_itos(123456);
+    ns_rt_pin_str(text);
+    ns_rt_pin_str(text);
+    mark = ns_rt_scope_enter();
+    scratch = ns_rt_alloc(32);
+    ns_rt_pin_str(text);
+    ns_rt_scope_leave(mark, 0, 0);
+    ns_expect(ns_rt_alloc(32) == scratch, "re-pinning a published string does not pin unrelated temporaries.");
+    ns_rt_reset();
+}
+
+static void test_allocation_free_scopes(void) {
+    const char *source =
+        "fn leaf(n: i32) i32 { return n + 1 }\n"
+        "fn chain(n: i32) i32 { return leaf(n) * 2 }\n"
+        "fn scratch(n: i32) i32 { let a = [i32](8)\n a[0] = n\n return a[0] }\n"
+        "fn allocating(n: i32) i32 { return scratch(n) }\n"
+        "fn main() i32 { return chain(1) + allocating(2) }\n";
+    ns_ast_ctx ctx = {0};
+    ns_return_bool parsed = ns_ast_parse(&ctx, ns_str_cstr((i8 *)source), ns_str_cstr("<scope_effect_test>"));
+    ns_expect(!ns_return_is_error(parsed), "scope effect source parses.");
+    ns_return_ptr built = ns_ssa_build_with_runtime_paths_options(&ctx, ns_str_null, ns_str_null, ns_str_null, false);
+    ns_expect(!ns_return_is_error(built), "scope effect source lowers.");
+    if (ns_return_is_error(built)) return;
+    ns_ssa_module *m = built.r;
+    for (i32 i = 0; i < (i32)ns_array_length(m->fns); ++i) {
+        ns_ssa_fn *fn = &m->fns[i];
+        ns_bool has_scope = false;
+        for (i32 j = 0; j < (i32)ns_array_length(fn->insts); ++j)
+            if (fn->insts[j].op == NS_SSA_OP_SCOPE_ENTER) has_scope = true;
+        if (ns_str_equals_STR(fn->name, "chain")) {
+            ns_expect(!has_scope, "a scalar helper chain needs no heap scope.");
+        }
+        if (ns_str_equals_STR(fn->name, "allocating")) {
+            ns_expect(has_scope, "a caller of an allocating function keeps its heap scope.");
+        }
+    }
+    ns_ssa_module_free(m);
+}
 
 int main(void) {
+    test_native_pins();
+    test_allocation_free_scopes();
     const char *source =
         "use std\n"
         "lit folded = 6 * 7\n"

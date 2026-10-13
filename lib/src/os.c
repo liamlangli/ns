@@ -58,6 +58,16 @@ i32 os_platform(void) {
 #endif
 }
 
+i32 os_cpu_count(void) {
+#ifdef NS_WIN
+    DWORD count = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    return count > 0 && count <= INT_MAX ? (i32)count : 1;
+#else
+    long count = sysconf(_SC_NPROCESSORS_ONLN);
+    return count > 0 && count <= INT_MAX ? (i32)count : 1;
+#endif
+}
+
 struct os_lock {
 #ifdef NS_WIN
     SRWLOCK native;

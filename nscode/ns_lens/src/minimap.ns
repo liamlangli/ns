@@ -190,7 +190,6 @@ fn lens_mini_build_content(r: ref ui_renderer, index: i32, text: str, document: 
             return
         }
     }
-    let line_h = g_lens_flow_line_pitch
     let char_w = ui_mono_char_width(r, code_base_font_px(), CODE_FONT())
     if char_w <= 0.0 {
         char_w = code_base_font_px() * 0.6
@@ -208,53 +207,8 @@ fn lens_mini_build_content(r: ref ui_renderer, index: i32, text: str, document: 
         ui_rect_batch_begin(r, batch)
     }
     let start_vertex = ui_rect_batch_vertex_count(r, batch)
-    let offset: i32 = 0
-    let row: i32 = first_row
-    loop row < lines && (document || offset < text.len) {
-        let source = text
-        let end = lens_line_end(source, offset)
-        if document {
-            source = lens_diff_visual_text(row)
-            offset = 0
-            end = source.len
-        }
-        let column = clamp_i(row / rows, 0, LENS_MAX_COLUMNS - 1)
-        let text_x = (column as f64) * g_lens_flow_column_pitch + code_base_gutter_w() + code_base_text_inset() + (first_col as f64) * char_w
-        let row_top = code_base_top_pad() + ((row % rows) as f64) * line_h
-        let m = end - offset
-        let p: i32 = 0
-        loop p < m {
-            if lens_is_blank(lens_byte(source, offset + p)) {
-                p = p + 1
-            } else {
-                let q = clamp_i(lens_token_end(source, offset, m, p), p + 1, m)
-                let kind = g_lens_token_kind
-                let class = lens_token_class(kind)
-                let more = true
-                loop more && q < m {
-                    let n = q
-                    loop n < m && lens_is_blank(lens_byte(source, offset + n)) {
-                        n = n + 1
-                    }
-                    if n >= m || n - q >= 2 {
-                        more = false
-                    } else {
-                        let next = clamp_i(lens_token_end(source, offset, m, n), n + 1, m)
-                        if lens_token_class(g_lens_token_kind) != class {
-                            more = false
-                        } else {
-                            q = next
-                        }
-                    }
-                }
-                ui_rect_batch_add(r, batch, text_x + (p as f64) * char_w, row_top + (line_h - code_base_line_h()) * 0.5 + code_base_line_h() * 0.25, ((q - p) as f64) * char_w, code_base_line_h() * 0.5, lens_bar_color(kind))
-                p = q
-            }
-        }
-        offset = end + 1
-        row = row + 1
-        first_col = 0
-    }
+    let input = lens_batch_prepare(r, text, document, first_row, first_col, lines, rows, char_w, true)
+    lens_batch_build(r, batch, ref input)
     ui_rect_batch_end(r, batch)
     if g_lens_mini_build_block != 0 {
         g_lens_block_mini_first[g_lens_mini_build_block] = start_vertex

@@ -481,13 +481,23 @@ ref fn ui_rect_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64) bool
 // geometry changes, then submit it (or a range of it) as one draw command
 // without consuming the renderer's per-frame vertex buffer. A batch holds either rectangles or glyphs of one
 // font atlas: the first add after ui_rect_batch_begin fixes which, and adds of
-// the other kind are ignored.
+// the other kind are ignored. Independent batches may be filled concurrently
+// while the renderer/fonts remain unchanged. Create, begin, append, destroy,
+// drawing and font loading belong to the caller thread; join workers before
+// consuming their batches. Adds/end/count perform CPU work only.
 ref fn ui_rect_batch_create(r: ref ui_renderer) i32
 ref fn ui_rect_batch_destroy(r: ref ui_renderer, batch_id: i32)
 ref fn ui_rect_batch_begin(r: ref ui_renderer, batch_id: i32)
 ref fn ui_rect_batch_add(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, w: f64, h: f64, rgba: u32)
 // Glyphs of one text run at batch-local (x, y), laid out as ui_draw_text does.
 ref fn ui_rect_batch_add_text(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
+// Byte range of a text run, equivalent to add_text(substr(text, offset, length)).
+// Avoids allocating a temporary substring for every highlighted token.
+ref fn ui_rect_batch_add_text_range(r: ref ui_renderer, batch_id: i32, x: f64, y: f64, text: str, offset: i32, length: i32, font_px: f64, rgba: u32, font_type: i32)
+// Copy CPU vertices in order. Both batches must use the same texture/kind.
+// Returns false without changing the destination on incompatibility/allocation
+// failure. No GPU work; call after workers have finished writing the source.
+ref fn ui_rect_batch_append(r: ref ui_renderer, batch_id: i32, source_id: i32) bool
 ref fn ui_rect_batch_end(r: ref ui_renderer, batch_id: i32) bool
 ref fn ui_rect_batch_draw(r: ref ui_renderer, batch_id: i32)
 ref fn ui_rect_batch_draw_at(r: ref ui_renderer, batch_id: i32, dx: f64, dy: f64)

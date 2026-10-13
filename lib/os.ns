@@ -10,6 +10,8 @@ lit OS_PLATFORM_WINDOWS = 4
 lit OS_PLATFORM_LINUX = 5
 
 ref fn os_platform() i32
+// Number of online logical CPUs, always at least one.
+ref fn os_cpu_count() i32
 
 struct os_date {
     year: i32,

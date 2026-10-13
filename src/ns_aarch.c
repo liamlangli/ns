@@ -981,6 +981,10 @@ static void ns_aarch_emit_inst(ns_aarch_ctx *c, ns_ssa_inst *inst) {
             break;
         }
         ns_aarch_load_value(c, NS_AARCH_X0, inst->a);
+        if (inst->target0 == 4) {
+            ns_aarch_emit_rt_call(c, "ns_rt_pin_ref");
+            break;
+        }
         if (inst->target0 == 1) {
             ns_aarch_emit_rt_call(c, "ns_rt_pin_str");
             break;

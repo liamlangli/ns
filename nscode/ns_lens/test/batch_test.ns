@@ -1,0 +1,61 @@
+use std
+use os
+use ui
+use view
+
+fn check_batch(r: ref ui_renderer, text: str, mini: bool, document: bool, first_row: i32, first_col: i32, total: i32) {
+    let input = lens_batch_prepare(r, text, document, first_row, first_col, total, 37, 8.0, mini)
+    let serial = ui_rect_batch_create(r)
+    let parallel = ui_rect_batch_create(r)
+    ui_rect_batch_begin(r, serial)
+    ui_rect_batch_begin(r, parallel)
+    // An existing prefix exercises minimap block append offsets too.
+    if mini {
+        ui_rect_batch_add(r, serial, 1.0, 2.0, 3.0, 4.0, 0xffffffffu)
+        ui_rect_batch_add(r, parallel, 1.0, 2.0, 3.0, 4.0, 0xffffffffu)
+    }
+    let start = os_time()
+    lens_batch_range(r, serial, ref input, 0, input.count)
+    let serial_ms = (os_time() - start) * 1000.0
+    let vertices = [i32](input.count)
+    for i in 0 to input.count { vertices[i] = input.vertex[i] }
+    let begin = os_time()
+    lens_batch_build(r, parallel, ref input)
+    let parallel_ms = (os_time() - begin) * 1000.0
+    assert ui_rect_batch_vertex_count(r, serial) == ui_rect_batch_vertex_count(r, parallel)
+    for i in 0 to input.count { assert vertices[i] == input.vertex[i] }
+    print(`batch mini={mini} document={document}: serial {serial_ms} ms, parallel {parallel_ms} ms, CPUs {os_cpu_count()}\n`)
+    ui_rect_batch_destroy(r, serial)
+    ui_rect_batch_destroy(r, parallel)
+}
+
+fn main() {
+    assert os_cpu_count() >= 1
+    let keyword = lens_token_end("let name = 42 // note", 0, 21, 0)
+    let number = lens_token_end("42", 0, 2, 0)
+    assert lens_token_position(keyword) == 3 && lens_token_kind(keyword) == TK_KEYWORD()
+    assert lens_token_position(number) == 2 && lens_token_kind(number) == TK_NUMBER()
+    assert lens_token_kind(keyword) == TK_KEYWORD()
+    let python_comment = lens_token_scan("# note", 0, 6, 0, 2)
+    assert lens_token_kind(python_comment) == TK_COMMENT()
+    assert is_keyword_language("xxfunctionyy", 2, 8, 1)
+    assert is_type_word_language("xxfloatyy", 2, 5, 2)
+    let v = view_create("batch test", 320, 200)
+    let r = ui_renderer_create(v)
+    g_lens_flow_column_pitch = 800.0
+    g_lens_flow_line_pitch = 20.0
+    let text = "    let answer: i32 = compute(42) + 3 // parallel batch generation\n"
+    for i in 0 to 12 { text = text + text }
+    text = text + "print(\"FINAL_ROW\")"
+    check_batch(r, text, true, false, 19, 7, 19 + lens_text_lines(text))
+    check_batch(r, text, false, false, 19, 7, 19 + lens_text_lines(text))
+    load_str(text)
+    lens_diff_parse("@@ -2 +2 @@\n-old\n+new\n")
+    check_batch(r, text, true, true, 0, 0, g_lens_diff_count)
+    check_batch(r, text, false, true, 0, 0, g_lens_diff_count)
+    check_batch(r, "", true, false, 0, 0, 1)
+    check_batch(r, "x", false, false, 0, 0, 1)
+    ui_renderer_destroy(r)
+    view_close(v)
+    print("batch_test: passed\n")
+}

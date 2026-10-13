@@ -885,23 +885,32 @@ fn lens_byte(text: str, i: i32) i32 {
     return (text[i] as i32) & 255
 }
 
-// End of the token starting at text[s + p] on a line of m bytes, with its
-// kind in g_lens_token_kind. A per-line cut of the editor's tokenizer: it needs
-// no document state, so a cached page highlights without loading it.
-let g_lens_token_kind: i32 = 0
+// Pack end and kind into a scalar to avoid a heap allocation per token in
+// native worker threads. The low four bits hold the nine token kinds.
+fn lens_token_pack(end: i32, kind: i32) i64 {
+    return ((end as i64) << 4) | (kind as i64)
+}
 
-fn lens_token_end(text: str, s: i32, m: i32, p: i32) i32 {
+fn lens_token_position(token: i64) i32 { return (token >> 4) as i32 }
+fn lens_token_kind(token: i64) i32 { return (token & 15) as i32 }
+
+fn lens_token_end(text: str, s: i32, m: i32, p: i32) i64 {
+    return lens_token_scan(text, s, m, p, g_syntax_language)
+}
+
+fn lens_token_scan(text: str, s: i32, m: i32, p: i32, language: i32) i64 {
+    let kind = TK_TEXT()
     let b = lens_byte(text, s + p)
     if b == 47 && (p + 1) < m && lens_byte(text, s + p + 1) == 47 {
-        g_lens_token_kind = TK_COMMENT()
-        return m
+        kind = TK_COMMENT()
+        return lens_token_pack(m, kind)
     }
-    if b == 35 && g_syntax_language == 2 {
-        g_lens_token_kind = TK_COMMENT()
-        return m
+    if b == 35 && language == 2 {
+        kind = TK_COMMENT()
+        return lens_token_pack(m, kind)
     }
     if b == 34 || b == 39 || b == 96 {
-        g_lens_token_kind = TK_STRING()
+        kind = TK_STRING()
         let q = p + 1
         loop q < m && lens_byte(text, s + q) != b {
             if lens_byte(text, s + q) == 92 {
@@ -909,33 +918,32 @@ fn lens_token_end(text: str, s: i32, m: i32, p: i32) i32 {
             }
             q = q + 1
         }
-        return clamp_i(q + 1, p + 1, m)
+        return lens_token_pack(clamp_i(q + 1, p + 1, m), kind)
     }
     if is_digit_byte(b) {
-        g_lens_token_kind = TK_NUMBER()
+        kind = TK_NUMBER()
         let q = p + 1
         loop q < m && (is_word_byte(lens_byte(text, s + q)) || lens_byte(text, s + q) == 46) {
             q = q + 1
         }
-        return q
+        return lens_token_pack(q, kind)
     }
     if is_word_byte(b) {
         let q = p + 1
         loop q < m && is_word_byte(lens_byte(text, s + q)) {
             q = q + 1
         }
-        let w = substr(text, s + p, q - p)
-        g_lens_token_kind = TK_TEXT()
-        if is_keyword(w) {
-            g_lens_token_kind = TK_KEYWORD()
-        } else if is_type_word(w) {
-            g_lens_token_kind = TK_TYPE()
+        kind = TK_TEXT()
+        if is_keyword_language(text, s + p, q - p, language) {
+            kind = TK_KEYWORD()
+        } else if is_type_word_language(text, s + p, q - p, language) {
+            kind = TK_TYPE()
         } else if lens_byte(text, s + q) == 40 {
-            g_lens_token_kind = TK_CALL()
+            kind = TK_CALL()
         }
-        return q
+        return lens_token_pack(q, kind)
     }
-    g_lens_token_kind = TK_PUNCT()
+    kind = TK_PUNCT()
     let q = p + 1
     loop q < m {
         let nb = lens_byte(text, s + q)
@@ -944,7 +952,7 @@ fn lens_token_end(text: str, s: i32, m: i32, p: i32) i32 {
         }
         q = q + 1
     }
-    return q
+    return lens_token_pack(q, kind)
 }
 
 // The minimap keeps each token's hue at reduced opacity.
@@ -965,7 +973,6 @@ fn lens_build_code_batch(r: ref ui_renderer, slot: i32, rows: i32) i32 {
         }
     }
     let text = g_lens_cache_text[slot]
-    let line_h = g_lens_flow_line_pitch
     let font_px = code_base_font_px()
     let char_w = ui_mono_char_width(r, font_px, CODE_FONT())
     if char_w <= 0.0 {
@@ -976,67 +983,31 @@ fn lens_build_code_batch(r: ref ui_renderer, slot: i32, rows: i32) i32 {
         g_lens_glyph_cols[marks + c] = 0
     }
     ui_rect_batch_begin(r, batch)
-    let offset: i32 = 0
-    let row: i32 = 0
+    let first_row: i32 = 0
     let first_col: i32 = 0
     let document = slot == LENS_CACHE_SLOTS
     if g_lens_slot_block[slot] != 0 {
         let block = g_lens_blocks[g_lens_slot_block[slot]]
-        row = block.row
+        first_row = block.row
         first_col = block.col
     }
-    let first_row = row
-    let total = row + lens_text_lines(text)
-    if document {
-        total = g_lens_diff_count
+    let total = first_row + lens_text_lines(text)
+    if document { total = g_lens_diff_count }
+    let input = lens_batch_prepare(r, text, document, first_row, first_col, total, rows, char_w, false)
+    lens_batch_build(r, batch, ref input)
+    for i in 0 to input.count {
+        let row = first_row + i
+        if row % rows == 0 || i == 0 {
+            let column = clamp_i(row / rows, 0, LENS_MAX_COLUMNS - 1)
+            g_lens_glyph_cols[marks + column] = input.vertex[i]
+        }
     }
-    loop row < total && (document || offset < text.len) {
-        let source = text
-        let end = lens_line_end(source, offset)
-        if document {
-            source = lens_diff_visual_text(row)
-            offset = 0
-            end = source.len
-        }
-        let column = clamp_i(row / rows, 0, LENS_MAX_COLUMNS - 1)
-        if row % rows == 0 || row == first_row {
-            g_lens_glyph_cols[marks + column] = ui_rect_batch_vertex_count(r, batch)
-        }
-        let column_x = (column as f64) * g_lens_flow_column_pitch
-        let text_x = column_x + code_base_gutter_w() + code_base_text_inset() + (first_col as f64) * char_w
-        let number_right = column_x + code_base_gutter_w() - 10.0
-        let row_top = code_base_top_pad() + ((row % rows) as f64) * line_h
-        let text_y = text_center_y(r, row_top, line_h, font_px)
-        let m = end - offset
-        let number = itos(row + 1)
-        if first_col != 0 {
-            number = ""
-        }
-        if document {
-            let source_row = g_lens_diff_rows[row]
-            if source_row < 0 { number = "-" } else { number = itos(source_row + 1) }
-        }
-        let number_x = number_right - ui_text_width(r, number, small_px(), FONT_MONO())
-        ui_rect_batch_add_text(r, batch, number_x, text_center_y(r, row_top, line_h, small_px()), number, small_px(), col_muted(), CODE_FONT())
-        let p: i32 = 0
-        loop p < m {
-            if lens_is_blank(lens_byte(source, offset + p)) {
-                p = p + 1
-            } else {
-                let q = clamp_i(lens_token_end(source, offset, m, p), p + 1, m)
-                ui_rect_batch_add_text(r, batch, text_x + (p as f64) * char_w, text_y, substr(source, offset + p, q - p), font_px, token_color(g_lens_token_kind), CODE_FONT())
-                p = q
-            }
-        }
-        offset = end + 1
-        row = row + 1
-        first_col = 0
-    }
-    let used = clamp_i((row + rows - 1) / rows, 0, LENS_MAX_COLUMNS)
+    let used = clamp_i((first_row + input.count + rows - 1) / rows, 0, LENS_MAX_COLUMNS)
     for c in used to LENS_MAX_COLUMNS + 1 {
         g_lens_glyph_cols[marks + c] = ui_rect_batch_vertex_count(r, batch)
     }
     ui_rect_batch_end(r, batch)
+    print(`GLYPH slot={slot} text={text.len} lines={input.count} rows={rows} vertices={ui_rect_batch_vertex_count(r, batch)} pitch={input.column_pitch} color={input.colors[0]}\n`)
     return batch
 }
 

@@ -1132,6 +1132,10 @@ static void ns_amd64_emit_inst(ns_amd64_ctx *c, ns_ssa_inst *inst) {
             break;
         }
         ns_amd64_load_value(c, c->int_regs[0], inst->a);
+        if (inst->target0 == 4) {
+            ns_amd64_emit_rt_call(c, "ns_rt_pin_ref");
+            break;
+        }
         if (inst->target0 == 1) {
             ns_amd64_emit_rt_call(c, "ns_rt_pin_str");
             break;

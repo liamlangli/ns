@@ -3,6 +3,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 
 #ifdef _WIN32
@@ -131,7 +132,7 @@ static int ns_rt_run_valid = 0;
 // Allocations that must outlive every scope: a string literal is materialized
 // once and cached forever, so releasing past it would leave the cache holding a
 // recycled address.
-static uint32_t ns_rt_floor = 0;
+static _Atomic uint32_t ns_rt_floor = 0;
 
 // How far the heap has ever been used. Committing a page zeroes it, so an
 // allocation that has never been handed out is already blank; one that comes
@@ -351,7 +352,9 @@ static void ns_rt_raise_floor(uint32_t to) {
 
 // A self-contained block: a flat struct, whose bytes hold no further address.
 void ns_rt_pin(int64_t addr, int64_t size) {
-    if (addr <= 0 || size < 0) return;
+    if (addr <= 0 || size < 0 || (uint64_t)addr > UINT32_MAX) return;
+    uint32_t floor = atomic_load_explicit(&ns_rt_floor, memory_order_acquire);
+    if ((uint64_t)addr + (uint64_t)size <= floor) return;
     ns_rt_heap_lock();
     if ((uint64_t)addr < (uint64_t)ns_rt_used) ns_rt_raise_floor((uint32_t)(addr + size));
     ns_rt_heap_unlock();
@@ -360,7 +363,16 @@ void ns_rt_pin(int64_t addr, int64_t size) {
 // A string keeps its bytes in a second block, which a substring may share with
 // the string it was cut from, so both extents are pinned.
 void ns_rt_pin_str(int64_t str) {
-    if (str <= 0) return;
+    if (str <= 0 || (uint64_t)str > UINT32_MAX) return;
+    // Published descriptors/bytes are immutable and cannot be reclaimed by a
+    // scope. Re-pinning them needs no mutex, which lets parallel FFI readers
+    // consume the same source strings without serializing on the heap lock.
+    uint32_t floor = atomic_load_explicit(&ns_rt_floor, memory_order_acquire);
+    if ((uint64_t)str + 8 <= floor) {
+        int32_t bytes = 0, len = 0;
+        ns_rt_str_parts(str, &bytes, &len);
+        if (bytes <= 0 || len <= 0 || (uint64_t)(uint32_t)bytes + (uint32_t)len <= floor) return;
+    }
     ns_rt_heap_lock();
     // Reading the descriptor goes through ns_rt_ptr, which takes this lock to
     // initialize the heap; only an initialized heap can hold this address.
@@ -394,6 +406,13 @@ void ns_rt_pin_all(void) {
     ns_rt_heap_lock();
     ns_rt_raise_floor(ns_rt_used);
     ns_rt_heap_unlock();
+}
+
+// A complex ns ref can reach arbitrary heap objects, but an opaque native
+// pointer (ui_renderer, os_lock, etc.) is outside the offset-addressed heap.
+// Passing those handles to FFI must not pin the entire ns heap on every call.
+void ns_rt_pin_ref(int64_t addr) {
+    if (addr > 0 && (uint64_t)addr <= UINT32_MAX) ns_rt_pin_all();
 }
 
 int64_t ns_rt_scope_leave(int64_t mark, int64_t value, int64_t size) {
@@ -1467,8 +1486,12 @@ int64_t ns_rt_task_spawn(int64_t fn, int64_t env, int64_t nargs,
 #ifdef _WIN32
     t->thread = CreateThread(NULL, 0, ns_rt_task_thread, t, 0, NULL);
     t->started = t->thread != NULL;
+    if (t->started) CloseHandle(t->thread);
 #else
     t->started = pthread_create(&t->thread, NULL, ns_rt_task_thread, t) == 0;
+    // Task completion is joined through its condition variable. No OS join
+    // consumes this thread, so release its resources automatically at exit.
+    if (t->started) pthread_detach(t->thread);
 #endif
     if (!t->started) {
         ns_rt_task_finish(t, 0, 1);

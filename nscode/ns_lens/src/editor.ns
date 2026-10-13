@@ -980,214 +980,239 @@ fn is_digit_byte(b: i32) bool {
 }
 
 // Keywords of the ns language itself (see src/ns_token.c).
+// Compare a source range without allocating a temporary substring.
+fn word_part_equal(text: str, start: i32, length: i32, word: str) bool {
+    if length != word.len { return false }
+    for i in 0 to length {
+        if text[start + i] != word[i] { return false }
+    }
+    return true
+}
+
 fn is_keyword(w: str) bool {
-    if g_syntax_language == 1 {
-        if w == "function" { return true }
-        if w == "const" { return true }
-        if w == "let" { return true }
-        if w == "var" { return true }
-        if w == "if" { return true }
-        if w == "else" { return true }
-        if w == "for" { return true }
-        if w == "while" { return true }
-        if w == "return" { return true }
-        if w == "class" { return true }
-        if w == "interface" { return true }
-        if w == "type" { return true }
-        if w == "import" { return true }
-        if w == "export" { return true }
-        if w == "from" { return true }
-        if w == "async" { return true }
-        if w == "await" { return true }
-        if w == "new" { return true }
-        if w == "extends" { return true }
-        if w == "implements" { return true }
-        if w == "true" { return true }
-        if w == "false" { return true }
-        if w == "null" { return true }
-        if w == "undefined" { return true }
+    return is_keyword_part(w, 0, w.len)
+}
+
+fn is_keyword_part(w: str, start: i32, length: i32) bool {
+    return is_keyword_language(w, start, length, g_syntax_language)
+}
+
+fn is_keyword_language(w: str, start: i32, length: i32, language: i32) bool {
+    if language == 1 {
+        if word_part_equal(w, start, length, "function") { return true }
+        if word_part_equal(w, start, length, "const") { return true }
+        if word_part_equal(w, start, length, "let") { return true }
+        if word_part_equal(w, start, length, "var") { return true }
+        if word_part_equal(w, start, length, "if") { return true }
+        if word_part_equal(w, start, length, "else") { return true }
+        if word_part_equal(w, start, length, "for") { return true }
+        if word_part_equal(w, start, length, "while") { return true }
+        if word_part_equal(w, start, length, "return") { return true }
+        if word_part_equal(w, start, length, "class") { return true }
+        if word_part_equal(w, start, length, "interface") { return true }
+        if word_part_equal(w, start, length, "type") { return true }
+        if word_part_equal(w, start, length, "import") { return true }
+        if word_part_equal(w, start, length, "export") { return true }
+        if word_part_equal(w, start, length, "from") { return true }
+        if word_part_equal(w, start, length, "async") { return true }
+        if word_part_equal(w, start, length, "await") { return true }
+        if word_part_equal(w, start, length, "new") { return true }
+        if word_part_equal(w, start, length, "extends") { return true }
+        if word_part_equal(w, start, length, "implements") { return true }
+        if word_part_equal(w, start, length, "true") { return true }
+        if word_part_equal(w, start, length, "false") { return true }
+        if word_part_equal(w, start, length, "null") { return true }
+        if word_part_equal(w, start, length, "undefined") { return true }
         return false
     }
-    if g_syntax_language == 2 {
-        if w == "def" { return true }
-        if w == "class" { return true }
-        if w == "if" { return true }
-        if w == "elif" { return true }
-        if w == "else" { return true }
-        if w == "for" { return true }
-        if w == "while" { return true }
-        if w == "in" { return true }
-        if w == "return" { return true }
-        if w == "import" { return true }
-        if w == "from" { return true }
-        if w == "as" { return true }
-        if w == "try" { return true }
-        if w == "except" { return true }
-        if w == "finally" { return true }
-        if w == "with" { return true }
-        if w == "lambda" { return true }
-        if w == "yield" { return true }
-        if w == "async" { return true }
-        if w == "await" { return true }
-        if w == "True" { return true }
-        if w == "False" { return true }
-        if w == "None" { return true }
-        if w == "and" { return true }
-        if w == "or" { return true }
-        if w == "not" { return true }
-        if w == "is" { return true }
-        if w == "pass" { return true }
-        if w == "break" { return true }
-        if w == "continue" { return true }
+    if language == 2 {
+        if word_part_equal(w, start, length, "def") { return true }
+        if word_part_equal(w, start, length, "class") { return true }
+        if word_part_equal(w, start, length, "if") { return true }
+        if word_part_equal(w, start, length, "elif") { return true }
+        if word_part_equal(w, start, length, "else") { return true }
+        if word_part_equal(w, start, length, "for") { return true }
+        if word_part_equal(w, start, length, "while") { return true }
+        if word_part_equal(w, start, length, "in") { return true }
+        if word_part_equal(w, start, length, "return") { return true }
+        if word_part_equal(w, start, length, "import") { return true }
+        if word_part_equal(w, start, length, "from") { return true }
+        if word_part_equal(w, start, length, "as") { return true }
+        if word_part_equal(w, start, length, "try") { return true }
+        if word_part_equal(w, start, length, "except") { return true }
+        if word_part_equal(w, start, length, "finally") { return true }
+        if word_part_equal(w, start, length, "with") { return true }
+        if word_part_equal(w, start, length, "lambda") { return true }
+        if word_part_equal(w, start, length, "yield") { return true }
+        if word_part_equal(w, start, length, "async") { return true }
+        if word_part_equal(w, start, length, "await") { return true }
+        if word_part_equal(w, start, length, "True") { return true }
+        if word_part_equal(w, start, length, "False") { return true }
+        if word_part_equal(w, start, length, "None") { return true }
+        if word_part_equal(w, start, length, "and") { return true }
+        if word_part_equal(w, start, length, "or") { return true }
+        if word_part_equal(w, start, length, "not") { return true }
+        if word_part_equal(w, start, length, "is") { return true }
+        if word_part_equal(w, start, length, "pass") { return true }
+        if word_part_equal(w, start, length, "break") { return true }
+        if word_part_equal(w, start, length, "continue") { return true }
         return false
     }
-    if w == "fn" {
+    if word_part_equal(w, start, length, "fn") {
         return true
     }
-    if w == "let" {
+    if word_part_equal(w, start, length, "let") {
         return true
     }
-    if w == "if" {
+    if word_part_equal(w, start, length, "if") {
         return true
     }
-    if w == "else" {
+    if word_part_equal(w, start, length, "else") {
         return true
     }
-    if w == "for" {
+    if word_part_equal(w, start, length, "for") {
         return true
     }
-    if w == "in" {
+    if word_part_equal(w, start, length, "in") {
         return true
     }
-    if w == "to" {
+    if word_part_equal(w, start, length, "to") {
         return true
     }
-    if w == "loop" {
+    if word_part_equal(w, start, length, "loop") {
         return true
     }
-    if w == "return" {
+    if word_part_equal(w, start, length, "return") {
         return true
     }
-    if w == "break" {
+    if word_part_equal(w, start, length, "break") {
         return true
     }
-    if w == "continue" {
+    if word_part_equal(w, start, length, "continue") {
         return true
     }
-    if w == "struct" {
+    if word_part_equal(w, start, length, "struct") {
         return true
     }
-    if w == "enum" {
+    if word_part_equal(w, start, length, "enum") {
         return true
     }
-    if w == "use" {
+    if word_part_equal(w, start, length, "use") {
         return true
     }
-    if w == "mod" {
+    if word_part_equal(w, start, length, "mod") {
         return true
     }
-    if w == "type" {
+    if word_part_equal(w, start, length, "type") {
         return true
     }
-    if w == "ref" {
+    if word_part_equal(w, start, length, "ref") {
         return true
     }
-    if w == "as" {
+    if word_part_equal(w, start, length, "as") {
         return true
     }
-    if w == "true" {
+    if word_part_equal(w, start, length, "true") {
         return true
     }
-    if w == "false" {
+    if word_part_equal(w, start, length, "false") {
         return true
     }
-    if w == "nil" {
+    if word_part_equal(w, start, length, "nil") {
         return true
     }
-    if w == "match" {
+    if word_part_equal(w, start, length, "match") {
         return true
     }
-    if w == "do" {
+    if word_part_equal(w, start, length, "do") {
         return true
     }
-    if w == "ops" {
+    if word_part_equal(w, start, length, "ops") {
         return true
     }
-    if w == "async" {
+    if word_part_equal(w, start, length, "async") {
         return true
     }
-    if w == "await" {
+    if word_part_equal(w, start, length, "await") {
         return true
     }
-    if w == "assert" {
+    if word_part_equal(w, start, length, "assert") {
         return true
     }
     return false
 }
 
 fn is_type_word(w: str) bool {
-    if g_syntax_language == 1 {
-        if w == "string" { return true }
-        if w == "number" { return true }
-        if w == "boolean" { return true }
-        if w == "unknown" { return true }
-        if w == "never" { return true }
-        if w == "void" { return true }
-        if w == "any" { return true }
+    return is_type_word_part(w, 0, w.len)
+}
+
+fn is_type_word_part(w: str, start: i32, length: i32) bool {
+    return is_type_word_language(w, start, length, g_syntax_language)
+}
+
+fn is_type_word_language(w: str, start: i32, length: i32, language: i32) bool {
+    if language == 1 {
+        if word_part_equal(w, start, length, "string") { return true }
+        if word_part_equal(w, start, length, "number") { return true }
+        if word_part_equal(w, start, length, "boolean") { return true }
+        if word_part_equal(w, start, length, "unknown") { return true }
+        if word_part_equal(w, start, length, "never") { return true }
+        if word_part_equal(w, start, length, "void") { return true }
+        if word_part_equal(w, start, length, "any") { return true }
         return false
     }
-    if g_syntax_language == 2 {
-        if w == "str" { return true }
-        if w == "int" { return true }
-        if w == "float" { return true }
-        if w == "bool" { return true }
-        if w == "list" { return true }
-        if w == "dict" { return true }
-        if w == "tuple" { return true }
-        if w == "set" { return true }
-        if w == "bytes" { return true }
+    if language == 2 {
+        if word_part_equal(w, start, length, "str") { return true }
+        if word_part_equal(w, start, length, "int") { return true }
+        if word_part_equal(w, start, length, "float") { return true }
+        if word_part_equal(w, start, length, "bool") { return true }
+        if word_part_equal(w, start, length, "list") { return true }
+        if word_part_equal(w, start, length, "dict") { return true }
+        if word_part_equal(w, start, length, "tuple") { return true }
+        if word_part_equal(w, start, length, "set") { return true }
+        if word_part_equal(w, start, length, "bytes") { return true }
         return false
     }
-    if w == "i8" {
+    if word_part_equal(w, start, length, "i8") {
         return true
     }
-    if w == "i16" {
+    if word_part_equal(w, start, length, "i16") {
         return true
     }
-    if w == "i32" {
+    if word_part_equal(w, start, length, "i32") {
         return true
     }
-    if w == "i64" {
+    if word_part_equal(w, start, length, "i64") {
         return true
     }
-    if w == "u8" {
+    if word_part_equal(w, start, length, "u8") {
         return true
     }
-    if w == "u16" {
+    if word_part_equal(w, start, length, "u16") {
         return true
     }
-    if w == "u32" {
+    if word_part_equal(w, start, length, "u32") {
         return true
     }
-    if w == "u64" {
+    if word_part_equal(w, start, length, "u64") {
         return true
     }
-    if w == "f32" {
+    if word_part_equal(w, start, length, "f32") {
         return true
     }
-    if w == "f64" {
+    if word_part_equal(w, start, length, "f64") {
         return true
     }
-    if w == "str" {
+    if word_part_equal(w, start, length, "str") {
         return true
     }
-    if w == "bool" {
+    if word_part_equal(w, start, length, "bool") {
         return true
     }
-    if w == "any" {
+    if word_part_equal(w, start, length, "any") {
         return true
     }
-    if w == "void" {
+    if word_part_equal(w, start, length, "void") {
         return true
     }
     return false

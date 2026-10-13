@@ -132,7 +132,68 @@ static void test_panel(void) {
     free(r);
 }
 
+static void test_batch_text_range(const char *source, i32 offset, i32 length, const char *expected) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    ui_glyph latin[] = {
+        {.code = 32, .x_advance = 6},
+        {.code = 65, .width = 5, .height = 8, .x_offset = 1, .x_advance = 6},
+        {.code = 66, .width = 5, .height = 8, .x_advance = 6, .atlas_x = 8},
+    };
+    ui_glyph chinese[] = {{.code = 19968, .width = 10, .height = 10, .x_advance = 10}};
+    r->fonts[UI_FONT_MONO] = (ui_font){.glyphs = latin, .glyph_count = 3,
+        .texture_width = 128, .texture_height = 128, .font_size = 10, .line_height = 12};
+    r->fonts[UI_FONT_ZH] = (ui_font){.glyphs = chinese, .glyph_count = 1,
+        .texture_width = 128, .texture_height = 128, .font_size = 10, .line_height = 12};
+    i32 a = ui_rect_batch_create(r), b = ui_rect_batch_create(r);
+    ui_rect_batch_begin(r, a);
+    ui_rect_batch_begin(r, b);
+    ui_rect_batch_add_text(r, a, 3, 4, expected, 12, 0x12345678u, UI_FONT_MONO);
+    ui_rect_batch_add_text_range(r, b, 3, 4, source, offset, length, 12, 0x12345678u, UI_FONT_MONO);
+    ui_rect_batch *original = ui_rect_batch_get(r, a), *range = ui_rect_batch_get(r, b);
+    assert(original->vertex_count == range->vertex_count);
+    assert(original->kind == range->kind && original->texture_id == range->texture_id);
+    if (original->vertex_count) assert(memcmp(original->vertices, range->vertices,
+        (size_t)original->vertex_count * sizeof(ui_vertex)) == 0);
+    ui_rect_batch_destroy(r, a);
+    ui_rect_batch_destroy(r, b);
+    free(r);
+}
+
+static void test_batch_append(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    i32 a = ui_rect_batch_create(r), b = ui_rect_batch_create(r);
+    ui_rect_batch_begin(r, a);
+    ui_rect_batch_begin(r, b);
+    ui_rect_batch_add(r, a, 1, 2, 3, 4, 0xffffffffu);
+    ui_rect_batch_add(r, b, 5, 6, 7, 8, 0x12345678u);
+    ui_rect_batch *dst = ui_rect_batch_get(r, a), *src = ui_rect_batch_get(r, b);
+    assert(ui_rect_batch_append(r, a, b));
+    assert(dst->vertex_count == 12 && src->vertex_count == 6);
+    assert(memcmp(dst->vertices + 6, src->vertices, 6 * sizeof(ui_vertex)) == 0);
+    assert(!ui_rect_batch_append(r, a, a));
+    src->texture_id++;
+    assert(!ui_rect_batch_append(r, a, b) && dst->vertex_count == 12);
+    src->texture_id--;
+    src->kind = UI_KIND_MSDF;
+    assert(!ui_rect_batch_append(r, a, b) && dst->vertex_count == 12);
+    ui_rect_batch_begin(r, a);
+    assert(ui_rect_batch_append(r, a, b));
+    assert(dst->kind == UI_KIND_MSDF && dst->vertex_count == 6);
+    ui_rect_batch_destroy(r, a);
+    ui_rect_batch_destroy(r, b);
+    free(r);
+}
+
 int main(void) {
+    test_batch_text_range("@@AB\nA!!", 2, 4, "AB\nA");
+    test_batch_text_range("@@A一B!!", 2, 5, "A一B");
+    test_batch_text_range("@@一A!!", 2, 4, "一A");
+    test_batch_text_range("@@A\xe4\xb8!!", 2, 3, "A\xe4\xb8");
+    test_batch_text_range("@@A", 2, 99, "A");
+    test_batch_text_range("@@A", 99, 3, "");
+    test_batch_append();
     test_panel();
     test_joined_triangles(0.0);
     test_joined_triangles(-1.0);

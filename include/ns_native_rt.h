@@ -43,6 +43,7 @@ void ns_rt_pin(int64_t addr, int64_t size);
 void ns_rt_pin_str(int64_t str);
 void ns_rt_pin_array(int64_t arr, int64_t stride);
 void ns_rt_pin_all(void);
+void ns_rt_pin_ref(int64_t addr);
 int64_t ns_rt_load(int64_t addr, int64_t off, int64_t size);
 void ns_rt_store(int64_t addr, int64_t off, int64_t val, int64_t size);
 void ns_rt_copy(int64_t dst, int64_t doff, int64_t src, int64_t size);
