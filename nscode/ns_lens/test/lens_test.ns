@@ -64,7 +64,10 @@ fn main() {
     assert area > 540000.0 && area < 1080001.0
     assert g_lens_code_world > 0.0
     assert lens_lod(1.0) == 0
-    assert lens_lod(0.5) == 1
+    assert lens_lod(0.5) == 0
+    assert lens_lod(0.3) == 1
+    assert lens_lod(LENS_GLYPH_ZOOM) == 1
+    assert lens_lod(0.19) == 1
     assert lens_lod(0.1) == 2
     assert lens_lod(0.01) == 2
     assert lens_lod(0.000001) == 2
@@ -228,10 +231,10 @@ fn main() {
     let large = workspace_find("large.ns")
     assert large >= 0
     assert lens_open(large)
-    assert g_lens_reading
+    assert !g_lens_reading
+    assert g_lens_large_index == large
     assert g_lens_editing == false
     assert g_workspace_active == -1
-    assert g_doc.len == LENS_PAGE_BYTES
     for slot in 0 to LENS_CACHE_SLOTS {
         g_lens_cache_id[slot] = 100 + slot
         g_lens_cache_age[slot] = slot + 1

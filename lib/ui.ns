@@ -513,6 +513,8 @@ ref fn ui_replay_layer(r: ref ui_renderer, layer: ref ui_layer, dx: f64, dy: f64
 // ===========================================================================
 
 ref fn ui_draw_text(r: ref ui_renderer, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32)
+// Scale glyph geometry independently on each axis, matching retained text batches.
+ref fn ui_draw_text_scaled(r: ref ui_renderer, x: f64, y: f64, text: str, font_px: f64, rgba: u32, font_type: i32, scale_x: f64, scale_y: f64)
 // Byte caret nearest to local x inside a single-line string. Offsets are UTF-8
 // bytes so they compose with substr; values clamp to [0, text.len].
 ref fn ui_text_index_at_x(r: ref ui_renderer, text: str, font_px: f64, font_type: i32, x: f64) i32

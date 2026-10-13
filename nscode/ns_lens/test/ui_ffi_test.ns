@@ -11,6 +11,54 @@ fn main() i32 {
     }
 
     let r = ui_renderer_create(v)
+    ui_draw_text_scaled(r, 10.0, 10.0, "scaled text", 12.0, 4294967295u, UI_FONT_MONO, 0.8, 0.4)
+    set_code_zoom(0.8, 0.4)
+    let center = code_text_center_y(r, 13.0, 8.0, code_font_px())
+    let expected = 13.0 + ui_text_v_center_y(r, 0.0, 20.0, code_base_font_px(), CODE_FONT()) * 0.4
+    assert abs(center - expected) < 0.000001
+    load_str("a\nnew\nz\n")
+    lens_diff_parse("@@ -2 +2 @@\n-old\n+new\n")
+    g_workspace_count = 1
+    g_lens_w[0] = 300.0
+    g_lens_h[0] = 200.0
+    g_lens_code_world = 1.0
+    g_lens_source_columns[0] = 100
+    lens_mini_sync_document(r, 0)
+    assert g_lens_mini_lines[0] == g_lens_diff_count
+    lens_code_flow(0, g_lens_diff_count)
+    assert g_lens_mini_rows[0] == g_lens_flow_rows
+    assert g_lens_mini_fit[0] == g_lens_flow_fit
+    assert g_lens_mini_line_pitch[0] == g_lens_flow_line_pitch
+    assert g_lens_mini_column_pitch[0] == g_lens_flow_column_pitch
+    let mini_batch = g_lens_mini_batch[0]
+    lens_mini_sync_document(r, 0)
+    assert g_lens_mini_batch[0] == mini_batch
+    ui_rect_batch_destroy(r, mini_batch)
+    g_lens_mini_batch[0] = 0
+    // Full active documents stay in one retained draw; the final row and
+    // characters beyond column 100 must not disappear at the editor LOD.
+    let wide = "A"
+    for n in 0 to 8 { wide = wide + wide }
+    g_lens_cache_text[0] = wide
+    g_lens_slot_block[0] = 0
+    g_lens_source_columns[0] = 256
+    lens_code_flow(0, 1)
+    let wide_batch = lens_build_code_batch(r, 0, 1)
+    assert ui_rect_batch_vertex_count(r, wide_batch) >= 256 * 6
+    ui_rect_batch_destroy(r, wide_batch)
+    g_lens_glyph_batch[0] = 0
+    let dense = "x\n"
+    for n in 0 to 13 { dense = dense + dense }
+    dense = dense + "FINAL_ROW"
+    load_str(dense)
+    lens_diff_clear()
+    lens_diff_build_rows()
+    g_lens_cache_text[LENS_CACHE_SLOTS] = g_doc
+    g_lens_slot_block[LENS_CACHE_SLOTS] = 0
+    lens_code_flow(0, g_lens_diff_count)
+    let dense_batch = lens_build_code_batch(r, LENS_CACHE_SLOTS, g_lens_flow_rows)
+    assert ui_rect_batch_vertex_count(r, dense_batch) > (8192 + 9) * 6
+    ui_rect_batch_destroy(r, dense_batch)
     let bitmap_loaded = ui_load_builtin_bitmap_font(r)
     let bitmap_metrics = ui_text_width(r, "ABC", 10.0, UI_FONT_BITMAP) == 18.0 &&
         ui_text_width(r, "A一", 10.0, UI_FONT_BITMAP) == 16.0 &&

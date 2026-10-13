@@ -17,6 +17,7 @@ let g_code_scroll: f64 = 0.0 as f64
 let g_code_zoom: f64 = 1.0
 // Vertical zoom: the map's tilt squashes rows but not glyph widths.
 let g_code_zoom_y: f64 = 1.0
+let g_code_draw_glyphs = true
 let g_code_line_pitch: f64 = 0.0
 let g_caret_follow = false
 let g_setting_language: i32 = 0
@@ -224,15 +225,21 @@ fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
             }
         }
     }
-    if editable {
-        let cursor_visual = g_lens_diff_source[cursor_line]
-        let cursor_col_x = x + ((cursor_visual / rows) as f64) * col_w
-        let cursor_x = cursor_col_x + gutter_w + code_text_inset() + ((cur_col() - g_coloff) as f64) * char_w
-        let cursor_top = body_y + code_top_pad() + ((cursor_visual % rows) as f64) * line_h - g_code_scroll
-        let inset = 2.0 * g_code_zoom_y
-        ui_fill_rect(r, cursor_x, cursor_top + inset, clamp(2.0 * g_code_zoom, 1.0, 4.0), line_h - inset * 2.0, col_editor_cursor(), 0.0)
+    if editable && g_code_draw_glyphs {
+        draw_code_caret(r, x, body_y, line_h, char_w, rows)
     }
     ui_pop_clip(r)
+}
+
+fn draw_code_caret(r: ref ui_renderer, x: f64, body_y: f64, line_h: f64, char_w: f64, rows: i32) {
+    let col_w = code_column_w(1.0)
+    let gutter_w = code_gutter_w()
+    let cursor_visual = g_lens_diff_source[cur_line()]
+    let cursor_col_x = x + ((cursor_visual / rows) as f64) * col_w
+    let cursor_x = cursor_col_x + gutter_w + code_text_inset() + ((cur_col() - g_coloff) as f64) * char_w
+    let cursor_top = body_y + code_top_pad() + ((cursor_visual % rows) as f64) * line_h - g_code_scroll
+    let inset = 2.0 * g_code_zoom_y
+    ui_fill_rect(r, cursor_x, cursor_top + inset, clamp(2.0 * g_code_zoom, 1.0, 4.0), line_h - inset * 2.0, col_editor_cursor(), 0.0)
 }
 
 fn draw_code_row(r: ref ui_renderer, visual: i32, col_x: f64, col_w: f64, text_x: f64, text_w: f64, row_top: f64, line_h: f64, char_w: f64, visible_cols: i32, body_y: f64, body_h: f64, cursor_line: i32, selected: bool, editable: bool) {
@@ -243,12 +250,14 @@ fn draw_code_row(r: ref ui_renderer, visual: i32, col_x: f64, col_w: f64, text_x
     if i < 0 {
         let deleted = -1 - i
         ui_fill_rect(r, col_x, row_top, col_w, line_h, ui_pack_color("#4b1e1e"), 0.0)
-        draw_text_clipped(r, col_x + 24.0 * g_code_zoom, row_top + 2.0 * g_code_zoom_y, 20.0 * g_code_zoom, line_h, "-", code_number_px(), col_text())
+        if g_code_draw_glyphs {
+            draw_text_clipped(r, col_x + 24.0 * g_code_zoom, row_top + 2.0 * g_code_zoom_y, 20.0 * g_code_zoom, line_h, "-", code_number_px(), col_text())
+        }
         let text = g_lens_diff_deleted[deleted]
-        if g_coloff < text.len {
+        if g_code_draw_glyphs && g_coloff < text.len {
             let count = clamp_i(text.len - g_coloff, 0, visible_cols)
             ui_push_clip(r, text_x, body_y, text_w, body_h)
-            ui_draw_text(r, text_x, text_center_y(r, row_top, line_h, code_font_px()), substr(text, g_coloff, count), code_font_px(), col_text(), CODE_FONT())
+            draw_code_text(r, text_x, code_text_center_y(r, row_top, line_h, code_font_px()), substr(text, g_coloff, count), code_font_px(), col_text(), CODE_FONT())
             ui_pop_clip(r)
         }
         return
@@ -281,15 +290,28 @@ fn draw_code_row(r: ref ui_renderer, visual: i32, col_x: f64, col_w: f64, text_x
     if i == cursor_line && editable {
         num_color = col_text()
     }
+    if !g_code_draw_glyphs {
+        return
+    }
     let line_number = itos(i + 1)
     let line_number_x = code_line_number_x(r, col_x, line_number)
-    draw_text_clipped(r, line_number_x, text_center_y(r, row_top, line_h, code_number_px()), code_gutter_w() - (line_number_x - col_x) - 10.0 * g_code_zoom, line_h, line_number, code_number_px(), num_color)
+    draw_code_text(r, line_number_x, code_text_center_y(r, row_top, line_h, code_number_px()), line_number, code_number_px(), num_color, CODE_FONT())
     ui_push_clip(r, text_x, body_y, text_w, body_h)
-    draw_code_line(r, i, text_x, text_center_y(r, row_top, line_h, code_font_px()), char_w, g_coloff, visible_cols)
+    draw_code_line(r, i, text_x, code_text_center_y(r, row_top, line_h, code_font_px()), char_w, g_coloff, visible_cols)
     ui_pop_clip(r)
 }
 
 fn col_editor_cursor() u32 { return ui_pack_color("#eeeeee") }
+
+// Live editor text uses the same base glyph geometry and x/y scaling as
+// retained glyph batches, including the map's vertical perspective squeeze.
+fn draw_code_text(r: ref ui_renderer, x: f64, y: f64, text: str, px: f64, color: u32, font: i32) {
+    ui_draw_text_scaled(r, x, y, text, px / g_code_zoom, color, font, g_code_zoom, g_code_zoom_y)
+}
+
+fn code_text_center_y(r: ref ui_renderer, y: f64, h: f64, px: f64) f64 {
+    return y + ui_text_v_center_y(r, 0.0, h / g_code_zoom_y, px / g_code_zoom, CODE_FONT()) * g_code_zoom_y
+}
 
 fn code_font_px() f64 { return code_base_font_px() * g_code_zoom }
 
@@ -341,7 +363,7 @@ fn draw_code_line(r: ref ui_renderer, li: i32, text_x: f64, row_y: f64, char_w: 
                     de = view_end
                 }
                 let tx = text_x + ((ds - first_col) as f64) * char_w
-                ui_draw_text(r, tx, row_y, token_text_part(t, ds - ts, de - ds), code_font_px(), token_color(token_kind(t)), CODE_FONT())
+                draw_code_text(r, tx, row_y, token_text_part(t, ds - ts, de - ds), code_font_px(), token_color(token_kind(t)), CODE_FONT())
             }
         }
     }

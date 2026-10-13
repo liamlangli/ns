@@ -2948,8 +2948,8 @@ static f64 ui_missing_glyph_advance(i32 font_type, f64 font_px) {
     return font_type == UI_FONT_BITMAP ? font_px * 0.6 : font_px * 0.55;
 }
 
-void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
-    if (!r || !text || font_px <= 0) return;
+void ui_draw_text_scaled(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type, f64 scale_x, f64 scale_y) {
+    if (!r || !text || font_px <= 0 || scale_x <= 0 || scale_y <= 0) return;
     ui_font *primary = ui_primary_font(r, font_type);
     f64 cx = x;
     f64 cy = y;
@@ -2958,26 +2958,26 @@ void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u
         i32 code = ui_utf8_next(&p);
         if (code == '\n') {
             cx = x;
-            cy += primary->line_height * (font_px / primary->font_size);
+            cy += primary->line_height * (font_px / primary->font_size) * scale_y;
             continue;
         }
         ui_glyph *g = NULL;
         ui_font *font = ui_font_for_code(r, font_type, code, &g);
         if (!g) {
-            cx += ui_missing_glyph_advance(font_type, font_px);
+            cx += ui_missing_glyph_advance(font_type, font_px) * scale_x;
             continue;
         }
         f64 scale = font_px / font->font_size;
         if (g->width > 0 && g->height > 0) {
-            f64 x0 = cx + g->x_offset * scale;
-            f64 y0 = cy + g->y_offset * scale;
+            f64 x0 = cx + g->x_offset * scale * scale_x;
+            f64 y0 = cy + g->y_offset * scale * scale_y;
             const ns_bool bitmap = ui_font_is_bitmap(r, font);
-            if (bitmap) {
+            if (bitmap && scale_x == 1.0 && scale_y == 1.0) {
                 x0 = floor(x0);
                 y0 = floor(y0);
             }
-            f64 x1 = x0 + g->width * scale;
-            f64 y1 = y0 + g->height * scale;
+            f64 x1 = x0 + g->width * scale * scale_x;
+            f64 y1 = y0 + g->height * scale * scale_y;
             r->current_texture_id = ui_font_texture_id(r, font);
             ui_push_quad_ex(r, x0, y0, x1, y1,
                             g->atlas_x / font->texture_width,
@@ -2986,8 +2986,12 @@ void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u
                             (g->atlas_y + g->height) / font->texture_height,
                             rgba, bitmap ? UI_KIND_BITMAP : UI_KIND_MSDF, 5.0, 0.0, 1.0);
         }
-        cx += g->x_advance * scale;
+        cx += g->x_advance * scale * scale_x;
     }
+}
+
+void ui_draw_text(ui_renderer *r, f64 x, f64 y, const char *text, f64 font_px, u32 rgba, i32 font_type) {
+    ui_draw_text_scaled(r, x, y, text, font_px, rgba, font_type, 1.0, 1.0);
 }
 
 // Lay a line of text into a retained batch, in the batch's local space. Glyphs

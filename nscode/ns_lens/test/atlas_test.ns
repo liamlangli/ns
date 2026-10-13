@@ -1,0 +1,77 @@
+use std
+use os
+use task
+use view
+use gpu
+use ui
+
+fn finish_atlas_read() {
+    let deadline = os_time() + 5.0
+    loop g_lens_io_running && os_time() < deadline {
+        sleep(1)
+        lens_io_poll()
+    }
+    assert !g_lens_io_running
+}
+
+fn main() {
+    let root = "/tmp/ns_lens_atlas_test"
+    os_make_dirs(root)
+    let row = "x"
+    for n in 0 to 9 { row = row + row }
+    row = row + "\n"
+    let text = row
+    for n in 0 to 10 { text = text + text }
+    text = text + "FINAL_SENTINEL"
+    let path = root + "/complete.ns"
+    assert os_write_file_atomic(path, text) != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    lens_rebuild()
+    let index = workspace_find("complete.ns")
+    assert index >= 0 && g_lens_source_columns[index] == 512
+    let v = view_create("atlas test", 320, 200)
+    let available = gpu_request_device(v)
+    let r = ui_renderer_create(v)
+    for attempt in 0 to 8 {
+        if g_lens_source_done[index] { break }
+        lens_io_start(index, g_lens_source_next[index], LENS_PREVIEW_BYTES, 2)
+        finish_atlas_read()
+        lens_mini_update(r)
+    }
+    assert g_lens_source_done[index]
+    assert g_lens_source_next[index] == text.len as i64
+    assert g_lens_block_count >= 3
+    let last_id = g_lens_block_last[index]
+    let last = g_lens_blocks[last_id]
+    assert last.end_row == lens_text_lines(text) - 1
+    assert last.end_col == 14
+    assert last.row > 500
+    lens_code_flow(index, g_lens_source_lines[index])
+    assert lens_block_visible(last, 0.0, 0.0, 1.0, 1.0, lens_leaf_rect(0.0, 0.0, 1000000.0, 1000000.0, 1.0, 1.0, 1.0))
+    lens_io_start(index, last.offset, last.bytes, 0)
+    finish_atlas_read()
+    let found = false
+    for slot in 0 to LENS_CACHE_SLOTS {
+        if g_lens_cache_id[slot] == index && g_lens_cache_offset[slot] == last.offset {
+            assert g_lens_slot_block[slot] == last_id
+            assert substr(g_lens_cache_text[slot], g_lens_cache_text[slot].len - 14, 14) == "FINAL_SENTINEL"
+            if available {
+                lens_code_flow(index, g_lens_source_lines[index])
+                g_lens_glyph_batch[slot] = lens_build_code_batch(r, slot, g_lens_flow_rows)
+                assert ui_rect_batch_vertex_count(r, g_lens_glyph_batch[slot]) >= 14 * 6
+            }
+            found = true
+        }
+    }
+    assert found
+    assert lens_chunk_text("a\u{4e00}", true) == "a\u{4e00}"
+    assert lens_chunk_text(substr("a\u{4e00}", 0, 3), true) == "a"
+    assert lens_open(index)
+    assert !g_lens_reading && g_lens_large_index == index
+    ui_renderer_destroy(r)
+    view_close(v)
+    os_watch_stop()
+    print("atlas_test: passed\n")
+}

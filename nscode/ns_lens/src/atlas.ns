@@ -1,0 +1,142 @@
+// Full-file coverage with bounded source chunks. Only the compact minimap
+// stays resident; detailed text chunks share the existing preview LRU.
+use os
+use ui
+
+struct lens_source_block {
+    file: i32,
+    offset: i64,
+    bytes: i32,
+    row: i32,
+    col: i32,
+    end_row: i32,
+    end_col: i32,
+    next: i32
+}
+let g_lens_blocks = [lens_source_block](65536)
+let g_lens_block_mini_first = [i32](65536)
+let g_lens_block_mini_count = [i32](65536)
+let g_lens_block_count: i32 = 0
+let g_lens_block_first = [i32](4096)
+let g_lens_block_last = [i32](4096)
+let g_lens_source_next = [i64](4096)
+let g_lens_source_done = [bool](4096)
+let g_lens_slot_block = [i32](49)
+let g_lens_large_index: i32 = -1
+
+fn lens_atlas_reset() {
+    g_lens_block_count = 0
+    g_lens_large_index = -1
+    for i in 0 to 4096 {
+        g_lens_block_first[i] = 0
+        g_lens_block_last[i] = 0
+        g_lens_source_next[i] = 0 as i64
+        g_lens_source_done[i] = false
+    }
+    for s in 0 to LENS_CACHE_SLOTS + 1 {
+        g_lens_slot_block[s] = 0
+    }
+}
+
+fn lens_block_register(index: i32, offset: i64, text: str) i32 {
+    if g_lens_block_count >= 65535 {
+        g_lens_message = "Source chunk index limit reached"
+        g_lens_source_done[index] = true
+        return 0
+    }
+    let row: i32 = 0
+    let col: i32 = 0
+    let previous = g_lens_block_last[index]
+    if previous != 0 {
+        row = g_lens_blocks[previous].end_row
+        col = g_lens_blocks[previous].end_col
+    }
+    let first_row = row
+    let first_col = col
+    for byte in text {
+        if byte == 10 {
+            row = row + 1
+            col = 0
+        } else {
+            col = col + 1
+        }
+    }
+    g_lens_block_count = g_lens_block_count + 1
+    let id = g_lens_block_count
+    g_lens_blocks[id] = lens_source_block(index, offset, text.len, first_row, first_col, row, col, 0)
+    if previous == 0 {
+        g_lens_block_first[index] = id
+    } else {
+        g_lens_blocks[previous].next = id
+    }
+    g_lens_block_last[index] = id
+    g_lens_source_next[index] = offset + (text.len as i64)
+    g_lens_source_done[index] = text.len == 0 || g_lens_source_next[index] >= os_file_size(os_entry_path(index))
+    return id
+}
+
+// Read boundaries stop before a partial UTF-8 character. The next bounded
+// read starts at that character rather than dropping it from either chunk.
+fn lens_chunk_text(text: str, more: bool) str {
+    if !more || text.len == 0 {
+        return text
+    }
+    let start = text.len - 1
+    loop start > 0 && (lens_byte(text, start) & 192) == 128 {
+        start = start - 1
+    }
+    let byte = lens_byte(text, start)
+    let size: i32 = 1
+    if byte >= 240 { size = 4 } else if byte >= 224 { size = 3 } else if byte >= 192 { size = 2 }
+    if text.len - start < size {
+        return substr(text, 0, start)
+    }
+    return text
+}
+
+fn lens_block_visible(block: lens_source_block, x: f64, y: f64, zoom: f64, squash: f64, view: lens_leaf_rect) bool {
+    let rows = g_lens_flow_rows
+    let first = block.row / rows
+    let last = block.end_row / rows
+    let left = x + (first as f64) * g_lens_flow_column_pitch * zoom
+    let right = x + ((last + 1) as f64) * g_lens_flow_column_pitch * zoom
+    if right <= view.x || left >= view.x + view.w {
+        return false
+    }
+    if first == last {
+        let top = y + (code_base_top_pad() + ((block.row % rows) as f64) * g_lens_flow_line_pitch) * zoom * squash
+        let bottom = y + (code_base_top_pad() + (((block.end_row % rows) + 1) as f64) * g_lens_flow_line_pitch) * zoom * squash
+        return bottom > view.y && top < view.y + view.h
+    }
+    return true
+}
+
+fn lens_draw_streamed_code(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64, view: lens_leaf_rect, allow_read: bool) {
+    lens_code_flow(index, g_lens_source_lines[index])
+    let fit = g_lens_flow_fit
+    let id = g_lens_block_first[index]
+    loop id != 0 {
+        let block = g_lens_blocks[id]
+        if lens_block_visible(block, x, y, zoom * fit, squash, view) {
+            g_lens_clock = g_lens_clock + 1
+            let slot: i32 = -1
+            for s in 0 to LENS_CACHE_SLOTS {
+                if g_lens_cache_id[s] == index && g_lens_cache_offset[s] == block.offset {
+                    slot = s
+                    g_lens_slot_block[s] = id
+                    g_lens_cache_age[s] = g_lens_clock
+                    break
+                }
+            }
+            if slot >= 0 {
+                lens_draw_code_batch(r, slot, index, x, y, zoom * fit, squash, view)
+            } else {
+                ui_rect_batch_draw_range(r, g_lens_mini_batch[index], g_lens_block_mini_first[id], g_lens_block_mini_count[id], x, y, zoom * fit, zoom * fit * squash)
+                if allow_read && !g_lens_io_running {
+                    lens_io_start(index, block.offset, block.bytes, 0)
+                }
+            }
+        }
+        id = block.next
+    }
+}

@@ -59,9 +59,19 @@ fn lens_io_poll() {
             g_lens_ready_text = g_lens_io_result[0]
         } else if g_lens_io_mode == 2 {
             // Background warm reads fill the resident minimap.
-            lens_mini_offer(g_lens_io_index, g_lens_io_result[0])
+            let index = g_lens_io_index
+            let size = os_file_size(os_entry_path(index))
+            let text = lens_chunk_text(g_lens_io_result[0], g_lens_io_offset + (g_lens_io_result[0].len as i64) < size)
+            let block = lens_block_register(index, g_lens_io_offset, text)
+            if size > LENS_PREVIEW_BYTES {
+                lens_mini_offer_block(index, text, block)
+            } else {
+                lens_mini_offer(index, text)
+            }
         } else if g_lens_io_mode == 0 {
-            lens_mini_offer(g_lens_io_index, g_lens_io_result[0])
+            if g_lens_io_offset == 0 && os_file_size(os_entry_path(g_lens_io_index)) <= LENS_PREVIEW_BYTES {
+                lens_mini_offer(g_lens_io_index, g_lens_io_result[0])
+            }
             let victim: i32 = 0
             for slot in 0 to LENS_CACHE_SLOTS {
                 if g_lens_cache_age[slot] < g_lens_cache_age[victim] {
@@ -73,6 +83,15 @@ fn lens_io_poll() {
             g_lens_cache_offset[victim] = g_lens_io_offset
             g_lens_cache_text[victim] = g_lens_io_result[0]
             g_lens_cache_age[victim] = g_lens_clock
+            g_lens_slot_block[victim] = 0
+            let block = g_lens_block_first[g_lens_io_index]
+            loop block != 0 {
+                if g_lens_blocks[block].offset == g_lens_io_offset {
+                    g_lens_slot_block[victim] = block
+                    break
+                }
+                block = g_lens_blocks[block].next
+            }
             lens_build_preview(victim, g_lens_io_result[0])
         }
     }
@@ -94,6 +113,12 @@ fn lens_preview_stream(index: i32, allow_read: bool) str {
 }
 
 fn lens_request_near(index: i32) {
+    if os_file_size(os_entry_path(index)) > LENS_EDIT_BYTES {
+        if g_lens_large_index != index {
+            lens_open(index)
+        }
+        return
+    }
     if g_lens_editing && g_workspace_active == index || g_lens_reading && g_lens_selected == index {
         return
     }
@@ -127,11 +152,14 @@ fn lens_warm_cache(moving: bool) {
     if moving || g_lens_io_running {
         return
     }
-    loop g_lens_warm_cursor < g_workspace_count {
+    for attempt in 0 to g_workspace_count {
+        if g_lens_warm_cursor >= g_workspace_count {
+            g_lens_warm_cursor = 0
+        }
         let index = g_lens_warm_cursor
-        g_lens_warm_cursor = index + 1
-        if g_lens_files[index] != 0 {
-            lens_io_start(index, 0 as i64, LENS_PREVIEW_BYTES, 2)
+        g_lens_warm_cursor = g_lens_warm_cursor + 1
+        if g_lens_files[index] != 0 && !g_lens_source_done[index] {
+            lens_io_start(index, g_lens_source_next[index], LENS_PREVIEW_BYTES, 2)
             break
         }
     }

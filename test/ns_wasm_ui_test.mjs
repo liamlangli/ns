@@ -94,6 +94,7 @@ fn draw_frame() {
     ui_fill_arc(r, 40.0, 40.0, 12.0, 3.0, 0.0, 1.5, 0xffff0000, 0.0)
     ui_stroke_circle(r, 60.0, 60.0, 8.0, 2.0, 0xff0000ff, 0.0)
     ui_draw_text(r, 8.0, 9.0, "native UI", 14.0, 0xffffffff, UI_FONT_MONO)
+    ui_draw_text_scaled(r, 8.0, 20.0, "scaled UI", 14.0, 0xffffffff, UI_FONT_MONO, 0.8, 0.4)
     let used = ui_draw_text_wrapped(r, 8.0, 40.0, 60.0, "wrap this label across lines", 12.0, 0xffffffff, UI_FONT_MAIN)
     ui_draw_text_vertical(r, 200.0, 20.0, "天行健", 16.0, 0xffffffff, UI_FONT_MAIN)
     ui_draw_text_arc(r, 120.0, 120.0, 30.0, 0.0, "arc", 12.0, 0xffffffff, UI_FONT_MAIN)
@@ -271,6 +272,8 @@ assert.equal(instance.exports.wrapped_height(), instance.exports.line_height() *
 instance.exports.draw_frame();
 assert(painted.includes('fillRect'), 'rectangles are painted');
 assert(painted.includes('text:native UI'), 'text is painted');
+assert(painted.includes('text:scaled UI'), 'scaled text is painted');
+assert(painted.includes('transform:0.8,0,0,0.4,0,0'), 'text preserves independent x/y scale');
 assert(painted.filter(entry => entry.startsWith('text:天') || entry.startsWith('text:行')).length >= 2,
   'vertical text paints one glyph per cell');
 assert(painted.includes('stroke'), 'strokes are painted');

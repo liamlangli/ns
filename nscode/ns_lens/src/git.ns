@@ -17,6 +17,7 @@ let g_lens_diff_deleted_count: i32 = 0
 let g_lens_diff_rows = [i32](73728)
 let g_lens_diff_source = [i32](65536)
 let g_lens_diff_count: i32 = 0
+let g_lens_diff_revision: i32 = 0
 let g_lens_diff_number_end: i32 = 0
 
 fn lens_diff_number(text: str, offset: i32) i32 {
@@ -93,6 +94,7 @@ fn lens_diff_parse(patch: str) {
 }
 
 fn lens_diff_build_rows() {
+    g_lens_diff_revision = g_lens_diff_revision + 1
     let deleted: i32 = 0
     g_lens_diff_count = 0
     for line in 0 to line_count() + 1 {
@@ -189,4 +191,12 @@ fn lens_git_tick(moving: bool) {
     }
     lens_diff_parse(patch)
     g_lens_git_version = g_doc_version
+}
+
+fn lens_diff_visual_text(row: i32) str {
+    let source = g_lens_diff_rows[row]
+    if source < 0 {
+        return g_lens_diff_deleted[-1 - source]
+    }
+    return line_text(source)
 }

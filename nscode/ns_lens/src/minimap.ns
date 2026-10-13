@@ -13,6 +13,9 @@ let g_lens_mini_lines = [i32](4096)
 let g_lens_mini_rows = [i32](4096)
 let g_lens_mini_column_pitch = [f64](4096)
 let g_lens_mini_line_pitch = [f64](4096)
+let g_lens_mini_document = [bool](4096)
+let g_lens_mini_doc_version = [i32](4096)
+let g_lens_mini_diff_version = [i32](4096)
 let g_lens_mini_fit = [f64](4096)
 // Batches whose files left the workspace, destroyed on the next frame.
 let g_lens_mini_drop = [i32](4096)
@@ -20,6 +23,8 @@ let g_lens_mini_drop_count: i32 = 0
 // Texts read since the last frame, built when a renderer is at hand.
 let g_lens_mini_queue_index = [i32](8)
 let g_lens_mini_queue_text = [str](8)
+let g_lens_mini_queue_block = [i32](8)
+let g_lens_mini_build_block: i32 = 0
 let g_lens_mini_queue_count: i32 = 0
 
 // A rescan renumbers entries: carry each batch over to its path's new index.
@@ -37,6 +42,7 @@ fn lens_mini_remap() {
     let fit = [f64](4096)
     let column_pitch = [f64](4096)
     let line_pitch = [f64](4096)
+    let document = [bool](4096)
     let kept = [i32](4096)
     for i in 0 to g_workspace_count {
         let path = os_entry_path(i)
@@ -49,6 +55,7 @@ fn lens_mini_remap() {
             fit[i] = g_lens_mini_fit[j]
             column_pitch[i] = g_lens_mini_column_pitch[j]
             line_pitch[i] = g_lens_mini_line_pitch[j]
+            document[i] = g_lens_mini_document[j]
             kept[j] = 1
         }
     }
@@ -66,6 +73,9 @@ fn lens_mini_remap() {
         g_lens_mini_fit[i] = fit[i]
         g_lens_mini_column_pitch[i] = column_pitch[i]
         g_lens_mini_line_pitch[i] = line_pitch[i]
+        g_lens_mini_document[i] = document[i]
+        g_lens_mini_doc_version[i] = -1
+        g_lens_mini_diff_version[i] = -1
         g_lens_mini_path[i] = ""
         if i < g_workspace_count {
             g_lens_mini_path[i] = os_entry_path(i)
@@ -78,9 +88,18 @@ fn lens_mini_offer(index: i32, text: str) {
     if index < 0 || index >= g_workspace_count || g_lens_mini_queue_count >= 8 {
         return
     }
+    g_lens_mini_queue_block[g_lens_mini_queue_count] = 0
     g_lens_mini_queue_index[g_lens_mini_queue_count] = index
     g_lens_mini_queue_text[g_lens_mini_queue_count] = text
     g_lens_mini_queue_count = g_lens_mini_queue_count + 1
+}
+
+fn lens_mini_offer_block(index: i32, text: str, block: i32) {
+    let slot = g_lens_mini_queue_count
+    lens_mini_offer(index, text)
+    if g_lens_mini_queue_count > slot {
+        g_lens_mini_queue_block[slot] = block
+    }
 }
 
 fn lens_mini_ready(index: i32) bool {
@@ -99,7 +118,9 @@ fn lens_mini_update(r: ref ui_renderer) {
     }
     g_lens_mini_drop_count = 0
     for q in 0 to g_lens_mini_queue_count {
+        g_lens_mini_build_block = g_lens_mini_queue_block[q]
         lens_mini_build(r, g_lens_mini_queue_index[q], g_lens_mini_queue_text[q])
+        g_lens_mini_build_block = 0
         g_lens_mini_queue_text[q] = ""
     }
     g_lens_mini_queue_count = 0
@@ -131,10 +152,33 @@ fn lens_token_class(kind: i32) i32 {
 // comment. It keeps the shape and colour of the code at a fraction of the
 // vertices, so the whole project's minimap stays resident.
 fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
+    lens_mini_build_content(r, index, text, false)
+}
+
+// Keep Git ghost rows in both forms so changing LOD cannot reflow the file.
+fn lens_mini_sync_document(r: ref ui_renderer, index: i32) {
+    if !g_lens_mini_document[index] || g_lens_mini_doc_version[index] != g_doc_version || g_lens_mini_diff_version[index] != g_lens_diff_revision || lens_mini_stale(index) {
+        lens_mini_build_content(r, index, g_doc, true)
+        g_lens_mini_doc_version[index] = g_doc_version
+        g_lens_mini_diff_version[index] = g_lens_diff_revision
+    }
+}
+
+fn lens_mini_build_content(r: ref ui_renderer, index: i32, text: str, document: bool) {
     let lines = lens_text_lines(text)
+    if document {
+        lines = g_lens_diff_count
+    } else if g_lens_mini_build_block != 0 {
+        lines = g_lens_source_lines[index]
+    }
     lens_code_flow(index, lines)
     let rows = g_lens_flow_rows
     let hash = os_text_hash(text)
+    if document {
+        hash = hash + ":" + itos(g_lens_diff_revision)
+    } else if g_lens_mini_build_block != 0 {
+        hash = hash + ":block" + itos(g_lens_mini_build_block)
+    }
     if g_lens_mini_batch[index] != 0 && g_lens_mini_hash[index] == hash && g_lens_mini_rows[index] == rows && !lens_mini_stale(index) {
         g_lens_mini_fit[index] = g_lens_flow_fit
         return
@@ -151,33 +195,51 @@ fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
     if char_w <= 0.0 {
         char_w = code_base_font_px() * 0.6
     }
-    ui_rect_batch_begin(r, batch)
+    let first_row: i32 = 0
+    let first_col: i32 = 0
+    if g_lens_mini_build_block != 0 {
+        let block = g_lens_blocks[g_lens_mini_build_block]
+        first_row = block.row
+        first_col = block.col
+        if block.offset == 0 {
+            ui_rect_batch_begin(r, batch)
+        }
+    } else {
+        ui_rect_batch_begin(r, batch)
+    }
+    let start_vertex = ui_rect_batch_vertex_count(r, batch)
     let offset: i32 = 0
-    let row: i32 = 0
-    loop offset < text.len {
-        let end = lens_line_end(text, offset)
+    let row: i32 = first_row
+    loop row < lines && (document || offset < text.len) {
+        let source = text
+        let end = lens_line_end(source, offset)
+        if document {
+            source = lens_diff_visual_text(row)
+            offset = 0
+            end = source.len
+        }
         let column = clamp_i(row / rows, 0, LENS_MAX_COLUMNS - 1)
-        let text_x = (column as f64) * g_lens_flow_column_pitch + code_base_gutter_w() + code_base_text_inset()
+        let text_x = (column as f64) * g_lens_flow_column_pitch + code_base_gutter_w() + code_base_text_inset() + (first_col as f64) * char_w
         let row_top = code_base_top_pad() + ((row % rows) as f64) * line_h
-        let m = clamp_i(end - offset, 0, LENS_PREVIEW_COLS)
+        let m = end - offset
         let p: i32 = 0
         loop p < m {
-            if lens_is_blank(lens_byte(text, offset + p)) {
+            if lens_is_blank(lens_byte(source, offset + p)) {
                 p = p + 1
             } else {
-                let q = clamp_i(lens_token_end(text, offset, m, p), p + 1, m)
+                let q = clamp_i(lens_token_end(source, offset, m, p), p + 1, m)
                 let kind = g_lens_token_kind
                 let class = lens_token_class(kind)
                 let more = true
                 loop more && q < m {
                     let n = q
-                    loop n < m && lens_is_blank(lens_byte(text, offset + n)) {
+                    loop n < m && lens_is_blank(lens_byte(source, offset + n)) {
                         n = n + 1
                     }
                     if n >= m || n - q >= 2 {
                         more = false
                     } else {
-                        let next = clamp_i(lens_token_end(text, offset, m, n), n + 1, m)
+                        let next = clamp_i(lens_token_end(source, offset, m, n), n + 1, m)
                         if lens_token_class(g_lens_token_kind) != class {
                             more = false
                         } else {
@@ -191,8 +253,14 @@ fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
         }
         offset = end + 1
         row = row + 1
+        first_col = 0
     }
     ui_rect_batch_end(r, batch)
+    if g_lens_mini_build_block != 0 {
+        g_lens_block_mini_first[g_lens_mini_build_block] = start_vertex
+        g_lens_block_mini_count[g_lens_mini_build_block] = ui_rect_batch_vertex_count(r, batch) - start_vertex
+    }
+    g_lens_mini_document[index] = document
     g_lens_mini_batch[index] = batch
     g_lens_mini_hash[index] = hash
     g_lens_mini_lines[index] = lines
@@ -209,7 +277,16 @@ fn lens_mini_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squ
         return false
     }
     let scale = zoom * g_lens_mini_fit[index]
+    if g_lens_mini_document[index] {
+        let world = clamp(g_lens_code_world, 0.000001, 1000000.0)
+        ui_push_clip(r, x, y, g_lens_w[index] * zoom / world - 2.0, (g_lens_h[index] / world - LENS_LEAF_HEADER_REF) * zoom * squash - 1.0)
+        y = y - g_code_scroll * scale * squash / g_code_zoom_y
+        x = x - (g_coloff as f64) * ui_mono_char_width(r, code_base_font_px(), CODE_FONT()) * scale
+    }
     ui_rect_batch_draw_range(r, batch, 0, ui_rect_batch_vertex_count(r, batch), x, y, scale, scale * squash)
+    if g_lens_mini_document[index] {
+        ui_pop_clip(r)
+    }
     return true
 }
 
