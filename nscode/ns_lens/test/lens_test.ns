@@ -34,10 +34,11 @@ fn main() {
         }
     }
     assert total > 0.0
-    // Siblings tile their folder without overlapping; folders keep a title.
+    // Siblings tile their directory without overlapping. A directory keeps
+    // no title band of its own.
     for a in 0 to g_workspace_count {
         if g_lens_weight[a] > 0.0 && os_entry_is_dir(a) != 0 {
-            assert g_lens_folder_header[a] > 0.0
+            assert g_lens_folder_header[a] == 0.0
         }
         for b in a + 1 to g_workspace_count {
             if g_lens_weight[a] > 0.0 && g_lens_weight[b] > 0.0 && os_entry_parent(a) == os_entry_parent(b) {
@@ -162,8 +163,23 @@ fn main() {
     lens_unproject(100.0, 60.0)
     assert g_lens_plane_y < 60.0 && g_lens_plane_x < 100.0
     assert lens_depth_gain(60.0) < 1.0 && lens_depth_gain(700.0) > 1.0
+    // The far edge of a 60 degree plane compresses lines; bars take over
+    // there and the near edge stays tall enough for glyphs.
+    g_lens_screen_h = 800.0
+    g_lens_tilt = 60.0
+    lens_plane_setup(1280.0, 42.0, 680.0)
+    assert abs(lens_plane_screen_y(g_lens_view_y0) - 42.0) < 0.5
+    assert abs(lens_plane_screen_y(g_lens_view_y1) - 722.0) < 0.5
+    assert lens_screen_per_flat(g_lens_view_y0) < lens_screen_per_flat(g_lens_view_y1)
+    assert lens_screen_per_flat(g_lens_view_y0) < 0.15
+    assert lens_screen_per_flat(g_lens_view_y1) > 0.9
+    let plane_cut = lens_plane_cut(g_lens_view_y0, g_lens_view_y1, 24.0)
+    assert plane_cut > g_lens_view_y0 + 10.0 && plane_cut < g_lens_view_y1 - 10.0
+    // A line that is already a few pixels at the far edge is not all bars.
+    assert lens_plane_cut(g_lens_view_y0, g_lens_view_y1, 80.0) < g_lens_view_y0 + (g_lens_view_y1 - g_lens_view_y0) * 0.5
     g_lens_tilt = 0.0
     lens_plane_setup(1280.0, 42.0, 680.0)
+    assert lens_plane_cut(10.0, 200.0, 24.0) == 10.0
     assert visible.w > 0.0 && visible.h > 0.0
     let index = workspace_find("editor.ns")
     assert index >= 0

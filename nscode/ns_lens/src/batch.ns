@@ -7,6 +7,7 @@ struct lens_batch_input {
     offset: [i32],
     length: [i32],
     number: [str],
+    row: [i32],
     vertex: [i32],
     colors: [u32],
     count: i32,
@@ -23,15 +24,51 @@ struct lens_batch_input {
     language: i32
 }
 
+// Default keeps every line. A glyph draw narrows this to the visible window
+// and restores it before anyone else prepares a batch.
+let g_lens_batch_c0: i32 = 0
+let g_lens_batch_c1: i32 = 128
+let g_lens_batch_r0: i32 = 0
+let g_lens_batch_r1: i32 = 2147483647
+
+fn lens_batch_window_reset() {
+    g_lens_batch_c0 = 0
+    g_lens_batch_c1 = LENS_MAX_COLUMNS
+    g_lens_batch_r0 = 0
+    g_lens_batch_r1 = 2147483647
+}
+
+fn lens_batch_keeps_row(row: i32, rows: i32) bool {
+    if g_lens_batch_r1 > 100000000 { return true }
+    let n = rows
+    if n < 1 { n = 1 }
+    let column = row / n
+    let local = row % n
+    return column >= g_lens_batch_c0 && column < g_lens_batch_c1 && local >= g_lens_batch_r0 && local < g_lens_batch_r1
+}
+
 fn lens_batch_prepare(r: ref ui_renderer, text: str, document: bool, first_row: i32, first_col: i32, total: i32, rows: i32, char_w: f64, mini: bool) lens_batch_input {
     // Initialize the selected language's literal cache before native workers.
     let keyword_ready = is_keyword_part("", 0, 0)
     let type_ready = is_type_word_part("", 0, 0)
     let capacity = total - first_row
     if !document { capacity = clamp_i(capacity, 0, lens_text_lines(text)) }
+    if g_lens_batch_r1 <= 100000000 {
+        let span = g_lens_batch_r1 - g_lens_batch_r0
+        let cols = g_lens_batch_c1 - g_lens_batch_c0
+        if span < 0 { span = 0 }
+        if cols < 0 { cols = 0 }
+        let n64 = (span as i64) * (cols as i64)
+        let n: i32 = 1000000
+        if n64 < 1000000 { n = n64 as i32 }
+        if n < capacity { capacity = n }
+    }
+    if capacity < 0 { capacity = 0 }
+    let rows_n = rows
+    if rows_n < 1 { rows_n = 1 }
     let input = lens_batch_input {
         [str](capacity), [i32](capacity), [i32](capacity),
-        [str](capacity), [i32](capacity), [u32](9),
+        [str](capacity), [i32](capacity), [i32](capacity), [u32](9),
         0, 0, first_row, first_col,
         rows, g_lens_flow_column_pitch,
         g_lens_flow_line_pitch, char_w,
@@ -45,6 +82,13 @@ fn lens_batch_prepare(r: ref ui_renderer, text: str, document: bool, first_row: 
     let offset: i32 = 0
     let row = first_row
     loop row < total && (document || offset < text.len) {
+        if lens_batch_keeps_row(row, rows_n) == false {
+            if document == false {
+                offset = lens_line_end(text, offset) + 1
+            }
+            row = row + 1
+            continue
+        }
         let source = text
         let end = lens_line_end(source, offset)
         let number = row + 1
@@ -58,10 +102,11 @@ fn lens_batch_prepare(r: ref ui_renderer, text: str, document: bool, first_row: 
         input.source[i] = substr(source, offset, end - offset)
         input.offset[i] = 0
         input.length[i] = end - offset
+        input.row[i] = row
         if !mini {
             input.number[i] = itos(number)
             if number == 0 { input.number[i] = "-" }
-            if first_col != 0 && i == 0 { input.number[i] = "" }
+            if first_col != 0 && row == first_row { input.number[i] = "" }
         }
         input.bytes = input.bytes + end - offset + 1
         input.count = i + 1
@@ -82,9 +127,9 @@ fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input,
     let bar_h = code_base_line_h()
     for i in begin to end {
         input.vertex[i] = ui_rect_batch_vertex_count(r, batch)
-        let row = input.first_row + i
+        let row = input.row[i]
         let first_col: i32 = 0
-        if i == 0 { first_col = input.first_col }
+        if row == input.first_row { first_col = input.first_col }
         let column = clamp_i(row / input.rows, 0, LENS_MAX_COLUMNS - 1)
         let column_x = (column as f64) * input.column_pitch
         let text_x = column_x + gutter + inset + (first_col as f64) * input.char_w
@@ -142,6 +187,7 @@ fn lens_batch_dispatch(r: ref ui_renderer, input: ref lens_batch_input, batches:
     let offset = input.offset
     let length = input.length
     let number = input.number
+    let row = input.row
     let vertex = input.vertex
     let colors = input.colors
     let count = input.count
@@ -157,7 +203,7 @@ fn lens_batch_dispatch(r: ref ui_renderer, input: ref lens_batch_input, batches:
     let mini = input.mini
     let language = input.language
     let pending = dispatch(queue_worker) { in
-        let work = lens_batch_input(source, offset, length, number, vertex, colors, count, bytes, first_row, first_col, rows, column_pitch, line_pitch, char_w, text_y, number_y, mini, language)
+        let work = lens_batch_input(source, offset, length, number, row, vertex, colors, count, bytes, first_row, first_col, rows, column_pitch, line_pitch, char_w, text_y, number_y, mini, language)
         lens_batch_range(r, output, ref work, begin, end)
     }
     lens_batch_dispatch(r, input, batches, starts, completed, worker + 1, workers)

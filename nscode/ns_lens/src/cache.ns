@@ -98,7 +98,7 @@ fn lens_read_source(path: str, offset: i64, bytes: i32) str {
 // The layout signature covers the ordered source set, sizes, and ancestry.
 // Text changes with an unchanged size still validate against SHA-256 on use.
 fn lens_layout_signature() str {
-    let signature = "layout4-lines\n" + ftos(g_lens_code_world)
+    let signature = "layout5-files\n" + ftos(g_lens_code_world)
     for i in 0 to g_workspace_count {
         g_lens_cache_keys[i] = os_text_hash(os_entry_path(i))
         signature = signature + os_text_hash(g_lens_cache_keys[i] + ":" + ftos(g_lens_weight[i]) + ":" + itos(os_entry_parent(i)))

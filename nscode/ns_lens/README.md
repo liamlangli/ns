@@ -15,8 +15,8 @@ directly with `bin/ns run nscode/ns_lens /absolute/path/to/project`.
 
 The scan follows the project's root `.gitignore`, excludes Git metadata, and
 recognizes Nano Script, common native/web/shader languages, scripts, manifests,
-and text documentation. Each directory is a titled frame holding its children
-in a weighted binary treemap; a file's area is proportional to its actual full-file line count. The
+and text documentation. Directories only group a weighted binary treemap and
+are not drawn; a file's area is proportional to its actual full-file line count. The
 map is laid out flat, so leaves tile edge to edge. Flat, the camera is
 orthographic; middle drag tilts the map plane up to 60 degrees and the camera
 becomes a perspective one looking across it. A tilt released under 5 degrees
@@ -100,13 +100,15 @@ bin/ns test nscode/ns_lens
 bin/ns lint nscode/ns_lens
 ```
 
-Text and minimap still switch with code size. Below readable text size the
+Text and minimap still switch with code size. On a tilted plane, lines the
+perspective compresses below a few screen pixels keep the minimap bars
+behind the glyphs, so the far edge does not go blank. Below readable text size the
 same resident minimap keeps rendering at every distance: there is no hidden
 state or coarse/fine minimap switch. Minimap bars cover every source line and share the glyphs' line spacing,
 column breaks, gutter, origin and camera scale. There is no row sampling or
 bar-count truncation. The batch is retained independently of the glyph/page
 cache and only rebuilt when source or layout changes. Pending files show a loading marker; empty files
-have an empty-content mark. Folder appearance is unchanged.
+have an empty-content mark. Directories are not drawn.
 
 Full rows use retained glyph batches, including the active editor. The immediate
 UI stream draws selection, Git backgrounds and the caret. Cached glyphs share
