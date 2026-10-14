@@ -1,0 +1,456 @@
+// The File menu and its shortcuts (Cmd+P search, Cmd+Enter commit, Cmd+O
+// push), the commit message dialog, the search box, and the bottom-left
+// hints and activity row above the status bar.
+use std
+use os
+use view
+use ui
+
+lit LENS_FILE_X = 12.0
+lit LENS_FILE_W = 64.0
+lit LENS_FILE_MENU_W = 220.0
+lit LENS_FILE_ITEMS = 3
+lit LENS_SEARCH_W = 560.0
+lit LENS_SEARCH_INPUT_H = 30.0
+lit LENS_SEARCH_ROWS = 12
+lit LENS_SEARCH_ROW_H = 22.0
+lit LENS_COMMIT_W = 460.0
+lit LENS_COMMIT_H = 150.0
+lit LENS_HINT_LINE_H = 15.0
+lit LENS_HINT_COUNT = 8
+lit LENS_ACTIVITY_H = 22.0
+
+let g_lens_file_open = false
+let g_lens_file_block = false
+let g_lens_search_block = false
+let g_lens_commit_open = false
+let g_lens_commit_message = ""
+let g_lens_commit_changes: i32 = 0
+
+fn lens_file_item_label(i: i32) str {
+    if i == 0 {
+        return "Search..."
+    }
+    if i == 1 {
+        return "Commit..."
+    }
+    return "Push"
+}
+
+fn lens_file_item_keys(i: i32) str {
+    if i == 0 {
+        return "cmd+P"
+    }
+    if i == 1 {
+        return "cmd+enter"
+    }
+    return "cmd+O"
+}
+
+fn lens_hint_keys(i: i32) str {
+    if i == 0 { return "wheel" }
+    if i == 1 { return "shift+wheel" }
+    if i == 2 { return "left drag" }
+    if i == 3 { return "right click" }
+    if i == 4 { return "middle drag" }
+    return lens_file_item_keys(i - 5)
+}
+
+fn lens_hint_action(i: i32) str {
+    if i == 0 { return "zoom" }
+    if i == 1 { return "scroll code" }
+    if i == 2 { return "pan" }
+    if i == 3 { return "select" }
+    if i == 4 { return "tilt" }
+    if i == 5 { return "search" }
+    if i == 6 { return "commit" }
+    return "push"
+}
+
+// Keys belong to the search box or the commit dialog while either is open.
+fn lens_typing() bool {
+    return g_lens_commit_open || g_lens_search_open
+}
+
+// Pointer input the map must not also take this frame.
+fn lens_menu_blocks() bool {
+    return g_lens_commit_open || g_lens_file_block || g_lens_search_block
+}
+
+fn cmd_down(v: ref view) bool {
+    return view_is_key_pressed(v, 343) || view_is_key_pressed(v, 347) || view_is_key_pressed(v, 341) || view_is_key_pressed(v, 345)
+}
+
+fn lens_search_show() {
+    g_lens_search_open = true
+    g_lens_commit_open = false
+    g_lens_file_open = false
+}
+
+fn lens_commit_show() {
+    g_lens_commit_open = true
+    g_lens_search_open = false
+    g_lens_file_open = false
+    g_lens_commit_message = ""
+    g_lens_commit_changes = 0
+    let listed = os_git_changes(g_workspace_root)
+    if os_git_status() == 0 && listed != "" {
+        g_lens_commit_changes = lens_text_lines(listed)
+        if ((listed[listed.len - 1] as i32) & 255) == 10 {
+            g_lens_commit_changes = g_lens_commit_changes - 1
+        }
+    }
+}
+
+fn lens_commit_submit() {
+    let message = lens_one_line(g_lens_commit_message)
+    if message == "" {
+        g_lens_message = "Enter a commit message"
+        return
+    }
+    g_lens_commit_open = false
+    lens_commit(message)
+}
+
+fn lens_file_action(i: i32) {
+    g_lens_file_open = false
+    if i == 0 {
+        lens_search_show()
+    } else if i == 1 {
+        lens_commit_show()
+    } else {
+        lens_push()
+    }
+}
+
+// One-line text entry from the latched keys: printable keys, Backspace and
+// Cmd+V. The caret stays at the end.
+fn lens_field_edit(v: ref view, text: str) str {
+    let value = text
+    if key_edge(v, 259) && value.len > 0 {
+        let cut = value.len - 1
+        loop cut > 0 && (lens_byte(value, cut) & 192) == 128 {
+            cut = cut - 1
+        }
+        value = substr(value, 0, cut)
+    }
+    for k in 32 to 97 {
+        if key_edge(v, k) {
+            if key_event_cmd() {
+                if k == 86 {
+                    value = value + lens_one_line(view_get_clipboard(v))
+                }
+            } else {
+                value = value + key_char(k, key_event_shift())
+            }
+        }
+    }
+    return value
+}
+
+// Runs before the editor, so neither the editor nor the map sees keys meant
+// for the shortcuts, the search box or the commit dialog.
+fn lens_menu_keys(v: ref view) {
+    if g_lens_commit_open {
+        if key_edge(v, 256) {
+            g_lens_commit_open = false
+            return
+        }
+        if key_edge(v, 257) || key_edge(v, 335) {
+            lens_commit_submit()
+            return
+        }
+        g_lens_commit_message = lens_field_edit(v, g_lens_commit_message)
+        return
+    }
+    if g_lens_search_open {
+        if key_edge(v, 256) || (cmd_down(v) && key_edge(v, 80)) {
+            g_lens_search_open = false
+            return
+        }
+        if key_edge(v, 257) || key_edge(v, 335) {
+            lens_search_go(g_lens_search_selected)
+            return
+        }
+        if key_edge(v, 264) {
+            g_lens_search_selected = clamp_i(g_lens_search_selected + 1, 0, clamp_i(g_lens_hit_count - 1, 0, LENS_HIT_MAX))
+        }
+        if key_edge(v, 265) {
+            g_lens_search_selected = clamp_i(g_lens_search_selected - 1, 0, LENS_HIT_MAX)
+        }
+        if g_lens_search_selected < g_lens_search_scroll {
+            g_lens_search_scroll = g_lens_search_selected
+        }
+        if g_lens_search_selected >= g_lens_search_scroll + LENS_SEARCH_ROWS {
+            g_lens_search_scroll = g_lens_search_selected - LENS_SEARCH_ROWS + 1
+        }
+        lens_search_set_query(lens_field_edit(v, g_lens_search_query))
+        return
+    }
+    if cmd_down(v) {
+        if key_edge(v, 80) {
+            lens_search_show()
+        } else if key_edge(v, 257) || key_edge(v, 335) {
+            lens_commit_show()
+        } else if key_edge(v, 79) {
+            lens_push()
+        }
+    }
+}
+
+fn lens_search_x(w: f64) f64 {
+    return clamp((w - LENS_SEARCH_W) * 0.5, 8.0, 100000.0)
+}
+
+fn lens_search_y() f64 { return lens_mode_y() + LENS_MODE_H + 8.0 }
+
+fn lens_search_shown_rows() i32 {
+    return clamp_i(g_lens_hit_count - g_lens_search_scroll, 0, LENS_SEARCH_ROWS)
+}
+
+fn lens_search_panel_h() f64 {
+    return LENS_SEARCH_INPUT_H + (lens_search_shown_rows() as f64) * LENS_SEARCH_ROW_H + LENS_SEARCH_ROW_H
+}
+
+fn lens_commit_x(w: f64) f64 { return (w - LENS_COMMIT_W) * 0.5 }
+
+fn lens_commit_y(h: f64) f64 { return (h - LENS_COMMIT_H) * 0.5 }
+
+// Pointer input for the File menu, the search box and the commit dialog,
+// ahead of the map. A click outside an open popup closes it.
+fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
+    let pop_y = lens_mode_popup_y()
+    let pop_h = LENS_MODE_ITEM * (LENS_FILE_ITEMS as f64)
+    g_lens_file_block = g_lens_file_open && raw_hit(v, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h)
+    let sx = lens_search_x(w)
+    let sy = lens_search_y()
+    g_lens_search_block = g_lens_search_open && raw_hit(v, sx, sy, LENS_SEARCH_W, lens_search_panel_h())
+    if g_lens_search_block && v.scroll_y != 0.0 {
+        let step: i32 = 1
+        if v.scroll_y > 0.0 {
+            step = -1
+        }
+        g_lens_search_scroll = clamp_i(g_lens_search_scroll + step, 0, clamp_i(g_lens_hit_count - LENS_SEARCH_ROWS, 0, LENS_HIT_MAX))
+        v.scroll_y = 0.0
+    }
+    if v.mouse_pressed == false {
+        return
+    }
+    if g_lens_commit_open {
+        let x = lens_commit_x(w)
+        let y = lens_commit_y(h)
+        if raw_hit(v, x + LENS_COMMIT_W - 196.0, y + LENS_COMMIT_H - 42.0, 84.0, 26.0) {
+            g_lens_commit_open = false
+        } else if raw_hit(v, x + LENS_COMMIT_W - 104.0, y + LENS_COMMIT_H - 42.0, 88.0, 26.0) {
+            lens_commit_submit()
+        }
+        v.mouse_pressed = false
+        return
+    }
+    if raw_hit(v, LENS_FILE_X, lens_mode_y(), LENS_FILE_W, LENS_MODE_H) {
+        g_lens_file_open = g_lens_file_open == false
+        v.mouse_pressed = false
+        return
+    }
+    if g_lens_file_open {
+        if g_lens_file_block {
+            lens_file_action(clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, LENS_FILE_ITEMS - 1))
+        }
+        g_lens_file_open = false
+        v.mouse_pressed = false
+        return
+    }
+    if g_lens_search_open {
+        let rows_y = sy + LENS_SEARCH_INPUT_H
+        if g_lens_search_block && g_mouse_y >= rows_y {
+            let row = ((g_mouse_y - rows_y) / LENS_SEARCH_ROW_H) as i32
+            if row < lens_search_shown_rows() {
+                lens_search_go(g_lens_search_scroll + row)
+            }
+        } else if g_lens_search_block == false {
+            g_lens_search_open = false
+        }
+        v.mouse_pressed = false
+    }
+}
+
+fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
+    let y = lens_mode_y()
+    let border = col_muted()
+    if g_lens_file_open {
+        border = col_accent()
+    }
+    ui_fill_round_rect(r, LENS_FILE_X, y, LENS_FILE_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, LENS_FILE_X, y, LENS_FILE_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
+    let ty = ui_text_v_center_y(r, y, LENS_MODE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, LENS_FILE_X + 10.0, ty, LENS_FILE_W - 28.0, LENS_MODE_H, "File", small_px(), col_text())
+    draw_text_clipped(r, LENS_FILE_X + LENS_FILE_W - 16.0, ty, 12.0, LENS_MODE_H, "v", small_px(), col_muted())
+    if g_lens_file_open == false {
+        return
+    }
+    let pop_y = lens_mode_popup_y()
+    let pop_h = LENS_MODE_ITEM * (LENS_FILE_ITEMS as f64)
+    ui_fill_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
+    for i in 0 to LENS_FILE_ITEMS {
+        let iy = pop_y + (i as f64) * LENS_MODE_ITEM
+        if raw_hit(v, LENS_FILE_X, iy, LENS_FILE_MENU_W, LENS_MODE_ITEM) {
+            ui_fill_rect(r, LENS_FILE_X + 1.0, iy, LENS_FILE_MENU_W - 2.0, LENS_MODE_ITEM, col_editor_panel_hi(), 0.0)
+        }
+        let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
+        draw_text_clipped(r, LENS_FILE_X + 10.0, row_ty, 110.0, LENS_MODE_ITEM, lens_file_item_label(i), small_px(), col_text())
+        let keys = lens_file_item_keys(i)
+        let kw = ui_text_width(r, keys, small_px(), FONT_MONO())
+        draw_text_clipped(r, LENS_FILE_X + LENS_FILE_MENU_W - 10.0 - kw, row_ty, kw, LENS_MODE_ITEM, keys, small_px(), col_muted())
+    }
+}
+
+// A one-line field: its text with the end kept in view, and a blinking caret.
+fn lens_draw_field(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, placeholder: str) {
+    ui_fill_round_rect(r, x, y, w, h, 3.0, col_editor_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, w, h, 3.0, 1.0, col_accent(), 0.0)
+    let ty = ui_text_v_center_y(r, y, h, small_px(), FONT_MONO())
+    let tw = ui_text_width(r, text, small_px(), FONT_MONO())
+    let room = w - 20.0
+    let tx = x + 10.0 - clamp(tw - room, 0.0, 1000000.0)
+    ui_push_clip(r, x + 4.0, y, w - 8.0, h)
+    if text == "" {
+        ui_draw_text(r, x + 10.0, ty, placeholder, small_px(), col_muted(), FONT_MONO())
+    } else {
+        ui_draw_text(r, tx, ty, text, small_px(), col_text(), FONT_MONO())
+    }
+    let blink = os_time() * 2.0
+    if blink - ((blink as i64) as f64) < 0.6 {
+        ui_fill_rect(r, tx + tw + 1.0, y + 7.0, 1.5, h - 14.0, col_editor_cursor(), 0.0)
+    }
+    ui_pop_clip(r)
+}
+
+fn lens_draw_search(r: ref ui_renderer, v: ref view, w: f64) {
+    if g_lens_search_open == false {
+        return
+    }
+    let x = lens_search_x(w)
+    let y = lens_search_y()
+    let panel_h = lens_search_panel_h()
+    ui_fill_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_field(r, x, y, LENS_SEARCH_W, LENS_SEARCH_INPUT_H, g_lens_search_query, "Search file names and contents")
+    let rows = lens_search_shown_rows()
+    for n in 0 to rows {
+        let hit = g_lens_search_scroll + n
+        let ry = y + LENS_SEARCH_INPUT_H + (n as f64) * LENS_SEARCH_ROW_H
+        if hit == g_lens_search_selected || raw_hit(v, x, ry, LENS_SEARCH_W, LENS_SEARCH_ROW_H) {
+            ui_fill_rect(r, x + 1.0, ry, LENS_SEARCH_W - 2.0, LENS_SEARCH_ROW_H, col_editor_panel_hi(), 0.0)
+        }
+        let ty = ui_text_v_center_y(r, ry, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
+        let place = lens_relative_path(os_entry_path(g_lens_hit_file[hit]))
+        if g_lens_hit_line[hit] >= 0 {
+            place = place + ":" + itos(g_lens_hit_line[hit] + 1)
+        }
+        let pw = ui_text_width(r, place, small_px(), FONT_MONO())
+        draw_text_clipped(r, x + 10.0, ty, LENS_SEARCH_W - 20.0, LENS_SEARCH_ROW_H, place, small_px(), col_text())
+        if g_lens_hit_text[hit] != "" {
+            let sx = x + 10.0 + pw + 16.0
+            draw_text_clipped(r, sx, ty, x + LENS_SEARCH_W - 10.0 - sx, LENS_SEARCH_ROW_H, g_lens_hit_text[hit], small_px(), col_muted())
+        }
+    }
+    let fy = y + LENS_SEARCH_INPUT_H + (rows as f64) * LENS_SEARCH_ROW_H
+    let note = ""
+    if g_lens_search_running || g_lens_search_query != g_lens_search_done_query {
+        note = "searching..."
+    } else if g_lens_search_query != "" {
+        note = itos(g_lens_hit_count) + " results"
+        if g_lens_hit_count >= LENS_HIT_MAX {
+            note = "first " + note
+        }
+    }
+    let ty = ui_text_v_center_y(r, fy, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, x + 10.0, ty, LENS_SEARCH_W - 20.0, LENS_SEARCH_ROW_H, note, small_px(), col_muted())
+}
+
+fn lens_draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f64, label: str, strong: bool) {
+    let border = col_muted()
+    if strong || raw_hit(v, x, y, w, h) {
+        border = col_accent()
+    }
+    ui_fill_round_rect(r, x, y, w, h, 3.0, col_editor_panel_hi(), 0.0)
+    ui_stroke_round_rect(r, x, y, w, h, 3.0, 1.0, border, 0.0)
+    draw_centered_text(r, x, y, w, h, label, small_px(), col_text())
+}
+
+fn lens_draw_commit(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    if g_lens_commit_open == false {
+        return
+    }
+    ui_fill_rect(r, 0.0, 0.0, w, h, 0x99000000u, 0.0)
+    let x = lens_commit_x(w)
+    let y = lens_commit_y(h)
+    ui_fill_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, 1.0, col_muted(), 0.0)
+    let title = "Commit " + itos(g_lens_commit_changes) + " changed files"
+    if g_lens_commit_changes == 1 {
+        title = "Commit 1 changed file"
+    }
+    draw_text_clipped(r, x + 16.0, y + 14.0, LENS_COMMIT_W - 32.0, 20.0, title, small_px(), col_text())
+    lens_draw_field(r, x + 16.0, y + 42.0, LENS_COMMIT_W - 32.0, 30.0, g_lens_commit_message, "Commit message")
+    draw_text_clipped(r, x + 16.0, y + 82.0, LENS_COMMIT_W - 32.0, 20.0, "enter  commit      esc  cancel", small_px(), col_muted())
+    lens_draw_button(r, v, x + LENS_COMMIT_W - 196.0, y + LENS_COMMIT_H - 42.0, 84.0, 26.0, "Cancel", false)
+    lens_draw_button(r, v, x + LENS_COMMIT_W - 104.0, y + LENS_COMMIT_H - 42.0, 88.0, 26.0, "Commit", true)
+}
+
+// Controls, one per line, stacked above the activity row.
+fn lens_draw_hints(r: ref ui_renderer, bottom: f64) {
+    for i in 0 to LENS_HINT_COUNT {
+        let y = bottom - ((LENS_HINT_COUNT - i) as f64) * LENS_HINT_LINE_H
+        ui_draw_text(r, 12.0, y, lens_hint_keys(i), small_px(), col_text(), FONT_MONO())
+        ui_draw_text(r, 112.0, y, lens_hint_action(i), small_px(), col_muted(), FONT_MONO())
+    }
+}
+
+// The running search, commit or push with its progress, then the message.
+// Work of unknown length shows a block sliding along the bar.
+fn lens_draw_activity(r: ref ui_renderer, y: f64, w: f64) {
+    let label = ""
+    let fraction: f64 = -1.0
+    if lens_job_visible() {
+        label = lens_job_label(g_lens_job_kind)
+        fraction = lens_job_fraction()
+    } else if g_lens_search_running {
+        label = "search"
+        fraction = lens_search_fraction()
+    }
+    let ty = ui_text_v_center_y(r, y, LENS_ACTIVITY_H, small_px(), FONT_MONO())
+    let x: f64 = 12.0
+    if label != "" {
+        lit bar_w = 140.0
+        draw_text_clipped(r, x, ty, 60.0, LENS_ACTIVITY_H, label, small_px(), col_text())
+        let bar_x = x + 64.0
+        let bar_y = y + LENS_ACTIVITY_H * 0.5 - 3.0
+        ui_fill_rect(r, bar_x, bar_y, bar_w, 6.0, col_editor_sel(), 0.0)
+        if fraction >= 0.0 {
+            ui_fill_rect(r, bar_x, bar_y, bar_w * clamp(fraction, 0.0, 1.0), 6.0, col_text(), 0.0)
+            let percent = itos((clamp(fraction, 0.0, 1.0) * 100.0) as i32) + "%"
+            draw_text_clipped(r, bar_x + bar_w + 8.0, ty, 40.0, LENS_ACTIVITY_H, percent, small_px(), col_muted())
+        } else {
+            let phase = os_time() * 0.8
+            let t = phase - ((phase as i64) as f64)
+            let swing = clamp(1.0 - 2.0 * t, -1.0, 1.0)
+            if swing < 0.0 {
+                swing = -swing
+            }
+            ui_fill_rect(r, bar_x + (bar_w - 36.0) * swing, bar_y, 36.0, 6.0, col_text(), 0.0)
+        }
+        x = bar_x + bar_w + 52.0
+    }
+    draw_text_clipped(r, x, ty, w - x - 12.0, LENS_ACTIVITY_H, g_lens_message, small_px(), col_muted())
+}
+
+fn lens_draw_menus(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    let activity_y = h - 28.0 - LENS_ACTIVITY_H
+    lens_draw_activity(r, activity_y, w)
+    lens_draw_hints(r, activity_y - 4.0)
+    lens_draw_file_menu(r, v)
+    lens_draw_search(r, v, w)
+    lens_draw_commit(r, v, w, h)
+}

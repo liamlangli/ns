@@ -14,6 +14,37 @@ fn finish_read() {
     assert g_lens_io_running == false
 }
 
+// Caret and pointer on wrapped rows use the same byte-to-row arithmetic as
+// the glyph batch: byte c of a line sits on its row c / wrap.
+fn check_wrapped_caret(v: ref view) {
+    load_str("abcdefghij\nabcdefgh\nxy")
+    lens_diff_parse("")
+    g_code_wrap = 4
+    lens_wrap_sync(4)
+    assert g_lens_wrap_total == 6
+    place_cursor(0, 4, false)
+    assert code_caret_row() == 1
+    place_cursor(0, 10, false)
+    assert code_caret_row() == 2
+    // Just past a full wrapped row the caret stays at that row's end.
+    place_cursor(1, 8, false)
+    assert code_caret_row() == 4
+    place_cursor(2, 0, false)
+    assert code_caret_row() == 5
+    g_code_scroll = 0.0
+    let line_h = 20.0
+    g_mouse_x = 10.0 + 2.0 * 8.0
+    g_mouse_y = 100.0 + code_top_pad() + 1.5 * line_h
+    let second = mouse_point(v, 100.0, line_h, 0, 100, 10.0, 8.0)
+    assert second.line == 0 && second.col == 6
+    // Past the end of a wrapped row the column stays on that row.
+    g_mouse_x = 10.0 + 100.0 * 8.0
+    g_mouse_y = 100.0 + code_top_pad() + 3.5 * line_h
+    let wrapped = mouse_point(v, 100.0, line_h, 0, 100, 10.0, 8.0)
+    assert wrapped.line == 1 && wrapped.col == 3
+    g_code_wrap = 0
+}
+
 fn main() {
     let root = "/tmp/ns_lens_zoom_code"
     os_make_dirs(root)
@@ -21,6 +52,10 @@ fn main() {
     let text = ""
     for n in 0 to 40 {
         text = text + line
+        // One long line wraps onto extra rows at the file's typical width.
+        if n == 20 {
+            text = text + "let long = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10 + 11 + 12 + 13 + 14\n"
+        }
     }
     assert os_write_file_atomic(root + "/main.ns", text) != 0
     g_workspace_streaming = true
@@ -29,6 +64,9 @@ fn main() {
     lens_rebuild()
     let index = workspace_find("main.ns")
     assert index >= 0
+    assert lens_wrap_cols(index) == 22
+    assert g_lens_source_rows[index] == lens_text_rows(text, 22)
+    assert g_lens_source_rows[index] == lens_text_lines(text) + 3
     let v = view_create("zoom code", 1280, 800)
     gpu_request_device(v)
     let r = ui_renderer_create(v)
@@ -36,7 +74,7 @@ fn main() {
     finish_read()
     lens_mini_update(r)
     assert lens_mini_ready(index)
-    lens_code_flow(index, g_lens_source_lines[index])
+    lens_code_flow(index, g_lens_source_rows[index])
     let fit = g_lens_flow_fit
     g_lens_distance = 800.0 * g_lens_code_world * fit / LENS_MAX_ZOOM
     g_lens_target_distance = g_lens_distance
@@ -71,6 +109,7 @@ fn main() {
     render_lens(r, v, 1280.0, 800.0)
     assert g_code_draw_glyphs
     assert g_lens_diff_count == lens_text_lines(text)
+    assert g_lens_wrap_total == g_lens_source_rows[index]
     let document_batch = g_lens_glyph_batch[LENS_CACHE_SLOTS]
     assert document_batch != 0
     assert ui_rect_batch_vertex_count(r, document_batch) > 0
@@ -96,6 +135,7 @@ fn main() {
     g_lens_render_serial = g_lens_render_serial + 1
     lens_release_idle_glyphs(r)
     assert g_lens_glyph_batch[preview_slot] == 0
+    check_wrapped_caret(v)
     ui_renderer_destroy(r)
     view_close(v)
     os_watch_stop()

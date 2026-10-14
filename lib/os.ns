@@ -99,8 +99,10 @@ ref fn os_motion_attitude(values: [f64]) bool
 // EOF and return an empty string when the file or requested range is invalid.
 ref fn os_file_size(path: str) i64
 // Streamed UTF-8 byte-column metrics, including the final empty line.
-// Writes line count and maximum byte-column count to values[0...1].
-// False means failure; the caller supplies at least two elements.
+// Writes line count, maximum byte-column count, the byte-column count that
+// covers 90% of the non-empty lines, and the row count when every line wraps
+// at that width to values[0...3].
+// False means failure; the caller supplies at least four elements.
 ref fn os_file_text_metrics(path: str, values: [i64]) bool
 // SHA-256 in lowercase hex; file hashing streams through a 64 KiB buffer.
 // Empty string means failure, including a file that changed during hashing.
@@ -121,6 +123,16 @@ ref fn os_git_revision(path: str) str
 ref fn os_git_base(path: str, max_bytes: i32) str
 ref fn os_git_diff_text(before: str, after: str, max_bytes: i32) str
 ref fn os_git_changes(path: str) str
+// Run `git -C folder` with one argument per line of `args` (empty lines are
+// skipped, so an argument cannot hold a newline), never through a shell.
+// Git runs without a controlling terminal and with GIT_TERMINAL_PROMPT=0, so
+// a missing credential fails rather than waiting on a prompt. Returns stdout
+// and stderr together, keeping the last 64 KiB; os_git_status() is the exit
+// status, -1 when Git could not run. Blocking: call it from a worker task.
+ref fn os_git_run(folder: str, args: str) str
+// The last percentage the running os_git_run printed (pass `--progress` for
+// push/fetch), or -1 before any. Readable from any thread.
+ref fn os_git_progress() i32
 ref fn os_read_file(path: str) str
 ref fn os_read_file_part(path: str, offset: i64, size: i64) str
 // Atomically replace a UTF-8 text file and return 1 on success.

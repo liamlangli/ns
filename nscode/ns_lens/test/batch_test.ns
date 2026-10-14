@@ -3,8 +3,8 @@ use os
 use ui
 use view
 
-fn check_batch(r: ref ui_renderer, text: str, mini: bool, document: bool, first_row: i32, first_col: i32, total: i32) {
-    let input = lens_batch_prepare(r, text, document, first_row, first_col, total, 37, 8.0, mini)
+fn check_batch(r: ref ui_renderer, text: str, mini: bool, document: bool, first_row: i32, first_col: i32, total: i32, wrap: i32) {
+    let input = lens_batch_prepare(r, text, lens_file_diff_none(), document, first_row, first_col, total, 37, wrap, 8.0, mini)
     let serial = ui_rect_batch_create(r)
     let parallel = ui_rect_batch_create(r)
     ui_rect_batch_begin(r, serial)
@@ -37,7 +37,7 @@ fn check_window(r: ref ui_renderer) {
     g_lens_batch_c1 = 1
     g_lens_batch_r0 = 2
     g_lens_batch_r1 = 5
-    let band = lens_batch_prepare(r, lines, false, 0, 4, 6, 37, 8.0, false)
+    let band = lens_batch_prepare(r, lines, lens_file_diff_none(), false, 0, 4, 6, 37, 1000, 8.0, false)
     assert band.count == 3
     assert band.row[0] == 2 && band.row[1] == 3 && band.row[2] == 4
     assert band.number[0] == "3"
@@ -45,21 +45,21 @@ fn check_window(r: ref ui_renderer) {
     g_lens_batch_c1 = 2
     g_lens_batch_r0 = 0
     g_lens_batch_r1 = 2
-    let column = lens_batch_prepare(r, lines, false, 0, 0, 6, 2, 8.0, false)
+    let column = lens_batch_prepare(r, lines, lens_file_diff_none(), false, 0, 0, 6, 2, 1000, 8.0, false)
     assert column.count == 2
     assert column.row[0] == 2 && column.row[1] == 3
     g_lens_batch_c0 = 0
     g_lens_batch_c1 = 1
     g_lens_batch_r0 = 0
     g_lens_batch_r1 = 1
-    let head = lens_batch_prepare(r, lines, false, 0, 4, 6, 37, 8.0, false)
+    let head = lens_batch_prepare(r, lines, lens_file_diff_none(), false, 0, 4, 6, 37, 1000, 8.0, false)
     assert head.count == 1 && head.row[0] == 0 && head.number[0] == ""
     let head_batch = ui_rect_batch_create(r)
     ui_rect_batch_begin(r, head_batch)
     lens_batch_range(r, head_batch, ref head, 0, head.count)
     let head_vertices = ui_rect_batch_vertex_count(r, head_batch)
     lens_batch_window_reset()
-    let all = lens_batch_prepare(r, lines, false, 0, 4, 6, 37, 8.0, false)
+    let all = lens_batch_prepare(r, lines, lens_file_diff_none(), false, 0, 4, 6, 37, 1000, 8.0, false)
     assert all.count == 6 && all.row[0] == 0 && all.row[5] == 5 && all.number[0] == ""
     let all_batch = ui_rect_batch_create(r)
     ui_rect_batch_begin(r, all_batch)
@@ -69,6 +69,95 @@ fn check_window(r: ref ui_renderer) {
     ui_rect_batch_destroy(r, head_batch)
     ui_rect_batch_destroy(r, all_batch)
     lens_batch_window_reset()
+}
+
+fn line_vertices(r: ref ui_renderer, text: str, wrap: i32, mini: bool) i32 {
+    let input = lens_batch_prepare(r, text, lens_file_diff_none(), false, 0, 0, lens_text_rows(text, wrap), 37, wrap, 8.0, mini)
+    let batch = ui_rect_batch_create(r)
+    ui_rect_batch_begin(r, batch)
+    lens_batch_range(r, batch, ref input, 0, input.count)
+    let count = ui_rect_batch_vertex_count(r, batch)
+    ui_rect_batch_destroy(r, batch)
+    return count
+}
+
+// A line longer than the wrap width continues on the following rows, with
+// its line number only on the first.
+fn check_wrap(r: ref ui_renderer) {
+    g_lens_flow_line_pitch = 20.0
+    g_lens_flow_column_pitch = 800.0
+    assert lens_wrap_rows(0, 4) == 1
+    assert lens_wrap_rows(4, 4) == 1
+    assert lens_wrap_rows(5, 4) == 2
+    assert lens_wrap_rows(12, 4) == 3
+    assert lens_wrap_span(4, 0, 4) == 0
+    assert lens_wrap_span(5, 3, 4) == 1
+    assert lens_wrap_span(2, 7, 4) == 3
+    let text = "abcdefghij\nxy\n\nabcd"
+    assert lens_text_rows(text, 4) == 6
+    assert lens_text_rows(text, 100) == lens_text_lines(text)
+    let input = lens_batch_prepare(r, text, lens_file_diff_none(), false, 0, 0, lens_text_rows(text, 4), 37, 4, 8.0, false)
+    assert input.count == 4
+    assert input.row[0] == 0 && input.row[1] == 3 && input.row[2] == 4 && input.row[3] == 5
+    assert input.number[0] == "1" && input.number[1] == "2" && input.number[3] == "4"
+    // Wrapping moves glyphs to new rows but adds no glyphs or line numbers.
+    assert line_vertices(r, "abcdefghij", 4, false) == line_vertices(r, "abcdefghij", 100, false)
+    assert line_vertices(r, "abcdefghij", 4, true) > line_vertices(r, "abcdefghij", 100, true)
+    // Rows past the wrapped line's last row belong to the next line, so a
+    // window starting there keeps only that line.
+    g_lens_batch_c0 = 0
+    g_lens_batch_c1 = 1
+    g_lens_batch_r0 = 2
+    g_lens_batch_r1 = 4
+    let band = lens_batch_prepare(r, text, lens_file_diff_none(), false, 0, 0, 6, 37, 4, 8.0, false)
+    assert band.count == 2 && band.row[0] == 0 && band.row[1] == 3
+    lens_batch_window_reset()
+    // A wrap never splits a UTF-8 character.
+    assert lens_char_start("a\u{4e00}z", 0, 5, 2) == 4
+    assert lens_char_start("a\u{4e00}z", 0, 5, 1) == 1
+    assert lens_char_start("ab", 0, 2, 9) == 2
+    // Document rows wrap through the same table the editor uses.
+    load_str("abcdefghij\nxy")
+    lens_diff_parse("")
+    lens_wrap_sync(4)
+    assert g_lens_wrap_total == 4
+    assert g_lens_wrap_first[1] == 3
+    assert lens_wrap_find(0) == 0 && lens_wrap_find(2) == 0 && lens_wrap_find(3) == 1
+    let doc = lens_batch_prepare(r, g_doc, lens_file_diff_none(), true, 0, 0, g_lens_wrap_total, 37, 4, 8.0, false)
+    assert doc.count == 2 && doc.row[0] == 0 && doc.row[1] == 3
+}
+
+// Git's view of a file: deleted lines become ghost rows before their anchor,
+// added lines are marked, and both carry their own colors.
+fn check_diff_rows(r: ref ui_renderer) {
+    g_lens_flow_line_pitch = 20.0
+    g_lens_flow_column_pitch = 800.0
+    let diff = lens_file_diff_parse("--- a/x\n+++ b/x\n@@ -2 +2 @@\n-old line\n+b\n@@ -5,0 +5,1 @@\n+e\n")
+    assert diff.all_added == false
+    assert diff.added_count == 2 && diff.added[0] == 1 && diff.added[1] == 4
+    assert diff.deleted_count == 1 && diff.anchor[0] == 1 && diff.deleted[0] == "old line"
+    assert lens_file_diff_rows(diff, 4) == 2
+    assert lens_file_diff_rows(diff, 100) == 1
+    let text = "a\nb\nc\nd\ne"
+    let input = lens_batch_prepare(r, text, diff, false, 0, 0, 6, 37, 100, 8.0, false)
+    assert input.count == 6
+    assert input.source[1] == "old line" && input.kind[1] == LENS_ROW_DELETED && input.number[1] == "-"
+    assert input.kind[0] == LENS_ROW_KEPT && input.number[0] == "1"
+    assert input.kind[2] == LENS_ROW_ADDED && input.number[2] == "2" && input.row[2] == 2
+    assert input.kind[5] == LENS_ROW_ADDED && input.number[5] == "5"
+    // Preview rows get the editor's backgrounds; the open document does not.
+    assert input.marks[LENS_ROW_KEPT] == 0u && input.marks[LENS_ROW_ADDED] != 0u
+    let doc_input = lens_batch_prepare(r, text, lens_file_diff_none(), true, 0, 0, 5, 37, 100, 8.0, false)
+    assert doc_input.marks[LENS_ROW_ADDED] == 0u
+    // Minimap bars are one gray; added and deleted rows have their colors.
+    let bars = lens_batch_prepare(r, text, diff, false, 0, 0, 6, 37, 100, 8.0, true)
+    assert bars.marks[LENS_ROW_KEPT] != bars.marks[LENS_ROW_ADDED]
+    assert bars.marks[LENS_ROW_ADDED] != bars.marks[LENS_ROW_DELETED]
+    let fresh = lens_file_diff_parse(LENS_PATCH_NEW)
+    assert fresh.all_added
+    let all = lens_batch_prepare(r, "x\ny", fresh, false, 0, 0, 2, 37, 100, 8.0, true)
+    assert all.kind[0] == LENS_ROW_ADDED && all.kind[1] == LENS_ROW_ADDED
+    assert lens_file_diff_parse("").deleted_count == 0
 }
 
 fn main() {
@@ -87,6 +176,8 @@ fn main() {
     g_lens_flow_column_pitch = 800.0
     g_lens_flow_line_pitch = 20.0
     check_window(r)
+    check_wrap(r)
+    check_diff_rows(r)
     let text = "    let answer: i32 = compute(42) + 3 // parallel batch generation\n"
     for i in 0 to 12 { text = text + text }
     text = text + "print(\"FINAL_ROW\")"
@@ -94,16 +185,18 @@ fn main() {
     g_lens_batch_c1 = 8
     g_lens_batch_r0 = 0
     g_lens_batch_r1 = 37
-    check_batch(r, text, false, false, 19, 7, 19 + lens_text_lines(text))
+    // Wrapping every 24 bytes splits each 66-byte line over three rows.
+    check_batch(r, text, false, false, 19, 7, 19 + lens_text_rows(text, 24), 24)
     lens_batch_window_reset()
-    check_batch(r, text, true, false, 19, 7, 19 + lens_text_lines(text))
-    check_batch(r, text, false, false, 19, 7, 19 + lens_text_lines(text))
+    check_batch(r, text, true, false, 19, 7, 19 + lens_text_rows(text, 24), 24)
+    check_batch(r, text, false, false, 19, 7, 19 + lens_text_lines(text), 1000)
     load_str(text)
     lens_diff_parse("@@ -2 +2 @@\n-old\n+new\n")
-    check_batch(r, text, true, true, 0, 0, g_lens_diff_count)
-    check_batch(r, text, false, true, 0, 0, g_lens_diff_count)
-    check_batch(r, "", true, false, 0, 0, 1)
-    check_batch(r, "x", false, false, 0, 0, 1)
+    lens_wrap_sync(24)
+    check_batch(r, text, true, true, 0, 0, g_lens_wrap_total, 24)
+    check_batch(r, text, false, true, 0, 0, g_lens_wrap_total, 24)
+    check_batch(r, "", true, false, 0, 0, 1, 24)
+    check_batch(r, "x", false, false, 0, 0, 1, 24)
     ui_renderer_destroy(r)
     view_close(v)
     print("batch_test: passed\n")

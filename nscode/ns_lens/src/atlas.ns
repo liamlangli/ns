@@ -53,12 +53,20 @@ fn lens_block_register(index: i32, offset: i64, text: str) i32 {
     }
     let first_row = row
     let first_col = col
+    // Rows are display rows: a line wraps every `wrap` bytes, and a line of
+    // exactly k * wrap bytes already stands on its next row at the newline.
+    let wrap = lens_wrap_cols(index)
     for byte in text {
         if byte == 10 {
-            row = row + 1
+            if col == 0 || col % wrap != 0 {
+                row = row + 1
+            }
             col = 0
         } else {
             col = col + 1
+            if col % wrap == 0 {
+                row = row + 1
+            }
         }
     }
     g_lens_block_count = g_lens_block_count + 1
@@ -112,7 +120,7 @@ fn lens_block_visible(block: lens_source_block, x: f64, y: f64, zoom: f64, squas
 }
 
 fn lens_draw_streamed_code(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64, view: lens_leaf_rect, allow_read: bool) {
-    lens_code_flow(index, g_lens_source_lines[index])
+    lens_code_flow(index, g_lens_source_rows[index])
     let fit = g_lens_flow_fit
     let id = g_lens_block_first[index]
     loop id != 0 {

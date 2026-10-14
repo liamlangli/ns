@@ -6,7 +6,91 @@ fn check_gray(c: u32) {
     assert (c & 255) == ((c >> 16) & 255)
 }
 
+// No arrangement of `lines` rows fits leaf `i` at a scale above `fit`.
+fn check_fit_is_largest(i: i32, lines: i32, fit: f64) {
+    let width = g_lens_w[i] / g_lens_code_world - 2.0
+    let height = g_lens_h[i] / g_lens_code_world - 4.0
+    let grown = fit * 1.0001
+    for c in 1 to clamp_i(lines, 1, LENS_MAX_COLUMNS) + 1 {
+        let rows = (lines + c - 1) / c
+        let fits_w = (c as f64) * lens_code_column_width(i) * grown <= width
+        let fits_h = (lens_header_h() + code_base_top_pad() + (rows as f64) * code_base_line_h()) * grown <= height
+        assert !(fits_w && fits_h)
+    }
+}
+
+// Each leaf takes the largest scale its shape allows; line height stays in
+// proportion to the glyphs whatever the leaf shape or source length.
+fn check_leaf_flow() {
+    g_workspace_count = 3
+    g_lens_code_world = 1.0
+    g_lens_w[0] = 300.0
+    g_lens_h[0] = 800.0
+    g_lens_source_rows[0] = 1
+    g_lens_source_columns[0] = 12
+    g_lens_w[1] = 200.0
+    g_lens_h[1] = 600.0
+    g_lens_source_rows[1] = 300
+    g_lens_source_columns[1] = 80
+    g_lens_w[2] = 1200.0
+    g_lens_h[2] = 180.0
+    g_lens_source_rows[2] = 2000
+    g_lens_source_columns[2] = 160
+    for i in 0 to 3 { g_lens_files[i] = 1 }
+    for size in 0 to 3 {
+        g_setting_font_size = size
+        lens_leaf_fits()
+        for i in 0 to 3 {
+            let scale = g_lens_leaf_fit[i]
+            assert scale > 0.0
+            lens_code_flow(i, g_lens_source_rows[i])
+            assert g_lens_flow_fit == scale
+            assert g_lens_flow_line_pitch == code_base_line_h()
+            assert g_lens_flow_rows * g_lens_flow_columns >= g_lens_source_rows[i]
+            assert g_lens_flow_columns <= LENS_MAX_COLUMNS
+            assert g_lens_flow_column_pitch + 0.001 >= lens_code_column_width(i)
+            // The file name row scales with the code, so it is counted in code units.
+            let height = (lens_header_h() + code_base_top_pad() + (g_lens_flow_rows as f64) * g_lens_flow_line_pitch) * scale
+            assert height <= g_lens_h[i] - 4.0 + 0.001
+            check_fit_is_largest(i, g_lens_source_rows[i], scale)
+        }
+        // Leaves no longer share the smallest scale on the map.
+        assert g_lens_leaf_fit[0] > g_lens_leaf_fit[2] * 2.0
+        // The file name is exactly one code row tall at every font size.
+        assert lens_header_h() == code_base_line_h()
+        // Deleting lines while editing keeps the scale.
+        lens_code_flow(1, 120)
+        assert g_lens_flow_fit == g_lens_leaf_fit[1]
+        assert g_lens_flow_line_pitch == code_base_line_h()
+        // Rows past the source count (new lines, Git deletion rows) shrink the
+        // scale just enough to stay inside the leaf.
+        lens_code_flow(1, 600)
+        assert g_lens_flow_fit < g_lens_leaf_fit[1]
+        assert g_lens_flow_line_pitch == code_base_line_h()
+        assert g_lens_flow_rows * g_lens_flow_columns >= 600
+        assert g_lens_flow_column_pitch + 0.001 >= lens_code_column_width(1)
+        assert (lens_header_h() + code_base_top_pad() + (g_lens_flow_rows as f64) * g_lens_flow_line_pitch) * g_lens_flow_fit <= g_lens_h[1] - 4.0 + 0.001
+        check_fit_is_largest(1, 600, g_lens_flow_fit)
+        // A new leaf scale invalidates a previously cached flow.
+        g_lens_leaf_fit[1] = g_lens_leaf_fit[1] * 0.5
+        lens_code_flow(1, 300)
+        assert g_lens_flow_fit == g_lens_leaf_fit[1]
+        assert g_lens_flow_line_pitch == code_base_line_h()
+    }
+    g_setting_font_size = 1
+    g_workspace_count = 0
+}
+
 fn main() {
+    check_leaf_flow()
+    // The minimap name keeps its cap in a roomy leaf, shrinks in a narrow or
+    // short one, and disappears once it would be unreadable.
+    assert lens_name_px(1000.0, 400.0, 60.0) == LENS_NAME_MAX_PX
+    assert lens_name_px(64.0, 400.0, 60.0) == 8.0
+    assert lens_name_px(1000.0, 14.0, 60.0) == 7.0
+    assert lens_name_px(46.0, 400.0, 60.0) == 0.0
+    assert lens_name_px(1000.0, 10.0, 60.0) == 0.0
+    assert lens_name_px(1000.0, 400.0, 0.0) == 0.0
     let overview = lens_detail_of(0, 0, 2, 8)
     assert overview.code == false
     assert overview.ready == 2 && overview.total == 8
@@ -58,18 +142,26 @@ fn main() {
             }
         }
     }
-    // Full-file line counts determine area; flow uses all available content space.
+    // Every file fills its leaf at its own scale, with full-file coverage.
     for f in 0 to g_workspace_count {
         if g_lens_files[f] != 0 {
-            assert g_lens_weight[f] == g_lens_source_lines[f] as f64
-            lens_code_flow(f, g_lens_source_lines[f])
+            assert g_lens_weight[f] == g_lens_source_rows[f] as f64
+            lens_code_flow(f, g_lens_source_rows[f])
             assert g_lens_flow_rows >= 1
-            assert g_lens_flow_fit > 0.0
-            assert g_lens_flow_rows * g_lens_flow_columns >= g_lens_source_lines[f]
+            assert g_lens_flow_fit == g_lens_leaf_fit[f]
+            assert g_lens_flow_line_pitch == code_base_line_h()
+            assert g_lens_flow_columns <= LENS_MAX_COLUMNS
+            assert g_lens_flow_column_pitch + 0.001 >= lens_code_column_width(f)
+            assert g_lens_flow_rows * g_lens_flow_columns >= g_lens_source_rows[f]
             let used_w = (g_lens_flow_columns as f64) * g_lens_flow_column_pitch * g_lens_flow_fit
-            let used_h = (code_base_top_pad() + (g_lens_flow_rows as f64) * g_lens_flow_line_pitch) * g_lens_flow_fit
+            let used_h = (lens_header_h() + code_base_top_pad() + (g_lens_flow_rows as f64) * g_lens_flow_line_pitch) * g_lens_flow_fit
             assert abs(used_w - (g_lens_w[f] / g_lens_code_world - 2.0)) < 0.001
-            assert abs(used_h - (g_lens_h[f] / g_lens_code_world - LENS_LEAF_HEADER_REF - 4.0)) < 0.001
+            assert used_h <= g_lens_h[f] / g_lens_code_world - 4.0 + 0.001
+            // A warm flow cache preserves the exact same grid.
+            check_fit_is_largest(f, g_lens_source_rows[f], g_lens_flow_fit)
+            lens_code_flow(f, g_lens_source_rows[f])
+            assert g_lens_flow_fit == g_lens_leaf_fit[f]
+            assert g_lens_flow_line_pitch == code_base_line_h()
         }
     }
     // Folder frames take a share of the map; files fill the rest.

@@ -1,0 +1,277 @@
+// Search (Cmd+P). File names match at once; file contents are scanned on a
+// worker task that reports how many files it has read. Smart case: a query
+// without capital letters ignores case.
+use os
+use task
+
+lit LENS_HIT_MAX = 400
+lit LENS_HIT_PER_FILE = 20
+lit LENS_SEARCH_FILE_BYTES: i64 = 4194304
+// Typing restarts the scan only after this pause, in seconds.
+lit LENS_SEARCH_PAUSE = 0.12
+
+let g_lens_search_open = false
+let g_lens_search_query = ""
+// The query the shown results belong to, and when the query last changed.
+let g_lens_search_done_query = ""
+let g_lens_search_edit_time: f64 = 0.0
+let g_lens_search_running = false
+let g_lens_search_generation: i32 = 0
+let g_lens_search_selected: i32 = 0
+let g_lens_search_scroll: i32 = 0
+// Results: file entry, 0-based line (-1 for a name match), the line's first
+// display row, and its trimmed text.
+let g_lens_hit_file = [i32](400)
+let g_lens_hit_line = [i32](400)
+let g_lens_hit_row = [i32](400)
+let g_lens_hit_text = [str](400)
+let g_lens_hit_count: i32 = 0
+// A leaf with a hit carries the generation that found it.
+let g_lens_search_mark = [i32](4096)
+// Worker exchange, guarded by g_lens_search_lock: [0] files read, [1] files
+// to read, [2] content hits published (-1 while scanning), [3] the live
+// generation (anything else cancels the scan).
+let g_lens_search_lock: ref os_lock = nil
+let g_lens_search_lock_ready = false
+let g_lens_search_state = [i32](4)
+let g_lens_found_file = [i32](400)
+let g_lens_found_line = [i32](400)
+let g_lens_found_row = [i32](400)
+let g_lens_found_text = [str](400)
+
+fn lens_fold_byte(b: i32) i32 {
+    if b >= 65 && b <= 90 {
+        return b + 32
+    }
+    return b
+}
+
+// Case is ignored unless the query has a capital letter.
+fn lens_search_folds(query: str) bool {
+    for b in query {
+        if b >= 65 && b <= 90 {
+            return false
+        }
+    }
+    return true
+}
+
+// First byte offset in text[start, end) where `query` starts, or -1.
+fn lens_search_find(text: str, start: i32, end: i32, query: str, fold: bool) i32 {
+    let n = query.len
+    if n == 0 || end - start < n {
+        return -1
+    }
+    let first = (query[0] as i32) & 255
+    for i in start to end - n + 1 {
+        let b = (text[i] as i32) & 255
+        if fold {
+            b = lens_fold_byte(b)
+        }
+        if b == first {
+            let j: i32 = 1
+            loop j < n {
+                let c = (text[i + j] as i32) & 255
+                if fold {
+                    c = lens_fold_byte(c)
+                }
+                if c != ((query[j] as i32) & 255) {
+                    break
+                }
+                j = j + 1
+            }
+            if j == n {
+                return i
+            }
+        }
+    }
+    return -1
+}
+
+// The line without its indent, cut at a character boundary.
+fn lens_search_snippet(text: str, start: i32, end: i32) str {
+    let s = start
+    loop s < end && lens_is_blank(lens_byte(text, s)) {
+        s = s + 1
+    }
+    let cut = end
+    if cut - s > 160 {
+        cut = s + 160
+        loop cut > s && (lens_byte(text, cut) & 192) == 128 {
+            cut = cut - 1
+        }
+    }
+    return substr(text, s, cut - s)
+}
+
+// Append the matching lines of one file after `count`; returns the new count.
+fn lens_search_text(text: str, query: str, fold: bool, file: i32, wrap: i32, out_file: [i32], out_line: [i32], out_row: [i32], out_text: [str], count: i32, room: i32) i32 {
+    let n = count
+    let in_file: i32 = 0
+    let offset: i32 = 0
+    let line: i32 = 0
+    let row: i32 = 0
+    loop offset <= text.len && n < room && in_file < LENS_HIT_PER_FILE {
+        let end = lens_line_end(text, offset)
+        if lens_search_find(text, offset, end, query, fold) >= 0 {
+            out_file[n] = file
+            out_line[n] = line
+            out_row[n] = row
+            out_text[n] = lens_search_snippet(text, offset, end)
+            n = n + 1
+            in_file = in_file + 1
+        }
+        row = row + lens_wrap_rows(end - offset, wrap)
+        line = line + 1
+        offset = end + 1
+    }
+    return n
+}
+
+fn lens_search_add(file: i32, line: i32, row: i32, text: str) {
+    if g_lens_hit_count >= LENS_HIT_MAX {
+        return
+    }
+    g_lens_hit_file[g_lens_hit_count] = file
+    g_lens_hit_line[g_lens_hit_count] = line
+    g_lens_hit_row[g_lens_hit_count] = row
+    g_lens_hit_text[g_lens_hit_count] = text
+    g_lens_hit_count = g_lens_hit_count + 1
+    g_lens_search_mark[file] = g_lens_search_generation
+}
+
+fn lens_search_start() {
+    let query = g_lens_search_query
+    g_lens_search_generation = g_lens_search_generation + 1
+    let generation = g_lens_search_generation
+    g_lens_search_done_query = query
+    g_lens_hit_count = 0
+    g_lens_search_selected = 0
+    g_lens_search_scroll = 0
+    if query == "" {
+        return
+    }
+    let fold = lens_search_folds(query)
+    // Names first: they are what Cmd+P usually looks for.
+    let total: i32 = 0
+    for i in 0 to g_workspace_count {
+        if g_lens_files[i] != 0 {
+            let path = lens_relative_path(os_entry_path(i))
+            if lens_search_find(path, 0, path.len, query, fold) >= 0 {
+                lens_search_add(i, -1, 0, "")
+            }
+            if g_lens_files[i] == 1 {
+                total = total + 1
+            }
+        }
+    }
+    let paths = [str](total)
+    let index = [i32](total)
+    let wraps = [i32](total)
+    let k: i32 = 0
+    for i in 0 to g_workspace_count {
+        if g_lens_files[i] == 1 {
+            paths[k] = os_entry_path(i)
+            index[k] = i
+            wraps[k] = lens_wrap_cols(i)
+            k = k + 1
+        }
+    }
+    if g_lens_search_lock_ready == false {
+        g_lens_search_lock = os_lock_create()
+        g_lens_search_lock_ready = true
+    }
+    let lock = g_lens_search_lock
+    let state = g_lens_search_state
+    let out_file = g_lens_found_file
+    let out_line = g_lens_found_line
+    let out_row = g_lens_found_row
+    let out_text = g_lens_found_text
+    let room = LENS_HIT_MAX - g_lens_hit_count
+    state[0] = 0
+    state[1] = total
+    state[2] = -1
+    state[3] = generation
+    g_lens_search_running = true
+    let pending = dispatch(queue_worker) { in
+        let count: i32 = 0
+        for f in 0 to total {
+            os_lock_acquire(lock)
+            let live = state[3] == generation
+            os_lock_release(lock)
+            if live && count < room {
+                let text = ""
+                if os_file_size(paths[f]) <= LENS_SEARCH_FILE_BYTES {
+                    text = os_read_file(paths[f])
+                }
+                count = lens_search_text(text, query, fold, index[f], wraps[f], out_file, out_line, out_row, out_text, count, room)
+            }
+            os_lock_acquire(lock)
+            state[0] = f + 1
+            os_lock_release(lock)
+        }
+        os_lock_acquire(lock)
+        state[2] = count
+        os_lock_release(lock)
+    }
+}
+
+// Each frame: collect a finished scan, and start one for a changed query
+// once typing pauses. A scan for an outdated query is cancelled first.
+fn lens_search_tick() {
+    if g_lens_search_running && os_lock_try_acquire(g_lens_search_lock) {
+        let published = g_lens_search_state[2]
+        if g_lens_search_query != g_lens_search_done_query {
+            g_lens_search_state[3] = -1
+        }
+        let live = g_lens_search_state[3] == g_lens_search_generation
+        os_lock_release(g_lens_search_lock)
+        if published >= 0 {
+            g_lens_search_running = false
+            if live {
+                for n in 0 to published {
+                    lens_search_add(g_lens_found_file[n], g_lens_found_line[n], g_lens_found_row[n], g_lens_found_text[n])
+                }
+            }
+        }
+    }
+    if g_lens_search_running == false && g_lens_search_query != g_lens_search_done_query && os_time() - g_lens_search_edit_time >= LENS_SEARCH_PAUSE {
+        lens_search_start()
+    }
+}
+
+// Files read over files to read while a scan runs, for the activity row.
+fn lens_search_fraction() f64 {
+    let total = g_lens_search_state[1]
+    if total <= 0 {
+        return -1.0
+    }
+    return (g_lens_search_state[0] as f64) / (total as f64)
+}
+
+fn lens_search_marked(i: i32) bool {
+    return g_lens_search_open && g_lens_hit_count > 0 && g_lens_search_mark[i] == g_lens_search_generation
+}
+
+fn lens_search_set_query(query: str) {
+    if query != g_lens_search_query {
+        g_lens_search_query = query
+        g_lens_search_edit_time = os_time()
+    }
+}
+
+// Fly to a hit and close the search: a name lands on the top of the file, a
+// line on that line.
+fn lens_search_go(hit: i32) {
+    if hit < 0 || hit >= g_lens_hit_count {
+        return
+    }
+    let i = g_lens_hit_file[hit]
+    if i < 0 || i >= g_workspace_count || g_lens_files[i] == 0 {
+        return
+    }
+    g_lens_selected = i
+    g_lens_selected_path = os_entry_path(i)
+    lens_focus_row(i, g_lens_hit_row[hit])
+    g_lens_search_open = false
+}

@@ -168,7 +168,9 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_deta
         }
         right = right - 16.0
     }
-    draw_text_clipped(r, x + 12.0, y + 5.0, right - x - 12.0, 20.0, g_workspace_root, small_px(), col_muted())
+    let left = x + 12.0
+    left = left + lens_draw_sync(r, left, y)
+    draw_text_clipped(r, left, y + 5.0, right - left, 20.0, g_workspace_root, small_px(), col_muted())
     ui_pop_clip(r)
 }
 
@@ -189,6 +191,9 @@ fn clamp(v: f64, lo: f64, hi: f64) f64 {
 // code batches use. A single tall column is g_code_rows = 0.
 let g_code_rows: i32 = 0
 let g_code_column_base: f64 = 0.0
+// Bytes per display row of the drawn document; longer lines wrap onto the
+// following rows, numbered only on their first. Zero keeps one row per line.
+let g_code_wrap: i32 = 0
 // The visible part of the flat map, so off-screen rows and columns are skipped.
 let g_code_view_x0: f64 = 0.0
 let g_code_view_x1: f64 = 100000.0
@@ -200,6 +205,21 @@ fn code_rows_per_column(total: i32) i32 {
         return g_code_rows
     }
     return clamp_i(total, 1, 100000000)
+}
+
+fn code_wrap() i32 {
+    if g_code_wrap > 0 {
+        return g_code_wrap
+    }
+    return 100000000
+}
+
+// Display row of the caret. A caret just past the last byte of a full
+// wrapped row stays at that row's end rather than opening an empty row.
+fn code_caret_row() i32 {
+    let row = g_lens_diff_source[cur_line()]
+    let first = g_lens_wrap_first[row]
+    return first + clamp_i(cur_col() / code_wrap(), 0, g_lens_wrap_first[row + 1] - first - 1)
 }
 
 fn code_column_w(w: f64) f64 {
@@ -225,9 +245,9 @@ fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
     }
     let col_w = code_column_w(w)
     let text_w = col_w - gutter_w - code_text_inset() - 8.0 * g_code_zoom
-    let visible_cols = (text_w / char_w) as i32 + 1
     lens_git_tick(lens_camera_moving(v))
-    let total = g_lens_diff_count
+    lens_wrap_sync(code_wrap())
+    let total = g_lens_wrap_total
     let rows = code_rows_per_column(total)
     let max_scroll = scroll_max((clamp_i(total, 0, rows) as f64) * line_h + 40.0 * g_code_zoom_y, clip_bottom - clip_top)
     if editable {
@@ -236,12 +256,13 @@ fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
         }
         process_code_keys(v)
         lens_git_tick(lens_camera_moving(v))
-        total = g_lens_diff_count
+        lens_wrap_sync(code_wrap())
+        total = g_lens_wrap_total
         rows = code_rows_per_column(total)
     }
+    // Lines wrap, so there is no sideways scroll.
     if shift_down(v) && hit(v, x, clip_top, w, clip_bottom - clip_top) {
         g_code_scroll = clamp(g_code_scroll - v.scroll_y * code_wheel_scale(), 0.0, max_scroll)
-        g_coloff = clamp_i(g_coloff + (v.scroll_x / 5.0) as i32, 0, 1000000)
     }
     if g_caret_follow && editable {
         g_caret_follow = false
@@ -264,7 +285,7 @@ fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
             let visual = c * rows + row
             if visual < total {
                 let row_top = body_y + code_top_pad() + (row as f64) * line_h - g_code_scroll
-                draw_code_row(r, visual, col_x, col_w, text_x, text_w, row_top, line_h, char_w, visible_cols, body_y, body_h, cursor_line, selected, editable)
+                draw_code_row(r, visual, col_x, col_w, text_x, text_w, row_top, line_h, char_w, body_y, body_h, cursor_line, selected, editable)
             }
         }
     }
@@ -277,30 +298,42 @@ fn draw_leaf_code(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: f6
 fn draw_code_caret(r: ref ui_renderer, x: f64, body_y: f64, line_h: f64, char_w: f64, rows: i32) {
     let col_w = code_column_w(1.0)
     let gutter_w = code_gutter_w()
-    let cursor_visual = g_lens_diff_source[cur_line()]
+    let cursor_visual = code_caret_row()
+    let segment = cursor_visual - g_lens_wrap_first[g_lens_diff_source[cur_line()]]
     let cursor_col_x = x + ((cursor_visual / rows) as f64) * col_w
-    let cursor_x = cursor_col_x + gutter_w + code_text_inset() + ((cur_col() - g_coloff) as f64) * char_w
+    let cursor_x = cursor_col_x + gutter_w + code_text_inset() + ((cur_col() - segment * code_wrap()) as f64) * char_w
     let cursor_top = body_y + code_top_pad() + ((cursor_visual % rows) as f64) * line_h - g_code_scroll
     let inset = 2.0 * g_code_zoom_y
     ui_fill_rect(r, cursor_x, cursor_top + inset, clamp(2.0 * g_code_zoom, 1.0, 4.0), line_h - inset * 2.0, col_editor_cursor(), 0.0)
 }
 
-fn draw_code_row(r: ref ui_renderer, visual: i32, col_x: f64, col_w: f64, text_x: f64, text_w: f64, row_top: f64, line_h: f64, char_w: f64, visible_cols: i32, body_y: f64, body_h: f64, cursor_line: i32, selected: bool, editable: bool) {
+// One display row: a whole line, or one wrapped part of it. Byte c of a line
+// sits on its wrapped row c / wrap, so `first` is the row's first byte.
+fn draw_code_row(r: ref ui_renderer, visual: i32, col_x: f64, col_w: f64, text_x: f64, text_w: f64, row_top: f64, line_h: f64, char_w: f64, body_y: f64, body_h: f64, cursor_line: i32, selected: bool, editable: bool) {
     if row_top + line_h < body_y || row_top > body_y + body_h {
         return
     }
-    let i = g_lens_diff_rows[visual]
+    let wrap = code_wrap()
+    let row = lens_wrap_find(visual)
+    let segment = visual - g_lens_wrap_first[row]
+    let first = segment * wrap
+    // A wrapped row ends after `wrap` bytes; the line's last row runs on.
+    let limit: i32 = 2000000000
+    if visual + 1 < g_lens_wrap_first[row + 1] {
+        limit = first + wrap
+    }
+    let i = g_lens_diff_rows[row]
     if i < 0 {
         let deleted = -1 - i
         ui_fill_rect(r, col_x, row_top, col_w, line_h, ui_pack_color("#4b1e1e"), 0.0)
-        if g_code_draw_glyphs {
+        if g_code_draw_glyphs && segment == 0 {
             draw_text_clipped(r, col_x + 24.0 * g_code_zoom, row_top + 2.0 * g_code_zoom_y, 20.0 * g_code_zoom, line_h, "-", code_number_px(), col_text())
         }
         let text = g_lens_diff_deleted[deleted]
-        if g_code_draw_glyphs && g_coloff < text.len {
-            let count = clamp_i(text.len - g_coloff, 0, visible_cols)
+        if g_code_draw_glyphs && first < text.len {
+            let count = clamp_i(limit, first, text.len) - first
             ui_push_clip(r, text_x, body_y, text_w, body_h)
-            draw_code_text(r, text_x, code_text_center_y(r, row_top, line_h, code_font_px()), substr(text, g_coloff, count), code_font_px(), col_text(), CODE_FONT())
+            draw_code_text(r, text_x, code_text_center_y(r, row_top, line_h, code_font_px()), substr(text, first, count), code_font_px(), col_text(), CODE_FONT())
             ui_pop_clip(r)
         }
         return
@@ -316,16 +349,15 @@ fn draw_code_row(r: ref ui_renderer, visual: i32, col_x: f64, col_w: f64, text_x
         let sb = line_sel_begin(i)
         if sb >= 0 {
             let ss = sb
-            if ss < g_coloff {
-                ss = g_coloff
+            if ss < first {
+                ss = first
             }
             let ee = line_sel_end(i)
-            let col_end = g_coloff + visible_cols
-            if ee > col_end {
-                ee = col_end
+            if ee > limit {
+                ee = limit
             }
             if ee > ss {
-                ui_fill_rect(r, text_x + ((ss - g_coloff) as f64) * char_w, row_top, ((ee - ss) as f64) * char_w, line_h, col_editor_sel(), 0.0)
+                ui_fill_rect(r, text_x + ((ss - first) as f64) * char_w, row_top, ((ee - ss) as f64) * char_w, line_h, col_editor_sel(), 0.0)
             }
         }
     }
@@ -336,11 +368,13 @@ fn draw_code_row(r: ref ui_renderer, visual: i32, col_x: f64, col_w: f64, text_x
     if !g_code_draw_glyphs {
         return
     }
-    let line_number = itos(i + 1)
-    let line_number_x = code_line_number_x(r, col_x, line_number)
-    draw_code_text(r, line_number_x, code_text_center_y(r, row_top, line_h, code_number_px()), line_number, code_number_px(), num_color, CODE_FONT())
+    if segment == 0 {
+        let line_number = itos(i + 1)
+        let line_number_x = code_line_number_x(r, col_x, line_number)
+        draw_code_text(r, line_number_x, code_text_center_y(r, row_top, line_h, code_number_px()), line_number, code_number_px(), num_color, CODE_FONT())
+    }
     ui_push_clip(r, text_x, body_y, text_w, body_h)
-    draw_code_line(r, i, text_x, code_text_center_y(r, row_top, line_h, code_font_px()), char_w, g_coloff, visible_cols)
+    draw_code_line(r, i, text_x, code_text_center_y(r, row_top, line_h, code_font_px()), char_w, first, limit - first)
     ui_pop_clip(r)
 }
 
@@ -543,7 +577,7 @@ fn code_base_gutter_w() f64 { return 52.0 }
 fn col_editor_sel() u32 { return ui_pack_color("#444444") }
 
 fn follow_caret(body_h: f64, line_h: f64, max_scroll: f64, rows: i32) {
-    let top = ((g_lens_diff_source[cur_line()] % rows) as f64) * line_h
+    let top = ((code_caret_row() % rows) as f64) * line_h
     let bot = top + line_h + 26.0 * g_code_zoom_y
     if top < g_code_scroll {
         g_code_scroll = top
@@ -671,8 +705,9 @@ fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, lin
     let text_x = x + (column as f64) * col_w + code_gutter_w() + code_text_inset()
     if v.mouse_right_pressed {
         if hit(v, x, body_y, w, body_h) {
-            let li = mouse_line(v, body_y, line_h, column, rows)
-            let col = mouse_col(v, text_x, char_w)
+            let point = mouse_point(v, body_y, line_h, column, rows, text_x, char_w)
+            let li = point.line
+            let col = point.col
             let now = os_time()
             let streak: i32 = 1
             if (now - g_last_click_time) < 0.45 {
@@ -697,7 +732,8 @@ fn process_code_mouse(v: ref view, x: f64, body_y: f64, w: f64, body_h: f64, lin
     }
     if g_code_drag {
         if v.mouse_right_down {
-            place_cursor(mouse_line(v, body_y, line_h, column, rows), mouse_col(v, text_x, char_w), true)
+            let point = mouse_point(v, body_y, line_h, column, rows, text_x, char_w)
+            place_cursor(point.line, point.col, true)
         }
     }
     if v.mouse_right_released {
@@ -721,13 +757,27 @@ fn mouse_column(x: f64, col_w: f64) i32 {
     return fx as i32
 }
 
-fn mouse_line(v: ref view, body_y: f64, line_h: f64, column: i32, rows: i32) i32 {
+struct code_point {
+    line: i32,
+    col: i32
+}
+
+// Source line and byte column under the pointer. Past the end of a wrapped
+// row the column stays on that row instead of running into the next one.
+fn mouse_point(v: ref view, body_y: f64, line_h: f64, column: i32, rows: i32, text_x: f64, char_w: f64) code_point {
     let fy = (g_mouse_y - body_y - code_top_pad() + g_code_scroll) / line_h
     let row: i32 = 0
     if fy > 0.0 {
         row = clamp_i(fy as i32, 0, rows - 1)
     }
-    return lens_diff_source_row(column * rows + row)
+    let visual = clamp_i(column * rows + row, 0, clamp_i(g_lens_wrap_total - 1, 0, 2000000000))
+    let diff = lens_wrap_find(visual)
+    let wrap = code_wrap()
+    let x = mouse_col(v, text_x, char_w)
+    if visual + 1 < g_lens_wrap_first[diff + 1] {
+        x = clamp_i(x, 0, wrap - 1)
+    }
+    return code_point(lens_diff_source_row(diff), (visual - g_lens_wrap_first[diff]) * wrap + x)
 }
 
 fn scroll_max(content_h: f64, body_h: f64) f64 {

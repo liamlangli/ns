@@ -1,0 +1,231 @@
+use std
+use os
+use task
+
+fn git(folder: str, args: str) str {
+    let out = os_git_run(folder, args)
+    assert os_git_status() == 0
+    return out
+}
+
+fn finish_job() {
+    let deadline = os_time() + 20.0
+    loop g_lens_job_running && os_time() < deadline {
+        sleep(1)
+        lens_job_poll()
+    }
+    assert g_lens_job_running == false
+}
+
+fn finish_search() {
+    let deadline = os_time() + 20.0
+    loop (g_lens_search_running || g_lens_search_query != g_lens_search_done_query) && os_time() < deadline {
+        sleep(1)
+        g_lens_search_edit_time = 0.0
+        lens_search_tick()
+    }
+    assert g_lens_search_running == false
+}
+
+// A scratch repository with its own identity, so the user's global Git
+// configuration (signing, hooks) cannot change the outcome.
+fn make_repo(folder: str) {
+    os_make_dirs(folder)
+    git(folder, "init\n-q")
+    git(folder, "config\nuser.name\nns_lens test")
+    git(folder, "config\nuser.email\nlens@example.com")
+    git(folder, "config\ncommit.gpgsign\nfalse")
+    git(folder, "config\ncore.hooksPath\n/dev/null")
+}
+
+fn check_text_helpers() {
+    assert lens_one_line("fix\nthe  bug\r\n") == "fix the  bug"
+    assert lens_one_line("") == ""
+    assert lens_last_line("Counting\rWriting 100%\nerror: denied\n\n") == "error: denied"
+    assert lens_last_line("a\rb") == "b"
+    assert lens_patch_body("--- a/tmp/x1\n+++ b/tmp/x2\n@@ -1 +1 @@\n-a\n+b\n") == "@@ -1 +1 @@\n-a\n+b\n"
+    assert lens_patch_body("--- a\n+++ b\n") == ""
+    lens_sync_parse("3\t12\n")
+    assert g_lens_sync_ahead == 3 && g_lens_sync_behind == 12
+    lens_sync_parse("")
+    assert g_lens_sync_ahead == -1 && g_lens_sync_behind == -1
+    let steps = lens_commit_steps("one\ntwo")
+    assert steps[0] == "add\n-A\n--\n."
+    assert steps[1] == "commit\n-q\n-m\none two\n--\n."
+    // Without a known upstream the branch is published to origin.
+    assert lens_push_steps()[0] == "push\n--progress\n--set-upstream\norigin\nHEAD"
+    g_lens_sync_ahead = 0
+    assert lens_push_steps()[0] == "push\n--progress"
+    g_lens_sync_ahead = -1
+}
+
+fn check_search_helpers() {
+    assert lens_search_folds("render")
+    assert lens_search_folds("Render") == false
+    assert lens_search_find("let Render = 1", 0, 14, "render", true) == 4
+    assert lens_search_find("let Render = 1", 0, 14, "Render", false) == 4
+    assert lens_search_find("let render = 1", 0, 14, "Render", false) == -1
+    assert lens_search_find("abc", 0, 3, "abcd", true) == -1
+    assert lens_search_find("abcabc", 1, 6, "abc", true) == 3
+    assert lens_search_snippet("\t  let x = 1", 0, 12) == "let x = 1"
+    let file = [i32](4)
+    let line = [i32](4)
+    let row = [i32](4)
+    let text = [str](4)
+    // The second line wraps over three rows at width 4, so the third line's
+    // first display row is 4.
+    let count = lens_search_text("x\nabcdefghij\nfind x", "x", true, 7, 4, file, line, row, text, 0, 4)
+    assert count == 2
+    assert file[0] == 7 && line[0] == 0 && row[0] == 0
+    assert line[1] == 2 && row[1] == 4 && text[1] == "find x"
+    assert lens_search_text("x\nx\nx", "x", true, 1, 4, file, line, row, text, 0, 2) == 2
+}
+
+fn check_git(base: str) {
+    os_make_dirs(base)
+    let probe = os_git_run(base, "--version")
+    if os_git_status() != 0 {
+        print("vcs_test: git unavailable, skipping repository checks\n")
+        return
+    }
+    let remote = base + "/remote.git"
+    let work = base + "/work"
+    let other = base + "/other"
+    git(base, "init\n-q\n--bare\nremote.git")
+    make_repo(work)
+    git(work, "remote\nadd\norigin\n" + remote)
+    assert os_write_file_atomic(work + "/main.ns", "fn main() {\n    print(\"hi\")\n}\n") != 0
+    for step in lens_commit_steps("first") {
+        git(work, step)
+    }
+    assert lens_last_line(git(work, "log\n-1\n--format=%s")) == "first"
+    // Publishing a branch reports Git's own progress.
+    git(work, lens_push_steps()[0])
+    assert os_git_progress() == 100
+    lens_sync_parse(git(work, "rev-list\n--left-right\n--count\nHEAD...@{upstream}"))
+    assert g_lens_sync_ahead == 0 && g_lens_sync_behind == 0
+    // A missing credential or remote fails instead of prompting.
+    let failed = os_git_run(work, "push\nnowhere\nHEAD")
+    assert os_git_status() != 0 && lens_last_line(failed) != ""
+
+    // The job path: commit on a worker, then the counts follow.
+    g_workspace_root = work
+    assert os_write_file_atomic(work + "/util.ns", "fn helper() i32 {\n    return 4\n}\n") != 0
+    lens_commit("second")
+    assert g_lens_job_running
+    finish_job()
+    assert g_lens_message == "commit done"
+    assert g_lens_sync_ahead == 1 && g_lens_sync_behind == 0
+    assert os_git_changes(work) == ""
+    lens_push()
+    finish_job()
+    assert g_lens_message == "push done"
+    assert g_lens_sync_ahead == 0
+
+    // A commit pushed from another clone shows up as behind after a fetch.
+    git(base, "clone\n-q\n" + remote + "\nother")
+    git(other, "config\nuser.name\nns_lens test")
+    git(other, "config\nuser.email\nlens@example.com")
+    git(other, "config\ncommit.gpgsign\nfalse")
+    assert os_write_file_atomic(other + "/remote.ns", "fn remote() {}\n") != 0
+    for step in lens_commit_steps("from other") {
+        git(other, step)
+    }
+    git(other, "push\n-q")
+    let steps = [str](1)
+    steps[0] = "fetch\n--quiet"
+    lens_job_start(LENS_JOB_FETCH, steps)
+    finish_job()
+    assert g_lens_sync_behind == 1 && g_lens_sync_ahead == 0
+    // Nothing left to commit is reported, not hidden.
+    lens_commit("empty")
+    finish_job()
+    assert substr(g_lens_message, 0, 13) == "commit failed"
+    check_patches(work)
+}
+
+fn finish_patches() {
+    let deadline = os_time() + 20.0
+    loop g_lens_patch_running && os_time() < deadline {
+        sleep(1)
+        lens_patch_tick(false)
+    }
+    assert g_lens_patch_running == false
+}
+
+// Every changed file gets a patch against HEAD; a new file is all added.
+fn check_patches(work: str) {
+    assert os_write_file_atomic(work + "/main.ns", "fn main() {\n    print(\"changed\")\n}\n") != 0
+    assert os_write_file_atomic(work + "/fresh.ns", "fn fresh() {}\n") != 0
+    g_workspace_streaming = true
+    g_workspace_root = work
+    workspace_init()
+    lens_rebuild()
+    lens_patch_tick(false)
+    assert g_lens_patch_running
+    finish_patches()
+    let main_file = workspace_find("main.ns")
+    let fresh_file = workspace_find("fresh.ns")
+    let util_file = workspace_find("util.ns")
+    assert main_file >= 0 && fresh_file >= 0 && util_file >= 0
+    let diff = lens_leaf_diff(main_file)
+    assert diff.added_count == 1 && diff.added[0] == 1
+    assert diff.deleted_count == 1 && diff.deleted[0] == "    print(\"hi\")"
+    assert lens_leaf_diff(fresh_file).all_added
+    assert lens_leaf_patch(util_file) == ""
+    let serial = lens_leaf_patch_serial(main_file)
+    assert serial > 0
+    // A rescan that finds the same patch keeps its serial; a commit clears it.
+    g_lens_patch_wanted = true
+    lens_patch_tick(false)
+    finish_patches()
+    assert lens_leaf_patch_serial(main_file) == serial
+    lens_commit("patched")
+    finish_job()
+    assert g_lens_patch_wanted
+    lens_patch_tick(false)
+    finish_patches()
+    assert lens_leaf_patch(main_file) == "" && lens_leaf_patch(fresh_file) == ""
+}
+
+fn check_search_scan(base: str) {
+    let root = base + "/search"
+    os_make_dirs(root + "/src")
+    assert os_write_file_atomic(root + "/src/alpha.ns", "fn alpha() {\n    let needle = 1\n}\n") != 0
+    assert os_write_file_atomic(root + "/src/needle_file.ns", "fn other() {}\n") != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    lens_rebuild()
+    g_lens_search_open = true
+    lens_search_set_query("needle")
+    finish_search()
+    assert g_lens_search_done_query == "needle"
+    assert g_lens_hit_count == 2
+    // Name matches come first, then the matching lines.
+    assert g_lens_hit_line[0] == -1
+    assert lens_relative_path(os_entry_path(g_lens_hit_file[0])) == "src/needle_file.ns"
+    assert g_lens_hit_line[1] == 1 && g_lens_hit_text[1] == "let needle = 1"
+    assert lens_search_marked(g_lens_hit_file[0]) && lens_search_marked(g_lens_hit_file[1])
+    assert lens_search_fraction() == 1.0
+    // A capital letter makes the search case sensitive.
+    lens_search_set_query("Needle")
+    finish_search()
+    assert g_lens_hit_count == 0
+    // Going to a hit selects the file and closes the search.
+    lens_search_set_query("needle")
+    finish_search()
+    lens_search_go(1)
+    assert g_lens_search_open == false
+    assert g_lens_selected == g_lens_hit_file[1]
+    assert g_lens_target_distance > 0.0
+}
+
+fn main() {
+    let base = "/tmp/ns_lens_vcs_test_" + itos((os_time() * 1000.0) as i32)
+    check_text_helpers()
+    check_search_helpers()
+    check_git(base)
+    check_search_scan(base)
+    print("vcs_test: passed\n")
+}

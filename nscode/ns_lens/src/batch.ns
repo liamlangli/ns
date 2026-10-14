@@ -6,15 +6,25 @@ struct lens_batch_input {
     source: [str],
     offset: [i32],
     length: [i32],
+    // Byte column of each entry's first byte within its line (non-zero only
+    // when a chunk starts mid-line).
+    lead: [i32],
+    // Each entry's LENS_ROW_* Git state.
+    kind: [i32],
     number: [str],
     row: [i32],
     vertex: [i32],
     colors: [u32],
+    // Indexed by LENS_ROW_*: minimap bar colors, then preview row
+    // backgrounds (0 draws none).
+    marks: [u32],
     count: i32,
     bytes: i32,
     first_row: i32,
     first_col: i32,
     rows: i32,
+    // Bytes per display row; longer lines continue on the following rows.
+    wrap: i32,
     column_pitch: f64,
     line_pitch: f64,
     char_w: f64,
@@ -47,12 +57,80 @@ fn lens_batch_keeps_row(row: i32, rows: i32) bool {
     return column >= g_lens_batch_c0 && column < g_lens_batch_c1 && local >= g_lens_batch_r0 && local < g_lens_batch_r1
 }
 
-fn lens_batch_prepare(r: ref ui_renderer, text: str, document: bool, first_row: i32, first_col: i32, total: i32, rows: i32, char_w: f64, mini: bool) lens_batch_input {
+// Display rows of a `length`-byte line wrapped every `wrap` bytes. Byte c of
+// a line sits on its row c / wrap at column c % wrap; an empty line keeps one.
+fn lens_wrap_rows(length: i32, wrap: i32) i32 {
+    if wrap <= 0 || length <= wrap {
+        return 1
+    }
+    return (length + wrap - 1) / wrap
+}
+
+// Rows of a line from byte column `lead` on, for a chunk that starts mid-line.
+fn lens_wrap_span(lead: i32, length: i32, wrap: i32) i32 {
+    if lead <= 0 {
+        return lens_wrap_rows(length, wrap)
+    }
+    return lens_wrap_rows(lead + length, wrap) - lead / clamp_i(wrap, 1, 100000000)
+}
+
+fn lens_text_rows(text: str, wrap: i32) i32 {
+    let rows: i32 = 0
+    let offset: i32 = 0
+    loop true {
+        let end = lens_line_end(text, offset)
+        rows = rows + lens_wrap_rows(end - offset, wrap)
+        if end >= text.len {
+            return rows
+        }
+        offset = end + 1
+    }
+    return rows
+}
+
+// First byte at or after column `n` that starts a UTF-8 character, so a wrap
+// never splits one: a character belongs to the row its first byte is on.
+fn lens_char_start(source: str, offset: i32, length: i32, n: i32) i32 {
+    let p = clamp_i(n, 0, length)
+    loop p < length && (lens_byte(source, offset + p) & 192) == 128 { p = p + 1 }
+    return p
+}
+
+// Uniform minimap bars; Git's added and deleted rows stand out in color so a
+// leaf shows the size of its change from far away.
+fn lens_mark_color(kind: i32, mini: bool) u32 {
+    if mini {
+        if kind == LENS_ROW_ADDED {
+            return 0xe06bc24au
+        }
+        if kind == LENS_ROW_DELETED {
+            return 0xe04f52f0u
+        }
+        return 0xa5e0e0e0u
+    }
+    if kind == LENS_ROW_ADDED {
+        return ui_pack_color("#183e2b")
+    }
+    if kind == LENS_ROW_DELETED {
+        return ui_pack_color("#4b1e1e")
+    }
+    return 0u
+}
+
+// One entry per source line or ghost row, each covering one or more display
+// rows. A chunk's `first_row` is the display row of its first byte, which
+// sits `first_col` bytes into its line. Document rows come from the wrap
+// table; other text takes its ghost rows and added lines from `diff`.
+fn lens_batch_prepare(r: ref ui_renderer, text: str, diff: lens_file_diff, document: bool, first_row: i32, first_col: i32, total: i32, rows: i32, wrap: i32, char_w: f64, mini: bool) lens_batch_input {
     // Initialize the selected language's literal cache before native workers.
     let keyword_ready = is_keyword_part("", 0, 0)
     let type_ready = is_type_word_part("", 0, 0)
-    let capacity = total - first_row
-    if !document { capacity = clamp_i(capacity, 0, lens_text_lines(text)) }
+    let wrap_n = clamp_i(wrap, 1, 100000000)
+    if document {
+        lens_wrap_sync(wrap_n)
+    }
+    let capacity = g_lens_diff_count
+    if !document { capacity = lens_text_lines(text) + diff.deleted_count }
     if g_lens_batch_r1 <= 100000000 {
         let span = g_lens_batch_r1 - g_lens_batch_r0
         let cols = g_lens_batch_c1 - g_lens_batch_c0
@@ -67,51 +145,113 @@ fn lens_batch_prepare(r: ref ui_renderer, text: str, document: bool, first_row: 
     let rows_n = rows
     if rows_n < 1 { rows_n = 1 }
     let input = lens_batch_input {
-        [str](capacity), [i32](capacity), [i32](capacity),
-        [str](capacity), [i32](capacity), [i32](capacity), [u32](9),
+        [str](capacity), [i32](capacity), [i32](capacity), [i32](capacity), [i32](capacity),
+        [str](capacity), [i32](capacity), [i32](capacity), [u32](9), [u32](3),
         0, 0, first_row, first_col,
-        rows, g_lens_flow_column_pitch,
+        rows, wrap_n, g_lens_flow_column_pitch,
         g_lens_flow_line_pitch, char_w,
         text_center_y(r, 0.0, g_lens_flow_line_pitch, code_base_font_px()),
         text_center_y(r, 0.0, g_lens_flow_line_pitch, small_px()), mini, g_syntax_language
     }
     for kind in 0 to 9 {
         input.colors[kind] = token_color(kind)
-        if mini { input.colors[kind] = lens_bar_color(kind) }
+    }
+    for kind in 0 to 3 {
+        input.marks[kind] = lens_mark_color(kind, mini)
+        // The editor draws the open document's row backgrounds itself.
+        if document && !mini { input.marks[kind] = 0u }
     }
     let offset: i32 = 0
     let row = first_row
-    loop row < total && (document || offset < text.len) {
-        if lens_batch_keeps_row(row, rows_n) == false {
-            if document == false {
-                offset = lens_line_end(text, offset) + 1
-            }
-            row = row + 1
-            continue
+    let lead = first_col
+    let line = first_row
+    // Document diff row, or this text's next source line, ghost row and added line.
+    let at: i32 = 0
+    let source_line: i32 = 0
+    let ghost: i32 = 0
+    let added: i32 = 0
+    if document {
+        at = lens_wrap_find(first_row)
+    }
+    loop row < total && input.count < capacity {
+        let is_ghost = !document && ghost < diff.deleted_count && diff.anchor[ghost] <= source_line
+        if (document && at >= g_lens_diff_count) || (!document && !is_ghost && offset >= text.len) {
+            break
         }
         let source = text
-        let end = lens_line_end(source, offset)
-        let number = row + 1
+        let start = offset
+        let end = 0
+        let number = line + 1
+        let span: i32 = 1
+        let kind = LENS_ROW_KEPT
         if document {
-            source = lens_diff_visual_text(row)
-            offset = 0
+            source = lens_diff_visual_text(at)
+            start = 0
             end = source.len
-            number = g_lens_diff_rows[row] + 1
+            number = g_lens_diff_rows[at] + 1
+            row = g_lens_wrap_first[at]
+            span = g_lens_wrap_first[at + 1] - row
+            lead = 0
+            if g_lens_diff_rows[at] < 0 {
+                kind = LENS_ROW_DELETED
+            } else if g_lens_diff_added[clamp_i(g_lens_diff_rows[at], 0, 65535)] != 0 {
+                kind = LENS_ROW_ADDED
+            }
+        } else if is_ghost {
+            source = diff.deleted[ghost]
+            start = 0
+            end = source.len
+            number = 0
+            span = lens_wrap_rows(end, wrap_n)
+            kind = LENS_ROW_DELETED
+        } else {
+            end = lens_line_end(text, offset)
+            span = lens_wrap_span(lead, end - offset, wrap_n)
+            loop added < diff.added_count && diff.added[added] < source_line {
+                added = added + 1
+            }
+            if diff.all_added || (added < diff.added_count && diff.added[added] == source_line) {
+                kind = LENS_ROW_ADDED
+            }
         }
-        let i = input.count
-        input.source[i] = substr(source, offset, end - offset)
-        input.offset[i] = 0
-        input.length[i] = end - offset
-        input.row[i] = row
-        if !mini {
-            input.number[i] = itos(number)
-            if number == 0 { input.number[i] = "-" }
-            if first_col != 0 && row == first_row { input.number[i] = "" }
+        // Only the chunk's first source line starts mid-line.
+        let entry_lead = lead
+        if document || is_ghost {
+            entry_lead = 0
         }
-        input.bytes = input.bytes + end - offset + 1
-        input.count = i + 1
-        offset = end + 1
-        row = row + 1
+        let keep = false
+        for s in 0 to span {
+            if !keep && lens_batch_keeps_row(row + s, rows_n) {
+                keep = true
+            }
+        }
+        if keep {
+            let i = input.count
+            input.source[i] = substr(source, start, end - start)
+            input.offset[i] = 0
+            input.length[i] = end - start
+            input.lead[i] = entry_lead
+            input.kind[i] = kind
+            input.row[i] = row
+            if !mini {
+                input.number[i] = itos(number)
+                if number == 0 { input.number[i] = "-" }
+                if entry_lead != 0 { input.number[i] = "" }
+            }
+            input.bytes = input.bytes + end - start + 1
+            input.count = i + 1
+        }
+        if document {
+            at = at + 1
+        } else if is_ghost {
+            ghost = ghost + 1
+        } else {
+            offset = end + 1
+            line = line + 1
+            source_line = source_line + 1
+            lead = 0
+        }
+        row = row + span
     }
     return input
 }
@@ -125,19 +265,27 @@ fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input,
     let inset = code_base_text_inset()
     let top = code_base_top_pad()
     let bar_h = code_base_line_h()
+    let wrap = clamp_i(input.wrap, 1, 100000000)
     for i in begin to end {
         input.vertex[i] = ui_rect_batch_vertex_count(r, batch)
         let row = input.row[i]
-        let first_col: i32 = 0
-        if row == input.first_row { first_col = input.first_col }
-        let column = clamp_i(row / input.rows, 0, LENS_MAX_COLUMNS - 1)
-        let column_x = (column as f64) * input.column_pitch
-        let text_x = column_x + gutter + inset + (first_col as f64) * input.char_w
-        let row_top = top + ((row % input.rows) as f64) * input.line_pitch
+        let lead = input.lead[i]
+        let base = lead / wrap
+        let mark = input.marks[input.kind[i]]
+        if !input.mini && mark != 0u {
+            // Added and deleted rows get the editor's backgrounds, behind
+            // the line number and glyphs, across every wrapped row.
+            for s in 0 to lens_wrap_span(lead, input.length[i], wrap) {
+                let back = row + s
+                let back_x = (clamp_i(back / input.rows, 0, LENS_MAX_COLUMNS - 1) as f64) * input.column_pitch
+                ui_rect_batch_add(r, batch, back_x, top + ((back % input.rows) as f64) * input.line_pitch, input.column_pitch, input.line_pitch, mark)
+            }
+        }
         if !input.mini {
             let number = input.number[i]
+            let column_x = (clamp_i(row / input.rows, 0, LENS_MAX_COLUMNS - 1) as f64) * input.column_pitch
             let number_x = column_x + gutter - 10.0 - ui_text_width(r, number, number_px, measure_font)
-            ui_rect_batch_add_text(r, batch, number_x, row_top + input.number_y, number, number_px, muted, CODE_FONT())
+            ui_rect_batch_add_text(r, batch, number_x, top + ((row % input.rows) as f64) * input.line_pitch + input.number_y, number, number_px, muted, CODE_FONT())
         }
         let source = input.source[i]
         let offset = input.offset[i]
@@ -162,9 +310,23 @@ fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input,
                             if lens_token_class(lens_token_kind(next)) != class { more = false } else { q = clamp_i(lens_token_position(next), n + 1, m) }
                         }
                     }
-                    ui_rect_batch_add(r, batch, text_x + (p as f64) * input.char_w, row_top + (input.line_pitch - bar_h) * 0.5 + bar_h * 0.25, ((q - p) as f64) * input.char_w, bar_h * 0.5, input.colors[lens_token_kind(token)])
-                } else {
-                    ui_rect_batch_add_text_range(r, batch, text_x + (p as f64) * input.char_w, row_top + input.text_y, source, offset + p, q - p, font_px, input.colors[lens_token_kind(token)], CODE_FONT())
+                }
+                // The whole line is tokenized, so a wrapped token keeps its
+                // colour; its pieces break at each wrap onto the next row.
+                let a = p
+                loop a < q {
+                    let segment = (lead + a) / wrap
+                    let e = clamp_i(lens_char_start(source, offset, m, (segment + 1) * wrap - lead), a + 1, q)
+                    let piece_row = row + segment - base
+                    let column_x = (clamp_i(piece_row / input.rows, 0, LENS_MAX_COLUMNS - 1) as f64) * input.column_pitch
+                    let x = column_x + gutter + inset + ((lead + a - segment * wrap) as f64) * input.char_w
+                    let row_top = top + ((piece_row % input.rows) as f64) * input.line_pitch
+                    if input.mini {
+                        ui_rect_batch_add(r, batch, x, row_top + (input.line_pitch - bar_h) * 0.5 + bar_h * 0.25, ((e - a) as f64) * input.char_w, bar_h * 0.5, mark)
+                    } else {
+                        ui_rect_batch_add_text_range(r, batch, x, row_top + input.text_y, source, offset + a, e - a, font_px, input.colors[lens_token_kind(token)], CODE_FONT())
+                    }
+                    a = e
                 }
                 p = q
             }
@@ -186,15 +348,19 @@ fn lens_batch_dispatch(r: ref ui_renderer, input: ref lens_batch_input, batches:
     let source = input.source
     let offset = input.offset
     let length = input.length
+    let lead = input.lead
+    let kind = input.kind
     let number = input.number
     let row = input.row
     let vertex = input.vertex
     let colors = input.colors
+    let marks = input.marks
     let count = input.count
     let bytes = input.bytes
     let first_row = input.first_row
     let first_col = input.first_col
     let rows = input.rows
+    let wrap = input.wrap
     let column_pitch = input.column_pitch
     let line_pitch = input.line_pitch
     let char_w = input.char_w
@@ -203,7 +369,7 @@ fn lens_batch_dispatch(r: ref ui_renderer, input: ref lens_batch_input, batches:
     let mini = input.mini
     let language = input.language
     let pending = dispatch(queue_worker) { in
-        let work = lens_batch_input(source, offset, length, number, row, vertex, colors, count, bytes, first_row, first_col, rows, column_pitch, line_pitch, char_w, text_y, number_y, mini, language)
+        let work = lens_batch_input(source, offset, length, lead, kind, number, row, vertex, colors, marks, count, bytes, first_row, first_col, rows, wrap, column_pitch, line_pitch, char_w, text_y, number_y, mini, language)
         lens_batch_range(r, output, ref work, begin, end)
     }
     lens_batch_dispatch(r, input, batches, starts, completed, worker + 1, workers)

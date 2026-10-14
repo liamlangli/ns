@@ -93,6 +93,90 @@ fn lens_diff_parse(patch: str) {
     lens_diff_build_rows()
 }
 
+// A row's Git state, for minimap bar and preview background colors.
+lit LENS_ROW_KEPT = 0
+lit LENS_ROW_ADDED = 1
+lit LENS_ROW_DELETED = 2
+
+// One file's changes against HEAD: its added line indices in order, and its
+// deleted lines with the line each comes before. A leaf shows the deleted
+// lines as ghost rows, as the editor does.
+struct lens_file_diff {
+    // A file HEAD does not have: every line is added.
+    all_added: bool,
+    added: [i32],
+    added_count: i32,
+    anchor: [i32],
+    deleted: [str],
+    deleted_count: i32
+}
+
+// Stands in for the patch of a file HEAD does not have.
+lit LENS_PATCH_NEW = "new"
+
+fn lens_file_diff_none() lens_file_diff {
+    return lens_file_diff(false, [i32](0), 0, [i32](0), [str](0), 0)
+}
+
+// The same hunk walk as lens_diff_parse, into a value of its own.
+fn lens_file_diff_parse(patch: str) lens_file_diff {
+    if patch == "" {
+        return lens_file_diff_none()
+    }
+    if patch == LENS_PATCH_NEW {
+        return lens_file_diff(true, [i32](0), 0, [i32](0), [str](0), 0)
+    }
+    let cap = lens_text_lines(patch)
+    let diff = lens_file_diff(false, [i32](cap), 0, [i32](cap), [str](cap), 0)
+    let offset: i32 = 0
+    let current: i32 = 0
+    let hunk = false
+    loop offset < patch.len {
+        let end = lens_line_end(patch, offset)
+        let line = substr(patch, offset, end - offset)
+        if line.len >= 4 && substr(line, 0, 3) == "@@ " {
+            let plus: i32 = 3
+            loop plus < line.len && ((line[plus] as i32) & 255) != 43 {
+                plus = plus + 1
+            }
+            let start = lens_diff_number(line, plus + 1)
+            let count: i32 = 1
+            if g_lens_diff_number_end < line.len && ((line[g_lens_diff_number_end] as i32) & 255) == 44 {
+                count = lens_diff_number(line, g_lens_diff_number_end + 1)
+            }
+            current = start - 1
+            if count == 0 {
+                current = start
+            }
+            hunk = true
+        } else if hunk && line.len > 0 {
+            let kind = (line[0] as i32) & 255
+            if kind == 43 {
+                diff.added[diff.added_count] = current
+                diff.added_count = diff.added_count + 1
+                current = current + 1
+            } else if kind == 45 {
+                diff.anchor[diff.deleted_count] = current
+                diff.deleted[diff.deleted_count] = substr(line, 1, line.len - 1)
+                diff.deleted_count = diff.deleted_count + 1
+            } else if kind == 32 {
+                current = current + 1
+            }
+        }
+        offset = end + 1
+    }
+    return diff
+}
+
+// Display rows the ghost rows add to a file wrapped every `wrap` bytes.
+fn lens_file_diff_rows(diff: lens_file_diff, wrap: i32) i32 {
+    let rows: i32 = 0
+    for d in 0 to diff.deleted_count {
+        rows = rows + lens_wrap_rows(diff.deleted[d].len, wrap)
+    }
+    return rows
+}
+
 fn lens_diff_build_rows() {
     g_lens_diff_revision = g_lens_diff_revision + 1
     let deleted: i32 = 0
@@ -109,6 +193,57 @@ fn lens_diff_build_rows() {
             g_lens_diff_count = g_lens_diff_count + 1
         }
     }
+}
+
+// Display rows of the document: diff row d wraps onto the rows from
+// g_lens_wrap_first[d] up to g_lens_wrap_first[d + 1]. Rebuilt whenever the
+// diff rows, the text or the wrap width change.
+let g_lens_wrap_first = [i32](73729)
+let g_lens_wrap_total: i32 = 0
+let g_lens_wrap_width: i32 = -1
+let g_lens_wrap_revision: i32 = -1
+let g_lens_wrap_version: i32 = -1
+
+fn lens_diff_visual_len(row: i32) i32 {
+    let source = g_lens_diff_rows[row]
+    if source < 0 {
+        return g_lens_diff_deleted[-1 - source].len
+    }
+    return line_len(line_start(source))
+}
+
+fn lens_wrap_sync(wrap: i32) {
+    if wrap == g_lens_wrap_width && g_lens_wrap_revision == g_lens_diff_revision && g_lens_wrap_version == g_doc_version {
+        return
+    }
+    g_lens_wrap_width = wrap
+    g_lens_wrap_revision = g_lens_diff_revision
+    g_lens_wrap_version = g_doc_version
+    let row: i32 = 0
+    for d in 0 to g_lens_diff_count {
+        g_lens_wrap_first[d] = row
+        row = row + lens_wrap_rows(lens_diff_visual_len(d), wrap)
+    }
+    g_lens_wrap_first[g_lens_diff_count] = row
+    g_lens_wrap_total = row
+}
+
+// Diff row whose wrapped rows include display row `visual`.
+fn lens_wrap_find(visual: i32) i32 {
+    if g_lens_diff_count <= 0 {
+        return 0
+    }
+    let lo: i32 = 0
+    let hi = g_lens_diff_count
+    loop lo + 1 < hi {
+        let mid = (lo + hi) / 2
+        if g_lens_wrap_first[mid] <= visual {
+            lo = mid
+        } else {
+            hi = mid
+        }
+    }
+    return lo
 }
 
 fn lens_diff_source_row(row: i32) i32 {

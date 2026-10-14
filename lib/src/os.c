@@ -964,29 +964,82 @@ const char *os_text_hash(const char *text) {
     return os_hash_hex;
 }
 
+// Line widths past the histogram share its last bucket; a percentile landing
+// there reports the longest line instead.
+#define OS_TEXT_WIDTH_BUCKETS 1024
+
+static void os_text_width_count(u32 *widths, i64 columns, i64 *filled) {
+    if (columns <= 0) return;
+    widths[columns < OS_TEXT_WIDTH_BUCKETS ? columns : OS_TEXT_WIDTH_BUCKETS]++;
+    (*filled)++;
+}
+
+// Extra rows of every line at least OS_TEXT_WIDTH_BUCKETS wide when lines
+// wrap at `wrap` columns. Those widths are not in the histogram, so reread.
+static int os_text_long_rows(FILE *file, i64 wrap, i64 *rows) {
+    if (fseek(file, 0, SEEK_SET) != 0) return 0;
+    i64 columns = 0;
+    u8 data[65536];
+    size_t count;
+    while ((count = fread(data, 1, sizeof(data), file)) > 0) {
+        for (size_t i = 0; i < count; i++) {
+            if (data[i] == '\n') {
+                if (columns >= OS_TEXT_WIDTH_BUCKETS) *rows += (columns - 1) / wrap;
+                columns = 0;
+            } else if (data[i] != '\r') columns++;
+        }
+    }
+    if (columns >= OS_TEXT_WIDTH_BUCKETS) *rows += (columns - 1) / wrap;
+    return !ferror(file);
+}
+
 ns_bool os_file_text_metrics(const char *path, i64 *values) {
     if (!values) return 0;
     values[0] = -1;
     values[1] = 0;
+    values[2] = 0;
+    values[3] = 0;
     FILE *file = path ? fopen(path, "rb") : NULL;
     if (!file) return 0;
-    i64 lines = 1, columns = 0, longest = 0;
+    i64 lines = 1, columns = 0, longest = 0, filled = 0;
+    u32 widths[OS_TEXT_WIDTH_BUCKETS + 1] = {0};
     u8 data[65536];
     size_t count;
     while ((count = fread(data, 1, sizeof(data), file)) > 0) {
         for (size_t i = 0; i < count; i++) {
             if (data[i] == '\n') {
                 if (columns > longest) longest = columns;
+                os_text_width_count(widths, columns, &filled);
                 columns = 0;
                 lines++;
             } else if (data[i] != '\r') columns++;
         }
     }
-    int failed = ferror(file);
+    if (ferror(file)) { fclose(file); return 0; }
+    if (columns > longest) longest = columns;
+    os_text_width_count(widths, columns, &filled);
+    i64 typical = 0, need = (filled * 9 + 9) / 10, seen = 0;
+    for (i64 w = 1; w <= OS_TEXT_WIDTH_BUCKETS && filled > 0; w++) {
+        seen += widths[w];
+        if (seen >= need) {
+            typical = w < OS_TEXT_WIDTH_BUCKETS ? w : longest;
+            break;
+        }
+    }
+    // A line of w columns wrapped at `typical` takes ceil(w / typical) rows.
+    i64 rows = lines;
+    if (typical > 0) {
+        for (i64 w = typical + 1; w < OS_TEXT_WIDTH_BUCKETS; w++) rows += (i64)widths[w] * ((w - 1) / typical);
+        if (widths[OS_TEXT_WIDTH_BUCKETS] > 0 && !os_text_long_rows(file, typical, &rows)) {
+            fclose(file);
+            return 0;
+        }
+    }
     fclose(file);
-    if (failed) return 0;
     values[0] = lines;
-    values[1] = columns > longest ? columns : longest;
+    values[1] = longest;
+    values[2] = typical;
+    values[3] = rows;
     return 1;
 }
 
@@ -1213,8 +1266,130 @@ const char *os_git_diff_text(const char *before, const char *after, i32 max_byte
     unlink(a); unlink(b);
     return status == 0 || status == 1 ? result : "";
 }
+
+// Progress is process-wide so the thread that draws can read it while a
+// worker thread waits on Git.
+static i32 os_git_progress_value = -1;
+i32 os_git_progress(void) { return __atomic_load_n(&os_git_progress_value, __ATOMIC_RELAXED); }
+
+#define OS_GIT_RUN_KEEP 65536
+#define OS_GIT_RUN_ARGS 64
+static _Thread_local char *os_git_run_text;
+
+// The environment plus GIT_TERMINAL_PROMPT=0, so a missing credential fails
+// instead of waiting on a prompt nobody can see.
+static char **os_git_run_env(void) {
+    size_t count = 0;
+    while (environ[count]) count++;
+    char **env = malloc((count + 2) * sizeof(char *));
+    if (!env) return NULL;
+    size_t used = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (strncmp(environ[i], "GIT_TERMINAL_PROMPT=", 20) != 0) env[used++] = environ[i];
+    }
+    env[used++] = "GIT_TERMINAL_PROMPT=0";
+    env[used] = NULL;
+    return env;
+}
+
+// Track the last "NN%" in Git's progress output across read boundaries.
+static void os_git_run_scan(const char *data, size_t n, i32 *number, i32 *digits) {
+    for (size_t i = 0; i < n; i++) {
+        char c = data[i];
+        if (c >= '0' && c <= '9') {
+            if (*digits < 3) *number = *number * 10 + (c - '0');
+            (*digits)++;
+        } else {
+            if (c == '%' && *digits >= 1 && *digits <= 3 && *number <= 100)
+                __atomic_store_n(&os_git_progress_value, *number, __ATOMIC_RELAXED);
+            *number = 0;
+            *digits = 0;
+        }
+    }
+}
+
+const char *os_git_run(const char *folder, const char *args) {
+    free(os_git_run_text);
+    os_git_run_text = NULL;
+    os_git_last_status = -1;
+    __atomic_store_n(&os_git_progress_value, -1, __ATOMIC_RELAXED);
+    if (!folder || !folder[0] || !args) return "";
+    char *list = strdup(args);
+    if (!list) return "";
+    char *argv[OS_GIT_RUN_ARGS + 4];
+    int argc = 0;
+    argv[argc++] = "git";
+    argv[argc++] = "-C";
+    argv[argc++] = (char *)folder;
+    for (char *p = list; *p;) {
+        char *end = strchr(p, '\n');
+        if (end) *end = 0;
+        if (*p) {
+            if (argc >= OS_GIT_RUN_ARGS + 3) { free(list); return ""; }
+            argv[argc++] = p;
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+    argv[argc] = NULL;
+    char **env = os_git_run_env();
+    int pipes[2];
+    if (!env || pipe(pipes) != 0) { free(env); free(list); return ""; }
+    fcntl(pipes[0], F_SETFD, FD_CLOEXEC);
+    fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, pipes[1], STDOUT_FILENO);
+    posix_spawn_file_actions_adddup2(&actions, pipes[1], STDERR_FILENO);
+    posix_spawn_file_actions_addclose(&actions, pipes[0]);
+    posix_spawn_file_actions_addclose(&actions, pipes[1]);
+    posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+#ifdef POSIX_SPAWN_SETSID
+    // A new session has no controlling terminal, so ssh cannot prompt on the
+    // terminal that launched this app and stall the job.
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSID);
+#endif
+    pid_t pid;
+    int error = posix_spawnp(&pid, "git", &actions, &attr, argv, env);
+    posix_spawnattr_destroy(&attr);
+    posix_spawn_file_actions_destroy(&actions);
+    close(pipes[1]);
+    free(env);
+    free(list);
+    if (error) { close(pipes[0]); return ""; }
+    // Keep only the tail: the last lines carry Git's result or error.
+    char *text = malloc(OS_GIT_RUN_KEEP * 2 + 1);
+    size_t used = 0;
+    i32 number = 0, digits = 0;
+    char chunk[8192];
+    for (;;) {
+        ssize_t n = read(pipes[0], chunk, sizeof(chunk));
+        if (n == 0) break;
+        if (n < 0) { if (errno == EINTR) continue; break; }
+        os_git_run_scan(chunk, (size_t)n, &number, &digits);
+        if (!text) continue;
+        if (used + (size_t)n > OS_GIT_RUN_KEEP * 2) {
+            memmove(text, text + used - OS_GIT_RUN_KEEP, OS_GIT_RUN_KEEP);
+            used = OS_GIT_RUN_KEEP;
+        }
+        memcpy(text + used, chunk, (size_t)n);
+        used += (size_t)n;
+    }
+    close(pipes[0]);
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) { if (errno != EINTR) { status = -1; break; } }
+    if (!text) return "";
+    text[used] = 0;
+    os_git_run_text = text;
+    os_git_last_status = status >= 0 && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return os_git_run_text;
+}
 #else
 i32 os_git_status(void) { return -1; }
+i32 os_git_progress(void) { return -1; }
+const char *os_git_run(const char *folder, const char *args) { ns_unused(folder); ns_unused(args); return ""; }
 const char *os_git_revision(const char *path) { ns_unused(path); return ""; }
 const char *os_git_base(const char *path, i32 max_bytes) { ns_unused(path); ns_unused(max_bytes); return ""; }
 const char *os_git_diff_text(const char *before, const char *after, i32 max_bytes) {

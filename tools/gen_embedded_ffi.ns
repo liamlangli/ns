@@ -31,19 +31,19 @@ let g_alias_from = [str](128)
 let g_alias_to = [str](128)
 let g_alias_count = 0
 
-let g_fn_name = [str](512)
-let g_fn_result = [str](512)
-let g_fn_result_ptr = [i32](512)
-let g_fn_arg_start = [i32](512)
-let g_fn_arg_count = [i32](512)
-let g_fn_impl = [i32](512)
+let g_fn_name = [str](1024)
+let g_fn_result = [str](1024)
+let g_fn_result_ptr = [i32](1024)
+let g_fn_arg_start = [i32](1024)
+let g_fn_arg_count = [i32](1024)
+let g_fn_impl = [i32](1024)
 let g_fn_count = 0
-let g_arg_type = [str](2048)
-let g_arg_ptr = [i32](2048)
+let g_arg_type = [str](4096)
+let g_arg_ptr = [i32](4096)
 let g_arg_total = 0
 
 // fn indices sorted by name, for the native-source scan
-let g_sorted = [i32](512)
+let g_sorted = [i32](1024)
 let g_sorted_count = 0
 
 // depth-0 comma split scratch
@@ -741,15 +741,15 @@ let g_used_struct = [str](64)
 let g_used_count = 0
 
 // dispatch entries: implemented fns deduped by name (first wins), name-sorted
-let g_emit = [i32](512)
+let g_emit = [i32](1024)
 let g_emit_count = 0
 
 let g_sig_body = [str](256)
 let g_sig_count = 0
-let g_entry_sig = [i32](512)
+let g_entry_sig = [i32](1024)
 let g_cpu_body = [str](256)
 let g_cpu_count = 0
-let g_entry_cpu = [i32](512)
+let g_entry_cpu = [i32](1024)
 
 fn out(line: str) {
     g_out[g_out_count] = line

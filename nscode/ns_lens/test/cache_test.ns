@@ -36,7 +36,7 @@ fn main() {
     assert g_lens_cache_found
     let empty_metrics = lens_file_metrics(path)
     assert empty_metrics.lines == 1 && empty_metrics.columns == 0
-    let missing_metrics = [i64](2)
+    let missing_metrics = [i64](4)
     assert !os_file_text_metrics(root + "/missing", missing_metrics)
     assert missing_metrics[0] == -1
     assert os_write_file_atomic(path, "ab\ncd") != 0
@@ -53,6 +53,21 @@ fn main() {
     assert os_write_file_atomic(path, "abcde") != 0
     let one_line_metrics = lens_file_metrics(path)
     assert one_line_metrics.lines == 1
+    // The typical width covers 90% of the non-empty lines; blank lines and
+    // one long line do not move it.
+    let mixed = ""
+    for n in 0 to 9 {
+        mixed = mixed + "0123456789\n\n"
+    }
+    for n in 0 to 20 {
+        mixed = mixed + "x"
+    }
+    mixed = mixed + "\n"
+    assert os_write_file_atomic(path, mixed) != 0
+    let mixed_metrics = lens_file_metrics(path)
+    assert mixed_metrics.lines == 20 && mixed_metrics.columns == 20 && mixed_metrics.typical == 10
+    // The 20-byte line wraps onto a second row at the typical width.
+    assert mixed_metrics.rows == 21
     // Count beyond the preview cap, including a newline across a read boundary.
     let large = "a"
     for n in 0 to 19 {
@@ -60,9 +75,27 @@ fn main() {
     }
     large = large + "\nend\n"
     assert os_write_file_atomic(path, large) != 0
-    let large_metrics = [i64](2)
+    let large_metrics = [i64](4)
     assert os_file_text_metrics(path, large_metrics)
     assert large_metrics[0] == 3 && large_metrics[1] == 524288
+    // Past the width histogram the typical width falls back to the longest.
+    assert large_metrics[2] == 524288
+    assert large_metrics[3] == 3
+    // A line past the width histogram is reread to count its wrapped rows:
+    // nine 1000-byte lines set the width, and a 2500-byte line takes three.
+    let thousand = ""
+    for n in 0 to 100 {
+        thousand = thousand + "0123456789"
+    }
+    let long_text = thousand + thousand + substr(thousand, 0, 500)
+    for n in 0 to 9 {
+        long_text = long_text + "\n" + thousand
+    }
+    assert os_write_file_atomic(path, long_text) != 0
+    let long_metrics = [i64](4)
+    assert os_file_text_metrics(path, long_metrics)
+    assert long_metrics[0] == 10 && long_metrics[1] == 2500 && long_metrics[2] == 1000
+    assert long_metrics[3] == 12
     assert os_write_file_atomic(path, "worker source") != 0
     g_workspace_streaming = true
     workspace_init()

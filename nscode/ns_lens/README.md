@@ -24,13 +24,30 @@ snaps back to orthographic.
 
 - The interface is monochrome. Syntax highlighting and Git change backgrounds
   use color; leaf outlines are rounded rectangles with a 3-point radius.
+- Minimap bars are one light gray. In every leaf, lines Git reports as added
+  are green and deleted lines appear as red ghost rows, so the size of each
+  file's change reads from far away. Up close the same rows keep the editor's
+  green and red backgrounds. A worker diffs every changed file against HEAD
+  after file changes, after a commit, and every 30 seconds.
 - Wheel: zoom toward the pointer with camera smoothing.
 - Left drag: pan. Right click: select a leaf; right drag selects text in its editor.
   Middle drag: tilt the map into perspective.
 - Zoom close to a leaf: its code becomes a syntax-highlighted, editable surface
   inside that leaf. The map keeps the entire canvas; no separate editor opens.
-- Shift+wheel: scroll code inside the leaf; horizontal travel scrolls columns.
+- Shift+wheel: scroll code inside the leaf.
 - **Open project** selects a project folder.
+- **File** (top left) holds the Git and search commands:
+  - **Search** (Cmd+P) matches file names at once and scans file contents on
+    a worker; a query without capitals ignores case. Matching leaves are
+    outlined, and Enter or a click flies to the file or the matching line.
+  - **Commit** (Cmd+Enter) asks for a one-line message and commits every
+    change under the opened folder, untracked files included. The change view
+    and the open file's diff refresh when it finishes.
+  - **Push** (Cmd+O) pushes the branch, publishing it to `origin` when it has
+    no upstream. Git runs without a terminal, so a missing credential fails
+    with Git's message instead of waiting on a prompt.
+- The controls are listed at the bottom left, above an activity row that shows
+  the running search, commit or push with its progress, and the latest message.
 - The menu beside **Open project** switches the map. **code** shows recognized
   source files (`.c`, `.h`, `.ns`, `.ts`, `.js`, and the other languages Lens
   already knows). **change** shows files Git reports as staged, unstaged, or
@@ -49,14 +66,23 @@ snaps back to orthographic.
   code-pixel-to-world ratio is shared by every leaf. By that zoom the code
   shows as glyphs, as minimap bars (one per code segment), or as the same resident minimap. Lines flow
   down newspaper columns across the leaf, preview and editor alike, so the
-  whole file shows; column count and font scale maximize readability, while column and row spacing
-  fill the available leaf; past a readable size the hovered file
+  whole file shows. Each file takes the largest font its leaf holds, with line
+  height in fixed proportion to the glyphs; spare width spreads the columns,
+  and editing keeps the scale until the text outgrows the leaf. A column is as
+  wide as 90% of the file's non-empty lines; longer lines wrap onto the
+  following rows, like Vim's `wrap`, numbered only on their first row. Glyphs, minimap bars and editing overlays share that row grid; past a readable size the hovered file
   becomes an editor at the same scale, with selection, undo/redo and
-  Cmd/Ctrl+S. Filenames appear once a leaf is wide enough.
+  Cmd/Ctrl+S. Each file name is the leaf's top row, in bold at the code font
+  size, scaling with the code and showing alongside its glyphs. While a leaf
+  shows minimap bars, its name sits in small bright text at the leaf's top
+  left instead.
 - Right-clicking a leaf focuses it at a readable code size, framing its top. Zoom
   stops once code reaches 2.5 times its editor size.
 - The status bar progress bar is the precision still loading: minimap bars across
   the project, or code for the leaves in view once the camera is that close.
+- The status bar starts with a down arrow counting upstream commits not pulled
+  yet and an up arrow counting local commits not pushed. Lens fetches in the
+  background every five minutes, and after opening a project.
 - The status bar also shows actual FPS and process resident RAM in MiB, sampled
   once per second. The RAM bar and percentage use total physical memory as the
   scale. Idle polling naturally reports a lower FPS. Narrow windows hide the
@@ -100,8 +126,9 @@ consume memory.
 Filesystem changes invalidate the layout and preview cache.
 
 Current limits: the shared filesystem API snapshots at most 4096 entries;
-Lens displays a warning at that limit. Source hashing and range loading run on the worker. Git commands and initial
-metadata/layout work currently run on the main thread. The scene is a perspective atlas with billboard cards.
+Lens displays a warning at that limit. Source hashing and range loading run on the worker. Commit, push, fetch and search
+run on workers; change listing, diffs and initial metadata/layout work
+currently run on the main thread. The scene is a perspective atlas with billboard cards.
 Syntax highlighting uses NSCode's existing supported language rules.
 
 Validation:

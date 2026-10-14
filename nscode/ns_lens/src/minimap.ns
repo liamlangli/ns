@@ -180,15 +180,22 @@ fn lens_mini_sync_document(r: ref ui_renderer, index: i32) {
 }
 
 fn lens_mini_build_content(r: ref ui_renderer, index: i32, text: str, document: bool) {
-    let lines = lens_text_lines(text)
+    let wrap = lens_wrap_cols(index)
+    let lines = 0
+    let diff = lens_file_diff_none()
     if document {
-        lines = g_lens_diff_count
-    } else if g_lens_mini_build_block != 0 {
-        lines = g_lens_source_lines[index]
+        lens_wrap_sync(wrap)
+        lines = g_lens_wrap_total
+    } else if g_lens_mini_build_block == 0 {
+        // Git's ghost rows and added lines color the bars.
+        diff = lens_leaf_diff(index)
+        lines = lens_text_rows(text, wrap) + lens_file_diff_rows(diff, wrap)
+    } else {
+        lines = g_lens_source_rows[index]
     }
     lens_code_flow(index, lines)
     let rows = g_lens_flow_rows
-    let hash = os_text_hash(text)
+    let hash = os_text_hash(text) + ":w" + itos(wrap) + ":p" + itos(lens_leaf_patch_serial(index))
     if document {
         hash = hash + ":" + itos(g_lens_diff_revision)
     } else if g_lens_mini_build_block != 0 {
@@ -222,7 +229,7 @@ fn lens_mini_build_content(r: ref ui_renderer, index: i32, text: str, document: 
         ui_rect_batch_begin(r, batch)
     }
     let start_vertex = ui_rect_batch_vertex_count(r, batch)
-    let input = lens_batch_prepare(r, text, document, first_row, first_col, lines, rows, char_w, true)
+    let input = lens_batch_prepare(r, text, diff, document, first_row, first_col, lines, rows, wrap, char_w, true)
     lens_batch_build(r, batch, ref input)
     ui_rect_batch_end(r, batch)
     if g_lens_mini_build_block != 0 {
@@ -248,9 +255,8 @@ fn lens_mini_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squ
     let scale = zoom * g_lens_mini_fit[index]
     if g_lens_mini_document[index] {
         let world = clamp(g_lens_code_world, 0.000001, 1000000.0)
-        ui_push_clip(r, x, y, g_lens_w[index] * zoom / world - 2.0, (g_lens_h[index] / world - LENS_LEAF_HEADER_REF) * zoom * squash - 1.0)
+        ui_push_clip(r, x, y, g_lens_w[index] * zoom / world - 2.0, (g_lens_h[index] / world - lens_header_h() * g_lens_mini_fit[index]) * zoom * squash - 1.0)
         y = y - g_code_scroll * scale * squash / g_code_zoom_y
-        x = x - (g_coloff as f64) * ui_mono_char_width(r, code_base_font_px(), CODE_FONT()) * scale
     }
     ui_rect_batch_draw_range(r, batch, 0, ui_rect_batch_vertex_count(r, batch), x, y, scale, scale * squash)
     if g_lens_mini_document[index] {

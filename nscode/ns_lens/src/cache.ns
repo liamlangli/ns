@@ -160,29 +160,42 @@ fn lens_offset_key(value: i64) str {
 
 struct lens_text_metrics {
     lines: i64,
-    columns: i64
+    columns: i64,
+    // Width covering 90% of the non-empty lines; longer lines wrap.
+    typical: i64,
+    // Display rows when every line wraps at `typical`.
+    rows: i64
 }
 
 // Metrics are small hash-validated records; full files never enter RAM here.
 fn lens_file_metrics(path: str) lens_text_metrics {
     let hash = os_file_hash(path)
-    let file = lens_cache_path(path, "metrics1")
+    let file = lens_cache_path(path, "metrics3")
     let payload = lens_cache_get(file, hash, 128)
     if g_lens_cache_found {
         g_lens_parse_offset = 0
         let lines = lens_cache_number(payload) as i64
         let columns = lens_cache_number(payload) as i64
-        if lines >= 1 && columns >= 0 {
-            return lens_text_metrics(lines, columns)
+        let typical = lens_cache_number(payload) as i64
+        let rows = lens_cache_number(payload) as i64
+        // Only an empty file has no typical width; wrapping never drops a row.
+        if lines >= 1 && columns >= 0 && typical <= columns && (typical > 0 || columns == 0) && rows >= lines {
+            return lens_text_metrics(lines, columns, typical, rows)
         }
     }
-    let native = [i64](2)
+    let native = [i64](4)
     if !os_file_text_metrics(path, native) {
-        return lens_text_metrics(-1 as i64, 0 as i64)
+        return lens_text_metrics(-1 as i64, 0 as i64, 0 as i64, 0 as i64)
     }
-    let value = lens_text_metrics(native[0], native[1])
+    let value = lens_text_metrics(native[0], native[1], native[2], native[3])
+    // A runtime without the wrap metrics leaves them zero: wrap at the
+    // longest line, which keeps one row per line.
+    if value.typical <= 0 || value.rows < value.lines {
+        value.typical = value.columns
+        value.rows = value.lines
+    }
     if value.lines >= 1 && os_file_hash(path) == hash {
-        lens_cache_put(file, hash, ftos(value.lines as f64) + "\n" + ftos(value.columns as f64) + "\n")
+        lens_cache_put(file, hash, ftos(value.lines as f64) + "\n" + ftos(value.columns as f64) + "\n" + ftos(value.typical as f64) + "\n" + ftos(value.rows as f64) + "\n")
     }
     return value
 }
