@@ -300,25 +300,22 @@ fn lens_change_has(relative: str) bool {
     return false
 }
 
-fn lens_changes_refresh() {
-    let text = ""
-    let status: i32 = -1
-    if g_workspace_root != "" {
-        text = os_git_changes(g_workspace_root)
-        status = os_git_status()
-    }
+// Adopt a listing of `root` that Git returned with `status`; a list that
+// differs from the shown one marks the map for a rebuild.
+fn lens_changes_apply(text: str, status: i32, root: str) {
+    let listed = text
     if status != 0 {
-        text = ""
+        listed = ""
         if g_lens_message == "" || g_lens_message == lens_git_unavailable() {
             g_lens_message = lens_git_unavailable()
         }
     } else if g_lens_message == lens_git_unavailable() {
         g_lens_message = ""
     }
-    if text != g_lens_change_text || g_lens_change_root != g_workspace_root {
-        g_lens_change_text = text
-        g_lens_change_root = g_workspace_root
-        lens_changes_parse(text)
+    if listed != g_lens_change_text || g_lens_change_root != root {
+        g_lens_change_text = listed
+        g_lens_change_root = root
+        lens_changes_parse(listed)
         g_lens_changes_dirty = true
     }
 }
@@ -372,7 +369,7 @@ fn lens_set_mode(mode: i32) {
     g_lens_view_mode = mode
     if mode == LENS_MODE_CHANGE {
         g_lens_change_poll = os_time() + 2.0
-        lens_changes_refresh()
+        lens_changes_request(false)
     } else if g_lens_message == lens_git_unavailable() {
         g_lens_message = ""
     }
@@ -382,7 +379,11 @@ fn lens_set_mode(mode: i32) {
 
 fn lens_rebuild() {
     if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_root != g_workspace_root {
-        lens_changes_refresh()
+        // Another folder's list must not pick this one's leaves. This
+        // folder's listing arrives from the worker and rebuilds again.
+        lens_changes_parse("")
+        g_lens_change_text = ""
+        lens_changes_request(false)
     }
     lens_mini_remap()
     lens_atlas_reset()
@@ -730,7 +731,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if g_lens_generation != g_workspace_generation {
         if g_lens_view_mode == LENS_MODE_CHANGE {
             g_lens_change_poll = os_time() + 2.0
-            lens_changes_refresh()
+            lens_changes_request(true)
         }
         lens_rebuild()
         g_lens_changes_dirty = false
@@ -800,13 +801,10 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_vcs_tick(moving)
     lens_patch_tick(moving)
     lens_search_tick()
+    lens_changes_poll()
     if g_lens_view_mode == LENS_MODE_CHANGE && moving == false && os_time() >= g_lens_change_poll {
         g_lens_change_poll = os_time() + 2.0
-        lens_changes_refresh()
-        if g_lens_changes_dirty {
-            lens_rebuild()
-            g_lens_changes_dirty = false
-        }
+        lens_changes_request(false)
     }
     let read_budget: i32 = 1
     if moving {
@@ -1024,7 +1022,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_mouse_y = screen_y
     if lens_file_count() == 0 {
         let note = "No source files in "
-        if g_lens_view_mode == LENS_MODE_CHANGE {
+        if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_root != g_workspace_root {
+            note = "Listing changed files in "
+        } else if g_lens_view_mode == LENS_MODE_CHANGE {
             note = "No changed files in "
         } else if g_lens_view_mode == LENS_MODE_FULL {
             note = "No files in "
@@ -1061,7 +1061,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         // The display paces a moving camera. A timer started after the frame
         // would add its delay to the frame's own cost.
         view_request_frame(v, 1)
-    } else if read_budget == 0 || g_lens_io_running || g_lens_close_view || lens_job_visible() || g_lens_search_running {
+    } else if read_budget == 0 || g_lens_io_running || g_lens_change_running || g_lens_close_view || lens_job_visible() || g_lens_search_running {
         view_request_frame_after(v, 16)
     } else {
         // Idle polling keeps file watching alive without drawing 60 empty frames.

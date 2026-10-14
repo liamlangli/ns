@@ -1,6 +1,7 @@
 // Git commands behind the File menu: commit, push, and a background fetch
 // that keeps the ahead/behind counts current. One job runs at a time on a
 // worker task; the main thread polls it and refreshes file states after it.
+// The change view's file list and per-file patches are read on workers too.
 use os
 use task
 
@@ -344,6 +345,80 @@ fn lens_draw_sync_count(r: ref ui_renderer, x: f64, y: f64, count: i32, down: bo
     }
     draw_text_clipped(r, x + 11.0, y + 5.0, label_w, 20.0, label, small_px(), color)
     return w
+}
+
+// The change view's file list. `git status` takes tens of milliseconds, too
+// long for a frame, so a worker runs it and the main thread adopts the
+// listing in a later frame.
+let g_lens_change_running = false
+let g_lens_change_again = false
+let g_lens_change_job_root = ""
+let g_lens_change_lock: ref os_lock = nil
+let g_lens_change_lock_ready = false
+// Worker results, guarded by g_lens_change_lock: [0] done, [1] Git status.
+let g_lens_change_state = [i32](2)
+let g_lens_change_output = [str](1)
+
+// List the opened folder's changes on a worker. A listing already running
+// for this folder serves the request, unless `stale`: files changed after it
+// began, so another listing follows it.
+fn lens_changes_request(stale: bool) {
+    if g_workspace_root == "" {
+        return
+    }
+    if g_lens_change_running {
+        if stale || g_lens_change_job_root != g_workspace_root {
+            g_lens_change_again = true
+        }
+        return
+    }
+    if g_lens_change_lock_ready == false {
+        g_lens_change_lock = os_lock_create()
+        g_lens_change_lock_ready = true
+    }
+    let root = g_workspace_root
+    let lock = g_lens_change_lock
+    let state = g_lens_change_state
+    let output = g_lens_change_output
+    state[0] = 0
+    g_lens_change_running = true
+    g_lens_change_job_root = root
+    let pending = dispatch(queue_worker) { in
+        let text = os_git_changes(root)
+        let status = os_git_status()
+        os_lock_acquire(lock)
+        output[0] = text
+        state[1] = status
+        state[0] = 1
+        os_lock_release(lock)
+    }
+}
+
+// Each frame: adopt a finished listing while the change view still shows the
+// folder it was read from. A list that changed rebuilds the map.
+fn lens_changes_poll() {
+    if g_lens_change_running == false || os_lock_try_acquire(g_lens_change_lock) == false {
+        return
+    }
+    let done = g_lens_change_state[0] != 0
+    let status = g_lens_change_state[1]
+    let text = g_lens_change_output[0]
+    os_lock_release(g_lens_change_lock)
+    if done == false {
+        return
+    }
+    g_lens_change_running = false
+    if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_job_root == g_workspace_root {
+        lens_changes_apply(text, status, g_lens_change_job_root)
+        if g_lens_changes_dirty {
+            lens_rebuild()
+            g_lens_changes_dirty = false
+        }
+    }
+    if g_lens_change_again {
+        g_lens_change_again = false
+        lens_changes_request(false)
+    }
 }
 
 // Patches against HEAD for every changed file, so each leaf's minimap shows

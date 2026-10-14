@@ -221,6 +221,51 @@ fn check_patches(work: str) {
     assert lens_leaf_patch(main_file) == "" && lens_leaf_patch(fresh_file) == ""
 }
 
+fn finish_changes() {
+    let deadline = os_time() + 20.0
+    loop g_lens_change_running && os_time() < deadline {
+        sleep(1)
+        lens_changes_poll()
+    }
+    assert g_lens_change_running == false
+}
+
+// The change view lists Git's changes on a worker: switching to it returns at
+// once, and a later frame adopts the listing and rebuilds the map.
+fn check_change_list(base: str) {
+    let root = base + "/changes"
+    make_repo(root)
+    assert os_write_file_atomic(root + "/kept.ns", "fn kept() {}\n") != 0
+    git(root, "add\n-A")
+    git(root, "commit\n-q\n-m\nbase")
+    assert os_write_file_atomic(root + "/fresh.ns", "fn fresh() {}\n") != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    g_lens_view_mode = LENS_MODE_CODE
+    lens_rebuild()
+    assert lens_file_count() == 2
+    lens_set_mode(LENS_MODE_CHANGE)
+    // Until this folder's listing arrives, no other folder's list picks leaves.
+    assert g_lens_change_running
+    assert lens_file_count() == 0
+    finish_changes()
+    assert g_lens_change_root == root
+    assert lens_change_has("fresh.ns") && lens_change_has("kept.ns") == false
+    assert lens_file_count() == 1
+    assert g_lens_files[workspace_find("fresh.ns")] == 1
+    // A file that changes while a listing runs is listed by the next one.
+    lens_changes_request(false)
+    assert os_write_file_atomic(root + "/kept.ns", "fn kept() { }\n") != 0
+    lens_changes_request(true)
+    assert g_lens_change_again
+    finish_changes()
+    assert g_lens_change_again == false
+    assert lens_change_has("kept.ns")
+    assert lens_file_count() == 2
+    lens_set_mode(LENS_MODE_CODE)
+}
+
 fn check_search_scan(base: str) {
     let root = base + "/search"
     os_make_dirs(root + "/src")
@@ -260,5 +305,6 @@ fn main() {
     check_search_helpers()
     check_git(base)
     check_search_scan(base)
+    check_change_list(base)
     print("vcs_test: passed\n")
 }
