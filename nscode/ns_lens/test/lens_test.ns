@@ -277,6 +277,43 @@ fn main() {
     assert g_lens_glyph_dirty[0] == 1
     assert lens_preview_line(0, 0) == "one"
     assert lens_preview_line(0, 1) == ""
+    g_workspace_root = "/tmp/ns_lens_mode_demo/"
+    assert lens_relative_path("/tmp/ns_lens_mode_demo/src/a.ns") == "src/a.ns"
+    lens_changes_parse("src/a.ns\nREADME.md\n")
+    assert g_lens_change_count == 2
+    assert lens_change_has("src/a.ns")
+    assert lens_change_has("README.md")
+    assert lens_change_has("other.ns") == false
+    let mode_root = "/tmp/ns_lens_mode_" + os_text_hash(ftos(os_time()))
+    os_make_dirs(mode_root)
+    assert os_write_file_atomic(mode_root + "/a.ns", "fn main() {}\n") != 0
+    assert os_write_file_atomic(mode_root + "/readme.md", "hi\n") != 0
+    assert os_write_file_atomic(mode_root + "/pic.png", "not a png") != 0
+    g_workspace_streaming = true
+    g_lens_editing = false
+    g_lens_reading = false
+    assert workspace_open_root(mode_root)
+    g_lens_view_mode = LENS_MODE_CODE
+    lens_rebuild()
+    assert lens_file_count() == 1
+    assert g_lens_files[workspace_find("a.ns")] == 1
+    assert g_lens_files[workspace_find("readme.md")] == 0
+    assert g_lens_files[workspace_find("pic.png")] == 0
+    g_lens_view_mode = LENS_MODE_FULL
+    lens_rebuild()
+    assert lens_file_count() == 3
+    assert g_lens_files[workspace_find("readme.md")] == 1
+    assert g_lens_files[workspace_find("pic.png")] == 2
+    assert g_lens_weight[workspace_find("pic.png")] > 0.0
+    g_lens_view_mode = LENS_MODE_CHANGE
+    g_lens_change_root = mode_root
+    lens_changes_parse("readme.md\npic.png\n")
+    lens_rebuild()
+    assert lens_file_count() == 2
+    assert g_lens_files[workspace_find("a.ns")] == 0
+    assert g_lens_files[workspace_find("readme.md")] == 1
+    assert g_lens_files[workspace_find("pic.png")] == 2
+    g_lens_view_mode = LENS_MODE_CODE
     os_watch_stop()
     print("lens_test: passed\n")
 }

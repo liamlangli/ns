@@ -36,6 +36,24 @@ fn main() {
         assert revision != ""
         let base = os_git_base("Makefile", 262144)
         assert base.len > 0
+        let listed = os_git_changes("nscode/ns_lens")
+        assert os_git_status() == 0
+        let offset: i32 = 0
+        for i in 0 to listed.len + 1 {
+            if i == listed.len || ((listed[i] as i32) & 255) == 10 {
+                if i > offset {
+                    let line = substr(listed, offset, i - offset)
+                    assert line.len > 0
+                    assert ((line[0] as i32) & 255) != 32
+                    assert line.len < 15 || substr(line, 0, 15) != "nscode/ns_lens/"
+                }
+                offset = i + 1
+            }
+        }
     }
+    os_make_dirs("/tmp/ns_lens_not_a_git_repo")
+    let missing = os_git_changes("/tmp/ns_lens_not_a_git_repo")
+    assert missing == ""
+    assert os_git_status() != 0
     print("git_test: passed\n")
 }

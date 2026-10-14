@@ -31,6 +31,11 @@ snaps back to orthographic.
   inside that leaf. The map keeps the entire canvas; no separate editor opens.
 - Shift+wheel: scroll code inside the leaf; horizontal travel scrolls columns.
 - **Open project** selects a project folder.
+- The menu beside **Open project** switches the map. **code** shows recognized
+  source files (`.c`, `.h`, `.ns`, `.ts`, `.js`, and the other languages Lens
+  already knows). **change** shows files Git reports as staged, unstaged, or
+  untracked in the opened folder. **full** shows every scanned file. A file
+  that is not text is a name tile; a deleted file has no leaf.
 - Text and minimap share their line order (including inline Git deletion rows),
   column flow, font scale and perspective squeeze, so LOD switches preserve geometry.
   Glyphs appear at 0.18 scale and editing starts at 0.5, bringing code into view farther away.

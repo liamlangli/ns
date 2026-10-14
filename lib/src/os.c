@@ -974,6 +974,7 @@ const char *os_file_hash(const char *path) {
 #include <sys/wait.h>
 extern char **environ;
 static _Thread_local char *os_git_output;
+static _Thread_local size_t os_git_output_len;
 static _Thread_local i32 os_git_last_status = -1;
 i32 os_git_status(void) { return os_git_last_status; }
 
@@ -982,6 +983,7 @@ i32 os_git_status(void) { return os_git_last_status; }
 static const char *os_git_capture(char *const argv[], i32 limit, int *exit_status) {
     free(os_git_output);
     os_git_output = NULL;
+    os_git_output_len = 0;
     *exit_status = -1;
     os_git_last_status = -1;
     if (limit < 1 || limit > 1048576) return "";
@@ -1019,9 +1021,78 @@ static const char *os_git_capture(char *const argv[], i32 limit, int *exit_statu
     while (waitpid(pid, &status, 0) < 0) { if (errno != EINTR) { failed = true; break; } }
     if (failed) { free(os_git_output); os_git_output = NULL; return ""; }
     os_git_output[used] = 0;
+    os_git_output_len = used;
     if (WIFEXITED(status)) *exit_status = WEXITSTATUS(status);
     os_git_last_status = *exit_status;
     return os_git_output;
+}
+
+// Porcelain v1 -z: "XY PATH\0", or "XY TO\0FROM\0" when either status is R/C.
+// NUL separators cannot cross the FFI string boundary, so the result is one
+// path per line, relative to `path`. A rename or copy contributes its new path.
+static _Thread_local char *os_git_changes_text;
+
+const char *os_git_changes(const char *path) {
+    free(os_git_changes_text);
+    os_git_changes_text = NULL;
+    if (!path || !path[0]) { os_git_last_status = -1; return ""; }
+    int status = 0;
+    char *repo[] = {"git", "-C", (char *)path, "rev-parse", "--is-inside-work-tree", NULL};
+    os_git_capture(repo, 64, &status);
+    if (status != 0) return "";
+    // Porcelain paths are relative to the repository root, not to `path`.
+    char *prefix_args[] = {"git", "-C", (char *)path, "rev-parse", "--show-prefix", NULL};
+    const char *prefix_raw = os_git_capture(prefix_args, OS_MAX_PATH - 1, &status);
+    if (status != 0 || !prefix_raw) return "";
+    char prefix[OS_MAX_PATH];
+    size_t prefix_len = os_git_output_len;
+    if (prefix_len >= sizeof(prefix)) { os_git_last_status = -1; return ""; }
+    memcpy(prefix, prefix_raw, prefix_len);
+    prefix[prefix_len] = 0;
+    while (prefix_len && (prefix[prefix_len - 1] == '\n' || prefix[prefix_len - 1] == '\r')) prefix[--prefix_len] = 0;
+    char *args[] = {"git", "-C", (char *)path, "--no-pager", "status", "--porcelain=v1", "-z",
+                    "--untracked-files=all", NULL};
+    const char *raw = os_git_capture(args, 1048576, &status);
+    if (status != 0 || !raw) return "";
+    size_t len = os_git_output_len;
+    char *out = (char *)malloc(len + 1);
+    if (!out) { os_git_last_status = -1; return ""; }
+    size_t used = 0;
+    size_t i = 0;
+    while (i + 3 <= len) {
+        char x = raw[i];
+        char y = raw[i + 1];
+        if (raw[i + 2] != ' ') break;
+        i += 3;
+        // -z renames are "to\\0from\\0": the first name is the current path.
+        size_t start = i;
+        while (i < len && raw[i] != '\0') i++;
+        size_t end = i;
+        if (i < len) i++;
+        if (x == 'R' || x == 'C' || y == 'R' || y == 'C') {
+            while (i < len && raw[i] != '\0') i++;
+            if (i < len) i++;
+        }
+        if (end <= start) continue;
+        if (prefix_len) {
+            if ((size_t)(end - start) < prefix_len || memcmp(raw + start, prefix, prefix_len) != 0) continue;
+            start += prefix_len;
+        }
+        if (end <= start) continue;
+        ns_bool broken = false;
+        for (size_t k = start; k < end; k++) if (raw[k] == '\n' || raw[k] == '\r') broken = true;
+        if (broken) continue;
+        size_t n = end - start;
+        if (used + n + 1 > len) break;
+        memcpy(out + used, raw + start, n);
+        for (size_t k = used; k < used + n; k++) if (out[k] == '\\') out[k] = '/';
+        used += n;
+        out[used++] = '\n';
+    }
+    out[used] = 0;
+    os_git_changes_text = out;
+    os_git_last_status = 0;
+    return out;
 }
 
 static ns_bool os_git_path(const char *path, char parent[OS_MAX_PATH], const char **name) {
@@ -1100,4 +1171,5 @@ const char *os_git_base(const char *path, i32 max_bytes) { ns_unused(path); ns_u
 const char *os_git_diff_text(const char *before, const char *after, i32 max_bytes) {
     ns_unused(before); ns_unused(after); ns_unused(max_bytes); return "";
 }
+const char *os_git_changes(const char *path) { ns_unused(path); return ""; }
 #endif

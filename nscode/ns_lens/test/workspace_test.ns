@@ -76,6 +76,12 @@ fn main() i32 {
         }
     }
     check("explorer action collapses every folder", expanded_folder == false)
+    check("code names cover c h ns ts js", workspace_name_is_code("a.c") && workspace_name_is_code("a.h") && workspace_name_is_code("a.ns") && workspace_name_is_code("a.ts") && workspace_name_is_code("a.js"))
+    check("code names ignore extension case", workspace_name_is_code("Foo.NS") && workspace_name_is_code("B.H"))
+    check("build files count as code", workspace_name_is_code("Makefile") && workspace_name_is_code("CMakeLists.txt"))
+    check("docs and images are not code", workspace_name_is_code("README.md") == false && workspace_name_is_code("pic.png") == false && workspace_name_is_code("ns.mod") == false)
+    check("docs stay editable", workspace_name_is_editable("README.md") && workspace_name_is_editable("ns.mod") && workspace_name_is_editable("a.ns"))
+    check("images are not editable", workspace_name_is_editable("pic.png") == false)
     os_watch_stop()
     return g_fail
 }

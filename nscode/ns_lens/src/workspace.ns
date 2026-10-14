@@ -64,11 +64,72 @@ fn workspace_root_name(path: str) str {
     return substr(path, start, end - start)
 }
 
-fn workspace_has_suffix(name: str, suffix: str) bool {
-    if name.len < suffix.len {
+// Recognized source suffixes, including the dot. Comparison is case-insensitive.
+lit WORKSPACE_CODE_EXT = ".c .h .hh .hpp .hxx .inl .ipp .cc .cpp .cxx .m .mm .ns .ts .tsx .mts .cts .js .jsx .mjs .cjs .py .pyi .rs .go .java .kt .kts .swift .cs .rb .php .lua .zig .dart .scala .sql .vue .svelte .css .scss .sass .less .html .htm .sh .bash .zsh .ps1 .glsl .hlsl .wgsl .metal .frag .vert .comp .cl .cu .cuh .proto .gradle .asm .s"
+lit WORKSPACE_TEXT_EXT = ".md .json .txt .toml .yaml .yml"
+
+fn workspace_has_ext(name: str, ext: str) bool {
+    if ext.len == 0 || name.len < ext.len {
         return false
     }
-    return substr(name, name.len - suffix.len, suffix.len) == suffix
+    let start = name.len - ext.len
+    for i in 0 to ext.len {
+        let ca = (name[start + i] as i32) & 255
+        let cb = (ext[i] as i32) & 255
+        if ca >= 65 && ca <= 90 {
+            ca = ca + 32
+        }
+        if cb >= 65 && cb <= 90 {
+            cb = cb + 32
+        }
+        if ca != cb {
+            return false
+        }
+    }
+    return true
+}
+
+fn workspace_has_listed_ext(name: str, extensions: str) bool {
+    let start: i32 = 0
+    for end in 0 to extensions.len + 1 {
+        if end == extensions.len || ((extensions[end] as i32) & 255) == 32 {
+            if end > start && workspace_has_ext(name, substr(extensions, start, end - start)) {
+                return true
+            }
+            start = end + 1
+        }
+    }
+    return false
+}
+
+fn workspace_name_is_code(name: str) bool {
+    if name == "Makefile" || name == "makefile" || name == "GNUmakefile" {
+        return true
+    }
+    if name == "CMakeLists.txt" || name == "Dockerfile" || name == "meson.build" {
+        return true
+    }
+    return workspace_has_listed_ext(name, WORKSPACE_CODE_EXT)
+}
+
+fn workspace_name_is_editable(name: str) bool {
+    if workspace_name_is_code(name) {
+        return true
+    }
+    if name == "ns.mod" {
+        return true
+    }
+    return workspace_has_listed_ext(name, WORKSPACE_TEXT_EXT)
+}
+
+fn workspace_entry_code(index: i32) bool {
+    if index < 0 || index >= g_workspace_count {
+        return false
+    }
+    if os_entry_is_dir(index) != 0 {
+        return false
+    }
+    return workspace_name_is_code(os_entry_name(index))
 }
 
 fn workspace_entry_editable(index: i32) bool {
@@ -78,48 +139,7 @@ fn workspace_entry_editable(index: i32) bool {
     if os_entry_is_dir(index) != 0 {
         return false
     }
-    let name = os_entry_name(index)
-    if name == "ns.mod" || name == "Makefile" || name == "CMakeLists.txt" {
-        return true
-    }
-    let extensions = ".cpp .cc .cxx .hpp .hh .mm .swift .py .rs .go .java .kt .tsx .jsx .css .html .sh .toml .yaml .yml .glsl .wgsl .metal"
-    let start: i32 = 0
-    for end in 0 to extensions.len + 1 {
-        if end == extensions.len || ((extensions[end] as i32) & 255) == 32 {
-            if workspace_has_suffix(name, substr(extensions, start, end - start)) {
-                return true
-            }
-            start = end + 1
-        }
-    }
-    if workspace_has_suffix(name, ".ns") {
-        return true
-    }
-    if workspace_has_suffix(name, ".md") {
-        return true
-    }
-    if workspace_has_suffix(name, ".json") {
-        return true
-    }
-    if workspace_has_suffix(name, ".txt") {
-        return true
-    }
-    if workspace_has_suffix(name, ".c") {
-        return true
-    }
-    if workspace_has_suffix(name, ".h") {
-        return true
-    }
-    if workspace_has_suffix(name, ".m") {
-        return true
-    }
-    if workspace_has_suffix(name, ".ts") {
-        return true
-    }
-    if workspace_has_suffix(name, ".js") {
-        return true
-    }
-    return false
+    return workspace_name_is_editable(os_entry_name(index))
 }
 
 fn workspace_find(name: str) i32 {

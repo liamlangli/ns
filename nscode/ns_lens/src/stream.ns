@@ -145,7 +145,7 @@ fn lens_warm_cache(moving: bool) {
         }
         let index = g_lens_warm_cursor
         g_lens_warm_cursor = g_lens_warm_cursor + 1
-        if g_lens_files[index] != 0 && !g_lens_source_done[index] {
+        if g_lens_files[index] == 1 && !g_lens_source_done[index] {
             lens_io_start(index, 0 as i64, lens_source_bytes(os_entry_path(index)), 2)
             break
         }

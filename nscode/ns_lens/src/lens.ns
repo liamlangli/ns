@@ -79,6 +79,24 @@ let g_lens_document_diff: i32 = -1
 let g_lens_document_index: i32 = -1
 
 let g_lens_file_count: i32 = 0
+// 0 code: recognized source. 1 change: git staged, unstaged, untracked.
+// 2 full: every scanned file. Name-only leaves (g_lens_files == 2) are files
+// the editor does not treat as text.
+lit LENS_MODE_CODE = 0
+lit LENS_MODE_CHANGE = 1
+lit LENS_MODE_FULL = 2
+lit LENS_MODE_W = 108.0
+lit LENS_MODE_H = 28.0
+lit LENS_MODE_ITEM = 26.0
+let g_lens_view_mode: i32 = 0
+let g_lens_mode_open = false
+let g_lens_mode_block = false
+let g_lens_change_path = [str](4096)
+let g_lens_change_count: i32 = 0
+let g_lens_change_text = ""
+let g_lens_change_root = ""
+let g_lens_change_poll: f64 = 0.0
+let g_lens_changes_dirty = false
 let g_lens_preview_slot: i32 = -1
 let g_lens_preview_builds: i32 = 0
 let g_lens_page: i64 = 0
@@ -184,7 +202,166 @@ fn lens_layout_children(parent: i32, x0: f64, y0: f64, w0: f64, h0: f64) {
     }
 }
 
+fn lens_git_unavailable() str {
+    return "Git status is unavailable"
+}
+
+fn lens_relative_path(path: str) str {
+    let root = g_workspace_root
+    let root_len = root.len
+    loop root_len > 0 {
+        let c = (root[root_len - 1] as i32) & 255
+        if c != 47 && c != 92 {
+            break
+        }
+        root_len = root_len - 1
+    }
+    if root_len == 0 || path.len <= root_len {
+        return path
+    }
+    for i in 0 to root_len {
+        if ((path[i] as i32) & 255) != ((root[i] as i32) & 255) {
+            return path
+        }
+    }
+    let sep = (path[root_len] as i32) & 255
+    if sep != 47 && sep != 92 {
+        return path
+    }
+    let rel = substr(path, root_len + 1, path.len - root_len - 1)
+    let slash = false
+    for i in 0 to rel.len {
+        if ((rel[i] as i32) & 255) == 92 {
+            slash = true
+            break
+        }
+    }
+    if slash == false {
+        return rel
+    }
+    let out = ""
+    for i in 0 to rel.len {
+        let c = (rel[i] as i32) & 255
+        if c == 92 {
+            out = out + "/"
+        } else {
+            out = out + substr(rel, i, 1)
+        }
+    }
+    return out
+}
+
+fn lens_changes_parse(text: str) {
+    let old = g_lens_change_count
+    g_lens_change_count = 0
+    let start: i32 = 0
+    for i in 0 to text.len + 1 {
+        if i == text.len || ((text[i] as i32) & 255) == 10 {
+            if i > start && g_lens_change_count < 4096 {
+                g_lens_change_path[g_lens_change_count] = substr(text, start, i - start)
+                g_lens_change_count = g_lens_change_count + 1
+            }
+            start = i + 1
+        }
+    }
+    for i in g_lens_change_count to old {
+        g_lens_change_path[i] = ""
+    }
+}
+
+fn lens_change_has(relative: str) bool {
+    for i in 0 to g_lens_change_count {
+        if g_lens_change_path[i] == relative {
+            return true
+        }
+    }
+    return false
+}
+
+fn lens_changes_refresh() {
+    let text = ""
+    let status: i32 = -1
+    if g_workspace_root != "" {
+        text = os_git_changes(g_workspace_root)
+        status = os_git_status()
+    }
+    if status != 0 {
+        text = ""
+        if g_lens_message == "" || g_lens_message == lens_git_unavailable() {
+            g_lens_message = lens_git_unavailable()
+        }
+    } else if g_lens_message == lens_git_unavailable() {
+        g_lens_message = ""
+    }
+    if text != g_lens_change_text || g_lens_change_root != g_workspace_root {
+        g_lens_change_text = text
+        g_lens_change_root = g_workspace_root
+        lens_changes_parse(text)
+        g_lens_changes_dirty = true
+    }
+}
+
+fn lens_entry_shown(index: i32) bool {
+    if os_entry_is_dir(index) != 0 {
+        return false
+    }
+    if g_lens_view_mode == LENS_MODE_FULL {
+        return true
+    }
+    if g_lens_view_mode == LENS_MODE_CHANGE {
+        return lens_change_has(lens_relative_path(os_entry_path(index)))
+    }
+    return workspace_entry_code(index)
+}
+
+fn lens_include_file(index: i32) {
+    let path = os_entry_path(index)
+    if workspace_entry_editable(index) {
+        let metrics = lens_file_metrics(path)
+        if metrics.lines >= 1 {
+            g_lens_files[index] = 1
+            g_lens_source_lines[index] = clamp_i(metrics.lines as i32, 1, 100000000)
+            g_lens_source_columns[index] = clamp_i(metrics.columns as i32, 1, 100000000)
+            g_lens_weight[index] = g_lens_source_lines[index] as f64
+            return
+        }
+    }
+    let bytes = os_file_size(path)
+    if bytes < 0 {
+        return
+    }
+    let lines = (bytes / 64) as i32
+    if lines < 4 {
+        lines = 4
+    }
+    if lines > 400 {
+        lines = 400
+    }
+    g_lens_files[index] = 2
+    g_lens_source_lines[index] = lines
+    g_lens_source_columns[index] = 40
+    g_lens_weight[index] = lines as f64
+}
+
+fn lens_set_mode(mode: i32) {
+    if mode == g_lens_view_mode {
+        return
+    }
+    g_lens_view_mode = mode
+    if mode == LENS_MODE_CHANGE {
+        g_lens_change_poll = os_time() + 2.0
+        lens_changes_refresh()
+    } else if g_lens_message == lens_git_unavailable() {
+        g_lens_message = ""
+    }
+    lens_rebuild()
+    g_lens_changes_dirty = false
+}
+
 fn lens_rebuild() {
+    if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_root != g_workspace_root {
+        lens_changes_refresh()
+    }
     lens_mini_remap()
     lens_atlas_reset()
     lens_clear_cache()
@@ -207,13 +384,8 @@ fn lens_rebuild() {
         g_lens_files[i] = 0
         g_lens_names[i] = os_entry_name(i)
         g_lens_folder_header[i] = 0.0
-        if workspace_entry_editable(i) {
-            g_lens_files[i] = 1
-            let path = os_entry_path(i)
-            let metrics = lens_file_metrics(path)
-            g_lens_source_lines[i] = clamp_i(metrics.lines as i32, 1, 100000000)
-            g_lens_source_columns[i] = clamp_i(metrics.columns as i32, 1, 100000000)
-            g_lens_weight[i] = g_lens_source_lines[i] as f64
+        if lens_entry_shown(i) {
+            lens_include_file(i)
         }
     }
     let i = g_workspace_count - 1
@@ -229,8 +401,8 @@ fn lens_rebuild() {
     g_lens_file_count = 0
     let code_area: f64 = 0.0
     for f in 0 to g_workspace_count {
-        g_lens_file_count = g_lens_file_count + g_lens_files[f]
         if g_lens_files[f] != 0 {
+            g_lens_file_count = g_lens_file_count + 1
             code_area = code_area + (g_lens_weight[f] * code_base_line_h() + LENS_LEAF_HEADER_REF + code_base_top_pad()) * LENS_COLUMN_REF
         }
     }
@@ -398,6 +570,133 @@ fn lens_open(index: i32) bool {
     return g_lens_editing
 }
 
+fn lens_mode_x(w: f64) f64 {
+    let x = w - 132.0 - 8.0 - LENS_MODE_W
+    if x < 8.0 {
+        return 8.0
+    }
+    return x
+}
+
+fn lens_mode_y() f64 { return 6.0 }
+
+fn lens_mode_popup_y() f64 { return lens_mode_y() + LENS_MODE_H + 2.0 }
+
+fn lens_mode_label(mode: i32) str {
+    if mode == LENS_MODE_CHANGE {
+        return "change"
+    }
+    if mode == LENS_MODE_FULL {
+        return "full"
+    }
+    return "code"
+}
+
+fn lens_mode_handle(v: ref view, w: f64) {
+    let x = lens_mode_x(w)
+    let y = lens_mode_y()
+    let pop_y = lens_mode_popup_y()
+    let pop_h = LENS_MODE_ITEM * 3.0
+    g_lens_mode_block = g_lens_mode_open && raw_hit(v, x, pop_y, LENS_MODE_W, pop_h)
+    if v.mouse_pressed == false {
+        return
+    }
+    if raw_hit(v, x, y, LENS_MODE_W, LENS_MODE_H) {
+        if g_lens_mode_open {
+            g_lens_mode_open = false
+        } else {
+            g_lens_mode_open = true
+        }
+        v.mouse_pressed = false
+        return
+    }
+    if g_lens_mode_open == false {
+        return
+    }
+    if g_lens_mode_block {
+        let row = ((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32
+        if row < 0 {
+            row = 0
+        }
+        if row > 2 {
+            row = 2
+        }
+        g_lens_mode_open = false
+        v.mouse_pressed = false
+        lens_set_mode(row)
+        return
+    }
+    g_lens_mode_open = false
+    v.mouse_pressed = false
+}
+
+fn lens_draw_mode_menu(r: ref ui_renderer, v: ref view, w: f64) {
+    let x = lens_mode_x(w)
+    let y = lens_mode_y()
+    let border = col_muted()
+    if g_lens_mode_open {
+        border = col_accent()
+    }
+    ui_fill_round_rect(r, x, y, LENS_MODE_W, LENS_MODE_H, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_MODE_W, LENS_MODE_H, 3.0, 1.0, border, 0.0)
+    let label = lens_mode_label(g_lens_view_mode)
+    let ty = ui_text_v_center_y(r, y, LENS_MODE_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, x + 10.0, ty, LENS_MODE_W - 28.0, LENS_MODE_H, label, small_px(), col_text())
+    draw_text_clipped(r, x + LENS_MODE_W - 16.0, ty, 12.0, LENS_MODE_H, "v", small_px(), col_muted())
+    if g_lens_mode_open == false {
+        return
+    }
+    let pop_y = lens_mode_popup_y()
+    let pop_h = LENS_MODE_ITEM * 3.0
+    ui_fill_round_rect(r, x, pop_y, LENS_MODE_W, pop_h, 3.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, x, pop_y, LENS_MODE_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
+    for i in 0 to 3 {
+        let iy = pop_y + (i as f64) * LENS_MODE_ITEM
+        let hot = raw_hit(v, x, iy, LENS_MODE_W, LENS_MODE_ITEM)
+        if hot || i == g_lens_view_mode {
+            ui_fill_rect(r, x + 1.0, iy, LENS_MODE_W - 2.0, LENS_MODE_ITEM, col_editor_panel_hi(), 0.0)
+        }
+        let color = col_text()
+        if i == g_lens_view_mode {
+            color = col_accent()
+        }
+        let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
+        draw_text_clipped(r, x + 10.0, row_ty, LENS_MODE_W - 16.0, LENS_MODE_ITEM, lens_mode_label(i), small_px(), color)
+    }
+}
+
+fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f64, body_h: f64, vx0: f64, vy0: f64, vx1: f64, vy1: f64, over_map: bool) {
+    let leaf = lens_project_leaf(i, w, top, body_h)
+    let pw = leaf.w
+    let ph = leaf.h
+    let px = leaf.x
+    let py = leaf.y
+    if pw <= 1.0 || ph <= 1.0 || px >= vx1 || px + pw <= vx0 || py >= vy1 || py + ph <= vy0 {
+        return
+    }
+    g_lens_on_screen[i] = 1
+    let color = col_muted()
+    if i == g_lens_selected {
+        color = col_accent()
+    }
+    let content = lens_leaf_content(leaf, vx0, vy0, vx1, vy1)
+    let on_screen = px >= vx0 && py >= vy0 && px + pw <= vx1 && py + ph <= vy1
+    if on_screen && pw >= 12.0 && ph >= 12.0 {
+        ui_fill_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, col_editor_panel_hi(), 0.0)
+        ui_stroke_round_rect(r, px + 1.0, py + 1.0, pw - 2.0, ph - 2.0, LENS_CORNER_RADIUS, 1.0, color, 0.0)
+    } else if content.w > 1.0 && content.h > 1.0 {
+        ui_fill_rect(r, content.x, content.y, content.w, content.h, col_editor_panel_hi(), 0.0)
+    }
+    if pw >= 45.0 && ph > 14.0 {
+        lens_draw_label(r, clamp(px + 6.0, vx0 + 6.0, vx1 - 6.0), clamp(py + 3.0, vy0 + 3.0, vy1 - 20.0), clamp(px + pw - 6.0, vx0, vx1 - 6.0), g_lens_names[i], color)
+    }
+    if v.mouse_right_pressed && over_map && hit(v, px, py, pw, ph) {
+        g_lens_selected = i
+        g_lens_selected_path = os_entry_path(i)
+        v.mouse_right_pressed = false
+    }
+}
+
 // Camera-space projection includes perspective depth from the tilted map plane
 // and directory elevation. All geometry and hit tests use the same projection.
 fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
@@ -405,7 +704,12 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_batch_window_reset()
     lens_io_poll()
     if g_lens_generation != g_workspace_generation {
+        if g_lens_view_mode == LENS_MODE_CHANGE {
+            g_lens_change_poll = os_time() + 2.0
+            lens_changes_refresh()
+        }
         lens_rebuild()
+        g_lens_changes_dirty = false
     }
     lens_mini_update(r)
     g_lens_canvas_h = h
@@ -414,6 +718,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let body_h = h - top - 78.0
     let map_w = w
     ui_fill_rect(r, 0.0, main_menu_h(), w, h, col_editor_bg(), 0.0)
+    lens_mode_handle(v, w)
     if v.mouse_pressed && hit(v, w - 132.0, 4.0, 120.0, 30.0) {
         if g_lens_editing && workspace_entry_dirty(g_workspace_active) {
             g_lens_message = "Save the current file before opening another project"
@@ -433,12 +738,16 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         v.mouse_pressed = false
     }
     draw_centered_text(r, w - 132.0, 4.0, 120.0, 30.0, "Open project", small_px(), col_text())
-    draw_text_clipped(r, 18.0, 10.0, w - 168.0, 24.0, "ns_lens  /  wheel zoom · Shift+wheel code · left drag pan · right click select · middle drag tilt", small_px(), col_text())
+    let hint_w = lens_mode_x(w) - 26.0
+    if hint_w < 0.0 {
+        hint_w = 0.0
+    }
+    draw_text_clipped(r, 18.0, 10.0, hint_w, 24.0, "ns_lens  /  wheel zoom · Shift+wheel code · left drag pan · right click select · middle drag tilt", small_px(), col_text())
     // The map is laid out flat and seen through the plane camera: every map
     // interaction runs on the flat plane, under the unprojected pointer.
     let screen_x = g_mouse_x
     let screen_y = g_mouse_y
-    let over_map = hit(v, 0.0, top, map_w, body_h)
+    let over_map = g_lens_mode_block == false && hit(v, 0.0, top, map_w, body_h)
     if over_map && v.mouse_middle_down {
         g_lens_tilt = clamp(g_lens_tilt + (screen_y - g_lens_screen_drag_y) * 0.25, 0.0, LENS_MAX_TILT)
     }
@@ -464,6 +773,14 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_lens_center_y = g_lens_center_y + (g_lens_target_y - g_lens_center_y) * blend
     let moving = lens_camera_moving(v)
     lens_git_tick(moving)
+    if g_lens_view_mode == LENS_MODE_CHANGE && moving == false && os_time() >= g_lens_change_poll {
+        g_lens_change_poll = os_time() + 2.0
+        lens_changes_refresh()
+        if g_lens_changes_dirty {
+            lens_rebuild()
+            g_lens_changes_dirty = false
+        }
+    }
     let read_budget: i32 = 1
     if moving {
         read_budget = 0
@@ -488,7 +805,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let code_total: i32 = 0
     for i in 0 to g_workspace_count {
         g_lens_on_screen[i] = 0
-        if g_lens_files[i] != 0 && g_lens_weight[i] > 0.0 {
+        if g_lens_files[i] == 2 && g_lens_weight[i] > 0.0 {
+            lens_draw_plain_leaf(r, v, i, w, top, body_h, vx0, vy0, vx1, vy1, over_map)
+        } else if g_lens_files[i] == 1 && g_lens_weight[i] > 0.0 {
             bars_total = bars_total + 1
             if g_lens_source_done[i] && lens_mini_ready(i) {
                 bars_ready = bars_ready + 1
@@ -656,7 +975,13 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     g_mouse_x = screen_x
     g_mouse_y = screen_y
     if lens_file_count() == 0 {
-        draw_centered_text(r, 0.0, top, w, body_h, "No source files in " + g_workspace_root + "  ·  Open project", small_px(), col_muted())
+        let note = "No source files in "
+        if g_lens_view_mode == LENS_MODE_CHANGE {
+            note = "No changed files in "
+        } else if g_lens_view_mode == LENS_MODE_FULL {
+            note = "No files in "
+        }
+        draw_centered_text(r, 0.0, top, w, body_h, note + g_workspace_root + "  ·  Open project", small_px(), col_muted())
     }
     if g_workspace_count >= 4096 {
         g_lens_message = "Filesystem snapshot limit reached: 4096 entries"
@@ -681,6 +1006,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     ui_draw_text(r, 230.0, h - 61.0, g_lens_message, small_px(), col_muted(), FONT_MONO())
     draw_status_bar(r, 0.0, h - 28.0, w, lens_detail_of(code_ready, code_total, bars_ready, bars_total))
+    lens_draw_mode_menu(r, v, w)
 
     lens_warm_cache(moving)
     if moving || read_budget == 0 || g_lens_io_running || g_lens_close_view {
