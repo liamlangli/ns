@@ -120,9 +120,11 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
     render_lens(r, v, w, h)
 }
 
+lit STATUS_BAR_H = 28.0
+
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_detail) {
-    ui_fill_rect(r, x, y, w, 28.0, col_editor_panel(), 0.0)
-    ui_push_clip(r, x, y, w, 28.0)
+    ui_fill_rect(r, x, y, w, STATUS_BAR_H, col_bar(), 0.0)
+    ui_push_clip(r, x, y, w, STATUS_BAR_H)
     let right = x + w - 12.0
     let bar_y = y + 14.0 - STATUS_METER_H * 0.5
     if w >= 320.0 {
@@ -162,6 +164,9 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_deta
 }
 
 fn col_editor_panel() u32 { return ui_pack_color("#191919") }
+
+// The top bar and status bar float over the map, which shows through them.
+fn col_bar() u32 { return (col_editor_panel() & 0x00ffffffu) | 0xb8000000u }
 
 lit STATUS_METER_H = 10.0
 lit STATUS_METER_INSET = 2.0

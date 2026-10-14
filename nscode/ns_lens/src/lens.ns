@@ -100,8 +100,12 @@ let g_lens_file_count: i32 = 0
 lit LENS_MODE_CODE = 0
 lit LENS_MODE_CHANGE = 1
 lit LENS_MODE_FULL = 2
+// The bar over the top of the map that holds the File and map menus, a
+// little taller than the status bar; its controls are as tall as the status
+// bar's.
+lit LENS_TOP_BAR_H = 32.0
 lit LENS_MODE_W = 108.0
-lit LENS_MODE_H = 28.0
+lit LENS_MODE_H = 20.0
 lit LENS_MODE_ITEM = 26.0
 let g_lens_view_mode: i32 = 0
 let g_lens_mode_open = false
@@ -595,15 +599,32 @@ fn lens_open(index: i32) bool {
     return g_lens_editing
 }
 
-fn lens_mode_x(w: f64) f64 {
-    let x = w - 132.0 - 8.0 - LENS_MODE_W
-    if x < 8.0 {
-        return 8.0
+// The map menu sits just right of File.
+fn lens_mode_x() f64 { return LENS_FILE_X + LENS_FILE_W + 8.0 }
+
+// File > Open (Cmd+O): pick a folder and map it. An unsaved edit keeps the
+// current project open.
+fn lens_open_project() {
+    if g_lens_editing && workspace_entry_dirty(g_workspace_active) {
+        g_lens_message = "Save the current file before opening another project"
+        return
     }
-    return x
+    let root = os_open_folder_dialog("Open code project")
+    if root == "" {
+        return
+    }
+    g_lens_editing = false
+    g_lens_reading = false
+    g_lens_selected_path = ""
+    workspace_open_root(root)
+    g_lens_target_x = 0.0
+    g_lens_target_y = 0.0
+    g_lens_target_distance = 1600.0
+    lens_rebuild()
 }
 
-fn lens_mode_y() f64 { return 6.0 }
+// Top of the controls in the top bar, centred in it.
+fn lens_mode_y() f64 { return main_menu_h() + (LENS_TOP_BAR_H - LENS_MODE_H) * 0.5 }
 
 fn lens_mode_popup_y() f64 { return lens_mode_y() + LENS_MODE_H + 2.0 }
 
@@ -618,7 +639,7 @@ fn lens_mode_label(mode: i32) str {
 }
 
 fn lens_mode_handle(v: ref view, w: f64) {
-    let x = lens_mode_x(w)
+    let x = lens_mode_x()
     let y = lens_mode_y()
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * 3.0
@@ -656,7 +677,7 @@ fn lens_mode_handle(v: ref view, w: f64) {
 }
 
 fn lens_draw_mode_menu(r: ref ui_renderer, v: ref view, w: f64) {
-    let x = lens_mode_x(w)
+    let x = lens_mode_x()
     let y = lens_mode_y()
     let border = col_muted()
     if g_lens_mode_open {
@@ -739,39 +760,24 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_mini_update(r)
     g_lens_canvas_h = h
     g_lens_screen_h = ui_surface_height(r) as f64
-    let top = main_menu_h() + 42.0
-    let body_h = h - top - 78.0
+    // The map covers the whole window and is drawn first. The top bar and
+    // the status bar float over it on translucent panels, and the map takes
+    // no pointer input under them.
+    let top = main_menu_h()
+    let body_h = h - top
+    let bar_bottom = top + LENS_TOP_BAR_H
     let map_w = w
     g_lens_view_w = w
     g_lens_body_h = body_h
-    ui_fill_rect(r, 0.0, main_menu_h(), w, h, col_editor_bg(), 0.0)
+    ui_fill_rect(r, 0.0, top, w, body_h, col_editor_bg(), 0.0)
     lens_menu_keys(v)
     lens_menu_mouse(v, w, h)
     lens_mode_handle(v, w)
-    if v.mouse_pressed && hit(v, w - 132.0, 4.0, 120.0, 30.0) {
-        if g_lens_editing && workspace_entry_dirty(g_workspace_active) {
-            g_lens_message = "Save the current file before opening another project"
-        } else {
-            let root = os_open_folder_dialog("Open code project")
-            if root != "" {
-                g_lens_editing = false
-                g_lens_reading = false
-                g_lens_selected_path = ""
-                workspace_open_root(root)
-                g_lens_target_x = 0.0
-                g_lens_target_y = 0.0
-                g_lens_target_distance = 1600.0
-                lens_rebuild()
-            }
-        }
-        v.mouse_pressed = false
-    }
-    draw_centered_text(r, w - 132.0, 4.0, 120.0, 30.0, "Open project", small_px(), col_text())
     // The map is laid out flat and seen through the plane camera: every map
     // interaction runs on the flat plane, under the unprojected pointer.
     let screen_x = g_mouse_x
     let screen_y = g_mouse_y
-    let over_map = g_lens_mode_block == false && lens_menu_blocks() == false && hit(v, 0.0, top, map_w, body_h)
+    let over_map = g_lens_mode_block == false && lens_menu_blocks() == false && hit(v, 0.0, bar_bottom, map_w, h - STATUS_BAR_H - bar_bottom)
     if over_map && v.mouse_middle_down {
         g_lens_tilt = clamp(g_lens_tilt + (screen_y - g_lens_screen_drag_y) * 0.25, 0.0, LENS_MAX_TILT)
     }
@@ -1002,7 +1008,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                         let distance = clamp(800.0 * g_lens_code_world * g_lens_flow_fit, 1.0, 6000.0)
                         let view = distance / 800.0
                         g_lens_target_x = g_lens_x[i] + clamp(g_lens_w[i] * 0.5, 0.0, (w * 0.5 - 24.0) * view)
-                        g_lens_target_y = g_lens_y[i] + clamp(g_lens_h[i] * 0.5, 0.0, (body_h * 0.5 - 24.0) * view)
+                        g_lens_target_y = g_lens_y[i] + clamp(g_lens_h[i] * 0.5, 0.0, (body_h * 0.5 - LENS_TOP_BAR_H - 24.0) * view)
                         g_lens_target_distance = distance
                     }
                     v.mouse_right_pressed = false
@@ -1020,6 +1026,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     ui_end_plane(r)
     g_mouse_x = screen_x
     g_mouse_y = screen_y
+    ui_fill_rect(r, 0.0, top, w, LENS_TOP_BAR_H, col_bar(), 0.0)
     if lens_file_count() == 0 {
         let note = "No source files in "
         if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_root != g_workspace_root {
@@ -1029,7 +1036,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         } else if g_lens_view_mode == LENS_MODE_FULL {
             note = "No files in "
         }
-        draw_centered_text(r, 0.0, top, w, body_h, note + g_workspace_root + "  ·  Open project", small_px(), col_muted())
+        draw_centered_text(r, 0.0, top, w, body_h, note + g_workspace_root + "  ·  File > Open (cmd+O)", small_px(), col_muted())
     }
     if g_workspace_count >= 4096 {
         g_lens_message = "Filesystem snapshot limit reached: 4096 entries"
@@ -1052,7 +1059,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         draw_centered_text(r, w - 160.0, h - 68.0, 70.0, 28.0, "Prev", small_px(), col_blue())
         draw_centered_text(r, w - 84.0, h - 68.0, 70.0, 28.0, "Next", small_px(), col_blue())
     }
-    draw_status_bar(r, 0.0, h - 28.0, w, lens_detail_of(code_ready, code_total, bars_ready, bars_total))
+    draw_status_bar(r, 0.0, h - STATUS_BAR_H, w, lens_detail_of(code_ready, code_total, bars_ready, bars_total))
     lens_draw_mode_menu(r, v, w)
     lens_draw_menus(r, v, w, h)
 

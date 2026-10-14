@@ -24,6 +24,9 @@ snaps back to orthographic.
 
 - The interface is monochrome. Syntax highlighting and Git change backgrounds
   use color; leaf outlines are rounded rectangles with a 3-point radius.
+- The map covers the whole window and is drawn first. The top bar (the **File**
+  and map menus) and the status bar float over it on translucent panels;
+  pointer input over them never reaches the map.
 - Minimap bars keep their syntax colours. A bar runs across gaps under four
   blanks and ends where the colour changes for more than two characters; a
   shorter run of another colour joins the bar before it. In every leaf, rows
@@ -37,20 +40,20 @@ snaps back to orthographic.
 - Zoom close to a leaf: its code becomes a syntax-highlighted, editable surface
   inside that leaf. The map keeps the entire canvas; no separate editor opens.
 - Shift+wheel: scroll code inside the leaf.
-- **Open project** selects a project folder.
-- **File** (top left) holds the Git and search commands:
+- **File** (top left) opens a project and holds the search and Git commands:
+  - **Open** (Cmd+O) selects a project folder to map.
   - **Search** (Cmd+P) matches file names at once and scans file contents on
     a worker; a query without capitals ignores case. Matching leaves are
     outlined, and Enter or a click flies to the file or the matching line.
   - **Commit** (Cmd+Enter) asks for a one-line message and commits every
     change under the opened folder, untracked files included. The change view
     and the open file's diff refresh when it finishes.
-  - **Push** (Cmd+O) pushes the branch, publishing it to `origin` when it has
+  - **Push** (no shortcut) pushes the branch, publishing it to `origin` when it has
     no upstream. Git runs without a terminal, so a missing credential fails
     with Git's message instead of waiting on a prompt.
 - The controls are listed at the bottom left, above an activity row that shows
   the running search, commit or push with its progress, and the latest message.
-- The menu beside **Open project** switches the map. **code** shows recognized
+- The menu right of **File** switches the map. **code** shows recognized
   source files (`.c`, `.h`, `.ns`, `.ts`, `.js`, and the other languages Lens
   already knows). **change** shows files Git reports as staged, unstaged, or
   untracked in the opened folder. **full** shows every scanned file. A file
