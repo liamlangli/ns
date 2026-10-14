@@ -266,6 +266,55 @@ fn check_change_list(base: str) {
     lens_set_mode(LENS_MODE_CODE)
 }
 
+fn finish_head() {
+    let deadline = os_time() + 20.0
+    loop g_lens_head_running && os_time() < deadline {
+        sleep(1)
+        lens_head_poll()
+    }
+    assert g_lens_head_running == false
+}
+
+// The open file's HEAD check runs on a worker: a tick only starts it, and a
+// later tick adopts the revision and the file's text at HEAD.
+fn check_head(base: str) {
+    let root = base + "/head"
+    make_repo(root)
+    assert os_write_file_atomic(root + "/main.ns", "fn main() {}\n") != 0
+    git(root, "add\n-A")
+    git(root, "commit\n-q\n-m\nbase")
+    let first = lens_one_line(git(root, "rev-parse\nHEAD"))
+    assert os_write_file_atomic(root + "/main.ns", "fn main() {\n}\n") != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    g_lens_view_mode = LENS_MODE_CODE
+    lens_rebuild()
+    assert lens_open(workspace_find("main.ns"))
+    lens_git_tick(false)
+    g_lens_git_deadline = 0.0
+    lens_git_tick(false)
+    assert g_lens_head_running
+    assert g_lens_git_revision == ""
+    finish_head()
+    assert g_lens_git_revision == first
+    assert g_lens_git_base == "fn main() {}\n"
+    // The diff against the buffer follows on the next tick.
+    lens_git_tick(false)
+    assert g_lens_git_version == g_doc_version
+    assert g_lens_diff_deleted_count == 1 && g_lens_diff_deleted[0] == "fn main() {}"
+    // A commit moves HEAD: the next check reads the new base.
+    git(root, "commit\n-q\n-a\n-m\nedit")
+    g_lens_git_poll = 0.0
+    lens_git_tick(false)
+    assert g_lens_head_running
+    finish_head()
+    assert g_lens_git_revision != first && g_lens_git_revision != ""
+    assert g_lens_git_base == "fn main() {\n}\n"
+    lens_git_tick(false)
+    assert g_lens_diff_deleted_count == 0
+}
+
 fn check_search_scan(base: str) {
     let root = base + "/search"
     os_make_dirs(root + "/src")
@@ -306,5 +355,6 @@ fn main() {
     check_git(base)
     check_search_scan(base)
     check_change_list(base)
+    check_head(base)
     print("vcs_test: passed\n")
 }

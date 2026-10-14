@@ -1,8 +1,12 @@
 // HEAD-to-working-buffer changes. Deleted source is a read-only inline ghost row.
 use std
 use os
+use task
 
 lit LENS_DIFF_DELETED = 8192
+// Largest patch Git may return. A patch is not bounded by the two texts: its
+// header names the compared files, and every hunk adds a header line.
+lit LENS_DIFF_BYTES = 1048576
 let g_lens_git_path = ""
 let g_lens_git_revision = ""
 let g_lens_git_base = ""
@@ -257,21 +261,97 @@ fn lens_diff_source_row(row: i32) i32 {
     return clamp_i(g_lens_diff_anchor[-1 - code], 0, line_count() - 1)
 }
 
-fn lens_git_load_base(path: str, revision: str) bool {
-    let hash = os_text_hash(revision)
+// The open file's HEAD revision, and the file's text at HEAD when that
+// revision is new. Both start Git processes, too slow for a frame, so a
+// worker reads them and lens_git_tick adopts the result in a later frame.
+let g_lens_head_running = false
+let g_lens_head_again = false
+let g_lens_head_path = ""
+let g_lens_head_lock: ref os_lock = nil
+let g_lens_head_lock_ready = false
+// Worker results, guarded by g_lens_head_lock: [0] done, [1] the base read
+// (1 read, 0 not needed, -1 failed); [0] revision, [1] base text.
+let g_lens_head_state = [i32](2)
+let g_lens_head_output = [str](2)
+
+// Check HEAD for `path` on a worker. A check asked for while one runs is
+// made after it.
+fn lens_head_request(path: str) {
+    if g_lens_head_running {
+        g_lens_head_again = true
+        return
+    }
+    if g_lens_head_lock_ready == false {
+        g_lens_head_lock = os_lock_create()
+        g_lens_head_lock_ready = true
+    }
+    let known = g_lens_git_revision
     let file = lens_cache_path(path, "base2")
     let budget = lens_source_bytes(path)
-    g_lens_git_base = lens_cache_get(file, hash, budget)
-    if g_lens_cache_found {
-        return true
+    let lock = g_lens_head_lock
+    let state = g_lens_head_state
+    let output = g_lens_head_output
+    state[0] = 0
+    g_lens_head_running = true
+    g_lens_head_path = path
+    let pending = dispatch(queue_worker) { in
+        let revision = os_git_revision(path)
+        let base = ""
+        let read: i32 = 0
+        if revision != "" && revision != known {
+            let hash = os_text_hash(revision)
+            let record = lens_disk_record(file, hash, budget)
+            if record.found {
+                base = record.text
+                read = 1
+            } else {
+                base = os_git_base(path, budget)
+                if os_git_status() < 0 {
+                    read = -1
+                } else {
+                    lens_cache_put(file, hash, base)
+                    read = 1
+                }
+            }
+        }
+        os_lock_acquire(lock)
+        output[0] = revision
+        output[1] = base
+        state[1] = read
+        state[0] = 1
+        os_lock_release(lock)
     }
-    g_lens_git_base = os_git_base(path, budget)
-    if os_git_status() < 0 {
-        g_lens_message = "Git base is unavailable or exceeds the detail budget"
-        return false
+}
+
+// Adopt a finished HEAD check of the file still open. A new revision brings
+// its base, and the diff against the buffer is made again.
+fn lens_head_poll() {
+    if g_lens_head_running == false || os_lock_try_acquire(g_lens_head_lock) == false {
+        return
     }
-    lens_cache_put(file, hash, g_lens_git_base)
-    return true
+    let done = g_lens_head_state[0] != 0
+    let read = g_lens_head_state[1]
+    let revision = g_lens_head_output[0]
+    let base = g_lens_head_output[1]
+    os_lock_release(g_lens_head_lock)
+    if done == false {
+        return
+    }
+    g_lens_head_running = false
+    if g_lens_head_path == g_lens_git_path && revision != g_lens_git_revision {
+        g_lens_git_revision = revision
+        g_lens_git_version = -1
+        if read < 0 {
+            g_lens_message = "Git base is unavailable or exceeds the detail budget"
+            g_lens_git_revision = ""
+        } else if read > 0 {
+            g_lens_git_base = base
+        }
+    }
+    if g_lens_head_again {
+        g_lens_head_again = false
+        g_lens_git_poll = 0.0
+    }
 }
 
 fn lens_git_tick(moving: bool) {
@@ -298,32 +378,22 @@ fn lens_git_tick(moving: bool) {
         lens_diff_clear()
         lens_diff_build_rows()
     }
+    lens_head_poll()
     if moving || now < g_lens_git_deadline {
         return
     }
     if now >= g_lens_git_poll {
-        let revision = os_git_revision(path)
         g_lens_git_poll = now + 2.0
-        if revision != g_lens_git_revision {
-            g_lens_git_revision = revision
-            g_lens_git_version = -1
-            if revision != "" && lens_git_load_base(path, revision) == false {
-                g_lens_git_revision = ""
-            }
-        }
+        lens_head_request(path)
     }
     if g_lens_git_revision == "" || g_lens_git_version == g_doc_version {
         return
     }
     let hash = os_text_hash(g_lens_git_revision + os_text_hash(g_doc))
     let file = lens_cache_path(path, "diff2")
-    let budget = g_doc.len + g_lens_git_base.len
-    if budget < g_doc.len {
-        budget = g_doc.len
-    }
-    let patch = lens_cache_get(file, hash, budget)
+    let patch = lens_cache_get(file, hash, LENS_DIFF_BYTES)
     if g_lens_cache_found == false {
-        patch = os_git_diff_text(g_lens_git_base, g_doc, budget)
+        patch = os_git_diff_text(g_lens_git_base, g_doc, LENS_DIFF_BYTES)
         if os_git_status() < 0 {
             return
         }
