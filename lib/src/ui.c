@@ -175,6 +175,7 @@ typedef struct ui_command {
     i32 texture_id;
     i32 kind;
     i32 rect_batch_id;
+    ns_bool retained;
     f64 offset_x, offset_y;
     f64 scale_x, scale_y;
     // 1-based ui_begin_plane projection, 0 for the flat screen.
@@ -198,10 +199,12 @@ typedef struct ui_rect_batch {
     u64 buffer_size;
     ns_bool dirty;
     ns_bool used;
+    u64 last_draw_frame;
 } ui_rect_batch;
 
 // A replaced batch buffer may still be read by a frame in flight.
 #define UI_RETIRED_BUFFERS 32
+#define UI_BATCH_GPU_CACHE 64
 typedef struct ui_retired_buffer {
     gpu_addr addr;
     i32 frames;
@@ -314,6 +317,7 @@ typedef struct ui_renderer {
     i32 texture_heights[UI_MAX_TEXTURES];
     ui_rect_batch rect_batches[UI_MAX_RECT_BATCHES];
     ui_retired_buffer retired[UI_RETIRED_BUFFERS];
+    u64 frame_serial;
     // Tilted-plane projections for this frame (ui_begin_plane) and the
     // screen rectangle each one is scissored to.
     f32 planes[UI_MAX_PLANES][16];
@@ -360,6 +364,8 @@ typedef struct ui_gpu_root {
     // binds its own vertex buffer, so it cannot index the frame's clip list.
     f32 batch_clip[4];
 } ui_gpu_root;
+
+_Static_assert(sizeof(ui_gpu_root) <= GPU_V2_ALLOC_ALIGN, "UI root must fit its frame-storage stride");
 
 typedef struct ui_theme { void *handle; } ui_theme;
 typedef struct ui_hit { ns_bool hovered; ns_bool pressed; } ui_hit;
@@ -1821,6 +1827,7 @@ void ui_rect_batch_draw_range(ui_renderer *r, i32 batch_id, i32 first, i32 count
     if (count <= 0) return;
     ui_clip c = ui_current_clip(r);
     if (c.w <= 0.0 || c.h <= 0.0) return;
+    batch->last_draw_frame = r->frame_serial;
     ui_command *cmd = &r->commands[r->command_count++];
     *cmd = (ui_command){
         .vertex_offset = first,
@@ -1828,6 +1835,7 @@ void ui_rect_batch_draw_range(ui_renderer *r, i32 batch_id, i32 first, i32 count
         .texture_id = batch->texture_id,
         .kind = batch->kind,
         .rect_batch_id = batch_id,
+        .retained = true,
         // Batch vertices are recorded once in content space, then scaled and
         // translated at draw time, so the safe-area origin rides along with
         // the draw offset.
@@ -1950,6 +1958,7 @@ void ui_request_render_after(ui_renderer *r, i32 milliseconds) {
 
 void ui_begin_frame(ui_renderer *r) {
     if (!r) return;
+    r->frame_serial++;
     r->vertex_count = 0;
     r->command_count = 0;
     r->clip_count = 1;
@@ -1964,8 +1973,69 @@ static u64 ui_align_u64(u64 value, u64 alignment) {
     return (value + alignment - 1u) & ~(alignment - 1u);
 }
 
-static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset) {
-    if (!r || !clip_offset) return false;
+static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset, u32 *root_offset) {
+    if (!r || !clip_offset || !root_offset) return false;
+    // Keep a bounded cache of GPU copies. CPU batches remain retained even
+    // when a project has more files than the backend's buffer-slot limit.
+    i32 cached = 0;
+    for (i32 i = 0; i < UI_MAX_RECT_BATCHES; i++) {
+        ui_rect_batch *batch = &r->rect_batches[i];
+        if (!batch->buffer) continue;
+        if (r->frame_serial - batch->last_draw_frame > GPU_SWAP_BUFFER_COUNT) {
+            gpu_free(batch->buffer);
+            batch->buffer = 0;
+            batch->buffer_size = 0;
+            batch->dirty = true;
+        } else {
+            cached++;
+        }
+    }
+    for (i32 i = 0; i < r->command_count; i++) {
+        ui_command *cmd = &r->commands[i];
+        ui_rect_batch *batch = ui_rect_batch_get(r, cmd->rect_batch_id);
+        if (!batch) continue;
+        const u64 size = (u64)(u32)batch->vertex_count * UI_VERTEX_STRIDE;
+        if (size > batch->buffer_size && (batch->buffer || cached < UI_BATCH_GPU_CACHE)) {
+            u64 capacity = batch->buffer_size > 0 ? batch->buffer_size : 4096;
+            while (capacity < size) capacity *= 2;
+            gpu_addr buffer = gpu_malloc(capacity, GPU_MEM_SHARED, "ui retained batch vertices");
+            if (buffer) {
+                if (!batch->buffer) cached++;
+                ui_retire_buffer(r, batch->buffer);
+                batch->buffer = buffer;
+                batch->buffer_size = capacity;
+            }
+        }
+        if (batch->buffer && size <= batch->buffer_size) {
+            if (batch->dirty) {
+                gpu_write(batch->buffer, batch->vertices, size);
+                batch->dirty = false;
+            }
+            continue;
+        }
+        // Overflow draws share the renderer's triple-buffered frame storage.
+        // Preserve local coordinates, transform and fragment clip for glyphs
+        // and tilted planes; only the vertex source changes.
+        if (cmd->vertex_count > INT32_MAX - r->vertex_count) return false;
+        const i32 base = r->vertex_count;
+        const i32 required = base + cmd->vertex_count;
+        if (required > r->vertex_capacity) {
+            i32 capacity = r->vertex_capacity > 0 ? r->vertex_capacity : UI_INITIAL_VERTEX_CAP;
+            while (capacity < required) {
+                if (capacity > INT32_MAX / 2) { capacity = required; break; }
+                capacity *= 2;
+            }
+            ui_vertex *vertices = realloc(r->vertices, (size_t)capacity * sizeof(ui_vertex));
+            if (!vertices) return false;
+            r->vertices = vertices;
+            r->vertex_capacity = capacity;
+        }
+        memcpy(r->vertices + base, batch->vertices + cmd->vertex_offset,
+               (size_t)cmd->vertex_count * sizeof(ui_vertex));
+        r->vertex_count += cmd->vertex_count;
+        cmd->vertex_offset = base;
+        cmd->rect_batch_id = 0;
+    }
     u64 cursor = (u64)(u32)r->vertex_count * UI_VERTEX_STRIDE;
     cursor = ui_align_u64(cursor, 16);
     *clip_offset = (u32)cursor;
@@ -1973,6 +2043,8 @@ static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset) {
                               ? (u64)(u32)r->gpu_clip_count * sizeof(ui_gpu_clip)
                               : sizeof(ui_gpu_clip);
     cursor = ui_align_u64(cursor + clip_size, 16);
+    *root_offset = (u32)ui_align_u64(cursor, GPU_V2_ALLOC_ALIGN);
+    cursor = *root_offset + (u64)(u32)r->command_count * GPU_V2_ALLOC_ALIGN;
     const u64 required = cursor > 0 ? cursor : 16;
     if (!r->storage || required > r->storage_capacity) {
         u64 capacity = r->storage_capacity > 0 ? r->storage_capacity : 4096;
@@ -1989,30 +2061,12 @@ static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset) {
     ui_gpu_clip empty_clip = {0};
     const void *clips = r->gpu_clip_count > 0 ? (const void *)r->gpu_clips : (const void *)&empty_clip;
     gpu_write(r->storage + *clip_offset, clips, clip_size);
-    for (i32 i = 0; i < r->command_count; i++) {
-        ui_rect_batch *batch = ui_rect_batch_get(r, r->commands[i].rect_batch_id);
-        if (!batch || !batch->dirty || batch->vertex_count <= 0) continue;
-        const u64 size = (u64)(u32)batch->vertex_count * UI_VERTEX_STRIDE;
-        if (size > batch->buffer_size) {
-            u64 capacity = batch->buffer_size > 0 ? batch->buffer_size : 4096;
-            while (capacity < size) capacity *= 2;
-            gpu_addr buffer = gpu_malloc(capacity, GPU_MEM_SHARED, "ui retained batch vertices");
-            if (!buffer) continue;
-            ui_retire_buffer(r, batch->buffer);
-            batch->buffer = buffer;
-            batch->buffer_size = capacity;
-        }
-        // A persistent single-copy write stages through the frame ring, so a
-        // frame still reading the previous contents is not disturbed.
-        gpu_write(batch->buffer, batch->vertices, size);
-        batch->dirty = false;
-    }
     return true;
 }
 
 static u32 ui_command_texture(ui_renderer *r, const ui_command *cmd) {
     if (cmd->kind == UI_KIND_ARC_SDF) return r->white_texture;
-    if (cmd->rect_batch_id > 0 && cmd->kind == UI_KIND_IMAGE) return r->white_texture;
+    if (cmd->retained && cmd->kind == UI_KIND_IMAGE) return r->white_texture;
     if (cmd->kind == UI_KIND_MSDF) {
         return cmd->texture_id == UI_FONT_ZH_TEXTURE && r->font_zh_texture
                    ? r->font_zh_texture
@@ -2369,7 +2423,8 @@ ui_panel_touch *ui_panel_touch_update(ui_renderer *r, i32 touch, ns_bool tracked
 void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     if (!r || !r->gpu_ready) return;
     u32 clip_offset = 0;
-    if (!ui_upload_storage(r, &clip_offset)) return;
+    u32 root_offset = 0;
+    if (!ui_upload_storage(r, &clip_offset, &root_offset)) return;
     const f64 fallback_scale = r->content_scale > 0.0 ? r->content_scale : 1.0;
     const i32 framebuffer_width = r->v && r->v->framebuffer_width > 0
                                       ? r->v->framebuffer_width
@@ -2450,7 +2505,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             .vertex_scale = {
                 cmd->scale_x > 0.0 ? (f32)cmd->scale_x : 1.0f,
                 cmd->scale_y > 0.0 ? (f32)cmd->scale_y : 1.0f,
-                batch ? 1.0f : 0.0f, 1.0f,
+                cmd->retained ? 1.0f : 0.0f, 1.0f,
             },
             .batch_clip = {
                 (f32)(cmd->batch_clip.x + r->safe_rect.x),
@@ -2468,7 +2523,12 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
             root.panel_enable[0] = 1.0f;
         }
         gpu_set_shader(shader);
-        gpu_set_root_data(&root, sizeof(root));
+        // All roots have reserved, aligned space in this frame's private
+        // storage. Large command lists no longer consume the frame ring once
+        // per draw, or retry its allocation thousands of times on failure.
+        gpu_addr root_addr = r->storage + root_offset + (u64)(u32)i * GPU_V2_ALLOC_ALIGN;
+        gpu_write(root_addr, &root, sizeof(root));
+        gpu_set_root(root_addr);
         gpu_addr storage = batch ? batch->buffer : r->storage;
         if (storage != bound_storage) {
             gpu_set_storage(storage);

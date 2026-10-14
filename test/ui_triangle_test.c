@@ -186,7 +186,77 @@ static void test_batch_append(void) {
     free(r);
 }
 
+static void test_batch_gpu_pressure(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    r->rect = r->safe_rect = (ui_rect){0, 0, 640, 480};
+    ui_begin_frame(r);
+    enum { batches = 300 };
+    for (i32 i = 0; i < batches; i++) {
+        i32 id = ui_rect_batch_create(r);
+        assert(id > 0);
+        ui_rect_batch_begin(r, id);
+        ui_rect_batch_add(r, id, 1, 2, 3, 4, 0xffffffffu);
+        ui_rect_batch_draw_range(r, id, 0, 6, 10, 20, 2, 3);
+    }
+    u32 clips, roots;
+    assert(ui_upload_storage(r, &clips, &roots));
+    i32 cached = 0, streamed = 0;
+    for (i32 i = 0; i < batches; i++) {
+        ui_rect_batch *batch = &r->rect_batches[i];
+        ui_command *cmd = &r->commands[i];
+        if (batch->buffer) cached++;
+        if (!cmd->rect_batch_id) {
+            streamed++;
+            assert(cmd->retained);
+            assert(cmd->offset_x == 10 && cmd->offset_y == 20);
+            assert(cmd->scale_x == 2 && cmd->scale_y == 3);
+            assert(cmd->batch_clip.w == 640 && cmd->batch_clip.h == 480);
+            assert(memcmp(r->vertices + cmd->vertex_offset, batch->vertices,
+                          6 * sizeof(ui_vertex)) == 0);
+        }
+    }
+    assert(cached == UI_BATCH_GPU_CACHE && streamed == batches - cached);
+    assert(r->vertex_count == streamed * 6);
+
+    // A full command list reserves all root parameters in framed storage.
+    // Uploading them must not allocate another byte of the transient ring.
+    ui_begin_frame(r);
+    for (i32 i = 0; i < UI_MAX_COMMANDS; i++) {
+        ui_rect_batch_draw_range(r, 1, 0, 6, 0, 0, 1, 1);
+    }
+    assert(ui_upload_storage(r, &clips, &roots));
+    assert(roots % GPU_V2_ALLOC_ALIGN == 0);
+    assert((u64)roots + UI_MAX_COMMANDS * GPU_V2_ALLOC_ALIGN <= r->storage_capacity);
+    gpu_addr before = gpu_frame_alloc(1, GPU_V2_ALLOC_ALIGN);
+    ui_gpu_root root = {.screen_width = 640, .screen_height = 480};
+    for (i32 i = 0; i < UI_MAX_COMMANDS; i++) {
+        gpu_addr addr = r->storage + roots + (u64)i * GPU_V2_ALLOC_ALIGN;
+        gpu_write(addr, &root, sizeof(root));
+    }
+    gpu_addr after = gpu_frame_alloc(1, GPU_V2_ALLOC_ALIGN);
+    assert(after - before == GPU_V2_ALLOC_ALIGN);
+    ui_gpu_root read = {0};
+    assert(gpu_read(r->storage + roots + (UI_MAX_COMMANDS - 1) * GPU_V2_ALLOC_ALIGN,
+                    &read, sizeof(read)));
+    assert(read.screen_width == 640 && read.screen_height == 480);
+
+    // Reclaim GPU copies after their in-flight reads finish, keeping CPU data.
+    for (i32 i = 0; i <= GPU_SWAP_BUFFER_COUNT; i++) {
+        gpu_commit();
+        ui_begin_frame(r);
+    }
+    ui_rect_batch_draw_range(r, 1, 0, 6, 0, 0, 1, 1);
+    assert(ui_upload_storage(r, &clips, &roots));
+    assert(r->rect_batches[0].buffer);
+    assert(!r->rect_batches[1].buffer && r->rect_batches[1].dirty);
+    assert(r->rect_batches[1].vertex_count == 6);
+    ui_renderer_destroy(r);
+    gpu_commit();
+}
+
 int main(void) {
+    test_batch_gpu_pressure();
     test_batch_text_range("@@AB\nA!!", 2, 4, "AB\nA");
     test_batch_text_range("@@A一B!!", 2, 5, "A一B");
     test_batch_text_range("@@一A!!", 2, 4, "一A");

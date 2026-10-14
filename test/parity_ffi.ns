@@ -9,4 +9,9 @@ fn main() {
     assert t > 1000000000.0
     let s = os_time_string()
     assert s.len > 0
+    let memory = os_process_memory()
+    let total = os_memory_total()
+    assert memory > 0
+    assert total > 0
+    assert memory <= total
 }

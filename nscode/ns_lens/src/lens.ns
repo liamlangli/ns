@@ -873,6 +873,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                     g_code_line_pitch = g_lens_flow_line_pitch
                     set_code_zoom(zoom * g_lens_flow_fit, zoom * g_lens_flow_fit * leaf.scale_y / leaf.scale)
                     ui_push_clip(r, content.x, content.y, content.w, content.h)
+                    // Retain visible glyphs across frames; the immediate stream
+                    // only draws editing overlays. The renderer supplies frame
+                    // storage if a retained GPU copy is unavailable.
                     g_code_draw_glyphs = false
                     draw_leaf_code(r, v, code_x, code_y, pw - 2.0, py + ph - code_y - 1.0, resident && lod == 0)
                     g_code_draw_glyphs = true
@@ -1610,7 +1613,7 @@ fn lens_trim_glyphs(r: ref ui_renderer) {
 fn lens_release_idle_glyphs(r: ref ui_renderer) {
     let now = os_time()
     for slot in 0 to LENS_CACHE_SLOTS + 1 {
-        if g_lens_glyph_batch[slot] != 0 && now - g_lens_glyph_time[slot] > 8.0 {
+        if g_lens_glyph_batch[slot] != 0 && g_lens_glyph_frame[slot] != g_lens_render_serial && now - g_lens_glyph_time[slot] > 8.0 {
             ui_rect_batch_destroy(r, g_lens_glyph_batch[slot])
             g_lens_glyph_batch[slot] = 0
             g_lens_glyph_dirty[slot] = 1

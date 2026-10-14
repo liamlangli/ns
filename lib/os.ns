@@ -12,6 +12,10 @@ lit OS_PLATFORM_LINUX = 5
 ref fn os_platform() i32
 // Number of online logical CPUs, always at least one.
 ref fn os_cpu_count() i32
+// Current process resident memory and total physical RAM, in bytes.
+// Returns 0 when the platform cannot provide the measurement.
+ref fn os_process_memory() u64
+ref fn os_memory_total() u64
 
 struct os_date {
     year: i32,

@@ -10,11 +10,14 @@
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
+#include <mach/mach.h>
+#include <sys/sysctl.h>
 #endif
 
 #ifdef NS_WIN
 #include <windows.h>
 #include <direct.h>
+#include <psapi.h>
 #else
 #include <dirent.h>
 #include <pthread.h>
@@ -65,6 +68,52 @@ i32 os_cpu_count(void) {
 #else
     long count = sysconf(_SC_NPROCESSORS_ONLN);
     return count > 0 && count <= INT_MAX ? (i32)count : 1;
+#endif
+}
+
+u64 os_process_memory(void) {
+#if defined(__APPLE__)
+    mach_task_basic_info_data_t info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+                  (task_info_t)&info, &count) != KERN_SUCCESS) return 0;
+    return (u64)info.resident_size;
+#elif defined(NS_WIN)
+    // Resolve from kernel32 to avoid adding a psapi link dependency.
+    typedef BOOL (WINAPI *memory_info_fn)(HANDLE, PPROCESS_MEMORY_COUNTERS, DWORD);
+    memory_info_fn query = (memory_info_fn)GetProcAddress(
+        GetModuleHandleA("kernel32.dll"), "K32GetProcessMemoryInfo");
+    PROCESS_MEMORY_COUNTERS info = {0};
+    if (!query || !query(GetCurrentProcess(), &info, sizeof(info))) return 0;
+    return (u64)info.WorkingSetSize;
+#elif defined(__linux__)
+    FILE *file = fopen("/proc/self/statm", "r");
+    if (!file) return 0;
+    unsigned long long pages = 0;
+    int read = fscanf(file, "%*u %llu", &pages);
+    fclose(file);
+    long page_size = sysconf(_SC_PAGESIZE);
+    return read == 1 && page_size > 0 ? (u64)pages * (u64)page_size : 0;
+#else
+    return 0;
+#endif
+}
+
+u64 os_memory_total(void) {
+#if defined(__APPLE__)
+    u64 bytes = 0;
+    size_t size = sizeof(bytes);
+    return sysctlbyname("hw.memsize", &bytes, &size, NULL, 0) == 0 ? bytes : 0;
+#elif defined(NS_WIN)
+    MEMORYSTATUSEX info = {0};
+    info.dwLength = sizeof(info);
+    return GlobalMemoryStatusEx(&info) ? (u64)info.ullTotalPhys : 0;
+#elif defined(__linux__)
+    long pages = sysconf(_SC_PHYS_PAGES);
+    long page_size = sysconf(_SC_PAGESIZE);
+    return pages > 0 && page_size > 0 ? (u64)pages * (u64)page_size : 0;
+#else
+    return 0;
 #endif
 }
 

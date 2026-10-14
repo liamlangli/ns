@@ -56,8 +56,46 @@ fn main() {
     ui_begin_frame(r)
     render_lens(r, v, 1280.0, 800.0)
     assert g_lens_preview_slot >= 0
-    let verts = ui_rect_batch_vertex_count(r, g_lens_glyph_batch[g_lens_preview_slot])
+    let preview_slot = g_lens_preview_slot
+    let verts = ui_rect_batch_vertex_count(r, g_lens_glyph_batch[preview_slot])
     assert verts > 0
+    // Finish the automatic transition from cached preview to editable text.
+    // Returning to the near LOD after an overview must keep the document.
+    lens_request_near(index)
+    finish_read()
+    lens_request_near(index)
+    assert g_lens_editing
+    assert g_workspace_active == index
+    assert g_doc == text
+    ui_begin_frame(r)
+    render_lens(r, v, 1280.0, 800.0)
+    assert g_code_draw_glyphs
+    assert g_lens_diff_count == lens_text_lines(text)
+    let document_batch = g_lens_glyph_batch[LENS_CACHE_SLOTS]
+    assert document_batch != 0
+    assert ui_rect_batch_vertex_count(r, document_batch) > 0
+    g_lens_distance = 6000.0
+    g_lens_target_distance = g_lens_distance
+    ui_begin_frame(r)
+    render_lens(r, v, 1280.0, 800.0)
+    g_lens_distance = 800.0 * g_lens_code_world * fit / LENS_MAX_ZOOM
+    g_lens_target_distance = g_lens_distance
+    ui_begin_frame(r)
+    render_lens(r, v, 1280.0, 800.0)
+    assert g_doc == text
+    assert g_code_draw_glyphs
+    assert g_lens_glyph_batch[LENS_CACHE_SLOTS] == document_batch
+    assert ui_rect_batch_vertex_count(r, document_batch) > 0
+    // Even a slow frame must retain batches already submitted for this frame.
+    let batch = g_lens_glyph_batch[preview_slot]
+    assert batch != 0
+    g_lens_glyph_frame[preview_slot] = g_lens_render_serial
+    g_lens_glyph_time[preview_slot] = os_time() - 9.0
+    lens_release_idle_glyphs(r)
+    assert g_lens_glyph_batch[preview_slot] == batch
+    g_lens_render_serial = g_lens_render_serial + 1
+    lens_release_idle_glyphs(r)
+    assert g_lens_glyph_batch[preview_slot] == 0
     ui_renderer_destroy(r)
     view_close(v)
     os_watch_stop()

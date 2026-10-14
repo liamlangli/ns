@@ -29,6 +29,8 @@ typedef struct os_semaphore os_semaphore;
 
 i32 os_platform(void);
 i32 os_cpu_count(void);
+u64 os_process_memory(void);
+u64 os_memory_total(void);
 os_lock *os_lock_create(void);
 i32 os_lock_acquire(os_lock *lock);
 i32 os_lock_try_acquire(os_lock *lock);

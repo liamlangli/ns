@@ -115,6 +115,7 @@ fn draw_text_clipped(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: s
 fn col_blue() u32 { return ui_pack_color("#b0b0b0") }
 
 fn render_frame(r: ref ui_renderer, v: ref view) {
+    status_sample(os_time())
     workspace_poll_changes()
     ui_resize(r)
     g_mouse_x = ui_content_x(r, v.mouse_x)
@@ -126,26 +127,49 @@ fn render_frame(r: ref ui_renderer, v: ref view) {
 
 fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_detail) {
     ui_fill_rect(r, x, y, w, 28.0, col_editor_panel(), 0.0)
-    let bar_w = 128.0
-    let label = lens_detail_text(detail)
-    let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
-    if label_w < 88.0 {
-        label_w = 88.0
-    }
-    let bar_x = x + w - 12.0 - bar_w
-    let label_x = bar_x - 8.0 - label_w
-    let path_w = label_x - (x + 12.0) - 8.0
-    if path_w < 0.0 {
-        path_w = 0.0
-    }
-    draw_text_clipped(r, x + 12.0, y + 5.0, path_w, 20.0, g_workspace_root, small_px(), col_muted())
-    draw_text_clipped(r, label_x, y + 5.0, label_w, 20.0, label, small_px(), col_muted())
+    ui_push_clip(r, x, y, w, 28.0)
+    let right = x + w - 12.0
     let bar_y = y + 11.0
-    ui_fill_rect(r, bar_x, bar_y, bar_w, 6.0, col_editor_sel(), 0.0)
-    let fill = bar_w * lens_detail_fraction(detail)
-    if fill > 0.0 {
-        ui_fill_rect(r, bar_x, bar_y, fill, 6.0, col_muted(), 0.0)
+    if w >= 320.0 {
+        lit memory_bar_w = 64.0
+        let bar_x = right - memory_bar_w
+        ui_fill_rect(r, bar_x, bar_y, memory_bar_w, 6.0, col_editor_sel(), 0.0)
+        let fill = memory_bar_w * status_memory_fraction(g_status_memory, g_status_memory_total)
+        if fill > 0.0 {
+            ui_fill_rect(r, bar_x, bar_y, fill, 6.0, col_muted(), 0.0)
+        }
+        let label = status_memory_text(g_status_memory, g_status_memory_total)
+        let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
+        right = bar_x - 8.0 - label_w
+        draw_text_clipped(r, right, y + 5.0, label_w, 20.0, label, small_px(), col_muted())
+        right = right - 16.0
     }
+    if w >= 220.0 {
+        let fps = itos(g_status_fps) + " FPS"
+        let fps_w = ui_text_width(r, fps, small_px(), FONT_MONO())
+        right = right - fps_w
+        draw_text_clipped(r, right, y + 5.0, fps_w, 20.0, fps, small_px(), col_muted())
+        right = right - 16.0
+    }
+    if w >= 720.0 {
+        lit bar_w = 128.0
+        let label = lens_detail_text(detail)
+        let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
+        if label_w < 88.0 {
+            label_w = 88.0
+        }
+        let bar_x = right - bar_w
+        right = bar_x - 8.0 - label_w
+        draw_text_clipped(r, right, y + 5.0, label_w, 20.0, label, small_px(), col_muted())
+        ui_fill_rect(r, bar_x, bar_y, bar_w, 6.0, col_editor_sel(), 0.0)
+        let fill = bar_w * lens_detail_fraction(detail)
+        if fill > 0.0 {
+            ui_fill_rect(r, bar_x, bar_y, fill, 6.0, col_muted(), 0.0)
+        }
+        right = right - 16.0
+    }
+    draw_text_clipped(r, x + 12.0, y + 5.0, right - x - 12.0, 20.0, g_workspace_root, small_px(), col_muted())
+    ui_pop_clip(r)
 }
 
 fn col_editor_panel() u32 { return ui_pack_color("#191919") }

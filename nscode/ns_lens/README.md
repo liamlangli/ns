@@ -57,6 +57,10 @@ snaps back to orthographic.
   stops once code reaches 2.5 times its editor size.
 - The status bar progress bar is the precision still loading: minimap bars across
   the project, or code for the leaves in view once the camera is that close.
+- The status bar also shows actual FPS and process resident RAM in MiB, sampled
+  once per second. The RAM bar and percentage use total physical memory as the
+  scale. Idle polling naturally reports a lower FPS. Narrow windows hide the
+  loading indicator first to leave room for these measurements.
 - Without a path argument the map opens the shell's working directory.
 - Every source file is read, opened and shown in full. Its minimap covers every
   line, and zooming in shows that same text.
