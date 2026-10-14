@@ -104,7 +104,7 @@ lit LENS_MODE_FULL = 2
 // little taller than the status bar; its controls are as tall as the status
 // bar's.
 lit LENS_TOP_BAR_H = 32.0
-lit LENS_MODE_W = 108.0
+lit LENS_MODE_W = 80.0
 lit LENS_MODE_H = 20.0
 lit LENS_MODE_ITEM = 26.0
 let g_lens_view_mode: i32 = 0

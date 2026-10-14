@@ -395,7 +395,8 @@ fn lens_changes_request(stale: bool) {
 }
 
 // Each frame: adopt a finished listing while the change view still shows the
-// folder it was read from. A list that changed rebuilds the map.
+// folder it was read from; a list that changed rebuilds the map. An open
+// commit dialog takes its file count from the same listing.
 fn lens_changes_poll() {
     if g_lens_change_running == false || os_lock_try_acquire(g_lens_change_lock) == false {
         return
@@ -408,6 +409,9 @@ fn lens_changes_poll() {
         return
     }
     g_lens_change_running = false
+    if g_lens_commit_open && g_lens_commit_changes < 0 && g_lens_change_job_root == g_workspace_root {
+        g_lens_commit_changes = lens_commit_count(text, status)
+    }
     if g_lens_view_mode == LENS_MODE_CHANGE && g_lens_change_job_root == g_workspace_root {
         lens_changes_apply(text, status, g_lens_change_job_root)
         if g_lens_changes_dirty {

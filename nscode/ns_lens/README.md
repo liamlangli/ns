@@ -137,9 +137,9 @@ Filesystem changes invalidate the layout and preview cache.
 
 Current limits: the shared filesystem API snapshots at most 4096 entries;
 Lens displays a warning at that limit. Source hashing and range loading run on the worker. Commit, push, fetch, search,
-the change view's file list and the open file's HEAD check and diff run on
-workers; opening the commit dialog counts its changes, and initial
-metadata/layout work runs, on the main thread. The scene is a perspective atlas with billboard cards.
+the change list (for the change view and the commit dialog's count) and the
+open file's HEAD check and diff run on workers, so no Git process runs on the
+main thread; initial metadata/layout work currently runs there. The scene is a perspective atlas with billboard cards.
 Syntax highlighting uses NSCode's existing supported language rules.
 
 Validation:

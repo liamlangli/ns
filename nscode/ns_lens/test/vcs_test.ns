@@ -235,6 +235,8 @@ fn finish_changes() {
 fn check_change_list(base: str) {
     let root = base + "/changes"
     make_repo(root)
+    // Lens keeps its caches under bin/, which a project ignores.
+    assert os_write_file_atomic(root + "/.gitignore", "bin/\n") != 0
     assert os_write_file_atomic(root + "/kept.ns", "fn kept() {}\n") != 0
     git(root, "add\n-A")
     git(root, "commit\n-q\n-m\nbase")
@@ -264,6 +266,15 @@ fn check_change_list(base: str) {
     assert lens_change_has("kept.ns")
     assert lens_file_count() == 2
     lens_set_mode(LENS_MODE_CODE)
+    // The commit dialog opens at once and counts its files from a listing.
+    lens_commit_show()
+    assert g_lens_commit_open && g_lens_commit_changes == -1
+    assert g_lens_change_running
+    finish_changes()
+    assert g_lens_commit_changes == 2
+    g_lens_commit_open = false
+    assert lens_commit_count("", 0) == 0 && lens_commit_count("a.ns\n", 128) == 0
+    assert lens_commit_count("a.ns\nb.ns\n", 0) == 2 && lens_commit_count("a.ns", 0) == 1
 }
 
 fn finish_head() {

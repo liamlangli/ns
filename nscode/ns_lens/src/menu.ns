@@ -25,6 +25,7 @@ let g_lens_file_block = false
 let g_lens_search_block = false
 let g_lens_commit_open = false
 let g_lens_commit_message = ""
+// Changed files the commit takes, or -1 while the worker lists them.
 let g_lens_commit_changes: i32 = 0
 
 fn lens_file_item_label(i: i32) str {
@@ -99,14 +100,21 @@ fn lens_commit_show() {
     g_lens_search_open = false
     g_lens_file_open = false
     g_lens_commit_message = ""
-    g_lens_commit_changes = 0
-    let listed = os_git_changes(g_workspace_root)
-    if os_git_status() == 0 && listed != "" {
-        g_lens_commit_changes = lens_text_lines(listed)
-        if ((listed[listed.len - 1] as i32) & 255) == 10 {
-            g_lens_commit_changes = g_lens_commit_changes - 1
-        }
+    // The change view's worker lists the files; its poll fills the count.
+    g_lens_commit_changes = -1
+    lens_changes_request(false)
+}
+
+// Files in a change listing Git returned with `status`; none when it failed.
+fn lens_commit_count(listed: str, status: i32) i32 {
+    if status != 0 || listed == "" {
+        return 0
     }
+    let count = lens_text_lines(listed)
+    if ((listed[listed.len - 1] as i32) & 255) == 10 {
+        count = count - 1
+    }
+    return count
 }
 
 fn lens_commit_submit() {
@@ -412,7 +420,9 @@ fn lens_draw_commit(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     ui_fill_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, col_editor_panel(), 0.0)
     ui_stroke_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, 1.0, col_muted(), 0.0)
     let title = "Commit " + itos(g_lens_commit_changes) + " changed files"
-    if g_lens_commit_changes == 1 {
+    if g_lens_commit_changes < 0 {
+        title = "Commit changes"
+    } else if g_lens_commit_changes == 1 {
         title = "Commit 1 changed file"
     }
     draw_text_clipped(r, x + 16.0, y + 14.0, LENS_COMMIT_W - 32.0, 20.0, title, small_px(), col_text())
