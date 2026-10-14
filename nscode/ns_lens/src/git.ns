@@ -354,6 +354,85 @@ fn lens_head_poll() {
     }
 }
 
+// The editor's diff against HEAD runs `git diff`, so a worker makes it from
+// a snapshot of the buffer. A result for a buffer, file or revision that has
+// changed since is dropped, and the next tick diffs the current text.
+let g_lens_edit_diff_running = false
+let g_lens_edit_diff_path = ""
+let g_lens_edit_diff_revision = ""
+let g_lens_edit_diff_version: i32 = -1
+let g_lens_edit_diff_lock: ref os_lock = nil
+let g_lens_edit_diff_lock_ready = false
+// Worker results, guarded by g_lens_edit_diff_lock: [0] done, [1] 1 when
+// the patch was made, 0 when Git failed.
+let g_lens_edit_diff_state = [i32](2)
+let g_lens_edit_diff_patch = [str](1)
+
+fn lens_edit_diff_request(path: str) {
+    if g_lens_edit_diff_running {
+        return
+    }
+    if g_lens_edit_diff_lock_ready == false {
+        g_lens_edit_diff_lock = os_lock_create()
+        g_lens_edit_diff_lock_ready = true
+    }
+    let revision = g_lens_git_revision
+    let base = g_lens_git_base
+    let doc = g_doc
+    let file = lens_cache_path(path, "diff2")
+    let lock = g_lens_edit_diff_lock
+    let state = g_lens_edit_diff_state
+    let output = g_lens_edit_diff_patch
+    state[0] = 0
+    g_lens_edit_diff_running = true
+    g_lens_edit_diff_path = path
+    g_lens_edit_diff_revision = revision
+    g_lens_edit_diff_version = g_doc_version
+    let pending = dispatch(queue_worker) { in
+        let hash = os_text_hash(revision + os_text_hash(doc))
+        let record = lens_disk_record(file, hash, LENS_DIFF_BYTES)
+        let patch = record.text
+        let made: i32 = 1
+        if record.found == false {
+            patch = os_git_diff_text(base, doc, LENS_DIFF_BYTES)
+            if os_git_status() < 0 {
+                made = 0
+            } else {
+                lens_cache_put(file, hash, patch)
+            }
+        }
+        os_lock_acquire(lock)
+        output[0] = patch
+        state[1] = made
+        state[0] = 1
+        os_lock_release(lock)
+    }
+}
+
+// Adopt a finished diff of the buffer as it still is. A failed diff leaves
+// no change rows and is not retried until the text changes.
+fn lens_edit_diff_poll() {
+    if g_lens_edit_diff_running == false || os_lock_try_acquire(g_lens_edit_diff_lock) == false {
+        return
+    }
+    let done = g_lens_edit_diff_state[0] != 0
+    let made = g_lens_edit_diff_state[1]
+    let patch = g_lens_edit_diff_patch[0]
+    os_lock_release(g_lens_edit_diff_lock)
+    if done == false {
+        return
+    }
+    g_lens_edit_diff_running = false
+    g_lens_edit_diff_patch[0] = ""
+    if g_lens_edit_diff_path != g_lens_git_path || g_lens_edit_diff_revision != g_lens_git_revision || g_lens_edit_diff_version != g_doc_version {
+        return
+    }
+    if made != 0 {
+        lens_diff_parse(patch)
+    }
+    g_lens_git_version = g_lens_edit_diff_version
+}
+
 fn lens_git_tick(moving: bool) {
     if g_lens_editing == false || g_workspace_active < 0 {
         if g_lens_diff_deleted_count != 0 || g_lens_diff_count != line_count() || g_doc_version != g_lens_git_observed {
@@ -379,6 +458,7 @@ fn lens_git_tick(moving: bool) {
         lens_diff_build_rows()
     }
     lens_head_poll()
+    lens_edit_diff_poll()
     if moving || now < g_lens_git_deadline {
         return
     }
@@ -386,21 +466,9 @@ fn lens_git_tick(moving: bool) {
         g_lens_git_poll = now + 2.0
         lens_head_request(path)
     }
-    if g_lens_git_revision == "" || g_lens_git_version == g_doc_version {
-        return
+    if g_lens_git_revision != "" && g_lens_git_version != g_doc_version {
+        lens_edit_diff_request(path)
     }
-    let hash = os_text_hash(g_lens_git_revision + os_text_hash(g_doc))
-    let file = lens_cache_path(path, "diff2")
-    let patch = lens_cache_get(file, hash, LENS_DIFF_BYTES)
-    if g_lens_cache_found == false {
-        patch = os_git_diff_text(g_lens_git_base, g_doc, LENS_DIFF_BYTES)
-        if os_git_status() < 0 {
-            return
-        }
-        lens_cache_put(file, hash, patch)
-    }
-    lens_diff_parse(patch)
-    g_lens_git_version = g_doc_version
 }
 
 fn lens_diff_visual_text(row: i32) str {

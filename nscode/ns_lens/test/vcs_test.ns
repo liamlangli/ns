@@ -275,6 +275,15 @@ fn finish_head() {
     assert g_lens_head_running == false
 }
 
+fn finish_edit_diff() {
+    let deadline = os_time() + 20.0
+    loop g_lens_edit_diff_running && os_time() < deadline {
+        sleep(1)
+        lens_edit_diff_poll()
+    }
+    assert g_lens_edit_diff_running == false
+}
+
 // The open file's HEAD check runs on a worker: a tick only starts it, and a
 // later tick adopts the revision and the file's text at HEAD.
 fn check_head(base: str) {
@@ -299,8 +308,11 @@ fn check_head(base: str) {
     finish_head()
     assert g_lens_git_revision == first
     assert g_lens_git_base == "fn main() {}\n"
-    // The diff against the buffer follows on the next tick.
+    // The diff against the buffer follows on a worker too.
     lens_git_tick(false)
+    assert g_lens_edit_diff_running
+    assert g_lens_git_version != g_doc_version
+    finish_edit_diff()
     assert g_lens_git_version == g_doc_version
     assert g_lens_diff_deleted_count == 1 && g_lens_diff_deleted[0] == "fn main() {}"
     // A commit moves HEAD: the next check reads the new base.
@@ -311,8 +323,21 @@ fn check_head(base: str) {
     finish_head()
     assert g_lens_git_revision != first && g_lens_git_revision != ""
     assert g_lens_git_base == "fn main() {\n}\n"
+    // An edit made while a diff runs drops that diff; the next one covers it.
     lens_git_tick(false)
+    assert g_lens_edit_diff_running
+    place_cursor(0, 0, false)
+    paste_str("// note\n")
+    finish_edit_diff()
+    assert g_lens_git_version != g_doc_version
+    lens_git_tick(false)
+    g_lens_git_deadline = 0.0
+    lens_git_tick(false)
+    assert g_lens_edit_diff_running
+    finish_edit_diff()
+    assert g_lens_git_version == g_doc_version
     assert g_lens_diff_deleted_count == 0
+    assert g_lens_diff_added[0] == 1 && g_lens_diff_added[1] == 0
 }
 
 fn check_search_scan(base: str) {
