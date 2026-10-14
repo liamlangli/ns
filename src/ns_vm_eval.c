@@ -1986,6 +1986,14 @@ static ns_return_value ns_eval_store_struct_field(ns_vm *vm, i32 o, ns_struct_fi
     if (ns_type_is_array(t)) {
         *(u64*)dst = (u64)ns_eval_array_raw(vm, val);
     } else if (ns_type_is_number(t)) {
+        // The readers below reinterpret the value's storage as the field
+        // type, so another number type is converted first: an f32 argument to
+        // an f64 field is widened, not stored as its bit pattern.
+        if (val.t.type != t.type) {
+            ns_return_value cast = ns_eval_cast_number(vm, val, t, loc);
+            if (ns_return_is_error(cast)) return cast;
+            val = cast.r;
+        }
         switch (t.type) {
         case NS_TYPE_U8:   *(u8*)dst = ns_eval_number_i8(vm, val); break;
         case NS_TYPE_I8:   *(i8*)dst = ns_eval_number_i8(vm, val); break;

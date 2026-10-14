@@ -1896,9 +1896,13 @@ ns_return_type ns_vm_parse_desig_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
     return ns_return_ok(type, st->st.st.t);
 }
 
-ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i) {
+ns_return_type ns_vm_parse_unary_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type expect) {
     ns_ast_t *n = &ctx->nodes[i];
-    ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->unary_expr.expr, ns_type_infer);
+    // `-` and `~` keep their operand's type, so an unsuffixed literal operand
+    // adopts the expected type: `-800.0` for an f64 field is an f64 literal.
+    ns_token_type op_type = n->unary_expr.op.type;
+    ns_type operand_expect = op_type == NS_TOKEN_ADD_OP || op_type == NS_TOKEN_BIT_INVERT_OP ? expect : ns_type_infer;
+    ns_return_type ret_t = ns_vm_parse_expr(vm, ctx, n->unary_expr.expr, operand_expect);
     if (ns_return_is_error(ret_t)) return ret_t;
 
     ns_type t = ret_t.r;
@@ -2242,7 +2246,7 @@ ns_return_type ns_vm_parse_expr(ns_vm *vm, ns_ast_ctx *ctx, i32 i, ns_type t) {
     case NS_AST_MEMBER_EXPR: return ns_vm_parse_member_expr(vm, ctx, i);
     case NS_AST_GEN_EXPR: return ns_vm_parse_gen_expr(vm, ctx, i);
     case NS_AST_DESIG_EXPR: return ns_vm_parse_desig_expr(vm, ctx, i);
-    case NS_AST_UNARY_EXPR: return ns_vm_parse_unary_expr(vm, ctx, i);
+    case NS_AST_UNARY_EXPR: return ns_vm_parse_unary_expr(vm, ctx, i, t);
     case NS_AST_CAST_EXPR: return ns_vm_parse_cast_expr(vm, ctx, i);
     case NS_AST_ARRAY_EXPR: return ns_vm_parse_array_expr(vm, ctx, i, t);
     case NS_AST_INDEX_EXPR: return ns_vm_parse_index_expr(vm, ctx, i);

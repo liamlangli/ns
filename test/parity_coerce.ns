@@ -3,6 +3,7 @@
 use std
 
 struct box { v: f64, n: i64 }
+struct pair { x: f64, y: f64 }
 
 let global_f64: f64 = 0.0
 
@@ -25,5 +26,20 @@ fn main() i32 {
     let values = [f64](2)
     values[1] = half32()
     assert values[1] == 0.5
+    // Constructors and designated fields convert like field assignment.
+    let made = box(half32(), seven())
+    assert made.v == 0.5
+    assert made.n == 7l
+    let named = box { v: half32(), n: seven() }
+    assert named.v == 0.5
+    assert named.n == 7l
+    // A negated literal adopts the field type, as an unsigned one does.
+    let p = pair(-800.0, -0.5)
+    assert p.x == -800.0
+    assert p.y == -0.5
+    let q = pair { x: -1.5, y: 2.0 }
+    assert q.x == -1.5
+    let wide: i64 = -5
+    assert wide == -5l
     return 0
 }

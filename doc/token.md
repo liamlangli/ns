@@ -74,7 +74,8 @@ The suffix only counts when it ends the number (`32b` is an `i8`, `32bit` is the
 int `32` followed by the identifier `bit`). An unsuffixed literal also adopts
 the number type expected by its context (a typed `let`, fn arg, struct field,
 return slot, or the other side of a binary expr), so `let x: f32 = 1.5` needs
-no suffix or cast.
+no suffix or cast. A negated or inverted literal adopts it too: `-800.0` passed
+to an `f64` field is an `f64`.
 
 When shader source is emitted, `h` literals are emitted as half literals/casts.
 `hb` literals fall back to half when bfloat16 is not available in the shader

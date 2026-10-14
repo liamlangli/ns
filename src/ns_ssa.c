@@ -136,6 +136,7 @@ static i32 ns_ssa_wasm32_align(i32 offset, i32 size);
 static i32 ns_ssa_wasm32_field_offset(ns_ssa_builder *b, ns_symbol *st, i32 field);
 static i32 ns_ssa_struct_field_size(ns_ssa_builder *b, ns_symbol *st, i32 field);
 static i32 ns_ssa_clone_struct(ns_ssa_builder *b, i32 value, i32 ast);
+static i32 ns_ssa_coerce_number(ns_ssa_builder *b, i32 value, ns_type target, i32 ast);
 static i32 ns_ssa_global_index(ns_ssa_builder *b, ns_str name);
 static i32 ns_ssa_env_find(ns_ssa_binding *env, ns_str name);
 static i32 ns_ssa_emit_value(ns_ssa_builder *b, ns_ssa_op op, i32 a, i32 c,
@@ -512,6 +513,7 @@ static i32 ns_ssa_lower_struct_ctor(ns_ssa_builder *b, ns_ast_t *n, ns_symbol *s
     for (i32 fi = 0; fi < n->call_expr.arg_count && fi < nfields && next > 0; ++fi) {
         i32 val = ns_ssa_lower_expr(b, next);
         val = ns_ssa_clone_struct(b, val, next);
+        val = ns_ssa_coerce_number(b, val, st->st.fields[fi].t, next);
         ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, next);
         store.a = object;
         store.b = val;
@@ -2717,6 +2719,7 @@ static i32 ns_ssa_lower_expr(ns_ssa_builder *b, i32 i) {
             field_node = &b->ctx->nodes[field_node->next];
             i32 resolved = field_node->field_def.rt.index;
             i32 value = ns_ssa_lower_expr(b, field_node->field_def.expr);
+            value = ns_ssa_coerce_number(b, value, st->st.fields[resolved].t, field_node->field_def.expr);
             ns_ssa_inst store = NS_SSA_INST_INIT(NS_SSA_OP_STORE, field_node->field_def.expr);
             store.a = object;
             store.b = value;
