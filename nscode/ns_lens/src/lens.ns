@@ -41,6 +41,8 @@ lit LENS_NAME_MIN_PX = 6.0
 lit LENS_NAME_MAX_PX = 9.0
 let g_lens_files = [i32](4096)
 let g_lens_names = [str](4096)
+// Project-relative path of each entry, shown in a leaf's header row.
+let g_lens_paths = [str](4096)
 let g_lens_weight = [f64](4096)
 let g_lens_x = [f64](4096)
 let g_lens_y = [f64](4096)
@@ -155,6 +157,10 @@ let g_lens_canvas_h: f64 = 800.0
 let g_lens_view_w: f64 = 1280.0
 let g_lens_body_h: f64 = 680.0
 let g_lens_message = ""
+// Leaf whose path label took the last left press, and the pointer there.
+let g_lens_label_press: i32 = -1
+let g_lens_label_press_x: f64 = 0.0
+let g_lens_label_press_y: f64 = 0.0
 
 fn lens_clear_cache() {
     for i in 0 to LENS_CACHE_SLOTS {
@@ -399,6 +405,7 @@ fn lens_rebuild() {
         g_lens_weight[i] = 0.0
         g_lens_files[i] = 0
         g_lens_names[i] = os_entry_name(i)
+        g_lens_paths[i] = lens_relative_path(os_entry_path(i))
         g_lens_folder_header[i] = 0.0
         if lens_entry_shown(i) {
             lens_include_file(i)
@@ -779,6 +786,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         if shift_down(v) == false && v.scroll_y != 0.0 {
             lens_zoom_at(g_mouse_x, g_mouse_y, w, top, body_h, v.scroll_y)
         }
+        lens_pinch_at(g_mouse_x, g_mouse_y, w, top, body_h, view_gesture(v).zoom_factor)
     }
     lens_pan_input(v, over_map)
     let dt = clamp(os_time() - g_lens_last_time, 0.001, 0.05)
@@ -980,7 +988,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                     lens_request_near(i)
                 }
                 if glyphs {
-                    lens_draw_label(r, leaf, content, fit, g_lens_names[i], color)
+                    lens_draw_label(r, v, i, leaf, content, fit, color, over_map)
                 } else {
                     lens_draw_far_name(r, content, g_lens_names[i], i == g_lens_selected)
                 }
@@ -1003,6 +1011,9 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
                 }
             }
         }
+    }
+    if v.mouse_released || !v.mouse_down {
+        g_lens_label_press = -1
     }
     g_lens_close_view = close_view
     lens_trim_glyphs(r)
@@ -1046,7 +1057,11 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_menus(r, v, w, h)
 
     lens_warm_cache(moving)
-    if moving || read_budget == 0 || g_lens_io_running || g_lens_close_view || lens_job_visible() || g_lens_search_running {
+    if moving {
+        // The display paces a moving camera. A timer started after the frame
+        // would add its delay to the frame's own cost.
+        view_request_frame(v, 1)
+    } else if read_budget == 0 || g_lens_io_running || g_lens_close_view || lens_job_visible() || g_lens_search_running {
         view_request_frame_after(v, 16)
     } else {
         // Idle polling keeps file watching alive without drawing 60 empty frames.
@@ -1252,10 +1267,11 @@ fn lens_code_y(leaf: lens_leaf_rect, fit: f64) f64 {
     return leaf.y + lens_header_h() * lens_code_zoom(leaf) * fit * leaf.scale_y / leaf.scale
 }
 
-// The file name occupies the leaf's header row in the code font and size,
-// shown alongside the glyphs. The atlas has no bold face: a second pass a
-// fraction of a glyph to the right thickens the strokes.
-fn lens_draw_label(r: ref ui_renderer, leaf: lens_leaf_rect, content: lens_leaf_rect, fit: f64, name: str, color: u32) {
+// The file's project-relative path occupies the leaf's header row in the
+// code font and size, shown alongside the glyphs. The atlas has no bold face:
+// a second pass a fraction of a glyph to the right thickens the strokes.
+// Under the pointer the path is underlined, and a click copies it.
+fn lens_draw_label(r: ref ui_renderer, v: ref view, i: i32, leaf: lens_leaf_rect, content: lens_leaf_rect, fit: f64, color: u32, over_map: bool) {
     let zoom = lens_code_zoom(leaf) * fit
     let row_h = lens_header_h() * zoom * leaf.scale_y / leaf.scale
     let bottom = content.y + content.h
@@ -1264,13 +1280,48 @@ fn lens_draw_label(r: ref ui_renderer, leaf: lens_leaf_rect, content: lens_leaf_
     if y1 - y0 < 0.5 || content.w < 1.0 {
         return
     }
+    let path = g_lens_paths[i]
     let font_px = code_base_font_px() * zoom
     let x = leaf.x + 1.0 + code_base_text_inset() * zoom
     let ty = ui_text_v_center_y(r, leaf.y + 1.0, row_h, font_px, CODE_FONT())
+    let text_w = ui_text_width(r, path, font_px, CODE_FONT()) + font_px * 0.06
+    let right = content.x + content.w
+    let hx0 = clamp(x, content.x, right)
+    let hx1 = clamp(x + text_w, content.x, right)
+    let hovered = over_map && hx1 > hx0 && hit(v, hx0, y0, hx1 - hx0, y1 - y0)
+    lens_label_click(v, i, hovered, path)
+    let ink = color
+    if hovered {
+        ink = col_accent()
+    }
     ui_push_clip(r, content.x, y0, content.w, y1 - y0)
-    ui_draw_text(r, x, ty, name, font_px, color, CODE_FONT())
-    ui_draw_text(r, x + font_px * 0.06, ty, name, font_px, color, CODE_FONT())
+    ui_draw_text(r, x, ty, path, font_px, ink, CODE_FONT())
+    ui_draw_text(r, x + font_px * 0.06, ty, path, font_px, ink, CODE_FONT())
+    if hovered {
+        let thick = clamp(font_px * 0.07, 1.0, 4.0)
+        ui_fill_rect(r, x, leaf.y + 1.0 + row_h * 0.5 + font_px * 0.6, text_w, thick, ink, 0.0)
+    }
     ui_pop_clip(r)
+}
+
+// A left press and release on the same path label copies the path. The press
+// still pans the map, so a pointer that moved more than a few pixels between
+// the two dragged the map instead.
+fn lens_label_click(v: ref view, i: i32, hovered: bool, path: str) {
+    if v.mouse_pressed && hovered {
+        g_lens_label_press = i
+        g_lens_label_press_x = g_mouse_x
+        g_lens_label_press_y = g_mouse_y
+    }
+    if v.mouse_released && hovered && g_lens_label_press == i {
+        let dx = g_mouse_x - g_lens_label_press_x
+        let dy = g_mouse_y - g_lens_label_press_y
+        if dx * dx + dy * dy <= 16.0 {
+            view_set_clipboard(v, path)
+            g_lens_message = "Copied " + path
+        }
+        g_lens_label_press = -1
+    }
 }
 
 // Without glyphs the file name sits in bright text at the top left of the
@@ -1409,10 +1460,10 @@ fn lens_wheel_rate(nearest: f64) f64 {
     return clamp(LENS_WHEEL_NEAR * sqrt(nearest / height), LENS_WHEEL_FAR, LENS_WHEEL_NEAR)
 }
 
-fn lens_zoom_at(mx: f64, my: f64, w: f64, top: f64, body_h: f64, wheel: f64) {
-    // The world point under the pointer keeps its screen position.
-    // Past LENS_MAX_ZOOM a line no longer fits the window; stop there rather
-    // than diving into the blank space between glyphs.
+// Closest camera distance over (mx, my). Past LENS_MAX_ZOOM a line no longer
+// fits the window; stop there rather than diving into the blank space between
+// glyphs.
+fn lens_zoom_nearest(mx: f64, my: f64, w: f64, top: f64, body_h: f64) f64 {
     let fit: f64 = 1.0
     for index in 0 to g_workspace_count {
         if g_lens_files[index] != 0 {
@@ -1426,12 +1477,31 @@ fn lens_zoom_at(mx: f64, my: f64, w: f64, top: f64, body_h: f64, wheel: f64) {
             }
         }
     }
-    let nearest = clamp(800.0 * g_lens_code_world * fit / LENS_MAX_ZOOM, 1.0, 6000.0)
+    return clamp(800.0 * g_lens_code_world * fit / LENS_MAX_ZOOM, 1.0, 6000.0)
+}
+
+fn lens_zoom_at(mx: f64, my: f64, w: f64, top: f64, body_h: f64, wheel: f64) {
+    let nearest = lens_zoom_nearest(mx, my, w, top, body_h)
     let step: f64 = clamp(1.0 + clamp(wheel * lens_sign(wheel), 0.0, 1000.0) * lens_wheel_rate(nearest), 1.0, 4.0)
     let factor: f64 = step
     if wheel > 0.0 {
         factor = 1.0 / step
     }
+    lens_zoom_by(mx, my, w, top, body_h, factor, nearest)
+}
+
+// A trackpad pinch scales the view by the fingers' spread since the last
+// frame: spreading them (a factor above 1) brings the camera closer.
+fn lens_pinch_at(mx: f64, my: f64, w: f64, top: f64, body_h: f64, spread: f64) {
+    if spread <= 0.0 || spread == 1.0 {
+        return
+    }
+    lens_zoom_by(mx, my, w, top, body_h, 1.0 / spread, lens_zoom_nearest(mx, my, w, top, body_h))
+}
+
+// Scale the camera distance by `factor` within [nearest, 6000]. The world
+// point under the pointer keeps its screen position.
+fn lens_zoom_by(mx: f64, my: f64, w: f64, top: f64, body_h: f64, factor: f64, nearest: f64) {
     let next = clamp(g_lens_target_distance * factor, nearest, 6000.0)
     let delta = (g_lens_target_distance - next) / 800.0
     g_lens_target_x = g_lens_target_x + (mx - w * 0.5) * delta
@@ -1820,7 +1890,7 @@ fn lens_pan_input(v: ref view, over_map: bool) {
 }
 
 fn lens_camera_moving(v: ref view) bool {
-    if g_lens_panning || v.mouse_middle_down || v.scroll_y != 0.0 {
+    if g_lens_panning || v.mouse_middle_down || v.scroll_y != 0.0 || view_gesture(v).zoom_factor != 1.0 {
         return true
     }
     let dx = g_lens_target_x - g_lens_center_x

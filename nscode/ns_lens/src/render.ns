@@ -31,16 +31,11 @@ fn col_editor_bg() u32 { return ui_pack_color("#121212") }
 
 fn FONT_MONO() i32 { return g_setting_font_family }
 
+// Clears the frame's edges and the platform's pointer event queue. A queue
+// left full drops later pointer moves, and with them the frame each requests,
+// so a drag would only redraw on Lens's own timer.
 fn reset_view_input(v: ref view) {
-    v.mouse_pressed = false
-    v.mouse_released = false
-    v.mouse_right_pressed = false
-    v.mouse_right_released = false
-    v.mouse_middle_pressed = false
-    v.mouse_middle_released = false
-    v.scroll_x = 0.0
-    v.scroll_y = 0.0
-    view_clear_key_presses(v)
+    view_input_reset(v)
 }
 
 fn small_px() f64 {
@@ -129,15 +124,11 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_deta
     ui_fill_rect(r, x, y, w, 28.0, col_editor_panel(), 0.0)
     ui_push_clip(r, x, y, w, 28.0)
     let right = x + w - 12.0
-    let bar_y = y + 11.0
+    let bar_y = y + 14.0 - STATUS_METER_H * 0.5
     if w >= 320.0 {
         lit memory_bar_w = 64.0
         let bar_x = right - memory_bar_w
-        ui_fill_rect(r, bar_x, bar_y, memory_bar_w, 6.0, col_editor_sel(), 0.0)
-        let fill = memory_bar_w * status_memory_fraction(g_status_memory, g_status_memory_total)
-        if fill > 0.0 {
-            ui_fill_rect(r, bar_x, bar_y, fill, 6.0, col_muted(), 0.0)
-        }
+        draw_status_meter(r, bar_x, bar_y, memory_bar_w, status_memory_fraction(g_status_memory, g_status_memory_total))
         let label = status_memory_text(g_status_memory, g_status_memory_total)
         let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
         right = bar_x - 8.0 - label_w
@@ -161,11 +152,7 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_deta
         let bar_x = right - bar_w
         right = bar_x - 8.0 - label_w
         draw_text_clipped(r, right, y + 5.0, label_w, 20.0, label, small_px(), col_muted())
-        ui_fill_rect(r, bar_x, bar_y, bar_w, 6.0, col_editor_sel(), 0.0)
-        let fill = bar_w * lens_detail_fraction(detail)
-        if fill > 0.0 {
-            ui_fill_rect(r, bar_x, bar_y, fill, 6.0, col_muted(), 0.0)
-        }
+        draw_status_meter(r, bar_x, bar_y, bar_w, lens_detail_fraction(detail))
         right = right - 16.0
     }
     let left = x + 12.0
@@ -175,6 +162,20 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_deta
 }
 
 fn col_editor_panel() u32 { return ui_pack_color("#191919") }
+
+lit STATUS_METER_H = 10.0
+lit STATUS_METER_INSET = 2.0
+
+// A status bar meter: a dark rounded track with a one-point outline, and the
+// filled share inset inside it with the corners rounded to match.
+fn draw_status_meter(r: ref ui_renderer, x: f64, y: f64, w: f64, fraction: f64) {
+    ui_fill_round_rect(r, x, y, w, STATUS_METER_H, LENS_CORNER_RADIUS, col_editor_bg(), 0.0)
+    let fill = (w - STATUS_METER_INSET * 2.0) * clamp(fraction, 0.0, 1.0)
+    if fill > 0.0 {
+        ui_fill_round_rect(r, x + STATUS_METER_INSET, y + STATUS_METER_INSET, fill, STATUS_METER_H - STATUS_METER_INSET * 2.0, LENS_CORNER_RADIUS - 1.0, col_muted(), 0.0)
+    }
+    ui_stroke_round_rect(r, x + 0.5, y + 0.5, w - 1.0, STATUS_METER_H - 1.0, LENS_CORNER_RADIUS, 1.0, col_muted(), 0.0)
+}
 
 fn clamp(v: f64, lo: f64, hi: f64) f64 {
     if v < lo {

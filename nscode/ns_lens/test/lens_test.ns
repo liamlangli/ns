@@ -406,6 +406,37 @@ fn main() {
     assert g_lens_files[workspace_find("readme.md")] == 1
     assert g_lens_files[workspace_find("pic.png")] == 2
     g_lens_view_mode = LENS_MODE_CODE
+    // A leaf's header shows its path from the project root.
+    os_make_dirs(mode_root + "/src")
+    assert os_write_file_atomic(mode_root + "/src/b.ns", "fn b() {}\n") != 0
+    assert workspace_open_root(mode_root)
+    lens_rebuild()
+    assert g_lens_paths[workspace_find("a.ns")] == "a.ns"
+    assert g_lens_paths[workspace_find("b.ns")] == "src/b.ns"
+    // A pinch zooms about the pointer: fingers spread twice as far halve the
+    // camera distance, and the world point under the pointer stays put.
+    let world = g_lens_code_world
+    g_lens_code_world = 0.01
+    g_lens_distance = 1600.0
+    g_lens_target_distance = 1600.0
+    g_lens_target_x = 0.0
+    g_lens_target_y = 0.0
+    let px = 1250.0
+    let py = 60.0
+    let anchor_x = (px - 640.0) * 1600.0 / 800.0
+    let anchor_y = (py - 42.0 - 340.0) * 1600.0 / 800.0
+    lens_pinch_at(px, py, 1280.0, 42.0, 680.0, 1.0)
+    assert g_lens_target_distance == 1600.0
+    lens_pinch_at(px, py, 1280.0, 42.0, 680.0, 2.0)
+    assert g_lens_target_distance == 800.0
+    assert abs(g_lens_target_x + (px - 640.0) * g_lens_target_distance / 800.0 - anchor_x) < 0.000001
+    assert abs(g_lens_target_y + (py - 42.0 - 340.0) * g_lens_target_distance / 800.0 - anchor_y) < 0.000001
+    lens_pinch_at(px, py, 1280.0, 42.0, 680.0, 0.5)
+    assert g_lens_target_distance == 1600.0
+    // Pinching out stops at the far limit like the wheel.
+    lens_pinch_at(px, py, 1280.0, 42.0, 680.0, 0.01)
+    assert g_lens_target_distance == 6000.0
+    g_lens_code_world = world
     os_watch_stop()
     print("lens_test: passed\n")
 }

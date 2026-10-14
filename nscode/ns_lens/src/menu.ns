@@ -48,7 +48,7 @@ fn lens_file_item_keys(i: i32) str {
 }
 
 fn lens_hint_keys(i: i32) str {
-    if i == 0 { return "wheel" }
+    if i == 0 { return "wheel/pinch" }
     if i == 1 { return "shift+wheel" }
     if i == 2 { return "left drag" }
     if i == 3 { return "right click" }

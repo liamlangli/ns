@@ -135,6 +135,15 @@ fn main() {
     g_lens_render_serial = g_lens_render_serial + 1
     lens_release_idle_glyphs(r)
     assert g_lens_glyph_batch[preview_slot] == 0
+    // A trackpad pinch reaches the camera through the view's gesture state,
+    // and the frame's input reset consumes it.
+    let before = g_lens_target_distance
+    view_on_gesture(v, 0.0, 0.0, 0.5, 0.0)
+    ui_begin_frame(r)
+    render_lens(r, v, 1280.0, 800.0)
+    assert g_lens_target_distance > before
+    reset_view_input(v)
+    assert view_gesture(v).zoom_factor == 1.0
     check_wrapped_caret(v)
     ui_renderer_destroy(r)
     view_close(v)

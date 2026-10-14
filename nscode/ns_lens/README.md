@@ -31,7 +31,7 @@ snaps back to orthographic.
   so the size of each file's change reads from far away. Up close the same
   rows keep the editor's green and red backgrounds. A worker diffs every changed file against HEAD
   after file changes, after a commit, and every 30 seconds.
-- Wheel: zoom toward the pointer with camera smoothing.
+- Wheel or trackpad pinch: zoom toward the pointer with camera smoothing.
 - Left drag: pan. Right click: select a leaf; right drag selects text in its editor.
   Middle drag: tilt the map into perspective.
 - Zoom close to a leaf: its code becomes a syntax-highlighted, editable surface
@@ -74,10 +74,11 @@ snaps back to orthographic.
   wide as 90% of the file's non-empty lines; longer lines wrap onto the
   following rows, like Vim's `wrap`, numbered only on their first row. Glyphs, minimap bars and editing overlays share that row grid; past a readable size the hovered file
   becomes an editor at the same scale, with selection, undo/redo and
-  Cmd/Ctrl+S. Each file name is the leaf's top row, in bold at the code font
-  size, scaling with the code and showing alongside its glyphs. While a leaf
-  shows minimap bars, its name sits in small bright text at the leaf's top
-  left instead.
+  Cmd/Ctrl+S. Each file's path relative to the opened folder is the leaf's top
+  row, in bold at the code font size, scaling with the code and showing
+  alongside its glyphs. The path underlines under the pointer, and a left
+  click copies it to the clipboard. While a leaf shows minimap bars, its file
+  name sits in small bright text at the leaf's top left instead.
 - Right-clicking a leaf focuses it at a readable code size, framing its top. Zoom
   stops once code reaches 2.5 times its editor size.
 - The status bar progress bar is the precision still loading: minimap bars across
@@ -105,8 +106,9 @@ checks the source digest and cached payload digest; same-size changes and
 corruption rebuild the record. Writes are atomic and validate the source again
 after reading. A single background worker reads one whole source file at a time
 for its minimap. Dragging defers new detail loads;
-preview line strings are split once on cache insertion. Camera motion, and a
-view close enough to show glyphs, keep 16 ms frame requests. An idle overview
+preview line strings are split once on cache insertion. Camera motion redraws at
+the display's refresh rate; a still view close enough to show glyphs keeps
+16 ms frame requests. An idle overview
 polls files every 100 ms.
 
 In the nearest LOD, changes compare HEAD against the current edit buffer,
