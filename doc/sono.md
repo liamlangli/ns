@@ -66,6 +66,7 @@ level, seconds).
 | --- | --- | --- |
 | Tones | `SONO_SINE`, `SONO_SQUARE`, `SONO_SAW`, `SONO_TRIANGLE`, `SONO_NOISE` | Band-limited oscillators. Noise follows the pitch with a low-pass. |
 | Instruments | `SONO_PLUCK` (string), `SONO_KEYS` (electric piano), `SONO_BELL`, `SONO_ORGAN`, `SONO_PAD`, `SONO_BASS`, `SONO_LEAD` | Pluck is Karplus-Strong; keys and bell are FM; pad is three detuned saws; bass has an enveloped filter; lead has vibrato. |
+| Acoustic colours | `SONO_HARP`, `SONO_CELESTA`, `SONO_FLUTE`, `SONO_PIZZICATO` | Harp and pizzicato use independently damped harmonic string modes; celesta adds soft inharmonic metal modes; flute mixes a rounded harmonic tone with filtered breath and gentle vibrato. Pitched, gated instruments with release tails; upper modes are omitted above Nyquist. |
 | Drums | `SONO_KICK`, `SONO_SNARE`, `SONO_HIHAT`, `SONO_OPEN_HAT`, `SONO_CLAP`, `SONO_TOM`, `SONO_CRASH` | One-shot. |
 | Effects | `SONO_COIN`, `SONO_JUMP`, `SONO_LASER`, `SONO_EXPLOSION`, `SONO_HIT`, `SONO_POWERUP`, `SONO_BLIP` | One-shot game sounds. |
 

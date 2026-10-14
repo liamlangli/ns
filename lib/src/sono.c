@@ -100,6 +100,10 @@ static const sono_preset sono_presets[NS_SONO_INSTRUMENT_COUNT] = {
     [NS_SONO_HIT] = {0.0005, 0, 1, 0.01, true, 0.18, 0, 0},
     [NS_SONO_POWERUP] = {0.0005, 0, 1, 0.01, true, 0.6, 0, 0},
     [NS_SONO_BLIP] = {0.0005, 0, 1, 0.01, true, 0.07, 0, 0},
+    [NS_SONO_HARP] = {0.002, 0, 1, 0.65, false, 0, 0, 0},
+    [NS_SONO_CELESTA] = {0.002, 0, 1, 1.1, false, 0, 0, 0},
+    [NS_SONO_FLUTE] = {0.035, 0.12, 0.85, 0.16, false, 0, 4.8, 0.08},
+    [NS_SONO_PIZZICATO] = {0.003, 0, 1, 0.18, false, 0, 0, 0},
 };
 
 static sono_song *sono_songs[SONO_MAX_SONGS];
@@ -971,6 +975,45 @@ static f64 sono_instrument(i32 instrument, sono_voice *v, f64 t, f64 pitch, f64 
         f64 x = 0.5 * sono_pulse(v->phase[0], dt, 0.25) + 0.3 * sono_saw(v->phase[1], dt);
         sono_svf_out f = sono_svf_run(&v->filter[0], x, 5200, 0.15, rate);
         return 0.6 * f.low;
+    }
+    case NS_SONO_HARP:
+    case NS_SONO_PIZZICATO: {
+        // Harmonic string modes decay independently: bright at the pick,
+        // round at the tail. Omit modes above Nyquist at every sample rate.
+        ns_bool harp = instrument == NS_SONO_HARP;
+        f64 decay = harp ? 1.8 : 7.5;
+        f64 sum = 0;
+        v->phase[0] = sono_wrap(v->phase[0] + dt);
+        for (i32 k = 1; k <= 6; k++) {
+            if (dt * k < 0.45) {
+                f64 weight = 1.0 / (k * k);
+                sum += weight * exp(-t * decay * (1 + 0.45 * (k - 1))) *
+                       sin(2 * SONO_PI * k * v->phase[0]);
+            }
+        }
+        return 0.7 * sum;
+    }
+    case NS_SONO_CELESTA: {
+        // A tuned fundamental with quiet, quickly damped metal modes.
+        static const f64 ratios[6] = {1, 2, 3, 4.17, 5.43, 6.79};
+        static const f64 weights[6] = {0.7, 0.22, 0.1, 0.12, 0.055, 0.025};
+        f64 sum = 0;
+        for (i32 k = 0; k < 6; k++) {
+            if (dt * ratios[k] < 0.45) {
+                v->phase[k] = sono_wrap(v->phase[k] + dt * ratios[k]);
+                sum += weights[k] * exp(-t * (1.4 + k * 1.8)) *
+                       sin(2 * SONO_PI * v->phase[k]);
+            }
+        }
+        return 0.65 * sum;
+    }
+    case NS_SONO_FLUTE: {
+        v->phase[0] = sono_wrap(v->phase[0] + dt);
+        f64 tone = sin(2 * SONO_PI * v->phase[0]);
+        if (dt * 2 < 0.45) tone += 0.16 * sin(4 * SONO_PI * v->phase[0]);
+        if (dt * 3 < 0.45) tone += 0.035 * sin(6 * SONO_PI * v->phase[0]);
+        sono_svf_out breath = sono_svf_run(&v->filter[0], sono_noise(&v->rng), hz * 2, 0.1, rate);
+        return 0.65 * tone + 0.035 * breath.low;
     }
     case NS_SONO_KICK: {
         f64 f = (45.0 + 110.0 * exp(-t * 30.0)) * tune;

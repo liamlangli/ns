@@ -55,6 +55,12 @@ lit SONO_HIT = 23
 lit SONO_POWERUP = 24
 lit SONO_BLIP = 25
 
+// Acoustic colours. Appended so existing instrument IDs stay stable.
+lit SONO_HARP = 26 // bright plucked harmonic string
+lit SONO_CELESTA = 27 // soft struck metal, sparkling upper partials
+lit SONO_FLUTE = 28 // breathy sustained woodwind
+lit SONO_PIZZICATO = 29 // short, warm orchestral string pluck
+
 // Songs. sample_rate is 8000..192000; bpm counts beats (quarter notes).
 ref fn sono_new(sample_rate: i32, bpm: f64) i32
 ref fn sono_free(song: i32)
