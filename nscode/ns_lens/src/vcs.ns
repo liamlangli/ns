@@ -8,6 +8,7 @@ lit LENS_JOB_STATUS = 1
 lit LENS_JOB_FETCH = 2
 lit LENS_JOB_COMMIT = 3
 lit LENS_JOB_PUSH = 4
+lit LENS_JOB_PULL = 5
 // Seconds between background fetches.
 lit LENS_FETCH_INTERVAL = 300.0
 
@@ -30,6 +31,19 @@ let g_lens_sync_ahead: i32 = -1
 let g_lens_sync_behind: i32 = -1
 let g_lens_sync_root = ""
 let g_lens_fetch_next: f64 = 0.0
+// Status bar buttons as last drawn: the down arrow pulls, the up arrow
+// pushes. Zero width while the counts are unknown.
+let g_lens_sync_y: f64 = 0.0
+let g_lens_sync_down_x: f64 = 0.0
+let g_lens_sync_down_w: f64 = 0.0
+let g_lens_sync_up_x: f64 = 0.0
+let g_lens_sync_up_w: f64 = 0.0
+
+// Jobs the user asked for: queued behind a running job, shown with progress
+// and reported when they end.
+fn lens_job_user(kind: i32) bool {
+    return kind == LENS_JOB_COMMIT || kind == LENS_JOB_PUSH || kind == LENS_JOB_PULL
+}
 
 fn lens_job_label(kind: i32) str {
     if kind == LENS_JOB_COMMIT {
@@ -37,6 +51,9 @@ fn lens_job_label(kind: i32) str {
     }
     if kind == LENS_JOB_PUSH {
         return "push"
+    }
+    if kind == LENS_JOB_PULL {
+        return "pull"
     }
     if kind == LENS_JOB_FETCH {
         return "fetch"
@@ -85,6 +102,19 @@ fn lens_push_steps() [str] {
     return steps
 }
 
+// Fetch, then replay local commits on the upstream. Git refuses while the
+// work tree has uncommitted changes, and that refusal is reported.
+fn lens_pull_steps() [str] {
+    let steps = [str](2)
+    steps[0] = "fetch\n--progress"
+    steps[1] = "pull\n--rebase\n--progress"
+    return steps
+}
+
+fn lens_pull() {
+    lens_job_start(LENS_JOB_PULL, lens_pull_steps())
+}
+
 fn lens_commit(message: str) {
     lens_job_start(LENS_JOB_COMMIT, lens_commit_steps(message))
 }
@@ -98,7 +128,7 @@ fn lens_job_start(kind: i32, steps: [str]) {
         return
     }
     if g_lens_job_running {
-        if kind == LENS_JOB_COMMIT || kind == LENS_JOB_PUSH {
+        if lens_job_user(kind) {
             g_lens_job_queued = kind
             g_lens_job_queued_steps = steps
         }
@@ -118,7 +148,7 @@ fn lens_job_start(kind: i32, steps: [str]) {
     g_lens_job_kind = kind
     g_lens_job_root = root
     g_lens_job_running = true
-    if kind == LENS_JOB_COMMIT || kind == LENS_JOB_PUSH {
+    if lens_job_user(kind) {
         g_lens_message = lens_job_label(kind) + "..."
     }
     let pending = dispatch(queue_worker) { in
@@ -195,17 +225,17 @@ fn lens_job_poll() {
         lens_sync_parse(counts)
         g_lens_sync_root = g_lens_job_root
     }
-    if kind == LENS_JOB_COMMIT || kind == LENS_JOB_PUSH {
+    if lens_job_user(kind) {
         if status == 0 {
             g_lens_message = lens_job_label(kind) + " done"
         } else {
             g_lens_message = lens_job_label(kind) + " failed: " + lens_last_line(text)
         }
     }
-    if kind == LENS_JOB_COMMIT && status == 0 {
-        // Committed files are clean: refresh the change view, the leaves'
-        // patches and the open file's diff against the new HEAD now rather
-        // than at the next poll.
+    if (kind == LENS_JOB_COMMIT || kind == LENS_JOB_PULL) && status == 0 {
+        // A commit cleans files and a pull moves HEAD and files: refresh the
+        // change view, the leaves' patches and the open file's diff against
+        // the new HEAD now rather than at the next poll.
         g_lens_change_poll = 0.0
         g_lens_git_poll = 0.0
         g_lens_patch_wanted = true
@@ -242,12 +272,12 @@ fn lens_vcs_tick(moving: bool) {
 
 // A commit or push the user is waiting on, for the activity row.
 fn lens_job_visible() bool {
-    return g_lens_job_running && (g_lens_job_kind == LENS_JOB_COMMIT || g_lens_job_kind == LENS_JOB_PUSH)
+    return g_lens_job_running && lens_job_user(g_lens_job_kind)
 }
 
-// Push reports Git's own percentage; a commit has none.
+// Push and pull report Git's own percentage; a commit has none.
 fn lens_job_fraction() f64 {
-    if g_lens_job_kind == LENS_JOB_PUSH {
+    if g_lens_job_kind == LENS_JOB_PUSH || g_lens_job_kind == LENS_JOB_PULL {
         let percent = os_git_progress()
         if percent >= 0 {
             return (percent as f64) / 100.0
@@ -260,20 +290,48 @@ fn lens_job_fraction() f64 {
 // up arrow with the local commits not pushed. Returns the width it used, 0
 // when the branch has no upstream.
 fn lens_draw_sync(r: ref ui_renderer, x: f64, y: f64) f64 {
+    g_lens_sync_y = y
+    g_lens_sync_down_w = 0.0
+    g_lens_sync_up_w = 0.0
     if g_lens_sync_ahead < 0 || g_lens_sync_behind < 0 {
         return 0.0
     }
-    let behind_w = lens_draw_sync_count(r, x, y, g_lens_sync_behind, true)
-    let ahead_w = lens_draw_sync_count(r, x + behind_w, y, g_lens_sync_ahead, false)
-    return behind_w + ahead_w + 8.0
+    g_lens_sync_down_x = x
+    g_lens_sync_down_w = lens_draw_sync_count(r, x, y, g_lens_sync_behind, true)
+    g_lens_sync_up_x = x + g_lens_sync_down_w
+    g_lens_sync_up_w = lens_draw_sync_count(r, g_lens_sync_up_x, y, g_lens_sync_ahead, false)
+    return g_lens_sync_down_w + g_lens_sync_up_w + 8.0
 }
 
-// One arrow and its count in a 28 px status bar at `y`. The atlas has no
-// arrow glyphs, so the arrow is a stem and a triangle head.
+// Which status bar button is under (mx, my): LENS_JOB_PULL, LENS_JOB_PUSH,
+// or 0 for neither.
+fn lens_sync_button_at(mx: f64, my: f64) i32 {
+    if my < g_lens_sync_y + 4.0 || my >= g_lens_sync_y + 24.0 {
+        return 0
+    }
+    if mx >= g_lens_sync_down_x - 4.0 && mx < g_lens_sync_down_x - 4.0 + g_lens_sync_down_w {
+        return LENS_JOB_PULL
+    }
+    if mx >= g_lens_sync_up_x - 4.0 && mx < g_lens_sync_up_x - 4.0 + g_lens_sync_up_w {
+        return LENS_JOB_PUSH
+    }
+    return 0
+}
+
+// One button, an arrow and its count, in a 28 px status bar at `y`; it
+// lights up under the pointer. The atlas has no arrow glyphs, so the arrow
+// is a stem and a triangle head.
 fn lens_draw_sync_count(r: ref ui_renderer, x: f64, y: f64, count: i32, down: bool) f64 {
     let color = col_muted()
     if count > 0 {
         color = col_text()
+    }
+    let label = itos(count)
+    let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
+    let w = 11.0 + label_w + 10.0
+    if g_mouse_x >= x - 4.0 && g_mouse_x < x - 4.0 + w && g_mouse_y >= y + 4.0 && g_mouse_y < y + 24.0 {
+        ui_fill_round_rect(r, x - 4.0, y + 4.0, w - 2.0, 20.0, 3.0, col_editor_panel_hi(), 0.0)
+        color = col_accent()
     }
     let ax = x + 4.0
     let cy = y + 14.0
@@ -284,10 +342,8 @@ fn lens_draw_sync_count(r: ref ui_renderer, x: f64, y: f64, count: i32, down: bo
         ui_stroke_line(r, ax, cy - 1.0, ax, cy + 6.0, 1.5, color, 0.5)
         ui_fill_triangle(r, ax - 4.0, cy, ax + 4.0, cy, ax, cy - 5.0, color, 0.5)
     }
-    let label = itos(count)
-    let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
     draw_text_clipped(r, x + 11.0, y + 5.0, label_w, 20.0, label, small_px(), color)
-    return 11.0 + label_w + 10.0
+    return w
 }
 
 // Patches against HEAD for every changed file, so each leaf's minimap shows

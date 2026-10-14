@@ -24,10 +24,12 @@ snaps back to orthographic.
 
 - The interface is monochrome. Syntax highlighting and Git change backgrounds
   use color; leaf outlines are rounded rectangles with a 3-point radius.
-- Minimap bars are one light gray. In every leaf, lines Git reports as added
-  are green and deleted lines appear as red ghost rows, so the size of each
-  file's change reads from far away. Up close the same rows keep the editor's
-  green and red backgrounds. A worker diffs every changed file against HEAD
+- Minimap bars keep their syntax colours. A bar runs across gaps under four
+  blanks and ends where the colour changes for more than two characters; a
+  shorter run of another colour joins the bar before it. In every leaf, rows
+  Git reports as added fill green and deleted lines appear as red ghost rows,
+  so the size of each file's change reads from far away. Up close the same
+  rows keep the editor's green and red backgrounds. A worker diffs every changed file against HEAD
   after file changes, after a commit, and every 30 seconds.
 - Wheel: zoom toward the pointer with camera smoothing.
 - Left drag: pan. Right click: select a leaf; right drag selects text in its editor.
@@ -82,7 +84,10 @@ snaps back to orthographic.
   the project, or code for the leaves in view once the camera is that close.
 - The status bar starts with a down arrow counting upstream commits not pulled
   yet and an up arrow counting local commits not pushed. Lens fetches in the
-  background every five minutes, and after opening a project.
+  background every five minutes, and after opening a project. Both are
+  buttons: the down arrow runs `git fetch` then `git pull --rebase` (Git
+  refuses while the work tree has uncommitted changes, and Lens shows why),
+  and the up arrow pushes.
 - The status bar also shows actual FPS and process resident RAM in MiB, sampled
   once per second. The RAM bar and percentage use total physical memory as the
   scale. Idle polling naturally reports a lower FPS. Narrow windows hide the

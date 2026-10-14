@@ -36,6 +36,7 @@ fn make_repo(folder: str) {
     git(folder, "config\nuser.email\nlens@example.com")
     git(folder, "config\ncommit.gpgsign\nfalse")
     git(folder, "config\ncore.hooksPath\n/dev/null")
+    git(folder, "config\nrebase.autoStash\nfalse")
 }
 
 fn check_text_helpers() {
@@ -57,6 +58,21 @@ fn check_text_helpers() {
     g_lens_sync_ahead = 0
     assert lens_push_steps()[0] == "push\n--progress"
     g_lens_sync_ahead = -1
+    let pull = lens_pull_steps()
+    assert pull[0] == "fetch\n--progress" && pull[1] == "pull\n--rebase\n--progress"
+    // The status bar's down arrow pulls and its up arrow pushes.
+    g_lens_sync_y = 100.0
+    g_lens_sync_down_x = 12.0
+    g_lens_sync_down_w = 30.0
+    g_lens_sync_up_x = 42.0
+    g_lens_sync_up_w = 30.0
+    assert lens_sync_button_at(20.0, 110.0) == LENS_JOB_PULL
+    assert lens_sync_button_at(50.0, 110.0) == LENS_JOB_PUSH
+    assert lens_sync_button_at(20.0, 90.0) == 0
+    assert lens_sync_button_at(100.0, 110.0) == 0
+    g_lens_sync_down_w = 0.0
+    g_lens_sync_up_w = 0.0
+    assert lens_sync_button_at(20.0, 110.0) == 0
 }
 
 fn check_search_helpers() {
@@ -137,10 +153,27 @@ fn check_git(base: str) {
     lens_job_start(LENS_JOB_FETCH, steps)
     finish_job()
     assert g_lens_sync_behind == 1 && g_lens_sync_ahead == 0
+    // Pulling brings the remote commit in.
+    lens_pull()
+    finish_job()
+    assert g_lens_message == "pull done"
+    assert g_lens_sync_behind == 0 && g_lens_sync_ahead == 0
+    assert os_file_size(work + "/remote.ns") >= 0
     // Nothing left to commit is reported, not hidden.
     lens_commit("empty")
     finish_job()
     assert substr(g_lens_message, 0, 13) == "commit failed"
+    // Git refuses to rebase over uncommitted changes, and says so.
+    assert os_write_file_atomic(other + "/remote.ns", "fn remote() { 2 }\n") != 0
+    for step in lens_commit_steps("again") {
+        git(other, step)
+    }
+    git(other, "push\n-q")
+    assert os_write_file_atomic(work + "/remote.ns", "fn remote() { local }\n") != 0
+    lens_pull()
+    finish_job()
+    assert substr(g_lens_message, 0, 11) == "pull failed"
+    git(work, "checkout\n--\nremote.ns")
     check_patches(work)
 }
 

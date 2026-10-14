@@ -260,6 +260,18 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         v.mouse_pressed = false
         return
     }
+    // The status bar's down arrow pulls and its up arrow pushes.
+    let sync = lens_sync_button_at(g_mouse_x, g_mouse_y)
+    if sync == LENS_JOB_PULL {
+        lens_pull()
+        v.mouse_pressed = false
+        return
+    }
+    if sync == LENS_JOB_PUSH {
+        lens_push()
+        v.mouse_pressed = false
+        return
+    }
     if g_lens_search_open {
         let rows_y = sy + LENS_SEARCH_INPUT_H
         if g_lens_search_block && g_mouse_y >= rows_y {

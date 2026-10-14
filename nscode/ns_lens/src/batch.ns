@@ -15,8 +15,7 @@ struct lens_batch_input {
     row: [i32],
     vertex: [i32],
     colors: [u32],
-    // Indexed by LENS_ROW_*: minimap bar colors, then preview row
-    // backgrounds (0 draws none).
+    // Row backgrounds indexed by LENS_ROW_* (0 draws none).
     marks: [u32],
     count: i32,
     bytes: i32,
@@ -96,25 +95,63 @@ fn lens_char_start(source: str, offset: i32, length: i32, n: i32) i32 {
     return p
 }
 
-// Uniform minimap bars; Git's added and deleted rows stand out in color so a
-// leaf shows the size of its change from far away.
+// A minimap bar runs across gaps shorter than this many blanks.
+lit LENS_BAR_GAP = 4
+// A run of another colour this short joins the bar before it.
+lit LENS_BAR_ABSORB = 2
+
+// Git's added and deleted rows fill their whole row. The minimap uses a
+// stronger shade than the editor so a leaf's change reads from far away.
 fn lens_mark_color(kind: i32, mini: bool) u32 {
-    if mini {
-        if kind == LENS_ROW_ADDED {
-            return 0xe06bc24au
-        }
-        if kind == LENS_ROW_DELETED {
-            return 0xe04f52f0u
-        }
-        return 0xa5e0e0e0u
-    }
     if kind == LENS_ROW_ADDED {
+        if mini {
+            return ui_pack_color("#255c38")
+        }
         return ui_pack_color("#183e2b")
     }
     if kind == LENS_ROW_DELETED {
+        if mini {
+            return ui_pack_color("#6e2a2a")
+        }
         return ui_pack_color("#4b1e1e")
     }
     return 0u
+}
+
+struct lens_bar_run {
+    end: i32,
+    // Non-blank bytes in the run.
+    chars: i32
+}
+
+// The run of tokens drawn in `color` from `start`, crossing gaps shorter
+// than LENS_BAR_GAP.
+fn lens_bar_run_of(source: str, offset: i32, m: i32, start: i32, color: u32, colors: [u32], language: i32) lens_bar_run {
+    let end = start
+    let chars: i32 = 0
+    let p = start
+    loop p < m {
+        let token = lens_token_scan(source, offset, m, p, language)
+        if colors[lens_token_kind(token)] != color {
+            break
+        }
+        let q = clamp_i(lens_token_position(token), p + 1, m)
+        for c in p to q {
+            if !lens_is_blank(lens_byte(source, offset + c)) {
+                chars = chars + 1
+            }
+        }
+        end = q
+        let n = q
+        loop n < m && lens_is_blank(lens_byte(source, offset + n)) {
+            n = n + 1
+        }
+        if n >= m || n - q >= LENS_BAR_GAP {
+            break
+        }
+        p = n
+    }
+    return lens_bar_run(end, chars)
 }
 
 // One entry per source line or ghost row, each covering one or more display
@@ -155,6 +192,7 @@ fn lens_batch_prepare(r: ref ui_renderer, text: str, diff: lens_file_diff, docum
     }
     for kind in 0 to 9 {
         input.colors[kind] = token_color(kind)
+        if mini { input.colors[kind] = (token_color(kind) & 0x00ffffffu) | 0xa5000000u }
     }
     for kind in 0 to 3 {
         input.marks[kind] = lens_mark_color(kind, mini)
@@ -272,9 +310,9 @@ fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input,
         let lead = input.lead[i]
         let base = lead / wrap
         let mark = input.marks[input.kind[i]]
-        if !input.mini && mark != 0u {
-            // Added and deleted rows get the editor's backgrounds, behind
-            // the line number and glyphs, across every wrapped row.
+        if mark != 0u {
+            // Added and deleted rows fill their background, behind the line
+            // number, glyphs and bars, across every wrapped row.
             for s in 0 to lens_wrap_span(lead, input.length[i], wrap) {
                 let back = row + s
                 let back_x = (clamp_i(back / input.rows, 0, LENS_MAX_COLUMNS - 1) as f64) * input.column_pitch
@@ -297,17 +335,25 @@ fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input,
             } else {
                 let token = lens_token_scan(source, offset, m, p, input.language)
                 let q = clamp_i(lens_token_position(token), p + 1, m)
+                let color = input.colors[lens_token_kind(token)]
                 if input.mini {
-                    let class = lens_token_class(lens_token_kind(token))
+                    // A bar keeps its first token's colour. It ends at a gap of
+                    // LENS_BAR_GAP blanks, or where a run of another colour is
+                    // longer than LENS_BAR_ABSORB; a shorter run joins it.
                     let more = true
                     loop more && q < m {
                         let n = q
                         loop n < m && lens_is_blank(lens_byte(source, offset + n)) { n = n + 1 }
-                        if n >= m || n - q >= 2 {
+                        if n >= m || n - q >= LENS_BAR_GAP {
                             more = false
                         } else {
-                            let next = lens_token_scan(source, offset, m, n, input.language)
-                            if lens_token_class(lens_token_kind(next)) != class { more = false } else { q = clamp_i(lens_token_position(next), n + 1, m) }
+                            let next = input.colors[lens_token_kind(lens_token_scan(source, offset, m, n, input.language))]
+                            let run = lens_bar_run_of(source, offset, m, n, next, input.colors, input.language)
+                            if next == color || run.chars <= LENS_BAR_ABSORB {
+                                q = clamp_i(run.end, n + 1, m)
+                            } else {
+                                more = false
+                            }
                         }
                     }
                 }
@@ -322,9 +368,9 @@ fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input,
                     let x = column_x + gutter + inset + ((lead + a - segment * wrap) as f64) * input.char_w
                     let row_top = top + ((piece_row % input.rows) as f64) * input.line_pitch
                     if input.mini {
-                        ui_rect_batch_add(r, batch, x, row_top + (input.line_pitch - bar_h) * 0.5 + bar_h * 0.25, ((e - a) as f64) * input.char_w, bar_h * 0.5, mark)
+                        ui_rect_batch_add(r, batch, x, row_top + (input.line_pitch - bar_h) * 0.5 + bar_h * 0.25, ((e - a) as f64) * input.char_w, bar_h * 0.5, color)
                     } else {
-                        ui_rect_batch_add_text_range(r, batch, x, row_top + input.text_y, source, offset + a, e - a, font_px, input.colors[lens_token_kind(token)], CODE_FONT())
+                        ui_rect_batch_add_text_range(r, batch, x, row_top + input.text_y, source, offset + a, e - a, font_px, color, CODE_FONT())
                     }
                     a = e
                 }

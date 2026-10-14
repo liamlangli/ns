@@ -151,21 +151,11 @@ fn lens_text_lines(text: str) i32 {
     return rows
 }
 
-// 0 code, 1 string, 2 comment: a bar breaks where the class changes.
-fn lens_token_class(kind: i32) i32 {
-    if kind == TK_COMMENT() {
-        return 2
-    }
-    if kind == TK_STRING() {
-        return 1
-    }
-    return 0
-}
-
 // One bar per code segment rather than per token: a segment runs across
-// single spaces and stops at a wider gap or where code turns into a string or
-// comment. It keeps the shape and colour of the code at a fraction of the
-// vertices, so the whole project's minimap stays resident.
+// gaps under four blanks and stops where the syntax colour changes for more
+// than two characters (see lens_batch_range). It keeps the shape and colour
+// of the code at a fraction of the vertices, so the whole project's minimap
+// stays resident. Git's added and deleted rows fill their background.
 fn lens_mini_build(r: ref ui_renderer, index: i32, text: str) {
     lens_mini_build_content(r, index, text, false)
 }
