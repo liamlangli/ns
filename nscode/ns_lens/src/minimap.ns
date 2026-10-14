@@ -117,13 +117,28 @@ fn lens_mini_update(r: ref ui_renderer) {
         ui_rect_batch_destroy(r, g_lens_mini_drop[d])
     }
     g_lens_mini_drop_count = 0
+    // A close view only spends the frame on leaves actually on screen.
+    // Off-screen texts stay queued until the camera pulls back.
+    let keep: i32 = 0
     for q in 0 to g_lens_mini_queue_count {
-        g_lens_mini_build_block = g_lens_mini_queue_block[q]
-        lens_mini_build(r, g_lens_mini_queue_index[q], g_lens_mini_queue_text[q])
-        g_lens_mini_build_block = 0
-        g_lens_mini_queue_text[q] = ""
+        let index = g_lens_mini_queue_index[q]
+        let build = g_lens_close_view == false || (index >= 0 && index < g_workspace_count && g_lens_on_screen[index] != 0)
+        if build {
+            g_lens_mini_build_block = g_lens_mini_queue_block[q]
+            lens_mini_build(r, index, g_lens_mini_queue_text[q])
+            g_lens_mini_build_block = 0
+            g_lens_mini_queue_text[q] = ""
+        } else {
+            if keep != q {
+                g_lens_mini_queue_index[keep] = index
+                g_lens_mini_queue_block[keep] = g_lens_mini_queue_block[q]
+                g_lens_mini_queue_text[keep] = g_lens_mini_queue_text[q]
+                g_lens_mini_queue_text[q] = ""
+            }
+            keep = keep + 1
+        }
     }
-    g_lens_mini_queue_count = 0
+    g_lens_mini_queue_count = keep
 }
 
 fn lens_text_lines(text: str) i32 {
@@ -227,7 +242,7 @@ fn lens_mini_build_content(r: ref ui_renderer, index: i32, text: str, document: 
 // The file's bars at the leaf's code origin, scaled by the camera.
 fn lens_mini_draw(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom: f64, squash: f64) bool {
     let batch = g_lens_mini_batch[index]
-    if batch == 0 {
+    if batch == 0 || zoom <= 0.0 || g_lens_mini_fit[index] <= 0.0 {
         return false
     }
     let scale = zoom * g_lens_mini_fit[index]

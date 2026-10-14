@@ -58,18 +58,16 @@ fn lens_io_poll() {
             g_lens_ready_index = g_lens_io_index
             g_lens_ready_text = g_lens_io_result[0]
         } else if g_lens_io_mode == 2 {
-            // Background warm reads fill the resident minimap.
+            // One whole-file read fills that file's resident minimap.
             let index = g_lens_io_index
+            lens_mini_offer(index, g_lens_io_result[0])
+            g_lens_source_done[index] = true
             let size = os_file_size(os_entry_path(index))
-            let text = lens_chunk_text(g_lens_io_result[0], g_lens_io_offset + (g_lens_io_result[0].len as i64) < size)
-            let block = lens_block_register(index, g_lens_io_offset, text)
-            if size > LENS_PREVIEW_BYTES {
-                lens_mini_offer_block(index, text, block)
-            } else {
-                lens_mini_offer(index, text)
+            if size > 0 {
+                g_lens_source_next[index] = size
             }
         } else if g_lens_io_mode == 0 {
-            if g_lens_io_offset == 0 && os_file_size(os_entry_path(g_lens_io_index)) <= LENS_PREVIEW_BYTES {
+            if g_lens_io_offset == 0 {
                 lens_mini_offer(g_lens_io_index, g_lens_io_result[0])
             }
             let victim: i32 = 0
@@ -103,22 +101,13 @@ fn lens_preview_stream(index: i32, allow_read: bool) str {
     if g_lens_preview_slot >= 0 || allow_read == false || g_lens_io_running {
         return text
     }
-    let offset: i64 = 0
-    if index == g_lens_selected {
-        offset = g_lens_page
-    }
-    lens_io_start(index, offset, LENS_PREVIEW_BYTES, 0)
+    let path = os_entry_path(index)
+    lens_io_start(index, 0 as i64, lens_source_bytes(path), 0)
     g_lens_preview_read = true
     return ""
 }
 
 fn lens_request_near(index: i32) {
-    if os_file_size(os_entry_path(index)) > LENS_EDIT_BYTES {
-        if g_lens_large_index != index {
-            lens_open(index)
-        }
-        return
-    }
     if g_lens_editing && g_workspace_active == index || g_lens_reading && g_lens_selected == index {
         return
     }
@@ -136,20 +125,18 @@ fn lens_request_near(index: i32) {
         return
     }
     if g_lens_io_running == false {
-        let size = os_file_size(os_entry_path(index))
-        if size < 0 {
+        let path = os_entry_path(index)
+        if os_file_size(path) < 0 {
             return
         }
-        let bytes = LENS_EDIT_BYTES
-        if size > LENS_EDIT_BYTES {
-            bytes = LENS_PAGE_BYTES
-        }
-        lens_io_start(index, 0 as i64, bytes, 1)
+        lens_io_start(index, 0 as i64, lens_source_bytes(path), 1)
     }
 }
 
 fn lens_warm_cache(moving: bool) {
-    if moving || g_lens_io_running {
+    // Reading one off-screen file and tessellating its bars blocks the frame
+    // the user is using to read. Resume once no leaf is at glyph size.
+    if moving || g_lens_io_running || g_lens_close_view {
         return
     }
     for attempt in 0 to g_workspace_count {
@@ -159,7 +146,7 @@ fn lens_warm_cache(moving: bool) {
         let index = g_lens_warm_cursor
         g_lens_warm_cursor = g_lens_warm_cursor + 1
         if g_lens_files[index] != 0 && !g_lens_source_done[index] {
-            lens_io_start(index, g_lens_source_next[index], LENS_PREVIEW_BYTES, 2)
+            lens_io_start(index, 0 as i64, lens_source_bytes(os_entry_path(index)), 2)
             break
         }
     }

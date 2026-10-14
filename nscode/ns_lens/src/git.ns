@@ -124,12 +124,13 @@ fn lens_diff_source_row(row: i32) i32 {
 
 fn lens_git_load_base(path: str, revision: str) bool {
     let hash = os_text_hash(revision)
-    let file = lens_cache_path(path, "base")
-    g_lens_git_base = lens_cache_get(file, hash, LENS_EDIT_BYTES)
+    let file = lens_cache_path(path, "base2")
+    let budget = lens_source_bytes(path)
+    g_lens_git_base = lens_cache_get(file, hash, budget)
     if g_lens_cache_found {
         return true
     }
-    g_lens_git_base = os_git_base(path, LENS_EDIT_BYTES)
+    g_lens_git_base = os_git_base(path, budget)
     if os_git_status() < 0 {
         g_lens_message = "Git base is unavailable or exceeds the detail budget"
         return false
@@ -180,10 +181,14 @@ fn lens_git_tick(moving: bool) {
         return
     }
     let hash = os_text_hash(g_lens_git_revision + os_text_hash(g_doc))
-    let file = lens_cache_path(path, "diff")
-    let patch = lens_cache_get(file, hash, LENS_EDIT_BYTES)
+    let file = lens_cache_path(path, "diff2")
+    let budget = g_doc.len + g_lens_git_base.len
+    if budget < g_doc.len {
+        budget = g_doc.len
+    }
+    let patch = lens_cache_get(file, hash, budget)
     if g_lens_cache_found == false {
-        patch = os_git_diff_text(g_lens_git_base, g_doc, LENS_EDIT_BYTES)
+        patch = os_git_diff_text(g_lens_git_base, g_doc, budget)
         if os_git_status() < 0 {
             return
         }

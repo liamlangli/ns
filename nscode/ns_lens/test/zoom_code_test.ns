@@ -1,0 +1,65 @@
+use std
+use os
+use task
+use ui
+use view
+use gpu
+
+fn finish_read() {
+    let deadline = os_time() + 5.0
+    loop g_lens_io_running && os_time() < deadline {
+        sleep(1)
+        lens_io_poll()
+    }
+    assert g_lens_io_running == false
+}
+
+fn main() {
+    let root = "/tmp/ns_lens_zoom_code"
+    os_make_dirs(root)
+    let line = "fn main() { print(1) }\n"
+    let text = ""
+    for n in 0 to 40 {
+        text = text + line
+    }
+    assert os_write_file_atomic(root + "/main.ns", text) != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    lens_rebuild()
+    let index = workspace_find("main.ns")
+    assert index >= 0
+    let v = view_create("zoom code", 1280, 800)
+    gpu_request_device(v)
+    let r = ui_renderer_create(v)
+    lens_io_start(index, 0 as i64, lens_source_bytes(os_entry_path(index)), 2)
+    finish_read()
+    lens_mini_update(r)
+    assert lens_mini_ready(index)
+    lens_code_flow(index, g_lens_source_lines[index])
+    let fit = g_lens_flow_fit
+    g_lens_distance = 800.0 * g_lens_code_world * fit / LENS_MAX_ZOOM
+    g_lens_target_distance = g_lens_distance
+    g_lens_center_x = g_lens_x[index] + g_lens_w[index] * 0.5
+    g_lens_center_y = g_lens_y[index] + g_lens_h[index] * 0.5
+    g_lens_target_x = g_lens_center_x
+    g_lens_target_y = g_lens_center_y
+    g_lens_tilt = 0.0
+    g_lens_last_time = os_time()
+    g_lens_screen_h = 800.0
+    g_mouse_x = 640.0
+    g_mouse_y = 382.0
+    ui_begin_frame(r)
+    render_lens(r, v, 1280.0, 800.0)
+    assert g_lens_preview_read
+    finish_read()
+    ui_begin_frame(r)
+    render_lens(r, v, 1280.0, 800.0)
+    assert g_lens_preview_slot >= 0
+    let verts = ui_rect_batch_vertex_count(r, g_lens_glyph_batch[g_lens_preview_slot])
+    assert verts > 0
+    ui_renderer_destroy(r)
+    view_close(v)
+    os_watch_stop()
+    print("zoom_code_test: passed\n")
+}

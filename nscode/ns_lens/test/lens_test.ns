@@ -7,6 +7,17 @@ fn check_gray(c: u32) {
 }
 
 fn main() {
+    let overview = lens_detail_of(0, 0, 2, 8)
+    assert overview.code == false
+    assert overview.ready == 2 && overview.total == 8
+    assert lens_detail_text(overview) == "minimap 2/8"
+    assert lens_detail_fraction(overview) == 0.25
+    let reading = lens_detail_of(1, 4, 8, 8)
+    assert reading.code
+    assert lens_detail_text(reading) == "code 1/4"
+    assert lens_detail_fraction(reading) == 0.25
+    let empty = lens_detail_of(0, 0, 0, 0)
+    assert lens_detail_fraction(empty) == 0.0
     assert lens_text_lines("") == 1
     assert lens_text_lines("a\nb\n") == 3
     check_gray(col_editor_bg())
@@ -198,15 +209,14 @@ fn main() {
     assert g_lens_preview_builds == builds + 1
     let preview_slot = g_lens_preview_slot
     assert lens_preview_line(preview_slot, 0) != ""
-    assert preview.len > 0 && preview.len <= LENS_PREVIEW_BYTES
+    assert preview.len > 0
     assert lens_preview(index, false) == preview
     assert g_lens_preview_read == false
     assert g_lens_preview_builds == builds + 1
     g_lens_selected = index
     g_lens_page = LENS_PAGE_BYTES as i64
     let second = lens_preview(index, true)
-    assert second != preview
-    assert second.len <= LENS_PREVIEW_BYTES
+    assert second == preview
     lens_clear_cache()
     assert lens_preview(index, false) == ""
     assert lens_preview_line(preview_slot, 0) == ""
@@ -247,17 +257,18 @@ fn main() {
     let large = workspace_find("large.ns")
     assert large >= 0
     assert lens_open(large)
-    assert !g_lens_reading
-    assert g_lens_large_index == large
-    assert g_lens_editing == false
-    assert g_workspace_active == -1
+    assert g_lens_reading == false
+    assert g_lens_large_index == -1
+    assert g_lens_editing
+    assert g_workspace_active == large
+    assert g_doc.len == big.len
     for slot in 0 to LENS_CACHE_SLOTS {
         g_lens_cache_id[slot] = 100 + slot
         g_lens_cache_age[slot] = slot + 1
     }
     lens_build_preview(0, "stale line")
     let text = lens_preview(large, true)
-    assert text.len == LENS_PREVIEW_BYTES
+    assert text.len == big.len
     assert g_lens_cache_id[0] == large
     assert lens_preview_line(0, 0) != "stale line"
     g_lens_cache_text[0] = "one"

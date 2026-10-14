@@ -249,9 +249,6 @@ fn workspace_open(index: i32) bool {
         return false
     }
 
-    if g_workspace_streaming && os_file_size(os_entry_path(index)) > 262144 {
-        return false
-    }
     workspace_store_active()
     workspace_add_tab(index)
     if g_workspace_opened[index] == 0 {
@@ -414,9 +411,6 @@ fn workspace_refresh_from_disk() {
             let text = g_refresh_tab_text[pos]
             let original = g_refresh_tab_original[pos]
             if g_refresh_tab_dirty[pos] == 0 {
-                if g_workspace_streaming && os_file_size(os_entry_path(index)) > 262144 {
-                    continue
-                }
                 text = os_read_file(os_entry_path(index))
                 original = text
             }

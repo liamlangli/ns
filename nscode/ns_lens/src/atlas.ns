@@ -128,13 +128,15 @@ fn lens_draw_streamed_code(r: ref ui_renderer, index: i32, x: f64, y: f64, zoom:
                     break
                 }
             }
+            let drew = false
             if slot >= 0 {
-                lens_draw_code_batch(r, slot, index, x, y, zoom * fit, squash, view)
-            } else {
+                drew = lens_draw_code_batch(r, slot, index, x, y, zoom * fit, squash, view)
+            }
+            if drew == false {
                 ui_rect_batch_draw_range(r, g_lens_mini_batch[index], g_lens_block_mini_first[id], g_lens_block_mini_count[id], x, y, zoom * fit, zoom * fit * squash)
-                if allow_read && !g_lens_io_running {
-                    lens_io_start(index, block.offset, block.bytes, 0)
-                }
+            }
+            if slot < 0 && allow_read && g_lens_io_running == false {
+                lens_io_start(index, block.offset, block.bytes, 0)
             }
         }
         id = block.next

@@ -50,10 +50,11 @@ snaps back to orthographic.
   Cmd/Ctrl+S. Filenames appear once a leaf is wide enough.
 - Right-clicking a leaf focuses it at a readable code size, framing its top. Zoom
   stops once code reaches 2.5 times its editor size.
+- The status bar progress bar is the precision still loading: minimap bars across
+  the project, or code for the leaves in view once the camera is that close.
 - Without a path argument the map opens the shell's working directory.
-- Files over 256 KiB stream through bounded chunks to EOF. Their complete
-  minimap stays resident; visible code chunks share the preview LRU. Large files
-  remain read-only, with no first-page replacement when zooming in.
+- Every source file is read, opened and shown in full. Its minimap covers every
+  line, and zooming in shows that same text.
 - Save edits before switching the Lens editor to another file.
 
 The application runs as a compiled native `exec` target. File metrics are streamed through a bounded 64 KiB buffer during the initial scan. Layout and source caches live under the opened
@@ -62,10 +63,11 @@ Layout reuse checks ordered paths, line counts, code scale and ancestry. Line/co
 cache read first hashes the entire local file with streamed SHA-256, then
 checks the source digest and cached payload digest; same-size changes and
 corruption rebuild the record. Writes are atomic and validate the source again
-after reading. A single background worker walks every source to EOF in 256 KiB chunks
-and streams requested visible code blocks. Dragging defers new detail loads;
-preview line strings are split once on cache insertion. Camera motion keeps
-16 ms frame requests, while idle file watching uses 100 ms polling.
+after reading. A single background worker reads one whole source file at a time
+for its minimap. Dragging defers new detail loads;
+preview line strings are split once on cache insertion. Camera motion, and a
+view close enough to show glyphs, keep 16 ms frame requests. An idle overview
+polls files every 100 ms.
 
 In the nearest LOD, changes compare HEAD against the current edit buffer,
 including staged, unstaged and unsaved changes. Added lines have green
@@ -75,23 +77,23 @@ navigation retain their actual document positions. Edits refresh the diff after
 200 ms of quiet; HEAD is checked every two seconds. Git baseline and patches
 are cached against HEAD and buffer hashes. Git must be on PATH (macOS/Linux);
 untracked files are entirely added. Entirely deleted files do not yet receive
-their own treemap leaf. Large streamed files currently omit inline changes.
+their own treemap leaf.
 
 
-The preview LRU has 48 slots of at most 256 KiB (12 MiB source payload), with at
-most one preview disk read per frame and up to 48 visible preview chunks. Offscreen
-cards do not request detailed glyph chunks; background minimap warming scans every file. Lens keeps one owned edit buffer and rejects edits
-that would grow it past 256 KiB; its existing undo history has 64 snapshots
-(up to 16 MiB source payload). These are payload budgets, not a total RSS claim:
+The preview LRU has 48 slots, each holding one whole file, with at most one
+preview disk read per frame and up to 48 visible previews. Every leaf in the
+viewport switches from minimap bars to glyphs at the same camera height.
+Offscreen cards do not request detailed glyph chunks. A close view pauses
+background minimap warming until the camera pulls back. Lens keeps one owned
+edit buffer. Its undo history has 64 snapshots. These are not a total RSS claim:
 UI resources, metadata, cached preview lines and one pending worker result also
 consume memory.
 Filesystem changes invalidate the layout and preview cache.
 
 Current limits: the shared filesystem API snapshots at most 4096 entries;
 Lens displays a warning at that limit. Source hashing and range loading run on the worker. Git commands and initial
-metadata/layout work currently run on the main thread. The scene is a perspective atlas with billboard cards. Large files support complete streamed viewing and remain read-only.
-Chunk boundaries preserve UTF-8 characters; syntax tokens crossing a chunk
-boundary may use the next chunk’s highlighting. Syntax highlighting uses NSCode's existing supported language rules.
+metadata/layout work currently run on the main thread. The scene is a perspective atlas with billboard cards.
+Syntax highlighting uses NSCode's existing supported language rules.
 
 Validation:
 
@@ -100,9 +102,8 @@ bin/ns test nscode/ns_lens
 bin/ns lint nscode/ns_lens
 ```
 
-Text and minimap still switch with code size. On a tilted plane, lines the
-perspective compresses below a few screen pixels keep the minimap bars
-behind the glyphs, so the far edge does not go blank. Below readable text size the
+Each leaf shows either glyphs or its minimap. Code replaces the bars for that
+file; the bars return only when this frame did not draw code. Below readable text size the
 same resident minimap keeps rendering at every distance: there is no hidden
 state or coarse/fine minimap switch. Minimap bars cover every source line and share the glyphs' line spacing,
 column breaks, gutter, origin and camera scale. There is no row sampling or
