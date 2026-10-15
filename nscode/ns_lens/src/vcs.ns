@@ -594,6 +594,7 @@ fn lens_patch_tick(moving: bool) {
 
 // The patch a leaf shows, "" when its file is unchanged.
 fn lens_leaf_patch(i: i32) str {
+    if g_lens_view_mode == LENS_MODE_REF { return "" }
     let path = lens_relative_path(os_entry_path(i))
     if has(g_lens_patches, path) {
         return g_lens_patches[path]

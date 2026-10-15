@@ -1,0 +1,41 @@
+// Cubic Bezier connectors share the code's flat plane and camera transform.
+use ui
+
+fn lens_ref_bezier(a: f64, b: f64, c: f64, d: f64, t: f64) f64 {
+    let u = 1.0 - t
+    return u * u * u * a + 3.0 * u * u * t * b + 3.0 * u * t * t * c + t * t * t * d
+}
+
+// Endpoint tangents are horizontal. Screen-sized sampling keeps even a close
+// zoom smooth; the renderer joins the samples as one antialiased stroke.
+fn lens_ref_curve_points(sx: f64, sy: f64, tx: f64, ty: f64, direction: f64, steps: i32) [f64] {
+    let span = (tx - sx) * direction
+    let reach = clamp(span * 0.5, 40.0, 400.0)
+    let points = [f64]((steps + 1) * 2)
+    for p in 0 to steps + 1 {
+        let t = (p as f64) / (steps as f64)
+        points[p * 2] = lens_ref_bezier(sx, sx + direction * reach, tx - direction * reach, tx, t)
+        points[p * 2 + 1] = lens_ref_bezier(sy, sy, ty, ty, t)
+    }
+    return points
+}
+
+fn lens_ref_draw_curve(r: ref ui_renderer, edge: lens_ref_edge, w: f64, top: f64, body_h: f64, ink: u32) {
+    let source = lens_project_leaf(edge.source, w, top, body_h)
+    let target = lens_project_leaf(edge.target, w, top, body_h)
+    let sx = source.x + source.w - 1.0
+    let tx = target.x + 1.0
+    let direction: f64 = 1.0
+    if target.x + target.w * 0.5 < source.x + source.w * 0.5 {
+        sx = source.x + 1.0
+        tx = target.x + target.w - 1.0
+        direction = -1.0
+    }
+    let sy = source.y + source.h * 0.5
+    let ty = target.y + target.h * 0.5
+    let dx = tx - sx
+    let dy = ty - sy
+    let steps = clamp_i((sqrt(dx * dx + dy * dy) / 8.0) as i32, 24, 160)
+    let points = lens_ref_curve_points(sx, sy, tx, ty, direction, steps)
+    ui_stroke_polyline(r, points, steps + 1, 1.0, ink, 1.0)
+}

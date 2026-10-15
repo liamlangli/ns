@@ -109,7 +109,7 @@ fn lens_mini_ready(index: i32) bool {
 // True when the file's leaf now flows its lines differently from its batch.
 fn lens_mini_stale(index: i32) bool {
     lens_code_flow(index, g_lens_mini_lines[index])
-    return g_lens_flow_rows != g_lens_mini_rows[index] || g_lens_flow_column_pitch != g_lens_mini_column_pitch[index] || g_lens_flow_line_pitch != g_lens_mini_line_pitch[index]
+    return g_lens_flow_fit != g_lens_mini_fit[index] || g_lens_flow_rows != g_lens_mini_rows[index] || g_lens_flow_column_pitch != g_lens_mini_column_pitch[index] || g_lens_flow_line_pitch != g_lens_mini_line_pitch[index]
 }
 
 fn lens_mini_update(r: ref ui_renderer) {

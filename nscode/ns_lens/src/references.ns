@@ -1,0 +1,562 @@
+// File reference graph. Resolve explicit modules and unambiguous Nano Script
+// declarations; retain source byte ranges so links follow the code's wrap grid.
+use std
+use os
+use ui
+use view
+
+lit LENS_MODE_REF = 3
+lit LENS_REF_EDGES = 32768
+lit LENS_REF_GAP = 72.0
+lit LENS_REF_COLUMN_GAP = 240.0
+lit LENS_REF_SPLIT_COUNT = 6
+let g_lens_ref_column_count = [i32](33)
+let g_lens_ref_root = ""
+let g_lens_ref_depth: i32 = 1
+let g_lens_ref_level = [i32](4096)
+let g_lens_ref_column = [i32](4096)
+let g_lens_ref_edges = [lens_ref_edge](32768)
+let g_lens_ref_count: i32 = 0
+let g_lens_ref_symbols = [str: i32](65536)
+let g_lens_ref_modules = [str: i32](8192)
+let g_lens_ref_drag: i32 = -1
+let g_lens_ref_press_x: f64 = 0.0
+let g_lens_ref_press_y: f64 = 0.0
+let g_lens_ref_doc_version: i32 = -1
+let g_lens_ref_doc_time: f64 = 0.0
+let g_lens_ref_truncated = false
+
+struct lens_ref_edge {
+    source: i32,
+    target: i32,
+    row: i32,
+    col: i32,
+    length: i32
+}
+
+struct lens_ref_token {
+    word: str,
+    row: i32,
+    col: i32
+}
+
+struct lens_ref_tokens {
+    words: [str],
+    rows: [i32],
+    cols: [i32],
+    count: i32
+}
+
+// Only identifiers and punctuation are needed. Comments and literals never
+// create dependencies, including multiline comments and escaped quotes.
+fn lens_ref_scan(text: str) lens_ref_tokens {
+    let count: i32 = 0
+    let words = [str](0)
+    let rows = [i32](0)
+    let cols = [i32](0)
+    for pass in 0 to 2 {
+        if pass == 1 {
+            words = [str](count)
+            rows = [i32](count)
+            cols = [i32](count)
+        }
+        count = 0
+        let p: i32 = 0
+        let row: i32 = 0
+        let col: i32 = 0
+        loop p < text.len {
+            let b = lens_byte(text, p)
+            let end = p + 1
+            let keep = false
+            if b == 47 && lens_byte(text, p + 1) == 47 {
+                end = lens_line_end(text, p)
+            } else if b == 47 && lens_byte(text, p + 1) == 42 {
+                end = p + 2
+                loop end < text.len && !(lens_byte(text, end - 1) == 42 && lens_byte(text, end) == 47) { end = end + 1 }
+                end = clamp_i(end + 1, p + 1, text.len)
+            } else if b == 34 || b == 39 || b == 96 {
+                loop end < text.len && lens_byte(text, end) != b {
+                    if lens_byte(text, end) == 92 { end = end + 1 }
+                    end = end + 1
+                }
+                end = clamp_i(end + 1, p + 1, text.len)
+            } else if is_word_byte(b) {
+                loop end < text.len && is_word_byte(lens_byte(text, end)) { end = end + 1 }
+                keep = true
+            } else if !lens_is_blank(b) && b != 10 {
+                keep = true
+            }
+            if keep {
+                if pass == 1 {
+                    words[count] = substr(text, p, end - p)
+                    rows[count] = row
+                    cols[count] = col
+                }
+                count = count + 1
+            }
+            for j in p to end {
+                if lens_byte(text, j) == 10 {
+                    row = row + 1
+                    col = 0
+                } else { col = col + 1 }
+            }
+            p = end
+        }
+    }
+    return lens_ref_tokens(words, rows, cols, count)
+}
+
+fn lens_ref_declaration(word: str) bool {
+    return word == "fn" || word == "struct" || word == "enum" || word == "type" || word == "let" || word == "lit"
+}
+
+fn lens_ref_register(table: [str: i32], word: str, file: i32) {
+    if !has(table, word) { table[word] = file } else if table[word] != file { table[word] = -2 }
+}
+
+fn lens_ref_index(file: i32, tokens: lens_ref_tokens) {
+    let braces: i32 = 0
+    for i in 0 to tokens.count {
+        let word = tokens.words[i]
+        if word == "{" { braces = braces + 1 }
+        if word == "}" { braces = braces - 1 }
+        if i + 1 < tokens.count {
+            if word == "mod" { lens_ref_register(g_lens_ref_modules, tokens.words[i + 1], file) }
+            if braces == 0 && lens_ref_declaration(word) {
+                lens_ref_register(g_lens_ref_symbols, tokens.words[i + 1], file)
+            }
+        }
+    }
+}
+
+fn lens_ref_add(source: i32, target: i32, token: lens_ref_token) {
+    if source == target || target < 0 { return }
+    if g_lens_ref_count >= LENS_REF_EDGES {
+        g_lens_ref_truncated = true
+        return
+    }
+    g_lens_ref_edges[g_lens_ref_count] = lens_ref_edge(source, target, token.row, token.col, token.word.len)
+    g_lens_ref_count = g_lens_ref_count + 1
+}
+
+fn lens_ref_resolve(file: i32, tokens: lens_ref_tokens, text: str) {
+    let first = [i32](lens_text_lines(text))
+    let offset: i32 = 0
+    let row: i32 = 0
+    let wrap = lens_wrap_cols(file)
+    for line in 0 to first.len {
+        first[line] = row
+        let end = lens_line_end(text, offset)
+        row = row + lens_wrap_rows(end - offset, wrap)
+        offset = end + 1
+    }
+    g_lens_source_rows[file] = row
+    // Conservatively exclude locally declared names and named parameters.
+    let locals = [str: i32](tokens.count + 1)
+    let braces: i32 = 0
+    for i in 0 to tokens.count - 1 {
+        let word = tokens.words[i]
+        if word == "{" { braces = braces + 1 }
+        if word == "}" { braces = braces - 1 }
+        if braces > 0 && (word == "let" || word == "lit" || word == "for") { locals[tokens.words[i + 1]] = 1 }
+        if tokens.words[i + 1] == ":" { locals[word] = 1 }
+    }
+    let referenced = set[i32](g_workspace_count + 1)
+    let previous = ""
+    for i in 0 to tokens.count {
+        let source = lens_ref_token(tokens.words[i], tokens.rows[i], tokens.cols[i])
+        let token = lens_ref_token(source.word, first[source.row] + source.col / wrap, source.col % wrap)
+        let word = token.word
+        let target: i32 = -1
+        if previous == "use" && has(g_lens_ref_modules, word) {
+            target = g_lens_ref_modules[word]
+        } else if !lens_ref_declaration(previous) && previous != "mod" && previous != "use" && previous != "." && !has(locals, word) && has(g_lens_ref_symbols, word) {
+            target = g_lens_ref_symbols[word]
+        }
+        // One representative use site per file pair keeps deep graphs legible.
+        if target >= 0 && target != file && insert(referenced, target) {
+            lens_ref_add(file, target, token)
+        }
+        previous = word
+    }
+}
+
+fn lens_ref_source(i: i32) str {
+    if g_lens_editing && g_workspace_active == i { return g_doc }
+    if g_workspace_opened[i] != 0 { return g_workspace_buffers[i] }
+    return os_read_file(os_entry_path(i))
+}
+
+fn lens_ref_is_ns(name: str) bool {
+    return name.len >= 3 && substr(name, name.len - 3, 3) == ".ns"
+}
+
+fn lens_ref_tick() {
+    if g_lens_ref_doc_version != g_doc_version {
+        g_lens_ref_doc_version = g_doc_version
+        g_lens_ref_doc_time = os_time() + 0.3
+    }
+    if g_lens_ref_doc_time > 0.0 && os_time() >= g_lens_ref_doc_time {
+        g_lens_ref_doc_time = 0.0
+        lens_ref_build()
+    }
+}
+
+fn lens_ref_build() {
+    g_lens_ref_symbols = [str: i32](65536)
+    g_lens_ref_modules = [str: i32](8192)
+    g_lens_ref_count = 0
+    g_lens_ref_truncated = false
+    for i in 0 to g_workspace_count {
+        let name = os_entry_name(i)
+        if g_lens_files[i] == 1 && lens_ref_is_ns(name) {
+            lens_ref_register(g_lens_ref_modules, substr(name, 0, name.len - 3), i)
+            lens_ref_index(i, lens_ref_scan(lens_ref_source(i)))
+        }
+    }
+    for i in 0 to g_workspace_count {
+        if g_lens_files[i] == 1 && lens_ref_is_ns(os_entry_name(i)) {
+            let text = lens_ref_source(i)
+            lens_ref_resolve(i, lens_ref_scan(text), text)
+        }
+    }
+    g_lens_ref_doc_version = g_doc_version
+    lens_ref_layout(true)
+}
+
+// Expand dependencies and callers independently. A file reached in both
+// directions stays on the dependency side, so cycles never duplicate cells.
+fn lens_ref_levels(root: i32) {
+    let outgoing = [i32](4096)
+    let incoming = [i32](4096)
+    for i in 0 to g_workspace_count {
+        g_lens_ref_level[i] = -1
+        g_lens_ref_column[i] = 0
+        outgoing[i] = -1
+        incoming[i] = -1
+    }
+    if root < 0 || root >= g_workspace_count { return }
+    outgoing[root] = 0
+    incoming[root] = 0
+    for depth in 0 to g_lens_ref_depth {
+        for e in 0 to g_lens_ref_count {
+            let edge = g_lens_ref_edges[e]
+            if outgoing[edge.source] == depth && outgoing[edge.target] < 0 { outgoing[edge.target] = depth + 1 }
+            if incoming[edge.target] == depth && incoming[edge.source] < 0 { incoming[edge.source] = depth + 1 }
+        }
+    }
+    for i in 0 to g_workspace_count {
+        if outgoing[i] >= 0 {
+            g_lens_ref_level[i] = outgoing[i]
+            g_lens_ref_column[i] = outgoing[i]
+        } else if incoming[i] >= 0 {
+            g_lens_ref_level[i] = incoming[i]
+            g_lens_ref_column[i] = -incoming[i]
+        }
+    }
+}
+
+fn lens_ref_layout(reset: bool) {
+    let root = workspace_find_path(g_lens_ref_root)
+    if root < 0 || root >= g_workspace_count || g_lens_files[root] == 0 {
+        root = g_lens_selected
+        if root >= g_workspace_count { root = -1 }
+        if root < 0 || root >= g_workspace_count || g_lens_files[root] == 0 {
+            root = -1
+            for i in 0 to g_workspace_count { if g_lens_files[i] != 0 && root < 0 { root = i } }
+        }
+        g_lens_ref_root = ""
+        if root >= 0 { g_lens_ref_root = os_entry_path(root) }
+    }
+    if reset && root >= 0 {
+        g_lens_selected = root
+        g_lens_selected_path = os_entry_path(root)
+    }
+    let old = [i32](4096)
+    let old_column = [i32](4096)
+    for i in 0 to g_workspace_count {
+        old[i] = g_lens_ref_level[i]
+        old_column[i] = g_lens_ref_column[i]
+    }
+    let old_x = [f64](33)
+    let old_lanes = [i32](33)
+    for column in -16 to 17 {
+        old_x[column + 16] = lens_ref_column_x(column)
+        old_lanes[column + 16] = lens_ref_column_lanes(column)
+    }
+    lens_ref_levels(root)
+    lens_ref_columns_sync()
+    g_lens_code_world = 0.5
+    g_lens_file_count = 0
+    let placed = [bool](4096)
+    for i in 0 to g_workspace_count {
+        if g_lens_ref_level[i] >= 0 {
+            g_lens_file_count = g_lens_file_count + 1
+            g_lens_w[i] = 460.0
+            g_lens_h[i] = 340.0
+            if i == root {
+                g_lens_w[i] = 600.0
+                g_lens_h[i] = 450.0
+            }
+            let column = g_lens_ref_column[i]
+            placed[i] = !reset && old[i] >= 0 && old_column[i] == column && old_x[column + 16] == lens_ref_column_x(column) && old_lanes[column + 16] == lens_ref_column_lanes(column)
+        }
+    }
+    if root >= 0 {
+        if reset {
+            g_lens_x[root] = -300.0
+            g_lens_y[root] = -225.0
+        }
+        placed[root] = true
+    }
+    for depth in 1 to g_lens_ref_depth + 1 {
+        for i in 0 to g_workspace_count {
+            if g_lens_ref_level[i] == depth && !placed[i] {
+                lens_ref_place(i, root, placed)
+                placed[i] = true
+            }
+        }
+    }
+    lens_leaf_fits()
+    if reset {
+        lens_ref_frame()
+    }
+    if g_lens_ref_truncated { g_lens_message = "Reference limit reached: 32768 sites" }
+}
+
+// Each logical depth owns one column, or two staggered columns for a busy
+// layer. Wider groups push subsequent depths outward on both sides.
+fn lens_ref_columns_sync() {
+    for i in 0 to 33 { g_lens_ref_column_count[i] = 0 }
+    for i in 0 to g_workspace_count {
+        if g_lens_ref_level[i] >= 0 {
+            let slot = g_lens_ref_column[i] + 16
+            g_lens_ref_column_count[slot] = g_lens_ref_column_count[slot] + 1
+        }
+    }
+}
+
+fn lens_ref_column_lanes(col: i32) i32 {
+    if g_lens_ref_column_count[col + 16] > LENS_REF_SPLIT_COUNT { return 2 }
+    return 1
+}
+
+// X of the near column; the second lane extends away from the source.
+fn lens_ref_column_x(col: i32) f64 {
+    if col == 0 { return -300.0 }
+    let offset = 300.0 + LENS_REF_COLUMN_GAP
+    let distance = col
+    let direction: i32 = 1
+    if col < 0 {
+        distance = -col
+        direction = -1
+    }
+    for depth in 1 to distance {
+        let lanes = lens_ref_column_lanes(depth * direction)
+        offset = offset + (lanes as f64) * (460.0 + LENS_REF_COLUMN_GAP)
+    }
+    if col > 0 { return offset }
+    return -offset - 460.0
+}
+
+fn lens_ref_space(i: i32, x: f64, y: f64, placed: [bool]) bool {
+    for j in 0 to g_workspace_count {
+        if j != i && placed[j] && x < g_lens_x[j] + g_lens_w[j] + LENS_REF_GAP - 0.001 && x + g_lens_w[i] + LENS_REF_GAP > g_lens_x[j] + 0.001 && y < g_lens_y[j] + g_lens_h[j] + LENS_REF_GAP - 0.001 && y + g_lens_h[i] + LENS_REF_GAP > g_lens_y[j] + 0.001 { return false }
+    }
+    return true
+}
+
+fn lens_ref_place(i: i32, root: i32, placed: [bool]) {
+    let column = g_lens_ref_column[i]
+    let count = g_lens_ref_column_count[column + 16]
+    let ordinal: i32 = 0
+    for j in 0 to i {
+        if g_lens_ref_level[j] >= 0 && g_lens_ref_column[j] == column { ordinal = ordinal + 1 }
+    }
+    let lanes = lens_ref_column_lanes(column)
+    let lane = ordinal % lanes
+    let row = ordinal / lanes
+    let direction: f64 = 1.0
+    if column < 0 { direction = -1.0 }
+    let x = g_lens_x[root] + 300.0 + lens_ref_column_x(column) + direction * (lane as f64) * (460.0 + LENS_REF_COLUMN_GAP)
+    let pitch = 340.0 + LENS_REF_GAP
+    let total = (((count - 1) / lanes) as f64) * pitch + 340.0
+    if lanes == 2 && count % 2 == 0 { total = total + pitch * 0.5 }
+    let y = g_lens_y[root] + 225.0 - total * 0.5 + (row as f64) * pitch + (lane as f64) * pitch * 0.5
+    // Keep manual placements when adding depth; find a free slot for new cells.
+    loop !lens_ref_space(i, x, y, placed) { y = y + 340.0 + LENS_REF_GAP }
+    g_lens_x[i] = x
+    g_lens_y[i] = y
+}
+
+// Slide along a neighbour's padded edge instead of dragging through it.
+fn lens_ref_move(i: i32, dx: f64, dy: f64) {
+    let gap: f64 = 24.0
+    let x = g_lens_x[i]
+    let y = g_lens_y[i]
+    let nx = x + dx
+    for j in 0 to g_workspace_count {
+        if j != i && g_lens_ref_level[j] >= 0 && y < g_lens_y[j] + g_lens_h[j] + gap && y + g_lens_h[i] + gap > g_lens_y[j] {
+            if dx > 0.0 && x + g_lens_w[i] <= g_lens_x[j] && nx + g_lens_w[i] + gap > g_lens_x[j] { nx = g_lens_x[j] - g_lens_w[i] - gap }
+            if dx < 0.0 && x >= g_lens_x[j] + g_lens_w[j] && nx < g_lens_x[j] + g_lens_w[j] + gap { nx = g_lens_x[j] + g_lens_w[j] + gap }
+        }
+    }
+    let ny = y + dy
+    for j in 0 to g_workspace_count {
+        if j != i && g_lens_ref_level[j] >= 0 && nx < g_lens_x[j] + g_lens_w[j] + gap && nx + g_lens_w[i] + gap > g_lens_x[j] {
+            if dy > 0.0 && y + g_lens_h[i] <= g_lens_y[j] && ny + g_lens_h[i] + gap > g_lens_y[j] { ny = g_lens_y[j] - g_lens_h[i] - gap }
+            if dy < 0.0 && y >= g_lens_y[j] + g_lens_h[j] && ny < g_lens_y[j] + g_lens_h[j] + gap { ny = g_lens_y[j] + g_lens_h[j] + gap }
+        }
+    }
+    if nx != x || ny != y {
+        g_lens_x[i] = nx
+        g_lens_y[i] = ny
+        }
+}
+
+fn lens_ref_bounds() lens_leaf_rect {
+    let x0: f64 = 1000000000.0
+    let y0: f64 = 1000000000.0
+    let x1: f64 = -1000000000.0
+    let y1: f64 = -1000000000.0
+    for i in 0 to g_workspace_count {
+        if g_lens_ref_level[i] >= 0 {
+            if g_lens_x[i] < x0 { x0 = g_lens_x[i] }
+            if g_lens_y[i] < y0 { y0 = g_lens_y[i] }
+            if g_lens_x[i] + g_lens_w[i] > x1 { x1 = g_lens_x[i] + g_lens_w[i] }
+            if g_lens_y[i] + g_lens_h[i] > y1 { y1 = g_lens_y[i] + g_lens_h[i] }
+        }
+    }
+    if x1 < x0 { return lens_leaf_rect(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0) }
+    return lens_leaf_rect(x0, y0, x1 - x0, y1 - y0, 0.0, 1.0, 1.0)
+}
+
+fn lens_ref_fit_distance(bounds: lens_leaf_rect) f64 {
+    let scale_x = (bounds.w + 160.0) / clamp(g_lens_view_w - 48.0, 100.0, 1000000.0)
+    let scale_y = (bounds.h + 160.0) / clamp(g_lens_body_h - LENS_TOP_BAR_H - STATUS_BAR_H - 48.0, 100.0, 1000000.0)
+    return clamp(clamp(scale_x, scale_y, 1000000000.0) * 800.0, 800.0, LENS_DISTANCE_LIMIT)
+}
+
+// Fit every visible cell, including files manually dragged far from the root.
+fn lens_ref_frame() {
+    let bounds = lens_ref_bounds()
+    if bounds.w <= 0.0 { return }
+    g_lens_target_x = bounds.x + bounds.w * 0.5
+    g_lens_target_y = bounds.y + bounds.h * 0.5
+    g_lens_target_distance = lens_ref_fit_distance(bounds)
+}
+
+fn lens_ref_visible(i: i32) bool {
+    return g_lens_view_mode != LENS_MODE_REF || g_lens_ref_level[i] >= 0
+}
+
+fn lens_ref_input(v: ref view, over_map: bool, w: f64, top: f64, body_h: f64) bool {
+    if v.mouse_pressed && over_map {
+        g_lens_ref_drag = -1
+        for i in 0 to g_workspace_count {
+            if g_lens_files[i] != 0 && lens_ref_visible(i) {
+                let leaf = lens_project_leaf(i, w, top, body_h)
+                if hit(v, leaf.x, leaf.y, leaf.w, leaf.h) { g_lens_ref_drag = i }
+            }
+        }
+        g_lens_ref_press_x = g_mouse_x
+        g_lens_ref_press_y = g_mouse_y
+    }
+    let captured = g_lens_ref_drag >= 0
+    if captured && v.mouse_down && !v.mouse_pressed {
+        let i = g_lens_ref_drag
+        lens_ref_move(i, (g_mouse_x - g_lens_drag_x) * g_lens_distance / 800.0, (g_mouse_y - g_lens_drag_y) * g_lens_distance / 800.0)
+    }
+    if v.mouse_released && captured {
+        let dx = g_mouse_x - g_lens_ref_press_x
+        let dy = g_mouse_y - g_lens_ref_press_y
+        if dx * dx + dy * dy < 16.0 {
+            let i = g_lens_ref_drag
+            g_lens_selected = i
+            g_lens_selected_path = os_entry_path(i)
+            if g_lens_ref_root != g_lens_selected_path {
+                g_lens_ref_root = g_lens_selected_path
+                lens_ref_layout(true)
+            }
+        }
+    }
+    if v.mouse_released || !v.mouse_down { g_lens_ref_drag = -1 }
+    return captured
+}
+
+// Float depth controls below the menu bar, anchored to the viewport's right.
+fn lens_ref_depth_box(w: f64) lens_leaf_rect {
+    return lens_leaf_rect(clamp(w - 168.0, 6.0, 100000.0), main_menu_h() + LENS_TOP_BAR_H + 8.0, 156.0, LENS_MODE_H + 12.0, 0.0, 1.0, 1.0)
+}
+
+fn lens_ref_depth_hit(v: ref view, w: f64) bool {
+    if g_lens_view_mode != LENS_MODE_REF { return false }
+    let box = lens_ref_depth_box(w)
+    return raw_hit(v, box.x, box.y, box.w, box.h)
+}
+
+fn lens_ref_controls(r: ref ui_renderer, v: ref view, w: f64) {
+    let box = lens_ref_depth_box(w)
+    let x = box.x + 6.0
+    let y = box.y + 6.0
+    ui_fill_round_rect(r, box.x, box.y, box.w, box.h, 4.0, col_bar(), 0.0)
+    for i in 0 to 2 {
+        let bx = x + (i as f64) * 28.0
+        let label = "<"
+        if i == 1 { label = ">" }
+        lens_draw_button(r, v, bx, y, 24.0, LENS_MODE_H, label, false)
+        if !lens_menu_blocks() && !g_lens_mode_open && v.mouse_pressed && raw_hit(v, bx, y, 24.0, LENS_MODE_H) {
+            let delta = -1
+            if i == 1 { delta = 1 }
+            let next = clamp_i(g_lens_ref_depth + delta, 0, 16)
+            if next != g_lens_ref_depth {
+                g_lens_ref_depth = next
+                lens_ref_layout(false)
+                lens_ref_frame()
+            }
+            v.mouse_pressed = false
+        }
+    }
+    draw_text_clipped(r, x + 62.0, y + 3.0, 82.0, LENS_MODE_H, "depth " + itos(g_lens_ref_depth), small_px(), col_text())
+    let bx = lens_mode_x() + LENS_MODE_W + 12.0
+    let focus_y = lens_mode_y()
+    lens_draw_button(r, v, bx, focus_y, 100.0, LENS_MODE_H, "Focus selected", false)
+    if !lens_menu_blocks() && !g_lens_mode_open && v.mouse_pressed && raw_hit(v, bx, focus_y, 100.0, LENS_MODE_H) && g_lens_selected >= 0 {
+        g_lens_ref_root = os_entry_path(g_lens_selected)
+        lens_ref_layout(true)
+        v.mouse_pressed = false
+    }
+}
+
+// Source row/byte-column -> the same newspaper column and wrap used by text.
+fn lens_ref_site(r: ref ui_renderer, edge: lens_ref_edge, w: f64, top: f64, body_h: f64) lens_leaf_rect {
+    let i = edge.source
+    let leaf = lens_project_leaf(i, w, top, body_h)
+    let wrap = lens_wrap_cols(i)
+    let row = edge.row
+    lens_code_flow(i, g_lens_source_rows[i])
+    let scale = lens_code_zoom(leaf) * g_lens_flow_fit
+    let cw = ui_mono_char_width(r, code_base_font_px(), CODE_FONT())
+    let x = leaf.x + 1.0 + ((row / g_lens_flow_rows) as f64) * g_lens_flow_column_pitch * scale + (code_base_gutter_w() + code_base_text_inset() + ((edge.col % wrap) as f64) * cw) * scale
+    let y = lens_code_y(leaf, g_lens_flow_fit) + (code_base_top_pad() + ((row % g_lens_flow_rows) as f64) * code_base_line_h()) * scale
+    return lens_leaf_rect(x, y, (clamp_i(edge.length, 1, wrap - edge.col % wrap) as f64) * cw * scale, code_base_line_h() * scale, leaf.distance, scale, scale)
+}
+
+fn lens_ref_links(r: ref ui_renderer, w: f64, top: f64, body_h: f64) {
+    let ink = (col_accent() & 0x00ffffffu) | 0x70000000u
+
+    for e in 0 to g_lens_ref_count {
+        let edge = g_lens_ref_edges[e]
+        if g_lens_ref_level[edge.source] >= 0 && g_lens_ref_level[edge.target] >= 0 && (g_lens_ref_level[edge.source] < g_lens_ref_depth || g_lens_ref_level[edge.target] < g_lens_ref_depth) {
+            let source = lens_project_leaf(edge.source, w, top, body_h)
+            let destination = lens_project_leaf(edge.target, w, top, body_h)
+            let visible_source = source.x + source.w >= g_lens_view_x0 && source.x <= g_lens_view_x1 && source.y + source.h >= g_lens_view_y0 && source.y <= g_lens_view_y1
+            let visible_target = destination.x + destination.w >= g_lens_view_x0 && destination.x <= g_lens_view_x1 && destination.y + destination.h >= g_lens_view_y0 && destination.y <= g_lens_view_y1
+            if visible_source || visible_target {
+                let site = lens_ref_site(r, edge, w, top, body_h)
+                lens_ref_draw_curve(r, edge, w, top, body_h, ink)
+                ui_stroke_round_rect(r, site.x - 2.0, site.y, site.w + 4.0, site.h, clamp(site.h * 0.2, 1.0, 4.0), 1.0, ink, 1.0)
+            }
+        }
+    }
+}

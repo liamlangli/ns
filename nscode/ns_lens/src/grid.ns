@@ -1,0 +1,39 @@
+// A world-anchored dot grid supplies motion cues in the empty map canvas.
+use ui
+
+// Power-of-two levels share every other dot. Fade the intervening dots as
+// their spacing approaches the next coarser level, avoiding density jumps.
+fn lens_grid_spacing(scale: f64, width: f64, height: f64) f64 {
+    let step: f64 = 64.0
+    let minimum = clamp(clamp(width / 128.0, height / 96.0, 1000000.0), 24.0, 1000000.0)
+    let zoom = clamp(scale, 0.0000001, 1000000000.0)
+    loop step * zoom < minimum { step = step * 2.0 }
+    loop step * zoom >= minimum * 2.0 { step = step * 0.5 }
+    return step
+}
+
+fn lens_draw_grid(r: ref ui_renderer, w: f64, top: f64, body_h: f64) {
+    let scale = 800.0 / clamp(g_lens_distance, 1.0, LENS_DISTANCE_LIMIT)
+    let width = g_lens_view_x1 - g_lens_view_x0
+    let height = g_lens_view_y1 - g_lens_view_y0
+    let step = lens_grid_spacing(scale, width, height)
+    let pitch = step * scale
+    let minimum = clamp(clamp(width / 128.0, height / 96.0, 1000000.0), 24.0, 1000000.0)
+    let minor_alpha = (64.0 * clamp((pitch - minimum) / minimum, 0.0, 1.0)) as u32
+    let rgb = col_muted() & 0x00ffffffu
+    let ox = w * 0.5 - g_lens_center_x * scale
+    let oy = top + body_h * 0.5 - g_lens_center_y * scale
+    let c0 = lens_floor_i((g_lens_view_x0 - ox) / pitch)
+    let c1 = lens_ceil_i((g_lens_view_x1 - ox) / pitch)
+    let r0 = lens_floor_i((g_lens_view_y0 - oy) / pitch)
+    let r1 = lens_ceil_i((g_lens_view_y1 - oy) / pitch)
+    for row in r0 to r1 + 1 {
+        for col in c0 to c1 + 1 {
+            let alpha = minor_alpha
+            if row % 2 == 0 && col % 2 == 0 { alpha = 64u }
+            if alpha > 0u {
+                ui_fill_circle(r, ox + (col as f64) * pitch, oy + (row as f64) * pitch, 0.9, rgb | (alpha << 24), 0.5)
+            }
+        }
+    }
+}

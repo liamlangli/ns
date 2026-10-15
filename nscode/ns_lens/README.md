@@ -68,6 +68,36 @@ snaps back to orthographic.
   already knows). **change** shows files Git reports as staged, unstaged, or
   untracked in the opened folder. **full** shows every scanned file. A file
   that is not text is a name tile; a deleted file has no leaf.
+- **ref**, immediately below **code**, shows the selected source file between
+  two sets of columns: files that reference it on the left, and files it
+  references on the right. Dependencies continue rightward and callers continue
+  leftward as **<** / **>** changes the depth (0–16). The depth group floats
+  below the menu bar at the upper right and keeps its right margin when resized.
+  Ref zoom-out starts with a 60000 camera-distance limit and expands to twice
+  the distance needed to frame the whole graph, including dragged cells.
+  A faint world-anchored dot grid provides motion cues in the map's empty areas;
+  dot density changes gradually with zoom and follows the tilted plane.
+  Files have a 72-unit vertical gap and 240-unit column gap. A layer with
+  more than six dependencies or callers alternates between two columns,
+  staggered vertically by half a row. Later depths move outward to leave room
+  for both columns.
+  Each file appears once; in a cycle a file reachable in both directions goes
+  on the dependency side. Left-drag a cell to move it; left-drag empty canvas
+  to pan. Cells retain their positions when depth changes unless their side,
+  column, or layer width changes, and dragging keeps a 24-unit minimum gap. Click a cell to
+  make it the new source; search and **Focus selected** also choose a source.
+  A translucent rounded outline marks one representative `use` or symbol use
+  per file pair. Smooth cubic Bezier curves connect the vertical midpoints of
+  facing left/right file borders, with horizontal tangents at each end.
+  Curves follow dragging,
+  camera zoom and the tilted plane, and remain visible over minimaps.
+  Reference analysis covers `.ns` files in the scanned workspace: `use`
+  resolves a module declaration or filename, and direct names resolve unique
+  top-level functions, types, enums and bindings. Comments, strings, member
+  names and local declarations are excluded; ambiguous names and SDK files
+  outside the workspace are omitted. This is a lexical dependency view.
+  Ref code is read-only and preserves an open editor's unsaved buffer.
+  Filesystem changes refresh the graph; **code** restores the treemap.
 - Text and minimap share their line order (including inline Git deletion rows),
   column flow, font scale and perspective squeeze, so LOD switches preserve geometry.
   Glyphs appear at 0.18 scale and editing starts at 0.5, bringing code into view farther away.

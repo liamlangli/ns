@@ -1,0 +1,294 @@
+use std
+use os
+
+fn reference_between(a: i32, b: i32) i32 {
+    let count: i32 = 0
+    for e in 0 to g_lens_ref_count {
+        if g_lens_ref_edges[e].source == a && g_lens_ref_edges[e].target == b { count = count + 1 }
+    }
+    return count
+}
+
+fn check_bidirectional_levels() {
+    g_workspace_count = 5
+    g_lens_ref_depth = 2
+    g_lens_ref_count = 5
+    g_lens_ref_edges[0] = lens_ref_edge(0, 1, 0, 0, 1)
+    g_lens_ref_edges[1] = lens_ref_edge(1, 2, 0, 0, 1)
+    g_lens_ref_edges[2] = lens_ref_edge(2, 0, 0, 0, 1)
+    g_lens_ref_edges[3] = lens_ref_edge(3, 0, 0, 0, 1)
+    g_lens_ref_edges[4] = lens_ref_edge(4, 3, 0, 0, 1)
+    lens_ref_levels(0)
+    assert g_lens_ref_column[0] == 0
+    assert g_lens_ref_column[1] == 1 && g_lens_ref_column[2] == 2
+    assert g_lens_ref_column[3] == -1 && g_lens_ref_column[4] == -2
+    assert lens_ref_column_x(-2) < lens_ref_column_x(-1)
+    assert lens_ref_column_x(2) > lens_ref_column_x(1)
+    g_lens_ref_depth = 0
+    lens_ref_levels(0)
+    for i in 1 to 5 { assert g_lens_ref_level[i] == -1 }
+}
+
+fn check_column_cells() {
+    g_workspace_count = 25
+    let placed = [bool](4096)
+    g_lens_x[0] = -300.0
+    g_lens_y[0] = -225.0
+    g_lens_w[0] = 600.0
+    g_lens_h[0] = 450.0
+    g_lens_ref_level[0] = 0
+    placed[0] = true
+    g_lens_ref_count = 24
+    for i in 1 to 25 {
+        g_lens_ref_level[i] = 1
+        g_lens_ref_column[i] = 1
+    }
+    lens_ref_columns_sync()
+    for i in 1 to 25 {
+        g_lens_ref_edges[i - 1] = lens_ref_edge(0, i, 0, 0, 1)
+        g_lens_ref_level[i] = 1
+        g_lens_w[i] = 460.0
+        g_lens_h[i] = 340.0
+        lens_ref_place(i, 0, placed)
+        placed[i] = true
+    }
+    // Busy layers alternate columns and offset the second column by half a row.
+    assert lens_ref_column_lanes(1) == 2
+    assert g_lens_x[1] == 300.0 + LENS_REF_COLUMN_GAP
+    assert g_lens_y[1] == -g_lens_y[24] - g_lens_h[24]
+    assert g_lens_x[2] - g_lens_x[1] == 460.0 + LENS_REF_COLUMN_GAP
+    assert g_lens_y[2] - g_lens_y[1] == (340.0 + LENS_REF_GAP) * 0.5
+    for i in 1 to 25 {
+        if i % 2 == 1 { assert g_lens_x[i] == g_lens_x[1] } else { assert g_lens_x[i] == g_lens_x[2] }
+    }
+    assert lens_ref_column_x(2) >= g_lens_x[2] + 460.0 + LENS_REF_COLUMN_GAP
+    for a in 0 to 25 {
+        for b in a + 1 to 25 {
+            let separate = g_lens_x[a] + g_lens_w[a] + LENS_REF_GAP <= g_lens_x[b] || g_lens_x[b] + g_lens_w[b] + LENS_REF_GAP <= g_lens_x[a] || g_lens_y[a] + g_lens_h[a] + LENS_REF_GAP <= g_lens_y[b] || g_lens_y[b] + g_lens_h[b] + LENS_REF_GAP <= g_lens_y[a]
+            assert separate
+        }
+    }
+    let right_x = [f64](25)
+    for i in 1 to 25 {
+        right_x[i] = g_lens_x[i]
+        g_lens_ref_column[i] = -1
+        placed[i] = false
+    }
+    lens_ref_columns_sync()
+    for i in 1 to 25 {
+        lens_ref_place(i, 0, placed)
+        placed[i] = true
+        assert g_lens_x[i] == -right_x[i] - 460.0
+    }
+    assert lens_ref_column_x(-2) + 460.0 + LENS_REF_COLUMN_GAP <= g_lens_x[2]
+    // Exactly six files remain one column; the seventh splits the layer.
+    g_workspace_count = 7
+    lens_ref_columns_sync()
+    assert lens_ref_column_lanes(-1) == 1
+    g_workspace_count = 8
+    lens_ref_columns_sync()
+    assert lens_ref_column_lanes(-1) == 2
+    // Swept dragging cannot tunnel through another cell, even in one frame.
+    g_workspace_count = 2
+    g_lens_x[0] = 0.0
+    g_lens_y[0] = 0.0
+    g_lens_w[0] = 460.0
+    g_lens_h[0] = 340.0
+    g_lens_x[1] = 508.0
+    g_lens_y[1] = 0.0
+    lens_ref_move(0, 1000.0, 0.0)
+    assert g_lens_x[0] == 24.0
+    assert g_lens_x[0] + g_lens_w[0] + 24.0 == g_lens_x[1]
+}
+
+fn check_bezier_curves() {
+    let points = lens_ref_curve_points(10.0, 20.0, 400.0, 300.0, 1.0, 80)
+    assert points.len == 162
+    assert points[0] == 10.0 && points[1] == 20.0
+    assert points[160] == 400.0 && points[161] == 300.0
+    assert points[80] == 205.0 && points[81] == 160.0
+    // Horizontal endpoint tangents, followed by a gradual vertical change.
+    assert points[2] > points[0]
+    assert points[3] - points[1] < 1.0
+    for i in 1 to 81 {
+        assert points[i * 2] >= points[(i - 1) * 2]
+        assert points[i * 2 + 1] >= points[(i - 1) * 2 + 1]
+    }
+    let reversed = lens_ref_curve_points(400.0, 300.0, 10.0, 20.0, -1.0, 80)
+    for i in 0 to 81 {
+        let dx = reversed[i * 2] - points[(80 - i) * 2]
+        let dy = reversed[i * 2 + 1] - points[(80 - i) * 2 + 1]
+        assert dx > -0.001 && dx < 0.001
+        assert dy > -0.001 && dy < 0.001
+    }
+}
+
+fn check_wide_ref_camera() {
+    g_lens_view_mode = LENS_MODE_REF
+    g_workspace_count = 2
+    g_lens_view_w = 1280.0
+    g_lens_body_h = 800.0
+    for i in 0 to 2 {
+        g_lens_ref_level[i] = 1
+        g_lens_w[i] = 460.0
+        g_lens_h[i] = 340.0
+    }
+    g_lens_x[0] = -100000.0
+    g_lens_y[0] = -50000.0
+    g_lens_x[1] = 100000.0
+    g_lens_y[1] = 50000.0
+    lens_ref_frame()
+    assert g_lens_target_distance > 60000.0
+    assert lens_zoom_farthest() >= g_lens_target_distance * 2.0
+    g_lens_distance = g_lens_target_distance
+    g_lens_center_x = g_lens_target_x
+    g_lens_center_y = g_lens_target_y
+    for i in 0 to 2 {
+        let leaf = lens_project_leaf(i, 1280.0, 0.0, 800.0)
+        assert leaf.x >= 24.0 && leaf.x + leaf.w <= 1256.0
+        assert leaf.y >= LENS_TOP_BAR_H && leaf.y + leaf.h <= 800.0 - STATUS_BAR_H
+    }
+    // Projection keeps shrinking past the former 10000 distance clamp.
+    let before = lens_project_leaf(0, 1280.0, 0.0, 800.0)
+    g_lens_distance = g_lens_distance * 2.0
+    let after = lens_project_leaf(0, 1280.0, 0.0, 800.0)
+    assert after.w == before.w * 0.5
+    let farthest = lens_zoom_farthest()
+    lens_zoom_by(640.0, 400.0, 1280.0, 0.0, 800.0, 1000000.0, 1.0)
+    assert g_lens_target_distance == farthest
+    // Ordinary treemap modes retain their existing zoom range.
+    g_lens_view_mode = LENS_MODE_CODE
+    assert lens_zoom_farthest() == 6000.0
+    let step = lens_grid_spacing(0.01, 1280.0, 800.0)
+    assert step * 0.01 >= 24.0 && step * 0.01 < 48.0
+    assert lens_grid_spacing(0.005, 1280.0, 800.0) == step * 2.0
+    let tilted_step = lens_grid_spacing(0.01, 64000.0, 50000.0)
+    assert 64000.0 / (tilted_step * 0.01) <= 128.0
+    assert 50000.0 / (tilted_step * 0.01) <= 96.0
+}
+
+fn main() {
+    let root = "/tmp/ns_lens_references_" + os_text_hash(ftos(os_time()))
+    os_make_dirs(root)
+    let a_text = "use bee\nfn main() {\n    helper()\n    helper()\n    // ignored()\n    let label = \"ignored()\"\n    /* ignored() */\n}\n"
+    assert os_write_file_atomic(root + "/a.ns", a_text) != 0
+    assert os_write_file_atomic(root + "/b.ns", "mod bee\nfn helper() { leaf() }\n") != 0
+    assert os_write_file_atomic(root + "/c.ns", "fn leaf() { main() }\nfn ignored() {}\n") != 0
+    assert os_write_file_atomic(root + "/d.ns", "fn unrelated() {}\n") != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    lens_rebuild()
+    let a = workspace_find("a.ns")
+    let b = workspace_find("b.ns")
+    let c = workspace_find("c.ns")
+    let d = workspace_find("d.ns")
+    assert a >= 0 && b >= 0 && c >= 0 && d >= 0
+    g_lens_selected = a
+    g_lens_selected_path = os_entry_path(a)
+    let return_x = g_lens_target_x
+    let return_y = g_lens_target_y
+    let return_distance = g_lens_target_distance
+    lens_set_mode(LENS_MODE_REF)
+    assert lens_mode_at(0) == LENS_MODE_CODE
+    assert lens_mode_at(1) == LENS_MODE_REF
+    assert lens_mode_at(2) == LENS_MODE_CHANGE
+    assert lens_mode_at(3) == LENS_MODE_FULL
+    assert lens_mode_label(LENS_MODE_REF) == "ref"
+    assert reference_between(a, b) == 1
+    assert reference_between(a, c) == 0
+    assert reference_between(b, c) == 1
+    assert reference_between(c, a) == 1
+    assert lens_file_count() == 3
+    assert g_lens_ref_column[a] == 0
+    assert g_lens_ref_column[b] == 1
+    assert g_lens_ref_column[c] == -1
+    assert g_lens_x[c] < g_lens_x[a] && g_lens_x[a] < g_lens_x[b]
+    assert lens_ref_visible(a) && lens_ref_visible(b)
+    assert lens_ref_visible(c) && !lens_ref_visible(d)
+    assert g_lens_x[a] == -300.0 && g_lens_y[a] == -225.0
+    assert g_lens_ref_edges[0].source == a
+    // Use-site positions are measured in wrapped display rows, even before
+    // preview/minimap text is loaded.
+    assert g_lens_ref_edges[0].row == 0 && g_lens_ref_edges[0].col == 4
+    let saved_x = g_lens_x[b] + 100.0
+    g_lens_x[b] = saved_x
+    g_lens_ref_depth = 2
+    lens_ref_layout(false)
+    assert lens_file_count() == 3 && lens_ref_visible(c)
+    assert g_lens_ref_level[c] == 2 && g_lens_ref_column[c] == 2
+    assert g_lens_x[c] > g_lens_x[b]
+    assert g_lens_x[b] == saved_x
+    g_lens_ref_depth = 16
+    lens_ref_layout(false)
+    assert lens_file_count() == 3 && g_lens_ref_level[a] == 0
+    g_lens_ref_depth = 0
+    lens_ref_layout(false)
+    assert lens_file_count() == 1 && !lens_ref_visible(b)
+    // Ambiguous declarations cannot silently point at an arbitrary file.
+    lens_ref_register(g_lens_ref_symbols, "helper", c)
+    g_lens_ref_count = 0
+    lens_ref_resolve(a, lens_ref_scan(a_text), a_text)
+    assert reference_between(a, b) == 1
+    // Local bindings/parameters and member accesses do not resolve globally.
+    let shadow = "fn sample(helper: i32) { helper() }\nfn other() { let leaf = 1\nleaf()\nvalue.ignored() }"
+    g_lens_ref_count = 0
+    lens_ref_resolve(a, lens_ref_scan(shadow), shadow)
+    assert g_lens_ref_count == 0
+    // Wrapped lines use the same byte-column grid as the renderer.
+    g_lens_source_columns[a] = 8
+    let wrapped = "          ignored()"
+    g_lens_ref_count = 0
+    lens_ref_resolve(a, lens_ref_scan(wrapped), wrapped)
+    assert g_lens_ref_count == 1
+    assert g_lens_ref_edges[0].row == 1 && g_lens_ref_edges[0].col == 2
+    assert g_lens_source_rows[a] == 3
+    // Dragging a cell changes only its world position; blank space still pans.
+    g_lens_ref_depth = 1
+    g_lens_ref_root = os_entry_path(a)
+    lens_ref_build()
+    g_lens_distance = 1600.0
+    g_lens_target_distance = 1600.0
+    g_lens_center_x = 0.0
+    g_lens_center_y = 0.0
+    g_lens_target_x = 0.0
+    g_lens_target_y = 0.0
+    let pointer = view_create("reference pointer test", 100, 100)
+    g_mouse_x = 640.0
+    g_mouse_y = 382.0
+    pointer.mouse_pressed = true
+    pointer.mouse_down = true
+    assert lens_ref_input(pointer, true, 1280.0, 42.0, 680.0)
+    lens_pan_input(pointer, false)
+    let before = g_lens_x[a]
+    pointer.mouse_pressed = false
+    g_mouse_x = 660.0
+    assert lens_ref_input(pointer, false, 1280.0, 42.0, 680.0)
+    lens_pan_input(pointer, false)
+    assert g_lens_x[a] == before + 40.0
+    assert g_lens_target_x == 0.0 && !g_lens_panning
+    pointer.mouse_down = false
+    pointer.mouse_released = true
+    assert lens_ref_input(pointer, false, 1280.0, 42.0, 680.0)
+    assert g_lens_ref_drag == -1
+    // Ref previews use the existing unsaved document without a disk read or
+    // transferring the editor to another graph cell.
+    assert lens_open(a)
+    insert_str("// unsaved\n")
+    let unsaved = g_doc
+    lens_clear_cache()
+    assert lens_preview(a, false) == unsaved
+    assert !g_lens_preview_read
+    assert g_workspace_active == a && workspace_entry_dirty(a)
+    lens_set_mode(LENS_MODE_CODE)
+    assert g_lens_target_x == return_x && g_lens_target_y == return_y
+    assert g_lens_target_distance == return_distance
+    assert g_doc == unsaved && g_workspace_active == a
+    assert lens_file_count() == 4 && lens_ref_visible(d)
+    os_watch_stop()
+    check_bidirectional_levels()
+    check_column_cells()
+    check_bezier_curves()
+    check_wide_ref_camera()
+    print("references_test: passed\n")
+}

@@ -31,3 +31,6 @@ cp "$root/test/zoom_code_test.ns" "$tmp/src/main.ns"
 cp "$root/test/ignore_test.ns" "$tmp/src/main.ns"
 "$ns" build "$tmp" >/dev/null
 "$tmp/bin/batch-test"
+cp "$root/test/references_test.ns" "$tmp/src/main.ns"
+"$ns" build "$tmp" >/dev/null
+"$tmp/bin/batch-test"

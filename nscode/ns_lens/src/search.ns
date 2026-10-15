@@ -272,6 +272,10 @@ fn lens_search_go(hit: i32) {
     }
     g_lens_selected = i
     g_lens_selected_path = os_entry_path(i)
+    if g_lens_view_mode == LENS_MODE_REF {
+        g_lens_ref_root = g_lens_selected_path
+        lens_ref_layout(true)
+    }
     lens_focus_row(i, g_lens_hit_row[hit])
     g_lens_search_open = false
 }

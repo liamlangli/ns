@@ -68,6 +68,7 @@ fn lens_hint_keys(i: i32) str {
 fn lens_hint_action(i: i32) str {
     if i == 0 { return "zoom" }
     if i == 1 { return "scroll code" }
+    if i == 2 && g_lens_view_mode == LENS_MODE_REF { return "move cell / pan" }
     if i == 2 { return "pan" }
     if i == 3 { return "select" }
     if i == 4 { return "tilt" }
