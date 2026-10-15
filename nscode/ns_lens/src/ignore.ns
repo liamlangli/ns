@@ -1,0 +1,186 @@
+// The Lens-only ignore file stays outside the filesystem snapshot. Borrow the
+// editor's document model for input, restoring the active file before returning.
+use std
+use os
+use view
+use ui
+
+let g_lens_ignore_open = false
+let g_lens_ignore_save_requested = false
+let g_lens_ignore_text = ""
+let g_lens_ignore_original = ""
+let g_lens_ignore_error = ""
+let g_lens_ignore_cur: i32 = 0
+let g_lens_ignore_anchor: i32 = -1
+let g_lens_ignore_row: i32 = 0
+let g_lens_ignore_col: i32 = 0
+
+struct lens_ignore_document {
+    text: str,
+    cursor: i32,
+    anchor: i32,
+    row: i32,
+    col: i32,
+    history: i32
+}
+
+fn lens_ignore_path() str { return workspace_join_root("bin/ns_lens/ignore") }
+
+fn lens_ignore_show() {
+    g_lens_ignore_text = os_read_file(lens_ignore_path())
+    g_lens_ignore_original = g_lens_ignore_text
+    g_lens_ignore_cur = 0
+    g_lens_ignore_anchor = -1
+    g_lens_ignore_row = 0
+    g_lens_ignore_col = 0
+    g_caret_follow = true
+    g_lens_ignore_error = ""
+    g_lens_ignore_save_requested = false
+    g_lens_ignore_open = true
+    g_lens_commit_open = false
+    g_lens_search_open = false
+    g_lens_file_open = false
+}
+
+fn lens_ignore_enter() lens_ignore_document {
+    let saved = lens_ignore_document(g_doc, g_cur, g_anchor, g_rowoff, g_coloff, g_history_id)
+    load_str_for_history(g_lens_ignore_text, history_buffer_cap() - 1)
+    g_cur = g_lens_ignore_cur
+    g_anchor = g_lens_ignore_anchor
+    g_rowoff = g_lens_ignore_row
+    g_coloff = g_lens_ignore_col
+    return saved
+}
+
+fn lens_ignore_leave(saved: lens_ignore_document) {
+    g_lens_ignore_text = g_doc
+    g_lens_ignore_cur = g_cur
+    g_lens_ignore_anchor = g_anchor
+    g_lens_ignore_row = g_rowoff
+    g_lens_ignore_col = g_coloff
+    load_str_for_history(saved.text, saved.history)
+    g_cur = saved.cursor
+    g_anchor = saved.anchor
+    g_rowoff = saved.row
+    g_coloff = saved.col
+}
+
+fn lens_ignore_save() { g_lens_ignore_save_requested = true }
+
+fn lens_ignore_flush() {
+    if g_lens_ignore_save_requested == false { return }
+    g_lens_ignore_save_requested = false
+    for i in 0 to g_workspace_tab_count {
+        if workspace_entry_dirty(g_workspace_tabs[i]) {
+            g_lens_ignore_error = "Save edited files before applying ignore rules"
+            return
+        }
+    }
+    if os_make_dirs(workspace_join_root("bin/ns_lens")) == 0 || os_write_file_atomic(lens_ignore_path(), g_lens_ignore_text) == 0 {
+        g_lens_ignore_error = "Could not save bin/ns_lens/ignore"
+        return
+    }
+    g_lens_ignore_original = g_lens_ignore_text
+    g_lens_ignore_error = ""
+    workspace_refresh_from_disk()
+    g_lens_message = "Ignore rules saved"
+}
+
+fn lens_ignore_keys(v: ref view) {
+    if key_edge(v, 256) {
+        g_lens_ignore_open = false
+        return
+    }
+    let saved = lens_ignore_enter()
+    process_code_keys(v)
+    lens_ignore_leave(saved)
+    lens_ignore_flush()
+}
+
+fn lens_ignore_width(w: f64) f64 { return clamp(w - 32.0, 240.0, 800.0) }
+fn lens_ignore_height(h: f64) f64 { return clamp(h - 80.0, 200.0, 560.0) }
+
+fn lens_ignore_mouse(v: ref view, w: f64, h: f64) {
+    let pw = lens_ignore_width(w)
+    let ph = lens_ignore_height(h)
+    let x = (w - pw) * 0.5
+    let y = (h - ph) * 0.5
+    if raw_hit(v, x + 16.0, y + 76.0, pw - 32.0, ph - 136.0) {
+        g_lens_ignore_row = clamp_i(g_lens_ignore_row - (v.scroll_y * 3.0) as i32, 0, 65535)
+        if v.mouse_pressed {
+            let saved = lens_ignore_enter()
+            let row = clamp_i(g_rowoff + ((g_mouse_y - y - 82.0) / 20.0) as i32, 0, line_count() - 1)
+            let col = g_coloff + clamp_i(((g_mouse_x - x - 24.0) / (small_px() * 0.6)) as i32, 0, 65535)
+            place_cursor(row, col, shift_down(v))
+            lens_ignore_leave(saved)
+        }
+    }
+    if v.mouse_pressed {
+        if raw_hit(v, x + pw - 196.0, y + ph - 42.0, 84.0, 26.0) {
+            g_lens_ignore_open = false
+        } else if raw_hit(v, x + pw - 104.0, y + ph - 42.0, 88.0, 26.0) {
+            lens_ignore_save()
+            lens_ignore_flush()
+        }
+    }
+    v.mouse_pressed = false
+    v.mouse_right_pressed = false
+    v.scroll_y = 0.0
+}
+
+fn lens_draw_ignore(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    if g_lens_ignore_open == false { return }
+    let pw = lens_ignore_width(w)
+    let ph = lens_ignore_height(h)
+    let x = (w - pw) * 0.5
+    let y = (h - ph) * 0.5
+    ui_fill_rect(r, 0.0, 0.0, w, h, 0x99000000u, 0.0)
+    ui_fill_round_rect(r, x, y, pw, ph, 4.0, col_editor_panel(), 0.0)
+    ui_stroke_round_rect(r, x, y, pw, ph, 4.0, 1.0, col_muted(), 0.0)
+    let title = "bin/ns_lens/ignore"
+    if g_lens_ignore_text != g_lens_ignore_original { title = title + " *" }
+    draw_text_clipped(r, x + 16.0, y + 14.0, pw - 32.0, 20.0, title, small_px(), col_text())
+    draw_text_clipped(r, x + 16.0, y + 38.0, pw - 32.0, 20.0, "One POSIX regex per line; matches project-relative paths.", small_px(), col_muted())
+    draw_text_clipped(r, x + 16.0, y + 56.0, pw - 32.0, 20.0, "Example: (^|/)node_modules(/|$)    # starts a comment", small_px(), col_muted())
+    let bx = x + 16.0
+    let by = y + 76.0
+    let bw = pw - 32.0
+    let bh = ph - 136.0
+    ui_fill_rect(r, bx, by, bw, bh, col_editor_bg(), 0.0)
+    ui_stroke_round_rect(r, bx, by, bw, bh, 2.0, 1.0, col_accent(), 0.0)
+    let saved = lens_ignore_enter()
+    let rows = clamp_i(((bh - 12.0) / 20.0) as i32, 1, 65536)
+    let cw = ui_mono_char_width(r, small_px(), FONT_MONO())
+    let cols = clamp_i(((bw - 16.0) / clamp(cw, 1.0, 100.0)) as i32, 1, 65536)
+    let caret_row = cur_line()
+    let caret_col = g_cur - line_start(caret_row)
+    if g_caret_follow {
+        g_rowoff = clamp_i(g_rowoff, caret_row - rows + 1, caret_row)
+        g_coloff = clamp_i(g_coloff, caret_col - cols + 1, caret_col)
+        g_caret_follow = false
+    }
+    g_rowoff = clamp_i(g_rowoff, 0, clamp_i(line_count() - rows, 0, 65536))
+    ui_push_clip(r, bx + 4.0, by + 1.0, bw - 8.0, bh - 2.0)
+    for n in 0 to rows {
+        let row = g_rowoff + n
+        if row < line_count() {
+            let start = line_start(row)
+            let text = line_text(row)
+            let ty = by + 6.0 + (n as f64) * 20.0
+            if has_selection() {
+                let a = clamp_i(sel_min() - start - g_coloff, 0, cols)
+                let b = clamp_i(sel_max() - start - g_coloff, 0, clamp_i(text.len - g_coloff, 0, cols))
+                if b > a { ui_fill_rect(r, bx + 8.0 + (a as f64) * cw, ty, ((b - a) as f64) * cw, 20.0, col_editor_sel(), 0.0) }
+            }
+            if text.len > g_coloff { ui_draw_text(r, bx + 8.0, ty, substr(text, g_coloff, clamp_i(text.len - g_coloff, 0, cols)), small_px(), col_text(), FONT_MONO()) }
+            if row == caret_row { ui_fill_rect(r, bx + 8.0 + ((caret_col - g_coloff) as f64) * cw, ty, 1.5, 18.0, col_editor_cursor(), 0.0) }
+        }
+    }
+    ui_pop_clip(r)
+    lens_ignore_leave(saved)
+    let note = "cmd+S  save     esc  close"
+    if g_lens_ignore_error != "" { note = g_lens_ignore_error }
+    draw_text_clipped(r, x + 16.0, y + ph - 30.0, pw - 228.0, 20.0, note, small_px(), col_muted())
+    lens_draw_button(r, v, x + pw - 196.0, y + ph - 42.0, 84.0, 26.0, "Close", false)
+    lens_draw_button(r, v, x + pw - 104.0, y + ph - 42.0, 88.0, 26.0, "Save", true)
+}

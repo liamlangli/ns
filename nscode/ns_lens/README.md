@@ -40,7 +40,7 @@ snaps back to orthographic.
 - Zoom close to a leaf: its code becomes a syntax-highlighted, editable surface
   inside that leaf. The map keeps the entire canvas; no separate editor opens.
 - Shift+wheel: scroll code inside the leaf.
-- **File** (top left) opens a project and holds the search and Git commands:
+- **File** (top left) opens a project and holds search, Git commands and ignore settings:
   - **Open** (Cmd+O) selects a project folder to map.
   - **Search** (Cmd+P) matches file names at once and scans file contents on
     a worker; a query without capitals ignores case. Matching leaves are
@@ -51,6 +51,16 @@ snaps back to orthographic.
   - **Push** (no shortcut) pushes the branch, publishing it to `origin` when it has
     no upstream. Git runs without a terminal, so a missing credential fails
     with Git's message instead of waiting on a prompt.
+  - **Ignore** opens a multiline editor for the opened project's
+    `bin/ns_lens/ignore`. **Save** or Cmd/Ctrl+S writes the file and refreshes
+    the map immediately; Escape closes the editor. Save other edited files
+    before applying rules. On macOS/Linux, each nonempty line is a POSIX
+    extended regular expression matched against the project-relative path
+    (with `/` separators); matching a directory excludes all its children.
+    For example, `(^|/)node_modules(/|$)` excludes dependency folders and
+    `_test[.]ns$` excludes test sources. Lines starting with `#` are comments;
+    invalid expressions are logged and skipped. These rules add to `.gitignore`
+    and apply in every map mode and search.
 - The controls are listed at the bottom left, above an activity row that shows
   the running search, commit or push with its progress, and the latest message.
 - The menu right of **File** switches the map. **code** shows recognized

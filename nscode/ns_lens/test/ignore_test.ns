@@ -1,0 +1,79 @@
+use std
+use os
+
+fn main() {
+    let root = "/tmp/ns_lens_ignore_" + itos((os_time() * 1000000.0) as i64)
+    assert os_make_dirs(root + "/bin/ns_lens") != 0
+    assert os_make_dirs(root + "/vendor/nested") != 0
+    assert os_make_dirs(root + "/src") != 0
+    assert os_write_file_atomic(root + "/vendor/nested/hidden.ns", "hidden") != 0
+    assert os_write_file_atomic(root + "/src/keep.ns", "keep") != 0
+    assert os_write_file_atomic(root + "/src/skip_test.ns", "skip") != 0
+    assert os_write_file_atomic(root + "/git_hidden.ns", "git") != 0
+    assert os_write_file_atomic(root + "/.gitignore", "git_hidden.ns\n") != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    assert workspace_find("hidden.ns") >= 0
+    assert workspace_find("skip_test.ns") >= 0
+    assert workspace_find("git_hidden.ns") < 0
+    assert workspace_find("ns_lens") < 0
+
+    // The modal borrows the document without changing unsaved text, selection,
+    // caret or undo history belonging to the active file.
+    load_str("unsaved buffer")
+    g_cur = 3
+    g_anchor = 1
+    insert_str("!")
+    let before = g_doc
+    let before_cur = g_cur
+    let before_anchor = g_anchor
+    lens_file_action(4)
+    assert g_lens_ignore_open
+    assert lens_typing()
+    assert lens_menu_blocks()
+    let saved = lens_ignore_enter()
+    assert g_doc == ""
+    paste_str("# Lens patterns\r\n^vendor(/|$)\r\n_test[.]ns$\n")
+    lens_ignore_leave(saved)
+    assert g_doc == before
+    assert g_cur == before_cur
+    assert g_anchor == before_anchor
+    assert undo()
+    assert g_doc == "unsaved buffer"
+    lens_ignore_save()
+    lens_ignore_flush()
+    assert g_lens_ignore_error == ""
+    assert os_read_file(lens_ignore_path()) == g_lens_ignore_text
+    assert workspace_find("vendor") < 0
+    assert workspace_find("hidden.ns") < 0
+    assert workspace_find("skip_test.ns") < 0
+    assert workspace_find("keep.ns") >= 0
+    assert workspace_find("git_hidden.ns") < 0
+
+    // A rule must not drop an unsaved editor buffer during the rescan.
+    assert workspace_open(workspace_find("keep.ns"))
+    insert_str("edited")
+    g_lens_ignore_text = "^src/keep[.]ns$\n"
+    lens_ignore_save()
+    lens_ignore_flush()
+    assert g_lens_ignore_error != ""
+    assert workspace_find("keep.ns") >= 0
+    assert workspace_entry_dirty(g_workspace_active)
+    assert workspace_save_active()
+    lens_ignore_save()
+    lens_ignore_flush()
+    assert g_lens_ignore_error == ""
+    assert workspace_find("keep.ns") < 0
+
+    // Emptying the file removes custom exclusions on the next scan.
+    g_lens_ignore_text = ""
+    lens_ignore_save()
+    lens_ignore_flush()
+    assert workspace_find("hidden.ns") >= 0
+    assert workspace_find("skip_test.ns") >= 0
+    assert workspace_find("git_hidden.ns") < 0
+    g_lens_ignore_open = false
+    os_watch_stop()
+    print("ignore_test: passed\n")
+}

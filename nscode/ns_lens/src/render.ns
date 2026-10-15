@@ -668,9 +668,13 @@ fn process_code_keys(v: ref view) {
                         g_caret_follow = true
                     }
                 } else if k == 83 {
-                    workspace_save_active()
+                    if g_lens_ignore_open {
+                        lens_ignore_save()
+                    } else {
+                        workspace_save_active()
+                    }
                 } else if k == 87 {
-                    if g_workspace_active >= 0 {
+                    if g_lens_ignore_open == false && g_workspace_active >= 0 {
                         workspace_close_tab(g_workspace_active)
                         g_caret_follow = true
                     }

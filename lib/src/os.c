@@ -20,6 +20,7 @@
 #include <psapi.h>
 #else
 #include <dirent.h>
+#include <regex.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -677,8 +678,51 @@ static void os_load_gitignore(const char *root) {
     fclose(file);
 }
 
+// Lens rules are POSIX extended regular expressions over root-relative paths.
+#ifndef NS_WIN
+static regex_t os_lens_ignore_rules[OS_MAX_IGNORE_RULES];
+static i32 os_lens_ignore_count;
+
+static void os_load_lens_ignore(const char *root) {
+    for (i32 i = 0; i < os_lens_ignore_count; i++) regfree(&os_lens_ignore_rules[i]);
+    os_lens_ignore_count = 0;
+    char path[OS_MAX_PATH];
+    snprintf(path, sizeof(path), "%s/bin/ns_lens/ignore", root);
+    FILE *file = fopen(path, "rb");
+    if (!file) return;
+    char *line = NULL;
+    size_t capacity = 0;
+    ssize_t length;
+    i32 number = 0;
+    while ((length = getline(&line, &capacity, file)) >= 0) {
+        number++;
+        while (length && (line[length - 1] == '\n' || line[length - 1] == '\r')) line[--length] = 0;
+        if (!length || line[0] == '#') continue;
+        if (os_lens_ignore_count >= OS_MAX_IGNORE_RULES) {
+            fprintf(stderr, "%s:%d: too many ignore rules\n", path, number);
+            break;
+        }
+        int status = regcomp(&os_lens_ignore_rules[os_lens_ignore_count], line, REG_EXTENDED | REG_NOSUB);
+        if (status) {
+            char error[256];
+            regerror(status, &os_lens_ignore_rules[os_lens_ignore_count], error, sizeof(error));
+            fprintf(stderr, "%s:%d: %s\n", path, number, error);
+        } else {
+            os_lens_ignore_count++;
+        }
+    }
+    free(line);
+    fclose(file);
+}
+#endif
+
 static i32 os_path_ignored(const char *relative, i32 is_dir) {
     if (strcmp(relative, ".git") == 0 || strncmp(relative, ".git/", 5) == 0) return 1;
+#ifndef NS_WIN
+    for (i32 i = 0; i < os_lens_ignore_count; i++) {
+        if (regexec(&os_lens_ignore_rules[i], relative, 0, NULL, 0) == 0) return 1;
+    }
+#endif
     i32 ignored = 0;
     for (i32 i = 0; i < os_ignore_rule_count; i++) {
         os_ignore_rule *rule = &os_ignore_rules[i];
@@ -805,6 +849,9 @@ i32 os_dir_scan(const char *path) {
     if (stat(path, &info) != 0 || !S_ISDIR(info.st_mode)) return -1;
 #endif
     os_load_gitignore(path);
+#ifndef NS_WIN
+    os_load_lens_ignore(path);
+#endif
     os_dir_scan_recursive(path, 0, -1);
     return os_entry_count;
 }

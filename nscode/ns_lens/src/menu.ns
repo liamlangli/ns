@@ -9,7 +9,7 @@ use ui
 lit LENS_FILE_X = 12.0
 lit LENS_FILE_W = 64.0
 lit LENS_FILE_MENU_W = 220.0
-lit LENS_FILE_ITEMS = 4
+lit LENS_FILE_ITEMS = 5
 lit LENS_SEARCH_W = 560.0
 lit LENS_SEARCH_INPUT_H = 30.0
 lit LENS_SEARCH_ROWS = 12
@@ -38,7 +38,8 @@ fn lens_file_item_label(i: i32) str {
     if i == 2 {
         return "Commit..."
     }
-    return "Push"
+    if i == 3 { return "Push" }
+    return "Ignore..."
 }
 
 // Push has no shortcut.
@@ -77,12 +78,12 @@ fn lens_hint_action(i: i32) str {
 
 // Keys belong to the search box or the commit dialog while either is open.
 fn lens_typing() bool {
-    return g_lens_commit_open || g_lens_search_open
+    return g_lens_ignore_open || g_lens_commit_open || g_lens_search_open
 }
 
 // Pointer input the map must not also take this frame.
 fn lens_menu_blocks() bool {
-    return g_lens_commit_open || g_lens_file_block || g_lens_search_block
+    return g_lens_ignore_open || g_lens_commit_open || g_lens_file_block || g_lens_search_block
 }
 
 fn cmd_down(v: ref view) bool {
@@ -135,8 +136,10 @@ fn lens_file_action(i: i32) {
         lens_search_show()
     } else if i == 2 {
         lens_commit_show()
-    } else {
+    } else if i == 3 {
         lens_push()
+    } else {
+        lens_ignore_show()
     }
 }
 
@@ -168,6 +171,10 @@ fn lens_field_edit(v: ref view, text: str) str {
 // Runs before the editor, so neither the editor nor the map sees keys meant
 // for the shortcuts, the search box or the commit dialog.
 fn lens_menu_keys(v: ref view) {
+    if g_lens_ignore_open {
+        lens_ignore_keys(v)
+        return
+    }
     if g_lens_commit_open {
         if key_edge(v, 256) {
             g_lens_commit_open = false
@@ -249,6 +256,10 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         }
         g_lens_search_scroll = clamp_i(g_lens_search_scroll + step, 0, clamp_i(g_lens_hit_count - LENS_SEARCH_ROWS, 0, LENS_HIT_MAX))
         v.scroll_y = 0.0
+    }
+    if g_lens_ignore_open {
+        lens_ignore_mouse(v, w, h)
+        return
     }
     if v.mouse_pressed == false {
         return
@@ -486,4 +497,5 @@ fn lens_draw_menus(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_file_menu(r, v)
     lens_draw_search(r, v, w)
     lens_draw_commit(r, v, w, h)
+    lens_draw_ignore(r, v, w, h)
 }
