@@ -548,6 +548,25 @@ static void view_osx_touch_orbit(NSSet<NSTouch*> *touches, ns_bool publish) {
 }
 @end
 
+// Give the window the content size view_create asked for, centred, and cut to
+// the screen's visible frame (below the menu bar, beside the Dock) when the
+// request is larger than that. A hosted application's window was sized by its
+// host's own content, so this applies to it as well.
+static void view_osx_size_window(NSWindow *window, CGFloat width, CGFloat height) {
+    [window setContentSize:NSMakeSize(width, height)];
+    [window center];
+    NSScreen *screen = [window screen] ? [window screen] : [NSScreen mainScreen];
+    if (!screen) return;
+    const NSRect visible = [screen visibleFrame];
+    NSRect frame = [window frame];
+    if (frame.size.width <= visible.size.width && frame.size.height <= visible.size.height) return;
+    frame.size.width = MIN(frame.size.width, visible.size.width);
+    frame.size.height = MIN(frame.size.height, visible.size.height);
+    frame.origin.x = NSMidX(visible) - frame.size.width * 0.5;
+    frame.origin.y = NSMidY(visible) - frame.size.height * 0.5;
+    [window setFrame:frame display:NO];
+}
+
 //------------------------------------------------------------------------------
 // Create the application, window and Metal view. Does NOT enter the run loop so
 // the caller can attach callbacks first; view_run() then drives frames.
@@ -586,7 +605,7 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     }
     [view_window setTitle:[NSString stringWithUTF8String: view_title]];
     [view_window setAcceptsMouseMovedEvents: YES];
-    [view_window center];
+    view_osx_size_window(view_window, view_width, view_height);
     [view_window setRestorable: YES];
     [view_window setDelegate: view_window_delegate];
 
