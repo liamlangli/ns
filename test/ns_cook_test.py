@@ -53,6 +53,25 @@ class CookTest(unittest.TestCase):
         self.assertEqual(first, (self.output / "res/colour.png.nstex").read_bytes())
         self.check_output(47, 4, 16)
 
+    def test_resize_keeps_transparent_colour(self):
+        # White strokes on transparent white: shrinking must not blacken the
+        # transparent texels, or the filtered strokes grow a dark fringe.
+        image = self.Image.new("RGBA", (64, 64), (255, 255, 255, 0))
+        for x in range(20, 44):
+            for y in range(20, 44):
+                image.putpixel((x, y), (255, 255, 255, 255))
+        image.save(self.root / "res/colour.png")
+        self.manifest()
+        (self.root / "ns.mod").write_text('assets = ["res"]\n[cook.windows]\nformat = "bc3"\nmax_size = 32\nexclude = ["res/data.png"]\n')
+        self.assertEqual(cook.cook(self.root, self.output, "windows"), 1)
+        data = (self.output / "res/colour.png.nstex").read_bytes()
+        self.assertEqual(struct.unpack("<4s7I", data[:32])[3:5], (32, 32))
+        # The first BC3 block is fully transparent: its alpha endpoints are
+        # 0 and both its colour endpoints are still white.
+        block = data[32:48]
+        self.assertEqual(max(block[0], block[1]), 0)
+        self.assertEqual(struct.unpack("<HH", block[8:12]), (0xFFFF, 0xFFFF))
+
     def test_astc_real_encoder(self):
         import os
         bundled = Path(cook.__file__).resolve().parent.parent / "bin/astcenc"

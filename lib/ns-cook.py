@@ -141,7 +141,12 @@ def cook(root, output, platform):
             if limit and max(image.size) > limit:
                 width, height = image.size
                 scale = limit / max(width, height)
-                image = image.resize((max(1, int(width * scale)), max(1, int(height * scale))), Image.Resampling.LANCZOS)
+                size = (max(1, int(width * scale)), max(1, int(height * scale)))
+                # Each channel on its own: Pillow resizes RGBA premultiplied,
+                # which blackens the colour of every transparent texel, and
+                # the GPU filters straight alpha, so those texels would bleed
+                # a dark fringe round everything drawn from the picture.
+                image = Image.merge("RGBA", [band.resize(size, Image.Resampling.LANCZOS) for band in image.split()])
             width, height = image.size
             with tempfile.TemporaryDirectory(prefix="ns-cook-") as temp:
                 temp = Path(temp)

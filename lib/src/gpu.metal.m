@@ -33,6 +33,9 @@ static MTLTextureType _mtl_texture_type(gpu_texture_type type) {
     return MTLTextureType2D;
 }
 
+// PVRTC has no mapping: Apple deprecated it (macOS 15, iOS 18) in favour
+// of ASTC, ETC2 and BC, so a PVRTC texture is refused and its loader falls
+// back to the source picture.
 static MTLPixelFormat _mtl_pixel_format(gpu_pixel_format format) {
     switch (format) {
         case PIXELFORMAT_ASTC_4x4_RGBA: return MTLPixelFormatASTC_4x4_LDR;
@@ -40,6 +43,18 @@ static MTLPixelFormat _mtl_pixel_format(gpu_pixel_format format) {
         case PIXELFORMAT_ASTC_6x6_RGBA: return MTLPixelFormatASTC_6x6_LDR;
         case PIXELFORMAT_ASTC_6x6_SRGBA: return MTLPixelFormatASTC_6x6_sRGB;
         default: break;
+    }
+    if (@available(macOS 11.0, iOS 8.0, *)) {
+        switch (format) {
+            case PIXELFORMAT_ETC2_RGB8: return MTLPixelFormatETC2_RGB8;
+            case PIXELFORMAT_ETC2_SRGB8: return MTLPixelFormatETC2_RGB8_sRGB;
+            case PIXELFORMAT_ETC2_RGB8A1: return MTLPixelFormatETC2_RGB8A1;
+            case PIXELFORMAT_ETC2_RGBA8: return MTLPixelFormatEAC_RGBA8;
+            case PIXELFORMAT_ETC2_SRGB8A8: return MTLPixelFormatEAC_RGBA8_sRGB;
+            case PIXELFORMAT_ETC2_RG11: return MTLPixelFormatEAC_RG11Unorm;
+            case PIXELFORMAT_ETC2_RG11SN: return MTLPixelFormatEAC_RG11Snorm;
+            default: break;
+        }
     }
 #if TARGET_OS_IOS
     if (@available(iOS 16.4, *)) {
@@ -916,6 +931,18 @@ static ns_bool mtl_v2_mem_create(u32 slot, u64 size, u32 flags, const char *name
 
 static void mtl_v2_mem_destroy(u32 slot) {
     if (slot >= GPU_RESOURCE_POOL_SIZE) return;
+    // A freed buffer may still be the bound root or a storage binding, held
+    // by plain pointer: the next draw or dispatch would hand Metal the
+    // released object. Unbind it first.
+    id<MTLBuffer> buffer = _state.v2_memory[slot];
+    if (buffer != nil) {
+        if (_state.v2_root_buffer == buffer) _state.v2_root_buffer = nil;
+        for (u32 i = 0; i < _state.v2_storage_slot_count; ++i) {
+            if (_state.v2_storage_buffers[i] != buffer) continue;
+            _state.v2_storage_buffers[i] = nil;
+            _state.v2_storage_offsets[i] = 0;
+        }
+    }
 #ifndef ENABLE_ARC
     [_state.v2_memory[slot] release];
 #endif
@@ -967,14 +994,36 @@ static void mtl_v2_mem_copy_end(void) {
     _state.blit_encoder = nil;
 }
 
+static bool mtl_block_compressed(gpu_pixel_format format) {
+    return format >= PIXELFORMAT_BC1_RGBA && format <= PIXELFORMAT_ASTC_6x6_SRGBA;
+}
+
+// Whether this GPU samples block-compressed `format`: ASTC from the Apple2
+// family on, ETC2 and EAC on every Apple GPU, BC where the device says so
+// (every Mac; an iPad from iOS 16.4 when its GPU has it).
+static bool mtl_block_format_supported(gpu_pixel_format format) {
+    id<MTLDevice> device = _state.device.device;
+    if (format >= PIXELFORMAT_ASTC_4x4_RGBA && format <= PIXELFORMAT_ASTC_6x6_SRGBA) {
+        return [device supportsFamily:MTLGPUFamilyApple2];
+    }
+    if (format >= PIXELFORMAT_ETC2_RGB8 && format <= PIXELFORMAT_ETC2_RG11SN) {
+        return [device supportsFamily:MTLGPUFamilyApple1];
+    }
+    if (format >= PIXELFORMAT_BC1_RGBA && format <= PIXELFORMAT_BC7_SRGBA) {
+        if (@available(macOS 11.0, iOS 16.4, *)) return device.supportsBCTextureCompression;
+        return TARGET_OS_OSX;
+    }
+    return false;
+}
+
 static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
                                  i32 format, u32 usage, i32 mip_count, i32 kind) {
     if (width <= 0 || height <= 0 || depth_or_layers <= 0 ||
         _state.texture_count >= GPU_RESOURCE_POOL_SIZE) return 0;
     MTLPixelFormat pixel_format = _mtl_pixel_format((gpu_pixel_format)format);
     if (pixel_format == MTLPixelFormatInvalid) return 0;
-    if (format >= PIXELFORMAT_ASTC_4x4_RGBA && format <= PIXELFORMAT_ASTC_6x6_SRGBA &&
-        ![_state.device.device supportsFamily:MTLGPUFamilyApple2]) return 0;
+    bool block_compressed = mtl_block_compressed((gpu_pixel_format)format);
+    if (block_compressed && !mtl_block_format_supported((gpu_pixel_format)format)) return 0;
     MTLTextureDescriptor *desc = [MTLTextureDescriptor new];
     desc.textureType = _mtl_texture_type((gpu_texture_type)kind);
     desc.pixelFormat = pixel_format;
@@ -990,8 +1039,9 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
     bool transient_render_target = (usage & TEXTURE_USAGE_RENDER_TARGET) &&
                                    !(usage & (TEXTURE_USAGE_READ | TEXTURE_USAGE_WRITE));
     // Simulator requires private storage for depth/stencil textures, including
-    // attachments sampled by a later pass. Color uploads still need shared
-    // storage; transient attachments can fall back to private storage.
+    // attachments sampled by a later pass. Uncompressed color uploads stay
+    // shared so replaceRegion can write them. Transient attachments can fall
+    // back to private storage.
     bool depth_stencil = format == PIXELFORMAT_DEPTH || format == PIXELFORMAT_DEPTH_STENCIL;
     MTLResourceOptions resource_options = (depth_stencil || transient_render_target)
                                              ? MTLResourceStorageModePrivate
@@ -1009,6 +1059,12 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
         }
 #endif
     }
+    // Block-compressed pictures live in private storage on every Apple GPU,
+    // filled by a blit (mtl_v2_texture_upload_private). The GPU lays the
+    // blocks out its own way there, which a CPU replaceRegion into a shared
+    // texture does not reliably reproduce on iOS devices; using one path on
+    // macOS too keeps it the path that is tested.
+    if (block_compressed && !transient_render_target) resource_options = MTLResourceStorageModePrivate;
     desc.resourceOptions = resource_options;
     desc.usage = 0;
     if (usage == TEXTURE_USAGE_DEFAULT || (usage & TEXTURE_USAGE_READ)) desc.usage |= MTLTextureUsageShaderRead;
@@ -1033,6 +1089,48 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
     return id;
 }
 
+// Private storage is not CPU-visible. One shot command buffer copies the
+// tightly packed blocks; the frame encoder stays untouched because
+// gpu_mtl_end_frame requires it to be idle.
+static void mtl_v2_texture_upload_private(gpu_texture_mtl *texture, i32 mip, i32 layer,
+                                          const void *data, u64 size,
+                                          NSUInteger width, NSUInteger height, NSUInteger depth,
+                                          NSUInteger row, NSUInteger image) {
+    u64 need = image == 0 ? size : (u64)image * (u64)depth;
+    if (_state.cmd_queue == nil || _state.device.device == nil || size > (u64)NSUIntegerMax || size < need) {
+        NSLog(@"ns: compressed texture upload skipped");
+        return;
+    }
+    @autoreleasepool {
+        id<MTLBuffer> staging = [_state.device.device newBufferWithBytes:data
+                                                                   length:(NSUInteger)size
+                                                                  options:MTLResourceStorageModeShared];
+        if (!staging) {
+            NSLog(@"ns: compressed texture upload failed to allocate %llu bytes", (unsigned long long)size);
+            return;
+        }
+        id<MTLCommandBuffer> command = [_state.cmd_queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [command blitCommandEncoder];
+        mtl_v2_label_encoder(blit, "compressed texture upload");
+        [blit copyFromBuffer:staging
+                sourceOffset:0
+           sourceBytesPerRow:row
+         sourceBytesPerImage:image
+                  sourceSize:MTLSizeMake(width, height, depth)
+                   toTexture:texture->texture
+            destinationSlice:(NSUInteger)layer
+            destinationLevel:(NSUInteger)mip
+           destinationOrigin:MTLOriginMake(0, 0, 0)];
+        [blit endEncoding];
+        [command commit];
+        [command waitUntilCompleted];
+        if (command.error) NSLog(@"ns: compressed texture upload failed: %@", command.error);
+#ifndef ENABLE_ARC
+        [staging release];
+#endif
+    }
+}
+
 static void mtl_v2_texture_upload(u32 tex, i32 mip, i32 layer, const void *data, u64 size) {
     if (!tex || tex >= _state.texture_count || !data || size == 0 || mip < 0 || layer < 0) return;
     gpu_texture_mtl *texture = &_state.textures[tex];
@@ -1043,9 +1141,22 @@ static void mtl_v2_texture_upload(u32 tex, i32 mip, i32 layer, const void *data,
                            : 1;
     NSUInteger row = (NSUInteger)gpu_pixel_format_row_pitch(texture->format, (i32)width, 1);
     NSUInteger image = (NSUInteger)gpu_pixel_format_surface_pitch(texture->format, (i32)width, (i32)height, 1);
+    // A block-compressed format's row is a row of blocks and its image the
+    // rows of blocks of one slice (gpu_pixel_format_row_pitch). A private
+    // texture (every block-compressed one) is filled by a blit.
+    if (texture->texture.storageMode == MTLStorageModePrivate) {
+        mtl_v2_texture_upload_private(texture, mip, layer, data, size, width, height, depth, row, image);
+        return;
+    }
     MTLRegion region = texture->type == TEXTURE_3D
                            ? MTLRegionMake3D(0, 0, 0, width, height, depth)
                            : MTLRegionMake2D(0, 0, width, height);
+    // bytesPerImage is the distance between slices of a 3D texture. Metal
+    // requires 0 for every other type; `slice` already selects that image.
+    // An iOS device applies a nonzero value to block-compressed formats as a
+    // pixel-row stride, so a tightly packed ASTC or BC surface is stored torn
+    // or blank.
+    if (texture->type != TEXTURE_3D) image = 0;
     [texture->texture replaceRegion:region
                        mipmapLevel:(NSUInteger)mip
                              slice:(NSUInteger)layer

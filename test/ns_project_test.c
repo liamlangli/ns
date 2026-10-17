@@ -276,6 +276,13 @@ int main(void) {
                   text_has(gpu_metal, "texture->transient_render_target") &&
                   text_has(gpu_metal, "MTLStoreActionDontCare"),
               "embedded Metal keeps render-target-only attachments memoryless and discards their stores.");
+    ns_expect(text_has(gpu_metal, "texture->type != TEXTURE_3D") &&
+                  text_has(gpu_metal, "bytesPerImage:image"),
+              "embedded Metal passes bytesPerImage only for 3D textures, so iOS compressed uploads stay intact.");
+    ns_expect(text_has(gpu_metal, "storageMode == MTLStorageModePrivate") &&
+                  text_has(gpu_metal, "copyFromBuffer:staging") &&
+                  text_has(gpu_metal, "compressed texture upload"),
+              "embedded Metal uploads block-compressed textures with a private blit on every Apple platform.");
     ns_expect(text_has(gpu_metal, "if (nil == _state.cmd_encoder) return;"),
               "embedded Metal state calls tolerate an unavailable screen drawable.");
     ns_expect(text_has(view_ios, "CGSize drawable = metal_view.drawableSize") &&

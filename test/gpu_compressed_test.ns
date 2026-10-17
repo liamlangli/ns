@@ -1,0 +1,206 @@
+use std
+use simd
+use shader
+use view
+use gpu
+
+// Block-compressed textures on a real GPU: each format is filled with blocks
+// of known solid colours, uploaded, sampled the way an app samples a
+// picture (one fullscreen triangle into an RGBA8 target), read back through
+// a compute pass and compared texel by texel - including sizes that end in
+// partial blocks. A format the GPU does not sample must be refused at
+// creation, never come back blank. Skips without a GPU.
+
+struct probe_vertex {
+    position: float4,
+    uv: float2
+}
+
+fn vs_probe() probe_vertex {
+    let id = shader_vertex_id()
+    let x = -1.0
+    let y = -1.0
+    if id == 1 { x = 3.0 }
+    if id == 2 { y = 3.0 }
+    return probe_vertex { float4 { x, y, 0.0, 1.0 }, float2 { (x + 1.0) * 0.5, (1.0 - y) * 0.5 } }
+}
+
+fn fs_probe(input: probe_vertex) float4 {
+    return shader_sample_texture_nearest(input.uv)
+}
+
+fn cs_probe() void {
+    let x = shader_global_id_x()
+    let y = shader_global_id_y()
+    let w = shader_root_f32(4) as i32
+    let c = shader_read_texture(x, y)
+    let r = (c.x * 255.0 + 0.5) as i32
+    let g = (c.y * 255.0 + 0.5) as i32
+    let b = (c.z * 255.0 + 0.5) as i32
+    let a = (c.w * 255.0 + 0.5) as i32
+    shader_buffer_store_i32(0, y * w + x, r + g * 256 + b * 65536 + a * 16777216)
+}
+
+lit FORMAT_BC1 = 45
+lit FORMAT_BC3 = 47
+lit FORMAT_ETC2_RGB8 = 61
+lit FORMAT_ETC2_RGBA8 = 64
+
+// One colour a block, in turn: red, green, blue, white, yellow, cyan.
+fn palette(k: i32) [i32] {
+    let c = [i32](3)
+    let i = k % 6
+    if i == 0 || i == 3 || i == 4 { c[0] = 255 }
+    if i == 1 || i == 3 || i == 4 || i == 5 { c[1] = 255 }
+    if i == 2 || i == 3 || i == 5 { c[2] = 255 }
+    return c
+}
+
+fn put16(out: [u8], at: i32, v: i32) {
+    out[at] = (v & 255) as u8
+    out[at + 1] = ((v >> 8) & 255) as u8
+}
+
+fn footprint(format: i32) i32 {
+    if format == GPU_PIXELFORMAT_ASTC_6X6 { return 6 }
+    return 4
+}
+
+fn block_bytes(format: i32) i32 {
+    if format == FORMAT_BC1 || format == FORMAT_ETC2_RGB8 { return 8 }
+    return 16
+}
+
+// One block of `format` at `at`, every texel palette colour `k`, opaque.
+fn block(out: [u8], at: i32, format: i32, k: i32) {
+    let c = palette(k)
+    if format == FORMAT_BC1 || format == FORMAT_BC3 {
+        let base = at
+        if format == FORMAT_BC3 {
+            // Alpha endpoints both 255, every index 0.
+            out[at] = 255 as u8
+            out[at + 1] = 255 as u8
+            base = at + 8
+        }
+        put16(out, base, ((c[0] >> 3) << 11) | ((c[1] >> 2) << 5) | (c[2] >> 3))
+        return
+    }
+    if format == FORMAT_ETC2_RGB8 || format == FORMAT_ETC2_RGBA8 {
+        let base = at
+        if format == FORMAT_ETC2_RGBA8 {
+            // EAC alpha: base 255, multiplier 0, so every texel is 255.
+            out[at] = 255 as u8
+            base = at + 8
+        }
+        // Individual mode, both halves the colour; codeword 0 adds 2 to
+        // every texel, which the comparison allows.
+        out[base] = ((c[0] >> 4) * 17) as u8
+        out[base + 1] = ((c[1] >> 4) * 17) as u8
+        out[base + 2] = ((c[2] >> 4) * 17) as u8
+        return
+    }
+    // ASTC LDR void-extent block: the constant colour as UNORM16.
+    out[at] = 252 as u8
+    out[at + 1] = 253 as u8
+    for i in 2 to 8 { out[at + i] = 255 as u8 }
+    put16(out, at + 8, c[0] * 257)
+    put16(out, at + 10, c[1] * 257)
+    put16(out, at + 12, c[2] * 257)
+    put16(out, at + 14, 65535)
+}
+
+let probe_graphics: u32 = 0u
+let probe_compute: u32 = 0u
+let probe_state: u32 = 0u
+
+// How many of a `w` x `h` texture of `format` come back wrong; -1 when the
+// GPU refused the format.
+fn probe(format: i32, w: i32, h: i32) i32 {
+    let f = footprint(format)
+    let across = (w + f - 1) / f
+    let down = (h + f - 1) / f
+    let size = across * down * block_bytes(format)
+    assert gpu_pixel_format_surface_pitch(format, w, h, 1) == size
+    let data = [u8](size)
+    for k in 0 to across * down { block(data, k * block_bytes(format), format, k) }
+    let texture = gpu_texture_create(w, h, 1, format, GPU_TEXTURE_USAGE_READ as u32, 1, GPU_TEXTURE_2D)
+    if texture == 0u { return -1 }
+    gpu_texture_upload(texture, 0, 0, data, size as u64)
+    let target = gpu_texture_create(w, h, 1, GPU_PIXELFORMAT_RGBA8, (GPU_TEXTURE_USAGE_RENDER_TARGET | GPU_TEXTURE_USAGE_READ) as u32, 1, GPU_TEXTURE_2D)
+    let readback = gpu_malloc((w * h * 4) as u64, GPU_MEM_SHARED, "compressed texture test readback")
+    assert target != 0u && readback != 0
+    let root = [f32](8)
+    // gpu_commit does not wait for the GPU, but the frame ring holds three
+    // frames: submitting the work a fourth time waits for the first.
+    for i in 0 to 4 {
+        root[0] = texture as f32
+        gpu_pass_begin("compressed texture test draw", target, 0u, 0u, 0u, 0u, GPU_LOAD_CLEAR | (GPU_LOAD_DONTCARE << 8), 0.0, 0.0, 0.0, 0.0, 1.0)
+        gpu_set_viewport(0, 0, w, h)
+        gpu_set_scissor(0, 0, w, h)
+        gpu_set_shader(probe_graphics)
+        gpu_set_state(probe_state)
+        gpu_set_root_data(root, 32)
+        gpu_draw_vertices(0, 3, 1)
+        gpu_pass_end()
+        root[0] = target as f32
+        root[4] = w as f32
+        root[5] = h as f32
+        gpu_set_shader(probe_compute)
+        gpu_set_root_data(root, 32)
+        gpu_set_storage(readback)
+        gpu_dispatch("compressed texture test read", w, h, 1)
+        gpu_commit()
+    }
+    let pixels = [i32](w * h)
+    assert gpu_read(readback, pixels, (w * h * 4) as u64)
+    let wrong = 0
+    for y in 0 to h {
+        for x in 0 to w {
+            let c = palette((y / f) * across + x / f)
+            let p = pixels[y * w + x]
+            if abs((p & 255) - c[0]) > 4 || abs(((p >> 8) & 255) - c[1]) > 4 || abs(((p >> 16) & 255) - c[2]) > 4 || ((p >> 24) & 255) < 250 {
+                if wrong == 0 { print(`format {format} {w}x{h}: texel {x},{y} is {p & 255},{(p >> 8) & 255},{(p >> 16) & 255},{(p >> 24) & 255}, not {c[0]},{c[1]},{c[2]},255\n`) }
+                wrong = wrong + 1
+            }
+        }
+    }
+    // Freed while still bound as storage: the next draw must not touch it.
+    gpu_free(readback)
+    gpu_texture_destroy(target)
+    gpu_texture_destroy(texture)
+    return wrong
+}
+
+fn main() {
+    let v = view_create("compressed texture test", 64, 64)
+    if !gpu_request_device(v) {
+        print("gpu_compressed_test: no GPU, skipped\n")
+        return
+    }
+    probe_graphics = gpu_shader_graphics(vs_probe, fs_probe).resource_id
+    probe_compute = gpu_shader_compute(cs_probe).resource_id
+    probe_state = gpu_state_create(GPU_PRIMITIVE_TRIANGLES, GPU_CULL_NONE, GPU_FACE_WINDING_CCW, GPU_COMPARE_ALWAYS, false, GPU_BLEND_OFF, 15u)
+    assert probe_graphics != 0u && probe_compute != 0u && probe_state != 0u
+    let formats = [i32](6)
+    formats[0] = FORMAT_BC1
+    formats[1] = FORMAT_BC3
+    formats[2] = FORMAT_ETC2_RGB8
+    formats[3] = FORMAT_ETC2_RGBA8
+    formats[4] = GPU_PIXELFORMAT_ASTC_4X4
+    formats[5] = GPU_PIXELFORMAT_ASTC_6X6
+    let tested = 0
+    for i in 0 to 6 {
+        let format = formats[i]
+        // Whole blocks, then a size that ends in partial ones.
+        let whole = probe(format, footprint(format) * 6, footprint(format) * 4)
+        if whole < 0 {
+            print(`format {format}: not sampled by this GPU, refused\n`)
+            continue
+        }
+        assert whole == 0
+        assert probe(format, 13, 7) == 0
+        tested = tested + 1
+    }
+    assert tested > 0
+    print(`gpu_compressed_test: {tested} formats sample exactly\n`)
+}

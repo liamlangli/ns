@@ -78,6 +78,19 @@ if texture == 0u {
 }
 ```
 
+A picture shrunk to `max_size` is resized one channel at a time, so the colour
+under fully transparent texels survives: the GPU filters straight alpha, and
+blackened transparent texels would draw a dark fringe round the opaque ones.
+
+On Metal every block-compressed texture is created in private storage and
+filled by a blit, on macOS as on iOS, so the path the device uses is the one
+the desktop exercises. Metal samples ASTC (Apple2 GPUs and later), ETC2/EAC
+(every Apple GPU) and BC (every Mac, and iPads that report it from iOS
+16.4). A format the GPU cannot sample, and PVRTC, which Apple deprecated, is
+refused when the texture is created, so `gpu_texture_load_cooked` returns 0.
+`test/gpu_compressed_test.ns` checks every format texel by texel on the
+local GPU.
+
 Raw `ns run` and Wasm packaging retain originals. Browser
 `gpu_texture_load_cooked` returns 0 so the same development fallback works.
 A platform without a matching table keeps originals.
