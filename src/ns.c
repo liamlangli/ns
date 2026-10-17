@@ -3744,6 +3744,41 @@ static ns_str ns_build_darwin_current_executable(void) {
 // a program keeps reading `res/house.vox` whether it was interpreted from the
 // project root or double-clicked as a bundle.
 // The cooker is a build-time tool; image codecs never enter the language VM.
+#ifdef NS_DARWIN
+// Whether `python` can run the cooker: Python 3.11+ for tomllib, and Pillow.
+static ns_bool ns_cook_python_ready(const char *python) {
+    if (strchr(python, '/') && access(python, X_OK) != 0) return false;
+    ns_str quoted = ns_shell_quote(ns_str_cstr((char *)python));
+    ns_str command = ns_str_null;
+    ns_str_append_len(&command, quoted.data, quoted.len);
+    ns_str_free(quoted);
+    const char *probe = " -c 'import tomllib, PIL' >/dev/null 2>&1";
+    ns_str_append_len(&command, probe, (i32)strlen(probe));
+    ns_array_push(command.data, '\0');
+    const i32 result = system(command.data);
+    ns_str_free(command);
+    return result == 0;
+}
+
+// Xcode strips Homebrew from PATH and exposes Apple's older system Python,
+// and the first Python a machine has need not carry Pillow. Take the first
+// candidate that can run the cooker; with none, the first that exists, so
+// the cooker itself reports what is missing.
+static const char *ns_cook_python(void) {
+    static const char *candidates[] = {
+        "/opt/homebrew/bin/python3", "/usr/local/bin/python3", "python3", "/usr/bin/python3",
+    };
+    const i32 count = (i32)(sizeof(candidates) / sizeof(candidates[0]));
+    for (i32 i = 0; i < count; i++) {
+        if (ns_cook_python_ready(candidates[i])) return candidates[i];
+    }
+    for (i32 i = 0; i < count; i++) {
+        if (strchr(candidates[i], '/') && access(candidates[i], X_OK) == 0) return candidates[i];
+    }
+    return "python3";
+}
+#endif
+
 static i32 ns_cook_command(i32 argc, const char **argv) {
 #ifdef NS_DARWIN
     const char *platform = ns_null, *output = ns_null, *root = ".";
@@ -3787,12 +3822,7 @@ static i32 ns_cook_command(i32 argc, const char **argv) {
     if (!ns_file_exists(script)) ns_exit(1, "cook", "missing ns-cook.py; reinstall the ns SDK.\n");
     const char *python = getenv("NS_COOK_PYTHON");
 #ifdef NS_DARWIN
-    // Xcode strips Homebrew from PATH and exposes Apple's older system Python.
-    // Prefer the normal Homebrew locations unless the user selected a runtime.
-    if (!python || !python[0]) {
-        if (access("/opt/homebrew/bin/python3", X_OK) == 0) python = "/opt/homebrew/bin/python3";
-        else if (access("/usr/local/bin/python3", X_OK) == 0) python = "/usr/local/bin/python3";
-    }
+    if (!python || !python[0]) python = ns_cook_python();
 #endif
     ns_str quoted = ns_shell_quote(ns_str_cstr((char *)(python && python[0] ? python : "python3")));
     ns_str command = ns_str_null;

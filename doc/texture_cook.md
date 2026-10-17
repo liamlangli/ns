@@ -60,7 +60,9 @@ also requires Arm's [astcenc](https://github.com/ARM-software/astc-encoder).
 Build a pinned copy with `sh scripts/bootstrap_astcenc.sh`; it writes
 `bin/astcenc`, which `make install` also installs. Alternatively put `astcenc`
 on PATH or set `NS_ASTCENC` to its executable. `NS_COOK_PYTHON` selects the
-Python executable, including when Xcode uses a different PATH.
+Python executable. Without it, macOS takes the first of Homebrew's, then
+`/usr/local/bin`'s, then PATH's and the system `python3` that has both tomllib
+and Pillow, so an Xcode build with a different PATH finds the same one.
 
 The app ships neither Python nor the encoder. The language-only `ns`
 executable does not link image or GPU libraries. Encoded results are cached
