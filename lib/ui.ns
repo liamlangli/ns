@@ -242,13 +242,17 @@ struct ui_layer {
 // ===========================================================================
 
 // Create a renderer on `v`'s GPU device. The Latin atlas (FONT_MAIN +
-// FONT_MONO) is loaded from lib/assets/latin_mono.* during init.
+// FONT_MONO) metrics are read from lib/assets/latin_mono.* during init; its
+// picture is uploaded the first time text samples it.
 ref fn ui_renderer_create(v: ref view) ref ui_renderer
 ref fn ui_renderer_destroy(r: ref ui_renderer)
 
 // Load the optional Chinese (FONT_ZH) atlas at runtime. Returns true on success.
 ref fn ui_load_chinese_font(r: ref ui_renderer, json_path: str, image_path: str) bool
-// Replace the main and mono SDF font faces from a standard ui atlas JSON.
+// Replace the main and mono SDF font faces from a standard ui atlas JSON. An
+// atlas of one face (its chars at the top level) becomes both faces. The
+// built-in latin_mono atlas goes to the GPU only when a draw first needs it,
+// so a program that replaces the faces here never uploads it.
 ref fn ui_load_font(r: ref ui_renderer, json_path: str, image_path: str) bool
 // Load Construct-style bitmap font atlases. The Latin JSON is an array of
 // {c,xo,yo,xa,uv:[x,y,w,h]} entries; the Chinese JSON maps codepoint strings

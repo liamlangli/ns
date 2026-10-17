@@ -246,5 +246,8 @@ void gpu_vk_end_frame(view *v);
 
 // Load a cooked NSTX sidecar directly into GPU storage; 0 on failure.
 u32 gpu_texture_load_cooked(const char *path);
+// The file name at the end of `path`, the part a texture named after the
+// picture it holds is labelled with.
+const char *gpu_texture_file_name(const char *path);
 // C-only metadata helper: original atlas dimensions preserve pixel-coordinate UVs.
 u32 gpu_texture_load_cooked_info(const char *path, i32 *source_width, i32 *source_height);

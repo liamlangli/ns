@@ -333,6 +333,9 @@ typedef struct ui_renderer {
     ui_font fonts[UI_FONT_COUNT];
     u32 white_texture;
     u32 font_texture;
+    // latin_mono.png goes up the first time a draw samples it, so a program
+    // that only draws bitmap text never holds it; a failed load is not retried.
+    ns_bool font_texture_failed;
     u32 font_zh_texture;
     u32 font_bitmap_texture;
     u32 font_bitmap_zh_texture;
@@ -1500,19 +1503,6 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     u32 white = 0xffffffffu;
     r->white_texture = ui_create_rgba_texture(&white, 1, 1, "ui white");
 
-    char image_path[UI_PATH_MAX];
-    io_image *img = ui_resolve_asset("latin_mono.png", image_path)
-                        ? io_load_image(image_path)
-                        : NULL;
-    if (!img) fprintf(stderr, "ui: cannot locate or load latin_mono.png\n");
-    if (img && img->data && img->channels == 4) {
-        r->font_texture = ui_create_rgba_texture(img->data, img->width, img->height, image_path);
-    }
-    if (img) {
-        free(img->data);
-        free(img);
-    }
-
     if (strcmp(gpu_shader_target(), "glsl") == 0) {
         static char vs_src[UI_SHADER_GLSL_CAPACITY];
         static char fs_src[UI_SHADER_GLSL_CAPACITY];
@@ -1532,7 +1522,7 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     // pixels as if they belonged to the world behind them.
     r->render_state_hud = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
                                            COMPARE_ALWAYS, true, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
-    r->gpu_ready = r->white_texture && r->font_texture && r->shader &&
+    r->gpu_ready = r->white_texture && r->shader &&
                    r->render_state && r->render_state_hud;
 }
 
@@ -1623,8 +1613,14 @@ ns_bool ui_load_font(ui_renderer *r, const char *json_path, const char *image_pa
     const i32 tex_h = (i32)ui_json_key_number(json, "height", image->height);
     ui_font main_font = {0};
     ui_font mono_font = {0};
-    ns_bool loaded = ui_load_font_face(json, "FONT_MAIN", tex_w, tex_h, &main_font) &&
-                     ui_load_font_face(json, "FONT_MONO", tex_w, tex_h, &mono_font);
+    // An atlas of one face (chars at the top level, no FONT_MAIN) serves as
+    // both the main and the mono face.
+    const ns_bool one_face = ui_find_key(json, "FONT_MAIN") == NULL;
+    ns_bool loaded = one_face
+                         ? ui_load_font_face(json, NULL, tex_w, tex_h, &main_font) &&
+                               ui_load_font_face(json, NULL, tex_w, tex_h, &mono_font)
+                         : ui_load_font_face(json, "FONT_MAIN", tex_w, tex_h, &main_font) &&
+                               ui_load_font_face(json, "FONT_MONO", tex_w, tex_h, &mono_font);
     free(json);
     if (!loaded) {
         free(main_font.glyphs);
@@ -1634,7 +1630,7 @@ ns_bool ui_load_font(ui_renderer *r, const char *json_path, const char *image_pa
         return false;
     }
 
-    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height, image_path);
+    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height, gpu_texture_file_name(image_path));
     free(image->data);
     free(image);
     if (!texture) {
@@ -1675,7 +1671,7 @@ ns_bool ui_load_chinese_font(ui_renderer *r, const char *json_path, const char *
         return false;
     }
 
-    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height, image_path);
+    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height, gpu_texture_file_name(image_path));
     free(image->data);
     free(image);
     if (!texture) {
@@ -1714,7 +1710,7 @@ static ns_bool ui_load_bitmap_face(ui_renderer *r, const char *json_path, const 
         return false;
     }
 
-    u32 texture = ui_create_font_texture(image, image_path);
+    u32 texture = ui_create_font_texture(image, gpu_texture_file_name(image_path));
     free(image->data);
     free(image);
     if (!texture) {
@@ -1995,7 +1991,7 @@ i32 ui_atlas_load(ui_renderer *r, const char *path) {
         rgba[i * 4 + 2] = c > 2 ? image->data[i * c + 2] : image->data[i * c + 0];
         rgba[i * 4 + 3] = c > 3 ? image->data[i * c + 3] : 255;
     }
-    i32 texture_id = ui_register_rgba_texture(r, rgba, image->width, image->height, path);
+    i32 texture_id = ui_register_rgba_texture(r, rgba, image->width, image->height, gpu_texture_file_name(path));
     free(rgba);
     free(image->data);
     free(image);
@@ -2166,13 +2162,34 @@ static ns_bool ui_upload_storage(ui_renderer *r, u32 *clip_offset, u32 *root_off
     return true;
 }
 
+// The main/mono atlas, uploaded on its first use (see font_texture_failed).
+static u32 ui_main_font_texture(ui_renderer *r) {
+    if (r->font_texture || r->font_texture_failed) return r->font_texture;
+    char image_path[UI_PATH_MAX];
+    io_image *img = ui_resolve_asset("latin_mono.png", image_path)
+                        ? io_load_image(image_path)
+                        : NULL;
+    if (img && img->data && img->channels == 4) {
+        r->font_texture = ui_create_rgba_texture(img->data, img->width, img->height, gpu_texture_file_name(image_path));
+    }
+    if (img) {
+        free(img->data);
+        free(img);
+    }
+    if (!r->font_texture) {
+        fprintf(stderr, "ui: cannot locate or load latin_mono.png\n");
+        r->font_texture_failed = true;
+    }
+    return r->font_texture;
+}
+
 static u32 ui_command_texture(ui_renderer *r, const ui_command *cmd) {
     if (cmd->kind == UI_KIND_ARC_SDF) return r->white_texture;
     if (cmd->retained && cmd->kind == UI_KIND_IMAGE) return r->white_texture;
     if (cmd->kind == UI_KIND_MSDF) {
-        return cmd->texture_id == UI_FONT_ZH_TEXTURE && r->font_zh_texture
-                   ? r->font_zh_texture
-                   : r->font_texture;
+        if (cmd->texture_id == UI_FONT_ZH_TEXTURE && r->font_zh_texture) return r->font_zh_texture;
+        u32 texture = ui_main_font_texture(r);
+        return texture ? texture : r->white_texture;
     }
     if (cmd->kind == UI_KIND_BITMAP) {
         return cmd->texture_id == UI_FONT_BITMAP_ZH_TEXTURE

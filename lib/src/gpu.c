@@ -904,6 +904,15 @@ static u32 gpu_cooked_u32(const u8 *p) {
     return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24;
 }
 
+const char *gpu_texture_file_name(const char *path) {
+    if (!path) return path;
+    const char *name = path;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') name = p + 1;
+    }
+    return name[0] ? name : path;
+}
+
 u32 gpu_texture_load_cooked_info(const char *path, i32 *source_width, i32 *source_height) {
     if (!path || strlen(path) > 4096) return 0;
     char filename[4112];
@@ -932,9 +941,10 @@ u32 gpu_texture_load_cooked_info(const char *path, i32 *source_width, i32 *sourc
         size != ((width + footprint - 1) / footprint) * ((height + footprint - 1) / footprint) * bytes) goto done;
     data = malloc(size);
     if (!data || fread(data, 1, size, file) != size || fgetc(file) != EOF) goto done;
-    // The source path names the texture, so a frame capture shows which
+    // The source file name labels the texture, so a frame capture shows which
     // picture each cooked texture holds.
-    texture = gpu_texture_create((i32)width, (i32)height, 1, (i32)format, TEXTURE_USAGE_READ, 1, TEXTURE_2D, path);
+    texture = gpu_texture_create((i32)width, (i32)height, 1, (i32)format, TEXTURE_USAGE_READ, 1, TEXTURE_2D,
+                                 gpu_texture_file_name(path));
     if (texture) {
         gpu_texture_upload(texture, 0, 0, data, size);
         if (source_width) *source_width = (i32)original_width;
