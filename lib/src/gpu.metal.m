@@ -1226,6 +1226,21 @@ static bool mtl_source_uses(const char *source, const char *symbol) {
     return source && strstr(source, symbol) != NULL;
 }
 
+// Metal's shader-validation device (MTL_SHADER_VALIDATION=1, or Xcode's
+// Shader Validation option) crashes inside newBinaryArchiveWithDescriptor
+// when it loads an archive that already holds pipelines. The archives are only
+// a compile cache, so a validated run compiles every pipeline instead.
+static bool mtl_shader_validation(void) {
+    static int validation = -1;
+    if (validation < 0) {
+        const char *env = getenv("MTL_SHADER_VALIDATION");
+        NSString *device = _state.device.device ? NSStringFromClass([_state.device.device class]) : nil;
+        validation = (env && env[0] && strcmp(env, "0") != 0) ||
+                     (device && [device rangeOfString:@"GPUDebug"].location != NSNotFound);
+    }
+    return validation == 1;
+}
+
 // Open the shader's archive, loading the entry storage already holds. A cache
 // that cannot be read is not an error: the archive starts empty and the
 // pipelines it gains are serialized over the unusable entry.
@@ -1233,7 +1248,7 @@ static void mtl_shader_cache_open(gpu_shader_mtl *record, const char *name, u64 
     record->cache_name[0] = '\0';
     record->cache_hash = hash;
     record->archive = nil;
-    if (!name || !name[0] || !mtl_cache_available()) return;
+    if (!name || !name[0] || !mtl_cache_available() || mtl_shader_validation()) return;
     snprintf(record->cache_name, sizeof(record->cache_name), "%s", name);
 
     const char *path = _mtl_cache.path(record->cache_name, hash);
