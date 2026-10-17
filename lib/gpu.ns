@@ -48,6 +48,15 @@ lit GPU_COMPARE_GREATER = 5
 lit GPU_COMPARE_NOT_EQUAL = 6
 lit GPU_COMPARE_GREATER_EQUAL = 7
 lit GPU_COMPARE_ALWAYS = 8
+// Reverse-Z depth, the default convention: near is 1 and far is 0
+// (simd.ns reverse_z_* and mat4_perspective_reverse_z*). A depth pass
+// clears to GPU_DEPTH_CLEAR; a state that keeps the nearest surface tests
+// GPU_COMPARE_NEARER, and one that may land on an already-written depth (a
+// background at the far plane, an overlay re-drawing a surface) tests
+// GPU_COMPARE_NEARER_EQUAL.
+lit GPU_DEPTH_CLEAR: f64 = 0.0
+lit GPU_COMPARE_NEARER = GPU_COMPARE_GREATER
+lit GPU_COMPARE_NEARER_EQUAL = GPU_COMPARE_GREATER_EQUAL
 lit GPU_STENCIL_OP_KEEP = 0
 lit GPU_STENCIL_OP_ZERO = 1
 lit GPU_STENCIL_OP_REPLACE = 2
@@ -159,8 +168,8 @@ ref fn gpu_state_create(primitive_type: i32, cull_mode: i32, face_winding: i32, 
 ref fn gpu_state_stencil(state: u32, compare: i32, pass_op: i32) u32
 
 // Attachments are texture indices, 0 = unused.
-// Default convention: reverse-Z (near 1, far/clear 0), GREATER/GREATER_EQUAL.
-// Explicit depth_clear and state comparisons remain caller-controlled.
+// Default convention: reverse-Z. Pass GPU_DEPTH_CLEAR as depth_clear; the
+// backend never inverts the clear value or a state's comparison.
 //
 // label states what the pass does ("shadow depth", "bloom downsample") and
 // names the command encoder, so a Metal or RenderDoc frame capture reads as

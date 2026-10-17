@@ -1,0 +1,78 @@
+// The reverse-Z helpers in simd.ns and the depth defaults in gpu.ns: near
+// lands on depth 1, far (or infinity) on 0, and a vertex fn that builds its
+// clip position with them still transpiles. Run from the repo root so the
+// debug NS_REF_PATH ("lib") resolves the library modules.
+use std
+use simd
+use shader
+use gpu
+
+lit NEAR: f32 = 0.05
+lit FAR: f32 = 10.0
+
+fn near_enough(a: f32, b: f32) bool {
+    return abs(a - b) < 0.00001
+}
+
+// The matrix applied to a view-space point, then divided by w.
+fn project_depth(m: mat4, eye_z: f32) f32 {
+    let z = m.col2.z * eye_z + m.col3.z
+    let w = m.col2.w * eye_z + m.col3.w
+    return z / w
+}
+
+struct reverse_z_fragment {
+    position: float4
+}
+
+fn vs_reverse_z() reverse_z_fragment {
+    let x = shader_root_f32(0)
+    let y = shader_root_f32(1)
+    let distance = shader_root_f32(2)
+    if shader_root_f32(3) > 0.5 { return reverse_z_fragment { reverse_z_clip_finite(x, y, distance, NEAR, FAR) } }
+    return reverse_z_fragment { reverse_z_clip(x, y, distance, NEAR) }
+}
+
+fn main() {
+    assert GPU_DEPTH_CLEAR == 0.0
+    assert GPU_COMPARE_NEARER == GPU_COMPARE_GREATER
+    assert GPU_COMPARE_NEARER_EQUAL == GPU_COMPARE_GREATER_EQUAL
+
+    assert near_enough(reverse_z_depth(NEAR, NEAR), 1.0)
+    assert reverse_z_depth(FAR, NEAR) < reverse_z_depth(1.0, NEAR)
+    assert near_enough(reverse_z_depth_finite(NEAR, NEAR, FAR), 1.0)
+    assert near_enough(reverse_z_depth_finite(FAR, NEAR, FAR), 0.0)
+    assert reverse_z_depth_finite(5.0, NEAR, FAR) > 0.0
+
+    let clip = reverse_z_clip(0.5, -0.25, 2.0, NEAR)
+    assert near_enough(clip.x / clip.w, 0.5)
+    assert near_enough(clip.y / clip.w, -0.25)
+    assert near_enough(clip.z / clip.w, reverse_z_depth(2.0, NEAR))
+    let finite = reverse_z_clip_finite(0.5, -0.25, 2.0, NEAR, FAR)
+    assert near_enough(finite.z / finite.w, reverse_z_depth_finite(2.0, NEAR, FAR))
+
+    // The matrices agree with the scalar forms; the eye looks down -z.
+    let m = mat4_perspective_reverse_z(0.5, 2.0, NEAR, FAR)
+    assert near_enough(m.col0.x, 1.0)
+    assert near_enough(m.col1.y, 2.0)
+    assert near_enough(project_depth(m, -NEAR), 1.0)
+    assert near_enough(project_depth(m, -FAR), 0.0)
+    assert near_enough(project_depth(m, -2.0), reverse_z_depth_finite(2.0, NEAR, FAR))
+    let infinite = mat4_perspective_reverse_z_infinite(0.5, 2.0, NEAR)
+    assert near_enough(project_depth(infinite, -NEAR), 1.0)
+    assert near_enough(project_depth(infinite, -2.0), reverse_z_depth(2.0, NEAR))
+
+    let words = [f32](20)
+    mat4_write(words, 4, m)
+    assert near_enough(words[4], m.col0.x)
+    assert near_enough(words[14], m.col2.z)
+    assert near_enough(words[15], -1.0)
+    assert near_enough(words[18], m.col3.z)
+
+    // simd's helpers are emitted into the shader beside the entry.
+    assert utf8_len(shader_transpile_stage(vs_reverse_z, "msl", "vertex")) > 0
+    assert utf8_len(shader_transpile_stage(vs_reverse_z, "glsl", "vertex")) > 0
+    assert utf8_len(shader_transpile_stage(vs_reverse_z, "hlsl", "vertex")) > 0
+    assert utf8_len(shader_transpile_stage(vs_reverse_z, "wgsl", "vertex")) > 0
+    print("reverse_z_test ok\n")
+}

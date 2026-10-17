@@ -451,10 +451,30 @@ pipeline. Changing between them between draws does not rebuild the PSO.
 
 ### Pass labels
 
-The default depth convention is reverse-Z: near 1, far and clear 0, with
-`GPU_COMPARE_GREATER` or `GPU_COMPARE_GREATER_EQUAL`. Pass clear values and
-state comparisons are explicit; the backend does not invert them. UI panel
-matrices and `shader_sample_shadow` use the same convention; shadow receiver
+The default depth convention is reverse-Z: near 1, far and clear 0. `gpu`
+names it: pass `GPU_DEPTH_CLEAR` as a pass's `depth_clear`, and give a
+depth-tested state `GPU_COMPARE_NEARER` (`GPU_COMPARE_GREATER`) or, where a
+draw may land on an already-written depth such as a background at the far
+plane, `GPU_COMPARE_NEARER_EQUAL`. Pass clear values and state comparisons
+are explicit; the backend does not invert them.
+
+`simd` carries the projection side, in plain ns that shader fns may call:
+
+```ns
+// NDC (x, y) `distance` in front of the eye; the far plane at infinity
+let clip = reverse_z_clip(x, y, distance, near)
+// the same with a far plane, and the clip z alone
+let finite = reverse_z_clip_finite(x, y, distance, near, far)
+let z = reverse_z_clip_depth_finite(distance, near, far)
+// depth after the divide: 1 at near, toward 0 far away
+let depth = reverse_z_depth(distance, near)
+// right-handed matrices (the eye looks down -z), column-major
+let proj = mat4_perspective_reverse_z(tan_half_fov_y, aspect, near, far)
+let sky = mat4_perspective_reverse_z_infinite(tan_half_fov_y, aspect, near)
+mat4_write(words, 0, proj) // 16 floats for a root block or ui_set_panel
+```
+
+UI panel matrices and `shader_sample_shadow` use the same convention; shadow receiver
 bias is positive and PCSS blockers have larger depths than their receivers.
 Existing forward-Z callers must update their projection and bias when using
 these default UI/shadow helpers.

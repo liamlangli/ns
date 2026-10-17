@@ -324,6 +324,16 @@ static ns_bool ns_shader_in_unit(ns_ast_ctx *ctx, ns_symbol *s) {
     return s->fn.ctx == ns_null || s->fn.ctx == ctx;
 }
 
+// A helper fn may come from another unit, such as a `use`d module (simd's
+// reverse-Z helpers). Its AST indices only mean something in the context it
+// was parsed in, so it is collected and emitted there; callees it names
+// resolve in that unit first. Returns the context to restore.
+static ns_ast_ctx *ns_shader_enter_unit(ns_shader_emit *e, ns_symbol *s) {
+    ns_ast_ctx *outer = e->ctx;
+    if (s->fn.ctx) e->ctx = s->fn.ctx;
+    return outer;
+}
+
 // float2/3/4 -> component count, mat4 -> 16, otherwise 0.
 static i32 ns_shader_simd_dim(ns_str name) {
     if (ns_str_equals(name, ns_str_cstr("float2"))) return 2;
@@ -369,8 +379,8 @@ static ns_symbol *ns_shader_find_global(ns_vm *vm, ns_str name) {
     return ns_null;
 }
 
-// Callee lookup. A fn is only transpilable from the unit it was parsed in, so
-// the unit being emitted wins over a same-named fn anywhere else.
+// Callee lookup. The unit being collected or emitted (ns_shader_enter_unit)
+// wins over a same-named fn anywhere else.
 static ns_symbol *ns_shader_find_fn(ns_vm *vm, ns_ast_ctx *ctx, ns_str name) {
     for (i32 i = 0, l = (i32)ns_array_length(vm->symbols); i < l; ++i) {
         ns_symbol *s = &vm->symbols[i];
@@ -855,6 +865,7 @@ static void ns_shader_emit_storage_buffer_list(ns_shader_emit *e, ns_str *dst, i
 }
 
 static ns_return_void ns_shader_collect_fn(ns_shader_emit *e, i32 fn_index, ns_bool is_entry, i32 depth);
+static ns_return_void ns_shader_collect_fn_body(ns_shader_emit *e, i32 fn_index, ns_bool is_entry, i32 depth);
 
 static ns_return_void ns_shader_collect_expr(ns_shader_emit *e, i32 i, i32 depth) {
     if (i == 0) return ns_return_ok_void;
@@ -1022,11 +1033,14 @@ static ns_return_void ns_shader_collect_fn(ns_shader_emit *e, i32 fn_index, ns_b
         snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: `%.*s` is not a transpilable fn (native ref fns have no body).", s->name.len, s->name.data);
         return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, ns_shader_err);
     }
-    if (!ns_shader_in_unit(e->ctx, s)) {
-        snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: fn `%.*s` must be defined in the same file as the shader entry.", s->name.len, s->name.data);
-        return ns_return_error(void, ns_code_loc_nil, NS_ERR_EVAL, ns_shader_err);
-    }
+    ns_ast_ctx *outer_ctx = ns_shader_enter_unit(e, s);
+    ns_return_void collected = ns_shader_collect_fn_body(e, fn_index, is_entry, depth);
+    e->ctx = outer_ctx;
+    return collected;
+}
 
+static ns_return_void ns_shader_collect_fn_body(ns_shader_emit *e, i32 fn_index, ns_bool is_entry, i32 depth) {
+    ns_symbol *s = &e->vm->symbols[fn_index];
     ns_ast_t *fn_node = &e->ctx->nodes[s->fn.ast];
     ns_code_loc loc = ns_shader_loc(e, fn_node);
     ns_shader_try(ns_shader_collect_type(e, s->fn.ret, loc));
@@ -1589,8 +1603,8 @@ static ns_return_void ns_shader_emit_expr(ns_shader_emit *e, i32 i, ns_str *dst)
                 s = &e->vm->symbols[n->call_expr.rt];
             }
             if (!s || s->type != NS_SYMBOL_FN) s = ns_shader_find_fn(e->vm, e->ctx, name);
-            if (!s || s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || !ns_shader_in_unit(e->ctx, s)) {
-                snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: cannot call `%.*s` from a shader fn (not a user fn in this file).", name.len, name.data);
+            if (!s || s->type != NS_SYMBOL_FN || s->fn.fn.t.ref || !ns_shader_index_in(e->fns, (i32)(s - e->vm->symbols))) {
+                snprintf(ns_shader_err, sizeof(ns_shader_err), "shader: cannot call `%.*s` from a shader fn (not a transpilable ns fn).", name.len, name.data);
                 return ns_return_error(void, loc, NS_ERR_EVAL, ns_shader_err);
             }
             ns_shader_str(dst, s->name);
@@ -2095,7 +2109,16 @@ static ns_return_void ns_shader_emit_struct(ns_shader_emit *e, i32 st_index) {
 // ---------------------------------------------------------------------------
 // fn emission
 // ---------------------------------------------------------------------------
+static ns_return_void ns_shader_emit_fn_body(ns_shader_emit *e, i32 fn_index, ns_shader_stage stage);
+
 static ns_return_void ns_shader_emit_fn(ns_shader_emit *e, i32 fn_index, ns_shader_stage stage) {
+    ns_ast_ctx *outer_ctx = ns_shader_enter_unit(e, &e->vm->symbols[fn_index]);
+    ns_return_void emitted = ns_shader_emit_fn_body(e, fn_index, stage);
+    e->ctx = outer_ctx;
+    return emitted;
+}
+
+static ns_return_void ns_shader_emit_fn_body(ns_shader_emit *e, i32 fn_index, ns_shader_stage stage) {
     ns_symbol *s = &e->vm->symbols[fn_index];
     ns_ast_t *fn_node = &e->ctx->nodes[s->fn.ast];
     ns_code_loc loc = ns_shader_loc(e, fn_node);

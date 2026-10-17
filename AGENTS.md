@@ -532,6 +532,15 @@ check the implementation/declaration for the target platform.
 
 ## Guidance for changes
 
+- Use reverse-Z throughout rendering: near depth 1, far/clear depth 0. Clear
+  depth passes to `GPU_DEPTH_CLEAR` and test with `GPU_COMPARE_NEARER` /
+  `GPU_COMPARE_NEARER_EQUAL` (`gpu`). Build clip positions and projections
+  with `reverse_z_clip`, `reverse_z_clip_finite`, `reverse_z_depth` and
+  `mat4_perspective_reverse_z` (`simd`; shader fns may call them) instead of
+  hand-written depth math. Shadows use a positive receiver bias. Keep
+  projection, depth-only passes, UI panel depth and PCSS consistent.
+- Shadow blocker maps default to single-channel R16F; comparison maps use
+  D16_UNORM. Keep the main perspective depth buffer floating point.
 - Preserve Nano Script's explicit, minimal, data-oriented design. Prefer a
   concrete type and a small function over hidden behavior or a generic
   abstraction.

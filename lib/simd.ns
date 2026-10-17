@@ -279,3 +279,72 @@ fn dot(a: float2, b: float2) f32 {
 fn dot(a: float4, b: float4) f32 {
     return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
 }
+
+// Reverse-Z perspective, the default depth convention (gpu.ns): the near
+// plane maps to depth 1 and the far plane, or infinity, to 0. Draw with
+// GPU_COMPARE_NEARER and clear to GPU_DEPTH_CLEAR. Clip w is the distance
+// in front of the eye, so the hardware divide gives the depth below.
+// The _finite forms keep a far plane; the others put it at infinity, which
+// spends the float's precision where reverse-Z has the most to give.
+
+// Clip z for a point `distance` in front of the eye with a far plane; with
+// the far plane at infinity clip z is `near` itself.
+fn reverse_z_clip_depth_finite(distance: f32, near: f32, far: f32) f32 {
+    return near * (far - distance) / (far - near)
+}
+
+// Depth after the divide: 1 at `near`, falling toward 0 far away.
+fn reverse_z_depth(distance: f32, near: f32) f32 {
+    return near / distance
+}
+
+fn reverse_z_depth_finite(distance: f32, near: f32, far: f32) f32 {
+    return reverse_z_clip_depth_finite(distance, near, far) / distance
+}
+
+// The clip position of a point already projected to NDC (x, y), `distance`
+// in front of the eye.
+fn reverse_z_clip(x: f32, y: f32, distance: f32, near: f32) float4 {
+    return float4 { x * distance, y * distance, near, distance }
+}
+
+fn reverse_z_clip_finite(x: f32, y: f32, distance: f32, near: f32, far: f32) float4 {
+    return float4 { x * distance, y * distance, reverse_z_clip_depth_finite(distance, near, far), distance }
+}
+
+// Right-handed reverse-Z projection matrices: the eye looks down -z, and
+// `tan_half_fov_y` is the tangent of half the vertical field of view.
+fn mat4_perspective_reverse_z(tan_half_fov_y: f32, aspect: f32, near: f32, far: f32) mat4 {
+    let range = far - near
+    return mat4 {
+        float4 { 1.0 / (tan_half_fov_y * aspect), 0.0, 0.0, 0.0 },
+        float4 { 0.0, 1.0 / tan_half_fov_y, 0.0, 0.0 },
+        float4 { 0.0, 0.0, near / range, -1.0 },
+        float4 { 0.0, 0.0, near * far / range, 0.0 }
+    }
+}
+
+fn mat4_perspective_reverse_z_infinite(tan_half_fov_y: f32, aspect: f32, near: f32) mat4 {
+    return mat4 {
+        float4 { 1.0 / (tan_half_fov_y * aspect), 0.0, 0.0, 0.0 },
+        float4 { 0.0, 1.0 / tan_half_fov_y, 0.0, 0.0 },
+        float4 { 0.0, 0.0, 0.0, -1.0 },
+        float4 { 0.0, 0.0, near, 0.0 }
+    }
+}
+
+// `m` as 16 column-major floats at out[at], the layout gpu roots and
+// ui_set_panel read.
+fn mat4_write(out: [f32], at: i32, m: mat4) {
+    mat4_write_column(out, at, m.col0)
+    mat4_write_column(out, at + 4, m.col1)
+    mat4_write_column(out, at + 8, m.col2)
+    mat4_write_column(out, at + 12, m.col3)
+}
+
+fn mat4_write_column(out: [f32], at: i32, col: float4) {
+    out[at] = col.x
+    out[at + 1] = col.y
+    out[at + 2] = col.z
+    out[at + 3] = col.w
+}
