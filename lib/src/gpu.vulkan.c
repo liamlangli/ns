@@ -32,6 +32,10 @@ extern void *view_linux_display(void) __attribute__((weak));
 #define GPU_VK_CORE_STORAGE_BINDING_BASE 3
 #define GPU_VK_STORAGE_BINDING_BASE 8
 #define GPU_VK_MASK_BINDING 4
+// ns_texture_table: one binding of GPU_TEXTURE_TABLE_SIZE combined samplers.
+#define GPU_VK_TEXTURE_TABLE_BINDING 5
+// Descriptor sets per frame that may carry a texture table (the ui draws).
+#define GPU_VK_MAX_TEXTURE_TABLE_SETS 1024
 #define GPU_VK_STORAGE_SLOT_COUNT 16
 #define GPU_VK_MAX_STORAGE_SLOTS GPU_VK_STORAGE_SLOT_COUNT
 #define GPU_VK_ROOT_BLOCK_SIZE 4096
@@ -49,6 +53,7 @@ extern void *view_linux_display(void) __attribute__((weak));
 #define GPU_VK_USE_READ_TEXTURE (1u << 5)
 #define GPU_VK_USE_WRITE_TEXTURE (1u << 6)
 #define GPU_VK_USE_SECONDARY_WRITE_TEXTURE (1u << 7)
+#define GPU_VK_USE_TEXTURE_TABLE (1u << 8)
 
 typedef struct gpu_vk_buffer {
     VkBuffer buffer;
@@ -176,6 +181,7 @@ typedef struct gpu_vk_state {
     u32 root_slot;
     u64 root_offset;
     ns_bool storage_valid[GPU_VK_MAX_STORAGE_SLOTS];
+    u32 texture_table[GPU_TEXTURE_TABLE_SIZE];
     u32 storage_slots[GPU_VK_MAX_STORAGE_SLOTS];
     u64 storage_offsets[GPU_VK_MAX_STORAGE_SLOTS];
     u32 storage_slot_count;
@@ -694,6 +700,7 @@ static u32 gpu_vk_source_usage(const char *source) {
     if (gpu_vk_source_uses(source, "ns_read_texture")) usage |= GPU_VK_USE_READ_TEXTURE;
     if (gpu_vk_source_uses(source, "ns_write_texture")) usage |= GPU_VK_USE_WRITE_TEXTURE;
     if (gpu_vk_source_uses(source, "ns_secondary_write_texture")) usage |= GPU_VK_USE_SECONDARY_WRITE_TEXTURE;
+    if (gpu_vk_source_uses(source, "ns_texture_table")) usage |= GPU_VK_USE_TEXTURE_TABLE;
     return usage;
 }
 
@@ -705,7 +712,7 @@ static VkDescriptorSetLayout gpu_vk_descriptor_layout(u32 usage, u32 storage_cou
     }
     if (_vk.layout_count >= (u32)(sizeof(_vk.layouts) / sizeof(_vk.layouts[0]))) return VK_NULL_HANDLE;
 
-    VkDescriptorSetLayoutBinding bindings[GPU_VK_STORAGE_SLOT_COUNT + 4];
+    VkDescriptorSetLayoutBinding bindings[GPU_VK_STORAGE_SLOT_COUNT + 5];
     u32 count = 0;
     if (usage & GPU_VK_USE_READ_TEXTURE) {
         bindings[count++] = (VkDescriptorSetLayoutBinding){
@@ -740,6 +747,11 @@ static VkDescriptorSetLayout gpu_vk_descriptor_layout(u32 usage, u32 storage_cou
             .binding = GPU_VK_STORAGE_BINDING_BASE + i,
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
             .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_ALL};
+    }
+    if (usage & GPU_VK_USE_TEXTURE_TABLE) {
+        bindings[count++] = (VkDescriptorSetLayoutBinding){
+            .binding = GPU_VK_TEXTURE_TABLE_BINDING, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = GPU_TEXTURE_TABLE_SIZE, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT};
     }
     if (usage & GPU_VK_USE_SECONDARY_WRITE_TEXTURE) {
         bindings[count++] = (VkDescriptorSetLayoutBinding){
@@ -1188,7 +1200,8 @@ static ns_bool gpu_vk_create_frame_resources(void) {
         VkDescriptorPoolSize sizes[] = {
             {.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = GPU_VK_MAX_DESCRIPTOR_SETS},
             {.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = GPU_VK_MAX_DESCRIPTOR_SETS * 2},
-            {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = GPU_VK_MAX_DESCRIPTOR_SETS * 2},
+            {.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+             .descriptorCount = GPU_VK_MAX_DESCRIPTOR_SETS * 2 + GPU_VK_MAX_TEXTURE_TABLE_SETS * GPU_TEXTURE_TABLE_SIZE},
             {.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = GPU_VK_MAX_DESCRIPTOR_SETS},
         };
         VkDescriptorPoolCreateInfo descriptors = {
@@ -2273,6 +2286,10 @@ static void gpu_vk_set_root(u32 slot, u64 offset, gpu_addr addr) {
     _vk.root_valid = true;
 }
 
+static void gpu_vk_set_texture_table(const u32 *textures) {
+    memcpy(_vk.texture_table, textures, sizeof(_vk.texture_table));
+}
+
 static void gpu_vk_set_storage(u32 binding, u32 slot, u64 offset, gpu_addr addr) {
     ns_unused(addr);
     if (binding < GPU_VK_CORE_STORAGE_BINDING_BASE) return;
@@ -2308,9 +2325,9 @@ static VkDescriptorSet gpu_vk_build_set(gpu_vk_shader *shader, u32 texture0, u32
     VkDescriptorSet set = VK_NULL_HANDLE;
     if (vkAllocateDescriptorSets(_vk.device, &allocate, &set) != VK_SUCCESS) return VK_NULL_HANDLE;
 
-    VkWriteDescriptorSet writes[GPU_VK_STORAGE_SLOT_COUNT + 4];
+    VkWriteDescriptorSet writes[GPU_VK_STORAGE_SLOT_COUNT + 5];
     VkDescriptorBufferInfo buffer_infos[GPU_VK_STORAGE_SLOT_COUNT + 1];
-    VkDescriptorImageInfo image_infos[4];
+    VkDescriptorImageInfo image_infos[4 + GPU_TEXTURE_TABLE_SIZE];
     u32 write_count = 0;
     u32 buffer_count = 0;
     u32 image_count = 0;
@@ -2406,6 +2423,32 @@ static VkDescriptorSet gpu_vk_build_set(gpu_vk_shader *shader, u32 texture0, u32
             .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .pImageInfo = info,
         };
     }
+    if (shader->usage & GPU_VK_USE_TEXTURE_TABLE) {
+        gpu_vk_texture *fallback = &_vk.dummy_texture;
+        for (u32 i = 0; i < GPU_TEXTURE_TABLE_SIZE; i++) {
+            if (gpu_vk_texture_valid(_vk.texture_table[i])) { fallback = &_vk.textures[_vk.texture_table[i]]; break; }
+        }
+        VkDescriptorImageInfo *table = &image_infos[image_count];
+        for (u32 i = 0; i < GPU_TEXTURE_TABLE_SIZE; i++) {
+            gpu_vk_texture *texture = gpu_vk_texture_valid(_vk.texture_table[i])
+                                          ? &_vk.textures[_vk.texture_table[i]]
+                                          : fallback;
+            image_infos[image_count++] = (VkDescriptorImageInfo){
+                .sampler = _vk.sampler_linear,
+                .imageView = texture->view,
+                .imageLayout = texture->layout == VK_IMAGE_LAYOUT_GENERAL
+                                   ? VK_IMAGE_LAYOUT_GENERAL
+                                   : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+        }
+        writes[write_count++] = (VkWriteDescriptorSet){
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = set, .dstBinding = GPU_VK_TEXTURE_TABLE_BINDING,
+            .descriptorCount = GPU_TEXTURE_TABLE_SIZE,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .pImageInfo = table,
+        };
+    }
     if (shader->usage & GPU_VK_USE_SECONDARY_WRITE_TEXTURE) {
         gpu_vk_texture *texture = gpu_vk_texture_valid(texture2) ? &_vk.textures[texture2] : &_vk.dummy_texture;
         VkDescriptorImageInfo *info = &image_infos[image_count++];
@@ -2443,6 +2486,12 @@ static ns_bool gpu_vk_prepare_graphics(void) {
     }
     if ((shader->usage & GPU_VK_USE_MASK_MAP) && gpu_vk_texture_valid(texture1)) {
         gpu_vk_texture_transition(_vk.commands, &_vk.textures[texture1], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    if (shader->usage & GPU_VK_USE_TEXTURE_TABLE) {
+        for (u32 i = 0; i < GPU_TEXTURE_TABLE_SIZE; i++) {
+            if (!gpu_vk_texture_valid(_vk.texture_table[i])) continue;
+            gpu_vk_texture_transition(_vk.commands, &_vk.textures[_vk.texture_table[i]], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
     }
     VkDescriptorSet set = gpu_vk_build_set(shader, texture0, texture1, texture2);
     if (set == VK_NULL_HANDLE) return false;
@@ -2555,6 +2604,7 @@ static const gpu_v2_ops _vulkan_v2_ops = {
     .set_stencil_ref = gpu_vk_set_stencil_ref,
     .set_root = gpu_vk_set_root,
     .set_storage = gpu_vk_set_storage,
+    .set_texture_table = gpu_vk_set_texture_table,
     .draw = gpu_vk_draw,
     .draw_indexed = gpu_vk_draw_indexed,
     .draw_indirect = gpu_vk_draw_indirect,

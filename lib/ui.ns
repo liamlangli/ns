@@ -272,10 +272,12 @@ ref fn ui_request_render_after(r: ref ui_renderer, milliseconds: i32)
 // Start a new frame of draw commands.
 ref fn ui_begin_frame(r: ref ui_renderer)
 
-// Submit the recorded commands, clearing the target to `clear`.
+// Encode the recorded commands as one screen pass, clearing the target to
+// `clear`. It does not commit: the pass joins the frame's command buffer, which
+// the host submits and presents once when the frame callback returns.
 ref fn ui_flush(r: ref ui_renderer, clear: ui_color_rgba)
 // Alias used after scene submission; scene and widgets retain their ordering in
-// one renderer batch and are committed together.
+// one renderer batch and land in the same frame command buffer.
 ref fn ui_flush_overlay(r: ref ui_renderer, clear: ui_color_rgba)
 
 // Size of the safe drawing area, in logical points. This is the drawable minus
@@ -369,6 +371,14 @@ ref fn ui_hud_gaze_y(r: ref ui_renderer) f64
 // The visionOS immersive HUD takes precedence while it is up.
 ref fn ui_set_panel(r: ref ui_renderer, view_proj: [f32], center_x: f64, center_y: f64, center_z: f64, right_x: f64, right_y: f64, right_z: f64, up_x: f64, up_y: f64, up_z: f64, half_width: f64, half_height: f64)
 ref fn ui_clear_panel(r: ref ui_renderer)
+// Screen overlay. Draws between ui_begin_overlay and ui_end_overlay stay flat
+// on the screen, over everything the frame drew before, while the rest of the
+// renderer is on its 3D panel: a hand can hide the panel but never the
+// overlay. Panel and overlay share one renderer and one flush, which draws
+// them in recording order. Without a panel an overlay is ordinary flat ui.
+// ui_begin_frame ends an open overlay.
+ref fn ui_begin_overlay(r: ref ui_renderer)
+ref fn ui_end_overlay(r: ref ui_renderer)
 
 // Tilted plane. Draws between ui_begin_plane and ui_end_plane are laid out on
 // the flat canvas as usual, then seen in perspective: the canvas plane turns

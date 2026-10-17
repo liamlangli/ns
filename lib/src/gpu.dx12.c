@@ -18,6 +18,7 @@
 extern void *view_win_hwnd(void);
 extern int view_win_width(void);
 extern int view_win_height(void);
+extern void view_win_set_frame_end(void (*end)(void));
 
 typedef struct gpu_dx12_memory {
     ID3D12Resource *resource;
@@ -41,11 +42,16 @@ typedef struct gpu_state_dx12 {
     UINT64 frame_fence_values[GPU_SWAP_BUFFER_COUNT];
     UINT frame_index;
     ns_bool pass_open;
+    // A closed command list that gpu_commit has not executed yet.
+    ns_bool submit_pending;
+    // gpu_commit ran during the current frame callback.
+    ns_bool frame_committed;
     gpu_dx12_memory memory[GPU_RESOURCE_POOL_SIZE];
 } gpu_state_dx12;
 
 static gpu_state_dx12 _state;
 static const gpu_v2_ops _dx12_v2_ops;
+static void gpu_dx12_end_frame(void);
 
 static void gpu_dx12_wait_for_gpu(void) {
     const UINT64 target = ++_state.fence_value;
@@ -130,11 +136,13 @@ ns_bool gpu_request_device(view *v) {
     _state.valid = true;
     // Shader/root binding is not implemented by this incremental backend yet.
     gpu_v2_set_backend(&_dx12_v2_ops, 0, 0);
+    view_win_set_frame_end(gpu_dx12_end_frame);
     return true;
 }
 
 void gpu_destroy_device(void) {
     if (!_state.valid) return;
+    view_win_set_frame_end(NULL);
     gpu_v2_set_backend(NULL, 0, 0);
     gpu_dx12_wait_for_gpu();
     for (u32 i = 0; i < GPU_RESOURCE_POOL_SIZE; ++i) {
@@ -274,6 +282,7 @@ static void dx12_pass_end(void) {
     ID3D12GraphicsCommandList_EndEvent(_state.command_list);
     ID3D12GraphicsCommandList_Close(_state.command_list);
     _state.pass_open = false;
+    _state.submit_pending = true;
 }
 
 void gpu_set_viewport(int x, int y, int width, int height) {
@@ -301,7 +310,23 @@ void gpu_commit(void) {
     const UINT64 submitted = ++_state.fence_value;
     ID3D12CommandQueue_Signal(_state.queue, _state.fence, submitted);
     _state.frame_fence_values[_state.frame_index] = submitted;
+    _state.submit_pending = false;
+    _state.frame_committed = true;
     gpu_v2_frame_end();
+}
+
+// The host's end of a frame (view.win.c, after on_frame), matching
+// gpu_mtl_end_frame and gpu_vk_end_frame: work the frame encoded without a
+// gpu_commit of its own - ui_flush does not commit - is submitted and
+// presented here, once, and the frame ring advances once either way.
+static void gpu_dx12_end_frame(void) {
+    if (_state.valid && (_state.pass_open || _state.submit_pending)) {
+        gpu_commit();
+    } else if (!_state.frame_committed) {
+        gpu_v2_flush_uploads();
+        gpu_v2_frame_end();
+    }
+    _state.frame_committed = false;
 }
 
 static const gpu_v2_ops _dx12_v2_ops = {

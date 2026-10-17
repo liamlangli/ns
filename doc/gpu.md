@@ -124,6 +124,25 @@ u32     gpu_storage_slot_count(void); // 0 without a device
 void gpu_commit(void);        // submit + present, recycles the frame ring
 ```
 
+**One command buffer per frame.** On the native backends every pass and
+dispatch a frame callback encodes lands in one command buffer, which the host
+opens before `on_frame` and submits and presents after it returns
+(`gpu_mtl_end_frame`, `gpu_vk_end_frame`, and the DX12 end-of-frame hook
+`view.win.c` calls). That submit also advances the frame ring, once per frame.
+A native program driven by the view's frame callback does not need
+`gpu_commit`; one at the very end of the frame is harmless, and the browser
+runtime requires it, because its `requestAnimationFrame` loop submits nothing
+on its own.
+
+Library code never commits on the program's behalf. `ui_flush` encodes its
+screen pass and returns, so a frame that renders its scene and then flushes
+its ui is still one command buffer. Each extra `gpu_commit` inside a frame closes the buffer
+and opens a new one, advances the frame ring a section early, and on Metal
+takes another of the three in-flight slots: N commits per frame leave about
+3 / N frames of CPU/GPU overlap. Commit mid-frame only to submit work that has
+to finish separately, such as an offscreen bake before its scratch targets are
+released, and outside a frame callback (headless tests).
+
 ### Memory
 
 ```c
@@ -157,7 +176,7 @@ land in a copy the GPU is not still using:
 - **Small uniforms / root structs:** `gpu_set_root_data`. It copies into the
   current ring section and binds that address.
 - **Variable-size transients (one frame only):** `gpu_frame_alloc` /
-  `gpu_frame_write`. The address dies at `gpu_commit`.
+  `gpu_frame_write`. The address dies when the frame is submitted.
 - **Fixed-size CPU buffers rewritten while frames are in flight** (UI
   vertices, actor joints, anything `gpu_write`n from the CPU and read by the
   GPU): `gpu_malloc(..., GPU_MEM_SHARED | GPU_MEM_FRAMES, ...)`. Backing is
@@ -188,7 +207,7 @@ void    *gpu_addr_host(gpu_addr addr);
 
 // Per-frame transient allocation from an internal triple-buffered ring;
 // recycled when the frame's GPU work completes. Do not keep the address
-// across gpu_commit. gpu_set_root_data is the usual caller; ui.c uses
+// past the frame submit. gpu_set_root_data is the usual caller; ui.c uses
 // GPU_MEM_FRAMES for its growing vertex store instead, because a busy HUD
 // can exceed one ring section.
 gpu_addr gpu_frame_alloc(u64 size, u32 align);
@@ -389,6 +408,11 @@ void gpu_set_root_data(const void *data, u64 size);
 void gpu_set_storage(gpu_addr addr);
 void gpu_set_storage_at(i32 index, gpu_addr addr);
 
+// Up to GPU_TEXTURE_TABLE_SIZE (16) textures for a raw-source shader that
+// declares ns_texture_table, so one draw samples a different texture per
+// primitive. Missing or invalid entries bind the first valid one.
+void gpu_set_texture_table(const u32 *textures, u32 count);
+
 void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count);
 void gpu_draw_indexed(gpu_addr indices, i32 index_type,
                       i32 index_count, i32 instance_count, i32 base_vertex);
@@ -402,6 +426,28 @@ void gpu_dispatch_indirect(const char *label, gpu_addr args);
 Compute uses the same flow: `gpu_set_shader(compute)`, `gpu_set_root*`,
 `gpu_dispatch`. Each dispatch is its own compute pass, so it carries its own
 label.
+
+**Texture table.** The root's first words name the one to three textures a
+shader binds as `ns_texture_map`, `ns_mask_map` or `ns_shadow_map`. A batch
+whose primitives each sample a texture of their own declares
+`ns_texture_table` instead and selects the entry per primitive (a flat
+vertex output), so one draw covers them all:
+
+- **Metal:** `array<texture2d<float>, 16> ns_texture_table [[texture(3)]]`,
+  bound at fragment texture slots 3..18 and indexed dynamically.
+- **Vulkan:** `layout(set = 0, binding = 5) uniform sampler2D
+  ns_texture_table[16]` with the linear sampler. GLSL needs a constant index
+  without descriptor indexing, so switch over the slot and index each case
+  with its literal.
+- **WebGPU / DX12:** not yet; the call is accepted and ignored.
+
+The ui renderer is the reference user. Take fragment derivatives before
+branching on a per-primitive value: the four fragments of a 2x2 quad can
+belong to primitives that take different branches.
+
+**Depth state and Metal PSOs.** Metal keeps depth compare and depth write in
+the depth-stencil state, so render states that differ only there share one
+pipeline. Changing between them between draws does not rebuild the PSO.
 
 ### Pass labels
 

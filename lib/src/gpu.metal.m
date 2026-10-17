@@ -328,6 +328,7 @@ typedef struct gpu_shader_mtl {
     bool uses_write_texture_secondary;
     bool uses_texture_map;
     bool uses_mask_map;
+    bool uses_texture_table;
     bool uses_shadow_map;
 } gpu_shader_mtl;
 
@@ -406,6 +407,8 @@ typedef struct gpu_state_mtl {
     id<MTLBuffer> *v2_storage_buffers;
     u64 *v2_storage_offsets;
     u32 v2_storage_slot_count;
+    // gpu_set_texture_table, bound at GPU_MTL_TEXTURE_TABLE_BASE.
+    u32 v2_texture_table[GPU_TEXTURE_TABLE_SIZE];
     MTLPixelFormat v2_pass_colors[4];
     MTLPixelFormat v2_pass_depth;
     MTLPixelFormat v2_pass_stencil;
@@ -1332,6 +1335,7 @@ static u32 mtl_v2_shader_graphics_create(const char *vs_src, const char *fs_src,
     record->uses_write_texture_secondary = mtl_source_uses(vs_src, "ns_secondary_write_texture") || mtl_source_uses(fs_src, "ns_secondary_write_texture");
     record->uses_texture_map = mtl_source_uses(vs_src, "ns_texture_map") || mtl_source_uses(fs_src, "ns_texture_map");
     record->uses_mask_map = mtl_source_uses(vs_src, "ns_mask_map") || mtl_source_uses(fs_src, "ns_mask_map");
+    record->uses_texture_table = mtl_source_uses(fs_src, "ns_texture_table");
     record->uses_shadow_map = mtl_source_uses(vs_src, "ns_shadow_map") || mtl_source_uses(fs_src, "ns_shadow_map");
     return id;
 }
@@ -1568,6 +1572,29 @@ static void mtl_v2_set_storage(u32 binding, u32 slot, u64 offset, gpu_addr addr)
     _state.v2_storage_offsets[index] = offset;
 }
 
+static void mtl_v2_set_texture_table(const u32 *textures) {
+    memcpy(_state.v2_texture_table, textures, sizeof(_state.v2_texture_table));
+}
+
+// The table follows the three fixed fragment textures (shadow, map, mask).
+#define GPU_MTL_TEXTURE_TABLE_BASE 3
+
+static void mtl_v2_bind_texture_table(id<MTLRenderCommandEncoder> encoder) {
+    id<MTLTexture> fallback = nil;
+    for (u32 i = 0; i < GPU_TEXTURE_TABLE_SIZE && !fallback; ++i) {
+        u32 index = _state.v2_texture_table[i];
+        if (index && index < _state.texture_count) fallback = _state.textures[index].texture;
+    }
+    if (!fallback) return;
+    id<MTLTexture> table[GPU_TEXTURE_TABLE_SIZE];
+    for (u32 i = 0; i < GPU_TEXTURE_TABLE_SIZE; ++i) {
+        u32 index = _state.v2_texture_table[i];
+        id<MTLTexture> texture = index && index < _state.texture_count ? _state.textures[index].texture : nil;
+        table[i] = texture ? texture : fallback;
+    }
+    [encoder setFragmentTextures:table withRange:NSMakeRange(GPU_MTL_TEXTURE_TABLE_BASE, GPU_TEXTURE_TABLE_SIZE)];
+}
+
 static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encoder, bool compute) {
     if (!shader) return;
     if (compute) {
@@ -1588,6 +1615,7 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
                 [render_encoder setFragmentBuffer:_state.v2_storage_buffers[i] offset:(NSUInteger)_state.v2_storage_offsets[i] atIndex:GPU_MTL_STORAGE_BINDING_BASE + i];
             }
         }
+        if (shader->uses_texture_table) mtl_v2_bind_texture_table(render_encoder);
     }
     if (!_state.v2_root_buffer) return;
     const f32 *words = (const f32 *)((const u8 *)[_state.v2_root_buffer contents] + _state.v2_root_offset);
@@ -1615,8 +1643,12 @@ static void mtl_v2_bind_root(gpu_shader_mtl *shader, id<MTLCommandEncoder> encod
 
 static ns_bool mtl_v2_ensure_pipeline(gpu_shader_mtl *shader) {
     if (!shader || !shader->vertex_func || !shader->fragment_func) return false;
-    // Stencil test and op live in the depth-stencil state, not the pipeline.
+    // Depth and stencil test, depth write and stencil op live in the
+    // depth-stencil state, not the pipeline: states that differ only there
+    // share one PSO.
     gpu_v2_state_desc pipeline_state = _state.v2_render_state;
+    pipeline_state.depth_compare = 0;
+    pipeline_state.depth_write = false;
     pipeline_state.stencil_compare = 0;
     pipeline_state.stencil_pass_op = 0;
     bool same = shader->v2_pipeline_valid &&
@@ -1884,6 +1916,7 @@ static const gpu_v2_ops _mtl_v2_ops = {
     .set_stencil_ref = mtl_v2_set_stencil_ref,
     .set_root = mtl_v2_set_root,
     .set_storage = mtl_v2_set_storage,
+    .set_texture_table = mtl_v2_set_texture_table,
     .draw = mtl_v2_draw,
     .draw_indexed = mtl_v2_draw_indexed,
     .draw_indirect = mtl_v2_draw_indirect,

@@ -22,6 +22,9 @@ static HWND _hwnd;
 static HINSTANCE _hinstance;
 static ns_bool _quit;
 #define VIEW_FRAME_TIMER_ID 1
+// The GPU backend's end of frame, registered by gpu.dx12.c: gpu links against
+// view on Windows, so view cannot call into gpu directly.
+static void (*_view_win_frame_end)(void);
 
 static f32 view_win_gamepad_axis(SHORT value, ns_bool invert) {
     f32 normalized = value < 0 ? (f32)value / 32768.0f : (f32)value / 32767.0f;
@@ -179,7 +182,11 @@ static LRESULT CALLBACK view_win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
             if (view_take_frame_request(&_view)) {
                 view_win_gamepad_poll();
                 view_on_frame frame = (view_on_frame)_view.on_frame;
-                if (frame) frame(&_view);
+                if (frame) {
+                    frame(&_view);
+                    // Submit and present whatever the frame encoded, once.
+                    if (_view_win_frame_end) _view_win_frame_end();
+                }
             }
             EndPaint(hwnd, &paint);
             view_complete_frame(&_view);
@@ -312,6 +319,8 @@ void view_platform_set_fullscreen(view *v, ns_bool fullscreen) {
 // ---- surface accessors for the DX12 backend --------------------------------
 
 void *view_win_hwnd(void) { return (void *)_hwnd; }
+
+void view_win_set_frame_end(void (*end)(void)) { _view_win_frame_end = end; }
 
 int view_win_width(void) {
     RECT rect;

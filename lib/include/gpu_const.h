@@ -13,6 +13,9 @@ enum {
     GPU_SHADER_TEXTURE_COUNT = 12,
     GPU_SHADER_SAMPLER_COUNT = 8,
     GPU_SHADER_BUFFER_COUNT = 4,
+    // Entries in the texture table a raw-source shader samples as
+    // ns_texture_table (gpu_set_texture_table).
+    GPU_TEXTURE_TABLE_SIZE = 16,
 
     GPU_RESOURCE_POOL_SIZE = 256,
     GPU_ATTACHMENTS_POOL_SIZE = 16,

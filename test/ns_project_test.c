@@ -289,11 +289,12 @@ int main(void) {
                   text_has(view_ios, "framebuffer_width = (i32)(drawable.width + 0.5)"),
               "embedded iOS view metrics use the exact Metal drawable extent.");
     ns_expect(text_has(ui_native, "gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height)") &&
-                  text_has(ui_native, "if (x1 > framebuffer_width) x1 = framebuffer_width") &&
-                  text_has(ui_native, "gpu_set_scissor(x0, y0, x1 - x0, y1 - y0)") &&
+                  text_has(ui_native, "gpu_set_scissor(0, 0, framebuffer_width, framebuffer_height)") &&
+                  text_has(ui_native, "gpu_set_shader(r->shader)") &&
+                  text_has(ui_native, "gpu_set_texture_table(d->textures, d->texture_count)") &&
                   text_has(ui_native, "gpu_set_storage(r->storage)") &&
                   text_has(ui_native, "gpu_draw_vertices("),
-              "embedded UI uses v2 storage and draws with framebuffer-clamped scissors.");
+              "embedded UI uses v2 storage and draws its frame with one shader under a framebuffer scissor.");
     ns_expect(text_has(ui_native, "\"../Resources\""),
               "embedded UI resolves its font atlas from a generated macOS application bundle.");
     char embedded_ffi[PATH_MAX];

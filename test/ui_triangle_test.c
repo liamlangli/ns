@@ -186,6 +186,92 @@ static void test_batch_append(void) {
     free(r);
 }
 
+static u32 meta_of(ui_renderer *r, i32 command) {
+    return r->vertices[r->commands[command].vertex_offset].meta;
+}
+
+static u32 meta(i32 kind, u32 slot, u32 projection) {
+    return (u32)kind | (slot << UI_META_SLOT_SHIFT) | (projection << UI_META_PROJECTION_SHIFT);
+}
+
+// Rectangles, arcs, images under a clip, a tilted plane and a screen overlay
+// recorded in one frame are one draw, and every vertex carries the kind,
+// texture slot and projection the one shader needs. A panel puts everything
+// but the overlay on it.
+static void test_one_draw(void) {
+    ui_renderer *r = calloc(1, sizeof(*r));
+    assert(r);
+    r->rect = r->safe_rect = (ui_rect){0, 0, 200, 100};
+    r->white_texture = 11;
+    for (i32 i = 0; i < UI_MAX_TEXTURES; i++) r->textures[i] = 100 + (u32)i;
+    ui_begin_frame(r);
+    ui_fill_rect(r, 0, 0, 10, 10, 0xffffffffu, 0.0);
+    ui_fill_arc(r, 50, 50, 12, 2, 0, M_PI / 3, 0xffffffffu, 0.0);
+    ui_push_clip(r, 0, 0, 50, 50);
+    r->current_texture_id = 3;
+    ui_push_quad_ex(r, 0, 0, 10, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_IMAGE, 0, 0, 0);
+    ui_pop_clip(r);
+    ui_begin_plane(r, 100, 50, 0.3, 400, 0, 0, 200, 100);
+    ui_fill_rect(r, 20, 20, 10, 10, 0xffffffffu, 0.0);
+    ui_end_plane(r);
+    ui_begin_overlay(r);
+    ui_fill_rect(r, 30, 30, 10, 10, 0xffffffffu, 0.0);
+    ui_end_overlay(r);
+    assert(r->command_count == 5);
+
+    assert(ui_plan_draws(r, false, false));
+    assert(r->draw_count == 1);
+    assert(r->draws[0].command == -1 && r->draws[0].vertex_offset == 0);
+    assert(r->draws[0].vertex_count == r->vertex_count);
+    assert(r->draws[0].texture_count == 2);
+    assert(r->draws[0].textures[0] == 11 && r->draws[0].textures[1] == 100);
+    assert(meta_of(r, 0) == meta(UI_KIND_IMAGE, 0, 0));
+    assert(meta_of(r, 1) == meta(UI_KIND_ARC_SDF, 0, 0));
+    assert(meta_of(r, 2) == meta(UI_KIND_IMAGE, 1, 0));
+    assert(meta_of(r, 3) == meta(UI_KIND_IMAGE, 0, 1));
+    assert(meta_of(r, 4) == meta(UI_KIND_IMAGE, 0, 0));
+    // The clipped quad keeps its clip per vertex rather than as a scissor.
+    assert(r->vertices[r->commands[2].vertex_offset].clip > 0.0f);
+
+    assert(ui_plan_draws(r, true, false));
+    assert(r->draw_count == 1);
+    assert(meta_of(r, 0) == meta(UI_KIND_IMAGE, 0, UI_PROJECTION_PANEL));
+    assert(meta_of(r, 3) == meta(UI_KIND_IMAGE, 0, UI_PROJECTION_PANEL));
+    assert(meta_of(r, 4) == meta(UI_KIND_IMAGE, 0, 0));
+    // The immersive HUD projects everything itself.
+    assert(ui_plan_draws(r, false, true));
+    assert(meta_of(r, 3) == meta(UI_KIND_IMAGE, 0, 0));
+
+    // A seventeenth texture starts a second draw, as does a retained batch.
+    ui_begin_frame(r);
+    for (i32 i = 0; i <= GPU_TEXTURE_TABLE_SIZE; i++) {
+        r->current_texture_id = 3 + i;
+        ui_push_quad_ex(r, 0, 0, 10, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_IMAGE, 0, 0, 0);
+    }
+    const i32 batch = ui_rect_batch_create(r);
+    ui_rect_batch_begin(r, batch);
+    ui_rect_batch_add(r, batch, 1, 2, 3, 4, 0xffffffffu);
+    ui_rect_batch_draw_range(r, batch, 0, 6, 0, 0, 1, 1);
+    ui_fill_rect(r, 0, 0, 10, 10, 0xffffffffu, 0.0);
+    assert(ui_plan_draws(r, false, false));
+    assert(r->draw_count == 4);
+    assert(r->draws[0].texture_count == GPU_TEXTURE_TABLE_SIZE);
+    assert(r->draws[0].vertex_count == GPU_TEXTURE_TABLE_SIZE * 6);
+    assert(r->draws[1].texture_count == 1 && r->draws[1].vertex_offset == GPU_TEXTURE_TABLE_SIZE * 6);
+    assert(r->draws[2].command == GPU_TEXTURE_TABLE_SIZE + 1);
+    assert(r->draws[2].batch_meta == meta(UI_KIND_IMAGE, 0, 0));
+    assert(r->draws[3].command == -1 && r->draws[3].vertex_count == 6);
+
+    // Vertices no command can take are taken back, so a draw never covers them.
+    const i32 vertices = r->vertex_count;
+    r->command_count = UI_MAX_COMMANDS;
+    r->current_texture_id = 4;
+    ui_push_quad_ex(r, 0, 0, 10, 10, 0, 0, 1, 1, 0xffffffffu, UI_KIND_IMAGE, 0, 0, 0);
+    assert(r->vertex_count == vertices);
+    ui_renderer_destroy(r);
+    gpu_commit();
+}
+
 static void test_batch_gpu_pressure(void) {
     ui_renderer *r = calloc(1, sizeof(*r));
     assert(r);
@@ -257,6 +343,7 @@ static void test_batch_gpu_pressure(void) {
 
 int main(void) {
     test_batch_gpu_pressure();
+    test_one_draw();
     test_batch_text_range("@@AB\nA!!", 2, 4, "AB\nA");
     test_batch_text_range("@@A一B!!", 2, 5, "A一B");
     test_batch_text_range("@@一A!!", 2, 4, "一A");

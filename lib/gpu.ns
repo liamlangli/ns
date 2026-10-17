@@ -12,6 +12,8 @@ use shader
 // bindless texture/sampler IDs. Native renderer implementation details are not
 // part of the Nano Script API.
 
+// Entries gpu_set_texture_table binds for ns_texture_table.
+lit GPU_TEXTURE_TABLE_SIZE = 16
 lit GPU_PIXELFORMAT_NONE = 1
 lit GPU_PIXELFORMAT_R8 = 2
 lit GPU_PIXELFORMAT_R16F = 10
@@ -188,6 +190,10 @@ ref fn gpu_set_storage(addr: u64)
 // Bind a GPU-addressed storage buffer by the same zero-based index used by the
 // shader_buffer_* intrinsics. gpu_set_storage is the index-0 convenience form.
 ref fn gpu_set_storage_at(index: i32, addr: u64)
+// Bind up to GPU_TEXTURE_TABLE_SIZE textures for draws whose raw-source
+// shader declares ns_texture_table, so one draw samples a texture per
+// primitive. Missing entries bind the first valid one.
+ref fn gpu_set_texture_table(textures: [u32], count: u32)
 // Copy a small argument struct into the frame ring and bind it as the root
 // pointer in one call.
 ref fn gpu_set_root_data(data: [any], size: u64)

@@ -126,6 +126,11 @@ void gpu_set_stencil_ref(u32 ref); // 8-bit reference for gpu_state_stencil test
 void gpu_set_root(gpu_addr args);
 void gpu_set_storage(gpu_addr addr);
 void gpu_set_storage_at(i32 index, gpu_addr addr);
+// Bind up to GPU_TEXTURE_TABLE_SIZE textures, by index, for draws whose
+// shader declares ns_texture_table: one draw can then sample a different
+// texture per primitive. Entries past `count` or naming no texture bind the
+// first valid entry instead. It stays bound until the next call.
+void gpu_set_texture_table(const u32 *textures, u32 count);
 void gpu_set_root_data(const void *data, u64 size); // frame-ring copy + set_root
 void gpu_draw_vertices(i32 vertex_base, i32 vertex_count, i32 instance_count);
 void gpu_draw_indexed(gpu_addr indices, i32 index_type,
@@ -214,6 +219,8 @@ typedef struct gpu_v2_ops {
     void (*set_stencil_ref)(u32 ref);
     void (*set_root)(u32 slot, u64 offset, gpu_addr addr);
     void (*set_storage)(u32 binding, u32 slot, u64 offset, gpu_addr addr);
+    // Always GPU_TEXTURE_TABLE_SIZE entries, unused ones 0.
+    void (*set_texture_table)(const u32 *textures);
     void (*draw)(i32 vertex_base, i32 vertex_count, i32 instance_count);
     void (*draw_indexed)(u32 index_slot, u64 index_offset, i32 index_type,
                          i32 index_count, i32 instance_count, i32 base_vertex);

@@ -826,6 +826,15 @@ void gpu_set_storage_at(i32 index, gpu_addr addr) {
     if (_v2.ops && _v2.ops->set_storage) _v2.ops->set_storage((u32)(3 + index), slot, offset, addr);
 }
 
+void gpu_set_texture_table(const u32 *textures, u32 count) {
+    u32 table[GPU_TEXTURE_TABLE_SIZE] = {0};
+    if (textures) {
+        if (count > GPU_TEXTURE_TABLE_SIZE) count = GPU_TEXTURE_TABLE_SIZE;
+        memcpy(table, textures, count * sizeof(u32));
+    }
+    if (_v2.ops && _v2.ops->set_texture_table) _v2.ops->set_texture_table(table);
+}
+
 void gpu_set_root_data(const void *data, u64 size) {
     if (!data || size == 0) return;
     gpu_addr addr = gpu_frame_alloc(size, GPU_V2_ALLOC_ALIGN);
