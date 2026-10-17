@@ -134,6 +134,7 @@ static MTLPixelFormat _mtl_pixel_format(gpu_pixel_format format) {
         case PIXELFORMAT_RGBA32SI: return MTLPixelFormatRGBA32Sint;
         case PIXELFORMAT_RGBA32F: return MTLPixelFormatRGBA32Float;
         case PIXELFORMAT_DEPTH: return MTLPixelFormatDepth32Float;
+        case PIXELFORMAT_DEPTH16: return MTLPixelFormatDepth16Unorm;
         case PIXELFORMAT_DEPTH_STENCIL: return MTLPixelFormatDepth32Float_Stencil8;
         case _PIXELFORMAT_DEFAULT:
         case PIXELFORMAT_NONE:
@@ -435,6 +436,8 @@ static void mtl_v2_label_encoder(id<MTLCommandEncoder> encoder, const char *labe
 static void gpu_mtl_configure_view(MTKView *view, id<MTLDevice> device) {
     if (view == nil) return;
     [view setDevice:device];
+    // Screen depth/stencil belongs to the explicit GPU passes, not MTKView.
+    [view setDepthStencilPixelFormat:MTLPixelFormatInvalid];
 
     CAMetalLayer *layer = (CAMetalLayer *)[view layer];
     [layer setMaximumDrawableCount:GPU_SWAP_BUFFER_COUNT];
@@ -719,7 +722,7 @@ void gpu_mtl_begin_frame(MTKView *view) {
         .color_format = PIXELFORMAT_BGRA8,
         .depth_stencil_format = PIXELFORMAT_NONE,
         .color_texture = [view multisampleColorTexture],
-        .depth_stencil_texture = [view depthStencilTexture],
+        .depth_stencil_texture = nil, // v2 owns screen depth/stencil; never ask MTKView to allocate one.
     };
 
     _state.cur_drawable = nil;
@@ -1042,7 +1045,7 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
     // attachments sampled by a later pass. Uncompressed color uploads stay
     // shared so replaceRegion can write them. Transient attachments can fall
     // back to private storage.
-    bool depth_stencil = format == PIXELFORMAT_DEPTH || format == PIXELFORMAT_DEPTH_STENCIL;
+    bool depth_stencil = format == PIXELFORMAT_DEPTH || format == PIXELFORMAT_DEPTH16 || format == PIXELFORMAT_DEPTH_STENCIL;
     MTLResourceOptions resource_options = (depth_stencil || transient_render_target)
                                              ? MTLResourceStorageModePrivate
                                              : MTLResourceStorageModeShared;

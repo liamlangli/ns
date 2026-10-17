@@ -1,0 +1,7 @@
+schema = "ns.mod/v2"
+name = "ns_tex"
+version = "0.1.0"
+type = "cli"
+description = "Apple texture cooking with Xcode's textureconverter, implemented in Nano Script."
+source = "src"
+entry = "main.ns"

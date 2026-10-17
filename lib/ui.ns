@@ -360,7 +360,7 @@ ref fn ui_hud_gaze_y(r: ref ui_renderer) f64
 // 3D panel. The canvas is laid out as usual and drawn onto a flat panel in the
 // application's own 3D scene: centre, right and up directions and half extents
 // in world units, seen through view_proj (16 floats, column-major, clip z in
-// 0..1, depth growing away from the camera). The canvas fills the panel edge
+// 0..1 reverse-Z, near 1 and far 0). The canvas fills the panel edge
 // to edge; ui_resize_to sets its layout size independently of the screen.
 // The flush draws it in a depth screen pass (gpu_screen_pass_begin_depth) and
 // tests it against the depth already there without writing any, so geometry

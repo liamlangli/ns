@@ -1,0 +1,72 @@
+fn test_rule() {
+    let manifest = "assets = [\"res\", \"other files\"]\n[cook.ios]\nformat = \"astc_6x6\" # mobile\nmax_size = 512\ninclude = [\"res/tex/*\"]\nexclude = [\"res/tex/data*\"]\nsrgb = true\n[cook.macos]\nformat = \"astc_4x4\"\nmax_size = 0\n"
+    let ios = cook_parse(manifest, "ios")
+    assert ios.enabled && ios.format == "astc_6x6" && ios.max_size == 512 && ios.srgb
+    assert ios.asset_count == 2 && ios.assets[1] == "other files"
+    assert cook_matches("res/tex/settings.png", ios.include, ios.include_count)
+    assert !cook_matches("res/pets/mesh.png", ios.include, ios.include_count)
+    assert cook_matches("res/tex/data.png", ios.exclude, ios.exclude_count)
+    let mac = cook_parse(manifest, "macos")
+    assert mac.enabled && mac.format == "astc_4x4" && mac.max_size == 0 && !mac.srgb
+    assert !cook_parse(manifest, "visionos").enabled
+    let conventional = cook_parse("source = \"code\"\n[cook.ios]\nformat = \"astc_6x6\"\n", "ios")
+    assert conventional.asset_count == 2
+    assert conventional.assets[0] == "assets" && conventional.assets[1] == "code/assets"
+    assert cook_glob("res/sub/thing.png", "res/*/*.p?g")
+    assert !cook_glob("res/thing.jpg", "*.png")
+    assert cook_glob("", "*")
+    assert cook_quote("a'b c") == "'a'\"'\"'b c'"
+    assert cook_relative("res/icon.png")
+    assert !cook_relative("../src/file")
+    assert !cook_relative("res/../src/file")
+    assert !cook_relative("/absolute/file")
+    assert !cook_relative("res/..")
+}
+
+fn test_ktx(srgb: bool) {
+    // One 6x6 block, with a smaller 5x3 texture and original atlas dimensions.
+    let ktx = [u8](84)
+    ktx[0] = 171 as u8
+    ktx[1] = 75 as u8
+    ktx[2] = 84 as u8
+    ktx[3] = 88 as u8
+    ktx[4] = 32 as u8
+    ktx[5] = 49 as u8
+    ktx[6] = 49 as u8
+    ktx[7] = 187 as u8
+    ktx[8] = 13 as u8
+    ktx[9] = 10 as u8
+    ktx[10] = 26 as u8
+    ktx[11] = 10 as u8
+    cook_put_u32(ktx, 12, 67305985)
+    cook_put_u32(ktx, 20, 1)
+    let internal = 37812
+    if srgb { internal += 32 }
+    cook_put_u32(ktx, 28, internal)
+    cook_put_u32(ktx, 36, 5)
+    cook_put_u32(ktx, 40, 3)
+    cook_put_u32(ktx, 52, 1)
+    cook_put_u32(ktx, 56, 1)
+    cook_put_u32(ktx, 64, 16)
+    for i in 0 to 16 { ktx[68 + i] = (i * 11) as u8 }
+    let rule = cook_parse("[cook.ios]\nformat = \"astc_6x6\"\n", "ios")
+    rule.srgb = srgb
+    let result = cook_pack(ktx, 84, rule, 1152, 384)
+    assert result.len == 48
+    assert result[0] == 78 && result[1] == 83 && result[2] == 84 && result[3] == 88
+    assert cook_u32(result, 4) == 1
+    let format = 70
+    if srgb { format += 1 }
+    assert cook_u32(result, 8) == format
+    assert cook_u32(result, 12) == 5 && cook_u32(result, 16) == 3
+    assert cook_u32(result, 20) == 1152 && cook_u32(result, 24) == 384
+    assert cook_u32(result, 28) == 16
+    for i in 0 to 16 { assert result[32 + i] == ktx[68 + i] }
+}
+
+fn main() {
+    test_rule()
+    test_ktx(false)
+    test_ktx(true)
+    print("texture cook: all assertions passed\n")
+}

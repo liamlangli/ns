@@ -613,7 +613,7 @@ void view_osx_create(i32 w, i32 h, const char* title) {
     view_mtk_view = [[ViewMTKView alloc] init];
     [view_mtk_view setDevice: view_mtl_device];
     [view_mtk_view setColorPixelFormat: MTLPixelFormatBGRA8Unorm];
-    [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatDepth32Float];
+    [view_mtk_view setDepthStencilPixelFormat: MTLPixelFormatInvalid];
     // On demand by default: the view sleeps until view_request_frame()
     // invalidates it. NS_VIEW_CONTINUOUS or view_set_frame_per_second switches
     // to vsync-paced drawing so a GPU frame capture has a boundary to arm on.

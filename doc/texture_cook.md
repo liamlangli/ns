@@ -42,6 +42,19 @@ rewritten. Font loaders and `io_load_image` still require original image files.
 
 ## Build dependencies
 
+On macOS, Apple texture cooking delegates to the Nano Script tool
+[`ns_tex`](../nscode/ns_tex/README.md): `make ns_tex` places it beside `bin/ns`,
+and `make install` installs its launcher and sources. It uses Xcode's bundled
+`textureconverter` for ASTC and does not require Python, Pillow or astcenc:
+
+```sh
+ns_tex /absolute/project ios /absolute/project/bin/resources
+```
+
+Apple `ns run`, `ns build`, `ns cook --platform ios|macos` and
+`ns patch --cook-platform ios|macos` all use this path. The following
+dependencies apply to the existing cooker for other platforms.
+
 Cooking requires Python 3.11+ and Pillow 11.2.1+ on the build machine. ASTC
 also requires Arm's [astcenc](https://github.com/ARM-software/astc-encoder).
 Build a pinned copy with `sh scripts/bootstrap_astcenc.sh`; it writes

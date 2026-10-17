@@ -296,6 +296,7 @@ static VkFormat gpu_vk_format(gpu_pixel_format format) {
         case PIXELFORMAT_RGBA32SI: return VK_FORMAT_R32G32B32A32_SINT;
         case PIXELFORMAT_RGBA32F: return VK_FORMAT_R32G32B32A32_SFLOAT;
         case PIXELFORMAT_DEPTH: return VK_FORMAT_D32_SFLOAT;
+        case PIXELFORMAT_DEPTH16: return VK_FORMAT_D16_UNORM;
         case PIXELFORMAT_DEPTH_STENCIL: return VK_FORMAT_D24_UNORM_S8_UINT;
         default: return VK_FORMAT_UNDEFINED;
     }
@@ -1161,7 +1162,7 @@ static ns_bool gpu_vk_create_samplers(void) {
     nearest.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     VkSamplerCreateInfo shadow = linear;
     shadow.compareEnable = VK_TRUE;
-    shadow.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    shadow.compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
     return vkCreateSampler(_vk.device, &linear, NULL, &_vk.sampler_linear) == VK_SUCCESS &&
            vkCreateSampler(_vk.device, &nearest, NULL, &_vk.sampler_nearest) == VK_SUCCESS &&
            vkCreateSampler(_vk.device, &shadow, NULL, &_vk.sampler_shadow) == VK_SUCCESS;
@@ -1749,7 +1750,7 @@ static u32 gpu_vk_texture_create(i32 width, i32 height, i32 depth_or_layers,
         ns_warn("gpu", "unsupported texture format %d\n", format);
         return 0;
     }
-    ns_bool depth = format == PIXELFORMAT_DEPTH || format == PIXELFORMAT_DEPTH_STENCIL;
+    ns_bool depth = format == PIXELFORMAT_DEPTH || format == PIXELFORMAT_DEPTH16 || format == PIXELFORMAT_DEPTH_STENCIL;
     ns_bool transient = (usage & TEXTURE_USAGE_RENDER_TARGET) &&
                         !(usage & (TEXTURE_USAGE_READ | TEXTURE_USAGE_WRITE));
     VkImageUsageFlags image_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;

@@ -405,6 +405,22 @@ label.
 
 ### Pass labels
 
+The default depth convention is reverse-Z: near 1, far and clear 0, with
+`GPU_COMPARE_GREATER` or `GPU_COMPARE_GREATER_EQUAL`. Pass clear values and
+state comparisons are explicit; the backend does not invert them. UI panel
+matrices and `shader_sample_shadow` use the same convention; shadow receiver
+bias is positive and PCSS blockers have larger depths than their receivers.
+Existing forward-Z callers must update their projection and bias when using
+these default UI/shadow helpers.
+
+`GPU_PIXELFORMAT_R16F` is a single-channel half-float colour target, suitable
+for raw shadow blocker depth. `GPU_PIXELFORMAT_DEPTH16` is single-channel
+16-bit normalized depth (Metal Depth16Unorm, Vulkan D16_UNORM), suitable for
+orthographic comparison maps; it is not a half-float depth format. Keep
+`GPU_PIXELFORMAT_DEPTH` (32-bit float) for perspective reverse-Z depth.
+MTKView does not allocate a depth attachment: explicit GPU screen passes own
+their depth/stencil target.
+
 Every pass names what it does: `"shadow depth"`, `"bloom downsample"`,
 `"terrain raycast"`. The label becomes the command encoder name, so a Metal or
 RenderDoc frame capture lists the frame as the render graph the program

@@ -1,0 +1,18 @@
+fn main() {
+    if os_env("NS_ARG0") == "--pack" {
+        if os_env("NS_ARGC") != "7" { cook_fail("invalid pack arguments") }
+        let rule = cook_parse("", "ios")
+        rule.format = os_env("NS_ARG3")
+        rule.srgb = os_env("NS_ARG4") == "true"
+        let ktx = cook_read_bytes(os_env("NS_ARG1"))
+        let data = cook_pack(ktx, ktx.len, rule, stof(os_env("NS_ARG5")) as i32, stof(os_env("NS_ARG6")) as i32)
+        if os_write_file_bytes_atomic(os_env("NS_ARG2"), data, data.len) == 0 { cook_fail("cannot publish cache") }
+        return
+    }
+    if os_env("NS_ARGC") != "3" { cook_fail("usage: ns_tex PROJECT_ROOT PLATFORM OUTPUT") }
+    let platform = os_env("NS_ARG1")
+    if platform == "iphoneos" || platform == "iphonesimulator" { platform = "ios" }
+    if platform == "macosx" { platform = "macos" }
+    if platform != "ios" && platform != "macos" { cook_fail(`unsupported Apple platform: {platform}`) }
+    cook_run(os_env("NS_ARG0"), platform, os_env("NS_ARG2"))
+}

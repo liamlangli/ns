@@ -208,6 +208,14 @@ assert.equal(runtime.get(runtime.addressParts(buffer).id, 'buffer').desc.label, 
 const texture = runtime.gpu('gpu_texture_new_2d', [8, 4, 23, 0]);
 assert.equal(runtime.gpu('gpu_texture_valid', [texture]), 1);
 assert.equal(runtime.gpu('gpu_texture_bytes', [texture]), 128n);
+// Shadow targets keep their actual single-channel precision in the browser.
+for (const [format, expected] of [[10, 'r16float'], [17, 'r32float'], [72, 'depth16unorm']]) {
+  const handle = runtime.gpu('gpu_texture_create', [8, 4, 1, format, 5, 1, 0]);
+  assert.equal(runtime.texture(handle).format, expected);
+  if (format === 10) assert.equal(runtime.texture(handle).texture.desc.usage & GPUTextureUsage.STORAGE_BINDING, 0);
+}
+assert.equal(runtime.gpu('gpu_pixel_format_size', [72]), 2);
+
 const allocation = runtime.gpu('gpu_memory_alloc', [64n, 0, runtime.writeString('wasm test allocation')]);
 assert.equal(runtime.gpu('gpu_memory_valid', [allocation]), 1);
 const allocationBase = runtime.view().getBigUint64(allocation, true);
@@ -250,6 +258,12 @@ assert.equal(runtime.shader('shader_vertex_attr_size', [7, 0]), 12);
 const vertexSource = runtime.writeString('@vertex fn vs() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }');
 const fragmentSource = runtime.writeString('@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }');
 assert(runtime.gpu('gpu_shader_graphics_create', [vertexSource, fragmentSource, runtime.writeString('vs'), runtime.writeString('fs')]) > 0);
+
+const reverseShader = runtime.gpu('gpu_shader_graphics_create', [vertexSource, fragmentSource, runtime.writeString('vs'), runtime.writeString('fs')]);
+const reverseState = runtime.gpu('gpu_state_create', [4, 0, 0, 5, true, 0, 15]);
+runtime.activeDepthFormat = 'depth16unorm';
+assert.equal(runtime.graphicsPipeline(reverseShader, reverseState).desc.depthStencil.depthCompare, 'greater');
+runtime.activeDepthFormat = null;
 const computeSource = runtime.writeString('@compute @workgroup_size(1) fn cs() {}');
 const computeEntry = runtime.writeString('cs');
 const computeShader = runtime.gpu('gpu_shader_compute_create', [computeSource, computeEntry]);

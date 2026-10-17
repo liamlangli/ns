@@ -83,7 +83,8 @@ ref fn shader_vertex_attr_size(f: any, index: i32) i32
 // `coord.z` is the already-biased receiver depth in the light projection. The
 // transpiler lowers this to one linearly filtered hardware depth comparison:
 // the comparison sampler's bilinear footprint is a 2x2 PCF kernel against the
-// depth texture bound as `ns_shadow_map`. It is not evaluated by the Nano
+// reverse-Z depth texture bound as `ns_shadow_map` (near 1, far/clear 0,
+// greater-equal comparison). It is not evaluated by the Nano
 // Script VM.
 ref fn shader_sample_shadow(coord: float3) f32
 

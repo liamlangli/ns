@@ -64,6 +64,7 @@ int gpu_pixel_format_size(gpu_pixel_format format) {
         case PIXELFORMAT_R16UI:
         case PIXELFORMAT_R16SI:
         case PIXELFORMAT_R16F:
+        case PIXELFORMAT_DEPTH16:
         case PIXELFORMAT_RG8:
         case PIXELFORMAT_RG8SN:
         case PIXELFORMAT_RG8UI:
@@ -777,7 +778,7 @@ void gpu_screen_pass_begin(const char *label, f64 r, f64 g, f64 b, f64 a) {
     gpu_v2_flush_uploads();
     if (!_v2.ops || !_v2.ops->screen_pass_begin) return;
     gpu_color clear = {(f32)r, (f32)g, (f32)b, (f32)a};
-    _v2.ops->screen_pass_begin(gpu_v2_label(label, "unnamed screen pass"), clear, false, 1.0f);
+    _v2.ops->screen_pass_begin(gpu_v2_label(label, "unnamed screen pass"), clear, false, 0.0f);
 }
 
 void gpu_screen_pass_begin_depth(const char *label, f64 r, f64 g, f64 b, f64 a, f64 depth_clear) {

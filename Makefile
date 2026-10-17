@@ -292,7 +292,8 @@ NS_SRCS = $(NS_LIB_SRCS) $(NS_ENTRY)
 NS_DIRS = bin bin/src bin/lib
 
 ifeq ($(NS_OS), $(NS_DARWIN))
-all: $(NS_DIRS) $(TARGET) $(NS_LIB) std profiler lens
+all: $(NS_DIRS) $(TARGET) $(NS_LIB) std profiler lens ns_tex
+test: ns_tex
 else ifeq ($(NS_OS), $(NS_LINUX))
 all: $(NS_DIRS) $(TARGET) $(NS_LIB) std $(NS_APPIMAGE_RUNTIME)
 test: $(NS_APPIMAGE_RUNTIME)
@@ -315,6 +316,19 @@ lens: $(TARGET) std
 	$(Q)$(call ns_step,BUILD,nscode/ns_lens,quiet) $(CURDIR)/$(TARGET)$(NS_SUFFIX) build $(CURDIR)/nscode/ns_lens
 	$(Q)$(NS_RMDIR) $(NS_BINDIR)/ns_lens.app
 	$(Q)$(NS_CP) nscode/ns_lens/bin/ns_lens.app $(NS_BINDIR)/ns_lens.app
+
+# The launcher locates its .ns project in the checkout or installed SDK.
+.PHONY: ns_tex install-ns_tex
+ns_tex: $(TARGET) std
+	$(Q)cp nscode/ns_tex/ns_tex $(NS_BINDIR)/ns_tex
+	$(Q)chmod +x $(NS_BINDIR)/ns_tex
+
+install-ns_tex: ns_tex
+	$(Q)$(NS_MKDIR) $(NS_INSTALL_ROOT)/bin $(NS_INSTALL_ROOT)/share/nscode/ns_tex/src
+	$(Q)cp nscode/ns_tex/ns.mod $(NS_INSTALL_ROOT)/share/nscode/ns_tex/
+	$(Q)cp nscode/ns_tex/src/*.ns $(NS_INSTALL_ROOT)/share/nscode/ns_tex/src/
+	$(Q)cp nscode/ns_tex/ns_tex $(NS_INSTALL_ROOT)/bin/ns_tex
+	$(Q)chmod +x $(NS_INSTALL_ROOT)/bin/ns_tex
 
 $(NS_DIRS):
 	$(Q)$(NS_MKDIR) $(NS_DIRS)
@@ -400,6 +414,8 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	sh test/ns_scope_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_profile_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_lens
+	$(CURDIR)/$(TARGET)$(NS_SUFFIX) test nscode/ns_tex
+	sh nscode/ns_tex/test/integration.sh
 	sh test/ns_wasm_project_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_cross_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/storage_apple_compile.sh
@@ -456,6 +472,7 @@ install: all
 	$(Q)cp lib/ns-cook.py $(NS_INSTALL_ROOT)/ref/ns-cook.py
 	$(Q)if [ -f bin/astcenc ]; then cp bin/astcenc $(NS_INSTALL_ROOT)/bin/astcenc; fi
 	$(Q)cp sample/ns.svg $(NS_INSTALL_ROOT)/ref/ns.svg
+	$(Q)$(MAKE) install-ns_tex
 	$(Q)$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	$(Q)cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/
 	$(Q)cp $(NS_NATIVE_RT_OBJ) $(NS_INSTALL_ROOT)/lib/ns_native_rt.o

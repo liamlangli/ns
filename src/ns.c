@@ -2716,6 +2716,21 @@ static void ns_project_asset_paths_free(ns_str *paths) {
 // beside it. Files the linker discovers are added afterwards by
 // ns_compile_build_input, and remain guarded by the recorded stamps of the
 // previous build.
+#ifdef NS_DARWIN
+static ns_str ns_tex_project_path(ns_str executable) {
+    ns_str directory = ns_path_dirname_safe(executable);
+    ns_str project = ns_path_join(directory, ns_str_cstr("../nscode/ns_tex"));
+    ns_str manifest = ns_path_join(project, ns_str_cstr("ns.mod"));
+    if (!ns_file_exists(manifest)) {
+        ns_str_free(project);
+        project = ns_path_join(directory, ns_str_cstr("../share/nscode/ns_tex"));
+    }
+    ns_str_free(manifest);
+    ns_str_free(directory);
+    return project;
+}
+#endif
+
 static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
     // A rebuilt ns emits different code from the same sources.
     ns_str executable = ns_project_current_executable();
@@ -2733,6 +2748,25 @@ static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
     ns_str cooker = ns_path_join(vm.ref_path, ns_str_cstr("ns-cook.py"));
     if (ns_file_exists(cooker)) ns_build_cache_add_package(cache, cooker);
     ns_str_free(cooker);
+#ifdef NS_DARWIN
+    // Apple packaging delegates to ns_tex. A change to its launcher, rules or
+    // packer must refresh the bundle even when application sources are intact.
+    ns_str self = ns_project_current_executable();
+    ns_str tool_project = ns_tex_project_path(self);
+    ns_str directory = ns_path_dirname_safe(self);
+    ns_str launcher = ns_path_join(directory, ns_str_cstr("ns_tex"));
+    ns_str tool_manifest = ns_path_join(tool_project, ns_str_cstr("ns.mod"));
+    ns_str tool_sources = ns_path_join(tool_project, ns_str_cstr("src"));
+    ns_build_cache_add_package(cache, launcher);
+    ns_build_cache_add_package(cache, tool_manifest);
+    ns_build_cache_add_package_tree(cache, tool_sources);
+    ns_str_free(tool_sources);
+    ns_str_free(tool_manifest);
+    ns_str_free(launcher);
+    ns_str_free(directory);
+    ns_str_free(tool_project);
+    ns_str_free(self);
+#endif
 
     ns_project_source *sources = ns_project_sources(in->scope, in->filename);
     for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
@@ -3711,6 +3745,44 @@ static ns_str ns_build_darwin_current_executable(void) {
 // project root or double-clicked as a bundle.
 // The cooker is a build-time tool; image codecs never enter the language VM.
 static i32 ns_cook_command(i32 argc, const char **argv) {
+#ifdef NS_DARWIN
+    const char *platform = ns_null, *output = ns_null, *root = ".";
+    ns_bool valid = true, has_root = false;
+    for (i32 i = 0; i < argc; i++) {
+        if (!strcmp(argv[i], "--platform") && i + 1 < argc) platform = argv[++i];
+        else if (!strcmp(argv[i], "--output") && i + 1 < argc) output = argv[++i];
+        else if (argv[i][0] != '-' && !has_root) { root = argv[i]; has_root = true; }
+        else valid = false;
+    }
+    if (platform && (!strcmp(platform, "ios") || !strcmp(platform, "macos") ||
+                     !strcmp(platform, "iphoneos") || !strcmp(platform, "iphonesimulator") ||
+                     !strcmp(platform, "macosx") || !strcmp(platform, "darwin"))) {
+        if (!valid || !output) ns_exit(1, "cook", "usage: ns cook [path] --platform <ios|macos> --output <resources>\n");
+        ns_str self = ns_project_current_executable();
+        ns_str directory = ns_path_dirname_safe(self);
+        ns_str launcher = ns_path_join(directory, ns_str_cstr("ns_tex"));
+        if (access(launcher.data, X_OK)) ns_exit(1, "cook", "missing ns_tex beside ns; run make ns_tex or make install.\n");
+        ns_str command = ns_str_null;
+        ns_str_append_cstr(&command, "NS_EXECUTABLE=");
+        ns_str quoted = ns_shell_quote(self);
+        ns_str_append(&command, quoted);
+        ns_str_free(quoted);
+        const char *arguments[] = {launcher.data, root, !strcmp(platform, "darwin") ? "macos" : platform, output};
+        for (i32 i = 0; i < 4; i++) {
+            quoted = ns_shell_quote(ns_str_cstr((char *)arguments[i]));
+            ns_str_append_cstr(&command, " ");
+            ns_str_append(&command, quoted);
+            ns_str_free(quoted);
+        }
+        ns_array_push(command.data, '\0');
+        i32 result = system(command.data);
+        ns_str_free(command);
+        ns_str_free(launcher);
+        ns_str_free(directory);
+        ns_str_free(self);
+        return result == 0 ? 0 : 1;
+    }
+#endif
     ns_str script = ns_path_join(vm.ref_path, ns_str_cstr("ns-cook.py"));
     if (!ns_file_exists(script)) ns_exit(1, "cook", "missing ns-cook.py; reinstall the ns SDK.\n");
     const char *python = getenv("NS_COOK_PYTHON");
@@ -3746,7 +3818,7 @@ static i32 ns_cook_command(i32 argc, const char **argv) {
 static void ns_cook_assets(ns_str root, ns_str destination, const char *platform) {
     ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
     ns_str text = ns_os_read_file(manifest);
-    // Projects without cook rules need neither Python nor Pillow.
+    // Projects without cook rules need no texture tool.
     ns_bool enabled = text.data && strstr(text.data, "[cook.") != ns_null;
     ns_str_free(text);
     ns_str_free(manifest);

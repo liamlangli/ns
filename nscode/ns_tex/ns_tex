@@ -1,0 +1,40 @@
+#!/bin/sh
+# Shell only launches build tasks; rules, validation and NSTX packing are ns.
+set -eu
+if [ "${1:-}" = '--help' ] || [ "${1:-}" = '-h' ]; then
+    echo 'Usage: ns_tex PROJECT_ROOT PLATFORM OUTPUT'
+    echo 'Cook ios/macos ASTC textures with Xcode textureconverter using ns.mod rules.'
+    exit 0
+fi
+if [ "$#" -ne 3 ]; then
+    echo 'Usage: ns_tex PROJECT_ROOT PLATFORM OUTPUT' >&2
+    exit 2
+fi
+launcher_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+if [ -f "$launcher_dir/ns.mod" ]; then
+    NS_TEX_ROOT=$launcher_dir
+elif [ -f "$launcher_dir/../nscode/ns_tex/ns.mod" ]; then
+    NS_TEX_ROOT=$(CDPATH= cd -- "$launcher_dir/../nscode/ns_tex" && pwd -P)
+else
+    NS_TEX_ROOT=$(CDPATH= cd -- "$launcher_dir/../share/nscode/ns_tex" && pwd -P)
+fi
+root=$(CDPATH= cd -- "$1" && pwd -P)
+mkdir -p "$3"
+output=$(CDPATH= cd -- "$3" && pwd -P)
+if [ -n "${NS_EXECUTABLE:-}" ]; then
+    NS_TEX_NS=$NS_EXECUTABLE
+elif [ -x "$launcher_dir/ns" ]; then
+    NS_TEX_NS="$launcher_dir/ns"
+else
+    NS_TEX_NS=$(command -v ns)
+fi
+NS_TEX_ENCODER=$(xcrun --find textureconverter)
+NS_TEX_ID=$$
+mkdir -p "$root/bin/.ns-tex"
+NS_TEX_PLAN="$root/bin/.ns-tex/tasks.$$.sh"
+export NS_TEX_ROOT NS_TEX_NS NS_TEX_ENCODER NS_TEX_ID NS_TEX_PLAN
+trap 'rm -f "$NS_TEX_PLAN"' EXIT HUP INT TERM
+"$NS_TEX_NS" run "$NS_TEX_ROOT" "$root" "$2" "$output"
+if [ -f "$NS_TEX_PLAN" ]; then
+    /bin/sh "$NS_TEX_PLAN"
+fi

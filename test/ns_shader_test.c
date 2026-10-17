@@ -614,7 +614,7 @@ int main() {
     {
         ns_return_str r = ns_shader_transpile(&vm, &ctx, fs_shadow, NS_SHADER_MSL, NS_SHADER_STAGE_FRAGMENT);
         ns_expect(!ns_return_is_error(r) && ns_shader_test_has(r.r, "depth2d<float> ns_shadow_map [[texture(0)]]") &&
-                      ns_shader_test_has(r.r, "sample_compare") && ns_shader_test_has(r.r, "compare_func::less_equal") &&
+                      ns_shader_test_has(r.r, "sample_compare") && ns_shader_test_has(r.r, "compare_func::greater_equal") &&
                       !ns_shader_test_has(r.r, "for (int y") && !ns_shader_test_has(r.r, "lit / 9.0"),
                   "msl shadow sampling binds a depth texture and emits one hardware 2x2 PCF comparison.");
         if (!ns_return_is_error(r)) ns_array_free(r.r.data);

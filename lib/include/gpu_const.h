@@ -108,6 +108,8 @@ typedef enum gpu_pixel_format {
     PIXELFORMAT_ASTC_6x6_RGBA,
     PIXELFORMAT_ASTC_6x6_SRGBA,
 
+    // Append formats to preserve every existing serialized format number.
+    PIXELFORMAT_DEPTH16,
     _PIXELFORMAT_NUM,
 } gpu_pixel_format;
 

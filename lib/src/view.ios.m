@@ -297,7 +297,7 @@ view *view_create(const char *title, i32 width, i32 height) {
         view_ios_metal_view.multipleTouchEnabled = YES;
         view_ios_metal_view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         view_ios_metal_view.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
-        view_ios_metal_view.depthStencilPixelFormat = MTLPixelFormatDepth32Float;
+        view_ios_metal_view.depthStencilPixelFormat = MTLPixelFormatInvalid;
         // On demand by default: the view sleeps until view_request_frame()
         // invalidates it. NS_VIEW_CONTINUOUS or view_set_frame_per_second
         // switches to vsync-paced drawing so a GPU frame capture has a

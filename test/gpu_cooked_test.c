@@ -30,6 +30,10 @@ static void write_image(const char *path, u8 *header, int extra) {
     fclose(file);
 }
 int main(int argc, char **argv) {
+    assert(PIXELFORMAT_DEPTH16 == 72);
+    assert(gpu_pixel_format_size(PIXELFORMAT_DEPTH16) == 2);
+    assert(gpu_pixel_format_size(PIXELFORMAT_R16F) == 2);
+    assert(gpu_pixel_format_surface_pitch(PIXELFORMAT_DEPTH16, 13, 7, 1) == 182);
     if (argc == 2) {
         assert(gpu_request_device(NULL));
         i32 width = 0, height = 0;

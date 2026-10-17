@@ -1442,7 +1442,7 @@ static void ui_create_gpu_resources(ui_renderer *r) {
     // it (a hand) hides it, but never writes depth: its layers share a plane
     // and keep painter's order.
     r->render_state_panel = gpu_state_create(PRIMITIVE_TRIANGLES, CULL_NONE, FACE_WINDING_CCW,
-                                             COMPARE_LESS_EQUAL, false, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
+                                             COMPARE_GREATER_EQUAL, false, GPU_BLEND_ALPHA, COLOR_MASK_ALL);
     r->gpu_ready = r->white_texture && r->font_texture && r->shader_image &&
                    r->shader_msdf && r->shader_bitmap && r->shader_arc_sdf && r->render_state &&
                    r->render_state_hud && r->render_state_panel;
@@ -2454,7 +2454,7 @@ void ui_flush(ui_renderer *r, ui_color_rgba *clear) {
     ns_bool hud = ui_hud_solve(&hud_frame);
     // The immersive HUD places itself; a 3D panel otherwise.
     ns_bool panel = !hud && r->panel;
-    if (panel) gpu_screen_pass_begin_depth("ui panel", 0.0, 0.0, 0.0, 1.0, 1.0);
+    if (panel) gpu_screen_pass_begin_depth("ui panel", 0.0, 0.0, 0.0, 1.0, 0.0);
     else gpu_screen_pass_begin("ui", 0.0, 0.0, 0.0, 1.0);
     gpu_set_viewport(0, 0, framebuffer_width, framebuffer_height);
     gpu_set_state(hud ? r->render_state_hud : (panel ? r->render_state_panel : r->render_state));

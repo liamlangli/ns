@@ -2732,7 +2732,7 @@ ns_return_str ns_shader_transpile_program(ns_vm *vm, ns_ast_ctx *ctx, ns_shader_
         ns_shader_cstr(&e.out,
             "inline float ns_shadow_compare(depth2d<float> map, float3 coord) {\n"
             "    if (coord.x <= 0.0 || coord.x >= 1.0 || coord.y <= 0.0 || coord.y >= 1.0 || coord.z <= 0.0 || coord.z >= 1.0) return 1.0;\n"
-            "    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear, compare_func::less_equal);\n"
+            "    constexpr sampler s(coord::normalized, address::clamp_to_edge, filter::linear, compare_func::greater_equal);\n"
             "    return map.sample_compare(s, coord.xy, coord.z);\n"
             "}\n\n");
     }
