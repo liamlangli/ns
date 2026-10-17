@@ -63,6 +63,8 @@ snaps back to orthographic.
     and apply in every map mode and search.
 - The controls are listed at the bottom left, above an activity row that shows
   the running search, commit or push with its progress, and the latest message.
+- The menu bar contains dropdown menus only; other controls belong in floating
+  panels, dialogs, the canvas or the status area.
 - The menu right of **File** switches the map. **code** shows recognized
   source files (`.c`, `.h`, `.ns`, `.ts`, `.js`, and the other languages Lens
   already knows). **change** shows files Git reports as staged, unstaged, or
@@ -85,7 +87,7 @@ snaps back to orthographic.
   on the dependency side. Left-drag a cell to move it; left-drag empty canvas
   to pan. Cells retain their positions when depth changes unless their side,
   column, or layer width changes, and dragging keeps a 24-unit minimum gap. Click a cell to
-  make it the new source; search and **Focus selected** also choose a source.
+  make it the new source; search also chooses a source.
   A translucent rounded outline marks one representative `use` or symbol use
   per file pair. Smooth cubic Bezier curves connect the vertical midpoints of
   facing left/right file borders, with horizontal tangents at each end.

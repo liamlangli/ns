@@ -647,7 +647,7 @@ fn lens_open_project() {
     lens_rebuild()
 }
 
-// Top of the controls in the top bar, centred in it.
+// The menu bar contains dropdown menus only, centred vertically.
 fn lens_mode_y() f64 { return main_menu_h() + (LENS_TOP_BAR_H - LENS_MODE_H) * 0.5 }
 
 fn lens_mode_popup_y() f64 { return lens_mode_y() + LENS_MODE_H + 2.0 }

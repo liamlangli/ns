@@ -518,14 +518,6 @@ fn lens_ref_controls(r: ref ui_renderer, v: ref view, w: f64) {
         }
     }
     draw_text_clipped(r, x + 62.0, y + 3.0, 82.0, LENS_MODE_H, "depth " + itos(g_lens_ref_depth), small_px(), col_text())
-    let bx = lens_mode_x() + LENS_MODE_W + 12.0
-    let focus_y = lens_mode_y()
-    lens_draw_button(r, v, bx, focus_y, 100.0, LENS_MODE_H, "Focus selected", false)
-    if !lens_menu_blocks() && !g_lens_mode_open && v.mouse_pressed && raw_hit(v, bx, focus_y, 100.0, LENS_MODE_H) && g_lens_selected >= 0 {
-        g_lens_ref_root = os_entry_path(g_lens_selected)
-        lens_ref_layout(true)
-        v.mouse_pressed = false
-    }
 }
 
 // Source row/byte-column -> the same newspaper column and wrap used by text.
