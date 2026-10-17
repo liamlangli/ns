@@ -989,10 +989,10 @@ static ns_bool ui_load_bitmap_chinese_face(char *json, i32 tex_w, i32 tex_h, ui_
     return true;
 }
 
-static u32 ui_create_rgba_texture(const void *data, i32 width, i32 height) {
+static u32 ui_create_rgba_texture(const void *data, i32 width, i32 height, const char *name) {
     if (!data || width <= 0 || height <= 0) return 0;
     u32 texture = gpu_texture_create(width, height, 1, PIXELFORMAT_RGBA8,
-                                     TEXTURE_USAGE_READ, 1, TEXTURE_2D);
+                                     TEXTURE_USAGE_READ, 1, TEXTURE_2D, name);
     if (texture) {
         gpu_texture_upload(texture, 0, 0, data,
                            (u64)(size_t)width * (u64)(size_t)height * 4u);
@@ -1000,7 +1000,7 @@ static u32 ui_create_rgba_texture(const void *data, i32 width, i32 height) {
     return texture;
 }
 
-static u32 ui_create_font_texture(io_image *image) {
+static u32 ui_create_font_texture(io_image *image, const char *name) {
     if (!image || !image->data || image->width <= 0 || image->height <= 0 || image->channels <= 0) {
         return 0;
     }
@@ -1017,7 +1017,7 @@ static u32 ui_create_font_texture(io_image *image) {
             rgba[i * 4 + 3] = 255;
         }
     }
-    u32 texture = ui_create_rgba_texture(rgba, image->width, image->height);
+    u32 texture = ui_create_rgba_texture(rgba, image->width, image->height, name);
     if (rgba != image->data) free(rgba);
     return texture;
 }
@@ -1498,7 +1498,7 @@ void ui_stroke_round_rect_per_corner(ui_renderer *r, f64 x, f64 y, f64 w, f64 h,
 
 static void ui_create_gpu_resources(ui_renderer *r) {
     u32 white = 0xffffffffu;
-    r->white_texture = ui_create_rgba_texture(&white, 1, 1);
+    r->white_texture = ui_create_rgba_texture(&white, 1, 1, "ui white");
 
     char image_path[UI_PATH_MAX];
     io_image *img = ui_resolve_asset("latin_mono.png", image_path)
@@ -1506,7 +1506,7 @@ static void ui_create_gpu_resources(ui_renderer *r) {
                         : NULL;
     if (!img) fprintf(stderr, "ui: cannot locate or load latin_mono.png\n");
     if (img && img->data && img->channels == 4) {
-        r->font_texture = ui_create_rgba_texture(img->data, img->width, img->height);
+        r->font_texture = ui_create_rgba_texture(img->data, img->width, img->height, image_path);
     }
     if (img) {
         free(img->data);
@@ -1634,7 +1634,7 @@ ns_bool ui_load_font(ui_renderer *r, const char *json_path, const char *image_pa
         return false;
     }
 
-    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height);
+    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height, image_path);
     free(image->data);
     free(image);
     if (!texture) {
@@ -1675,7 +1675,7 @@ ns_bool ui_load_chinese_font(ui_renderer *r, const char *json_path, const char *
         return false;
     }
 
-    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height);
+    u32 texture = ui_create_rgba_texture(image->data, image->width, image->height, image_path);
     free(image->data);
     free(image);
     if (!texture) {
@@ -1714,7 +1714,7 @@ static ns_bool ui_load_bitmap_face(ui_renderer *r, const char *json_path, const 
         return false;
     }
 
-    u32 texture = ui_create_font_texture(image);
+    u32 texture = ui_create_font_texture(image, image_path);
     free(image->data);
     free(image);
     if (!texture) {
@@ -1951,11 +1951,11 @@ void ui_rect_batch_draw(ui_renderer *r, i32 batch_id) {
     ui_rect_batch_draw_scaled(r, batch_id, 0.0, 0.0, 1.0);
 }
 
-static i32 ui_register_rgba_texture(ui_renderer *r, const u8 *data, i32 width, i32 height) {
+static i32 ui_register_rgba_texture(ui_renderer *r, const u8 *data, i32 width, i32 height, const char *name) {
     if (!r || !data || width <= 0 || height <= 0) return 0;
     for (i32 slot = 0; slot < UI_MAX_TEXTURES; slot++) {
         if (r->textures[slot]) continue;
-        u32 texture = ui_create_rgba_texture(data, width, height);
+        u32 texture = ui_create_rgba_texture(data, width, height, name);
         if (!texture) return 0;
         r->textures[slot] = texture;
         r->texture_widths[slot] = width;
@@ -1995,7 +1995,7 @@ i32 ui_atlas_load(ui_renderer *r, const char *path) {
         rgba[i * 4 + 2] = c > 2 ? image->data[i * c + 2] : image->data[i * c + 0];
         rgba[i * 4 + 3] = c > 3 ? image->data[i * c + 3] : 255;
     }
-    i32 texture_id = ui_register_rgba_texture(r, rgba, image->width, image->height);
+    i32 texture_id = ui_register_rgba_texture(r, rgba, image->width, image->height, path);
     free(rgba);
     free(image->data);
     free(image);

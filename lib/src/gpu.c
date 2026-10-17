@@ -638,11 +638,11 @@ void gpu_v2_frame_end(void) {
 }
 
 u32 gpu_texture_create(i32 width, i32 height, i32 depth_or_layers,
-                       i32 format, u32 usage, i32 mip_count, i32 kind) {
-    if (width <= 0 || height <= 0) return 0;
+                       i32 format, u32 usage, i32 mip_count, i32 kind, const char *name) {
+    if (width <= 0 || height <= 0 || !name || !name[0]) return 0;
     if (!_v2.ops || !_v2.ops->texture_create) return 0;
     return _v2.ops->texture_create(width, height, depth_or_layers < 1 ? 1 : depth_or_layers,
-                                   format, usage, mip_count < 1 ? 1 : mip_count, kind);
+                                   format, usage, mip_count < 1 ? 1 : mip_count, kind, name);
 }
 
 void gpu_texture_upload(u32 tex, i32 mip, i32 layer, const void *data, u64 size) {
@@ -932,7 +932,9 @@ u32 gpu_texture_load_cooked_info(const char *path, i32 *source_width, i32 *sourc
         size != ((width + footprint - 1) / footprint) * ((height + footprint - 1) / footprint) * bytes) goto done;
     data = malloc(size);
     if (!data || fread(data, 1, size, file) != size || fgetc(file) != EOF) goto done;
-    texture = gpu_texture_create((i32)width, (i32)height, 1, (i32)format, TEXTURE_USAGE_READ, 1, TEXTURE_2D);
+    // The source path names the texture, so a frame capture shows which
+    // picture each cooked texture holds.
+    texture = gpu_texture_create((i32)width, (i32)height, 1, (i32)format, TEXTURE_USAGE_READ, 1, TEXTURE_2D, path);
     if (texture) {
         gpu_texture_upload(texture, 0, 0, data, size);
         if (source_width) *source_width = (i32)original_width;

@@ -146,7 +146,10 @@ ref fn gpu_read(src: u64, dst: [any], size: u64) bool
 // backend. Do not keep the address across frames.
 ref fn gpu_frame_alloc(size: u64, align: u32) u64
 
-ref fn gpu_texture_create(width: i32, height: i32, depth_or_layers: i32, format: i32, usage: u32, mip_count: i32, kind: i32) u32
+// name is required, like the gpu_malloc name, and labels the texture in GPU
+// debugging tools ("hdr color", "shadow depth"); a cooked texture is named
+// by its source path.
+ref fn gpu_texture_create(width: i32, height: i32, depth_or_layers: i32, format: i32, usage: u32, mip_count: i32, kind: i32, name: str) u32
 ref fn gpu_texture_upload(tex: u32, mip: i32, layer: i32, data: [any], size: u64)
 ref fn gpu_texture_destroy(tex: u32)
 ref fn gpu_sampler_create(min_filter: i32, mag_filter: i32, mip_filter: i32, wrap_u: i32, wrap_v: i32, wrap_w: i32, compare_func: i32, max_anisotropy: i32) u32
@@ -284,8 +287,8 @@ struct gpu_memory {
     flags: u32
 }
 
-fn gpu_texture_new(width: i32, height: i32, depth_or_layers: i32, format: i32, usage: u32, mip_count: i32, kind: i32) gpu_texture {
-    let id = gpu_texture_create(width, height, depth_or_layers, format, usage, mip_count, kind)
+fn gpu_texture_new(width: i32, height: i32, depth_or_layers: i32, format: i32, usage: u32, mip_count: i32, kind: i32, name: str) gpu_texture {
+    let id = gpu_texture_create(width, height, depth_or_layers, format, usage, mip_count, kind, name)
     return gpu_texture {
         id,
         width,
@@ -298,8 +301,8 @@ fn gpu_texture_new(width: i32, height: i32, depth_or_layers: i32, format: i32, u
     }
 }
 
-fn gpu_texture_new_2d(width: i32, height: i32, format: i32, usage: u32) gpu_texture {
-    return gpu_texture_new(width, height, 1, format, usage, 1, GPU_TEXTURE_2D)
+fn gpu_texture_new_2d(width: i32, height: i32, format: i32, usage: u32, name: str) gpu_texture {
+    return gpu_texture_new(width, height, 1, format, usage, 1, GPU_TEXTURE_2D, name)
 }
 
 // Empty handle for unused pass attachments.

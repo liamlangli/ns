@@ -123,10 +123,10 @@ fn probe(format: i32, w: i32, h: i32) i32 {
     assert gpu_pixel_format_surface_pitch(format, w, h, 1) == size
     let data = [u8](size)
     for k in 0 to across * down { block(data, k * block_bytes(format), format, k) }
-    let texture = gpu_texture_create(w, h, 1, format, GPU_TEXTURE_USAGE_READ as u32, 1, GPU_TEXTURE_2D)
+    let texture = gpu_texture_create(w, h, 1, format, GPU_TEXTURE_USAGE_READ as u32, 1, GPU_TEXTURE_2D, "compressed texture test source")
     if texture == 0u { return -1 }
     gpu_texture_upload(texture, 0, 0, data, size as u64)
-    let target = gpu_texture_create(w, h, 1, GPU_PIXELFORMAT_RGBA8, (GPU_TEXTURE_USAGE_RENDER_TARGET | GPU_TEXTURE_USAGE_READ) as u32, 1, GPU_TEXTURE_2D)
+    let target = gpu_texture_create(w, h, 1, GPU_PIXELFORMAT_RGBA8, (GPU_TEXTURE_USAGE_RENDER_TARGET | GPU_TEXTURE_USAGE_READ) as u32, 1, GPU_TEXTURE_2D, "compressed texture test target")
     let readback = gpu_malloc((w * h * 4) as u64, GPU_MEM_SHARED, "compressed texture test readback")
     assert target != 0u && readback != 0
     let root = [f32](8)

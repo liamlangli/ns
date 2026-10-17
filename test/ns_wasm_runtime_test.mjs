@@ -205,12 +205,14 @@ assert.equal(runtime.gpu('gpu_malloc', [32n, 0, runtime.writeString('')]), 0n);
 const buffer = runtime.gpu('gpu_malloc', [32n, 0, runtime.writeString('wasm test storage')]);
 assert(buffer > 0n);
 assert.equal(runtime.get(runtime.addressParts(buffer).id, 'buffer').desc.label, 'wasm test storage');
-const texture = runtime.gpu('gpu_texture_new_2d', [8, 4, 23, 0]);
+assert.equal(runtime.gpu('gpu_texture_create', [8, 4, 1, 23, 0, 1, 0, runtime.writeString('')]), 0);
+const texture = runtime.gpu('gpu_texture_new_2d', [8, 4, 23, 0, runtime.writeString('wasm test texture')]);
 assert.equal(runtime.gpu('gpu_texture_valid', [texture]), 1);
+assert.equal(runtime.texture(runtime.view().getUint32(texture, true)).texture.desc.label, 'wasm test texture');
 assert.equal(runtime.gpu('gpu_texture_bytes', [texture]), 128n);
 // Shadow targets keep their actual single-channel precision in the browser.
 for (const [format, expected] of [[10, 'r16float'], [17, 'r32float'], [72, 'depth16unorm']]) {
-  const handle = runtime.gpu('gpu_texture_create', [8, 4, 1, format, 5, 1, 0]);
+  const handle = runtime.gpu('gpu_texture_create', [8, 4, 1, format, 5, 1, 0, runtime.writeString('wasm test shadow target')]);
   assert.equal(runtime.texture(handle).format, expected);
   if (format === 10) assert.equal(runtime.texture(handle).texture.desc.usage & GPUTextureUsage.STORAGE_BINDING, 0);
 }

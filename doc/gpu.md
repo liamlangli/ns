@@ -222,9 +222,11 @@ tools (for example, as an `MTLBuffer` label or a DirectX 12 object name).
 
 ```c
 // Returns a bindless heap index (plain u32); 0 is invalid. The index is
-// plain data: store it in structs, arrays, or GPU memory.
+// plain data: store it in structs, arrays, or GPU memory. name is required
+// and labels the texture in frame captures, like the gpu_malloc name.
 u32  gpu_texture_create(i32 width, i32 height, i32 depth_or_layers,
-                        i32 format, u32 usage, i32 mip_count, i32 kind);
+                        i32 format, u32 usage, i32 mip_count, i32 kind,
+                        const char *name);
 void gpu_texture_upload(u32 tex, i32 mip, i32 layer,
                         const void *data, u64 size);
 void gpu_texture_destroy(u32 tex);
@@ -596,7 +598,7 @@ What the metadata buys on the CPU side:
 - `gpu_render_state_new` round-trips the same value-cached id as the raw
   call while keeping every field readable.
 
-Constructors are `gpu_texture_new`/`gpu_texture_new_2d`/`gpu_texture_none`,
+Constructors are `gpu_texture_new(..., name)`/`gpu_texture_new_2d(..., name)`/`gpu_texture_none`,
 `gpu_sampler_new`, `gpu_render_state_new`, `gpu_memory_alloc(size, flags, name)`; teardown is
 `gpu_*_release`/`gpu_memory_free`; binding is `gpu_shader_bind` /
 `gpu_render_state_bind`.

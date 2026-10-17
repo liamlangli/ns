@@ -70,7 +70,8 @@ gpu_addr gpu_frame_alloc(u64 size, u32 align);  // transient, recycled by gpu_co
 
 // ---- textures and samplers (bindless heap indices, 0 = invalid) ------------
 u32  gpu_texture_create(i32 width, i32 height, i32 depth_or_layers,
-                        i32 format, u32 usage, i32 mip_count, i32 kind);
+                        i32 format, u32 usage, i32 mip_count, i32 kind,
+                        const char *name); // non-empty debug name, like gpu_malloc
 void gpu_texture_upload(u32 tex, i32 mip, i32 layer, const void *data, u64 size);
 void gpu_texture_destroy(u32 tex);
 u32  gpu_sampler_create(i32 min_filter, i32 mag_filter, i32 mip_filter,
@@ -190,7 +191,8 @@ typedef struct gpu_v2_ops {
     void    (*mem_copy_end)(void);
 
     u32  (*texture_create)(i32 width, i32 height, i32 depth_or_layers,
-                           i32 format, u32 usage, i32 mip_count, i32 kind);
+                           i32 format, u32 usage, i32 mip_count, i32 kind,
+                           const char *name);
     void (*texture_upload)(u32 tex, i32 mip, i32 layer, const void *data, u64 size);
     void (*texture_destroy)(u32 tex);
     u32  (*sampler_create)(i32 min_filter, i32 mag_filter, i32 mip_filter,

@@ -314,8 +314,8 @@ fn resize_accumulation(width: i32, height: i32) {
     if width == accumulation_width && height == accumulation_height { return }
     if accumulation_a != 0u { gpu_texture_destroy(accumulation_a) }
     if accumulation_b != 0u { gpu_texture_destroy(accumulation_b) }
-    accumulation_a = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_RG11B10F, (GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_WRITE) as u32, 1, GPU_TEXTURE_2D)
-    accumulation_b = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_RG11B10F, (GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_WRITE) as u32, 1, GPU_TEXTURE_2D)
+    accumulation_a = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_RG11B10F, (GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_WRITE) as u32, 1, GPU_TEXTURE_2D, "path trace accumulation a")
+    accumulation_b = gpu_texture_create(width, height, 1, GPU_PIXELFORMAT_RG11B10F, (GPU_TEXTURE_USAGE_READ | GPU_TEXTURE_USAGE_WRITE) as u32, 1, GPU_TEXTURE_2D, "path trace accumulation b")
     accumulation_width = width
     accumulation_height = height
     accumulation_frame = 0

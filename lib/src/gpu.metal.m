@@ -1023,7 +1023,7 @@ static bool mtl_block_format_supported(gpu_pixel_format format) {
 }
 
 static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
-                                 i32 format, u32 usage, i32 mip_count, i32 kind) {
+                                 i32 format, u32 usage, i32 mip_count, i32 kind, const char *name) {
     if (width <= 0 || height <= 0 || depth_or_layers <= 0 ||
         _state.texture_count >= GPU_RESOURCE_POOL_SIZE) return 0;
     MTLPixelFormat pixel_format = _mtl_pixel_format((gpu_pixel_format)format);
@@ -1081,6 +1081,7 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
     [desc release];
 #endif
     if (!texture) return 0;
+    texture.label = [NSString stringWithUTF8String:name];
     u32 id = _state.texture_count++;
     _state.textures[id] = (gpu_texture_mtl){
         .texture = texture,

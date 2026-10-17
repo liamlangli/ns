@@ -1755,7 +1755,8 @@ static void gpu_vk_mem_copy_end(void) {
 // ---- textures and samplers --------------------------------------------------
 
 static u32 gpu_vk_texture_create(i32 width, i32 height, i32 depth_or_layers,
-                                 i32 format, u32 usage, i32 mip_count, i32 kind) {
+                                 i32 format, u32 usage, i32 mip_count, i32 kind, const char *name) {
+    (void)name;
     if (width <= 0 || height <= 0 || depth_or_layers <= 0) return 0;
     if (_vk.texture_count >= GPU_RESOURCE_POOL_SIZE) return 0;
     VkFormat vk_format = gpu_vk_format((gpu_pixel_format)format);

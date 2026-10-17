@@ -8,8 +8,9 @@
 static u32 expected_format, expected_size;
 static i32 expected_width, expected_height;
 static i32 uploads;
-static u32 create_texture(i32 width, i32 height, i32 layers, i32 format, u32 usage, i32 mips, i32 kind) {
+static u32 create_texture(i32 width, i32 height, i32 layers, i32 format, u32 usage, i32 mips, i32 kind, const char *name) {
     assert(width == expected_width && height == expected_height);
+    assert(name && strncmp(name, "/tmp/ns-cooked-", 15) == 0);
     assert(format == (i32)expected_format && layers == 1 && mips == 1);
     assert(usage == TEXTURE_USAGE_READ && kind == TEXTURE_2D);
     return 17;
