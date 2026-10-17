@@ -1,0 +1,113 @@
+# Platform texture cooking
+
+`ns build` app packaging and generated Apple Xcode targets can replace GPU
+pictures with platform-specific compressed textures. Configure valid TOML tables
+in `ns.mod` (use `[cook.ios]`, rather than `[[cook:ios]]`):
+
+```toml
+[cook.ios]
+format = "astc_6x6"
+max_size = 512
+exclude = ["res/*_mesh.png", "res/*_vat.png", "res/fonts/*"]
+
+[cook.macos]
+format = "astc_4x4"
+max_size = 0
+exclude = ["res/*_mesh.png", "res/*_vat.png", "res/fonts/*"]
+
+[cook.windows]
+format = "bc3"
+max_size = 0
+```
+
+Platforms: `ios`, `macos`, `windows`, `linux`, `android`, `visionos`.
+Formats: `astc_4x4`, `astc_6x6`, `bc1`, `bc3`. ASTC platforms are Apple and
+Android; BC formats are intended for desktop GPUs. macOS ASTC requires Apple
+silicon; use BC3 for Intel Mac targets. These rules do not add new native
+packaging or GPU backends to platforms the toolchain does not support yet.
+
+`max_size` limits the longest edge while preserving aspect ratio. Zero means
+unlimited; omitted means 512 for iOS, Android and visionOS, unlimited elsewhere.
+Optional `include` and `exclude` are arrays of case-sensitive project-relative
+globs; `*` also matches `/`. All PNG/JPEG/WebP/TGA/BMP files in the manifest's
+`assets` are selected by default. `exclude` wins. Optional `quality` is an
+astcenc preset (`fastest`, `fast`, `medium`, `thorough`, `exhaustive`; default
+`medium`). `srgb = true` selects sRGB encoding and sampling; default false
+preserves linear sampling. BC1 sRGB is currently unsupported.
+
+Only ordinary GPU pictures should be selected. Exclude mesh/VAT data images,
+normal maps requiring special encoding, CPU-read images and font atlases.
+16-bit grayscale data images are rejected. Embedded GLB pictures are not
+rewritten. Font loaders and `io_load_image` still require original image files.
+
+## Build dependencies
+
+Cooking requires Python 3.11+ and Pillow 11.2.1+ on the build machine. ASTC
+also requires Arm's [astcenc](https://github.com/ARM-software/astc-encoder).
+Build a pinned copy with `sh scripts/bootstrap_astcenc.sh`; it writes
+`bin/astcenc`, which `make install` also installs. Alternatively put `astcenc`
+on PATH or set `NS_ASTCENC` to its executable. `NS_COOK_PYTHON` selects the
+Python executable, including when Xcode uses a different PATH.
+
+The app ships neither Python nor the encoder. The language-only `ns`
+executable does not link image or GPU libraries. Encoded results are cached
+under the project's `bin/.ns-cook/`, keyed by source contents, settings,
+cooker and encoder identity. Missing dependencies or failed encoding fail the
+build. Source assets are never modified.
+
+## Packaging and loading
+
+Native macOS app builds select `cook.macos`, Linux packaging selects
+`cook.linux`. Xcode's final `Cook Textures` phase runs after Copy Resources,
+selects the actual SDK (iOS simulator and device both select `ios`), and runs
+before code signing. Each selected packaged `res/picture.png` becomes
+`res/picture.png.nstex`; the packaged original is removed after successful
+encoding. There is one base mip; mipmap generation is not yet supported.
+
+`ui_atlas_load` automatically prefers the cooked texture. Original atlas
+width and height are retained for pixel-coordinate UVs even after resizing.
+For custom GPU loading, try `gpu_texture_load_cooked(source_path)` before the
+usual image decode/upload; it returns a texture ID, or 0 if absent, invalid,
+or unsupported. It uploads compressed blocks directly and releases CPU staging
+memory. For example:
+
+```ns
+let texture = gpu_texture_load_cooked("res/cloud.png")
+if texture == 0u {
+    // Existing source image loader for development runs.
+}
+```
+
+Raw `ns run` and Wasm packaging retain originals. Browser
+`gpu_texture_load_cooked` returns 0 so the same development fallback works.
+A platform without a matching table keeps originals.
+
+To cook an already copied resource directory manually:
+
+```sh
+ns cook . --platform ios --output bin/ios-resources
+```
+
+This command writes selected compressed textures and removes matching copied
+originals. It does not copy unrelated assets. Keep its output in `bin/` or an
+external generated directory.
+
+OTA patches need an explicit platform when the manifest has cook rules:
+
+```sh
+ns patch --cook-platform ios
+```
+
+The patch writer cooks a separate staging snapshot before hashing and bundling,
+then removes the staging copy. Use separate patch targets/URLs for incompatible
+platform formats. The patch's assets retain the same relative paths as the app.
+
+## NSTX v1
+
+The runtime sidecar is a fixed 32-byte little-endian header followed by one
+mip's tightly packed GPU blocks. Header: magic `NSTX`, version `u32 = 1`, GPU
+pixel-format enum `u32`, cooked width/height `u32`, original width/height `u32`,
+payload size `u32`. The format determines the block footprint (4 or 6) and
+block size (8 bytes for BC1, otherwise 16). Payload size must exactly match
+`ceil(width / block) * ceil(height / block) * block_bytes`. Readers reject
+unknown versions/formats, invalid dimensions, truncation and trailing data.

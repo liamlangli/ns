@@ -105,6 +105,9 @@ typedef enum gpu_pixel_format {
     PIXELFORMAT_ASTC_4x4_RGBA,
     PIXELFORMAT_ASTC_4x4_SRGBA,
 
+    PIXELFORMAT_ASTC_6x6_RGBA,
+    PIXELFORMAT_ASTC_6x6_SRGBA,
+
     _PIXELFORMAT_NUM,
 } gpu_pixel_format;
 

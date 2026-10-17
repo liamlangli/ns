@@ -234,3 +234,8 @@ void gpu_v2_frame_end(void); // backends call this from gpu_commit to recycle th
 // program without a view never calls them.
 void gpu_vk_begin_frame(view *v);
 void gpu_vk_end_frame(view *v);
+
+// Load a cooked NSTX sidecar directly into GPU storage; 0 on failure.
+u32 gpu_texture_load_cooked(const char *path);
+// C-only metadata helper: original atlas dimensions preserve pixel-coordinate UVs.
+u32 gpu_texture_load_cooked_info(const char *path, i32 *source_width, i32 *source_height);

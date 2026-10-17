@@ -1880,6 +1880,18 @@ static i32 ui_register_rgba_texture(ui_renderer *r, const u8 *data, i32 width, i
 
 i32 ui_atlas_load(ui_renderer *r, const char *path) {
     if (!r || !path || !path[0]) return 0;
+    for (i32 slot = 0; slot < UI_MAX_TEXTURES; slot++) {
+        if (r->textures[slot]) continue;
+        i32 width = 0, height = 0;
+        u32 texture = gpu_texture_load_cooked_info(path, &width, &height);
+        if (texture) {
+            r->textures[slot] = texture;
+            r->texture_widths[slot] = width;
+            r->texture_heights[slot] = height;
+            return slot + 3;
+        }
+        break;
+    }
     io_image *image = io_load_image(path);
     if (!image || !image->data || image->width <= 0 || image->height <= 0) return 0;
     size_t pixels = (size_t)image->width * (size_t)image->height;

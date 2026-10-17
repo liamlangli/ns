@@ -112,7 +112,7 @@ static ns_bool ns_xcode_file_exists(const char *path) {
 // `expects_assets` is the project-attribute line the packaged paths of this
 // manifest produce, so a project generated for a different set of them, or for
 // none, is regenerated rather than left carrying the wrong resources.
-#define NS_XCODE_GENERATOR_VERSION "20"
+#define NS_XCODE_GENERATOR_VERSION "21"
 
 static ns_bool ns_xcode_generated_project_needs_upgrade(const char *path, const char *expects_assets,
                                                         ns_bool expects_app_icon, ns_bool expects_link_native,
@@ -1651,6 +1651,7 @@ static ns_bool ns_xcode_append_native_target(ns_xcode_buffer *pbx, unsigned targ
     char compile_id[25];
     char sources_id[25];
     char resources_id[25];
+    char cook_id[25];
     char product_id[25];
     ns_xcode_id(target_id, 20, target);
     ns_xcode_id(config_list_id, 73, target);
@@ -1658,6 +1659,7 @@ static ns_bool ns_xcode_append_native_target(ns_xcode_buffer *pbx, unsigned targ
     ns_xcode_id(compile_id, 14, target);
     ns_xcode_id(sources_id, 11, target);
     ns_xcode_id(resources_id, 12, target);
+    ns_xcode_id(cook_id, 15, target);
     ns_xcode_id(product_id, 60, target);
     char *escaped_target = ns_xcode_escape(target_name);
     char *escaped_safe = ns_xcode_escape(safe_name);
@@ -1678,6 +1680,7 @@ static ns_bool ns_xcode_append_native_target(ns_xcode_buffer *pbx, unsigned targ
                      "%s"
                      "\t\t\t\t%s /* Sources */,\n"
                      "\t\t\t\t%s /* Resources */,\n"
+                     "\t\t\t\t%s /* Cook Textures */,\n"
                      "\t\t\t);\n"
                      "\t\t\tbuildRules = ();\n"
                      "\t\t\tdependencies = ();\n"
@@ -1687,7 +1690,7 @@ static ns_bool ns_xcode_append_native_target(ns_xcode_buffer *pbx, unsigned targ
                      "\t\t\tproductType = \"com.apple.product-type.application\";\n"
                      "\t\t};\n",
                      target_id, escaped_target, config_list_id, escaped_target, shell_id, compile_line, sources_id,
-                     resources_id, escaped_target, escaped_safe, product_id, escaped_safe);
+                     resources_id, cook_id, escaped_target, escaped_safe, product_id, escaped_safe);
     free(escaped_target);
     free(escaped_safe);
     return ok;
@@ -2090,6 +2093,14 @@ static ns_bool ns_xcode_generate_app_pbx(const ns_project_spec *spec, const char
     }
     for (unsigned target = 1; target <= 3; ++target) {
         if (!ns_xcode_append_shell_phase(&pbx, 10, target, "Refresh NS Project", escaped_script)) {
+            for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
+            goto fail;
+        }
+        const char *cook_script = "set -e\n\"$NS_EXECUTABLE\" cook \"$NS_PROJECT_ROOT\" --platform \"$PLATFORM_NAME\" --output \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\n";
+        char *escaped_cook = ns_xcode_escape(cook_script);
+        ns_bool cooked = escaped_cook && ns_xcode_append_shell_phase(&pbx, 15, target, "Cook Textures", escaped_cook);
+        free(escaped_cook);
+        if (!cooked) {
             for (unsigned i = 0; i < 3; ++i) ns_xcode_buffer_free(&target_names[i]);
             goto fail;
         }

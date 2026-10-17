@@ -115,6 +115,7 @@ typedef struct ns_compile_option_t {
     // `ns profiler --device [selector]` / `--devices`: profile a device app.
     ns_bool device_view;
     ns_bool device_list;
+    const char *cook_platform; // platform for an OTA resource snapshot
     const char *patch_label; // `ns patch --label <text>`
     ns_bool patch_release;   // `ns patch --release`: the default label ends in release
 } ns_compile_option_t;
@@ -239,6 +240,9 @@ ns_compile_option_t parse_options(i32 argc, i8** argv) {
             if (i + 1 >= argc) ns_exit(1, "usage", "--live-host needs an address.\n");
             option.live_host = ns_str_cstr(argv[i + 1]);
             i++;
+        } else if (strcmp(argv[i], "--cook-platform") == 0 && option.patch_cmd) {
+            if (i + 1 >= argc) ns_exit(1, "usage", "--cook-platform needs a name.\n");
+            option.cook_platform = argv[++i];
         } else if (strcmp(argv[i], "--label") == 0 && option.patch_cmd) {
             if (i + 1 >= argc) ns_exit(1, "usage", "--label needs the text to publish with the patch.\n");
             option.patch_label = argv[++i];
@@ -348,6 +352,7 @@ void ns_help() {
     printf("                    --exe/--app or --lib/--library can force artifact type\n");
     printf("                    --cpu writes an ns_cpu image bin/<name>.nsc instead\n");
     printf("                    --target x86_64-linux-gnu cross-compiles a native build\n");
+    printf("  ns cook [path] --platform <ios|macos|windows|linux|android|visionos> --output <resources>\n");
     printf("                    app manifests may set icon = \"path/to/image.png\"\n");
     printf("                    keeps the artifact when no input changed; --force rebuilds\n");
     printf("  patch [path|target] write the eval/emu target's over-the-air patch to\n");
@@ -2725,6 +2730,9 @@ static void ns_build_cache_collect(ns_build_cache *cache, ns_build_input *in) {
     ns_str_free(manifest);
     ns_build_cache_add_package(cache, in->icon);
     ns_build_cache_add_package(cache, in->shell);
+    ns_str cooker = ns_path_join(vm.ref_path, ns_str_cstr("ns-cook.py"));
+    if (ns_file_exists(cooker)) ns_build_cache_add_package(cache, cooker);
+    ns_str_free(cooker);
 
     ns_project_source *sources = ns_project_sources(in->scope, in->filename);
     for (i32 i = 0, count = ns_array_length(sources); i < count; i++) {
@@ -3701,6 +3709,52 @@ static ns_str ns_build_darwin_current_executable(void) {
 // they have in the project. The launched executable enters that directory, so
 // a program keeps reading `res/house.vox` whether it was interpreted from the
 // project root or double-clicked as a bundle.
+// The cooker is a build-time tool; image codecs never enter the language VM.
+static i32 ns_cook_command(i32 argc, const char **argv) {
+    ns_str script = ns_path_join(vm.ref_path, ns_str_cstr("ns-cook.py"));
+    if (!ns_file_exists(script)) ns_exit(1, "cook", "missing ns-cook.py; reinstall the ns SDK.\n");
+    const char *python = getenv("NS_COOK_PYTHON");
+#ifdef NS_DARWIN
+    // Xcode strips Homebrew from PATH and exposes Apple's older system Python.
+    // Prefer the normal Homebrew locations unless the user selected a runtime.
+    if (!python || !python[0]) {
+        if (access("/opt/homebrew/bin/python3", X_OK) == 0) python = "/opt/homebrew/bin/python3";
+        else if (access("/usr/local/bin/python3", X_OK) == 0) python = "/usr/local/bin/python3";
+    }
+#endif
+    ns_str quoted = ns_shell_quote(ns_str_cstr((char *)(python && python[0] ? python : "python3")));
+    ns_str command = ns_str_null;
+    ns_str_append_len(&command, quoted.data, quoted.len);
+    ns_str_free(quoted);
+    quoted = ns_shell_quote(script);
+    ns_str_append_len(&command, " ", 1);
+    ns_str_append_len(&command, quoted.data, quoted.len);
+    ns_str_free(quoted);
+    ns_str_free(script);
+    for (i32 i = 0; i < argc; i++) {
+        quoted = ns_shell_quote(ns_str_cstr((char *)argv[i]));
+        ns_str_append_len(&command, " ", 1);
+        ns_str_append_len(&command, quoted.data, quoted.len);
+        ns_str_free(quoted);
+    }
+    ns_array_push(command.data, '\0');
+    i32 result = system(command.data);
+    ns_str_free(command);
+    return result == 0 ? 0 : 1;
+}
+
+static void ns_cook_assets(ns_str root, ns_str destination, const char *platform) {
+    ns_str manifest = ns_path_join(root, ns_str_cstr("ns.mod"));
+    ns_str text = ns_os_read_file(manifest);
+    // Projects without cook rules need neither Python nor Pillow.
+    ns_bool enabled = text.data && strstr(text.data, "[cook.") != ns_null;
+    ns_str_free(text);
+    ns_str_free(manifest);
+    if (!enabled) return;
+    const char *args[] = {root.data, "--platform", platform, "--output", destination.data};
+    if (ns_cook_command(5, args)) ns_exit(1, "cook", "texture cooking failed.\n");
+}
+
 static void ns_build_darwin_copy_assets(ns_build_input *in, ns_str resources_dir) {
     if (!in->has_manifest) return;
     ns_str *assets = ns_project_asset_paths(in->scope);
@@ -3718,6 +3772,7 @@ static void ns_build_darwin_copy_assets(ns_build_input *in, ns_str resources_dir
         ns_str_free(destination);
     }
     ns_project_asset_paths_free(assets);
+    ns_cook_assets(in->scope, resources_dir, "macos");
 }
 
 static void ns_build_darwin_app(ns_build_input *in, ns_str output, ns_ssa_module *ssa) {
@@ -4120,6 +4175,7 @@ static void ns_build_linux_package_app(ns_build_input *in, ns_str executable_pat
         ns_str_free(destination);
     }
     ns_project_asset_paths_free(assets);
+    ns_cook_assets(in->scope, dir, "linux");
     if (!appimage) ns_build_linux_copy_ui_assets(dir);
     ns_str marker = ns_path_join(dir, ns_str_cstr(".ns-resources"));
     ns_write_text_file(marker, ns_str_cstr(""));
@@ -5068,7 +5124,7 @@ static ns_str ns_patch_written_label(ns_str scope, ns_str name) {
     return label;
 }
 
-void ns_exec_patch(ns_str argument, const char *label, ns_bool release) {
+void ns_exec_patch(ns_str argument, const char *label, ns_bool release, const char *cook_platform) {
     ns_str scope = ns_str_null, target_name = ns_str_null;
     ns_str path = argument;
     if (ns_target_arg_select(argument, &scope, &target_name)) path = scope;
@@ -5093,6 +5149,46 @@ void ns_exec_patch(ns_str argument, const char *label, ns_bool release) {
     const char **asset_names = ns_null;
     for (i32 i = 0, count = ns_array_length(assets); i < count; i++) ns_array_push(asset_names, (const char *)assets[i].data);
     ns_str out_dir = ns_patch_output_dir(in.scope, sel.name);
+    ns_str patch_root = ns_str_concat(in.scope, ns_str_cstr(""));
+    ns_str cook_manifest = ns_path_join(in.scope, ns_str_cstr("ns.mod"));
+    ns_str cook_text = ns_os_read_file(cook_manifest);
+    ns_bool has_cook = cook_text.data && strstr(cook_text.data, "[cook.") != ns_null;
+    ns_str_free(cook_text);
+    ns_str_free(cook_manifest);
+    if (has_cook && !cook_platform) {
+        ns_exit(1, "patch", "texture rules require --cook-platform <ios|macos|windows|linux|android|visionos> for this OTA snapshot.\n");
+    }
+    if (has_cook) {
+        ns_str_free(patch_root);
+        patch_root = ns_path_join(out_dir, ns_str_cstr("cook-staging"));
+        ns_remove_tree(patch_root);
+        ns_mkdir_p(patch_root);
+        for (i32 i = 0, count = ns_array_length(assets); i < count; i++) {
+            ns_str source = ns_path_join(in.scope, assets[i]);
+            ns_str destination = ns_path_join(patch_root, assets[i]);
+            if (ns_is_dir(source)) ns_copy_tree(source, destination);
+            else if (ns_file_exists(source)) ns_copy_file_contents(source, destination);
+            ns_str_free(source);
+            ns_str_free(destination);
+        }
+        ns_cook_assets(in.scope, patch_root, cook_platform);
+        // A standalone asset file is renamed by cooking; directories retain
+        // their name and naturally include all generated sidecars.
+        for (i32 i = 0, count = ns_array_length(assets); i < count; i++) {
+            ns_str original = ns_path_join(patch_root, assets[i]);
+            ns_str cooked = ns_str_concat(original, ns_str_cstr(".nstex"));
+            if (!ns_file_exists(original) && !ns_is_dir(original) && ns_file_exists(cooked)) {
+                ns_str renamed = ns_str_concat(assets[i], ns_str_cstr(".nstex"));
+                ns_str_free(assets[i]);
+                assets[i] = renamed;
+                asset_names[i] = renamed.data;
+            }
+            ns_str_free(original);
+            ns_str_free(cooked);
+        }
+
+    }
+
     ns_str version = ns_build_manifest_value(in.scope, "version");
     // Without --label the patch is labelled `<version>.<YYYYMMDDHHMMSS>.debug`,
     // or `.release` with --release, from the manifest version and the local time.
@@ -5122,7 +5218,7 @@ void ns_exec_patch(ns_str argument, const char *label, ns_bool release) {
         .mode = emu ? NS_PATCH_MODE_EMU : NS_PATCH_MODE_EVAL,
         .code = code,
         .code_size = code_size,
-        .root = in.scope.data,
+        .root = patch_root.data,
         .assets = asset_names,
         .asset_count = ns_array_length(asset_names),
         .out_dir = out_dir.data,
@@ -5130,6 +5226,8 @@ void ns_exec_patch(ns_str argument, const char *label, ns_bool release) {
     };
     ns_patch_summary summary;
     if (!ns_patch_write(&input, &summary)) ns_exit(1, "patch", "%s.\n", summary.error);
+    if (has_cook) ns_remove_tree(patch_root);
+    ns_str_free(patch_root);
 
     if (summary.unchanged) {
         ns_info("patch", "%.*s is unchanged; still patch %u at %s\n", sel.name.len, sel.name.data,
@@ -6707,6 +6805,10 @@ static void ns_publish_program_args(i32 argc, i8 **argv) {
 }
 
 i32 main(i32 argc, i8** argv) {
+    if (argc > 1 && strcmp(argv[1], "cook") == 0) {
+        ns_configure_vm_runtime_paths(&vm);
+        return ns_cook_command(argc - 2, (const char **)(argv + 2));
+    }
     ns_compile_option_t option = parse_options(argc, argv);
 
     if (option.show_help) {
@@ -6792,7 +6894,7 @@ i32 main(i32 argc, i8** argv) {
     } else if (option.update) {
         ns_exec_update(option.filename);
     } else if (option.patch_cmd) {
-        ns_exec_patch(option.filename, option.patch_label, option.patch_release);
+        ns_exec_patch(option.filename, option.patch_label, option.patch_release, option.cook_platform);
     } else if (option.lint) {
         ns_exec_lint(option.filename, option.lint_fix);
     } else if (option.tokenize_only) {

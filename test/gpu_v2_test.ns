@@ -186,6 +186,24 @@ assert tex.width == 64 && tex.height == 32 && tex.depth_or_layers == 1
 assert tex.format == GPU_PIXELFORMAT_RGBA8
 assert tex.mip_count == 1 && tex.kind == GPU_TEXTURE_2D
 assert gpu_texture_bytes(tex) == 8192 // 64 * 32 * 4
+// Each format is laid out at its own size: one byte a pixel for R8, two for
+// RG8, eight for RGBA16F, sixteen for RGBA32F.
+assert gpu_pixel_format_size(GPU_PIXELFORMAT_R8) == 1
+assert gpu_pixel_format_size(11) == 2
+assert gpu_pixel_format_size(GPU_PIXELFORMAT_RGBA8) == 4
+assert gpu_pixel_format_size(GPU_PIXELFORMAT_RGBA16F) == 8
+assert gpu_pixel_format_size(GPU_PIXELFORMAT_RGBA32F) == 16
+assert gpu_pixel_format_row_pitch(GPU_PIXELFORMAT_R8, 1023, 1) == 1023
+assert gpu_pixel_format_row_pitch(GPU_PIXELFORMAT_R8, 1023, 4) == 1024
+assert gpu_pixel_format_surface_pitch(GPU_PIXELFORMAT_R8, 64, 32, 1) == 2048
+let mask = gpu_texture_new_2d(64, 32, GPU_PIXELFORMAT_R8, 1u)
+assert gpu_texture_bytes(mask) == 2048 // 64 * 32 * 1
+gpu_texture_release(mask)
+// Block-compressed formats are laid out in 4x4 blocks, and have no size a
+// pixel: BC1 (45) eight bytes a block, BC7 (55) sixteen.
+assert gpu_pixel_format_size(45) == 0
+assert gpu_pixel_format_row_pitch(45, 10, 1) == 24
+assert gpu_pixel_format_surface_pitch(55, 10, 10, 1) == 144
 gpu_texture_update(tex, 0, 0, src, 16)
 gpu_texture_update_all(tex, src)
 gpu_texture_release(tex)
@@ -229,3 +247,9 @@ gpu_shader_release(sh)
 gpu_pass_begin_target("headless target", gpu_texture_none(), gpu_texture_none(), 0u, 0.0, 0.0, 0.0, 1.0, 1.0)
 gpu_pass_end()
 gpu_commit()
+
+// ASTC uses full blocks even for edge texels; 6x6 must not use 4x4 pitch.
+assert gpu_pixel_format_surface_pitch(GPU_PIXELFORMAT_ASTC_4X4, 13, 7, 1) == 128
+assert gpu_pixel_format_surface_pitch(GPU_PIXELFORMAT_ASTC_6X6, 13, 7, 1) == 96
+assert gpu_pixel_format_row_pitch(GPU_PIXELFORMAT_ASTC_6X6, 13, 256) == 256
+assert gpu_texture_load_cooked("missing-cooked-texture.png") == 0u

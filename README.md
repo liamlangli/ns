@@ -123,3 +123,5 @@ async fn download(url: str, on_data: (data: Data) to void): Data {
   hot updates; see [doc/cpu.md](doc/cpu.md).
 - Utilizes an explicit type system, avoiding generic types.
 - Follows a data-oriented programming approach.
+
+Platform-specific GPU texture compression and size limits in `ns.mod`: [texture cooking](doc/texture_cook.md).

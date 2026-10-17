@@ -14,6 +14,7 @@
 // gpu_v2_ops.
 #include "gpu.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -43,20 +44,141 @@ const char *gpu_shader_target(void) {
 #endif
 }
 
-// Pixel-format math is backend agnostic; provide a minimal RGBA8 fallback so the
-// helpers return sane values when no backend is present.
+// Pixel-format layout math, shared by the backends that copy texel data and
+// by the ns side (gpu_texture_bytes). Uncompressed formats are measured in
+// bytes per pixel; block-compressed ones in 4x4 blocks (PVRTC in its own
+// 8x8 / 16x8 footprint), so their row pitch is a row of blocks and their row
+// count the number of block rows.
+
+// Bytes per pixel; 0 for a block-compressed format, which has no per-pixel
+// size (see gpu_pixel_format_row_pitch).
 int gpu_pixel_format_size(gpu_pixel_format format) {
-    ns_unused(format);
-    return 4;
+    switch (format) {
+        case PIXELFORMAT_R8:
+        case PIXELFORMAT_R8SN:
+        case PIXELFORMAT_R8UI:
+        case PIXELFORMAT_R8SI:
+            return 1;
+        case PIXELFORMAT_R16:
+        case PIXELFORMAT_R16SN:
+        case PIXELFORMAT_R16UI:
+        case PIXELFORMAT_R16SI:
+        case PIXELFORMAT_R16F:
+        case PIXELFORMAT_RG8:
+        case PIXELFORMAT_RG8SN:
+        case PIXELFORMAT_RG8UI:
+        case PIXELFORMAT_RG8SI:
+            return 2;
+        case PIXELFORMAT_R32UI:
+        case PIXELFORMAT_R32SI:
+        case PIXELFORMAT_R32F:
+        case PIXELFORMAT_RG16:
+        case PIXELFORMAT_RG16SN:
+        case PIXELFORMAT_RG16UI:
+        case PIXELFORMAT_RG16SI:
+        case PIXELFORMAT_RG16F:
+        case PIXELFORMAT_RGBA8:
+        case PIXELFORMAT_SRGB8A8:
+        case PIXELFORMAT_RGBA8SN:
+        case PIXELFORMAT_RGBA8UI:
+        case PIXELFORMAT_RGBA8SI:
+        case PIXELFORMAT_BGRA8:
+        case PIXELFORMAT_RGB10A2:
+        case PIXELFORMAT_RG11B10F:
+        case PIXELFORMAT_RGB9E5:
+        case PIXELFORMAT_DEPTH:
+            return 4;
+        // Metal stores it as Depth32Float_Stencil8 (8 bytes), Vulkan as
+        // D24_UNORM_S8_UINT (4).
+        case PIXELFORMAT_DEPTH_STENCIL:
+#if defined(NS_GPU_METAL)
+            return 8;
+#else
+            return 4;
+#endif
+        case PIXELFORMAT_RG32UI:
+        case PIXELFORMAT_RG32SI:
+        case PIXELFORMAT_RG32F:
+        case PIXELFORMAT_RGBA16:
+        case PIXELFORMAT_RGBA16SN:
+        case PIXELFORMAT_RGBA16UI:
+        case PIXELFORMAT_RGBA16SI:
+        case PIXELFORMAT_RGBA16F:
+            return 8;
+        case PIXELFORMAT_RGBA32UI:
+        case PIXELFORMAT_RGBA32SI:
+        case PIXELFORMAT_RGBA32F:
+            return 16;
+        default:
+            return 0;
+    }
 }
 
+// Bytes in one 4x4 block of a block-compressed format, 0 for any other.
+static int gpu_pixel_format_block_size(gpu_pixel_format format) {
+    switch (format) {
+        case PIXELFORMAT_BC1_RGBA:
+        case PIXELFORMAT_BC4_R:
+        case PIXELFORMAT_BC4_RSN:
+        case PIXELFORMAT_ETC2_RGB8:
+        case PIXELFORMAT_ETC2_SRGB8:
+        case PIXELFORMAT_ETC2_RGB8A1:
+            return 8;
+        case PIXELFORMAT_BC2_RGBA:
+        case PIXELFORMAT_BC3_RGBA:
+        case PIXELFORMAT_BC3_SRGBA:
+        case PIXELFORMAT_BC5_RG:
+        case PIXELFORMAT_BC5_RGSN:
+        case PIXELFORMAT_BC6H_RGBF:
+        case PIXELFORMAT_BC6H_RGBUF:
+        case PIXELFORMAT_BC7_RGBA:
+        case PIXELFORMAT_BC7_SRGBA:
+        case PIXELFORMAT_ETC2_RGBA8:
+        case PIXELFORMAT_ETC2_SRGB8A8:
+        case PIXELFORMAT_ETC2_RG11:
+        case PIXELFORMAT_ETC2_RG11SN:
+        case PIXELFORMAT_ASTC_4x4_RGBA:
+        case PIXELFORMAT_ASTC_4x4_SRGBA:
+        case PIXELFORMAT_ASTC_6x6_RGBA:
+        case PIXELFORMAT_ASTC_6x6_SRGBA:
+            return 16;
+        default:
+            return 0;
+    }
+}
+
+static ns_bool gpu_pixel_format_pvrtc(gpu_pixel_format format) {
+    return format == PIXELFORMAT_PVRTC_RGB_2BPP || format == PIXELFORMAT_PVRTC_RGB_4BPP ||
+           format == PIXELFORMAT_PVRTC_RGBA_2BPP || format == PIXELFORMAT_PVRTC_RGBA_4BPP;
+}
+
+// Rows of texel data in `height` pixel rows: one per block row for a
+// block-compressed format.
 int gpu_pixel_format_row_count(gpu_pixel_format format, int height) {
-    ns_unused(format);
+    if (format == PIXELFORMAT_ASTC_6x6_RGBA || format == PIXELFORMAT_ASTC_6x6_SRGBA) return (height + 5) / 6;
+    if (gpu_pixel_format_block_size(format) > 0) return (height + 3) / 4;
+    // PVRTC's footprint is at least 8 rows; with its row pitch this gives
+    // the surface size.
+    if (gpu_pixel_format_pvrtc(format)) return ((height < 8 ? 8 : height) + 7) / 8 * 8;
     return height;
 }
 
+// Bytes in one row of texel data `width` pixels wide, rounded up to
+// `row_alignment` bytes.
 int gpu_pixel_format_row_pitch(gpu_pixel_format format, int width, int row_alignment) {
-    int pitch = gpu_pixel_format_size(format) * width;
+    int block = gpu_pixel_format_block_size(format);
+    int pitch;
+    if (block > 0) {
+        int footprint = (format == PIXELFORMAT_ASTC_6x6_RGBA || format == PIXELFORMAT_ASTC_6x6_SRGBA) ? 6 : 4;
+        pitch = (width + footprint - 1) / footprint * block;
+        if (pitch < block) pitch = block;
+    } else if (format == PIXELFORMAT_PVRTC_RGB_4BPP || format == PIXELFORMAT_PVRTC_RGBA_4BPP) {
+        pitch = (width < 8 ? 8 : width) * 4 / 8;
+    } else if (format == PIXELFORMAT_PVRTC_RGB_2BPP || format == PIXELFORMAT_PVRTC_RGBA_2BPP) {
+        pitch = (width < 16 ? 16 : width) * 2 / 8;
+    } else {
+        pitch = gpu_pixel_format_size(format) * width;
+    }
     if (row_alignment > 1) {
         pitch = ((pitch + row_alignment - 1) / row_alignment) * row_alignment;
     }
@@ -764,4 +886,54 @@ void gpu_wait_before(gpu_addr addr, u64 value) {
     u64 offset;
     if (!gpu_v2_decode(addr, &slot, &offset)) return;
     if (_v2.ops && _v2.ops->wait_before) _v2.ops->wait_before(slot, offset, value);
+}
+
+// NSTX v1: eight little-endian words, followed by one tightly packed mip.
+// Source paths stay stable: "res/cloud.png" resolves "res/cloud.png.nstex".
+static u32 gpu_cooked_u32(const u8 *p) {
+    return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24;
+}
+
+u32 gpu_texture_load_cooked_info(const char *path, i32 *source_width, i32 *source_height) {
+    if (!path || strlen(path) > 4096) return 0;
+    char filename[4112];
+    snprintf(filename, sizeof(filename), "%s.nstex", path);
+    FILE *file = fopen(filename, "rb");
+    if (!file) return 0;
+    u8 header[32];
+    u32 texture = 0;
+    u8 *data = NULL;
+    if (fread(header, 1, sizeof(header), file) != sizeof(header) ||
+        memcmp(header, "NSTX", 4) || gpu_cooked_u32(header + 4) != 1) goto done;
+    u32 format = gpu_cooked_u32(header + 8);
+    u32 width = gpu_cooked_u32(header + 12), height = gpu_cooked_u32(header + 16);
+    u32 original_width = gpu_cooked_u32(header + 20), original_height = gpu_cooked_u32(header + 24);
+    u32 size = gpu_cooked_u32(header + 28);
+    u32 footprint = 4, bytes = 16;
+    switch (format) {
+        case PIXELFORMAT_BC1_RGBA: bytes = 8; break;
+        case PIXELFORMAT_BC3_RGBA: case PIXELFORMAT_BC3_SRGBA: break;
+        case PIXELFORMAT_ASTC_4x4_RGBA: case PIXELFORMAT_ASTC_4x4_SRGBA: break;
+        case PIXELFORMAT_ASTC_6x6_RGBA: case PIXELFORMAT_ASTC_6x6_SRGBA: footprint = 6; break;
+        default: goto done;
+    }
+    if (!width || !height || width > 16384 || height > 16384 || original_width < width || original_height < height ||
+        original_width > 1048576 || original_height > 1048576 ||
+        size != ((width + footprint - 1) / footprint) * ((height + footprint - 1) / footprint) * bytes) goto done;
+    data = malloc(size);
+    if (!data || fread(data, 1, size, file) != size || fgetc(file) != EOF) goto done;
+    texture = gpu_texture_create((i32)width, (i32)height, 1, (i32)format, TEXTURE_USAGE_READ, 1, TEXTURE_2D);
+    if (texture) {
+        gpu_texture_upload(texture, 0, 0, data, size);
+        if (source_width) *source_width = (i32)original_width;
+        if (source_height) *source_height = (i32)original_height;
+    }
+done:
+    free(data);
+    fclose(file);
+    return texture;
+}
+
+u32 gpu_texture_load_cooked(const char *path) {
+    return gpu_texture_load_cooked_info(path, NULL, NULL);
 }

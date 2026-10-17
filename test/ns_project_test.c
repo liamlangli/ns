@@ -362,9 +362,12 @@ int main(void) {
               "Xcode configuration escapes executable paths without embedding shell-breaking quotes.");
     ns_expect(text_has(xgenerated, "-Wno-shorten-64-to-32") && !text_has(xgenerated, "ZSTD") &&
                   !text_has(pbx, "\"-framework\", AppIntents") &&
-                  text_has(pbx, "NSProjectGeneratorVersion = 20") &&
+                  text_has(pbx, "NSProjectGeneratorVersion = 21") &&
                   text_has(pbx, "XROS_DEPLOYMENT_TARGET = 26.0"),
               "Xcode configuration keeps intentional embedded ABI narrowing quiet without linking unused AppIntents services.");
+    ns_expect(text_has(pbx, "Cook Textures") && text_has(pbx, "--platform") &&
+                  text_has(pbx, "$UNLOCALIZED_RESOURCES_FOLDER_PATH"),
+              "Xcode cooks textures for the actual SDK in the packaged resource directory.");
     ns_expect(text_has(bridge_header, "#ifndef NS_BRIDGE_H") && !text_has(bridge_header, "#pragma once"),
               "Xcode bridging header uses an include guard without main-file pragma warnings.");
     char bridge_source[PATH_MAX];
@@ -400,7 +403,7 @@ int main(void) {
                                  "DEVELOPMENT_TEAM = IOSDEBUG1;") &&
                   replace_text_after(pbx, "4E5350520000004800000016 /* Release */", "DEVELOPMENT_TEAM = \"\";",
                                      "DEVELOPMENT_TEAM = IOSRELSE2;") &&
-                  replace_text_after(pbx, "NSProjectGeneratorVersion = 20;", "NSProjectGeneratorVersion = 20;",
+                  replace_text_after(pbx, "NSProjectGeneratorVersion = 21;", "NSProjectGeneratorVersion = 21;",
                                      "NSProjectGeneratorVersion = 18;"),
               "project test simulates iOS signing choices before a structural refresh.");
     ns_expect(ns_project_generate_xcode(&app), "Xcode structural project refresh succeeds.");

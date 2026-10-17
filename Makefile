@@ -387,6 +387,8 @@ test: $(NS_TEST_TARGETS) $(TARGET) std
 	$(NS_BINDIR)/ns_profile_test
 	$(NS_BINDIR)/ns_patch_test
 	$(NS_BINDIR)/ui_triangle_test
+	$(NS_BINDIR)/gpu_cooked_test
+	python3 test/ns_cook_test.py
 	sh nscode/ns_lens/test/batch_native_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_project_cli_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
 	sh test/ns_update_test.sh "$(CURDIR)/$(TARGET)$(NS_SUFFIX)"
@@ -415,6 +417,10 @@ endif
 test: $(NS_BINDIR)/ui_triangle_test
 $(NS_BINDIR)/ui_triangle_test: test/ui_triangle_test.c lib/src/ui.c $(NS_HEADERS) $(NS_LIB) $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB)
 	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_IO_DYLIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) $(NS_LDFLAGS) $(NS_UI_TEST_LDFLAGS)
+
+test: $(NS_BINDIR)/gpu_cooked_test
+$(NS_BINDIR)/gpu_cooked_test: test/gpu_cooked_test.c lib/include/gpu.h lib/include/gpu_const.h $(NS_HEADERS) $(NS_LIB) $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB)
+	$(Q)$(call ns_step,LINK,$@,quiet) $(NS_CC) -o $@ $< $(NS_LIB_INC) $(NS_CFLAGS) -L$(NS_BINDIR) -lns $(NS_GPU_DYLIB) $(NS_VIEW_DYLIB) $(NS_LDFLAGS) $(NS_UI_TEST_LDFLAGS)
 
 include sample/c/Makefile
 
@@ -447,6 +453,8 @@ install: all
 	$(Q)mv -f $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX).new $(NS_INSTALL_ROOT)/bin/ns$(NS_SUFFIX)
 	$(Q)$(NS_CP) lib/*.ns $(NS_INSTALL_ROOT)/ref
 	$(Q)cp lib/ns-wasm.js $(NS_INSTALL_ROOT)/ref/ns-wasm.js
+	$(Q)cp lib/ns-cook.py $(NS_INSTALL_ROOT)/ref/ns-cook.py
+	$(Q)if [ -f bin/astcenc ]; then cp bin/astcenc $(NS_INSTALL_ROOT)/bin/astcenc; fi
 	$(Q)cp sample/ns.svg $(NS_INSTALL_ROOT)/ref/ns.svg
 	$(Q)$(NS_CP) lib/assets $(NS_INSTALL_ROOT)/ref
 	$(Q)cp $(NS_EMBED_RUNTIME_SRCS) $(NS_INSTALL_ROOT)/share/ns-runtime/src/

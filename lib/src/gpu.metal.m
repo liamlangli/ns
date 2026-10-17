@@ -34,6 +34,13 @@ static MTLTextureType _mtl_texture_type(gpu_texture_type type) {
 }
 
 static MTLPixelFormat _mtl_pixel_format(gpu_pixel_format format) {
+    switch (format) {
+        case PIXELFORMAT_ASTC_4x4_RGBA: return MTLPixelFormatASTC_4x4_LDR;
+        case PIXELFORMAT_ASTC_4x4_SRGBA: return MTLPixelFormatASTC_4x4_sRGB;
+        case PIXELFORMAT_ASTC_6x6_RGBA: return MTLPixelFormatASTC_6x6_LDR;
+        case PIXELFORMAT_ASTC_6x6_SRGBA: return MTLPixelFormatASTC_6x6_sRGB;
+        default: break;
+    }
 #if TARGET_OS_IOS
     if (@available(iOS 16.4, *)) {
         switch (format) {
@@ -140,6 +147,8 @@ static MTLPixelFormat _mtl_pixel_format(gpu_pixel_format format) {
         case PIXELFORMAT_ETC2_RG11SN:
         case PIXELFORMAT_ASTC_4x4_RGBA:
         case PIXELFORMAT_ASTC_4x4_SRGBA:
+        case PIXELFORMAT_ASTC_6x6_RGBA:
+        case PIXELFORMAT_ASTC_6x6_SRGBA:
         case _PIXELFORMAT_NUM:
             return MTLPixelFormatInvalid;
     }
@@ -962,9 +971,13 @@ static u32 mtl_v2_texture_create(i32 width, i32 height, i32 depth_or_layers,
                                  i32 format, u32 usage, i32 mip_count, i32 kind) {
     if (width <= 0 || height <= 0 || depth_or_layers <= 0 ||
         _state.texture_count >= GPU_RESOURCE_POOL_SIZE) return 0;
+    MTLPixelFormat pixel_format = _mtl_pixel_format((gpu_pixel_format)format);
+    if (pixel_format == MTLPixelFormatInvalid) return 0;
+    if (format >= PIXELFORMAT_ASTC_4x4_RGBA && format <= PIXELFORMAT_ASTC_6x6_SRGBA &&
+        ![_state.device.device supportsFamily:MTLGPUFamilyApple2]) return 0;
     MTLTextureDescriptor *desc = [MTLTextureDescriptor new];
     desc.textureType = _mtl_texture_type((gpu_texture_type)kind);
-    desc.pixelFormat = _mtl_pixel_format((gpu_pixel_format)format);
+    desc.pixelFormat = pixel_format;
     desc.width = (NSUInteger)width;
     desc.height = (NSUInteger)height;
     desc.mipmapLevelCount = (NSUInteger)(mip_count > 0 ? mip_count : 1);

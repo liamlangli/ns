@@ -20,6 +20,10 @@ lit GPU_PIXELFORMAT_RG11B10F = 30
 lit GPU_PIXELFORMAT_RGBA16F = 39
 lit GPU_PIXELFORMAT_RGBA32F = 42
 lit GPU_PIXELFORMAT_DEPTH = 43
+lit GPU_PIXELFORMAT_ASTC_4X4 = 68
+lit GPU_PIXELFORMAT_ASTC_4X4_SRGB = 69
+lit GPU_PIXELFORMAT_ASTC_6X6 = 70
+lit GPU_PIXELFORMAT_ASTC_6X6_SRGB = 71
 lit GPU_TEXTURE_USAGE_READ = 1
 lit GPU_TEXTURE_USAGE_WRITE = 2
 // Render-target-only textures are transient: a pass does not store their
@@ -450,3 +454,7 @@ fn gpu_pass_begin_target(label: str, color: gpu_texture, depth: gpu_texture, loa
         gpu_set_viewport(0, 0, color.width, color.height)
     }
 }
+
+// Prefer a bundle's compressed sidecar. Returns 0 if absent, invalid, or unsupported.
+// Keep source image loading as the development fallback. No RGBA decode occurs.
+ref fn gpu_texture_load_cooked(path: str) u32
