@@ -128,14 +128,15 @@ fn lens_ignore_mouse(v: ref view, w: f64, h: f64) {
     v.scroll_y = 0.0
 }
 
+// The ignore editor floats over the map on the shared popup background. Its
+// body is only outlined: a fill would compound the panel's alpha.
 fn lens_draw_ignore(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if g_lens_ignore_open == false { return }
     let pw = lens_ignore_width(w)
     let ph = lens_ignore_height(h)
     let x = (w - pw) * 0.5
     let y = (h - ph) * 0.5
-    ui_fill_rect(r, 0.0, 0.0, w, h, 0x99000000u, 0.0)
-    ui_fill_round_rect(r, x, y, pw, ph, 4.0, col_editor_panel(), 0.0)
+    ui_fill_round_rect(r, x, y, pw, ph, 4.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, x, y, pw, ph, 4.0, 1.0, col_muted(), 0.0)
     let title = "bin/ns_lens/ignore"
     if g_lens_ignore_text != g_lens_ignore_original { title = title + " *" }
@@ -146,7 +147,6 @@ fn lens_draw_ignore(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     let by = y + 76.0
     let bw = pw - 32.0
     let bh = ph - 136.0
-    ui_fill_rect(r, bx, by, bw, bh, col_editor_bg(), 0.0)
     ui_stroke_round_rect(r, bx, by, bw, bh, 2.0, 1.0, col_accent(), 0.0)
     let saved = lens_ignore_enter()
     let rows = clamp_i(((bh - 12.0) / 20.0) as i32, 1, 65536)

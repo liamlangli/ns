@@ -112,6 +112,12 @@ fn main() {
     check_gray(col_text())
     check_gray(col_editor_sel())
     check_gray(col_editor_cursor())
+    // Every popup shares the terminal's 80% background, and its hover tint
+    // stays translucent.
+    check_gray(col_popup_bg())
+    assert (col_popup_bg() >> 24) == 0xccu
+    assert col_popup_bg() == col_terminal_bg()
+    assert (col_popup_hi() >> 24) < (col_popup_bg() >> 24)
     g_workspace_streaming = true
     g_workspace_root = "nscode/ns_lens/src"
     workspace_init()

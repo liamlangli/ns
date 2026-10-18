@@ -35,7 +35,7 @@ fn col_outline_hi() u32 {
 }
 
 fn col_outline_prompt_bg() u32 {
-    return lens_float_color(col_editor_bg())
+    return col_popup_bg()
 }
 
 let g_outline_open = false

@@ -512,7 +512,7 @@ install: all
 		$(NS_RMDIR) $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
 		$(NS_CP) nscode/profile/bin/nscode-profile.app $(NS_INSTALL_ROOT)/bin/nscode-profile.app; \
 	fi
-	$(Q)cp nscode/ns_lens/ns.mod $(NS_INSTALL_ROOT)/share/nscode/ns_lens/
+	$(Q)cp nscode/ns_lens/ns.mod nscode/ns_lens/icon.png $(NS_INSTALL_ROOT)/share/nscode/ns_lens/
 	$(Q)cp nscode/ns_lens/src/*.ns $(NS_INSTALL_ROOT)/share/nscode/ns_lens/src/
 	$(Q)if [ -d nscode/ns_lens/bin/ns_lens.app ]; then \
 		$(NS_RMDIR) $(NS_INSTALL_ROOT)/share/nscode/ns_lens/ns_lens.app; \

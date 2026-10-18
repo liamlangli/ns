@@ -165,6 +165,19 @@ fn draw_status_bar(r: ref ui_renderer, x: f64, y: f64, w: f64, detail: lens_deta
 
 fn col_editor_panel() u32 { return ui_pack_color("#191919") }
 
+// Popups (menu dropdowns, the search box, the commit and ignore dialogs) float
+// on the same background as the terminal and the outline prompt, so the map
+// stays visible behind them.
+fn col_popup_bg() u32 {
+    return lens_float_color(col_editor_bg())
+}
+
+// A popup row highlight is a tint over that background, never an opaque fill
+// that would hide the map behind the row.
+fn col_popup_hi() u32 {
+    return (col_editor_panel_hi() & 0x00ffffffu) | 0x66000000u
+}
+
 // The top bar and status bar float over the map, which shows through them.
 fn col_bar() u32 { return (col_editor_panel() & 0x00ffffffu) | 0xb8000000u }
 

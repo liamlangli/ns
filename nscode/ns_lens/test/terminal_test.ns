@@ -18,6 +18,7 @@ fn main() {
     term_palette_init()
     check("palette has default colours", term_color(TERM_FG_DEFAULT) == col_text() && term_color(TERM_BG_DEFAULT) == col_editor_bg())
     check("terminal background uses the shared 80% alpha", (col_terminal_bg() >> 24) == 0xccu)
+    check("terminal background is the popup background", col_terminal_bg() == col_popup_bg())
     let default_cell = term_attr_pack(TERM_FG_DEFAULT, TERM_BG_DEFAULT, 0)
     check("default cells leave the panel background", terminal_attr_bg_color(default_cell) == 0u)
     let coloured_cell = term_attr_pack(TERM_FG_DEFAULT, 4, 0)

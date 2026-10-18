@@ -105,8 +105,9 @@ lit LENS_MODE_FULL = 2
 // little taller than the status bar; its controls are as tall as the status
 // bar's.
 lit LENS_TOP_BAR_H = 32.0
-// Floating panels (outline and terminal) share an 80% opaque background so the
-// map stays visible behind them without making their text hard to read.
+// Floating panels and popups (the outline, the terminal, menu dropdowns, the
+// search box and the commit and ignore dialogs) share an 80% opaque background
+// so the map stays visible behind them without making their text hard to read.
 lit LENS_FLOAT_ALPHA = 204
 
 fn lens_float_color(color: u32) u32 {
@@ -820,14 +821,14 @@ fn lens_draw_mode_menu(r: ref ui_renderer, v: ref view, w: f64) {
     }
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * 4.0
-    ui_fill_round_rect(r, x, pop_y, LENS_MODE_W, pop_h, 3.0, col_editor_panel(), 0.0)
+    ui_fill_round_rect(r, x, pop_y, LENS_MODE_W, pop_h, 3.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, x, pop_y, LENS_MODE_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
     for row in 0 to 4 {
         let i = lens_mode_at(row)
         let iy = pop_y + (row as f64) * LENS_MODE_ITEM
         let hot = raw_hit(v, x, iy, LENS_MODE_W, LENS_MODE_ITEM)
         if hot || i == g_lens_view_mode {
-            ui_fill_rect(r, x + 1.0, iy, LENS_MODE_W - 2.0, LENS_MODE_ITEM, col_editor_panel_hi(), 0.0)
+            ui_fill_rect(r, x + 1.0, iy, LENS_MODE_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
         }
         let color = col_text()
         if i == g_lens_view_mode {

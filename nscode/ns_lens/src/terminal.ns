@@ -185,10 +185,10 @@ fn term_palette_init() {
     g_term_palette_ready = true
 }
 
-// The terminal floats over the map like the bars do. Its default background
-// uses the shared floating-panel alpha; explicit SGR backgrounds stay opaque.
+// The terminal floats over the map like the bars do. Its default background is
+// the shared popup background; explicit SGR backgrounds stay opaque.
 fn col_terminal_bg() u32 {
-    return lens_float_color(col_editor_bg())
+    return col_popup_bg()
 }
 
 fn term_color(index: i32) u32 {

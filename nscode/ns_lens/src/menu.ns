@@ -400,12 +400,12 @@ fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
     }
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (LENS_FILE_ITEMS as f64)
-    ui_fill_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, col_editor_panel(), 0.0)
+    ui_fill_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
     for i in 0 to LENS_FILE_ITEMS {
         let iy = pop_y + (i as f64) * LENS_MODE_ITEM
         if raw_hit(v, LENS_FILE_X, iy, LENS_FILE_MENU_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, LENS_FILE_X + 1.0, iy, LENS_FILE_MENU_W - 2.0, LENS_MODE_ITEM, col_editor_panel_hi(), 0.0)
+            ui_fill_rect(r, LENS_FILE_X + 1.0, iy, LENS_FILE_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
         }
         let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
         draw_text_clipped(r, LENS_FILE_X + 10.0, row_ty, 110.0, LENS_MODE_ITEM, lens_file_item_label(i), small_px(), col_text())
@@ -431,12 +431,12 @@ fn lens_draw_view_menu(r: ref ui_renderer, v: ref view) {
     }
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (LENS_VIEW_ITEMS as f64)
-    ui_fill_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, col_editor_panel(), 0.0)
+    ui_fill_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
     for i in 0 to LENS_VIEW_ITEMS {
         let iy = pop_y + (i as f64) * LENS_MODE_ITEM
         if raw_hit(v, LENS_VIEW_X, iy, LENS_VIEW_MENU_W, LENS_MODE_ITEM) {
-            ui_fill_rect(r, LENS_VIEW_X + 1.0, iy, LENS_VIEW_MENU_W - 2.0, LENS_MODE_ITEM, col_editor_panel_hi(), 0.0)
+            ui_fill_rect(r, LENS_VIEW_X + 1.0, iy, LENS_VIEW_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
         }
         let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
         draw_text_clipped(r, LENS_VIEW_X + 10.0, row_ty, 100.0, LENS_MODE_ITEM, lens_view_item_label(i), small_px(), col_text())
@@ -449,8 +449,9 @@ fn lens_draw_view_menu(r: ref ui_renderer, v: ref view) {
 }
 
 // A one-line field: its text with the end kept in view, and a blinking caret.
+// The popup behind it supplies the fill; a second translucent fill here would
+// compound the alpha.
 fn lens_draw_field(r: ref ui_renderer, x: f64, y: f64, w: f64, h: f64, text: str, placeholder: str) {
-    ui_fill_round_rect(r, x, y, w, h, 3.0, col_editor_bg(), 0.0)
     ui_stroke_round_rect(r, x, y, w, h, 3.0, 1.0, col_accent(), 0.0)
     let ty = ui_text_v_center_y(r, y, h, small_px(), FONT_MONO())
     let tw = ui_text_width(r, text, small_px(), FONT_MONO())
@@ -476,7 +477,7 @@ fn lens_draw_search(r: ref ui_renderer, v: ref view, w: f64) {
     let x = lens_search_x(w)
     let y = lens_search_y()
     let panel_h = lens_search_panel_h()
-    ui_fill_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, col_editor_panel(), 0.0)
+    ui_fill_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, 1.0, col_muted(), 0.0)
     lens_draw_field(r, x, y, LENS_SEARCH_W, LENS_SEARCH_INPUT_H, g_lens_search_query, "Search file names and contents")
     let rows = lens_search_shown_rows()
@@ -484,7 +485,7 @@ fn lens_draw_search(r: ref ui_renderer, v: ref view, w: f64) {
         let hit = g_lens_search_scroll + n
         let ry = y + LENS_SEARCH_INPUT_H + (n as f64) * LENS_SEARCH_ROW_H
         if hit == g_lens_search_selected || raw_hit(v, x, ry, LENS_SEARCH_W, LENS_SEARCH_ROW_H) {
-            ui_fill_rect(r, x + 1.0, ry, LENS_SEARCH_W - 2.0, LENS_SEARCH_ROW_H, col_editor_panel_hi(), 0.0)
+            ui_fill_rect(r, x + 1.0, ry, LENS_SEARCH_W - 2.0, LENS_SEARCH_ROW_H, col_popup_hi(), 0.0)
         }
         let ty = ui_text_v_center_y(r, ry, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
         let place = lens_relative_path(os_entry_path(g_lens_hit_file[hit]))
@@ -522,14 +523,15 @@ fn lens_draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     draw_centered_text(r, x, y, w, h, label, small_px(), col_text())
 }
 
+// The commit dialog floats over the map on the shared popup background; it
+// keeps no dimming layer, so the code behind it stays visible.
 fn lens_draw_commit(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     if g_lens_commit_open == false {
         return
     }
-    ui_fill_rect(r, 0.0, 0.0, w, h, 0x99000000u, 0.0)
     let x = lens_commit_x(w)
     let y = lens_commit_y(h)
-    ui_fill_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, col_editor_panel(), 0.0)
+    ui_fill_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, 1.0, col_muted(), 0.0)
     let title = "Commit " + itos(g_lens_commit_changes) + " changed files"
     if g_lens_commit_changes < 0 {

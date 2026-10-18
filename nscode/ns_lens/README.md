@@ -26,7 +26,9 @@ snaps back to orthographic.
   use color; leaf outlines are rounded rectangles with a 3-point radius.
 - The map covers the whole window and is drawn first. The top bar (the **File**,
   **View**, and map menus) and the status bar float over it on translucent
-  panels; pointer input over them never reaches the map.
+  panels; pointer input over them never reaches the map. Menu dropdowns, the
+  search box, and the commit and ignore dialogs use the same 80% background as
+  the View panels, so the map stays visible behind them.
 - Minimap bars keep their syntax colours. A bar runs across gaps under four
   blanks and ends where the colour changes for more than two characters; a
   shorter run of another colour joins the bar before it. In every leaf, rows
@@ -73,8 +75,8 @@ snaps back to orthographic.
 - **View** (right of the map menu) opens two floating panels, each of which can
   be dragged by its title bar, resized from its bottom-right corner, and closed
   with its **x**. **Outline** and **Terminal** are independent toggles. Both
-  float over the map with an 80% opaque background, so the code behind them
-  stays faintly visible.
+  float over the map on the shared 80% background, as every popup does, so the
+  code behind them stays faintly visible.
   - **Outline** is a tree of every scanned folder and file. Every folder starts
     folded; the button left of a folder unfolds and folds it. The open folders
     are remembered in the project's `bin/ns_lens/outline` (one
