@@ -16,6 +16,9 @@ fn main() {
         g_workspace_root = os_cwd()
     }
     workspace_init()
+    if g_workspace_count >= 0 {
+        recent_add(g_workspace_root)
+    }
     panel_state_load()
     let v = view_create("ns_lens", 1280, 800)
     if gpu_request_device(v) {

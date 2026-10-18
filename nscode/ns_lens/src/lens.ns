@@ -734,20 +734,38 @@ fn lens_apply_panel_state() {
     }
 }
 
-// File > Open (Cmd+O): pick a folder and map it. An unsaved edit keeps the
-// current project open.
-fn lens_open_project() {
+// An unsaved edit keeps the current project open.
+fn lens_open_blocked() bool {
     if g_lens_editing && workspace_entry_dirty(g_workspace_active) {
         g_lens_message = "Save the current file before opening another project"
+        return true
+    }
+    return false
+}
+
+// File > Open (Cmd+O): pick a folder and map it.
+fn lens_open_project() {
+    if lens_open_blocked() {
         return
     }
     let root = os_open_folder_dialog("Open code project")
     if root == "" {
         return
     }
+    lens_open_root(root)
+}
+
+// Map `root` in place of the current project and put it at the top of Open
+// Recent. A folder that no longer exists maps the project that was open again
+// and leaves the recent list.
+fn lens_open_root(root: str) bool {
+    if lens_open_blocked() {
+        return false
+    }
     // The panel layout belongs to the project being left; write it before the
     // root changes, then adopt the new project's own layout.
     panel_state_save()
+    let previous = g_workspace_root
     g_lens_editing = false
     g_lens_reading = false
     g_lens_selected_path = ""
@@ -755,12 +773,21 @@ fn lens_open_project() {
     g_lens_scope_path = ""
     outline_reset()
     workspace_open_root(root)
+    if g_workspace_count < 0 {
+        workspace_open_root(previous)
+        lens_rebuild()
+        recent_remove(root)
+        g_lens_message = "Project folder not found: " + root
+        return false
+    }
+    recent_add(root)
     panel_state_load()
     lens_apply_panel_state()
     g_lens_target_x = 0.0
     g_lens_target_y = 0.0
     g_lens_target_distance = 1600.0
     lens_rebuild()
+    return true
 }
 
 // The menu bar contains dropdown menus only, centred vertically.

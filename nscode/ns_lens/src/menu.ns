@@ -1,6 +1,7 @@
 // The File menu and its shortcuts (Cmd+O open, Cmd+P search, Cmd+Enter
-// commit; Push has none), the commit message dialog, the search box, and the
-// bottom-left hints and activity row above the status bar.
+// commit; Open Recent and Push have none), Open Recent's submenu, the commit
+// message dialog, the search box, and the bottom-left hints and activity row
+// above the status bar.
 use std
 use os
 use view
@@ -9,7 +10,16 @@ use ui
 lit LENS_FILE_X = 12.0
 lit LENS_FILE_W = 64.0
 lit LENS_FILE_MENU_W = 220.0
-lit LENS_FILE_ITEMS = 5
+lit LENS_FILE_ITEMS = 6
+lit LENS_FILE_OPEN = 0
+lit LENS_FILE_RECENT = 1
+lit LENS_FILE_SEARCH = 2
+lit LENS_FILE_COMMIT = 3
+lit LENS_FILE_PUSH = 4
+lit LENS_FILE_IGNORE = 5
+// Open Recent's submenu opens to the right of the File popup, level with its
+// row.
+lit LENS_RECENT_W = 420.0
 // The View menu follows File and the map mode menu in the top bar.
 lit LENS_VIEW_X = 172.0
 lit LENS_VIEW_W = 64.0
@@ -27,6 +37,8 @@ lit LENS_ACTIVITY_H = 22.0
 
 let g_lens_file_open = false
 let g_lens_file_block = false
+let g_lens_recent_open = false
+let g_lens_recent_block = false
 let g_lens_view_open = false
 let g_lens_view_block = false
 let g_lens_search_block = false
@@ -36,32 +48,51 @@ let g_lens_commit_message = ""
 let g_lens_commit_changes: i32 = 0
 
 fn lens_file_item_label(i: i32) str {
-    if i == 0 {
+    if i == LENS_FILE_OPEN {
         return "Open..."
     }
-    if i == 1 {
+    if i == LENS_FILE_RECENT {
+        return "Open Recent"
+    }
+    if i == LENS_FILE_SEARCH {
         return "Search..."
     }
-    if i == 2 {
+    if i == LENS_FILE_COMMIT {
         return "Commit..."
     }
-    if i == 3 { return "Push" }
+    if i == LENS_FILE_PUSH { return "Push" }
     return "Ignore..."
 }
 
-// Push has no shortcut.
+// Open Recent shows its submenu arrow instead; Push has no shortcut.
 fn lens_file_item_keys(i: i32) str {
-    if i == 0 {
+    if i == LENS_FILE_OPEN {
         return "cmd+O"
     }
-    if i == 1 {
+    if i == LENS_FILE_RECENT {
+        return ">"
+    }
+    if i == LENS_FILE_SEARCH {
         return "cmd+P"
     }
-    if i == 2 {
+    if i == LENS_FILE_COMMIT {
         return "cmd+enter"
     }
     return ""
 }
+
+fn lens_recent_x() f64 { return LENS_FILE_X + LENS_FILE_MENU_W }
+
+fn lens_recent_y() f64 {
+    return lens_mode_popup_y() + LENS_MODE_ITEM * (LENS_FILE_RECENT as f64)
+}
+
+// One row per listed project, or a single placeholder row when none is.
+fn lens_recent_rows() i32 {
+    return clamp_i(g_recent_count, 1, RECENT_KEEP)
+}
+
+fn lens_recent_h() f64 { return LENS_MODE_ITEM * (lens_recent_rows() as f64) }
 
 fn lens_view_item_label(i: i32) str {
     if i == 0 {
@@ -93,7 +124,9 @@ fn lens_hint_keys(i: i32) str {
     if i == 2 { return "left drag" }
     if i == 3 { return "right click" }
     if i == 4 { return "middle drag" }
-    return lens_file_item_keys(i - 5)
+    if i == 5 { return lens_file_item_keys(LENS_FILE_OPEN) }
+    if i == 6 { return lens_file_item_keys(LENS_FILE_SEARCH) }
+    return lens_file_item_keys(LENS_FILE_COMMIT)
 }
 
 fn lens_hint_action(i: i32) str {
@@ -117,7 +150,7 @@ fn lens_typing() bool {
 // Pointer input the map must not also take this frame. Floating panels block
 // their own rectangles with their hit tests, so only popups belong here.
 fn lens_menu_blocks() bool {
-    return g_lens_ignore_open || g_lens_commit_open || g_lens_file_block || g_lens_view_open || g_lens_view_block || g_lens_search_block
+    return g_lens_ignore_open || g_lens_commit_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block
 }
 
 fn cmd_down(v: ref view) bool {
@@ -163,17 +196,36 @@ fn lens_commit_submit() {
 }
 
 fn lens_file_action(i: i32) {
+    if i == LENS_FILE_RECENT {
+        // Open Recent keeps the File menu up and shows its submenu.
+        g_lens_recent_open = true
+        return
+    }
     g_lens_file_open = false
-    if i == 0 {
+    if i == LENS_FILE_OPEN {
         lens_open_project()
-    } else if i == 1 {
+    } else if i == LENS_FILE_SEARCH {
         lens_search_show()
-    } else if i == 2 {
+    } else if i == LENS_FILE_COMMIT {
         lens_commit_show()
-    } else if i == 3 {
+    } else if i == LENS_FILE_PUSH {
         lens_push()
     } else {
         lens_ignore_show()
+    }
+}
+
+// Open Recent's `row`: map that project. The open project's row and the
+// placeholder row of an empty list only close the menu.
+fn lens_recent_action(row: i32) {
+    g_lens_file_open = false
+    g_lens_recent_open = false
+    if row < 0 || row >= g_recent_count {
+        return
+    }
+    let root = g_recent[row]
+    if root != recent_normalize(g_workspace_root) {
+        lens_open_root(root)
     }
 }
 
@@ -299,6 +351,12 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (LENS_FILE_ITEMS as f64)
     g_lens_file_block = g_lens_file_open && raw_hit(v, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h)
+    g_lens_recent_block = g_lens_file_open && g_lens_recent_open && raw_hit(v, lens_recent_x(), lens_recent_y(), LENS_RECENT_W, lens_recent_h())
+    // Pointing at a File row shows Open Recent's submenu for its own row and
+    // hides it for the others; leaving the popup keeps it as it is.
+    if g_lens_file_block {
+        g_lens_recent_open = clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, LENS_FILE_ITEMS - 1) == LENS_FILE_RECENT
+    }
     let view_pop_h = LENS_MODE_ITEM * (LENS_VIEW_ITEMS as f64)
     g_lens_view_block = g_lens_view_open && raw_hit(v, LENS_VIEW_X, pop_y, LENS_VIEW_MENU_W, view_pop_h)
     let sx = lens_search_x(w)
@@ -332,6 +390,10 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     }
     if raw_hit(v, LENS_FILE_X, lens_mode_y(), LENS_FILE_W, LENS_MODE_H) {
         g_lens_file_open = g_lens_file_open == false
+        g_lens_recent_open = false
+        if g_lens_file_open {
+            recent_load()
+        }
         // The map menu's popup opens where File's would cover it.
         g_lens_mode_open = false
         g_lens_view_open = false
@@ -354,11 +416,16 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         return
     }
     if g_lens_file_open {
+        v.mouse_pressed = false
+        if g_lens_recent_block {
+            lens_recent_action(clamp_i(((g_mouse_y - lens_recent_y()) / LENS_MODE_ITEM) as i32, 0, lens_recent_rows() - 1))
+            return
+        }
         if g_lens_file_block {
             lens_file_action(clamp_i(((g_mouse_y - pop_y) / LENS_MODE_ITEM) as i32, 0, LENS_FILE_ITEMS - 1))
+            return
         }
         g_lens_file_open = false
-        v.mouse_pressed = false
         return
     }
     // The status bar's down arrow pulls and its up arrow pushes.
@@ -407,7 +474,8 @@ fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
     ui_stroke_round_rect(r, LENS_FILE_X, pop_y, LENS_FILE_MENU_W, pop_h, 3.0, 1.0, col_muted(), 0.0)
     for i in 0 to LENS_FILE_ITEMS {
         let iy = pop_y + (i as f64) * LENS_MODE_ITEM
-        if raw_hit(v, LENS_FILE_X, iy, LENS_FILE_MENU_W, LENS_MODE_ITEM) {
+        let parent = i == LENS_FILE_RECENT && g_lens_recent_open
+        if parent || raw_hit(v, LENS_FILE_X, iy, LENS_FILE_MENU_W, LENS_MODE_ITEM) {
             ui_fill_rect(r, LENS_FILE_X + 1.0, iy, LENS_FILE_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
         }
         let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
@@ -415,6 +483,46 @@ fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
         let keys = lens_file_item_keys(i)
         let kw = ui_text_width(r, keys, small_px(), FONT_MONO())
         draw_text_clipped(r, LENS_FILE_X + LENS_FILE_MENU_W - 10.0 - kw, row_ty, kw, LENS_MODE_ITEM, keys, small_px(), col_muted())
+    }
+    if g_lens_recent_open {
+        lens_draw_recent_menu(r, v)
+    }
+}
+
+// Each row names the project's folder, then the folder that holds it; the
+// open project is marked on the right.
+fn lens_draw_recent_menu(r: ref ui_renderer, v: ref view) {
+    let x = lens_recent_x()
+    let y = lens_recent_y()
+    ui_fill_round_rect(r, x, y, LENS_RECENT_W, lens_recent_h(), 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_RECENT_W, lens_recent_h(), 3.0, 1.0, col_muted(), 0.0)
+    let count = g_recent_count
+    if count == 0 {
+        let ty = ui_text_v_center_y(r, y, LENS_MODE_ITEM, small_px(), FONT_MONO())
+        draw_text_clipped(r, x + 10.0, ty, LENS_RECENT_W - 20.0, LENS_MODE_ITEM, "No recent projects", small_px(), col_muted())
+        return
+    }
+    let open = recent_normalize(g_workspace_root)
+    for i in 0 to count {
+        let iy = y + (i as f64) * LENS_MODE_ITEM
+        if raw_hit(v, x, iy, LENS_RECENT_W, LENS_MODE_ITEM) {
+            ui_fill_rect(r, x + 1.0, iy, LENS_RECENT_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+        }
+        let path = g_recent[i]
+        let name = recent_name(path)
+        let row_ty = ui_text_v_center_y(r, iy, LENS_MODE_ITEM, small_px(), FONT_MONO())
+        let nw = clamp(ui_text_width(r, name, small_px(), FONT_MONO()), 0.0, LENS_RECENT_W - 20.0)
+        draw_text_clipped(r, x + 10.0, row_ty, nw, LENS_MODE_ITEM, name, small_px(), col_text())
+        let px = x + 10.0 + nw + 16.0
+        let right = x + LENS_RECENT_W - 10.0
+        if path == open {
+            let state = "open"
+            let sw = ui_text_width(r, state, small_px(), FONT_MONO())
+            right = right - sw
+            draw_text_clipped(r, right, row_ty, sw, LENS_MODE_ITEM, state, small_px(), col_accent())
+            right = right - 12.0
+        }
+        draw_text_clipped(r, px, row_ty, right - px, LENS_MODE_ITEM, recent_place(path), small_px(), col_muted())
     }
 }
 

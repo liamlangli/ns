@@ -28,7 +28,7 @@ fn main() {
     let before = g_doc
     let before_cur = g_cur
     let before_anchor = g_anchor
-    lens_file_action(4)
+    lens_file_action(LENS_FILE_IGNORE)
     assert g_lens_ignore_open
     assert lens_typing()
     assert lens_menu_blocks()

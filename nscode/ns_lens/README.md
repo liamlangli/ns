@@ -44,6 +44,14 @@ snaps back to orthographic.
 - Shift+wheel: scroll code inside the leaf.
 - **File** (top left) opens a project and holds search, Git commands and ignore settings:
   - **Open** (Cmd+O) selects a project folder to map.
+  - **Open Recent** opens a submenu of the 10 projects opened most recently,
+    newest first; each row names the folder and the folder that holds it, and
+    the open project is marked **open**. Pointing at the row (or clicking it) shows the
+    submenu, and clicking a project maps it. The list is shared by every
+    project in `ns_lens/recent` under the per-user application-support
+    directory (`~/Library/Application Support` on macOS), one absolute path
+    per line. A project that no longer exists keeps the open project mapped
+    and leaves the list.
   - **Search** (Cmd+P) matches file names at once and scans file contents on
     a worker; a query without capitals ignores case. Matching leaves are
     outlined, and Enter or a click flies to the file or the matching line.

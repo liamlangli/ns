@@ -1,0 +1,86 @@
+// File > Open Recent: the shared list keeps the newest projects first, once
+// each, and opening one from the submenu maps it and moves it to the top.
+use std
+use os
+
+fn check(name: str, ok: bool) {
+    if ok {
+        print("ok   " + name + "\n")
+    } else {
+        print("FAIL " + name + "\n")
+        assert false
+    }
+}
+
+fn project(root: str) str {
+    assert os_make_dirs(root + "/src") != 0
+    assert os_write_file_atomic(root + "/src/main.ns", "fn main() {\n}\n") != 0
+    return root
+}
+
+fn main() {
+    let base = "/tmp/ns_lens_recent_" + itos((os_time() * 1000000.0) as i64)
+    assert os_make_dirs(base) != 0
+    g_recent_file = base + "/recent"
+    g_panel_state = false
+
+    check("normalize drops trailing separators", recent_normalize("/a/b//") == "/a/b" && recent_normalize("/") == "/")
+    check("normalize makes relative paths absolute", recent_normalize("x") == os_cwd() + "/x" && recent_normalize("./x") == os_cwd() + "/x" && recent_normalize(".") == os_cwd())
+    check("name and place", recent_name("/a/b/proj") == "proj" && recent_place("/a/b/proj") == "/a/b")
+    let home = os_env("HOME")
+    check("place shortens home", home == "" || recent_place(home + "/os/proj") == "~/os")
+
+    recent_load()
+    check("missing file is an empty list", g_recent_count == 0)
+    for i in 0 to 14 {
+        recent_add("/p/" + itos(i))
+    }
+    check("list keeps the newest ten", g_recent_count == RECENT_KEEP && RECENT_KEEP == 10 && g_recent[0] == "/p/13" && g_recent[RECENT_KEEP - 1] == "/p/4")
+    recent_add("/p/7/")
+    check("reopening moves to the front once", g_recent[0] == "/p/7" && g_recent[1] == "/p/13" && g_recent_count == RECENT_KEEP && recent_find("/p/7") == 0)
+    recent_load()
+    check("list survives a reload", g_recent_count == RECENT_KEEP && g_recent[0] == "/p/7" && g_recent[2] == "/p/12")
+    recent_remove("/p/13")
+    check("remove", recent_find("/p/13") < 0 && g_recent_count == RECENT_KEEP - 1 && g_recent[1] == "/p/12")
+    assert os_write_file_atomic(g_recent_file, "") != 0
+    recent_load()
+
+    // Open Recent keeps the File menu up and shows its submenu.
+    g_lens_file_open = true
+    lens_file_action(LENS_FILE_RECENT)
+    check("open recent shows the submenu", g_lens_file_open && g_lens_recent_open)
+    check("empty submenu keeps a placeholder row", lens_recent_rows() == 1)
+    lens_recent_action(0)
+    check("placeholder only closes the menu", g_lens_file_open == false && g_lens_recent_open == false)
+
+    let first = project(base + "/first")
+    let second = project(base + "/second")
+    g_workspace_streaming = true
+    g_workspace_root = first
+    workspace_init()
+    recent_add(g_workspace_root)
+    lens_rebuild()
+    check("open records the project", lens_open_root(second) && g_workspace_root == second)
+    check("newest first", g_recent_count == 2 && g_recent[0] == second && g_recent[1] == first)
+    check("submenu lists the open project too", lens_recent_rows() == 2)
+    g_lens_file_open = true
+    g_lens_recent_open = true
+    lens_recent_action(0)
+    check("open project's row only closes the menu", g_workspace_root == second && g_lens_file_open == false)
+    g_lens_file_open = true
+    g_lens_recent_open = true
+    lens_recent_action(1)
+    check("submenu opens the project", g_workspace_root == first && g_recent[0] == first && g_lens_file_open == false)
+    check("project is mapped", workspace_find("main.ns") >= 0)
+
+    // A folder deleted since it was opened maps the open project again and
+    // leaves the list.
+    recent_add(base + "/gone")
+    check("missing project does not open", lens_open_root(base + "/gone") == false)
+    check("open project is mapped again", g_workspace_root == first && workspace_find("main.ns") >= 0)
+    check("missing project leaves the list", recent_find(base + "/gone") < 0 && g_recent_count == 2)
+    check("missing project is reported", g_lens_message != "")
+
+    os_watch_stop()
+    print("recent_test: passed\n")
+}

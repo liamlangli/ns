@@ -1,0 +1,157 @@
+// The project folders opened most recently, newest first, behind File > Open
+// Recent. The list lives in the per-user application-support directory rather
+// than under a project's bin/, so every project and every running Lens shares
+// it. Each line is one absolute folder path; a missing or unreadable file is
+// an empty list.
+use std
+use os
+
+// Open Recent lists this many projects, the open one included.
+lit RECENT_KEEP = 10
+
+// Tests point this at a scratch file; "" selects the per-user default.
+let g_recent_file = ""
+let g_recent = [str](RECENT_KEEP)
+let g_recent_count: i32 = 0
+
+fn recent_path() str {
+    if g_recent_file != "" {
+        return g_recent_file
+    }
+    return os_app_data_dir("ns_lens") + "/recent"
+}
+
+fn recent_is_separator(c: i32) bool {
+    return c == 47 || c == 92
+}
+
+// An absolute folder path without trailing separators, so one project is
+// listed once however it was spelled when it opened.
+fn recent_normalize(path: str) str {
+    let p = path
+    if p == "." {
+        p = os_cwd()
+    } else if p.len >= 2 && ((p[0] as i32) & 255) == 46 && recent_is_separator((p[1] as i32) & 255) {
+        p = substr(p, 2, p.len - 2)
+    }
+    if p == "" {
+        return ""
+    }
+    let first = (p[0] as i32) & 255
+    let drive = p.len >= 2 && ((p[1] as i32) & 255) == 58
+    if recent_is_separator(first) == false && drive == false {
+        p = os_cwd() + "/" + p
+    }
+    let end = p.len
+    loop end > 1 && recent_is_separator((p[end - 1] as i32) & 255) {
+        end = end - 1
+    }
+    return substr(p, 0, end)
+}
+
+// Reread the file, so a project another Lens window opened shows up too.
+fn recent_load() {
+    g_recent_count = 0
+    let text = os_read_file(recent_path())
+    let start: i32 = 0
+    for i in 0 to text.len + 1 {
+        let c: i32 = 10
+        if i < text.len {
+            c = (text[i] as i32) & 255
+        }
+        if i == text.len || c == 10 {
+            let end = i
+            if end > start && ((text[end - 1] as i32) & 255) == 13 {
+                end = end - 1
+            }
+            if end > start && g_recent_count < RECENT_KEEP {
+                let path = substr(text, start, end - start)
+                if recent_find(path) < 0 {
+                    g_recent[g_recent_count] = path
+                    g_recent_count = g_recent_count + 1
+                }
+            }
+            start = i + 1
+        }
+    }
+}
+
+fn recent_save() {
+    let text = ""
+    for i in 0 to g_recent_count {
+        text = text + g_recent[i] + "\n"
+    }
+    os_write_file_atomic(recent_path(), text)
+}
+
+fn recent_find(path: str) i32 {
+    for i in 0 to g_recent_count {
+        if g_recent[i] == path {
+            return i
+        }
+    }
+    return -1
+}
+
+// Move `path` to the front, dropping the oldest entry once the list is full.
+fn recent_add(path: str) {
+    let p = recent_normalize(path)
+    if p == "" {
+        return
+    }
+    recent_load()
+    let last = recent_find(p)
+    if last < 0 {
+        last = clamp_i(g_recent_count, 0, RECENT_KEEP - 1)
+        g_recent_count = clamp_i(g_recent_count + 1, 0, RECENT_KEEP)
+    }
+    let i = last
+    loop i > 0 {
+        g_recent[i] = g_recent[i - 1]
+        i = i - 1
+    }
+    g_recent[0] = p
+    recent_save()
+}
+
+fn recent_remove(path: str) {
+    recent_load()
+    let at = recent_find(recent_normalize(path))
+    if at < 0 {
+        return
+    }
+    for i in at to g_recent_count - 1 {
+        g_recent[i] = g_recent[i + 1]
+    }
+    g_recent_count = g_recent_count - 1
+    recent_save()
+}
+
+// The folder's own name, which leads its menu row.
+fn recent_name(path: str) str {
+    let cut = path.len
+    loop cut > 0 && recent_is_separator((path[cut - 1] as i32) & 255) == false {
+        cut = cut - 1
+    }
+    if cut == path.len {
+        return path
+    }
+    return substr(path, cut, path.len - cut)
+}
+
+// The folder containing it, with the home directory shortened to ~.
+fn recent_place(path: str) str {
+    let name = recent_name(path)
+    let parent = substr(path, 0, path.len - name.len)
+    if parent.len > 1 && recent_is_separator((parent[parent.len - 1] as i32) & 255) {
+        parent = substr(parent, 0, parent.len - 1)
+    }
+    let home = os_env("HOME")
+    if home != "" && parent.len >= home.len && substr(parent, 0, home.len) == home {
+        let rest = substr(parent, home.len, parent.len - home.len)
+        if rest == "" || recent_is_separator((rest[0] as i32) & 255) {
+            return "~" + rest
+        }
+    }
+    return parent
+}
