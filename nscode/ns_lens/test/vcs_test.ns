@@ -75,6 +75,100 @@ fn check_text_helpers() {
     assert lens_sync_button_at(20.0, 110.0) == 0
 }
 
+fn check_branch_helpers() {
+    // Git's explanation, not the hint after it.
+    assert lens_git_error("error: the branch 'x' is not fully merged\nhint: run 'git branch -D x'\n") == "error: the branch 'x' is not fully merged"
+    assert lens_git_error("hint: Diverging branches\nfatal: Not possible to fast-forward, aborting.\n") == "fatal: Not possible to fast-forward, aborting."
+    assert lens_git_error("On branch main\nnothing to commit, working tree clean\n") == "nothing to commit, working tree clean"
+    assert lens_git_error("") == ""
+    lens_branch_apply("feature", "", "feature\nmain\n", "origin/HEAD origin/trunk\norigin/feature/x \norigin/main \n")
+    assert g_lens_branch == "feature" && lens_branch_label() == "feature"
+    assert g_lens_branch_local_count == 2 && g_lens_branch_locals[1] == "main"
+    // A remote's HEAD is no branch to list; it names the default branch.
+    assert g_lens_branch_remote_count == 2
+    assert g_lens_branch_remotes[0] == "origin/feature/x" && g_lens_branch_remotes[1] == "origin/main"
+    assert g_lens_branch_default == "trunk"
+    let serial = g_lens_branch_serial
+    lens_branch_apply("feature", "", "feature\nmain\n", "origin/HEAD origin/trunk\norigin/feature/x \norigin/main \n")
+    assert g_lens_branch_serial == serial
+    // Without one, main or master, local or remote.
+    lens_branch_apply("feature", "", "feature\nmaster\n", "")
+    assert g_lens_branch_default == "master" && g_lens_branch_serial == serial + 1
+    lens_branch_apply("feature", "", "feature\n", "origin/main \n")
+    assert g_lens_branch_default == "main"
+    lens_branch_apply("feature", "", "feature\n", "")
+    assert g_lens_branch_default == "" && lens_branch_can_delete() == false
+    // A branch without a commit has no ref, yet is listed; a detached HEAD
+    // shows its commit.
+    lens_branch_apply("main", "", "", "")
+    assert g_lens_branch_local_count == 1 && g_lens_branch_locals[0] == "main"
+    lens_branch_apply("", "1a2b3c4", "main\n", "")
+    assert lens_branch_label() == "1a2b3c4" && lens_branch_can_delete() == false
+    lens_branch_apply("", "", "", "")
+    assert lens_branch_label() == ""
+    assert lens_branch_remote_name("origin/feature/x") == "feature/x"
+    assert lens_branch_remote_of("origin/feature/x") == "origin"
+    assert lens_branch_remote_name("plain") == "plain"
+    assert lens_branch_clean("  my new\tbranch ") == "my-new-branch"
+    assert lens_branch_clean("fix") == "fix"
+    assert lens_branch_clean("   ") == ""
+    assert lens_branch_create_steps("x")[0] == "switch\n-c\nx"
+    assert lens_branch_switch_steps("main")[0] == "switch\nmain"
+    let deleting = lens_branch_delete_steps("feature", "main")
+    assert deleting[0] == "switch\nmain" && deleting[1] == "branch\n-d\nfeature"
+    // A remote branch with a local one switches and fast-forwards it.
+    lens_branch_apply("main", "", "main\nfeature\n", "origin/feature \norigin/fresh \n")
+    let tracked = lens_branch_remote_steps("origin/fresh")
+    assert tracked.len == 1 && tracked[0] == "switch\n--track\norigin/fresh"
+    let known = lens_branch_remote_steps("origin/feature")
+    assert known.len == 2 && known[0] == "switch\nfeature" && known[1] == "merge\n--ff-only\n--quiet\norigin/feature"
+    // The remote search filters with smart case.
+    g_lens_remote_query = ""
+    lens_remote_filter()
+    assert g_lens_remote_hit_count == 2
+    g_lens_remote_query = "fre"
+    lens_remote_filter()
+    assert g_lens_remote_hit_count == 1 && g_lens_branch_remotes[g_lens_remote_hits[0]] == "origin/fresh"
+    g_lens_remote_query = "Fre"
+    lens_remote_filter()
+    assert g_lens_remote_hit_count == 0
+    g_lens_remote_query = ""
+    // The button, and the menu rows above the status bar.
+    g_lens_branch_y = 100.0
+    g_lens_branch_x = 80.0
+    g_lens_branch_w = 60.0
+    assert lens_branch_button_at(90.0, 110.0)
+    assert lens_branch_button_at(150.0, 110.0) == false
+    assert lens_branch_button_at(90.0, 90.0) == false
+    let h: f64 = 800.0
+    let top = lens_branch_menu_y(h)
+    assert top + lens_branch_menu_h(h) == h - STATUS_BAR_H - 2.0
+    assert lens_branch_rows(h) == 2
+    assert lens_branch_row_at(top + 2.0, h) == LENS_BRANCH_ROW_CREATE
+    assert lens_branch_row_at(top + LENS_MODE_ITEM + 2.0, h) == LENS_BRANCH_ROW_REMOTE
+    assert lens_branch_row_at(top + LENS_MODE_ITEM * 2.0 + 2.0, h) == LENS_BRANCH_ROW_NONE
+    let list_y = lens_branch_list_y(h)
+    assert lens_branch_row_at(list_y + 2.0, h) == 0
+    assert lens_branch_row_at(list_y + LENS_MODE_ITEM + 2.0, h) == 1
+    assert lens_branch_row_at(lens_branch_delete_y(h) + 2.0, h) == LENS_BRANCH_ROW_DELETE
+    assert lens_branch_row_at(top - 2.0, h) == LENS_BRANCH_ROW_NONE
+    // A long list scrolls, and a short window shows fewer rows.
+    let many = ""
+    for i in 0 to 30 {
+        many = many + "b" + itos(i) + "\n"
+    }
+    lens_branch_apply("b0", "", many, "")
+    assert lens_branch_rows(h) == LENS_BRANCH_ROWS && lens_branch_scroll_max(h) == 30 - LENS_BRANCH_ROWS
+    g_lens_branch_scroll = 3
+    assert lens_branch_row_at(lens_branch_list_y(h) + 2.0, h) == 3
+    g_lens_branch_scroll = 0
+    assert lens_branch_rows(300.0) < LENS_BRANCH_ROWS
+    assert lens_branch_menu_y(300.0) >= LENS_TOP_BAR_H
+    g_lens_branch_w = 0.0
+    lens_branch_clear()
+    assert lens_branch_label() == "" && g_lens_branch_local_count == 0
+}
+
 fn check_search_helpers() {
     assert lens_search_folds("render")
     assert lens_search_folds("Render") == false
@@ -515,9 +609,168 @@ fn check_search_scan(base: str) {
     assert g_lens_target_distance > 0.0
 }
 
+// The branch menu's jobs against real repositories: create, switch, pull a
+// remote branch in, and delete the current one, with the branch and the lists
+// read after each.
+fn check_branches(base: str) {
+    let remote = base + "/branches.git"
+    let work = base + "/branches"
+    let other = base + "/branches_other"
+    git(base, "init\n-q\n--bare\nbranches.git")
+    make_repo(work)
+    // The user's init.defaultBranch must not pick the name.
+    git(work, "symbolic-ref\nHEAD\nrefs/heads/main")
+    git(work, "remote\nadd\norigin\n" + remote)
+    assert os_write_file_atomic(work + "/main.ns", "fn main() {}\n") != 0
+    for step in lens_commit_steps("first") {
+        git(work, step)
+    }
+    git(work, "push\n-q\n-u\norigin\nmain")
+    g_workspace_streaming = true
+    g_workspace_root = work
+    workspace_init()
+    g_lens_editing = false
+    g_workspace_active = -1
+    lens_job_start(LENS_JOB_STATUS, [str](0))
+    finish_job()
+    assert g_lens_branch == "main" && g_lens_branch_detached == ""
+    assert g_lens_branch_local_count == 1 && g_lens_branch_locals[0] == "main"
+    assert g_lens_branch_remote_count == 1 && g_lens_branch_remotes[0] == "origin/main"
+    // No origin/HEAD yet: the local main is the default.
+    assert g_lens_branch_default == "main"
+    git(work, "remote\nset-head\norigin\nmain")
+    lens_job_start(LENS_JOB_STATUS, [str](0))
+    finish_job()
+    assert g_lens_branch_default == "main" && g_lens_branch_remote_count == 1
+    // The default branch stays.
+    lens_branch_delete()
+    assert g_lens_job_running == false && g_lens_message == "The default branch cannot be deleted"
+
+    // A typed name with blanks becomes a branch with dashes, checked out.
+    lens_branch_create_show()
+    assert g_lens_branch_create_open
+    g_lens_branch_create_name = " feature one "
+    lens_branch_create_submit()
+    assert g_lens_branch_create_open == false
+    finish_job()
+    assert g_lens_message == "created feature-one"
+    assert g_lens_branch == "feature-one" && g_lens_branch_local_count == 2
+    assert lens_branch_has("feature-one") && lens_branch_has("main")
+    // A taken name keeps the dialog open.
+    lens_branch_create_show()
+    g_lens_branch_create_name = "main"
+    lens_branch_create_submit()
+    assert g_lens_branch_create_open && g_lens_message == "A branch named main already exists"
+    g_lens_branch_create_name = "-x"
+    lens_branch_create_submit()
+    assert g_lens_branch_create_open && g_lens_message == "A branch name cannot start with -"
+    g_lens_branch_create_name = "bad..name"
+    lens_branch_create_submit()
+    finish_job()
+    assert substr(g_lens_message, 0, 13) == "create failed" && g_lens_branch == "feature-one"
+    // Published with an upstream, so delete can drop it later.
+    assert os_write_file_atomic(work + "/feature.ns", "fn feature() {}\n") != 0
+    lens_commit("feature")
+    finish_job()
+    lens_push()
+    finish_job()
+    assert g_lens_message == "push done" && g_lens_sync_ahead == 0
+    assert lens_branch_has_remote("origin/feature-one")
+
+    // Switching from the menu moves the files.
+    lens_branch_show()
+    assert g_lens_branch_open
+    finish_job()
+    lens_branch_switch("main")
+    assert g_lens_branch_open == false
+    finish_job()
+    assert g_lens_message == "switched to main" && g_lens_branch == "main"
+    assert os_file_size(work + "/feature.ns") < 0
+    assert g_lens_patch_wanted
+    // Picking the branch already checked out does nothing.
+    lens_branch_switch("main")
+    assert g_lens_job_running == false
+
+    // A branch pushed from another clone is fetched and searched for, then
+    // checked out tracking it.
+    git(base, "clone\n-q\n" + remote + "\nbranches_other")
+    git(other, "config\nuser.name\nns_lens test")
+    git(other, "config\nuser.email\nlens@example.com")
+    git(other, "config\ncommit.gpgsign\nfalse")
+    git(other, "switch\n-q\n-c\nremote-only\norigin/main")
+    assert os_write_file_atomic(other + "/only.ns", "fn only() {}\n") != 0
+    for step in lens_commit_steps("remote only") {
+        git(other, step)
+    }
+    git(other, "push\n-q\n-u\norigin\nremote-only")
+    lens_remote_show()
+    assert g_lens_remote_open && lens_remote_fetching()
+    finish_job()
+    assert g_lens_message == "fetch done" && lens_remote_fetching() == false
+    assert lens_branch_has_remote("origin/remote-only")
+    g_lens_remote_query = "on"
+    lens_remote_filter()
+    assert g_lens_remote_hit_count == 2
+    g_lens_remote_query = "remote-"
+    lens_remote_filter()
+    assert g_lens_remote_hit_count == 1
+    lens_remote_go(0)
+    assert g_lens_remote_open == false
+    finish_job()
+    assert g_lens_message == "switched to remote-only" && g_lens_branch == "remote-only"
+    assert g_lens_sync_ahead == 0 && g_lens_sync_behind == 0
+    assert os_file_size(work + "/only.ns") >= 0
+    // One with a local branch already is fast-forwarded to the remote.
+    git(other, "switch\n-q\n-c\nfeature-one\norigin/feature-one")
+    assert os_write_file_atomic(other + "/feature.ns", "fn feature() { 2 }\n") != 0
+    for step in lens_commit_steps("feature from other") {
+        git(other, step)
+    }
+    git(other, "push\n-q")
+    lens_remote_show()
+    finish_job()
+    g_lens_remote_query = "origin/feature-one"
+    lens_remote_filter()
+    assert g_lens_remote_hit_count == 1
+    lens_remote_go(0)
+    finish_job()
+    assert g_lens_message == "switched to feature-one" && g_lens_branch == "feature-one"
+    assert g_lens_sync_behind == 0
+    assert lens_last_line(git(work, "log\n-1\n--format=%s")) == "feature from other"
+
+    // Delete returns to the default branch and drops the one left.
+    lens_branch_delete()
+    finish_job()
+    assert g_lens_message == "deleted feature-one" && g_lens_branch == "main"
+    assert lens_branch_has("feature-one") == false && lens_branch_has("remote-only")
+    // Git keeps a branch whose commits are nowhere else, and says why.
+    g_lens_branch_create_name = "scratch"
+    lens_branch_create_submit()
+    finish_job()
+    assert os_write_file_atomic(work + "/scratch.ns", "fn scratch() {}\n") != 0
+    lens_commit("scratch")
+    finish_job()
+    lens_branch_delete()
+    finish_job()
+    assert g_lens_message == "delete failed: error: the branch 'scratch' is not fully merged"
+    assert g_lens_branch == "main" && lens_branch_has("scratch")
+    // Unsaved edits keep the branch where it is.
+    assert lens_open(workspace_find("main.ns"))
+    place_cursor(0, 0, false)
+    paste_str("// note\n")
+    lens_branch_switch("scratch")
+    assert g_lens_job_running == false && g_lens_message == "Save edited files before switching branches"
+    lens_branch_delete()
+    assert g_lens_job_running == false
+    load_str(g_workspace_originals[g_workspace_active])
+    g_lens_editing = false
+    g_workspace_active = -1
+}
+
 fn main() {
     let base = "/tmp/ns_lens_vcs_test_" + itos((os_time() * 1000.0) as i32)
     check_text_helpers()
+    check_branch_helpers()
     check_search_helpers()
     check_git(base)
     check_search_scan(base)
@@ -525,5 +778,6 @@ fn main() {
     check_partial_commit(base)
     check_head(base)
     check_diff_seed(base)
+    check_branches(base)
     print("vcs_test: passed\n")
 }

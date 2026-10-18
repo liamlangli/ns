@@ -1,7 +1,8 @@
 // The File menu and its shortcuts (Cmd+O open, Cmd+P search, Cmd+Enter
 // commit; Open Recent and Push have none), Open Recent's submenu, the commit
 // message dialog, the search box, and the bottom-left hints and activity row
-// above the status bar.
+// above the status bar. Input and drawing for the status bar's branch menu
+// and its dialogs (branch.ns) are routed through here too.
 use std
 use os
 use view
@@ -171,16 +172,16 @@ fn lens_hint_action(i: i32) str {
     return "commit"
 }
 
-// Keys belong to the search box, the commit dialog, the ignore editor, an
-// outline prompt or the terminal while any of them is open.
+// Keys belong to the search box, the commit dialog, the branch dialogs, the
+// ignore editor, an outline prompt or the terminal while any of them is open.
 fn lens_typing() bool {
-    return g_lens_ignore_open || g_lens_commit_open || g_lens_search_open || outline_prompt_active() || terminal_focused()
+    return g_lens_ignore_open || g_lens_commit_open || g_lens_search_open || g_lens_branch_create_open || g_lens_remote_open || outline_prompt_active() || terminal_focused()
 }
 
 // Pointer input the map must not also take this frame. Floating panels block
 // their own rectangles with their hit tests, so only popups belong here.
 fn lens_menu_blocks() bool {
-    return g_lens_ignore_open || g_lens_commit_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block
+    return g_lens_ignore_open || g_lens_commit_open || g_lens_branch_create_open || g_lens_file_block || g_lens_recent_block || g_lens_view_open || g_lens_view_block || g_lens_search_block || g_lens_branch_block || g_lens_remote_block
 }
 
 fn cmd_down(v: ref view) bool {
@@ -188,12 +189,14 @@ fn cmd_down(v: ref view) bool {
 }
 
 fn lens_search_show() {
+    lens_branch_hide()
     g_lens_search_open = true
     g_lens_commit_open = false
     g_lens_file_open = false
 }
 
 fn lens_commit_show() {
+    lens_branch_hide()
     g_lens_commit_open = true
     g_lens_search_open = false
     g_lens_file_open = false
@@ -367,6 +370,9 @@ fn lens_menu_keys(v: ref view) {
         g_lens_commit_message = lens_field_edit(v, g_lens_commit_message)
         return
     }
+    if lens_branch_keys(v) {
+        return
+    }
     if g_lens_search_open {
         if key_edge(v, 256) || (cmd_down(v) && key_edge(v, 80)) {
             g_lens_search_open = false
@@ -460,8 +466,8 @@ fn lens_commit_y(h: f64) f64 {
     return clamp((h - lens_commit_h()) * 0.5, LENS_TOP_BAR_H + 4.0, 100000.0)
 }
 
-// Pointer input for the File menu, the search box and the commit dialog,
-// ahead of the map. A click outside an open popup closes it.
+// Pointer input for the File menu, the search box, the commit dialog and the
+// branch menu, ahead of the map. A click outside an open popup closes it.
 fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     let pop_y = lens_mode_popup_y()
     let pop_h = LENS_MODE_ITEM * (LENS_FILE_ITEMS as f64)
@@ -485,6 +491,7 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         g_lens_search_scroll = clamp_i(g_lens_search_scroll + step, 0, clamp_i(g_lens_hit_count - LENS_SEARCH_ROWS, 0, LENS_HIT_MAX))
         v.scroll_y = 0.0
     }
+    lens_branch_pointer(v, w, h)
     if g_lens_ignore_open {
         lens_ignore_mouse(v, w, h)
         return
@@ -518,9 +525,15 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         v.mouse_pressed = false
         return
     }
+    if g_lens_branch_create_open {
+        lens_branch_create_click(v, w, h)
+        v.mouse_pressed = false
+        return
+    }
     if raw_hit(v, LENS_FILE_X, lens_mode_y(), LENS_FILE_W, LENS_MODE_H) {
         g_lens_file_open = g_lens_file_open == false
         g_lens_recent_open = false
+        g_lens_branch_open = false
         if g_lens_file_open {
             recent_load()
         }
@@ -533,6 +546,7 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     if raw_hit(v, LENS_VIEW_X, lens_mode_y(), LENS_VIEW_W, LENS_MODE_H) {
         g_lens_view_open = g_lens_view_open == false
         g_lens_file_open = false
+        g_lens_branch_open = false
         g_lens_mode_open = false
         v.mouse_pressed = false
         return
@@ -564,7 +578,13 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         g_lens_file_open = false
         return
     }
-    // The status bar's down arrow pulls and its up arrow pushes.
+    if g_lens_branch_open {
+        lens_branch_menu_click(h)
+        v.mouse_pressed = false
+        return
+    }
+    // The status bar's down arrow pulls, its up arrow pushes, and the branch
+    // button opens the branch menu.
     let sync = lens_sync_button_at(g_mouse_x, g_mouse_y)
     if sync == LENS_JOB_PULL {
         lens_pull()
@@ -573,6 +593,11 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     }
     if sync == LENS_JOB_PUSH {
         lens_push()
+        v.mouse_pressed = false
+        return
+    }
+    if lens_branch_button_at(g_mouse_x, g_mouse_y) {
+        lens_branch_show()
         v.mouse_pressed = false
         return
     }
@@ -586,6 +611,10 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         } else if g_lens_search_block == false {
             g_lens_search_open = false
         }
+        v.mouse_pressed = false
+    }
+    if g_lens_remote_open {
+        lens_remote_click()
         v.mouse_pressed = false
     }
 }
@@ -896,7 +925,8 @@ fn lens_draw_hints(r: ref ui_renderer, bottom: f64) {
     }
 }
 
-// The running search, commit or push with its progress, then the message.
+// The running search, commit, push, pull or branch job with its progress,
+// then the message.
 // Work of unknown length shows a block sliding along the bar.
 fn lens_draw_activity(r: ref ui_renderer, y: f64, w: f64) {
     let label = ""
@@ -949,5 +979,6 @@ fn lens_draw_menus(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_draw_view_menu(r, v)
     lens_draw_search(r, v, w)
     lens_draw_commit(r, v, w, h)
+    lens_draw_branch_popups(r, v, w, h)
     lens_draw_ignore(r, v, w, h)
 }

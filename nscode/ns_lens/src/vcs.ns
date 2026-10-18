@@ -1,7 +1,9 @@
-// Git commands behind the File menu: commit, push, and a background fetch
-// that keeps the ahead/behind counts current. One job runs at a time on a
-// worker task; the main thread polls it and refreshes file states after it.
-// The change view's file list and per-file patches are read on workers too.
+// Git commands behind the File menu and the status bar: commit, push, pull,
+// branch switches, and a background fetch that keeps the ahead/behind counts
+// current. One job runs at a time on a worker task; after its steps it reads
+// the counts, the checked-out branch and the branch lists, and the main thread
+// polls it and refreshes file states after it. The change view's file list
+// and per-file patches are read on workers too.
 use os
 use task
 
@@ -10,8 +12,16 @@ lit LENS_JOB_FETCH = 2
 lit LENS_JOB_COMMIT = 3
 lit LENS_JOB_PUSH = 4
 lit LENS_JOB_PULL = 5
+// Branch menu jobs: switch to a branch, create one, delete the current one,
+// and the fetch that refreshes the remote branch search.
+lit LENS_JOB_SWITCH = 6
+lit LENS_JOB_BRANCH = 7
+lit LENS_JOB_DELETE = 8
+lit LENS_JOB_REMOTE = 9
 // Seconds between background fetches.
 lit LENS_FETCH_INTERVAL = 300.0
+// Seconds between status reads, so a branch switched outside Lens shows up.
+lit LENS_STATUS_INTERVAL = 5.0
 
 let g_lens_job_kind: i32 = 0
 let g_lens_job_running = false
@@ -23,15 +33,21 @@ let g_lens_job_done = [i32](1)
 let g_lens_job_code = [i32](1)
 let g_lens_job_output = [str](1)
 let g_lens_job_counts = [str](1)
-// A commit or push asked for while another job runs starts after it.
+// The branch, the detached commit, the local and the remote branch listings.
+let g_lens_job_refs = [str](4)
+// The branch a job acts on, for its message.
+let g_lens_job_subject = ""
+// A job the user asked for while another one runs starts after it.
 let g_lens_job_queued: i32 = 0
 let g_lens_job_queued_steps = [str](0)
+let g_lens_job_queued_subject = ""
 // Commits only on this branch (ahead) and only on its upstream (behind);
 // -1 when unknown or the branch has no upstream.
 let g_lens_sync_ahead: i32 = -1
 let g_lens_sync_behind: i32 = -1
 let g_lens_sync_root = ""
 let g_lens_fetch_next: f64 = 0.0
+let g_lens_status_next: f64 = 0.0
 // Status bar buttons as last drawn: the down arrow pulls, the up arrow
 // pushes. Zero width while the counts are unknown.
 let g_lens_sync_y: f64 = 0.0
@@ -43,7 +59,7 @@ let g_lens_sync_up_w: f64 = 0.0
 // Jobs the user asked for: queued behind a running job, shown with progress
 // and reported when they end.
 fn lens_job_user(kind: i32) bool {
-    return kind == LENS_JOB_COMMIT || kind == LENS_JOB_PUSH || kind == LENS_JOB_PULL
+    return kind >= LENS_JOB_COMMIT && kind <= LENS_JOB_REMOTE
 }
 
 fn lens_job_label(kind: i32) str {
@@ -56,10 +72,21 @@ fn lens_job_label(kind: i32) str {
     if kind == LENS_JOB_PULL {
         return "pull"
     }
-    if kind == LENS_JOB_FETCH {
+    if kind == LENS_JOB_SWITCH { return "switch" }
+    if kind == LENS_JOB_BRANCH { return "create" }
+    if kind == LENS_JOB_DELETE { return "delete" }
+    if kind == LENS_JOB_FETCH || kind == LENS_JOB_REMOTE {
         return "fetch"
     }
     return "status"
+}
+
+// What a finished job reports; a branch job names its branch.
+fn lens_job_done_message(kind: i32, subject: str) str {
+    if kind == LENS_JOB_SWITCH { return "switched to " + subject }
+    if kind == LENS_JOB_BRANCH { return "created " + subject }
+    if kind == LENS_JOB_DELETE { return "deleted " + subject }
+    return lens_job_label(kind) + " done"
 }
 
 // Git takes one argument per line, so a message keeps to one line.
@@ -147,6 +174,10 @@ fn lens_push() {
 }
 
 fn lens_job_start(kind: i32, steps: [str]) {
+    lens_job_begin(kind, steps, "")
+}
+
+fn lens_job_begin(kind: i32, steps: [str], subject: str) {
     if g_workspace_root == "" {
         return
     }
@@ -154,6 +185,7 @@ fn lens_job_start(kind: i32, steps: [str]) {
         if lens_job_user(kind) {
             g_lens_job_queued = kind
             g_lens_job_queued_steps = steps
+            g_lens_job_queued_subject = subject
         }
         return
     }
@@ -167,8 +199,10 @@ fn lens_job_start(kind: i32, steps: [str]) {
     let code = g_lens_job_code
     let output = g_lens_job_output
     let counts = g_lens_job_counts
+    let refs = g_lens_job_refs
     done[0] = 0
     g_lens_job_kind = kind
+    g_lens_job_subject = subject
     g_lens_job_root = root
     g_lens_job_running = true
     if lens_job_user(kind) {
@@ -188,10 +222,35 @@ fn lens_job_start(kind: i32, steps: [str]) {
         if os_git_status() != 0 {
             sync = ""
         }
+        // So do the branch and the lists. --count keeps each listing near
+        // the 64 KiB os_git_run returns, past which it drops the first lines.
+        let branch = lens_one_line(os_git_run(root, "symbolic-ref\n--short\n-q\nHEAD"))
+        if os_git_status() != 0 {
+            branch = ""
+        }
+        let detached = ""
+        if branch == "" {
+            detached = lens_one_line(os_git_run(root, "rev-parse\n--short\nHEAD"))
+            if os_git_status() != 0 {
+                detached = ""
+            }
+        }
+        let locals = os_git_run(root, "for-each-ref\n--count=1024\n--format=%(refname:lstrip=2)\nrefs/heads")
+        if os_git_status() != 0 {
+            locals = ""
+        }
+        let remotes = os_git_run(root, "for-each-ref\n--count=1024\n--format=%(refname:lstrip=2) %(symref:lstrip=2)\nrefs/remotes")
+        if os_git_status() != 0 {
+            remotes = ""
+        }
         os_lock_acquire(lock)
         output[0] = text
         code[0] = status
         counts[0] = sync
+        refs[0] = branch
+        refs[1] = detached
+        refs[2] = locals
+        refs[3] = remotes
         done[0] = 1
         os_lock_release(lock)
     }
@@ -230,6 +289,30 @@ fn lens_last_line(text: str) str {
     return substr(text, start, end - start)
 }
 
+// The line of Git's output that explains a failure: its first error or fatal
+// line, else its last line that is not a hint.
+fn lens_git_error(text: str) str {
+    let last = ""
+    let start: i32 = 0
+    for i in 0 to text.len + 1 {
+        let c: i32 = 10
+        if i < text.len {
+            c = (text[i] as i32) & 255
+        }
+        if c == 10 || c == 13 {
+            let line = lens_last_line(substr(text, start, i - start))
+            if line.len >= 6 && (substr(line, 0, 6) == "error:" || substr(line, 0, 6) == "fatal:") {
+                return line
+            }
+            if line != "" && (line.len < 5 || substr(line, 0, 5) != "hint:") {
+                last = line
+            }
+            start = i + 1
+        }
+    }
+    return last
+}
+
 fn lens_job_poll() {
     if g_lens_job_running == false || os_lock_try_acquire(g_lens_job_lock) == false {
         return
@@ -238,27 +321,34 @@ fn lens_job_poll() {
     let status = g_lens_job_code[0]
     let text = g_lens_job_output[0]
     let counts = g_lens_job_counts[0]
+    let branch = g_lens_job_refs[0]
+    let detached = g_lens_job_refs[1]
+    let locals = g_lens_job_refs[2]
+    let remotes = g_lens_job_refs[3]
     os_lock_release(g_lens_job_lock)
     if ready == false {
         return
     }
     g_lens_job_running = false
+    g_lens_status_next = os_time() + LENS_STATUS_INTERVAL
     let kind = g_lens_job_kind
     if g_lens_job_root == g_workspace_root {
         lens_sync_parse(counts)
         g_lens_sync_root = g_lens_job_root
+        lens_branch_apply(branch, detached, locals, remotes)
     }
     if lens_job_user(kind) {
         if status == 0 {
-            g_lens_message = lens_job_label(kind) + " done"
+            g_lens_message = lens_job_done_message(kind, g_lens_job_subject)
         } else {
-            g_lens_message = lens_job_label(kind) + " failed: " + lens_last_line(text)
+            g_lens_message = lens_job_label(kind) + " failed: " + lens_git_error(text)
         }
     }
-    if (kind == LENS_JOB_COMMIT || kind == LENS_JOB_PULL) && status == 0 {
-        // A commit cleans files and a pull moves HEAD and files: refresh the
-        // change view, the leaves' patches and the open file's diff against
-        // the new HEAD now rather than at the next poll.
+    // A delete that switched branches but could not delete moved files too.
+    if kind == LENS_JOB_SWITCH || kind == LENS_JOB_DELETE || ((kind == LENS_JOB_COMMIT || kind == LENS_JOB_PULL) && status == 0) {
+        // A commit cleans files; a pull or a branch switch moves HEAD and
+        // files: refresh the change view, the leaves' patches and the open
+        // file's diff against the new HEAD now rather than at the next poll.
         g_lens_change_poll = 0.0
         g_lens_git_poll = 0.0
         g_lens_patch_wanted = true
@@ -266,12 +356,13 @@ fn lens_job_poll() {
     if g_lens_job_queued != 0 {
         let queued = g_lens_job_queued
         g_lens_job_queued = 0
-        lens_job_start(queued, g_lens_job_queued_steps)
+        lens_job_begin(queued, g_lens_job_queued_steps, g_lens_job_queued_subject)
     }
 }
 
-// Each frame: collect a finished job, read the counts for a newly opened
-// project at once, and fetch in the background every LENS_FETCH_INTERVAL.
+// Each frame: collect a finished job, read the counts and the branch for a
+// newly opened project at once, read them again every LENS_STATUS_INTERVAL,
+// and fetch in the background every LENS_FETCH_INTERVAL.
 fn lens_vcs_tick(moving: bool) {
     lens_job_poll()
     if g_lens_job_running || g_workspace_root == "" {
@@ -281,26 +372,33 @@ fn lens_vcs_tick(moving: bool) {
         g_lens_sync_ahead = -1
         g_lens_sync_behind = -1
         g_lens_sync_root = g_workspace_root
+        lens_branch_clear()
         g_lens_fetch_next = os_time() + 2.0
         lens_job_start(LENS_JOB_STATUS, [str](0))
         return
     }
-    if moving == false && os_time() >= g_lens_fetch_next {
+    if moving {
+        return
+    }
+    if os_time() >= g_lens_fetch_next {
         g_lens_fetch_next = os_time() + LENS_FETCH_INTERVAL
         let steps = [str](1)
         steps[0] = "fetch\n--quiet"
         lens_job_start(LENS_JOB_FETCH, steps)
+    } else if os_time() >= g_lens_status_next {
+        lens_job_start(LENS_JOB_STATUS, [str](0))
     }
 }
 
-// A commit or push the user is waiting on, for the activity row.
+// A commit, push, pull or branch job the user is waiting on, for the activity
+// row.
 fn lens_job_visible() bool {
     return g_lens_job_running && lens_job_user(g_lens_job_kind)
 }
 
-// Push and pull report Git's own percentage; a commit has none.
+// Push, pull and fetch report Git's own percentage; a commit has none.
 fn lens_job_fraction() f64 {
-    if g_lens_job_kind == LENS_JOB_PUSH || g_lens_job_kind == LENS_JOB_PULL {
+    if g_lens_job_kind == LENS_JOB_PUSH || g_lens_job_kind == LENS_JOB_PULL || g_lens_job_kind == LENS_JOB_REMOTE {
         let percent = os_git_progress()
         if percent >= 0 {
             return (percent as f64) / 100.0

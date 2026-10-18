@@ -39,6 +39,7 @@ fn lens_ignore_show() {
     g_lens_ignore_open = true
     g_lens_commit_open = false
     g_lens_search_open = false
+    lens_branch_hide()
     g_lens_file_open = false
 }
 

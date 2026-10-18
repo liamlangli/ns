@@ -88,7 +88,8 @@ snaps back to orthographic.
     invalid expressions are logged and skipped. These rules add to `.gitignore`
     and apply in every map mode and search.
 - The controls are listed at the bottom left, above an activity row that shows
-  the running search, commit or push with its progress, and the latest message.
+  the running search, commit, push, pull or branch command with its progress,
+  and the latest message.
 - The menu bar contains dropdown menus only; other controls belong in floating
   panels, dialogs, the canvas or the status area.
 - The menu right of **View** switches the map. **code** shows recognized
@@ -202,6 +203,31 @@ snaps back to orthographic.
   buttons: the down arrow runs `git fetch` then `git pull --rebase` (Git
   refuses while the work tree has uncommitted changes, and Lens shows why),
   and the up arrow pushes.
+- Right of the arrows, the branch button names the checked-out branch (or the
+  commit of a detached HEAD); Lens reads it again every five seconds and after
+  every Git command, so a switch made in a terminal shows up. Clicking it opens
+  a menu above it:
+  - **Create Branch...** asks for a name and creates the branch at HEAD,
+    switching to it. Blanks in the name become dashes; a name that is taken or
+    starts with `-` keeps the dialog open, and Git reports any other name it
+    refuses.
+  - **Pull Remote Branch...** runs `git fetch --all --prune` and opens a search
+    over the remote-tracking branches, laid out like Cmd+P: typing filters by
+    name (a query without capitals ignores case), Up/Down select, and Enter or a
+    click checks the branch out. A remote branch without a local branch of its
+    name gets one that tracks it; one with a local branch switches to it and
+    fast-forwards it to the remote, which Git refuses if the two have diverged.
+  - The local branches, the current one marked `current`. Clicking another
+    switches to it; the wheel scrolls a list longer than twelve rows.
+  - **Delete Current Branch** switches to the default branch (the one
+    `origin/HEAD` names, else `main` or `master`), then deletes the branch it
+    left with `git branch -d`, so Git keeps a branch whose commits are on
+    neither its upstream nor the default branch, and says so. It is dimmed on
+    the default branch and while HEAD is detached.
+
+  Switching, pulling a remote branch in and deleting refuse while an editor
+  tab has unsaved edits, which a later save would write over the other
+  branch's files. Escape or a click outside closes the menu.
 - The status bar also shows actual FPS and process resident RAM in MiB, sampled
   once per second. The RAM bar and percentage use total physical memory as the
   scale. Idle polling naturally reports a lower FPS. Narrow windows hide the

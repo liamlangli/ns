@@ -1,0 +1,819 @@
+// The status bar's branch button, right of the sync arrows, names the
+// checked-out branch. A click opens a menu above it: Create Branch and Pull
+// Remote Branch on top, the local branches with the current one marked, and
+// Delete Current Branch at the bottom. Clicking a branch switches to it.
+// Create Branch asks for a name in a dialog; Pull Remote Branch fetches and
+// searches the remote-tracking branches the way Cmd+P searches files. The
+// jobs run in vcs.ns, which reads the branch and both lists after each job.
+use std
+use os
+use view
+use ui
+
+lit LENS_BRANCH_MAX = 1024
+lit LENS_BRANCH_MENU_W = 320.0
+// Past this many branches the wheel scrolls the menu's list.
+lit LENS_BRANCH_ROWS = 12
+lit LENS_BRANCH_SEPARATOR_H = 9.0
+// Menu rows that are not a branch.
+lit LENS_BRANCH_ROW_NONE = -1
+lit LENS_BRANCH_ROW_CREATE = -2
+lit LENS_BRANCH_ROW_REMOTE = -3
+lit LENS_BRANCH_ROW_DELETE = -4
+lit LENS_BRANCH_CREATE_W = 420.0
+lit LENS_BRANCH_CREATE_H = 150.0
+
+// The checked-out branch, "" when HEAD is detached or the folder is not in a
+// repository; the detached commit's short hash, "" on a branch.
+let g_lens_branch = ""
+let g_lens_branch_detached = ""
+// Local branches, and remote-tracking ones as "remote/name", in Git's order.
+let g_lens_branch_locals = [str](1024)
+let g_lens_branch_local_count: i32 = 0
+let g_lens_branch_remotes = [str](1024)
+let g_lens_branch_remote_count: i32 = 0
+// Where Delete Current Branch returns to, "" when unknown.
+let g_lens_branch_default = ""
+// The listings last adopted, and a serial that counts changes to them.
+let g_lens_branch_key = ""
+let g_lens_branch_serial: i32 = 0
+// The status bar button as last drawn; zero width outside a repository.
+let g_lens_branch_x: f64 = 0.0
+let g_lens_branch_y: f64 = 0.0
+let g_lens_branch_w: f64 = 0.0
+let g_lens_branch_open = false
+let g_lens_branch_block = false
+let g_lens_branch_scroll: i32 = 0
+let g_lens_branch_create_open = false
+let g_lens_branch_create_name = ""
+// The remote branch search: the remotes whose name holds the query, by
+// index into g_lens_branch_remotes, and the query and listing they match.
+let g_lens_remote_open = false
+let g_lens_remote_block = false
+let g_lens_remote_query = ""
+let g_lens_remote_hits = [i32](1024)
+let g_lens_remote_hit_count: i32 = 0
+let g_lens_remote_selected: i32 = 0
+let g_lens_remote_scroll: i32 = 0
+let g_lens_remote_filtered_query = ""
+let g_lens_remote_filtered_serial: i32 = -1
+
+fn lens_branch_label() str {
+    if g_lens_branch != "" {
+        return g_lens_branch
+    }
+    return g_lens_branch_detached
+}
+
+fn lens_branch_has(name: str) bool {
+    for i in 0 to g_lens_branch_local_count {
+        if g_lens_branch_locals[i] == name {
+            return true
+        }
+    }
+    return false
+}
+
+fn lens_branch_has_remote(remote: str) bool {
+    for i in 0 to g_lens_branch_remote_count {
+        if g_lens_branch_remotes[i] == remote {
+            return true
+        }
+    }
+    return false
+}
+
+// Offset of the first `byte` in `text`, or its length when it has none.
+fn lens_branch_find(text: str, byte: i32) i32 {
+    let i: i32 = 0
+    loop i < text.len && lens_byte(text, i) != byte {
+        i = i + 1
+    }
+    return i
+}
+
+// "origin/feature/x" is branch "feature/x" of remote "origin".
+fn lens_branch_remote_name(remote: str) str {
+    let slash = lens_branch_find(remote, 47)
+    if slash >= remote.len {
+        return remote
+    }
+    return substr(remote, slash + 1, remote.len - slash - 1)
+}
+
+fn lens_branch_remote_of(remote: str) str {
+    return substr(remote, 0, lens_branch_find(remote, 47))
+}
+
+// The branch a remote's HEAD names, origin's first, else main or master.
+fn lens_branch_default_of(head: str) str {
+    if head != "" {
+        return head
+    }
+    if lens_branch_has("main") || lens_branch_has_remote("origin/main") {
+        return "main"
+    }
+    if lens_branch_has("master") || lens_branch_has_remote("origin/master") {
+        return "master"
+    }
+    return ""
+}
+
+fn lens_branch_clear() {
+    g_lens_branch = ""
+    g_lens_branch_detached = ""
+    g_lens_branch_local_count = 0
+    g_lens_branch_remote_count = 0
+    g_lens_branch_default = ""
+    g_lens_branch_key = ""
+    g_lens_branch_serial = g_lens_branch_serial + 1
+    g_lens_branch_open = false
+}
+
+// Adopt what a job read: the branch, the detached commit, one local branch
+// per line, and one "remote/name symref" per remote-tracking ref, where only
+// a remote's HEAD has a symref.
+fn lens_branch_apply(branch: str, detached: str, locals: str, remotes: str) {
+    let key = branch + "\n" + detached + "\n" + locals + "\n" + remotes
+    if key == g_lens_branch_key {
+        return
+    }
+    g_lens_branch_key = key
+    g_lens_branch_serial = g_lens_branch_serial + 1
+    g_lens_branch = branch
+    g_lens_branch_detached = detached
+    g_lens_branch_local_count = 0
+    let start: i32 = 0
+    for i in 0 to locals.len + 1 {
+        if i == locals.len || lens_byte(locals, i) == 10 {
+            if i > start && g_lens_branch_local_count < LENS_BRANCH_MAX {
+                g_lens_branch_locals[g_lens_branch_local_count] = substr(locals, start, i - start)
+                g_lens_branch_local_count = g_lens_branch_local_count + 1
+            }
+            start = i + 1
+        }
+    }
+    // A branch without a commit yet has no ref to list.
+    if branch != "" && lens_branch_has(branch) == false && g_lens_branch_local_count < LENS_BRANCH_MAX {
+        g_lens_branch_locals[g_lens_branch_local_count] = branch
+        g_lens_branch_local_count = g_lens_branch_local_count + 1
+    }
+    g_lens_branch_remote_count = 0
+    let head = ""
+    start = 0
+    for i in 0 to remotes.len + 1 {
+        if i == remotes.len || lens_byte(remotes, i) == 10 {
+            let line = substr(remotes, start, i - start)
+            let space = lens_branch_find(line, 32)
+            let name = substr(line, 0, space)
+            let target = ""
+            if space + 1 < line.len {
+                target = substr(line, space + 1, line.len - space - 1)
+            }
+            if target != "" {
+                if head == "" || lens_branch_remote_of(name) == "origin" {
+                    head = lens_branch_remote_name(target)
+                }
+            } else if name != "" && g_lens_branch_remote_count < LENS_BRANCH_MAX {
+                g_lens_branch_remotes[g_lens_branch_remote_count] = name
+                g_lens_branch_remote_count = g_lens_branch_remote_count + 1
+            }
+            start = i + 1
+        }
+    }
+    g_lens_branch_default = lens_branch_default_of(head)
+}
+
+fn lens_branch_switch_steps(name: str) [str] {
+    let steps = [str](1)
+    steps[0] = "switch\n" + name
+    return steps
+}
+
+// A new branch starts at HEAD and is checked out at once.
+fn lens_branch_create_steps(name: str) [str] {
+    let steps = [str](1)
+    steps[0] = "switch\n-c\n" + name
+    return steps
+}
+
+// A remote branch without a local branch of its name gets one that tracks
+// it. One that has a local branch switches to it and fast-forwards it to the
+// remote; Git refuses when the two have diverged, and says so.
+fn lens_branch_remote_steps(remote: str) [str] {
+    let name = lens_branch_remote_name(remote)
+    if lens_branch_has(name) {
+        let steps = [str](2)
+        steps[0] = "switch\n" + name
+        steps[1] = "merge\n--ff-only\n--quiet\n" + remote
+        return steps
+    }
+    let steps = [str](1)
+    steps[0] = "switch\n--track\n" + remote
+    return steps
+}
+
+// Return to `back`, then delete `name`. Git keeps a branch whose commits are
+// on neither its upstream nor `back`, and says so.
+fn lens_branch_delete_steps(name: str, back: str) [str] {
+    let steps = [str](2)
+    steps[0] = "switch\n" + back
+    steps[1] = "branch\n-d\n" + name
+    return steps
+}
+
+// Every remote, dropping the branches deleted there.
+fn lens_branch_fetch_steps() [str] {
+    let steps = [str](1)
+    steps[0] = "fetch\n--all\n--prune\n--progress"
+    return steps
+}
+
+// A switch rewrites files under unsaved edits, and saving them afterwards
+// would write the old branch's text over the new one.
+fn lens_edits_unsaved() bool {
+    for i in 0 to g_workspace_tab_count {
+        if workspace_entry_dirty(g_workspace_tabs[i]) {
+            return true
+        }
+    }
+    return false
+}
+
+fn lens_branch_switch_blocked() bool {
+    if lens_edits_unsaved() {
+        g_lens_message = "Save edited files before switching branches"
+        return true
+    }
+    return false
+}
+
+fn lens_branch_switch(name: str) {
+    g_lens_branch_open = false
+    if name == g_lens_branch || lens_branch_switch_blocked() {
+        return
+    }
+    lens_job_begin(LENS_JOB_SWITCH, lens_branch_switch_steps(name), name)
+}
+
+// The typed name without its outer blanks; Git allows no blanks inside one,
+// so each becomes a dash.
+fn lens_branch_clean(text: str) str {
+    let line = lens_one_line(text)
+    let start: i32 = 0
+    let end = line.len
+    loop start < end && lens_is_blank(lens_byte(line, start)) {
+        start = start + 1
+    }
+    loop end > start && lens_is_blank(lens_byte(line, end - 1)) {
+        end = end - 1
+    }
+    let out = ""
+    let run = start
+    for i in start to end + 1 {
+        if i == end || lens_is_blank(lens_byte(line, i)) {
+            out = out + substr(line, run, i - run)
+            if i < end {
+                out = out + "-"
+            }
+            run = i + 1
+        }
+    }
+    return out
+}
+
+// A name Git would read as an option, or one already taken, keeps the dialog
+// open; Git judges the rest and reports what it refuses.
+fn lens_branch_create_submit() {
+    let name = lens_branch_clean(g_lens_branch_create_name)
+    if name == "" {
+        g_lens_message = "Enter a branch name"
+        return
+    }
+    if lens_byte(name, 0) == 45 {
+        g_lens_message = "A branch name cannot start with -"
+        return
+    }
+    if lens_branch_has(name) {
+        g_lens_message = "A branch named " + name + " already exists"
+        return
+    }
+    g_lens_branch_create_open = false
+    lens_job_begin(LENS_JOB_BRANCH, lens_branch_create_steps(name), name)
+}
+
+fn lens_branch_can_delete() bool {
+    return g_lens_branch != "" && g_lens_branch_default != "" && g_lens_branch != g_lens_branch_default
+}
+
+fn lens_branch_delete() {
+    g_lens_branch_open = false
+    let name = g_lens_branch
+    let back = g_lens_branch_default
+    if name == "" {
+        g_lens_message = "No branch is checked out"
+        return
+    }
+    if back == "" {
+        g_lens_message = "No default branch to return to"
+        return
+    }
+    if name == back {
+        g_lens_message = "The default branch cannot be deleted"
+        return
+    }
+    if lens_branch_switch_blocked() {
+        return
+    }
+    lens_job_begin(LENS_JOB_DELETE, lens_branch_delete_steps(name, back), name)
+}
+
+// The remote branches whose name holds the query, smart case as in Search.
+// Runs again when the query or the listing changes.
+fn lens_remote_filter() {
+    let query = g_lens_remote_query
+    if query == g_lens_remote_filtered_query && g_lens_remote_filtered_serial == g_lens_branch_serial {
+        return
+    }
+    if query != g_lens_remote_filtered_query {
+        g_lens_remote_selected = 0
+        g_lens_remote_scroll = 0
+    }
+    g_lens_remote_filtered_query = query
+    g_lens_remote_filtered_serial = g_lens_branch_serial
+    let fold = lens_search_folds(query)
+    let count: i32 = 0
+    for i in 0 to g_lens_branch_remote_count {
+        let name = g_lens_branch_remotes[i]
+        if query == "" || lens_search_find(name, 0, name.len, query, fold) >= 0 {
+            g_lens_remote_hits[count] = i
+            count = count + 1
+        }
+    }
+    g_lens_remote_hit_count = count
+    g_lens_remote_selected = clamp_i(g_lens_remote_selected, 0, clamp_i(count - 1, 0, LENS_BRANCH_MAX))
+    g_lens_remote_scroll = clamp_i(g_lens_remote_scroll, 0, clamp_i(count - LENS_SEARCH_ROWS, 0, LENS_BRANCH_MAX))
+}
+
+fn lens_remote_go(hit: i32) {
+    lens_remote_filter()
+    if hit < 0 || hit >= g_lens_remote_hit_count {
+        return
+    }
+    let remote = g_lens_branch_remotes[g_lens_remote_hits[hit]]
+    g_lens_remote_open = false
+    if lens_branch_switch_blocked() {
+        return
+    }
+    lens_job_begin(LENS_JOB_SWITCH, lens_branch_remote_steps(remote), lens_branch_remote_name(remote))
+}
+
+fn lens_remote_fetching() bool {
+    return (g_lens_job_running && g_lens_job_kind == LENS_JOB_REMOTE) || g_lens_job_queued == LENS_JOB_REMOTE
+}
+
+fn lens_branch_hide() {
+    g_lens_branch_open = false
+    g_lens_branch_create_open = false
+    g_lens_remote_open = false
+}
+
+// The menu shows the branches the last job read and reads them again.
+fn lens_branch_show() {
+    lens_branch_hide()
+    g_lens_branch_open = true
+    g_lens_branch_scroll = 0
+    g_lens_search_open = false
+    g_lens_file_open = false
+    g_lens_view_open = false
+    lens_job_start(LENS_JOB_STATUS, [str](0))
+}
+
+fn lens_branch_create_show() {
+    lens_branch_hide()
+    g_lens_branch_create_open = true
+    g_lens_branch_create_name = ""
+    g_lens_search_open = false
+    g_lens_commit_open = false
+}
+
+// The search lists the remote branches the last job read at once, and the
+// fetch it starts brings the rest. A queued commit, push or switch keeps its
+// place instead.
+fn lens_remote_show() {
+    lens_branch_hide()
+    g_lens_remote_open = true
+    g_lens_remote_query = ""
+    g_lens_remote_selected = 0
+    g_lens_remote_scroll = 0
+    g_lens_remote_filtered_serial = -1
+    g_lens_search_open = false
+    g_lens_commit_open = false
+    if g_lens_job_queued == 0 {
+        lens_job_begin(LENS_JOB_REMOTE, lens_branch_fetch_steps(), "")
+    }
+}
+
+// Create and Pull Remote Branch, the separators around the list, and Delete.
+fn lens_branch_fixed_h() f64 {
+    return LENS_MODE_ITEM * 3.0 + LENS_BRANCH_SEPARATOR_H * 2.0
+}
+
+// One list row per branch up to LENS_BRANCH_ROWS, fewer when the window is
+// short, and one for the note while there is none.
+fn lens_branch_rows(h: f64) i32 {
+    let room = h - STATUS_BAR_H - 2.0 - (main_menu_h() + LENS_TOP_BAR_H + 4.0) - lens_branch_fixed_h()
+    let fit = clamp_i((room / LENS_MODE_ITEM) as i32, 1, LENS_BRANCH_ROWS)
+    return clamp_i(g_lens_branch_local_count, 1, fit)
+}
+
+fn lens_branch_menu_h(h: f64) f64 {
+    return lens_branch_fixed_h() + LENS_MODE_ITEM * (lens_branch_rows(h) as f64)
+}
+
+// The menu opens upward from the button, level with its left edge.
+fn lens_branch_menu_x(w: f64) f64 {
+    return clamp(g_lens_branch_x - 4.0, 8.0, clamp(w - LENS_BRANCH_MENU_W - 8.0, 8.0, 100000.0))
+}
+
+fn lens_branch_menu_y(h: f64) f64 {
+    return h - STATUS_BAR_H - 2.0 - lens_branch_menu_h(h)
+}
+
+fn lens_branch_list_y(h: f64) f64 {
+    return lens_branch_menu_y(h) + LENS_MODE_ITEM * 2.0 + LENS_BRANCH_SEPARATOR_H
+}
+
+fn lens_branch_delete_y(h: f64) f64 {
+    return lens_branch_list_y(h) + LENS_MODE_ITEM * (lens_branch_rows(h) as f64) + LENS_BRANCH_SEPARATOR_H
+}
+
+fn lens_branch_scroll_max(h: f64) i32 {
+    return clamp_i(g_lens_branch_local_count - lens_branch_rows(h), 0, LENS_BRANCH_MAX)
+}
+
+// The menu row at `y`: a local branch's index, or a LENS_BRANCH_ROW code.
+fn lens_branch_row_at(y: f64, h: f64) i32 {
+    let top = lens_branch_menu_y(h)
+    let list_y = lens_branch_list_y(h)
+    let delete_y = lens_branch_delete_y(h)
+    if y < top || y >= delete_y + LENS_MODE_ITEM {
+        return LENS_BRANCH_ROW_NONE
+    }
+    if y < top + LENS_MODE_ITEM {
+        return LENS_BRANCH_ROW_CREATE
+    }
+    if y < top + LENS_MODE_ITEM * 2.0 {
+        return LENS_BRANCH_ROW_REMOTE
+    }
+    if y >= delete_y {
+        return LENS_BRANCH_ROW_DELETE
+    }
+    if y < list_y || y >= delete_y - LENS_BRANCH_SEPARATOR_H {
+        return LENS_BRANCH_ROW_NONE
+    }
+    let i = g_lens_branch_scroll + ((y - list_y) / LENS_MODE_ITEM) as i32
+    if i < g_lens_branch_local_count {
+        return i
+    }
+    return LENS_BRANCH_ROW_NONE
+}
+
+fn lens_branch_button_at(mx: f64, my: f64) bool {
+    if g_lens_branch_w <= 0.0 || my < g_lens_branch_y + 4.0 || my >= g_lens_branch_y + 24.0 {
+        return false
+    }
+    return mx >= g_lens_branch_x - 4.0 && mx < g_lens_branch_x - 4.0 + g_lens_branch_w
+}
+
+fn lens_branch_create_x(w: f64) f64 { return (w - LENS_BRANCH_CREATE_W) * 0.5 }
+
+fn lens_branch_create_y(h: f64) f64 {
+    return clamp((h - LENS_BRANCH_CREATE_H) * 0.5, LENS_TOP_BAR_H + 4.0, 100000.0)
+}
+
+fn lens_remote_shown_rows() i32 {
+    return clamp_i(g_lens_remote_hit_count - g_lens_remote_scroll, 0, LENS_SEARCH_ROWS)
+}
+
+fn lens_remote_panel_h() f64 {
+    return LENS_SEARCH_INPUT_H + (lens_remote_shown_rows() as f64) * LENS_SEARCH_ROW_H + LENS_SEARCH_ROW_H
+}
+
+fn lens_branch_create_keys(v: ref view) {
+    if key_edge(v, 256) {
+        g_lens_branch_create_open = false
+        return
+    }
+    if key_edge(v, 257) || key_edge(v, 335) {
+        lens_branch_create_submit()
+        return
+    }
+    g_lens_branch_create_name = lens_field_edit(v, g_lens_branch_create_name)
+}
+
+fn lens_remote_keys(v: ref view) {
+    if key_edge(v, 256) {
+        g_lens_remote_open = false
+        return
+    }
+    lens_remote_filter()
+    if key_edge(v, 257) || key_edge(v, 335) {
+        lens_remote_go(g_lens_remote_selected)
+        return
+    }
+    let last = clamp_i(g_lens_remote_hit_count - 1, 0, LENS_BRANCH_MAX)
+    if key_edge(v, 264) {
+        g_lens_remote_selected = clamp_i(g_lens_remote_selected + 1, 0, last)
+    }
+    if key_edge(v, 265) {
+        g_lens_remote_selected = clamp_i(g_lens_remote_selected - 1, 0, last)
+    }
+    if g_lens_remote_selected < g_lens_remote_scroll {
+        g_lens_remote_scroll = g_lens_remote_selected
+    }
+    if g_lens_remote_selected >= g_lens_remote_scroll + LENS_SEARCH_ROWS {
+        g_lens_remote_scroll = g_lens_remote_selected - LENS_SEARCH_ROWS + 1
+    }
+    g_lens_remote_query = lens_field_edit(v, g_lens_remote_query)
+    lens_remote_filter()
+}
+
+// Keys for the create dialog, the remote search, and Escape for the menu.
+// Returns whether they took this frame's keys.
+fn lens_branch_keys(v: ref view) bool {
+    if g_lens_branch_create_open {
+        lens_branch_create_keys(v)
+        return true
+    }
+    if g_lens_remote_open {
+        lens_remote_keys(v)
+        return true
+    }
+    if g_lens_branch_open && key_edge(v, 256) {
+        g_lens_branch_open = false
+        return true
+    }
+    return false
+}
+
+fn lens_wheel_step(v: ref view) i32 {
+    if v.scroll_y > 0.0 {
+        return -1
+    }
+    return 1
+}
+
+// Every frame, before any click: the rectangles the menu and the search
+// cover, and the wheel over them.
+fn lens_branch_pointer(v: ref view, w: f64, h: f64) {
+    g_lens_branch_block = g_lens_branch_open && raw_hit(v, lens_branch_menu_x(w), lens_branch_menu_y(h), LENS_BRANCH_MENU_W, lens_branch_menu_h(h))
+    if g_lens_remote_open {
+        lens_remote_filter()
+    }
+    g_lens_remote_block = g_lens_remote_open && raw_hit(v, lens_search_x(w), lens_search_y(), LENS_SEARCH_W, lens_remote_panel_h())
+    if v.scroll_y == 0.0 {
+        return
+    }
+    if g_lens_branch_block {
+        g_lens_branch_scroll = clamp_i(g_lens_branch_scroll + lens_wheel_step(v), 0, lens_branch_scroll_max(h))
+        v.scroll_y = 0.0
+    } else if g_lens_remote_block {
+        g_lens_remote_scroll = clamp_i(g_lens_remote_scroll + lens_wheel_step(v), 0, clamp_i(g_lens_remote_hit_count - LENS_SEARCH_ROWS, 0, LENS_BRANCH_MAX))
+        v.scroll_y = 0.0
+    }
+}
+
+// The create dialog's buttons; it takes every click while open.
+fn lens_branch_create_click(v: ref view, w: f64, h: f64) {
+    let x = lens_branch_create_x(w)
+    let y = lens_branch_create_y(h)
+    let button_y = y + LENS_BRANCH_CREATE_H - 42.0
+    if raw_hit(v, x + LENS_BRANCH_CREATE_W - 196.0, button_y, 84.0, 26.0) {
+        g_lens_branch_create_open = false
+    } else if raw_hit(v, x + LENS_BRANCH_CREATE_W - 104.0, button_y, 88.0, 26.0) {
+        lens_branch_create_submit()
+    }
+}
+
+// A click on a menu row acts on it; one outside the menu closes it. The
+// separators and the empty list's note leave it open.
+fn lens_branch_menu_click(h: f64) {
+    if g_lens_branch_block == false {
+        g_lens_branch_open = false
+        return
+    }
+    let row = lens_branch_row_at(g_mouse_y, h)
+    if row == LENS_BRANCH_ROW_CREATE {
+        lens_branch_create_show()
+    } else if row == LENS_BRANCH_ROW_REMOTE {
+        lens_remote_show()
+    } else if row == LENS_BRANCH_ROW_DELETE {
+        lens_branch_delete()
+    } else if row >= 0 {
+        lens_branch_switch(g_lens_branch_locals[row])
+    }
+}
+
+// A click on a result switches to it; one outside the search closes it.
+fn lens_remote_click() {
+    let rows_y = lens_search_y() + LENS_SEARCH_INPUT_H
+    if g_lens_remote_block && g_mouse_y >= rows_y {
+        let row = ((g_mouse_y - rows_y) / LENS_SEARCH_ROW_H) as i32
+        if row < lens_remote_shown_rows() {
+            lens_remote_go(g_lens_remote_scroll + row)
+        }
+    } else if g_lens_remote_block == false {
+        g_lens_remote_open = false
+    }
+}
+
+// A branch: a trunk with a commit at each end, joined by a line from a
+// commit at the top right. The atlas has no branch glyph.
+fn lens_draw_branch_icon(r: ref ui_renderer, x: f64, cy: f64, color: u32) {
+    ui_stroke_line(r, x + 1.5, cy - 4.5, x + 1.5, cy + 4.5, 1.5, color, 0.5)
+    ui_stroke_line(r, x + 7.5, cy - 3.5, x + 7.5, cy - 1.0, 1.5, color, 0.5)
+    ui_stroke_line(r, x + 7.5, cy - 1.0, x + 1.5, cy + 2.5, 1.5, color, 0.5)
+    ui_fill_circle(r, x + 1.5, cy - 4.5, 2.0, color, 0.5)
+    ui_fill_circle(r, x + 1.5, cy + 4.5, 2.0, color, 0.5)
+    ui_fill_circle(r, x + 7.5, cy - 3.5, 2.0, color, 0.5)
+}
+
+// Status bar, in a 28 px bar at `y`: the branch icon, the branch name or the
+// detached commit, and a caret toward the menu above. It lights up under the
+// pointer and while the menu is open. Returns the width it used, 0 outside a
+// repository.
+fn lens_draw_branch(r: ref ui_renderer, x: f64, y: f64) f64 {
+    g_lens_branch_x = x
+    g_lens_branch_y = y
+    g_lens_branch_w = 0.0
+    let label = lens_branch_label()
+    if label == "" {
+        return 0.0
+    }
+    let label_w = clamp(ui_text_width(r, label, small_px(), FONT_MONO()), 0.0, 240.0)
+    let w = label_w + 34.0
+    g_lens_branch_w = w
+    let color = col_text()
+    if g_lens_branch == "" {
+        color = col_muted()
+    }
+    if g_lens_branch_open || lens_branch_button_at(g_mouse_x, g_mouse_y) {
+        ui_fill_round_rect(r, x - 4.0, y + 4.0, w - 2.0, 20.0, 3.0, col_editor_panel_hi(), 0.0)
+        color = col_accent()
+    }
+    let cy = y + 14.0
+    lens_draw_branch_icon(r, x + 1.0, cy, color)
+    draw_text_clipped(r, x + 14.0, y + 5.0, label_w, 20.0, label, small_px(), color)
+    let cx = x + 14.0 + label_w + 7.0
+    ui_fill_triangle(r, cx - 3.0, cy + 1.5, cx + 3.0, cy + 1.5, cx, cy - 2.0, color, 0.5)
+    return w + 8.0
+}
+
+// One menu row, tinted under the pointer while `live`, with `state` on its
+// right in the accent color.
+fn lens_draw_branch_item(r: ref ui_renderer, v: ref view, x: f64, y: f64, label: str, state: str, live: bool) {
+    let color = col_muted()
+    if live {
+        color = col_text()
+        if raw_hit(v, x, y, LENS_BRANCH_MENU_W, LENS_MODE_ITEM) {
+            ui_fill_rect(r, x + 1.0, y, LENS_BRANCH_MENU_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+        }
+    }
+    let ty = ui_text_v_center_y(r, y, LENS_MODE_ITEM, small_px(), FONT_MONO())
+    let right = x + LENS_BRANCH_MENU_W - 10.0
+    if state != "" {
+        let sw = ui_text_width(r, state, small_px(), FONT_MONO())
+        right = right - sw
+        draw_text_clipped(r, right, ty, sw, LENS_MODE_ITEM, state, small_px(), col_accent())
+        right = right - 12.0
+    }
+    draw_text_clipped(r, x + 10.0, ty, right - x - 10.0, LENS_MODE_ITEM, label, small_px(), color)
+}
+
+fn lens_draw_branch_separator(r: ref ui_renderer, x: f64, below: f64) {
+    ui_fill_rect(r, x + 8.0, below - LENS_BRANCH_SEPARATOR_H * 0.5 - 0.5, LENS_BRANCH_MENU_W - 16.0, 1.0, col_muted(), 0.0)
+}
+
+// Delete Current Branch is dimmed on the default branch and while detached.
+fn lens_draw_branch_menu(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    if g_lens_branch_open == false {
+        return
+    }
+    let x = lens_branch_menu_x(w)
+    let y = lens_branch_menu_y(h)
+    let menu_h = lens_branch_menu_h(h)
+    ui_fill_round_rect(r, x, y, LENS_BRANCH_MENU_W, menu_h, 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_BRANCH_MENU_W, menu_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_branch_item(r, v, x, y, "Create Branch...", "", true)
+    lens_draw_branch_item(r, v, x, y + LENS_MODE_ITEM, "Pull Remote Branch...", "", true)
+    let list_y = lens_branch_list_y(h)
+    lens_draw_branch_separator(r, x, list_y)
+    let rows = lens_branch_rows(h)
+    let count = g_lens_branch_local_count
+    if count == 0 {
+        lens_draw_branch_item(r, v, x, list_y, "No branches", "", false)
+    }
+    g_lens_branch_scroll = clamp_i(g_lens_branch_scroll, 0, lens_branch_scroll_max(h))
+    for n in 0 to rows {
+        let i = g_lens_branch_scroll + n
+        if i < count {
+            let state = ""
+            if g_lens_branch_locals[i] == g_lens_branch {
+                state = "current"
+            }
+            lens_draw_branch_item(r, v, x, list_y + (n as f64) * LENS_MODE_ITEM, g_lens_branch_locals[i], state, true)
+        }
+    }
+    let max = lens_branch_scroll_max(h)
+    if max > 0 {
+        let list_h = LENS_MODE_ITEM * (rows as f64)
+        let thumb_h = clamp(list_h * (rows as f64) / (count as f64), 18.0, list_h)
+        let fraction = (g_lens_branch_scroll as f64) / (max as f64)
+        let bar_x = x + LENS_BRANCH_MENU_W - 5.0
+        ui_fill_rect(r, bar_x, list_y, 2.0, list_h, col_editor_sel(), 0.0)
+        ui_fill_rect(r, bar_x, list_y + (list_h - thumb_h) * fraction, 2.0, thumb_h, col_muted(), 0.0)
+    }
+    let delete_y = lens_branch_delete_y(h)
+    lens_draw_branch_separator(r, x, delete_y)
+    lens_draw_branch_item(r, v, x, delete_y, "Delete Current Branch", "", lens_branch_can_delete())
+}
+
+// Floats over the map like the commit dialog, without a dimming layer.
+fn lens_draw_branch_create(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    if g_lens_branch_create_open == false {
+        return
+    }
+    let x = lens_branch_create_x(w)
+    let y = lens_branch_create_y(h)
+    ui_fill_round_rect(r, x, y, LENS_BRANCH_CREATE_W, LENS_BRANCH_CREATE_H, 4.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_BRANCH_CREATE_W, LENS_BRANCH_CREATE_H, 4.0, 1.0, col_muted(), 0.0)
+    let title = "Create branch"
+    if lens_branch_label() != "" {
+        title = title + " from " + lens_branch_label()
+    }
+    draw_text_clipped(r, x + 16.0, y + 14.0, LENS_BRANCH_CREATE_W - 32.0, 20.0, title, small_px(), col_text())
+    lens_draw_field(r, x + 16.0, y + 42.0, LENS_BRANCH_CREATE_W - 32.0, 30.0, g_lens_branch_create_name, "Branch name")
+    draw_text_clipped(r, x + 16.0, y + 80.0, LENS_BRANCH_CREATE_W - 32.0, 20.0, "enter  create      esc  cancel", small_px(), col_muted())
+    let button_y = y + LENS_BRANCH_CREATE_H - 42.0
+    lens_draw_button(r, v, x + LENS_BRANCH_CREATE_W - 196.0, button_y, 84.0, 26.0, "Cancel", false)
+    lens_draw_button(r, v, x + LENS_BRANCH_CREATE_W - 104.0, button_y, 88.0, 26.0, "Create", true)
+}
+
+// Laid out as the Cmd+P search. A result whose branch is already local says
+// so on its right.
+fn lens_draw_remote(r: ref ui_renderer, v: ref view, w: f64) {
+    if g_lens_remote_open == false {
+        return
+    }
+    lens_remote_filter()
+    let x = lens_search_x(w)
+    let y = lens_search_y()
+    let panel_h = lens_remote_panel_h()
+    ui_fill_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_SEARCH_W, panel_h, 3.0, 1.0, col_muted(), 0.0)
+    lens_draw_field(r, x, y, LENS_SEARCH_W, LENS_SEARCH_INPUT_H, g_lens_remote_query, "Search remote branches")
+    let rows = lens_remote_shown_rows()
+    for n in 0 to rows {
+        let hit = g_lens_remote_scroll + n
+        let ry = y + LENS_SEARCH_INPUT_H + (n as f64) * LENS_SEARCH_ROW_H
+        if hit == g_lens_remote_selected || raw_hit(v, x, ry, LENS_SEARCH_W, LENS_SEARCH_ROW_H) {
+            ui_fill_rect(r, x + 1.0, ry, LENS_SEARCH_W - 2.0, LENS_SEARCH_ROW_H, col_popup_hi(), 0.0)
+        }
+        let ty = ui_text_v_center_y(r, ry, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
+        let remote = g_lens_branch_remotes[g_lens_remote_hits[hit]]
+        let name = lens_branch_remote_name(remote)
+        let state = ""
+        if name == g_lens_branch {
+            state = "current"
+        } else if lens_branch_has(name) {
+            state = "local"
+        }
+        let right = x + LENS_SEARCH_W - 10.0
+        if state != "" {
+            let sw = ui_text_width(r, state, small_px(), FONT_MONO())
+            right = right - sw
+            draw_text_clipped(r, right, ty, sw, LENS_SEARCH_ROW_H, state, small_px(), col_muted())
+            right = right - 16.0
+        }
+        draw_text_clipped(r, x + 10.0, ty, right - x - 10.0, LENS_SEARCH_ROW_H, remote, small_px(), col_text())
+    }
+    let fy = y + LENS_SEARCH_INPUT_H + (rows as f64) * LENS_SEARCH_ROW_H
+    let note = "No remote branches"
+    if lens_remote_fetching() {
+        note = "fetching..."
+    } else if g_lens_branch_remote_count > 0 {
+        note = itos(g_lens_branch_remote_count) + " remote branches"
+        if g_lens_remote_query != "" {
+            note = itos(g_lens_remote_hit_count) + " of " + note
+        }
+    }
+    let ty = ui_text_v_center_y(r, fy, LENS_SEARCH_ROW_H, small_px(), FONT_MONO())
+    draw_text_clipped(r, x + 10.0, ty, LENS_SEARCH_W - 20.0, LENS_SEARCH_ROW_H, note, small_px(), col_muted())
+}
+
+fn lens_draw_branch_popups(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    lens_draw_branch_menu(r, v, w, h)
+    lens_draw_remote(r, v, w)
+    lens_draw_branch_create(r, v, w, h)
+}

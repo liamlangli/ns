@@ -8,6 +8,20 @@ use gpu
 use ui
 use editor
 use workspace
+use task
+
+// Let the Git job running in the background end. The test folder is no
+// repository, so the branch lists a job reads are empty.
+fn settle_jobs() {
+    let deadline = os_time() + 20.0
+    loop g_lens_job_running && os_time() < deadline {
+        sleep(1)
+        lens_job_poll()
+    }
+    assert g_lens_job_running == false
+    g_lens_fetch_next = os_time() + 1000.0
+    g_lens_status_next = os_time() + 1000.0
+}
 
 fn main() {
     let stamp = os_time_us() % 1000000000
@@ -103,6 +117,56 @@ fn main() {
     assert lens_recent_h() == 2.0 * LENS_MODE_ITEM + LENS_RECENT_SEPARATOR_H
     g_lens_file_open = false
     g_lens_recent_open = false
+
+    // The status bar's branch button opens its menu above it, scrolled past a
+    // page of branches; Create Branch and Pull Remote Branch open their own
+    // panels.
+    let branches = ""
+    for i in 0 to 20 {
+        branches = branches + "feature/branch_" + itos(i) + "\n"
+    }
+    let remotes = "origin/HEAD origin/main\norigin/main \norigin/feature/branch_3 \norigin/fresh \n"
+    settle_jobs()
+    lens_branch_apply("feature/branch_3", "", branches + "main\n", remotes)
+    for n in 0 to 2 {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+    assert g_lens_branch_w > 0.0
+    assert lens_branch_button_at(g_lens_branch_x + 2.0, g_lens_branch_y + 14.0)
+    lens_branch_show()
+    settle_jobs()
+    lens_branch_apply("feature/branch_3", "", branches + "main\n", remotes)
+    g_lens_branch_scroll = 5
+    for n in 0 to 2 {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+    assert lens_branch_menu_y(800.0) + lens_branch_menu_h(800.0) == 800.0 - STATUS_BAR_H - 2.0
+    assert lens_branch_scroll_max(800.0) == 21 - LENS_BRANCH_ROWS
+    lens_branch_create_show()
+    g_lens_branch_create_name = "topic"
+    for n in 0 to 2 {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+    assert lens_typing() && lens_menu_blocks()
+    lens_remote_show()
+    assert g_lens_branch_create_open == false
+    settle_jobs()
+    lens_branch_apply("feature/branch_3", "", branches + "main\n", remotes)
+    g_lens_remote_query = "fe"
+    for n in 0 to 2 {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+    assert g_lens_remote_hit_count == 1
+    lens_branch_hide()
+    lens_branch_clear()
 
     outline_hide()
     // With no project open the window draws only its Open Folder button.
