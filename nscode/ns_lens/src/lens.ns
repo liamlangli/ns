@@ -300,14 +300,15 @@ fn lens_relative_path(path: str) str {
     return out
 }
 
+// A change-kinds listing: "K path" per line, K the change's letter.
 fn lens_changes_parse(text: str) {
     let old = g_lens_change_count
     g_lens_change_count = 0
     let start: i32 = 0
     for i in 0 to text.len + 1 {
         if i == text.len || ((text[i] as i32) & 255) == 10 {
-            if i > start && g_lens_change_count < 4096 {
-                g_lens_change_path[g_lens_change_count] = substr(text, start, i - start)
+            if i > start + 2 && g_lens_change_count < 4096 {
+                g_lens_change_path[g_lens_change_count] = substr(text, start + 2, i - start - 2)
                 g_lens_change_count = g_lens_change_count + 1
             }
             start = i + 1

@@ -55,9 +55,17 @@ snaps back to orthographic.
   - **Search** (Cmd+P) matches file names at once and scans file contents on
     a worker; a query without capitals ignores case. Matching leaves are
     outlined, and Enter or a click flies to the file or the matching line.
-  - **Commit** (Cmd+Enter) asks for a one-line message and commits every
-    change under the opened folder, untracked files included. The change view
-    and the open file's diff refresh when it finishes.
+  - **Commit** (Cmd+Enter) asks for a one-line message and lists every
+    changed file under the opened folder, untracked files included, below the
+    message field. Each row has a tick box, a path colored by its Git state
+    (modified amber, added green, deleted red) and that state's letter, `M`,
+    `A` or `D`, at its end; a rename lists its new path as added and its old
+    path as deleted. Clicking a row ticks or unticks it, the box in the title
+    ticks or unticks them all, and the wheel scrolls a list longer than twelve
+    rows. With every file ticked the commit takes the whole work tree; with
+    some unticked it stages the ticked new files and commits only the ticked
+    paths, leaving every other change as it was. The change view and the open
+    file's diff refresh when it finishes.
   - **Push** (no shortcut) pushes the branch, publishing it to `origin` when it has
     no upstream. Git runs without a terminal, so a missing credential fails
     with Git's message instead of waiting on a prompt.
@@ -101,7 +109,10 @@ snaps back to orthographic.
     create an entry in the selected folder (or the selected file's folder), and
     **rename** renames the selected entry. A right click on a row starts a
     rename. Names cannot contain a path separator, and a rename never replaces
-    an existing entry or discards unsaved editor text.
+    an existing entry or discards unsaved editor text. A changed file takes
+    the commit dialog's color for its Git state and ends its row with the
+    state's letter; a folder holding changes does too, with the one kind its
+    changes share or `M` when they differ.
   - **Terminal** runs the user's `$SHELL` as a login shell in the opened
     project root through a pseudo-terminal. It renders the shell's VT output
     (colours, cursor addressing, erase, scroll regions, alternate screens,
@@ -221,7 +232,8 @@ Filesystem changes invalidate the layout and preview cache.
 
 Current limits: the shared filesystem API snapshots at most 4096 entries;
 Lens displays a warning at that limit. Source hashing and range loading run on the worker. Commit, push, fetch, search,
-the change list (for the change view and the commit dialog's count) and the
+the change list (for the change view, the commit dialog's files and the
+outline's Git states) and the
 open file's HEAD check and diff run on workers, so no Git process runs on the
 main thread; initial metadata/layout work currently runs there. The scene is a perspective atlas with billboard cards.
 Syntax highlighting uses NSCode's existing supported language rules.

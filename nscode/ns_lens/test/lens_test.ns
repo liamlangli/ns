@@ -377,7 +377,7 @@ fn main() {
     assert lens_preview_line(0, 1) == ""
     g_workspace_root = "/tmp/ns_lens_mode_demo/"
     assert lens_relative_path("/tmp/ns_lens_mode_demo/src/a.ns") == "src/a.ns"
-    lens_changes_parse("src/a.ns\nREADME.md\n")
+    lens_changes_parse("M src/a.ns\nA README.md\n")
     assert g_lens_change_count == 2
     assert lens_change_has("src/a.ns")
     assert lens_change_has("README.md")
@@ -405,7 +405,7 @@ fn main() {
     assert g_lens_weight[workspace_find("pic.png")] > 0.0
     g_lens_view_mode = LENS_MODE_CHANGE
     g_lens_change_root = mode_root
-    lens_changes_parse("readme.md\npic.png\n")
+    lens_changes_parse("M readme.md\nA pic.png\n")
     lens_rebuild()
     assert lens_file_count() == 2
     assert g_lens_files[workspace_find("a.ns")] == 0

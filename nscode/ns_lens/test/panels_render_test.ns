@@ -62,9 +62,35 @@ fn main() {
     assert g_lens_scope_path == root + "/src"
     assert lens_file_count() == 2
 
-    g_lens_mode_open = false
-    outline_hide()
+    // Git states tint outline rows and end them with a letter; the commit
+    // dialog lists every changed file with a tick box, scrolled past a page.
+    workspace_toggle_entry(workspace_find("nested"))
+    lens_git_states_apply("M src/main.ns\nA src/nested/part.ns\nD gone.ns\n", root)
+    assert lens_entry_git_kind(workspace_find("src")) == LENS_GIT_MODIFIED
+    assert lens_entry_git_kind(workspace_find("nested")) == LENS_GIT_ADDED
+    assert lens_entry_git_kind(workspace_find("part.ns")) == LENS_GIT_ADDED
+    assert lens_entry_git_kind(workspace_find("README.md")) == LENS_GIT_NONE
     terminal_hide()
+    g_lens_mode_open = false
+    g_lens_commit_open = true
+    let listing = ""
+    for i in 0 to 20 {
+        listing = listing + "M src/file_" + itos(i) + ".ns\n"
+    }
+    lens_commit_list(listing + "A src/nested/part.ns\nD gone.ns\n", 0)
+    assert g_lens_commit_changes == 22
+    lens_commit_toggle(3)
+    g_lens_commit_scroll = 4
+    for n in 0 to 2 {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+    assert lens_commit_h() == LENS_COMMIT_LIST_Y + 12.0 * LENS_COMMIT_ROW_H + 76.0
+    assert lens_commit_scroll_max() == 10
+    g_lens_commit_open = false
+
+    outline_hide()
     os_watch_stop()
     ui_renderer_destroy(r)
     view_close(v)

@@ -29,8 +29,13 @@ lit LENS_SEARCH_W = 560.0
 lit LENS_SEARCH_INPUT_H = 30.0
 lit LENS_SEARCH_ROWS = 12
 lit LENS_SEARCH_ROW_H = 22.0
-lit LENS_COMMIT_W = 460.0
-lit LENS_COMMIT_H = 150.0
+lit LENS_COMMIT_W = 560.0
+// The changed files sit under the message field, one tick box per row; past
+// LENS_COMMIT_ROWS the wheel scrolls them.
+lit LENS_COMMIT_LIST_Y = 84.0
+lit LENS_COMMIT_ROW_H = 22.0
+lit LENS_COMMIT_ROWS = 12
+lit LENS_COMMIT_FILES = 4096
 lit LENS_HINT_LINE_H = 15.0
 lit LENS_HINT_COUNT = 8
 lit LENS_ACTIVITY_H = 22.0
@@ -44,8 +49,14 @@ let g_lens_view_block = false
 let g_lens_search_block = false
 let g_lens_commit_open = false
 let g_lens_commit_message = ""
-// Changed files the commit takes, or -1 while the worker lists them.
+// Changed files the dialog lists, or -1 while the worker lists them.
 let g_lens_commit_changes: i32 = 0
+// Each listed file's path relative to the workspace root, its Git state, and
+// whether the commit takes it.
+let g_lens_commit_path = [str](4096)
+let g_lens_commit_kind = [i32](4096)
+let g_lens_commit_checked = [bool](4096)
+let g_lens_commit_scroll: i32 = 0
 
 fn lens_file_item_label(i: i32) str {
     if i == LENS_FILE_OPEN {
@@ -168,31 +179,88 @@ fn lens_commit_show() {
     g_lens_search_open = false
     g_lens_file_open = false
     g_lens_commit_message = ""
-    // The change view's worker lists the files; its poll fills the count.
+    // The change view's worker lists the files; its poll fills the list.
     g_lens_commit_changes = -1
+    g_lens_commit_scroll = 0
     lens_changes_request(false)
 }
 
-// Files in a change listing Git returned with `status`; none when it failed.
-fn lens_commit_count(listed: str, status: i32) i32 {
-    if status != 0 || listed == "" {
-        return 0
+// Take the files of a change-kinds listing Git returned with `status`, each
+// one ticked; none when it failed.
+fn lens_commit_list(listed: str, status: i32) {
+    g_lens_commit_changes = 0
+    g_lens_commit_scroll = 0
+    if status != 0 {
+        return
     }
-    let count = lens_text_lines(listed)
-    if ((listed[listed.len - 1] as i32) & 255) == 10 {
-        count = count - 1
+    let start: i32 = 0
+    for i in 0 to listed.len + 1 {
+        if i == listed.len || ((listed[i] as i32) & 255) == 10 {
+            if i > start + 2 && g_lens_commit_changes < LENS_COMMIT_FILES {
+                let n = g_lens_commit_changes
+                g_lens_commit_kind[n] = lens_git_kind((listed[start] as i32) & 255)
+                g_lens_commit_path[n] = substr(listed, start + 2, i - start - 2)
+                g_lens_commit_checked[n] = true
+                g_lens_commit_changes = n + 1
+            }
+            start = i + 1
+        }
+    }
+}
+
+fn lens_commit_ticked() i32 {
+    let count: i32 = 0
+    for i in 0 to g_lens_commit_changes {
+        if g_lens_commit_checked[i] {
+            count = count + 1
+        }
     }
     return count
 }
 
+// The title's box ticks every file, or unticks them all when all are ticked.
+fn lens_commit_tick_all() {
+    let on = lens_commit_ticked() < g_lens_commit_changes
+    for i in 0 to g_lens_commit_changes {
+        g_lens_commit_checked[i] = on
+    }
+}
+
+fn lens_commit_toggle(i: i32) {
+    if i >= 0 && i < g_lens_commit_changes {
+        g_lens_commit_checked[i] = g_lens_commit_checked[i] == false
+    }
+}
+
+// With every listed file ticked the commit takes the whole work tree, as it
+// did before the list arrived; otherwise only the ticked paths.
 fn lens_commit_submit() {
     let message = lens_one_line(g_lens_commit_message)
     if message == "" {
         g_lens_message = "Enter a commit message"
         return
     }
+    let ticked = lens_commit_ticked()
+    if g_lens_commit_changes > 0 && ticked == 0 {
+        g_lens_message = "Tick the files to commit"
+        return
+    }
     g_lens_commit_open = false
-    lens_commit(message)
+    if g_lens_commit_changes <= 0 || ticked == g_lens_commit_changes {
+        lens_commit(message)
+        return
+    }
+    let added = ""
+    let chosen = ""
+    for i in 0 to g_lens_commit_changes {
+        if g_lens_commit_checked[i] {
+            chosen = chosen + "\n" + g_lens_commit_path[i]
+            if g_lens_commit_kind[i] == LENS_GIT_ADDED {
+                added = added + "\n" + g_lens_commit_path[i]
+            }
+        }
+    }
+    lens_commit_paths(message, added, chosen)
 }
 
 fn lens_file_action(i: i32) {
@@ -343,7 +411,28 @@ fn lens_search_panel_h() f64 {
 
 fn lens_commit_x(w: f64) f64 { return (w - LENS_COMMIT_W) * 0.5 }
 
-fn lens_commit_y(h: f64) f64 { return (h - LENS_COMMIT_H) * 0.5 }
+// One row per listed file up to LENS_COMMIT_ROWS, and one for the note while
+// the list is empty.
+fn lens_commit_shown_rows() i32 {
+    return clamp_i(g_lens_commit_changes, 1, LENS_COMMIT_ROWS)
+}
+
+fn lens_commit_scroll_max() i32 {
+    return clamp_i(g_lens_commit_changes - LENS_COMMIT_ROWS, 0, LENS_COMMIT_FILES)
+}
+
+fn lens_commit_list_h() f64 {
+    return (lens_commit_shown_rows() as f64) * LENS_COMMIT_ROW_H
+}
+
+// Title, message field, file list, then the key hint and the buttons.
+fn lens_commit_h() f64 {
+    return LENS_COMMIT_LIST_Y + lens_commit_list_h() + 76.0
+}
+
+fn lens_commit_y(h: f64) f64 {
+    return clamp((h - lens_commit_h()) * 0.5, LENS_TOP_BAR_H + 4.0, 100000.0)
+}
 
 // Pointer input for the File menu, the search box and the commit dialog,
 // ahead of the map. A click outside an open popup closes it.
@@ -374,16 +463,31 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
         lens_ignore_mouse(v, w, h)
         return
     }
+    if g_lens_commit_open && v.scroll_y != 0.0 && raw_hit(v, lens_commit_x(w), lens_commit_y(h), LENS_COMMIT_W, lens_commit_h()) {
+        let step: i32 = 1
+        if v.scroll_y > 0.0 {
+            step = -1
+        }
+        g_lens_commit_scroll = clamp_i(g_lens_commit_scroll + step, 0, lens_commit_scroll_max())
+        v.scroll_y = 0.0
+    }
     if v.mouse_pressed == false {
         return
     }
     if g_lens_commit_open {
         let x = lens_commit_x(w)
         let y = lens_commit_y(h)
-        if raw_hit(v, x + LENS_COMMIT_W - 196.0, y + LENS_COMMIT_H - 42.0, 84.0, 26.0) {
+        let dialog_h = lens_commit_h()
+        let list_y = y + LENS_COMMIT_LIST_Y
+        if raw_hit(v, x + LENS_COMMIT_W - 196.0, y + dialog_h - 42.0, 84.0, 26.0) {
             g_lens_commit_open = false
-        } else if raw_hit(v, x + LENS_COMMIT_W - 104.0, y + LENS_COMMIT_H - 42.0, 88.0, 26.0) {
+        } else if raw_hit(v, x + LENS_COMMIT_W - 104.0, y + dialog_h - 42.0, 88.0, 26.0) {
             lens_commit_submit()
+        } else if g_lens_commit_changes > 0 && raw_hit(v, x + 8.0, y + 10.0, 30.0, 28.0) {
+            lens_commit_tick_all()
+        } else if g_lens_commit_changes > 0 && raw_hit(v, x + 8.0, list_y, LENS_COMMIT_W - 16.0, lens_commit_list_h()) {
+            // A click anywhere on a file's row ticks or unticks it.
+            lens_commit_toggle(g_lens_commit_scroll + ((g_mouse_y - list_y) / LENS_COMMIT_ROW_H) as i32)
         }
         v.mouse_pressed = false
         return
@@ -634,6 +738,85 @@ fn lens_draw_button(r: ref ui_renderer, v: ref view, x: f64, y: f64, w: f64, h: 
     draw_centered_text(r, x, y, w, h, label, small_px(), col_text())
 }
 
+// A 14 px tick box: a tick when `checked`, a dash when only `partial`.
+fn lens_draw_check(r: ref ui_renderer, x: f64, y: f64, checked: bool, partial: bool, color: u32) {
+    ui_stroke_round_rect(r, x, y, 14.0, 14.0, 2.0, 1.0, color, 0.0)
+    if checked {
+        ui_stroke_line(r, x + 3.0, y + 7.5, x + 6.0, y + 10.5, 1.5, color, 0.5)
+        ui_stroke_line(r, x + 6.0, y + 10.5, x + 11.0, y + 3.5, 1.5, color, 0.5)
+    } else if partial {
+        ui_fill_rect(r, x + 3.5, y + 6.25, 7.0, 1.5, color, 0.0)
+    }
+}
+
+fn lens_commit_title() str {
+    let count = g_lens_commit_changes
+    if count < 0 {
+        return "Commit changes"
+    }
+    let noun = " changed files"
+    if count == 1 {
+        noun = " changed file"
+    }
+    let ticked = lens_commit_ticked()
+    if ticked < count {
+        return "Commit " + itos(ticked) + " of " + itos(count) + noun
+    }
+    return "Commit " + itos(count) + noun
+}
+
+// One listed file: its tick box, its path in its Git state's color, dimmed
+// while unticked, and the state's letter at the end of the row.
+fn lens_draw_commit_row(r: ref ui_renderer, v: ref view, x: f64, y: f64, i: i32) {
+    let row_w = LENS_COMMIT_W - 16.0
+    if raw_hit(v, x + 8.0, y, row_w, LENS_COMMIT_ROW_H) {
+        ui_fill_rect(r, x + 8.0, y, row_w, LENS_COMMIT_ROW_H, col_popup_hi(), 0.0)
+    }
+    let kind = g_lens_commit_kind[i]
+    let color = col_git_kind(kind)
+    let box = col_text()
+    if g_lens_commit_checked[i] == false {
+        color = (color & 0x00ffffffu) | 0x80000000u
+        box = col_muted()
+    }
+    lens_draw_check(r, x + 16.0, y + 4.0, g_lens_commit_checked[i], false, box)
+    let ty = ui_text_v_center_y(r, y, LENS_COMMIT_ROW_H, small_px(), FONT_MONO())
+    let letter = lens_git_letter(kind)
+    let lw = ui_text_width(r, letter, small_px(), FONT_MONO())
+    let right = x + LENS_COMMIT_W - 24.0
+    draw_text_clipped(r, x + 40.0, ty, right - lw - 12.0 - (x + 40.0), LENS_COMMIT_ROW_H, g_lens_commit_path[i], small_px(), color)
+    draw_text_clipped(r, right - lw, ty, lw, LENS_COMMIT_ROW_H, letter, small_px(), color)
+}
+
+fn lens_draw_commit_list(r: ref ui_renderer, v: ref view, x: f64, y: f64) {
+    let count = g_lens_commit_changes
+    if count <= 0 {
+        let note = "No changed files"
+        if count < 0 {
+            note = "Listing changed files..."
+        }
+        let ty = ui_text_v_center_y(r, y, LENS_COMMIT_ROW_H, small_px(), FONT_MONO())
+        draw_text_clipped(r, x + 16.0, ty, LENS_COMMIT_W - 32.0, LENS_COMMIT_ROW_H, note, small_px(), col_muted())
+        return
+    }
+    g_lens_commit_scroll = clamp_i(g_lens_commit_scroll, 0, lens_commit_scroll_max())
+    for n in 0 to lens_commit_shown_rows() {
+        let i = g_lens_commit_scroll + n
+        if i < count {
+            lens_draw_commit_row(r, v, x, y + (n as f64) * LENS_COMMIT_ROW_H, i)
+        }
+    }
+    let max = lens_commit_scroll_max()
+    if max > 0 {
+        let list_h = lens_commit_list_h()
+        let thumb_h = clamp(list_h * (LENS_COMMIT_ROWS as f64) / (count as f64), 18.0, list_h)
+        let fraction = (g_lens_commit_scroll as f64) / (max as f64)
+        let bar_x = x + LENS_COMMIT_W - 12.0
+        ui_fill_rect(r, bar_x, y, 2.0, list_h, col_editor_sel(), 0.0)
+        ui_fill_rect(r, bar_x, y + (list_h - thumb_h) * fraction, 2.0, thumb_h, col_muted(), 0.0)
+    }
+}
+
 // The commit dialog floats over the map on the shared popup background; it
 // keeps no dimming layer, so the code behind it stays visible.
 fn lens_draw_commit(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
@@ -642,19 +825,22 @@ fn lens_draw_commit(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     }
     let x = lens_commit_x(w)
     let y = lens_commit_y(h)
-    ui_fill_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, col_popup_bg(), 0.0)
-    ui_stroke_round_rect(r, x, y, LENS_COMMIT_W, LENS_COMMIT_H, 4.0, 1.0, col_muted(), 0.0)
-    let title = "Commit " + itos(g_lens_commit_changes) + " changed files"
-    if g_lens_commit_changes < 0 {
-        title = "Commit changes"
-    } else if g_lens_commit_changes == 1 {
-        title = "Commit 1 changed file"
+    let dialog_h = lens_commit_h()
+    ui_fill_round_rect(r, x, y, LENS_COMMIT_W, dialog_h, 4.0, col_popup_bg(), 0.0)
+    ui_stroke_round_rect(r, x, y, LENS_COMMIT_W, dialog_h, 4.0, 1.0, col_muted(), 0.0)
+    let title_x = x + 16.0
+    if g_lens_commit_changes > 0 {
+        let ticked = lens_commit_ticked()
+        lens_draw_check(r, x + 16.0, y + 17.0, ticked == g_lens_commit_changes, ticked > 0, col_text())
+        title_x = x + 40.0
     }
-    draw_text_clipped(r, x + 16.0, y + 14.0, LENS_COMMIT_W - 32.0, 20.0, title, small_px(), col_text())
+    draw_text_clipped(r, title_x, y + 14.0, x + LENS_COMMIT_W - 16.0 - title_x, 20.0, lens_commit_title(), small_px(), col_text())
     lens_draw_field(r, x + 16.0, y + 42.0, LENS_COMMIT_W - 32.0, 30.0, g_lens_commit_message, "Commit message")
-    draw_text_clipped(r, x + 16.0, y + 82.0, LENS_COMMIT_W - 32.0, 20.0, "enter  commit      esc  cancel", small_px(), col_muted())
-    lens_draw_button(r, v, x + LENS_COMMIT_W - 196.0, y + LENS_COMMIT_H - 42.0, 84.0, 26.0, "Cancel", false)
-    lens_draw_button(r, v, x + LENS_COMMIT_W - 104.0, y + LENS_COMMIT_H - 42.0, 88.0, 26.0, "Commit", true)
+    let list_y = y + LENS_COMMIT_LIST_Y
+    lens_draw_commit_list(r, v, x, list_y)
+    draw_text_clipped(r, x + 16.0, list_y + lens_commit_list_h() + 8.0, LENS_COMMIT_W - 32.0, 20.0, "enter  commit      esc  cancel      click  tick a file", small_px(), col_muted())
+    lens_draw_button(r, v, x + LENS_COMMIT_W - 196.0, y + dialog_h - 42.0, 84.0, 26.0, "Cancel", false)
+    lens_draw_button(r, v, x + LENS_COMMIT_W - 104.0, y + dialog_h - 42.0, 88.0, 26.0, "Commit", true)
 }
 
 // Controls, one per line, stacked above the activity row.

@@ -272,9 +272,87 @@ fn check_change_list(base: str) {
     assert g_lens_change_running
     finish_changes()
     assert g_lens_commit_changes == 2
+    assert g_lens_commit_path[0] == "kept.ns" && g_lens_commit_kind[0] == LENS_GIT_MODIFIED
+    assert g_lens_commit_path[1] == "fresh.ns" && g_lens_commit_kind[1] == LENS_GIT_ADDED
+    assert g_lens_commit_checked[0] && g_lens_commit_checked[1]
+    // The same listing gives the outline its states.
+    assert g_lens_git_states_root == root
+    assert lens_entry_git_kind(workspace_find("fresh.ns")) == LENS_GIT_ADDED
+    assert lens_entry_git_kind(workspace_find("kept.ns")) == LENS_GIT_MODIFIED
+    // Committing only the ticked file leaves the other one changed.
+    g_lens_commit_message = "only kept"
+    lens_commit_toggle(1)
+    assert lens_commit_ticked() == 1
+    assert lens_commit_title() == "Commit 1 of 2 changed files"
+    lens_commit_submit()
+    assert g_lens_commit_open == false
+    finish_job()
+    assert g_lens_message == "commit done"
+    assert lens_last_line(git(root, "log\n-1\n--format=%s")) == "only kept"
+    assert os_git_change_kinds(root) == "A fresh.ns\n"
+    // Nothing ticked keeps the dialog open and says why.
+    lens_commit_show()
+    finish_changes()
+    assert g_lens_commit_changes == 1
+    lens_commit_tick_all()
+    assert lens_commit_ticked() == 0
+    g_lens_commit_message = "none"
+    lens_commit_submit()
+    assert g_lens_commit_open && g_lens_message == "Tick the files to commit"
+    lens_commit_tick_all()
+    assert lens_commit_ticked() == 1
     g_lens_commit_open = false
-    assert lens_commit_count("", 0) == 0 && lens_commit_count("a.ns\n", 128) == 0
-    assert lens_commit_count("a.ns\nb.ns\n", 0) == 2 && lens_commit_count("a.ns", 0) == 1
+    lens_commit_list("M a.ns\n", 128)
+    assert g_lens_commit_changes == 0
+    lens_commit_list("M a.ns\nD b/c.ns\nA d.ns", 0)
+    assert g_lens_commit_changes == 3
+    assert g_lens_commit_kind[1] == LENS_GIT_DELETED && g_lens_commit_path[1] == "b/c.ns"
+    assert g_lens_commit_path[2] == "d.ns"
+}
+
+// A partial commit stages new files, then commits exactly the ticked paths:
+// renames, staged and unstaged deletions, and names that look like patterns.
+fn check_partial_commit(base: str) {
+    let root = base + "/partial"
+    make_repo(root)
+    os_make_dirs(root + "/sub")
+    assert os_write_file_atomic(root + "/keep.txt", "a\n") != 0
+    assert os_write_file_atomic(root + "/gone.txt", "b\n") != 0
+    assert os_write_file_atomic(root + "/staged_gone.txt", "c\n") != 0
+    assert os_write_file_atomic(root + "/old.txt", "d\n") != 0
+    assert os_write_file_atomic(root + "/sub/mod.txt", "e\n") != 0
+    assert os_write_file_atomic(root + "/we*ird.txt", "f\n") != 0
+    assert os_write_file_atomic(root + "/weird.txt", "g\n") != 0
+    git(root, "add\n-A")
+    git(root, "commit\n-q\n-m\nbase")
+    assert os_write_file_atomic(root + "/keep.txt", "a2\n") != 0
+    assert os_rename_path(root + "/gone.txt", base + "/gone.txt") != 0
+    git(root, "rm\n-q\nstaged_gone.txt")
+    git(root, "mv\nold.txt\nnew.txt")
+    assert os_write_file_atomic(root + "/sub/mod.txt", "e2\n") != 0
+    assert os_write_file_atomic(root + "/sub/fresh.txt", "n\n") != 0
+    assert os_write_file_atomic(root + "/we*ird.txt", "f2\n") != 0
+    assert os_write_file_atomic(root + "/weird.txt", "g2\n") != 0
+    let listed = os_git_change_kinds(root)
+    assert os_git_status() == 0
+    assert listed == "D gone.txt\nM keep.txt\nA new.txt\nD old.txt\nD staged_gone.txt\nM sub/mod.txt\nM we*ird.txt\nM weird.txt\nA sub/fresh.txt\n"
+    // Listed from a folder below the repository root, paths start there.
+    assert os_git_change_kinds(root + "/sub") == "M mod.txt\nA fresh.txt\n"
+    lens_git_states_apply(listed, root)
+    assert g_lens_git_states["sub"] == LENS_GIT_MODIFIED
+    assert g_lens_git_states["sub/fresh.txt"] == LENS_GIT_ADDED
+    lens_git_states_apply("A a/b/x.ns\nA a/y.ns\nD a/b/z.ns\nD c/w.ns\n", root)
+    assert g_lens_git_states["a"] == LENS_GIT_MODIFIED && g_lens_git_states["a/b"] == LENS_GIT_MODIFIED
+    assert g_lens_git_states["c"] == LENS_GIT_DELETED && has(g_lens_git_states, "a/b/x") == false
+    let steps = lens_commit_paths_steps("part\nial", "\nnew.txt\nsub/fresh.txt", "\ngone.txt\nstaged_gone.txt\nnew.txt\nold.txt\nsub/fresh.txt\nwe*ird.txt")
+    assert steps.len == 2
+    assert steps[0] == "--literal-pathspecs\nadd\n-A\n--\nnew.txt\nsub/fresh.txt"
+    assert substr(steps[1], 0, 45) == "--literal-pathspecs\ncommit\n-q\n-m\npart ial\n--\n"
+    for step in steps {
+        git(root, step)
+    }
+    assert os_git_change_kinds(root) == "M keep.txt\nM sub/mod.txt\nM weird.txt\n"
+    assert lens_commit_paths_steps("m", "", "\nkeep.txt").len == 1
 }
 
 fn finish_head() {
@@ -391,6 +469,7 @@ fn main() {
     check_git(base)
     check_search_scan(base)
     check_change_list(base)
+    check_partial_commit(base)
     check_head(base)
     print("vcs_test: passed\n")
 }

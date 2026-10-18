@@ -68,6 +68,8 @@ const char *os_git_base(const char *path, i32 max_bytes);
 const char *os_git_diff_text(const char *before, const char *after, i32 max_bytes);
 // Newline-separated paths relative to `path`. Empty with status 0 is clean.
 const char *os_git_changes(const char *path);
+// The same listing with each line led by "M ", "A " or "D ".
+const char *os_git_change_kinds(const char *path);
 const char *os_git_run(const char *folder, const char *args);
 i32 os_git_progress(void);
 const char *os_read_file(const char *path);

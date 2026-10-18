@@ -238,6 +238,7 @@ extern const char * os_git_revision(const char *);
 extern const char * os_git_base(const char *, i32);
 extern const char * os_git_diff_text(const char *, const char *, i32);
 extern const char * os_git_changes(const char *);
+extern const char * os_git_change_kinds(const char *);
 extern const char * os_git_run(const char *, const char *);
 extern i32 os_git_progress(void);
 extern const char * os_read_file(const char *);
@@ -2922,6 +2923,7 @@ static const ns_embedded_entry ns_embedded_entries[] = {
     { "os_file_size", (void *)os_file_size, ns_embedded_sig77, ns_embedded_cpu77 },
     { "os_file_text_metrics", (void *)os_file_text_metrics, ns_embedded_sig66, ns_embedded_cpu66 },
     { "os_git_base", (void *)os_git_base, ns_embedded_sig78, ns_embedded_cpu78 },
+    { "os_git_change_kinds", (void *)os_git_change_kinds, ns_embedded_sig75, ns_embedded_cpu75 },
     { "os_git_changes", (void *)os_git_changes, ns_embedded_sig75, ns_embedded_cpu75 },
     { "os_git_diff_text", (void *)os_git_diff_text, ns_embedded_sig79, ns_embedded_cpu79 },
     { "os_git_progress", (void *)os_git_progress, ns_embedded_sig13, ns_embedded_cpu13 },

@@ -1468,10 +1468,38 @@ static const char *os_git_capture(char *const argv[], i32 limit, int *exit_statu
 
 // Porcelain v1 -z: "XY PATH\0", or "XY TO\0FROM\0" when either status is R/C.
 // NUL separators cannot cross the FFI string boundary, so the result is one
-// path per line, relative to `path`. A rename or copy contributes its new path.
+// path per line, relative to `path`. A rename or copy contributes its new path;
+// with `kinds`, each line starts with "M ", "A " or "D ", and a rename also
+// lists its old path as deleted.
 static _Thread_local char *os_git_changes_text;
 
-const char *os_git_changes(const char *path) {
+// Append raw[start, end) minus the workspace prefix as one line, preceded by
+// "K " when `kind` is set. Paths outside the prefix or holding a line break
+// are skipped; false means the buffer is full.
+static ns_bool os_git_changes_line(char *out, size_t *used, size_t cap, const char *raw, size_t start, size_t end,
+                                   const char *prefix, size_t prefix_len, char kind) {
+    if (end <= start) return true;
+    if (prefix_len) {
+        if (end - start < prefix_len || memcmp(raw + start, prefix, prefix_len) != 0) return true;
+        start += prefix_len;
+    }
+    if (end <= start) return true;
+    for (size_t k = start; k < end; k++) if (raw[k] == '\n' || raw[k] == '\r') return true;
+    size_t n = end - start;
+    size_t head = kind ? 2 : 0;
+    if (*used + head + n + 1 > cap) return false;
+    if (kind) {
+        out[(*used)++] = kind;
+        out[(*used)++] = ' ';
+    }
+    memcpy(out + *used, raw + start, n);
+    for (size_t k = *used; k < *used + n; k++) if (out[k] == '\\') out[k] = '/';
+    *used += n;
+    out[(*used)++] = '\n';
+    return true;
+}
+
+static const char *os_git_changes_list(const char *path, ns_bool kinds) {
     free(os_git_changes_text);
     os_git_changes_text = NULL;
     if (!path || !path[0]) { os_git_last_status = -1; return ""; }
@@ -1494,11 +1522,14 @@ const char *os_git_changes(const char *path) {
     const char *raw = os_git_capture(args, 1048576, &status);
     if (status != 0 || !raw) return "";
     size_t len = os_git_output_len;
-    char *out = (char *)malloc(len + 1);
+    // A rename listed with kinds takes one byte more than its raw record.
+    size_t cap = len * 2 + 1;
+    char *out = (char *)malloc(cap);
     if (!out) { os_git_last_status = -1; return ""; }
     size_t used = 0;
     size_t i = 0;
-    while (i + 3 <= len) {
+    ns_bool room = true;
+    while (room && i + 3 <= len) {
         char x = raw[i];
         char y = raw[i + 1];
         if (raw[i + 2] != ' ') break;
@@ -1508,31 +1539,34 @@ const char *os_git_changes(const char *path) {
         while (i < len && raw[i] != '\0') i++;
         size_t end = i;
         if (i < len) i++;
-        if (x == 'R' || x == 'C' || y == 'R' || y == 'C') {
+        size_t from_start = i;
+        size_t from_end = i;
+        ns_bool moved = x == 'R' || x == 'C' || y == 'R' || y == 'C';
+        if (moved) {
             while (i < len && raw[i] != '\0') i++;
+            from_end = i;
             if (i < len) i++;
         }
-        if (end <= start) continue;
-        if (prefix_len) {
-            if ((size_t)(end - start) < prefix_len || memcmp(raw + start, prefix, prefix_len) != 0) continue;
-            start += prefix_len;
+        char kind = 0;
+        if (kinds) {
+            if (x == '?' || moved || (x == 'A' && y != 'D')) kind = 'A';
+            else if (x == 'D' || y == 'D') kind = 'D';
+            else kind = 'M';
         }
-        if (end <= start) continue;
-        ns_bool broken = false;
-        for (size_t k = start; k < end; k++) if (raw[k] == '\n' || raw[k] == '\r') broken = true;
-        if (broken) continue;
-        size_t n = end - start;
-        if (used + n + 1 > len) break;
-        memcpy(out + used, raw + start, n);
-        for (size_t k = used; k < used + n; k++) if (out[k] == '\\') out[k] = '/';
-        used += n;
-        out[used++] = '\n';
+        room = os_git_changes_line(out, &used, cap - 1, raw, start, end, prefix, prefix_len, kind);
+        // A copy keeps its source; a rename removes it.
+        if (room && kinds && (x == 'R' || y == 'R'))
+            room = os_git_changes_line(out, &used, cap - 1, raw, from_start, from_end, prefix, prefix_len, 'D');
     }
     out[used] = 0;
     os_git_changes_text = out;
     os_git_last_status = 0;
     return out;
 }
+
+const char *os_git_changes(const char *path) { return os_git_changes_list(path, false); }
+
+const char *os_git_change_kinds(const char *path) { return os_git_changes_list(path, true); }
 
 static ns_bool os_git_path(const char *path, char parent[OS_MAX_PATH], const char **name) {
     if (!path || !path[0] || strlen(path) >= OS_MAX_PATH) return false;
@@ -1610,7 +1644,8 @@ static i32 os_git_progress_value = -1;
 i32 os_git_progress(void) { return __atomic_load_n(&os_git_progress_value, __ATOMIC_RELAXED); }
 
 #define OS_GIT_RUN_KEEP 65536
-#define OS_GIT_RUN_ARGS 64
+// Enough for a commit that names each of its paths.
+#define OS_GIT_RUN_ARGS 8192
 static _Thread_local char *os_git_run_text;
 
 // The environment plus GIT_TERMINAL_PROMPT=0, so a missing credential fails
@@ -1653,7 +1688,8 @@ const char *os_git_run(const char *folder, const char *args) {
     if (!folder || !folder[0] || !args) return "";
     char *list = strdup(args);
     if (!list) return "";
-    char *argv[OS_GIT_RUN_ARGS + 4];
+    char **argv = malloc((OS_GIT_RUN_ARGS + 4) * sizeof(char *));
+    if (!argv) { free(list); return ""; }
     int argc = 0;
     argv[argc++] = "git";
     argv[argc++] = "-C";
@@ -1662,7 +1698,7 @@ const char *os_git_run(const char *folder, const char *args) {
         char *end = strchr(p, '\n');
         if (end) *end = 0;
         if (*p) {
-            if (argc >= OS_GIT_RUN_ARGS + 3) { free(list); return ""; }
+            if (argc >= OS_GIT_RUN_ARGS + 3) { free(argv); free(list); return ""; }
             argv[argc++] = p;
         }
         if (!end) break;
@@ -1671,7 +1707,7 @@ const char *os_git_run(const char *folder, const char *args) {
     argv[argc] = NULL;
     char **env = os_git_run_env();
     int pipes[2];
-    if (!env || pipe(pipes) != 0) { free(env); free(list); return ""; }
+    if (!env || pipe(pipes) != 0) { free(env); free(argv); free(list); return ""; }
     fcntl(pipes[0], F_SETFD, FD_CLOEXEC);
     fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
     posix_spawn_file_actions_t actions;
@@ -1694,6 +1730,7 @@ const char *os_git_run(const char *folder, const char *args) {
     posix_spawn_file_actions_destroy(&actions);
     close(pipes[1]);
     free(env);
+    free(argv);
     free(list);
     if (error) { close(pipes[0]); return ""; }
     // Keep only the tail: the last lines carry Git's result or error.
@@ -1733,4 +1770,5 @@ const char *os_git_diff_text(const char *before, const char *after, i32 max_byte
     ns_unused(before); ns_unused(after); ns_unused(max_bytes); return "";
 }
 const char *os_git_changes(const char *path) { ns_unused(path); return ""; }
+const char *os_git_change_kinds(const char *path) { ns_unused(path); return ""; }
 #endif

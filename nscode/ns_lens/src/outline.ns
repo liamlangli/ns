@@ -863,7 +863,21 @@ fn outline_draw_row(r: ref ui_renderer, v: ref view, index: i32, row: i32) {
     } else if index == g_lens_scope {
         color = col_accent()
     }
-    draw_text_clipped(r, button_x + 20.0, ui_text_v_center_y(r, y, OUTLINE_ROW_H, small_px(), FONT_MONO()), g_outline_w - (button_x - x) - 30.0, OUTLINE_ROW_H, name, small_px(), color)
+    // A changed file, or a folder holding changes, takes its Git state's
+    // color, as in the commit dialog, and ends its row with the state's
+    // letter; the row highlight still marks the selection.
+    let ty = ui_text_v_center_y(r, y, OUTLINE_ROW_H, small_px(), FONT_MONO())
+    let name_w = g_outline_w - (button_x - x) - 30.0
+    let kind = lens_entry_git_kind(index)
+    if kind != LENS_GIT_NONE {
+        color = col_git_kind(kind)
+        let letter = lens_git_letter(kind)
+        let lw = ui_text_width(r, letter, small_px(), FONT_MONO())
+        let lx = x + g_outline_w - 16.0 - lw
+        draw_text_clipped(r, lx, ty, lw, OUTLINE_ROW_H, letter, small_px(), color)
+        name_w = lx - 8.0 - (button_x + 20.0)
+    }
+    draw_text_clipped(r, button_x + 20.0, ty, name_w, OUTLINE_ROW_H, name, small_px(), color)
 }
 
 fn outline_draw_prompt(r: ref ui_renderer, v: ref view) {
