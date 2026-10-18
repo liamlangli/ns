@@ -3267,7 +3267,7 @@ static void ns_build_write_strtab_c(ns_ssa_module *ssa, ns_str path) {
             if (ch == '\\' || ch == '"') fprintf(f, "\\%c", ch);
             else if (ch == '\n') fputs("\\n", f);
             else if (ch == '\t') fputs("\\t", f);
-            else if (ch < 32 || ch > 126) fprintf(f, "\\x%02x", ch);
+            else if (ch < 32 || ch > 126) fprintf(f, "\\%03o", ch); /* octal: at most 3 digits, so a following hex digit never extends it */
             else fputc(ch, f);
         }
         fprintf(f, "\",\n");

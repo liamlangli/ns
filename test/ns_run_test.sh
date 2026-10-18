@@ -381,6 +381,24 @@ if [ "$(uname -s)" = "Darwin" ]; then
         exit 1
     fi
 
+    # A non-ASCII byte directly before a hex digit must not merge into one
+    # out-of-range C escape in the generated string table.
+    printf '%s\n' \
+        'use std' \
+        'fn main() {' \
+        '    print("微暗。4 米|é5|中abcF\n")' \
+        '}' > "$build_tmp/utf8.ns"
+    "$ns" build --exe "$build_tmp/utf8.ns" -o "$build_tmp/utf8" > "$build_tmp/utf8.log" 2>&1 || {
+        cat "$build_tmp/utf8.log" >&2
+        printf '%s\n' 'FAIL: ns build --exe failed on UTF-8 followed by a hex digit.' >&2
+        exit 1
+    }
+    utf8_out=$("$build_tmp/utf8")
+    if [ "$utf8_out" != "微暗。4 米|é5|中abcF" ]; then
+        printf 'FAIL: compiled UTF-8 string printed %s\n' "$utf8_out" >&2
+        exit 1
+    fi
+
     mkdir -p "$build_tmp/app"
     printf '%s\n' \
         'schema = "ns.mod/v2"' \
