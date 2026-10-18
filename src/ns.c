@@ -6538,6 +6538,203 @@ static int ns_cstr_cmp(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
+// Run the discovered entries in directory order, one at a time.
+static void ns_exec_test_entries(ns_str dir, char **names, i32 count) {
+    i32 passed = 0, failed = 0;
+    for (i32 i = 0; i < count; i++) {
+        ns_str file = ns_path_join(dir, ns_str_cstr(names[i]));
+        printf("== %s ==\n", names[i]);
+        i32 code = ns_run_test_file(file);
+        if (code == 0) { passed++; } else { failed++; }
+        printf("-- %s: %s --\n", names[i], code == 0 ? "PASS" : "FAIL");
+        free(names[i]);
+    }
+    ns_array_free(names);
+
+    printf("\nsuites: %d passed, %d failed\n", passed, failed);
+    if (failed != 0) exit(1);
+}
+
+#if !defined(_WIN32)
+// Every entry is a fresh VM over read-only project inputs, so independent
+// entries can run at once. `NS_TEST_JOBS` overrides the host's logical CPU
+// count, and `NS_TEST_JOBS=1` keeps the serial runner for debugging.
+static i32 ns_test_worker_count(i32 count) {
+    const char *requested = getenv("NS_TEST_JOBS");
+    i32 workers = 0;
+    if (requested != ns_null && requested[0] != '\0') {
+        workers = atoi(requested);
+    } else {
+        long online = sysconf(_SC_NPROCESSORS_ONLN);
+        workers = online > 0 ? (i32)online : 1;
+    }
+    if (workers < 1) workers = 1;
+    if (workers > count) workers = count;
+    return workers;
+}
+
+typedef struct ns_test_job_t {
+    pid_t pid;
+    i32 index;
+} ns_test_job;
+
+// Fork one entry with stdout and stderr on `capture`. Only the parent returns.
+static pid_t ns_test_spawn(ns_str file, int capture) {
+    fflush(ns_null);
+    pid_t pid = fork();
+    if (pid != 0) return pid;
+    if (dup2(capture, STDOUT_FILENO) < 0 || dup2(capture, STDERR_FILENO) < 0) _exit(1);
+    i32 code = ns_run_test_file(file);
+    fflush(ns_null);
+    _exit(code == 0 ? 0 : 1);
+}
+
+// Run one entry in this process while still writing to its capture file, for
+// when the host refuses to fork. Restores the ordinary output afterwards.
+static i32 ns_test_run_captured(ns_str file, int capture) {
+    fflush(ns_null);
+    int out = dup(STDOUT_FILENO);
+    int err = dup(STDERR_FILENO);
+    if (dup2(capture, STDOUT_FILENO) < 0 || dup2(capture, STDERR_FILENO) < 0) {
+        if (out >= 0) close(out);
+        if (err >= 0) close(err);
+        return ns_run_test_file(file);
+    }
+    i32 code = ns_run_test_file(file);
+    fflush(ns_null);
+    if (out >= 0) {
+        dup2(out, STDOUT_FILENO);
+        close(out);
+    }
+    if (err >= 0) {
+        dup2(err, STDERR_FILENO);
+        close(err);
+    }
+    return code;
+}
+
+// Run entries concurrently and replay their captured output in directory
+// order, so a parallel run reads like the serial one. A fresh process also
+// gives each entry a fresh VM and ns_rt heap.
+static void ns_exec_test_dir_parallel(ns_str dir, char **names, i32 count, i32 workers) {
+    ns_test_job *jobs = (ns_test_job *)calloc((szt)workers, sizeof(ns_test_job));
+    FILE **captures = (FILE **)calloc((szt)count, sizeof(FILE *));
+    i32 *codes = (i32 *)calloc((szt)count, sizeof(i32));
+    ns_bool *retried = (ns_bool *)calloc((szt)count, sizeof(ns_bool));
+    if (jobs == ns_null || captures == ns_null || codes == ns_null) {
+        free(jobs);
+        free(captures);
+        free(codes);
+        free(retried);
+        ns_exec_test_entries(dir, names, count);
+        return;
+    }
+    for (i32 i = 0; i < count; i++) {
+        codes[i] = 1;
+        captures[i] = tmpfile();
+        if (captures[i] == ns_null) {
+            for (i32 j = 0; j < i; j++) fclose(captures[j]);
+            free(jobs);
+            free(captures);
+            free(codes);
+            free(retried);
+            ns_exec_test_entries(dir, names, count);
+            return;
+        }
+    }
+
+    i32 next = 0, active = 0;
+    while (next < count || active > 0) {
+        while (next < count && active < workers) {
+            ns_str file = ns_path_join(dir, ns_str_cstr(names[next]));
+            pid_t pid = ns_test_spawn(file, fileno(captures[next]));
+            if (pid > 0) {
+                jobs[active].pid = pid;
+                jobs[active].index = next;
+                active++;
+            } else {
+                // Resource pressure should not fail a valid run; finish this
+                // entry in the parent and keep the remaining ones parallel.
+                codes[next] = ns_test_run_captured(file, fileno(captures[next]));
+            }
+            ns_str_free(file);
+            next++;
+        }
+
+        if (active > 0) {
+            i32 status = 0;
+            pid_t done;
+            do {
+                done = wait(&status);
+            } while (done < 0 && errno == EINTR);
+            if (done < 0) {
+                for (i32 i = 0; i < active; i++) codes[jobs[i].index] = 1;
+                active = 0;
+                continue;
+            }
+            for (i32 i = 0; i < active; i++) {
+                if (jobs[i].pid != done) continue;
+                codes[jobs[i].index] = (WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : 1;
+                jobs[i] = jobs[active - 1];
+                active--;
+                break;
+            }
+        }
+    }
+
+    // Native GPU entries talk to a host compiler service; several at once can
+    // make that service refuse the first connection. A failed entry gets one
+    // serial retry, so a real assertion failure fails again while transient
+    // contention does not fail the suite. The retry runs in its own process
+    // because a failing entry may exit after reporting the error.
+    if (retried != ns_null) {
+        for (i32 i = 0; i < count; i++) {
+            if (codes[i] == 0) continue;
+            FILE *retry = tmpfile();
+            if (retry == ns_null) continue;
+            ns_str file = ns_path_join(dir, ns_str_cstr(names[i]));
+            pid_t pid = ns_test_spawn(file, fileno(retry));
+            ns_str_free(file);
+            if (pid <= 0) {
+                fclose(retry);
+                continue;
+            }
+            i32 status = 0;
+            pid_t done;
+            do {
+                done = waitpid(pid, &status, 0);
+            } while (done < 0 && errno == EINTR);
+            codes[i] = (done == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0) ? 0 : 1;
+            fclose(captures[i]);
+            captures[i] = retry;
+            retried[i] = true;
+        }
+    }
+
+    i32 passed = 0, failed = 0;
+    for (i32 i = 0; i < count; i++) {
+        printf("== %s ==\n", names[i]);
+        if (retried != ns_null && retried[i]) printf("[rerun serially after a failed parallel attempt]\n");
+        rewind(captures[i]);
+        char buffer[16384];
+        szt n;
+        while ((n = fread(buffer, 1, sizeof(buffer), captures[i])) > 0) fwrite(buffer, 1, n, stdout);
+        fclose(captures[i]);
+        if (codes[i] == 0) { passed++; } else { failed++; }
+        printf("-- %s: %s --\n", names[i], codes[i] == 0 ? "PASS" : "FAIL");
+        free(names[i]);
+    }
+    free(jobs);
+    free(captures);
+    free(codes);
+    free(retried);
+    ns_array_free(names);
+
+    printf("\nsuites: %d passed, %d failed\n", passed, failed);
+    if (failed != 0) exit(1);
+}
+#endif
+
 // Discover and run every `*_test.ns` file directly under `dir`.
 static void ns_exec_test_dir(ns_str dir) {
     char **names = ns_null;
@@ -6569,19 +6766,14 @@ static void ns_exec_test_dir(ns_str dir) {
     }
     qsort(names, count, sizeof(char *), ns_cstr_cmp);
 
-    i32 passed = 0, failed = 0;
-    for (i32 i = 0; i < count; i++) {
-        ns_str file = ns_path_join(dir, ns_str_cstr(names[i]));
-        printf("== %s ==\n", names[i]);
-        i32 code = ns_run_test_file(file);
-        if (code == 0) { passed++; } else { failed++; }
-        printf("-- %s: %s --\n", names[i], code == 0 ? "PASS" : "FAIL");
-        free(names[i]);
+#if !defined(_WIN32)
+    i32 workers = ns_test_worker_count(count);
+    if (workers > 1) {
+        ns_exec_test_dir_parallel(dir, names, count, workers);
+        return;
     }
-    ns_array_free(names);
-
-    printf("\nsuites: %d passed, %d failed\n", passed, failed);
-    if (failed != 0) exit(1);
+#endif
+    ns_exec_test_entries(dir, names, count);
 }
 
 // Resolve a project directory to the conventional test directory beside its
