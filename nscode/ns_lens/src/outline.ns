@@ -16,6 +16,10 @@ lit OUTLINE_FOOTER_H = 22.0
 lit OUTLINE_PROMPT_H = 118.0
 lit OUTLINE_MIN_W = 300.0
 lit OUTLINE_MIN_H = 220.0
+// Pixels the list moves per unit of wheel travel, the code view's rate. A
+// macOS trackpad reports points, so the rows follow the fingers smoothly
+// rather than jumping whole rows.
+lit OUTLINE_WHEEL_PX: f64 = 6.0
 
 // Prompt kinds.
 lit OUTLINE_PROMPT_NONE = 0
@@ -45,7 +49,8 @@ let g_outline_w: f64 = 320.0
 let g_outline_h: f64 = 480.0
 let g_outline_selected: i32 = -1
 let g_outline_selected_path = ""
-let g_outline_scroll: i32 = 0
+// Pixels the row list is scrolled past its first row.
+let g_outline_scroll: f64 = 0.0
 let g_outline_generation: i32 = -1
 let g_outline_dragging = false
 let g_outline_resize_edges: i32 = PANEL_EDGE_NONE
@@ -232,7 +237,7 @@ fn outline_sync() {
         if g_outline_selected < 0 {
             g_outline_selected_path = ""
         }
-        g_outline_scroll = clamp_i(g_outline_scroll, 0, clamp_i(g_workspace_visible_count - 1, 0, 4096))
+        g_outline_scroll = clamp(g_outline_scroll, 0.0, outline_scroll_max())
     }
     if g_outline_selected >= 0 {
         g_outline_selected_path = os_entry_path(g_outline_selected)
@@ -242,7 +247,7 @@ fn outline_sync() {
 fn outline_reset() {
     g_outline_selected = -1
     g_outline_selected_path = ""
-    g_outline_scroll = 0
+    g_outline_scroll = 0.0
     g_outline_generation = -1
     g_outline_prompt = OUTLINE_PROMPT_NONE
     g_outline_prompt_error = ""
@@ -311,31 +316,36 @@ fn outline_list_h() f64 {
     return clamp(g_outline_h - OUTLINE_TOOLBAR_H - OUTLINE_TOOL_H - OUTLINE_FOOTER_H, OUTLINE_ROW_H, 10000.0)
 }
 
-fn outline_visible_rows() i32 {
-    return clamp_i((outline_list_h() / OUTLINE_ROW_H) as i32, 1, 4096)
+fn outline_scroll_max() f64 {
+    return clamp((g_workspace_visible_count as f64) * OUTLINE_ROW_H - outline_list_h(), 0.0, 100000000.0)
 }
 
-fn outline_scroll_max() i32 {
-    return clamp_i(g_workspace_visible_count - outline_visible_rows(), 0, 4096)
+// Position in the visible row list of the row at screen `y`, or -1 outside
+// the list.
+fn outline_row_pos(y: f64) i32 {
+    let top = outline_list_y()
+    if y < top || y >= top + outline_list_h() {
+        return -1
+    }
+    let pos = ((y - top + g_outline_scroll) / OUTLINE_ROW_H) as i32
+    if pos >= g_workspace_visible_count {
+        return -1
+    }
+    return pos
 }
 
 fn outline_row_index(y: f64) i32 {
-    let n = ((y - outline_list_y()) / OUTLINE_ROW_H) as i32
-    if n < 0 {
+    let pos = outline_row_pos(y)
+    if pos < 0 {
         return -1
     }
-    if n >= outline_visible_rows() {
-        return -1
-    }
-    let index = g_outline_scroll + n
-    if index < 0 || index >= g_workspace_visible_count {
-        return -1
-    }
-    return g_workspace_visible[index]
+    return g_workspace_visible[pos]
 }
 
-fn outline_row_y(row: i32) f64 {
-    return outline_list_y() + (row as f64) * OUTLINE_ROW_H
+// Screen y of the row at list position `pos`; a scrolled list may leave the
+// first and last rows partly outside it.
+fn outline_row_y(pos: i32) f64 {
+    return outline_list_y() + (pos as f64) * OUTLINE_ROW_H - g_outline_scroll
 }
 
 fn outline_select(index: i32) {
@@ -356,13 +366,14 @@ fn outline_follow_selection() {
     workspace_rebuild_visible()
     for n in 0 to g_workspace_visible_count {
         if g_workspace_visible[n] == g_outline_selected {
-            if n < g_outline_scroll {
-                g_outline_scroll = n
+            let top = (n as f64) * OUTLINE_ROW_H
+            if top < g_outline_scroll {
+                g_outline_scroll = top
             }
-            if n >= g_outline_scroll + outline_visible_rows() {
-                g_outline_scroll = n - outline_visible_rows() + 1
+            if top + OUTLINE_ROW_H > g_outline_scroll + outline_list_h() {
+                g_outline_scroll = top + OUTLINE_ROW_H - outline_list_h()
             }
-            g_outline_scroll = clamp_i(g_outline_scroll, 0, outline_scroll_max())
+            g_outline_scroll = clamp(g_outline_scroll, 0.0, outline_scroll_max())
             return
         }
     }
@@ -376,7 +387,7 @@ fn outline_toggle_folder(index: i32) {
         return
     }
     workspace_toggle_entry(index)
-    g_outline_scroll = clamp_i(g_outline_scroll, 0, outline_scroll_max())
+    g_outline_scroll = clamp(g_outline_scroll, 0.0, outline_scroll_max())
 }
 
 // Any open tab with unsaved edits below `path` blocks a rename.
@@ -710,12 +721,12 @@ fn outline_mouse(v: ref view, w: f64, h: f64) {
         }
         // A tree row.
         if raw_hit(v, g_outline_x + 2.0, outline_list_y(), g_outline_w - 4.0, outline_list_h()) {
-            let index = outline_row_index(g_mouse_y)
-            if index >= 0 {
-                let row = g_outline_scroll + ((g_mouse_y - outline_list_y()) / OUTLINE_ROW_H) as i32
+            let pos = outline_row_pos(g_mouse_y)
+            if pos >= 0 {
+                let index = g_workspace_visible[pos]
                 let indent = outline_indent(index)
                 let button_x = g_outline_x + 6.0 + indent
-                let hit_button = raw_hit(v, button_x, outline_row_y(row) + 2.0, 16.0, 16.0)
+                let hit_button = raw_hit(v, button_x, outline_row_y(pos) + 2.0, 16.0, 16.0)
                 outline_select(index)
                 if os_entry_is_dir(index) != 0 && hit_button {
                     outline_toggle_folder(index)
@@ -750,11 +761,7 @@ fn outline_mouse(v: ref view, w: f64, h: f64) {
         return
     }
     if inside && v.scroll_y != 0.0 {
-        let step: i32 = 3
-        if v.scroll_y > 0.0 {
-            step = -3
-        }
-        g_outline_scroll = clamp_i(g_outline_scroll + step, 0, outline_scroll_max())
+        g_outline_scroll = clamp(g_outline_scroll - v.scroll_y * OUTLINE_WHEEL_PX, 0.0, outline_scroll_max())
         v.scroll_y = 0.0
     }
     if g_outline_dragging && v.mouse_down {
@@ -810,7 +817,7 @@ fn outline_draw_toolbar(r: ref ui_renderer, v: ref view) {
 
 fn outline_draw_scrollbar(r: ref ui_renderer) {
     let max = outline_scroll_max()
-    if max <= 0 {
+    if max <= 0.0 {
         return
     }
     let x = g_outline_x + g_outline_w - 6.0
@@ -819,13 +826,13 @@ fn outline_draw_scrollbar(r: ref ui_renderer) {
     let span = (g_workspace_visible_count as f64) * OUTLINE_ROW_H
     let thumb_h = clamp(h * (h / clamp(span, 1.0, 100000.0)), 18.0, h)
     let travel = clamp(h - thumb_h, 0.0, 100000.0)
-    let fraction = (g_outline_scroll as f64) / (max as f64)
+    let fraction = g_outline_scroll / max
     ui_fill_rect(r, x, y, 2.0, h, col_editor_sel(), 0.0)
     ui_fill_rect(r, x, y + travel * clamp(fraction, 0.0, 1.0), 2.0, thumb_h, col_muted(), 0.0)
 }
 
-fn outline_draw_row(r: ref ui_renderer, v: ref view, index: i32, row: i32) {
-    let y = outline_row_y(row)
+fn outline_draw_row(r: ref ui_renderer, v: ref view, index: i32, pos: i32) {
+    let y = outline_row_y(pos)
     let x = g_outline_x
     let indent = outline_indent(index)
     let is_dir = os_entry_is_dir(index) != 0
@@ -929,14 +936,13 @@ fn outline_draw(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
         return
     }
     outline_draw_toolbar(r, v)
-    let rows = outline_visible_rows()
-    g_outline_scroll = clamp_i(g_outline_scroll, 0, outline_scroll_max())
+    g_outline_scroll = clamp(g_outline_scroll, 0.0, outline_scroll_max())
+    // Every row the list shows at least partly, clipped to the list.
+    let first = (g_outline_scroll / OUTLINE_ROW_H) as i32
+    let last = clamp_i(((g_outline_scroll + outline_list_h()) / OUTLINE_ROW_H) as i32 + 1, 0, g_workspace_visible_count)
     ui_push_clip(r, g_outline_x, outline_list_y(), g_outline_w, outline_list_h())
-    for n in 0 to rows {
-        let pos = g_outline_scroll + n
-        if pos < g_workspace_visible_count {
-            outline_draw_row(r, v, g_workspace_visible[pos], n)
-        }
+    for pos in first to last {
+        outline_draw_row(r, v, g_workspace_visible[pos], pos)
     }
     ui_pop_clip(r)
     outline_draw_scrollbar(r)

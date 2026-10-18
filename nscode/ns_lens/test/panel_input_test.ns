@@ -148,7 +148,7 @@ fn main() {
     assert src >= 0
     let row = outline_row_of(src)
     assert row >= 0
-    g_outline_scroll = 0
+    g_outline_scroll = 0.0
 
     // The disclosure button sits at the row's left edge.
     let button_x = g_outline_x + 6.0 + outline_indent(src) + 8.0

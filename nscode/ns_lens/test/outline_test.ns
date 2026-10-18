@@ -1,5 +1,6 @@
 use std
 use os
+use view
 use editor
 use workspace
 
@@ -241,6 +242,51 @@ fn main() {
     }
     check("outline reveals a deep entry", deep_visible)
 
+    check_wheel_scroll(root + "_scroll")
     os_watch_stop()
     print("outline: passed" + unescape("\n"))
+}
+
+// The wheel moves the list by pixels, not whole rows, and rows, clicks and
+// the selection follow the pixel offset.
+fn check_wheel_scroll(root: str) {
+    assert os_make_dirs(root) != 0
+    for i in 0 to 40 {
+        assert os_write_file_atomic(root + "/file_" + itos(100 + i) + ".ns", "x") != 0
+    }
+    g_workspace_root = root
+    workspace_init()
+    outline_reset()
+    outline_show()
+    g_outline_x = 16.0
+    g_outline_y = 44.0
+    g_outline_w = 320.0
+    g_outline_h = 220.0
+    workspace_rebuild_visible()
+    assert g_workspace_visible_count == 40
+    let v = view_create("outline scroll test", 200, 200)
+    let top = outline_list_y()
+    g_mouse_x = g_outline_x + 40.0
+    g_mouse_y = top + 15.0
+    v.scroll_y = -1.0
+    outline_mouse(v, 1280.0, 800.0)
+    check("wheel scrolls by pixels", g_outline_scroll == OUTLINE_WHEEL_PX)
+    check("wheel travel is consumed", v.scroll_y == 0.0)
+    check("rows shift by the pixel offset", outline_row_y(1) == top + 20.0 - OUTLINE_WHEEL_PX)
+    check("pointer row includes the offset", outline_row_pos(top + 15.0) == 1)
+    check("pointer above the list has no row", outline_row_pos(top - 1.0) == -1)
+    v.scroll_y = -100000.0
+    outline_mouse(v, 1280.0, 800.0)
+    check("wheel stops at the last row", g_outline_scroll == 40.0 * 20.0 - outline_list_h())
+    v.scroll_y = 100000.0
+    outline_mouse(v, 1280.0, 800.0)
+    check("wheel stops at the first row", g_outline_scroll == 0.0)
+    outline_select(g_workspace_visible[39])
+    outline_follow_selection()
+    check("selection scrolls fully into view", g_outline_scroll == outline_scroll_max())
+    outline_select(g_workspace_visible[0])
+    outline_follow_selection()
+    check("selection above scrolls back", g_outline_scroll == 0.0)
+    outline_hide()
+    view_close(v)
 }
