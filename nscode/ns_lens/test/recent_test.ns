@@ -19,7 +19,8 @@ fn project(root: str) str {
 }
 
 fn main() {
-    let base = "/tmp/ns_lens_recent_" + itos((os_time() * 1000000.0) as i64)
+    let stamp = os_time_us() % 1000000000
+    let base = "/tmp/ns_lens_recent_" + itos(stamp as i32)
     assert os_make_dirs(base) != 0
     g_recent_file = base + "/recent"
     g_panel_state = false
@@ -42,14 +43,40 @@ fn main() {
     check("list survives a reload", g_recent_count == RECENT_KEEP && g_recent[0] == "/p/7" && g_recent[2] == "/p/12")
     recent_remove("/p/13")
     check("remove", recent_find("/p/13") < 0 && g_recent_count == RECENT_KEEP - 1 && g_recent[1] == "/p/12")
-    assert os_write_file_atomic(g_recent_file, "") != 0
+
+    // Launched with no folder, Lens starts in its own resource directory,
+    // which is never remembered.
+    lit bundle = "/Applications/ns_lens.app/Contents/Resources"
+    check("bundle resources are the app default", recent_is_app_default(bundle + "/") && recent_is_app_default("/a/b") == false && recent_is_app_default("") == false)
+    let packaged = base + "/packaged"
+    assert os_make_dirs(packaged) != 0
+    assert os_write_file_atomic(packaged + "/.ns-resources", "") != 0
+    check("a marked package directory is the app default", recent_is_app_default(packaged))
+    recent_add(bundle)
+    recent_add(packaged)
     recent_load()
+    check("app default is not remembered", g_recent_count == RECENT_KEEP - 1 && g_recent[0] == "/p/7" && recent_find(bundle) < 0)
+    assert os_write_file_atomic(g_recent_file, bundle + "\n/p/1\n") != 0
+    recent_load()
+    check("a remembered app default leaves the list", g_recent_count == 1 && g_recent[0] == "/p/1")
+
+    // Clear Recent empties the shared file and closes the menu.
+    g_lens_file_open = true
+    g_lens_recent_open = true
+    lens_recent_clear()
+    check("clear recent empties the list", g_recent_count == 0 && g_lens_file_open == false && g_lens_recent_open == false)
+    recent_load()
+    check("cleared list stays empty", g_recent_count == 0)
 
     // Open Recent keeps the File menu up and shows its submenu.
     g_lens_file_open = true
     lens_file_action(LENS_FILE_RECENT)
     check("open recent shows the submenu", g_lens_file_open && g_lens_recent_open)
     check("empty submenu keeps a placeholder row", lens_recent_rows() == 1)
+    let ry = lens_recent_y()
+    let clear_y = ry + LENS_MODE_ITEM + LENS_RECENT_SEPARATOR_H
+    check("clear recent follows a separator", lens_recent_clear_y() == clear_y && lens_recent_h() == 2.0 * LENS_MODE_ITEM + LENS_RECENT_SEPARATOR_H)
+    check("submenu rows by height", lens_recent_row_at(ry + 1.0) == 0 && lens_recent_row_at(clear_y - 1.0) == -1 && lens_recent_row_at(clear_y + 1.0) == LENS_RECENT_CLEAR)
     lens_recent_action(0)
     check("placeholder only closes the menu", g_lens_file_open == false && g_lens_recent_open == false)
 
@@ -62,7 +89,7 @@ fn main() {
     lens_rebuild()
     check("open records the project", lens_open_root(second) && g_workspace_root == second)
     check("newest first", g_recent_count == 2 && g_recent[0] == second && g_recent[1] == first)
-    check("submenu lists the open project too", lens_recent_rows() == 2)
+    check("submenu lists the open project too", lens_recent_rows() == 2 && lens_recent_row_at(ry + LENS_MODE_ITEM + 1.0) == 1)
     g_lens_file_open = true
     g_lens_recent_open = true
     lens_recent_action(0)
@@ -80,6 +107,12 @@ fn main() {
     check("open project is mapped again", g_workspace_root == first && workspace_find("main.ns") >= 0)
     check("missing project leaves the list", recent_find(base + "/gone") < 0 && g_recent_count == 2)
     check("missing project is reported", g_lens_message != "")
+
+    // With no project open, a folder that cannot be opened keeps the window
+    // empty and a real one maps.
+    lens_close_root()
+    check("missing project keeps the window empty", lens_open_root(base + "/gone") == false && g_workspace_root == "" && g_workspace_count == 0)
+    check("empty window opens a project", lens_open_root(second) && g_workspace_root == second && g_recent[0] == second)
 
     os_watch_stop()
     print("recent_test: passed\n")

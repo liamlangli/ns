@@ -90,8 +90,29 @@ fn main() {
     assert lens_commit_scroll_max() == 10
     g_lens_commit_open = false
 
+    // Open Recent ends in a separator and Clear Recent.
+    g_recent[0] = root
+    g_recent_count = 1
+    g_lens_file_open = true
+    g_lens_recent_open = true
+    for n in 0 to 2 {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+    assert lens_recent_h() == 2.0 * LENS_MODE_ITEM + LENS_RECENT_SEPARATOR_H
+    g_lens_file_open = false
+    g_lens_recent_open = false
+
     outline_hide()
-    os_watch_stop()
+    // With no project open the window draws only its Open Folder button.
+    lens_close_root()
+    for n in 0 to 2 {
+        ui_begin_frame(r)
+        render_lens(r, v, 1280, 800)
+        ui_flush(r, ui_color_rgba { r: 0.071, g: 0.071, b: 0.071, a: 1.0 })
+    }
+    assert g_workspace_root == ""
     ui_renderer_destroy(r)
     view_close(v)
     print("panels: passed" + unescape("\n"))

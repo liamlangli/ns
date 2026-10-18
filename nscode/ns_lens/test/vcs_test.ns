@@ -429,6 +429,59 @@ fn check_head(base: str) {
     assert g_lens_diff_added[0] == 1 && g_lens_diff_added[1] == 0
 }
 
+// The editor opens a changed file with the rows its leaf already shows, even
+// while the camera still moves, and a rewrite on disk brings its new rows in
+// with the patch rather than with the editor's own diff.
+fn check_diff_seed(base: str) {
+    let root = base + "/seed"
+    make_repo(root)
+    assert os_write_file_atomic(root + "/main.ns", "fn main() {\n    print(\"hi\")\n}\n") != 0
+    git(root, "add\n-A")
+    git(root, "commit\n-q\n-m\nbase")
+    assert os_write_file_atomic(root + "/main.ns", "fn main() {\n    print(\"changed\")\n}\n") != 0
+    assert os_write_file_atomic(root + "/fresh.ns", "fn fresh() {}\nfn more() {}\n") != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    g_lens_view_mode = LENS_MODE_CODE
+    lens_rebuild()
+    lens_patch_tick(false)
+    finish_patches()
+    // The previous check leaves an unsaved buffer of another root open.
+    g_lens_editing = false
+    g_workspace_active = -1
+    assert lens_open(workspace_find("main.ns"))
+    lens_git_tick(true)
+    assert g_lens_head_running == false
+    assert g_lens_diff_deleted_count == 1 && g_lens_diff_deleted[0] == "    print(\"hi\")"
+    assert g_lens_diff_added[1] == 1 && g_lens_diff_added[0] == 0
+    // An unsaved edit leaves the rows to the editor's own diff.
+    place_cursor(0, 0, false)
+    paste_str("// note\n")
+    lens_git_tick(true)
+    assert g_lens_diff_deleted_count == 0
+    load_str(g_workspace_originals[g_workspace_active])
+    lens_git_tick(true)
+    assert g_lens_diff_deleted_count == 1
+    // A new file is added throughout.
+    assert lens_open(workspace_find("fresh.ns"))
+    lens_git_tick(true)
+    assert g_lens_diff_added[0] == 1 && g_lens_diff_added[1] == 1 && g_lens_diff_deleted_count == 0
+    // Rewritten on disk: the reload waits for fresh patches, then takes them.
+    assert lens_open(workspace_find("main.ns"))
+    lens_git_tick(true)
+    assert os_write_file_atomic(root + "/main.ns", "fn main() {\n    print(\"hi\")\n    print(\"again\")\n}\n") != 0
+    workspace_refresh_from_disk()
+    lens_rebuild()
+    lens_git_tick(true)
+    assert g_lens_diff_deleted_count == 0
+    lens_patch_tick(false)
+    finish_patches()
+    assert g_lens_diff_deleted_count == 0
+    assert g_lens_diff_added[2] == 1 && g_lens_diff_added[1] == 0
+    g_lens_editing = false
+}
+
 fn check_search_scan(base: str) {
     let root = base + "/search"
     os_make_dirs(root + "/src")
@@ -471,5 +524,6 @@ fn main() {
     check_change_list(base)
     check_partial_commit(base)
     check_head(base)
+    check_diff_seed(base)
     print("vcs_test: passed\n")
 }

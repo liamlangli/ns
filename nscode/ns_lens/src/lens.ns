@@ -759,8 +759,8 @@ fn lens_open_project() {
 }
 
 // Map `root` in place of the current project and put it at the top of Open
-// Recent. A folder that no longer exists maps the project that was open again
-// and leaves the recent list.
+// Recent. A folder that no longer exists maps the project that was open again,
+// or returns to the empty window, and leaves the recent list.
 fn lens_open_root(root: str) bool {
     if lens_open_blocked() {
         return false
@@ -777,20 +777,37 @@ fn lens_open_root(root: str) bool {
     outline_reset()
     workspace_open_root(root)
     if g_workspace_count < 0 {
-        workspace_open_root(previous)
-        lens_rebuild()
+        if previous == "" {
+            lens_close_root()
+        } else {
+            workspace_open_root(previous)
+            lens_rebuild()
+        }
         recent_remove(root)
         g_lens_message = "Project folder not found: " + root
         return false
     }
     recent_add(root)
-    panel_state_load()
-    lens_apply_panel_state()
+    // A project without a saved view opens on its whole map, in the current
+    // mode unless that is Ref, whose root file belonged to the last project.
     g_lens_target_x = 0.0
     g_lens_target_y = 0.0
     g_lens_target_distance = 1600.0
+    g_lens_ref_root = ""
+    panel_state_load()
+    if g_panel_view_loaded == false && g_lens_view_mode == LENS_MODE_REF {
+        g_lens_view_mode = LENS_MODE_CODE
+    }
+    lens_apply_panel_state()
     lens_rebuild()
     return true
+}
+
+// No project: the window shows only its Open Folder button.
+fn lens_close_root() {
+    os_watch_stop()
+    g_workspace_root = ""
+    g_workspace_count = 0
 }
 
 // The menu bar contains dropdown menus only, centred vertically.
@@ -955,9 +972,39 @@ fn lens_draw_plain_leaf(r: ref ui_renderer, v: ref view, i: i32, w: f64, top: f6
     }
 }
 
+lit LENS_EMPTY_BUTTON_W = 160.0
+lit LENS_EMPTY_BUTTON_H = 32.0
+
+// With no project open the window is empty but for one centred button; it and
+// Cmd+O pick the folder to map. A folder that failed to open says so below it.
+fn lens_render_empty(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    let top = main_menu_h()
+    ui_fill_rect(r, 0.0, top, w, h - top, col_editor_bg(), 0.0)
+    let bx = (w - LENS_EMPTY_BUTTON_W) * 0.5
+    let by = top + (h - top - LENS_EMPTY_BUTTON_H) * 0.5
+    lens_draw_button(r, v, bx, by, LENS_EMPTY_BUTTON_W, LENS_EMPTY_BUTTON_H, "Open Folder...", false)
+    if g_lens_message != "" {
+        draw_centered_text(r, 0.0, by + LENS_EMPTY_BUTTON_H + 12.0, w, 20.0, g_lens_message, small_px(), col_muted())
+    }
+    let pressed = v.mouse_pressed && raw_hit(v, bx, by, LENS_EMPTY_BUTTON_W, LENS_EMPTY_BUTTON_H)
+    v.mouse_pressed = false
+    if pressed || (cmd_down(v) && key_edge(v, 79)) {
+        lens_open_project()
+    }
+    if g_workspace_root != "" {
+        view_request_frame_after(v, 1)
+    } else {
+        view_request_frame_after(v, 100)
+    }
+}
+
 // Camera-space projection includes perspective depth from the tilted map plane
 // and directory elevation. All geometry and hit tests use the same projection.
 fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
+    if g_workspace_root == "" {
+        lens_render_empty(r, v, w, h)
+        return
+    }
     g_lens_render_serial = g_lens_render_serial + 1
     lens_batch_window_reset()
     lens_io_poll()
@@ -1029,6 +1076,7 @@ fn render_lens(r: ref ui_renderer, v: ref view, w: f64, h: f64) {
     lens_git_tick(moving)
     lens_vcs_tick(moving)
     lens_patch_tick(moving)
+    panel_state_tick(moving)
     lens_search_tick()
     lens_changes_poll()
     if g_lens_view_mode == LENS_MODE_CHANGE && moving == false && os_time() >= g_lens_change_poll {

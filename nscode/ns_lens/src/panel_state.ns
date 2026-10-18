@@ -1,14 +1,20 @@
-// Floating-panel layout state, kept beside the outline's fold state under the
-// opened project's bin/ns_lens/. It records whether the outline and terminal
-// are open and where each panel sits, so a later launch reopens the panels at
-// the size and place the user left them. A missing or unreadable file keeps
-// the built-in defaults.
+// Window state, kept beside the outline's fold state under the opened
+// project's bin/ns_lens/. It records whether the outline and terminal are open
+// and where each panel sits, and the map itself: the camera's offset, zoom and
+// tilt, the map mode, the scoped folder, the selected file and the outline's
+// scroll. A later launch, or reopening the project, comes back to the view
+// the user left. A missing or unreadable file keeps the built-in defaults.
 use std
 use os
 
 // Tests that scan a real project can turn this off without disabling the
 // outline's own expanded-folder state.
 let g_panel_state = true
+// The view as last written, and when an idle frame next compares it.
+let g_panel_view_saved = ""
+let g_panel_view_check: f64 = 0.0
+// Set while a load read any view key; the view is then adopted at once.
+let g_panel_view_loaded = false
 
 fn panel_state_path() str {
     return workspace_join_root("bin/ns_lens/layout")
@@ -28,6 +34,51 @@ fn panel_state_flag(open: bool) str {
     return "0"
 }
 
+// Project-relative path of `path`, "" outside the project.
+fn panel_state_relative(path: str) str {
+    if path == "" {
+        return ""
+    }
+    return workspace_relative_path(path)
+}
+
+// The scanned entry's path for a project-relative `relative`, "" when the
+// project no longer has it.
+fn panel_state_entry_path(relative: str) str {
+    if relative == "" {
+        return ""
+    }
+    for i in 0 to g_workspace_count {
+        if workspace_relative_path(os_entry_path(i)) == relative {
+            return os_entry_path(i)
+        }
+    }
+    return ""
+}
+
+// The map's lines of the state file. The camera is its target, where the
+// smoothed camera settles.
+fn panel_state_view_text() str {
+    let text = "view.mode=" + itos(g_lens_view_mode) + "\n"
+    text = text + "view.x=" + ftos(g_lens_target_x) + "\n"
+    text = text + "view.y=" + ftos(g_lens_target_y) + "\n"
+    text = text + "view.distance=" + ftos(g_lens_target_distance) + "\n"
+    text = text + "view.tilt=" + ftos(g_lens_tilt) + "\n"
+    text = text + "view.scope=" + panel_state_relative(g_lens_scope_path) + "\n"
+    text = text + "view.selected=" + panel_state_relative(g_lens_selected_path) + "\n"
+    if g_lens_view_mode == LENS_MODE_REF {
+        // Ref mode lays out around its root file and returns to the map's
+        // own camera when left.
+        text = text + "view.ref_root=" + panel_state_relative(g_lens_ref_root) + "\n"
+        text = text + "view.ref_x=" + ftos(g_lens_ref_return_x) + "\n"
+        text = text + "view.ref_y=" + ftos(g_lens_ref_return_y) + "\n"
+        text = text + "view.ref_distance=" + ftos(g_lens_ref_return_distance) + "\n"
+    }
+    text = text + "outline.scroll=" + ftos(g_outline_scroll) + "\n"
+    text = text + "outline.selected=" + panel_state_relative(g_outline_selected_path) + "\n"
+    return text
+}
+
 fn panel_state_save() {
     if panel_state_save_allowed() == false {
         return
@@ -35,6 +86,8 @@ fn panel_state_save() {
     if os_make_dirs(workspace_join_root("bin/ns_lens")) == 0 {
         return
     }
+    let view = panel_state_view_text()
+    g_panel_view_saved = view
     let text = "outline.open=" + panel_state_flag(g_outline_open) + "\n"
     // Geometry is written only after a panel has actually been shown. A panel
     // that was never opened keeps its built-in placement, so a fresh project
@@ -53,7 +106,20 @@ fn panel_state_save() {
         text = text + "terminal.w=" + ftos(g_terminal_w) + "\n"
         text = text + "terminal.h=" + ftos(g_terminal_h) + "\n"
     }
-    os_write_file_atomic(panel_state_path(), text)
+    os_write_file_atomic(panel_state_path(), text + view)
+}
+
+// Each frame: once the camera rests, write the view if it moved since the
+// last write, so a view survives even an app that never closes cleanly.
+fn panel_state_tick(moving: bool) {
+    let now = os_time()
+    if moving || now < g_panel_view_check || panel_state_save_allowed() == false {
+        return
+    }
+    g_panel_view_check = now + 1.0
+    if panel_state_view_text() != g_panel_view_saved {
+        panel_state_save()
+    }
 }
 
 // Apply one "key=value" line. Unknown keys are ignored so a newer file still
@@ -96,10 +162,66 @@ fn panel_state_apply(key: str, value: str) {
             g_terminal_h = n
             g_terminal_ready = true
         }
+    } else if key == "view.mode" {
+        g_panel_view_loaded = true
+        let mode = n as i32
+        if mode >= LENS_MODE_CODE && mode <= LENS_MODE_REF {
+            g_lens_view_mode = mode
+        }
+    } else if key == "view.x" {
+        g_panel_view_loaded = true
+        g_lens_target_x = n
+    } else if key == "view.y" {
+        g_panel_view_loaded = true
+        g_lens_target_y = n
+    } else if key == "view.distance" {
+        g_panel_view_loaded = true
+        if n >= 1.0 && n <= LENS_DISTANCE_LIMIT {
+            g_lens_target_distance = n
+        }
+    } else if key == "view.tilt" {
+        g_lens_tilt = clamp(n, 0.0, LENS_MAX_TILT)
+    } else if key == "view.scope" {
+        g_lens_scope_path = panel_state_entry_path(value)
+        g_lens_scope = -1
+    } else if key == "view.selected" {
+        g_lens_selected_path = panel_state_entry_path(value)
+    } else if key == "view.ref_root" {
+        g_lens_ref_root = panel_state_entry_path(value)
+    } else if key == "view.ref_x" {
+        g_lens_ref_return_x = n
+    } else if key == "view.ref_y" {
+        g_lens_ref_return_y = n
+    } else if key == "view.ref_distance" {
+        if n >= 1.0 && n <= LENS_DISTANCE_LIMIT {
+            g_lens_ref_return_distance = n
+        }
+    } else if key == "outline.scroll" {
+        g_outline_scroll = clamp(n, 0.0, 100000000.0)
+    } else if key == "outline.selected" {
+        g_outline_selected_path = panel_state_entry_path(value)
     }
 }
 
+// Adopt a loaded view: the camera starts where it was left rather than
+// gliding there, and a Ref view whose root file is gone falls back to the
+// code map at the camera Ref mode would have returned to.
+fn panel_state_view_finish() {
+    if g_lens_view_mode == LENS_MODE_REF && g_lens_ref_root == "" {
+        g_lens_view_mode = LENS_MODE_CODE
+        g_lens_target_x = g_lens_ref_return_x
+        g_lens_target_y = g_lens_ref_return_y
+        g_lens_target_distance = g_lens_ref_return_distance
+    }
+    g_lens_center_x = g_lens_target_x
+    g_lens_center_y = g_lens_target_y
+    g_lens_distance = g_lens_target_distance
+    g_outline_generation = -1
+    g_panel_view_saved = panel_state_view_text()
+}
+
 fn panel_state_load() {
+    g_panel_view_loaded = false
     if panel_state_save_allowed() == false {
         return
     }
@@ -131,6 +253,9 @@ fn panel_state_load() {
             }
             start = i + 1
         }
+    }
+    if g_panel_view_loaded {
+        panel_state_view_finish()
     }
 }
 

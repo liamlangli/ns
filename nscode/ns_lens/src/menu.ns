@@ -18,8 +18,10 @@ lit LENS_FILE_COMMIT = 3
 lit LENS_FILE_PUSH = 4
 lit LENS_FILE_IGNORE = 5
 // Open Recent's submenu opens to the right of the File popup, level with its
-// row.
+// row. Its project rows end in a separator, then Clear Recent.
 lit LENS_RECENT_W = 420.0
+lit LENS_RECENT_SEPARATOR_H = 9.0
+lit LENS_RECENT_CLEAR = -2
 // The top bar reads File, View, then the map mode menu.
 lit LENS_VIEW_X = LENS_FILE_X + LENS_FILE_W + 8.0
 lit LENS_VIEW_W = 64.0
@@ -103,7 +105,24 @@ fn lens_recent_rows() i32 {
     return clamp_i(g_recent_count, 1, RECENT_KEEP)
 }
 
-fn lens_recent_h() f64 { return LENS_MODE_ITEM * (lens_recent_rows() as f64) }
+fn lens_recent_clear_y() f64 {
+    return lens_recent_y() + LENS_MODE_ITEM * (lens_recent_rows() as f64) + LENS_RECENT_SEPARATOR_H
+}
+
+fn lens_recent_h() f64 { return lens_recent_clear_y() + LENS_MODE_ITEM - lens_recent_y() }
+
+// The submenu row at `y`: a project row, LENS_RECENT_CLEAR, or -1 on the
+// separator.
+fn lens_recent_row_at(y: f64) i32 {
+    let clear_y = lens_recent_clear_y()
+    if y >= clear_y {
+        return LENS_RECENT_CLEAR
+    }
+    if y >= clear_y - LENS_RECENT_SEPARATOR_H {
+        return -1
+    }
+    return clamp_i(((y - lens_recent_y()) / LENS_MODE_ITEM) as i32, 0, lens_recent_rows() - 1)
+}
 
 fn lens_view_item_label(i: i32) str {
     if i == 0 {
@@ -295,6 +314,13 @@ fn lens_recent_action(row: i32) {
     if root != recent_normalize(g_workspace_root) {
         lens_open_root(root)
     }
+}
+
+// Open Recent's last row empties the list and closes the menu.
+fn lens_recent_clear() {
+    g_lens_file_open = false
+    g_lens_recent_open = false
+    recent_clear()
 }
 
 // One-line text entry from the latched keys: printable keys, Backspace and
@@ -522,7 +548,13 @@ fn lens_menu_mouse(v: ref view, w: f64, h: f64) {
     if g_lens_file_open {
         v.mouse_pressed = false
         if g_lens_recent_block {
-            lens_recent_action(clamp_i(((g_mouse_y - lens_recent_y()) / LENS_MODE_ITEM) as i32, 0, lens_recent_rows() - 1))
+            // A click on the separator leaves the menu open.
+            let row = lens_recent_row_at(g_mouse_y)
+            if row == LENS_RECENT_CLEAR {
+                lens_recent_clear()
+            } else if row >= 0 {
+                lens_recent_action(row)
+            }
             return
         }
         if g_lens_file_block {
@@ -594,12 +626,24 @@ fn lens_draw_file_menu(r: ref ui_renderer, v: ref view) {
 }
 
 // Each row names the project's folder, then the folder that holds it; the
-// open project is marked on the right.
+// open project is marked on the right. Clear Recent follows a separator and
+// is dimmed while the list is empty.
 fn lens_draw_recent_menu(r: ref ui_renderer, v: ref view) {
     let x = lens_recent_x()
     let y = lens_recent_y()
     ui_fill_round_rect(r, x, y, LENS_RECENT_W, lens_recent_h(), 3.0, col_popup_bg(), 0.0)
     ui_stroke_round_rect(r, x, y, LENS_RECENT_W, lens_recent_h(), 3.0, 1.0, col_muted(), 0.0)
+    let clear_y = lens_recent_clear_y()
+    ui_fill_rect(r, x + 8.0, clear_y - LENS_RECENT_SEPARATOR_H * 0.5 - 0.5, LENS_RECENT_W - 16.0, 1.0, col_muted(), 0.0)
+    let clear_color = col_muted()
+    if g_recent_count > 0 {
+        clear_color = col_text()
+        if raw_hit(v, x, clear_y, LENS_RECENT_W, LENS_MODE_ITEM) {
+            ui_fill_rect(r, x + 1.0, clear_y, LENS_RECENT_W - 2.0, LENS_MODE_ITEM, col_popup_hi(), 0.0)
+        }
+    }
+    let clear_ty = ui_text_v_center_y(r, clear_y, LENS_MODE_ITEM, small_px(), FONT_MONO())
+    draw_text_clipped(r, x + 10.0, clear_ty, LENS_RECENT_W - 20.0, LENS_MODE_ITEM, "Clear Recent", small_px(), clear_color)
     let count = g_recent_count
     if count == 0 {
         let ty = ui_text_v_center_y(r, y, LENS_MODE_ITEM, small_px(), FONT_MONO())

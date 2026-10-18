@@ -712,6 +712,11 @@ fn lens_patch_tick(moving: bool) {
             g_lens_patch_listed[0] = ""
             if g_lens_patch_root == g_workspace_root {
                 lens_patch_apply(count)
+                // A file reloaded from disk in the editor takes its new rows
+                // with its leaf, before its own diff against HEAD is back.
+                if g_lens_git_version != g_doc_version {
+                    lens_diff_seed()
+                }
                 if listed_status == 0 {
                     lens_git_states_apply(listed, g_lens_patch_root)
                 } else {

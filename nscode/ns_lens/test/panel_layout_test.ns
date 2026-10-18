@@ -364,7 +364,68 @@ fn main() {
     check("resized terminal geometry is persisted", state_line(text, "terminal.w=560"))
 
     terminal_hide()
+    check_view_state(root, path)
     os_watch_stop()
     view_close(v)
     print("panel layout: passed" + unescape("\n"))
+}
+
+// The map's view rides in the same file: camera, mode, scope, selection and
+// the outline's scroll come back as written, with the camera already there.
+fn check_view_state(root: str, path: str) {
+    let file = root + "/src/main.ns"
+    let folder = root + "/src"
+    g_lens_view_mode = LENS_MODE_CHANGE
+    g_lens_target_x = 120.5
+    g_lens_target_y = -40.25
+    g_lens_target_distance = 900.0
+    g_lens_tilt = 30.0
+    g_lens_scope_path = folder
+    g_lens_selected_path = file
+    g_outline_scroll = 40.0
+    g_outline_selected_path = file
+    panel_state_save()
+    let text = os_read_file(path)
+    check("view mode is recorded", state_line(text, "view.mode=1"))
+    check("scope is recorded relative to the project", state_line(text, "view.scope=src"))
+    check("selection is recorded relative to the project", state_line(text, "view.selected=src/main.ns"))
+    check("panels stay recorded beside the view", state_line(text, "outline.open=0"))
+
+    g_lens_view_mode = LENS_MODE_CODE
+    g_lens_target_x = 0.0
+    g_lens_target_y = 0.0
+    g_lens_target_distance = 1600.0
+    g_lens_center_x = 0.0
+    g_lens_center_y = 0.0
+    g_lens_distance = 1600.0
+    g_lens_tilt = 0.0
+    g_lens_scope_path = ""
+    g_lens_selected_path = ""
+    g_outline_scroll = 0.0
+    g_outline_selected_path = ""
+    panel_state_load()
+    check("a load reports a saved view", g_panel_view_loaded)
+    check("mode is restored", g_lens_view_mode == LENS_MODE_CHANGE)
+    check("camera target is restored", g_lens_target_x == 120.5 && g_lens_target_y == -40.25 && g_lens_target_distance == 900.0)
+    check("camera starts at the saved view", g_lens_center_x == 120.5 && g_lens_center_y == -40.25 && g_lens_distance == 900.0)
+    check("tilt is restored", g_lens_tilt == 30.0)
+    check("scope is restored", g_lens_scope_path == folder)
+    check("selection is restored", g_lens_selected_path == file)
+    check("outline scroll and selection are restored", g_outline_scroll == 40.0 && g_outline_selected_path == file)
+    check("a fresh load leaves nothing to save", g_panel_view_saved == panel_state_view_text())
+
+    // A Ref view whose root file is gone returns to the code map's camera.
+    assert os_write_file_atomic(path, "view.mode=3\nview.x=5\nview.ref_root=src/gone.ns\nview.ref_x=7\nview.ref_y=8\nview.ref_distance=700\nview.scope=missing\n") != 0
+    panel_state_load()
+    check("ref without its root falls back to code", g_lens_view_mode == LENS_MODE_CODE)
+    check("fallback takes the camera ref returns to", g_lens_target_x == 7.0 && g_lens_target_y == 8.0 && g_lens_target_distance == 700.0)
+    check("a folder the project lost clears the scope", g_lens_scope_path == "")
+    // Without view keys an older file leaves the camera alone.
+    assert os_write_file_atomic(path, "outline.open=0\n") != 0
+    g_lens_target_x = 3.0
+    panel_state_load()
+    check("a file without a view keeps the camera", g_panel_view_loaded == false && g_lens_target_x == 3.0)
+    g_lens_view_mode = LENS_MODE_CODE
+    g_lens_scope_path = ""
+    g_lens_selected_path = ""
 }

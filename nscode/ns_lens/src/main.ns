@@ -15,9 +15,15 @@ fn main() {
     if g_workspace_root == "" {
         g_workspace_root = os_cwd()
     }
-    workspace_init()
-    if g_workspace_count >= 0 {
-        recent_add(g_workspace_root)
+    // Opened from Finder or the Dock, that is the app's own resource
+    // directory: no project is open, and the window asks for a folder.
+    if recent_is_app_default(g_workspace_root) {
+        g_workspace_root = ""
+    } else {
+        workspace_init()
+        if g_workspace_count >= 0 {
+            recent_add(g_workspace_root)
+        }
     }
     panel_state_load()
     let v = view_create("ns_lens", 1280, 800)

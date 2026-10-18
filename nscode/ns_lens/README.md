@@ -13,6 +13,12 @@ installs it with the source in `share/nscode/ns_lens`; without a compiled app,
 `ns lens` builds and runs this project. From the repository root it also runs
 directly with `bin/ns run nscode/ns_lens /absolute/path/to/project`.
 
+Opened from Finder or the Dock, the app starts in its own resource directory
+(`Contents/Resources`, or the directory a Linux package marks with
+`.ns-resources`). That directory is never mapped or added to Open Recent: the
+window stays empty except for an **Open Folder...** button in the centre, which
+(like Cmd+O) picks the project folder to map.
+
 The scan follows the project's root `.gitignore`, excludes Git metadata, and
 recognizes Nano Script, common native/web/shader languages, scripts, manifests,
 and text documentation. Directories only group a weighted binary treemap and
@@ -51,7 +57,9 @@ snaps back to orthographic.
     project in `ns_lens/recent` under the per-user application-support
     directory (`~/Library/Application Support` on macOS), one absolute path
     per line. A project that no longer exists keeps the open project mapped
-    and leaves the list.
+    and leaves the list. **Clear Recent**, below a separator at the end of the
+    submenu, empties the list, the open project included; it is dimmed while
+    the list is empty.
   - **Search** (Cmd+P) matches file names at once and scans file contents on
     a worker; a query without capitals ignores case. Matching leaves are
     outlined, and Enter or a click flies to the file or the matching line.
@@ -98,6 +106,13 @@ snaps back to orthographic.
   visible. Their open state, position and size are written to the project's
   `bin/ns_lens/layout` and restored when that project opens again; deleting
   that file returns both panels to their built-in defaults.
+- The same file keeps the map's view: the camera's offset, zoom and tilt, the
+  map mode, the scoped folder, the selected file and the outline's scroll and
+  selection (and, in **ref**, its root file and the map camera it returns
+  to). It is written a second after the camera comes to rest, when another
+  project is opened and on quit, so launching or reopening a project starts
+  where it was left. A saved folder or file the project no longer has is
+  dropped, and a **ref** view whose root file is gone opens on **code**.
   - **Outline** is a tree of every scanned folder and file. Every folder starts
     folded; the button left of a folder unfolds and folds it. The open folders
     are remembered in the project's `bin/ns_lens/outline` (one

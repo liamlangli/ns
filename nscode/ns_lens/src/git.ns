@@ -433,6 +433,31 @@ fn lens_edit_diff_poll() {
     g_lens_git_version = g_lens_edit_diff_version
 }
 
+// The open file's rows from the patch its leaf already shows, so the editor
+// matches the map the moment it opens or reloads instead of waiting for its
+// own diff against HEAD, which follows once the camera rests. Only while the
+// buffer is the file on disk and the patches were read after its last change.
+fn lens_diff_seed() bool {
+    let index = g_workspace_active
+    if g_lens_editing == false || index < 0 || workspace_entry_dirty(index) {
+        return false
+    }
+    if g_lens_patch_running || g_lens_patch_seen != g_workspace_generation || g_lens_patch_root != g_workspace_root {
+        return false
+    }
+    let patch = lens_leaf_patch(index)
+    if patch == LENS_PATCH_NEW {
+        lens_diff_clear()
+        for line in 0 to clamp_i(line_count(), 0, 65536) {
+            g_lens_diff_added[line] = 1
+        }
+        lens_diff_build_rows()
+    } else {
+        lens_diff_parse(patch)
+    }
+    return true
+}
+
 fn lens_git_tick(moving: bool) {
     if g_lens_editing == false || g_workspace_active < 0 {
         if g_lens_diff_deleted_count != 0 || g_lens_diff_count != line_count() || g_doc_version != g_lens_git_observed {
@@ -454,8 +479,10 @@ fn lens_git_tick(moving: bool) {
     if g_doc_version != g_lens_git_observed {
         g_lens_git_observed = g_doc_version
         g_lens_git_deadline = now + 0.2
-        lens_diff_clear()
-        lens_diff_build_rows()
+        if lens_diff_seed() == false {
+            lens_diff_clear()
+            lens_diff_build_rows()
+        }
     }
     lens_head_poll()
     lens_edit_diff_poll()

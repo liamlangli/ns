@@ -49,7 +49,24 @@ fn recent_normalize(path: str) str {
     return substr(p, 0, end)
 }
 
-// Reread the file, so a project another Lens window opened shows up too.
+// A packaged app starts inside its own resource directory: Contents/Resources
+// of a Darwin bundle, or the directory a Linux package marks with
+// .ns-resources. Lens launched with no folder lands there, which is neither a
+// project to map nor one to remember.
+fn recent_is_app_default(path: str) bool {
+    let p = recent_normalize(path)
+    if p == "" {
+        return false
+    }
+    lit suffix = ".app/Contents/Resources"
+    if p.len >= suffix.len && substr(p, p.len - suffix.len, suffix.len) == suffix {
+        return true
+    }
+    return os_file_size(p + "/.ns-resources") >= 0
+}
+
+// Reread the file, so a project another Lens window opened shows up too. An
+// app's resource directory recorded by an older build is dropped.
 fn recent_load() {
     g_recent_count = 0
     let text = os_read_file(recent_path())
@@ -66,7 +83,7 @@ fn recent_load() {
             }
             if end > start && g_recent_count < RECENT_KEEP {
                 let path = substr(text, start, end - start)
-                if recent_find(path) < 0 {
+                if recent_find(path) < 0 && recent_is_app_default(path) == false {
                     g_recent[g_recent_count] = path
                     g_recent_count = g_recent_count + 1
                 }
@@ -96,7 +113,7 @@ fn recent_find(path: str) i32 {
 // Move `path` to the front, dropping the oldest entry once the list is full.
 fn recent_add(path: str) {
     let p = recent_normalize(path)
-    if p == "" {
+    if p == "" || recent_is_app_default(p) {
         return
     }
     recent_load()
@@ -124,6 +141,13 @@ fn recent_remove(path: str) {
         g_recent[i] = g_recent[i + 1]
     }
     g_recent_count = g_recent_count - 1
+    recent_save()
+}
+
+// Clear Recent forgets every project, the open one included, for every Lens
+// sharing the file.
+fn recent_clear() {
+    g_recent_count = 0
     recent_save()
 }
 
