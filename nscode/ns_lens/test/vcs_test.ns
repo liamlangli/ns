@@ -46,18 +46,21 @@ fn check_text_helpers() {
     assert lens_last_line("a\rb") == "b"
     assert lens_patch_body("--- a/tmp/x1\n+++ b/tmp/x2\n@@ -1 +1 @@\n-a\n+b\n") == "@@ -1 +1 @@\n-a\n+b\n"
     assert lens_patch_body("--- a\n+++ b\n") == ""
-    lens_sync_parse("3\t12\n")
-    assert g_lens_sync_ahead == 3 && g_lens_sync_behind == 12
-    lens_sync_parse("")
-    assert g_lens_sync_ahead == -1 && g_lens_sync_behind == -1
+    lens_sync_parse("3\t12\n", true)
+    assert g_lens_sync_ahead == 3 && g_lens_sync_behind == 12 && g_lens_sync_upstream
+    lens_sync_parse("", true)
+    assert g_lens_sync_ahead == -1 && g_lens_sync_behind == -1 && g_lens_sync_upstream == false
+    // A branch without an upstream still has counts.
+    lens_sync_parse("2\t0", false)
+    assert g_lens_sync_ahead == 2 && g_lens_sync_behind == 0 && g_lens_sync_upstream == false
     let steps = lens_commit_steps("one\ntwo")
     assert steps[0] == "add\n-A\n--\n."
     assert steps[1] == "commit\n-q\n-m\none two\n--\n."
     // Without a known upstream the branch is published to origin.
     assert lens_push_steps()[0] == "push\n--progress\n--set-upstream\norigin\nHEAD"
-    g_lens_sync_ahead = 0
+    g_lens_sync_upstream = true
     assert lens_push_steps()[0] == "push\n--progress"
-    g_lens_sync_ahead = -1
+    g_lens_sync_upstream = false
     let pull = lens_pull_steps()
     assert pull[0] == "fetch\n--progress" && pull[1] == "pull\n--rebase\n--progress"
     // The status bar's down arrow pulls and its up arrow pushes.
@@ -212,7 +215,7 @@ fn check_git(base: str) {
     // Publishing a branch reports Git's own progress.
     git(work, lens_push_steps()[0])
     assert os_git_progress() == 100
-    lens_sync_parse(git(work, "rev-list\n--left-right\n--count\nHEAD...@{upstream}"))
+    lens_sync_parse(git(work, "rev-list\n--left-right\n--count\nHEAD...@{upstream}"), true)
     assert g_lens_sync_ahead == 0 && g_lens_sync_behind == 0
     // A missing credential or remote fails instead of prompting.
     let failed = os_git_run(work, "push\nnowhere\nHEAD")
@@ -655,8 +658,10 @@ fn check_branches(base: str) {
     finish_job()
     assert g_lens_message == "created feature-one"
     assert g_lens_branch == "feature-one" && g_lens_branch_local_count == 2
-    // No upstream yet: the down arrow explains, and the up arrow publishes.
-    assert g_lens_sync_behind == -1 && g_lens_sync_ahead == -1
+    // No upstream yet: ahead counts what no remote has, nothing is behind,
+    // the down arrow explains, and the up arrow publishes.
+    assert g_lens_sync_upstream == false
+    assert g_lens_sync_ahead == 0 && g_lens_sync_behind == 0
     lens_pull()
     assert g_lens_job_running == false
     assert g_lens_message == "No upstream to pull from; the up arrow publishes this branch"
@@ -677,6 +682,7 @@ fn check_branches(base: str) {
     assert os_write_file_atomic(work + "/feature.ns", "fn feature() {}\n") != 0
     lens_commit("feature")
     finish_job()
+    assert g_lens_sync_ahead == 1 && g_lens_sync_behind == 0 && g_lens_sync_upstream == false
     lens_push()
     finish_job()
     assert g_lens_message == "push done" && g_lens_sync_ahead == 0

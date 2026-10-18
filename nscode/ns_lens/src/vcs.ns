@@ -33,6 +33,8 @@ let g_lens_job_done = [i32](1)
 let g_lens_job_code = [i32](1)
 let g_lens_job_output = [str](1)
 let g_lens_job_counts = [str](1)
+// 1 when the counts are against the branch's upstream.
+let g_lens_job_upstream = [i32](1)
 // The branch, the detached commit, the local and the remote branch listings.
 let g_lens_job_refs = [str](4)
 // The branch a job acts on, for its message.
@@ -42,15 +44,16 @@ let g_lens_job_queued: i32 = 0
 let g_lens_job_queued_steps = [str](0)
 let g_lens_job_queued_subject = ""
 // Commits only on this branch (ahead) and only on its upstream (behind);
-// -1 when unknown or the branch has no upstream.
+// -1 when unknown. A branch without an upstream counts the commits no remote
+// has as ahead and none behind.
 let g_lens_sync_ahead: i32 = -1
 let g_lens_sync_behind: i32 = -1
+let g_lens_sync_upstream = false
 let g_lens_sync_root = ""
 let g_lens_fetch_next: f64 = 0.0
 let g_lens_status_next: f64 = 0.0
 // Status bar buttons as last drawn: the down arrow pulls, the up arrow
-// pushes. Zero width while no branch is checked out and the counts are
-// unknown.
+// pushes. Zero width while the counts are unknown.
 let g_lens_sync_y: f64 = 0.0
 let g_lens_sync_down_x: f64 = 0.0
 let g_lens_sync_down_w: f64 = 0.0
@@ -147,7 +150,7 @@ fn lens_commit_paths(message: str, added: str, chosen: str) {
 fn lens_push_steps() [str] {
     let steps = [str](1)
     steps[0] = "push\n--progress"
-    if g_lens_sync_ahead < 0 {
+    if g_lens_sync_upstream == false {
         steps[0] = "push\n--progress\n--set-upstream\norigin\nHEAD"
     }
     return steps
@@ -165,7 +168,7 @@ fn lens_pull_steps() [str] {
 // A branch without an upstream has nothing to pull; Git would only print
 // how to set one.
 fn lens_pull() {
-    if g_lens_sync_behind < 0 {
+    if g_lens_sync_upstream == false {
         g_lens_message = "No upstream to pull from; the up arrow publishes this branch"
         return
     }
@@ -206,6 +209,7 @@ fn lens_job_begin(kind: i32, steps: [str], subject: str) {
     let code = g_lens_job_code
     let output = g_lens_job_output
     let counts = g_lens_job_counts
+    let upstreams = g_lens_job_upstream
     let refs = g_lens_job_refs
     done[0] = 0
     g_lens_job_kind = kind
@@ -224,13 +228,8 @@ fn lens_job_begin(kind: i32, steps: [str], subject: str) {
                 status = os_git_status()
             }
         }
-        // The counts read the refs the steps just moved.
-        let sync = os_git_run(root, "rev-list\n--left-right\n--count\nHEAD...@{upstream}")
-        if os_git_status() != 0 {
-            sync = ""
-        }
-        // So do the branch and the lists. --count keeps each listing near
-        // the 64 KiB os_git_run returns, past which it drops the first lines.
+        // The branch, the counts and the lists read the refs the steps just
+        // moved.
         let branch = lens_one_line(os_git_run(root, "symbolic-ref\n--short\n-q\nHEAD"))
         if os_git_status() != 0 {
             branch = ""
@@ -242,6 +241,23 @@ fn lens_job_begin(kind: i32, steps: [str], subject: str) {
                 detached = ""
             }
         }
+        let sync = os_git_run(root, "rev-list\n--left-right\n--count\nHEAD...@{upstream}")
+        let upstream: i32 = 1
+        if os_git_status() != 0 {
+            sync = ""
+            upstream = 0
+            // Without an upstream, ahead is what no remote has yet (none for
+            // a branch without a commit) and nothing is behind.
+            if branch != "" {
+                let local = lens_one_line(os_git_run(root, "rev-list\n--count\nHEAD\n--not\n--remotes"))
+                if os_git_status() != 0 {
+                    local = "0"
+                }
+                sync = local + "\t0"
+            }
+        }
+        // --count keeps each listing near the 64 KiB os_git_run returns, past
+        // which it drops the first lines.
         let locals = os_git_run(root, "for-each-ref\n--count=1024\n--format=%(refname:lstrip=2)\nrefs/heads")
         if os_git_status() != 0 {
             locals = ""
@@ -254,6 +270,7 @@ fn lens_job_begin(kind: i32, steps: [str], subject: str) {
         output[0] = text
         code[0] = status
         counts[0] = sync
+        upstreams[0] = upstream
         refs[0] = branch
         refs[1] = detached
         refs[2] = locals
@@ -263,8 +280,10 @@ fn lens_job_begin(kind: i32, steps: [str], subject: str) {
     }
 }
 
-// "<ahead>\t<behind>" from rev-list --left-right --count HEAD...@{upstream}.
-fn lens_sync_parse(counts: str) {
+// "<ahead>\t<behind>" from rev-list --left-right --count HEAD...@{upstream},
+// or for a branch without an upstream (`upstream` false).
+fn lens_sync_parse(counts: str, upstream: bool) {
+    g_lens_sync_upstream = upstream && counts != ""
     if counts == "" {
         g_lens_sync_ahead = -1
         g_lens_sync_behind = -1
@@ -328,6 +347,7 @@ fn lens_job_poll() {
     let status = g_lens_job_code[0]
     let text = g_lens_job_output[0]
     let counts = g_lens_job_counts[0]
+    let upstream = g_lens_job_upstream[0] != 0
     let branch = g_lens_job_refs[0]
     let detached = g_lens_job_refs[1]
     let locals = g_lens_job_refs[2]
@@ -340,7 +360,7 @@ fn lens_job_poll() {
     g_lens_status_next = os_time() + LENS_STATUS_INTERVAL
     let kind = g_lens_job_kind
     if g_lens_job_root == g_workspace_root {
-        lens_sync_parse(counts)
+        lens_sync_parse(counts, upstream)
         g_lens_sync_root = g_lens_job_root
         lens_branch_apply(branch, detached, locals, remotes)
     }
@@ -378,6 +398,7 @@ fn lens_vcs_tick(moving: bool) {
     if g_lens_sync_root != g_workspace_root {
         g_lens_sync_ahead = -1
         g_lens_sync_behind = -1
+        g_lens_sync_upstream = false
         g_lens_sync_root = g_workspace_root
         lens_branch_clear()
         g_lens_fetch_next = os_time() + 2.0
@@ -415,14 +436,13 @@ fn lens_job_fraction() f64 {
 }
 
 // Status bar: a down arrow with the upstream commits not pulled yet, then an
-// up arrow with the local commits not pushed. A branch without an upstream
-// keeps both arrows, without counts, so the up arrow can publish it. Returns
-// the width it used, 0 outside a branch.
+// up arrow with the local commits not pushed. Returns the width it used, 0
+// when the counts are unknown (outside a branch).
 fn lens_draw_sync(r: ref ui_renderer, x: f64, y: f64) f64 {
     g_lens_sync_y = y
     g_lens_sync_down_w = 0.0
     g_lens_sync_up_w = 0.0
-    if (g_lens_sync_ahead < 0 || g_lens_sync_behind < 0) && g_lens_branch == "" {
+    if g_lens_sync_ahead < 0 || g_lens_sync_behind < 0 {
         return 0.0
     }
     g_lens_sync_down_x = x
@@ -448,18 +468,14 @@ fn lens_sync_button_at(mx: f64, my: f64) i32 {
 }
 
 // One button, an arrow and its count, in a 28 px status bar at `y`; it
-// lights up under the pointer. An unknown count (-1) shows the arrow alone,
-// the up arrow bright since it publishes. The atlas has no arrow glyphs, so
-// the arrow is a stem and a triangle head.
+// lights up under the pointer. The atlas has no arrow glyphs, so the arrow
+// is a stem and a triangle head.
 fn lens_draw_sync_count(r: ref ui_renderer, x: f64, y: f64, count: i32, down: bool) f64 {
     let color = col_muted()
-    if count > 0 || (count < 0 && down == false) {
+    if count > 0 {
         color = col_text()
     }
-    let label = ""
-    if count >= 0 {
-        label = itos(count)
-    }
+    let label = itos(count)
     let label_w = ui_text_width(r, label, small_px(), FONT_MONO())
     let w = 11.0 + label_w + 10.0
     if g_mouse_x >= x - 4.0 && g_mouse_x < x - 4.0 + w && g_mouse_y >= y + 4.0 && g_mouse_y < y + 24.0 {

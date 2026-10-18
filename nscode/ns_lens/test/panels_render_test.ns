@@ -128,6 +128,7 @@ fn main() {
     let remotes = "origin/HEAD origin/main\norigin/main \norigin/feature/branch_3 \norigin/fresh \n"
     settle_jobs()
     lens_branch_apply("feature/branch_3", "", branches + "main\n", remotes)
+    lens_sync_parse("2\t0", false)
     for n in 0 to 2 {
         ui_begin_frame(r)
         render_lens(r, v, 1280, 800)
@@ -135,9 +136,10 @@ fn main() {
     }
     assert g_lens_branch_w > 0.0
     assert lens_branch_button_at(g_lens_branch_x + 2.0, g_lens_branch_y + 14.0)
-    // The folder has no upstream, yet a checked-out branch keeps both arrows,
-    // with the branch button right of them.
-    assert g_lens_sync_ahead == -1 && g_lens_sync_down_w > 0.0 && g_lens_sync_up_w > 0.0
+    // A branch without an upstream keeps both arrows with their counts, and
+    // the branch button sits right of them.
+    let bare_w = 11.0 + 10.0
+    assert g_lens_sync_down_w > bare_w && g_lens_sync_up_w > bare_w
     assert g_lens_branch_x >= g_lens_sync_up_x + g_lens_sync_up_w
     // A long name keeps its start and end within the label width.
     assert lens_fit_middle(r, "main", LENS_BRANCH_LABEL_W) == "main"
