@@ -59,6 +59,8 @@ let g_lens_preview_rows = [i32](48)
 let g_lens_preview_wrap = [i32](48)
 let g_lens_preview_patch = [i32](48)
 let g_lens_glyph_batch = [i32](49)
+// Each slot's added and deleted row backgrounds, drawn under its glyphs.
+let g_lens_mark_batch = [i32](49)
 let g_lens_glyph_dirty = [i32](49)
 // World units per code-layout pixel, so every leaf's code shares one size.
 let g_lens_code_world: f64 = 1.0
@@ -1943,7 +1945,39 @@ fn lens_build_code_batch(r: ref ui_renderer, slot: i32, rows: i32) i32 {
     let input = lens_batch_prepare(r, text, diff, document, first_row, first_col, total, rows, wrap, char_w, false)
     lens_batch_build(r, batch, ref input)
     ui_rect_batch_end(r, batch)
+    let marks = g_lens_mark_batch[slot]
+    if marks == 0 && !document && (diff.all_added || diff.added_count > 0 || diff.deleted_count > 0) {
+        marks = ui_rect_batch_create(r)
+        g_lens_mark_batch[slot] = marks
+    }
+    if marks != 0 {
+        ui_rect_batch_begin(r, marks)
+        if !document {
+            lens_batch_marks(r, marks, ref input)
+        }
+        ui_rect_batch_end(r, marks)
+    }
     return batch
+}
+
+// A slot's glyphs over its row backgrounds, scaled like the glyph batch.
+fn lens_draw_slot_batches(r: ref ui_renderer, slot: i32, x: f64, y: f64, zoom: f64, squash: f64) {
+    let marks = g_lens_mark_batch[slot]
+    if marks != 0 && ui_rect_batch_vertex_count(r, marks) > 0 {
+        ui_rect_batch_draw_range(r, marks, 0, ui_rect_batch_vertex_count(r, marks), x, y, zoom, zoom * squash)
+    }
+    let batch = g_lens_glyph_batch[slot]
+    ui_rect_batch_draw_range(r, batch, 0, ui_rect_batch_vertex_count(r, batch), x, y, zoom, zoom * squash)
+}
+
+fn lens_destroy_slot_batches(r: ref ui_renderer, slot: i32) {
+    ui_rect_batch_destroy(r, g_lens_glyph_batch[slot])
+    g_lens_glyph_batch[slot] = 0
+    if g_lens_mark_batch[slot] != 0 {
+        ui_rect_batch_destroy(r, g_lens_mark_batch[slot])
+        g_lens_mark_batch[slot] = 0
+    }
+    g_lens_glyph_dirty[slot] = 1
 }
 
 struct lens_glyph_window {
@@ -2029,7 +2063,7 @@ fn lens_draw_code_batch(r: ref ui_renderer, slot: i32, index: i32, x: f64, y: f6
         }
         g_lens_glyph_time[slot] = os_time()
         g_lens_glyph_frame[slot] = g_lens_render_serial
-        ui_rect_batch_draw_range(r, batch, 0, ui_rect_batch_vertex_count(r, batch), x, y, zoom, zoom * squash)
+        lens_draw_slot_batches(r, slot, x, y, zoom, squash)
         return true
     }
     g_lens_slot_index[slot] = index
@@ -2055,7 +2089,7 @@ fn lens_draw_code_batch(r: ref ui_renderer, slot: i32, index: i32, x: f64, y: f6
     if batch == 0 || ui_rect_batch_vertex_count(r, batch) <= 0 {
         return false
     }
-    ui_rect_batch_draw_range(r, batch, 0, ui_rect_batch_vertex_count(r, batch), x, y, zoom, zoom * squash)
+    lens_draw_slot_batches(r, slot, x, y, zoom, squash)
     return true
 }
 
@@ -2105,9 +2139,7 @@ fn lens_trim_glyphs(r: ref ui_renderer) {
             break
         }
         vertices = vertices - ui_rect_batch_vertex_count(r, g_lens_glyph_batch[victim])
-        ui_rect_batch_destroy(r, g_lens_glyph_batch[victim])
-        g_lens_glyph_batch[victim] = 0
-        g_lens_glyph_dirty[victim] = 1
+        lens_destroy_slot_batches(r, victim)
     }
 }
 
@@ -2117,9 +2149,7 @@ fn lens_release_idle_glyphs(r: ref ui_renderer) {
     let now = os_time()
     for slot in 0 to LENS_CACHE_SLOTS + 1 {
         if g_lens_glyph_batch[slot] != 0 && g_lens_glyph_frame[slot] != g_lens_render_serial && now - g_lens_glyph_time[slot] > 8.0 {
-            ui_rect_batch_destroy(r, g_lens_glyph_batch[slot])
-            g_lens_glyph_batch[slot] = 0
-            g_lens_glyph_dirty[slot] = 1
+            lens_destroy_slot_batches(r, slot)
         }
     }
 }

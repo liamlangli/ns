@@ -145,8 +145,10 @@ fn check_diff_rows(r: ref ui_renderer) {
     assert input.kind[0] == LENS_ROW_KEPT && input.number[0] == "1"
     assert input.kind[2] == LENS_ROW_ADDED && input.number[2] == "2" && input.row[2] == 2
     assert input.kind[5] == LENS_ROW_ADDED && input.number[5] == "5"
-    // Preview rows get the editor's backgrounds; the open document does not.
-    assert input.marks[LENS_ROW_KEPT] == 0u && input.marks[LENS_ROW_ADDED] != 0u
+    // A glyph batch holds glyphs only: preview rows leave their backgrounds
+    // to the slot's mark batch, and the open document draws its own.
+    assert input.marks[LENS_ROW_KEPT] == 0u && input.marks[LENS_ROW_ADDED] == 0u
+    assert lens_mark_color(LENS_ROW_ADDED, false) != 0u
     let doc_input = lens_batch_prepare(r, text, lens_file_diff_none(), true, 0, 0, 5, 37, 100, 8.0, false)
     assert doc_input.marks[LENS_ROW_ADDED] == 0u
     // Minimap rows fill a stronger shade than the editor's, so a change reads
@@ -154,7 +156,7 @@ fn check_diff_rows(r: ref ui_renderer) {
     let bars = lens_batch_prepare(r, text, diff, false, 0, 0, 6, 37, 100, 8.0, true)
     assert bars.marks[LENS_ROW_KEPT] == 0u
     assert bars.marks[LENS_ROW_ADDED] != 0u && bars.marks[LENS_ROW_ADDED] != bars.marks[LENS_ROW_DELETED]
-    assert bars.marks[LENS_ROW_ADDED] != input.marks[LENS_ROW_ADDED]
+    assert bars.marks[LENS_ROW_ADDED] != lens_mark_color(LENS_ROW_ADDED, false)
     assert bars.colors[TK_KEYWORD()] != bars.colors[TK_TEXT()]
     // A changed row adds one background rect behind its bars.
     let plain = lens_batch_prepare(r, "a\nb", lens_file_diff_none(), false, 0, 0, 2, 37, 100, 8.0, true)

@@ -1,0 +1,67 @@
+// A ui batch holds rects or glyphs, never both. A changed file's glyph batch
+// must keep its glyphs and leave the green and red row backgrounds to the
+// slot's own mark batch; otherwise a first added row turns the glyph batch
+// into rects and every letter of the file disappears.
+use std
+use os
+use ui
+use view
+use gpu
+
+fn main() {
+    let root = "/tmp/ns_lens_glyph_marks_" + itos((os_time() * 1000.0) as i32 % 1000000)
+    assert os_make_dirs(root) != 0
+    let text = "fn a() {}\nfn b() {}\nfn c() {}\n"
+    assert os_write_file_atomic(root + "/a.ns", text) != 0
+    g_workspace_streaming = true
+    g_workspace_root = root
+    workspace_init()
+    lens_rebuild()
+    let index = workspace_find("a.ns")
+    assert index >= 0
+    let v = view_create("glyph marks test", 640, 480)
+    if !gpu_request_device(v) {
+        view_close(v)
+        os_watch_stop()
+        return
+    }
+    let r = ui_renderer_create(v)
+    let slot = 0
+    g_lens_cache_id[slot] = index
+    g_lens_cache_offset[slot] = 0 as i64
+    g_lens_cache_text[slot] = text
+    g_lens_slot_index[slot] = index
+    g_lens_slot_block[slot] = 0
+    lens_batch_window_reset()
+    lens_code_flow(index, 8)
+    let rows = g_lens_flow_rows
+
+    let plain = lens_build_code_batch(r, slot, rows)
+    let glyphs = ui_rect_batch_vertex_count(r, plain)
+    assert glyphs > 0
+    assert g_lens_mark_batch[slot] == 0
+
+    // Every line added, the first one included.
+    g_lens_patches[lens_relative_path(os_entry_path(index))] = LENS_PATCH_NEW
+    let added = lens_build_code_batch(r, slot, rows)
+    assert ui_rect_batch_vertex_count(r, added) == glyphs
+    // One background quad per added row, apart from the glyphs.
+    assert g_lens_mark_batch[slot] != 0
+    assert ui_rect_batch_vertex_count(r, g_lens_mark_batch[slot]) == 3 * 6
+
+    // A file back to unchanged keeps an empty mark batch.
+    g_lens_patches = [str: str](8192)
+    ui_rect_batch_destroy(r, added)
+    let clean = lens_build_code_batch(r, slot, rows)
+    assert ui_rect_batch_vertex_count(r, clean) == glyphs
+    assert ui_rect_batch_vertex_count(r, g_lens_mark_batch[slot]) == 0
+
+    ui_rect_batch_destroy(r, plain)
+    g_lens_glyph_batch[slot] = clean
+    lens_destroy_slot_batches(r, slot)
+    assert g_lens_glyph_batch[slot] == 0 && g_lens_mark_batch[slot] == 0
+    ui_renderer_destroy(r)
+    view_close(v)
+    os_watch_stop()
+    print("glyph marks: passed\n")
+}

@@ -196,8 +196,10 @@ fn lens_batch_prepare(r: ref ui_renderer, text: str, diff: lens_file_diff, docum
     }
     for kind in 0 to 3 {
         input.marks[kind] = lens_mark_color(kind, mini)
-        // The editor draws the open document's row backgrounds itself.
-        if document && !mini { input.marks[kind] = 0u }
+        // A ui batch holds rects or glyphs, never both, so a glyph batch
+        // leaves its row backgrounds to lens_batch_marks; the editor draws the
+        // open document's itself.
+        if !mini { input.marks[kind] = 0u }
     }
     let offset: i32 = 0
     let row = first_row
@@ -294,6 +296,29 @@ fn lens_batch_prepare(r: ref ui_renderer, text: str, diff: lens_file_diff, docum
     return input
 }
 
+// Entry i's Git background in `mark`, across every row it wraps onto.
+fn lens_batch_mark_rows(r: ref ui_renderer, batch: i32, input: ref lens_batch_input, i: i32, mark: u32) {
+    let wrap = clamp_i(input.wrap, 1, 100000000)
+    let row = input.row[i]
+    let top = code_base_top_pad()
+    for s in 0 to lens_wrap_span(input.lead[i], input.length[i], wrap) {
+        let back = row + s
+        let back_x = (clamp_i(back / input.rows, 0, LENS_MAX_COLUMNS - 1) as f64) * input.column_pitch
+        ui_rect_batch_add(r, batch, back_x, top + ((back % input.rows) as f64) * input.line_pitch, input.column_pitch, input.line_pitch, mark)
+    }
+}
+
+// The added and deleted row backgrounds of glyph entries, a rect batch drawn
+// under their glyph batch.
+fn lens_batch_marks(r: ref ui_renderer, batch: i32, input: ref lens_batch_input) {
+    for i in 0 to input.count {
+        let mark = lens_mark_color(input.kind[i], false)
+        if mark != 0u {
+            lens_batch_mark_rows(r, batch, input, i, mark)
+        }
+    }
+}
+
 fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input, begin: i32, end: i32) {
     let font_px = code_base_font_px()
     let number_px = small_px()
@@ -311,13 +336,8 @@ fn lens_batch_range(r: ref ui_renderer, batch: i32, input: ref lens_batch_input,
         let base = lead / wrap
         let mark = input.marks[input.kind[i]]
         if mark != 0u {
-            // Added and deleted rows fill their background, behind the line
-            // number, glyphs and bars, across every wrapped row.
-            for s in 0 to lens_wrap_span(lead, input.length[i], wrap) {
-                let back = row + s
-                let back_x = (clamp_i(back / input.rows, 0, LENS_MAX_COLUMNS - 1) as f64) * input.column_pitch
-                ui_rect_batch_add(r, batch, back_x, top + ((back % input.rows) as f64) * input.line_pitch, input.column_pitch, input.line_pitch, mark)
-            }
+            // Added and deleted rows fill their background behind the bars.
+            lens_batch_mark_rows(r, batch, input, i, mark)
         }
         if !input.mini {
             let number = input.number[i]
